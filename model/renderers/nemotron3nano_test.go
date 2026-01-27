@@ -75,9 +75,9 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 						Parameters: api.ToolFunctionParameters{
 							Type:     "object",
 							Required: []string{"city"},
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"city": {Type: api.PropertyType{"string"}, Description: "The city name"},
-							},
+							}),
 						},
 					},
 				},
@@ -113,7 +113,7 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 						{
 							Function: api.ToolCallFunction{
 								Name:      "get_weather",
-								Arguments: map[string]any{"city": "Paris"},
+								Arguments: testArgs(map[string]any{"city": "Paris"}),
 							},
 						},
 					},
@@ -129,9 +129,9 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 						Parameters: api.ToolFunctionParameters{
 							Type:     "object",
 							Required: []string{"city"},
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"city": {Type: api.PropertyType{"string"}, Description: "The city name"},
-							},
+							}),
 						},
 					},
 				},
@@ -171,7 +171,7 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 						{
 							Function: api.ToolCallFunction{
 								Name:      "get_weather",
-								Arguments: map[string]any{"city": "Paris"},
+								Arguments: testArgs(map[string]any{"city": "Paris"}),
 							},
 						},
 					},
@@ -185,9 +185,9 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 						Name: "get_weather",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"city": {Type: api.PropertyType{"string"}},
-							},
+							}),
 						},
 					},
 				},
@@ -238,13 +238,13 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 						{
 							Function: api.ToolCallFunction{
 								Name:      "get_weather",
-								Arguments: map[string]any{"city": "Paris"},
+								Arguments: testArgs(map[string]any{"city": "Paris"}),
 							},
 						},
 						{
 							Function: api.ToolCallFunction{
 								Name:      "get_weather",
-								Arguments: map[string]any{"city": "London"},
+								Arguments: testArgs(map[string]any{"city": "London"}),
 							},
 						},
 					},
@@ -259,9 +259,9 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 						Name: "get_weather",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"city": {Type: api.PropertyType{"string"}},
-							},
+							}),
 						},
 					},
 				},
@@ -304,13 +304,13 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 			msgs: []api.Message{
 				{Role: "user", Content: "What's the weather in Paris and London? Also, what's 2+2?"},
 				{Role: "assistant", Content: "", Thinking: "I need to check the weather for both cities and calculate 2+2. Let me start with the weather calls.", ToolCalls: []api.ToolCall{
-					{Function: api.ToolCallFunction{Name: "get_weather", Arguments: api.ToolCallFunctionArguments{"city": "Paris"}}},
-					{Function: api.ToolCallFunction{Name: "get_weather", Arguments: api.ToolCallFunctionArguments{"city": "London"}}},
+					{Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "Paris"})}},
+					{Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "London"})}},
 				}},
 				{Role: "tool", Content: "Sunny, 22°C", ToolCallID: "call1"},
 				{Role: "tool", Content: "Rainy, 15°C", ToolCallID: "call2"},
 				{Role: "assistant", Content: "", Thinking: "Now I have the weather data. Let me calculate 2+2.", ToolCalls: []api.ToolCall{
-					{Function: api.ToolCallFunction{Name: "calculate", Arguments: api.ToolCallFunctionArguments{"expression": "2+2"}}},
+					{Function: api.ToolCallFunction{Name: "calculate", Arguments: testArgs(map[string]any{"expression": "2+2"})}},
 				}},
 				{Role: "tool", Content: "4", ToolCallID: "call3"},
 				{Role: "assistant", Content: "Based on the weather data, Paris is sunny at 22°C and London is rainy at 15°C. Also, 2+2 equals 4.", Thinking: "Perfect! I have all the information needed to provide a complete answer."},
@@ -322,9 +322,9 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 						Name: "get_weather",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"city": {Type: api.PropertyType{"string"}},
-							},
+							}),
 						},
 					},
 				},
@@ -334,9 +334,9 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 						Name: "calculate",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"expression": {Type: api.PropertyType{"string"}},
-							},
+							}),
 						},
 					},
 				},
@@ -389,7 +389,7 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 				{
 					Role: "assistant",
 					ToolCalls: []api.ToolCall{
-						{Function: api.ToolCallFunction{Name: "get_user", Arguments: map[string]any{"id": "123"}}},
+						{Function: api.ToolCallFunction{Name: "get_user", Arguments: testArgs(map[string]any{"id": "123"})}},
 					},
 				},
 				{Role: "tool", Content: `{"name": "John", "age": 30, "active": true}`},
@@ -401,7 +401,7 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 						Name: "get_user",
 						Parameters: api.ToolFunctionParameters{
 							Type:       "object",
-							Properties: map[string]api.ToolProperty{"id": {Type: api.PropertyType{"string"}}},
+							Properties: testPropsMap(map[string]api.ToolProperty{"id": {Type: api.PropertyType{"string"}}}),
 						},
 					},
 				},
@@ -450,9 +450,9 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 					ToolCalls: []api.ToolCall{
 						{Function: api.ToolCallFunction{
 							Name: "create",
-							Arguments: map[string]any{
+							Arguments: testArgs(map[string]any{
 								"data": map[string]any{"nested": "value", "count": 42},
-							},
+							}),
 						}},
 					},
 				},
@@ -465,7 +465,7 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 						Name: "create",
 						Parameters: api.ToolFunctionParameters{
 							Type:       "object",
-							Properties: map[string]api.ToolProperty{"data": {Type: api.PropertyType{"object"}}},
+							Properties: testPropsMap(map[string]api.ToolProperty{"data": {Type: api.PropertyType{"object"}}}),
 						},
 					},
 				},
@@ -512,7 +512,7 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 				{
 					Role: "assistant",
 					ToolCalls: []api.ToolCall{
-						{Function: api.ToolCallFunction{Name: "translate", Arguments: map[string]any{"text": "你好"}}},
+						{Function: api.ToolCallFunction{Name: "translate", Arguments: testArgs(map[string]any{"text": "你好"})}},
 					},
 				},
 				{Role: "tool", Content: "Hello"},
@@ -524,9 +524,9 @@ func TestNemotron3NanoRenderer(t *testing.T) {
 						Name: "translate",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"text": {Type: api.PropertyType{"string"}},
-							},
+							}),
 						},
 					},
 				},

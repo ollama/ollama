@@ -82,9 +82,9 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 					},
@@ -104,9 +104,9 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 					},
@@ -125,9 +125,9 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 					},
@@ -147,17 +147,17 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "London",
-								},
+								}),
 							},
 						},
 					},
@@ -214,9 +214,9 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 					},
@@ -235,9 +235,9 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 						{
 							Function: api.ToolCallFunction{
 								Name: "process",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"data": "test",
-								},
+								}),
 							},
 						},
 					},
@@ -281,9 +281,9 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 					},
@@ -305,9 +305,9 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 					},
@@ -355,9 +355,9 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 					},
@@ -379,9 +379,9 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 					},
@@ -422,7 +422,7 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 				{Role: "user", Content: "How do they interact with matter?"},
 			},
 			thinkValue: &api.ThinkValue{Value: true},
-			expected:   `<｜begin▁of▁sentence｜><｜User｜>Explain quantum physics<｜Assistant｜><think>Quantum physics is the study of matter and energy at the smallest scales.<｜end▁of▁sentence｜><｜User｜>What about photons?<｜Assistant｜></think>Photons are particles of light with no mass.<｜end▁of▁sentence｜><｜User｜>How do they interact with matter?<｜Assistant｜><think>`,
+			expected:   `<｜begin▁of▁sentence｜><｜User｜>Explain quantum physics<｜Assistant｜></think>Quantum physics is the study of matter and energy at the smallest scales.<｜end▁of▁sentence｜><｜User｜>What about photons?<｜Assistant｜></think>Photons are particles of light with no mass.<｜end▁of▁sentence｜><｜User｜>How do they interact with matter?<｜Assistant｜><think>`,
 		},
 		{
 			name: "tool call with thinking content in response",
@@ -436,17 +436,17 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Tokyo",
-								},
+								}),
 							},
 						},
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "New York",
-								},
+								}),
 							},
 						},
 					},
@@ -489,12 +489,12 @@ Second instruction<｜User｜>Hello<｜Assistant｜></think>`,
 						Description: "Get current weather information",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {
 									Type:        api.PropertyType{"string"},
 									Description: "City name",
 								},
-							},
+							}),
 							Required: []string{"location"},
 						},
 					},
@@ -535,12 +535,12 @@ Where:
 						Description: "Get current weather information",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {
 									Type:        api.PropertyType{"string"},
 									Description: "City name",
 								},
-							},
+							}),
 							Required: []string{"location"},
 						},
 					},
@@ -578,9 +578,9 @@ Where:
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 					},
@@ -594,12 +594,12 @@ Where:
 						Description: "Get current weather information",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {
 									Type:        api.PropertyType{"string"},
 									Description: "City name",
 								},
-							},
+							}),
 							Required: []string{"location"},
 						},
 					},
@@ -638,9 +638,9 @@ Where:
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 					},
@@ -656,12 +656,12 @@ Where:
 						Description: "Get current weather information",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {
 									Type:        api.PropertyType{"string"},
 									Description: "City name",
 								},
-							},
+							}),
 							Required: []string{"location"},
 						},
 					},
@@ -701,9 +701,9 @@ Where:
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Tokyo",
-								},
+								}),
 							},
 						},
 					},
@@ -724,12 +724,12 @@ Where:
 						Description: "Get current weather information",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {
 									Type:        api.PropertyType{"string"},
 									Description: "City name",
 								},
-							},
+							}),
 							Required: []string{"location"},
 						},
 					},
@@ -770,12 +770,12 @@ Where:
 						Description: "Get current weather information",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {
 									Type:        api.PropertyType{"string"},
 									Description: "City name",
 								},
-							},
+							}),
 							Required: []string{"location"},
 						},
 					},
@@ -787,12 +787,12 @@ Where:
 						Description: "Perform mathematical calculations",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"expression": {
 									Type:        api.PropertyType{"string"},
 									Description: "Mathematical expression to evaluate",
 								},
-							},
+							}),
 							Required: []string{"expression"},
 						},
 					},
@@ -834,17 +834,17 @@ Where:
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"location": "Paris",
-								},
+								}),
 							},
 						},
 						{
 							Function: api.ToolCallFunction{
 								Name: "calculate",
-								Arguments: api.ToolCallFunctionArguments{
+								Arguments: testArgs(map[string]any{
 									"expression": "25 * 4",
-								},
+								}),
 							},
 						},
 					},
@@ -860,12 +860,12 @@ Where:
 						Description: "Get current weather information",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {
 									Type:        api.PropertyType{"string"},
 									Description: "City name",
 								},
-							},
+							}),
 							Required: []string{"location"},
 						},
 					},
@@ -877,12 +877,12 @@ Where:
 						Description: "Perform mathematical calculations",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"expression": {
 									Type:        api.PropertyType{"string"},
 									Description: "Mathematical expression to evaluate",
 								},
-							},
+							}),
 							Required: []string{"expression"},
 						},
 					},
@@ -927,12 +927,12 @@ Where:
 						Description: "Get current weather information",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {
 									Type:        api.PropertyType{"string"},
 									Description: "City name",
 								},
-							},
+							}),
 							Required: []string{"location"},
 						},
 					},
@@ -958,6 +958,73 @@ Where:
 - ` + "`tool_call_arguments`" + ` must be valid JSON that strictly follows the tool's Parameters Schema
 - For multiple tool calls, chain them directly without separators or spaces
 <｜User｜>What's the weather?<｜Assistant｜></think>`,
+		},
+		{
+			name: "multi-turn conversation with thinking content on each turn",
+			messages: []api.Message{
+				{Role: "user", Content: "hey!"},
+				{
+					Role:     "assistant",
+					Content:  "Hey! 😊 How's it going? What's on your mind today?",
+					Thinking: "Hmm, the user just said \"hey!\" which is a simple greeting. This is a straightforward opening where they're likely just starting a conversation or testing the interaction.",
+				},
+				{Role: "user", Content: "fantastic, how has yours been"},
+				{
+					Role:     "assistant",
+					Content:  "Glad to hear you're having a fantastic day! That's awesome.\n\nMine's been great, thanks for asking! Just buzzing along, helping people out and having conversations like this one. So what's making your day so fantastic? Anything fun happening?",
+					Thinking: "Ah, the user is responding warmly and asking about my \"day.\" Since I'm an AI, I need to gently remind them I don't experience time like a human, but frame it positively to keep the conversation flowing.",
+				},
+				{Role: "user", Content: "awesome, can you tell me a 10 word story?"},
+			},
+			thinkValue: &api.ThinkValue{Value: true},
+			expected: `<｜begin▁of▁sentence｜><｜User｜>hey!<｜Assistant｜></think>Hey! 😊 How's it going? What's on your mind today?<｜end▁of▁sentence｜><｜User｜>fantastic, how has yours been<｜Assistant｜></think>Glad to hear you're having a fantastic day! That's awesome.
+
+Mine's been great, thanks for asking! Just buzzing along, helping people out and having conversations like this one. So what's making your day so fantastic? Anything fun happening?<｜end▁of▁sentence｜><｜User｜>awesome, can you tell me a 10 word story?<｜Assistant｜><think>`,
+		},
+		{
+			name: "vLLM documentation example - multi-turn with full thinking content",
+			messages: []api.Message{
+				{Role: "system", Content: "You are a helpful assistant"},
+				{Role: "user", Content: "Who are you?"},
+				{
+					Role:     "assistant",
+					Content:  "I am DeepSeek",
+					Thinking: "Hmm",
+				},
+				{Role: "user", Content: "9.11 and 9.8, which is greater?"},
+				{
+					Role:     "assistant",
+					Content:  "9.8 is greater than 9.11.\n\nTo compare them easily, you can align the decimal places:  \n- 9.11 has a tenths digit of 1 and a hundredths digit of 1.  \n- 9.8 can be written as 9.80, which has a tenths digit of 8 and a hundredths digit of 0.  \n\nSince the whole number part (9) is the same, compare the tenths place: 8 is greater than 1, so 9.80 (or 9.8) is greater than 9.11.",
+					Thinking: "First, the user is asking which number is greater between 9.11 and 9.8. These are decimal numbers.\n\nI need to compare 9.11 and 9.8. To make it easier, I should think of them as decimals with the same number of decimal places.\n\n9.11 has two decimal places, and 9.8 has one decimal place. I can write 9.8 as 9.80 to make it comparable.\n\nSo, 9.11 versus 9.80.\n\nNow, comparing the whole number parts: both have 9, so they are equal in the units place.\n\nNext, compare the tenths place: for 9.11, the tenths digit is 1. For 9.80, the tenths digit is 8. Since 8 is greater than 1, 9.80 is greater than 9.11.\n\nTherefore, 9.8 is greater than 9.11.\n\nI can also think of them as fractions: 9.11 is 911/100, and 9.8 is 98/10 or 980/100. Comparing 911/100 and 980/100, 980/100 is larger, so 9.8 is greater.\n\nSo, the answer should be that 9.8 is greater than 9.11.\n\nNow, I need to respond helpfully. Since the user might be learning or need clarification, I should explain briefly.\n\nFinally, my response should be in English, as the query is in English.",
+				},
+				{Role: "user", Content: "Thanks! Can you tell me a 10 word story?"},
+				{
+					Role:     "assistant",
+					Content:  "Of course. Here is a 10-word story:\n\nHe found the key, unlocking a door to forgotten memories.",
+					Thinking: "Hmm, the user just asked for a 10-word story after the previous number comparison question. This is a quick creative task with a strict word count constraint. \n\nThe story needs to be exactly 10 words while maintaining coherence and a hint of narrative. A micro-story about finding a key could work - it implies a larger unseen story. \n\nChecking the word count: \"He found the key, unlocking a door to forgotten memories.\" That's 10 words with a beginning, middle and implied end. It fits the requirement while leaving room for imagination.",
+				},
+				{Role: "user", Content: "That was beautiful! Now can you write a haiku?"},
+			},
+			thinkValue: &api.ThinkValue{Value: true},
+			expected: `<｜begin▁of▁sentence｜>You are a helpful assistant<｜User｜>Who are you?<｜Assistant｜></think>I am DeepSeek<｜end▁of▁sentence｜><｜User｜>9.11 and 9.8, which is greater?<｜Assistant｜></think>9.8 is greater than 9.11.
+
+To compare them easily, you can align the decimal places:  
+- 9.11 has a tenths digit of 1 and a hundredths digit of 1.  
+- 9.8 can be written as 9.80, which has a tenths digit of 8 and a hundredths digit of 0.  
+
+Since the whole number part (9) is the same, compare the tenths place: 8 is greater than 1, so 9.80 (or 9.8) is greater than 9.11.<｜end▁of▁sentence｜><｜User｜>Thanks! Can you tell me a 10 word story?<｜Assistant｜></think>Of course. Here is a 10-word story:
+
+He found the key, unlocking a door to forgotten memories.<｜end▁of▁sentence｜><｜User｜>That was beautiful! Now can you write a haiku?<｜Assistant｜><think>`,
+		},
+		{
+			name: "no system prompt - content with embedded thinking tags",
+			messages: []api.Message{
+				{Role: "user", Content: "Who are you?"},
+				{Role: "assistant", Content: "<think>Hmm</think>I am DeepSeek"},
+				{Role: "user", Content: "Thanks! Can you tell me a 10 word story?"},
+			},
+			thinkValue: &api.ThinkValue{Value: true},
+			expected:   `<｜begin▁of▁sentence｜><｜User｜>Who are you?<｜Assistant｜></think>I am DeepSeek<｜end▁of▁sentence｜><｜User｜>Thanks! Can you tell me a 10 word story?<｜Assistant｜><think>`,
 		},
 	}
 

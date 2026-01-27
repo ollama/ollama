@@ -59,7 +59,7 @@ func rendererForName(name string) Renderer {
 	case "cogito":
 		renderer := &CogitoRenderer{isThinking: true}
 		return renderer
-	case "deepseek-v3.1":
+	case "deepseek3.1":
 		renderer := &DeepSeek3Renderer{IsThinking: true, Variant: Deepseek31}
 		return renderer
 	case "olmo3":
@@ -78,6 +78,14 @@ func rendererForName(name string) Renderer {
 		return renderer
 	case "nemotron-3-nano":
 		return &Nemotron3NanoRenderer{}
+	case "functiongemma":
+		return &FunctionGemmaRenderer{}
+	case "glm-4.7":
+		return &GLM47Renderer{}
+	case "lfm2":
+		return &LFM2Renderer{IsThinking: false}
+	case "lfm2-thinking":
+		return &LFM2Renderer{IsThinking: true}
 	default:
 		return nil
 	}

@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/logutil"
@@ -194,36 +193,6 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 	}
 }
 
-// TODO(drifkin): move this to a shared location
-// longest overlap between suffix of s and prefix of delim
-func overlap(s, delim string) int {
-	max := min(len(delim), len(s))
-	for i := max; i > 0; i-- {
-		if strings.HasSuffix(s, delim[:i]) {
-			return i
-		}
-	}
-	return 0
-}
-
-func trailingWhitespaceLen(s string) int {
-	remaining := s
-	total := 0
-	for len(remaining) > 0 {
-		r, size := utf8.DecodeLastRuneInString(remaining)
-		// if it's an invalid utf8 rune, assume it isn't whitespace
-		if r == utf8.RuneError && size == 1 {
-			break
-		}
-		if !unicode.IsSpace(r) {
-			break
-		}
-		total += size
-		remaining = remaining[:len(remaining)-size]
-	}
-	return total
-}
-
 type XMLFunctionCall struct {
 	XMLName    xml.Name       `xml:"function"`
 	Name       string         `xml:"name,attr"`
@@ -270,12 +239,12 @@ func parseToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall, er
 		}
 	}
 
-	toolCall.Function.Arguments = make(api.ToolCallFunctionArguments)
+	toolCall.Function.Arguments = api.NewToolCallFunctionArguments()
 	for _, parameter := range functionCall.Parameters {
 		// Look up the parameter type if we found the tool
 		var paramType api.PropertyType
 		if matchedTool != nil && matchedTool.Function.Parameters.Properties != nil {
-			if prop, ok := matchedTool.Function.Parameters.Properties[parameter.Name]; ok {
+			if prop, ok := matchedTool.Function.Parameters.Properties.Get(parameter.Name); ok {
 				// Handle anyOf by collecting all types from the union
 				if len(prop.AnyOf) > 0 {
 					for _, anyOfProp := range prop.AnyOf {
@@ -287,7 +256,7 @@ func parseToolCall(raw qwenEventRawToolCall, tools []api.Tool) (api.ToolCall, er
 			}
 		}
 
-		toolCall.Function.Arguments[parameter.Name] = parseValue(parameter.Value, paramType)
+		toolCall.Function.Arguments.Set(parameter.Name, parseValue(parameter.Value, paramType))
 	}
 
 	return toolCall, nil

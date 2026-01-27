@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"time"
 
 	"github.com/ollama/ollama/api"
 )
@@ -265,9 +266,9 @@ type ResponsesText struct {
 type ResponsesTool struct {
 	Type        string         `json:"type"` // "function"
 	Name        string         `json:"name"`
-	Description string         `json:"description,omitempty"`
-	Strict      bool           `json:"strict,omitempty"`
-	Parameters  map[string]any `json:"parameters,omitempty"`
+	Description *string        `json:"description"` // nullable but required
+	Strict      *bool          `json:"strict"`      // nullable but required
+	Parameters  map[string]any `json:"parameters"`  // nullable but required
 }
 
 type ResponsesRequest struct {
@@ -475,11 +476,16 @@ func convertTool(t ResponsesTool) (api.Tool, error) {
 		}
 	}
 
+	var description string
+	if t.Description != nil {
+		description = *t.Description
+	}
+
 	return api.Tool{
 		Type: t.Type,
 		Function: api.ToolFunction{
 			Name:        t.Name,
-			Description: t.Description,
+			Description: description,
 			Parameters:  params,
 		},
 	}, nil
@@ -516,17 +522,60 @@ func convertInputMessage(m ResponsesInputMessage) (api.Message, error) {
 
 // Response types for the Responses API
 
+// ResponsesTextField represents the text output configuration in the response.
+type ResponsesTextField struct {
+	Format ResponsesTextFormat `json:"format"`
+}
+
+// ResponsesReasoningOutput represents reasoning configuration in the response.
+type ResponsesReasoningOutput struct {
+	Effort  *string `json:"effort,omitempty"`
+	Summary *string `json:"summary,omitempty"`
+}
+
+// ResponsesError represents an error in the response.
+type ResponsesError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// ResponsesIncompleteDetails represents details about why a response was incomplete.
+type ResponsesIncompleteDetails struct {
+	Reason string `json:"reason"`
+}
+
 type ResponsesResponse struct {
-	ID        string                `json:"id"`
-	Object    string                `json:"object"`
-	CreatedAt int64                 `json:"created_at"`
-	Status    string                `json:"status"`
-	Model     string                `json:"model"`
-	Output    []ResponsesOutputItem `json:"output"`
-	Usage     *ResponsesUsage       `json:"usage,omitempty"`
-	// TODO(drifkin): add `temperature` and `top_p` to the response, but this
-	// requires additional plumbing to find the effective values since the
-	// defaults can come from the model or the request
+	ID                 string                      `json:"id"`
+	Object             string                      `json:"object"`
+	CreatedAt          int64                       `json:"created_at"`
+	CompletedAt        *int64                      `json:"completed_at"`
+	Status             string                      `json:"status"`
+	IncompleteDetails  *ResponsesIncompleteDetails `json:"incomplete_details"`
+	Model              string                      `json:"model"`
+	PreviousResponseID *string                     `json:"previous_response_id"`
+	Instructions       *string                     `json:"instructions"`
+	Output             []ResponsesOutputItem       `json:"output"`
+	Error              *ResponsesError             `json:"error"`
+	Tools              []ResponsesTool             `json:"tools"`
+	ToolChoice         any                         `json:"tool_choice"`
+	Truncation         string                      `json:"truncation"`
+	ParallelToolCalls  bool                        `json:"parallel_tool_calls"`
+	Text               ResponsesTextField          `json:"text"`
+	TopP               float64                     `json:"top_p"`
+	PresencePenalty    float64                     `json:"presence_penalty"`
+	FrequencyPenalty   float64                     `json:"frequency_penalty"`
+	TopLogprobs        int                         `json:"top_logprobs"`
+	Temperature        float64                     `json:"temperature"`
+	Reasoning          *ResponsesReasoningOutput   `json:"reasoning"`
+	Usage              *ResponsesUsage             `json:"usage"`
+	MaxOutputTokens    *int                        `json:"max_output_tokens"`
+	MaxToolCalls       *int                        `json:"max_tool_calls"`
+	Store              bool                        `json:"store"`
+	Background         bool                        `json:"background"`
+	ServiceTier        string                      `json:"service_tier"`
+	Metadata           map[string]any              `json:"metadata"`
+	SafetyIdentifier   *string                     `json:"safety_identifier"`
+	PromptCacheKey     *string                     `json:"prompt_cache_key"`
 }
 
 type ResponsesOutputItem struct {
@@ -550,18 +599,39 @@ type ResponsesReasoningSummary struct {
 }
 
 type ResponsesOutputContent struct {
-	Type string `json:"type"` // "output_text"
-	Text string `json:"text"`
+	Type        string `json:"type"` // "output_text"
+	Text        string `json:"text"`
+	Annotations []any  `json:"annotations"`
+	Logprobs    []any  `json:"logprobs"`
+}
+
+type ResponsesInputTokensDetails struct {
+	CachedTokens int `json:"cached_tokens"`
+}
+
+type ResponsesOutputTokensDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens"`
 }
 
 type ResponsesUsage struct {
-	InputTokens  int `json:"input_tokens"`
-	OutputTokens int `json:"output_tokens"`
-	TotalTokens  int `json:"total_tokens"`
+	InputTokens         int                          `json:"input_tokens"`
+	OutputTokens        int                          `json:"output_tokens"`
+	TotalTokens         int                          `json:"total_tokens"`
+	InputTokensDetails  ResponsesInputTokensDetails  `json:"input_tokens_details"`
+	OutputTokensDetails ResponsesOutputTokensDetails `json:"output_tokens_details"`
 }
 
-// ToResponse converts an api.ChatResponse to a Responses API response
-func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse) ResponsesResponse {
+// derefFloat64 returns the value of a float64 pointer, or a default if nil.
+func derefFloat64(p *float64, def float64) float64 {
+	if p != nil {
+		return *p
+	}
+	return def
+}
+
+// ToResponse converts an api.ChatResponse to a Responses API response.
+// The request is used to echo back request parameters in the response.
+func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse, request ResponsesRequest) ResponsesResponse {
 	var output []ResponsesOutputItem
 
 	// Add reasoning item if thinking is present
@@ -585,6 +655,7 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse)
 			output = append(output, ResponsesOutputItem{
 				ID:        fmt.Sprintf("fc_%s_%d", responseID, i),
 				Type:      "function_call",
+				Status:    "completed",
 				CallID:    tc.ID,
 				Name:      tc.Function.Name,
 				Arguments: tc.Function.Arguments,
@@ -598,25 +669,90 @@ func ToResponse(model, responseID, itemID string, chatResponse api.ChatResponse)
 			Role:   "assistant",
 			Content: []ResponsesOutputContent{
 				{
-					Type: "output_text",
-					Text: chatResponse.Message.Content,
+					Type:        "output_text",
+					Text:        chatResponse.Message.Content,
+					Annotations: []any{},
+					Logprobs:    []any{},
 				},
 			},
 		})
 	}
 
+	var instructions *string
+	if request.Instructions != "" {
+		instructions = &request.Instructions
+	}
+
+	// Build truncation with default
+	truncation := "disabled"
+	if request.Truncation != nil {
+		truncation = *request.Truncation
+	}
+
+	tools := request.Tools
+	if tools == nil {
+		tools = []ResponsesTool{}
+	}
+
+	text := ResponsesTextField{
+		Format: ResponsesTextFormat{Type: "text"},
+	}
+	if request.Text != nil && request.Text.Format != nil {
+		text.Format = *request.Text.Format
+	}
+
+	// Build reasoning output from request
+	var reasoning *ResponsesReasoningOutput
+	if request.Reasoning.Effort != "" || request.Reasoning.Summary != "" {
+		reasoning = &ResponsesReasoningOutput{}
+		if request.Reasoning.Effort != "" {
+			reasoning.Effort = &request.Reasoning.Effort
+		}
+		if request.Reasoning.Summary != "" {
+			reasoning.Summary = &request.Reasoning.Summary
+		}
+	}
+
 	return ResponsesResponse{
-		ID:        responseID,
-		Object:    "response",
-		CreatedAt: chatResponse.CreatedAt.Unix(),
-		Status:    "completed",
-		Model:     model,
-		Output:    output,
+		ID:                 responseID,
+		Object:             "response",
+		CreatedAt:          chatResponse.CreatedAt.Unix(),
+		CompletedAt:        nil, // Set by middleware when writing final response
+		Status:             "completed",
+		IncompleteDetails:  nil, // Only populated if response incomplete
+		Model:              model,
+		PreviousResponseID: nil, // Not supported
+		Instructions:       instructions,
+		Output:             output,
+		Error:              nil, // Only populated on failure
+		Tools:              tools,
+		ToolChoice:         "auto", // Default value
+		Truncation:         truncation,
+		ParallelToolCalls:  true, // Default value
+		Text:               text,
+		TopP:               derefFloat64(request.TopP, 1.0),
+		PresencePenalty:    0, // Default value
+		FrequencyPenalty:   0, // Default value
+		TopLogprobs:        0, // Default value
+		Temperature:        derefFloat64(request.Temperature, 1.0),
+		Reasoning:          reasoning,
 		Usage: &ResponsesUsage{
 			InputTokens:  chatResponse.PromptEvalCount,
 			OutputTokens: chatResponse.EvalCount,
 			TotalTokens:  chatResponse.PromptEvalCount + chatResponse.EvalCount,
+			// TODO(drifkin): wire through the actual values
+			InputTokensDetails: ResponsesInputTokensDetails{CachedTokens: 0},
+			// TODO(drifkin): wire through the actual values
+			OutputTokensDetails: ResponsesOutputTokensDetails{ReasoningTokens: 0},
 		},
+		MaxOutputTokens:  request.MaxOutputTokens,
+		MaxToolCalls:     nil,   // Not supported
+		Store:            false, // We don't store responses
+		Background:       request.Background,
+		ServiceTier:      "default", // Default value
+		Metadata:         map[string]any{},
+		SafetyIdentifier: nil, // Not supported
+		PromptCacheKey:   nil, // Not supported
 	}
 }
 
@@ -636,6 +772,7 @@ type ResponsesStreamConverter struct {
 	responseID string
 	itemID     string
 	model      string
+	request    ResponsesRequest
 
 	// State tracking (mutated across Process calls)
 	firstWrite      bool
@@ -668,11 +805,12 @@ func (c *ResponsesStreamConverter) newEvent(eventType string, data map[string]an
 }
 
 // NewResponsesStreamConverter creates a new converter with the given configuration.
-func NewResponsesStreamConverter(responseID, itemID, model string) *ResponsesStreamConverter {
+func NewResponsesStreamConverter(responseID, itemID, model string, request ResponsesRequest) *ResponsesStreamConverter {
 	return &ResponsesStreamConverter{
 		responseID: responseID,
 		itemID:     itemID,
 		model:      model,
+		request:    request,
 		firstWrite: true,
 	}
 }
@@ -717,25 +855,120 @@ func (c *ResponsesStreamConverter) Process(r api.ChatResponse) []ResponsesStream
 	return events
 }
 
+// buildResponseObject creates a full response object with all required fields for streaming events.
+func (c *ResponsesStreamConverter) buildResponseObject(status string, output []any, usage map[string]any) map[string]any {
+	var instructions any = nil
+	if c.request.Instructions != "" {
+		instructions = c.request.Instructions
+	}
+
+	truncation := "disabled"
+	if c.request.Truncation != nil {
+		truncation = *c.request.Truncation
+	}
+
+	var tools []any
+	if c.request.Tools != nil {
+		for _, t := range c.request.Tools {
+			tools = append(tools, map[string]any{
+				"type":        t.Type,
+				"name":        t.Name,
+				"description": t.Description,
+				"strict":      t.Strict,
+				"parameters":  t.Parameters,
+			})
+		}
+	}
+	if tools == nil {
+		tools = []any{}
+	}
+
+	textFormat := map[string]any{"type": "text"}
+	if c.request.Text != nil && c.request.Text.Format != nil {
+		textFormat = map[string]any{
+			"type": c.request.Text.Format.Type,
+		}
+		if c.request.Text.Format.Name != "" {
+			textFormat["name"] = c.request.Text.Format.Name
+		}
+		if c.request.Text.Format.Schema != nil {
+			textFormat["schema"] = c.request.Text.Format.Schema
+		}
+		if c.request.Text.Format.Strict != nil {
+			textFormat["strict"] = *c.request.Text.Format.Strict
+		}
+	}
+
+	var reasoning any = nil
+	if c.request.Reasoning.Effort != "" || c.request.Reasoning.Summary != "" {
+		r := map[string]any{}
+		if c.request.Reasoning.Effort != "" {
+			r["effort"] = c.request.Reasoning.Effort
+		} else {
+			r["effort"] = nil
+		}
+		if c.request.Reasoning.Summary != "" {
+			r["summary"] = c.request.Reasoning.Summary
+		} else {
+			r["summary"] = nil
+		}
+		reasoning = r
+	}
+
+	// Build top_p and temperature with defaults
+	topP := 1.0
+	if c.request.TopP != nil {
+		topP = *c.request.TopP
+	}
+	temperature := 1.0
+	if c.request.Temperature != nil {
+		temperature = *c.request.Temperature
+	}
+
+	return map[string]any{
+		"id":                   c.responseID,
+		"object":               "response",
+		"created_at":           time.Now().Unix(),
+		"completed_at":         nil,
+		"status":               status,
+		"incomplete_details":   nil,
+		"model":                c.model,
+		"previous_response_id": nil,
+		"instructions":         instructions,
+		"output":               output,
+		"error":                nil,
+		"tools":                tools,
+		"tool_choice":          "auto",
+		"truncation":           truncation,
+		"parallel_tool_calls":  true,
+		"text":                 map[string]any{"format": textFormat},
+		"top_p":                topP,
+		"presence_penalty":     0,
+		"frequency_penalty":    0,
+		"top_logprobs":         0,
+		"temperature":          temperature,
+		"reasoning":            reasoning,
+		"usage":                usage,
+		"max_output_tokens":    c.request.MaxOutputTokens,
+		"max_tool_calls":       nil,
+		"store":                false,
+		"background":           c.request.Background,
+		"service_tier":         "default",
+		"metadata":             map[string]any{},
+		"safety_identifier":    nil,
+		"prompt_cache_key":     nil,
+	}
+}
+
 func (c *ResponsesStreamConverter) createResponseCreatedEvent() ResponsesStreamEvent {
 	return c.newEvent("response.created", map[string]any{
-		"response": map[string]any{
-			"id":     c.responseID,
-			"object": "response",
-			"status": "in_progress",
-			"output": []any{},
-		},
+		"response": c.buildResponseObject("in_progress", []any{}, nil),
 	})
 }
 
 func (c *ResponsesStreamConverter) createResponseInProgressEvent() ResponsesStreamEvent {
 	return c.newEvent("response.in_progress", map[string]any{
-		"response": map[string]any{
-			"id":     c.responseID,
-			"object": "response",
-			"status": "in_progress",
-			"output": []any{},
-		},
+		"response": c.buildResponseObject("in_progress", []any{}, nil),
 	})
 }
 
@@ -762,9 +995,10 @@ func (c *ResponsesStreamConverter) processThinking(thinking string) []ResponsesS
 
 	// Emit delta
 	events = append(events, c.newEvent("response.reasoning_summary_text.delta", map[string]any{
-		"item_id":      c.reasoningItemID,
-		"output_index": c.outputIndex,
-		"delta":        thinking,
+		"item_id":       c.reasoningItemID,
+		"output_index":  c.outputIndex,
+		"summary_index": 0,
+		"delta":         thinking,
 	}))
 
 	// TODO(drifkin): consider adding
@@ -783,9 +1017,10 @@ func (c *ResponsesStreamConverter) finishReasoning() []ResponsesStreamEvent {
 
 	events := []ResponsesStreamEvent{
 		c.newEvent("response.reasoning_summary_text.done", map[string]any{
-			"item_id":      c.reasoningItemID,
-			"output_index": c.outputIndex,
-			"text":         c.accumulatedThinking,
+			"item_id":       c.reasoningItemID,
+			"output_index":  c.outputIndex,
+			"summary_index": 0,
+			"text":          c.accumulatedThinking,
 		}),
 		c.newEvent("response.output_item.done", map[string]any{
 			"output_index": c.outputIndex,
@@ -898,8 +1133,10 @@ func (c *ResponsesStreamConverter) processTextContent(content string) []Response
 			"output_index":  c.outputIndex,
 			"content_index": c.contentIndex,
 			"part": map[string]any{
-				"type": "output_text",
-				"text": "",
+				"type":        "output_text",
+				"text":        "",
+				"annotations": []any{},
+				"logprobs":    []any{},
 			},
 		}))
 	}
@@ -913,6 +1150,7 @@ func (c *ResponsesStreamConverter) processTextContent(content string) []Response
 		"output_index":  c.outputIndex,
 		"content_index": 0,
 		"delta":         content,
+		"logprobs":      []any{},
 	}))
 
 	return events
@@ -944,8 +1182,10 @@ func (c *ResponsesStreamConverter) buildFinalOutput() []any {
 			"status": "completed",
 			"role":   "assistant",
 			"content": []map[string]any{{
-				"type": "output_text",
-				"text": c.accumulatedText,
+				"type":        "output_text",
+				"text":        c.accumulatedText,
+				"annotations": []any{},
+				"logprobs":    []any{},
 			}},
 		})
 	}
@@ -967,6 +1207,7 @@ func (c *ResponsesStreamConverter) processCompletion(r api.ChatResponse) []Respo
 			"output_index":  c.outputIndex,
 			"content_index": 0,
 			"text":          c.accumulatedText,
+			"logprobs":      []any{},
 		}))
 
 		// response.content_part.done
@@ -975,8 +1216,10 @@ func (c *ResponsesStreamConverter) processCompletion(r api.ChatResponse) []Respo
 			"output_index":  c.outputIndex,
 			"content_index": 0,
 			"part": map[string]any{
-				"type": "output_text",
-				"text": c.accumulatedText,
+				"type":        "output_text",
+				"text":        c.accumulatedText,
+				"annotations": []any{},
+				"logprobs":    []any{},
 			},
 		}))
 
@@ -989,26 +1232,31 @@ func (c *ResponsesStreamConverter) processCompletion(r api.ChatResponse) []Respo
 				"status": "completed",
 				"role":   "assistant",
 				"content": []map[string]any{{
-					"type": "output_text",
-					"text": c.accumulatedText,
+					"type":        "output_text",
+					"text":        c.accumulatedText,
+					"annotations": []any{},
+					"logprobs":    []any{},
 				}},
 			},
 		}))
 	}
 
 	// response.completed
-	events = append(events, c.newEvent("response.completed", map[string]any{
-		"response": map[string]any{
-			"id":     c.responseID,
-			"object": "response",
-			"status": "completed",
-			"output": c.buildFinalOutput(),
-			"usage": map[string]any{
-				"input_tokens":  r.PromptEvalCount,
-				"output_tokens": r.EvalCount,
-				"total_tokens":  r.PromptEvalCount + r.EvalCount,
-			},
+	usage := map[string]any{
+		"input_tokens":  r.PromptEvalCount,
+		"output_tokens": r.EvalCount,
+		"total_tokens":  r.PromptEvalCount + r.EvalCount,
+		"input_tokens_details": map[string]any{
+			"cached_tokens": 0,
 		},
+		"output_tokens_details": map[string]any{
+			"reasoning_tokens": 0,
+		},
+	}
+	response := c.buildResponseObject("completed", c.buildFinalOutput(), usage)
+	response["completed_at"] = time.Now().Unix()
+	events = append(events, c.newEvent("response.completed", map[string]any{
+		"response": response,
 	}))
 
 	return events

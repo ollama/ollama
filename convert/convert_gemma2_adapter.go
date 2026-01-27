@@ -6,6 +6,7 @@ import (
 	"github.com/pdevine/tensor"
 	"github.com/pdevine/tensor/native"
 
+	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/fs/ggml"
 )
 
@@ -15,7 +16,7 @@ type gemma2Adapter struct {
 
 var _ AdapterConverter = (*gemma2Adapter)(nil)
 
-func (p *gemma2Adapter) KV(baseKV ggml.KV) ggml.KV {
+func (p *gemma2Adapter) KV(baseKV fs.Config) KV {
 	kv := p.AdapterParameters.KV()
 	kv["general.architecture"] = "gemma2"
 	return kv

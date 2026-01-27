@@ -95,6 +95,13 @@ func getTensorNewType(kv fsggml.KV, qs *quantizeState, newType fsggml.TensorType
 			// for the 8-expert model, bumping this to Q8_0 trades just ~128MB
 			newType = fsggml.TensorTypeQ8_0
 		}
+	} else if strings.Contains(name, "attn_k_b.weight") ||
+		strings.Contains(name, "attn_v_b.weight") ||
+		strings.Contains(name, "attn_kv_a_mqa.weight") ||
+		strings.Contains(name, "attn_q_a.weight") ||
+		strings.Contains(name, "attn_q_b.weight") {
+		// MLA tensors need higher precision to avoid quality degradation
+		newType = fsggml.TensorTypeQ8_0
 	} else if strings.Contains(name, "ffn_down") {
 		iLayer := qs.iFfnDown
 		n_layer := qs.nFfnDown
@@ -198,8 +205,8 @@ func newType(t *fsggml.Tensor, kv fsggml.KV, qs *quantizeState, ftype fsggml.Fil
 	name := t.Name
 	quantize := strings.HasSuffix(name, "weight")
 
-	// don't quantize vision stuff
-	quantize = quantize && (!strings.Contains(name, "v.") || strings.Contains(name, "_v."))
+	// don't quantize vision encoder tensors (named with "v." prefix)
+	quantize = quantize && !strings.HasPrefix(name, "v.")
 	quantize = quantize && !strings.Contains(name, "mm.")
 
 	// quantize only 2D and 3D tensors (experts)
@@ -218,6 +225,9 @@ func newType(t *fsggml.Tensor, kv fsggml.KV, qs *quantizeState, ftype fsggml.Fil
 	// do not quantize Mamba's small yet 2D weights
 	// NOTE: can't use LLM_TN here because the layer number is not known
 	quantize = quantize && !strings.Contains(name, "ssm_conv1d.weight")
+
+	// do not quantize LFM2's shortconv kernel weights
+	quantize = quantize && !strings.Contains(name, "shortconv.conv.weight")
 
 	// do not quantize RWKV's time_mix_first tensors
 	quantize = quantize && !strings.Contains(name, "time_mix_first.weight")

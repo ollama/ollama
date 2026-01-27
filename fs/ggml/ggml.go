@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"log/slog"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -239,21 +241,36 @@ func (kv KV) Bools(key string, defaultValue ...[]bool) []bool {
 	return val.values
 }
 
+func (kv KV) Len() int {
+	return len(kv)
+}
+
+func (kv KV) Keys() iter.Seq[string] {
+	return maps.Keys(kv)
+}
+
+func (kv KV) Value(key string) any {
+	return kv[key]
+}
+
 func (kv KV) OllamaEngineRequired() bool {
 	return slices.Contains([]string{
+		"bert",
+		"deepseek2",
+		"deepseekocr",
 		"gemma3",
 		"gemma3n",
 		"gptoss", "gpt-oss",
 		"llama4",
 		"mistral3",
 		"mllama",
+		"nomic-bert",
+		"olmo3",
 		"qwen25vl",
 		"qwen3", "qwen3moe",
 		"qwen3vl", "qwen3vlmoe",
-		"deepseekocr",
-		"deepseek2",
-		"nomic-bert",
-		"olmo3",
+		"glm4moelite",
+		"lfm2",
 	}, kv.Architecture())
 }
 
@@ -839,8 +856,11 @@ func (f GGML) SupportsFlashAttention() bool {
 // FlashAttention checks if the model should enable flash attention
 func (f GGML) FlashAttention() bool {
 	return slices.Contains([]string{
+		"bert",
 		"gemma3",
+		"glm4moelite",
 		"gptoss", "gpt-oss",
+		"lfm2",
 		"mistral3",
 		"olmo3",
 		"qwen3", "qwen3moe",

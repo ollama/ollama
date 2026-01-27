@@ -82,7 +82,8 @@ int32_t cpu_get_num_math();
 enum llama_example {
     LLAMA_EXAMPLE_COMMON,
     LLAMA_EXAMPLE_SPECULATIVE,
-    LLAMA_EXAMPLE_MAIN,
+    LLAMA_EXAMPLE_COMPLETION,
+    LLAMA_EXAMPLE_CLI,
     LLAMA_EXAMPLE_EMBEDDING,
     LLAMA_EXAMPLE_PERPLEXITY,
     LLAMA_EXAMPLE_RETRIEVAL,
@@ -98,6 +99,7 @@ enum llama_example {
     LLAMA_EXAMPLE_TTS,
     LLAMA_EXAMPLE_DIFFUSION,
     LLAMA_EXAMPLE_FINETUNE,
+    LLAMA_EXAMPLE_FIT_PARAMS,
 
     LLAMA_EXAMPLE_COUNT,
 };
@@ -194,7 +196,6 @@ struct common_params_sampling {
 
     std::vector<std::string> dry_sequence_breakers = {"\n", ":", "\"", "*"};     // default sequence breakers for DRY
 
-
     std::vector<enum common_sampler_type> samplers = {
         COMMON_SAMPLER_TYPE_PENALTIES,
         COMMON_SAMPLER_TYPE_DRY,
@@ -214,6 +215,10 @@ struct common_params_sampling {
 
     std::vector<llama_logit_bias> logit_bias;     // logit biases to apply
     std::vector<llama_logit_bias> logit_bias_eog; // pre-calculated logit biases for EOG tokens
+
+    bool has_logit_bias() const {
+        return !logit_bias.empty();
+    }
 
     // print the parameters into a string
     std::string print() const;
@@ -302,8 +307,8 @@ struct lr_opt {
 struct ggml_opt_optimizer_params common_opt_lr_pars(void * userdata);
 
 struct common_params {
-    int32_t n_predict             =    -1; // new tokens to predict
-    int32_t n_ctx                 =  4096; // context size
+    int32_t n_predict             =    -1; // max. number of new tokens to predict, -1 == no limit
+    int32_t n_ctx                 =     0; // context size, 0 == context the model was trained with
     int32_t n_batch               =  2048; // logical batch size for prompt processing (must be >=32 to use BLAS)
     int32_t n_ubatch              =   512; // physical batch size for prompt processing (must be >=32 to use BLAS)
     int32_t n_keep                =     0; // number of tokens to keep from initial prompt
@@ -324,9 +329,12 @@ struct common_params {
     // offload params
     std::vector<ggml_backend_dev_t> devices; // devices to use for offloading
 
-    int32_t n_gpu_layers      = -1;  // number of layers to store in VRAM (-1 - use default)
-    int32_t main_gpu          = 0;   // the GPU that is used for scratch and small tensors
-    float   tensor_split[128] = {0}; // how split tensors should be distributed across GPUs
+    int32_t n_gpu_layers       = -1;               // number of layers to store in VRAM (-1 - use default)
+    int32_t main_gpu           = 0;                // the GPU that is used for scratch and small tensors
+    float   tensor_split[128]  = {0};              // how split tensors should be distributed across GPUs
+    bool    fit_params         = true;             // whether to fit unset model/context parameters to free device memory
+    size_t  fit_params_target  = 1024 * 1024*1024; // margin per device in bytes for fitting parameters to free memory
+    int32_t fit_params_min_ctx = 4096;             // minimum context size to set when trying to reduce memory use
 
     enum llama_split_mode split_mode = LLAMA_SPLIT_MODE_LAYER; // how to split the model across GPUs
 
@@ -406,6 +414,7 @@ struct common_params {
     bool simple_io         = false; // improves compatibility with subprocesses and limited consoles
     bool cont_batching     = true;  // insert new sequences for decoding on-the-fly
     bool no_perf           = false; // disable performance metrics
+    bool show_timings      = true;  // show timing information on CLI
     bool ctx_shift         = false; // context shift on infinite text generation
     bool swa_full          = false; // use full-size SWA cache (https://github.com/ggml-org/llama.cpp/pull/13194#issuecomment-2868343055)
     bool kv_unified        = false; // enable unified KV cache
@@ -462,7 +471,7 @@ struct common_params {
     std::string public_path   = "";                                                                         // NOLINT
     std::string api_prefix    = "";                                                                         // NOLINT
     std::string chat_template = "";                                                                         // NOLINT
-    bool use_jinja = false;                                                                                 // NOLINT
+    bool use_jinja = true;                                                                                  // NOLINT
     bool enable_chat_template = true;
     common_reasoning_format reasoning_format = COMMON_REASONING_FORMAT_DEEPSEEK;
     int reasoning_budget = -1;
@@ -482,9 +491,10 @@ struct common_params {
     bool endpoint_metrics = false;
 
     // router server configs
-    std::string models_dir = ""; // directory containing models for the router server
-    int models_max = 4;          // maximum number of models to load simultaneously
-    bool models_autoload = true; // automatically load models when requested via the router server
+    std::string models_dir    = ""; // directory containing models for the router server
+    std::string models_preset = ""; // directory containing model presets for the router server
+    int models_max = 4;             // maximum number of models to load simultaneously
+    bool models_autoload = true;    // automatically load models when requested via the router server
 
     bool log_json = false;
 
@@ -666,15 +676,29 @@ bool tty_can_use_colors();
 // Model utils
 //
 
-// note: defines object's lifetime
-struct common_init_result {
-    llama_model_ptr   model;
-    llama_context_ptr context;
+struct common_sampler;
 
-    std::vector<llama_adapter_lora_ptr> lora;
+// note: defines the model, context, samplers, ets. lifetimes
+struct common_init_result {
+    common_init_result(common_params & params);
+    ~common_init_result();
+
+    llama_model * model();
+    llama_context * context();
+    common_sampler * sampler(llama_seq_id seq_id);
+
+    std::vector<llama_adapter_lora_ptr> & lora();
+
+    void free_context();
+
+private:
+    struct impl;
+    std::unique_ptr<impl> pimpl;
 };
 
-struct common_init_result     common_init_from_params(common_params & params);
+using common_init_result_ptr = std::unique_ptr<common_init_result>;
+
+common_init_result_ptr common_init_from_params(common_params & params);
 
 struct llama_model_params     common_model_params_to_llama  (      common_params & params);
 struct llama_context_params   common_context_params_to_llama(const common_params & params);

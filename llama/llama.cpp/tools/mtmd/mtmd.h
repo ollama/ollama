@@ -22,6 +22,11 @@
  *          Issues related to API usage may receive lower priority support.
  *
  * For the usage, see an example in mtmd-cli.cpp
+ *
+ * For contributors:
+ * - Make sure the C API is aligned with the libllama C API (as in llama.h)
+ * - Do not include model name (e.g., qwen, gemma) in the API, use generic terms instead
+ * - Keep the API minimal, do not expose internal details unless necessary
  */
 
 #ifdef LLAMA_SHARED

@@ -420,6 +420,11 @@ void common_log_set_timestamps(struct common_log * log, bool timestamps) {
     log->set_timestamps(timestamps);
 }
 
+void common_log_flush(struct common_log * log) {
+    log->pause();
+    log->resume();
+}
+
 static int common_get_verbosity(enum ggml_log_level level) {
     switch (level) {
         case GGML_LOG_LEVEL_DEBUG: return LOG_LEVEL_DEBUG;

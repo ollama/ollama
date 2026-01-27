@@ -161,8 +161,7 @@ struct mtmd_context {
     // string template for slice image delimiters with row/col (idefics3)
     std::string sli_img_start_tmpl;
 
-    // for whisper, we pre-calculate the mel filter bank
-    whisper_preprocessor::whisper_filters w_filters;
+    std::unique_ptr<mtmd_audio_preprocessor> audio_preproc;
 
     // TODO @ngxson : add timings
 
@@ -228,7 +227,7 @@ struct mtmd_context {
 
     void init_vision() {
         GGML_ASSERT(ctx_v != nullptr);
-        use_mrope = clip_is_qwen2vl(ctx_v);
+        use_mrope = clip_is_mrope(ctx_v);
 
         projector_type proj = clip_get_projector_type(ctx_v);
         int minicpmv_version = clip_is_minicpmv(ctx_v);
@@ -320,6 +319,10 @@ struct mtmd_context {
             img_beg = "<|image_start|>";
             img_end = "<|image_end|>";
 
+        } else if (proj == PROJECTOR_TYPE_GLM4V) {
+            img_beg = "<|begin_of_image|>";
+            img_end = "<|end_of_image|>";
+
         }
     }
 
@@ -327,14 +330,25 @@ struct mtmd_context {
         GGML_ASSERT(ctx_a != nullptr);
         projector_type proj = clip_get_projector_type(ctx_a);
 
-        if (clip_has_whisper_encoder(ctx_a)) {
-            // TODO @ngxson : check if model n_mel is 128 or 80
-            w_filters = whisper_precalc_filters::get_128_bins();
-        }
-
         LOG_WRN("%s: audio input is in experimental stage and may have reduced quality:\n"
                 "    https://github.com/ggml-org/llama.cpp/discussions/13759\n", __func__);
 
+        // set preprocessor
+        switch (proj) {
+            case PROJECTOR_TYPE_QWEN2A:
+            case PROJECTOR_TYPE_QWEN25O:
+            case PROJECTOR_TYPE_ULTRAVOX:
+            case PROJECTOR_TYPE_VOXTRAL:
+                audio_preproc = std::make_unique<mtmd_audio_preprocessor_whisper>(ctx_a);
+                break;
+            default:
+                GGML_ABORT("unsupported audio projector type");
+        }
+
+        // initialize audio preprocessor
+        audio_preproc->initialize();
+
+        // set special tokens
         if (proj == PROJECTOR_TYPE_QWEN2A) {
             // <|audio_bos|> ... (embeddings) ... <|audio_eos|>
             aud_beg = "<|audio_bos|>";
@@ -663,11 +677,10 @@ struct mtmd_tokenizer {
             }
 
             // preprocess audio
-            GGML_ASSERT(ctx->w_filters.n_mel); // make sure we have filter preloaded
-            std::vector<whisper_preprocessor::whisper_mel> mel_spec_chunks;
+            std::vector<mtmd_audio_mel> mel_spec_chunks;
             const float * samples = (const float *)bitmap->data.data();
             size_t n_samples = bitmap->data.size() / sizeof(float);
-            bool ok = whisper_preprocessor::preprocess_audio(samples, n_samples, ctx->w_filters, mel_spec_chunks);
+            bool ok = ctx->audio_preproc->preprocess(samples, n_samples, mel_spec_chunks);
             if (!ok) {
                 LOG_ERR("Unable to preprocess audio\n");
                 return 2;
@@ -873,8 +886,7 @@ int mtmd_get_audio_bitrate(mtmd_context * ctx) {
     if (!ctx->ctx_a) {
         return -1;
     }
-    // for now, we assume that all audio models have the same bitrate
-    return 16000; // 16kHz
+    return clip_get_hparams(ctx->ctx_a)->audio_sample_rate;
 }
 
 //

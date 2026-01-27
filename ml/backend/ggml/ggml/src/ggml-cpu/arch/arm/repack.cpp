@@ -24,6 +24,7 @@
 
 #define UNUSED GGML_UNUSED
 
+#if defined(__aarch64__) && defined(__ARM_NEON) && (defined(__ARM_FEATURE_MATMUL_INT8) || defined(__ARM_FEATURE_DOTPROD))
 static inline void decode_q4_Kx8_scales_mins(const uint8_t * scales_in,
                                              int16x8_t *     out_mins,
                                              int8_t *        out_scales) {
@@ -46,6 +47,7 @@ static inline void decode_q4_Kx8_scales_mins(const uint8_t * scales_in,
     scales_u32[1] = (sm[2] & kmask2) | (((sm[0] >> 6) & kmask3) << 4);
     memcpy(out_scales, scales_u32, 8);
 }
+#endif
 
 void ggml_quantize_mat_q8_0_4x4(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t k) {
     assert(QK8_0 == 32);

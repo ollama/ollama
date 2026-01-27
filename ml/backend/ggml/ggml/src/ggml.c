@@ -5265,8 +5265,6 @@ struct ggml_tensor * ggml_flash_attn_ext(
 
     if (mask) {
         GGML_ASSERT(ggml_is_contiguous(mask));
-        GGML_ASSERT(mask->ne[1] >= GGML_PAD(q->ne[1], GGML_KQ_MASK_PAD) &&
-                "the Flash-Attention kernel requires the mask to be padded to GGML_KQ_MASK_PAD and at least n_queries big");
         //GGML_ASSERT(ggml_can_repeat_rows(mask, qk));
 
         GGML_ASSERT(q->ne[2] % mask->ne[2] == 0);
@@ -7572,6 +7570,11 @@ size_t ggml_quantize_chunk(
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+
+void ggml_log_get(ggml_log_callback * log_callback, void ** user_data) {
+    *log_callback = g_logger_state.log_callback;
+    *user_data    = g_logger_state.log_callback_user_data;
+}
 
 void ggml_log_set(ggml_log_callback log_callback, void * user_data) {
     g_logger_state.log_callback = log_callback ? log_callback : ggml_log_callback_default;

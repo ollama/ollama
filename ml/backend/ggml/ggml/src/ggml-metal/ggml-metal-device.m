@@ -769,8 +769,15 @@ ggml_metal_device_t ggml_metal_device_init(void) {
 #endif
 
             dev->props.use_shared_buffers = dev->props.has_unified_memory;
+#if TARGET_OS_OSX
+            // In case of eGPU, shared memory may be preferable.
+            dev->props.use_shared_buffers |= [dev->mtl_device location] == MTLDeviceLocationExternal;
+#endif
             if (getenv("GGML_METAL_SHARED_BUFFERS_DISABLE") != NULL) {
                 dev->props.use_shared_buffers = false;
+            }
+            if (getenv("GGML_METAL_SHARED_BUFFERS_ENABLE") != NULL) {
+                dev->props.use_shared_buffers = true;
             }
 
             dev->props.supports_gpu_family_apple7 = [dev->mtl_device supportsFamily:MTLGPUFamilyApple7];
@@ -1064,12 +1071,8 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                 op->src[0]->ne[0] != 112 &&
                 op->src[0]->ne[0] != 128 &&
                 op->src[0]->ne[0] != 192 &&
-                op->src[0]->ne[0] != 256) {
-                return false;
-            }
-            if (op->src[0]->ne[0] == 576) {
-                // DeepSeek sizes
-                // TODO: disabled for now, until optmized
+                op->src[0]->ne[0] != 256 &&
+                op->src[0]->ne[0] != 576) {
                 return false;
             }
             if (op->src[1]->type != op->src[2]->type) {

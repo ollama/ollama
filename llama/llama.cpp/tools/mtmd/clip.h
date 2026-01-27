@@ -7,6 +7,8 @@
 
 // !!! Internal header, to be used by mtmd only !!!
 
+#define MTMD_INTERNAL_HEADER
+
 struct clip_ctx;
 
 struct clip_image_size {
@@ -102,7 +104,7 @@ bool clip_image_batch_encode(struct clip_ctx * ctx, int n_threads, const struct 
 
 int clip_is_minicpmv(const struct clip_ctx * ctx);
 bool clip_is_glm(const struct clip_ctx * ctx);
-bool clip_is_qwen2vl(const struct clip_ctx * ctx);
+bool clip_is_mrope(const struct clip_ctx * ctx);
 bool clip_is_llava(const struct clip_ctx * ctx);
 bool clip_is_gemma3(const struct clip_ctx * ctx);
 

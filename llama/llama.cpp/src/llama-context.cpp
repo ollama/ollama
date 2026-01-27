@@ -9,6 +9,7 @@
 #include "llama-model.h"
 
 #include <cinttypes>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -72,6 +73,43 @@ llama_context::llama_context(
         cparams.yarn_ext_factor = rope_scaling_type == LLAMA_ROPE_SCALING_TYPE_YARN ? 1.0f : 0.0f;
     }
 
+    if (cparams.yarn_ext_factor != 0) {
+        static auto get_mscale = [](float scale, float mscale) {
+            return scale <= 1.0f ? 1.0f : (0.1f * mscale * logf(scale) + 1.0f);
+        };
+
+        const float factor = 1.0f / cparams.rope_freq_scale;
+
+        // ref: https://github.com/huggingface/transformers/blob/6d00f6b0a5679c36510f203e4226e36f517c3032/src/transformers/modeling_rope_utils.py#L336-L348
+        if (hparams.rope_yarn_log_mul != 0.0f) {
+            // note: here we assume `mscale == 1.0f`
+            // TODO: start reading the actual value of mscale and handle the case where it is not 1.0f
+                  float mscale          = 1.0f;
+            const float mscale_all_dims = hparams.rope_yarn_log_mul;
+
+            // [TAG_DEEPSEEK2_YARN_LOG_MUL_FIX]
+            // special-case DEEPSEEK v2:
+            // https://huggingface.co/deepseek-ai/DeepSeek-V2-Lite-Chat/blob/main/config.json#L42-L43
+            if (model.arch == LLM_ARCH_DEEPSEEK2 && mscale_all_dims != 1.0f) {
+                mscale = mscale_all_dims;
+            }
+
+            cparams.yarn_attn_factor = get_mscale(factor, mscale) / get_mscale(factor, mscale_all_dims);
+
+            LLAMA_LOG_WARN("%s: setting new yarn_attn_factor = %.4f (mscale == %.1f, mscale_all_dim = %.1f)\n",
+                    __func__, cparams.yarn_attn_factor, mscale, mscale_all_dims);
+        } else {
+            cparams.yarn_attn_factor = get_mscale(factor, 1.0f);
+        }
+
+        // when YARN is applied with yarn_ext_factor != 0.0f, we need to cancel this factor:
+        // https://github.com/ggml-org/llama.cpp/blob/a81a569577cc38b32558958b048228150be63eae/ggml/src/ggml-cpu/ops.cpp#L5541-L5544
+        //
+        // ref: https://github.com/ggml-org/llama.cpp/discussions/7416
+        //      https://github.com/ggml-org/llama.cpp/pull/17945
+        cparams.yarn_attn_factor *= 1.0f / (1.0f + 0.1f * logf(factor));
+    }
+
     cparams.yarn_attn_factor *= hparams.rope_attn_factor;
 
     if (cparams.pooling_type == LLAMA_POOLING_TYPE_UNSPECIFIED) {
@@ -93,14 +131,6 @@ llama_context::llama_context(
     // with causal attention, the batch size is limited by the context size
     cparams.n_batch = cparams.causal_attn ? std::min(cparams.n_ctx, params.n_batch) : params.n_batch;
 
-    // the batch has to be at least GGML_KQ_MASK_PAD because we will be padding the KQ_mask
-    // this is required by GPU kernels in order to avoid out-of-bounds accesses (e.g. ggml_flash_attn_ext)
-    // ref: https://github.com/ggerganov/llama.cpp/pull/5021
-    // TODO: this padding is not needed for the cache-less context so we should probably move it to llama_memory
-    if (cparams.n_batch < GGML_KQ_MASK_PAD) {
-        LLAMA_LOG_WARN("%s: n_batch is less than GGML_KQ_MASK_PAD - increasing to %d\n", __func__, GGML_KQ_MASK_PAD);
-        cparams.n_batch = GGML_KQ_MASK_PAD;
-    }
     cparams.n_ubatch = std::min(cparams.n_batch, params.n_ubatch == 0 ? params.n_batch : params.n_ubatch);
 
     cparams.op_offload = params.op_offload;
@@ -228,6 +258,7 @@ llama_context::llama_context(
 
         backend_buft.clear();
         backend_ptrs.clear();
+        backend_buf_exp_size.clear();
 
         for (auto & backend : backends) {
             auto * buft = ggml_backend_get_default_buffer_type(backend.get());
@@ -244,6 +275,7 @@ llama_context::llama_context(
 
             backend_buft.push_back(buft);
             backend_ptrs.push_back(backend.get());
+            backend_buf_exp_size.push_back(0);
         }
 
         LLAMA_LOG_DEBUG("%s: backend_ptrs.size() = %zu\n", __func__, backend_ptrs.size());
@@ -359,7 +391,8 @@ llama_context::llama_context(
 
         // reserve pp (prompt processing) graph first so that buffers are only allocated once
         {
-            auto * gf = graph_reserve(n_tokens, n_seqs, n_tokens, mctx.get());
+            auto * gf = graph_reserve(n_tokens, n_seqs, n_tokens, mctx.get(),
+                model.hparams.no_alloc, model.hparams.no_alloc ? backend_buf_exp_size.data() : nullptr);
             if (!gf) {
                 if (pipeline_parallel) {
                     LLAMA_LOG_WARN("%s: compute buffer allocation failed, retrying without pipeline parallelism\n", __func__);
@@ -377,7 +410,7 @@ llama_context::llama_context(
 
         // reserve with tg (token generation) graph to get the number of splits and nodes
         {
-            auto * gf = graph_reserve(n_seqs, n_seqs, n_seqs, mctx.get());
+            auto * gf = graph_reserve(n_seqs, n_seqs, n_seqs, mctx.get(), model.hparams.no_alloc);
             if (!gf) {
                 throw std::runtime_error("failed to allocate compute tg buffers");
             }
@@ -392,7 +425,7 @@ llama_context::llama_context(
             //
             // auto * gf = graph_reserve(n_tokens, 1, n_tokens, mctx.get());
             //
-            auto * gf = graph_reserve(n_tokens, n_seqs, n_tokens, mctx.get());
+            auto * gf = graph_reserve(n_tokens, n_seqs, n_tokens, mctx.get(), model.hparams.no_alloc);
             if (!gf) {
                 throw std::runtime_error("failed to allocate compute pp buffers");
             }
@@ -401,11 +434,13 @@ llama_context::llama_context(
         for (size_t i = 0; i < backend_ptrs.size(); ++i) {
             ggml_backend_t             backend = backend_ptrs[i];
             ggml_backend_buffer_type_t buft    = backend_buft[i];
-            size_t size = ggml_backend_sched_get_buffer_size(sched.get(), backend);
-            if (size > 1) {
+            if (!model.hparams.no_alloc) {
+                backend_buf_exp_size[i] = ggml_backend_sched_get_buffer_size(sched.get(), backend);
+            }
+            if (backend_buf_exp_size[i] > 1) {
                 LLAMA_LOG_INFO("%s: %10s compute buffer size = %8.2f MiB\n", __func__,
                         ggml_backend_buft_name(buft),
-                        size / 1024.0 / 1024.0);
+                        backend_buf_exp_size[i] / 1024.0 / 1024.0);
             }
         }
 
@@ -424,6 +459,23 @@ llama_context::llama_context(
 }
 
 llama_context::~llama_context() {
+    // FIXME this currently results in a use-after-free bug if the model is freed before the context
+    // if (!model.hparams.no_alloc) {
+    //     for (size_t i = 0; i < backend_ptrs.size(); ++i) {
+    //         ggml_backend_t             backend = backend_ptrs[i];
+    //         ggml_backend_buffer_type_t buft    = backend_buft[i];
+
+    //         const size_t size_exp = backend_buf_exp_size[i];
+    //         const size_t size_act = ggml_backend_sched_get_buffer_size(sched.get(), backend);
+    //         if (size_exp == size_act) {
+    //             LLAMA_LOG_DEBUG("%s: %10s compute buffer size is %8.4f MiB, matches expectation of %8.4f MiB\n",
+    //                 __func__, ggml_backend_buft_name(buft), size_act / (1024.0*1024.0), size_exp / (1024.0*1024.0));
+    //         } else {
+    //             LLAMA_LOG_WARN("%s: %10s compute buffer size of %8.4f MiB, does not match expectation of %8.4f MiB\n",
+    //                 __func__, ggml_backend_buft_name(buft), size_act / (1024.0*1024.0), size_exp / (1024.0*1024.0));
+    //         }
+    //     }
+    // }
     ggml_opt_free(opt_ctx);
 }
 
@@ -1325,6 +1377,7 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
             // This doesn't happen often, but may be annoying in some cases (like the HellaSwag benchmark)
             LLAMA_LOG_INFO("%s: reallocating output buffer from size %.02f MiB to %.02f MiB\n", __func__, prev_size / 1024.0 / 1024.0, new_size / 1024.0 / 1024.0);
 #endif
+            synchronize();
             buf_output = nullptr;
             logits = nullptr;
             embd = nullptr;
@@ -1396,7 +1449,8 @@ llm_graph_result * llama_context::get_gf_res_reserve() const {
     return static_cast<llm_graph_result *>(gf_res_reserve.get());
 }
 
-ggml_cgraph * llama_context::graph_reserve(uint32_t n_tokens, uint32_t n_seqs, uint32_t n_outputs, const llama_memory_context_i * mctx, bool split_only) {
+ggml_cgraph * llama_context::graph_reserve(
+        uint32_t n_tokens, uint32_t n_seqs, uint32_t n_outputs, const llama_memory_context_i * mctx, bool split_only, size_t * sizes) {
     LLAMA_LOG_DEBUG("%s: reserving a graph for ubatch with n_tokens = %4u, n_seqs = %2u, n_outputs = %4u\n", __func__, n_tokens, n_seqs, n_outputs);
     GGML_ASSERT(n_outputs >= 1);
 
@@ -1433,8 +1487,13 @@ ggml_cgraph * llama_context::graph_reserve(uint32_t n_tokens, uint32_t n_seqs, u
 
     // initialize scheduler with the specified graph
     if (split_only) {
-        ggml_backend_sched_split_graph(sched.get(), gf);
+        if (sizes) {
+            ggml_backend_sched_reserve_size(sched.get(), gf, sizes);
+        } else {
+            ggml_backend_sched_split_graph(sched.get(), gf);
+        }
     } else if (!ggml_backend_sched_reserve(sched.get(), gf)) {
+        GGML_ASSERT(!sizes);
         LLAMA_LOG_ERROR("%s: failed to allocate compute buffers\n", __func__);
         return nullptr;
     }
@@ -2056,15 +2115,26 @@ void llama_context::perf_reset() {
 
 std::map<ggml_backend_buffer_type_t, llama_memory_breakdown_data> llama_context::memory_breakdown() const {
     std::map<ggml_backend_buffer_type_t, llama_memory_breakdown_data> ret;
-    for (const auto & buft_size : model.memory_breakdown()) {
-        ret[buft_size.first].model += buft_size.second;
+    for (const auto & [buft, size] : model.memory_breakdown()) {
+        ret[buft].model += size;
     }
-    for (const auto & buft_size : memory->memory_breakdown()) {
-        ret[buft_size.first].context += buft_size.second;
+    if (memory) {
+        for (const auto & [buft, size] : memory->memory_breakdown()) {
+            ret[buft].context += size;
+        }
     }
-    for (const auto & backend_ptr : backends) {
-        ggml_backend_t backend = backend_ptr.get();
-        ret[ggml_backend_sched_get_buffer_type(sched.get(), backend)].compute += ggml_backend_sched_get_buffer_size(sched.get(), backend);
+    if (model.hparams.no_alloc) {
+        for (size_t i = 0; i < backends.size(); ++i) {
+            ggml_backend_t             backend = backends[i].get();
+            ggml_backend_buffer_type_t buft    = ggml_backend_sched_get_buffer_type(sched.get(), backend);
+            ret[buft].compute += backend_buf_exp_size[i];
+        }
+    } else {
+        for (const auto & backend_ptr : backends) {
+            ggml_backend_t             backend = backend_ptr.get();
+            ggml_backend_buffer_type_t buft    = ggml_backend_sched_get_buffer_type(sched.get(), backend);
+            ret[buft].compute += ggml_backend_sched_get_buffer_size(sched.get(), backend);
+        }
     }
     return ret;
 }

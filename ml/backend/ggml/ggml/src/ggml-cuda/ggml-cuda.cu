@@ -4436,7 +4436,7 @@ static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t *
 
 #if defined(GGML_USE_HIP)
     if (ggml_hip_mgmt_init() == 0) {
-        int status = ggml_hip_get_device_memory(ctx->pci_bus_id.c_str(), free, total);
+        int status = ggml_hip_get_device_memory(ctx->pci_bus_id.c_str(), free, total, ctx->integrated != 0);
         if (status == 0) {
             GGML_LOG_DEBUG("%s device %s utilizing AMD specific memory reporting free: %zu total: %zu\n", __func__, ctx->pci_bus_id.c_str(), *free, *total);
             ggml_hip_mgmt_release();
@@ -4588,6 +4588,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                 case GGML_UNARY_OP_EXPM1:
                 case GGML_UNARY_OP_SOFTPLUS:
                 case GGML_UNARY_OP_ELU:
+                case GGML_UNARY_OP_XIELU:
                 case GGML_UNARY_OP_FLOOR:
                 case GGML_UNARY_OP_CEIL:
                 case GGML_UNARY_OP_ROUND:
@@ -4907,9 +4908,9 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
         case GGML_OP_CUMSUM:
         case GGML_OP_TRI:
         case GGML_OP_DIAG:
-            return true;
         case GGML_OP_SOLVE_TRI:
-            return op->src[0]->ne[0] <= 64 && op->src[1]->ne[0] <= 32;
+            return true;
+
         default:
             return false;
     }

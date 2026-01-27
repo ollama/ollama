@@ -20,7 +20,7 @@ consistent performance.
  8 files changed, 58 insertions(+), 32 deletions(-)
 
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
-index 229bf387b..2763f2bd6 100644
+index 03557bb31..93c95602d 100644
 --- a/ggml/include/ggml-backend.h
 +++ b/ggml/include/ggml-backend.h
 @@ -98,7 +98,7 @@ extern "C" {
@@ -40,8 +40,8 @@ index 229bf387b..2763f2bd6 100644
 +    GGML_API void                 ggml_backend_sched_set_batch_size(ggml_backend_sched_t sched, int batch_size);
 +
      // Initialize backend buffers from a measure graph
+     GGML_API void                 ggml_backend_sched_reserve_size(ggml_backend_sched_t sched, struct ggml_cgraph * measure_graph, size_t * sizes);
      GGML_API bool                 ggml_backend_sched_reserve(ggml_backend_sched_t sched, struct ggml_cgraph * measure_graph); // returns success
- 
 diff --git a/ggml/src/ggml-backend-impl.h b/ggml/src/ggml-backend-impl.h
 index 6792ba986..0f5b03cef 100644
 --- a/ggml/src/ggml-backend-impl.h
@@ -58,10 +58,10 @@ index 6792ba986..0f5b03cef 100644
          // (optional) event synchronization
          // record an event on this stream
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index dbf8486a0..312ca873c 100644
+index 1459d16dd..498186a7c 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
-@@ -348,14 +348,14 @@ enum ggml_status ggml_backend_graph_plan_compute(ggml_backend_t backend, ggml_ba
+@@ -353,14 +353,14 @@ enum ggml_status ggml_backend_graph_plan_compute(ggml_backend_t backend, ggml_ba
  }
  
  enum ggml_status ggml_backend_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
@@ -79,7 +79,7 @@ index dbf8486a0..312ca873c 100644
  }
  
  bool ggml_backend_supports_op(ggml_backend_t backend, const struct ggml_tensor * op) {
-@@ -722,6 +722,8 @@ struct ggml_backend_sched {
+@@ -727,6 +727,8 @@ struct ggml_backend_sched {
  
      bool op_offload;
  
@@ -88,7 +88,7 @@ index dbf8486a0..312ca873c 100644
      int debug;
  
      // used for debugging graph reallocations [GGML_SCHED_DEBUG_REALLOC]
-@@ -820,7 +822,7 @@ static int ggml_backend_sched_backend_id_from_cur(ggml_backend_sched_t sched, st
+@@ -825,7 +827,7 @@ static int ggml_backend_sched_backend_id_from_cur(ggml_backend_sched_t sched, st
          if (tensor->op != GGML_OP_ROPE && src->buffer != NULL && src->buffer->usage == GGML_BACKEND_BUFFER_USAGE_WEIGHTS) {
              int src_backend_id = ggml_backend_sched_backend_from_buffer(sched, src, tensor);
              // check if a backend with higher prio wants to offload the op
@@ -97,7 +97,7 @@ index dbf8486a0..312ca873c 100644
                  for (int b = 0; b < src_backend_id; b++) {
                      if (ggml_backend_supports_op(sched->backends[b], tensor) && ggml_backend_offload_op(sched->backends[b], tensor)) {
                          SET_CAUSE(tensor, "1.off");
-@@ -1572,7 +1574,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+@@ -1577,7 +1579,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
          }
  
          if (!sched->callback_eval) {
@@ -106,7 +106,7 @@ index dbf8486a0..312ca873c 100644
              if (ec != GGML_STATUS_SUCCESS) {
                  return ec;
              }
-@@ -1594,7 +1596,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+@@ -1599,7 +1601,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
  
                  struct ggml_cgraph gv = ggml_graph_view(&split->graph, j0, j1 + 1);
  
@@ -115,7 +115,7 @@ index dbf8486a0..312ca873c 100644
                  if (ec != GGML_STATUS_SUCCESS) {
                      return ec;
                  }
-@@ -1684,6 +1686,7 @@ ggml_backend_sched_t ggml_backend_sched_new(
+@@ -1689,6 +1691,7 @@ ggml_backend_sched_t ggml_backend_sched_new(
  
      sched->galloc = ggml_gallocr_new_n(sched->bufts, n_backends);
      sched->op_offload = op_offload;
@@ -123,7 +123,7 @@ index dbf8486a0..312ca873c 100644
  
      ggml_backend_sched_reset(sched);
  
-@@ -1715,6 +1718,10 @@ void ggml_backend_sched_free(ggml_backend_sched_t sched) {
+@@ -1720,6 +1723,10 @@ void ggml_backend_sched_free(ggml_backend_sched_t sched) {
      free(sched);
  }
  
@@ -156,7 +156,7 @@ index 5b888cdd8..88d088952 100644
  
  static struct ggml_backend_i blas_backend_i = {
 diff --git a/ggml/src/ggml-cpu/ggml-cpu.cpp b/ggml/src/ggml-cpu/ggml-cpu.cpp
-index 3191faaa4..32f14c811 100644
+index f4713a421..92ba577a5 100644
 --- a/ggml/src/ggml-cpu/ggml-cpu.cpp
 +++ b/ggml/src/ggml-cpu/ggml-cpu.cpp
 @@ -164,7 +164,7 @@ static enum ggml_status ggml_backend_cpu_graph_plan_compute(ggml_backend_t backe
@@ -178,7 +178,7 @@ index 3191faaa4..32f14c811 100644
  
  static const struct ggml_backend_i ggml_backend_cpu_i = {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index f641c1016..17062697b 100644
+index c9d3a2b03..25548629d 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -2901,7 +2901,7 @@ static void ggml_backend_cuda_synchronize(ggml_backend_t backend) {
@@ -278,10 +278,10 @@ index 8fc1c2fb5..ba95b4acc 100644
  
  static void ggml_backend_metal_graph_optimize(ggml_backend_t backend, ggml_cgraph * cgraph) {
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index c801d2fd2..b2c0d0cee 100644
+index 120191ca0..5349bce24 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -13006,7 +13006,7 @@ static uint32_t ggml_vk_fuse_multi_add(ggml_backend_vk_context * ctx, const stru
+@@ -13099,7 +13099,7 @@ static uint32_t ggml_vk_fuse_multi_add(ggml_backend_vk_context * ctx, const stru
      return num_adds;
  }
  
@@ -290,7 +290,7 @@ index c801d2fd2..b2c0d0cee 100644
      VK_LOG_DEBUG("ggml_backend_vk_graph_compute(" << cgraph->n_nodes << " nodes)");
      ggml_backend_vk_context * ctx = (ggml_backend_vk_context *)backend->context;
  
-@@ -13241,6 +13241,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
+@@ -13334,6 +13334,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
      return GGML_STATUS_SUCCESS;
  
      UNUSED(backend);

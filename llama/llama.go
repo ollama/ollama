@@ -42,6 +42,7 @@ import (
 	_ "github.com/ollama/ollama/llama/llama.cpp/common"
 	_ "github.com/ollama/ollama/llama/llama.cpp/src"
 	_ "github.com/ollama/ollama/llama/llama.cpp/tools/mtmd"
+	_ "github.com/ollama/ollama/llama/llama.cpp/tools/mtmd/models"
 	"github.com/ollama/ollama/ml"
 	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
 )

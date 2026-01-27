@@ -19,8 +19,33 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/types/model"
 )
+
+// testPropsMap creates a ToolPropertiesMap from a map (convenience function for tests)
+func testPropsMap(m map[string]api.ToolProperty) *api.ToolPropertiesMap {
+	props := api.NewToolPropertiesMap()
+	for k, v := range m {
+		props.Set(k, v)
+	}
+	return props
+}
+
+// testArgs creates ToolCallFunctionArguments from a map (convenience function for tests)
+func testArgs(m map[string]any) api.ToolCallFunctionArguments {
+	args := api.NewToolCallFunctionArguments()
+	for k, v := range m {
+		args.Set(k, v)
+	}
+	return args
+}
+
+// argsComparer provides cmp options for comparing ToolCallFunctionArguments by value
+var argsComparer = cmp.Comparer(func(a, b api.ToolCallFunctionArguments) bool {
+	return cmp.Equal(a.ToMap(), b.ToMap())
+})
 
 type mockRunner struct {
 	llm.LlamaServer
@@ -47,6 +72,8 @@ func (mockRunner) Tokenize(_ context.Context, s string) (tokens []int, err error
 
 	return
 }
+
+func (mockRunner) Ping(_ context.Context) error { return nil }
 
 func newMockServer(mock *mockRunner) func(ml.SystemInfo, []ml.DeviceInfo, string, *ggml.GGML, []string, []string, api.Options, int) (llm.LlamaServer, error) {
 	return func(_ ml.SystemInfo, _ []ml.DeviceInfo, _ string, _ *ggml.GGML, _, _ []string, _ api.Options, _ int) (llm.LlamaServer, error) {
@@ -488,7 +515,7 @@ func TestGenerateChat(t *testing.T) {
 					Parameters: api.ToolFunctionParameters{
 						Type:     "object",
 						Required: []string{"location"},
-						Properties: map[string]api.ToolProperty{
+						Properties: testPropsMap(map[string]api.ToolProperty{
 							"location": {
 								Type:        api.PropertyType{"string"},
 								Description: "The city and state",
@@ -497,7 +524,7 @@ func TestGenerateChat(t *testing.T) {
 								Type: api.PropertyType{"string"},
 								Enum: []any{"celsius", "fahrenheit"},
 							},
-						},
+						}),
 					},
 				},
 			},
@@ -559,15 +586,15 @@ func TestGenerateChat(t *testing.T) {
 		expectedToolCall := api.ToolCall{
 			Function: api.ToolCallFunction{
 				Name: "get_weather",
-				Arguments: api.ToolCallFunctionArguments{
+				Arguments: testArgs(map[string]any{
 					"location": "Seattle, WA",
 					"unit":     "celsius",
-				},
+				}),
 			},
 		}
 
 		expectedToolCall.ID = gotToolCall.ID
-		if diff := cmp.Diff(gotToolCall, expectedToolCall); diff != "" {
+		if diff := cmp.Diff(gotToolCall, expectedToolCall, argsComparer); diff != "" {
 			t.Errorf("tool call mismatch (-got +want):\n%s", diff)
 		}
 	})
@@ -582,7 +609,7 @@ func TestGenerateChat(t *testing.T) {
 					Parameters: api.ToolFunctionParameters{
 						Type:     "object",
 						Required: []string{"location"},
-						Properties: map[string]api.ToolProperty{
+						Properties: testPropsMap(map[string]api.ToolProperty{
 							"location": {
 								Type:        api.PropertyType{"string"},
 								Description: "The city and state",
@@ -591,7 +618,7 @@ func TestGenerateChat(t *testing.T) {
 								Type: api.PropertyType{"string"},
 								Enum: []any{"celsius", "fahrenheit"},
 							},
-						},
+						}),
 					},
 				},
 			},
@@ -688,10 +715,10 @@ func TestGenerateChat(t *testing.T) {
 		expectedToolCall := api.ToolCall{
 			Function: api.ToolCallFunction{
 				Name: "get_weather",
-				Arguments: api.ToolCallFunctionArguments{
+				Arguments: testArgs(map[string]any{
 					"location": "Seattle, WA",
 					"unit":     "celsius",
-				},
+				}),
 			},
 		}
 
@@ -703,7 +730,7 @@ func TestGenerateChat(t *testing.T) {
 		}
 
 		expectedToolCall.ID = finalToolCall.ID
-		if diff := cmp.Diff(finalToolCall, expectedToolCall); diff != "" {
+		if diff := cmp.Diff(finalToolCall, expectedToolCall, argsComparer); diff != "" {
 			t.Errorf("final tool call mismatch (-got +want):\n%s", diff)
 		}
 	})
@@ -716,9 +743,9 @@ func TestGenerateChat(t *testing.T) {
 					Name: "get_weather",
 					Parameters: api.ToolFunctionParameters{
 						Type: "object",
-						Properties: map[string]api.ToolProperty{
+						Properties: testPropsMap(map[string]api.ToolProperty{
 							"location": {Type: api.PropertyType{"string"}},
-						},
+						}),
 					},
 				},
 			},
@@ -2077,4 +2104,339 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 			t.Errorf("expected final done reason stop, got %s", last.DoneReason)
 		}
 	})
+}
+
+func TestGenerateUnload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var loadFnCalled bool
+
+	s := Server{
+		sched: &Scheduler{
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(&mockRunner{}),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				loadFnCalled = true
+				req.successCh <- &runnerRef{llama: &mockRunner{}}
+				return false
+			},
+		},
+	}
+
+	go s.sched.Run(t.Context())
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "test",
+		Files:  map[string]string{"file.gguf": digest},
+		Stream: &stream,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	t.Run("unload with empty prompt and keepalive 0", func(t *testing.T) {
+		loadFnCalled = false
+
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:     "test",
+			Prompt:    "",
+			KeepAlive: &api.Duration{Duration: 0},
+			Stream:    &stream,
+		})
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d", w.Code)
+		}
+
+		var resp api.GenerateResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+
+		if resp.DoneReason != "unload" {
+			t.Errorf("expected done_reason 'unload', got %q", resp.DoneReason)
+		}
+
+		if !resp.Done {
+			t.Error("expected done to be true")
+		}
+
+		if loadFnCalled {
+			t.Error("expected model NOT to be loaded for unload request, but loadFn was called")
+		}
+	})
+}
+
+func TestGenerateWithImages(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mock := mockRunner{
+		CompletionResponse: llm.CompletionResponse{
+			Done:               true,
+			DoneReason:         llm.DoneReasonStop,
+			PromptEvalCount:    1,
+			PromptEvalDuration: 1,
+			EvalCount:          1,
+			EvalDuration:       1,
+		},
+	}
+
+	s := Server{
+		sched: &Scheduler{
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(&mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+			waitForRecovery: 250 * time.Millisecond,
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				time.Sleep(time.Millisecond)
+				req.successCh <- &runnerRef{
+					llama: &mock,
+				}
+				return false
+			},
+		},
+	}
+
+	go s.sched.Run(t.Context())
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "test",
+		Files:  map[string]string{"file.gguf": digest},
+		Stream: &stream,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	t.Run("images passed to completion request", func(t *testing.T) {
+		testImage := []byte("test-image-data")
+
+		mock.CompletionResponse.Content = "Image processed"
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:  "test",
+			Prompt: "Describe this image",
+			Images: []api.ImageData{testImage},
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		// Verify images were passed to the completion request
+		if len(mock.CompletionRequest.Images) != 1 {
+			t.Fatalf("expected 1 image in completion request, got %d", len(mock.CompletionRequest.Images))
+		}
+
+		if !bytes.Equal(mock.CompletionRequest.Images[0].Data, testImage) {
+			t.Errorf("image data mismatch in completion request")
+		}
+
+		if mock.CompletionRequest.Images[0].ID != 0 {
+			t.Errorf("expected image ID 0, got %d", mock.CompletionRequest.Images[0].ID)
+		}
+	})
+
+	t.Run("multiple images passed to completion request", func(t *testing.T) {
+		testImage1 := []byte("test-image-1")
+		testImage2 := []byte("test-image-2")
+
+		mock.CompletionResponse.Content = "Images processed"
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:  "test",
+			Prompt: "Compare these images",
+			Images: []api.ImageData{testImage1, testImage2},
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		// Verify both images were passed
+		if len(mock.CompletionRequest.Images) != 2 {
+			t.Fatalf("expected 2 images in completion request, got %d", len(mock.CompletionRequest.Images))
+		}
+
+		if !bytes.Equal(mock.CompletionRequest.Images[0].Data, testImage1) {
+			t.Errorf("first image data mismatch")
+		}
+
+		if !bytes.Equal(mock.CompletionRequest.Images[1].Data, testImage2) {
+			t.Errorf("second image data mismatch")
+		}
+
+		if mock.CompletionRequest.Images[0].ID != 0 || mock.CompletionRequest.Images[1].ID != 1 {
+			t.Errorf("expected image IDs 0 and 1, got %d and %d",
+				mock.CompletionRequest.Images[0].ID, mock.CompletionRequest.Images[1].ID)
+		}
+	})
+
+	t.Run("no images when none provided", func(t *testing.T) {
+		mock.CompletionResponse.Content = "No images"
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:  "test",
+			Prompt: "Hello",
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		// Verify no images in completion request
+		if len(mock.CompletionRequest.Images) != 0 {
+			t.Fatalf("expected 0 images in completion request, got %d", len(mock.CompletionRequest.Images))
+		}
+	})
+}
+
+// TestImageGenerateStreamFalse tests that image generation respects stream=false
+// and returns a single JSON response instead of streaming ndjson.
+func TestImageGenerateStreamFalse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	p := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", p)
+
+	mock := mockRunner{}
+	mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+		fn(llm.CompletionResponse{Step: 1, TotalSteps: 3, Done: false})
+		fn(llm.CompletionResponse{Step: 2, TotalSteps: 3, Done: false})
+		fn(llm.CompletionResponse{Step: 3, TotalSteps: 3, Done: true, DoneReason: llm.DoneReasonStop, Image: "base64image"})
+		return nil
+	}
+
+	opts := api.DefaultOptions()
+	s := Server{
+		sched: &Scheduler{
+			pendingReqCh:  make(chan *LlmRequest, 1),
+			finishedReqCh: make(chan *LlmRequest, 1),
+			expiredCh:     make(chan *runnerRef, 1),
+			unloadedCh:    make(chan any, 1),
+			loaded: map[string]*runnerRef{
+				"": {
+					llama:       &mock,
+					Options:     &opts,
+					model:       &Model{Config: model.ConfigV2{Capabilities: []string{"image"}}},
+					numParallel: 1,
+				},
+			},
+			newServerFn:     newMockServer(&mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+		},
+	}
+
+	go s.sched.Run(t.Context())
+
+	// Create model manifest with image capability
+	n := model.ParseName("test-image")
+	cfg := model.ConfigV2{Capabilities: []string{"image"}}
+	var b bytes.Buffer
+	if err := json.NewEncoder(&b).Encode(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	configLayer, err := manifest.NewLayer(&b, "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manifest.WriteManifest(n, configLayer, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	streamFalse := false
+	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+		Model:  "test-image",
+		Prompt: "test prompt",
+		Stream: &streamFalse,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if ct := w.Header().Get("Content-Type"); ct != "application/json; charset=utf-8" {
+		t.Errorf("expected Content-Type 'application/json; charset=utf-8', got %q", ct)
+	}
+
+	body := w.Body.String()
+	lines := strings.Split(strings.TrimSpace(body), "\n")
+	if len(lines) != 1 {
+		t.Errorf("expected 1 response line, got %d:\n%s", len(lines), body)
+	}
+
+	var resp api.GenerateResponse
+	if err := json.Unmarshal([]byte(lines[0]), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if resp.Image != "base64image" {
+		t.Errorf("expected image 'base64image', got %q", resp.Image)
+	}
+
+	if !resp.Done {
+		t.Errorf("expected done=true")
+	}
 }
