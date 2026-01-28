@@ -17,7 +17,7 @@ import (
 func llama(t testing.TB) BytePairEncoding {
 	t.Helper()
 
-	f, err := os.Open(filepath.Join("..", "..", "model", "testdata", "llama3.2", "encoder.json"))
+	f, err := os.Open(filepath.Join("..", "..", "tokenizer", "testdata", "llama3.2", "encoder.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func llama(t testing.TB) BytePairEncoding {
 		}
 	}
 
-	f, err = os.Open(filepath.Join("..", "..", "model", "testdata", "llama3.2", "vocab.bpe"))
+	f, err = os.Open(filepath.Join("..", "..", "tokenizer", "testdata", "llama3.2", "vocab.bpe"))
 	if err != nil {
 		t.Fatal(err)
 	}

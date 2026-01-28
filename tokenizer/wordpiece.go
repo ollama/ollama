@@ -1,4 +1,4 @@
-package model
+package tokenizer
 
 import (
 	"fmt"
@@ -9,7 +9,7 @@ import (
 	"github.com/ollama/ollama/logutil"
 )
 
-type WordPiece struct {
+type wordPiece struct {
 	vocab     *Vocabulary
 	lowercase bool
 }
@@ -32,8 +32,8 @@ var wordPieceReplacer = strings.NewReplacer(
 	" 're", "'re",
 )
 
-// Decode implements TextProcessor.
-func (wpm WordPiece) Decode(ids []int32) (string, error) {
+// Decode implements Tokenizer.
+func (wpm wordPiece) Decode(ids []int32) (string, error) {
 	var sb strings.Builder
 	for i, id := range ids {
 		if id < 0 || int(id) >= len(wpm.vocab.Values) {
@@ -56,7 +56,7 @@ func (wpm WordPiece) Decode(ids []int32) (string, error) {
 
 // words splits a string into words, treating CJK characters as separate words.
 // TODO: this is specifically for BERT and may need to be adjusted or refactored for other models.
-func (wpm WordPiece) words(s string) iter.Seq[string] {
+func (wpm wordPiece) words(s string) iter.Seq[string] {
 	return func(yield func(string) bool) {
 		runes := make([]rune, 0, len(s)*3)
 		for _, r := range s {
@@ -96,8 +96,8 @@ func (wpm WordPiece) words(s string) iter.Seq[string] {
 	}
 }
 
-// Encode implements TextProcessor.
-func (wpm WordPiece) Encode(s string, addSpecial bool) ([]int32, error) {
+// Encode implements Tokenizer.
+func (wpm wordPiece) Encode(s string, addSpecial bool) ([]int32, error) {
 	var ids []int32
 
 	// TODO: use [UNK] from config
@@ -151,20 +151,20 @@ func (wpm WordPiece) Encode(s string, addSpecial bool) ([]int32, error) {
 	return ids, nil
 }
 
-// Is implements TextProcessor.
-func (wpm WordPiece) Is(id int32, special Special) bool {
+// Is implements Tokenizer.
+func (wpm wordPiece) Is(id int32, special Special) bool {
 	return wpm.vocab.Is(id, special)
 }
 
-// Vocabulary implements TextProcessor.
-func (wpm WordPiece) Vocabulary() *Vocabulary {
+// Vocabulary implements Tokenizer.
+func (wpm wordPiece) Vocabulary() *Vocabulary {
 	return wpm.vocab
 }
 
-var _ TextProcessor = (*WordPiece)(nil)
+var _ Tokenizer = (*wordPiece)(nil)
 
-func NewWordPiece(vocab *Vocabulary, lowercase bool) WordPiece {
-	return WordPiece{
+func NewWordPiece(vocab *Vocabulary, lowercase bool) wordPiece {
+	return wordPiece{
 		vocab:     vocab,
 		lowercase: lowercase,
 	}

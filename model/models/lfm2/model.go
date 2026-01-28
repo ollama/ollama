@@ -10,6 +10,7 @@ import (
 	"github.com/ollama/ollama/ml/nn/rope"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
+	"github.com/ollama/ollama/tokenizer"
 )
 
 type Options struct {
@@ -59,7 +60,7 @@ func (o Options) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions
 
 type Model struct {
 	model.Base
-	model.TextProcessor
+	tokenizer.Tokenizer
 
 	TokenEmbedding *nn.Embedding `gguf:"token_embd"`
 	Layers         []Layer       `gguf:"blk"`
@@ -78,7 +79,7 @@ func New(c fs.Config) (model.Model, error) {
 		return nil, model.ErrUnsupportedTokenizer
 	}
 
-	vocabulary := model.Vocabulary{
+	vocabulary := tokenizer.Vocabulary{
 		Values: c.Strings("tokenizer.ggml.tokens"),
 		Scores: c.Floats("tokenizer.ggml.scores"),
 		Types:  c.Ints("tokenizer.ggml.token_type"),
@@ -104,8 +105,8 @@ func New(c fs.Config) (model.Model, error) {
 	}
 
 	m := Model{
-		TextProcessor: model.NewBytePairEncoding(&vocabulary, pretokenizers...),
-		Layers:        make([]Layer, c.Uint("block_count")),
+		Tokenizer: tokenizer.NewBytePairEncoding(&vocabulary, pretokenizers...),
+		Layers:    make([]Layer, c.Uint("block_count")),
 		Options: Options{
 			hiddenSize:            int(c.Uint("embedding_length")),
 			headDim:               int(c.Uint("attention.key_length")),

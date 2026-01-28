@@ -9,6 +9,7 @@ import (
 	"slices"
 
 	"github.com/ollama/ollama/fs"
+	"github.com/ollama/ollama/tokenizer"
 	"github.com/ollama/ollama/x/kvcache"
 	"github.com/ollama/ollama/x/ml"
 	"github.com/ollama/ollama/x/ml/nn"
@@ -18,7 +19,7 @@ import (
 
 type Model struct {
 	model.Base
-	model.SentencePiece
+	tokenizer.Tokenizer
 
 	*VisionModel `gguf:"vision_tower.vision_model"`
 	*TextModel   `gguf:"language_model.model"`
@@ -58,8 +59,8 @@ func (p *MultiModalProjector) Forward(ctx ml.Context, visionOutputs ml.Tensor, i
 func New(c fs.Config) (model.Model, error) {
 	// slog.Info("XXX Config", "c", c)
 	m := Model{
-		SentencePiece: model.NewSentencePiece(
-			&model.Vocabulary{
+		Tokenizer: tokenizer.NewSentencePiece(
+			&tokenizer.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Scores: c.Floats("tokenizer.ggml.scores"),
 				Types:  c.Ints("tokenizer.ggml.token_type"),

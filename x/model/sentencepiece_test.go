@@ -15,7 +15,7 @@ import (
 func loadSentencePieceVocab(t *testing.T) SentencePiece {
 	t.Helper()
 
-	bts, err := os.ReadFile(filepath.Join("..", "..", "model", "testdata", "gemma2", "tokenizer.model"))
+	bts, err := os.ReadFile(filepath.Join("..", "..", "tokenizer", "testdata", "gemma2", "tokenizer.model"))
 	if err != nil {
 		t.Fatal(err)
 	}
