@@ -605,3 +605,140 @@ func TestAnthropicMessagesMiddleware_SetsRelaxThinkingFlag(t *testing.T) {
 		t.Error("expected relax_thinking flag to be set in context")
 	}
 }
+
+// Web Search Tests
+
+func TestExtractSearchQuery(t *testing.T) {
+	testCases := []struct {
+		name     string
+		messages []anthropic.MessageParam
+		expected string
+	}{
+		{
+			name: "extract from colon pattern",
+			messages: []anthropic.MessageParam{
+				{
+					Role:    "user",
+					Content: "Perform a web search for the query: ollama launch",
+				},
+			},
+			expected: "ollama launch",
+		},
+		{
+			name: "extract from content blocks",
+			messages: []anthropic.MessageParam{
+				{
+					Role: "user",
+					Content: []any{
+						map[string]any{
+							"type": "text",
+							"text": "Perform a web search for the query: test query",
+						},
+					},
+				},
+			},
+			expected: "test query",
+		},
+		{
+			name: "no query found",
+			messages: []anthropic.MessageParam{
+				{
+					Role:    "user",
+					Content: "Hello world",
+				},
+			},
+			expected: "",
+		},
+		{
+			name: "search for pattern",
+			messages: []anthropic.MessageParam{
+				{
+					Role: "user",
+					Content: []any{
+						map[string]any{
+							"type": "text",
+							"text": "Search for: golang tutorials",
+						},
+					},
+				},
+			},
+			expected: "golang tutorials",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := extractSearchQuery(tc.messages)
+			if result != tc.expected {
+				t.Errorf("expected %q, got %q", tc.expected, result)
+			}
+		})
+	}
+}
+
+func TestFormatSearchResultsAsText(t *testing.T) {
+	resp := &anthropic.OllamaWebSearchResponse{
+		Results: []anthropic.OllamaWebSearchResult{
+			{
+				Title:   "First Result",
+				URL:     "https://example.com/1",
+				Content: "First content",
+			},
+			{
+				Title:   "Second Result",
+				URL:     "https://example.com/2",
+				Content: "Second content",
+			},
+		},
+	}
+
+	result := formatSearchResultsAsText(resp)
+
+	if !strings.Contains(result, "First Result") {
+		t.Error("expected result to contain 'First Result'")
+	}
+
+	if !strings.Contains(result, "https://example.com/1") {
+		t.Error("expected result to contain URL")
+	}
+
+	if !strings.Contains(result, "Second Result") {
+		t.Error("expected result to contain 'Second Result'")
+	}
+}
+
+func TestFormatSearchResultsAsText_Empty(t *testing.T) {
+	resp := &anthropic.OllamaWebSearchResponse{
+		Results: []anthropic.OllamaWebSearchResult{},
+	}
+
+	result := formatSearchResultsAsText(resp)
+
+	if !strings.Contains(result, "No search results found") {
+		t.Errorf("expected 'No search results found' message, got %q", result)
+	}
+}
+
+func TestFormatSearchResultsAsText_LongContent(t *testing.T) {
+	longContent := strings.Repeat("a", 300)
+	resp := &anthropic.OllamaWebSearchResponse{
+		Results: []anthropic.OllamaWebSearchResult{
+			{
+				Title:   "Test",
+				URL:     "https://example.com",
+				Content: longContent,
+			},
+		},
+	}
+
+	result := formatSearchResultsAsText(resp)
+
+	// Content should be truncated to ~200 chars + "..."
+	if strings.Contains(result, longContent) {
+		t.Error("expected long content to be truncated")
+	}
+
+	if !strings.Contains(result, "...") {
+		t.Error("expected truncated content to end with '...'")
+	}
+}

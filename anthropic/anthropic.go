@@ -1,11 +1,14 @@
 package anthropic
 
 import (
+	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -82,27 +85,54 @@ type MessageParam struct {
 // Text and Thinking use pointers so they serialize as the field being present (even if empty)
 // only when set, which is required for SDK streaming accumulation.
 type ContentBlock struct {
-	Type string `json:"type"` // text, image, tool_use, tool_result, thinking
+	Type string `json:"type"` // text, image, tool_use, tool_result, thinking, server_tool_use, web_search_tool_result
 
 	// For text blocks - pointer so field only appears when set (SDK requires it for accumulation)
 	Text *string `json:"text,omitempty"`
 
+	// For text blocks with citations
+	Citations []Citation `json:"citations,omitempty"`
+
 	// For image blocks
 	Source *ImageSource `json:"source,omitempty"`
 
-	// For tool_use blocks
+	// For tool_use and server_tool_use blocks
 	ID    string `json:"id,omitempty"`
 	Name  string `json:"name,omitempty"`
 	Input any    `json:"input,omitempty"`
 
-	// For tool_result blocks
+	// For tool_result and web_search_tool_result blocks
 	ToolUseID string `json:"tool_use_id,omitempty"`
-	Content   any    `json:"content,omitempty"` // string or []ContentBlock
+	Content   any    `json:"content,omitempty"` // string, []ContentBlock, []WebSearchResult, or WebSearchToolResultError
 	IsError   bool   `json:"is_error,omitempty"`
 
 	// For thinking blocks - pointer so field only appears when set (SDK requires it for accumulation)
 	Thinking  *string `json:"thinking,omitempty"`
 	Signature string  `json:"signature,omitempty"`
+}
+
+// Citation represents a citation in a text block
+type Citation struct {
+	Type           string `json:"type"` // "web_search_result_location"
+	URL            string `json:"url"`
+	Title          string `json:"title"`
+	EncryptedIndex string `json:"encrypted_index,omitempty"`
+	CitedText      string `json:"cited_text,omitempty"`
+}
+
+// WebSearchResult represents a single web search result
+type WebSearchResult struct {
+	Type             string `json:"type"` // "web_search_result"
+	URL              string `json:"url"`
+	Title            string `json:"title"`
+	EncryptedContent string `json:"encrypted_content,omitempty"`
+	PageAge          string `json:"page_age,omitempty"`
+}
+
+// WebSearchToolResultError represents an error from web search
+type WebSearchToolResultError struct {
+	Type      string `json:"type"` // "web_search_tool_result_error"
+	ErrorCode string `json:"error_code"`
 }
 
 // ImageSource represents the source of an image
@@ -115,10 +145,25 @@ type ImageSource struct {
 
 // Tool represents a tool definition
 type Tool struct {
-	Type        string          `json:"type,omitempty"` // "custom" for user-defined tools
+	Type        string          `json:"type,omitempty"` // "custom" for user-defined tools, or "web_search_20250305" for web search
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	InputSchema json.RawMessage `json:"input_schema,omitempty"`
+
+	// Web search specific fields
+	MaxUses        int           `json:"max_uses,omitempty"`
+	AllowedDomains []string      `json:"allowed_domains,omitempty"`
+	BlockedDomains []string      `json:"blocked_domains,omitempty"`
+	UserLocation   *UserLocation `json:"user_location,omitempty"`
+}
+
+// UserLocation for localizing web search results
+type UserLocation struct {
+	Type     string `json:"type"` // "approximate"
+	City     string `json:"city,omitempty"`
+	Region   string `json:"region,omitempty"`
+	Country  string `json:"country,omitempty"`
+	Timezone string `json:"timezone,omitempty"`
 }
 
 // ToolChoice controls how the model uses tools
@@ -233,6 +278,10 @@ type StreamErrorEvent struct {
 
 // FromMessagesRequest converts an Anthropic MessagesRequest to an Ollama api.ChatRequest
 func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
+	// Debug: log the raw request
+	reqJSON, _ := json.MarshalIndent(r, "", "  ")
+	slog.Debug("FromMessagesRequest received", "request", string(reqJSON))
+
 	var messages []api.Message
 
 	if r.System != nil {
@@ -288,13 +337,18 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 	}
 
 	var tools api.Tools
+	var hasWebSearch bool
 	for _, t := range r.Tools {
-		tool, err := convertTool(t)
+		tool, isServerTool, err := convertTool(t)
 		if err != nil {
 			return nil, err
 		}
+		if isServerTool && strings.HasPrefix(t.Type, "web_search") {
+			hasWebSearch = true
+		}
 		tools = append(tools, tool)
 	}
+	_ = hasWebSearch // TODO: use this to trigger web search handling
 
 	var think *api.ThinkValue
 	if r.Thinking != nil && r.Thinking.Type == "enabled" {
@@ -336,6 +390,10 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 			}
 
 			blockType, _ := blockMap["type"].(string)
+
+			// Debug: log each block
+			blockJSON, _ := json.MarshalIndent(blockMap, "", "  ")
+			slog.Debug("convertMessage processing block", "type", blockType, "block", string(blockJSON))
 
 			switch blockType {
 			case "text":
@@ -411,6 +469,47 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 				if t, ok := blockMap["thinking"].(string); ok {
 					thinking = t
 				}
+
+			case "server_tool_use":
+				// Handle server tool use (like web_search) - treat as regular tool call
+				id, _ := blockMap["id"].(string)
+				name, _ := blockMap["name"].(string)
+				tc := api.ToolCall{
+					ID: id,
+					Function: api.ToolCallFunction{
+						Name: name,
+					},
+				}
+				if input, ok := blockMap["input"].(map[string]any); ok {
+					tc.Function.Arguments = mapToArgs(input)
+				}
+				toolCalls = append(toolCalls, tc)
+
+			case "web_search_tool_result":
+				// Handle web search results - convert to tool result format
+				toolUseID, _ := blockMap["tool_use_id"].(string)
+				var resultContent string
+
+				// Extract search results and format them as text for the model
+				if content, ok := blockMap["content"].([]any); ok {
+					for _, item := range content {
+						if itemMap, ok := item.(map[string]any); ok {
+							if itemMap["type"] == "web_search_result" {
+								title, _ := itemMap["title"].(string)
+								url, _ := itemMap["url"].(string)
+								resultContent += fmt.Sprintf("- %s: %s\n", title, url)
+							}
+						}
+					}
+				}
+
+				if resultContent != "" {
+					toolResults = append(toolResults, api.Message{
+						Role:       "tool",
+						Content:    resultContent,
+						ToolCallID: toolUseID,
+					})
+				}
 			}
 		}
 
@@ -436,11 +535,33 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 }
 
 // convertTool converts an Anthropic Tool to an Ollama api.Tool
-func convertTool(t Tool) (api.Tool, error) {
+func convertTool(t Tool) (api.Tool, bool, error) {
+	// Handle server tools (like web_search)
+	if strings.HasPrefix(t.Type, "web_search") {
+		// Convert Anthropic's web_search server tool to a function tool
+		props := api.NewToolPropertiesMap()
+		props.Set("query", api.ToolProperty{
+			Type:        api.PropertyType{"string"},
+			Description: "The search query to look up on the web",
+		})
+		return api.Tool{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "web_search",
+				Description: "Search the web for current information. Use this to find up-to-date information about any topic.",
+				Parameters: api.ToolFunctionParameters{
+					Type:       "object",
+					Required:   []string{"query"},
+					Properties: props,
+				},
+			},
+		}, true, nil // true = is server tool
+	}
+
 	var params api.ToolFunctionParameters
 	if len(t.InputSchema) > 0 {
 		if err := json.Unmarshal(t.InputSchema, &params); err != nil {
-			return api.Tool{}, fmt.Errorf("invalid input_schema for tool %q: %w", t.Name, err)
+			return api.Tool{}, false, fmt.Errorf("invalid input_schema for tool %q: %w", t.Name, err)
 		}
 	}
 
@@ -451,7 +572,7 @@ func convertTool(t Tool) (api.Tool, error) {
 			Description: t.Description,
 			Parameters:  params,
 		},
-	}, nil
+	}, false, nil
 }
 
 // ToMessagesResponse converts an Ollama api.ChatResponse to an Anthropic MessagesResponse
@@ -898,4 +1019,85 @@ func countContentBlock(block any) int {
 	}
 
 	return total
+}
+
+// OllamaWebSearchRequest represents a request to the Ollama web search API
+type OllamaWebSearchRequest struct {
+	Query      string `json:"query"`
+	MaxResults int    `json:"max_results,omitempty"`
+}
+
+// OllamaWebSearchResult represents a single search result from Ollama API
+type OllamaWebSearchResult struct {
+	Title   string `json:"title"`
+	URL     string `json:"url"`
+	Content string `json:"content"`
+}
+
+// OllamaWebSearchResponse represents the response from the Ollama web search API
+type OllamaWebSearchResponse struct {
+	Results []OllamaWebSearchResult `json:"results"`
+}
+
+// DoWebSearch calls the Ollama web search API
+func DoWebSearch(ctx context.Context, apiKey string, query string, maxResults int) (*OllamaWebSearchResponse, error) {
+	if maxResults <= 0 {
+		maxResults = 5
+	}
+	if maxResults > 10 {
+		maxResults = 10
+	}
+
+	reqBody := OllamaWebSearchRequest{
+		Query:      query,
+		MaxResults: maxResults,
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal web search request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://ollama.com/api/web_search", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create web search request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("web search request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("web search returned status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var searchResp OllamaWebSearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
+		return nil, fmt.Errorf("failed to decode web search response: %w", err)
+	}
+
+	return &searchResp, nil
+}
+
+// ConvertOllamaToAnthropicResults converts Ollama web search results to Anthropic format
+func ConvertOllamaToAnthropicResults(ollamaResults *OllamaWebSearchResponse) []WebSearchResult {
+	var results []WebSearchResult
+	for _, r := range ollamaResults.Results {
+		results = append(results, WebSearchResult{
+			Type:  "web_search_result",
+			URL:   r.URL,
+			Title: r.Title,
+			// Note: encrypted_content would be set by Anthropic's servers
+			// For Ollama compatibility, we use the content directly
+		})
+	}
+	return results
 }
