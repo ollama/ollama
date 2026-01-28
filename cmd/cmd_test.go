@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -1657,5 +1658,393 @@ func TestRunOptions_Copy_Independence(t *testing.T) {
 
 	if copied.Think != nil && copied.Think.Value == "modified" {
 		t.Error("Copy Think should not be affected by original modification")
+	}
+}
+
+func TestExportHandler(t *testing.T) {
+	tests := []struct {
+		name           string
+		serverResponse []api.ListModelResponse
+		outputFile     string
+		expectedError  string
+		checkOutput    func(t *testing.T, output string)
+	}{
+		{
+			name: "export all models to stdout",
+			serverResponse: []api.ListModelResponse{
+				{Name: "llama3.2:latest", Digest: "sha256:abc123", Size: 1024},
+				{Name: "qwen2.5:7b", Digest: "sha256:def456", Size: 2048},
+			},
+			checkOutput: func(t *testing.T, output string) {
+				if !strings.Contains(output, "# Ollama models export") {
+					t.Error("expected header comment")
+				}
+				if !strings.Contains(output, "llama3.2:latest") {
+					t.Error("expected model llama3.2:latest in output")
+				}
+				if !strings.Contains(output, "qwen2.5:7b") {
+					t.Error("expected model qwen2.5:7b in output")
+				}
+			},
+		},
+		{
+			name: "export skips remote models",
+			serverResponse: []api.ListModelResponse{
+				{Name: "local-model", Digest: "sha256:abc123", Size: 1024},
+				{Name: "remote-model", Digest: "sha256:def456", Size: 0, RemoteModel: "cloud/model"},
+			},
+			checkOutput: func(t *testing.T, output string) {
+				if !strings.Contains(output, "local-model") {
+					t.Error("expected local-model in output")
+				}
+				if !strings.Contains(output, "# (remote) remote-model") {
+					t.Error("expected remote model to be commented out")
+				}
+			},
+		},
+		{
+			name:           "export empty model list",
+			serverResponse: []api.ListModelResponse{},
+			checkOutput: func(t *testing.T, output string) {
+				if !strings.Contains(output, "# No models found") {
+					t.Error("expected 'No models found' message")
+				}
+			},
+		},
+		{
+			name:          "server error",
+			expectedError: "server error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/tags" || r.Method != http.MethodGet {
+					t.Errorf("unexpected request to %s %s", r.Method, r.URL.Path)
+					http.Error(w, "not found", http.StatusNotFound)
+					return
+				}
+
+				if tt.expectedError != "" {
+					http.Error(w, tt.expectedError, http.StatusInternalServerError)
+					return
+				}
+
+				response := api.ListResponse{Models: tt.serverResponse}
+				if err := json.NewEncoder(w).Encode(response); err != nil {
+					t.Fatal(err)
+				}
+			}))
+			defer mockServer.Close()
+
+			t.Setenv("OLLAMA_HOST", mockServer.URL)
+
+			cmd := &cobra.Command{}
+			cmd.Flags().StringP("output", "o", "", "")
+			cmd.SetContext(t.Context())
+
+			// Capture stdout
+			oldStdout := os.Stdout
+			r, w, _ := os.Pipe()
+			os.Stdout = w
+
+			err := ExportHandler(cmd, []string{})
+
+			// Restore stdout and get output
+			w.Close()
+			os.Stdout = oldStdout
+			output, _ := io.ReadAll(r)
+
+			if tt.expectedError == "" {
+				if err != nil {
+					t.Errorf("expected no error, got %v", err)
+				}
+				if tt.checkOutput != nil {
+					tt.checkOutput(t, string(output))
+				}
+			} else {
+				if err == nil || !strings.Contains(err.Error(), tt.expectedError) {
+					t.Errorf("expected error containing %q, got %v", tt.expectedError, err)
+				}
+			}
+		})
+	}
+}
+
+func TestExportHandlerToFile(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/tags" && r.Method == http.MethodGet {
+			response := api.ListResponse{
+				Models: []api.ListModelResponse{
+					{Name: "llama3.2:latest", Digest: "sha256:abc123", Size: 1024},
+					{Name: "qwen2.5:7b", Digest: "sha256:def456", Size: 2048},
+				},
+			}
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				t.Fatal(err)
+			}
+			return
+		}
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer mockServer.Close()
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+
+	// Create temp file for output
+	tempFile := filepath.Join(t.TempDir(), "models.txt")
+
+	cmd := &cobra.Command{}
+	cmd.Flags().StringP("output", "o", "", "")
+	if err := cmd.Flags().Set("output", tempFile); err != nil {
+		t.Fatal(err)
+	}
+	cmd.SetContext(t.Context())
+
+	// Capture stderr for the "saved to" message
+	oldStderr := os.Stderr
+	stderrR, stderrW, _ := os.Pipe()
+	os.Stderr = stderrW
+
+	err := ExportHandler(cmd, []string{})
+
+	stderrW.Close()
+	os.Stderr = oldStderr
+	stderrOutput, _ := io.ReadAll(stderrR)
+
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	// Check stderr message
+	if !strings.Contains(string(stderrOutput), "Models list saved to") {
+		t.Error("expected 'Models list saved to' message on stderr")
+	}
+
+	// Read and verify file content
+	content, err := os.ReadFile(tempFile)
+	if err != nil {
+		t.Fatalf("failed to read output file: %v", err)
+	}
+
+	if !strings.Contains(string(content), "llama3.2:latest") {
+		t.Error("expected llama3.2:latest in file")
+	}
+	if !strings.Contains(string(content), "qwen2.5:7b") {
+		t.Error("expected qwen2.5:7b in file")
+	}
+}
+
+func TestPullFromFile(t *testing.T) {
+	tests := []struct {
+		name          string
+		fileContent   string
+		serverHandler func(w http.ResponseWriter, r *http.Request)
+		expectedError string
+		checkOutput   func(t *testing.T, stdout, stderr string)
+	}{
+		{
+			name: "pull multiple models successfully",
+			fileContent: `# Ollama models export
+# Generated at: 2026-01-21T10:00:00Z
+llama3.2:latest
+qwen2.5:7b
+`,
+			serverHandler: func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/pull" && r.Method == http.MethodPost {
+					// Simulate successful pull
+					responses := []api.ProgressResponse{
+						{Status: "pulling manifest"},
+						{Digest: "sha256:abc123", Total: 100, Completed: 100},
+						{Status: "success"},
+					}
+					for _, resp := range responses {
+						if err := json.NewEncoder(w).Encode(resp); err != nil {
+							return
+						}
+						w.(http.Flusher).Flush()
+					}
+					return
+				}
+				http.Error(w, "not found", http.StatusNotFound)
+			},
+			checkOutput: func(t *testing.T, stdout, stderr string) {
+				if !strings.Contains(stdout, "Found 2 model(s) to pull") {
+					t.Error("expected 'Found 2 model(s) to pull' message")
+				}
+				if !strings.Contains(stdout, "Successfully pulled all 2 model(s)") {
+					t.Error("expected success message")
+				}
+			},
+		},
+		{
+			name: "skip comments and empty lines",
+			fileContent: `# This is a comment
+   
+# Another comment
+llama3.2:latest
+
+`,
+			serverHandler: func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/pull" && r.Method == http.MethodPost {
+					responses := []api.ProgressResponse{{Status: "success"}}
+					for _, resp := range responses {
+						json.NewEncoder(w).Encode(resp)
+					}
+					return
+				}
+				http.Error(w, "not found", http.StatusNotFound)
+			},
+			checkOutput: func(t *testing.T, stdout, stderr string) {
+				if !strings.Contains(stdout, "Found 1 model(s) to pull") {
+					t.Error("expected only 1 model to be found (comments should be skipped)")
+				}
+			},
+		},
+		{
+			name:        "empty file",
+			fileContent: "# Only comments\n# No models\n",
+			serverHandler: func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "should not be called", http.StatusInternalServerError)
+			},
+			checkOutput: func(t *testing.T, stdout, stderr string) {
+				if !strings.Contains(stdout, "No models found in the requirements file") {
+					t.Error("expected 'No models found' message")
+				}
+			},
+		},
+		{
+			name:          "file not found",
+			fileContent:   "", // Will use non-existent file
+			expectedError: "failed to open requirements file",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var mockServer *httptest.Server
+			if tt.serverHandler != nil {
+				mockServer = httptest.NewServer(http.HandlerFunc(tt.serverHandler))
+				defer mockServer.Close()
+				t.Setenv("OLLAMA_HOST", mockServer.URL)
+			}
+
+			// Create temp file with content
+			var filename string
+			if tt.fileContent != "" || tt.expectedError == "" {
+				tempFile, err := os.CreateTemp(t.TempDir(), "models-*.txt")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := tempFile.WriteString(tt.fileContent); err != nil {
+					t.Fatal(err)
+				}
+				tempFile.Close()
+				filename = tempFile.Name()
+			} else {
+				filename = "/nonexistent/path/models.txt"
+			}
+
+			cmd := &cobra.Command{}
+			cmd.SetContext(t.Context())
+
+			// Capture stdout
+			oldStdout := os.Stdout
+			stdoutR, stdoutW, _ := os.Pipe()
+			os.Stdout = stdoutW
+
+			// Capture stderr
+			oldStderr := os.Stderr
+			stderrR, stderrW, _ := os.Pipe()
+			os.Stderr = stderrW
+
+			err := pullFromFile(cmd, filename, false)
+
+			// Restore and read outputs
+			stdoutW.Close()
+			stderrW.Close()
+			os.Stdout = oldStdout
+			os.Stderr = oldStderr
+
+			stdout, _ := io.ReadAll(stdoutR)
+			stderr, _ := io.ReadAll(stderrR)
+
+			if tt.expectedError == "" {
+				if err != nil && !strings.Contains(err.Error(), "failed to pull") {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if tt.checkOutput != nil {
+					tt.checkOutput(t, string(stdout), string(stderr))
+				}
+			} else {
+				if err == nil || !strings.Contains(err.Error(), tt.expectedError) {
+					t.Errorf("expected error containing %q, got %v", tt.expectedError, err)
+				}
+			}
+		})
+	}
+}
+
+func TestPullHandlerWithRequirementsFlag(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/pull" && r.Method == http.MethodPost {
+			responses := []api.ProgressResponse{{Status: "success"}}
+			for _, resp := range responses {
+				json.NewEncoder(w).Encode(resp)
+			}
+			return
+		}
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer mockServer.Close()
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+
+	// Create temp file with models
+	tempFile, err := os.CreateTemp(t.TempDir(), "models-*.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tempFile.WriteString("llama3.2:latest\n"); err != nil {
+		t.Fatal(err)
+	}
+	tempFile.Close()
+
+	cmd := &cobra.Command{}
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().StringP("requirements", "r", "", "")
+	if err := cmd.Flags().Set("requirements", tempFile.Name()); err != nil {
+		t.Fatal(err)
+	}
+	cmd.SetContext(t.Context())
+
+	// Capture stdout
+	oldStdout := os.Stdout
+	stdoutR, stdoutW, _ := os.Pipe()
+	os.Stdout = stdoutW
+
+	// Capture stderr
+	oldStderr := os.Stderr
+	stderrR, stderrW, _ := os.Pipe()
+	os.Stderr = stderrW
+
+	err = PullHandler(cmd, []string{})
+
+	// Restore outputs
+	stdoutW.Close()
+	stderrW.Close()
+	os.Stdout = oldStdout
+	os.Stderr = oldStderr
+
+	stdout, _ := io.ReadAll(stdoutR)
+	io.ReadAll(stderrR) // drain stderr
+
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+
+	if !strings.Contains(string(stdout), "Found 1 model(s) to pull") {
+		t.Error("expected pull from file to be executed")
 	}
 }
