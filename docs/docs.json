@@ -93,6 +93,7 @@
               "/capabilities/thinking",
               "/capabilities/structured-outputs",
               "/capabilities/vision",
+              "/capabilities/image-generation",
               "/capabilities/embeddings",
               "/capabilities/tool-calling",
               "/capabilities/web-search"
