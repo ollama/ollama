@@ -347,6 +347,11 @@ func (s *Server) VRAMByGPU(id ml.DeviceID) uint64 {
 	return s.vramSize
 }
 
+// Context length is not applicable for image generation.
+func (s *Server) ContextLength() int {
+	return 0
+}
+
 func (s *Server) Embedding(ctx context.Context, input string) ([]float32, int, error) {
 	return nil, 0, errors.New("not supported")
 }
