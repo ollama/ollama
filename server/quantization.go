@@ -40,10 +40,19 @@ func (q quantizer) WriteTo(w io.Writer) (int64, error) {
 	} else {
 		f32s = ggml.ConvertToF32(data, q.from.Kind, q.from.Elements())
 	}
-	data = ggml.Quantize(newType, f32s, q.from.Shape)
-	n, err := w.Write(data)
-	q.progressFn(q.from.Size())
-	return int64(n), err
+
+	var n int64
+	for bts := range ggml.Quantize(newType, f32s, q.from.Shape) {
+		nn, err := w.Write(bts)
+		if err != nil {
+			return 0, err
+		}
+
+		q.progressFn(uint64(nn))
+		n += int64(nn)
+	}
+
+	return n, err
 }
 
 type quantizeState struct {
