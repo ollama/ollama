@@ -27,6 +27,7 @@ import { ErrorMessage } from "./ErrorMessage";
 import { processFiles } from "@/utils/fileValidation";
 import type { ImageData } from "@/types/webview";
 import { PlusIcon } from "@heroicons/react/24/outline";
+import { useDraftMessage } from "@/hooks/useDraftMessage";
 
 export type ThinkingLevel = "low" | "medium" | "high";
 
@@ -62,6 +63,7 @@ interface ChatFormProps {
   chatId?: string;
   isDownloadingModel?: boolean;
   isDisabled?: boolean;
+  initialDraft?: string;
   // Editing props - when provided, ChatForm enters edit mode
   editingMessage?: {
     content: string;
@@ -84,6 +86,7 @@ function ChatForm({
   chatId = "new",
   isDownloadingModel = false,
   isDisabled = false,
+  initialDraft,
   editingMessage,
   onCancelEdit,
   onFilesReceived,
@@ -117,6 +120,8 @@ function ChatForm({
   const [fileUploadError, setFileUploadError] = useState<ErrorEvent | null>(
     null,
   );
+
+  const { saveDraft, clearDraft } = useDraftMessage(chatId);
 
   const handleThinkingLevelDropdownToggle = (isOpen: boolean) => {
     if (
@@ -308,10 +313,39 @@ function ChatForm({
     }
   }, [editingMessage]);
 
-  // Clear composition and reset textarea height when chatId changes
   useEffect(() => {
-    resetChatForm();
-  }, [chatId]);
+    if (editingMessage) {
+      return;
+    }
+
+    if (initialDraft && initialDraft.trim()) {
+      setMessage({
+        content: initialDraft,
+        attachments: [],
+        fileErrors: [],
+      });
+
+      // Adjust textarea height after loading draft
+      setTimeout(() => {
+        if (textareaRef.current && initialDraft) {
+          textareaRef.current.style.height = "auto";
+          textareaRef.current.style.height =
+            Math.min(textareaRef.current.scrollHeight, 24 * 8) + "px";
+        }
+      }, 0);
+    } else {
+      resetChatForm();
+    }
+  }, [chatId, initialDraft, editingMessage]);
+
+  // Save draft only when navigating away or on blur
+  useEffect(() => {
+    return () => {
+      if (!editingMessage && message.content.trim()) {
+        saveDraft(message.content);
+      }
+    };
+  }, [message.content, editingMessage, saveDraft]);
 
   // Auto-focus textarea when autoFocus is true or when streaming completes (but not when editing)
   useEffect(() => {
@@ -511,12 +545,13 @@ function ChatForm({
       });
     }
 
-    // Clear composition after successful submission
+    // Clear composition and draft after successful submission
     setMessage({
       content: "",
       attachments: [],
       fileErrors: [],
     });
+    clearDraft();
 
     // Reset textarea height and refocus after submit
     setTimeout(() => {
@@ -619,6 +654,13 @@ function ChatForm({
     // Reset height to auto to get the correct scrollHeight, then cap at 8 lines
     e.target.style.height = "auto";
     e.target.style.height = Math.min(e.target.scrollHeight, 24 * 8) + "px";
+  };
+
+  // Save draft when textarea loses focus
+  const handleTextareaBlur = () => {
+    if (!editingMessage && message.content.trim()) {
+      saveDraft(message.content);
+    }
   };
 
   const handleFilesUpload = async () => {
@@ -832,6 +874,7 @@ function ChatForm({
             ref={textareaRef}
             value={message.content}
             onChange={handleTextareaChange}
+            onBlur={handleTextareaBlur}
             placeholder="Send a message"
             disabled={isDisabled}
             className={`allow-context-menu w-full overflow-y-auto text-neutral-700 outline-none resize-none border-none bg-transparent dark:text-white placeholder:text-neutral-400 dark:placeholder:text-neutral-500 min-h-[24px] leading-6 transition-opacity duration-300 ${

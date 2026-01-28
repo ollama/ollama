@@ -111,6 +111,11 @@ func (*appCallbacks) UIRunning() bool {
 }
 
 func (app *appCallbacks) Quit() {
+	if wv.Store != nil {
+		if err := wv.Store.ClearAllDrafts(); err != nil {
+			slog.Warn("failed to clear drafts on quit", "error", err)
+		}
+	}
 	app.t.Quit()
 	wv.Terminate()
 }

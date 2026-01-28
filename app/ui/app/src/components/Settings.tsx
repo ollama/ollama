@@ -16,7 +16,6 @@ import {
   ArrowLeftIcon,
 } from "@heroicons/react/20/solid";
 import { Settings as SettingsType } from "@/gotypes";
-import { useNavigate } from "@tanstack/react-router";
 import { useUser } from "@/hooks/useUser";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getSettings, updateSettings } from "@/api";
@@ -52,7 +51,6 @@ export default function Settings() {
   const [isAwaitingConnection, setIsAwaitingConnection] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [pollingInterval, setPollingInterval] = useState<number | null>(null);
-  const navigate = useNavigate();
 
   const {
     data: settingsData,
@@ -216,7 +214,7 @@ export default function Settings() {
         >
           {isWindows && (
             <button
-              onClick={() => navigate({ to: "/" })}
+              onClick={() => window.history.back()}
               className="hover:bg-neutral-100 mr-3 dark:hover:bg-neutral-800 rounded-full p-1.5"
             >
               <ArrowLeftIcon className="w-5 h-5 dark:text-white" />
@@ -226,7 +224,7 @@ export default function Settings() {
         </h1>
         {!isWindows && (
           <button
-            onClick={() => navigate({ to: "/" })}
+            onClick={() => window.history.back()}
             className="p-1 hover:bg-neutral-100 mr-3 dark:hover:bg-neutral-800 rounded-full"
           >
             <XMarkIcon className="w-6 h-6 dark:text-white" />

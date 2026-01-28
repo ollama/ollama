@@ -282,6 +282,7 @@ export default function Chat({ chatId }: { chatId: string }) {
               onSubmit={handleChatFormSubmit}
               chatId={chatId}
               autoFocus={true}
+              initialDraft={chatQuery?.data?.chat?.draft ?? ""}
               editingMessage={editingMessage}
               onCancelEdit={handleCancelEdit}
               isDisabled={isDisabled}
