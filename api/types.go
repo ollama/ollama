@@ -922,6 +922,19 @@ type UserResponse struct {
 	Plan      string    `json:"plan,omitempty"`
 }
 
+type UsageResponse struct {
+	// Start is the time the server started tracking usage (UTC, RFC 3339).
+	Start time.Time        `json:"start"`
+	Usage []ModelUsageData `json:"usage"`
+}
+
+type ModelUsageData struct {
+	Model            string `json:"model"`
+	Requests         int64  `json:"requests"`
+	PromptTokens     int64  `json:"prompt_tokens"`
+	CompletionTokens int64  `json:"completion_tokens"`
+}
+
 // Tensor describes the metadata for a given tensor.
 type Tensor struct {
 	Name  string   `json:"name"`
