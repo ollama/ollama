@@ -804,6 +804,7 @@ func (s *mockLlm) GetPort() int                                       { return -
 func (s *mockLlm) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo { return nil }
 func (s *mockLlm) HasExited() bool                                    { return false }
 func (s *mockLlm) GetActiveDeviceIDs() []ml.DeviceID                  { return nil }
+func (s *mockLlm) ContextLength() int                                 { return 0 }
 
 // TestImageGenRunnerCanBeEvicted verifies that an image generation model
 // loaded in the scheduler can be evicted when idle.

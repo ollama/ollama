@@ -80,6 +80,7 @@ type LlamaServer interface {
 	GetPort() int
 	GetDeviceInfos(ctx context.Context) []ml.DeviceInfo
 	HasExited() bool
+	ContextLength() int
 }
 
 // llmServer is an instance of a runner hosting a single model
@@ -1899,6 +1900,10 @@ func (s *llmServer) VRAMByGPU(id ml.DeviceID) uint64 {
 	}
 
 	return 0
+}
+
+func (s *llmServer) ContextLength() int {
+	return s.options.NumCtx
 }
 
 func (s *ollamaServer) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {
