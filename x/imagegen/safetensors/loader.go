@@ -17,7 +17,8 @@ type WeightSource interface {
 	GetTensor(name string) (*mlx.Array, error)
 	ListTensors() []string
 	HasTensor(name string) bool
-	Quantization() string // Returns "NVFP4", "FP4", "FP8", or ""
+	Quantization() string // Returns "NVFP4", "Q4", "Q8", or ""
+	GroupSize() int       // Returns quantization group size, or 0 if not specified
 }
 
 // QuantizationParams returns groupSize, bits, mode for a quantization type.
@@ -38,7 +39,7 @@ func QuantizationParams(quantization string) (groupSize, bits int, mode string) 
 		return 32, 8, "mxfp8"
 	case "FP8", "Q8", "INT8", "":
 		// 8-bit quantization with affine mode (default for quantized models)
-		return 32, 8, "affine"
+		return 64, 8, "affine"
 	default:
 		return 32, 8, "affine" // Default to affine
 	}
@@ -273,8 +274,48 @@ func LoadMultiLinearLayer(weights WeightSource, path string) (nn.MultiLinearLaye
 		}
 
 		// Always dequantize for MultiLinear - no batched quantized matmul support
-		groupSize, bits, mode := QuantizationParams(weights.Quantization())
-		weight = mlx.Dequantize(weight, scales, qbiases, groupSize, bits, mode)
+		// Detect bits from tensor shapes (supports mixed-precision Q4/Q8)
+		weightShape := weight.Shape()
+		scalesShape := scales.Shape()
+		weightCols := int(weightShape[len(weightShape)-1])
+		scalesCols := int(scalesShape[len(scalesShape)-1])
+
+		// Detect quantization from tensor shapes
+		// groupSize = weightCols * packFactor / scalesCols
+		// Note: groupSize4 = 2 * groupSize8 always, so ambiguous cases need metadata
+		groupSize4 := weightCols * 8 / scalesCols
+		groupSize8 := weightCols * 4 / scalesCols
+
+		var bits, groupSize int
+		// Use metadata to help disambiguate when shapes are ambiguous
+		// (e.g., Q4 with group_size=64 has same shapes as Q8 with group_size=32)
+		quantType := strings.ToUpper(weights.Quantization())
+		isQ8Type := quantType == "Q8" || quantType == "FP8" || quantType == "INT8"
+
+		if groupSize4 == 32 {
+			// Unambiguous: Q4 with group_size=32
+			bits = 4
+			groupSize = 32
+		} else if groupSize8 == 64 {
+			// Unambiguous: Q8 with group_size=64
+			bits = 8
+			groupSize = 64
+		} else if groupSize4 == 64 && groupSize8 == 32 {
+			// Ambiguous: could be Q4/gs=64 or Q8/gs=32, use metadata
+			if isQ8Type {
+				bits = 8
+				groupSize = 32
+			} else {
+				bits = 4
+				groupSize = 64
+			}
+		} else {
+			// Fallback: use global quantization params
+			_, bits, _ = QuantizationParams(weights.Quantization())
+			packFactor := 32 / bits
+			groupSize = weightCols * packFactor / scalesCols
+		}
+		weight = mlx.Dequantize(weight, scales, qbiases, groupSize, bits, "affine")
 	}
 
 	return nn.NewMultiLinear(weight), nil
@@ -310,7 +351,48 @@ func LoadLinearLayer(weights WeightSource, path string) (nn.LinearLayer, error) 
 			qbiases, _ = weights.GetTensor(qbiasPath)
 		}
 
-		groupSize, bits, mode := QuantizationParams(weights.Quantization())
+		// Detect bits from tensor shapes (supports mixed-precision Q4/Q8)
+		weightShape := weight.Shape()
+		scalesShape := scales.Shape()
+		weightCols := int(weightShape[len(weightShape)-1])
+		scalesCols := int(scalesShape[len(scalesShape)-1])
+
+		// Detect quantization from tensor shapes
+		// groupSize = weightCols * packFactor / scalesCols
+		// Note: groupSize4 = 2 * groupSize8 always, so ambiguous cases need metadata
+		groupSize4 := weightCols * 8 / scalesCols
+		groupSize8 := weightCols * 4 / scalesCols
+
+		var bits, groupSize int
+		mode := "affine"
+		// Use metadata to help disambiguate when shapes are ambiguous
+		// (e.g., Q4 with group_size=64 has same shapes as Q8 with group_size=32)
+		quantType := strings.ToUpper(weights.Quantization())
+		isQ8Type := quantType == "Q8" || quantType == "FP8" || quantType == "INT8"
+
+		if groupSize4 == 32 {
+			// Unambiguous: Q4 with group_size=32
+			bits = 4
+			groupSize = 32
+		} else if groupSize8 == 64 {
+			// Unambiguous: Q8 with group_size=64
+			bits = 8
+			groupSize = 64
+		} else if groupSize4 == 64 && groupSize8 == 32 {
+			// Ambiguous: could be Q4/gs=64 or Q8/gs=32, use metadata
+			if isQ8Type {
+				bits = 8
+				groupSize = 32
+			} else {
+				bits = 4
+				groupSize = 64
+			}
+		} else {
+			// Fallback: use global quantization params
+			_, bits, mode = QuantizationParams(weights.Quantization())
+			packFactor := 32 / bits
+			groupSize = weightCols * packFactor / scalesCols
+		}
 
 		// NVFP4 and MXFP8 don't have native quantized matmul kernels in MLX,
 		// so we always dequantize at load time. Affine modes (FP4, FP8) have kernel support.

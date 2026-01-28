@@ -163,8 +163,17 @@ func GetSafetensorsTensorInfo(name model.Name) ([]api.Tensor, error) {
 
 // getTensorInfoFromManifest extracts tensor info from a manifest.
 // This is separated for testability.
+// For quantized models, groups weight/scale/qbias into single entries with detected quantization type.
 func getTensorInfoFromManifest(mf *manifest.Manifest) ([]api.Tensor, error) {
 	var tensors []api.Tensor
+
+	// First pass: collect all tensor info and identify scale tensors
+	type tensorData struct {
+		info   *safetensorsTensorInfo
+		digest string
+	}
+	tensorMap := make(map[string]*tensorData)
+	scaleMap := make(map[string]*tensorData) // base name -> scale tensor info
 
 	for _, layer := range mf.Layers {
 		if layer.MediaType != manifest.MediaTypeImageTensor {
@@ -178,21 +187,89 @@ func getTensorInfoFromManifest(mf *manifest.Manifest) ([]api.Tensor, error) {
 		}
 		info, err := readSafetensorsHeader(blobPath)
 		if err != nil {
-			// Skip tensors we can't read
 			continue
 		}
 
-		// Convert shape from int to uint64
-		shape := make([]uint64, len(info.Shape))
-		for i, s := range info.Shape {
-			shape[i] = uint64(s)
+		td := &tensorData{info: info, digest: layer.Digest}
+
+		if strings.HasSuffix(layer.Name, "_scale") {
+			baseName := strings.TrimSuffix(layer.Name, "_scale")
+			scaleMap[baseName] = td
+		} else if strings.HasSuffix(layer.Name, "_qbias") {
+			// Skip qbias tensors - they're included with the quantized weight
+			continue
+		} else {
+			tensorMap[layer.Name] = td
+		}
+	}
+
+	// Second pass: build tensor list with quantization info
+	for _, layer := range mf.Layers {
+		if layer.MediaType != manifest.MediaTypeImageTensor {
+			continue
 		}
 
-		tensors = append(tensors, api.Tensor{
-			Name:  layer.Name,
-			Type:  info.Dtype,
-			Shape: shape,
-		})
+		// Skip scale and qbias tensors
+		if strings.HasSuffix(layer.Name, "_scale") || strings.HasSuffix(layer.Name, "_qbias") {
+			continue
+		}
+
+		td := tensorMap[layer.Name]
+		if td == nil {
+			continue
+		}
+
+		// Check if this tensor has a corresponding scale tensor (quantized)
+		scaleTd := scaleMap[layer.Name]
+		if scaleTd != nil && len(td.info.Shape) >= 2 && len(scaleTd.info.Shape) >= 2 {
+			// Quantized tensor - detect bits from shapes
+			weightCols := td.info.Shape[len(td.info.Shape)-1]
+			scaleCols := scaleTd.info.Shape[len(scaleTd.info.Shape)-1]
+
+			// Detect quantization: Q4 has pack_factor=8, Q8 has pack_factor=4
+			// Q4 uses group_size=32: weightCols * 8 / scaleCols = 32
+			// Q8 uses group_size=64: weightCols * 4 / scaleCols = 64
+			var bits int
+			var quantType string
+			if weightCols*8/scaleCols == 32 {
+				bits = 4
+				quantType = "Q4"
+			} else if weightCols*4/scaleCols == 64 {
+				bits = 8
+				quantType = "Q8"
+			} else {
+				// Unknown quantization, show raw
+				quantType = td.info.Dtype
+			}
+
+			// Calculate unpacked shape
+			shape := make([]uint64, len(td.info.Shape))
+			for i, s := range td.info.Shape {
+				shape[i] = uint64(s)
+			}
+			if bits > 0 {
+				packFactor := int64(32 / bits)
+				shape[len(shape)-1] = uint64(td.info.Shape[len(td.info.Shape)-1] * packFactor)
+			}
+
+			tensors = append(tensors, api.Tensor{
+				Name:  layer.Name,
+				Type:  quantType,
+				Shape: shape,
+			})
+		} else {
+			// Non-quantized tensor
+			shape := make([]uint64, len(td.info.Shape))
+			for i, s := range td.info.Shape {
+				shape[i] = uint64(s)
+			}
+
+			tensors = append(tensors, api.Tensor{
+				Name:  layer.Name,
+				Type:  td.info.Dtype,
+				Shape: shape,
+			})
+		}
 	}
 
 	return tensors, nil
@@ -231,9 +308,9 @@ func GetSafetensorsDtype(name model.Name) (string, error) {
 
 	if hasScales {
 		if hasQBias {
-			// Affine mode (has scale + qbias) - could be FP4 or FP8
-			// Default to FP4 as it's more common
-			return "FP4", nil
+			// Affine mode (has scale + qbias) - could be Q4 or Q8
+			// Default to Q4 as it's more common
+			return "Q4", nil
 		}
 		// No qbias = NVFP4
 		return "NVFP4", nil

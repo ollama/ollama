@@ -35,7 +35,7 @@ type ModelfileConfig struct {
 type CreateOptions struct {
 	ModelName string
 	ModelDir  string
-	Quantize  string           // "fp8" for quantization
+	Quantize  string           // "q4", "q8", "nvfp4", or "mxfp8" for quantization
 	Modelfile *ModelfileConfig // template/system/license from Modelfile
 }
 

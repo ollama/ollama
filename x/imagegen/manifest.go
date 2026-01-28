@@ -209,7 +209,7 @@ func GetModelInfo(modelName string) (*ModelInfo, error) {
 	if info.Quantization == "" {
 		for _, layer := range manifest.Manifest.Layers {
 			if strings.HasSuffix(layer.Name, ".weight_scale") {
-				info.Quantization = "FP8"
+				info.Quantization = "Q8"
 				break
 			}
 		}

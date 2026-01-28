@@ -209,19 +209,36 @@ func (mw *ManifestWeights) Quantization() string {
 		// So scale size should be ~weight_size * 4 / 32 = weight_size / 8
 
 		// Rough size heuristic (assuming float16 scales)
-		// FP4: scale_bytes ≈ weight_bytes / 4 * 2 / 4 = weight_bytes / 8
-		// FP8: scale_bytes ≈ weight_bytes / 8 * 2 / 4 = weight_bytes / 16
+		// Q4: scale_bytes ≈ weight_bytes / 4 * 2 / 4 = weight_bytes / 8
+		// Q8: scale_bytes ≈ weight_bytes / 8 * 2 / 4 = weight_bytes / 16
 		ratio := float64(weightLayer.Size) / float64(scaleLayer.Size)
 		if ratio < 12 {
-			// Closer to 8 = FP4
-			return "FP4"
+			// Closer to 8 = Q4
+			return "Q4"
 		}
-		// Closer to 16 = FP8
-		return "FP8"
+		// Closer to 16 = Q8
+		return "Q8"
 	}
 
-	// Default to FP4 for affine mode (most common)
-	return "FP4"
+	// Default to Q4 for affine mode (most common)
+	return "Q4"
+}
+
+// GroupSize returns the quantization group size from model_index.json.
+// Returns 0 if not specified (caller should use default based on quantization type).
+func (mw *ManifestWeights) GroupSize() int {
+	if mw.manifest == nil {
+		return 0
+	}
+
+	var index struct {
+		GroupSize int `json:"group_size"`
+	}
+	if err := mw.manifest.ReadConfigJSON("model_index.json", &index); err == nil && index.GroupSize > 0 {
+		return index.GroupSize
+	}
+
+	return 0
 }
 
 // ReleaseAll frees all native handles and clears the tensor cache.

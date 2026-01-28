@@ -15,15 +15,15 @@ import (
 // CreateImageGenModel imports an image generation model from a directory.
 // Stores each tensor as a separate blob for fine-grained deduplication.
 // If quantize is specified, linear weights in transformer/text_encoder are quantized.
-// Supported quantization types: fp4, fp8, nvfp4, mxfp8 (or empty for no quantization).
+// Supported quantization types: q4, q8, nvfp4, mxfp8 (or empty for no quantization).
 // Layer creation and manifest writing are done via callbacks to avoid import cycles.
 func CreateImageGenModel(modelName, modelDir, quantize string, createLayer LayerCreator, createTensorLayer QuantizingTensorLayerCreator, writeManifest ManifestWriter, fn func(status string)) error {
 	// Validate quantization type
 	switch quantize {
-	case "", "fp4", "fp8", "nvfp4", "mxfp8":
+	case "", "q4", "q8", "nvfp4", "mxfp8":
 		// valid
 	default:
-		return fmt.Errorf("unsupported quantization type %q: supported types are fp4, fp8, nvfp4, mxfp8", quantize)
+		return fmt.Errorf("unsupported quantization type %q: supported types are q4, q8, nvfp4, mxfp8", quantize)
 	}
 
 	var layers []LayerInfo
@@ -214,14 +214,17 @@ func CreateImageGenModel(modelName, modelDir, quantize string, createLayer Layer
 
 // canQuantizeShape returns true if a tensor shape is compatible with MLX quantization.
 // MLX requires the last dimension to be divisible by the group size.
-// NVFP4 uses group_size=16, all other modes use group_size=32.
+// nvfp4: 16, q4/mxfp8: 32, q8: 64
 func canQuantizeShape(shape []int32, quantize string) bool {
 	if len(shape) < 2 {
 		return false
 	}
 	groupSize := int32(32)
-	if strings.ToUpper(quantize) == "NVFP4" {
+	switch strings.ToUpper(quantize) {
+	case "NVFP4":
 		groupSize = 16
+	case "Q8":
+		groupSize = 64
 	}
 	return shape[len(shape)-1]%groupSize == 0
 }

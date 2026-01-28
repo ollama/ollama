@@ -228,7 +228,7 @@ type LayerCreator func(r io.Reader, mediaType, name string) (LayerInfo, error)
 type TensorLayerCreator func(r io.Reader, name, dtype string, shape []int32) (LayerInfo, error)
 
 // QuantizingTensorLayerCreator creates tensor layers with optional quantization.
-// When quantize is non-empty (e.g., "fp8"), returns multiple layers (weight + scales + biases).
+// When quantize is non-empty (e.g., "q8"), returns multiple layers (weight + scales + biases).
 type QuantizingTensorLayerCreator func(r io.Reader, name, dtype string, shape []int32, quantize string) ([]LayerInfo, error)
 
 // ManifestWriter writes the manifest file.
@@ -264,40 +264,132 @@ func ShouldQuantize(name, component string) bool {
 
 // ShouldQuantizeTensor returns true if a tensor should be quantized based on name, shape, and quantize type.
 // This is a more detailed check that also considers tensor dimensions.
-// The quantize parameter specifies the quantization type (e.g., "fp4", "nvfp4", "fp8", "mxfp8").
+// The quantize parameter specifies the quantization type (e.g., "q4", "nvfp4", "q8", "mxfp8").
 func ShouldQuantizeTensor(name string, shape []int32, quantize string) bool {
+	return GetTensorQuantization(name, shape, quantize) != ""
+}
+
+// normalizeQuantType converts various quantization type aliases to canonical forms.
+// Supports: q4/Q4/int4/INT4/fp4/FP4 -> q4, q8/Q8/int8/INT8/fp8/FP8 -> q8, nvfp4/NVFP4, mxfp8/MXFP8
+func normalizeQuantType(quantize string) string {
+	switch strings.ToUpper(quantize) {
+	case "Q4", "INT4", "FP4":
+		return "q4"
+	case "Q8", "INT8", "FP8":
+		return "q8"
+	case "NVFP4":
+		return "nvfp4"
+	case "MXFP8":
+		return "mxfp8"
+	default:
+		return quantize
+	}
+}
+
+// getQuantGroupSize returns the group size for a given quantization type.
+// These must match the values used in quantize.go when creating quantized models.
+func getQuantGroupSize(quantize string) int {
+	switch normalizeQuantType(quantize) {
+	case "nvfp4":
+		return 16
+	case "q4":
+		return 32
+	case "mxfp8":
+		return 32
+	case "q8":
+		return 64
+	default:
+		return 32
+	}
+}
+
+// GetTensorQuantization returns the appropriate quantization type for a tensor.
+// Returns "" if the tensor should not be quantized.
+// This implements mixed-precision quantization:
+//   - Attention MLA weights (q_a, q_b, kv_a, kv_b): unquantized (most sensitive)
+//   - Output projection, gate/up weights: q4 (less sensitive)
+//   - Down projection weights: q8 (more sensitive, would be Q6 in GGML but no MLX kernel)
+//   - Norms, embeddings, biases, routing gates: no quantization
+func GetTensorQuantization(name string, shape []int32, quantize string) string {
 	// Use basic name-based check first
 	if !ShouldQuantize(name, "") {
-		return false
+		return ""
 	}
 
 	// Only quantize 2D tensors (linear layers) - skip 1D (biases, norms) and higher-D (convolutions if any)
 	if len(shape) != 2 {
-		return false
+		return ""
 	}
 
 	// Skip small tensors (less than 1024 elements) - not worth quantizing
 	if len(shape) >= 2 && int64(shape[0])*int64(shape[1]) < 1024 {
-		return false
+		return ""
 	}
+
+	// Normalize quantization type to canonical form
+	quantNorm := normalizeQuantType(quantize)
 
 	// MLX quantization requires last dimension to be divisible by group size
-	// NVFP4 uses group_size=16, all other modes (fp4, fp8, mxfp8) use group_size=32
+	// nvfp4: 16, q4/mxfp8: 32, q8: 64
 	groupSize := int32(32)
-	if strings.ToUpper(quantize) == "NVFP4" {
+	switch quantNorm {
+	case "nvfp4":
 		groupSize = 16
+	case "q8":
+		groupSize = 64
 	}
 	if shape[len(shape)-1]%groupSize != 0 {
-		return false
+		return ""
 	}
 
-	return true
+	// Skip routing gate weights (should stay high precision)
+	// In safetensors these are: mlp.gate.weight (not mlp.gate_proj.weight)
+	if strings.Contains(name, "mlp.gate.weight") && !strings.Contains(name, "_proj") {
+		return ""
+	}
+
+	// For NVFP4 or MXFP8, use the same quantization for all (no mixed precision)
+	if quantNorm == "nvfp4" || quantNorm == "mxfp8" {
+		return quantNorm
+	}
+
+	// Attention MLA weights - keep unquantized (bf16)
+	// These are highly sensitive: errors accumulate in the KV cache over time
+	// q_a_proj, q_b_proj, kv_a_proj_with_mqa, kv_b_proj
+	if strings.Contains(name, "q_a_proj") ||
+		strings.Contains(name, "q_b_proj") ||
+		strings.Contains(name, "kv_a_proj") ||
+		strings.Contains(name, "kv_b_proj") {
+		return "" // No quantization - keep bf16
+	}
+
+	// Down projection weights - use Q8 (would be Q6_K in GGML, but MLX has no Q6 kernel)
+	// mlp.down_proj, mlp.experts.X.down_proj, mlp.shared_experts.down_proj
+	if strings.Contains(name, "down_proj") {
+		return "q8"
+	}
+
+	// Output projection, gate/up weights - use requested quantization (Q4)
+	// o_proj, gate_proj, up_proj
+	if strings.Contains(name, "o_proj") ||
+		strings.Contains(name, "gate_proj") ||
+		strings.Contains(name, "up_proj") {
+		return quantNorm
+	}
+
+	// LM head - use requested quantization
+	if strings.Contains(name, "lm_head") {
+		return quantNorm
+	}
+
+	// Default to requested quantization for other weights
+	return quantNorm
 }
 
 // CreateSafetensorsModel imports a standard safetensors model from a directory.
 // This handles Hugging Face style models with config.json and *.safetensors files.
 // Stores each tensor as a separate blob for fine-grained deduplication.
-// If quantize is non-empty (e.g., "fp8"), eligible tensors will be quantized.
+// If quantize is non-empty (e.g., "q8"), eligible tensors will be quantized.
 func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer LayerCreator, createTensorLayer QuantizingTensorLayerCreator, writeManifest ManifestWriter, fn func(status string)) error {
 	var layers []LayerInfo
 	var configLayer LayerInfo
@@ -336,9 +428,10 @@ func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer La
 			}
 
 			// Determine quantization type for this tensor (empty string if not quantizing)
+			// GetTensorQuantization handles mixed-precision (e.g., Q8 for attention, Q4 for FFN)
 			quantizeType := ""
-			if quantize != "" && ShouldQuantizeTensor(tensorName, td.Shape, quantize) {
-				quantizeType = quantize
+			if quantize != "" {
+				quantizeType = GetTensorQuantization(tensorName, td.Shape, quantize)
 			}
 
 			// Store as minimal safetensors format (88 bytes header overhead)
@@ -398,6 +491,7 @@ func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer La
 	if quantize != "" {
 		modelIndex := map[string]any{
 			"quantization": strings.ToUpper(quantize),
+			"group_size":   getQuantGroupSize(quantize),
 		}
 		indexData, err := json.MarshalIndent(modelIndex, "", "    ")
 		if err != nil {
