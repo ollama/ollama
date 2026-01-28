@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ollama/ollama/app/store"
@@ -58,7 +59,8 @@ func (u *Updater) checkForUpdate(ctx context.Context) (bool, UpdateResponse) {
 	query := requestURL.Query()
 	query.Add("os", runtime.GOOS)
 	query.Add("arch", runtime.GOARCH)
-	query.Add("version", version.Version)
+	currentVersion := version.Version
+	query.Add("version", currentVersion)
 	query.Add("ts", strconv.FormatInt(time.Now().Unix(), 10))
 
 	// The original macOS app used to use the device ID
@@ -131,15 +133,27 @@ func (u *Updater) checkForUpdate(ctx context.Context) (bool, UpdateResponse) {
 }
 
 func (u *Updater) DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) error {
+	// Create a cancellable context for this download
+	downloadCtx, cancel := context.WithCancel(ctx)
+	u.cancelDownloadLock.Lock()
+	u.cancelDownload = cancel
+	u.cancelDownloadLock.Unlock()
+	defer func() {
+		u.cancelDownloadLock.Lock()
+		u.cancelDownload = nil
+		u.cancelDownloadLock.Unlock()
+		cancel()
+	}()
+
 	// Do a head first to check etag info
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, updateResp.UpdateURL, nil)
+	req, err := http.NewRequestWithContext(downloadCtx, http.MethodHead, updateResp.UpdateURL, nil)
 	if err != nil {
 		return err
 	}
 
 	// In case of slow downloads, continue the update check in the background
-	bgctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	bgctx, bgcancel := context.WithCancel(downloadCtx)
+	defer bgcancel()
 	go func() {
 		for {
 			select {
@@ -176,6 +190,7 @@ func (u *Updater) DownloadNewRelease(ctx context.Context, updateResp UpdateRespo
 	_, err = os.Stat(stageFilename)
 	if err == nil {
 		slog.Info("update already downloaded", "bundle", stageFilename)
+		UpdateDownloaded = true
 		return nil
 	}
 
@@ -244,34 +259,99 @@ func cleanupOldDownloads(stageDir string) {
 }
 
 type Updater struct {
-	Store *store.Store
+	Store              *store.Store
+	cancelDownload     context.CancelFunc
+	cancelDownloadLock sync.Mutex
+	checkNow           chan struct{}
+}
+
+// CancelOngoingDownload cancels any currently running download
+func (u *Updater) CancelOngoingDownload() {
+	u.cancelDownloadLock.Lock()
+	defer u.cancelDownloadLock.Unlock()
+	if u.cancelDownload != nil {
+		slog.Info("cancelling ongoing update download")
+		u.cancelDownload()
+		u.cancelDownload = nil
+	}
+}
+
+// TriggerImmediateCheck signals the background checker to check for updates immediately
+func (u *Updater) TriggerImmediateCheck() {
+	if u.checkNow != nil {
+		select {
+		case u.checkNow <- struct{}{}:
+		default:
+			// Check already pending, no need to queue another
+		}
+	}
 }
 
 func (u *Updater) StartBackgroundUpdaterChecker(ctx context.Context, cb func(string) error) {
+	u.checkNow = make(chan struct{}, 1)
 	go func() {
 		// Don't blast an update message immediately after startup
 		time.Sleep(UpdateCheckInitialDelay)
 		slog.Info("beginning update checker", "interval", UpdateCheckInterval)
+		ticker := time.NewTicker(UpdateCheckInterval)
+		defer ticker.Stop()
+
 		for {
-			available, resp := u.checkForUpdate(ctx)
-			if available {
-				err := u.DownloadNewRelease(ctx, resp)
-				if err != nil {
-					slog.Error(fmt.Sprintf("failed to download new release: %s", err))
-				} else {
-					err = cb(resp.UpdateVersion)
-					if err != nil {
-						slog.Warn(fmt.Sprintf("failed to register update available with tray: %s", err))
-					}
-				}
-			}
 			select {
 			case <-ctx.Done():
 				slog.Debug("stopping background update checker")
 				return
-			default:
-				time.Sleep(UpdateCheckInterval)
+			case <-u.checkNow:
+				// Immediate check triggered
+			case <-ticker.C:
+				// Regular interval check
+			}
+
+			// Always check for updates
+			available, resp := u.checkForUpdate(ctx)
+			if !available {
+				continue
+			}
+
+			// Update is available - check if auto-update is enabled for downloading
+			settings, err := u.Store.Settings()
+			if err != nil {
+				slog.Error("failed to load settings", "error", err)
+				continue
+			}
+
+			if !settings.AutoUpdateEnabled {
+				// Auto-update disabled - don't download, just log
+				slog.Debug("update available but auto-update disabled", "version", resp.UpdateVersion)
+				continue
+			}
+
+			// Auto-update is enabled - download
+			err = u.DownloadNewRelease(ctx, resp)
+			if err != nil {
+				slog.Error("failed to download new release", "error", err)
+				continue
+			}
+
+			// Download successful - show tray notification (regardless of toggle state)
+			err = cb(resp.UpdateVersion)
+			if err != nil {
+				slog.Warn("failed to register update available with tray", "error", err)
 			}
 		}
 	}()
+}
+
+func (u *Updater) CheckForUpdate(ctx context.Context) (bool, string, error) {
+	available, resp := u.checkForUpdate(ctx)
+	return available, resp.UpdateVersion, nil
+}
+
+func (u *Updater) InstallAndRestart() error {
+	if !UpdateDownloaded {
+		return fmt.Errorf("no update downloaded")
+	}
+
+	slog.Info("installing update and restarting")
+	return DoUpgrade(true)
 }
