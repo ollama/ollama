@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -1024,10 +1025,29 @@ func (s *Server) DeleteHandler(c *gin.Context) {
 		switch {
 		case os.IsNotExist(err):
 			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", cmp.Or(r.Model, r.Name))})
+			return
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			// Corrupt manifest: delete file directly since we can't parse it.
+			// Orphaned layers will be cleaned by the next prune operation.
+			slog.Warn("corrupt manifest detected during delete, attempting to remove", "model", n, "error", err)
+
+			manifests, pathErr := manifest.Path()
+			if pathErr != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": pathErr.Error()})
+				return
+			}
+
+			manifestPath := filepath.Join(manifests, n.Filepath())
+			if removeErr := os.Remove(manifestPath); removeErr != nil && !os.IsNotExist(removeErr) {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to remove corrupt manifest: %v", removeErr)})
+				return
+			}
+
+			if pruneErr := manifest.PruneDirectory(manifests); pruneErr != nil {
+				slog.Warn("failed to prune manifest directories", "error", pruneErr)
+			}
+			return
 		}
-		return
 	}
 
 	if err := m.Remove(); err != nil {
