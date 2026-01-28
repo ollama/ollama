@@ -30,6 +30,7 @@ func TestGenerateDebugRenderOnly(t *testing.T) {
 	}
 
 	s := Server{
+		usage: NewUsageTracker(),
 		sched: &Scheduler{
 			pendingReqCh:    make(chan *LlmRequest, 1),
 			finishedReqCh:   make(chan *LlmRequest, 1),
@@ -224,6 +225,7 @@ func TestChatDebugRenderOnly(t *testing.T) {
 	}
 
 	s := Server{
+		usage: NewUsageTracker(),
 		sched: &Scheduler{
 			pendingReqCh:    make(chan *LlmRequest, 1),
 			finishedReqCh:   make(chan *LlmRequest, 1),
