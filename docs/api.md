@@ -15,6 +15,7 @@
 - [Push a Model](#push-a-model)
 - [Generate Embeddings](#generate-embeddings)
 - [List Running Models](#list-running-models)
+- [Usage](#usage)
 - [Version](#version)
 - [Experimental: Image Generation](#image-generation-experimental)
 
@@ -1853,6 +1854,53 @@ curl http://localhost:11434/api/embeddings -d '{
   ]
 }
 ```
+
+## Usage
+
+```
+GET /api/usage
+```
+
+Show aggregate usage statistics per model since the server started. All timestamps are UTC in RFC 3339 format.
+
+### Examples
+
+#### Request
+
+```shell
+curl http://localhost:11434/api/usage
+```
+
+#### Response
+
+```json
+{
+  "start": "2025-01-27T20:00:00Z",
+  "usage": [
+    {
+      "model": "llama3.2",
+      "requests": 5,
+      "prompt_tokens": 130,
+      "completion_tokens": 890
+    },
+    {
+      "model": "deepseek-r1",
+      "requests": 2,
+      "prompt_tokens": 48,
+      "completion_tokens": 312
+    }
+  ]
+}
+```
+
+#### Response fields
+
+- `start`: when the server started tracking usage (UTC, RFC 3339)
+- `usage`: list of per-model usage statistics
+  - `model`: model name
+  - `requests`: total number of completed requests
+  - `prompt_tokens`: total prompt tokens evaluated
+  - `completion_tokens`: total completion tokens generated
 
 ## Version
 
