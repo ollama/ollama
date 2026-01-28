@@ -151,8 +151,9 @@ configure_systemd() {
     status "Adding current user to ollama group..."
     $SUDO usermod -a -G ollama $(whoami)
 
-    status "Creating ollama systemd service..."
-    cat <<EOF | $SUDO tee /etc/systemd/system/ollama.service >/dev/null
+    if [ ! -f /etc/systemd/system/ollama.service ]; then
+        status "Creating ollama systemd service..."
+        cat <<EOF | $SUDO tee /etc/systemd/system/ollama.service >/dev/null
 [Unit]
 Description=Ollama Service
 After=network-online.target
@@ -168,6 +169,9 @@ Environment="PATH=$PATH"
 [Install]
 WantedBy=default.target
 EOF
+    else
+        status "Ollama systemd service already exists, skipping creation..."
+    fi
     SYSTEMCTL_RUNNING="$(systemctl is-system-running || true)"
     case $SYSTEMCTL_RUNNING in
         running|degraded)
