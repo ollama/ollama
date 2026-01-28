@@ -87,7 +87,7 @@ func New(c fs.Config) (model.Model, error) {
 	// m.Cache = kvcache.NewWrapperCache(kvcache.NewSWACache(slidingWindowLen, m.Shift), kvcache.NewCausalCache(m.Shift))
 
 	// TODO need to implement sliding window...
-	m.Cache = kvcache.NewMLXCausalCache()
+	m.Cache = kvcache.NewCausalCache()
 
 	return &m, nil
 }

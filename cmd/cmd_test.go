@@ -1553,7 +1553,7 @@ func TestShowInfoImageGen(t *testing.T) {
 		Details: api.ModelDetails{
 			Family:            "ZImagePipeline",
 			ParameterSize:     "10.3B",
-			QuantizationLevel: "FP8",
+			QuantizationLevel: "Q8",
 		},
 		Capabilities: []model.Capability{model.CapabilityImage},
 		Requires:     "0.14.0",
@@ -1565,7 +1565,7 @@ func TestShowInfoImageGen(t *testing.T) {
 	expect := "  Model\n" +
 		"    architecture    ZImagePipeline    \n" +
 		"    parameters      10.3B             \n" +
-		"    quantization    FP8               \n" +
+		"    quantization    Q8                \n" +
 		"    requires        0.14.0            \n" +
 		"\n" +
 		"  Capabilities\n" +

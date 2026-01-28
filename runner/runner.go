@@ -3,7 +3,7 @@ package runner
 import (
 	"github.com/ollama/ollama/runner/llamarunner"
 	"github.com/ollama/ollama/runner/ollamarunner"
-	imagerunner "github.com/ollama/ollama/x/imagegen/runner"
+	"github.com/ollama/ollama/x/mlxrunner"
 )
 
 func Execute(args []string) error {
@@ -12,18 +12,18 @@ func Execute(args []string) error {
 	}
 
 	var newRunner bool
-	var imageRunner bool
+	var mlxRunner bool
 	if len(args) > 0 && args[0] == "--ollama-engine" {
 		args = args[1:]
 		newRunner = true
 	}
-	if len(args) > 0 && args[0] == "--image-engine" {
+	if len(args) > 0 && args[0] == "--mlx-engine" {
 		args = args[1:]
-		imageRunner = true
+		mlxRunner = true
 	}
 
-	if imageRunner {
-		return imagerunner.Execute(args)
+	if mlxRunner {
+		return mlxrunner.Execute(args)
 	} else if newRunner {
 		return ollamarunner.Execute(args)
 	} else {
