@@ -1,18 +1,21 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Viraj Wadhwa <viraj.wadhwa@intel.com>
-Date: Tue, 4 Nov 2025 12:04:04 -0800
-Subject: [PATCH] Add memory detection using DXGI + PDH
+From: jmorganca <jmorganca@gmail.com>
+Date: Sat, 10 Jan 2026 16:17:12 -0800
+Subject: [PATCH] ollama: Add memory detection using DXGI + PDH
 
+Add Windows-specific VRAM detection using DXGI and PDH performance counters.
+This provides accurate memory reporting for both integrated and discrete GPUs.
+Add luid field to Vulkan device context for device matching.
 ---
  ggml/src/CMakeLists.txt              |   1 +
  ggml/src/ggml-impl.h                 |   3 +
- ggml/src/ggml-vulkan/ggml-vulkan.cpp |  26 ++-
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp |  24 +++
  ggml/src/mem_dxgi_pdh.cpp            | 297 +++++++++++++++++++++++++++
- 4 files changed, 325 insertions(+), 2 deletions(-)
+ 4 files changed, 325 insertions(+)
  create mode 100644 ggml/src/mem_dxgi_pdh.cpp
 
 diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
-index 99ae293cc..9a134b7af 100644
+index 47d7ea9ce..755ea86a7 100644
 --- a/ggml/src/CMakeLists.txt
 +++ b/ggml/src/CMakeLists.txt
 @@ -207,6 +207,7 @@ add_library(ggml-base
@@ -24,10 +27,10 @@ index 99ae293cc..9a134b7af 100644
  
  set_target_properties(ggml-base PROPERTIES
 diff --git a/ggml/src/ggml-impl.h b/ggml/src/ggml-impl.h
-index dba8f4695..7e17032c7 100644
+index f19417bd7..e2a4c990a 100644
 --- a/ggml/src/ggml-impl.h
 +++ b/ggml/src/ggml-impl.h
-@@ -684,6 +684,9 @@ GGML_API void ggml_nvml_release();
+@@ -683,6 +683,9 @@ GGML_API void ggml_nvml_release();
  GGML_API int ggml_hip_mgmt_init();
  GGML_API int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total, bool is_integrated_gpu);
  GGML_API void ggml_hip_mgmt_release();
@@ -38,7 +41,7 @@ index dba8f4695..7e17032c7 100644
  #ifdef __cplusplus
  }
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 0103fd03a..9cc4ebdef 100644
+index c0d0763dc..9fe4238a8 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -74,6 +74,7 @@ DispatchLoaderDynamic & ggml_vk_default_dispatcher();
@@ -49,7 +52,7 @@ index 0103fd03a..9cc4ebdef 100644
  
  typedef struct VkPhysicalDeviceShaderBfloat16FeaturesKHR {
      VkStructureType                       sType;
-@@ -13669,6 +13670,7 @@ struct ggml_backend_vk_device_context {
+@@ -14403,6 +14404,7 @@ struct ggml_backend_vk_device_context {
      std::string pci_id;
      std::string id;
      std::string uuid;
@@ -57,12 +60,12 @@ index 0103fd03a..9cc4ebdef 100644
      int major;
      int minor;
      int driver_major;
-@@ -13687,6 +13689,20 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
-     
-     vk::PhysicalDeviceProperties2 props2;
-     vkdev.getProperties2(&props2);
-+    GGML_LOG_DEBUG("ggml_backend_vk_get_device_memory called: uuid %s\n", ctx->uuid.c_str());
-+    GGML_LOG_DEBUG("ggml_backend_vk_get_device_memory called: luid %s\n", ctx->luid.c_str());
+@@ -14427,6 +14429,20 @@ static const char * ggml_backend_vk_device_get_id(ggml_backend_dev_t dev) {
+ 
+ static void ggml_backend_vk_device_get_memory(ggml_backend_dev_t device, size_t * free, size_t * total) {
+     ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)device->context;
++    GGML_LOG_DEBUG("ggml_backend_vk_device_get_memory called: uuid %s\n", ctx->uuid.c_str());
++    GGML_LOG_DEBUG("ggml_backend_vk_device_get_memory called: luid %s\n", ctx->luid.c_str());
 +
 +    // Check VRAM reporting for Windows IGPU/DGPU using DXGI + PDH (vendor agnostic)
 +    if (ggml_dxgi_pdh_init() == 0) {
@@ -76,25 +79,9 @@ index 0103fd03a..9cc4ebdef 100644
 +        ggml_dxgi_pdh_release();
 +    }
  
-     if (!is_integrated_gpu)
-     {
-@@ -13718,7 +13734,6 @@ void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size
-     }
-     // else fallback to memory budget if supported
- 
--
-     if (membudget_supported) {
-         memprops.pNext = &budgetprops;
-     }
-@@ -14452,7 +14467,6 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
-                     /* .reg     = */ reg,
-                     /* .context = */ ctx,
-                 });
--
-                 // Gather additional information about the device
-                 int dev_idx = vk_instance.device_indices[i];
-                 vk::PhysicalDeviceProperties props1;
-@@ -14475,6 +14489,14 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
+     // Use vendor specific management libraries for best VRAM reporting if available
+     if (!ctx->is_integrated_gpu) {
+@@ -15215,6 +15231,14 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                      }
                  }
                  ctx->uuid = oss.str();
@@ -111,7 +98,7 @@ index 0103fd03a..9cc4ebdef 100644
                  // TODO regex parse driver_props.driverInfo for a X.Y or X.Y.Z version string
 diff --git a/ggml/src/mem_dxgi_pdh.cpp b/ggml/src/mem_dxgi_pdh.cpp
 new file mode 100644
-index 000000000..2f395761c
+index 000000000..4dd66c25f
 --- /dev/null
 +++ b/ggml/src/mem_dxgi_pdh.cpp
 @@ -0,0 +1,297 @@
@@ -158,7 +145,7 @@ index 000000000..2f395761c
 +    void *pdh_dll_handle;
 +    // DXGI Functions
 +    HRESULT (*CreateDXGIFactory1)(REFIID riid, void **ppFactory);
-+    // PDH functions  
++    // PDH functions
 +    PDH_STATUS (*PdhOpenQueryW)(LPCWSTR szDataSource, DWORD_PTR dwUserData, PDH_HQUERY *phQuery);
 +    PDH_STATUS (*PdhAddCounterW)(PDH_HQUERY hQuery, LPCWSTR szFullCounterPath, DWORD_PTR dwUserData, PDH_HCOUNTER *phCounter);
 +    PDH_STATUS (*PdhCollectQueryData)(PDH_HQUERY hQuery);
@@ -213,7 +200,7 @@ index 000000000..2f395761c
 +        while (pFactory->EnumAdapters1(i, &pAdapter) != DXGI_ERROR_NOT_FOUND) {
 +            DXGI_ADAPTER_DESC1 desc;
 +            pAdapter->GetDesc1(&desc);
-+            
++
 +            // Get all the GPU adapter info
 +            GpuInfo info;
 +            fetch_dxgi_adapter_desc1(desc, &info);
@@ -314,7 +301,7 @@ index 000000000..2f395761c
 +        dll_functions.PdhCollectQueryData = (PDH_STATUS (*)(PDH_HQUERY hQuery)) GetProcAddress((HMODULE)(dll_functions.pdh_dll_handle), "PdhCollectQueryData");
 +        dll_functions.PdhGetFormattedCounterValue = (PDH_STATUS (*)(PDH_HCOUNTER hCounter, DWORD dwFormat, LPDWORD lpdwType, PPDH_FMT_COUNTERVALUE pValue)) GetProcAddress((HMODULE)(dll_functions.pdh_dll_handle), "PdhGetFormattedCounterValue");
 +        dll_functions.PdhCloseQuery = (PDH_STATUS (*)(PDH_HQUERY hQuery)) GetProcAddress((HMODULE)(dll_functions.pdh_dll_handle), "PdhCloseQuery");
-+    
++
 +        SetErrorMode(old_mode); // set old mode before any return
 +
 +        // Check if any function pointers are NULL (not found)
@@ -326,7 +313,7 @@ index 000000000..2f395761c
 +            dll_functions.pdh_dll_handle = NULL;
 +            return ERROR_PROC_NOT_FOUND;
 +        }
-+    
++
 +        // No other initializations needed, successfully loaded the libraries and functions!
 +        return ERROR_SUCCESS;
 +    }
@@ -412,4 +399,3 @@ index 000000000..2f395761c
 +} // extern "C"
 +
 +#endif // #ifdef _WIN32
-\ No newline at end of file

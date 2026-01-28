@@ -14,25 +14,28 @@ make -f Makefile.sync apply-patches
 
 ### Updating Base Commit
 
-**Pin to new base commit**
+To update to a new base commit:
 
-To change the base commit, update `FETCH_HEAD` in Makefile.sync.
+1. **Update FETCH_HEAD** in `Makefile.sync` to the new commit hash.
 
-When updating to a newer base commit, the existing patches may not apply cleanly and require manual merge resolution.
+2. **Check for upstreamed patches**: Before applying, review if any patches have been merged upstream. Remove those patches from `./patches/` to avoid conflicts.
 
-Start by applying the patches. If any of the patches have conflicts, the `git am` will stop at the first failure.
+3. **Apply patches**:
+   ```shell
+   make -f Makefile.sync apply-patches
+   ```
 
-```shell
-make -f Makefile.sync apply-patches
-```
+4. **Resolve conflicts** (if any): When `git am` fails on a patch:
+   - Fix conflicts in `./vendor/`
+   - Stage the resolved files: `git -C llama/vendor add <file>`
+   - Continue: `git -C llama/vendor am --continue`
+   - Re-run: `make -f Makefile.sync apply-patches`
+   - Repeat until all patches are applied.
 
-If there are conflicts, you will see an error message. Resolve the conflicts in `./vendor/`, and continue the patch series with `git am --continue` and rerun `make -f Makefile.sync apply-patches`. Repeat until all patches are successfully applied.
-
-Once all patches are applied, commit the changes to the tracking repository.
-
-```shell
-make -f Makefile.sync format-patches sync
-```
+5. **Regenerate patches and sync**:
+   ```shell
+   make -f Makefile.sync format-patches sync
+   ```
 
 ### Generating Patches
 
