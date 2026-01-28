@@ -751,7 +751,7 @@ func TestCreateImageGenModel_WithQuantize(t *testing.T) {
 
 	progressFn := func(status string) {}
 
-	err := CreateImageGenModel("test-imagegen", dir, "fp8", createLayer, createTensorLayer, writeManifest, progressFn)
+	err := CreateImageGenModel("test-imagegen", dir, "q8", createLayer, createTensorLayer, writeManifest, progressFn)
 	if err != nil {
 		t.Fatalf("CreateImageGenModel failed: %v", err)
 	}
