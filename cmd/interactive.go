@@ -563,6 +563,7 @@ func normalizeFilePath(fp string) string {
 		"\\*", "*", // Escaped asterisk
 		"\\?", "?", // Escaped question mark
 		"\\~", "~", // Escaped tilde
+		"\\@", "@", // Escaped at sign
 	).Replace(fp)
 }
 
