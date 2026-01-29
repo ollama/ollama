@@ -90,8 +90,8 @@ func TestLaunchCmd(t *testing.T) {
 	cmd := LaunchCmd(mockCheck)
 
 	t.Run("command structure", func(t *testing.T) {
-		if cmd.Use != "launch [INTEGRATION]" {
-			t.Errorf("Use = %q, want %q", cmd.Use, "launch [INTEGRATION]")
+		if cmd.Use != "launch [INTEGRATION] [-- [EXTRA_ARGS...]]" {
+			t.Errorf("Use = %q, want %q", cmd.Use, "launch [INTEGRATION] [-- [EXTRA_ARGS...]]")
 		}
 		if cmd.Short == "" {
 			t.Error("Short description should not be empty")
@@ -121,7 +121,7 @@ func TestLaunchCmd(t *testing.T) {
 }
 
 func TestRunIntegration_UnknownIntegration(t *testing.T) {
-	err := runIntegration("unknown-integration", "model")
+	err := runIntegration("unknown-integration", "model", nil)
 	if err == nil {
 		t.Error("expected error for unknown integration, got nil")
 	}
@@ -182,7 +182,69 @@ func TestAllIntegrations_HaveRequiredMethods(t *testing.T) {
 
 			// Test Run() exists (we can't call it without actually running the command)
 			// Just verify the method is available
-			var _ func(string) error = r.Run
+			var _ func(string, []string) error = r.Run
+		})
+	}
+}
+
+func TestParseExtraArgs(t *testing.T) {
+	tests := []struct {
+		name          string
+		args          []string
+		wantArgs      []string
+		wantExtraArgs []string
+	}{
+		{
+			name:          "no extra args",
+			args:          []string{"claude"},
+			wantArgs:      []string{"claude"},
+			wantExtraArgs: nil,
+		},
+		{
+			name:          "with extra args after --",
+			args:          []string{"claude", "--", "--yolo", "--hi"},
+			wantArgs:      []string{"claude"},
+			wantExtraArgs: []string{"--yolo", "--hi"},
+		},
+		{
+			name:          "extra args only after --",
+			args:          []string{"codex", "--", "--help"},
+			wantArgs:      []string{"codex"},
+			wantExtraArgs: []string{"--help"},
+		},
+		{
+			name:          "-- at end with no args after",
+			args:          []string{"claude", "--"},
+			wantArgs:      []string{"claude", "--"},
+			wantExtraArgs: nil,
+		},
+		{
+			name:          "multiple args after --",
+			args:          []string{"claude", "--", "--flag1", "--flag2", "value", "--flag3"},
+			wantArgs:      []string{"claude"},
+			wantExtraArgs: []string{"--flag1", "--flag2", "value", "--flag3"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Simulate the parsing logic from LaunchCmd
+			args := tt.args
+			var extraArgs []string
+			for i, arg := range args {
+				if arg == "--" && i < len(args)-1 {
+					extraArgs = args[i+1:]
+					args = args[:i]
+					break
+				}
+			}
+
+			if !slices.Equal(args, tt.wantArgs) {
+				t.Errorf("args = %v, want %v", args, tt.wantArgs)
+			}
+			if !slices.Equal(extraArgs, tt.wantExtraArgs) {
+				t.Errorf("extraArgs = %v, want %v", extraArgs, tt.wantExtraArgs)
+			}
 		})
 	}
 }

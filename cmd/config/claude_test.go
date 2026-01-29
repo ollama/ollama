@@ -82,19 +82,23 @@ func TestClaudeArgs(t *testing.T) {
 	c := &Claude{}
 
 	tests := []struct {
-		name  string
-		model string
-		want  []string
+		name      string
+		model     string
+		extraArgs []string
+		want      []string
 	}{
-		{"with model", "llama3.2", []string{"--model", "llama3.2"}},
-		{"empty model", "", nil},
+		{"with model", "llama3.2", nil, []string{"--model", "llama3.2"}},
+		{"empty model", "", nil, nil},
+		{"with model and extra args", "llama3.2", []string{"--yolo", "--hi"}, []string{"--model", "llama3.2", "--yolo", "--hi"}},
+		{"empty model with extra args", "", []string{"--help"}, []string{"--help"}},
+		{"multiple extra args", "llama3.2", []string{"--flag1", "--flag2", "value"}, []string{"--model", "llama3.2", "--flag1", "--flag2", "value"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := c.args(tt.model)
+			got := c.args(tt.model, tt.extraArgs)
 			if !slices.Equal(got, tt.want) {
-				t.Errorf("args(%q) = %v, want %v", tt.model, got, tt.want)
+				t.Errorf("args(%q, %v) = %v, want %v", tt.model, tt.extraArgs, got, tt.want)
 			}
 		})
 	}

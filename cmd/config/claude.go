@@ -15,11 +15,15 @@ type Claude struct{}
 
 func (c *Claude) String() string { return "Claude Code" }
 
-func (c *Claude) args(model string) []string {
+func (c *Claude) args(model string, extraArgs []string) []string {
+	var args []string
 	if model != "" {
-		return []string{"--model", model}
+		args = append(args, "--model", model)
 	}
-	return nil
+	if len(extraArgs) > 0 {
+		args = append(args, extraArgs...)
+	}
+	return args
 }
 
 func (c *Claude) findPath() (string, error) {
@@ -41,13 +45,13 @@ func (c *Claude) findPath() (string, error) {
 	return fallback, nil
 }
 
-func (c *Claude) Run(model string) error {
+func (c *Claude) Run(model string, extraArgs []string) error {
 	claudePath, err := c.findPath()
 	if err != nil {
 		return fmt.Errorf("claude is not installed, install from https://code.claude.com/docs/en/quickstart")
 	}
 
-	cmd := exec.Command(claudePath, c.args(model)...)
+	cmd := exec.Command(claudePath, c.args(model, extraArgs)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
