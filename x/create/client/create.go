@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/progress"
@@ -34,7 +35,7 @@ type ModelfileConfig struct {
 type CreateOptions struct {
 	ModelName string
 	ModelDir  string
-	Quantize  string           // "fp8" for quantization
+	Quantize  string           // "q4", "q8", "nvfp4", or "mxfp8" for quantization
 	Modelfile *ModelfileConfig // template/system/license from Modelfile
 }
 
@@ -53,10 +54,20 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 	// Determine model type settings
 	var modelType, spinnerKey string
 	var capabilities []string
+	var parserName, rendererName string
 	if isSafetensors {
 		modelType = "safetensors model"
 		spinnerKey = "create"
 		capabilities = []string{"completion"}
+
+		// Check if model supports thinking based on architecture
+		if supportsThinking(opts.ModelDir) {
+			capabilities = append(capabilities, "thinking")
+		}
+
+		// Set parser and renderer name based on architecture
+		parserName = getParserName(opts.ModelDir)
+		rendererName = getRendererName(opts.ModelDir)
 	} else {
 		modelType = "image generation model"
 		spinnerKey = "imagegen"
@@ -81,14 +92,14 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 		err = create.CreateSafetensorsModel(
 			opts.ModelName, opts.ModelDir, opts.Quantize,
 			newLayerCreator(), newTensorLayerCreator(),
-			newManifestWriter(opts, capabilities),
+			newManifestWriter(opts, capabilities, parserName, rendererName),
 			progressFn,
 		)
 	} else {
 		err = create.CreateImageGenModel(
 			opts.ModelName, opts.ModelDir, opts.Quantize,
 			newLayerCreator(), newTensorLayerCreator(),
-			newManifestWriter(opts, capabilities),
+			newManifestWriter(opts, capabilities, "", ""),
 			progressFn,
 		)
 	}
@@ -204,7 +215,7 @@ func createUnquantizedLayer(r io.Reader, name string) ([]create.LayerInfo, error
 }
 
 // newManifestWriter returns a ManifestWriter callback for writing the model manifest.
-func newManifestWriter(opts CreateOptions, capabilities []string) create.ManifestWriter {
+func newManifestWriter(opts CreateOptions, capabilities []string, parserName, rendererName string) create.ManifestWriter {
 	return func(modelName string, config create.LayerInfo, layers []create.LayerInfo) error {
 		name := model.ParseName(modelName)
 		if !name.IsValid() {
@@ -229,6 +240,8 @@ func newManifestWriter(opts CreateOptions, capabilities []string) create.Manifes
 			ModelFormat:  "safetensors",
 			Capabilities: caps,
 			Requires:     MinOllamaVersion,
+			Parser:       parserName,
+			Renderer:     rendererName,
 		}
 		configJSON, err := json.Marshal(configData)
 		if err != nil {
@@ -294,4 +307,147 @@ func createModelfileLayers(mf *ModelfileConfig) ([]manifest.Layer, error) {
 	}
 
 	return layers, nil
+}
+
+// supportsThinking checks if the model supports thinking mode based on its architecture.
+// This reads the config.json from the model directory and checks the architectures field.
+func supportsThinking(modelDir string) bool {
+	configPath := filepath.Join(modelDir, "config.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return false
+	}
+
+	var cfg struct {
+		Architectures []string `json:"architectures"`
+		ModelType     string   `json:"model_type"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return false
+	}
+
+	// Check architectures that support thinking
+	thinkingArchitectures := []string{
+		"glm4moe",  // GLM-4 MoE models
+		"deepseek", // DeepSeek models
+		"qwen3",    // Qwen3 models
+	}
+
+	// Check the architecture list
+	for _, arch := range cfg.Architectures {
+		archLower := strings.ToLower(arch)
+		for _, thinkArch := range thinkingArchitectures {
+			if strings.Contains(archLower, thinkArch) {
+				return true
+			}
+		}
+	}
+
+	// Also check model_type
+	if cfg.ModelType != "" {
+		typeLower := strings.ToLower(cfg.ModelType)
+		for _, thinkArch := range thinkingArchitectures {
+			if strings.Contains(typeLower, thinkArch) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// getParserName returns the parser name for a model based on its architecture.
+// This reads the config.json from the model directory and determines the appropriate parser.
+func getParserName(modelDir string) string {
+	configPath := filepath.Join(modelDir, "config.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return ""
+	}
+
+	var cfg struct {
+		Architectures []string `json:"architectures"`
+		ModelType     string   `json:"model_type"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return ""
+	}
+
+	// Check architectures for known parsers
+	for _, arch := range cfg.Architectures {
+		archLower := strings.ToLower(arch)
+		if strings.Contains(archLower, "glm4") || strings.Contains(archLower, "glm-4") {
+			return "glm-4.7"
+		}
+		if strings.Contains(archLower, "deepseek") {
+			return "deepseek3"
+		}
+		if strings.Contains(archLower, "qwen3") {
+			return "qwen3-coder"
+		}
+	}
+
+	// Also check model_type
+	if cfg.ModelType != "" {
+		typeLower := strings.ToLower(cfg.ModelType)
+		if strings.Contains(typeLower, "glm4") || strings.Contains(typeLower, "glm-4") {
+			return "glm-4.7"
+		}
+		if strings.Contains(typeLower, "deepseek") {
+			return "deepseek3"
+		}
+		if strings.Contains(typeLower, "qwen3") {
+			return "qwen3-coder"
+		}
+	}
+
+	return ""
+}
+
+// getRendererName returns the renderer name for a model based on its architecture.
+// This reads the config.json from the model directory and determines the appropriate renderer.
+func getRendererName(modelDir string) string {
+	configPath := filepath.Join(modelDir, "config.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return ""
+	}
+
+	var cfg struct {
+		Architectures []string `json:"architectures"`
+		ModelType     string   `json:"model_type"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return ""
+	}
+
+	// Check architectures for known renderers
+	for _, arch := range cfg.Architectures {
+		archLower := strings.ToLower(arch)
+		if strings.Contains(archLower, "glm4") || strings.Contains(archLower, "glm-4") {
+			return "glm-4.7"
+		}
+		if strings.Contains(archLower, "deepseek") {
+			return "deepseek3"
+		}
+		if strings.Contains(archLower, "qwen3") {
+			return "qwen3-coder"
+		}
+	}
+
+	// Also check model_type
+	if cfg.ModelType != "" {
+		typeLower := strings.ToLower(cfg.ModelType)
+		if strings.Contains(typeLower, "glm4") || strings.Contains(typeLower, "glm-4") {
+			return "glm-4.7"
+		}
+		if strings.Contains(typeLower, "deepseek") {
+			return "deepseek3"
+		}
+		if strings.Contains(typeLower, "qwen3") {
+			return "qwen3-coder"
+		}
+	}
+
+	return ""
 }

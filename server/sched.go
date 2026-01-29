@@ -21,7 +21,7 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/types/model"
-	"github.com/ollama/ollama/x/imagegen"
+	"github.com/ollama/ollama/x/mlxrunner"
 )
 
 type LlmRequest struct {
@@ -195,12 +195,23 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						slog.Debug("updating default concurrency", "OLLAMA_MAX_LOADED_MODELS", maxRunners, "gpu_count", len(gpus))
 					}
 
-					// Check for image generation model before attempting GGML load
+					// Check for image generation models - all use MLX runner
 					if slices.Contains(pending.model.Config.Capabilities, "image") {
-						if s.loadImageGen(pending) {
+						if s.loadMLX(pending) {
 							break
 						}
 						continue
+					}
+
+					// Check for experimental safetensors LLM models
+					if pending.model.Config.ModelFormat == "safetensors" {
+						if slices.Contains(pending.model.Config.Capabilities, "completion") {
+							// LLM model with safetensors format - use MLX runner
+							if s.loadMLX(pending) {
+								break
+							}
+							continue
+						}
 					}
 
 					// Load model for fitting
@@ -552,11 +563,20 @@ iGPUScan:
 	return false
 }
 
-// loadImageGen loads an image generation model.
-func (s *Scheduler) loadImageGen(req *LlmRequest) bool {
-	// Use model name for imagegen (it resolves manifests by name, not file path)
+// loadMLX loads an experimental safetensors model using the unified MLX runner.
+// This supports both LLM (completion) and image generation models.
+func (s *Scheduler) loadMLX(req *LlmRequest) bool {
+	// Determine mode based on capabilities
+	var mode mlxrunner.ModelMode
+	if slices.Contains(req.model.Config.Capabilities, "image") {
+		mode = mlxrunner.ModeImageGen
+	} else {
+		mode = mlxrunner.ModeLLM
+	}
+
+	// Use model name for MLX (it resolves manifests by name, not file path)
 	modelName := req.model.ShortName
-	server, err := imagegen.NewServer(modelName)
+	server, err := mlxrunner.NewServer(modelName, mode)
 	if err != nil {
 		req.errCh <- err
 		return true

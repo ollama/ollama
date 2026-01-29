@@ -9,6 +9,7 @@ type Cache interface {
 	Offset() int
 	Len() int
 	State() []*mlx.Array
+	Reset()
 }
 
 type KVCache struct {
@@ -62,6 +63,13 @@ func (c *KVCache) State() []*mlx.Array {
 
 func (c *KVCache) Offset() int { return c.offset }
 func (c *KVCache) Len() int    { return c.offset }
+
+// Reset clears the cache state for a new generation session
+func (c *KVCache) Reset() {
+	c.keys = nil
+	c.values = nil
+	c.offset = 0
+}
 
 // RotatingKVCache implements sliding window attention with bounded memory
 type RotatingKVCache struct {
@@ -154,3 +162,11 @@ func (c *RotatingKVCache) State() []*mlx.Array {
 
 func (c *RotatingKVCache) Offset() int { return c.offset }
 func (c *RotatingKVCache) Len() int    { return min(c.offset, c.maxSize) }
+
+// Reset clears the cache state for a new generation session
+func (c *RotatingKVCache) Reset() {
+	c.keys = nil
+	c.values = nil
+	c.offset = 0
+	c.idx = 0
+}
