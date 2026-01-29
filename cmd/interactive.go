@@ -294,6 +294,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 						thinkValue.Value = maybeLevel
 					}
 					opts.Think = &thinkValue
+					opts.HideThinking = false
 					thinkExplicitlySet = true
 					if client, err := api.ClientFromEnvironment(); err == nil {
 						ensureThinkingSupport(cmd.Context(), client, opts.Model)
@@ -305,6 +306,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					}
 				case "nothink":
 					opts.Think = &api.ThinkValue{Value: false}
+					opts.HideThinking = true
 					thinkExplicitlySet = true
 					if client, err := api.ClientFromEnvironment(); err == nil {
 						ensureThinkingSupport(cmd.Context(), client, opts.Model)
