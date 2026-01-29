@@ -1,4 +1,4 @@
-package model
+package tokenizer
 
 import (
 	"log/slog"
@@ -12,10 +12,10 @@ import (
 	"github.com/ollama/ollama/convert/sentencepiece"
 )
 
-func loadSentencePieceVocab(t *testing.T) SentencePiece {
+func loadSentencePieceVocab(t *testing.T) sentencePiece {
 	t.Helper()
 
-	bts, err := os.ReadFile(filepath.Join("testdata", "gemma2", "tokenizer.model"))
+	bts, err := os.ReadFile(filepath.FromSlash("testdata/gemma2/tokenizer.model"))
 	if err != nil {
 		t.Fatal(err)
 	}

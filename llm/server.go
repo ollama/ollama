@@ -34,6 +34,7 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model"
+	"github.com/ollama/ollama/tokenizer"
 )
 
 type filteredEnv []string
@@ -115,7 +116,7 @@ type llamaServer struct {
 type ollamaServer struct {
 	llmServer
 
-	textProcessor model.TextProcessor // textProcessor handles text encoding/decoding
+	tokenizer tokenizer.Tokenizer // textProcessor handles text encoding/decoding
 }
 
 // LoadModel will load a model from disk. The model must be in the GGML format.
@@ -141,11 +142,11 @@ func LoadModel(model string, maxArraySize int) (*ggml.GGML, error) {
 // NewLlamaServer will run a server for the given GPUs
 func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath string, f *ggml.GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
 	var llamaModel *llama.Model
-	var textProcessor model.TextProcessor
+	var tokenizer tokenizer.Tokenizer
 	var err error
 	if envconfig.NewEngine() || f.KV().OllamaEngineRequired() {
 		if len(projectors) == 0 {
-			textProcessor, err = model.NewTextProcessor(modelPath)
+			tokenizer, err = model.NewTextProcessor(modelPath)
 		} else {
 			err = errors.New("split vision models aren't supported")
 		}
@@ -154,7 +155,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 			slog.Debug("model not yet supported by Ollama engine, switching to compatibility mode", "model", modelPath, "error", err)
 		}
 	}
-	if textProcessor == nil {
+	if tokenizer == nil {
 		llamaModel, err = llama.LoadModelFromFile(modelPath, llama.ModelParams{VocabOnly: true})
 		if err != nil {
 			return nil, err
@@ -210,7 +211,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 
 	kvct := strings.ToLower(envconfig.KvCacheType())
 
-	if textProcessor == nil {
+	if tokenizer == nil {
 		flashAttention := ml.FlashAttentionAuto
 		if faUserSet {
 			if fa {
@@ -260,7 +261,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	gpuLibs := ml.LibraryPaths(gpus)
 	status := NewStatusWriter(os.Stderr)
 	cmd, port, err := StartRunner(
-		textProcessor != nil,
+		tokenizer != nil,
 		modelPath,
 		gpuLibs,
 		status,
@@ -309,8 +310,8 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		}
 	}()
 
-	if textProcessor != nil {
-		return &ollamaServer{llmServer: s, textProcessor: textProcessor}, nil
+	if tokenizer != nil {
+		return &ollamaServer{llmServer: s, tokenizer: tokenizer}, nil
 	} else {
 		return &llamaServer{llmServer: s, ggml: f}, nil
 	}
@@ -1772,7 +1773,7 @@ func (s *llamaServer) Tokenize(ctx context.Context, content string) ([]int, erro
 }
 
 func (s *ollamaServer) Tokenize(ctx context.Context, content string) ([]int, error) {
-	tokens, err := s.textProcessor.Encode(content, false)
+	tokens, err := s.tokenizer.Encode(content, false)
 	if err != nil {
 		return nil, err
 	}
@@ -1807,7 +1808,7 @@ func (s *ollamaServer) Detokenize(ctx context.Context, tokens []int) (string, er
 		toks[i] = int32(t)
 	}
 
-	content, err := s.textProcessor.Decode(toks)
+	content, err := s.tokenizer.Decode(toks)
 	if err != nil {
 		return "", err
 	}

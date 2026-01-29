@@ -1,8 +1,10 @@
-package model
+package tokenizer
 
 import (
 	"cmp"
+	"fmt"
 	"iter"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -11,24 +13,24 @@ import (
 	"github.com/ollama/ollama/logutil"
 )
 
-type BytePairEncoding struct {
+type bytePairEncoding struct {
 	vocab   *Vocabulary
 	regexps []*regexp2.Regexp
 }
 
-var _ TextProcessor = (*BytePairEncoding)(nil)
+var _ Tokenizer = (*bytePairEncoding)(nil)
 
-func NewBytePairEncoding(vocab *Vocabulary, pretokenizers ...string) BytePairEncoding {
-	if len(pretokenizers) == 0 {
+func NewBytePairEncoding(vocab *Vocabulary, pretokenizer ...string) bytePairEncoding {
+	if len(pretokenizer) == 0 {
 		// set default byte-level pretokenizer if none provided, e.g.
-		// https://github.com/huggingface/tokenizers/blob/main/tokenizers/src/pre_tokenizers/byte_level.rs#L44
-		pretokenizers = []string{`'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+`}
+		// https://github.com/huggingface/tokenizer/blob/main/tokenizer/src/pre_tokenizer/byte_level.rs#L44
+		pretokenizer = []string{`'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+`}
 	}
 
-	return BytePairEncoding{
+	return bytePairEncoding{
 		vocab: vocab,
 		regexps: slices.Collect(func(yield func(*regexp2.Regexp) bool) {
-			for _, p := range pretokenizers {
+			for _, p := range pretokenizer {
 				if !yield(regexp2.MustCompile(p, regexp2.RE2)) {
 					return
 				}
@@ -37,15 +39,15 @@ func NewBytePairEncoding(vocab *Vocabulary, pretokenizers ...string) BytePairEnc
 	}
 }
 
-func (bpe BytePairEncoding) Vocabulary() *Vocabulary {
+func (bpe bytePairEncoding) Vocabulary() *Vocabulary {
 	return bpe.vocab
 }
 
-func (bpe BytePairEncoding) Is(id int32, special Special) bool {
+func (bpe bytePairEncoding) Is(id int32, special Special) bool {
 	return bpe.vocab.Is(id, special)
 }
 
-func (bpe *BytePairEncoding) split(s string) iter.Seq[string] {
+func (bpe *bytePairEncoding) split(s string) iter.Seq[string] {
 	parts := []string{s}
 	for _, re := range bpe.regexps {
 		parts = slices.Collect(func(yield func(string) bool) {
@@ -96,7 +98,7 @@ type merge struct {
 	runes []rune
 }
 
-func (bpe BytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
+func (bpe bytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
 	fragments := []fragment{{value: s}}
 	for _, special := range bpe.vocab.SpecialVocabulary() {
 		// TODO: process special tokens concurrently
@@ -243,7 +245,15 @@ func (bpe BytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
 	return ids, nil
 }
 
-func (bpe BytePairEncoding) Decode(ids []int32) (string, error) {
+type lazyIdsString struct {
+	ids []int32
+}
+
+func (l lazyIdsString) LogValue() slog.Value {
+	return slog.AnyValue(fmt.Sprint(l.ids))
+}
+
+func (bpe bytePairEncoding) Decode(ids []int32) (string, error) {
 	var sb strings.Builder
 	for _, id := range ids {
 		for _, r := range bpe.vocab.Decode(id) {
@@ -267,6 +277,6 @@ func (bpe BytePairEncoding) Decode(ids []int32) (string, error) {
 		}
 	}
 
-	logutil.Trace("decoded", "string", sb.String(), "from", ids)
+	logutil.Trace("decoded", "string", sb.String(), "from", lazyIdsString{ids: ids})
 	return sb.String(), nil
 }

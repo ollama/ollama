@@ -11,11 +11,12 @@ import (
 	"github.com/ollama/ollama/ml/nn/rope"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
+	"github.com/ollama/ollama/tokenizer"
 )
 
 type Model struct {
 	model.Base
-	model.TextProcessor
+	tokenizer.Tokenizer
 
 	TokenEmbedding     *nn.Embedding `gguf:"token_embd"`
 	TypeEmbedding      *nn.Embedding `gguf:"token_types"`
@@ -178,8 +179,8 @@ func New(c fs.Config) (model.Model, error) {
 	numHeads := int(c.Uint("attention.head_count"))
 	headDim := hiddenSize / numHeads
 
-	processor := model.NewWordPiece(
-		&model.Vocabulary{
+	tokenizer := tokenizer.NewWordPiece(
+		&tokenizer.Vocabulary{
 			Values: c.Strings("tokenizer.ggml.tokens"),
 			Scores: c.Floats("tokenizer.ggml.scores"),
 			Types:  c.Ints("tokenizer.ggml.token_type"),
@@ -219,8 +220,8 @@ func New(c fs.Config) (model.Model, error) {
 	}
 
 	return &Model{
-		TextProcessor: processor,
-		Layers:        layers,
+		Tokenizer: tokenizer,
+		Layers:    layers,
 		Options: Options{
 			hiddenSize:      hiddenSize,
 			numHeads:        numHeads,

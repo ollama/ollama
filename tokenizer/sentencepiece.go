@@ -1,4 +1,4 @@
-package model
+package tokenizer
 
 import (
 	"container/heap"
@@ -12,18 +12,18 @@ import (
 
 const spmWhitespaceSep = "▁"
 
-type SentencePiece struct {
+type sentencePiece struct {
 	maxTokenLen int
 	vocab       *Vocabulary
 }
 
-var _ TextProcessor = (*SentencePiece)(nil)
+var _ Tokenizer = (*sentencePiece)(nil)
 
-func (spm SentencePiece) Vocabulary() *Vocabulary {
+func (spm sentencePiece) Vocabulary() *Vocabulary {
 	return spm.vocab
 }
 
-func NewSentencePiece(vocab *Vocabulary) SentencePiece {
+func NewSentencePiece(vocab *Vocabulary) sentencePiece {
 	logutil.Trace("Tokens", "num tokens", len(vocab.Values), "vals", vocab.Values[:5], "scores", vocab.Scores[:5], "types", vocab.Types[:5])
 
 	counter := map[int]int{}
@@ -42,17 +42,17 @@ func NewSentencePiece(vocab *Vocabulary) SentencePiece {
 		"user defined", counter[TOKEN_TYPE_USER_DEFINED], "unused", counter[TOKEN_TYPE_UNUSED], "byte", counter[TOKEN_TYPE_BYTE],
 		"max token len", maxTokenLen)
 
-	return SentencePiece{
+	return sentencePiece{
 		maxTokenLen: maxTokenLen,
 		vocab:       vocab,
 	}
 }
 
-func (spm SentencePiece) Is(id int32, special Special) bool {
+func (spm sentencePiece) Is(id int32, special Special) bool {
 	return spm.vocab.Is(id, special)
 }
 
-func (spm SentencePiece) Encode(s string, addSpecial bool) ([]int32, error) {
+func (spm sentencePiece) Encode(s string, addSpecial bool) ([]int32, error) {
 	fragments := []fragment{{value: s}}
 	for _, special := range spm.vocab.SpecialVocabulary() {
 		id := spm.vocab.Encode(special)
@@ -218,13 +218,13 @@ func (q *queue) Pop() interface{} {
 	return item
 }
 
-func (spm SentencePiece) Decode(ids []int32) (string, error) {
+func (spm sentencePiece) Decode(ids []int32) (string, error) {
 	var sb strings.Builder
 	for _, id := range ids {
 		data := spm.vocab.Decode(id)
 		data = strings.ReplaceAll(data, spmWhitespaceSep, " ")
 
-		// For tokenizers that use byte tokens like "<0xEA>"
+		// For tokenizer that use byte tokens like "<0xEA>"
 		// convert them to the partial unicode character
 		// so they are buffered correctly by the runner instead
 		// of being sent back to the api as "<0xEA>"

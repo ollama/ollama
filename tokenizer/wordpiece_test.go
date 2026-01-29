@@ -1,4 +1,4 @@
-package model
+package tokenizer
 
 import (
 	"slices"
@@ -39,7 +39,7 @@ func TestWordPiece(t *testing.T) {
 }
 
 func TestWordPieceWords(t *testing.T) {
-	var wpm WordPiece
+	var wpm wordPiece
 
 	basic := slices.Collect(wpm.words("Hey friend!     How are you?!?"))
 	if diff := cmp.Diff([]string{"Hey", "friend", "!", "How", "are", "you", "?", "!", "?"}, basic); diff != "" {
