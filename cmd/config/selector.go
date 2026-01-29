@@ -275,7 +275,11 @@ func parseInput(r io.Reader) (inputEvent, byte, error) {
 func renderSelect(w io.Writer, prompt string, s *selectState) int {
 	filtered := s.filtered()
 
-	fmt.Fprintf(w, "%s %s\r\n", prompt, s.filter)
+	if s.filter == "" {
+		fmt.Fprintf(w, "%s %sType to filter...%s\r\n", prompt, ansiGray, ansiReset)
+	} else {
+		fmt.Fprintf(w, "%s %s\r\n", prompt, s.filter)
+	}
 	lineCount := 1
 
 	if len(filtered) == 0 {
@@ -314,7 +318,11 @@ func renderSelect(w io.Writer, prompt string, s *selectState) int {
 func renderMultiSelect(w io.Writer, prompt string, s *multiSelectState) int {
 	filtered := s.filtered()
 
-	fmt.Fprintf(w, "%s %s\r\n", prompt, s.filter)
+	if s.filter == "" {
+		fmt.Fprintf(w, "%s %sType to filter...%s\r\n", prompt, ansiGray, ansiReset)
+	} else {
+		fmt.Fprintf(w, "%s %s\r\n", prompt, s.filter)
+	}
 	lineCount := 1
 
 	if len(filtered) == 0 {
