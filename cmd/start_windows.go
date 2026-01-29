@@ -41,7 +41,7 @@ func startApp(ctx context.Context, client *api.Client) error {
 			// Finally look in the path
 			appExe, err = exec.LookPath(AppName)
 			if err != nil {
-				return errors.New("could not locate ollama app")
+				return errors.New("could not locate Ollama app")
 			}
 		}
 	}
@@ -55,7 +55,7 @@ func startApp(ctx context.Context, client *api.Client) error {
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("unable to start ollama app %w", err)
+		return fmt.Errorf("unable to start Ollama app %w", err)
 	}
 
 	if cmd.Process != nil {
