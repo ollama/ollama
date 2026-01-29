@@ -642,7 +642,7 @@ func TestStreamConverter_Basic(t *testing.T) {
 		},
 		Done:       true,
 		DoneReason: "stop",
-		Metrics:    api.Metrics{EvalCount: 5},
+		Metrics:    api.Metrics{PromptEvalCount: 10, EvalCount: 5},
 	}
 
 	events2 := conv.Process(resp2)
@@ -650,6 +650,24 @@ func TestStreamConverter_Basic(t *testing.T) {
 	// Should have content_block_delta, content_block_stop, message_delta, message_stop
 	hasStop := false
 	for _, e := range events2 {
+		if e.Event == "message_delta" {
+			if data, ok := e.Data.(MessageDeltaEvent); ok {
+				if data.Type != "message_delta" {
+					t.Errorf("unexpected data type: %+v", data)
+				}
+
+				if data.Delta.StopReason != "end_turn" {
+					t.Errorf("unexpected stop reason: %+v", data.Delta.StopReason)
+				}
+
+				if data.Usage.InputTokens != 10 || data.Usage.OutputTokens != 5 {
+					t.Errorf("unexpected usage: %+v", data.Usage)
+				}
+			} else {
+				t.Errorf("unexpected data: %+v", e.Data)
+			}
+		}
+
 		if e.Event == "message_stop" {
 			hasStop = true
 		}
