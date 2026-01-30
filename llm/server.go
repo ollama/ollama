@@ -1200,7 +1200,8 @@ func (s *llmServer) initModel(ctx context.Context, req LoadRequest, operation Lo
 
 	resp, err := http.DefaultClient.Do(r)
 	if err != nil {
-		return nil, fmt.Errorf("do load request: %w", err)
+		slog.Error("do load request", "error", err)
+		return nil, errors.New("model failed to load, this may be due to resource limitations or an internal error, check ollama server logs for details")
 	}
 	defer resp.Body.Close()
 
