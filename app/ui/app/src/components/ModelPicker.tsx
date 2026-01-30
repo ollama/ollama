@@ -12,6 +12,7 @@ import { useSettings } from "@/hooks/useSettings";
 import { useQueryClient } from "@tanstack/react-query";
 import { getModelUpstreamInfo } from "@/api";
 import { ArrowDownTrayIcon } from "@heroicons/react/24/outline";
+import { parseParamsB } from "@/utils/modelSize";
 
 const stalenessCheckCache = new Map<string, number>();
 
@@ -34,6 +35,19 @@ export const ModelPicker = forwardRef<
     chatId,
     searchQuery,
   );
+  const PARAM_OPTIONS = [
+    { value: 0, label: "0B" },
+    { value: 1, label: "1B" },
+    { value: 4, label: "4B" },
+    { value: 8, label: "8B" },
+    { value: 14, label: "14B" },
+    { value: 20, label: "20B" },
+    { value: 30, label: "30B" },
+    { value: 120, label: "120B" },
+    { value: 671, label: "671B" },
+  ];
+  const [minParams, setMinParams] = useState<number>(0);
+  const [maxParams, setMaxParams] = useState<number>(671);
   const { settings } = useSettings();
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -156,6 +170,14 @@ export const ModelPicker = forwardRef<
     onModelSelect?.();
   };
 
+  const modelsByParams = (items: Model[], minB: number, maxB: number) => {
+    return items.filter((m) => {
+      const params = parseParamsB(m.model);
+      if (params == null) return false;
+      return params >= minB && params <= maxB;
+    });
+  };
+
   return (
     <div className="relative" ref={dropdownRef}>
       <button
@@ -213,10 +235,81 @@ export const ModelPicker = forwardRef<
               className="w-full px-2 py-0.5 bg-transparent border-none border-neutral-200 rounded-md outline-none focus:border-neutral-400 dark:border-neutral-600 dark:focus:border-neutral-400"
             />
           </div>
+          <div className="px-2 py-2 border-b border-neutral-100 dark:border-neutral-700 space-y-2">
+            <div className="space-y-2">
+              <div className="text-xs text-neutral-600 dark:text-neutral-300">Min parameters</div>
+              <div className="w-full">
+                <div className="flex items-center">
+                  <div className="flex-1">
+                    {/* using discrete slider twice to emulate range selection */}
+                    <div className="relative">
+                      <div className="absolute top-[9px] left-2 right-2 h-1 bg-neutral-200 dark:bg-neutral-700 pointer-events-none rounded-full" />
+                      <div className="flex justify-between">
+                        {PARAM_OPTIONS.map((opt) => (
+                          <div key={`min-${opt.value}`} className="flex flex-col items-center">
+                            <button
+                              onClick={() => {
+                                const next = Math.min(opt.value, maxParams);
+                                setMinParams(next);
+                              }}
+                              className="relative px-3 py-6 -mx-3 -my-6 z-10 cursor-pointer"
+                            >
+                              <div className="relative w-5 h-5 flex items-center justify-center">
+                                {minParams === opt.value && (
+                                  <div className="w-4 h-4 bg-white dark:bg-white border border-neutral-400 dark:border-neutral-500 rounded-full" />
+                                )}
+                              </div>
+                            </button>
+                            <div className="text-[11px] mt text-neutral-500 dark:text-neutral-400">
+                              {opt.label}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <div className="text-xs text-neutral-600 dark:text-neutral-300">Max parameters</div>
+              <div className="w-full">
+                <div className="flex items-center">
+                  <div className="flex-1">
+                    <div className="relative">
+                      <div className="absolute top-[9px] left-2 right-2 h-1 bg-neutral-200 dark:bg-neutral-700 pointer-events-none rounded-full" />
+                      <div className="flex justify-between">
+                        {PARAM_OPTIONS.map((opt) => (
+                          <div key={`max-${opt.value}`} className="flex flex-col items-center">
+                            <button
+                              onClick={() => {
+                                const next = Math.max(opt.value, minParams);
+                                setMaxParams(next);
+                              }}
+                              className="relative px-3 py-6 -mx-3 -my-6 z-10 cursor-pointer"
+                            >
+                              <div className="relative w-5 h-5 flex items-center justify-center">
+                                {maxParams === opt.value && (
+                                  <div className="w-4 h-4 bg-white dark:bg-white border border-neutral-400 dark:border-neutral-500 rounded-full" />
+                                )}
+                              </div>
+                            </button>
+                            <div className="text-[11px] mt text-neutral-500 dark:text-neutral-400">
+                              {opt.label}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
 
           <ModelList
             ref={modelListRef}
-            models={models}
+            models={modelsByParams(models, minParams, maxParams)}
             selectedModel={selectedModel}
             onModelSelect={handleModelSelect}
             airplaneMode={settings.airplaneMode}
