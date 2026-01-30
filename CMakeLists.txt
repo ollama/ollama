@@ -208,6 +208,7 @@ if(MLX_ENGINE)
     # Manually install cudart and cublas since they might not be picked up as direct dependencies
     if(CUDAToolkit_FOUND)
         file(GLOB CUDART_LIBS
+            "${CUDAToolkit_LIBRARY_DIR}/libnvrtc-builtins.so*"
             "${CUDAToolkit_LIBRARY_DIR}/libcudart.so*"
             "${CUDAToolkit_LIBRARY_DIR}/libcublas.so*")
         if(CUDART_LIBS)

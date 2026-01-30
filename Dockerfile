@@ -157,6 +157,7 @@ RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'MLX CUDA 13' -DBLAS_INCLUDE_DIRS=/usr/include/openblas -DLAPACK_INCLUDE_DIRS=/usr/include/openblas \
         && cmake --build --parallel ${PARALLEL} --preset 'MLX CUDA 13' \
         && cmake --install build --component MLX --strip --parallel ${PARALLEL}
+RUN cd dist/lib/ollama/mlx_cuda_v13 && cp -a /usr/local/cuda/targets/x86_64-linux/include include && ln -s cccl/cuda include/cuda
 
 FROM base AS build
 WORKDIR /go/src/github.com/ollama/ollama
@@ -200,7 +201,7 @@ COPY --from=build /bin/ollama /bin/ollama
 
 FROM ubuntu:24.04
 RUN apt-get update \
-    && apt-get install -y ca-certificates libvulkan1 libopenblas0 \
+    && apt-get install -y ca-certificates libvulkan1 libopenblas0 libquadmath0 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=archive /bin /usr/bin
@@ -210,6 +211,7 @@ ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV OLLAMA_HOST=0.0.0.0:11434
+ENV CUDA_PATH=/usr/lib/ollama/mlx_cuda_v13
 EXPOSE 11434
 ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]
