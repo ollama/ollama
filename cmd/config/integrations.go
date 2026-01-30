@@ -41,10 +41,10 @@ type Editor interface {
 // integrations is the registry of available integrations.
 var integrations = map[string]Runner{
 	"claude":   &Claude{},
-	"clawdbot": &Clawdbot{},
 	"codex":    &Codex{},
 	"droid":    &Droid{},
 	"opencode": &OpenCode{},
+	"openclaw": &Openclaw{},
 }
 
 func selectIntegration() (string, error) {
@@ -243,10 +243,10 @@ func LaunchCmd(checkServerHeartbeat func(cmd *cobra.Command, args []string) erro
 
 Supported integrations:
   claude    Claude Code
-  clawdbot  Clawdbot
   codex     Codex
   droid     Droid
   opencode  OpenCode
+  openclaw  Openclaw
 
 Examples:
   ollama launch
