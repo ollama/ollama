@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+
+	"github.com/ollama/ollama/envconfig"
 )
 
 // Claude implements Runner for Claude Code integration
@@ -50,7 +52,7 @@ func (c *Claude) Run(model string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = append(os.Environ(),
-		"ANTHROPIC_BASE_URL=http://localhost:11434",
+		"ANTHROPIC_BASE_URL="+envconfig.Host().String(),
 		"ANTHROPIC_API_KEY=",
 		"ANTHROPIC_AUTH_TOKEN=ollama",
 	)
