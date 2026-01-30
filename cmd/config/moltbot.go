@@ -13,19 +13,19 @@ import (
 	"github.com/ollama/ollama/envconfig"
 )
 
-type Clawdbot struct{}
+type Moltbot struct{}
 
-func (c *Clawdbot) String() string { return "Clawdbot" }
+func (c *Moltbot) String() string { return "Moltbot" }
 
 const ansiGreen = "\033[32m"
 
-func (c *Clawdbot) Run(model string) error {
+func (c *Moltbot) Run(model string) error {
 	if _, err := exec.LookPath("clawdbot"); err != nil {
-		return fmt.Errorf("clawdbot is not installed, install from https://docs.clawd.bot")
+		return fmt.Errorf("moltbot is not installed, install from https://docs.molt.bot")
 	}
 
 	models := []string{model}
-	if config, err := loadIntegration("clawdbot"); err == nil && len(config.Models) > 0 {
+	if config, err := loadIntegration("moltbot"); err == nil && len(config.Models) > 0 {
 		models = config.Models
 	}
 	if err := c.Edit(models); err != nil {
@@ -42,13 +42,13 @@ func (c *Clawdbot) Run(model string) error {
 
 	err := cmd.Run()
 	if err != nil && strings.Contains(outputBuf.String(), "Gateway already running") {
-		fmt.Fprintf(os.Stderr, "%sClawdbot has been configured with Ollama. Gateway is already running.%s\n", ansiGreen, ansiReset)
+		fmt.Fprintf(os.Stderr, "%sMoltbot has been configured with Ollama. Gateway is already running.%s\n", ansiGreen, ansiReset)
 		return nil
 	}
 	return err
 }
 
-func (c *Clawdbot) Paths() []string {
+func (c *Moltbot) Paths() []string {
 	home, _ := os.UserHomeDir()
 	p := filepath.Join(home, ".clawdbot", "clawdbot.json")
 	if _, err := os.Stat(p); err == nil {
@@ -57,7 +57,7 @@ func (c *Clawdbot) Paths() []string {
 	return nil
 }
 
-func (c *Clawdbot) Edit(models []string) error {
+func (c *Moltbot) Edit(models []string) error {
 	if len(models) == 0 {
 		return nil
 	}
@@ -167,7 +167,7 @@ func (c *Clawdbot) Edit(models []string) error {
 	return writeWithBackup(configPath, data)
 }
 
-func (c *Clawdbot) Models() []string {
+func (c *Moltbot) Models() []string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil

@@ -102,11 +102,11 @@
             "group": "Integrations",
             "pages": [
               "/integrations/claude-code",
-              "/integrations/clawdbot",
               "/integrations/cline",
               "/integrations/codex",
               "/integrations/droid",
               "/integrations/goose",
+              "/integrations/moltbot",
               "/integrations/jetbrains",
               "/integrations/marimo",
               "/integrations/n8n",
