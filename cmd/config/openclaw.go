@@ -20,8 +20,8 @@ func (c *Openclaw) String() string { return "Openclaw" }
 const ansiGreen = "\033[32m"
 
 func (c *Openclaw) Run(model string) error {
-	if _, err := exec.LookPath("clawdbot"); err != nil {
-		return fmt.Errorf("openclaw is not installed (missing 'clawdbot' CLI), install from https://clawd.bot")
+	if _, err := exec.LookPath("openclaw"); err != nil {
+		return fmt.Errorf("openclaw is not installed, install from https://docs.openclaw.ai")
 	}
 
 	models := []string{model}
@@ -32,7 +32,7 @@ func (c *Openclaw) Run(model string) error {
 		return fmt.Errorf("setup failed: %w", err)
 	}
 
-	cmd := exec.Command("clawdbot", "gateway")
+	cmd := exec.Command("openclaw", "gateway")
 	cmd.Stdin = os.Stdin
 
 	// Capture output to detect "already running" message
@@ -50,7 +50,7 @@ func (c *Openclaw) Run(model string) error {
 
 func (c *Openclaw) Paths() []string {
 	home, _ := os.UserHomeDir()
-	p := filepath.Join(home, ".clawdbot", "clawdbot.json")
+	p := filepath.Join(home, ".openclaw", "openclaw.json")
 	if _, err := os.Stat(p); err == nil {
 		return []string{p}
 	}
@@ -67,7 +67,7 @@ func (c *Openclaw) Edit(models []string) error {
 		return err
 	}
 
-	configPath := filepath.Join(home, ".clawdbot", "clawdbot.json")
+	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		return err
 	}
@@ -173,7 +173,7 @@ func (c *Openclaw) Models() []string {
 		return nil
 	}
 
-	config, err := readJSONFile(filepath.Join(home, ".clawdbot", "clawdbot.json"))
+	config, err := readJSONFile(filepath.Join(home, ".openclaw", "openclaw.json"))
 	if err != nil {
 		return nil
 	}
