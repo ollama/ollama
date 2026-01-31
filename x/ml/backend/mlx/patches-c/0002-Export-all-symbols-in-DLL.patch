@@ -1,0 +1,28 @@
+From 319fece4fa04746522552938f157425c33fc22df Mon Sep 17 00:00:00 2001
+From: Daniel Hiltgen <daniel@ollama.com>
+Date: Tue, 20 Jan 2026 15:22:05 -0800
+Subject: [PATCH 2/2] Export all symbols in DLL
+
+---
+ CMakeLists.txt | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 3197d95..0f4963b 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -75,6 +75,11 @@ target_include_directories(mlxc
+                            PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_LIST_DIR}>)
+ set_property(TARGET mlxc PROPERTY POSITION_INDEPENDENT_CODE ON)
+ 
++# Windows DLL symbol exports
++if(WIN32)
++  set_target_properties(mlxc PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS TRUE)
++endif()
++
+ if(MLX_C_BUILD_EXAMPLES)
+   add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/examples)
+ endif()
+-- 
+2.50.1.windows.1
+

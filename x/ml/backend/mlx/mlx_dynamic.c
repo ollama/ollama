@@ -13,7 +13,7 @@ typedef HMODULE lib_handle_t;
 #define GET_SYMBOL(handle, name) GetProcAddress(handle, name)
 #define CLOSE_LIB(handle) FreeLibrary(handle)
 #define LIB_ERROR() "LoadLibrary failed"
-static const char* LIB_NAMES[] = {"libmlxc.dll", NULL};
+static const char* LIB_NAMES[] = {"mlxc.dll", NULL};  // Windows DLLs don't use lib prefix
 #else
 #include <dlfcn.h>
 typedef void* lib_handle_t;

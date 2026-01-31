@@ -75,34 +75,48 @@ func NewServer(modelName string) (*Server, error) {
 	cmd := exec.Command(exe, "runner", "--image-engine", "--model", modelName, "--port", strconv.Itoa(port))
 	cmd.Env = os.Environ()
 
-	// On Linux, set LD_LIBRARY_PATH to include MLX library directories
-	if runtime.GOOS == "linux" {
+	// Set library path environment variable for MLX libraries
+	// Linux: LD_LIBRARY_PATH, Windows: PATH
+	var libPathEnvVar string
+	switch runtime.GOOS {
+	case "linux":
+		libPathEnvVar = "LD_LIBRARY_PATH"
+	case "windows":
+		libPathEnvVar = "PATH"
+	}
+
+	if libPathEnvVar != "" {
 		// Build library paths: start with LibOllamaPath, then add any mlx_* subdirectories
 		libraryPaths := []string{ml.LibOllamaPath}
 		if mlxDirs, err := filepath.Glob(filepath.Join(ml.LibOllamaPath, "mlx_*")); err == nil {
 			libraryPaths = append(libraryPaths, mlxDirs...)
 		}
 
-		// Append existing LD_LIBRARY_PATH if set
-		if existingPath, ok := os.LookupEnv("LD_LIBRARY_PATH"); ok {
+		// Append existing path
+		if existingPath, ok := os.LookupEnv(libPathEnvVar); ok {
 			libraryPaths = append(libraryPaths, filepath.SplitList(existingPath)...)
 		}
 
 		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
 
-		// Update or add LD_LIBRARY_PATH in cmd.Env
+		// Update or add the environment variable in cmd.Env
 		found := false
 		for i := range cmd.Env {
-			if strings.HasPrefix(cmd.Env[i], "LD_LIBRARY_PATH=") {
-				cmd.Env[i] = "LD_LIBRARY_PATH=" + pathEnvVal
+			// Windows PATH is case-insensitive
+			envName := cmd.Env[i]
+			if runtime.GOOS == "windows" {
+				envName = strings.ToUpper(envName)
+			}
+			if strings.HasPrefix(envName, libPathEnvVar+"=") {
+				cmd.Env[i] = libPathEnvVar + "=" + pathEnvVal
 				found = true
 				break
 			}
 		}
 		if !found {
-			cmd.Env = append(cmd.Env, "LD_LIBRARY_PATH="+pathEnvVal)
+			cmd.Env = append(cmd.Env, libPathEnvVar+"="+pathEnvVal)
 		}
-		slog.Debug("mlx subprocess library path", "LD_LIBRARY_PATH", pathEnvVal)
+		slog.Debug("mlx subprocess library path", libPathEnvVar, pathEnvVal)
 	}
 
 	// Get total weight size from manifest
@@ -117,7 +131,7 @@ func NewServer(modelName string) (*Server, error) {
 		modelName: modelName,
 		vramSize:  weightSize,
 		done:      make(chan error, 1),
-		client:    &http.Client{Timeout: 10 * time.Minute},
+		client:    &http.Client{Timeout: 60 * time.Minute}, // Increased from 10 min - image gen can be slow on some hardware
 	}
 
 	// Forward subprocess stdout/stderr to server logs
@@ -268,8 +282,10 @@ func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
+	reqStart := time.Now()
 	resp, err := s.client.Do(httpReq)
 	if err != nil {
+		slog.Warn("image runner HTTP request failed", "error", err, "duration", time.Since(reqStart))
 		return err
 	}
 	defer resp.Body.Close()
@@ -281,7 +297,12 @@ func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 1024*1024), 16*1024*1024) // 16MB max
+
+	lineCount := 0
 	for scanner.Scan() {
+		lineCount++
+		lineBytes := scanner.Bytes()
+
 		// Parse subprocess response (has singular "image" field)
 		var raw struct {
 			Image   string `json:"image,omitempty"`
@@ -290,7 +311,8 @@ func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 			Step    int    `json:"step,omitempty"`
 			Total   int    `json:"total,omitempty"`
 		}
-		if err := json.Unmarshal(scanner.Bytes(), &raw); err != nil {
+		if err := json.Unmarshal(lineBytes, &raw); err != nil {
+			slog.Warn("failed to unmarshal runner response", "error", err)
 			continue
 		}
 
@@ -309,7 +331,13 @@ func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 		}
 	}
 
-	return scanner.Err()
+	if scanErr := scanner.Err(); scanErr != nil {
+		slog.Warn("scanner error reading runner response", "error", scanErr, "linesScanned", lineCount)
+		return fmt.Errorf("scanner error after %d lines: %w", lineCount, scanErr)
+	}
+	// If we get here, the stream ended without a done=true response - this is an error
+	slog.Warn("image generation stream ended unexpectedly", "linesScanned", lineCount, "duration", time.Since(reqStart))
+	return fmt.Errorf("image generation stream ended unexpectedly after %d responses without completion", lineCount)
 }
 
 // Close terminates the subprocess.

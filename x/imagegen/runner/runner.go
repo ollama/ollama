@@ -158,6 +158,7 @@ func (s *Server) completionHandler(w http.ResponseWriter, r *http.Request) {
 
 	var req Request
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		slog.Warn("failed to decode request body", "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -215,6 +216,7 @@ func (s *Server) completionHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Transfer-Encoding", "chunked")
 	flusher, ok := w.(http.Flusher)
 	if !ok {
+		slog.Warn("streaming not supported by ResponseWriter")
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)
 		return
 	}
@@ -226,8 +228,12 @@ func (s *Server) completionHandler(w http.ResponseWriter, r *http.Request) {
 	// Progress callback streams step updates
 	progress := func(step, total int) {
 		resp := Response{Step: step, Total: total}
-		enc.Encode(resp)
-		w.Write([]byte("\n"))
+		if err := enc.Encode(resp); err != nil {
+			slog.Warn("failed to encode progress response", "error", err, "step", step)
+		}
+		if _, err := w.Write([]byte("\n")); err != nil {
+			slog.Warn("failed to write newline after progress", "error", err, "step", step)
+		}
 		flusher.Flush()
 	}
 
@@ -250,6 +256,7 @@ func (s *Server) completionHandler(w http.ResponseWriter, r *http.Request) {
 		if ctx.Err() != nil {
 			return
 		}
+		slog.Warn("image generation failed", "error", err)
 		resp := Response{Content: fmt.Sprintf("error: %v", err), Done: true}
 		data, _ := json.Marshal(resp)
 		w.Write(data)
@@ -260,6 +267,7 @@ func (s *Server) completionHandler(w http.ResponseWriter, r *http.Request) {
 	// Encode image as base64 PNG
 	imageData, err := imagegen.EncodeImageBase64(img)
 	if err != nil {
+		slog.Warn("failed to encode image", "error", err)
 		resp := Response{Content: fmt.Sprintf("error encoding: %v", err), Done: true}
 		data, _ := json.Marshal(resp)
 		w.Write(data)
@@ -271,6 +279,8 @@ func (s *Server) completionHandler(w http.ResponseWriter, r *http.Request) {
 	img.Free()
 	mlx.ClearCache()
 	mlx.MetalResetPeakMemory()
+
+	slog.Info("image generation complete", "imageSize", len(imageData))
 
 	// Send final response with image data
 	resp := Response{
