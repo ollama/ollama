@@ -396,7 +396,6 @@ func (layer *TransformerBlock) Forward(ctx ml.Context, hiddenStates, positions, 
 
 	if outputs != nil {
 		hiddenStates = hiddenStates.Rows(ctx, outputs)
-		residual = residual.Rows(ctx, outputs)
 		shortcutOutput = shortcutOutput.Rows(ctx, outputs)
 	}
 
