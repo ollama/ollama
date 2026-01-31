@@ -8,12 +8,12 @@ import (
 	"testing"
 )
 
-func TestClawdbotIntegration(t *testing.T) {
-	c := &Clawdbot{}
+func TestOpenclawIntegration(t *testing.T) {
+	c := &Openclaw{}
 
 	t.Run("String", func(t *testing.T) {
-		if got := c.String(); got != "Clawdbot" {
-			t.Errorf("String() = %q, want %q", got, "Clawdbot")
+		if got := c.String(); got != "OpenClaw" {
+			t.Errorf("String() = %q, want %q", got, "OpenClaw")
 		}
 	})
 
@@ -26,13 +26,13 @@ func TestClawdbotIntegration(t *testing.T) {
 	})
 }
 
-func TestClawdbotEdit(t *testing.T) {
-	c := &Clawdbot{}
+func TestOpenclawEdit(t *testing.T) {
+	c := &Openclaw{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
-	configDir := filepath.Join(tmpDir, ".clawdbot")
-	configPath := filepath.Join(configDir, "clawdbot.json")
+	configDir := filepath.Join(tmpDir, ".openclaw")
+	configPath := filepath.Join(configDir, "openclaw.json")
 
 	cleanup := func() { os.RemoveAll(configDir) }
 
@@ -41,8 +41,8 @@ func TestClawdbotEdit(t *testing.T) {
 		if err := c.Edit([]string{"llama3.2"}); err != nil {
 			t.Fatal(err)
 		}
-		assertClawdbotModelExists(t, configPath, "llama3.2")
-		assertClawdbotPrimaryModel(t, configPath, "ollama/llama3.2")
+		assertOpenclawModelExists(t, configPath, "llama3.2")
+		assertOpenclawPrimaryModel(t, configPath, "ollama/llama3.2")
 	})
 
 	t.Run("multiple models - first is primary", func(t *testing.T) {
@@ -50,9 +50,9 @@ func TestClawdbotEdit(t *testing.T) {
 		if err := c.Edit([]string{"llama3.2", "mistral"}); err != nil {
 			t.Fatal(err)
 		}
-		assertClawdbotModelExists(t, configPath, "llama3.2")
-		assertClawdbotModelExists(t, configPath, "mistral")
-		assertClawdbotPrimaryModel(t, configPath, "ollama/llama3.2")
+		assertOpenclawModelExists(t, configPath, "llama3.2")
+		assertOpenclawModelExists(t, configPath, "mistral")
+		assertOpenclawPrimaryModel(t, configPath, "ollama/llama3.2")
 	})
 
 	t.Run("preserve other providers", func(t *testing.T) {
@@ -127,8 +127,8 @@ func TestClawdbotEdit(t *testing.T) {
 		c.Edit([]string{"llama3.2", "mistral"})
 		c.Edit([]string{"llama3.2"})
 
-		assertClawdbotModelExists(t, configPath, "llama3.2")
-		assertClawdbotModelNotExists(t, configPath, "mistral")
+		assertOpenclawModelExists(t, configPath, "llama3.2")
+		assertOpenclawModelNotExists(t, configPath, "mistral")
 	})
 
 	t.Run("empty models is no-op", func(t *testing.T) {
@@ -169,12 +169,12 @@ func TestClawdbotEdit(t *testing.T) {
 		if err := c.Edit([]string{"llama3.2"}); err != nil {
 			t.Fatal(err)
 		}
-		assertClawdbotModelExists(t, configPath, "llama3.2")
+		assertOpenclawModelExists(t, configPath, "llama3.2")
 	})
 }
 
-func TestClawdbotModels(t *testing.T) {
-	c := &Clawdbot{}
+func TestOpenclawModels(t *testing.T) {
+	c := &Openclaw{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
@@ -185,9 +185,9 @@ func TestClawdbotModels(t *testing.T) {
 	})
 
 	t.Run("returns all ollama models", func(t *testing.T) {
-		configDir := filepath.Join(tmpDir, ".clawdbot")
+		configDir := filepath.Join(tmpDir, ".openclaw")
 		os.MkdirAll(configDir, 0o755)
-		os.WriteFile(filepath.Join(configDir, "clawdbot.json"), []byte(`{
+		os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(`{
 			"models":{"providers":{"ollama":{"models":[
 				{"id":"llama3.2"},
 				{"id":"mistral"}
@@ -202,7 +202,7 @@ func TestClawdbotModels(t *testing.T) {
 }
 
 // Helper functions
-func assertClawdbotModelExists(t *testing.T, path, model string) {
+func assertOpenclawModelExists(t *testing.T, path, model string) {
 	t.Helper()
 	data, _ := os.ReadFile(path)
 	var cfg map[string]any
@@ -221,7 +221,7 @@ func assertClawdbotModelExists(t *testing.T, path, model string) {
 	t.Errorf("model %s not found", model)
 }
 
-func assertClawdbotModelNotExists(t *testing.T, path, model string) {
+func assertOpenclawModelNotExists(t *testing.T, path, model string) {
 	t.Helper()
 	data, _ := os.ReadFile(path)
 	var cfg map[string]any
@@ -239,7 +239,7 @@ func assertClawdbotModelNotExists(t *testing.T, path, model string) {
 	}
 }
 
-func assertClawdbotPrimaryModel(t *testing.T, path, expected string) {
+func assertOpenclawPrimaryModel(t *testing.T, path, expected string) {
 	t.Helper()
 	data, _ := os.ReadFile(path)
 	var cfg map[string]any
@@ -252,15 +252,15 @@ func assertClawdbotPrimaryModel(t *testing.T, path, expected string) {
 	}
 }
 
-func TestClawdbotPaths(t *testing.T) {
-	c := &Clawdbot{}
+func TestOpenclawPaths(t *testing.T) {
+	c := &Openclaw{}
 
 	t.Run("returns path when config exists", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
-		configDir := filepath.Join(tmpDir, ".clawdbot")
+		configDir := filepath.Join(tmpDir, ".openclaw")
 		os.MkdirAll(configDir, 0o755)
-		os.WriteFile(filepath.Join(configDir, "clawdbot.json"), []byte(`{}`), 0o644)
+		os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(`{}`), 0o644)
 
 		paths := c.Paths()
 		if len(paths) != 1 {
@@ -277,12 +277,12 @@ func TestClawdbotPaths(t *testing.T) {
 	})
 }
 
-func TestClawdbotModelsEdgeCases(t *testing.T) {
-	c := &Clawdbot{}
+func TestOpenclawModelsEdgeCases(t *testing.T) {
+	c := &Openclaw{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
-	configDir := filepath.Join(tmpDir, ".clawdbot")
-	configPath := filepath.Join(configDir, "clawdbot.json")
+	configDir := filepath.Join(tmpDir, ".openclaw")
+	configPath := filepath.Join(configDir, "openclaw.json")
 	cleanup := func() { os.RemoveAll(configDir) }
 
 	t.Run("corrupted JSON returns nil", func(t *testing.T) {
@@ -340,11 +340,11 @@ func TestClawdbotModelsEdgeCases(t *testing.T) {
 	})
 }
 
-func TestClawdbotEditSchemaFields(t *testing.T) {
-	c := &Clawdbot{}
+func TestOpenclawEditSchemaFields(t *testing.T) {
+	c := &Openclaw{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
-	configPath := filepath.Join(tmpDir, ".clawdbot", "clawdbot.json")
+	configPath := filepath.Join(tmpDir, ".openclaw", "openclaw.json")
 
 	if err := c.Edit([]string{"llama3.2"}); err != nil {
 		t.Fatal(err)
@@ -381,20 +381,20 @@ func TestClawdbotEditSchemaFields(t *testing.T) {
 	}
 }
 
-func TestClawdbotEditModelNames(t *testing.T) {
-	c := &Clawdbot{}
+func TestOpenclawEditModelNames(t *testing.T) {
+	c := &Openclaw{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
-	configPath := filepath.Join(tmpDir, ".clawdbot", "clawdbot.json")
-	cleanup := func() { os.RemoveAll(filepath.Join(tmpDir, ".clawdbot")) }
+	configPath := filepath.Join(tmpDir, ".openclaw", "openclaw.json")
+	cleanup := func() { os.RemoveAll(filepath.Join(tmpDir, ".openclaw")) }
 
 	t.Run("model with colon tag", func(t *testing.T) {
 		cleanup()
 		if err := c.Edit([]string{"llama3.2:70b"}); err != nil {
 			t.Fatal(err)
 		}
-		assertClawdbotModelExists(t, configPath, "llama3.2:70b")
-		assertClawdbotPrimaryModel(t, configPath, "ollama/llama3.2:70b")
+		assertOpenclawModelExists(t, configPath, "llama3.2:70b")
+		assertOpenclawPrimaryModel(t, configPath, "ollama/llama3.2:70b")
 	})
 
 	t.Run("model with slash", func(t *testing.T) {
@@ -402,8 +402,8 @@ func TestClawdbotEditModelNames(t *testing.T) {
 		if err := c.Edit([]string{"library/model:tag"}); err != nil {
 			t.Fatal(err)
 		}
-		assertClawdbotModelExists(t, configPath, "library/model:tag")
-		assertClawdbotPrimaryModel(t, configPath, "ollama/library/model:tag")
+		assertOpenclawModelExists(t, configPath, "library/model:tag")
+		assertOpenclawPrimaryModel(t, configPath, "ollama/library/model:tag")
 	})
 
 	t.Run("model with hyphen", func(t *testing.T) {
@@ -411,16 +411,16 @@ func TestClawdbotEditModelNames(t *testing.T) {
 		if err := c.Edit([]string{"test-model"}); err != nil {
 			t.Fatal(err)
 		}
-		assertClawdbotModelExists(t, configPath, "test-model")
+		assertOpenclawModelExists(t, configPath, "test-model")
 	})
 }
 
-func TestClawdbotEditAgentsPreservation(t *testing.T) {
-	c := &Clawdbot{}
+func TestOpenclawEditAgentsPreservation(t *testing.T) {
+	c := &Openclaw{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
-	configDir := filepath.Join(tmpDir, ".clawdbot")
-	configPath := filepath.Join(configDir, "clawdbot.json")
+	configDir := filepath.Join(tmpDir, ".openclaw")
+	configPath := filepath.Join(configDir, "openclaw.json")
 	cleanup := func() { os.RemoveAll(configDir) }
 
 	t.Run("preserve other agent defaults", func(t *testing.T) {
@@ -457,7 +457,7 @@ func TestClawdbotEditAgentsPreservation(t *testing.T) {
 	})
 }
 
-const testClawdbotFixture = `{
+const testOpenclawFixture = `{
   "theme": "dark",
   "mcp": {"servers": {"custom": {"enabled": true}}},
   "models": {
@@ -475,15 +475,15 @@ const testClawdbotFixture = `{
   }
 }`
 
-func TestClawdbotEdit_RoundTrip(t *testing.T) {
-	c := &Clawdbot{}
+func TestOpenclawEdit_RoundTrip(t *testing.T) {
+	c := &Openclaw{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
-	configDir := filepath.Join(tmpDir, ".clawdbot")
-	configPath := filepath.Join(configDir, "clawdbot.json")
+	configDir := filepath.Join(tmpDir, ".openclaw")
+	configPath := filepath.Join(configDir, "openclaw.json")
 
 	os.MkdirAll(configDir, 0o755)
-	os.WriteFile(configPath, []byte(testClawdbotFixture), 0o644)
+	os.WriteFile(configPath, []byte(testOpenclawFixture), 0o644)
 
 	if err := c.Edit([]string{"llama3.2", "mistral"}); err != nil {
 		t.Fatal(err)
@@ -521,15 +521,15 @@ func TestClawdbotEdit_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestClawdbotEdit_Idempotent(t *testing.T) {
-	c := &Clawdbot{}
+func TestOpenclawEdit_Idempotent(t *testing.T) {
+	c := &Openclaw{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
-	configDir := filepath.Join(tmpDir, ".clawdbot")
-	configPath := filepath.Join(configDir, "clawdbot.json")
+	configDir := filepath.Join(tmpDir, ".openclaw")
+	configPath := filepath.Join(configDir, "openclaw.json")
 
 	os.MkdirAll(configDir, 0o755)
-	os.WriteFile(configPath, []byte(testClawdbotFixture), 0o644)
+	os.WriteFile(configPath, []byte(testOpenclawFixture), 0o644)
 
 	c.Edit([]string{"llama3.2", "mistral"})
 	firstData, _ := os.ReadFile(configPath)
@@ -542,15 +542,15 @@ func TestClawdbotEdit_Idempotent(t *testing.T) {
 	}
 }
 
-func TestClawdbotEdit_MultipleConsecutiveEdits(t *testing.T) {
-	c := &Clawdbot{}
+func TestOpenclawEdit_MultipleConsecutiveEdits(t *testing.T) {
+	c := &Openclaw{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
-	configDir := filepath.Join(tmpDir, ".clawdbot")
-	configPath := filepath.Join(configDir, "clawdbot.json")
+	configDir := filepath.Join(tmpDir, ".openclaw")
+	configPath := filepath.Join(configDir, "openclaw.json")
 
 	os.MkdirAll(configDir, 0o755)
-	os.WriteFile(configPath, []byte(testClawdbotFixture), 0o644)
+	os.WriteFile(configPath, []byte(testOpenclawFixture), 0o644)
 
 	for i := range 10 {
 		models := []string{"model-a", "model-b"}
@@ -573,12 +573,12 @@ func TestClawdbotEdit_MultipleConsecutiveEdits(t *testing.T) {
 	}
 }
 
-func TestClawdbotEdit_BackupCreated(t *testing.T) {
-	c := &Clawdbot{}
+func TestOpenclawEdit_BackupCreated(t *testing.T) {
+	c := &Openclaw{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
-	configDir := filepath.Join(tmpDir, ".clawdbot")
-	configPath := filepath.Join(configDir, "clawdbot.json")
+	configDir := filepath.Join(tmpDir, ".openclaw")
+	configPath := filepath.Join(configDir, "openclaw.json")
 	backupDir := filepath.Join(os.TempDir(), "ollama-backups")
 
 	os.MkdirAll(configDir, 0o755)
@@ -590,7 +590,7 @@ func TestClawdbotEdit_BackupCreated(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	backups, _ := filepath.Glob(filepath.Join(backupDir, "clawdbot.json.*"))
+	backups, _ := filepath.Glob(filepath.Join(backupDir, "openclaw.json.*"))
 	foundBackup := false
 	for _, backup := range backups {
 		data, _ := os.ReadFile(backup)
@@ -605,11 +605,151 @@ func TestClawdbotEdit_BackupCreated(t *testing.T) {
 	}
 }
 
-func TestClawdbotEdit_CreatesDirectoryIfMissing(t *testing.T) {
-	c := &Clawdbot{}
+func TestOpenclawClawdbotAlias(t *testing.T) {
+	for _, alias := range []string{"clawdbot", "moltbot"} {
+		t.Run(alias+" alias resolves to Openclaw runner", func(t *testing.T) {
+			r, ok := integrations[alias]
+			if !ok {
+				t.Fatalf("%s not found in integrations", alias)
+			}
+			if _, ok := r.(*Openclaw); !ok {
+				t.Errorf("%s integration is %T, want *Openclaw", alias, r)
+			}
+		})
+
+		t.Run(alias+" is hidden from selector", func(t *testing.T) {
+			if !integrationAliases[alias] {
+				t.Errorf("%s should be in integrationAliases", alias)
+			}
+		})
+	}
+}
+
+func TestOpenclawLegacyPaths(t *testing.T) {
+	c := &Openclaw{}
+
+	t.Run("falls back to legacy clawdbot path", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		legacyDir := filepath.Join(tmpDir, ".clawdbot")
+		os.MkdirAll(legacyDir, 0o755)
+		os.WriteFile(filepath.Join(legacyDir, "clawdbot.json"), []byte(`{}`), 0o644)
+
+		paths := c.Paths()
+		if len(paths) != 1 {
+			t.Fatalf("expected 1 path, got %d", len(paths))
+		}
+		if paths[0] != filepath.Join(legacyDir, "clawdbot.json") {
+			t.Errorf("expected legacy path, got %s", paths[0])
+		}
+	})
+
+	t.Run("prefers new path over legacy", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		newDir := filepath.Join(tmpDir, ".openclaw")
+		legacyDir := filepath.Join(tmpDir, ".clawdbot")
+		os.MkdirAll(newDir, 0o755)
+		os.MkdirAll(legacyDir, 0o755)
+		os.WriteFile(filepath.Join(newDir, "openclaw.json"), []byte(`{}`), 0o644)
+		os.WriteFile(filepath.Join(legacyDir, "clawdbot.json"), []byte(`{}`), 0o644)
+
+		paths := c.Paths()
+		if len(paths) != 1 {
+			t.Fatalf("expected 1 path, got %d", len(paths))
+		}
+		if paths[0] != filepath.Join(newDir, "openclaw.json") {
+			t.Errorf("expected new path, got %s", paths[0])
+		}
+	})
+
+	t.Run("Models reads from legacy path", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		legacyDir := filepath.Join(tmpDir, ".clawdbot")
+		os.MkdirAll(legacyDir, 0o755)
+		os.WriteFile(filepath.Join(legacyDir, "clawdbot.json"), []byte(`{
+			"models":{"providers":{"ollama":{"models":[{"id":"llama3.2"}]}}}
+		}`), 0o644)
+
+		models := c.Models()
+		if len(models) != 1 || models[0] != "llama3.2" {
+			t.Errorf("expected [llama3.2], got %v", models)
+		}
+	})
+
+	t.Run("Models prefers new path over legacy", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		newDir := filepath.Join(tmpDir, ".openclaw")
+		legacyDir := filepath.Join(tmpDir, ".clawdbot")
+		os.MkdirAll(newDir, 0o755)
+		os.MkdirAll(legacyDir, 0o755)
+		os.WriteFile(filepath.Join(newDir, "openclaw.json"), []byte(`{
+			"models":{"providers":{"ollama":{"models":[{"id":"new-model"}]}}}
+		}`), 0o644)
+		os.WriteFile(filepath.Join(legacyDir, "clawdbot.json"), []byte(`{
+			"models":{"providers":{"ollama":{"models":[{"id":"legacy-model"}]}}}
+		}`), 0o644)
+
+		models := c.Models()
+		if len(models) != 1 || models[0] != "new-model" {
+			t.Errorf("expected [new-model], got %v", models)
+		}
+	})
+
+	t.Run("Edit reads new path over legacy when both exist", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		newDir := filepath.Join(tmpDir, ".openclaw")
+		legacyDir := filepath.Join(tmpDir, ".clawdbot")
+		os.MkdirAll(newDir, 0o755)
+		os.MkdirAll(legacyDir, 0o755)
+		os.WriteFile(filepath.Join(newDir, "openclaw.json"), []byte(`{"theme":"new"}`), 0o644)
+		os.WriteFile(filepath.Join(legacyDir, "clawdbot.json"), []byte(`{"theme":"legacy"}`), 0o644)
+
+		if err := c.Edit([]string{"llama3.2"}); err != nil {
+			t.Fatal(err)
+		}
+
+		data, _ := os.ReadFile(filepath.Join(newDir, "openclaw.json"))
+		var cfg map[string]any
+		json.Unmarshal(data, &cfg)
+		if cfg["theme"] != "new" {
+			t.Errorf("expected theme from new config, got %v", cfg["theme"])
+		}
+	})
+
+	t.Run("Edit migrates from legacy config", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		legacyDir := filepath.Join(tmpDir, ".clawdbot")
+		os.MkdirAll(legacyDir, 0o755)
+		os.WriteFile(filepath.Join(legacyDir, "clawdbot.json"), []byte(`{"theme":"dark"}`), 0o644)
+
+		if err := c.Edit([]string{"llama3.2"}); err != nil {
+			t.Fatal(err)
+		}
+
+		// Should write to new path
+		newPath := filepath.Join(tmpDir, ".openclaw", "openclaw.json")
+		data, err := os.ReadFile(newPath)
+		if err != nil {
+			t.Fatal("expected new config file to be created")
+		}
+		var cfg map[string]any
+		json.Unmarshal(data, &cfg)
+		if cfg["theme"] != "dark" {
+			t.Error("legacy theme setting was not migrated")
+		}
+	})
+}
+
+func TestOpenclawEdit_CreatesDirectoryIfMissing(t *testing.T) {
+	c := &Openclaw{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
-	configDir := filepath.Join(tmpDir, ".clawdbot")
+	configDir := filepath.Join(tmpDir, ".openclaw")
 
 	if _, err := os.Stat(configDir); !os.IsNotExist(err) {
 		t.Fatal("directory should not exist before test")

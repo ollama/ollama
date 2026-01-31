@@ -41,10 +41,18 @@ type Editor interface {
 // integrations is the registry of available integrations.
 var integrations = map[string]Runner{
 	"claude":   &Claude{},
-	"clawdbot": &Clawdbot{},
+	"clawdbot": &Openclaw{},
 	"codex":    &Codex{},
+	"moltbot":  &Openclaw{},
 	"droid":    &Droid{},
 	"opencode": &OpenCode{},
+	"openclaw": &Openclaw{},
+}
+
+// integrationAliases are hidden from the interactive selector but work as CLI arguments.
+var integrationAliases = map[string]bool{
+	"clawdbot": true,
+	"moltbot":  true,
 }
 
 func selectIntegration() (string, error) {
@@ -55,6 +63,9 @@ func selectIntegration() (string, error) {
 	names := slices.Sorted(maps.Keys(integrations))
 	var items []selectItem
 	for _, name := range names {
+		if integrationAliases[name] {
+			continue
+		}
 		r := integrations[name]
 		description := r.String()
 		if conn, err := loadIntegration(name); err == nil && len(conn.Models) > 0 {
@@ -243,10 +254,10 @@ func LaunchCmd(checkServerHeartbeat func(cmd *cobra.Command, args []string) erro
 
 Supported integrations:
   claude    Claude Code
-  clawdbot  Clawdbot
   codex     Codex
   droid     Droid
   opencode  OpenCode
+  openclaw  OpenClaw (aliases: clawdbot, moltbot)
 
 Examples:
   ollama launch
