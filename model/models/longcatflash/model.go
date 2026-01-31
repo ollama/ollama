@@ -29,7 +29,6 @@ type Options struct {
 	numHeads,
 	numKVHeads int
 
-	// optional explicit head sizes
 	keyLength,
 	valueLength int
 
@@ -40,7 +39,8 @@ type Options struct {
 	qkNopeHeadDim int
 
 	numExperts,
-	numExpertsUsed int
+	numExpertsUsed,
+	numRoutedExperts int
 
 	routedScalingFactor float32
 
@@ -54,19 +54,6 @@ type Options struct {
 	kqScale        float64
 	mlaScaleQLoRA  float32
 	mlaScaleKVLoRA float32
-}
-
-func (o Options) headDim() int {
-	if o.keyLength != 0 {
-		return o.keyLength
-	}
-	if o.valueLength != 0 {
-		return o.valueLength
-	}
-	if o.numHeads != 0 {
-		return o.hiddenSize / o.numHeads
-	}
-	return o.hiddenSize
 }
 
 func (o Options) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions ml.Tensor) ml.Tensor {
@@ -92,6 +79,10 @@ func New(c fs.Config) (model.Model, error) {
 	}
 
 	numExperts := int(c.Uint("expert_count"))
+	numRoutedExperts := int(c.Uint("expert_routed_count"))
+	if numRoutedExperts <= 0 {
+		numRoutedExperts = numExperts
+	}
 	numExpertsUsed := int(c.Uint("expert_used_count"))
 	if numExpertsUsed > numExperts {
 		numExpertsUsed = numExperts
@@ -155,6 +146,7 @@ func New(c fs.Config) (model.Model, error) {
 			qkNopeHeadDim:         qkNopeHeadDim,
 			numExperts:            numExperts,
 			numExpertsUsed:        numExpertsUsed,
+			numRoutedExperts:      numRoutedExperts,
 			routedScalingFactor:   c.Float("expert_weights_scale"),
 			eps:                   c.Float("attention.layer_norm_rms_epsilon"),
 			ropeBase:              c.Float("rope.freq_base"),
@@ -285,11 +277,11 @@ type TopKRouter struct {
 func (router *TopKRouter) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options) (ml.Tensor, ml.Tensor) {
 	routerLogits := router.Classifier.Forward(ctx, hiddenStates)
 	scores := routerLogits.Softmax(ctx)
+	scoresForChoice := scores
 	if router.ScoreCorrectionBias != nil {
-		scores = scores.Add(ctx, router.ScoreCorrectionBias)
+		scoresForChoice = scores.Add(ctx, router.ScoreCorrectionBias)
 	}
-
-	topKIndices := scores.TopK(ctx, opts.numExpertsUsed)
+	topKIndices := scoresForChoice.TopK(ctx, opts.numExpertsUsed)
 	topKWeights := scores.Reshape(ctx, 1, opts.numExperts, hiddenStates.Dim(1)).Rows(ctx, topKIndices)
 	topKWeights = topKWeights.Contiguous(ctx).Scale(ctx, float64(opts.routedScalingFactor))
 	return topKWeights, topKIndices
@@ -303,18 +295,45 @@ type Experts struct {
 func (experts *Experts) Forward(ctx ml.Context, hiddenStates, topKIndices, topKWeights ml.Tensor, opts *Options) ml.Tensor {
 	hiddenStates = hiddenStates.Reshape(ctx, hiddenStates.Dim(0), 1, hiddenStates.Dim(1))
 
+	var downIndices ml.Tensor = topKIndices
+	var routedMask, zeroMask ml.Tensor
+	if opts.numRoutedExperts > 0 && opts.numRoutedExperts < opts.numExperts {
+		topKIndicesF32 := topKIndices.Cast(ctx, ml.DTypeF32)
+		numRoutedConst := ctx.Input().FromFloats([]float32{float32(opts.numRoutedExperts)}, 1)
+		routedMask = numRoutedConst.Sub(ctx, topKIndicesF32).Step(ctx)
+		zeroMask = topKIndicesF32.Sub(ctx, numRoutedConst).Step(ctx)
+		downIndices = topKIndicesF32.Mul(ctx, routedMask).Cast(ctx, ml.DTypeI32)
+	}
+
 	gateUp := experts.GateUp.Forward(ctx, hiddenStates, topKIndices)
 	gateUpChunks := gateUp.ChunkSections(ctx, 0, gateUp.Dim(0)/2, gateUp.Dim(0)/2)
 	gate := gateUpChunks[0]
 	up := gateUpChunks[1]
 
 	hiddenStates = gate.SILU(ctx, up)
-	expertsOut := experts.Down.Forward(ctx, hiddenStates, topKIndices)
+	expertsOut := experts.Down.Forward(ctx, hiddenStates, downIndices)
 	expertsOut = expertsOut.Mul(ctx, topKWeights)
+
+	if routedMask != nil {
+		routedMask = routedMask.Reshape(ctx, routedMask.Dim(0), 1, routedMask.Dim(1))
+		expertsOut = expertsOut.Mul(ctx, routedMask)
+	}
 
 	nextStates := expertsOut.View(ctx, 0, expertsOut.Dim(0), expertsOut.Stride(2), expertsOut.Dim(2))
 	for i := 1; i < opts.numExpertsUsed; i++ {
 		nextStates = nextStates.Add(ctx, expertsOut.View(ctx, i*expertsOut.Stride(1), expertsOut.Dim(0), expertsOut.Stride(2), expertsOut.Dim(2)))
+	}
+
+	if zeroMask != nil {
+		zeroWeights := topKWeights.Mul(ctx, zeroMask.Reshape(ctx, 1, zeroMask.Dim(0), zeroMask.Dim(1)))
+		zeroWeightsPerToken := zeroWeights.View(ctx, 0, zeroWeights.Dim(0), zeroWeights.Stride(1), zeroWeights.Dim(2))
+		for i := 1; i < opts.numExpertsUsed; i++ {
+			zeroWeightsPerToken = zeroWeightsPerToken.Add(ctx, zeroWeights.View(ctx, i*zeroWeights.Stride(1), zeroWeights.Dim(0), zeroWeights.Stride(1), zeroWeights.Dim(2)))
+		}
+		zeroWeightsPerToken = zeroWeightsPerToken.Reshape(ctx, zeroWeightsPerToken.Dim(1), 1)
+		hiddenOrig := hiddenStates.Reshape(ctx, hiddenStates.Dim(0), hiddenStates.Dim(2))
+		zeroContrib := hiddenOrig.Mul(ctx, zeroWeightsPerToken)
+		nextStates = nextStates.Add(ctx, zeroContrib)
 	}
 
 	return nextStates

@@ -62,6 +62,7 @@ func (m *longcatflashModel) KV(t *Tokenizer) KV {
 	kv["longcatflash.rope.scaling.type"] = cmp.Or(m.RopeScaling.Type, "default")
 	kv["longcatflash.rope.scaling.yarn_log_multiplier"] = 0.1 * m.RopeScaling.MScaleAllDim
 	kv["longcatflash.expert_count"] = m.ExpertCount + m.ZeroExpertNum
+	kv["longcatflash.expert_routed_count"] = m.ExpertCount
 	kv["longcatflash.expert_used_count"] = m.ExpertUsedCount
 	kv["longcatflash.expert_weights_scale"] = cmp.Or(m.RoutedScalingFactor, 1)
 	return kv

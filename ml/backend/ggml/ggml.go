@@ -1777,6 +1777,13 @@ func (t *Tensor) Sqrt(ctx ml.Context) ml.Tensor {
 	}
 }
 
+func (t *Tensor) Step(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_step(ctx.(*Context).ctx, t.t),
+	}
+}
+
 func (t *Tensor) Interpolate(ctx ml.Context, dims [4]int, samplingMode ml.SamplingMode) ml.Tensor {
 	var mode C.uint32_t
 	switch samplingMode {
