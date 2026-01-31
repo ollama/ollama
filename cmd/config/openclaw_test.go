@@ -606,21 +606,23 @@ func TestOpenclawEdit_BackupCreated(t *testing.T) {
 }
 
 func TestOpenclawClawdbotAlias(t *testing.T) {
-	t.Run("clawdbot alias resolves to Openclaw runner", func(t *testing.T) {
-		r, ok := integrations["clawdbot"]
-		if !ok {
-			t.Fatal("clawdbot not found in integrations")
-		}
-		if _, ok := r.(*Openclaw); !ok {
-			t.Errorf("clawdbot integration is %T, want *Openclaw", r)
-		}
-	})
+	for _, alias := range []string{"clawdbot", "moltbot"} {
+		t.Run(alias+" alias resolves to Openclaw runner", func(t *testing.T) {
+			r, ok := integrations[alias]
+			if !ok {
+				t.Fatalf("%s not found in integrations", alias)
+			}
+			if _, ok := r.(*Openclaw); !ok {
+				t.Errorf("%s integration is %T, want *Openclaw", alias, r)
+			}
+		})
 
-	t.Run("clawdbot is hidden from selector", func(t *testing.T) {
-		if !integrationAliases["clawdbot"] {
-			t.Error("clawdbot should be in integrationAliases")
-		}
-	})
+		t.Run(alias+" is hidden from selector", func(t *testing.T) {
+			if !integrationAliases[alias] {
+				t.Errorf("%s should be in integrationAliases", alias)
+			}
+		})
+	}
 }
 
 func TestOpenclawLegacyPaths(t *testing.T) {

@@ -43,6 +43,7 @@ var integrations = map[string]Runner{
 	"claude":   &Claude{},
 	"clawdbot": &Openclaw{},
 	"codex":    &Codex{},
+	"moltbot":  &Openclaw{},
 	"droid":    &Droid{},
 	"opencode": &OpenCode{},
 	"openclaw": &Openclaw{},
@@ -51,6 +52,7 @@ var integrations = map[string]Runner{
 // integrationAliases are hidden from the interactive selector but work as CLI arguments.
 var integrationAliases = map[string]bool{
 	"clawdbot": true,
+	"moltbot":  true,
 }
 
 func selectIntegration() (string, error) {
@@ -255,7 +257,7 @@ Supported integrations:
   codex     Codex
   droid     Droid
   opencode  OpenCode
-  openclaw  OpenClaw (alias: clawdbot)
+  openclaw  OpenClaw (aliases: clawdbot, moltbot)
 
 Examples:
   ollama launch
