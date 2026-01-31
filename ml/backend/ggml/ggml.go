@@ -788,7 +788,12 @@ func (c *Context) Layer(i int) ml.Context {
 		}
 	}
 
-	return c
+	// Fallback for models with multiple cache layers per backend layer (e.g. 2 attn per block).
+	if i > 0 {
+		return c.Layer(i / 2)
+	}
+
+	return c.Input()
 }
 
 func (c *Context) Forward(tensors ...ml.Tensor) ml.Context {

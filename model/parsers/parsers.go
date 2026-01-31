@@ -75,6 +75,8 @@ func ParserForName(name string) Parser {
 		return &LFM2Parser{hasThinkingSupport: false}
 	case "lfm2-thinking":
 		return &LFM2Parser{hasThinkingSupport: true}
+	case "longcatflash":
+		return &LongcatParser{}
 	default:
 		return nil
 	}

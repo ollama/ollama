@@ -315,6 +315,10 @@ func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 		conv = &glm4MoeLiteModel{}
 	case "Lfm2ForCausalLM":
 		conv = &lfm2Model{}
+	case "LongcatFlashForCausalLM":
+		conv = &longcatflashModel{}
+	case "LongcatFlashNgramForCausalLM":
+		conv = &longcatflashModel{}
 	default:
 		return nil, nil, fmt.Errorf("unsupported architecture %q", p.Architectures[0])
 	}
