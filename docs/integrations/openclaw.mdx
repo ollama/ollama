@@ -1,12 +1,12 @@
 ---
-title: Openclaw
+title: OpenClaw
 ---
 
-Openclaw is a personal AI assistant that runs on your own devices. It bridges messaging services (WhatsApp, Telegram, Slack, Discord, iMessage, and more) to AI coding agents through a centralized gateway.
+OpenClaw is a personal AI assistant that runs on your own devices. It bridges messaging services (WhatsApp, Telegram, Slack, Discord, iMessage, and more) to AI coding agents through a centralized gateway.
 
 ## Install
 
-Install [Openclaw](https://openclaw.ai/) 
+Install [OpenClaw](https://openclaw.ai/) 
 
 ```bash
 npm install -g openclaw@latest
@@ -18,7 +18,7 @@ Then run the onboarding wizard:
 openclaw onboard --install-daemon
 ```
 
-<Note>Openclaw requires a larger context window. It is recommended to use a context window of at least 64k tokens. See [Context length](/context-length) for more information.</Note>
+<Note>OpenClaw requires a larger context window. It is recommended to use a context window of at least 64k tokens. See [Context length](/context-length) for more information.</Note>
 
 ## Usage with Ollama
 
@@ -28,7 +28,9 @@ openclaw onboard --install-daemon
 ollama launch openclaw
 ```
 
-This configures Openclaw to use Ollama and starts the gateway.
+<Note>Previously known as Clawdbot. `ollama launch clawdbot` still works as an alias.</Note>
+
+This configures OpenClaw to use Ollama and starts the gateway.
 If the gateway is already running, no changes need to be made as the gateway will auto-reload the changes. 
 
 

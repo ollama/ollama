@@ -12,8 +12,8 @@ func TestOpenclawIntegration(t *testing.T) {
 	c := &Openclaw{}
 
 	t.Run("String", func(t *testing.T) {
-		if got := c.String(); got != "Openclaw" {
-			t.Errorf("String() = %q, want %q", got, "Openclaw")
+		if got := c.String(); got != "OpenClaw" {
+			t.Errorf("String() = %q, want %q", got, "OpenClaw")
 		}
 	})
 
@@ -603,6 +603,144 @@ func TestOpenclawEdit_BackupCreated(t *testing.T) {
 	if !foundBackup {
 		t.Error("backup with original content not found")
 	}
+}
+
+func TestOpenclawClawdbotAlias(t *testing.T) {
+	t.Run("clawdbot alias resolves to Openclaw runner", func(t *testing.T) {
+		r, ok := integrations["clawdbot"]
+		if !ok {
+			t.Fatal("clawdbot not found in integrations")
+		}
+		if _, ok := r.(*Openclaw); !ok {
+			t.Errorf("clawdbot integration is %T, want *Openclaw", r)
+		}
+	})
+
+	t.Run("clawdbot is hidden from selector", func(t *testing.T) {
+		if !integrationAliases["clawdbot"] {
+			t.Error("clawdbot should be in integrationAliases")
+		}
+	})
+}
+
+func TestOpenclawLegacyPaths(t *testing.T) {
+	c := &Openclaw{}
+
+	t.Run("falls back to legacy clawdbot path", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		legacyDir := filepath.Join(tmpDir, ".clawdbot")
+		os.MkdirAll(legacyDir, 0o755)
+		os.WriteFile(filepath.Join(legacyDir, "clawdbot.json"), []byte(`{}`), 0o644)
+
+		paths := c.Paths()
+		if len(paths) != 1 {
+			t.Fatalf("expected 1 path, got %d", len(paths))
+		}
+		if paths[0] != filepath.Join(legacyDir, "clawdbot.json") {
+			t.Errorf("expected legacy path, got %s", paths[0])
+		}
+	})
+
+	t.Run("prefers new path over legacy", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		newDir := filepath.Join(tmpDir, ".openclaw")
+		legacyDir := filepath.Join(tmpDir, ".clawdbot")
+		os.MkdirAll(newDir, 0o755)
+		os.MkdirAll(legacyDir, 0o755)
+		os.WriteFile(filepath.Join(newDir, "openclaw.json"), []byte(`{}`), 0o644)
+		os.WriteFile(filepath.Join(legacyDir, "clawdbot.json"), []byte(`{}`), 0o644)
+
+		paths := c.Paths()
+		if len(paths) != 1 {
+			t.Fatalf("expected 1 path, got %d", len(paths))
+		}
+		if paths[0] != filepath.Join(newDir, "openclaw.json") {
+			t.Errorf("expected new path, got %s", paths[0])
+		}
+	})
+
+	t.Run("Models reads from legacy path", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		legacyDir := filepath.Join(tmpDir, ".clawdbot")
+		os.MkdirAll(legacyDir, 0o755)
+		os.WriteFile(filepath.Join(legacyDir, "clawdbot.json"), []byte(`{
+			"models":{"providers":{"ollama":{"models":[{"id":"llama3.2"}]}}}
+		}`), 0o644)
+
+		models := c.Models()
+		if len(models) != 1 || models[0] != "llama3.2" {
+			t.Errorf("expected [llama3.2], got %v", models)
+		}
+	})
+
+	t.Run("Models prefers new path over legacy", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		newDir := filepath.Join(tmpDir, ".openclaw")
+		legacyDir := filepath.Join(tmpDir, ".clawdbot")
+		os.MkdirAll(newDir, 0o755)
+		os.MkdirAll(legacyDir, 0o755)
+		os.WriteFile(filepath.Join(newDir, "openclaw.json"), []byte(`{
+			"models":{"providers":{"ollama":{"models":[{"id":"new-model"}]}}}
+		}`), 0o644)
+		os.WriteFile(filepath.Join(legacyDir, "clawdbot.json"), []byte(`{
+			"models":{"providers":{"ollama":{"models":[{"id":"legacy-model"}]}}}
+		}`), 0o644)
+
+		models := c.Models()
+		if len(models) != 1 || models[0] != "new-model" {
+			t.Errorf("expected [new-model], got %v", models)
+		}
+	})
+
+	t.Run("Edit reads new path over legacy when both exist", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		newDir := filepath.Join(tmpDir, ".openclaw")
+		legacyDir := filepath.Join(tmpDir, ".clawdbot")
+		os.MkdirAll(newDir, 0o755)
+		os.MkdirAll(legacyDir, 0o755)
+		os.WriteFile(filepath.Join(newDir, "openclaw.json"), []byte(`{"theme":"new"}`), 0o644)
+		os.WriteFile(filepath.Join(legacyDir, "clawdbot.json"), []byte(`{"theme":"legacy"}`), 0o644)
+
+		if err := c.Edit([]string{"llama3.2"}); err != nil {
+			t.Fatal(err)
+		}
+
+		data, _ := os.ReadFile(filepath.Join(newDir, "openclaw.json"))
+		var cfg map[string]any
+		json.Unmarshal(data, &cfg)
+		if cfg["theme"] != "new" {
+			t.Errorf("expected theme from new config, got %v", cfg["theme"])
+		}
+	})
+
+	t.Run("Edit migrates from legacy config", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		legacyDir := filepath.Join(tmpDir, ".clawdbot")
+		os.MkdirAll(legacyDir, 0o755)
+		os.WriteFile(filepath.Join(legacyDir, "clawdbot.json"), []byte(`{"theme":"dark"}`), 0o644)
+
+		if err := c.Edit([]string{"llama3.2"}); err != nil {
+			t.Fatal(err)
+		}
+
+		// Should write to new path
+		newPath := filepath.Join(tmpDir, ".openclaw", "openclaw.json")
+		data, err := os.ReadFile(newPath)
+		if err != nil {
+			t.Fatal("expected new config file to be created")
+		}
+		var cfg map[string]any
+		json.Unmarshal(data, &cfg)
+		if cfg["theme"] != "dark" {
+			t.Error("legacy theme setting was not migrated")
+		}
+	})
 }
 
 func TestOpenclawEdit_CreatesDirectoryIfMissing(t *testing.T) {

@@ -15,24 +15,30 @@ import (
 
 type Openclaw struct{}
 
-func (c *Openclaw) String() string { return "Openclaw" }
+func (c *Openclaw) String() string { return "OpenClaw" }
 
 const ansiGreen = "\033[32m"
 
 func (c *Openclaw) Run(model string) error {
-	if _, err := exec.LookPath("openclaw"); err != nil {
-		return fmt.Errorf("openclaw is not installed, install from https://docs.openclaw.ai")
+	bin := "openclaw"
+	if _, err := exec.LookPath(bin); err != nil {
+		bin = "clawdbot"
+		if _, err := exec.LookPath(bin); err != nil {
+			return fmt.Errorf("openclaw is not installed, install from https://docs.openclaw.ai")
+		}
 	}
 
 	models := []string{model}
 	if config, err := loadIntegration("openclaw"); err == nil && len(config.Models) > 0 {
+		models = config.Models
+	} else if config, err := loadIntegration("clawdbot"); err == nil && len(config.Models) > 0 {
 		models = config.Models
 	}
 	if err := c.Edit(models); err != nil {
 		return fmt.Errorf("setup failed: %w", err)
 	}
 
-	cmd := exec.Command("openclaw", "gateway")
+	cmd := exec.Command(bin, "gateway")
 	cmd.Stdin = os.Stdin
 
 	// Capture output to detect "already running" message
@@ -42,7 +48,7 @@ func (c *Openclaw) Run(model string) error {
 
 	err := cmd.Run()
 	if err != nil && strings.Contains(outputBuf.String(), "Gateway already running") {
-		fmt.Fprintf(os.Stderr, "%sOpenclaw has been configured with Ollama. Gateway is already running.%s\n", ansiGreen, ansiReset)
+		fmt.Fprintf(os.Stderr, "%sOpenClaw has been configured with Ollama. Gateway is already running.%s\n", ansiGreen, ansiReset)
 		return nil
 	}
 	return err
@@ -53,6 +59,10 @@ func (c *Openclaw) Paths() []string {
 	p := filepath.Join(home, ".openclaw", "openclaw.json")
 	if _, err := os.Stat(p); err == nil {
 		return []string{p}
+	}
+	legacy := filepath.Join(home, ".clawdbot", "clawdbot.json")
+	if _, err := os.Stat(legacy); err == nil {
+		return []string{legacy}
 	}
 	return nil
 }
@@ -68,6 +78,7 @@ func (c *Openclaw) Edit(models []string) error {
 	}
 
 	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	legacyPath := filepath.Join(home, ".clawdbot", "clawdbot.json")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		return err
 	}
@@ -75,6 +86,8 @@ func (c *Openclaw) Edit(models []string) error {
 	// Read into map[string]any to preserve unknown fields
 	config := make(map[string]any)
 	if data, err := os.ReadFile(configPath); err == nil {
+		_ = json.Unmarshal(data, &config)
+	} else if data, err := os.ReadFile(legacyPath); err == nil {
 		_ = json.Unmarshal(data, &config)
 	}
 
@@ -175,7 +188,10 @@ func (c *Openclaw) Models() []string {
 
 	config, err := readJSONFile(filepath.Join(home, ".openclaw", "openclaw.json"))
 	if err != nil {
-		return nil
+		config, err = readJSONFile(filepath.Join(home, ".clawdbot", "clawdbot.json"))
+		if err != nil {
+			return nil
+		}
 	}
 
 	modelsSection, _ := config["models"].(map[string]any)
