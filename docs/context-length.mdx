@@ -27,6 +27,11 @@ If editing the context length for Ollama is not possible, the context length can
 OLLAMA_CONTEXT_LENGTH=64000 ollama serve
 ```
 
+k/m/K/M in human-readable format is supported. (k = 1000, K = 1024)
+```
+OLLAMA_CONTEXT_LENGTH=32k ollama serve
+```
+
 ### Check allocated context length and model offloading
 For best performance, use the maximum context length for a model, and avoid offloading the model to CPU. Verify the split under `PROCESSOR` using `ollama ps`.
 ```

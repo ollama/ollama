@@ -201,7 +201,7 @@ var (
 	// Enable the new Ollama engine
 	NewEngine = Bool("OLLAMA_NEW_ENGINE")
 	// ContextLength sets the default context length
-	ContextLength = Uint("OLLAMA_CONTEXT_LENGTH", 4096)
+	ContextLength = HumanReadableUint("OLLAMA_CONTEXT_LENGTH", 4096)
 	// Auth enables authentication between the Ollama client and server
 	UseAuth = Bool("OLLAMA_AUTH")
 	// Enable Vulkan backend
@@ -229,6 +229,55 @@ func Uint(key string, defaultValue uint) func() uint {
 	return func() uint {
 		if s := Var(key); s != "" {
 			if n, err := strconv.ParseUint(s, 10, 64); err != nil {
+				slog.Warn("invalid environment variable, using default", "key", key, "value", s, "default", defaultValue)
+			} else {
+				return uint(n)
+			}
+		}
+
+		return defaultValue
+	}
+}
+
+func parseHumanReadableUint(s string) (uint64, error) {
+	if n, err := strconv.ParseUint(s, 10, 64); err == nil {
+		return n, nil
+	}
+
+	if len(s) < 2 {
+		return 0, fmt.Errorf("value too short for human-readable format")
+	}
+
+	numPart := s[:len(s)-1]
+	suffix := s[len(s)-1:]
+
+	var multiplier uint64
+
+	switch suffix {
+	case "k":
+		multiplier = 1000
+	case "K":
+		multiplier = 1024
+	case "m":
+		multiplier = 1000 * 1000
+	case "M":
+		multiplier = 1024 * 1024
+	default:
+		return 0, fmt.Errorf("unsupported suffix: %s", suffix)
+	}
+
+	base, err := strconv.ParseUint(numPart, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid numeric part: %s", numPart)
+	}
+
+	return base * multiplier, nil
+}
+
+func HumanReadableUint(key string, defaultValue uint) func() uint {
+	return func() uint {
+		if s := Var(key); s != "" {
+			if n, err := parseHumanReadableUint(s); err != nil {
 				slog.Warn("invalid environment variable, using default", "key", key, "value", s, "default", defaultValue)
 			} else {
 				return uint(n)
