@@ -12,6 +12,7 @@ import (
 	_ "github.com/ollama/ollama/model/models/lfm2"
 	_ "github.com/ollama/ollama/model/models/llama"
 	_ "github.com/ollama/ollama/model/models/llama4"
+	_ "github.com/ollama/ollama/model/models/longcatflash"
 	_ "github.com/ollama/ollama/model/models/mistral3"
 	_ "github.com/ollama/ollama/model/models/mllama"
 	_ "github.com/ollama/ollama/model/models/nomicbert"
