@@ -763,3 +763,116 @@ func TestOpenclawEdit_CreatesDirectoryIfMissing(t *testing.T) {
 		t.Fatal("directory was not created")
 	}
 }
+
+func TestOpenclawOnboarded(t *testing.T) {
+	c := &Openclaw{}
+
+	t.Run("returns false when no config exists", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		if c.onboarded() {
+			t.Error("expected false when no config exists")
+		}
+	})
+
+	t.Run("returns false when config exists but no wizard section", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		configDir := filepath.Join(tmpDir, ".openclaw")
+		os.MkdirAll(configDir, 0o755)
+		os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(`{"theme":"dark"}`), 0o644)
+
+		if c.onboarded() {
+			t.Error("expected false when no wizard section")
+		}
+	})
+
+	t.Run("returns false when wizard section exists but no lastRunAt", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		configDir := filepath.Join(tmpDir, ".openclaw")
+		os.MkdirAll(configDir, 0o755)
+		os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(`{"wizard":{}}`), 0o644)
+
+		if c.onboarded() {
+			t.Error("expected false when wizard.lastRunAt is missing")
+		}
+	})
+
+	t.Run("returns false when wizard.lastRunAt is empty string", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		configDir := filepath.Join(tmpDir, ".openclaw")
+		os.MkdirAll(configDir, 0o755)
+		os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(`{"wizard":{"lastRunAt":""}}`), 0o644)
+
+		if c.onboarded() {
+			t.Error("expected false when wizard.lastRunAt is empty")
+		}
+	})
+
+	t.Run("returns true when wizard.lastRunAt is set", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		configDir := filepath.Join(tmpDir, ".openclaw")
+		os.MkdirAll(configDir, 0o755)
+		os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(`{"wizard":{"lastRunAt":"2024-01-01T00:00:00Z"}}`), 0o644)
+
+		if !c.onboarded() {
+			t.Error("expected true when wizard.lastRunAt is set")
+		}
+	})
+
+	t.Run("checks legacy clawdbot path", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		legacyDir := filepath.Join(tmpDir, ".clawdbot")
+		os.MkdirAll(legacyDir, 0o755)
+		os.WriteFile(filepath.Join(legacyDir, "clawdbot.json"), []byte(`{"wizard":{"lastRunAt":"2024-01-01T00:00:00Z"}}`), 0o644)
+
+		if !c.onboarded() {
+			t.Error("expected true when legacy config has wizard.lastRunAt")
+		}
+	})
+
+	t.Run("prefers new path over legacy", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		newDir := filepath.Join(tmpDir, ".openclaw")
+		legacyDir := filepath.Join(tmpDir, ".clawdbot")
+		os.MkdirAll(newDir, 0o755)
+		os.MkdirAll(legacyDir, 0o755)
+		// New path has no wizard marker
+		os.WriteFile(filepath.Join(newDir, "openclaw.json"), []byte(`{}`), 0o644)
+		// Legacy has wizard marker
+		os.WriteFile(filepath.Join(legacyDir, "clawdbot.json"), []byte(`{"wizard":{"lastRunAt":"2024-01-01T00:00:00Z"}}`), 0o644)
+
+		if c.onboarded() {
+			t.Error("expected false - should prefer new path which has no wizard marker")
+		}
+	})
+
+	t.Run("handles corrupted JSON gracefully", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		configDir := filepath.Join(tmpDir, ".openclaw")
+		os.MkdirAll(configDir, 0o755)
+		os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(`{corrupted`), 0o644)
+
+		if c.onboarded() {
+			t.Error("expected false for corrupted JSON")
+		}
+	})
+
+	t.Run("handles wrong type for wizard section", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		configDir := filepath.Join(tmpDir, ".openclaw")
+		os.MkdirAll(configDir, 0o755)
+		os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(`{"wizard":"not a map"}`), 0o644)
+
+		if c.onboarded() {
+			t.Error("expected false when wizard is wrong type")
+		}
+	})
+}
