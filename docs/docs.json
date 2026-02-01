@@ -71,6 +71,10 @@
     {
       "source": "/api",
       "destination": "/api/introduction"
+    },
+    {
+      "source": "/integrations/clawdbot",
+      "destination": "/integrations/openclaw"
     }
   ],
   "navigation": {
