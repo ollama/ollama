@@ -41,7 +41,7 @@ struct {
     void *pdh_dll_handle;
     // DXGI Functions
     HRESULT (*CreateDXGIFactory1)(REFIID riid, void **ppFactory);
-    // PDH functions  
+    // PDH functions
     PDH_STATUS (*PdhOpenQueryW)(LPCWSTR szDataSource, DWORD_PTR dwUserData, PDH_HQUERY *phQuery);
     PDH_STATUS (*PdhAddCounterW)(PDH_HQUERY hQuery, LPCWSTR szFullCounterPath, DWORD_PTR dwUserData, PDH_HCOUNTER *phCounter);
     PDH_STATUS (*PdhCollectQueryData)(PDH_HQUERY hQuery);
@@ -96,7 +96,7 @@ static std::vector<GpuInfo> get_dxgi_gpu_infos() {
         while (pFactory->EnumAdapters1(i, &pAdapter) != DXGI_ERROR_NOT_FOUND) {
             DXGI_ADAPTER_DESC1 desc;
             pAdapter->GetDesc1(&desc);
-            
+
             // Get all the GPU adapter info
             GpuInfo info;
             fetch_dxgi_adapter_desc1(desc, &info);
@@ -197,7 +197,7 @@ extern "C" {
         dll_functions.PdhCollectQueryData = (PDH_STATUS (*)(PDH_HQUERY hQuery)) GetProcAddress((HMODULE)(dll_functions.pdh_dll_handle), "PdhCollectQueryData");
         dll_functions.PdhGetFormattedCounterValue = (PDH_STATUS (*)(PDH_HCOUNTER hCounter, DWORD dwFormat, LPDWORD lpdwType, PPDH_FMT_COUNTERVALUE pValue)) GetProcAddress((HMODULE)(dll_functions.pdh_dll_handle), "PdhGetFormattedCounterValue");
         dll_functions.PdhCloseQuery = (PDH_STATUS (*)(PDH_HQUERY hQuery)) GetProcAddress((HMODULE)(dll_functions.pdh_dll_handle), "PdhCloseQuery");
-    
+
         SetErrorMode(old_mode); // set old mode before any return
 
         // Check if any function pointers are NULL (not found)
@@ -209,7 +209,7 @@ extern "C" {
             dll_functions.pdh_dll_handle = NULL;
             return ERROR_PROC_NOT_FOUND;
         }
-    
+
         // No other initializations needed, successfully loaded the libraries and functions!
         return ERROR_SUCCESS;
     }

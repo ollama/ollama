@@ -72,6 +72,10 @@ uint32_t llama_hparams::n_embd_inp() const {
     return n_embd_inp;
 }
 
+uint32_t llama_hparams::n_embd_out() const {
+    return n_embd_out_impl > 0 ? n_embd_out_impl : n_embd;
+}
+
 uint32_t llama_hparams::n_embd_k_gqa(uint32_t il) const {
     const uint32_t n_head_kv = this->n_head_kv(il);
 
@@ -179,6 +183,21 @@ bool llama_hparams::is_swa(uint32_t il) const {
     GGML_ABORT("fatal error");
 }
 
+bool llama_hparams::is_mla() const {
+    assert((n_embd_head_k_mla_impl == 0 && n_embd_head_v_mla_impl == 0) ||
+           (n_embd_head_k_mla_impl != 0 && n_embd_head_v_mla_impl != 0));
+
+    return n_embd_head_k_mla_impl != 0 && n_embd_head_v_mla_impl != 0;
+}
+
+uint32_t llama_hparams::n_embd_head_k_mla() const {
+    return is_mla() ? n_embd_head_k_mla_impl : n_embd_head_k;
+}
+
+uint32_t llama_hparams::n_embd_head_v_mla() const {
+    return is_mla() ? n_embd_head_v_mla_impl : n_embd_head_v;
+}
+
 bool llama_hparams::has_kv(uint32_t il) const {
     if (n_layer_kv_from_start >= 0) {
         if (il < (uint32_t) n_layer_kv_from_start) {
@@ -202,42 +221,6 @@ uint32_t llama_hparams::n_layer_kv() const {
     }
 
     return res;
-}
-
-bool llama_hparams::is_masked_swa(uint32_t n_swa, llama_swa_type swa_type, llama_pos p0, llama_pos p1) {
-    assert(p0 >= 0 && p1 >= 0);
-
-    switch (swa_type) {
-        case LLAMA_SWA_TYPE_NONE:
-            {
-            } break;
-        case LLAMA_SWA_TYPE_STANDARD:
-            {
-                if (p1 - p0 >= (int32_t) n_swa) {
-                    return true;
-                }
-            } break;
-        case LLAMA_SWA_TYPE_CHUNKED:
-            {
-                const llama_pos pos_chunk_start = (p1 / n_swa) * n_swa;
-
-                if (p0 < pos_chunk_start) {
-                    return true;
-                }
-            } break;
-        case LLAMA_SWA_TYPE_SYMMETRIC:
-            {
-                const int32_t half_n_swa = (int32_t) n_swa / 2;
-                const int32_t pos_diff = p1 - p0;
-
-                // Mask if outside the symmetric window
-                if (pos_diff < -half_n_swa || pos_diff > half_n_swa) {
-                    return true;
-                }
-            } break;
-    }
-
-    return false;
 }
 
 bool llama_hparams::use_mrope() const {

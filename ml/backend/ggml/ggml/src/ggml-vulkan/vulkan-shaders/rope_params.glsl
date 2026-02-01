@@ -6,6 +6,7 @@
 struct rope_params {
     uint rope_mode;
     uint ncols;
+    uint nrows;
     uint n_dims;
     float freq_scale;
     uint p_delta_rows;

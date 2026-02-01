@@ -17,7 +17,7 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint ib32, 
             const vec4 b_val_1 = vec4(data_b_v4[base_b_idx + 2 * l + 1]);
 
             // index for data_a
-            uint ibi = a_offset / QUANT_K + first_row * num_blocks_per_row + i;
+            uint ibi = a_offset + first_row * num_blocks_per_row + i;
 
             [[unroll]] for (uint n = 0; n < num_rows; ++n) {
                 const float d = float(data_a[ibi].d);

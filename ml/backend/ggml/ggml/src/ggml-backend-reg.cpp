@@ -77,38 +77,22 @@
 #include "ggml-zendnn.h"
 #endif
 
-// disable C++17 deprecation warning for std::codecvt_utf8
-#if defined(__clang__)
-#    pragma clang diagnostic push
-#    pragma clang diagnostic ignored "-Wdeprecated-declarations"
-#elif defined(__GNUC__)
-#    pragma GCC diagnostic push
-#    pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-#endif
-
 namespace fs = std::filesystem;
 
 static std::string path_str(const fs::path & path) {
-    std::string u8path;
     try {
 #if defined(__cpp_lib_char8_t)
         // C++20 and later: u8string() returns std::u8string
-        std::u8string u8str = path.u8string();
-        u8path = std::string(reinterpret_cast<const char*>(u8str.c_str()));
+        const std::u8string u8str = path.u8string();
+        return std::string(reinterpret_cast<const char *>(u8str.data()), u8str.size());
 #else
         // C++17: u8string() returns std::string
-        u8path = path.u8string();
+        return path.u8string();
 #endif
     } catch (...) {
+        return std::string();
     }
-    return u8path;
 }
-
-#if defined(__clang__)
-#    pragma clang diagnostic pop
-#elif defined(__GNUC__)
-#    pragma GCC diagnostic pop
-#endif
 
 #ifdef _WIN32
 

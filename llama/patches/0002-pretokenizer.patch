@@ -6,14 +6,14 @@ Subject: [PATCH] pretokenizer
 allow for an unset pretokenizer with a warning in the
 logs instead of throwing an error
 ---
- src/llama-vocab.cpp | 14 +++-----------
- 1 file changed, 3 insertions(+), 11 deletions(-)
+ src/llama-vocab.cpp | 17 +++++------------
+ 1 file changed, 5 insertions(+), 12 deletions(-)
 
 diff --git a/src/llama-vocab.cpp b/src/llama-vocab.cpp
-index 7b01a2edf..63250cdf1 100644
+index a23950d00..886ed637d 100644
 --- a/src/llama-vocab.cpp
 +++ b/src/llama-vocab.cpp
-@@ -1825,16 +1825,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+@@ -1839,16 +1839,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
          if (type == LLAMA_VOCAB_TYPE_BPE) {
              add_space_prefix = false;
              clean_spaces = true;
@@ -31,8 +31,8 @@ index 7b01a2edf..63250cdf1 100644
                  pre_type = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
              } else if (
                      tokenizer_pre == "llama3"   ||
-@@ -2015,7 +2006,8 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
-                 pre_type = LLAMA_VOCAB_PRE_TYPE_MINIMAX_M2;
+@@ -2042,7 +2033,8 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+                 pre_type = LLAMA_VOCAB_PRE_TYPE_SOLAR_OPEN;
                  clean_spaces = false;
              } else {
 -                throw std::runtime_error(format("unknown pre-tokenizer type: '%s'", tokenizer_pre.c_str()));
@@ -41,3 +41,20 @@ index 7b01a2edf..63250cdf1 100644
              }
          } else if (type == LLAMA_VOCAB_TYPE_SPM) {
              pre_type = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
+@@ -2086,6 +2078,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+         scores = (const float * ) gguf_get_arr_data(ctx, score_idx);
+     }
+ 
++    const uint32_t n_scores = score_idx != -1 ? gguf_get_arr_n(ctx, score_idx) : 0;
+     const int * toktypes = nullptr;
+     const int toktype_idx = gguf_find_key(ctx, kv(LLM_KV_TOKENIZER_TOKEN_TYPE).c_str());
+     if (toktype_idx != -1) {
+@@ -2107,7 +2100,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+ 
+         auto & token_data = id_to_token[i];
+         token_data.text  = std::move(word);
+-        token_data.score = scores ? scores[i] : 0.0f;
++        token_data.score = (scores && i < n_scores) ? scores[i] : 0.0f;
+         token_data.attr  = LLAMA_TOKEN_ATTR_NORMAL;
+ 
+         if (toktypes) {  //TODO: remove, required until per token attributes are available from GGUF file
