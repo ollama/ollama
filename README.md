@@ -509,6 +509,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [bb7](https://github.com/drunkwcodes/bb7)
 - [SwollamaCLI](https://github.com/marcusziade/Swollama) bundled with the Swollama Swift package. [Demo](https://github.com/marcusziade/Swollama?tab=readme-ov-file#cli-usage)
 - [aichat](https://github.com/sigoden/aichat) All-in-one LLM CLI tool featuring Shell Assistant, Chat-REPL, RAG, AI tools & agents, with access to OpenAI, Claude, Gemini, Ollama, Groq, and more.
+- [loki](https://github.com/Dark-Alex-17/loki) All-in-one, batteries-included LLM CLI Tool. Originally a fork of aichat. Includes support for secure storage of secrets (a Vault), function calling of Python or Bash scripts, etc.
 - [PowershAI](https://github.com/rrg92/powershai) PowerShell module that brings AI to terminal on Windows, including support for Ollama
 - [DeepShell](https://github.com/Abyss-c0re/deepshell) Your self-hosted AI assistant. Interactive Shell, Files and Folders analysis.
 - [orbiton](https://github.com/xyproto/orbiton) Configuration-free text editor and IDE with support for tab completion with Ollama.
