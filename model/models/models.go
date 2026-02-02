@@ -8,6 +8,7 @@ import (
 	_ "github.com/ollama/ollama/model/models/gemma3"
 	_ "github.com/ollama/ollama/model/models/gemma3n"
 	_ "github.com/ollama/ollama/model/models/glm4moelite"
+	_ "github.com/ollama/ollama/model/models/glmocr"
 	_ "github.com/ollama/ollama/model/models/gptoss"
 	_ "github.com/ollama/ollama/model/models/lfm2"
 	_ "github.com/ollama/ollama/model/models/llama"

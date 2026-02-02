@@ -1581,6 +1581,13 @@ func (t *Tensor) GELU(ctx ml.Context, t2 ...ml.Tensor) ml.Tensor {
 	}
 }
 
+func (t *Tensor) GELU_ERF(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_gelu_erf_inplace(ctx.(*Context).ctx, t.t),
+	}
+}
+
 func (t *Tensor) QuickGELU(ctx ml.Context, t2 ...ml.Tensor) ml.Tensor {
 	var tt *C.struct_ggml_tensor
 	if len(t2) > 0 {
