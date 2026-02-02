@@ -21,7 +21,7 @@ Download and extract the package:
 
 ```shell
 curl -fsSL https://ollama.com/download/ollama-linux-amd64.tar.zst \
-    | sudo tar x -C /usr
+   | zstd -d | sudo tar x -C /usr
 ```
 
 Start Ollama:
