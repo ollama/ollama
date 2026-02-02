@@ -863,6 +863,69 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+// GetLoraAdaptersHandler returns the list of loaded LoRA adapters for a model.
+// This is part of the multi-LoRA hot-swap functionality.
+func (s *Server) GetLoraAdaptersHandler(c *gin.Context) {
+	modelName := c.Query("model")
+	if modelName == "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model parameter is required"})
+		return
+	}
+
+	// Get the loaded runner for this model
+	runner := s.sched.GetRunnerByModelName(model.ParseName(modelName))
+	if runner == nil {
+		c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "model not loaded"})
+		return
+	}
+
+	// Query the runner for its loaded adapters
+	adapters, err := runner.GetLoraAdapters(c.Request.Context())
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, api.LoraAdaptersResponse{
+		Model:    modelName,
+		Adapters: adapters,
+	})
+}
+
+// SetLoraAdaptersHandler updates the scales of loaded LoRA adapters.
+// This enables hot-swapping adapters at runtime without model reload.
+func (s *Server) SetLoraAdaptersHandler(c *gin.Context) {
+	var req api.SetLoraAdaptersRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Model == "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+
+	// Get the loaded runner for this model
+	runner := s.sched.GetRunnerByModelName(model.ParseName(req.Model))
+	if runner == nil {
+		c.AbortWithStatusJSON(http.StatusNotFound, gin.H{"error": "model not loaded"})
+		return
+	}
+
+	// Set the adapter scales via the runner
+	adapters, err := runner.SetLoraAdapterScales(c.Request.Context(), req.Adapters)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, api.SetLoraAdaptersResponse{
+		Success: true,
+	})
+	_ = adapters // Response already sent
+}
+
 func (s *Server) PullHandler(c *gin.Context) {
 	var req api.PullRequest
 	err := c.ShouldBindJSON(&req)
@@ -1596,6 +1659,10 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/chat", s.ChatHandler)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
+
+	// LoRA adapters (hot-swap support)
+	r.GET("/api/lora-adapters", s.GetLoraAdaptersHandler)
+	r.POST("/api/lora-adapters", s.SetLoraAdaptersHandler)
 
 	// Inference (OpenAI compatibility)
 	r.POST("/v1/chat/completions", middleware.ChatMiddleware(), s.ChatHandler)

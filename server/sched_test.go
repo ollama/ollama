@@ -805,6 +805,13 @@ func (s *mockLlm) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo { return n
 func (s *mockLlm) HasExited() bool                                    { return false }
 func (s *mockLlm) GetActiveDeviceIDs() []ml.DeviceID                  { return nil }
 
+func (s *mockLlm) GetLoraAdapters(ctx context.Context) (api.LoraAdapterList, error) {
+	return nil, nil
+}
+func (s *mockLlm) SetLoraAdapterScales(ctx context.Context, adapters []api.LoraScaleRequest) (api.LoraAdapterList, error) {
+	return nil, nil
+}
+
 // TestImageGenRunnerCanBeEvicted verifies that an image generation model
 // loaded in the scheduler can be evicted when idle.
 func TestImageGenRunnerCanBeEvicted(t *testing.T) {

@@ -919,6 +919,64 @@ type Tensor struct {
 	Shape []uint64 `json:"shape"`
 }
 
+// LoraAdapter represents a loaded LoRA adapter for hot-swap support.
+type LoraAdapter struct {
+	// ID is the unique identifier for the adapter (assigned at load time).
+	ID int `json:"id"`
+
+	// Path is the file path of the adapter.
+	Path string `json:"path"`
+
+	// Scale is the current scale factor for the adapter (0.0-2.0).
+	// A scale of 0.0 means the adapter is loaded but not applied.
+	Scale float32 `json:"scale"`
+}
+
+// LoraAdapterList is a collection of loaded LoRA adapters.
+type LoraAdapterList []LoraAdapter
+
+// LoraScaleRequest specifies a new scale for a loaded adapter.
+type LoraScaleRequest struct {
+	// ID is the adapter identifier to update.
+	ID int `json:"id"`
+
+	// Scale is the new scale factor to apply (0.0-2.0).
+	Scale float32 `json:"scale"`
+}
+
+// LoraAdaptersRequest is used to list adapters for a specific model.
+type LoraAdaptersRequest struct {
+	// Model is the model name to query.
+	Model string `json:"model"`
+}
+
+// LoraAdaptersResponse contains the list of loaded adapters for a model.
+type LoraAdaptersResponse struct {
+	// Model is the model name.
+	Model string `json:"model"`
+
+	// Adapters is the list of loaded adapters.
+	Adapters LoraAdapterList `json:"adapters"`
+}
+
+// SetLoraAdaptersRequest sets adapter scales for a loaded model.
+type SetLoraAdaptersRequest struct {
+	// Model is the model name.
+	Model string `json:"model"`
+
+	// Adapters specifies the new scales for each adapter.
+	Adapters []LoraScaleRequest `json:"adapters"`
+}
+
+// SetLoraAdaptersResponse is returned after updating adapter scales.
+type SetLoraAdaptersResponse struct {
+	// Success indicates if the scales were updated successfully.
+	Success bool `json:"success"`
+
+	// Error contains an error message if the operation failed.
+	Error string `json:"error,omitempty"`
+}
+
 func (m *Metrics) Summary() {
 	if m.TotalDuration > 0 {
 		fmt.Fprintf(os.Stderr, "total duration:       %v\n", m.TotalDuration)

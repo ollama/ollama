@@ -168,7 +168,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		if !remote && r.Adapters != nil {
 			adapterLayers, err = convertModelFromFiles(r.Adapters, baseLayers, true, fn)
 			if err != nil {
-				for _, badReq := range []error{errNoFilesProvided, errOnlyOneAdapterSupported, errOnlyGGUFSupported, errUnknownType, errFilePath} {
+				for _, badReq := range []error{errNoFilesProvided, errOnlyGGUFSupported, errUnknownType, errFilePath} {
 					if errors.Is(err, badReq) {
 						ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
 						return
@@ -315,9 +315,8 @@ func convertModelFromFiles(files map[string]string, baseLayers []*layerGGML, isA
 	case "gguf":
 		if len(files) == 0 {
 			return nil, errNoFilesProvided
-		} else if len(files) > 1 && isAdapter {
-			return nil, errOnlyOneAdapterSupported
 		}
+		// Multi-adapter support: allow multiple GGUF adapter files
 
 		var digest string
 		var allLayers []*layerGGML

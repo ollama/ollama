@@ -917,3 +917,20 @@ func (s *Scheduler) expireRunner(model *Model) {
 		runner.refMu.Unlock()
 	}
 }
+
+// GetRunnerByModelName looks up a loaded runner by model name.
+// Returns the runner if found, nil otherwise.
+func (s *Scheduler) GetRunnerByModelName(name model.Name) llm.LlamaServer {
+	s.loadedMu.Lock()
+	defer s.loadedMu.Unlock()
+
+	for path, runner := range s.loaded {
+		if runner.model != nil && (runner.model.Name == name.String() || strings.HasSuffix(path, name.Model)) {
+			runner.refMu.Lock()
+			llama := runner.llama
+			runner.refMu.Unlock()
+			return llama
+		}
+	}
+	return nil
+}

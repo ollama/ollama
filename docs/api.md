@@ -1854,6 +1854,85 @@ curl http://localhost:11434/api/embeddings -d '{
 }
 ```
 
+  ]
+}
+```
+
+## List LoRA Adapters
+
+```
+GET /api/lora-adapters
+```
+
+Returns a list of loaded LoRA adapters for a running model.
+
+### Parameters
+
+- `model`: (required) name of the loaded model
+
+### Example
+
+#### Request
+
+```shell
+curl http://localhost:11434/api/lora-adapters?model=llama3.2
+```
+
+#### Response
+
+```json
+{
+  "model": "llama3.2",
+  "adapters": [
+    {
+      "id": 0,
+      "path": "/path/to/math.gguf",
+      "scale": 1.0
+    },
+    {
+      "id": 1,
+      "path": "/path/to/science.gguf",
+      "scale": 0.0
+    }
+  ]
+}
+```
+
+## Set LoRA Adapters
+
+```
+POST /api/lora-adapters
+```
+
+Updates the scales of loaded LoRA adapters (hot-swap).
+
+### Parameters
+
+- `model`: (required) name of the loaded model
+- `adapters`: list of adapters with their new scales
+
+### Example
+
+#### Request
+
+```shell
+curl http://localhost:11434/api/lora-adapters -d '{
+  "model": "llama3.2",
+  "adapters": [
+    { "id": 0, "scale": 0.0 },
+    { "id": 1, "scale": 1.0 }
+  ]
+}'
+```
+
+#### Response
+
+```json
+{
+  "success": true
+}
+```
+
 ## Version
 
 ```

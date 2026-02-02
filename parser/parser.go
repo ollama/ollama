@@ -94,7 +94,13 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 				return nil, err
 			}
 
-			req.Adapters = digestMap
+			if req.Adapters == nil {
+				req.Adapters = digestMap
+			} else {
+				for k, v := range digestMap {
+					req.Adapters[k] = v
+				}
+			}
 		case "template":
 			req.Template = c.Args
 		case "system":

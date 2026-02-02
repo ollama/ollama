@@ -1439,10 +1439,17 @@ void llama_context::output_reorder() {
 //
 
 uint32_t llama_context::graph_max_nodes(uint32_t n_tokens) const {
+    uint32_t res;
     if (model.arch == LLM_ARCH_QWEN3NEXT) {
-        return std::max<uint32_t>(n_tokens * 40, 32u * model.n_tensors());
+        res = std::max<uint32_t>(n_tokens * 40, 32u * model.n_tensors());
+    } else {
+        res = std::max<uint32_t>(1024u, 8u*model.n_tensors());
     }
-    return std::max<uint32_t>(1024u, 8u*model.n_tensors());
+    // Add extra capacity for LoRA adapters which may be applied after context creation.
+    // Each LoRA weight adds ~6 nodes (a, b, scale, add, 2 x mul_mat) per tensor.
+    // A 300% buffer accommodates heavy multi-LoRA use cases safely.
+    res = res * 3u;
+    return res;
 }
 
 llm_graph_result * llama_context::get_gf_res_reserve() const {

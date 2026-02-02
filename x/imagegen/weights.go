@@ -15,9 +15,9 @@ import (
 type ManifestWeights struct {
 	manifest    *ModelManifest
 	component   string
-	tensors     map[string]ManifestLayer      // name -> layer
-	cache       map[string]*mlx.Array         // name -> loaded array
-	nativeCache []*mlx.SafetensorsFile        // keep native handles alive
+	tensors     map[string]ManifestLayer // name -> layer
+	cache       map[string]*mlx.Array    // name -> loaded array
+	nativeCache []*mlx.SafetensorsFile   // keep native handles alive
 }
 
 // LoadWeightsFromManifest creates a weight loader for a component from manifest storage.
