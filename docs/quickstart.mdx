@@ -104,16 +104,14 @@ See a full list of available models [here](https://ollama.com/models).
 
 ## Coding 
 
-For coding use cases, we recommend using the `glm-4.7-flash` model. 
+For coding use cases, we recommend `glm-4.7-flash` for local use or cloud models for full context length:
 
-Note: this model requires 23 GB of VRAM with 64000 tokens context length.
-```sh
-ollama pull glm-4.7-flash 
-```
+- `glm-4.7-flash` (local, requires 23 GB of VRAM with 64000 tokens context length)
+- `glm-4.7:cloud` (cloud)
+- `kimi-k2.5:cloud` (cloud)
 
-Alternatively, you can use a more powerful cloud model (with full context length):
 ```sh
-ollama pull glm-4.7:cloud
+ollama pull glm-4.7-flash
 ```
 
 Use `ollama launch` to quickly set up a coding tool with Ollama models:

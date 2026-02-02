@@ -416,7 +416,7 @@ func TestBuildModelList_ExistingCloudModelsNotPushedToBottom(t *testing.T) {
 	got := names(items)
 
 	// glm-4.7-flash and glm-4.7:cloud are installed so they sort normally;
-	// kimi-k2.5:cloud is not installed so it goes to the bottom
+	// kimi-k2.5:cloud and qwen3:0.6b are not installed so they go to the bottom
 	want := []string{"glm-4.7-flash", "glm-4.7:cloud", "kimi-k2.5:cloud"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("existing cloud models should sort normally (-want +got):\n%s", diff)
@@ -433,7 +433,7 @@ func TestBuildModelList_HasRecommendedCloudModel_OnlyNonInstalledAtBottom(t *tes
 	got := names(items)
 
 	// kimi-k2.5:cloud is installed so it sorts normally;
-	// glm-4.7-flash and glm-4.7:cloud are not installed so they go to the bottom
+	// the rest of the recommendations are not installed so they go to the bottom
 	want := []string{"kimi-k2.5:cloud", "llama3.2", "glm-4.7-flash", "glm-4.7:cloud"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("only non-installed models should be at bottom (-want +got):\n%s", diff)
