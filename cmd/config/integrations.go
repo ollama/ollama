@@ -268,13 +268,31 @@ Examples:
 		Args:    cobra.ArbitraryArgs,
 		PreRunE: checkServerHeartbeat,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Extract integration name and pass through remaining args
+			// Extract integration name and extra args using -- separator
 			var name string
 			var extraArgs []string
-			if len(args) > 0 {
-				name = args[0]
-				extraArgs = args[1:]
+			dashIdx := cmd.ArgsLenAtDash()
+
+			if dashIdx == -1 {
+				// No "--" separator: only allow 0 or 1 args (integration name)
+				if len(args) > 1 {
+					return fmt.Errorf("unexpected arguments: %v\nUse '--' to pass extra arguments to the integration", args[1:])
+				}
+				if len(args) == 1 {
+					name = args[0]
+				}
 			} else {
+				// "--" was used: args before it = integration name, args after = extra
+				if dashIdx > 1 {
+					return fmt.Errorf("expected at most 1 integration name before '--', got %d", dashIdx)
+				}
+				if dashIdx == 1 {
+					name = args[0]
+				}
+				extraArgs = args[dashIdx:]
+			}
+
+			if name == "" {
 				var err error
 				name, err = selectIntegration()
 				if errors.Is(err, errCancelled) {

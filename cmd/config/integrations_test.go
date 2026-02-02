@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -188,59 +189,108 @@ func TestAllIntegrations_HaveRequiredMethods(t *testing.T) {
 }
 
 func TestParseExtraArgs(t *testing.T) {
+	// Tests reflect cobra's ArgsLenAtDash() semantics:
+	// - cobra strips "--" from args
+	// - ArgsLenAtDash() returns the index where "--" was, or -1
 	tests := []struct {
 		name          string
-		args          []string
-		wantArgs      []string
+		args          []string // args as cobra delivers them (no "--")
+		dashIdx       int      // what ArgsLenAtDash() returns
+		wantName      string
 		wantExtraArgs []string
+		wantErr       bool
 	}{
 		{
-			name:          "no extra args",
-			args:          []string{"claude"},
-			wantArgs:      []string{"claude"},
-			wantExtraArgs: nil,
+			name:     "no extra args, no dash",
+			args:     []string{"claude"},
+			dashIdx:  -1,
+			wantName: "claude",
 		},
 		{
 			name:          "with extra args after --",
-			args:          []string{"claude", "--", "--yolo", "--hi"},
-			wantArgs:      []string{"claude"},
+			args:          []string{"claude", "--yolo", "--hi"},
+			dashIdx:       1,
+			wantName:      "claude",
 			wantExtraArgs: []string{"--yolo", "--hi"},
 		},
 		{
 			name:          "extra args only after --",
-			args:          []string{"codex", "--", "--help"},
-			wantArgs:      []string{"codex"},
+			args:          []string{"codex", "--help"},
+			dashIdx:       1,
+			wantName:      "codex",
 			wantExtraArgs: []string{"--help"},
 		},
 		{
-			name:          "-- at end with no args after",
-			args:          []string{"claude", "--"},
-			wantArgs:      []string{"claude", "--"},
-			wantExtraArgs: nil,
+			name:     "-- at end with no args after",
+			args:     []string{"claude"},
+			dashIdx:  1,
+			wantName: "claude",
 		},
 		{
-			name:          "multiple args after --",
-			args:          []string{"claude", "--", "--flag1", "--flag2", "value", "--flag3"},
-			wantArgs:      []string{"claude"},
-			wantExtraArgs: []string{"--flag1", "--flag2", "value", "--flag3"},
+			name:          "-- with no integration name",
+			args:          []string{"--yolo"},
+			dashIdx:       0,
+			wantName:      "",
+			wantExtraArgs: []string{"--yolo"},
+		},
+		{
+			name:    "multiple args before -- is error",
+			args:    []string{"claude", "codex", "--yolo"},
+			dashIdx: 2,
+			wantErr: true,
+		},
+		{
+			name:    "multiple args without -- is error",
+			args:    []string{"claude", "codex"},
+			dashIdx: -1,
+			wantErr: true,
+		},
+		{
+			name:     "no args, no dash",
+			args:     []string{},
+			dashIdx:  -1,
+			wantName: "",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Simulate the parsing logic from LaunchCmd
-			args := tt.args
+			// Simulate the parsing logic from LaunchCmd using dashIdx
+			var name string
 			var extraArgs []string
-			for i, arg := range args {
-				if arg == "--" && i < len(args)-1 {
-					extraArgs = args[i+1:]
-					args = args[:i]
-					break
+			var err error
+
+			dashIdx := tt.dashIdx
+			args := tt.args
+
+			if dashIdx == -1 {
+				if len(args) > 1 {
+					err = fmt.Errorf("unexpected arguments: %v", args[1:])
+				} else if len(args) == 1 {
+					name = args[0]
+				}
+			} else {
+				if dashIdx > 1 {
+					err = fmt.Errorf("expected at most 1 integration name before '--', got %d", dashIdx)
+				} else {
+					if dashIdx == 1 {
+						name = args[0]
+					}
+					extraArgs = args[dashIdx:]
 				}
 			}
 
-			if !slices.Equal(args, tt.wantArgs) {
-				t.Errorf("args = %v, want %v", args, tt.wantArgs)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if name != tt.wantName {
+				t.Errorf("name = %q, want %q", name, tt.wantName)
 			}
 			if !slices.Equal(extraArgs, tt.wantExtraArgs) {
 				t.Errorf("extraArgs = %v, want %v", extraArgs, tt.wantExtraArgs)
