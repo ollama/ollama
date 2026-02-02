@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
 )
@@ -378,6 +379,16 @@ func (s *Server) HasExited() bool {
 	default:
 		return false
 	}
+}
+
+// GetLoraAdapters returns empty list - image models don't support LoRA
+func (s *Server) GetLoraAdapters(ctx context.Context) (api.LoraAdapterList, error) {
+	return nil, nil
+}
+
+// SetLoraAdapterScales is not supported for image models
+func (s *Server) SetLoraAdapterScales(ctx context.Context, adapters []api.LoraScaleRequest) (api.LoraAdapterList, error) {
+	return nil, errors.New("LoRA adapters not supported for image generation models")
 }
 
 // Ensure Server implements llm.LlamaServer

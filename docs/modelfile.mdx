@@ -212,6 +212,20 @@ Currently supported Safetensor adapters:
 ADAPTER ./ollama-lora.gguf
 ```
 
+### Multiple LoRA Adapters
+
+You can specify multiple LoRA adapters that will be loaded at startup:
+
+```dockerfile
+FROM llama3.2
+ADAPTER /path/to/math-adapter.gguf
+ADAPTER /path/to/science-adapter.gguf
+SYSTEM You are a helpful assistant.
+```
+
+All adapters are loaded with scale 0.0 by default. Use the API to 
+activate specific adapters at runtime.
+
 ### LICENSE
 
 The `LICENSE` instruction allows you to specify the legal license under which the model used with this Modelfile is shared or distributed.

@@ -58,6 +58,28 @@ TEMPLATE """{{ if .System }}<|start_header_id|>system<|end_header_id|>
 	assert.Equal(t, expectedCommands, modelfile.Commands)
 }
 
+func TestParseFileMultipleAdapters(t *testing.T) {
+	input := `
+FROM model1
+ADAPTER adapter1
+ADAPTER adapter2
+LICENSE MIT
+`
+	reader := strings.NewReader(input)
+
+	modelfile, err := ParseFile(reader)
+	require.NoError(t, err)
+
+	expectedCommands := []Command{
+		{Name: "model", Args: "model1"},
+		{Name: "adapter", Args: "adapter1"},
+		{Name: "adapter", Args: "adapter2"},
+		{Name: "license", Args: "MIT"},
+	}
+
+	assert.Equal(t, expectedCommands, modelfile.Commands)
+}
+
 func TestParseFileTrimSpace(t *testing.T) {
 	input := `
 FROM "     model 1"

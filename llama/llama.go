@@ -341,6 +341,75 @@ func (m *Model) AddBOSToken() bool {
 	return bool(C.llama_vocab_get_add_bos(m.Vocab()))
 }
 
+// LoraAdapterInfo holds information about a loaded LoRA adapter.
+type LoraAdapterInfo struct {
+	ID      int
+	Path    string
+	Scale   float32
+	adapter *C.struct_llama_adapter_lora
+}
+
+// LoadLoraAdapter loads a LoRA adapter from file and returns its info.
+// The adapter is not applied until SetLoraAdapterScale is called with a non-zero scale.
+func (m *Model) LoadLoraAdapter(context *Context, loraPath string, id int, scale float32) (*LoraAdapterInfo, error) {
+	cLoraPath := C.CString(loraPath)
+	defer C.free(unsafe.Pointer(cLoraPath))
+
+	loraAdapter := C.llama_adapter_lora_init(m.c, cLoraPath)
+	if loraAdapter == nil {
+		return nil, errors.New("unable to load lora adapter: " + loraPath)
+	}
+
+	// Apply the adapter with the specified scale
+	err := int(C.llama_set_adapter_lora(context.c, loraAdapter, C.float(scale)))
+	if err != 0 {
+		return nil, errors.New("error applying lora adapter")
+	}
+
+	return &LoraAdapterInfo{
+		ID:      id,
+		Path:    loraPath,
+		Scale:   scale,
+		adapter: loraAdapter,
+	}, nil
+}
+
+// SetLoraAdapterScale updates the scale of a loaded LoRA adapter.
+// Scale should be between 0.0 (disabled) and 2.0.
+func (m *Model) SetLoraAdapterScale(context *Context, adapter *LoraAdapterInfo, scale float32) error {
+	if adapter == nil || adapter.adapter == nil {
+		return errors.New("invalid adapter")
+	}
+
+	err := int(C.llama_set_adapter_lora(context.c, adapter.adapter, C.float(scale)))
+	if err != 0 {
+		return errors.New("error setting lora adapter scale")
+	}
+
+	adapter.Scale = scale
+	return nil
+}
+
+// RemoveLoraAdapter removes a specific LoRA adapter from the context.
+func (m *Model) RemoveLoraAdapter(context *Context, adapter *LoraAdapterInfo) error {
+	if adapter == nil || adapter.adapter == nil {
+		return errors.New("invalid adapter")
+	}
+
+	err := int(C.llama_rm_adapter_lora(context.c, adapter.adapter))
+	if err != 0 {
+		return errors.New("error removing lora adapter")
+	}
+
+	return nil
+}
+
+// ClearAllLoraAdapters removes all LoRA adapters from the context.
+func (m *Model) ClearAllLoraAdapters(context *Context) {
+	C.llama_clear_adapter_lora(context.c)
+}
+
+// ApplyLoraFromFile loads and applies a LoRA adapter from file (legacy compatibility).
 func (m *Model) ApplyLoraFromFile(context *Context, loraPath string, scale float32, threads int) error {
 	cLoraPath := C.CString(loraPath)
 	defer C.free(unsafe.Pointer(cLoraPath))

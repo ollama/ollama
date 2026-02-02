@@ -80,6 +80,9 @@ type LlamaServer interface {
 	GetPort() int
 	GetDeviceInfos(ctx context.Context) []ml.DeviceInfo
 	HasExited() bool
+	// LoRA adapter hot-swap methods
+	GetLoraAdapters(ctx context.Context) (api.LoraAdapterList, error)
+	SetLoraAdapterScales(ctx context.Context, adapters []api.LoraScaleRequest) (api.LoraAdapterList, error)
 }
 
 // llmServer is an instance of a runner hosting a single model
@@ -144,7 +147,11 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	var textProcessor model.TextProcessor
 	var err error
 	if envconfig.NewEngine() || f.KV().OllamaEngineRequired() {
-		if len(projectors) == 0 {
+		// Force llama.cpp runner when LoRA adapters are specified (ollama-engine doesn't support LoRA yet)
+		if len(adapters) > 0 {
+			slog.Info("LoRA adapters requested, using llama.cpp runner (ollama-engine doesn't support LoRA yet)", "adapters", len(adapters))
+			// Skip textProcessor creation to force llama.cpp runner
+		} else if len(projectors) == 0 {
 			textProcessor, err = model.NewTextProcessor(modelPath)
 		} else {
 			err = errors.New("split vision models aren't supported")
@@ -1417,6 +1424,70 @@ func (s *llmServer) HasExited() bool {
 		return true
 	}
 	return false
+}
+
+// GetLoraAdapters queries the runner for its loaded LoRA adapters.
+func (s *llmServer) GetLoraAdapters(ctx context.Context) (api.LoraAdapterList, error) {
+	url := fmt.Sprintf("http://127.0.0.1:%d/lora-adapters", s.port)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to get lora adapters: %s", string(body))
+	}
+
+	var adapters api.LoraAdapterList
+	if err := json.NewDecoder(resp.Body).Decode(&adapters); err != nil {
+		return nil, err
+	}
+
+	return adapters, nil
+}
+
+// SetLoraAdapterScales updates the scales of loaded LoRA adapters in the runner.
+func (s *llmServer) SetLoraAdapterScales(ctx context.Context, scaleRequests []api.LoraScaleRequest) (api.LoraAdapterList, error) {
+	url := fmt.Sprintf("http://127.0.0.1:%d/lora-adapters", s.port)
+
+	body, err := json.Marshal(scaleRequests)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("failed to set lora adapter scales: %s", string(respBody))
+	}
+
+	var result struct {
+		Success  bool                `json:"success"`
+		Adapters api.LoraAdapterList `json:"adapters"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	return result.Adapters, nil
 }
 
 var grammarJSON = `

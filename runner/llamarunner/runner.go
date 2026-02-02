@@ -305,6 +305,9 @@ type Server struct {
 
 	// next sequence for prompt processing to avoid starvation
 	nextSeq int
+
+	// loraAdapters tracks loaded LoRA adapters for hot-swap support
+	loraAdapters []*llama.LoraAdapterInfo
 }
 
 func (s *Server) allNil() bool {
@@ -849,11 +852,13 @@ func (s *Server) loadModel(
 		panic(err)
 	}
 
-	for _, path := range lpath {
-		err := s.model.ApplyLoraFromFile(s.lc, path, 1.0, threads)
+	for i, path := range lpath {
+		// Load adapters with scale 0.0 (deferred activation) for hot-swap support
+		adapterInfo, err := s.model.LoadLoraAdapter(s.lc, path, i, 0.0)
 		if err != nil {
 			panic(err)
 		}
+		s.loraAdapters = append(s.loraAdapters, adapterInfo)
 	}
 
 	if ppath != "" {
@@ -948,6 +953,89 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// loraAdapters returns the list of loaded LoRA adapters with their current scales
+func (s *Server) loraAdaptersHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	s.mu.Lock()
+	adapters := make([]map[string]interface{}, 0, len(s.loraAdapters))
+	for _, adapter := range s.loraAdapters {
+		adapters = append(adapters, map[string]interface{}{
+			"id":    adapter.ID,
+			"path":  adapter.Path,
+			"scale": adapter.Scale,
+		})
+	}
+	s.mu.Unlock()
+
+	if err := json.NewEncoder(w).Encode(adapters); err != nil {
+		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
+	}
+}
+
+// setLoraAdaptersHandler updates the scales of loaded LoRA adapters
+func (s *Server) setLoraAdaptersHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	var req []struct {
+		ID    int     `json:"id"`
+		Scale float32 `json:"scale"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("failed to decode request: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Validate all adapter IDs first
+	for _, update := range req {
+		found := false
+		for _, adapter := range s.loraAdapters {
+			if adapter.ID == update.ID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			http.Error(w, fmt.Sprintf("adapter ID %d not found", update.ID), http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Apply scale updates
+	for _, update := range req {
+		for _, adapter := range s.loraAdapters {
+			if adapter.ID == update.ID {
+				if err := s.model.SetLoraAdapterScale(s.lc, adapter, update.Scale); err != nil {
+					http.Error(w, fmt.Sprintf("failed to set scale for adapter %d: %v", update.ID, err), http.StatusInternalServerError)
+					return
+				}
+				break
+			}
+		}
+	}
+
+	// Return updated adapters
+	adapters := make([]map[string]interface{}, 0, len(s.loraAdapters))
+	for _, adapter := range s.loraAdapters {
+		adapters = append(adapters, map[string]interface{}{
+			"id":    adapter.ID,
+			"path":  adapter.Path,
+			"scale": adapter.Scale,
+		})
+	}
+
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":  true,
+		"adapters": adapters,
+	}); err != nil {
+		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
+	}
+}
+
 func Execute(args []string) error {
 	fs := flag.NewFlagSet("runner", flag.ExitOnError)
 	mpath := fs.String("model", "", "Path to model binary file")
@@ -993,6 +1081,8 @@ func Execute(args []string) error {
 	mux.HandleFunc("/embedding", server.embeddings)
 	mux.HandleFunc("/completion", server.completion)
 	mux.HandleFunc("/health", server.health)
+	mux.HandleFunc("GET /lora-adapters", server.loraAdaptersHandler)
+	mux.HandleFunc("POST /lora-adapters", server.setLoraAdaptersHandler)
 
 	httpServer := http.Server{
 		Handler: mux,
