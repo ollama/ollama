@@ -53,7 +53,7 @@ var integrations = map[string]Runner{
 // recommendedModels are shown when the user has no models or as suggestions.
 // Order matters: local models first, then cloud models.
 var recommendedModels = []selectItem{
-	{Name: "glm-4.7-flash", Description: "recommended"},
+	{Name: "glm-4.7-flash", Description: "Recommended (requires ~25GB VRAM)"},
 	{Name: "glm-4.7:cloud", Description: "recommended"},
 	{Name: "kimi-k2.5:cloud", Description: "recommended"},
 }
