@@ -11,13 +11,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
 )
 
 const (
-	routerConfigFilename = "router.json"
+	routerConfigFilename = "config.json"
 	routerConfigVersion  = 1
 )
 
@@ -80,8 +79,8 @@ func (s *aliasStore) load() error {
 			continue
 		}
 
-		canonicalAlias := aliasName.String()
-		canonicalTarget := targetName.String()
+		canonicalAlias := displayAliasName(aliasName)
+		canonicalTarget := displayAliasName(targetName)
 		s.entries[normalizeAliasKey(aliasName)] = aliasEntry{
 			Alias:  canonicalAlias,
 			Target: canonicalTarget,
@@ -156,7 +155,7 @@ func (s *aliasStore) ResolveName(name model.Name) (model.Name, bool, error) {
 	}
 
 	visited := map[string]struct{}{key: {}}
-	targetKey := strings.ToLower(entry.Target)
+	targetKey := normalizeAliasKeyString(entry.Target)
 	current := entry.Target
 
 	for {
@@ -178,7 +177,7 @@ func (s *aliasStore) ResolveName(name model.Name) (model.Name, bool, error) {
 		}
 
 		current = next.Target
-		targetKey = strings.ToLower(current)
+		targetKey = normalizeAliasKeyString(current)
 	}
 }
 
@@ -205,12 +204,12 @@ func (s *aliasStore) Set(alias, target model.Name) error {
 		if !ok {
 			break
 		}
-		currentKey = strings.ToLower(next.Target)
+		currentKey = normalizeAliasKeyString(next.Target)
 	}
 
 	s.entries[aliasKey] = aliasEntry{
-		Alias:  alias.String(),
-		Target: target.String(),
+		Alias:  displayAliasName(alias),
+		Target: displayAliasName(target),
 	}
 
 	return s.saveLocked()
@@ -245,7 +244,25 @@ func (s *aliasStore) List() []aliasEntry {
 }
 
 func normalizeAliasKey(name model.Name) string {
-	return strings.ToLower(name.String())
+	return strings.ToLower(displayAliasName(name))
+}
+
+func normalizeAliasKeyString(value string) string {
+	n := model.ParseName(value)
+	if !n.IsValid() {
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+	return normalizeAliasKey(n)
+}
+
+func displayAliasName(n model.Name) string {
+	display := n.DisplayShortest()
+	if strings.EqualFold(n.Tag, "latest") {
+		if idx := strings.LastIndex(display, ":"); idx != -1 {
+			return display[:idx]
+		}
+	}
+	return display
 }
 
 func localModelExists(name model.Name) (bool, error) {
@@ -263,7 +280,11 @@ func localModelExists(name model.Name) (bool, error) {
 }
 
 func routerConfigPath() string {
-	return filepath.Join(envconfig.Models(), routerConfigFilename)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(".ollama", routerConfigFilename)
+	}
+	return filepath.Join(home, ".ollama", routerConfigFilename)
 }
 
 func (s *Server) aliasStore() (*aliasStore, error) {

@@ -93,7 +93,7 @@ func (s *Server) CreateAliasHandler(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, aliasEntry{Alias: aliasName.String(), Target: targetName.String()})
+	c.JSON(http.StatusOK, aliasEntry{Alias: displayAliasName(aliasName), Target: displayAliasName(targetName)})
 }
 
 func (s *Server) DeleteAliasHandler(c *gin.Context) {

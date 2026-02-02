@@ -14,6 +14,7 @@ import (
 
 func TestAliasShadowingRejected(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	t.Setenv("HOME", t.TempDir())
 
 	s := Server{}
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
@@ -37,6 +38,7 @@ func TestAliasShadowingRejected(t *testing.T) {
 
 func TestAliasResolvesForChatRemote(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	t.Setenv("HOME", t.TempDir())
 
 	var remoteModel string
 	rs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
