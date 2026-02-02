@@ -413,6 +413,100 @@ func TestMigrateConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("idempotent when called twice", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		legacyDir := filepath.Join(tmpDir, ".ollama", "config")
+		os.MkdirAll(legacyDir, 0o755)
+		os.WriteFile(filepath.Join(legacyDir, "config.json"), []byte(`{"integrations":{}}`), 0o644)
+
+		if _, err := migrateConfig(); err != nil {
+			t.Fatal(err)
+		}
+
+		migrated, err := migrateConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if migrated {
+			t.Error("second migration should be a no-op")
+		}
+	})
+
+	t.Run("legacy directory preserved if not empty", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		legacyDir := filepath.Join(tmpDir, ".ollama", "config")
+		os.MkdirAll(legacyDir, 0o755)
+		os.WriteFile(filepath.Join(legacyDir, "config.json"), []byte(`{"integrations":{}}`), 0o644)
+		os.WriteFile(filepath.Join(legacyDir, "other-file.txt"), []byte("keep me"), 0o644)
+
+		if _, err := migrateConfig(); err != nil {
+			t.Fatal(err)
+		}
+
+		if _, err := os.Stat(legacyDir); os.IsNotExist(err) {
+			t.Error("directory with other files should not have been removed")
+		}
+		if _, err := os.Stat(filepath.Join(legacyDir, "other-file.txt")); os.IsNotExist(err) {
+			t.Error("other files in legacy directory should be untouched")
+		}
+	})
+
+	t.Run("backup created in tmp", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		legacyDir := filepath.Join(tmpDir, ".ollama", "config")
+		os.MkdirAll(legacyDir, 0o755)
+		os.WriteFile(filepath.Join(legacyDir, "config.json"), []byte(`{"integrations":{}}`), 0o644)
+
+		if _, err := migrateConfig(); err != nil {
+			t.Fatal(err)
+		}
+
+		entries, err := os.ReadDir(backupDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, e := range entries {
+			if strings.HasPrefix(e.Name(), "config.json.") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Error("expected backup file in tmp directory")
+		}
+	})
+
+	t.Run("save writes to new path after migration", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		legacyDir := filepath.Join(tmpDir, ".ollama", "config")
+		os.MkdirAll(legacyDir, 0o755)
+		os.WriteFile(filepath.Join(legacyDir, "config.json"), []byte(`{"integrations":{"claude":{"models":["llama3.2"]}}}`), 0o644)
+
+		// load triggers migration, then save should write to new path
+		if err := saveIntegration("codex", []string{"qwen2.5"}); err != nil {
+			t.Fatal(err)
+		}
+
+		newPath := filepath.Join(tmpDir, ".ollama", "config.json")
+		if _, err := os.Stat(newPath); os.IsNotExist(err) {
+			t.Error("save should write to new path")
+		}
+
+		// old path should not be recreated
+		if _, err := os.Stat(filepath.Join(legacyDir, "config.json")); !os.IsNotExist(err) {
+			t.Error("save should not recreate legacy path")
+		}
+	})
+
 	t.Run("load triggers migration transparently", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
