@@ -200,12 +200,10 @@ func TestLoadIntegration_CorruptedJSON(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
-	// Create corrupted config.json file
-	dir := filepath.Join(tmpDir, ".ollama", "config")
+	dir := filepath.Join(tmpDir, ".ollama")
 	os.MkdirAll(dir, 0o755)
 	os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{corrupted json`), 0o644)
 
-	// Corrupted file is treated as empty, so loadIntegration returns not found
 	_, err := loadIntegration("test")
 	if err == nil {
 		t.Error("expected error for nonexistent integration in corrupted file")
@@ -267,7 +265,7 @@ func TestConfigPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	expected := filepath.Join(tmpDir, ".ollama", "config", "config.json")
+	expected := filepath.Join(tmpDir, ".ollama", "config.json")
 	if path != expected {
 		t.Errorf("expected %s, got %s", expected, path)
 	}
@@ -318,6 +316,117 @@ func TestLoad(t *testing.T) {
 		_, err := load()
 		if err == nil {
 			t.Error("expected error for corrupted JSON")
+		}
+	})
+}
+
+func TestMigrateConfig(t *testing.T) {
+	t.Run("migrates legacy file to new location", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		legacyDir := filepath.Join(tmpDir, ".ollama", "config")
+		os.MkdirAll(legacyDir, 0o755)
+		data := []byte(`{"integrations":{"claude":{"models":["llama3.2"]}}}`)
+		os.WriteFile(filepath.Join(legacyDir, "config.json"), data, 0o644)
+
+		migrated, err := migrateConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !migrated {
+			t.Fatal("expected migration to occur")
+		}
+
+		newPath, _ := configPath()
+		got, err := os.ReadFile(newPath)
+		if err != nil {
+			t.Fatalf("new config not found: %v", err)
+		}
+		if string(got) != string(data) {
+			t.Errorf("content mismatch: got %s", got)
+		}
+
+		if _, err := os.Stat(filepath.Join(legacyDir, "config.json")); !os.IsNotExist(err) {
+			t.Error("legacy file should have been removed")
+		}
+
+		if _, err := os.Stat(legacyDir); !os.IsNotExist(err) {
+			t.Error("legacy directory should have been removed")
+		}
+	})
+
+	t.Run("no-op when no legacy file exists", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		migrated, err := migrateConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if migrated {
+			t.Error("expected no migration")
+		}
+	})
+
+	t.Run("skips corrupt legacy file", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		legacyDir := filepath.Join(tmpDir, ".ollama", "config")
+		os.MkdirAll(legacyDir, 0o755)
+		os.WriteFile(filepath.Join(legacyDir, "config.json"), []byte(`{corrupt`), 0o644)
+
+		migrated, err := migrateConfig()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if migrated {
+			t.Error("should not migrate corrupt file")
+		}
+
+		if _, err := os.Stat(filepath.Join(legacyDir, "config.json")); os.IsNotExist(err) {
+			t.Error("corrupt legacy file should not have been deleted")
+		}
+	})
+
+	t.Run("new path takes precedence over legacy", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		legacyDir := filepath.Join(tmpDir, ".ollama", "config")
+		os.MkdirAll(legacyDir, 0o755)
+		os.WriteFile(filepath.Join(legacyDir, "config.json"), []byte(`{"integrations":{"old":{"models":["old-model"]}}}`), 0o644)
+
+		newDir := filepath.Join(tmpDir, ".ollama")
+		os.WriteFile(filepath.Join(newDir, "config.json"), []byte(`{"integrations":{"new":{"models":["new-model"]}}}`), 0o644)
+
+		cfg, err := load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := cfg.Integrations["new"]; !ok {
+			t.Error("expected new-path integration to be loaded")
+		}
+		if _, ok := cfg.Integrations["old"]; ok {
+			t.Error("legacy integration should not have been loaded")
+		}
+	})
+
+	t.Run("load triggers migration transparently", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		legacyDir := filepath.Join(tmpDir, ".ollama", "config")
+		os.MkdirAll(legacyDir, 0o755)
+		os.WriteFile(filepath.Join(legacyDir, "config.json"), []byte(`{"integrations":{"claude":{"models":["llama3.2"]}}}`), 0o644)
+
+		cfg, err := load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Integrations["claude"] == nil || cfg.Integrations["claude"].Models[0] != "llama3.2" {
+			t.Error("migration via load() did not preserve data")
 		}
 	})
 }

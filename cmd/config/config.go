@@ -3,9 +3,11 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,7 +26,64 @@ func configPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return filepath.Join(home, ".ollama", "config.json"), nil
+}
+
+func legacyConfigPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
 	return filepath.Join(home, ".ollama", "config", "config.json"), nil
+}
+
+// migrateConfig moves the config from the legacy path to ~/.ollama/config.json
+func migrateConfig() (bool, error) {
+	oldPath, err := legacyConfigPath()
+	if err != nil {
+		return false, err
+	}
+
+	oldData, err := os.ReadFile(oldPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	var js json.RawMessage
+	if err := json.Unmarshal(oldData, &js); err != nil {
+		slog.Warn("legacy config has invalid JSON, skipping migration", "path", oldPath, "error", err)
+		return false, nil
+	}
+
+	if _, err := backupToTmp(oldPath); err != nil {
+		return false, fmt.Errorf("backup legacy config: %w", err)
+	}
+
+	newPath, err := configPath()
+	if err != nil {
+		return false, err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(newPath), 0o755); err != nil {
+		return false, err
+	}
+	if err := writeWithBackup(newPath, oldData); err != nil {
+		return false, fmt.Errorf("write new config: %w", err)
+	}
+
+	written, err := os.ReadFile(newPath)
+	if err != nil || !bytes.Equal(written, oldData) {
+		return false, fmt.Errorf("verification failed after writing new config")
+	}
+
+	_ = os.Remove(oldPath)
+	_ = os.Remove(filepath.Dir(oldPath)) // clean up empty directory
+
+	slog.Info("migrated config", "from", oldPath, "to", newPath)
+	return true, nil
 }
 
 func load() (*config, error) {
@@ -34,6 +93,11 @@ func load() (*config, error) {
 	}
 
 	data, err := os.ReadFile(path)
+	if err != nil && os.IsNotExist(err) {
+		if migrated, merr := migrateConfig(); merr == nil && migrated {
+			data, err = os.ReadFile(path)
+		}
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			return &config{Integrations: make(map[string]*integration)}, nil
