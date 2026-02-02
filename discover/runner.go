@@ -105,6 +105,9 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 				} else if !envconfig.EnableVulkan() && strings.Contains(filepath.Base(dir), "vulkan") {
 					slog.Info("experimental Vulkan support disabled.  To enable, set OLLAMA_VULKAN=1")
 					continue
+				} else if !envconfig.EnableSYCL() && strings.Contains(filepath.Base(dir), "sycl") {
+					slog.Info("Intel SYCL support disabled.  To enable, set OLLAMA_SYCL=1")
+					continue
 				}
 				dirs = []string{ml.LibOllamaPath, dir}
 			} else {
@@ -479,6 +482,7 @@ func overrideWarnings() {
 		"GGML_VK_VISIBLE_DEVICES",
 		"GPU_DEVICE_ORDINAL",
 		"HSA_OVERRIDE_GFX_VERSION",
+		"ONEAPI_DEVICE_SELECTOR",
 	} {
 		if e, found := m[k]; found && e.Value != "" {
 			anyFound = true

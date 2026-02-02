@@ -553,7 +553,7 @@ func (d DeviceInfo) PreferredLibrary(other DeviceInfo) bool {
 	// TODO in the future if we find Vulkan is better than ROCm on some devices
 	// that implementation can live here.
 
-	if d.Library == "CUDA" || d.Library == "ROCm" {
+	if d.Library == "CUDA" || d.Library == "ROCm" || d.Library == "SYCL" {
 		return true
 	}
 	return false
@@ -575,6 +575,22 @@ func (d DeviceInfo) updateVisibleDevicesEnv(env map[string]string, mustFilter bo
 			return
 		}
 		envVar = "CUDA_VISIBLE_DEVICES"
+	case "SYCL":
+		// SYCL uses ONEAPI_DEVICE_SELECTOR with level_zero backend prefix
+		envVar = "ONEAPI_DEVICE_SELECTOR"
+		v, existing := env[envVar]
+		if existing {
+			v = v + ","
+		} else {
+			v = "level_zero:"
+		}
+		if d.FilterID != "" {
+			v = v + d.FilterID
+		} else {
+			v = v + d.ID
+		}
+		env[envVar] = v
+		return
 	default:
 		// Vulkan is not filtered via env var, but via scheduling decisions
 		return

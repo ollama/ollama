@@ -206,6 +206,8 @@ var (
 	UseAuth = Bool("OLLAMA_AUTH")
 	// Enable Vulkan backend
 	EnableVulkan = Bool("OLLAMA_VULKAN")
+	// Enable SYCL backend (Intel GPUs)
+	EnableSYCL = Bool("OLLAMA_SYCL")
 )
 
 func String(s string) func() string {
@@ -223,6 +225,7 @@ var (
 	VkVisibleDevices      = String("GGML_VK_VISIBLE_DEVICES")
 	GpuDeviceOrdinal      = String("GPU_DEVICE_ORDINAL")
 	HsaOverrideGfxVersion = String("HSA_OVERRIDE_GFX_VERSION")
+	OneapiDeviceSelector  = String("ONEAPI_DEVICE_SELECTOR")
 )
 
 func Uint(key string, defaultValue uint) func() uint {
@@ -315,6 +318,8 @@ func AsMap() map[string]EnvVar {
 		ret["GPU_DEVICE_ORDINAL"] = EnvVar{"GPU_DEVICE_ORDINAL", GpuDeviceOrdinal(), "Set which AMD devices are visible by numeric ID"}
 		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion(), "Override the gfx used for all detected AMD GPUs"}
 		ret["OLLAMA_VULKAN"] = EnvVar{"OLLAMA_VULKAN", EnableVulkan(), "Enable experimental Vulkan support"}
+		ret["OLLAMA_SYCL"] = EnvVar{"OLLAMA_SYCL", EnableSYCL(), "Enable Intel SYCL GPU support"}
+		ret["ONEAPI_DEVICE_SELECTOR"] = EnvVar{"ONEAPI_DEVICE_SELECTOR", OneapiDeviceSelector(), "Set which Intel GPU devices are visible"}
 	}
 
 	return ret

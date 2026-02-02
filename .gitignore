@@ -2,6 +2,7 @@
 .vscode
 .env
 .venv
+.claude
 .swp
 dist
 build

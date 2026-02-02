@@ -85,6 +85,15 @@
       }
     },
     {
+      "name": "SYCL",
+      "inherits": [ "Default" ],
+      "cacheVariables": {
+        "ENABLE_SYCL": "ON",
+        "GGML_SYCL_TARGET": "INTEL",
+        "OLLAMA_RUNNER_DIR": "sycl"
+      }
+    },
+    {
       "name": "MLX",
       "inherits": [ "Default" ],
       "cacheVariables": {
@@ -162,6 +171,11 @@
       "name": "Vulkan",
       "targets": [ "ggml-vulkan" ],
       "configurePreset": "Vulkan"
+    },
+    {
+      "name": "SYCL",
+      "configurePreset": "SYCL",
+      "targets": [ "ggml-sycl" ]
     },
     {
       "name": "MLX",
