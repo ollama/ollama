@@ -313,6 +313,8 @@ func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 		conv = &deepseek2Model{}
 	case "Glm4MoeLiteForCausalLM":
 		conv = &glm4MoeLiteModel{}
+	case "GlmOcrForConditionalGeneration":
+		conv = &glmOcrModel{}
 	case "Lfm2ForCausalLM":
 		conv = &lfm2Model{}
 	default:

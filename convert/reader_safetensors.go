@@ -99,6 +99,7 @@ func (st safetensor) Kind() uint32 {
 	if st.dtype == "BF16" &&
 		!strings.HasPrefix(st.name, "v.") &&
 		!strings.HasPrefix(st.name, "s.") &&
+		!strings.HasPrefix(st.name, "mm.") &&
 		kind != tensorKindFP32 {
 		kind = tensorKindBF16
 	}

@@ -71,6 +71,8 @@ func ParserForName(name string) Parser {
 		return &FunctionGemmaParser{}
 	case "glm-4.7":
 		return &GLM47Parser{}
+	case "glm-ocr":
+		return &GlmOcrParser{}
 	case "lfm2":
 		return &LFM2Parser{hasThinkingSupport: false}
 	case "lfm2-thinking":
