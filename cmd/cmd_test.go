@@ -1555,7 +1555,7 @@ func TestShowInfoImageGen(t *testing.T) {
 			ParameterSize:     "10.3B",
 			QuantizationLevel: "FP8",
 		},
-		Capabilities: []model.Capability{model.CapabilityImageGeneration},
+		Capabilities: []model.Capability{model.CapabilityImage},
 		Requires:     "0.14.0",
 	}, false, &b)
 	if err != nil {

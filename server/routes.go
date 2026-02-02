@@ -39,6 +39,7 @@ import (
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/middleware"
 	"github.com/ollama/ollama/model/parsers"
 	"github.com/ollama/ollama/model/renderers"
@@ -51,7 +52,7 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 	"github.com/ollama/ollama/x/imagegen"
-	imagegenapi "github.com/ollama/ollama/x/imagegen/api"
+	xserver "github.com/ollama/ollama/x/server"
 )
 
 const signinURLStr = "https://ollama.com/connect?name=%s&key=%s"
@@ -164,29 +165,6 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 	return runner.llama, model, &opts, nil
 }
 
-// ScheduleImageGenRunner schedules an image generation model runner.
-// This implements the imagegenapi.RunnerScheduler interface.
-func (s *Server) ScheduleImageGenRunner(c *gin.Context, modelName string, opts api.Options, keepAlive *api.Duration) (llm.LlamaServer, error) {
-	m := &Model{
-		Name:      modelName,
-		ShortName: modelName,
-		ModelPath: modelName, // For image gen, ModelPath is just the model name
-		Config: model.ConfigV2{
-			Capabilities: []string{"image"},
-		},
-	}
-
-	runnerCh, errCh := s.sched.GetRunner(c.Request.Context(), m, opts, keepAlive)
-	var runner *runnerRef
-	select {
-	case runner = <-runnerCh:
-	case err := <-errCh:
-		return nil, err
-	}
-
-	return runner.llama, nil
-}
-
 func signinURL() (string, error) {
 	pubKey, err := auth.GetPublicKey()
 	if err != nil {
@@ -211,12 +189,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
-		return
-	}
-
-	// Check if this is a known image generation model
-	if imagegen.ResolveModelName(req.Model) != "" {
-		imagegenapi.HandleGenerateRequest(c, s, req.Model, req.Prompt, req.KeepAlive, streamResponse)
 		return
 	}
 
@@ -344,7 +316,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	// expire the runner
+	// expire the runner if unload is requested (empty prompt, keep alive is 0)
 	if req.Prompt == "" && req.KeepAlive != nil && req.KeepAlive.Duration == 0 {
 		s.sched.expireRunner(m)
 
@@ -355,6 +327,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			Done:       true,
 			DoneReason: "unload",
 		})
+		return
+	}
+
+	// Handle image generation models
+	if slices.Contains(m.Capabilities(), model.CapabilityImage) {
+		s.handleImageGenerate(c, req, name.String(), checkpointStart)
 		return
 	}
 
@@ -997,7 +975,7 @@ func (s *Server) PushHandler(c *gin.Context) {
 // is.
 func getExistingName(n model.Name) (model.Name, error) {
 	var zero model.Name
-	existing, err := Manifests(true)
+	existing, err := manifest.Manifests(true)
 	if err != nil {
 		return zero, err
 	}
@@ -1041,7 +1019,7 @@ func (s *Server) DeleteHandler(c *gin.Context) {
 		return
 	}
 
-	m, err := ParseNamedManifest(n)
+	m, err := manifest.ParseNamedManifest(n)
 	if err != nil {
 		switch {
 		case os.IsNotExist(err):
@@ -1103,7 +1081,7 @@ func (s *Server) ShowHandler(c *gin.Context) {
 func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	name := model.ParseName(req.Model)
 	if !name.IsValid() {
-		return nil, ErrModelPathInvalid
+		return nil, model.Unqualified(name)
 	}
 	name, err := getExistingName(name)
 	if err != nil {
@@ -1125,11 +1103,27 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	}
 
 	// For image generation models, populate details from imagegen package
-	if slices.Contains(m.Capabilities(), model.CapabilityImageGeneration) {
+	if slices.Contains(m.Capabilities(), model.CapabilityImage) {
 		if info, err := imagegen.GetModelInfo(name.String()); err == nil {
 			modelDetails.Family = info.Architecture
 			modelDetails.ParameterSize = format.HumanNumber(uint64(info.ParameterCount))
 			modelDetails.QuantizationLevel = info.Quantization
+		}
+	}
+
+	// For safetensors LLM models (experimental), populate details from config.json
+	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
+		if info, err := xserver.GetSafetensorsLLMInfo(name); err == nil {
+			if arch, ok := info["general.architecture"].(string); ok && arch != "" {
+				modelDetails.Family = arch
+			}
+			if paramCount, ok := info["general.parameter_count"].(int64); ok && paramCount > 0 {
+				modelDetails.ParameterSize = format.HumanNumber(uint64(paramCount))
+			}
+		}
+		// Get torch_dtype directly from config.json for quantization level
+		if dtype, err := xserver.GetSafetensorsDtype(name); err == nil && dtype != "" {
+			modelDetails.QuantizationLevel = dtype
 		}
 	}
 
@@ -1142,7 +1136,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		msgs[i] = api.Message{Role: msg.Role, Content: msg.Content}
 	}
 
-	manifest, err := ParseNamedManifest(name)
+	mf, err := manifest.ParseNamedManifest(name)
 	if err != nil {
 		return nil, err
 	}
@@ -1154,8 +1148,11 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		Details:      modelDetails,
 		Messages:     msgs,
 		Capabilities: m.Capabilities(),
-		ModifiedAt:   manifest.fi.ModTime(),
+		ModifiedAt:   mf.FileInfo().ModTime(),
 		Requires:     m.Config.Requires,
+		// Several integrations crash on a nil/omitempty+empty ModelInfo, so by
+		// default we return an empty map.
+		ModelInfo: make(map[string]any),
 	}
 
 	if m.Config.RemoteHost != "" {
@@ -1215,7 +1212,27 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		return resp, nil
 	}
 
-	if slices.Contains(m.Capabilities(), model.CapabilityImageGeneration) {
+	if slices.Contains(m.Capabilities(), model.CapabilityImage) {
+		// Populate tensor info if verbose
+		if req.Verbose {
+			if tensors, err := xserver.GetSafetensorsTensorInfo(name); err == nil {
+				resp.Tensors = tensors
+			}
+		}
+		return resp, nil
+	}
+
+	// For safetensors LLM models (experimental), populate ModelInfo from config.json
+	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
+		if info, err := xserver.GetSafetensorsLLMInfo(name); err == nil {
+			resp.ModelInfo = info
+		}
+		// Populate tensor info if verbose
+		if req.Verbose {
+			if tensors, err := xserver.GetSafetensorsTensorInfo(name); err == nil {
+				resp.Tensors = tensors
+			}
+		}
 		return resp, nil
 	}
 
@@ -1269,7 +1286,7 @@ func getModelData(digest string, verbose bool) (ggml.KV, ggml.Tensors, error) {
 }
 
 func (s *Server) ListHandler(c *gin.Context) {
-	ms, err := Manifests(true)
+	ms, err := manifest.Manifests(true)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1300,8 +1317,8 @@ func (s *Server) ListHandler(c *gin.Context) {
 			RemoteModel: cf.RemoteModel,
 			RemoteHost:  cf.RemoteHost,
 			Size:        m.Size(),
-			Digest:      m.digest,
-			ModifiedAt:  m.fi.ModTime(),
+			Digest:      m.Digest(),
+			ModifiedAt:  m.FileInfo().ModTime(),
 			Details: api.ModelDetails{
 				Format:            cf.ModelFormat,
 				Family:            cf.ModelFamily,
@@ -1360,7 +1377,7 @@ func (s *Server) CopyHandler(c *gin.Context) {
 }
 
 func (s *Server) HeadBlobHandler(c *gin.Context) {
-	path, err := GetBlobsPath(c.Param("digest"))
+	path, err := manifest.BlobsPath(c.Param("digest"))
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1376,7 +1393,7 @@ func (s *Server) HeadBlobHandler(c *gin.Context) {
 
 func (s *Server) CreateBlobHandler(c *gin.Context) {
 	if ib, ok := intermediateBlobs[c.Param("digest")]; ok {
-		p, err := GetBlobsPath(ib)
+		p, err := manifest.BlobsPath(ib)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -1394,7 +1411,7 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 		}
 	}
 
-	path, err := GetBlobsPath(c.Param("digest"))
+	path, err := manifest.BlobsPath(c.Param("digest"))
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1412,7 +1429,7 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 		return
 	}
 
-	layer, err := NewLayer(c.Request.Body, "")
+	layer, err := manifest.NewLayer(c.Request.Body, "")
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1587,12 +1604,12 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.GET("/v1/models", middleware.ListMiddleware(), s.ListHandler)
 	r.GET("/v1/models/:model", middleware.RetrieveMiddleware(), s.ShowHandler)
 	r.POST("/v1/responses", middleware.ResponsesMiddleware(), s.ChatHandler)
+	// OpenAI-compatible image generation endpoints
+	r.POST("/v1/images/generations", middleware.ImageGenerationsMiddleware(), s.GenerateHandler)
+	r.POST("/v1/images/edits", middleware.ImageEditsMiddleware(), s.GenerateHandler)
 
 	// Inference (Anthropic compatibility)
 	r.POST("/v1/messages", middleware.AnthropicMessagesMiddleware(), s.ChatHandler)
-
-	// Experimental image generation support
-	imagegenapi.RegisterRoutes(r, s)
 
 	if rc != nil {
 		// wrap old with new
@@ -1613,7 +1630,7 @@ func Serve(ln net.Listener) error {
 	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
 	slog.Info("server config", "env", envconfig.Values())
 
-	blobsDir, err := GetBlobsPath("")
+	blobsDir, err := manifest.BlobsPath("")
 	if err != nil {
 		return err
 	}
@@ -1622,7 +1639,7 @@ func Serve(ln net.Listener) error {
 	}
 
 	if !envconfig.NoPrune() {
-		if _, err := Manifests(false); err != nil {
+		if _, err := manifest.Manifests(false); err != nil {
 			slog.Warn("corrupt manifests detected, skipping prune operation.  Re-pull or delete to clear", "error", err)
 		} else {
 			// clean up unused layers and manifests
@@ -1630,12 +1647,12 @@ func Serve(ln net.Listener) error {
 				return err
 			}
 
-			manifestsPath, err := GetManifestPath()
+			manifestsPath, err := manifest.Path()
 			if err != nil {
 				return err
 			}
 
-			if err := PruneDirectory(manifestsPath); err != nil {
+			if err := manifest.PruneDirectory(manifestsPath); err != nil {
 				return err
 			}
 		}
@@ -2459,4 +2476,116 @@ func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
 		}
 	}
 	return msgs
+}
+
+// handleImageGenerate handles image generation requests within GenerateHandler.
+// This is called when the model has the Image capability.
+func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, modelName string, checkpointStart time.Time) {
+	// Validate image dimensions
+	const maxDimension int32 = 4096
+	if req.Width > maxDimension || req.Height > maxDimension {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("width and height must be <= %d", maxDimension)})
+		return
+	}
+
+	// Schedule the runner for image generation
+	runner, _, _, err := s.scheduleRunner(c.Request.Context(), modelName, []model.Capability{model.CapabilityImage}, nil, req.KeepAlive)
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
+
+	checkpointLoaded := time.Now()
+
+	// Handle load-only request (empty prompt)
+	if req.Prompt == "" {
+		c.JSON(http.StatusOK, api.GenerateResponse{
+			Model:      req.Model,
+			CreatedAt:  time.Now().UTC(),
+			Done:       true,
+			DoneReason: "load",
+		})
+		return
+	}
+
+	// Check streaming preference
+	isStreaming := req.Stream == nil || *req.Stream
+
+	contentType := "application/x-ndjson"
+	if !isStreaming {
+		contentType = "application/json; charset=utf-8"
+	}
+	c.Header("Content-Type", contentType)
+
+	// Get seed from options if provided
+	var seed int64
+	if s, ok := req.Options["seed"]; ok {
+		switch v := s.(type) {
+		case int:
+			seed = int64(v)
+		case int64:
+			seed = v
+		case float64:
+			seed = int64(v)
+		}
+	}
+
+	var images []llm.ImageData
+	for i, imgData := range req.Images {
+		images = append(images, llm.ImageData{ID: i, Data: imgData})
+	}
+
+	var streamStarted bool
+	var finalResponse api.GenerateResponse
+
+	if err := runner.Completion(c.Request.Context(), llm.CompletionRequest{
+		Prompt: req.Prompt,
+		Width:  req.Width,
+		Height: req.Height,
+		Steps:  req.Steps,
+		Seed:   seed,
+		Images: images,
+	}, func(cr llm.CompletionResponse) {
+		streamStarted = true
+		res := api.GenerateResponse{
+			Model:     req.Model,
+			CreatedAt: time.Now().UTC(),
+			Done:      cr.Done,
+		}
+
+		if cr.TotalSteps > 0 {
+			res.Completed = int64(cr.Step)
+			res.Total = int64(cr.TotalSteps)
+		}
+
+		if cr.Image != "" {
+			res.Image = cr.Image
+		}
+
+		if cr.Done {
+			res.DoneReason = cr.DoneReason.String()
+			res.Metrics.TotalDuration = time.Since(checkpointStart)
+			res.Metrics.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+		}
+
+		if !isStreaming {
+			finalResponse = res
+			return
+		}
+
+		data, _ := json.Marshal(res)
+		c.Writer.Write(append(data, '\n'))
+		c.Writer.Flush()
+	}); err != nil {
+		// Only send JSON error if streaming hasn't started yet
+		// (once streaming starts, headers are committed and we can't change status code)
+		if !streamStarted {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+		return
+	}
+
+	if !isStreaming {
+		c.JSON(http.StatusOK, finalResponse)
+	}
 }

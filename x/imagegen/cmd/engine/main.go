@@ -7,17 +7,20 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"log"
 	"os"
 	"path/filepath"
 	"runtime/pprof"
 
+	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/mlx"
+	"github.com/ollama/ollama/x/imagegen/models/flux2"
 	"github.com/ollama/ollama/x/imagegen/models/gemma3"
 	"github.com/ollama/ollama/x/imagegen/models/gpt_oss"
 	"github.com/ollama/ollama/x/imagegen/models/llama"
-	"github.com/ollama/ollama/x/imagegen/models/qwen_image"
-	"github.com/ollama/ollama/x/imagegen/models/qwen_image_edit"
 	"github.com/ollama/ollama/x/imagegen/models/zimage"
 	"github.com/ollama/ollama/x/imagegen/safetensors"
 )
@@ -46,9 +49,9 @@ func main() {
 	imagePath := flag.String("image", "", "Image path for multimodal models")
 
 	// Image generation params
-	width := flag.Int("width", 1024, "Image width")
-	height := flag.Int("height", 1024, "Image height")
-	steps := flag.Int("steps", 9, "Denoising steps")
+	width := flag.Int("width", 0, "Image width (0 = auto from input or 1024)")
+	height := flag.Int("height", 0, "Image height (0 = auto from input or 1024)")
+	steps := flag.Int("steps", 0, "Denoising steps (0 = model default)")
 	seed := flag.Int64("seed", 42, "Random seed")
 	out := flag.String("output", "output.png", "Output path")
 
@@ -56,13 +59,11 @@ func main() {
 	listTensors := flag.Bool("list", false, "List tensors only")
 	cpuProfile := flag.String("cpuprofile", "", "Write CPU profile to file")
 	gpuCapture := flag.String("gpu-capture", "", "Capture GPU trace to .gputrace file (run with MTL_CAPTURE_ENABLED=1)")
-	layerCache := flag.Bool("layer-cache", false, "Enable layer caching for faster diffusion (Z-Image, Qwen-Image). Not compatible with CFG/negative prompts.")
 	wiredLimitGB := flag.Int("wired-limit", 32, "Metal wired memory limit in GB")
 
 	// Legacy mode flags
 	zimageFlag := flag.Bool("zimage", false, "Z-Image generation")
-	qwenImage := flag.Bool("qwen-image", false, "Qwen-Image text-to-image generation")
-	qwenImageEdit := flag.Bool("qwen-image-edit", false, "Qwen-Image-Edit image editing")
+	flux2Flag := flag.Bool("flux2", false, "FLUX.2 Klein generation")
 	var inputImages stringSlice
 	flag.Var(&inputImages, "input-image", "Input image for image editing (can be specified multiple times)")
 	negativePrompt := flag.String("negative-prompt", "", "Negative prompt for CFG (empty = no CFG, matching Python)")
@@ -76,6 +77,11 @@ func main() {
 	if *modelPath == "" {
 		flag.Usage()
 		return
+	}
+
+	// Check if MLX initialized successfully
+	if !mlx.IsMLXAvailable() {
+		log.Fatalf("MLX initialization failed: %v", mlx.GetMLXInitError())
 	}
 
 	// CPU profiling
@@ -117,57 +123,41 @@ func main() {
 		if err == nil {
 			err = saveImageArray(img, *out)
 		}
-	case *qwenImage:
-		m, loadErr := qwen_image.LoadPersistent(*modelPath)
-		if loadErr != nil {
+	case *flux2Flag:
+		m := &flux2.Model{}
+		if loadErr := m.Load(*modelPath); loadErr != nil {
 			log.Fatal(loadErr)
 		}
+		// Load input images with EXIF orientation correction
+		var loadedImages []image.Image
+		for _, path := range inputImages {
+			img, loadErr := loadImageWithEXIF(path)
+			if loadErr != nil {
+				log.Fatalf("Failed to load image %s: %v", path, loadErr)
+			}
+			loadedImages = append(loadedImages, img)
+		}
+		// When input images provided and user didn't override dimensions, use 0 to match input
+		fluxWidth := int32(*width)
+		fluxHeight := int32(*height)
+		if len(loadedImages) > 0 && *width == 0 && *height == 0 {
+			// Both unset, will auto-detect from input
+		} else if len(loadedImages) > 0 && *width == 0 {
+			fluxWidth = 0 // Compute from height + aspect ratio
+		} else if len(loadedImages) > 0 && *height == 0 {
+			fluxHeight = 0 // Compute from width + aspect ratio
+		}
 		var img *mlx.Array
-		img, err = m.GenerateFromConfig(&qwen_image.GenerateConfig{
-			Prompt:         *prompt,
-			NegativePrompt: *negativePrompt,
-			CFGScale:       float32(*cfgScale),
-			Width:          int32(*width),
-			Height:         int32(*height),
-			Steps:          *steps,
-			Seed:           *seed,
-			LayerCache:     *layerCache,
+		img, err = m.GenerateFromConfig(context.Background(), &flux2.GenerateConfig{
+			Prompt:        *prompt,
+			Width:         fluxWidth,
+			Height:        fluxHeight,
+			Steps:         *steps,
+			GuidanceScale: float32(*cfgScale),
+			Seed:          *seed,
+			CapturePath:   *gpuCapture,
+			InputImages:   loadedImages,
 		})
-		if err == nil {
-			err = saveImageArray(img, *out)
-		}
-	case *qwenImageEdit:
-		if len(inputImages) == 0 {
-			log.Fatal("qwen-image-edit requires at least one -input-image")
-		}
-
-		m, loadErr := qwen_image_edit.LoadPersistent(*modelPath)
-		if loadErr != nil {
-			log.Fatal(loadErr)
-		}
-		// For image editing, use 0 for dimensions to auto-detect from input image
-		// unless explicitly overridden from defaults
-		editWidth := int32(0)
-		editHeight := int32(0)
-		if *width != 1024 {
-			editWidth = int32(*width)
-		}
-		if *height != 1024 {
-			editHeight = int32(*height)
-		}
-
-		cfg := &qwen_image_edit.GenerateConfig{
-			Prompt:         *prompt,
-			NegativePrompt: *negativePrompt,
-			CFGScale:       float32(*cfgScale),
-			Width:          editWidth,
-			Height:         editHeight,
-			Steps:          *steps,
-			Seed:           *seed,
-		}
-
-		var img *mlx.Array
-		img, err = m.EditFromConfig(inputImages, cfg)
 		if err == nil {
 			err = saveImageArray(img, *out)
 		}
@@ -271,6 +261,8 @@ func detectModelKind(modelPath string) (string, error) {
 			switch index.ClassName {
 			case "FluxPipeline", "ZImagePipeline":
 				return "zimage", nil
+			case "Flux2KleinPipeline":
+				return "flux2", nil
 			}
 		}
 		return "zimage", nil
@@ -290,4 +282,13 @@ func detectModelKind(modelPath string) (string, error) {
 	}
 
 	return cfg.ModelType, nil
+}
+
+// loadImageWithEXIF loads an image from a file path with EXIF orientation correction.
+func loadImageWithEXIF(path string) (image.Image, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read file: %w", err)
+	}
+	return imagegen.DecodeImage(data)
 }

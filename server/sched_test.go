@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"os"
-	"slices"
 	"testing"
 	"time"
 
@@ -17,7 +16,6 @@ import (
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
-	"github.com/ollama/ollama/types/model"
 )
 
 func TestMain(m *testing.M) {
@@ -807,32 +805,8 @@ func (s *mockLlm) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo { return n
 func (s *mockLlm) HasExited() bool                                    { return false }
 func (s *mockLlm) GetActiveDeviceIDs() []ml.DeviceID                  { return nil }
 
-// TestImageGenCapabilityDetection verifies that models with "image" capability
-// are correctly identified and routed differently from language models.
-func TestImageGenCapabilityDetection(t *testing.T) {
-	// Model with image capability should be detected
-	imageModel := &Model{
-		Config: model.ConfigV2{
-			Capabilities: []string{"image"},
-		},
-	}
-	require.True(t, slices.Contains(imageModel.Config.Capabilities, "image"))
-
-	// Model without image capability should not be detected
-	langModel := &Model{
-		Config: model.ConfigV2{
-			Capabilities: []string{"completion"},
-		},
-	}
-	require.False(t, slices.Contains(langModel.Config.Capabilities, "image"))
-
-	// Empty capabilities should not match
-	emptyModel := &Model{}
-	require.False(t, slices.Contains(emptyModel.Config.Capabilities, "image"))
-}
-
 // TestImageGenRunnerCanBeEvicted verifies that an image generation model
-// loaded in the scheduler can be evicted by a language model request.
+// loaded in the scheduler can be evicted when idle.
 func TestImageGenRunnerCanBeEvicted(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
 	defer done()
@@ -863,4 +837,60 @@ func TestImageGenRunnerCanBeEvicted(t *testing.T) {
 	runner := s.findRunnerToUnload()
 	require.NotNil(t, runner)
 	require.Equal(t, "/fake/image/model", runner.modelPath)
+}
+
+// TestImageGenSchedulerCoexistence verifies that image generation models
+// can coexist with language models in the scheduler and VRAM is tracked correctly.
+func TestImageGenSchedulerCoexistence(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+
+	s := InitScheduler(ctx)
+	s.getGpuFn = getGpuFn
+	s.getSystemInfoFn = getSystemInfoFn
+
+	// Load both an imagegen runner and a language model runner
+	imageGenRunner := &runnerRef{
+		model:           &Model{Name: "flux", ModelPath: "/fake/flux/model"},
+		modelPath:       "/fake/flux/model",
+		llama:           &mockLlm{vramSize: 8 * format.GigaByte, vramByGPU: map[ml.DeviceID]uint64{{Library: "Metal"}: 8 * format.GigaByte}},
+		sessionDuration: 10 * time.Millisecond,
+		numParallel:     1,
+		refCount:        0,
+	}
+
+	langModelRunner := &runnerRef{
+		model:           &Model{Name: "llama3", ModelPath: "/fake/llama3/model"},
+		modelPath:       "/fake/llama3/model",
+		llama:           &mockLlm{vramSize: 4 * format.GigaByte, vramByGPU: map[ml.DeviceID]uint64{{Library: "Metal"}: 4 * format.GigaByte}},
+		sessionDuration: 10 * time.Millisecond,
+		numParallel:     1,
+		refCount:        0,
+	}
+
+	s.loadedMu.Lock()
+	s.loaded["/fake/flux/model"] = imageGenRunner
+	s.loaded["/fake/llama3/model"] = langModelRunner
+	s.loadedMu.Unlock()
+
+	// Verify both are loaded
+	s.loadedMu.Lock()
+	require.Len(t, s.loaded, 2)
+	require.NotNil(t, s.loaded["/fake/flux/model"])
+	require.NotNil(t, s.loaded["/fake/llama3/model"])
+	s.loadedMu.Unlock()
+
+	// Verify updateFreeSpace accounts for both
+	gpus := []ml.DeviceInfo{
+		{
+			DeviceID:    ml.DeviceID{Library: "Metal"},
+			TotalMemory: 24 * format.GigaByte,
+			FreeMemory:  24 * format.GigaByte,
+		},
+	}
+	s.updateFreeSpace(gpus)
+
+	// Free memory should be reduced by both models
+	expectedFree := uint64(24*format.GigaByte) - uint64(8*format.GigaByte) - uint64(4*format.GigaByte)
+	require.Equal(t, expectedFree, gpus[0].FreeMemory)
 }

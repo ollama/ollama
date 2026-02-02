@@ -1,6 +1,26 @@
 package renderers
 
-import "github.com/ollama/ollama/api"
+import (
+	"encoding/json"
+
+	"github.com/ollama/ollama/api"
+)
+
+func args(s string) api.ToolCallFunctionArguments {
+	var result api.ToolCallFunctionArguments
+	if err := json.Unmarshal([]byte(s), &result); err != nil {
+		panic("invalid JSON in args(): " + err.Error())
+	}
+	return result
+}
+
+func propsMap(s string) *api.ToolPropertiesMap {
+	var result api.ToolPropertiesMap
+	if err := json.Unmarshal([]byte(s), &result); err != nil {
+		panic("invalid JSON in propsMap(): " + err.Error())
+	}
+	return &result
+}
 
 // testPropsMap creates a ToolPropertiesMap from a map (convenience function for tests, order not preserved)
 func testPropsMap(m map[string]api.ToolProperty) *api.ToolPropertiesMap {
