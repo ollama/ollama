@@ -63,18 +63,20 @@ Ollama supports the following AMD GPUs via the ROCm library:
 
 | Family         | Cards and accelerators                                                                                                                         |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| AMD Radeon RX  | `7900 XTX` `7900 XT` `7900 GRE` `7800 XT` `7700 XT` `7600 XT` `7600` `6950 XT` `6900 XTX` `6900XT` `6800 XT` `6800` `Vega 64`                  |
+| AMD Radeon RX  | `9070 XT` `9070` `7900 XTX` `7900 XT` `7900 GRE` `7800 XT` `7700 XT` `7600 XT` `7600` `6950 XT` `6900 XTX` `6900XT` `6800 XT` `6800` `Vega 64` |
 | AMD Radeon PRO | `W7900` `W7800` `W7700` `W7600` `W7500` `W6900X` `W6800X Duo` `W6800X` `W6800` `V620` `V420` `V340` `V320` `Vega II Duo` `Vega II` `SSG`       |
+| AMD Radeon AI  | `AI Pro R9700` `AI 370` `AI Max 395`                                                                                                           |
 | AMD Instinct   | `MI300X` `MI300A` `MI300` `MI250X` `MI250` `MI210` `MI200` `MI100` `MI60`                                                                      |
 
 ### Windows Support
 
-With ROCm v6.1, the following GPUs are supported on Windows.
+With ROCm v6.1+, the following GPUs are supported on Windows.
 
-| Family         | Cards and accelerators                                                                                               |
-| -------------- | -------------------------------------------------------------------------------------------------------------------- |
-| AMD Radeon RX  | `7900 XTX` `7900 XT` `7900 GRE` `7800 XT` `7700 XT` `7600 XT` `7600` `6950 XT` `6900 XTX` `6900XT` `6800 XT` `6800`  |
-| AMD Radeon PRO | `W7900` `W7800` `W7700` `W7600` `W7500` `W6900X` `W6800X Duo` `W6800X` `W6800` `V620`                                |
+| Family         | Cards and accelerators                                                                                                    |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| AMD Radeon RX  | `9070 XT` `9070` `7900 XTX` `7900 XT` `7900 GRE` `7800 XT` `7700 XT` `7600 XT` `7600` `6950 XT` `6900 XTX` `6900XT` `6800 XT` `6800` |
+| AMD Radeon PRO | `W7900` `W7800` `W7700` `W7600` `W7500` `W6900X` `W6800X Duo` `W6800X` `W6800` `V620`                                      |
+| AMD Radeon AI  | `AI Pro R9700`                                                                                                            |
 
 ### Overrides on Linux
 
@@ -105,6 +107,14 @@ This table shows some example GPUs that map to these LLVM targets:
 | gfx1100 | Radeon PRO W7900 |
 | gfx1101 | Radeon PRO W7700 |
 | gfx1102 | Radeon RX 7600 |
+| gfx1151 | Radeon AI 300 Series |
+| gfx1200 | Radeon RX 9070 XT |
+| gfx1201 | Radeon AI Pro R9700 |
+
+> **Note for RDNA4 (gfx1200/gfx1201) users:** The first launch may take 60-120
+> seconds due to ROCm's lazy-loading TensileLibrary JIT compilation. Subsequent
+> launches will be faster. If discovery times out, you can increase the timeout
+> using `OLLAMA_GPU_DISCOVERY_TIMEOUT=120` (in seconds).
 
 AMD is working on enhancing ROCm v6 to broaden support for families of GPUs in a
 future release which should increase support for more GPUs.

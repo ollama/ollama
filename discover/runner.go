@@ -92,6 +92,25 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 				// cached
 				bootstrapTimeout = 90 * time.Second
 			}
+
+			// Check for ROCm library - RDNA4 (gfx1200/gfx1201) devices require
+			// significantly longer initialization due to lazy-loading TensileLibrary
+			// JIT compilation and firmware initialization
+			if strings.Contains(filepath.Base(dir), "rocm") {
+				// RDNA4 devices can take 60+ seconds for initial rocblas JIT compilation
+				// Increase timeout to 120s on Windows, 90s on Linux
+				if runtime.GOOS == "windows" {
+					bootstrapTimeout = 120 * time.Second
+				} else {
+					bootstrapTimeout = 90 * time.Second
+				}
+			}
+
+			// Allow user override for discovery timeout
+			if customTimeout := envconfig.GpuDiscoveryTimeout(); customTimeout > 0 {
+				bootstrapTimeout = time.Duration(customTimeout) * time.Second
+				slog.Debug("using custom GPU discovery timeout", "timeout", bootstrapTimeout)
+			}
 			var dirs []string
 			if dir != "" {
 				if requested != "" && filepath.Base(dir) != requested {
@@ -122,7 +141,29 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 		// aren't supported by a given library.  We run this phase in parallel to speed up discovery.
 		// Only devices that need verification are included in this pass
 		slog.Debug("evaluating which, if any, devices to filter out", "initial_count", len(devices))
-		ctx2ndPass, cancel := context.WithTimeout(ctx, 30*time.Second)
+
+		// Determine second pass timeout - increase for ROCm/RDNA4 devices
+		secondPassTimeout := 30 * time.Second
+		hasRocmDevice := false
+		for _, dev := range devices {
+			if strings.EqualFold(dev.Library, "ROCm") {
+				hasRocmDevice = true
+				break
+			}
+		}
+		if hasRocmDevice {
+			// RDNA4 devices require longer validation due to rocblas JIT compilation
+			secondPassTimeout = 90 * time.Second
+			if runtime.GOOS == "windows" {
+				secondPassTimeout = 120 * time.Second
+			}
+		}
+		// Allow user override
+		if customTimeout := envconfig.GpuDiscoveryTimeout(); customTimeout > 0 {
+			secondPassTimeout = time.Duration(customTimeout) * time.Second
+		}
+
+		ctx2ndPass, cancel := context.WithTimeout(ctx, secondPassTimeout)
 		defer cancel()
 		var wg sync.WaitGroup
 		needsDelete := make([]bool, len(devices))

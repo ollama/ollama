@@ -206,6 +206,8 @@ var (
 	UseAuth = Bool("OLLAMA_AUTH")
 	// Enable Vulkan backend
 	EnableVulkan = Bool("OLLAMA_VULKAN")
+	// GPU discovery timeout in seconds - increase for RDNA4 devices with slow JIT compilation
+	GpuDiscoveryTimeout = Uint("OLLAMA_GPU_DISCOVERY_TIMEOUT", 0)
 )
 
 func String(s string) func() string {

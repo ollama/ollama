@@ -47,6 +47,7 @@ func (e filteredEnv) LogValue() slog.Value {
 				strings.HasPrefix(key, "CUDA_"),
 				strings.HasPrefix(key, "ROCR_"),
 				strings.HasPrefix(key, "ROCM_"),
+				strings.HasPrefix(key, "ROCBLAS_"),
 				strings.HasPrefix(key, "HIP_"),
 				strings.HasPrefix(key, "GPU_"),
 				strings.HasPrefix(key, "HSA_"),
@@ -259,12 +260,23 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 
 	gpuLibs := ml.LibraryPaths(gpus)
 	status := NewStatusWriter(os.Stderr)
+	envs := ml.GetVisibleDevicesEnv(gpus, false)
+	for _, gpu := range gpus {
+		if gpu.Library == "Vulkan" {
+			if envs == nil {
+				envs = make(map[string]string)
+			}
+			envs["GGML_VK_VISIBLE_DEVICES"] = "0"
+			break
+		}
+	}
+
 	cmd, port, err := StartRunner(
 		textProcessor != nil,
 		modelPath,
 		gpuLibs,
 		status,
-		ml.GetVisibleDevicesEnv(gpus, false),
+		envs,
 	)
 
 	s := llmServer{
@@ -420,6 +432,30 @@ func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.W
 	if ollamaPathNeeded {
 		cmd.Env = append(cmd.Env, "OLLAMA_LIBRARY_PATH="+strings.Join(gpuLibs, string(filepath.ListSeparator)))
 	}
+
+	// Set ROCBLAS_TENSILE_LIBPATH for ROCm/HIP to find TensileLibrary files
+	// This is critical for RDNA4 (gfx1200/gfx1201) which uses lazy-loaded tensile libraries
+	rocblasLibPath := ""
+	for _, libPath := range gpuLibs {
+		tensorPath := filepath.Join(libPath, "rocblas", "library")
+		if fi, err := os.Stat(tensorPath); err == nil && fi.IsDir() {
+			rocblasLibPath = tensorPath
+			break
+		}
+	}
+	if rocblasLibPath != "" {
+		rocblasNeeded := true
+		for i := range cmd.Env {
+			if strings.HasPrefix(cmd.Env[i], "ROCBLAS_TENSILE_LIBPATH=") {
+				rocblasNeeded = false
+				break
+			}
+		}
+		if rocblasNeeded {
+			cmd.Env = append(cmd.Env, "ROCBLAS_TENSILE_LIBPATH="+rocblasLibPath)
+		}
+	}
+
 	for k, done := range extraEnvsDone {
 		if !done {
 			cmd.Env = append(cmd.Env, k+"="+extraEnvs[k])
@@ -981,8 +1017,8 @@ func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMe
 					break
 				}
 			}
-			if !found {
-				// The runner doesn't report seeing this GPU
+			// The runner doesn't report seeing this GPU
+			if memory.GPUs != nil && !found {
 				gl[i].FreeMemory = 0
 			}
 		}
