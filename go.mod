@@ -1,6 +1,6 @@
 module github.com/ollama/ollama
 
-go 1.25.5
+go 1.25.6
 
 require (
 	github.com/TheTitanrain/w32 v0.0.0-20180517000239-4f5cfb03fabf
