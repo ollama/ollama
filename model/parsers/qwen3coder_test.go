@@ -343,20 +343,23 @@ func TestQwenParserStreaming(t *testing.T) {
 				},
 			},
 		},
+		// qwen3-coder:30b occasionally leaves off opening <tool_call> tags, but we
+		// want to parse it anyway
+		{
+			desc: "missing <tool_call> opening tag still parses",
+			steps: []step{
+				{
+					input: "before tool call<function=get_current_temperature>some tool content here</function></tool_call>",
+					wantEvents: []qwenEvent{
+						qwenEventContent{content: "before tool call"},
+						qwenEventRawToolCall{raw: "<function=get_current_temperature>some tool content here</function>"},
+					},
+				},
+			},
+		},
 	}
 
-	anyOnlies := false
 	for _, tc := range cases {
-		if tc.only {
-			anyOnlies = true
-		}
-	}
-
-	for _, tc := range cases {
-		if anyOnlies && !tc.only {
-			continue
-		}
-
 		t.Run(tc.desc, func(t *testing.T) {
 			parser := Qwen3CoderParser{}
 

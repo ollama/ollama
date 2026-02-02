@@ -19,8 +19,9 @@ import (
 type qwenParserState int
 
 const (
-	toolOpenTag  = "<tool_call>"
-	toolCloseTag = "</tool_call>"
+	toolOpenTag       = "<tool_call>"
+	toolCloseTag      = "</tool_call>"
+	functionOpenStart = "<function=" // qwen3-coder sometimes omits <tool_call> but starts with this
 )
 
 const (
@@ -138,11 +139,26 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 			p.acc.WriteString(after)
 			p.state = qwenParserState_CollectingToolContent
 			return events, true
-		} else if overlap := overlap(p.acc.String(), toolOpenTag); overlap > 0 {
+		} else if idx := strings.Index(p.acc.String(), functionOpenStart); idx != -1 {
+			// qwen3-coder sometimes omits <tool_call> but starts with <function=
+			// we treat this as the start of a tool call, keeping the <function= prefix
+			// since it's part of the raw tool call content
+			before := p.acc.String()[:idx]
+			before = strings.TrimRightFunc(before, unicode.IsSpace)
+			if len(before) > 0 {
+				events = append(events, qwenEventContent{content: before})
+			}
+			after := p.acc.String()[idx:]
+			p.acc.Reset()
+			p.acc.WriteString(after)
+			p.state = qwenParserState_CollectingToolContent
+			return events, true
+		} else if toolOverlap, funcOverlap := overlap(p.acc.String(), toolOpenTag), overlap(p.acc.String(), functionOpenStart); toolOverlap > 0 || funcOverlap > 0 {
 			// we found a partial tool open tag, so we can emit the unambiguous part,
 			// which is the (trailing-whitespace trimmed) content before the partial
 			// tool open tag
-			beforePartialTag := p.acc.String()[:len(p.acc.String())-overlap]
+			maxOverlap := max(toolOverlap, funcOverlap)
+			beforePartialTag := p.acc.String()[:len(p.acc.String())-maxOverlap]
 			trailingWhitespaceLen := trailingWhitespaceLen(beforePartialTag)
 			ambiguousStart := len(beforePartialTag) - trailingWhitespaceLen
 			unambiguous := p.acc.String()[:ambiguousStart]
