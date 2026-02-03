@@ -18,7 +18,7 @@ type OpenCode struct{}
 
 func (o *OpenCode) String() string { return "OpenCode" }
 
-func (o *OpenCode) Run(model string, extraArgs []string) error {
+func (o *OpenCode) Run(model string, args []string) error {
 	if _, err := exec.LookPath("opencode"); err != nil {
 		return fmt.Errorf("opencode is not installed, install from https://opencode.ai")
 	}
@@ -32,7 +32,7 @@ func (o *OpenCode) Run(model string, extraArgs []string) error {
 		return fmt.Errorf("setup failed: %w", err)
 	}
 
-	cmd := exec.Command("opencode", extraArgs...)
+	cmd := exec.Command("opencode", args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

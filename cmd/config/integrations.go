@@ -22,7 +22,7 @@ import (
 // Runner can run an integration with a model.
 
 type Runner interface {
-	Run(model string, extraArgs []string) error
+	Run(model string, args []string) error
 	// String returns the human-readable name of the integration
 	String() string
 }
@@ -233,13 +233,13 @@ func selectModels(ctx context.Context, name, current string) ([]string, error) {
 	return selected, nil
 }
 
-func runIntegration(name, modelName string, extraArgs []string) error {
+func runIntegration(name, modelName string, args []string) error {
 	r, ok := integrations[name]
 	if !ok {
 		return fmt.Errorf("unknown integration: %s", name)
 	}
 	fmt.Fprintf(os.Stderr, "\nLaunching %s with %s...\n", r, modelName)
-	return r.Run(modelName, extraArgs)
+	return r.Run(modelName, args)
 }
 
 // LaunchCmd returns the cobra command for launching integrations.
@@ -264,13 +264,13 @@ Examples:
   ollama launch claude
   ollama launch claude --model <model>
   ollama launch droid --config (does not auto-launch)
-  ollama launch claude -- --yolo --hi (pass extra args to integration)`,
+  ollama launch claude -- --yolo (pass extra args to integration)`,
 		Args:    cobra.ArbitraryArgs,
 		PreRunE: checkServerHeartbeat,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Extract integration name and extra args using -- separator
+			// Extract integration name and args to pass through using -- separator
 			var name string
-			var extraArgs []string
+			var passArgs []string
 			dashIdx := cmd.ArgsLenAtDash()
 
 			if dashIdx == -1 {
@@ -282,14 +282,14 @@ Examples:
 					name = args[0]
 				}
 			} else {
-				// "--" was used: args before it = integration name, args after = extra
+				// "--" was used: args before it = integration name, args after = passthrough
 				if dashIdx > 1 {
 					return fmt.Errorf("expected at most 1 integration name before '--', got %d", dashIdx)
 				}
 				if dashIdx == 1 {
 					name = args[0]
 				}
-				extraArgs = args[dashIdx:]
+				passArgs = args[dashIdx:]
 			}
 
 			if name == "" {
@@ -311,7 +311,7 @@ Examples:
 			// If launching without --model, use saved config if available
 			if !configFlag && modelFlag == "" {
 				if config, err := loadIntegration(name); err == nil && len(config.Models) > 0 {
-					return runIntegration(name, config.Models[0], extraArgs)
+					return runIntegration(name, config.Models[0], passArgs)
 				}
 			}
 
@@ -372,13 +372,13 @@ Examples:
 
 			if configFlag {
 				if launch, _ := confirmPrompt(fmt.Sprintf("\nLaunch %s now?", r)); launch {
-					return runIntegration(name, models[0], extraArgs)
+					return runIntegration(name, models[0], passArgs)
 				}
 				fmt.Fprintf(os.Stderr, "Run 'ollama launch %s' to start with %s\n", strings.ToLower(name), models[0])
 				return nil
 			}
 
-			return runIntegration(name, models[0], extraArgs)
+			return runIntegration(name, models[0], passArgs)
 		},
 	}
 

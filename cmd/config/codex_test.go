@@ -11,7 +11,7 @@ func TestCodexArgs(t *testing.T) {
 	tests := []struct {
 		name      string
 		model     string
-		extraArgs []string
+		args []string
 		want      []string
 	}{
 		{"with model", "llama3.2", nil, []string{"--oss", "-m", "llama3.2"}},
@@ -22,9 +22,9 @@ func TestCodexArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := c.args(tt.model, tt.extraArgs)
+			got := c.args(tt.model, tt.args)
 			if !slices.Equal(got, tt.want) {
-				t.Errorf("args(%q, %v) = %v, want %v", tt.model, tt.extraArgs, got, tt.want)
+				t.Errorf("args(%q, %v) = %v, want %v", tt.model, tt.args, got, tt.want)
 			}
 		})
 	}

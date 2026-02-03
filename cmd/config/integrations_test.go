@@ -188,17 +188,17 @@ func TestAllIntegrations_HaveRequiredMethods(t *testing.T) {
 	}
 }
 
-func TestParseExtraArgs(t *testing.T) {
+func TestParseArgs(t *testing.T) {
 	// Tests reflect cobra's ArgsLenAtDash() semantics:
 	// - cobra strips "--" from args
 	// - ArgsLenAtDash() returns the index where "--" was, or -1
 	tests := []struct {
-		name          string
-		args          []string // args as cobra delivers them (no "--")
-		dashIdx       int      // what ArgsLenAtDash() returns
-		wantName      string
-		wantExtraArgs []string
-		wantErr       bool
+		name     string
+		args     []string // args as cobra delivers them (no "--")
+		dashIdx  int      // what ArgsLenAtDash() returns
+		wantName string
+		wantArgs []string
+		wantErr  bool
 	}{
 		{
 			name:     "no extra args, no dash",
@@ -211,14 +211,14 @@ func TestParseExtraArgs(t *testing.T) {
 			args:          []string{"claude", "--yolo", "--hi"},
 			dashIdx:       1,
 			wantName:      "claude",
-			wantExtraArgs: []string{"--yolo", "--hi"},
+			wantArgs: []string{"--yolo", "--hi"},
 		},
 		{
 			name:          "extra args only after --",
 			args:          []string{"codex", "--help"},
 			dashIdx:       1,
 			wantName:      "codex",
-			wantExtraArgs: []string{"--help"},
+			wantArgs: []string{"--help"},
 		},
 		{
 			name:     "-- at end with no args after",
@@ -231,7 +231,7 @@ func TestParseExtraArgs(t *testing.T) {
 			args:          []string{"--yolo"},
 			dashIdx:       0,
 			wantName:      "",
-			wantExtraArgs: []string{"--yolo"},
+			wantArgs: []string{"--yolo"},
 		},
 		{
 			name:    "multiple args before -- is error",
@@ -257,7 +257,7 @@ func TestParseExtraArgs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Simulate the parsing logic from LaunchCmd using dashIdx
 			var name string
-			var extraArgs []string
+			var parsedArgs []string
 			var err error
 
 			dashIdx := tt.dashIdx
@@ -276,7 +276,7 @@ func TestParseExtraArgs(t *testing.T) {
 					if dashIdx == 1 {
 						name = args[0]
 					}
-					extraArgs = args[dashIdx:]
+					parsedArgs = args[dashIdx:]
 				}
 			}
 
@@ -292,8 +292,8 @@ func TestParseExtraArgs(t *testing.T) {
 			if name != tt.wantName {
 				t.Errorf("name = %q, want %q", name, tt.wantName)
 			}
-			if !slices.Equal(extraArgs, tt.wantExtraArgs) {
-				t.Errorf("extraArgs = %v, want %v", extraArgs, tt.wantExtraArgs)
+			if !slices.Equal(parsedArgs, tt.wantArgs) {
+				t.Errorf("args = %v, want %v", parsedArgs, tt.wantArgs)
 			}
 		})
 	}
