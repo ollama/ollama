@@ -146,7 +146,7 @@ func InstallIntegration(name string) error {
 	// Create a temporary file for the script
 	tmpDir := os.TempDir()
 	scriptPath := filepath.Join(tmpDir, fmt.Sprintf("install-%s.sh", name))
-	if err := os.WriteFile(scriptPath, script, 0700); err != nil {
+	if err := os.WriteFile(scriptPath, script, 0o700); err != nil {
 		return fmt.Errorf("failed to write install script: %w", err)
 	}
 	defer os.Remove(scriptPath)
@@ -223,7 +223,7 @@ func SelectModel(ctx context.Context) (string, error) {
 func defaultSingleSelector(title string, items []ModelItem) (string, error) {
 	selectItems := make([]selectItem, len(items))
 	for i, item := range items {
-		selectItems[i] = selectItem{Name: item.Name, Description: item.Description}
+		selectItems[i] = selectItem(item)
 	}
 	return selectPrompt(title, selectItems)
 }
@@ -231,7 +231,7 @@ func defaultSingleSelector(title string, items []ModelItem) (string, error) {
 func defaultMultiSelector(title string, items []ModelItem, preChecked []string) ([]string, error) {
 	selectItems := make([]selectItem, len(items))
 	for i, item := range items {
-		selectItems[i] = selectItem{Name: item.Name, Description: item.Description}
+		selectItems[i] = selectItem(item)
 	}
 	return multiSelectPrompt(title, selectItems, preChecked)
 }
