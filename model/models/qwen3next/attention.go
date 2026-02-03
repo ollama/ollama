@@ -13,7 +13,7 @@ import (
 // - Both Q and K have RMSNorm
 // - Output is gated: attn * sigmoid(gate)
 type FullAttention struct {
-	Query     *nn.Linear  `gguf:"attn_q"`      // outputs [n_embd_head * 2, n_head]
+	Query     *nn.Linear  `gguf:"attn_q"` // outputs [n_embd_head * 2, n_head]
 	QueryNorm *nn.RMSNorm `gguf:"attn_q_norm"`
 	Key       *nn.Linear  `gguf:"attn_k"`
 	KeyNorm   *nn.RMSNorm `gguf:"attn_k_norm"`
@@ -22,7 +22,27 @@ type FullAttention struct {
 }
 
 func (sa *FullAttention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache *HybridCache, opts *Options) ml.Tensor {
+	// Use Dim() instead of Shape() for consistent behavior during graph construction
+	hiddenDim := hiddenStates.Dim(0)
 	batchSize := hiddenStates.Dim(1)
+	nSeqs := hiddenStates.Dim(2) // 0 if 2D tensor
+
+	if cache != nil && cache.IsSupportedForBatch() {
+		seqTokens := cache.seqTokens()
+		seqs := cache.numSeqs()
+		if seqTokens > 0 && seqs > 0 {
+			if nSeqs > 0 {
+				// 3D tensor: [hiddenDim, seqTokens, nSeqs]
+				if batchSize != seqTokens || nSeqs != seqs {
+					panic("qwen3next: unsupported batch layout for full attention")
+				}
+				hiddenStates = hiddenStates.Reshape(ctx, hiddenDim, seqTokens*seqs)
+				batchSize = seqTokens * seqs
+			} else if batchSize != seqTokens*seqs {
+				panic("qwen3next: unsupported batch layout for full attention")
+			}
+		}
+	}
 	headDim := opts.headDim()
 	numHeads := opts.numHeads
 

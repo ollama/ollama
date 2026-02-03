@@ -2,6 +2,7 @@ package convert
 
 import (
 	"fmt"
+	"io/fs"
 	"math"
 	"slices"
 	"strings"
@@ -25,21 +26,21 @@ type qwen3NextModel struct {
 	RMSNormEPS            float32 `json:"rms_norm_eps"`
 
 	// MoE config
-	NumExperts               uint32 `json:"num_experts"`
-	NumExpertsPerToken       uint32 `json:"num_experts_per_tok"`
-	NormTopkProb             bool   `json:"norm_topk_prob"`
-	MoEIntermediateSize      uint32 `json:"moe_intermediate_size"`
-	SharedExpertIntermSize   uint32 `json:"shared_expert_intermediate_size"`
+	NumExperts             uint32 `json:"num_experts"`
+	NumExpertsPerToken     uint32 `json:"num_experts_per_tok"`
+	NormTopkProb           bool   `json:"norm_topk_prob"`
+	MoEIntermediateSize    uint32 `json:"moe_intermediate_size"`
+	SharedExpertIntermSize uint32 `json:"shared_expert_intermediate_size"`
 
 	// Hybrid attention config
 	FullAttentionInterval uint32 `json:"full_attention_interval"`
 
 	// Linear attention (Gated Delta Net) config
-	LinearConvKernelDim  uint32 `json:"linear_conv_kernel_dim"`
-	LinearKeyHeadDim     uint32 `json:"linear_key_head_dim"`
-	LinearNumKeyHeads    uint32 `json:"linear_num_key_heads"`
-	LinearNumValueHeads  uint32 `json:"linear_num_value_heads"`
-	LinearValueHeadDim   uint32 `json:"linear_value_head_dim"`
+	LinearConvKernelDim uint32 `json:"linear_conv_kernel_dim"`
+	LinearKeyHeadDim    uint32 `json:"linear_key_head_dim"`
+	LinearNumKeyHeads   uint32 `json:"linear_num_key_heads"`
+	LinearNumValueHeads uint32 `json:"linear_num_value_heads"`
+	LinearValueHeadDim  uint32 `json:"linear_value_head_dim"`
 
 	// RoPE config
 	PartialRotaryFactor float32 `json:"partial_rotary_factor"`
@@ -51,6 +52,37 @@ type qwen3NextModel struct {
 
 var _ ModelConverter = (*qwen3NextModel)(nil)
 
+func (q *qwen3NextModel) parseMore(_ fs.FS) error {
+	if q.NumHiddenLayers == 0 {
+		return fmt.Errorf("qwen3next: num_hidden_layers must be set")
+	}
+	if q.NumAttentionHeads == 0 {
+		return fmt.Errorf("qwen3next: num_attention_heads must be set")
+	}
+	if q.NumKeyValueHeads == 0 {
+		return fmt.Errorf("qwen3next: num_key_value_heads must be set")
+	}
+	if q.FullAttentionInterval == 0 {
+		return fmt.Errorf("qwen3next: full_attention_interval must be set")
+	}
+	if q.FullAttentionInterval > q.NumHiddenLayers {
+		return fmt.Errorf("qwen3next: full_attention_interval (%d) exceeds num_hidden_layers (%d)", q.FullAttentionInterval, q.NumHiddenLayers)
+	}
+
+	hasFull := false
+	for i := range q.NumHiddenLayers {
+		if (i+1)%q.FullAttentionInterval == 0 {
+			hasFull = true
+			break
+		}
+	}
+	if !hasFull {
+		return fmt.Errorf("qwen3next: head_count_kv would be all zeros (full_attention_interval=%d, num_hidden_layers=%d)", q.FullAttentionInterval, q.NumHiddenLayers)
+	}
+
+	return nil
+}
+
 func (q *qwen3NextModel) KV(t *Tokenizer) KV {
 	kv := q.ModelParameters.KV(t)
 	kv["general.architecture"] = "qwen3next"
@@ -60,7 +92,6 @@ func (q *qwen3NextModel) KV(t *Tokenizer) KV {
 	kv["embedding_length"] = q.HiddenSize
 	kv["feed_forward_length"] = q.IntermediateSize
 	kv["attention.head_count"] = q.NumAttentionHeads
-	kv["attention.head_count_kv"] = q.NumKeyValueHeads
 	headDim := q.HeadDim
 	if headDim == 0 && q.NumAttentionHeads > 0 {
 		headDim = q.HiddenSize / q.NumAttentionHeads
@@ -97,20 +128,19 @@ func (q *qwen3NextModel) KV(t *Tokenizer) KV {
 	// d_inner = linear_value_head_dim * linear_num_value_heads
 	dInner := q.LinearValueHeadDim * q.LinearNumValueHeads
 	kv["ssm.inner_size"] = dInner
-	kv["ssm.state_size"] = q.LinearKeyHeadDim   // head_k_dim
-	kv["ssm.group_count"] = q.LinearNumKeyHeads // num_k_heads
+	kv["ssm.state_size"] = q.LinearKeyHeadDim        // head_k_dim
+	kv["ssm.group_count"] = q.LinearNumKeyHeads      // num_k_heads
 	kv["ssm.time_step_rank"] = q.LinearNumValueHeads // num_v_heads
 	kv["ssm.conv_kernel"] = q.LinearConvKernelDim
-	if q.FullAttentionInterval > 0 {
-		kv["full_attention_interval"] = q.FullAttentionInterval
-	}
+	interval := q.FullAttentionInterval
+	kv["full_attention_interval"] = interval
 
 	// Build per-layer KV head count array to identify layer types
 	// 0 = recurrent (linear attention), non-zero = full attention
 	kvHeadCounts := make([]uint32, q.NumHiddenLayers)
 	for i := range q.NumHiddenLayers {
 		// Full attention every full_attention_interval layers (starting at interval-1)
-		if q.FullAttentionInterval > 0 && (i+1)%q.FullAttentionInterval == 0 {
+		if interval > 0 && (i+1)%interval == 0 {
 			kvHeadCounts[i] = q.NumKeyValueHeads
 		}
 		// else stays 0 (recurrent layer)
@@ -213,6 +243,22 @@ func (q *qwen3NextModel) Tensors(ts []Tensor) []*ggml.Tensor {
 				Shape:    newShape,
 				WriterTo: t,
 			})
+		// Squeeze shared expert gate: [D, 1] or [1, D] -> [D]
+		case strings.HasSuffix(name, ".ffn_gate_inp_shexp.weight"):
+			newShape := slices.Clone(shape)
+			if len(shape) == 2 {
+				if shape[0] == 1 && shape[1] > 1 {
+					newShape = []uint64{shape[1]}
+				} else if shape[1] == 1 && shape[0] > 1 {
+					newShape = []uint64{shape[0]}
+				}
+			}
+			out = append(out, &ggml.Tensor{
+				Name:     name,
+				Kind:     t.Kind(),
+				Shape:    newShape,
+				WriterTo: t,
+			})
 
 		default:
 			out = append(out, &ggml.Tensor{
@@ -228,14 +274,14 @@ func (q *qwen3NextModel) Tensors(ts []Tensor) []*ggml.Tensor {
 }
 
 type qkvzSplitSpec struct {
-	hidden   int
-	headKDim int
-	headVDim int
+	hidden    int
+	headKDim  int
+	headVDim  int
 	numKHeads int
 	numVHeads int
-	qkvzDim  int
-	qkvOut   int
-	gateOut  int
+	qkvzDim   int
+	qkvOut    int
+	gateOut   int
 }
 
 func (q *qwen3NextModel) qkvzSpec(shape []uint64) (qkvzSplitSpec, bool) {
@@ -263,14 +309,14 @@ func (q *qwen3NextModel) qkvzSpec(shape []uint64) (qkvzSplitSpec, bool) {
 	}
 
 	return qkvzSplitSpec{
-		hidden:   hidden,
-		headKDim: headKDim,
-		headVDim: headVDim,
+		hidden:    hidden,
+		headKDim:  headKDim,
+		headVDim:  headVDim,
 		numKHeads: numKHeads,
 		numVHeads: numVHeads,
-		qkvzDim:  qkvzDim,
-		qkvOut:   2*headKDim*numKHeads + headVDim*numVHeads,
-		gateOut:  headVDim * numVHeads,
+		qkvzDim:   qkvzDim,
+		qkvOut:    2*headKDim*numKHeads + headVDim*numVHeads,
+		gateOut:   headVDim * numVHeads,
 	}, true
 }
 
@@ -388,7 +434,6 @@ func (q *qwen3NextModel) repackQKVZ(spec qkvzSplitSpec, extractGate bool) Repack
 		return native.VectorF32(out.(*tensor.Dense))
 	}
 }
-
 
 // addOne adds 1.0 to all elements in the tensor (for norm weights)
 func (*qwen3NextModel) addOne(_ string, data []float32, shape []uint64) ([]float32, error) {

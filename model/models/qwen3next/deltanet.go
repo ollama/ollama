@@ -30,16 +30,20 @@ type Masks struct {
 }
 
 // GatedDeltaNet implements linear attention with SSM convolution and recurrent state.
+// It implements the Operator interface directly.
 type GatedDeltaNet struct {
 	// Optimized path: pre-split QKV and gate
-	SSMQKV     *nn.Linear  `gguf:"attn_qkv"`  // -> Q, K, V (concatenated)
-	SSMQKVGate *nn.Linear  `gguf:"attn_gate"` // -> Z gate
-	SSMBetaAlpha *nn.Linear  `gguf:"ssm_ba"`        // -> beta, alpha
+	SSMQKV       *nn.Linear  `gguf:"attn_qkv"`  // -> Q, K, V (concatenated)
+	SSMQKVGate   *nn.Linear  `gguf:"attn_gate"` // -> Z gate
+	SSMBetaAlpha *nn.Linear  `gguf:"ssm_ba"`    // -> beta, alpha
 	SSMConv1D    *convKernel `gguf:"ssm_conv1d"`
 	SSMDT        ml.Tensor   `gguf:"ssm_dt"` // alpha bias
-	SSMA         ml.Tensor   `gguf:"ssm_a"`         // -A_log.exp()
+	SSMA         ml.Tensor   `gguf:"ssm_a"`  // -A_log.exp()
 	SSMNorm      *nn.RMSNorm `gguf:"ssm_norm"`
 	SSMOut       *nn.Linear  `gguf:"ssm_out"`
+
+	// Layer index for cache access (set during model construction)
+	Layer int
 }
 
 // createMasks builds the constant mask tensors (called once, reused for all chunks)
@@ -61,7 +65,8 @@ func createMasks(ctx ml.Context) *Masks {
 	}
 }
 
-func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates ml.Tensor, cache *HybridCache, layer int, opts *Options) ml.Tensor {
+func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cache *HybridCache, opts *Options) ml.Tensor {
+	layer := gdn.Layer
 	nSeqTokens := hiddenStates.Dim(1)
 	nSeqs := hiddenStates.Dim(2)
 	if cache != nil && cache.IsSupportedForBatch() {
@@ -199,7 +204,8 @@ func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates ml.Tensor, cache 
 	return out.Reshape(ctx, out.Dim(0), nSeqTokens*nSeqs)
 }
 
-// deltaNetAutoregressive implements single-token state update
+// deltaNetAutoregressive implements single-token state update.
+// NOTE: Assumes headKDim == headVDim (state shape is [headVDim, headVDim, numVHeads, nSeqs]).
 func (gdn *GatedDeltaNet) deltaNetAutoregressive(
 	ctx ml.Context,
 	q, k, v, gate, beta, state ml.Tensor,
@@ -207,7 +213,6 @@ func (gdn *GatedDeltaNet) deltaNetAutoregressive(
 	layer int,
 	cache *HybridCache,
 ) ml.Tensor {
-	headKDim := q.Dim(0)
 	numVHeads := v.Dim(1)
 	headVDim := v.Dim(0)
 	nSeqs := q.Dim(3)
@@ -223,12 +228,12 @@ func (gdn *GatedDeltaNet) deltaNetAutoregressive(
 	// Sigmoid beta
 	beta = beta.Sigmoid(ctx)
 
-	// Reshape state
+	// Reshape state: [headVDim, headVDim, numVHeads, nSeqs]
 	state = state.Reshape(ctx, headVDim, headVDim, numVHeads, nSeqs)
 
 	// Reshape gate and beta for broadcasting
-	gT := gate.Permute(ctx, 2, 0, 1, 3).Reshape(ctx, 1, 1, numVHeads, nSeqs)
-	betaT := beta.Permute(ctx, 2, 0, 1, 3).Reshape(ctx, 1, 1, numVHeads, nSeqs)
+	gT := gate.Permute(ctx, 1, 0, 2, 3).Reshape(ctx, 1, 1, numVHeads, nSeqs)
+	betaT := beta.Permute(ctx, 1, 0, 2, 3).Reshape(ctx, 1, 1, numVHeads, nSeqs)
 
 	// Apply exponential to gate
 	gT = gT.Exp(ctx)
@@ -237,9 +242,9 @@ func (gdn *GatedDeltaNet) deltaNetAutoregressive(
 	state = state.Mul(ctx, gT)
 
 	// kv_mem = (state * k_t.unsqueeze(-1)).sum(dim=-2)
-	kTUnsqueezed := k.Reshape(ctx, 1, headKDim, numVHeads, nSeqs)
+	kTUnsqueezed := k.Reshape(ctx, 1, headVDim, numVHeads, nSeqs)
 	kvMem := state.Mul(ctx, kTUnsqueezed)
-	// Sum over dim=-2 (headKDim dimension)
+	// Sum over dim=-2 (second dimension after permute)
 	kvMem = kvMem.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 	kvMem = kvMem.SumRows(ctx)
 	kvMem = kvMem.Permute(ctx, 1, 0, 2, 3)
@@ -252,12 +257,12 @@ func (gdn *GatedDeltaNet) deltaNetAutoregressive(
 	delta := vDiff.Mul(ctx, betaT)
 
 	// state = state + k_t.unsqueeze(-1) * delta
-	kTUnsqueezedBroad := kTUnsqueezed.Repeat4D(ctx, headVDim, headKDim, numVHeads, nSeqs)
+	kTUnsqueezedBroad := kTUnsqueezed.Repeat4D(ctx, headVDim, headVDim, numVHeads, nSeqs)
 	kTDelta := kTUnsqueezedBroad.Mul(ctx, delta)
 	state = state.Add(ctx, kTDelta)
 
 	// core_attn_out = (state * q_t.unsqueeze(-1)).sum(dim=-2)
-	qTUnsqueezed := q.Reshape(ctx, 1, headKDim, numVHeads, nSeqs)
+	qTUnsqueezed := q.Reshape(ctx, 1, headVDim, numVHeads, nSeqs)
 	stateQ := state.Mul(ctx, qTUnsqueezed)
 	stateQ = stateQ.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 	coreAttnOut := stateQ.SumRows(ctx)
@@ -269,8 +274,8 @@ func (gdn *GatedDeltaNet) deltaNetAutoregressive(
 	return coreAttnOut.Reshape(ctx, headVDim, numVHeads, 1, nSeqs)
 }
 
-// deltaNetChunked implements chunked computation for prefill
-// Pre-compute outside the loop
+// deltaNetChunked implements chunked computation for prefill.
+// NOTE: Assumes headKDim == headVDim (state shape is [headVDim, headVDim, numVHeads, nSeqs]).
 func (gdn *GatedDeltaNet) deltaNetChunked(
 	ctx ml.Context,
 	q, k, v, gate, beta, state ml.Tensor,
@@ -403,7 +408,7 @@ func (gdn *GatedDeltaNet) deltaNetChunked(
 
 	// Process chunks and update state
 	var coreAttnOut ml.Tensor
-	newState := state.Duplicate(ctx)
+	newState := state
 
 	for chunk := range nChunks {
 		qChunk := q.Slice(ctx, 2, chunk, chunk+1, 1)
@@ -418,7 +423,7 @@ func (gdn *GatedDeltaNet) deltaNetChunked(
 		// v_prime = k_cumdecay @ state
 		vPrime := stateT.Mulmat(ctx, kCumdecayChunk)
 
-		// v_new = v - v_prime (GGML broadcasts automatically, no Repeat4D needed)
+		// v_new = v - v_prime
 		vNew := vChunk.Sub(ctx, vPrime)
 		vNewT := vNew.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 

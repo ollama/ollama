@@ -14,17 +14,17 @@ import (
 
 // Options contains model configuration
 type Options struct {
-	hiddenSize int
-	numHeads   int
-	numKVHeads int
-	keyLength  int
+	hiddenSize  int
+	numHeads    int
+	numKVHeads  int
+	keyLength   int
 	valueLength int
-	ropeDim   int
+	ropeDim     int
 
-	eps       float32
-	ropeBase  float32
-	ropeScale float32
-	ropeType  string
+	eps                   float32
+	ropeBase              float32
+	ropeScale             float32
+	ropeType              string
 	originalContextLength int
 	attentionScale        float64
 
@@ -199,25 +199,6 @@ func (l *Layer) Forward(ctx ml.Context, layer int, hiddenStates, positions, outp
 	return hiddenStates.Add(ctx, ffnResidual)
 }
 
-// OperatorForward wraps FullAttention to implement the Operator interface with correct cache
-type OperatorFullAttention struct {
-	*FullAttention
-}
-
-func (o *OperatorFullAttention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache *HybridCache, opts *Options) ml.Tensor {
-	return o.FullAttention.Forward(ctx, hiddenStates, positions, cache, opts)
-}
-
-// OperatorGatedDeltaNet wraps GatedDeltaNet with layer info
-type OperatorGatedDeltaNet struct {
-	*GatedDeltaNet
-	layer int
-}
-
-func (o *OperatorGatedDeltaNet) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache *HybridCache, opts *Options) ml.Tensor {
-	return o.GatedDeltaNet.Forward(ctx, hiddenStates, cache, o.layer, opts)
-}
-
 // Model is the main Qwen3-Next model
 type Model struct {
 	model.Base
@@ -274,38 +255,17 @@ func New(c fs.Config) (model.Model, error) {
 	}
 
 	var isRecurrent []bool
+	var headCountKV []uint64
 	if hc, ok := c.(headCounts); ok {
-		headCountKV := hc.HeadCountKV()
-		isRecurrent = make([]bool, numLayers)
-		hasZero := false
-		for i := range numLayers {
-			if i < len(headCountKV) && headCountKV[i] == 0 {
-				hasZero = true
-				break
-			}
-		}
+		headCountKV = hc.HeadCountKV()
+	}
 
-		if hasZero {
-			for i := range numLayers {
-				// If KV head count is 0, it's a recurrent layer
-				if i < len(headCountKV) && headCountKV[i] == 0 {
-					isRecurrent[i] = true
-				}
-			}
-		} else {
-			// Fallback to full_attention_interval for GGUFs that only
-			// store a scalar head_count_kv.
-			interval := int(c.Uint("full_attention_interval", 4))
-			for i := range numLayers {
-				// Full attention every `interval` layers (1-indexed)
-				if (i+1)%interval != 0 {
-					isRecurrent[i] = true
-				}
-			}
+	isRecurrent = make([]bool, numLayers)
+	for i := range numLayers {
+		// If KV head count is 0, it's a recurrent layer
+		if i < len(headCountKV) && headCountKV[i] == 0 {
+			isRecurrent[i] = true
 		}
-	} else {
-		// Fallback: all full attention
-		isRecurrent = make([]bool, numLayers)
 	}
 
 	// Determine if MoE
@@ -313,9 +273,9 @@ func New(c fs.Config) (model.Model, error) {
 
 	for i := range layers {
 		if isRecurrent[i] {
-			layers[i].Operator = &OperatorGatedDeltaNet{GatedDeltaNet: &GatedDeltaNet{}, layer: i}
+			layers[i].Operator = &GatedDeltaNet{Layer: i}
 		} else {
-			layers[i].Operator = &OperatorFullAttention{FullAttention: &FullAttention{}}
+			layers[i].Operator = &FullAttention{}
 		}
 
 		if isMoE {
@@ -326,9 +286,16 @@ func New(c fs.Config) (model.Model, error) {
 	}
 
 	opts := &Options{
-		hiddenSize:            int(c.Uint("embedding_length")),
-		numHeads:              int(c.Uint("attention.head_count")),
-		numKVHeads:            int(c.Uint("attention.head_count_kv")),
+		hiddenSize: int(c.Uint("embedding_length")),
+		numHeads:   int(c.Uint("attention.head_count")),
+		numKVHeads: func() int {
+			for _, v := range headCountKV {
+				if v > 0 {
+					return int(v)
+				}
+			}
+			return int(c.Uint("attention.head_count_kv"))
+		}(),
 		keyLength:             int(c.Uint("attention.key_length")),
 		valueLength:           int(c.Uint("attention.value_length")),
 		ropeDim:               int(c.Uint("rope.dimension_count")),
