@@ -28,6 +28,7 @@ import (
 
 	"github.com/containerd/console"
 	"github.com/mattn/go-runewidth"
+	"github.com/pkg/browser"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
@@ -52,7 +53,7 @@ import (
 	"github.com/ollama/ollama/x/imagegen"
 )
 
-const ConnectInstructions = "To sign in, navigate to:\n    %s\n\n"
+const ConnectInstructions = "If your browser did not open, navigate to:\n    %s\n\n"
 
 // ensureThinkingSupport emits a warning if the model does not advertise thinking support
 func ensureThinkingSupport(ctx context.Context, client *api.Client, name string) {
@@ -663,6 +664,7 @@ func SigninHandler(cmd *cobra.Command, args []string) error {
 			fmt.Println()
 
 			if aErr.SigninURL != "" {
+				_ = browser.OpenURL(aErr.SigninURL)
 				fmt.Printf(ConnectInstructions, aErr.SigninURL)
 			}
 			return nil
