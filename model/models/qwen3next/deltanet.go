@@ -1,13 +1,14 @@
 package qwen3next
 
 import (
+	"log/slog"
 	"math"
 
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
 )
 
-const chunkSize = 64
+const chunkSize = 128
 
 // TriType constants for triangular matrix operations
 const (
@@ -127,7 +128,8 @@ func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cac
 	// Get conv state from cache
 	convStates, err := cache.ConvState(ctx, layer)
 	if err != nil {
-		// Fallback: create zero state
+		// Log this - if it happens, short-term context will be lost
+		slog.Warn("qwen3next: failed to get conv state, using zeros", "layer", layer, "error", err)
 		convStates = ctx.Input().Zeros(ml.DTypeF32, convKernelSize-1, qkvDim, nSeqs)
 	}
 
@@ -161,6 +163,8 @@ func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cac
 	// Get delta state from cache
 	state, err := cache.DeltaState(ctx, layer, headVDim, numVHeads)
 	if err != nil {
+		// Log this - if it happens frequently, context will degrade
+		slog.Warn("qwen3next: failed to get delta state, using zeros", "layer", layer, "error", err)
 		state = ctx.Input().Zeros(ml.DTypeF32, headVDim, headVDim*numVHeads, nSeqs)
 	}
 	state = state.Reshape(ctx, headVDim, headVDim*numVHeads, 1, nSeqs)

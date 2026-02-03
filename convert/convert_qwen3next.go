@@ -62,6 +62,18 @@ func (q *qwen3NextModel) parseMore(_ fs.FS) error {
 	if q.NumKeyValueHeads == 0 {
 		return fmt.Errorf("qwen3next: num_key_value_heads must be set")
 	}
+	if q.HeadDim == 0 {
+		return fmt.Errorf("qwen3next: head_dim must be set")
+	}
+	if q.RopeTheta == 0 {
+		return fmt.Errorf("qwen3next: rope_theta must be set")
+	}
+	if q.PartialRotaryFactor <= 0 || q.PartialRotaryFactor > 1 {
+		return fmt.Errorf("qwen3next: partial_rotary_factor must be in (0,1], got %v", q.PartialRotaryFactor)
+	}
+	if q.LinearNumKeyHeads == 0 || q.LinearNumValueHeads == 0 || q.LinearKeyHeadDim == 0 || q.LinearValueHeadDim == 0 {
+		return fmt.Errorf("qwen3next: linear attention config must be set (linear_num_key_heads, linear_num_value_heads, linear_key_head_dim, linear_value_head_dim)")
+	}
 	if q.FullAttentionInterval == 0 {
 		return fmt.Errorf("qwen3next: full_attention_interval must be set")
 	}
@@ -104,9 +116,6 @@ func (q *qwen3NextModel) KV(t *Tokenizer) KV {
 	// RoPE dimension count (partial rotary)
 	// partial_rotary_factor = 0.25 means only 25% of head_dim uses RoPE
 	partialRotary := q.PartialRotaryFactor
-	if partialRotary == 0 {
-		partialRotary = 0.25
-	}
 	if partialRotary > 0 && partialRotary <= 1 {
 		kv["rope.dimension_count"] = uint32(float32(headDim) * partialRotary)
 	}

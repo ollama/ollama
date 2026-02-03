@@ -7,12 +7,11 @@ Subject: [PATCH] ggml: metal solve_tri
  ggml/src/ggml-metal/ggml-metal-device.cpp | 20 ++++++
  ggml/src/ggml-metal/ggml-metal-device.h   |  1 +
  ggml/src/ggml-metal/ggml-metal-device.m   |  6 ++
- ggml/src/ggml-metal/ggml-metal-embed.metal| 81 ++++++++++++++++++++++
  ggml/src/ggml-metal/ggml-metal-impl.h     | 21 ++++++
  ggml/src/ggml-metal/ggml-metal-ops.cpp    | 63 +++++++++++++++++
  ggml/src/ggml-metal/ggml-metal-ops.h      |  1 +
  ggml/src/ggml-metal/ggml-metal.metal      | 60 ++++++++++++++++
- 8 files changed, 253 insertions(+)
+ 7 files changed, 172 insertions(+)
 
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
 index 04c6137c..212fc011 100644
@@ -21,7 +20,7 @@ index 04c6137c..212fc011 100644
 @@ -1395,6 +1395,26 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_l2_norm(ggml_met
      return res;
  }
- 
+
 +ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_solve_tri(ggml_metal_library_t lib, const ggml_tensor * op) {
 +    assert(op->op == GGML_OP_SOLVE_TRI);
 +
@@ -44,7 +43,7 @@ index 04c6137c..212fc011 100644
 +
  ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_group_norm(ggml_metal_library_t lib, const ggml_tensor * op) {
      assert(op->op == GGML_OP_GROUP_NORM);
- 
+
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-metal-device.h
 index 3d01c56f..f9b9245a 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.h
@@ -74,105 +73,6 @@ index 7f9c384c..7f89ec87 100644
          case GGML_OP_COUNT_EQUAL:
              return has_simdgroup_reduction &&
                  op->src[0]->type == GGML_TYPE_I32 &&
-diff --git a/ggml/src/ggml-metal/ggml-metal-embed.metal b/ggml/src/ggml-metal/ggml-metal-embed.metal
-index 6c34c95f..d049924e 100644
---- a/ggml/src/ggml-metal/ggml-metal-embed.metal
-+++ b/ggml/src/ggml-metal/ggml-metal-embed.metal
-@@ -2386,6 +2386,27 @@ typedef struct {
-     float    eps;
- } ggml_metal_kargs_l2_norm;
- 
-+typedef struct {
-+    int32_t  ne00;
-+    int32_t  ne01;
-+    int32_t  ne02;
-+    int32_t  ne03;
-+    uint64_t nb00;
-+    uint64_t nb01;
-+    uint64_t nb02;
-+    uint64_t nb03;
-+    int32_t  ne10;
-+    int32_t  ne11;
-+    uint64_t nb10;
-+    uint64_t nb11;
-+    uint64_t nb12;
-+    uint64_t nb13;
-+    uint64_t nb0;
-+    uint64_t nb1;
-+    uint64_t nb2;
-+    uint64_t nb3;
-+} ggml_metal_kargs_solve_tri;
-+
- typedef struct {
-     int64_t  ne00;
-     int64_t  ne01;
-@@ -5843,6 +5864,66 @@ kernel void kernel_l2_norm_f32(
-     }
- }
- 
-+kernel void kernel_solve_tri_f32(
-+        constant ggml_metal_kargs_solve_tri & args,
-+        device const char * src0,
-+        device const char * src1,
-+        device       char * dst,
-+        uint   tgpig[[threadgroup_position_in_grid]],
-+        ushort tpitg[[thread_position_in_threadgroup]],
-+        ushort   ntg[[threads_per_threadgroup]]) {
-+    const uint64_t ncols = (uint64_t) args.ne10;
-+    const uint64_t n_batches = (uint64_t) args.ne02 * (uint64_t) args.ne03;
-+    const uint64_t nr = n_batches * ncols;
-+
-+    const uint64_t gid = (uint64_t) tgpig * (uint64_t) ntg + (uint64_t) tpitg;
-+    if (gid >= nr) {
-+        return;
-+    }
-+
-+    const uint64_t i03 = gid / ((uint64_t) args.ne02 * ncols);
-+    const uint64_t rem = gid - i03 * (uint64_t) args.ne02 * ncols;
-+    const uint64_t i02 = rem / ncols;
-+    const uint64_t i01 = rem - i02 * ncols;
-+
-+    const uint64_t sa0 = args.nb00 / sizeof(float);
-+    const uint64_t sa1 = args.nb01 / sizeof(float);
-+    const uint64_t sa2 = args.nb02 / sizeof(float);
-+    const uint64_t sa3 = args.nb03 / sizeof(float);
-+
-+    const uint64_t sb0 = args.nb10 / sizeof(float);
-+    const uint64_t sb1 = args.nb11 / sizeof(float);
-+    const uint64_t sb2 = args.nb12 / sizeof(float);
-+    const uint64_t sb3 = args.nb13 / sizeof(float);
-+
-+    const uint64_t sx0 = args.nb0 / sizeof(float);
-+    const uint64_t sx1 = args.nb1 / sizeof(float);
-+    const uint64_t sx2 = args.nb2 / sizeof(float);
-+    const uint64_t sx3 = args.nb3 / sizeof(float);
-+
-+    device const float * A = (device const float *) src0;
-+    device const float * B = (device const float *) src1;
-+    device       float * X = (device       float *) dst;
-+
-+    const uint64_t A_base = i02 * sa2 + i03 * sa3;
-+    const uint64_t B_base = i02 * sb2 + i03 * sb3;
-+    const uint64_t X_base = i02 * sx2 + i03 * sx3;
-+
-+    const uint64_t n = (uint64_t) args.ne11;
-+
-+    for (uint64_t i00 = 0; i00 < n; ++i00) {
-+        float sum = 0.0f;
-+        for (uint64_t t = 0; t < i00; ++t) {
-+            sum += A[A_base + i00 * sa1 + t * sa0] *
-+                X[X_base + t * sx1 + i01 * sx0];
-+        }
-+
-+        const float diag = A[A_base + i00 * sa1 + i00 * sa0];
-+        X[X_base + i00 * sx1 + i01 * sx0] =
-+            (B[B_base + i00 * sb1 + i01 * sb0] - sum) / diag;
-+    }
-+}
-+
- kernel void kernel_group_norm_f32(
-         constant ggml_metal_kargs_group_norm & args,
-         device const float * src0,
 diff --git a/ggml/src/ggml-metal/ggml-metal-impl.h b/ggml/src/ggml-metal/ggml-metal-impl.h
 index 59d88b01..d4f09e7a 100644
 --- a/ggml/src/ggml-metal/ggml-metal-impl.h
@@ -180,7 +80,7 @@ index 59d88b01..d4f09e7a 100644
 @@ -501,6 +501,27 @@ typedef struct {
      float    eps;
  } ggml_metal_kargs_l2_norm;
- 
+
 +typedef struct {
 +    int32_t  ne00;
 +    int32_t  ne01;
@@ -223,7 +123,7 @@ index 7f4cfbba..1bd2abe9 100644
 @@ -2995,6 +2999,65 @@ int ggml_metal_op_l2_norm(ggml_metal_op_t ctx, int idx) {
      return 1;
  }
- 
+
 +int ggml_metal_op_solve_tri(ggml_metal_op_t ctx, int idx) {
 +    ggml_tensor * op = ctx->node(idx);
 +
@@ -285,7 +185,7 @@ index 7f4cfbba..1bd2abe9 100644
 +
  int ggml_metal_op_group_norm(ggml_metal_op_t ctx, int idx) {
      ggml_tensor * op = ctx->node(idx);
- 
+
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.h b/ggml/src/ggml-metal/ggml-metal-ops.h
 index 10686a33..c2b8b1d1 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.h
@@ -305,7 +205,7 @@ index e669995f..0562ebca 100644
 @@ -3013,6 +3013,66 @@ kernel void kernel_l2_norm_f32(
      }
  }
- 
+
 +kernel void kernel_solve_tri_f32(
 +        constant ggml_metal_kargs_solve_tri & args,
 +        device const char * src0,

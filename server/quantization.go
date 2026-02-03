@@ -77,8 +77,6 @@ func qwen3nextQuantType(name string) (fsggml.TensorType, bool) {
 		return fsggml.TensorTypeQ4_K, true
 
 	// SSM
-	case strings.HasSuffix(name, ".ssm_in.weight"):
-		return fsggml.TensorTypeQ4_K, true
 	case strings.HasSuffix(name, ".ssm_ba.weight"):
 		return fsggml.TensorTypeQ4_K, true
 	case strings.HasSuffix(name, ".ssm_out.weight"):

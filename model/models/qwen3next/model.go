@@ -2,6 +2,7 @@ package qwen3next
 
 import (
 	"cmp"
+	"fmt"
 	"math"
 
 	"github.com/ollama/ollama/fs"
@@ -261,11 +262,19 @@ func New(c fs.Config) (model.Model, error) {
 	}
 
 	isRecurrent = make([]bool, numLayers)
+	hasZero := false
+	hasFull := false
 	for i := range numLayers {
 		// If KV head count is 0, it's a recurrent layer
 		if i < len(headCountKV) && headCountKV[i] == 0 {
 			isRecurrent[i] = true
+			hasZero = true
+		} else if i < len(headCountKV) && headCountKV[i] > 0 {
+			hasFull = true
 		}
+	}
+	if !hasZero || !hasFull {
+		return nil, fmt.Errorf("qwen3next: invalid attention.head_count_kv array; expected mix of zero and non-zero values")
 	}
 
 	// Determine if MoE
@@ -294,7 +303,7 @@ func New(c fs.Config) (model.Model, error) {
 					return int(v)
 				}
 			}
-			return int(c.Uint("attention.head_count_kv"))
+			return 0
 		}(),
 		keyLength:             int(c.Uint("attention.key_length")),
 		valueLength:           int(c.Uint("attention.value_length")),
@@ -314,6 +323,9 @@ func New(c fs.Config) (model.Model, error) {
 		ssmDtRank:             int(c.Uint("ssm.time_step_rank")),
 		convKernelSize:        int(c.Uint("ssm.conv_kernel")),
 		isRecurrent:           isRecurrent,
+	}
+	if opts.numKVHeads == 0 {
+		return nil, fmt.Errorf("qwen3next: attention.head_count_kv array must include at least one non-zero value")
 	}
 
 	// Calculate cache dimensions

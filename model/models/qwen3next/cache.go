@@ -1,6 +1,7 @@
 package qwen3next
 
 import (
+	"math"
 	"slices"
 
 	"github.com/ollama/ollama/kvcache"
@@ -44,6 +45,19 @@ type HybridCache struct {
 	deltaCtxs   map[int]ml.Context
 	deltaStates map[int]ml.Tensor // [deltaStateSize, maxSlots]
 
+	// recurrent checkpoints (per slot)
+	checkpointCount     int
+	checkpointMinPos    int32
+	checkpointInterval  int32
+	checkpoints         map[int]*slotCheckpointStore
+	pendingRestore      map[int]checkpointRestore
+	curCheckpointPos    []int32
+	curCheckpointSlots  map[int]int
+	reserveCheckpoints  bool
+	checkpointConvCtxs  map[int]ml.Context
+	checkpointDeltaCtxs map[int]ml.Context
+	checkpointReserved  map[int]struct{}
+
 	// current forward batch (derived in StartForward)
 	curSeqs       []int
 	curSlots      []int
@@ -60,15 +74,24 @@ func NewHybridCache(
 	convDim, convChannels, deltaStateSize int,
 ) *HybridCache {
 	return &HybridCache{
-		kv:             kvcache.NewCausalCache(shift),
-		convDim:        convDim,
-		convChannels:   convChannels,
-		deltaStateSize: deltaStateSize,
-		slotForSeq:     make(map[int]int),
-		convCtxs:       make(map[int]ml.Context),
-		convStates:     make(map[int]ml.Tensor),
-		deltaCtxs:      make(map[int]ml.Context),
-		deltaStates:    make(map[int]ml.Tensor),
+		kv:                  kvcache.NewCausalCache(shift),
+		convDim:             convDim,
+		convChannels:        convChannels,
+		deltaStateSize:      deltaStateSize,
+		slotForSeq:          make(map[int]int),
+		convCtxs:            make(map[int]ml.Context),
+		convStates:          make(map[int]ml.Tensor),
+		deltaCtxs:           make(map[int]ml.Context),
+		deltaStates:         make(map[int]ml.Tensor),
+		checkpointCount:     checkpointCountDefault,
+		checkpointMinPos:    checkpointMinPosDefault,
+		checkpointInterval:  checkpointIntervalDefault,
+		checkpoints:         make(map[int]*slotCheckpointStore),
+		pendingRestore:      make(map[int]checkpointRestore),
+		curCheckpointSlots:  make(map[int]int),
+		checkpointConvCtxs:  make(map[int]ml.Context),
+		checkpointDeltaCtxs: make(map[int]ml.Context),
+		checkpointReserved:  make(map[int]struct{}),
 	}
 }
 
@@ -76,6 +99,11 @@ func (c *HybridCache) Init(backend ml.Backend, dtype ml.DType, maxSequences, cap
 	c.backend = backend
 	c.dtype = dtype
 	c.maxSequences = maxSequences
+	c.checkpoints = make(map[int]*slotCheckpointStore)
+	c.pendingRestore = make(map[int]checkpointRestore)
+	c.curCheckpointPos = c.curCheckpointPos[:0]
+	c.curCheckpointSlots = make(map[int]int)
+	c.checkpointReserved = make(map[int]struct{})
 
 	// initialize slot allocator
 	c.refCount = make([]int, maxSequences)
@@ -92,6 +120,12 @@ func (c *HybridCache) Close() {
 		ctx.Close()
 	}
 	for _, ctx := range c.deltaCtxs {
+		ctx.Close()
+	}
+	for _, ctx := range c.checkpointConvCtxs {
+		ctx.Close()
+	}
+	for _, ctx := range c.checkpointDeltaCtxs {
 		ctx.Close()
 	}
 	c.kv.Close()
@@ -152,6 +186,8 @@ func (c *HybridCache) StartForward(ctx ml.Context, batch input.Batch, reserve bo
 			slots[i] = int32(i)
 		}
 		c.curSlotsInput = ctx.Input().FromInts(slots, len(slots))
+		c.reserveCheckpoints = true
+		c.planCheckpoints(batch)
 		return nil
 	}
 
@@ -188,6 +224,8 @@ func (c *HybridCache) StartForward(ctx ml.Context, batch input.Batch, reserve bo
 	// Reset writable state for new forward pass
 	c.writableEnsured = false
 	c.writableError = nil
+	c.reserveCheckpoints = false
+	c.planCheckpoints(batch)
 
 	return nil
 }
@@ -276,6 +314,9 @@ func (c *HybridCache) EnsureWritable(ctx ml.Context) error {
 			srcF32 := src.Cast(ctx, ml.DTypeF32)
 			ctx.Forward(buf.SetRows(ctx, srcF32, ctx.Input().FromInts([]int32{int32(newSlot)}, 1)))
 		}
+
+		// Copy checkpoint state
+		c.copyCheckpoints(ctx, slot, newSlot)
 	}
 
 	// Rebuild current slots tensor
@@ -315,16 +356,40 @@ func (c *HybridCache) CopyPrefix(srcSeq, dstSeq int, prefixLen int32) {
 }
 
 func (c *HybridCache) CanResume(seq int, pos int32) bool {
-	return c.kv.CanResume(seq, pos)
+	if !c.kv.CanResume(seq, pos) {
+		return false
+	}
+	if pos == 0 {
+		return true
+	}
+	return c.hasCheckpoint(seq, pos)
 }
 
 func (c *HybridCache) Remove(seq int, beginIndex, endIndex int32) error {
+	if beginIndex > 0 && endIndex != math.MaxInt32 {
+		return kvcache.ErrNotSupported
+	}
+
+	if beginIndex > 0 {
+		restore, ok := c.pendingRestore[seq]
+		if !ok || restore.pos+1 != beginIndex {
+			return kvcache.ErrNotSupported
+		}
+	}
+
 	if err := c.kv.Remove(seq, beginIndex, endIndex); err != nil {
 		return err
 	}
 
+	if beginIndex > 0 {
+		restore := c.pendingRestore[seq]
+		delete(c.pendingRestore, seq)
+		return c.applyCheckpointRestore(restore)
+	}
+
 	// Removal invalidates recurrent state
 	slot, ok := c.slotForSeq[seq]
+	delete(c.pendingRestore, seq)
 	if !ok {
 		return nil
 	}
@@ -337,6 +402,7 @@ func (c *HybridCache) Remove(seq int, beginIndex, endIndex int32) error {
 	c.refCount[slot]--
 	if c.refCount[slot] <= 0 {
 		c.refCount[slot] = 0
+		c.clearCheckpoints(slot)
 		c.freeSlot(slot)
 	}
 	delete(c.slotForSeq, seq)
@@ -446,9 +512,11 @@ func (c *HybridCache) UpdateConvState(ctx ml.Context, layer int, newState ml.Ten
 		offset := start * buf.Stride(1)
 		view := buf.View(ctx, offset, c.convDim*c.convChannels, buf.Stride(1), c.numSeqs())
 		ctx.Forward(srcF32.Copy(ctx, view))
-		return
+	} else {
+		ctx.Forward(buf.SetRows(ctx, srcF32, c.slotsTensor()))
 	}
-	ctx.Forward(buf.SetRows(ctx, srcF32, c.slotsTensor()))
+
+	c.captureConvCheckpoint(ctx, layer, srcF32)
 }
 
 // DeltaState returns the delta state for current batch sequences as [headVDim, headVDim*numVHeads, nSeqs].
@@ -474,9 +542,11 @@ func (c *HybridCache) UpdateDeltaState(ctx ml.Context, layer int, newState ml.Te
 		offset := start * buf.Stride(1)
 		view := buf.View(ctx, offset, c.deltaStateSize, buf.Stride(1), c.numSeqs())
 		ctx.Forward(srcF32.Copy(ctx, view))
-		return
+	} else {
+		ctx.Forward(buf.SetRows(ctx, srcF32, c.slotsTensor()))
 	}
-	ctx.Forward(buf.SetRows(ctx, srcF32, c.slotsTensor()))
+
+	c.captureDeltaCheckpoint(ctx, layer, srcF32)
 }
 
 // IsSupportedForBatch returns true if the current batch layout supports recurrent layers.
