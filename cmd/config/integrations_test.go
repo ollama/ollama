@@ -385,7 +385,7 @@ func TestIsCloudModel(t *testing.T) {
 	})
 }
 
-func names(items []selectItem) []string {
+func names(items []ModelItem) []string {
 	var out []string
 	for _, item := range items {
 		out = append(out, item.Name)
