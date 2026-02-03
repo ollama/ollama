@@ -20,8 +20,9 @@ type integration struct {
 }
 
 type config struct {
-	Integrations map[string]*integration `json:"integrations"`
-	LastModel    string                  `json:"last_model,omitempty"`
+	Integrations  map[string]*integration `json:"integrations"`
+	LastModel     string                  `json:"last_model,omitempty"`
+	LastSelection string                  `json:"last_selection,omitempty"` // "run" or integration name
 }
 
 func configPath() (string, error) {
@@ -175,6 +176,25 @@ func SetLastModel(model string) error {
 		return err
 	}
 	cfg.LastModel = model
+	return save(cfg)
+}
+
+// LastSelection returns the last menu selection ("run" or integration name), or empty string if none.
+func LastSelection() string {
+	cfg, err := load()
+	if err != nil {
+		return ""
+	}
+	return cfg.LastSelection
+}
+
+// SetLastSelection saves the last menu selection ("run" or integration name).
+func SetLastSelection(selection string) error {
+	cfg, err := load()
+	if err != nil {
+		return err
+	}
+	cfg.LastSelection = selection
 	return save(cfg)
 }
 

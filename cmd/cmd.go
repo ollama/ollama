@@ -1883,6 +1883,7 @@ func runInteractiveTUI(cmd *cobra.Command) {
 			// User quit
 			return
 		case tui.SelectionRunModel:
+			_ = config.SetLastSelection("run")
 			// Run last model directly if configured and still exists
 			if modelName := config.LastModel(); modelName != "" && config.ModelExists(cmd.Context(), modelName) {
 				runModel(modelName)
@@ -1899,6 +1900,7 @@ func runInteractiveTUI(cmd *cobra.Command) {
 				runModel(modelName)
 			}
 		case tui.SelectionChangeRunModel:
+			_ = config.SetLastSelection("run")
 			// Always show picker
 			modelName, err := config.SelectModelWithSelector(cmd.Context(), singleSelector)
 			if errors.Is(err, errSelectionCancelled) {
@@ -1910,10 +1912,12 @@ func runInteractiveTUI(cmd *cobra.Command) {
 			}
 			runModel(modelName)
 		case tui.SelectionIntegration:
+			_ = config.SetLastSelection(result.Integration)
 			if !launchIntegration(result.Integration) {
 				continue // Return to main menu
 			}
 		case tui.SelectionChangeIntegration:
+			_ = config.SetLastSelection(result.Integration)
 			err := config.ConfigureIntegrationWithSelectors(cmd.Context(), result.Integration, singleSelector, multiSelector)
 			if errors.Is(err, errSelectionCancelled) {
 				continue // Return to main menu

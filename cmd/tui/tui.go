@@ -203,12 +203,42 @@ func (m *model) buildItems() {
 	}
 }
 
+// isOthersIntegration returns true if the integration is in the "Others" menu
+func isOthersIntegration(name string) bool {
+	switch name {
+	case "codex", "droid", "opencode":
+		return true
+	}
+	return false
+}
+
 func initialModel() model {
 	m := model{
 		cursor: 0,
 	}
 	m.loadAvailableModels()
+
+	// Check last selection to determine if we need to expand "Others"
+	lastSelection := config.LastSelection()
+	if isOthersIntegration(lastSelection) {
+		m.showOthers = true
+	}
+
 	m.buildItems()
+
+	// Position cursor on last selection
+	if lastSelection != "" {
+		for i, item := range m.items {
+			if lastSelection == "run" && item.isRunModel {
+				m.cursor = i
+				break
+			} else if item.integration == lastSelection {
+				m.cursor = i
+				break
+			}
+		}
+	}
+
 	return m
 }
 
