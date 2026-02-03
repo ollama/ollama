@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
+	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -61,7 +64,7 @@ var integrations = map[string]Runner{
 
 // recommendedModels are shown when the user has no models or as suggestions.
 // Order matters: local models first, then cloud models.
-var recommendedModels = []selectItem{
+var recommendedModels = []ModelItem{
 	{Name: "glm-4.7-flash", Description: "Recommended (requires ~25GB VRAM)"},
 	{Name: "qwen3:8b", Description: "Recommended (requires ~11GB VRAM)"},
 	{Name: "glm-4.7:cloud", Description: "Recommended"},
@@ -72,6 +75,165 @@ var recommendedModels = []selectItem{
 var integrationAliases = map[string]bool{
 	"clawdbot": true,
 	"moltbot":  true,
+}
+
+// integrationInstallURLs maps integration names to their install script URLs.
+var integrationInstallURLs = map[string]string{
+	"claude":   "https://claude.ai/install.sh",
+	"openclaw": "https://openclaw.ai/install.sh",
+	"droid":    "https://app.factory.ai/cli",
+	"opencode": "https://opencode.ai/install",
+}
+
+// CanInstallIntegration returns true if we have an install script for this integration.
+func CanInstallIntegration(name string) bool {
+	_, ok := integrationInstallURLs[name]
+	return ok
+}
+
+// IsIntegrationInstalled checks if an integration binary is installed.
+func IsIntegrationInstalled(name string) bool {
+	switch name {
+	case "claude":
+		c := &Claude{}
+		_, err := c.findPath()
+		return err == nil
+	case "openclaw":
+		if _, err := exec.LookPath("openclaw"); err == nil {
+			return true
+		}
+		if _, err := exec.LookPath("clawdbot"); err == nil {
+			return true
+		}
+		return false
+	case "codex":
+		_, err := exec.LookPath("codex")
+		return err == nil
+	case "droid":
+		_, err := exec.LookPath("droid")
+		return err == nil
+	case "opencode":
+		_, err := exec.LookPath("opencode")
+		return err == nil
+	default:
+		return true // Assume installed for unknown integrations
+	}
+}
+
+// InstallIntegration downloads and runs the install script for an integration.
+func InstallIntegration(name string) error {
+	url, ok := integrationInstallURLs[name]
+	if !ok {
+		return fmt.Errorf("no install script available for %s", name)
+	}
+
+	// Download the install script
+	resp, err := http.Get(url)
+	if err != nil {
+		return fmt.Errorf("failed to download install script: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to download install script: HTTP %d", resp.StatusCode)
+	}
+
+	script, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read install script: %w", err)
+	}
+
+	// Create a temporary file for the script
+	tmpDir := os.TempDir()
+	scriptPath := filepath.Join(tmpDir, fmt.Sprintf("install-%s.sh", name))
+	if err := os.WriteFile(scriptPath, script, 0700); err != nil {
+		return fmt.Errorf("failed to write install script: %w", err)
+	}
+	defer os.Remove(scriptPath)
+
+	// Execute the script with bash
+	cmd := exec.Command("bash", scriptPath)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("install script failed: %w", err)
+	}
+
+	return nil
+}
+
+// SelectModel lets the user select a model to run.
+// ModelItem represents a model for selection.
+type ModelItem struct {
+	Name        string
+	Description string
+}
+
+// SingleSelector is a function type for single item selection.
+type SingleSelector func(title string, items []ModelItem) (string, error)
+
+// MultiSelector is a function type for multi item selection.
+type MultiSelector func(title string, items []ModelItem, preChecked []string) ([]string, error)
+
+// SelectModelWithSelector prompts the user to select a model using the provided selector.
+func SelectModelWithSelector(ctx context.Context, selector SingleSelector) (string, error) {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return "", err
+	}
+
+	models, err := client.List(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	if len(models.Models) == 0 {
+		return "", fmt.Errorf("no models available, run 'ollama pull <model>' first")
+	}
+
+	lastModel := LastModel()
+
+	var items []ModelItem
+	for _, m := range models.Models {
+		items = append(items, ModelItem{Name: m.Name})
+	}
+
+	// Sort with last model first, then alphabetically
+	slices.SortFunc(items, func(a, b ModelItem) int {
+		aIsLast := a.Name == lastModel
+		bIsLast := b.Name == lastModel
+		if aIsLast != bIsLast {
+			if aIsLast {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+	})
+
+	return selector("Select model to run:", items)
+}
+
+func SelectModel(ctx context.Context) (string, error) {
+	return SelectModelWithSelector(ctx, defaultSingleSelector)
+}
+
+func defaultSingleSelector(title string, items []ModelItem) (string, error) {
+	selectItems := make([]selectItem, len(items))
+	for i, item := range items {
+		selectItems[i] = selectItem{Name: item.Name, Description: item.Description}
+	}
+	return selectPrompt(title, selectItems)
+}
+
+func defaultMultiSelector(title string, items []ModelItem, preChecked []string) ([]string, error) {
+	selectItems := make([]selectItem, len(items))
+	for i, item := range items {
+		selectItems[i] = selectItem{Name: item.Name, Description: item.Description}
+	}
+	return multiSelectPrompt(title, selectItems, preChecked)
 }
 
 func selectIntegration() (string, error) {
@@ -96,8 +258,8 @@ func selectIntegration() (string, error) {
 	return selectPrompt("Select integration:", items)
 }
 
-// selectModels lets the user select models for an integration
-func selectModels(ctx context.Context, name, current string) ([]string, error) {
+// selectModelsWithSelectors lets the user select models for an integration using provided selectors.
+func selectModelsWithSelectors(ctx context.Context, name, current string, single SingleSelector, multi MultiSelector) ([]string, error) {
 	r, ok := integrations[name]
 	if !ok {
 		return nil, fmt.Errorf("unknown integration: %s", name)
@@ -133,7 +295,7 @@ func selectModels(ctx context.Context, name, current string) ([]string, error) {
 
 	var selected []string
 	if _, ok := r.(Editor); ok {
-		selected, err = multiSelectPrompt(fmt.Sprintf("Select models for %s:", r), items, preChecked)
+		selected, err = multi(fmt.Sprintf("Select models for %s:", r), items, preChecked)
 		if err != nil {
 			return nil, err
 		}
@@ -142,7 +304,7 @@ func selectModels(ctx context.Context, name, current string) ([]string, error) {
 		if _, ok := r.(AliasConfigurer); ok {
 			prompt = fmt.Sprintf("Select Primary model for %s:", r)
 		}
-		model, err := selectPrompt(prompt, items)
+		model, err := single(prompt, items)
 		if err != nil {
 			return nil, err
 		}
@@ -227,10 +389,15 @@ func listModels(ctx context.Context) ([]selectItem, map[string]bool, map[string]
 		})
 	}
 
-	items, _, existingModels, cloudModels := buildModelList(existing, nil, "")
+	modelItems, _, existingModels, cloudModels := buildModelList(existing, nil, "")
 
-	if len(items) == 0 {
+	if len(modelItems) == 0 {
 		return nil, nil, nil, nil, fmt.Errorf("no models available, run 'ollama pull <model>' first")
+	}
+
+	items := make([]selectItem, len(modelItems))
+	for i, mi := range modelItems {
+		items[i] = selectItem{Name: mi.Name, Description: mi.Description}
 	}
 
 	return items, existingModels, cloudModels, client, nil
@@ -303,6 +470,11 @@ func ensureAuth(ctx context.Context, client *api.Client, cloudModels map[string]
 	}
 }
 
+// selectModels lets the user select models for an integration using default selectors.
+func selectModels(ctx context.Context, name, current string) ([]string, error) {
+	return selectModelsWithSelectors(ctx, name, current, defaultSingleSelector, defaultMultiSelector)
+}
+
 func runIntegration(name, modelName string, args []string) error {
 	r, ok := integrations[name]
 	if !ok {
@@ -335,15 +507,86 @@ func syncAliases(ctx context.Context, client *api.Client, ac AliasConfigurer, na
 	return saveAliases(name, aliases)
 }
 
+// LaunchIntegration launches the named integration using saved config or prompts for setup.
+func LaunchIntegration(name string) error {
+	r, ok := integrations[name]
+	if !ok {
+		return fmt.Errorf("unknown integration: %s", name)
+	}
+
+	// Try to use saved config
+	if config, err := loadIntegration(name); err == nil && len(config.Models) > 0 {
+		return runIntegration(name, config.Models[0], nil)
+	}
+
+	// No saved config - prompt user to run setup
+	return fmt.Errorf("%s is not configured. Run 'ollama launch %s' to set it up", r, name)
+}
+
+// ConfigureIntegrationWithSelectors allows the user to select/change the model for an integration using custom selectors.
+func ConfigureIntegrationWithSelectors(ctx context.Context, name string, single SingleSelector, multi MultiSelector) error {
+	r, ok := integrations[name]
+	if !ok {
+		return fmt.Errorf("unknown integration: %s", name)
+	}
+
+	models, err := selectModelsWithSelectors(ctx, name, "", single, multi)
+	if errors.Is(err, errCancelled) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	if editor, isEditor := r.(Editor); isEditor {
+		paths := editor.Paths()
+		if len(paths) > 0 {
+			fmt.Fprintf(os.Stderr, "This will modify your %s configuration:\n", r)
+			for _, p := range paths {
+				fmt.Fprintf(os.Stderr, "  %s\n", p)
+			}
+			fmt.Fprintf(os.Stderr, "Backups will be saved to %s/\n\n", backupDir())
+
+			if ok, _ := confirmPrompt("Proceed?"); !ok {
+				return nil
+			}
+		}
+
+		if err := editor.Edit(models); err != nil {
+			return fmt.Errorf("setup failed: %w", err)
+		}
+	}
+
+	if err := saveIntegration(name, models); err != nil {
+		return fmt.Errorf("failed to save: %w", err)
+	}
+
+	if len(models) == 1 {
+		fmt.Fprintf(os.Stderr, "Configured %s with %s\n", r, models[0])
+	} else {
+		fmt.Fprintf(os.Stderr, "Configured %s with %d models (default: %s)\n", r, len(models), models[0])
+	}
+
+	return nil
+}
+
+// ConfigureIntegration allows the user to select/change the model for an integration.
+func ConfigureIntegration(ctx context.Context, name string) error {
+	return ConfigureIntegrationWithSelectors(ctx, name, defaultSingleSelector, defaultMultiSelector)
+}
+
 // LaunchCmd returns the cobra command for launching integrations.
-func LaunchCmd(checkServerHeartbeat func(cmd *cobra.Command, args []string) error) *cobra.Command {
+// The runTUI callback is called when no arguments are provided (alias for main TUI).
+func LaunchCmd(checkServerHeartbeat func(cmd *cobra.Command, args []string) error, runTUI func(cmd *cobra.Command)) *cobra.Command {
 	var modelFlag string
 	var configFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "launch [INTEGRATION] [-- [EXTRA_ARGS...]]",
-		Short: "Launch an integration with Ollama",
-		Long: `Launch an integration configured with Ollama models.
+		Short: "Launch the Ollama menu or an integration",
+		Long: `Launch the Ollama interactive menu, or directly launch a specific integration.
+
+Without arguments, this is equivalent to running 'ollama' directly.
 
 Supported integrations:
   claude    Claude Code
@@ -362,6 +605,12 @@ Examples:
 		Args:    cobra.ArbitraryArgs,
 		PreRunE: checkServerHeartbeat,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// No args - run the main TUI (same as 'ollama')
+			if len(args) == 0 && modelFlag == "" && !configFlag {
+				runTUI(cmd)
+				return nil
+			}
+
 			// Extract integration name and args to pass through using -- separator
 			var name string
 			var passArgs []string
@@ -582,7 +831,7 @@ type modelInfo struct {
 
 // buildModelList merges existing models with recommendations, sorts them, and returns
 // the ordered items along with maps of existing and cloud model names.
-func buildModelList(existing []modelInfo, preChecked []string, current string) (items []selectItem, orderedChecked []string, existingModels, cloudModels map[string]bool) {
+func buildModelList(existing []modelInfo, preChecked []string, current string) (items []ModelItem, orderedChecked []string, existingModels, cloudModels map[string]bool) {
 	existingModels = make(map[string]bool)
 	cloudModels = make(map[string]bool)
 	recommended := make(map[string]bool)
@@ -602,7 +851,7 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 		}
 		displayName := strings.TrimSuffix(m.Name, ":latest")
 		existingModels[displayName] = true
-		item := selectItem{Name: displayName}
+		item := ModelItem{Name: displayName}
 		if recommended[displayName] {
 			item.Description = "recommended"
 		}
@@ -651,7 +900,7 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 	}
 
 	if hasLocalModel || hasCloudModel {
-		slices.SortStableFunc(items, func(a, b selectItem) int {
+		slices.SortStableFunc(items, func(a, b ModelItem) int {
 			ac, bc := checked[a.Name], checked[b.Name]
 			aNew, bNew := notInstalled[a.Name], notInstalled[b.Name]
 

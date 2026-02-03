@@ -94,8 +94,10 @@ func TestLaunchCmd(t *testing.T) {
 	mockCheck := func(cmd *cobra.Command, args []string) error {
 		return nil
 	}
+	// Mock TUI function (not called in these tests)
+	mockTUI := func(cmd *cobra.Command) {}
 
-	cmd := LaunchCmd(mockCheck)
+	cmd := LaunchCmd(mockCheck, mockTUI)
 
 	t.Run("command structure", func(t *testing.T) {
 		if cmd.Use != "launch [INTEGRATION] [-- [EXTRA_ARGS...]]" {
@@ -124,6 +126,75 @@ func TestLaunchCmd(t *testing.T) {
 	t.Run("PreRunE is set", func(t *testing.T) {
 		if cmd.PreRunE == nil {
 			t.Error("PreRunE should be set to checkServerHeartbeat")
+		}
+	})
+}
+
+func TestLaunchCmd_TUICallback(t *testing.T) {
+	mockCheck := func(cmd *cobra.Command, args []string) error {
+		return nil
+	}
+
+	t.Run("no args calls TUI", func(t *testing.T) {
+		tuiCalled := false
+		mockTUI := func(cmd *cobra.Command) {
+			tuiCalled = true
+		}
+
+		cmd := LaunchCmd(mockCheck, mockTUI)
+		cmd.SetArgs([]string{})
+		_ = cmd.Execute()
+
+		if !tuiCalled {
+			t.Error("TUI callback should be called when no args provided")
+		}
+	})
+
+	t.Run("integration arg bypasses TUI", func(t *testing.T) {
+		tuiCalled := false
+		mockTUI := func(cmd *cobra.Command) {
+			tuiCalled = true
+		}
+
+		cmd := LaunchCmd(mockCheck, mockTUI)
+		cmd.SetArgs([]string{"claude"})
+		// Will error because claude isn't configured, but that's OK
+		_ = cmd.Execute()
+
+		if tuiCalled {
+			t.Error("TUI callback should NOT be called when integration arg provided")
+		}
+	})
+
+	t.Run("--model flag bypasses TUI", func(t *testing.T) {
+		tuiCalled := false
+		mockTUI := func(cmd *cobra.Command) {
+			tuiCalled = true
+		}
+
+		cmd := LaunchCmd(mockCheck, mockTUI)
+		cmd.SetArgs([]string{"--model", "test-model"})
+		// Will error because no integration specified, but that's OK
+		_ = cmd.Execute()
+
+		if tuiCalled {
+			t.Error("TUI callback should NOT be called when --model flag provided")
+		}
+	})
+
+	t.Run("--config flag bypasses TUI", func(t *testing.T) {
+		tuiCalled := false
+		mockTUI := func(cmd *cobra.Command) {
+			tuiCalled = true
+		}
+
+		cmd := LaunchCmd(mockCheck, mockTUI)
+		cmd.SetArgs([]string{"--config"})
+		// Will error because no integration specified, but that's OK
+		_ = cmd.Execute()
+
+		if tuiCalled {
+			t.Error("TUI callback should NOT be called when --config flag provided")
 		}
 	})
 }
@@ -168,7 +239,7 @@ func TestHasLocalModel_DocumentsHeuristic(t *testing.T) {
 
 func TestLaunchCmd_NilHeartbeat(t *testing.T) {
 	// This should not panic - cmd creation should work even with nil
-	cmd := LaunchCmd(nil)
+	cmd := LaunchCmd(nil, nil)
 	if cmd == nil {
 		t.Fatal("LaunchCmd returned nil")
 	}
