@@ -268,6 +268,7 @@ func (kv KV) OllamaEngineRequired() bool {
 		"olmo3",
 		"qwen25vl",
 		"qwen3", "qwen3moe",
+		"qwen3next",
 		"qwen3vl", "qwen3vlmoe",
 		"glm4moelite",
 		"glmocr",
@@ -866,6 +867,7 @@ func (f GGML) FlashAttention() bool {
 		"mistral3",
 		"olmo3",
 		"qwen3", "qwen3moe",
+		"qwen3next",
 		"qwen3vl", "qwen3vlmoe",
 	}, f.KV().String("general.architecture"))
 }
