@@ -353,10 +353,15 @@ func renderMultiSelect(w io.Writer, prompt string, s *multiSelectState) int {
 				suffix = " " + ansiGray + "(default)" + ansiReset
 			}
 
+			desc := ""
+			if item.Description != "" {
+				desc = " " + ansiGray + "- " + item.Description + ansiReset
+			}
+
 			if idx == s.highlighted && !s.focusOnButton {
-				fmt.Fprintf(w, "  %s%s %s %s%s%s\r\n", ansiBold, prefix, checkbox, item.Name, ansiReset, suffix)
+				fmt.Fprintf(w, "  %s%s %s %s%s%s%s\r\n", ansiBold, prefix, checkbox, item.Name, ansiReset, desc, suffix)
 			} else {
-				fmt.Fprintf(w, "  %s %s %s%s\r\n", prefix, checkbox, item.Name, suffix)
+				fmt.Fprintf(w, "  %s %s %s%s%s\r\n", prefix, checkbox, item.Name, desc, suffix)
 			}
 			lineCount++
 		}
