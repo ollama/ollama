@@ -54,8 +54,9 @@ var integrations = map[string]Runner{
 // Order matters: local models first, then cloud models.
 var recommendedModels = []selectItem{
 	{Name: "glm-4.7-flash", Description: "Recommended (requires ~25GB VRAM)"},
-	{Name: "glm-4.7:cloud", Description: "recommended"},
-	{Name: "kimi-k2.5:cloud", Description: "recommended"},
+	{Name: "qwen3:8b", Description: "Recommended (requires ~11GB VRAM)"},
+	{Name: "glm-4.7:cloud", Description: "Recommended"},
+	{Name: "kimi-k2.5:cloud", Description: "Recommended"},
 }
 
 // integrationAliases are hidden from the interactive selector but work as CLI arguments.
@@ -445,7 +446,11 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 	for i := range items {
 		if !existingModels[items[i].Name] {
 			notInstalled[items[i].Name] = true
-			items[i].Description = "recommended, install?"
+			if items[i].Description != "" {
+				items[i].Description += ", install?"
+			} else {
+				items[i].Description = "install?"
+			}
 		}
 	}
 

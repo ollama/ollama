@@ -328,14 +328,14 @@ func names(items []selectItem) []string {
 func TestBuildModelList_NoExistingModels(t *testing.T) {
 	items, _, _, _ := buildModelList(nil, nil, "")
 
-	want := []string{"glm-4.7-flash", "glm-4.7:cloud", "kimi-k2.5:cloud"}
+	want := []string{"glm-4.7-flash", "qwen3:8b", "glm-4.7:cloud", "kimi-k2.5:cloud"}
 	if diff := cmp.Diff(want, names(items)); diff != "" {
 		t.Errorf("with no existing models, items should be recommended in order (-want +got):\n%s", diff)
 	}
 
 	for _, item := range items {
-		if item.Description != "recommended, install?" {
-			t.Errorf("item %q should have description 'install?', got %q", item.Name, item.Description)
+		if !strings.HasSuffix(item.Description, "install?") {
+			t.Errorf("item %q should have description ending with 'install?', got %q", item.Name, item.Description)
 		}
 	}
 }
@@ -349,7 +349,7 @@ func TestBuildModelList_OnlyLocalModels_CloudRecsAtBottom(t *testing.T) {
 	items, _, _, _ := buildModelList(existing, nil, "")
 	got := names(items)
 
-	want := []string{"llama3.2", "qwen2.5", "glm-4.7-flash", "glm-4.7:cloud", "kimi-k2.5:cloud"}
+	want := []string{"llama3.2", "qwen2.5", "glm-4.7-flash", "glm-4.7:cloud", "kimi-k2.5:cloud", "qwen3:8b"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("cloud recs should be at bottom (-want +got):\n%s", diff)
 	}
@@ -364,7 +364,7 @@ func TestBuildModelList_BothCloudAndLocal_RegularSort(t *testing.T) {
 	items, _, _, _ := buildModelList(existing, nil, "")
 	got := names(items)
 
-	want := []string{"glm-4.7:cloud", "llama3.2", "glm-4.7-flash", "kimi-k2.5:cloud"}
+	want := []string{"glm-4.7:cloud", "llama3.2", "glm-4.7-flash", "kimi-k2.5:cloud", "qwen3:8b"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("mixed models should be alphabetical (-want +got):\n%s", diff)
 	}
@@ -395,12 +395,12 @@ func TestBuildModelList_ExistingRecommendedMarked(t *testing.T) {
 	for _, item := range items {
 		switch item.Name {
 		case "glm-4.7-flash", "glm-4.7:cloud":
-			if item.Description != "recommended" {
-				t.Errorf("installed recommended %q should have description 'recommended', got %q", item.Name, item.Description)
+			if strings.HasSuffix(item.Description, "install?") {
+				t.Errorf("installed recommended %q should not have 'install?' suffix, got %q", item.Name, item.Description)
 			}
-		case "kimi-k2.5:cloud":
-			if item.Description != "recommended, install?" {
-				t.Errorf("non-installed recommended %q should have description 'install?', got %q", item.Name, item.Description)
+		case "kimi-k2.5:cloud", "qwen3:8b":
+			if !strings.HasSuffix(item.Description, "install?") {
+				t.Errorf("non-installed recommended %q should have 'install?' suffix, got %q", item.Name, item.Description)
 			}
 		}
 	}
@@ -416,8 +416,8 @@ func TestBuildModelList_ExistingCloudModelsNotPushedToBottom(t *testing.T) {
 	got := names(items)
 
 	// glm-4.7-flash and glm-4.7:cloud are installed so they sort normally;
-	// kimi-k2.5:cloud and qwen3:0.6b are not installed so they go to the bottom
-	want := []string{"glm-4.7-flash", "glm-4.7:cloud", "kimi-k2.5:cloud"}
+	// kimi-k2.5:cloud and qwen3:8b are not installed so they go to the bottom
+	want := []string{"glm-4.7-flash", "glm-4.7:cloud", "kimi-k2.5:cloud", "qwen3:8b"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("existing cloud models should sort normally (-want +got):\n%s", diff)
 	}
@@ -434,16 +434,15 @@ func TestBuildModelList_HasRecommendedCloudModel_OnlyNonInstalledAtBottom(t *tes
 
 	// kimi-k2.5:cloud is installed so it sorts normally;
 	// the rest of the recommendations are not installed so they go to the bottom
-	want := []string{"kimi-k2.5:cloud", "llama3.2", "glm-4.7-flash", "glm-4.7:cloud"}
+	want := []string{"kimi-k2.5:cloud", "llama3.2", "glm-4.7-flash", "glm-4.7:cloud", "qwen3:8b"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("only non-installed models should be at bottom (-want +got):\n%s", diff)
 	}
 
-	// Non-installed models should have "recommended, install?" description
 	for _, item := range items {
 		if !slices.Contains([]string{"kimi-k2.5:cloud", "llama3.2"}, item.Name) {
-			if item.Description != "recommended, install?" {
-				t.Errorf("non-installed %q should have description 'install?', got %q", item.Name, item.Description)
+			if !strings.HasSuffix(item.Description, "install?") {
+				t.Errorf("non-installed %q should have 'install?' suffix, got %q", item.Name, item.Description)
 			}
 		}
 	}
