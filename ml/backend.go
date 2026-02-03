@@ -210,6 +210,9 @@ type Tensor interface {
 	Exp(ctx Context) Tensor
 	Neg(ctx Context) Tensor
 
+	// Clamp clamps values to [min, max] range
+	Clamp(ctx Context, min, max float32) Tensor
+
 	// Softplus computes ln(1 + exp(x))
 	Softplus(ctx Context) Tensor
 

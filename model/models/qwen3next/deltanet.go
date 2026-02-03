@@ -8,7 +8,7 @@ import (
 	"github.com/ollama/ollama/ml/nn"
 )
 
-const chunkSize = 128
+const chunkSize = 64
 
 // TriType constants for triangular matrix operations
 const (
@@ -239,8 +239,8 @@ func (gdn *GatedDeltaNet) deltaNetAutoregressive(
 	gT := gate.Permute(ctx, 1, 0, 2, 3).Reshape(ctx, 1, 1, numVHeads, nSeqs)
 	betaT := beta.Permute(ctx, 1, 0, 2, 3).Reshape(ctx, 1, 1, numVHeads, nSeqs)
 
-	// Apply exponential to gate
-	gT = gT.Exp(ctx)
+	// Apply exponential to gate (clamp to prevent overflow)
+	gT = gT.Clamp(ctx, -math.MaxFloat32, 50.0).Exp(ctx)
 
 	// state = state * g_t
 	state = state.Mul(ctx, gT)
@@ -380,9 +380,9 @@ func (gdn *GatedDeltaNet) deltaNetChunked(
 	vBetaT := vBeta.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 	v = vBetaT.Mulmat(ctx, attn)
 
-	// Compute g_exp for state update
+	// Compute g_exp for state update (clamp to prevent exp overflow at long contexts)
 	gCumsumT := gCumsum.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
-	gExp := gCumsumT.Exp(ctx)
+	gExp := gCumsumT.Clamp(ctx, -math.MaxFloat32, 50.0).Exp(ctx)
 
 	// kbeta_gexp = k_beta * g_exp
 	kBetaGExp := kBeta.Mul(ctx, gExp)
@@ -401,11 +401,11 @@ func (gdn *GatedDeltaNet) deltaNetChunked(
 	// g_last = view of last element in g_cumsum along chunk_size dimension
 	// We need to get the last row of gCumsum: shape [chunkSize, 1, nChunks, H*n_seqs] -> [1, 1, nChunks, H*n_seqs]
 	gLast := gCumsum.Slice(ctx, 0, chunkSize-1, chunkSize, 1).Contiguous(ctx, 1, 1, nChunks, numVHeads*nSeqs)
-	gLastExp := gLast.Exp(ctx)
+	gLastExp := gLast.Clamp(ctx, -math.MaxFloat32, 50.0).Exp(ctx)
 
 	// g_diff = -(g_cumsum - g_last) = g_last - g_cumsum
 	gDiff := gCumsum.Neg(ctx).Add(ctx, gLast)
-	gDiffExp := gDiff.Exp(ctx)
+	gDiffExp := gDiff.Clamp(ctx, -math.MaxFloat32, 50.0).Exp(ctx)
 
 	// key_gdiff = k * exp(g_diff)
 	keyGDiff := k.Mul(ctx, gDiffExp)

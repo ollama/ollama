@@ -57,9 +57,10 @@ type fakeTensor struct {
 }
 
 // Stub methods to satisfy ml.Tensor interface
-func (f *fakeTensor) Exp(ctx ml.Context) ml.Tensor          { return f }
-func (f *fakeTensor) Neg(ctx ml.Context) ml.Tensor          { return f }
-func (f *fakeTensor) Softplus(ctx ml.Context) ml.Tensor     { return f }
+func (f *fakeTensor) Exp(ctx ml.Context) ml.Tensor                        { return f }
+func (f *fakeTensor) Neg(ctx ml.Context) ml.Tensor                        { return f }
+func (f *fakeTensor) Clamp(ctx ml.Context, _, _ float32) ml.Tensor        { return f }
+func (f *fakeTensor) Softplus(ctx ml.Context) ml.Tensor                   { return f }
 func (f *fakeTensor) CumSum(ctx ml.Context) ml.Tensor       { return f }
 func (f *fakeTensor) Diag(ctx ml.Context) ml.Tensor         { return f }
 func (f *fakeTensor) Tri(ctx ml.Context, _ int) ml.Tensor   { return f }

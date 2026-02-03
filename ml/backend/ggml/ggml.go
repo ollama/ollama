@@ -1793,6 +1793,13 @@ func (t *Tensor) Neg(ctx ml.Context) ml.Tensor {
 	}
 }
 
+func (t *Tensor) Clamp(ctx ml.Context, min, max float32) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_clamp(ctx.(*Context).ctx, t.t, C.float(min), C.float(max)),
+	}
+}
+
 func (t *Tensor) Softplus(ctx ml.Context) ml.Tensor {
 	return &Tensor{
 		b: t.b,
