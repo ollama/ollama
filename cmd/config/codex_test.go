@@ -9,15 +9,15 @@ func TestCodexArgs(t *testing.T) {
 	c := &Codex{}
 
 	tests := []struct {
-		name      string
-		model     string
-		args []string
-		want      []string
+		name  string
+		model string
+		args  []string
+		want  []string
 	}{
 		{"with model", "llama3.2", nil, []string{"--oss", "-m", "llama3.2"}},
 		{"empty model", "", nil, []string{"--oss"}},
-		{"with model and extra args", "qwen3-coder", []string{"--yolo"}, []string{"--oss", "-m", "qwen3-coder", "--yolo"}},
-		{"empty model with extra args", "", []string{"--help"}, []string{"--oss", "--help"}},
+		{"with model and profile", "qwen3-coder", []string{"-p", "myprofile"}, []string{"--oss", "-m", "qwen3-coder", "-p", "myprofile"}},
+		{"with sandbox flag", "llama3.2", []string{"--sandbox", "workspace-write"}, []string{"--oss", "-m", "llama3.2", "--sandbox", "workspace-write"}},
 	}
 
 	for _, tt := range tests {

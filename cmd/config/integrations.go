@@ -264,7 +264,8 @@ Examples:
   ollama launch claude
   ollama launch claude --model <model>
   ollama launch droid --config (does not auto-launch)
-  ollama launch claude -- --yolo (pass extra args to integration)`,
+  ollama launch codex -- -p myprofile (pass extra args to integration)
+  ollama launch codex -- --sandbox workspace-write`,
 		Args:    cobra.ArbitraryArgs,
 		PreRunE: checkServerHeartbeat,
 		RunE: func(cmd *cobra.Command, args []string) error {

@@ -82,16 +82,16 @@ func TestClaudeArgs(t *testing.T) {
 	c := &Claude{}
 
 	tests := []struct {
-		name      string
-		model     string
-		args []string
-		want      []string
+		name  string
+		model string
+		args  []string
+		want  []string
 	}{
 		{"with model", "llama3.2", nil, []string{"--model", "llama3.2"}},
 		{"empty model", "", nil, nil},
-		{"with model and extra args", "llama3.2", []string{"--yolo", "--hi"}, []string{"--model", "llama3.2", "--yolo", "--hi"}},
-		{"empty model with extra args", "", []string{"--help"}, []string{"--help"}},
-		{"multiple extra args", "llama3.2", []string{"--flag1", "--flag2", "value"}, []string{"--model", "llama3.2", "--flag1", "--flag2", "value"}},
+		{"with model and verbose", "llama3.2", []string{"--verbose"}, []string{"--model", "llama3.2", "--verbose"}},
+		{"empty model with help", "", []string{"--help"}, []string{"--help"}},
+		{"with allowed tools", "llama3.2", []string{"--allowedTools", "Read,Write,Bash"}, []string{"--model", "llama3.2", "--allowedTools", "Read,Write,Bash"}},
 	}
 
 	for _, tt := range tests {
