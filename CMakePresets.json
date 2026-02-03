@@ -40,7 +40,17 @@
       "name": "CUDA 13",
       "inherits": [ "CUDA" ],
       "cacheVariables": {
-        "CMAKE_CUDA_ARCHITECTURES": "75-virtual;80-virtual;86-virtual;87-virtual;89-virtual;90-virtual;90a-virtual;100-virtual;103-virtual;110-virtual;120-virtual;121-virtual",
+        "CMAKE_CUDA_ARCHITECTURES": "75-virtual;80-virtual;86-virtual;89-virtual;90-virtual;90a-virtual;100-virtual;103-virtual;110-virtual;120-virtual;121-virtual",
+        "CMAKE_CUDA_FLAGS": "-t 4",
+        "OLLAMA_RUNNER_DIR": "cuda_v13"
+      }
+    },
+    {
+      "name": "CUDA 13 Windows",
+      "inherits": [ "CUDA" ],
+      "description": "Reduced architecture set for Windows to avoid MSVC template compilation issues",
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "75-virtual;89-virtual;100-virtual;120-virtual",
         "CMAKE_CUDA_FLAGS": "-t 4",
         "OLLAMA_RUNNER_DIR": "cuda_v13"
       }
@@ -137,6 +147,11 @@
       "name": "CUDA 13",
       "inherits": [ "CUDA" ],
       "configurePreset": "CUDA 13"
+    },
+    {
+      "name": "CUDA 13 Windows",
+      "inherits": [ "CUDA" ],
+      "configurePreset": "CUDA 13 Windows"
     },
     {
       "name": "JetPack 5",

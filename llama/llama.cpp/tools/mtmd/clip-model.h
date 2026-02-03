@@ -4,6 +4,7 @@
 #include "clip.h"
 #include "clip-impl.h"
 
+#include <array>
 #include <vector>
 #include <unordered_set>
 #include <cstdint>
@@ -60,6 +61,7 @@ struct clip_hparams {
     std::unordered_set<int32_t> vision_feature_layer;
     int32_t attn_window_size = 0;
     int32_t n_wa_pattern = 0;
+    std::unordered_set<int32_t> wa_layer_indexes; // explicit layer indexes that use full attention (for irregular patterns like YoutuVL)
 
     // audio
     int32_t n_mel_bins = 0; // whisper preprocessor
@@ -142,9 +144,72 @@ struct clip_layer {
     ggml_tensor * deepstack_fc2_w = nullptr;
     ggml_tensor * deepstack_fc2_b = nullptr;
 
+    // lfm2
+    ggml_tensor * ff_norm_w     = nullptr;
+    ggml_tensor * ff_norm_b     = nullptr;
+    ggml_tensor * ff_norm_1_w   = nullptr;
+    ggml_tensor * ff_norm_1_b   = nullptr;
+    ggml_tensor * ff_up_1_w     = nullptr;
+    ggml_tensor * ff_up_1_b     = nullptr;
+    ggml_tensor * ff_down_1_w   = nullptr;
+    ggml_tensor * ff_down_1_b   = nullptr;
+    ggml_tensor * pos_bias_u    = nullptr;
+    ggml_tensor * pos_bias_v    = nullptr;
+    ggml_tensor * norm_conv_w   = nullptr;
+    ggml_tensor * norm_conv_b   = nullptr;
+    ggml_tensor * linear_pos_w  = nullptr;
+
+    ggml_tensor * conv_norm_w   = nullptr;
+    ggml_tensor * conv_norm_b   = nullptr;
+    ggml_tensor * conv_dw_w     = nullptr;
+    ggml_tensor * conv_dw_b     = nullptr;
+    ggml_tensor * conv_pw1_w    = nullptr;
+    ggml_tensor * conv_pw1_b    = nullptr;
+    ggml_tensor * conv_pw2_w    = nullptr;
+    ggml_tensor * conv_pw2_b    = nullptr;
+
     bool has_deepstack() const {
         return deepstack_fc1_w != nullptr;
     }
+};
+
+// Expanded MobileNetV5 block structure for Gemma3n vision encoder
+struct mobilenetv5_block {
+    // Stage 0 (Edge Residual)
+    ggml_tensor * s0_conv_exp_w = nullptr;
+    ggml_tensor * s0_bn1_w      = nullptr;
+    ggml_tensor * s0_conv_pwl_w = nullptr;
+    ggml_tensor * s0_bn2_w      = nullptr;
+
+    // Stage 1+ (Universal Inverted Residual)
+    ggml_tensor * dw_start_w    = nullptr;
+    ggml_tensor * dw_start_bn_w = nullptr;
+
+    ggml_tensor * pw_exp_w      = nullptr;
+    ggml_tensor * pw_exp_bn_w   = nullptr;
+
+    ggml_tensor * dw_mid_w      = nullptr;
+    ggml_tensor * dw_mid_bn_w   = nullptr;
+
+    ggml_tensor * pw_proj_w     = nullptr;
+    ggml_tensor * pw_proj_bn_w  = nullptr;
+
+    ggml_tensor * layer_scale_w = nullptr;
+
+    // Attention (MQA) components
+    ggml_tensor * attn_q_w = nullptr;
+    ggml_tensor * attn_k_w = nullptr;
+    ggml_tensor * attn_v_w = nullptr;
+    ggml_tensor * attn_o_w = nullptr;
+
+    // Optional downsampling/norm in attention
+    ggml_tensor * attn_k_dw_w   = nullptr;
+    ggml_tensor * attn_k_norm_w = nullptr;
+    ggml_tensor * attn_v_dw_w   = nullptr;
+    ggml_tensor * attn_v_norm_w = nullptr;
+
+    // Block norm (often present in attention blocks)
+    ggml_tensor * attn_norm_w   = nullptr;
 };
 
 struct clip_model {
@@ -263,6 +328,23 @@ struct clip_model {
     ggml_tensor * mm_input_proj_w = nullptr;
     ggml_tensor * mm_soft_emb_norm_w = nullptr;
 
+    // mobilenetv5 for gemma3n
+    std::vector<mobilenetv5_block> mobilenet_blocks;
+    std::vector<int> mobilenet_stage_ends;
+    ggml_tensor * mobilenet_stem_conv_w = nullptr;
+    ggml_tensor * mobilenet_stem_conv_b = nullptr;
+    ggml_tensor * mobilenet_stem_norm_w = nullptr;
+    ggml_tensor * mm_post_proj_norm_w = nullptr;
+
+    // Multi-Scale Fusion Adapter (MSFA) components
+    ggml_tensor * msfa_concat_conv_w = nullptr;
+    ggml_tensor * msfa_concat_norm_w = nullptr;
+    ggml_tensor * msfa_ffn_expand_w = nullptr;
+    ggml_tensor * msfa_ffn_project_w = nullptr;
+    ggml_tensor * msfa_ffn_expand_bn = nullptr;
+    ggml_tensor * msfa_ffn_project_bn = nullptr;
+
+
     // pixtral, glm4v
     ggml_tensor * token_embd_img_break = nullptr;
     ggml_tensor * mm_patch_merger_w = nullptr;
@@ -286,9 +368,16 @@ struct clip_model {
     ggml_tensor * mm_boi = nullptr;
     ggml_tensor * mm_eoi = nullptr;
 
+    // lfm2 audio
+    std::array<ggml_tensor *, 7> pre_encode_conv_X_w = {nullptr};
+    std::array<ggml_tensor *, 7> pre_encode_conv_X_b = {nullptr};
+    ggml_tensor * pre_encode_out_w = nullptr;
+    ggml_tensor * pre_encode_out_b = nullptr;
+
     bool audio_has_avgpool() const {
         return proj_type == PROJECTOR_TYPE_QWEN2A
-            || proj_type == PROJECTOR_TYPE_VOXTRAL;
+            || proj_type == PROJECTOR_TYPE_VOXTRAL
+            || proj_type == PROJECTOR_TYPE_MUSIC_FLAMINGO;
     }
 
     bool audio_has_stack_frames() const {
