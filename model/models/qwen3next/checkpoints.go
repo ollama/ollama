@@ -1,6 +1,9 @@
 package qwen3next
 
 import (
+	"log/slog"
+	"math"
+
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model/input"
@@ -85,6 +88,71 @@ func (s *slotCheckpointStore) bestIndex(targetPos int32) (int, int32, bool) {
 		return -1, -1, false
 	}
 	return bestIdx, bestPos, true
+}
+
+func (s *slotCheckpointStore) pruneAfter(pos int32) {
+	if len(s.entries) == 0 {
+		s.size = 0
+		s.next = 0
+		s.lastPos = -1
+		return
+	}
+
+	size := 0
+	next := -1
+	minPos := int32(math.MaxInt32)
+	minIdx := 0
+	for i := range s.entries {
+		if s.entries[i].pos > pos {
+			s.entries[i].pos = -1
+		}
+		if s.entries[i].pos >= 0 {
+			size++
+			if s.entries[i].pos < minPos {
+				minPos = s.entries[i].pos
+				minIdx = i
+			}
+		} else if next == -1 {
+			next = i
+		}
+	}
+
+	s.size = size
+	if size == 0 {
+		s.next = 0
+		s.lastPos = -1
+		return
+	}
+	if next != -1 {
+		s.next = next
+	} else {
+		// Full ring: overwrite the oldest checkpoint next.
+		s.next = minIdx
+	}
+	s.lastPos = pos
+}
+
+func (s *slotCheckpointStore) window() (size int, minPos, maxPos, lastPos int32) {
+	minPos = int32(math.MaxInt32)
+	maxPos = int32(-1)
+	for i := range s.entries {
+		pos := s.entries[i].pos
+		if pos < 0 {
+			continue
+		}
+		size++
+		if pos < minPos {
+			minPos = pos
+		}
+		if pos > maxPos {
+			maxPos = pos
+		}
+	}
+	if size == 0 {
+		minPos = -1
+		maxPos = -1
+	}
+	return size, minPos, maxPos, s.lastPos
 }
 
 func (c *HybridCache) planCheckpoints(batch input.Batch) {
@@ -184,10 +252,14 @@ func (c *HybridCache) PrepareRestore(seq int, targetPos int32) (int32, bool) {
 	}
 	store, ok := c.checkpoints[slot]
 	if !ok {
+		slog.Debug("qwen3next: checkpoint miss", "seq", seq, "slot", slot, "target", targetPos, "size", 0)
 		return 0, false
 	}
 	idx, pos, ok := store.bestIndex(targetPos)
 	if !ok {
+		size, minPos, maxPos, lastPos := store.window()
+		slog.Debug("qwen3next: checkpoint miss", "seq", seq, "slot", slot, "target", targetPos, "size", size,
+			"min", minPos, "max", maxPos, "last", lastPos)
 		return 0, false
 	}
 	c.pendingRestore[seq] = checkpointRestore{
@@ -222,6 +294,7 @@ func (c *HybridCache) applyCheckpointRestore(restore checkpointRestore) error {
 	}
 
 	ctx.Compute()
+	store.pruneAfter(restore.pos)
 	return nil
 }
 
