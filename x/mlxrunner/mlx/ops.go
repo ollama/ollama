@@ -37,6 +37,12 @@ func (t *Array) ArgpartitionAxis(kth int, axis int) *Array {
 	return out
 }
 
+func (t *Array) ArgsortAxis(axis int) *Array {
+	out := New("ARGSORT_AXIS", t)
+	C.mlx_argsort_axis(&out.ctx, t.ctx, C.int(axis), DefaultStream().ctx)
+	return out
+}
+
 func (t *Array) AsType(dtype DType) *Array {
 	out := New("AS_TYPE", t)
 	C.mlx_astype(&out.ctx, t.ctx, C.mlx_dtype(dtype), DefaultStream().ctx)
@@ -79,9 +85,39 @@ func (t *Array) Concatenate(axis int, others ...*Array) *Array {
 	return out
 }
 
+func (t *Array) Divide(other *Array) *Array {
+	out := New("DIVIDE", t, other)
+	C.mlx_divide(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
+	return out
+}
+
 func (t *Array) ExpandDims(axis int) *Array {
 	out := New("EXPAND_DIMS", t)
 	C.mlx_expand_dims(&out.ctx, t.ctx, C.int(axis), DefaultStream().ctx)
+	return out
+}
+
+func (t *Array) Flatten(startAxis, endAxis int) *Array {
+	out := New("FLATTEN", t)
+	C.mlx_flatten(&out.ctx, t.ctx, C.int(startAxis), C.int(endAxis), DefaultStream().ctx)
+	return out
+}
+
+func (t *Array) FloorDivide(other *Array) *Array {
+	out := New("FLOOR_DIVIDE", t, other)
+	C.mlx_floor_divide(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
+	return out
+}
+
+func (t *Array) GatherMM(other, lhs, rhs *Array, sorted bool) *Array {
+	if lhs == nil {
+		lhs = New("")
+	}
+	if rhs == nil {
+		rhs = New("")
+	}
+	out := New("GATHER_MM", t, other, lhs, rhs)
+	C.mlx_gather_mm(&out.ctx, t.ctx, other.ctx, lhs.ctx, rhs.ctx, C.bool(sorted), DefaultStream().ctx)
 	return out
 }
 
@@ -150,15 +186,42 @@ func (t *Array) Squeeze(axis int) *Array {
 	return out
 }
 
+func (t *Array) StackAxis(axis int, others ...*Array) *Array {
+	vectorData := make([]C.mlx_array, len(others)+1)
+	vectorData[0] = t.ctx
+	for i := range others {
+		vectorData[i+1] = others[i].ctx
+	}
+
+	vector := C.mlx_vector_array_new_data(unsafe.SliceData(vectorData), C.size_t(len(vectorData)))
+	defer C.mlx_vector_array_free(vector)
+
+	out := New("STACK_AXIS", append(others, t)...)
+	C.mlx_stack_axis(&out.ctx, vector, C.int(axis), DefaultStream().ctx)
+	return out
+}
+
 func (t *Array) Subtract(other *Array) *Array {
 	out := New("SUBTRACT", t, other)
 	C.mlx_subtract(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
 	return out
 }
 
+func (t *Array) SumAxis(axis int, keepDims bool) *Array {
+	out := New("SUM_AXIS", t)
+	C.mlx_sum_axis(&out.ctx, t.ctx, C.int(axis), C.bool(keepDims), DefaultStream().ctx)
+	return out
+}
+
 func (t *Array) TakeAxis(indices *Array, axis int) *Array {
 	out := New("TAKE_AXIS", t, indices)
 	C.mlx_take_axis(&out.ctx, t.ctx, indices.ctx, C.int(axis), DefaultStream().ctx)
+	return out
+}
+
+func (t *Array) TakeAlongAxis(indices *Array, axis int) *Array {
+	out := New("TAKE_ALONG_AXIS", t, indices)
+	C.mlx_take_along_axis(&out.ctx, t.ctx, indices.ctx, C.int(axis), DefaultStream().ctx)
 	return out
 }
 
