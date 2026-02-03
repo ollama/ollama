@@ -455,34 +455,6 @@ func TestMigrateConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("backup created in tmp", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-
-		legacyDir := filepath.Join(tmpDir, ".ollama", "config")
-		os.MkdirAll(legacyDir, 0o755)
-		os.WriteFile(filepath.Join(legacyDir, "config.json"), []byte(`{"integrations":{}}`), 0o644)
-
-		if _, err := migrateConfig(); err != nil {
-			t.Fatal(err)
-		}
-
-		entries, err := os.ReadDir(backupDir())
-		if err != nil {
-			t.Fatal(err)
-		}
-		found := false
-		for _, e := range entries {
-			if strings.HasPrefix(e.Name(), "config.json.") {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Error("expected backup file in tmp directory")
-		}
-	})
-
 	t.Run("save writes to new path after migration", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)

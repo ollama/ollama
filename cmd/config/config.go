@@ -3,7 +3,6 @@
 package config
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -58,10 +57,6 @@ func migrateConfig() (bool, error) {
 		return false, nil
 	}
 
-	if _, err := backupToTmp(oldPath); err != nil {
-		return false, fmt.Errorf("backup legacy config: %w", err)
-	}
-
 	newPath, err := configPath()
 	if err != nil {
 		return false, err
@@ -70,13 +65,8 @@ func migrateConfig() (bool, error) {
 	if err := os.MkdirAll(filepath.Dir(newPath), 0o755); err != nil {
 		return false, err
 	}
-	if err := writeWithBackup(newPath, oldData); err != nil {
+	if err := os.WriteFile(newPath, oldData, 0o644); err != nil {
 		return false, fmt.Errorf("write new config: %w", err)
-	}
-
-	written, err := os.ReadFile(newPath)
-	if err != nil || !bytes.Equal(written, oldData) {
-		return false, fmt.Errorf("verification failed after writing new config")
 	}
 
 	_ = os.Remove(oldPath)
