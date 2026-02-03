@@ -28,8 +28,8 @@ import (
 
 	"github.com/containerd/console"
 	"github.com/mattn/go-runewidth"
-	"github.com/pkg/browser"
 	"github.com/olekukonko/tablewriter"
+	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sync/errgroup"
