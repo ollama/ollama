@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -90,8 +91,8 @@ func TestLaunchCmd(t *testing.T) {
 	cmd := LaunchCmd(mockCheck)
 
 	t.Run("command structure", func(t *testing.T) {
-		if cmd.Use != "launch [INTEGRATION]" {
-			t.Errorf("Use = %q, want %q", cmd.Use, "launch [INTEGRATION]")
+		if cmd.Use != "launch [INTEGRATION] [-- [EXTRA_ARGS...]]" {
+			t.Errorf("Use = %q, want %q", cmd.Use, "launch [INTEGRATION] [-- [EXTRA_ARGS...]]")
 		}
 		if cmd.Short == "" {
 			t.Error("Short description should not be empty")
@@ -121,7 +122,7 @@ func TestLaunchCmd(t *testing.T) {
 }
 
 func TestRunIntegration_UnknownIntegration(t *testing.T) {
-	err := runIntegration("unknown-integration", "model")
+	err := runIntegration("unknown-integration", "model", nil)
 	if err == nil {
 		t.Error("expected error for unknown integration, got nil")
 	}
@@ -182,7 +183,118 @@ func TestAllIntegrations_HaveRequiredMethods(t *testing.T) {
 
 			// Test Run() exists (we can't call it without actually running the command)
 			// Just verify the method is available
-			var _ func(string) error = r.Run
+			var _ func(string, []string) error = r.Run
+		})
+	}
+}
+
+func TestParseArgs(t *testing.T) {
+	// Tests reflect cobra's ArgsLenAtDash() semantics:
+	// - cobra strips "--" from args
+	// - ArgsLenAtDash() returns the index where "--" was, or -1
+	tests := []struct {
+		name     string
+		args     []string // args as cobra delivers them (no "--")
+		dashIdx  int      // what ArgsLenAtDash() returns
+		wantName string
+		wantArgs []string
+		wantErr  bool
+	}{
+		{
+			name:     "no extra args, no dash",
+			args:     []string{"claude"},
+			dashIdx:  -1,
+			wantName: "claude",
+		},
+		{
+			name:     "with extra args after --",
+			args:     []string{"codex", "-p", "myprofile"},
+			dashIdx:  1,
+			wantName: "codex",
+			wantArgs: []string{"-p", "myprofile"},
+		},
+		{
+			name:     "extra args only after --",
+			args:     []string{"codex", "--sandbox", "workspace-write"},
+			dashIdx:  1,
+			wantName: "codex",
+			wantArgs: []string{"--sandbox", "workspace-write"},
+		},
+		{
+			name:     "-- at end with no args after",
+			args:     []string{"claude"},
+			dashIdx:  1,
+			wantName: "claude",
+		},
+		{
+			name:     "-- with no integration name",
+			args:     []string{"--verbose"},
+			dashIdx:  0,
+			wantName: "",
+			wantArgs: []string{"--verbose"},
+		},
+		{
+			name:    "multiple args before -- is error",
+			args:    []string{"claude", "codex", "--verbose"},
+			dashIdx: 2,
+			wantErr: true,
+		},
+		{
+			name:    "multiple args without -- is error",
+			args:    []string{"claude", "codex"},
+			dashIdx: -1,
+			wantErr: true,
+		},
+		{
+			name:     "no args, no dash",
+			args:     []string{},
+			dashIdx:  -1,
+			wantName: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Simulate the parsing logic from LaunchCmd using dashIdx
+			var name string
+			var parsedArgs []string
+			var err error
+
+			dashIdx := tt.dashIdx
+			args := tt.args
+
+			if dashIdx == -1 {
+				if len(args) > 1 {
+					err = fmt.Errorf("unexpected arguments: %v", args[1:])
+				} else if len(args) == 1 {
+					name = args[0]
+				}
+			} else {
+				if dashIdx > 1 {
+					err = fmt.Errorf("expected at most 1 integration name before '--', got %d", dashIdx)
+				} else {
+					if dashIdx == 1 {
+						name = args[0]
+					}
+					parsedArgs = args[dashIdx:]
+				}
+			}
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if name != tt.wantName {
+				t.Errorf("name = %q, want %q", name, tt.wantName)
+			}
+			if !slices.Equal(parsedArgs, tt.wantArgs) {
+				t.Errorf("args = %v, want %v", parsedArgs, tt.wantArgs)
+			}
 		})
 	}
 }

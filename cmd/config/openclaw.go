@@ -19,7 +19,7 @@ func (c *Openclaw) String() string { return "OpenClaw" }
 
 const ansiGreen = "\033[32m"
 
-func (c *Openclaw) Run(model string) error {
+func (c *Openclaw) Run(model string, args []string) error {
 	bin := "openclaw"
 	if _, err := exec.LookPath(bin); err != nil {
 		bin = "clawdbot"
@@ -52,7 +52,7 @@ func (c *Openclaw) Run(model string) error {
 	}
 
 	// Onboarding completed: run gateway
-	cmd := exec.Command(bin, "gateway")
+	cmd := exec.Command(bin, append([]string{"gateway"}, args...)...)
 	cmd.Stdin = os.Stdin
 
 	// Capture output to detect "already running" message

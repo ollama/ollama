@@ -22,7 +22,7 @@ import (
 // Runner can run an integration with a model.
 
 type Runner interface {
-	Run(model string) error
+	Run(model string, args []string) error
 	// String returns the human-readable name of the integration
 	String() string
 }
@@ -233,13 +233,13 @@ func selectModels(ctx context.Context, name, current string) ([]string, error) {
 	return selected, nil
 }
 
-func runIntegration(name, modelName string) error {
+func runIntegration(name, modelName string, args []string) error {
 	r, ok := integrations[name]
 	if !ok {
 		return fmt.Errorf("unknown integration: %s", name)
 	}
 	fmt.Fprintf(os.Stderr, "\nLaunching %s with %s...\n", r, modelName)
-	return r.Run(modelName)
+	return r.Run(modelName, args)
 }
 
 // LaunchCmd returns the cobra command for launching integrations.
@@ -248,7 +248,7 @@ func LaunchCmd(checkServerHeartbeat func(cmd *cobra.Command, args []string) erro
 	var configFlag bool
 
 	cmd := &cobra.Command{
-		Use:   "launch [INTEGRATION]",
+		Use:   "launch [INTEGRATION] [-- [EXTRA_ARGS...]]",
 		Short: "Launch an integration with Ollama",
 		Long: `Launch an integration configured with Ollama models.
 
@@ -263,14 +263,37 @@ Examples:
   ollama launch
   ollama launch claude
   ollama launch claude --model <model>
-  ollama launch droid --config (does not auto-launch)`,
-		Args:    cobra.MaximumNArgs(1),
+  ollama launch droid --config (does not auto-launch)
+  ollama launch codex -- -p myprofile (pass extra args to integration)
+  ollama launch codex -- --sandbox workspace-write`,
+		Args:    cobra.ArbitraryArgs,
 		PreRunE: checkServerHeartbeat,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Extract integration name and args to pass through using -- separator
 			var name string
-			if len(args) > 0 {
-				name = args[0]
+			var passArgs []string
+			dashIdx := cmd.ArgsLenAtDash()
+
+			if dashIdx == -1 {
+				// No "--" separator: only allow 0 or 1 args (integration name)
+				if len(args) > 1 {
+					return fmt.Errorf("unexpected arguments: %v\nUse '--' to pass extra arguments to the integration", args[1:])
+				}
+				if len(args) == 1 {
+					name = args[0]
+				}
 			} else {
+				// "--" was used: args before it = integration name, args after = passthrough
+				if dashIdx > 1 {
+					return fmt.Errorf("expected at most 1 integration name before '--', got %d", dashIdx)
+				}
+				if dashIdx == 1 {
+					name = args[0]
+				}
+				passArgs = args[dashIdx:]
+			}
+
+			if name == "" {
 				var err error
 				name, err = selectIntegration()
 				if errors.Is(err, errCancelled) {
@@ -289,7 +312,7 @@ Examples:
 			// If launching without --model, use saved config if available
 			if !configFlag && modelFlag == "" {
 				if config, err := loadIntegration(name); err == nil && len(config.Models) > 0 {
-					return runIntegration(name, config.Models[0])
+					return runIntegration(name, config.Models[0], passArgs)
 				}
 			}
 
@@ -350,13 +373,13 @@ Examples:
 
 			if configFlag {
 				if launch, _ := confirmPrompt(fmt.Sprintf("\nLaunch %s now?", r)); launch {
-					return runIntegration(name, models[0])
+					return runIntegration(name, models[0], passArgs)
 				}
 				fmt.Fprintf(os.Stderr, "Run 'ollama launch %s' to start with %s\n", strings.ToLower(name), models[0])
 				return nil
 			}
 
-			return runIntegration(name, models[0])
+			return runIntegration(name, models[0], passArgs)
 		},
 	}
 
