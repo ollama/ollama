@@ -13,10 +13,10 @@ interleaved version used for qwen3vl
  4 files changed, 16 insertions(+), 16 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index c08e73f3c..a1ca888e7 100644
+index 7d1733adb..f4aae5332 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
-@@ -5598,14 +5598,14 @@ static void ggml_mrope_cache_init(
+@@ -5599,14 +5599,14 @@ static void ggml_mrope_cache_init(
  
          float theta = theta_t;
          if (is_imrope) { // qwen3vl apply interleaved mrope
@@ -59,10 +59,10 @@ index 88ed79111..71ca60214 100644
      } else {
          if (sector < sections.v[0]) {
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 2e463bd99..e669995f0 100644
+index 236838e9e..c98d269d1 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -4243,14 +4243,14 @@ kernel void kernel_rope_multi(
+@@ -4242,14 +4242,14 @@ kernel void kernel_rope_multi(
  
              float theta_base;
              if (FC_rope_is_imrope) {
@@ -82,10 +82,10 @@ index 2e463bd99..e669995f0 100644
              } else {
                  if (sector < args.sect_0) {
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/rope_funcs.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/rope_funcs.glsl
-index aacec9846..0163d8bbc 100644
+index 9726b722d..1c8c69422 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/rope_funcs.glsl
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/rope_funcs.glsl
-@@ -155,14 +155,14 @@ void rope_multi(const uint i0, const uint i1, rope_params p) {
+@@ -148,14 +148,14 @@ void rope_multi(const uint i0, const uint i1, rope_params p) {
  
      float theta_base = 0.0;
      if (p.is_imrope != 0) {

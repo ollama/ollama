@@ -45,14 +45,13 @@
 #define KEY_SPATIAL_MERGE_SIZE  "clip.vision.spatial_merge_size"
 #define KEY_IS_DEEPSTACK_LAYERS "clip.vision.is_deepstack_layers"
 
-#define KEY_MM_PATCH_MERGE_TYPE    "clip.vision.mm_patch_merge_type"
-#define KEY_IMAGE_GRID_PINPOINTS   "clip.vision.image_grid_pinpoints"
-#define KEY_IMAGE_CROP_RESOLUTION  "clip.vision.image_crop_resolution"
-#define KEY_WIN_ATTN_PATTERN       "clip.vision.n_wa_pattern"
-#define KEY_WIN_ATTN_LAYER_INDEXES "clip.vision.wa_layer_indexes"
-#define KEY_ATTN_WINDOW_SIZE       "clip.vision.window_size"
-#define KEY_MINICPMV_VERSION       "clip.minicpmv_version"
-#define KEY_MINICPMV_QUERY_NUM     "clip.minicpmv_query_num"
+#define KEY_MM_PATCH_MERGE_TYPE   "clip.vision.mm_patch_merge_type"
+#define KEY_IMAGE_GRID_PINPOINTS  "clip.vision.image_grid_pinpoints"
+#define KEY_IMAGE_CROP_RESOLUTION "clip.vision.image_crop_resolution"
+#define KEY_WIN_ATTN_PATTERN      "clip.vision.n_wa_pattern"
+#define KEY_ATTN_WINDOW_SIZE      "clip.vision.window_size"
+#define KEY_MINICPMV_VERSION      "clip.minicpmv_version"
+#define KEY_MINICPMV_QUERY_NUM    "clip.minicpmv_query_num"
 
 // audio-specific
 #define KEY_AUDIO_PROJ_TYPE     "clip.audio.projector_type" // for models with mixed modalities
@@ -139,62 +138,6 @@
 #define TN_TOK_BOI         "v.boi"
 #define TN_TOK_EOI         "v.eoi"
 
-// (conformer) lfm2
-#define TN_PRE_ENCODE_OUT  "a.pre_encode.out.%s"
-#define TN_FFN_NORM        "%s.blk.%d.ffn_norm.%s"
-#define TN_FFN_NORM_1      "%s.blk.%d.ffn_norm_1.%s"
-#define TN_FFN_UP_1        "%s.blk.%d.ffn_up_1.%s"
-#define TN_FFN_DOWN_1      "%s.blk.%d.ffn_down_1.%s"
-#define TN_POS_BIAS_U      "%s.blk.%d.pos_bias_u"
-#define TN_POS_BIAS_V      "%s.blk.%d.pos_bias_v"
-#define TN_NORM_CONV       "%s.blk.%d.norm_conv.%s"
-#define TN_LINEAR_POS      "%s.blk.%d.linear_pos.%s"
-#define TN_CONV_DW         "%s.blk.%d.conv_dw.%s"
-#define TN_CONV_NORM       "%s.blk.%d.conv_norm.%s"
-#define TN_CONV_PW1        "%s.blk.%d.conv_pw1.%s"
-#define TN_CONV_PW2        "%s.blk.%d.conv_pw2.%s"
-
-// mobilenetv5 (gemma3n) definitions
-#define TN_MNV5_STEM_CONV        "v.conv_stem.conv.weight"
-#define TN_MNV5_STEM_BIAS        "v.conv_stem.conv.bias"
-#define TN_MNV5_STEM_BN          "v.conv_stem.bn.weight"
-
-// Stage 0 Block (Edge Residual)
-#define TN_MNV5_BLK_S0_EXP_W     "v.blk.%d.%d.conv_exp.weight"
-#define TN_MNV5_BLK_S0_BN1_W     "v.blk.%d.%d.bn1.weight"
-#define TN_MNV5_BLK_S0_PWL_W     "v.blk.%d.%d.conv_pwl.weight"
-#define TN_MNV5_BLK_S0_BN2_W     "v.blk.%d.%d.bn2.weight"
-
-// Stage 1+ Block (Universal Inverted Residual)
-#define TN_MNV5_BLK_DW_START_W   "v.blk.%d.%d.dw_start.conv.weight"
-#define TN_MNV5_BLK_DW_START_BN  "v.blk.%d.%d.dw_start.bn.weight"
-#define TN_MNV5_BLK_DW_MID_W     "v.blk.%d.%d.dw_mid.conv.weight"
-#define TN_MNV5_BLK_DW_MID_BN    "v.blk.%d.%d.dw_mid.bn.weight"
-#define TN_MNV5_BLK_PW_EXP_W     "v.blk.%d.%d.pw_exp.conv.weight"
-#define TN_MNV5_BLK_PW_EXP_BN    "v.blk.%d.%d.pw_exp.bn.weight"
-#define TN_MNV5_BLK_PW_PROJ_W    "v.blk.%d.%d.pw_proj.conv.weight"
-#define TN_MNV5_BLK_PW_PROJ_BN   "v.blk.%d.%d.pw_proj.bn.weight"
-#define TN_MNV5_BLK_LAYER_SCALE  "v.blk.%d.%d.layer_scale.gamma"
-
-// Attention Components
-#define TN_MNV5_ATTN_Q_W         "v.blk.%d.%d.attn.query.proj.weight"
-#define TN_MNV5_ATTN_K_W         "v.blk.%d.%d.attn.key.proj.weight"
-#define TN_MNV5_ATTN_V_W         "v.blk.%d.%d.attn.value.proj.weight"
-#define TN_MNV5_ATTN_O_W         "v.blk.%d.%d.attn.output.proj.weight"
-#define TN_MNV5_ATTN_K_DW        "v.blk.%d.%d.attn.key.down_conv.weight"
-#define TN_MNV5_ATTN_K_NORM      "v.blk.%d.%d.attn.key.norm.weight"
-#define TN_MNV5_ATTN_V_DW        "v.blk.%d.%d.attn.value.down_conv.weight"
-#define TN_MNV5_ATTN_V_NORM      "v.blk.%d.%d.attn.value.norm.weight"
-#define TN_MNV5_ATTN_NORM        "v.blk.%d.%d.norm.weight" // Block norm used in attn blocks
-
-// MSFA
-#define TN_MNV5_MSFA_FFN_EXP_W   "v.msfa.ffn.pw_exp.conv.weight"
-#define TN_MNV5_MSFA_FFN_EXP_BN  "v.msfa.ffn.pw_exp.bn.weight"
-#define TN_MNV5_MSFA_FFN_PROJ_W  "v.msfa.ffn.pw_proj.conv.weight"
-#define TN_MNV5_MSFA_FFN_PROJ_BN "v.msfa.ffn.pw_proj.bn.weight"
-#define TN_MNV5_MSFA_NORM        "v.msfa.norm.weight"
-
-
 // align x to upper multiple of n
 #define CLIP_ALIGN(x, n) ((((x) + (n) - 1) / (n)) * (n))
 
@@ -212,8 +155,6 @@ enum projector_type {
     PROJECTOR_TYPE_QWEN2VL,
     PROJECTOR_TYPE_QWEN3VL,
     PROJECTOR_TYPE_GEMMA3,
-    PROJECTOR_TYPE_GEMMA3NV,
-    PROJECTOR_TYPE_GEMMA3NA,
     PROJECTOR_TYPE_IDEFICS3,
     PROJECTOR_TYPE_PIXTRAL,
     PROJECTOR_TYPE_QWEN25VL,
@@ -224,15 +165,12 @@ enum projector_type {
     PROJECTOR_TYPE_GLMA,
     PROJECTOR_TYPE_QWEN25O, // will be replaced by QWEN2A or QWEN25VL depending on clip_ctx
     PROJECTOR_TYPE_VOXTRAL,
-    PROJECTOR_TYPE_MUSIC_FLAMINGO,
     PROJECTOR_TYPE_LFM2,
     PROJECTOR_TYPE_KIMIVL,
     PROJECTOR_TYPE_LIGHTONOCR,
     PROJECTOR_TYPE_COGVLM,
     PROJECTOR_TYPE_JANUS_PRO,
-    PROJECTOR_TYPE_LFM2A,
     PROJECTOR_TYPE_GLM4V,
-    PROJECTOR_TYPE_YOUTUVL,
     PROJECTOR_TYPE_UNKNOWN,
 };
 
@@ -246,8 +184,6 @@ static std::map<projector_type, std::string> PROJECTOR_TYPE_NAMES = {
     { PROJECTOR_TYPE_QWEN25VL,  "qwen2.5vl_merger"},
     { PROJECTOR_TYPE_QWEN3VL,   "qwen3vl_merger"},
     { PROJECTOR_TYPE_GEMMA3,    "gemma3"},
-    { PROJECTOR_TYPE_GEMMA3NV,  "gemma3nv"},
-    { PROJECTOR_TYPE_GEMMA3NA,  "gemma3na"},
     { PROJECTOR_TYPE_IDEFICS3,  "idefics3"},
     { PROJECTOR_TYPE_PIXTRAL,   "pixtral"},
     { PROJECTOR_TYPE_ULTRAVOX,  "ultravox"},
@@ -257,15 +193,12 @@ static std::map<projector_type, std::string> PROJECTOR_TYPE_NAMES = {
     { PROJECTOR_TYPE_GLMA,      "glma"},
     { PROJECTOR_TYPE_QWEN25O,   "qwen2.5o"},
     { PROJECTOR_TYPE_VOXTRAL,   "voxtral"},
-    { PROJECTOR_TYPE_MUSIC_FLAMINGO, "musicflamingo"},
     { PROJECTOR_TYPE_LFM2,      "lfm2"},
     { PROJECTOR_TYPE_KIMIVL,    "kimivl"},
     { PROJECTOR_TYPE_LIGHTONOCR,"lightonocr"},
     { PROJECTOR_TYPE_COGVLM,    "cogvlm"},
     { PROJECTOR_TYPE_JANUS_PRO, "janus_pro"},
-    { PROJECTOR_TYPE_LFM2A,     "lfm2a"},
     { PROJECTOR_TYPE_GLM4V,     "glm4v"},
-    { PROJECTOR_TYPE_YOUTUVL,   "youtuvl"},
 };
 
 static projector_type clip_projector_type_from_string(const std::string & str) {

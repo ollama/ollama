@@ -29,8 +29,6 @@ layout (push_constant) uniform parameter
 #ifdef MUL_MAT_ID
     uint nei0;
     uint ne11;
-    uint expert_i1;
-    uint nbi1;
 #else
     uint ne02;
     uint ne12;
@@ -45,7 +43,7 @@ uint expert_id;
 
 void get_offsets(out uint a_offset, out uint b_offset, out uint d_offset) {
 #ifdef MUL_MAT_ID
-    const uint expert_i0 = gl_GlobalInvocationID.y;
+    const uint expert_idx = gl_GlobalInvocationID.y;
 #else
     const uint batch_idx = gl_GlobalInvocationID.y;
 #endif
@@ -62,24 +60,24 @@ void get_offsets(out uint a_offset, out uint b_offset, out uint d_offset) {
         batch_idx_a = i03 * p.ne02 + i02;
     }
 #else
-    expert_id = data_ids[expert_i0 + p.expert_i1 * p.nbi1];
+    expert_id = data_ids[expert_idx];
 #endif
 
     a_offset =
 #ifdef MUL_MAT_ID
-            expert_id * (p.batch_stride_a / QUANT_K);
+            expert_id * p.batch_stride_a;
 #else
-            batch_idx_a * (p.batch_stride_a / QUANT_K);
+            batch_idx_a * p.batch_stride_a;
 #endif
     b_offset =
 #ifdef MUL_MAT_ID
-            (expert_i0 % p.ne11) * p.stride_b + p.expert_i1 * p.batch_stride_b;
+            (expert_idx % p.ne11) * p.stride_b;
 #else
             batch_idx * p.batch_stride_b;
 #endif
     d_offset =
 #ifdef MUL_MAT_ID
-            expert_i0 * p.stride_d + p.expert_i1 * p.batch_stride_d;
+            expert_idx * p.stride_d;
 #else
             batch_idx * p.batch_stride_d;
 #endif
@@ -105,12 +103,12 @@ void reduce_result(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const in uint32_t 
                     temp[j][n] += FLOAT_TYPE(data_fuse0[expert_id*p.stride_d + first_row + n]);
                 }
                 if ((p.fusion_flags & MAT_VEC_FUSION_FLAGS_SCALE0) != 0) {
-                    const uint expert_i0 = gl_GlobalInvocationID.y;
-                    temp[j][n] *= FLOAT_TYPE(data_fuse0[expert_i0]);
+                    const uint expert_idx = gl_GlobalInvocationID.y;
+                    temp[j][n] *= FLOAT_TYPE(data_fuse0[expert_idx]);
                 }
                 if ((p.fusion_flags & MAT_VEC_FUSION_FLAGS_SCALE1) != 0) {
-                    const uint expert_i0 = gl_GlobalInvocationID.y;
-                    temp[j][n] *= FLOAT_TYPE(data_fuse1[expert_i0]);
+                    const uint expert_idx = gl_GlobalInvocationID.y;
+                    temp[j][n] *= FLOAT_TYPE(data_fuse1[expert_idx]);
                 }
 #else
                 if ((p.fusion_flags & MAT_VEC_FUSION_FLAGS_BIAS0) != 0) {
@@ -160,12 +158,12 @@ void reduce_result(FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const in uint32_t d_offs
                     temp[j][n] += FLOAT_TYPE(data_fuse0[expert_id*p.stride_d + first_row + n]);
                 }
                 if ((p.fusion_flags & MAT_VEC_FUSION_FLAGS_SCALE0) != 0) {
-                    const uint expert_i0 = gl_GlobalInvocationID.y;
-                    temp[j][n] *= FLOAT_TYPE(data_fuse0[expert_i0]);
+                    const uint expert_idx = gl_GlobalInvocationID.y;
+                    temp[j][n] *= FLOAT_TYPE(data_fuse0[expert_idx]);
                 }
                 if ((p.fusion_flags & MAT_VEC_FUSION_FLAGS_SCALE1) != 0) {
-                    const uint expert_i0 = gl_GlobalInvocationID.y;
-                    temp[j][n] *= FLOAT_TYPE(data_fuse1[expert_i0]);
+                    const uint expert_idx = gl_GlobalInvocationID.y;
+                    temp[j][n] *= FLOAT_TYPE(data_fuse1[expert_idx]);
                 }
 #else
                 if ((p.fusion_flags & MAT_VEC_FUSION_FLAGS_BIAS0) != 0) {
@@ -205,12 +203,12 @@ void reduce_result(FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const in uint32_t d_offs
                     tmpsh[j][n][0] += FLOAT_TYPE(data_fuse0[expert_id*p.stride_d + first_row + n]);
                 }
                 if ((p.fusion_flags & MAT_VEC_FUSION_FLAGS_SCALE0) != 0) {
-                    const uint expert_i0 = gl_GlobalInvocationID.y;
-                    tmpsh[j][n][0] *= FLOAT_TYPE(data_fuse0[expert_i0]);
+                    const uint expert_idx = gl_GlobalInvocationID.y;
+                    tmpsh[j][n][0] *= FLOAT_TYPE(data_fuse0[expert_idx]);
                 }
                 if ((p.fusion_flags & MAT_VEC_FUSION_FLAGS_SCALE1) != 0) {
-                    const uint expert_i0 = gl_GlobalInvocationID.y;
-                    tmpsh[j][n][0] *= FLOAT_TYPE(data_fuse1[expert_i0]);
+                    const uint expert_idx = gl_GlobalInvocationID.y;
+                    tmpsh[j][n][0] *= FLOAT_TYPE(data_fuse1[expert_idx]);
                 }
 #else
                 if ((p.fusion_flags & MAT_VEC_FUSION_FLAGS_BIAS0) != 0) {

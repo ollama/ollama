@@ -6,11 +6,11 @@ Subject: [PATCH] clip-unicode
 fixes loading vision models in llama.cpp on windows
 filesystems for paths that include wide characters
 ---
- tools/mtmd/clip.cpp | 47 +++++++++++++++++++++++++++++++++++++++++----
- 1 file changed, 43 insertions(+), 4 deletions(-)
+ tools/mtmd/clip.cpp | 39 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 39 insertions(+)
 
 diff --git a/tools/mtmd/clip.cpp b/tools/mtmd/clip.cpp
-index 9b076e0c5..18dab19df 100644
+index 35e3aef0a..84a3796b5 100644
 --- a/tools/mtmd/clip.cpp
 +++ b/tools/mtmd/clip.cpp
 @@ -24,6 +24,19 @@
@@ -33,7 +33,7 @@ index 9b076e0c5..18dab19df 100644
  struct clip_logger_state g_logger_state = {clip_log_callback_default, NULL};
  
  //#define CLIP_DEBUG_FUNCTIONS
-@@ -1837,7 +1850,29 @@ struct clip_model_loader {
+@@ -1619,7 +1632,29 @@ struct clip_model_loader {
          {
              std::vector<uint8_t> read_buf;
  
@@ -63,7 +63,7 @@ index 9b076e0c5..18dab19df 100644
              if (!fin) {
                  throw std::runtime_error(string_format("%s: failed to open %s\n", __func__, fname.c_str()));
              }
-@@ -1864,7 +1899,11 @@ struct clip_model_loader {
+@@ -1646,7 +1681,11 @@ struct clip_model_loader {
                      ggml_backend_tensor_set(cur, read_buf.data(), 0, num_bytes);
                  }
              }
@@ -75,39 +75,3 @@ index 9b076e0c5..18dab19df 100644
  
              LOG_DBG("%s: loaded %zu tensors from %s\n", __func__, tensors_to_load.size(), fname.c_str());
          }
-@@ -2247,7 +2286,7 @@ struct img_tool {
-             std::array<uint8_t, 3> pad_color = {0, 0, 0}) {
-         dst.nx = target_resolution.width;
-         dst.ny = target_resolution.height;
--        dst.buf.resize(3 * dst.nx * dst.ny);
-+        dst.buf.resize(3 * static_cast<size_t>(dst.nx) * static_cast<size_t>(dst.ny));
- 
-         if (dst.nx == src.nx && dst.ny == src.ny) {
-             // no resize needed, simple copy
-@@ -2300,7 +2339,7 @@ struct img_tool {
-     static void crop(const clip_image_u8 & image, clip_image_u8 & dst, int x, int y, int w, int h) {
-         dst.nx = w;
-         dst.ny = h;
--        dst.buf.resize(3 * w * h);
-+        dst.buf.resize(3 * static_cast<size_t>(w) * static_cast<size_t>(h));
- 
-         for (int i = 0; i < h; ++i) {
-             for (int j = 0; j < w; ++j) {
-@@ -2397,7 +2436,7 @@ private:
-     static void resize_bilinear(const clip_image_u8 & src, clip_image_u8 & dst, int target_width, int target_height) {
-         dst.nx = target_width;
-         dst.ny = target_height;
--        dst.buf.resize(3 * target_width * target_height);
-+        dst.buf.resize(3 * static_cast<size_t>(target_width) * static_cast<size_t>(target_height));
- 
-         float x_ratio = static_cast<float>(src.nx - 1) / target_width;
-         float y_ratio = static_cast<float>(src.ny - 1) / target_height;
-@@ -2436,7 +2475,7 @@ private:
- 
-         dst.nx = target_width;
-         dst.ny = target_height;
--        dst.buf.resize(3 * target_width * target_height);
-+        dst.buf.resize(3 * static_cast<size_t>(target_width) * static_cast<size_t>(target_height));
- 
-         float Cc;
-         float C[5] = {};

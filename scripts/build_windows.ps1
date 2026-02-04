@@ -178,31 +178,7 @@ function cuda12 {
 }
 
 function cuda13 {
-    # Use Windows-specific preset with reduced architectures to avoid MSVC template compilation issues
-    mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
-    $cudaMajorVer = "13"
-    if ($script:ARCH -ne "arm64") {
-        if ("$script:CUDA_DIRS".Contains("v$cudaMajorVer")) {
-            foreach ($d in $Script:CUDA_DIRS){
-                if ($d.FullName.Contains("v$cudaMajorVer")) {
-                    if (test-path -literalpath (join-path -path $d -childpath "nvcc.exe" ) ) {
-                        $cuda=($d.FullName|split-path -parent)
-                        break
-                    }
-                }
-            }
-            write-host "Building CUDA v$cudaMajorVer backend libraries $cuda"
-            $env:CUDAToolkit_ROOT=$cuda
-            & cmake -B build\cuda_v$cudaMajorVer --preset "CUDA 13 Windows" -T cuda="$cuda" --install-prefix "$script:DIST_DIR"
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --build build\cuda_v$cudaMajorVer --target ggml-cuda --config Release --parallel $script:JOBS
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --install build\cuda_v$cudaMajorVer --component "CUDA" --strip
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        } else {
-            write-host "CUDA v$cudaMajorVer not detected, skipping"
-        }
-    }
+    cudaCommon("13")
 }
 
 function rocm {
@@ -220,7 +196,6 @@ function rocm {
             & cmake -B build\rocm --preset "ROCm 6" -G Ninja `
                 -DCMAKE_C_COMPILER=clang `
                 -DCMAKE_CXX_COMPILER=clang++ `
-                -DCMAKE_HIP_COMPILER="${script:HIP_PATH}\bin\clang++.exe" `
                 -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
                 -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
                 --install-prefix $script:DIST_DIR
