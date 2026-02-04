@@ -12,7 +12,7 @@ import (
 const (
 	checkpointCountDefault    = 32
 	checkpointMinPosDefault   = int32(16)
-	checkpointIntervalDefault = int32(512)
+	checkpointIntervalDefault = int32(1280)
 )
 
 // TODO(jmorganca): Add byte-serialized host-RAM checkpoints to reduce GPU
