@@ -135,7 +135,7 @@ func (mlp *sparse) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options
 		// Apply shared expert gating
 		if mlp.SharedGateInp != nil {
 			sharedGateVal := mlp.SharedGateInp.Forward(ctx, hiddenStates2D)
-			sharedGateVal = sharedGateVal.Sigmoid(ctx)
+			sharedGateVal = sharedGateVal.SigmoidOut(ctx)
 			// Broadcast gate to match dimensions
 			sharedGateVal = sharedGateVal.Repeat(ctx, 0, sharedOut.Dim(0))
 			sharedOut = sharedOut.Mul(ctx, sharedGateVal)
