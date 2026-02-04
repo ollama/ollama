@@ -228,6 +228,13 @@ func (t Array) Floats() []float32 {
 	return floats
 }
 
+func (t Array) Save(name string) error {
+	cName := C.CString(name)
+	defer C.free(unsafe.Pointer(cName))
+	C.mlx_save(cName, t.ctx)
+	return nil
+}
+
 func Free(s ...*Array) (n int) {
 	now := time.Now()
 	defer func() {
