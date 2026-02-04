@@ -512,7 +512,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		// TODO (jmorganca): avoid building the response twice both here and below
 		var sb strings.Builder
 		defer close(ch)
-		slog.Debug("GenerateHandler prompt", "prompt", prompt)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:      prompt,
 			Images:      images,
@@ -2225,7 +2224,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 			// sets up new context given parent context per request
 			ctx, cancel := context.WithCancel(c.Request.Context())
-			slog.Debug("ChatHandler prompt", "prompt", prompt)
 			err := r.Completion(ctx, llm.CompletionRequest{
 				Prompt:      prompt,
 				Images:      images,
@@ -2236,7 +2234,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				Logprobs:    req.Logprobs,
 				TopLogprobs: req.TopLogprobs,
 			}, func(r llm.CompletionResponse) {
-				slog.Debug("ChatHandler response", "content", r.Content, "done", r.Done)
 				res := api.ChatResponse{
 					Model:     req.Model,
 					CreatedAt: time.Now().UTC(),
