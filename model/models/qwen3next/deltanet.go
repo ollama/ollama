@@ -321,11 +321,11 @@ func (gdn *GatedDeltaNet) deltaNetChunked(
 
 	// Pad tensors
 	if pad > 0 {
-		q = q.Pad(ctx, 0, int(pad), 0, 0)
-		k = k.Pad(ctx, 0, int(pad), 0, 0)
-		v = v.Pad(ctx, 0, int(pad), 0, 0)
-		gate = gate.Pad(ctx, int(pad), 0, 0, 0)
-		beta = beta.Pad(ctx, 0, int(pad), 0, 0)
+		q = q.Pad(ctx, 0, pad, 0, 0)
+		k = k.Pad(ctx, 0, pad, 0, 0)
+		v = v.Pad(ctx, 0, pad, 0, 0)
+		gate = gate.Pad(ctx, pad, 0, 0, 0)
+		beta = beta.Pad(ctx, 0, pad, 0, 0)
 	}
 
 	// Use pre-computed masks (passed in, not recreated)
@@ -342,11 +342,9 @@ func (gdn *GatedDeltaNet) deltaNetChunked(
 	q = q.Reshape(ctx, headKDim, chunkSize, nChunks, numVHeads*nSeqs)
 	k = k.Reshape(ctx, headKDim, chunkSize, nChunks, numVHeads*nSeqs)
 	kBeta = kBeta.Reshape(ctx, headKDim, chunkSize, nChunks, numVHeads*nSeqs)
-	v = v.Reshape(ctx, headVDim, chunkSize, nChunks, numVHeads*nSeqs)
 	vBeta = vBeta.Reshape(ctx, headVDim, chunkSize, nChunks, numVHeads*nSeqs)
 
 	gate = gate.Reshape(ctx, chunkSize, 1, nChunks, numVHeads*nSeqs)
-	beta = beta.Reshape(ctx, 1, chunkSize, nChunks, numVHeads*nSeqs)
 
 	// g_cumsum = cumsum(gate)
 	gCumsum := gate.CumSum(ctx)

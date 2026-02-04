@@ -468,7 +468,7 @@ func (c *HybridCache) reserveCheckpointConv(layer int) {
 	if _, ok := c.checkpointReserved[key]; ok {
 		return
 	}
-	for slot := 0; slot < c.maxSequences; slot++ {
+	for slot := range c.maxSequences {
 		store := c.checkpointStore(slot)
 		for i := range store.entries {
 			entry := &store.entries[i]
@@ -483,7 +483,7 @@ func (c *HybridCache) reserveCheckpointDelta(layer int) {
 	if _, ok := c.checkpointReserved[key]; ok {
 		return
 	}
-	for slot := 0; slot < c.maxSequences; slot++ {
+	for slot := range c.maxSequences {
 		store := c.checkpointStore(slot)
 		for i := range store.entries {
 			entry := &store.entries[i]
