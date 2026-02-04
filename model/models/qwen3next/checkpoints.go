@@ -289,7 +289,9 @@ func (c *HybridCache) applyCheckpointRestore(restore checkpointRestore) error {
 		ctx.Forward(buf.SetRows(ctx, src, slotIdx))
 	}
 
-	ctx.Compute()
+	if len(entry.conv) > 0 || len(entry.delta) > 0 {
+		ctx.Compute()
+	}
 	store := c.checkpoints[restore.slot]
 	store.pruneAfter(restore.pos)
 	return nil

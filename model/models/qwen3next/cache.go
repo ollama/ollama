@@ -395,7 +395,9 @@ func (c *HybridCache) Remove(seq int, beginIndex, endIndex int32) error {
 			ctx := c.backend.NewContext()
 			c.copyRecurrentState(ctx, slot, newSlot)
 			c.copyCheckpoints(ctx, slot, newSlot)
-			ctx.Compute()
+			if len(c.convStates) > 0 || len(c.deltaStates) > 0 {
+				ctx.Compute()
+			}
 			ctx.Close()
 
 			c.refCount[slot]--
