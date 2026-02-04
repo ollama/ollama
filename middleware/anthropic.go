@@ -131,15 +131,12 @@ func AnthropicMessagesMiddleware() gin.HandlerFunc {
 
 		messageID := anthropic.GenerateMessageID()
 
-		// Estimate input tokens for streaming (actual count not available until generation completes)
-		estimatedTokens := anthropic.EstimateInputTokens(req)
-
 		w := &AnthropicWriter{
 			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
 			stream:     req.Stream,
 			id:         messageID,
 			model:      req.Model,
-			converter:  anthropic.NewStreamConverter(messageID, req.Model, estimatedTokens),
+			converter:  anthropic.NewStreamConverter(messageID, req.Model),
 		}
 
 		if req.Stream {

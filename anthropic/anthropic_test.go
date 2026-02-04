@@ -605,7 +605,7 @@ func TestGenerateMessageID(t *testing.T) {
 }
 
 func TestStreamConverter_Basic(t *testing.T) {
-	conv := NewStreamConverter("msg_123", "test-model", 0)
+	conv := NewStreamConverter("msg_123", "test-model")
 
 	// First chunk
 	resp1 := api.ChatResponse{
@@ -678,7 +678,7 @@ func TestStreamConverter_Basic(t *testing.T) {
 }
 
 func TestStreamConverter_WithToolCalls(t *testing.T) {
-	conv := NewStreamConverter("msg_123", "test-model", 0)
+	conv := NewStreamConverter("msg_123", "test-model")
 
 	resp := api.ChatResponse{
 		Model: "test-model",
@@ -731,7 +731,7 @@ func TestStreamConverter_WithToolCalls(t *testing.T) {
 func TestStreamConverter_ToolCallWithUnmarshalableArgs(t *testing.T) {
 	// Test that unmarshalable arguments (like channels) are handled gracefully
 	// and don't cause a panic or corrupt stream
-	conv := NewStreamConverter("msg_123", "test-model", 0)
+	conv := NewStreamConverter("msg_123", "test-model")
 
 	// Create a channel which cannot be JSON marshaled
 	unmarshalable := make(chan int)
@@ -778,7 +778,7 @@ func TestStreamConverter_ToolCallWithUnmarshalableArgs(t *testing.T) {
 
 func TestStreamConverter_MultipleToolCallsWithMixedValidity(t *testing.T) {
 	// Test that valid tool calls still work when mixed with invalid ones
-	conv := NewStreamConverter("msg_123", "test-model", 0)
+	conv := NewStreamConverter("msg_123", "test-model")
 
 	unmarshalable := make(chan int)
 	badArgs := api.NewToolCallFunctionArguments()
@@ -903,7 +903,7 @@ func TestContentBlockJSON_EmptyFieldsPresent(t *testing.T) {
 // events include the required empty fields for SDK compatibility.
 func TestStreamConverter_ContentBlockStartIncludesEmptyFields(t *testing.T) {
 	t.Run("text block start includes empty text", func(t *testing.T) {
-		conv := NewStreamConverter("msg_123", "test-model", 0)
+		conv := NewStreamConverter("msg_123", "test-model")
 
 		resp := api.ChatResponse{
 			Model:   "test-model",
@@ -937,7 +937,7 @@ func TestStreamConverter_ContentBlockStartIncludesEmptyFields(t *testing.T) {
 	})
 
 	t.Run("thinking block start includes empty thinking", func(t *testing.T) {
-		conv := NewStreamConverter("msg_123", "test-model", 0)
+		conv := NewStreamConverter("msg_123", "test-model")
 
 		resp := api.ChatResponse{
 			Model:   "test-model",

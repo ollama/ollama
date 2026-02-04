@@ -65,10 +65,6 @@ func (s *selectState) handleInput(event inputEvent, char byte) (done bool, resul
 		if len(filtered) > 0 && s.selected < len(filtered) {
 			return true, filtered[s.selected].Name, nil
 		}
-		// No matches but user typed something - return filter for pull prompt
-		if len(filtered) == 0 && s.filter != "" {
-			return true, s.filter, nil
-		}
 	case eventEscape:
 		return true, "", errCancelled
 	case eventBackspace:
@@ -287,11 +283,7 @@ func renderSelect(w io.Writer, prompt string, s *selectState) int {
 	lineCount := 1
 
 	if len(filtered) == 0 {
-		if s.filter != "" {
-			fmt.Fprintf(w, "  %s→ Download model: '%s'? Press Enter%s\r\n", ansiGray, s.filter, ansiReset)
-		} else {
-			fmt.Fprintf(w, "  %s(no matches)%s\r\n", ansiGray, ansiReset)
-		}
+		fmt.Fprintf(w, "  %s(no matches)%s\r\n", ansiGray, ansiReset)
 		lineCount++
 	} else {
 		displayCount := min(len(filtered), maxDisplayedItems)
