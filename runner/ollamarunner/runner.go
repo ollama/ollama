@@ -740,7 +740,11 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		if seq == nil || nextBatchTokens[i] == nil {
 			continue
 		}
-
+		// If the sequence was replaced while this batch was computing, discard results.
+		if activeBatch.seqs[i] != seq {
+			logutil.Trace("computeBatch: sequence replaced, discarding its results", "batchID", activeBatch.id, "seqIdx", i)
+			continue
+		}
 		seq.lastUpdatedAt = t
 		if seq.numPredicted == 1 {
 			seq.processingDuration = seq.lastUpdatedAt.Sub(seq.startedAt)
