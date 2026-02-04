@@ -279,6 +279,9 @@ func (c *HybridCache) applyCheckpointRestore(restore checkpointRestore) error {
 	if entry.pos < 0 {
 		return kvcache.ErrNotSupported
 	}
+	if !c.entryComplete(entry) {
+		return kvcache.ErrNotSupported
+	}
 
 	ctx := c.backend.NewContext()
 	defer ctx.Close()
@@ -296,6 +299,32 @@ func (c *HybridCache) applyCheckpointRestore(restore checkpointRestore) error {
 	ctx.Compute()
 	store.pruneAfter(restore.pos)
 	return nil
+}
+
+func (c *HybridCache) restoreComplete(restore checkpointRestore) bool {
+	store, ok := c.checkpoints[restore.slot]
+	if !ok || restore.idx < 0 || restore.idx >= len(store.entries) {
+		return false
+	}
+	entry := &store.entries[restore.idx]
+	if entry.pos < 0 {
+		return false
+	}
+	return c.entryComplete(entry)
+}
+
+func (c *HybridCache) entryComplete(entry *checkpointEntry) bool {
+	for layer := range c.convStates {
+		if entry.conv == nil || entry.conv[layer] == nil {
+			return false
+		}
+	}
+	for layer := range c.deltaStates {
+		if entry.delta == nil || entry.delta[layer] == nil {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *HybridCache) clearCheckpoints(slot int) {

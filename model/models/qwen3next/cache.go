@@ -301,21 +301,7 @@ func (c *HybridCache) EnsureWritable(ctx ml.Context) error {
 		c.slotForSeq[seq] = newSlot
 		c.curSlots[i] = newSlot
 
-		// Copy conv state for all initialized layers
-		for _, buf := range c.convStates {
-			src := buf.Rows(ctx, ctx.Input().FromInts([]int32{int32(slot)}, 1))
-			srcF32 := src.Cast(ctx, ml.DTypeF32)
-			ctx.Forward(buf.SetRows(ctx, srcF32, ctx.Input().FromInts([]int32{int32(newSlot)}, 1)))
-		}
-
-		// Copy delta state for all initialized layers
-		for _, buf := range c.deltaStates {
-			src := buf.Rows(ctx, ctx.Input().FromInts([]int32{int32(slot)}, 1))
-			srcF32 := src.Cast(ctx, ml.DTypeF32)
-			ctx.Forward(buf.SetRows(ctx, srcF32, ctx.Input().FromInts([]int32{int32(newSlot)}, 1)))
-		}
-
-		// Copy checkpoint state
+		c.copyRecurrentState(ctx, slot, newSlot)
 		c.copyCheckpoints(ctx, slot, newSlot)
 	}
 
@@ -327,6 +313,23 @@ func (c *HybridCache) EnsureWritable(ctx ml.Context) error {
 	c.curSlotsInput = ctx.Input().FromInts(slots, len(slots))
 
 	return nil
+}
+
+func (c *HybridCache) copyRecurrentState(ctx ml.Context, srcSlot, dstSlot int) {
+	src := ctx.Input().FromInts([]int32{int32(srcSlot)}, 1)
+	dst := ctx.Input().FromInts([]int32{int32(dstSlot)}, 1)
+
+	for _, buf := range c.convStates {
+		rows := buf.Rows(ctx, src)
+		rowsF32 := rows.Cast(ctx, ml.DTypeF32)
+		ctx.Forward(buf.SetRows(ctx, rowsF32, dst))
+	}
+
+	for _, buf := range c.deltaStates {
+		rows := buf.Rows(ctx, src)
+		rowsF32 := rows.Cast(ctx, ml.DTypeF32)
+		ctx.Forward(buf.SetRows(ctx, rowsF32, dst))
+	}
 }
 
 func (c *HybridCache) CopyPrefix(srcSeq, dstSeq int, prefixLen int32) {
@@ -374,6 +377,28 @@ func (c *HybridCache) Remove(seq int, beginIndex, endIndex int32) error {
 		restore, ok := c.pendingRestore[seq]
 		if !ok || restore.pos+1 != beginIndex {
 			return kvcache.ErrNotSupported
+		}
+		if !c.restoreComplete(restore) {
+			return kvcache.ErrNotSupported
+		}
+		// If the recurrent slot is shared, detach it before applying a restore.
+		if slot, ok := c.slotForSeq[seq]; ok && slot >= 0 && slot < len(c.refCount) && c.refCount[slot] > 1 {
+			newSlot, err := c.allocSlot()
+			if err != nil {
+				return err
+			}
+			ctx := c.backend.NewContext()
+			c.copyRecurrentState(ctx, slot, newSlot)
+			c.copyCheckpoints(ctx, slot, newSlot)
+			ctx.Compute()
+			ctx.Close()
+
+			c.refCount[slot]--
+			c.refCount[newSlot] = 1
+			c.slotForSeq[seq] = newSlot
+
+			restore.slot = newSlot
+			c.pendingRestore[seq] = restore
 		}
 	}
 
