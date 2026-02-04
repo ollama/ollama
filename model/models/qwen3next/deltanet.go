@@ -1,6 +1,7 @@
 package qwen3next
 
 import (
+	"errors"
 	"log/slog"
 	"math"
 
@@ -66,7 +67,7 @@ func createMasks(ctx ml.Context) *Masks {
 	}
 }
 
-func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cache *HybridCache, opts *Options) ml.Tensor {
+func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cache *HybridCache, opts *Options) (ml.Tensor, error) {
 	layer := gdn.Layer
 	nSeqTokens := hiddenStates.Dim(1)
 	nSeqs := hiddenStates.Dim(2)
@@ -76,11 +77,11 @@ func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cac
 		if seqTokens > 0 && seqs > 0 {
 			if nSeqs > 1 {
 				if nSeqTokens != seqTokens || nSeqs != seqs {
-					panic("qwen3next: unsupported batch layout for linear attention")
+					return nil, ErrUnsupportedBatchLayout
 				}
 			} else {
 				if nSeqTokens != seqTokens*seqs {
-					panic("qwen3next: unsupported batch layout for linear attention")
+					return nil, ErrUnsupportedBatchLayout
 				}
 				hiddenStates = hiddenStates.Reshape(ctx, hiddenStates.Dim(0), seqTokens, seqs)
 				nSeqTokens = seqTokens
@@ -99,7 +100,7 @@ func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cac
 	qkvDim := headKDim*numKHeads*2 + headVDim*numVHeads
 
 	if gdn.SSMQKV == nil || gdn.SSMQKVGate == nil {
-		panic("qwen3next: missing attn_qkv/attn_gate projections (legacy ssm_in is not supported)")
+		return nil, errors.New("qwen3next: missing attn_qkv/attn_gate projections (legacy ssm_in is not supported)")
 	}
 	// Optimized path: pre-split QKV and gate
 	qkvMixed := gdn.SSMQKV.Forward(ctx, hiddenStates).Reshape(ctx, qkvDim, nSeqTokens, nSeqs)
@@ -205,7 +206,7 @@ func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cac
 	finalOutput := attnOutGated.Reshape(ctx, headVDim*numVHeads, nSeqTokens, nSeqs)
 
 	out := gdn.SSMOut.Forward(ctx, finalOutput)
-	return out.Reshape(ctx, out.Dim(0), nSeqTokens*nSeqs)
+	return out.Reshape(ctx, out.Dim(0), nSeqTokens*nSeqs), nil
 }
 
 // deltaNetAutoregressive implements single-token state update.

@@ -49,6 +49,7 @@ type HybridCache struct {
 	checkpointCount     int
 	checkpointMinPos    int32
 	checkpointInterval  int32
+	checkpointCtxSize   int
 	checkpoints         map[int]*slotCheckpointStore
 	pendingRestore      map[int]checkpointRestore
 	curCheckpointPos    []int32
@@ -104,6 +105,10 @@ func (c *HybridCache) Init(backend ml.Backend, dtype ml.DType, maxSequences, cap
 	c.curCheckpointPos = c.curCheckpointPos[:0]
 	c.curCheckpointSlots = make(map[int]int)
 	c.checkpointReserved = make(map[int]struct{})
+	c.checkpointCtxSize = c.checkpointCount * c.maxSequences
+	if c.checkpointCtxSize < 8 {
+		c.checkpointCtxSize = 8
+	}
 
 	// initialize slot allocator
 	c.refCount = make([]int, maxSequences)
@@ -337,7 +342,7 @@ func (c *HybridCache) CopyPrefix(srcSeq, dstSeq int, prefixLen int32) {
 
 	// Copy-on-write for recurrent state
 	if dstSlot, ok := c.slotForSeq[dstSeq]; ok {
-		if dstSlot >= 0 && dstSlot < len(c.refCount) {
+		if c.validSlot(dstSlot) {
 			c.refCount[dstSlot]--
 			if c.refCount[dstSlot] <= 0 {
 				c.refCount[dstSlot] = 0
@@ -352,7 +357,7 @@ func (c *HybridCache) CopyPrefix(srcSeq, dstSeq int, prefixLen int32) {
 		return
 	}
 
-	if srcSlot >= 0 && srcSlot < len(c.refCount) {
+	if c.validSlot(srcSlot) {
 		c.slotForSeq[dstSeq] = srcSlot
 		c.refCount[srcSlot]++
 	}
@@ -382,7 +387,7 @@ func (c *HybridCache) Remove(seq int, beginIndex, endIndex int32) error {
 			return kvcache.ErrNotSupported
 		}
 		// If the recurrent slot is shared, detach it before applying a restore.
-		if slot, ok := c.slotForSeq[seq]; ok && slot >= 0 && slot < len(c.refCount) && c.refCount[slot] > 1 {
+		if slot, ok := c.slotForSeq[seq]; ok && c.validSlot(slot) && c.refCount[slot] > 1 {
 			newSlot, err := c.allocSlot()
 			if err != nil {
 				return err
@@ -419,7 +424,7 @@ func (c *HybridCache) Remove(seq int, beginIndex, endIndex int32) error {
 		return nil
 	}
 
-	if slot < 0 || slot >= len(c.refCount) {
+	if !c.validSlot(slot) {
 		delete(c.slotForSeq, seq)
 		return nil
 	}
@@ -433,6 +438,10 @@ func (c *HybridCache) Remove(seq int, beginIndex, endIndex int32) error {
 	delete(c.slotForSeq, seq)
 
 	return nil
+}
+
+func (c *HybridCache) validSlot(slot int) bool {
+	return slot >= 0 && slot < len(c.refCount)
 }
 
 func (c *HybridCache) slotsTensor() ml.Tensor {

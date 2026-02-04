@@ -271,15 +271,8 @@ func (c *HybridCache) PrepareRestore(seq int, targetPos int32) (int32, bool) {
 }
 
 func (c *HybridCache) applyCheckpointRestore(restore checkpointRestore) error {
-	store, ok := c.checkpoints[restore.slot]
-	if !ok || restore.idx < 0 || restore.idx >= len(store.entries) {
-		return kvcache.ErrNotSupported
-	}
-	entry := &store.entries[restore.idx]
-	if entry.pos < 0 {
-		return kvcache.ErrNotSupported
-	}
-	if !c.entryComplete(entry) {
+	entry, ok := c.restoreEntry(restore)
+	if !ok {
 		return kvcache.ErrNotSupported
 	}
 
@@ -297,20 +290,29 @@ func (c *HybridCache) applyCheckpointRestore(restore checkpointRestore) error {
 	}
 
 	ctx.Compute()
+	store := c.checkpoints[restore.slot]
 	store.pruneAfter(restore.pos)
 	return nil
 }
 
 func (c *HybridCache) restoreComplete(restore checkpointRestore) bool {
+	_, ok := c.restoreEntry(restore)
+	return ok
+}
+
+func (c *HybridCache) restoreEntry(restore checkpointRestore) (*checkpointEntry, bool) {
 	store, ok := c.checkpoints[restore.slot]
 	if !ok || restore.idx < 0 || restore.idx >= len(store.entries) {
-		return false
+		return nil, false
 	}
 	entry := &store.entries[restore.idx]
 	if entry.pos < 0 {
-		return false
+		return nil, false
 	}
-	return c.entryComplete(entry)
+	if !c.entryComplete(entry) {
+		return nil, false
+	}
+	return entry, true
 }
 
 func (c *HybridCache) entryComplete(entry *checkpointEntry) bool {
@@ -434,7 +436,7 @@ func (c *HybridCache) ensureCheckpointConv(layer int, entry *checkpointEntry) ml
 	}
 	ctx, ok := c.checkpointConvCtxs[layer]
 	if !ok {
-		ctx = c.backend.NewContextSize(c.checkpointCtxSize()).Layer(layer)
+		ctx = c.backend.NewContextSize(c.checkpointCtxSize).Layer(layer)
 		c.checkpointConvCtxs[layer] = ctx
 	}
 	t := ctx.Zeros(ml.DTypeF32, c.convDim*c.convChannels, 1)
@@ -451,23 +453,12 @@ func (c *HybridCache) ensureCheckpointDelta(layer int, entry *checkpointEntry) m
 	}
 	ctx, ok := c.checkpointDeltaCtxs[layer]
 	if !ok {
-		ctx = c.backend.NewContextSize(c.checkpointCtxSize()).Layer(layer)
+		ctx = c.backend.NewContextSize(c.checkpointCtxSize).Layer(layer)
 		c.checkpointDeltaCtxs[layer] = ctx
 	}
 	t := ctx.Zeros(ml.DTypeF32, c.deltaStateSize, 1)
 	entry.delta[layer] = t
 	return t
-}
-
-func (c *HybridCache) checkpointCtxSize() int {
-	if c.checkpointCount == 0 || c.maxSequences == 0 {
-		return 1
-	}
-	size := c.checkpointCount * c.maxSequences
-	if size < 8 {
-		size = 8
-	}
-	return size
 }
 
 func (c *HybridCache) reserveCheckpointConv(layer int) {

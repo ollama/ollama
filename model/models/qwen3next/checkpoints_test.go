@@ -202,3 +202,101 @@ func TestHybridCacheRestoreAcceptsCompleteCheckpoint(t *testing.T) {
 		t.Fatalf("expected restore to succeed, got %v", err)
 	}
 }
+
+func TestSlotCheckpointStoreRingBufferWrapAround(t *testing.T) {
+	// Test that ring buffer wrap-around reuses entries without clearing maps.
+	store := newSlotCheckpointStore(3)
+
+	// Fill the buffer
+	store.record(10)
+	store.record(20)
+	store.record(30)
+
+	// Create fake tensor data in the first entry's maps
+	store.entries[0].conv = make(map[int]ml.Tensor)
+	store.entries[0].conv[0] = nil // Simulated tensor reference
+	store.entries[0].delta = make(map[int]ml.Tensor)
+	store.entries[0].delta[0] = nil // Simulated tensor reference
+
+	// Record another entry, which should wrap around and overwrite entry 0
+	store.record(40)
+
+	// Verify the maps are still present (we reuse tensors)
+	if store.entries[0].conv == nil {
+		t.Fatalf("expected conv map to be preserved on reuse")
+	}
+	if store.entries[0].delta == nil {
+		t.Fatalf("expected delta map to be preserved on reuse")
+	}
+
+	// Verify the new position was recorded
+	if store.entries[0].pos != 40 {
+		t.Fatalf("expected entry 0 pos to be 40, got %d", store.entries[0].pos)
+	}
+}
+
+func TestSlotCheckpointStoreFullCapacity(t *testing.T) {
+	// Test behavior when buffer is exactly at capacity
+	store := newSlotCheckpointStore(2)
+
+	idx1 := store.record(10)
+	idx2 := store.record(20)
+
+	if idx1 != 0 || idx2 != 1 {
+		t.Fatalf("expected indices 0, 1, got %d, %d", idx1, idx2)
+	}
+
+	if store.size != 2 {
+		t.Fatalf("expected size 2, got %d", store.size)
+	}
+
+	// Verify both checkpoints are accessible
+	_, pos1, ok1 := store.bestIndex(15)
+	_, pos2, ok2 := store.bestIndex(25)
+
+	if !ok1 || pos1 != 10 {
+		t.Fatalf("expected best pos 10 for target 15, got pos=%d ok=%v", pos1, ok1)
+	}
+	if !ok2 || pos2 != 20 {
+		t.Fatalf("expected best pos 20 for target 25, got pos=%d ok=%v", pos2, ok2)
+	}
+}
+
+func TestSlotCheckpointStoreEmptyBuffer(t *testing.T) {
+	// Test behavior with zero-size buffer
+	store := newSlotCheckpointStore(0)
+
+	idx := store.record(10)
+	if idx != -1 {
+		t.Fatalf("expected record to return -1 for empty buffer, got %d", idx)
+	}
+
+	_, _, ok := store.bestIndex(15)
+	if ok {
+		t.Fatalf("expected no checkpoint for empty buffer")
+	}
+}
+
+func TestSlotCheckpointStorePruneAfterAll(t *testing.T) {
+	// Test pruning that removes all checkpoints
+	store := newSlotCheckpointStore(3)
+	store.record(10)
+	store.record(20)
+	store.record(30)
+
+	// Prune everything by setting threshold below all positions
+	store.pruneAfter(5)
+
+	if store.size != 0 {
+		t.Fatalf("expected size 0 after pruning all, got %d", store.size)
+	}
+	// When all checkpoints are pruned, lastPos is reset to -1
+	if store.lastPos != -1 {
+		t.Fatalf("expected lastPos -1 after pruning all, got %d", store.lastPos)
+	}
+
+	_, _, ok := store.bestIndex(100)
+	if ok {
+		t.Fatalf("expected no checkpoint after pruning all")
+	}
+}

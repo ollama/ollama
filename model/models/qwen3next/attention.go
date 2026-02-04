@@ -1,11 +1,16 @@
 package qwen3next
 
 import (
+	"errors"
 	"math"
 
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
 )
+
+// ErrUnsupportedBatchLayout is returned when the batch layout is incompatible
+// with the attention layer requirements.
+var ErrUnsupportedBatchLayout = errors.New("qwen3next: unsupported batch layout")
 
 // FullAttention implements gated attention with QK normalization and sigmoid-gated output.
 // Key differences from standard attention:
@@ -21,7 +26,7 @@ type FullAttention struct {
 	Output    *nn.Linear  `gguf:"attn_output"`
 }
 
-func (sa *FullAttention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache *HybridCache, opts *Options) ml.Tensor {
+func (sa *FullAttention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache *HybridCache, opts *Options) (ml.Tensor, error) {
 	// Use Dim() instead of Shape() for consistent behavior during graph construction
 	hiddenDim := hiddenStates.Dim(0)
 	batchSize := hiddenStates.Dim(1)
@@ -34,12 +39,12 @@ func (sa *FullAttention) Forward(ctx ml.Context, hiddenStates, positions ml.Tens
 			if nSeqs > 0 {
 				// 3D tensor: [hiddenDim, seqTokens, nSeqs]
 				if batchSize != seqTokens || nSeqs != seqs {
-					panic("qwen3next: unsupported batch layout for full attention")
+					return nil, ErrUnsupportedBatchLayout
 				}
 				hiddenStates = hiddenStates.Reshape(ctx, hiddenDim, seqTokens*seqs)
 				batchSize = seqTokens * seqs
 			} else if batchSize != seqTokens*seqs {
-				panic("qwen3next: unsupported batch layout for full attention")
+				return nil, ErrUnsupportedBatchLayout
 			}
 		}
 	}
@@ -94,5 +99,5 @@ func (sa *FullAttention) Forward(ctx ml.Context, hiddenStates, positions ml.Tens
 	gateSigmoid := gate.Sigmoid(ctx)
 	attention = attention.Mul(ctx, gateSigmoid)
 
-	return sa.Output.Forward(ctx, attention)
+	return sa.Output.Forward(ctx, attention), nil
 }

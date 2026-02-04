@@ -68,7 +68,7 @@ func (o Options) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions
 
 // Operator is the interface for attention-like operators
 type Operator interface {
-	Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache *HybridCache, opts *Options) ml.Tensor
+	Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache *HybridCache, opts *Options) (ml.Tensor, error)
 }
 
 // MLP is the interface for feedforward networks
@@ -169,14 +169,18 @@ type Layer struct {
 	MLP     MLP
 }
 
-func (l *Layer) Forward(ctx ml.Context, layer int, hiddenStates, positions, outputs ml.Tensor, cache *HybridCache, opts *Options) ml.Tensor {
+func (l *Layer) Forward(ctx ml.Context, layer int, hiddenStates, positions, outputs ml.Tensor, cache *HybridCache, opts *Options) (ml.Tensor, error) {
 	residual := hiddenStates
 
 	// Pre-attention norm
 	hiddenStates = l.AttentionNorm.Forward(ctx, hiddenStates, opts.eps)
 
 	// Attention (full or linear)
-	hiddenStates = l.Operator.Forward(ctx, hiddenStates, positions, cache, opts)
+	var err error
+	hiddenStates, err = l.Operator.Forward(ctx, hiddenStates, positions, cache, opts)
+	if err != nil {
+		return nil, err
+	}
 
 	// Output projection for last layer
 	if outputs != nil {
@@ -197,7 +201,7 @@ func (l *Layer) Forward(ctx ml.Context, layer int, hiddenStates, positions, outp
 	hiddenStates = l.MLP.Forward(ctx, hiddenStates, opts)
 
 	// Second residual connection
-	return hiddenStates.Add(ctx, ffnResidual)
+	return hiddenStates.Add(ctx, ffnResidual), nil
 }
 
 // Model is the main Qwen3-Next model
@@ -232,7 +236,11 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 			outputs = batch.Outputs
 		}
 
-		hiddenStates = layer.Forward(ctx, i, hiddenStates, positions, outputs, cache, m.Options)
+		var err error
+		hiddenStates, err = layer.Forward(ctx, i, hiddenStates, positions, outputs, cache, m.Options)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	hiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)
@@ -337,6 +345,12 @@ func New(c fs.Config) (model.Model, error) {
 		headVDim = opts.ssmDInner / numVHeads
 	}
 	deltaStateSize := headVDim * headVDim * numVHeads
+
+	// Validate dimension assumption: headKDim == headVDim is required for state computations
+	headKDim := opts.ssmDState
+	if headKDim != headVDim && headKDim > 0 && headVDim > 0 {
+		return nil, fmt.Errorf("qwen3next: headKDim (%d) != headVDim (%d) not supported; state computations require equal dimensions", headKDim, headVDim)
+	}
 
 	m := Model{
 		BytePairEncoding: model.NewBytePairEncoding(
