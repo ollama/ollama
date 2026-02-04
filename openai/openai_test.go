@@ -2,6 +2,7 @@ package openai
 
 import (
 	"encoding/base64"
+	"strings"
 	"testing"
 	"time"
 
@@ -529,5 +530,96 @@ func TestFromImageEditRequest_InvalidImage(t *testing.T) {
 	_, err := FromImageEditRequest(req)
 	if err == nil {
 		t.Error("expected error for invalid image")
+	}
+}
+
+func TestFromChatRequest_InvalidMessageContent(t *testing.T) {
+	tests := []struct {
+		name        string
+		messages    []Message
+		wantErrText string
+	}{
+		{
+			name: "content array item not an object",
+			messages: []Message{
+				{
+					Role:    "user",
+					Content: []any{"invalid string item"},
+				},
+			},
+			wantErrText: "invalid message content part: expected object with 'type' field",
+		},
+		{
+			name: "text field not a string",
+			messages: []Message{
+				{
+					Role: "user",
+					Content: []any{
+						map[string]any{"type": "text", "text": 123},
+					},
+				},
+			},
+			wantErrText: "invalid 'text' field in message content: expected string",
+		},
+		{
+			name: "image_url.url not a string",
+			messages: []Message{
+				{
+					Role: "user",
+					Content: []any{
+						map[string]any{
+							"type":      "image_url",
+							"image_url": map[string]any{"url": 123},
+						},
+					},
+				},
+			},
+			wantErrText: "invalid 'url' field in image_url: expected string",
+		},
+		{
+			name: "image_url not a string or object",
+			messages: []Message{
+				{
+					Role: "user",
+					Content: []any{
+						map[string]any{
+							"type":      "image_url",
+							"image_url": 123,
+						},
+					},
+				},
+			},
+			wantErrText: "invalid 'image_url' field: expected string or object with 'url'",
+		},
+		{
+			name: "unsupported content type",
+			messages: []Message{
+				{
+					Role: "user",
+					Content: []any{
+						map[string]any{"type": "video"},
+					},
+				},
+			},
+			wantErrText: "unsupported content type: video",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := ChatCompletionRequest{
+				Model:    "test-model",
+				Messages: tt.messages,
+			}
+
+			_, err := FromChatRequest(req)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+
+			if !strings.Contains(err.Error(), tt.wantErrText) {
+				t.Errorf("error %q should contain %q", err.Error(), tt.wantErrText)
+			}
+		})
 	}
 }
