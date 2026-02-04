@@ -74,7 +74,7 @@ func Quantize(newType fsggml.TensorType, f32s []float32, shape []uint64) []byte 
 	if nrows < int64(nthread)*2 {
 		nelements_matrix := nPerRow * nrows
 		newSize := C.size_t(0)
-		for i03 := int64(0); i03 < shape2; i03++ {
+		for i03 := range shape2 {
 			f32s_03 := i03 * nelements_matrix
 			buf_03 := rowSize * i03 * nrows
 			newSize += C.ggml_quantize_chunk(
@@ -94,13 +94,13 @@ func Quantize(newType fsggml.TensorType, f32s []float32, shape []uint64) []byte 
 	var totalSize atomic.Uint64
 	var wg sync.WaitGroup
 
-	for i03 := int64(0); i03 < shape2; i03++ {
+	for i03 := range shape2 {
 		f32s_03_offset := i03 * nelements_matrix
 		buf_03_offset := rowSize * i03 * nrows
 
 		rowsPerThread := (nrows + int64(nthread) - 1) / int64(nthread)
 
-		for t := 0; t < nthread; t++ {
+		for t := range nthread {
 			firstRow := int64(t) * rowsPerThread
 			if firstRow >= nrows {
 				break

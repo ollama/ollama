@@ -118,7 +118,6 @@ func (c *InputCache) LoadCacheSlot(prompt []*input.Input, cachePrompt bool) (*In
 	slot.InUse = true
 	slot.lastUsed = time.Now()
 
-
 	if numPast == int32(len(prompt)) {
 		// Leave one input to sample so we can get a response
 		numPast--
