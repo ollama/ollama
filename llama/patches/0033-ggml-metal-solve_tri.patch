@@ -4,23 +4,23 @@ Date: Tue, 3 Feb 2026 12:00:00 -0800
 Subject: [PATCH] ggml: metal solve_tri
 
 ---
- ggml/src/ggml-metal/ggml-metal-device.cpp | 20 ++++++
+ ggml/src/ggml-metal/ggml-metal-device.cpp | 20 +++++++
  ggml/src/ggml-metal/ggml-metal-device.h   |  1 +
- ggml/src/ggml-metal/ggml-metal-device.m   |  6 ++
- ggml/src/ggml-metal/ggml-metal-impl.h     | 21 ++++++
- ggml/src/ggml-metal/ggml-metal-ops.cpp    | 63 +++++++++++++++++
+ ggml/src/ggml-metal/ggml-metal-device.m   | 11 ++++
+ ggml/src/ggml-metal/ggml-metal-impl.h     | 21 ++++++++
+ ggml/src/ggml-metal/ggml-metal-ops.cpp    | 63 +++++++++++++++++++++++
  ggml/src/ggml-metal/ggml-metal-ops.h      |  1 +
- ggml/src/ggml-metal/ggml-metal.metal      | 60 ++++++++++++++++
- 7 files changed, 172 insertions(+)
+ ggml/src/ggml-metal/ggml-metal.metal      | 60 +++++++++++++++++++++
+ 7 files changed, 177 insertions(+)
 
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.cpp b/ggml/src/ggml-metal/ggml-metal-device.cpp
-index 04c6137c..212fc011 100644
+index 680904d13..83385c9ef 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-device.cpp
-@@ -1395,6 +1395,26 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_l2_norm(ggml_met
+@@ -1370,6 +1370,26 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_l2_norm(ggml_met
      return res;
  }
-
+ 
 +ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_solve_tri(ggml_metal_library_t lib, const ggml_tensor * op) {
 +    assert(op->op == GGML_OP_SOLVE_TRI);
 +
@@ -43,12 +43,12 @@ index 04c6137c..212fc011 100644
 +
  ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_group_norm(ggml_metal_library_t lib, const ggml_tensor * op) {
      assert(op->op == GGML_OP_GROUP_NORM);
-
+ 
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.h b/ggml/src/ggml-metal/ggml-metal-device.h
-index 3d01c56f..f9b9245a 100644
+index 0a8b9211a..8a9d17460 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.h
 +++ b/ggml/src/ggml-metal/ggml-metal-device.h
-@@ -134,6 +134,7 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_top_k
+@@ -133,6 +133,7 @@ struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_top_k
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_top_k_merge       (ggml_metal_library_t lib, const struct ggml_tensor * op);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_bin               (ggml_metal_library_t lib, enum ggml_op op, int32_t n_fuse, bool row);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_l2_norm           (ggml_metal_library_t lib, const struct ggml_tensor * op);
@@ -57,10 +57,10 @@ index 3d01c56f..f9b9245a 100644
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_norm              (ggml_metal_library_t lib, const struct ggml_tensor * op, int32_t n_fuse);
  struct ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_rope              (ggml_metal_library_t lib, const struct ggml_tensor * op);
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
-index 7f9c384c..7f89ec87 100644
+index 7b5ee968c..4e5acfbe5 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.m
 +++ b/ggml/src/ggml-metal/ggml-metal-device.m
-@@ -1029,6 +1029,12 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
+@@ -1023,6 +1023,17 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
              return has_simdgroup_reduction && ggml_is_contiguous_rows(op->src[0]);
          case GGML_OP_L2_NORM:
              return has_simdgroup_reduction && (op->ne[0] % 4 == 0 && ggml_is_contiguous_1(op->src[0]));
@@ -70,17 +70,22 @@ index 7f9c384c..7f89ec87 100644
 +                op->src[0]->type == GGML_TYPE_F32 &&
 +                op->src[1]->type == GGML_TYPE_F32 &&
 +                op->type == GGML_TYPE_F32;
-         case GGML_OP_COUNT_EQUAL:
-             return has_simdgroup_reduction &&
-                 op->src[0]->type == GGML_TYPE_I32 &&
++        case GGML_OP_COUNT_EQUAL:
++            return has_simdgroup_reduction &&
++                op->src[0]->type == GGML_TYPE_I32 &&
++                op->src[1]->type == GGML_TYPE_I32 &&
++                op->type == GGML_TYPE_I64;
+         case GGML_OP_ARGMAX:
+             return has_simdgroup_reduction;
+         case GGML_OP_NORM:
 diff --git a/ggml/src/ggml-metal/ggml-metal-impl.h b/ggml/src/ggml-metal/ggml-metal-impl.h
-index 59d88b01..d4f09e7a 100644
+index 8944b07e9..cfdea9c07 100644
 --- a/ggml/src/ggml-metal/ggml-metal-impl.h
 +++ b/ggml/src/ggml-metal/ggml-metal-impl.h
-@@ -501,6 +501,27 @@ typedef struct {
+@@ -500,6 +500,27 @@ typedef struct {
      float    eps;
  } ggml_metal_kargs_l2_norm;
-
+ 
 +typedef struct {
 +    int32_t  ne00;
 +    int32_t  ne01;
@@ -106,10 +111,10 @@ index 59d88b01..d4f09e7a 100644
      int64_t  ne00;
      int64_t  ne01;
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index 7f4cfbba..1bd2abe9 100644
+index 80864f303..4ac135603 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-@@ -361,6 +361,10 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
+@@ -357,6 +357,10 @@ static int ggml_metal_op_encode_impl(ggml_metal_op_t ctx, int idx) {
              {
                  n_fuse = ggml_metal_op_l2_norm(ctx, idx);
              } break;
@@ -120,10 +125,10 @@ index 7f4cfbba..1bd2abe9 100644
          case GGML_OP_GROUP_NORM:
              {
                  n_fuse = ggml_metal_op_group_norm(ctx, idx);
-@@ -2995,6 +2999,65 @@ int ggml_metal_op_l2_norm(ggml_metal_op_t ctx, int idx) {
+@@ -2931,6 +2935,65 @@ int ggml_metal_op_l2_norm(ggml_metal_op_t ctx, int idx) {
      return 1;
  }
-
+ 
 +int ggml_metal_op_solve_tri(ggml_metal_op_t ctx, int idx) {
 +    ggml_tensor * op = ctx->node(idx);
 +
@@ -185,12 +190,12 @@ index 7f4cfbba..1bd2abe9 100644
 +
  int ggml_metal_op_group_norm(ggml_metal_op_t ctx, int idx) {
      ggml_tensor * op = ctx->node(idx);
-
+ 
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.h b/ggml/src/ggml-metal/ggml-metal-ops.h
-index 10686a33..c2b8b1d1 100644
+index 902b54452..a475183d3 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.h
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.h
-@@ -69,6 +69,7 @@ int ggml_metal_op_add_id            (ggml_metal_op_t ctx, int idx);
+@@ -68,6 +68,7 @@ int ggml_metal_op_add_id            (ggml_metal_op_t ctx, int idx);
  int ggml_metal_op_flash_attn_ext    (ggml_metal_op_t ctx, int idx);
  int ggml_metal_op_bin               (ggml_metal_op_t ctx, int idx);
  int ggml_metal_op_l2_norm           (ggml_metal_op_t ctx, int idx);
@@ -199,13 +204,13 @@ index 10686a33..c2b8b1d1 100644
  int ggml_metal_op_norm              (ggml_metal_op_t ctx, int idx);
  int ggml_metal_op_rope              (ggml_metal_op_t ctx, int idx);
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index e669995f..0562ebca 100644
+index d33c16079..c37447a10 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -3013,6 +3013,66 @@ kernel void kernel_l2_norm_f32(
+@@ -3012,6 +3012,66 @@ kernel void kernel_l2_norm_f32(
      }
  }
-
+ 
 +kernel void kernel_solve_tri_f32(
 +        constant ggml_metal_kargs_solve_tri & args,
 +        device const char * src0,
