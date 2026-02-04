@@ -10,9 +10,6 @@ package ggml
 import "C"
 
 import (
-	"runtime"
-	"sync"
-	"sync/atomic"
 	"unsafe"
 
 	fsggml "github.com/ollama/ollama/fs/ggml"
@@ -57,81 +54,30 @@ func ConvertToF32(data []byte, dtype uint32, nelements uint64) []float32 {
 
 func Quantize(newType fsggml.TensorType, f32s []float32, shape []uint64) []byte {
 	buf := make([]byte, len(f32s)*4) // upper bound on size
-	nPerRow := int64(shape[0])
-	nrows := int64(1)
+	nPerRow := C.int64_t(shape[0])
+	nrows := C.int64_t(1)
 	if len(shape) > 1 {
-		nrows = int64(shape[1])
+		nrows = C.int64_t(shape[1])
 	}
-	shape2 := int64(1)
+	shape2 := C.int64_t(1)
 	if len(shape) > 2 {
-		shape2 = int64(shape[2])
+		shape2 = C.int64_t(shape[2])
 	}
-
-	rowSize := int64(C.ggml_row_size(uint32(newType), C.int64_t(nPerRow)))
-	nthread := runtime.GOMAXPROCS(0)
-
-	// For small tensors or single row, use single-threaded path
-	if nrows < int64(nthread)*2 {
-		nelements_matrix := nPerRow * nrows
-		newSize := C.size_t(0)
-		for i03 := range shape2 {
-			f32s_03 := i03 * nelements_matrix
-			buf_03 := rowSize * i03 * nrows
-			newSize += C.ggml_quantize_chunk(
-				uint32(newType),
-				(*C.float)(&f32s[f32s_03]),
-				unsafe.Pointer(uintptr(unsafe.Pointer(&buf[0]))+uintptr(buf_03)),
-				0,
-				C.int64_t(nrows),
-				C.int64_t(nPerRow),
-				nil)
-		}
-		return buf[:newSize]
-	}
-
-	// Parallel quantization across rows
 	nelements_matrix := nPerRow * nrows
-	var totalSize atomic.Uint64
-	var wg sync.WaitGroup
-
-	for i03 := range shape2 {
-		f32s_03_offset := i03 * nelements_matrix
-		buf_03_offset := rowSize * i03 * nrows
-
-		rowsPerThread := (nrows + int64(nthread) - 1) / int64(nthread)
-
-		for t := range nthread {
-			firstRow := int64(t) * rowsPerThread
-			if firstRow >= nrows {
-				break
-			}
-			thisNrows := rowsPerThread
-			if firstRow+thisNrows > nrows {
-				thisNrows = nrows - firstRow
-			}
-
-			wg.Add(1)
-			go func(firstRow, thisNrows, f32s_03_offset, buf_03_offset int64) {
-				defer wg.Done()
-
-				srcOffset := f32s_03_offset + firstRow*nPerRow
-				dstOffset := buf_03_offset + firstRow*rowSize
-
-				size := C.ggml_quantize_chunk(
-					uint32(newType),
-					(*C.float)(&f32s[srcOffset]),
-					unsafe.Pointer(uintptr(unsafe.Pointer(&buf[0]))+uintptr(dstOffset)),
-					0,
-					C.int64_t(thisNrows),
-					C.int64_t(nPerRow),
-					nil)
-				totalSize.Add(uint64(size))
-			}(firstRow, thisNrows, f32s_03_offset, buf_03_offset)
-		}
+	newSize := C.size_t(0)
+	for i03 := C.int64_t(0); i03 < shape2; i03++ {
+		f32s_03 := i03 * nelements_matrix
+		buf_03 := C.int64_t(C.ggml_row_size(uint32(newType), nPerRow)) * i03 * nrows
+		newSize += C.ggml_quantize_chunk(
+			uint32(newType),
+			(*C.float)(&f32s[f32s_03]),
+			unsafe.Pointer((uintptr)(unsafe.Pointer(&buf[0]))+uintptr(buf_03)),
+			0,
+			nrows,
+			nPerRow,
+			nil)
 	}
-	wg.Wait()
-
-	return buf[:totalSize.Load()]
+	return buf[:newSize]
 }
 
 func QuantizationVersion() uint32 {
