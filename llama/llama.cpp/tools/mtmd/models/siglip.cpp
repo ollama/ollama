@@ -50,10 +50,15 @@ ggml_cgraph * clip_graph_siglip::build() {
         const int scale_factor = model.hparams.n_merge;
         cur = build_patch_merge_permute(cur, scale_factor);
 
-        // projection
-        cur = ggml_norm(ctx0, cur, 1e-5); // default nn.LayerNorm
-        cur = ggml_mul(ctx0, cur, model.mm_input_norm_w);
-        cur = ggml_add(ctx0, cur, model.mm_input_norm_b);
+        // projection, in LFM2-VL input norm is optional
+        if (model.mm_input_norm_w) {
+            cur = ggml_norm(ctx0, cur, 1e-5); // default nn.LayerNorm
+            cur = ggml_mul(ctx0, cur, model.mm_input_norm_w);
+        }
+
+        if (model.mm_input_norm_b) {
+            cur = ggml_add(ctx0, cur, model.mm_input_norm_b);
+        }
 
         cur = build_ffn(cur,
             model.mm_1_w, model.mm_1_b,
