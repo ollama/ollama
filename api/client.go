@@ -474,7 +474,7 @@ type AliasRequest struct {
 	PrefixMatching bool   `json:"prefix_matching,omitempty"`
 }
 
-// SetAlias creates or updates a model alias via the experimental aliases API.
-func (c *Client) SetAlias(ctx context.Context, req *AliasRequest) error {
+// SetAliasExperimental creates or updates a model alias via the experimental aliases API.
+func (c *Client) SetAliasExperimental(ctx context.Context, req *AliasRequest) error {
 	return c.do(ctx, http.MethodPost, "/api/experimental/aliases", req, nil)
 }

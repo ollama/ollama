@@ -148,7 +148,7 @@ func (c *Claude) SetAliases(ctx context.Context, aliases map[string]string) erro
 			Target:         target,
 			PrefixMatching: true,
 		}
-		if err := client.SetAlias(ctx, req); err != nil {
+		if err := client.SetAliasExperimental(ctx, req); err != nil {
 			errs = append(errs, prefix)
 		}
 	}
