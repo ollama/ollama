@@ -369,19 +369,19 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
 
 		isCloud := strings.HasPrefix(info.RemoteHost, "https://ollama.com")
 
+		// Check if user is signed in for ollama.com cloud models
+		if isCloud {
+			if _, err := client.Whoami(cmd.Context()); err != nil {
+				return err
+			}
+		}
+
 		if opts.ShowConnect {
 			p.StopAndClear()
 			if isCloud {
 				fmt.Fprintf(os.Stderr, "Connecting to '%s' on 'ollama.com' ⚡\n", info.RemoteModel)
 			} else {
 				fmt.Fprintf(os.Stderr, "Connecting to '%s' on '%s'\n", info.RemoteModel, info.RemoteHost)
-			}
-		}
-
-		// Check if user is signed in for ollama.com cloud models
-		if isCloud {
-			if _, err := client.Whoami(cmd.Context()); err != nil {
-				return err
 			}
 		}
 
