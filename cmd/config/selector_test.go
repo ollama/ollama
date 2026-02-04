@@ -91,15 +91,12 @@ func TestSelectState(t *testing.T) {
 		s := newSelectState(items)
 		s.filter = "nonexistent"
 		done, result, err := s.handleInput(eventEnter, 0)
-		// When no matches but filter has content, return filter for pull prompt
 		if !done || result != "nonexistent" || err != nil {
 			t.Errorf("expected (true, 'nonexistent', nil), got (%v, %v, %v)", done, result, err)
 		}
 	})
 
 	t.Run("Enter_EmptyFilteredList_EmptyFilter_DoesNothing", func(t *testing.T) {
-		// Edge case: items exist but filter reduced to empty result, and filter is empty
-		// This shouldn't happen in practice but test the boundary
 		s := newSelectState([]selectItem{})
 		done, result, err := s.handleInput(eventEnter, 0)
 		if done || result != "" || err != nil {

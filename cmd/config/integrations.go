@@ -118,7 +118,6 @@ func selectModels(ctx context.Context, name, current string) ([]string, error) {
 		existing = append(existing, modelInfo{Name: m.Name, Remote: m.RemoteModel != ""})
 	}
 
-	// Get previously configured models (saved config takes precedence)
 	var preChecked []string
 	if saved, err := loadIntegration(name); err == nil {
 		preChecked = saved.Models
@@ -150,7 +149,6 @@ func selectModels(ctx context.Context, name, current string) ([]string, error) {
 		selected = []string{model}
 	}
 
-	// Pull any models that aren't installed
 	var toPull []string
 	for _, m := range selected {
 		if !existingModels[m] {
@@ -172,7 +170,6 @@ func selectModels(ctx context.Context, name, current string) ([]string, error) {
 		}
 	}
 
-	// if any model in selected is a cloud model, ensure signed in
 	if err := ensureAuth(ctx, client, cloudModels, selected); err != nil {
 		return nil, err
 	}
@@ -197,7 +194,6 @@ func pullIfNeeded(ctx context.Context, client *api.Client, existingModels map[st
 	return nil
 }
 
-// TODO: (parthsareen) filter models using capability
 func listModels(ctx context.Context) ([]selectItem, map[string]bool, map[string]bool, *api.Client, error) {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -252,8 +248,6 @@ func ensureAuth(ctx context.Context, client *api.Client, cloudModels map[string]
 
 	fmt.Fprintf(os.Stderr, "\nTo sign in, navigate to:\n    %s\n\n", aErr.SigninURL)
 
-	// TODO(parthsareen): extract into auth package for cmd
-	// Auto-open browser (best effort, fail silently)
 	switch runtime.GOOS {
 	case "darwin":
 		_ = exec.Command("open", aErr.SigninURL).Start()
@@ -290,19 +284,6 @@ func ensureAuth(ctx context.Context, client *api.Client, cloudModels map[string]
 			}
 		}
 	}
-}
-
-func missingAliases(existing map[string]string, required []string) []string {
-	if len(required) == 0 {
-		return nil
-	}
-	var missing []string
-	for _, key := range required {
-		if existing == nil || existing[key] == "" {
-			missing = append(missing, key)
-		}
-	}
-	return missing
 }
 
 func ensureAliases(ctx context.Context, r Runner, name string, primaryModel string, existing map[string]string, force bool) (bool, error) {
@@ -429,7 +410,6 @@ Examples:
 				}
 			}
 
-			// AliasConfigurer handles its own model selection
 			if ac, ok := r.(AliasConfigurer); ok {
 				var existingAliases map[string]string
 				if existing, err := loadIntegration(name); err == nil {

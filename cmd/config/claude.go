@@ -77,7 +77,6 @@ func (c *Claude) ConfigureAliases(ctx context.Context, primaryModel string, exis
 		aliases["primary"] = primaryModel
 	}
 
-	// Already configured
 	if !force && aliases["primary"] != "" && aliases["fast"] != "" {
 		return aliases, false, nil
 	}
@@ -87,11 +86,9 @@ func (c *Claude) ConfigureAliases(ctx context.Context, primaryModel string, exis
 		return nil, false, err
 	}
 
-	// Header
 	fmt.Fprintf(os.Stderr, "\n%sModel Configuration%s\n", ansiBold, ansiReset)
 	fmt.Fprintf(os.Stderr, "%sClaude Code uses multiple models for various tasks%s\n\n", ansiGray, ansiReset)
 
-	// Primary model
 	fmt.Fprintf(os.Stderr, "%sPrimary%s\n", ansiBold, ansiReset)
 	fmt.Fprintf(os.Stderr, "%sHandles complex reasoning: planning, code generation, debugging.%s\n\n", ansiGray, ansiReset)
 
@@ -111,7 +108,6 @@ func (c *Claude) ConfigureAliases(ctx context.Context, primaryModel string, exis
 		fmt.Fprintf(os.Stderr, "  %s\n\n", aliases["primary"])
 	}
 
-	// Fast model
 	fmt.Fprintf(os.Stderr, "%sFast%s\n", ansiBold, ansiReset)
 	fmt.Fprintf(os.Stderr, "%sHandles quick operations: file searches, simple edits, status checks.%s\n", ansiGray, ansiReset)
 	fmt.Fprintf(os.Stderr, "%sSmaller models work well and respond faster.%s\n\n", ansiGray, ansiReset)
@@ -133,34 +129,27 @@ func (c *Claude) ConfigureAliases(ctx context.Context, primaryModel string, exis
 	return aliases, true, nil
 }
 
-// SetAliases syncs the configured aliases to the Ollama server.
+// SetAliases syncs the configured aliases to the Ollama server using prefix matching.
 func (c *Claude) SetAliases(ctx context.Context, aliases map[string]string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
 
-	// Server aliases with prefix matching to route Claude Code model requests
-	// to local models. Prefix matching allows "claude-sonnet-" to match any
-	// claude-sonnet-* model variant (e.g., claude-sonnet-4-5-20250929).
-	type aliasConfig struct {
-		prefix string
-		target string
-	}
-	serverAliases := []aliasConfig{
-		{"claude-sonnet-", aliases["primary"]},
-		{"claude-haiku-", aliases["fast"]},
+	prefixAliases := map[string]string{
+		"claude-sonnet-": aliases["primary"],
+		"claude-haiku-":  aliases["fast"],
 	}
 
 	var errs []string
-	for _, cfg := range serverAliases {
+	for prefix, target := range prefixAliases {
 		req := &api.AliasRequest{
-			Alias:          cfg.prefix,
-			Target:         cfg.target,
+			Alias:          prefix,
+			Target:         target,
 			PrefixMatching: true,
 		}
 		if err := client.SetAlias(ctx, req); err != nil {
-			errs = append(errs, cfg.prefix)
+			errs = append(errs, prefix)
 		}
 	}
 
