@@ -208,6 +208,9 @@ type Tensor interface {
 	Sqr(ctx Context) Tensor
 	Sqrt(ctx Context) Tensor
 
+	// Step returns 1 where t > 0, 0 otherwise (Heaviside step function)
+	Step(ctx Context) Tensor
+
 	Interpolate(ctx Context, dims [4]int, samplingMode SamplingMode) Tensor
 }
 
