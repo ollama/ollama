@@ -317,6 +317,8 @@ func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 		conv = &glmOcrModel{}
 	case "Lfm2ForCausalLM":
 		conv = &lfm2Model{}
+	case "Qwen3NextForCausalLM":
+		conv = &qwen3NextModel{}
 	default:
 		return nil, nil, fmt.Errorf("unsupported architecture %q", p.Architectures[0])
 	}
