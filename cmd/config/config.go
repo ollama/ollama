@@ -13,7 +13,8 @@ import (
 )
 
 type integration struct {
-	Models []string `json:"models"`
+	Models  []string          `json:"models"`
+	Aliases map[string]string `json:"aliases,omitempty"`
 }
 
 type config struct {
@@ -133,8 +134,16 @@ func saveIntegration(appName string, models []string) error {
 		return err
 	}
 
-	cfg.Integrations[strings.ToLower(appName)] = &integration{
-		Models: models,
+	key := strings.ToLower(appName)
+	existing := cfg.Integrations[key]
+	var aliases map[string]string
+	if existing != nil && existing.Aliases != nil {
+		aliases = existing.Aliases
+	}
+
+	cfg.Integrations[key] = &integration{
+		Models:  models,
+		Aliases: aliases,
 	}
 
 	return save(cfg)
@@ -152,6 +161,33 @@ func loadIntegration(appName string) (*integration, error) {
 	}
 
 	return ic, nil
+}
+
+func saveAliases(appName string, aliases map[string]string) error {
+	if appName == "" {
+		return errors.New("app name cannot be empty")
+	}
+
+	cfg, err := load()
+	if err != nil {
+		return err
+	}
+
+	key := strings.ToLower(appName)
+	existing := cfg.Integrations[key]
+	if existing == nil {
+		existing = &integration{}
+	}
+
+	if existing.Aliases == nil {
+		existing.Aliases = make(map[string]string)
+	}
+	for k, v := range aliases {
+		existing.Aliases[k] = v
+	}
+
+	cfg.Integrations[key] = existing
+	return save(cfg)
 }
 
 func listIntegrations() ([]integration, error) {

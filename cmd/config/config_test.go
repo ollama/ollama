@@ -46,6 +46,53 @@ func TestIntegrationConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("save and load aliases", func(t *testing.T) {
+		models := []string{"llama3.2"}
+		if err := saveIntegration("claude", models); err != nil {
+			t.Fatal(err)
+		}
+		aliases := map[string]string{
+			"primary": "llama3.2:70b",
+			"fast":    "llama3.2:8b",
+		}
+		if err := saveAliases("claude", aliases); err != nil {
+			t.Fatal(err)
+		}
+
+		config, err := loadIntegration("claude")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if config.Aliases == nil {
+			t.Fatal("expected aliases to be saved")
+		}
+		for k, v := range aliases {
+			if config.Aliases[k] != v {
+				t.Errorf("alias %s: expected %s, got %s", k, v, config.Aliases[k])
+			}
+		}
+	})
+
+	t.Run("saveIntegration preserves aliases", func(t *testing.T) {
+		if err := saveIntegration("claude", []string{"model-a"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := saveAliases("claude", map[string]string{"primary": "model-a", "fast": "model-small"}); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := saveIntegration("claude", []string{"model-b"}); err != nil {
+			t.Fatal(err)
+		}
+		config, err := loadIntegration("claude")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if config.Aliases["primary"] != "model-a" {
+			t.Errorf("expected aliases to be preserved, got %v", config.Aliases)
+		}
+	})
+
 	t.Run("defaultModel returns first model", func(t *testing.T) {
 		saveIntegration("codex", []string{"model-a", "model-b"})
 

@@ -509,3 +509,37 @@ func TestBuildModelList_ReturnsExistingAndCloudMaps(t *testing.T) {
 		t.Error("llama3.2 should not be in cloudModels")
 	}
 }
+
+func TestMissingAliases(t *testing.T) {
+	t.Run("missing fast alias", func(t *testing.T) {
+		required := []string{"primary", "fast"}
+		missing := missingAliases(map[string]string{"primary": "a"}, required)
+		if len(missing) != 1 || missing[0] != "fast" {
+			t.Errorf("expected missing [fast], got %v", missing)
+		}
+	})
+
+	t.Run("no missing aliases", func(t *testing.T) {
+		required := []string{"primary", "fast"}
+		missing := missingAliases(map[string]string{"primary": "a", "fast": "b"}, required)
+		if len(missing) != 0 {
+			t.Errorf("expected no missing aliases, got %v", missing)
+		}
+	})
+}
+
+func TestAliasConfigurerInterface(t *testing.T) {
+	t.Run("claude implements AliasConfigurer", func(t *testing.T) {
+		claude := &Claude{}
+		if _, ok := interface{}(claude).(AliasConfigurer); !ok {
+			t.Error("Claude should implement AliasConfigurer")
+		}
+	})
+
+	t.Run("codex does not implement AliasConfigurer", func(t *testing.T) {
+		codex := &Codex{}
+		if _, ok := interface{}(codex).(AliasConfigurer); ok {
+			t.Error("Codex should not implement AliasConfigurer")
+		}
+	})
+}

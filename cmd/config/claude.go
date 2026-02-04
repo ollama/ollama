@@ -1,17 +1,22 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 )
 
-// Claude implements Runner for Claude Code integration
+// Claude implements Runner and AliasConfigurer for Claude Code integration
 type Claude struct{}
+
+// Compile-time check that Claude implements AliasConfigurer
+var _ AliasConfigurer = (*Claude)(nil)
 
 func (c *Claude) String() string { return "Claude Code" }
 
@@ -59,4 +64,108 @@ func (c *Claude) Run(model string, args []string) error {
 		"ANTHROPIC_AUTH_TOKEN=ollama",
 	)
 	return cmd.Run()
+}
+
+// ConfigureAliases sets up Primary and Fast model aliases for Claude Code.
+func (c *Claude) ConfigureAliases(ctx context.Context, primaryModel string, existing map[string]string, force bool) (map[string]string, bool, error) {
+	aliases := make(map[string]string)
+	for k, v := range existing {
+		aliases[k] = v
+	}
+
+	if primaryModel != "" {
+		aliases["primary"] = primaryModel
+	}
+
+	// Already configured
+	if !force && aliases["primary"] != "" && aliases["fast"] != "" {
+		return aliases, false, nil
+	}
+
+	items, existingModels, cloudModels, client, err := listModels(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+
+	// Header
+	fmt.Fprintf(os.Stderr, "\n%sModel Configuration%s\n", ansiBold, ansiReset)
+	fmt.Fprintf(os.Stderr, "%sClaude Code uses multiple models for various tasks%s\n\n", ansiGray, ansiReset)
+
+	// Primary model
+	fmt.Fprintf(os.Stderr, "%sPrimary%s\n", ansiBold, ansiReset)
+	fmt.Fprintf(os.Stderr, "%sHandles complex reasoning: planning, code generation, debugging.%s\n\n", ansiGray, ansiReset)
+
+	if aliases["primary"] == "" || force {
+		primary, err := selectPrompt("Select Primary model:", items)
+		if err != nil {
+			return nil, false, err
+		}
+		if err := pullIfNeeded(ctx, client, existingModels, primary); err != nil {
+			return nil, false, err
+		}
+		if err := ensureAuth(ctx, client, cloudModels, []string{primary}); err != nil {
+			return nil, false, err
+		}
+		aliases["primary"] = primary
+	} else {
+		fmt.Fprintf(os.Stderr, "  %s\n\n", aliases["primary"])
+	}
+
+	// Fast model
+	fmt.Fprintf(os.Stderr, "%sFast%s\n", ansiBold, ansiReset)
+	fmt.Fprintf(os.Stderr, "%sHandles quick operations: file searches, simple edits, status checks.%s\n", ansiGray, ansiReset)
+	fmt.Fprintf(os.Stderr, "%sSmaller models work well and respond faster.%s\n\n", ansiGray, ansiReset)
+
+	if aliases["fast"] == "" || force {
+		fast, err := selectPrompt("Select Fast model:", items)
+		if err != nil {
+			return nil, false, err
+		}
+		if err := pullIfNeeded(ctx, client, existingModels, fast); err != nil {
+			return nil, false, err
+		}
+		if err := ensureAuth(ctx, client, cloudModels, []string{fast}); err != nil {
+			return nil, false, err
+		}
+		aliases["fast"] = fast
+	}
+
+	return aliases, true, nil
+}
+
+// SetAliases syncs the configured aliases to the Ollama server.
+func (c *Claude) SetAliases(ctx context.Context, aliases map[string]string) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	// Server aliases with prefix matching to route Claude Code model requests
+	// to local models. Prefix matching allows "claude-sonnet-" to match any
+	// claude-sonnet-* model variant (e.g., claude-sonnet-4-5-20250929).
+	type aliasConfig struct {
+		prefix string
+		target string
+	}
+	serverAliases := []aliasConfig{
+		{"claude-sonnet-", aliases["primary"]},
+		{"claude-haiku-", aliases["fast"]},
+	}
+
+	var errs []string
+	for _, cfg := range serverAliases {
+		req := &api.AliasRequest{
+			Alias:          cfg.prefix,
+			Target:         cfg.target,
+			PrefixMatching: true,
+		}
+		if err := client.SetAlias(ctx, req); err != nil {
+			errs = append(errs, cfg.prefix)
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("failed to set aliases: %v", errs)
+	}
+	return nil
 }
