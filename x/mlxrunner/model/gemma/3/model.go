@@ -11,7 +11,7 @@ import (
 )
 
 type Model struct {
-	Text   TextModel  `weight:"language_model"`
+	Text TextModel `weight:"language_model"`
 }
 
 func (m *Model) NumLayers() int {
@@ -78,7 +78,7 @@ type RMSNorm struct {
 	mlx.RMSNorm
 }
 
-func (m *RMSNorm) AfterLoad(*model.Root) error {
+func (m *RMSNorm) AfterLoad(*model.Root) ([]*mlx.Array, error) {
 	m.Weight.Set(m.Weight.Add(mlx.FromValue(1)))
-	return nil
+	return []*mlx.Array{}, nil
 }

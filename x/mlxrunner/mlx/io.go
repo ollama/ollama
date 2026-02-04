@@ -47,7 +47,7 @@ func Load(path string) iter.Seq2[string, *Array] {
 	}
 }
 
-func LoadAll(root *model.Root, pattern string, states map[string]*Array, afterLoadFuncs []func(*model.Root) error) error {
+func LoadAll(root *model.Root, pattern string, states map[string]*Array, afterLoadFuncs []func(*model.Root) ([]*Array, error)) error {
 	matches, err := root.Glob(pattern)
 	if err != nil {
 		return err
@@ -69,8 +69,25 @@ func LoadAll(root *model.Root, pattern string, states map[string]*Array, afterLo
 	}
 
 	for _, afterLoadFunc := range afterLoadFuncs {
-		if err := afterLoadFunc(root); err != nil {
+		weights, err := afterLoadFunc(root)
+		if err != nil {
 			return err
+		}
+
+		for _, weight := range weights {
+			weight.desc.numRefs = 1000
+			Eval(weight)
+
+			var freeAll func(...*Array)
+			freeAll = func(inputs ...*Array) {
+				for _, input := range inputs {
+					input.desc.numRefs = 0
+					freeAll(input.desc.inputs...)
+				}
+				Free(inputs...)
+			}
+
+			freeAll(weight.desc.inputs...)
 		}
 	}
 

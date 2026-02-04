@@ -28,15 +28,15 @@ type TextGeneration interface {
 	Unembed(*mlx.Array) *mlx.Array
 }
 
-func Weights(m Model) (map[string]*mlx.Array, []func(*model.Root) error) {
+func Weights(m Model) (map[string]*mlx.Array, []func(*model.Root) ([]*mlx.Array, error)) {
 	mapping := make(map[string]*mlx.Array)
-	var afterLoadFuncs []func(*model.Root) error
+	var afterLoadFuncs []func(*model.Root) ([]*mlx.Array, error)
 	var fn func(v reflect.Value, tags []string)
 	fn = func(v reflect.Value, tags []string) {
 		t := v.Type()
 
 		if method := v.Addr().MethodByName("AfterLoad"); method.IsValid() {
-			var afterLoadFunc func(*model.Root) error
+			var afterLoadFunc func(*model.Root) ([]*mlx.Array, error)
 			reflect.ValueOf(&afterLoadFunc).Elem().Set(method)
 			afterLoadFuncs = append(afterLoadFuncs, afterLoadFunc)
 		}
@@ -54,7 +54,7 @@ func Weights(m Model) (map[string]*mlx.Array, []func(*model.Root) error) {
 
 				if tt == reflect.TypeOf((*mlx.Array)(nil)).Elem() {
 					name := strings.Join(tags, ".")
-					mapping[name] =  vv.Addr().Interface().(*mlx.Array)
+					mapping[name] = vv.Addr().Interface().(*mlx.Array)
 					continue
 				}
 

@@ -69,11 +69,12 @@ func (t *Array) Concatenate(axis int, others ...*Array) *Array {
 	vector := C.mlx_vector_array_new()
 	defer C.mlx_vector_array_free(vector)
 
-	for _, other := range append([]*Array{t}, others...) {
+	s := append([]*Array{t}, others...)
+	for _, other := range s {
 		C.mlx_vector_array_append_value(vector, other.ctx)
 	}
 
-	out := New("CONCATENATE", t)
+	out := New("CONCATENATE", s...)
 	C.mlx_concatenate_axis(&out.ctx, vector, C.int(axis), DefaultStream().ctx)
 	return out
 }
