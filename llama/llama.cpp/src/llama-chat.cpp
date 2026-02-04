@@ -57,7 +57,6 @@ static const std::map<std::string, llm_chat_template> LLM_CHAT_TEMPLATES = {
     { "minicpm",           LLM_CHAT_TEMPLATE_MINICPM           },
     { "exaone3",           LLM_CHAT_TEMPLATE_EXAONE_3          },
     { "exaone4",           LLM_CHAT_TEMPLATE_EXAONE_4          },
-    { "exaone-moe",        LLM_CHAT_TEMPLATE_EXAONE_MOE        },
     { "rwkv-world",        LLM_CHAT_TEMPLATE_RWKV_WORLD        },
     { "granite",           LLM_CHAT_TEMPLATE_GRANITE           },
     { "gigachat",          LLM_CHAT_TEMPLATE_GIGACHAT          },
@@ -75,7 +74,6 @@ static const std::map<std::string, llm_chat_template> LLM_CHAT_TEMPLATES = {
     { "seed_oss",          LLM_CHAT_TEMPLATE_SEED_OSS          },
     { "grok-2",            LLM_CHAT_TEMPLATE_GROK_2            },
     { "pangu-embedded",    LLM_CHAT_TEMPLATE_PANGU_EMBED       },
-    { "solar-open",        LLM_CHAT_TEMPLATE_SOLAR_OPEN        },
 };
 
 llm_chat_template llm_chat_template_from_str(const std::string & name) {
@@ -138,9 +136,6 @@ llm_chat_template llm_chat_detect_template(const std::string & tmpl) {
     } else if (tmpl_contains("[gMASK]<sop>")) {
         return LLM_CHAT_TEMPLATE_CHATGLM_4;
     } else if (tmpl_contains("<|assistant|>") && tmpl_contains("<|user|>")) {
-        if (tmpl_contains("<|tool_declare|>")) {
-            return LLM_CHAT_TEMPLATE_EXAONE_MOE;
-        }
         return tmpl_contains("</s>") ? LLM_CHAT_TEMPLATE_FALCON_3 : LLM_CHAT_TEMPLATE_GLMEDGE;
     } else if (tmpl_contains("<|{{ item['role'] }}|>") && tmpl_contains("<|begin_of_image|>")) {
         return LLM_CHAT_TEMPLATE_GLMEDGE;
@@ -221,8 +216,6 @@ llm_chat_template llm_chat_detect_template(const std::string & tmpl) {
         return LLM_CHAT_TEMPLATE_GROK_2;
     } else if (tmpl_contains(LU8("[unused9]系统：[unused10]"))) {
         return LLM_CHAT_TEMPLATE_PANGU_EMBED;
-    } else if (tmpl_contains("<|begin|>") && tmpl_contains("<|end|>") && tmpl_contains("<|content|>")) {
-        return LLM_CHAT_TEMPLATE_SOLAR_OPEN;
     }
     return LLM_CHAT_TEMPLATE_UNKNOWN;
 }
@@ -580,22 +573,6 @@ int32_t llm_chat_apply_template(
         if (add_ass) {
             ss << "[|assistant|]";
         }
-    } else if (tmpl == LLM_CHAT_TEMPLATE_EXAONE_MOE) {
-        for (auto message : chat) {
-            std::string role(message->role);
-            if (role == "system") {
-                ss << "<|system|>\n" << trim(message->content) << "<|endofturn|>\n";
-            } else if (role == "user") {
-                ss << "<|user|>\n" << trim(message->content) << "<|endofturn|>\n";
-            } else if (role == "assistant") {
-                ss << "<|assistant|>\n" << trim(message->content) << "<|endofturn|>\n";
-            } else if (role == "tool") {
-                ss << "<|tool|>\n" << trim(message->content) << "<|endofturn|>\n";
-            }
-        }
-        if (add_ass) {
-            ss << "<|assistant|>\n";
-        }
     } else if (tmpl == LLM_CHAT_TEMPLATE_RWKV_WORLD) {
         // this template requires the model to have "\n\n" as EOT token
         for (size_t i = 0; i < chat.size(); i++) {
@@ -867,14 +844,6 @@ int32_t llm_chat_apply_template(
         }
         if (add_ass) {
             ss << "[unused9]助手：";
-        }
-    } else if (tmpl == LLM_CHAT_TEMPLATE_SOLAR_OPEN) {
-        for (auto message : chat) {
-            std::string role(message->role);
-            ss << "<|begin|>" << role << "<|content|>" << message->content << "<|end|>";
-        }
-        if (add_ass) {
-            ss << "<|begin|>assistant";
         }
     } else {
         // template not supported

@@ -8,16 +8,16 @@ Subject: [PATCH] decode: disable output_all
  1 file changed, 1 insertion(+), 2 deletions(-)
 
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index 0b2b05c41..985f723db 100644
+index 8786d4ee3..9e6998272 100644
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
-@@ -1475,8 +1475,7 @@ int llama_context::decode(const llama_batch & batch_inp) {
+@@ -1051,8 +1051,7 @@ int llama_context::decode(const llama_batch & batch_inp) {
      const int64_t n_vocab = vocab.n_tokens();
      const int64_t n_embd  = hparams.n_embd_inp();
  
 -    // when computing embeddings, all tokens are output
--    const bool output_all   = cparams.embeddings;
+-    const bool output_all = cparams.embeddings;
 +    const bool output_all = false;
-     const bool has_samplers = !sampling.samplers.empty();
  
-     const uint32_t n_seq_max = cparams.kv_unified ? LLAMA_MAX_SEQ : cparams.n_seq_max;
+     if (!balloc->init(batch_inp, vocab, memory.get(), n_embd, cparams.kv_unified ? LLAMA_MAX_SEQ : cparams.n_seq_max, output_all)) {
+         LLAMA_LOG_ERROR("%s: failed to initialize batch\n", __func__);

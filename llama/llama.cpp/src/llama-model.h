@@ -11,7 +11,6 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 struct llama_cparams;
@@ -25,14 +24,12 @@ enum llm_type {
     LLM_TYPE_17M,
     LLM_TYPE_22M,
     LLM_TYPE_33M,
-    LLM_TYPE_47M,
     LLM_TYPE_60M,
     LLM_TYPE_70M,
     LLM_TYPE_80M,
     LLM_TYPE_109M,
     LLM_TYPE_137M,
     LLM_TYPE_140M,
-    LLM_TYPE_149M,
     LLM_TYPE_160M,
     LLM_TYPE_190M,
     LLM_TYPE_220M,
@@ -42,7 +39,6 @@ enum llm_type {
     LLM_TYPE_335M,
     LLM_TYPE_350M,
     LLM_TYPE_360M,
-    LLM_TYPE_395M,
     LLM_TYPE_410M,
     LLM_TYPE_450M,
     LLM_TYPE_475M,
@@ -121,12 +117,10 @@ enum llm_type {
     LLM_TYPE_31B_A3_5B,
     LLM_TYPE_80B_A3B, // Qwen3 Next
     LLM_TYPE_100B_A6B,
-    LLM_TYPE_102B_A12B, // Solar-Open
     LLM_TYPE_106B_A12B, // GLM-4.5-Air
     LLM_TYPE_230B_A10B, // Minimax M2
     LLM_TYPE_235B_A22B,
     LLM_TYPE_300B_A47B, // Ernie MoE big
-    LLM_TYPE_310B_A15B, // /MiMo-V2-Flash
     LLM_TYPE_355B_A32B, // GLM-4.5
     LLM_TYPE_E2B,
     LLM_TYPE_E4B,
@@ -471,6 +465,8 @@ struct llama_model {
     struct ggml_tensor * dense_2_out_layers = nullptr;
     struct ggml_tensor * dense_3_out_layers = nullptr;
 
+    llama_model_params params;
+
     // gguf metadata
     std::unordered_map<std::string, std::string> gguf_kv;
 
@@ -479,9 +475,6 @@ struct llama_model {
 
     // for quantize-stats only
     std::vector<std::pair<std::string, struct ggml_tensor *>> tensors_by_name;
-
-    // for keeping track of associated LoRA adapters
-    std::unordered_set<llama_adapter_lora *> loras;
 
     int64_t t_load_us  = 0;
     int64_t t_start_us = 0;
@@ -503,9 +496,6 @@ struct llama_model {
     size_t size() const; // file size
     size_t n_tensors() const;
     size_t n_devices() const;
-
-    uint32_t n_gpu_layers() const;
-    llama_split_mode split_mode() const;
 
     std::map<ggml_backend_buffer_type_t, size_t> memory_breakdown() const;
 
@@ -535,8 +525,6 @@ struct llama_model {
     ggml_cgraph * build_graph(const llm_graph_params & params) const;
 
 private:
-    llama_model_params params;
-
     struct impl;
     std::unique_ptr<impl> pimpl;
 };

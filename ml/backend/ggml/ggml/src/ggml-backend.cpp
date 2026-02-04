@@ -911,9 +911,9 @@ static void ggml_backend_sched_print_assignments(ggml_backend_sched_t sched, str
         }
         if (sched->debug > 1) {
             ggml_backend_t tensor_backend = ggml_backend_sched_get_tensor_backend(sched, node);
-            GGML_LOG_DEBUG("node #%3d (%10.10s): %20.20s (%5.5s) [%5.5s %8.8s] use=%d,c=%d:", i, ggml_op_name(node->op), node->name,
+            GGML_LOG_DEBUG("node #%3d (%10.10s): %20.20s (%5.5s) [%5.5s %8.8s] use=%d:", i, ggml_op_name(node->op), node->name,
                 fmt_size(ggml_nbytes(node)), tensor_backend ? ggml_backend_name(tensor_backend) : "NULL", GET_CAUSE(node),
-                graph->use_counts[ggml_hash_find(&graph->visited_hash_set, node)], node->flags & GGML_TENSOR_FLAG_COMPUTE ? 1 : 0);
+                graph->use_counts[ggml_hash_find(&graph->visited_hash_set, node)]);
             for (int j = 0; j < GGML_MAX_SRC; j++) {
                 struct ggml_tensor * src = node->src[j];
                 if (src == NULL) {
@@ -1747,10 +1747,6 @@ ggml_backend_sched_t ggml_backend_sched_new_ext(
     return sched;
 }
 
-void ggml_backend_sched_set_batch_size(ggml_backend_sched_t sched, int batch_size) {
-    sched->batch_size = batch_size;
-}
-
 void ggml_backend_sched_free(ggml_backend_sched_t sched) {
     if (sched == NULL) {
         return;
@@ -1778,6 +1774,10 @@ void ggml_backend_sched_free(ggml_backend_sched_t sched) {
     free(sched->graph.nodes);
     free(sched->graph.leafs);
     free(sched);
+}
+
+void ggml_backend_sched_set_batch_size(ggml_backend_sched_t sched, int batch_size) {
+    sched->batch_size = batch_size;
 }
 
 void ggml_backend_sched_reset(ggml_backend_sched_t sched) {
@@ -2013,7 +2013,6 @@ static struct ggml_tensor * graph_copy_dup_tensor(struct ggml_hash_set hash_set,
         dst->view_offs = src->view_offs;
     }
     dst->op = src->op;
-    dst->flags = src->flags;
     memcpy(dst->op_params, src->op_params, sizeof(dst->op_params));
     ggml_set_name(dst, src->name);
 
@@ -2145,7 +2144,7 @@ void ggml_backend_graph_copy_free(struct ggml_backend_graph_copy copy) {
     ggml_free(copy.ctx_unallocated);
 }
 
-bool ggml_backend_compare_graph_backend(ggml_backend_t backend1, ggml_backend_t backend2, struct ggml_cgraph * graph, ggml_backend_eval_callback callback, void * user_data, struct ggml_tensor const * const * test_nodes, size_t num_test_nodes) {
+bool ggml_backend_compare_graph_backend(ggml_backend_t backend1, ggml_backend_t backend2, struct ggml_cgraph * graph, ggml_backend_eval_callback callback, void * user_data, struct ggml_tensor * test_node) {
     struct ggml_backend_graph_copy copy = ggml_backend_graph_copy(backend2, graph);
     if (copy.buffer == NULL) {
         return false;
@@ -2156,22 +2155,22 @@ bool ggml_backend_compare_graph_backend(ggml_backend_t backend1, ggml_backend_t 
 
     assert(g1->n_nodes == g2->n_nodes);
 
-    if (num_test_nodes != 0) {
-        GGML_ASSERT(test_nodes);
-        // Compute the whole graph and only test the output for specific tensors
+    if (test_node != nullptr) {
+        // Compute the whole graph and only test the output for a specific tensor
         ggml_backend_graph_compute(backend1, g1);
         ggml_backend_graph_compute(backend2, g2);
 
-        bool verified = false;
+        int test_node_idx = -1;
         for (int i = 0; i < g1->n_nodes; i++) {
-            for (size_t j = 0; j < num_test_nodes; ++j) {
-                if (g1->nodes[i] == test_nodes[j]) {
-                    callback(i, g1->nodes[i], g2->nodes[i], user_data);
-                    verified = true;
-                }
+            struct ggml_tensor * t1 = g1->nodes[i];
+            if (t1 == test_node) {
+                test_node_idx = i;
+                break;
             }
         }
-        GGML_ASSERT(verified);
+        GGML_ASSERT(test_node_idx != -1);
+
+        callback(test_node_idx, g1->nodes[test_node_idx], g2->nodes[test_node_idx], user_data);
     } else {
         for (int i = 0; i < g1->n_nodes; i++) {
             struct ggml_tensor * t1 = g1->nodes[i];

@@ -15,7 +15,6 @@
 layout (push_constant) uniform parameter
 {
     uint ne;
-    uint num_blocks;
 } p;
 
 #include "types.glsl"
@@ -34,7 +33,8 @@ layout (binding = 1) writeonly buffer D {block_q8_1_x4 data_b[];};
 shared float shmem[GROUP_SIZE];
 #endif
 
-void quantize(const uint wgid) {
+void quantize() {
+    const uint wgid = gl_WorkGroupID.x;
     const uint tid = INVOCATION_ID;
 
     // Each thread handles a vec4, so 8 threads handle a block
@@ -45,7 +45,11 @@ void quantize(const uint wgid) {
     const uint ib = wgid * blocks_per_group + block_in_wg;
     const uint iqs = tid % 8;
 
-#ifdef QBLOCK_X4
+#ifndef QBLOCK_X4
+    if (ib >= gl_NumWorkGroups.x * blocks_per_group) {
+        return;
+    }
+#else
     const uint ibx4_outer = ib / 4;
     const uint ibx4_inner = ib % 4;
 
@@ -119,9 +123,5 @@ void quantize(const uint wgid) {
 }
 
 void main() {
-    uint wgid = gl_WorkGroupID.x;
-    while (wgid < p.num_blocks) {
-        quantize(wgid);
-        wgid += gl_NumWorkGroups.x;
-    }
+    quantize();
 }

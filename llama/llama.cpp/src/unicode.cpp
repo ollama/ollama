@@ -985,11 +985,6 @@ std::vector<std::string> unicode_regex_split(const std::string & text, const std
         { "\\p{P}", unicode_cpt_flags::PUNCTUATION },
         { "\\p{M}", unicode_cpt_flags::ACCENT_MARK },
         { "\\p{S}", unicode_cpt_flags::SYMBOL },
-        { "\\p{Lu}", unicode_cpt_flags::LETTER }, // Uppercase letter
-        { "\\p{Ll}", unicode_cpt_flags::LETTER }, // Lowercase letter
-        { "\\p{Lt}", unicode_cpt_flags::LETTER }, // Titlecase letter
-        { "\\p{Lm}", unicode_cpt_flags::LETTER }, // Modifier letter
-        { "\\p{Lo}", unicode_cpt_flags::LETTER }, // Other letter
     };
 
     static const std::map<int, int> k_ucat_cpt = {
@@ -1100,26 +1095,22 @@ std::vector<std::string> unicode_regex_split(const std::string & text, const std
                         continue;
                     }
 
-                    // Match \p{...} Unicode properties of varying lengths
-                    if (regex_expr[i + 0] == '\\' && i + 3 < regex_expr.size() &&
+                    if (regex_expr[i + 0] == '\\' && i + 4 < regex_expr.size() &&
                         regex_expr[i + 1] == 'p' &&
-                        regex_expr[i + 2] == '{') {
-                        // Find the closing brace
-                        size_t closing_brace = regex_expr.find('}', i + 3);
-                        if (closing_brace != std::string::npos && closing_brace <= i + 10) { // reasonable limit
-                            const std::string pat = regex_expr.substr(i, closing_brace - i + 1);
-                            if (k_ucat_enum.find(pat) != k_ucat_enum.end()) {
-                                if (!inside) {
-                                    regex_expr_collapsed += '[';
-                                }
-                                regex_expr_collapsed += k_ucat_cpt.at(k_ucat_enum.at(pat));
-                                regex_expr_collapsed += k_ucat_map.at(k_ucat_enum.at(pat));
-                                if (!inside) {
-                                    regex_expr_collapsed += ']';
-                                }
-                                i = closing_brace;
-                                continue;
+                        regex_expr[i + 2] == '{' &&
+                        regex_expr[i + 4] == '}') {
+                        const std::string pat = regex_expr.substr(i, 5);
+                        if (k_ucat_enum.find(pat) != k_ucat_enum.end()) {
+                            if (!inside) {
+                                regex_expr_collapsed += '[';
                             }
+                            regex_expr_collapsed += k_ucat_cpt.at(k_ucat_enum.at(pat));
+                            regex_expr_collapsed += k_ucat_map.at(k_ucat_enum.at(pat));
+                            if (!inside) {
+                                regex_expr_collapsed += ']';
+                            }
+                            i += 4;
+                            continue;
                         }
                     }
 

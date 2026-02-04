@@ -288,7 +288,7 @@ int ggml_hip_mgmt_init() {
         const char *version = NULL;
         ADLX_RESULT status = adlx.ADLXQueryVersion(&version);
         if (ADLX_SUCCEEDED(status)) {
-            GGML_LOG_DEBUG("%s located ADLX version %s\n", __func__, version);
+            GGML_LOG_DEBUG("%s located ADLX version %s\n", __func__, version);  
         }
     }
 
@@ -406,7 +406,7 @@ int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total, bool
             adlx_gdm_cleanup;
             return status;
         }
-
+        
         adlx_uint totalVRAM = 0;
         status = gpu->pVtbl->TotalVRAM(gpu, &totalVRAM);
         if (ADLX_FAILED(status)) {
