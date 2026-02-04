@@ -514,13 +514,6 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 			continue
 		}
 
-		// if past the num predict limit
-		if seq.numPredict > 0 && seq.numPredicted >= seq.numPredict {
-			s.removeSequence(seqIdx, llm.DoneReasonLength)
-			nextBatch.seqs[seqIdx] = nil
-			continue
-		}
-
 		if !s.cache.enabled {
 			seq.inputs = append(seq.cache.Inputs, seq.inputs...)
 			seq.cache.Inputs = []*input.Input{}
@@ -709,7 +702,6 @@ func (s *Server) computeBatch(activeBatch batchState) {
 			continue
 		}
 
-		seq.numPredicted++
 		nextToken := &input.Input{Token: 0} // placeholder we'll fill in after Compute/Floats
 		seq.inputs = []*input.Input{nextToken}
 		nextBatchTokens[i] = nextToken
@@ -745,7 +737,9 @@ func (s *Server) computeBatch(activeBatch batchState) {
 			logutil.Trace("computeBatch: sequence replaced, discarding its results", "batchID", activeBatch.id, "seqIdx", i)
 			continue
 		}
+
 		seq.lastUpdatedAt = t
+		seq.numPredicted++
 		if seq.numPredicted == 1 {
 			seq.processingDuration = seq.lastUpdatedAt.Sub(seq.startedAt)
 			seq.startedAt = seq.lastUpdatedAt
@@ -791,6 +785,13 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		}
 
 		seq.pendingResponses = append(seq.pendingResponses, piece)
+
+		// if past the num predict limit
+		if seq.numPredict > 0 && seq.numPredicted >= seq.numPredict {
+			s.removeSequence(i, llm.DoneReasonLength)
+			continue
+		}
+
 		sequence := strings.Join(seq.pendingResponses, "")
 
 		if ok, stop := common.FindStop(sequence, seq.stop); ok {
