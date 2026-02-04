@@ -31,7 +31,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	currMsgIdx := 0
 
 	// Start with all messages and remove from the front until it fits in context
-	for i := 0; i <= lastMsgIdx; i++ {
+	for i := range lastMsgIdx {
 		// Collect system messages from the portion we're about to skip
 		system = make([]api.Message, 0)
 		for j := range i {
