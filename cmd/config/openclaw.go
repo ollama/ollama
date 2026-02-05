@@ -13,26 +13,46 @@ import (
 	"github.com/ollama/ollama/envconfig"
 )
 
-type Clawdbot struct{}
+type Openclaw struct{}
 
-func (c *Clawdbot) String() string { return "Clawdbot" }
+func (c *Openclaw) String() string { return "OpenClaw" }
 
 const ansiGreen = "\033[32m"
 
-func (c *Clawdbot) Run(model string) error {
-	if _, err := exec.LookPath("clawdbot"); err != nil {
-		return fmt.Errorf("clawdbot is not installed, install from https://docs.clawd.bot")
+func (c *Openclaw) Run(model string, args []string) error {
+	bin := "openclaw"
+	if _, err := exec.LookPath(bin); err != nil {
+		bin = "clawdbot"
+		if _, err := exec.LookPath(bin); err != nil {
+			return fmt.Errorf("openclaw is not installed, install from https://docs.openclaw.ai")
+		}
 	}
 
 	models := []string{model}
-	if config, err := loadIntegration("clawdbot"); err == nil && len(config.Models) > 0 {
+	if config, err := loadIntegration("openclaw"); err == nil && len(config.Models) > 0 {
+		models = config.Models
+	} else if config, err := loadIntegration("clawdbot"); err == nil && len(config.Models) > 0 {
 		models = config.Models
 	}
 	if err := c.Edit(models); err != nil {
 		return fmt.Errorf("setup failed: %w", err)
 	}
 
-	cmd := exec.Command("clawdbot", "gateway")
+	if !c.onboarded() {
+		// Onboarding not completed: run it (model already set via Edit)
+		// Use "ollama" as gateway token for simple local access
+		cmd := exec.Command(bin, "onboard",
+			"--auth-choice", "skip",
+			"--gateway-token", "ollama",
+		)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
+
+	// Onboarding completed: run gateway
+	cmd := exec.Command(bin, append([]string{"gateway"}, args...)...)
 	cmd.Stdin = os.Stdin
 
 	// Capture output to detect "already running" message
@@ -42,22 +62,55 @@ func (c *Clawdbot) Run(model string) error {
 
 	err := cmd.Run()
 	if err != nil && strings.Contains(outputBuf.String(), "Gateway already running") {
-		fmt.Fprintf(os.Stderr, "%sClawdbot has been configured with Ollama. Gateway is already running.%s\n", ansiGreen, ansiReset)
+		fmt.Fprintf(os.Stderr, "%sOpenClaw has been configured with Ollama. Gateway is already running.%s\n", ansiGreen, ansiReset)
 		return nil
 	}
 	return err
 }
 
-func (c *Clawdbot) Paths() []string {
+// onboarded checks if OpenClaw onboarding wizard was completed
+// by looking for the wizard.lastRunAt marker in the config
+func (c *Openclaw) onboarded() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+
+	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	legacyPath := filepath.Join(home, ".clawdbot", "clawdbot.json")
+
+	config := make(map[string]any)
+	if data, err := os.ReadFile(configPath); err == nil {
+		_ = json.Unmarshal(data, &config)
+	} else if data, err := os.ReadFile(legacyPath); err == nil {
+		_ = json.Unmarshal(data, &config)
+	} else {
+		return false
+	}
+
+	// Check for wizard.lastRunAt marker (set when onboarding completes)
+	wizard, _ := config["wizard"].(map[string]any)
+	if wizard == nil {
+		return false
+	}
+	lastRunAt, _ := wizard["lastRunAt"].(string)
+	return lastRunAt != ""
+}
+
+func (c *Openclaw) Paths() []string {
 	home, _ := os.UserHomeDir()
-	p := filepath.Join(home, ".clawdbot", "clawdbot.json")
+	p := filepath.Join(home, ".openclaw", "openclaw.json")
 	if _, err := os.Stat(p); err == nil {
 		return []string{p}
+	}
+	legacy := filepath.Join(home, ".clawdbot", "clawdbot.json")
+	if _, err := os.Stat(legacy); err == nil {
+		return []string{legacy}
 	}
 	return nil
 }
 
-func (c *Clawdbot) Edit(models []string) error {
+func (c *Openclaw) Edit(models []string) error {
 	if len(models) == 0 {
 		return nil
 	}
@@ -67,7 +120,8 @@ func (c *Clawdbot) Edit(models []string) error {
 		return err
 	}
 
-	configPath := filepath.Join(home, ".clawdbot", "clawdbot.json")
+	configPath := filepath.Join(home, ".openclaw", "openclaw.json")
+	legacyPath := filepath.Join(home, ".clawdbot", "clawdbot.json")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		return err
 	}
@@ -75,6 +129,8 @@ func (c *Clawdbot) Edit(models []string) error {
 	// Read into map[string]any to preserve unknown fields
 	config := make(map[string]any)
 	if data, err := os.ReadFile(configPath); err == nil {
+		_ = json.Unmarshal(data, &config)
+	} else if data, err := os.ReadFile(legacyPath); err == nil {
 		_ = json.Unmarshal(data, &config)
 	}
 
@@ -167,15 +223,18 @@ func (c *Clawdbot) Edit(models []string) error {
 	return writeWithBackup(configPath, data)
 }
 
-func (c *Clawdbot) Models() []string {
+func (c *Openclaw) Models() []string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil
 	}
 
-	config, err := readJSONFile(filepath.Join(home, ".clawdbot", "clawdbot.json"))
+	config, err := readJSONFile(filepath.Join(home, ".openclaw", "openclaw.json"))
 	if err != nil {
-		return nil
+		config, err = readJSONFile(filepath.Join(home, ".clawdbot", "clawdbot.json"))
+		if err != nil {
+			return nil
+		}
 	}
 
 	modelsSection, _ := config["models"].(map[string]any)

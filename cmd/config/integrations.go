@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/progress"
 	"github.com/spf13/cobra"
 )
 
@@ -22,7 +23,7 @@ import (
 // Runner can run an integration with a model.
 
 type Runner interface {
-	Run(model string) error
+	Run(model string, args []string) error
 	// String returns the human-readable name of the integration
 	String() string
 }
@@ -41,10 +42,27 @@ type Editor interface {
 // integrations is the registry of available integrations.
 var integrations = map[string]Runner{
 	"claude":   &Claude{},
-	"clawdbot": &Clawdbot{},
+	"clawdbot": &Openclaw{},
 	"codex":    &Codex{},
+	"moltbot":  &Openclaw{},
 	"droid":    &Droid{},
 	"opencode": &OpenCode{},
+	"openclaw": &Openclaw{},
+}
+
+// recommendedModels are shown when the user has no models or as suggestions.
+// Order matters: local models first, then cloud models.
+var recommendedModels = []selectItem{
+	{Name: "glm-4.7-flash", Description: "Recommended (requires ~25GB VRAM)"},
+	{Name: "qwen3:8b", Description: "Recommended (requires ~11GB VRAM)"},
+	{Name: "glm-4.7:cloud", Description: "Recommended"},
+	{Name: "kimi-k2.5:cloud", Description: "Recommended"},
+}
+
+// integrationAliases are hidden from the interactive selector but work as CLI arguments.
+var integrationAliases = map[string]bool{
+	"clawdbot": true,
+	"moltbot":  true,
 }
 
 func selectIntegration() (string, error) {
@@ -55,6 +73,9 @@ func selectIntegration() (string, error) {
 	names := slices.Sorted(maps.Keys(integrations))
 	var items []selectItem
 	for _, name := range names {
+		if integrationAliases[name] {
+			continue
+		}
 		r := integrations[name]
 		description := r.String()
 		if conn, err := loadIntegration(name); err == nil && len(conn.Models) > 0 {
@@ -83,62 +104,25 @@ func selectModels(ctx context.Context, name, current string) ([]string, error) {
 		return nil, err
 	}
 
-	if len(models.Models) == 0 {
-		return nil, fmt.Errorf("no models available, run 'ollama pull <model>' first")
-	}
-
-	var items []selectItem
-	cloudModels := make(map[string]bool)
+	var existing []modelInfo
 	for _, m := range models.Models {
-		if m.RemoteModel != "" {
-			cloudModels[m.Name] = true
-		}
-		items = append(items, selectItem{Name: m.Name})
+		existing = append(existing, modelInfo{Name: m.Name, Remote: m.RemoteModel != ""})
 	}
 
-	if len(items) == 0 {
-		return nil, fmt.Errorf("no local models available, run 'ollama pull <model>' first")
-	}
-
-	// Get previously configured models (saved config takes precedence)
 	var preChecked []string
 	if saved, err := loadIntegration(name); err == nil {
 		preChecked = saved.Models
 	} else if editor, ok := r.(Editor); ok {
 		preChecked = editor.Models()
 	}
-	checked := make(map[string]bool, len(preChecked))
-	for _, n := range preChecked {
-		checked[n] = true
-	}
 
-	// Resolve current to full name (e.g., "llama3.2" -> "llama3.2:latest")
-	for _, item := range items {
-		if item.Name == current || strings.HasPrefix(item.Name, current+":") {
-			current = item.Name
-			break
-		}
-	}
+	items, preChecked, existingModels, cloudModels := buildModelList(existing, preChecked, current)
 
-	// If current model is configured, move to front of preChecked
-	if checked[current] {
-		preChecked = append([]string{current}, slices.DeleteFunc(preChecked, func(m string) bool { return m == current })...)
+	if len(items) == 0 {
+		return nil, fmt.Errorf("no models available")
 	}
-
-	// Sort: checked first, then alphabetical
-	slices.SortFunc(items, func(a, b selectItem) int {
-		ac, bc := checked[a.Name], checked[b.Name]
-		if ac != bc {
-			if ac {
-				return -1
-			}
-			return 1
-		}
-		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
-	})
 
 	var selected []string
-	// only editors support multi-model selection
 	if _, ok := r.(Editor); ok {
 		selected, err = multiSelectPrompt(fmt.Sprintf("Select models for %s:", r), items, preChecked)
 		if err != nil {
@@ -152,7 +136,27 @@ func selectModels(ctx context.Context, name, current string) ([]string, error) {
 		selected = []string{model}
 	}
 
-	// if any model in selected is a cloud model, ensure signed in
+	var toPull []string
+	for _, m := range selected {
+		if !existingModels[m] {
+			toPull = append(toPull, m)
+		}
+	}
+	if len(toPull) > 0 {
+		msg := fmt.Sprintf("Download %s?", strings.Join(toPull, ", "))
+		if ok, err := confirmPrompt(msg); err != nil {
+			return nil, err
+		} else if !ok {
+			return nil, errCancelled
+		}
+		for _, m := range toPull {
+			fmt.Fprintf(os.Stderr, "\n")
+			if err := pullModel(ctx, client, m); err != nil {
+				return nil, fmt.Errorf("failed to pull %s: %w", m, err)
+			}
+		}
+	}
+
 	var selectedCloudModels []string
 	for _, m := range selected {
 		if cloudModels[m] {
@@ -222,13 +226,13 @@ func selectModels(ctx context.Context, name, current string) ([]string, error) {
 	return selected, nil
 }
 
-func runIntegration(name, modelName string) error {
+func runIntegration(name, modelName string, args []string) error {
 	r, ok := integrations[name]
 	if !ok {
 		return fmt.Errorf("unknown integration: %s", name)
 	}
 	fmt.Fprintf(os.Stderr, "\nLaunching %s with %s...\n", r, modelName)
-	return r.Run(modelName)
+	return r.Run(modelName, args)
 }
 
 // LaunchCmd returns the cobra command for launching integrations.
@@ -237,29 +241,52 @@ func LaunchCmd(checkServerHeartbeat func(cmd *cobra.Command, args []string) erro
 	var configFlag bool
 
 	cmd := &cobra.Command{
-		Use:   "launch [INTEGRATION]",
+		Use:   "launch [INTEGRATION] [-- [EXTRA_ARGS...]]",
 		Short: "Launch an integration with Ollama",
 		Long: `Launch an integration configured with Ollama models.
 
 Supported integrations:
   claude    Claude Code
-  clawdbot  Clawdbot
   codex     Codex
   droid     Droid
   opencode  OpenCode
+  openclaw  OpenClaw (aliases: clawdbot, moltbot)
 
 Examples:
   ollama launch
   ollama launch claude
   ollama launch claude --model <model>
-  ollama launch droid --config (does not auto-launch)`,
-		Args:    cobra.MaximumNArgs(1),
+  ollama launch droid --config (does not auto-launch)
+  ollama launch codex -- -p myprofile (pass extra args to integration)
+  ollama launch codex -- --sandbox workspace-write`,
+		Args:    cobra.ArbitraryArgs,
 		PreRunE: checkServerHeartbeat,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Extract integration name and args to pass through using -- separator
 			var name string
-			if len(args) > 0 {
-				name = args[0]
+			var passArgs []string
+			dashIdx := cmd.ArgsLenAtDash()
+
+			if dashIdx == -1 {
+				// No "--" separator: only allow 0 or 1 args (integration name)
+				if len(args) > 1 {
+					return fmt.Errorf("unexpected arguments: %v\nUse '--' to pass extra arguments to the integration", args[1:])
+				}
+				if len(args) == 1 {
+					name = args[0]
+				}
 			} else {
+				// "--" was used: args before it = integration name, args after = passthrough
+				if dashIdx > 1 {
+					return fmt.Errorf("expected at most 1 integration name before '--', got %d", dashIdx)
+				}
+				if dashIdx == 1 {
+					name = args[0]
+				}
+				passArgs = args[dashIdx:]
+			}
+
+			if name == "" {
 				var err error
 				name, err = selectIntegration()
 				if errors.Is(err, errCancelled) {
@@ -275,16 +302,14 @@ Examples:
 				return fmt.Errorf("unknown integration: %s", name)
 			}
 
-			// If launching without --model, use saved config if available
 			if !configFlag && modelFlag == "" {
 				if config, err := loadIntegration(name); err == nil && len(config.Models) > 0 {
-					return runIntegration(name, config.Models[0])
+					return runIntegration(name, config.Models[0], passArgs)
 				}
 			}
 
 			var models []string
 			if modelFlag != "" {
-				// When --model is specified, merge with existing models (new model becomes default)
 				models = []string{modelFlag}
 				if existing, err := loadIntegration(name); err == nil && len(existing.Models) > 0 {
 					for _, m := range existing.Models {
@@ -339,17 +364,168 @@ Examples:
 
 			if configFlag {
 				if launch, _ := confirmPrompt(fmt.Sprintf("\nLaunch %s now?", r)); launch {
-					return runIntegration(name, models[0])
+					return runIntegration(name, models[0], passArgs)
 				}
 				fmt.Fprintf(os.Stderr, "Run 'ollama launch %s' to start with %s\n", strings.ToLower(name), models[0])
 				return nil
 			}
 
-			return runIntegration(name, models[0])
+			return runIntegration(name, models[0], passArgs)
 		},
 	}
 
 	cmd.Flags().StringVar(&modelFlag, "model", "", "Model to use")
 	cmd.Flags().BoolVar(&configFlag, "config", false, "Configure without launching")
 	return cmd
+}
+
+type modelInfo struct {
+	Name   string
+	Remote bool
+}
+
+// buildModelList merges existing models with recommendations, sorts them, and returns
+// the ordered items along with maps of existing and cloud model names.
+func buildModelList(existing []modelInfo, preChecked []string, current string) (items []selectItem, orderedChecked []string, existingModels, cloudModels map[string]bool) {
+	existingModels = make(map[string]bool)
+	cloudModels = make(map[string]bool)
+	recommended := make(map[string]bool)
+	var hasLocalModel, hasCloudModel bool
+
+	for _, rec := range recommendedModels {
+		recommended[rec.Name] = true
+	}
+
+	for _, m := range existing {
+		existingModels[m.Name] = true
+		if m.Remote {
+			cloudModels[m.Name] = true
+			hasCloudModel = true
+		} else {
+			hasLocalModel = true
+		}
+		displayName := strings.TrimSuffix(m.Name, ":latest")
+		existingModels[displayName] = true
+		item := selectItem{Name: displayName}
+		if recommended[displayName] {
+			item.Description = "recommended"
+		}
+		items = append(items, item)
+	}
+
+	for _, rec := range recommendedModels {
+		if existingModels[rec.Name] || existingModels[rec.Name+":latest"] {
+			continue
+		}
+		items = append(items, rec)
+		if isCloudModel(rec.Name) {
+			cloudModels[rec.Name] = true
+		}
+	}
+
+	checked := make(map[string]bool, len(preChecked))
+	for _, n := range preChecked {
+		checked[n] = true
+	}
+
+	// Resolve current to full name (e.g., "llama3.2" -> "llama3.2:latest")
+	for _, item := range items {
+		if item.Name == current || strings.HasPrefix(item.Name, current+":") {
+			current = item.Name
+			break
+		}
+	}
+
+	if checked[current] {
+		preChecked = append([]string{current}, slices.DeleteFunc(preChecked, func(m string) bool { return m == current })...)
+	}
+
+	// Non-existing models get "install?" suffix and are pushed to the bottom.
+	// When user has no models, preserve recommended order.
+	notInstalled := make(map[string]bool)
+	for i := range items {
+		if !existingModels[items[i].Name] {
+			notInstalled[items[i].Name] = true
+			if items[i].Description != "" {
+				items[i].Description += ", install?"
+			} else {
+				items[i].Description = "install?"
+			}
+		}
+	}
+
+	if hasLocalModel || hasCloudModel {
+		slices.SortStableFunc(items, func(a, b selectItem) int {
+			ac, bc := checked[a.Name], checked[b.Name]
+			aNew, bNew := notInstalled[a.Name], notInstalled[b.Name]
+
+			if ac != bc {
+				if ac {
+					return -1
+				}
+				return 1
+			}
+			if !ac && !bc && aNew != bNew {
+				if aNew {
+					return 1
+				}
+				return -1
+			}
+			return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+		})
+	}
+
+	return items, preChecked, existingModels, cloudModels
+}
+
+func isCloudModel(name string) bool {
+	return strings.HasSuffix(name, ":cloud")
+}
+
+func pullModel(ctx context.Context, client *api.Client, model string) error {
+	p := progress.NewProgress(os.Stderr)
+	defer p.Stop()
+
+	bars := make(map[string]*progress.Bar)
+	var status string
+	var spinner *progress.Spinner
+
+	fn := func(resp api.ProgressResponse) error {
+		if resp.Digest != "" {
+			if resp.Completed == 0 {
+				return nil
+			}
+
+			if spinner != nil {
+				spinner.Stop()
+			}
+
+			bar, ok := bars[resp.Digest]
+			if !ok {
+				name, isDigest := strings.CutPrefix(resp.Digest, "sha256:")
+				name = strings.TrimSpace(name)
+				if isDigest {
+					name = name[:min(12, len(name))]
+				}
+				bar = progress.NewBar(fmt.Sprintf("pulling %s:", name), resp.Total, resp.Completed)
+				bars[resp.Digest] = bar
+				p.Add(resp.Digest, bar)
+			}
+
+			bar.Set(resp.Completed)
+		} else if status != resp.Status {
+			if spinner != nil {
+				spinner.Stop()
+			}
+
+			status = resp.Status
+			spinner = progress.NewSpinner(status)
+			p.Add(status, spinner)
+		}
+
+		return nil
+	}
+
+	request := api.PullRequest{Name: model}
+	return client.Pull(ctx, &request, fn)
 }

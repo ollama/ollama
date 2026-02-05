@@ -211,6 +211,7 @@ type MessageDelta struct {
 
 // DeltaUsage contains cumulative token usage
 type DeltaUsage struct {
+	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
 }
 
@@ -721,6 +722,7 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 			})
 		}
 
+		c.inputTokens = r.Metrics.PromptEvalCount
 		c.outputTokens = r.Metrics.EvalCount
 		stopReason := mapStopReason(r.DoneReason, len(c.toolCallsSent) > 0)
 
@@ -732,6 +734,7 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 					StopReason: stopReason,
 				},
 				Usage: DeltaUsage{
+					InputTokens:  c.inputTokens,
 					OutputTokens: c.outputTokens,
 				},
 			},

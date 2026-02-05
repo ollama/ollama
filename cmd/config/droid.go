@@ -39,7 +39,7 @@ type modelEntry struct {
 
 func (d *Droid) String() string { return "Droid" }
 
-func (d *Droid) Run(model string) error {
+func (d *Droid) Run(model string, args []string) error {
 	if _, err := exec.LookPath("droid"); err != nil {
 		return fmt.Errorf("droid is not installed, install from https://docs.factory.ai/cli/getting-started/quickstart")
 	}
@@ -53,7 +53,7 @@ func (d *Droid) Run(model string) error {
 		return fmt.Errorf("setup failed: %w", err)
 	}
 
-	cmd := exec.Command("droid")
+	cmd := exec.Command("droid", args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

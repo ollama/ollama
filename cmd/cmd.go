@@ -29,6 +29,7 @@ import (
 	"github.com/containerd/console"
 	"github.com/mattn/go-runewidth"
 	"github.com/olekukonko/tablewriter"
+	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sync/errgroup"
@@ -52,7 +53,7 @@ import (
 	"github.com/ollama/ollama/x/imagegen"
 )
 
-const ConnectInstructions = "To sign in, navigate to:\n    %s\n\n"
+const ConnectInstructions = "If your browser did not open, navigate to:\n    %s\n\n"
 
 // ensureThinkingSupport emits a warning if the model does not advertise thinking support
 func ensureThinkingSupport(ctx context.Context, client *api.Client, name string) {
@@ -366,14 +367,25 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
 		return err
 	} else if info.RemoteHost != "" {
 		// Cloud model, no need to load/unload
+
+		isCloud := strings.HasPrefix(info.RemoteHost, "https://ollama.com")
+
+		// Check if user is signed in for ollama.com cloud models
+		if isCloud {
+			if _, err := client.Whoami(cmd.Context()); err != nil {
+				return err
+			}
+		}
+
 		if opts.ShowConnect {
 			p.StopAndClear()
-			if strings.HasPrefix(info.RemoteHost, "https://ollama.com") {
+			if isCloud {
 				fmt.Fprintf(os.Stderr, "Connecting to '%s' on 'ollama.com' ⚡\n", info.RemoteModel)
 			} else {
 				fmt.Fprintf(os.Stderr, "Connecting to '%s' on '%s'\n", info.RemoteModel, info.RemoteHost)
 			}
 		}
+
 		return nil
 	}
 
@@ -663,6 +675,7 @@ func SigninHandler(cmd *cobra.Command, args []string) error {
 			fmt.Println()
 
 			if aErr.SigninURL != "" {
+				_ = browser.OpenURL(aErr.SigninURL)
 				fmt.Printf(ConnectInstructions, aErr.SigninURL)
 			}
 			return nil
