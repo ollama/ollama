@@ -8,20 +8,6 @@ import (
 	"testing"
 )
 
-// Mock API client for testing
-type mockAliasClient struct {
-	setAliasCalls    []setAliasCall
-	deleteAliasCalls []string
-	setAliasErr      error
-	deleteAliasErr   error
-}
-
-type setAliasCall struct {
-	alias          string
-	target         string
-	prefixMatching bool
-}
-
 // TestSetAliases_CloudModel verifies that cloud models set both prefix aliases
 func TestSetAliases_CloudModel(t *testing.T) {
 	// Test the SetAliases logic by checking the alias map behavior
@@ -167,7 +153,7 @@ func TestSaveAliases_NilMap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to load: %v", err)
 	}
-	if loaded.Aliases != nil && len(loaded.Aliases) > 0 {
+	if len(loaded.Aliases) > 0 {
 		t.Errorf("aliases should be nil or empty, got %v", loaded.Aliases)
 	}
 }
@@ -378,16 +364,8 @@ func TestAtomicUpdate_ServerFailsConfigNotSaved(t *testing.T) {
 
 	// Simulate: server fails, config should NOT be saved
 	serverErr := errors.New("server unavailable")
-	configSaved := false
 
-	if serverErr != nil {
-		// Server failed - don't save config
-		configSaved = false
-	} else {
-		configSaved = true
-	}
-
-	if configSaved {
+	if serverErr == nil {
 		t.Error("config should NOT be saved when server fails")
 	}
 }
@@ -398,21 +376,13 @@ func TestAtomicUpdate_ServerSucceedsConfigSaved(t *testing.T) {
 	setTestHome(t, tmpDir)
 
 	// Simulate: server succeeds, config should be saved
-	var serverErr error = nil
-	configSaved := false
-
+	var serverErr error
 	if serverErr != nil {
-		configSaved = false
-	} else {
-		// Server succeeded - save config
-		if err := saveAliases("claude", map[string]string{"primary": "model"}); err != nil {
-			t.Fatalf("saveAliases failed: %v", err)
-		}
-		configSaved = true
+		t.Fatal("server should succeed")
 	}
 
-	if !configSaved {
-		t.Error("config should be saved when server succeeds")
+	if err := saveAliases("claude", map[string]string{"primary": "model"}); err != nil {
+		t.Fatalf("saveAliases failed: %v", err)
 	}
 
 	// Verify it was actually saved
@@ -606,12 +576,6 @@ func TestSwitchingScenarios(t *testing.T) {
 		}
 	})
 }
-
-// mockRunner is a test runner that doesn't call the real server
-type mockRunner struct{}
-
-func (m *mockRunner) Run(model string, args []string) error { return nil }
-func (m *mockRunner) String() string                        { return "mock" }
 
 // TestToolCapabilityFiltering tests the tool capability detection logic
 func TestToolCapabilityFiltering(t *testing.T) {

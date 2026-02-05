@@ -367,11 +367,19 @@ Examples:
 			}
 
 			if modelFlag != "" {
+				client, err := api.ClientFromEnvironment()
+				if err != nil {
+					return err
+				}
+				if _, err := client.Show(cmd.Context(), &api.ShowRequest{Name: modelFlag}); err != nil {
+					return fmt.Errorf("model %q not found", modelFlag)
+				}
 				if err := saveIntegration(name, []string{modelFlag}); err != nil {
 					return fmt.Errorf("failed to save: %w", err)
 				}
 			}
 
+			forceConfig := false
 			if !configFlag {
 				if config, err := loadIntegration(name); err == nil && len(config.Models) > 0 {
 					model := config.Models[0]
@@ -380,6 +388,11 @@ Examples:
 					}
 
 					client, _ := api.ClientFromEnvironment()
+					if _, err := client.Show(cmd.Context(), &api.ShowRequest{Name: model}); err != nil {
+						fmt.Fprintf(os.Stderr, "%sConfigured model %q not found%s\n\n", ansiGray, model, ansiReset)
+						forceConfig = true
+						goto configureModel
+					}
 					needsLocalSave := false
 
 					if config.Aliases["primary"] != model {
@@ -411,12 +424,13 @@ Examples:
 				}
 			}
 
+		configureModel:
 			if ac, ok := r.(AliasConfigurer); ok {
 				var existingAliases map[string]string
 				if existing, err := loadIntegration(name); err == nil {
 					existingAliases = existing.Aliases
 				}
-				aliases, updated, err := ac.ConfigureAliases(cmd.Context(), "", existingAliases, configFlag)
+				aliases, updated, err := ac.ConfigureAliases(cmd.Context(), "", existingAliases, configFlag || forceConfig)
 				if errors.Is(err, errCancelled) {
 					return nil
 				}
