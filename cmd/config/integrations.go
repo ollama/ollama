@@ -482,6 +482,8 @@ Examples:
 						}
 					}
 				}
+			} else if saved, err := loadIntegration(name); err == nil && len(saved.Models) > 0 && !configFlag {
+				return runIntegration(name, saved.Models[0], passArgs)
 			} else {
 				var err error
 				models, err = selectModels(cmd.Context(), name, "")

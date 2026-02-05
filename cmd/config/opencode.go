@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -10,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 )
 
@@ -113,6 +115,8 @@ func (o *OpenCode) Edit(modelList []string) error {
 		}
 	}
 
+	client, _ := api.ClientFromEnvironment()
+
 	for _, model := range modelList {
 		if existing, ok := models[model].(map[string]any); ok {
 			// migrate existing models without _launch marker
@@ -122,12 +126,26 @@ func (o *OpenCode) Edit(modelList []string) error {
 					existing["name"] = strings.TrimSuffix(name, " [Ollama]")
 				}
 			}
+			// TODO(parthsareen): grab context/output limits from model info instead of hardcoding
+			if isCloudModel(context.Background(), client, model) {
+				existing["limit"] = map[string]any{
+					"context": 128000,
+					"output":  65536,
+				}
+			}
 			continue
 		}
-		models[model] = map[string]any{
+		entry := map[string]any{
 			"name":    model,
 			"_launch": true,
 		}
+		if isCloudModel(context.Background(), client, model) {
+			entry["limit"] = map[string]any{
+				"context": 128000,
+				"output":  65536,
+			}
+		}
+		models[model] = entry
 	}
 
 	ollama["models"] = models
