@@ -164,16 +164,16 @@ type model struct {
 	err             error
 
 	// Modal state
-	showingModal    bool            // true when model picker modal is visible
-	modalSelector   selectorModel   // the selector model for the modal
-	modalItems      []SelectItem    // cached items for the modal
+	showingModal  bool          // true when model picker modal is visible
+	modalSelector selectorModel // the selector model for the modal
+	modalItems    []SelectItem  // cached items for the modal
 
 	// Sign-in dialog state
-	showingSignIn     bool            // true when sign-in dialog is visible
-	signInURL         string          // URL for sign-in
-	signInModel       string          // model that requires sign-in
-	signInSpinner     int             // spinner frame index
-	signInFromModal   bool            // true if sign-in was triggered from modal (not main menu)
+	showingSignIn   bool   // true when sign-in dialog is visible
+	signInURL       string // URL for sign-in
+	signInModel     string // model that requires sign-in
+	signInSpinner   int    // spinner frame index
+	signInFromModal bool   // true if sign-in was triggered from modal (not main menu)
 }
 
 // signInTickMsg is sent to animate the sign-in spinner
@@ -729,7 +729,7 @@ func (m model) renderSignInDialog() string {
 	content.WriteString(fmt.Sprintf("To use %s, please sign in.\n\n", selectedStyle.Render(m.signInModel)))
 
 	content.WriteString("Navigate to:\n")
-	content.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Render("  "+m.signInURL))
+	content.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Render("  " + m.signInURL))
 	content.WriteString("\n\n")
 
 	content.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(
