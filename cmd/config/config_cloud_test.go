@@ -380,10 +380,6 @@ func TestAtomicUpdate_ServerFailsConfigNotSaved(t *testing.T) {
 	serverErr := errors.New("server unavailable")
 	configSaved := false
 
-	// This is the pattern used in ensureAliases and LaunchCmd:
-	// 1. Call SetAliases (server)
-	// 2. Only if successful, call saveAliases (local)
-
 	if serverErr != nil {
 		// Server failed - don't save config
 		configSaved = false
@@ -483,19 +479,6 @@ func containsHelper(s, substr string) bool {
 		}
 	}
 	return false
-}
-
-// TestEnsureAliases_NotAliasConfigurer verifies behavior for non-AliasConfigurer runners
-func TestEnsureAliases_NotAliasConfigurer(t *testing.T) {
-	// Droid doesn't implement AliasConfigurer
-	d := &Droid{}
-	updated, err := ensureAliases(context.Background(), d, "droid", "", nil, false)
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-	if updated {
-		t.Error("should return updated=false for non-AliasConfigurer")
-	}
 }
 
 // TestClaudeImplementsAliasConfigurer verifies Claude implements the interface
@@ -709,7 +692,6 @@ func TestModelsAndAliasesMustStayInSync(t *testing.T) {
 		}
 
 		// The fix: when updating aliases, also update models
-		// This is what ensureAliases now does
 		if err := saveIntegration("claude", []string{loaded.Aliases["primary"]}); err != nil {
 			t.Fatal(err)
 		}
@@ -733,12 +715,11 @@ func TestModelsAndAliasesMustStayInSync(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// Now simulate what ensureAliases does: update aliases AND models together
+		// Update aliases AND models together
 		newAliases := map[string]string{"primary": "updated-model"}
 		if err := saveAliases("claude", newAliases); err != nil {
 			t.Fatal(err)
 		}
-		// ensureAliases now also calls saveIntegration
 		if err := saveIntegration("claude", []string{newAliases["primary"]}); err != nil {
 			t.Fatal(err)
 		}

@@ -289,40 +289,6 @@ func ensureAuth(ctx context.Context, client *api.Client, cloudModels map[string]
 	}
 }
 
-func ensureAliases(ctx context.Context, r Runner, name string, primaryModel string, existing map[string]string, force bool) (bool, error) {
-	ac, ok := r.(AliasConfigurer)
-	if !ok {
-		return false, nil
-	}
-
-	aliases, updated, err := ac.ConfigureAliases(ctx, primaryModel, existing, force)
-	if err != nil {
-		return false, err
-	}
-	if !updated {
-		return false, nil
-	}
-
-	if err := ac.SetAliases(ctx, aliases); err != nil {
-		fmt.Fprintf(os.Stderr, "%sWarning: Could not update server aliases: %v%s\n", ansiGray, err, ansiReset)
-		fmt.Fprintf(os.Stderr, "%sConfiguration not saved.%s\n\n", ansiGray, ansiReset)
-		return false, nil
-	}
-
-	if err := saveAliases(name, aliases); err != nil {
-		return false, err
-	}
-
-	// Keep models[0] in sync with aliases["primary"]
-	if aliases["primary"] != "" {
-		if err := saveIntegration(name, []string{aliases["primary"]}); err != nil {
-			return false, err
-		}
-	}
-
-	return true, nil
-}
-
 func runIntegration(name, modelName string, args []string) error {
 	r, ok := integrations[name]
 	if !ok {
@@ -400,7 +366,13 @@ Examples:
 				return fmt.Errorf("unknown integration: %s", name)
 			}
 
-			if !configFlag && modelFlag == "" {
+			if modelFlag != "" {
+				if err := saveIntegration(name, []string{modelFlag}); err != nil {
+					return fmt.Errorf("failed to save: %w", err)
+				}
+			}
+
+			if !configFlag {
 				if config, err := loadIntegration(name); err == nil && len(config.Models) > 0 {
 					model := config.Models[0]
 					if config.Aliases == nil {
@@ -435,21 +407,11 @@ Examples:
 						_ = saveAliases(name, config.Aliases)
 					}
 
-					if _, err := ensureAliases(cmd.Context(), r, name, model, config.Aliases, false); errors.Is(err, errCancelled) {
-						return nil
-					} else if err != nil {
-						return err
-					}
 					return runIntegration(name, model, passArgs)
 				}
 			}
 
 			if ac, ok := r.(AliasConfigurer); ok {
-				// --model flag: skip alias configuration, just run with specified model
-				if modelFlag != "" {
-					return runIntegration(name, modelFlag, passArgs)
-				}
-
 				var existingAliases map[string]string
 				if existing, err := loadIntegration(name); err == nil {
 					existingAliases = existing.Aliases
