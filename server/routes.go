@@ -55,8 +55,8 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 	"github.com/ollama/ollama/x/imagegen"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	xserver "github.com/ollama/ollama/x/server"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const signinURLStr = "https://ollama.com/connect?name=%s&key=%s"
@@ -79,17 +79,13 @@ func experimentEnabled(name string) bool {
 
 var useClient2 = experimentEnabled("client2")
 
-// Low VRAM mode is based on the sum of total VRAM (not free) and triggers
-// reduced context length on some models
-var lowVRAMThreshold uint64 = 20 * format.GibiByte
-
 var mode string = gin.DebugMode
 
 type Server struct {
-	addr    net.Addr
-	sched   *Scheduler
-	lowVRAM bool
-	metrics *telemetry.Metrics
+	addr          net.Addr
+	sched         *Scheduler
+	defaultNumCtx int
+	metrics       *telemetry.Metrics
 }
 
 func init() {
@@ -112,8 +108,12 @@ var (
 	errBadTemplate = errors.New("template error")
 )
 
-func modelOptions(model *Model, requestOpts map[string]any) (api.Options, error) {
+func (s *Server) modelOptions(model *Model, requestOpts map[string]any) (api.Options, error) {
 	opts := api.DefaultOptions()
+	if opts.NumCtx == 0 {
+		opts.NumCtx = s.defaultNumCtx
+	}
+
 	if err := opts.FromMap(model.Options); err != nil {
 		return api.Options{}, err
 	}
@@ -145,18 +145,9 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 		return nil, nil, nil, fmt.Errorf("%s %w", name, err)
 	}
 
-	opts, err := modelOptions(model, requestOpts)
+	opts, err := s.modelOptions(model, requestOpts)
 	if err != nil {
 		return nil, nil, nil, err
-	}
-
-	// This model is much more capable with a larger context, so set that
-	// unless it would penalize performance too much
-	if !s.lowVRAM && slices.Contains([]string{
-		"gptoss", "gpt-oss",
-		"qwen3vl", "qwen3vlmoe",
-	}, model.Config.ModelFamily) {
-		opts.NumCtx = max(opts.NumCtx, 8192)
 	}
 
 	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive)
@@ -1757,10 +1748,18 @@ func Serve(ln net.Listener) error {
 	for _, gpu := range gpus {
 		totalVRAM += gpu.TotalMemory - envconfig.GpuOverhead()
 	}
-	if totalVRAM < lowVRAMThreshold {
-		s.lowVRAM = true
-		slog.Info("entering low vram mode", "total vram", format.HumanBytes2(totalVRAM), "threshold", format.HumanBytes2(lowVRAMThreshold))
+
+	// Set default context based on VRAM tier
+	// Use slightly lower thresholds (47/23 GiB vs. 48/24 GiB) to account for small differences in the exact value
+	switch {
+	case totalVRAM >= 47*format.GibiByte:
+		s.defaultNumCtx = 262144
+	case totalVRAM >= 23*format.GibiByte:
+		s.defaultNumCtx = 32768
+	default:
+		s.defaultNumCtx = 4096
 	}
+	slog.Info("vram-based default context", "total_vram", format.HumanBytes2(totalVRAM), "default_num_ctx", s.defaultNumCtx)
 
 	err = srvr.Serve(ln)
 	// If server is closed from the signal handler, wait for the ctx to be done
@@ -1934,8 +1933,8 @@ func (s *Server) PsHandler(c *gin.Context) {
 			Details:   modelDetails,
 			ExpiresAt: v.expiresAt,
 		}
-		if v.Options != nil {
-			mr.ContextLength = v.Options.NumCtx
+		if v.llama != nil {
+			mr.ContextLength = v.llama.ContextLength()
 		}
 		// The scheduler waits to set expiresAt, so if a model is loading it's
 		// possible that it will be set to the unix epoch. For those cases, just

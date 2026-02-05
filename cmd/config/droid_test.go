@@ -218,7 +218,7 @@ func TestDroidEdit(t *testing.T) {
 			}
 		}
 
-		if model["baseUrl"] != "http://localhost:11434/v1" {
+		if model["baseUrl"] != "http://127.0.0.1:11434/v1" {
 			t.Errorf("unexpected baseUrl: %s", model["baseUrl"])
 		}
 		if model["apiKey"] != "ollama" {
@@ -447,7 +447,7 @@ const testDroidSettingsFixture = `{
     {
       "model": "existing-ollama-model",
       "displayName": "existing-ollama-model",
-      "baseUrl": "http://localhost:11434/v1",
+      "baseUrl": "http://127.0.0.1:11434/v1",
       "apiKey": "ollama",
       "provider": "generic-chat-completion-api",
       "maxOutputTokens": 64000,

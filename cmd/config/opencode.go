@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/ollama/ollama/envconfig"
 )
 
 // OpenCode implements Runner and Editor for OpenCode integration
@@ -16,7 +18,7 @@ type OpenCode struct{}
 
 func (o *OpenCode) String() string { return "OpenCode" }
 
-func (o *OpenCode) Run(model string) error {
+func (o *OpenCode) Run(model string, args []string) error {
 	if _, err := exec.LookPath("opencode"); err != nil {
 		return fmt.Errorf("opencode is not installed, install from https://opencode.ai")
 	}
@@ -30,7 +32,7 @@ func (o *OpenCode) Run(model string) error {
 		return fmt.Errorf("setup failed: %w", err)
 	}
 
-	cmd := exec.Command("opencode")
+	cmd := exec.Command("opencode", args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -88,7 +90,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 			"npm":  "@ai-sdk/openai-compatible",
 			"name": "Ollama (local)",
 			"options": map[string]any{
-				"baseURL": "http://localhost:11434/v1",
+				"baseURL": envconfig.Host().String() + "/v1",
 			},
 		}
 	}

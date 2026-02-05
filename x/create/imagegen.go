@@ -15,15 +15,15 @@ import (
 // CreateImageGenModel imports an image generation model from a directory.
 // Stores each tensor as a separate blob for fine-grained deduplication.
 // If quantize is specified, linear weights in transformer/text_encoder are quantized.
-// Supported quantization types: fp8 (or empty for no quantization).
+// Supported quantization types: q4, q8, nvfp4, mxfp8 (or empty for no quantization).
 // Layer creation and manifest writing are done via callbacks to avoid import cycles.
 func CreateImageGenModel(modelName, modelDir, quantize string, createLayer LayerCreator, createTensorLayer QuantizingTensorLayerCreator, writeManifest ManifestWriter, fn func(status string)) error {
 	// Validate quantization type
 	switch quantize {
-	case "", "fp4", "fp8":
+	case "", "q4", "q8", "nvfp4", "mxfp8":
 		// valid
 	default:
-		return fmt.Errorf("unsupported quantization type %q: supported types are fp4, fp8", quantize)
+		return fmt.Errorf("unsupported quantization type %q: supported types are q4, q8, nvfp4, mxfp8", quantize)
 	}
 
 	var layers []LayerInfo
@@ -89,7 +89,7 @@ func CreateImageGenModel(modelName, modelDir, quantize string, createLayer Layer
 
 				// Determine quantization type for this tensor (empty string if not quantizing)
 				quantizeType := ""
-				if quantize != "" && ShouldQuantize(tensorName, component) && canQuantizeShape(td.Shape) {
+				if quantize != "" && ShouldQuantize(tensorName, component) && canQuantizeShape(td.Shape, quantize) {
 					quantizeType = quantize
 				}
 
@@ -213,10 +213,18 @@ func CreateImageGenModel(modelName, modelDir, quantize string, createLayer Layer
 }
 
 // canQuantizeShape returns true if a tensor shape is compatible with MLX quantization.
-// MLX requires the last dimension to be divisible by the group size (32).
-func canQuantizeShape(shape []int32) bool {
+// MLX requires the last dimension to be divisible by the group size.
+// nvfp4: 16, q4/mxfp8: 32, q8: 64
+func canQuantizeShape(shape []int32, quantize string) bool {
 	if len(shape) < 2 {
 		return false
 	}
-	return shape[len(shape)-1]%32 == 0
+	groupSize := int32(32)
+	switch strings.ToUpper(quantize) {
+	case "NVFP4":
+		groupSize = 16
+	case "Q8":
+		groupSize = 64
+	}
+	return shape[len(shape)-1]%groupSize == 0
 }

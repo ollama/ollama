@@ -71,6 +71,10 @@
     {
       "source": "/api",
       "destination": "/api/introduction"
+    },
+    {
+      "source": "/integrations/clawdbot",
+      "destination": "/integrations/openclaw"
     }
   ],
   "navigation": {
@@ -103,6 +107,7 @@
             "pages": [
               "/integrations/claude-code",
               "/integrations/cline",
+              "/integrations/openclaw",
               "/integrations/codex",
               "/integrations/droid",
               "/integrations/goose",

@@ -80,6 +80,7 @@ type LlamaServer interface {
 	GetPort() int
 	GetDeviceInfos(ctx context.Context) []ml.DeviceInfo
 	HasExited() bool
+	ContextLength() int
 }
 
 // llmServer is an instance of a runner hosting a single model
@@ -1200,7 +1201,8 @@ func (s *llmServer) initModel(ctx context.Context, req LoadRequest, operation Lo
 
 	resp, err := http.DefaultClient.Do(r)
 	if err != nil {
-		return nil, fmt.Errorf("do load request: %w", err)
+		slog.Error("do load request", "error", err)
+		return nil, errors.New("model failed to load, this may be due to resource limitations or an internal error, check ollama server logs for details")
 	}
 	defer resp.Body.Close()
 
@@ -1899,6 +1901,10 @@ func (s *llmServer) VRAMByGPU(id ml.DeviceID) uint64 {
 	}
 
 	return 0
+}
+
+func (s *llmServer) ContextLength() int {
+	return s.options.NumCtx
 }
 
 func (s *ollamaServer) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {
