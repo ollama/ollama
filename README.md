@@ -467,6 +467,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [ollama-co2](https://github.com/carbonatedWaterOrg/ollama-co2) (FastAPI web interface for monitoring and managing local and remote Ollama servers with real-time model monitoring and concurrent downloads)
 - [Hillnote](https://hillnote.com) (A Markdown-first workspace designed to supercharge your AI workflow. Create documents ready to integrate with Claude, ChatGPT, Gemini, Cursor, and more - all while keeping your work on your device.)
 - [Stakpak](https://github.com/stakpak/agent) (An open source, vendor neutral DevOps agent that works with any model, and any stack, for teams who just want to ship)
+- [Underlator](https://github.com/sengeer/underlator) (Secure multi-platform desktop LLM app for translation and document analysis with minimalist, keyboard-first UI)
 
 ### Cloud
 
