@@ -194,4 +194,3 @@ func isPiOllamaModel(cfg map[string]any) bool {
 	}
 	return false
 }
-
