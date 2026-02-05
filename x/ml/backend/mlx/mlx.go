@@ -901,8 +901,28 @@ func (a *Array) LayerNorm(ctx ml.Context, w, b ml.Tensor, eps float32) ml.Tensor
 }
 
 func (a *Array) L2Norm(ctx ml.Context, eps float32) ml.Tensor {
-	// TODO implement
-	panic("NOT YET IMPLEMENTED")
+	// L2 normalization: x / (||x||₂ + eps)
+	// Uses MLX's optimized linalg.norm_l2
+	stream := ctx.(*Context).stream
+	axis := C.int(-1)
+
+	// Step 1: Compute L2 norm along last axis, keeping dims for broadcasting
+	var norm C.mlx_array
+	C.mlx_linalg_norm_l2(&norm, a.a, &axis, 1, true, stream)
+
+	// Step 2: Add eps for numerical stability
+	epsArray := C.mlx_array_new_float(C.float(eps))
+	var normPlusEps C.mlx_array
+	C.mlx_add(&normPlusEps, norm, epsArray, stream)
+	C.mlx_array_free(norm)
+	C.mlx_array_free(epsArray)
+
+	// Step 3: Divide x by (norm + eps) to get unit vector
+	var result C.mlx_array
+	C.mlx_divide(&result, a.a, normPlusEps, stream)
+	C.mlx_array_free(normPlusEps)
+
+	return newArray(ctx.(*Context), result)
 }
 
 func (t Array) AvgPool2D(ctx ml.Context, k, s int, p float32) ml.Tensor {
