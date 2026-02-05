@@ -1,13 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { Model } from "@/gotypes";
 import { getModels } from "@/api";
-import { mergeModels } from "@/utils/mergeModels";
-import { useSettings } from "./useSettings";
 import { useMemo } from "react";
 
+const DEFAULT_MODEL = "gemma3:4b";
+
 export function useModels(searchQuery = "") {
-  const { settings } = useSettings();
-  const localQuery = useQuery<Model[], Error>({
+  const query = useQuery<Model[], Error>({
     queryKey: ["models", searchQuery],
     queryFn: () => getModels(searchQuery),
     gcTime: 10 * 60 * 1000, // Keep in cache for 10 minutes
@@ -19,33 +18,18 @@ export function useModels(searchQuery = "") {
     refetchIntervalInBackground: true,
   });
 
-  const allModels = useMemo(() => {
-    const models = mergeModels(localQuery.data || [], settings.airplaneMode);
-
-    if (searchQuery && searchQuery.trim()) {
-      const query = searchQuery.toLowerCase().trim();
-      const filteredModels = models.filter((model) =>
-        model.model.toLowerCase().includes(query),
-      );
-
-      const seen = new Set<string>();
-      return filteredModels.filter((model) => {
-        const currentModel = model.model.toLowerCase();
-        if (seen.has(currentModel)) {
-          return false;
-        }
-        seen.add(currentModel);
-        return true;
-      });
+  const models = useMemo(() => {
+    const data = query.data || [];
+    if (data.length === 0) {
+      return [new Model({ model: DEFAULT_MODEL })];
     }
-
-    return models;
-  }, [localQuery.data, searchQuery, settings.airplaneMode]);
+    return data;
+  }, [query.data]);
 
   return {
-    ...localQuery,
-    data: allModels,
-    isLoading: localQuery.isLoading,
+    ...query,
+    data: models,
+    isLoading: query.isLoading,
   };
 }
 

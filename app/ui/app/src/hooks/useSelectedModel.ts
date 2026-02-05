@@ -4,7 +4,6 @@ import { useModels } from "./useModels";
 import { useChat } from "./useChats";
 import { useSettings } from "./useSettings.ts";
 import { Model } from "@/gotypes";
-import { FEATURED_MODELS } from "@/utils/mergeModels";
 import { getTotalVRAM } from "@/utils/vram.ts";
 import { getInferenceCompute } from "@/api";
 
@@ -46,77 +45,13 @@ export function useSelectedModel(currentChatId?: string, searchQuery?: string) {
   const restoredChatRef = useRef<string | null>(null);
 
   const selectedModel: Model | null = useMemo(() => {
-    // if airplane mode is on and selected model ends with cloud,
-    // switch to recommended default model
-    if (settings.airplaneMode && settings.selectedModel?.endsWith("cloud")) {
-      return (
-        models.find((m) => m.model === recommendedModel) ||
-        models.find((m) => m.isCloud) ||
-        models.find((m) => m.digest === undefined || m.digest === "") ||
-        models[0] ||
-        null
-      );
-    }
-
-    // Migration logic: if turboEnabled is true and selectedModel is a base model,
-    // migrate to the cloud version and disable turboEnabled permanently
-    // TODO: remove this logic in a future release
-    const baseModelsToMigrate = [
-      "gpt-oss:20b",
-      "gpt-oss:120b",
-      "deepseek-v3.1:671b",
-      "qwen3-coder:480b",
-    ];
-    const shouldMigrate =
-      !settings.airplaneMode &&
-      settings.turboEnabled &&
-      baseModelsToMigrate.includes(settings.selectedModel);
-
-    if (shouldMigrate) {
-      const cloudModel = `${settings.selectedModel}cloud`;
-      return (
-        models.find((m) => m.model === cloudModel) ||
-        new Model({
-          model: cloudModel,
-          cloud: true,
-          ollama_host: false,
-        })
-      );
-    }
-
     return (
       models.find((m) => m.model === settings.selectedModel) ||
       (settings.selectedModel &&
-        new Model({
-          model: settings.selectedModel,
-          cloud: FEATURED_MODELS.some(
-            (f) => f.endsWith("cloud") && f === settings.selectedModel,
-          ),
-          ollama_host: false,
-        })) ||
+        new Model({ model: settings.selectedModel })) ||
       null
     );
-  }, [models, settings.selectedModel, settings.airplaneMode, recommendedModel]);
-
-  useEffect(() => {
-    if (!selectedModel) return;
-
-    if (
-      settings.airplaneMode &&
-      settings.selectedModel?.endsWith("cloud") &&
-      selectedModel.model !== settings.selectedModel
-    ) {
-      setSettings({ SelectedModel: selectedModel.model });
-    }
-
-    if (
-      !settings.airplaneMode &&
-      settings.turboEnabled &&
-      selectedModel.model !== settings.selectedModel
-    ) {
-      setSettings({ SelectedModel: selectedModel.model, TurboEnabled: false });
-    }
-  }, [selectedModel, settings.airplaneMode, settings.selectedModel]);
+  }, [models, settings.selectedModel]);
 
   // Set model from chat history when chat data loads
   useEffect(() => {
@@ -169,8 +104,6 @@ export function useSelectedModel(currentChatId?: string, searchQuery?: string) {
 
     const defaultModel =
       models.find((m) => m.model === recommendedModel) ||
-      models.find((m) => m.isCloud()) ||
-      models.find((m) => m.digest === undefined || m.digest === "") ||
       models[0];
 
     if (defaultModel) {
