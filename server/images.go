@@ -105,12 +105,15 @@ func (m *Model) Capabilities() []model.Capability {
 	}
 
 	builtinParser := parsers.ParserForName(m.Config.Parser)
+	isGptoss := slices.Contains([]string{"gptoss", "gpt-oss"}, m.Config.ModelFamily)
+
 	// Check for tools capability
+	// gptoss models use harmony parser which supports tools via browser.search, browser.open, etc.
 	v, err := m.Template.Vars()
 	if err != nil {
 		slog.Warn("model template contains errors", "error", err)
 	}
-	if slices.Contains(v, "tools") || (builtinParser != nil && builtinParser.HasToolSupport()) {
+	if slices.Contains(v, "tools") || isGptoss || (builtinParser != nil && builtinParser.HasToolSupport()) {
 		capabilities = append(capabilities, model.CapabilityTools)
 	}
 
@@ -132,7 +135,6 @@ func (m *Model) Capabilities() []model.Capability {
 	// Check for thinking capability
 	openingTag, closingTag := thinking.InferTags(m.Template.Template)
 	hasTags := openingTag != "" && closingTag != ""
-	isGptoss := slices.Contains([]string{"gptoss", "gpt-oss"}, m.Config.ModelFamily)
 	if hasTags || isGptoss || (builtinParser != nil && builtinParser.HasThinkingSupport()) {
 		capabilities = append(capabilities, model.CapabilityThinking)
 	}

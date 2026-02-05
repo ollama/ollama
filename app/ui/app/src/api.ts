@@ -20,12 +20,31 @@ import { API_BASE, OLLAMA_DOT_COM } from "./lib/config";
 // Extend Model class with utility methods
 declare module "@/gotypes" {
   interface Model {
+    families?: string[];
     isCloud(): boolean;
+    supportsWebSearch(): boolean;
   }
 }
 
 Model.prototype.isCloud = function (): boolean {
   return this.model.endsWith("cloud");
+};
+
+Model.prototype.supportsWebSearch = function (): boolean {
+  // Check families first (for models with custom names but gptoss architecture)
+  if (this.families && this.families.length > 0) {
+    const familyLower = this.families.map((f: string) => f.toLowerCase());
+    if (familyLower.includes("gptoss") || familyLower.includes("gpt-oss")) {
+      return true;
+    }
+  }
+  // Fallback to model name check for known models
+  const modelLower = this.model.toLowerCase();
+  return (
+    modelLower.startsWith("gpt-oss") ||
+    modelLower.startsWith("qwen3") ||
+    modelLower.startsWith("deepseek-v3")
+  );
 };
 // Helper function to convert Uint8Array to base64
 function uint8ArrayToBase64(uint8Array: Uint8Array): string {
@@ -127,14 +146,15 @@ export async function getModels(query?: string): Promise<Model[]> {
         return !isBertOnly;
       })
       .map((m: ModelResponse) => {
-        // Remove the latest tag from the returned model
-        const modelName = m.name.replace(/:latest$/, "");
-
-        return new Model({
-          model: modelName,
+        // Keep the full model name including :latest to match settings
+        const model = new Model({
+          model: m.name,
           digest: m.digest,
           modified_at: m.modified_at ? new Date(m.modified_at) : undefined,
         });
+        // Preserve families for web search support detection
+        model.families = m.details?.families;
+        return model;
       });
 
     // Filter by query if provided

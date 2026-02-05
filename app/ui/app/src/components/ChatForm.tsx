@@ -149,11 +149,7 @@ function ChatForm({
   } = useSettings();
 
   // current supported models for web search
-  const modelLower = selectedModel?.model.toLowerCase() || "";
-  const supportsWebSearch =
-    modelLower.startsWith("gpt-oss") ||
-    modelLower.startsWith("qwen3") ||
-    modelLower.startsWith("deepseek-v3");
+  const supportsWebSearch = selectedModel?.supportsWebSearch() ?? false;
   // Use per-chat thinking level instead of global
   const thinkLevel: ThinkingLevel =
     settingsThinkLevel === "none" || !settingsThinkLevel

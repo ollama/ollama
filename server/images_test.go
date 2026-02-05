@@ -269,6 +269,28 @@ func TestModelCheckCapabilities(t *testing.T) {
 			},
 			checkCaps: []model.Capability{model.CapabilityImage},
 		},
+		{
+			name: "gptoss model has tools capability",
+			model: Model{
+				ModelPath: completionModelPath,
+				Template:  chatTemplate, // no tools in template
+				Config: model.ConfigV2{
+					ModelFamily: "gptoss",
+				},
+			},
+			checkCaps: []model.Capability{model.CapabilityTools},
+		},
+		{
+			name: "gpt-oss model has tools capability",
+			model: Model{
+				ModelPath: completionModelPath,
+				Template:  chatTemplate, // no tools in template
+				Config: model.ConfigV2{
+					ModelFamily: "gpt-oss",
+				},
+			},
+			checkCaps: []model.Capability{model.CapabilityTools},
+		},
 	}
 
 	for _, tt := range tests {
