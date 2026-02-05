@@ -12,7 +12,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/ollama/ollama/x/imagegen"
+	"github.com/ollama/ollama/x/imagegen/manifest"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/models/qwen3"
 	"github.com/ollama/ollama/x/imagegen/tokenizer"
@@ -61,7 +61,7 @@ func (m *Model) Load(modelName string) error {
 	m.ModelName = modelName
 
 	// Load manifest
-	manifest, err := imagegen.LoadManifest(modelName)
+	manifest, err := manifest.LoadManifest(modelName)
 	if err != nil {
 		return fmt.Errorf("load manifest: %w", err)
 	}

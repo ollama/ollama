@@ -23,6 +23,7 @@ import (
 
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/x/imagegen/manifest"
 )
 
 // Server wraps an MLX runner subprocess to implement llm.LlamaServer.
@@ -106,8 +107,8 @@ func NewServer(modelName string, mode ModelMode) (*Server, error) {
 
 	// Estimate VRAM based on tensor size from manifest
 	var vramSize uint64
-	if manifest, err := LoadManifest(modelName); err == nil {
-		vramSize = uint64(manifest.TotalTensorSize())
+	if modelManifest, err := manifest.LoadManifest(modelName); err == nil {
+		vramSize = uint64(modelManifest.TotalTensorSize())
 	} else {
 		// Fallback: default to 8GB if manifest can't be loaded
 		vramSize = 8 * 1024 * 1024 * 1024

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ollama/ollama/x/imagegen/manifest"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/models/flux2"
 	"github.com/ollama/ollama/x/imagegen/models/zimage"
@@ -27,8 +28,8 @@ var imageGenMu sync.Mutex
 func (s *server) loadImageModel() error {
 	// Check memory requirements before loading
 	var requiredMemory uint64
-	if manifest, err := LoadManifest(s.modelName); err == nil {
-		requiredMemory = uint64(manifest.TotalTensorSize())
+	if modelManifest, err := manifest.LoadManifest(s.modelName); err == nil {
+		requiredMemory = uint64(modelManifest.TotalTensorSize())
 	}
 	availableMemory := mlx.GetMemoryLimit()
 	if availableMemory > 0 && requiredMemory > 0 && availableMemory < requiredMemory {
