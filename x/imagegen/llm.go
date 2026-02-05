@@ -1,6 +1,6 @@
 //go:build mlx
 
-package mlxrunner
+package imagegen
 
 import (
 	"encoding/json"
@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/cache"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/models/glm4_moe_lite"
@@ -197,7 +196,7 @@ func sample(logits *mlx.Array, temp float32, vocabSize int32) *mlx.Array {
 // loadLLMModel loads a safetensors LLM model and its tokenizer from manifest storage.
 func (s *server) loadLLMModel() error {
 	// Load the manifest to get model information
-	manifest, err := imagegen.LoadManifest(s.modelName)
+	manifest, err := LoadManifest(s.modelName)
 	if err != nil {
 		return fmt.Errorf("failed to load manifest: %w", err)
 	}

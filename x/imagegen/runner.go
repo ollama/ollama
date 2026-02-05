@@ -1,7 +1,7 @@
 //go:build mlx
 
-// Package mlxrunner provides a unified MLX runner for both LLM and image generation models.
-package mlxrunner
+// Package imagegen provides a unified MLX runner for both LLM and image generation models.
+package imagegen
 
 import (
 	"context"
@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 )
 
@@ -98,7 +97,7 @@ func Execute(args []string) error {
 // detectModelMode determines whether a model is an LLM or image generation model.
 func detectModelMode(modelName string) ModelMode {
 	// Check for image generation model by looking at model_index.json
-	modelType := imagegen.DetectModelType(modelName)
+	modelType := DetectModelType(modelName)
 	if modelType != "" {
 		// Known image generation model types
 		switch modelType {

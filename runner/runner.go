@@ -3,7 +3,7 @@ package runner
 import (
 	"github.com/ollama/ollama/runner/llamarunner"
 	"github.com/ollama/ollama/runner/ollamarunner"
-	"github.com/ollama/ollama/x/mlxrunner"
+	"github.com/ollama/ollama/x/imagegen"
 )
 
 func Execute(args []string) error {
@@ -15,8 +15,8 @@ func Execute(args []string) error {
 		switch args[0] {
 		case "--ollama-engine":
 			return ollamarunner.Execute(args[1:])
-		case "--mlx-engine":
-			return mlxrunner.Execute(args[1:])
+		case "--imagegen-engine":
+			return imagegen.Execute(args[1:])
 		}
 	}
 	return llamarunner.Execute(args)
