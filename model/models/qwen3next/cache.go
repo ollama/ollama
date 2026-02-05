@@ -64,6 +64,8 @@ type HybridCache struct {
 	curSlots      []int
 	curSlotsInput ml.Tensor
 	curSeqTokens  int
+	// token indices per sequence in batch order
+	curSeqTokenIdxs [][]int32
 
 	// track if EnsureWritable has been called for this forward pass
 	writableEnsured bool
@@ -168,19 +170,44 @@ func (c *HybridCache) StartForward(ctx ml.Context, batch input.Batch, reserve bo
 	}
 
 	if len(c.curSeqs) == 0 {
+		c.curSeqTokenIdxs = c.curSeqTokenIdxs[:0]
 		return nil
+	}
+
+	if cap(c.curSeqTokenIdxs) < len(c.curSeqs) {
+		c.curSeqTokenIdxs = make([][]int32, len(c.curSeqs))
+	} else {
+		c.curSeqTokenIdxs = c.curSeqTokenIdxs[:len(c.curSeqs)]
+	}
+	for i := range c.curSeqTokenIdxs {
+		c.curSeqTokenIdxs[i] = c.curSeqTokenIdxs[i][:0]
+	}
+
+	seqIndex := make(map[int]int, len(c.curSeqs))
+	for i, s := range c.curSeqs {
+		seqIndex[s] = i
+	}
+	for i, s := range batch.Sequences {
+		c.curSeqTokenIdxs[seqIndex[s]] = append(c.curSeqTokenIdxs[seqIndex[s]], int32(i))
 	}
 
 	nTokens := len(batch.Sequences)
 	nSeqs := len(c.curSeqs)
 	want := nTokens / nSeqs
+	uniform := true
 	for _, s := range c.curSeqs {
 		if seqCounts[s] != want {
-			return kvcache.ErrNotSupported
+			uniform = false
+			break
 		}
 	}
 
-	c.curSeqTokens = want
+	if uniform {
+		c.curSeqTokens = want
+	} else {
+		// Mixed batch: recurrent layers will process sequences independently.
+		c.curSeqTokens = 0
+	}
 
 	// When reserving memory for estimation, use fake slot assignments
 	if reserve {
@@ -585,7 +612,101 @@ func (c *HybridCache) UpdateDeltaState(ctx ml.Context, layer int, newState ml.Te
 	c.captureDeltaCheckpoint(ctx, layer, srcF32)
 }
 
-// IsSupportedForBatch returns true if the current batch layout supports recurrent layers.
+// convStateForSlot returns the conv state for a single slot as [convDim, convChannels, 1].
+func (c *HybridCache) convStateForSlot(ctx ml.Context, layer int, slot int) (ml.Tensor, error) {
+	c.ensureWritableOnce(ctx)
+	if c.writableError != nil {
+		return nil, c.writableError
+	}
+	buf := c.convBuffer(ctx, layer)
+	slotIdx := ctx.Input().FromInts([]int32{int32(slot)}, 1)
+	cur := buf.Rows(ctx, slotIdx)
+	return cur.Reshape(ctx, c.convDim, c.convChannels, 1), nil
+}
+
+// updateConvStateForSlot writes a new conv state for a single slot.
+func (c *HybridCache) updateConvStateForSlot(ctx ml.Context, layer int, slot int, seqIndex int, newState ml.Tensor) {
+	buf := c.convBuffer(ctx, layer)
+	src := newState.Reshape(ctx, c.convDim*c.convChannels, 1)
+	srcF32 := src.Cast(ctx, ml.DTypeF32)
+	slotIdx := ctx.Input().FromInts([]int32{int32(slot)}, 1)
+	ctx.Forward(buf.SetRows(ctx, srcF32, slotIdx))
+	c.captureConvCheckpointForSeq(ctx, layer, seqIndex, srcF32)
+}
+
+// deltaStateForSlot returns the delta state for a single slot as [headVDim, headVDim*numVHeads, 1].
+func (c *HybridCache) deltaStateForSlot(ctx ml.Context, layer int, slot int, headVDim, numVHeads int) (ml.Tensor, error) {
+	c.ensureWritableOnce(ctx)
+	if c.writableError != nil {
+		return nil, c.writableError
+	}
+	buf := c.deltaBuffer(ctx, layer)
+	slotIdx := ctx.Input().FromInts([]int32{int32(slot)}, 1)
+	cur := buf.Rows(ctx, slotIdx)
+	return cur.Reshape(ctx, headVDim, headVDim*numVHeads, 1), nil
+}
+
+// updateDeltaStateForSlot writes a new delta state for a single slot.
+func (c *HybridCache) updateDeltaStateForSlot(ctx ml.Context, layer int, slot int, seqIndex int, newState ml.Tensor) {
+	buf := c.deltaBuffer(ctx, layer)
+	src := newState.Reshape(ctx, c.deltaStateSize, 1)
+	srcF32 := src.Cast(ctx, ml.DTypeF32)
+	slotIdx := ctx.Input().FromInts([]int32{int32(slot)}, 1)
+	ctx.Forward(buf.SetRows(ctx, srcF32, slotIdx))
+	c.captureDeltaCheckpointForSeq(ctx, layer, seqIndex, srcF32)
+}
+
+func (c *HybridCache) captureConvCheckpointForSeq(ctx ml.Context, layer int, seqIndex int, src ml.Tensor) {
+	if c.checkpointCount == 0 {
+		return
+	}
+	if c.reserveCheckpoints {
+		c.reserveCheckpointConv(layer)
+		return
+	}
+	if seqIndex < 0 || seqIndex >= len(c.curCheckpointPos) {
+		return
+	}
+	pos := c.curCheckpointPos[seqIndex]
+	if pos < 0 {
+		return
+	}
+	slot := c.curSlots[seqIndex]
+	idx := c.checkpointIndexForSlot(slot, pos)
+	if idx < 0 {
+		return
+	}
+	entry := &c.checkpoints[slot].entries[idx]
+	dst := c.ensureCheckpointConv(layer, entry)
+	ctx.Forward(src.Copy(ctx, dst))
+}
+
+func (c *HybridCache) captureDeltaCheckpointForSeq(ctx ml.Context, layer int, seqIndex int, src ml.Tensor) {
+	if c.checkpointCount == 0 {
+		return
+	}
+	if c.reserveCheckpoints {
+		c.reserveCheckpointDelta(layer)
+		return
+	}
+	if seqIndex < 0 || seqIndex >= len(c.curCheckpointPos) {
+		return
+	}
+	pos := c.curCheckpointPos[seqIndex]
+	if pos < 0 {
+		return
+	}
+	slot := c.curSlots[seqIndex]
+	idx := c.checkpointIndexForSlot(slot, pos)
+	if idx < 0 {
+		return
+	}
+	entry := &c.checkpoints[slot].entries[idx]
+	dst := c.ensureCheckpointDelta(layer, entry)
+	ctx.Forward(src.Copy(ctx, dst))
+}
+
+// IsSupportedForBatch returns true if the current batch layout supports grid-style recurrent processing.
 func (c *HybridCache) IsSupportedForBatch() bool {
 	return c.curSeqTokens > 0 && len(c.curSeqs) > 0
 }

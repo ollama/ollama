@@ -39,12 +39,15 @@ func (sa *FullAttention) Forward(ctx ml.Context, hiddenStates, positions ml.Tens
 			if nSeqs > 0 {
 				// 3D tensor: [hiddenDim, seqTokens, nSeqs]
 				if batchSize != seqTokens || nSeqs != seqs {
-					return nil, ErrUnsupportedBatchLayout
+					// Fallback: treat as flat batch if layout doesn't match.
+					hiddenStates = hiddenStates.Reshape(ctx, hiddenDim, batchSize*nSeqs)
+					batchSize = batchSize * nSeqs
+				} else {
+					hiddenStates = hiddenStates.Reshape(ctx, hiddenDim, seqTokens*seqs)
+					batchSize = seqTokens * seqs
 				}
-				hiddenStates = hiddenStates.Reshape(ctx, hiddenDim, seqTokens*seqs)
-				batchSize = seqTokens * seqs
 			} else if batchSize != seqTokens*seqs {
-				return nil, ErrUnsupportedBatchLayout
+				// Layout mismatch; proceed with flat batch.
 			}
 		}
 	}

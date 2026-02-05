@@ -48,6 +48,13 @@ type GatedDeltaNet struct {
 	Layer int
 }
 
+type stateAccessors struct {
+	convState   func() (ml.Tensor, error)
+	updateConv  func(ml.Tensor)
+	deltaState  func() (ml.Tensor, error)
+	updateDelta func(ml.Tensor)
+}
+
 // createMasks builds the constant mask tensors (called once, reused for all chunks)
 func createMasks(ctx ml.Context) *Masks {
 	ones := ctx.Input().Zeros(ml.DTypeF32, chunkSize, chunkSize)
@@ -68,7 +75,6 @@ func createMasks(ctx ml.Context) *Masks {
 }
 
 func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cache *HybridCache, opts *Options) (ml.Tensor, error) {
-	layer := gdn.Layer
 	nSeqTokens := hiddenStates.Dim(1)
 	nSeqs := hiddenStates.Dim(2)
 	if cache != nil && cache.IsSupportedForBatch() {
@@ -77,34 +83,140 @@ func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cac
 		if seqTokens > 0 && seqs > 0 {
 			if nSeqs > 1 {
 				if nSeqTokens != seqTokens || nSeqs != seqs {
-					return nil, ErrUnsupportedBatchLayout
+					return gdn.forwardMixed(ctx, hiddenStates, cache, opts)
 				}
 			} else {
 				if nSeqTokens != seqTokens*seqs {
-					return nil, ErrUnsupportedBatchLayout
+					return gdn.forwardMixed(ctx, hiddenStates, cache, opts)
 				}
 				hiddenStates = hiddenStates.Reshape(ctx, hiddenStates.Dim(0), seqTokens, seqs)
-				nSeqTokens = seqTokens
-				nSeqs = seqs
 			}
 		}
+
+		numVHeads := opts.ssmDtRank
+		headVDim := opts.ssmDInner / numVHeads
+		layer := gdn.Layer
+		access := stateAccessors{
+			convState: func() (ml.Tensor, error) {
+				return cache.ConvState(ctx, layer)
+			},
+			updateConv: func(newState ml.Tensor) {
+				cache.UpdateConvState(ctx, layer, newState)
+			},
+			deltaState: func() (ml.Tensor, error) {
+				return cache.DeltaState(ctx, layer, headVDim, numVHeads)
+			},
+			updateDelta: func(newState ml.Tensor) {
+				cache.UpdateDeltaState(ctx, layer, newState)
+			},
+		}
+
+		return gdn.forwardWithAccessors(ctx, hiddenStates, opts, access)
 	}
+
+	if cache == nil {
+		return nil, ErrUnsupportedBatchLayout
+	}
+
+	return gdn.forwardMixed(ctx, hiddenStates, cache, opts)
+}
+
+func (gdn *GatedDeltaNet) forwardMixed(ctx ml.Context, hiddenStates ml.Tensor, cache *HybridCache, opts *Options) (ml.Tensor, error) {
+	if hiddenStates.Dim(2) > 0 {
+		hiddenStates = hiddenStates.Reshape(ctx, hiddenStates.Dim(0), hiddenStates.Dim(1)*hiddenStates.Dim(2))
+	}
+
+	if len(cache.curSeqs) == 0 {
+		return hiddenStates, nil
+	}
+
+	// Ensure any shared slots are detached once for this forward pass.
+	cache.ensureWritableOnce(ctx)
+
+	layer := gdn.Layer
+	numVHeads := opts.ssmDtRank
+	headVDim := opts.ssmDInner / numVHeads
+
+	if gdn.SSMQKV == nil || gdn.SSMQKVGate == nil {
+		return nil, errors.New("qwen3next: missing attn_qkv/attn_gate projections (legacy ssm_in is not supported)")
+	}
+
+	// Precompute projections for the full batch and slice per sequence.
+	mixedBAFull := gdn.SSMBetaAlpha.Forward(ctx, hiddenStates)
+	qkvMixedFull := gdn.SSMQKV.Forward(ctx, hiddenStates)
+	zFull := gdn.SSMQKVGate.Forward(ctx, hiddenStates)
+
+	out := hiddenStates
+	for seqIndex := range cache.curSeqs {
+		idxs := cache.curSeqTokenIdxs[seqIndex]
+		if len(idxs) == 0 {
+			continue
+		}
+		idxTensor := ctx.Input().FromInts(idxs, len(idxs))
+
+		mixedBA := mixedBAFull.Rows(ctx, idxTensor)
+		qkvMixed := qkvMixedFull.Rows(ctx, idxTensor)
+		z := zFull.Rows(ctx, idxTensor)
+
+		slot := cache.curSlots[seqIndex]
+		access := stateAccessors{
+			convState: func() (ml.Tensor, error) {
+				return cache.convStateForSlot(ctx, layer, slot)
+			},
+			updateConv: func(newState ml.Tensor) {
+				cache.updateConvStateForSlot(ctx, layer, slot, seqIndex, newState)
+			},
+			deltaState: func() (ml.Tensor, error) {
+				return cache.deltaStateForSlot(ctx, layer, slot, headVDim, numVHeads)
+			},
+			updateDelta: func(newState ml.Tensor) {
+				cache.updateDeltaStateForSlot(ctx, layer, slot, seqIndex, newState)
+			},
+		}
+
+		seqOut, err := gdn.forwardProjected(ctx, len(idxs), 1, mixedBA, qkvMixed, z, opts, access)
+		if err != nil {
+			return nil, err
+		}
+		out = out.SetRows(ctx, seqOut, idxTensor)
+	}
+
+	return out, nil
+}
+
+func (gdn *GatedDeltaNet) forwardWithAccessors(ctx ml.Context, hiddenStates ml.Tensor, opts *Options, access stateAccessors) (ml.Tensor, error) {
+	nSeqTokens := hiddenStates.Dim(1)
+	nSeqs := hiddenStates.Dim(2)
+
+	mixedBA := gdn.SSMBetaAlpha.Forward(ctx, hiddenStates)
+
+	if gdn.SSMQKV == nil || gdn.SSMQKVGate == nil {
+		return nil, errors.New("qwen3next: missing attn_qkv/attn_gate projections (legacy ssm_in is not supported)")
+	}
+	// Optimized path: pre-split QKV and gate
+	qkvMixed := gdn.SSMQKV.Forward(ctx, hiddenStates)
+	z := gdn.SSMQKVGate.Forward(ctx, hiddenStates)
+
+	return gdn.forwardProjected(ctx, nSeqTokens, nSeqs, mixedBA, qkvMixed, z, opts, access)
+}
+
+func (gdn *GatedDeltaNet) forwardProjected(
+	ctx ml.Context,
+	nSeqTokens, nSeqs int,
+	mixedBA, qkvMixed, z ml.Tensor,
+	opts *Options,
+	access stateAccessors,
+) (ml.Tensor, error) {
+	layer := gdn.Layer
 
 	headKDim := opts.ssmDState
 	numKHeads := opts.ssmNGroup
 	numVHeads := opts.ssmDtRank
 	headVDim := opts.ssmDInner / numVHeads
 	convKernelSize := opts.convKernelSize
-
-	mixedBA := gdn.SSMBetaAlpha.Forward(ctx, hiddenStates)
 	qkvDim := headKDim*numKHeads*2 + headVDim*numVHeads
 
-	if gdn.SSMQKV == nil || gdn.SSMQKVGate == nil {
-		return nil, errors.New("qwen3next: missing attn_qkv/attn_gate projections (legacy ssm_in is not supported)")
-	}
-	// Optimized path: pre-split QKV and gate
-	qkvMixed := gdn.SSMQKV.Forward(ctx, hiddenStates).Reshape(ctx, qkvDim, nSeqTokens, nSeqs)
-	z := gdn.SSMQKVGate.Forward(ctx, hiddenStates)
+	qkvMixed = qkvMixed.Reshape(ctx, qkvDim, nSeqTokens, nSeqs)
 
 	baNewDim := 2 * numVHeads / numKHeads
 	mixedBAReshaped := mixedBA.Reshape(ctx, baNewDim, numKHeads, nSeqTokens, nSeqs)
@@ -127,7 +239,7 @@ func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cac
 	qkvMixed = qkvMixed.Permute(ctx, 1, 0, 2, 3)
 
 	// Get conv state from cache
-	convStates, err := cache.ConvState(ctx, layer)
+	convStates, err := access.convState()
 	if err != nil {
 		// Log this - if it happens, short-term context will be lost
 		slog.Warn("qwen3next: failed to get conv state, using zeros", "layer", layer, "error", err)
@@ -142,7 +254,7 @@ func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cac
 
 	// Save new conv state (last convKernelSize-1 tokens)
 	lastConvStates := convInput.Slice(ctx, 0, nSeqTokens, nSeqTokens+convKernelSize-1, 1)
-	cache.UpdateConvState(ctx, layer, lastConvStates)
+	access.updateConv(lastConvStates)
 
 	// Apply SSM convolution (kernel must be F32 for Metal)
 	convOutput := convInput.SSMConv(ctx, gdn.SSMConv1D.Weight)
@@ -162,7 +274,7 @@ func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cac
 	vConv = vConv.Contiguous(ctx, headVDim, numVHeads, nSeqTokens, nSeqs)
 
 	// Get delta state from cache
-	state, err := cache.DeltaState(ctx, layer, headVDim, numVHeads)
+	state, err := access.deltaState()
 	if err != nil {
 		// Log this - if it happens frequently, context will degrade
 		slog.Warn("qwen3next: failed to get delta state, using zeros", "layer", layer, "error", err)
@@ -185,13 +297,18 @@ func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cac
 	}
 
 	// Choose computation mode based on sequence length
-	var attnOut ml.Tensor
+	var (
+		attnOut  ml.Tensor
+		newState ml.Tensor
+	)
 	if nSeqTokens == 1 {
-		attnOut = gdn.deltaNetAutoregressive(ctx, qConv, kConv, vConv, gate, beta, state, opts, layer, cache)
+		attnOut, newState = gdn.deltaNetAutoregressive(ctx, qConv, kConv, vConv, gate, beta, state, opts)
 	} else {
 		// Use pre-computed masks from opts (created once in Model.Forward)
-		attnOut = gdn.deltaNetChunked(ctx, qConv, kConv, vConv, gate, beta, state, opts.masks, opts, layer, cache)
+		attnOut, newState = gdn.deltaNetChunked(ctx, qConv, kConv, vConv, gate, beta, state, opts.masks, opts)
 	}
+
+	access.updateDelta(newState)
 
 	// Apply gated normalization
 	attnOut2D := attnOut.Contiguous(ctx, headVDim, numVHeads*nSeqTokens*nSeqs)
@@ -215,9 +332,7 @@ func (gdn *GatedDeltaNet) deltaNetAutoregressive(
 	ctx ml.Context,
 	q, k, v, gate, beta, state ml.Tensor,
 	opts *Options,
-	layer int,
-	cache *HybridCache,
-) ml.Tensor {
+) (ml.Tensor, ml.Tensor) {
 	numVHeads := v.Dim(1)
 	headVDim := v.Dim(0)
 	nSeqs := q.Dim(3)
@@ -273,10 +388,8 @@ func (gdn *GatedDeltaNet) deltaNetAutoregressive(
 	coreAttnOut := stateQ.SumRows(ctx)
 	coreAttnOut = coreAttnOut.Permute(ctx, 1, 0, 2, 3)
 
-	// Update delta state in cache
-	cache.UpdateDeltaState(ctx, layer, state.Reshape(ctx, headVDim, headVDim*numVHeads, nSeqs))
-
-	return coreAttnOut.Reshape(ctx, headVDim, numVHeads, 1, nSeqs)
+	newState := state.Reshape(ctx, headVDim, headVDim*numVHeads, nSeqs)
+	return coreAttnOut.Reshape(ctx, headVDim, numVHeads, 1, nSeqs), newState
 }
 
 // deltaNetChunked implements chunked computation for prefill.
@@ -286,9 +399,7 @@ func (gdn *GatedDeltaNet) deltaNetChunked(
 	q, k, v, gate, beta, state ml.Tensor,
 	masks *Masks,
 	opts *Options,
-	layer int,
-	cache *HybridCache,
-) ml.Tensor {
+) (ml.Tensor, ml.Tensor) {
 	headKDim := q.Dim(0)
 	numVHeads := v.Dim(1)
 	headVDim := v.Dim(0)
@@ -465,8 +576,6 @@ func (gdn *GatedDeltaNet) deltaNetChunked(
 		coreAttnOut = coreAttnOut.Slice(ctx, 1, 0, nTokens, 1)
 	}
 
-	// Update delta state in cache
-	cache.UpdateDeltaState(ctx, layer, newState.Reshape(ctx, headVDim, headVDim*numVHeads, nSeqs))
-
-	return coreAttnOut.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx, headVDim, numVHeads, nTokens, nSeqs)
+	newStateFlat := newState.Reshape(ctx, headVDim, headVDim*numVHeads, nSeqs)
+	return coreAttnOut.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx, headVDim, numVHeads, nTokens, nSeqs), newStateFlat
 }
