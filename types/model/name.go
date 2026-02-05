@@ -227,6 +227,17 @@ func (n Name) String() string {
 	return b.String()
 }
 
+// Set implements [flag.Value]. It parses the provided input as a name string
+// and sets the receiver to the parsed value. If the parsed name is not valid,
+// ErrUnqualifiedName is returned.
+func (n *Name) Set(s string) error {
+	*n = ParseName(s)
+	if !n.IsValid() {
+		return ErrUnqualifiedName
+	}
+	return nil
+}
+
 // DisplayShortest returns a short string version of the name.
 func (n Name) DisplayShortest() string {
 	var sb strings.Builder
