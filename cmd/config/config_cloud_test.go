@@ -8,7 +8,6 @@ import (
 	"testing"
 )
 
-// TestSetAliases_CloudModel verifies that cloud models set both prefix aliases
 func TestSetAliases_CloudModel(t *testing.T) {
 	// Test the SetAliases logic by checking the alias map behavior
 	aliases := map[string]string{
@@ -25,7 +24,6 @@ func TestSetAliases_CloudModel(t *testing.T) {
 	}
 }
 
-// TestSetAliases_LocalModel verifies that local models clear fast and would delete aliases
 func TestSetAliases_LocalModel(t *testing.T) {
 	aliases := map[string]string{
 		"primary": "llama3.2:latest",
@@ -38,8 +36,6 @@ func TestSetAliases_LocalModel(t *testing.T) {
 	}
 }
 
-// TestSaveAliases_ReplacesNotMerges verifies the critical fix where saveAliases
-// replaces aliases entirely instead of merging (which would leave stale keys)
 func TestSaveAliases_ReplacesNotMerges(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -84,7 +80,6 @@ func TestSaveAliases_ReplacesNotMerges(t *testing.T) {
 	}
 }
 
-// TestSaveAliases_PreservesModels verifies that updating aliases doesn't affect models
 func TestSaveAliases_PreservesModels(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -166,7 +161,6 @@ func TestSaveAliases_EmptyAppName(t *testing.T) {
 	}
 }
 
-// TestSaveAliases_CaseInsensitive verifies app names are case insensitive
 func TestSaveAliases_CaseInsensitive(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -217,8 +211,6 @@ func TestSaveAliases_CreatesIntegration(t *testing.T) {
 	}
 }
 
-// TestCleanAliasesForLocalModel tests the cleanup function
-// TestConfigureAliases_AliasMap tests the alias map manipulation logic
 func TestConfigureAliases_AliasMap(t *testing.T) {
 	t.Run("cloud model auto-sets fast to primary", func(t *testing.T) {
 		aliases := make(map[string]string)
@@ -316,7 +308,6 @@ func TestConfigureAliases_AliasMap(t *testing.T) {
 	})
 }
 
-// TestSetAliases_PrefixMapping verifies the correct prefix-to-alias mapping
 func TestSetAliases_PrefixMapping(t *testing.T) {
 	// This tests the expected mapping without needing a real client
 	aliases := map[string]string{
@@ -337,7 +328,6 @@ func TestSetAliases_PrefixMapping(t *testing.T) {
 	}
 }
 
-// TestSetAliases_LocalDeletesPrefixes verifies local models should delete both prefixes
 func TestSetAliases_LocalDeletesPrefixes(t *testing.T) {
 	aliases := map[string]string{
 		"primary": "local-model",
@@ -395,7 +385,6 @@ func TestAtomicUpdate_ServerSucceedsConfigSaved(t *testing.T) {
 	}
 }
 
-// TestConfigFile_PreservesUnknownFields verifies we don't lose unknown fields
 func TestConfigFile_PreservesUnknownFields(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -451,13 +440,11 @@ func containsHelper(s, substr string) bool {
 	return false
 }
 
-// TestClaudeImplementsAliasConfigurer verifies Claude implements the interface
 func TestClaudeImplementsAliasConfigurer(t *testing.T) {
 	c := &Claude{}
 	var _ AliasConfigurer = c // Compile-time check
 }
 
-// TestModelNameEdgeCases tests various model name formats
 func TestModelNameEdgeCases(t *testing.T) {
 	testCases := []struct {
 		name  string
@@ -492,7 +479,6 @@ func TestModelNameEdgeCases(t *testing.T) {
 	}
 }
 
-// TestSwitchingScenarios tests the full switching behavior
 func TestSwitchingScenarios(t *testing.T) {
 	t.Run("cloud to local removes fast", func(t *testing.T) {
 		tmpDir := t.TempDir()
@@ -577,7 +563,6 @@ func TestSwitchingScenarios(t *testing.T) {
 	})
 }
 
-// TestToolCapabilityFiltering tests the tool capability detection logic
 func TestToolCapabilityFiltering(t *testing.T) {
 	t.Run("all models checked for tool capability", func(t *testing.T) {
 		// Both cloud and local models are checked for tool capability via Show API
@@ -596,25 +581,18 @@ func TestToolCapabilityFiltering(t *testing.T) {
 	})
 }
 
-// TestIsCloudModel_SuffixLogic tests the cloud model suffix detection
-func TestIsCloudModel_SuffixLogic(t *testing.T) {
-	t.Run("model with :cloud suffix is cloud", func(t *testing.T) {
-		// nil client tests suffix-only path
-		if !isCloudModel(context.Background(), nil, "model:cloud") {
-			t.Error("model with :cloud suffix should be detected as cloud")
+func TestIsCloudModel_RequiresClient(t *testing.T) {
+	t.Run("nil client always returns false", func(t *testing.T) {
+		// isCloudModel now only uses Show API, no suffix detection
+		if isCloudModel(context.Background(), nil, "model:cloud") {
+			t.Error("nil client should return false regardless of suffix")
 		}
-	})
-
-	t.Run("model without :cloud suffix is not cloud (suffix check)", func(t *testing.T) {
-		// nil client means only suffix is checked
 		if isCloudModel(context.Background(), nil, "local-model") {
-			t.Error("model without :cloud suffix should not be detected as cloud")
+			t.Error("nil client should return false")
 		}
 	})
 }
 
-// TestModelsAndAliasesMustStayInSync verifies that models[0] and aliases["primary"]
-// stay synchronized. This prevents the bug where they can diverge.
 func TestModelsAndAliasesMustStayInSync(t *testing.T) {
 	t.Run("saveAliases followed by saveIntegration keeps them in sync", func(t *testing.T) {
 		tmpDir := t.TempDir()

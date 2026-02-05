@@ -67,16 +67,18 @@ func (c *Claude) Run(model string, args []string) error {
 }
 
 // ConfigureAliases sets up model aliases for Claude Code.
+// model: the model to use (if empty, user will be prompted to select)
+// aliases: existing alias configuration to preserve/update
 // Cloud-only: subagent routing (fast model) is gated to cloud models only until
 // there is a better strategy for prompt caching on local models.
-func (c *Claude) ConfigureAliases(ctx context.Context, primaryModel string, existing map[string]string, force bool) (map[string]string, bool, error) {
+func (c *Claude) ConfigureAliases(ctx context.Context, model string, existingAliases map[string]string, force bool) (map[string]string, bool, error) {
 	aliases := make(map[string]string)
-	for k, v := range existing {
+	for k, v := range existingAliases {
 		aliases[k] = v
 	}
 
-	if primaryModel != "" {
-		aliases["primary"] = primaryModel
+	if model != "" {
+		aliases["primary"] = model
 	}
 
 	if !force && aliases["primary"] != "" {

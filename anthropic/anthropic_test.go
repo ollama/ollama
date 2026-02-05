@@ -321,8 +321,6 @@ func TestFromMessagesRequest_WithThinking(t *testing.T) {
 	}
 }
 
-// TestFromMessagesRequest_ThinkingOnlyBlock verifies that messages containing only
-// a thinking block (no text, images, or tool calls) are preserved and not dropped.
 func TestFromMessagesRequest_ThinkingOnlyBlock(t *testing.T) {
 	req := MessagesRequest{
 		Model:     "test-model",
@@ -842,10 +840,6 @@ func TestStreamConverter_MultipleToolCallsWithMixedValidity(t *testing.T) {
 	}
 }
 
-// TestContentBlockJSON_EmptyFieldsPresent verifies that empty text and thinking fields
-// are serialized in JSON output. The Anthropic SDK requires these fields to be present
-// (even when empty) in content_block_start events to properly accumulate streaming deltas.
-// Without these fields, the SDK throws: "TypeError: unsupported operand type(s) for +=: 'NoneType' and 'str'"
 func TestContentBlockJSON_EmptyFieldsPresent(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -899,8 +893,6 @@ func TestContentBlockJSON_EmptyFieldsPresent(t *testing.T) {
 	}
 }
 
-// TestStreamConverter_ContentBlockStartIncludesEmptyFields verifies that content_block_start
-// events include the required empty fields for SDK compatibility.
 func TestStreamConverter_ContentBlockStartIncludesEmptyFields(t *testing.T) {
 	t.Run("text block start includes empty text", func(t *testing.T) {
 		conv := NewStreamConverter("msg_123", "test-model", 0)
@@ -968,4 +960,106 @@ func TestStreamConverter_ContentBlockStartIncludesEmptyFields(t *testing.T) {
 			t.Error("expected thinking content_block_start event")
 		}
 	})
+}
+
+func TestEstimateTokens_SimpleMessage(t *testing.T) {
+	req := CountTokensRequest{
+		Model: "test-model",
+		Messages: []MessageParam{
+			{Role: "user", Content: "Hello, world!"},
+		},
+	}
+
+	tokens := estimateTokens(req)
+
+	// "user" (4) + "Hello, world!" (13) = 17 chars / 4 = 4 tokens
+	if tokens < 1 {
+		t.Errorf("expected at least 1 token, got %d", tokens)
+	}
+	// Sanity check: shouldn't be wildly off
+	if tokens > 10 {
+		t.Errorf("expected fewer than 10 tokens for short message, got %d", tokens)
+	}
+}
+
+func TestEstimateTokens_WithSystemPrompt(t *testing.T) {
+	req := CountTokensRequest{
+		Model:  "test-model",
+		System: "You are a helpful assistant.",
+		Messages: []MessageParam{
+			{Role: "user", Content: "Hello"},
+		},
+	}
+
+	tokens := estimateTokens(req)
+
+	// System prompt adds to count
+	if tokens < 5 {
+		t.Errorf("expected at least 5 tokens with system prompt, got %d", tokens)
+	}
+}
+
+func TestEstimateTokens_WithTools(t *testing.T) {
+	req := CountTokensRequest{
+		Model: "test-model",
+		Messages: []MessageParam{
+			{Role: "user", Content: "What's the weather?"},
+		},
+		Tools: []Tool{
+			{
+				Name:        "get_weather",
+				Description: "Get the current weather for a location",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{"location":{"type":"string"}}}`),
+			},
+		},
+	}
+
+	tokens := estimateTokens(req)
+
+	// Tools add significant content
+	if tokens < 10 {
+		t.Errorf("expected at least 10 tokens with tools, got %d", tokens)
+	}
+}
+
+func TestEstimateTokens_WithThinking(t *testing.T) {
+	req := CountTokensRequest{
+		Model: "test-model",
+		Messages: []MessageParam{
+			{Role: "user", Content: "Hello"},
+			{
+				Role: "assistant",
+				Content: []any{
+					map[string]any{
+						"type":     "thinking",
+						"thinking": "Let me think about this carefully...",
+					},
+					map[string]any{
+						"type": "text",
+						"text": "Here is my response.",
+					},
+				},
+			},
+		},
+	}
+
+	tokens := estimateTokens(req)
+
+	// Thinking content should be counted
+	if tokens < 10 {
+		t.Errorf("expected at least 10 tokens with thinking content, got %d", tokens)
+	}
+}
+
+func TestEstimateTokens_EmptyContent(t *testing.T) {
+	req := CountTokensRequest{
+		Model:    "test-model",
+		Messages: []MessageParam{},
+	}
+
+	tokens := estimateTokens(req)
+
+	if tokens != 0 {
+		t.Errorf("expected 0 tokens for empty content, got %d", tokens)
+	}
 }

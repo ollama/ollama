@@ -299,6 +299,28 @@ func runIntegration(name, modelName string, args []string) error {
 	return r.Run(modelName, args)
 }
 
+// syncAliases syncs aliases to server and saves locally for an AliasConfigurer.
+func syncAliases(ctx context.Context, client *api.Client, ac AliasConfigurer, name, model string, existing map[string]string) error {
+	aliases := make(map[string]string)
+	for k, v := range existing {
+		aliases[k] = v
+	}
+	aliases["primary"] = model
+
+	if isCloudModel(ctx, client, model) {
+		if aliases["fast"] == "" || !isCloudModel(ctx, client, aliases["fast"]) {
+			aliases["fast"] = model
+		}
+	} else {
+		delete(aliases, "fast")
+	}
+
+	if err := ac.SetAliases(ctx, aliases); err != nil {
+		return err
+	}
+	return saveAliases(name, aliases)
+}
+
 // LaunchCmd returns the cobra command for launching integrations.
 func LaunchCmd(checkServerHeartbeat func(cmd *cobra.Command, args []string) error) *cobra.Command {
 	var modelFlag string
@@ -366,6 +388,80 @@ Examples:
 				return fmt.Errorf("unknown integration: %s", name)
 			}
 
+			// Handle AliasConfigurer integrations (claude, codex)
+			if ac, ok := r.(AliasConfigurer); ok {
+				client, err := api.ClientFromEnvironment()
+				if err != nil {
+					return err
+				}
+
+				// Validate --model flag if provided
+				if modelFlag != "" {
+					if _, err := client.Show(cmd.Context(), &api.ShowRequest{Name: modelFlag}); err != nil {
+						return fmt.Errorf("model %q not found", modelFlag)
+					}
+				}
+
+				var model string
+				var existingAliases map[string]string
+
+				// Load saved config
+				if cfg, err := loadIntegration(name); err == nil {
+					existingAliases = cfg.Aliases
+					if len(cfg.Models) > 0 {
+						model = cfg.Models[0]
+						// AliasConfigurer integrations use single model; sanitize if multiple
+						if len(cfg.Models) > 1 {
+							_ = saveIntegration(name, []string{model})
+						}
+					}
+				}
+
+				// --model flag overrides saved model
+				if modelFlag != "" {
+					model = modelFlag
+				}
+
+				// Validate saved model still exists
+				if model != "" && modelFlag == "" {
+					if _, err := client.Show(cmd.Context(), &api.ShowRequest{Name: model}); err != nil {
+						fmt.Fprintf(os.Stderr, "%sConfigured model %q not found%s\n\n", ansiGray, model, ansiReset)
+						model = ""
+					}
+				}
+
+				// If no valid model or --config flag, show picker
+				if model == "" || configFlag {
+					aliases, _, err := ac.ConfigureAliases(cmd.Context(), model, existingAliases, configFlag)
+					if errors.Is(err, errCancelled) {
+						return nil
+					}
+					if err != nil {
+						return err
+					}
+					model = aliases["primary"]
+					existingAliases = aliases
+				}
+
+				// Sync aliases and save
+				if err := syncAliases(cmd.Context(), client, ac, name, model, existingAliases); err != nil {
+					fmt.Fprintf(os.Stderr, "%sWarning: Could not sync aliases: %v%s\n", ansiGray, err, ansiReset)
+				}
+				if err := saveIntegration(name, []string{model}); err != nil {
+					return fmt.Errorf("failed to save: %w", err)
+				}
+
+				// Launch (unless --config without confirmation)
+				if configFlag {
+					if launch, _ := confirmPrompt(fmt.Sprintf("Launch %s now?", r)); launch {
+						return runIntegration(name, model, passArgs)
+					}
+					return nil
+				}
+				return runIntegration(name, model, passArgs)
+			}
+
+			// Validate --model flag for non-AliasConfigurer integrations
 			if modelFlag != "" {
 				client, err := api.ClientFromEnvironment()
 				if err != nil {
@@ -374,91 +470,6 @@ Examples:
 				if _, err := client.Show(cmd.Context(), &api.ShowRequest{Name: modelFlag}); err != nil {
 					return fmt.Errorf("model %q not found", modelFlag)
 				}
-				if err := saveIntegration(name, []string{modelFlag}); err != nil {
-					return fmt.Errorf("failed to save: %w", err)
-				}
-			}
-
-			forceConfig := false
-			if !configFlag {
-				if config, err := loadIntegration(name); err == nil && len(config.Models) > 0 {
-					model := config.Models[0]
-					if config.Aliases == nil {
-						config.Aliases = make(map[string]string)
-					}
-
-					client, _ := api.ClientFromEnvironment()
-					if _, err := client.Show(cmd.Context(), &api.ShowRequest{Name: model}); err != nil {
-						fmt.Fprintf(os.Stderr, "%sConfigured model %q not found%s\n\n", ansiGray, model, ansiReset)
-						forceConfig = true
-						goto configureModel
-					}
-					needsLocalSave := false
-
-					if config.Aliases["primary"] != model {
-						config.Aliases["primary"] = model
-						needsLocalSave = true
-					}
-
-					if isCloudModel(cmd.Context(), client, model) {
-						if config.Aliases["fast"] == "" || !isCloudModel(cmd.Context(), client, config.Aliases["fast"]) {
-							config.Aliases["fast"] = model
-							needsLocalSave = true
-						}
-					} else if config.Aliases["fast"] != "" {
-						delete(config.Aliases, "fast")
-						needsLocalSave = true
-					}
-
-					if ac, ok := r.(AliasConfigurer); ok {
-						if err := ac.SetAliases(cmd.Context(), config.Aliases); err != nil {
-							fmt.Fprintf(os.Stderr, "%sWarning: Could not update server aliases: %v%s\n", ansiGray, err, ansiReset)
-						}
-					}
-
-					if needsLocalSave {
-						_ = saveAliases(name, config.Aliases)
-					}
-
-					return runIntegration(name, model, passArgs)
-				}
-			}
-
-		configureModel:
-			if ac, ok := r.(AliasConfigurer); ok {
-				var existingAliases map[string]string
-				if existing, err := loadIntegration(name); err == nil {
-					existingAliases = existing.Aliases
-				}
-				aliases, updated, err := ac.ConfigureAliases(cmd.Context(), "", existingAliases, configFlag || forceConfig)
-				if errors.Is(err, errCancelled) {
-					return nil
-				}
-				if err != nil {
-					return err
-				}
-				if updated {
-					// Atomic: sync to server FIRST, only save locally if server succeeds
-					if err := ac.SetAliases(cmd.Context(), aliases); err != nil {
-						fmt.Fprintf(os.Stderr, "%sWarning: Could not update server aliases: %v%s\n", ansiGray, err, ansiReset)
-						fmt.Fprintf(os.Stderr, "%sConfiguration not saved.%s\n\n", ansiGray, ansiReset)
-						// Still launch with the model, but don't save config
-					} else {
-						if err := saveAliases(name, aliases); err != nil {
-							return err
-						}
-						if err := saveIntegration(name, []string{aliases["primary"]}); err != nil {
-							return fmt.Errorf("failed to save: %w", err)
-						}
-					}
-				}
-				if configFlag {
-					if launch, _ := confirmPrompt(fmt.Sprintf("Launch %s now?", r)); launch {
-						return runIntegration(name, aliases["primary"], passArgs)
-					}
-					return nil
-				}
-				return runIntegration(name, aliases["primary"], passArgs)
 			}
 
 			var models []string
@@ -632,20 +643,16 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 	return items, preChecked, existingModels, cloudModels
 }
 
-// isCloudModel checks if a model is a cloud model using suffix check and server API fallback.
+// isCloudModel checks if a model is a cloud model using the Show API.
 func isCloudModel(ctx context.Context, client *api.Client, name string) bool {
-	// Fast path: check suffix first (no network call)
-	if strings.HasSuffix(name, ":cloud") {
-		return true
+	if client == nil {
+		return false
 	}
-	// Fallback: check server if client available
-	if client != nil {
-		resp, err := client.Show(ctx, &api.ShowRequest{Name: name})
-		if err == nil && resp.RemoteModel != "" {
-			return true
-		}
+	resp, err := client.Show(ctx, &api.ShowRequest{Name: name})
+	if err != nil {
+		return false
 	}
-	return false
+	return resp.RemoteModel != ""
 }
 
 func pullModel(ctx context.Context, client *api.Client, model string) error {

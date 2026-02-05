@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	routerConfigFilename = "server.json"
-	routerConfigVersion  = 1
+	serverConfigFilename = "server.json"
+	serverConfigVersion  = 1
 )
 
 var errAliasCycle = errors.New("alias cycle detected")
@@ -28,20 +28,20 @@ type aliasEntry struct {
 	PrefixMatching bool   `json:"prefix_matching,omitempty"`
 }
 
-type routerConfig struct {
+type serverConfig struct {
 	Version int          `json:"version"`
 	Aliases []aliasEntry `json:"aliases"`
 }
 
-type aliasStore struct {
+type store struct {
 	mu            sync.RWMutex
 	path          string
 	entries       map[string]aliasEntry // normalized alias -> entry (exact matches)
 	prefixEntries []aliasEntry          // prefix matches, sorted longest-first
 }
 
-func newAliasStore(path string) (*aliasStore, error) {
-	store := &aliasStore{
+func createStore(path string) (*store, error) {
+	store := &store{
 		path:    path,
 		entries: make(map[string]aliasEntry),
 	}
@@ -51,7 +51,7 @@ func newAliasStore(path string) (*aliasStore, error) {
 	return store, nil
 }
 
-func (s *aliasStore) load() error {
+func (s *store) load() error {
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -60,12 +60,12 @@ func (s *aliasStore) load() error {
 		return err
 	}
 
-	var cfg routerConfig
+	var cfg serverConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return err
 	}
 
-	if cfg.Version != 0 && cfg.Version != routerConfigVersion {
+	if cfg.Version != 0 && cfg.Version != serverConfigVersion {
 		return fmt.Errorf("unsupported router config version %d", cfg.Version)
 	}
 
@@ -109,7 +109,7 @@ func (s *aliasStore) load() error {
 	return nil
 }
 
-func (s *aliasStore) saveLocked() error {
+func (s *store) saveLocked() error {
 	dir := filepath.Dir(s.path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -126,8 +126,8 @@ func (s *aliasStore) saveLocked() error {
 		return strings.Compare(entries[i].Alias, entries[j].Alias) < 0
 	})
 
-	cfg := routerConfig{
-		Version: routerConfigVersion,
+	cfg := serverConfig{
+		Version: serverConfigVersion,
 		Aliases: entries,
 	}
 
@@ -157,7 +157,7 @@ func (s *aliasStore) saveLocked() error {
 	return os.Rename(f.Name(), s.path)
 }
 
-func (s *aliasStore) ResolveName(name model.Name) (model.Name, bool, error) {
+func (s *store) ResolveName(name model.Name) (model.Name, bool, error) {
 	// If a local model exists, do not allow alias shadowing (highest priority).
 	exists, err := localModelExists(name)
 	if err != nil {
@@ -226,7 +226,7 @@ func (s *aliasStore) ResolveName(name model.Name) (model.Name, bool, error) {
 	}
 }
 
-func (s *aliasStore) Set(alias, target model.Name, prefixMatching bool) error {
+func (s *store) Set(alias, target model.Name, prefixMatching bool) error {
 	targetKey := normalizeAliasKey(target)
 
 	s.mu.Lock()
@@ -283,7 +283,7 @@ func (s *aliasStore) Set(alias, target model.Name, prefixMatching bool) error {
 	return s.saveLocked()
 }
 
-func (s *aliasStore) Delete(alias model.Name) (bool, error) {
+func (s *store) Delete(alias model.Name) (bool, error) {
 	aliasKey := normalizeAliasKey(alias)
 
 	s.mu.Lock()
@@ -309,7 +309,7 @@ func (s *aliasStore) Delete(alias model.Name) (bool, error) {
 
 // DeleteByString deletes an alias by its raw string value, useful for prefix
 // aliases that may not be valid model names.
-func (s *aliasStore) DeleteByString(alias string) (bool, error) {
+func (s *store) DeleteByString(alias string) (bool, error) {
 	alias = strings.TrimSpace(alias)
 	aliasLower := strings.ToLower(alias)
 
@@ -333,7 +333,7 @@ func (s *aliasStore) DeleteByString(alias string) (bool, error) {
 	return false, nil
 }
 
-func (s *aliasStore) List() []aliasEntry {
+func (s *store) List() []aliasEntry {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -353,7 +353,7 @@ func normalizeAliasKey(name model.Name) string {
 	return strings.ToLower(displayAliasName(name))
 }
 
-func (s *aliasStore) sortPrefixEntriesLocked() {
+func (s *store) sortPrefixEntriesLocked() {
 	sort.Slice(s.prefixEntries, func(i, j int) bool {
 		// Sort by length descending (longest prefix first)
 		return len(s.prefixEntries[i].Alias) > len(s.prefixEntries[j].Alias)
@@ -392,23 +392,23 @@ func localModelExists(name model.Name) (bool, error) {
 	return false, nil
 }
 
-func routerConfigPath() string {
+func serverConfigPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(".ollama", routerConfigFilename)
+		return filepath.Join(".ollama", serverConfigFilename)
 	}
-	return filepath.Join(home, ".ollama", routerConfigFilename)
+	return filepath.Join(home, ".ollama", serverConfigFilename)
 }
 
-func (s *Server) aliasStore() (*aliasStore, error) {
+func (s *Server) aliasStore() (*store, error) {
 	s.aliasesOnce.Do(func() {
-		s.aliases, s.aliasesErr = newAliasStore(routerConfigPath())
+		s.aliases, s.aliasesErr = createStore(serverConfigPath())
 	})
 
 	return s.aliases, s.aliasesErr
 }
 
-func (s *Server) resolveModelAliasName(name model.Name) (model.Name, bool, error) {
+func (s *Server) resolveAlias(name model.Name) (model.Name, bool, error) {
 	store, err := s.aliasStore()
 	if err != nil {
 		return name, false, err

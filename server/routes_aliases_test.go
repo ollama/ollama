@@ -113,7 +113,7 @@ func TestAliasResolvesForChatRemote(t *testing.T) {
 
 func TestPrefixAliasBasicMatching(t *testing.T) {
 	tmpDir := t.TempDir()
-	store, err := newAliasStore(filepath.Join(tmpDir, "server.json"))
+	store, err := createStore(filepath.Join(tmpDir, "server.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestPrefixAliasBasicMatching(t *testing.T) {
 
 func TestPrefixAliasLongestMatchWins(t *testing.T) {
 	tmpDir := t.TempDir()
-	store, err := newAliasStore(filepath.Join(tmpDir, "server.json"))
+	store, err := createStore(filepath.Join(tmpDir, "server.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestPrefixAliasLongestMatchWins(t *testing.T) {
 
 func TestPrefixAliasChain(t *testing.T) {
 	tmpDir := t.TempDir()
-	store, err := newAliasStore(filepath.Join(tmpDir, "server.json"))
+	store, err := createStore(filepath.Join(tmpDir, "server.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +325,7 @@ func TestPrefixAliasCRUD(t *testing.T) {
 
 func TestPrefixAliasCaseInsensitive(t *testing.T) {
 	tmpDir := t.TempDir()
-	store, err := newAliasStore(filepath.Join(tmpDir, "server.json"))
+	store, err := createStore(filepath.Join(tmpDir, "server.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

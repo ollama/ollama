@@ -83,7 +83,7 @@ type Server struct {
 	sched         *Scheduler
 	defaultNumCtx int
 	aliasesOnce   sync.Once
-	aliases       *aliasStore
+	aliases       *store
 	aliasesErr    error
 }
 
@@ -195,7 +195,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	resolvedName, _, err := s.resolveModelAliasName(name)
+	resolvedName, _, err := s.resolveAlias(name)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1964,7 +1964,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	resolvedName, _, err := s.resolveModelAliasName(name)
+	resolvedName, _, err := s.resolveAlias(name)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

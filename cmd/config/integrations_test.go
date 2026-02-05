@@ -298,25 +298,15 @@ func TestParseArgs(t *testing.T) {
 }
 
 func TestIsCloudModel(t *testing.T) {
-	tests := []struct {
-		name string
-		want bool
-	}{
-		{"glm-4.7:cloud", true},
-		{"kimi-k2.5:cloud", true},
-		{"glm-4.7-flash", false},
-		{"glm-4.7-flash:latest", false},
-		{"cloud-model", false},
-		{"model:cloudish", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// nil client = suffix-only path (no API calls)
-			if got := isCloudModel(context.Background(), nil, tt.name); got != tt.want {
-				t.Errorf("isCloudModel(%q) = %v, want %v", tt.name, got, tt.want)
+	// isCloudModel now only uses Show API, so nil client always returns false
+	t.Run("nil client returns false", func(t *testing.T) {
+		models := []string{"glm-4.7:cloud", "kimi-k2.5:cloud", "local-model"}
+		for _, model := range models {
+			if isCloudModel(context.Background(), nil, model) {
+				t.Errorf("isCloudModel(%q) with nil client should return false", model)
 			}
-		})
-	}
+		}
+	})
 }
 
 func names(items []selectItem) []string {
