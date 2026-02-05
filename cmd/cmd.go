@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -1805,8 +1806,48 @@ Environment Variables:
 	cmd.SetUsageTemplate(cmd.UsageTemplate() + envUsage)
 }
 
+// ensureServerRunning checks if the ollama server is running and starts it in the background if not.
+func ensureServerRunning(ctx context.Context) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	// Check if server is already running
+	if err := client.Heartbeat(ctx); err == nil {
+		return nil // server is already running
+	}
+
+	// Server not running, start it in the background
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("could not find executable: %w", err)
+	}
+
+	serverCmd := exec.CommandContext(ctx, exe, "serve")
+	serverCmd.Env = os.Environ()
+	serverCmd.SysProcAttr = backgroundServerSysProcAttr()
+	if err := serverCmd.Start(); err != nil {
+		return fmt.Errorf("failed to start server: %w", err)
+	}
+
+	// Wait for the server to be ready
+	for {
+		time.Sleep(500 * time.Millisecond)
+		if err := client.Heartbeat(ctx); err == nil {
+			return nil // server has started
+		}
+	}
+}
+
 // runInteractiveTUI runs the main interactive TUI menu.
 func runInteractiveTUI(cmd *cobra.Command) {
+	// Ensure the server is running before showing the TUI
+	if err := ensureServerRunning(cmd.Context()); err != nil {
+		fmt.Fprintf(os.Stderr, "Error starting server: %v\n", err)
+		return
+	}
+
 	// errSelectionCancelled is returned when user cancels model selection
 	errSelectionCancelled := errors.New("cancelled")
 
@@ -1901,14 +1942,18 @@ func runInteractiveTUI(cmd *cobra.Command) {
 			}
 		case tui.SelectionChangeRunModel:
 			_ = config.SetLastSelection("run")
-			// Always show picker
-			modelName, err := config.SelectModelWithSelector(cmd.Context(), singleSelector)
-			if errors.Is(err, errSelectionCancelled) {
-				continue // Return to main menu
-			}
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error selecting model: %v\n", err)
-				continue
+			// Use model from modal if selected, otherwise show picker
+			modelName := result.Model
+			if modelName == "" {
+				var err error
+				modelName, err = config.SelectModelWithSelector(cmd.Context(), singleSelector)
+				if errors.Is(err, errSelectionCancelled) {
+					continue // Return to main menu
+				}
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error selecting model: %v\n", err)
+					continue
+				}
 			}
 			runModel(modelName)
 		case tui.SelectionIntegration:
@@ -1918,16 +1963,28 @@ func runInteractiveTUI(cmd *cobra.Command) {
 			}
 		case tui.SelectionChangeIntegration:
 			_ = config.SetLastSelection(result.Integration)
-			err := config.ConfigureIntegrationWithSelectors(cmd.Context(), result.Integration, singleSelector, multiSelector)
-			if errors.Is(err, errSelectionCancelled) {
-				continue // Return to main menu
-			}
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error configuring %s: %v\n", result.Integration, err)
-				continue
-			}
-			if err := config.LaunchIntegration(result.Integration); err != nil {
-				fmt.Fprintf(os.Stderr, "Error launching %s: %v\n", result.Integration, err)
+			// Use model from modal if selected, otherwise show picker
+			if result.Model != "" {
+				// Model already selected from modal - save and launch
+				if err := config.SaveIntegrationModel(result.Integration, result.Model); err != nil {
+					fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
+					continue
+				}
+				if err := config.LaunchIntegrationWithModel(result.Integration, result.Model); err != nil {
+					fmt.Fprintf(os.Stderr, "Error launching %s: %v\n", result.Integration, err)
+				}
+			} else {
+				err := config.ConfigureIntegrationWithSelectors(cmd.Context(), result.Integration, singleSelector, multiSelector)
+				if errors.Is(err, errSelectionCancelled) {
+					continue // Return to main menu
+				}
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error configuring %s: %v\n", result.Integration, err)
+					continue
+				}
+				if err := config.LaunchIntegration(result.Integration); err != nil {
+					fmt.Fprintf(os.Stderr, "Error launching %s: %v\n", result.Integration, err)
+				}
 			}
 		}
 	}

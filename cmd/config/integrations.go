@@ -189,19 +189,25 @@ func SelectModelWithSelector(ctx context.Context, selector SingleSelector) (stri
 		return "", err
 	}
 
-	if len(models.Models) == 0 {
-		return "", fmt.Errorf("no models available, run 'ollama pull <model>' first")
+	var existing []modelInfo
+	for _, m := range models.Models {
+		existing = append(existing, modelInfo{Name: m.Name, Remote: m.RemoteModel != ""})
 	}
 
 	lastModel := LastModel()
-
-	var items []ModelItem
-	for _, m := range models.Models {
-		items = append(items, ModelItem{Name: m.Name})
+	var preChecked []string
+	if lastModel != "" {
+		preChecked = []string{lastModel}
 	}
 
-	// Sort with last model first, then alphabetically
-	slices.SortFunc(items, func(a, b ModelItem) int {
+	items, _, existingModels, cloudModels := buildModelList(existing, preChecked, lastModel)
+
+	if len(items) == 0 {
+		return "", fmt.Errorf("no models available, run 'ollama pull <model>' first")
+	}
+
+	// Sort with last model first, then existing models, then recommendations
+	slices.SortStableFunc(items, func(a, b ModelItem) int {
 		aIsLast := a.Name == lastModel
 		bIsLast := b.Name == lastModel
 		if aIsLast != bIsLast {
@@ -210,10 +216,95 @@ func SelectModelWithSelector(ctx context.Context, selector SingleSelector) (stri
 			}
 			return 1
 		}
+		aExists := existingModels[a.Name]
+		bExists := existingModels[b.Name]
+		if aExists != bExists {
+			if aExists {
+				return -1
+			}
+			return 1
+		}
 		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
 	})
 
-	return selector("Select model to run:", items)
+	selected, err := selector("Select model to run:", items)
+	if err != nil {
+		return "", err
+	}
+
+	// If the selected model isn't installed, pull it first
+	if !existingModels[selected] {
+		msg := fmt.Sprintf("Download %s?", selected)
+		if ok, err := confirmPrompt(msg); err != nil {
+			return "", err
+		} else if !ok {
+			return "", errCancelled
+		}
+		fmt.Fprintf(os.Stderr, "\n")
+		if err := pullModel(ctx, client, selected); err != nil {
+			return "", fmt.Errorf("failed to pull %s: %w", selected, err)
+		}
+	}
+
+	// If it's a cloud model, ensure user is signed in
+	if cloudModels[selected] {
+		user, err := client.Whoami(ctx)
+		if err == nil && user != nil && user.Name != "" {
+			return selected, nil
+		}
+
+		var aErr api.AuthorizationError
+		if !errors.As(err, &aErr) || aErr.SigninURL == "" {
+			return "", err
+		}
+
+		yes, err := confirmPrompt(fmt.Sprintf("sign in to use %s?", selected))
+		if err != nil || !yes {
+			return "", fmt.Errorf("%s requires sign in", selected)
+		}
+
+		fmt.Fprintf(os.Stderr, "\nTo sign in, navigate to:\n    %s\n\n", aErr.SigninURL)
+
+		// Auto-open browser (best effort, fail silently)
+		switch runtime.GOOS {
+		case "darwin":
+			_ = exec.Command("open", aErr.SigninURL).Start()
+		case "linux":
+			_ = exec.Command("xdg-open", aErr.SigninURL).Start()
+		case "windows":
+			_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", aErr.SigninURL).Start()
+		}
+
+		spinnerFrames := []string{"|", "/", "-", "\\"}
+		frame := 0
+
+		fmt.Fprintf(os.Stderr, "\033[90mwaiting for sign in to complete... %s\033[0m", spinnerFrames[0])
+
+		ticker := time.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				fmt.Fprintf(os.Stderr, "\r\033[K")
+				return "", ctx.Err()
+			case <-ticker.C:
+				frame++
+				fmt.Fprintf(os.Stderr, "\r\033[90mwaiting for sign in to complete... %s\033[0m", spinnerFrames[frame%len(spinnerFrames)])
+
+				// poll every 10th frame (~2 seconds)
+				if frame%10 == 0 {
+					u, err := client.Whoami(ctx)
+					if err == nil && u != nil && u.Name != "" {
+						fmt.Fprintf(os.Stderr, "\r\033[K\033[A\r\033[K\033[1msigned in:\033[0m %s\n", u.Name)
+						return selected, nil
+					}
+				}
+			}
+		}
+	}
+
+	return selected, nil
 }
 
 func SelectModel(ctx context.Context) (string, error) {
@@ -521,6 +612,30 @@ func LaunchIntegration(name string) error {
 
 	// No saved config - prompt user to run setup
 	return fmt.Errorf("%s is not configured. Run 'ollama launch %s' to set it up", r, name)
+}
+
+// LaunchIntegrationWithModel launches the named integration with the specified model.
+func LaunchIntegrationWithModel(name, modelName string) error {
+	return runIntegration(name, modelName, nil)
+}
+
+// SaveIntegrationModel saves the model for an integration.
+func SaveIntegrationModel(name, modelName string) error {
+	// Load existing models and prepend the new one
+	var models []string
+	if existing, err := loadIntegration(name); err == nil && len(existing.Models) > 0 {
+		models = existing.Models
+		// Remove the model if it already exists
+		for i, m := range models {
+			if m == modelName {
+				models = append(models[:i], models[i+1:]...)
+				break
+			}
+		}
+	}
+	// Prepend the new model
+	models = append([]string{modelName}, models...)
+	return saveIntegration(name, models)
 }
 
 // ConfigureIntegrationWithSelectors allows the user to select/change the model for an integration using custom selectors.
@@ -933,6 +1048,56 @@ func isCloudModel(ctx context.Context, client *api.Client, name string) bool {
 		return false
 	}
 	return resp.RemoteModel != ""
+}
+
+// GetModelItems returns a list of model items including recommendations for the TUI.
+// It includes all locally available models plus recommended models that aren't installed.
+func GetModelItems(ctx context.Context) ([]ModelItem, map[string]bool) {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return nil, nil
+	}
+
+	models, err := client.List(ctx)
+	if err != nil {
+		return nil, nil
+	}
+
+	var existing []modelInfo
+	for _, m := range models.Models {
+		existing = append(existing, modelInfo{Name: m.Name, Remote: m.RemoteModel != ""})
+	}
+
+	lastModel := LastModel()
+	var preChecked []string
+	if lastModel != "" {
+		preChecked = []string{lastModel}
+	}
+
+	items, _, existingModels, _ := buildModelList(existing, preChecked, lastModel)
+
+	// Sort with last model first, then existing models, then recommendations
+	slices.SortStableFunc(items, func(a, b ModelItem) int {
+		aIsLast := a.Name == lastModel
+		bIsLast := b.Name == lastModel
+		if aIsLast != bIsLast {
+			if aIsLast {
+				return -1
+			}
+			return 1
+		}
+		aExists := existingModels[a.Name]
+		bExists := existingModels[b.Name]
+		if aExists != bExists {
+			if aExists {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+	})
+
+	return items, existingModels
 }
 
 func pullModel(ctx context.Context, client *api.Client, model string) error {

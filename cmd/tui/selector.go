@@ -123,6 +123,25 @@ func (m selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+		case tea.KeyPgUp:
+			m.cursor -= maxSelectorItems
+			if m.cursor < 0 {
+				m.cursor = 0
+			}
+			m.scrollOffset -= maxSelectorItems
+			if m.scrollOffset < 0 {
+				m.scrollOffset = 0
+			}
+
+		case tea.KeyPgDown:
+			m.cursor += maxSelectorItems
+			if m.cursor >= len(filtered) {
+				m.cursor = len(filtered) - 1
+			}
+			if m.cursor >= m.scrollOffset+maxSelectorItems {
+				m.scrollOffset = m.cursor - maxSelectorItems + 1
+			}
+
 		case tea.KeyBackspace:
 			if len(m.filter) > 0 {
 				m.filter = m.filter[:len(m.filter)-1]
@@ -339,6 +358,25 @@ func (m multiSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.cursor >= m.scrollOffset+maxSelectorItems {
 					m.scrollOffset = m.cursor - maxSelectorItems + 1
 				}
+			}
+
+		case tea.KeyPgUp:
+			m.cursor -= maxSelectorItems
+			if m.cursor < 0 {
+				m.cursor = 0
+			}
+			m.scrollOffset -= maxSelectorItems
+			if m.scrollOffset < 0 {
+				m.scrollOffset = 0
+			}
+
+		case tea.KeyPgDown:
+			m.cursor += maxSelectorItems
+			if m.cursor >= len(filtered) {
+				m.cursor = len(filtered) - 1
+			}
+			if m.cursor >= m.scrollOffset+maxSelectorItems {
+				m.scrollOffset = m.cursor - maxSelectorItems + 1
 			}
 
 		case tea.KeyBackspace:
