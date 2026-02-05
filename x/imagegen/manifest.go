@@ -6,8 +6,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
+
+	"github.com/ollama/ollama/envconfig"
 )
 
 // ManifestLayer represents a layer in the manifest.
@@ -32,31 +33,15 @@ type ModelManifest struct {
 	BlobDir  string
 }
 
-// DefaultBlobDir returns the default blob storage directory.
 func DefaultBlobDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
-	}
-	switch runtime.GOOS {
-	case "darwin":
-		return filepath.Join(home, ".ollama", "models", "blobs")
-	case "linux":
-		return filepath.Join(home, ".ollama", "models", "blobs")
-	case "windows":
-		return filepath.Join(home, ".ollama", "models", "blobs")
-	default:
-		return filepath.Join(home, ".ollama", "models", "blobs")
-	}
+	return filepath.Join(envconfig.Models(), "blobs")
 }
 
-// DefaultManifestDir returns the default manifest storage directory.
+// DefaultManifestDir returns the manifest storage directory.
+// Respects OLLAMA_MODELS.
+
 func DefaultManifestDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
-	}
-	return filepath.Join(home, ".ollama", "models", "manifests")
+	return filepath.Join(envconfig.Models(), "manifests")
 }
 
 // LoadManifest loads a manifest for the given model name.
@@ -117,14 +102,17 @@ func (m *ModelManifest) BlobPath(digest string) string {
 	return filepath.Join(m.BlobDir, blobName)
 }
 
-// GetTensorLayers returns all tensor layers for a given component.
-// Component should be "text_encoder", "transformer", or "vae".
-// Tensor names are path-style: "component/tensor_name" (e.g., "text_encoder/model.embed_tokens.weight").
+// GetTensorLayers returns tensor layers, optionally filtered by component.
+// If component is empty, returns all tensor layers (for LLM models).
+// If component is specified (e.g., "text_encoder", "transformer", "vae"),
+// returns only layers with that prefix.
 func (m *ModelManifest) GetTensorLayers(component string) []ManifestLayer {
-	prefix := component + "/"
 	var layers []ManifestLayer
 	for _, layer := range m.Manifest.Layers {
-		if layer.MediaType == "application/vnd.ollama.image.tensor" && strings.HasPrefix(layer.Name, prefix) {
+		if layer.MediaType != "application/vnd.ollama.image.tensor" {
+			continue
+		}
+		if component == "" || strings.HasPrefix(layer.Name, component+"/") {
 			layers = append(layers, layer)
 		}
 	}
@@ -176,6 +164,17 @@ func (m *ModelManifest) HasTensorLayers() bool {
 	return false
 }
 
+// TotalTensorSize returns the total size in bytes of all tensor layers.
+func (m *ModelManifest) TotalTensorSize() int64 {
+	var total int64
+	for _, layer := range m.Manifest.Layers {
+		if layer.MediaType == "application/vnd.ollama.image.tensor" {
+			total += layer.Size
+		}
+	}
+	return total
+}
+
 // ModelInfo contains metadata about an image generation model.
 type ModelInfo struct {
 	Architecture   string
@@ -210,7 +209,7 @@ func GetModelInfo(modelName string) (*ModelInfo, error) {
 	if info.Quantization == "" {
 		for _, layer := range manifest.Manifest.Layers {
 			if strings.HasSuffix(layer.Name, ".weight_scale") {
-				info.Quantization = "FP8"
+				info.Quantization = "Q8"
 				break
 			}
 		}

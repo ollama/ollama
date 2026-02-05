@@ -39,6 +39,13 @@ type Model interface {
 	Config() config
 }
 
+// Validator is an optional interface that models can implement to perform
+// validation after tensors have been loaded. If validation fails, model
+// loading will fail with the returned error.
+type Validator interface {
+	Validate() error
+}
+
 // MultimodalProcessor must be implemented by multimodal models.
 type MultimodalProcessor interface {
 	// EncodeMultimodal processes a single input (such as an image) and
@@ -116,6 +123,13 @@ func New(modelPath string, params ml.BackendParams) (Model, error) {
 	base := Base{b: b, config: m.Config()}
 	v := reflect.ValueOf(m)
 	v.Elem().Set(populateFields(base, v.Elem()))
+
+	if validator, ok := m.(Validator); ok {
+		if err := validator.Validate(); err != nil {
+			return nil, err
+		}
+	}
+
 	return m, nil
 }
 

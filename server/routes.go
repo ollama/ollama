@@ -39,6 +39,7 @@ import (
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/middleware"
 	"github.com/ollama/ollama/model/parsers"
 	"github.com/ollama/ollama/model/renderers"
@@ -74,16 +75,12 @@ func experimentEnabled(name string) bool {
 
 var useClient2 = experimentEnabled("client2")
 
-// Low VRAM mode is based on the sum of total VRAM (not free) and triggers
-// reduced context length on some models
-var lowVRAMThreshold uint64 = 20 * format.GibiByte
-
 var mode string = gin.DebugMode
 
 type Server struct {
-	addr    net.Addr
-	sched   *Scheduler
-	lowVRAM bool
+	addr          net.Addr
+	sched         *Scheduler
+	defaultNumCtx int
 }
 
 func init() {
@@ -106,8 +103,12 @@ var (
 	errBadTemplate = errors.New("template error")
 )
 
-func modelOptions(model *Model, requestOpts map[string]any) (api.Options, error) {
+func (s *Server) modelOptions(model *Model, requestOpts map[string]any) (api.Options, error) {
 	opts := api.DefaultOptions()
+	if opts.NumCtx == 0 {
+		opts.NumCtx = s.defaultNumCtx
+	}
+
 	if err := opts.FromMap(model.Options); err != nil {
 		return api.Options{}, err
 	}
@@ -139,18 +140,9 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 		return nil, nil, nil, fmt.Errorf("%s %w", name, err)
 	}
 
-	opts, err := modelOptions(model, requestOpts)
+	opts, err := s.modelOptions(model, requestOpts)
 	if err != nil {
 		return nil, nil, nil, err
-	}
-
-	// This model is much more capable with a larger context, so set that
-	// unless it would penalize performance too much
-	if !s.lowVRAM && slices.Contains([]string{
-		"gptoss", "gpt-oss",
-		"qwen3vl", "qwen3vlmoe",
-	}, model.Config.ModelFamily) {
-		opts.NumCtx = max(opts.NumCtx, 8192)
 	}
 
 	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive)
@@ -315,7 +307,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	// expire the runner
+	// expire the runner if unload is requested (empty prompt, keep alive is 0)
 	if req.Prompt == "" && req.KeepAlive != nil && req.KeepAlive.Duration == 0 {
 		s.sched.expireRunner(m)
 
@@ -326,6 +318,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			Done:       true,
 			DoneReason: "unload",
 		})
+		return
+	}
+
+	// Handle image generation models
+	if slices.Contains(m.Capabilities(), model.CapabilityImage) {
+		s.handleImageGenerate(c, req, name.String(), checkpointStart)
 		return
 	}
 
@@ -968,7 +966,7 @@ func (s *Server) PushHandler(c *gin.Context) {
 // is.
 func getExistingName(n model.Name) (model.Name, error) {
 	var zero model.Name
-	existing, err := Manifests(true)
+	existing, err := manifest.Manifests(true)
 	if err != nil {
 		return zero, err
 	}
@@ -1012,7 +1010,7 @@ func (s *Server) DeleteHandler(c *gin.Context) {
 		return
 	}
 
-	m, err := ParseNamedManifest(n)
+	m, err := manifest.ParseNamedManifest(n)
 	if err != nil {
 		switch {
 		case os.IsNotExist(err):
@@ -1074,7 +1072,7 @@ func (s *Server) ShowHandler(c *gin.Context) {
 func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	name := model.ParseName(req.Model)
 	if !name.IsValid() {
-		return nil, ErrModelPathInvalid
+		return nil, model.Unqualified(name)
 	}
 	name, err := getExistingName(name)
 	if err != nil {
@@ -1096,7 +1094,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	}
 
 	// For image generation models, populate details from imagegen package
-	if slices.Contains(m.Capabilities(), model.CapabilityImageGeneration) {
+	if slices.Contains(m.Capabilities(), model.CapabilityImage) {
 		if info, err := imagegen.GetModelInfo(name.String()); err == nil {
 			modelDetails.Family = info.Architecture
 			modelDetails.ParameterSize = format.HumanNumber(uint64(info.ParameterCount))
@@ -1106,7 +1104,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 
 	// For safetensors LLM models (experimental), populate details from config.json
 	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
-		if info, err := xserver.GetSafetensorsLLMInfo(name.String()); err == nil {
+		if info, err := xserver.GetSafetensorsLLMInfo(name); err == nil {
 			if arch, ok := info["general.architecture"].(string); ok && arch != "" {
 				modelDetails.Family = arch
 			}
@@ -1115,7 +1113,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 			}
 		}
 		// Get torch_dtype directly from config.json for quantization level
-		if dtype, err := xserver.GetSafetensorsDtype(name.String()); err == nil && dtype != "" {
+		if dtype, err := xserver.GetSafetensorsDtype(name); err == nil && dtype != "" {
 			modelDetails.QuantizationLevel = dtype
 		}
 	}
@@ -1129,7 +1127,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		msgs[i] = api.Message{Role: msg.Role, Content: msg.Content}
 	}
 
-	manifest, err := ParseNamedManifest(name)
+	mf, err := manifest.ParseNamedManifest(name)
 	if err != nil {
 		return nil, err
 	}
@@ -1141,8 +1139,11 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		Details:      modelDetails,
 		Messages:     msgs,
 		Capabilities: m.Capabilities(),
-		ModifiedAt:   manifest.fi.ModTime(),
+		ModifiedAt:   mf.FileInfo().ModTime(),
 		Requires:     m.Config.Requires,
+		// Several integrations crash on a nil/omitempty+empty ModelInfo, so by
+		// default we return an empty map.
+		ModelInfo: make(map[string]any),
 	}
 
 	if m.Config.RemoteHost != "" {
@@ -1202,10 +1203,10 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		return resp, nil
 	}
 
-	if slices.Contains(m.Capabilities(), model.CapabilityImageGeneration) {
+	if slices.Contains(m.Capabilities(), model.CapabilityImage) {
 		// Populate tensor info if verbose
 		if req.Verbose {
-			if tensors, err := xserver.GetSafetensorsTensorInfo(name.String()); err == nil {
+			if tensors, err := xserver.GetSafetensorsTensorInfo(name); err == nil {
 				resp.Tensors = tensors
 			}
 		}
@@ -1214,12 +1215,12 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 
 	// For safetensors LLM models (experimental), populate ModelInfo from config.json
 	if m.Config.ModelFormat == "safetensors" && slices.Contains(m.Config.Capabilities, "completion") {
-		if info, err := xserver.GetSafetensorsLLMInfo(name.String()); err == nil {
+		if info, err := xserver.GetSafetensorsLLMInfo(name); err == nil {
 			resp.ModelInfo = info
 		}
 		// Populate tensor info if verbose
 		if req.Verbose {
-			if tensors, err := xserver.GetSafetensorsTensorInfo(name.String()); err == nil {
+			if tensors, err := xserver.GetSafetensorsTensorInfo(name); err == nil {
 				resp.Tensors = tensors
 			}
 		}
@@ -1276,7 +1277,7 @@ func getModelData(digest string, verbose bool) (ggml.KV, ggml.Tensors, error) {
 }
 
 func (s *Server) ListHandler(c *gin.Context) {
-	ms, err := Manifests(true)
+	ms, err := manifest.Manifests(true)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1307,8 +1308,8 @@ func (s *Server) ListHandler(c *gin.Context) {
 			RemoteModel: cf.RemoteModel,
 			RemoteHost:  cf.RemoteHost,
 			Size:        m.Size(),
-			Digest:      m.digest,
-			ModifiedAt:  m.fi.ModTime(),
+			Digest:      m.Digest(),
+			ModifiedAt:  m.FileInfo().ModTime(),
 			Details: api.ModelDetails{
 				Format:            cf.ModelFormat,
 				Family:            cf.ModelFamily,
@@ -1367,7 +1368,7 @@ func (s *Server) CopyHandler(c *gin.Context) {
 }
 
 func (s *Server) HeadBlobHandler(c *gin.Context) {
-	path, err := GetBlobsPath(c.Param("digest"))
+	path, err := manifest.BlobsPath(c.Param("digest"))
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1383,7 +1384,7 @@ func (s *Server) HeadBlobHandler(c *gin.Context) {
 
 func (s *Server) CreateBlobHandler(c *gin.Context) {
 	if ib, ok := intermediateBlobs[c.Param("digest")]; ok {
-		p, err := GetBlobsPath(ib)
+		p, err := manifest.BlobsPath(ib)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -1401,7 +1402,7 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 		}
 	}
 
-	path, err := GetBlobsPath(c.Param("digest"))
+	path, err := manifest.BlobsPath(c.Param("digest"))
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1419,7 +1420,7 @@ func (s *Server) CreateBlobHandler(c *gin.Context) {
 		return
 	}
 
-	layer, err := NewLayer(c.Request.Body, "")
+	layer, err := manifest.NewLayer(c.Request.Body, "")
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1594,8 +1595,9 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.GET("/v1/models", middleware.ListMiddleware(), s.ListHandler)
 	r.GET("/v1/models/:model", middleware.RetrieveMiddleware(), s.ShowHandler)
 	r.POST("/v1/responses", middleware.ResponsesMiddleware(), s.ChatHandler)
-	// Experimental OpenAI-compatible image generation endpoint
-	r.POST("/v1/images/generations", s.handleImageGeneration)
+	// OpenAI-compatible image generation endpoints
+	r.POST("/v1/images/generations", middleware.ImageGenerationsMiddleware(), s.GenerateHandler)
+	r.POST("/v1/images/edits", middleware.ImageEditsMiddleware(), s.GenerateHandler)
 
 	// Inference (Anthropic compatibility)
 	r.POST("/v1/messages", middleware.AnthropicMessagesMiddleware(), s.ChatHandler)
@@ -1619,7 +1621,7 @@ func Serve(ln net.Listener) error {
 	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
 	slog.Info("server config", "env", envconfig.Values())
 
-	blobsDir, err := GetBlobsPath("")
+	blobsDir, err := manifest.BlobsPath("")
 	if err != nil {
 		return err
 	}
@@ -1628,7 +1630,7 @@ func Serve(ln net.Listener) error {
 	}
 
 	if !envconfig.NoPrune() {
-		if _, err := Manifests(false); err != nil {
+		if _, err := manifest.Manifests(false); err != nil {
 			slog.Warn("corrupt manifests detected, skipping prune operation.  Re-pull or delete to clear", "error", err)
 		} else {
 			// clean up unused layers and manifests
@@ -1636,12 +1638,12 @@ func Serve(ln net.Listener) error {
 				return err
 			}
 
-			manifestsPath, err := GetManifestPath()
+			manifestsPath, err := manifest.Path()
 			if err != nil {
 				return err
 			}
 
-			if err := PruneDirectory(manifestsPath); err != nil {
+			if err := manifest.PruneDirectory(manifestsPath); err != nil {
 				return err
 			}
 		}
@@ -1709,10 +1711,18 @@ func Serve(ln net.Listener) error {
 	for _, gpu := range gpus {
 		totalVRAM += gpu.TotalMemory - envconfig.GpuOverhead()
 	}
-	if totalVRAM < lowVRAMThreshold {
-		s.lowVRAM = true
-		slog.Info("entering low vram mode", "total vram", format.HumanBytes2(totalVRAM), "threshold", format.HumanBytes2(lowVRAMThreshold))
+
+	// Set default context based on VRAM tier
+	// Use slightly lower thresholds (47/23 GiB vs. 48/24 GiB) to account for small differences in the exact value
+	switch {
+	case totalVRAM >= 47*format.GibiByte:
+		s.defaultNumCtx = 262144
+	case totalVRAM >= 23*format.GibiByte:
+		s.defaultNumCtx = 32768
+	default:
+		s.defaultNumCtx = 4096
 	}
+	slog.Info("vram-based default context", "total_vram", format.HumanBytes2(totalVRAM), "default_num_ctx", s.defaultNumCtx)
 
 	err = srvr.Serve(ln)
 	// If server is closed from the signal handler, wait for the ctx to be done
@@ -1886,8 +1896,8 @@ func (s *Server) PsHandler(c *gin.Context) {
 			Details:   modelDetails,
 			ExpiresAt: v.expiresAt,
 		}
-		if v.Options != nil {
-			mr.ContextLength = v.Options.NumCtx
+		if v.llama != nil {
+			mr.ContextLength = v.llama.ContextLength()
 		}
 		// The scheduler waits to set expiresAt, so if a model is loading it's
 		// possible that it will be set to the unix epoch. For those cases, just
@@ -1915,62 +1925,6 @@ func toolCallId() string {
 		b[i] = letterBytes[rand.Intn(len(letterBytes))]
 	}
 	return "call_" + strings.ToLower(string(b))
-}
-
-func (s *Server) handleImageGeneration(c *gin.Context) {
-	var req struct {
-		Model  string `json:"model"`
-		Prompt string `json:"prompt"`
-		Size   string `json:"size"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	m, err := GetModel(req.Model)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-		return
-	}
-
-	runnerCh, errCh := s.sched.GetRunner(c.Request.Context(), m, api.Options{}, nil)
-	var runner *runnerRef
-	select {
-	case runner = <-runnerCh:
-	case err := <-errCh:
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Parse size (e.g., "1024x768") into width and height
-	width, height := int32(1024), int32(1024)
-	if req.Size != "" {
-		if _, err := fmt.Sscanf(req.Size, "%dx%d", &width, &height); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid size format, expected WxH"})
-			return
-		}
-	}
-
-	var image []byte
-	err = runner.llama.Completion(c.Request.Context(), llm.CompletionRequest{
-		Prompt: req.Prompt,
-		Width:  width,
-		Height: height,
-	}, func(resp llm.CompletionResponse) {
-		if len(resp.Image) > 0 {
-			image = resp.Image
-		}
-	})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"created": time.Now().Unix(),
-		"data":    []gin.H{{"b64_json": base64.StdEncoding.EncodeToString(image)}},
-	})
 }
 
 func (s *Server) ChatHandler(c *gin.Context) {
@@ -2521,4 +2475,116 @@ func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
 		}
 	}
 	return msgs
+}
+
+// handleImageGenerate handles image generation requests within GenerateHandler.
+// This is called when the model has the Image capability.
+func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, modelName string, checkpointStart time.Time) {
+	// Validate image dimensions
+	const maxDimension int32 = 4096
+	if req.Width > maxDimension || req.Height > maxDimension {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("width and height must be <= %d", maxDimension)})
+		return
+	}
+
+	// Schedule the runner for image generation
+	runner, _, _, err := s.scheduleRunner(c.Request.Context(), modelName, []model.Capability{model.CapabilityImage}, nil, req.KeepAlive)
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
+
+	checkpointLoaded := time.Now()
+
+	// Handle load-only request (empty prompt)
+	if req.Prompt == "" {
+		c.JSON(http.StatusOK, api.GenerateResponse{
+			Model:      req.Model,
+			CreatedAt:  time.Now().UTC(),
+			Done:       true,
+			DoneReason: "load",
+		})
+		return
+	}
+
+	// Check streaming preference
+	isStreaming := req.Stream == nil || *req.Stream
+
+	contentType := "application/x-ndjson"
+	if !isStreaming {
+		contentType = "application/json; charset=utf-8"
+	}
+	c.Header("Content-Type", contentType)
+
+	// Get seed from options if provided
+	var seed int64
+	if s, ok := req.Options["seed"]; ok {
+		switch v := s.(type) {
+		case int:
+			seed = int64(v)
+		case int64:
+			seed = v
+		case float64:
+			seed = int64(v)
+		}
+	}
+
+	var images []llm.ImageData
+	for i, imgData := range req.Images {
+		images = append(images, llm.ImageData{ID: i, Data: imgData})
+	}
+
+	var streamStarted bool
+	var finalResponse api.GenerateResponse
+
+	if err := runner.Completion(c.Request.Context(), llm.CompletionRequest{
+		Prompt: req.Prompt,
+		Width:  req.Width,
+		Height: req.Height,
+		Steps:  req.Steps,
+		Seed:   seed,
+		Images: images,
+	}, func(cr llm.CompletionResponse) {
+		streamStarted = true
+		res := api.GenerateResponse{
+			Model:     req.Model,
+			CreatedAt: time.Now().UTC(),
+			Done:      cr.Done,
+		}
+
+		if cr.TotalSteps > 0 {
+			res.Completed = int64(cr.Step)
+			res.Total = int64(cr.TotalSteps)
+		}
+
+		if cr.Image != "" {
+			res.Image = cr.Image
+		}
+
+		if cr.Done {
+			res.DoneReason = cr.DoneReason.String()
+			res.Metrics.TotalDuration = time.Since(checkpointStart)
+			res.Metrics.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+		}
+
+		if !isStreaming {
+			finalResponse = res
+			return
+		}
+
+		data, _ := json.Marshal(res)
+		c.Writer.Write(append(data, '\n'))
+		c.Writer.Flush()
+	}); err != nil {
+		// Only send JSON error if streaming hasn't started yet
+		// (once streaming starts, headers are committed and we can't change status code)
+		if !streamStarted {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+		return
+	}
+
+	if !isStreaming {
+		c.JSON(http.StatusOK, finalResponse)
+	}
 }

@@ -16,6 +16,7 @@
 - [Generate Embeddings](#generate-embeddings)
 - [List Running Models](#list-running-models)
 - [Version](#version)
+- [Experimental: Image Generation](#image-generation-experimental)
 
 ## Conventions
 
@@ -60,6 +61,15 @@ Advanced parameters (optional):
 - `raw`: if `true` no formatting will be applied to the prompt. You may choose to use the `raw` parameter if you are specifying a full templated prompt in your request to the API
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 - `context` (deprecated): the context parameter returned from a previous request to `/generate`, this can be used to keep a short conversational memory
+
+Experimental image generation parameters (for image generation models only):
+
+> [!WARNING]
+> These parameters are experimental and may change in future versions.
+
+- `width`: width of the generated image in pixels
+- `height`: height of the generated image in pixels
+- `steps`: number of diffusion steps
 
 #### Structured outputs
 
@@ -1906,5 +1916,57 @@ curl http://localhost:11434/api/version
 ```json
 {
   "version": "0.5.1"
+}
+```
+
+## Experimental Features
+
+### Image Generation (Experimental)
+
+> [!WARNING]
+> Image generation is experimental and may change in future versions.
+
+Image generation is now supported through the standard `/api/generate` endpoint when using image generation models. The API automatically detects when an image generation model is being used.
+
+See the [Generate a completion](#generate-a-completion) section for the full API documentation. The experimental image generation parameters (`width`, `height`, `steps`) are documented there.
+
+#### Example
+
+##### Request
+
+```shell
+curl http://localhost:11434/api/generate -d '{
+  "model": "x/z-image-turbo",
+  "prompt": "a sunset over mountains",
+  "width": 1024,
+  "height": 768
+}'
+```
+
+##### Response (streaming)
+
+Progress updates during generation:
+
+```json
+{
+  "model": "x/z-image-turbo",
+  "created_at": "2024-01-15T10:30:00.000000Z",
+  "completed": 5,
+  "total": 20,
+  "done": false
+}
+```
+
+##### Final Response
+
+```json
+{
+  "model": "x/z-image-turbo",
+  "created_at": "2024-01-15T10:30:15.000000Z",
+  "image": "iVBORw0KGgoAAAANSUhEUg...",
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 15000000000,
+  "load_duration": 2000000000
 }
 ```

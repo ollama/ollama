@@ -9,7 +9,8 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/x/imagegen"
+	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/types/model"
 )
 
 // modelConfig represents the HuggingFace config.json structure
@@ -35,22 +36,22 @@ type modelConfig struct {
 
 // GetSafetensorsLLMInfo extracts model information from safetensors LLM models.
 // It reads the config.json layer and returns a map compatible with GGML's KV format.
-func GetSafetensorsLLMInfo(modelName string) (map[string]any, error) {
-	manifest, err := imagegen.LoadManifest(modelName)
+func GetSafetensorsLLMInfo(name model.Name) (map[string]any, error) {
+	mf, err := manifest.ParseNamedManifest(name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load manifest: %w", err)
 	}
 
 	var config modelConfig
-	if err := manifest.ReadConfigJSON("config.json", &config); err != nil {
+	if err := mf.ReadConfigJSON("config.json", &config); err != nil {
 		return nil, fmt.Errorf("failed to read config.json: %w", err)
 	}
 
 	// Calculate total tensor bytes from manifest layers
 	var totalBytes int64
 	var tensorCount int64
-	for _, layer := range manifest.Manifest.Layers {
-		if layer.MediaType == "application/vnd.ollama.image.tensor" {
+	for _, layer := range mf.Layers {
+		if layer.MediaType == manifest.MediaTypeImageTensor {
 			totalBytes += layer.Size
 			tensorCount++
 		}
@@ -151,73 +152,175 @@ func buildModelInfo(config modelConfig, totalTensorBytes, tensorCount int64) map
 
 // GetSafetensorsTensorInfo extracts tensor information from safetensors model layers.
 // Each tensor is stored as a minimal safetensors file with an 88-byte header containing metadata.
-func GetSafetensorsTensorInfo(modelName string) ([]api.Tensor, error) {
-	manifest, err := imagegen.LoadManifest(modelName)
+func GetSafetensorsTensorInfo(name model.Name) ([]api.Tensor, error) {
+	mf, err := manifest.ParseNamedManifest(name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load manifest: %w", err)
 	}
 
-	return getTensorInfoFromManifest(manifest)
+	return getTensorInfoFromManifest(mf)
 }
 
 // getTensorInfoFromManifest extracts tensor info from a manifest.
 // This is separated for testability.
-func getTensorInfoFromManifest(manifest *imagegen.ModelManifest) ([]api.Tensor, error) {
+// For quantized models, groups weight/scale/qbias into single entries with detected quantization type.
+func getTensorInfoFromManifest(mf *manifest.Manifest) ([]api.Tensor, error) {
 	var tensors []api.Tensor
 
-	for _, layer := range manifest.Manifest.Layers {
-		if layer.MediaType != "application/vnd.ollama.image.tensor" {
+	// First pass: collect all tensor info and identify scale tensors
+	type tensorData struct {
+		info   *safetensorsTensorInfo
+		digest string
+	}
+	tensorMap := make(map[string]*tensorData)
+	scaleMap := make(map[string]*tensorData) // base name -> scale tensor info
+
+	for _, layer := range mf.Layers {
+		if layer.MediaType != manifest.MediaTypeImageTensor {
 			continue
 		}
 
 		// Read the safetensors header from the blob
-		blobPath := manifest.BlobPath(layer.Digest)
+		blobPath, err := manifest.BlobsPath(layer.Digest)
+		if err != nil {
+			continue
+		}
 		info, err := readSafetensorsHeader(blobPath)
 		if err != nil {
-			// Skip tensors we can't read
 			continue
 		}
 
-		// Convert shape from int to uint64
-		shape := make([]uint64, len(info.Shape))
-		for i, s := range info.Shape {
-			shape[i] = uint64(s)
+		td := &tensorData{info: info, digest: layer.Digest}
+
+		if strings.HasSuffix(layer.Name, "_scale") {
+			baseName := strings.TrimSuffix(layer.Name, "_scale")
+			scaleMap[baseName] = td
+		} else if strings.HasSuffix(layer.Name, "_qbias") {
+			// Skip qbias tensors - they're included with the quantized weight
+			continue
+		} else {
+			tensorMap[layer.Name] = td
+		}
+	}
+
+	// Second pass: build tensor list with quantization info
+	for _, layer := range mf.Layers {
+		if layer.MediaType != manifest.MediaTypeImageTensor {
+			continue
 		}
 
-		tensors = append(tensors, api.Tensor{
-			Name:  layer.Name,
-			Type:  info.Dtype,
-			Shape: shape,
-		})
+		// Skip scale and qbias tensors
+		if strings.HasSuffix(layer.Name, "_scale") || strings.HasSuffix(layer.Name, "_qbias") {
+			continue
+		}
+
+		td := tensorMap[layer.Name]
+		if td == nil {
+			continue
+		}
+
+		// Check if this tensor has a corresponding scale tensor (quantized)
+		scaleTd := scaleMap[layer.Name]
+		if scaleTd != nil && len(td.info.Shape) >= 2 && len(scaleTd.info.Shape) >= 2 {
+			// Quantized tensor - detect bits from shapes
+			weightCols := td.info.Shape[len(td.info.Shape)-1]
+			scaleCols := scaleTd.info.Shape[len(scaleTd.info.Shape)-1]
+
+			// Detect quantization: Q4 has pack_factor=8, Q8 has pack_factor=4
+			// Q4 uses group_size=32: weightCols * 8 / scaleCols = 32
+			// Q8 uses group_size=64: weightCols * 4 / scaleCols = 64
+			var bits int
+			var quantType string
+			if weightCols*8/scaleCols == 32 {
+				bits = 4
+				quantType = "Q4"
+			} else if weightCols*4/scaleCols == 64 {
+				bits = 8
+				quantType = "Q8"
+			} else {
+				// Unknown quantization, show raw
+				quantType = td.info.Dtype
+			}
+
+			// Calculate unpacked shape
+			shape := make([]uint64, len(td.info.Shape))
+			for i, s := range td.info.Shape {
+				shape[i] = uint64(s)
+			}
+			if bits > 0 {
+				packFactor := int64(32 / bits)
+				shape[len(shape)-1] = uint64(td.info.Shape[len(td.info.Shape)-1] * packFactor)
+			}
+
+			tensors = append(tensors, api.Tensor{
+				Name:  layer.Name,
+				Type:  quantType,
+				Shape: shape,
+			})
+		} else {
+			// Non-quantized tensor
+			shape := make([]uint64, len(td.info.Shape))
+			for i, s := range td.info.Shape {
+				shape[i] = uint64(s)
+			}
+
+			tensors = append(tensors, api.Tensor{
+				Name:  layer.Name,
+				Type:  td.info.Dtype,
+				Shape: shape,
+			})
+		}
 	}
 
 	return tensors, nil
 }
 
 // GetSafetensorsDtype returns the quantization type for a safetensors model.
-// If the model is quantized (has _scale tensors), returns the quantization type (e.g., "FP8").
+// Reads from model_index.json first, falls back to detection from tensor names.
 // Otherwise returns the torch_dtype from config.json.
-func GetSafetensorsDtype(modelName string) (string, error) {
-	manifest, err := imagegen.LoadManifest(modelName)
+func GetSafetensorsDtype(name model.Name) (string, error) {
+	mf, err := manifest.ParseNamedManifest(name)
 	if err != nil {
 		return "", fmt.Errorf("failed to load manifest: %w", err)
 	}
 
-	// Check if model is quantized by looking for _scale tensors
-	for _, layer := range manifest.Manifest.Layers {
-		if layer.MediaType == "application/vnd.ollama.image.tensor" {
+	// First try to read quantization from model_index.json
+	var modelIndex struct {
+		Quantization string `json:"quantization"`
+	}
+	if err := mf.ReadConfigJSON("model_index.json", &modelIndex); err == nil && modelIndex.Quantization != "" {
+		return modelIndex.Quantization, nil
+	}
+
+	// Fallback: detect from tensor names
+	hasScales := false
+	hasQBias := false
+	for _, layer := range mf.Layers {
+		if layer.MediaType == manifest.MediaTypeImageTensor {
 			if strings.HasSuffix(layer.Name, "_scale") {
-				// Model is quantized - return FP8 (affine quantization)
-				return "FP8", nil
+				hasScales = true
+			}
+			if strings.HasSuffix(layer.Name, "_qbias") {
+				hasQBias = true
 			}
 		}
+	}
+
+	if hasScales {
+		if hasQBias {
+			// Affine mode (has scale + qbias) - could be Q4 or Q8
+			// Default to Q4 as it's more common
+			return "Q4", nil
+		}
+		// No qbias = NVFP4
+		return "NVFP4", nil
 	}
 
 	// Not quantized - return torch_dtype from config.json
 	var cfg struct {
 		TorchDtype string `json:"torch_dtype"`
 	}
-	if err := manifest.ReadConfigJSON("config.json", &cfg); err != nil {
+	if err := mf.ReadConfigJSON("config.json", &cfg); err != nil {
 		return "", fmt.Errorf("failed to read config.json: %w", err)
 	}
 

@@ -991,6 +991,19 @@ func Concat(a, b *Array, axis int) *Array {
 	return Concatenate([]*Array{a, b}, axis)
 }
 
+// Stack stacks arrays along a new axis (axis 0 by default)
+func Stack(arrays []*Array, axis int) *Array {
+	handles := make([]C.mlx_array, len(arrays))
+	for i, arr := range arrays {
+		handles[i] = arr.c
+	}
+	vec := C.mlx_vector_array_new_data(&handles[0], C.size_t(len(handles)))
+	res := C.mlx_array_new()
+	C.mlx_stack_axis(&res, vec, C.int(axis), C.default_stream())
+	C.mlx_vector_array_free(vec)
+	return newArray(res)
+}
+
 // Slice slices the array
 func Slice(a *Array, start, stop []int32) *Array {
 	n := len(start)
@@ -1135,6 +1148,27 @@ func RMSNormNoWeight(x *Array, eps float32) *Array {
 	lastDim := x.Shape()[len(x.Shape())-1]
 	ones := AsType(Full(1.0, lastDim), x.Dtype())
 	return RMSNorm(x, ones, eps)
+}
+
+// LayerNorm applies layer normalization without learnable params
+// (x - mean) / sqrt(var + eps)
+func LayerNorm(x *Array, eps float32) *Array {
+	return LayerNormWithWeightBias(x, nil, nil, eps)
+}
+
+// LayerNormWithWeightBias computes layer normalization using mlx.fast
+// weight and bias can be nil for elementwise_affine=False
+func LayerNormWithWeightBias(x, weight, bias *Array, eps float32) *Array {
+	res := C.mlx_array_new()
+	var wc, bc C.mlx_array
+	if weight != nil {
+		wc = weight.c
+	}
+	if bias != nil {
+		bc = bias.c
+	}
+	C.mlx_fast_layer_norm(&res, x.c, wc, bc, C.float(eps), C.default_stream())
+	return newArray(res)
 }
 
 // RoPE applies rotary position embeddings using mlx.fast

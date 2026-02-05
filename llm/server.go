@@ -80,6 +80,7 @@ type LlamaServer interface {
 	GetPort() int
 	GetDeviceInfos(ctx context.Context) []ml.DeviceInfo
 	HasExited() bool
+	ContextLength() int
 }
 
 // llmServer is an instance of a runner hosting a single model
@@ -1200,7 +1201,8 @@ func (s *llmServer) initModel(ctx context.Context, req LoadRequest, operation Lo
 
 	resp, err := http.DefaultClient.Do(r)
 	if err != nil {
-		return nil, fmt.Errorf("do load request: %w", err)
+		slog.Error("do load request", "error", err)
+		return nil, errors.New("model failed to load, this may be due to resource limitations or an internal error, check ollama server logs for details")
 	}
 	defer resp.Body.Close()
 
@@ -1468,6 +1470,7 @@ type CompletionRequest struct {
 	// Image generation fields
 	Width  int32 `json:"width,omitempty"`
 	Height int32 `json:"height,omitempty"`
+	Steps  int32 `json:"steps,omitempty"`
 	Seed   int64 `json:"seed,omitempty"`
 }
 
@@ -1518,10 +1521,14 @@ type CompletionResponse struct {
 	// Logprobs contains log probability information if requested
 	Logprobs []Logprob `json:"logprobs,omitempty"`
 
-	// Image generation fields
-	Image []byte `json:"image,omitempty"` // Generated image
-	Step  int    `json:"step,omitempty"`  // Current generation step
-	Total int    `json:"total,omitempty"` // Total generation steps
+	// Image contains base64-encoded image data for image generation
+	Image string `json:"image,omitempty"`
+
+	// Step is the current step in image generation
+	Step int `json:"step,omitempty"`
+
+	// TotalSteps is the total number of steps for image generation
+	TotalSteps int `json:"total_steps,omitempty"`
 }
 
 func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
@@ -1894,6 +1901,10 @@ func (s *llmServer) VRAMByGPU(id ml.DeviceID) uint64 {
 	}
 
 	return 0
+}
+
+func (s *llmServer) ContextLength() int {
+	return s.options.NumCtx
 }
 
 func (s *ollamaServer) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {

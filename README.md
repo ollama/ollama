@@ -358,6 +358,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Odin Runes](https://github.com/leonid20000/OdinRunes)
 - [LLM-X](https://github.com/mrdjohnson/llm-x) (Progressive Web App)
 - [AnythingLLM (Docker + MacOs/Windows/Linux native app)](https://github.com/Mintplex-Labs/anything-llm)
+- [Screenpipe](https://github.com/mediar-ai/screenpipe) (24/7 screen & mic recording with AI-powered search, uses Ollama for local LLM features)
 - [Ollama Basic Chat: Uses HyperDiv Reactive UI](https://github.com/rapidarchitect/ollama_basic_chat)
 - [Ollama-chats RPG](https://github.com/drazdra/ollama-chats)
 - [IntelliBar](https://intellibar.app/) (AI-powered assistant for macOS)
@@ -465,6 +466,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Clueless](https://github.com/KashyapTan/clueless) (Open Source & Local Cluely: A desktop application LLM assistant to help you talk to anything on your screen using locally served Ollama models. Also undetectable to screenshare)
 - [ollama-co2](https://github.com/carbonatedWaterOrg/ollama-co2) (FastAPI web interface for monitoring and managing local and remote Ollama servers with real-time model monitoring and concurrent downloads)
 - [Hillnote](https://hillnote.com) (A Markdown-first workspace designed to supercharge your AI workflow. Create documents ready to integrate with Claude, ChatGPT, Gemini, Cursor, and more - all while keeping your work on your device.)
+- [Stakpak](https://github.com/stakpak/agent) (An open source, vendor neutral DevOps agent that works with any model, and any stack, for teams who just want to ship)
 
 ### Cloud
 
@@ -558,7 +560,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LiteLLM](https://github.com/BerriAI/litellm)
 - [OllamaFarm for Go](https://github.com/presbrey/ollamafarm)
 - [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp)
-- [Ollama for Ruby](https://github.com/gbaptista/ollama-ai)
+- [Ollama for Ruby](https://github.com/crmne/ruby_llm)
 - [Ollama-rs for Rust](https://github.com/pepperoni21/ollama-rs)
 - [Ollama-hpp for C++](https://github.com/jmont-dev/ollama-hpp)
 - [Ollama4j for Java](https://github.com/ollama4j/ollama4j)

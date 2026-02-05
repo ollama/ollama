@@ -514,13 +514,6 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 			continue
 		}
 
-		// if past the num predict limit
-		if seq.numPredict > 0 && seq.numPredicted >= seq.numPredict {
-			s.removeSequence(seqIdx, llm.DoneReasonLength)
-			nextBatch.seqs[seqIdx] = nil
-			continue
-		}
-
 		if !s.cache.enabled {
 			seq.inputs = append(seq.cache.Inputs, seq.inputs...)
 			seq.cache.Inputs = []*input.Input{}
@@ -709,7 +702,6 @@ func (s *Server) computeBatch(activeBatch batchState) {
 			continue
 		}
 
-		seq.numPredicted++
 		nextToken := &input.Input{Token: 0} // placeholder we'll fill in after Compute/Floats
 		seq.inputs = []*input.Input{nextToken}
 		nextBatchTokens[i] = nextToken
@@ -740,8 +732,14 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		if seq == nil || nextBatchTokens[i] == nil {
 			continue
 		}
+		// If the sequence was replaced while this batch was computing, discard results.
+		if activeBatch.seqs[i] != seq {
+			logutil.Trace("computeBatch: sequence replaced, discarding its results", "batchID", activeBatch.id, "seqIdx", i)
+			continue
+		}
 
 		seq.lastUpdatedAt = t
+		seq.numPredicted++
 		if seq.numPredicted == 1 {
 			seq.processingDuration = seq.lastUpdatedAt.Sub(seq.startedAt)
 			seq.startedAt = seq.lastUpdatedAt
@@ -787,6 +785,13 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		}
 
 		seq.pendingResponses = append(seq.pendingResponses, piece)
+
+		// if past the num predict limit
+		if seq.numPredict > 0 && seq.numPredicted >= seq.numPredict {
+			s.removeSequence(i, llm.DoneReasonLength)
+			continue
+		}
+
 		sequence := strings.Join(seq.pendingResponses, "")
 
 		if ok, stop := common.FindStop(sequence, seq.stop); ok {
@@ -1358,7 +1363,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 		// Dummy load to get the backend wired up
 		f, err := os.CreateTemp("", "*.bin")
 		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to initialize baackend: %v", err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("failed to initialize backend: %v", err), http.StatusInternalServerError)
 			return
 		}
 		defer f.Close()
@@ -1368,13 +1373,13 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 			"general.architecture": "llama",
 			"tokenizer.ggml.model": "gpt2",
 		}, nil); err != nil {
-			http.Error(w, fmt.Sprintf("failed to initialize baackend: %v", err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("failed to initialize backend: %v", err), http.StatusInternalServerError)
 			return
 		}
 
 		m, err = model.New(f.Name(), ml.BackendParams{NumThreads: runtime.NumCPU(), AllocMemory: false, GPULayers: ml.GPULayersList{{}}})
 		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to initialize baackend: %v", err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("failed to initialize backend: %v", err), http.StatusInternalServerError)
 			return
 		}
 		slog.Debug("dummy model load took", "duration", time.Since(startLoad))

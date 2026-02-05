@@ -159,6 +159,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			sb.WriteString(before)
 			if !ok {
 				fmt.Fprintln(&sb)
+				scanner.Prompt.UseAlt = true
 				continue
 			}
 

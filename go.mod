@@ -28,6 +28,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.14
 	github.com/nlpodyssey/gopickle v0.3.0
 	github.com/pdevine/tensor v0.0.0-20240510204454-f88f4562727c
+	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/tkrajina/typescriptify-golang-structs v0.2.0
 	github.com/wk8/go-ordered-map/v2 v2.1.8
 	golang.org/x/image v0.22.0

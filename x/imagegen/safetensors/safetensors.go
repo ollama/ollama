@@ -298,6 +298,16 @@ func (mw *ModelWeights) HasTensor(name string) bool {
 	return ok
 }
 
+// Quantization returns empty string for directory-based weights (not quantized).
+func (mw *ModelWeights) Quantization() string {
+	return ""
+}
+
+// GroupSize returns 0 for directory-based weights (use default).
+func (mw *ModelWeights) GroupSize() int {
+	return 0
+}
+
 // ReleaseAll releases all cached native file handles.
 func (mw *ModelWeights) ReleaseAll() {
 	for path, native := range mw.nativeCache {
