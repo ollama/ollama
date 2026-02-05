@@ -171,6 +171,11 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 
 	opts.NumBatch = min(opts.NumBatch, opts.NumCtx)
 
+	if f.KV().Architecture() == "nomic-bert" {
+		opts.NumBatch = opts.NumCtx
+		slog.Debug("nomic-bert model detected, setting batch size equal to context length", "num_batch", opts.NumBatch, "num_ctx", opts.NumCtx)
+	}
+
 	loadRequest := LoadRequest{LoraPath: adapters, KvSize: opts.NumCtx * numParallel, BatchSize: opts.NumBatch, Parallel: numParallel, MultiUserCache: envconfig.MultiUserCache()}
 
 	defaultThreads := systemInfo.ThreadCount
