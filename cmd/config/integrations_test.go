@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -310,7 +311,8 @@ func TestIsCloudModel(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isCloudModel(tt.name); got != tt.want {
+			// nil client = suffix-only path (no API calls)
+			if got := isCloudModel(context.Background(), nil, tt.name); got != tt.want {
 				t.Errorf("isCloudModel(%q) = %v, want %v", tt.name, got, tt.want)
 			}
 		})

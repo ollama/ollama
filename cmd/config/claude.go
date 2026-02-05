@@ -66,7 +66,9 @@ func (c *Claude) Run(model string, args []string) error {
 	return cmd.Run()
 }
 
-// ConfigureAliases sets up Primary and Fast model aliases for Claude Code.
+// ConfigureAliases sets up model aliases for Claude Code.
+// Cloud-only: subagent routing (fast model) is gated to cloud models only until
+// there is a better strategy for prompt caching on local models.
 func (c *Claude) ConfigureAliases(ctx context.Context, primaryModel string, existing map[string]string, force bool) (map[string]string, bool, error) {
 	aliases := make(map[string]string)
 	for k, v := range existing {
@@ -77,8 +79,16 @@ func (c *Claude) ConfigureAliases(ctx context.Context, primaryModel string, exis
 		aliases["primary"] = primaryModel
 	}
 
-	if !force && aliases["primary"] != "" && aliases["fast"] != "" {
-		return aliases, false, nil
+	if !force && aliases["primary"] != "" {
+		client, _ := api.ClientFromEnvironment()
+		if isCloudModel(ctx, client, aliases["primary"]) {
+			if isCloudModel(ctx, client, aliases["fast"]) {
+				return aliases, false, nil
+			}
+		} else {
+			delete(aliases, "fast")
+			return aliases, false, nil
+		}
 	}
 
 	items, existingModels, cloudModels, client, err := listModels(ctx)
@@ -86,14 +96,11 @@ func (c *Claude) ConfigureAliases(ctx context.Context, primaryModel string, exis
 		return nil, false, err
 	}
 
-	fmt.Fprintf(os.Stderr, "\n%sModel Configuration%s\n", ansiBold, ansiReset)
-	fmt.Fprintf(os.Stderr, "%sClaude Code uses multiple models for various tasks%s\n\n", ansiGray, ansiReset)
-
-	fmt.Fprintf(os.Stderr, "%sPrimary%s\n", ansiBold, ansiReset)
-	fmt.Fprintf(os.Stderr, "%sHandles complex reasoning: planning, code generation, debugging.%s\n\n", ansiGray, ansiReset)
+	fmt.Fprintf(os.Stderr, "\n%sModel Configuration%s\n\n", ansiBold, ansiReset)
 
 	if aliases["primary"] == "" || force {
-		primary, err := selectPrompt("Select Primary model:", items)
+		primary, err := selectPrompt("Select model:", items)
+		fmt.Fprintf(os.Stderr, "\033[3A\033[J")
 		if err != nil {
 			return nil, false, err
 		}
@@ -104,36 +111,35 @@ func (c *Claude) ConfigureAliases(ctx context.Context, primaryModel string, exis
 			return nil, false, err
 		}
 		aliases["primary"] = primary
-	} else {
-		fmt.Fprintf(os.Stderr, "  %s\n\n", aliases["primary"])
 	}
 
-	fmt.Fprintf(os.Stderr, "%sFast%s\n", ansiBold, ansiReset)
-	fmt.Fprintf(os.Stderr, "%sHandles quick operations: file searches, simple edits, status checks.%s\n", ansiGray, ansiReset)
-	fmt.Fprintf(os.Stderr, "%sSmaller models work well and respond faster.%s\n\n", ansiGray, ansiReset)
-
-	if aliases["fast"] == "" || force {
-		fast, err := selectPrompt("Select Fast model:", items)
-		if err != nil {
-			return nil, false, err
+	if isCloudModel(ctx, client, aliases["primary"]) {
+		if aliases["fast"] == "" || !isCloudModel(ctx, client, aliases["fast"]) {
+			aliases["fast"] = aliases["primary"]
 		}
-		if err := pullIfNeeded(ctx, client, existingModels, fast); err != nil {
-			return nil, false, err
-		}
-		if err := ensureAuth(ctx, client, cloudModels, []string{fast}); err != nil {
-			return nil, false, err
-		}
-		aliases["fast"] = fast
+	} else {
+		delete(aliases, "fast")
 	}
 
 	return aliases, true, nil
 }
 
 // SetAliases syncs the configured aliases to the Ollama server using prefix matching.
+// Cloud-only: for local models (fast is empty), we delete any existing aliases to
+// prevent stale routing to a previous cloud model.
 func (c *Claude) SetAliases(ctx context.Context, aliases map[string]string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
+	}
+
+	prefixes := []string{"claude-sonnet-", "claude-haiku-"}
+
+	if aliases["fast"] == "" {
+		for _, prefix := range prefixes {
+			_ = client.DeleteAliasExperimental(ctx, &api.AliasDeleteRequest{Alias: prefix})
+		}
+		return nil
 	}
 
 	prefixAliases := map[string]string{

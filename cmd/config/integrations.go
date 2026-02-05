@@ -207,7 +207,10 @@ func listModels(ctx context.Context) ([]selectItem, map[string]bool, map[string]
 
 	var existing []modelInfo
 	for _, m := range models.Models {
-		existing = append(existing, modelInfo{Name: m.Name, Remote: m.RemoteModel != ""})
+		existing = append(existing, modelInfo{
+			Name:   m.Name,
+			Remote: m.RemoteModel != "",
+		})
 	}
 
 	items, _, existingModels, cloudModels := buildModelList(existing, nil, "")
@@ -300,13 +303,21 @@ func ensureAliases(ctx context.Context, r Runner, name string, primaryModel stri
 		return false, nil
 	}
 
+	if err := ac.SetAliases(ctx, aliases); err != nil {
+		fmt.Fprintf(os.Stderr, "%sWarning: Could not update server aliases: %v%s\n", ansiGray, err, ansiReset)
+		fmt.Fprintf(os.Stderr, "%sConfiguration not saved.%s\n\n", ansiGray, ansiReset)
+		return false, nil
+	}
+
 	if err := saveAliases(name, aliases); err != nil {
 		return false, err
 	}
 
-	if err := ac.SetAliases(ctx, aliases); err != nil {
-		fmt.Fprintf(os.Stderr, "%sWarning: Could not sync aliases to server: %v%s\n", ansiGray, err, ansiReset)
-		fmt.Fprintf(os.Stderr, "%sAliases saved locally. Server sync will retry on next launch.%s\n\n", ansiGray, ansiReset)
+	// Keep models[0] in sync with aliases["primary"]
+	if aliases["primary"] != "" {
+		if err := saveIntegration(name, []string{aliases["primary"]}); err != nil {
+			return false, err
+		}
 	}
 
 	return true, nil
@@ -316,16 +327,6 @@ func runIntegration(name, modelName string, args []string) error {
 	r, ok := integrations[name]
 	if !ok {
 		return fmt.Errorf("unknown integration: %s", name)
-	}
-
-	if _, ok := r.(AliasConfigurer); ok {
-		if config, err := loadIntegration(name); err == nil && config.Aliases != nil {
-			primary, fast := config.Aliases["primary"], config.Aliases["fast"]
-			if primary != "" && fast != "" {
-				fmt.Fprintf(os.Stderr, "\nLaunching %s with Primary: %s, Fast: %s...\n", r, primary, fast)
-				return r.Run(modelName, args)
-			}
-		}
 	}
 
 	fmt.Fprintf(os.Stderr, "\nLaunching %s with %s...\n", r, modelName)
@@ -401,16 +402,54 @@ Examples:
 
 			if !configFlag && modelFlag == "" {
 				if config, err := loadIntegration(name); err == nil && len(config.Models) > 0 {
-					if _, err := ensureAliases(cmd.Context(), r, name, config.Models[0], config.Aliases, false); errors.Is(err, errCancelled) {
+					model := config.Models[0]
+					if config.Aliases == nil {
+						config.Aliases = make(map[string]string)
+					}
+
+					client, _ := api.ClientFromEnvironment()
+					needsLocalSave := false
+
+					if config.Aliases["primary"] != model {
+						config.Aliases["primary"] = model
+						needsLocalSave = true
+					}
+
+					if isCloudModel(cmd.Context(), client, model) {
+						if config.Aliases["fast"] == "" || !isCloudModel(cmd.Context(), client, config.Aliases["fast"]) {
+							config.Aliases["fast"] = model
+							needsLocalSave = true
+						}
+					} else if config.Aliases["fast"] != "" {
+						delete(config.Aliases, "fast")
+						needsLocalSave = true
+					}
+
+					if ac, ok := r.(AliasConfigurer); ok {
+						if err := ac.SetAliases(cmd.Context(), config.Aliases); err != nil {
+							fmt.Fprintf(os.Stderr, "%sWarning: Could not update server aliases: %v%s\n", ansiGray, err, ansiReset)
+						}
+					}
+
+					if needsLocalSave {
+						_ = saveAliases(name, config.Aliases)
+					}
+
+					if _, err := ensureAliases(cmd.Context(), r, name, model, config.Aliases, false); errors.Is(err, errCancelled) {
 						return nil
 					} else if err != nil {
 						return err
 					}
-					return runIntegration(name, config.Models[0], passArgs)
+					return runIntegration(name, model, passArgs)
 				}
 			}
 
 			if ac, ok := r.(AliasConfigurer); ok {
+				// --model flag: skip alias configuration, just run with specified model
+				if modelFlag != "" {
+					return runIntegration(name, modelFlag, passArgs)
+				}
+
 				var existingAliases map[string]string
 				if existing, err := loadIntegration(name); err == nil {
 					existingAliases = existing.Aliases
@@ -423,18 +462,19 @@ Examples:
 					return err
 				}
 				if updated {
-					if err := saveAliases(name, aliases); err != nil {
-						return err
-					}
+					// Atomic: sync to server FIRST, only save locally if server succeeds
 					if err := ac.SetAliases(cmd.Context(), aliases); err != nil {
-						fmt.Fprintf(os.Stderr, "%sWarning: Could not sync aliases to server: %v%s\n", ansiGray, err, ansiReset)
+						fmt.Fprintf(os.Stderr, "%sWarning: Could not update server aliases: %v%s\n", ansiGray, err, ansiReset)
+						fmt.Fprintf(os.Stderr, "%sConfiguration not saved.%s\n\n", ansiGray, ansiReset)
+						// Still launch with the model, but don't save config
+					} else {
+						if err := saveAliases(name, aliases); err != nil {
+							return err
+						}
+						if err := saveIntegration(name, []string{aliases["primary"]}); err != nil {
+							return fmt.Errorf("failed to save: %w", err)
+						}
 					}
-					fmt.Fprintf(os.Stderr, "\n%sConfiguration Complete%s\n", ansiBold, ansiReset)
-					fmt.Fprintf(os.Stderr, "Primary: %s\n", aliases["primary"])
-					fmt.Fprintf(os.Stderr, "Fast: %s\n\n", aliases["fast"])
-				}
-				if err := saveIntegration(name, []string{aliases["primary"]}); err != nil {
-					return fmt.Errorf("failed to save: %w", err)
 				}
 				if configFlag {
 					if launch, _ := confirmPrompt(fmt.Sprintf("Launch %s now?", r)); launch {
@@ -517,8 +557,9 @@ Examples:
 }
 
 type modelInfo struct {
-	Name   string
-	Remote bool
+	Name        string
+	Remote      bool
+	ToolCapable bool
 }
 
 // buildModelList merges existing models with recommendations, sorts them, and returns
@@ -555,7 +596,7 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 			continue
 		}
 		items = append(items, rec)
-		if isCloudModel(rec.Name) {
+		if strings.HasSuffix(rec.Name, ":cloud") {
 			cloudModels[rec.Name] = true
 		}
 	}
@@ -615,8 +656,20 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 	return items, preChecked, existingModels, cloudModels
 }
 
-func isCloudModel(name string) bool {
-	return strings.HasSuffix(name, ":cloud")
+// isCloudModel checks if a model is a cloud model using suffix check and server API fallback.
+func isCloudModel(ctx context.Context, client *api.Client, name string) bool {
+	// Fast path: check suffix first (no network call)
+	if strings.HasSuffix(name, ":cloud") {
+		return true
+	}
+	// Fallback: check server if client available
+	if client != nil {
+		resp, err := client.Show(ctx, &api.ShowRequest{Name: name})
+		if err == nil && resp.RemoteModel != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func pullModel(ctx context.Context, client *api.Client, model string) error {

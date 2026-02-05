@@ -179,12 +179,8 @@ func saveAliases(appName string, aliases map[string]string) error {
 		existing = &integration{}
 	}
 
-	if existing.Aliases == nil {
-		existing.Aliases = make(map[string]string)
-	}
-	for k, v := range aliases {
-		existing.Aliases[k] = v
-	}
+	// Replace aliases entirely (not merge) so deletions are persisted
+	existing.Aliases = aliases
 
 	cfg.Integrations[key] = existing
 	return save(cfg)

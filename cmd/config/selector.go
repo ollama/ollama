@@ -17,6 +17,7 @@ const (
 	ansiBold       = "\033[1m"
 	ansiReset      = "\033[0m"
 	ansiGray       = "\033[37m"
+	ansiGreen      = "\033[32m"
 	ansiClearDown  = "\033[J"
 )
 
@@ -64,10 +65,6 @@ func (s *selectState) handleInput(event inputEvent, char byte) (done bool, resul
 	case eventEnter:
 		if len(filtered) > 0 && s.selected < len(filtered) {
 			return true, filtered[s.selected].Name, nil
-		}
-		// No matches but user typed something - return filter for pull prompt
-		if len(filtered) == 0 && s.filter != "" {
-			return true, s.filter, nil
 		}
 	case eventEscape:
 		return true, "", errCancelled
@@ -287,11 +284,7 @@ func renderSelect(w io.Writer, prompt string, s *selectState) int {
 	lineCount := 1
 
 	if len(filtered) == 0 {
-		if s.filter != "" {
-			fmt.Fprintf(w, "  %s→ Download model: '%s'? Press Enter%s\r\n", ansiGray, s.filter, ansiReset)
-		} else {
-			fmt.Fprintf(w, "  %s(no matches)%s\r\n", ansiGray, ansiReset)
-		}
+		fmt.Fprintf(w, "  %s(no matches)%s\r\n", ansiGray, ansiReset)
 		lineCount++
 	} else {
 		displayCount := min(len(filtered), maxDisplayedItems)

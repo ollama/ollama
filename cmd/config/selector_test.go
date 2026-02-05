@@ -87,12 +87,12 @@ func TestSelectState(t *testing.T) {
 		}
 	})
 
-	t.Run("Enter_EmptyFilteredList_ReturnsFilter", func(t *testing.T) {
+	t.Run("Enter_EmptyFilteredList_DoesNothing", func(t *testing.T) {
 		s := newSelectState(items)
 		s.filter = "nonexistent"
 		done, result, err := s.handleInput(eventEnter, 0)
-		if !done || result != "nonexistent" || err != nil {
-			t.Errorf("expected (true, 'nonexistent', nil), got (%v, %v, %v)", done, result, err)
+		if done || result != "" || err != nil {
+			t.Errorf("expected (false, '', nil), got (%v, %v, %v)", done, result, err)
 		}
 	})
 
@@ -576,15 +576,15 @@ func TestRenderSelect(t *testing.T) {
 		}
 	})
 
-	t.Run("EmptyFilteredList_ShowsPullPrompt", func(t *testing.T) {
+	t.Run("EmptyFilteredList_ShowsNoMatches", func(t *testing.T) {
 		s := newSelectState(items)
 		s.filter = "xyz"
 		var buf bytes.Buffer
 		renderSelect(&buf, "Select:", s)
 
 		output := buf.String()
-		if !strings.Contains(output, "Download model: 'xyz'?") {
-			t.Errorf("expected 'Download model: xyz?' message, got: %s", output)
+		if !strings.Contains(output, "no matches") {
+			t.Errorf("expected 'no matches' message, got: %s", output)
 		}
 	})
 
