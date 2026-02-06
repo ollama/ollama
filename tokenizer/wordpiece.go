@@ -1,4 +1,4 @@
-package model
+package tokenizer
 
 import (
 	"fmt"
@@ -32,7 +32,7 @@ var wordPieceReplacer = strings.NewReplacer(
 	" 're", "'re",
 )
 
-// Decode implements TextProcessor.
+// Decode implements Tokenizer.
 func (wpm WordPiece) Decode(ids []int32) (string, error) {
 	var sb strings.Builder
 	for i, id := range ids {
@@ -96,7 +96,7 @@ func (wpm WordPiece) words(s string) iter.Seq[string] {
 	}
 }
 
-// Encode implements TextProcessor.
+// Encode implements Tokenizer.
 func (wpm WordPiece) Encode(s string, addSpecial bool) ([]int32, error) {
 	var ids []int32
 
@@ -151,17 +151,17 @@ func (wpm WordPiece) Encode(s string, addSpecial bool) ([]int32, error) {
 	return ids, nil
 }
 
-// Is implements TextProcessor.
+// Is implements Tokenizer.
 func (wpm WordPiece) Is(id int32, special Special) bool {
 	return wpm.vocab.Is(id, special)
 }
 
-// Vocabulary implements TextProcessor.
+// Vocabulary implements Tokenizer.
 func (wpm WordPiece) Vocabulary() *Vocabulary {
 	return wpm.vocab
 }
 
-var _ TextProcessor = (*WordPiece)(nil)
+var _ Tokenizer = (*WordPiece)(nil)
 
 func NewWordPiece(vocab *Vocabulary, lowercase bool) WordPiece {
 	return WordPiece{
