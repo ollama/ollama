@@ -18,6 +18,45 @@ import (
 // OpenCode implements Runner and Editor for OpenCode integration
 type OpenCode struct{}
 
+// cloudModelLimit holds context and output token limits for a cloud model.
+type cloudModelLimit struct {
+	Context int
+	Output  int
+}
+
+// cloudModelLimits maps cloud model base names to their token limits.
+// TODO(parthsareen): grab context/output limits from model info instead of hardcoding
+var cloudModelLimits = map[string]cloudModelLimit{
+	"cogito-2.1:671b":     {Context: 163_840, Output: 65_536},
+	"deepseek-v3.1:671b":  {Context: 163_840, Output: 163_840},
+	"deepseek-v3.2":       {Context: 163_840, Output: 65_536},
+	"glm-4.6":             {Context: 202_752, Output: 131_072},
+	"glm-4.7":             {Context: 202_752, Output: 131_072},
+	"gpt-oss:120b":        {Context: 131_072, Output: 131_072},
+	"gpt-oss:20b":         {Context: 131_072, Output: 131_072},
+	"kimi-k2:1t":          {Context: 262_144, Output: 262_144},
+	"kimi-k2.5":           {Context: 262_144, Output: 262_144},
+	"kimi-k2-thinking":    {Context: 262_144, Output: 262_144},
+	"nemotron-3-nano:30b": {Context: 1_048_576, Output: 131_072},
+	"qwen3-coder:480b":    {Context: 262_144, Output: 65_536},
+	"qwen3-next:80b":      {Context: 262_144, Output: 32_768},
+}
+
+// lookupCloudModelLimit returns the token limits for a cloud model.
+// It tries the exact name first, then strips the ":cloud" suffix.
+func lookupCloudModelLimit(name string) (cloudModelLimit, bool) {
+	if l, ok := cloudModelLimits[name]; ok {
+		return l, true
+	}
+	base := strings.TrimSuffix(name, ":cloud")
+	if base != name {
+		if l, ok := cloudModelLimits[base]; ok {
+			return l, true
+		}
+	}
+	return cloudModelLimit{}, false
+}
+
 func (o *OpenCode) String() string { return "OpenCode" }
 
 func (o *OpenCode) Run(model string, args []string) error {
@@ -126,11 +165,12 @@ func (o *OpenCode) Edit(modelList []string) error {
 					existing["name"] = strings.TrimSuffix(name, " [Ollama]")
 				}
 			}
-			// TODO(parthsareen): grab context/output limits from model info instead of hardcoding
 			if isCloudModel(context.Background(), client, model) {
-				existing["limit"] = map[string]any{
-					"context": 128000,
-					"output":  65536,
+				if l, ok := lookupCloudModelLimit(model); ok {
+					existing["limit"] = map[string]any{
+						"context": l.Context,
+						"output":  l.Output,
+					}
 				}
 			}
 			continue
@@ -140,9 +180,11 @@ func (o *OpenCode) Edit(modelList []string) error {
 			"_launch": true,
 		}
 		if isCloudModel(context.Background(), client, model) {
-			entry["limit"] = map[string]any{
-				"context": 128000,
-				"output":  65536,
+			if l, ok := lookupCloudModelLimit(model); ok {
+				entry["limit"] = map[string]any{
+					"context": l.Context,
+					"output":  l.Output,
+				}
 			}
 		}
 		models[model] = entry
