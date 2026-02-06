@@ -633,6 +633,7 @@ func TestLookupCloudModelLimit(t *testing.T) {
 		{"deepseek-v3.2", true, 163_840, 65_536},
 		{"deepseek-v3.2:cloud", true, 163_840, 65_536},
 		{"qwen3-coder:480b", true, 262_144, 65_536},
+		{"qwen3-coder-next:cloud", true, 262_144, 32_768},
 		{"llama3.2", false, 0, 0},
 		{"unknown-model:cloud", false, 0, 0},
 	}
