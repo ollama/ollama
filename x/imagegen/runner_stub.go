@@ -1,6 +1,6 @@
 //go:build !mlx
 
-package mlxrunner
+package imagegen
 
 import "errors"
 

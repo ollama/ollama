@@ -1,6 +1,6 @@
 //go:build mlx
 
-package mlxrunner
+package imagegen
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ollama/ollama/x/imagegen"
+	"github.com/ollama/ollama/x/imagegen/manifest"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/models/flux2"
 	"github.com/ollama/ollama/x/imagegen/models/zimage"
@@ -28,8 +28,8 @@ var imageGenMu sync.Mutex
 func (s *server) loadImageModel() error {
 	// Check memory requirements before loading
 	var requiredMemory uint64
-	if manifest, err := imagegen.LoadManifest(s.modelName); err == nil {
-		requiredMemory = uint64(manifest.TotalTensorSize())
+	if modelManifest, err := manifest.LoadManifest(s.modelName); err == nil {
+		requiredMemory = uint64(modelManifest.TotalTensorSize())
 	}
 	availableMemory := mlx.GetMemoryLimit()
 	if availableMemory > 0 && requiredMemory > 0 && availableMemory < requiredMemory {
@@ -38,7 +38,7 @@ func (s *server) loadImageModel() error {
 	}
 
 	// Detect model type and load appropriate model
-	modelType := imagegen.DetectModelType(s.modelName)
+	modelType := DetectModelType(s.modelName)
 	slog.Info("detected image model type", "type", modelType)
 
 	var model ImageModel
@@ -108,7 +108,7 @@ func (s *server) handleImageCompletion(w http.ResponseWriter, r *http.Request, r
 	}
 
 	// Encode image as base64 PNG
-	imageData, err := imagegen.EncodeImageBase64(img)
+	imageData, err := EncodeImageBase64(img)
 	if err != nil {
 		resp := Response{Content: fmt.Sprintf("error encoding: %v", err), Done: true}
 		data, _ := json.Marshal(resp)

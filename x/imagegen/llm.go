@@ -1,6 +1,6 @@
 //go:build mlx
 
-package mlxrunner
+package imagegen
 
 import (
 	"encoding/json"
@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/cache"
+	"github.com/ollama/ollama/x/imagegen/manifest"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/models/glm4_moe_lite"
 	"github.com/ollama/ollama/x/imagegen/tokenizer"
@@ -197,13 +197,13 @@ func sample(logits *mlx.Array, temp float32, vocabSize int32) *mlx.Array {
 // loadLLMModel loads a safetensors LLM model and its tokenizer from manifest storage.
 func (s *server) loadLLMModel() error {
 	// Load the manifest to get model information
-	manifest, err := imagegen.LoadManifest(s.modelName)
+	modelManifest, err := manifest.LoadManifest(s.modelName)
 	if err != nil {
 		return fmt.Errorf("failed to load manifest: %w", err)
 	}
 
 	// Detect model architecture from config.json
-	configData, err := manifest.ReadConfig("config.json")
+	configData, err := modelManifest.ReadConfig("config.json")
 	if err != nil {
 		return fmt.Errorf("failed to read config.json: %w", err)
 	}
@@ -232,7 +232,7 @@ func (s *server) loadLLMModel() error {
 
 	switch {
 	case strings.Contains(archLower, "glm4moelite"):
-		m, err := glm4_moe_lite.LoadFromManifest(manifest)
+		m, err := glm4_moe_lite.LoadFromManifest(modelManifest)
 		if err != nil {
 			return fmt.Errorf("failed to load glm4-moe-lite model: %w", err)
 		}

@@ -1,4 +1,4 @@
-package imagegen
+package manifest
 
 import (
 	"encoding/json"

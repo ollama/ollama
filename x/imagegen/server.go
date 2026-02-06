@@ -1,4 +1,4 @@
-package mlxrunner
+package imagegen
 
 import (
 	"bufio"
@@ -23,7 +23,7 @@ import (
 
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
-	"github.com/ollama/ollama/x/imagegen"
+	"github.com/ollama/ollama/x/imagegen/manifest"
 )
 
 // Server wraps an MLX runner subprocess to implement llm.LlamaServer.
@@ -46,7 +46,7 @@ type Server struct {
 // NewServer spawns a new MLX runner subprocess and waits until it's ready.
 func NewServer(modelName string, mode ModelMode) (*Server, error) {
 	// Validate platform support before attempting to start
-	if err := imagegen.CheckPlatformSupport(); err != nil {
+	if err := CheckPlatformSupport(); err != nil {
 		return nil, err
 	}
 
@@ -71,8 +71,8 @@ func NewServer(modelName string, mode ModelMode) (*Server, error) {
 		exe = eval
 	}
 
-	// Spawn subprocess: ollama runner --mlx-engine --model <path> --port <port>
-	cmd := exec.Command(exe, "runner", "--mlx-engine", "--model", modelName, "--port", strconv.Itoa(port))
+	// Spawn subprocess: ollama runner --imagegen-engine --model <path> --port <port>
+	cmd := exec.Command(exe, "runner", "--imagegen-engine", "--model", modelName, "--port", strconv.Itoa(port))
 	cmd.Env = os.Environ()
 
 	// On Linux, set LD_LIBRARY_PATH to include MLX library directories
@@ -107,8 +107,8 @@ func NewServer(modelName string, mode ModelMode) (*Server, error) {
 
 	// Estimate VRAM based on tensor size from manifest
 	var vramSize uint64
-	if manifest, err := imagegen.LoadManifest(modelName); err == nil {
-		vramSize = uint64(manifest.TotalTensorSize())
+	if modelManifest, err := manifest.LoadManifest(modelName); err == nil {
+		vramSize = uint64(modelManifest.TotalTensorSize())
 	} else {
 		// Fallback: default to 8GB if manifest can't be loaded
 		vramSize = 8 * 1024 * 1024 * 1024
