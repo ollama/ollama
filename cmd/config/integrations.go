@@ -488,7 +488,7 @@ func listModels(ctx context.Context) ([]selectItem, map[string]bool, map[string]
 
 	items := make([]selectItem, len(modelItems))
 	for i, mi := range modelItems {
-		items[i] = selectItem{Name: mi.Name, Description: mi.Description}
+		items[i] = selectItem(mi)
 	}
 
 	return items, existingModels, cloudModels, client, nil

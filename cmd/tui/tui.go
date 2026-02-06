@@ -16,7 +16,6 @@ import (
 	"github.com/ollama/ollama/version"
 )
 
-
 var (
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -30,7 +29,6 @@ var (
 
 	selectedStyle = lipgloss.NewStyle().
 			PaddingLeft(2).
-			Foreground(lipgloss.Color("147")).
 			Bold(true)
 
 	greyedStyle = lipgloss.NewStyle().
@@ -579,7 +577,7 @@ func (m model) View() string {
 func (m model) renderModal() string {
 	modalStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("147")).
+		BorderForeground(lipgloss.Color("245")).
 		Padding(1, 2).
 		MarginLeft(2)
 
@@ -639,7 +637,7 @@ func (m model) renderModal() string {
 func (m model) renderSignInDialog() string {
 	dialogStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("147")).
+		BorderForeground(lipgloss.Color("245")).
 		Padding(1, 2).
 		MarginLeft(2)
 

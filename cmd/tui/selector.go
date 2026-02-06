@@ -11,15 +11,13 @@ import (
 
 var (
 	selectorTitleStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(lipgloss.Color("147"))
+				Bold(true)
 
 	selectorItemStyle = lipgloss.NewStyle().
 				PaddingLeft(4)
 
 	selectorSelectedItemStyle = lipgloss.NewStyle().
 					PaddingLeft(2).
-					Foreground(lipgloss.Color("147")).
 					Bold(true)
 
 	selectorDescStyle = lipgloss.NewStyle().
@@ -36,7 +34,7 @@ var (
 				Foreground(lipgloss.Color("241"))
 
 	selectorCheckboxCheckedStyle = lipgloss.NewStyle().
-					Foreground(lipgloss.Color("147"))
+					Bold(true)
 
 	selectorDefaultTagStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("241")).
