@@ -2050,6 +2050,7 @@ func inferThinkingOption(caps *[]model.Capability, runOpts *runOptions, explicit
 		return runOpts.Think, nil
 	}
 
+	var modelParams string
 	if caps == nil {
 		client, err := api.ClientFromEnvironment()
 		if err != nil {
@@ -2062,6 +2063,7 @@ func inferThinkingOption(caps *[]model.Capability, runOpts *runOptions, explicit
 			return nil, err
 		}
 		caps = &ret.Capabilities
+		modelParams = ret.Parameters
 	}
 
 	thinkingSupported := false
@@ -2072,6 +2074,29 @@ func inferThinkingOption(caps *[]model.Capability, runOpts *runOptions, explicit
 	}
 
 	if thinkingSupported {
+		// Check if the model has a stored think parameter that overrides the default
+		if modelParams == "" && runOpts != nil {
+			client, err := api.ClientFromEnvironment()
+			if err == nil {
+				ret, err := client.Show(context.Background(), &api.ShowRequest{Name: runOpts.Model})
+				if err == nil {
+					modelParams = ret.Parameters
+				}
+			}
+		}
+		if modelParams != "" {
+			for _, line := range strings.Split(modelParams, "\n") {
+				parts := strings.Fields(line)
+				if len(parts) == 2 && parts[0] == "think" {
+					switch strings.ToLower(parts[1]) {
+					case "false", "off", "no", "0":
+						return &api.ThinkValue{Value: false}, nil
+					case "high", "medium", "low":
+						return &api.ThinkValue{Value: parts[1]}, nil
+					}
+				}
+			}
+		}
 		return &api.ThinkValue{Value: true}, nil
 	}
 
