@@ -39,6 +39,7 @@ var cloudModelLimits = map[string]cloudModelLimit{
 	"kimi-k2-thinking":    {Context: 262_144, Output: 262_144},
 	"nemotron-3-nano:30b": {Context: 1_048_576, Output: 131_072},
 	"qwen3-coder:480b":    {Context: 262_144, Output: 65_536},
+	"qwen3-coder-next":    {Context: 262_144, Output: 32_768},
 	"qwen3-next:80b":      {Context: 262_144, Output: 32_768},
 }
 

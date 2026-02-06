@@ -1251,6 +1251,54 @@ func TestDroidEdit_LargeNumberOfModels(t *testing.T) {
 	}
 }
 
+func TestDroidEdit_LocalModelDefaultMaxOutput(t *testing.T) {
+	d := &Droid{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	settingsDir := filepath.Join(tmpDir, ".factory")
+	settingsPath := filepath.Join(settingsDir, "settings.json")
+
+	if err := d.Edit([]string{"llama3.2"}); err != nil {
+		t.Fatal(err)
+	}
+
+	data, _ := os.ReadFile(settingsPath)
+	var settings map[string]any
+	json.Unmarshal(data, &settings)
+
+	models := settings["customModels"].([]any)
+	entry := models[0].(map[string]any)
+	if entry["maxOutputTokens"] != float64(64000) {
+		t.Errorf("local model maxOutputTokens = %v, want 64000", entry["maxOutputTokens"])
+	}
+}
+
+func TestDroidEdit_CloudModelMaxOutput(t *testing.T) {
+	// Verify that the cloud model limit lookup works for droid's use case.
+	// Since isCloudModel requires a running server, we test the lookup directly
+	// and verify that Edit applies the default for local models.
+	for name, expected := range cloudModelLimits {
+		l, ok := lookupCloudModelLimit(name)
+		if !ok {
+			t.Errorf("lookupCloudModelLimit(%q) returned false", name)
+			continue
+		}
+		if l.Output != expected.Output {
+			t.Errorf("lookupCloudModelLimit(%q).Output = %d, want %d", name, l.Output, expected.Output)
+		}
+	}
+
+	// Also verify :cloud suffix stripping works
+	l, ok := lookupCloudModelLimit("glm-4.7:cloud")
+	if !ok {
+		t.Fatal("lookupCloudModelLimit(glm-4.7:cloud) returned false")
+	}
+	if l.Output != 131_072 {
+		t.Errorf("output = %d, want 131072", l.Output)
+	}
+}
+
 func TestDroidEdit_ArraysWithMixedTypes(t *testing.T) {
 	d := &Droid{}
 	tmpDir := t.TempDir()
