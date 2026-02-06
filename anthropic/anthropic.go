@@ -897,11 +897,5 @@ func countContentBlock(block any) int {
 		}
 	}
 
-	if source, ok := blockMap["source"].(map[string]any); ok {
-		if data, ok := source["data"].(string); ok {
-			total += len(data)
-		}
-	}
-
 	return total
 }
