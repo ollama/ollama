@@ -502,6 +502,28 @@ func TestBuildModelList_ReturnsExistingAndCloudMaps(t *testing.T) {
 	}
 }
 
+func TestEditorIntegration_SavedConfigSkipsSelection(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	// Save a config for opencode so it looks like a previous launch
+	if err := saveIntegration("opencode", []string{"llama3.2"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify loadIntegration returns the saved models
+	saved, err := loadIntegration("opencode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.Models) == 0 {
+		t.Fatal("expected saved models")
+	}
+	if saved.Models[0] != "llama3.2" {
+		t.Errorf("expected llama3.2, got %s", saved.Models[0])
+	}
+}
+
 func TestAliasConfigurerInterface(t *testing.T) {
 	t.Run("claude implements AliasConfigurer", func(t *testing.T) {
 		claude := &Claude{}
