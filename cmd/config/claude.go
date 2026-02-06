@@ -58,11 +58,32 @@ func (c *Claude) Run(model string, args []string) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = append(os.Environ(),
+
+	env := append(os.Environ(),
 		"ANTHROPIC_BASE_URL="+envconfig.Host().String(),
 		"ANTHROPIC_API_KEY=",
 		"ANTHROPIC_AUTH_TOKEN=ollama",
 	)
+
+	// Set Claude Code model env vars so all model tiers route through Ollama
+	primary := model
+	fast := model
+	if cfg, err := loadIntegration("claude"); err == nil && cfg.Aliases != nil {
+		if p := cfg.Aliases["primary"]; p != "" {
+			primary = p
+		}
+		if f := cfg.Aliases["fast"]; f != "" {
+			fast = f
+		}
+	}
+	env = append(env,
+		"ANTHROPIC_DEFAULT_OPUS_MODEL="+primary,
+		"ANTHROPIC_DEFAULT_SONNET_MODEL="+primary,
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL="+fast,
+		"CLAUDE_CODE_SUBAGENT_MODEL="+primary,
+	)
+
+	cmd.Env = env
 	return cmd.Run()
 }
 
