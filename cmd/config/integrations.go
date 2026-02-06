@@ -194,6 +194,20 @@ func pullIfNeeded(ctx context.Context, client *api.Client, existingModels map[st
 	return nil
 }
 
+// showOrPull checks if a model exists via client.Show and offers to pull it if not found.
+func showOrPull(ctx context.Context, client *api.Client, model string) error {
+	if _, err := client.Show(ctx, &api.ShowRequest{Model: model}); err == nil {
+		return nil
+	}
+	if ok, err := confirmPrompt(fmt.Sprintf("Download %s?", model)); err != nil {
+		return err
+	} else if !ok {
+		return errCancelled
+	}
+	fmt.Fprintf(os.Stderr, "\n")
+	return pullModel(ctx, client, model)
+}
+
 func listModels(ctx context.Context) ([]selectItem, map[string]bool, map[string]bool, *api.Client, error) {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -397,8 +411,11 @@ Examples:
 
 				// Validate --model flag if provided
 				if modelFlag != "" {
-					if _, err := client.Show(cmd.Context(), &api.ShowRequest{Name: modelFlag}); err != nil {
-						return fmt.Errorf("model %q not found", modelFlag)
+					if err := showOrPull(cmd.Context(), client, modelFlag); err != nil {
+						if errors.Is(err, errCancelled) {
+							return nil
+						}
+						return err
 					}
 				}
 
@@ -424,9 +441,11 @@ Examples:
 
 				// Validate saved model still exists
 				if model != "" && modelFlag == "" {
-					if _, err := client.Show(cmd.Context(), &api.ShowRequest{Name: model}); err != nil {
+					if _, err := client.Show(cmd.Context(), &api.ShowRequest{Model: model}); err != nil {
 						fmt.Fprintf(os.Stderr, "%sConfigured model %q not found%s\n\n", ansiGray, model, ansiReset)
-						model = ""
+						if err := showOrPull(cmd.Context(), client, model); err != nil {
+							model = ""
+						}
 					}
 				}
 
@@ -441,6 +460,13 @@ Examples:
 					}
 					model = aliases["primary"]
 					existingAliases = aliases
+				}
+
+				// Ensure cloud models are authenticated
+				if isCloudModel(cmd.Context(), client, model) {
+					if err := ensureAuth(cmd.Context(), client, map[string]bool{model: true}, []string{model}); err != nil {
+						return err
+					}
 				}
 
 				// Sync aliases and save
@@ -467,8 +493,11 @@ Examples:
 				if err != nil {
 					return err
 				}
-				if _, err := client.Show(cmd.Context(), &api.ShowRequest{Name: modelFlag}); err != nil {
-					return fmt.Errorf("model %q not found", modelFlag)
+				if err := showOrPull(cmd.Context(), client, modelFlag); err != nil {
+					if errors.Is(err, errCancelled) {
+						return nil
+					}
+					return err
 				}
 			}
 
@@ -650,7 +679,7 @@ func isCloudModel(ctx context.Context, client *api.Client, name string) bool {
 	if client == nil {
 		return false
 	}
-	resp, err := client.Show(ctx, &api.ShowRequest{Name: name})
+	resp, err := client.Show(ctx, &api.ShowRequest{Model: name})
 	if err != nil {
 		return false
 	}
