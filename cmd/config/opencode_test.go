@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -492,6 +493,165 @@ func TestOpenCodeEdit_SpecialCharsInModelName(t *testing.T) {
 
 	if models[specialModel] == nil {
 		t.Errorf("model with special chars not found in config")
+	}
+}
+
+func readOpenCodeModel(t *testing.T, configPath, model string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	json.Unmarshal(data, &cfg)
+	provider := cfg["provider"].(map[string]any)
+	ollama := provider["ollama"].(map[string]any)
+	models := ollama["models"].(map[string]any)
+	entry, ok := models[model].(map[string]any)
+	if !ok {
+		t.Fatalf("model %s not found in config", model)
+	}
+	return entry
+}
+
+func TestOpenCodeEdit_LocalModelNoLimit(t *testing.T) {
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	configPath := filepath.Join(tmpDir, ".config", "opencode", "opencode.json")
+
+	if err := o.Edit([]string{"llama3.2"}); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := readOpenCodeModel(t, configPath, "llama3.2")
+	if entry["limit"] != nil {
+		t.Errorf("local model should not have limit set, got %v", entry["limit"])
+	}
+}
+
+func TestOpenCodeEdit_PreservesUserLimit(t *testing.T) {
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	configDir := filepath.Join(tmpDir, ".config", "opencode")
+	configPath := filepath.Join(configDir, "opencode.json")
+
+	// Set up a model with a user-configured limit
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(configPath, []byte(`{
+		"provider": {
+			"ollama": {
+				"models": {
+					"llama3.2": {
+						"name": "llama3.2",
+						"_launch": true,
+						"limit": {"context": 8192, "output": 4096}
+					}
+				}
+			}
+		}
+	}`), 0o644)
+
+	// Re-edit should preserve the user's limit (not delete it)
+	if err := o.Edit([]string{"llama3.2"}); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := readOpenCodeModel(t, configPath, "llama3.2")
+	limit, ok := entry["limit"].(map[string]any)
+	if !ok {
+		t.Fatal("user-configured limit was removed")
+	}
+	if limit["context"] != float64(8192) {
+		t.Errorf("context limit changed: got %v, want 8192", limit["context"])
+	}
+	if limit["output"] != float64(4096) {
+		t.Errorf("output limit changed: got %v, want 4096", limit["output"])
+	}
+}
+
+func TestOpenCodeEdit_CloudModelLimitStructure(t *testing.T) {
+	// Verify that when a cloud model entry has limits set (as Edit would do),
+	// the structure matches what opencode expects and re-edit preserves them.
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	configDir := filepath.Join(tmpDir, ".config", "opencode")
+	configPath := filepath.Join(configDir, "opencode.json")
+
+	expected := cloudModelLimits["glm-4.7"]
+
+	// Simulate a cloud model that already has the limit set by a previous Edit
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(configPath, []byte(fmt.Sprintf(`{
+		"provider": {
+			"ollama": {
+				"models": {
+					"glm-4.7:cloud": {
+						"name": "glm-4.7:cloud",
+						"_launch": true,
+						"limit": {"context": %d, "output": %d}
+					}
+				}
+			}
+		}
+	}`, expected.Context, expected.Output)), 0o644)
+
+	// Re-edit should preserve the cloud model limit
+	if err := o.Edit([]string{"glm-4.7:cloud"}); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := readOpenCodeModel(t, configPath, "glm-4.7:cloud")
+	limit, ok := entry["limit"].(map[string]any)
+	if !ok {
+		t.Fatal("cloud model limit was removed on re-edit")
+	}
+	if limit["context"] != float64(expected.Context) {
+		t.Errorf("context = %v, want %d", limit["context"], expected.Context)
+	}
+	if limit["output"] != float64(expected.Output) {
+		t.Errorf("output = %v, want %d", limit["output"], expected.Output)
+	}
+}
+
+func TestLookupCloudModelLimit(t *testing.T) {
+	tests := []struct {
+		name        string
+		wantOK      bool
+		wantContext int
+		wantOutput  int
+	}{
+		{"glm-4.7", true, 202_752, 131_072},
+		{"glm-4.7:cloud", true, 202_752, 131_072},
+		{"kimi-k2.5", true, 262_144, 262_144},
+		{"kimi-k2.5:cloud", true, 262_144, 262_144},
+		{"deepseek-v3.2", true, 163_840, 65_536},
+		{"deepseek-v3.2:cloud", true, 163_840, 65_536},
+		{"qwen3-coder:480b", true, 262_144, 65_536},
+		{"llama3.2", false, 0, 0},
+		{"unknown-model:cloud", false, 0, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			l, ok := lookupCloudModelLimit(tt.name)
+			if ok != tt.wantOK {
+				t.Errorf("lookupCloudModelLimit(%q) ok = %v, want %v", tt.name, ok, tt.wantOK)
+			}
+			if ok {
+				if l.Context != tt.wantContext {
+					t.Errorf("context = %d, want %d", l.Context, tt.wantContext)
+				}
+				if l.Output != tt.wantOutput {
+					t.Errorf("output = %d, want %d", l.Output, tt.wantOutput)
+				}
+			}
+		})
 	}
 }
 

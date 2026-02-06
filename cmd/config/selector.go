@@ -17,6 +17,7 @@ const (
 	ansiBold       = "\033[1m"
 	ansiReset      = "\033[0m"
 	ansiGray       = "\033[37m"
+	ansiGreen      = "\033[32m"
 	ansiClearDown  = "\033[J"
 )
 

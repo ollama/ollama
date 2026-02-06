@@ -22,6 +22,7 @@ import (
 	"os/signal"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -85,6 +86,9 @@ type Server struct {
 	addr          net.Addr
 	sched         *Scheduler
 	defaultNumCtx int
+	aliasesOnce   sync.Once
+	aliases       *store
+	aliasesErr    error
 	metrics       *telemetry.Metrics
 }
 
@@ -196,9 +200,16 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	resolvedName, _, err := s.resolveAlias(name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	name = resolvedName
+
 	// We cannot currently consolidate this into GetModel because all we'll
 	// induce infinite recursion given the current code structure.
-	name, err := getExistingName(name)
+	name, err = getExistingName(name)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
 		return
@@ -1615,6 +1626,9 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
 	r.POST("/api/copy", s.CopyHandler)
+	r.GET("/api/experimental/aliases", s.ListAliasesHandler)
+	r.POST("/api/experimental/aliases", s.CreateAliasHandler)
+	r.DELETE("/api/experimental/aliases", s.DeleteAliasHandler)
 
 	// Inference
 	r.GET("/api/ps", s.PsHandler)
@@ -1987,13 +2001,20 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	name, err := getExistingName(name)
+	resolvedName, _, err := s.resolveAlias(name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	name = resolvedName
+
+	name, err = getExistingName(name)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
 	}
 
-	m, err := GetModel(req.Model)
+	m, err := GetModel(name.String())
 	if err != nil {
 		switch {
 		case os.IsNotExist(err):

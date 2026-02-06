@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -297,24 +298,15 @@ func TestParseArgs(t *testing.T) {
 }
 
 func TestIsCloudModel(t *testing.T) {
-	tests := []struct {
-		name string
-		want bool
-	}{
-		{"glm-4.7:cloud", true},
-		{"kimi-k2.5:cloud", true},
-		{"glm-4.7-flash", false},
-		{"glm-4.7-flash:latest", false},
-		{"cloud-model", false},
-		{"model:cloudish", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := isCloudModel(tt.name); got != tt.want {
-				t.Errorf("isCloudModel(%q) = %v, want %v", tt.name, got, tt.want)
+	// isCloudModel now only uses Show API, so nil client always returns false
+	t.Run("nil client returns false", func(t *testing.T) {
+		models := []string{"glm-4.7:cloud", "kimi-k2.5:cloud", "local-model"}
+		for _, model := range models {
+			if isCloudModel(context.Background(), nil, model) {
+				t.Errorf("isCloudModel(%q) with nil client should return false", model)
 			}
-		})
-	}
+		}
+	})
 }
 
 func names(items []selectItem) []string {
@@ -508,4 +500,42 @@ func TestBuildModelList_ReturnsExistingAndCloudMaps(t *testing.T) {
 	if cloudModels["llama3.2"] {
 		t.Error("llama3.2 should not be in cloudModels")
 	}
+}
+
+func TestEditorIntegration_SavedConfigSkipsSelection(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	// Save a config for opencode so it looks like a previous launch
+	if err := saveIntegration("opencode", []string{"llama3.2"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify loadIntegration returns the saved models
+	saved, err := loadIntegration("opencode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.Models) == 0 {
+		t.Fatal("expected saved models")
+	}
+	if saved.Models[0] != "llama3.2" {
+		t.Errorf("expected llama3.2, got %s", saved.Models[0])
+	}
+}
+
+func TestAliasConfigurerInterface(t *testing.T) {
+	t.Run("claude implements AliasConfigurer", func(t *testing.T) {
+		claude := &Claude{}
+		if _, ok := interface{}(claude).(AliasConfigurer); !ok {
+			t.Error("Claude should implement AliasConfigurer")
+		}
+	})
+
+	t.Run("codex does not implement AliasConfigurer", func(t *testing.T) {
+		codex := &Codex{}
+		if _, ok := interface{}(codex).(AliasConfigurer); ok {
+			t.Error("Codex should not implement AliasConfigurer")
+		}
+	})
 }

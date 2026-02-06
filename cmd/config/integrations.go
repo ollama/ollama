@@ -39,6 +39,15 @@ type Editor interface {
 	Models() []string
 }
 
+// AliasConfigurer can configure model aliases (e.g., for subagent routing).
+// Integrations like Claude and Codex use this to route model requests to local models.
+type AliasConfigurer interface {
+	// ConfigureAliases prompts the user to configure aliases and returns the updated map.
+	ConfigureAliases(ctx context.Context, primaryModel string, existing map[string]string, force bool) (map[string]string, bool, error)
+	// SetAliases syncs the configured aliases to the server
+	SetAliases(ctx context.Context, aliases map[string]string) error
+}
+
 // integrations is the registry of available integrations.
 var integrations = map[string]Runner{
 	"claude":   &Claude{},
@@ -129,7 +138,11 @@ func selectModels(ctx context.Context, name, current string) ([]string, error) {
 			return nil, err
 		}
 	} else {
-		model, err := selectPrompt(fmt.Sprintf("Select model for %s:", r), items)
+		prompt := fmt.Sprintf("Select model for %s:", r)
+		if _, ok := r.(AliasConfigurer); ok {
+			prompt = fmt.Sprintf("Select Primary model for %s:", r)
+		}
+		model, err := selectPrompt(prompt, items)
 		if err != nil {
 			return nil, err
 		}
@@ -157,73 +170,123 @@ func selectModels(ctx context.Context, name, current string) ([]string, error) {
 		}
 	}
 
+	if err := ensureAuth(ctx, client, cloudModels, selected); err != nil {
+		return nil, err
+	}
+
+	return selected, nil
+}
+
+func pullIfNeeded(ctx context.Context, client *api.Client, existingModels map[string]bool, model string) error {
+	if existingModels[model] {
+		return nil
+	}
+	msg := fmt.Sprintf("Download %s?", model)
+	if ok, err := confirmPrompt(msg); err != nil {
+		return err
+	} else if !ok {
+		return errCancelled
+	}
+	fmt.Fprintf(os.Stderr, "\n")
+	if err := pullModel(ctx, client, model); err != nil {
+		return fmt.Errorf("failed to pull %s: %w", model, err)
+	}
+	return nil
+}
+
+func listModels(ctx context.Context) ([]selectItem, map[string]bool, map[string]bool, *api.Client, error) {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	models, err := client.List(ctx)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	var existing []modelInfo
+	for _, m := range models.Models {
+		existing = append(existing, modelInfo{
+			Name:   m.Name,
+			Remote: m.RemoteModel != "",
+		})
+	}
+
+	items, _, existingModels, cloudModels := buildModelList(existing, nil, "")
+
+	if len(items) == 0 {
+		return nil, nil, nil, nil, fmt.Errorf("no models available, run 'ollama pull <model>' first")
+	}
+
+	return items, existingModels, cloudModels, client, nil
+}
+
+func ensureAuth(ctx context.Context, client *api.Client, cloudModels map[string]bool, selected []string) error {
 	var selectedCloudModels []string
 	for _, m := range selected {
 		if cloudModels[m] {
 			selectedCloudModels = append(selectedCloudModels, m)
 		}
 	}
-	if len(selectedCloudModels) > 0 {
-		// ensure user is signed in
-		user, err := client.Whoami(ctx)
-		if err == nil && user != nil && user.Name != "" {
-			return selected, nil
-		}
+	if len(selectedCloudModels) == 0 {
+		return nil
+	}
 
-		var aErr api.AuthorizationError
-		if !errors.As(err, &aErr) || aErr.SigninURL == "" {
-			return nil, err
-		}
+	user, err := client.Whoami(ctx)
+	if err == nil && user != nil && user.Name != "" {
+		return nil
+	}
 
-		modelList := strings.Join(selectedCloudModels, ", ")
-		yes, err := confirmPrompt(fmt.Sprintf("sign in to use %s?", modelList))
-		if err != nil || !yes {
-			return nil, fmt.Errorf("%s requires sign in", modelList)
-		}
+	var aErr api.AuthorizationError
+	if !errors.As(err, &aErr) || aErr.SigninURL == "" {
+		return err
+	}
 
-		fmt.Fprintf(os.Stderr, "\nTo sign in, navigate to:\n    %s\n\n", aErr.SigninURL)
+	modelList := strings.Join(selectedCloudModels, ", ")
+	yes, err := confirmPrompt(fmt.Sprintf("sign in to use %s?", modelList))
+	if err != nil || !yes {
+		return fmt.Errorf("%s requires sign in", modelList)
+	}
 
-		// TODO(parthsareen): extract into auth package for cmd
-		// Auto-open browser (best effort, fail silently)
-		switch runtime.GOOS {
-		case "darwin":
-			_ = exec.Command("open", aErr.SigninURL).Start()
-		case "linux":
-			_ = exec.Command("xdg-open", aErr.SigninURL).Start()
-		case "windows":
-			_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", aErr.SigninURL).Start()
-		}
+	fmt.Fprintf(os.Stderr, "\nTo sign in, navigate to:\n    %s\n\n", aErr.SigninURL)
 
-		spinnerFrames := []string{"|", "/", "-", "\\"}
-		frame := 0
+	switch runtime.GOOS {
+	case "darwin":
+		_ = exec.Command("open", aErr.SigninURL).Start()
+	case "linux":
+		_ = exec.Command("xdg-open", aErr.SigninURL).Start()
+	case "windows":
+		_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", aErr.SigninURL).Start()
+	}
 
-		fmt.Fprintf(os.Stderr, "\033[90mwaiting for sign in to complete... %s\033[0m", spinnerFrames[0])
+	spinnerFrames := []string{"|", "/", "-", "\\"}
+	frame := 0
 
-		ticker := time.NewTicker(200 * time.Millisecond)
-		defer ticker.Stop()
+	fmt.Fprintf(os.Stderr, "\033[90mwaiting for sign in to complete... %s\033[0m", spinnerFrames[0])
 
-		for {
-			select {
-			case <-ctx.Done():
-				fmt.Fprintf(os.Stderr, "\r\033[K")
-				return nil, ctx.Err()
-			case <-ticker.C:
-				frame++
-				fmt.Fprintf(os.Stderr, "\r\033[90mwaiting for sign in to complete... %s\033[0m", spinnerFrames[frame%len(spinnerFrames)])
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
 
-				// poll every 10th frame (~2 seconds)
-				if frame%10 == 0 {
-					u, err := client.Whoami(ctx)
-					if err == nil && u != nil && u.Name != "" {
-						fmt.Fprintf(os.Stderr, "\r\033[K\033[A\r\033[K\033[1msigned in:\033[0m %s\n", u.Name)
-						return selected, nil
-					}
+	for {
+		select {
+		case <-ctx.Done():
+			fmt.Fprintf(os.Stderr, "\r\033[K")
+			return ctx.Err()
+		case <-ticker.C:
+			frame++
+			fmt.Fprintf(os.Stderr, "\r\033[90mwaiting for sign in to complete... %s\033[0m", spinnerFrames[frame%len(spinnerFrames)])
+
+			// poll every 10th frame (~2 seconds)
+			if frame%10 == 0 {
+				u, err := client.Whoami(ctx)
+				if err == nil && u != nil && u.Name != "" {
+					fmt.Fprintf(os.Stderr, "\r\033[K\033[A\r\033[K\033[1msigned in:\033[0m %s\n", u.Name)
+					return nil
 				}
 			}
 		}
 	}
-
-	return selected, nil
 }
 
 func runIntegration(name, modelName string, args []string) error {
@@ -231,8 +294,31 @@ func runIntegration(name, modelName string, args []string) error {
 	if !ok {
 		return fmt.Errorf("unknown integration: %s", name)
 	}
+
 	fmt.Fprintf(os.Stderr, "\nLaunching %s with %s...\n", r, modelName)
 	return r.Run(modelName, args)
+}
+
+// syncAliases syncs aliases to server and saves locally for an AliasConfigurer.
+func syncAliases(ctx context.Context, client *api.Client, ac AliasConfigurer, name, model string, existing map[string]string) error {
+	aliases := make(map[string]string)
+	for k, v := range existing {
+		aliases[k] = v
+	}
+	aliases["primary"] = model
+
+	if isCloudModel(ctx, client, model) {
+		if aliases["fast"] == "" || !isCloudModel(ctx, client, aliases["fast"]) {
+			aliases["fast"] = model
+		}
+	} else {
+		delete(aliases, "fast")
+	}
+
+	if err := ac.SetAliases(ctx, aliases); err != nil {
+		return err
+	}
+	return saveAliases(name, aliases)
 }
 
 // LaunchCmd returns the cobra command for launching integrations.
@@ -302,9 +388,87 @@ Examples:
 				return fmt.Errorf("unknown integration: %s", name)
 			}
 
-			if !configFlag && modelFlag == "" {
-				if config, err := loadIntegration(name); err == nil && len(config.Models) > 0 {
-					return runIntegration(name, config.Models[0], passArgs)
+			// Handle AliasConfigurer integrations (claude, codex)
+			if ac, ok := r.(AliasConfigurer); ok {
+				client, err := api.ClientFromEnvironment()
+				if err != nil {
+					return err
+				}
+
+				// Validate --model flag if provided
+				if modelFlag != "" {
+					if _, err := client.Show(cmd.Context(), &api.ShowRequest{Name: modelFlag}); err != nil {
+						return fmt.Errorf("model %q not found", modelFlag)
+					}
+				}
+
+				var model string
+				var existingAliases map[string]string
+
+				// Load saved config
+				if cfg, err := loadIntegration(name); err == nil {
+					existingAliases = cfg.Aliases
+					if len(cfg.Models) > 0 {
+						model = cfg.Models[0]
+						// AliasConfigurer integrations use single model; sanitize if multiple
+						if len(cfg.Models) > 1 {
+							_ = saveIntegration(name, []string{model})
+						}
+					}
+				}
+
+				// --model flag overrides saved model
+				if modelFlag != "" {
+					model = modelFlag
+				}
+
+				// Validate saved model still exists
+				if model != "" && modelFlag == "" {
+					if _, err := client.Show(cmd.Context(), &api.ShowRequest{Name: model}); err != nil {
+						fmt.Fprintf(os.Stderr, "%sConfigured model %q not found%s\n\n", ansiGray, model, ansiReset)
+						model = ""
+					}
+				}
+
+				// If no valid model or --config flag, show picker
+				if model == "" || configFlag {
+					aliases, _, err := ac.ConfigureAliases(cmd.Context(), model, existingAliases, configFlag)
+					if errors.Is(err, errCancelled) {
+						return nil
+					}
+					if err != nil {
+						return err
+					}
+					model = aliases["primary"]
+					existingAliases = aliases
+				}
+
+				// Sync aliases and save
+				if err := syncAliases(cmd.Context(), client, ac, name, model, existingAliases); err != nil {
+					fmt.Fprintf(os.Stderr, "%sWarning: Could not sync aliases: %v%s\n", ansiGray, err, ansiReset)
+				}
+				if err := saveIntegration(name, []string{model}); err != nil {
+					return fmt.Errorf("failed to save: %w", err)
+				}
+
+				// Launch (unless --config without confirmation)
+				if configFlag {
+					if launch, _ := confirmPrompt(fmt.Sprintf("Launch %s now?", r)); launch {
+						return runIntegration(name, model, passArgs)
+					}
+					return nil
+				}
+				return runIntegration(name, model, passArgs)
+			}
+
+			// Validate --model flag for non-AliasConfigurer integrations
+			if modelFlag != "" {
+				client, err := api.ClientFromEnvironment()
+				if err != nil {
+					return err
+				}
+				if _, err := client.Show(cmd.Context(), &api.ShowRequest{Name: modelFlag}); err != nil {
+					return fmt.Errorf("model %q not found", modelFlag)
 				}
 			}
 
@@ -318,6 +482,8 @@ Examples:
 						}
 					}
 				}
+			} else if saved, err := loadIntegration(name); err == nil && len(saved.Models) > 0 && !configFlag {
+				return runIntegration(name, saved.Models[0], passArgs)
 			} else {
 				var err error
 				models, err = selectModels(cmd.Context(), name, "")
@@ -380,8 +546,9 @@ Examples:
 }
 
 type modelInfo struct {
-	Name   string
-	Remote bool
+	Name        string
+	Remote      bool
+	ToolCapable bool
 }
 
 // buildModelList merges existing models with recommendations, sorts them, and returns
@@ -418,7 +585,7 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 			continue
 		}
 		items = append(items, rec)
-		if isCloudModel(rec.Name) {
+		if strings.HasSuffix(rec.Name, ":cloud") {
 			cloudModels[rec.Name] = true
 		}
 	}
@@ -478,8 +645,16 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 	return items, preChecked, existingModels, cloudModels
 }
 
-func isCloudModel(name string) bool {
-	return strings.HasSuffix(name, ":cloud")
+// isCloudModel checks if a model is a cloud model using the Show API.
+func isCloudModel(ctx context.Context, client *api.Client, name string) bool {
+	if client == nil {
+		return false
+	}
+	resp, err := client.Show(ctx, &api.ShowRequest{Name: name})
+	if err != nil {
+		return false
+	}
+	return resp.RemoteModel != ""
 }
 
 func pullModel(ctx context.Context, client *api.Client, model string) error {
