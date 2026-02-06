@@ -466,3 +466,25 @@ func (c *Client) Whoami(ctx context.Context) (*UserResponse, error) {
 	}
 	return &resp, nil
 }
+
+// AliasRequest is the request body for creating or updating a model alias.
+type AliasRequest struct {
+	Alias          string `json:"alias"`
+	Target         string `json:"target"`
+	PrefixMatching bool   `json:"prefix_matching,omitempty"`
+}
+
+// SetAliasExperimental creates or updates a model alias via the experimental aliases API.
+func (c *Client) SetAliasExperimental(ctx context.Context, req *AliasRequest) error {
+	return c.do(ctx, http.MethodPost, "/api/experimental/aliases", req, nil)
+}
+
+// AliasDeleteRequest is the request body for deleting a model alias.
+type AliasDeleteRequest struct {
+	Alias string `json:"alias"`
+}
+
+// DeleteAliasExperimental deletes a model alias via the experimental aliases API.
+func (c *Client) DeleteAliasExperimental(ctx context.Context, req *AliasDeleteRequest) error {
+	return c.do(ctx, http.MethodDelete, "/api/experimental/aliases", req, nil)
+}

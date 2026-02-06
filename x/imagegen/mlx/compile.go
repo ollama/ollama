@@ -3,7 +3,7 @@
 package mlx
 
 /*
-#include "mlx/c/mlx.h"
+#include "mlx.h"
 #include <stdlib.h>
 
 // Forward declaration for Go callback

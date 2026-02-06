@@ -9,7 +9,7 @@ import "github.com/ollama/ollama/x/imagegen/mlx"
 // shallow layers change little between consecutive steps, so we can
 // cache their outputs and skip recomputation on non-refresh steps.
 //
-// Supports both single-stream (Z-Image) and dual-stream (Qwen-Image) architectures:
+// Supports both single-stream and dual-stream architectures:
 //   - Single-stream: use Get/Set for the single output per layer
 //   - Dual-stream: use Get/Set for stream 1 (imgH), Get2/Set2 for stream 2 (txtH)
 //
@@ -87,7 +87,7 @@ func (c *StepCache) Set(layer int, arr *mlx.Array) {
 }
 
 // Get2 returns the cached output for a layer (stream 2), or nil if not cached.
-// Used for dual-stream architectures like Qwen-Image.
+// Used for dual-stream architectures.
 func (c *StepCache) Get2(layer int) *mlx.Array {
 	if layer < len(c.layers2) {
 		return c.layers2[layer]
@@ -96,7 +96,7 @@ func (c *StepCache) Get2(layer int) *mlx.Array {
 }
 
 // Set2 stores a layer output (stream 2), freeing any previous value.
-// Used for dual-stream architectures like Qwen-Image.
+// Used for dual-stream architectures.
 func (c *StepCache) Set2(layer int, arr *mlx.Array) {
 	if layer < len(c.layers2) {
 		if c.layers2[layer] != nil {

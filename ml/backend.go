@@ -162,6 +162,7 @@ type Tensor interface {
 	AvgPool2D(ctx Context, k, s int, p float32) Tensor
 	Conv2D(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 	Conv3D(ctx Context, weight Tensor, c, s0, s1, s2, p0, p1, p2, d0, d1, d2 int) Tensor
+	SSMConv(ctx Context, kernel Tensor) Tensor
 
 	IM2Col(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
@@ -169,10 +170,12 @@ type Tensor interface {
 	Cos(ctx Context) Tensor
 	Tanh(ctx Context) Tensor
 	GELU(ctx Context, up ...Tensor) Tensor
+	GELU_ERF(ctx Context) Tensor
 	QuickGELU(ctx Context, up ...Tensor) Tensor
 	SILU(ctx Context, up ...Tensor) Tensor
 	RELU(ctx Context, up ...Tensor) Tensor
 	Sigmoid(ctx Context) Tensor
+	SigmoidOut(ctx Context) Tensor
 
 	// AlphaLimitSILU is a variant of SILU that clamps the input to the range [-limit, limit]
 	SILUAlphaLimit(ctx Context, up Tensor, alpha, limit float32) Tensor
@@ -205,6 +208,32 @@ type Tensor interface {
 	Stddev(ctx Context) Tensor
 	Sqr(ctx Context) Tensor
 	Sqrt(ctx Context) Tensor
+	Exp(ctx Context) Tensor
+	Neg(ctx Context) Tensor
+
+	// Clamp clamps values to [min, max] range
+	Clamp(ctx Context, min, max float32) Tensor
+
+	// Softplus computes ln(1 + exp(x))
+	Softplus(ctx Context) Tensor
+
+	// CumSum computes cumulative sum along dimension 0
+	CumSum(ctx Context) Tensor
+
+	// Diag creates a diagonal matrix from a 1D tensor
+	Diag(ctx Context) Tensor
+
+	// Tri converts a matrix to triangular form (0=upper+diag, 1=upper, 2=lower+diag, 3=lower)
+	Tri(ctx Context, triType int) Tensor
+
+	// Fill fills a tensor with a constant value (in-place)
+	Fill(ctx Context, value float32) Tensor
+
+	// Repeat4D repeats tensor to match target shape
+	Repeat4D(ctx Context, dim0, dim1, dim2, dim3 int) Tensor
+
+	// SolveTri solves a triangular system Ax = B
+	SolveTri(ctx Context, b Tensor, lower, left, unitDiag bool) Tensor
 
 	Interpolate(ctx Context, dims [4]int, samplingMode SamplingMode) Tensor
 }

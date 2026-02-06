@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/rand"
 	"net"
@@ -22,14 +23,19 @@ import (
 
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/x/imagegen/manifest"
 )
 
-// Server wraps an image generation subprocess to implement llm.LlamaServer.
+// Server wraps an MLX runner subprocess to implement llm.LlamaServer.
+//
+// This implementation is compatible with Ollama's scheduler and can be loaded/unloaded
+// like any other model. It supports both LLM (safetensors) and image generation models.
 type Server struct {
 	mu          sync.Mutex
 	cmd         *exec.Cmd
 	port        int
 	modelName   string
+	mode        ModelMode
 	vramSize    uint64
 	done        chan error
 	client      *http.Client
@@ -37,24 +43,8 @@ type Server struct {
 	lastErrLock sync.Mutex
 }
 
-// completionRequest is sent to the subprocess
-type completionRequest struct {
-	Prompt string `json:"prompt"`
-	Width  int32  `json:"width,omitempty"`
-	Height int32  `json:"height,omitempty"`
-	Steps  int    `json:"steps,omitempty"`
-	Seed   int64  `json:"seed,omitempty"`
-}
-
-// completionResponse is received from the subprocess
-type completionResponse struct {
-	Content string `json:"content,omitempty"`
-	Image   string `json:"image,omitempty"`
-	Done    bool   `json:"done"`
-}
-
-// NewServer spawns a new image generation subprocess and waits until it's ready.
-func NewServer(modelName string) (*Server, error) {
+// NewServer spawns a new MLX runner subprocess and waits until it's ready.
+func NewServer(modelName string, mode ModelMode) (*Server, error) {
 	// Validate platform support before attempting to start
 	if err := CheckPlatformSupport(); err != nil {
 		return nil, err
@@ -72,7 +62,7 @@ func NewServer(modelName string) (*Server, error) {
 		port = rand.Intn(65535-49152) + 49152
 	}
 
-	// Get the ollama-mlx executable path (in same directory as current executable)
+	// Get the current executable path (we use the same binary with runner subcommand)
 	exe, err := os.Executable()
 	if err != nil {
 		return nil, fmt.Errorf("unable to lookup executable path: %w", err)
@@ -80,10 +70,9 @@ func NewServer(modelName string) (*Server, error) {
 	if eval, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = eval
 	}
-	mlxExe := filepath.Join(filepath.Dir(exe), "ollama-mlx")
 
-	// Spawn subprocess: ollama-mlx runner --image-engine --model <path> --port <port>
-	cmd := exec.Command(mlxExe, "runner", "--image-engine", "--model", modelName, "--port", strconv.Itoa(port))
+	// Spawn subprocess: ollama runner --imagegen-engine --model <path> --port <port>
+	cmd := exec.Command(exe, "runner", "--imagegen-engine", "--model", modelName, "--port", strconv.Itoa(port))
 	cmd.Env = os.Environ()
 
 	// On Linux, set LD_LIBRARY_PATH to include MLX library directories
@@ -116,11 +105,21 @@ func NewServer(modelName string) (*Server, error) {
 		slog.Debug("mlx subprocess library path", "LD_LIBRARY_PATH", pathEnvVal)
 	}
 
+	// Estimate VRAM based on tensor size from manifest
+	var vramSize uint64
+	if modelManifest, err := manifest.LoadManifest(modelName); err == nil {
+		vramSize = uint64(modelManifest.TotalTensorSize())
+	} else {
+		// Fallback: default to 8GB if manifest can't be loaded
+		vramSize = 8 * 1024 * 1024 * 1024
+	}
+
 	s := &Server{
 		cmd:       cmd,
 		port:      port,
 		modelName: modelName,
-		vramSize:  EstimateVRAM(modelName),
+		mode:      mode,
+		vramSize:  vramSize,
 		done:      make(chan error, 1),
 		client:    &http.Client{Timeout: 10 * time.Minute},
 	}
@@ -131,24 +130,23 @@ func NewServer(modelName string) (*Server, error) {
 	go func() {
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
-			slog.Info("image-runner", "msg", scanner.Text())
+			slog.Info("mlx-runner", "msg", scanner.Text())
 		}
 	}()
 	go func() {
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
 			line := scanner.Text()
-			slog.Warn("image-runner", "msg", line)
-			// Capture last error line for better error reporting
+			slog.Warn("mlx-runner", "msg", line)
 			s.lastErrLock.Lock()
 			s.lastErr = line
 			s.lastErrLock.Unlock()
 		}
 	}()
 
-	slog.Info("starting ollama-mlx image runner subprocess", "exe", mlxExe, "model", modelName, "port", port)
+	slog.Info("starting mlx runner subprocess", "exe", exe, "model", modelName, "port", port, "mode", mode)
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("failed to start image runner: %w", err)
+		return nil, fmt.Errorf("failed to start mlx runner: %w", err)
 	}
 
 	// Reap subprocess when it exits
@@ -171,7 +169,7 @@ func (s *Server) ModelPath() string {
 	return s.modelName
 }
 
-// Load is called by the scheduler after the server is created.
+// Load satisfies the LlamaServer interface. MLX models don't need GPU layer assignment.
 func (s *Server) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
 	return nil, nil
 }
@@ -204,69 +202,78 @@ func (s *Server) waitUntilRunning() error {
 	for {
 		select {
 		case err := <-s.done:
-			// Include last stderr line for better error context
-			s.lastErrLock.Lock()
-			lastErr := s.lastErr
-			s.lastErrLock.Unlock()
-			if lastErr != "" {
-				return fmt.Errorf("image runner failed: %s (exit: %v)", lastErr, err)
+			// Include recent stderr lines for better error context
+			errMsg := s.getLastErr()
+			if errMsg != "" {
+				return fmt.Errorf("mlx runner failed: %s (exit: %v)", errMsg, err)
 			}
-			return fmt.Errorf("image runner exited unexpectedly: %w", err)
+			return fmt.Errorf("mlx runner exited unexpectedly: %w", err)
 		case <-timeout:
-			s.lastErrLock.Lock()
-			lastErr := s.lastErr
-			s.lastErrLock.Unlock()
-			if lastErr != "" {
-				return fmt.Errorf("timeout waiting for image runner: %s", lastErr)
+			errMsg := s.getLastErr()
+			if errMsg != "" {
+				return fmt.Errorf("timeout waiting for mlx runner: %s", errMsg)
 			}
-			return errors.New("timeout waiting for image runner to start")
+			return errors.New("timeout waiting for mlx runner to start")
 		case <-ticker.C:
 			if err := s.Ping(ctx); err == nil {
-				slog.Info("image runner is ready", "port", s.port)
+				slog.Info("mlx runner is ready", "port", s.port)
 				return nil
 			}
 		}
 	}
 }
 
-// WaitUntilRunning implements the LlamaServer interface (no-op since NewServer waits).
+// getLastErr returns the last stderr line.
+func (s *Server) getLastErr() string {
+	s.lastErrLock.Lock()
+	defer s.lastErrLock.Unlock()
+	return s.lastErr
+}
+
+// WaitUntilRunning satisfies the LlamaServer interface.
 func (s *Server) WaitUntilRunning(ctx context.Context) error {
 	return nil
 }
 
-// Completion generates an image from the prompt via the subprocess.
+// Completion handles both text and image generation requests.
 func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
-	// Build request
-	creq := completionRequest{
+	seed := req.Seed
+	if seed == 0 {
+		seed = time.Now().UnixNano()
+	}
+
+	// Extract raw image bytes from llm.ImageData slice
+	var images [][]byte
+	for _, img := range req.Images {
+		images = append(images, img.Data)
+	}
+
+	// Build request for subprocess
+	creq := Request{
 		Prompt: req.Prompt,
-		Width:  1024,
-		Height: 1024,
-		Steps:  9,
-		Seed:   time.Now().UnixNano(),
+		Width:  req.Width,
+		Height: req.Height,
+		Steps:  int(req.Steps),
+		Seed:   seed,
+		Images: images,
 	}
 
+	// Pass LLM options if present
 	if req.Options != nil {
-		if req.Options.NumCtx > 0 && req.Options.NumCtx <= 4096 {
-			creq.Width = int32(req.Options.NumCtx)
-		}
-		if req.Options.NumGPU > 0 && req.Options.NumGPU <= 4096 {
-			creq.Height = int32(req.Options.NumGPU)
-		}
-		if req.Options.NumPredict > 0 && req.Options.NumPredict <= 100 {
-			creq.Steps = req.Options.NumPredict
-		}
-		if req.Options.Seed > 0 {
-			creq.Seed = int64(req.Options.Seed)
+		creq.Options = &RequestOptions{
+			NumPredict:  req.Options.NumPredict,
+			Temperature: float64(req.Options.Temperature),
+			TopP:        float64(req.Options.TopP),
+			TopK:        req.Options.TopK,
+			Stop:        req.Options.Stop,
 		}
 	}
 
-	// Encode request body
 	body, err := json.Marshal(creq)
 	if err != nil {
 		return err
 	}
 
-	// Send request to subprocess
 	url := fmt.Sprintf("http://127.0.0.1:%d/completion", s.port)
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
 	if err != nil {
@@ -281,34 +288,69 @@ func (s *Server) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("completion request failed: %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("%s", strings.TrimSpace(string(body)))
 	}
 
-	// Stream responses - use large buffer for base64 image data
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 1024*1024), 16*1024*1024) // 16MB max
 	for scanner.Scan() {
-		var cresp completionResponse
-		if err := json.Unmarshal(scanner.Bytes(), &cresp); err != nil {
+		// Parse subprocess response
+		var raw struct {
+			Image              string `json:"image,omitempty"`
+			Content            string `json:"content,omitempty"`
+			Done               bool   `json:"done"`
+			Step               int    `json:"step,omitempty"`
+			Total              int    `json:"total,omitempty"`
+			StopReason         string `json:"stop_reason,omitempty"`
+			PromptEvalCount    int    `json:"prompt_eval_count,omitempty"`
+			PromptEvalDuration int    `json:"prompt_eval_duration,omitempty"`
+			EvalCount          int    `json:"eval_count,omitempty"`
+			EvalDuration       int    `json:"eval_duration,omitempty"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &raw); err != nil {
+			slog.Debug("mlx response parse error", "error", err, "line", string(scanner.Bytes()))
 			continue
 		}
 
-		content := cresp.Content
-		// If this is the final response with an image, encode it in the content
-		if cresp.Done && cresp.Image != "" {
-			content = "IMAGE_BASE64:" + cresp.Image
+		// Log stop reason when generation completes
+		if raw.Done && raw.StopReason != "" {
+			slog.Info("mlx generation completed", "stop_reason", raw.StopReason)
 		}
 
-		fn(llm.CompletionResponse{
-			Content: content,
-			Done:    cresp.Done,
-		})
+		// Convert to llm.CompletionResponse
+		cresp := llm.CompletionResponse{
+			Content:            raw.Content,
+			Done:               raw.Done,
+			Step:               raw.Step,
+			TotalSteps:         raw.Total,
+			Image:              raw.Image,
+			PromptEvalCount:    raw.PromptEvalCount,
+			PromptEvalDuration: time.Duration(raw.PromptEvalDuration),
+			EvalCount:          raw.EvalCount,
+			EvalDuration:       time.Duration(raw.EvalDuration),
+		}
+
+		fn(cresp)
 		if cresp.Done {
-			break
+			return nil
 		}
 	}
 
-	return scanner.Err()
+	// Scanner exited without receiving Done - connection was likely closed
+	scanErr := scanner.Err()
+	if scanErr != nil {
+		slog.Error("mlx scanner error", "error", scanErr)
+	} else {
+		slog.Warn("mlx scanner EOF without Done response - subprocess may have crashed")
+	}
+
+	// Check if subprocess is still alive
+	if s.HasExited() {
+		slog.Error("mlx subprocess has exited unexpectedly")
+	}
+
+	return scanErr
 }
 
 // Close terminates the subprocess.
@@ -317,7 +359,7 @@ func (s *Server) Close() error {
 	defer s.mu.Unlock()
 
 	if s.cmd != nil && s.cmd.Process != nil {
-		slog.Info("stopping image runner subprocess", "pid", s.cmd.Process.Pid)
+		slog.Info("stopping mlx runner subprocess", "pid", s.cmd.Process.Pid)
 		s.cmd.Process.Signal(os.Interrupt)
 
 		// Wait briefly for graceful shutdown
@@ -346,22 +388,56 @@ func (s *Server) VRAMByGPU(id ml.DeviceID) uint64 {
 	return s.vramSize
 }
 
-// Embedding is not supported for image generation models.
+// ContextLength returns the context length (not applicable for image generation).
+func (s *Server) ContextLength() int {
+	return 0
+}
+
+// Embedding returns embeddings for the input.
 func (s *Server) Embedding(ctx context.Context, input string) ([]float32, int, error) {
-	return nil, 0, errors.New("embedding not supported for image generation models")
+	return nil, 0, errors.New("embeddings not supported for MLX models")
 }
 
-// Tokenize is not supported for image generation models.
+// Tokenize tokenizes the input content.
 func (s *Server) Tokenize(ctx context.Context, content string) ([]int, error) {
-	return nil, errors.New("tokenize not supported for image generation models")
+	body, err := json.Marshal(map[string]string{"content": content})
+	if err != nil {
+		return nil, err
+	}
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/tokenize", s.port)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("tokenize failed: %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Tokens []int `json:"tokens"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	return result.Tokens, nil
 }
 
-// Detokenize is not supported for image generation models.
+// Detokenize converts tokens back to text.
 func (s *Server) Detokenize(ctx context.Context, tokens []int) (string, error) {
-	return "", errors.New("detokenize not supported for image generation models")
+	return "", errors.New("detokenization not supported for MLX models")
 }
 
-// Pid returns the subprocess PID.
+// Pid returns the process ID of the subprocess.
 func (s *Server) Pid() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -371,17 +447,17 @@ func (s *Server) Pid() int {
 	return -1
 }
 
-// GetPort returns the subprocess port.
+// GetPort returns the port the subprocess is listening on.
 func (s *Server) GetPort() int {
 	return s.port
 }
 
-// GetDeviceInfos returns nil since we don't track GPU info.
+// GetDeviceInfos returns device information.
 func (s *Server) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {
 	return nil
 }
 
-// HasExited returns true if the subprocess has exited.
+// HasExited returns whether the subprocess has exited.
 func (s *Server) HasExited() bool {
 	select {
 	case <-s.done:

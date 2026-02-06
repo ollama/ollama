@@ -510,7 +510,11 @@ func loadFromTokenizerJSON(data []byte, dir string) (*Tokenizer, error) {
 		t.vocab.Merges[merge] = i
 	}
 
-	// Add special tokens to vocabulary
+	// Add all added_tokens to vocabulary and special tokens map.
+	// HuggingFace treats ALL added_tokens as special for tokenization purposes -
+	// they bypass BPE and get their own token ID. The "special" flag just indicates
+	// if it's a "truly special" token like BOS/EOS/PAD, but for tokenization we need
+	// to treat all added_tokens as special to match HuggingFace behavior.
 	for _, tok := range raw.AddedTokens {
 		if int(tok.ID) >= len(t.vocab.Values) {
 			newValues := make([]string, tok.ID+1)
@@ -518,9 +522,7 @@ func loadFromTokenizerJSON(data []byte, dir string) (*Tokenizer, error) {
 			t.vocab.Values = newValues
 		}
 		t.vocab.Values[tok.ID] = tok.Content
-		if tok.Special {
-			t.specialTokens[tok.Content] = tok.ID
-		}
+		t.specialTokens[tok.Content] = tok.ID // Add ALL added_tokens to special tokens
 	}
 
 	// Load special token configuration from companion files

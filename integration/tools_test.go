@@ -131,7 +131,7 @@ func TestAPIToolCalling(t *testing.T) {
 					t.Errorf("unexpected tool called: got %q want %q", lastToolCall.Function.Name, "get_weather")
 				}
 
-				if _, ok := lastToolCall.Function.Arguments["location"]; !ok {
+				if _, ok := lastToolCall.Function.Arguments.Get("location"); !ok {
 					t.Errorf("expected tool arguments to include 'location', got: %s", lastToolCall.Function.Arguments.String())
 				}
 			case <-ctx.Done():

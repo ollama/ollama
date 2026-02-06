@@ -25,6 +25,7 @@ import (
 	"github.com/ollama/ollama/convert"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -223,15 +224,15 @@ func TestCreateFromModelInheritsRendererParser(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	manifest, err := ParseNamedManifest(model.ParseName("child"))
+	mf, err := manifest.ParseNamedManifest(model.ParseName("child"))
 	if err != nil {
 		t.Fatalf("parse manifest: %v", err)
 	}
-	if manifest.Config.Digest == "" {
+	if mf.Config.Digest == "" {
 		t.Fatalf("unexpected empty config digest for child manifest")
 	}
 
-	configPath, err := GetBlobsPath(manifest.Config.Digest)
+	configPath, err := manifest.BlobsPath(mf.Config.Digest)
 	if err != nil {
 		t.Fatalf("config blob path: %v", err)
 	}

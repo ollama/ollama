@@ -8,6 +8,8 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
+// TestNemotron3NanoParser tests Nemotron-specific behavior (thinking support).
+// Tool call parsing is tested in qwen3coder_test.go since Nemotron delegates to Qwen3CoderParser.
 func TestNemotron3NanoParser(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -17,18 +19,6 @@ func TestNemotron3NanoParser(t *testing.T) {
 		expectedThinking string
 		expectedCalls    []api.ToolCall
 	}{
-		{
-			name:            "simple content - no thinking",
-			input:           "Hello, how can I help you?",
-			thinkValue:      nil,
-			expectedContent: "Hello, how can I help you?",
-		},
-		{
-			name:            "simple content - thinking disabled",
-			input:           "Hello, how can I help you?",
-			thinkValue:      &api.ThinkValue{Value: false},
-			expectedContent: "Hello, how can I help you?",
-		},
 		{
 			name:             "thinking then content",
 			input:            "Let me think about this...</think>\nHere is my answer.",
@@ -42,69 +32,6 @@ func TestNemotron3NanoParser(t *testing.T) {
 			thinkValue:       &api.ThinkValue{Value: true},
 			expectedThinking: "Step 1: Analyze\nStep 2: Process\nStep 3: Conclude",
 			expectedContent:  "The answer is 42.",
-		},
-		{
-			name:       "simple tool call",
-			input:      "<tool_call>\n<function=get_weather>\n<parameter=city>\nParis\n</parameter>\n</function>\n</tool_call>",
-			thinkValue: nil,
-			expectedCalls: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Name:      "get_weather",
-						Arguments: testArgs(map[string]any{"city": "Paris"}),
-					},
-				},
-			},
-		},
-		{
-			name:            "content then tool call",
-			input:           "Let me check the weather.\n<tool_call>\n<function=get_weather>\n<parameter=city>\nNYC\n</parameter>\n</function>\n</tool_call>",
-			thinkValue:      nil,
-			expectedContent: "Let me check the weather.",
-			expectedCalls: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Name:      "get_weather",
-						Arguments: testArgs(map[string]any{"city": "NYC"}),
-					},
-				},
-			},
-		},
-		{
-			name:       "tool call with multiple parameters",
-			input:      "<tool_call>\n<function=book_flight>\n<parameter=from>\nSFO\n</parameter>\n<parameter=to>\nNYC\n</parameter>\n</function>\n</tool_call>",
-			thinkValue: nil,
-			expectedCalls: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Name: "book_flight",
-						Arguments: testArgs(map[string]any{
-							"from": "SFO",
-							"to":   "NYC",
-						}),
-					},
-				},
-			},
-		},
-		{
-			name: "multiple tool calls",
-			input: "<tool_call>\n<function=get_weather>\n<parameter=city>\nSan Francisco\n</parameter>\n</function>\n</tool_call>\n" +
-				"<tool_call>\n<function=get_weather>\n<parameter=city>\nNew York\n</parameter>\n</function>\n</tool_call>",
-			thinkValue: nil,
-			expectedCalls: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Name:      "get_weather",
-						Arguments: testArgs(map[string]any{"city": "San Francisco"}),
-					},
-				},
-				{
-					Function: api.ToolCallFunction{
-						Name:      "get_weather",
-						Arguments: testArgs(map[string]any{"city": "New York"}),
-					},
-				},
-			},
 		},
 		{
 			name:             "thinking then tool call",
@@ -136,19 +63,6 @@ func TestNemotron3NanoParser(t *testing.T) {
 			},
 		},
 		{
-			name:       "tool call with multiline parameter value",
-			input:      "<tool_call>\n<function=create_note>\n<parameter=content>\nLine 1\nLine 2\nLine 3\n</parameter>\n</function>\n</tool_call>",
-			thinkValue: nil,
-			expectedCalls: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Name:      "create_note",
-						Arguments: testArgs(map[string]any{"content": "Line 1\nLine 2\nLine 3"}),
-					},
-				},
-			},
-		},
-		{
 			name:             "empty thinking block - immediate close",
 			input:            "</think>\nHere is my answer.",
 			thinkValue:       &api.ThinkValue{Value: true},
@@ -162,42 +76,11 @@ func TestNemotron3NanoParser(t *testing.T) {
 			expectedContent: "</think>\nSome content after spurious tag.",
 		},
 		{
-			name:          "tool call with no function name - returns empty tool call",
-			input:         "<tool_call>\n<function=>\n</function>\n</tool_call>",
-			thinkValue:    nil,
-			expectedCalls: []api.ToolCall{{Function: api.ToolCallFunction{Name: "", Arguments: api.NewToolCallFunctionArguments()}}},
-		},
-		{
-			name:            "content with newlines preserved",
-			input:           "Line 1\n\nLine 2\n\n\nLine 3",
-			thinkValue:      nil,
-			expectedContent: "Line 1\n\nLine 2\n\n\nLine 3",
-		},
-		{
 			name:             "thinking with only whitespace after close tag",
 			input:            "My thoughts...</think>   \n\t\n   Content here.",
 			thinkValue:       &api.ThinkValue{Value: true},
 			expectedThinking: "My thoughts...",
 			expectedContent:  "Content here.",
-		},
-		{
-			name:            "unicode content",
-			input:           "Hello 世界! 🌍 Ñoño",
-			thinkValue:      nil,
-			expectedContent: "Hello 世界! 🌍 Ñoño",
-		},
-		{
-			name:       "tool call with numeric parameter",
-			input:      "<tool_call>\n<function=set_temp>\n<parameter=value>\n42\n</parameter>\n</function>\n</tool_call>",
-			thinkValue: nil,
-			expectedCalls: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Name:      "set_temp",
-						Arguments: testArgs(map[string]any{"value": "42"}),
-					},
-				},
-			},
 		},
 	}
 
@@ -233,6 +116,8 @@ func TestNemotron3NanoParser(t *testing.T) {
 	}
 }
 
+// TestNemotron3NanoParser_Streaming tests streaming behavior for thinking support.
+// Tool call streaming is tested in qwen3coder_test.go.
 func TestNemotron3NanoParser_Streaming(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -242,18 +127,6 @@ func TestNemotron3NanoParser_Streaming(t *testing.T) {
 		expectedThinking string
 		expectedCalls    []api.ToolCall
 	}{
-		{
-			name:            "streaming content character by character",
-			chunks:          []string{"H", "e", "l", "l", "o", ",", " ", "w", "o", "r", "l", "d", "!"},
-			thinkValue:      nil,
-			expectedContent: "Hello, world!",
-		},
-		{
-			name:            "streaming content small tokens",
-			chunks:          []string{"Hel", "lo", ", ", "how ", "can", " I", " help", " you", " today", "?"},
-			thinkValue:      nil,
-			expectedContent: "Hello, how can I help you today?",
-		},
 		{
 			name:             "streaming thinking then content - granular",
 			chunks:           []string{"Let", " me", " th", "ink", " about", " this", "...", "<", "/", "think", ">", "\n", "Here", " is", " my", " answer", "."},
@@ -269,45 +142,6 @@ func TestNemotron3NanoParser_Streaming(t *testing.T) {
 			expectedContent:  "The answer.",
 		},
 		{
-			name:       "streaming tool call - highly granular",
-			chunks:     []string{"<", "tool", "_", "call", ">", "\n", "<", "func", "tion", "=", "get", "_", "weather", ">", "\n", "<", "param", "eter", "=", "city", ">", "\n", "Par", "is", "\n", "</", "param", "eter", ">", "\n", "</", "func", "tion", ">", "\n", "</", "tool", "_", "call", ">"},
-			thinkValue: nil,
-			expectedCalls: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Name:      "get_weather",
-						Arguments: testArgs(map[string]any{"city": "Paris"}),
-					},
-				},
-			},
-		},
-		{
-			name:            "streaming content then tool call - granular",
-			chunks:          []string{"Let", " me", " check", " the", " weather", ".", "\n<", "tool_call", ">", "\n", "<function=", "get_weather", ">", "\n", "<parameter=", "city", ">", "\n", "NYC", "\n", "</parameter>", "\n", "</function>", "\n", "</tool_call>"},
-			thinkValue:      nil,
-			expectedContent: "Let me check the weather.",
-			expectedCalls: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Name:      "get_weather",
-						Arguments: testArgs(map[string]any{"city": "NYC"}),
-					},
-				},
-			},
-		},
-		{
-			name:   "tool call tag split character by character",
-			chunks: []string{"<", "t", "o", "o", "l", "_", "c", "a", "l", "l", ">", "\n", "<", "f", "u", "n", "c", "t", "i", "o", "n", "=", "t", "e", "s", "t", ">", "\n", "<", "/", "f", "u", "n", "c", "t", "i", "o", "n", ">", "\n", "<", "/", "t", "o", "o", "l", "_", "c", "a", "l", "l", ">"},
-			expectedCalls: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Name:      "test",
-						Arguments: api.NewToolCallFunctionArguments(),
-					},
-				},
-			},
-		},
-		{
 			name:             "thinking close tag split character by character",
 			chunks:           []string{"I", "'", "m", " ", "t", "h", "i", "n", "k", "i", "n", "g", ".", ".", ".", "<", "/", "t", "h", "i", "n", "k", ">", "\n", "D", "o", "n", "e", "!"},
 			thinkValue:       &api.ThinkValue{Value: true},
@@ -320,22 +154,6 @@ func TestNemotron3NanoParser_Streaming(t *testing.T) {
 			thinkValue:       &api.ThinkValue{Value: true},
 			expectedThinking: "Thinking...",
 			expectedContent:  "Content here.",
-		},
-		{
-			name:       "tool call with multiple parameters - streaming",
-			chunks:     []string{"<tool_", "call>\n", "<function", "=book_", "flight>", "\n<para", "meter=", "from>\n", "SFO\n", "</param", "eter>", "\n<param", "eter=to", ">\nNYC", "\n</para", "meter>", "\n</func", "tion>\n", "</tool_", "call>"},
-			thinkValue: nil,
-			expectedCalls: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Name: "book_flight",
-						Arguments: testArgs(map[string]any{
-							"from": "SFO",
-							"to":   "NYC",
-						}),
-					},
-				},
-			},
 		},
 		{
 			name:             "thinking then content then tool call - streaming",
@@ -353,56 +171,11 @@ func TestNemotron3NanoParser_Streaming(t *testing.T) {
 			},
 		},
 		{
-			name: "multiple tool calls - streaming",
-			chunks: []string{
-				"<tool_call>", "\n", "<function=", "get_weather>", "\n",
-				"<parameter=", "city>\n", "San Fran", "cisco\n", "</parameter>", "\n",
-				"</function>", "\n", "</tool_call>", "\n",
-				"<tool_", "call>\n", "<function", "=get_weather", ">\n",
-				"<param", "eter=city", ">\nNew", " York\n", "</parameter>\n",
-				"</function>\n", "</tool_call>",
-			},
-			thinkValue: nil,
-			expectedCalls: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Name:      "get_weather",
-						Arguments: testArgs(map[string]any{"city": "San Francisco"}),
-					},
-				},
-				{
-					Function: api.ToolCallFunction{
-						Name:      "get_weather",
-						Arguments: testArgs(map[string]any{"city": "New York"}),
-					},
-				},
-			},
-		},
-		{
-			name:       "tool call with multiline parameter - streaming",
-			chunks:     []string{"<tool_call>\n", "<function=", "create_note>\n", "<parameter=", "content>\n", "Line 1", "\nLine", " 2\n", "Line 3", "\n</parameter>\n", "</function>\n", "</tool_call>"},
-			thinkValue: nil,
-			expectedCalls: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Name:      "create_note",
-						Arguments: testArgs(map[string]any{"content": "Line 1\nLine 2\nLine 3"}),
-					},
-				},
-			},
-		},
-		{
 			name:             "empty thinking block",
 			chunks:           []string{"</think>", "\n", "Just content."},
 			thinkValue:       &api.ThinkValue{Value: true},
 			expectedThinking: "",
 			expectedContent:  "Just content.",
-		},
-		{
-			name:            "empty input chunks interspersed",
-			chunks:          []string{"Hello", "", " ", "", "world", "", "!"},
-			thinkValue:      nil,
-			expectedContent: "Hello world!",
 		},
 		{
 			name:             "tool call immediately after think close - no content",
@@ -417,25 +190,6 @@ func TestNemotron3NanoParser_Streaming(t *testing.T) {
 					},
 				},
 			},
-		},
-		{
-			name:       "tool call with empty parameter value",
-			chunks:     []string{"<tool_call>\n<function=test>\n<parameter=name>\n", "\n</parameter>\n</function>\n</tool_call>"},
-			thinkValue: nil,
-			expectedCalls: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Name:      "test",
-						Arguments: testArgs(map[string]any{"name": ""}),
-					},
-				},
-			},
-		},
-		{
-			name:            "partial tool call tag at end - buffered",
-			chunks:          []string{"Here's some content", "<tool"},
-			thinkValue:      nil,
-			expectedContent: "Here's some content",
 		},
 	}
 
@@ -569,6 +323,68 @@ func TestNemotron3NanoParser_WithTools(t *testing.T) {
 	}
 
 	if diff := cmp.Diff(calls, expectedCalls, argsComparer); diff != "" {
+		t.Errorf("calls mismatch (-got +want):\n%s", diff)
+	}
+}
+
+// TestNemotron3NanoParser_ToolCallWithoutThinkClose tests the case where thinking is enabled
+// but the model outputs content + tool call WITHOUT the </think> tag.
+// The parser should still parse the tool call (content before is treated as thinking).
+func TestNemotron3NanoParser_ToolCallWithoutThinkClose(t *testing.T) {
+	chunks := []string{
+		"Let", " me", " analyze", " this", ".", "\n",
+		"<tool_call>", "\n",
+		"<function=get_weather>", "\n",
+		"<parameter=city>", "Paris", "</parameter>", "\n",
+		"</function>", "\n",
+		"</tool_call>",
+	}
+
+	p := &Nemotron3NanoParser{}
+	p.Init(nil, nil, &api.ThinkValue{Value: true}) // thinking ENABLED but model doesn't output </think>
+
+	var allContent string
+	var allThinking string
+	var allCalls []api.ToolCall
+
+	for _, chunk := range chunks {
+		content, thinking, calls, err := p.Add(chunk, false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		allContent += content
+		allThinking += thinking
+		allCalls = append(allCalls, calls...)
+	}
+
+	// Drain
+	content, thinking, calls, err := p.Add("", true)
+	if err != nil {
+		t.Fatalf("unexpected error on done: %v", err)
+	}
+	allContent += content
+	allThinking += thinking
+	allCalls = append(allCalls, calls...)
+
+	// The parser was in thinking mode, so text before <tool_call> is emitted as thinking.
+	expectedThinking := "Let me analyze this."
+
+	expectedCalls := []api.ToolCall{
+		{
+			Function: api.ToolCallFunction{
+				Name:      "get_weather",
+				Arguments: testArgs(map[string]any{"city": "Paris"}),
+			},
+		},
+	}
+
+	if allContent != "" {
+		t.Errorf("expected no content (text was streamed as thinking), got: %q", allContent)
+	}
+	if diff := cmp.Diff(allThinking, expectedThinking); diff != "" {
+		t.Errorf("thinking mismatch (-got +want):\n%s", diff)
+	}
+	if diff := cmp.Diff(allCalls, expectedCalls, argsComparer); diff != "" {
 		t.Errorf("calls mismatch (-got +want):\n%s", diff)
 	}
 }

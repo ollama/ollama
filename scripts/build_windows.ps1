@@ -56,6 +56,12 @@ function checkEnv {
 
     $script:DIST_DIR="${script:SRC_DIR}\dist\windows-${script:TARGET_ARCH}"
     $env:CGO_ENABLED="1"
+    if (-not $env:CGO_CFLAGS) {
+        $env:CGO_CFLAGS = "-O3"
+    }
+    if (-not $env:CGO_CXXFLAGS) {
+        $env:CGO_CXXFLAGS = "-O3"
+    }
     Write-Output "Checking version"
     if (!$env:VERSION) {
         $data=(git describe --tags --first-parent --abbrev=7 --long --dirty --always)

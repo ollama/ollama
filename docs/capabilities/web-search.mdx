@@ -110,7 +110,7 @@ More Ollama [Python example](https://github.com/ollama/ollama-python/blob/main/e
 import { Ollama } from "ollama";
 
 const client = new Ollama();
-const results = await client.webSearch({ query: "what is ollama?" });
+const results = await client.webSearch("what is ollama?");
 console.log(JSON.stringify(results, null, 2));
 ```
 
@@ -213,7 +213,7 @@ models](https://ollama.com/models)\n\nAvailable for macOS, Windows, and Linux',
 import { Ollama } from "ollama";
 
 const client = new Ollama();
-const fetchResult = await client.webFetch({ url: "https://ollama.com" });
+const fetchResult = await client.webFetch("https://ollama.com");
 console.log(JSON.stringify(fetchResult, null, 2));
 ```
 

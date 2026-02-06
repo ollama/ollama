@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/ollama/ollama/x/imagegen"
+	"github.com/ollama/ollama/x/imagegen/manifest"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/safetensors"
+	"github.com/ollama/ollama/x/imagegen/vae"
 )
 
 // VAEConfig holds VAE decoder configuration
@@ -561,7 +562,7 @@ func (ub *UpDecoderBlock2D) Forward(x *mlx.Array) *mlx.Array {
 	if ub.Upsample != nil {
 		// Stage 1: Upsample2x (nearest neighbor)
 		{
-					prev := x
+			prev := x
 			x = Upsample2x(x)
 			prev.Free()
 			mlx.Eval(x)
@@ -569,7 +570,7 @@ func (ub *UpDecoderBlock2D) Forward(x *mlx.Array) *mlx.Array {
 
 		// Stage 2: Upsample conv
 		{
-					prev := x
+			prev := x
 			x = ub.Upsample.Forward(x)
 			prev.Free()
 			mlx.Eval(x)
@@ -636,19 +637,22 @@ type VAEDecoder struct {
 	UpBlocks    []*UpDecoderBlock2D
 	ConvNormOut *GroupNormLayer
 	ConvOut     *Conv2D
+
+	// Tiling configuration (nil = no tiling)
+	Tiling *vae.TilingConfig
 }
 
 // Load loads the VAE decoder from ollama blob storage.
-func (m *VAEDecoder) Load(manifest *imagegen.ModelManifest) error {
+func (m *VAEDecoder) Load(modelManifest *manifest.ModelManifest) error {
 	// Load config from blob
 	var cfg VAEConfig
-	if err := manifest.ReadConfigJSON("vae/config.json", &cfg); err != nil {
+	if err := modelManifest.ReadConfigJSON("vae/config.json", &cfg); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 	m.Config = &cfg
 
 	// Load weights from tensor blobs
-	weights, err := imagegen.LoadWeightsFromManifest(manifest, "vae")
+	weights, err := manifest.LoadWeightsFromManifest(modelManifest, "vae")
 	if err != nil {
 		return fmt.Errorf("weights: %w", err)
 	}
@@ -730,45 +734,60 @@ func (m *VAEDecoder) loadWeights(weights safetensors.WeightSource, cfg *VAEConfi
 
 // Decode decodes latents to images.
 // Input latents are in NCHW format, output is in NCHW format.
-// Internally uses NHWC format (MLX native) for all operations.
-func (vae *VAEDecoder) Decode(latents *mlx.Array) *mlx.Array {
+// If Tiling is set, uses tiled decoding to reduce memory for large images.
+func (v *VAEDecoder) Decode(latents *mlx.Array) *mlx.Array {
 	// Scale latents
-	z := mlx.DivScalar(latents, vae.Config.ScalingFactor)
-	z = mlx.AddScalar(z, vae.Config.ShiftFactor)
+	z := mlx.DivScalar(latents, v.Config.ScalingFactor)
+	z = mlx.AddScalar(z, v.Config.ShiftFactor)
 	// Convert NCHW -> NHWC for internal processing
 	z = mlx.Transpose(z, 0, 2, 3, 1)
-	h := vae.ConvIn.Forward(z)
+
+	// Use tiled decoding if enabled
+	if v.Tiling != nil {
+		mlx.Eval(z)
+		return vae.DecodeTiled(z, v.Tiling, v.decodeTile)
+	}
+
+	// Direct decode
+	h := v.decodeTile(z)
+	h = mlx.ClipScalar(h, 0.0, 1.0, true, true)
+	// Convert NHWC -> NCHW for output
+	h = mlx.Transpose(h, 0, 3, 1, 2)
+	mlx.Eval(h)
+	return h
+}
+
+// decodeTile decodes a single latent tile to pixels.
+// Input: [B, H, W, C] latent tile in NHWC format (already scaled)
+// Output: [B, H*8, W*8, 3] pixel tile in NHWC format
+func (v *VAEDecoder) decodeTile(z *mlx.Array) *mlx.Array {
+	h := v.ConvIn.Forward(z)
 	mlx.Eval(h)
 
 	prev := h
-	h = vae.MidBlock.Forward(h)
+	h = v.MidBlock.Forward(h)
 	prev.Free()
 
-	for _, upBlock := range vae.UpBlocks {
+	for _, upBlock := range v.UpBlocks {
 		prev = h
 		h = upBlock.Forward(h)
 		prev.Free()
 	}
 
 	prev = h
-	h = vae.ConvNormOut.Forward(h)
+	h = v.ConvNormOut.Forward(h)
 	mlx.Eval(h) // Eval after GroupNorm to avoid grid dimension issues
 	prev.Free()
 
 	prev = h
 	h = mlx.SiLU(h)
-	h = vae.ConvOut.Forward(h)
+	h = v.ConvOut.Forward(h)
 	mlx.Eval(h)
 	prev.Free()
 
 	// VAE outputs [-1, 1], convert to [0, 1]
 	h = mlx.MulScalar(h, 0.5)
 	h = mlx.AddScalar(h, 0.5)
-	h = mlx.ClipScalar(h, 0.0, 1.0, true, true)
-
-	// Convert NHWC -> NCHW for output
-	h = mlx.Transpose(h, 0, 3, 1, 2)
-	mlx.Eval(h)
 
 	return h
 }
