@@ -66,14 +66,12 @@ func (t *Array) AsStrided(shape []int, strides []int, offset int) *Array {
 }
 
 func (t *Array) Concatenate(axis int, others ...*Array) *Array {
-	vectorData := make([]C.mlx_array, len(others)+1)
-	vectorData[0] = t.ctx
-	for i := range others {
-		vectorData[i+1] = others[i].ctx
-	}
-
-	vector := C.mlx_vector_array_new_data(unsafe.SliceData(vectorData), C.size_t(len(vectorData)))
+	vector := C.mlx_vector_array_new()
 	defer C.mlx_vector_array_free(vector)
+
+	for _, other := range append([]*Array{t}, others...) {
+		C.mlx_vector_array_append_value(vector, other.ctx)
+	}
 
 	out := New("CONCATENATE", t)
 	C.mlx_concatenate_axis(&out.ctx, vector, C.int(axis), DefaultStream().ctx)

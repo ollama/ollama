@@ -12,20 +12,15 @@ package mlx
 // #include "generated.h"
 import "C"
 
-import (
-	"unsafe"
-)
-
 func doEval(outputs []*Array, async bool) {
-	vectorData := make([]C.mlx_array, 0, len(outputs))
+	vector := C.mlx_vector_array_new()
+	defer C.mlx_vector_array_free(vector)
+
 	for _, output := range outputs {
 		if output.Valid() {
-			vectorData = append(vectorData, output.ctx)
+			C.mlx_vector_array_append_value(vector, output.ctx)
 		}
 	}
-
-	vector := C.mlx_vector_array_new_data(unsafe.SliceData(vectorData), C.size_t(len(vectorData)))
-	defer C.mlx_vector_array_free(vector)
 
 	if async {
 		C.mlx_async_eval(vector)
