@@ -605,6 +605,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Neuro SAN](https://github.com/cognizant-ai-lab/neuro-san-studio) (Data-driven multi-agent orchestration framework) with [example](https://github.com/cognizant-ai-lab/neuro-san-studio/blob/main/docs/user_guide.md#ollama)
 - [achatbot-go](https://github.com/ai-bot-pro/achatbot-go) a multimodal(text/audio/image) chatbot.
 - [Ollama Bash Lib](https://github.com/attogram/ollama-bash-lib) - A Bash Library for Ollama. Run LLM prompts straight from your shell, and more
+- [WWW::Ollama](https://github.com/antononcube/Raku-WWW-Ollama) Raku package providing an Ollama client (for accessing Ollama LLMs.)
 
 ### Mobile
 
