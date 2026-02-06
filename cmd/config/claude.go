@@ -65,7 +65,14 @@ func (c *Claude) Run(model string, args []string) error {
 		"ANTHROPIC_AUTH_TOKEN=ollama",
 	)
 
-	// Set Claude Code model env vars so all model tiers route through Ollama
+	env = append(env, c.modelEnvVars(model)...)
+
+	cmd.Env = env
+	return cmd.Run()
+}
+
+// modelEnvVars returns Claude Code env vars that route all model tiers through Ollama.
+func (c *Claude) modelEnvVars(model string) []string {
 	primary := model
 	fast := model
 	if cfg, err := loadIntegration("claude"); err == nil && cfg.Aliases != nil {
@@ -76,15 +83,12 @@ func (c *Claude) Run(model string, args []string) error {
 			fast = f
 		}
 	}
-	env = append(env,
-		"ANTHROPIC_DEFAULT_OPUS_MODEL="+primary,
-		"ANTHROPIC_DEFAULT_SONNET_MODEL="+primary,
-		"ANTHROPIC_DEFAULT_HAIKU_MODEL="+fast,
-		"CLAUDE_CODE_SUBAGENT_MODEL="+primary,
-	)
-
-	cmd.Env = env
-	return cmd.Run()
+	return []string{
+		"ANTHROPIC_DEFAULT_OPUS_MODEL=" + primary,
+		"ANTHROPIC_DEFAULT_SONNET_MODEL=" + primary,
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL=" + fast,
+		"CLAUDE_CODE_SUBAGENT_MODEL=" + primary,
+	}
 }
 
 // ConfigureAliases sets up model aliases for Claude Code.
