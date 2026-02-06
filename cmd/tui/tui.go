@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -17,46 +16,8 @@ import (
 	"github.com/ollama/ollama/version"
 )
 
-const (
-	logoNormal = ` ▆▁▂▃▂▁▆
-▟███████▙
-█▙▛▅ ▅▜▟█
-▟█▙▀▀▀▟█▙
-█████████
-▟███████▙
-▀▀▀▀▀▀▀▀▀`
-
-	logoBlink = ` ▆▁▂▃▂▁▆
-▟███████▙
-██▛▅ ▅▜██
-▟█▙▀▀▀▟█▙
-█████████
-▟███████▙
-▀▀▀▀▀▀▀▀▀`
-
-	// logoBlank is used for terminals that don't render the logo well
-	logoBlank = `
-
-
-
-
-
-         `
-
-	blinkInterval = 15 * time.Second
-	blinkDuration = 250 * time.Millisecond
-)
-
-type (
-	blinkMsg   struct{}
-	unblinkMsg struct{}
-)
 
 var (
-	logoStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("255")).
-			Background(lipgloss.Color("0"))
-
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
 			MarginBottom(1)
@@ -112,6 +73,11 @@ var mainMenuItems = []menuItem{
 		integration: "claude",
 	},
 	{
+		title:       "Launch Codex",
+		description: "Open Codex CLI",
+		integration: "codex",
+	},
+	{
 		title:       "Launch Open Claw",
 		description: "Open the Open Claw integration",
 		integration: "openclaw",
@@ -127,7 +93,7 @@ var othersMenuItem = menuItem{
 // getOtherIntegrations returns the list of other integrations, filtering out
 // Codex if it's not installed (since it requires npm install).
 func getOtherIntegrations() []menuItem {
-	items := []menuItem{
+	return []menuItem{
 		{
 			title:       "Launch Droid",
 			description: "Open Droid integration",
@@ -139,17 +105,6 @@ func getOtherIntegrations() []menuItem {
 			integration: "opencode",
 		},
 	}
-
-	// Only show Codex if it's already installed
-	if config.IsIntegrationInstalled("codex") {
-		items = append([]menuItem{{
-			title:       "Launch Codex",
-			description: "Open Codex CLI",
-			integration: "codex",
-		}}, items...)
-	}
-
-	return items
 }
 
 type model struct {
@@ -160,7 +115,6 @@ type model struct {
 	changeModel     bool            // true if user pressed right arrow to change model
 	showOthers      bool            // true if "Others..." is expanded
 	availableModels map[string]bool // cache of available model names
-	blinking        bool            // true when showing blink logo
 	err             error
 
 	// Modal state
@@ -325,7 +279,7 @@ func (m *model) buildItems() {
 // isOthersIntegration returns true if the integration is in the "Others" menu
 func isOthersIntegration(name string) bool {
 	switch name {
-	case "codex", "droid", "opencode":
+	case "droid", "opencode":
 		return true
 	}
 	return false
@@ -362,9 +316,7 @@ func initialModel() model {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Tick(blinkInterval, func(t time.Time) tea.Msg {
-		return blinkMsg{}
-	})
+	return nil
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -498,18 +450,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
-	case blinkMsg:
-		m.blinking = true
-		return m, tea.Tick(blinkDuration, func(t time.Time) tea.Msg {
-			return unblinkMsg{}
-		})
-
-	case unblinkMsg:
-		m.blinking = false
-		return m, tea.Tick(blinkInterval, func(t time.Time) tea.Msg {
-			return blinkMsg{}
-		})
-
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "q", "esc":
@@ -591,22 +531,7 @@ func (m model) View() string {
 		return m.renderModal()
 	}
 
-	logo := logoNormal
-	if m.blinking {
-		logo = logoBlink
-	}
-	if os.Getenv("TERM_PROGRAM") == "Apple_Terminal" {
-		logo = logoBlank
-	}
-
-	versionText := "\n\n  Ollama " + versionStyle.Render("v"+version.Version)
-
-	logoRendered := logoStyle.Render(logo)
-	logoBlock := lipgloss.NewStyle().Padding(0, 1).MarginLeft(2).Background(lipgloss.Color("0")).Render(logoRendered)
-	versionBlock := titleStyle.Render(versionText)
-	header := lipgloss.JoinHorizontal(lipgloss.Top, logoBlock, versionBlock)
-
-	s := header + "\n\n"
+	s := titleStyle.Render("  Ollama "+versionStyle.Render("v"+version.Version)) + "\n\n"
 
 	for i, item := range m.items {
 		cursor := "  "
