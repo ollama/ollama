@@ -1274,28 +1274,29 @@ func TestDroidEdit_LocalModelDefaultMaxOutput(t *testing.T) {
 	}
 }
 
-func TestDroidEdit_CloudModelMaxOutput(t *testing.T) {
-	// Verify that the cloud model limit lookup works for droid's use case.
-	// Since isCloudModel requires a running server, we test the lookup directly
-	// and verify that Edit applies the default for local models.
+func TestDroidEdit_CloudModelLimitsUsed(t *testing.T) {
+	// Verify that every cloud model in cloudModelLimits has a valid output
+	// value that would be used for maxOutputTokens when isCloudModel returns true.
+	// :cloud suffix stripping must also work since that's how users specify them.
 	for name, expected := range cloudModelLimits {
-		l, ok := lookupCloudModelLimit(name)
-		if !ok {
-			t.Errorf("lookupCloudModelLimit(%q) returned false", name)
-			continue
-		}
-		if l.Output != expected.Output {
-			t.Errorf("lookupCloudModelLimit(%q).Output = %d, want %d", name, l.Output, expected.Output)
-		}
-	}
-
-	// Also verify :cloud suffix stripping works
-	l, ok := lookupCloudModelLimit("glm-4.7:cloud")
-	if !ok {
-		t.Fatal("lookupCloudModelLimit(glm-4.7:cloud) returned false")
-	}
-	if l.Output != 131_072 {
-		t.Errorf("output = %d, want 131072", l.Output)
+		t.Run(name, func(t *testing.T) {
+			l, ok := lookupCloudModelLimit(name)
+			if !ok {
+				t.Fatalf("lookupCloudModelLimit(%q) returned false", name)
+			}
+			if l.Output != expected.Output {
+				t.Errorf("output = %d, want %d", l.Output, expected.Output)
+			}
+			// Also verify :cloud suffix lookup
+			cloudName := name + ":cloud"
+			l2, ok := lookupCloudModelLimit(cloudName)
+			if !ok {
+				t.Fatalf("lookupCloudModelLimit(%q) returned false", cloudName)
+			}
+			if l2.Output != expected.Output {
+				t.Errorf(":cloud output = %d, want %d", l2.Output, expected.Output)
+			}
+		})
 	}
 }
 
