@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,7 +53,6 @@ func migrateConfig() (bool, error) {
 
 	var js json.RawMessage
 	if err := json.Unmarshal(oldData, &js); err != nil {
-		slog.Warn("legacy config has invalid JSON, skipping migration", "path", oldPath, "error", err)
 		return false, nil
 	}
 
@@ -73,7 +71,6 @@ func migrateConfig() (bool, error) {
 	_ = os.Remove(oldPath)
 	_ = os.Remove(filepath.Dir(oldPath)) // clean up empty directory
 
-	slog.Info("migrated config", "from", oldPath, "to", newPath)
 	return true, nil
 }
 
