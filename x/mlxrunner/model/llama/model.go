@@ -36,7 +36,7 @@ func (m Model) NumLayers() int {
 	return len(m.Layers)
 }
 
-func (m Model) Forward(inputs *mlx.Tensor, caches []cache.Cache) *mlx.Tensor {
+func (m Model) Forward(inputs *mlx.Array, caches []cache.Cache) *mlx.Array {
 	slog.Debug("Model.forward", "input shape", inputs.Dims(), "m.EmbedTokens", m.EmbedTokens.Weight.Dims())
 	B, L := inputs.Dim(0), inputs.Dim(1)
 	hiddenStates := m.EmbedTokens.Forward(inputs)
@@ -56,7 +56,7 @@ type Layer struct {
 	MLP           MLP         `weight:"mlp"`
 }
 
-func (m Layer) Forward(hiddenStates *mlx.Tensor, c cache.Cache, B, L int, opts Options) *mlx.Tensor {
+func (m Layer) Forward(hiddenStates *mlx.Array, c cache.Cache, B, L int, opts Options) *mlx.Array {
 	residual := hiddenStates
 	hiddenStates = m.AttentionNorm.Forward(hiddenStates, opts.RMSNormEps)
 	hiddenStates = m.Attention.Forward(hiddenStates, c, B, L, opts)
@@ -76,7 +76,7 @@ type Attention struct {
 	OutputProj mlx.Linear `weight:"o_proj"`
 }
 
-func (m Attention) Forward(hiddenStates *mlx.Tensor, cache cache.Cache, B, L int, opts Options) *mlx.Tensor {
+func (m Attention) Forward(hiddenStates *mlx.Array, cache cache.Cache, B, L int, opts Options) *mlx.Array {
 	query := m.QueryProj.Forward(hiddenStates)
 	query = query.Reshape(B, L, opts.NumAttentionHeads, -1).Transpose(0, 2, 1, 3)
 
@@ -101,7 +101,7 @@ type MLP struct {
 	Down mlx.Linear `weight:"down_proj"`
 }
 
-func (m MLP) Forward(h *mlx.Tensor) *mlx.Tensor {
+func (m MLP) Forward(h *mlx.Array) *mlx.Array {
 	return m.Down.Forward(mlx.SILU(m.Gate.Forward(h)).Multiply(m.Up.Forward(h)))
 }
 

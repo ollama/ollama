@@ -16,7 +16,7 @@ import (
 
 type tensorDesc struct {
 	name    string
-	inputs  []*Tensor
+	inputs  []*Array
 	numRefs int
 }
 
@@ -28,15 +28,15 @@ func (d tensorDesc) LogValue() slog.Value {
 	)
 }
 
-type Tensor struct {
+type Array struct {
 	ctx  C.mlx_array
 	desc tensorDesc
 }
 
 // constructor utilities
 
-func New(name string, inputs ...*Tensor) *Tensor {
-	t := &Tensor{
+func New(name string, inputs ...*Array) *Array {
+	t := &Array{
 		desc: tensorDesc{
 			name:   name,
 			inputs: inputs,
@@ -54,7 +54,7 @@ type scalarTypes interface {
 	~bool | ~int | ~float32 | ~float64 | ~complex64
 }
 
-func FromValue[T scalarTypes](t T) *Tensor {
+func FromValue[T scalarTypes](t T) *Array {
 	tt := New("")
 	switch v := any(t).(type) {
 	case bool:
@@ -80,7 +80,7 @@ type arrayTypes interface {
 		~complex64
 }
 
-func FromValues[S ~[]E, E arrayTypes](s S, shape ...int) *Tensor {
+func FromValues[S ~[]E, E arrayTypes](s S, shape ...int) *Array {
 	if len(shape) == 0 {
 		panic("shape must be provided for non-scalar tensors")
 	}
@@ -130,13 +130,13 @@ func FromValues[S ~[]E, E arrayTypes](s S, shape ...int) *Tensor {
 	return tt
 }
 
-func (t *Tensor) Set(other *Tensor) {
+func (t *Array) Set(other *Array) {
 	other.desc.numRefs++
-	t.desc.inputs = []*Tensor{other}
+	t.desc.inputs = []*Array{other}
 	C.mlx_array_set(&t.ctx, other.ctx)
 }
 
-func (t *Tensor) Clone() *Tensor {
+func (t *Array) Clone() *Array {
 	tt := New(t.desc.name, t.desc.inputs...)
 	C.mlx_array_set(&tt.ctx, t.ctx)
 	return tt
@@ -144,18 +144,18 @@ func (t *Tensor) Clone() *Tensor {
 
 // misc. utilities
 
-func (t *Tensor) Valid() bool {
+func (t *Array) Valid() bool {
 	return t.ctx.ctx != nil
 }
 
-func (t *Tensor) String() string {
+func (t *Array) String() string {
 	str := C.mlx_string_new()
 	defer C.mlx_string_free(str)
 	C.mlx_array_tostring(&str, t.ctx)
 	return strings.TrimSpace(C.GoString(C.mlx_string_data(str)))
 }
 
-func (t *Tensor) LogValue() slog.Value {
+func (t *Array) LogValue() slog.Value {
 	attrs := []slog.Attr{slog.Any("", t.desc)}
 	if t.Valid() {
 		attrs = append(attrs,
@@ -169,19 +169,19 @@ func (t *Tensor) LogValue() slog.Value {
 
 // shape utilities
 
-func (t Tensor) Size() int {
+func (t Array) Size() int {
 	return int(C.mlx_array_size(t.ctx))
 }
 
-func (t Tensor) NumBytes() int {
+func (t Array) NumBytes() int {
 	return int(C.mlx_array_nbytes(t.ctx))
 }
 
-func (t Tensor) NumDims() int {
+func (t Array) NumDims() int {
 	return int(C.mlx_array_ndim(t.ctx))
 }
 
-func (t Tensor) Dims() []int {
+func (t Array) Dims() []int {
 	dims := make([]int, t.NumDims())
 	for i := range dims {
 		dims[i] = t.Dim(i)
@@ -190,29 +190,29 @@ func (t Tensor) Dims() []int {
 	return dims
 }
 
-func (t Tensor) Dim(dim int) int {
+func (t Array) Dim(dim int) int {
 	return int(C.mlx_array_dim(t.ctx, C.int(dim)))
 }
 
-func (t Tensor) DType() DType {
+func (t Array) DType() DType {
 	return DType(C.mlx_array_dtype(t.ctx))
 }
 
 // data utilities
 
-func (t Tensor) Int() int {
+func (t Array) Int() int {
 	var item C.int64_t
 	C.mlx_array_item_int64(&item, t.ctx)
 	return int(item)
 }
 
-func (t Tensor) Float() float64 {
+func (t Array) Float() float64 {
 	var item C.double
 	C.mlx_array_item_float64(&item, t.ctx)
 	return float64(item)
 }
 
-func (t Tensor) Ints() []int {
+func (t Array) Ints() []int {
 	ints := make([]int, t.Size())
 	for i, f := range unsafe.Slice(C.mlx_array_data_int32(t.ctx), len(ints)) {
 		ints[i] = int(f)
@@ -220,7 +220,7 @@ func (t Tensor) Ints() []int {
 	return ints
 }
 
-func (t Tensor) Floats() []float32 {
+func (t Array) Floats() []float32 {
 	floats := make([]float32, t.Size())
 	for i, f := range unsafe.Slice(C.mlx_array_data_float32(t.ctx), len(floats)) {
 		floats[i] = float32(f)
@@ -228,7 +228,7 @@ func (t Tensor) Floats() []float32 {
 	return floats
 }
 
-func Free(s ...*Tensor) (n int) {
+func Free(s ...*Array) (n int) {
 	now := time.Now()
 	defer func() {
 		if n > 0 {
@@ -236,8 +236,8 @@ func Free(s ...*Tensor) (n int) {
 		}
 	}()
 
-	free := make([]*Tensor, 0, 8192)
-	fn := func(t *Tensor) {
+	free := make([]*Array, 0, 8192)
+	fn := func(t *Array) {
 		if t.Valid() {
 			free = append(free, t.desc.inputs...)
 			t.desc.numRefs--

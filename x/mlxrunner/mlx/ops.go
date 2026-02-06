@@ -7,43 +7,43 @@ import (
 	"unsafe"
 )
 
-func (t *Tensor) Abs() *Tensor {
+func (t *Array) Abs() *Array {
 	out := New("ABS", t)
 	C.mlx_abs(&out.ctx, t.ctx, DefaultStream().ctx)
 	return out
 }
 
-func (t *Tensor) Add(other *Tensor) *Tensor {
+func (t *Array) Add(other *Array) *Array {
 	out := New("ADD", t, other)
 	C.mlx_add(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
 	return out
 }
 
-func (t *Tensor) Addmm(a, b *Tensor, alpha, beta float32) *Tensor {
+func (t *Array) Addmm(a, b *Array, alpha, beta float32) *Array {
 	out := New("ADDMM", t, a, b)
 	C.mlx_addmm(&out.ctx, t.ctx, a.ctx, b.ctx, C.float(alpha), C.float(beta), DefaultStream().ctx)
 	return out
 }
 
-func (t *Tensor) Argmax(axis int, keepDims bool) *Tensor {
+func (t *Array) Argmax(axis int, keepDims bool) *Array {
 	out := New("ARGMAX", t)
 	C.mlx_argmax_axis(&out.ctx, t.ctx, C.int(axis), C.bool(keepDims), DefaultStream().ctx)
 	return out
 }
 
-func (t *Tensor) ArgpartitionAxis(kth int, axis int) *Tensor {
+func (t *Array) ArgpartitionAxis(kth int, axis int) *Array {
 	out := New("ARGPARTITION", t)
 	C.mlx_argpartition_axis(&out.ctx, t.ctx, C.int(kth), C.int(axis), DefaultStream().ctx)
 	return out
 }
 
-func (t *Tensor) AsType(dtype DType) *Tensor {
+func (t *Array) AsType(dtype DType) *Array {
 	out := New("AS_TYPE", t)
 	C.mlx_astype(&out.ctx, t.ctx, C.mlx_dtype(dtype), DefaultStream().ctx)
 	return out
 }
 
-func (t *Tensor) AsStrided(shape []int, strides []int, offset int) *Tensor {
+func (t *Array) AsStrided(shape []int, strides []int, offset int) *Array {
 	cShape := make([]C.int, len(shape))
 	for i, s := range shape {
 		cShape[i] = C.int(s)
@@ -65,7 +65,7 @@ func (t *Tensor) AsStrided(shape []int, strides []int, offset int) *Tensor {
 	return out
 }
 
-func (t *Tensor) Concatenate(axis int, others ...*Tensor) *Tensor {
+func (t *Array) Concatenate(axis int, others ...*Array) *Array {
 	vectorData := make([]C.mlx_array, len(others)+1)
 	vectorData[0] = t.ctx
 	for i := range others {
@@ -80,49 +80,49 @@ func (t *Tensor) Concatenate(axis int, others ...*Tensor) *Tensor {
 	return out
 }
 
-func (t *Tensor) ExpandDims(axis int) *Tensor {
+func (t *Array) ExpandDims(axis int) *Array {
 	out := New("EXPAND_DIMS", t)
 	C.mlx_expand_dims(&out.ctx, t.ctx, C.int(axis), DefaultStream().ctx)
 	return out
 }
 
-func (t *Tensor) Logsumexp(keepDims bool) *Tensor {
+func (t *Array) Logsumexp(keepDims bool) *Array {
 	out := New("LOGSUMEXP", t)
 	C.mlx_logsumexp(&out.ctx, t.ctx, C.bool(keepDims), DefaultStream().ctx)
 	return out
 }
 
-func (t *Tensor) Matmul(other *Tensor) *Tensor {
+func (t *Array) Matmul(other *Array) *Array {
 	out := New("MATMUL", t, other)
 	C.mlx_matmul(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
 	return out
 }
 
-func (t *Tensor) Multiply(other *Tensor) *Tensor {
+func (t *Array) Multiply(other *Array) *Array {
 	out := New("MULTIPLY", t, other)
 	C.mlx_multiply(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
 	return out
 }
 
-func (t *Tensor) Negative() *Tensor {
+func (t *Array) Negative() *Array {
 	out := New("NEGATIVE", t)
 	C.mlx_negative(&out.ctx, t.ctx, DefaultStream().ctx)
 	return out
 }
 
-func (t *Tensor) Power(exponent *Tensor) *Tensor {
+func (t *Array) Power(exponent *Array) *Array {
 	out := New("POWER", t, exponent)
 	C.mlx_power(&out.ctx, t.ctx, exponent.ctx, DefaultStream().ctx)
 	return out
 }
 
-func (t *Tensor) PutAlongAxis(indices, values *Tensor, axis int) *Tensor {
+func (t *Array) PutAlongAxis(indices, values *Array, axis int) *Array {
 	out := New("PUT_ALONG_AXIS", t, indices, values)
 	C.mlx_put_along_axis(&out.ctx, t.ctx, indices.ctx, values.ctx, C.int(axis), DefaultStream().ctx)
 	return out
 }
 
-func (t *Tensor) Reshape(axes ...int) *Tensor {
+func (t *Array) Reshape(axes ...int) *Array {
 	cAxes := make([]C.int, len(axes))
 	for i := range axes {
 		cAxes[i] = C.int(axes[i])
@@ -133,43 +133,43 @@ func (t *Tensor) Reshape(axes ...int) *Tensor {
 	return out
 }
 
-func (t *Tensor) Sigmoid() *Tensor {
+func (t *Array) Sigmoid() *Array {
 	out := New("SIGMOID", t)
 	C.mlx_sigmoid(&out.ctx, t.ctx, DefaultStream().ctx)
 	return out
 }
 
-func (t *Tensor) Sqrt() *Tensor {
+func (t *Array) Sqrt() *Array {
 	out := New("SQRT", t)
 	C.mlx_sqrt(&out.ctx, t.ctx, DefaultStream().ctx)
 	return out
 }
 
-func (t *Tensor) Squeeze(axis int) *Tensor {
+func (t *Array) Squeeze(axis int) *Array {
 	out := New("SQUEEZE", t)
 	C.mlx_squeeze_axis(&out.ctx, t.ctx, C.int(axis), DefaultStream().ctx)
 	return out
 }
 
-func (t *Tensor) Subtract(other *Tensor) *Tensor {
+func (t *Array) Subtract(other *Array) *Array {
 	out := New("SUBTRACT", t, other)
 	C.mlx_subtract(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
 	return out
 }
 
-func (t *Tensor) TakeAxis(indices *Tensor, axis int) *Tensor {
+func (t *Array) TakeAxis(indices *Array, axis int) *Array {
 	out := New("TAKE_AXIS", t, indices)
 	C.mlx_take_axis(&out.ctx, t.ctx, indices.ctx, C.int(axis), DefaultStream().ctx)
 	return out
 }
 
-func (t *Tensor) Tanh() *Tensor {
+func (t *Array) Tanh() *Array {
 	out := New("TANH", t)
 	C.mlx_tanh(&out.ctx, t.ctx, DefaultStream().ctx)
 	return out
 }
 
-func (t *Tensor) Transpose(axes ...int) *Tensor {
+func (t *Array) Transpose(axes ...int) *Array {
 	cAxes := make([]C.int, len(axes))
 	for i, axis := range axes {
 		cAxes[i] = C.int(axis)
@@ -180,7 +180,7 @@ func (t *Tensor) Transpose(axes ...int) *Tensor {
 	return out
 }
 
-func Zeros(dtype DType, shape ...int) *Tensor {
+func Zeros(dtype DType, shape ...int) *Array {
 	cAxes := make([]C.int, len(shape))
 	for i := range shape {
 		cAxes[i] = C.int(shape[i])

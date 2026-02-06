@@ -7,7 +7,7 @@ import (
 	"unsafe"
 )
 
-func ScaledDotProductAttention(query, key, value, mask *Tensor, scale float32) *Tensor {
+func ScaledDotProductAttention(query, key, value, mask *Array, scale float32) *Array {
 	if mask == nil {
 		mask = New("")
 	}
@@ -24,21 +24,21 @@ func ScaledDotProductAttention(query, key, value, mask *Tensor, scale float32) *
 }
 
 type LayerNorm struct {
-	Weight Tensor `weight:"weight"`
-	Bias   Tensor `weight:"bias"`
+	Weight Array `weight:"weight"`
+	Bias   Array `weight:"bias"`
 }
 
-func (r *LayerNorm) Forward(x *Tensor, eps float32) *Tensor {
+func (r *LayerNorm) Forward(x *Array, eps float32) *Array {
 	out := New("FAST_LAYERNORM", x)
 	C.mlx_fast_layer_norm(&out.ctx, x.ctx, r.Weight.ctx, r.Bias.ctx, C.float(eps), DefaultStream().ctx)
 	return out
 }
 
 type RMSNorm struct {
-	Weight Tensor `weight:"weight"`
+	Weight Array `weight:"weight"`
 }
 
-func (r RMSNorm) Forward(x *Tensor, eps float32) *Tensor {
+func (r RMSNorm) Forward(x *Array, eps float32) *Array {
 	out := New("FAST_RMSNORM", x)
 	C.mlx_fast_rms_norm(&out.ctx, x.ctx, r.Weight.ctx, C.float(eps), DefaultStream().ctx)
 	return out
@@ -51,7 +51,7 @@ type RoPE struct {
 	Scale       float32
 }
 
-func (r RoPE) Forward(t *Tensor, offset int) *Tensor {
+func (r RoPE) Forward(t *Array, offset int) *Array {
 	freqs := New("")
 	out := New("FAST_ROPE", t, freqs)
 	C.mlx_fast_rope(

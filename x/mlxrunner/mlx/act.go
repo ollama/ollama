@@ -4,7 +4,7 @@ package mlx
 import "C"
 import "math"
 
-func GELUApprox(t *Tensor) *Tensor {
+func GELUApprox(t *Array) *Array {
 	return t.Multiply(
 		FromValue[float32](0.5),
 	).Multiply(
@@ -16,6 +16,6 @@ func GELUApprox(t *Tensor) *Tensor {
 	).AsType(t.DType())
 }
 
-func SILU(t *Tensor) *Tensor {
+func SILU(t *Array) *Array {
 	return t.Multiply(t.Sigmoid()).AsType(t.DType())
 }

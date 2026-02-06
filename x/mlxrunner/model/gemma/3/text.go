@@ -29,7 +29,7 @@ type TextModel struct {
 	Options TextOptions
 }
 
-func (m TextModel) Forward(inputs *mlx.Tensor, caches []cache.Cache) *mlx.Tensor {
+func (m TextModel) Forward(inputs *mlx.Array, caches []cache.Cache) *mlx.Array {
 	B, L := inputs.Dim(0), inputs.Dim(1)
 	hiddenStates := m.EmbedTokens.Forward(inputs)
 
@@ -53,7 +53,7 @@ type TextDecoderLayer struct {
 	PostFFNorm   RMSNorm       `weight:"post_feedforward_layernorm"`
 }
 
-func (m TextDecoderLayer) Forward(hiddenStates *mlx.Tensor, cache cache.Cache, B, L int, rope mlx.RoPE, opts TextOptions) *mlx.Tensor {
+func (m TextDecoderLayer) Forward(hiddenStates *mlx.Array, cache cache.Cache, B, L int, rope mlx.RoPE, opts TextOptions) *mlx.Array {
 	residual := hiddenStates
 	hiddenStates = m.InputNorm.Forward(hiddenStates, opts.RMSNormEps)
 	hiddenStates = m.Attention.Forward(hiddenStates, cache, B, L, rope, opts)
@@ -77,7 +77,7 @@ type TextAttention struct {
 	OProj mlx.Linear `weight:"o_proj"`
 }
 
-func (m TextAttention) Forward(hiddenStates *mlx.Tensor, cache cache.Cache, B, L int, rope mlx.RoPE, opts TextOptions) *mlx.Tensor {
+func (m TextAttention) Forward(hiddenStates *mlx.Array, cache cache.Cache, B, L int, rope mlx.RoPE, opts TextOptions) *mlx.Array {
 	query := m.QProj.Forward(hiddenStates)
 	key := m.KProj.Forward(hiddenStates)
 	value := m.VProj.Forward(hiddenStates)
@@ -113,6 +113,6 @@ type TextMLP struct {
 	DownProj mlx.Linear `weight:"down_proj"`
 }
 
-func (m TextMLP) Forward(h *mlx.Tensor, opts TextOptions) *mlx.Tensor {
+func (m TextMLP) Forward(h *mlx.Array, opts TextOptions) *mlx.Array {
 	return m.DownProj.Forward(mlx.GELUApprox(m.GateProj.Forward(h)).Multiply(m.UpProj.Forward(h)))
 }

@@ -13,8 +13,8 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
-func Load(path string) iter.Seq2[string, *Tensor] {
-	return func(yield func(string, *Tensor) bool) {
+func Load(path string) iter.Seq2[string, *Array] {
+	return func(yield func(string, *Array) bool) {
 		string2array := C.mlx_map_string_to_array_new()
 		defer C.mlx_map_string_to_array_free(string2array)
 
@@ -40,20 +40,20 @@ func Load(path string) iter.Seq2[string, *Tensor] {
 			}
 
 			name := C.GoString(key)
-			if !yield(name, &Tensor{ctx: value, desc: tensorDesc{name: name, numRefs: 1000}}) {
+			if !yield(name, &Array{ctx: value, desc: tensorDesc{name: name, numRefs: 1000}}) {
 				break
 			}
 		}
 	}
 }
 
-func LoadAll(root *model.Root, pattern string, states map[string]*Tensor, afterLoadFuncs []func(*model.Root) error) error {
+func LoadAll(root *model.Root, pattern string, states map[string]*Array, afterLoadFuncs []func(*model.Root) error) error {
 	matches, err := root.Glob(pattern)
 	if err != nil {
 		return err
 	}
 
-	weights := make(map[string]*Tensor)
+	weights := make(map[string]*Array)
 	for match := range matches {
 		slog.Debug("Loading weights from", "file", match)
 		maps.Copy(weights, maps.Collect(Load(root.JoinPath("blobs", match))))
@@ -80,7 +80,7 @@ func LoadAll(root *model.Root, pattern string, states map[string]*Tensor, afterL
 	return nil
 }
 
-func UnloadAll(states map[string]*Tensor) {
+func UnloadAll(states map[string]*Array) {
 	weights := slices.Collect(maps.Values(states))
 	for _, weight := range weights {
 		weight.desc.numRefs = 0

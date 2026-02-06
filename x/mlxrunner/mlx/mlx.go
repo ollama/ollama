@@ -16,7 +16,7 @@ import (
 	"unsafe"
 )
 
-func doEval(outputs []*Tensor, async bool) {
+func doEval(outputs []*Array, async bool) {
 	vectorData := make([]C.mlx_array, 0, len(outputs))
 	for _, output := range outputs {
 		if output.Valid() {
@@ -34,10 +34,10 @@ func doEval(outputs []*Tensor, async bool) {
 	}
 }
 
-func AsyncEval(outputs ...*Tensor) {
+func AsyncEval(outputs ...*Array) {
 	doEval(outputs, true)
 }
 
-func Eval(outputs ...*Tensor) {
+func Eval(outputs ...*Array) {
 	doEval(outputs, false)
 }

@@ -57,7 +57,7 @@ func makeSlices(dims []int, slices ...slice) (starts, stops, strides []C.int) {
 	return args[0], args[1], args[2]
 }
 
-func (t *Tensor) Slice(slices ...slice) *Tensor {
+func (t *Array) Slice(slices ...slice) *Array {
 	starts, stops, strides := makeSlices(t.Dims(), slices...)
 	out := New("SLICE", t)
 	C.mlx_slice(
@@ -70,7 +70,7 @@ func (t *Tensor) Slice(slices ...slice) *Tensor {
 	return out
 }
 
-func (t *Tensor) SliceUpdate(other *Tensor, slices ...slice) *Tensor {
+func (t *Array) SliceUpdate(other *Array, slices ...slice) *Array {
 	starts, stops, strides := makeSlices(t.Dims(), slices...)
 	out := New("SLICE_UPDATE", t, other)
 	C.mlx_slice_update(

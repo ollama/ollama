@@ -7,8 +7,8 @@ import (
 )
 
 type Cache interface {
-	Update(keys, values *mlx.Tensor) (newKeys, newValues *mlx.Tensor)
-	State() (keys, values *mlx.Tensor)
+	Update(keys, values *mlx.Array) (newKeys, newValues *mlx.Array)
+	State() (keys, values *mlx.Array)
 	Trim(int) int
 	Clone() Cache
 	Offset() int
@@ -16,16 +16,16 @@ type Cache interface {
 }
 
 type KVCache struct {
-	keys, values *mlx.Tensor
+	keys, values *mlx.Array
 	offset       int
 	step         int
 }
 
 func NewKVCache() *KVCache {
-	return &KVCache{step: 256, keys: &mlx.Tensor{}, values: &mlx.Tensor{}}
+	return &KVCache{step: 256, keys: &mlx.Array{}, values: &mlx.Array{}}
 }
 
-func (c *KVCache) Update(keys, values *mlx.Tensor) (*mlx.Tensor, *mlx.Tensor) {
+func (c *KVCache) Update(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
 	B, H, L, Dk, Dv := keys.Dim(0), keys.Dim(1), keys.Dim(2), keys.Dim(3), values.Dim(3)
 
 	prev := c.offset
@@ -56,7 +56,7 @@ func (c *KVCache) Update(keys, values *mlx.Tensor) (*mlx.Tensor, *mlx.Tensor) {
 		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice())
 }
 
-func (c *KVCache) State() (*mlx.Tensor, *mlx.Tensor) {
+func (c *KVCache) State() (*mlx.Array, *mlx.Array) {
 	if c.offset == c.keys.Dim(2) {
 		return c.keys, c.values
 	}
@@ -94,14 +94,14 @@ func NewRotatingKVCache(maxSize int) *RotatingKVCache {
 	return &RotatingKVCache{maxSize: maxSize, KVCache: NewKVCache()}
 }
 
-func (c *RotatingKVCache) Update(keys, values *mlx.Tensor) (*mlx.Tensor, *mlx.Tensor) {
+func (c *RotatingKVCache) Update(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
 	if keys.Dim(2) > 1 {
 		return c.concat(keys, values)
 	}
 	return c.update(keys, values)
 }
 
-func (c *RotatingKVCache) concat(keys, values *mlx.Tensor) (newK *mlx.Tensor, newV *mlx.Tensor) {
+func (c *RotatingKVCache) concat(keys, values *mlx.Array) (newK *mlx.Array, newV *mlx.Array) {
 	slog.Debug("(*RotatingKVCache).concat", "keys_dim", keys.Dims(), "values_dim", values.Dims(), "offset", c.offset, "idx", c.idx, "max_size", c.maxSize)
 	if !c.keys.Valid() {
 		c.keys, c.values = keys, values
@@ -127,7 +127,7 @@ func (c *RotatingKVCache) concat(keys, values *mlx.Tensor) (newK *mlx.Tensor, ne
 	return c.keys, c.values
 }
 
-func (c *RotatingKVCache) update(keys, values *mlx.Tensor) (*mlx.Tensor, *mlx.Tensor) {
+func (c *RotatingKVCache) update(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
 	slog.Debug("(*RotatingKVCache).update", "keys_dim", keys.Dims(), "values_dim", values.Dims(), "offset", c.offset, "idx", c.idx, "max_size", c.maxSize)
 	B, H, L, Dk, Dv := keys.Dim(0), keys.Dim(1), keys.Dim(2), keys.Dim(3), values.Dim(3)
 
@@ -170,7 +170,7 @@ func (c *RotatingKVCache) update(keys, values *mlx.Tensor) (*mlx.Tensor, *mlx.Te
 		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, validLen), mlx.Slice())
 }
 
-func (c *RotatingKVCache) State() (*mlx.Tensor, *mlx.Tensor) {
+func (c *RotatingKVCache) State() (*mlx.Array, *mlx.Array) {
 	if c.offset < c.keys.Dim(2) {
 		return c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice()),
 			c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice())

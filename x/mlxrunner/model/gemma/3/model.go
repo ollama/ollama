@@ -30,11 +30,11 @@ func (m Model) Cache() []cache.Cache {
 	return caches
 }
 
-func (m *Model) Forward(inputs *mlx.Tensor, cache []cache.Cache) *mlx.Tensor {
+func (m *Model) Forward(inputs *mlx.Array, cache []cache.Cache) *mlx.Array {
 	return m.Text.Forward(inputs, cache)
 }
 
-func (m *Model) Unembed(x *mlx.Tensor) *mlx.Tensor {
+func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 	return m.Text.EmbedTokens.AsLinear().Forward(x)
 }
 

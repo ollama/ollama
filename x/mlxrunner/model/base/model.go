@@ -15,7 +15,7 @@ import (
 
 type Model interface {
 	// Forward performs a forward pass through the model.
-	Forward(inputs *mlx.Tensor, cache []cache.Cache) *mlx.Tensor
+	Forward(inputs *mlx.Array, cache []cache.Cache) *mlx.Array
 
 	// NumLayers returns the number of layers in the model.
 	// This is used to initialize caches.
@@ -25,11 +25,11 @@ type Model interface {
 
 type TextGeneration interface {
 	Model
-	Unembed(*mlx.Tensor) *mlx.Tensor
+	Unembed(*mlx.Array) *mlx.Array
 }
 
-func Weights(m Model) (map[string]*mlx.Tensor, []func(*model.Root) error) {
-	mapping := make(map[string]*mlx.Tensor)
+func Weights(m Model) (map[string]*mlx.Array, []func(*model.Root) error) {
+	mapping := make(map[string]*mlx.Array)
 	var afterLoadFuncs []func(*model.Root) error
 	var fn func(v reflect.Value, tags []string)
 	fn = func(v reflect.Value, tags []string) {
@@ -52,9 +52,9 @@ func Weights(m Model) (map[string]*mlx.Tensor, []func(*model.Root) error) {
 					tags = append(tags, tag)
 				}
 
-				if tt == reflect.TypeOf((*mlx.Tensor)(nil)).Elem() {
+				if tt == reflect.TypeOf((*mlx.Array)(nil)).Elem() {
 					name := strings.Join(tags, ".")
-					mapping[name] =  vv.Addr().Interface().(*mlx.Tensor)
+					mapping[name] =  vv.Addr().Interface().(*mlx.Array)
 					continue
 				}
 

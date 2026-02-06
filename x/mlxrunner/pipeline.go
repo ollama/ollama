@@ -42,8 +42,8 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		n := min(2<<10, total-processed-1)
 		temp := model.Forward(mlx.FromValues(tokens[processed:processed+n], n).ExpandDims(0), caches)
 		defer mlx.Free(temp)
-		mlx.Eval(func() []*mlx.Tensor {
-			s := make([]*mlx.Tensor, 2*len(caches))
+		mlx.Eval(func() []*mlx.Array {
+			s := make([]*mlx.Array, 2*len(caches))
 			for i, c := range caches {
 				s[2*i], s[2*i+1] = c.State()
 			}
@@ -54,7 +54,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		mlx.ClearCache()
 	}
 
-	step := func(token *mlx.Tensor) (*mlx.Tensor, *mlx.Tensor) {
+	step := func(token *mlx.Array) (*mlx.Array, *mlx.Array) {
 		logits := model.Unembed(model.Forward(token.ExpandDims(0), caches))
 		logits = logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1)
 

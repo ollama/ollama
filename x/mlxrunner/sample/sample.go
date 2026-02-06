@@ -7,7 +7,7 @@ import (
 )
 
 type Sampler interface {
-	Sample(*mlx.Tensor) *mlx.Tensor
+	Sample(*mlx.Array) *mlx.Array
 }
 
 func New(temp, top_p, min_p float32, top_k int) Sampler {
@@ -34,13 +34,13 @@ func New(temp, top_p, min_p float32, top_k int) Sampler {
 
 type greedy struct{}
 
-func (greedy) Sample(logits *mlx.Tensor) *mlx.Tensor {
+func (greedy) Sample(logits *mlx.Array) *mlx.Array {
 	return logits.Argmax(-1, false)
 }
 
 type chain []Sampler
 
-func (c chain) Sample(logits *mlx.Tensor) *mlx.Tensor {
+func (c chain) Sample(logits *mlx.Array) *mlx.Array {
 	for _, sampler := range c {
 		logits = sampler.Sample(logits)
 	}
@@ -49,27 +49,27 @@ func (c chain) Sample(logits *mlx.Tensor) *mlx.Tensor {
 
 type Temperature float32
 
-func (t Temperature) Sample(logits *mlx.Tensor) *mlx.Tensor {
+func (t Temperature) Sample(logits *mlx.Array) *mlx.Array {
 	return logits.Multiply(mlx.FromValue(1 / float32(t))).Categorical(-1)
 }
 
 type TopP float32
 
-func (p TopP) Sample(logprobs *mlx.Tensor) *mlx.Tensor {
+func (p TopP) Sample(logprobs *mlx.Array) *mlx.Array {
 	// TODO: implement
 	return logprobs
 }
 
 type MinP float32
 
-func (p MinP) Sample(logprobs *mlx.Tensor) *mlx.Tensor {
+func (p MinP) Sample(logprobs *mlx.Array) *mlx.Array {
 	// TODO: implement
 	return logprobs
 }
 
 type TopK int
 
-func (k TopK) Sample(logprobs *mlx.Tensor) *mlx.Tensor {
+func (k TopK) Sample(logprobs *mlx.Array) *mlx.Array {
 	mask := logprobs.Negative().ArgpartitionAxis(int(k)-1, -1).Slice(mlx.Slice(), mlx.Slice(int(k), 0))
 	return logprobs.PutAlongAxis(mask, mlx.FromValue(float32(math.Inf(-1))), -1)
 }

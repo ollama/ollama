@@ -1,12 +1,12 @@
 package mlx
 
 type Linear struct {
-	Weight Tensor `weight:"weight"`
-	Bias   Tensor `weight:"bias"`
+	Weight Array `weight:"weight"`
+	Bias   Array `weight:"bias"`
 }
 
 // Forward computes the linear transformation: x @ Weight.T + Bias
-func (m Linear) Forward(x *Tensor) *Tensor {
+func (m Linear) Forward(x *Array) *Array {
 	w := m.Weight.Transpose(1, 0)
 	if m.Bias.Valid() {
 		return m.Bias.Addmm(x, w, 1.0, 1.0)
@@ -16,10 +16,10 @@ func (m Linear) Forward(x *Tensor) *Tensor {
 }
 
 type Embedding struct {
-	Weight Tensor `weight:"weight"`
+	Weight Array `weight:"weight"`
 }
 
-func (e *Embedding) Forward(indices *Tensor) *Tensor {
+func (e *Embedding) Forward(indices *Array) *Array {
 	return e.Weight.TakeAxis(indices, 0)
 }
 
