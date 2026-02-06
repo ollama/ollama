@@ -4,6 +4,10 @@ package mlx
 import "C"
 
 import (
+	"encoding/binary"
+	"encoding/json"
+	"errors"
+	"io"
 	"iter"
 	"log/slog"
 	"maps"
@@ -47,24 +51,78 @@ func Load(path string) iter.Seq2[string, *Array] {
 	}
 }
 
-func LoadAll(root *model.Root, pattern string, states map[string]*Array, afterLoadFuncs []func(*model.Root) ([]*Array, error)) error {
-	matches, err := root.Glob(pattern)
+func Parse(root *model.Root, path string) (map[string]Quantization, error) {
+	f, err := root.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var n uint64
+	if err := binary.Read(f, binary.LittleEndian, &n); err != nil {
+		return nil, err
+	}
+
+	bts := make([]byte, n)
+	if _, err := io.ReadFull(f, bts); err != nil {
+		return nil, err
+	}
+
+	var m struct {
+		Metadata struct {
+			Quantization map[string]Quantization `json:"quantization"`
+		} `json:"__metadata__"`
+	}
+	if err := json.Unmarshal(bts, &m); err != nil {
+		return nil, err
+	}
+
+	return m.Metadata.Quantization, nil
+}
+
+func LoadWeights(root *model.Root, match string, states map[string]*Array) error {
+	slog.Debug("Loading weights from", "file", match)
+	for name, weight := range Load(root.JoinPath("blobs", root.Real(match))) {
+		if state, ok := states[name]; ok {
+			*state = *weight
+		}
+	}
+
+	return nil
+}
+
+func LoadQuantizations(root *model.Root, match string, quantizations map[string]*Quantization) error {
+	slog.Debug("Loading quantizations from", "file", match)
+	metadata, err := Parse(root, match)
 	if err != nil {
 		return err
 	}
 
-	weights := make(map[string]*Array)
-	for match := range matches {
-		slog.Debug("Loading weights from", "file", match)
-		maps.Copy(weights, maps.Collect(Load(root.JoinPath("blobs", match))))
+	for name := range metadata {
+		if q, ok := quantizations[name+".weight"]; ok {
+			q.GroupSize = metadata[name].GroupSize
+			q.Bits = metadata[name].Bits
+			q.Mode = metadata[name].Mode
+		}
 	}
 
-	var numBytes int
-	for name, weight := range states {
-		if _, ok := weights[name]; ok {
-			slog.Debug("Loading weight", "name", name, "weight", weight)
-			*weight = *weights[name]
-			numBytes += weight.NumBytes()
+	return nil
+}
+
+type AfterLoadFunc func(*model.Root) ([]*Array, error)
+
+func LoadAll(root *model.Root, states map[string]*Array, quantizations map[string]*Quantization, afterLoadFuncs []AfterLoadFunc) error {
+	matches, err := root.Glob("model*.safetensors")
+	if err != nil {
+		return err
+	}
+
+	for match := range matches {
+		if err := errors.Join(
+			LoadWeights(root, match, states),
+			LoadQuantizations(root, match, quantizations),
+		); err != nil {
+			return err
 		}
 	}
 
@@ -93,7 +151,7 @@ func LoadAll(root *model.Root, pattern string, states map[string]*Array, afterLo
 
 	Eval(slices.Collect(maps.Values(states))...)
 	ClearCache()
-	slog.Info("Loaded weights", "count", len(states), "num_bytes", PrettyBytes(numBytes), "memory", Memory{})
+	slog.Info("Loaded weights", "count", len(states), "memory", Memory{})
 	return nil
 }
 

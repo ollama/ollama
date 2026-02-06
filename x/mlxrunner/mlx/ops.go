@@ -91,6 +91,33 @@ func (t *Array) Divide(other *Array) *Array {
 	return out
 }
 
+func (t *Array) Dequantize(scales, biases *Array, groupSize, bits int, mode string) *Array {
+	out := New("DEQUANTIZE", t, scales, biases)
+	cMode := C.CString(mode)
+	defer C.free(unsafe.Pointer(cMode))
+
+	C.mlx_dequantize(
+		&out.ctx,
+		t.ctx,
+		scales.ctx,
+		biases.ctx,
+		C.mlx_optional_int{
+			value:     C.int(groupSize),
+			has_value: C.bool(groupSize > 0),
+		},
+		C.mlx_optional_int{
+			value:     C.int(bits),
+			has_value: C.bool(bits > 0),
+		},
+		cMode,
+		C.mlx_optional_dtype{
+			has_value: false,
+		},
+		DefaultStream().ctx,
+	)
+	return out
+}
+
 func (t *Array) ExpandDims(axis int) *Array {
 	out := New("EXPAND_DIMS", t)
 	C.mlx_expand_dims(&out.ctx, t.ctx, C.int(axis), DefaultStream().ctx)
@@ -118,6 +145,40 @@ func (t *Array) GatherMM(other, lhs, rhs *Array, sorted bool) *Array {
 	}
 	out := New("GATHER_MM", t, other, lhs, rhs)
 	C.mlx_gather_mm(&out.ctx, t.ctx, other.ctx, lhs.ctx, rhs.ctx, C.bool(sorted), DefaultStream().ctx)
+	return out
+}
+
+func (t *Array) GatherQMM(weight, scales, biases, lhs, rhs *Array, transpose bool, groupSize, bits int, mode string, sorted bool) *Array {
+	if lhs == nil {
+		lhs = New("")
+	}
+	if rhs == nil {
+		rhs = New("")
+	}
+	out := New("GATHER_QMM", t, weight, scales, biases, lhs, rhs)
+	cMode := C.CString(mode)
+	defer C.free(unsafe.Pointer(cMode))
+	C.mlx_gather_qmm(
+		&out.ctx,
+		t.ctx,
+		weight.ctx,
+		scales.ctx,
+		biases.ctx,
+		lhs.ctx,
+		rhs.ctx,
+		C.bool(transpose),
+		C.mlx_optional_int{
+			value:     C.int(groupSize),
+			has_value: C.bool(groupSize > 0),
+		},
+		C.mlx_optional_int{
+			value:     C.int(bits),
+			has_value: C.bool(bits > 0),
+		},
+		cMode,
+		C.bool(sorted),
+		DefaultStream().ctx,
+	)
 	return out
 }
 
@@ -154,6 +215,32 @@ func (t *Array) Power(exponent *Array) *Array {
 func (t *Array) PutAlongAxis(indices, values *Array, axis int) *Array {
 	out := New("PUT_ALONG_AXIS", t, indices, values)
 	C.mlx_put_along_axis(&out.ctx, t.ctx, indices.ctx, values.ctx, C.int(axis), DefaultStream().ctx)
+	return out
+}
+
+func (t *Array) QuantizedMatmul(weight, scales, biases *Array, transpose bool, groupSize, bits int, mode string) *Array {
+	out := New("QUANTIZED_MATMUL", t, weight, scales, biases)
+	cMode := C.CString(mode)
+	defer C.free(unsafe.Pointer(cMode))
+
+	C.mlx_quantized_matmul(
+		&out.ctx,
+		t.ctx,
+		weight.ctx,
+		scales.ctx,
+		biases.ctx,
+		C.bool(transpose),
+		C.mlx_optional_int{
+			value:     C.int(groupSize),
+			has_value: C.bool(groupSize > 0),
+		},
+		C.mlx_optional_int{
+			value:     C.int(bits),
+			has_value: C.bool(bits > 0),
+		},
+		cMode,
+		DefaultStream().ctx,
+	)
 	return out
 }
 

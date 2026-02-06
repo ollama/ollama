@@ -294,9 +294,9 @@ func (r Root) Glob(pattern string) (iter.Seq[string], error) {
 	}
 
 	return func(yield func(string) bool) {
-		for name, blob := range r.blobs {
+		for name := range r.blobs {
 			if matched, _ := filepath.Match(pattern, name); matched {
-				if !yield(blob.Filepath()) {
+				if !yield(name) {
 					return
 				}
 			}
@@ -306,4 +306,11 @@ func (r Root) Glob(pattern string) (iter.Seq[string], error) {
 
 func (r Root) JoinPath(parts ...string) string {
 	return filepath.Join(append([]string{r.root.Name()}, parts...)...)
+}
+
+func (r Root) Real(name string) string {
+	if b, ok := r.blobs[name]; ok {
+		return b.Filepath()
+	}
+	return ""
 }

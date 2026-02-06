@@ -28,17 +28,26 @@ type TextGeneration interface {
 	Unembed(*mlx.Array) *mlx.Array
 }
 
-func Weights(m Model) (map[string]*mlx.Array, []func(*model.Root) ([]*mlx.Array, error)) {
-	mapping := make(map[string]*mlx.Array)
-	var afterLoadFuncs []func(*model.Root) ([]*mlx.Array, error)
+func Walk(m Model) (map[string]*mlx.Array, map[string]*mlx.Quantization, []mlx.AfterLoadFunc) {
+	weights := make(map[string]*mlx.Array)
+	quantizations := make(map[string]*mlx.Quantization)
+	var afterLoadFuncs []mlx.AfterLoadFunc
 	var fn func(v reflect.Value, tags []string)
 	fn = func(v reflect.Value, tags []string) {
 		t := v.Type()
 
 		if method := v.Addr().MethodByName("AfterLoad"); method.IsValid() {
-			var afterLoadFunc func(*model.Root) ([]*mlx.Array, error)
+			var afterLoadFunc mlx.AfterLoadFunc
 			reflect.ValueOf(&afterLoadFunc).Elem().Set(method)
 			afterLoadFuncs = append(afterLoadFuncs, afterLoadFunc)
+		}
+
+		if t == reflect.TypeOf((*mlx.Array)(nil)).Elem() {
+			name := strings.Join(tags, ".")
+			weights[name] = v.Addr().Interface().(*mlx.Array)
+			return
+		} else if t == reflect.TypeOf((*mlx.Quantization)(nil)).Elem() {
+			quantizations[strings.Join(tags, ".")] = v.Addr().Interface().(*mlx.Quantization)
 		}
 
 		for _, field := range reflect.VisibleFields(t) {
@@ -50,12 +59,6 @@ func Weights(m Model) (map[string]*mlx.Array, []func(*model.Root) ([]*mlx.Array,
 				if tag := field.Tag.Get("weight"); tag != "" {
 					// TODO: use model.Tag
 					tags = append(tags, tag)
-				}
-
-				if tt == reflect.TypeOf((*mlx.Array)(nil)).Elem() {
-					name := strings.Join(tags, ".")
-					mapping[name] = vv.Addr().Interface().(*mlx.Array)
-					continue
 				}
 
 				switch tt.Kind() {
@@ -76,7 +79,7 @@ func Weights(m Model) (map[string]*mlx.Array, []func(*model.Root) ([]*mlx.Array,
 		}
 	}
 	fn(reflect.ValueOf(m).Elem(), []string{})
-	return mapping, afterLoadFuncs
+	return weights, quantizations, afterLoadFuncs
 }
 
 var m = make(map[string]func(*model.Root) (Model, error))

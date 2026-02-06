@@ -79,8 +79,8 @@ func (r *Runner) Load(name model.Name) (err error) {
 		return err
 	}
 
-	weights, afterLoadFuncs := base.Weights(r.Model)
-	return mlx.LoadAll(root, "model*.safetensors", weights, afterLoadFuncs)
+	weights, quantizations, afterLoadFuncs := base.Walk(r.Model)
+	return mlx.LoadAll(root, weights, quantizations, afterLoadFuncs)
 }
 
 func (r *Runner) Run(host, port string, mux http.Handler) error {
