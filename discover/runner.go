@@ -198,15 +198,6 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 			}
 		}
 
-		for i := 0; i < len(devices); i++ {
-			slog.Debug("Devices found",
-				"id", devices[i].ID,
-				"library", devices[i].Library,
-				"name", devices[i].Name,
-				"pci_id", devices[i].PCIID,
-				"device_id", devices[i].DeviceID)
-		}
-
 		// Now filter out any overlap with different libraries (favor CUDA/HIP over others)
 		for i := 0; i < len(devices); i++ {
 			for j := i + 1; j < len(devices); j++ {
