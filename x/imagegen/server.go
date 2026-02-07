@@ -351,6 +351,10 @@ func (s *Server) Embedding(ctx context.Context, input string) ([]float32, int, e
 	return nil, 0, errors.New("not supported")
 }
 
+func (s *Server) Rerank(ctx context.Context, req llm.RerankRequest, fn func(llm.RerankResponse)) error {
+	return errors.New("not supported")
+}
+
 func (s *Server) Tokenize(ctx context.Context, content string) ([]int, error) {
 	return nil, errors.New("not supported")
 }

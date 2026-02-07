@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -305,6 +306,8 @@ type Server struct {
 
 	// next sequence for prompt processing to avoid starvation
 	nextSeq int
+
+	reranking bool
 }
 
 func (s *Server) allNil() bool {
@@ -814,6 +817,103 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) rerank(w http.ResponseWriter, r *http.Request) {
+	var req llm.RerankRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("bad rerank request: %s", err), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+
+	var rsp llm.RerankResponse
+	rsp.Results = make([]llm.RerankResult, 0, len(req.Prompts))
+
+	// Process prompts in batches that fit within parallel capacity
+	batchSize := s.parallel
+	for batchStart := 0; batchStart < len(req.Prompts); batchStart += batchSize {
+		batchEnd := min(batchStart+batchSize, len(req.Prompts))
+		currentBatch := req.Prompts[batchStart:batchEnd]
+
+		slog.Debug("Processing batch", "start", batchStart, "end", batchEnd, "size", len(currentBatch))
+
+		// Create sequences for current batch
+		sequences := make([]*Sequence, len(currentBatch))
+		for i, prompt := range currentBatch {
+			seq, err := s.NewSequence(prompt, nil, NewSequenceParams{embedding: true, truncate: false})
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
+				return
+			}
+			sequences[i] = seq
+		}
+
+		// Acquire semaphores for current batch of sequences
+		for i := range sequences {
+			if err := s.seqsSem.Acquire(r.Context(), 1); err != nil {
+				// In case of an error, release any already acquired semaphores
+				for j := 0; j < i; j++ {
+					s.seqsSem.Release(1)
+				}
+				if errors.Is(err, context.Canceled) {
+					slog.Info("aborting reranking request due to client closing the connection")
+				} else {
+					slog.Error("Failed to acquire semaphore", "error", err)
+				}
+				return
+			}
+		}
+
+		// Add current batch to processing queue
+		s.mu.Lock()
+		for i, seq := range sequences {
+			found := false
+			for j, sq := range s.seqs {
+				if sq == nil {
+					var err error
+					seq.cache, seq.inputs, err = s.cache.LoadCacheSlot(seq.inputs, false)
+					if err != nil {
+						s.mu.Unlock()
+						for k := i; k < len(sequences); k++ {
+							s.seqsSem.Release(1)
+						}
+						http.Error(w, fmt.Sprintf("Failed to load cache: %v", err), http.StatusInternalServerError)
+						return
+					}
+					s.seqs[j] = seq
+					found = true
+					break
+				}
+			}
+			if !found {
+				s.mu.Unlock()
+				for k := i; k < len(sequences); k++ {
+					s.seqsSem.Release(1)
+				}
+				http.Error(w, "could not find available sequence slots", http.StatusInternalServerError)
+				return
+			}
+		}
+		s.cond.Signal()
+		s.mu.Unlock()
+
+		// Collect results from current batch
+		for i, seq := range sequences {
+			score := <-seq.embedding
+			ret := llm.RerankResult{
+				Index:          batchStart + i,
+				RelevanceScore: score[0],
+			}
+			if math.IsNaN(float64(ret.RelevanceScore)) {
+				continue
+			}
+			rsp.Results = append(rsp.Results, ret)
+		}
+	}
+	if err := json.NewEncoder(w).Encode(&rsp); err != nil {
+		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
+	}
+}
+
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(&llm.ServerStatusResponse{
@@ -836,6 +936,7 @@ func (s *Server) loadModel(
 	flashAttention ml.FlashAttentionType,
 	threads int,
 	multiUserCache bool,
+	reranking bool,
 ) {
 	var err error
 	s.model, err = llama.LoadModelFromFile(mpath, params)
@@ -843,7 +944,7 @@ func (s *Server) loadModel(
 		panic(err)
 	}
 
-	ctxParams := llama.NewContextParams(kvSize, s.batchSize, s.parallel, threads, flashAttention, kvCacheType)
+	ctxParams := llama.NewContextParams(kvSize, s.batchSize, s.parallel, threads, flashAttention, kvCacheType, reranking)
 	s.lc, err = llama.NewContextWithModel(s.model, ctxParams)
 	if err != nil {
 		panic(err)
@@ -931,7 +1032,7 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 		}
 
 		s.status = llm.ServerStatusLoadingModel
-		go s.loadModel(params, s.modelPath, req.LoraPath, req.ProjectorPath, req.KvSize, req.KvCacheType, req.FlashAttention, req.NumThreads, req.MultiUserCache)
+		go s.loadModel(params, s.modelPath, req.LoraPath, req.ProjectorPath, req.KvSize, req.KvCacheType, req.FlashAttention, req.NumThreads, req.MultiUserCache, s.reranking)
 
 	case llm.LoadOperationClose:
 		// No-op for us
@@ -952,6 +1053,7 @@ func Execute(args []string) error {
 	fs := flag.NewFlagSet("runner", flag.ExitOnError)
 	mpath := fs.String("model", "", "Path to model binary file")
 	port := fs.Int("port", 8080, "Port to expose the server on")
+	reranking := fs.Bool("reranking", false, "Reranking mode")
 	_ = fs.Bool("verbose", false, "verbose output (default: disabled)")
 
 	fs.Usage = func() {
@@ -969,6 +1071,7 @@ func Execute(args []string) error {
 	server := &Server{
 		modelPath: *mpath,
 		status:    llm.ServerStatusLaunched,
+		reranking: *reranking,
 	}
 
 	server.ready.Add(1)
@@ -991,6 +1094,7 @@ func Execute(args []string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /load", server.load)
 	mux.HandleFunc("/embedding", server.embeddings)
+	mux.HandleFunc("/rerank", server.rerank)
 	mux.HandleFunc("/completion", server.completion)
 	mux.HandleFunc("/health", server.health)
 

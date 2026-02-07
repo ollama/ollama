@@ -97,6 +97,9 @@ type Sequence struct {
 	// true if an embedding are to be returned instead of text generation
 	embeddingOnly bool
 
+	// reranking indicates if the loaded model supports reranking.
+	reranking bool
+
 	// shift if context window is exceeded
 	shift bool
 
@@ -120,6 +123,7 @@ type NewSequenceParams struct {
 	numKeep     int32
 	sampler     sample.Sampler
 	embedding   bool
+	reranking   bool
 	shift       bool
 	truncate    bool
 	logprobs    bool
@@ -201,6 +205,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 		embedding:        make(chan []float32, 1),
 		sampler:          params.sampler,
 		embeddingOnly:    params.embedding,
+		reranking:        params.reranking,
 		stop:             params.stop,
 		numKeep:          params.numKeep,
 		shift:            params.shift,
@@ -384,6 +389,8 @@ type Server struct {
 	// multimodalHash generates hashes for comparing equality
 	// of non-text data
 	multimodalHash maphash.Hash
+
+	reranking bool
 }
 
 func (s *Server) allNil() bool {
@@ -592,7 +599,7 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 			batch.Sequences = append(batch.Sequences, seq.cache.Id)
 
 			seq.iBatch = len(batchOutputs)
-			if i+1 == len(seq.inputs) || seq.embeddingOnly {
+			if i+1 == len(seq.inputs) || seq.embeddingOnly || seq.reranking {
 				batchOutputs = append(batchOutputs, int32(len(batchInputs)-1))
 			}
 			logutil.Trace("forwardBatch iBatch", "batchID", s.batchID, "seqIdx", seqIdx, "seq.iBatch", seq.iBatch, "i+1", i+1, "len(seq.inputs)", len(seq.inputs))
@@ -758,6 +765,19 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		vocabSize := len(outputs) / activeBatch.batch.Outputs.Dim(0)
 		logutil.Trace("computeBatch: vocab details", "batchID", activeBatch.id, "seqIdx", i, "len(logits)", len(outputs), "len(activeBatch.batch.Outputs)", activeBatch.batch.Outputs.Dim(0), "vocabSize", vocabSize, "iBatches", iBatches)
 		logits := outputs[iBatches[i]*vocabSize : (iBatches[i]+1)*vocabSize]
+
+		if seq.reranking {
+			// For reranking, the "embedding" is the relevance score
+			if len(logits) == 0 {
+				slog.Warn("reranking model returned no logits")
+				s.removeSequence(i, llm.DoneReasonStop)
+				continue
+			}
+			seq.embedding <- []float32{logits[0]}
+			s.removeSequence(i, llm.DoneReasonStop)
+			continue
+		}
+
 		token, err := seq.sampler.Sample(logits)
 		if err != nil {
 			panic("failed to sample token")
@@ -1046,6 +1066,121 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 		Embedding:       <-seq.embedding,
 		PromptEvalCount: seq.numPromptInputs,
 	}); err != nil {
+		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) rerank(w http.ResponseWriter, r *http.Request) {
+	if pooling.Type(s.model.Backend().Config().Uint("pooling_type")) == pooling.TypeNone {
+		http.Error(w, "this model does not support reranking", http.StatusNotImplemented)
+		return
+	}
+
+	var req llm.RerankRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("bad rerank request: %s", err), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+
+	textProcessor, ok := s.model.(model.TextProcessor)
+	if !ok {
+		http.Error(w, "model does not support text processing for reranking", http.StatusInternalServerError)
+		return
+	}
+
+	var totalTokens int
+	for _, p := range req.Prompts {
+		tokens, err := textProcessor.Encode(p, true)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to tokenize prompt: %v", err), http.StatusInternalServerError)
+			return
+		}
+		totalTokens += len(tokens)
+	}
+
+	var rsp llm.RerankResponse
+	rsp.Results = make([]llm.RerankResult, 0, len(req.Prompts))
+
+	// Process prompts in batches that fit within parallel capacity
+	batchSize := s.parallel
+	for batchStart := 0; batchStart < len(req.Prompts); batchStart += batchSize {
+		batchEnd := min(batchStart+batchSize, len(req.Prompts))
+		currentBatch := req.Prompts[batchStart:batchEnd]
+
+		slog.Debug("Processing batch", "start", batchStart, "end", batchEnd, "size", len(currentBatch))
+
+		// Create sequences for current batch
+		sequences := make([]*Sequence, len(currentBatch))
+		for i, prompt := range currentBatch {
+			seq, err := s.NewSequence(prompt, nil, NewSequenceParams{reranking: true, truncate: false})
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
+				return
+			}
+			sequences[i] = seq
+		}
+
+		// Acquire semaphores for current batch of sequences
+		for i := range sequences {
+			if err := s.seqsSem.Acquire(r.Context(), 1); err != nil {
+				// In case of an error, release any already acquired semaphores
+				for j := 0; j < i; j++ {
+					s.seqsSem.Release(1)
+				}
+				if errors.Is(err, context.Canceled) {
+					slog.Info("aborting reranking request due to client closing the connection")
+				} else {
+					slog.Error("Failed to acquire semaphore", "error", err)
+				}
+				return
+			}
+		}
+
+		// Add current batch to processing queue
+		s.mu.Lock()
+		for i, seq := range sequences {
+			found := false
+			for j, sq := range s.seqs {
+				if sq == nil {
+					var err error
+					seq.cache, seq.inputs, err = s.cache.LoadCacheSlot(seq.inputs, false)
+					if err != nil {
+						s.mu.Unlock()
+						for k := i; k < len(sequences); k++ {
+							s.seqsSem.Release(1)
+						}
+						http.Error(w, fmt.Sprintf("Failed to load cache: %v", err), http.StatusInternalServerError)
+						return
+					}
+					s.seqs[j] = seq
+					found = true
+					break
+				}
+			}
+			if !found {
+				s.mu.Unlock()
+				for k := i; k < len(sequences); k++ {
+					s.seqsSem.Release(1)
+				}
+				http.Error(w, "could not find available sequence slots", http.StatusInternalServerError)
+				return
+			}
+		}
+		s.cond.Signal()
+		s.mu.Unlock()
+
+		// Collect results from current batch
+		for i, seq := range sequences {
+			score := <-seq.embedding
+			rsp.Results = append(rsp.Results, llm.RerankResult{
+				Index:          batchStart + i,
+				RelevanceScore: score[0],
+			})
+		}
+	}
+
+	if err := json.NewEncoder(w).Encode(&rsp); err != nil {
 		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 	}
 }
@@ -1392,6 +1527,7 @@ func Execute(args []string) error {
 	fs := flag.NewFlagSet("runner", flag.ExitOnError)
 	mpath := fs.String("model", "", "Path to model binary file")
 	port := fs.Int("port", 8080, "Port to expose the server on")
+	reranking := fs.Bool("reranking", false, "Reranking mode")
 	_ = fs.Bool("verbose", false, "verbose output (default: disabled)")
 
 	fs.Usage = func() {
@@ -1410,6 +1546,7 @@ func Execute(args []string) error {
 	server := &Server{
 		modelPath: *mpath,
 		status:    llm.ServerStatusLaunched,
+		reranking: *reranking,
 	}
 
 	server.cond = sync.NewCond(&server.mu)
@@ -1430,6 +1567,7 @@ func Execute(args []string) error {
 	mux.HandleFunc("GET /info", server.info)
 	mux.HandleFunc("POST /load", server.load)
 	mux.HandleFunc("POST /embedding", server.embeddings)
+	mux.HandleFunc("POST /rerank", server.rerank)
 	mux.HandleFunc("POST /completion", server.completion)
 	mux.HandleFunc("GET /health", server.health)
 
