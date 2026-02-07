@@ -14,20 +14,21 @@ type Codex struct{}
 
 func (c *Codex) String() string { return "Codex" }
 
-func (c *Codex) args(model string) []string {
+func (c *Codex) args(model string, extra []string) []string {
 	args := []string{"--oss"}
 	if model != "" {
 		args = append(args, "-m", model)
 	}
+	args = append(args, extra...)
 	return args
 }
 
-func (c *Codex) Run(model string) error {
+func (c *Codex) Run(model string, args []string) error {
 	if err := checkCodexVersion(); err != nil {
 		return err
 	}
 
-	cmd := exec.Command("codex", c.args(model)...)
+	cmd := exec.Command("codex", c.args(model, args)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/cache"
+	"github.com/ollama/ollama/x/imagegen/manifest"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/nn"
 	"github.com/ollama/ollama/x/imagegen/safetensors"
@@ -38,7 +38,7 @@ type TransformerConfig struct {
 type TimestepEmbedder struct {
 	Linear1       nn.LinearLayer `weight:"mlp.0"`
 	Linear2       nn.LinearLayer `weight:"mlp.2"`
-	FreqEmbedSize int32      // 256 (computed)
+	FreqEmbedSize int32          // 256 (computed)
 }
 
 // Forward computes timestep embeddings -> [B, 256]
@@ -85,9 +85,9 @@ func (xe *XEmbedder) Forward(x *mlx.Array) *mlx.Array {
 
 // CapEmbedder projects caption features to model dimension
 type CapEmbedder struct {
-	Norm     *nn.RMSNorm `weight:"0"`
-	Linear   nn.LinearLayer  `weight:"1"`
-	PadToken *mlx.Array  // loaded separately at root level
+	Norm     *nn.RMSNorm    `weight:"0"`
+	Linear   nn.LinearLayer `weight:"1"`
+	PadToken *mlx.Array     // loaded separately at root level
 }
 
 // Forward projects caption embeddings: [B, L, cap_feat_dim] -> [B, L, dim]
@@ -103,9 +103,8 @@ type FeedForward struct {
 	W1     nn.LinearLayer `weight:"w1"` // gate projection
 	W2     nn.LinearLayer `weight:"w2"` // down projection
 	W3     nn.LinearLayer `weight:"w3"` // up projection
-	OutDim int32      // computed from W2
+	OutDim int32          // computed from W2
 }
-
 
 // Forward applies SwiGLU: silu(W1(x)) * W3(x), then W2
 func (ff *FeedForward) Forward(x *mlx.Array) *mlx.Array {
@@ -132,11 +131,11 @@ type Attention struct {
 	ToK   nn.LinearLayer `weight:"to_k"`
 	ToV   nn.LinearLayer `weight:"to_v"`
 	ToOut nn.LinearLayer `weight:"to_out.0"`
-	NormQ *mlx.Array `weight:"norm_q.weight"` // [head_dim] for per-head RMSNorm
-	NormK *mlx.Array `weight:"norm_k.weight"`
+	NormQ *mlx.Array     `weight:"norm_q.weight"` // [head_dim] for per-head RMSNorm
+	NormK *mlx.Array     `weight:"norm_k.weight"`
 	// Fused QKV (computed at init time for efficiency, not loaded from weights)
 	ToQKV nn.LinearLayer `weight:"-"` // Fused Q+K+V projection (created by FuseQKV)
-	Fused bool       `weight:"-"` // Whether to use fused QKV path
+	Fused bool           `weight:"-"` // Whether to use fused QKV path
 	// Computed fields (not loaded from weights)
 	NHeads  int32   `weight:"-"`
 	HeadDim int32   `weight:"-"`
@@ -288,13 +287,13 @@ func applyRoPE3D(x *mlx.Array, cos, sin *mlx.Array) *mlx.Array {
 
 // TransformerBlock is a single transformer block with optional AdaLN modulation
 type TransformerBlock struct {
-	Attention      *Attention   `weight:"attention"`
-	FeedForward    *FeedForward `weight:"feed_forward"`
-	AttentionNorm1 *nn.RMSNorm  `weight:"attention_norm1"`
-	AttentionNorm2 *nn.RMSNorm  `weight:"attention_norm2"`
-	FFNNorm1       *nn.RMSNorm  `weight:"ffn_norm1"`
-	FFNNorm2       *nn.RMSNorm  `weight:"ffn_norm2"`
-	AdaLN          nn.LinearLayer   `weight:"adaLN_modulation.0,optional"` // only if modulation
+	Attention      *Attention     `weight:"attention"`
+	FeedForward    *FeedForward   `weight:"feed_forward"`
+	AttentionNorm1 *nn.RMSNorm    `weight:"attention_norm1"`
+	AttentionNorm2 *nn.RMSNorm    `weight:"attention_norm2"`
+	FFNNorm1       *nn.RMSNorm    `weight:"ffn_norm1"`
+	FFNNorm2       *nn.RMSNorm    `weight:"ffn_norm2"`
+	AdaLN          nn.LinearLayer `weight:"adaLN_modulation.0,optional"` // only if modulation
 	// Computed fields
 	HasModulation bool
 	Dim           int32
@@ -350,7 +349,7 @@ func (tb *TransformerBlock) Forward(x *mlx.Array, adaln *mlx.Array, cos, sin *ml
 type FinalLayer struct {
 	AdaLN  nn.LinearLayer `weight:"adaLN_modulation.1"` // [256] -> [dim]
 	Output nn.LinearLayer `weight:"linear"`             // [dim] -> [out_channels]
-	OutDim int32      // computed from Output
+	OutDim int32          // computed from Output
 }
 
 // Forward computes final output
@@ -401,12 +400,12 @@ type Transformer struct {
 }
 
 // Load loads the Z-Image transformer from ollama blob storage.
-func (m *Transformer) Load(manifest *imagegen.ModelManifest) error {
+func (m *Transformer) Load(modelManifest *manifest.ModelManifest) error {
 	fmt.Print("  Loading transformer... ")
 
 	// Load config from blob
 	var cfg TransformerConfig
-	if err := manifest.ReadConfigJSON("transformer/config.json", &cfg); err != nil {
+	if err := modelManifest.ReadConfigJSON("transformer/config.json", &cfg); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 	if len(cfg.AllPatchSize) > 0 {
@@ -417,7 +416,7 @@ func (m *Transformer) Load(manifest *imagegen.ModelManifest) error {
 	m.ContextRefiners = make([]*TransformerBlock, cfg.NRefinerLayers)
 	m.Layers = make([]*TransformerBlock, cfg.NLayers)
 
-	weights, err := imagegen.LoadWeightsFromManifest(manifest, "transformer")
+	weights, err := manifest.LoadWeightsFromManifest(modelManifest, "transformer")
 	if err != nil {
 		return fmt.Errorf("weights: %w", err)
 	}

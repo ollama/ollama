@@ -211,6 +211,7 @@ type MessageDelta struct {
 
 // DeltaUsage contains cumulative token usage
 type DeltaUsage struct {
+	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
 }
 
@@ -517,24 +518,26 @@ func mapStopReason(reason string, hasToolCalls bool) string {
 
 // StreamConverter manages state for converting Ollama streaming responses to Anthropic format
 type StreamConverter struct {
-	ID              string
-	Model           string
-	firstWrite      bool
-	contentIndex    int
-	inputTokens     int
-	outputTokens    int
-	thinkingStarted bool
-	thinkingDone    bool
-	textStarted     bool
-	toolCallsSent   map[string]bool
+	ID                   string
+	Model                string
+	firstWrite           bool
+	contentIndex         int
+	inputTokens          int
+	outputTokens         int
+	estimatedInputTokens int // Estimated tokens from request (used when actual metrics are 0)
+	thinkingStarted      bool
+	thinkingDone         bool
+	textStarted          bool
+	toolCallsSent        map[string]bool
 }
 
-func NewStreamConverter(id, model string) *StreamConverter {
+func NewStreamConverter(id, model string, estimatedInputTokens int) *StreamConverter {
 	return &StreamConverter{
-		ID:            id,
-		Model:         model,
-		firstWrite:    true,
-		toolCallsSent: make(map[string]bool),
+		ID:                   id,
+		Model:                model,
+		firstWrite:           true,
+		estimatedInputTokens: estimatedInputTokens,
+		toolCallsSent:        make(map[string]bool),
 	}
 }
 
@@ -550,7 +553,11 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 
 	if c.firstWrite {
 		c.firstWrite = false
+		// Use actual metrics if available, otherwise use estimate
 		c.inputTokens = r.Metrics.PromptEvalCount
+		if c.inputTokens == 0 && c.estimatedInputTokens > 0 {
+			c.inputTokens = c.estimatedInputTokens
+		}
 
 		events = append(events, StreamEvent{
 			Event: "message_start",
@@ -721,6 +728,7 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 			})
 		}
 
+		c.inputTokens = r.Metrics.PromptEvalCount
 		c.outputTokens = r.Metrics.EvalCount
 		stopReason := mapStopReason(r.DoneReason, len(c.toolCallsSent) > 0)
 
@@ -732,6 +740,7 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 					StopReason: stopReason,
 				},
 				Usage: DeltaUsage{
+					InputTokens:  c.inputTokens,
 					OutputTokens: c.outputTokens,
 				},
 			},
@@ -775,4 +784,118 @@ func mapToArgs(m map[string]any) api.ToolCallFunctionArguments {
 		args.Set(k, v)
 	}
 	return args
+}
+
+// CountTokensRequest represents an Anthropic count_tokens request
+type CountTokensRequest struct {
+	Model    string          `json:"model"`
+	Messages []MessageParam  `json:"messages"`
+	System   any             `json:"system,omitempty"`
+	Tools    []Tool          `json:"tools,omitempty"`
+	Thinking *ThinkingConfig `json:"thinking,omitempty"`
+}
+
+// EstimateInputTokens estimates input tokens from a MessagesRequest (reuses CountTokensRequest logic)
+func EstimateInputTokens(req MessagesRequest) int {
+	return estimateTokens(CountTokensRequest{
+		Model:    req.Model,
+		Messages: req.Messages,
+		System:   req.System,
+		Tools:    req.Tools,
+		Thinking: req.Thinking,
+	})
+}
+
+// CountTokensResponse represents an Anthropic count_tokens response
+type CountTokensResponse struct {
+	InputTokens int `json:"input_tokens"`
+}
+
+// estimateTokens returns a rough estimate of tokens (len/4).
+// TODO: Replace with actual tokenization via Tokenize API for accuracy.
+// Current len/4 heuristic is a rough approximation (~4 chars/token average).
+func estimateTokens(req CountTokensRequest) int {
+	var totalLen int
+
+	// Count system prompt
+	if req.System != nil {
+		totalLen += countAnyContent(req.System)
+	}
+
+	// Count messages
+	for _, msg := range req.Messages {
+		// Count role (always present)
+		totalLen += len(msg.Role)
+		// Count content
+		contentLen := countAnyContent(msg.Content)
+		totalLen += contentLen
+	}
+
+	for _, tool := range req.Tools {
+		totalLen += len(tool.Name) + len(tool.Description) + len(tool.InputSchema)
+	}
+
+	// Return len/4 as rough token estimate, minimum 1 if there's any content
+	tokens := totalLen / 4
+	if tokens == 0 && (len(req.Messages) > 0 || req.System != nil) {
+		tokens = 1
+	}
+	return tokens
+}
+
+func countAnyContent(content any) int {
+	if content == nil {
+		return 0
+	}
+
+	switch c := content.(type) {
+	case string:
+		return len(c)
+	case []any:
+		total := 0
+		for _, block := range c {
+			total += countContentBlock(block)
+		}
+		return total
+	default:
+		if data, err := json.Marshal(content); err == nil {
+			return len(data)
+		}
+		return 0
+	}
+}
+
+func countContentBlock(block any) int {
+	blockMap, ok := block.(map[string]any)
+	if !ok {
+		if s, ok := block.(string); ok {
+			return len(s)
+		}
+		return 0
+	}
+
+	total := 0
+	blockType, _ := blockMap["type"].(string)
+
+	if text, ok := blockMap["text"].(string); ok {
+		total += len(text)
+	}
+
+	if thinking, ok := blockMap["thinking"].(string); ok {
+		total += len(thinking)
+	}
+
+	if blockType == "tool_use" {
+		if data, err := json.Marshal(blockMap); err == nil {
+			total += len(data)
+		}
+	}
+
+	if blockType == "tool_result" {
+		if data, err := json.Marshal(blockMap); err == nil {
+			total += len(data)
+		}
+	}
+
+	return total
 }

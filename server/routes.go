@@ -23,6 +23,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -52,7 +53,7 @@ import (
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
-	"github.com/ollama/ollama/x/imagegen"
+	imagegenmanifest "github.com/ollama/ollama/x/imagegen/manifest"
 	xserver "github.com/ollama/ollama/x/server"
 )
 
@@ -76,16 +77,15 @@ func experimentEnabled(name string) bool {
 
 var useClient2 = experimentEnabled("client2")
 
-// Low VRAM mode is based on the sum of total VRAM (not free) and triggers
-// reduced context length on some models
-var lowVRAMThreshold uint64 = 20 * format.GibiByte
-
 var mode string = gin.DebugMode
 
 type Server struct {
-	addr    net.Addr
-	sched   *Scheduler
-	lowVRAM bool
+	addr          net.Addr
+	sched         *Scheduler
+	defaultNumCtx int
+	aliasesOnce   sync.Once
+	aliases       *store
+	aliasesErr    error
 }
 
 func init() {
@@ -108,8 +108,12 @@ var (
 	errBadTemplate = errors.New("template error")
 )
 
-func modelOptions(model *Model, requestOpts map[string]any) (api.Options, error) {
+func (s *Server) modelOptions(model *Model, requestOpts map[string]any) (api.Options, error) {
 	opts := api.DefaultOptions()
+	if opts.NumCtx == 0 {
+		opts.NumCtx = s.defaultNumCtx
+	}
+
 	if err := opts.FromMap(model.Options); err != nil {
 		return api.Options{}, err
 	}
@@ -141,18 +145,9 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 		return nil, nil, nil, fmt.Errorf("%s %w", name, err)
 	}
 
-	opts, err := modelOptions(model, requestOpts)
+	opts, err := s.modelOptions(model, requestOpts)
 	if err != nil {
 		return nil, nil, nil, err
-	}
-
-	// This model is much more capable with a larger context, so set that
-	// unless it would penalize performance too much
-	if !s.lowVRAM && slices.Contains([]string{
-		"gptoss", "gpt-oss",
-		"qwen3vl", "qwen3vlmoe",
-	}, model.Config.ModelFamily) {
-		opts.NumCtx = max(opts.NumCtx, 8192)
 	}
 
 	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive)
@@ -201,9 +196,16 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	resolvedName, _, err := s.resolveAlias(name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	name = resolvedName
+
 	// We cannot currently consolidate this into GetModel because all we'll
 	// induce infinite recursion given the current code structure.
-	name, err := getExistingName(name)
+	name, err = getExistingName(name)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
 		return
@@ -1198,7 +1200,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 
 	// For image generation models, populate details from imagegen package
 	if slices.Contains(m.Capabilities(), model.CapabilityImage) {
-		if info, err := imagegen.GetModelInfo(name.String()); err == nil {
+		if info, err := imagegenmanifest.GetModelInfo(name.String()); err == nil {
 			modelDetails.Family = info.Architecture
 			modelDetails.ParameterSize = format.HumanNumber(uint64(info.ParameterCount))
 			modelDetails.QuantizationLevel = info.Quantization
@@ -1683,6 +1685,9 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
 	r.POST("/api/copy", s.CopyHandler)
+	r.GET("/api/experimental/aliases", s.ListAliasesHandler)
+	r.POST("/api/experimental/aliases", s.CreateAliasHandler)
+	r.DELETE("/api/experimental/aliases", s.DeleteAliasHandler)
 
 	// Inference
 	r.GET("/api/ps", s.PsHandler)
@@ -1817,10 +1822,18 @@ func Serve(ln net.Listener) error {
 	for _, gpu := range gpus {
 		totalVRAM += gpu.TotalMemory - envconfig.GpuOverhead()
 	}
-	if totalVRAM < lowVRAMThreshold {
-		s.lowVRAM = true
-		slog.Info("entering low vram mode", "total vram", format.HumanBytes2(totalVRAM), "threshold", format.HumanBytes2(lowVRAMThreshold))
+
+	// Set default context based on VRAM tier
+	// Use slightly lower thresholds (47/23 GiB vs. 48/24 GiB) to account for small differences in the exact value
+	switch {
+	case totalVRAM >= 47*format.GibiByte:
+		s.defaultNumCtx = 262144
+	case totalVRAM >= 23*format.GibiByte:
+		s.defaultNumCtx = 32768
+	default:
+		s.defaultNumCtx = 4096
 	}
+	slog.Info("vram-based default context", "total_vram", format.HumanBytes2(totalVRAM), "default_num_ctx", s.defaultNumCtx)
 
 	err = srvr.Serve(ln)
 	// If server is closed from the signal handler, wait for the ctx to be done
@@ -1994,8 +2007,8 @@ func (s *Server) PsHandler(c *gin.Context) {
 			Details:   modelDetails,
 			ExpiresAt: v.expiresAt,
 		}
-		if v.Options != nil {
-			mr.ContextLength = v.Options.NumCtx
+		if v.llama != nil {
+			mr.ContextLength = v.llama.ContextLength()
 		}
 		// The scheduler waits to set expiresAt, so if a model is loading it's
 		// possible that it will be set to the unix epoch. For those cases, just
@@ -2048,13 +2061,20 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	name, err := getExistingName(name)
+	resolvedName, _, err := s.resolveAlias(name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	name = resolvedName
+
+	name, err = getExistingName(name)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
 	}
 
-	m, err := GetModel(req.Model)
+	m, err := GetModel(name.String())
 	if err != nil {
 		switch {
 		case os.IsNotExist(err):

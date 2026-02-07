@@ -23,6 +23,7 @@ import (
 	_ "github.com/ollama/ollama/ml/backend"
 	"github.com/ollama/ollama/ml/nn/pooling"
 	"github.com/ollama/ollama/model/input"
+	"github.com/ollama/ollama/tokenizer"
 )
 
 var (
@@ -133,7 +134,7 @@ func New(modelPath string, params ml.BackendParams) (Model, error) {
 	return m, nil
 }
 
-func NewTextProcessor(s string) (TextProcessor, error) {
+func NewTextProcessor(s string) (tokenizer.Tokenizer, error) {
 	r, err := os.Open(s)
 	if err != nil {
 		return nil, err
@@ -150,7 +151,7 @@ func NewTextProcessor(s string) (TextProcessor, error) {
 		return nil, err
 	}
 
-	tp, ok := m.(TextProcessor)
+	tp, ok := m.(tokenizer.Tokenizer)
 	if !ok {
 		return nil, ErrUnsupportedTokenizer
 	}
