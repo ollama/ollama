@@ -33,7 +33,10 @@ func (s *Server) appHandler() http.Handler {
 		data, err := fs.ReadFile(fsys, "index.html")
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) {
-				http.NotFound(w, r)
+				// Development mode: UI not built
+				w.Header().Set("Content-Type", "text/plain")
+				w.WriteHeader(http.StatusNotFound)
+				w.Write([]byte("UI not built. Run 'npm run build' in app/ui/app directory."))
 			} else {
 				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 			}
