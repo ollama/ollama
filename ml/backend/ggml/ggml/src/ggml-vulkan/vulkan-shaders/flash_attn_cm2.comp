@@ -55,7 +55,7 @@ ACC_TYPE Max(const in uint32_t row, const in uint32_t col, const in ACC_TYPE ele
     return max(elem0, elem1);
 }
 
-#if defined(BLOCK_SIZE)
+#if BLOCK_SIZE > 1
 #define DECODEFUNC , DEQUANTFUNC
 #else
 #define DECODEFUNC
@@ -85,7 +85,7 @@ void main() {
 
     tensorViewNV<2, false, 1, 0> tensorViewTranspose = createTensorViewNV(2, false, 1, 0);
 
-#if defined(BLOCK_SIZE)
+#if BLOCK_SIZE > 1
     tensorLayoutK = setTensorLayoutBlockSizeNV(tensorLayoutK, 1, BLOCK_SIZE);
     tensorLayoutV = setTensorLayoutBlockSizeNV(tensorLayoutV, 1, BLOCK_SIZE);
 #endif
@@ -98,7 +98,7 @@ void main() {
     if (Clamp != gl_CooperativeMatrixClampModeConstantNV)
     {
         q_stride &= ~7;
-#if !defined(BLOCK_SIZE)
+#if BLOCK_SIZE == 1
         k_stride &= ~7;
         v_stride &= ~7;
 #endif

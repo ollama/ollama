@@ -9,10 +9,10 @@ disable amx as it reduces performance on some systems
  1 file changed, 1 insertion(+), 4 deletions(-)
 
 diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
-index 993ec027f..cbda1380c 100644
+index a20b7e54a..dbcb5ef5d 100644
 --- a/ggml/src/CMakeLists.txt
 +++ b/ggml/src/CMakeLists.txt
-@@ -379,10 +379,7 @@ if (GGML_CPU_ALL_VARIANTS)
+@@ -380,10 +380,7 @@ if (GGML_CPU_ALL_VARIANTS)
              ggml_add_cpu_backend_variant(zen4           SSE42 AVX F16C FMA AVX2 BMI2 AVX512 AVX512_VBMI AVX512_VNNI AVX512_BF16)
          endif()
          ggml_add_cpu_backend_variant(alderlake          SSE42 AVX F16C FMA AVX2 BMI2 AVX_VNNI)

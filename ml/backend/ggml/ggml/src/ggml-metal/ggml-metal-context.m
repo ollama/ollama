@@ -24,8 +24,12 @@ struct ggml_metal_command_buffer {
 };
 
 struct ggml_metal {
+    char name[128];
+
     ggml_metal_device_t  dev;
     ggml_metal_library_t lib;
+
+    ggml_metal_event_t ev_cpy; // for async copies
 
     dispatch_queue_t d_queue;
 
@@ -117,7 +121,11 @@ ggml_metal_t ggml_metal_init(ggml_metal_device_t dev) {
         }
     }
 
-    //const struct ggml_metal_device_props * props_dev = ggml_metal_device_get_props(dev);
+    res->ev_cpy = ggml_metal_device_event_init(dev);
+
+    const struct ggml_metal_device_props * props_dev = ggml_metal_device_get_props(dev);
+
+    snprintf(res->name, sizeof(res->name), "%s", props_dev->name);
 
     res->d_queue = dispatch_queue_create("ggml-metal", DISPATCH_QUEUE_CONCURRENT);
 
@@ -206,7 +214,13 @@ void ggml_metal_free(ggml_metal_t ctx) {
 
     dispatch_release(ctx->d_queue);
 
+    ggml_metal_device_event_free(ctx->dev, ctx->ev_cpy);
+
     free(ctx);
+}
+
+const char * ggml_metal_get_name(ggml_metal_t ctx) {
+    return ctx->name;
 }
 
 void ggml_metal_synchronize(ggml_metal_t ctx) {
@@ -273,8 +287,8 @@ void ggml_metal_set_tensor_async(ggml_metal_t ctx, struct ggml_tensor * tensor, 
         // wrap the source data into a Metal buffer
         id<MTLDevice> device = ggml_metal_device_get_obj(ctx->dev);
         id<MTLBuffer> buf_src = [device newBufferWithBytes:data
-                                                         length:size
-                                                        options:MTLResourceStorageModeShared];
+                                                    length:size
+                                                   options:MTLResourceStorageModeShared];
 
         GGML_ASSERT(buf_src);
 
@@ -316,9 +330,9 @@ void ggml_metal_get_tensor_async(ggml_metal_t ctx, const struct ggml_tensor * te
     @autoreleasepool {
         id<MTLDevice> device = ggml_metal_device_get_obj(ctx->dev);
         id<MTLBuffer> buf_dst = [device newBufferWithBytesNoCopy:data
-                                                               length:size
-                                                              options:MTLResourceStorageModeShared
-                                                          deallocator:nil];
+                                                          length:size
+                                                         options:MTLResourceStorageModeShared
+                                                     deallocator:nil];
 
         GGML_ASSERT(buf_dst);
 
@@ -353,6 +367,49 @@ void ggml_metal_get_tensor_async(ggml_metal_t ctx, const struct ggml_tensor * te
         ctx->cmd_buf_last = cmd_buf;
 
         [cmd_buf retain];
+    }
+}
+
+bool ggml_metal_cpy_tensor_async(ggml_metal_t ctx_src, ggml_metal_t ctx_dst, const struct ggml_tensor * src, struct ggml_tensor * dst) {
+    @autoreleasepool {
+        struct ggml_metal_buffer_id bid_src = ggml_metal_get_buffer_id(src);
+        struct ggml_metal_buffer_id bid_dst = ggml_metal_get_buffer_id(dst);
+
+        if (bid_src.metal == nil || bid_dst.metal == nil) {
+            return false;
+        }
+
+        // queue the copy operation into the Metal context
+        // this will be queued at the end, after any currently ongoing GPU operations
+        id<MTLCommandQueue> queue = ggml_metal_device_get_queue(ctx_src->dev);
+        id<MTLCommandBuffer> cmd_buf = [queue commandBuffer];
+        id<MTLBlitCommandEncoder> encoder = [cmd_buf blitCommandEncoder];
+
+        [encoder copyFromBuffer:bid_src.metal
+                   sourceOffset:bid_src.offs
+                       toBuffer:bid_dst.metal
+              destinationOffset:bid_dst.offs
+                           size:ggml_nbytes(src)];
+
+        [encoder endEncoding];
+
+        ggml_metal_event_t ev_cpy = ggml_metal_get_ev_cpy(ctx_src);
+        ggml_metal_event_record(ctx_src, ev_cpy);
+
+        [cmd_buf commit];
+
+        // do not wait here for completion
+        //[cmd_buf waitUntilCompleted];
+
+        // instead, remember a reference to the command buffer and wait for it later if needed
+        [ctx_src->cmd_bufs_ext addObject:cmd_buf];
+        ctx_src->cmd_buf_last = cmd_buf;
+
+        [cmd_buf retain];
+
+        ggml_metal_event_wait(ctx_dst, ev_cpy);
+
+        return true;
     }
 }
 
@@ -528,6 +585,42 @@ void ggml_metal_graph_optimize(ggml_metal_t ctx, struct ggml_cgraph * gf) {
     }
 
     //printf("%s: graph optimize took %.3f ms\n", __func__, (ggml_time_us() - t_start) / 1000.0);
+}
+
+void ggml_metal_event_record(ggml_metal_t ctx, ggml_metal_event_t ev) {
+    @autoreleasepool {
+        id<MTLCommandQueue> queue = ggml_metal_device_get_queue(ctx->dev);
+        id<MTLCommandBuffer> cmd_buf = [queue commandBuffer];
+
+        ggml_metal_event_encode_signal(ev, cmd_buf);
+
+        [cmd_buf commit];
+
+        [ctx->cmd_bufs_ext addObject:cmd_buf];
+        ctx->cmd_buf_last = cmd_buf;
+
+        [cmd_buf retain];
+    }
+}
+
+void ggml_metal_event_wait(ggml_metal_t ctx, ggml_metal_event_t ev) {
+    @autoreleasepool {
+        id<MTLCommandQueue> queue = ggml_metal_device_get_queue(ctx->dev);
+        id<MTLCommandBuffer> cmd_buf = [queue commandBuffer];
+
+        ggml_metal_event_encode_wait(ev, cmd_buf);
+
+        [cmd_buf commit];
+
+        [ctx->cmd_bufs_ext addObject:cmd_buf];
+        ctx->cmd_buf_last = cmd_buf;
+
+        [cmd_buf retain];
+    }
+}
+
+ggml_metal_event_t ggml_metal_get_ev_cpy(ggml_metal_t ctx) {
+    return ctx->ev_cpy;
 }
 
 void ggml_metal_set_n_cb(ggml_metal_t ctx, int n_cb) {

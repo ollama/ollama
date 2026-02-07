@@ -3148,16 +3148,17 @@ void ggml_gemm_q4_K_8x8_q8_K(int                        n,
 
                         // Scales[i] corresponds to column i
                         const int scale_offset = cp * 2;
-                        for (int blk = 0; blk < 2; blk++) {
-                            const int32x4_t block_scale = {
-                                (int32_t) q4sb_scales[blk][scale_offset],
-                                (int32_t) q4sb_scales[blk][scale_offset],
-                                (int32_t) q4sb_scales[blk][scale_offset + 1],
-                                (int32_t) q4sb_scales[blk][scale_offset + 1],
-                            };
-                            acc[cp]     = vmlaq_s32(acc[cp], sb_acc[blk], block_scale);
-                            acc[cp + 4] = vmlaq_s32(acc[cp + 4], sb_acc[blk + 2], block_scale);
-                        }
+                        const int32_t scale_00 = q4sb_scales[0][scale_offset];
+                        const int32_t scale_01 = q4sb_scales[0][scale_offset + 1];
+                        const int32_t scale_10 = q4sb_scales[1][scale_offset];
+                        const int32_t scale_11 = q4sb_scales[1][scale_offset + 1];
+                        const int32x4_t block_scale_0 = vcombine_s32(vdup_n_s32(scale_00), vdup_n_s32(scale_01));
+                        const int32x4_t block_scale_1 = vcombine_s32(vdup_n_s32(scale_10), vdup_n_s32(scale_11));
+
+                        acc[cp]     = vmlaq_s32(acc[cp], sb_acc[0], block_scale_0);
+                        acc[cp + 4] = vmlaq_s32(acc[cp + 4], sb_acc[2], block_scale_0);
+                        acc[cp]     = vmlaq_s32(acc[cp], sb_acc[1], block_scale_1);
+                        acc[cp + 4] = vmlaq_s32(acc[cp + 4], sb_acc[3], block_scale_1);
                     }
 
                     // Multiply Acc bsum + mins

@@ -88,6 +88,7 @@ static cudaError_t cudaMemsetAsyncReserve ( void* devPtr, int value, size_t coun
 // While BW spans CC 1000, 1100 & 1200, we are integrating Tensor Core instructions available to 1200 family, see
 // https://docs.nvidia.com/cutlass/media/docs/cpp/blackwell_functionality.html#blackwell-sm120-gemms
 #define GGML_CUDA_CC_BLACKWELL       1200
+#define GGML_CUDA_CC_DGX_SPARK       1210
 #define GGML_CUDA_CC_RUBIN           1300
 #define GGML_CUDA_CC_OFFSET_AMD      0x1000000
 #define GGML_CUDA_CC_OFFSET_MTHREADS 0x0100000
@@ -1159,14 +1160,17 @@ struct ggml_tensor_extra_gpu {
 #endif
 
 struct ggml_cuda_graph_node_properties {
-    void * node_address;
+    void * node_data;
     ggml_op node_op;
+    enum ggml_type node_type;
     int32_t flags;
     int64_t ne[GGML_MAX_DIMS];
     size_t nb[GGML_MAX_DIMS];
-    void * src_address[GGML_MAX_SRC];
+    void * src_data[GGML_MAX_SRC];
     int32_t op_params[GGML_MAX_OP_PARAMS / sizeof(int32_t)];
 };
+
+static_assert(std::is_trivial<ggml_cuda_graph_node_properties>::value, "ggml_cuda_graph_node_properties must be trivial");
 
 struct ggml_cuda_graph {
 #ifdef USE_CUDA_GRAPH
@@ -1186,6 +1190,12 @@ struct ggml_cuda_graph {
     bool disable_due_to_too_many_updates = false;
     int number_consecutive_updates = 0;
     std::vector<ggml_cuda_graph_node_properties> props;
+
+    // these are extra tensors (inputs) that participate in the ggml graph but are not nodes
+    // they properties also have to match in order to be able to safely reuse a CUDA graph
+    // ref: https://github.com/ggml-org/llama.cpp/pull/18583
+    // ref: https://github.com/ggml-org/llama.cpp/pull/19165
+    std::vector<ggml_cuda_graph_node_properties> extra;
 
     void record_update(bool use_graph, bool update_required) {
         if (use_graph && update_required) {

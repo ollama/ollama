@@ -197,7 +197,7 @@ struct llama_hparams {
     uint32_t n_deepstack_layers = 0;
 
     // needed by encoder-decoder models (e.g. T5, FLAN-T5)
-    // ref: https://github.com/ggerganov/llama.cpp/pull/8141
+    // ref: https://github.com/ggml-org/llama.cpp/pull/8141
     llama_token dec_start_token_id = LLAMA_TOKEN_NULL;
     uint32_t    dec_n_layer        = 0;
 

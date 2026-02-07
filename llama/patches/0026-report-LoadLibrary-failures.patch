@@ -4,14 +4,35 @@ Date: Fri, 17 Oct 2025 14:17:00 -0700
 Subject: [PATCH] report LoadLibrary failures
 
 ---
- ggml/src/ggml-backend-reg.cpp | 12 ++++++++++++
- 1 file changed, 12 insertions(+)
+ ggml/src/ggml-backend-dl.cpp | 27 +++++++++++++++++++++++++++
+ 1 file changed, 27 insertions(+)
 
-diff --git a/ggml/src/ggml-backend-reg.cpp b/ggml/src/ggml-backend-reg.cpp
-index f3d371dcc..20b219f19 100644
---- a/ggml/src/ggml-backend-reg.cpp
-+++ b/ggml/src/ggml-backend-reg.cpp
-@@ -110,6 +110,18 @@ static dl_handle * dl_load_library(const fs::path & path) {
+diff --git a/ggml/src/ggml-backend-dl.cpp b/ggml/src/ggml-backend-dl.cpp
+index a65cf0090..f6311a393 100644
+--- a/ggml/src/ggml-backend-dl.cpp
++++ b/ggml/src/ggml-backend-dl.cpp
+@@ -2,12 +2,39 @@
+ 
+ #ifdef _WIN32
+ 
++static std::string path_str(const fs::path & path) {
++    try {
++#if defined(__cpp_lib_char8_t)
++        // C++20 and later: u8string() returns std::u8string
++        const std::u8string u8str = path.u8string();
++        return std::string(reinterpret_cast<const char *>(u8str.data()), u8str.size());
++#else
++        // C++17: u8string() returns std::string
++        return path.u8string();
++#endif
++    } catch (...) {
++        return std::string();
++    }
++}
++
+ dl_handle * dl_load_library(const fs::path & path) {
+     // suppress error dialogs for missing DLLs
+     DWORD old_mode = SetErrorMode(SEM_FAILCRITICALERRORS);
      SetErrorMode(old_mode | SEM_FAILCRITICALERRORS);
  
      HMODULE handle = LoadLibraryW(path.wstring().c_str());

@@ -164,6 +164,17 @@ enum common_params_sampling_config : uint64_t {
     COMMON_PARAMS_SAMPLING_CONFIG_MIROSTAT_ETA    = 1 << 11,
 };
 
+enum common_speculative_type {
+    COMMON_SPECULATIVE_TYPE_NONE,          // no speculative decoding
+    COMMON_SPECULATIVE_TYPE_DRAFT,         // draft model
+    COMMON_SPECULATIVE_TYPE_EAGLE3,        // eagle draft model
+    COMMON_SPECULATIVE_TYPE_NGRAM_SIMPLE,  // simple self-speculative decoding
+    COMMON_SPECULATIVE_TYPE_NGRAM_MAP_K,   // self-speculative decoding with n-gram keys only
+    COMMON_SPECULATIVE_TYPE_NGRAM_MAP_K4V, // self-speculative decoding with n-gram keys and 4 m-gram values
+    COMMON_SPECULATIVE_TYPE_NGRAM_MOD,
+    COMMON_SPECULATIVE_TYPE_NGRAM_CACHE,   // self-speculative decoding with 3-level n-gram cache
+    COMMON_SPECULATIVE_TYPE_COUNT          // number of types, unknown type
+};
 
 // sampling parameters
 struct common_params_sampling {
@@ -242,17 +253,40 @@ struct common_params_model {
     std::string name        = ""; // in format <user>/<model>[:<tag>] (tag is optional)     // NOLINT
 };
 
-struct common_params_speculative {
-    std::vector<ggml_backend_dev_t> devices; // devices to use for offloading
+struct common_ngram_mod;
 
-    int32_t n_ctx        =     0; // draft context size
-    int32_t n_max        =    16; // maximum number of tokens to draft during speculative decoding
-    int32_t n_min        =     0; // minimum number of draft tokens to use for speculative decoding
-    int32_t n_gpu_layers =    -1; // number of layers to store in VRAM for the draft model (-1 - use default)
-    float   p_split      =  0.1f; // speculative decoding split probability
-    float   p_min        = 0.75f; // minimum speculative decoding probability (greedy)
-    std::vector<std::pair<std::string, std::string>> replacements; // main to speculative model replacements
-    std::vector<llama_model_tensor_buft_override> tensor_buft_overrides;
+struct common_params_speculative {
+    common_speculative_type type = COMMON_SPECULATIVE_TYPE_NONE; // type of speculative decoding
+
+    // general-purpose speculative decoding parameters
+
+    int32_t n_max   = 16; // maximum number of tokens to draft during speculative decoding
+    int32_t n_min   = 0; // minimum number of draft tokens to use for speculative decoding
+    float   p_split = 0.1f; // speculative decoding split probability
+    float   p_min   = 0.75f; // minimum speculative decoding probability (greedy)
+
+    // ngram-based speculative decoding
+
+    uint16_t ngram_size_n     = 12; // ngram size for lookup
+    uint16_t ngram_size_m     = 48; // mgram size for speculative tokens
+    uint16_t ngram_check_rate =  1; // check rate for ngram lookup
+    uint16_t ngram_min_hits   =  1; // minimum hits at ngram/mgram lookup for mgram to be proposed
+
+    std::shared_ptr<common_ngram_mod> ngram_mod;
+
+    std::string lookup_cache_static;  // path of static ngram cache file for lookup decoding           // NOLINT
+    std::string lookup_cache_dynamic; // path of dynamic ngram cache file for lookup decoding          // NOLINT
+
+    // draft-model speculative decoding
+
+    struct common_params_model mparams_dft;
+
+    llama_model * model_dft = nullptr; // a llama_model that can be shared by multiple speculative contexts
+
+    llama_context_params cparams_dft; // these are the parameters for the draft llama_context
+
+    int32_t n_ctx        = 0;  // draft context size
+    int32_t n_gpu_layers = -1; // number of layers to store in VRAM for the draft model (-1 - use default)
 
     ggml_type cache_type_k = GGML_TYPE_F16; // KV cache data type for the K
     ggml_type cache_type_v = GGML_TYPE_F16; // KV cache data type for the V
@@ -260,7 +294,14 @@ struct common_params_speculative {
     struct cpu_params cpuparams;
     struct cpu_params cpuparams_batch;
 
-    struct common_params_model model;
+    std::vector<ggml_backend_dev_t> devices; // devices to use for offloading
+
+    std::vector<std::pair<std::string, std::string>> replacements; // main to speculative model replacements
+    std::vector<llama_model_tensor_buft_override> tensor_buft_overrides;
+
+    bool has_dft() const {
+        return !mparams_dft.path.empty() || !mparams_dft.hf_repo.empty();
+    }
 };
 
 struct common_params_vocoder {
@@ -378,8 +419,6 @@ struct common_params {
     std::string path_prompt_cache    = ""; // path to file for saving/loading prompt eval state             // NOLINT
     std::string input_prefix         = ""; // string to prefix user inputs with                             // NOLINT
     std::string input_suffix         = ""; // string to suffix user inputs with                             // NOLINT
-    std::string lookup_cache_static  = ""; // path of static ngram cache file for lookup decoding           // NOLINT
-    std::string lookup_cache_dynamic = ""; // path of dynamic ngram cache file for lookup decoding          // NOLINT
     std::string logits_file          = ""; // file for saving *all* logits                                  // NOLINT
 
     // llama-debug specific options
@@ -438,7 +477,7 @@ struct common_params {
 
     bool input_prefix_bos  = false; // prefix BOS to user inputs, preceding input_prefix
     bool use_mmap          = true;  // enable mmap to use filesystem cache
-    bool use_direct_io     = true;  // read from disk without buffering for faster model loading
+    bool use_direct_io     = false; // read from disk without buffering
     bool use_mlock         = false; // use mlock to keep model in memory
     bool verbose_prompt    = false; // print prompt tokens before generation
     bool display_prompt    = true;  // print prompt before generation
@@ -575,10 +614,6 @@ struct common_params {
     // return false from callback to abort model loading or true to continue
     llama_progress_callback load_progress_callback = NULL;
     void *                  load_progress_callback_user_data = NULL;
-
-    bool has_speculative() const {
-        return !speculative.model.path.empty() || !speculative.model.hf_repo.empty();
-    }
 };
 
 // call once at the start of a program if it uses libcommon
@@ -713,8 +748,6 @@ struct common_init_result {
     void reset_samplers();
 
     std::vector<llama_adapter_lora_ptr> & lora();
-
-    void free_context();
 
 private:
     struct impl;

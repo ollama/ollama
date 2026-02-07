@@ -12,7 +12,7 @@ Subject: [PATCH] add argsort and cuda copy for i32
  5 files changed, 413 insertions(+), 11 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index 48c896436..c08e73f3c 100644
+index ce15b18ce..4bdb7c890 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
 @@ -7958,6 +7958,45 @@ static void ggml_compute_forward_argsort_f32(
@@ -291,10 +291,10 @@ index ee84303ef..178e82d76 100644
          if (can_be_transposed) {
              ggml_cpy_scalar_cuda<nv_bfloat16, nv_bfloat16, true>
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 17e358d1a..2e463bd99 100644
+index c09a54e66..3e61b5761 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -4955,8 +4955,77 @@ kernel void kernel_argsort_f32_i32(
+@@ -5032,8 +5032,77 @@ kernel void kernel_argsort_f32_i32(
      }
  }
  
@@ -372,7 +372,7 @@ index 17e358d1a..2e463bd99 100644
  
  typedef void (argsort_merge_t)(
          constant   ggml_metal_kargs_argsort_merge & args,
-@@ -5111,8 +5180,154 @@ kernel void kernel_argsort_merge_f32_i32(
+@@ -5188,8 +5257,154 @@ kernel void kernel_argsort_merge_f32_i32(
      }
  }
  

@@ -212,7 +212,7 @@ private:
 
     // Make sure enough space is available for outputs.
     // Returns max number of outputs for which space was reserved.
-    uint32_t output_reserve(int32_t n_outputs, const llama_batch & batch);
+    uint32_t output_reserve(int32_t n_outputs);
 
     void output_reorder();
 

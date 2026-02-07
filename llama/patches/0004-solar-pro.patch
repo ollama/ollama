@@ -137,7 +137,7 @@ index 392f9160c..14e089efb 100644
      if (il < n_layer) {
          return swa_layers[il];
 diff --git a/src/llama-hparams.h b/src/llama-hparams.h
-index caed0ec1b..61a1fbef6 100644
+index dfbc7d95e..847e3770a 100644
 --- a/src/llama-hparams.h
 +++ b/src/llama-hparams.h
 @@ -66,6 +66,8 @@ struct llama_hparams {
@@ -160,7 +160,7 @@ index caed0ec1b..61a1fbef6 100644
  
      // note: currently only support if either all or none of the layers are MLA
 diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
-index 383b8dc76..c2e758737 100644
+index 1501e392c..37b69a4b3 100644
 --- a/src/llama-model-loader.cpp
 +++ b/src/llama-model-loader.cpp
 @@ -497,7 +497,7 @@ namespace GGUFMeta {
@@ -173,7 +173,7 @@ index 383b8dc76..c2e758737 100644
  llama_model_loader::llama_model_loader(
          const std::string & fname,
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index cc784e1cb..c093207e0 100644
+index 72490a89b..09942cf5e 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
 @@ -2114,6 +2114,21 @@ void llama_model::load_hparams(llama_model_loader & ml) {

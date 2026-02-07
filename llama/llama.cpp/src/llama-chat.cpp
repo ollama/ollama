@@ -233,7 +233,7 @@ int32_t llm_chat_apply_template(
     llm_chat_template tmpl,
     const std::vector<const llama_chat_message *> & chat,
     std::string & dest, bool add_ass) {
-    // Taken from the research: https://github.com/ggerganov/llama.cpp/issues/5527
+    // Taken from the research: https://github.com/ggml-org/llama.cpp/issues/5527
     std::stringstream ss;
     if (tmpl == LLM_CHAT_TEMPLATE_CHATML) {
         // chatml template

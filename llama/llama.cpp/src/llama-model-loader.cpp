@@ -541,15 +541,15 @@ llama_model_loader::llama_model_loader(
 
     if (use_mmap && use_direct_io) {
         if (files.back()->has_direct_io()) {
-            // Disable mmap, as DirectIO is available
-            use_mmap = false;
             LLAMA_LOG_WARN("%s: direct I/O is enabled, disabling mmap\n", __func__);
+            use_mmap = false;
         } else {
-            // Disable DirectIO and reopen file using std::fopen for mmap
+            LLAMA_LOG_WARN("%s: direct I/O is not available, using mmap\n", __func__);
             use_direct_io = false;
+
+            // reopen file using std::fopen for mmap
             files.pop_back();
             files.emplace_back(new llama_file(fname.c_str(), "rb", false));
-            LLAMA_LOG_WARN("%s: direct I/O is not available, using mmap\n", __func__);
         }
     }
 

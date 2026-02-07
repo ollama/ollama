@@ -8,10 +8,10 @@ Subject: [PATCH] add phony target ggml-cpu for all cpu variants
  1 file changed, 2 insertions(+)
 
 diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
-index 6192a8704..993ec027f 100644
+index 265023733..a20b7e54a 100644
 --- a/ggml/src/CMakeLists.txt
 +++ b/ggml/src/CMakeLists.txt
-@@ -345,6 +345,7 @@ function(ggml_add_cpu_backend_variant tag_name)
+@@ -346,6 +346,7 @@ function(ggml_add_cpu_backend_variant tag_name)
      endif()
  
      ggml_add_cpu_backend_variant_impl(${tag_name})
@@ -19,7 +19,7 @@ index 6192a8704..993ec027f 100644
  endfunction()
  
  ggml_add_backend(CPU)
-@@ -355,6 +356,7 @@ if (GGML_CPU_ALL_VARIANTS)
+@@ -356,6 +357,7 @@ if (GGML_CPU_ALL_VARIANTS)
      elseif (GGML_CPU_ARM_ARCH)
          message(FATAL_ERROR "Cannot use both GGML_CPU_ARM_ARCH and GGML_CPU_ALL_VARIANTS")
      endif()

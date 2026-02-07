@@ -7,11 +7,12 @@
 #include "ggml-metal-context.h"
 #include "ggml-metal-ops.h"
 
-// globals
+#define GGML_METAL_NAME "MTL"
+#define GGML_METAL_MAX_DEVICES 16
 
-// initialized in ggml_backend_metal_reg
-static ggml_backend_reg    g_ggml_metal_reg;
-static ggml_backend_device g_ggml_metal_device;
+// number of Metal devices
+// note: can be overriden with GGML_METAL_DEVICES env to simulate virtual devices
+static int g_devices = 1;
 
 ////////////////////////////////////////////////////////////////////////////////
 // backend interface
@@ -167,9 +168,27 @@ static ggml_backend_buffer_i ggml_backend_metal_buffer_private_i = {
     /* .reset           = */ NULL,
 };
 
+static bool ggml_backend_buffer_is_metal(ggml_backend_buffer_t buffer) {
+    return buffer->iface.free_buffer == ggml_backend_metal_buffer_shared_free_buffer ||
+           buffer->iface.free_buffer == ggml_backend_metal_buffer_private_free_buffer;
+}
+
 //
 // buffer types
 //
+
+struct ggml_backend_metal_buffer_type {
+    int device;
+    std::string name;
+};
+
+struct ggml_backend_metal_buffer_type_deleter {
+    void operator()(ggml_backend_metal_buffer_type * ctx) const {
+        delete ctx;
+    }
+};
+
+typedef std::unique_ptr<ggml_backend_metal_buffer_type, ggml_backend_metal_buffer_type_deleter> ggml_backend_metal_buffer_type_ptr;
 
 // common method for allocating shread or private Metal buffers
 static ggml_backend_buffer_t ggml_backend_metal_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size, bool shared) {
@@ -220,9 +239,9 @@ static size_t ggml_backend_metal_buffer_type_get_alloc_size(ggml_backend_buffer_
 // default (shared) buffer type
 
 static const char * ggml_backend_metal_buffer_type_shared_get_name(ggml_backend_buffer_type_t buft) {
-    return "Metal";
+    ggml_backend_metal_buffer_type * ctx = (ggml_backend_metal_buffer_type *)buft->context;
 
-    GGML_UNUSED(buft);
+    return ctx->name.c_str();
 }
 
 static ggml_backend_buffer_t ggml_backend_metal_buffer_type_shared_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
@@ -251,29 +270,54 @@ static bool ggml_backend_metal_buffer_type_shared_is_host(ggml_backend_buffer_ty
     GGML_UNUSED(buft);
 }
 
-static ggml_backend_buffer_type_t ggml_backend_metal_buffer_type_shared(void) {
-    static ggml_backend_buffer_type ggml_backend_buffer_type_metal = {
-        /* .iface = */ {
-            /* .get_name         = */ ggml_backend_metal_buffer_type_shared_get_name,
-            /* .alloc_buffer     = */ ggml_backend_metal_buffer_type_shared_alloc_buffer,
-            /* .get_alignment    = */ ggml_backend_metal_buffer_type_shared_get_alignment,
-            /* .get_max_size     = */ ggml_backend_metal_buffer_type_shared_get_max_size,
-            /* .get_alloc_size   = */ ggml_backend_metal_buffer_type_shared_get_alloc_size,
-            /* .is_host          = */ ggml_backend_metal_buffer_type_shared_is_host,
-        },
-        /* .device  = */ &g_ggml_metal_device,
-        /* .context = */ NULL,
-    };
+static ggml_backend_buffer_type_t ggml_backend_metal_buffer_type_shared(int device) {
+    static std::mutex mutex;
+    std::lock_guard<std::mutex> lock(mutex);
 
-    return &ggml_backend_buffer_type_metal;
+    static std::vector<ggml_backend_buffer_type> bufts;
+    static std::vector<ggml_backend_metal_buffer_type_ptr> ctxs;
+
+    static bool initialized = false;
+    if (!initialized) {
+        bufts.reserve(g_devices);
+        ctxs.reserve(g_devices);
+
+        for (int i = 0; i < g_devices; ++i) {
+            ggml_backend_metal_buffer_type * raw_ctx =
+                new ggml_backend_metal_buffer_type {
+                    /* .device = */ i,
+                    /* .name   = */ GGML_METAL_NAME + std::to_string(i),
+                };
+            ctxs.emplace_back(raw_ctx);
+
+            ggml_backend_buffer_type buft = {
+                /* .iface = */ {
+                    /* .get_name         = */ ggml_backend_metal_buffer_type_shared_get_name,
+                    /* .alloc_buffer     = */ ggml_backend_metal_buffer_type_shared_alloc_buffer,
+                    /* .get_alignment    = */ ggml_backend_metal_buffer_type_shared_get_alignment,
+                    /* .get_max_size     = */ ggml_backend_metal_buffer_type_shared_get_max_size,
+                    /* .get_alloc_size   = */ ggml_backend_metal_buffer_type_shared_get_alloc_size,
+                    /* .is_host          = */ ggml_backend_metal_buffer_type_shared_is_host,
+                },
+                /* .device  = */ ggml_backend_reg_dev_get(ggml_backend_metal_reg(), i),
+                /* .context = */ raw_ctx,
+            };
+
+            bufts.emplace_back(buft);
+        }
+
+        initialized = true;
+    }
+
+    return &bufts[device];
 }
 
 // default (private) buffer type
 
 static const char * ggml_backend_metal_buffer_type_private_get_name(ggml_backend_buffer_type_t buft) {
-    return "Metal_Private";
+    ggml_backend_metal_buffer_type * ctx = (ggml_backend_metal_buffer_type *)buft->context;
 
-    GGML_UNUSED(buft);
+    return ctx->name.c_str();
 }
 
 static ggml_backend_buffer_t ggml_backend_metal_buffer_type_private_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
@@ -302,29 +346,53 @@ static bool ggml_backend_metal_buffer_type_private_is_host(ggml_backend_buffer_t
     GGML_UNUSED(buft);
 }
 
-static ggml_backend_buffer_type_t ggml_backend_metal_buffer_type_private(void) {
-    static ggml_backend_buffer_type ggml_backend_buffer_type_metal = {
-        /* .iface = */ {
-            /* .get_name         = */ ggml_backend_metal_buffer_type_private_get_name,
-            /* .alloc_buffer     = */ ggml_backend_metal_buffer_type_private_alloc_buffer,
-            /* .get_alignment    = */ ggml_backend_metal_buffer_type_private_get_alignment,
-            /* .get_max_size     = */ ggml_backend_metal_buffer_type_private_get_max_size,
-            /* .get_alloc_size   = */ ggml_backend_metal_buffer_type_private_get_alloc_size,
-            /* .is_host          = */ ggml_backend_metal_buffer_type_private_is_host,
-        },
-        /* .device  = */ &g_ggml_metal_device,
-        /* .context = */ NULL,
-    };
+static ggml_backend_buffer_type_t ggml_backend_metal_buffer_type_private(int device) {
+    static std::mutex mutex;
+    std::lock_guard<std::mutex> lock(mutex);
 
-    return &ggml_backend_buffer_type_metal;
+    static std::vector<ggml_backend_buffer_type> bufts;
+    static std::vector<ggml_backend_metal_buffer_type_ptr> ctxs;
+
+    static bool initialized = false;
+    if (!initialized) {
+        bufts.reserve(g_devices);
+        ctxs.reserve(g_devices);
+
+        for (int i = 0; i < g_devices; ++i) {
+            ggml_backend_metal_buffer_type * raw_ctx = new ggml_backend_metal_buffer_type{
+                /* .device = */ i,
+                /* .name   = */ GGML_METAL_NAME + std::to_string(i) + "_Private"
+            };
+            ctxs.emplace_back(raw_ctx);
+
+            ggml_backend_buffer_type buft = {
+                /* .iface = */ {
+                    /* .get_name         = */ ggml_backend_metal_buffer_type_private_get_name,
+                    /* .alloc_buffer     = */ ggml_backend_metal_buffer_type_private_alloc_buffer,
+                    /* .get_alignment    = */ ggml_backend_metal_buffer_type_private_get_alignment,
+                    /* .get_max_size     = */ ggml_backend_metal_buffer_type_private_get_max_size,
+                    /* .get_alloc_size   = */ ggml_backend_metal_buffer_type_private_get_alloc_size,
+                    /* .is_host          = */ ggml_backend_metal_buffer_type_private_is_host,
+                },
+                /* .device  = */ ggml_backend_reg_dev_get(ggml_backend_metal_reg(), i),
+                /* .context = */ raw_ctx,
+            };
+
+            bufts.emplace_back(buft);
+        }
+
+        initialized = true;
+    }
+
+    return &bufts[device];
 }
 
 // mapped buffer type
 
 static const char * ggml_backend_metal_buffer_type_mapped_get_name(ggml_backend_buffer_type_t buft) {
-    return "Metal_Mapped";
+    ggml_backend_metal_buffer_type * ctx = (ggml_backend_metal_buffer_type *)buft->context;
 
-    GGML_UNUSED(buft);
+    return ctx->name.c_str();
 }
 
 static ggml_backend_buffer_t ggml_backend_metal_buffer_type_mapped_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
@@ -354,31 +422,55 @@ static bool ggml_backend_metal_buffer_type_mapped_is_host(ggml_backend_buffer_ty
     GGML_UNUSED(buft);
 }
 
-static ggml_backend_buffer_type_t ggml_backend_metal_buffer_type_mapped(void) {
-    // note: not obvious, but this buffer type still needs to implement .alloc_buffer:
-    //       https://github.com/ggml-org/llama.cpp/pull/15832#discussion_r2333177099
-    static ggml_backend_buffer_type ggml_backend_buffer_type_mapped_metal = {
-        /* .iface = */ {
-            /* .get_name         = */ ggml_backend_metal_buffer_type_mapped_get_name,
-            /* .alloc_buffer     = */ ggml_backend_metal_buffer_type_mapped_alloc_buffer,
-            /* .get_alignment    = */ ggml_backend_metal_buffer_type_mapped_get_alignment,
-            /* .get_max_size     = */ ggml_backend_metal_buffer_type_mapped_get_max_size,
-            /* .get_alloc_size   = */ ggml_backend_metal_buffer_type_mapped_get_alloc_size,
-            /* .is_host          = */ ggml_backend_metal_buffer_type_mapped_is_host,
-        },
-        /* .device  = */ &g_ggml_metal_device,
-        /* .context = */ NULL,
-    };
+static ggml_backend_buffer_type_t ggml_backend_metal_buffer_type_mapped(int device) {
+    static std::mutex mutex;
+    std::lock_guard<std::mutex> lock(mutex);
 
-    return &ggml_backend_buffer_type_mapped_metal;
+    static std::vector<ggml_backend_buffer_type> bufts;
+    static std::vector<ggml_backend_metal_buffer_type_ptr> ctxs;
+
+    static bool initialized = false;
+    if (!initialized) {
+        bufts.reserve(g_devices);
+        ctxs.reserve(g_devices);
+
+        for (int i = 0; i < g_devices; ++i) {
+            ggml_backend_metal_buffer_type * raw_ctx = new ggml_backend_metal_buffer_type{
+                /* .device = */ i,
+                /* .name   = */ GGML_METAL_NAME + std::to_string(i) + "_Mapped"
+            };
+            ctxs.emplace_back(raw_ctx);
+
+            // note: not obvious, but this buffer type still needs to implement .alloc_buffer:
+            //       https://github.com/ggml-org/llama.cpp/pull/15832#discussion_r2333177099
+            ggml_backend_buffer_type buft = {
+                /* .iface = */ {
+                    /* .get_name         = */ ggml_backend_metal_buffer_type_mapped_get_name,
+                    /* .alloc_buffer     = */ ggml_backend_metal_buffer_type_mapped_alloc_buffer,
+                    /* .get_alignment    = */ ggml_backend_metal_buffer_type_mapped_get_alignment,
+                    /* .get_max_size     = */ ggml_backend_metal_buffer_type_mapped_get_max_size,
+                    /* .get_alloc_size   = */ ggml_backend_metal_buffer_type_mapped_get_alloc_size,
+                    /* .is_host          = */ ggml_backend_metal_buffer_type_mapped_is_host,
+                },
+                /* .device  = */ ggml_backend_reg_dev_get(ggml_backend_metal_reg(), i),
+                /* .context = */ raw_ctx,
+            };
+
+            bufts.emplace_back(buft);
+        }
+
+        initialized = true;
+    }
+
+    return &bufts[device];
 }
 
 // backend
 
 static const char * ggml_backend_metal_name(ggml_backend_t backend) {
-    return "Metal";
+    ggml_metal_t ctx = (ggml_metal_t)backend->context;
 
-    GGML_UNUSED(backend);
+    return ggml_metal_get_name(ctx);
 }
 
 static void ggml_backend_metal_free(ggml_backend_t backend) {
@@ -411,12 +503,24 @@ static void ggml_backend_metal_get_tensor_async(ggml_backend_t backend, const gg
 }
 
 static bool ggml_backend_metal_cpy_tensor_async(ggml_backend_t backend_src, ggml_backend_t backend_dst, const ggml_tensor * src, ggml_tensor * dst) {
-    return false;
+    if (!ggml_backend_is_metal(backend_src) || !ggml_backend_is_metal(backend_dst)) {
+        return false;
+    }
 
-    GGML_UNUSED(backend_src);
-    GGML_UNUSED(backend_dst);
-    GGML_UNUSED(src);
-    GGML_UNUSED(dst);
+    if (!ggml_backend_buffer_is_metal(src->buffer) || !ggml_backend_buffer_is_metal(dst->buffer)) {
+        return false;
+    }
+
+    ggml_metal_t ctx_src = (ggml_metal_t)backend_src->context;
+    ggml_metal_t ctx_dst = (ggml_metal_t)backend_dst->context;
+
+    //ggml_backend_buffer_t buf_src = src->view_src ? src->view_src->buffer : src->buffer;
+    //ggml_backend_buffer_t buf_dst = dst->view_src ? dst->view_src->buffer : dst->buffer;
+
+    //ggml_metal_buffer_t buf_ctx_src = (ggml_metal_buffer_t)buf_src->context;
+    //ggml_metal_buffer_t buf_ctx_dst = (ggml_metal_buffer_t)buf_dst->context;
+
+    return ggml_metal_cpy_tensor_async(ctx_src, ctx_dst, src, dst);
 }
 
 static enum ggml_status ggml_backend_metal_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
@@ -425,6 +529,20 @@ static enum ggml_status ggml_backend_metal_graph_compute(ggml_backend_t backend,
     GGML_UNUSED(batch_size);
 
     return ggml_metal_graph_compute(ctx, cgraph);
+}
+
+static void ggml_backend_metal_event_record(ggml_backend_t backend, ggml_backend_event_t event) {
+    ggml_metal_t ctx = (ggml_metal_t)backend->context;
+    ggml_metal_event_t ev = (ggml_metal_event_t)event->context;
+
+    ggml_metal_event_record(ctx, ev);
+}
+
+static void ggml_backend_metal_event_wait(ggml_backend_t backend, ggml_backend_event_t event) {
+    ggml_metal_t ctx = (ggml_metal_t)backend->context;
+    ggml_metal_event_t ev = (ggml_metal_event_t)event->context;
+
+    ggml_metal_event_wait(ctx, ev);
 }
 
 static void ggml_backend_metal_graph_optimize(ggml_backend_t backend, ggml_cgraph * cgraph) {
@@ -439,7 +557,6 @@ static void ggml_backend_metal_set_n_cb(ggml_backend_t backend, int n_cb) {
     ggml_metal_t ctx = (ggml_metal_t)backend->context;
 
     ggml_metal_set_n_cb(ctx, n_cb);
-
 }
 
 static ggml_backend_i ggml_backend_metal_i = {
@@ -454,12 +571,8 @@ static ggml_backend_i ggml_backend_metal_i = {
     /* .graph_plan_update       = */ NULL,
     /* .graph_plan_compute      = */ NULL,
     /* .graph_compute           = */ ggml_backend_metal_graph_compute,
-
-    // the events API is needed only for multi-GPU setups, so likely no need to implement it for Metal
-    // in any case, these docs seem relevant if we ever decide to implement it:
-    // https://developer.apple.com/documentation/metal/mtlcommandbuffer#Synchronizing-Passes-with-Events
-    /* .event_record            = */ NULL,
-    /* .event_wait              = */ NULL,
+    /* .event_record            = */ ggml_backend_metal_event_record,
+    /* .event_wait              = */ ggml_backend_metal_event_wait,
     /* .graph_optimize          = */ ggml_backend_metal_graph_optimize,
 };
 
@@ -523,15 +636,17 @@ void ggml_backend_metal_capture_next_compute(ggml_backend_t backend) {
 // backend device
 
 static const char * ggml_backend_metal_device_get_name(ggml_backend_dev_t dev) {
-    return "Metal";
+    ggml_metal_device_t ctx_dev = (ggml_metal_device_t)dev->context;
 
-    GGML_UNUSED(dev);
+    const ggml_metal_device_props * props_dev = ggml_metal_device_get_props(ctx_dev);
+
+    return props_dev->name;
 }
 
 static const char * ggml_backend_metal_device_get_description(ggml_backend_dev_t dev) {
     ggml_metal_device_t ctx_dev = (ggml_metal_device_t)dev->context;
 
-    return ggml_metal_device_get_props(ctx_dev)->name;
+    return ggml_metal_device_get_props(ctx_dev)->desc;
 }
 
 static void ggml_backend_metal_device_get_memory(ggml_backend_dev_t dev, size_t * free, size_t * total) {
@@ -557,14 +672,14 @@ static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, ggml_bac
 
     props->library = GGML_METAL_NAME;
     props->caps = {
-        /* .async                 = */ true,
-        /* .host_buffer           = */ false,
-        /* .buffer_from_host_ptr  = */ true,
-        /* .events                = */ false,
+        /* .async                = */ true,
+        /* .host_buffer          = */ false,
+        /* .buffer_from_host_ptr = */ true,
+        /* .events               = */ true,
     };
 }
 
-static ggml_backend_t ggml_backend_metal_device_init(ggml_backend_dev_t dev, const char * params) {
+static ggml_backend_t ggml_backend_metal_device_init_backend(ggml_backend_dev_t dev, const char * params) {
     ggml_metal_device_t ctx_dev = (ggml_metal_device_t)dev->context;
 
     ggml_metal_t ctx = ggml_metal_init(ctx_dev);
@@ -594,7 +709,7 @@ static ggml_backend_buffer_type_t ggml_backend_metal_device_get_buffer_type(ggml
 
     const ggml_metal_device_props * props_dev = ggml_metal_device_get_props(ctx_dev);
 
-    return props_dev->use_shared_buffers ? ggml_backend_metal_buffer_type_shared() : ggml_backend_metal_buffer_type_private();
+    return props_dev->use_shared_buffers ? ggml_backend_metal_buffer_type_shared(props_dev->device) : ggml_backend_metal_buffer_type_private(props_dev->device);
 }
 
 static ggml_backend_buffer_t ggml_backend_metal_device_buffer_mapped(ggml_backend_dev_t dev, void * ptr, size_t size, size_t max_tensor_size) {
@@ -602,7 +717,9 @@ static ggml_backend_buffer_t ggml_backend_metal_device_buffer_mapped(ggml_backen
 
     ggml_metal_buffer_t res = ggml_metal_buffer_map(ctx_dev, ptr, size, max_tensor_size);
 
-    return ggml_backend_buffer_init(ggml_backend_metal_buffer_type_mapped(), ggml_backend_metal_buffer_shared_i, res, size);
+    const ggml_metal_device_props * props_dev = ggml_metal_device_get_props(ctx_dev);
+
+    return ggml_backend_buffer_init(ggml_backend_metal_buffer_type_mapped(props_dev->device), ggml_backend_metal_buffer_shared_i, res, size);
 }
 
 static bool ggml_backend_metal_device_supports_op(ggml_backend_dev_t dev, const ggml_tensor * op) {
@@ -613,9 +730,10 @@ static bool ggml_backend_metal_device_supports_op(ggml_backend_dev_t dev, const 
 
 static bool ggml_backend_metal_device_supports_buft(ggml_backend_dev_t dev, ggml_backend_buffer_type_t buft) {
     return
+        buft->device == dev && (
         buft->iface.get_name == ggml_backend_metal_buffer_type_shared_get_name ||
         buft->iface.get_name == ggml_backend_metal_buffer_type_private_get_name ||
-        buft->iface.get_name == ggml_backend_metal_buffer_type_mapped_get_name;
+        buft->iface.get_name == ggml_backend_metal_buffer_type_mapped_get_name);
 
     GGML_UNUSED(dev);
 }
@@ -639,45 +757,97 @@ static bool ggml_backend_metal_device_offload_op(ggml_backend_dev_t dev, const g
             get_op_batch_size(op) >= ggml_metal_device_get_props(ctx_dev)->op_offload_min_batch_size;
 }
 
+static ggml_backend_event_t ggml_backend_metal_device_event_new(ggml_backend_dev_t dev) {
+    ggml_metal_device_t ctx_dev = (ggml_metal_device_t)dev->context;
+
+    ggml_metal_event_t event = ggml_metal_device_event_init(ctx_dev);
+    GGML_ASSERT(event);
+
+    ggml_backend_event_t ev = new ggml_backend_event {
+        /* .device  = */ dev,
+        /* .context = */ event,
+    };
+
+    return ev;
+}
+
+static void ggml_backend_metal_device_event_free(ggml_backend_dev_t dev, ggml_backend_event_t event) {
+    ggml_metal_device_t ctx_dev = (ggml_metal_device_t)dev->context;
+
+    ggml_metal_event_t ev = (ggml_metal_event_t)event->context;
+
+    ggml_metal_device_event_free(ctx_dev, ev);
+
+    delete event;
+}
+
+static void ggml_backend_metal_device_event_synchronize(ggml_backend_dev_t dev, ggml_backend_event_t event) {
+    ggml_metal_device_t ctx_dev = (ggml_metal_device_t)dev->context;
+
+    ggml_metal_event_t evt = (ggml_metal_event_t)event->context;
+
+    ggml_metal_device_event_synchronize(ctx_dev, evt);
+}
+
 static ggml_backend_device_i ggml_backend_metal_device_i = {
     /* .get_name             = */ ggml_backend_metal_device_get_name,
     /* .get_description      = */ ggml_backend_metal_device_get_description,
     /* .get_memory           = */ ggml_backend_metal_device_get_memory,
     /* .get_type             = */ ggml_backend_metal_device_get_type,
     /* .get_props            = */ ggml_backend_metal_device_get_props,
-    /* .init_backend         = */ ggml_backend_metal_device_init,
+    /* .init_backend         = */ ggml_backend_metal_device_init_backend,
     /* .get_buffer_type      = */ ggml_backend_metal_device_get_buffer_type,
     /* .get_host_buffer_type = */ NULL,
     /* .buffer_from_host_ptr = */ ggml_backend_metal_device_buffer_mapped,
     /* .supports_op          = */ ggml_backend_metal_device_supports_op,
     /* .supports_buft        = */ ggml_backend_metal_device_supports_buft,
     /* .offload_op           = */ ggml_backend_metal_device_offload_op,
-    /* .event_new            = */ NULL,
-    /* .event_free           = */ NULL,
-    /* .event_synchronize    = */ NULL,
+    /* .event_new            = */ ggml_backend_metal_device_event_new,
+    /* .event_free           = */ ggml_backend_metal_device_event_free,
+    /* .event_synchronize    = */ ggml_backend_metal_device_event_synchronize,
 };
 
 // backend registry
 
+struct ggml_backend_metal_reg {
+    std::vector<ggml_backend_dev_t> devices;
+};
+
+typedef struct ggml_backend_metal_reg * ggml_backend_metal_reg_t;
+
+static ggml_backend_metal_reg_t ggml_backend_metal_reg_init(void) {
+    ggml_backend_metal_reg_t ctx = new struct ggml_backend_metal_reg;
+
+    return ctx;
+}
+
+static void ggml_backend_metal_reg_free(ggml_backend_metal_reg_t ctx) {
+    delete ctx;
+}
+
+struct ggml_backend_metal_reg_deleter {
+    void operator()(ggml_backend_metal_reg_t ctx) {
+        ggml_backend_metal_reg_free(ctx);
+    }
+};
+
+typedef std::unique_ptr<struct ggml_backend_metal_reg, ggml_backend_metal_reg_deleter> ggml_backend_metal_reg_ptr;
+
 static const char * ggml_backend_metal_reg_get_name(ggml_backend_reg_t reg) {
-    return "Metal";
+    return GGML_METAL_NAME;
 
     GGML_UNUSED(reg);
 }
 
 static size_t ggml_backend_metal_reg_device_count(ggml_backend_reg_t reg) {
-    return 1;
-
-    GGML_UNUSED(reg);
+    ggml_backend_metal_reg_t ctx = (ggml_backend_metal_reg_t)reg->context;
+    return ctx->devices.size();
 }
 
 static ggml_backend_dev_t ggml_backend_metal_reg_device_get(ggml_backend_reg_t reg, size_t index) {
-    GGML_ASSERT(index == 0);
-
-    return &g_ggml_metal_device;
-
-    GGML_UNUSED(reg);
-    GGML_UNUSED(index);
+    ggml_backend_metal_reg_t ctx = (ggml_backend_metal_reg_t)reg->context;
+    GGML_ASSERT(index < ctx->devices.size());
+    return ctx->devices[index];
 }
 
 static ggml_backend_feature g_ggml_backend_metal_features[] = {
@@ -705,27 +875,67 @@ static void * ggml_backend_metal_get_proc_address(ggml_backend_reg_t reg, const 
 
 static ggml_backend_reg_i ggml_backend_metal_reg_i = {
     /* .get_name         = */ ggml_backend_metal_reg_get_name,
-    /* .device_count     = */ ggml_backend_metal_reg_device_count,
-    /* .device_get       = */ ggml_backend_metal_reg_device_get,
+    /* .get_device_count = */ ggml_backend_metal_reg_device_count,
+    /* .get_device       = */ ggml_backend_metal_reg_device_get,
     /* .get_proc_address = */ ggml_backend_metal_get_proc_address,
 };
 
-ggml_backend_reg_t ggml_backend_metal_reg(void) {
-    {
-        g_ggml_metal_reg = {
-            /* .api_version = */ GGML_BACKEND_API_VERSION,
-            /* .iface       = */ ggml_backend_metal_reg_i,
-            /* .context     = */ NULL,
-        };
+static ggml_backend_dev_t ggml_backend_metal_device_init(ggml_backend_reg_t reg, int device) {
+    return new ggml_backend_device {
+        /* .iface   = */ ggml_backend_metal_device_i,
+        /* .reg     = */ reg,
+        /* .context = */ ggml_metal_device_get(device),
+    };
+}
 
-        g_ggml_metal_device = {
-            /* .iface   = */ ggml_backend_metal_device_i,
-            /* .reg     = */ &g_ggml_metal_reg,
-            /* .context = */ ggml_metal_device_get(),
-        };
+static void ggml_backend_metal_device_free(ggml_backend_dev_t dev) {
+    delete dev;
+}
+
+struct ggml_backend_device_deleter {
+    void operator()(ggml_backend_dev_t ctx) {
+        ggml_backend_metal_device_free(ctx);
+    }
+};
+
+typedef std::unique_ptr<ggml_backend_device, ggml_backend_device_deleter> ggml_backend_device_ptr;
+
+ggml_backend_reg_t ggml_backend_metal_reg(void) {
+    static ggml_backend_reg reg;
+    static bool initialized = false;
+
+    {
+        static std::mutex mutex;
+        std::lock_guard<std::mutex> lock(mutex);
+
+        const char * env = getenv("GGML_METAL_DEVICES");
+        if (env) {
+            g_devices = atoi(env);
+        }
+
+        static std::vector<ggml_backend_device_ptr> devs;
+
+        if (!initialized) {
+            static ggml_backend_metal_reg_ptr reg_ctx(ggml_backend_metal_reg_init());
+
+            for (int i = 0; i < g_devices; ++i) {
+                auto * dev = ggml_backend_metal_device_init(&reg, i);
+                devs.emplace_back(dev);
+
+                reg_ctx->devices.push_back(dev);
+            }
+
+            reg = {
+                /* .api_version = */ GGML_BACKEND_API_VERSION,
+                /* .iface       = */ ggml_backend_metal_reg_i,
+                /* .context     = */ reg_ctx.get(),
+            };
+        }
+
+        initialized = true;
     }
 
-    return &g_ggml_metal_reg;
+    return &reg;
 }
 
 GGML_BACKEND_DL_IMPL(ggml_backend_metal_reg)
