@@ -416,7 +416,7 @@ func TestMigrateConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("skips corrupt legacy file", func(t *testing.T) {
+	t.Run("fails on corrupt legacy file", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
 
@@ -425,8 +425,8 @@ func TestMigrateConfig(t *testing.T) {
 		os.WriteFile(filepath.Join(legacyDir, "config.json"), []byte(`{corrupt`), 0o644)
 
 		migrated, err := migrateConfig()
-		if err != nil {
-			t.Fatal(err)
+		if err == nil {
+			t.Fatal("expected error for corrupt legacy file")
 		}
 		if migrated {
 			t.Error("should not migrate corrupt file")

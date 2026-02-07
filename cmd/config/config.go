@@ -53,7 +53,7 @@ func migrateConfig() (bool, error) {
 
 	var js json.RawMessage
 	if err := json.Unmarshal(oldData, &js); err != nil {
-		return false, nil
+		return false, err
 	}
 
 	newPath, err := configPath()
