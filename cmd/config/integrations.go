@@ -59,6 +59,12 @@ var integrations = map[string]Runner{
 	"openclaw": &Openclaw{},
 }
 
+// IsIntegration returns true if the given name is a valid integration.
+func IsIntegration(name string) bool {
+	_, ok := integrations[strings.ToLower(name)]
+	return ok
+}
+
 // recommendedModels are shown when the user has no models or as suggestions.
 // Order matters: local models first, then cloud models.
 var recommendedModels = []selectItem{
@@ -76,7 +82,7 @@ var integrationAliases = map[string]bool{
 
 func selectIntegration() (string, error) {
 	if len(integrations) == 0 {
-		return "", fmt.Errorf("no integrations available")
+		return "", fmt.Errorf("no apps available")
 	}
 
 	names := slices.Sorted(maps.Keys(integrations))
@@ -93,14 +99,14 @@ func selectIntegration() (string, error) {
 		items = append(items, selectItem{Name: name, Description: description})
 	}
 
-	return selectPrompt("Select integration:", items)
+	return selectPrompt("Select app:", items)
 }
 
 // selectModels lets the user select models for an integration
 func selectModels(ctx context.Context, name, current string) ([]string, error) {
 	r, ok := integrations[name]
 	if !ok {
-		return nil, fmt.Errorf("unknown integration: %s", name)
+		return nil, fmt.Errorf("unknown app: %s", name)
 	}
 
 	client, err := api.ClientFromEnvironment()
@@ -306,7 +312,7 @@ func ensureAuth(ctx context.Context, client *api.Client, cloudModels map[string]
 func runIntegration(name, modelName string, args []string) error {
 	r, ok := integrations[name]
 	if !ok {
-		return fmt.Errorf("unknown integration: %s", name)
+		return fmt.Errorf("unknown app: %s", name)
 	}
 
 	fmt.Fprintf(os.Stderr, "\nLaunching %s with %s...\n", r, modelName)
@@ -335,17 +341,230 @@ func syncAliases(ctx context.Context, client *api.Client, ac AliasConfigurer, na
 	return saveAliases(name, aliases)
 }
 
+// RunLaunch executes the launch logic for the given integration and arguments.
+// This can be called directly from the root command (with empty modelFlag/configFlag)
+// or via the launch subcommand.
+func RunLaunch(cmd *cobra.Command, args []string, modelFlag string, configFlag bool) error {
+	// Extract integration name and args to pass through using -- separator
+	var name string
+	var passArgs []string
+	dashIdx := cmd.ArgsLenAtDash()
+
+	if dashIdx == -1 {
+		// No "--" separator: only allow 0 or 1 args (integration name)
+		if len(args) > 1 {
+			return fmt.Errorf("unexpected arguments: %v\nUse '--' to pass extra arguments to the app", args[1:])
+		}
+		if len(args) == 1 {
+			name = args[0]
+		}
+	} else {
+		// "--" was used: args before it = integration name, args after = passthrough
+		if dashIdx > 1 {
+			return fmt.Errorf("expected at most 1 app name before '--', got %d", dashIdx)
+		}
+		if dashIdx == 1 {
+			name = args[0]
+		}
+		passArgs = args[dashIdx:]
+	}
+
+	if name == "" {
+		var err error
+		name, err = selectIntegration()
+		if errors.Is(err, errCancelled) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	r, ok := integrations[strings.ToLower(name)]
+	if !ok {
+		return fmt.Errorf("unknown app: %s", name)
+	}
+
+	// Handle AliasConfigurer integrations (claude, codex)
+	if ac, ok := r.(AliasConfigurer); ok {
+		client, err := api.ClientFromEnvironment()
+		if err != nil {
+			return err
+		}
+
+		// Validate --model flag if provided
+		if modelFlag != "" {
+			if err := showOrPull(cmd.Context(), client, modelFlag); err != nil {
+				if errors.Is(err, errCancelled) {
+					return nil
+				}
+				return err
+			}
+		}
+
+		var model string
+		var existingAliases map[string]string
+
+		// Load saved config
+		if cfg, err := loadIntegration(name); err == nil {
+			existingAliases = cfg.Aliases
+			if len(cfg.Models) > 0 {
+				model = cfg.Models[0]
+				// AliasConfigurer integrations use single model; sanitize if multiple
+				if len(cfg.Models) > 1 {
+					_ = saveIntegration(name, []string{model})
+				}
+			}
+		}
+
+		// --model flag overrides saved model
+		if modelFlag != "" {
+			model = modelFlag
+		}
+
+		// Validate saved model still exists
+		if model != "" && modelFlag == "" {
+			if _, err := client.Show(cmd.Context(), &api.ShowRequest{Model: model}); err != nil {
+				fmt.Fprintf(os.Stderr, "%sConfigured model %q not found%s\n\n", ansiGray, model, ansiReset)
+				if err := showOrPull(cmd.Context(), client, model); err != nil {
+					model = ""
+				}
+			}
+		}
+
+		// If no valid model or --config flag, show picker
+		if model == "" || configFlag {
+			aliases, _, err := ac.ConfigureAliases(cmd.Context(), model, existingAliases, configFlag)
+			if errors.Is(err, errCancelled) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			model = aliases["primary"]
+			existingAliases = aliases
+		}
+
+		// Ensure cloud models are authenticated
+		if isCloudModel(cmd.Context(), client, model) {
+			if err := ensureAuth(cmd.Context(), client, map[string]bool{model: true}, []string{model}); err != nil {
+				return err
+			}
+		}
+
+		// Sync aliases and save
+		if err := syncAliases(cmd.Context(), client, ac, name, model, existingAliases); err != nil {
+			fmt.Fprintf(os.Stderr, "%sWarning: Could not sync aliases: %v%s\n", ansiGray, err, ansiReset)
+		}
+		if err := saveIntegration(name, []string{model}); err != nil {
+			return fmt.Errorf("failed to save: %w", err)
+		}
+
+		// Launch (unless --config without confirmation)
+		if configFlag {
+			if launch, _ := confirmPrompt(fmt.Sprintf("Launch %s now?", r)); launch {
+				return runIntegration(name, model, passArgs)
+			}
+			return nil
+		}
+		return runIntegration(name, model, passArgs)
+	}
+
+	// Validate --model flag for non-AliasConfigurer integrations
+	if modelFlag != "" {
+		client, err := api.ClientFromEnvironment()
+		if err != nil {
+			return err
+		}
+		if err := showOrPull(cmd.Context(), client, modelFlag); err != nil {
+			if errors.Is(err, errCancelled) {
+				return nil
+			}
+			return err
+		}
+	}
+
+	var models []string
+	if modelFlag != "" {
+		models = []string{modelFlag}
+		if existing, err := loadIntegration(name); err == nil && len(existing.Models) > 0 {
+			for _, m := range existing.Models {
+				if m != modelFlag {
+					models = append(models, m)
+				}
+			}
+		}
+	} else if saved, err := loadIntegration(name); err == nil && len(saved.Models) > 0 && !configFlag {
+		return runIntegration(name, saved.Models[0], passArgs)
+	} else {
+		var err error
+		models, err = selectModels(cmd.Context(), name, "")
+		if errors.Is(err, errCancelled) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	if editor, isEditor := r.(Editor); isEditor {
+		paths := editor.Paths()
+		if len(paths) > 0 {
+			fmt.Fprintf(os.Stderr, "This will modify your %s configuration:\n", r)
+			for _, p := range paths {
+				fmt.Fprintf(os.Stderr, "  %s\n", p)
+			}
+			fmt.Fprintf(os.Stderr, "Backups will be saved to %s/\n\n", backupDir())
+
+			if ok, _ := confirmPrompt("Proceed?"); !ok {
+				return nil
+			}
+		}
+	}
+
+	if err := saveIntegration(name, models); err != nil {
+		return fmt.Errorf("failed to save: %w", err)
+	}
+
+	if editor, isEditor := r.(Editor); isEditor {
+		if err := editor.Edit(models); err != nil {
+			return fmt.Errorf("setup failed: %w", err)
+		}
+	}
+
+	if _, isEditor := r.(Editor); isEditor {
+		if len(models) == 1 {
+			fmt.Fprintf(os.Stderr, "Added %s to %s\n", models[0], r)
+		} else {
+			fmt.Fprintf(os.Stderr, "Added %d models to %s (default: %s)\n", len(models), r, models[0])
+		}
+	}
+
+	if configFlag {
+		if launch, _ := confirmPrompt(fmt.Sprintf("\nLaunch %s now?", r)); launch {
+			return runIntegration(name, models[0], passArgs)
+		}
+		return nil
+	}
+
+	if runner, isRunner := r.(Runner); isRunner {
+		return runner.Run(models[0], passArgs)
+	}
+
+	return nil
+}
+
 // LaunchCmd returns the cobra command for launching integrations.
 func LaunchCmd(checkServerHeartbeat func(cmd *cobra.Command, args []string) error) *cobra.Command {
 	var modelFlag string
 	var configFlag bool
 
 	cmd := &cobra.Command{
-		Use:   "launch [INTEGRATION] [-- [EXTRA_ARGS...]]",
-		Short: "Launch an integration with Ollama",
-		Long: `Launch an integration configured with Ollama models.
+		Use:   "launch [APP] [-- [EXTRA_ARGS...]]",
+		Short: "Launch an app with Ollama",
+		Long: `Launch an app configured with Ollama models.
 
-Supported integrations:
+Supported apps:
   claude    Claude Code
   codex     Codex
   droid     Droid
@@ -357,215 +576,12 @@ Examples:
   ollama launch claude
   ollama launch claude --model <model>
   ollama launch droid --config (does not auto-launch)
-  ollama launch codex -- -p myprofile (pass extra args to integration)
+  ollama launch codex -- -p myprofile (pass extra args to app)
   ollama launch codex -- --sandbox workspace-write`,
 		Args:    cobra.ArbitraryArgs,
 		PreRunE: checkServerHeartbeat,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Extract integration name and args to pass through using -- separator
-			var name string
-			var passArgs []string
-			dashIdx := cmd.ArgsLenAtDash()
-
-			if dashIdx == -1 {
-				// No "--" separator: only allow 0 or 1 args (integration name)
-				if len(args) > 1 {
-					return fmt.Errorf("unexpected arguments: %v\nUse '--' to pass extra arguments to the integration", args[1:])
-				}
-				if len(args) == 1 {
-					name = args[0]
-				}
-			} else {
-				// "--" was used: args before it = integration name, args after = passthrough
-				if dashIdx > 1 {
-					return fmt.Errorf("expected at most 1 integration name before '--', got %d", dashIdx)
-				}
-				if dashIdx == 1 {
-					name = args[0]
-				}
-				passArgs = args[dashIdx:]
-			}
-
-			if name == "" {
-				var err error
-				name, err = selectIntegration()
-				if errors.Is(err, errCancelled) {
-					return nil
-				}
-				if err != nil {
-					return err
-				}
-			}
-
-			r, ok := integrations[strings.ToLower(name)]
-			if !ok {
-				return fmt.Errorf("unknown integration: %s", name)
-			}
-
-			// Handle AliasConfigurer integrations (claude, codex)
-			if ac, ok := r.(AliasConfigurer); ok {
-				client, err := api.ClientFromEnvironment()
-				if err != nil {
-					return err
-				}
-
-				// Validate --model flag if provided
-				if modelFlag != "" {
-					if err := showOrPull(cmd.Context(), client, modelFlag); err != nil {
-						if errors.Is(err, errCancelled) {
-							return nil
-						}
-						return err
-					}
-				}
-
-				var model string
-				var existingAliases map[string]string
-
-				// Load saved config
-				if cfg, err := loadIntegration(name); err == nil {
-					existingAliases = cfg.Aliases
-					if len(cfg.Models) > 0 {
-						model = cfg.Models[0]
-						// AliasConfigurer integrations use single model; sanitize if multiple
-						if len(cfg.Models) > 1 {
-							_ = saveIntegration(name, []string{model})
-						}
-					}
-				}
-
-				// --model flag overrides saved model
-				if modelFlag != "" {
-					model = modelFlag
-				}
-
-				// Validate saved model still exists
-				if model != "" && modelFlag == "" {
-					if _, err := client.Show(cmd.Context(), &api.ShowRequest{Model: model}); err != nil {
-						fmt.Fprintf(os.Stderr, "%sConfigured model %q not found%s\n\n", ansiGray, model, ansiReset)
-						if err := showOrPull(cmd.Context(), client, model); err != nil {
-							model = ""
-						}
-					}
-				}
-
-				// If no valid model or --config flag, show picker
-				if model == "" || configFlag {
-					aliases, _, err := ac.ConfigureAliases(cmd.Context(), model, existingAliases, configFlag)
-					if errors.Is(err, errCancelled) {
-						return nil
-					}
-					if err != nil {
-						return err
-					}
-					model = aliases["primary"]
-					existingAliases = aliases
-				}
-
-				// Ensure cloud models are authenticated
-				if isCloudModel(cmd.Context(), client, model) {
-					if err := ensureAuth(cmd.Context(), client, map[string]bool{model: true}, []string{model}); err != nil {
-						return err
-					}
-				}
-
-				// Sync aliases and save
-				if err := syncAliases(cmd.Context(), client, ac, name, model, existingAliases); err != nil {
-					fmt.Fprintf(os.Stderr, "%sWarning: Could not sync aliases: %v%s\n", ansiGray, err, ansiReset)
-				}
-				if err := saveIntegration(name, []string{model}); err != nil {
-					return fmt.Errorf("failed to save: %w", err)
-				}
-
-				// Launch (unless --config without confirmation)
-				if configFlag {
-					if launch, _ := confirmPrompt(fmt.Sprintf("Launch %s now?", r)); launch {
-						return runIntegration(name, model, passArgs)
-					}
-					return nil
-				}
-				return runIntegration(name, model, passArgs)
-			}
-
-			// Validate --model flag for non-AliasConfigurer integrations
-			if modelFlag != "" {
-				client, err := api.ClientFromEnvironment()
-				if err != nil {
-					return err
-				}
-				if err := showOrPull(cmd.Context(), client, modelFlag); err != nil {
-					if errors.Is(err, errCancelled) {
-						return nil
-					}
-					return err
-				}
-			}
-
-			var models []string
-			if modelFlag != "" {
-				models = []string{modelFlag}
-				if existing, err := loadIntegration(name); err == nil && len(existing.Models) > 0 {
-					for _, m := range existing.Models {
-						if m != modelFlag {
-							models = append(models, m)
-						}
-					}
-				}
-			} else if saved, err := loadIntegration(name); err == nil && len(saved.Models) > 0 && !configFlag {
-				return runIntegration(name, saved.Models[0], passArgs)
-			} else {
-				var err error
-				models, err = selectModels(cmd.Context(), name, "")
-				if errors.Is(err, errCancelled) {
-					return nil
-				}
-				if err != nil {
-					return err
-				}
-			}
-
-			if editor, isEditor := r.(Editor); isEditor {
-				paths := editor.Paths()
-				if len(paths) > 0 {
-					fmt.Fprintf(os.Stderr, "This will modify your %s configuration:\n", r)
-					for _, p := range paths {
-						fmt.Fprintf(os.Stderr, "  %s\n", p)
-					}
-					fmt.Fprintf(os.Stderr, "Backups will be saved to %s/\n\n", backupDir())
-
-					if ok, _ := confirmPrompt("Proceed?"); !ok {
-						return nil
-					}
-				}
-			}
-
-			if err := saveIntegration(name, models); err != nil {
-				return fmt.Errorf("failed to save: %w", err)
-			}
-
-			if editor, isEditor := r.(Editor); isEditor {
-				if err := editor.Edit(models); err != nil {
-					return fmt.Errorf("setup failed: %w", err)
-				}
-			}
-
-			if _, isEditor := r.(Editor); isEditor {
-				if len(models) == 1 {
-					fmt.Fprintf(os.Stderr, "Added %s to %s\n", models[0], r)
-				} else {
-					fmt.Fprintf(os.Stderr, "Added %d models to %s (default: %s)\n", len(models), r, models[0])
-				}
-			}
-
-			if configFlag {
-				if launch, _ := confirmPrompt(fmt.Sprintf("\nLaunch %s now?", r)); launch {
-					return runIntegration(name, models[0], passArgs)
-				}
-				fmt.Fprintf(os.Stderr, "Run 'ollama launch %s' to start with %s\n", strings.ToLower(name), models[0])
-				return nil
-			}
-
-			return runIntegration(name, models[0], passArgs)
+			return RunLaunch(cmd, args, modelFlag, configFlag)
 		},
 	}
 

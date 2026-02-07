@@ -98,8 +98,8 @@ func TestLaunchCmd(t *testing.T) {
 	cmd := LaunchCmd(mockCheck)
 
 	t.Run("command structure", func(t *testing.T) {
-		if cmd.Use != "launch [INTEGRATION] [-- [EXTRA_ARGS...]]" {
-			t.Errorf("Use = %q, want %q", cmd.Use, "launch [INTEGRATION] [-- [EXTRA_ARGS...]]")
+		if cmd.Use != "launch [APP] [-- [EXTRA_ARGS...]]" {
+			t.Errorf("Use = %q, want %q", cmd.Use, "launch [APP] [-- [EXTRA_ARGS...]]")
 		}
 		if cmd.Short == "" {
 			t.Error("Short description should not be empty")
@@ -133,8 +133,8 @@ func TestRunIntegration_UnknownIntegration(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for unknown integration, got nil")
 	}
-	if !strings.Contains(err.Error(), "unknown integration") {
-		t.Errorf("error should mention 'unknown integration', got: %v", err)
+	if !strings.Contains(err.Error(), "unknown app") {
+		t.Errorf("error should mention 'unknown app', got: %v", err)
 	}
 }
 

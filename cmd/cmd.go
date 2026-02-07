@@ -1826,6 +1826,18 @@ func NewCLI() *cobra.Command {
 				return
 			}
 
+			// If no args, run launch to show interactive app selector
+			if len(args) == 0 {
+				if err := checkServerHeartbeat(cmd, args); err != nil {
+					cobra.CheckErr(err)
+					return
+				}
+				if err := config.RunLaunch(cmd, args, "", false); err != nil {
+					cobra.CheckErr(err)
+				}
+				return
+			}
+
 			cmd.Print(cmd.UsageString())
 		},
 	}
