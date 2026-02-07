@@ -77,6 +77,9 @@
 // precomputed f32 table for f16 (256 KB) (simd-mappings.h)
 float ggml_table_f32_f16[1 << 16];
 
+// precomputed f32 table for e8m0 half (1 KB) (simd-mappings.h)
+float ggml_table_f32_e8m0_half[1 << 8];
+
 #if defined(__ARM_ARCH)
 struct ggml_arm_arch_features_type {
     int sve_cnt;
@@ -3685,6 +3688,11 @@ void ggml_cpu_init(void) {
                 ggml_table_f32_f16[i] = f;
                 ggml_table_gelu_f16[i] = GGML_CPU_FP32_TO_FP16(ggml_gelu_f32(f));
                 ggml_table_gelu_quick_f16[i] = GGML_CPU_FP32_TO_FP16(ggml_gelu_quick_f32(f));
+            }
+
+            // initialize E8M0 half table (256 entries)
+            for (int i = 0; i < (1 << 8); ++i) {
+                ggml_table_f32_e8m0_half[i] = GGML_E8M0_TO_FP32_HALF(i);
             }
 
             const uint64_t t_end = ggml_time_us(); UNUSED(t_end);
