@@ -8,7 +8,7 @@ Subject: [PATCH] Improve ggml_backend_vk_get_device_pci_id
  1 file changed, 18 insertions(+), 14 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 78b750e8d..83801ccaf 100644
+index 78b750e8d..4b8ec05de 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -14505,34 +14505,38 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
@@ -18,7 +18,7 @@ index 78b750e8d..83801ccaf 100644
 -
      for (const auto& properties : ext_props) {
 -        if (strcmp("VK_EXT_pci_bus_info", properties.extensionName) == 0) {
-+        if (strcmp(ext.extensionName, VK_EXT_PCI_BUS_INFO_EXTENSION_NAME) == 0) {
++        if (strcmp(properties.extensionName, VK_EXT_PCI_BUS_INFO_EXTENSION_NAME) == 0) {
              ext_support = true;
              break;
          }

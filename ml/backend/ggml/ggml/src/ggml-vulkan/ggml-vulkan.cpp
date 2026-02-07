@@ -14506,7 +14506,7 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
 
     bool ext_support = false;
     for (const auto& properties : ext_props) {
-        if (strcmp(ext.extensionName, VK_EXT_PCI_BUS_INFO_EXTENSION_NAME) == 0) {
+        if (strcmp(properties.extensionName, VK_EXT_PCI_BUS_INFO_EXTENSION_NAME) == 0) {
             ext_support = true;
             break;
         }
