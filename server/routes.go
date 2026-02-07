@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -57,6 +58,18 @@ import (
 )
 
 const signinURLStr = "https://ollama.com/connect?name=%s&key=%s"
+
+var (
+	trendingCache []struct {
+		Name string
+		Size int64
+	}
+	lastFetchTime time.Time
+	cacheMutex    sync.RWMutex
+	cacheDuration = 1 * time.Hour
+	reTrending    = regexp.MustCompile(`/library/([a-z0-9\.-]+)`)
+	httpClient    = &http.Client{Timeout: 5 * time.Second}
+)
 
 func shouldUseHarmony(model *Model) bool {
 	if slices.Contains([]string{"gptoss", "gpt-oss"}, model.Config.ModelFamily) {
@@ -1295,32 +1308,34 @@ func (s *Server) ListHandler(c *gin.Context) {
 	}
 
 	models := []api.ListModelResponse{}
+	localModelNames := make(map[string]bool)
+
 	for n, m := range ms {
 		var cf model.ConfigV2
+		name := n.DisplayShortest()
+
+		localModelNames[name] = true
+		localModelNames[strings.TrimSuffix(name, ":latest")] = true
 
 		if m.Config.Digest != "" {
 			f, err := m.Config.Open()
-			if err != nil {
-				slog.Warn("bad manifest filepath", "name", n, "error", err)
-				continue
-			}
-			defer f.Close()
-
-			if err := json.NewDecoder(f).Decode(&cf); err != nil {
-				slog.Warn("bad manifest config", "name", n, "error", err)
-				continue
+			if err == nil {
+				defer f.Close()
+				if err := json.NewDecoder(f).Decode(&cf); err != nil {
+					slog.Warn("bad manifest config", "name", n, "error", err)
+				}
 			}
 		}
-
 		// tag should never be masked
 		models = append(models, api.ListModelResponse{
-			Model:       n.DisplayShortest(),
-			Name:        n.DisplayShortest(),
+			Model:      name,
+			Name:       name,
+			Size:       m.Size(),
+			Digest:     m.Digest(),
+			ModifiedAt: m.FileInfo().ModTime(),
+			// Orijinal haline sadık kalıyoruz:
 			RemoteModel: cf.RemoteModel,
 			RemoteHost:  cf.RemoteHost,
-			Size:        m.Size(),
-			Digest:      m.Digest(),
-			ModifiedAt:  m.FileInfo().ModTime(),
 			Details: api.ModelDetails{
 				Format:            cf.ModelFormat,
 				Family:            cf.ModelFamily,
@@ -1329,6 +1344,18 @@ func (s *Server) ListHandler(c *gin.Context) {
 				QuantizationLevel: cf.FileType,
 			},
 		})
+	}
+
+	trending := fetchTrendingModels()
+	for _, tm := range trending {
+		if !localModelNames[tm.Name] {
+			displayName := tm.Name + " ☁️📥"
+			models = append(models, api.ListModelResponse{
+				Model: tm.Name,
+				Name:  displayName,
+				Size:  tm.Size,
+			})
+		}
 	}
 
 	slices.SortStableFunc(models, func(i, j api.ListModelResponse) int {
@@ -2608,4 +2635,53 @@ func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, mo
 	if !isStreaming {
 		c.JSON(http.StatusOK, finalResponse)
 	}
+}
+
+func fetchTrendingModels() []struct {
+	Name string
+	Size int64
+} {
+	cacheMutex.RLock()
+	if time.Since(lastFetchTime) < cacheDuration && trendingCache != nil {
+		defer cacheMutex.RUnlock()
+		return trendingCache
+	}
+	cacheMutex.RUnlock()
+
+	cacheMutex.Lock()
+	defer cacheMutex.Unlock()
+
+	if time.Since(lastFetchTime) < cacheDuration && trendingCache != nil {
+		return trendingCache
+	}
+
+	resp, err := httpClient.Get("https://ollama.com/library")
+	if err != nil {
+		slog.Error("failed to fetch trending models", "error", err)
+		return trendingCache
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	matches := reTrending.FindAllStringSubmatch(string(body), 15)
+
+	var results []struct {
+		Name string
+		Size int64
+	}
+
+	for _, match := range matches {
+		results = append(results, struct {
+			Name string
+			Size int64
+		}{
+			Name: match[1],
+			Size: 0,
+		})
+	}
+
+	trendingCache = results
+	lastFetchTime = time.Now()
+
+	return results
 }
