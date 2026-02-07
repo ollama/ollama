@@ -209,10 +209,10 @@ index baadfe9a7..f19417bd7 100644
  }
  #endif
 diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
-index 77deb7fa3..522fe3eae 100644
+index ba12c7c14..128c10fa0 100644
 --- a/ggml/src/ggml-metal/ggml-metal.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal.cpp
-@@ -661,6 +661,7 @@ static enum ggml_backend_dev_type ggml_backend_metal_device_get_type(ggml_backen
+@@ -664,6 +664,7 @@ static enum ggml_backend_dev_type ggml_backend_metal_device_get_type(ggml_backen
      GGML_UNUSED(dev);
  }
  
@@ -220,7 +220,7 @@ index 77deb7fa3..522fe3eae 100644
  static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
      props->name        = ggml_backend_metal_device_get_name(dev);
      props->description = ggml_backend_metal_device_get_description(dev);
-@@ -669,6 +670,7 @@ static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, ggml_bac
+@@ -672,6 +673,7 @@ static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, ggml_bac
  
      ggml_backend_metal_device_get_memory(dev, &props->memory_free, &props->memory_total);
  

@@ -151,10 +151,10 @@ index 464b897b1..0553178f0 100644
                  char pci_bus_id[16] = {};
                  snprintf(pci_bus_id, sizeof(pci_bus_id), "%04x:%02x:%02x.0", prop.pciDomainID, prop.pciBusID, prop.pciDeviceID);
 diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
-index bfec09edb..d142ed24f 100644
+index 9f20b9a25..8d2c93a95 100644
 --- a/ggml/src/ggml-metal/ggml-metal.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal.cpp
-@@ -662,6 +662,7 @@ static enum ggml_backend_dev_type ggml_backend_metal_device_get_type(ggml_backen
+@@ -665,6 +665,7 @@ static enum ggml_backend_dev_type ggml_backend_metal_device_get_type(ggml_backen
  static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
      props->name        = ggml_backend_metal_device_get_name(dev);
      props->description = ggml_backend_metal_device_get_description(dev);

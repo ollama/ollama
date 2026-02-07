@@ -112,10 +112,10 @@ index eeb8625db..464b897b1 100644
  
  static void * ggml_cuda_host_malloc(size_t size) {
 diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
-index a616dcdb4..bfec09edb 100644
+index 1c705362f..9f20b9a25 100644
 --- a/ggml/src/ggml-metal/ggml-metal.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal.cpp
-@@ -26,6 +26,7 @@ static void ggml_backend_metal_buffer_shared_free_buffer(ggml_backend_buffer_t b
+@@ -29,6 +29,7 @@ static void ggml_backend_metal_buffer_shared_free_buffer(ggml_backend_buffer_t b
      GGML_ASSERT(ggml_metal_buffer_is_shared(ctx));
  
      ggml_metal_buffer_free(ctx);
@@ -123,7 +123,7 @@ index a616dcdb4..bfec09edb 100644
  }
  
  static void * ggml_backend_metal_buffer_shared_get_base(ggml_backend_buffer_t buffer) {
-@@ -100,6 +101,7 @@ static void ggml_backend_metal_buffer_private_free_buffer(ggml_backend_buffer_t
+@@ -103,6 +104,7 @@ static void ggml_backend_metal_buffer_private_free_buffer(ggml_backend_buffer_t
      GGML_ASSERT(!ggml_metal_buffer_is_shared(ctx));
  
      ggml_metal_buffer_free(ctx);

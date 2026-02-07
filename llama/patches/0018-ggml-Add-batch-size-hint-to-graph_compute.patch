@@ -232,10 +232,10 @@ index 4f0a1620f..a8635dc97 100644
  
      const int last = last_compute_op(graph);
 diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
-index d142ed24f..77deb7fa3 100644
+index 8d2c93a95..ba12c7c14 100644
 --- a/ggml/src/ggml-metal/ggml-metal.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal.cpp
-@@ -523,9 +523,11 @@ static bool ggml_backend_metal_cpy_tensor_async(ggml_backend_t backend_src, ggml
+@@ -526,9 +526,11 @@ static bool ggml_backend_metal_cpy_tensor_async(ggml_backend_t backend_src, ggml
      return ggml_metal_cpy_tensor_async(ctx_src, ctx_dst, src, dst);
  }
  
