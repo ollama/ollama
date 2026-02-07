@@ -19,7 +19,7 @@ adds support for the Solar Pro architecture
  create mode 100644 src/models/solar.cpp
 
 diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
-index f337afd6b..b08cd324d 100644
+index bedfa1bc3..262a37a61 100644
 --- a/src/CMakeLists.txt
 +++ b/src/CMakeLists.txt
 @@ -131,6 +131,7 @@ add_library(llama

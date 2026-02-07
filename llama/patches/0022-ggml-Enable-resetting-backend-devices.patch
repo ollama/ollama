@@ -61,7 +61,7 @@ index bcc42c5c5..4d8abe025 100644
      GGML_ASSERT(device);
      return device->iface.get_buffer_type(device);
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index f388198e3..5283dee67 100644
+index c741ba305..60d2bb57f 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -118,6 +118,11 @@ int ggml_cuda_get_device() {
@@ -76,7 +76,7 @@ index f388198e3..5283dee67 100644
  static cudaError_t ggml_cuda_device_malloc(void ** ptr, size_t size, int device) {
      ggml_cuda_set_device(device);
      cudaError_t err;
-@@ -5116,6 +5121,11 @@ static void ggml_backend_cuda_device_event_synchronize(ggml_backend_dev_t dev, g
+@@ -5115,6 +5120,11 @@ static void ggml_backend_cuda_device_event_synchronize(ggml_backend_dev_t dev, g
      CUDA_CHECK(cudaEventSynchronize((cudaEvent_t)event->context));
  }
  
@@ -88,7 +88,7 @@ index f388198e3..5283dee67 100644
  static const ggml_backend_device_i ggml_backend_cuda_device_interface = {
      /* .get_name                = */ ggml_backend_cuda_device_get_name,
      /* .get_description         = */ ggml_backend_cuda_device_get_description,
-@@ -5132,6 +5142,7 @@ static const ggml_backend_device_i ggml_backend_cuda_device_interface = {
+@@ -5131,6 +5141,7 @@ static const ggml_backend_device_i ggml_backend_cuda_device_interface = {
      /* .event_new               = */ ggml_backend_cuda_device_event_new,
      /* .event_free              = */ ggml_backend_cuda_device_event_free,
      /* .event_synchronize       = */ ggml_backend_cuda_device_event_synchronize,

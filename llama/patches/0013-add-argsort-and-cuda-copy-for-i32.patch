@@ -291,7 +291,7 @@ index ee84303ef..178e82d76 100644
          if (can_be_transposed) {
              ggml_cpy_scalar_cuda<nv_bfloat16, nv_bfloat16, true>
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index c09a54e66..3e61b5761 100644
+index 612a42a1e..4e3ddc338 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
 @@ -5032,8 +5032,77 @@ kernel void kernel_argsort_f32_i32(
