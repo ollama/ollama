@@ -5,17 +5,17 @@ Subject: [PATCH] add argsort and cuda copy for i32
 
 ---
  ggml/src/ggml-cpu/ops.cpp            |  43 ++++++
- ggml/src/ggml-cuda/argsort.cu        | 122 +++++++++++++--
+ ggml/src/ggml-cuda/argsort.cu        | 120 +++++++++++++--
  ggml/src/ggml-cuda/cpy-utils.cuh     |   6 +
  ggml/src/ggml-cuda/cpy.cu            |  40 +++++
  ggml/src/ggml-metal/ggml-metal.metal | 215 +++++++++++++++++++++++++++
- 5 files changed, 414 insertions(+), 12 deletions(-)
+ 5 files changed, 413 insertions(+), 11 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index 303278397..7d1733adb 100644
+index 48c896436..c08e73f3c 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
-@@ -7932,6 +7932,45 @@ static void ggml_compute_forward_argsort_f32(
+@@ -7958,6 +7958,45 @@ static void ggml_compute_forward_argsort_f32(
      }
  }
  
@@ -61,7 +61,7 @@ index 303278397..7d1733adb 100644
  void ggml_compute_forward_argsort(
      const ggml_compute_params * params,
      ggml_tensor * dst) {
-@@ -7943,6 +7982,10 @@ void ggml_compute_forward_argsort(
+@@ -7969,6 +8008,10 @@ void ggml_compute_forward_argsort(
              {
                  ggml_compute_forward_argsort_f32(params, dst);
              } break;
@@ -73,10 +73,10 @@ index 303278397..7d1733adb 100644
              {
                  GGML_ABORT("fatal error");
 diff --git a/ggml/src/ggml-cuda/argsort.cu b/ggml/src/ggml-cuda/argsort.cu
-index da9652c3b..b82be371c 100644
+index 4896669c3..6fae8b808 100644
 --- a/ggml/src/ggml-cuda/argsort.cu
 +++ b/ggml/src/ggml-cuda/argsort.cu
-@@ -168,13 +168,107 @@ static void argsort_f32_i32_cuda_bitonic(const float *   x,
+@@ -198,13 +198,107 @@ void argsort_f32_i32_cuda_bitonic(const float *   x,
      }
  }
  
@@ -185,28 +185,27 @@ index da9652c3b..b82be371c 100644
      GGML_ASSERT( dst->type == GGML_TYPE_I32);
      GGML_ASSERT(ggml_is_contiguous(src0));
  
-@@ -183,18 +277,22 @@ void ggml_cuda_op_argsort(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+@@ -213,18 +307,22 @@ void ggml_cuda_op_argsort(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
  
      enum ggml_sort_order order = (enum ggml_sort_order) dst->op_params[0];
  
--#ifdef GGML_CUDA_USE_CUB
++    if (src0->type == GGML_TYPE_I32) {
++        argsort_i32_i32_cuda((const int32_t *)src0_d, (int *)dst_d, ncols, nrows, order, stream);
++    } else {
+ #ifdef GGML_CUDA_USE_CUB
 -    const int    ncols_pad      = next_power_of_2(ncols);
 -    const size_t shared_mem     = ncols_pad * sizeof(int);
 -    const size_t max_shared_mem = ggml_cuda_info().devices[ggml_cuda_get_device()].smpb;
--
--    if (shared_mem > max_shared_mem || ncols > 1024) {
--        ggml_cuda_pool & pool = ctx.pool();
--        argsort_f32_i32_cuda_cub(pool, src0_d, (int *) dst_d, ncols, nrows, order, stream);
-+    if (src0->type == GGML_TYPE_I32) {
-+        argsort_i32_i32_cuda((const int32_t *)src0_d, (int *)dst_d, ncols, nrows, order, stream);
-     } else {
--        argsort_f32_i32_cuda_bitonic(src0_d, (int *) dst_d, ncols, nrows, order, stream);
--    }
-+#ifdef GGML_CUDA_USE_CUB
 +        const int    ncols_pad      = next_power_of_2(ncols);
 +        const size_t shared_mem     = ncols_pad * sizeof(int);
 +        const size_t max_shared_mem = ggml_cuda_info().devices[ggml_cuda_get_device()].smpb;
-+
+ 
+-    if (shared_mem > max_shared_mem || ncols > 1024) {
+-        ggml_cuda_pool & pool = ctx.pool();
+-        argsort_f32_i32_cuda_cub(pool, src0_d, (int *) dst_d, ncols, nrows, order, stream);
+-    } else {
+-        argsort_f32_i32_cuda_bitonic(src0_d, (int *) dst_d, ncols, nrows, order, stream);
+-    }
 +        if (shared_mem > max_shared_mem || ncols > 1024) {
 +            ggml_cuda_pool & pool = ctx.pool();
 +            argsort_f32_i32_cuda_cub(pool, src0_d, (int *) dst_d, ncols, nrows, order, stream);
@@ -234,10 +233,10 @@ index 7697c292d..00d773dd3 100644
 +    *dst = *src;
 +}
 diff --git a/ggml/src/ggml-cuda/cpy.cu b/ggml/src/ggml-cuda/cpy.cu
-index c4ceb4fc5..0e53ecc39 100644
+index ee84303ef..178e82d76 100644
 --- a/ggml/src/ggml-cuda/cpy.cu
 +++ b/ggml/src/ggml-cuda/cpy.cu
-@@ -352,6 +352,43 @@ static void ggml_cpy_f32_iq4_nl_cuda(
+@@ -369,6 +369,43 @@ static void ggml_cpy_f32_iq4_nl_cuda(
          (cx, cdst, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13);
  }
  
@@ -281,7 +280,7 @@ index c4ceb4fc5..0e53ecc39 100644
  void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, ggml_tensor * src1) {
      const int64_t ne = ggml_nelements(src0);
      GGML_ASSERT(ne == ggml_nelements(src1));
-@@ -481,6 +518,9 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
+@@ -495,6 +532,9 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
              ggml_cpy_scalar_cuda<half, float>
                  (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
          }
@@ -292,10 +291,10 @@ index c4ceb4fc5..0e53ecc39 100644
          if (can_be_transposed) {
              ggml_cpy_scalar_cuda<nv_bfloat16, nv_bfloat16, true>
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 51bcbae30..236838e9e 100644
+index 17e358d1a..2e463bd99 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -4954,8 +4954,77 @@ kernel void kernel_argsort_f32_i32(
+@@ -4955,8 +4955,77 @@ kernel void kernel_argsort_f32_i32(
      }
  }
  
@@ -373,7 +372,7 @@ index 51bcbae30..236838e9e 100644
  
  typedef void (argsort_merge_t)(
          constant   ggml_metal_kargs_argsort_merge & args,
-@@ -5110,8 +5179,154 @@ kernel void kernel_argsort_merge_f32_i32(
+@@ -5111,8 +5180,154 @@ kernel void kernel_argsort_merge_f32_i32(
      }
  }
  

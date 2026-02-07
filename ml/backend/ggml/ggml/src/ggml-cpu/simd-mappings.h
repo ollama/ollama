@@ -14,10 +14,6 @@
 #include <arm_neon.h>
 #endif
 
-#if defined(__F16C__)
-#include <immintrin.h>
-#endif
-
 #if defined(__riscv_v_intrinsic)
 #include <riscv_vector.h>
 #endif
@@ -658,6 +654,14 @@ static inline void __avx_f32cx8_store(ggml_fp16_t *x, __m256 y) {
           vec_extract(x[0], 2) +               \
           vec_extract(x[0], 3);                \
 }
+#define GGML_F32x4_REDUCE_4(res, s0, s1, s2, s3)        \
+{                                                       \
+    vector float v = vec_add(vec_add(s0, s1),           \
+                             vec_add(s2, s3));          \
+    v = vec_add(v, vec_sld(v, v, 8));                   \
+    v = vec_add(v, vec_sld(v, v, 4));                   \
+    res += (ggml_float) vec_extract(v, 0);              \
+}
 
 #define GGML_F32_VEC        GGML_F32x4
 #define GGML_F32_VEC_ZERO   GGML_F32x4_ZERO
@@ -693,6 +697,29 @@ static inline unsigned char ggml_endian_byte(int i) {
     vec_xst(vec_pack_to_short_fp32(r[i - GGML_ENDIAN_BYTE(1)],  \
                                    r[i - GGML_ENDIAN_BYTE(0)]), \
             0, p - GGML_F16_EPR)
+
+//BF16 POWER9
+#define GGML_BF16_STEP 16
+#define GGML_BF16_EPR  8
+
+#define GGML_BF16x8         vector unsigned short
+#define GGML_BF16x8_ZERO    vec_splats((unsigned short)0)
+#define GGML_BF16x8_LOAD(p) vec_xl(0, (const unsigned short *)(p))
+
+#define GGML_BF16_VEC          GGML_BF16x8
+#define GGML_BF16_VEC_ZERO     GGML_BF16x8_ZERO
+#define GGML_BF16_VEC_LOAD     GGML_BF16x8_LOAD
+#if defined(__LITTLE_ENDIAN__)
+#define GGML_BF16_TO_F32_LO(v) ((vector float) vec_mergel(GGML_BF16_VEC_ZERO, (v)))
+#define GGML_BF16_TO_F32_HI(v) ((vector float) vec_mergeh(GGML_BF16_VEC_ZERO, (v)))
+#else
+#define GGML_BF16_TO_F32_LO(v) ((vector float) vec_mergel((v), GGML_BF16_VEC_ZERO))
+#define GGML_BF16_TO_F32_HI(v) ((vector float) vec_mergeh((v), GGML_BF16_VEC_ZERO))
+#endif
+#define GGML_BF16_FMA_LO(acc, x, y) \
+    (acc) = GGML_F32x4_FMA((acc), GGML_BF16_TO_F32_LO(x), GGML_BF16_TO_F32_LO(y))
+#define GGML_BF16_FMA_HI(acc, x, y) \
+    (acc) = GGML_F32x4_FMA((acc), GGML_BF16_TO_F32_HI(x), GGML_BF16_TO_F32_HI(y))
 
 #elif defined(__wasm_simd128__)
 
