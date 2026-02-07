@@ -4,12 +4,12 @@ float rope_yarn_ramp(const float low, const float high, const uint i0) {
     return 1.0f - min(1.0f, max(0.0f, y));
 }
 
-uint rope_a_coord(const uint i0, const uint i01, const uint i02, rope_params p) {
+uint rope_a_coord(const uint i0, const uint i01, const uint i02, const uint i03, rope_params p) {
 #if RMS_NORM_ROPE_FUSION
     // Per-row offset in shared memory
     const uint ix = i0;
 #else
-    const uint ix = i02*p.nb02 + i01*p.nb01 + i0;
+    const uint ix = i03*p.nb03 + i02*p.nb02 + i01*p.nb01 + i0;
 #endif
     return ix;
 }
@@ -34,26 +34,19 @@ void rope_yarn(const float theta_extrap, const uint i0, out float cos_theta, out
     sin_theta = sin(theta) * mscale;
 }
 
-void rope_norm(const uint i0, const uint i1, rope_params p) {
-    uint ne0 = p.ncols;
-    uint ne1 = p.p_delta_rows;
-
-    if (i0 >= ne0) {
+void rope_norm(const uint i0, const uint i1, const uint i2, const uint i3, rope_params p) {
+    if (i0 >= p.ne00) {
         return;
     }
 
-    // i1 is actually i2*nb2+i1, but the rows are contiguous
-    const uint i01 = i1 % ne1;
-    const uint i02 = i1 / ne1;
-
-    uint idst = i1*ne0 + i0;
-    const uint ix = rope_a_coord(i0, i01, i02, p);
+    uint idst = i0 + i1 * p.nb11 + i2 * p.nb12 + i3 * p.nb13;
+    const uint ix = rope_a_coord(i0, i1, i2, i3, p);
 
     // Fusion optimization: ROPE + VIEW + SET_ROWS.
     // The rope output is viewed as a 1D tensor and offset based on a row index in rope_data_i.
     if (p.set_rows_stride != 0) {
-        idst = i01*ne0 + i0;
-        idst += rope_data_i[i02].x * p.set_rows_stride;
+        idst = i1*p.nb11 + i0;
+        idst += rope_data_i[i2].x * p.set_rows_stride;
     }
 
     if (i0 >= p.n_dims) {
@@ -63,7 +56,7 @@ void rope_norm(const uint i0, const uint i1, rope_params p) {
         return;
     }
 
-    const float theta_base = rope_data_pos[i02] * pow(p.theta_scale, i0/2.0f);
+    const float theta_base = rope_data_pos[i2] * pow(p.theta_scale, i0/2.0f);
 
     const float freq_factor = p.has_ff != 0 ? rope_data_ff[i0/2] : 1.0f;
 
@@ -77,25 +70,19 @@ void rope_norm(const uint i0, const uint i1, rope_params p) {
     rope_data_d[idst + 1] = ROPE_D_TYPE(x0*sin_theta + x1*cos_theta);
 }
 
-void rope_neox(const uint i0, const uint i1, rope_params p) {
-    uint ne0 = p.ncols;
-    uint ne1 = p.p_delta_rows;
-
-    if (i0 >= ne0) {
+void rope_neox(const uint i0, const uint i1, const uint i2, const uint i3, rope_params p) {
+    if (i0 >= p.ne00) {
         return;
     }
 
-    const uint i01 = i1 % ne1;
-    const uint i02 = i1 / ne1;
-
-    uint idst = i1*ne0 + i0/2;
-    const uint ix = rope_a_coord(i0/2, i01, i02, p);
+    uint idst = i0/2 + i1 * p.nb11 + i2 * p.nb12 + i3 * p.nb13;
+    const uint ix = rope_a_coord(i0/2, i1, i2, i3, p);
 
     // Fusion optimization: ROPE + VIEW + SET_ROWS.
     // The rope output is viewed as a 1D tensor and offset based on a row index in rope_data_i.
     if (p.set_rows_stride != 0) {
-        idst = i01*ne0 + i0/2;
-        idst += rope_data_i[i02].x * p.set_rows_stride;
+        idst = i1*p.nb11 + i0/2;
+        idst += rope_data_i[i2].x * p.set_rows_stride;
     }
 
     if (i0 >= p.n_dims) {
@@ -105,7 +92,7 @@ void rope_neox(const uint i0, const uint i1, rope_params p) {
         return;
     }
 
-    const float theta_base = rope_data_pos[i02] * pow(p.theta_scale, i0/2.0f);
+    const float theta_base = rope_data_pos[i2] * pow(p.theta_scale, i0/2.0f);
 
     const float freq_factor = p.has_ff != 0 ? rope_data_ff[i0/2] : 1.0f;
 
@@ -120,26 +107,19 @@ void rope_neox(const uint i0, const uint i1, rope_params p) {
 }
 
 
-void rope_multi(const uint i0, const uint i1, rope_params p) {
-    uint ne0 = p.ncols;
-    uint ne1 = p.p_delta_rows;
-    uint ne2 = p.ne02;
-
-    if (i0 >= ne0) {
+void rope_multi(const uint i0, const uint i1, const uint i2, const uint i3, rope_params p) {
+    if (i0 >= p.ne00) {
         return;
     }
 
-    const uint i01 = i1 % ne1;
-    const uint i02 = i1 / ne1;
-
-    uint idst = i1*ne0 + i0/2;
-    const uint ix = rope_a_coord(i0/2, i01, i02, p);
+    uint idst = i0/2 + i1 * p.nb11 + i2 * p.nb12 + i3 * p.nb13;
+    const uint ix = rope_a_coord(i0/2, i1, i2, i3, p);
 
     // Fusion optimization: ROPE + VIEW + SET_ROWS.
     // The rope output is viewed as a 1D tensor and offset based on a row index in rope_data_i.
     if (p.set_rows_stride != 0) {
-        idst = i01*ne0 + i0/2;
-        idst += rope_data_i[i02].x * p.set_rows_stride;
+        idst = i1*p.nb11 + i0/2;
+        idst += rope_data_i[i2].x * p.set_rows_stride;
     }
 
     if (i0 >= p.n_dims) {
@@ -156,26 +136,26 @@ void rope_multi(const uint i0, const uint i1, rope_params p) {
     float theta_base = 0.0;
     if (p.is_imrope != 0) {
         if (sector % 3 == 1 && sector < 1 + 3 * p.sections[1]) {
-            theta_base = rope_data_pos[i02 + ne2 * 1]*pow(p.theta_scale, i0/2.0f);
+            theta_base = rope_data_pos[i2 + p.ne02 * 1]*pow(p.theta_scale, i0/2.0f);
         } else if (sector % 3 == 2 && sector < 2 + 3 * p.sections[2]) {
-            theta_base = rope_data_pos[i02 + ne2 * 2]*pow(p.theta_scale, i0/2.0f);
+            theta_base = rope_data_pos[i2 + p.ne02 * 2]*pow(p.theta_scale, i0/2.0f);
         } else if (sector % 3 == 0 && sector < 3 * p.sections[0]) {
-            theta_base = rope_data_pos[i02]*pow(p.theta_scale, i0/2.0f);
+            theta_base = rope_data_pos[i2]*pow(p.theta_scale, i0/2.0f);
         //} else {
-        //    theta_base = rope_data_pos[i02 + ne2 * 3]*pow(p.theta_scale, i0/2.0f);
+        //    theta_base = rope_data_pos[i2 + p.ne02 * 3]*pow(p.theta_scale, i0/2.0f);
         }
     } else {
         if (sector < p.sections[0]) {
-            theta_base = rope_data_pos[i02]*pow(p.theta_scale, i0/2.0f);
+            theta_base = rope_data_pos[i2]*pow(p.theta_scale, i0/2.0f);
         }
         else if (sector >= p.sections[0] && sector < sec_w) {
-            theta_base = rope_data_pos[i02 + ne2 * 1]*pow(p.theta_scale, i0/2.0f);
+            theta_base = rope_data_pos[i2 + p.ne02 * 1]*pow(p.theta_scale, i0/2.0f);
         }
         else if (sector >= sec_w && sector < sec_w + p.sections[2]) {
-            theta_base = rope_data_pos[i02 + ne2 * 2]*pow(p.theta_scale, i0/2.0f);
+            theta_base = rope_data_pos[i2 + p.ne02 * 2]*pow(p.theta_scale, i0/2.0f);
         }
         else if (sector >= sec_w + p.sections[2]) {
-            theta_base = rope_data_pos[i02 + ne2 * 3]*pow(p.theta_scale, i0/2.0f);
+            theta_base = rope_data_pos[i2 + p.ne02 * 3]*pow(p.theta_scale, i0/2.0f);
         }
     }
 
@@ -191,20 +171,13 @@ void rope_multi(const uint i0, const uint i1, rope_params p) {
     rope_data_d[idst + p.n_dims/2] = ROPE_D_TYPE(x0*sin_theta + x1*cos_theta);
 }
 
-void rope_vision(const uint i0, const uint i1, rope_params p) {
-    uint ne0 = p.ncols;
-    uint ne1 = p.p_delta_rows;
-    uint ne2 = p.ne02;
-
-    if (i0 >= ne0) {
+void rope_vision(const uint i0, const uint i1, const uint i2, const uint i3, rope_params p) {
+    if (i0 >= p.ne00) {
         return;
     }
 
-    const uint i01 = i1 % ne1;
-    const uint i02 = i1 / ne1;
-
-    const uint idst = i1*ne0 + i0/2;
-    const uint ix = rope_a_coord(i0/2, i01, i02, p);
+    const uint idst = i0/2 + i1 * p.nb11 + i2 * p.nb12 + i3 * p.nb13;
+    const uint ix = rope_a_coord(i0/2, i1, i2, i3, p);
 
     const int sect_dims = p.sections[0] + p.sections[1];
     const int sec_w = p.sections[1] + p.sections[0];
@@ -213,11 +186,11 @@ void rope_vision(const uint i0, const uint i1, rope_params p) {
     float theta_base = 0.0;
     if (sector < p.sections[0]) {
         const uint p0 = sector;
-        theta_base = rope_data_pos[i02]*pow(p.theta_scale, p0);
+        theta_base = rope_data_pos[i2]*pow(p.theta_scale, p0);
     }
     else if (sector >= p.sections[0] && sector < sec_w) {
         const uint p0 = sector - p.sections[0];
-        theta_base = rope_data_pos[i02 + ne2]*pow(p.theta_scale, p0);
+        theta_base = rope_data_pos[i2 + p.ne02]*pow(p.theta_scale, p0);
     }
 
     const float freq_factor = p.has_ff != 0 ? rope_data_ff[i0/2] : 1.0f;

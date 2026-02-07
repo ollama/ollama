@@ -82,25 +82,25 @@ index 3e61b5761..bbe08717c 100644
              } else {
                  if (sector < args.sect_0) {
 diff --git a/ggml/src/ggml-vulkan/vulkan-shaders/rope_funcs.glsl b/ggml/src/ggml-vulkan/vulkan-shaders/rope_funcs.glsl
-index aacec9846..0163d8bbc 100644
+index 2e5345990..f2028c4c5 100644
 --- a/ggml/src/ggml-vulkan/vulkan-shaders/rope_funcs.glsl
 +++ b/ggml/src/ggml-vulkan/vulkan-shaders/rope_funcs.glsl
-@@ -155,14 +155,14 @@ void rope_multi(const uint i0, const uint i1, rope_params p) {
+@@ -135,14 +135,14 @@ void rope_multi(const uint i0, const uint i1, const uint i2, const uint i3, rope
  
      float theta_base = 0.0;
      if (p.is_imrope != 0) {
 -        if (sector % 3 == 1 && sector < 3 * p.sections[1]) {
 +        if (sector % 3 == 1 && sector < 1 + 3 * p.sections[1]) {
-             theta_base = rope_data_pos[i02 + ne2 * 1]*pow(p.theta_scale, i0/2.0f);
+             theta_base = rope_data_pos[i2 + p.ne02 * 1]*pow(p.theta_scale, i0/2.0f);
 -        } else if (sector % 3 == 2 && sector < 3 * p.sections[2]) {
 +        } else if (sector % 3 == 2 && sector < 2 + 3 * p.sections[2]) {
-             theta_base = rope_data_pos[i02 + ne2 * 2]*pow(p.theta_scale, i0/2.0f);
+             theta_base = rope_data_pos[i2 + p.ne02 * 2]*pow(p.theta_scale, i0/2.0f);
          } else if (sector % 3 == 0 && sector < 3 * p.sections[0]) {
-             theta_base = rope_data_pos[i02]*pow(p.theta_scale, i0/2.0f);
+             theta_base = rope_data_pos[i2]*pow(p.theta_scale, i0/2.0f);
 -        } else {
--            theta_base = rope_data_pos[i02 + ne2 * 3]*pow(p.theta_scale, i0/2.0f);
+-            theta_base = rope_data_pos[i2 + p.ne02 * 3]*pow(p.theta_scale, i0/2.0f);
 +        //} else {
-+        //    theta_base = rope_data_pos[i02 + ne2 * 3]*pow(p.theta_scale, i0/2.0f);
++        //    theta_base = rope_data_pos[i2 + p.ne02 * 3]*pow(p.theta_scale, i0/2.0f);
          }
      } else {
          if (sector < p.sections[0]) {
