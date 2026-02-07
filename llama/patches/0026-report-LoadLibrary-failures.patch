@@ -4,14 +4,16 @@ Date: Fri, 17 Oct 2025 14:17:00 -0700
 Subject: [PATCH] report LoadLibrary failures
 
 ---
- ggml/src/ggml-backend-dl.cpp | 27 +++++++++++++++++++++++++++
- 1 file changed, 27 insertions(+)
+ ggml/src/ggml-backend-dl.cpp | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
 
 diff --git a/ggml/src/ggml-backend-dl.cpp b/ggml/src/ggml-backend-dl.cpp
-index a65cf0090..f6311a393 100644
+index a65cf0090..34949c261 100644
 --- a/ggml/src/ggml-backend-dl.cpp
 +++ b/ggml/src/ggml-backend-dl.cpp
-@@ -2,12 +2,39 @@
+@@ -1,13 +1,41 @@
+ #include "ggml-backend-dl.h"
++#include "ggml-impl.h"
  
  #ifdef _WIN32
  
