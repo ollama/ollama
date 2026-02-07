@@ -5,9 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand"
+	"os"
+	"os/exec"
 	"reflect"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +26,7 @@ import (
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/x/imagegen"
+	"github.com/ollama/ollama/x/mlxrunner"
 )
 
 type LlmRequest struct {
@@ -195,23 +200,12 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						slog.Debug("updating default concurrency", "OLLAMA_MAX_LOADED_MODELS", maxRunners, "gpu_count", len(gpus))
 					}
 
-					// Check for image generation models - all use MLX runner
-					if slices.Contains(pending.model.Config.Capabilities, "image") {
-						if s.loadMLX(pending) {
+					// Check for experimental safetensors LLM models
+					if pending.model.Config.ModelFormat == "safetensors" {
+						if s.loadSafetensors(pending) {
 							break
 						}
 						continue
-					}
-
-					// Check for experimental safetensors LLM models
-					if pending.model.Config.ModelFormat == "safetensors" {
-						if slices.Contains(pending.model.Config.Capabilities, "completion") {
-							// LLM model with safetensors format - use MLX runner
-							if s.loadMLX(pending) {
-								break
-							}
-							continue
-						}
 					}
 
 					// Load model for fitting
@@ -563,9 +557,90 @@ iGPUScan:
 	return false
 }
 
-// loadMLX loads an experimental safetensors model using the unified MLX runner.
+func subproc(args, environ []string) (*exec.Cmd, int, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, 0, fmt.Errorf("unable to lookup executable path: %w", err)
+	}
+
+	for range 3 {
+		// get a random port in the ephemeral range
+		port := rand.Intn(65535-49152) + 49152
+		cmd := exec.Command(exe, slices.Concat([]string{"runner"}, args, []string{"--port", strconv.Itoa(port)})...)
+		cmd.Env = slices.Concat(os.Environ(), environ)
+		cmd.Stdout = os.Stderr
+		cmd.Stderr = os.Stderr
+		if err := cmd.Start(); err != nil {
+			continue
+		}
+
+		return cmd, port, nil
+	}
+
+	return nil, 0, fmt.Errorf("unable to start subprocess after multiple attempts")
+}
+
+func (s *Scheduler) loadSafetensors(req *LlmRequest) bool {
+	if slices.Contains(req.model.Config.Capabilities, "image") {
+		return s.loadImageGen(req)
+	}
+
+	args := []string{"--mlx-engine", "--model", req.model.ShortName}
+	environ := []string{}
+	cmd, port, err := subproc(args, environ)
+	if err != nil {
+		req.errCh <- fmt.Errorf("failed to start mlx subprocess: %w", err)
+		return true
+	}
+
+	sessionDuration := envconfig.KeepAlive()
+	if req.sessionDuration != nil {
+		sessionDuration = req.sessionDuration.Duration
+	}
+
+	runner := &runnerRef{
+		model:           req.model,
+		modelPath:       req.model.ModelPath,
+		Options:         &req.opts,
+		loading:         false,
+		sessionDuration: sessionDuration,
+		llama: &mlxrunner.Client{
+			Cmd:  cmd,
+			Port: port,
+		},
+	}
+
+	s.loadedMu.Lock()
+	s.loaded[req.model.ModelPath] = runner
+	s.loadedMu.Unlock()
+
+	runner.refMu.Lock()
+	if sessionDuration > 0 {
+		runner.expireTimer = time.AfterFunc(sessionDuration, func() {
+			s.expiredCh <- runner
+		})
+	}
+	runner.refMu.Unlock()
+	req.useLoadedRunner(runner, s.finishedReqCh)
+
+	for range time.Tick(20 * time.Millisecond) {
+		if err := func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+			defer cancel()
+			return runner.llama.Ping(ctx)
+		}(); err != nil {
+			continue
+		}
+
+		break
+	}
+
+	return true
+}
+
+// loadImageGen loads an experimental safetensors model using the unified MLX runner.
 // This supports both LLM (completion) and image generation models.
-func (s *Scheduler) loadMLX(req *LlmRequest) bool {
+func (s *Scheduler) loadImageGen(req *LlmRequest) bool {
 	// Determine mode based on capabilities
 	var mode imagegen.ModelMode
 	if slices.Contains(req.model.Config.Capabilities, "image") {
