@@ -7,6 +7,9 @@
 #include "ggml-metal-context.h"
 #include "ggml-metal-ops.h"
 
+#include <mutex>
+#include <string>
+
 #define GGML_METAL_NAME "MTL"
 #define GGML_METAL_MAX_DEVICES 16
 
