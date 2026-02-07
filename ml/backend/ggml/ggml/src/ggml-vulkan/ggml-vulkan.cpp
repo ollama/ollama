@@ -14505,34 +14505,38 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
     const std::vector<vk::ExtensionProperties> ext_props = device.enumerateDeviceExtensionProperties();
 
     bool ext_support = false;
-
     for (const auto& properties : ext_props) {
-        if (strcmp("VK_EXT_pci_bus_info", properties.extensionName) == 0) {
+        if (strcmp(ext.extensionName, VK_EXT_PCI_BUS_INFO_EXTENSION_NAME) == 0) {
             ext_support = true;
             break;
         }
-    }
-
-    if (!ext_support) {
-        return "";
     }
 
     vk::PhysicalDeviceProperties2 props = {};
     vk::PhysicalDevicePCIBusInfoPropertiesEXT pci_bus_info = {};
 
     props.pNext = &pci_bus_info;
+    try {
+        device.getProperties2(&props);
 
-    device.getProperties2(&props);
+        // If not supported and values are 0, it might be invalid
+        if (!ext_support && pci_bus_info.pciDomain == 0 && pci_bus_info.pciBus == 0 &&
+            pci_bus_info.pciDevice == 0 && pci_bus_info.pciFunction == 0) {
+            return "";
+        }
 
-    const uint32_t pci_domain = pci_bus_info.pciDomain;
-    const uint32_t pci_bus = pci_bus_info.pciBus;
-    const uint32_t pci_device = pci_bus_info.pciDevice;
-    const uint8_t pci_function = (uint8_t) pci_bus_info.pciFunction; // pci function is between 0 and 7, prevent printf overflow warning
+        const uint32_t pci_domain = pci_bus_info.pciDomain;
+        const uint32_t pci_bus = pci_bus_info.pciBus;
+        const uint32_t pci_device = pci_bus_info.pciDevice;
+        const uint8_t pci_function = (uint8_t) pci_bus_info.pciFunction; // pci function is between 0 and 7, prevent printf overflow warning
 
-    char pci_bus_id[16] = {};
-    snprintf(pci_bus_id, sizeof(pci_bus_id), "%04x:%02x:%02x.%x", pci_domain, pci_bus, pci_device, pci_function);
+        char pci_bus_id[16] = {};
+        snprintf(pci_bus_id, sizeof(pci_bus_id), "%04x:%02x:%02x.%x", pci_domain, pci_bus, pci_device, pci_function);
 
-    return std::string(pci_bus_id);
+        return std::string(pci_bus_id);
+    } catch(...) {
+        return "";
+    }
 }
 
 //////////////////////////
