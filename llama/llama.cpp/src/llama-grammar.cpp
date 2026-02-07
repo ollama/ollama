@@ -2,7 +2,7 @@
 
 #include "llama-impl.h"
 #include "llama-vocab.h"
-#include "llama-sampling.h"
+#include "llama-sampler.h"
 
 #include <cmath>
 #include <algorithm>

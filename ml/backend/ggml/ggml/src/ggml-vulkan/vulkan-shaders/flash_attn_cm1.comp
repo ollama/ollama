@@ -42,8 +42,6 @@ D_TYPE perElemOpGqaStore(const in uint32_t r, const in uint32_t c, const in D_TY
     return elem;
 }
 
-shared float tmpsh[row_split];
-
 const uint32_t qstride = HSK_pad / 4 + 2; // in units of f16vec4
 shared f16vec4 Qf[Br * qstride];
 
@@ -134,6 +132,10 @@ void main() {
         }
     }
 
+    const uint32_t mo_stride = CEIL_DIV(KV, 16 * Bc);
+    // mo_offset will point to the tile starting at row i*Br and col 0
+    uint32_t mo_offset = mo_stride * i;
+
 #if BLOCK_SIZE > 1
     uint32_t k_offset = (ik2*p.nb12 + ik3*p.nb13) / BLOCK_BYTE_SIZE;
     uint32_t v_offset = (iv2*p.nb22 + iv3*p.nb23) / BLOCK_BYTE_SIZE;
@@ -144,65 +146,73 @@ void main() {
     uint32_t m_offset = gqa_iq1*KV;
     if (p.nem2 != 1 || p.nem3 != 1) {
         m_offset += ((iq3 % p.nem3) * p.nem2 + (iq2 % p.nem2)) * p.nem1 * KV;
+        mo_offset += ((iq3 % p.nem3) * p.nem2 + (iq2 % p.nem2)) * CEIL_DIV(p.nem1, Br) * mo_stride;
     }
+
+    uint32_t mask_opt = 0;
+    uint32_t mask_opt_idx = ~0;
 
     [[dont_unroll]]
     for (uint32_t j = start_j; j < end_j; ++j) {
 
         f16vec4 mask_cache[Bc * Br / 4 / WorkGroupSize];
-        if ((p.mask_n_head_log2 & MASK_ENABLE_BIT) != 0) {
-            bool nem1_bounds_check = !(p.gqa_ratio > 1) && (p.nem1 % Br) != 0;
+        [[unroll]] for (uint32_t idx = 0; idx < mask_cache.length(); ++idx) {
+            mask_cache[idx] = f16vec4(0);
+        }
 
-            float max_mask = NEG_FLT_MAX_OVER_2;
-            [[unroll]] for (uint32_t idx = 0; idx < Bc * Br / 4; idx += gl_WorkGroupSize.x) {
-                uint32_t c = (idx + tid) / (Br / 4);
-                uint32_t r = (idx + tid) % (Br / 4);
-                if (idx + tid < Bc * Br / 4 || idx + gl_WorkGroupSize.x <= Bc * Br / 4) {
-                    if ((!KV_bounds_check || j * Bc + c < KV)) {
-                        f16vec4 m;
-                        if (!nem1_bounds_check || i * Br + r * 4 + 3 < p.nem1) {
-                            m = f16vec4(data_m[m_offset + (i * Br + r * 4    ) * m_stride + (j * Bc + c)],
-                                        data_m[m_offset + (i * Br + r * 4 + 1) * m_stride + (j * Bc + c)],
-                                        data_m[m_offset + (i * Br + r * 4 + 2) * m_stride + (j * Bc + c)],
-                                        data_m[m_offset + (i * Br + r * 4 + 3) * m_stride + (j * Bc + c)]);
-                            max_mask = max(max(max(max(max_mask, float(m[0])), float(m[1])), float(m[2])), float(m[3]));
-                        } else if (i * Br + r * 4 + 2 < p.nem1) {
-                            m = f16vec4(data_m[m_offset + (i * Br + r * 4    ) * m_stride + (j * Bc + c)],
-                                        data_m[m_offset + (i * Br + r * 4 + 1) * m_stride + (j * Bc + c)],
-                                        data_m[m_offset + (i * Br + r * 4 + 2) * m_stride + (j * Bc + c)],
-                                        0.0);
-                            max_mask = max(max(max(max_mask, float(m[0])), float(m[1])), float(m[2]));
-                        } else if (i * Br + r * 4 + 1 < p.nem1) {
-                            m = f16vec4(data_m[m_offset + (i * Br + r * 4    ) * m_stride + (j * Bc + c)],
-                                        data_m[m_offset + (i * Br + r * 4 + 1) * m_stride + (j * Bc + c)],
-                                        0.0,
-                                        0.0);
-                            max_mask = max(max(max_mask, float(m[0])), float(m[1]));
-                        } else if (i * Br + r * 4 < p.nem1) {
-                            m = f16vec4(data_m[m_offset + (i * Br + r * 4    ) * m_stride + (j * Bc + c)],
-                                        0.0,
-                                        0.0,
-                                        0.0);
-                            max_mask = max(max_mask, float(m[0]));
-                        } else {
-                            m = f16vec4(0.0);
+        if (MASK_ENABLE) {
+
+            if (USE_MASK_OPT && mask_opt_idx != j / 16) {
+                mask_opt_idx = j / 16;
+                mask_opt = data_mask_opt[mo_offset + mask_opt_idx];
+            }
+            uint32_t mask_opt_bits = (mask_opt >> ((j % 16) * 2)) & 0x3;
+            if (mask_opt_bits == MASK_OPT_ALL_NEG_INF) {
+                // skip this block
+                continue;
+            }
+            // Only load if the block is not all zeros
+            if (mask_opt_bits != MASK_OPT_ALL_ZERO) {
+                bool nem1_bounds_check = !(p.gqa_ratio > 1) && (p.nem1 % Br) != 0;
+
+                float max_mask = NEG_FLT_MAX_OVER_2;
+                [[unroll]] for (uint32_t idx = 0; idx < Bc * Br / 4; idx += gl_WorkGroupSize.x) {
+                    uint32_t c = (idx + tid) / (Br / 4);
+                    uint32_t r = (idx + tid) % (Br / 4);
+                    if (idx + tid < Bc * Br / 4 || idx + gl_WorkGroupSize.x <= Bc * Br / 4) {
+                        if ((!KV_bounds_check || j * Bc + c < KV)) {
+                            f16vec4 m;
+                            if (!nem1_bounds_check || i * Br + r * 4 + 3 < p.nem1) {
+                                m = f16vec4(data_m[m_offset + (i * Br + r * 4    ) * m_stride + (j * Bc + c)],
+                                            data_m[m_offset + (i * Br + r * 4 + 1) * m_stride + (j * Bc + c)],
+                                            data_m[m_offset + (i * Br + r * 4 + 2) * m_stride + (j * Bc + c)],
+                                            data_m[m_offset + (i * Br + r * 4 + 3) * m_stride + (j * Bc + c)]);
+                                max_mask = max(max(max(max(max_mask, float(m[0])), float(m[1])), float(m[2])), float(m[3]));
+                            } else if (i * Br + r * 4 + 2 < p.nem1) {
+                                m = f16vec4(data_m[m_offset + (i * Br + r * 4    ) * m_stride + (j * Bc + c)],
+                                            data_m[m_offset + (i * Br + r * 4 + 1) * m_stride + (j * Bc + c)],
+                                            data_m[m_offset + (i * Br + r * 4 + 2) * m_stride + (j * Bc + c)],
+                                            0.0);
+                                max_mask = max(max(max(max_mask, float(m[0])), float(m[1])), float(m[2]));
+                            } else if (i * Br + r * 4 + 1 < p.nem1) {
+                                m = f16vec4(data_m[m_offset + (i * Br + r * 4    ) * m_stride + (j * Bc + c)],
+                                            data_m[m_offset + (i * Br + r * 4 + 1) * m_stride + (j * Bc + c)],
+                                            0.0,
+                                            0.0);
+                                max_mask = max(max(max_mask, float(m[0])), float(m[1]));
+                            } else if (i * Br + r * 4 < p.nem1) {
+                                m = f16vec4(data_m[m_offset + (i * Br + r * 4    ) * m_stride + (j * Bc + c)],
+                                            0.0,
+                                            0.0,
+                                            0.0);
+                                max_mask = max(max_mask, float(m[0]));
+                            } else {
+                                m = f16vec4(0.0);
+                            }
+                            mask_cache[idx / WorkGroupSize] = m;
                         }
-                        mask_cache[idx / WorkGroupSize] = m;
                     }
                 }
-            }
-            // skip the block if the mask is entirely -inf
-            bool all_less = subgroupAll(max_mask <= NEG_FLT_MAX_OVER_2);
-            barrier();
-            if (gl_SubgroupInvocationID == 0) {
-                tmpsh[gl_SubgroupID] = all_less ? NEG_FLT_MAX_OVER_2 : 0.0f;
-            }
-            barrier();
-            [[unroll]] for (uint s = 0; s < gl_NumSubgroups; ++s) {
-                max_mask = max(max_mask, tmpsh[s]);
-            }
-            if (max_mask <= NEG_FLT_MAX_OVER_2) {
-                continue;
             }
         }
 
@@ -293,7 +303,7 @@ void main() {
         coopMatStore(SfMat, sfsh, coord, sfshstride, gl_CooperativeMatrixLayoutRowMajor);
         barrier();
 
-        if (p.logit_softcap != 0.0f) {
+        if (LOGIT_SOFTCAP) {
             [[unroll]] for (uint32_t idx = 0; idx < Bc * Br / 4; idx += gl_WorkGroupSize.x) {
                 uint32_t c = (idx + tid) / (Br / 4);
                 uint32_t r = (idx + tid) % (Br / 4);
@@ -304,7 +314,7 @@ void main() {
             barrier();
         }
 
-        if ((p.mask_n_head_log2 & MASK_ENABLE_BIT) != 0) {
+        if (MASK_ENABLE) {
             [[unroll]] for (uint32_t idx = 0; idx < Bc * Br / 4; idx += gl_WorkGroupSize.x) {
                 uint32_t c = (idx + tid) / (Br / 4);
                 uint32_t r = (idx + tid) % (Br / 4);

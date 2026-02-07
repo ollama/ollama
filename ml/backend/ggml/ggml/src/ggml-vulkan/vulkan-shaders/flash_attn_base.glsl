@@ -10,6 +10,11 @@ layout (constant_id = 5) const uint32_t Clamp = 0;
 layout (constant_id = 6) const uint32_t D_split = 16;
 layout (constant_id = 7) const uint32_t SubGroupSize = 32;
 layout (constant_id = 8) const uint32_t K_LOAD_SHMEM = 0;
+layout (constant_id = 9) const uint32_t Flags = 0;
+
+const bool USE_MASK_OPT  = (Flags & 1) != 0;
+const bool MASK_ENABLE   = (Flags & 2) != 0;
+const bool LOGIT_SOFTCAP = (Flags & 4) != 0;
 
 // Round up head sizes to a multiple of 16, for coopmat1/coopmat2 paths
 const uint32_t HSK_pad = (HSK + 15) & ~15;
@@ -59,12 +64,16 @@ layout (push_constant) uniform parameter {
 } p;
 
 #define SINK_ENABLE_BIT (1<<24)
-#define MASK_ENABLE_BIT (1<<16)
 #define N_LOG2_MASK 0xFFFF
 
 layout (binding = 4) readonly buffer S {float data_s[];};
 
 layout (binding = 5) writeonly buffer O {D_TYPE data_o[];};
+
+layout (binding = 6) readonly buffer MO {uint32_t data_mask_opt[];};
+
+#define MASK_OPT_ALL_NEG_INF 1
+#define MASK_OPT_ALL_ZERO 2
 
 #define BINDING_IDX_K 0
 #define BINDING_IDX_V 1
@@ -231,3 +240,7 @@ void init_indices()
     // and breaking the alignment detection.
     m_stride = (p.gqa_ratio > 1) ? (p.gqa_ratio >> 16) : KV;
 }
+
+// Bias applied to softmax to stay in fp16 range.
+// Based on ggml-cuda issue https://github.com/ggml-org/llama.cpp/issues/18606
+const float FATTN_KQ_MAX_OFFSET = 3.0f*0.6931f;

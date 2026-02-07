@@ -94,6 +94,10 @@ void main() {
         }
     }
 
+    const uint32_t mo_stride = CEIL_DIV(KV, 16 * Bc);
+    // mo_offset will point to the tile starting at row i*Br and col 0
+    uint32_t mo_offset = mo_stride * i;
+
 #if BLOCK_SIZE > 1
     uint32_t k_offset = (ik2*p.nb12 + ik3*p.nb13) / BLOCK_BYTE_SIZE;
     uint32_t v_offset = (iv2*p.nb22 + iv3*p.nb23) / BLOCK_BYTE_SIZE;
@@ -104,15 +108,28 @@ void main() {
     uint32_t m_offset = gqa_iq1*KV;
     if (p.nem2 != 1 || p.nem3 != 1) {
         m_offset += ((iq3 % p.nem3) * p.nem2 + (iq2 % p.nem2)) * p.nem1 * KV;
+        mo_offset += ((iq3 % p.nem3) * p.nem2 + (iq2 % p.nem2)) * CEIL_DIV(p.nem1, Br) * mo_stride;
     }
+
+    uint32_t mask_opt = 0;
+    uint32_t mask_opt_idx = ~0;
 
     [[dont_unroll]]
     for (uint32_t j = start_j; j < end_j; ++j) {
 
-        if ((p.mask_n_head_log2 & MASK_ENABLE_BIT) != 0) {
+        if (USE_MASK_OPT && mask_opt_idx != j / 16) {
+            mask_opt_idx = j / 16;
+            mask_opt = data_mask_opt[mo_offset + mask_opt_idx];
+        }
+        uint32_t mask_opt_bits = (mask_opt >> ((j % 16) * 2)) & 0x3;
+        if (mask_opt_bits == MASK_OPT_ALL_NEG_INF) {
+            // skip this block
+            continue;
+        }
+        // Only load if the block is not all zeros
+        if (MASK_ENABLE && mask_opt_bits != MASK_OPT_ALL_ZERO) {
             bool nem1_bounds_check = !(p.gqa_ratio > 1) && (p.nem1 % Br) != 0;
 
-            float max_mask = NEG_FLT_MAX_OVER_2;
             [[unroll]] for (uint32_t idx = 0; idx < Bc * Br; idx += gl_WorkGroupSize.x) {
                 uint32_t c = (idx + tid) % Bc;
                 uint32_t r = (idx + tid) / Bc;
@@ -120,25 +137,12 @@ void main() {
                     if ((!KV_bounds_check || j * Bc + c < KV) && (!nem1_bounds_check || i * Br + r < p.nem1)) {
                         float m = float(data_m[m_offset + (i * Br + r) * m_stride + (j * Bc + c)]);
                         masksh[c][r] = m;
-                        max_mask = max(max_mask, m);
                     } else {
                         masksh[c][r] = float(0);
                     }
                 }
             }
-            // skip the block if the mask is entirely -inf
-            bool all_less = subgroupAll(max_mask <= NEG_FLT_MAX_OVER_2);
             barrier();
-            if (gl_SubgroupInvocationID == 0) {
-                tmpsh[gl_SubgroupID] = all_less ? NEG_FLT_MAX_OVER_2 : 0.0f;
-            }
-            barrier();
-            [[unroll]] for (uint s = 0; s < gl_NumSubgroups; ++s) {
-                max_mask = max(max_mask, tmpsh[s]);
-            }
-            if (max_mask <= NEG_FLT_MAX_OVER_2) {
-                continue;
-            }
         }
 
         float Sf[Br][cols_per_thread];
@@ -177,7 +181,7 @@ void main() {
             }
         }
 
-        if (p.logit_softcap != 0.0f) {
+        if (LOGIT_SOFTCAP) {
             [[unroll]] for (uint32_t r = 0; r < Br; ++r) {
                 [[unroll]] for (uint32_t c = 0; c < cols_per_thread; ++c) {
                     Sf[r][c] = p.logit_softcap * tanh(Sf[r][c]);
@@ -185,7 +189,7 @@ void main() {
             }
         }
 
-        if ((p.mask_n_head_log2 & MASK_ENABLE_BIT) != 0) {
+        if (MASK_ENABLE && mask_opt_bits != MASK_OPT_ALL_ZERO) {
             [[unroll]] for (uint32_t c = 0; c < cols_per_thread; ++c) {
                 [[unroll]] for (uint32_t r = 0; r < Br; ++r) {
                     float mvf = masksh[c * cols_per_iter + col_tid][r];
@@ -255,9 +259,6 @@ void main() {
 
         barrier();
     }
-
-    // prevent race on tmpsh
-    barrier();
 
     // reduce across threads
 

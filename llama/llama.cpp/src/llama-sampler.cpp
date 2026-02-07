@@ -1,4 +1,4 @@
-#include "llama-sampling.h"
+#include "llama-sampler.h"
 
 #include "llama-impl.h"
 #include "llama-vocab.h"
