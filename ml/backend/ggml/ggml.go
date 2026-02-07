@@ -1743,7 +1743,7 @@ func (t *Tensor) Duplicate(ctx ml.Context) ml.Tensor {
 func (t *Tensor) TopK(ctx ml.Context, k int) ml.Tensor {
 	return &Tensor{
 		b: t.b,
-		t: C.ggml_argsort_top_k(ctx.(*Context).ctx, t.t, C.int(k)),
+		t: C.ggml_top_k(ctx.(*Context).ctx, t.t, C.int(k)),
 	}
 }
 
