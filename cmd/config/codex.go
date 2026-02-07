@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/ollama/ollama/envconfig"
 	"golang.org/x/mod/semver"
 )
 
@@ -32,6 +33,10 @@ func (c *Codex) Run(model string, args []string) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	cmd.Env = append(os.Environ(),
+		"OPENAI_BASE_URL="+envconfig.Host().String()+"/v1/",
+		"OPENAI_API_KEY=ollama",
+	)
 	return cmd.Run()
 }
 
