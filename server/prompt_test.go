@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -307,6 +308,28 @@ func TestChatPromptTokenizeCalls(t *testing.T) {
 			maxTokenizes: 5,
 		},
 	}
+
+	// Generate a large conversation for the O(log N) test case.
+	// Each message is 2 words (= 2 tokens with the mock tokenizer).
+	var largeMsgs []api.Message
+	for i := range 100 {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		largeMsgs = append(largeMsgs, api.Message{Role: role, Content: fmt.Sprintf("message %d", i)})
+	}
+	cases = append(cases, struct {
+		name         string
+		limit        int
+		msgs         []api.Message
+		maxTokenizes int
+	}{
+		name:         "large conversation truncation is O(log n)",
+		limit:        5,
+		msgs:         largeMsgs,
+		maxTokenizes: 10, // log2(100) + 1 ≈ 8, well under 10
+	})
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
