@@ -3013,66 +3013,6 @@ kernel void kernel_l2_norm_f32(
     }
 }
 
-kernel void kernel_solve_tri_f32(
-        constant ggml_metal_kargs_solve_tri & args,
-        device const char * src0,
-        device const char * src1,
-        device       char * dst,
-        uint   tgpig[[threadgroup_position_in_grid]],
-        ushort tpitg[[thread_position_in_threadgroup]],
-        ushort   ntg[[threads_per_threadgroup]]) {
-    const uint64_t ncols = (uint64_t) args.ne10;
-    const uint64_t n_batches = (uint64_t) args.ne02 * (uint64_t) args.ne03;
-    const uint64_t nr = n_batches * ncols;
-
-    const uint64_t gid = (uint64_t) tgpig * (uint64_t) ntg + (uint64_t) tpitg;
-    if (gid >= nr) {
-        return;
-    }
-
-    const uint64_t i03 = gid / ((uint64_t) args.ne02 * ncols);
-    const uint64_t rem = gid - i03 * (uint64_t) args.ne02 * ncols;
-    const uint64_t i02 = rem / ncols;
-    const uint64_t i01 = rem - i02 * ncols;
-
-    const uint64_t sa0 = args.nb00 / sizeof(float);
-    const uint64_t sa1 = args.nb01 / sizeof(float);
-    const uint64_t sa2 = args.nb02 / sizeof(float);
-    const uint64_t sa3 = args.nb03 / sizeof(float);
-
-    const uint64_t sb0 = args.nb10 / sizeof(float);
-    const uint64_t sb1 = args.nb11 / sizeof(float);
-    const uint64_t sb2 = args.nb12 / sizeof(float);
-    const uint64_t sb3 = args.nb13 / sizeof(float);
-
-    const uint64_t sx0 = args.nb0 / sizeof(float);
-    const uint64_t sx1 = args.nb1 / sizeof(float);
-    const uint64_t sx2 = args.nb2 / sizeof(float);
-    const uint64_t sx3 = args.nb3 / sizeof(float);
-
-    device const float * A = (device const float *) src0;
-    device const float * B = (device const float *) src1;
-    device       float * X = (device       float *) dst;
-
-    const uint64_t A_base = i02 * sa2 + i03 * sa3;
-    const uint64_t B_base = i02 * sb2 + i03 * sb3;
-    const uint64_t X_base = i02 * sx2 + i03 * sx3;
-
-    const uint64_t n = (uint64_t) args.ne11;
-
-    for (uint64_t i00 = 0; i00 < n; ++i00) {
-        float sum = 0.0f;
-        for (uint64_t t = 0; t < i00; ++t) {
-            sum += A[A_base + i00 * sa1 + t * sa0] *
-                X[X_base + t * sx1 + i01 * sx0];
-        }
-
-        const float diag = A[A_base + i00 * sa1 + i00 * sa0];
-        X[X_base + i00 * sx1 + i01 * sx0] =
-            (B[B_base + i00 * sb1 + i01 * sb0] - sum) / diag;
-    }
-}
-
 kernel void kernel_group_norm_f32(
         constant ggml_metal_kargs_group_norm & args,
         device const float * src0,
