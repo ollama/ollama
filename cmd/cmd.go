@@ -1934,9 +1934,27 @@ func NewCLI() *cobra.Command {
 		RunE:    SigninHandler,
 	}
 
+	loginCmd := &cobra.Command{
+		Use:     "login",
+		Short:   "Sign in to ollama.com",
+		Hidden:  true,
+		Args:    cobra.ExactArgs(0),
+		PreRunE: checkServerHeartbeat,
+		RunE:    SigninHandler,
+	}
+
 	signoutCmd := &cobra.Command{
 		Use:     "signout",
 		Short:   "Sign out from ollama.com",
+		Args:    cobra.ExactArgs(0),
+		PreRunE: checkServerHeartbeat,
+		RunE:    SignoutHandler,
+	}
+
+	logoutCmd := &cobra.Command{
+		Use:     "logout",
+		Short:   "Sign out from ollama.com",
+		Hidden:  true,
 		Args:    cobra.ExactArgs(0),
 		PreRunE: checkServerHeartbeat,
 		RunE:    SignoutHandler,
@@ -2038,7 +2056,9 @@ func NewCLI() *cobra.Command {
 		pullCmd,
 		pushCmd,
 		signinCmd,
+		loginCmd,
 		signoutCmd,
+		logoutCmd,
 		listCmd,
 		psCmd,
 		copyCmd,
