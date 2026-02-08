@@ -41,6 +41,7 @@ func (t tensorBase) Kind() uint32 {
 	if strings.HasSuffix(t.name, ".ffn_gate_inp.weight") ||
 		strings.HasSuffix(t.name, ".bias") ||
 		strings.HasSuffix(t.name, ".shortconv.conv.weight") ||
+		strings.HasSuffix(t.name, ".ssm_conv1d.weight") || // SSM conv kernel must be F32 for Metal
 		t.name == "token_types.weight" ||
 		t.name == "v.positional_embedding_vlm" ||
 		t.name == "v.tile_position_embd.weight" ||

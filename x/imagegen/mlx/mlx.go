@@ -991,6 +991,19 @@ func Concat(a, b *Array, axis int) *Array {
 	return Concatenate([]*Array{a, b}, axis)
 }
 
+// Stack stacks arrays along a new axis (axis 0 by default)
+func Stack(arrays []*Array, axis int) *Array {
+	handles := make([]C.mlx_array, len(arrays))
+	for i, arr := range arrays {
+		handles[i] = arr.c
+	}
+	vec := C.mlx_vector_array_new_data(&handles[0], C.size_t(len(handles)))
+	res := C.mlx_array_new()
+	C.mlx_stack_axis(&res, vec, C.int(axis), C.default_stream())
+	C.mlx_vector_array_free(vec)
+	return newArray(res)
+}
+
 // Slice slices the array
 func Slice(a *Array, start, stop []int32) *Array {
 	n := len(start)

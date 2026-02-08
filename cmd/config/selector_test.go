@@ -96,6 +96,14 @@ func TestSelectState(t *testing.T) {
 		}
 	})
 
+	t.Run("Enter_EmptyFilteredList_EmptyFilter_DoesNothing", func(t *testing.T) {
+		s := newSelectState([]selectItem{})
+		done, result, err := s.handleInput(eventEnter, 0)
+		if done || result != "" || err != nil {
+			t.Errorf("expected (false, '', nil), got (%v, %v, %v)", done, result, err)
+		}
+	})
+
 	t.Run("Escape_ReturnsCancelledError", func(t *testing.T) {
 		s := newSelectState(items)
 		done, result, err := s.handleInput(eventEscape, 0)
@@ -574,8 +582,19 @@ func TestRenderSelect(t *testing.T) {
 		var buf bytes.Buffer
 		renderSelect(&buf, "Select:", s)
 
+		output := buf.String()
+		if !strings.Contains(output, "no matches") {
+			t.Errorf("expected 'no matches' message, got: %s", output)
+		}
+	})
+
+	t.Run("EmptyFilteredList_EmptyFilter_ShowsNoMatches", func(t *testing.T) {
+		s := newSelectState([]selectItem{})
+		var buf bytes.Buffer
+		renderSelect(&buf, "Select:", s)
+
 		if !strings.Contains(buf.String(), "no matches") {
-			t.Error("expected 'no matches' message")
+			t.Error("expected 'no matches' message for empty list with no filter")
 		}
 	})
 
