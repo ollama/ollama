@@ -54,7 +54,7 @@ RUN --mount=type=cache,target=/root/.ccache \
 
 FROM base AS cuda-11
 ARG CUDA11VERSION=11.8
-RUN dnf install -y cuda-toolkit-${CUDA11VERSION//./-}
+RUN dnf install -y cuda-toolkit-$(echo ${CUDA11VERSION} | tr '.' '-')
 ENV PATH=/usr/local/cuda-11/bin:$PATH
 ARG PARALLEL
 COPY CMakeLists.txt CMakePresets.json .
@@ -66,7 +66,7 @@ RUN --mount=type=cache,target=/root/.ccache \
 
 FROM base AS cuda-12
 ARG CUDA12VERSION=12.8
-RUN dnf install -y cuda-toolkit-${CUDA12VERSION//./-}
+RUN dnf install -y cuda-toolkit-$(echo ${CUDA12VERSION} | tr '.' '-')
 ENV PATH=/usr/local/cuda-12/bin:$PATH
 ARG PARALLEL
 COPY CMakeLists.txt CMakePresets.json .
@@ -79,7 +79,7 @@ RUN --mount=type=cache,target=/root/.ccache \
 
 FROM base AS cuda-13
 ARG CUDA13VERSION=13.0
-RUN dnf install -y cuda-toolkit-${CUDA13VERSION//./-}
+RUN dnf install -y cuda-toolkit-$(echo ${CUDA13VERSION} | tr '.' '-')
 ENV PATH=/usr/local/cuda-13/bin:$PATH
 ARG PARALLEL
 COPY CMakeLists.txt CMakePresets.json .
