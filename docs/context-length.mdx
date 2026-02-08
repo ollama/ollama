@@ -5,7 +5,10 @@ title: Context length
 Context length is the maximum number of tokens that the model has access to in memory.  
 
 <Note>
-  The default context length in Ollama is 4096 tokens.
+  Ollama defaults to the following context lengths based on VRAM:
+< 24 GiB VRAM: 4,096 context
+24-48 GiB VRAM: 32,768 context
+>= 48 GiB VRAM: 262,144 context
 </Note>
 
 Tasks which require large context like web search, agents, and coding tools should be set to at least 64000 tokens.
