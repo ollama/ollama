@@ -14505,7 +14505,7 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
     const std::vector<vk::ExtensionProperties> ext_props = device.enumerateDeviceExtensionProperties();
 
     vk::PhysicalDeviceProperties devProps = device.getProperties();
-    bool ext_support = devProps.vendorID == VK_VENDOR_ID_AMD;
+    bool ext_support = devProps.vendorID == VK_VENDOR_ID_AMD || devProps.vendorID == VK_VENDOR_ID_NVIDIA;
     for (const auto& properties : ext_props) {
         if (strcmp(properties.extensionName, VK_EXT_PCI_BUS_INFO_EXTENSION_NAME) == 0) {
             ext_support = true;
