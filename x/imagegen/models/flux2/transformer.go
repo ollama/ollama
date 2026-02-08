@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/ollama/ollama/x/imagegen"
+	"github.com/ollama/ollama/x/imagegen/manifest"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/nn"
 	"github.com/ollama/ollama/x/imagegen/safetensors"
@@ -14,19 +14,19 @@ import (
 
 // TransformerConfig holds Flux2 transformer configuration
 type TransformerConfig struct {
-	AttentionHeadDim         int32   `json:"attention_head_dim"`          // 128
-	AxesDimsRoPE             []int32 `json:"axes_dims_rope"`              // [32, 32, 32, 32]
-	Eps                      float32 `json:"eps"`                         // 1e-6
-	GuidanceEmbeds           bool    `json:"guidance_embeds"`             // false for Klein
-	InChannels               int32   `json:"in_channels"`                 // 128
-	JointAttentionDim        int32   `json:"joint_attention_dim"`         // 7680
-	MLPRatio                 float32 `json:"mlp_ratio"`                   // 3.0
-	NumAttentionHeads        int32   `json:"num_attention_heads"`         // 24
-	NumLayers                int32   `json:"num_layers"`                  // 5
-	NumSingleLayers          int32   `json:"num_single_layers"`           // 20
-	PatchSize                int32   `json:"patch_size"`                  // 1
-	RopeTheta                int32   `json:"rope_theta"`                  // 2000
-	TimestepGuidanceChannels int32   `json:"timestep_guidance_channels"`  // 256
+	AttentionHeadDim         int32   `json:"attention_head_dim"`         // 128
+	AxesDimsRoPE             []int32 `json:"axes_dims_rope"`             // [32, 32, 32, 32]
+	Eps                      float32 `json:"eps"`                        // 1e-6
+	GuidanceEmbeds           bool    `json:"guidance_embeds"`            // false for Klein
+	InChannels               int32   `json:"in_channels"`                // 128
+	JointAttentionDim        int32   `json:"joint_attention_dim"`        // 7680
+	MLPRatio                 float32 `json:"mlp_ratio"`                  // 3.0
+	NumAttentionHeads        int32   `json:"num_attention_heads"`        // 24
+	NumLayers                int32   `json:"num_layers"`                 // 5
+	NumSingleLayers          int32   `json:"num_single_layers"`          // 20
+	PatchSize                int32   `json:"patch_size"`                 // 1
+	RopeTheta                int32   `json:"rope_theta"`                 // 2000
+	TimestepGuidanceChannels int32   `json:"timestep_guidance_channels"` // 256
 }
 
 // Computed dimensions
@@ -392,12 +392,12 @@ type Flux2Transformer2DModel struct {
 }
 
 // Load loads the Flux2 transformer from ollama blob storage.
-func (m *Flux2Transformer2DModel) Load(manifest *imagegen.ModelManifest) error {
+func (m *Flux2Transformer2DModel) Load(modelManifest *manifest.ModelManifest) error {
 	fmt.Print("  Loading transformer... ")
 
 	// Load config from blob
 	var cfg TransformerConfig
-	if err := manifest.ReadConfigJSON("transformer/config.json", &cfg); err != nil {
+	if err := modelManifest.ReadConfigJSON("transformer/config.json", &cfg); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 	m.TransformerConfig = &cfg
@@ -412,7 +412,7 @@ func (m *Flux2Transformer2DModel) Load(manifest *imagegen.ModelManifest) error {
 	}
 
 	// Load weights from tensor blobs
-	weights, err := imagegen.LoadWeightsFromManifest(manifest, "transformer")
+	weights, err := manifest.LoadWeightsFromManifest(modelManifest, "transformer")
 	if err != nil {
 		return fmt.Errorf("weights: %w", err)
 	}

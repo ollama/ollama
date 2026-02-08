@@ -2,12 +2,17 @@ package config
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/ollama/ollama/api"
 	"github.com/spf13/cobra"
 )
 
@@ -538,4 +543,137 @@ func TestAliasConfigurerInterface(t *testing.T) {
 			t.Error("Codex should not implement AliasConfigurer")
 		}
 	})
+}
+
+func TestShowOrPull_ModelExists(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `{"model":"test-model"}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	err := showOrPull(context.Background(), client, "test-model")
+	if err != nil {
+		t.Errorf("showOrPull should return nil when model exists, got: %v", err)
+	}
+}
+
+func TestShowOrPull_ModelNotFound_NoTerminal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprintf(w, `{"error":"model not found"}`)
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	// confirmPrompt will fail in test (no terminal), so showOrPull should return an error
+	err := showOrPull(context.Background(), client, "missing-model")
+	if err == nil {
+		t.Error("showOrPull should return error when model not found and no terminal available")
+	}
+}
+
+func TestShowOrPull_ShowCalledWithCorrectModel(t *testing.T) {
+	var receivedModel string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" {
+			var req api.ShowRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+				receivedModel = req.Model
+			}
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `{"model":"%s"}`, receivedModel)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	_ = showOrPull(context.Background(), client, "qwen3:8b")
+	if receivedModel != "qwen3:8b" {
+		t.Errorf("expected Show to be called with %q, got %q", "qwen3:8b", receivedModel)
+	}
+}
+
+func TestEnsureAuth_NoCloudModels(t *testing.T) {
+	// ensureAuth should be a no-op when no cloud models are selected
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("no API calls expected when no cloud models selected")
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	err := ensureAuth(context.Background(), client, map[string]bool{}, []string{"local-model"})
+	if err != nil {
+		t.Errorf("ensureAuth should return nil for non-cloud models, got: %v", err)
+	}
+}
+
+func TestEnsureAuth_CloudModelFilteredCorrectly(t *testing.T) {
+	// ensureAuth should only care about models in cloudModels map
+	var whoamiCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/me" {
+			whoamiCalled = true
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `{"name":"testuser"}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	cloudModels := map[string]bool{"cloud-model:cloud": true}
+	selected := []string{"cloud-model:cloud", "local-model"}
+
+	err := ensureAuth(context.Background(), client, cloudModels, selected)
+	if err != nil {
+		t.Errorf("ensureAuth should succeed when user is authenticated, got: %v", err)
+	}
+	if !whoamiCalled {
+		t.Error("expected whoami to be called for cloud model")
+	}
+}
+
+func TestEnsureAuth_SkipsWhenNoCloudSelected(t *testing.T) {
+	var whoamiCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/me" {
+			whoamiCalled = true
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	// cloudModels has entries but none are in selected
+	cloudModels := map[string]bool{"cloud-model:cloud": true}
+	selected := []string{"local-model"}
+
+	err := ensureAuth(context.Background(), client, cloudModels, selected)
+	if err != nil {
+		t.Errorf("expected nil error, got: %v", err)
+	}
+	if whoamiCalled {
+		t.Error("whoami should not be called when no cloud models are selected")
+	}
 }

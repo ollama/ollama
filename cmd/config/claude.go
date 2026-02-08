@@ -58,12 +58,37 @@ func (c *Claude) Run(model string, args []string) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = append(os.Environ(),
+
+	env := append(os.Environ(),
 		"ANTHROPIC_BASE_URL="+envconfig.Host().String(),
 		"ANTHROPIC_API_KEY=",
 		"ANTHROPIC_AUTH_TOKEN=ollama",
 	)
+
+	env = append(env, c.modelEnvVars(model)...)
+
+	cmd.Env = env
 	return cmd.Run()
+}
+
+// modelEnvVars returns Claude Code env vars that route all model tiers through Ollama.
+func (c *Claude) modelEnvVars(model string) []string {
+	primary := model
+	fast := model
+	if cfg, err := loadIntegration("claude"); err == nil && cfg.Aliases != nil {
+		if p := cfg.Aliases["primary"]; p != "" {
+			primary = p
+		}
+		if f := cfg.Aliases["fast"]; f != "" {
+			fast = f
+		}
+	}
+	return []string{
+		"ANTHROPIC_DEFAULT_OPUS_MODEL=" + primary,
+		"ANTHROPIC_DEFAULT_SONNET_MODEL=" + primary,
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL=" + fast,
+		"CLAUDE_CODE_SUBAGENT_MODEL=" + primary,
+	}
 }
 
 // ConfigureAliases sets up model aliases for Claude Code.

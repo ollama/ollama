@@ -55,7 +55,7 @@ import (
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
-	"github.com/ollama/ollama/x/imagegen"
+	imagegenmanifest "github.com/ollama/ollama/x/imagegen/manifest"
 	xserver "github.com/ollama/ollama/x/server"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -1131,7 +1131,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 
 	// For image generation models, populate details from imagegen package
 	if slices.Contains(m.Capabilities(), model.CapabilityImage) {
-		if info, err := imagegen.GetModelInfo(name.String()); err == nil {
+		if info, err := imagegenmanifest.GetModelInfo(name.String()); err == nil {
 			modelDetails.Family = info.Architecture
 			modelDetails.ParameterSize = format.HumanNumber(uint64(info.ParameterCount))
 			modelDetails.QuantizationLevel = info.Quantization
