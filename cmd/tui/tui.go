@@ -90,26 +90,30 @@ var othersMenuItem = menuItem{
 	isOthers:    true,
 }
 
-// getOtherIntegrations returns the list of other integrations, filtering out
-// Codex if it's not installed (since it requires npm install).
+// getOtherIntegrations dynamically builds the "Others" list from the integration
+// registry, excluding any integrations already present in the pinned mainMenuItems.
 func getOtherIntegrations() []menuItem {
-	return []menuItem{
-		{
-			title:       "Launch Droid",
-			description: "Open Droid integration",
-			integration: "droid",
-		},
-		{
-			title:       "Launch OpenCode",
-			description: "Open OpenCode integration",
-			integration: "opencode",
-		},
-		{
-			title:       "Launch Pi",
-			description: "Open Pi coding agent",
-			integration: "pi",
-		},
+	pinned := map[string]bool{
+		"run": true, // not an integration but in the pinned list
 	}
+	for _, item := range mainMenuItems {
+		if item.integration != "" {
+			pinned[item.integration] = true
+		}
+	}
+
+	var others []menuItem
+	for _, info := range config.ListIntegrationInfos() {
+		if pinned[info.Name] {
+			continue
+		}
+		others = append(others, menuItem{
+			title:       "Launch " + info.DisplayName,
+			description: "Open " + info.DisplayName + " integration",
+			integration: info.Name,
+		})
+	}
+	return others
 }
 
 type model struct {
@@ -283,9 +287,10 @@ func (m *model) buildItems() {
 
 // isOthersIntegration returns true if the integration is in the "Others" menu
 func isOthersIntegration(name string) bool {
-	switch name {
-	case "droid", "opencode":
-		return true
+	for _, item := range getOtherIntegrations() {
+		if item.integration == name {
+			return true
+		}
 	}
 	return false
 }

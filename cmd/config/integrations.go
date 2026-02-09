@@ -84,6 +84,30 @@ var integrationInstallHints = map[string]string{
 	"opencode": "install from https://opencode.ai",
 }
 
+// IntegrationInfo contains display information about a registered integration.
+type IntegrationInfo struct {
+	Name        string // registry key, e.g. "claude"
+	DisplayName string // human-readable, e.g. "Claude Code"
+}
+
+// ListIntegrationInfos returns all non-alias registered integrations, sorted by name.
+func ListIntegrationInfos() []IntegrationInfo {
+	var result []IntegrationInfo
+	for name, r := range integrations {
+		if integrationAliases[name] {
+			continue
+		}
+		result = append(result, IntegrationInfo{
+			Name:        name,
+			DisplayName: r.String(),
+		})
+	}
+	slices.SortFunc(result, func(a, b IntegrationInfo) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+	return result
+}
+
 // IntegrationInstallHint returns a user-friendly install hint for the given integration,
 // or an empty string if none is available.
 func IntegrationInstallHint(name string) string {
