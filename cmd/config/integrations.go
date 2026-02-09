@@ -4,12 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
-	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
@@ -78,20 +75,6 @@ var integrationAliases = map[string]bool{
 	"moltbot":  true,
 }
 
-// integrationInstallURLs maps integration names to their install script URLs.
-var integrationInstallURLs = map[string]string{
-	"claude":   "https://claude.ai/install.sh",
-	"openclaw": "https://openclaw.ai/install.sh",
-	"droid":    "https://app.factory.ai/cli",
-	"opencode": "https://opencode.ai/install",
-}
-
-// CanInstallIntegration returns true if we have an install script for this integration.
-func CanInstallIntegration(name string) bool {
-	_, ok := integrationInstallURLs[name]
-	return ok
-}
-
 // integrationInstallHints maps integration names to user-friendly install instructions.
 var integrationInstallHints = map[string]string{
 	"claude":   "install from https://code.claude.com/docs/en/quickstart",
@@ -134,50 +117,6 @@ func IsIntegrationInstalled(name string) bool {
 	default:
 		return true // Assume installed for unknown integrations
 	}
-}
-
-// InstallIntegration downloads and runs the install script for an integration.
-func InstallIntegration(name string) error {
-	url, ok := integrationInstallURLs[name]
-	if !ok {
-		return fmt.Errorf("no install script available for %s", name)
-	}
-
-	// Download the install script
-	resp, err := http.Get(url)
-	if err != nil {
-		return fmt.Errorf("failed to download install script: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to download install script: HTTP %d", resp.StatusCode)
-	}
-
-	script, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read install script: %w", err)
-	}
-
-	// Create a temporary file for the script
-	tmpDir := os.TempDir()
-	scriptPath := filepath.Join(tmpDir, fmt.Sprintf("install-%s.sh", name))
-	if err := os.WriteFile(scriptPath, script, 0o700); err != nil {
-		return fmt.Errorf("failed to write install script: %w", err)
-	}
-	defer os.Remove(scriptPath)
-
-	// Execute the script with bash
-	cmd := exec.Command("bash", scriptPath)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("install script failed: %w", err)
-	}
-
-	return nil
 }
 
 // SelectModel lets the user select a model to run.
@@ -309,29 +248,16 @@ func SelectModel(ctx context.Context) (string, error) {
 
 // DefaultSingleSelector is the default single-select implementation.
 // It can be overridden (e.g., from cmd/cmd.go) to use the Bubbletea TUI selector.
-var DefaultSingleSelector SingleSelector = fallbackSingleSelector
+var DefaultSingleSelector SingleSelector
 
 // DefaultMultiSelector is the default multi-select implementation.
 // It can be overridden (e.g., from cmd/cmd.go) to use the Bubbletea TUI selector.
-var DefaultMultiSelector MultiSelector = fallbackMultiSelector
-
-func fallbackSingleSelector(title string, items []ModelItem) (string, error) {
-	selectItems := make([]selectItem, len(items))
-	for i, item := range items {
-		selectItems[i] = selectItem(item)
-	}
-	return selectPrompt(title, selectItems)
-}
-
-func fallbackMultiSelector(title string, items []ModelItem, preChecked []string) ([]string, error) {
-	selectItems := make([]selectItem, len(items))
-	for i, item := range items {
-		selectItems[i] = selectItem(item)
-	}
-	return multiSelectPrompt(title, selectItems, preChecked)
-}
+var DefaultMultiSelector MultiSelector
 
 func selectIntegration() (string, error) {
+	if DefaultSingleSelector == nil {
+		return "", fmt.Errorf("no selector configured")
+	}
 	if len(integrations) == 0 {
 		return "", fmt.Errorf("no integrations available")
 	}
@@ -465,7 +391,7 @@ func showOrPull(ctx context.Context, client *api.Client, model string) error {
 	return pullModel(ctx, client, model)
 }
 
-func listModels(ctx context.Context) ([]selectItem, map[string]bool, map[string]bool, *api.Client, error) {
+func listModels(ctx context.Context) ([]ModelItem, map[string]bool, map[string]bool, *api.Client, error) {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return nil, nil, nil, nil, err
@@ -484,15 +410,10 @@ func listModels(ctx context.Context) ([]selectItem, map[string]bool, map[string]
 		})
 	}
 
-	modelItems, _, existingModels, cloudModels := buildModelList(existing, nil, "")
+	items, _, existingModels, cloudModels := buildModelList(existing, nil, "")
 
-	if len(modelItems) == 0 {
+	if len(items) == 0 {
 		return nil, nil, nil, nil, fmt.Errorf("no models available, run 'ollama pull <model>' first")
-	}
-
-	items := make([]selectItem, len(modelItems))
-	for i, mi := range modelItems {
-		items[i] = selectItem(mi)
 	}
 
 	return items, existingModels, cloudModels, client, nil
