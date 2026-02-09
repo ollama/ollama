@@ -92,6 +92,21 @@ func CanInstallIntegration(name string) bool {
 	return ok
 }
 
+// integrationInstallHints maps integration names to user-friendly install instructions.
+var integrationInstallHints = map[string]string{
+	"claude":   "install from https://code.claude.com/docs/en/quickstart",
+	"openclaw": "install from https://docs.openclaw.ai",
+	"codex":    "install with: npm install -g @openai/codex",
+	"droid":    "install from https://docs.factory.ai/cli/getting-started/quickstart",
+	"opencode": "install from https://opencode.ai",
+}
+
+// IntegrationInstallHint returns a user-friendly install hint for the given integration,
+// or an empty string if none is available.
+func IntegrationInstallHint(name string) string {
+	return integrationInstallHints[name]
+}
+
 // IsIntegrationInstalled checks if an integration binary is installed.
 func IsIntegrationInstalled(name string) bool {
 	switch name {
@@ -208,27 +223,6 @@ func SelectModelWithSelector(ctx context.Context, selector SingleSelector) (stri
 		return "", fmt.Errorf("no models available, run 'ollama pull <model>' first")
 	}
 
-	// Sort with last model first, then existing models, then recommendations
-	slices.SortStableFunc(items, func(a, b ModelItem) int {
-		aIsLast := a.Name == lastModel
-		bIsLast := b.Name == lastModel
-		if aIsLast != bIsLast {
-			if aIsLast {
-				return -1
-			}
-			return 1
-		}
-		aExists := existingModels[a.Name]
-		bExists := existingModels[b.Name]
-		if aExists != bExists {
-			if aExists {
-				return -1
-			}
-			return 1
-		}
-		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
-	})
-
 	selected, err := selector("Select model to run:", items)
 	if err != nil {
 		return "", err
@@ -310,10 +304,18 @@ func SelectModelWithSelector(ctx context.Context, selector SingleSelector) (stri
 }
 
 func SelectModel(ctx context.Context) (string, error) {
-	return SelectModelWithSelector(ctx, defaultSingleSelector)
+	return SelectModelWithSelector(ctx, DefaultSingleSelector)
 }
 
-func defaultSingleSelector(title string, items []ModelItem) (string, error) {
+// DefaultSingleSelector is the default single-select implementation.
+// It can be overridden (e.g., from cmd/cmd.go) to use the Bubbletea TUI selector.
+var DefaultSingleSelector SingleSelector = fallbackSingleSelector
+
+// DefaultMultiSelector is the default multi-select implementation.
+// It can be overridden (e.g., from cmd/cmd.go) to use the Bubbletea TUI selector.
+var DefaultMultiSelector MultiSelector = fallbackMultiSelector
+
+func fallbackSingleSelector(title string, items []ModelItem) (string, error) {
 	selectItems := make([]selectItem, len(items))
 	for i, item := range items {
 		selectItems[i] = selectItem(item)
@@ -321,7 +323,7 @@ func defaultSingleSelector(title string, items []ModelItem) (string, error) {
 	return selectPrompt(title, selectItems)
 }
 
-func defaultMultiSelector(title string, items []ModelItem, preChecked []string) ([]string, error) {
+func fallbackMultiSelector(title string, items []ModelItem, preChecked []string) ([]string, error) {
 	selectItems := make([]selectItem, len(items))
 	for i, item := range items {
 		selectItems[i] = selectItem(item)
@@ -335,7 +337,7 @@ func selectIntegration() (string, error) {
 	}
 
 	names := slices.Sorted(maps.Keys(integrations))
-	var items []selectItem
+	var items []ModelItem
 	for _, name := range names {
 		if integrationAliases[name] {
 			continue
@@ -345,10 +347,10 @@ func selectIntegration() (string, error) {
 		if conn, err := loadIntegration(name); err == nil && len(conn.Models) > 0 {
 			description = fmt.Sprintf("%s (%s)", r.String(), conn.Models[0])
 		}
-		items = append(items, selectItem{Name: name, Description: description})
+		items = append(items, ModelItem{Name: name, Description: description})
 	}
 
-	return selectPrompt("Select integration:", items)
+	return DefaultSingleSelector("Select integration:", items)
 }
 
 // selectModelsWithSelectors lets the user select models for an integration using provided selectors.
@@ -565,7 +567,7 @@ func ensureAuth(ctx context.Context, client *api.Client, cloudModels map[string]
 
 // selectModels lets the user select models for an integration using default selectors.
 func selectModels(ctx context.Context, name, current string) ([]string, error) {
-	return selectModelsWithSelectors(ctx, name, current, defaultSingleSelector, defaultMultiSelector)
+	return selectModelsWithSelectors(ctx, name, current, DefaultSingleSelector, DefaultMultiSelector)
 }
 
 func runIntegration(name, modelName string, args []string) error {
@@ -689,7 +691,7 @@ func ConfigureIntegrationWithSelectors(ctx context.Context, name string, single 
 
 // ConfigureIntegration allows the user to select/change the model for an integration.
 func ConfigureIntegration(ctx context.Context, name string) error {
-	return ConfigureIntegrationWithSelectors(ctx, name, defaultSingleSelector, defaultMultiSelector)
+	return ConfigureIntegrationWithSelectors(ctx, name, DefaultSingleSelector, DefaultMultiSelector)
 }
 
 // LaunchCmd returns the cobra command for launching integrations.

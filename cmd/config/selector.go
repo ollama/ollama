@@ -23,7 +23,11 @@ const (
 
 const maxDisplayedItems = 10
 
-var errCancelled = errors.New("cancelled")
+// ErrCancelled is returned when the user cancels a selection.
+var ErrCancelled = errors.New("cancelled")
+
+// errCancelled is kept as an alias for backward compatibility within the package.
+var errCancelled = ErrCancelled
 
 type selectItem struct {
 	Name        string
