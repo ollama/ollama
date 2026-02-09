@@ -55,6 +55,33 @@ import (
 	"github.com/ollama/ollama/x/imagegen"
 )
 
+func init() {
+	// Override default selectors to use Bubbletea TUI instead of raw terminal I/O.
+	config.DefaultSingleSelector = func(title string, items []config.ModelItem) (string, error) {
+		tuiItems := make([]tui.SelectItem, len(items))
+		for i, item := range items {
+			tuiItems[i] = tui.SelectItem{Name: item.Name, Description: item.Description, Recommended: item.Recommended}
+		}
+		result, err := tui.SelectSingle(title, tuiItems)
+		if errors.Is(err, tui.ErrCancelled) {
+			return "", config.ErrCancelled
+		}
+		return result, err
+	}
+
+	config.DefaultMultiSelector = func(title string, items []config.ModelItem, preChecked []string) ([]string, error) {
+		tuiItems := make([]tui.SelectItem, len(items))
+		for i, item := range items {
+			tuiItems[i] = tui.SelectItem{Name: item.Name, Description: item.Description, Recommended: item.Recommended}
+		}
+		result, err := tui.SelectMultiple(title, tuiItems, preChecked)
+		if errors.Is(err, tui.ErrCancelled) {
+			return nil, config.ErrCancelled
+		}
+		return result, err
+	}
+}
+
 const ConnectInstructions = "If your browser did not open, navigate to:\n    %s\n\n"
 
 // ensureThinkingSupport emits a warning if the model does not advertise thinking support
@@ -1855,7 +1882,7 @@ func runInteractiveTUI(cmd *cobra.Command) {
 	singleSelector := func(title string, items []config.ModelItem) (string, error) {
 		tuiItems := make([]tui.SelectItem, len(items))
 		for i, item := range items {
-			tuiItems[i] = tui.SelectItem{Name: item.Name, Description: item.Description}
+			tuiItems[i] = tui.SelectItem{Name: item.Name, Description: item.Description, Recommended: item.Recommended}
 		}
 		result, err := tui.SelectSingle(title, tuiItems)
 		if errors.Is(err, tui.ErrCancelled) {
@@ -1867,7 +1894,7 @@ func runInteractiveTUI(cmd *cobra.Command) {
 	multiSelector := func(title string, items []config.ModelItem, preChecked []string) ([]string, error) {
 		tuiItems := make([]tui.SelectItem, len(items))
 		for i, item := range items {
-			tuiItems[i] = tui.SelectItem{Name: item.Name, Description: item.Description}
+			tuiItems[i] = tui.SelectItem{Name: item.Name, Description: item.Description, Recommended: item.Recommended}
 		}
 		result, err := tui.SelectMultiple(title, tuiItems, preChecked)
 		if errors.Is(err, tui.ErrCancelled) {

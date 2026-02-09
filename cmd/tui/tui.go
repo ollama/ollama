@@ -22,32 +22,34 @@ var (
 			MarginBottom(1)
 
 	versionStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("245"))
+			Foreground(lipgloss.AdaptiveColor{Light: "243", Dark: "250"})
 
 	itemStyle = lipgloss.NewStyle().
-			PaddingLeft(2)
+			PaddingLeft(4)
 
 	selectedStyle = lipgloss.NewStyle().
 			PaddingLeft(2).
-			Bold(true)
+			Bold(true).
+			Background(lipgloss.AdaptiveColor{Light: "254", Dark: "236"})
 
 	greyedStyle = lipgloss.NewStyle().
-			PaddingLeft(2).
-			Foreground(lipgloss.Color("241"))
+			PaddingLeft(4).
+			Foreground(lipgloss.AdaptiveColor{Light: "249", Dark: "240"})
 
 	greyedSelectedStyle = lipgloss.NewStyle().
 				PaddingLeft(2).
-				Foreground(lipgloss.Color("243"))
+				Foreground(lipgloss.AdaptiveColor{Light: "240", Dark: "248"}).
+				Background(lipgloss.AdaptiveColor{Light: "254", Dark: "236"})
 
 	descStyle = lipgloss.NewStyle().
-			PaddingLeft(4).
-			Foreground(lipgloss.Color("241"))
+			PaddingLeft(6).
+			Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"})
 
 	modelStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("245"))
+			Foreground(lipgloss.AdaptiveColor{Light: "243", Dark: "250"})
 
 	notInstalledStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("241")).
+				Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}).
 				Italic(true)
 )
 
@@ -98,8 +100,8 @@ func getOtherIntegrations() []menuItem {
 			integration: "droid",
 		},
 		{
-			title:       "Launch Open Code",
-			description: "Open Open Code integration",
+			title:       "Launch OpenCode",
+			description: "Open OpenCode integration",
 			integration: "opencode",
 		},
 		{
@@ -131,6 +133,9 @@ type model struct {
 	signInModel     string // model that requires sign-in
 	signInSpinner   int    // spinner frame index
 	signInFromModal bool   // true if sign-in was triggered from modal (not main menu)
+
+	// Status message state
+	statusMsg string // temporary status message shown near help text
 }
 
 // signInTickMsg is sent to animate the sign-in spinner
@@ -141,6 +146,9 @@ type signInCheckMsg struct {
 	signedIn bool
 	userName string
 }
+
+// clearStatusMsg is sent to clear the temporary status message
+type clearStatusMsg struct{}
 
 // modelExists checks if a model exists in the cached available models.
 func (m *model) modelExists(name string) bool {
@@ -173,8 +181,9 @@ func (m *model) buildModalItems() []SelectItem {
 func (m *model) openModelModal() {
 	m.modalItems = m.buildModalItems()
 	m.modalSelector = selectorModel{
-		title: "Select model:",
-		items: m.modalItems,
+		title:    "Select model:",
+		items:    m.modalItems,
+		helpText: "↑/↓ navigate • enter select • ← back",
 	}
 	m.showingModal = true
 }
@@ -316,6 +325,12 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Handle clearStatusMsg
+	if _, ok := msg.(clearStatusMsg); ok {
+		m.statusMsg = ""
+		return m, nil
+	}
+
 	// Handle sign-in dialog
 	if m.showingSignIn {
 		switch msg := msg.(type) {
@@ -369,7 +384,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg := msg.(type) {
 		case tea.KeyMsg:
 			switch msg.Type {
-			case tea.KeyCtrlC, tea.KeyEsc:
+			case tea.KeyCtrlC, tea.KeyEsc, tea.KeyLeft:
 				// Close modal without selection
 				m.showingModal = false
 				return m, nil
@@ -390,56 +405,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 
-			case tea.KeyUp:
-				if m.modalSelector.cursor > 0 {
-					m.modalSelector.cursor--
-					if m.modalSelector.cursor < m.modalSelector.scrollOffset {
-						m.modalSelector.scrollOffset = m.modalSelector.cursor
-					}
-				}
-
-			case tea.KeyDown:
-				filtered := m.modalSelector.filteredItems()
-				if m.modalSelector.cursor < len(filtered)-1 {
-					m.modalSelector.cursor++
-					if m.modalSelector.cursor >= m.modalSelector.scrollOffset+maxSelectorItems {
-						m.modalSelector.scrollOffset = m.modalSelector.cursor - maxSelectorItems + 1
-					}
-				}
-
-			case tea.KeyPgUp:
-				filtered := m.modalSelector.filteredItems()
-				m.modalSelector.cursor -= maxSelectorItems
-				if m.modalSelector.cursor < 0 {
-					m.modalSelector.cursor = 0
-				}
-				m.modalSelector.scrollOffset -= maxSelectorItems
-				if m.modalSelector.scrollOffset < 0 {
-					m.modalSelector.scrollOffset = 0
-				}
-				_ = filtered // suppress unused warning
-
-			case tea.KeyPgDown:
-				filtered := m.modalSelector.filteredItems()
-				m.modalSelector.cursor += maxSelectorItems
-				if m.modalSelector.cursor >= len(filtered) {
-					m.modalSelector.cursor = len(filtered) - 1
-				}
-				if m.modalSelector.cursor >= m.modalSelector.scrollOffset+maxSelectorItems {
-					m.modalSelector.scrollOffset = m.modalSelector.cursor - maxSelectorItems + 1
-				}
-
-			case tea.KeyBackspace:
-				if len(m.modalSelector.filter) > 0 {
-					m.modalSelector.filter = m.modalSelector.filter[:len(m.modalSelector.filter)-1]
-					m.modalSelector.cursor = 0
-					m.modalSelector.scrollOffset = 0
-				}
-
-			case tea.KeyRunes:
-				m.modalSelector.filter += string(msg.Runes)
-				m.modalSelector.cursor = 0
-				m.modalSelector.scrollOffset = 0
+			default:
+				// Delegate navigation (up/down/pgup/pgdown/filter/backspace) to selectorModel
+				m.modalSelector.updateNavigation(msg)
 			}
 		}
 		return m, nil
@@ -473,7 +441,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// Don't allow selecting uninstalled integrations
 			if item.integration != "" && !config.IsIntegrationInstalled(item.integration) {
-				return m, nil
+				m.statusMsg = fmt.Sprintf("%s is not installed", item.title)
+				if hint := config.IntegrationInstallHint(item.integration); hint != "" {
+					m.statusMsg += " — " + hint
+				}
+				return m, tea.Tick(4*time.Second, func(t time.Time) tea.Msg { return clearStatusMsg{} })
 			}
 
 			// Check if a cloud model is configured and needs sign-in
@@ -497,7 +469,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if item.integration != "" || item.isRunModel {
 				// Don't allow for uninstalled integrations
 				if item.integration != "" && !config.IsIntegrationInstalled(item.integration) {
-					return m, nil
+					m.statusMsg = fmt.Sprintf("%s is not installed", item.title)
+					if hint := config.IntegrationInstallHint(item.integration); hint != "" {
+						m.statusMsg += " — " + hint
+					}
+					return m, tea.Tick(4*time.Second, func(t time.Time) tea.Msg { return clearStatusMsg{} })
 				}
 				m.openModelModal()
 			}
@@ -522,10 +498,10 @@ func (m model) View() string {
 		return m.renderModal()
 	}
 
-	s := titleStyle.Render("  Ollama "+versionStyle.Render("v"+version.Version)) + "\n\n"
+	s := titleStyle.Render("  Ollama "+versionStyle.Render(version.Version)) + "\n\n"
 
 	for i, item := range m.items {
-		cursor := "  "
+		cursor := ""
 		style := itemStyle
 		isInstalled := true
 
@@ -564,81 +540,23 @@ func (m model) View() string {
 		s += descStyle.Render(item.description) + "\n\n"
 	}
 
-	s += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("↑/↓ navigate • enter select • → change model • esc quit")
+	if m.statusMsg != "" {
+		s += "\n" + lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "210"}).Render(m.statusMsg) + "\n"
+	}
+
+	s += "\n" + lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "244", Dark: "244"}).Render("↑/↓ navigate • enter select • → change model • esc quit")
 
 	return s
 }
 
 // renderModal renders the model picker modal.
+// Delegates to selectorModel.renderContent() for the actual item rendering.
 func (m model) renderModal() string {
 	modalStyle := lipgloss.NewStyle().
 		Padding(1, 2).
 		MarginLeft(2)
 
-	var content strings.Builder
-
-	// Title with filter
-	content.WriteString(selectorTitleStyle.Render(m.modalSelector.title))
-	content.WriteString(" ")
-	if m.modalSelector.filter == "" {
-		content.WriteString(selectorFilterStyle.Render("Type to filter..."))
-	} else {
-		content.WriteString(selectorInputStyle.Render(m.modalSelector.filter))
-	}
-	content.WriteString("\n\n")
-
-	filtered := m.modalSelector.filteredItems()
-
-	if len(filtered) == 0 {
-		content.WriteString(selectorItemStyle.Render(selectorDescStyle.Render("(no matches)")))
-		content.WriteString("\n")
-	} else {
-		displayCount := min(len(filtered), maxSelectorItems)
-		shownRecHeader := false
-		prevWasRec := false
-
-		for i := range displayCount {
-			idx := m.modalSelector.scrollOffset + i
-			if idx >= len(filtered) {
-				break
-			}
-			item := filtered[idx]
-
-			// Show section headers when not filtering
-			if m.modalSelector.filter == "" {
-				if item.Recommended && !shownRecHeader {
-					content.WriteString(selectorDescStyle.Render("  Recommended"))
-					content.WriteString("\n")
-					shownRecHeader = true
-				} else if !item.Recommended && prevWasRec {
-					content.WriteString("\n")
-				}
-				prevWasRec = item.Recommended
-			}
-
-			if idx == m.modalSelector.cursor {
-				content.WriteString(selectorSelectedItemStyle.Render("▸ " + item.Name))
-			} else {
-				content.WriteString(selectorItemStyle.Render(item.Name))
-			}
-
-			if item.Description != "" {
-				content.WriteString(" ")
-				content.WriteString(selectorDescStyle.Render("- " + item.Description))
-			}
-			content.WriteString("\n")
-		}
-
-		if remaining := len(filtered) - m.modalSelector.scrollOffset - displayCount; remaining > 0 {
-			content.WriteString(selectorMoreStyle.Render(fmt.Sprintf("... and %d more", remaining)))
-			content.WriteString("\n")
-		}
-	}
-
-	content.WriteString("\n")
-	content.WriteString(selectorHelpStyle.Render("↑/↓ navigate • enter select • esc cancel"))
-
-	return modalStyle.Render(content.String())
+	return modalStyle.Render(m.modalSelector.renderContent())
 }
 
 // renderSignInDialog renders the sign-in dialog.
@@ -663,7 +581,7 @@ func (m model) renderSignInDialog() string {
 	content.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Render("  " + m.signInURL))
 	content.WriteString("\n\n")
 
-	content.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(
+	content.WriteString(lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}).Render(
 		fmt.Sprintf("%s Waiting for sign in to complete...", spinner)))
 	content.WriteString("\n\n")
 
