@@ -76,7 +76,6 @@ var recommendedModels = []ModelItem{
 var integrationAliases = map[string]bool{
 	"clawdbot": true,
 	"moltbot":  true,
-	"pi":       true,
 }
 
 // integrationInstallURLs maps integration names to their install script URLs.

@@ -102,6 +102,11 @@ func getOtherIntegrations() []menuItem {
 			description: "Open Open Code integration",
 			integration: "opencode",
 		},
+		{
+			title:       "Launch Pi",
+			description: "Open Pi coding agent",
+			integration: "pi",
+		},
 	}
 }
 
