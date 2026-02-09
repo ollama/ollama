@@ -148,18 +148,6 @@ func (mlp *sparse) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options
 	return moeOut
 }
 
-// dense implements standard feedforward
-type dense struct {
-	Gate *nn.Linear `gguf:"ffn_gate"`
-	Up   *nn.Linear `gguf:"ffn_up"`
-	Down *nn.Linear `gguf:"ffn_down"`
-}
-
-func (mlp *dense) Forward(ctx ml.Context, hiddenStates ml.Tensor, _ *Options) ml.Tensor {
-	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates).SILU(ctx, mlp.Up.Forward(ctx, hiddenStates))
-	return mlp.Down.Forward(ctx, hiddenStates)
-}
-
 // Layer represents a single transformer layer
 type Layer struct {
 	AttentionNorm     *nn.RMSNorm `gguf:"attn_norm"`
