@@ -1,10 +1,18 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 func TestPiIntegration(t *testing.T) {
@@ -59,6 +67,17 @@ func TestPiPaths(t *testing.T) {
 }
 
 func TestPiEdit(t *testing.T) {
+	// Mock Ollama server for createConfig calls during Edit
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" {
+			fmt.Fprintf(w, `{"capabilities":[],"model_info":{}}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
 	pi := &Pi{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -606,4 +625,206 @@ func TestPiModels(t *testing.T) {
 			t.Errorf("Models() = %v, want nil for corrupt config", models)
 		}
 	})
+}
+
+func TestIsPiOllamaModel(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  map[string]any
+		want bool
+	}{
+		{"with _launch true", map[string]any{"id": "m", "_launch": true}, true},
+		{"with _launch false", map[string]any{"id": "m", "_launch": false}, false},
+		{"without _launch", map[string]any{"id": "m"}, false},
+		{"with _launch non-bool", map[string]any{"id": "m", "_launch": "yes"}, false},
+		{"empty map", map[string]any{}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isPiOllamaModel(tt.cfg); got != tt.want {
+				t.Errorf("isPiOllamaModel(%v) = %v, want %v", tt.cfg, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCreateConfig(t *testing.T) {
+	t.Run("sets vision input when model has vision capability", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/show" {
+				fmt.Fprintf(w, `{"capabilities":["vision"],"model_info":{}}`)
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+
+		u, _ := url.Parse(srv.URL)
+		client := api.NewClient(u, srv.Client())
+
+		cfg := createConfig(context.Background(), client, "llava:7b")
+
+		if cfg["id"] != "llava:7b" {
+			t.Errorf("id = %v, want llava:7b", cfg["id"])
+		}
+		if cfg["_launch"] != true {
+			t.Error("expected _launch = true")
+		}
+		input, ok := cfg["input"].([]string)
+		if !ok || len(input) != 2 || input[0] != "text" || input[1] != "image" {
+			t.Errorf("input = %v, want [text image]", cfg["input"])
+		}
+	})
+
+	t.Run("sets text-only input when model lacks vision", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/show" {
+				fmt.Fprintf(w, `{"capabilities":["completion"],"model_info":{}}`)
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+
+		u, _ := url.Parse(srv.URL)
+		client := api.NewClient(u, srv.Client())
+
+		cfg := createConfig(context.Background(), client, "llama3.2")
+
+		input, ok := cfg["input"].([]string)
+		if !ok || len(input) != 1 || input[0] != "text" {
+			t.Errorf("input = %v, want [text]", cfg["input"])
+		}
+		if _, ok := cfg["reasoning"]; ok {
+			t.Error("reasoning should not be set for non-thinking model")
+		}
+	})
+
+	t.Run("sets reasoning when model has thinking capability", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/show" {
+				fmt.Fprintf(w, `{"capabilities":["thinking"],"model_info":{}}`)
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+
+		u, _ := url.Parse(srv.URL)
+		client := api.NewClient(u, srv.Client())
+
+		cfg := createConfig(context.Background(), client, "qwq")
+
+		if cfg["reasoning"] != true {
+			t.Error("expected reasoning = true for thinking model")
+		}
+	})
+
+	t.Run("extracts context window from model info", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/show" {
+				fmt.Fprintf(w, `{"capabilities":[],"model_info":{"llama.context_length":131072}}`)
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+
+		u, _ := url.Parse(srv.URL)
+		client := api.NewClient(u, srv.Client())
+
+		cfg := createConfig(context.Background(), client, "llama3.2")
+
+		if cfg["contextWindow"] != 131072 {
+			t.Errorf("contextWindow = %v, want 131072", cfg["contextWindow"])
+		}
+	})
+
+	t.Run("handles all capabilities together", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/show" {
+				fmt.Fprintf(w, `{"capabilities":["vision","thinking"],"model_info":{"qwen3.context_length":32768}}`)
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+
+		u, _ := url.Parse(srv.URL)
+		client := api.NewClient(u, srv.Client())
+
+		cfg := createConfig(context.Background(), client, "qwen3-vision")
+
+		input := cfg["input"].([]string)
+		if len(input) != 2 || input[0] != "text" || input[1] != "image" {
+			t.Errorf("input = %v, want [text image]", input)
+		}
+		if cfg["reasoning"] != true {
+			t.Error("expected reasoning = true")
+		}
+		if cfg["contextWindow"] != 32768 {
+			t.Errorf("contextWindow = %v, want 32768", cfg["contextWindow"])
+		}
+	})
+
+	t.Run("returns minimal config when show fails", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"error":"model not found"}`)
+		}))
+		defer srv.Close()
+
+		u, _ := url.Parse(srv.URL)
+		client := api.NewClient(u, srv.Client())
+
+		cfg := createConfig(context.Background(), client, "missing-model")
+
+		if cfg["id"] != "missing-model" {
+			t.Errorf("id = %v, want missing-model", cfg["id"])
+		}
+		if cfg["_launch"] != true {
+			t.Error("expected _launch = true")
+		}
+		// Should not have capability fields
+		if _, ok := cfg["input"]; ok {
+			t.Error("input should not be set when show fails")
+		}
+		if _, ok := cfg["reasoning"]; ok {
+			t.Error("reasoning should not be set when show fails")
+		}
+		if _, ok := cfg["contextWindow"]; ok {
+			t.Error("contextWindow should not be set when show fails")
+		}
+	})
+
+	t.Run("skips zero context length", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/show" {
+				fmt.Fprintf(w, `{"capabilities":[],"model_info":{"llama.context_length":0}}`)
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+
+		u, _ := url.Parse(srv.URL)
+		client := api.NewClient(u, srv.Client())
+
+		cfg := createConfig(context.Background(), client, "test-model")
+
+		if _, ok := cfg["contextWindow"]; ok {
+			t.Error("contextWindow should not be set for zero value")
+		}
+	})
+}
+
+// Ensure Capability constants used in createConfig match expected values
+func TestPiCapabilityConstants(t *testing.T) {
+	if model.CapabilityVision != "vision" {
+		t.Errorf("CapabilityVision = %q, want %q", model.CapabilityVision, "vision")
+	}
+	if model.CapabilityThinking != "thinking" {
+		t.Errorf("CapabilityThinking = %q, want %q", model.CapabilityThinking, "thinking")
+	}
 }
