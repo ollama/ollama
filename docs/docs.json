@@ -105,6 +105,7 @@
           {
             "group": "Integrations",
             "pages": [
+              "/integrations/index",
               "/integrations/claude-code",
               "/integrations/cline",
               "/integrations/openclaw",
