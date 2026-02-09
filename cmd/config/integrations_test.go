@@ -417,9 +417,10 @@ func TestBuildModelList_OnlyLocalModels_CloudRecsAtBottom(t *testing.T) {
 	items, _, _, _ := buildModelList(existing, nil, "")
 	got := names(items)
 
-	want := []string{"llama3.2", "qwen2.5", "glm-4.7-flash", "glm-4.7:cloud", "kimi-k2.5:cloud", "qwen3:8b"}
+	// Recommended pinned at top (local recs first, then cloud recs), then installed non-recs
+	want := []string{"glm-4.7-flash", "qwen3:8b", "glm-4.7:cloud", "kimi-k2.5:cloud", "llama3.2", "qwen2.5"}
 	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("cloud recs should be at bottom (-want +got):\n%s", diff)
+		t.Errorf("recs pinned at top, local recs before cloud recs (-want +got):\n%s", diff)
 	}
 }
 
@@ -432,9 +433,10 @@ func TestBuildModelList_BothCloudAndLocal_RegularSort(t *testing.T) {
 	items, _, _, _ := buildModelList(existing, nil, "")
 	got := names(items)
 
-	want := []string{"glm-4.7:cloud", "llama3.2", "glm-4.7-flash", "kimi-k2.5:cloud", "qwen3:8b"}
+	// All recs pinned at top (cloud before local in mixed case), then non-recs
+	want := []string{"glm-4.7:cloud", "kimi-k2.5:cloud", "glm-4.7-flash", "qwen3:8b", "llama3.2"}
 	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("mixed models should be alphabetical (-want +got):\n%s", diff)
+		t.Errorf("recs pinned at top, cloud recs first in mixed case (-want +got):\n%s", diff)
 	}
 }
 
@@ -485,9 +487,10 @@ func TestBuildModelList_ExistingCloudModelsNotPushedToBottom(t *testing.T) {
 
 	// glm-4.7-flash and glm-4.7:cloud are installed so they sort normally;
 	// kimi-k2.5:cloud and qwen3:8b are not installed so they go to the bottom
-	want := []string{"glm-4.7-flash", "glm-4.7:cloud", "kimi-k2.5:cloud", "qwen3:8b"}
+	// All recs: cloud first in mixed case, then local, in rec order within each
+	want := []string{"glm-4.7:cloud", "kimi-k2.5:cloud", "glm-4.7-flash", "qwen3:8b"}
 	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("existing cloud models should sort normally (-want +got):\n%s", diff)
+		t.Errorf("all recs, cloud first in mixed case (-want +got):\n%s", diff)
 	}
 }
 
@@ -502,9 +505,10 @@ func TestBuildModelList_HasRecommendedCloudModel_OnlyNonInstalledAtBottom(t *tes
 
 	// kimi-k2.5:cloud is installed so it sorts normally;
 	// the rest of the recommendations are not installed so they go to the bottom
-	want := []string{"kimi-k2.5:cloud", "llama3.2", "glm-4.7-flash", "glm-4.7:cloud", "qwen3:8b"}
+	// All recs pinned at top (cloud first in mixed case), then non-recs
+	want := []string{"glm-4.7:cloud", "kimi-k2.5:cloud", "glm-4.7-flash", "qwen3:8b", "llama3.2"}
 	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("only non-installed models should be at bottom (-want +got):\n%s", diff)
+		t.Errorf("recs pinned at top, cloud first in mixed case (-want +got):\n%s", diff)
 	}
 
 	for _, item := range items {
@@ -575,6 +579,101 @@ func TestBuildModelList_ReturnsExistingAndCloudMaps(t *testing.T) {
 	}
 	if cloudModels["llama3.2"] {
 		t.Error("llama3.2 should not be in cloudModels")
+	}
+}
+
+func TestBuildModelList_RecommendedFieldSet(t *testing.T) {
+	existing := []modelInfo{
+		{Name: "glm-4.7-flash", Remote: false},
+		{Name: "llama3.2:latest", Remote: false},
+	}
+
+	items, _, _, _ := buildModelList(existing, nil, "")
+
+	for _, item := range items {
+		switch item.Name {
+		case "glm-4.7-flash", "qwen3:8b", "glm-4.7:cloud", "kimi-k2.5:cloud":
+			if !item.Recommended {
+				t.Errorf("%q should have Recommended=true", item.Name)
+			}
+		case "llama3.2":
+			if item.Recommended {
+				t.Errorf("%q should have Recommended=false", item.Name)
+			}
+		}
+	}
+}
+
+func TestBuildModelList_MixedCase_CloudRecsFirst(t *testing.T) {
+	existing := []modelInfo{
+		{Name: "llama3.2:latest", Remote: false},
+		{Name: "glm-4.7:cloud", Remote: true},
+	}
+
+	items, _, _, _ := buildModelList(existing, nil, "")
+	got := names(items)
+
+	// Cloud recs should sort before local recs in mixed case
+	cloudIdx := slices.Index(got, "glm-4.7:cloud")
+	localIdx := slices.Index(got, "glm-4.7-flash")
+	if cloudIdx > localIdx {
+		t.Errorf("cloud recs should be before local recs in mixed case, got %v", got)
+	}
+}
+
+func TestBuildModelList_OnlyLocal_LocalRecsFirst(t *testing.T) {
+	existing := []modelInfo{
+		{Name: "llama3.2:latest", Remote: false},
+	}
+
+	items, _, _, _ := buildModelList(existing, nil, "")
+	got := names(items)
+
+	// Local recs should sort before cloud recs in only-local case
+	localIdx := slices.Index(got, "glm-4.7-flash")
+	cloudIdx := slices.Index(got, "glm-4.7:cloud")
+	if localIdx > cloudIdx {
+		t.Errorf("local recs should be before cloud recs in only-local case, got %v", got)
+	}
+}
+
+func TestBuildModelList_RecsAboveNonRecs(t *testing.T) {
+	existing := []modelInfo{
+		{Name: "llama3.2:latest", Remote: false},
+		{Name: "custom-model", Remote: false},
+	}
+
+	items, _, _, _ := buildModelList(existing, nil, "")
+	got := names(items)
+
+	// All recommended models should appear before non-recommended installed models
+	lastRecIdx := -1
+	firstNonRecIdx := len(got)
+	for i, name := range got {
+		isRec := name == "glm-4.7-flash" || name == "qwen3:8b" || name == "glm-4.7:cloud" || name == "kimi-k2.5:cloud"
+		if isRec && i > lastRecIdx {
+			lastRecIdx = i
+		}
+		if !isRec && i < firstNonRecIdx {
+			firstNonRecIdx = i
+		}
+	}
+	if lastRecIdx > firstNonRecIdx {
+		t.Errorf("all recs should be above non-recs, got %v", got)
+	}
+}
+
+func TestBuildModelList_CheckedBeforeRecs(t *testing.T) {
+	existing := []modelInfo{
+		{Name: "llama3.2:latest", Remote: false},
+		{Name: "glm-4.7:cloud", Remote: true},
+	}
+
+	items, _, _, _ := buildModelList(existing, []string{"llama3.2"}, "")
+	got := names(items)
+
+	if got[0] != "llama3.2" {
+		t.Errorf("checked model should be first even before recs, got %v", got)
 	}
 }
 
