@@ -50,6 +50,8 @@ func rendererForName(name string) Renderer {
 	case "qwen3-coder":
 		renderer := &Qwen3CoderRenderer{}
 		return renderer
+	case "qwen35", "qwen35moe", "qwen3_5", "qwen3_5_moe", "qwen3.5", "qwen3.5-moe":
+		return &Qwen3CoderRenderer{}
 	case "qwen3-vl-instruct":
 		renderer := &Qwen3VLRenderer{isThinking: false, useImgTags: RenderImgTags}
 		return renderer
