@@ -50,8 +50,8 @@ jobs:
             'MLX_C_VERSION' \
             'llama/llama.cpp/**/*' \
             'ml/backend/ggml/ggml/**/*' \
-            'x/imagegen/mlx/**' \
-            'x/imagegen/mlx/**/*' \
+            'x/mlxrunner/mlx/**' \
+            'x/mlxrunner/mlx/**/*' \
             '.github/**/*') | tee -a $GITHUB_OUTPUT
           echo app_changed=$(changed 'app/**' 'app/**/*') | tee -a $GITHUB_OUTPUT
           echo enginehash=$(cat LLAMA_CPP_VERSION)-$(cat MLX_VERSION)-$(cat MLX_C_VERSION) | tee -a $GITHUB_OUTPUT
@@ -399,8 +399,6 @@ jobs:
           cmake -S . -B build/mlx-generate -DOLLAMA_MLX_BACKENDS=cuda_v13
           cmake --build build/mlx-generate --target ollama-mlx-generate-wrappers
           git diff --exit-code -- \
-            x/imagegen/mlx/mlx.h \
-            x/imagegen/mlx/mlx.c \
             x/mlxrunner/mlx/generated.h \
             x/mlxrunner/mlx/generated.c \
             x/mlxrunner/mlx/include/mlx/c

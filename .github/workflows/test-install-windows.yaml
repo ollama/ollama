@@ -3,6 +3,8 @@ name: test-install-windows
 on:
   pull_request:
     paths:
+      - 'app/msi/**'
+      - 'scripts/build_windows.ps1'
       - 'scripts/install.ps1'
       - 'scripts/tests/**'
       - '.github/workflows/test-install-windows.yaml'

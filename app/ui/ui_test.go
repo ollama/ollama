@@ -1018,9 +1018,7 @@ func TestSettingsToggleAutoUpdateOn_NoPendingUpdate_TriggersCheck(t *testing.T) 
 	updater.UpdateDownloaded = false
 	defer func() { updater.UpdateDownloaded = oldVal }()
 
-	oldStageDir := updater.UpdateStageDir
-	updater.UpdateStageDir = t.TempDir() // empty dir means IsUpdatePending() returns false
-	defer func() { updater.UpdateStageDir = oldStageDir }()
+	isolateNoPendingUpdateState(t)
 
 	upd := &updater.Updater{Store: &store.Store{
 		DBPath: filepath.Join(t.TempDir(), "db2.sqlite"),
