@@ -389,6 +389,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Painting Droid](https://github.com/mateuszmigas/painting-droid) (Painting app with AI integrations)
 - [Kerlig AI](https://www.kerlig.com/) (AI writing assistant for macOS)
 - [AI Studio](https://github.com/MindWorkAI/AI-Studio)
+- [Bluemesh AI](https://bluemesh.ai/) (provides a secure, private AI platform that integrates intelligence into your applications)
 - [Sidellama](https://github.com/gyopak/sidellama) (browser-based LLM client)
 - [LLMStack](https://github.com/trypromptly/LLMStack) (No-code multi-agent framework to build LLM agents and workflows)
 - [BoltAI for Mac](https://boltai.com) (AI Chat Client for Mac)
