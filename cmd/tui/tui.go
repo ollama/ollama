@@ -62,7 +62,7 @@ type menuItem struct {
 var mainMenuItems = []menuItem{
 	{
 		title:       "Run a model",
-		description: "Start an interactive chat with a local model",
+		description: "Start an interactive chat with a model",
 		isRunModel:  true,
 	},
 	{
@@ -164,7 +164,7 @@ func (m *model) buildModalItems() []SelectItem {
 	modelItems, _ := config.GetModelItems(context.Background())
 	var items []SelectItem
 	for _, item := range modelItems {
-		items = append(items, SelectItem{Name: item.Name, Description: item.Description})
+		items = append(items, SelectItem{Name: item.Name, Description: item.Description, Recommended: item.Recommended})
 	}
 	return items
 }
@@ -266,13 +266,6 @@ func (m *model) buildItems() {
 	m.items = append(m.items, mainMenuItems...)
 
 	if m.showOthers {
-		// Change "Others..." to "Hide others..."
-		hideItem := menuItem{
-			title:       "Hide others...",
-			description: "Hide additional integrations",
-			isOthers:    true,
-		}
-		m.items = append(m.items, hideItem)
 		m.items = append(m.items, others...)
 	} else {
 		m.items = append(m.items, othersMenuItem)
@@ -468,20 +461,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor < len(m.items)-1 {
 				m.cursor++
 			}
+			// Auto-expand "Others..." when cursor lands on it
+			if m.cursor < len(m.items) && m.items[m.cursor].isOthers && !m.showOthers {
+				m.showOthers = true
+				m.buildItems()
+				// cursor now points at the first "other" integration
+			}
 
 		case "enter", " ":
 			item := m.items[m.cursor]
-
-			// Handle "Others..." toggle
-			if item.isOthers {
-				m.showOthers = !m.showOthers
-				m.buildItems()
-				// Keep cursor on the Others/Hide item
-				if m.cursor >= len(m.items) {
-					m.cursor = len(m.items) - 1
-				}
-				return m, nil
-			}
 
 			// Don't allow selecting uninstalled integrations
 			if item.integration != "" && !config.IsIntegrationInstalled(item.integration) {
@@ -557,19 +545,22 @@ func (m model) View() string {
 		}
 
 		title := item.title
+		var modelSuffix string
 		if item.integration != "" {
 			if !isInstalled {
 				title += " " + notInstalledStyle.Render("(not installed)")
-			} else if mdl := config.IntegrationModel(item.integration); mdl != "" && m.modelExists(mdl) {
-				title += " " + modelStyle.Render("("+mdl+")")
+			} else if m.cursor == i {
+				if mdl := config.IntegrationModel(item.integration); mdl != "" && m.modelExists(mdl) {
+					modelSuffix = " " + modelStyle.Render("("+mdl+")")
+				}
 			}
-		} else if item.isRunModel {
+		} else if item.isRunModel && m.cursor == i {
 			if mdl := config.LastModel(); mdl != "" && m.modelExists(mdl) {
-				title += " " + modelStyle.Render("("+mdl+")")
+				modelSuffix = " " + modelStyle.Render("("+mdl+")")
 			}
 		}
 
-		s += style.Render(cursor+title) + "\n"
+		s += style.Render(cursor+title) + modelSuffix + "\n"
 		s += descStyle.Render(item.description) + "\n\n"
 	}
 
@@ -581,8 +572,6 @@ func (m model) View() string {
 // renderModal renders the model picker modal.
 func (m model) renderModal() string {
 	modalStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("245")).
 		Padding(1, 2).
 		MarginLeft(2)
 
@@ -605,6 +594,8 @@ func (m model) renderModal() string {
 		content.WriteString("\n")
 	} else {
 		displayCount := min(len(filtered), maxSelectorItems)
+		shownRecHeader := false
+		prevWasRec := false
 
 		for i := range displayCount {
 			idx := m.modalSelector.scrollOffset + i
@@ -612,6 +603,18 @@ func (m model) renderModal() string {
 				break
 			}
 			item := filtered[idx]
+
+			// Show section headers when not filtering
+			if m.modalSelector.filter == "" {
+				if item.Recommended && !shownRecHeader {
+					content.WriteString(selectorDescStyle.Render("  Recommended"))
+					content.WriteString("\n")
+					shownRecHeader = true
+				} else if !item.Recommended && prevWasRec {
+					content.WriteString("\n")
+				}
+				prevWasRec = item.Recommended
+			}
 
 			if idx == m.modalSelector.cursor {
 				content.WriteString(selectorSelectedItemStyle.Render("▸ " + item.Name))
