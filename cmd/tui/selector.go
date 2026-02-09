@@ -58,6 +58,7 @@ var ErrCancelled = errors.New("cancelled")
 type SelectItem struct {
 	Name        string
 	Description string
+	Recommended bool
 }
 
 // selectorModel is the bubbletea model for single selection.

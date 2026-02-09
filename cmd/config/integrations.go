@@ -66,10 +66,10 @@ var integrations = map[string]Runner{
 // recommendedModels are shown when the user has no models or as suggestions.
 // Order matters: local models first, then cloud models.
 var recommendedModels = []ModelItem{
-	{Name: "glm-4.7-flash", Description: "Recommended (requires ~25GB VRAM)"},
-	{Name: "qwen3:8b", Description: "Recommended (requires ~11GB VRAM)"},
-	{Name: "glm-4.7:cloud", Description: "Recommended"},
-	{Name: "kimi-k2.5:cloud", Description: "Recommended"},
+	{Name: "glm-4.7-flash", Recommended: true},
+	{Name: "qwen3:8b", Recommended: true},
+	{Name: "glm-4.7:cloud", Recommended: true},
+	{Name: "kimi-k2.5:cloud", Recommended: true},
 }
 
 // integrationAliases are hidden from the interactive selector but work as CLI arguments.
@@ -170,6 +170,7 @@ func InstallIntegration(name string) error {
 type ModelItem struct {
 	Name        string
 	Description string
+	Recommended bool
 }
 
 // SingleSelector is a function type for single item selection.
@@ -967,10 +968,7 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 		}
 		displayName := strings.TrimSuffix(m.Name, ":latest")
 		existingModels[displayName] = true
-		item := ModelItem{Name: displayName}
-		if recommended[displayName] {
-			item.Description = "recommended"
-		}
+		item := ModelItem{Name: displayName, Recommended: recommended[displayName]}
 		items = append(items, item)
 	}
 
@@ -1015,23 +1013,64 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 		}
 	}
 
+	// Build a recommended rank map to preserve ordering within tiers.
+	recRank := make(map[string]int)
+	for i, rec := range recommendedModels {
+		recRank[rec.Name] = i + 1 // 1-indexed; 0 means not recommended
+	}
+
+	onlyLocal := hasLocalModel && !hasCloudModel
+
 	if hasLocalModel || hasCloudModel {
 		slices.SortStableFunc(items, func(a, b ModelItem) int {
 			ac, bc := checked[a.Name], checked[b.Name]
 			aNew, bNew := notInstalled[a.Name], notInstalled[b.Name]
+			aRec, bRec := recRank[a.Name] > 0, recRank[b.Name] > 0
+			aCloud, bCloud := cloudModels[a.Name], cloudModels[b.Name]
 
+			// Checked/pre-selected always first
 			if ac != bc {
 				if ac {
 					return -1
 				}
 				return 1
 			}
-			if !ac && !bc && aNew != bNew {
+
+			// Recommended above non-recommended
+			if aRec != bRec {
+				if aRec {
+					return -1
+				}
+				return 1
+			}
+
+			// Both recommended
+			if aRec && bRec {
+				if aCloud != bCloud {
+					if onlyLocal {
+						// Local before cloud when only local installed
+						if aCloud {
+							return 1
+						}
+						return -1
+					}
+					// Cloud before local in mixed case
+					if aCloud {
+						return -1
+					}
+					return 1
+				}
+				return recRank[a.Name] - recRank[b.Name]
+			}
+
+			// Both non-recommended: installed before not-installed
+			if aNew != bNew {
 				if aNew {
 					return 1
 				}
 				return -1
 			}
+
 			return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
 		})
 	}
@@ -1076,27 +1115,6 @@ func GetModelItems(ctx context.Context) ([]ModelItem, map[string]bool) {
 	}
 
 	items, _, existingModels, _ := buildModelList(existing, preChecked, lastModel)
-
-	// Sort with last model first, then existing models, then recommendations
-	slices.SortStableFunc(items, func(a, b ModelItem) int {
-		aIsLast := a.Name == lastModel
-		bIsLast := b.Name == lastModel
-		if aIsLast != bIsLast {
-			if aIsLast {
-				return -1
-			}
-			return 1
-		}
-		aExists := existingModels[a.Name]
-		bExists := existingModels[b.Name]
-		if aExists != bExists {
-			if aExists {
-				return -1
-			}
-			return 1
-		}
-		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
-	})
 
 	return items, existingModels
 }

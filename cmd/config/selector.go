@@ -28,6 +28,7 @@ var errCancelled = errors.New("cancelled")
 type selectItem struct {
 	Name        string
 	Description string
+	Recommended bool
 }
 
 type inputEvent int
