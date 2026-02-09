@@ -224,19 +224,82 @@ function Initialize-SandboxInstallerPerformance {
     }
 }
 
+function Get-CachedDownload {
+    param([string]$Uri, [string]$CacheDir, [string]$FileName)
 
+    New-Item -ItemType Directory -Path $CacheDir -Force | Out-Null
+    $target = Join-Path $CacheDir $FileName
+    if (-not (Test-Path -LiteralPath $target -PathType Leaf) -or (Get-Item -LiteralPath $target).Length -lt 1KB) {
+        Write-Host "  Downloading $FileName..."
+        $temp = "$target.download"
+        Invoke-WebRequest -Uri $Uri -OutFile $temp -UseBasicParsing
+        Move-Item -LiteralPath $temp -Destination $target -Force
+    }
+    return $target
+}
+
+function Initialize-PackageManagers {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $ProgressPreference = "SilentlyContinue"
+
+    if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
+        # PowerShellGet and the Microsoft.WinGet.Client module need WMI, which
+        # Windows Sandbox does not have, so use the App Installer bundle route
+        # Microsoft documents for Sandbox. Downloads are cached on the host.
+        Write-Host "Installing WinGet in Windows Sandbox..."
+        $cacheDir = Join-Path $InstallerCache "winget"
+        # The winget-cli release ships the exact framework packages (VCLibs,
+        # Windows App SDK runtime, ...) its bundle depends on; they change
+        # between releases, so take them from the same release as the bundle.
+        $bundle = Get-CachedDownload -Uri "https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle" -CacheDir $cacheDir -FileName "Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle"
+        $dependenciesZip = Get-CachedDownload -Uri "https://github.com/microsoft/winget-cli/releases/latest/download/DesktopAppInstaller_Dependencies.zip" -CacheDir $cacheDir -FileName "DesktopAppInstaller_Dependencies.zip"
+        $dependenciesDir = Join-Path $env:TEMP "winget-dependencies"
+        Remove-Item -LiteralPath $dependenciesDir -Recurse -Force -ErrorAction SilentlyContinue
+        Expand-Archive -LiteralPath $dependenciesZip -DestinationPath $dependenciesDir -Force
+        $dependencies = @(Get-ChildItem -LiteralPath (Join-Path $dependenciesDir "x64") -Filter "*.appx" -File -ErrorAction SilentlyContinue)
+        if ($dependencies.Count -eq 0) {
+            throw "DesktopAppInstaller_Dependencies.zip did not contain x64 framework packages"
+        }
+        foreach ($package in ($dependencies.FullName + $bundle)) {
+            Write-Host "  Add-AppxPackage $(Split-Path $package -Leaf)"
+            Add-AppxPackage -Path $package -ErrorAction Stop
+        }
+        $wingetDir = Get-ChildItem -LiteralPath (Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps") -Filter "winget.exe" -Recurse -ErrorAction SilentlyContinue |
+            Select-Object -First 1 -ExpandProperty DirectoryName
+        if ($wingetDir) {
+            $env:Path = $wingetDir + ";" + $env:Path
+        }
+    }
+    if (-not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
+        throw "WinGet bootstrap completed without making winget.exe available"
+    }
+    Write-Host "  winget: $((& winget.exe --version 2>&1) -join ' ')"
+
+    if (-not (Get-Command choco.exe -ErrorAction SilentlyContinue)) {
+        Write-Host "Installing Chocolatey in Windows Sandbox..."
+        $bootstrap = (Invoke-WebRequest -Uri "https://community.chocolatey.org/install.ps1" -UseBasicParsing).Content
+        & ([scriptblock]::Create($bootstrap))
+        $env:Path = (Join-Path $env:ProgramData "chocolatey\bin") + ";" + $env:Path
+    }
+    if (-not (Get-Command choco.exe -ErrorAction SilentlyContinue)) {
+        throw "Chocolatey bootstrap completed without making choco.exe available"
+    }
+}
 
 try {
     Start-Transcript -LiteralPath $transcriptPath -Force | Out-Null
 
     $env:OLLAMA_TEST_SANDBOX = "1"
     $env:OLLAMA_TEST_ARTIFACT_DIR = $RunRoot
-    $destructiveTags = @("Integration", "UpgradeMatrix", "AppIntegration")
+    $destructiveTags = @("Integration", "UpgradeMatrix", "AppIntegration", "PackageManager")
     if (@($summary.tags | Where-Object { $_ -in $destructiveTags }).Count -gt 0) {
         Initialize-SandboxInstallerPerformance -DistDir (Join-Path $RepoRoot "dist")
         Install-WindowsSandboxTaskkillShim
     }
 
+    if ("PackageManager" -in $summary.tags) {
+        Initialize-PackageManagers
+    }
 
     $pesterManifest = Join-Path $PesterModuleRoot "Pester.psd1"
     if (-not (Test-Path -LiteralPath $pesterManifest -PathType Leaf)) {
@@ -254,11 +317,11 @@ try {
     $env:OLLAMA_TEST_LATEST_INSTALLER_VERSION = "0.1.48"
     $env:OLLAMA_TEST_PINNED_UPGRADE_VERSION = "0.1.47"
     if ("AppIntegration" -in $summary.tags) {
-        $updaterBinary = Join-Path $RunRoot "updater-integration.test.exe"
-        if (-not (Test-Path -LiteralPath $updaterBinary -PathType Leaf)) {
-            throw "Mapped app updater integration test binary not found: $updaterBinary"
+        $appBinary = Join-Path $RunRoot "updater-app-localtest.exe"
+        if (-not (Test-Path -LiteralPath $appBinary -PathType Leaf)) {
+            throw "Mapped app updater integration executable not found: $appBinary"
         }
-        $env:OLLAMA_TEST_UPDATER_BINARY = $updaterBinary
+        $env:OLLAMA_TEST_APP_BINARY = $appBinary
     }
     $distDir = Join-Path $RepoRoot "dist"
     if (Test-Path -LiteralPath $distDir -PathType Container) {

@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.24)
 
+get_property(_ollama_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(NOT _ollama_multi_config AND NOT DEFINED CMAKE_BUILD_TYPE AND NOT DEFINED ENV{CMAKE_BUILD_TYPE})
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type")
+endif()
+
 project(Ollama C CXX)
 
 # Handle cross-compilation on macOS: when CMAKE_OSX_ARCHITECTURES is set to a
@@ -22,10 +27,6 @@ include(CheckLanguage)
 include(GNUInstallDirs)
 
 find_package(Threads REQUIRED)
-
-if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
-endif()
 
 # These defaults can be overridden by presets (e.g., for static macOS llama-server builds)
 if(NOT DEFINED BUILD_SHARED_LIBS)

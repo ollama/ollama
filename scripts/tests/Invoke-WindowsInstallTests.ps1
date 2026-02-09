@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("Unit", "Integration", "UpgradeMatrix", "AppIntegration")]
+    [ValidateSet("Unit", "Build", "Integration", "UpgradeMatrix", "AppIntegration", "PackageManager")]
     [string[]]$Tag = @("Unit"),
 
     [ValidateSet("Auto", "Host", "Sandbox")]
@@ -19,22 +19,24 @@ $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $testPath = Join-Path $repoRoot "scripts\tests\install.Tests.ps1"
 $stateRoot = Join-Path $repoRoot ".cache\windows-test-sandbox"
 $configPath = Join-Path $stateRoot "config.json"
-$destructiveTags = @("Integration", "UpgradeMatrix", "AppIntegration")
+$destructiveTags = @("Integration", "UpgradeMatrix", "AppIntegration", "PackageManager")
 $isDestructive = @($Tag | Where-Object { $_ -in $destructiveTags }).Count -gt 0
-. (Join-Path $PSScriptRoot "WindowsSandbox-TestHelpers.ps1")
 $needsAppIntegration = "AppIntegration" -in $Tag
+. (Join-Path $PSScriptRoot "WindowsSandbox-TestHelpers.ps1")
 
-function Build-AppUpdaterIntegrationTest {
+function Build-AppUpdaterIntegrationExecutable {
     param([string]$OutputPath)
 
     New-Item -ItemType Directory -Path (Split-Path -Parent $OutputPath) -Force | Out-Null
     Remove-Item -LiteralPath $OutputPath -Force -ErrorAction SilentlyContinue
-    Write-Host "Building fresh Windows app updater integration test..."
+    Write-Host "Building fresh Windows app updater integration executable..."
     Push-Location $repoRoot
     try {
-        & go test -count=1 -c -tags "updater_integration updater_unsigned" -o $OutputPath ./app/updater
+        & go build -tags "updater_localtest updater_unsigned" -trimpath `
+            -ldflags "-H windowsgui -X=github.com/ollama/ollama/app/version.Version=0.0.0-localtest" `
+            -o $OutputPath .\app\cmd\app
         if ($LASTEXITCODE -ne 0) {
-            throw "Failed to build the Windows app updater integration test (exit code $LASTEXITCODE)."
+            throw "Failed to build the Windows app updater integration executable (exit code $LASTEXITCODE)."
         }
     } finally {
         Pop-Location
@@ -64,20 +66,20 @@ function Invoke-HostTests {
         PassThru = $true
         CI = $CI
     }
-    $savedUpdaterBinary = $env:OLLAMA_TEST_UPDATER_BINARY
+    $savedAppBinary = $env:OLLAMA_TEST_APP_BINARY
     try {
         if ($AppIntegrationBinary) {
-            $env:OLLAMA_TEST_UPDATER_BINARY = $AppIntegrationBinary
+            $env:OLLAMA_TEST_APP_BINARY = $AppIntegrationBinary
         }
         $result = Invoke-Pester @pesterArgs
         if ($result.FailedCount -gt 0 -or $result.Result -ne "Passed") {
             throw "Pester failed: result=$($result.Result), failed=$($result.FailedCount)"
         }
     } finally {
-        if ($null -eq $savedUpdaterBinary) {
-            Remove-Item Env:OLLAMA_TEST_UPDATER_BINARY -ErrorAction SilentlyContinue
+        if ($null -eq $savedAppBinary) {
+            Remove-Item Env:OLLAMA_TEST_APP_BINARY -ErrorAction SilentlyContinue
         } else {
-            $env:OLLAMA_TEST_UPDATER_BINARY = $savedUpdaterBinary
+            $env:OLLAMA_TEST_APP_BINARY = $savedAppBinary
         }
     }
     Write-Host "Host result: passed=$($result.PassedCount), failed=$($result.FailedCount), skipped=$($result.SkippedCount)"
@@ -98,8 +100,8 @@ if ($Isolation -eq "Auto") {
 if ($selectedIsolation -eq "Host") {
     $appIntegrationBinary = ""
     if ($needsAppIntegration) {
-        $appIntegrationBinary = Join-Path $stateRoot "host\updater-integration.test.exe"
-        Build-AppUpdaterIntegrationTest -OutputPath $appIntegrationBinary
+        $appIntegrationBinary = Join-Path $stateRoot "host\updater-app-localtest.exe"
+        Build-AppUpdaterIntegrationExecutable -OutputPath $appIntegrationBinary
     }
     Invoke-HostTests -AppIntegrationBinary $appIntegrationBinary
     return
@@ -129,7 +131,7 @@ $runRoot = Join-Path $stateRoot "runs\$runId"
 $installerCache = Join-Path $repoRoot ".cache\install-tests"
 New-Item -ItemType Directory -Path $runRoot, $installerCache -Force | Out-Null
 if ($needsAppIntegration) {
-    Build-AppUpdaterIntegrationTest -OutputPath (Join-Path $runRoot "updater-integration.test.exe")
+    Build-AppUpdaterIntegrationExecutable -OutputPath (Join-Path $runRoot "updater-app-localtest.exe")
 }
 
 $tagCsv = $Tag -join ","
