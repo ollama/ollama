@@ -1,5 +1,5 @@
 #!/bin/sh
-# This script installs Ollama on Linux and macOS.
+# This script installs the most recent release (https://github.com/ollama/ollama/releases) of Ollama on Linux and macOS.
 # It detects the current operating system architecture and installs the appropriate version of Ollama.
 
 set -eu
