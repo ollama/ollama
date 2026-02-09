@@ -1,0 +1,20 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+    <Fragment>
+        <StandardDirectory Id="LocalAppDataFolder">
+            <Directory Name="Programs">
+                <Directory Id="ROOTDIRECTORY" Name="Ollama">
+                    <Directory Id="lib_ollama_Dir" Name="lib\ollama">
+                        <Directory Id="lib_ollama_cuda_v12_Dir" Name="cuda_v12" />
+                        <Directory Id="lib_ollama_cuda_v13_Dir" Name="cuda_v13" />
+                        <Directory Id="lib_ollama_rocm_Dir" Name="rocm">
+                            <Directory Id="lib_ollama_rocm_rocblas_Dir" Name="rocblas">
+                                <Directory Id="lib_ollama_rocm_rocblas_library_Dir" Name="library" />
+                            </Directory>
+                        </Directory>
+                        <Directory Id="lib_ollama_vulkan_Dir" Name="vulkan" />
+                    </Directory>
+                </Directory>
+            </Directory>
+        </StandardDirectory>
+    </Fragment>
+</Wix>

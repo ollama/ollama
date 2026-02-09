@@ -1,0 +1,130 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+    <Package
+      Name="Ollama"
+      Manufacturer="Ollama, Inc."
+      Version="$(PKG_VERSION)"
+      Scope="perUser"
+      UpgradeCode="7A5B3E2F-1C4D-4F8A-9E6B-0D2A1F3C5E7D"
+      InstallerVersion="500">
+
+      <MajorUpgrade AllowDowngrades="yes" Schedule="afterInstallInitialize" />
+
+      <!-- Close running Ollama processes before install/upgrade/uninstall -->
+      <util:CloseApplication
+        Id="CloseOllamaServer"
+        CloseMessage="yes"
+        RebootPrompt="no"
+        ElevatedCloseMessage="no"
+        Target="ollama.exe" />
+      <util:CloseApplication
+        Id="CloseOllamaApp"
+        CloseMessage="yes"
+        RebootPrompt="no"
+        ElevatedCloseMessage="no"
+        Target="Ollama app.exe" />
+
+      <SummaryInformation Description="Ollama - Run large language models locally" />
+      <MediaTemplate EmbedCab="yes" MaximumUncompressedMediaSize="2" CompressionLevel="high" />
+      <Icon Id="productIcon" SourceFile="..\assets\app.ico" />
+      <Property Id="ARPPRODUCTICON" Value="productIcon" />
+
+      <!-- System32 directory for custom actions that run cmd.exe or powershell.exe -->
+      <StandardDirectory Id="System64Folder" />
+
+      <!-- Property to control model removal on uninstall (default: preserve models) -->
+      <Property Id="REMOVEMODELS" Value="0" />
+
+      <!-- Remove models custom action (deferred, runs as user) -->
+      <CustomAction Id="RemoveModelsAction"
+                    Directory="System64Folder"
+                    Execute="deferred"
+                    Impersonate="yes"
+                    Return="ignore"
+                    ExeCommand="cmd.exe /c if exist &quot;%USERPROFILE%\.ollama\models&quot; rmdir /s /q &quot;%USERPROFILE%\.ollama\models&quot;" />
+
+      <!--
+        Chained uninstall: when core is uninstalled from ARP, spawn PowerShell
+        asynchronously (asyncNoWait) after InstallFinalize. The script source
+        is in chained-uninstall.ps1; CMake encodes it at build time and passes
+        it as the CHAINED_UNINSTALL_ENCODED preprocessor variable.
+      -->
+      <CustomAction Id="ChainedUninstall"
+                    Directory="System64Folder"
+                    Return="asyncNoWait"
+                    ExeCommand="WindowsPowerShell\v1.0\powershell.exe -NoProfile -WindowStyle Hidden -EncodedCommand $(var.CHAINED_UNINSTALL_ENCODED)" />
+
+      <InstallExecuteSequence>
+        <Custom Action="RemoveModelsAction"
+                Before="InstallFinalize"
+                Condition="(REMOVE=&quot;ALL&quot;) AND (REMOVEMODELS=&quot;1&quot;)" />
+        <Custom Action="ChainedUninstall"
+                After="InstallFinalize"
+                Condition="REMOVE=&quot;ALL&quot;" />
+      </InstallExecuteSequence>
+
+      <!-- Core executables -->
+      <ComponentGroup Id="Root_Components" Directory="ROOTDIRECTORY">
+        <Component><File Source="../windows-ollama-app-amd64.exe" Name="Ollama app.exe"/></Component>
+        <Component><File Source="ollama.exe"/></Component>
+        <Component><File Source="packages.json"/></Component>
+      </ComponentGroup>
+
+      <!-- CPU backend libraries -->
+      <ComponentGroup Id="lib_ollama_Components" Directory="lib_ollama_Dir">
+        <Component><File Source="lib\ollama\ggml-base.dll"/></Component>
+        <Component><File Source="lib\ollama\ggml-cpu-alderlake.dll"/></Component>
+        <Component><File Source="lib\ollama\ggml-cpu-haswell.dll"/></Component>
+        <Component><File Source="lib\ollama\ggml-cpu-icelake.dll"/></Component>
+        <Component><File Source="lib\ollama\ggml-cpu-sandybridge.dll"/></Component>
+        <Component><File Source="lib\ollama\ggml-cpu-skylakex.dll"/></Component>
+        <Component><File Source="lib\ollama\ggml-cpu-sse42.dll"/></Component>
+        <Component><File Source="lib\ollama\ggml-cpu-x64.dll"/></Component>
+      </ComponentGroup>
+
+      <!-- Add install directory to user PATH environment variable -->
+      <Component Id="PathEnvironment" Directory="ROOTDIRECTORY" Guid="A1B2C3D4-E5F6-7890-ABCD-EF1234567890">
+        <Environment Id="PATH"
+                     Name="PATH"
+                     Value="[ROOTDIRECTORY]"
+                     Permanent="no"
+                     Part="last"
+                     Action="set"
+                     System="no" />
+      </Component>
+
+      <!-- Register ollama:// URL protocol handler -->
+      <Component Id="UrlProtocol" Directory="ROOTDIRECTORY" Guid="B2C3D4E5-F6A7-8901-BCDE-F12345678901">
+        <RegistryKey Root="HKCU" Key="Software\Classes\ollama">
+          <RegistryValue Type="string" Value="URL:Ollama Protocol" />
+          <RegistryValue Name="URL Protocol" Type="string" Value="" />
+        </RegistryKey>
+        <RegistryKey Root="HKCU" Key="Software\Classes\ollama\shell\open\command">
+          <RegistryValue Type="string" Value="&quot;[ROOTDIRECTORY]Ollama app.exe&quot; &quot;%1&quot;" />
+        </RegistryKey>
+      </Component>
+
+      <!-- Start Menu shortcut -->
+      <StandardDirectory Id="ProgramMenuFolder">
+        <Component Id="StartMenuShortcut" Guid="C3D4E5F6-A7B8-9012-CDEF-123456789012">
+          <Shortcut Id="OllamaShortcut"
+                    Name="Ollama"
+                    Description="Run Ollama"
+                    Target="[ROOTDIRECTORY]Ollama app.exe"
+                    WorkingDirectory="ROOTDIRECTORY"
+                    Icon="productIcon" />
+          <RemoveFolder Id="RemoveProgramMenuFolder" On="uninstall" />
+          <RegistryValue Root="HKCU" Key="Software\Ollama" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+      </StandardDirectory>
+
+      <!-- Feature to include all components -->
+      <Feature Id="MainFeature" Title="Ollama" Level="1">
+        <ComponentGroupRef Id="Root_Components" />
+        <ComponentGroupRef Id="lib_ollama_Components" />
+        <ComponentRef Id="PathEnvironment" />
+        <ComponentRef Id="UrlProtocol" />
+        <ComponentRef Id="StartMenuShortcut" />
+      </Feature>
+    </Package>
+</Wix>

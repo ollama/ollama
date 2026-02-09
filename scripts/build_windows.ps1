@@ -93,6 +93,17 @@ function checkEnv {
         write-host "Code signing disabled - please set KEY_CONTAINERS to sign and copy ollama_inc.crt to the top of the source tree"
     }
     $script:JOBS=([Environment]::ProcessorCount)
+
+    # Detect llvm-mingw for ARM64 cross-compilation
+    $script:LLVM_MINGW_ARM64_CC = $null
+    $arm64Clang = Get-Command "aarch64-w64-mingw32-clang" -ErrorAction SilentlyContinue
+    if ($arm64Clang) {
+        $script:LLVM_MINGW_ARM64_CC = $arm64Clang.Source
+        $script:LLVM_MINGW_ARM64_CXX = (Get-Command "aarch64-w64-mingw32-clang++" -ErrorAction SilentlyContinue).Source
+        write-host "ARM64 cross-compiler detected: $script:LLVM_MINGW_ARM64_CC"
+    } else {
+        write-host "ARM64 cross-compiler not found (install llvm-mingw for ARM64 builds)"
+    }
 }
 
 
@@ -234,6 +245,27 @@ function ollama {
     & go build -trimpath -ldflags "-s -w -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     cp .\ollama.exe "${script:DIST_DIR}\"
+
+    # Cross-compile for ARM64 if llvm-mingw is available
+    if ($script:LLVM_MINGW_ARM64_CC) {
+        $arm64DistDir = "${script:SRC_DIR}\dist\windows-arm64"
+        mkdir -Force -path "$arm64DistDir" | Out-Null
+        write-host "Building ollama CLI for ARM64 (cross-compile)"
+        $env:CGO_ENABLED = "1"
+        $env:GOOS = "windows"
+        $env:GOARCH = "arm64"
+        $env:CC = $script:LLVM_MINGW_ARM64_CC
+        $env:CXX = $script:LLVM_MINGW_ARM64_CXX
+        & go build -trimpath -ldflags "-s -w -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" -o "$arm64DistDir\ollama.exe" .
+        $buildResult = $LASTEXITCODE
+        # Reset environment
+        $env:GOOS = ""
+        $env:GOARCH = ""
+        $env:CC = ""
+        $env:CXX = ""
+        if ($buildResult -ne 0) { exit($buildResult) }
+        write-host "ARM64 ollama CLI built successfully"
+    }
 }
 
 function app {
@@ -290,14 +322,33 @@ function app {
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
 	& go build -trimpath -ldflags "-s -w -H windowsgui -X=github.com/ollama/ollama/app/version.Version=$script:VERSION" -o .\dist\windows-ollama-app-${script:ARCH}.exe ./app/cmd/app/
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+
+    # Cross-compile for ARM64 if llvm-mingw is available
+    if ($script:LLVM_MINGW_ARM64_CC) {
+        write-host "Building Ollama App for ARM64 (cross-compile)"
+        $env:CGO_ENABLED = "1"
+        $env:GOOS = "windows"
+        $env:GOARCH = "arm64"
+        $env:CC = $script:LLVM_MINGW_ARM64_CC
+        $env:CXX = $script:LLVM_MINGW_ARM64_CXX
+        & go build -trimpath -ldflags "-s -w -H windowsgui -X=github.com/ollama/ollama/app/version.Version=$script:VERSION" -o .\dist\windows-ollama-app-arm64.exe ./app/cmd/app/
+        $buildResult = $LASTEXITCODE
+        # Reset environment
+        $env:GOOS = ""
+        $env:GOARCH = ""
+        $env:CC = ""
+        $env:CXX = ""
+        if ($buildResult -ne 0) { exit($buildResult) }
+        write-host "ARM64 app built successfully"
+    }
 }
 
 function deps {
     write-host "Download MSVC Redistributables"
-    mkdir -Force -path "${script:SRC_DIR}\dist\\windows-arm64" | Out-Null
-    mkdir -Force -path "${script:SRC_DIR}\dist\\windows-amd64" | Out-Null
-    invoke-webrequest -Uri "https://aka.ms/vs/17/release/vc_redist.arm64.exe" -OutFile  "${script:SRC_DIR}\dist\windows-arm64\vc_redist.arm64.exe"
-    invoke-webrequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile  "${script:SRC_DIR}\dist\windows-amd64\vc_redist.x64.exe"
+    mkdir -Force -path "${script:SRC_DIR}\dist\windows-arm64" | Out-Null
+    mkdir -Force -path "${script:SRC_DIR}\dist\windows-amd64" | Out-Null
+    invoke-webrequest -Uri "https://aka.ms/vs/17/release/vc_redist.arm64.exe" -OutFile "${script:SRC_DIR}\dist\windows-arm64\vc_redist.arm64.exe"
+    invoke-webrequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile "${script:SRC_DIR}\dist\windows-amd64\vc_redist.x64.exe"
     write-host "Done."
 }
 
@@ -313,12 +364,48 @@ function sign {
     }
 }
 
+function msi {
+    write-host "Building MSI packages via CMake"
+
+    # Payloads must be signed before building MSIs so signed files are packaged
+    # The 'sign' step should have been run before this
+
+    # Configure CMake MSI build
+    $cmakeArgs = @(
+        "-B", "${script:SRC_DIR}\build\msi",
+        "-S", "${script:SRC_DIR}\app\msi",
+        "-DOLLAMA_VERSION=${script:VERSION}",
+        "-DOLLAMA_PKG_VERSION=${script:PKG_VERSION}",
+        "-DOLLAMA_DIST_DIR=${script:SRC_DIR}\dist"
+    )
+
+    write-host "Configuring: cmake $cmakeArgs"
+    & cmake @cmakeArgs
+    if ($LASTEXITCODE -ne 0) {
+        write-host "ERROR: CMake configure failed"
+        exit($LASTEXITCODE)
+    }
+
+    # Build all MSI targets (deps -> backends -> packages.json -> core)
+    # CMake dependency graph ensures correct ordering and -j enables parallelism
+    # Signing is handled by CMake post-build commands when KEY_CONTAINER is set
+    write-host "Building all MSI targets..."
+    & cmake --build "${script:SRC_DIR}\build\msi" --target msi-all -j
+    if ($LASTEXITCODE -ne 0) {
+        write-host "ERROR: MSI build failed"
+        exit($LASTEXITCODE)
+    }
+
+    write-host "MSI packages built successfully"
+}
+
 function installer {
     if ($null -eq ${script:INNO_SETUP_DIR}) {
-        write-host "ERROR: missing Inno Setup installation directory - install from https://jrsoftware.org/isdl.php"
-        exit 1
+        write-host "Inno Setup not found, skipping OllamaSetup.exe build"
+        write-host "Install from https://jrsoftware.org/isdl.php to build the Inno Setup installer"
+        return
     }
-    write-host "Building Ollama Installer"
+    write-host "Building Ollama Installer (Inno Setup)"
     cd "${script:SRC_DIR}\app"
     $env:PKG_VERSION=$script:PKG_VERSION
     if ("${env:KEY_CONTAINER}") {
@@ -354,6 +441,59 @@ function zip {
     }
 }
 
+function sums {
+    write-host "Generating sha256sum.txt for dist/ files"
+    $distPath = "${script:SRC_DIR}\dist"
+
+    if (-Not (Test-Path $distPath)) {
+        write-host "ERROR: dist/ directory not found"
+        return
+    }
+
+    $outputFile = Join-Path $distPath "sha256sum.txt"
+
+    # Get all files in dist/ (non-recursive, matching release workflow behavior)
+    # Include: *.msi, *.exe, *.zip, *.tgz, *.tar.zst, *.dmg
+    $extensions = @("*.msi", "*.exe", "*.zip", "*.tgz", "*.tar.zst", "*.dmg")
+    $files = @()
+    foreach ($ext in $extensions) {
+        $files += Get-ChildItem -Path $distPath -Filter $ext -File -ErrorAction SilentlyContinue
+    }
+
+    if ($files.Count -eq 0) {
+        write-host "No distribution files found in dist/"
+        return
+    }
+
+    # Generate checksums in the same format as CI: "hash  ./filename"
+    $checksums = @()
+    foreach ($file in $files) {
+        $hash = (Get-FileHash -Path $file.FullName -Algorithm SHA256).Hash.ToLower()
+        $checksums += "$hash  ./$($file.Name)"
+    }
+
+    # Write to file
+    $checksums | Out-File -FilePath $outputFile -Encoding utf8 -Force
+
+    write-host "Generated $outputFile with $($files.Count) entries:"
+    $checksums | ForEach-Object { write-host "  $_" }
+
+    # Generate upgrade.json for local testing
+    # This simulates what the update API returns, pointing to localhost for testing
+    $upgradeJsonFile = Join-Path $distPath "upgrade.json"
+    $upgradeJson = @{
+        url = "http://localhost:8000/OllamaSetup.exe"
+        version = $script:VERSION
+    } | ConvertTo-Json -Compress
+
+    $upgradeJson | Out-File -FilePath $upgradeJsonFile -Encoding utf8 -Force
+    write-host "Generated $upgradeJsonFile for local testing:"
+    write-host "  $upgradeJson"
+    write-host ""
+    write-host "To test updates locally, run from dist/:"
+    write-host "  python -m http.server 8000"
+}
+
 function clean {
     Remove-Item -ea 0 -r "${script:SRC_DIR}\dist\"
     Remove-Item -ea 0 -r "${script:SRC_DIR}\build\"
@@ -367,17 +507,19 @@ try {
         cuda13
         rocm
         vulkan
-        ollama
-        app
+        ollama  # Also cross-compiles for ARM64 if llvm-mingw available
+        app     # Also cross-compiles for ARM64 if llvm-mingw available
         deps
-        sign
-        installer
+        sign       # Sign payloads before packaging
+        msi        # Build MSI packages via CMake (uses signed payloads)
+        installer  # Build Inno Setup installer (Phase 1 - kept alongside MSI)
         zip
+        sums
     } else {
         for ( $i = 0; $i -lt $args.count; $i++ ) {
             write-host "running build step $($args[$i])"
             & $($args[$i])
-        } 
+        }
     }
 } catch {
     write-host "Build Failed"

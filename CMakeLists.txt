@@ -111,6 +111,12 @@ if(CMAKE_CUDA_COMPILER)
         RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT CUDA
         LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT CUDA
     )
+
+    # Write CUDA version breadcrumb for MSI installer version detection
+    set(CUDA_VERSION_CONTENT "${CUDAToolkit_VERSION}")
+    install(CODE "file(WRITE \"${OLLAMA_INSTALL_DIR}/cuda-version.txt\" \"${CUDA_VERSION_CONTENT}\")"
+        COMPONENT CUDA
+    )
 endif()
 
 set(WINDOWS_AMDGPU_TARGETS_EXCLUDE_REGEX "^gfx(908|90a|1200|1201):xnack[+-]$"
@@ -161,6 +167,12 @@ if(CMAKE_HIP_COMPILER)
                 break()
             endif()
         endforeach()
+
+        # Write ROCm/HIP version breadcrumb for MSI installer version detection
+        set(ROCM_VERSION_CONTENT "${hip_VERSION}")
+        install(CODE "file(WRITE \"${OLLAMA_INSTALL_DIR}/rocm-version.txt\" \"${ROCM_VERSION_CONTENT}\")"
+            COMPONENT HIP
+        )
     endif()
 endif()
 
@@ -174,6 +186,12 @@ if(NOT APPLE)
                 PRE_EXCLUDE_REGEXES ".*"
             RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT Vulkan
             LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT Vulkan
+        )
+
+        # Write Vulkan version breadcrumb for MSI installer version detection
+        set(VULKAN_VERSION_CONTENT "${Vulkan_VERSION}")
+        install(CODE "file(WRITE \"${OLLAMA_INSTALL_DIR}/vulkan-version.txt\" \"${VULKAN_VERSION_CONTENT}\")"
+            COMPONENT Vulkan
         )
     endif()
 endif()
