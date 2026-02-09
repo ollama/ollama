@@ -1,14 +1,19 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"net/http"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/types/model"
 )
 
 // Pi implements Runner and Editor for Pi (Pi Coding Agent) integration
@@ -121,12 +126,11 @@ func (p *Pi) Edit(models []string) error {
 	}
 
 	// Add newly selected models that weren't already in the list
+	client := api.NewClient(envconfig.Host(), http.DefaultClient)
+	ctx := context.Background()
 	for _, model := range models {
 		if selectedSet[model] {
-			newModels = append(newModels, map[string]any{
-				"id":      model,
-				"_launch": true,
-			})
+			newModels = append(newModels, createConfig(ctx, client, model))
 		}
 	}
 
@@ -193,4 +197,41 @@ func isPiOllamaModel(cfg map[string]any) bool {
 		return true
 	}
 	return false
+}
+
+// createConfig builds Pi model config with capability detection
+func createConfig(ctx context.Context, client *api.Client, modelID string) map[string]any {
+	cfg := map[string]any{
+		"id":      modelID,
+		"_launch": true,
+	}
+
+	resp, err := client.Show(ctx, &api.ShowRequest{Model: modelID})
+	if err != nil {
+		return cfg
+	}
+
+	// Set input types based on vision capability
+	if slices.Contains(resp.Capabilities, model.CapabilityVision) {
+		cfg["input"] = []string{"text", "image"}
+	} else {
+		cfg["input"] = []string{"text"}
+	}
+
+	// Set reasoning based on thinking capability
+	if slices.Contains(resp.Capabilities, model.CapabilityThinking) {
+		cfg["reasoning"] = true
+	}
+
+	// Extract context window from ModelInfo
+	for key, val := range resp.ModelInfo {
+		if strings.HasSuffix(key, ".context_length") {
+			if ctxLen, ok := val.(float64); ok && ctxLen > 0 {
+				cfg["contextWindow"] = int(ctxLen)
+			}
+			break
+		}
+	}
+
+	return cfg
 }
