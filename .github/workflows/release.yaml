@@ -399,13 +399,16 @@ jobs:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
       VERSION: ${{ needs.setup-environment.outputs.VERSION }}
       KEY_CONTAINER: ${{ vars.KEY_CONTAINER }}
+      # Uncomment to force deps MSIs to rebuild from source instead of downloading
+      # OLLAMA_DEPS_FORCE_BUILD: 1
     steps:
       - uses: actions/checkout@v4
       - uses: google-github-actions/auth@v2
         with:
           project_id: ollama
           credentials_json: ${{ secrets.GOOGLE_SIGNING_CREDENTIALS }}
-      - run: |
+      - name: Install signing tools and WiX
+        run: |
           $ErrorActionPreference = "Stop"
           Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=323507" -OutFile "${{ runner.temp }}\sdksetup.exe"
           Start-Process "${{ runner.temp }}\sdksetup.exe" -ArgumentList @("/q") -NoNewWindow -Wait
@@ -415,6 +418,9 @@ jobs:
           & "${{ runner.temp }}\plugin\*\kmscng.msi" /quiet
 
           echo "${{ vars.OLLAMA_CERT }}" >ollama_inc.crt
+
+          dotnet tool install --global wix
+          wix extension add --global WixToolset.Util.wixext
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -459,7 +465,7 @@ jobs:
             cmake --build build/go-license --target ollama-go-license
           done
       - run: |
-          ./scripts/build_windows.ps1 deps sign installer zip
+          ./scripts/build_windows.ps1 deps sign msi installer zip
       - name: Log contents after build
         run: |
           gci -path .\dist -Recurse -File | ForEach-Object { get-filehash -path $_.FullName -Algorithm SHA256 } | format-list
@@ -468,8 +474,10 @@ jobs:
           name: bundles-windows
           path: |
             dist/*.zip
-            dist/*.ps1
             dist/OllamaSetup.exe
+            dist/*.msi
+            dist/*.json
+            dist/*.ps1
 
   linux-depends:
     strategy:
@@ -764,11 +772,25 @@ jobs:
       - name: Verify release artifacts
         run: |
           required=(
-            dist/OllamaSetup.exe
             dist/install.ps1
             dist/install.sh
+            dist/packages.json
+            dist/OllamaSetup.exe
+            dist/ollama-core.msi
+            dist/ollama-core-arm64.msi
+            dist/ollama-cuda-v12.msi
+            dist/ollama-cuda-v13.msi
+            dist/ollama-rocm.msi
+            dist/ollama-vulkan.msi
+            dist/ollama-mlx-cuda-v13.msi
+            dist/ollama-cuda-deps-*.msi
+            dist/ollama-cuda-v13-deps-*.msi
+            dist/ollama-rocm-deps-*.msi
+            dist/ollama-vulkan-deps-*.msi
             dist/ollama-windows-amd64.zip
             dist/ollama-windows-arm64.zip
+            dist/ollama-windows-amd64-rocm.zip
+            dist/ollama-windows-amd64-mlx.zip
           )
           for payload in "${required[@]}"; do
             if [ ! -f "$payload" ]; then
@@ -798,7 +820,7 @@ jobs:
       - name: Upload release artifacts
         run: |
           pids=()
-          for payload in dist/*.txt dist/*.zip dist/*.tgz dist/*.tar.zst dist/*.exe dist/*.dmg dist/*.ps1 dist/*.sh ; do
+          for payload in dist/*.txt dist/*.zip dist/*.tgz dist/*.tar.zst dist/*.dmg dist/OllamaSetup.exe dist/*.msi dist/*.json dist/*.ps1 dist/*.sh ; do
             echo "Uploading $payload"
             gh release upload ${GITHUB_REF_NAME} $payload --clobber &
             pids+=($!)

@@ -47,6 +47,8 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY         ${OLLAMA_BUILD_DIR})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_DEBUG   ${OLLAMA_BUILD_DIR})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_RELEASE ${OLLAMA_BUILD_DIR})
 
+include("${CMAKE_CURRENT_LIST_DIR}/../windows-runtime-deps.cmake")
+
 if(MLX_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES)
     check_language(CUDA)
 endif()
@@ -118,6 +120,39 @@ if(_cudnn_root)
     file(GLOB CUDNN_BIN_SUBDIRS "${_cudnn_root}/bin/*")
     list(APPEND MLX_RUNTIME_DIRS ${CUDNN_BIN_SUBDIRS})
 endif()
+
+function(ollama_read_cudnn_version OUT_VAR)
+    set(_cudnn_include_dirs)
+    if(CUDNN_INCLUDE_PATH)
+        list(APPEND _cudnn_include_dirs "${CUDNN_INCLUDE_PATH}")
+    endif()
+    if(_cudnn_root)
+        list(APPEND _cudnn_include_dirs "${_cudnn_root}/include")
+        if(CUDAToolkit_VERSION_MAJOR)
+            list(APPEND _cudnn_include_dirs "${_cudnn_root}/include/${CUDAToolkit_VERSION_MAJOR}.0")
+        endif()
+    endif()
+
+    foreach(_cudnn_include_dir IN LISTS _cudnn_include_dirs)
+        file(TO_CMAKE_PATH "${_cudnn_include_dir}" _cudnn_include_dir)
+        set(_cudnn_version_header "${_cudnn_include_dir}/cudnn_version.h")
+        if(EXISTS "${_cudnn_version_header}")
+            file(STRINGS "${_cudnn_version_header}" _cudnn_major_line REGEX "^#define[ \t]+CUDNN_MAJOR[ \t]+[0-9]+")
+            file(STRINGS "${_cudnn_version_header}" _cudnn_minor_line REGEX "^#define[ \t]+CUDNN_MINOR[ \t]+[0-9]+")
+            file(STRINGS "${_cudnn_version_header}" _cudnn_patch_line REGEX "^#define[ \t]+CUDNN_PATCHLEVEL[ \t]+[0-9]+")
+            if(_cudnn_major_line AND _cudnn_minor_line AND _cudnn_patch_line)
+                string(REGEX REPLACE ".*CUDNN_MAJOR[ \t]+([0-9]+).*" "\\1" _cudnn_major "${_cudnn_major_line}")
+                string(REGEX REPLACE ".*CUDNN_MINOR[ \t]+([0-9]+).*" "\\1" _cudnn_minor "${_cudnn_minor_line}")
+                string(REGEX REPLACE ".*CUDNN_PATCHLEVEL[ \t]+([0-9]+).*" "\\1" _cudnn_patch "${_cudnn_patch_line}")
+                set(${OUT_VAR} "${_cudnn_major}.${_cudnn_minor}.${_cudnn_patch}" PARENT_SCOPE)
+                return()
+            endif()
+        endif()
+    endforeach()
+
+    set(${OUT_VAR} "" PARENT_SCOPE)
+endfunction()
+
 # Add build output directory and MLX dependency build directories.
 list(APPEND MLX_RUNTIME_DIRS ${OLLAMA_BUILD_DIR})
 # OpenBLAS DLL location (pre-built zip extracts into openblas-src/bin/).
@@ -127,9 +162,11 @@ list(APPEND MLX_RUNTIME_DIRS ${CMAKE_BINARY_DIR}/_deps/openblas-src/bin)
 # so there is no runtime dependency. This path covers the stub build dir
 # for windows so we include the DLL in our dependencies.
 list(APPEND MLX_RUNTIME_DIRS ${CMAKE_BINARY_DIR}/_deps/mlx-build/mlx/distributed/nccl/nccl_stub-prefix/src/nccl_stub-build/Release)
+list(APPEND MLX_RUNTIME_DIRS ${OLLAMA_WINDOWS_RUNTIME_DEP_DIRS})
 
 # Base regexes for runtime dependencies (cross-platform).
 set(MLX_INCLUDE_REGEXES cublas cublasLt cudart cufft nvrtc nvrtc-builtins cudnn nccl openblas gfortran)
+list(APPEND MLX_INCLUDE_REGEXES ${OLLAMA_WINDOWS_RUNTIME_DEP_INCLUDE_REGEXES})
 # On Windows, also include dl.dll (dlfcn-win32 POSIX emulation layer).
 if(WIN32)
     list(APPEND MLX_INCLUDE_REGEXES "^dl\\.dll$")
@@ -177,6 +214,7 @@ install(RUNTIME_DEPENDENCY_SET mlx_runtime_deps
     RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX_VENDOR
     LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX_VENDOR
 )
+ollama_install_windows_runtime_dlls("${OLLAMA_INSTALL_DIR}" COMPONENT MLX_VENDOR)
 
 get_target_property(_MLX_LINK_LIBRARIES mlx LINK_LIBRARIES)
 if(TARGET jaccl AND "jaccl" IN_LIST _MLX_LINK_LIBRARIES)
@@ -410,4 +448,13 @@ if(CUDAToolkit_FOUND)
             DESTINATION ${OLLAMA_INSTALL_DIR}
             COMPONENT MLX_VENDOR)
     endif()
+    set(_ollama_mlx_deps_version "${CUDAToolkit_VERSION}")
+    ollama_read_cudnn_version(_ollama_cudnn_version)
+    if(_ollama_cudnn_version)
+        set(_ollama_mlx_deps_version "${_ollama_mlx_deps_version}-cudnn${_ollama_cudnn_version}")
+    elseif(MLX_CUDNN_LIBRARY OR MLX_CUDNN_DLLS)
+        message(WARNING "Could not determine cuDNN version for MLX dependency breadcrumb")
+    endif()
+    install(CODE "file(WRITE \"\${CMAKE_INSTALL_PREFIX}/${OLLAMA_INSTALL_DIR}/mlx-version.txt\" \"${_ollama_mlx_deps_version}\")"
+        COMPONENT MLX)
 endif()

@@ -33,6 +33,7 @@ func resetWindowsUpdaterState(t *testing.T) {
 	oldRunningInstaller := runningInstaller
 	oldUpgradeLogFile := UpgradeLogFile
 	oldInstallScriptInstallerLogFile := installScriptInstallerLogFile
+	oldInstallScriptInstallerLogFileGlob := installScriptInstallerLogFileGlob
 	oldUpgradeMarkerFile := UpgradeMarkerFile
 	oldVerifyDownload := VerifyDownload
 	oldVerifyInstallScriptSignature := verifyInstallScriptSignature
@@ -45,6 +46,7 @@ func resetWindowsUpdaterState(t *testing.T) {
 		runningInstaller = oldRunningInstaller
 		UpgradeLogFile = oldUpgradeLogFile
 		installScriptInstallerLogFile = oldInstallScriptInstallerLogFile
+		installScriptInstallerLogFileGlob = oldInstallScriptInstallerLogFileGlob
 		UpgradeMarkerFile = oldUpgradeMarkerFile
 		VerifyDownload = oldVerifyDownload
 		verifyInstallScriptSignature = oldVerifyInstallScriptSignature
@@ -1017,6 +1019,7 @@ func TestDoPostUpgradeCleanupLogsInstallerFailure(t *testing.T) {
 	runningInstaller = filepath.Join(runDir, Installer)
 	UpgradeLogFile = filepath.Join(runDir, "upgrade.log")
 	installScriptInstallerLogFile = filepath.Join(runDir, "OllamaSetup.log")
+	installScriptInstallerLogFileGlob = filepath.Join(runDir, "OllamaInstaller-*.log")
 	UpgradeMarkerFile = filepath.Join(runDir, "upgraded")
 
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
@@ -1050,6 +1053,54 @@ func TestDoPostUpgradeCleanupLogsInstallerFailure(t *testing.T) {
 	}
 	if !strings.Contains(logText, installScriptInstallerLogFile) {
 		t.Fatalf("expected installer log path in warning, got logs:\n%s", logText)
+	}
+}
+
+func TestDoPostUpgradeCleanupLogsMSIInstallerFailure(t *testing.T) {
+	resetWindowsUpdaterState(t)
+
+	localAppData := t.TempDir()
+	t.Setenv("LOCALAPPDATA", localAppData)
+	UpdateStageDir = t.TempDir()
+	runDir := filepath.Join(localAppData, "Ollama")
+	runningInstaller = filepath.Join(runDir, Installer)
+	UpgradeLogFile = filepath.Join(runDir, "upgrade.log")
+	installScriptInstallerLogFile = filepath.Join(runDir, "OllamaSetup.log")
+	installScriptInstallerLogFileGlob = filepath.Join(runDir, "OllamaInstaller-*.log")
+	UpgradeMarkerFile = filepath.Join(runDir, "upgraded")
+
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(UpgradeMarkerFile, []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	markerTime := time.Now().Add(-2 * time.Minute)
+	if err := os.Chtimes(UpgradeMarkerFile, markerTime, markerTime); err != nil {
+		t.Fatal(err)
+	}
+	msiLog := filepath.Join(runDir, "OllamaInstaller-install-ollama-core.log")
+	if err := os.WriteFile(msiLog, []byte("Action ended: InstallFinalize. Return value 3."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() {
+		slog.SetDefault(previousLogger)
+	})
+
+	if err := DoPostUpgradeCleanup(); err != nil {
+		t.Fatal(err)
+	}
+
+	logText := logs.String()
+	if !strings.Contains(logText, "Windows installer reported upgrade failure") {
+		t.Fatalf("expected installer failure warning, got logs:\n%s", logText)
+	}
+	if !strings.Contains(logText, msiLog) {
+		t.Fatalf("expected MSI log path in warning, got logs:\n%s", logText)
 	}
 }
 

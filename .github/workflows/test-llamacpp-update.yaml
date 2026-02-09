@@ -547,6 +547,10 @@ jobs:
       VERSION: ${{ needs.setup-environment.outputs.VERSION }}
     steps:
       - uses: actions/checkout@v4
+      - name: Install WiX
+        run: |
+          dotnet tool install --global wix
+          wix extension add --global WixToolset.Util.wixext
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -591,8 +595,8 @@ jobs:
               "-DOLLAMA_GO_LICENSE_TARGETS=windows/${arch}"
             cmake --build build/go-license --target ollama-go-license
           done
-      - name: Build unsigned Windows installer and zips
-        run: ./scripts/build_windows.ps1 deps installer zip
+      - name: Build unsigned Windows installer, MSIs, and zips
+        run: ./scripts/build_windows.ps1 deps installer msi zip
       - name: Log contents after build
         run: |
           gci -path .\dist -Recurse -File | ForEach-Object { get-filehash -path $_.FullName -Algorithm SHA256 } | format-list
@@ -604,7 +608,20 @@ jobs:
             dist/ollama-windows-amd64.zip \
             dist/ollama-windows-arm64.zip \
             dist/ollama-windows-amd64-rocm.zip \
+            dist/ollama-windows-amd64-mlx.zip \
             dist/OllamaSetup.exe \
+            dist/ollama-core.msi \
+            dist/ollama-core-arm64.msi \
+            dist/ollama-cuda-v12.msi \
+            dist/ollama-cuda-v13.msi \
+            dist/ollama-rocm.msi \
+            dist/ollama-vulkan.msi \
+            dist/ollama-mlx-cuda-v13.msi \
+            dist/ollama-cuda-deps-*.msi \
+            dist/ollama-cuda-v13-deps-*.msi \
+            dist/ollama-rocm-deps-*.msi \
+            dist/ollama-vulkan-deps-*.msi \
+            dist/packages.json \
             dist/install.ps1
           do
             [ -f "$payload" ] || { echo "missing $payload"; exit 1; }
@@ -626,8 +643,20 @@ jobs:
           compression-level: 0
       - uses: actions/upload-artifact@v4
         with:
+          name: ollama-windows-amd64-mlx.zip
+          path: dist/ollama-windows-amd64-mlx.zip
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
           name: OllamaSetup.exe
           path: dist/OllamaSetup.exe
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-msi-packages
+          path: |
+            dist/*.msi
+            dist/packages.json
           compression-level: 0
       - uses: actions/upload-artifact@v4
         with:

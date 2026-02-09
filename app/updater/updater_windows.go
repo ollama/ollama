@@ -33,8 +33,9 @@ const (
 )
 
 var (
-	runningInstaller              string
-	installScriptInstallerLogFile string
+	runningInstaller                  string
+	installScriptInstallerLogFile     string
+	installScriptInstallerLogFileGlob string
 )
 
 var (
@@ -84,6 +85,7 @@ func init() {
 
 	UpgradeLogFile = filepath.Join(appDataDir, "upgrade.log")
 	installScriptInstallerLogFile = filepath.Join(appDataDir, "OllamaSetup.log")
+	installScriptInstallerLogFileGlob = filepath.Join(appDataDir, "OllamaInstaller-*.log")
 	Installer = "OllamaSetup.exe"
 	runningInstaller = filepath.Join(appDataDir, Installer)
 	UpgradeMarkerFile = filepath.Join(appDataDir, "upgraded")
@@ -448,10 +450,30 @@ func logInstallerFailuresSince(start time.Time) {
 }
 
 func installScriptInstallerLogFiles() []string {
-	if installScriptInstallerLogFile == "" {
-		return nil
+	files := make([]string, 0, 1)
+	seen := map[string]bool{}
+	add := func(file string) {
+		if file == "" {
+			return
+		}
+		key := strings.ToLower(filepath.Clean(file))
+		if !seen[key] {
+			seen[key] = true
+			files = append(files, file)
+		}
 	}
-	return []string{installScriptInstallerLogFile}
+
+	add(installScriptInstallerLogFile)
+	if installScriptInstallerLogFileGlob != "" {
+		matches, err := filepath.Glob(installScriptInstallerLogFileGlob)
+		if err != nil {
+			slog.Debug("unable to list installer logs", "glob", installScriptInstallerLogFileGlob, "error", err)
+		}
+		for _, match := range matches {
+			add(match)
+		}
+	}
+	return files
 }
 
 func windowsInstallerLogIndicatesFailure(logFile string, since time.Time) (bool, error) {

@@ -229,6 +229,8 @@ if(GGML_HIP)
     find_package(hip)
 endif()
 
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/windows-runtime-deps.cmake")
+
 # Install layout under lib/ollama/:
 #
 # CPU build (OLLAMA_RUNNER_DIR=""):
@@ -327,7 +329,7 @@ function(ollama_append_mingw_runtime_dlls output)
     endif()
 endfunction()
 
-function(ollama_install_windows_runtime_dlls dest)
+function(ollama_install_llama_windows_runtime_dlls dest)
     if(NOT WIN32 OR NOT GGML_BACKEND_DL)
         return()
     endif()
@@ -433,7 +435,7 @@ if(OLLAMA_RUNNER_DIR)
         endforeach()
     " COMPONENT llama-server)
 
-    ollama_install_windows_runtime_dlls("${_base_dest}/${OLLAMA_RUNNER_DIR}")
+    ollama_install_llama_windows_runtime_dlls("${_base_dest}/${OLLAMA_RUNNER_DIR}")
 
     # Bundle GPU runtime libraries (cublas, cudart, rocblas, etc.)
     # These are needed at runtime by the GPU backend .so
@@ -456,13 +458,15 @@ if(OLLAMA_RUNNER_DIR)
         if(TARGET ggml-cuda)
             install(TARGETS ggml-cuda
                 RUNTIME_DEPENDENCIES
-                    DIRECTORIES ${_cuda_redist_dir} ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_LIBRARY_DIR}
+                    DIRECTORIES ${_cuda_redist_dir} ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_LIBRARY_DIR} ${OLLAMA_WINDOWS_RUNTIME_DEP_DIRS}
                     PRE_INCLUDE_REGEXES cublas cublasLt cudart
                     PRE_EXCLUDE_REGEXES ".*"
                 RUNTIME DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
                 LIBRARY DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
             )
         endif()
+        install(CODE "file(WRITE \"\${CMAKE_INSTALL_PREFIX}/${_base_dest}/${OLLAMA_RUNNER_DIR}/cuda-version.txt\" \"${CUDAToolkit_VERSION}\")"
+            COMPONENT llama-server)
     endif()
     if(GGML_HIP)
         if(TARGET ggml-hip)
@@ -472,8 +476,8 @@ if(OLLAMA_RUNNER_DIR)
                 LIBRARY DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
             )
             install(RUNTIME_DEPENDENCY_SET rocm_deps
-                DIRECTORIES ${HIP_BIN_INSTALL_DIR} ${HIP_LIB_INSTALL_DIR}
-                PRE_INCLUDE_REGEXES hipblas rocblas amdhip64 rocsolver amd_comgr hsa-runtime64 rocsparse tinfo rocprofiler-register roctx64 rocroller drm drm_amdgpu numa elf
+                DIRECTORIES ${HIP_BIN_INSTALL_DIR} ${HIP_LIB_INSTALL_DIR} ${OLLAMA_WINDOWS_RUNTIME_DEP_DIRS}
+                PRE_INCLUDE_REGEXES hipblas rocblas amdhip64 rocsolver amd_comgr hsa-runtime64 rocsparse tinfo rocprofiler-register roctx64 rocroller drm drm_amdgpu numa elf ${OLLAMA_WINDOWS_RUNTIME_DEP_INCLUDE_REGEXES}
                 PRE_EXCLUDE_REGEXES ".*"
                 POST_EXCLUDE_REGEXES "system32"
                 RUNTIME DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
@@ -508,6 +512,13 @@ if(OLLAMA_RUNNER_DIR)
                     break()
                 endif()
             endforeach()
+            if(hip_VERSION)
+                set(_ollama_rocm_version "${hip_VERSION}")
+            else()
+                set(_ollama_rocm_version "0.0.0")
+            endif()
+            install(CODE "file(WRITE \"\${CMAKE_INSTALL_PREFIX}/${_base_dest}/${OLLAMA_RUNNER_DIR}/rocm-version.txt\" \"${_ollama_rocm_version}\")"
+                COMPONENT llama-server)
         endif()
     endif()
     if(GGML_VULKAN)
@@ -516,6 +527,11 @@ if(OLLAMA_RUNNER_DIR)
                 RUNTIME DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
                 LIBRARY DESTINATION "${_base_dest}/${OLLAMA_RUNNER_DIR}" COMPONENT llama-server
             )
+            find_package(Vulkan)
+            if(Vulkan_FOUND)
+                install(CODE "file(WRITE \"\${CMAKE_INSTALL_PREFIX}/${_base_dest}/${OLLAMA_RUNNER_DIR}/vulkan-version.txt\" \"${Vulkan_VERSION}\")"
+                    COMPONENT llama-server)
+            endif()
         endif()
     endif()
 else()
@@ -541,7 +557,7 @@ else()
 
     # Bundle Windows CRT DLLs alongside the executables so zip installs
     # do not depend on host-global redistributables.
-    ollama_install_windows_runtime_dlls("${_base_dest}")
+    ollama_install_llama_windows_runtime_dlls("${_base_dest}")
 
     # CPU backend modules (multiple variants from GGML_CPU_ALL_VARIANTS).
     # install(CODE) runs at install time so CMAKE_INSTALL_CONFIG_NAME is

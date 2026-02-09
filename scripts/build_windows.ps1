@@ -287,11 +287,6 @@ function checkEnv {
         $script:HIP_PATH=$script:HIP_PATH_V6
     }
     
-    $inoSetup=(get-item "C:\Program Files*\Inno Setup*\")
-    if ($inoSetup.length -gt 0) {
-        $script:INNO_SETUP_DIR=$inoSetup[0]
-    }
-
     $script:DIST_DIR="${script:SRC_DIR}\dist\windows-${script:TARGET_ARCH}"
     $env:CGO_ENABLED="1"
     if (-not $env:CGO_CFLAGS) {
@@ -333,6 +328,10 @@ function checkEnv {
         }
     } else {
         Write-Output "Code signing disabled - please set KEY_CONTAINERS to sign and copy ollama_inc.crt to the top of the source tree"
+    }
+    $inoSetup=(get-item "C:\Program Files*\Inno Setup*\" -ea 'silentlycontinue')
+    if ($inoSetup.length -gt 0) {
+        $script:INNO_SETUP_DIR=$inoSetup[0]
     }
     if (!$env:CMAKE_GENERATOR) {
         $ninja = Get-Command -Name "ninja.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -1010,6 +1009,26 @@ function deps {
     Write-Output "deps: no external dependencies to download (CRT DLLs bundled by CMake install)"
 }
 
+function goLicense {
+    foreach ($arch in @("amd64", "arm64")) {
+        $payloadDir = "${script:SRC_DIR}\dist\windows-$arch"
+        if (-not (Test-Path (Join-Path $payloadDir "ollama.exe"))) {
+            continue
+        }
+
+        Write-Output "Collecting Go licenses for Windows $arch"
+        & cmake -S "${script:SRC_DIR}" -B "${script:SRC_DIR}\build\go-license-$arch" `
+            -DOLLAMA_LLAMA_BACKENDS= `
+            -DOLLAMA_MLX_BACKENDS= `
+            "-DOLLAMA_PAYLOAD_INSTALL_PREFIX=$payloadDir" `
+            "-DOLLAMA_GO_LICENSE_TARGETS=windows/$arch"
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+
+        & cmake --build "${script:SRC_DIR}\build\go-license-$arch" --target ollama-go-license
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    }
+}
+
 function sign {
     # Copy install.ps1 to dist for release packaging
     Write-Output "Copying install.ps1 to dist"
@@ -1037,15 +1056,48 @@ function installer {
         Write-Output "ERROR: missing Inno Setup installation directory - install from https://jrsoftware.org/isdl.php"
         exit 1
     }
+    restoreDistComponentStaging
+    goLicense
     Write-Output "Building Ollama Installer"
-    cd "${script:SRC_DIR}\app"
-    $env:PKG_VERSION=$script:PKG_VERSION
-    if ("${env:KEY_CONTAINER}") {
-        & "${script:INNO_SETUP_DIR}\ISCC.exe" /DARCH=$script:TARGET_ARCH /SMySignTool="${script:SignTool} sign /fd sha256 /t http://timestamp.digicert.com /f ${script:OLLAMA_CERT} /csp `$qGoogle Cloud KMS Provider`$q /kc ${env:KEY_CONTAINER} `$f" .\ollama.iss
-    } else {
-        & "${script:INNO_SETUP_DIR}\ISCC.exe" /DARCH=$script:TARGET_ARCH .\ollama.iss
+    Push-Location "${script:SRC_DIR}\app"
+    try {
+        $env:PKG_VERSION=$script:PKG_VERSION
+        if ("${env:KEY_CONTAINER}") {
+            & "${script:INNO_SETUP_DIR}\ISCC.exe" /DARCH=$script:TARGET_ARCH /SMySignTool="${script:SignTool} sign /fd sha256 /t http://timestamp.digicert.com /f ${script:OLLAMA_CERT} /csp `$qGoogle Cloud KMS Provider`$q /kc ${env:KEY_CONTAINER} `$f" .\ollama.iss
+        } else {
+            & "${script:INNO_SETUP_DIR}\ISCC.exe" /DARCH=$script:TARGET_ARCH .\ollama.iss
+        }
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    } finally {
+        Pop-Location
     }
-    if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+}
+
+function msi {
+    Write-Output "Building MSI packages via CMake"
+    goLicense
+    restoreDistComponentStaging
+
+    # Payloads must be signed before building MSIs so signed files are packaged.
+    # The 'sign' step should have been run before this.
+    $cmakeArgs = @(
+        "-B", "${script:SRC_DIR}\build\msi",
+        "-S", "${script:SRC_DIR}\app\msi",
+        "-DOLLAMA_VERSION=${script:VERSION}",
+        "-DOLLAMA_DIST_DIR=${script:SRC_DIR}\dist"
+    )
+
+    & cmake @cmakeArgs
+    if ($LASTEXITCODE -ne 0) {
+        Write-Output "ERROR: CMake configure failed"
+        exit($LASTEXITCODE)
+    }
+
+    & cmake --build "${script:SRC_DIR}\build\msi" --target msi-all --parallel $script:JOBS
+    if ($LASTEXITCODE -ne 0) {
+        Write-Output "ERROR: MSI build failed"
+        exit($LASTEXITCODE)
+    }
 }
 
 function newZipJob($sourceDir, $destZip) {
@@ -1219,19 +1271,48 @@ function stageComponents($mainDir, $stagingDir, $pattern, $readmePrefix) {
     return $false
 }
 
+function moveDirectoryContents($sourceDir, $destinationDir) {
+    mkdir -Force -path $destinationDir | Out-Null
+    foreach ($item in (Get-ChildItem -LiteralPath $sourceDir -Force)) {
+        $destination = Join-Path $destinationDir $item.Name
+        if ($item.PSIsContainer) {
+            moveDirectoryContents $item.FullName $destination
+            Remove-Item -ea 0 -r $item.FullName
+        } else {
+            Move-Item -LiteralPath $item.FullName -destination $destination -Force
+        }
+    }
+}
+
 function restoreComponents($mainDir, $stagingDir) {
     if (Test-Path -Path "${stagingDir}\lib\ollama") {
+        mkdir -Force -path "${mainDir}\lib\ollama" | Out-Null
         foreach ($dir in (Get-ChildItem -Path "${stagingDir}\lib\ollama" -Directory)) {
-            Move-Item -path $dir.FullName -destination "${mainDir}\lib\ollama\$($dir.Name)"
+            $destinationDir = "${mainDir}\lib\ollama\$($dir.Name)"
+            if (Test-Path -Path $destinationDir) {
+                moveDirectoryContents $dir.FullName $destinationDir
+                Remove-Item -ea 0 -r $dir.FullName
+            } else {
+                Move-Item -LiteralPath $dir.FullName -destination $destinationDir
+            }
         }
     }
     Remove-Item -ea 0 -r $stagingDir
+}
+
+function restoreDistComponentStaging {
+    $distDir = "${script:SRC_DIR}\dist"
+    $amd64Dir = "${distDir}\windows-amd64"
+    restoreComponents $amd64Dir "${distDir}\windows-amd64-rocm"
+    restoreComponents $amd64Dir "${distDir}\windows-amd64-mlx"
 }
 
 function zip {
     $jobs = @()
     $distDir = "${script:SRC_DIR}\dist"
     $amd64Dir = "${distDir}\windows-amd64"
+    restoreDistComponentStaging
+    goLicense
 
     # Remove any stale zip files before starting
     Remove-Item -ea 0 "${distDir}\ollama-windows-*.zip"
@@ -1291,6 +1372,36 @@ function zip {
     }
 }
 
+function sums {
+    Write-Output "Generating sha256sum.txt for dist/ files"
+    $distPath = "${script:SRC_DIR}\dist"
+    if (-not (Test-Path $distPath)) {
+        Write-Output "ERROR: dist/ directory not found"
+        return
+    }
+
+    $outputFile = Join-Path $distPath "sha256sum.txt"
+    $extensions = @("*.msi", "*.exe", "*.zip", "*.tgz", "*.tar.zst", "*.dmg")
+    $files = @()
+    foreach ($ext in $extensions) {
+        $files += Get-ChildItem -Path $distPath -Filter $ext -File -ErrorAction SilentlyContinue
+    }
+
+    if ($files.Count -eq 0) {
+        Write-Output "No distribution files found in dist/"
+        return
+    }
+
+    $checksums = @()
+    foreach ($file in ($files | Sort-Object Name)) {
+        $hash = (Get-FileHash -Path $file.FullName -Algorithm SHA256).Hash.ToLower()
+        $checksums += "$hash  ./$($file.Name)"
+    }
+
+    $checksums | Out-File -FilePath $outputFile -Encoding utf8 -Force
+    Write-Output "Generated $outputFile with $($files.Count) entries"
+}
+
 function clean {
     Remove-Item -ea 0 -r "${script:SRC_DIR}\dist\"
     Remove-Item -ea 0 -r "${script:SRC_DIR}\build\"
@@ -1315,8 +1426,10 @@ try {
         appArm64
         deps
         sign
+        msi
         installer
         zip
+        sums
     } else {
         for ( $i = 0; $i -lt $args.count; $i++ ) {
             Write-Output "running build step $($args[$i])"
