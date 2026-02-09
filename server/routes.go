@@ -149,7 +149,7 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 	if err != nil {
 		return nil, nil, nil, err
 	}
-
+	model.Reranking = opts.Reranking
 	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive)
 	var runner *runnerRef
 	select {
@@ -689,27 +689,35 @@ func (s *Server) RerankHandler(c *gin.Context) {
 		handleScheduleError(c, req.Model, err)
 		return
 	}
-	if m.Template == nil {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model '%s' missing template", req.Model)})
-		return
+	llmReq := llm.RerankRequest{
+		Model: req.Model,
 	}
-	var prompts []string
-	for _, doc := range req.Documents {
-		var b bytes.Buffer
-		var values template.Values
-		values.Query = req.Query
-		values.Document = doc
-		if err := m.Template.Execute(&b, values); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	useTemplate := false
+	if m.Template != nil {
+		vars, err := m.Template.Vars()
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		prompts = append(prompts, b.String())
+		useTemplate = slices.Contains(vars, "query") && slices.Contains(vars, "document")
 	}
-	llmreq := llm.RerankRequest{
-		Model:   req.Model,
-		Prompts: prompts,
+	if useTemplate {
+		for _, doc := range req.Documents {
+			var b bytes.Buffer
+			var values template.Values
+			values.Query = req.Query
+			values.Document = doc
+			if err := m.Template.Execute(&b, values); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			llmReq.Prompts = append(llmReq.Prompts, b.String())
+		}
+	} else {
+		llmReq.Query = &req.Query
+		llmReq.Prompts = req.Documents
 	}
-	err = r.Rerank(c.Request.Context(), llmreq, func(rr llm.RerankResponse) {
+	err = r.Rerank(c.Request.Context(), llmReq, func(rr llm.RerankResponse) {
 		sort.SliceStable(rr.Results, func(i, j int) bool {
 			return rr.Results[i].RelevanceScore > rr.Results[j].RelevanceScore
 		})
@@ -1988,7 +1996,7 @@ func (s *Server) SignoutHandler(c *gin.Context) {
 func (s *Server) PsHandler(c *gin.Context) {
 	models := []api.ProcessModelResponse{}
 
-	for _, v := range s.sched.loaded {
+	for _, v := range s.sched.GetAllLoadedRunner(true) {
 		model := v.model
 		modelDetails := api.ModelDetails{
 			Format:            model.Config.ModelFormat,

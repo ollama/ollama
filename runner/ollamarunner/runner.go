@@ -98,9 +98,6 @@ type Sequence struct {
 	// true if an embedding are to be returned instead of text generation
 	embeddingOnly bool
 
-	// reranking indicates if the loaded model supports reranking.
-	reranking bool
-
 	// shift if context window is exceeded
 	shift bool
 
@@ -119,30 +116,65 @@ type Sequence struct {
 }
 
 type NewSequenceParams struct {
-	numPredict  int
-	stop        []string
-	numKeep     int32
-	sampler     sample.Sampler
-	embedding   bool
-	reranking   bool
-	shift       bool
-	truncate    bool
-	logprobs    bool
-	topLogprobs int
+	numPredict     int
+	stop           []string
+	numKeep        int32
+	sampler        sample.Sampler
+	embedding      bool
+	shift          bool
+	truncate       bool
+	logprobs       bool
+	topLogprobs    int
+	rerankingQuery *string
 }
 
 var errorInputTooLong = errors.New("the input length exceeds the context length")
 
 func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
-
-	inputs, ctxs, mmStore, err := s.inputs(prompt, images)
-	if err != nil {
-		return nil, fmt.Errorf("failed to process inputs: %w", err)
-	} else if len(inputs) == 0 {
-		return nil, errors.New("no input provided")
+	var inputs []*input.Input
+	var ctxs []ml.Context
+	var mmStore multimodalStore
+	var err error
+	if params.rerankingQuery == nil {
+		inputs, ctxs, mmStore, err = s.inputs(prompt, images)
+		if err != nil {
+			return nil, fmt.Errorf("failed to process inputs: %w", err)
+		} else if len(inputs) == 0 {
+			return nil, errors.New("no input provided")
+		}
+	} else {
+		tz, ok := s.model.(tokenizer.Tokenizer)
+		if !ok {
+			return nil, errors.New("model does not implement Tokenizer")
+		}
+		vocabulary := tz.Vocabulary()
+		var eosToken []*input.Input
+		if vocabulary.AddEOS {
+			for _, eos := range vocabulary.EOS {
+				eosToken = append(eosToken, &input.Input{Token: eos})
+			}
+		}
+		if vocabulary.AddBOS {
+			for _, bos := range vocabulary.BOS {
+				inputs = append(inputs, &input.Input{Token: bos})
+			}
+		}
+		var queryInputs []*input.Input
+		queryInputs, _, _, err = s.inputs(*params.rerankingQuery, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to process reranking query inputs: %w", err)
+		}
+		inputs = append(inputs, queryInputs...)
+		inputs = append(inputs, eosToken...)
+		var docInputs []*input.Input
+		docInputs, _, _, err = s.inputs(prompt, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to process reranking document inputs: %w", err)
+		}
+		inputs = append(inputs, docInputs...)
+		inputs = append(inputs, eosToken...)
 	}
-
 	if params.numKeep < 0 {
 		params.numKeep = int32(len(inputs))
 	}
@@ -206,7 +238,6 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 		embedding:        make(chan []float32, 1),
 		sampler:          params.sampler,
 		embeddingOnly:    params.embedding,
-		reranking:        params.reranking,
 		stop:             params.stop,
 		numKeep:          params.numKeep,
 		shift:            params.shift,
@@ -248,7 +279,7 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]*input.Input, 
 
 	for i, part := range parts {
 		// text - tokenize
-		tokens, err := s.model.(tokenizer.Tokenizer).Encode(part, i == 0)
+		tokens, err := s.model.(tokenizer.Tokenizer).Encode(part, i == 0 && !s.reranking)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -593,7 +624,7 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 			batch.Sequences = append(batch.Sequences, seq.cache.Id)
 
 			seq.iBatch = len(batchOutputs)
-			if i+1 == len(seq.inputs) || seq.embeddingOnly || seq.reranking {
+			if i+1 == len(seq.inputs) || seq.embeddingOnly {
 				batchOutputs = append(batchOutputs, int32(len(batchInputs)-1))
 			}
 			logutil.Trace("forwardBatch iBatch", "batchID", s.batchID, "seqIdx", seqIdx, "seq.iBatch", seq.iBatch, "i+1", i+1, "len(seq.inputs)", len(seq.inputs))
@@ -764,18 +795,6 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		vocabSize := len(outputs) / activeBatch.batch.Outputs.Dim(0)
 		logutil.Trace("computeBatch: vocab details", "batchID", activeBatch.id, "seqIdx", i, "len(logits)", len(outputs), "len(activeBatch.batch.Outputs)", activeBatch.batch.Outputs.Dim(0), "vocabSize", vocabSize, "iBatches", iBatches)
 		logits := outputs[iBatches[i]*vocabSize : (iBatches[i]+1)*vocabSize]
-
-		if seq.reranking {
-			// For reranking, the "embedding" is the relevance score
-			if len(logits) == 0 {
-				slog.Warn("reranking model returned no logits")
-				s.removeSequence(i, llm.DoneReasonStop)
-				continue
-			}
-			seq.embedding <- []float32{logits[0]}
-			s.removeSequence(i, llm.DoneReasonStop)
-			continue
-		}
 
 		token, err := seq.sampler.Sample(logits)
 		if err != nil {
@@ -1077,33 +1096,16 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) rerank(w http.ResponseWriter, r *http.Request) {
-	if pooling.Type(s.model.Backend().Config().Uint("pooling_type")) == pooling.TypeNone {
+	if pooling.Type(s.model.Backend().Config().Uint("pooling_type")) != pooling.TypeRank {
 		http.Error(w, "this model does not support reranking", http.StatusNotImplemented)
 		return
 	}
-
 	var req llm.RerankRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, fmt.Sprintf("bad rerank request: %s", err), http.StatusBadRequest)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-
-	textProcessor, ok := s.model.(model.TextProcessor)
-	if !ok {
-		http.Error(w, "model does not support text processing for reranking", http.StatusInternalServerError)
-		return
-	}
-
-	var totalTokens int
-	for _, p := range req.Prompts {
-		tokens, err := textProcessor.Encode(p, true)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to tokenize prompt: %v", err), http.StatusInternalServerError)
-			return
-		}
-		totalTokens += len(tokens)
-	}
 
 	var rsp llm.RerankResponse
 	rsp.Results = make([]llm.RerankResult, 0, len(req.Prompts))
@@ -1119,7 +1121,7 @@ func (s *Server) rerank(w http.ResponseWriter, r *http.Request) {
 		// Create sequences for current batch
 		sequences := make([]*Sequence, len(currentBatch))
 		for i, prompt := range currentBatch {
-			seq, err := s.NewSequence(prompt, nil, NewSequenceParams{reranking: true, truncate: false})
+			seq, err := s.NewSequence(prompt, nil, NewSequenceParams{embedding: true, truncate: false, rerankingQuery: req.Query})
 			if err != nil {
 				http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
 				return
@@ -1402,7 +1404,6 @@ func (s *Server) loadModel() {
 func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 	s.loadMu.Lock()
 	defer s.loadMu.Unlock()
-
 	w.Header().Set("Content-Type", "application/json")
 
 	if s.status != llm.ServerStatusLaunched {
@@ -1433,12 +1434,13 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 
 	if loadModel {
 		s.closeModel()
-
+		s.reranking = req.Reranking
 		params := ml.BackendParams{
 			AllocMemory:    req.Operation != llm.LoadOperationFit,
 			NumThreads:     req.NumThreads,
 			GPULayers:      req.GPULayers,
 			FlashAttention: req.FlashAttention,
+			Reranking:      req.Reranking,
 		}
 
 		s.batchSize = req.BatchSize
@@ -1533,7 +1535,6 @@ func Execute(args []string) error {
 	fs := flag.NewFlagSet("runner", flag.ExitOnError)
 	mpath := fs.String("model", "", "Path to model binary file")
 	port := fs.Int("port", 8080, "Port to expose the server on")
-	reranking := fs.Bool("reranking", false, "Reranking mode")
 	_ = fs.Bool("verbose", false, "verbose output (default: disabled)")
 
 	fs.Usage = func() {
@@ -1552,7 +1553,6 @@ func Execute(args []string) error {
 	server := &Server{
 		modelPath: *mpath,
 		status:    llm.ServerStatusLaunched,
-		reranking: *reranking,
 	}
 
 	server.cond = sync.NewCond(&server.mu)

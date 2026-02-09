@@ -173,7 +173,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 
 	opts.NumBatch = min(opts.NumBatch, opts.NumCtx)
 
-	loadRequest := LoadRequest{LoraPath: adapters, KvSize: opts.NumCtx * numParallel, BatchSize: opts.NumBatch, Parallel: numParallel, MultiUserCache: envconfig.MultiUserCache()}
+	loadRequest := LoadRequest{LoraPath: adapters, KvSize: opts.NumCtx * numParallel, BatchSize: opts.NumBatch, Parallel: numParallel, MultiUserCache: envconfig.MultiUserCache(), Reranking: opts.Reranking}
 
 	defaultThreads := systemInfo.ThreadCount
 	if opts.NumThread > 0 {
@@ -268,7 +268,6 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		gpuLibs,
 		status,
 		ml.GetVisibleDevicesEnv(gpus, false),
-		opts.Reranking,
 	)
 
 	s := llmServer{
@@ -320,7 +319,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	}
 }
 
-func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.Writer, extraEnvs map[string]string, reranking bool) (cmd *exec.Cmd, port int, err error) {
+func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.Writer, extraEnvs map[string]string) (cmd *exec.Cmd, port int, err error) {
 	var exe string
 	exe, err = os.Executable()
 	if err != nil {
@@ -349,9 +348,6 @@ func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.W
 	}
 	if modelPath != "" {
 		params = append(params, "--model", modelPath)
-	}
-	if reranking {
-		params = append(params, "--reranking")
 	}
 	params = append(params, "--port", strconv.Itoa(port))
 
@@ -493,6 +489,7 @@ type LoadRequest struct {
 	ProjectorPath string
 	MainGPU       int
 	UseMmap       bool
+	Reranking     bool
 }
 
 type LoadResponse struct {
@@ -1773,6 +1770,7 @@ func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, int
 
 type RerankRequest struct {
 	Model   string   `json:"model"`
+	Query   *string  `json:"query"`
 	Prompts []string `json:"prompts"`
 }
 

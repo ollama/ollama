@@ -30,6 +30,10 @@ type Vocabulary struct {
 
 	mergeOnce sync.Once
 	merge     map[string]int32
+
+	AddSpacePrefix          bool
+	RemoveExtraWhitespaces  bool
+	TreatWhitespaceAsSuffix bool
 }
 
 func (v *Vocabulary) Is(id int32, special Special) bool {

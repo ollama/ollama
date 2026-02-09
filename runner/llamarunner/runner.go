@@ -117,18 +117,51 @@ type NewSequenceParams struct {
 	truncate       bool
 	logprobs       bool
 	topLogprobs    int
+	rerankQuery    *string
 }
 
 var errorInputTooLong = errors.New("the input length exceeds the context length")
 
 func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
-
-	inputs, err := s.inputs(prompt, images)
-	if err != nil {
-		return nil, fmt.Errorf("failed to process inputs: %w", err)
-	} else if len(inputs) == 0 {
-		return nil, errors.New("no input provided")
+	var inputs []input
+	var err error
+	if params.rerankQuery != nil {
+		eosToken := s.model.EOS()
+		if eosToken == -1 {
+			eosToken = s.model.SEP()
+		}
+		if s.model.AddBOSToken() {
+			inputs = append(inputs, input{token: int(s.model.BOS())})
+		}
+		var queryInputs []input
+		queryInputs, err = s.inputs(*params.rerankQuery, nil, false)
+		if err != nil {
+			return nil, fmt.Errorf("failed to process rerank query inputs: %w", err)
+		}
+		inputs = append(inputs, queryInputs...)
+		if s.model.AddEOSToken() {
+			inputs = append(inputs, input{token: int(eosToken)})
+		}
+		if s.model.AddSEPToken() {
+			inputs = append(inputs, input{token: int(s.model.SEP())})
+		}
+		var docInputs []input
+		docInputs, err = s.inputs(prompt, nil, false)
+		if err != nil {
+			return nil, fmt.Errorf("failed to process rerank document inputs: %w", err)
+		}
+		inputs = append(inputs, docInputs...)
+		if s.model.AddEOSToken() {
+			inputs = append(inputs, input{token: int(eosToken)})
+		}
+	} else {
+		inputs, err = s.inputs(prompt, images, true)
+		if err != nil {
+			return nil, fmt.Errorf("failed to process inputs: %w", err)
+		} else if len(inputs) == 0 {
+			return nil, errors.New("no input provided")
+		}
 	}
 
 	if params.numKeep < 0 {
@@ -194,7 +227,7 @@ func calculateLogprobsLlama(logits []float32, selectedToken int, topK int, model
 // inputs processes the prompt and images into a list of inputs
 // by splitting the prompt on [img-<n>] tags, tokenizing text and
 // generating image embeddings for each image
-func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input, error) {
+func (s *Server) inputs(prompt string, images []llm.ImageData, parseSpecial bool) ([]input, error) {
 	var inputs []input
 	var parts []string
 	var matches [][]string
@@ -209,7 +242,7 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input, error) 
 
 	for i, part := range parts {
 		// text - tokenize
-		tokens, err := s.lc.Model().Tokenize(part, i == 0, true)
+		tokens, err := s.lc.Model().Tokenize(part, i == 0 && !s.reranking, parseSpecial)
 		if err != nil {
 			return nil, err
 		}
@@ -839,7 +872,7 @@ func (s *Server) rerank(w http.ResponseWriter, r *http.Request) {
 		// Create sequences for current batch
 		sequences := make([]*Sequence, len(currentBatch))
 		for i, prompt := range currentBatch {
-			seq, err := s.NewSequence(prompt, nil, NewSequenceParams{embedding: true, truncate: false})
+			seq, err := s.NewSequence(prompt, nil, NewSequenceParams{embedding: true, truncate: false, rerankQuery: req.Query})
 			if err != nil {
 				http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
 				return
@@ -936,7 +969,6 @@ func (s *Server) loadModel(
 	flashAttention ml.FlashAttentionType,
 	threads int,
 	multiUserCache bool,
-	reranking bool,
 ) {
 	var err error
 	s.model, err = llama.LoadModelFromFile(mpath, params)
@@ -944,7 +976,7 @@ func (s *Server) loadModel(
 		panic(err)
 	}
 
-	ctxParams := llama.NewContextParams(kvSize, s.batchSize, s.parallel, threads, flashAttention, kvCacheType, reranking)
+	ctxParams := llama.NewContextParams(kvSize, s.batchSize, s.parallel, threads, flashAttention, kvCacheType, s.reranking)
 	s.lc, err = llama.NewContextWithModel(s.model, ctxParams)
 	if err != nil {
 		panic(err)
@@ -1001,6 +1033,7 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 	case llm.LoadOperationCommit:
 		s.batchSize = req.BatchSize
 		s.parallel = req.Parallel
+		s.reranking = req.Reranking
 		s.seqs = make([]*Sequence, s.parallel)
 		s.seqsSem = semaphore.NewWeighted(int64(s.parallel))
 
@@ -1032,7 +1065,7 @@ func (s *Server) load(w http.ResponseWriter, r *http.Request) {
 		}
 
 		s.status = llm.ServerStatusLoadingModel
-		go s.loadModel(params, s.modelPath, req.LoraPath, req.ProjectorPath, req.KvSize, req.KvCacheType, req.FlashAttention, req.NumThreads, req.MultiUserCache, s.reranking)
+		go s.loadModel(params, s.modelPath, req.LoraPath, req.ProjectorPath, req.KvSize, req.KvCacheType, req.FlashAttention, req.NumThreads, req.MultiUserCache)
 
 	case llm.LoadOperationClose:
 		// No-op for us
@@ -1053,7 +1086,6 @@ func Execute(args []string) error {
 	fs := flag.NewFlagSet("runner", flag.ExitOnError)
 	mpath := fs.String("model", "", "Path to model binary file")
 	port := fs.Int("port", 8080, "Port to expose the server on")
-	reranking := fs.Bool("reranking", false, "Reranking mode")
 	_ = fs.Bool("verbose", false, "verbose output (default: disabled)")
 
 	fs.Usage = func() {
@@ -1071,7 +1103,6 @@ func Execute(args []string) error {
 	server := &Server{
 		modelPath: *mpath,
 		status:    llm.ServerStatusLaunched,
-		reranking: *reranking,
 	}
 
 	server.ready.Add(1)

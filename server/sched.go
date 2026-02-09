@@ -47,8 +47,9 @@ type Scheduler struct {
 	// including by evicting one or more other models. We can only load
 	// one model at a time but new requests to models that already loaded can
 	// happen in parallel
-	activeLoading llm.LlamaServer
-	loaded        map[string]*runnerRef
+	activeLoading   llm.LlamaServer
+	loaded          map[string]*runnerRef
+	loadedReranking map[string]*runnerRef
 
 	loadFn          func(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool
 	newServerFn     func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error)
@@ -72,6 +73,7 @@ func InitScheduler(ctx context.Context) *Scheduler {
 		expiredCh:       make(chan *runnerRef, maxQueue),
 		unloadedCh:      make(chan any, maxQueue),
 		loaded:          make(map[string]*runnerRef),
+		loadedReranking: make(map[string]*runnerRef),
 		newServerFn:     llm.NewLlamaServer,
 		getGpuFn:        discover.GPUDevices,
 		getSystemInfoFn: discover.GetSystemInfo,
@@ -102,7 +104,7 @@ func (s *Scheduler) GetRunner(c context.Context, m *Model, opts api.Options, ses
 	}
 
 	s.loadedMu.Lock()
-	runner := s.loaded[req.model.ModelPath]
+	runner, _ := s.getLoadedRunnerUnlock(req.model.ModelPath, opts.Reranking)
 	s.loadedMu.Unlock()
 	if runner != nil && !runner.needsReload(c, req) {
 		req.useLoadedRunner(runner, s.finishedReqCh)
@@ -149,12 +151,9 @@ func (s *Scheduler) processPending(ctx context.Context) {
 			for {
 				var runnerToExpire *runnerRef
 				s.loadedMu.Lock()
-				runner := s.loaded[pending.model.ModelPath]
+				runner, _ := s.getLoadedRunnerUnlock(pending.model.ModelPath, pending.model.Reranking)
 				loadedCount := len(s.loaded)
-				runnersSnapshot := make([]ml.FilteredRunnerDiscovery, 0, len(s.loaded))
-				for _, r := range s.loaded {
-					runnersSnapshot = append(runnersSnapshot, r)
-				}
+				runnersSnapshot := s.getAllRunnerDiscoveryUnlock()
 				s.loadedMu.Unlock()
 
 				if runner != nil {
@@ -290,7 +289,7 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 			return
 		case finished := <-s.finishedReqCh:
 			s.loadedMu.Lock()
-			runner := s.loaded[finished.model.ModelPath]
+			runner, _ := s.getLoadedRunnerUnlock(finished.model.ModelPath, finished.model.Reranking)
 			s.loadedMu.Unlock()
 			if runner == nil {
 				slog.Error("finished request signal received after model unloaded", "modelPath", finished.model.ModelPath)
@@ -344,7 +343,7 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 
 			s.loadedMu.Lock()
 			slog.Debug("got lock to unload expired event", "runner", runner)
-			runnerToUnload := s.loaded[runner.modelPath]
+			runnerToUnload, _ := s.getLoadedRunnerUnlock(runner.modelPath, runner.Reranking)
 			if runnerToUnload == nil {
 				// If runnerToUnload is nil, we already processed an event and
 				// unloaded it. This double unload can happen if the initial
@@ -367,13 +366,10 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 				runner.refMu.Unlock()
 			} else {
 				slog.Debug("starting background wait for VRAM recovery", "runner", runner)
-				runnersSnapshot := make([]ml.FilteredRunnerDiscovery, 0, len(s.loaded))
-				for _, r := range s.loaded {
-					runnersSnapshot = append(runnersSnapshot, r)
-				}
+				runnersSnapshot := s.getAllRunnerDiscoveryUnlock()
 				finished := s.waitForVRAMRecovery(runner, runnersSnapshot)
+				s.deleteLoadedRunnerUnlock(runner)
 				runner.unload()
-				delete(s.loaded, runner.modelPath)
 				s.loadedMu.Unlock()
 				slog.Debug("runner terminated and removed from list, blocking for VRAM recovery", "runner", runner)
 				<-finished
@@ -405,6 +401,57 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 		slog.Debug("context for request finished", "runner", runner)
 		finished <- pending
 	}()
+}
+
+func (s *Scheduler) getLoadedRunnerUnlock(path string, reranking bool) (ref *runnerRef, ok bool) {
+	if reranking {
+		ref, ok = s.loadedReranking[path]
+	} else {
+		ref, ok = s.loaded[path]
+	}
+	return
+}
+
+func (s *Scheduler) getAllRunnerDiscoveryUnlock() []ml.FilteredRunnerDiscovery {
+	ret := make([]ml.FilteredRunnerDiscovery, 0, len(s.loaded)+len(s.loadedReranking))
+	for _, r := range s.loaded {
+		ret = append(ret, r)
+	}
+	for _, r := range s.loadedReranking {
+		ret = append(ret, r)
+	}
+	return ret
+}
+
+func (s *Scheduler) deleteLoadedRunnerUnlock(runner *runnerRef) {
+	if runner.Reranking {
+		delete(s.loadedReranking, runner.modelPath)
+	} else {
+		delete(s.loaded, runner.modelPath)
+	}
+}
+
+func (s *Scheduler) GetAllLoadedRunner(withLock bool) []*runnerRef {
+	if withLock {
+		s.loadedMu.Lock()
+		defer s.loadedMu.Unlock()
+	}
+	ret := make([]*runnerRef, 0, len(s.loaded)+len(s.loadedReranking))
+	for _, r := range s.loaded {
+		ret = append(ret, r)
+	}
+	for _, r := range s.loadedReranking {
+		ret = append(ret, r)
+	}
+	return ret
+}
+
+func (s *Scheduler) setLoadedRunnerUnlock(runner *runnerRef) {
+	if runner.Options.Reranking {
+		s.loadedReranking[runner.modelPath] = runner
+	} else {
+		s.loaded[runner.modelPath] = runner
+	}
 }
 
 // load creates a new model based on req and loads it. If requireFull is true then the model must be loaded fully onto GPUs
@@ -525,7 +572,7 @@ iGPUScan:
 	runner.refMu.Lock() // hold lock until running or aborted
 
 	s.loadedMu.Lock()
-	if oldRunner, ok := s.loaded[req.model.ModelPath]; ok {
+	if oldRunner, ok := s.getLoadedRunnerUnlock(req.model.ModelPath, req.model.Reranking); ok {
 		// Shouldn't happen, but safeguard against leaking a runner
 		slog.Warn("model was still loaded", "old_runner", oldRunner, "new_runner", runner)
 		oldRunner.refMu.Lock()
@@ -533,8 +580,8 @@ iGPUScan:
 		oldRunner.refMu.Unlock()
 	}
 	s.activeLoading = nil
-	s.loaded[req.model.ModelPath] = runner
-	slog.Info("loaded runners", "count", len(s.loaded))
+	s.setLoadedRunnerUnlock(runner)
+	slog.Info("loaded runners", "count", len(s.loaded)+len(s.loadedReranking))
 	s.loadedMu.Unlock()
 
 	go func() {
@@ -599,7 +646,7 @@ func (s *Scheduler) loadMLX(req *LlmRequest) bool {
 	}
 
 	s.loadedMu.Lock()
-	s.loaded[req.model.ModelPath] = runner
+	s.setLoadedRunnerUnlock(runner)
 	s.loadedMu.Unlock()
 
 	// Set up expiration timer
@@ -620,12 +667,7 @@ func (s *Scheduler) updateFreeSpace(allGpus []ml.DeviceInfo) {
 		return
 	}
 	predMap := map[ml.DeviceID]uint64{} // Sum up the total predicted usage per GPU for all runners
-	s.loadedMu.Lock()
-	runners := make([]*runnerRef, 0, len(s.loaded))
-	for _, r := range s.loaded {
-		runners = append(runners, r)
-	}
-	s.loadedMu.Unlock()
+	runners := s.GetAllLoadedRunner(true)
 	for _, r := range runners {
 		r.refMu.Lock()
 		if r.llama != nil {
@@ -871,12 +913,7 @@ func (a ByDurationAndName) Less(i, j int) bool {
 
 // findRunnerToUnload finds a runner to unload to make room for a new model
 func (s *Scheduler) findRunnerToUnload() *runnerRef {
-	s.loadedMu.Lock()
-	runnerList := make([]*runnerRef, 0, len(s.loaded))
-	for _, r := range s.loaded {
-		runnerList = append(runnerList, r)
-	}
-	s.loadedMu.Unlock()
+	runnerList := s.GetAllLoadedRunner(true)
 	if len(runnerList) == 0 {
 		slog.Debug("no loaded runner to unload")
 		return nil
@@ -910,10 +947,9 @@ func (s *Scheduler) unloadAllRunners() {
 		s.activeLoading.Close()
 		s.activeLoading = nil
 	}
-
-	for model, runner := range s.loaded {
+	for _, runner := range s.GetAllLoadedRunner(false) {
 		if runner.llama != nil {
-			slog.Debug("shutting down runner", "model", model)
+			slog.Debug("shutting down runner", "model", runner.modelPath)
 			runner.llama.Close()
 		}
 	}
@@ -921,7 +957,7 @@ func (s *Scheduler) unloadAllRunners() {
 
 func (s *Scheduler) expireRunner(model *Model) {
 	s.loadedMu.Lock()
-	runner, ok := s.loaded[model.ModelPath]
+	runner, ok := s.getLoadedRunnerUnlock(model.ModelPath, model.Reranking)
 	s.loadedMu.Unlock()
 	if ok {
 		runner.refMu.Lock()
