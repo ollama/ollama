@@ -35,6 +35,8 @@ case "$ARCH" in
     *) error "Unsupported architecture: $ARCH" ;;
 esac
 
+VER_PARAM="${OLLAMA_VERSION:+?version=$OLLAMA_VERSION}"
+
 ###########################################
 # macOS
 ###########################################
@@ -49,11 +51,7 @@ if [ "$OS" = "Darwin" ]; then
         exit 1
     fi
 
-    if [ -n "${OLLAMA_VERSION:-}" ]; then
-        DOWNLOAD_URL="https://github.com/ollama/ollama/releases/download/${OLLAMA_VERSION}/Ollama-darwin.zip"
-    else
-        DOWNLOAD_URL="https://github.com/ollama/ollama/releases/latest/download/Ollama-darwin.zip"
-    fi
+    DOWNLOAD_URL="https://ollama.com/download/Ollama-darwin.zip${VER_PARAM}"
 
     if pgrep -x Ollama >/dev/null 2>&1; then
         status "Stopping running Ollama instance..."
@@ -102,8 +100,6 @@ case "$KERN" in
     *icrosoft) error "Microsoft WSL1 is not currently supported. Please use WSL2 with 'wsl --set-version <distro> 2'" ;;
     *) ;;
 esac
-
-VER_PARAM="${OLLAMA_VERSION:+?version=$OLLAMA_VERSION}"
 
 SUDO=
 if [ "$(id -u)" -ne 0 ]; then

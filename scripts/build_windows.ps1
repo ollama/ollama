@@ -327,11 +327,21 @@ function deps {
 }
 
 function sign {
+    # Copy install.ps1 to dist for release packaging
+    write-host "Copying install.ps1 to dist"
+    Copy-Item -Path "${script:SRC_DIR}\scripts\install.ps1" -Destination "${script:SRC_DIR}\dist\install.ps1"
+
     if ("${env:KEY_CONTAINER}") {
         write-host "Signing Ollama executables, scripts and libraries"
         & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
             /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} `
             $(get-childitem -path "${script:SRC_DIR}\dist\windows-*" -r -include @('*.exe', '*.dll'))
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+
+        write-host "Signing install.ps1"
+        & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
+            /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} `
+            "${script:SRC_DIR}\dist\install.ps1"
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     } else {
         write-host "Signing not enabled"
