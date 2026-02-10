@@ -682,3 +682,5 @@ See the [API documentation](./docs/api.md) for all endpoints.
 ### Security
 
 - [Ollama Fortress](https://github.com/ParisNeo/ollama_proxy_server)
+
+- [AgentMarket](https://agentmarket.cloud) - B2A marketplace for AI agents. Real energy data (28M+ records). Free API.
