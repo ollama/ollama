@@ -27,6 +27,8 @@ If editing the context length for Ollama is not possible, the context length can
 OLLAMA_CONTEXT_LENGTH=64000 ollama serve
 ```
 
+If you used the installer, Ollama is likely running as a service and you may need to refer to [How do I configure Ollama server?](./faq#how-do-i-configure-ollama-server) for setting environment variables.
+
 ### Check allocated context length and model offloading
 For best performance, use the maximum context length for a model, and avoid offloading the model to CPU. Verify the split under `PROCESSOR` using `ollama ps`.
 ```
