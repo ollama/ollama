@@ -148,6 +148,11 @@ func Remotes() []string {
 	return r
 }
 
+// PreloadedModels returns the raw comma-separated list of models to preload on startup.
+func PreloadedModels() string {
+	return Var("OLLAMA_PRELOAD_MODELS")
+}
+
 func BoolWithDefault(k string) func(defaultValue bool) bool {
 	return func(defaultValue bool) bool {
 		if s := Var(k); s != "" {
@@ -283,6 +288,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_LOAD_TIMEOUT":      {"OLLAMA_LOAD_TIMEOUT", LoadTimeout(), "How long to allow model loads to stall before giving up (default \"5m\")"},
 		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners(), "Maximum number of loaded models per GPU"},
 		"OLLAMA_MAX_QUEUE":         {"OLLAMA_MAX_QUEUE", MaxQueue(), "Maximum number of queued requests"},
+		"OLLAMA_PRELOAD_MODELS":  {"OLLAMA_PRELOAD_MODELS", PreloadedModels(), "Comma-separated models to preload on startup"},
 		"OLLAMA_MODELS":            {"OLLAMA_MODELS", Models(), "The path to the models directory"},
 		"OLLAMA_NOHISTORY":         {"OLLAMA_NOHISTORY", NoHistory(), "Do not preserve readline history"},
 		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune(), "Do not prune model blobs on startup"},
