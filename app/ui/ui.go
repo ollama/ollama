@@ -28,6 +28,7 @@ import (
 	"github.com/ollama/ollama/app/tools"
 	"github.com/ollama/ollama/app/types/not"
 	"github.com/ollama/ollama/app/ui/responses"
+	"github.com/ollama/ollama/app/updater"
 	"github.com/ollama/ollama/app/version"
 	ollamaAuth "github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
@@ -106,6 +107,10 @@ type Server struct {
 
 	// Dev is true if the server is running in development mode
 	Dev bool
+
+	// Updater for checking and downloading updates
+	Updater             *updater.Updater
+	UpdateAvailableFunc func()
 }
 
 func (s *Server) log() *slog.Logger {
@@ -286,6 +291,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/settings", handle(s.settings))
 	mux.Handle("GET /api/v1/cloud", handle(s.getCloudSetting))
 	mux.Handle("POST /api/v1/cloud", handle(s.cloudSetting))
+	mux.Handle("GET /api/v1/update/check", handle(s.checkForUpdate))
+	mux.Handle("POST /api/v1/update/install", handle(s.installUpdate))
 
 	// Ollama proxy endpoints
 	ollamaProxy := s.ollamaProxy()
@@ -1447,6 +1454,24 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 		return fmt.Errorf("failed to save settings: %w", err)
 	}
 
+	// Handle auto-update toggle changes
+	if old.AutoUpdateEnabled != settings.AutoUpdateEnabled {
+		if !settings.AutoUpdateEnabled {
+			// Auto-update disabled: cancel any ongoing download
+			if s.Updater != nil {
+				s.Updater.CancelOngoingDownload()
+			}
+		} else {
+			// Auto-update re-enabled: show notification if update is already staged, or trigger immediate check
+			if (updater.IsUpdatePending() || updater.UpdateDownloaded) && s.UpdateAvailableFunc != nil {
+				s.UpdateAvailableFunc()
+			} else if s.Updater != nil {
+				// Trigger the background checker to run immediately
+				s.Updater.TriggerImmediateCheck()
+			}
+		}
+	}
+
 	if old.ContextLength != settings.ContextLength ||
 		old.Models != settings.Models ||
 		old.Expose != settings.Expose {
@@ -1556,6 +1581,73 @@ func (s *Server) modelUpstream(w http.ResponseWriter, r *http.Request) error {
 
 	w.Header().Set("Content-Type", "application/json")
 	return json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) checkForUpdate(w http.ResponseWriter, r *http.Request) error {
+	currentVersion := version.Version
+
+	if s.Updater == nil {
+		return fmt.Errorf("updater not available")
+	}
+
+	updateAvailable, updateVersion, err := s.Updater.CheckForUpdate(r.Context())
+	if err != nil {
+		s.log().Warn("failed to check for update", "error", err)
+		// Don't return error, just log it and continue with no update available
+	}
+
+	response := responses.UpdateCheckResponse{
+		UpdateInfo: responses.UpdateInfo{
+			CurrentVersion:   currentVersion,
+			AvailableVersion: updateVersion,
+			UpdateAvailable:  updateAvailable,
+			UpdateDownloaded: updater.UpdateDownloaded,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	return json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) installUpdate(w http.ResponseWriter, r *http.Request) error {
+	if r.Method != "POST" {
+		return fmt.Errorf("method not allowed")
+	}
+
+	if s.Updater == nil {
+		s.log().Error("install failed: updater not available")
+		return fmt.Errorf("updater not available")
+	}
+
+	// Check if update is downloaded
+	if !updater.UpdateDownloaded {
+		s.log().Error("install failed: no update downloaded")
+		return fmt.Errorf("no update downloaded")
+	}
+
+	// Send response before restarting
+	response := map[string]any{
+		"success": true,
+		"message": "Installing update and restarting...",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		return err
+	}
+
+	// Give the response time to be sent
+	time.Sleep(500 * time.Millisecond)
+
+	// Trigger the upgrade and restart
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		if err := s.Updater.InstallAndRestart(); err != nil {
+			s.log().Error("failed to install update", "error", err)
+		}
+	}()
+
+	return nil
 }
 
 func userAgent() string {
