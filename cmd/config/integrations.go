@@ -60,6 +60,7 @@ var integrations = map[string]Runner{
 	"droid":    &Droid{},
 	"opencode": &OpenCode{},
 	"openclaw": &Openclaw{},
+	"vim":      &Vim{},
 }
 
 // recommendedModels are shown when the user has no models or as suggestions.
@@ -709,6 +710,7 @@ Supported integrations:
   droid     Droid
   opencode  OpenCode
   openclaw  OpenClaw (aliases: clawdbot, moltbot)
+  vim       Vim with Ollama integration
 
 Examples:
   ollama launch
