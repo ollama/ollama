@@ -273,7 +273,7 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 			"Query":      v.Query,
 			"Document":   v.Document,
 		})
-	} else if !v.forceLegacy && (slices.Contains(vars, "messages") && slices.Contains(vars, "document")) {
+	} else if !v.forceLegacy && (slices.Contains(vars, "messages") || slices.Contains(vars, "document")) {
 		return t.Template.Execute(w, map[string]any{
 			"System":     system,
 			"Messages":   convertMessagesForTemplate(messages),
@@ -299,8 +299,6 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 				"Think":      v.Think,
 				"ThinkLevel": v.ThinkLevel,
 				"IsThinkSet": v.IsThinkSet,
-				"Query":      v.Query,
-				"Document":   v.Document,
 			}); err != nil {
 				return err
 			}
@@ -349,8 +347,6 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 		"Think":      v.Think,
 		"ThinkLevel": v.ThinkLevel,
 		"IsThinkSet": v.IsThinkSet,
-		"Query":      v.Query,
-		"Document":   v.Document,
 	}); err != nil {
 		return err
 	}
