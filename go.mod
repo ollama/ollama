@@ -13,7 +13,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.24
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/spf13/cobra v1.7.0
-	github.com/stretchr/testify v1.9.0
+	github.com/stretchr/testify v1.10.0
 	github.com/x448/float16 v0.8.4
 	golang.org/x/sync v0.17.0
 	golang.org/x/sys v0.37.0
@@ -31,6 +31,8 @@ require (
 	github.com/pdevine/tensor v0.0.0-20240510204454-f88f4562727c
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/tkrajina/typescriptify-golang-structs v0.2.0
+	github.com/tree-sitter/go-tree-sitter v0.25.0
+	github.com/tree-sitter/tree-sitter-cpp v0.23.4
 	github.com/wk8/go-ordered-map/v2 v2.1.8
 	golang.org/x/image v0.22.0
 	golang.org/x/mod v0.30.0
@@ -60,6 +62,7 @@ require (
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
+	github.com/mattn/go-pointer v0.0.1 // indirect
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/muesli/termenv v0.16.0 // indirect
