@@ -440,9 +440,19 @@ func (h *HarmonyMessageHandler) Add(s string, done bool) (content string, thinki
 		if toolName != nil {
 			name := strings.TrimPrefix(*toolName, "functions.")
 			name = h.FunctionNameMap.OriginalFromConverted(name)
+			// The tool accumulator may contain trailing Harmony tokens after
+			// the JSON arguments (e.g. "<|call|><|start|>assistant...").
+			// Strip everything from the first "<|" that follows the JSON.
+			cleaned := raw
+			if idx := strings.Index(cleaned, "<|"); idx >= 0 {
+				cleaned = strings.TrimSpace(cleaned[:idx])
+			}
+			if cleaned == "" {
+				cleaned = "{}"
+			}
 			var args api.ToolCallFunctionArguments
-			if err := json.Unmarshal([]byte(raw), &args); err != nil {
-				return "", "", nil, fmt.Errorf("error parsing tool call: raw='%s', err=%w", raw, err)
+			if err := json.Unmarshal([]byte(cleaned), &args); err != nil {
+				return "", "", nil, fmt.Errorf("error parsing tool call: raw='%s', cleaned='%s', err=%w", raw, cleaned, err)
 			}
 			calls = append(calls, api.ToolCall{Function: api.ToolCallFunction{Name: name, Arguments: args}})
 		}
