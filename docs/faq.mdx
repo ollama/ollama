@@ -14,11 +14,11 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 ## How can I view the logs?
 
-Review the [Troubleshooting](./troubleshooting) docs for more about using logs.
+Review the [Troubleshooting](./troubleshooting.mdx) docs for more about using logs.
 
 ## Is my GPU compatible with Ollama?
 
-Please refer to the [GPU docs](./gpu).
+Please refer to the [GPU docs](./gpu.mdx).
 
 ## How can I specify the context window size?
 
@@ -66,7 +66,7 @@ llama3:70b  bcfb190ca3a7  42 GB   100% GPU    4 minutes from now
 ```
 </Info>
 
-The `Processor` column will show which memory the model was loaded in to:
+The `Processor` column will show which memory the model was loaded into:
 
 - `100% GPU` means the model was loaded entirely into the GPU
 - `100% CPU` means the model was loaded entirely in system memory
@@ -158,7 +158,7 @@ docker run -d -e HTTPS_PROXY=https://my.proxy.example.com -p 11434:11434 ollama-
 
 ## Does Ollama send my prompts and answers back to ollama.com?
 
-No. Ollama runs locally, and conversation data does not leave your machine.
+Ollama runs locally. We don't see your prompts or data when you run locally. When using cloud-hosted models, we process your prompts and responses to provide the service but do not store or log that content and never train on it. We collect basic account info and limited usage metadata to provide the service that does not include prompt or response content. We don't sell your data. You can delete your account anytime.
 
 ## How can I expose Ollama on my network?
 
@@ -183,7 +183,7 @@ server {
 
 ## How can I use Ollama with ngrok?
 
-Ollama can be accessed using a range of tools for tunneling tools. For example with Ngrok:
+Ollama can be accessed using a range of tunneling apps. For example with Ngrok:
 
 ```shell
 ngrok http 11434 --host-header="localhost:11434"
@@ -240,7 +240,7 @@ GPU acceleration is not available for Docker Desktop in macOS due to the lack of
 
 This can impact both installing Ollama, as well as downloading models.
 
-Open `Control Panel > Networking and Internet > View network status and tasks` and click on `Change adapter settings` on the left panel. Find the `vEthernel (WSL)` adapter, right click and select `Properties`.
+Open `Control Panel > Networking and Internet > View network status and tasks` and click on `Change adapter settings` on the left panel. Find the `vEthernet (WSL)` adapter, right click and select `Properties`.
 Click on `Configure` and open the `Advanced` tab. Search through each of the properties until you find `Large Send Offload Version 2 (IPv4)` and `Large Send Offload Version 2 (IPv6)`. _Disable_ both of these
 properties.
 
@@ -299,7 +299,7 @@ The `keep_alive` API parameter with the `/api/generate` and `/api/chat` API endp
 
 ## How do I manage the maximum number of requests the Ollama server can queue?
 
-If too many requests are sent to the server, it will respond with a 503 error indicating the server is overloaded. You can adjust how many requests may be queue by setting `OLLAMA_MAX_QUEUE`.
+If too many requests are sent to the server, it will respond with a 503 error indicating the server is overloaded. You can adjust how many requests may be queued by setting `OLLAMA_MAX_QUEUE`.
 
 ## How does Ollama handle concurrent requests?
 
@@ -315,7 +315,7 @@ The following server settings may be used to adjust how Ollama handles concurren
 - `OLLAMA_NUM_PARALLEL` - The maximum number of parallel requests each model will process at the same time, default 1.  Required RAM will scale by `OLLAMA_NUM_PARALLEL` * `OLLAMA_CONTEXT_LENGTH`.
 - `OLLAMA_MAX_QUEUE` - The maximum number of requests Ollama will queue when busy before rejecting additional requests. The default is 512
 
-Note: Windows with Radeon GPUs currently default to 1 model maximum due to limitations in ROCm v5.7 for available VRAM reporting. Once ROCm v6.2 is available, Windows Radeon will follow the defaults above. You may enable concurrent model loads on Radeon on Windows, but ensure you don't load more models than will fit into your GPUs VRAM.
+Note: Windows with Radeon GPUs currently default to 1 model maximum due to limitations in ROCm v5.7 for available VRAM reporting. Once ROCm v6.2 is available, Windows Radeon will follow the defaults above. You may enable concurrent model loads on Radeon on Windows, but ensure you don't load more models than will fit into your GPU's VRAM.
 
 ## How does Ollama load models on multiple GPUs?
 
@@ -382,7 +382,7 @@ ollama signin
   Replace &lt;username&gt; with your actual Windows user name.
 </Note>
 
-## How can I stop Ollama from starting when I login to my computer
+## How can I stop Ollama from starting when I login to my computer?
 
 Ollama for Windows and macOS register as a login item during installation.  You can disable this if you prefer not to have Ollama automatically start.  Ollama will respect this setting across upgrades, unless you uninstall the application.
 
@@ -390,4 +390,4 @@ Ollama for Windows and macOS register as a login item during installation.  You 
 - In `Task Manager` go to the `Startup apps` tab, search for `ollama` then click `Disable`
 
 **MacOS**
-- Open `Settings` and search for "Login Items", find the `Ollama` entry under "Allow in the Background`, then click the slider to disable.
+- Open `Settings` and search for "Login Items", find the `Ollama` entry under `Allow in the Background`, then click the slider to disable.
