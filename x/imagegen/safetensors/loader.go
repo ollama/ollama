@@ -17,7 +17,7 @@ type WeightSource interface {
 	GetTensor(name string) (*mlx.Array, error)
 	ListTensors() []string
 	HasTensor(name string) bool
-	Quantization() string // Returns "NVFP4", "Q4", "Q8", or ""
+	Quantization() string // Returns "NVFP4", "INT4", "INT8", or ""
 	GroupSize() int       // Returns quantization group size, or 0 if not specified
 }
 
