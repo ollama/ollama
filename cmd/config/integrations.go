@@ -60,6 +60,7 @@ var integrations = map[string]Runner{
 	"droid":    &Droid{},
 	"opencode": &OpenCode{},
 	"openclaw": &Openclaw{},
+	"pi":       &Pi{},
 }
 
 // recommendedModels are shown when the user has no models or as suggestions.
