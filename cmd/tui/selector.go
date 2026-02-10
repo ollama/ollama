@@ -12,6 +12,7 @@ import (
 var (
 	selectorTitleStyle = lipgloss.NewStyle().
 				Bold(true)
+		// PaddingLeft(4)
 
 	selectorItemStyle = lipgloss.NewStyle().
 				PaddingLeft(4)
@@ -23,6 +24,9 @@ var (
 
 	selectorDescStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"})
+
+	selectorDescLineStyle = selectorDescStyle.
+				PaddingLeft(6)
 
 	selectorFilterStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}).
@@ -45,11 +49,12 @@ var (
 				Foreground(lipgloss.AdaptiveColor{Light: "244", Dark: "244"})
 
 	selectorMoreStyle = lipgloss.NewStyle().
-				PaddingLeft(4).
+				PaddingLeft(6).
 				Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}).
 				Italic(true)
 
 	sectionHeaderStyle = lipgloss.NewStyle().
+				PaddingLeft(2).
 				Bold(true).
 				Foreground(lipgloss.AdaptiveColor{Light: "240", Dark: "249"})
 )
@@ -96,27 +101,39 @@ func (m selectorModel) Init() tea.Cmd {
 	return nil
 }
 
+// otherStart returns the index of the first non-recommended item in the filtered list.
+// When filtering, all items scroll together so this returns 0.
+func (m selectorModel) otherStart() int {
+	if m.filter != "" {
+		return 0
+	}
+	filtered := m.filteredItems()
+	for i, item := range filtered {
+		if !item.Recommended {
+			return i
+		}
+	}
+	return len(filtered)
+}
+
 // updateNavigation handles navigation keys (up/down/pgup/pgdown/filter/backspace).
 // It does NOT handle Enter, Esc, or CtrlC. This is used by both the standalone
 // selector and the TUI modal (which intercepts Enter/Esc for its own logic).
 func (m *selectorModel) updateNavigation(msg tea.KeyMsg) {
 	filtered := m.filteredItems()
+	otherStart := m.otherStart()
 
 	switch msg.Type {
 	case tea.KeyUp:
 		if m.cursor > 0 {
 			m.cursor--
-			if m.cursor < m.scrollOffset {
-				m.scrollOffset = m.cursor
-			}
+			m.updateScroll(otherStart)
 		}
 
 	case tea.KeyDown:
 		if m.cursor < len(filtered)-1 {
 			m.cursor++
-			if m.cursor >= m.scrollOffset+maxSelectorItems {
-				m.scrollOffset = m.cursor - maxSelectorItems + 1
-			}
+			m.updateScroll(otherStart)
 		}
 
 	case tea.KeyPgUp:
@@ -124,19 +141,14 @@ func (m *selectorModel) updateNavigation(msg tea.KeyMsg) {
 		if m.cursor < 0 {
 			m.cursor = 0
 		}
-		m.scrollOffset -= maxSelectorItems
-		if m.scrollOffset < 0 {
-			m.scrollOffset = 0
-		}
+		m.updateScroll(otherStart)
 
 	case tea.KeyPgDown:
 		m.cursor += maxSelectorItems
 		if m.cursor >= len(filtered) {
 			m.cursor = len(filtered) - 1
 		}
-		if m.cursor >= m.scrollOffset+maxSelectorItems {
-			m.scrollOffset = m.cursor - maxSelectorItems + 1
-		}
+		m.updateScroll(otherStart)
 
 	case tea.KeyBackspace:
 		if len(m.filter) > 0 {
@@ -149,6 +161,41 @@ func (m *selectorModel) updateNavigation(msg tea.KeyMsg) {
 		m.filter += string(msg.Runes)
 		m.cursor = 0
 		m.scrollOffset = 0
+	}
+}
+
+// updateScroll adjusts scrollOffset based on cursor position.
+// When not filtering, scrollOffset is relative to the "More" (non-recommended) section.
+// When filtering, it's relative to the full filtered list.
+func (m *selectorModel) updateScroll(otherStart int) {
+	if m.filter != "" {
+		// Standard scrolling for filtered results
+		if m.cursor < m.scrollOffset {
+			m.scrollOffset = m.cursor
+		}
+		if m.cursor >= m.scrollOffset+maxSelectorItems {
+			m.scrollOffset = m.cursor - maxSelectorItems + 1
+		}
+		return
+	}
+
+	// Cursor is in recommended section — reset "More" scroll to top
+	if m.cursor < otherStart {
+		m.scrollOffset = 0
+		return
+	}
+
+	// Cursor is in "More" section — scroll relative to others
+	posInOthers := m.cursor - otherStart
+	maxOthers := maxSelectorItems - otherStart
+	if maxOthers < 3 {
+		maxOthers = 3
+	}
+	if posInOthers < m.scrollOffset {
+		m.scrollOffset = posInOthers
+	}
+	if posInOthers >= m.scrollOffset+maxOthers {
+		m.scrollOffset = posInOthers - maxOthers + 1
 	}
 }
 
@@ -175,6 +222,20 @@ func (m selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// renderItem renders a single selector item.
+func (m selectorModel) renderItem(s *strings.Builder, item SelectItem, idx int) {
+	if idx == m.cursor {
+		s.WriteString(selectorSelectedItemStyle.Render("▸ " + item.Name))
+	} else {
+		s.WriteString(selectorItemStyle.Render(item.Name))
+	}
+	s.WriteString("\n")
+	if item.Description != "" {
+		s.WriteString(selectorDescLineStyle.Render(item.Description))
+		s.WriteString("\n")
+	}
+}
+
 // renderContent renders the selector content (title, items, help text) without
 // checking the cancelled/selected state. This is used by both View() (standalone mode)
 // and by the TUI modal which embeds a selectorModel.
@@ -196,46 +257,68 @@ func (m selectorModel) renderContent() string {
 	if len(filtered) == 0 {
 		s.WriteString(selectorItemStyle.Render(selectorDescStyle.Render("(no matches)")))
 		s.WriteString("\n")
-	} else {
-		displayCount := min(len(filtered), maxSelectorItems)
-		shownRecHeader := false
-		prevWasRec := false
+	} else if m.filter != "" {
+		// Filtering: flat list with "Top Results" header, standard scrolling
+		s.WriteString(sectionHeaderStyle.Render("Top Results"))
+		s.WriteString("\n")
 
+		displayCount := min(len(filtered), maxSelectorItems)
 		for i := range displayCount {
 			idx := m.scrollOffset + i
 			if idx >= len(filtered) {
 				break
 			}
-			item := filtered[idx]
-
-			// Show section headers when not filtering
-			if m.filter == "" {
-				if item.Recommended && !shownRecHeader {
-					s.WriteString(sectionHeaderStyle.Render("  Recommended"))
-					s.WriteString("\n")
-					shownRecHeader = true
-				} else if !item.Recommended && prevWasRec {
-					s.WriteString("\n")
-				}
-				prevWasRec = item.Recommended
-			}
-
-			if idx == m.cursor {
-				s.WriteString(selectorSelectedItemStyle.Render("▸ " + item.Name))
-			} else {
-				s.WriteString(selectorItemStyle.Render(item.Name))
-			}
-
-			if item.Description != "" {
-				s.WriteString(" ")
-				s.WriteString(selectorDescStyle.Render("- " + item.Description))
-			}
-			s.WriteString("\n")
+			m.renderItem(&s, filtered[idx], idx)
 		}
 
 		if remaining := len(filtered) - m.scrollOffset - displayCount; remaining > 0 {
 			s.WriteString(selectorMoreStyle.Render(fmt.Sprintf("... and %d more", remaining)))
 			s.WriteString("\n")
+		}
+	} else {
+		// Split into pinned recommended and scrollable others
+		var recItems, otherItems []int
+		for i, item := range filtered {
+			if item.Recommended {
+				recItems = append(recItems, i)
+			} else {
+				otherItems = append(otherItems, i)
+			}
+		}
+
+		// Always render all recommended items (pinned)
+		if len(recItems) > 0 {
+			s.WriteString(sectionHeaderStyle.Render("Recommended"))
+			s.WriteString("\n")
+			for _, idx := range recItems {
+				m.renderItem(&s, filtered[idx], idx)
+			}
+		}
+
+		// Render scrollable "More" section
+		if len(otherItems) > 0 {
+			s.WriteString("\n")
+			s.WriteString(sectionHeaderStyle.Render("More"))
+			s.WriteString("\n")
+
+			maxOthers := maxSelectorItems - len(recItems)
+			if maxOthers < 3 {
+				maxOthers = 3
+			}
+			displayCount := min(len(otherItems), maxOthers)
+
+			for i := range displayCount {
+				idx := m.scrollOffset + i
+				if idx >= len(otherItems) {
+					break
+				}
+				m.renderItem(&s, filtered[otherItems[idx]], otherItems[idx])
+			}
+
+			if remaining := len(otherItems) - m.scrollOffset - displayCount; remaining > 0 {
+				s.WriteString(selectorMoreStyle.Render(fmt.Sprintf("... and %d more", remaining)))
+				s.WriteString("\n")
+			}
 		}
 	}
 
@@ -476,7 +559,7 @@ func (m multiSelectorModel) View() string {
 			// Show section headers when not filtering
 			if m.filter == "" {
 				if item.Recommended && !shownRecHeader {
-					s.WriteString(sectionHeaderStyle.Render("  Recommended"))
+					s.WriteString(sectionHeaderStyle.Render("Recommended"))
 					s.WriteString("\n")
 					shownRecHeader = true
 				} else if !item.Recommended && prevWasRec {

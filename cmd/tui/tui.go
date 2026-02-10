@@ -17,33 +17,24 @@ import (
 )
 
 var (
-	titleStyle = lipgloss.NewStyle().
-			Bold(true).
-			MarginBottom(1)
-
 	versionStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.AdaptiveColor{Light: "243", Dark: "250"})
 
-	itemStyle = lipgloss.NewStyle().
-			PaddingLeft(4)
+	menuItemStyle = lipgloss.NewStyle().
+			PaddingLeft(2)
 
-	selectedStyle = lipgloss.NewStyle().
-			PaddingLeft(2).
-			Bold(true).
-			Background(lipgloss.AdaptiveColor{Light: "254", Dark: "236"})
-
-	greyedStyle = lipgloss.NewStyle().
-			PaddingLeft(4).
-			Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"})
-
-	greyedSelectedStyle = lipgloss.NewStyle().
-				PaddingLeft(2).
-				Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}).
+	menuSelectedItemStyle = lipgloss.NewStyle().
+				Bold(true).
 				Background(lipgloss.AdaptiveColor{Light: "254", Dark: "236"})
 
-	descStyle = lipgloss.NewStyle().
-			PaddingLeft(6).
+	menuDescStyle = selectorDescStyle.
+			PaddingLeft(4)
+
+	greyedStyle = menuItemStyle.
 			Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"})
+
+	greyedSelectedStyle = menuSelectedItemStyle.
+				Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"})
 
 	modelStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.AdaptiveColor{Light: "243", Dark: "250"})
@@ -69,23 +60,23 @@ var mainMenuItems = []menuItem{
 	},
 	{
 		title:       "Launch Claude Code",
-		description: "Open Claude Code AI assistant",
+		description: "Agentic coding across large codebases",
 		integration: "claude",
 	},
 	{
 		title:       "Launch Codex",
-		description: "Open Codex CLI",
+		description: "OpenAI's open-source coding agent",
 		integration: "codex",
 	},
 	{
 		title:       "Launch OpenClaw",
-		description: "Open OpenClaw integration",
+		description: "Personal AI with 100+ skills",
 		integration: "openclaw",
 	},
 }
 
 var othersMenuItem = menuItem{
-	title:       "Others...",
+	title:       "More...",
 	description: "Show additional integrations",
 	isOthers:    true,
 }
@@ -107,9 +98,13 @@ func getOtherIntegrations() []menuItem {
 		if pinned[info.Name] {
 			continue
 		}
+		desc := info.Description
+		if desc == "" {
+			desc = "Open " + info.DisplayName + " integration"
+		}
 		others = append(others, menuItem{
 			title:       "Launch " + info.DisplayName,
-			description: "Open " + info.DisplayName + " integration",
+			description: desc,
 			integration: info.Name,
 		})
 	}
@@ -429,6 +424,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor > 0 {
 				m.cursor--
 			}
+			// Auto-collapse "Others" when cursor moves back into pinned items
+			if m.showOthers && m.cursor < len(mainMenuItems) {
+				m.showOthers = false
+				m.buildItems()
+			}
 
 		case "down", "j":
 			if m.cursor < len(m.items)-1 {
@@ -495,11 +495,11 @@ func (m model) View() string {
 		return m.renderModal()
 	}
 
-	s := titleStyle.Render("  Ollama "+versionStyle.Render(version.Version)) + "\n\n"
+	s := selectorTitleStyle.Render("Ollama "+versionStyle.Render(version.Version)) + "\n\n"
 
 	for i, item := range m.items {
 		cursor := ""
-		style := itemStyle
+		style := menuItemStyle
 		isInstalled := true
 
 		if item.integration != "" {
@@ -509,7 +509,7 @@ func (m model) View() string {
 		if m.cursor == i {
 			cursor = "▸ "
 			if isInstalled {
-				style = selectedStyle
+				style = menuSelectedItemStyle
 			} else {
 				style = greyedSelectedStyle
 			}
@@ -543,14 +543,14 @@ func (m model) View() string {
 				desc = "not installed"
 			}
 		}
-		s += descStyle.Render(desc) + "\n\n"
+		s += menuDescStyle.Render(desc) + "\n\n"
 	}
 
 	if m.statusMsg != "" {
 		s += "\n" + lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "210"}).Render(m.statusMsg) + "\n"
 	}
 
-	s += "\n" + lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "244", Dark: "244"}).Render("↑/↓ navigate • enter launch • → change model • esc quit")
+	s += "\n" + selectorHelpStyle.Render("↑/↓ navigate • enter launch • → change model • esc quit")
 
 	return s
 }
@@ -559,8 +559,8 @@ func (m model) View() string {
 // Delegates to selectorModel.renderContent() for the actual item rendering.
 func (m model) renderModal() string {
 	modalStyle := lipgloss.NewStyle().
-		Padding(1, 2).
-		MarginLeft(2)
+		PaddingBottom(1).
+		PaddingRight(2)
 
 	return modalStyle.Render(m.modalSelector.renderContent())
 }
@@ -581,7 +581,7 @@ func (m model) renderSignInDialog() string {
 	content.WriteString(selectorTitleStyle.Render("Sign in required"))
 	content.WriteString("\n\n")
 
-	content.WriteString(fmt.Sprintf("To use %s, please sign in.\n\n", selectedStyle.Render(m.signInModel)))
+	content.WriteString(fmt.Sprintf("To use %s, please sign in.\n\n", selectorSelectedItemStyle.Render(m.signInModel)))
 
 	content.WriteString("Navigate to:\n")
 	content.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Render("  " + m.signInURL))
