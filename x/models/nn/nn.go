@@ -1,3 +1,5 @@
+//go:build mlx
+
 package nn
 
 import "github.com/ollama/ollama/x/mlxrunner/mlx"
