@@ -63,10 +63,16 @@ var integrations = map[string]Runner{
 // recommendedModels are shown when the user has no models or as suggestions.
 // Order matters: local models first, then cloud models.
 var recommendedModels = []ModelItem{
-	{Name: "glm-4.7-flash", Recommended: true},
-	{Name: "qwen3:8b", Recommended: true},
-	{Name: "glm-4.7:cloud", Recommended: true},
-	{Name: "kimi-k2.5:cloud", Recommended: true},
+	{Name: "kimi-k2.5:cloud", Description: "Multimodal reasoning with subagents", Recommended: true},
+	{Name: "glm-4.7:cloud", Description: "Reasoning and code generation", Recommended: true},
+	{Name: "glm-4.7-flash", Description: "Reasoning and code generation locally", Recommended: true},
+	{Name: "qwen3:8b", Description: "Efficient all-purpose assistant", Recommended: true},
+}
+
+// recommendedVRAM maps local recommended models to their approximate VRAM requirement.
+var recommendedVRAM = map[string]string{
+	"glm-4.7-flash": "~25GB",
+	"qwen3:8b":      "~11GB",
 }
 
 // integrationAliases are hidden from the interactive selector but work as CLI arguments.
@@ -75,19 +81,34 @@ var integrationAliases = map[string]bool{
 	"moltbot":  true,
 }
 
-// integrationInstallHints maps integration names to user-friendly install instructions.
+// integrationInstallHints maps integration names to install URLs.
 var integrationInstallHints = map[string]string{
-	"claude":   "install from https://code.claude.com/docs/en/quickstart",
-	"openclaw": "install from https://docs.openclaw.ai",
-	"codex":    "install with: npm install -g @openai/codex",
-	"droid":    "install from https://docs.factory.ai/cli/getting-started/quickstart",
-	"opencode": "install from https://opencode.ai",
+	"claude":   "https://code.claude.com/docs/en/quickstart",
+	"openclaw": "https://docs.openclaw.ai",
+	"codex":    "https://developers.openai.com/codex/cli/",
+	"droid":    "https://docs.factory.ai/cli/getting-started/quickstart",
+	"opencode": "https://opencode.ai",
+}
+
+// hyperlink wraps text in an OSC 8 terminal hyperlink so it is cmd+clickable.
+func hyperlink(url, text string) string {
+	return fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", url, text)
 }
 
 // IntegrationInfo contains display information about a registered integration.
 type IntegrationInfo struct {
 	Name        string // registry key, e.g. "claude"
 	DisplayName string // human-readable, e.g. "Claude Code"
+	Description string // short description, e.g. "Anthropic's agentic coding tool"
+}
+
+// integrationDescriptions maps integration names to short descriptions.
+var integrationDescriptions = map[string]string{
+	"claude":   "Anthropic's coding tool with subagents",
+	"codex":    "OpenAI's open-source coding agent",
+	"openclaw": "Personal AI with 100+ skills",
+	"droid":    "Factory's coding agent across terminal and IDEs",
+	"opencode": "Anomaly's Open-source coding agent",
 }
 
 // ListIntegrationInfos returns all non-alias registered integrations, sorted by name.
@@ -100,6 +121,7 @@ func ListIntegrationInfos() []IntegrationInfo {
 		result = append(result, IntegrationInfo{
 			Name:        name,
 			DisplayName: r.String(),
+			Description: integrationDescriptions[name],
 		})
 	}
 	slices.SortFunc(result, func(a, b IntegrationInfo) int {
@@ -109,9 +131,14 @@ func ListIntegrationInfos() []IntegrationInfo {
 }
 
 // IntegrationInstallHint returns a user-friendly install hint for the given integration,
-// or an empty string if none is available.
+// or an empty string if none is available. The URL is wrapped in an OSC 8 hyperlink
+// so it is cmd+clickable in supported terminals.
 func IntegrationInstallHint(name string) string {
-	return integrationInstallHints[name]
+	url := integrationInstallHints[name]
+	if url == "" {
+		return ""
+	}
+	return "Install from " + hyperlink(url, url)
 }
 
 // IsIntegrationInstalled checks if an integration binary is installed.
@@ -669,7 +696,7 @@ Examples:
 		Args:    cobra.ArbitraryArgs,
 		PreRunE: checkServerHeartbeat,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// No args - run the main TUI (same as 'ollama')
+			// No args and no flags - show the full TUI (same as bare 'ollama')
 			if len(args) == 0 && modelFlag == "" && !configFlag {
 				runTUI(cmd)
 				return nil
@@ -901,8 +928,10 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 	recommended := make(map[string]bool)
 	var hasLocalModel, hasCloudModel bool
 
+	recDesc := make(map[string]string)
 	for _, rec := range recommendedModels {
 		recommended[rec.Name] = true
+		recDesc[rec.Name] = rec.Description
 	}
 
 	for _, m := range existing {
@@ -915,7 +944,7 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 		}
 		displayName := strings.TrimSuffix(m.Name, ":latest")
 		existingModels[displayName] = true
-		item := ModelItem{Name: displayName, Recommended: recommended[displayName]}
+		item := ModelItem{Name: displayName, Recommended: recommended[displayName], Description: recDesc[displayName]}
 		items = append(items, item)
 	}
 
@@ -952,11 +981,15 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 	for i := range items {
 		if !existingModels[items[i].Name] {
 			notInstalled[items[i].Name] = true
+			var parts []string
 			if items[i].Description != "" {
-				items[i].Description += ", install?"
-			} else {
-				items[i].Description = "install?"
+				parts = append(parts, items[i].Description)
 			}
+			if vram := recommendedVRAM[items[i].Name]; vram != "" {
+				parts = append(parts, vram)
+			}
+			parts = append(parts, "install?")
+			items[i].Description = strings.Join(parts, ", ")
 		}
 	}
 

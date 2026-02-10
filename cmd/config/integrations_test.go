@@ -94,9 +94,7 @@ func TestLaunchCmd(t *testing.T) {
 	mockCheck := func(cmd *cobra.Command, args []string) error {
 		return nil
 	}
-	// Mock TUI function (not called in these tests)
 	mockTUI := func(cmd *cobra.Command) {}
-
 	cmd := LaunchCmd(mockCheck, mockTUI)
 
 	t.Run("command structure", func(t *testing.T) {

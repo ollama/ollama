@@ -34,11 +34,11 @@ var (
 
 	greyedStyle = lipgloss.NewStyle().
 			PaddingLeft(4).
-			Foreground(lipgloss.AdaptiveColor{Light: "249", Dark: "240"})
+			Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"})
 
 	greyedSelectedStyle = lipgloss.NewStyle().
 				PaddingLeft(2).
-				Foreground(lipgloss.AdaptiveColor{Light: "240", Dark: "248"}).
+				Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}).
 				Background(lipgloss.AdaptiveColor{Light: "254", Dark: "236"})
 
 	descStyle = lipgloss.NewStyle().
@@ -78,8 +78,8 @@ var mainMenuItems = []menuItem{
 		integration: "codex",
 	},
 	{
-		title:       "Launch Open Claw",
-		description: "Open the Open Claw integration",
+		title:       "Launch OpenClaw",
+		description: "Open OpenClaw integration",
 		integration: "openclaw",
 	},
 }
@@ -446,11 +446,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// Don't allow selecting uninstalled integrations
 			if item.integration != "" && !config.IsIntegrationInstalled(item.integration) {
-				m.statusMsg = fmt.Sprintf("%s is not installed", item.title)
-				if hint := config.IntegrationInstallHint(item.integration); hint != "" {
-					m.statusMsg += " — " + hint
-				}
-				return m, tea.Tick(4*time.Second, func(t time.Time) tea.Msg { return clearStatusMsg{} })
+				return m, nil
 			}
 
 			// Check if a cloud model is configured and needs sign-in
@@ -474,11 +470,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if item.integration != "" || item.isRunModel {
 				// Don't allow for uninstalled integrations
 				if item.integration != "" && !config.IsIntegrationInstalled(item.integration) {
-					m.statusMsg = fmt.Sprintf("%s is not installed", item.title)
-					if hint := config.IntegrationInstallHint(item.integration); hint != "" {
-						m.statusMsg += " — " + hint
-					}
-					return m, tea.Tick(4*time.Second, func(t time.Time) tea.Msg { return clearStatusMsg{} })
+					return m, nil
 				}
 				m.openModelModal()
 			}
@@ -542,14 +534,23 @@ func (m model) View() string {
 		}
 
 		s += style.Render(cursor+title) + modelSuffix + "\n"
-		s += descStyle.Render(item.description) + "\n\n"
+
+		desc := item.description
+		if !isInstalled && item.integration != "" && m.cursor == i {
+			if hint := config.IntegrationInstallHint(item.integration); hint != "" {
+				desc = hint
+			} else {
+				desc = "not installed"
+			}
+		}
+		s += descStyle.Render(desc) + "\n\n"
 	}
 
 	if m.statusMsg != "" {
 		s += "\n" + lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "210"}).Render(m.statusMsg) + "\n"
 	}
 
-	s += "\n" + lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "244", Dark: "244"}).Render("↑/↓ navigate • enter select • → change model • esc quit")
+	s += "\n" + lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "244", Dark: "244"}).Render("↑/↓ navigate • enter launch • → change model • esc quit")
 
 	return s
 }
