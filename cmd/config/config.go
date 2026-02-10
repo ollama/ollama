@@ -56,8 +56,8 @@ func migrateConfig() (bool, error) {
 		return false, err
 	}
 
-	var js json.RawMessage
-	if err := json.Unmarshal(oldData, &js); err != nil {
+	// Ignore legacy files with invalid JSON and continue startup.
+	if !json.Valid(oldData) {
 		return false, nil
 	}
 

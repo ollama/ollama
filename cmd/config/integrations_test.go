@@ -149,6 +149,10 @@ func TestLaunchCmd_TUICallback(t *testing.T) {
 	})
 
 	t.Run("integration arg bypasses TUI", func(t *testing.T) {
+		srv := httptest.NewServer(http.NotFoundHandler())
+		defer srv.Close()
+		t.Setenv("OLLAMA_HOST", srv.URL)
+
 		tuiCalled := false
 		mockTUI := func(cmd *cobra.Command) {
 			tuiCalled = true

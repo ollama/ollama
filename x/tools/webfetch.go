@@ -15,6 +15,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/auth"
+	internalcloud "github.com/ollama/ollama/internal/cloud"
 )
 
 const (
@@ -71,6 +72,10 @@ type webFetchResponse struct {
 // Execute fetches content from a web page.
 // Uses Ollama key signing for authentication - this makes requests via ollama.com API.
 func (w *WebFetchTool) Execute(args map[string]any) (string, error) {
+	if internalcloud.Disabled() {
+		return "", errors.New(internalcloud.DisabledError("web fetch is unavailable"))
+	}
+
 	urlStr, ok := args["url"].(string)
 	if !ok || urlStr == "" {
 		return "", fmt.Errorf("url parameter is required")

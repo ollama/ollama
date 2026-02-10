@@ -834,6 +834,12 @@ type TokenResponse struct {
 	Token string `json:"token"`
 }
 
+// CloudStatusResponse is the response from [Client.CloudStatusExperimental].
+type CloudStatusResponse struct {
+	Disabled bool   `json:"disabled"`
+	Source   string `json:"source"`
+}
+
 // GenerateResponse is the response passed into [GenerateResponseFunc].
 type GenerateResponse struct {
 	// Model is the model name that generated the response.

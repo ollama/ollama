@@ -209,7 +209,15 @@ func (m *model) openMultiModelModal(integration string) {
 }
 
 func isCloudModel(name string) bool {
-	return strings.HasSuffix(name, ":cloud")
+	return strings.HasSuffix(name, ":cloud") || strings.HasSuffix(name, "-cloud")
+}
+
+func cloudStatusDisabled(client *api.Client) bool {
+	status, err := client.CloudStatusExperimental(context.Background())
+	if err != nil {
+		return false
+	}
+	return status.Disabled
 }
 
 // checkCloudSignIn checks if a cloud model needs sign-in.
@@ -220,6 +228,9 @@ func (m *model) checkCloudSignIn(modelName string, fromModal bool) tea.Cmd {
 	}
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
+		return nil
+	}
+	if cloudStatusDisabled(client) {
 		return nil
 	}
 	user, err := client.Whoami(context.Background())
@@ -272,7 +283,11 @@ func (m *model) loadAvailableModels() {
 	if err != nil {
 		return
 	}
+	cloudDisabled := cloudStatusDisabled(client)
 	for _, mdl := range models.Models {
+		if cloudDisabled && mdl.RemoteModel != "" {
+			continue
+		}
 		m.availableModels[mdl.Name] = true
 	}
 }

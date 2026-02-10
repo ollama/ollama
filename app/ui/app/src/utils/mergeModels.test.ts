@@ -41,14 +41,14 @@ describe("Model merging logic", () => {
     expect(merged.length).toBe(FEATURED_MODELS.length + 2);
   });
 
-  it("should hide cloud models in airplane mode", () => {
+  it("should hide cloud models when cloud is disabled", () => {
     const localModels: Model[] = [
       new Model({ model: "gpt-oss:120b-cloud" }),
       new Model({ model: "llama3:latest" }),
       new Model({ model: "mistral:latest" }),
     ];
 
-    const merged = mergeModels(localModels, true); // airplane mode = true
+    const merged = mergeModels(localModels, true); // cloud disabled = true
 
     // No cloud models should be present
     const cloudModels = merged.filter((m) => m.isCloud());

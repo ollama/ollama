@@ -1971,7 +1971,7 @@ func runInteractiveTUI(cmd *cobra.Command) {
 			return
 		case tui.SelectionRunModel:
 			_ = config.SetLastSelection("run")
-			if modelName := config.LastModel(); modelName != "" {
+			if modelName := config.LastModel(); modelName != "" && !config.IsCloudModelDisabled(cmd.Context(), modelName) {
 				runModel(modelName)
 			} else {
 				modelName, err := config.SelectModelWithSelector(cmd.Context(), singleSelector)
@@ -2273,6 +2273,7 @@ func NewCLI() *cobra.Command {
 				envVars["OLLAMA_MAX_QUEUE"],
 				envVars["OLLAMA_MODELS"],
 				envVars["OLLAMA_NUM_PARALLEL"],
+				envVars["OLLAMA_NO_CLOUD"],
 				envVars["OLLAMA_NOPRUNE"],
 				envVars["OLLAMA_ORIGINS"],
 				envVars["OLLAMA_SCHED_SPREAD"],

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
+	internalcloud "github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/progress"
 	"github.com/spf13/cobra"
 )
@@ -213,6 +215,11 @@ func SelectModelWithSelector(ctx context.Context, selector SingleSelector) (stri
 		existing = append(existing, modelInfo{Name: m.Name, Remote: m.RemoteModel != ""})
 	}
 
+	cloudDisabled, _ := cloudStatusDisabled(ctx, client)
+	if cloudDisabled {
+		existing = filterCloudModels(existing)
+	}
+
 	lastModel := LastModel()
 	var preChecked []string
 	if lastModel != "" {
@@ -220,6 +227,10 @@ func SelectModelWithSelector(ctx context.Context, selector SingleSelector) (stri
 	}
 
 	items, _, existingModels, cloudModels := buildModelList(existing, preChecked, lastModel)
+
+	if cloudDisabled {
+		items = filterCloudItems(items)
+	}
 
 	if len(items) == 0 {
 		return "", fmt.Errorf("no models available, run 'ollama pull <model>' first")
@@ -374,6 +385,11 @@ func selectModelsWithSelectors(ctx context.Context, name, current string, single
 		existing = append(existing, modelInfo{Name: m.Name, Remote: m.RemoteModel != ""})
 	}
 
+	cloudDisabled, _ := cloudStatusDisabled(ctx, client)
+	if cloudDisabled {
+		existing = filterCloudModels(existing)
+	}
+
 	var preChecked []string
 	if saved, err := loadIntegration(name); err == nil {
 		preChecked = saved.Models
@@ -382,6 +398,10 @@ func selectModelsWithSelectors(ctx context.Context, name, current string, single
 	}
 
 	items, preChecked, existingModels, cloudModels := buildModelList(existing, preChecked, current)
+
+	if cloudDisabled {
+		items = filterCloudItems(items)
+	}
 
 	if len(items) == 0 {
 		return nil, fmt.Errorf("no models available")
@@ -489,7 +509,16 @@ func listModels(ctx context.Context) ([]ModelItem, map[string]bool, map[string]b
 		})
 	}
 
+	cloudDisabled, _ := cloudStatusDisabled(ctx, client)
+	if cloudDisabled {
+		existing = filterCloudModels(existing)
+	}
+
 	items, _, existingModels, cloudModels := buildModelList(existing, nil, "")
+
+	if cloudDisabled {
+		items = filterCloudItems(items)
+	}
 
 	if len(items) == 0 {
 		return nil, nil, nil, nil, fmt.Errorf("no models available, run 'ollama pull <model>' first")
@@ -518,6 +547,9 @@ func ensureAuth(ctx context.Context, client *api.Client, cloudModels map[string]
 	}
 	if len(selectedCloudModels) == 0 {
 		return nil
+	}
+	if disabled, known := cloudStatusDisabled(ctx, client); known && disabled {
+		return errors.New(internalcloud.DisabledError("remote inference is unavailable"))
 	}
 
 	user, err := client.Whoami(ctx)
@@ -854,8 +886,12 @@ Examples:
 				}
 
 				// Validate saved model still exists
+				cloudCleared := false
 				if model != "" && modelFlag == "" {
-					if _, err := client.Show(cmd.Context(), &api.ShowRequest{Model: model}); err != nil {
+					if disabled, _ := cloudStatusDisabled(cmd.Context(), client); disabled && isCloudModelName(model) {
+						model = ""
+						cloudCleared = true
+					} else if _, err := client.Show(cmd.Context(), &api.ShowRequest{Model: model}); err != nil {
 						fmt.Fprintf(os.Stderr, "%sConfigured model %q not found%s\n\n", ansiGray, model, ansiReset)
 						if err := ShowOrPull(cmd.Context(), client, model); err != nil {
 							model = ""
@@ -865,7 +901,7 @@ Examples:
 
 				// If no valid model or --config flag, show picker
 				if model == "" || configFlag {
-					aliases, _, err := ac.ConfigureAliases(cmd.Context(), model, existingAliases, configFlag)
+					aliases, _, err := ac.ConfigureAliases(cmd.Context(), model, existingAliases, configFlag || cloudCleared)
 					if errors.Is(err, errCancelled) {
 						return nil
 					}
@@ -1027,7 +1063,7 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 			continue
 		}
 		items = append(items, rec)
-		if strings.HasSuffix(rec.Name, ":cloud") {
+		if isCloudModelName(rec.Name) {
 			cloudModels[rec.Name] = true
 		}
 	}
@@ -1132,7 +1168,45 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 	return items, preChecked, existingModels, cloudModels
 }
 
+// IsCloudModelDisabled reports whether the given model name looks like a cloud
+// model and cloud features are currently disabled on the server.
+func IsCloudModelDisabled(ctx context.Context, name string) bool {
+	if !isCloudModelName(name) {
+		return false
+	}
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return false
+	}
+	disabled, _ := cloudStatusDisabled(ctx, client)
+	return disabled
+}
+
 // isCloudModel checks if a model is a cloud model using the Show API.
+func isCloudModelName(name string) bool {
+	return strings.HasSuffix(name, ":cloud") || strings.HasSuffix(name, "-cloud")
+}
+
+func filterCloudModels(existing []modelInfo) []modelInfo {
+	filtered := existing[:0]
+	for _, m := range existing {
+		if !m.Remote {
+			filtered = append(filtered, m)
+		}
+	}
+	return filtered
+}
+
+func filterCloudItems(items []ModelItem) []ModelItem {
+	filtered := items[:0]
+	for _, item := range items {
+		if !isCloudModelName(item.Name) {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
 func isCloudModel(ctx context.Context, client *api.Client, name string) bool {
 	if client == nil {
 		return false
@@ -1162,6 +1236,11 @@ func GetModelItems(ctx context.Context) ([]ModelItem, map[string]bool) {
 		existing = append(existing, modelInfo{Name: m.Name, Remote: m.RemoteModel != ""})
 	}
 
+	cloudDisabled, _ := cloudStatusDisabled(ctx, client)
+	if cloudDisabled {
+		existing = filterCloudModels(existing)
+	}
+
 	lastModel := LastModel()
 	var preChecked []string
 	if lastModel != "" {
@@ -1170,7 +1249,23 @@ func GetModelItems(ctx context.Context) ([]ModelItem, map[string]bool) {
 
 	items, _, existingModels, _ := buildModelList(existing, preChecked, lastModel)
 
+	if cloudDisabled {
+		items = filterCloudItems(items)
+	}
+
 	return items, existingModels
+}
+
+func cloudStatusDisabled(ctx context.Context, client *api.Client) (disabled bool, known bool) {
+	status, err := client.CloudStatusExperimental(ctx)
+	if err != nil {
+		var statusErr api.StatusError
+		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound {
+			return false, false
+		}
+		return false, false
+	}
+	return status.Disabled, true
 }
 
 func pullModel(ctx context.Context, client *api.Client, model string) error {
