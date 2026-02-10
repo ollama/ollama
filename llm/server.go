@@ -387,9 +387,6 @@ func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.W
 		go func() {
 			io.Copy(out, stderr) //nolint:errcheck
 		}()
-	} else {
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
 	}
 	cmd.SysProcAttr = LlamaServerSysProcAttr
 
