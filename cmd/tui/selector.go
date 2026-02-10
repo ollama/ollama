@@ -12,7 +12,6 @@ import (
 var (
 	selectorTitleStyle = lipgloss.NewStyle().
 				Bold(true)
-		// PaddingLeft(4)
 
 	selectorItemStyle = lipgloss.NewStyle().
 				PaddingLeft(4)
@@ -64,7 +63,6 @@ const maxSelectorItems = 10
 // ErrCancelled is returned when the user cancels the selection.
 var ErrCancelled = errors.New("cancelled")
 
-// SelectItem represents an item that can be selected.
 type SelectItem struct {
 	Name        string
 	Description string
@@ -80,7 +78,7 @@ type selectorModel struct {
 	scrollOffset int
 	selected     string
 	cancelled    bool
-	helpText     string // optional override for help line
+	helpText     string
 }
 
 func (m selectorModel) filteredItems() []SelectItem {
@@ -169,7 +167,6 @@ func (m *selectorModel) updateNavigation(msg tea.KeyMsg) {
 // When filtering, it's relative to the full filtered list.
 func (m *selectorModel) updateScroll(otherStart int) {
 	if m.filter != "" {
-		// Standard scrolling for filtered results
 		if m.cursor < m.scrollOffset {
 			m.scrollOffset = m.cursor
 		}
@@ -222,7 +219,6 @@ func (m selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// renderItem renders a single selector item.
 func (m selectorModel) renderItem(s *strings.Builder, item SelectItem, idx int) {
 	if idx == m.cursor {
 		s.WriteString(selectorSelectedItemStyle.Render("▸ " + item.Name))
@@ -242,7 +238,6 @@ func (m selectorModel) renderItem(s *strings.Builder, item SelectItem, idx int) 
 func (m selectorModel) renderContent() string {
 	var s strings.Builder
 
-	// Title with filter
 	s.WriteString(selectorTitleStyle.Render(m.title))
 	s.WriteString(" ")
 	if m.filter == "" {
@@ -258,7 +253,6 @@ func (m selectorModel) renderContent() string {
 		s.WriteString(selectorItemStyle.Render(selectorDescStyle.Render("(no matches)")))
 		s.WriteString("\n")
 	} else if m.filter != "" {
-		// Filtering: flat list with "Top Results" header, standard scrolling
 		s.WriteString(sectionHeaderStyle.Render("Top Results"))
 		s.WriteString("\n")
 
@@ -295,7 +289,6 @@ func (m selectorModel) renderContent() string {
 			}
 		}
 
-		// Render scrollable "More" section
 		if len(otherItems) > 0 {
 			s.WriteString("\n")
 			s.WriteString(sectionHeaderStyle.Render("More"))
@@ -341,7 +334,6 @@ func (m selectorModel) View() string {
 	return m.renderContent()
 }
 
-// SelectSingle prompts the user to select a single item from a list.
 func SelectSingle(title string, items []SelectItem) (string, error) {
 	if len(items) == 0 {
 		return "", fmt.Errorf("no items to select from")
@@ -458,14 +450,12 @@ func (m multiSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case tea.KeyEnter:
-			// Enter confirms if at least one item is selected
 			if len(m.checkOrder) > 0 {
 				m.confirmed = true
 				return m, tea.Quit
 			}
 
 		case tea.KeySpace:
-			// Space always toggles selection
 			m.toggleItem()
 
 		case tea.KeyUp:
@@ -521,14 +511,12 @@ func (m multiSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m multiSelectorModel) View() string {
-	// Clear screen when exiting
 	if m.cancelled || m.confirmed {
 		return ""
 	}
 
 	var s strings.Builder
 
-	// Title with filter
 	s.WriteString(selectorTitleStyle.Render(m.title))
 	s.WriteString(" ")
 	if m.filter == "" {
@@ -556,7 +544,6 @@ func (m multiSelectorModel) View() string {
 			item := filtered[idx]
 			origIdx := m.itemIndex[item.Name]
 
-			// Show section headers when not filtering
 			if m.filter == "" {
 				if item.Recommended && !shownRecHeader {
 					s.WriteString(sectionHeaderStyle.Render("Recommended"))
@@ -568,7 +555,6 @@ func (m multiSelectorModel) View() string {
 				prevWasRec = item.Recommended
 			}
 
-			// Checkbox
 			var checkbox string
 			if m.checked[origIdx] {
 				checkbox = selectorCheckboxCheckedStyle.Render("[x]")
@@ -576,7 +562,6 @@ func (m multiSelectorModel) View() string {
 				checkbox = selectorCheckboxStyle.Render("[ ]")
 			}
 
-			// Cursor and name
 			var line string
 			if idx == m.cursor {
 				line = selectorSelectedItemStyle.Render("▸ ") + checkbox + " " + selectorSelectedItemStyle.Render(item.Name)
@@ -584,7 +569,6 @@ func (m multiSelectorModel) View() string {
 				line = "  " + checkbox + " " + item.Name
 			}
 
-			// Default tag
 			if len(m.checkOrder) > 0 && m.checkOrder[0] == origIdx {
 				line += " " + selectorDefaultTagStyle.Render("(default)")
 			}
@@ -601,7 +585,6 @@ func (m multiSelectorModel) View() string {
 
 	s.WriteString("\n")
 
-	// Status line
 	count := m.selectedCount()
 	if count == 0 {
 		s.WriteString(selectorDescStyle.Render("  Select at least one model."))
@@ -615,7 +598,6 @@ func (m multiSelectorModel) View() string {
 	return s.String()
 }
 
-// SelectMultiple prompts the user to select multiple items from a list.
 func SelectMultiple(title string, items []SelectItem, preChecked []string) ([]string, error) {
 	if len(items) == 0 {
 		return nil, fmt.Errorf("no items to select from")

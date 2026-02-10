@@ -1875,9 +1875,6 @@ func runInteractiveTUI(cmd *cobra.Command) {
 		return
 	}
 
-	// errSelectionCancelled is returned when user cancels model selection
-	errSelectionCancelled := errors.New("cancelled")
-
 	// Selector adapters for tui
 	singleSelector := func(title string, items []config.ModelItem) (string, error) {
 		tuiItems := make([]tui.SelectItem, len(items))
@@ -1886,7 +1883,7 @@ func runInteractiveTUI(cmd *cobra.Command) {
 		}
 		result, err := tui.SelectSingle(title, tuiItems)
 		if errors.Is(err, tui.ErrCancelled) {
-			return "", errSelectionCancelled
+			return "", config.ErrCancelled
 		}
 		return result, err
 	}
@@ -1898,7 +1895,7 @@ func runInteractiveTUI(cmd *cobra.Command) {
 		}
 		result, err := tui.SelectMultiple(title, tuiItems, preChecked)
 		if errors.Is(err, tui.ErrCancelled) {
-			return nil, errSelectionCancelled
+			return nil, config.ErrCancelled
 		}
 		return result, err
 	}
@@ -1932,7 +1929,7 @@ func runInteractiveTUI(cmd *cobra.Command) {
 			configuredModel := config.IntegrationModel(name)
 			if configuredModel == "" || !config.ModelExists(cmd.Context(), configuredModel) {
 				err := config.ConfigureIntegrationWithSelectors(cmd.Context(), name, singleSelector, multiSelector)
-				if errors.Is(err, errSelectionCancelled) {
+				if errors.Is(err, config.ErrCancelled) {
 					return false // Return to main menu
 				}
 				if err != nil {
@@ -1958,7 +1955,7 @@ func runInteractiveTUI(cmd *cobra.Command) {
 			} else {
 				// No last model or model no longer exists, show picker
 				modelName, err := config.SelectModelWithSelector(cmd.Context(), singleSelector)
-				if errors.Is(err, errSelectionCancelled) {
+				if errors.Is(err, config.ErrCancelled) {
 					continue // Return to main menu
 				}
 				if err != nil {
@@ -1974,7 +1971,7 @@ func runInteractiveTUI(cmd *cobra.Command) {
 			if modelName == "" {
 				var err error
 				modelName, err = config.SelectModelWithSelector(cmd.Context(), singleSelector)
-				if errors.Is(err, errSelectionCancelled) {
+				if errors.Is(err, config.ErrCancelled) {
 					continue // Return to main menu
 				}
 				if err != nil {
@@ -2002,7 +1999,7 @@ func runInteractiveTUI(cmd *cobra.Command) {
 				}
 			} else {
 				err := config.ConfigureIntegrationWithSelectors(cmd.Context(), result.Integration, singleSelector, multiSelector)
-				if errors.Is(err, errSelectionCancelled) {
+				if errors.Is(err, config.ErrCancelled) {
 					continue // Return to main menu
 				}
 				if err != nil {

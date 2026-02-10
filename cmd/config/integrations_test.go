@@ -394,7 +394,7 @@ func names(items []ModelItem) []string {
 func TestBuildModelList_NoExistingModels(t *testing.T) {
 	items, _, _, _ := buildModelList(nil, nil, "")
 
-	want := []string{"glm-4.7-flash", "qwen3:8b", "glm-4.7:cloud", "kimi-k2.5:cloud"}
+	want := []string{"kimi-k2.5:cloud", "glm-4.7:cloud", "glm-4.7-flash", "qwen3:8b"}
 	if diff := cmp.Diff(want, names(items)); diff != "" {
 		t.Errorf("with no existing models, items should be recommended in order (-want +got):\n%s", diff)
 	}
@@ -415,8 +415,8 @@ func TestBuildModelList_OnlyLocalModels_CloudRecsAtBottom(t *testing.T) {
 	items, _, _, _ := buildModelList(existing, nil, "")
 	got := names(items)
 
-	// Recommended pinned at top (local recs first, then cloud recs), then installed non-recs
-	want := []string{"glm-4.7-flash", "qwen3:8b", "glm-4.7:cloud", "kimi-k2.5:cloud", "llama3.2", "qwen2.5"}
+	// Recommended pinned at top (local recs first, then cloud recs when only-local), then installed non-recs
+	want := []string{"glm-4.7-flash", "qwen3:8b", "kimi-k2.5:cloud", "glm-4.7:cloud", "llama3.2", "qwen2.5"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("recs pinned at top, local recs before cloud recs (-want +got):\n%s", diff)
 	}
@@ -432,7 +432,7 @@ func TestBuildModelList_BothCloudAndLocal_RegularSort(t *testing.T) {
 	got := names(items)
 
 	// All recs pinned at top (cloud before local in mixed case), then non-recs
-	want := []string{"glm-4.7:cloud", "kimi-k2.5:cloud", "glm-4.7-flash", "qwen3:8b", "llama3.2"}
+	want := []string{"kimi-k2.5:cloud", "glm-4.7:cloud", "glm-4.7-flash", "qwen3:8b", "llama3.2"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("recs pinned at top, cloud recs first in mixed case (-want +got):\n%s", diff)
 	}
@@ -486,7 +486,7 @@ func TestBuildModelList_ExistingCloudModelsNotPushedToBottom(t *testing.T) {
 	// glm-4.7-flash and glm-4.7:cloud are installed so they sort normally;
 	// kimi-k2.5:cloud and qwen3:8b are not installed so they go to the bottom
 	// All recs: cloud first in mixed case, then local, in rec order within each
-	want := []string{"glm-4.7:cloud", "kimi-k2.5:cloud", "glm-4.7-flash", "qwen3:8b"}
+	want := []string{"kimi-k2.5:cloud", "glm-4.7:cloud", "glm-4.7-flash", "qwen3:8b"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("all recs, cloud first in mixed case (-want +got):\n%s", diff)
 	}
@@ -504,7 +504,7 @@ func TestBuildModelList_HasRecommendedCloudModel_OnlyNonInstalledAtBottom(t *tes
 	// kimi-k2.5:cloud is installed so it sorts normally;
 	// the rest of the recommendations are not installed so they go to the bottom
 	// All recs pinned at top (cloud first in mixed case), then non-recs
-	want := []string{"glm-4.7:cloud", "kimi-k2.5:cloud", "glm-4.7-flash", "qwen3:8b", "llama3.2"}
+	want := []string{"kimi-k2.5:cloud", "glm-4.7:cloud", "glm-4.7-flash", "qwen3:8b", "llama3.2"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("recs pinned at top, cloud first in mixed case (-want +got):\n%s", diff)
 	}
@@ -843,5 +843,235 @@ func TestEnsureAuth_SkipsWhenNoCloudSelected(t *testing.T) {
 	}
 	if whoamiCalled {
 		t.Error("whoami should not be called when no cloud models are selected")
+	}
+}
+
+func TestHyperlink(t *testing.T) {
+	tests := []struct {
+		name     string
+		url      string
+		text     string
+		wantURL  string
+		wantText string
+	}{
+		{
+			name:     "basic link",
+			url:      "https://example.com",
+			text:     "click here",
+			wantURL:  "https://example.com",
+			wantText: "click here",
+		},
+		{
+			name:     "url with path",
+			url:      "https://example.com/docs/install",
+			text:     "install docs",
+			wantURL:  "https://example.com/docs/install",
+			wantText: "install docs",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := hyperlink(tt.url, tt.text)
+
+			// Should contain OSC 8 escape sequences
+			if !strings.Contains(got, "\033]8;;") {
+				t.Error("should contain OSC 8 open sequence")
+			}
+			if !strings.Contains(got, tt.wantURL) {
+				t.Errorf("should contain URL %q", tt.wantURL)
+			}
+			if !strings.Contains(got, tt.wantText) {
+				t.Errorf("should contain text %q", tt.wantText)
+			}
+
+			// Should have closing OSC 8 sequence
+			wantSuffix := "\033]8;;\033\\"
+			if !strings.HasSuffix(got, wantSuffix) {
+				t.Error("should end with OSC 8 close sequence")
+			}
+		})
+	}
+}
+
+func TestIntegrationInstallHint(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantEmpty bool
+		wantURL   string
+	}{
+		{
+			name:    "claude has hint",
+			input:   "claude",
+			wantURL: "https://code.claude.com/docs/en/quickstart",
+		},
+		{
+			name:    "codex has hint",
+			input:   "codex",
+			wantURL: "https://developers.openai.com/codex/cli/",
+		},
+		{
+			name:    "openclaw has hint",
+			input:   "openclaw",
+			wantURL: "https://docs.openclaw.ai",
+		},
+		{
+			name:      "unknown has no hint",
+			input:     "unknown",
+			wantEmpty: true,
+		},
+		{
+			name:      "empty name has no hint",
+			input:     "",
+			wantEmpty: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IntegrationInstallHint(tt.input)
+			if tt.wantEmpty {
+				if got != "" {
+					t.Errorf("expected empty hint, got %q", got)
+				}
+				return
+			}
+			if !strings.Contains(got, "Install from") {
+				t.Errorf("hint should start with 'Install from', got %q", got)
+			}
+			if !strings.Contains(got, tt.wantURL) {
+				t.Errorf("hint should contain URL %q, got %q", tt.wantURL, got)
+			}
+			// Should be a clickable hyperlink
+			if !strings.Contains(got, "\033]8;;") {
+				t.Error("hint URL should be wrapped in OSC 8 hyperlink")
+			}
+		})
+	}
+}
+
+func TestListIntegrationInfos(t *testing.T) {
+	infos := ListIntegrationInfos()
+
+	t.Run("excludes aliases", func(t *testing.T) {
+		for _, info := range infos {
+			if integrationAliases[info.Name] {
+				t.Errorf("alias %q should not appear in ListIntegrationInfos", info.Name)
+			}
+		}
+	})
+
+	t.Run("sorted by name", func(t *testing.T) {
+		for i := 1; i < len(infos); i++ {
+			if infos[i-1].Name >= infos[i].Name {
+				t.Errorf("not sorted: %q >= %q", infos[i-1].Name, infos[i].Name)
+			}
+		}
+	})
+
+	t.Run("all fields populated", func(t *testing.T) {
+		for _, info := range infos {
+			if info.Name == "" {
+				t.Error("Name should not be empty")
+			}
+			if info.DisplayName == "" {
+				t.Errorf("DisplayName for %q should not be empty", info.Name)
+			}
+			if info.Description == "" {
+				t.Errorf("Description for %q should not be empty", info.Name)
+			}
+		}
+	})
+
+	t.Run("includes known integrations", func(t *testing.T) {
+		known := map[string]bool{"claude": false, "codex": false, "opencode": false}
+		for _, info := range infos {
+			if _, ok := known[info.Name]; ok {
+				known[info.Name] = true
+			}
+		}
+		for name, found := range known {
+			if !found {
+				t.Errorf("expected %q in ListIntegrationInfos", name)
+			}
+		}
+	})
+}
+
+func TestBuildModelList_Descriptions(t *testing.T) {
+	t.Run("installed recommended has base description", func(t *testing.T) {
+		existing := []modelInfo{
+			{Name: "qwen3:8b", Remote: false},
+		}
+		items, _, _, _ := buildModelList(existing, nil, "")
+
+		for _, item := range items {
+			if item.Name == "qwen3:8b" {
+				if strings.HasSuffix(item.Description, "install?") {
+					t.Errorf("installed model should not have 'install?' suffix, got %q", item.Description)
+				}
+				if item.Description == "" {
+					t.Error("installed recommended model should have a description")
+				}
+				return
+			}
+		}
+		t.Error("qwen3:8b not found in items")
+	})
+
+	t.Run("not-installed local rec has VRAM in description", func(t *testing.T) {
+		items, _, _, _ := buildModelList(nil, nil, "")
+
+		for _, item := range items {
+			if item.Name == "qwen3:8b" {
+				if !strings.Contains(item.Description, "~11GB") {
+					t.Errorf("not-installed qwen3:8b should show VRAM hint, got %q", item.Description)
+				}
+				return
+			}
+		}
+		t.Error("qwen3:8b not found in items")
+	})
+
+	t.Run("installed local rec omits VRAM", func(t *testing.T) {
+		existing := []modelInfo{
+			{Name: "qwen3:8b", Remote: false},
+		}
+		items, _, _, _ := buildModelList(existing, nil, "")
+
+		for _, item := range items {
+			if item.Name == "qwen3:8b" {
+				if strings.Contains(item.Description, "~11GB") {
+					t.Errorf("installed qwen3:8b should not show VRAM hint, got %q", item.Description)
+				}
+				return
+			}
+		}
+		t.Error("qwen3:8b not found in items")
+	})
+}
+
+func TestLaunchIntegration_UnknownIntegration(t *testing.T) {
+	err := LaunchIntegration("nonexistent-integration")
+	if err == nil {
+		t.Fatal("expected error for unknown integration")
+	}
+	if !strings.Contains(err.Error(), "unknown integration") {
+		t.Errorf("error should mention 'unknown integration', got: %v", err)
+	}
+}
+
+func TestLaunchIntegration_NotConfigured(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	// Claude is a known integration but not configured in temp dir
+	err := LaunchIntegration("claude")
+	if err == nil {
+		t.Fatal("expected error when integration is not configured")
+	}
+	if !strings.Contains(err.Error(), "not configured") {
+		t.Errorf("error should mention 'not configured', got: %v", err)
 	}
 }

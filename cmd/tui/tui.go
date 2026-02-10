@@ -48,8 +48,8 @@ type menuItem struct {
 	title       string
 	description string
 	integration string // integration name for loading model config, empty if not an integration
-	isRunModel  bool   // true for the "Run a model" option
-	isOthers    bool   // true for the "Others..." toggle item
+	isRunModel  bool
+	isOthers    bool
 }
 
 var mainMenuItems = []menuItem{
@@ -115,41 +115,34 @@ type model struct {
 	items           []menuItem
 	cursor          int
 	quitting        bool
-	selected        bool            // true if user made a selection (enter/space)
-	changeModel     bool            // true if user pressed right arrow to change model
-	showOthers      bool            // true if "Others..." is expanded
-	availableModels map[string]bool // cache of available model names
+	selected        bool
+	changeModel     bool
+	showOthers      bool
+	availableModels map[string]bool
 	err             error
 
-	// Modal state
-	showingModal  bool          // true when model picker modal is visible
-	modalSelector selectorModel // the selector model for the modal
-	modalItems    []SelectItem  // cached items for the modal
+	showingModal  bool
+	modalSelector selectorModel
+	modalItems    []SelectItem
 
-	// Sign-in dialog state
-	showingSignIn   bool   // true when sign-in dialog is visible
-	signInURL       string // URL for sign-in
-	signInModel     string // model that requires sign-in
-	signInSpinner   int    // spinner frame index
+	showingSignIn   bool
+	signInURL       string
+	signInModel     string
+	signInSpinner   int
 	signInFromModal bool   // true if sign-in was triggered from modal (not main menu)
 
-	// Status message state
 	statusMsg string // temporary status message shown near help text
 }
 
-// signInTickMsg is sent to animate the sign-in spinner
 type signInTickMsg struct{}
 
-// signInCheckMsg is sent to check if sign-in is complete
 type signInCheckMsg struct {
 	signedIn bool
 	userName string
 }
 
-// clearStatusMsg is sent to clear the temporary status message
 type clearStatusMsg struct{}
 
-// modelExists checks if a model exists in the cached available models.
 func (m *model) modelExists(name string) bool {
 	if m.availableModels == nil || name == "" {
 		return false
@@ -166,7 +159,6 @@ func (m *model) modelExists(name string) bool {
 	return false
 }
 
-// buildModalItems creates the list of models for the modal selector.
 func (m *model) buildModalItems() []SelectItem {
 	modelItems, _ := config.GetModelItems(context.Background())
 	var items []SelectItem
@@ -176,7 +168,6 @@ func (m *model) buildModalItems() []SelectItem {
 	return items
 }
 
-// openModelModal opens the model picker modal.
 func (m *model) openModelModal() {
 	m.modalItems = m.buildModalItems()
 	m.modalSelector = selectorModel{
@@ -187,7 +178,6 @@ func (m *model) openModelModal() {
 	m.showingModal = true
 }
 
-// isCloudModel returns true if the model name indicates a cloud model.
 func isCloudModel(name string) bool {
 	return strings.HasSuffix(name, ":cloud")
 }
@@ -204,7 +194,7 @@ func (m *model) checkCloudSignIn(modelName string, fromModal bool) tea.Cmd {
 	}
 	user, err := client.Whoami(context.Background())
 	if err == nil && user != nil && user.Name != "" {
-		return nil // Already signed in
+		return nil
 	}
 	var aErr api.AuthorizationError
 	if errors.As(err, &aErr) && aErr.SigninURL != "" {
@@ -233,13 +223,11 @@ func (m *model) startSignIn(modelName, signInURL string, fromModal bool) tea.Cmd
 		_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", signInURL).Start()
 	}
 
-	// Start the spinner tick
 	return tea.Tick(200*time.Millisecond, func(t time.Time) tea.Msg {
 		return signInTickMsg{}
 	})
 }
 
-// checkSignIn checks if the user has completed sign-in.
 func checkSignIn() tea.Msg {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -252,7 +240,6 @@ func checkSignIn() tea.Msg {
 	return signInCheckMsg{signedIn: false}
 }
 
-// loadAvailableModels fetches and caches the list of available models.
 func (m *model) loadAvailableModels() {
 	m.availableModels = make(map[string]bool)
 	client, err := api.ClientFromEnvironment()
@@ -280,7 +267,6 @@ func (m *model) buildItems() {
 	}
 }
 
-// isOthersIntegration returns true if the integration is in the "Others" menu
 func isOthersIntegration(name string) bool {
 	for _, item := range getOtherIntegrations() {
 		if item.integration == name {
@@ -296,7 +282,6 @@ func initialModel() model {
 	}
 	m.loadAvailableModels()
 
-	// Check last selection to determine if we need to expand "Others"
 	lastSelection := config.LastSelection()
 	if isOthersIntegration(lastSelection) {
 		m.showOthers = true
@@ -304,7 +289,6 @@ func initialModel() model {
 
 	m.buildItems()
 
-	// Position cursor on last selection
 	if lastSelection != "" {
 		for i, item := range m.items {
 			if lastSelection == "run" && item.isRunModel {
@@ -325,24 +309,20 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	// Handle clearStatusMsg
 	if _, ok := msg.(clearStatusMsg); ok {
 		m.statusMsg = ""
 		return m, nil
 	}
 
-	// Handle sign-in dialog
 	if m.showingSignIn {
 		switch msg := msg.(type) {
 		case tea.KeyMsg:
 			switch msg.Type {
 			case tea.KeyCtrlC, tea.KeyEsc:
-				// Cancel sign-in and go back
 				m.showingSignIn = false
 				if m.signInFromModal {
 					m.showingModal = true
 				}
-				// If from main menu, just return to main menu (default state)
 				return m, nil
 			}
 
@@ -363,13 +343,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case signInCheckMsg:
 			if msg.signedIn {
-				// Sign-in complete - proceed with selection
 				if m.signInFromModal {
-					// Came from modal - set changeModel
 					m.modalSelector.selected = m.signInModel
 					m.changeModel = true
 				} else {
-					// Came from main menu - just select
 					m.selected = true
 				}
 				m.quitting = true
@@ -379,13 +356,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Handle modal input if modal is showing
 	if m.showingModal {
 		switch msg := msg.(type) {
 		case tea.KeyMsg:
 			switch msg.Type {
 			case tea.KeyCtrlC, tea.KeyEsc, tea.KeyLeft:
-				// Close modal without selection
 				m.showingModal = false
 				return m, nil
 
@@ -398,7 +373,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if cmd := m.checkCloudSignIn(m.modalSelector.selected, true); cmd != nil {
 						return m, cmd
 					}
-					// Selection made - exit with changeModel
 					m.changeModel = true
 					m.quitting = true
 					return m, tea.Quit
@@ -444,12 +418,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter", " ":
 			item := m.items[m.cursor]
 
-			// Don't allow selecting uninstalled integrations
 			if item.integration != "" && !config.IsIntegrationInstalled(item.integration) {
 				return m, nil
 			}
 
-			// Check if a cloud model is configured and needs sign-in
 			var configuredModel string
 			if item.isRunModel {
 				configuredModel = config.LastModel()
@@ -465,10 +437,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case "right", "l":
-			// Allow model change for integrations and run model
 			item := m.items[m.cursor]
 			if item.integration != "" || item.isRunModel {
-				// Don't allow for uninstalled integrations
 				if item.integration != "" && !config.IsIntegrationInstalled(item.integration) {
 					return m, nil
 				}
@@ -485,12 +455,10 @@ func (m model) View() string {
 		return ""
 	}
 
-	// Render sign-in dialog if showing
 	if m.showingSignIn {
 		return m.renderSignInDialog()
 	}
 
-	// Render modal overlay if showing - replaces main view
 	if m.showingModal {
 		return m.renderModal()
 	}
@@ -555,8 +523,6 @@ func (m model) View() string {
 	return s
 }
 
-// renderModal renders the model picker modal.
-// Delegates to selectorModel.renderContent() for the actual item rendering.
 func (m model) renderModal() string {
 	modalStyle := lipgloss.NewStyle().
 		PaddingBottom(1).
@@ -565,7 +531,6 @@ func (m model) renderModal() string {
 	return modalStyle.Render(m.modalSelector.renderContent())
 }
 
-// renderSignInDialog renders the sign-in dialog.
 func (m model) renderSignInDialog() string {
 	dialogStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -581,14 +546,14 @@ func (m model) renderSignInDialog() string {
 	content.WriteString(selectorTitleStyle.Render("Sign in required"))
 	content.WriteString("\n\n")
 
-	content.WriteString(fmt.Sprintf("To use %s, please sign in.\n\n", selectorSelectedItemStyle.Render(m.signInModel)))
+	fmt.Fprintf(&content, "To use %s, please sign in.\n\n", selectorSelectedItemStyle.Render(m.signInModel))
 
 	content.WriteString("Navigate to:\n")
 	content.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Render("  " + m.signInURL))
 	content.WriteString("\n\n")
 
 	content.WriteString(lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}).Render(
-		fmt.Sprintf("%s Waiting for sign in to complete...", spinner)))
+		spinner + " Waiting for sign in to complete..."))
 	content.WriteString("\n\n")
 
 	content.WriteString(selectorHelpStyle.Render("esc cancel"))
@@ -596,7 +561,6 @@ func (m model) renderSignInDialog() string {
 	return dialogStyle.Render(content.String())
 }
 
-// Selection represents what the user selected
 type Selection int
 
 const (
@@ -607,14 +571,12 @@ const (
 	SelectionChangeIntegration // Generic change model for integration
 )
 
-// Result contains the selection and any associated data
 type Result struct {
 	Selection   Selection
 	Integration string // integration name if applicable
 	Model       string // model name if selected from modal
 }
 
-// Run starts the TUI and returns the user's selection
 func Run() (Result, error) {
 	m := initialModel()
 	p := tea.NewProgram(m)
@@ -629,14 +591,12 @@ func Run() (Result, error) {
 		return Result{Selection: SelectionNone}, fm.err
 	}
 
-	// User quit without selecting
 	if !fm.selected && !fm.changeModel {
 		return Result{Selection: SelectionNone}, nil
 	}
 
 	item := fm.items[fm.cursor]
 
-	// Handle model change request
 	if fm.changeModel {
 		if item.isRunModel {
 			return Result{
@@ -651,7 +611,6 @@ func Run() (Result, error) {
 		}, nil
 	}
 
-	// Handle selection
 	if item.isRunModel {
 		return Result{Selection: SelectionRunModel}, nil
 	}

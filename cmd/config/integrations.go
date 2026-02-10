@@ -298,11 +298,9 @@ func SelectModel(ctx context.Context) (string, error) {
 }
 
 // DefaultSingleSelector is the default single-select implementation.
-// It can be overridden (e.g., from cmd/cmd.go) to use the Bubbletea TUI selector.
 var DefaultSingleSelector SingleSelector
 
 // DefaultMultiSelector is the default multi-select implementation.
-// It can be overridden (e.g., from cmd/cmd.go) to use the Bubbletea TUI selector.
 var DefaultMultiSelector MultiSelector
 
 func selectIntegration() (string, error) {
@@ -582,8 +580,15 @@ func LaunchIntegration(name string) error {
 	}
 
 	// Try to use saved config
-	if config, err := loadIntegration(name); err == nil && len(config.Models) > 0 {
-		return runIntegration(name, config.Models[0], nil)
+	if ic, err := loadIntegration(name); err == nil && len(ic.Models) > 0 {
+		client, err := api.ClientFromEnvironment()
+		if err != nil {
+			return err
+		}
+		if err := showOrPull(context.Background(), client, ic.Models[0]); err != nil {
+			return err
+		}
+		return runIntegration(name, ic.Models[0], nil)
 	}
 
 	// No saved config - prompt user to run setup
@@ -592,6 +597,13 @@ func LaunchIntegration(name string) error {
 
 // LaunchIntegrationWithModel launches the named integration with the specified model.
 func LaunchIntegrationWithModel(name, modelName string) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+	if err := showOrPull(context.Background(), client, modelName); err != nil {
+		return err
+	}
 	return runIntegration(name, modelName, nil)
 }
 
@@ -623,7 +635,7 @@ func ConfigureIntegrationWithSelectors(ctx context.Context, name string, single 
 
 	models, err := selectModelsWithSelectors(ctx, name, "", single, multi)
 	if errors.Is(err, errCancelled) {
-		return nil
+		return errCancelled
 	}
 	if err != nil {
 		return err
