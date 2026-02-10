@@ -1,3 +1,5 @@
+//go:build mlx
+
 package mlx
 
 type Linear struct {
