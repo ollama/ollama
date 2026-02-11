@@ -291,8 +291,6 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/settings", handle(s.settings))
 	mux.Handle("GET /api/v1/cloud", handle(s.getCloudSetting))
 	mux.Handle("POST /api/v1/cloud", handle(s.cloudSetting))
-	mux.Handle("GET /api/v1/update/check", handle(s.checkForUpdate))
-	mux.Handle("POST /api/v1/update/install", handle(s.installUpdate))
 
 	// Ollama proxy endpoints
 	ollamaProxy := s.ollamaProxy()
@@ -1583,72 +1581,6 @@ func (s *Server) modelUpstream(w http.ResponseWriter, r *http.Request) error {
 	return json.NewEncoder(w).Encode(response)
 }
 
-func (s *Server) checkForUpdate(w http.ResponseWriter, r *http.Request) error {
-	currentVersion := version.Version
-
-	if s.Updater == nil {
-		return fmt.Errorf("updater not available")
-	}
-
-	updateAvailable, updateVersion, err := s.Updater.CheckForUpdate(r.Context())
-	if err != nil {
-		s.log().Warn("failed to check for update", "error", err)
-		// Don't return error, just log it and continue with no update available
-	}
-
-	response := responses.UpdateCheckResponse{
-		UpdateInfo: responses.UpdateInfo{
-			CurrentVersion:   currentVersion,
-			AvailableVersion: updateVersion,
-			UpdateAvailable:  updateAvailable,
-			UpdateDownloaded: updater.UpdateDownloaded,
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	return json.NewEncoder(w).Encode(response)
-}
-
-func (s *Server) installUpdate(w http.ResponseWriter, r *http.Request) error {
-	if r.Method != "POST" {
-		return fmt.Errorf("method not allowed")
-	}
-
-	if s.Updater == nil {
-		s.log().Error("install failed: updater not available")
-		return fmt.Errorf("updater not available")
-	}
-
-	// Check if update is downloaded
-	if !updater.UpdateDownloaded {
-		s.log().Error("install failed: no update downloaded")
-		return fmt.Errorf("no update downloaded")
-	}
-
-	// Send response before restarting
-	response := map[string]any{
-		"success": true,
-		"message": "Installing update and restarting...",
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		return err
-	}
-
-	// Give the response time to be sent
-	time.Sleep(500 * time.Millisecond)
-
-	// Trigger the upgrade and restart
-	go func() {
-		time.Sleep(500 * time.Millisecond)
-		if err := s.Updater.InstallAndRestart(); err != nil {
-			s.log().Error("failed to install update", "error", err)
-		}
-	}()
-
-	return nil
-}
 
 func userAgent() string {
 	buildinfo, _ := debug.ReadBuildInfo()

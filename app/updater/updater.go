@@ -342,16 +342,3 @@ func (u *Updater) StartBackgroundUpdaterChecker(ctx context.Context, cb func(str
 	}()
 }
 
-func (u *Updater) CheckForUpdate(ctx context.Context) (bool, string, error) {
-	available, resp := u.checkForUpdate(ctx)
-	return available, resp.UpdateVersion, nil
-}
-
-func (u *Updater) InstallAndRestart() error {
-	if !UpdateDownloaded {
-		return fmt.Errorf("no update downloaded")
-	}
-
-	slog.Info("installing update and restarting")
-	return DoUpgrade(true)
-}
