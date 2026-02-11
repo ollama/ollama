@@ -1201,3 +1201,56 @@ func TestLaunchIntegration_NotConfigured(t *testing.T) {
 		t.Errorf("error should mention 'not configured', got: %v", err)
 	}
 }
+
+func TestIsEditorIntegration(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{"droid", true},
+		{"opencode", true},
+		{"openclaw", true},
+		{"claude", false},
+		{"codex", false},
+		{"nonexistent", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsEditorIntegration(tt.name); got != tt.want {
+				t.Errorf("IsEditorIntegration(%q) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIntegrationModels(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	t.Run("returns nil when not configured", func(t *testing.T) {
+		if got := IntegrationModels("droid"); got != nil {
+			t.Errorf("expected nil, got %v", got)
+		}
+	})
+
+	t.Run("returns all saved models", func(t *testing.T) {
+		if err := saveIntegration("droid", []string{"llama3.2", "qwen3:8b"}); err != nil {
+			t.Fatal(err)
+		}
+		got := IntegrationModels("droid")
+		want := []string{"llama3.2", "qwen3:8b"}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("IntegrationModels mismatch (-want +got):\n%s", diff)
+		}
+	})
+}
+
+func TestSaveAndEditIntegration_UnknownIntegration(t *testing.T) {
+	err := SaveAndEditIntegration("nonexistent", []string{"model"})
+	if err == nil {
+		t.Fatal("expected error for unknown integration")
+	}
+	if !strings.Contains(err.Error(), "unknown integration") {
+		t.Errorf("error should mention 'unknown integration', got: %v", err)
+	}
+}
