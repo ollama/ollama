@@ -28,8 +28,12 @@ func (m signInModel) Init() tea.Cmd {
 func (m signInModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		wasSet := m.width > 0
 		m.width = msg.Width
-		return m, tea.ClearScreen
+		if wasSet {
+			return m, tea.EnterAltScreen
+		}
+		return m, nil
 
 	case tea.KeyMsg:
 		switch msg.Type {

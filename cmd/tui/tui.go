@@ -301,8 +301,12 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if wmsg, ok := msg.(tea.WindowSizeMsg); ok {
+		wasSet := m.width > 0
 		m.width = wmsg.Width
-		return m, tea.ClearScreen
+		if wasSet {
+			return m, tea.EnterAltScreen
+		}
+		return m, nil
 	}
 
 	if _, ok := msg.(clearStatusMsg); ok {

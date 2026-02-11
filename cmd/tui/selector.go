@@ -79,6 +79,7 @@ type selectorModel struct {
 	selected     string
 	cancelled    bool
 	helpText     string
+	hasSize      bool
 }
 
 func (m selectorModel) filteredItems() []SelectItem {
@@ -199,7 +200,11 @@ func (m *selectorModel) updateScroll(otherStart int) {
 func (m selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		return m, tea.ClearScreen
+		if m.hasSize {
+			return m, tea.EnterAltScreen
+		}
+		m.hasSize = true
+		return m, nil
 
 	case tea.KeyMsg:
 		switch msg.Type {
@@ -373,6 +378,7 @@ type multiSelectorModel struct {
 	checkOrder   []int
 	cancelled    bool
 	confirmed    bool
+	hasSize      bool
 }
 
 func newMultiSelectorModel(title string, items []SelectItem, preChecked []string) multiSelectorModel {
@@ -445,7 +451,11 @@ func (m multiSelectorModel) Init() tea.Cmd {
 func (m multiSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		return m, tea.ClearScreen
+		if m.hasSize {
+			return m, tea.EnterAltScreen
+		}
+		m.hasSize = true
+		return m, nil
 
 	case tea.KeyMsg:
 		filtered := m.filteredItems()
