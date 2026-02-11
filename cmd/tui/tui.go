@@ -160,20 +160,27 @@ func (m *model) modelExists(name string) bool {
 
 func (m *model) buildModalItems() []SelectItem {
 	modelItems, _ := config.GetModelItems(context.Background())
-	var items []SelectItem
-	for _, item := range modelItems {
-		items = append(items, SelectItem{Name: item.Name, Description: item.Description, Recommended: item.Recommended})
-	}
-	return items
+	return ReorderItems(ConvertItems(modelItems))
 }
 
-func (m *model) openModelModal() {
+func (m *model) openModelModal(currentModel string) {
 	m.modalItems = m.buildModalItems()
+	cursor := 0
+	if currentModel != "" {
+		for i, item := range m.modalItems {
+			if item.Name == currentModel || strings.HasPrefix(item.Name, currentModel+":") || strings.HasPrefix(currentModel, item.Name+":") {
+				cursor = i
+				break
+			}
+		}
+	}
 	m.modalSelector = selectorModel{
 		title:    "Select model:",
 		items:    m.modalItems,
+		cursor:   cursor,
 		helpText: "↑/↓ navigate • enter select • ← back",
 	}
+	m.modalSelector.updateScroll(m.modalSelector.otherStart())
 	m.showingModal = true
 }
 
@@ -442,7 +449,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if item.integration != "" && !config.IsIntegrationInstalled(item.integration) {
 					return m, nil
 				}
-				m.openModelModal()
+				var currentModel string
+				if item.isRunModel {
+					currentModel = config.LastModel()
+				} else if item.integration != "" {
+					currentModel = config.IntegrationModel(item.integration)
+				}
+				m.openModelModal(currentModel)
 			}
 		}
 	}

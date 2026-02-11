@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/ollama/ollama/cmd/config"
 )
 
 var (
@@ -67,6 +68,30 @@ type SelectItem struct {
 	Name        string
 	Description string
 	Recommended bool
+}
+
+// ConvertItems converts config.ModelItem slice to SelectItem slice.
+func ConvertItems(items []config.ModelItem) []SelectItem {
+	out := make([]SelectItem, len(items))
+	for i, item := range items {
+		out[i] = SelectItem{Name: item.Name, Description: item.Description, Recommended: item.Recommended}
+	}
+	return out
+}
+
+// ReorderItems returns a copy with recommended items first, then non-recommended,
+// preserving relative order within each group. This ensures the data order matches
+// the visual section layout (Recommended / More).
+func ReorderItems(items []SelectItem) []SelectItem {
+	var rec, other []SelectItem
+	for _, item := range items {
+		if item.Recommended {
+			rec = append(rec, item)
+		} else {
+			other = append(other, item)
+		}
+	}
+	return append(rec, other...)
 }
 
 // selectorModel is the bubbletea model for single selection.

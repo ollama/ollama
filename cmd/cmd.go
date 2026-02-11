@@ -58,10 +58,7 @@ import (
 func init() {
 	// Override default selectors to use Bubbletea TUI instead of raw terminal I/O.
 	config.DefaultSingleSelector = func(title string, items []config.ModelItem) (string, error) {
-		tuiItems := make([]tui.SelectItem, len(items))
-		for i, item := range items {
-			tuiItems[i] = tui.SelectItem{Name: item.Name, Description: item.Description, Recommended: item.Recommended}
-		}
+		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
 		result, err := tui.SelectSingle(title, tuiItems)
 		if errors.Is(err, tui.ErrCancelled) {
 			return "", config.ErrCancelled
@@ -70,10 +67,7 @@ func init() {
 	}
 
 	config.DefaultMultiSelector = func(title string, items []config.ModelItem, preChecked []string) ([]string, error) {
-		tuiItems := make([]tui.SelectItem, len(items))
-		for i, item := range items {
-			tuiItems[i] = tui.SelectItem{Name: item.Name, Description: item.Description, Recommended: item.Recommended}
-		}
+		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
 		result, err := tui.SelectMultiple(title, tuiItems, preChecked)
 		if errors.Is(err, tui.ErrCancelled) {
 			return nil, config.ErrCancelled
