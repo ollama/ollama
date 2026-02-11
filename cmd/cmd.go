@@ -88,6 +88,14 @@ func init() {
 		}
 		return userName, err
 	}
+
+	config.DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		ok, err := tui.RunConfirm(prompt)
+		if errors.Is(err, tui.ErrCancelled) {
+			return false, config.ErrCancelled
+		}
+		return ok, err
+	}
 }
 
 const ConnectInstructions = "If your browser did not open, navigate to:\n    %s\n\n"
@@ -1916,6 +1924,18 @@ func runInteractiveTUI(cmd *cobra.Command) {
 		}
 
 		runModel := func(modelName string) {
+			client, err := api.ClientFromEnvironment()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				return
+			}
+			if err := config.ShowOrPull(cmd.Context(), client, modelName); err != nil {
+				if errors.Is(err, config.ErrCancelled) {
+					return
+				}
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				return
+			}
 			_ = config.SetLastModel(modelName)
 			opts := runOptions{
 				Model:       modelName,
@@ -1957,11 +1977,9 @@ func runInteractiveTUI(cmd *cobra.Command) {
 			return
 		case tui.SelectionRunModel:
 			_ = config.SetLastSelection("run")
-			// Run last model directly if configured and still exists
-			if modelName := config.LastModel(); modelName != "" && config.ModelExists(cmd.Context(), modelName) {
+			if modelName := config.LastModel(); modelName != "" {
 				runModel(modelName)
 			} else {
-				// No last model or model no longer exists, show picker
 				modelName, err := config.SelectModelWithSelector(cmd.Context(), singleSelector)
 				if errors.Is(err, config.ErrCancelled) {
 					continue // Return to main menu

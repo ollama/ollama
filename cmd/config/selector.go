@@ -22,7 +22,15 @@ var ErrCancelled = errors.New("cancelled")
 // errCancelled is kept as an alias for backward compatibility within the package.
 var errCancelled = ErrCancelled
 
+// DefaultConfirmPrompt provides a TUI-based confirmation prompt.
+// When set, confirmPrompt delegates to it instead of using raw terminal I/O.
+var DefaultConfirmPrompt func(prompt string) (bool, error)
+
 func confirmPrompt(prompt string) (bool, error) {
+	if DefaultConfirmPrompt != nil {
+		return DefaultConfirmPrompt(prompt)
+	}
+
 	fd := int(os.Stdin.Fd())
 	oldState, err := term.MakeRaw(fd)
 	if err != nil {

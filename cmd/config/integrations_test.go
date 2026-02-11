@@ -727,7 +727,7 @@ func TestShowOrPull_ModelExists(t *testing.T) {
 	u, _ := url.Parse(srv.URL)
 	client := api.NewClient(u, srv.Client())
 
-	err := showOrPull(context.Background(), client, "test-model")
+	err := ShowOrPull(context.Background(), client, "test-model")
 	if err != nil {
 		t.Errorf("showOrPull should return nil when model exists, got: %v", err)
 	}
@@ -744,7 +744,7 @@ func TestShowOrPull_ModelNotFound_NoTerminal(t *testing.T) {
 	client := api.NewClient(u, srv.Client())
 
 	// confirmPrompt will fail in test (no terminal), so showOrPull should return an error
-	err := showOrPull(context.Background(), client, "missing-model")
+	err := ShowOrPull(context.Background(), client, "missing-model")
 	if err == nil {
 		t.Error("showOrPull should return error when model not found and no terminal available")
 	}
@@ -769,9 +769,101 @@ func TestShowOrPull_ShowCalledWithCorrectModel(t *testing.T) {
 	u, _ := url.Parse(srv.URL)
 	client := api.NewClient(u, srv.Client())
 
-	_ = showOrPull(context.Background(), client, "qwen3:8b")
+	_ = ShowOrPull(context.Background(), client, "qwen3:8b")
 	if receivedModel != "qwen3:8b" {
 		t.Errorf("expected Show to be called with %q, got %q", "qwen3:8b", receivedModel)
+	}
+}
+
+func TestShowOrPull_ModelNotFound_ConfirmYes_Pulls(t *testing.T) {
+	// Set up hook so confirmPrompt doesn't need a terminal
+	oldHook := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		if !strings.Contains(prompt, "missing-model") {
+			t.Errorf("expected prompt to contain model name, got %q", prompt)
+		}
+		return true, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldHook }()
+
+	var pullCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"error":"model not found"}`)
+		case "/api/pull":
+			pullCalled = true
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `{"status":"success"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	err := ShowOrPull(context.Background(), client, "missing-model")
+	if err != nil {
+		t.Errorf("ShowOrPull should succeed after pull, got: %v", err)
+	}
+	if !pullCalled {
+		t.Error("expected pull to be called when user confirms download")
+	}
+}
+
+func TestShowOrPull_ModelNotFound_ConfirmNo_Cancelled(t *testing.T) {
+	oldHook := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		return false, ErrCancelled
+	}
+	defer func() { DefaultConfirmPrompt = oldHook }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"error":"model not found"}`)
+		case "/api/pull":
+			t.Error("pull should not be called when user declines")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	err := ShowOrPull(context.Background(), client, "missing-model")
+	if err == nil {
+		t.Error("ShowOrPull should return error when user declines")
+	}
+}
+
+func TestConfirmPrompt_DelegatesToHook(t *testing.T) {
+	oldHook := DefaultConfirmPrompt
+	var hookCalled bool
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		hookCalled = true
+		if prompt != "test prompt?" {
+			t.Errorf("expected prompt %q, got %q", "test prompt?", prompt)
+		}
+		return true, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldHook }()
+
+	ok, err := confirmPrompt("test prompt?")
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Error("expected true from hook")
+	}
+	if !hookCalled {
+		t.Error("expected DefaultConfirmPrompt hook to be called")
 	}
 }
 

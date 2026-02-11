@@ -432,8 +432,9 @@ func pullIfNeeded(ctx context.Context, client *api.Client, existingModels map[st
 	return nil
 }
 
-// showOrPull checks if a model exists via client.Show and offers to pull it if not found.
-func showOrPull(ctx context.Context, client *api.Client, model string) error {
+// TODO(parthsareen): pull this out to tui package
+// ShowOrPull checks if a model exists via client.Show and offers to pull it if not found.
+func ShowOrPull(ctx context.Context, client *api.Client, model string) error {
 	if _, err := client.Show(ctx, &api.ShowRequest{Model: model}); err == nil {
 		return nil
 	}
@@ -605,7 +606,7 @@ func LaunchIntegration(name string) error {
 		if err != nil {
 			return err
 		}
-		if err := showOrPull(context.Background(), client, ic.Models[0]); err != nil {
+		if err := ShowOrPull(context.Background(), client, ic.Models[0]); err != nil {
 			return err
 		}
 		return runIntegration(name, ic.Models[0], nil)
@@ -621,7 +622,7 @@ func LaunchIntegrationWithModel(name, modelName string) error {
 	if err != nil {
 		return err
 	}
-	if err := showOrPull(context.Background(), client, modelName); err != nil {
+	if err := ShowOrPull(context.Background(), client, modelName); err != nil {
 		return err
 	}
 	return runIntegration(name, modelName, nil)
@@ -783,7 +784,7 @@ Examples:
 
 				// Validate --model flag if provided
 				if modelFlag != "" {
-					if err := showOrPull(cmd.Context(), client, modelFlag); err != nil {
+					if err := ShowOrPull(cmd.Context(), client, modelFlag); err != nil {
 						if errors.Is(err, errCancelled) {
 							return nil
 						}
@@ -815,7 +816,7 @@ Examples:
 				if model != "" && modelFlag == "" {
 					if _, err := client.Show(cmd.Context(), &api.ShowRequest{Model: model}); err != nil {
 						fmt.Fprintf(os.Stderr, "%sConfigured model %q not found%s\n\n", ansiGray, model, ansiReset)
-						if err := showOrPull(cmd.Context(), client, model); err != nil {
+						if err := ShowOrPull(cmd.Context(), client, model); err != nil {
 							model = ""
 						}
 					}
@@ -865,7 +866,7 @@ Examples:
 				if err != nil {
 					return err
 				}
-				if err := showOrPull(cmd.Context(), client, modelFlag); err != nil {
+				if err := ShowOrPull(cmd.Context(), client, modelFlag); err != nil {
 					if errors.Is(err, errCancelled) {
 						return nil
 					}
