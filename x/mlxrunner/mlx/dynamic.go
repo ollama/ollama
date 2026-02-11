@@ -8,6 +8,7 @@ package mlx
 import "C"
 
 import (
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -15,6 +16,13 @@ import (
 	"runtime"
 	"unsafe"
 )
+
+var initError error
+
+// CheckInit returns any error that occurred during MLX dynamic library initialization.
+func CheckInit() error {
+	return initError
+}
 
 func init() {
 	switch runtime.GOOS {
@@ -34,7 +42,9 @@ func init() {
 	for _, path := range filepath.SplitList(paths) {
 		matches, err := fs.Glob(os.DirFS(path), "libmlxc.*")
 		if err != nil {
-			panic(err)
+			initError = fmt.Errorf("failed to glob for MLX libraries in %s: %w", path, err)
+			slog.Warn("MLX dynamic library not available", "error", initError)
+			return
 		}
 
 		for _, match := range matches {
@@ -61,5 +71,6 @@ func init() {
 		}
 	}
 
-	panic("Failed to load any MLX dynamic library")
+	initError = fmt.Errorf("failed to load any MLX dynamic library from OLLAMA_LIBRARY_PATH=%s", paths)
+	slog.Warn("MLX dynamic library not available", "error", initError)
 }
