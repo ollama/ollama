@@ -1,9 +1,12 @@
 package qwen35moe
 
 import (
+	"bytes"
 	"cmp"
 	"fmt"
+	"image"
 	"math"
+	"slices"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/ml"
@@ -14,7 +17,6 @@ import (
 	"github.com/ollama/ollama/tokenizer"
 )
 
-// Options contains model configuration
 type Options struct {
 	hiddenSize  int
 	numHeads    int
@@ -30,23 +32,21 @@ type Options struct {
 	originalContextLength int
 	attentionScale        float64
 
-	// MoE config
 	numExperts     int
 	numExpertsUsed int
 	normTopKProb   bool
 
-	// Linear attention (Gated Delta Net) config
-	ssmDInner      int // d_inner = head_v_dim * num_v_heads
-	ssmDState      int // head_k_dim
-	ssmNGroup      int // num_k_heads
-	ssmDtRank      int // num_v_heads
-	convKernelSize int // SSM conv kernel size
+	ssmDInner      int
+	ssmDState      int
+	ssmNGroup      int
+	ssmDtRank      int
+	convKernelSize int
 
-	// Per-layer type from GGUF metadata
 	isRecurrent []bool
 
-	// Pre-computed masks for chunked attention (created once per forward pass)
 	masks *Masks
+
+	mropeSections []int
 }
 
 func (o Options) headDim() int {
@@ -54,6 +54,11 @@ func (o Options) headDim() int {
 }
 
 func (o Options) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions ml.Tensor) ml.Tensor {
+	if len(o.mropeSections) > 0 {
+		return nn.RoPE(ctx, states, positions, o.headDim(), o.ropeBase, 1/float32(math.Sqrt(float64(o.ropeScale))),
+			rope.WithInterleaveMRoPE(o.mropeSections),
+		)
+	}
 	opts := []func(*rope.Options){rope.WithTypeNeoX()}
 	if o.ropeType == "yarn" {
 		attnFactor := float32(1.0 / (1.0 + 0.1*math.Log(float64(o.ropeScale))))
@@ -67,24 +72,20 @@ func (o Options) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions
 	return nn.RoPE(ctx, states, positions, ropeDim, o.ropeBase, 1./o.ropeScale, opts...)
 }
 
-// Operator is the interface for attention-like operators
 type Operator interface {
 	Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache *HybridCache, opts *Options) (ml.Tensor, error)
 }
 
-// MLP is the interface for feedforward networks
 type MLP interface {
 	Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options) ml.Tensor
 }
 
-// sparse implements MoE with shared experts
 type sparse struct {
 	Router *nn.Linear      `gguf:"ffn_gate_inp"`
 	Gate   *nn.LinearBatch `gguf:"ffn_gate_exps"`
 	Up     *nn.LinearBatch `gguf:"ffn_up_exps"`
 	Down   *nn.LinearBatch `gguf:"ffn_down_exps"`
 
-	// Shared experts
 	SharedGateInp *nn.Linear `gguf:"ffn_gate_inp_shexp"`
 	SharedGate    *nn.Linear `gguf:"ffn_gate_shexp"`
 	SharedUp      *nn.Linear `gguf:"ffn_up_shexp"`
@@ -98,10 +99,8 @@ func (mlp *sparse) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options
 	}
 	hiddenStates2D := hiddenStates.Reshape(ctx, hiddenDim, sequenceLength*batchSize)
 
-	// Router logits
 	routerLogits := mlp.Router.Forward(ctx, hiddenStates2D)
 
-	// Softmax routing weights
 	routingWeights := routerLogits.Softmax(ctx)
 	selectedExperts := routingWeights.TopK(ctx, opts.numExpertsUsed)
 	routingWeights = routingWeights.Reshape(ctx, 1, opts.numExperts, hiddenStates2D.Dim(1)).Rows(ctx, selectedExperts)
@@ -113,31 +112,26 @@ func (mlp *sparse) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options
 
 	hiddenStates3D := hiddenStates2D.Reshape(ctx, hiddenStates2D.Dim(0), 1, hiddenStates2D.Dim(1))
 
-	// Expert computation with SILU activation
 	gateOut := mlp.Gate.Forward(ctx, hiddenStates3D, selectedExperts)
 	upOut := mlp.Up.Forward(ctx, hiddenStates3D, selectedExperts)
 	experts := gateOut.SILU(ctx, upOut)
 	experts = mlp.Down.Forward(ctx, experts, selectedExperts)
 	experts = experts.Mul(ctx, routingWeights)
 
-	// Sum over experts
 	moeOut := experts.View(ctx, 0, experts.Dim(0), experts.Stride(2), experts.Dim(2))
 	for i := 1; i < opts.numExpertsUsed; i++ {
 		moeOut = moeOut.Add(ctx, experts.View(ctx, i*experts.Stride(1), experts.Dim(0), experts.Stride(2), experts.Dim(2)))
 	}
 
-	// Add shared experts if present
 	if mlp.SharedUp != nil {
 		sharedGate := mlp.SharedGate.Forward(ctx, hiddenStates2D)
 		sharedUp := mlp.SharedUp.Forward(ctx, hiddenStates2D)
 		sharedOut := sharedGate.SILU(ctx, sharedUp)
 		sharedOut = mlp.SharedDown.Forward(ctx, sharedOut)
 
-		// Apply shared expert gating
 		if mlp.SharedGateInp != nil {
 			sharedGateVal := mlp.SharedGateInp.Forward(ctx, hiddenStates2D)
 			sharedGateVal = sharedGateVal.SigmoidOut(ctx)
-			// Broadcast gate to match dimensions
 			sharedGateVal = sharedGateVal.Repeat(ctx, 0, sharedOut.Dim(0))
 			sharedOut = sharedOut.Mul(ctx, sharedGateVal)
 		}
@@ -148,10 +142,9 @@ func (mlp *sparse) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options
 	return moeOut
 }
 
-// Layer represents a single transformer layer
 type Layer struct {
 	AttentionNorm     *nn.RMSNorm `gguf:"attn_norm"`
-	AttentionPostNorm *nn.RMSNorm `gguf:"post_attention_norm,alt:attn_post_norm"` // Post-attention norm before FFN
+	AttentionPostNorm *nn.RMSNorm `gguf:"post_attention_norm,alt:attn_post_norm"`
 	Operator          Operator
 
 	MLP MLP
@@ -160,39 +153,41 @@ type Layer struct {
 func (l *Layer) Forward(ctx ml.Context, layer int, hiddenStates, positions, outputs ml.Tensor, cache *HybridCache, opts *Options) (ml.Tensor, error) {
 	residual := hiddenStates
 
-	// Pre-attention norm
 	hiddenStates = l.AttentionNorm.Forward(ctx, hiddenStates, opts.eps)
 
-	// Attention (full or linear)
 	var err error
 	hiddenStates, err = l.Operator.Forward(ctx, hiddenStates, positions, cache, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	// Output projection for last layer
 	if outputs != nil {
 		hiddenStates = hiddenStates.Rows(ctx, outputs)
 		residual = residual.Rows(ctx, outputs)
 	}
 
-	// First residual connection
 	hiddenStates = hiddenStates.Add(ctx, residual)
 
-	// Save for FFN residual
 	ffnResidual := hiddenStates
 
-	// Post-attention norm (before FFN)
 	hiddenStates = l.AttentionPostNorm.Forward(ctx, hiddenStates, opts.eps)
 
-	// FFN
 	hiddenStates = l.MLP.Forward(ctx, hiddenStates, opts)
 
-	// Second residual connection
 	return hiddenStates.Add(ctx, ffnResidual), nil
 }
 
-// Model is the main Qwen3.5 MoE model
+const (
+	tokenVision      int32 = 248056
+	tokenVisionStart int32 = 248053
+	tokenVisionEnd   int32 = 248054
+)
+
+type modelInput struct {
+	position int32
+	*input.Input
+}
+
 type Model struct {
 	model.Base
 	tokenizer.Tokenizer
@@ -203,17 +198,143 @@ type Model struct {
 
 	Layers []Layer `gguf:"blk"`
 
+	*VisionModel `gguf:"v"`
+	ImageProcessor
+
 	*Options
+
+	positionCache []int32
+}
+
+func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input.Multimodal, error) {
+	if len(m.VisionModel.Layers) == 0 {
+		return nil, model.ErrNoVisionModel
+	}
+
+	img, _, err := image.Decode(bytes.NewReader(multimodalData))
+	if err != nil {
+		return nil, err
+	}
+
+	pixelValues, grid, err := m.ImageProcessor.ProcessImage(ctx, img)
+	if err != nil {
+		return nil, err
+	}
+
+	visionOutputs := m.VisionModel.Forward(ctx, pixelValues, grid)
+	return []input.Multimodal{{Tensor: visionOutputs, Data: grid}}, nil
+}
+
+func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
+	m.positionCache = m.positionCache[:0]
+	return slices.Collect(func(yield func(*input.Input) bool) {
+		for i := range inputs {
+			s := []modelInput{{Input: inputs[i]}}
+			if mm := inputs[i].Multimodal; mm != nil {
+				t := mm[0].Tensor
+				s = slices.Repeat([]modelInput{
+					{
+						position: int32(i + 1),
+						Input:    &input.Input{Token: tokenVision},
+					},
+				}, t.Dim(1)+1+1)
+
+				s[0] = modelInput{
+					Input:    &input.Input{Token: tokenVisionStart},
+					position: int32(i),
+				}
+
+				s[len(s)-1] = modelInput{
+					Input:    &input.Input{Token: tokenVisionEnd},
+					position: int32(i + mm[0].Data.(*Grid).Width/m.VisionModel.spatialMergeSize + 1),
+				}
+
+				s[1] = modelInput{
+					Input: &input.Input{
+						Token:          tokenVision,
+						Multimodal:     inputs[i].Multimodal,
+						MultimodalHash: inputs[i].MultimodalHash,
+						SameBatch:      t.Dim(1),
+					},
+					position: int32(i + 1),
+				}
+			}
+
+			for _, e := range s {
+				position := e.position
+				if position == 0 && len(m.positionCache) > 0 {
+					position = m.positionCache[len(m.positionCache)-1] + 1
+				}
+
+				m.positionCache = append(m.positionCache, position)
+				if !yield(e.Input) {
+					return
+				}
+			}
+		}
+	}), nil
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
+	var positions ml.Tensor
 
+	if len(m.mropeSections) > 0 {
+		positionSlice := slices.Collect(makeSlice2D[int32](4, len(batch.Positions)))
+		for i, id := range batch.Positions {
+			if id < int32(len(m.positionCache)) {
+				id = m.positionCache[id]
+			} else if len(m.positionCache) > 0 {
+				id = id - int32(len(m.positionCache)) + m.positionCache[len(m.positionCache)-1] + 1
+			}
+
+			positionSlice[0][i] = id
+			positionSlice[1][i] = id
+			positionSlice[2][i] = id
+		}
+
+		hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs).Duplicate(ctx)
+
+		for _, mi := range batch.Multimodal {
+			visionOutputs := mi.Multimodal[0].Tensor
+			ctx.Forward(visionOutputs.Copy(ctx, hiddenStates.View(ctx, mi.Index*hiddenStates.Stride(1), visionOutputs.Dim(0)*visionOutputs.Dim(1))))
+
+			if grid, ok := mi.Multimodal[0].Data.(*Grid); ok {
+				for i := range visionOutputs.Dim(1) {
+					w := grid.Width / m.VisionModel.spatialMergeSize
+					positionSlice[1][mi.Index+i] += int32(i / w)
+					positionSlice[2][mi.Index+i] += int32(i % w)
+				}
+			}
+		}
+
+		positions = ctx.Input().FromInts(slices.Concat(positionSlice...), len(positionSlice[0])*len(positionSlice))
+
+		cache := m.Cache.(*HybridCache)
+		m.Options.masks = createMasks(ctx)
+
+		for i, layer := range m.Layers {
+			cache.SetLayer(i)
+
+			var outputs ml.Tensor
+			if i == len(m.Layers)-1 {
+				outputs = batch.Outputs
+			}
+
+			var err error
+			hiddenStates, err = layer.Forward(ctx, i, hiddenStates, positions, outputs, cache, m.Options)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		hiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)
+		return m.Output.Forward(ctx, hiddenStates), nil
+	}
+
+	positions = ctx.Input().FromInts(batch.Positions, len(batch.Positions))
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 
 	cache := m.Cache.(*HybridCache)
-
-	// Create masks once per forward pass
 	m.Options.masks = createMasks(ctx)
 
 	for i, layer := range m.Layers {
@@ -236,6 +357,10 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 }
 
 func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
+	if len(m.mropeSections) > 0 {
+		m.positionCache = nil
+		shift = shift.Repeat(ctx, 1, 4).Reshape(ctx, -1)
+	}
 	return m.applyRotaryPositionEmbeddings(ctx, key, shift), nil
 }
 
@@ -249,7 +374,6 @@ func New(c fs.Config) (model.Model, error) {
 	numLayers := int(c.Uint("block_count"))
 	layers := make([]Layer, numLayers)
 
-	// Get per-layer head counts (for detecting layer type)
 	type headCounts interface {
 		HeadCount() []uint64
 		HeadCountKV() []uint64
@@ -265,7 +389,6 @@ func New(c fs.Config) (model.Model, error) {
 	hasZero := false
 	hasFull := false
 	for i := range numLayers {
-		// If KV head count is 0, it's a recurrent layer
 		if i < len(headCountKV) && headCountKV[i] == 0 {
 			isRecurrent[i] = true
 			hasZero = true
@@ -321,7 +444,6 @@ func New(c fs.Config) (model.Model, error) {
 		return nil, fmt.Errorf("qwen35moe: attention.head_count_kv array must include at least one non-zero value")
 	}
 
-	// Calculate cache dimensions
 	convDim := max(0, opts.convKernelSize-1)
 	convChannels := opts.ssmDInner + 2*opts.ssmNGroup*opts.ssmDState
 	headVDim := 0
@@ -331,7 +453,6 @@ func New(c fs.Config) (model.Model, error) {
 	}
 	deltaStateSize := headVDim * headVDim * numVHeads
 
-	// Validate dimension assumption: headKDim == headVDim is required for state computations
 	headKDim := opts.ssmDState
 	if headKDim != headVDim && headKDim > 0 && headVDim > 0 {
 		return nil, fmt.Errorf("qwen35moe: headKDim (%d) != headVDim (%d) not supported; state computations require equal dimensions", headKDim, headVDim)
@@ -343,8 +464,6 @@ func New(c fs.Config) (model.Model, error) {
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Types:  c.Ints("tokenizer.ggml.token_type"),
 				Merges: c.Strings("tokenizer.ggml.merges"),
-				// Qwen3 tokenizers typically set add_bos_token=false and bos_token=null.
-				// Default to false when the GGUF key is missing to avoid injecting a spurious BOS.
 				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", false),
 				BOS:    []int32{int32(c.Uint("tokenizer.ggml.bos_token_id"))},
 				AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
@@ -353,10 +472,19 @@ func New(c fs.Config) (model.Model, error) {
 					c.Ints("tokenizer.ggml.eos_token_ids")...,
 				),
 			},
-			`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
+			`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+|\p{N}| ?[^\s\p{L}\p{M}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
 		),
-		Layers:  layers,
-		Options: opts,
+		Layers:         layers,
+		VisionModel:    newVisionModel(c),
+		ImageProcessor: newImageProcessor(c),
+		Options:        opts,
+	}
+
+	if sections := c.Ints("mrope_sections"); len(sections) > 0 {
+		opts.mropeSections = make([]int, len(sections))
+		for i, s := range sections {
+			opts.mropeSections[i] = int(s)
+		}
 	}
 
 	m.Cache = NewHybridCache(m.Shift, convDim, convChannels, deltaStateSize)
