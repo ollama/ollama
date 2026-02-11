@@ -79,6 +79,7 @@ var recommendedVRAM = map[string]string{
 var integrationAliases = map[string]bool{
 	"clawdbot": true,
 	"moltbot":  true,
+	"pi":       true,
 }
 
 // integrationInstallHints maps integration names to install URLs.
@@ -108,7 +109,7 @@ var integrationDescriptions = map[string]string{
 	"codex":    "OpenAI's open-source coding agent",
 	"openclaw": "Personal AI with 100+ skills",
 	"droid":    "Factory's coding agent across terminal and IDEs",
-	"opencode": "Anomaly's Open-source coding agent",
+	"opencode": "Anomaly's open-source coding agent",
 }
 
 // ListIntegrationInfos returns all non-alias registered integrations, sorted by name.

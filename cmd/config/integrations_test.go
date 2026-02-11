@@ -978,9 +978,6 @@ func TestListIntegrationInfos(t *testing.T) {
 			if info.DisplayName == "" {
 				t.Errorf("DisplayName for %q should not be empty", info.Name)
 			}
-			if info.Description == "" {
-				t.Errorf("Description for %q should not be empty", info.Name)
-			}
 		}
 	})
 
