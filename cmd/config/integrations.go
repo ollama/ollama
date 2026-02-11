@@ -303,6 +303,11 @@ var DefaultSingleSelector SingleSelector
 // DefaultMultiSelector is the default multi-select implementation.
 var DefaultMultiSelector MultiSelector
 
+// DefaultSignIn provides a TUI-based sign-in flow.
+// When set, ensureAuth uses it instead of plain text prompts.
+// Returns the signed-in username or an error.
+var DefaultSignIn func(modelName, signInURL string) (string, error)
+
 func selectIntegration() (string, error) {
 	if DefaultSingleSelector == nil {
 		return "", fmt.Errorf("no selector configured")
@@ -468,6 +473,17 @@ func listModels(ctx context.Context) ([]ModelItem, map[string]bool, map[string]b
 	return items, existingModels, cloudModels, client, nil
 }
 
+func OpenBrowser(url string) {
+	switch runtime.GOOS {
+	case "darwin":
+		_ = exec.Command("open", url).Start()
+	case "linux":
+		_ = exec.Command("xdg-open", url).Start()
+	case "windows":
+		_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+	}
+}
+
 func ensureAuth(ctx context.Context, client *api.Client, cloudModels map[string]bool, selected []string) error {
 	var selectedCloudModels []string
 	for _, m := range selected {
@@ -490,6 +506,16 @@ func ensureAuth(ctx context.Context, client *api.Client, cloudModels map[string]
 	}
 
 	modelList := strings.Join(selectedCloudModels, ", ")
+
+	if DefaultSignIn != nil {
+		_, err := DefaultSignIn(modelList, aErr.SigninURL)
+		if err != nil {
+			return fmt.Errorf("%s requires sign in", modelList)
+		}
+		return nil
+	}
+
+	// Fallback: plain text sign-in flow
 	yes, err := confirmPrompt(fmt.Sprintf("sign in to use %s?", modelList))
 	if err != nil || !yes {
 		return fmt.Errorf("%s requires sign in", modelList)
@@ -497,14 +523,7 @@ func ensureAuth(ctx context.Context, client *api.Client, cloudModels map[string]
 
 	fmt.Fprintf(os.Stderr, "\nTo sign in, navigate to:\n    %s\n\n", aErr.SigninURL)
 
-	switch runtime.GOOS {
-	case "darwin":
-		_ = exec.Command("open", aErr.SigninURL).Start()
-	case "linux":
-		_ = exec.Command("xdg-open", aErr.SigninURL).Start()
-	case "windows":
-		_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", aErr.SigninURL).Start()
-	}
+	OpenBrowser(aErr.SigninURL)
 
 	spinnerFrames := []string{"|", "/", "-", "\\"}
 	frame := 0

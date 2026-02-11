@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
-	"runtime"
 	"strings"
 	"time"
 
@@ -131,6 +129,7 @@ type model struct {
 	signInSpinner   int
 	signInFromModal bool   // true if sign-in was triggered from modal (not main menu)
 
+	width     int    // terminal width from WindowSizeMsg
 	statusMsg string // temporary status message shown near help text
 }
 
@@ -213,15 +212,7 @@ func (m *model) startSignIn(modelName, signInURL string, fromModal bool) tea.Cmd
 	m.signInSpinner = 0
 	m.signInFromModal = fromModal
 
-	// Open browser (best effort)
-	switch runtime.GOOS {
-	case "darwin":
-		_ = exec.Command("open", signInURL).Start()
-	case "linux":
-		_ = exec.Command("xdg-open", signInURL).Start()
-	case "windows":
-		_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", signInURL).Start()
-	}
+	config.OpenBrowser(signInURL)
 
 	return tea.Tick(200*time.Millisecond, func(t time.Time) tea.Msg {
 		return signInTickMsg{}
@@ -309,6 +300,11 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if wmsg, ok := msg.(tea.WindowSizeMsg); ok {
+		m.width = wmsg.Width
+		return m, nil
+	}
+
 	if _, ok := msg.(clearStatusMsg); ok {
 		m.statusMsg = ""
 		return m, nil
@@ -532,33 +528,7 @@ func (m model) renderModal() string {
 }
 
 func (m model) renderSignInDialog() string {
-	dialogStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("245")).
-		Padding(1, 2).
-		MarginLeft(2)
-
-	spinnerFrames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-	spinner := spinnerFrames[m.signInSpinner%len(spinnerFrames)]
-
-	var content strings.Builder
-
-	content.WriteString(selectorTitleStyle.Render("Sign in required"))
-	content.WriteString("\n\n")
-
-	fmt.Fprintf(&content, "To use %s, please sign in.\n\n", selectorSelectedItemStyle.Render(m.signInModel))
-
-	content.WriteString("Navigate to:\n")
-	content.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Render("  " + m.signInURL))
-	content.WriteString("\n\n")
-
-	content.WriteString(lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}).Render(
-		spinner + " Waiting for sign in to complete..."))
-	content.WriteString("\n\n")
-
-	content.WriteString(selectorHelpStyle.Render("esc cancel"))
-
-	return dialogStyle.Render(content.String())
+	return renderSignIn(m.signInModel, m.signInURL, m.signInSpinner, m.width)
 }
 
 type Selection int
@@ -579,7 +549,7 @@ type Result struct {
 
 func Run() (Result, error) {
 	m := initialModel()
-	p := tea.NewProgram(m)
+	p := tea.NewProgram(m, tea.WithAltScreen())
 
 	finalModel, err := p.Run()
 	if err != nil {

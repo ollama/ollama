@@ -80,6 +80,14 @@ func init() {
 		}
 		return result, err
 	}
+
+	config.DefaultSignIn = func(modelName, signInURL string) (string, error) {
+		userName, err := tui.RunSignIn(modelName, signInURL)
+		if errors.Is(err, tui.ErrCancelled) {
+			return "", config.ErrCancelled
+		}
+		return userName, err
+	}
 }
 
 const ConnectInstructions = "If your browser did not open, navigate to:\n    %s\n\n"
