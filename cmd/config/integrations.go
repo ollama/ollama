@@ -457,7 +457,8 @@ func ShowOrPull(ctx context.Context, client *api.Client, model string) error {
 		return nil
 	}
 	// Cloud models only pull a small manifest; skip the download confirmation
-	if strings.HasSuffix(model, ":cloud") {
+	// TODO(parthsareen): consolidate with cloud config changes
+	if strings.HasSuffix(model, "cloud") {
 		return pullModel(ctx, client, model)
 	}
 	if ok, err := confirmPrompt(fmt.Sprintf("Download %s?", model)); err != nil {
