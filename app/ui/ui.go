@@ -1581,7 +1581,6 @@ func (s *Server) modelUpstream(w http.ResponseWriter, r *http.Request) error {
 	return json.NewEncoder(w).Encode(response)
 }
 
-
 func userAgent() string {
 	buildinfo, _ := debug.ReadBuildInfo()
 
