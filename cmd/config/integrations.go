@@ -221,15 +221,22 @@ func SelectModelWithSelector(ctx context.Context, selector SingleSelector) (stri
 
 	// If the selected model isn't installed, pull it first
 	if !existingModels[selected] {
-		msg := fmt.Sprintf("Download %s?", selected)
-		if ok, err := confirmPrompt(msg); err != nil {
-			return "", err
-		} else if !ok {
-			return "", errCancelled
-		}
-		fmt.Fprintf(os.Stderr, "\n")
-		if err := pullModel(ctx, client, selected); err != nil {
-			return "", fmt.Errorf("failed to pull %s: %w", selected, err)
+		if cloudModels[selected] {
+			// Cloud models only pull a small manifest; no confirmation needed
+			if err := pullModel(ctx, client, selected); err != nil {
+				return "", fmt.Errorf("failed to pull %s: %w", selected, err)
+			}
+		} else {
+			msg := fmt.Sprintf("Download %s?", selected)
+			if ok, err := confirmPrompt(msg); err != nil {
+				return "", err
+			} else if !ok {
+				return "", errCancelled
+			}
+			fmt.Fprintf(os.Stderr, "\n")
+			if err := pullModel(ctx, client, selected); err != nil {
+				return "", fmt.Errorf("failed to pull %s: %w", selected, err)
+			}
 		}
 	}
 
@@ -437,6 +444,10 @@ func pullIfNeeded(ctx context.Context, client *api.Client, existingModels map[st
 func ShowOrPull(ctx context.Context, client *api.Client, model string) error {
 	if _, err := client.Show(ctx, &api.ShowRequest{Model: model}); err == nil {
 		return nil
+	}
+	// Cloud models only pull a small manifest; skip the download confirmation
+	if strings.HasSuffix(model, ":cloud") {
+		return pullModel(ctx, client, model)
 	}
 	if ok, err := confirmPrompt(fmt.Sprintf("Download %s?", model)); err != nil {
 		return err

@@ -843,6 +843,43 @@ func TestShowOrPull_ModelNotFound_ConfirmNo_Cancelled(t *testing.T) {
 	}
 }
 
+func TestShowOrPull_CloudModel_SkipsConfirmation(t *testing.T) {
+	// Confirm prompt should NOT be called for cloud models
+	oldHook := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		t.Error("confirm prompt should not be called for cloud models")
+		return false, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldHook }()
+
+	var pullCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"error":"model not found"}`)
+		case "/api/pull":
+			pullCalled = true
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `{"status":"success"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	err := ShowOrPull(context.Background(), client, "glm-4.7:cloud")
+	if err != nil {
+		t.Errorf("ShowOrPull should succeed for cloud model, got: %v", err)
+	}
+	if !pullCalled {
+		t.Error("expected pull to be called for cloud model without confirmation")
+	}
+}
+
 func TestConfirmPrompt_DelegatesToHook(t *testing.T) {
 	oldHook := DefaultConfirmPrompt
 	var hookCalled bool
