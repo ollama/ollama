@@ -520,6 +520,9 @@ func (m model) View() string {
 
 	s += "\n" + selectorHelpStyle.Render("↑/↓ navigate • enter launch • → change model • esc quit")
 
+	if m.width > 0 {
+		return lipgloss.NewStyle().MaxWidth(m.width).Render(s)
+	}
 	return s
 }
 
@@ -528,7 +531,11 @@ func (m model) renderModal() string {
 		PaddingBottom(1).
 		PaddingRight(2)
 
-	return modalStyle.Render(m.modalSelector.renderContent())
+	s := modalStyle.Render(m.modalSelector.renderContent())
+	if m.width > 0 {
+		return lipgloss.NewStyle().MaxWidth(m.width).Render(s)
+	}
+	return s
 }
 
 func (m model) renderSignInDialog() string {

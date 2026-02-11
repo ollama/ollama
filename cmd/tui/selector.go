@@ -79,7 +79,7 @@ type selectorModel struct {
 	selected     string
 	cancelled    bool
 	helpText     string
-	hasSize      bool
+	width        int
 }
 
 func (m selectorModel) filteredItems() []SelectItem {
@@ -200,10 +200,11 @@ func (m *selectorModel) updateScroll(otherStart int) {
 func (m selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		if m.hasSize {
+		wasSet := m.width > 0
+		m.width = msg.Width
+		if wasSet {
 			return m, tea.EnterAltScreen
 		}
-		m.hasSize = true
 		return m, nil
 
 	case tea.KeyMsg:
@@ -334,12 +335,15 @@ func (m selectorModel) renderContent() string {
 }
 
 func (m selectorModel) View() string {
-	// Clear screen when exiting
 	if m.cancelled || m.selected != "" {
 		return ""
 	}
 
-	return m.renderContent()
+	s := m.renderContent()
+	if m.width > 0 {
+		return lipgloss.NewStyle().MaxWidth(m.width).Render(s)
+	}
+	return s
 }
 
 func SelectSingle(title string, items []SelectItem) (string, error) {
@@ -378,7 +382,7 @@ type multiSelectorModel struct {
 	checkOrder   []int
 	cancelled    bool
 	confirmed    bool
-	hasSize      bool
+	width        int
 }
 
 func newMultiSelectorModel(title string, items []SelectItem, preChecked []string) multiSelectorModel {
@@ -451,10 +455,11 @@ func (m multiSelectorModel) Init() tea.Cmd {
 func (m multiSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		if m.hasSize {
+		wasSet := m.width > 0
+		m.width = msg.Width
+		if wasSet {
 			return m, tea.EnterAltScreen
 		}
-		m.hasSize = true
 		return m, nil
 
 	case tea.KeyMsg:
@@ -611,7 +616,11 @@ func (m multiSelectorModel) View() string {
 
 	s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • space toggle • enter confirm • esc cancel"))
 
-	return s.String()
+	result := s.String()
+	if m.width > 0 {
+		return lipgloss.NewStyle().MaxWidth(m.width).Render(result)
+	}
+	return result
 }
 
 func SelectMultiple(title string, items []SelectItem, preChecked []string) ([]string, error) {
