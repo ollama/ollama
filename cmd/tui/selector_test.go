@@ -382,6 +382,169 @@ func TestUpdateNavigation_Backspace(t *testing.T) {
 	}
 }
 
+// --- ReorderItems ---
+
+func TestReorderItems(t *testing.T) {
+	input := []SelectItem{
+		{Name: "local-1"},
+		{Name: "rec-a", Recommended: true},
+		{Name: "local-2"},
+		{Name: "rec-b", Recommended: true},
+	}
+	got := ReorderItems(input)
+	want := []string{"rec-a", "rec-b", "local-1", "local-2"}
+	for i, item := range got {
+		if item.Name != want[i] {
+			t.Errorf("index %d: got %q, want %q", i, item.Name, want[i])
+		}
+	}
+}
+
+func TestReorderItems_AllRecommended(t *testing.T) {
+	input := recItems("a", "b", "c")
+	got := ReorderItems(input)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(got))
+	}
+	for i, item := range got {
+		if item.Name != input[i].Name {
+			t.Errorf("order should be preserved, index %d: got %q, want %q", i, item.Name, input[i].Name)
+		}
+	}
+}
+
+func TestReorderItems_NoneRecommended(t *testing.T) {
+	input := items("x", "y")
+	got := ReorderItems(input)
+	if len(got) != 2 || got[0].Name != "x" || got[1].Name != "y" {
+		t.Errorf("order should be preserved, got %v", got)
+	}
+}
+
+// --- Multi-select otherStart ---
+
+func TestMultiOtherStart(t *testing.T) {
+	tests := []struct {
+		name   string
+		items  []SelectItem
+		filter string
+		want   int
+	}{
+		{"all recommended", recItems("a", "b"), "", 2},
+		{"none recommended", items("a", "b"), "", 0},
+		{"mixed", mixedItems(), "", 2},
+		{"with filter returns 0", mixedItems(), "other", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newMultiSelectorModel("test", tt.items, nil)
+			m.filter = tt.filter
+			if got := m.otherStart(); got != tt.want {
+				t.Errorf("otherStart() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+// --- Multi-select updateScroll ---
+
+func TestMultiUpdateScroll(t *testing.T) {
+	tests := []struct {
+		name       string
+		cursor     int
+		offset     int
+		otherStart int
+		wantOffset int
+	}{
+		{"cursor in recommended resets scroll", 1, 5, 3, 0},
+		{"cursor at start of others", 2, 0, 2, 0},
+		{"cursor scrolls down in others", 12, 0, 2, 3},
+		{"cursor scrolls up in others", 4, 5, 2, 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newMultiSelectorModel("test", nil, nil)
+			m.cursor = tt.cursor
+			m.scrollOffset = tt.offset
+			m.updateScroll(tt.otherStart)
+			if m.scrollOffset != tt.wantOffset {
+				t.Errorf("scrollOffset = %d, want %d", m.scrollOffset, tt.wantOffset)
+			}
+		})
+	}
+}
+
+// --- Multi-select View section headers ---
+
+func TestMultiView_SectionHeaders(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", []SelectItem{
+		{Name: "rec-a", Recommended: true},
+		{Name: "other-1"},
+	}, nil)
+	content := m.View()
+
+	if !strings.Contains(content, "Recommended") {
+		t.Error("should contain 'Recommended' header")
+	}
+	if !strings.Contains(content, "More") {
+		t.Error("should contain 'More' header")
+	}
+}
+
+func TestMultiView_CursorIndicator(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b"), nil)
+	m.cursor = 0
+	content := m.View()
+
+	if !strings.Contains(content, "▸") {
+		t.Error("should show ▸ cursor indicator")
+	}
+}
+
+func TestMultiView_CheckedItemShowsX(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b"), []string{"a"})
+	content := m.View()
+
+	if !strings.Contains(content, "[x]") {
+		t.Error("checked item should show [x]")
+	}
+	if !strings.Contains(content, "[ ]") {
+		t.Error("unchecked item should show [ ]")
+	}
+}
+
+func TestMultiView_DefaultTag(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b"), []string{"a"})
+	content := m.View()
+
+	if !strings.Contains(content, "(default)") {
+		t.Error("first checked item should have (default) tag")
+	}
+}
+
+func TestMultiView_PinnedRecommended(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", mixedItems(), nil)
+	m.cursor = 8
+	m.scrollOffset = 3
+	content := m.View()
+
+	if !strings.Contains(content, "rec-a") {
+		t.Error("recommended items should always be visible (pinned)")
+	}
+	if !strings.Contains(content, "rec-b") {
+		t.Error("recommended items should always be visible (pinned)")
+	}
+}
+
+func TestMultiView_OverflowIndicator(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", mixedItems(), nil)
+	content := m.View()
+
+	if !strings.Contains(content, "... and") {
+		t.Error("should show overflow indicator when more items than visible")
+	}
+}
+
 // Key message helpers for testing
 
 type keyType = int

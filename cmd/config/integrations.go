@@ -63,8 +63,8 @@ var integrations = map[string]Runner{
 // recommendedModels are shown when the user has no models or as suggestions.
 // Order matters: local models first, then cloud models.
 var recommendedModels = []ModelItem{
+	{Name: "glm-5:cloud", Description: "Reasoning and code generation", Recommended: true},
 	{Name: "kimi-k2.5:cloud", Description: "Multimodal reasoning with subagents", Recommended: true},
-	{Name: "glm-4.7:cloud", Description: "Reasoning and code generation", Recommended: true},
 	{Name: "glm-4.7-flash", Description: "Reasoning and code generation locally", Recommended: true},
 	{Name: "qwen3:8b", Description: "Efficient all-purpose assistant", Recommended: true},
 }
@@ -171,6 +171,17 @@ func IsIntegrationInstalled(name string) bool {
 	}
 }
 
+// IsEditorIntegration returns true if the named integration uses multi-model
+// selection (implements the Editor interface).
+func IsEditorIntegration(name string) bool {
+	r, ok := integrations[strings.ToLower(name)]
+	if !ok {
+		return false
+	}
+	_, isEditor := r.(Editor)
+	return isEditor
+}
+
 // SelectModel lets the user select a model to run.
 // ModelItem represents a model for selection.
 type ModelItem struct {
@@ -221,15 +232,22 @@ func SelectModelWithSelector(ctx context.Context, selector SingleSelector) (stri
 
 	// If the selected model isn't installed, pull it first
 	if !existingModels[selected] {
-		msg := fmt.Sprintf("Download %s?", selected)
-		if ok, err := confirmPrompt(msg); err != nil {
-			return "", err
-		} else if !ok {
-			return "", errCancelled
-		}
-		fmt.Fprintf(os.Stderr, "\n")
-		if err := pullModel(ctx, client, selected); err != nil {
-			return "", fmt.Errorf("failed to pull %s: %w", selected, err)
+		if cloudModels[selected] {
+			// Cloud models only pull a small manifest; no confirmation needed
+			if err := pullModel(ctx, client, selected); err != nil {
+				return "", fmt.Errorf("failed to pull %s: %w", selected, err)
+			}
+		} else {
+			msg := fmt.Sprintf("Download %s?", selected)
+			if ok, err := confirmPrompt(msg); err != nil {
+				return "", err
+			} else if !ok {
+				return "", errCancelled
+			}
+			fmt.Fprintf(os.Stderr, "\n")
+			if err := pullModel(ctx, client, selected); err != nil {
+				return "", fmt.Errorf("failed to pull %s: %w", selected, err)
+			}
 		}
 	}
 
@@ -438,6 +456,11 @@ func ShowOrPull(ctx context.Context, client *api.Client, model string) error {
 	if _, err := client.Show(ctx, &api.ShowRequest{Model: model}); err == nil {
 		return nil
 	}
+	// Cloud models only pull a small manifest; skip the download confirmation
+	// TODO(parthsareen): consolidate with cloud config changes
+	if strings.HasSuffix(model, "cloud") {
+		return pullModel(ctx, client, model)
+	}
 	if ok, err := confirmPrompt(fmt.Sprintf("Download %s?", model)); err != nil {
 		return err
 	} else if !ok {
@@ -645,6 +668,24 @@ func SaveIntegrationModel(name, modelName string) error {
 	// Prepend the new model
 	models = append([]string{modelName}, models...)
 	return saveIntegration(name, models)
+}
+
+// SaveAndEditIntegration saves the models for an Editor integration and runs its Edit method
+// to write the integration's config files.
+func SaveAndEditIntegration(name string, models []string) error {
+	r, ok := integrations[strings.ToLower(name)]
+	if !ok {
+		return fmt.Errorf("unknown integration: %s", name)
+	}
+	if err := saveIntegration(name, models); err != nil {
+		return fmt.Errorf("failed to save: %w", err)
+	}
+	if editor, isEditor := r.(Editor); isEditor {
+		if err := editor.Edit(models); err != nil {
+			return fmt.Errorf("setup failed: %w", err)
+		}
+	}
+	return nil
 }
 
 // ConfigureIntegrationWithSelectors allows the user to select/change the model for an integration using custom selectors.

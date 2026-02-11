@@ -58,10 +58,7 @@ import (
 func init() {
 	// Override default selectors to use Bubbletea TUI instead of raw terminal I/O.
 	config.DefaultSingleSelector = func(title string, items []config.ModelItem) (string, error) {
-		tuiItems := make([]tui.SelectItem, len(items))
-		for i, item := range items {
-			tuiItems[i] = tui.SelectItem{Name: item.Name, Description: item.Description, Recommended: item.Recommended}
-		}
+		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
 		result, err := tui.SelectSingle(title, tuiItems)
 		if errors.Is(err, tui.ErrCancelled) {
 			return "", config.ErrCancelled
@@ -70,10 +67,7 @@ func init() {
 	}
 
 	config.DefaultMultiSelector = func(title string, items []config.ModelItem, preChecked []string) ([]string, error) {
-		tuiItems := make([]tui.SelectItem, len(items))
-		for i, item := range items {
-			tuiItems[i] = tui.SelectItem{Name: item.Name, Description: item.Description, Recommended: item.Recommended}
-		}
+		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
 		result, err := tui.SelectMultiple(title, tuiItems, preChecked)
 		if errors.Is(err, tui.ErrCancelled) {
 			return nil, config.ErrCancelled
@@ -2013,9 +2007,17 @@ func runInteractiveTUI(cmd *cobra.Command) {
 			}
 		case tui.SelectionChangeIntegration:
 			_ = config.SetLastSelection(result.Integration)
-			// Use model from modal if selected, otherwise show picker
-			if result.Model != "" {
-				// Model already selected from modal - save and launch
+			if len(result.Models) > 0 {
+				// Multi-select from modal (Editor integrations)
+				if err := config.SaveAndEditIntegration(result.Integration, result.Models); err != nil {
+					fmt.Fprintf(os.Stderr, "Error configuring %s: %v\n", result.Integration, err)
+					continue
+				}
+				if err := config.LaunchIntegrationWithModel(result.Integration, result.Models[0]); err != nil {
+					fmt.Fprintf(os.Stderr, "Error launching %s: %v\n", result.Integration, err)
+				}
+			} else if result.Model != "" {
+				// Single-select from modal - save and launch
 				if err := config.SaveIntegrationModel(result.Integration, result.Model); err != nil {
 					fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
 					continue

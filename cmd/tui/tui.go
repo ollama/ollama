@@ -115,6 +115,7 @@ type model struct {
 	quitting        bool
 	selected        bool
 	changeModel     bool
+	changeModels    []string // multi-select result for Editor integrations
 	showOthers      bool
 	availableModels map[string]bool
 	err             error
@@ -122,6 +123,9 @@ type model struct {
 	showingModal  bool
 	modalSelector selectorModel
 	modalItems    []SelectItem
+
+	showingMultiModal  bool
+	multiModalSelector multiSelectorModel
 
 	showingSignIn   bool
 	signInURL       string
@@ -160,21 +164,48 @@ func (m *model) modelExists(name string) bool {
 
 func (m *model) buildModalItems() []SelectItem {
 	modelItems, _ := config.GetModelItems(context.Background())
-	var items []SelectItem
-	for _, item := range modelItems {
-		items = append(items, SelectItem{Name: item.Name, Description: item.Description, Recommended: item.Recommended})
-	}
-	return items
+	return ReorderItems(ConvertItems(modelItems))
 }
 
-func (m *model) openModelModal() {
+func (m *model) openModelModal(currentModel string) {
 	m.modalItems = m.buildModalItems()
+	cursor := 0
+	if currentModel != "" {
+		for i, item := range m.modalItems {
+			if item.Name == currentModel || strings.HasPrefix(item.Name, currentModel+":") || strings.HasPrefix(currentModel, item.Name+":") {
+				cursor = i
+				break
+			}
+		}
+	}
 	m.modalSelector = selectorModel{
 		title:    "Select model:",
 		items:    m.modalItems,
+		cursor:   cursor,
 		helpText: "↑/↓ navigate • enter select • ← back",
 	}
+	m.modalSelector.updateScroll(m.modalSelector.otherStart())
 	m.showingModal = true
+}
+
+func (m *model) openMultiModelModal(integration string) {
+	items := m.buildModalItems()
+	var preChecked []string
+	if models := config.IntegrationModels(integration); len(models) > 0 {
+		preChecked = models
+	}
+	m.multiModalSelector = newMultiSelectorModel("Select models:", items, preChecked)
+	// Set cursor to the first pre-checked (last used) model
+	if len(preChecked) > 0 {
+		for i, item := range items {
+			if item.Name == preChecked[0] {
+				m.multiModalSelector.cursor = i
+				m.multiModalSelector.updateScroll(m.multiModalSelector.otherStart())
+				break
+			}
+		}
+	}
+	m.showingMultiModal = true
 }
 
 func isCloudModel(name string) bool {
@@ -356,6 +387,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.showingMultiModal {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			if msg.Type == tea.KeyLeft {
+				m.showingMultiModal = false
+				return m, nil
+			}
+			updated, cmd := m.multiModalSelector.Update(msg)
+			m.multiModalSelector = updated.(multiSelectorModel)
+
+			if m.multiModalSelector.cancelled {
+				m.showingMultiModal = false
+				return m, nil
+			}
+			if m.multiModalSelector.confirmed {
+				var selected []string
+				for _, idx := range m.multiModalSelector.checkOrder {
+					selected = append(selected, m.multiModalSelector.items[idx].Name)
+				}
+				if len(selected) > 0 {
+					m.changeModels = selected
+					m.changeModel = true
+					m.quitting = true
+					return m, tea.Quit
+				}
+				m.multiModalSelector.confirmed = false
+				return m, nil
+			}
+			return m, cmd
+		}
+		return m, nil
+	}
+
 	if m.showingModal {
 		switch msg := msg.(type) {
 		case tea.KeyMsg:
@@ -442,7 +506,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if item.integration != "" && !config.IsIntegrationInstalled(item.integration) {
 					return m, nil
 				}
-				m.openModelModal()
+				if item.integration != "" && config.IsEditorIntegration(item.integration) {
+					m.openMultiModelModal(item.integration)
+				} else {
+					var currentModel string
+					if item.isRunModel {
+						currentModel = config.LastModel()
+					} else if item.integration != "" {
+						currentModel = config.IntegrationModel(item.integration)
+					}
+					m.openModelModal(currentModel)
+				}
 			}
 		}
 	}
@@ -457,6 +531,10 @@ func (m model) View() string {
 
 	if m.showingSignIn {
 		return m.renderSignInDialog()
+	}
+
+	if m.showingMultiModal {
+		return m.multiModalSelector.View()
 	}
 
 	if m.showingModal {
@@ -554,8 +632,9 @@ const (
 
 type Result struct {
 	Selection   Selection
-	Integration string // integration name if applicable
-	Model       string // model name if selected from modal
+	Integration string   // integration name if applicable
+	Model       string   // model name if selected from single-select modal
+	Models      []string // models selected from multi-select modal (Editor integrations)
 }
 
 func Run() (Result, error) {
@@ -589,6 +668,7 @@ func Run() (Result, error) {
 			Selection:   SelectionChangeIntegration,
 			Integration: item.integration,
 			Model:       fm.modalSelector.selected,
+			Models:      fm.changeModels,
 		}, nil
 	}
 

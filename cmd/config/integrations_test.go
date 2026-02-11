@@ -374,7 +374,7 @@ func TestParseArgs(t *testing.T) {
 func TestIsCloudModel(t *testing.T) {
 	// isCloudModel now only uses Show API, so nil client always returns false
 	t.Run("nil client returns false", func(t *testing.T) {
-		models := []string{"glm-4.7:cloud", "kimi-k2.5:cloud", "local-model"}
+		models := []string{"glm-5:cloud", "kimi-k2.5:cloud", "local-model"}
 		for _, model := range models {
 			if isCloudModel(context.Background(), nil, model) {
 				t.Errorf("isCloudModel(%q) with nil client should return false", model)
@@ -394,7 +394,7 @@ func names(items []ModelItem) []string {
 func TestBuildModelList_NoExistingModels(t *testing.T) {
 	items, _, _, _ := buildModelList(nil, nil, "")
 
-	want := []string{"kimi-k2.5:cloud", "glm-4.7:cloud", "glm-4.7-flash", "qwen3:8b"}
+	want := []string{"glm-5:cloud", "kimi-k2.5:cloud", "glm-4.7-flash", "qwen3:8b"}
 	if diff := cmp.Diff(want, names(items)); diff != "" {
 		t.Errorf("with no existing models, items should be recommended in order (-want +got):\n%s", diff)
 	}
@@ -416,7 +416,7 @@ func TestBuildModelList_OnlyLocalModels_CloudRecsAtBottom(t *testing.T) {
 	got := names(items)
 
 	// Recommended pinned at top (local recs first, then cloud recs when only-local), then installed non-recs
-	want := []string{"glm-4.7-flash", "qwen3:8b", "kimi-k2.5:cloud", "glm-4.7:cloud", "llama3.2", "qwen2.5"}
+	want := []string{"glm-4.7-flash", "qwen3:8b", "glm-5:cloud", "kimi-k2.5:cloud", "llama3.2", "qwen2.5"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("recs pinned at top, local recs before cloud recs (-want +got):\n%s", diff)
 	}
@@ -425,14 +425,14 @@ func TestBuildModelList_OnlyLocalModels_CloudRecsAtBottom(t *testing.T) {
 func TestBuildModelList_BothCloudAndLocal_RegularSort(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "llama3.2:latest", Remote: false},
-		{Name: "glm-4.7:cloud", Remote: true},
+		{Name: "glm-5:cloud", Remote: true},
 	}
 
 	items, _, _, _ := buildModelList(existing, nil, "")
 	got := names(items)
 
 	// All recs pinned at top (cloud before local in mixed case), then non-recs
-	want := []string{"kimi-k2.5:cloud", "glm-4.7:cloud", "glm-4.7-flash", "qwen3:8b", "llama3.2"}
+	want := []string{"glm-5:cloud", "kimi-k2.5:cloud", "glm-4.7-flash", "qwen3:8b", "llama3.2"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("recs pinned at top, cloud recs first in mixed case (-want +got):\n%s", diff)
 	}
@@ -441,7 +441,7 @@ func TestBuildModelList_BothCloudAndLocal_RegularSort(t *testing.T) {
 func TestBuildModelList_PreCheckedFirst(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "llama3.2:latest", Remote: false},
-		{Name: "glm-4.7:cloud", Remote: true},
+		{Name: "glm-5:cloud", Remote: true},
 	}
 
 	items, _, _, _ := buildModelList(existing, []string{"llama3.2"}, "")
@@ -455,14 +455,14 @@ func TestBuildModelList_PreCheckedFirst(t *testing.T) {
 func TestBuildModelList_ExistingRecommendedMarked(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "glm-4.7-flash", Remote: false},
-		{Name: "glm-4.7:cloud", Remote: true},
+		{Name: "glm-5:cloud", Remote: true},
 	}
 
 	items, _, _, _ := buildModelList(existing, nil, "")
 
 	for _, item := range items {
 		switch item.Name {
-		case "glm-4.7-flash", "glm-4.7:cloud":
+		case "glm-4.7-flash", "glm-5:cloud":
 			if strings.HasSuffix(item.Description, "install?") {
 				t.Errorf("installed recommended %q should not have 'install?' suffix, got %q", item.Name, item.Description)
 			}
@@ -477,16 +477,16 @@ func TestBuildModelList_ExistingRecommendedMarked(t *testing.T) {
 func TestBuildModelList_ExistingCloudModelsNotPushedToBottom(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "glm-4.7-flash", Remote: false},
-		{Name: "glm-4.7:cloud", Remote: true},
+		{Name: "glm-5:cloud", Remote: true},
 	}
 
 	items, _, _, _ := buildModelList(existing, nil, "")
 	got := names(items)
 
-	// glm-4.7-flash and glm-4.7:cloud are installed so they sort normally;
+	// glm-4.7-flash and glm-5:cloud are installed so they sort normally;
 	// kimi-k2.5:cloud and qwen3:8b are not installed so they go to the bottom
 	// All recs: cloud first in mixed case, then local, in rec order within each
-	want := []string{"kimi-k2.5:cloud", "glm-4.7:cloud", "glm-4.7-flash", "qwen3:8b"}
+	want := []string{"glm-5:cloud", "kimi-k2.5:cloud", "glm-4.7-flash", "qwen3:8b"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("all recs, cloud first in mixed case (-want +got):\n%s", diff)
 	}
@@ -504,7 +504,7 @@ func TestBuildModelList_HasRecommendedCloudModel_OnlyNonInstalledAtBottom(t *tes
 	// kimi-k2.5:cloud is installed so it sorts normally;
 	// the rest of the recommendations are not installed so they go to the bottom
 	// All recs pinned at top (cloud first in mixed case), then non-recs
-	want := []string{"kimi-k2.5:cloud", "glm-4.7:cloud", "glm-4.7-flash", "qwen3:8b", "llama3.2"}
+	want := []string{"glm-5:cloud", "kimi-k2.5:cloud", "glm-4.7-flash", "qwen3:8b", "llama3.2"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("recs pinned at top, cloud first in mixed case (-want +got):\n%s", diff)
 	}
@@ -554,7 +554,7 @@ func TestBuildModelList_LatestTagStripped(t *testing.T) {
 func TestBuildModelList_ReturnsExistingAndCloudMaps(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "llama3.2:latest", Remote: false},
-		{Name: "glm-4.7:cloud", Remote: true},
+		{Name: "glm-5:cloud", Remote: true},
 	}
 
 	_, _, existingModels, cloudModels := buildModelList(existing, nil, "")
@@ -562,15 +562,15 @@ func TestBuildModelList_ReturnsExistingAndCloudMaps(t *testing.T) {
 	if !existingModels["llama3.2"] {
 		t.Error("llama3.2 should be in existingModels")
 	}
-	if !existingModels["glm-4.7:cloud"] {
-		t.Error("glm-4.7:cloud should be in existingModels")
+	if !existingModels["glm-5:cloud"] {
+		t.Error("glm-5:cloud should be in existingModels")
 	}
 	if existingModels["glm-4.7-flash"] {
 		t.Error("glm-4.7-flash should not be in existingModels (it's a recommendation)")
 	}
 
-	if !cloudModels["glm-4.7:cloud"] {
-		t.Error("glm-4.7:cloud should be in cloudModels")
+	if !cloudModels["glm-5:cloud"] {
+		t.Error("glm-5:cloud should be in cloudModels")
 	}
 	if !cloudModels["kimi-k2.5:cloud"] {
 		t.Error("kimi-k2.5:cloud should be in cloudModels (recommended cloud)")
@@ -590,7 +590,7 @@ func TestBuildModelList_RecommendedFieldSet(t *testing.T) {
 
 	for _, item := range items {
 		switch item.Name {
-		case "glm-4.7-flash", "qwen3:8b", "glm-4.7:cloud", "kimi-k2.5:cloud":
+		case "glm-4.7-flash", "qwen3:8b", "glm-5:cloud", "kimi-k2.5:cloud":
 			if !item.Recommended {
 				t.Errorf("%q should have Recommended=true", item.Name)
 			}
@@ -605,14 +605,14 @@ func TestBuildModelList_RecommendedFieldSet(t *testing.T) {
 func TestBuildModelList_MixedCase_CloudRecsFirst(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "llama3.2:latest", Remote: false},
-		{Name: "glm-4.7:cloud", Remote: true},
+		{Name: "glm-5:cloud", Remote: true},
 	}
 
 	items, _, _, _ := buildModelList(existing, nil, "")
 	got := names(items)
 
 	// Cloud recs should sort before local recs in mixed case
-	cloudIdx := slices.Index(got, "glm-4.7:cloud")
+	cloudIdx := slices.Index(got, "glm-5:cloud")
 	localIdx := slices.Index(got, "glm-4.7-flash")
 	if cloudIdx > localIdx {
 		t.Errorf("cloud recs should be before local recs in mixed case, got %v", got)
@@ -629,7 +629,7 @@ func TestBuildModelList_OnlyLocal_LocalRecsFirst(t *testing.T) {
 
 	// Local recs should sort before cloud recs in only-local case
 	localIdx := slices.Index(got, "glm-4.7-flash")
-	cloudIdx := slices.Index(got, "glm-4.7:cloud")
+	cloudIdx := slices.Index(got, "glm-5:cloud")
 	if localIdx > cloudIdx {
 		t.Errorf("local recs should be before cloud recs in only-local case, got %v", got)
 	}
@@ -648,7 +648,7 @@ func TestBuildModelList_RecsAboveNonRecs(t *testing.T) {
 	lastRecIdx := -1
 	firstNonRecIdx := len(got)
 	for i, name := range got {
-		isRec := name == "glm-4.7-flash" || name == "qwen3:8b" || name == "glm-4.7:cloud" || name == "kimi-k2.5:cloud"
+		isRec := name == "glm-4.7-flash" || name == "qwen3:8b" || name == "glm-5:cloud" || name == "kimi-k2.5:cloud"
 		if isRec && i > lastRecIdx {
 			lastRecIdx = i
 		}
@@ -664,7 +664,7 @@ func TestBuildModelList_RecsAboveNonRecs(t *testing.T) {
 func TestBuildModelList_CheckedBeforeRecs(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "llama3.2:latest", Remote: false},
-		{Name: "glm-4.7:cloud", Remote: true},
+		{Name: "glm-5:cloud", Remote: true},
 	}
 
 	items, _, _, _ := buildModelList(existing, []string{"llama3.2"}, "")
@@ -840,6 +840,43 @@ func TestShowOrPull_ModelNotFound_ConfirmNo_Cancelled(t *testing.T) {
 	err := ShowOrPull(context.Background(), client, "missing-model")
 	if err == nil {
 		t.Error("ShowOrPull should return error when user declines")
+	}
+}
+
+func TestShowOrPull_CloudModel_SkipsConfirmation(t *testing.T) {
+	// Confirm prompt should NOT be called for cloud models
+	oldHook := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		t.Error("confirm prompt should not be called for cloud models")
+		return false, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldHook }()
+
+	var pullCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"error":"model not found"}`)
+		case "/api/pull":
+			pullCalled = true
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `{"status":"success"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	err := ShowOrPull(context.Background(), client, "glm-5:cloud")
+	if err != nil {
+		t.Errorf("ShowOrPull should succeed for cloud model, got: %v", err)
+	}
+	if !pullCalled {
+		t.Error("expected pull to be called for cloud model without confirmation")
 	}
 }
 
@@ -1162,5 +1199,58 @@ func TestLaunchIntegration_NotConfigured(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not configured") {
 		t.Errorf("error should mention 'not configured', got: %v", err)
+	}
+}
+
+func TestIsEditorIntegration(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{"droid", true},
+		{"opencode", true},
+		{"openclaw", true},
+		{"claude", false},
+		{"codex", false},
+		{"nonexistent", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsEditorIntegration(tt.name); got != tt.want {
+				t.Errorf("IsEditorIntegration(%q) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIntegrationModels(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	t.Run("returns nil when not configured", func(t *testing.T) {
+		if got := IntegrationModels("droid"); got != nil {
+			t.Errorf("expected nil, got %v", got)
+		}
+	})
+
+	t.Run("returns all saved models", func(t *testing.T) {
+		if err := saveIntegration("droid", []string{"llama3.2", "qwen3:8b"}); err != nil {
+			t.Fatal(err)
+		}
+		got := IntegrationModels("droid")
+		want := []string{"llama3.2", "qwen3:8b"}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("IntegrationModels mismatch (-want +got):\n%s", diff)
+		}
+	})
+}
+
+func TestSaveAndEditIntegration_UnknownIntegration(t *testing.T) {
+	err := SaveAndEditIntegration("nonexistent", []string{"model"})
+	if err == nil {
+		t.Fatal("expected error for unknown integration")
+	}
+	if !strings.Contains(err.Error(), "unknown integration") {
+		t.Errorf("error should mention 'unknown integration', got: %v", err)
 	}
 }
