@@ -17,8 +17,6 @@ type Openclaw struct{}
 
 func (c *Openclaw) String() string { return "OpenClaw" }
 
-const ansiGreen = "\033[32m"
-
 func (c *Openclaw) Run(model string, args []string) error {
 	bin := "openclaw"
 	if _, err := exec.LookPath(bin); err != nil {

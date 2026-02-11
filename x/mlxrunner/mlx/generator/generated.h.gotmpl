@@ -1,0 +1,22 @@
+// This code is auto-generated; DO NOT EDIT.
+
+#ifndef MLX_GENERATED_H
+#define MLX_GENERATED_H
+
+#include "dynamic.h"
+#include "mlx/c/mlx.h"
+{{ range .Functions }}
+#undef {{ .Name }}
+{{- end }}
+{{ range .Functions }}
+extern {{ .Type }} (*{{ .Name }}_){{ .Parameters }};
+{{- end }}
+
+int mlx_dynamic_load_symbols(mlx_dynamic_handle handle);
+{{ range .Functions }}
+static inline {{ .Type }} {{ .Name }}{{ .Parameters }} {{ "{" }}
+    return {{ .Name }}_({{ .Args }});
+{{ "}" }}
+{{- end }}
+
+#endif // MLX_GENERATED_H

@@ -339,6 +339,7 @@ jobs:
           name: bundles-windows
           path: |
             dist/*.zip
+            dist/*.ps1
             dist/OllamaSetup.exe
 
   linux-build:
@@ -516,6 +517,9 @@ jobs:
       - name: Log dist contents
         run: |
           ls -l dist/
+      - name: Copy install scripts to dist
+        run: |
+          cp scripts/install.sh dist/install.sh
       - name: Generate checksum file
         run: find . -type f -not -name 'sha256sum.txt' | xargs sha256sum | tee sha256sum.txt
         working-directory: dist
@@ -538,7 +542,7 @@ jobs:
       - name: Upload release artifacts
         run: |
           pids=()
-          for payload in dist/*.txt dist/*.zip dist/*.tgz dist/*.tar.zst dist/*.exe dist/*.dmg ; do
+          for payload in dist/*.txt dist/*.zip dist/*.tgz dist/*.tar.zst dist/*.exe dist/*.dmg dist/*.ps1 dist/*.sh ; do
             echo "Uploading $payload"
             gh release upload ${GITHUB_REF_NAME} $payload --clobber &
             pids[$!]=$!

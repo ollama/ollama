@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -37,6 +38,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
+	"github.com/ollama/ollama/cmd/tui"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/parser"
@@ -52,6 +54,49 @@ import (
 	xcreateclient "github.com/ollama/ollama/x/create/client"
 	"github.com/ollama/ollama/x/imagegen"
 )
+
+func init() {
+	// Override default selectors to use Bubbletea TUI instead of raw terminal I/O.
+	config.DefaultSingleSelector = func(title string, items []config.ModelItem) (string, error) {
+		tuiItems := make([]tui.SelectItem, len(items))
+		for i, item := range items {
+			tuiItems[i] = tui.SelectItem{Name: item.Name, Description: item.Description, Recommended: item.Recommended}
+		}
+		result, err := tui.SelectSingle(title, tuiItems)
+		if errors.Is(err, tui.ErrCancelled) {
+			return "", config.ErrCancelled
+		}
+		return result, err
+	}
+
+	config.DefaultMultiSelector = func(title string, items []config.ModelItem, preChecked []string) ([]string, error) {
+		tuiItems := make([]tui.SelectItem, len(items))
+		for i, item := range items {
+			tuiItems[i] = tui.SelectItem{Name: item.Name, Description: item.Description, Recommended: item.Recommended}
+		}
+		result, err := tui.SelectMultiple(title, tuiItems, preChecked)
+		if errors.Is(err, tui.ErrCancelled) {
+			return nil, config.ErrCancelled
+		}
+		return result, err
+	}
+
+	config.DefaultSignIn = func(modelName, signInURL string) (string, error) {
+		userName, err := tui.RunSignIn(modelName, signInURL)
+		if errors.Is(err, tui.ErrCancelled) {
+			return "", config.ErrCancelled
+		}
+		return userName, err
+	}
+
+	config.DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		ok, err := tui.RunConfirm(prompt)
+		if errors.Is(err, tui.ErrCancelled) {
+			return false, config.ErrCancelled
+		}
+		return ok, err
+	}
+}
 
 const ConnectInstructions = "If your browser did not open, navigate to:\n    %s\n\n"
 
@@ -1763,7 +1808,7 @@ func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 		if err := startApp(cmd.Context(), client); err != nil {
-			return fmt.Errorf("ollama server not responding - %w", err)
+			return err
 		}
 	}
 	return nil
@@ -1804,6 +1849,197 @@ Environment Variables:
 	cmd.SetUsageTemplate(cmd.UsageTemplate() + envUsage)
 }
 
+// ensureServerRunning checks if the ollama server is running and starts it in the background if not.
+func ensureServerRunning(ctx context.Context) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	// Check if server is already running
+	if err := client.Heartbeat(ctx); err == nil {
+		return nil // server is already running
+	}
+
+	// Server not running, start it in the background
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("could not find executable: %w", err)
+	}
+
+	serverCmd := exec.CommandContext(ctx, exe, "serve")
+	serverCmd.Env = os.Environ()
+	serverCmd.SysProcAttr = backgroundServerSysProcAttr()
+	if err := serverCmd.Start(); err != nil {
+		return fmt.Errorf("failed to start server: %w", err)
+	}
+
+	// Wait for the server to be ready
+	for {
+		time.Sleep(500 * time.Millisecond)
+		if err := client.Heartbeat(ctx); err == nil {
+			return nil // server has started
+		}
+	}
+}
+
+// runInteractiveTUI runs the main interactive TUI menu.
+func runInteractiveTUI(cmd *cobra.Command) {
+	// Ensure the server is running before showing the TUI
+	if err := ensureServerRunning(cmd.Context()); err != nil {
+		fmt.Fprintf(os.Stderr, "Error starting server: %v\n", err)
+		return
+	}
+
+	// Selector adapters for tui
+	singleSelector := func(title string, items []config.ModelItem) (string, error) {
+		tuiItems := make([]tui.SelectItem, len(items))
+		for i, item := range items {
+			tuiItems[i] = tui.SelectItem{Name: item.Name, Description: item.Description, Recommended: item.Recommended}
+		}
+		result, err := tui.SelectSingle(title, tuiItems)
+		if errors.Is(err, tui.ErrCancelled) {
+			return "", config.ErrCancelled
+		}
+		return result, err
+	}
+
+	multiSelector := func(title string, items []config.ModelItem, preChecked []string) ([]string, error) {
+		tuiItems := make([]tui.SelectItem, len(items))
+		for i, item := range items {
+			tuiItems[i] = tui.SelectItem{Name: item.Name, Description: item.Description, Recommended: item.Recommended}
+		}
+		result, err := tui.SelectMultiple(title, tuiItems, preChecked)
+		if errors.Is(err, tui.ErrCancelled) {
+			return nil, config.ErrCancelled
+		}
+		return result, err
+	}
+
+	for {
+		result, err := tui.Run()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			return
+		}
+
+		runModel := func(modelName string) {
+			client, err := api.ClientFromEnvironment()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				return
+			}
+			if err := config.ShowOrPull(cmd.Context(), client, modelName); err != nil {
+				if errors.Is(err, config.ErrCancelled) {
+					return
+				}
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				return
+			}
+			_ = config.SetLastModel(modelName)
+			opts := runOptions{
+				Model:       modelName,
+				WordWrap:    os.Getenv("TERM") == "xterm-256color",
+				Options:     map[string]any{},
+				ShowConnect: true,
+			}
+			if err := loadOrUnloadModel(cmd, &opts); err != nil {
+				fmt.Fprintf(os.Stderr, "Error loading model: %v\n", err)
+				return
+			}
+			if err := generateInteractive(cmd, opts); err != nil {
+				fmt.Fprintf(os.Stderr, "Error running model: %v\n", err)
+			}
+		}
+
+		launchIntegration := func(name string) bool {
+			// If not configured or model no longer exists, prompt for model selection
+			configuredModel := config.IntegrationModel(name)
+			if configuredModel == "" || !config.ModelExists(cmd.Context(), configuredModel) {
+				err := config.ConfigureIntegrationWithSelectors(cmd.Context(), name, singleSelector, multiSelector)
+				if errors.Is(err, config.ErrCancelled) {
+					return false // Return to main menu
+				}
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error configuring %s: %v\n", name, err)
+					return true
+				}
+			}
+			if err := config.LaunchIntegration(name); err != nil {
+				fmt.Fprintf(os.Stderr, "Error launching %s: %v\n", name, err)
+			}
+			return true
+		}
+
+		switch result.Selection {
+		case tui.SelectionNone:
+			// User quit
+			return
+		case tui.SelectionRunModel:
+			_ = config.SetLastSelection("run")
+			if modelName := config.LastModel(); modelName != "" {
+				runModel(modelName)
+			} else {
+				modelName, err := config.SelectModelWithSelector(cmd.Context(), singleSelector)
+				if errors.Is(err, config.ErrCancelled) {
+					continue // Return to main menu
+				}
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error selecting model: %v\n", err)
+					continue
+				}
+				runModel(modelName)
+			}
+		case tui.SelectionChangeRunModel:
+			_ = config.SetLastSelection("run")
+			// Use model from modal if selected, otherwise show picker
+			modelName := result.Model
+			if modelName == "" {
+				var err error
+				modelName, err = config.SelectModelWithSelector(cmd.Context(), singleSelector)
+				if errors.Is(err, config.ErrCancelled) {
+					continue // Return to main menu
+				}
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error selecting model: %v\n", err)
+					continue
+				}
+			}
+			runModel(modelName)
+		case tui.SelectionIntegration:
+			_ = config.SetLastSelection(result.Integration)
+			if !launchIntegration(result.Integration) {
+				continue // Return to main menu
+			}
+		case tui.SelectionChangeIntegration:
+			_ = config.SetLastSelection(result.Integration)
+			// Use model from modal if selected, otherwise show picker
+			if result.Model != "" {
+				// Model already selected from modal - save and launch
+				if err := config.SaveIntegrationModel(result.Integration, result.Model); err != nil {
+					fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
+					continue
+				}
+				if err := config.LaunchIntegrationWithModel(result.Integration, result.Model); err != nil {
+					fmt.Fprintf(os.Stderr, "Error launching %s: %v\n", result.Integration, err)
+				}
+			} else {
+				err := config.ConfigureIntegrationWithSelectors(cmd.Context(), result.Integration, singleSelector, multiSelector)
+				if errors.Is(err, config.ErrCancelled) {
+					continue // Return to main menu
+				}
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error configuring %s: %v\n", result.Integration, err)
+					continue
+				}
+				if err := config.LaunchIntegration(result.Integration); err != nil {
+					fmt.Fprintf(os.Stderr, "Error launching %s: %v\n", result.Integration, err)
+				}
+			}
+		}
+	}
+}
+
 func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	cobra.EnableCommandSorting = false
@@ -1826,11 +2062,13 @@ func NewCLI() *cobra.Command {
 				return
 			}
 
-			cmd.Print(cmd.UsageString())
+			runInteractiveTUI(cmd)
 		},
 	}
 
 	rootCmd.Flags().BoolP("version", "v", false, "Show version information")
+	rootCmd.Flags().Bool("verbose", false, "Show timings for response")
+	rootCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 
 	createCmd := &cobra.Command{
 		Use:   "create MODEL",
@@ -1934,9 +2172,27 @@ func NewCLI() *cobra.Command {
 		RunE:    SigninHandler,
 	}
 
+	loginCmd := &cobra.Command{
+		Use:     "login",
+		Short:   "Sign in to ollama.com",
+		Hidden:  true,
+		Args:    cobra.ExactArgs(0),
+		PreRunE: checkServerHeartbeat,
+		RunE:    SigninHandler,
+	}
+
 	signoutCmd := &cobra.Command{
 		Use:     "signout",
 		Short:   "Sign out from ollama.com",
+		Args:    cobra.ExactArgs(0),
+		PreRunE: checkServerHeartbeat,
+		RunE:    SignoutHandler,
+	}
+
+	logoutCmd := &cobra.Command{
+		Use:     "logout",
+		Short:   "Sign out from ollama.com",
+		Hidden:  true,
 		Args:    cobra.ExactArgs(0),
 		PreRunE: checkServerHeartbeat,
 		RunE:    SignoutHandler,
@@ -2038,13 +2294,15 @@ func NewCLI() *cobra.Command {
 		pullCmd,
 		pushCmd,
 		signinCmd,
+		loginCmd,
 		signoutCmd,
+		logoutCmd,
 		listCmd,
 		psCmd,
 		copyCmd,
 		deleteCmd,
 		runnerCmd,
-		config.LaunchCmd(checkServerHeartbeat),
+		config.LaunchCmd(checkServerHeartbeat, runInteractiveTUI),
 	)
 
 	return rootCmd

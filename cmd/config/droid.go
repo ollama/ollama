@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 )
 
@@ -112,9 +114,17 @@ func (d *Droid) Edit(models []string) error {
 	}
 
 	// Build new Ollama model entries with sequential indices (0, 1, 2, ...)
+	client, _ := api.ClientFromEnvironment()
+
 	var newModels []any
 	var defaultModelID string
 	for i, model := range models {
+		maxOutput := 64000
+		if isCloudModel(context.Background(), client, model) {
+			if l, ok := lookupCloudModelLimit(model); ok {
+				maxOutput = l.Output
+			}
+		}
 		modelID := fmt.Sprintf("custom:%s-%d", model, i)
 		newModels = append(newModels, modelEntry{
 			Model:           model,
@@ -122,7 +132,7 @@ func (d *Droid) Edit(models []string) error {
 			BaseURL:         envconfig.Host().String() + "/v1",
 			APIKey:          "ollama",
 			Provider:        "generic-chat-completion-api",
-			MaxOutputTokens: 64000,
+			MaxOutputTokens: maxOutput,
 			SupportsImages:  false,
 			ID:              modelID,
 			Index:           i,

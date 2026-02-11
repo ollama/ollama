@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/cache"
+	"github.com/ollama/ollama/x/imagegen/manifest"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/nn"
 	"github.com/ollama/ollama/x/imagegen/safetensors"
@@ -38,11 +38,11 @@ type Config struct {
 	AttentionBias         bool    `json:"attention_bias"`
 
 	// MLA (Multi-head Latent Attention) parameters
-	QLoraRank      int32 `json:"q_lora_rank"`
-	KVLoraRank     int32 `json:"kv_lora_rank"`
-	QKRopeHeadDim  int32 `json:"qk_rope_head_dim"`
-	QKNopeHeadDim  int32 `json:"qk_nope_head_dim"`
-	VHeadDim       int32 `json:"v_head_dim"`
+	QLoraRank     int32 `json:"q_lora_rank"`
+	KVLoraRank    int32 `json:"kv_lora_rank"`
+	QKRopeHeadDim int32 `json:"qk_rope_head_dim"`
+	QKNopeHeadDim int32 `json:"qk_nope_head_dim"`
+	VHeadDim      int32 `json:"v_head_dim"`
 
 	// MoE parameters
 	NRoutedExperts      int32   `json:"n_routed_experts"`
@@ -82,7 +82,7 @@ type MLAAttention struct {
 	// Absorbed MLA projections (derived from kv_b_proj)
 	// EmbedQ: projects q_nope to latent space [num_heads, kv_lora_rank, qk_nope_head_dim]
 	// UnembedOut: projects attention output from latent space [num_heads, v_head_dim, kv_lora_rank]
-	EmbedQ    *nn.MultiLinear `weight:"-"`
+	EmbedQ     *nn.MultiLinear `weight:"-"`
 	UnembedOut *nn.MultiLinear `weight:"-"`
 
 	// Output projection
@@ -194,8 +194,8 @@ func (m *DenseMLP) Forward(x *mlx.Array) *mlx.Array {
 
 // MoEGate implements the expert gating mechanism
 type MoEGate struct {
-	Gate                   nn.LinearLayer `weight:"mlp.gate"`
-	EScoreCorrectionBias   *mlx.Array     `weight:"mlp.gate.e_score_correction_bias,optional"`
+	Gate                 nn.LinearLayer `weight:"mlp.gate"`
+	EScoreCorrectionBias *mlx.Array     `weight:"mlp.gate.e_score_correction_bias,optional"`
 }
 
 // Forward computes expert selection indices and scores
@@ -617,9 +617,9 @@ func sanitizeExpertWeights(weights safetensors.WeightSource, prefix string, numE
 }
 
 // LoadFromManifest loads a GLM4-MoE-Lite model from a manifest (Ollama blob storage).
-func LoadFromManifest(manifest *imagegen.ModelManifest) (*Model, error) {
+func LoadFromManifest(modelManifest *manifest.ModelManifest) (*Model, error) {
 	// Read config from manifest
-	configData, err := manifest.ReadConfig("config.json")
+	configData, err := modelManifest.ReadConfig("config.json")
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
@@ -634,7 +634,7 @@ func LoadFromManifest(manifest *imagegen.ModelManifest) (*Model, error) {
 	cfg.Scale = computeScale(&cfg)
 
 	// Load weights from manifest blobs
-	weights, err := imagegen.LoadWeightsFromManifest(manifest, "")
+	weights, err := manifest.LoadWeightsFromManifest(modelManifest, "")
 	if err != nil {
 		return nil, fmt.Errorf("load weights: %w", err)
 	}
@@ -653,7 +653,7 @@ func LoadFromManifest(manifest *imagegen.ModelManifest) (*Model, error) {
 	}
 
 	// Load tokenizer from manifest with config files for EOS token detection
-	tokData, err := manifest.ReadConfig("tokenizer.json")
+	tokData, err := modelManifest.ReadConfig("tokenizer.json")
 	if err != nil {
 		return nil, fmt.Errorf("load tokenizer config: %w", err)
 	}
@@ -664,12 +664,12 @@ func LoadFromManifest(manifest *imagegen.ModelManifest) (*Model, error) {
 	}
 
 	// Try to load generation_config.json if available (preferred source for EOS)
-	if genConfigData, err := manifest.ReadConfig("generation_config.json"); err == nil {
+	if genConfigData, err := modelManifest.ReadConfig("generation_config.json"); err == nil {
 		tokConfig.GenerationConfigJSON = genConfigData
 	}
 
 	// Try to load tokenizer_config.json if available
-	if tokConfigData, err := manifest.ReadConfig("tokenizer_config.json"); err == nil {
+	if tokConfigData, err := modelManifest.ReadConfig("tokenizer_config.json"); err == nil {
 		tokConfig.TokenizerConfigJSON = tokConfigData
 	}
 
