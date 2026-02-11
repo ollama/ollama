@@ -2007,9 +2007,17 @@ func runInteractiveTUI(cmd *cobra.Command) {
 			}
 		case tui.SelectionChangeIntegration:
 			_ = config.SetLastSelection(result.Integration)
-			// Use model from modal if selected, otherwise show picker
-			if result.Model != "" {
-				// Model already selected from modal - save and launch
+			if len(result.Models) > 0 {
+				// Multi-select from modal (Editor integrations)
+				if err := config.SaveAndEditIntegration(result.Integration, result.Models); err != nil {
+					fmt.Fprintf(os.Stderr, "Error configuring %s: %v\n", result.Integration, err)
+					continue
+				}
+				if err := config.LaunchIntegrationWithModel(result.Integration, result.Models[0]); err != nil {
+					fmt.Fprintf(os.Stderr, "Error launching %s: %v\n", result.Integration, err)
+				}
+			} else if result.Model != "" {
+				// Single-select from modal - save and launch
 				if err := config.SaveIntegrationModel(result.Integration, result.Model); err != nil {
 					fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
 					continue

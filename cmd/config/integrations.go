@@ -171,6 +171,17 @@ func IsIntegrationInstalled(name string) bool {
 	}
 }
 
+// IsEditorIntegration returns true if the named integration uses multi-model
+// selection (implements the Editor interface).
+func IsEditorIntegration(name string) bool {
+	r, ok := integrations[strings.ToLower(name)]
+	if !ok {
+		return false
+	}
+	_, isEditor := r.(Editor)
+	return isEditor
+}
+
 // SelectModel lets the user select a model to run.
 // ModelItem represents a model for selection.
 type ModelItem struct {
@@ -656,6 +667,24 @@ func SaveIntegrationModel(name, modelName string) error {
 	// Prepend the new model
 	models = append([]string{modelName}, models...)
 	return saveIntegration(name, models)
+}
+
+// SaveAndEditIntegration saves the models for an Editor integration and runs its Edit method
+// to write the integration's config files.
+func SaveAndEditIntegration(name string, models []string) error {
+	r, ok := integrations[strings.ToLower(name)]
+	if !ok {
+		return fmt.Errorf("unknown integration: %s", name)
+	}
+	if err := saveIntegration(name, models); err != nil {
+		return fmt.Errorf("failed to save: %w", err)
+	}
+	if editor, isEditor := r.(Editor); isEditor {
+		if err := editor.Edit(models); err != nil {
+			return fmt.Errorf("setup failed: %w", err)
+		}
+	}
+	return nil
 }
 
 // ConfigureIntegrationWithSelectors allows the user to select/change the model for an integration using custom selectors.
