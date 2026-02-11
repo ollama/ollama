@@ -302,7 +302,7 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if wmsg, ok := msg.(tea.WindowSizeMsg); ok {
 		m.width = wmsg.Width
-		return m, nil
+		return m, tea.ClearScreen
 	}
 
 	if _, ok := msg.(clearStatusMsg); ok {
@@ -549,7 +549,7 @@ type Result struct {
 
 func Run() (Result, error) {
 	m := initialModel()
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m)
 
 	finalModel, err := p.Run()
 	if err != nil {

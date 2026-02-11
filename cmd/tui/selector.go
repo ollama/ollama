@@ -198,6 +198,9 @@ func (m *selectorModel) updateScroll(otherStart int) {
 
 func (m selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		return m, tea.ClearScreen
+
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
@@ -441,6 +444,9 @@ func (m multiSelectorModel) Init() tea.Cmd {
 
 func (m multiSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		return m, tea.ClearScreen
+
 	case tea.KeyMsg:
 		filtered := m.filteredItems()
 

@@ -29,7 +29,7 @@ func (m signInModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
-		return m, nil
+		return m, tea.ClearScreen
 
 	case tea.KeyMsg:
 		switch msg.Type {
@@ -109,7 +109,7 @@ func RunSignIn(modelName, signInURL string) (string, error) {
 		signInURL: signInURL,
 	}
 
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m)
 	finalModel, err := p.Run()
 	if err != nil {
 		return "", fmt.Errorf("error running sign-in: %w", err)
