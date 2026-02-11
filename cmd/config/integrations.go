@@ -63,8 +63,8 @@ var integrations = map[string]Runner{
 // recommendedModels are shown when the user has no models or as suggestions.
 // Order matters: local models first, then cloud models.
 var recommendedModels = []ModelItem{
+	{Name: "glm-5:cloud", Description: "Reasoning and code generation", Recommended: true},
 	{Name: "kimi-k2.5:cloud", Description: "Multimodal reasoning with subagents", Recommended: true},
-	{Name: "glm-4.7:cloud", Description: "Reasoning and code generation", Recommended: true},
 	{Name: "glm-4.7-flash", Description: "Reasoning and code generation locally", Recommended: true},
 	{Name: "qwen3:8b", Description: "Efficient all-purpose assistant", Recommended: true},
 }
