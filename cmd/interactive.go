@@ -621,7 +621,7 @@ func editInExternalEditor(content string) (string, error) {
 		editor = os.Getenv("EDITOR")
 	}
 	if editor == "" {
-		editor = "vi"
+		editor = defaultEditor
 	}
 
 	// Check that the editor binary exists
