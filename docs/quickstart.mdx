@@ -2,7 +2,7 @@
 title: Quickstart
 ---
 
-Ollama is available on macOS, Windows or Linux.
+Ollama is available on macOS, Windows, and Linux.
 
 <a
   href="https://ollama.com/download"
@@ -14,7 +14,7 @@ Ollama is available on macOS, Windows or Linux.
 
 ## Get Started
 
-Run `ollama` in your terminal of choice to open the interactive menu:
+Run `ollama` in your terminal to open the interactive menu:
 
 ```sh
 ollama
@@ -26,19 +26,6 @@ The menu provides quick access to:
 - **Run a model** - Start an interactive chat
 - **Launch tools** - Claude Code, Codex, OpenClaw, and more
 - **Additional integrations** - Available under "More..."
-
-## API
-
-Use the [API](/api) to integrate Ollama into your applications:
-
-```sh
-curl http://localhost:11434/api/chat -d '{
-  "model": "gemma3",
-  "messages": [{ "role": "user", "content": "Hello!" }]
-}'
-```
-
-See the [API documentation](/api) for Python, JavaScript, and other integrations.
 
 ## Coding
 
@@ -57,3 +44,16 @@ ollama launch opencode
 ```
 
 See [integrations](/integrations) for all supported tools.
+
+## API
+
+Use the [API](/api) to integrate Ollama into your applications:
+
+```sh
+curl http://localhost:11434/api/chat -d '{
+  "model": "gemma3",
+  "messages": [{ "role": "user", "content": "Hello!" }]
+}'
+```
+
+See the [API documentation](/api) for Python, JavaScript, and other integrations.
