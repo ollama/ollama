@@ -7,6 +7,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,11 +17,16 @@ import (
 
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/sample"
 )
 
 func Execute(args []string) error {
 	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
+
+	if err := mlx.CheckInit(); err != nil {
+		return fmt.Errorf("MLX not available: %w", err)
+	}
 
 	var (
 		modelName string
