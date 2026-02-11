@@ -3,6 +3,7 @@ package convert
 import (
 	"cmp"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -204,8 +205,10 @@ func (q *qwen35Model) parseMore(fsys fs.FS) error {
 
 func (q *qwen35Model) parseVisionConfig(fsys fs.FS) error {
 	bts, err := fs.ReadFile(fsys, "preprocessor_config.json")
-	if err != nil {
+	if errors.Is(err, fs.ErrNotExist) {
 		return nil
+	} else if err != nil {
+		return err
 	}
 
 	return json.Unmarshal(bts, &q.VisionModel)
