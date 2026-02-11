@@ -90,7 +90,7 @@ func (i *Instance) Readline() (string, error) {
 
 	buf, _ := NewBuffer(i.Prompt)
 
-	// Prefill the buffer with any text that we recieved from an external editor
+	// Prefill the buffer with any text that we received from an external editor
 	if i.Prefill != "" {
 		lines := strings.Split(i.Prefill, "\n")
 		i.Prefill = ""
