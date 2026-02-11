@@ -341,4 +341,3 @@ func (u *Updater) StartBackgroundUpdaterChecker(ctx context.Context, cb func(str
 		}
 	}()
 }
-
