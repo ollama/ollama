@@ -131,7 +131,7 @@ type model struct {
 	signInURL       string
 	signInModel     string
 	signInSpinner   int
-	signInFromModal bool   // true if sign-in was triggered from modal (not main menu)
+	signInFromModal bool // true if sign-in was triggered from modal (not main menu)
 
 	width     int    // terminal width from WindowSizeMsg
 	statusMsg string // temporary status message shown near help text
