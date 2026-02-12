@@ -136,12 +136,66 @@ function Invoke-Download {
 
     Write-Status "  Downloading: $Url"
     try {
-        Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing
-        $size = (Get-Item $OutFile).Length
-        Write-Status "  Downloaded: $([math]::Round($size / 1MB, 1)) MB"
+        $request = [System.Net.HttpWebRequest]::Create($Url)
+        $request.AllowAutoRedirect = $true
+        $response = $request.GetResponse()
+        $totalBytes = $response.ContentLength
+        $stream = $response.GetResponseStream()
+        $fileStream = [System.IO.FileStream]::new($OutFile, [System.IO.FileMode]::Create)
+        $buffer = [byte[]]::new(65536)
+        $totalRead = 0
+        $lastUpdate = [DateTime]::MinValue
+        $barWidth = 40
+
+        try {
+            while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                $fileStream.Write($buffer, 0, $read)
+                $totalRead += $read
+
+                $now = [DateTime]::UtcNow
+                if (($now - $lastUpdate).TotalMilliseconds -ge 250) {
+                    if ($totalBytes -gt 0) {
+                        $pct = [math]::Min(100, [math]::Floor(($totalRead / $totalBytes) * 100))
+                        $filled = [math]::Floor($barWidth * $pct / 100)
+                        $empty = $barWidth - $filled
+                        $bar = ('#' * $filled) + (' ' * $empty)
+                        $sizeMB = [math]::Round($totalRead / 1MB, 1)
+                        $totalMB = [math]::Round($totalBytes / 1MB, 1)
+                        Write-Host -NoNewline "`r  [$bar] ${pct}%  ${sizeMB} / ${totalMB} MB"
+                    } else {
+                        $sizeMB = [math]::Round($totalRead / 1MB, 1)
+                        Write-Host -NoNewline "`r  ${sizeMB} MB downloaded..."
+                    }
+                    $lastUpdate = $now
+                }
+            }
+
+            # Final progress update
+            if ($totalBytes -gt 0) {
+                $totalMB = [math]::Round($totalBytes / 1MB, 1)
+                $bar = '#' * $barWidth
+                Write-Host "`r  [$bar] 100%  ${totalMB} / ${totalMB} MB"
+            } else {
+                $sizeMB = [math]::Round($totalRead / 1MB, 1)
+                Write-Host "`r  ${sizeMB} MB downloaded.          "
+            }
+        } finally {
+            $fileStream.Close()
+            $stream.Close()
+            $response.Close()
+        }
     } catch {
-        if ($_.Exception.Response.StatusCode -eq 404) {
-            throw "Download failed: not found at $Url"
+        if ($_.Exception -is [System.Net.WebException]) {
+            $webEx = [System.Net.WebException]$_.Exception
+            if ($webEx.Response -and ([System.Net.HttpWebResponse]$webEx.Response).StatusCode -eq [System.Net.HttpStatusCode]::NotFound) {
+                throw "Download failed: not found at $Url"
+            }
+        }
+        if ($_.Exception.InnerException -is [System.Net.WebException]) {
+            $webEx = [System.Net.WebException]$_.Exception.InnerException
+            if ($webEx.Response -and ([System.Net.HttpWebResponse]$webEx.Response).StatusCode -eq [System.Net.HttpStatusCode]::NotFound) {
+                throw "Download failed: not found at $Url"
+            }
         }
         throw "Download failed for ${Url}: $($_.Exception.Message)"
     }
