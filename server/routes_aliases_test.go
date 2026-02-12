@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -16,7 +17,7 @@ import (
 
 func TestAliasShadowingRejected(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 
 	s := Server{}
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
@@ -40,7 +41,7 @@ func TestAliasShadowingRejected(t *testing.T) {
 
 func TestAliasResolvesForChatRemote(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 
 	var remoteModel string
 	rs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -256,7 +257,7 @@ func TestPrefixAliasChain(t *testing.T) {
 
 func TestPrefixAliasCRUD(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 
 	s := Server{}
 
@@ -364,7 +365,7 @@ func TestPrefixAliasCaseInsensitive(t *testing.T) {
 
 func TestPrefixAliasLocalModelPrecedence(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 
 	s := Server{}
 
@@ -422,5 +423,53 @@ func TestPrefixAliasLocalModelPrecedence(t *testing.T) {
 	expectedTarget := model.ParseName("someothermodel")
 	if resolved.DisplayShortest() != expectedTarget.DisplayShortest() {
 		t.Fatalf("expected resolved name to be %q, got %q", expectedTarget.DisplayShortest(), resolved.DisplayShortest())
+	}
+}
+
+func TestAliasSavePreservesCloudDisable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	configPath := filepath.Join(tmpDir, ".ollama", "server.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	initial := map[string]any{
+		"version":              serverConfigVersion,
+		"disable_ollama_cloud": true,
+		"aliases":              []aliasEntry{},
+	}
+	data, err := json.Marshal(initial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := Server{}
+	w := createRequest(t, s.CreateAliasHandler, aliasEntry{Alias: "alias-model", Target: "target-model"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	updated, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var updatedCfg map[string]json.RawMessage
+	if err := json.Unmarshal(updated, &updatedCfg); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, ok := updatedCfg["disable_ollama_cloud"]
+	if !ok {
+		t.Fatal("expected disable_ollama_cloud key to be preserved")
+	}
+	if string(raw) != "true" {
+		t.Fatalf("expected disable_ollama_cloud to remain true, got %s", string(raw))
 	}
 }

@@ -115,6 +115,107 @@ func TestHandlePostApiSettings(t *testing.T) {
 	}
 }
 
+func TestHandlePostApiCloudSetting(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("OLLAMA_NO_CLOUD", "")
+
+	testStore := &store.Store{
+		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
+	}
+	defer testStore.Close()
+
+	restartCount := 0
+	server := &Server{
+		Store: testStore,
+		Restart: func() {
+			restartCount++
+		},
+	}
+
+	for _, tc := range []struct {
+		name        string
+		body        string
+		wantEnabled bool
+	}{
+		{name: "disable cloud", body: `{"enabled": false}`, wantEnabled: false},
+		{name: "enable cloud", body: `{"enabled": true}`, wantEnabled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/api/v1/cloud", bytes.NewBufferString(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+
+			if err := server.cloudSetting(rr, req); err != nil {
+				t.Fatalf("cloudSetting() error = %v", err)
+			}
+			if rr.Code != http.StatusOK {
+				t.Fatalf("cloudSetting() status = %d, want %d", rr.Code, http.StatusOK)
+			}
+
+			var got map[string]any
+			if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+				t.Fatalf("cloudSetting() invalid response JSON: %v", err)
+			}
+			if got["disabled"] != !tc.wantEnabled {
+				t.Fatalf("response disabled = %v, want %v", got["disabled"], !tc.wantEnabled)
+			}
+
+			disabled, err := testStore.CloudDisabled()
+			if err != nil {
+				t.Fatalf("CloudDisabled() error = %v", err)
+			}
+			if gotEnabled := !disabled; gotEnabled != tc.wantEnabled {
+				t.Fatalf("cloud enabled = %v, want %v", gotEnabled, tc.wantEnabled)
+			}
+		})
+	}
+
+	if restartCount != 2 {
+		t.Fatalf("Restart called %d times, want 2", restartCount)
+	}
+}
+
+func TestHandleGetApiCloudSetting(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("OLLAMA_NO_CLOUD", "")
+
+	testStore := &store.Store{
+		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
+	}
+	defer testStore.Close()
+
+	if err := testStore.SetCloudEnabled(false); err != nil {
+		t.Fatalf("SetCloudEnabled(false) error = %v", err)
+	}
+
+	server := &Server{
+		Store:   testStore,
+		Restart: func() {},
+	}
+
+	req := httptest.NewRequest("GET", "/api/v1/cloud", nil)
+	rr := httptest.NewRecorder()
+	if err := server.getCloudSetting(rr, req); err != nil {
+		t.Fatalf("getCloudSetting() error = %v", err)
+	}
+	if rr.Code != http.StatusOK {
+		t.Fatalf("getCloudSetting() status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("getCloudSetting() invalid response JSON: %v", err)
+	}
+	if got["disabled"] != true {
+		t.Fatalf("response disabled = %v, want true", got["disabled"])
+	}
+	if got["source"] != "config" {
+		t.Fatalf("response source = %v, want config", got["source"])
+	}
+}
+
 func TestAuthenticationMiddleware(t *testing.T) {
 	tests := []struct {
 		name         string
