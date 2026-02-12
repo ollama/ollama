@@ -828,7 +828,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 		WebSearchEnabled := req.WebSearch != nil && *req.WebSearch
 
 		if WebSearchEnabled {
-			if supportsBrowserTools(req.Model) {
+			if supportsBrowserTools(details.Details.Family) {
 				browserState, ok := s.browserState(chat)
 				if !ok {
 					browserState = reconstructBrowserState(chat.Messages, tools.DefaultViewTokens)
@@ -1611,8 +1611,10 @@ func isImageAttachment(filename string) bool {
 func ptr[T any](v T) *T { return &v }
 
 // Browser tools simulate a full browser environment, allowing for actions like searching, opening, and interacting with web pages (e.g., "browser_search", "browser_open", "browser_find"). Currently only gpt-oss models support browser tools.
-func supportsBrowserTools(model string) bool {
-	return strings.HasPrefix(strings.ToLower(model), "gpt-oss")
+// modelFamily should be the model's architecture family (e.g., from ShowResponse.Details.Family).
+func supportsBrowserTools(modelFamily string) bool {
+	family := strings.ToLower(modelFamily)
+	return family == "gptoss" || family == "gpt-oss"
 }
 
 // Web search tools are simpler, providing only basic web search and fetch capabilities (e.g., "web_search", "web_fetch") without simulating a browser. Currently only qwen3 and deepseek-v3 support web search tools.

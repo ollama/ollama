@@ -421,3 +421,124 @@ func TestUserAgentTransport(t *testing.T) {
 
 	t.Logf("User-Agent transport successfully set: %s", receivedUA)
 }
+
+func TestSupportsBrowserTools(t *testing.T) {
+	tests := []struct {
+		name        string
+		modelFamily string
+		want        bool
+	}{
+		{
+			name:        "gptoss family (lowercase)",
+			modelFamily: "gptoss",
+			want:        true,
+		},
+		{
+			name:        "gpt-oss family (with hyphen)",
+			modelFamily: "gpt-oss",
+			want:        true,
+		},
+		{
+			name:        "GPTOSS family (uppercase)",
+			modelFamily: "GPTOSS",
+			want:        true,
+		},
+		{
+			name:        "GPT-OSS family (uppercase with hyphen)",
+			modelFamily: "GPT-OSS",
+			want:        true,
+		},
+		{
+			name:        "GptOss family (mixed case)",
+			modelFamily: "GptOss",
+			want:        true,
+		},
+		{
+			name:        "llama family",
+			modelFamily: "llama",
+			want:        false,
+		},
+		{
+			name:        "qwen3 family",
+			modelFamily: "qwen3",
+			want:        false,
+		},
+		{
+			name:        "empty family",
+			modelFamily: "",
+			want:        false,
+		},
+		{
+			name:        "gptoss-like but not exact (gptoss2)",
+			modelFamily: "gptoss2",
+			want:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := supportsBrowserTools(tt.modelFamily)
+			if got != tt.want {
+				t.Errorf("supportsBrowserTools(%q) = %v, want %v", tt.modelFamily, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSupportsWebSearchTools(t *testing.T) {
+	tests := []struct {
+		name      string
+		modelName string
+		want      bool
+	}{
+		{
+			name:      "qwen3 model",
+			modelName: "qwen3",
+			want:      true,
+		},
+		{
+			name:      "qwen3-coder model",
+			modelName: "qwen3-coder",
+			want:      true,
+		},
+		{
+			name:      "deepseek-v3 model",
+			modelName: "deepseek-v3",
+			want:      true,
+		},
+		{
+			name:      "deepseek-v3:latest model",
+			modelName: "deepseek-v3:latest",
+			want:      true,
+		},
+		{
+			name:      "QWEN3 model (uppercase)",
+			modelName: "QWEN3",
+			want:      true,
+		},
+		{
+			name:      "llama model",
+			modelName: "llama",
+			want:      false,
+		},
+		{
+			name:      "gpt-oss model",
+			modelName: "gpt-oss",
+			want:      false,
+		},
+		{
+			name:      "empty model",
+			modelName: "",
+			want:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := supportsWebSearchTools(tt.modelName)
+			if got != tt.want {
+				t.Errorf("supportsWebSearchTools(%q) = %v, want %v", tt.modelName, got, tt.want)
+			}
+		})
+	}
+}
