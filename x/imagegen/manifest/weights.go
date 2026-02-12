@@ -102,8 +102,15 @@ func (mw *ManifestWeights) Load(dtype mlx.Dtype) error {
 		for _, entry := range entries {
 			name := entry.name
 
-			// Try to get tensor by manifest name
-			arr := sf.Get(name)
+			// Try to get tensor by stripped name first, then with component prefix.
+			// Blobs may store tensors with the full prefixed name (e.g., "text_encoder/model.layers.0.weight")
+			// while the tensors map uses stripped names (e.g., "model.layers.0.weight").
+			lookupName := name
+			arr := sf.Get(lookupName)
+			if arr == nil && mw.component != "" {
+				lookupName = mw.component + "/" + name
+				arr = sf.Get(lookupName)
+			}
 			if arr != nil {
 				// Single-tensor blob or tensor found by name
 				if dtype != 0 && arr.Dtype() != dtype {
@@ -114,14 +121,14 @@ func (mw *ManifestWeights) Load(dtype mlx.Dtype) error {
 				arrays = append(arrays, arr)
 
 				// Check for scale tensor
-				if scale := sf.Get(name + ".scale"); scale != nil {
+				if scale := sf.Get(lookupName + ".scale"); scale != nil {
 					scale = mlx.Contiguous(scale)
 					mw.cache[name+"_scale"] = scale
 					arrays = append(arrays, scale)
 				}
 
 				// Check for bias tensor
-				if bias := sf.Get(name + ".bias"); bias != nil {
+				if bias := sf.Get(lookupName + ".bias"); bias != nil {
 					bias = mlx.Contiguous(bias)
 					mw.cache[name+"_qbias"] = bias
 					arrays = append(arrays, bias)
@@ -147,20 +154,27 @@ func (mw *ManifestWeights) Load(dtype mlx.Dtype) error {
 						tArr = mlx.AsType(tArr, dtype)
 					}
 					tArr = mlx.Contiguous(tArr)
-					mw.cache[tensorName] = tArr
+
+					// Strip component prefix from blob-internal names so cache keys
+					// match the stripped names used by LoadModule.
+					cacheName := tensorName
+					if mw.component != "" {
+						cacheName = strings.TrimPrefix(tensorName, mw.component+"/")
+					}
+					mw.cache[cacheName] = tArr
 					arrays = append(arrays, tArr)
 
 					// Check for scale tensor
 					if scale := sf.Get(tensorName + ".scale"); scale != nil {
 						scale = mlx.Contiguous(scale)
-						mw.cache[tensorName+"_scale"] = scale
+						mw.cache[cacheName+"_scale"] = scale
 						arrays = append(arrays, scale)
 					}
 
 					// Check for bias tensor
 					if bias := sf.Get(tensorName + ".bias"); bias != nil {
 						bias = mlx.Contiguous(bias)
-						mw.cache[tensorName+"_qbias"] = bias
+						mw.cache[cacheName+"_qbias"] = bias
 						arrays = append(arrays, bias)
 					}
 				}

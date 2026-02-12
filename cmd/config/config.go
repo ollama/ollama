@@ -160,6 +160,15 @@ func IntegrationModel(appName string) string {
 	return ic.Models[0]
 }
 
+// IntegrationModels returns all configured models for an integration, or nil.
+func IntegrationModels(appName string) []string {
+	ic, err := loadIntegration(appName)
+	if err != nil || len(ic.Models) == 0 {
+		return nil
+	}
+	return ic.Models
+}
+
 // LastModel returns the last model that was run, or empty string if none.
 func LastModel() string {
 	cfg, err := load()

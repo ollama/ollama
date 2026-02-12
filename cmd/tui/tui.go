@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
-	"runtime"
 	"strings"
 	"time"
 
@@ -17,37 +15,30 @@ import (
 )
 
 var (
-	titleStyle = lipgloss.NewStyle().
-			Bold(true).
-			MarginBottom(1)
-
 	versionStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("245"))
+			Foreground(lipgloss.AdaptiveColor{Light: "243", Dark: "250"})
 
-	itemStyle = lipgloss.NewStyle().
+	menuItemStyle = lipgloss.NewStyle().
 			PaddingLeft(2)
 
-	selectedStyle = lipgloss.NewStyle().
-			PaddingLeft(2).
-			Bold(true)
+	menuSelectedItemStyle = lipgloss.NewStyle().
+				Bold(true).
+				Background(lipgloss.AdaptiveColor{Light: "254", Dark: "236"})
 
-	greyedStyle = lipgloss.NewStyle().
-			PaddingLeft(2).
-			Foreground(lipgloss.Color("241"))
+	menuDescStyle = selectorDescStyle.
+			PaddingLeft(4)
 
-	greyedSelectedStyle = lipgloss.NewStyle().
-				PaddingLeft(2).
-				Foreground(lipgloss.Color("243"))
+	greyedStyle = menuItemStyle.
+			Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"})
 
-	descStyle = lipgloss.NewStyle().
-			PaddingLeft(4).
-			Foreground(lipgloss.Color("241"))
+	greyedSelectedStyle = menuSelectedItemStyle.
+				Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"})
 
 	modelStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("245"))
+			Foreground(lipgloss.AdaptiveColor{Light: "243", Dark: "250"})
 
 	notInstalledStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("241")).
+				Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}).
 				Italic(true)
 )
 
@@ -55,94 +46,106 @@ type menuItem struct {
 	title       string
 	description string
 	integration string // integration name for loading model config, empty if not an integration
-	isRunModel  bool   // true for the "Run a model" option
-	isOthers    bool   // true for the "Others..." toggle item
+	isRunModel  bool
+	isOthers    bool
 }
 
 var mainMenuItems = []menuItem{
 	{
 		title:       "Run a model",
-		description: "Start an interactive chat with a local model",
+		description: "Start an interactive chat with a model",
 		isRunModel:  true,
 	},
 	{
 		title:       "Launch Claude Code",
-		description: "Open Claude Code AI assistant",
+		description: "Agentic coding across large codebases",
 		integration: "claude",
 	},
 	{
 		title:       "Launch Codex",
-		description: "Open Codex CLI",
+		description: "OpenAI's open-source coding agent",
 		integration: "codex",
 	},
 	{
-		title:       "Launch Open Claw",
-		description: "Open the Open Claw integration",
+		title:       "Launch OpenClaw",
+		description: "Personal AI with 100+ skills",
 		integration: "openclaw",
 	},
 }
 
 var othersMenuItem = menuItem{
-	title:       "Others...",
+	title:       "More...",
 	description: "Show additional integrations",
 	isOthers:    true,
 }
 
-// getOtherIntegrations returns the list of other integrations, filtering out
-// Codex if it's not installed (since it requires npm install).
+// getOtherIntegrations dynamically builds the "Others" list from the integration
+// registry, excluding any integrations already present in the pinned mainMenuItems.
 func getOtherIntegrations() []menuItem {
-	return []menuItem{
-		{
-			title:       "Launch Droid",
-			description: "Open Droid integration",
-			integration: "droid",
-		},
-		{
-			title:       "Launch Open Code",
-			description: "Open Open Code integration",
-			integration: "opencode",
-		},
-		{
-			title:       "Launch Pi",
-			description: "Open Pi coding agent",
-			integration: "pi",
-		},
+	pinned := map[string]bool{
+		"run": true, // not an integration but in the pinned list
 	}
+	for _, item := range mainMenuItems {
+		if item.integration != "" {
+			pinned[item.integration] = true
+		}
+	}
+
+	var others []menuItem
+	for _, info := range config.ListIntegrationInfos() {
+		if pinned[info.Name] {
+			continue
+		}
+		desc := info.Description
+		if desc == "" {
+			desc = "Open " + info.DisplayName + " integration"
+		}
+		others = append(others, menuItem{
+			title:       "Launch " + info.DisplayName,
+			description: desc,
+			integration: info.Name,
+		})
+	}
+	return others
 }
 
 type model struct {
 	items           []menuItem
 	cursor          int
 	quitting        bool
-	selected        bool            // true if user made a selection (enter/space)
-	changeModel     bool            // true if user pressed right arrow to change model
-	showOthers      bool            // true if "Others..." is expanded
-	availableModels map[string]bool // cache of available model names
+	selected        bool
+	changeModel     bool
+	changeModels    []string // multi-select result for Editor integrations
+	showOthers      bool
+	availableModels map[string]bool
 	err             error
 
-	// Modal state
-	showingModal  bool          // true when model picker modal is visible
-	modalSelector selectorModel // the selector model for the modal
-	modalItems    []SelectItem  // cached items for the modal
+	showingModal  bool
+	modalSelector selectorModel
+	modalItems    []SelectItem
 
-	// Sign-in dialog state
-	showingSignIn   bool   // true when sign-in dialog is visible
-	signInURL       string // URL for sign-in
-	signInModel     string // model that requires sign-in
-	signInSpinner   int    // spinner frame index
+	showingMultiModal  bool
+	multiModalSelector multiSelectorModel
+
+	showingSignIn   bool
+	signInURL       string
+	signInModel     string
+	signInSpinner   int
 	signInFromModal bool   // true if sign-in was triggered from modal (not main menu)
+
+	width     int    // terminal width from WindowSizeMsg
+	statusMsg string // temporary status message shown near help text
 }
 
-// signInTickMsg is sent to animate the sign-in spinner
 type signInTickMsg struct{}
 
-// signInCheckMsg is sent to check if sign-in is complete
 type signInCheckMsg struct {
 	signedIn bool
 	userName string
 }
 
-// modelExists checks if a model exists in the cached available models.
+type clearStatusMsg struct{}
+
 func (m *model) modelExists(name string) bool {
 	if m.availableModels == nil || name == "" {
 		return false
@@ -159,27 +162,52 @@ func (m *model) modelExists(name string) bool {
 	return false
 }
 
-// buildModalItems creates the list of models for the modal selector.
 func (m *model) buildModalItems() []SelectItem {
 	modelItems, _ := config.GetModelItems(context.Background())
-	var items []SelectItem
-	for _, item := range modelItems {
-		items = append(items, SelectItem{Name: item.Name, Description: item.Description})
-	}
-	return items
+	return ReorderItems(ConvertItems(modelItems))
 }
 
-// openModelModal opens the model picker modal.
-func (m *model) openModelModal() {
+func (m *model) openModelModal(currentModel string) {
 	m.modalItems = m.buildModalItems()
-	m.modalSelector = selectorModel{
-		title: "Select model:",
-		items: m.modalItems,
+	cursor := 0
+	if currentModel != "" {
+		for i, item := range m.modalItems {
+			if item.Name == currentModel || strings.HasPrefix(item.Name, currentModel+":") || strings.HasPrefix(currentModel, item.Name+":") {
+				cursor = i
+				break
+			}
+		}
 	}
+	m.modalSelector = selectorModel{
+		title:    "Select model:",
+		items:    m.modalItems,
+		cursor:   cursor,
+		helpText: "↑/↓ navigate • enter select • ← back",
+	}
+	m.modalSelector.updateScroll(m.modalSelector.otherStart())
 	m.showingModal = true
 }
 
-// isCloudModel returns true if the model name indicates a cloud model.
+func (m *model) openMultiModelModal(integration string) {
+	items := m.buildModalItems()
+	var preChecked []string
+	if models := config.IntegrationModels(integration); len(models) > 0 {
+		preChecked = models
+	}
+	m.multiModalSelector = newMultiSelectorModel("Select models:", items, preChecked)
+	// Set cursor to the first pre-checked (last used) model
+	if len(preChecked) > 0 {
+		for i, item := range items {
+			if item.Name == preChecked[0] {
+				m.multiModalSelector.cursor = i
+				m.multiModalSelector.updateScroll(m.multiModalSelector.otherStart())
+				break
+			}
+		}
+	}
+	m.showingMultiModal = true
+}
+
 func isCloudModel(name string) bool {
 	return strings.HasSuffix(name, ":cloud")
 }
@@ -196,7 +224,7 @@ func (m *model) checkCloudSignIn(modelName string, fromModal bool) tea.Cmd {
 	}
 	user, err := client.Whoami(context.Background())
 	if err == nil && user != nil && user.Name != "" {
-		return nil // Already signed in
+		return nil
 	}
 	var aErr api.AuthorizationError
 	if errors.As(err, &aErr) && aErr.SigninURL != "" {
@@ -215,23 +243,13 @@ func (m *model) startSignIn(modelName, signInURL string, fromModal bool) tea.Cmd
 	m.signInSpinner = 0
 	m.signInFromModal = fromModal
 
-	// Open browser (best effort)
-	switch runtime.GOOS {
-	case "darwin":
-		_ = exec.Command("open", signInURL).Start()
-	case "linux":
-		_ = exec.Command("xdg-open", signInURL).Start()
-	case "windows":
-		_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", signInURL).Start()
-	}
+	config.OpenBrowser(signInURL)
 
-	// Start the spinner tick
 	return tea.Tick(200*time.Millisecond, func(t time.Time) tea.Msg {
 		return signInTickMsg{}
 	})
 }
 
-// checkSignIn checks if the user has completed sign-in.
 func checkSignIn() tea.Msg {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -244,7 +262,6 @@ func checkSignIn() tea.Msg {
 	return signInCheckMsg{signedIn: false}
 }
 
-// loadAvailableModels fetches and caches the list of available models.
 func (m *model) loadAvailableModels() {
 	m.availableModels = make(map[string]bool)
 	client, err := api.ClientFromEnvironment()
@@ -266,24 +283,17 @@ func (m *model) buildItems() {
 	m.items = append(m.items, mainMenuItems...)
 
 	if m.showOthers {
-		// Change "Others..." to "Hide others..."
-		hideItem := menuItem{
-			title:       "Hide others...",
-			description: "Hide additional integrations",
-			isOthers:    true,
-		}
-		m.items = append(m.items, hideItem)
 		m.items = append(m.items, others...)
 	} else {
 		m.items = append(m.items, othersMenuItem)
 	}
 }
 
-// isOthersIntegration returns true if the integration is in the "Others" menu
 func isOthersIntegration(name string) bool {
-	switch name {
-	case "droid", "opencode":
-		return true
+	for _, item := range getOtherIntegrations() {
+		if item.integration == name {
+			return true
+		}
 	}
 	return false
 }
@@ -294,7 +304,6 @@ func initialModel() model {
 	}
 	m.loadAvailableModels()
 
-	// Check last selection to determine if we need to expand "Others"
 	lastSelection := config.LastSelection()
 	if isOthersIntegration(lastSelection) {
 		m.showOthers = true
@@ -302,7 +311,6 @@ func initialModel() model {
 
 	m.buildItems()
 
-	// Position cursor on last selection
 	if lastSelection != "" {
 		for i, item := range m.items {
 			if lastSelection == "run" && item.isRunModel {
@@ -323,18 +331,29 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	// Handle sign-in dialog
+	if wmsg, ok := msg.(tea.WindowSizeMsg); ok {
+		wasSet := m.width > 0
+		m.width = wmsg.Width
+		if wasSet {
+			return m, tea.EnterAltScreen
+		}
+		return m, nil
+	}
+
+	if _, ok := msg.(clearStatusMsg); ok {
+		m.statusMsg = ""
+		return m, nil
+	}
+
 	if m.showingSignIn {
 		switch msg := msg.(type) {
 		case tea.KeyMsg:
 			switch msg.Type {
 			case tea.KeyCtrlC, tea.KeyEsc:
-				// Cancel sign-in and go back
 				m.showingSignIn = false
 				if m.signInFromModal {
 					m.showingModal = true
 				}
-				// If from main menu, just return to main menu (default state)
 				return m, nil
 			}
 
@@ -355,13 +374,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case signInCheckMsg:
 			if msg.signedIn {
-				// Sign-in complete - proceed with selection
 				if m.signInFromModal {
-					// Came from modal - set changeModel
 					m.modalSelector.selected = m.signInModel
 					m.changeModel = true
 				} else {
-					// Came from main menu - just select
 					m.selected = true
 				}
 				m.quitting = true
@@ -371,13 +387,44 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Handle modal input if modal is showing
+	if m.showingMultiModal {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			if msg.Type == tea.KeyLeft {
+				m.showingMultiModal = false
+				return m, nil
+			}
+			updated, cmd := m.multiModalSelector.Update(msg)
+			m.multiModalSelector = updated.(multiSelectorModel)
+
+			if m.multiModalSelector.cancelled {
+				m.showingMultiModal = false
+				return m, nil
+			}
+			if m.multiModalSelector.confirmed {
+				var selected []string
+				for _, idx := range m.multiModalSelector.checkOrder {
+					selected = append(selected, m.multiModalSelector.items[idx].Name)
+				}
+				if len(selected) > 0 {
+					m.changeModels = selected
+					m.changeModel = true
+					m.quitting = true
+					return m, tea.Quit
+				}
+				m.multiModalSelector.confirmed = false
+				return m, nil
+			}
+			return m, cmd
+		}
+		return m, nil
+	}
+
 	if m.showingModal {
 		switch msg := msg.(type) {
 		case tea.KeyMsg:
 			switch msg.Type {
-			case tea.KeyCtrlC, tea.KeyEsc:
-				// Close modal without selection
+			case tea.KeyCtrlC, tea.KeyEsc, tea.KeyLeft:
 				m.showingModal = false
 				return m, nil
 
@@ -390,63 +437,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if cmd := m.checkCloudSignIn(m.modalSelector.selected, true); cmd != nil {
 						return m, cmd
 					}
-					// Selection made - exit with changeModel
 					m.changeModel = true
 					m.quitting = true
 					return m, tea.Quit
 				}
 				return m, nil
 
-			case tea.KeyUp:
-				if m.modalSelector.cursor > 0 {
-					m.modalSelector.cursor--
-					if m.modalSelector.cursor < m.modalSelector.scrollOffset {
-						m.modalSelector.scrollOffset = m.modalSelector.cursor
-					}
-				}
-
-			case tea.KeyDown:
-				filtered := m.modalSelector.filteredItems()
-				if m.modalSelector.cursor < len(filtered)-1 {
-					m.modalSelector.cursor++
-					if m.modalSelector.cursor >= m.modalSelector.scrollOffset+maxSelectorItems {
-						m.modalSelector.scrollOffset = m.modalSelector.cursor - maxSelectorItems + 1
-					}
-				}
-
-			case tea.KeyPgUp:
-				filtered := m.modalSelector.filteredItems()
-				m.modalSelector.cursor -= maxSelectorItems
-				if m.modalSelector.cursor < 0 {
-					m.modalSelector.cursor = 0
-				}
-				m.modalSelector.scrollOffset -= maxSelectorItems
-				if m.modalSelector.scrollOffset < 0 {
-					m.modalSelector.scrollOffset = 0
-				}
-				_ = filtered // suppress unused warning
-
-			case tea.KeyPgDown:
-				filtered := m.modalSelector.filteredItems()
-				m.modalSelector.cursor += maxSelectorItems
-				if m.modalSelector.cursor >= len(filtered) {
-					m.modalSelector.cursor = len(filtered) - 1
-				}
-				if m.modalSelector.cursor >= m.modalSelector.scrollOffset+maxSelectorItems {
-					m.modalSelector.scrollOffset = m.modalSelector.cursor - maxSelectorItems + 1
-				}
-
-			case tea.KeyBackspace:
-				if len(m.modalSelector.filter) > 0 {
-					m.modalSelector.filter = m.modalSelector.filter[:len(m.modalSelector.filter)-1]
-					m.modalSelector.cursor = 0
-					m.modalSelector.scrollOffset = 0
-				}
-
-			case tea.KeyRunes:
-				m.modalSelector.filter += string(msg.Runes)
-				m.modalSelector.cursor = 0
-				m.modalSelector.scrollOffset = 0
+			default:
+				// Delegate navigation (up/down/pgup/pgdown/filter/backspace) to selectorModel
+				m.modalSelector.updateNavigation(msg)
 			}
 		}
 		return m, nil
@@ -463,32 +462,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor > 0 {
 				m.cursor--
 			}
+			// Auto-collapse "Others" when cursor moves back into pinned items
+			if m.showOthers && m.cursor < len(mainMenuItems) {
+				m.showOthers = false
+				m.buildItems()
+			}
 
 		case "down", "j":
 			if m.cursor < len(m.items)-1 {
 				m.cursor++
 			}
+			// Auto-expand "Others..." when cursor lands on it
+			if m.cursor < len(m.items) && m.items[m.cursor].isOthers && !m.showOthers {
+				m.showOthers = true
+				m.buildItems()
+				// cursor now points at the first "other" integration
+			}
 
 		case "enter", " ":
 			item := m.items[m.cursor]
 
-			// Handle "Others..." toggle
-			if item.isOthers {
-				m.showOthers = !m.showOthers
-				m.buildItems()
-				// Keep cursor on the Others/Hide item
-				if m.cursor >= len(m.items) {
-					m.cursor = len(m.items) - 1
-				}
-				return m, nil
-			}
-
-			// Don't allow selecting uninstalled integrations
 			if item.integration != "" && !config.IsIntegrationInstalled(item.integration) {
 				return m, nil
 			}
 
-			// Check if a cloud model is configured and needs sign-in
 			var configuredModel string
 			if item.isRunModel {
 				configuredModel = config.LastModel()
@@ -504,14 +501,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case "right", "l":
-			// Allow model change for integrations and run model
 			item := m.items[m.cursor]
 			if item.integration != "" || item.isRunModel {
-				// Don't allow for uninstalled integrations
 				if item.integration != "" && !config.IsIntegrationInstalled(item.integration) {
 					return m, nil
 				}
-				m.openModelModal()
+				if item.integration != "" && config.IsEditorIntegration(item.integration) {
+					m.openMultiModelModal(item.integration)
+				} else {
+					var currentModel string
+					if item.isRunModel {
+						currentModel = config.LastModel()
+					} else if item.integration != "" {
+						currentModel = config.IntegrationModel(item.integration)
+					}
+					m.openModelModal(currentModel)
+				}
 			}
 		}
 	}
@@ -524,21 +529,23 @@ func (m model) View() string {
 		return ""
 	}
 
-	// Render sign-in dialog if showing
 	if m.showingSignIn {
 		return m.renderSignInDialog()
 	}
 
-	// Render modal overlay if showing - replaces main view
+	if m.showingMultiModal {
+		return m.multiModalSelector.View()
+	}
+
 	if m.showingModal {
 		return m.renderModal()
 	}
 
-	s := titleStyle.Render("  Ollama "+versionStyle.Render("v"+version.Version)) + "\n\n"
+	s := selectorTitleStyle.Render("Ollama "+versionStyle.Render(version.Version)) + "\n\n"
 
 	for i, item := range m.items {
-		cursor := "  "
-		style := itemStyle
+		cursor := ""
+		style := menuItemStyle
 		isInstalled := true
 
 		if item.integration != "" {
@@ -548,7 +555,7 @@ func (m model) View() string {
 		if m.cursor == i {
 			cursor = "▸ "
 			if isInstalled {
-				style = selectedStyle
+				style = menuSelectedItemStyle
 			} else {
 				style = greyedSelectedStyle
 			}
@@ -557,119 +564,62 @@ func (m model) View() string {
 		}
 
 		title := item.title
+		var modelSuffix string
 		if item.integration != "" {
 			if !isInstalled {
 				title += " " + notInstalledStyle.Render("(not installed)")
-			} else if mdl := config.IntegrationModel(item.integration); mdl != "" && m.modelExists(mdl) {
-				title += " " + modelStyle.Render("("+mdl+")")
+			} else if m.cursor == i {
+				if mdl := config.IntegrationModel(item.integration); mdl != "" && m.modelExists(mdl) {
+					modelSuffix = " " + modelStyle.Render("("+mdl+")")
+				}
 			}
-		} else if item.isRunModel {
+		} else if item.isRunModel && m.cursor == i {
 			if mdl := config.LastModel(); mdl != "" && m.modelExists(mdl) {
-				title += " " + modelStyle.Render("("+mdl+")")
+				modelSuffix = " " + modelStyle.Render("("+mdl+")")
 			}
 		}
 
-		s += style.Render(cursor+title) + "\n"
-		s += descStyle.Render(item.description) + "\n\n"
+		s += style.Render(cursor+title) + modelSuffix + "\n"
+
+		desc := item.description
+		if !isInstalled && item.integration != "" && m.cursor == i {
+			if hint := config.IntegrationInstallHint(item.integration); hint != "" {
+				desc = hint
+			} else {
+				desc = "not installed"
+			}
+		}
+		s += menuDescStyle.Render(desc) + "\n\n"
 	}
 
-	s += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("↑/↓ navigate • enter select • → change model • esc quit")
+	if m.statusMsg != "" {
+		s += "\n" + lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "210"}).Render(m.statusMsg) + "\n"
+	}
 
+	s += "\n" + selectorHelpStyle.Render("↑/↓ navigate • enter launch • → change model • esc quit")
+
+	if m.width > 0 {
+		return lipgloss.NewStyle().MaxWidth(m.width).Render(s)
+	}
 	return s
 }
 
-// renderModal renders the model picker modal.
 func (m model) renderModal() string {
 	modalStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("245")).
-		Padding(1, 2).
-		MarginLeft(2)
+		PaddingBottom(1).
+		PaddingRight(2)
 
-	var content strings.Builder
-
-	// Title with filter
-	content.WriteString(selectorTitleStyle.Render(m.modalSelector.title))
-	content.WriteString(" ")
-	if m.modalSelector.filter == "" {
-		content.WriteString(selectorFilterStyle.Render("Type to filter..."))
-	} else {
-		content.WriteString(selectorInputStyle.Render(m.modalSelector.filter))
+	s := modalStyle.Render(m.modalSelector.renderContent())
+	if m.width > 0 {
+		return lipgloss.NewStyle().MaxWidth(m.width).Render(s)
 	}
-	content.WriteString("\n\n")
-
-	filtered := m.modalSelector.filteredItems()
-
-	if len(filtered) == 0 {
-		content.WriteString(selectorItemStyle.Render(selectorDescStyle.Render("(no matches)")))
-		content.WriteString("\n")
-	} else {
-		displayCount := min(len(filtered), maxSelectorItems)
-
-		for i := range displayCount {
-			idx := m.modalSelector.scrollOffset + i
-			if idx >= len(filtered) {
-				break
-			}
-			item := filtered[idx]
-
-			if idx == m.modalSelector.cursor {
-				content.WriteString(selectorSelectedItemStyle.Render("▸ " + item.Name))
-			} else {
-				content.WriteString(selectorItemStyle.Render(item.Name))
-			}
-
-			if item.Description != "" {
-				content.WriteString(" ")
-				content.WriteString(selectorDescStyle.Render("- " + item.Description))
-			}
-			content.WriteString("\n")
-		}
-
-		if remaining := len(filtered) - m.modalSelector.scrollOffset - displayCount; remaining > 0 {
-			content.WriteString(selectorMoreStyle.Render(fmt.Sprintf("... and %d more", remaining)))
-			content.WriteString("\n")
-		}
-	}
-
-	content.WriteString("\n")
-	content.WriteString(selectorHelpStyle.Render("↑/↓ navigate • enter select • esc cancel"))
-
-	return modalStyle.Render(content.String())
+	return s
 }
 
-// renderSignInDialog renders the sign-in dialog.
 func (m model) renderSignInDialog() string {
-	dialogStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("245")).
-		Padding(1, 2).
-		MarginLeft(2)
-
-	spinnerFrames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-	spinner := spinnerFrames[m.signInSpinner%len(spinnerFrames)]
-
-	var content strings.Builder
-
-	content.WriteString(selectorTitleStyle.Render("Sign in required"))
-	content.WriteString("\n\n")
-
-	content.WriteString(fmt.Sprintf("To use %s, please sign in.\n\n", selectedStyle.Render(m.signInModel)))
-
-	content.WriteString("Navigate to:\n")
-	content.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("117")).Render("  " + m.signInURL))
-	content.WriteString("\n\n")
-
-	content.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(
-		fmt.Sprintf("%s Waiting for sign in to complete...", spinner)))
-	content.WriteString("\n\n")
-
-	content.WriteString(selectorHelpStyle.Render("esc cancel"))
-
-	return dialogStyle.Render(content.String())
+	return renderSignIn(m.signInModel, m.signInURL, m.signInSpinner, m.width)
 }
 
-// Selection represents what the user selected
 type Selection int
 
 const (
@@ -680,14 +630,13 @@ const (
 	SelectionChangeIntegration // Generic change model for integration
 )
 
-// Result contains the selection and any associated data
 type Result struct {
 	Selection   Selection
-	Integration string // integration name if applicable
-	Model       string // model name if selected from modal
+	Integration string   // integration name if applicable
+	Model       string   // model name if selected from single-select modal
+	Models      []string // models selected from multi-select modal (Editor integrations)
 }
 
-// Run starts the TUI and returns the user's selection
 func Run() (Result, error) {
 	m := initialModel()
 	p := tea.NewProgram(m)
@@ -702,14 +651,12 @@ func Run() (Result, error) {
 		return Result{Selection: SelectionNone}, fm.err
 	}
 
-	// User quit without selecting
 	if !fm.selected && !fm.changeModel {
 		return Result{Selection: SelectionNone}, nil
 	}
 
 	item := fm.items[fm.cursor]
 
-	// Handle model change request
 	if fm.changeModel {
 		if item.isRunModel {
 			return Result{
@@ -721,10 +668,10 @@ func Run() (Result, error) {
 			Selection:   SelectionChangeIntegration,
 			Integration: item.integration,
 			Model:       fm.modalSelector.selected,
+			Models:      fm.changeModels,
 		}, nil
 	}
 
-	// Handle selection
 	if item.isRunModel {
 		return Result{Selection: SelectionRunModel}, nil
 	}
