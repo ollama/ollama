@@ -353,8 +353,3 @@ console.log(response.message.content);
 - [Gentoo](https://github.com/gentoo/guru/tree/master/app-misc/ollama)
 - [Flox](https://flox.dev/blog/ollama-part-one)
 - [Guix channel](https://codeberg.org/tusharhero/ollama-guix)
-
-### Other
-
-- [handy-ollama](https://github.com/datawhalechina/handy-ollama) - Chinese tutorial for Ollama by Datawhale
-- [llama.cpp](https://github.com/ggml-org/llama.cpp) - Underlying inference engine, founded by Georgi Gerganov
