@@ -23,6 +23,7 @@ import (
 	_ "github.com/ollama/ollama/ml/backend"
 	"github.com/ollama/ollama/ml/nn/pooling"
 	"github.com/ollama/ollama/model/input"
+	"github.com/ollama/ollama/tokenizer"
 )
 
 var (
@@ -37,6 +38,13 @@ type Model interface {
 
 	Backend() ml.Backend
 	Config() config
+}
+
+// Validator is an optional interface that models can implement to perform
+// validation after tensors have been loaded. If validation fails, model
+// loading will fail with the returned error.
+type Validator interface {
+	Validate() error
 }
 
 // MultimodalProcessor must be implemented by multimodal models.
@@ -116,10 +124,17 @@ func New(modelPath string, params ml.BackendParams) (Model, error) {
 	base := Base{b: b, config: m.Config()}
 	v := reflect.ValueOf(m)
 	v.Elem().Set(populateFields(base, v.Elem()))
+
+	if validator, ok := m.(Validator); ok {
+		if err := validator.Validate(); err != nil {
+			return nil, err
+		}
+	}
+
 	return m, nil
 }
 
-func NewTextProcessor(s string) (TextProcessor, error) {
+func NewTextProcessor(s string) (tokenizer.Tokenizer, error) {
 	r, err := os.Open(s)
 	if err != nil {
 		return nil, err
@@ -136,7 +151,7 @@ func NewTextProcessor(s string) (TextProcessor, error) {
 		return nil, err
 	}
 
-	tp, ok := m.(TextProcessor)
+	tp, ok := m.(tokenizer.Tokenizer)
 	if !ok {
 		return nil, ErrUnsupportedTokenizer
 	}

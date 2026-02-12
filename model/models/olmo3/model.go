@@ -11,6 +11,7 @@ import (
 	"github.com/ollama/ollama/ml/nn/rope"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
+	"github.com/ollama/ollama/tokenizer"
 )
 
 const (
@@ -33,7 +34,7 @@ type Options struct {
 
 type Model struct {
 	model.Base
-	model.TextProcessor
+	tokenizer.Tokenizer
 
 	TokenEmbedding *nn.Embedding `gguf:"token_embd"`
 	Layers         []Layer       `gguf:"blk"`
@@ -44,28 +45,24 @@ type Model struct {
 }
 
 func New(c fs.Config) (model.Model, error) {
-	vocabulary := model.Vocabulary{
-		Values: c.Strings("tokenizer.ggml.tokens"),
-		Scores: c.Floats("tokenizer.ggml.scores"),
-		Types:  c.Ints("tokenizer.ggml.token_type"),
-		Merges: c.Strings("tokenizer.ggml.merges"),
-		AddBOS: c.Bool("tokenizer.ggml.add_bos_token", false),
-		BOS:    []int32{int32(c.Uint("tokenizer.ggml.bos_token_id"))},
-		AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
-		EOS: append(
-			[]int32{int32(c.Uint("tokenizer.ggml.eos_token_id"))},
-			c.Ints("tokenizer.ggml.eos_token_ids")...,
-		),
-	}
-
-	processor := model.NewBytePairEncoding(
-		&vocabulary,
-		"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
-	)
-
 	m := Model{
-		TextProcessor: processor,
-		Layers:        make([]Layer, c.Uint("block_count")),
+		Tokenizer: tokenizer.NewBytePairEncoding(
+			&tokenizer.Vocabulary{
+				Values: c.Strings("tokenizer.ggml.tokens"),
+				Scores: c.Floats("tokenizer.ggml.scores"),
+				Types:  c.Ints("tokenizer.ggml.token_type"),
+				Merges: c.Strings("tokenizer.ggml.merges"),
+				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", false),
+				BOS:    []int32{int32(c.Uint("tokenizer.ggml.bos_token_id"))},
+				AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
+				EOS: append(
+					[]int32{int32(c.Uint("tokenizer.ggml.eos_token_id"))},
+					c.Ints("tokenizer.ggml.eos_token_ids")...,
+				),
+			},
+			"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+		),
+		Layers: make([]Layer, c.Uint("block_count")),
 		Options: Options{
 			hiddenSize:            int(c.Uint("embedding_length")),
 			numHeads:              int(c.Uint("attention.head_count")),

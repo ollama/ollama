@@ -21,6 +21,7 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/x/imagegen"
 )
 
 type LlmRequest struct {
@@ -192,6 +193,25 @@ func (s *Scheduler) processPending(ctx context.Context) {
 							maxRunners = uint(defaultModelsPerGPU * max(len(gpus), 1))
 						}
 						slog.Debug("updating default concurrency", "OLLAMA_MAX_LOADED_MODELS", maxRunners, "gpu_count", len(gpus))
+					}
+
+					// Check for image generation models - all use MLX runner
+					if slices.Contains(pending.model.Config.Capabilities, "image") {
+						if s.loadMLX(pending) {
+							break
+						}
+						continue
+					}
+
+					// Check for experimental safetensors LLM models
+					if pending.model.Config.ModelFormat == "safetensors" {
+						if slices.Contains(pending.model.Config.Capabilities, "completion") {
+							// LLM model with safetensors format - use MLX runner
+							if s.loadMLX(pending) {
+								break
+							}
+							continue
+						}
 					}
 
 					// Load model for fitting
@@ -397,9 +417,9 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo
 		numParallel = 1
 	}
 
-	// `mllama`, `qwen3vl`, and `qwen3vlmoe` are snowflakes and uses an encoder cache which cannot be used with num_parallel > 1
+	// Some architectures are not safe with num_parallel > 1.
 	// ref: https://github.com/ollama/ollama/issues/4165
-	if slices.Contains([]string{"mllama", "qwen3vl", "qwen3vlmoe"}, req.model.Config.ModelFamily) && numParallel != 1 {
+	if slices.Contains([]string{"mllama", "qwen3vl", "qwen3vlmoe", "qwen3next", "lfm2", "lfm2moe"}, req.model.Config.ModelFamily) && numParallel != 1 {
 		numParallel = 1
 		slog.Warn("model architecture does not currently support parallel requests", "architecture", req.model.Config.ModelFamily)
 	}
@@ -541,6 +561,58 @@ iGPUScan:
 	}()
 
 	return false
+}
+
+// loadMLX loads an experimental safetensors model using the unified MLX runner.
+// This supports both LLM (completion) and image generation models.
+func (s *Scheduler) loadMLX(req *LlmRequest) bool {
+	// Determine mode based on capabilities
+	var mode imagegen.ModelMode
+	if slices.Contains(req.model.Config.Capabilities, "image") {
+		mode = imagegen.ModeImageGen
+	} else {
+		mode = imagegen.ModeLLM
+	}
+
+	// Use model name for MLX (it resolves manifests by name, not file path)
+	modelName := req.model.ShortName
+	server, err := imagegen.NewServer(modelName, mode)
+	if err != nil {
+		req.errCh <- err
+		return true
+	}
+
+	sessionDuration := envconfig.KeepAlive()
+	if req.sessionDuration != nil {
+		sessionDuration = req.sessionDuration.Duration
+	}
+
+	runner := &runnerRef{
+		model:           req.model,
+		modelPath:       req.model.ModelPath,
+		llama:           server,
+		Options:         &req.opts,
+		loading:         false,
+		sessionDuration: sessionDuration,
+		totalSize:       server.TotalSize(),
+		vramSize:        server.VRAMSize(),
+	}
+
+	s.loadedMu.Lock()
+	s.loaded[req.model.ModelPath] = runner
+	s.loadedMu.Unlock()
+
+	// Set up expiration timer
+	runner.refMu.Lock()
+	if sessionDuration > 0 {
+		runner.expireTimer = time.AfterFunc(sessionDuration, func() {
+			s.expiredCh <- runner
+		})
+	}
+	runner.refMu.Unlock()
+
+	req.useLoadedRunner(runner, s.finishedReqCh)
+	return true
 }
 
 func (s *Scheduler) updateFreeSpace(allGpus []ml.DeviceInfo) {

@@ -1,5 +1,5 @@
 #!/bin/sh
-# This script installs Ollama on Linux.
+# This script installs Ollama on Linux and macOS.
 # It detects the current operating system architecture and installs the appropriate version of Ollama.
 
 set -eu
@@ -27,14 +27,70 @@ require() {
     echo $MISSING
 }
 
-[ "$(uname -s)" = "Linux" ] || error 'This script is intended to run on Linux only.'
-
+OS="$(uname -s)"
 ARCH=$(uname -m)
 case "$ARCH" in
     x86_64) ARCH="amd64" ;;
     aarch64|arm64) ARCH="arm64" ;;
     *) error "Unsupported architecture: $ARCH" ;;
 esac
+
+VER_PARAM="${OLLAMA_VERSION:+?version=$OLLAMA_VERSION}"
+
+###########################################
+# macOS
+###########################################
+
+if [ "$OS" = "Darwin" ]; then
+    NEEDS=$(require curl unzip)
+    if [ -n "$NEEDS" ]; then
+        status "ERROR: The following tools are required but missing:"
+        for NEED in $NEEDS; do
+            echo "  - $NEED"
+        done
+        exit 1
+    fi
+
+    DOWNLOAD_URL="https://ollama.com/download/Ollama-darwin.zip${VER_PARAM}"
+
+    if pgrep -x Ollama >/dev/null 2>&1; then
+        status "Stopping running Ollama instance..."
+        pkill -x Ollama 2>/dev/null || true
+        sleep 2
+    fi
+
+    if [ -d "/Applications/Ollama.app" ]; then
+        status "Removing existing Ollama installation..."
+        rm -rf "/Applications/Ollama.app"
+    fi
+
+    status "Downloading Ollama for macOS..."
+    curl --fail --show-error --location --progress-bar \
+        -o "$TEMP_DIR/Ollama-darwin.zip" "$DOWNLOAD_URL"
+
+    status "Installing Ollama to /Applications..."
+    unzip -q "$TEMP_DIR/Ollama-darwin.zip" -d "$TEMP_DIR"
+    mv "$TEMP_DIR/Ollama.app" "/Applications/"
+
+    status "Adding 'ollama' command to PATH (may require password)..."
+    mkdir -p "/usr/local/bin" 2>/dev/null || sudo mkdir -p "/usr/local/bin"
+    ln -sf "/Applications/Ollama.app/Contents/Resources/ollama" "/usr/local/bin/ollama" 2>/dev/null || \
+        sudo ln -sf "/Applications/Ollama.app/Contents/Resources/ollama" "/usr/local/bin/ollama"
+
+    if [ -z "${OLLAMA_NO_START:-}" ]; then
+        status "Starting Ollama..."
+        open -a Ollama --args hidden
+    fi
+
+    status "Install complete. You can now run 'ollama'."
+    exit 0
+fi
+
+###########################################
+# Linux
+###########################################
+
+[ "$OS" = "Linux" ] || error 'This script is intended to run on Linux and macOS only.'
 
 IS_WSL2=false
 
@@ -44,8 +100,6 @@ case "$KERN" in
     *icrosoft) error "Microsoft WSL1 is not currently supported. Please use WSL2 with 'wsl --set-version <distro> 2'" ;;
     *) ;;
 esac
-
-VER_PARAM="${OLLAMA_VERSION:+?version=$OLLAMA_VERSION}"
 
 SUDO=
 if [ "$(id -u)" -ne 0 ]; then
@@ -66,6 +120,36 @@ if [ -n "$NEEDS" ]; then
     exit 1
 fi
 
+# Function to download and extract with fallback from zst to tgz
+download_and_extract() {
+    local url_base="$1"
+    local dest_dir="$2"
+    local filename="$3"
+
+    # Check if .tar.zst is available
+    if curl --fail --silent --head --location "${url_base}/${filename}.tar.zst${VER_PARAM}" >/dev/null 2>&1; then
+        # zst file exists - check if we have zstd tool
+        if ! available zstd; then
+            error "This version requires zstd for extraction. Please install zstd and try again:
+  - Debian/Ubuntu: sudo apt-get install zstd
+  - RHEL/CentOS/Fedora: sudo dnf install zstd
+  - Arch: sudo pacman -S zstd"
+        fi
+
+        status "Downloading ${filename}.tar.zst"
+        curl --fail --show-error --location --progress-bar \
+            "${url_base}/${filename}.tar.zst${VER_PARAM}" | \
+            zstd -d | $SUDO tar -xf - -C "${dest_dir}"
+        return 0
+    fi
+
+    # Fall back to .tgz for older versions
+    status "Downloading ${filename}.tgz"
+    curl --fail --show-error --location --progress-bar \
+        "${url_base}/${filename}.tgz${VER_PARAM}" | \
+        $SUDO tar -xzf - -C "${dest_dir}"
+}
+
 for BINDIR in /usr/local/bin /usr/bin /bin; do
     echo $PATH | grep -q $BINDIR && break || continue
 done
@@ -78,10 +162,7 @@ fi
 status "Installing ollama to $OLLAMA_INSTALL_DIR"
 $SUDO install -o0 -g0 -m755 -d $BINDIR
 $SUDO install -o0 -g0 -m755 -d "$OLLAMA_INSTALL_DIR/lib/ollama"
-status "Downloading Linux ${ARCH} bundle"
-curl --fail --show-error --location --progress-bar \
-    "https://ollama.com/download/ollama-linux-${ARCH}.tgz${VER_PARAM}" | \
-    $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}"
 
 if [ "$OLLAMA_INSTALL_DIR/bin/ollama" != "$BINDIR/ollama" ] ; then
     status "Making ollama accessible in the PATH in $BINDIR"
@@ -91,15 +172,9 @@ fi
 # Check for NVIDIA JetPack systems with additional downloads
 if [ -f /etc/nv_tegra_release ] ; then
     if grep R36 /etc/nv_tegra_release > /dev/null ; then
-        status "Downloading JetPack 6 components"
-        curl --fail --show-error --location --progress-bar \
-            "https://ollama.com/download/ollama-linux-${ARCH}-jetpack6.tgz${VER_PARAM}" | \
-            $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+        download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-jetpack6"
     elif grep R35 /etc/nv_tegra_release > /dev/null ; then
-        status "Downloading JetPack 5 components"
-        curl --fail --show-error --location --progress-bar \
-            "https://ollama.com/download/ollama-linux-${ARCH}-jetpack5.tgz${VER_PARAM}" | \
-            $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+        download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-jetpack5"
     else
         warning "Unsupported JetPack version detected.  GPU may not be supported"
     fi
@@ -222,10 +297,7 @@ if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdg
 fi
 
 if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
-    status "Downloading Linux ROCm ${ARCH} bundle"
-    curl --fail --show-error --location --progress-bar \
-        "https://ollama.com/download/ollama-linux-${ARCH}-rocm.tgz${VER_PARAM}" | \
-        $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+    download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-rocm"
 
     install_success
     status "AMD GPU ready."
