@@ -20,7 +20,7 @@ func TestStatusHandler(t *testing.T) {
 		t.Fatalf("expected status 200, got %d", w.Code)
 	}
 
-	var resp api.CloudStatusResponse
+	var resp api.StatusResponse
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatal(err)
 	}

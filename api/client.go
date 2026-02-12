@@ -450,8 +450,8 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 }
 
 // CloudStatusExperimental returns whether cloud features are disabled on the server.
-func (c *Client) CloudStatusExperimental(ctx context.Context) (*CloudStatusResponse, error) {
-	var status CloudStatusResponse
+func (c *Client) CloudStatusExperimental(ctx context.Context) (*StatusResponse, error) {
+	var status StatusResponse
 	if err := c.do(ctx, http.MethodGet, "/api/status", nil, &status); err != nil {
 		return nil, err
 	}

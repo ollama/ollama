@@ -839,8 +839,8 @@ type CloudStatus struct {
 	Source   string `json:"source"`
 }
 
-// CloudStatusResponse is the response from [Client.CloudStatusExperimental].
-type CloudStatusResponse struct {
+// StatusResponse is the response from [Client.CloudStatusExperimental].
+type StatusResponse struct {
 	Cloud CloudStatus `json:"cloud"`
 }
 

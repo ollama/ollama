@@ -1852,7 +1852,7 @@ func streamResponse(c *gin.Context, ch chan any) {
 
 func (s *Server) StatusHandler(c *gin.Context) {
 	disabled, source := internalcloud.Status()
-	c.JSON(http.StatusOK, api.CloudStatusResponse{
+	c.JSON(http.StatusOK, api.StatusResponse{
 		Cloud: api.CloudStatus{
 			Disabled: disabled,
 			Source:   source,
