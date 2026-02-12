@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
+	internalcloud "github.com/ollama/ollama/internal/cloud"
 )
 
 func TestStatusHandler(t *testing.T) {
@@ -61,7 +62,7 @@ func TestCloudDisabledBlocksRemoteOperations(t *testing.T) {
 		if w.Code != http.StatusForbidden {
 			t.Fatalf("expected status 403, got %d", w.Code)
 		}
-		if got := w.Body.String(); got != `{"error":"ollama cloud is disabled: remote inference is unavailable"}` {
+		if got := w.Body.String(); got != `{"error":"`+internalcloud.DisabledError(cloudErrRemoteInferenceUnavailable)+`"}` {
 			t.Fatalf("unexpected response: %s", got)
 		}
 	})
@@ -74,7 +75,7 @@ func TestCloudDisabledBlocksRemoteOperations(t *testing.T) {
 		if w.Code != http.StatusForbidden {
 			t.Fatalf("expected status 403, got %d", w.Code)
 		}
-		if got := w.Body.String(); got != `{"error":"ollama cloud is disabled: remote inference is unavailable"}` {
+		if got := w.Body.String(); got != `{"error":"`+internalcloud.DisabledError(cloudErrRemoteInferenceUnavailable)+`"}` {
 			t.Fatalf("unexpected response: %s", got)
 		}
 	})
@@ -86,7 +87,7 @@ func TestCloudDisabledBlocksRemoteOperations(t *testing.T) {
 		if w.Code != http.StatusForbidden {
 			t.Fatalf("expected status 403, got %d", w.Code)
 		}
-		if got := w.Body.String(); got != `{"error":"ollama cloud is disabled: remote model details are unavailable"}` {
+		if got := w.Body.String(); got != `{"error":"`+internalcloud.DisabledError(cloudErrRemoteModelDetailsUnavailable)+`"}` {
 			t.Fatalf("unexpected response: %s", got)
 		}
 	})
