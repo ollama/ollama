@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -70,9 +71,15 @@ func (o *OpenCode) Run(model string, args []string) error {
 	if config, err := loadIntegration("opencode"); err == nil && len(config.Models) > 0 {
 		models = config.Models
 	}
-	if filtered := filterDisabledCloudModels(models); len(filtered) != len(models) {
-		models = filtered
-		_ = SaveIntegration("opencode", models)
+	var err error
+	models, err = resolveEditorModels("opencode", models, func() ([]string, error) {
+		return selectModels(context.Background(), "opencode", "")
+	})
+	if errors.Is(err, errCancelled) {
+		return nil
+	}
+	if err != nil {
+		return err
 	}
 	if err := o.Edit(models); err != nil {
 		return fmt.Errorf("setup failed: %w", err)

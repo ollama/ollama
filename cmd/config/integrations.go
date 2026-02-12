@@ -701,6 +701,29 @@ func SaveAndEditIntegration(name string, models []string) error {
 	return nil
 }
 
+// resolveEditorModels filters out cloud-disabled models before editor launch.
+// If no models remain, it invokes picker to collect a valid replacement list.
+func resolveEditorModels(name string, models []string, picker func() ([]string, error)) ([]string, error) {
+	filtered := filterDisabledCloudModels(models)
+	if len(filtered) != len(models) {
+		if err := SaveIntegration(name, filtered); err != nil {
+			return nil, fmt.Errorf("failed to save: %w", err)
+		}
+	}
+	if len(filtered) > 0 {
+		return filtered, nil
+	}
+
+	selected, err := picker()
+	if err != nil {
+		return nil, err
+	}
+	if err := SaveIntegration(name, selected); err != nil {
+		return nil, fmt.Errorf("failed to save: %w", err)
+	}
+	return selected, nil
+}
+
 // ConfigureIntegrationWithSelectors allows the user to select/change the model for an integration using custom selectors.
 func ConfigureIntegrationWithSelectors(ctx context.Context, name string, single SingleSelector, multi MultiSelector) error {
 	r, ok := integrations[name]
@@ -829,6 +852,10 @@ Examples:
 				return fmt.Errorf("unknown integration: %s", name)
 			}
 
+			if modelFlag != "" && IsCloudModelDisabled(cmd.Context(), modelFlag) {
+				modelFlag = ""
+			}
+
 			// Handle AliasConfigurer integrations (claude, codex)
 			if ac, ok := r.(AliasConfigurer); ok {
 				client, err := api.ClientFromEnvironment()
@@ -940,6 +967,17 @@ Examples:
 						if m != modelFlag {
 							models = append(models, m)
 						}
+					}
+				}
+				models = filterDisabledCloudModels(models)
+				if len(models) == 0 {
+					var err error
+					models, err = selectModels(cmd.Context(), name, "")
+					if errors.Is(err, errCancelled) {
+						return nil
+					}
+					if err != nil {
+						return err
 					}
 				}
 			} else if saved, err := loadIntegration(name); err == nil && len(saved.Models) > 0 && !configFlag {

@@ -16,6 +16,28 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type stubEditorRunner struct {
+	edited   [][]string
+	ranModel string
+}
+
+func (s *stubEditorRunner) Run(model string, args []string) error {
+	s.ranModel = model
+	return nil
+}
+
+func (s *stubEditorRunner) String() string { return "StubEditor" }
+
+func (s *stubEditorRunner) Paths() []string { return nil }
+
+func (s *stubEditorRunner) Edit(models []string) error {
+	cloned := append([]string(nil), models...)
+	s.edited = append(s.edited, cloned)
+	return nil
+}
+
+func (s *stubEditorRunner) Models() []string { return nil }
+
 func TestIntegrationLookup(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -698,6 +720,137 @@ func TestEditorIntegration_SavedConfigSkipsSelection(t *testing.T) {
 	}
 	if saved.Models[0] != "llama3.2" {
 		t.Errorf("expected llama3.2, got %s", saved.Models[0])
+	}
+}
+
+func TestResolveEditorLaunchModels_PicksWhenAllFiltered(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status":
+			fmt.Fprintf(w, `{"disabled":true}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	pickerCalled := false
+	models, err := resolveEditorModels("opencode", []string{"glm-5:cloud"}, func() ([]string, error) {
+		pickerCalled = true
+		return []string{"llama3.2"}, nil
+	})
+	if err != nil {
+		t.Fatalf("resolveEditorLaunchModels returned error: %v", err)
+	}
+	if !pickerCalled {
+		t.Fatal("expected model picker to be called when all models are filtered")
+	}
+	if diff := cmp.Diff([]string{"llama3.2"}, models); diff != "" {
+		t.Fatalf("resolved models mismatch (-want +got):\n%s", diff)
+	}
+
+	saved, err := loadIntegration("opencode")
+	if err != nil {
+		t.Fatalf("failed to reload integration config: %v", err)
+	}
+	if diff := cmp.Diff([]string{"llama3.2"}, saved.Models); diff != "" {
+		t.Fatalf("saved models mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolveEditorLaunchModels_FiltersAndSkipsPickerWhenLocalRemains(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status":
+			fmt.Fprintf(w, `{"disabled":true}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	pickerCalled := false
+	models, err := resolveEditorModels("droid", []string{"llama3.2", "glm-5:cloud"}, func() ([]string, error) {
+		pickerCalled = true
+		return []string{"qwen3:8b"}, nil
+	})
+	if err != nil {
+		t.Fatalf("resolveEditorLaunchModels returned error: %v", err)
+	}
+	if pickerCalled {
+		t.Fatal("picker should not be called when a local model remains")
+	}
+	if diff := cmp.Diff([]string{"llama3.2"}, models); diff != "" {
+		t.Fatalf("resolved models mismatch (-want +got):\n%s", diff)
+	}
+
+	saved, err := loadIntegration("droid")
+	if err != nil {
+		t.Fatalf("failed to reload integration config: %v", err)
+	}
+	if diff := cmp.Diff([]string{"llama3.2"}, saved.Models); diff != "" {
+		t.Fatalf("saved models mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestLaunchCmd_ModelFlagFiltersDisabledCloudFromSavedConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	if err := SaveIntegration("stubeditor", []string{"glm-5:cloud"}); err != nil {
+		t.Fatalf("failed to seed saved config: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status":
+			fmt.Fprintf(w, `{"disabled":true}`)
+		case "/api/show":
+			fmt.Fprintf(w, `{"model":"llama3.2"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	stub := &stubEditorRunner{}
+	old, existed := integrations["stubeditor"]
+	integrations["stubeditor"] = stub
+	defer func() {
+		if existed {
+			integrations["stubeditor"] = old
+		} else {
+			delete(integrations, "stubeditor")
+		}
+	}()
+
+	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command) {})
+	cmd.SetArgs([]string{"stubeditor", "--model", "llama3.2"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("launch command failed: %v", err)
+	}
+
+	saved, err := loadIntegration("stubeditor")
+	if err != nil {
+		t.Fatalf("failed to reload integration config: %v", err)
+	}
+	if diff := cmp.Diff([]string{"llama3.2"}, saved.Models); diff != "" {
+		t.Fatalf("saved models mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff([][]string{{"llama3.2"}}, stub.edited); diff != "" {
+		t.Fatalf("editor models mismatch (-want +got):\n%s", diff)
+	}
+	if stub.ranModel != "llama3.2" {
+		t.Fatalf("expected launch to run with llama3.2, got %q", stub.ranModel)
 	}
 }
 
