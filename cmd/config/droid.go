@@ -51,6 +51,12 @@ func (d *Droid) Run(model string, args []string) error {
 	if config, err := loadIntegration("droid"); err == nil && len(config.Models) > 0 {
 		models = config.Models
 	}
+	if IsCloudDisabled() {
+		if filtered := filterCloudModelNames(models); len(filtered) != len(models) {
+			models = filtered
+			_ = SaveIntegration("droid", models)
+		}
+	}
 	if err := d.Edit(models); err != nil {
 		return fmt.Errorf("setup failed: %w", err)
 	}

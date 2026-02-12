@@ -70,6 +70,12 @@ func (o *OpenCode) Run(model string, args []string) error {
 	if config, err := loadIntegration("opencode"); err == nil && len(config.Models) > 0 {
 		models = config.Models
 	}
+	if IsCloudDisabled() {
+		if filtered := filterCloudModelNames(models); len(filtered) != len(models) {
+			models = filtered
+			_ = SaveIntegration("opencode", models)
+		}
+	}
 	if err := o.Edit(models); err != nil {
 		return fmt.Errorf("setup failed: %w", err)
 	}

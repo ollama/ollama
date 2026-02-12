@@ -220,6 +220,17 @@ func cloudStatusDisabled(client *api.Client) bool {
 	return status.Disabled
 }
 
+func cloudModelDisabled(name string) bool {
+	if !isCloudModel(name) {
+		return false
+	}
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return false
+	}
+	return cloudStatusDisabled(client)
+}
+
 // checkCloudSignIn checks if a cloud model needs sign-in.
 // Returns a command to start sign-in if needed, or nil if already signed in.
 func (m *model) checkCloudSignIn(modelName string, fromModal bool) tea.Cmd {
@@ -509,6 +520,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if cmd := m.checkCloudSignIn(configuredModel, false); cmd != nil {
 				return m, cmd
+			}
+
+			if configuredModel != "" && isCloudModel(configuredModel) && cloudModelDisabled(configuredModel) {
+				if item.integration != "" && config.IsEditorIntegration(item.integration) {
+					m.openMultiModelModal(item.integration)
+				} else {
+					m.openModelModal(configuredModel)
+				}
+				return m, nil
 			}
 
 			m.selected = true

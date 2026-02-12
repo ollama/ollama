@@ -1949,7 +1949,7 @@ func runInteractiveTUI(cmd *cobra.Command) {
 		launchIntegration := func(name string) bool {
 			// If not configured or model no longer exists, prompt for model selection
 			configuredModel := config.IntegrationModel(name)
-			if configuredModel == "" || !config.ModelExists(cmd.Context(), configuredModel) {
+			if configuredModel == "" || !config.ModelExists(cmd.Context(), configuredModel) || config.IsCloudModelDisabled(cmd.Context(), configuredModel) {
 				err := config.ConfigureIntegrationWithSelectors(cmd.Context(), name, singleSelector, multiSelector)
 				if errors.Is(err, config.ErrCancelled) {
 					return false // Return to main menu
@@ -1999,6 +1999,9 @@ func runInteractiveTUI(cmd *cobra.Command) {
 					continue
 				}
 			}
+			if config.IsCloudModelDisabled(cmd.Context(), modelName) {
+				continue // Return to main menu
+			}
 			runModel(modelName)
 		case tui.SelectionIntegration:
 			_ = config.SetLastSelection(result.Integration)
@@ -2008,6 +2011,17 @@ func runInteractiveTUI(cmd *cobra.Command) {
 		case tui.SelectionChangeIntegration:
 			_ = config.SetLastSelection(result.Integration)
 			if len(result.Models) > 0 {
+				// Filter out cloud-disabled models
+				var filtered []string
+				for _, m := range result.Models {
+					if !config.IsCloudModelDisabled(cmd.Context(), m) {
+						filtered = append(filtered, m)
+					}
+				}
+				if len(filtered) == 0 {
+					continue
+				}
+				result.Models = filtered
 				// Multi-select from modal (Editor integrations)
 				if err := config.SaveAndEditIntegration(result.Integration, result.Models); err != nil {
 					fmt.Fprintf(os.Stderr, "Error configuring %s: %v\n", result.Integration, err)
@@ -2017,8 +2031,11 @@ func runInteractiveTUI(cmd *cobra.Command) {
 					fmt.Fprintf(os.Stderr, "Error launching %s: %v\n", result.Integration, err)
 				}
 			} else if result.Model != "" {
+				if config.IsCloudModelDisabled(cmd.Context(), result.Model) {
+					continue
+				}
 				// Single-select from modal - save and launch
-				if err := config.SaveIntegrationModel(result.Integration, result.Model); err != nil {
+				if err := config.SaveIntegration(result.Integration, []string{result.Model}); err != nil {
 					fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
 					continue
 				}

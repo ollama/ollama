@@ -683,25 +683,6 @@ func LaunchIntegrationWithModel(name, modelName string) error {
 	return runIntegration(name, modelName, nil)
 }
 
-// SaveIntegrationModel saves the model for an integration.
-func SaveIntegrationModel(name, modelName string) error {
-	// Load existing models and prepend the new one
-	var models []string
-	if existing, err := loadIntegration(name); err == nil && len(existing.Models) > 0 {
-		models = existing.Models
-		// Remove the model if it already exists
-		for i, m := range models {
-			if m == modelName {
-				models = append(models[:i], models[i+1:]...)
-				break
-			}
-		}
-	}
-	// Prepend the new model
-	models = append([]string{modelName}, models...)
-	return saveIntegration(name, models)
-}
-
 // SaveAndEditIntegration saves the models for an Editor integration and runs its Edit method
 // to write the integration's config files.
 func SaveAndEditIntegration(name string, models []string) error {
@@ -709,7 +690,7 @@ func SaveAndEditIntegration(name string, models []string) error {
 	if !ok {
 		return fmt.Errorf("unknown integration: %s", name)
 	}
-	if err := saveIntegration(name, models); err != nil {
+	if err := SaveIntegration(name, models); err != nil {
 		return fmt.Errorf("failed to save: %w", err)
 	}
 	if editor, isEditor := r.(Editor); isEditor {
@@ -754,7 +735,7 @@ func ConfigureIntegrationWithSelectors(ctx context.Context, name string, single 
 		}
 	}
 
-	if err := saveIntegration(name, models); err != nil {
+	if err := SaveIntegration(name, models); err != nil {
 		return fmt.Errorf("failed to save: %w", err)
 	}
 
@@ -875,7 +856,7 @@ Examples:
 						model = cfg.Models[0]
 						// AliasConfigurer integrations use single model; sanitize if multiple
 						if len(cfg.Models) > 1 {
-							_ = saveIntegration(name, []string{model})
+							_ = SaveIntegration(name, []string{model})
 						}
 					}
 				}
@@ -923,7 +904,7 @@ Examples:
 				if err := syncAliases(cmd.Context(), client, ac, name, model, existingAliases); err != nil {
 					fmt.Fprintf(os.Stderr, "%sWarning: Could not sync aliases: %v%s\n", ansiGray, err, ansiReset)
 				}
-				if err := saveIntegration(name, []string{model}); err != nil {
+				if err := SaveIntegration(name, []string{model}); err != nil {
 					return fmt.Errorf("failed to save: %w", err)
 				}
 
@@ -962,7 +943,29 @@ Examples:
 					}
 				}
 			} else if saved, err := loadIntegration(name); err == nil && len(saved.Models) > 0 && !configFlag {
-				return runIntegration(name, saved.Models[0], passArgs)
+				savedModels := saved.Models
+				// Filter out cloud-disabled models from saved config
+				if client, cErr := api.ClientFromEnvironment(); cErr == nil {
+					if disabled, _ := cloudStatusDisabled(cmd.Context(), client); disabled {
+						savedModels = filterCloudModelNames(savedModels)
+						if len(savedModels) != len(saved.Models) {
+							_ = SaveIntegration(name, savedModels)
+						}
+					}
+				}
+				if len(savedModels) == 0 {
+					// All saved models were cloud — fall through to picker
+					models, err = selectModels(cmd.Context(), name, "")
+					if errors.Is(err, errCancelled) {
+						return nil
+					}
+					if err != nil {
+						return err
+					}
+				} else {
+					models = savedModels
+					return runIntegration(name, models[0], passArgs)
+				}
 			} else {
 				var err error
 				models, err = selectModels(cmd.Context(), name, "")
@@ -989,7 +992,7 @@ Examples:
 				}
 			}
 
-			if err := saveIntegration(name, models); err != nil {
+			if err := SaveIntegration(name, models); err != nil {
 				return fmt.Errorf("failed to save: %w", err)
 			}
 
@@ -1170,6 +1173,16 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 
 // IsCloudModelDisabled reports whether the given model name looks like a cloud
 // model and cloud features are currently disabled on the server.
+// IsCloudDisabled reports whether cloud features are currently disabled.
+func IsCloudDisabled() bool {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return false
+	}
+	disabled, _ := cloudStatusDisabled(context.Background(), client)
+	return disabled
+}
+
 func IsCloudModelDisabled(ctx context.Context, name string) bool {
 	if !isCloudModelName(name) {
 		return false
@@ -1191,6 +1204,18 @@ func filterCloudModels(existing []modelInfo) []modelInfo {
 	filtered := existing[:0]
 	for _, m := range existing {
 		if !m.Remote {
+			filtered = append(filtered, m)
+		}
+	}
+	return filtered
+}
+
+// filterCloudModelNames removes cloud model names from a string slice.
+// Used by Editor integrations to strip disabled cloud models before writing configs.
+func filterCloudModelNames(models []string) []string {
+	var filtered []string
+	for _, m := range models {
+		if !isCloudModelName(m) {
 			filtered = append(filtered, m)
 		}
 	}
