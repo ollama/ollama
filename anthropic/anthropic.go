@@ -17,6 +17,7 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
+// Error types matching Anthropic API
 type Error struct {
 	Type    string `json:"type"`
 	Message string `json:"message"`
@@ -55,6 +56,9 @@ func NewError(code int, message string) ErrorResponse {
 	}
 }
 
+// Request types
+
+// MessagesRequest represents an Anthropic Messages API request
 type MessagesRequest struct {
 	Model         string          `json:"model"`
 	MaxTokens     int             `json:"max_tokens"`
@@ -71,6 +75,7 @@ type MessagesRequest struct {
 	Metadata      *Metadata       `json:"metadata,omitempty"`
 }
 
+// MessageParam represents a message in the request
 type MessageParam struct {
 	Role    string `json:"role"`    // "user" or "assistant"
 	Content any    `json:"content"` // string or []ContentBlock
@@ -80,20 +85,33 @@ type MessageParam struct {
 // Text and Thinking use pointers so they serialize as the field being present (even if empty)
 // only when set, which is required for SDK streaming accumulation.
 type ContentBlock struct {
-	Type      string       `json:"type"`
-	Text      *string      `json:"text,omitempty"`
-	Citations []Citation   `json:"citations,omitempty"`
-	Source    *ImageSource `json:"source,omitempty"`
-	ID        string       `json:"id,omitempty"`
-	Name      string       `json:"name,omitempty"`
-	Input     any          `json:"input,omitempty"`
-	ToolUseID string       `json:"tool_use_id,omitempty"`
-	Content   any          `json:"content,omitempty"`
-	IsError   bool         `json:"is_error,omitempty"`
-	Thinking  *string      `json:"thinking,omitempty"`
-	Signature string       `json:"signature,omitempty"`
+	Type string `json:"type"` // text, image, tool_use, tool_result, thinking, server_tool_use, web_search_tool_result
+
+	// For text blocks - pointer so field only appears when set (SDK requires it for accumulation)
+	Text *string `json:"text,omitempty"`
+
+	// For text blocks with citations
+	Citations []Citation `json:"citations,omitempty"`
+
+	// For image blocks
+	Source *ImageSource `json:"source,omitempty"`
+
+	// For tool_use and server_tool_use blocks
+	ID    string `json:"id,omitempty"`
+	Name  string `json:"name,omitempty"`
+	Input any    `json:"input,omitempty"`
+
+	// For tool_result and web_search_tool_result blocks
+	ToolUseID string `json:"tool_use_id,omitempty"`
+	Content   any    `json:"content,omitempty"` // string, []ContentBlock, []WebSearchResult, or WebSearchToolResultError
+	IsError   bool   `json:"is_error,omitempty"`
+
+	// For thinking blocks - pointer so field only appears when set (SDK requires it for accumulation)
+	Thinking  *string `json:"thinking,omitempty"`
+	Signature string  `json:"signature,omitempty"`
 }
 
+// Citation represents a citation in a text block
 type Citation struct {
 	Type           string `json:"type"` // "web_search_result_location"
 	URL            string `json:"url"`
@@ -102,6 +120,7 @@ type Citation struct {
 	CitedText      string `json:"cited_text,omitempty"`
 }
 
+// WebSearchResult represents a single web search result
 type WebSearchResult struct {
 	Type             string `json:"type"` // "web_search_result"
 	URL              string `json:"url"`
@@ -110,11 +129,13 @@ type WebSearchResult struct {
 	PageAge          string `json:"page_age,omitempty"`
 }
 
+// WebSearchToolResultError represents an error from web search
 type WebSearchToolResultError struct {
 	Type      string `json:"type"` // "web_search_tool_result_error"
 	ErrorCode string `json:"error_code"`
 }
 
+// ImageSource represents the source of an image
 type ImageSource struct {
 	Type      string `json:"type"` // "base64" or "url"
 	MediaType string `json:"media_type,omitempty"`
@@ -122,18 +143,21 @@ type ImageSource struct {
 	URL       string `json:"url,omitempty"`
 }
 
+// Tool represents a tool definition
 type Tool struct {
-	Type        string          `json:"type,omitempty"`
+	Type        string          `json:"type,omitempty"` // "custom" for user-defined tools, or "web_search_20250305" for web search
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	InputSchema json.RawMessage `json:"input_schema,omitempty"`
 
+	// Web search specific fields
 	MaxUses        int           `json:"max_uses,omitempty"`
 	AllowedDomains []string      `json:"allowed_domains,omitempty"`
 	BlockedDomains []string      `json:"blocked_domains,omitempty"`
 	UserLocation   *UserLocation `json:"user_location,omitempty"`
 }
 
+// UserLocation for localizing web search results
 type UserLocation struct {
 	Type     string `json:"type"` // "approximate"
 	City     string `json:"city,omitempty"`
@@ -142,21 +166,27 @@ type UserLocation struct {
 	Timezone string `json:"timezone,omitempty"`
 }
 
+// ToolChoice controls how the model uses tools
 type ToolChoice struct {
 	Type                   string `json:"type"` // "auto", "any", "tool", "none"
 	Name                   string `json:"name,omitempty"`
 	DisableParallelToolUse bool   `json:"disable_parallel_tool_use,omitempty"`
 }
 
+// ThinkingConfig controls extended thinking
 type ThinkingConfig struct {
 	Type         string `json:"type"` // "enabled" or "disabled"
 	BudgetTokens int    `json:"budget_tokens,omitempty"`
 }
 
+// Metadata for the request
 type Metadata struct {
 	UserID string `json:"user_id,omitempty"`
 }
 
+// Response types
+
+// MessagesResponse represents an Anthropic Messages API response
 type MessagesResponse struct {
 	ID           string         `json:"id"`
 	Type         string         `json:"type"` // "message"
@@ -168,65 +198,79 @@ type MessagesResponse struct {
 	Usage        Usage          `json:"usage"`
 }
 
+// Usage contains token usage information
 type Usage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
 }
 
+// Streaming event types
+
+// MessageStartEvent is sent at the start of streaming
 type MessageStartEvent struct {
 	Type    string           `json:"type"` // "message_start"
 	Message MessagesResponse `json:"message"`
 }
 
+// ContentBlockStartEvent signals the start of a content block
 type ContentBlockStartEvent struct {
 	Type         string       `json:"type"` // "content_block_start"
 	Index        int          `json:"index"`
 	ContentBlock ContentBlock `json:"content_block"`
 }
 
+// ContentBlockDeltaEvent contains incremental content updates
 type ContentBlockDeltaEvent struct {
 	Type  string `json:"type"` // "content_block_delta"
 	Index int    `json:"index"`
 	Delta Delta  `json:"delta"`
 }
 
+// Delta represents an incremental update
 type Delta struct {
-	Type        string `json:"type"`
+	Type        string `json:"type"` // "text_delta", "input_json_delta", "thinking_delta", "signature_delta"
 	Text        string `json:"text,omitempty"`
 	PartialJSON string `json:"partial_json,omitempty"`
 	Thinking    string `json:"thinking,omitempty"`
 	Signature   string `json:"signature,omitempty"`
 }
 
+// ContentBlockStopEvent signals the end of a content block
 type ContentBlockStopEvent struct {
 	Type  string `json:"type"` // "content_block_stop"
 	Index int    `json:"index"`
 }
 
+// MessageDeltaEvent contains updates to the message
 type MessageDeltaEvent struct {
 	Type  string       `json:"type"` // "message_delta"
 	Delta MessageDelta `json:"delta"`
 	Usage DeltaUsage   `json:"usage"`
 }
 
+// MessageDelta contains stop information
 type MessageDelta struct {
 	StopReason   string `json:"stop_reason,omitempty"`
 	StopSequence string `json:"stop_sequence,omitempty"`
 }
 
+// DeltaUsage contains cumulative token usage
 type DeltaUsage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
 }
 
+// MessageStopEvent signals the end of the message
 type MessageStopEvent struct {
 	Type string `json:"type"` // "message_stop"
 }
 
+// PingEvent is a keepalive event
 type PingEvent struct {
 	Type string `json:"type"` // "ping"
 }
 
+// StreamErrorEvent is an error during streaming
 type StreamErrorEvent struct {
 	Type  string `json:"type"` // "error"
 	Error Error  `json:"error"`
@@ -314,6 +358,7 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 	}, nil
 }
 
+// convertMessage converts an Anthropic MessageParam to Ollama api.Message(s)
 func convertMessage(msg MessageParam) ([]api.Message, error) {
 	var messages []api.Message
 	role := strings.ToLower(msg.Role)
@@ -360,7 +405,9 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 				} else {
 					return nil, fmt.Errorf("invalid image source type: %s. Only base64 images are supported.", sourceType)
 				}
-				case "tool_use":
+				// URL images would need to be fetched - skip for now
+
+			case "tool_use":
 				id, ok := blockMap["id"].(string)
 				if !ok {
 					return nil, errors.New("tool_use block missing required 'id' field")
@@ -461,6 +508,7 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 			messages = append(messages, m)
 		}
 
+		// Add tool results as separate messages
 		messages = append(messages, toolResults...)
 
 	default:
@@ -470,6 +518,7 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 	return messages, nil
 }
 
+// convertTool converts an Anthropic Tool to an Ollama api.Tool, returning true if it's a server tool
 func convertTool(t Tool) (api.Tool, bool, error) {
 	if strings.HasPrefix(t.Type, "web_search") {
 		props := api.NewToolPropertiesMap()
@@ -811,6 +860,7 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 	return events
 }
 
+// generateID generates a unique ID with the given prefix using crypto/rand
 func generateID(prefix string) string {
 	b := make([]byte, 12)
 	if _, err := rand.Read(b); err != nil {
@@ -825,10 +875,12 @@ func GenerateMessageID() string {
 	return generateID("msg")
 }
 
+// ptr returns a pointer to the given string value
 func ptr(s string) *string {
 	return &s
 }
 
+// mapToArgs converts a map to ToolCallFunctionArguments
 func mapToArgs(m map[string]any) api.ToolCallFunctionArguments {
 	args := api.NewToolCallFunctionArguments()
 	for k, v := range m {
@@ -837,6 +889,7 @@ func mapToArgs(m map[string]any) api.ToolCallFunctionArguments {
 	return args
 }
 
+// CountTokensRequest represents an Anthropic count_tokens request
 type CountTokensRequest struct {
 	Model    string          `json:"model"`
 	Messages []MessageParam  `json:"messages"`
@@ -856,6 +909,7 @@ func EstimateInputTokens(req MessagesRequest) int {
 	})
 }
 
+// CountTokensResponse represents an Anthropic count_tokens response
 type CountTokensResponse struct {
 	InputTokens int `json:"input_tokens"`
 }

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -19,6 +18,7 @@ import (
 	"github.com/ollama/ollama/envconfig"
 )
 
+// AnthropicWriter wraps the response writer to transform Ollama responses to Anthropic format
 type AnthropicWriter struct {
 	BaseWriter
 	stream    bool
@@ -96,36 +96,17 @@ type WebSearchAnthropicWriter struct {
 func (w *WebSearchAnthropicWriter) Write(data []byte) (int, error) {
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
-		slog.Warn("websearch writer got non-200 status", "code", code)
 		return w.inner.writeError(data)
 	}
 
 	var chatResponse api.ChatResponse
 	if err := json.Unmarshal(data, &chatResponse); err != nil {
-		slog.Error("websearch writer failed to unmarshal chat response", "error", err)
 		return 0, err
 	}
 
 	if w.stream && !chatResponse.Done {
 		w.chunks = append(w.chunks, append([]byte(nil), data...))
 		return len(data), nil
-	}
-
-	slog.Info("websearch: first model response",
-		"done", chatResponse.Done,
-		"done_reason", chatResponse.DoneReason,
-		"content_len", len(chatResponse.Message.Content),
-		"tool_calls_count", len(chatResponse.Message.ToolCalls),
-		"has_thinking", chatResponse.Message.Thinking != "",
-	)
-
-	for i, tc := range chatResponse.Message.ToolCalls {
-		slog.Info("websearch: tool call in response",
-			"index", i,
-			"id", tc.ID,
-			"name", tc.Function.Name,
-			"args_len", tc.Function.Arguments.Len(),
-		)
 	}
 
 	var webSearchCall *api.ToolCall
@@ -137,7 +118,6 @@ func (w *WebSearchAnthropicWriter) Write(data []byte) (int, error) {
 	}
 
 	if webSearchCall == nil {
-		slog.Info("websearch: model did NOT call web_search, passing through")
 		if w.stream {
 			if err := w.replayBuffered(); err != nil {
 				return 0, err
@@ -145,10 +125,6 @@ func (w *WebSearchAnthropicWriter) Write(data []byte) (int, error) {
 		}
 		return w.inner.writeResponse(data)
 	}
-
-	slog.Info("websearch: model called web_search, intercepting",
-		"tool_call_id", webSearchCall.ID,
-	)
 
 	return len(data), w.handleWebSearch(chatResponse, webSearchCall)
 }
@@ -168,24 +144,15 @@ func (w *WebSearchAnthropicWriter) replayBuffered() error {
 func (w *WebSearchAnthropicWriter) handleWebSearch(firstResponse api.ChatResponse, toolCall *api.ToolCall) error {
 	query := extractQueryFromToolCall(toolCall)
 	if query == "" {
-		slog.Error("web_search tool call has no query argument", "tool_call_id", toolCall.ID)
 		return w.sendError("invalid_request", "")
 	}
 
-	slog.Info("websearch: executing search", "query", query)
-
 	apiKey := os.Getenv("OLLAMA_API_KEY")
-	searchStart := time.Now()
 	const defaultMaxResults = 5
 	searchResp, err := anthropic.WebSearch(w.ctx, apiKey, query, defaultMaxResults)
-	searchDuration := time.Since(searchStart)
-
 	if err != nil {
-		slog.Error("websearch: search API failed", "error", err, "query", query, "duration", searchDuration)
 		return w.sendError("unavailable", query)
 	}
-
-	slog.Info("websearch: search completed", "query", query, "results_count", len(searchResp.Results), "duration", searchDuration)
 
 	searchResults := anthropic.ConvertOllamaToAnthropicResults(searchResp)
 
@@ -241,7 +208,6 @@ func (w *WebSearchAnthropicWriter) handleWebSearch(firstResponse api.ChatRespons
 	}
 
 	chatURL := envconfig.Host().String() + "/api/chat"
-	followUpStart := time.Now()
 	client := &http.Client{Timeout: 5 * time.Minute}
 	httpReq, err := http.NewRequestWithContext(w.ctx, "POST", chatURL, bytes.NewReader(body))
 	if err != nil {
@@ -250,7 +216,6 @@ func (w *WebSearchAnthropicWriter) handleWebSearch(firstResponse api.ChatRespons
 	httpReq.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		slog.Error("websearch: followup request failed", "error", err)
 		return w.sendError("unavailable", query)
 	}
 	defer resp.Body.Close()
@@ -262,15 +227,8 @@ func (w *WebSearchAnthropicWriter) handleWebSearch(firstResponse api.ChatRespons
 
 	var chatResp api.ChatResponse
 	if err := json.Unmarshal(respBody, &chatResp); err != nil {
-		slog.Error("websearch: failed to unmarshal followup response", "error", err)
 		return err
 	}
-
-	slog.Info("websearch: followup response",
-		"content_len", len(chatResp.Message.Content),
-		"eval_count", chatResp.Metrics.EvalCount,
-		"duration", time.Since(followUpStart),
-	)
 
 	content := []anthropic.ContentBlock{
 		{
@@ -395,8 +353,6 @@ func (w *WebSearchAnthropicWriter) streamResponse(response anthropic.MessagesRes
 
 // sendError sends a web search error response
 func (w *WebSearchAnthropicWriter) sendError(errorCode, query string) error {
-	slog.Warn("websearch: sending error response", "error_code", errorCode)
-
 	toolUseID := serverToolUseID(w.inner.id)
 
 	response := anthropic.MessagesResponse{
@@ -463,6 +419,7 @@ func AnthropicMessagesMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		// Set think to nil when being used with Anthropic API to connect to tools like claude code
 		c.Set("relax_thinking", true)
 
 		var b bytes.Buffer
@@ -475,6 +432,7 @@ func AnthropicMessagesMiddleware() gin.HandlerFunc {
 
 		messageID := anthropic.GenerateMessageID()
 
+		// Estimate input tokens for streaming (actual count not available until generation completes)
 		estimatedTokens := anthropic.EstimateInputTokens(req)
 
 		innerWriter := &AnthropicWriter{
@@ -495,18 +453,6 @@ func AnthropicMessagesMiddleware() gin.HandlerFunc {
 				c.AbortWithStatusJSON(http.StatusBadRequest, anthropic.NewError(http.StatusBadRequest, "web_search tool is only supported for cloud models"))
 				return
 			}
-
-			toolNames := make([]string, len(req.Tools))
-			for i, t := range req.Tools {
-				toolNames[i] = fmt.Sprintf("%s(%s)", t.Name, t.Type)
-			}
-			slog.Info("websearch: intercepting request",
-				"model", req.Model,
-				"stream", req.Stream,
-				"messages_count", len(req.Messages),
-				"tools", strings.Join(toolNames, ", "),
-				"message_id", messageID,
-			)
 
 			c.Writer = &WebSearchAnthropicWriter{
 				BaseWriter: BaseWriter{ResponseWriter: c.Writer},
