@@ -25,11 +25,11 @@ func TestStatusHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !resp.Disabled {
-		t.Fatalf("expected disabled true, got false")
+	if !resp.Cloud.Disabled {
+		t.Fatalf("expected cloud.disabled true, got false")
 	}
-	if resp.Source != "env" {
-		t.Fatalf("expected source env, got %q", resp.Source)
+	if resp.Cloud.Source != "env" {
+		t.Fatalf("expected cloud.source env, got %q", resp.Cloud.Source)
 	}
 }
 

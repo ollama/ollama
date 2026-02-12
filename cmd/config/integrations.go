@@ -1310,7 +1310,7 @@ func cloudStatusDisabled(ctx context.Context, client *api.Client) (disabled bool
 		}
 		return false, false
 	}
-	return status.Disabled, true
+	return status.Cloud.Disabled, true
 }
 
 func pullModel(ctx context.Context, client *api.Client, model string) error {

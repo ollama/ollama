@@ -730,7 +730,7 @@ func TestResolveEditorLaunchModels_PicksWhenAllFiltered(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/status":
-			fmt.Fprintf(w, `{"disabled":true}`)
+			fmt.Fprintf(w, `{"cloud":{"disabled":true,"source":"config"}}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -769,7 +769,7 @@ func TestResolveEditorLaunchModels_FiltersAndSkipsPickerWhenLocalRemains(t *test
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/status":
-			fmt.Fprintf(w, `{"disabled":true}`)
+			fmt.Fprintf(w, `{"cloud":{"disabled":true,"source":"config"}}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -812,7 +812,7 @@ func TestLaunchCmd_ModelFlagFiltersDisabledCloudFromSavedConfig(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/status":
-			fmt.Fprintf(w, `{"disabled":true}`)
+			fmt.Fprintf(w, `{"cloud":{"disabled":true,"source":"config"}}`)
 		case "/api/show":
 			fmt.Fprintf(w, `{"model":"llama3.2"}`)
 		default:

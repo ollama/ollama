@@ -73,7 +73,7 @@ func cloudStatusDisabled(ctx context.Context, client *api.Client) (disabled bool
 		}
 		return false, false
 	}
-	return status.Disabled, true
+	return status.Cloud.Disabled, true
 }
 
 // truncateToolOutput truncates tool output to prevent context overflow.

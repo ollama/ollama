@@ -21,7 +21,7 @@ func TestEnsureCloudEnabledForTool(t *testing.T) {
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"disabled":false,"source":"none"}`))
+			_, _ = w.Write([]byte(`{"cloud":{"disabled":false,"source":"none"}}`))
 		}))
 		t.Cleanup(ts.Close)
 		t.Setenv("OLLAMA_HOST", ts.URL)
@@ -38,7 +38,7 @@ func TestEnsureCloudEnabledForTool(t *testing.T) {
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"disabled":true,"source":"config"}`))
+			_, _ = w.Write([]byte(`{"cloud":{"disabled":true,"source":"config"}}`))
 		}))
 		t.Cleanup(ts.Close)
 		t.Setenv("OLLAMA_HOST", ts.URL)

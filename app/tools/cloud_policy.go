@@ -27,7 +27,7 @@ func ensureCloudEnabledForTool(ctx context.Context, operation string) error {
 		return errors.New(disabledMessage + " (unable to verify server cloud policy)")
 	}
 
-	if status.Disabled {
+	if status.Cloud.Disabled {
 		return errors.New(disabledMessage)
 	}
 
