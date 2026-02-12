@@ -136,12 +136,64 @@ function Invoke-Download {
 
     Write-Status "  Downloading: $Url"
     try {
-        Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing
-        $size = (Get-Item $OutFile).Length
-        Write-Status "  Downloaded: $([math]::Round($size / 1MB, 1)) MB"
+        $request = [System.Net.HttpWebRequest]::Create($Url)
+        $request.AllowAutoRedirect = $true
+        $response = $request.GetResponse()
+        $totalBytes = $response.ContentLength
+        $stream = $response.GetResponseStream()
+        $fileStream = [System.IO.FileStream]::new($OutFile, [System.IO.FileMode]::Create)
+        $buffer = [byte[]]::new(65536)
+        $totalRead = 0
+        $lastUpdate = [DateTime]::MinValue
+        $barWidth = 40
+
+        try {
+            while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                $fileStream.Write($buffer, 0, $read)
+                $totalRead += $read
+
+                $now = [DateTime]::UtcNow
+                if (($now - $lastUpdate).TotalMilliseconds -ge 250) {
+                    if ($totalBytes -gt 0) {
+                        $pct = [math]::Min(100.0, ($totalRead / $totalBytes) * 100)
+                        $filled = [math]::Floor($barWidth * $pct / 100)
+                        $empty = $barWidth - $filled
+                        $bar = ('#' * $filled) + (' ' * $empty)
+                        $pctFmt = $pct.ToString("0.0")
+                        Write-Host -NoNewline "`r$bar ${pctFmt}%"
+                    } else {
+                        $sizeMB = [math]::Round($totalRead / 1MB, 1)
+                        Write-Host -NoNewline "`r${sizeMB} MB downloaded..."
+                    }
+                    $lastUpdate = $now
+                }
+            }
+
+            # Final progress update
+            if ($totalBytes -gt 0) {
+                $bar = '#' * $barWidth
+                Write-Host "`r$bar 100.0%"
+            } else {
+                $sizeMB = [math]::Round($totalRead / 1MB, 1)
+                Write-Host "`r${sizeMB} MB downloaded.          "
+            }
+        } finally {
+            $fileStream.Close()
+            $stream.Close()
+            $response.Close()
+        }
     } catch {
-        if ($_.Exception.Response.StatusCode -eq 404) {
-            throw "Download failed: not found at $Url"
+        if ($_.Exception -is [System.Net.WebException]) {
+            $webEx = [System.Net.WebException]$_.Exception
+            if ($webEx.Response -and ([System.Net.HttpWebResponse]$webEx.Response).StatusCode -eq [System.Net.HttpStatusCode]::NotFound) {
+                throw "Download failed: not found at $Url"
+            }
+        }
+        if ($_.Exception.InnerException -is [System.Net.WebException]) {
+            $webEx = [System.Net.WebException]$_.Exception.InnerException
+            if ($webEx.Response -and ([System.Net.HttpWebResponse]$webEx.Response).StatusCode -eq [System.Net.HttpStatusCode]::NotFound) {
+                throw "Download failed: not found at $Url"
+            }
         }
         throw "Download failed for ${Url}: $($_.Exception.Message)"
     }
@@ -156,7 +208,7 @@ function Invoke-Uninstall {
 
     $regKey = Find-InnoSetupInstall
     if (-not $regKey) {
-        Write-Host "Ollama is not installed."
+        Write-Host ">>> Ollama is not installed."
         return
     }
 
@@ -175,7 +227,7 @@ function Invoke-Uninstall {
         return
     }
 
-    Write-Host "Launching uninstaller..."
+    Write-Host ">>> Launching uninstaller..."
     # Run with GUI so user can choose whether to keep models
     Start-Process -FilePath $uninstallExe -Wait
 
@@ -183,7 +235,7 @@ function Invoke-Uninstall {
     if (Find-InnoSetupInstall) {
         Write-Warning "Uninstall may not have completed"
     } else {
-        Write-Host "Ollama has been uninstalled."
+        Write-Host ">>> Ollama has been uninstalled."
     }
 }
 
@@ -202,7 +254,7 @@ function Invoke-Install {
     # Download installer
     Write-Step "Downloading Ollama"
     if (-not $DebugInstall) {
-        Write-Host "Downloading Ollama..."
+        Write-Host ">>> Downloading Ollama for Windows..."
     }
 
     $tempInstaller = Join-Path $env:TEMP "OllamaSetup.exe"
@@ -225,7 +277,7 @@ function Invoke-Install {
     # Run installer
     Write-Step "Installing Ollama"
     if (-not $DebugInstall) {
-        Write-Host "Installing..."
+        Write-Host ">>> Installing Ollama..."
     }
 
     # Create upgrade marker so the app starts hidden
@@ -257,7 +309,7 @@ function Invoke-Install {
     Write-Step "Updating session PATH"
     Update-SessionPath
 
-    Write-Host "Install complete. You can now run 'ollama'."
+    Write-Host ">>> Install complete. Run 'ollama' from the command line."
 }
 
 # --------------------------------------------------------------------------
