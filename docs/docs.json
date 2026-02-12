@@ -32,7 +32,9 @@
     "codeblocks": "system"
   },
   "contextual": {
-    "options": ["copy"]
+    "options": [
+      "copy"
+    ]
   },
   "navbar": {
     "links": [
@@ -52,7 +54,9 @@
       "display": "simple"
     },
     "examples": {
-      "languages": ["curl"]
+      "languages": [
+        "curl"
+      ]
     }
   },
   "redirects": [
@@ -67,6 +71,10 @@
     {
       "source": "/api",
       "destination": "/api/introduction"
+    },
+    {
+      "source": "/integrations/clawdbot",
+      "destination": "/integrations/openclaw"
     }
   ],
   "navigation": {
@@ -97,16 +105,52 @@
           {
             "group": "Integrations",
             "pages": [
-              "/integrations/vscode",
-              "/integrations/jetbrains",
-              "/integrations/codex",
-              "/integrations/cline",
-              "/integrations/droid",
-              "/integrations/goose",
-              "/integrations/zed",
-              "/integrations/roo-code",
-              "/integrations/n8n",
-              "/integrations/xcode"
+              "/integrations/index",
+              {
+                "group": "Coding",
+                "pages": [
+                  "/integrations/claude-code",
+                  "/integrations/codex",
+                  "/integrations/opencode",
+                  "/integrations/droid",
+                  "/integrations/goose"
+                ]
+              },
+              {
+                "group": "Assistants",
+                "pages": [
+                  "/integrations/openclaw"
+                ]
+              },
+              {
+                "group": "IDEs & Editors",
+                "pages": [
+                  "/integrations/cline",
+                  "/integrations/jetbrains",
+                  "/integrations/roo-code",
+                  "/integrations/vscode",
+                  "/integrations/xcode",
+                  "/integrations/zed"
+                ]
+              },
+              {
+                "group": "Chat & RAG",
+                "pages": [
+                  "/integrations/onyx"
+                ]
+              },
+              {
+                "group": "Automation",
+                "pages": [
+                  "/integrations/n8n"
+                ]
+              },
+              {
+                "group": "Notebooks",
+                "pages": [
+                  "/integrations/marimo"
+                ]
+              }
             ]
           },
           {
@@ -139,7 +183,8 @@
               "/api/streaming",
               "/api/usage",
               "/api/errors",
-              "/api/openai-compatibility"
+              "/api/openai-compatibility",
+              "/api/anthropic-compatibility"
             ]
           },
           {

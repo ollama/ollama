@@ -100,8 +100,8 @@ func (r *Olmo3Renderer) Render(messages []api.Message, tools []api.Tool, _ *api.
 					sb.WriteString("(")
 
 					// Get sorted keys for deterministic output
-					keys := make([]string, 0, len(tc.Function.Arguments))
-					for k := range tc.Function.Arguments {
+					keys := make([]string, 0, tc.Function.Arguments.Len())
+					for k := range tc.Function.Arguments.All() {
 						keys = append(keys, k)
 					}
 					sort.Strings(keys)
@@ -110,7 +110,8 @@ func (r *Olmo3Renderer) Render(messages []api.Message, tools []api.Tool, _ *api.
 						if k > 0 {
 							sb.WriteString(", ")
 						}
-						value, err := json.Marshal(tc.Function.Arguments[key])
+						val, _ := tc.Function.Arguments.Get(key)
+						value, err := json.Marshal(val)
 						if err != nil {
 							return "", err
 						}

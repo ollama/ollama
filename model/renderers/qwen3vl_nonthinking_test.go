@@ -337,7 +337,7 @@ Let me analyze this image.`,
 					Role:    "assistant",
 					Content: "I'll check.",
 					ToolCalls: []api.ToolCall{
-						{Function: api.ToolCallFunction{Name: "get-current-weather", Arguments: map[string]any{"location": "Paris", "unit": "celsius"}}},
+						{Function: api.ToolCallFunction{Name: "get-current-weather", Arguments: testArgsOrdered([]orderedArg{{"location", "Paris"}, {"unit", "celsius"}})}},
 					},
 				},
 				{Role: "user", Content: "<tool_response>\n18\n</tool_response>"},
@@ -367,8 +367,8 @@ Thanks!<|im_end|>
 					Role:    "assistant",
 					Content: "before",
 					ToolCalls: []api.ToolCall{
-						{Function: api.ToolCallFunction{Name: "add", Arguments: map[string]any{"a": 2, "b": 3}}},
-						{Function: api.ToolCallFunction{Name: "mul", Arguments: map[string]any{"x": 4, "y": 5}}},
+						{Function: api.ToolCallFunction{Name: "add", Arguments: testArgsOrdered([]orderedArg{{"a", 2}, {"b", 3}})}},
+						{Function: api.ToolCallFunction{Name: "mul", Arguments: testArgsOrdered([]orderedArg{{"x", 4}, {"y", 5}})}},
 					},
 				},
 			},
@@ -387,7 +387,7 @@ before
 			name: "consecutive tool responses grouped",
 			msgs: []api.Message{
 				{Role: "user", Content: "Compute results"},
-				{Role: "assistant", Content: "ok", ToolCalls: []api.ToolCall{{Function: api.ToolCallFunction{Name: "job", Arguments: map[string]any{"n": 1}}}}},
+				{Role: "assistant", Content: "ok", ToolCalls: []api.ToolCall{{Function: api.ToolCallFunction{Name: "job", Arguments: testArgs(map[string]any{"n": 1})}}}},
 				{Role: "tool", Content: "5", ToolName: "job"},
 				{Role: "tool", Content: "6", ToolName: "job"},
 			},
@@ -412,7 +412,7 @@ ok
 			name: "last message is tool then prefill",
 			msgs: []api.Message{
 				{Role: "user", Content: "run"},
-				{Role: "assistant", Content: "ok", ToolCalls: []api.ToolCall{{Function: api.ToolCallFunction{Name: "exec", Arguments: map[string]any{"cmd": "ls"}}}}},
+				{Role: "assistant", Content: "ok", ToolCalls: []api.ToolCall{{Function: api.ToolCallFunction{Name: "exec", Arguments: testArgs(map[string]any{"cmd": "ls"})}}}},
 				{Role: "tool", Content: "done", ToolName: "exec"},
 			},
 			expected: `<|im_start|>user
@@ -447,7 +447,7 @@ done
 					Role:    "assistant",
 					Content: "I'll check.",
 					ToolCalls: []api.ToolCall{
-						{Function: api.ToolCallFunction{Name: "get-current-weather", Arguments: map[string]any{"location": "Paris", "unit": "celsius"}}},
+						{Function: api.ToolCallFunction{Name: "get-current-weather", Arguments: testArgsOrdered([]orderedArg{{"location", "Paris"}, {"unit", "celsius"}})}},
 					},
 				},
 				{Role: "user", Content: "<tool_response>\n18\n</tool_response>"},
@@ -477,7 +477,7 @@ Thanks!<|im_end|>
 					Role:    "assistant",
 					Content: "I'll check.",
 					ToolCalls: []api.ToolCall{
-						{Function: api.ToolCallFunction{Name: "get-current-weather", Arguments: map[string]any{"location": "Paris", "unit": "celsius"}}},
+						{Function: api.ToolCallFunction{Name: "get-current-weather", Arguments: testArgsOrdered([]orderedArg{{"location", "Paris"}, {"unit", "celsius"}})}},
 					},
 				},
 				{Role: "user", Content: "\n\n\n\n<tool_response>\n18\n</tool_response> extra\n\n\n\n\n\n"},

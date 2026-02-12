@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -1547,6 +1548,79 @@ func TestRunOptions_Copy_ThinkValueVariants(t *testing.T) {
 	}
 }
 
+func TestShowInfoImageGen(t *testing.T) {
+	var b bytes.Buffer
+	err := showInfo(&api.ShowResponse{
+		Details: api.ModelDetails{
+			Family:            "ZImagePipeline",
+			ParameterSize:     "10.3B",
+			QuantizationLevel: "Q8",
+		},
+		Capabilities: []model.Capability{model.CapabilityImage},
+		Requires:     "0.14.0",
+	}, false, &b)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expect := "  Model\n" +
+		"    architecture    ZImagePipeline    \n" +
+		"    parameters      10.3B             \n" +
+		"    quantization    Q8                \n" +
+		"    requires        0.14.0            \n" +
+		"\n" +
+		"  Capabilities\n" +
+		"    image    \n" +
+		"\n"
+	if diff := cmp.Diff(expect, b.String()); diff != "" {
+		t.Errorf("unexpected output (-want +got):\n%s", diff)
+	}
+}
+
+func TestPushProgressMessage(t *testing.T) {
+	tests := []struct {
+		name    string
+		status  string
+		digest  string
+		wantMsg string
+	}{
+		{
+			name:    "uses status when provided",
+			status:  "uploading model",
+			digest:  "sha256:abc123456789def",
+			wantMsg: "uploading model",
+		},
+		{
+			name:    "falls back to digest when status empty",
+			status:  "",
+			digest:  "sha256:abc123456789def",
+			wantMsg: "pushing abc123456789...",
+		},
+		{
+			name:    "handles short digest gracefully",
+			status:  "",
+			digest:  "sha256:abc",
+			wantMsg: "pushing sha256:abc...",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := tt.status
+			if msg == "" {
+				if len(tt.digest) >= 19 {
+					msg = fmt.Sprintf("pushing %s...", tt.digest[7:19])
+				} else {
+					msg = fmt.Sprintf("pushing %s...", tt.digest)
+				}
+			}
+			if msg != tt.wantMsg {
+				t.Errorf("got %q, want %q", msg, tt.wantMsg)
+			}
+		})
+	}
+}
+
 func TestRunOptions_Copy_Independence(t *testing.T) {
 	// Test that modifications to original don't affect copy
 	originalThink := &api.ThinkValue{Value: "original"}
@@ -1584,5 +1658,105 @@ func TestRunOptions_Copy_Independence(t *testing.T) {
 
 	if copied.Think != nil && copied.Think.Value == "modified" {
 		t.Error("Copy Think should not be affected by original modification")
+	}
+}
+
+func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
+	tests := []struct {
+		name          string
+		remoteHost    string
+		whoamiStatus  int
+		whoamiResp    any
+		expectedError string
+	}{
+		{
+			name:         "ollama.com cloud model - user signed in",
+			remoteHost:   "https://ollama.com",
+			whoamiStatus: http.StatusOK,
+			whoamiResp:   api.UserResponse{Name: "testuser"},
+		},
+		{
+			name:         "ollama.com cloud model - user not signed in",
+			remoteHost:   "https://ollama.com",
+			whoamiStatus: http.StatusUnauthorized,
+			whoamiResp: map[string]string{
+				"error":      "unauthorized",
+				"signin_url": "https://ollama.com/signin",
+			},
+			expectedError: "unauthorized",
+		},
+		{
+			name:         "non-ollama.com remote - no auth check",
+			remoteHost:   "https://other-remote.com",
+			whoamiStatus: http.StatusUnauthorized, // should not be called
+			whoamiResp:   nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			whoamiCalled := false
+			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/show":
+					w.Header().Set("Content-Type", "application/json")
+					if err := json.NewEncoder(w).Encode(api.ShowResponse{
+						RemoteHost:  tt.remoteHost,
+						RemoteModel: "test-model",
+					}); err != nil {
+						http.Error(w, err.Error(), http.StatusInternalServerError)
+					}
+				case "/api/me":
+					whoamiCalled = true
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(tt.whoamiStatus)
+					if tt.whoamiResp != nil {
+						if err := json.NewEncoder(w).Encode(tt.whoamiResp); err != nil {
+							http.Error(w, err.Error(), http.StatusInternalServerError)
+						}
+					}
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer mockServer.Close()
+
+			t.Setenv("OLLAMA_HOST", mockServer.URL)
+
+			cmd := &cobra.Command{}
+			cmd.SetContext(t.Context())
+
+			opts := &runOptions{
+				Model:       "test-cloud-model",
+				ShowConnect: false,
+			}
+
+			err := loadOrUnloadModel(cmd, opts)
+
+			if strings.HasPrefix(tt.remoteHost, "https://ollama.com") {
+				if !whoamiCalled {
+					t.Error("expected whoami to be called for ollama.com cloud model")
+				}
+			} else {
+				if whoamiCalled {
+					t.Error("whoami should not be called for non-ollama.com remote")
+				}
+			}
+
+			if tt.expectedError != "" {
+				if err == nil {
+					t.Errorf("expected error containing %q, got nil", tt.expectedError)
+				} else {
+					var authErr api.AuthorizationError
+					if !errors.As(err, &authErr) {
+						t.Errorf("expected AuthorizationError, got %T: %v", err, err)
+					}
+				}
+			} else {
+				if err != nil {
+					t.Errorf("expected no error, got %v", err)
+				}
+			}
+		})
 	}
 }

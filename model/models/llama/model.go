@@ -11,6 +11,7 @@ import (
 	"github.com/ollama/ollama/ml/nn/rope"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
+	"github.com/ollama/ollama/tokenizer"
 )
 
 type Options struct {
@@ -25,7 +26,7 @@ func (o Options) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions
 
 type Model struct {
 	model.Base
-	model.TextProcessor
+	tokenizer.Tokenizer
 
 	TokenEmbedding *nn.Embedding `gguf:"token_embd"`
 	Layers         []Layer       `gguf:"blk"`
@@ -41,8 +42,8 @@ func New(c fs.Config) (model.Model, error) {
 		return nil, model.ErrUnsupportedModel
 	}
 
-	var processor model.TextProcessor
-	vocabulary := model.Vocabulary{
+	var processor tokenizer.Tokenizer
+	vocabulary := tokenizer.Vocabulary{
 		Values: c.Strings("tokenizer.ggml.tokens"),
 		Scores: c.Floats("tokenizer.ggml.scores"),
 		Types:  c.Ints("tokenizer.ggml.token_type"),
@@ -80,16 +81,16 @@ func New(c fs.Config) (model.Model, error) {
 				"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
 			}
 		}
-		processor = model.NewBytePairEncoding(&vocabulary, pretokenizers...)
+		processor = tokenizer.NewBytePairEncoding(&vocabulary, pretokenizers...)
 	case "llama":
-		processor = model.NewSentencePiece(&vocabulary)
+		processor = tokenizer.NewSentencePiece(&vocabulary)
 	default:
 		return nil, model.ErrUnsupportedTokenizer
 	}
 
 	m := Model{
-		TextProcessor: processor,
-		Layers:        make([]Layer, c.Uint("block_count")),
+		Tokenizer: processor,
+		Layers:    make([]Layer, c.Uint("block_count")),
 		Options: Options{
 			hiddenSize: int(c.Uint("embedding_length")),
 			numHeads:   int(c.Uint("attention.head_count")),

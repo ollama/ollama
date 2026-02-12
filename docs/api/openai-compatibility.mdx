@@ -275,7 +275,76 @@ curl -X POST http://localhost:11434/v1/chat/completions \
 - [x] `dimensions`
 - [ ] `user`
 
+### `/v1/images/generations` (experimental)
+
+> Note: This endpoint is experimental and may change or be removed in future versions.
+
+Generate images using image generation models.
+
+<CodeGroup dropdown>
+
+```python images.py
+from openai import OpenAI
+
+client = OpenAI(
+    base_url='http://localhost:11434/v1/',
+    api_key='ollama',  # required but ignored
+)
+
+response = client.images.generate(
+    model='x/z-image-turbo',
+    prompt='A cute robot learning to paint',
+    size='1024x1024',
+    response_format='b64_json',
+)
+print(response.data[0].b64_json[:50] + '...')
+```
+
+```javascript images.js
+import OpenAI from "openai";
+
+const openai = new OpenAI({
+  baseURL: "http://localhost:11434/v1/",
+  apiKey: "ollama", // required but ignored
+});
+
+const response = await openai.images.generate({
+  model: "x/z-image-turbo",
+  prompt: "A cute robot learning to paint",
+  size: "1024x1024",
+  response_format: "b64_json",
+});
+
+console.log(response.data[0].b64_json.slice(0, 50) + "...");
+```
+
+```shell images.sh
+curl -X POST http://localhost:11434/v1/images/generations \
+-H "Content-Type: application/json" \
+-d '{
+  "model": "x/z-image-turbo",
+  "prompt": "A cute robot learning to paint",
+  "size": "1024x1024",
+  "response_format": "b64_json"
+}'
+```
+
+</CodeGroup>
+
+#### Supported request fields
+
+- [x] `model`
+- [x] `prompt`
+- [x] `size` (e.g. "1024x1024")
+- [x] `response_format` (only `b64_json` supported)
+- [ ] `n`
+- [ ] `quality`
+- [ ] `style`
+- [ ] `user`
+
 ### `/v1/responses`
+
+> Note: Added in Ollama v0.13.3
 
 Ollama supports the [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses). Only the non-stateful flavor is supported (i.e., there is no `previous_response_id` or `conversation` support).
 
