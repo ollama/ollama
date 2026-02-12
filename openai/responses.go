@@ -3,7 +3,6 @@ package openai
 import (
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"time"
 
 	"github.com/ollama/ollama/api"
@@ -978,7 +977,7 @@ func (c *ResponsesStreamConverter) processThinking(thinking string) []ResponsesS
 	// Start reasoning item if not started
 	if !c.reasoningStarted {
 		c.reasoningStarted = true
-		c.reasoningItemID = fmt.Sprintf("rs_%d", rand.Intn(999999))
+		c.reasoningItemID = GenerateID("rs")
 
 		events = append(events, c.newEvent("response.output_item.added", map[string]any{
 			"output_index": c.outputIndex,
@@ -1046,7 +1045,7 @@ func (c *ResponsesStreamConverter) processToolCalls(toolCalls []api.ToolCall) []
 	converted := ToToolCalls(toolCalls)
 
 	for i, tc := range converted {
-		fcItemID := fmt.Sprintf("fc_%d_%d", rand.Intn(999999), i)
+		fcItemID := GenerateID("fc")
 
 		// Store for final output (with status: completed)
 		toolCallItem := map[string]any{
