@@ -60,7 +60,7 @@ import (
 const signinURLStr = "https://ollama.com/connect?name=%s&key=%s"
 
 const (
-	cloudErrRemoteInferenceUnavailable    = "remote inference is unavailable"
+	cloudErrRemoteInferenceUnavailable    = "remote model is unavailable"
 	cloudErrRemoteModelDetailsUnavailable = "remote model details are unavailable"
 )
 
