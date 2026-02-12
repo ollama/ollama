@@ -442,12 +442,68 @@ int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total, bool
 #include <string>
 #include <vector>
 #include <filesystem>
+#include <cstdlib>
+#include <strings.h>
 
 #include <sys/stat.h>
 #include <dirent.h>
 #include <unistd.h>
 #include <glob.h>
 namespace fs = std::filesystem;
+
+namespace {
+
+static bool ggml_env_flag_enabled(const char *name) {
+    const char *value = getenv(name);
+    if (value == nullptr) {
+        return false;
+    }
+    if (*value == '\0') {
+        return true;
+    }
+
+    if ((value[0] == '0' && value[1] == '\0') ||
+        strcasecmp(value, "false") == 0 ||
+        strcasecmp(value, "off") == 0) {
+        return false;
+    }
+    return true;
+}
+
+static bool ggml_read_sysfs_value(const std::string &path, uint64_t &value) {
+    std::ifstream stream(path.c_str());
+    if (!stream.is_open()) {
+        GGML_LOG_DEBUG("%s unable to open sysfs node %s\n", __func__, path.c_str());
+        return false;
+    }
+    stream >> value;
+    if (stream.fail()) {
+        GGML_LOG_DEBUG("%s unable to parse sysfs node %s\n", __func__, path.c_str());
+        return false;
+    }
+    return true;
+}
+
+static bool ggml_should_use_gtt(uint64_t vram_total, uint64_t gtt_total) {
+    if (ggml_env_flag_enabled("GGML_HIP_DISABLE_GTT")) {
+        return false;
+    }
+    if (ggml_env_flag_enabled("GGML_HIP_FORCE_GTT")) {
+        return gtt_total > 0;
+    }
+    if (gtt_total == 0) {
+        return false;
+    }
+
+    const uint64_t umaThreshold = 1024ull * 1024ull * 1024ull; // 1 GiB
+    if (vram_total == 0) {
+        return true;
+    }
+
+    return vram_total <= umaThreshold && gtt_total > vram_total;
+}
+
+} // namespace
 
 extern "C" {
 
@@ -460,9 +516,9 @@ int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total, bool
     const std::string drmDeviceGlob = "/sys/class/drm/card*/device/uevent";
     const std::string drmTotalMemoryFile = "mem_info_vram_total";
     const std::string drmUsedMemoryFile = "mem_info_vram_used";
-    const std::string drmGTTTotalMemoryFile = "mem_info_gtt_total";
-    const std::string drmGTTUsedMemoryFile = "mem_info_gtt_used";
     const std::string drmUeventPCISlotLabel = "PCI_SLOT_NAME=";
+    const std::string drmGttTotalFile = "mem_info_gtt_total";
+    const std::string drmGttUsedFile = "mem_info_gtt_used";
 
 
     glob_t glob_result;
@@ -511,33 +567,29 @@ int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total, bool
                     uint64_t memoryUsed;
                     usedFileStream >> memoryUsed;
 
-                    if (is_integrated_gpu) {
-                        std::string totalFile = dir + "/" + drmGTTTotalMemoryFile;
-                        std::ifstream totalFileStream(totalFile.c_str());
-                        if (!totalFileStream.is_open()) {
-                            GGML_LOG_DEBUG("%s Failed to read sysfs node %s\n", __func__, totalFile.c_str());
-                            file.close();
-                            globfree(&glob_result);
-                            return 1;
-                        }
-                        uint64_t gtt;
-                        totalFileStream >> gtt;
-                        std::string usedFile = dir + "/" + drmGTTUsedMemoryFile;
-                        std::ifstream usedFileStream(usedFile.c_str());
-                        if (!usedFileStream.is_open()) {
-                            GGML_LOG_DEBUG("%s Failed to read sysfs node %s\n", __func__, usedFile.c_str());
-                            file.close();
-                            globfree(&glob_result);
-                            return 1;
-                        }
-                        uint64_t gttUsed;
-                        usedFileStream >> gttUsed;
-                        memory += gtt;
-                        memoryUsed += gttUsed;
-                    }
+                    uint64_t gttTotal = 0;
+                    uint64_t gttUsed = 0;
+                    bool hasGttTotal = ggml_read_sysfs_value(dir + "/" + drmGttTotalFile, gttTotal);
+                    bool hasGttUsed = ggml_read_sysfs_value(dir + "/" + drmGttUsedFile, gttUsed);
+                    bool useGtt = ggml_should_use_gtt(memory, hasGttTotal ? gttTotal : 0);
 
-                    *total = memory;
-                    *free = memory - memoryUsed;
+                    if (useGtt && hasGttTotal) {
+                        uint64_t freeGtt = gttTotal;
+                        if (hasGttUsed && gttTotal > gttUsed) {
+                            freeGtt = gttTotal - gttUsed;
+                        }
+                        *total = gttTotal;
+                        *free = freeGtt;
+                        GGML_LOG_INFO("%s using GTT memory for %s (total=%zu free=%zu)\n",
+                                      __func__, id, *total, *free);
+                    } else {
+                        *total = memory;
+                        if (memory > memoryUsed) {
+                            *free = memory - memoryUsed;
+                        } else {
+                            *free = 0;
+                        }
+                    }
 
                     file.close();
                     globfree(&glob_result);

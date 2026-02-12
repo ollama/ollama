@@ -1,3 +1,16 @@
+> [!IMPORTANT]
+> This is a fork of Ollama with experimental ROCm support for AMD APUs / iGPUs (UMA/GTT memory) and stability tweaks. See `docs/rocm-apu.md` for setup details.
+>
+> ROCm 7.1+ build note: HIP clang conflicts are patched and MMF is disabled for HIP to avoid ROCm 7.1.1 assembler issues (see commit history).
+
+## What’s Different in This Fork
+
+- Experimental ROCm support for AMD APUs / iGPUs using UMA/GTT memory.
+- GTT-aware VRAM reporting for HIP to avoid 512 MB false limits on APUs.
+- Safe defaults for mixed CPU/GPU offload via `OLLAMA_NUM_GPU`.
+- Setup guide and runtime notes in `docs/rocm-apu.md`.
+- ROCm 7.1+ HIP build compatibility fixes (clang macro conflicts; MMF disabled on HIP).
+
 <div align="center">
   <a href="https://ollama.com">
     <img alt="ollama" width="240" src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
@@ -24,6 +37,9 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 [Manual install instructions](https://docs.ollama.com/linux#manual-install)
 
+> [!TIP]
+> Running ROCm on UMA-only AMD APUs (e.g., Radeon 760M) requires staging additional ROCm runtime files and enabling experimental discovery flags. See [docs/rocm-apu.md](docs/rocm-apu.md) for the exact build and runtime steps used on this branch.
+
 ### Docker
 
 The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `ollama/ollama` is available on Docker Hub.
@@ -32,6 +48,7 @@ The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `olla
 
 - [ollama-python](https://github.com/ollama/ollama-python)
 - [ollama-js](https://github.com/ollama/ollama-js)
+- [Experimental ROCm iGPU Guide](docs/rocm-apu.md)
 
 ### Community
 
