@@ -32,11 +32,9 @@ func (c *Openclaw) Run(model string, args []string) error {
 	} else if config, err := loadIntegration("clawdbot"); err == nil && len(config.Models) > 0 {
 		models = config.Models
 	}
-	if IsCloudDisabled() {
-		if filtered := filterCloudModelNames(models); len(filtered) != len(models) {
-			models = filtered
-			_ = SaveIntegration("openclaw", models)
-		}
+	if filtered := filterDisabledCloudModels(models); len(filtered) != len(models) {
+		models = filtered
+		_ = SaveIntegration("openclaw", models)
 	}
 	if err := c.Edit(models); err != nil {
 		return fmt.Errorf("setup failed: %w", err)

@@ -126,7 +126,7 @@ func save(cfg *config) error {
 	return writeWithBackup(path, data)
 }
 
-func saveIntegration(appName string, models []string) error {
+func SaveIntegration(appName string, models []string) error {
 	if appName == "" {
 		return errors.New("app name cannot be empty")
 	}

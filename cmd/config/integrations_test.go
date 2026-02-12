@@ -684,7 +684,7 @@ func TestEditorIntegration_SavedConfigSkipsSelection(t *testing.T) {
 	setTestHome(t, tmpDir)
 
 	// Save a config for opencode so it looks like a previous launch
-	if err := saveIntegration("opencode", []string{"llama3.2"}); err != nil {
+	if err := SaveIntegration("opencode", []string{"llama3.2"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1238,7 +1238,7 @@ func TestIntegrationModels(t *testing.T) {
 	})
 
 	t.Run("returns all saved models", func(t *testing.T) {
-		if err := saveIntegration("droid", []string{"llama3.2", "qwen3:8b"}); err != nil {
+		if err := SaveIntegration("droid", []string{"llama3.2", "qwen3:8b"}); err != nil {
 			t.Fatal(err)
 		}
 		got := IntegrationModels("droid")

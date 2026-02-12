@@ -943,15 +943,9 @@ Examples:
 					}
 				}
 			} else if saved, err := loadIntegration(name); err == nil && len(saved.Models) > 0 && !configFlag {
-				savedModels := saved.Models
-				// Filter out cloud-disabled models from saved config
-				if client, cErr := api.ClientFromEnvironment(); cErr == nil {
-					if disabled, _ := cloudStatusDisabled(cmd.Context(), client); disabled {
-						savedModels = filterCloudModelNames(savedModels)
-						if len(savedModels) != len(saved.Models) {
-							_ = SaveIntegration(name, savedModels)
-						}
-					}
+				savedModels := filterDisabledCloudModels(saved.Models)
+				if len(savedModels) != len(saved.Models) {
+					_ = SaveIntegration(name, savedModels)
 				}
 				if len(savedModels) == 0 {
 					// All saved models were cloud — fall through to picker
@@ -1173,16 +1167,6 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 
 // IsCloudModelDisabled reports whether the given model name looks like a cloud
 // model and cloud features are currently disabled on the server.
-// IsCloudDisabled reports whether cloud features are currently disabled.
-func IsCloudDisabled() bool {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return false
-	}
-	disabled, _ := cloudStatusDisabled(context.Background(), client)
-	return disabled
-}
-
 func IsCloudModelDisabled(ctx context.Context, name string) bool {
 	if !isCloudModelName(name) {
 		return false
@@ -1195,7 +1179,6 @@ func IsCloudModelDisabled(ctx context.Context, name string) bool {
 	return disabled
 }
 
-// isCloudModel checks if a model is a cloud model using the Show API.
 func isCloudModelName(name string) bool {
 	return strings.HasSuffix(name, ":cloud") || strings.HasSuffix(name, "-cloud")
 }
@@ -1210,12 +1193,11 @@ func filterCloudModels(existing []modelInfo) []modelInfo {
 	return filtered
 }
 
-// filterCloudModelNames removes cloud model names from a string slice.
-// Used by Editor integrations to strip disabled cloud models before writing configs.
-func filterCloudModelNames(models []string) []string {
+// filterDisabledCloudModels removes cloud models from a list when cloud is disabled.
+func filterDisabledCloudModels(models []string) []string {
 	var filtered []string
 	for _, m := range models {
-		if !isCloudModelName(m) {
+		if !IsCloudModelDisabled(context.Background(), m) {
 			filtered = append(filtered, m)
 		}
 	}
