@@ -414,3 +414,4 @@ export async function fetchHealth(): Promise<boolean> {
     return false;
   }
 }
+

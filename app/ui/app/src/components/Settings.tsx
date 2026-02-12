@@ -14,6 +14,7 @@ import {
   XMarkIcon,
   CogIcon,
   ArrowLeftIcon,
+  ArrowDownTrayIcon,
 } from "@heroicons/react/20/solid";
 import { Settings as SettingsType } from "@/gotypes";
 import { useNavigate } from "@tanstack/react-router";
@@ -344,6 +345,29 @@ export default function Settings() {
           {/* Local Configuration */}
           <div className="relative overflow-hidden rounded-xl bg-white dark:bg-neutral-800">
             <div className="space-y-4 p-4">
+              {/* Auto Update */}
+              <Field>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start space-x-3 flex-1">
+                    <ArrowDownTrayIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
+                    <div>
+                      <Label>Auto-download updates</Label>
+                      <Description>
+                        {settings.AutoUpdateEnabled
+                          ? "Automatically download updates when available."
+                          : "Updates will not be downloaded automatically."}
+                      </Description>
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0">
+                    <Switch
+                      checked={settings.AutoUpdateEnabled}
+                      onChange={(checked) => handleChange("AutoUpdateEnabled", checked)}
+                    />
+                  </div>
+                </div>
+              </Field>
+
               {/* Expose Ollama */}
               <Field>
                 <div className="flex items-start justify-between gap-4">
