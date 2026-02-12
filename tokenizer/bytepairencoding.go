@@ -27,6 +27,8 @@ func NewBytePairEncoding(vocab *Vocabulary, pretokenizer ...string) BytePairEnco
 		pretokenizer = []string{`'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+`}
 	}
 
+	pretokenizer = []string{strings.Join(pretokenizer, "|")}
+
 	return BytePairEncoding{
 		vocab: vocab,
 		regexps: slices.Collect(func(yield func(*regexp2.Regexp) bool) {
