@@ -608,137 +608,1170 @@ func TestAnthropicMessagesMiddleware_SetsRelaxThinkingFlag(t *testing.T) {
 
 // Web Search Tests
 
-func TestExtractSearchQuery(t *testing.T) {
-	testCases := []struct {
+func TestHasWebSearchTool(t *testing.T) {
+	tests := []struct {
 		name     string
-		messages []anthropic.MessageParam
-		expected string
+		tools    []anthropic.Tool
+		expected bool
 	}{
 		{
-			name: "extract from colon pattern",
-			messages: []anthropic.MessageParam{
-				{
-					Role:    "user",
-					Content: "Perform a web search for the query: ollama launch",
-				},
-			},
-			expected: "ollama launch",
+			name:     "no tools",
+			tools:    nil,
+			expected: false,
 		},
 		{
-			name: "extract from content blocks",
-			messages: []anthropic.MessageParam{
-				{
-					Role: "user",
-					Content: []any{
-						map[string]any{
-							"type": "text",
-							"text": "Perform a web search for the query: test query",
-						},
-					},
-				},
+			name: "regular tool only",
+			tools: []anthropic.Tool{
+				{Type: "custom", Name: "get_weather"},
 			},
-			expected: "test query",
+			expected: false,
 		},
 		{
-			name: "no query found",
-			messages: []anthropic.MessageParam{
-				{
-					Role:    "user",
-					Content: "Hello world",
-				},
+			name: "web search tool",
+			tools: []anthropic.Tool{
+				{Type: "web_search_20250305", Name: "web_search"},
 			},
-			expected: "",
+			expected: true,
 		},
 		{
-			name: "search for pattern",
-			messages: []anthropic.MessageParam{
-				{
-					Role: "user",
-					Content: []any{
-						map[string]any{
-							"type": "text",
-							"text": "Search for: golang tutorials",
-						},
-					},
-				},
+			name: "mixed tools",
+			tools: []anthropic.Tool{
+				{Type: "custom", Name: "get_weather"},
+				{Type: "web_search_20250305", Name: "web_search"},
 			},
-			expected: "golang tutorials",
+			expected: true,
 		},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			result := extractSearchQuery(tc.messages)
-			if result != tc.expected {
-				t.Errorf("expected %q, got %q", tc.expected, result)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := hasWebSearchTool(tt.tools)
+			if result != tt.expected {
+				t.Errorf("expected %v, got %v", tt.expected, result)
 			}
 		})
 	}
 }
 
-func TestFormatSearchResultsAsText(t *testing.T) {
-	resp := &anthropic.OllamaWebSearchResponse{
-		Results: []anthropic.OllamaWebSearchResult{
-			{
-				Title:   "First Result",
-				URL:     "https://example.com/1",
-				Content: "First content",
+func TestExtractQueryFromToolCall(t *testing.T) {
+	tests := []struct {
+		name     string
+		tc       *api.ToolCall
+		expected string
+	}{
+		{
+			name: "valid query",
+			tc: &api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name:      "web_search",
+					Arguments: makeArgs("query", "test search"),
+				},
 			},
-			{
-				Title:   "Second Result",
-				URL:     "https://example.com/2",
-				Content: "Second content",
+			expected: "test search",
+		},
+		{
+			name: "empty arguments",
+			tc: &api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "web_search",
+				},
 			},
+			expected: "",
+		},
+		{
+			name: "no query key",
+			tc: &api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name:      "web_search",
+					Arguments: makeArgs("other", "value"),
+				},
+			},
+			expected: "",
 		},
 	}
 
-	result := formatSearchResultsAsText(resp)
-
-	if !strings.Contains(result, "First Result") {
-		t.Error("expected result to contain 'First Result'")
-	}
-
-	if !strings.Contains(result, "https://example.com/1") {
-		t.Error("expected result to contain URL")
-	}
-
-	if !strings.Contains(result, "Second Result") {
-		t.Error("expected result to contain 'Second Result'")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractQueryFromToolCall(tt.tc)
+			if result != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, result)
+			}
+		})
 	}
 }
 
-func TestFormatSearchResultsAsText_Empty(t *testing.T) {
-	resp := &anthropic.OllamaWebSearchResponse{
-		Results: []anthropic.OllamaWebSearchResult{},
+// makeArgs is a test helper that creates ToolCallFunctionArguments
+func makeArgs(key string, value any) api.ToolCallFunctionArguments {
+	args := api.NewToolCallFunctionArguments()
+	args.Set(key, value)
+	return args
+}
+
+// --- Web Search Integration Tests ---
+
+// TestWebSearchServerToolUseID tests the ID derivation logic.
+func TestWebSearchServerToolUseID(t *testing.T) {
+	tests := []struct {
+		msgID    string
+		expected string
+	}{
+		{"msg_abc123", "srvtoolu_abc123"},
+		{"msg_", "srvtoolu_"},
+		{"nomsgprefix", "srvtoolu_nomsgprefix"},
 	}
-
-	result := formatSearchResultsAsText(resp)
-
-	if !strings.Contains(result, "No search results found") {
-		t.Errorf("expected 'No search results found' message, got %q", result)
+	for _, tt := range tests {
+		got := serverToolUseID(tt.msgID)
+		if got != tt.expected {
+			t.Errorf("serverToolUseID(%q) = %q, want %q", tt.msgID, got, tt.expected)
+		}
 	}
 }
 
-func TestFormatSearchResultsAsText_LongContent(t *testing.T) {
-	longContent := strings.Repeat("a", 300)
-	resp := &anthropic.OllamaWebSearchResponse{
-		Results: []anthropic.OllamaWebSearchResult{
+// TestWebSearchNoWebSearchTool verifies that when there is no web_search tool,
+// requests pass through to the normal AnthropicWriter without interception.
+func TestWebSearchNoWebSearchTool(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.Use(AnthropicMessagesMiddleware())
+	router.POST("/v1/messages", func(c *gin.Context) {
+		resp := api.ChatResponse{
+			Model: "test-model",
+			Message: api.Message{
+				Role:    "assistant",
+				Content: "Normal response",
+			},
+			Done:       true,
+			DoneReason: "stop",
+			Metrics:    api.Metrics{PromptEvalCount: 10, EvalCount: 5},
+		}
+		data, _ := json.Marshal(resp)
+		c.Writer.WriteHeader(http.StatusOK)
+		_, _ = c.Writer.Write(data)
+	})
+
+	body := `{"model":"test-model","max_tokens":100,"messages":[{"role":"user","content":"Hello"}]}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+
+	var result anthropic.MessagesResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+
+	if result.Type != "message" {
+		t.Errorf("expected type 'message', got %q", result.Type)
+	}
+	if len(result.Content) != 1 || result.Content[0].Type != "text" {
+		t.Fatalf("expected single text block, got %d blocks", len(result.Content))
+	}
+	if *result.Content[0].Text != "Normal response" {
+		t.Errorf("expected text 'Normal response', got %q", *result.Content[0].Text)
+	}
+}
+
+// TestWebSearchToolPresent_ModelDoesNotCallIt_NonStreaming verifies that when
+// the web_search tool is present but the model does not call it, the response
+// passes through normally (non-streaming case).
+func TestWebSearchToolPresent_ModelDoesNotCallIt_NonStreaming(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.Use(AnthropicMessagesMiddleware())
+	router.POST("/v1/messages", func(c *gin.Context) {
+		resp := api.ChatResponse{
+			Model: "test-model",
+			Message: api.Message{
+				Role:    "assistant",
+				Content: "I can answer that without searching.",
+			},
+			Done:       true,
+			DoneReason: "stop",
+			Metrics:    api.Metrics{PromptEvalCount: 12, EvalCount: 8},
+		}
+		data, _ := json.Marshal(resp)
+		c.Writer.WriteHeader(http.StatusOK)
+		_, _ = c.Writer.Write(data)
+	})
+
+	body := `{
+		"model":"test-model:cloud",
+		"max_tokens":100,
+		"messages":[{"role":"user","content":"What is 2+2?"}],
+		"tools":[{"type":"web_search_20250305","name":"web_search"}]
+	}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+
+	var result anthropic.MessagesResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+
+	if result.Type != "message" {
+		t.Errorf("expected type 'message', got %q", result.Type)
+	}
+	if len(result.Content) != 1 || result.Content[0].Type != "text" {
+		t.Fatalf("expected single text block, got %+v", result.Content)
+	}
+	if *result.Content[0].Text != "I can answer that without searching." {
+		t.Errorf("unexpected text: %q", *result.Content[0].Text)
+	}
+	if result.StopReason != "end_turn" {
+		t.Errorf("expected stop_reason 'end_turn', got %q", result.StopReason)
+	}
+}
+
+// TestWebSearchToolPresent_ModelDoesNotCallIt_Streaming verifies the streaming
+// pass-through case when the model does not invoke web_search.
+func TestWebSearchToolPresent_ModelDoesNotCallIt_Streaming(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.Use(AnthropicMessagesMiddleware())
+	router.POST("/v1/messages", func(c *gin.Context) {
+		// Simulate streaming: two partial chunks then a final chunk
+		chunks := []api.ChatResponse{
 			{
-				Title:   "Test",
-				URL:     "https://example.com",
-				Content: longContent,
+				Model:   "test-model",
+				Message: api.Message{Role: "assistant", Content: "Hello "},
+				Done:    false,
+			},
+			{
+				Model:   "test-model",
+				Message: api.Message{Role: "assistant", Content: "world"},
+				Done:    false,
+			},
+			{
+				Model:      "test-model",
+				Message:    api.Message{Role: "assistant", Content: ""},
+				Done:       true,
+				DoneReason: "stop",
+				Metrics:    api.Metrics{PromptEvalCount: 10, EvalCount: 5},
+			},
+		}
+		c.Writer.WriteHeader(http.StatusOK)
+		for _, chunk := range chunks {
+			data, _ := json.Marshal(chunk)
+			_, _ = c.Writer.Write(data)
+		}
+	})
+
+	body := `{
+		"model":"test-model:cloud",
+		"max_tokens":100,
+		"stream":true,
+		"messages":[{"role":"user","content":"Hi"}],
+		"tools":[{"type":"web_search_20250305","name":"web_search"}]
+	}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+
+	// Parse SSE events
+	events := parseSSEEvents(t, resp.Body.String())
+
+	// Should have standard streaming event flow
+	if len(events) == 0 {
+		t.Fatal("expected SSE events, got none")
+	}
+
+	// First event should be message_start
+	if events[0].event != "message_start" {
+		t.Errorf("first event should be message_start, got %q", events[0].event)
+	}
+
+	// Should have content_block_start for text
+	hasTextStart := false
+	hasTextDelta := false
+	hasMessageStop := false
+	for _, e := range events {
+		if e.event == "content_block_start" {
+			var cbs anthropic.ContentBlockStartEvent
+			if err := json.Unmarshal([]byte(e.data), &cbs); err == nil {
+				if cbs.ContentBlock.Type == "text" {
+					hasTextStart = true
+				}
+			}
+		}
+		if e.event == "content_block_delta" {
+			var cbd anthropic.ContentBlockDeltaEvent
+			if err := json.Unmarshal([]byte(e.data), &cbd); err == nil {
+				if cbd.Delta.Type == "text_delta" {
+					hasTextDelta = true
+				}
+			}
+		}
+		if e.event == "message_stop" {
+			hasMessageStop = true
+		}
+	}
+	if !hasTextStart {
+		t.Error("expected content_block_start with text type")
+	}
+	if !hasTextDelta {
+		t.Error("expected content_block_delta with text_delta")
+	}
+	if !hasMessageStop {
+		t.Error("expected message_stop event")
+	}
+}
+
+// TestWebSearchToolPresent_ModelCallsIt_NonStreaming tests the full web search flow
+// in non-streaming mode. It mocks the followup /api/chat call using a local HTTP server.
+func TestWebSearchToolPresent_ModelCallsIt_NonStreaming(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// Create a mock Ollama server that responds to the followup /api/chat call
+	followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := api.ChatResponse{
+			Model: "test-model",
+			Message: api.Message{
+				Role:    "assistant",
+				Content: "Based on my search, the answer is 42.",
+			},
+			Done:       true,
+			DoneReason: "stop",
+			Metrics:    api.Metrics{PromptEvalCount: 50, EvalCount: 20},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer followupServer.Close()
+
+	// Set OLLAMA_HOST to our mock server so the followup call goes there
+	t.Setenv("OLLAMA_HOST", followupServer.URL)
+
+	// Also mock the web search API
+	searchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := anthropic.OllamaWebSearchResponse{
+			Results: []anthropic.OllamaWebSearchResult{
+				{Title: "Test Result", URL: "https://example.com/result", Content: "Some content"},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer searchServer.Close()
+
+	// Point DoWebSearch at our mock search server
+	originalEndpoint := anthropic.WebSearchEndpoint
+	anthropic.WebSearchEndpoint = searchServer.URL
+	defer func() { anthropic.WebSearchEndpoint = originalEndpoint }()
+
+	router := gin.New()
+	router.Use(AnthropicMessagesMiddleware())
+	router.POST("/v1/messages", func(c *gin.Context) {
+		resp := api.ChatResponse{
+			Model: "test-model",
+			Message: api.Message{
+				Role: "assistant",
+				ToolCalls: []api.ToolCall{
+					{
+						ID: "call_ws_001",
+						Function: api.ToolCallFunction{
+							Name:      "web_search",
+							Arguments: makeArgs("query", "meaning of life"),
+						},
+					},
+				},
+			},
+			Done:       true,
+			DoneReason: "stop",
+			Metrics:    api.Metrics{PromptEvalCount: 15, EvalCount: 3},
+		}
+		data, _ := json.Marshal(resp)
+		c.Writer.WriteHeader(http.StatusOK)
+		_, _ = c.Writer.Write(data)
+	})
+
+	body := `{
+		"model":"test-model:cloud",
+		"max_tokens":100,
+		"messages":[{"role":"user","content":"What is the meaning of life?"}],
+		"tools":[{"type":"web_search_20250305","name":"web_search"}]
+	}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+
+	var result anthropic.MessagesResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal error: %v\nbody: %s", err, resp.Body.String())
+	}
+
+	if result.Type != "message" {
+		t.Errorf("expected type 'message', got %q", result.Type)
+	}
+	if result.Role != "assistant" {
+		t.Errorf("expected role 'assistant', got %q", result.Role)
+	}
+
+	// Should have 3 blocks: server_tool_use + web_search_tool_result + text
+	if len(result.Content) != 3 {
+		t.Fatalf("expected 3 content blocks, got %d: %+v", len(result.Content), result.Content)
+	}
+
+	if result.Content[0].Type != "server_tool_use" {
+		t.Errorf("expected first block type 'server_tool_use', got %q", result.Content[0].Type)
+	}
+	if result.Content[0].Name != "web_search" {
+		t.Errorf("expected name 'web_search', got %q", result.Content[0].Name)
+	}
+
+	if result.Content[1].Type != "web_search_tool_result" {
+		t.Errorf("expected second block type 'web_search_tool_result', got %q", result.Content[1].Type)
+	}
+	if result.Content[1].ToolUseID != result.Content[0].ID {
+		t.Errorf("tool_use_id mismatch: %q != %q", result.Content[1].ToolUseID, result.Content[0].ID)
+	}
+
+	if result.Content[2].Type != "text" {
+		t.Errorf("expected third block type 'text', got %q", result.Content[2].Type)
+	}
+	if result.Content[2].Text == nil || *result.Content[2].Text == "" {
+		t.Error("expected non-empty text in third block")
+	}
+
+	if result.StopReason != "end_turn" {
+		t.Errorf("expected stop_reason 'end_turn', got %q", result.StopReason)
+	}
+}
+
+// TestWebSearchToolPresent_ModelCallsIt_Streaming tests the streaming SSE output
+// when the model calls web_search with mocked search and followup endpoints.
+func TestWebSearchToolPresent_ModelCallsIt_Streaming(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// Mock followup /api/chat server
+	followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := api.ChatResponse{
+			Model:      "test-model",
+			Message:    api.Message{Role: "assistant", Content: "Here are the latest news."},
+			Done:       true,
+			DoneReason: "stop",
+			Metrics:    api.Metrics{PromptEvalCount: 40, EvalCount: 15},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer followupServer.Close()
+	t.Setenv("OLLAMA_HOST", followupServer.URL)
+
+	// Mock web search API
+	searchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := anthropic.OllamaWebSearchResponse{
+			Results: []anthropic.OllamaWebSearchResult{
+				{Title: "News Result", URL: "https://example.com/news", Content: "Breaking news"},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer searchServer.Close()
+	originalEndpoint := anthropic.WebSearchEndpoint
+	anthropic.WebSearchEndpoint = searchServer.URL
+	defer func() { anthropic.WebSearchEndpoint = originalEndpoint }()
+
+	router := gin.New()
+	router.Use(AnthropicMessagesMiddleware())
+	router.POST("/v1/messages", func(c *gin.Context) {
+		// Simulate buffered streaming: non-final chunk then final with tool call
+		chunks := []api.ChatResponse{
+			{
+				Model:   "test-model",
+				Message: api.Message{Role: "assistant"},
+				Done:    false,
+			},
+			{
+				Model: "test-model",
+				Message: api.Message{
+					Role: "assistant",
+					ToolCalls: []api.ToolCall{
+						{
+							ID: "call_ws_002",
+							Function: api.ToolCallFunction{
+								Name:      "web_search",
+								Arguments: makeArgs("query", "latest news"),
+							},
+						},
+					},
+				},
+				Done:       true,
+				DoneReason: "stop",
+				Metrics:    api.Metrics{PromptEvalCount: 10, EvalCount: 2},
+			},
+		}
+		c.Writer.WriteHeader(http.StatusOK)
+		for _, chunk := range chunks {
+			data, _ := json.Marshal(chunk)
+			_, _ = c.Writer.Write(data)
+		}
+	})
+
+	body := `{
+		"model":"test-model:cloud",
+		"max_tokens":100,
+		"stream":true,
+		"messages":[{"role":"user","content":"What is the latest news?"}],
+		"tools":[{"type":"web_search_20250305","name":"web_search"}]
+	}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+
+	events := parseSSEEvents(t, resp.Body.String())
+
+	// Success path: 10 events (3 blocks: server_tool_use, web_search_tool_result, text with delta)
+	expectedEventTypes := []string{
+		"message_start",
+		"content_block_start", // server_tool_use
+		"content_block_stop",
+		"content_block_start", // web_search_tool_result
+		"content_block_stop",
+		"content_block_start", // text (empty)
+		"content_block_delta", // text_delta with actual content
+		"content_block_stop",
+		"message_delta",
+		"message_stop",
+	}
+
+	if len(events) != len(expectedEventTypes) {
+		t.Fatalf("expected %d events, got %d.\nEvents: %v", len(expectedEventTypes), len(events), eventNames(events))
+	}
+
+	for i, expected := range expectedEventTypes {
+		if events[i].event != expected {
+			t.Errorf("event[%d]: expected %q, got %q", i, expected, events[i].event)
+		}
+	}
+
+	// Verify text delta has the followup model's content
+	var textDelta anthropic.ContentBlockDeltaEvent
+	if err := json.Unmarshal([]byte(events[6].data), &textDelta); err != nil {
+		t.Fatalf("failed to parse text delta: %v", err)
+	}
+	if textDelta.Delta.Type != "text_delta" {
+		t.Errorf("expected delta type 'text_delta', got %q", textDelta.Delta.Type)
+	}
+	if textDelta.Delta.Text != "Here are the latest news." {
+		t.Errorf("expected followup text, got %q", textDelta.Delta.Text)
+	}
+}
+
+// TestWebSearchStreamResponse tests the streamResponse method directly by constructing
+// a WebSearchAnthropicWriter and calling streamResponse with a known response.
+func TestWebSearchStreamResponse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	text := "Here is the answer."
+
+	response := anthropic.MessagesResponse{
+		ID:    "msg_test123",
+		Type:  "message",
+		Role:  "assistant",
+		Model: "test-model",
+		Content: []anthropic.ContentBlock{
+			{
+				Type:  "server_tool_use",
+				ID:    "srvtoolu_test123",
+				Name:  "web_search",
+				Input: map[string]any{"query": "test query"},
+			},
+			{
+				Type:      "web_search_tool_result",
+				ToolUseID: "srvtoolu_test123",
+				Content: []anthropic.WebSearchResult{
+					{Type: "web_search_result", URL: "https://example.com", Title: "Example"},
+				},
+			},
+			{
+				Type: "text",
+				Text: &text,
 			},
 		},
+		StopReason: "end_turn",
+		Usage:      anthropic.Usage{InputTokens: 20, OutputTokens: 10},
 	}
 
-	result := formatSearchResultsAsText(resp)
+	rec := httptest.NewRecorder()
+	ginCtx, _ := gin.CreateTestContext(rec)
 
-	// Content should be truncated to ~200 chars + "..."
-	if strings.Contains(result, longContent) {
-		t.Error("expected long content to be truncated")
+	innerWriter := &AnthropicWriter{
+		BaseWriter: BaseWriter{ResponseWriter: ginCtx.Writer},
+		stream:     true,
+		id:         "msg_test123",
+	}
+	wsWriter := &WebSearchAnthropicWriter{
+		BaseWriter: BaseWriter{ResponseWriter: ginCtx.Writer},
+		inner:      innerWriter,
+		stream:     true,
+		req:        anthropic.MessagesRequest{Model: "test-model"},
 	}
 
-	if !strings.Contains(result, "...") {
-		t.Error("expected truncated content to end with '...'")
+	if err := wsWriter.streamResponse(response); err != nil {
+		t.Fatalf("streamResponse error: %v", err)
+	}
+
+	events := parseSSEEvents(t, rec.Body.String())
+
+	// Verify full event sequence
+	expectedEventTypes := []string{
+		"message_start",
+		"content_block_start", // server_tool_use (index 0)
+		"content_block_stop",  // index 0
+		"content_block_start", // web_search_tool_result (index 1)
+		"content_block_stop",  // index 1
+		"content_block_start", // text (index 2)
+		"content_block_delta", // text_delta
+		"content_block_stop",  // index 2
+		"message_delta",
+		"message_stop",
+	}
+
+	if len(events) != len(expectedEventTypes) {
+		t.Fatalf("expected %d events, got %d.\nEvents: %v", len(expectedEventTypes), len(events), eventNames(events))
+	}
+
+	for i, expected := range expectedEventTypes {
+		if events[i].event != expected {
+			t.Errorf("event[%d]: expected %q, got %q", i, expected, events[i].event)
+		}
+	}
+
+	// Verify message_start content
+	var msgStart anthropic.MessageStartEvent
+	if err := json.Unmarshal([]byte(events[0].data), &msgStart); err != nil {
+		t.Fatalf("failed to parse message_start: %v", err)
+	}
+	if msgStart.Message.ID != "msg_test123" {
+		t.Errorf("expected message ID 'msg_test123', got %q", msgStart.Message.ID)
+	}
+	if msgStart.Message.Role != "assistant" {
+		t.Errorf("expected role 'assistant', got %q", msgStart.Message.Role)
+	}
+	if len(msgStart.Message.Content) != 0 {
+		t.Errorf("expected empty content in message_start, got %d blocks", len(msgStart.Message.Content))
+	}
+
+	// Verify content_block_start for server_tool_use (event index 1)
+	var toolStart anthropic.ContentBlockStartEvent
+	if err := json.Unmarshal([]byte(events[1].data), &toolStart); err != nil {
+		t.Fatalf("failed to parse server_tool_use start: %v", err)
+	}
+	if toolStart.Index != 0 {
+		t.Errorf("expected index 0, got %d", toolStart.Index)
+	}
+	if toolStart.ContentBlock.Type != "server_tool_use" {
+		t.Errorf("expected type 'server_tool_use', got %q", toolStart.ContentBlock.Type)
+	}
+	if toolStart.ContentBlock.ID != "srvtoolu_test123" {
+		t.Errorf("expected ID 'srvtoolu_test123', got %q", toolStart.ContentBlock.ID)
+	}
+
+	// Verify content_block_start for web_search_tool_result (event index 3)
+	var searchStart anthropic.ContentBlockStartEvent
+	if err := json.Unmarshal([]byte(events[3].data), &searchStart); err != nil {
+		t.Fatalf("failed to parse web_search_tool_result start: %v", err)
+	}
+	if searchStart.Index != 1 {
+		t.Errorf("expected index 1, got %d", searchStart.Index)
+	}
+	if searchStart.ContentBlock.Type != "web_search_tool_result" {
+		t.Errorf("expected type 'web_search_tool_result', got %q", searchStart.ContentBlock.Type)
+	}
+
+	// Verify text block: content_block_start (event index 5)
+	var textStart anthropic.ContentBlockStartEvent
+	if err := json.Unmarshal([]byte(events[5].data), &textStart); err != nil {
+		t.Fatalf("failed to parse text start: %v", err)
+	}
+	if textStart.Index != 2 {
+		t.Errorf("expected index 2, got %d", textStart.Index)
+	}
+	if textStart.ContentBlock.Type != "text" {
+		t.Errorf("expected type 'text', got %q", textStart.ContentBlock.Type)
+	}
+	// Text in start should be empty
+	if textStart.ContentBlock.Text == nil || *textStart.ContentBlock.Text != "" {
+		t.Errorf("expected empty text in content_block_start, got %v", textStart.ContentBlock.Text)
+	}
+
+	// Verify text delta (event index 6)
+	var textDelta anthropic.ContentBlockDeltaEvent
+	if err := json.Unmarshal([]byte(events[6].data), &textDelta); err != nil {
+		t.Fatalf("failed to parse text delta: %v", err)
+	}
+	if textDelta.Index != 2 {
+		t.Errorf("expected index 2, got %d", textDelta.Index)
+	}
+	if textDelta.Delta.Type != "text_delta" {
+		t.Errorf("expected delta type 'text_delta', got %q", textDelta.Delta.Type)
+	}
+	if textDelta.Delta.Text != "Here is the answer." {
+		t.Errorf("expected delta text 'Here is the answer.', got %q", textDelta.Delta.Text)
+	}
+
+	// Verify message_delta (event index 8)
+	var msgDelta anthropic.MessageDeltaEvent
+	if err := json.Unmarshal([]byte(events[8].data), &msgDelta); err != nil {
+		t.Fatalf("failed to parse message_delta: %v", err)
+	}
+	if msgDelta.Delta.StopReason != "end_turn" {
+		t.Errorf("expected stop_reason 'end_turn', got %q", msgDelta.Delta.StopReason)
+	}
+	if msgDelta.Usage.OutputTokens != 10 {
+		t.Errorf("expected output_tokens 10, got %d", msgDelta.Usage.OutputTokens)
+	}
+}
+
+// TestWebSearchSendError_NonStreaming tests sendError produces correct response shape.
+func TestWebSearchSendError_NonStreaming(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	ginCtx, _ := gin.CreateTestContext(rec)
+
+	innerWriter := &AnthropicWriter{
+		BaseWriter: BaseWriter{ResponseWriter: ginCtx.Writer},
+		stream:     false,
+		id:         "msg_err001",
+	}
+	wsWriter := &WebSearchAnthropicWriter{
+		BaseWriter: BaseWriter{ResponseWriter: ginCtx.Writer},
+		inner:      innerWriter,
+		stream:     false,
+		req:        anthropic.MessagesRequest{Model: "test-model"},
+	}
+
+	if err := wsWriter.sendError("unavailable", "test query"); err != nil {
+		t.Fatalf("sendError error: %v", err)
+	}
+
+	var result anthropic.MessagesResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal error: %v\nbody: %s", err, rec.Body.String())
+	}
+
+	if result.Type != "message" {
+		t.Errorf("expected type 'message', got %q", result.Type)
+	}
+	if result.ID != "msg_err001" {
+		t.Errorf("expected ID 'msg_err001', got %q", result.ID)
+	}
+
+	// Should have exactly 2 blocks: server_tool_use + web_search_tool_result
+	if len(result.Content) != 2 {
+		t.Fatalf("expected 2 content blocks, got %d", len(result.Content))
+	}
+
+	// Block 0: server_tool_use
+	if result.Content[0].Type != "server_tool_use" {
+		t.Errorf("expected 'server_tool_use', got %q", result.Content[0].Type)
+	}
+	expectedToolID := "srvtoolu_err001"
+	if result.Content[0].ID != expectedToolID {
+		t.Errorf("expected ID %q, got %q", expectedToolID, result.Content[0].ID)
+	}
+	if result.Content[0].Name != "web_search" {
+		t.Errorf("expected name 'web_search', got %q", result.Content[0].Name)
+	}
+	// Verify input contains the query
+	inputMap, ok := result.Content[0].Input.(map[string]any)
+	if !ok {
+		t.Fatalf("expected Input to be map, got %T", result.Content[0].Input)
+	}
+	if inputMap["query"] != "test query" {
+		t.Errorf("expected query 'test query', got %v", inputMap["query"])
+	}
+
+	// Block 1: web_search_tool_result with error
+	if result.Content[1].Type != "web_search_tool_result" {
+		t.Errorf("expected 'web_search_tool_result', got %q", result.Content[1].Type)
+	}
+	if result.Content[1].ToolUseID != expectedToolID {
+		t.Errorf("expected tool_use_id %q, got %q", expectedToolID, result.Content[1].ToolUseID)
+	}
+
+	// The Content field should be a WebSearchToolResultError
+	contentJSON, _ := json.Marshal(result.Content[1].Content)
+	var errContent anthropic.WebSearchToolResultError
+	if err := json.Unmarshal(contentJSON, &errContent); err != nil {
+		t.Fatalf("failed to parse error content: %v\nraw: %s", err, string(contentJSON))
+	}
+	if errContent.Type != "web_search_tool_result_error" {
+		t.Errorf("expected error type 'web_search_tool_result_error', got %q", errContent.Type)
+	}
+	if errContent.ErrorCode != "unavailable" {
+		t.Errorf("expected error_code 'unavailable', got %q", errContent.ErrorCode)
+	}
+
+	if result.StopReason != "end_turn" {
+		t.Errorf("expected stop_reason 'end_turn', got %q", result.StopReason)
+	}
+}
+
+// TestWebSearchSendError_Streaming tests sendError in streaming mode produces proper SSE.
+func TestWebSearchSendError_Streaming(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	ginCtx, _ := gin.CreateTestContext(rec)
+
+	innerWriter := &AnthropicWriter{
+		BaseWriter: BaseWriter{ResponseWriter: ginCtx.Writer},
+		stream:     true,
+		id:         "msg_err002",
+	}
+	wsWriter := &WebSearchAnthropicWriter{
+		BaseWriter: BaseWriter{ResponseWriter: ginCtx.Writer},
+		inner:      innerWriter,
+		stream:     true,
+		req:        anthropic.MessagesRequest{Model: "test-model"},
+	}
+
+	if err := wsWriter.sendError("invalid_request", "bad query"); err != nil {
+		t.Fatalf("sendError error: %v", err)
+	}
+
+	events := parseSSEEvents(t, rec.Body.String())
+
+	// Error response has 2 blocks: server_tool_use + web_search_tool_result
+	// Expected events: message_start,
+	//   content_block_start(server_tool_use), content_block_stop,
+	//   content_block_start(web_search_tool_result), content_block_stop,
+	//   message_delta, message_stop
+	expectedEventTypes := []string{
+		"message_start",
+		"content_block_start",
+		"content_block_stop",
+		"content_block_start",
+		"content_block_stop",
+		"message_delta",
+		"message_stop",
+	}
+
+	if len(events) != len(expectedEventTypes) {
+		t.Fatalf("expected %d events, got %d.\nEvents: %v", len(expectedEventTypes), len(events), eventNames(events))
+	}
+
+	for i, expected := range expectedEventTypes {
+		if events[i].event != expected {
+			t.Errorf("event[%d]: expected %q, got %q", i, expected, events[i].event)
+		}
+	}
+
+	// Verify the server_tool_use block
+	var toolStart anthropic.ContentBlockStartEvent
+	if err := json.Unmarshal([]byte(events[1].data), &toolStart); err != nil {
+		t.Fatalf("failed to parse server_tool_use start: %v", err)
+	}
+	if toolStart.ContentBlock.Type != "server_tool_use" {
+		t.Errorf("expected 'server_tool_use', got %q", toolStart.ContentBlock.Type)
+	}
+
+	// Verify the web_search_tool_result block
+	var resultStart anthropic.ContentBlockStartEvent
+	if err := json.Unmarshal([]byte(events[3].data), &resultStart); err != nil {
+		t.Fatalf("failed to parse web_search_tool_result start: %v", err)
+	}
+	if resultStart.ContentBlock.Type != "web_search_tool_result" {
+		t.Errorf("expected 'web_search_tool_result', got %q", resultStart.ContentBlock.Type)
+	}
+}
+
+// TestWebSearchSendError_EmptyQuery tests sendError with an empty query.
+func TestWebSearchSendError_EmptyQuery(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	rec := httptest.NewRecorder()
+	ginCtx, _ := gin.CreateTestContext(rec)
+
+	innerWriter := &AnthropicWriter{
+		BaseWriter: BaseWriter{ResponseWriter: ginCtx.Writer},
+		stream:     false,
+		id:         "msg_empty001",
+	}
+	wsWriter := &WebSearchAnthropicWriter{
+		BaseWriter: BaseWriter{ResponseWriter: ginCtx.Writer},
+		inner:      innerWriter,
+		stream:     false,
+		req:        anthropic.MessagesRequest{Model: "test-model"},
+	}
+
+	if err := wsWriter.sendError("invalid_request", ""); err != nil {
+		t.Fatalf("sendError error: %v", err)
+	}
+
+	var result anthropic.MessagesResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+
+	if len(result.Content) != 2 {
+		t.Fatalf("expected 2 content blocks, got %d", len(result.Content))
+	}
+
+	// Verify the input has empty query
+	inputMap, ok := result.Content[0].Input.(map[string]any)
+	if !ok {
+		t.Fatalf("expected Input to be map, got %T", result.Content[0].Input)
+	}
+	if inputMap["query"] != "" {
+		t.Errorf("expected empty query, got %v", inputMap["query"])
+	}
+}
+
+// --- SSE parsing helpers ---
+
+type sseEvent struct {
+	event string
+	data  string
+}
+
+// parseSSEEvents parses Server-Sent Events from a string.
+func parseSSEEvents(t *testing.T, body string) []sseEvent {
+	t.Helper()
+	var events []sseEvent
+	var currentEvent string
+	var currentData strings.Builder
+
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "event: ") {
+			currentEvent = strings.TrimPrefix(line, "event: ")
+		} else if strings.HasPrefix(line, "data: ") {
+			currentData.WriteString(strings.TrimPrefix(line, "data: "))
+		} else if line == "" && currentEvent != "" {
+			events = append(events, sseEvent{event: currentEvent, data: currentData.String()})
+			currentEvent = ""
+			currentData.Reset()
+		}
+	}
+	return events
+}
+
+// eventNames returns a list of event type names for debugging.
+func eventNames(events []sseEvent) []string {
+	names := make([]string, len(events))
+	for i, e := range events {
+		names[i] = e.event
+	}
+	return names
+}
+
+// TestWebSearchCloudModelGating tests that web_search tool is rejected for non-cloud models.
+func TestWebSearchCloudModelGating(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("local model rejected", func(t *testing.T) {
+		handlerCalled := false
+		router := gin.New()
+		router.Use(AnthropicMessagesMiddleware())
+		router.POST("/v1/messages", func(c *gin.Context) {
+			handlerCalled = true
+		})
+
+		body := `{"model":"llama3.2","max_tokens":100,"messages":[{"role":"user","content":"hello"}],"tools":[{"type":"web_search_20250305","name":"web_search"}]}`
+		req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+
+		if resp.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d: %s", resp.Code, resp.Body.String())
+		}
+		if handlerCalled {
+			t.Error("handler should not be called for non-cloud model")
+		}
+		var errResp anthropic.ErrorResponse
+		if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
+			t.Fatalf("failed to parse error response: %v", err)
+		}
+		if !strings.Contains(errResp.Error.Message, "cloud models") {
+			t.Errorf("expected error about cloud models, got: %q", errResp.Error.Message)
+		}
+	})
+
+	t.Run("local model with tag rejected", func(t *testing.T) {
+		router := gin.New()
+		router.Use(AnthropicMessagesMiddleware())
+		router.POST("/v1/messages", func(c *gin.Context) {
+			t.Error("handler should not be called for non-cloud model")
+		})
+
+		body := `{"model":"llama3.2:latest","max_tokens":100,"messages":[{"role":"user","content":"hello"}],"tools":[{"type":"web_search_20250305","name":"web_search"}]}`
+		req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+
+		if resp.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d: %s", resp.Code, resp.Body.String())
+		}
+	})
+
+	t.Run("cloud model with size tag allowed", func(t *testing.T) {
+		handlerCalled := false
+		router := gin.New()
+		router.Use(AnthropicMessagesMiddleware())
+		router.POST("/v1/messages", func(c *gin.Context) {
+			handlerCalled = true
+			resp := api.ChatResponse{
+				Model:      "gpt-oss:120b",
+				Message:    api.Message{Role: "assistant", Content: "hello"},
+				Done:       true,
+				DoneReason: "stop",
+				Metrics:    api.Metrics{PromptEvalCount: 10, EvalCount: 5},
+			}
+			data, _ := json.Marshal(resp)
+			c.Writer.WriteHeader(http.StatusOK)
+			_, _ = c.Writer.Write(data)
+		})
+
+		body := `{"model":"gpt-oss:120b-cloud","max_tokens":100,"messages":[{"role":"user","content":"hello"}],"tools":[{"type":"web_search_20250305","name":"web_search"}]}`
+		req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+
+		if !handlerCalled {
+			t.Error("handler should be called for cloud model")
+		}
+		if resp.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+		}
+	})
+
+	t.Run("cloud model allowed", func(t *testing.T) {
+		handlerCalled := false
+		router := gin.New()
+		router.Use(AnthropicMessagesMiddleware())
+		router.POST("/v1/messages", func(c *gin.Context) {
+			handlerCalled = true
+			// Return a simple response so the middleware doesn't error
+			resp := api.ChatResponse{
+				Model:      "kimi-k2.5",
+				Message:    api.Message{Role: "assistant", Content: "hello"},
+				Done:       true,
+				DoneReason: "stop",
+				Metrics:    api.Metrics{PromptEvalCount: 10, EvalCount: 5},
+			}
+			data, _ := json.Marshal(resp)
+			c.Writer.WriteHeader(http.StatusOK)
+			_, _ = c.Writer.Write(data)
+		})
+
+		body := `{"model":"kimi-k2.5:cloud","max_tokens":100,"messages":[{"role":"user","content":"hello"}],"tools":[{"type":"web_search_20250305","name":"web_search"}]}`
+		req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+
+		if !handlerCalled {
+			t.Error("handler should be called for cloud model")
+		}
+		if resp.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+		}
+	})
+}
+
+// TestWebSearchSearchAPIError tests that a failing search API returns a proper error response.
+func TestWebSearchSearchAPIError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// Mock search server that returns 500
+	searchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer searchServer.Close()
+	originalEndpoint := anthropic.WebSearchEndpoint
+	anthropic.WebSearchEndpoint = searchServer.URL
+	defer func() { anthropic.WebSearchEndpoint = originalEndpoint }()
+
+	router := gin.New()
+	router.Use(AnthropicMessagesMiddleware())
+	router.POST("/v1/messages", func(c *gin.Context) {
+		resp := api.ChatResponse{
+			Model: "test-model",
+			Message: api.Message{
+				Role: "assistant",
+				ToolCalls: []api.ToolCall{
+					{
+						ID: "call_err",
+						Function: api.ToolCallFunction{
+							Name:      "web_search",
+							Arguments: makeArgs("query", "test"),
+						},
+					},
+				},
+			},
+			Done:       true,
+			DoneReason: "stop",
+			Metrics:    api.Metrics{PromptEvalCount: 10, EvalCount: 2},
+		}
+		data, _ := json.Marshal(resp)
+		c.Writer.WriteHeader(http.StatusOK)
+		_, _ = c.Writer.Write(data)
+	})
+
+	body := `{
+		"model":"test-model:cloud",
+		"max_tokens":100,
+		"messages":[{"role":"user","content":"test"}],
+		"tools":[{"type":"web_search_20250305","name":"web_search"}]
+	}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+
+	var result anthropic.MessagesResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+
+	// Error response: server_tool_use + web_search_tool_result with error
+	if len(result.Content) != 2 {
+		t.Fatalf("expected 2 content blocks for error, got %d", len(result.Content))
+	}
+	if result.Content[0].Type != "server_tool_use" {
+		t.Errorf("expected 'server_tool_use', got %q", result.Content[0].Type)
+	}
+	if result.Content[1].Type != "web_search_tool_result" {
+		t.Errorf("expected 'web_search_tool_result', got %q", result.Content[1].Type)
 	}
 }

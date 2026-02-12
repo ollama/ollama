@@ -860,23 +860,31 @@ type CountTokensResponse struct {
 	InputTokens int `json:"input_tokens"`
 }
 
-// estimateTokens returns a rough estimate of tokens using len/4 heuristic.
+// estimateTokens returns a rough estimate of tokens (len/4).
+// TODO: Replace with actual tokenization via Tokenize API for accuracy.
+// Current len/4 heuristic is a rough approximation (~4 chars/token average).
 func estimateTokens(req CountTokensRequest) int {
 	var totalLen int
 
+	// Count system prompt
 	if req.System != nil {
 		totalLen += countAnyContent(req.System)
 	}
 
+	// Count messages
 	for _, msg := range req.Messages {
+		// Count role (always present)
 		totalLen += len(msg.Role)
-		totalLen += countAnyContent(msg.Content)
+		// Count content
+		contentLen := countAnyContent(msg.Content)
+		totalLen += contentLen
 	}
 
 	for _, tool := range req.Tools {
 		totalLen += len(tool.Name) + len(tool.Description) + len(tool.InputSchema)
 	}
 
+	// Return len/4 as rough token estimate, minimum 1 if there's any content
 	tokens := totalLen / 4
 	if tokens == 0 && (len(req.Messages) > 0 || req.System != nil) {
 		tokens = 1
