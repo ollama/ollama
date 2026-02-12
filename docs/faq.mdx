@@ -348,6 +348,26 @@ How much the cache quantization impacts the model's response quality will depend
 
 You may need to experiment with different quantization types to find the best balance between memory usage and quality.
 
+## How can I disable thinking mode by default?
+
+Some models (like Qwen3) support "thinking mode" which shows the model's reasoning process. By default, thinking is enabled for models that support it. To disable thinking by default server-wide, set the `OLLAMA_DEFAULT_THINK` environment variable:
+
+```shell
+OLLAMA_DEFAULT_THINK=false ollama serve
+```
+
+Supported values:
+- `true` or `1` - Enable thinking by default
+- `false` or `0` - Disable thinking by default
+- `high`, `medium`, `low` - Set thinking budget level
+
+Users can still override this per-request using the `think` parameter in the API or `--think` flag in the CLI:
+
+```shell
+# Override to enable thinking for this request
+ollama run --think=true qwen3:8b "explain quantum computing"
+```
+
 ## Where can I find my Ollama Public Key?
 
 Your **Ollama Public Key** is the public part of the key pair that lets your local Ollama instance talk to [ollama.com](https://ollama.com).
