@@ -155,16 +155,15 @@ function Invoke-Download {
                 $now = [DateTime]::UtcNow
                 if (($now - $lastUpdate).TotalMilliseconds -ge 250) {
                     if ($totalBytes -gt 0) {
-                        $pct = [math]::Min(100, [math]::Floor(($totalRead / $totalBytes) * 100))
+                        $pct = [math]::Min(100.0, ($totalRead / $totalBytes) * 100)
                         $filled = [math]::Floor($barWidth * $pct / 100)
                         $empty = $barWidth - $filled
                         $bar = ('#' * $filled) + (' ' * $empty)
-                        $sizeMB = [math]::Round($totalRead / 1MB, 1)
-                        $totalMB = [math]::Round($totalBytes / 1MB, 1)
-                        Write-Host -NoNewline "`r  [$bar] ${pct}%  ${sizeMB} / ${totalMB} MB"
+                        $pctFmt = $pct.ToString("0.0")
+                        Write-Host -NoNewline "`r$bar ${pctFmt}%"
                     } else {
                         $sizeMB = [math]::Round($totalRead / 1MB, 1)
-                        Write-Host -NoNewline "`r  ${sizeMB} MB downloaded..."
+                        Write-Host -NoNewline "`r${sizeMB} MB downloaded..."
                     }
                     $lastUpdate = $now
                 }
@@ -172,12 +171,11 @@ function Invoke-Download {
 
             # Final progress update
             if ($totalBytes -gt 0) {
-                $totalMB = [math]::Round($totalBytes / 1MB, 1)
                 $bar = '#' * $barWidth
-                Write-Host "`r  [$bar] 100%  ${totalMB} / ${totalMB} MB"
+                Write-Host "`r$bar 100.0%"
             } else {
                 $sizeMB = [math]::Round($totalRead / 1MB, 1)
-                Write-Host "`r  ${sizeMB} MB downloaded.          "
+                Write-Host "`r${sizeMB} MB downloaded.          "
             }
         } finally {
             $fileStream.Close()
@@ -210,7 +208,7 @@ function Invoke-Uninstall {
 
     $regKey = Find-InnoSetupInstall
     if (-not $regKey) {
-        Write-Host "Ollama is not installed."
+        Write-Host ">>> Ollama is not installed."
         return
     }
 
@@ -229,7 +227,7 @@ function Invoke-Uninstall {
         return
     }
 
-    Write-Host "Launching uninstaller..."
+    Write-Host ">>> Launching uninstaller..."
     # Run with GUI so user can choose whether to keep models
     Start-Process -FilePath $uninstallExe -Wait
 
@@ -237,7 +235,7 @@ function Invoke-Uninstall {
     if (Find-InnoSetupInstall) {
         Write-Warning "Uninstall may not have completed"
     } else {
-        Write-Host "Ollama has been uninstalled."
+        Write-Host ">>> Ollama has been uninstalled."
     }
 }
 
@@ -256,7 +254,7 @@ function Invoke-Install {
     # Download installer
     Write-Step "Downloading Ollama"
     if (-not $DebugInstall) {
-        Write-Host "Downloading Ollama..."
+        Write-Host ">>> Downloading Ollama for Windows..."
     }
 
     $tempInstaller = Join-Path $env:TEMP "OllamaSetup.exe"
@@ -279,7 +277,7 @@ function Invoke-Install {
     # Run installer
     Write-Step "Installing Ollama"
     if (-not $DebugInstall) {
-        Write-Host "Installing..."
+        Write-Host ">>> Installing Ollama..."
     }
 
     # Create upgrade marker so the app starts hidden
@@ -311,7 +309,7 @@ function Invoke-Install {
     Write-Step "Updating session PATH"
     Update-SessionPath
 
-    Write-Host "Install complete. You can now run 'ollama'."
+    Write-Host ">>> Install complete. Run 'ollama' from the command line."
 }
 
 # --------------------------------------------------------------------------
