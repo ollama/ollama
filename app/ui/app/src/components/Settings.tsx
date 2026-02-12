@@ -19,7 +19,7 @@ import { Settings as SettingsType } from "@/gotypes";
 import { useNavigate } from "@tanstack/react-router";
 import { useUser } from "@/hooks/useUser";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getSettings, updateSettings } from "@/api";
+import { getSettings, updateSettings, getInferenceCompute } from "@/api";
 
 function AnimatedDots() {
   return (
@@ -64,6 +64,13 @@ export default function Settings() {
   });
 
   const settings = settingsData?.settings || null;
+
+  const { data: inferenceComputeResponse } = useQuery({
+    queryKey: ["inferenceCompute"],
+    queryFn: getInferenceCompute,
+  });
+
+  const defaultContextLength = inferenceComputeResponse?.defaultContextLength;
 
   const updateSettingsMutation = useMutation({
     mutationFn: updateSettings,
@@ -148,7 +155,7 @@ export default function Settings() {
         Models: "",
         Agent: false,
         Tools: false,
-        ContextLength: 4096,
+        ContextLength: 0,
         AirplaneMode: false,
       });
       updateSettingsMutation.mutate(defaultSettings);
@@ -419,13 +426,11 @@ export default function Settings() {
                     </Description>
                     <div className="mt-3">
                       <Slider
-                        value={(() => {
-                          // Otherwise use the settings value
-                          return settings.ContextLength || 4096;
-                        })()}
+                        value={settings.ContextLength || defaultContextLength || 0}
                         onChange={(value) => {
                           handleChange("ContextLength", value);
                         }}
+                        disabled={!defaultContextLength}
                         options={[
                           { value: 4096, label: "4k" },
                           { value: 8192, label: "8k" },
@@ -440,6 +445,7 @@ export default function Settings() {
                   </div>
                 </div>
               </Field>
+
               {/* Airplane Mode */}
               <Field>
                 <div className="flex items-start justify-between gap-4">

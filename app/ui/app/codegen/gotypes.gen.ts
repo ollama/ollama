@@ -289,10 +289,12 @@ export class InferenceCompute {
 }
 export class InferenceComputeResponse {
     inferenceComputes: InferenceCompute[];
+    defaultContextLength: number;
 
     constructor(source: any = {}) {
         if ('string' === typeof source) source = JSON.parse(source);
         this.inferenceComputes = this.convertValues(source["inferenceComputes"], InferenceCompute);
+        this.defaultContextLength = source["defaultContextLength"];
     }
 
 	convertValues(a: any, classs: any, asMap: boolean = false): any {
