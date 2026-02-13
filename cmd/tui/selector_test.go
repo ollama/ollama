@@ -545,6 +545,43 @@ func TestMultiView_OverflowIndicator(t *testing.T) {
 	}
 }
 
+// --- Multi-select space toggle (including KeyRunes fallback for Windows PowerShell) ---
+
+func TestMultiUpdate_SpaceTogglesItem(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), nil)
+	m.cursor = 1
+
+	// Simulate space delivered as tea.KeySpace
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = updated.(multiSelectorModel)
+
+	if !m.checked[1] {
+		t.Error("space (KeySpace) should toggle the item at cursor")
+	}
+	if m.filter != "" {
+		t.Error("space should not modify filter")
+	}
+}
+
+func TestMultiUpdate_SpaceRuneTogglesItem(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), nil)
+	m.cursor = 1
+
+	// Simulate space delivered as tea.KeyRunes (Windows PowerShell behavior)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m = updated.(multiSelectorModel)
+
+	if !m.checked[1] {
+		t.Error("space (KeyRunes) should toggle the item at cursor")
+	}
+	if m.filter != "" {
+		t.Error("space rune should not be added to filter")
+	}
+	if m.cursor != 1 {
+		t.Errorf("cursor should stay at 1, got %d", m.cursor)
+	}
+}
+
 // Key message helpers for testing
 
 type keyType = int
