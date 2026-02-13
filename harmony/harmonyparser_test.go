@@ -1,6 +1,7 @@
 package harmony
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"testing"
@@ -532,6 +533,74 @@ func TestFunctionConvertAndAdd(t *testing.T) {
 				if parser.harmonyToUser[want] != in {
 					t.Errorf("case %d: harmonyToUser[%q] = %q, want %q", i, want, parser.harmonyToUser[want], in)
 				}
+			}
+		})
+	}
+}
+
+func TestToolCallArgParsing(t *testing.T) {
+	tests := []struct {
+		name, wantName, wantArgs string
+		input                    string
+		wantErr                  bool
+	}{
+		{
+			name:     "valid tool call with clean JSON args",
+			input:    "<|start|>assistant<|channel|>commentary to=functions.get_weather <|constrain|>json<|message|>" + `{"location":"San Francisco"}`,
+			wantName: "get_weather",
+			wantArgs: `{"location":"San Francisco"}`,
+		},
+		{
+			name:     "trailing Harmony tokens after JSON args",
+			input:    "<|start|>assistant<|channel|>commentary to=functions.get_weather <|constrain|>json<|message|>" + `{"location":"San Francisco"}` + "<|call|><|start|>assistant<|channel|>final<|message|>",
+			wantName: "get_weather",
+			wantArgs: `{"location":"San Francisco"}`,
+		},
+		{
+			name:     "empty args become empty object",
+			input:    "<|start|>assistant<|channel|>commentary to=functions.refresh <|constrain|>json<|message|>",
+			wantName: "refresh",
+			wantArgs: `{}`,
+		},
+		{
+			name:     "pipe-angle in JSON string value preserved",
+			input:    "<|start|>assistant<|channel|>commentary to=functions.search <|constrain|>json<|message|>" + `{"query":"tokens like <|start|> are special"}`,
+			wantName: "search",
+			wantArgs: `{"query":"tokens like <|start|> are special"}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := NewHarmonyMessageHandler()
+			handler.FunctionNameMap.ConvertAndAdd(tt.wantName)
+			handler.HarmonyParser.AddImplicitStart()
+			handler.toolAccumulator = handler.CreateToolParser()
+			_, _, calls, err := handler.Add(tt.input, true)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(calls) != 1 {
+				t.Fatalf("expected 1 tool call, got %d", len(calls))
+			}
+			if calls[0].Function.Name != tt.wantName {
+				t.Errorf("name: got %q, want %q", calls[0].Function.Name, tt.wantName)
+			}
+			var gotMap, wantMap map[string]any
+			gotBytes, _ := json.Marshal(calls[0].Function.Arguments)
+			if err := json.Unmarshal(gotBytes, &gotMap); err != nil {
+				t.Fatalf("failed to unmarshal got args: %v", err)
+			}
+			if err := json.Unmarshal([]byte(tt.wantArgs), &wantMap); err != nil {
+				t.Fatalf("failed to unmarshal want args: %v", err)
+			}
+			if !reflect.DeepEqual(gotMap, wantMap) {
+				t.Errorf("args: got %v, want %v", gotMap, wantMap)
 			}
 		})
 	}

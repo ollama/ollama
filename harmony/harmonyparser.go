@@ -1,6 +1,7 @@
 package harmony
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -442,17 +443,17 @@ func (h *HarmonyMessageHandler) Add(s string, done bool) (content string, thinki
 			name = h.FunctionNameMap.OriginalFromConverted(name)
 			// The tool accumulator may contain trailing Harmony tokens after
 			// the JSON arguments (e.g. "<|call|><|start|>assistant...").
-			// Strip everything from the first "<|" that follows the JSON.
-			cleaned := raw
-			if idx := strings.Index(cleaned, "<|"); idx >= 0 {
-				cleaned = strings.TrimSpace(cleaned[:idx])
-			}
-			if cleaned == "" {
-				cleaned = "{}"
-			}
+			// Use json.Decoder to extract just the first valid JSON value,
+			// safely ignoring any trailing bytes without risking corruption
+			// of JSON string values that may legitimately contain "<|".
 			var args api.ToolCallFunctionArguments
-			if err := json.Unmarshal([]byte(cleaned), &args); err != nil {
-				return "", "", nil, fmt.Errorf("error parsing tool call: raw='%s', cleaned='%s', err=%w", raw, cleaned, err)
+			trimmed := strings.TrimSpace(raw)
+			if trimmed == "" {
+				trimmed = "{}"
+			}
+			decoder := json.NewDecoder(bytes.NewReader([]byte(trimmed)))
+			if err := decoder.Decode(&args); err != nil {
+				return "", "", nil, fmt.Errorf("error parsing tool call: raw='%s', err=%w", raw, err)
 			}
 			calls = append(calls, api.ToolCall{Function: api.ToolCallFunction{Name: name, Arguments: args}})
 		}
