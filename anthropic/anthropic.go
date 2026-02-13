@@ -11,10 +11,14 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/auth"
+	internalcloud "github.com/ollama/ollama/internal/cloud"
 )
 
 // Error types matching Anthropic API
@@ -1023,7 +1027,11 @@ type OllamaWebSearchResponse struct {
 
 var WebSearchEndpoint = "https://ollama.com/api/web_search"
 
-func WebSearch(ctx context.Context, apiKey string, query string, maxResults int) (*OllamaWebSearchResponse, error) {
+func WebSearch(ctx context.Context, query string, maxResults int) (*OllamaWebSearchResponse, error) {
+	if internalcloud.Disabled() {
+		return nil, errors.New(internalcloud.DisabledError("ollama cloud is disabled - web search is unavailable"))
+	}
+
 	if maxResults <= 0 {
 		maxResults = 5
 	}
@@ -1041,14 +1049,29 @@ func WebSearch(ctx context.Context, apiKey string, query string, maxResults int)
 		return nil, fmt.Errorf("failed to marshal web search request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", WebSearchEndpoint, bytes.NewReader(body))
+	searchURL, err := url.Parse(WebSearchEndpoint)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse web search URL: %w", err)
+	}
+
+	q := searchURL.Query()
+	q.Set("ts", strconv.FormatInt(time.Now().Unix(), 10))
+	searchURL.RawQuery = q.Encode()
+
+	challenge := fmt.Sprintf("%s,%s", http.MethodPost, searchURL.RequestURI())
+	signature, err := auth.Sign(ctx, []byte(challenge))
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign web search request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", searchURL.String(), bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create web search request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
+	if signature != "" {
+		req.Header.Set("Authorization", signature)
 	}
 
 	resp, err := http.DefaultClient.Do(req)

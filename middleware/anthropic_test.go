@@ -1638,6 +1638,24 @@ func TestWebSearchCloudModelGating(t *testing.T) {
 		}
 	})
 
+	t.Run("model ending in cloud without cloud suffix rejected", func(t *testing.T) {
+		router := gin.New()
+		router.Use(AnthropicMessagesMiddleware())
+		router.POST("/v1/messages", func(c *gin.Context) {
+			t.Error("handler should not be called for invalid cloud suffix model")
+		})
+
+		body := `{"model":"notreallycloud","max_tokens":100,"messages":[{"role":"user","content":"hello"}],"tools":[{"type":"web_search_20250305","name":"web_search"}]}`
+		req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+
+		if resp.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d: %s", resp.Code, resp.Body.String())
+		}
+	})
+
 	t.Run("cloud model with size tag allowed", func(t *testing.T) {
 		handlerCalled := false
 		router := gin.New()
@@ -1700,6 +1718,38 @@ func TestWebSearchCloudModelGating(t *testing.T) {
 		}
 		if resp.Code != http.StatusOK {
 			t.Errorf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+		}
+	})
+
+	t.Run("cloud disabled blocks web search even for cloud model", func(t *testing.T) {
+		t.Setenv("OLLAMA_NO_CLOUD", "1")
+
+		handlerCalled := false
+		router := gin.New()
+		router.Use(AnthropicMessagesMiddleware())
+		router.POST("/v1/messages", func(c *gin.Context) {
+			handlerCalled = true
+		})
+
+		body := `{"model":"kimi-k2.5:cloud","max_tokens":100,"messages":[{"role":"user","content":"hello"}],"tools":[{"type":"web_search_20250305","name":"web_search"}]}`
+		req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+
+		if resp.Code != http.StatusForbidden {
+			t.Fatalf("expected 403, got %d: %s", resp.Code, resp.Body.String())
+		}
+		if handlerCalled {
+			t.Fatal("handler should not be called when cloud is disabled")
+		}
+
+		var errResp anthropic.ErrorResponse
+		if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
+			t.Fatalf("failed to parse error response: %v", err)
+		}
+		if !strings.Contains(errResp.Error.Message, "ollama cloud is disabled") {
+			t.Fatalf("expected cloud disabled error, got: %q", errResp.Error.Message)
 		}
 	})
 }
@@ -1774,4 +1824,812 @@ func TestWebSearchSearchAPIError(t *testing.T) {
 	if result.Content[1].Type != "web_search_tool_result" {
 		t.Errorf("expected 'web_search_tool_result', got %q", result.Content[1].Type)
 	}
+}
+
+func TestWebSearchStreamingImmediateTakeover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := api.ChatResponse{
+			Model:      "test-model",
+			Message:    api.Message{Role: "assistant", Content: "After search."},
+			Done:       true,
+			DoneReason: "stop",
+			Metrics:    api.Metrics{PromptEvalCount: 20, EvalCount: 10},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer followupServer.Close()
+	t.Setenv("OLLAMA_HOST", followupServer.URL)
+
+	searchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := anthropic.OllamaWebSearchResponse{
+			Results: []anthropic.OllamaWebSearchResult{
+				{Title: "Result", URL: "https://example.com", Content: "content"},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer searchServer.Close()
+	originalEndpoint := anthropic.WebSearchEndpoint
+	anthropic.WebSearchEndpoint = searchServer.URL
+	defer func() { anthropic.WebSearchEndpoint = originalEndpoint }()
+
+	router := gin.New()
+	router.Use(AnthropicMessagesMiddleware())
+	router.POST("/v1/messages", func(c *gin.Context) {
+		chunks := []api.ChatResponse{
+			{
+				Model:   "test-model",
+				Message: api.Message{Role: "assistant", Content: "Preface "},
+				Done:    false,
+			},
+			{
+				Model: "test-model",
+				Message: api.Message{
+					Role: "assistant",
+					ToolCalls: []api.ToolCall{
+						{
+							ID: "call_ws_stream_1",
+							Function: api.ToolCallFunction{
+								Name:      "web_search",
+								Arguments: makeArgs("query", "latest updates"),
+							},
+						},
+					},
+				},
+				Done: false,
+			},
+			{
+				Model:   "test-model",
+				Message: api.Message{Role: "assistant", Content: "ignored chunk"},
+				Done:    false,
+			},
+			{
+				Model:      "test-model",
+				Message:    api.Message{Role: "assistant"},
+				Done:       true,
+				DoneReason: "stop",
+				Metrics:    api.Metrics{PromptEvalCount: 9, EvalCount: 4},
+			},
+		}
+		c.Writer.WriteHeader(http.StatusOK)
+		for _, chunk := range chunks {
+			data, _ := json.Marshal(chunk)
+			_, _ = c.Writer.Write(data)
+		}
+	})
+
+	body := `{
+		"model":"test-model:cloud",
+		"max_tokens":100,
+		"stream":true,
+		"messages":[{"role":"user","content":"Find updates"}],
+		"tools":[{"type":"web_search_20250305","name":"web_search"}]
+	}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+
+	events := parseSSEEvents(t, resp.Body.String())
+	if countEventsByName(events, "message_start") != 1 {
+		t.Fatalf("expected exactly one message_start, got %d", countEventsByName(events, "message_start"))
+	}
+	if countEventsByName(events, "message_stop") != 1 {
+		t.Fatalf("expected exactly one message_stop, got %d", countEventsByName(events, "message_stop"))
+	}
+
+	textDeltas := collectTextDeltas(t, events)
+	if !containsString(textDeltas, "Preface ") {
+		t.Fatalf("expected passthrough text delta, got %v", textDeltas)
+	}
+	if !containsString(textDeltas, "After search.") {
+		t.Fatalf("expected post-search text delta, got %v", textDeltas)
+	}
+	if containsString(textDeltas, "ignored chunk") {
+		t.Fatalf("unexpected text from chunks after takeover: %v", textDeltas)
+	}
+}
+
+func TestWebSearchMixedToolCallsPreferWebSearch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := api.ChatResponse{
+			Model:      "test-model",
+			Message:    api.Message{Role: "assistant", Content: "Search answer."},
+			Done:       true,
+			DoneReason: "stop",
+			Metrics:    api.Metrics{PromptEvalCount: 11, EvalCount: 6},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer followupServer.Close()
+	t.Setenv("OLLAMA_HOST", followupServer.URL)
+
+	searchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := anthropic.OllamaWebSearchResponse{
+			Results: []anthropic.OllamaWebSearchResult{
+				{Title: "Result", URL: "https://example.com", Content: "content"},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer searchServer.Close()
+	originalEndpoint := anthropic.WebSearchEndpoint
+	anthropic.WebSearchEndpoint = searchServer.URL
+	defer func() { anthropic.WebSearchEndpoint = originalEndpoint }()
+
+	router := gin.New()
+	router.Use(AnthropicMessagesMiddleware())
+	router.POST("/v1/messages", func(c *gin.Context) {
+		resp := api.ChatResponse{
+			Model: "test-model",
+			Message: api.Message{
+				Role: "assistant",
+				ToolCalls: []api.ToolCall{
+					{
+						ID: "call_other",
+						Function: api.ToolCallFunction{
+							Name:      "get_weather",
+							Arguments: makeArgs("location", "SF"),
+						},
+					},
+					{
+						ID: "call_ws_mixed",
+						Function: api.ToolCallFunction{
+							Name:      "web_search",
+							Arguments: makeArgs("query", "latest weather"),
+						},
+					},
+				},
+			},
+			Done:       true,
+			DoneReason: "stop",
+			Metrics:    api.Metrics{PromptEvalCount: 10, EvalCount: 2},
+		}
+		data, _ := json.Marshal(resp)
+		c.Writer.WriteHeader(http.StatusOK)
+		_, _ = c.Writer.Write(data)
+	})
+
+	body := `{
+		"model":"test-model:cloud",
+		"max_tokens":100,
+		"messages":[{"role":"user","content":"Weather?"}],
+		"tools":[
+			{"type":"web_search_20250305","name":"web_search"},
+			{"type":"custom","name":"get_weather","input_schema":{"type":"object"}}
+		]
+	}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+
+	var result anthropic.MessagesResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+
+	if len(result.Content) < 3 {
+		t.Fatalf("expected at least 3 blocks, got %d", len(result.Content))
+	}
+	if result.Content[0].Type != "server_tool_use" {
+		t.Fatalf("expected server_tool_use first, got %q", result.Content[0].Type)
+	}
+	if result.Content[1].Type != "web_search_tool_result" {
+		t.Fatalf("expected web_search_tool_result second, got %q", result.Content[1].Type)
+	}
+
+	for _, block := range result.Content {
+		if block.Type == "tool_use" && block.Name == "get_weather" {
+			t.Fatalf("did not expect get_weather tool_use in mixed web_search-preferred path: %+v", result.Content)
+		}
+	}
+}
+
+func TestWebSearchFollowupClientToolStopReasonToolUse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := api.ChatResponse{
+			Model: "test-model",
+			Message: api.Message{
+				Role: "assistant",
+				ToolCalls: []api.ToolCall{
+					{
+						ID: "call_weather_final",
+						Function: api.ToolCallFunction{
+							Name:      "get_weather",
+							Arguments: makeArgs("location", "New York"),
+						},
+					},
+				},
+			},
+			Done:       true,
+			DoneReason: "stop",
+			Metrics:    api.Metrics{PromptEvalCount: 25, EvalCount: 7},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer followupServer.Close()
+	t.Setenv("OLLAMA_HOST", followupServer.URL)
+
+	searchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := anthropic.OllamaWebSearchResponse{
+			Results: []anthropic.OllamaWebSearchResult{
+				{Title: "Result", URL: "https://example.com", Content: "content"},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer searchServer.Close()
+	originalEndpoint := anthropic.WebSearchEndpoint
+	anthropic.WebSearchEndpoint = searchServer.URL
+	defer func() { anthropic.WebSearchEndpoint = originalEndpoint }()
+
+	router := gin.New()
+	router.Use(AnthropicMessagesMiddleware())
+	router.POST("/v1/messages", func(c *gin.Context) {
+		resp := api.ChatResponse{
+			Model: "test-model",
+			Message: api.Message{
+				Role: "assistant",
+				ToolCalls: []api.ToolCall{
+					{
+						ID: "call_ws_tool_use",
+						Function: api.ToolCallFunction{
+							Name:      "web_search",
+							Arguments: makeArgs("query", "forecast"),
+						},
+					},
+				},
+			},
+			Done:       true,
+			DoneReason: "stop",
+			Metrics:    api.Metrics{PromptEvalCount: 15, EvalCount: 3},
+		}
+		data, _ := json.Marshal(resp)
+		c.Writer.WriteHeader(http.StatusOK)
+		_, _ = c.Writer.Write(data)
+	})
+
+	body := `{
+		"model":"test-model:cloud",
+		"max_tokens":100,
+		"messages":[{"role":"user","content":"Do I need an umbrella?"}],
+		"tools":[
+			{"type":"web_search_20250305","name":"web_search"},
+			{"type":"custom","name":"get_weather","input_schema":{"type":"object"}}
+		]
+	}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+
+	var result anthropic.MessagesResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+
+	if result.StopReason != "tool_use" {
+		t.Fatalf("expected stop_reason tool_use, got %q", result.StopReason)
+	}
+	if len(result.Content) < 3 {
+		t.Fatalf("expected server blocks + tool_use, got %d blocks", len(result.Content))
+	}
+	last := result.Content[len(result.Content)-1]
+	if last.Type != "tool_use" {
+		t.Fatalf("expected final block tool_use, got %q", last.Type)
+	}
+	if last.Name != "get_weather" {
+		t.Fatalf("expected final tool name get_weather, got %q", last.Name)
+	}
+	if result.Usage.InputTokens != 40 || result.Usage.OutputTokens != 10 {
+		t.Fatalf("unexpected aggregated usage: %+v", result.Usage)
+	}
+}
+
+func TestWebSearchMultiIterationLoop(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	followupCall := 0
+	followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		followupCall++
+		switch followupCall {
+		case 1:
+			resp := api.ChatResponse{
+				Model: "test-model",
+				Message: api.Message{
+					Role: "assistant",
+					ToolCalls: []api.ToolCall{
+						{
+							ID: "call_ws_2",
+							Function: api.ToolCallFunction{
+								Name:      "web_search",
+								Arguments: makeArgs("query", "loop query 2"),
+							},
+						},
+					},
+				},
+				Done:       true,
+				DoneReason: "stop",
+				Metrics:    api.Metrics{PromptEvalCount: 20, EvalCount: 2},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		case 2:
+			resp := api.ChatResponse{
+				Model:      "test-model",
+				Message:    api.Message{Role: "assistant", Content: "Final answer after 2 searches."},
+				Done:       true,
+				DoneReason: "stop",
+				Metrics:    api.Metrics{PromptEvalCount: 30, EvalCount: 3},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		default:
+			t.Fatalf("unexpected extra followup call: %d", followupCall)
+		}
+	}))
+	defer followupServer.Close()
+	t.Setenv("OLLAMA_HOST", followupServer.URL)
+
+	searchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := anthropic.OllamaWebSearchResponse{
+			Results: []anthropic.OllamaWebSearchResult{
+				{Title: "Result", URL: "https://example.com", Content: "content"},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer searchServer.Close()
+	originalEndpoint := anthropic.WebSearchEndpoint
+	anthropic.WebSearchEndpoint = searchServer.URL
+	defer func() { anthropic.WebSearchEndpoint = originalEndpoint }()
+
+	router := gin.New()
+	router.Use(AnthropicMessagesMiddleware())
+	router.POST("/v1/messages", func(c *gin.Context) {
+		resp := api.ChatResponse{
+			Model: "test-model",
+			Message: api.Message{
+				Role: "assistant",
+				ToolCalls: []api.ToolCall{
+					{
+						ID: "call_ws_1",
+						Function: api.ToolCallFunction{
+							Name:      "web_search",
+							Arguments: makeArgs("query", "loop query 1"),
+						},
+					},
+				},
+			},
+			Done:       true,
+			DoneReason: "stop",
+			Metrics:    api.Metrics{PromptEvalCount: 10, EvalCount: 1},
+		}
+		data, _ := json.Marshal(resp)
+		c.Writer.WriteHeader(http.StatusOK)
+		_, _ = c.Writer.Write(data)
+	})
+
+	body := `{
+		"model":"test-model:cloud",
+		"max_tokens":100,
+		"messages":[{"role":"user","content":"do multiple searches"}],
+		"tools":[{"type":"web_search_20250305","name":"web_search"}]
+	}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+	if followupCall != 2 {
+		t.Fatalf("expected 2 followup calls, got %d", followupCall)
+	}
+
+	var result anthropic.MessagesResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+
+	serverToolUses := 0
+	webResults := 0
+	for _, block := range result.Content {
+		if block.Type == "server_tool_use" {
+			serverToolUses++
+		}
+		if block.Type == "web_search_tool_result" {
+			webResults++
+		}
+	}
+	if serverToolUses != 2 || webResults != 2 {
+		t.Fatalf("expected two search iterations, got server_tool_use=%d web_search_tool_result=%d", serverToolUses, webResults)
+	}
+
+	if result.Usage.InputTokens != 60 || result.Usage.OutputTokens != 6 {
+		t.Fatalf("unexpected aggregated usage: %+v", result.Usage)
+	}
+}
+
+func TestWebSearchLoopMaxLimit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	followupCall := 0
+	followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		followupCall++
+		resp := api.ChatResponse{
+			Model: "test-model",
+			Message: api.Message{
+				Role: "assistant",
+				ToolCalls: []api.ToolCall{
+					{
+						ID: "call_ws_loop_limit",
+						Function: api.ToolCallFunction{
+							Name:      "web_search",
+							Arguments: makeArgs("query", "loop query next"),
+						},
+					},
+				},
+			},
+			Done:       true,
+			DoneReason: "stop",
+			Metrics:    api.Metrics{PromptEvalCount: 7, EvalCount: 2},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer followupServer.Close()
+	t.Setenv("OLLAMA_HOST", followupServer.URL)
+
+	searchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := anthropic.OllamaWebSearchResponse{
+			Results: []anthropic.OllamaWebSearchResult{
+				{Title: "Result", URL: "https://example.com", Content: "content"},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer searchServer.Close()
+	originalEndpoint := anthropic.WebSearchEndpoint
+	anthropic.WebSearchEndpoint = searchServer.URL
+	defer func() { anthropic.WebSearchEndpoint = originalEndpoint }()
+
+	router := gin.New()
+	router.Use(AnthropicMessagesMiddleware())
+	router.POST("/v1/messages", func(c *gin.Context) {
+		resp := api.ChatResponse{
+			Model: "test-model",
+			Message: api.Message{
+				Role: "assistant",
+				ToolCalls: []api.ToolCall{
+					{
+						ID: "call_ws_initial",
+						Function: api.ToolCallFunction{
+							Name:      "web_search",
+							Arguments: makeArgs("query", "loop query 1"),
+						},
+					},
+				},
+			},
+			Done:       true,
+			DoneReason: "stop",
+			Metrics:    api.Metrics{PromptEvalCount: 5, EvalCount: 1},
+		}
+		data, _ := json.Marshal(resp)
+		c.Writer.WriteHeader(http.StatusOK)
+		_, _ = c.Writer.Write(data)
+	})
+
+	body := `{
+		"model":"test-model:cloud",
+		"max_tokens":100,
+		"messages":[{"role":"user","content":"keep searching"}],
+		"tools":[{"type":"web_search_20250305","name":"web_search"}]
+	}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+	if followupCall != 3 {
+		t.Fatalf("expected 3 followup calls before max loop error, got %d", followupCall)
+	}
+
+	var result anthropic.MessagesResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+
+	last := result.Content[len(result.Content)-1]
+	if last.Type != "web_search_tool_result" {
+		t.Fatalf("expected last block web_search_tool_result, got %q", last.Type)
+	}
+	contentJSON, _ := json.Marshal(last.Content)
+	var errContent anthropic.WebSearchToolResultError
+	if err := json.Unmarshal(contentJSON, &errContent); err != nil {
+		t.Fatalf("failed to parse web search error content: %v", err)
+	}
+	if errContent.ErrorCode != "max_uses_exceeded" {
+		t.Fatalf("expected max_uses_exceeded error, got %q", errContent.ErrorCode)
+	}
+	if result.StopReason != "end_turn" {
+		t.Fatalf("expected end_turn, got %q", result.StopReason)
+	}
+}
+
+func TestWebSearchStreamingFinalStopReasonToolUse(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := api.ChatResponse{
+			Model: "test-model",
+			Message: api.Message{
+				Role: "assistant",
+				ToolCalls: []api.ToolCall{
+					{
+						ID: "call_weather_stream",
+						Function: api.ToolCallFunction{
+							Name:      "get_weather",
+							Arguments: makeArgs("location", "Seattle"),
+						},
+					},
+				},
+			},
+			Done:       true,
+			DoneReason: "stop",
+			Metrics:    api.Metrics{PromptEvalCount: 14, EvalCount: 5},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer followupServer.Close()
+	t.Setenv("OLLAMA_HOST", followupServer.URL)
+
+	searchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := anthropic.OllamaWebSearchResponse{
+			Results: []anthropic.OllamaWebSearchResult{
+				{Title: "Result", URL: "https://example.com", Content: "content"},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer searchServer.Close()
+	originalEndpoint := anthropic.WebSearchEndpoint
+	anthropic.WebSearchEndpoint = searchServer.URL
+	defer func() { anthropic.WebSearchEndpoint = originalEndpoint }()
+
+	router := gin.New()
+	router.Use(AnthropicMessagesMiddleware())
+	router.POST("/v1/messages", func(c *gin.Context) {
+		chunks := []api.ChatResponse{
+			{
+				Model:   "test-model",
+				Message: api.Message{Role: "assistant", Content: "Let me check. "},
+				Done:    false,
+			},
+			{
+				Model: "test-model",
+				Message: api.Message{
+					Role: "assistant",
+					ToolCalls: []api.ToolCall{
+						{
+							ID: "call_ws_stream_tool_use",
+							Function: api.ToolCallFunction{
+								Name:      "web_search",
+								Arguments: makeArgs("query", "weather seattle"),
+							},
+						},
+					},
+				},
+				Done: false,
+			},
+		}
+		c.Writer.WriteHeader(http.StatusOK)
+		for _, chunk := range chunks {
+			data, _ := json.Marshal(chunk)
+			_, _ = c.Writer.Write(data)
+		}
+	})
+
+	body := `{
+		"model":"test-model:cloud",
+		"max_tokens":100,
+		"stream":true,
+		"messages":[{"role":"user","content":"Should I take a jacket?"}],
+		"tools":[
+			{"type":"web_search_20250305","name":"web_search"},
+			{"type":"custom","name":"get_weather","input_schema":{"type":"object"}}
+		]
+	}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+
+	events := parseSSEEvents(t, resp.Body.String())
+	if countEventsByName(events, "message_start") != 1 {
+		t.Fatalf("expected exactly one message_start, got %d", countEventsByName(events, "message_start"))
+	}
+
+	var messageDelta anthropic.MessageDeltaEvent
+	foundMessageDelta := false
+	foundToolUse := false
+	for _, event := range events {
+		if event.event == "message_delta" {
+			foundMessageDelta = true
+			if err := json.Unmarshal([]byte(event.data), &messageDelta); err != nil {
+				t.Fatalf("failed to unmarshal message_delta: %v", err)
+			}
+		}
+		if event.event == "content_block_start" {
+			var start anthropic.ContentBlockStartEvent
+			if err := json.Unmarshal([]byte(event.data), &start); err != nil {
+				t.Fatalf("failed to unmarshal content_block_start: %v", err)
+			}
+			if start.ContentBlock.Type == "tool_use" && start.ContentBlock.Name == "get_weather" {
+				foundToolUse = true
+			}
+		}
+	}
+
+	if !foundMessageDelta {
+		t.Fatal("expected message_delta event")
+	}
+	if messageDelta.Delta.StopReason != "tool_use" {
+		t.Fatalf("expected stop_reason tool_use, got %q", messageDelta.Delta.StopReason)
+	}
+	if !foundToolUse {
+		t.Fatal("expected tool_use content block for get_weather")
+	}
+}
+
+func TestWebSearchFollowupNon200ReturnsApiError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer followupServer.Close()
+	t.Setenv("OLLAMA_HOST", followupServer.URL)
+
+	searchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := anthropic.OllamaWebSearchResponse{
+			Results: []anthropic.OllamaWebSearchResult{
+				{Title: "Result", URL: "https://example.com", Content: "content"},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer searchServer.Close()
+	originalEndpoint := anthropic.WebSearchEndpoint
+	anthropic.WebSearchEndpoint = searchServer.URL
+	defer func() { anthropic.WebSearchEndpoint = originalEndpoint }()
+
+	router := gin.New()
+	router.Use(AnthropicMessagesMiddleware())
+	router.POST("/v1/messages", func(c *gin.Context) {
+		resp := api.ChatResponse{
+			Model: "test-model",
+			Message: api.Message{
+				Role: "assistant",
+				ToolCalls: []api.ToolCall{
+					{
+						ID: "call_ws_non200",
+						Function: api.ToolCallFunction{
+							Name:      "web_search",
+							Arguments: makeArgs("query", "test"),
+						},
+					},
+				},
+			},
+			Done:       true,
+			DoneReason: "stop",
+			Metrics:    api.Metrics{PromptEvalCount: 9, EvalCount: 1},
+		}
+		data, _ := json.Marshal(resp)
+		c.Writer.WriteHeader(http.StatusOK)
+		_, _ = c.Writer.Write(data)
+	})
+
+	body := `{
+		"model":"test-model:cloud",
+		"max_tokens":100,
+		"messages":[{"role":"user","content":"test"}],
+		"tools":[{"type":"web_search_20250305","name":"web_search"}]
+	}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+
+	var result anthropic.MessagesResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+	if len(result.Content) != 2 {
+		t.Fatalf("expected 2 blocks in error response, got %d", len(result.Content))
+	}
+
+	contentJSON, _ := json.Marshal(result.Content[1].Content)
+	var errContent anthropic.WebSearchToolResultError
+	if err := json.Unmarshal(contentJSON, &errContent); err != nil {
+		t.Fatalf("failed to parse error content: %v", err)
+	}
+	if errContent.ErrorCode != "api_error" {
+		t.Fatalf("expected api_error, got %q", errContent.ErrorCode)
+	}
+}
+
+func countEventsByName(events []sseEvent, eventName string) int {
+	count := 0
+	for _, event := range events {
+		if event.event == eventName {
+			count++
+		}
+	}
+	return count
+}
+
+func collectTextDeltas(t *testing.T, events []sseEvent) []string {
+	t.Helper()
+
+	var deltas []string
+	for _, event := range events {
+		if event.event != "content_block_delta" {
+			continue
+		}
+
+		var delta anthropic.ContentBlockDeltaEvent
+		if err := json.Unmarshal([]byte(event.data), &delta); err != nil {
+			t.Fatalf("failed to unmarshal content_block_delta: %v", err)
+		}
+		if delta.Delta.Type == "text_delta" {
+			deltas = append(deltas, delta.Delta.Text)
+		}
+	}
+
+	return deltas
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }

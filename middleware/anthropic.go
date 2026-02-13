@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -16,6 +16,7 @@ import (
 	"github.com/ollama/ollama/anthropic"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	internalcloud "github.com/ollama/ollama/internal/cloud"
 )
 
 // AnthropicWriter wraps the response writer to transform Ollama responses to Anthropic format
@@ -89,11 +90,38 @@ type WebSearchAnthropicWriter struct {
 	inner   *AnthropicWriter
 	req     anthropic.MessagesRequest // original Anthropic request
 	chatReq *api.ChatRequest          // converted Ollama request (for followup calls)
-	stream bool
-	chunks [][]byte // accumulates streaming chunks from first model call
+	stream  bool
+
+	estimatedInputTokens int
+
+	terminalSent bool
+
+	streamMessageStarted bool
+	streamHasOpenBlock   bool
+	streamOpenBlockIndex int
+	streamNextIndex      int
+}
+
+const maxWebSearchLoops = 3
+
+type webSearchLoopError struct {
+	code  string
+	query string
+	err   error
+}
+
+func (e *webSearchLoopError) Error() string {
+	if e.err == nil {
+		return e.code
+	}
+	return fmt.Sprintf("%s: %v", e.code, e.err)
 }
 
 func (w *WebSearchAnthropicWriter) Write(data []byte) (int, error) {
+	if w.terminalSent {
+		return len(data), nil
+	}
+
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
 		return w.inner.writeError(data)
@@ -104,198 +132,364 @@ func (w *WebSearchAnthropicWriter) Write(data []byte) (int, error) {
 		return 0, err
 	}
 
-	if w.stream && !chatResponse.Done {
-		w.chunks = append(w.chunks, append([]byte(nil), data...))
-		return len(data), nil
+	webSearchCall, hasWebSearch, hasOtherTools := findWebSearchToolCall(chatResponse.Message.ToolCalls)
+	if hasWebSearch && hasOtherTools {
+		// Prefer web_search if both server and client tools are present in one chunk.
+		slog.Debug("preferring web_search tool call over client tool calls in mixed tool response")
 	}
 
-	var webSearchCall *api.ToolCall
-	for i := range chatResponse.Message.ToolCalls {
-		if chatResponse.Message.ToolCalls[i].Function.Name == "web_search" {
-			webSearchCall = &chatResponse.Message.ToolCalls[i]
-			break
-		}
-	}
-
-	if webSearchCall == nil {
+	if !hasWebSearch {
 		if w.stream {
-			if err := w.replayBuffered(); err != nil {
+			if err := w.writePassthroughStreamChunk(chatResponse); err != nil {
 				return 0, err
 			}
+			return len(data), nil
 		}
 		return w.inner.writeResponse(data)
 	}
 
-	return len(data), w.handleWebSearch(chatResponse, webSearchCall)
+	response, loopErr := w.runWebSearchLoop(chatResponse, webSearchCall)
+	if loopErr != nil {
+		return len(data), w.sendError(loopErr.code, loopErr.query)
+	}
+
+	if err := w.writeTerminalResponse(response); err != nil {
+		return 0, err
+	}
+
+	return len(data), nil
 }
 
-// replayBuffered sends all buffered streaming chunks through the inner writer
-func (w *WebSearchAnthropicWriter) replayBuffered() error {
-	for _, chunk := range w.chunks {
-		if _, err := w.inner.writeResponse(chunk); err != nil {
-			return err
+func (w *WebSearchAnthropicWriter) runWebSearchLoop(initialResponse api.ChatResponse, initialToolCall api.ToolCall) (anthropic.MessagesResponse, *webSearchLoopError) {
+	followUpMessages := make([]api.Message, 0, len(w.chatReq.Messages)+maxWebSearchLoops*2)
+	followUpMessages = append(followUpMessages, w.chatReq.Messages...)
+
+	followUpTools := stripWebSearchTools(w.chatReq.Tools)
+	usage := anthropic.Usage{
+		InputTokens:  initialResponse.Metrics.PromptEvalCount,
+		OutputTokens: initialResponse.Metrics.EvalCount,
+	}
+
+	currentResponse := initialResponse
+	currentToolCall := initialToolCall
+
+	var serverContent []anthropic.ContentBlock
+
+	for loop := 1; loop <= maxWebSearchLoops; loop++ {
+		query := extractQueryFromToolCall(&currentToolCall)
+		if query == "" {
+			return anthropic.MessagesResponse{}, &webSearchLoopError{
+				code:  "invalid_request",
+				query: "",
+			}
 		}
+
+		const defaultMaxResults = 5
+		searchResp, err := anthropic.WebSearch(w.ctx, query, defaultMaxResults)
+		if err != nil {
+			return anthropic.MessagesResponse{}, &webSearchLoopError{
+				code:  "unavailable",
+				query: query,
+				err:   err,
+			}
+		}
+
+		toolUseID := loopServerToolUseID(w.inner.id, loop)
+		searchResults := anthropic.ConvertOllamaToAnthropicResults(searchResp)
+		serverContent = append(serverContent,
+			anthropic.ContentBlock{
+				Type:  "server_tool_use",
+				ID:    toolUseID,
+				Name:  "web_search",
+				Input: map[string]any{"query": query},
+			},
+			anthropic.ContentBlock{
+				Type:      "web_search_tool_result",
+				ToolUseID: toolUseID,
+				Content:   searchResults,
+			},
+		)
+
+		assistantMsg := buildWebSearchAssistantMessage(currentResponse, currentToolCall)
+		toolResultMsg := api.Message{
+			Role:       "tool",
+			Content:    formatWebSearchResultsForToolMessage(searchResp.Results),
+			ToolCallID: currentToolCall.ID,
+		}
+		followUpMessages = append(followUpMessages, assistantMsg, toolResultMsg)
+
+		followUpResponse, err := w.callFollowUpChat(followUpMessages, followUpTools)
+		if err != nil {
+			return anthropic.MessagesResponse{}, &webSearchLoopError{
+				code:  "api_error",
+				query: query,
+				err:   err,
+			}
+		}
+
+		usage.InputTokens += followUpResponse.Metrics.PromptEvalCount
+		usage.OutputTokens += followUpResponse.Metrics.EvalCount
+
+		nextToolCall, hasWebSearch, hasOtherTools := findWebSearchToolCall(followUpResponse.Message.ToolCalls)
+		if hasWebSearch && hasOtherTools {
+			// Prefer web_search if both server and client tools are present in one chunk.
+			slog.Debug("preferring web_search tool call over client tool calls in mixed followup response")
+		}
+
+		if !hasWebSearch {
+			return w.combineServerAndFinalContent(serverContent, followUpResponse, usage), nil
+		}
+
+		if loop == maxWebSearchLoops {
+			maxLoopQuery := extractQueryFromToolCall(&nextToolCall)
+			maxLoopToolUseID := loopServerToolUseID(w.inner.id, loop+1)
+			serverContent = append(serverContent,
+				anthropic.ContentBlock{
+					Type:  "server_tool_use",
+					ID:    maxLoopToolUseID,
+					Name:  "web_search",
+					Input: map[string]any{"query": maxLoopQuery},
+				},
+				anthropic.ContentBlock{
+					Type:      "web_search_tool_result",
+					ToolUseID: maxLoopToolUseID,
+					Content: anthropic.WebSearchToolResultError{
+						Type:      "web_search_tool_result_error",
+						ErrorCode: "max_uses_exceeded",
+					},
+				},
+			)
+
+			return anthropic.MessagesResponse{
+				ID:         w.inner.id,
+				Type:       "message",
+				Role:       "assistant",
+				Model:      w.req.Model,
+				Content:    serverContent,
+				StopReason: "end_turn",
+				Usage:      usage,
+			}, nil
+		}
+
+		currentResponse = followUpResponse
+		currentToolCall = nextToolCall
 	}
-	return nil
+
+	return anthropic.MessagesResponse{}, &webSearchLoopError{code: "api_error"}
 }
 
-// handleWebSearch executes the search, re-invokes the model with results, and
-// returns server_tool_use + web_search_tool_result + text to the client.
-func (w *WebSearchAnthropicWriter) handleWebSearch(firstResponse api.ChatResponse, toolCall *api.ToolCall) error {
-	query := extractQueryFromToolCall(toolCall)
-	if query == "" {
-		return w.sendError("invalid_request", "")
+func (w *WebSearchAnthropicWriter) combineServerAndFinalContent(serverContent []anthropic.ContentBlock, finalResponse api.ChatResponse, usage anthropic.Usage) anthropic.MessagesResponse {
+	converted := anthropic.ToMessagesResponse(w.inner.id, finalResponse)
+
+	content := make([]anthropic.ContentBlock, 0, len(serverContent)+len(converted.Content))
+	content = append(content, serverContent...)
+	content = append(content, converted.Content...)
+
+	return anthropic.MessagesResponse{
+		ID:           w.inner.id,
+		Type:         "message",
+		Role:         "assistant",
+		Model:        w.req.Model,
+		Content:      content,
+		StopReason:   converted.StopReason,
+		StopSequence: converted.StopSequence,
+		Usage:        usage,
 	}
+}
 
-	apiKey := os.Getenv("OLLAMA_API_KEY")
-	const defaultMaxResults = 5
-	searchResp, err := anthropic.WebSearch(w.ctx, apiKey, query, defaultMaxResults)
-	if err != nil {
-		return w.sendError("unavailable", query)
+func buildWebSearchAssistantMessage(response api.ChatResponse, webSearchCall api.ToolCall) api.Message {
+	assistantMsg := api.Message{
+		Role:      "assistant",
+		ToolCalls: []api.ToolCall{webSearchCall},
 	}
+	if response.Message.Content != "" {
+		assistantMsg.Content = response.Message.Content
+	}
+	if response.Message.Thinking != "" {
+		assistantMsg.Thinking = response.Message.Thinking
+	}
+	return assistantMsg
+}
 
-	searchResults := anthropic.ConvertOllamaToAnthropicResults(searchResp)
-
-	toolUseID := serverToolUseID(w.inner.id)
-
+func formatWebSearchResultsForToolMessage(results []anthropic.OllamaWebSearchResult) string {
 	var resultText strings.Builder
-	for _, r := range searchResp.Results {
+	for _, r := range results {
 		fmt.Fprintf(&resultText, "Title: %s\nURL: %s\n", r.Title, r.URL)
 		if r.Content != "" {
 			fmt.Fprintf(&resultText, "Content: %s\n", r.Content)
 		}
 		resultText.WriteString("\n")
 	}
+	return resultText.String()
+}
 
-	// Strip web_search from tools to prevent infinite loop
+func stripWebSearchTools(tools api.Tools) api.Tools {
 	var followUpTools api.Tools
-	for _, t := range w.chatReq.Tools {
+	for _, t := range tools {
 		if t.Function.Name != "web_search" {
 			followUpTools = append(followUpTools, t)
 		}
 	}
+	return followUpTools
+}
 
-	assistantMsg := api.Message{
-		Role:      "assistant",
-		ToolCalls: firstResponse.Message.ToolCalls,
+func findWebSearchToolCall(toolCalls []api.ToolCall) (api.ToolCall, bool, bool) {
+	var webSearchCall api.ToolCall
+	hasWebSearch := false
+	hasOtherTools := false
+
+	for _, toolCall := range toolCalls {
+		if toolCall.Function.Name == "web_search" {
+			if !hasWebSearch {
+				webSearchCall = toolCall
+				hasWebSearch = true
+			}
+			continue
+		}
+		hasOtherTools = true
 	}
-	if firstResponse.Message.Content != "" {
-		assistantMsg.Content = firstResponse.Message.Content
+
+	return webSearchCall, hasWebSearch, hasOtherTools
+}
+
+func loopServerToolUseID(messageID string, loop int) string {
+	base := serverToolUseID(messageID)
+	if loop <= 1 {
+		return base
 	}
+	return fmt.Sprintf("%s_%d", base, loop)
+}
 
-	toolResultMsg := api.Message{
-		Role:       "tool",
-		Content:    resultText.String(),
-		ToolCallID: toolCall.ID,
-	}
-
-	followUpMessages := make([]api.Message, len(w.chatReq.Messages))
-	copy(followUpMessages, w.chatReq.Messages)
-	followUpMessages = append(followUpMessages, assistantMsg, toolResultMsg)
-
+func (w *WebSearchAnthropicWriter) callFollowUpChat(messages []api.Message, tools api.Tools) (api.ChatResponse, error) {
 	streaming := false
 	followUp := api.ChatRequest{
 		Model:    w.chatReq.Model,
-		Messages: followUpMessages,
+		Messages: messages,
 		Stream:   &streaming,
-		Tools:    followUpTools,
+		Tools:    tools,
 		Options:  w.chatReq.Options,
 	}
 
 	body, err := json.Marshal(followUp)
 	if err != nil {
-		return err
+		return api.ChatResponse{}, err
 	}
 
 	chatURL := envconfig.Host().String() + "/api/chat"
 	client := &http.Client{Timeout: 5 * time.Minute}
 	httpReq, err := http.NewRequestWithContext(w.ctx, "POST", chatURL, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return api.ChatResponse{}, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return w.sendError("unavailable", query)
+		return api.ChatResponse{}, err
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return api.ChatResponse{}, fmt.Errorf("followup /api/chat returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 
 	var chatResp api.ChatResponse
-	if err := json.Unmarshal(respBody, &chatResp); err != nil {
-		return err
+	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
+		return api.ChatResponse{}, err
 	}
 
-	content := []anthropic.ContentBlock{
-		{
-			Type:  "server_tool_use",
-			ID:    toolUseID,
-			Name:  "web_search",
-			Input: map[string]any{"query": query},
-		},
-		{
-			Type:      "web_search_tool_result",
-			ToolUseID: toolUseID,
-			Content:   searchResults,
-		},
-	}
-
-	text := chatResp.Message.Content
-	if text == "" {
-		text = "Search completed but no response was generated."
-	}
-	content = append(content, anthropic.ContentBlock{
-		Type: "text",
-		Text: &text,
-	})
-
-	response := anthropic.MessagesResponse{
-		ID:         w.inner.id,
-		Type:       "message",
-		Role:       "assistant",
-		Model:      w.req.Model,
-		Content:    content,
-		StopReason: "end_turn",
-		Usage: anthropic.Usage{
-			InputTokens:  chatResp.Metrics.PromptEvalCount,
-			OutputTokens: chatResp.Metrics.EvalCount,
-		},
-	}
-
-	if w.stream {
-		return w.streamResponse(response)
-	}
-
-	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	return json.NewEncoder(w.ResponseWriter).Encode(response)
+	return chatResp, nil
 }
 
-// streamResponse emits a complete MessagesResponse as SSE events
-func (w *WebSearchAnthropicWriter) streamResponse(response anthropic.MessagesResponse) error {
+func (w *WebSearchAnthropicWriter) writePassthroughStreamChunk(chatResponse api.ChatResponse) error {
+	events := w.inner.converter.Process(chatResponse)
+	for _, event := range events {
+		switch e := event.Data.(type) {
+		case anthropic.MessageStartEvent:
+			w.streamMessageStarted = true
+		case anthropic.ContentBlockStartEvent:
+			w.streamHasOpenBlock = true
+			w.streamOpenBlockIndex = e.Index
+			if e.Index+1 > w.streamNextIndex {
+				w.streamNextIndex = e.Index + 1
+			}
+		case anthropic.ContentBlockStopEvent:
+			if w.streamHasOpenBlock && w.streamOpenBlockIndex == e.Index {
+				w.streamHasOpenBlock = false
+			}
+			if e.Index+1 > w.streamNextIndex {
+				w.streamNextIndex = e.Index + 1
+			}
+		case anthropic.MessageStopEvent:
+			w.terminalSent = true
+		}
+
+		if err := writeSSE(w.ResponseWriter, event.Event, event.Data); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (w *WebSearchAnthropicWriter) ensureStreamMessageStart(usage anthropic.Usage) error {
+	if w.streamMessageStarted {
+		return nil
+	}
+
+	inputTokens := usage.InputTokens
+	if inputTokens == 0 {
+		inputTokens = w.estimatedInputTokens
+	}
+
 	if err := writeSSE(w.ResponseWriter, "message_start", anthropic.MessageStartEvent{
 		Type: "message_start",
 		Message: anthropic.MessagesResponse{
-			ID:      response.ID,
+			ID:      w.inner.id,
 			Type:    "message",
 			Role:    "assistant",
-			Model:   response.Model,
+			Model:   w.req.Model,
 			Content: []anthropic.ContentBlock{},
-			Usage:   response.Usage,
+			Usage: anthropic.Usage{
+				InputTokens: inputTokens,
+			},
 		},
 	}); err != nil {
 		return err
 	}
 
-	for i, block := range response.Content {
+	w.streamMessageStarted = true
+	return nil
+}
+
+func (w *WebSearchAnthropicWriter) closeOpenStreamBlock() error {
+	if !w.streamHasOpenBlock {
+		return nil
+	}
+
+	if err := writeSSE(w.ResponseWriter, "content_block_stop", anthropic.ContentBlockStopEvent{
+		Type:  "content_block_stop",
+		Index: w.streamOpenBlockIndex,
+	}); err != nil {
+		return err
+	}
+
+	if w.streamOpenBlockIndex+1 > w.streamNextIndex {
+		w.streamNextIndex = w.streamOpenBlockIndex + 1
+	}
+	w.streamHasOpenBlock = false
+	return nil
+}
+
+func (w *WebSearchAnthropicWriter) writeStreamContentBlocks(content []anthropic.ContentBlock) error {
+	for _, block := range content {
+		index := w.streamNextIndex
 		if block.Type == "text" {
 			emptyText := ""
 			if err := writeSSE(w.ResponseWriter, "content_block_start", anthropic.ContentBlockStartEvent{
 				Type:  "content_block_start",
-				Index: i,
+				Index: index,
 				ContentBlock: anthropic.ContentBlock{
 					Type: "text",
 					Text: &emptyText,
@@ -303,13 +497,14 @@ func (w *WebSearchAnthropicWriter) streamResponse(response anthropic.MessagesRes
 			}); err != nil {
 				return err
 			}
+
 			text := ""
 			if block.Text != nil {
 				text = *block.Text
 			}
 			if err := writeSSE(w.ResponseWriter, "content_block_delta", anthropic.ContentBlockDeltaEvent{
 				Type:  "content_block_delta",
-				Index: i,
+				Index: index,
 				Delta: anthropic.Delta{
 					Type: "text_delta",
 					Text: text,
@@ -320,18 +515,48 @@ func (w *WebSearchAnthropicWriter) streamResponse(response anthropic.MessagesRes
 		} else {
 			if err := writeSSE(w.ResponseWriter, "content_block_start", anthropic.ContentBlockStartEvent{
 				Type:         "content_block_start",
-				Index:        i,
+				Index:        index,
 				ContentBlock: block,
 			}); err != nil {
 				return err
 			}
 		}
+
 		if err := writeSSE(w.ResponseWriter, "content_block_stop", anthropic.ContentBlockStopEvent{
 			Type:  "content_block_stop",
-			Index: i,
+			Index: index,
 		}); err != nil {
 			return err
 		}
+
+		w.streamNextIndex++
+	}
+
+	return nil
+}
+
+func (w *WebSearchAnthropicWriter) writeTerminalResponse(response anthropic.MessagesResponse) error {
+	if w.terminalSent {
+		return nil
+	}
+
+	if !w.stream {
+		w.ResponseWriter.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w.ResponseWriter).Encode(response); err != nil {
+			return err
+		}
+		w.terminalSent = true
+		return nil
+	}
+
+	if err := w.ensureStreamMessageStart(response.Usage); err != nil {
+		return err
+	}
+	if err := w.closeOpenStreamBlock(); err != nil {
+		return err
+	}
+	if err := w.writeStreamContentBlocks(response.Content); err != nil {
+		return err
 	}
 
 	if err := writeSSE(w.ResponseWriter, "message_delta", anthropic.MessageDeltaEvent{
@@ -346,16 +571,25 @@ func (w *WebSearchAnthropicWriter) streamResponse(response anthropic.MessagesRes
 		return err
 	}
 
-	return writeSSE(w.ResponseWriter, "message_stop", anthropic.MessageStopEvent{
+	if err := writeSSE(w.ResponseWriter, "message_stop", anthropic.MessageStopEvent{
 		Type: "message_stop",
-	})
+	}); err != nil {
+		return err
+	}
+
+	w.terminalSent = true
+	return nil
 }
 
-// sendError sends a web search error response
-func (w *WebSearchAnthropicWriter) sendError(errorCode, query string) error {
+// streamResponse emits a complete MessagesResponse as SSE events.
+func (w *WebSearchAnthropicWriter) streamResponse(response anthropic.MessagesResponse) error {
+	return w.writeTerminalResponse(response)
+}
+
+func (w *WebSearchAnthropicWriter) webSearchErrorResponse(errorCode, query string, usage anthropic.Usage) anthropic.MessagesResponse {
 	toolUseID := serverToolUseID(w.inner.id)
 
-	response := anthropic.MessagesResponse{
+	return anthropic.MessagesResponse{
 		ID:    w.inner.id,
 		Type:  "message",
 		Role:  "assistant",
@@ -377,15 +611,13 @@ func (w *WebSearchAnthropicWriter) sendError(errorCode, query string) error {
 			},
 		},
 		StopReason: "end_turn",
-		Usage:      anthropic.Usage{},
+		Usage:      usage,
 	}
+}
 
-	if w.stream {
-		return w.streamResponse(response)
-	}
-
-	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	return json.NewEncoder(w.ResponseWriter).Encode(response)
+// sendError sends a web search error response.
+func (w *WebSearchAnthropicWriter) sendError(errorCode, query string) error {
+	return w.writeTerminalResponse(w.webSearchErrorResponse(errorCode, query, anthropic.Usage{}))
 }
 
 // AnthropicMessagesMiddleware handles Anthropic Messages API requests
@@ -449,18 +681,26 @@ func AnthropicMessagesMiddleware() gin.HandlerFunc {
 		}
 
 		if hasWebSearchTool(req.Tools) {
-			if !strings.HasSuffix(req.Model, "cloud") {
+			// Guard against runtime cloud-disable policy (OLLAMA_NO_CLOUD/server.json),
+			// independent of model naming. Name-based checks are transitional.
+			if disabled, _ := internalcloud.Status(); disabled {
+				c.AbortWithStatusJSON(http.StatusForbidden, anthropic.NewError(http.StatusForbidden, internalcloud.DisabledError("web search is unavailable")))
+				return
+			}
+
+			if !isCloudModelName(req.Model) {
 				c.AbortWithStatusJSON(http.StatusBadRequest, anthropic.NewError(http.StatusBadRequest, "web_search tool is only supported for cloud models"))
 				return
 			}
 
 			c.Writer = &WebSearchAnthropicWriter{
-				BaseWriter: BaseWriter{ResponseWriter: c.Writer},
-				ctx:        c.Request.Context(),
-				inner:      innerWriter,
-				req:        req,
-				chatReq:    chatReq,
-				stream:     req.Stream,
+				BaseWriter:           BaseWriter{ResponseWriter: c.Writer},
+				ctx:                  c.Request.Context(),
+				inner:                innerWriter,
+				req:                  req,
+				chatReq:              chatReq,
+				stream:               req.Stream,
+				estimatedInputTokens: estimatedTokens,
 			}
 		} else {
 			c.Writer = innerWriter
@@ -478,6 +718,10 @@ func hasWebSearchTool(tools []anthropic.Tool) bool {
 		}
 	}
 	return false
+}
+
+func isCloudModelName(name string) bool {
+	return strings.HasSuffix(name, ":cloud") || strings.HasSuffix(name, "-cloud")
 }
 
 // extractQueryFromToolCall extracts the search query from a web_search tool call
@@ -498,7 +742,9 @@ func writeSSE(w http.ResponseWriter, eventType string, data any) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, d)
+	if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, d); err != nil {
+		return err
+	}
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
