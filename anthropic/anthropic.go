@@ -155,19 +155,7 @@ type Tool struct {
 	InputSchema json.RawMessage `json:"input_schema,omitempty"`
 
 	// Web search specific fields
-	MaxUses        int           `json:"max_uses,omitempty"`
-	AllowedDomains []string      `json:"allowed_domains,omitempty"`
-	BlockedDomains []string      `json:"blocked_domains,omitempty"`
-	UserLocation   *UserLocation `json:"user_location,omitempty"`
-}
-
-// UserLocation for localizing web search results
-type UserLocation struct {
-	Type     string `json:"type"` // "approximate"
-	City     string `json:"city,omitempty"`
-	Region   string `json:"region,omitempty"`
-	Country  string `json:"country,omitempty"`
-	Timezone string `json:"timezone,omitempty"`
+	MaxUses int `json:"max_uses,omitempty"`
 }
 
 // ToolChoice controls how the model uses tools
@@ -1071,7 +1059,7 @@ func WebSearch(ctx context.Context, query string, maxResults int) (*OllamaWebSea
 
 	req.Header.Set("Content-Type", "application/json")
 	if signature != "" {
-		req.Header.Set("Authorization", signature)
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", signature))
 	}
 
 	resp, err := http.DefaultClient.Do(req)

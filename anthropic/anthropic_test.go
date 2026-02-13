@@ -1288,34 +1288,6 @@ func TestWebSearchTypes(t *testing.T) {
 	}
 }
 
-func TestUserLocation(t *testing.T) {
-	loc := UserLocation{
-		Type:     "approximate",
-		City:     "San Francisco",
-		Region:   "California",
-		Country:  "US",
-		Timezone: "America/Los_Angeles",
-	}
-
-	data, err := json.Marshal(loc)
-	if err != nil {
-		t.Fatalf("failed to marshal UserLocation: %v", err)
-	}
-
-	var unmarshaled UserLocation
-	if err := json.Unmarshal(data, &unmarshaled); err != nil {
-		t.Fatalf("failed to unmarshal UserLocation: %v", err)
-	}
-
-	if unmarshaled.City != "San Francisco" {
-		t.Errorf("city mismatch: expected 'San Francisco', got %q", unmarshaled.City)
-	}
-
-	if unmarshaled.Timezone != "America/Los_Angeles" {
-		t.Errorf("timezone mismatch: expected 'America/Los_Angeles', got %q", unmarshaled.Timezone)
-	}
-}
-
 func TestCitation(t *testing.T) {
 	citation := Citation{
 		Type:           "web_search_result_location",
