@@ -14,9 +14,11 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -1828,6 +1830,95 @@ func versionHandler(cmd *cobra.Command, _ []string) {
 	}
 }
 
+// updateCheckURL is the endpoint used to check for new releases.
+// It is a variable so tests can override it with a mock server URL.
+var updateCheckURL = "https://ollama.com/api/update"
+
+// updateOutput is the writer used for update command output.
+// It is a variable so tests can capture output without printing to stdout.
+var updateOutput io.Writer = os.Stdout
+
+func UpdateHandler(cmd *cobra.Command, _ []string) error {
+	ctx := cmd.Context()
+
+	requestURL, err := url.Parse(updateCheckURL)
+	if err != nil {
+		return err
+	}
+	q := requestURL.Query()
+	q.Add("os", runtime.GOOS)
+	q.Add("arch", runtime.GOARCH)
+	q.Add("version", version.Version)
+	q.Add("ts", strconv.FormatInt(time.Now().Unix(), 10))
+	requestURL.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL.String(), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent",
+		fmt.Sprintf("ollama/%s %s Go/%s", version.Version, runtime.GOARCH, runtime.Version()))
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to check for update: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNoContent {
+		fmt.Fprintf(updateOutput, "ollama is already up to date (version %s)\n", version.Version)
+		return nil
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("update check failed with status %d", resp.StatusCode)
+	}
+
+	var updateResp struct {
+		URL     string `json:"url"`
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&updateResp); err != nil {
+		return fmt.Errorf("failed to parse update response: %w", err)
+	}
+	// Version is embedded in the release artifact URL path: .../v0.x.y/Ollama-...
+	if updateResp.Version == "" {
+		updateResp.Version = path.Base(path.Dir(updateResp.URL))
+	}
+
+	checkOnly, _ := cmd.Flags().GetBool("check")
+	if checkOnly {
+		fmt.Fprintf(updateOutput, "A new version of ollama is available: %s (current: %s)\n",
+			updateResp.Version, version.Version)
+		fmt.Fprintf(updateOutput, "Download: %s\n", updateResp.URL)
+		return nil
+	}
+
+	fmt.Fprintf(updateOutput, "Updating ollama to version %s...\n", updateResp.Version)
+
+	switch runtime.GOOS {
+	case "linux":
+		return updateLinux(ctx)
+	case "darwin", "windows":
+		fmt.Fprintln(updateOutput, "The Ollama desktop app handles updates automatically.")
+		fmt.Fprintf(updateOutput, "To update manually, run:\n  curl -fsSL https://ollama.com/install.sh | sh\n")
+	default:
+		fmt.Fprintf(updateOutput, "Automatic update is not supported on %s.\n", runtime.GOOS)
+		fmt.Fprintf(updateOutput, "Download the latest release from: %s\n", updateResp.URL)
+	}
+	return nil
+}
+
+func updateLinux(ctx context.Context) error {
+	fmt.Println("Running: curl -fsSL https://ollama.com/install.sh | sh")
+	// #nosec G204 -- URL is a hardcoded constant, not user input
+	installCmd := exec.CommandContext(ctx, "sh", "-c", "curl -fsSL https://ollama.com/install.sh | sh")
+	installCmd.Stdout = os.Stdout
+	installCmd.Stderr = os.Stderr
+	installCmd.Stdin = os.Stdin
+	return installCmd.Run()
+}
+
 func appendEnvDocs(cmd *cobra.Command, envs []envconfig.EnvVar) {
 	if len(envs) == 0 {
 		return
@@ -2230,6 +2321,14 @@ func NewCLI() *cobra.Command {
 		RunE:    DeleteHandler,
 	}
 
+	updateCmd := &cobra.Command{
+		Use:   "update",
+		Short: "Update ollama to the latest version",
+		Args:  cobra.NoArgs,
+		RunE:  UpdateHandler,
+	}
+	updateCmd.Flags().Bool("check", false, "Check for available updates without installing")
+
 	runnerCmd := &cobra.Command{
 		Use:    "runner",
 		Hidden: true,
@@ -2303,6 +2402,7 @@ func NewCLI() *cobra.Command {
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		updateCmd,
 		runnerCmd,
 		config.LaunchCmd(checkServerHeartbeat, runInteractiveTUI),
 	)
