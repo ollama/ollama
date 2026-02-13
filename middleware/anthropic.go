@@ -36,7 +36,7 @@ func (w *AnthropicWriter) writeError(data []byte) (int, error) {
 	}
 
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	err := json.NewEncoder(w.ResponseWriter).Encode(anthropic.NewError(w.ResponseWriter.Status(), errData.Error))
+	err := json.NewEncoder(w.ResponseWriter).Encode(anthropic.NewError(w.Status(), errData.Error))
 	if err != nil {
 		return 0, err
 	}
@@ -86,15 +86,23 @@ func (w *AnthropicWriter) Write(data []byte) (int, error) {
 // Anthropic-format response (server_tool_use + web_search_tool_result + text).
 type WebSearchAnthropicWriter struct {
 	BaseWriter
-	ctx     context.Context
-	inner   *AnthropicWriter
-	req     anthropic.MessagesRequest // original Anthropic request
-	chatReq *api.ChatRequest          // converted Ollama request (for followup calls)
-	stream  bool
+	newLoopContext func() (context.Context, context.CancelFunc)
+	inner          *AnthropicWriter
+	req            anthropic.MessagesRequest // original Anthropic request
+	chatReq        *api.ChatRequest          // converted Ollama request (for followup calls)
+	stream         bool
 
 	estimatedInputTokens int
 
 	terminalSent bool
+
+	observedPromptEvalCount int
+	observedEvalCount       int
+
+	loopInFlight      bool
+	loopBaseInputTok  int
+	loopBaseOutputTok int
+	loopResultCh      chan webSearchLoopResult
 
 	streamMessageStarted bool
 	streamHasOpenBlock   bool
@@ -103,6 +111,11 @@ type WebSearchAnthropicWriter struct {
 }
 
 const maxWebSearchLoops = 3
+
+type webSearchLoopResult struct {
+	response anthropic.MessagesResponse
+	loopErr  *webSearchLoopError
+}
 
 type webSearchLoopError struct {
 	code  string
@@ -122,7 +135,7 @@ func (w *WebSearchAnthropicWriter) Write(data []byte) (int, error) {
 		return len(data), nil
 	}
 
-	code := w.ResponseWriter.Status()
+	code := w.Status()
 	if code != http.StatusOK {
 		return w.inner.writeError(data)
 	}
@@ -130,6 +143,17 @@ func (w *WebSearchAnthropicWriter) Write(data []byte) (int, error) {
 	var chatResponse api.ChatResponse
 	if err := json.Unmarshal(data, &chatResponse); err != nil {
 		return 0, err
+	}
+	w.recordObservedUsage(chatResponse.Metrics)
+
+	if w.stream && w.loopInFlight {
+		if !chatResponse.Done {
+			return len(data), nil
+		}
+		if err := w.writeLoopResult(); err != nil {
+			return len(data), err
+		}
+		return len(data), nil
 	}
 
 	webSearchCall, hasWebSearch, hasOtherTools := findWebSearchToolCall(chatResponse.Message.ToolCalls)
@@ -148,7 +172,25 @@ func (w *WebSearchAnthropicWriter) Write(data []byte) (int, error) {
 		return w.inner.writeResponse(data)
 	}
 
-	response, loopErr := w.runWebSearchLoop(chatResponse, webSearchCall)
+	if w.stream {
+		// Let the original generation continue to completion while web search runs in parallel.
+		w.startLoopWorker(chatResponse, webSearchCall)
+		if chatResponse.Done {
+			if err := w.writeLoopResult(); err != nil {
+				return len(data), err
+			}
+		}
+		return len(data), nil
+	}
+
+	loopCtx, cancel := w.startLoopContext()
+	defer cancel()
+
+	initialUsage := anthropic.Usage{
+		InputTokens:  max(w.observedPromptEvalCount, chatResponse.Metrics.PromptEvalCount),
+		OutputTokens: max(w.observedEvalCount, chatResponse.Metrics.EvalCount),
+	}
+	response, loopErr := w.runWebSearchLoop(loopCtx, chatResponse, webSearchCall, initialUsage)
 	if loopErr != nil {
 		return len(data), w.sendError(loopErr.code, loopErr.query)
 	}
@@ -160,20 +202,24 @@ func (w *WebSearchAnthropicWriter) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
-func (w *WebSearchAnthropicWriter) runWebSearchLoop(initialResponse api.ChatResponse, initialToolCall api.ToolCall) (anthropic.MessagesResponse, *webSearchLoopError) {
+func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initialResponse api.ChatResponse, initialToolCall api.ToolCall, initialUsage anthropic.Usage) (anthropic.MessagesResponse, *webSearchLoopError) {
 	followUpMessages := make([]api.Message, 0, len(w.chatReq.Messages)+maxWebSearchLoops*2)
 	followUpMessages = append(followUpMessages, w.chatReq.Messages...)
 
 	followUpTools := stripWebSearchTools(w.chatReq.Tools)
-	usage := anthropic.Usage{
-		InputTokens:  initialResponse.Metrics.PromptEvalCount,
-		OutputTokens: initialResponse.Metrics.EvalCount,
-	}
+	usage := initialUsage
 
 	currentResponse := initialResponse
 	currentToolCall := initialToolCall
 
 	var serverContent []anthropic.ContentBlock
+
+	if !isCloudModelName(w.req.Model) {
+		return anthropic.MessagesResponse{}, &webSearchLoopError{
+			code:  "web_search_not_supported_for_local_models",
+			query: extractQueryFromToolCall(&initialToolCall),
+		}
+	}
 
 	for loop := 1; loop <= maxWebSearchLoops; loop++ {
 		query := extractQueryFromToolCall(&currentToolCall)
@@ -185,7 +231,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(initialResponse api.ChatResp
 		}
 
 		const defaultMaxResults = 5
-		searchResp, err := anthropic.WebSearch(w.ctx, query, defaultMaxResults)
+		searchResp, err := anthropic.WebSearch(ctx, query, defaultMaxResults)
 		if err != nil {
 			return anthropic.MessagesResponse{}, &webSearchLoopError{
 				code:  "unavailable",
@@ -218,7 +264,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(initialResponse api.ChatResp
 		}
 		followUpMessages = append(followUpMessages, assistantMsg, toolResultMsg)
 
-		followUpResponse, err := w.callFollowUpChat(followUpMessages, followUpTools)
+		followUpResponse, err := w.callFollowUpChat(ctx, followUpMessages, followUpTools)
 		if err != nil {
 			return anthropic.MessagesResponse{}, &webSearchLoopError{
 				code:  "api_error",
@@ -240,42 +286,105 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(initialResponse api.ChatResp
 			return w.combineServerAndFinalContent(serverContent, followUpResponse, usage), nil
 		}
 
-		if loop == maxWebSearchLoops {
-			maxLoopQuery := extractQueryFromToolCall(&nextToolCall)
-			maxLoopToolUseID := loopServerToolUseID(w.inner.id, loop+1)
-			serverContent = append(serverContent,
-				anthropic.ContentBlock{
-					Type:  "server_tool_use",
-					ID:    maxLoopToolUseID,
-					Name:  "web_search",
-					Input: map[string]any{"query": maxLoopQuery},
-				},
-				anthropic.ContentBlock{
-					Type:      "web_search_tool_result",
-					ToolUseID: maxLoopToolUseID,
-					Content: anthropic.WebSearchToolResultError{
-						Type:      "web_search_tool_result_error",
-						ErrorCode: "max_uses_exceeded",
-					},
-				},
-			)
-
-			return anthropic.MessagesResponse{
-				ID:         w.inner.id,
-				Type:       "message",
-				Role:       "assistant",
-				Model:      w.req.Model,
-				Content:    serverContent,
-				StopReason: "end_turn",
-				Usage:      usage,
-			}, nil
-		}
-
 		currentResponse = followUpResponse
 		currentToolCall = nextToolCall
 	}
 
-	return anthropic.MessagesResponse{}, &webSearchLoopError{code: "api_error"}
+	maxLoopQuery := extractQueryFromToolCall(&currentToolCall)
+	maxLoopToolUseID := loopServerToolUseID(w.inner.id, maxWebSearchLoops+1)
+	serverContent = append(serverContent,
+		anthropic.ContentBlock{
+			Type:  "server_tool_use",
+			ID:    maxLoopToolUseID,
+			Name:  "web_search",
+			Input: map[string]any{"query": maxLoopQuery},
+		},
+		anthropic.ContentBlock{
+			Type:      "web_search_tool_result",
+			ToolUseID: maxLoopToolUseID,
+			Content: anthropic.WebSearchToolResultError{
+				Type:      "web_search_tool_result_error",
+				ErrorCode: "max_uses_exceeded",
+			},
+		},
+	)
+
+	return anthropic.MessagesResponse{
+		ID:         w.inner.id,
+		Type:       "message",
+		Role:       "assistant",
+		Model:      w.req.Model,
+		Content:    serverContent,
+		StopReason: "end_turn",
+		Usage:      usage,
+	}, nil
+}
+
+func (w *WebSearchAnthropicWriter) startLoopWorker(initialResponse api.ChatResponse, initialToolCall api.ToolCall) {
+	if w.loopInFlight {
+		return
+	}
+
+	initialUsage := anthropic.Usage{
+		InputTokens:  max(w.observedPromptEvalCount, initialResponse.Metrics.PromptEvalCount),
+		OutputTokens: max(w.observedEvalCount, initialResponse.Metrics.EvalCount),
+	}
+	w.loopBaseInputTok = initialUsage.InputTokens
+	w.loopBaseOutputTok = initialUsage.OutputTokens
+	w.loopResultCh = make(chan webSearchLoopResult, 1)
+	w.loopInFlight = true
+
+	go func() {
+		ctx, cancel := w.startLoopContext()
+		defer cancel()
+
+		response, loopErr := w.runWebSearchLoop(ctx, initialResponse, initialToolCall, initialUsage)
+		w.loopResultCh <- webSearchLoopResult{
+			response: response,
+			loopErr:  loopErr,
+		}
+	}()
+}
+
+func (w *WebSearchAnthropicWriter) writeLoopResult() error {
+	if w.loopResultCh == nil {
+		return w.sendError("api_error", "")
+	}
+
+	result := <-w.loopResultCh
+	w.loopResultCh = nil
+	w.loopInFlight = false
+	if result.loopErr != nil {
+		return w.sendError(result.loopErr.code, result.loopErr.query)
+	}
+
+	w.applyObservedUsageDelta(&result.response)
+	return w.writeTerminalResponse(result.response)
+}
+
+func (w *WebSearchAnthropicWriter) applyObservedUsageDelta(response *anthropic.MessagesResponse) {
+	if deltaIn := w.observedPromptEvalCount - w.loopBaseInputTok; deltaIn > 0 {
+		response.Usage.InputTokens += deltaIn
+	}
+	if deltaOut := w.observedEvalCount - w.loopBaseOutputTok; deltaOut > 0 {
+		response.Usage.OutputTokens += deltaOut
+	}
+}
+
+func (w *WebSearchAnthropicWriter) recordObservedUsage(metrics api.Metrics) {
+	if metrics.PromptEvalCount > w.observedPromptEvalCount {
+		w.observedPromptEvalCount = metrics.PromptEvalCount
+	}
+	if metrics.EvalCount > w.observedEvalCount {
+		w.observedEvalCount = metrics.EvalCount
+	}
+}
+
+func (w *WebSearchAnthropicWriter) startLoopContext() (context.Context, context.CancelFunc) {
+	if w.newLoopContext != nil {
+		return w.newLoopContext()
+	}
+	return context.WithTimeout(context.Background(), 5*time.Minute)
 }
 
 func (w *WebSearchAnthropicWriter) combineServerAndFinalContent(serverContent []anthropic.ContentBlock, finalResponse api.ChatResponse, usage anthropic.Usage) anthropic.MessagesResponse {
@@ -360,7 +469,7 @@ func loopServerToolUseID(messageID string, loop int) string {
 	return fmt.Sprintf("%s_%d", base, loop)
 }
 
-func (w *WebSearchAnthropicWriter) callFollowUpChat(messages []api.Message, tools api.Tools) (api.ChatResponse, error) {
+func (w *WebSearchAnthropicWriter) callFollowUpChat(ctx context.Context, messages []api.Message, tools api.Tools) (api.ChatResponse, error) {
 	streaming := false
 	followUp := api.ChatRequest{
 		Model:    w.chatReq.Model,
@@ -376,14 +485,13 @@ func (w *WebSearchAnthropicWriter) callFollowUpChat(messages []api.Message, tool
 	}
 
 	chatURL := envconfig.Host().String() + "/api/chat"
-	client := &http.Client{Timeout: 5 * time.Minute}
-	httpReq, err := http.NewRequestWithContext(w.ctx, "POST", chatURL, bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", chatURL, bytes.NewReader(body))
 	if err != nil {
 		return api.ChatResponse{}, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.Do(httpReq)
+	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
 		return api.ChatResponse{}, err
 	}
@@ -623,6 +731,8 @@ func (w *WebSearchAnthropicWriter) sendError(errorCode, query string) error {
 // AnthropicMessagesMiddleware handles Anthropic Messages API requests
 func AnthropicMessagesMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		requestCtx := c.Request.Context()
+
 		var req anthropic.MessagesRequest
 		err := c.ShouldBindJSON(&req)
 		if err != nil {
@@ -681,21 +791,21 @@ func AnthropicMessagesMiddleware() gin.HandlerFunc {
 		}
 
 		if hasWebSearchTool(req.Tools) {
-			// Guard against runtime cloud-disable policy (OLLAMA_NO_CLOUD/server.json),
-			// independent of model naming. Name-based checks are transitional.
-			if disabled, _ := internalcloud.Status(); disabled {
-				c.AbortWithStatusJSON(http.StatusForbidden, anthropic.NewError(http.StatusForbidden, internalcloud.DisabledError("web search is unavailable")))
-				return
-			}
-
-			if !isCloudModelName(req.Model) {
-				c.AbortWithStatusJSON(http.StatusBadRequest, anthropic.NewError(http.StatusBadRequest, "web_search tool is only supported for cloud models"))
-				return
+			// Guard against runtime cloud-disable policy (OLLAMA_NO_CLOUD/server.json)
+			// for cloud models. Local models may still receive web_search tool definitions;
+			// execution is validated when the model actually emits a web_search tool call.
+			if isCloudModelName(req.Model) {
+				if disabled, _ := internalcloud.Status(); disabled {
+					c.AbortWithStatusJSON(http.StatusForbidden, anthropic.NewError(http.StatusForbidden, internalcloud.DisabledError("web search is unavailable")))
+					return
+				}
 			}
 
 			c.Writer = &WebSearchAnthropicWriter{
-				BaseWriter:           BaseWriter{ResponseWriter: c.Writer},
-				ctx:                  c.Request.Context(),
+				BaseWriter: BaseWriter{ResponseWriter: c.Writer},
+				newLoopContext: func() (context.Context, context.CancelFunc) {
+					return context.WithTimeout(requestCtx, 5*time.Minute)
+				},
 				inner:                innerWriter,
 				req:                  req,
 				chatReq:              chatReq,

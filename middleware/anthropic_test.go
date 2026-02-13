@@ -1587,16 +1587,26 @@ func eventNames(events []sseEvent) []string {
 	return names
 }
 
-// TestWebSearchCloudModelGating tests that web_search tool is rejected for non-cloud models.
+// TestWebSearchCloudModelGating tests web_search behavior across model types.
 func TestWebSearchCloudModelGating(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	t.Run("local model rejected", func(t *testing.T) {
+	t.Run("local model allowed when web_search is not called", func(t *testing.T) {
 		handlerCalled := false
 		router := gin.New()
 		router.Use(AnthropicMessagesMiddleware())
 		router.POST("/v1/messages", func(c *gin.Context) {
 			handlerCalled = true
+			resp := api.ChatResponse{
+				Model:      "llama3.2",
+				Message:    api.Message{Role: "assistant", Content: "hello"},
+				Done:       true,
+				DoneReason: "stop",
+				Metrics:    api.Metrics{PromptEvalCount: 10, EvalCount: 5},
+			}
+			data, _ := json.Marshal(resp)
+			c.Writer.WriteHeader(http.StatusOK)
+			_, _ = c.Writer.Write(data)
 		})
 
 		body := `{"model":"llama3.2","max_tokens":100,"messages":[{"role":"user","content":"hello"}],"tools":[{"type":"web_search_20250305","name":"web_search"}]}`
@@ -1605,44 +1615,84 @@ func TestWebSearchCloudModelGating(t *testing.T) {
 		resp := httptest.NewRecorder()
 		router.ServeHTTP(resp, req)
 
-		if resp.Code != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d: %s", resp.Code, resp.Body.String())
+		if resp.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d: %s", resp.Code, resp.Body.String())
 		}
-		if handlerCalled {
-			t.Error("handler should not be called for non-cloud model")
-		}
-		var errResp anthropic.ErrorResponse
-		if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
-			t.Fatalf("failed to parse error response: %v", err)
-		}
-		if !strings.Contains(errResp.Error.Message, "cloud models") {
-			t.Errorf("expected error about cloud models, got: %q", errResp.Error.Message)
+		if !handlerCalled {
+			t.Error("handler should be called for local model when web_search is not called")
 		}
 	})
 
-	t.Run("local model with tag rejected", func(t *testing.T) {
+	t.Run("local model emits web_search and gets structured error", func(t *testing.T) {
 		router := gin.New()
 		router.Use(AnthropicMessagesMiddleware())
 		router.POST("/v1/messages", func(c *gin.Context) {
-			t.Error("handler should not be called for non-cloud model")
+			resp := api.ChatResponse{
+				Model: "llama3.2",
+				Message: api.Message{
+					Role: "assistant",
+					ToolCalls: []api.ToolCall{
+						{
+							ID: "call_local_ws",
+							Function: api.ToolCallFunction{
+								Name:      "web_search",
+								Arguments: makeArgs("query", "hello"),
+							},
+						},
+					},
+				},
+				Done:       true,
+				DoneReason: "stop",
+				Metrics:    api.Metrics{PromptEvalCount: 8, EvalCount: 2},
+			}
+			data, _ := json.Marshal(resp)
+			c.Writer.WriteHeader(http.StatusOK)
+			_, _ = c.Writer.Write(data)
 		})
 
-		body := `{"model":"llama3.2:latest","max_tokens":100,"messages":[{"role":"user","content":"hello"}],"tools":[{"type":"web_search_20250305","name":"web_search"}]}`
+		body := `{"model":"llama3.2","max_tokens":100,"messages":[{"role":"user","content":"hello"}],"tools":[{"type":"web_search_20250305","name":"web_search"}]}`
 		req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		resp := httptest.NewRecorder()
 		router.ServeHTTP(resp, req)
 
-		if resp.Code != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d: %s", resp.Code, resp.Body.String())
+		if resp.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+		}
+
+		var result anthropic.MessagesResponse
+		if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
+			t.Fatalf("unmarshal error: %v", err)
+		}
+		if len(result.Content) != 2 {
+			t.Fatalf("expected 2 content blocks for local model web_search error, got %d", len(result.Content))
+		}
+		contentJSON, _ := json.Marshal(result.Content[1].Content)
+		var errContent anthropic.WebSearchToolResultError
+		if err := json.Unmarshal(contentJSON, &errContent); err != nil {
+			t.Fatalf("failed to parse web_search error content: %v", err)
+		}
+		if errContent.ErrorCode != "web_search_not_supported_for_local_models" {
+			t.Fatalf("expected web_search_not_supported_for_local_models, got %q", errContent.ErrorCode)
 		}
 	})
 
-	t.Run("model ending in cloud without cloud suffix rejected", func(t *testing.T) {
+	t.Run("model ending in cloud without cloud suffix treated as local", func(t *testing.T) {
+		handlerCalled := false
 		router := gin.New()
 		router.Use(AnthropicMessagesMiddleware())
 		router.POST("/v1/messages", func(c *gin.Context) {
-			t.Error("handler should not be called for invalid cloud suffix model")
+			handlerCalled = true
+			resp := api.ChatResponse{
+				Model:      "notreallycloud",
+				Message:    api.Message{Role: "assistant", Content: "hello"},
+				Done:       true,
+				DoneReason: "stop",
+				Metrics:    api.Metrics{PromptEvalCount: 10, EvalCount: 5},
+			}
+			data, _ := json.Marshal(resp)
+			c.Writer.WriteHeader(http.StatusOK)
+			_, _ = c.Writer.Write(data)
 		})
 
 		body := `{"model":"notreallycloud","max_tokens":100,"messages":[{"role":"user","content":"hello"}],"tools":[{"type":"web_search_20250305","name":"web_search"}]}`
@@ -1651,8 +1701,11 @@ func TestWebSearchCloudModelGating(t *testing.T) {
 		resp := httptest.NewRecorder()
 		router.ServeHTTP(resp, req)
 
-		if resp.Code != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d: %s", resp.Code, resp.Body.String())
+		if !handlerCalled {
+			t.Error("handler should be called for non-cloud model when web_search is not called")
+		}
+		if resp.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d: %s", resp.Code, resp.Body.String())
 		}
 	})
 
@@ -1694,7 +1747,6 @@ func TestWebSearchCloudModelGating(t *testing.T) {
 		router.Use(AnthropicMessagesMiddleware())
 		router.POST("/v1/messages", func(c *gin.Context) {
 			handlerCalled = true
-			// Return a simple response so the middleware doesn't error
 			resp := api.ChatResponse{
 				Model:      "kimi-k2.5",
 				Message:    api.Message{Role: "assistant", Content: "hello"},
@@ -1721,7 +1773,7 @@ func TestWebSearchCloudModelGating(t *testing.T) {
 		}
 	})
 
-	t.Run("cloud disabled blocks web search even for cloud model", func(t *testing.T) {
+	t.Run("cloud disabled blocks web search for cloud model", func(t *testing.T) {
 		t.Setenv("OLLAMA_NO_CLOUD", "1")
 
 		handlerCalled := false
@@ -1752,6 +1804,120 @@ func TestWebSearchCloudModelGating(t *testing.T) {
 			t.Fatalf("expected cloud disabled error, got: %q", errResp.Error.Message)
 		}
 	})
+
+	t.Run("cloud disabled does not block local model if web_search is not called", func(t *testing.T) {
+		t.Setenv("OLLAMA_NO_CLOUD", "1")
+
+		handlerCalled := false
+		router := gin.New()
+		router.Use(AnthropicMessagesMiddleware())
+		router.POST("/v1/messages", func(c *gin.Context) {
+			handlerCalled = true
+			resp := api.ChatResponse{
+				Model:      "llama3.2",
+				Message:    api.Message{Role: "assistant", Content: "hello"},
+				Done:       true,
+				DoneReason: "stop",
+				Metrics:    api.Metrics{PromptEvalCount: 10, EvalCount: 5},
+			}
+			data, _ := json.Marshal(resp)
+			c.Writer.WriteHeader(http.StatusOK)
+			_, _ = c.Writer.Write(data)
+		})
+
+		body := `{"model":"llama3.2","max_tokens":100,"messages":[{"role":"user","content":"hello"}],"tools":[{"type":"web_search_20250305","name":"web_search"}]}`
+		req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+
+		if resp.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+		}
+		if !handlerCalled {
+			t.Fatal("handler should be called for local model when web_search is not called")
+		}
+	})
+}
+
+func TestWebSearchUsesBearerAuthorizationHeader(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var authHeader string
+	searchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader = r.Header.Get("Authorization")
+		resp := anthropic.OllamaWebSearchResponse{
+			Results: []anthropic.OllamaWebSearchResult{
+				{Title: "Result", URL: "https://example.com", Content: "content"},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer searchServer.Close()
+	originalEndpoint := anthropic.WebSearchEndpoint
+	anthropic.WebSearchEndpoint = searchServer.URL
+	defer func() { anthropic.WebSearchEndpoint = originalEndpoint }()
+
+	followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := api.ChatResponse{
+			Model:      "test-model",
+			Message:    api.Message{Role: "assistant", Content: "done"},
+			Done:       true,
+			DoneReason: "stop",
+			Metrics:    api.Metrics{PromptEvalCount: 5, EvalCount: 2},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer followupServer.Close()
+	t.Setenv("OLLAMA_HOST", followupServer.URL)
+
+	router := gin.New()
+	router.Use(AnthropicMessagesMiddleware())
+	router.POST("/v1/messages", func(c *gin.Context) {
+		resp := api.ChatResponse{
+			Model: "test-model",
+			Message: api.Message{
+				Role: "assistant",
+				ToolCalls: []api.ToolCall{
+					{
+						ID: "call_auth",
+						Function: api.ToolCallFunction{
+							Name:      "web_search",
+							Arguments: makeArgs("query", "auth test"),
+						},
+					},
+				},
+			},
+			Done:       true,
+			DoneReason: "stop",
+			Metrics:    api.Metrics{PromptEvalCount: 4, EvalCount: 1},
+		}
+		data, _ := json.Marshal(resp)
+		c.Writer.WriteHeader(http.StatusOK)
+		_, _ = c.Writer.Write(data)
+	})
+
+	body := `{
+		"model":"test-model:cloud",
+		"max_tokens":100,
+		"messages":[{"role":"user","content":"test auth"}],
+		"tools":[{"type":"web_search_20250305","name":"web_search"}]
+	}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+	if authHeader == "" {
+		t.Fatal("expected Authorization header on web search request")
+	}
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		t.Fatalf("expected Bearer Authorization header, got %q", authHeader)
+	}
 }
 
 // TestWebSearchSearchAPIError tests that a failing search API returns a proper error response.
@@ -1934,6 +2100,115 @@ func TestWebSearchStreamingImmediateTakeover(t *testing.T) {
 	}
 	if containsString(textDeltas, "ignored chunk") {
 		t.Fatalf("unexpected text from chunks after takeover: %v", textDeltas)
+	}
+}
+
+func TestWebSearchStreamingUsageUsesObservedChunkMetrics(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := api.ChatResponse{
+			Model:      "test-model",
+			Message:    api.Message{Role: "assistant", Content: "After search."},
+			Done:       true,
+			DoneReason: "stop",
+			Metrics:    api.Metrics{PromptEvalCount: 20, EvalCount: 7},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer followupServer.Close()
+	t.Setenv("OLLAMA_HOST", followupServer.URL)
+
+	searchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := anthropic.OllamaWebSearchResponse{
+			Results: []anthropic.OllamaWebSearchResult{
+				{Title: "Result", URL: "https://example.com", Content: "content"},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer searchServer.Close()
+	originalEndpoint := anthropic.WebSearchEndpoint
+	anthropic.WebSearchEndpoint = searchServer.URL
+	defer func() { anthropic.WebSearchEndpoint = originalEndpoint }()
+
+	router := gin.New()
+	router.Use(AnthropicMessagesMiddleware())
+	router.POST("/v1/messages", func(c *gin.Context) {
+		chunks := []api.ChatResponse{
+			{
+				Model:   "test-model",
+				Message: api.Message{Role: "assistant", Content: "Preface "},
+				Done:    false,
+				Metrics: api.Metrics{PromptEvalCount: 12, EvalCount: 4},
+			},
+			{
+				Model: "test-model",
+				Message: api.Message{
+					Role: "assistant",
+					ToolCalls: []api.ToolCall{
+						{
+							ID: "call_ws_stream_usage",
+							Function: api.ToolCallFunction{
+								Name:      "web_search",
+								Arguments: makeArgs("query", "latest updates"),
+							},
+						},
+					},
+				},
+				Done:    false,
+				Metrics: api.Metrics{PromptEvalCount: 0, EvalCount: 0},
+			},
+			{
+				Model:      "test-model",
+				Message:    api.Message{Role: "assistant"},
+				Done:       true,
+				DoneReason: "stop",
+				Metrics:    api.Metrics{PromptEvalCount: 12, EvalCount: 4},
+			},
+		}
+		c.Writer.WriteHeader(http.StatusOK)
+		for _, chunk := range chunks {
+			data, _ := json.Marshal(chunk)
+			_, _ = c.Writer.Write(data)
+		}
+	})
+
+	body := `{
+		"model":"test-model:cloud",
+		"max_tokens":100,
+		"stream":true,
+		"messages":[{"role":"user","content":"Find updates"}],
+		"tools":[{"type":"web_search_20250305","name":"web_search"}]
+	}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
+	}
+
+	events := parseSSEEvents(t, resp.Body.String())
+	var messageDelta anthropic.MessageDeltaEvent
+	found := false
+	for _, event := range events {
+		if event.event != "message_delta" {
+			continue
+		}
+		if err := json.Unmarshal([]byte(event.data), &messageDelta); err != nil {
+			t.Fatalf("failed to unmarshal message_delta: %v", err)
+		}
+		found = true
+		break
+	}
+	if !found {
+		t.Fatal("expected message_delta event")
+	}
+	if messageDelta.Usage.OutputTokens != 11 {
+		t.Fatalf("expected aggregated output tokens 11 (4 passthrough + 7 followup), got %d", messageDelta.Usage.OutputTokens)
 	}
 }
 
@@ -2446,6 +2721,13 @@ func TestWebSearchStreamingFinalStopReasonToolUse(t *testing.T) {
 					},
 				},
 				Done: false,
+			},
+			{
+				Model:      "test-model",
+				Message:    api.Message{Role: "assistant"},
+				Done:       true,
+				DoneReason: "stop",
+				Metrics:    api.Metrics{PromptEvalCount: 10, EvalCount: 3},
 			},
 		}
 		c.Writer.WriteHeader(http.StatusOK)
