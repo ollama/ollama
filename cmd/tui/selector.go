@@ -576,9 +576,15 @@ func (m multiSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case tea.KeyRunes:
-			m.filter += string(msg.Runes)
-			m.cursor = 0
-			m.scrollOffset = 0
+			// On some terminals (e.g. Windows PowerShell), space arrives as
+			// KeyRunes instead of KeySpace. Intercept it so toggle still works.
+			if len(msg.Runes) == 1 && msg.Runes[0] == ' ' {
+				m.toggleItem()
+			} else {
+				m.filter += string(msg.Runes)
+				m.cursor = 0
+				m.scrollOffset = 0
+			}
 		}
 	}
 
