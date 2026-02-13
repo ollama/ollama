@@ -1348,6 +1348,9 @@ func TestWebSearchStreamResponse(t *testing.T) {
 	if msgDelta.Delta.StopReason != "end_turn" {
 		t.Errorf("expected stop_reason 'end_turn', got %q", msgDelta.Delta.StopReason)
 	}
+	if msgDelta.Usage.InputTokens != 20 {
+		t.Errorf("expected input_tokens 20, got %d", msgDelta.Usage.InputTokens)
+	}
 	if msgDelta.Usage.OutputTokens != 10 {
 		t.Errorf("expected output_tokens 10, got %d", msgDelta.Usage.OutputTokens)
 	}
@@ -1372,7 +1375,8 @@ func TestWebSearchSendError_NonStreaming(t *testing.T) {
 		req:        anthropic.MessagesRequest{Model: "test-model"},
 	}
 
-	if err := wsWriter.sendError("unavailable", "test query"); err != nil {
+	errorUsage := anthropic.Usage{InputTokens: 7, OutputTokens: 2}
+	if err := wsWriter.sendError("unavailable", "test query", errorUsage); err != nil {
 		t.Fatalf("sendError error: %v", err)
 	}
 
@@ -1437,6 +1441,9 @@ func TestWebSearchSendError_NonStreaming(t *testing.T) {
 	if result.StopReason != "end_turn" {
 		t.Errorf("expected stop_reason 'end_turn', got %q", result.StopReason)
 	}
+	if result.Usage != errorUsage {
+		t.Errorf("expected usage %+v, got %+v", errorUsage, result.Usage)
+	}
 }
 
 // TestWebSearchSendError_Streaming tests sendError in streaming mode produces proper SSE.
@@ -1458,7 +1465,8 @@ func TestWebSearchSendError_Streaming(t *testing.T) {
 		req:        anthropic.MessagesRequest{Model: "test-model"},
 	}
 
-	if err := wsWriter.sendError("invalid_request", "bad query"); err != nil {
+	errorUsage := anthropic.Usage{InputTokens: 9, OutputTokens: 4}
+	if err := wsWriter.sendError("invalid_request", "bad query", errorUsage); err != nil {
 		t.Fatalf("sendError error: %v", err)
 	}
 
@@ -1506,6 +1514,14 @@ func TestWebSearchSendError_Streaming(t *testing.T) {
 	if resultStart.ContentBlock.Type != "web_search_tool_result" {
 		t.Errorf("expected 'web_search_tool_result', got %q", resultStart.ContentBlock.Type)
 	}
+
+	var msgDelta anthropic.MessageDeltaEvent
+	if err := json.Unmarshal([]byte(events[5].data), &msgDelta); err != nil {
+		t.Fatalf("failed to parse message_delta: %v", err)
+	}
+	if msgDelta.Usage.InputTokens != errorUsage.InputTokens || msgDelta.Usage.OutputTokens != errorUsage.OutputTokens {
+		t.Fatalf("expected usage %+v in message_delta, got %+v", errorUsage, msgDelta.Usage)
+	}
 }
 
 // TestWebSearchSendError_EmptyQuery tests sendError with an empty query.
@@ -1527,7 +1543,7 @@ func TestWebSearchSendError_EmptyQuery(t *testing.T) {
 		req:        anthropic.MessagesRequest{Model: "test-model"},
 	}
 
-	if err := wsWriter.sendError("invalid_request", ""); err != nil {
+	if err := wsWriter.sendError("invalid_request", "", anthropic.Usage{}); err != nil {
 		t.Fatalf("sendError error: %v", err)
 	}
 
@@ -1990,6 +2006,9 @@ func TestWebSearchSearchAPIError(t *testing.T) {
 	if result.Content[1].Type != "web_search_tool_result" {
 		t.Errorf("expected 'web_search_tool_result', got %q", result.Content[1].Type)
 	}
+	if result.Usage.InputTokens != 10 || result.Usage.OutputTokens != 2 {
+		t.Fatalf("expected usage input=10 output=2, got %+v", result.Usage)
+	}
 }
 
 func TestWebSearchStreamingImmediateTakeover(t *testing.T) {
@@ -2206,6 +2225,9 @@ func TestWebSearchStreamingUsageUsesObservedChunkMetrics(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("expected message_delta event")
+	}
+	if messageDelta.Usage.InputTokens != 32 {
+		t.Fatalf("expected aggregated input tokens 32 (12 passthrough + 20 followup), got %d", messageDelta.Usage.InputTokens)
 	}
 	if messageDelta.Usage.OutputTokens != 11 {
 		t.Fatalf("expected aggregated output tokens 11 (4 passthrough + 7 followup), got %d", messageDelta.Usage.OutputTokens)
@@ -2427,7 +2449,26 @@ func TestWebSearchMultiIterationLoop(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	followupCall := 0
+	followupDecodeErr := false
+	missingWebSearchTool := false
 	followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var followupReq api.ChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&followupReq); err != nil {
+			followupDecodeErr = true
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		hasWebSearchTool := false
+		for _, tool := range followupReq.Tools {
+			if tool.Function.Name == "web_search" {
+				hasWebSearchTool = true
+				break
+			}
+		}
+		if !hasWebSearchTool {
+			missingWebSearchTool = true
+		}
+
 		followupCall++
 		switch followupCall {
 		case 1:
@@ -2522,6 +2563,12 @@ func TestWebSearchMultiIterationLoop(t *testing.T) {
 	}
 	if followupCall != 2 {
 		t.Fatalf("expected 2 followup calls, got %d", followupCall)
+	}
+	if followupDecodeErr {
+		t.Fatal("failed to decode followup request body")
+	}
+	if missingWebSearchTool {
+		t.Fatal("expected followup requests to retain web_search tool definition")
 	}
 
 	var result anthropic.MessagesResponse
@@ -2873,6 +2920,9 @@ func TestWebSearchFollowupNon200ReturnsApiError(t *testing.T) {
 	}
 	if errContent.ErrorCode != "api_error" {
 		t.Fatalf("expected api_error, got %q", errContent.ErrorCode)
+	}
+	if result.Usage.InputTokens != 9 || result.Usage.OutputTokens != 1 {
+		t.Fatalf("expected usage input=9 output=1, got %+v", result.Usage)
 	}
 }
 

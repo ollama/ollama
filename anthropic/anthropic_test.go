@@ -3,6 +3,7 @@ package anthropic
 import (
 	"encoding/base64"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -297,6 +298,78 @@ func TestFromMessagesRequest_WithTools(t *testing.T) {
 	}
 	if tool.Function.Description != "Get current weather" {
 		t.Errorf("expected description 'Get current weather', got %q", tool.Function.Description)
+	}
+}
+
+func TestFromMessagesRequest_DropsCustomWebSearchWhenBuiltinPresent(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 1024,
+		Messages:  []MessageParam{{Role: "user", Content: "Hello"}},
+		Tools: []Tool{
+			{
+				Type: "web_search_20250305",
+				Name: "web_search",
+			},
+			{
+				Type:        "custom",
+				Name:        "web_search",
+				Description: "User-defined web search that should be dropped",
+				InputSchema: json.RawMessage(`{"type":"invalid"}`),
+			},
+			{
+				Type:        "custom",
+				Name:        "get_weather",
+				Description: "Get current weather",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{"location":{"type":"string"}},"required":["location"]}`),
+			},
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Tools) != 2 {
+		t.Fatalf("expected 2 tools after dropping custom web_search, got %d", len(result.Tools))
+	}
+	if result.Tools[0].Function.Name != "web_search" {
+		t.Fatalf("expected first tool to be built-in web_search, got %q", result.Tools[0].Function.Name)
+	}
+	if result.Tools[1].Function.Name != "get_weather" {
+		t.Fatalf("expected second tool to be get_weather, got %q", result.Tools[1].Function.Name)
+	}
+}
+
+func TestFromMessagesRequest_KeepsCustomWebSearchWhenBuiltinAbsent(t *testing.T) {
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 1024,
+		Messages:  []MessageParam{{Role: "user", Content: "Hello"}},
+		Tools: []Tool{
+			{
+				Type:        "custom",
+				Name:        "web_search",
+				Description: "User-defined web search",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`),
+			},
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Tools) != 1 {
+		t.Fatalf("expected 1 custom tool, got %d", len(result.Tools))
+	}
+	if result.Tools[0].Function.Name != "web_search" {
+		t.Fatalf("expected custom tool name web_search, got %q", result.Tools[0].Function.Name)
+	}
+	if result.Tools[0].Function.Description != "User-defined web search" {
+		t.Fatalf("expected custom description preserved, got %q", result.Tools[0].Function.Description)
 	}
 }
 
@@ -1205,6 +1278,71 @@ func TestConvertMessage_WebSearchToolResult(t *testing.T) {
 
 	if messages[0].Content == "" {
 		t.Error("expected non-empty content from web search results")
+	}
+}
+
+func TestConvertMessage_WebSearchToolResultEmptyStillCreatesToolMessage(t *testing.T) {
+	msg := MessageParam{
+		Role: "user",
+		Content: []any{
+			map[string]any{
+				"type":        "web_search_tool_result",
+				"tool_use_id": "srvtoolu_empty",
+				"content":     []any{},
+			},
+		},
+	}
+
+	messages, err := convertMessage(msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(messages))
+	}
+	if messages[0].Role != "tool" {
+		t.Fatalf("expected role tool, got %q", messages[0].Role)
+	}
+	if messages[0].ToolCallID != "srvtoolu_empty" {
+		t.Fatalf("expected tool_call_id srvtoolu_empty, got %q", messages[0].ToolCallID)
+	}
+	if messages[0].Content != "" {
+		t.Fatalf("expected empty content for empty web search results, got %q", messages[0].Content)
+	}
+}
+
+func TestConvertMessage_WebSearchToolResultErrorStillCreatesToolMessage(t *testing.T) {
+	msg := MessageParam{
+		Role: "user",
+		Content: []any{
+			map[string]any{
+				"type":        "web_search_tool_result",
+				"tool_use_id": "srvtoolu_error",
+				"content": map[string]any{
+					"type":       "web_search_tool_result_error",
+					"error_code": "max_uses_exceeded",
+				},
+			},
+		},
+	}
+
+	messages, err := convertMessage(msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(messages))
+	}
+	if messages[0].Role != "tool" {
+		t.Fatalf("expected role tool, got %q", messages[0].Role)
+	}
+	if messages[0].ToolCallID != "srvtoolu_error" {
+		t.Fatalf("expected tool_call_id srvtoolu_error, got %q", messages[0].ToolCallID)
+	}
+	if !strings.Contains(messages[0].Content, "max_uses_exceeded") {
+		t.Fatalf("expected error code in converted tool content, got %q", messages[0].Content)
 	}
 }
 

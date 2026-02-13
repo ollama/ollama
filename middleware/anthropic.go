@@ -120,6 +120,7 @@ type webSearchLoopResult struct {
 type webSearchLoopError struct {
 	code  string
 	query string
+	usage anthropic.Usage
 	err   error
 }
 
@@ -192,7 +193,7 @@ func (w *WebSearchAnthropicWriter) Write(data []byte) (int, error) {
 	}
 	response, loopErr := w.runWebSearchLoop(loopCtx, chatResponse, webSearchCall, initialUsage)
 	if loopErr != nil {
-		return len(data), w.sendError(loopErr.code, loopErr.query)
+		return len(data), w.sendError(loopErr.code, loopErr.query, loopErr.usage)
 	}
 
 	if err := w.writeTerminalResponse(response); err != nil {
@@ -206,7 +207,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 	followUpMessages := make([]api.Message, 0, len(w.chatReq.Messages)+maxWebSearchLoops*2)
 	followUpMessages = append(followUpMessages, w.chatReq.Messages...)
 
-	followUpTools := stripWebSearchTools(w.chatReq.Tools)
+	followUpTools := append(api.Tools(nil), w.chatReq.Tools...)
 	usage := initialUsage
 
 	currentResponse := initialResponse
@@ -218,6 +219,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 		return anthropic.MessagesResponse{}, &webSearchLoopError{
 			code:  "web_search_not_supported_for_local_models",
 			query: extractQueryFromToolCall(&initialToolCall),
+			usage: usage,
 		}
 	}
 
@@ -227,6 +229,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 			return anthropic.MessagesResponse{}, &webSearchLoopError{
 				code:  "invalid_request",
 				query: "",
+				usage: usage,
 			}
 		}
 
@@ -236,6 +239,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 			return anthropic.MessagesResponse{}, &webSearchLoopError{
 				code:  "unavailable",
 				query: query,
+				usage: usage,
 				err:   err,
 			}
 		}
@@ -269,6 +273,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 			return anthropic.MessagesResponse{}, &webSearchLoopError{
 				code:  "api_error",
 				query: query,
+				usage: usage,
 				err:   err,
 			}
 		}
@@ -348,14 +353,16 @@ func (w *WebSearchAnthropicWriter) startLoopWorker(initialResponse api.ChatRespo
 
 func (w *WebSearchAnthropicWriter) writeLoopResult() error {
 	if w.loopResultCh == nil {
-		return w.sendError("api_error", "")
+		return w.sendError("api_error", "", w.currentObservedUsage())
 	}
 
 	result := <-w.loopResultCh
 	w.loopResultCh = nil
 	w.loopInFlight = false
 	if result.loopErr != nil {
-		return w.sendError(result.loopErr.code, result.loopErr.query)
+		usage := result.loopErr.usage
+		w.applyObservedUsageDeltaToUsage(&usage)
+		return w.sendError(result.loopErr.code, result.loopErr.query, usage)
 	}
 
 	w.applyObservedUsageDelta(&result.response)
@@ -363,12 +370,7 @@ func (w *WebSearchAnthropicWriter) writeLoopResult() error {
 }
 
 func (w *WebSearchAnthropicWriter) applyObservedUsageDelta(response *anthropic.MessagesResponse) {
-	if deltaIn := w.observedPromptEvalCount - w.loopBaseInputTok; deltaIn > 0 {
-		response.Usage.InputTokens += deltaIn
-	}
-	if deltaOut := w.observedEvalCount - w.loopBaseOutputTok; deltaOut > 0 {
-		response.Usage.OutputTokens += deltaOut
-	}
+	w.applyObservedUsageDeltaToUsage(&response.Usage)
 }
 
 func (w *WebSearchAnthropicWriter) recordObservedUsage(metrics api.Metrics) {
@@ -377,6 +379,22 @@ func (w *WebSearchAnthropicWriter) recordObservedUsage(metrics api.Metrics) {
 	}
 	if metrics.EvalCount > w.observedEvalCount {
 		w.observedEvalCount = metrics.EvalCount
+	}
+}
+
+func (w *WebSearchAnthropicWriter) applyObservedUsageDeltaToUsage(usage *anthropic.Usage) {
+	if deltaIn := w.observedPromptEvalCount - w.loopBaseInputTok; deltaIn > 0 {
+		usage.InputTokens += deltaIn
+	}
+	if deltaOut := w.observedEvalCount - w.loopBaseOutputTok; deltaOut > 0 {
+		usage.OutputTokens += deltaOut
+	}
+}
+
+func (w *WebSearchAnthropicWriter) currentObservedUsage() anthropic.Usage {
+	return anthropic.Usage{
+		InputTokens:  w.observedPromptEvalCount,
+		OutputTokens: w.observedEvalCount,
 	}
 }
 
@@ -430,16 +448,6 @@ func formatWebSearchResultsForToolMessage(results []anthropic.OllamaWebSearchRes
 		resultText.WriteString("\n")
 	}
 	return resultText.String()
-}
-
-func stripWebSearchTools(tools api.Tools) api.Tools {
-	var followUpTools api.Tools
-	for _, t := range tools {
-		if t.Function.Name != "web_search" {
-			followUpTools = append(followUpTools, t)
-		}
-	}
-	return followUpTools
 }
 
 func findWebSearchToolCall(toolCalls []api.ToolCall) (api.ToolCall, bool, bool) {
@@ -673,6 +681,7 @@ func (w *WebSearchAnthropicWriter) writeTerminalResponse(response anthropic.Mess
 			StopReason: response.StopReason,
 		},
 		Usage: anthropic.DeltaUsage{
+			InputTokens:  response.Usage.InputTokens,
 			OutputTokens: response.Usage.OutputTokens,
 		},
 	}); err != nil {
@@ -724,8 +733,8 @@ func (w *WebSearchAnthropicWriter) webSearchErrorResponse(errorCode, query strin
 }
 
 // sendError sends a web search error response.
-func (w *WebSearchAnthropicWriter) sendError(errorCode, query string) error {
-	return w.writeTerminalResponse(w.webSearchErrorResponse(errorCode, query, anthropic.Usage{}))
+func (w *WebSearchAnthropicWriter) sendError(errorCode, query string, usage anthropic.Usage) error {
+	return w.writeTerminalResponse(w.webSearchErrorResponse(errorCode, query, usage))
 }
 
 // AnthropicMessagesMiddleware handles Anthropic Messages API requests

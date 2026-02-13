@@ -325,7 +325,22 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 	}
 
 	var tools api.Tools
+	hasBuiltinWebSearch := false
 	for _, t := range r.Tools {
+		if strings.HasPrefix(t.Type, "web_search") {
+			hasBuiltinWebSearch = true
+			break
+		}
+	}
+
+	for _, t := range r.Tools {
+		// Anthropic built-in web_search maps to Ollama function name "web_search".
+		// If a user-defined tool also uses that name in the same request, drop the
+		// user-defined one to avoid ambiguous tool-call routing.
+		if hasBuiltinWebSearch && !strings.HasPrefix(t.Type, "web_search") && t.Name == "web_search" {
+			continue
+		}
+
 		tool, _, err := convertTool(t)
 		if err != nil {
 			return nil, err
@@ -465,27 +480,11 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 
 			case "web_search_tool_result":
 				toolUseID, _ := blockMap["tool_use_id"].(string)
-				var resultContent string
-
-				if content, ok := blockMap["content"].([]any); ok {
-					for _, item := range content {
-						if itemMap, ok := item.(map[string]any); ok {
-							if itemMap["type"] == "web_search_result" {
-								title, _ := itemMap["title"].(string)
-								url, _ := itemMap["url"].(string)
-								resultContent += fmt.Sprintf("- %s: %s\n", title, url)
-							}
-						}
-					}
-				}
-
-				if resultContent != "" {
-					toolResults = append(toolResults, api.Message{
-						Role:       "tool",
-						Content:    resultContent,
-						ToolCallID: toolUseID,
-					})
-				}
+				toolResults = append(toolResults, api.Message{
+					Role:       "tool",
+					Content:    formatWebSearchToolResultContent(blockMap["content"]),
+					ToolCallID: toolUseID,
+				})
 			}
 		}
 
@@ -508,6 +507,67 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 	}
 
 	return messages, nil
+}
+
+func formatWebSearchToolResultContent(content any) string {
+	switch c := content.(type) {
+	case string:
+		return c
+	case []WebSearchResult:
+		var resultContent strings.Builder
+		for _, item := range c {
+			if item.Type != "web_search_result" {
+				continue
+			}
+			fmt.Fprintf(&resultContent, "- %s: %s\n", item.Title, item.URL)
+		}
+		return resultContent.String()
+	case []any:
+		var resultContent strings.Builder
+		for _, item := range c {
+			itemMap, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			switch itemMap["type"] {
+			case "web_search_result":
+				title, _ := itemMap["title"].(string)
+				url, _ := itemMap["url"].(string)
+				fmt.Fprintf(&resultContent, "- %s: %s\n", title, url)
+			case "web_search_tool_result_error":
+				errorCode, _ := itemMap["error_code"].(string)
+				if errorCode == "" {
+					return "web_search_tool_result_error"
+				}
+				return "web_search_tool_result_error: " + errorCode
+			}
+		}
+		return resultContent.String()
+	case map[string]any:
+		if c["type"] == "web_search_tool_result_error" {
+			errorCode, _ := c["error_code"].(string)
+			if errorCode == "" {
+				return "web_search_tool_result_error"
+			}
+			return "web_search_tool_result_error: " + errorCode
+		}
+		data, err := json.Marshal(c)
+		if err != nil {
+			return ""
+		}
+		return string(data)
+	case WebSearchToolResultError:
+		if c.ErrorCode == "" {
+			return "web_search_tool_result_error"
+		}
+		return "web_search_tool_result_error: " + c.ErrorCode
+	default:
+		data, err := json.Marshal(c)
+		if err != nil {
+			return ""
+		}
+		return string(data)
+	}
 }
 
 // convertTool converts an Anthropic Tool to an Ollama api.Tool, returning true if it's a server tool
@@ -1017,7 +1077,7 @@ var WebSearchEndpoint = "https://ollama.com/api/web_search"
 
 func WebSearch(ctx context.Context, query string, maxResults int) (*OllamaWebSearchResponse, error) {
 	if internalcloud.Disabled() {
-		return nil, errors.New(internalcloud.DisabledError("ollama cloud is disabled - web search is unavailable"))
+		return nil, errors.New(internalcloud.DisabledError("web search is unavailable"))
 	}
 
 	if maxResults <= 0 {
