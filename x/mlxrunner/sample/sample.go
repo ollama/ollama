@@ -52,7 +52,7 @@ func (c chain) Sample(logits *mlx.Array) *mlx.Array {
 type Temperature float32
 
 func (t Temperature) Sample(logits *mlx.Array) *mlx.Array {
-	return logits.Multiply(mlx.FromValue(1 / float32(t))).Categorical(-1)
+	return mlx.DivScalar(logits, float32(t)).Categorical(-1)
 }
 
 type TopP float32

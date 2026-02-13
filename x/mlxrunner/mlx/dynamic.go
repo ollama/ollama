@@ -24,6 +24,39 @@ func CheckInit() error {
 	return initError
 }
 
+// tryLoadFromDir searches a directory for libmlxc.* and tries to load it.
+// Returns true if the library was successfully loaded.
+func tryLoadFromDir(dir string) bool {
+	matches, err := fs.Glob(os.DirFS(dir), "libmlxc.*")
+	if err != nil || len(matches) == 0 {
+		return false
+	}
+
+	for _, match := range matches {
+		path := filepath.Join(dir, match)
+		slog.Info("Loading MLX dynamic library", "path", path)
+
+		cPath := C.CString(path)
+		defer C.free(unsafe.Pointer(cPath))
+
+		var handle C.mlx_dynamic_handle
+		if C.mlx_dynamic_load(&handle, cPath) != 0 {
+			slog.Error("Failed to load MLX dynamic library", "path", path)
+			continue
+		}
+
+		if C.mlx_dynamic_load_symbols(handle) != 0 {
+			slog.Error("Failed to load MLX dynamic library symbols", "path", path)
+			C.mlx_dynamic_unload(&handle)
+			continue
+		}
+
+		slog.Info("Loaded MLX dynamic library", "path", path)
+		return true
+	}
+	return false
+}
+
 func init() {
 	switch runtime.GOOS {
 	case "darwin":
@@ -33,44 +66,34 @@ func init() {
 		return
 	}
 
-	paths, ok := os.LookupEnv("OLLAMA_LIBRARY_PATH")
-	if !ok {
-		slog.Debug("OLLAMA_LIBRARY_PATH not set, skipping mlx dynamic loading")
-		return
+	// Try OLLAMA_LIBRARY_PATH first
+	if paths, ok := os.LookupEnv("OLLAMA_LIBRARY_PATH"); ok {
+		for _, dir := range filepath.SplitList(paths) {
+			if tryLoadFromDir(dir) {
+				return
+			}
+		}
 	}
 
-	for _, path := range filepath.SplitList(paths) {
-		matches, err := fs.Glob(os.DirFS(path), "libmlxc.*")
-		if err != nil {
-			initError = fmt.Errorf("failed to glob for MLX libraries in %s: %w", path, err)
-			slog.Warn("MLX dynamic library not available", "error", initError)
-			return
+	// Build search paths: executable directory, then build directories
+	var searchDirs []string
+	if exe, err := os.Executable(); err == nil {
+		if eval, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = eval
 		}
+		searchDirs = append(searchDirs, filepath.Dir(exe))
+	}
 
-		for _, match := range matches {
-			path := filepath.Join(paths, match)
-			slog.Info("Loading MLX dynamic library", "path", path)
+	if cwd, err := os.Getwd(); err == nil {
+		searchDirs = append(searchDirs, filepath.Join(cwd, "build", "lib", "ollama"))
+	}
 
-			cPath := C.CString(path)
-			defer C.free(unsafe.Pointer(cPath))
-
-			var handle C.mlx_dynamic_handle
-			if C.mlx_dynamic_load(&handle, cPath) != 0 {
-				slog.Error("Failed to load MLX dynamic library", "path", path)
-				continue
-			}
-
-			if C.mlx_dynamic_load_symbols(handle) != 0 {
-				slog.Error("Failed to load MLX dynamic library symbols", "path", path)
-				C.mlx_dynamic_unload(&handle)
-				continue
-			}
-
-			slog.Info("Loaded MLX dynamic library", "path", path)
+	for _, dir := range searchDirs {
+		if tryLoadFromDir(dir) {
 			return
 		}
 	}
 
-	initError = fmt.Errorf("failed to load any MLX dynamic library from OLLAMA_LIBRARY_PATH=%s", paths)
+	initError = fmt.Errorf("failed to load MLX dynamic library (searched: %v)", searchDirs)
 	slog.Warn("MLX dynamic library not available", "error", initError)
 }

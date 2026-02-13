@@ -144,12 +144,15 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 		return nil, nil, nil, fmt.Errorf("%s %w", name, err)
 	}
 
+	useImagegen, _ := requestOpts["use_imagegen_runner"].(bool)
+	delete(requestOpts, "use_imagegen_runner")
+
 	opts, err := s.modelOptions(model, requestOpts)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
-	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive)
+	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive, useImagegen)
 	var runner *runnerRef
 	select {
 	case runner = <-runnerCh:
