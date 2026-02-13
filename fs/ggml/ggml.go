@@ -182,6 +182,11 @@ func (kv KV) Bool(key string, defaultValue ...bool) bool {
 	return val
 }
 
+func (kv KV) Uint8(key string, defaultValue ...uint8) uint8 {
+	val, _ := keyValue(kv, key, append(defaultValue, 0)...)
+	return val
+}
+
 func (kv KV) UintOrMaxArrayValue(key string, defaultValue uint32) uint32 {
 	_, max := kv.UintOrArrayValue(key, defaultValue)
 	return max
@@ -238,6 +243,11 @@ func (kv KV) Floats(key string, defaultValue ...[]float32) []float32 {
 
 func (kv KV) Bools(key string, defaultValue ...[]bool) []bool {
 	val, _ := keyValue(kv, key, &array[bool]{values: append(defaultValue, []bool(nil))[0]})
+	return val.values
+}
+
+func (kv KV) Uint8s(key string, defaultValue ...[]uint8) []uint8 {
+	val, _ := keyValue(kv, key, &array[uint8]{values: append(defaultValue, []uint8(nil))[0]})
 	return val.values
 }
 

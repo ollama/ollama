@@ -17,12 +17,13 @@ type Model struct {
 	model.Base
 	tokenizer.Tokenizer
 
-	TokenEmbedding     *nn.Embedding `gguf:"token_embd"`
-	TypeEmbedding      *nn.Embedding `gguf:"token_types"`
-	PositionEmbedding  *nn.Embedding `gguf:"position_embd"`
-	TokenEmbeddingNorm *nn.LayerNorm `gguf:"token_embd_norm"`
-
-	Layers []EncoderLayer `gguf:"blk"`
+	TokenEmbedding     *nn.Embedding  `gguf:"token_embd"`
+	TypeEmbedding      *nn.Embedding  `gguf:"token_types"`
+	PositionEmbedding  *nn.Embedding  `gguf:"position_embd"`
+	TokenEmbeddingNorm *nn.LayerNorm  `gguf:"token_embd_norm"`
+	Cls                *nn.Linear     `gguf:"cls"`
+	ClsOut             *nn.Linear     `gguf:"cls.output"`
+	Layers             []EncoderLayer `gguf:"blk"`
 
 	Options
 }
@@ -38,8 +39,8 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 		hiddenStates = layer.Forward(ctx, hiddenStates, &m.Options)
 	}
 
-	hiddenStates = m.poolingType.Forward(ctx, hiddenStates)
-	if m.normalize {
+	hiddenStates = m.poolingType.Forward(ctx, hiddenStates, m.Cls, m.ClsOut)
+	if m.normalize && m.poolingType != pooling.TypeRank {
 		hiddenStates = hiddenStates.L2Norm(ctx, 1e-12)
 	}
 
@@ -152,12 +153,19 @@ func New(c fs.Config) (model.Model, error) {
 				c.Uint("tokenizer.ggml.eos_token_id"),
 			)),
 		},
+		RemoveExtraWhitespaces: c.Bool("tokenizer.ggml.remove_extra_whitespaces", false),
+		AddSpacePrefix:         c.Bool("tokenizer.ggml.add_space_prefix", false),
 	}
-
 	var t tokenizer.Tokenizer
+	var err error
 	switch c.String("tokenizer.ggml.model", "bert") {
 	case "bert":
 		t = tokenizer.NewWordPiece(vocab, true)
+	case "t5":
+		t, err = tokenizer.NewUnigram(vocab, c.Uint8s("tokenizer.ggml.precompiled_charsmap"))
+		if err != nil {
+			return nil, err
+		}
 	default:
 		return nil, model.ErrUnsupportedTokenizer
 	}
