@@ -782,6 +782,7 @@ func TestWebSearchNoWebSearchTool(t *testing.T) {
 // passes through normally (non-streaming case).
 func TestWebSearchToolPresent_ModelDoesNotCallIt_NonStreaming(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	enableCloudForTest(t)
 
 	router := gin.New()
 	router.Use(AnthropicMessagesMiddleware())
@@ -840,6 +841,7 @@ func TestWebSearchToolPresent_ModelDoesNotCallIt_NonStreaming(t *testing.T) {
 // pass-through case when the model does not invoke web_search.
 func TestWebSearchToolPresent_ModelDoesNotCallIt_Streaming(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	enableCloudForTest(t)
 
 	router := gin.New()
 	router.Use(AnthropicMessagesMiddleware())
@@ -941,6 +943,7 @@ func TestWebSearchToolPresent_ModelDoesNotCallIt_Streaming(t *testing.T) {
 // in non-streaming mode. It mocks the followup /api/chat call using a local HTTP server.
 func TestWebSearchToolPresent_ModelCallsIt_NonStreaming(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	enableCloudForTest(t)
 
 	// Create a mock Ollama server that responds to the followup /api/chat call
 	followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1066,6 +1069,7 @@ func TestWebSearchToolPresent_ModelCallsIt_NonStreaming(t *testing.T) {
 // when the model calls web_search with mocked search and followup endpoints.
 func TestWebSearchToolPresent_ModelCallsIt_Streaming(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	enableCloudForTest(t)
 
 	// Mock followup /api/chat server
 	followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1606,6 +1610,7 @@ func eventNames(events []sseEvent) []string {
 // TestWebSearchCloudModelGating tests web_search behavior across model types.
 func TestWebSearchCloudModelGating(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	enableCloudForTest(t)
 
 	t.Run("local model allowed when web_search is not called", func(t *testing.T) {
 		handlerCalled := false
@@ -1858,6 +1863,7 @@ func TestWebSearchCloudModelGating(t *testing.T) {
 
 func TestWebSearchDoesNotRequireAuthorizationHeaderForMockEndpoint(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	enableCloudForTest(t)
 
 	var authHeader string
 	searchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1936,6 +1942,7 @@ func TestWebSearchDoesNotRequireAuthorizationHeaderForMockEndpoint(t *testing.T)
 // TestWebSearchSearchAPIError tests that a failing search API returns a proper error response.
 func TestWebSearchSearchAPIError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	enableCloudForTest(t)
 
 	// Mock search server that returns 500
 	searchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2010,6 +2017,7 @@ func TestWebSearchSearchAPIError(t *testing.T) {
 
 func TestWebSearchStreamingImmediateTakeover(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	enableCloudForTest(t)
 
 	followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := api.ChatResponse{
@@ -2121,6 +2129,7 @@ func TestWebSearchStreamingImmediateTakeover(t *testing.T) {
 
 func TestWebSearchStreamingUsageUsesObservedChunkMetrics(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	enableCloudForTest(t)
 
 	followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := api.ChatResponse{
@@ -2233,6 +2242,7 @@ func TestWebSearchStreamingUsageUsesObservedChunkMetrics(t *testing.T) {
 
 func TestWebSearchMixedToolCallsPreferWebSearch(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	enableCloudForTest(t)
 
 	followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := api.ChatResponse{
@@ -2336,6 +2346,7 @@ func TestWebSearchMixedToolCallsPreferWebSearch(t *testing.T) {
 
 func TestWebSearchFollowupClientToolStopReasonToolUse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	enableCloudForTest(t)
 
 	followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := api.ChatResponse{
@@ -2444,6 +2455,7 @@ func TestWebSearchFollowupClientToolStopReasonToolUse(t *testing.T) {
 
 func TestWebSearchMultiIterationLoop(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	enableCloudForTest(t)
 
 	followupCall := 0
 	followupDecodeErr := false
@@ -2594,6 +2606,7 @@ func TestWebSearchMultiIterationLoop(t *testing.T) {
 
 func TestWebSearchLoopMaxLimit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	enableCloudForTest(t)
 
 	followupCall := 0
 	followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2703,6 +2716,7 @@ func TestWebSearchLoopMaxLimit(t *testing.T) {
 
 func TestWebSearchStreamingFinalStopReasonToolUse(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	enableCloudForTest(t)
 
 	followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := api.ChatResponse{
@@ -2840,6 +2854,7 @@ func TestWebSearchStreamingFinalStopReasonToolUse(t *testing.T) {
 
 func TestWebSearchFollowupNon200ReturnsApiError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	enableCloudForTest(t)
 
 	followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
