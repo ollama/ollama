@@ -572,6 +572,12 @@ ggml_tensor * clip_graph::build_ffn(
                 cur = ggml_gelu_quick(ctx0, cur);
                 cb(cur, "ffn_gelu_quick", il);
             } break;
+        case FFN_RELU_SQR:
+            {
+                cur = ggml_relu(ctx0, cur);
+                cur = ggml_sqr(ctx0, cur);
+                cb(cur, "ffn_relu_sqr", il);
+            } break;
     }
 
     if (down) {
@@ -822,6 +828,10 @@ static ggml_cgraph * clip_image_build_graph(clip_ctx * ctx, const clip_image_f32
         case PROJECTOR_TYPE_INTERNVL:
             {
                 builder = std::make_unique<clip_graph_internvl>(ctx, img);
+            } break;
+        case PROJECTOR_TYPE_NEMOTRON_V2_VL:
+            {
+                builder = std::make_unique<clip_graph_nemotron_v2_vl>(ctx, img);
             } break;
         case PROJECTOR_TYPE_LLAMA4:
             {
@@ -1127,6 +1137,7 @@ struct clip_model_loader {
                         }
                     } break;
                 case PROJECTOR_TYPE_INTERNVL:
+                case PROJECTOR_TYPE_NEMOTRON_V2_VL:
                     {
                         get_u32(KEY_PROJ_SCALE_FACTOR, hparams.n_merge, false);
                     } break;
@@ -1783,6 +1794,12 @@ struct clip_model_loader {
                     model.mm_1_b = get_tensor(string_format(TN_MVLM_PROJ_MLP, 1, "bias"));
                     model.mm_3_w = get_tensor(string_format(TN_MVLM_PROJ_MLP, 3, "weight"));
                     model.mm_3_b = get_tensor(string_format(TN_MVLM_PROJ_MLP, 3, "bias"));
+                } break;
+            case PROJECTOR_TYPE_NEMOTRON_V2_VL:
+                {
+                    model.mm_0_w = get_tensor(string_format(TN_MVLM_PROJ_MLP, 0, "weight"));
+                    model.mm_1_w = get_tensor(string_format(TN_MVLM_PROJ_MLP, 1, "weight"));
+                    model.mm_3_w = get_tensor(string_format(TN_MVLM_PROJ_MLP, 3, "weight"));
                 } break;
             case PROJECTOR_TYPE_GLMA:
                 {
@@ -3131,6 +3148,7 @@ bool clip_image_preprocess(struct clip_ctx * ctx, const clip_image_u8 * img, str
         case PROJECTOR_TYPE_GLM_EDGE:
         case PROJECTOR_TYPE_GEMMA3:
         case PROJECTOR_TYPE_INTERNVL: // TODO @ngxson : support dynamic resolution
+        case PROJECTOR_TYPE_NEMOTRON_V2_VL:
             {
                 clip_image_u8 resized_image;
                 int sz = params.image_size;
@@ -3440,6 +3458,7 @@ int clip_n_output_tokens(const struct clip_ctx * ctx, struct clip_image_f32 * im
         case PROJECTOR_TYPE_GEMMA3:
         case PROJECTOR_TYPE_IDEFICS3:
         case PROJECTOR_TYPE_INTERNVL:
+        case PROJECTOR_TYPE_NEMOTRON_V2_VL:
         case PROJECTOR_TYPE_LLAMA4:
             {
                 // both X and Y are downscaled by the scale factor
@@ -3848,6 +3867,7 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
         case PROJECTOR_TYPE_GEMMA3NV:
         case PROJECTOR_TYPE_IDEFICS3:
         case PROJECTOR_TYPE_INTERNVL:
+        case PROJECTOR_TYPE_NEMOTRON_V2_VL:
         case PROJECTOR_TYPE_QWEN2A:
         case PROJECTOR_TYPE_GLMA:
         case PROJECTOR_TYPE_ULTRAVOX:
@@ -4011,6 +4031,7 @@ int clip_n_mmproj_embd(const struct clip_ctx * ctx) {
         case PROJECTOR_TYPE_MUSIC_FLAMINGO:
             return ctx->model.mm_2_w->ne[1];
         case PROJECTOR_TYPE_INTERNVL:
+        case PROJECTOR_TYPE_NEMOTRON_V2_VL:
             return ctx->model.mm_3_w->ne[1];
         case PROJECTOR_TYPE_LLAMA4:
             return ctx->model.mm_model_proj->ne[1];

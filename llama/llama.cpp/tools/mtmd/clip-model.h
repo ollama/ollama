@@ -15,6 +15,7 @@ enum ffn_op_type {
     FFN_GELU_ERF,
     FFN_SILU,
     FFN_GELU_QUICK,
+    FFN_RELU_SQR,
 };
 
 enum norm_type {
