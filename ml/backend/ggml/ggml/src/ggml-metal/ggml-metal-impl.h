@@ -82,6 +82,7 @@
 #define FC_COUNT_EQUAL                 1100
 #define FC_UNARY                       1200
 #define FC_BIN                         1300
+#define FC_SUM_ROWS                    1400
 
 // op-specific constants
 #define OP_FLASH_ATTN_EXT_NQPSG 8
@@ -118,6 +119,8 @@
 #define OP_UNARY_NUM_SOFTPLUS    115
 #define OP_UNARY_NUM_EXPM1       116
 
+#define OP_SUM_ROWS_NUM_SUM_ROWS 10
+#define OP_SUM_ROWS_NUM_MEAN     11
 
 // kernel argument structs
 //

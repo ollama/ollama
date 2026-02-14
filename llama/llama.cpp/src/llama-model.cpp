@@ -8008,7 +8008,6 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                             cparams.n_seq_max,
                             nullptr);
                 } else if (llm_arch_is_hybrid(arch)) {
-
                     // The main difference between hybrid architectures is the
                     // layer filters, so pick the right one here
                     llama_memory_hybrid::layer_filter_cb filter_attn = nullptr;
@@ -8033,7 +8032,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                             /* attn_type_v       */ params.type_v,
                             /* attn_v_trans      */ !cparams.flash_attn,
                             /* attn_swa_full     */ params.swa_full,
-                            /* attn_kv_size      */ cparams.n_ctx,
+                            /* attn_kv_size      */ cparams.n_ctx_seq,
                             /* attn_n_ubatch     */ cparams.n_ubatch,
                             /* attn_n_pad        */ 1,
                             /* recurrent_type_r  */ GGML_TYPE_F32,
@@ -8050,7 +8049,7 @@ llama_memory_i * llama_model::create_memory(const llama_memory_params & params, 
                             /* attn_type_k       */ params.type_k,
                             /* attn_type_v       */ params.type_v,
                             /* attn_v_trans      */ !cparams.flash_attn,
-                            /* attn_kv_size      */ cparams.n_ctx,
+                            /* attn_kv_size      */ cparams.n_ctx_seq,
                             /* attn_n_pad        */ 1,
                             /* attn_n_swa        */ hparams.n_swa,
                             /* attn_swa_type     */ hparams.swa_type,

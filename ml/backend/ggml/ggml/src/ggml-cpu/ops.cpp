@@ -2096,9 +2096,13 @@ static void ggml_compute_forward_gelu_f32(
 
     const ggml_tensor * src0 = dst->src[0];
 
-    assert(ggml_is_contiguous_1(src0));
-    assert(ggml_is_contiguous_1(dst));
+    assert(ggml_is_contiguous_rows(src0));
     assert(ggml_are_same_shape(src0, dst));
+
+    GGML_TENSOR_LOCALS(int64_t, ne0, src0, ne)
+    GGML_TENSOR_LOCALS(size_t,  nb0, src0, nb)
+    GGML_TENSOR_LOCALS(int64_t, ne,  dst,  ne)
+    GGML_TENSOR_LOCALS(size_t,  nb,  dst,  nb)
 
     const int ith = params->ith;
     const int nth = params->nth;
@@ -2113,10 +2117,14 @@ static void ggml_compute_forward_gelu_f32(
     const int ir0 = dr*ith;
     const int ir1 = MIN(ir0 + dr, nr);
 
-    for (int i1 = ir0; i1 < ir1; i1++) {
+    for (int ir = ir0; ir < ir1; ++ir) {
+        const int i3 = ir/(ne02*ne01);
+        const int i2 = (ir - i3*ne02*ne01)/ne01;
+        const int i1 = (ir - i3*ne02*ne01 - i2*ne01);
+
         ggml_vec_gelu_f32(nc,
-                (float *) ((char *) dst->data  + i1*( dst->nb[1])),
-                (float *) ((char *) src0->data + i1*(src0->nb[1])));
+                (float *) ((char *) dst->data  + i3*nb3  + i2*nb2  + i1*nb1),
+                (float *) ((char *) src0->data + i3*nb03 + i2*nb02 + i1*nb01));
 
 #ifndef NDEBUG
         for (int k = 0; k < nc; k++) {
@@ -2135,9 +2143,13 @@ static void ggml_compute_forward_gelu_f16(
 
     const ggml_tensor * src0 = dst->src[0];
 
-    assert(ggml_is_contiguous_1(src0));
-    assert(ggml_is_contiguous_1(dst));
+    assert(ggml_is_contiguous_rows(src0));
     assert(ggml_are_same_shape(src0, dst));
+
+    GGML_TENSOR_LOCALS(int64_t, ne0, src0, ne)
+    GGML_TENSOR_LOCALS(size_t,  nb0, src0, nb)
+    GGML_TENSOR_LOCALS(int64_t, ne,  dst,  ne)
+    GGML_TENSOR_LOCALS(size_t,  nb,  dst,  nb)
 
     const int ith = params->ith;
     const int nth = params->nth;
@@ -2152,10 +2164,14 @@ static void ggml_compute_forward_gelu_f16(
     const int ir0 = dr*ith;
     const int ir1 = MIN(ir0 + dr, nr);
 
-    for (int i1 = ir0; i1 < ir1; i1++) {
+    for (int ir = ir0; ir < ir1; ++ir) {
+        const int i3 = ir/(ne02*ne01);
+        const int i2 = (ir - i3*ne02*ne01)/ne01;
+        const int i1 = (ir - i3*ne02*ne01 - i2*ne01);
+
         ggml_vec_gelu_f16(nc,
-                (ggml_fp16_t *) ((char *) dst->data  + i1*( dst->nb[1])),
-                (ggml_fp16_t *) ((char *) src0->data + i1*(src0->nb[1])));
+                (ggml_fp16_t *) ((char *) dst->data  + i3*nb3  + i2*nb2  + i1*nb1),
+                (ggml_fp16_t *) ((char *) src0->data + i3*nb03 + i2*nb02 + i1*nb01));
 
 #ifndef NDEBUG
         for (int k = 0; k < nc; k++) {
@@ -2276,9 +2292,13 @@ static void ggml_compute_forward_gelu_erf_f32(
 
     const ggml_tensor * src0 = dst->src[0];
 
-    assert(ggml_is_contiguous_1(src0));
-    assert(ggml_is_contiguous_1(dst));
+    assert(ggml_is_contiguous_rows(src0));
     assert(ggml_are_same_shape(src0, dst));
+
+    GGML_TENSOR_LOCALS(int64_t, ne0, src0, ne)
+    GGML_TENSOR_LOCALS(size_t,  nb0, src0, nb)
+    GGML_TENSOR_LOCALS(int64_t, ne,  dst,  ne)
+    GGML_TENSOR_LOCALS(size_t,  nb,  dst,  nb)
 
     const int ith = params->ith;
     const int nth = params->nth;
@@ -2293,10 +2313,14 @@ static void ggml_compute_forward_gelu_erf_f32(
     const int ir0 = dr*ith;
     const int ir1 = MIN(ir0 + dr, nr);
 
-    for (int i1 = ir0; i1 < ir1; i1++) {
+    for (int ir = ir0; ir < ir1; ++ir) {
+        const int i3 = ir/(ne02*ne01);
+        const int i2 = (ir - i3*ne02*ne01)/ne01;
+        const int i1 = (ir - i3*ne02*ne01 - i2*ne01);
+
         ggml_vec_gelu_erf_f32(nc,
-                (float *) ((char *) dst->data  + i1*( dst->nb[1])),
-                (float *) ((char *) src0->data + i1*(src0->nb[1])));
+                (float *) ((char *) dst->data  + i3*nb3  + i2*nb2  + i1*nb1),
+                (float *) ((char *) src0->data + i3*nb03 + i2*nb02 + i1*nb01));
 
 #ifndef NDEBUG
         for (int k = 0; k < nc; k++) {
@@ -2315,9 +2339,13 @@ static void ggml_compute_forward_gelu_erf_f16(
 
     const ggml_tensor * src0 = dst->src[0];
 
-    assert(ggml_is_contiguous_1(src0));
-    assert(ggml_is_contiguous_1(dst));
+    assert(ggml_is_contiguous_rows(src0));
     assert(ggml_are_same_shape(src0, dst));
+
+    GGML_TENSOR_LOCALS(int64_t, ne0, src0, ne)
+    GGML_TENSOR_LOCALS(size_t,  nb0, src0, nb)
+    GGML_TENSOR_LOCALS(int64_t, ne,  dst,  ne)
+    GGML_TENSOR_LOCALS(size_t,  nb,  dst,  nb)
 
     const int ith = params->ith;
     const int nth = params->nth;
@@ -2332,10 +2360,14 @@ static void ggml_compute_forward_gelu_erf_f16(
     const int ir0 = dr*ith;
     const int ir1 = MIN(ir0 + dr, nr);
 
-    for (int i1 = ir0; i1 < ir1; i1++) {
+    for (int ir = ir0; ir < ir1; ++ir) {
+        const int i3 = ir/(ne02*ne01);
+        const int i2 = (ir - i3*ne02*ne01)/ne01;
+        const int i1 = (ir - i3*ne02*ne01 - i2*ne01);
+
         ggml_vec_gelu_erf_f16(nc,
-                (ggml_fp16_t *) ((char *) dst->data  + i1*( dst->nb[1])),
-                (ggml_fp16_t *) ((char *) src0->data + i1*(src0->nb[1])));
+                (ggml_fp16_t *) ((char *) dst->data  + i3*nb3  + i2*nb2  + i1*nb1),
+                (ggml_fp16_t *) ((char *) src0->data + i3*nb03 + i2*nb02 + i1*nb01));
 
 #ifndef NDEBUG
         for (int k = 0; k < nc; k++) {
@@ -2379,9 +2411,13 @@ static void ggml_compute_forward_gelu_quick_f32(
 
     const ggml_tensor * src0 = dst->src[0];
 
-    assert(ggml_is_contiguous_1(src0));
-    assert(ggml_is_contiguous_1(dst));
+    assert(ggml_is_contiguous_rows(src0));
     assert(ggml_are_same_shape(src0, dst));
+
+    GGML_TENSOR_LOCALS(int64_t, ne0, src0, ne)
+    GGML_TENSOR_LOCALS(size_t,  nb0, src0, nb)
+    GGML_TENSOR_LOCALS(int64_t, ne,  dst,  ne)
+    GGML_TENSOR_LOCALS(size_t,  nb,  dst,  nb)
 
     const int ith = params->ith;
     const int nth = params->nth;
@@ -2396,10 +2432,14 @@ static void ggml_compute_forward_gelu_quick_f32(
     const int ir0 = dr*ith;
     const int ir1 = MIN(ir0 + dr, nr);
 
-    for (int i1 = ir0; i1 < ir1; i1++) {
+    for (int ir = ir0; ir < ir1; ++ir) {
+        const int i3 = ir/(ne02*ne01);
+        const int i2 = (ir - i3*ne02*ne01)/ne01;
+        const int i1 = (ir - i3*ne02*ne01 - i2*ne01);
+
         ggml_vec_gelu_quick_f32(nc,
-                (float *) ((char *) dst->data  + i1*( dst->nb[1])),
-                (float *) ((char *) src0->data + i1*(src0->nb[1])));
+                (float *) ((char *) dst->data  + i3*nb3  + i2*nb2  + i1*nb1),
+                (float *) ((char *) src0->data + i3*nb03 + i2*nb02 + i1*nb01));
 
 #ifndef NDEBUG
         for (int k = 0; k < nc; k++) {
@@ -2418,9 +2458,13 @@ static void ggml_compute_forward_gelu_quick_f16(
 
     const ggml_tensor * src0 = dst->src[0];
 
-    assert(ggml_is_contiguous_1(src0));
-    assert(ggml_is_contiguous_1(dst));
+    assert(ggml_is_contiguous_rows(src0));
     assert(ggml_are_same_shape(src0, dst));
+
+    GGML_TENSOR_LOCALS(int64_t, ne0, src0, ne)
+    GGML_TENSOR_LOCALS(size_t,  nb0, src0, nb)
+    GGML_TENSOR_LOCALS(int64_t, ne,  dst,  ne)
+    GGML_TENSOR_LOCALS(size_t,  nb,  dst,  nb)
 
     const int ith = params->ith;
     const int nth = params->nth;
@@ -2435,10 +2479,14 @@ static void ggml_compute_forward_gelu_quick_f16(
     const int ir0 = dr*ith;
     const int ir1 = MIN(ir0 + dr, nr);
 
-    for (int i1 = ir0; i1 < ir1; i1++) {
+    for (int ir = ir0; ir < ir1; ++ir) {
+        const int i3 = ir/(ne02*ne01);
+        const int i2 = (ir - i3*ne02*ne01)/ne01;
+        const int i1 = (ir - i3*ne02*ne01 - i2*ne01);
+
         ggml_vec_gelu_quick_f16(nc,
-                (ggml_fp16_t *) ((char *) dst->data  + i1*( dst->nb[1])),
-                (ggml_fp16_t *) ((char *) src0->data + i1*(src0->nb[1])));
+                (ggml_fp16_t *) ((char *) dst->data  + i3*nb3  + i2*nb2  + i1*nb1),
+                (ggml_fp16_t *) ((char *) src0->data + i3*nb03 + i2*nb02 + i1*nb01));
 
 #ifndef NDEBUG
         for (int k = 0; k < nc; k++) {
@@ -2482,9 +2530,13 @@ static void ggml_compute_forward_silu_f32(
 
     const ggml_tensor * src0 = dst->src[0];
 
-    assert(ggml_is_contiguous_1(src0));
-    assert(ggml_is_contiguous_1(dst));
+    assert(ggml_is_contiguous_rows(src0));
     assert(ggml_are_same_shape(src0, dst));
+
+    GGML_TENSOR_LOCALS(int64_t, ne0, src0, ne)
+    GGML_TENSOR_LOCALS(size_t,  nb0, src0, nb)
+    GGML_TENSOR_LOCALS(int64_t, ne,  dst,  ne)
+    GGML_TENSOR_LOCALS(size_t,  nb,  dst,  nb)
 
     const int ith = params->ith;
     const int nth = params->nth;
@@ -2499,10 +2551,14 @@ static void ggml_compute_forward_silu_f32(
     const int ir0 = dr*ith;
     const int ir1 = MIN(ir0 + dr, nr);
 
-    for (int i1 = ir0; i1 < ir1; i1++) {
+    for (int ir = ir0; ir < ir1; ++ir) {
+        const int i3 = ir/(ne02*ne01);
+        const int i2 = (ir - i3*ne02*ne01)/ne01;
+        const int i1 = (ir - i3*ne02*ne01 - i2*ne01);
+
         ggml_vec_silu_f32(nc,
-                (float *) ((char *) dst->data  + i1*( dst->nb[1])),
-                (float *) ((char *) src0->data + i1*(src0->nb[1])));
+                (float *) ((char *) dst->data  + i3*nb3  + i2*nb2  + i1*nb1),
+                (float *) ((char *) src0->data + i3*nb03 + i2*nb02 + i1*nb01));
 
 #ifndef NDEBUG
         for (int k = 0; k < nc; k++) {
@@ -2521,9 +2577,13 @@ static void ggml_compute_forward_silu_f16(
 
     const ggml_tensor * src0 = dst->src[0];
 
-    assert(ggml_is_contiguous_1(src0));
-    assert(ggml_is_contiguous_1(dst));
+    assert(ggml_is_contiguous_rows(src0));
     assert(ggml_are_same_shape(src0, dst));
+
+    GGML_TENSOR_LOCALS(int64_t, ne0, src0, ne)
+    GGML_TENSOR_LOCALS(size_t,  nb0, src0, nb)
+    GGML_TENSOR_LOCALS(int64_t, ne,  dst,  ne)
+    GGML_TENSOR_LOCALS(size_t,  nb,  dst,  nb)
 
     const int ith = params->ith;
     const int nth = params->nth;
@@ -2538,10 +2598,14 @@ static void ggml_compute_forward_silu_f16(
     const int ir0 = dr*ith;
     const int ir1 = MIN(ir0 + dr, nr);
 
-    for (int i1 = ir0; i1 < ir1; i1++) {
+    for (int ir = ir0; ir < ir1; ++ir) {
+        const int i3 = ir/(ne02*ne01);
+        const int i2 = (ir - i3*ne02*ne01)/ne01;
+        const int i1 = (ir - i3*ne02*ne01 - i2*ne01);
+
         ggml_vec_silu_f16(nc,
-                (ggml_fp16_t *) ((char *) dst->data  + i1*( dst->nb[1])),
-                (ggml_fp16_t *) ((char *) src0->data + i1*(src0->nb[1])));
+                (ggml_fp16_t *) ((char *) dst->data  + i3*nb3  + i2*nb2  + i1*nb1),
+                (ggml_fp16_t *) ((char *) src0->data + i3*nb03 + i2*nb02 + i1*nb01));
 
 #ifndef NDEBUG
         for (int k = 0; k < nc; k++) {

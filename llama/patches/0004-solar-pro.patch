@@ -173,7 +173,7 @@ index 1501e392c..37b69a4b3 100644
  llama_model_loader::llama_model_loader(
          const std::string & fname,
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 5816e9a95..c76658319 100644
+index 6b7da69e9..8832de209 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
 @@ -2120,6 +2120,21 @@ void llama_model::load_hparams(llama_model_loader & ml) {
@@ -233,7 +233,7 @@ index 5816e9a95..c76658319 100644
                          layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
                          layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
                          layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
-@@ -8435,6 +8478,10 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
+@@ -8434,6 +8477,10 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
              {
                  llm = std::make_unique<llm_build_chameleon>(*this, params);
              } break;
@@ -244,7 +244,7 @@ index 5816e9a95..c76658319 100644
          case LLM_ARCH_WAVTOKENIZER_DEC:
              {
                  llm = std::make_unique<llm_build_wavtokenizer_dec>(*this, params);
-@@ -8730,6 +8777,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
+@@ -8729,6 +8776,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
          case LLM_ARCH_GRANITE_MOE:
          case LLM_ARCH_GRANITE_HYBRID:
          case LLM_ARCH_CHAMELEON:

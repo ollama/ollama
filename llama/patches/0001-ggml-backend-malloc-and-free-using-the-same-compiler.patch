@@ -132,10 +132,10 @@ index 1c705362f..9f20b9a25 100644
  
  static void * ggml_backend_metal_buffer_private_get_base(ggml_backend_buffer_t buffer) {
 diff --git a/ggml/src/ggml-opencl/ggml-opencl.cpp b/ggml/src/ggml-opencl/ggml-opencl.cpp
-index 508b2b8f0..f308c42b0 100644
+index ae3f79fd0..20df68bc2 100644
 --- a/ggml/src/ggml-opencl/ggml-opencl.cpp
 +++ b/ggml/src/ggml-opencl/ggml-opencl.cpp
-@@ -3699,6 +3699,7 @@ struct ggml_backend_opencl_buffer_context {
+@@ -3885,6 +3885,7 @@ struct ggml_backend_opencl_buffer_context {
  static void ggml_backend_opencl_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      ggml_backend_opencl_buffer_context * ctx = (ggml_backend_opencl_buffer_context *) buffer->context;
      delete ctx;

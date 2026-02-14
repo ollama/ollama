@@ -5754,7 +5754,7 @@ static struct ggml_tensor * ggml_unary_impl(
         struct ggml_tensor  * a,
         enum ggml_unary_op    op,
         bool                  inplace) {
-    GGML_ASSERT(ggml_is_contiguous_1(a));
+    GGML_ASSERT(ggml_is_contiguous_rows(a));
 
     struct ggml_tensor * result = inplace ? ggml_view_tensor(ctx, a) : ggml_dup_tensor(ctx, a);
 

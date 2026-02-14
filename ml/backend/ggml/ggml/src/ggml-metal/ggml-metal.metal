@@ -77,6 +77,14 @@ static inline float dot(float x, float y) {
     return x*y;
 }
 
+static inline float sum(float x) {
+    return x;
+}
+
+static inline float sum(float4 x) {
+    return x[0] + x[1] + x[2] + x[3];
+}
+
 // NOTE: this is not dequantizing - we are simply fitting the template
 template <typename type4x4>
 void dequantize_f32(device const float4x4 * src, short il, thread type4x4 & reg) {
@@ -910,7 +918,7 @@ constant float a4_erf = -1.453152027f;
 constant float a5_erf = 1.061405429f;
 
 template<typename T>
-T erf_approx(T x) {
+inline T erf_approx(T x) {
     T sign_x = sign(x);
     x = fabs(x);
     T t = 1.0f / (1.0f + p_erf * x);
@@ -918,10 +926,27 @@ T erf_approx(T x) {
     return sign_x * y;
 }
 
+template<typename T> T elu_approx(T x);
+
+template<> inline float elu_approx<float>(float x) {
+    return (x > 0.f) ? x : (exp(x) - 1);
+}
+
+template<> inline float4 elu_approx<float4>(float4 x) {
+    float4 res;
+
+    res[0] = (x[0] > 0.0f) ? x[0] : (exp(x[0]) - 1.0f);
+    res[1] = (x[1] > 0.0f) ? x[1] : (exp(x[1]) - 1.0f);
+    res[2] = (x[2] > 0.0f) ? x[2] : (exp(x[2]) - 1.0f);
+    res[3] = (x[3] > 0.0f) ? x[3] : (exp(x[3]) - 1.0f);
+
+    return res;
+}
+
 constant short FC_unary_op [[function_constant(FC_UNARY + 0)]];
 constant bool  FC_unary_cnt[[function_constant(FC_UNARY + 1)]];
 
-template <typename T0, typename T>
+template <typename T0, typename T, typename TC>
 kernel void kernel_unary_impl(
         constant ggml_metal_kargs_unary & args,
         device const char * src0,
@@ -963,111 +988,111 @@ kernel void kernel_unary_impl(
             }
         }
 
-        device const T0 & x = src0_ptr[i0];
+        const TC x = (TC) src0_ptr[i0];
 
         if (FC_OP == OP_UNARY_NUM_SCALE) {
-            dst_ptr[i0] = args.scale * x + args.bias;
+            dst_ptr[i0] = (T) (args.scale * x + args.bias);
         }
 
         if (FC_OP == OP_UNARY_NUM_FILL) {
-            dst_ptr[i0] = args.val;
+            dst_ptr[i0] = (T) args.val;
         }
 
         if (FC_OP == OP_UNARY_NUM_CLAMP) {
-            dst_ptr[i0] = clamp(x, args.min, args.max);
+            dst_ptr[i0] = (T) clamp(x, args.min, args.max);
         }
 
         if (FC_OP == OP_UNARY_NUM_SQR) {
-            dst_ptr[i0] = x * x;
+            dst_ptr[i0] = (T) (x * x);
         }
 
         if (FC_OP == OP_UNARY_NUM_SQRT) {
-            dst_ptr[i0] = sqrt(x);
+            dst_ptr[i0] = (T) sqrt(x);
         }
 
         if (FC_OP == OP_UNARY_NUM_SIN) {
-            dst_ptr[i0] = sin(x);
+            dst_ptr[i0] = (T) sin(x);
         }
 
         if (FC_OP == OP_UNARY_NUM_COS) {
-            dst_ptr[i0] = cos(x);
+            dst_ptr[i0] = (T) cos(x);
         }
 
         if (FC_OP == OP_UNARY_NUM_LOG) {
-            dst_ptr[i0] = log(x);
+            dst_ptr[i0] = (T) log(x);
         }
 
         if (FC_OP == OP_UNARY_NUM_LEAKY_RELU) {
-            dst_ptr[i0] = T(x > 0.0f)*x + T(x <= 0.0f)*(x * args.slope);
+            dst_ptr[i0] = (T) (TC(x > 0)*x + TC(x <= 0)*(x * args.slope));
         }
 
         if (FC_OP == OP_UNARY_NUM_TANH) {
-            dst_ptr[i0] = precise::tanh(x);
+            dst_ptr[i0] = (T) precise::tanh(x);
         }
 
         if (FC_OP == OP_UNARY_NUM_RELU) {
-            dst_ptr[i0] = fmax(0.0f, x);
+            dst_ptr[i0] = (T) fmax(0, x);
         }
 
         if (FC_OP == OP_UNARY_NUM_SIGMOID) {
-            dst_ptr[i0] = 1.0f / (1.0f + exp(-x));
+            dst_ptr[i0] = (T) (1 / (1 + exp(-x)));
         }
 
         if (FC_OP == OP_UNARY_NUM_GELU) {
-            dst_ptr[i0] = 0.5f*x*(1.0f + precise::tanh(SQRT_2_OVER_PI*x*(1.0f + GELU_COEF_A*x*x)));
+            dst_ptr[i0] = (T) (0.5*x*(1 + precise::tanh(SQRT_2_OVER_PI*x*(1 + GELU_COEF_A*x*x))));
         }
 
         if (FC_OP == OP_UNARY_NUM_GELU_ERF) {
-            dst_ptr[i0] = 0.5f*x*(1.0f + erf_approx(SQRT_2_INV*x));
+            dst_ptr[i0] = (T) (0.5*x*(1 + erf_approx(SQRT_2_INV*x)));
         }
 
         if (FC_OP == OP_UNARY_NUM_GELU_QUICK) {
-            dst_ptr[i0] = x * (1.0f/(1.0f + exp(GELU_QUICK_COEF*x)));
+            dst_ptr[i0] = (T) (x * (1/(1 + exp(GELU_QUICK_COEF*x))));
         }
 
         if (FC_OP == OP_UNARY_NUM_SILU) {
-            dst_ptr[i0] = x / (1.0f + exp(-x));
+            dst_ptr[i0] = (T) (x / (1 + exp(-x)));
         }
 
         if (FC_OP == OP_UNARY_NUM_ELU) {
-            dst_ptr[i0] = T(x > 0.0f)*x + T(x <= 0.0f)*(exp(x) - 1.0f);
+            dst_ptr[i0] = (T) elu_approx(x);
         }
 
         if (FC_OP == OP_UNARY_NUM_NEG) {
-            dst_ptr[i0] = -x;
+            dst_ptr[i0] = (T) -x;
         }
 
         if (FC_OP == OP_UNARY_NUM_ABS) {
-            dst_ptr[i0] = fabs(x);
+            dst_ptr[i0] = (T) fabs(x);
         }
 
         if (FC_OP == OP_UNARY_NUM_SGN) {
-            dst_ptr[i0] = T(x > 0.0f) - T(x < 0.0f);
+            dst_ptr[i0] = T(x > 0) - T(x < 0);
         }
 
         if (FC_OP == OP_UNARY_NUM_STEP) {
-            dst_ptr[i0] = T(x > 0.0f);
+            dst_ptr[i0] = T(x > 0);
         }
 
         if (FC_OP == OP_UNARY_NUM_HARDSWISH) {
-            dst_ptr[i0] = x * fmax(0.0f, fmin(1.0f, x/6.0f + 0.5f));
+            dst_ptr[i0] = (T) (x * fmax(0, fmin(1, x/6 + 0.5)));
         }
 
         if (FC_OP == OP_UNARY_NUM_HARDSIGMOID) {
-            dst_ptr[i0] = fmax(0.0f, fmin(1.0f, x/6.0f + 0.5f));
+            dst_ptr[i0] = (T) fmax(0, fmin(1, x/6 + 0.5));
         }
 
         if (FC_OP == OP_UNARY_NUM_EXP) {
-            dst_ptr[i0] = exp(x);
+            dst_ptr[i0] = (T) exp(x);
         }
 
         if (FC_OP == OP_UNARY_NUM_SOFTPLUS) {
-            dst_ptr[i0] = select(log(1.0f + exp(x)), x, x > 20.0f);
+            dst_ptr[i0] = (T) select(log(1 + exp(x)), x, x > 20);
         }
 
         if (FC_OP == OP_UNARY_NUM_EXPM1) {
             // TODO: precise implementation
-            dst_ptr[i0] = exp(x) - 1.0f;
+            dst_ptr[i0] = (T) (exp(x) - 1);
         }
     }
 
@@ -1075,11 +1100,12 @@ kernel void kernel_unary_impl(
 #undef FC_CNT
 }
 
-typedef decltype(kernel_unary_impl<float, float>) kernel_unary_t;
+typedef decltype(kernel_unary_impl<float, float, float>) kernel_unary_t;
 
-template [[host_name("kernel_unary_f32_f32")]]   kernel kernel_unary_t kernel_unary_impl<float,  float>;
-template [[host_name("kernel_unary_f32_f32_4")]] kernel kernel_unary_t kernel_unary_impl<float4, float4>;
-
+template [[host_name("kernel_unary_f32_f32")]]   kernel kernel_unary_t kernel_unary_impl<float,  float,  float>;
+template [[host_name("kernel_unary_f32_f32_4")]] kernel kernel_unary_t kernel_unary_impl<float4, float4, float4>;
+template [[host_name("kernel_unary_f16_f16")]]   kernel kernel_unary_t kernel_unary_impl<half,   half,   float>;
+template [[host_name("kernel_unary_f16_f16_4")]] kernel kernel_unary_t kernel_unary_impl<half4,  half4,  float4>;
 
 // OP: 0 - add, 1 - sub, 2 - mul, 3 - div
 constant short FC_bin_op [[function_constant(FC_BIN + 0)]];
@@ -1483,33 +1509,35 @@ kernel void kernel_op_sum_f32(
     }
 }
 
-template <bool norm>
-kernel void kernel_sum_rows(
+constant short FC_sum_rows_op [[function_constant(FC_SUM_ROWS + 0)]];
+
+template <typename T0, typename T>
+kernel void kernel_sum_rows_impl(
         constant ggml_metal_kargs_sum_rows & args,
-        device const float * src0,
-        device       float * dst,
-        threadgroup  float * shmem_f32 [[threadgroup(0)]],
+        device const char * src0,
+        device       char * dst,
+        threadgroup  char * shmem [[threadgroup(0)]],
         uint3   tgpig[[threadgroup_position_in_grid]],
         ushort3 tpitg[[thread_position_in_threadgroup]],
         ushort  sgitg[[simdgroup_index_in_threadgroup]],
         ushort  tiisg[[thread_index_in_simdgroup]],
         ushort3   ntg[[threads_per_threadgroup]]) {
-    int64_t i3 = tgpig.z;
-    int64_t i2 = tgpig.y;
-    int64_t i1 = tgpig.x;
+#define FC_OP  FC_sum_rows_op
 
-    if (i3 >= args.ne03 || i2 >= args.ne02 || i1 >= args.ne01) {
-        return;
-    }
+    const int i3 = tgpig.z;
+    const int i2 = tgpig.y;
+    const int i1 = tgpig.x;
+
+    threadgroup T0 * shmem_t = (threadgroup T0 *) shmem;
 
     if (sgitg == 0) {
-        shmem_f32[tiisg] = 0.0f;
+        shmem_t[tiisg] = 0.0f;
     }
 
-    device const float * src_row = (device const float *) ((device const char *) src0 + i1*args.nb01 + i2*args.nb02 + i3*args.nb03);
-    device       float * dst_row = (device       float *) ((device       char *) dst  + i1*args.nb1  + i2*args.nb2  + i3*args.nb3);
+    device const T0 * src_row = (device const T0 *) (src0 + i1*args.nb01 + i2*args.nb02 + i3*args.nb03);
+    device       T  * dst_row = (device       T  *) (dst  + i1*args.nb1  + i2*args.nb2  + i3*args.nb3);
 
-    float sumf = 0;
+    T0 sumf = T0(0.0f);
 
     for (int64_t i0 = tpitg.x; i0 < args.ne00; i0 += ntg.x) {
         sumf += src_row[i0];
@@ -1520,23 +1548,33 @@ kernel void kernel_sum_rows(
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (tiisg == 0) {
-        shmem_f32[sgitg] = sumf;
+        shmem_t[sgitg] = sumf;
     }
 
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    sumf = shmem_f32[tiisg];
+    sumf = shmem_t[tiisg];
     sumf = simd_sum(sumf);
 
     if (tpitg.x == 0) {
-        dst_row[0] = norm ? sumf / args.ne00 : sumf;
+        if (FC_OP == OP_SUM_ROWS_NUM_MEAN) {
+            if (is_same<float4, T0>::value) {
+                dst_row[0] = sum(sumf) / (4*args.ne00);
+            } else {
+                dst_row[0] = sum(sumf) / args.ne00;
+            }
+        } else {
+            dst_row[0] = sum(sumf);
+        }
     }
+
+#undef FC_OP
 }
 
-typedef decltype(kernel_sum_rows<false>) kernel_sum_rows_t;
+typedef decltype(kernel_sum_rows_impl<float, float>) kernel_sum_rows_t;
 
-template [[host_name("kernel_sum_rows_f32")]] kernel kernel_sum_rows_t kernel_sum_rows<false>;
-template [[host_name("kernel_mean_f32")]]     kernel kernel_sum_rows_t kernel_sum_rows<true>;
+template [[host_name("kernel_sum_rows_f32_f32")]]   kernel kernel_sum_rows_t kernel_sum_rows_impl<float,  float>;
+template [[host_name("kernel_sum_rows_f32_f32_4")]] kernel kernel_sum_rows_t kernel_sum_rows_impl<float4, float>;
 
 template<typename T>
 kernel void kernel_cumsum_blk(
@@ -2416,9 +2454,6 @@ kernel void kernel_solve_tri_f32(
     const short N   = FC_solve_tri_n;
     const short K   = FC_solve_tri_k;
     const short NP  = PAD2(N, NW);
-
-    const int32_t ne02 = args.ne02;
-    const int32_t ne03 = args.ne03;
 
     const int32_t i03 = tgpig.z;
     const int32_t i02 = tgpig.y;
@@ -6146,7 +6181,7 @@ kernel void kernel_flash_attn_ext_vec(
     static_assert(DK4 % NL == 0, "DK4 must be divisible by NL");
     static_assert(DV4 % NL == 0, "DV4 must be divisible by NL");
 
-    const short T = PK + NSG*SH; // shared memory size per query in (half)
+  //const short T = PK + NSG*SH; // shared memory size per query in (half)
 
   //threadgroup q_t   * sq  = (threadgroup q_t   *) (shmem_f16 +                      0*PK); // holds the query data
     threadgroup q4_t  * sq4 = (threadgroup q4_t  *) (shmem_f16 +                      0*PK); // same as above but in q4_t
@@ -8734,7 +8769,9 @@ kernel void kernel_mul_mm(
     threadgroup S0 * sa = (threadgroup S0 *)(shmem);
     threadgroup S1 * sb = (threadgroup S1 *)(shmem + 4096);
 
+#ifdef GGML_METAL_HAS_TENSOR
     threadgroup float * sc = (threadgroup float *)(shmem);
+#endif
 
     constexpr int NR0 = 64;
     constexpr int NR1 = 32;
@@ -8857,8 +8894,8 @@ kernel void kernel_mul_mm(
             const short sx = (tiitg%NL1);
             const short sy = (tiitg/NL1)/8;
 
-            const short dx = sx;
-            const short dy = sy;
+          //const short dx = sx;
+          //const short dy = sy;
 
             const short ly = (tiitg/NL1)%8;
 
@@ -9107,7 +9144,9 @@ kernel void kernel_mul_mm_id(
     threadgroup S0 * sa = (threadgroup S0 *)(shmem);
     threadgroup S1 * sb = (threadgroup S1 *)(shmem + 4096);
 
+#ifdef GGML_METAL_HAS_TENSOR
     threadgroup float * sc = (threadgroup float *)(shmem);
+#endif
 
     constexpr int NR0 = 64;
     constexpr int NR1 = 32;
@@ -9242,8 +9281,8 @@ kernel void kernel_mul_mm_id(
             const short sx = (tiitg%NL1);
             const short sy = (tiitg/NL1)/8;
 
-            const short dx = sx;
-            const short dy = sy;
+          //const short dx = sx;
+          //const short dy = sy;
 
             const short ly = (tiitg/NL1)%8;
 

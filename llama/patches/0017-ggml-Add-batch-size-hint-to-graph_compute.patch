@@ -1,0 +1,362 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: jmorganca <jmorganca@gmail.com>
+Date: Sat, 10 Jan 2026 15:36:34 -0800
+Subject: [PATCH] ggml: Add batch size hint to graph_compute
+
+This adds a batch_size parameter to backend graph_compute functions
+to provide optimization hints for processing.
+---
+ ggml/include/ggml-backend.h            |  5 ++++-
+ ggml/src/ggml-backend-impl.h           |  4 ++--
+ ggml/src/ggml-backend.cpp              | 19 +++++++++++++------
+ ggml/src/ggml-blas/ggml-blas.cpp       |  3 ++-
+ ggml/src/ggml-cann/ggml-cann.cpp       |  4 +++-
+ ggml/src/ggml-cpu/ggml-cpu.cpp         |  4 +++-
+ ggml/src/ggml-cuda/ggml-cuda.cu        |  4 +++-
+ ggml/src/ggml-hexagon/ggml-hexagon.cpp |  4 +++-
+ ggml/src/ggml-metal/ggml-metal.cpp     |  4 +++-
+ ggml/src/ggml-opencl/ggml-opencl.cpp   |  4 +++-
+ ggml/src/ggml-rpc/ggml-rpc.cpp         |  4 +++-
+ ggml/src/ggml-sycl/ggml-sycl.cpp       |  4 +++-
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp   |  3 ++-
+ ggml/src/ggml-webgpu/ggml-webgpu.cpp   |  3 ++-
+ ggml/src/ggml-zdnn/ggml-zdnn.cpp       |  3 ++-
+ ggml/src/ggml-zendnn/ggml-zendnn.cpp   |  4 +++-
+ 16 files changed, 54 insertions(+), 22 deletions(-)
+
+diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
+index 99412fe56..97f630faa 100644
+--- a/ggml/include/ggml-backend.h
++++ b/ggml/include/ggml-backend.h
+@@ -98,7 +98,7 @@ extern "C" {
+ 
+     GGML_API enum ggml_status ggml_backend_graph_plan_compute (ggml_backend_t backend, ggml_backend_graph_plan_t plan);
+     GGML_API enum ggml_status ggml_backend_graph_compute      (ggml_backend_t backend, struct ggml_cgraph * cgraph);
+-    GGML_API enum ggml_status ggml_backend_graph_compute_async(ggml_backend_t backend, struct ggml_cgraph * cgraph);
++    GGML_API enum ggml_status ggml_backend_graph_compute_async(ggml_backend_t backend, struct ggml_cgraph * cgraph, int batch_size);
+ 
+     // NOTE: will be removed, use device version instead
+     GGML_API bool ggml_backend_supports_op(ggml_backend_t backend, const struct ggml_tensor * op);
+@@ -308,6 +308,9 @@ extern "C" {
+     GGML_API ggml_backend_sched_t ggml_backend_sched_new(ggml_backend_t * backends, ggml_backend_buffer_type_t * bufts, int n_backends, size_t graph_size, bool parallel, bool op_offload);
+     GGML_API void                 ggml_backend_sched_free(ggml_backend_sched_t sched);
+ 
++    // Provide a hint on the batch size to optimize processing (uses heuristics if unset)
++    GGML_API void                 ggml_backend_sched_set_batch_size(ggml_backend_sched_t sched, int batch_size);
++
+     // Initialize backend buffers from a measure graph
+     GGML_API void                 ggml_backend_sched_reserve_size(ggml_backend_sched_t sched, struct ggml_cgraph * measure_graph, size_t * sizes);
+     GGML_API bool                 ggml_backend_sched_reserve(ggml_backend_sched_t sched, struct ggml_cgraph * measure_graph); // returns success
+diff --git a/ggml/src/ggml-backend-impl.h b/ggml/src/ggml-backend-impl.h
+index 59190b7c4..a833756f9 100644
+--- a/ggml/src/ggml-backend-impl.h
++++ b/ggml/src/ggml-backend-impl.h
+@@ -106,8 +106,8 @@ extern "C" {
+         // compute the graph with the plan
+         enum ggml_status          (*graph_plan_compute)(ggml_backend_t backend, ggml_backend_graph_plan_t plan);
+ 
+-        // compute graph (always async if supported by the backend)
+-        enum ggml_status          (*graph_compute)     (ggml_backend_t backend, struct ggml_cgraph * cgraph);
++        // compute graph (always async if supported by the backend). batch_size may be -1 if unknown
++        enum ggml_status          (*graph_compute)     (ggml_backend_t backend, struct ggml_cgraph * cgraph, int batch_size);
+ 
+         // (optional) event synchronization
+         // record an event on this stream
+diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
+index c1f4f63ba..761bd12df 100644
+--- a/ggml/src/ggml-backend.cpp
++++ b/ggml/src/ggml-backend.cpp
+@@ -355,14 +355,14 @@ enum ggml_status ggml_backend_graph_plan_compute(ggml_backend_t backend, ggml_ba
+ }
+ 
+ enum ggml_status ggml_backend_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
+-    enum ggml_status err = ggml_backend_graph_compute_async(backend, cgraph);
++    enum ggml_status err = ggml_backend_graph_compute_async(backend, cgraph, -1);
+     ggml_backend_synchronize(backend);
+     return err;
+ }
+ 
+-enum ggml_status ggml_backend_graph_compute_async(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
++enum ggml_status ggml_backend_graph_compute_async(ggml_backend_t backend, struct ggml_cgraph * cgraph, int batch_size) {
+     GGML_ASSERT(backend);
+-    return backend->iface.graph_compute(backend, cgraph);
++    return backend->iface.graph_compute(backend, cgraph, batch_size);
+ }
+ 
+ bool ggml_backend_supports_op(ggml_backend_t backend, const struct ggml_tensor * op) {
+@@ -729,6 +729,8 @@ struct ggml_backend_sched {
+ 
+     bool op_offload;
+ 
++    int batch_size; // a hint on the batch size to optimize processing, -1 to use heuristics
++
+     int debug;
+ 
+     // used for debugging graph reallocations [GGML_SCHED_DEBUG_REALLOC]
+@@ -827,7 +829,7 @@ static int ggml_backend_sched_backend_id_from_cur(ggml_backend_sched_t sched, st
+         if (tensor->op != GGML_OP_ROPE && src->buffer != NULL && src->buffer->usage == GGML_BACKEND_BUFFER_USAGE_WEIGHTS) {
+             int src_backend_id = ggml_backend_sched_backend_from_buffer(sched, src, tensor);
+             // check if a backend with higher prio wants to offload the op
+-            if (sched->op_offload && src_backend_id == sched->n_backends - 1 && ggml_backend_buffer_is_host(src->buffer)) {
++            if (sched->op_offload && (sched->batch_size < 0 || sched->batch_size >= 32) && src_backend_id == sched->n_backends - 1 && ggml_backend_buffer_is_host(src->buffer)) {
+                 for (int b = 0; b < src_backend_id; b++) {
+                     if (ggml_backend_supports_op(sched->backends[b], tensor) && ggml_backend_offload_op(sched->backends[b], tensor)) {
+                         SET_CAUSE(tensor, "1.off");
+@@ -1579,7 +1581,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+         }
+ 
+         if (!sched->callback_eval) {
+-            enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &split->graph);
++            enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &split->graph, sched->batch_size);
+             if (ec != GGML_STATUS_SUCCESS) {
+                 return ec;
+             }
+@@ -1601,7 +1603,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+ 
+                 struct ggml_cgraph gv = ggml_graph_view(&split->graph, j0, j1 + 1);
+ 
+-                enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &gv);
++                enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &gv, sched->batch_size);
+                 if (ec != GGML_STATUS_SUCCESS) {
+                     return ec;
+                 }
+@@ -1691,12 +1693,17 @@ ggml_backend_sched_t ggml_backend_sched_new(
+ 
+     sched->galloc = ggml_gallocr_new_n(sched->bufts, n_backends);
+     sched->op_offload = op_offload;
++    sched->batch_size = -1;
+ 
+     ggml_backend_sched_reset(sched);
+ 
+     return sched;
+ }
+ 
++void ggml_backend_sched_set_batch_size(ggml_backend_sched_t sched, int batch_size) {
++    sched->batch_size = batch_size;
++}
++
+ void ggml_backend_sched_free(ggml_backend_sched_t sched) {
+     if (sched == NULL) {
+         return;
+diff --git a/ggml/src/ggml-blas/ggml-blas.cpp b/ggml/src/ggml-blas/ggml-blas.cpp
+index 2e9ddf224..6a399bdb1 100644
+--- a/ggml/src/ggml-blas/ggml-blas.cpp
++++ b/ggml/src/ggml-blas/ggml-blas.cpp
+@@ -220,7 +220,7 @@ static void ggml_backend_blas_free(ggml_backend_t backend) {
+     delete backend;
+ }
+ 
+-static enum ggml_status ggml_backend_blas_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
++static enum ggml_status ggml_backend_blas_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph, int batch_size) {
+     ggml_backend_blas_context * ctx = (ggml_backend_blas_context *)backend->context;
+ 
+     for (int i = 0; i < cgraph->n_nodes; i++) {
+@@ -254,6 +254,7 @@ static enum ggml_status ggml_backend_blas_graph_compute(ggml_backend_t backend,
+     return GGML_STATUS_SUCCESS;
+ 
+     GGML_UNUSED(backend);
++    GGML_UNUSED(batch_size);
+ }
+ 
+ static struct ggml_backend_i blas_backend_i = {
+diff --git a/ggml/src/ggml-cann/ggml-cann.cpp b/ggml/src/ggml-cann/ggml-cann.cpp
+index 90a15f217..02a781c31 100644
+--- a/ggml/src/ggml-cann/ggml-cann.cpp
++++ b/ggml/src/ggml-cann/ggml-cann.cpp
+@@ -2187,8 +2187,10 @@ static void evaluate_and_capture_cann_graph(ggml_backend_cann_context * cann_ctx
+  * @return enum ggml_status Returns GGML_STATUS_SUCCESS if computation
+  *         completes successfully, otherwise an appropriate error status.
+  */
+-static enum ggml_status ggml_backend_cann_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
++static enum ggml_status ggml_backend_cann_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
+     ggml_backend_cann_context * cann_ctx = (ggml_backend_cann_context *) backend->context;
++
++    GGML_UNUSED(batch_size);
+     ggml_cann_set_device(cann_ctx->device);
+     g_nz_workspaces[cann_ctx->device].clear();
+ 
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.cpp b/ggml/src/ggml-cpu/ggml-cpu.cpp
+index ddf1737a3..622cf5d24 100644
+--- a/ggml/src/ggml-cpu/ggml-cpu.cpp
++++ b/ggml/src/ggml-cpu/ggml-cpu.cpp
+@@ -167,7 +167,7 @@ static enum ggml_status ggml_backend_cpu_graph_plan_compute(ggml_backend_t backe
+     GGML_UNUSED(backend);
+ }
+ 
+-static enum ggml_status ggml_backend_cpu_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
++static enum ggml_status ggml_backend_cpu_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph, int batch_size) {
+     struct ggml_backend_cpu_context * cpu_ctx = (struct ggml_backend_cpu_context *)backend->context;
+ 
+     struct ggml_cplan cplan = ggml_graph_plan(cgraph, cpu_ctx->n_threads, cpu_ctx->threadpool);
+@@ -188,6 +188,8 @@ static enum ggml_status ggml_backend_cpu_graph_compute(ggml_backend_t backend, s
+     cplan.use_ref             = cpu_ctx->use_ref;
+ 
+     return ggml_graph_compute(cgraph, &cplan);
++
++    GGML_UNUSED(batch_size);
+ }
+ 
+ static const struct ggml_backend_i ggml_backend_cpu_i = {
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index 227c9691f..74ea72915 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -3993,9 +3993,11 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
+ }
+ #endif // USE_CUDA_GRAPH
+ 
+-static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
++static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
+     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) backend->context;
+ 
++    GGML_UNUSED(batch_size);
++
+     ggml_cuda_set_device(cuda_ctx->device);
+ 
+     bool use_cuda_graph             = false;
+diff --git a/ggml/src/ggml-hexagon/ggml-hexagon.cpp b/ggml/src/ggml-hexagon/ggml-hexagon.cpp
+index 54f998649..57b47e8ab 100644
+--- a/ggml/src/ggml-hexagon/ggml-hexagon.cpp
++++ b/ggml/src/ggml-hexagon/ggml-hexagon.cpp
+@@ -2543,9 +2543,11 @@ static inline int last_compute_op(ggml_cgraph * graph) {
+     return last;
+ }
+ 
+-static ggml_status ggml_backend_hexagon_graph_compute(ggml_backend_t backend, ggml_cgraph * graph) {
++static ggml_status ggml_backend_hexagon_graph_compute(ggml_backend_t backend, ggml_cgraph * graph, int batch_size) {
+     auto sess = static_cast<ggml_hexagon_session *>(backend->context);
+ 
++    GGML_UNUSED(batch_size);
++
+     HEX_VERBOSE("ggml-hex: %s graph-compute n_nodes %d\n", sess->name.c_str(), graph->n_nodes);
+ 
+     const int last = last_compute_op(graph);
+diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
+index 8d2c93a95..ba12c7c14 100644
+--- a/ggml/src/ggml-metal/ggml-metal.cpp
++++ b/ggml/src/ggml-metal/ggml-metal.cpp
+@@ -526,9 +526,11 @@ static bool ggml_backend_metal_cpy_tensor_async(ggml_backend_t backend_src, ggml
+     return ggml_metal_cpy_tensor_async(ctx_src, ctx_dst, src, dst);
+ }
+ 
+-static enum ggml_status ggml_backend_metal_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
++static enum ggml_status ggml_backend_metal_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
+     ggml_metal_t ctx = (ggml_metal_t)backend->context;
+ 
++    GGML_UNUSED(batch_size);
++
+     return ggml_metal_graph_compute(ctx, cgraph);
+ }
+ 
+diff --git a/ggml/src/ggml-opencl/ggml-opencl.cpp b/ggml/src/ggml-opencl/ggml-opencl.cpp
+index 20df68bc2..05cacbd2c 100644
+--- a/ggml/src/ggml-opencl/ggml-opencl.cpp
++++ b/ggml/src/ggml-opencl/ggml-opencl.cpp
+@@ -3322,9 +3322,11 @@ static void ggml_opencl_op_rms_norm_fused(ggml_backend_t backend, ggml_tensor *
+ static void ggml_opencl_op_norm_fused(ggml_backend_t backend, ggml_tensor * norm_tensor, ggml_tensor * mul_tensor, ggml_tensor * add_tensor);
+ static void ggml_opencl_op_group_norm_fused(ggml_backend_t backend, ggml_tensor * gn_tensor, ggml_tensor * mul_tensor, ggml_tensor * add_tensor);
+ 
+-static ggml_status ggml_backend_opencl_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
++static ggml_status ggml_backend_opencl_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
+     ggml_backend_opencl_context *backend_ctx = (ggml_backend_opencl_context *)backend->context;
+ 
++    GGML_UNUSED(batch_size);
++
+     for (int i = 0; i < cgraph->n_nodes; i++) {
+         ggml_tensor * node = cgraph->nodes[i];
+ 
+diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
+index 281fa1bdb..b5f7adf89 100644
+--- a/ggml/src/ggml-rpc/ggml-rpc.cpp
++++ b/ggml/src/ggml-rpc/ggml-rpc.cpp
+@@ -866,9 +866,11 @@ static void serialize_graph(uint32_t device, const ggml_cgraph * cgraph, std::ve
+     memcpy(out_tensors, tensors.data(), n_tensors * sizeof(rpc_tensor));
+ }
+ 
+-static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
++static enum ggml_status ggml_backend_rpc_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
+     ggml_backend_rpc_context * rpc_ctx = (ggml_backend_rpc_context *)backend->context;
+ 
++    GGML_UNUSED(batch_size);
++
+     GGML_ASSERT(cgraph->n_nodes > 0);
+     bool reuse = rpc_ctx->gc.is_cached(cgraph);
+     if (reuse) {
+diff --git a/ggml/src/ggml-sycl/ggml-sycl.cpp b/ggml/src/ggml-sycl/ggml-sycl.cpp
+index 336172700..9e1e2510e 100644
+--- a/ggml/src/ggml-sycl/ggml-sycl.cpp
++++ b/ggml/src/ggml-sycl/ggml-sycl.cpp
+@@ -4374,9 +4374,11 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
+ }
+ #endif
+ 
+-static ggml_status ggml_backend_sycl_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
++static ggml_status ggml_backend_sycl_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
+     auto * sycl_ctx = static_cast<ggml_backend_sycl_context *>(backend->context);
+ 
++    GGML_UNUSED(batch_size);
++
+ #ifdef GGML_SYCL_GRAPH
+     bool use_sycl_graph = !g_ggml_sycl_disable_graph && check_graph_compatibility(cgraph);
+     if (use_sycl_graph) {
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 411ae7c23..8b6447344 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -13790,8 +13790,9 @@ static uint32_t ggml_vk_fuse_multi_add(ggml_backend_vk_context * ctx, const stru
+     return num_adds;
+ }
+ 
+-static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
++static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
+     VK_LOG_DEBUG("ggml_backend_vk_graph_compute(" << cgraph->n_nodes << " nodes)");
++    GGML_UNUSED(batch_size);
+     ggml_backend_vk_context * ctx = (ggml_backend_vk_context *)backend->context;
+ 
+     if (vk_instance.debug_utils_support) {
+diff --git a/ggml/src/ggml-webgpu/ggml-webgpu.cpp b/ggml/src/ggml-webgpu/ggml-webgpu.cpp
+index 32e120266..72ad83e3c 100644
+--- a/ggml/src/ggml-webgpu/ggml-webgpu.cpp
++++ b/ggml/src/ggml-webgpu/ggml-webgpu.cpp
+@@ -2151,8 +2151,9 @@ static std::optional<webgpu_command> ggml_webgpu_encode_node(webgpu_context ctx,
+     }
+ }
+ 
+-static ggml_status ggml_backend_webgpu_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
++static ggml_status ggml_backend_webgpu_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph, int batch_size) {
+     WEBGPU_LOG_DEBUG("ggml_backend_webgpu_graph_compute(" << cgraph->n_nodes << " nodes)");
++    GGML_UNUSED(batch_size);
+ 
+     ggml_backend_webgpu_context * backend_ctx = (ggml_backend_webgpu_context *) backend->context;
+     webgpu_context                ctx         = backend_ctx->webgpu_ctx;
+diff --git a/ggml/src/ggml-zdnn/ggml-zdnn.cpp b/ggml/src/ggml-zdnn/ggml-zdnn.cpp
+index 9b6938abf..9c5f3ae84 100644
+--- a/ggml/src/ggml-zdnn/ggml-zdnn.cpp
++++ b/ggml/src/ggml-zdnn/ggml-zdnn.cpp
+@@ -412,7 +412,8 @@ static void ggml_backend_zdnn_free(ggml_backend_t backend) {
+     free(backend);
+ }
+ 
+-static enum ggml_status ggml_backend_zdnn_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
++static enum ggml_status ggml_backend_zdnn_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
++    GGML_UNUSED(batch_size);
+     return ggml_zdnn_graph_compute(backend, cgraph);
+ }
+ 
+diff --git a/ggml/src/ggml-zendnn/ggml-zendnn.cpp b/ggml/src/ggml-zendnn/ggml-zendnn.cpp
+index 551c15bb4..e1277cd9f 100644
+--- a/ggml/src/ggml-zendnn/ggml-zendnn.cpp
++++ b/ggml/src/ggml-zendnn/ggml-zendnn.cpp
+@@ -204,9 +204,11 @@ static void ggml_backend_zendnn_free(ggml_backend_t backend) {
+     delete backend;
+ }
+ 
+-static ggml_status ggml_backend_zendnn_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
++static ggml_status ggml_backend_zendnn_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
+     ggml_backend_zendnn_context * ctx = (ggml_backend_zendnn_context *)backend->context;
+ 
++    GGML_UNUSED(batch_size);
++
+     for (int i = 0; i < cgraph->n_nodes; i++) {
+         struct ggml_tensor * node = cgraph->nodes[i];
+ 
