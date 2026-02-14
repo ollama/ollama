@@ -1,12 +1,13 @@
 import { useChats } from "@/hooks/useChats";
 import { useRenameChat } from "@/hooks/useRenameChat";
 import { useDeleteChat } from "@/hooks/useDeleteChat";
+import { useDeleteAllChats } from "@/hooks/useDeleteAllChats";
 import { useQueryClient } from "@tanstack/react-query";
 import { getChat } from "@/api";
 import { Link } from "@/components/ui/link";
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { ChatsResponse } from "@/gotypes";
-import { CogIcon } from "@heroicons/react/24/outline";
+import { CogIcon, TrashIcon } from "@heroicons/react/24/outline";
 
 // there's a hidden debug feature to copy a chat's data to the clipboard by
 // holding shift and clicking this many times within this many seconds
@@ -22,6 +23,7 @@ export function ChatSidebar({ currentChatId }: ChatSidebarProps) {
   const queryClient = useQueryClient();
   const renameMutation = useRenameChat();
   const deleteMutation = useDeleteChat();
+  const deleteAllMutation = useDeleteAllChats();
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -180,6 +182,23 @@ export function ChatSidebar({ currentChatId }: ChatSidebarProps) {
     [deleteMutation],
   );
 
+  const handleDeleteAllChats = useCallback(async () => {
+    const chatCount = data?.chatInfos?.length || 0;
+    if (chatCount === 0) return;
+
+    const confirmed = window.confirm(
+      `Are you sure you want to delete all ${chatCount} chat${chatCount === 1 ? "" : "s"}? This action cannot be undone.`,
+    );
+
+    if (!confirmed) return;
+
+    try {
+      await deleteAllMutation.mutateAsync();
+    } catch (error) {
+      console.error("Failed to delete all chats:", error);
+    }
+  }, [data?.chatInfos?.length, deleteAllMutation]);
+
   // implementation of the hidden debug feature to copy a chat's data to the clipboard
   const handleShiftClick = useCallback(
     async (e: React.MouseEvent, chatId: string) => {
@@ -292,6 +311,18 @@ export function ChatSidebar({ currentChatId }: ChatSidebarProps) {
             <CogIcon className="h-5 w-5 stroke-current" />
             <span className="truncate">Settings</span>
           </Link>
+        )}
+        {sortedChats.length > 0 && (
+          <button
+            onClick={handleDeleteAllChats}
+            disabled={deleteAllMutation.isPending}
+            className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <TrashIcon className="h-5 w-5 stroke-current" />
+            <span className="truncate">
+              {deleteAllMutation.isPending ? "Deleting..." : "Delete All Chats"}
+            </span>
+          </button>
         )}
       </header>
       <div className="flex flex-1 flex-col px-4 py-1 overflow-y-auto overscroll-auto scrollbar-gutter">
