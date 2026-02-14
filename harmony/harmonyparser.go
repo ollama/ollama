@@ -447,19 +447,69 @@ func (h *HarmonyMessageHandler) Add(s string, done bool) (content string, thinki
 			// safely ignoring any trailing bytes without risking corruption
 			// of JSON string values that may legitimately contain "<|".
 			var args api.ToolCallFunctionArguments
+			var repair *api.ToolCallRepair
 			trimmed := strings.TrimSpace(raw)
 			if trimmed == "" {
 				trimmed = "{}"
 			}
 			decoder := json.NewDecoder(bytes.NewReader([]byte(trimmed)))
 			if err := decoder.Decode(&args); err != nil {
-				return "", "", nil, fmt.Errorf("error parsing tool call: raw='%s', err=%w", raw, err)
+				// Try to recover from truncated JSON by appending missing closing braces.
+				// Smaller models often fail to emit all closing braces before EOS.
+				if repaired, ok := tryRepairBraces(trimmed); ok {
+					decoder2 := json.NewDecoder(bytes.NewReader([]byte(repaired)))
+					if err2 := decoder2.Decode(&args); err2 != nil {
+						return "", "", nil, fmt.Errorf("error parsing tool call: raw='%s', err=%w", raw, err)
+					}
+					addedBraces := len(repaired) - len(trimmed)
+					repair = &api.ToolCallRepair{
+						Original: trimmed,
+						Action:   fmt.Sprintf("closed_braces:%d", addedBraces),
+					}
+					slog.Debug("repaired truncated tool call JSON", "added_braces", addedBraces)
+				} else {
+					return "", "", nil, fmt.Errorf("error parsing tool call: raw='%s', err=%w", raw, err)
+				}
 			}
-			calls = append(calls, api.ToolCall{Function: api.ToolCallFunction{Name: name, Arguments: args}})
+			calls = append(calls, api.ToolCall{Function: api.ToolCallFunction{Name: name, Arguments: args}, Repaired: repair})
 		}
 	}
 
 	return content, thinking, calls, nil
+}
+
+// tryRepairBraces attempts to fix truncated JSON by appending missing closing braces.
+// Returns the repaired string and true if braces were unbalanced, or the original and false otherwise.
+func tryRepairBraces(s string) (string, bool) {
+	inString := false
+	escape := false
+	depth := 0
+	for _, ch := range s {
+		if escape {
+			escape = false
+			continue
+		}
+		if ch == '\\' && inString {
+			escape = true
+			continue
+		}
+		if ch == '"' {
+			inString = !inString
+			continue
+		}
+		if inString {
+			continue
+		}
+		if ch == '{' {
+			depth++
+		} else if ch == '}' {
+			depth--
+		}
+	}
+	if depth > 0 {
+		return s + strings.Repeat("}", depth), true
+	}
+	return s, false
 }
 
 // HasToolSupport implements the Parser interface

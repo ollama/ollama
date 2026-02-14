@@ -543,6 +543,8 @@ func TestToolCallArgParsing(t *testing.T) {
 		name, wantName, wantArgs string
 		input                    string
 		wantErr                  bool
+		wantRepaired             bool
+		wantRepairAction         string
 	}{
 		{
 			name:     "valid tool call with clean JSON args",
@@ -567,6 +569,14 @@ func TestToolCallArgParsing(t *testing.T) {
 			input:    "<|start|>assistant<|channel|>commentary to=functions.search <|constrain|>json<|message|>" + `{"query":"tokens like <|start|> are special"}`,
 			wantName: "search",
 			wantArgs: `{"query":"tokens like <|start|> are special"}`,
+		},
+		{
+			name:             "truncated JSON with missing closing braces is repaired",
+			input:            "<|start|>assistant<|channel|>commentary to=functions.get_weather <|constrain|>json<|message|>" + `{"location":"San Francisco","options":{"units":"metric"`,
+			wantName:         "get_weather",
+			wantArgs:         `{"location":"San Francisco","options":{"units":"metric"}}`,
+			wantRepaired:     true,
+			wantRepairAction: "closed_braces:2",
 		},
 	}
 	for _, tt := range tests {
@@ -601,6 +611,72 @@ func TestToolCallArgParsing(t *testing.T) {
 			}
 			if !reflect.DeepEqual(gotMap, wantMap) {
 				t.Errorf("args: got %v, want %v", gotMap, wantMap)
+			}
+			if tt.wantRepaired {
+				if calls[0].Repaired == nil {
+					t.Fatal("expected Repaired to be set")
+				}
+				if calls[0].Repaired.Action != tt.wantRepairAction {
+					t.Errorf("repair action: got %q, want %q", calls[0].Repaired.Action, tt.wantRepairAction)
+				}
+				if calls[0].Repaired.Original == "" {
+					t.Error("expected Repaired.Original to be non-empty")
+				}
+			} else {
+				if calls[0].Repaired != nil {
+					t.Errorf("expected Repaired to be nil, got %+v", calls[0].Repaired)
+				}
+			}
+		})
+	}
+}
+
+func TestTryRepairBraces(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		wantOutput string
+		wantFixed  bool
+	}{
+		{
+			name:       "complete JSON unchanged",
+			input:      `{"a":"b"}`,
+			wantOutput: `{"a":"b"}`,
+			wantFixed:  false,
+		},
+		{
+			name:       "one missing brace",
+			input:      `{"a":{"b":"c"}`,
+			wantOutput: `{"a":{"b":"c"}}`,
+			wantFixed:  true,
+		},
+		{
+			name:       "three missing braces",
+			input:      `{"a":{"b":{"c":"d"`,
+			wantOutput: `{"a":{"b":{"c":"d"}}}`,
+			wantFixed:  true,
+		},
+		{
+			name:       "braces inside strings ignored",
+			input:      `{"a":"{{{}","b":"c"`,
+			wantOutput: `{"a":"{{{}","b":"c"}`,
+			wantFixed:  true,
+		},
+		{
+			name:       "escaped quotes handled",
+			input:      `{"a":"say \"hi\"","b":{"c":"d"`,
+			wantOutput: `{"a":"say \"hi\"","b":{"c":"d"}}`,
+			wantFixed:  true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, fixed := tryRepairBraces(tt.input)
+			if got != tt.wantOutput {
+				t.Errorf("output: got %q, want %q", got, tt.wantOutput)
+			}
+			if fixed != tt.wantFixed {
+				t.Errorf("fixed: got %v, want %v", fixed, tt.wantFixed)
 			}
 		})
 	}
