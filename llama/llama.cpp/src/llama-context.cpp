@@ -1057,51 +1057,43 @@ bool llama_context::set_sampler(llama_seq_id seq_id, llama_sampler * sampler) {
     return true;
 }
 
-void llama_context::set_adapter_lora(
-            llama_adapter_lora * adapter,
-            float scale) {
-    LLAMA_LOG_DEBUG("%s: adapter = %p, scale = %f\n", __func__, (void *) adapter, scale);
+void llama_context::set_adapters_lora(llama_adapter_lora ** adapters, size_t n_adapters, float * scales) {
+    LLAMA_LOG_DEBUG("%s: adapters = %p\n", __func__, (void *) adapters);
 
-    if (auto it = loras.find(adapter); it != loras.end()) {
-        if (it->second == scale) {
-            return;
-        }
-    }
-
-    loras[adapter] = scale;
-
-    sched_need_reserve = true;
-}
-
-bool llama_context::rm_adapter_lora(
-            llama_adapter_lora * adapter) {
-    LLAMA_LOG_DEBUG("%s: adapter = %p\n", __func__, (void *) adapter);
-
-    auto it = loras.find(adapter);
-    if (it != loras.end()) {
-        loras.erase(it);
-
-        sched_need_reserve = true;
-
-        return true;
-    }
-
-    return false;
-}
-
-void llama_context::clear_adapter_lora() {
-    LLAMA_LOG_DEBUG("%s: call\n", __func__);
-
-    if (loras.empty()) {
+    if (adapters_lora_are_same(adapters, n_adapters, scales)) {
         return;
     }
 
     loras.clear();
 
+    for (size_t i = 0; i < n_adapters; i ++) {
+        if (scales[i] != 0.0f) {
+            loras[adapters[i]] = scales[i];
+        }
+    }
+
     sched_need_reserve = true;
 }
 
-bool llama_context::apply_adapter_cvec(
+bool llama_context::adapters_lora_are_same(llama_adapter_lora ** adapters, size_t n_adapters, float * scales) {
+    LLAMA_LOG_DEBUG("%s: adapters = %p\n", __func__, (void *) adapters);
+
+    if (n_adapters != loras.size()) {
+        return false;
+    }
+
+    for (size_t i = 0; i < n_adapters; i ++) {
+        auto it = loras.find(adapters[i]);
+
+        if (it == loras.end() || it->second != scales[i]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool llama_context::set_adapter_cvec(
             const float * data,
                  size_t   len,
                 int32_t   n_embd,
@@ -3208,35 +3200,28 @@ uint32_t llama_get_sampled_probs_count_ith(llama_context * ctx, int32_t i) {
 
 // llama adapter API
 
-int32_t llama_set_adapter_lora(
+int32_t llama_set_adapters_lora(
             llama_context * ctx,
-            llama_adapter_lora * adapter,
-            float scale) {
-    ctx->set_adapter_lora(adapter, scale);
+            llama_adapter_lora ** adapters,
+            size_t n_adapters,
+            float * scales) {
+    if (adapters == nullptr || scales == nullptr) {
+        GGML_ASSERT(n_adapters == 0 && "invalid llama_set_adapters_lora call");
+    }
+
+    ctx->set_adapters_lora(adapters, n_adapters, scales);
 
     return 0;
 }
 
-int32_t llama_rm_adapter_lora(
-            llama_context * ctx,
-            llama_adapter_lora * adapter) {
-    bool res = ctx->rm_adapter_lora(adapter);
-
-    return res ? 0 : -1;
-}
-
-void llama_clear_adapter_lora(llama_context * ctx) {
-    ctx->clear_adapter_lora();
-}
-
-int32_t llama_apply_adapter_cvec(
+int32_t llama_set_adapter_cvec(
         llama_context * ctx,
-                 const float * data,
-                      size_t   len,
-                     int32_t   n_embd,
-                     int32_t   il_start,
-                     int32_t   il_end) {
-    bool res = ctx->apply_adapter_cvec(data, len, n_embd, il_start, il_end);
+          const float * data,
+               size_t   len,
+              int32_t   n_embd,
+              int32_t   il_start,
+              int32_t   il_end) {
+    bool res = ctx->set_adapter_cvec(data, len, n_embd, il_start, il_end);
 
     return res ? 0 : -1;
 }

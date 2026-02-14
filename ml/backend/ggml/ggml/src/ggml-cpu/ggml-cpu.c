@@ -2949,7 +2949,11 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
         /*.use_ref    =*/ cplan->use_ref,
     };
 
-    GGML_PRINT_DEBUG("thread #%d compute-start cplan %p last-graph %d \n", state->ith, cplan, state->last_graph);
+#ifdef GGML_USE_OPENMP
+    GGML_PRINT_DEBUG("thread #%d compute-start cplan %p\n", state->ith, (const void *)cplan);
+#else
+    GGML_PRINT_DEBUG("thread #%d compute-start cplan %p last-graph %d\n", state->ith, (const void *)cplan, state->last_graph);
+#endif
 
     for (int node_n = 0; node_n < cgraph->n_nodes && atomic_load_explicit(&tp->abort, memory_order_relaxed) != node_n; node_n++) {
         struct ggml_tensor * node = cgraph->nodes[node_n];
@@ -2980,7 +2984,11 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
         }
     }
 
-    GGML_PRINT_DEBUG("thread #%d compute-done cplan %p last-graph %d \n", state->ith, cplan, state->last_graph);
+#ifdef GGML_USE_OPENMP
+    GGML_PRINT_DEBUG("thread #%d compute-done cplan %p\n", state->ith, (const void *)cplan);
+#else
+    GGML_PRINT_DEBUG("thread #%d compute-done cplan %p last-graph %d\n", state->ith, (const void *)cplan, state->last_graph);
+#endif
 
     ggml_barrier(state->threadpool);
 

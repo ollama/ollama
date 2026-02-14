@@ -105,16 +105,11 @@ struct llama_context {
     void set_causal_attn(bool value);
     void set_warmup(bool value);
 
-    void set_adapter_lora(
-            llama_adapter_lora * adapter,
-            float scale);
+    void set_adapters_lora(llama_adapter_lora ** adapters, size_t n_adapters, float * scales);
 
-    bool rm_adapter_lora(
-            llama_adapter_lora * adapter);
+    bool adapters_lora_are_same(llama_adapter_lora ** adapters, size_t n_adapters, float * scales);
 
-    void clear_adapter_lora();
-
-    bool apply_adapter_cvec(
+    bool set_adapter_cvec(
             const float * data,
                  size_t   len,
                 int32_t   n_embd,

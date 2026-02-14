@@ -3,6 +3,9 @@
 #include "types.glsl"
 #include "generic_binary_head.glsl"
 
+// false for SET, true for ACC
+layout(constant_id = 1) const bool ACC = true;
+
 layout(local_size_x = 512, local_size_y = 1, local_size_z = 1) in;
 
 void main() {
@@ -23,7 +26,11 @@ void main() {
     uint i00, i01, i02, i03;
 
     if (i0 < p.ne10 && i1 < p.ne11 && i2 < p.ne12 && i3 < p.ne13) {
-        data_d[get_doffset() + idx] = D_TYPE(FLOAT_TYPE(data_a[get_aoffset() + idx]) + FLOAT_TYPE(data_b[get_boffset() + src1_idx(i0, i1, i2, i3)]));
+        if (ACC) {
+            data_d[get_doffset() + idx] = D_TYPE(FLOAT_TYPE(data_a[get_aoffset() + idx]) + FLOAT_TYPE(data_b[get_boffset() + src1_idx(i0, i1, i2, i3)]));
+        } else {
+            data_d[get_doffset() + idx] = D_TYPE(FLOAT_TYPE(data_b[get_boffset() + src1_idx(i0, i1, i2, i3)]));
+        }
     } else {
         data_d[get_doffset() + idx] = D_TYPE(FLOAT_TYPE(data_a[get_aoffset() + idx]));
     }
