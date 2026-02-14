@@ -581,9 +581,12 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 	opts.WordWrap = !nowrap
 
-	useImagegen, err := cmd.Flags().GetBool("imagegen")
-	if err != nil {
-		return err
+	useImagegen := false
+	if cmd.Flags().Lookup("imagegen") != nil {
+		useImagegen, err = cmd.Flags().GetBool("imagegen")
+		if err != nil {
+			return err
+		}
 	}
 	if useImagegen {
 		opts.Options["use_imagegen_runner"] = true
