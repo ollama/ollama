@@ -306,19 +306,42 @@ func AddMM(c, a, b *Array, alpha, beta float32) *Array {
 
 // Scalar helpers
 
+// scalarWithDtype creates a scalar array matching the dtype of a.
+// Matching dtype is important for graph fusion and avoiding implicit casts.
+func scalarWithDtype(s float32, a *Array) C.mlx_array {
+	f32 := C.mlx_array_new_float(C.float(s))
+	dtype := a.DType()
+	if dtype == DTypeFloat32 {
+		return f32
+	}
+	casted := C.mlx_array_new()
+	C.mlx_astype(&casted, f32, C.mlx_dtype(dtype), DefaultStream().ctx)
+	C.mlx_array_free(f32)
+	return casted
+}
+
 func AddScalar(a *Array, s float32) *Array {
-	scalar := FromValue(s)
-	return a.Add(scalar)
+	scalar := scalarWithDtype(s, a)
+	out := New("ADD_SCALAR", a)
+	C.mlx_add(&out.ctx, a.ctx, scalar, DefaultStream().ctx)
+	C.mlx_array_free(scalar)
+	return out
 }
 
 func MulScalar(a *Array, s float32) *Array {
-	scalar := FromValue(s)
-	return a.Multiply(scalar)
+	scalar := scalarWithDtype(s, a)
+	out := New("MUL_SCALAR", a)
+	C.mlx_multiply(&out.ctx, a.ctx, scalar, DefaultStream().ctx)
+	C.mlx_array_free(scalar)
+	return out
 }
 
 func DivScalar(a *Array, s float32) *Array {
-	scalar := FromValue(s)
-	return a.Divide(scalar)
+	scalar := scalarWithDtype(s, a)
+	out := New("DIV_SCALAR", a)
+	C.mlx_divide(&out.ctx, a.ctx, scalar, DefaultStream().ctx)
+	C.mlx_array_free(scalar)
+	return out
 }
 
 func FloorDivideScalar(a *Array, s int32) *Array {

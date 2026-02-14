@@ -102,13 +102,18 @@ func (mw *ManifestWeights) Load(dtype mlx.Dtype) error {
 		for _, entry := range entries {
 			name := entry.name
 
-			// Try to get tensor by stripped name first, then with component prefix.
-			// Blobs may store tensors with the full prefixed name (e.g., "text_encoder/model.layers.0.weight")
-			// while the tensors map uses stripped names (e.g., "model.layers.0.weight").
+			// Try to get tensor by stripped name first, then with component prefix,
+			// then fall back to "data" for legacy blobs created by older versions
+			// that stored all tensors with the generic key "data".
 			lookupName := name
 			arr := sf.Get(lookupName)
 			if arr == nil && mw.component != "" {
 				lookupName = mw.component + "/" + name
+				arr = sf.Get(lookupName)
+			}
+			if arr == nil {
+				// Legacy blob format: tensor stored as "data"
+				lookupName = "data"
 				arr = sf.Get(lookupName)
 			}
 			if arr != nil {
