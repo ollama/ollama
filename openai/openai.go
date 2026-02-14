@@ -466,24 +466,24 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 			for _, c := range content {
 				data, ok := c.(map[string]any)
 				if !ok {
-					return nil, errors.New("invalid message format")
+					return nil, fmt.Errorf("invalid message content part: expected object with 'type' field, got %T", c)
 				}
 				switch data["type"] {
 				case "text":
 					text, ok := data["text"].(string)
 					if !ok {
-						return nil, errors.New("invalid message format")
+						return nil, fmt.Errorf("invalid 'text' field in message content: expected string, got %T", data["text"])
 					}
 					messages = append(messages, api.Message{Role: msg.Role, Content: text})
 				case "image_url":
 					var url string
 					if urlMap, ok := data["image_url"].(map[string]any); ok {
 						if url, ok = urlMap["url"].(string); !ok {
-							return nil, errors.New("invalid message format")
+							return nil, fmt.Errorf("invalid 'url' field in image_url: expected string, got %T", urlMap["url"])
 						}
 					} else {
 						if url, ok = data["image_url"].(string); !ok {
-							return nil, errors.New("invalid message format")
+							return nil, fmt.Errorf("invalid 'image_url' field: expected string or object with 'url', got %T", data["image_url"])
 						}
 					}
 
@@ -494,7 +494,7 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 
 					messages = append(messages, api.Message{Role: msg.Role, Images: []api.ImageData{img}})
 				default:
-					return nil, errors.New("invalid message format")
+					return nil, fmt.Errorf("unsupported content type: %v (supported types: 'text', 'image_url')", data["type"])
 				}
 			}
 			// since we might have added multiple messages above, if we have tools
