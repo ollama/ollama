@@ -262,6 +262,19 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	var g errgroup.Group
 	g.SetLimit(max(runtime.GOMAXPROCS(0)-1, 1))
 
+	// Find common model directory from file paths
+	modelDir := ""
+	for f := range req.Files {
+		if modelDir == "" {
+			modelDir = filepath.Dir(f)
+		} else {
+			// Find common prefix directory
+			for !strings.HasPrefix(f, modelDir+string(filepath.Separator)) && modelDir != filepath.Dir(modelDir) {
+				modelDir = filepath.Dir(modelDir)
+			}
+		}
+	}
+
 	files := syncmap.NewSyncMap[string, string]()
 	for f, digest := range req.Files {
 		g.Go(func() error {
@@ -269,12 +282,27 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				return err
 			}
 
-			// TODO: this is incorrect since the file might be in a subdirectory
-			//       instead this should take the path relative to the model directory
-			//       but the current implementation does not allow this
-			files.Store(filepath.Base(f), digest)
+			// Use relative path to preserve subdirectory structure
+			relPath, err := filepath.Rel(modelDir, f)
+			if err != nil {
+				// Fallback to basename if relative path fails
+				relPath = filepath.Base(f)
+			}
+			files.Store(filepath.ToSlash(relPath), digest)
 			return nil
 		})
+	}
+
+	// Find common adapter directory
+	adapterDir := ""
+	for f := range req.Adapters {
+		if adapterDir == "" {
+			adapterDir = filepath.Dir(f)
+		} else {
+			for !strings.HasPrefix(f, adapterDir+string(filepath.Separator)) && adapterDir != filepath.Dir(adapterDir) {
+				adapterDir = filepath.Dir(adapterDir)
+			}
+		}
 	}
 
 	adapters := syncmap.NewSyncMap[string, string]()
@@ -284,8 +312,13 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				return err
 			}
 
-			// TODO: same here
-			adapters.Store(filepath.Base(f), digest)
+			// Use relative path to preserve subdirectory structure
+			relPath, err := filepath.Rel(adapterDir, f)
+			if err != nil {
+				// Fallback to basename if relative path fails
+				relPath = filepath.Base(f)
+			}
+			adapters.Store(filepath.ToSlash(relPath), digest)
 			return nil
 		})
 	}
