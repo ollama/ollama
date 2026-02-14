@@ -352,7 +352,7 @@ func (m *Model) ApplyLoraFromFile(context *Context, loraPath string, scale float
 
 	err := -1
 	if loraAdapter != nil {
-		err = int(C.llama_set_adapter_lora(context.c, loraAdapter, C.float(scale)))
+		err = int(C.llama_set_adapters_lora(context.c, &loraAdapter, 1, (*C.float)(&scale)))
 	}
 	if err != 0 {
 		return errors.New("error applying lora from file")
