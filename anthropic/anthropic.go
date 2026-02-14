@@ -19,6 +19,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/auth"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
+	"github.com/ollama/ollama/logutil"
 )
 
 // Error types matching Anthropic API
@@ -271,6 +272,14 @@ type StreamErrorEvent struct {
 // FromMessagesRequest converts an Anthropic MessagesRequest to an Ollama api.ChatRequest
 func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 	var messages []api.Message
+	logutil.Trace("anthropic: converting messages request",
+		"model", r.Model,
+		"messages", len(r.Messages),
+		"tools", len(r.Tools),
+		"stream", r.Stream,
+		"has_system", r.System != nil,
+		"has_thinking", r.Thinking != nil,
+	)
 
 	if r.System != nil {
 		switch sys := r.System.(type) {
@@ -278,6 +287,7 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 			if sys != "" {
 				messages = append(messages, api.Message{Role: "system", Content: sys})
 			}
+			logutil.Trace("anthropic: converted system prompt", "format", "string", "chars", len(sys))
 		case []any:
 			// System can be an array of content blocks
 			var content strings.Builder
@@ -293,12 +303,15 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 			if content.Len() > 0 {
 				messages = append(messages, api.Message{Role: "system", Content: content.String()})
 			}
+			logutil.Trace("anthropic: converted system prompt", "format", "blocks", "blocks", len(sys), "text_chars", content.Len())
 		}
 	}
 
-	for _, msg := range r.Messages {
+	for i, msg := range r.Messages {
+		logutil.Trace("anthropic: converting message", "index", i, "role", msg.Role, "content_type", messageContentType(msg.Content))
 		converted, err := convertMessage(msg)
 		if err != nil {
+			logutil.Trace("anthropic: message conversion failed", "index", i, "role", msg.Role, "error", err)
 			return nil, err
 		}
 		messages = append(messages, converted...)
@@ -338,6 +351,7 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 		// If a user-defined tool also uses that name in the same request, drop the
 		// user-defined one to avoid ambiguous tool-call routing.
 		if hasBuiltinWebSearch && !strings.HasPrefix(t.Type, "web_search") && t.Name == "web_search" {
+			logutil.Trace("anthropic: dropping colliding custom web_search tool", "tool_type", t.Type)
 			continue
 		}
 
@@ -354,6 +368,13 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 	}
 
 	stream := r.Stream
+	logutil.Trace("anthropic: converted messages request",
+		"model", r.Model,
+		"converted_messages", len(messages),
+		"converted_tools", len(tools),
+		"stream", stream,
+		"options", len(options),
+	)
 
 	return &api.ChatRequest{
 		Model:    r.Model,
@@ -365,14 +386,27 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 	}, nil
 }
 
+func messageContentType(content any) string {
+	switch content.(type) {
+	case string:
+		return "string"
+	case []any:
+		return "blocks"
+	default:
+		return fmt.Sprintf("%T", content)
+	}
+}
+
 // convertMessage converts an Anthropic MessageParam to Ollama api.Message(s)
 func convertMessage(msg MessageParam) ([]api.Message, error) {
 	var messages []api.Message
 	role := strings.ToLower(msg.Role)
+	logutil.Trace("anthropic: convertMessage", "role", role, "content_type", messageContentType(msg.Content))
 
 	switch content := msg.Content.(type) {
 	case string:
 		messages = append(messages, api.Message{Role: role, Content: content})
+		logutil.Trace("anthropic: converted string message", "role", role, "chars", len(content))
 
 	case []any:
 		var textContent strings.Builder
@@ -380,10 +414,19 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 		var toolCalls []api.ToolCall
 		var thinking string
 		var toolResults []api.Message
+		textBlocks := 0
+		imageBlocks := 0
+		toolUseBlocks := 0
+		toolResultBlocks := 0
+		serverToolUseBlocks := 0
+		webSearchToolResultBlocks := 0
+		thinkingBlocks := 0
+		unknownBlocks := 0
 
 		for _, block := range content {
 			blockMap, ok := block.(map[string]any)
 			if !ok {
+				logutil.Trace("anthropic: invalid content block format", "role", role)
 				return nil, errors.New("invalid content block format")
 			}
 
@@ -391,13 +434,16 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 
 			switch blockType {
 			case "text":
+				textBlocks++
 				if text, ok := blockMap["text"].(string); ok {
 					textContent.WriteString(text)
 				}
 
 			case "image":
+				imageBlocks++
 				source, ok := blockMap["source"].(map[string]any)
 				if !ok {
+					logutil.Trace("anthropic: invalid image source", "role", role)
 					return nil, errors.New("invalid image source")
 				}
 
@@ -406,21 +452,26 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 					data, _ := source["data"].(string)
 					decoded, err := base64.StdEncoding.DecodeString(data)
 					if err != nil {
+						logutil.Trace("anthropic: invalid base64 image data", "role", role, "error", err)
 						return nil, fmt.Errorf("invalid base64 image data: %w", err)
 					}
 					images = append(images, decoded)
 				} else {
+					logutil.Trace("anthropic: unsupported image source type", "role", role, "source_type", sourceType)
 					return nil, fmt.Errorf("invalid image source type: %s. Only base64 images are supported.", sourceType)
 				}
 				// URL images would need to be fetched - skip for now
 
 			case "tool_use":
+				toolUseBlocks++
 				id, ok := blockMap["id"].(string)
 				if !ok {
+					logutil.Trace("anthropic: tool_use block missing id", "role", role)
 					return nil, errors.New("tool_use block missing required 'id' field")
 				}
 				name, ok := blockMap["name"].(string)
 				if !ok {
+					logutil.Trace("anthropic: tool_use block missing name", "role", role)
 					return nil, errors.New("tool_use block missing required 'name' field")
 				}
 				tc := api.ToolCall{
@@ -435,6 +486,7 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 				toolCalls = append(toolCalls, tc)
 
 			case "tool_result":
+				toolResultBlocks++
 				toolUseID, _ := blockMap["tool_use_id"].(string)
 				var resultContent string
 
@@ -460,11 +512,13 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 				})
 
 			case "thinking":
+				thinkingBlocks++
 				if t, ok := blockMap["thinking"].(string); ok {
 					thinking = t
 				}
 
 			case "server_tool_use":
+				serverToolUseBlocks++
 				id, _ := blockMap["id"].(string)
 				name, _ := blockMap["name"].(string)
 				tc := api.ToolCall{
@@ -479,12 +533,15 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 				toolCalls = append(toolCalls, tc)
 
 			case "web_search_tool_result":
+				webSearchToolResultBlocks++
 				toolUseID, _ := blockMap["tool_use_id"].(string)
 				toolResults = append(toolResults, api.Message{
 					Role:       "tool",
 					Content:    formatWebSearchToolResultContent(blockMap["content"]),
 					ToolCallID: toolUseID,
 				})
+			default:
+				unknownBlocks++
 			}
 		}
 
@@ -501,8 +558,22 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 
 		// Add tool results as separate messages
 		messages = append(messages, toolResults...)
+		logutil.Trace("anthropic: converted block message",
+			"role", role,
+			"blocks", len(content),
+			"text_blocks", textBlocks,
+			"image_blocks", imageBlocks,
+			"tool_use_blocks", toolUseBlocks,
+			"tool_result_blocks", toolResultBlocks,
+			"server_tool_use_blocks", serverToolUseBlocks,
+			"web_search_tool_result_blocks", webSearchToolResultBlocks,
+			"thinking_blocks", thinkingBlocks,
+			"unknown_blocks", unknownBlocks,
+			"out_messages", len(messages),
+		)
 
 	default:
+		logutil.Trace("anthropic: invalid message content type", "role", role, "content_type", fmt.Sprintf("%T", content))
 		return nil, fmt.Errorf("invalid message content type: %T", content)
 	}
 
@@ -573,6 +644,7 @@ func formatWebSearchToolResultContent(content any) string {
 // convertTool converts an Anthropic Tool to an Ollama api.Tool, returning true if it's a server tool
 func convertTool(t Tool) (api.Tool, bool, error) {
 	if strings.HasPrefix(t.Type, "web_search") {
+		logutil.Trace("anthropic: converting tool", "tool_type", t.Type, "builtin_web_search", true)
 		props := api.NewToolPropertiesMap()
 		props.Set("query", api.ToolProperty{
 			Type:        api.PropertyType{"string"},
@@ -595,9 +667,11 @@ func convertTool(t Tool) (api.Tool, bool, error) {
 	var params api.ToolFunctionParameters
 	if len(t.InputSchema) > 0 {
 		if err := json.Unmarshal(t.InputSchema, &params); err != nil {
+			logutil.Trace("anthropic: invalid custom tool schema", "tool_type", t.Type, "error", err)
 			return api.Tool{}, false, fmt.Errorf("invalid input_schema for tool %q: %w", t.Name, err)
 		}
 	}
+	logutil.Trace("anthropic: converting tool", "tool_type", t.Type, "builtin_web_search", false, "has_schema", len(t.InputSchema) > 0)
 
 	return api.Tool{
 		Type: "function",
@@ -1077,6 +1151,7 @@ var WebSearchEndpoint = "https://ollama.com/api/web_search"
 
 func WebSearch(ctx context.Context, query string, maxResults int) (*OllamaWebSearchResponse, error) {
 	if internalcloud.Disabled() {
+		logutil.TraceContext(ctx, "anthropic: web search blocked", "reason", "cloud_disabled")
 		return nil, errors.New(internalcloud.DisabledError("web search is unavailable"))
 	}
 
@@ -1101,16 +1176,26 @@ func WebSearch(ctx context.Context, query string, maxResults int) (*OllamaWebSea
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse web search URL: %w", err)
 	}
+	logutil.TraceContext(ctx, "anthropic: web search request",
+		"host", searchURL.Hostname(),
+		"path", searchURL.Path,
+		"max_results", maxResults,
+		"query_len", len(strings.TrimSpace(query)),
+	)
 
 	q := searchURL.Query()
 	q.Set("ts", strconv.FormatInt(time.Now().Unix(), 10))
 	searchURL.RawQuery = q.Encode()
 
-	challenge := fmt.Sprintf("%s,%s", http.MethodPost, searchURL.RequestURI())
-	signature, err := auth.Sign(ctx, []byte(challenge))
-	if err != nil {
-		return nil, fmt.Errorf("failed to sign web search request: %w", err)
+	signature := ""
+	if strings.EqualFold(searchURL.Hostname(), "ollama.com") {
+		challenge := fmt.Sprintf("%s,%s", http.MethodPost, searchURL.RequestURI())
+		signature, err = auth.Sign(ctx, []byte(challenge))
+		if err != nil {
+			return nil, fmt.Errorf("failed to sign web search request: %w", err)
+		}
 	}
+	logutil.TraceContext(ctx, "anthropic: web search auth mode", "signed", signature != "")
 
 	req, err := http.NewRequestWithContext(ctx, "POST", searchURL.String(), bytes.NewReader(body))
 	if err != nil {
@@ -1127,6 +1212,7 @@ func WebSearch(ctx context.Context, query string, maxResults int) (*OllamaWebSea
 		return nil, fmt.Errorf("web search request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	logutil.TraceContext(ctx, "anthropic: web search response received", "status", resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -1137,6 +1223,7 @@ func WebSearch(ctx context.Context, query string, maxResults int) (*OllamaWebSea
 	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
 		return nil, fmt.Errorf("failed to decode web search response: %w", err)
 	}
+	logutil.TraceContext(ctx, "anthropic: web search decoded", "results", len(searchResp.Results))
 
 	return &searchResp, nil
 }

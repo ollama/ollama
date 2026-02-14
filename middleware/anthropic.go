@@ -17,6 +17,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
+	"github.com/ollama/ollama/logutil"
 )
 
 // AnthropicWriter wraps the response writer to transform Ollama responses to Anthropic format
@@ -158,6 +159,13 @@ func (w *WebSearchAnthropicWriter) Write(data []byte) (int, error) {
 	}
 
 	webSearchCall, hasWebSearch, hasOtherTools := findWebSearchToolCall(chatResponse.Message.ToolCalls)
+	logutil.Trace("anthropic middleware: processed upstream chunk",
+		"stream", w.stream,
+		"done", chatResponse.Done,
+		"tool_calls", len(chatResponse.Message.ToolCalls),
+		"has_web_search", hasWebSearch,
+		"has_other_tools", hasOtherTools,
+	)
 	if hasWebSearch && hasOtherTools {
 		// Prefer web_search if both server and client tools are present in one chunk.
 		slog.Debug("preferring web_search tool call over client tool calls in mixed tool response")
@@ -175,6 +183,7 @@ func (w *WebSearchAnthropicWriter) Write(data []byte) (int, error) {
 
 	if w.stream {
 		// Let the original generation continue to completion while web search runs in parallel.
+		logutil.Trace("anthropic middleware: starting async web_search loop", "query_len", len(strings.TrimSpace(extractQueryFromToolCall(&webSearchCall))))
 		w.startLoopWorker(chatResponse, webSearchCall)
 		if chatResponse.Done {
 			if err := w.writeLoopResult(); err != nil {
@@ -191,6 +200,11 @@ func (w *WebSearchAnthropicWriter) Write(data []byte) (int, error) {
 		InputTokens:  max(w.observedPromptEvalCount, chatResponse.Metrics.PromptEvalCount),
 		OutputTokens: max(w.observedEvalCount, chatResponse.Metrics.EvalCount),
 	}
+	logutil.Trace("anthropic middleware: starting sync web_search loop",
+		"query_len", len(strings.TrimSpace(extractQueryFromToolCall(&webSearchCall))),
+		"initial_input_tokens", initialUsage.InputTokens,
+		"initial_output_tokens", initialUsage.OutputTokens,
+	)
 	response, loopErr := w.runWebSearchLoop(loopCtx, chatResponse, webSearchCall, initialUsage)
 	if loopErr != nil {
 		return len(data), w.sendError(loopErr.code, loopErr.query, loopErr.usage)
@@ -209,6 +223,12 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 
 	followUpTools := append(api.Tools(nil), w.chatReq.Tools...)
 	usage := initialUsage
+	logutil.TraceContext(ctx, "anthropic middleware: web_search loop initialized",
+		"model", w.req.Model,
+		"messages", len(followUpMessages),
+		"tools", len(followUpTools),
+		"max_loops", maxWebSearchLoops,
+	)
 
 	currentResponse := initialResponse
 	currentToolCall := initialToolCall
@@ -216,6 +236,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 	var serverContent []anthropic.ContentBlock
 
 	if !isCloudModelName(w.req.Model) {
+		logutil.TraceContext(ctx, "anthropic middleware: web_search execution blocked", "reason", "non_cloud_model")
 		return anthropic.MessagesResponse{}, &webSearchLoopError{
 			code:  "web_search_not_supported_for_local_models",
 			query: extractQueryFromToolCall(&initialToolCall),
@@ -225,6 +246,12 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 
 	for loop := 1; loop <= maxWebSearchLoops; loop++ {
 		query := extractQueryFromToolCall(&currentToolCall)
+		logutil.TraceContext(ctx, "anthropic middleware: web_search loop iteration",
+			"loop", loop,
+			"query_len", len(strings.TrimSpace(query)),
+			"followup_messages", len(followUpMessages),
+			"followup_tools", len(followUpTools),
+		)
 		if query == "" {
 			return anthropic.MessagesResponse{}, &webSearchLoopError{
 				code:  "invalid_request",
@@ -236,6 +263,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 		const defaultMaxResults = 5
 		searchResp, err := anthropic.WebSearch(ctx, query, defaultMaxResults)
 		if err != nil {
+			logutil.TraceContext(ctx, "anthropic middleware: web_search request failed", "loop", loop, "error", err)
 			return anthropic.MessagesResponse{}, &webSearchLoopError{
 				code:  "unavailable",
 				query: query,
@@ -243,6 +271,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 				err:   err,
 			}
 		}
+		logutil.TraceContext(ctx, "anthropic middleware: web_search request succeeded", "loop", loop, "results", len(searchResp.Results))
 
 		toolUseID := loopServerToolUseID(w.inner.id, loop)
 		searchResults := anthropic.ConvertOllamaToAnthropicResults(searchResp)
@@ -270,6 +299,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 
 		followUpResponse, err := w.callFollowUpChat(ctx, followUpMessages, followUpTools)
 		if err != nil {
+			logutil.TraceContext(ctx, "anthropic middleware: followup /api/chat failed", "loop", loop, "error", err)
 			return anthropic.MessagesResponse{}, &webSearchLoopError{
 				code:  "api_error",
 				query: query,
@@ -277,6 +307,12 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 				err:   err,
 			}
 		}
+		logutil.TraceContext(ctx, "anthropic middleware: followup /api/chat succeeded",
+			"loop", loop,
+			"tool_calls", len(followUpResponse.Message.ToolCalls),
+			"prompt_eval", followUpResponse.Metrics.PromptEvalCount,
+			"eval", followUpResponse.Metrics.EvalCount,
+		)
 
 		usage.InputTokens += followUpResponse.Metrics.PromptEvalCount
 		usage.OutputTokens += followUpResponse.Metrics.EvalCount
@@ -288,6 +324,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 		}
 
 		if !hasWebSearch {
+			logutil.TraceContext(ctx, "anthropic middleware: web_search loop complete", "loop", loop, "final_tool_calls", len(followUpResponse.Message.ToolCalls))
 			return w.combineServerAndFinalContent(serverContent, followUpResponse, usage), nil
 		}
 
@@ -296,6 +333,10 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 	}
 
 	maxLoopQuery := extractQueryFromToolCall(&currentToolCall)
+	logutil.TraceContext(ctx, "anthropic middleware: web_search loop max reached",
+		"max_loops", maxWebSearchLoops,
+		"query_len", len(strings.TrimSpace(maxLoopQuery)),
+	)
 	maxLoopToolUseID := loopServerToolUseID(w.inner.id, maxWebSearchLoops+1)
 	serverContent = append(serverContent,
 		anthropic.ContentBlock{
@@ -338,6 +379,11 @@ func (w *WebSearchAnthropicWriter) startLoopWorker(initialResponse api.ChatRespo
 	w.loopBaseOutputTok = initialUsage.OutputTokens
 	w.loopResultCh = make(chan webSearchLoopResult, 1)
 	w.loopInFlight = true
+	logutil.Trace("anthropic middleware: loop worker started",
+		"initial_input_tokens", initialUsage.InputTokens,
+		"initial_output_tokens", initialUsage.OutputTokens,
+		"query_len", len(strings.TrimSpace(extractQueryFromToolCall(&initialToolCall))),
+	)
 
 	go func() {
 		ctx, cancel := w.startLoopContext()
@@ -360,10 +406,15 @@ func (w *WebSearchAnthropicWriter) writeLoopResult() error {
 	w.loopResultCh = nil
 	w.loopInFlight = false
 	if result.loopErr != nil {
+		logutil.Trace("anthropic middleware: loop worker returned error", "code", result.loopErr.code, "query_len", len(strings.TrimSpace(result.loopErr.query)))
 		usage := result.loopErr.usage
 		w.applyObservedUsageDeltaToUsage(&usage)
 		return w.sendError(result.loopErr.code, result.loopErr.query, usage)
 	}
+	logutil.Trace("anthropic middleware: loop worker returned response",
+		"content_blocks", len(result.response.Content),
+		"stop_reason", result.response.StopReason,
+	)
 
 	w.applyObservedUsageDelta(&result.response)
 	return w.writeTerminalResponse(result.response)
@@ -493,6 +544,12 @@ func (w *WebSearchAnthropicWriter) callFollowUpChat(ctx context.Context, message
 	}
 
 	chatURL := envconfig.Host().String() + "/api/chat"
+	logutil.TraceContext(ctx, "anthropic middleware: followup request",
+		"url", chatURL,
+		"model", followUp.Model,
+		"messages", len(followUp.Messages),
+		"tools", len(followUp.Tools),
+	)
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", chatURL, bytes.NewReader(body))
 	if err != nil {
 		return api.ChatResponse{}, err
@@ -507,6 +564,7 @@ func (w *WebSearchAnthropicWriter) callFollowUpChat(ctx context.Context, message
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
+		logutil.TraceContext(ctx, "anthropic middleware: followup non-200 response", "status", resp.StatusCode)
 		return api.ChatResponse{}, fmt.Errorf("followup /api/chat returned status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 
@@ -514,6 +572,11 @@ func (w *WebSearchAnthropicWriter) callFollowUpChat(ctx context.Context, message
 	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
 		return api.ChatResponse{}, err
 	}
+	logutil.TraceContext(ctx, "anthropic middleware: followup decoded response",
+		"tool_calls", len(chatResp.Message.ToolCalls),
+		"prompt_eval", chatResp.Metrics.PromptEvalCount,
+		"eval", chatResp.Metrics.EvalCount,
+	)
 
 	return chatResp, nil
 }
@@ -734,6 +797,12 @@ func (w *WebSearchAnthropicWriter) webSearchErrorResponse(errorCode, query strin
 
 // sendError sends a web search error response.
 func (w *WebSearchAnthropicWriter) sendError(errorCode, query string, usage anthropic.Usage) error {
+	logutil.Trace("anthropic middleware: sending web_search error response",
+		"error_code", errorCode,
+		"query_len", len(strings.TrimSpace(query)),
+		"input_tokens", usage.InputTokens,
+		"output_tokens", usage.OutputTokens,
+	)
 	return w.writeTerminalResponse(w.webSearchErrorResponse(errorCode, query, usage))
 }
 
