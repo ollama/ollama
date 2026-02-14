@@ -434,16 +434,24 @@ func ParseFile(r io.Reader) (*Modelfile, error) {
 					cmd.Name = s
 				}
 			case stateParameter:
-				cmd.Name = b.String()
-			case stateMessage:
-				if !isValidMessageRole(b.String()) {
-					return nil, &ParserError{
-						LineNumber: currLine,
-						Msg:        errInvalidMessageRole.Error(),
-					}
+				if b.Len() == 0 {
+					next = stateParameter
+				} else {
+					cmd.Name = b.String()
 				}
+			case stateMessage:
+				if b.Len() == 0 {
+					next = stateMessage
+				} else {
+					if !isValidMessageRole(b.String()) {
+						return nil, &ParserError{
+							LineNumber: currLine,
+							Msg:        errInvalidMessageRole.Error(),
+						}
+					}
 
-				role = b.String()
+					role = b.String()
+				}
 			case stateComment, stateNil:
 				// pass
 			case stateValue:
