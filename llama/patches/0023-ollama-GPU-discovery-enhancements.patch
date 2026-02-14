@@ -51,7 +51,7 @@ index dbcb5ef5d..ab763741d 100644
  
  set_target_properties(ggml-base PROPERTIES
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 4e165d3c0..4d60d7b70 100644
+index 0228c6e10..91f4f3641 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -262,6 +262,16 @@ static ggml_cuda_device_info ggml_cuda_init() {
@@ -71,7 +71,7 @@ index 4e165d3c0..4d60d7b70 100644
  #if defined(GGML_USE_VMM)
          CUdevice device;
          CU_CHECK(cuDeviceGet(&device, id));
-@@ -4524,6 +4534,11 @@ struct ggml_backend_cuda_device_context {
+@@ -4526,6 +4536,11 @@ struct ggml_backend_cuda_device_context {
      std::string description;
      std::string pci_bus_id;
      std::string id;
@@ -83,7 +83,7 @@ index 4e165d3c0..4d60d7b70 100644
      int op_offload_min_batch_size;
  };
  
-@@ -4621,6 +4636,28 @@ static const char * ggml_backend_cuda_device_get_id(ggml_backend_dev_t dev) {
+@@ -4623,6 +4638,28 @@ static const char * ggml_backend_cuda_device_get_id(ggml_backend_dev_t dev) {
  static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t * free, size_t * total) {
      ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
      ggml_cuda_set_device(ctx->device);
@@ -112,7 +112,7 @@ index 4e165d3c0..4d60d7b70 100644
      CUDA_CHECK(cudaMemGetInfo(free, total));
  
  // ref: https://github.com/ggml-org/llama.cpp/pull/17368
-@@ -4653,6 +4690,7 @@ static enum ggml_backend_dev_type ggml_backend_cuda_device_get_type(ggml_backend
+@@ -4655,6 +4692,7 @@ static enum ggml_backend_dev_type ggml_backend_cuda_device_get_type(ggml_backend
      return GGML_BACKEND_DEVICE_TYPE_GPU;
  }
  
@@ -120,7 +120,7 @@ index 4e165d3c0..4d60d7b70 100644
  static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
      ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
  
-@@ -4661,7 +4699,22 @@ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_back
+@@ -4663,7 +4701,22 @@ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_back
      props->id          = ggml_backend_cuda_device_get_id(dev);
      props->type        = ggml_backend_cuda_device_get_type(dev);
      props->device_id   = ctx->pci_bus_id.empty() ? nullptr : ctx->pci_bus_id.c_str();
@@ -144,7 +144,7 @@ index 4e165d3c0..4d60d7b70 100644
  
      bool host_buffer = getenv("GGML_CUDA_NO_PINNED") == nullptr;
  #ifdef GGML_CUDA_NO_PEER_COPY
-@@ -5263,6 +5316,7 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
+@@ -5268,6 +5321,7 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
          if (!initialized) {
              ggml_backend_cuda_reg_context * ctx = new ggml_backend_cuda_reg_context;
              const int min_batch_size = getenv("GGML_OP_OFFLOAD_MIN_BATCH") ? atoi(getenv("GGML_OP_OFFLOAD_MIN_BATCH")) : 32;
@@ -152,7 +152,7 @@ index 4e165d3c0..4d60d7b70 100644
  
              for (int i = 0; i < ggml_cuda_info().device_count; i++) {
                  ggml_backend_cuda_device_context * dev_ctx = new ggml_backend_cuda_device_context;
-@@ -5277,6 +5331,15 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
+@@ -5282,6 +5336,15 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
                  char pci_bus_id[16] = {};
                  snprintf(pci_bus_id, sizeof(pci_bus_id), "%04x:%02x:%02x.0", prop.pciDomainID, prop.pciBusID, prop.pciDeviceID);
                  dev_ctx->pci_bus_id = pci_bus_id;
@@ -229,7 +229,7 @@ index ba12c7c14..128c10fa0 100644
          /* .async                = */ true,
          /* .host_buffer          = */ false,
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 8b6447344..1ecf935d3 100644
+index 982a8816e..6cd6f1c9b 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -242,6 +242,7 @@ class vk_memory_logger;
