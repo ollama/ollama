@@ -1856,7 +1856,7 @@ func TestWebSearchCloudModelGating(t *testing.T) {
 	})
 }
 
-func TestWebSearchUsesBearerAuthorizationHeader(t *testing.T) {
+func TestWebSearchDoesNotRequireAuthorizationHeaderForMockEndpoint(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	var authHeader string
@@ -1928,11 +1928,8 @@ func TestWebSearchUsesBearerAuthorizationHeader(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
 	}
-	if authHeader == "" {
-		t.Fatal("expected Authorization header on web search request")
-	}
-	if !strings.HasPrefix(authHeader, "Bearer ") {
-		t.Fatalf("expected Bearer Authorization header, got %q", authHeader)
+	if authHeader != "" {
+		t.Fatalf("expected no Authorization header for mock web search endpoint, got %q", authHeader)
 	}
 }
 
