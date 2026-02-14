@@ -21,8 +21,6 @@ type tokenizeFunc func(context.Context, string) ([]int, error)
 // chatPrompt truncates any messages that exceed the context window of the model, making sure to always include 1) the
 // latest message and 2) system messages
 func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool, think *api.ThinkValue, truncate bool) (prompt string, images []llm.ImageData, _ error) {
-	var system []api.Message
-
 	// TODO: Ideally we would compute this from the projector metadata but some pieces are implementation dependent
 	// Clip images are represented as 768 tokens, each an embedding
 	imageNumTokens := 768
@@ -30,24 +28,36 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	lastMsgIdx := len(msgs) - 1
 	currMsgIdx := 0
 
-	// Start with all messages and remove from the front until it fits in context
-	for i := 0; i <= lastMsgIdx; i++ {
-		// Collect system messages from the portion we're about to skip
-		system = make([]api.Message, 0)
+	// TODO: chatPrompt tokenizes here only to count tokens for the context
+	// window check, then discards the token IDs. The final rendered prompt
+	// (produced at the bottom of this function) is sent as text to the runner
+	// process, which re-tokenizes it from scratch in runner/ollamarunner via
+	// tokenizer.Tokenizer.Encode. This means every chat request tokenizes the
+	// full prompt at least twice using the same Go byte-pair encoding codepath.
+	// Passing the token IDs from this step directly to the runner (e.g. by
+	// adding a Tokens field to llm.CompletionRequest) would eliminate the
+	// redundant second tokenization entirely.
+
+	// fitsContext reports whether the rendered prompt starting from message
+	// index i (with system messages from msgs[:i] prepended) fits within the
+	// context window. Token count is monotonically non-increasing as i grows,
+	// since increasing i only drops non-system messages.
+	fitsContext := func(i int) (bool, error) {
+		var sys []api.Message
 		for j := range i {
 			if msgs[j].Role == "system" {
-				system = append(system, msgs[j])
+				sys = append(sys, msgs[j])
 			}
 		}
 
-		p, err := renderPrompt(m, append(system, msgs[i:]...), tools, think)
+		p, err := renderPrompt(m, append(sys, msgs[i:]...), tools, think)
 		if err != nil {
-			return "", nil, err
+			return false, err
 		}
 
 		s, err := tokenize(ctx, p)
 		if err != nil {
-			return "", nil, err
+			return false, err
 		}
 
 		ctxLen := len(s)
@@ -57,15 +67,43 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 			}
 		}
 
-		if !truncate || ctxLen <= opts.NumCtx {
-			currMsgIdx = i
-			break
+		return ctxLen <= opts.NumCtx, nil
+	}
+
+	if truncate {
+		// Try the full prompt first — this is the common case where
+		// everything fits and requires only a single tokenize call.
+		fits, err := fitsContext(0)
+		if err != nil {
+			return "", nil, err
 		}
 
-		// Must always include at least the last message
-		if i == lastMsgIdx {
-			currMsgIdx = lastMsgIdx
-			break
+		if !fits && lastMsgIdx > 0 {
+			// Binary search for the smallest i in [1, lastMsgIdx] where
+			// the prompt fits. If nothing fits, converges to lastMsgIdx
+			// which is always included as a last resort.
+			low, high := 1, lastMsgIdx
+			for low < high {
+				mid := low + (high-low)/2
+				fits, err := fitsContext(mid)
+				if err != nil {
+					return "", nil, err
+				}
+				if fits {
+					high = mid
+				} else {
+					low = mid + 1
+				}
+			}
+			currMsgIdx = low
+		}
+	}
+
+	// Collect system messages from the portion we skipped
+	var system []api.Message
+	for j := range currMsgIdx {
+		if msgs[j].Role == "system" {
+			system = append(system, msgs[j])
 		}
 	}
 

@@ -53,32 +53,7 @@ func (spm SentencePiece) Is(id int32, special Special) bool {
 }
 
 func (spm SentencePiece) Encode(s string, addSpecial bool) ([]int32, error) {
-	fragments := []fragment{{value: s}}
-	for _, special := range spm.vocab.SpecialVocabulary() {
-		id := spm.vocab.Encode(special)
-		for i := 0; i < len(fragments); i++ {
-			frag := fragments[i]
-			if len(frag.ids) > 0 {
-				continue
-			}
-
-			var middle []fragment
-			switch i := strings.Index(frag.value, special); {
-			case i < 0:
-				middle = append(middle, frag)
-			case i > 0:
-				middle = append(middle, fragment{value: frag.value[:i]})
-				fallthrough
-			default:
-				middle = append(middle, fragment{value: special, ids: []int32{id}})
-				if rest := frag.value[i+len(special):]; rest != "" {
-					middle = append(middle, fragment{value: rest})
-				}
-			}
-
-			fragments = append(fragments[:i], append(middle, fragments[i+1:]...)...)
-		}
-	}
+	fragments := splitSpecialTokens(s, spm.vocab)
 
 	var ids []int32
 	for _, frag := range fragments {
