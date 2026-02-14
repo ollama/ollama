@@ -3,6 +3,7 @@ package openai
 
 import (
 	"bytes"
+	cryptorand "crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -837,4 +838,15 @@ func FromImageEditRequest(r ImageEditRequest) (api.GenerateRequest, error) {
 	}
 
 	return req, nil
+}
+
+// GenerateID generates a unique ID with the given prefix using crypto/rand.
+// The format matches OpenAI-style IDs (e.g., "chatcmpl-7Z3nR4v8T2b1...").
+func GenerateID(prefix string) string {
+	b := make([]byte, 18)
+	if _, err := cryptorand.Read(b); err != nil {
+		// Fallback to time-based ID if crypto/rand fails
+		return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
+	}
+	return fmt.Sprintf("%s-%s", prefix, base64.RawURLEncoding.EncodeToString(b))
 }

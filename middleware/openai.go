@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"strings"
 	"time"
@@ -333,7 +332,7 @@ func CompletionsMiddleware() gin.HandlerFunc {
 		w := &CompleteWriter{
 			BaseWriter:    BaseWriter{ResponseWriter: c.Writer},
 			stream:        req.Stream,
-			id:            fmt.Sprintf("cmpl-%d", rand.Intn(999)),
+			id:            openai.GenerateID("cmpl"),
 			streamOptions: req.StreamOptions,
 		}
 
@@ -425,7 +424,7 @@ func ChatMiddleware() gin.HandlerFunc {
 		w := &ChatWriter{
 			BaseWriter:    BaseWriter{ResponseWriter: c.Writer},
 			stream:        req.Stream,
-			id:            fmt.Sprintf("chatcmpl-%d", rand.Intn(999)),
+			id:            openai.GenerateID("chatcmpl"),
 			streamOptions: req.StreamOptions,
 		}
 
@@ -522,8 +521,8 @@ func ResponsesMiddleware() gin.HandlerFunc {
 
 		c.Request.Body = io.NopCloser(&b)
 
-		responseID := fmt.Sprintf("resp_%d", rand.Intn(999999))
-		itemID := fmt.Sprintf("msg_%d", rand.Intn(999999))
+		responseID := openai.GenerateID("resp")
+		itemID := openai.GenerateID("msg")
 
 		w := &ResponsesWriter{
 			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
