@@ -121,6 +121,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
     { LLM_ARCH_MIMO2,            "mimo2"           },
     { LLM_ARCH_LLAMA_EMBED,      "llama-embed"      },
     { LLM_ARCH_MAINCODER,        "maincoder"        },
+    { LLM_ARCH_KIMI_LINEAR,      "kimi-linear"      },
     { LLM_ARCH_UNKNOWN,          "(unknown)"        },
 };
 
@@ -248,6 +249,8 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
     { LLM_KV_SSM_GROUP_COUNT,    "%s.ssm.group_count"    },
     { LLM_KV_SSM_DT_B_C_RMS,     "%s.ssm.dt_b_c_rms"     },
 
+    { LLM_KV_KDA_HEAD_DIM, "%s.kda.head_dim" },
+
     { LLM_KV_WKV_HEAD_SIZE, "%s.wkv.head_size" },
 
     { LLM_KV_POSNET_EMBEDDING_LENGTH, "%s.posnet.embedding_length" },
@@ -374,6 +377,15 @@ static const std::map<llm_tensor, const char *> LLM_TENSOR_NAMES = {
     { LLM_TENSOR_SSM_DT_NORM,                            "blk.%d.ssm_dt_norm" },
     { LLM_TENSOR_SSM_B_NORM,                             "blk.%d.ssm_b_norm" },
     { LLM_TENSOR_SSM_C_NORM,                             "blk.%d.ssm_c_norm" },
+    { LLM_TENSOR_SSM_CONV1D_Q,                           "blk.%d.ssm_conv1d_q" },
+    { LLM_TENSOR_SSM_CONV1D_K,                           "blk.%d.ssm_conv1d_k" },
+    { LLM_TENSOR_SSM_CONV1D_V,                           "blk.%d.ssm_conv1d_v" },
+    { LLM_TENSOR_SSM_F_A,                                "blk.%d.ssm_f_a" },
+    { LLM_TENSOR_SSM_F_B,                                "blk.%d.ssm_f_b" },
+    { LLM_TENSOR_SSM_BETA,                               "blk.%d.ssm_beta" },
+    { LLM_TENSOR_SSM_G_A,                                "blk.%d.ssm_g_a" },
+    { LLM_TENSOR_SSM_G_B,                                "blk.%d.ssm_g_b" },
+    { LLM_TENSOR_SSM_NORM,                               "blk.%d.ssm_norm" },
     { LLM_TENSOR_ATTN_Q_A_NORM,                          "blk.%d.attn_q_a_norm" },
     { LLM_TENSOR_ATTN_KV_A_NORM,                         "blk.%d.attn_kv_a_norm" },
     { LLM_TENSOR_ATTN_Q_A,                               "blk.%d.attn_q_a" },
@@ -2300,13 +2312,61 @@ static std::set<llm_tensor> llm_get_tensor_names(llm_arch arch) {
                 LLM_TENSOR_ATTN_NORM,
                 LLM_TENSOR_ATTN_Q,
                 LLM_TENSOR_ATTN_K,
-                LLM_TENSOR_ATTN_V,
+               LLM_TENSOR_ATTN_V,
                 LLM_TENSOR_ATTN_OUT,
                 LLM_TENSOR_FFN_NORM,
                 LLM_TENSOR_FFN_GATE,
                 LLM_TENSOR_FFN_DOWN,
                 LLM_TENSOR_FFN_UP,
                 LLM_TENSOR_BSKCN_TV,
+            };
+        case LLM_ARCH_KIMI_LINEAR:
+            return {
+                LLM_TENSOR_TOKEN_EMBD,
+                LLM_TENSOR_OUTPUT_NORM,
+                LLM_TENSOR_OUTPUT,
+                LLM_TENSOR_ROPE_FREQS,
+                LLM_TENSOR_ATTN_NORM,
+                LLM_TENSOR_ATTN_Q,
+                LLM_TENSOR_ATTN_K,
+                LLM_TENSOR_ATTN_V,
+                LLM_TENSOR_ATTN_OUT,
+                LLM_TENSOR_FFN_NORM,
+                // Dense FFN (layer 0 only)
+                LLM_TENSOR_FFN_GATE,
+                LLM_TENSOR_FFN_DOWN,
+                LLM_TENSOR_FFN_UP,
+                // MoE FFN (layers 1+)
+                LLM_TENSOR_FFN_GATE_INP,
+                LLM_TENSOR_FFN_GATE_EXPS,
+                LLM_TENSOR_FFN_DOWN_EXPS,
+                LLM_TENSOR_FFN_UP_EXPS,
+                LLM_TENSOR_FFN_EXP_PROBS_B,
+                // Shared experts
+                LLM_TENSOR_FFN_GATE_SHEXP,
+                LLM_TENSOR_FFN_DOWN_SHEXP,
+                LLM_TENSOR_FFN_UP_SHEXP,
+                // KDA (using SSM_ enum prefix, keeping GGUF names for backward compat)
+                LLM_TENSOR_SSM_CONV1D_Q,
+                LLM_TENSOR_SSM_CONV1D_K,
+                LLM_TENSOR_SSM_CONV1D_V,
+                LLM_TENSOR_SSM_F_A,
+                LLM_TENSOR_SSM_F_B,
+                LLM_TENSOR_SSM_BETA,
+                LLM_TENSOR_SSM_A,
+                LLM_TENSOR_SSM_G_A,
+                LLM_TENSOR_SSM_G_B,
+                LLM_TENSOR_SSM_DT,
+                LLM_TENSOR_SSM_NORM,
+                // MLA
+                LLM_TENSOR_ATTN_Q_A,
+                LLM_TENSOR_ATTN_Q_B,
+                LLM_TENSOR_ATTN_Q_A_NORM,
+                LLM_TENSOR_ATTN_KV_A_MQA,
+                LLM_TENSOR_ATTN_KV_B,
+                LLM_TENSOR_ATTN_K_B,
+                LLM_TENSOR_ATTN_V_B,
+                LLM_TENSOR_ATTN_KV_A_NORM,
             };
         default:
             GGML_ABORT("unknown architecture for tensor mapping");
@@ -2411,6 +2471,15 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
     {LLM_TENSOR_SSM_C_NORM,                 {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
     {LLM_TENSOR_SSM_D,                      {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
     {LLM_TENSOR_SSM_NORM,                   {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
+    // Kimi KDA - Conv tensors are 4D [d_conv, 1, d_inner, 1], reshaped to 2D at runtime
+    {LLM_TENSOR_SSM_CONV1D_Q,               {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
+    {LLM_TENSOR_SSM_CONV1D_K,               {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
+    {LLM_TENSOR_SSM_CONV1D_V,               {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
+    {LLM_TENSOR_SSM_F_A,                    {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
+    {LLM_TENSOR_SSM_F_B,                    {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
+    {LLM_TENSOR_SSM_BETA,                   {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
+    {LLM_TENSOR_SSM_G_A,                    {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
+    {LLM_TENSOR_SSM_G_B,                    {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
     {LLM_TENSOR_TIME_MIX_LERP_X,            {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
     {LLM_TENSOR_TIME_MIX_LN,                {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
     {LLM_TENSOR_CHANNEL_MIX_LERP_K,         {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
@@ -2593,6 +2662,7 @@ bool llm_arch_is_hybrid(const llm_arch & arch) {
         case LLM_ARCH_NEMOTRON_H:
         case LLM_ARCH_NEMOTRON_H_MOE:
         case LLM_ARCH_QWEN3NEXT:
+        case LLM_ARCH_KIMI_LINEAR:
             return true;
         default:
             return false;

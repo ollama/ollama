@@ -119,6 +119,7 @@ enum llm_type {
     LLM_TYPE_21B_A3B, // Ernie MoE small
     LLM_TYPE_30B_A3B,
     LLM_TYPE_31B_A3_5B,
+    LLM_TYPE_48B_A3B, // Kimi Linear
     LLM_TYPE_80B_A3B, // Qwen3 Next
     LLM_TYPE_100B_A6B,
     LLM_TYPE_102B_A12B, // Solar-Open
@@ -411,6 +412,18 @@ struct llama_layer {
     struct ggml_tensor * ffn_act_alpha_p = nullptr;
     struct ggml_tensor * ffn_act_beta    = nullptr;
     struct ggml_tensor * ffn_act_eps     = nullptr;
+
+    // Kimi Linear KDA (using ssm_ prefix for consistency)
+    // Note: ssm_dt_b already exists above (mamba bias), reused for Kimi dt_bias
+    struct ggml_tensor * ssm_q_conv = nullptr;
+    struct ggml_tensor * ssm_k_conv = nullptr;
+    struct ggml_tensor * ssm_v_conv = nullptr;
+    struct ggml_tensor * ssm_f_a    = nullptr;
+    struct ggml_tensor * ssm_f_b    = nullptr;
+    struct ggml_tensor * ssm_beta   = nullptr;
+    struct ggml_tensor * ssm_g_a    = nullptr;
+    struct ggml_tensor * ssm_g_b    = nullptr;
+    struct ggml_tensor * ssm_o_norm = nullptr;
 
     struct ggml_tensor * bskcn_tv = nullptr;
 

@@ -787,9 +787,9 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         quantize &= name != LLM_TN(model.arch)(LLM_TENSOR_POS_EMBD,    "weight");
         quantize &= name != LLM_TN(model.arch)(LLM_TENSOR_TOKEN_TYPES, "weight");
 
-        // do not quantize Mamba's small yet 2D weights
+        // do not quantize Mamba /Kimi's small conv1d weights
         // NOTE: can't use LLM_TN here because the layer number is not known
-        quantize &= name.find("ssm_conv1d.weight") == std::string::npos;
+        quantize &= name.find("ssm_conv1d") == std::string::npos;
         quantize &= name.find("shortconv.conv.weight") == std::string::npos;
 
         // do not quantize RWKV's small yet 2D weights
