@@ -707,6 +707,8 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 		return nil, errors.New("failed to allocate memory for model")
 	}
 
+	s.logGPUOffloadStatus(gpuLayers, len(systemGPUs))
+
 	// The llama engine does its memory allocations together with model loading, so we
 	// need to wait until it is done to ensure that we have accurate memory data before
 	// loading the next model
@@ -895,7 +897,25 @@ nextOperation:
 		return nil, errors.New("failed to commit memory for model")
 	}
 
+	s.logGPUOffloadStatus(gpuLayers, len(gpus))
+
 	return uniqueDeviceIDs(gpuLayers), nil
+}
+
+// logGPUOffloadStatus logs a warning when the model is partially or fully running on CPU
+// despite GPUs being available, helping users diagnose unexpected performance issues.
+func (s *llmServer) logGPUOffloadStatus(gpuLayers ml.GPULayersList, numGPUs int) {
+	gpuLayerCount := gpuLayers.Sum()
+	cpuLayerCount := int(s.totalLayers) - gpuLayerCount
+	if cpuLayerCount > 0 && gpuLayerCount > 0 {
+		slog.Warn("model partially loaded on GPU",
+			"gpu_layers", gpuLayerCount,
+			"cpu_layers", cpuLayerCount,
+			"total_layers", s.totalLayers)
+	} else if numGPUs > 0 && gpuLayerCount == 0 {
+		slog.Warn("model loaded entirely on CPU despite GPU being available",
+			"total_layers", s.totalLayers)
+	}
 }
 
 func uniqueDeviceIDs(gpuLayers ml.GPULayersList) []ml.DeviceID {
@@ -1048,13 +1068,16 @@ nextLayer:
 		if vramSize > systemInfo.TotalMemory {
 			// disable partial offloading when model is greater than total system memory as this
 			// can lead to locking up the system
+			slog.Warn("model requires more memory than system total, disabling GPU offload to prevent system lockup",
+				"model_vram_required", format.HumanBytes2(vramSize),
+				"system_total_memory", format.HumanBytes2(systemInfo.TotalMemory))
 			s.options.NumGPU = 0
 			gpuLayers = ml.GPULayersList{}
 		}
 	}
 
 	if len(systemGPUs) > 0 && gpuLayers.Sum() == 0 {
-		slog.Debug("insufficient VRAM to load any model layers")
+		slog.Warn("insufficient VRAM to load any model layers, model will run entirely on CPU")
 	}
 
 	return nil
