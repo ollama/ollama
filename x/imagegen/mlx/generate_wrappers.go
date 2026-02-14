@@ -286,8 +286,15 @@ func generateWrapperFiles(functions []Function, headerPath, implPath string) err
 
 	implBuf.WriteString("#include \"mlx/c/mlx.h\"\n")
 	implBuf.WriteString("#include \"mlx_dynamic.h\"\n")
-	implBuf.WriteString("#include <stdio.h>\n")
-	implBuf.WriteString("#include <dlfcn.h>\n\n")
+	implBuf.WriteString("#include <stdio.h>\n\n")
+	implBuf.WriteString("// Platform-specific dynamic loading\n")
+	implBuf.WriteString("#ifdef _WIN32\n")
+	implBuf.WriteString("#include <windows.h>\n")
+	implBuf.WriteString("#define GET_SYM(handle, name) GetProcAddress((HMODULE)(handle), name)\n")
+	implBuf.WriteString("#else\n")
+	implBuf.WriteString("#include <dlfcn.h>\n")
+	implBuf.WriteString("#define GET_SYM(handle, name) dlsym(handle, name)\n")
+	implBuf.WriteString("#endif\n\n")
 
 	// Function pointer definitions
 	implBuf.WriteString("// Function pointer definitions\n")
@@ -314,7 +321,7 @@ func generateWrapperFiles(functions []Function, headerPath, implPath string) err
 		if fn.NeedsARM64Guard {
 			implBuf.WriteString("#if defined(__aarch64__) || defined(_M_ARM64)\n")
 		}
-		implBuf.WriteString(fmt.Sprintf("    %s_ptr = dlsym(handle, \"%s\");\n", fn.Name, fn.Name))
+		implBuf.WriteString(fmt.Sprintf("    %s_ptr = (%s (*)(%s))GET_SYM(handle, \"%s\");\n", fn.Name, fn.ReturnType, fn.Params, fn.Name))
 		implBuf.WriteString(fmt.Sprintf("    if (%s_ptr == NULL) {\n", fn.Name))
 		implBuf.WriteString(fmt.Sprintf("        fprintf(stderr, \"MLX: Failed to load symbol: %s\\n\");\n", fn.Name))
 		implBuf.WriteString("        return -1;\n")

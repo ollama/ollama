@@ -1503,14 +1503,14 @@ type SafetensorsFile struct {
 }
 
 // LoadSafetensorsNative loads a safetensors file using MLX's optimized loader
-// Note: Uses CPU stream because Load primitive only runs on CPU
+// Uses GPU stream so tensors are loaded directly to GPU memory (CUDA has Load::eval_gpu)
 func LoadSafetensorsNative(path string) (*SafetensorsFile, error) {
 	cPath := C.CString(path)
 	defer C.free(unsafe.Pointer(cPath))
 
 	var arrays C.mlx_map_string_to_array
 	var metadata C.mlx_map_string_to_string
-	if C.mlx_load_safetensors(&arrays, &metadata, cPath, C.cpu_stream()) != 0 {
+	if C.mlx_load_safetensors(&arrays, &metadata, cPath, C.default_stream()) != 0 {
 		return nil, fmt.Errorf("failed to load safetensors: %s", path)
 	}
 	return &SafetensorsFile{arrays: arrays, metadata: metadata}, nil
