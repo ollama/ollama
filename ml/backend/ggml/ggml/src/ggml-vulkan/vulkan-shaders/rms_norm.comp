@@ -112,12 +112,11 @@ void rms_norm(uint num_iters) {
 #if RMS_NORM_ROPE_FUSION
     barrier();
     rope_params rp = p.rope;
-    uint rope_row = (samp*nchannels + channel)*nrows + row;
     for (uint t = 2*tid; t < ncols; t += 2*BLOCK_SIZE) {
         if (rp.rope_mode == GGML_ROPE_TYPE_NEOX) {
-            rope_neox(t, rope_row, rp);
+            rope_neox(t, row, channel, samp, rp);
         } else if (rp.rope_mode == GGML_ROPE_TYPE_NORMAL) {
-            rope_norm(t, rope_row, rp);
+            rope_norm(t, row, channel, samp, rp);
         }
     }
 #endif

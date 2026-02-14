@@ -1,7 +1,3 @@
-#if defined(_MSC_VER)
-#define _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING
-#endif
-
 #include "ggml.h"
 #include "gguf.h"
 
@@ -9,12 +5,12 @@
 #include "log.h"
 #include "llama.h"
 #include "sampling.h"
+#include "unicode.h"
 
 #include <algorithm>
 #include <cinttypes>
 #include <climits>
 #include <cmath>
-#include <codecvt>
 #include <chrono>
 #include <cstdarg>
 #include <cstring>
@@ -251,7 +247,7 @@ bool set_process_priority(enum ggml_sched_priority prio) {
         case GGML_SCHED_PRIO_REALTIME: p = -20; break;
     }
 
-    if (!setpriority(PRIO_PROCESS, 0, p)) {
+    if (setpriority(PRIO_PROCESS, 0, p) != 0) {
         LOG_WRN("failed to set process priority %d : %s (%d)\n", prio, strerror(errno), errno);
         return false;
     }
@@ -706,45 +702,28 @@ bool fs_validate_filename(const std::string & filename, bool allow_subdirs) {
         return false;
     }
 
-    std::u32string filename_utf32;
-    try {
-#if defined(__clang__)
-        // disable C++17 deprecation warning for std::codecvt_utf8
-#    pragma clang diagnostic push
-#    pragma clang diagnostic ignored "-Wdeprecated-declarations"
-#elif defined(__GNUC__)
-#    pragma GCC diagnostic push
-#    pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-#endif
+    size_t offset = 0;
+    while (offset < filename.size()) {
+        utf8_parse_result result = parse_utf8_codepoint(filename, offset);
 
-        std::wstring_convert<std::codecvt_utf8<char32_t>, char32_t> converter;
-
-#if defined(__clang__)
-#    pragma clang diagnostic pop
-#elif defined(__GNUC__)
-#    pragma GCC diagnostic pop
-#endif
-
-        filename_utf32 = converter.from_bytes(filename);
-
-        // If the reverse conversion mismatches, it means overlong UTF-8 sequences were used,
-        // or invalid encodings were encountered. Reject such attempts
-        std::string filename_reencoded = converter.to_bytes(filename_utf32);
-        if (filename_reencoded != filename) {
+        if (result.status != utf8_parse_result::SUCCESS) {
             return false;
         }
-    } catch (const std::exception &) {
-        return false;
-    }
+        uint32_t c = result.codepoint;
 
-    // Check for forbidden codepoints:
-    // - Control characters
-    // - Unicode equivalents of illegal characters
-    // - UTF-16 surrogate pairs
-    // - UTF-8 replacement character
-    // - Byte order mark (BOM)
-    // - Illegal characters: / \ : * ? " < > |
-    for (char32_t c : filename_utf32) {
+        if ((result.bytes_consumed == 2 && c < 0x80) ||
+            (result.bytes_consumed == 3 && c < 0x800) ||
+            (result.bytes_consumed == 4 && c < 0x10000)) {
+            return false;
+        }
+
+        // Check for forbidden codepoints:
+        // - Control characters
+        // - Unicode equivalents of illegal characters
+        // - UTF-16 surrogate pairs
+        // - UTF-8 replacement character
+        // - Byte order mark (BOM)
+        // - Illegal characters: / \ : * ? " < > |
         if (c <= 0x1F // Control characters (C0)
             || c == 0x7F // Control characters (DEL)
             || (c >= 0x80 && c <= 0x9F) // Control characters (C1)
@@ -752,6 +731,7 @@ bool fs_validate_filename(const std::string & filename, bool allow_subdirs) {
             || c == 0x2215 // Division Slash (forward slash equivalent)
             || c == 0x2216 // Set Minus (backslash equivalent)
             || (c >= 0xD800 && c <= 0xDFFF) // UTF-16 surrogate pairs
+            || c > 0x10FFFF // Max Unicode limit
             || c == 0xFFFD // Replacement Character (UTF-8)
             || c == 0xFEFF // Byte Order Mark (BOM)
             || c == ':' || c == '*' // Illegal characters
@@ -762,6 +742,7 @@ bool fs_validate_filename(const std::string & filename, bool allow_subdirs) {
             // Subdirectories not allowed, reject path separators
             return false;
         }
+        offset += result.bytes_consumed;
     }
 
     // Reject any leading or trailing ' ', or any trailing '.', these are stripped on Windows and will cause a different filename
@@ -898,7 +879,8 @@ std::string fs_get_cache_directory() {
     if (getenv("LLAMA_CACHE")) {
         cache_directory = std::getenv("LLAMA_CACHE");
     } else {
-#if defined(__linux__) || defined(__FreeBSD__) || defined(_AIX) || defined(__OpenBSD__)
+#if defined(__linux__) || defined(__FreeBSD__) || defined(_AIX) || \
+        defined(__OpenBSD__) || defined(__NetBSD__)
         if (std::getenv("XDG_CACHE_HOME")) {
             cache_directory = std::getenv("XDG_CACHE_HOME");
         } else if (std::getenv("HOME")) {
@@ -1078,12 +1060,15 @@ struct common_init_result::impl {
     impl() = default;
     ~impl() = default;
 
+    // note: the order in which model, context, etc. are declared matters because their destructors will be called bottom-to-top
+
     llama_model_ptr   model;
     llama_context_ptr context;
 
     std::vector<llama_adapter_lora_ptr> lora;
 
     std::vector<common_sampler_ptr> samplers;
+    std::vector<llama_sampler_seq_config> samplers_seq_config;
 };
 
 common_init_result::common_init_result(common_params & params) :
@@ -1092,9 +1077,12 @@ common_init_result::common_init_result(common_params & params) :
     auto cparams = common_context_params_to_llama(params);
 
     if (params.fit_params) {
-        LOG_INF("%s: fitting params to device memory, to report bugs during this step use -fit off (or --verbose if you can't)\n", __func__);
+        LOG_INF("%s: fitting params to device memory, for bugs during this step try to reproduce them with -fit off, or provide --verbose logs if the bug only occurs with -fit on\n", __func__);
         llama_params_fit(params.model.path.c_str(), &mparams, &cparams,
-            params.tensor_split, params.tensor_buft_overrides.data(), params.fit_params_target, params.fit_params_min_ctx,
+            params.tensor_split,
+            params.tensor_buft_overrides.data(),
+            params.fit_params_target.data(),
+            params.fit_params_min_ctx,
             params.verbosity >= 4 ? GGML_LOG_LEVEL_DEBUG : GGML_LOG_LEVEL_ERROR);
     }
 
@@ -1106,6 +1094,25 @@ common_init_result::common_init_result(common_params & params) :
     pimpl->model.reset(model);
 
     const llama_vocab * vocab = llama_model_get_vocab(model);
+
+    // load and optionally apply lora adapters (must be loaded before context creation)
+    for (auto & la : params.lora_adapters) {
+        llama_adapter_lora_ptr lora;
+        lora.reset(llama_adapter_lora_init(model, la.path.c_str()));
+        if (lora == nullptr) {
+            LOG_ERR("%s: failed to load lora adapter '%s'\n", __func__, la.path.c_str());
+            pimpl->model.reset(model);
+            return;
+        }
+
+        char buf[1024];
+        la.ptr = lora.get();
+        llama_adapter_meta_val_str(la.ptr, "adapter.lora.task_name", buf, sizeof(buf));
+        la.task_name = buf;
+        llama_adapter_meta_val_str(la.ptr, "adapter.lora.prompt_prefix", buf, sizeof(buf));
+        la.prompt_prefix = buf;
+        pimpl->lora.emplace_back(std::move(lora)); // copy to list of loaded adapters
+    }
 
     // updates params.sampling
     // TODO: fix naming
@@ -1141,10 +1148,18 @@ common_init_result::common_init_result(common_params & params) :
     //    params.sampling.dry_penalty_last_n = llama_n_ctx(lctx);
     //}
 
+    // init the backend samplers as part of the context creation
     pimpl->samplers.resize(cparams.n_seq_max);
+    pimpl->samplers_seq_config.resize(cparams.n_seq_max);
 
     for (int i = 0; i < (int) cparams.n_seq_max; ++i) {
         pimpl->samplers[i].reset(common_sampler_init(model, params.sampling));
+        pimpl->samplers_seq_config[i] = { i, common_sampler_get(pimpl->samplers[i].get()) };
+    }
+
+    if (params.sampling.backend_sampling) {
+        cparams.samplers   = pimpl->samplers_seq_config.data();
+        cparams.n_samplers = pimpl->samplers_seq_config.size();
     }
 
     llama_context * lctx = llama_init_from_model(model, cparams);
@@ -1168,12 +1183,14 @@ common_sampler * common_init_result::sampler(llama_seq_id seq_id) {
     return pimpl->samplers[seq_id].get();
 }
 
-std::vector<llama_adapter_lora_ptr> & common_init_result::lora() {
-    return pimpl->lora;
+void common_init_result::reset_samplers() {
+    for (int i = 0; i < (int) pimpl->samplers.size(); ++i) {
+        llama_sampler_reset(common_sampler_get(pimpl->samplers[i].get()));
+    }
 }
 
-void common_init_result::free_context() {
-    pimpl->context.reset();
+std::vector<llama_adapter_lora_ptr> & common_init_result::lora() {
+    return pimpl->lora;
 }
 
 common_init_result_ptr common_init_from_params(common_params & params) {
@@ -1207,7 +1224,7 @@ common_init_result_ptr common_init_from_params(common_params & params) {
             return res;
         }
 
-        int err = llama_apply_adapter_cvec(
+        int err = llama_set_adapter_cvec(
                 lctx,
                 cvec.data.data(),
                 cvec.data.size(),
@@ -1241,24 +1258,6 @@ common_init_result_ptr common_init_from_params(common_params & params) {
         if (!ok) {
             return res;
         }
-    }
-
-    // load and optionally apply lora adapters
-    for (auto & la : params.lora_adapters) {
-        llama_adapter_lora_ptr lora;
-        lora.reset(llama_adapter_lora_init(model, la.path.c_str()));
-        if (lora == nullptr) {
-            LOG_ERR("%s: failed to apply lora adapter '%s'\n", __func__, la.path.c_str());
-            return res;
-        }
-
-        char buf[1024];
-        la.ptr = lora.get();
-        llama_adapter_meta_val_str(la.ptr, "adapter.lora.task_name", buf, sizeof(buf));
-        la.task_name = buf;
-        llama_adapter_meta_val_str(la.ptr, "adapter.lora.prompt_prefix", buf, sizeof(buf));
-        la.prompt_prefix = buf;
-        res->lora().emplace_back(std::move(lora)); // copy to list of loaded adapters
     }
 
     if (!params.lora_init_without_apply) {
@@ -1301,6 +1300,9 @@ common_init_result_ptr common_init_from_params(common_params & params) {
         llama_synchronize(lctx);
         llama_perf_context_reset(lctx);
         llama_set_warmup(lctx, false);
+
+        // reset samplers to reset RNG state after warmup to the seeded state
+        res->reset_samplers();
     }
 
     return res;
@@ -1324,12 +1326,15 @@ std::string get_model_endpoint() {
 }
 
 void common_set_adapter_lora(struct llama_context * ctx, std::vector<common_adapter_lora_info> & lora) {
-    llama_clear_adapter_lora(ctx);
-    for (auto & la : lora) {
-        if (la.scale != 0.0f) {
-            llama_set_adapter_lora(ctx, la.ptr, la.scale);
-        }
+    std::vector<llama_adapter_lora *> loras;
+    std::vector<float> scales;
+
+    for (auto & la: lora) {
+        loras.push_back(la.ptr);
+        scales.push_back(la.scale);
     }
+
+    llama_set_adapters_lora(ctx, loras.data(), loras.size(), scales.data());
 }
 
 struct llama_model_params common_model_params_to_llama(common_params & params) {
@@ -1339,14 +1344,12 @@ struct llama_model_params common_model_params_to_llama(common_params & params) {
         mparams.devices = params.devices.data();
     }
 
-    if (params.n_gpu_layers != -1) {
-        mparams.n_gpu_layers = params.n_gpu_layers;
-    }
-
+    mparams.n_gpu_layers    = params.n_gpu_layers;
     mparams.main_gpu        = params.main_gpu;
     mparams.split_mode      = params.split_mode;
     mparams.tensor_split    = params.tensor_split;
     mparams.use_mmap        = params.use_mmap;
+    mparams.use_direct_io   = params.use_direct_io;
     mparams.use_mlock       = params.use_mlock;
     mparams.check_tensors   = params.check_tensors;
     mparams.use_extra_bufts = !params.no_extra_bufts;
@@ -1449,66 +1452,6 @@ void common_batch_add(
     batch.logits  [batch.n_tokens] = logits;
 
     batch.n_tokens++;
-}
-
-//
-// Token utils
-//
-
-size_t common_lcp(const llama_tokens & a, const llama_tokens & b) {
-    size_t i;
-    for (i = 0; i < a.size() && i < b.size() && a[i] == b[i]; i++) {}
-
-    return i;
-}
-
-size_t common_lcs(const llama_tokens & a, const llama_tokens & b) {
-    // check for empty sequences
-    if (a.empty() || b.empty()) {
-        return 0;
-    }
-
-    // get the lengths of the input sequences
-    size_t a_len = a.size();
-    size_t b_len = b.size();
-
-    // initialize the maximum length of the longest common subsequence (LCS)
-    size_t max_length = 0;
-
-    // use two rows instead of a 2D matrix to optimize space
-    std::vector<size_t> prev_row(b_len + 1, 0);
-    std::vector<size_t> curr_row(b_len + 1, 0);
-
-    // iterate through the elements of a
-    for (size_t i = 1; i <= a_len; i++) {
-        // iterate through the elements of b
-        for (size_t j = 1; j <= b_len; j++) {
-            // if elements at the current positions match
-            if (a[i - 1] == b[j - 1]) {
-                // if it's the first element of either sequences, set LCS length to 1
-                if (i == 1 || j == 1) {
-                    curr_row[j] = 1;
-                } else {
-                    // increment LCS length by 1 compared to the previous element
-                    curr_row[j] = prev_row[j - 1] + 1;
-                }
-
-                // update max_length if necessary
-                if (curr_row[j] > max_length) {
-                    max_length = curr_row[j];
-                }
-            } else {
-                // reset LCS length if elements don't match
-                curr_row[j] = 0;
-            }
-        }
-
-        // update the previous row for the next iteration
-        prev_row = curr_row;
-    }
-
-    // return the maximum length of the LCS
-    return max_length;
 }
 
 //

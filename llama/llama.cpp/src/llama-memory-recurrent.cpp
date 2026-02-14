@@ -785,23 +785,21 @@ void llama_memory_recurrent::state_write_data(llama_io_write_i & io, const std::
     io.write(&s_trans, sizeof(s_trans));
     io.write(&n_layer,   sizeof(n_layer));
 
-    std::vector<uint8_t> tmp_buf;
-
-    // Iterate and write all the keys first, each row is a cell
+    // Iterate and write all the R tensors first, each row is a cell
     // Get whole range at a time
     for (uint32_t il = 0; il < n_layer; ++il) {
         // skip null layers (read_data will handle this by checking "r_l" and "s_l" for null)
         if (r_l[il] == nullptr) continue;
 
-        // Write key type
+        // Write R tensor type
         const int32_t r_type_i = (int32_t)r_l[il]->type;
         io.write(&r_type_i, sizeof(r_type_i));
 
-        // Write row size of key
+        // Write row size of R tensor
         const uint64_t r_size_row = ggml_row_size(r_l[il]->type, hparams.n_embd_r());
         io.write(&r_size_row, sizeof(r_size_row));
 
-        // Read each range of cells of k_size length each into tmp_buf and write out
+        // Write each range of cells of r_size_row length
         for (const auto & range : cell_ranges) {
             const size_t range_size = range.second - range.first;
             const size_t buf_size = range_size * r_size_row;
@@ -814,15 +812,15 @@ void llama_memory_recurrent::state_write_data(llama_io_write_i & io, const std::
             // skip null layers (read_data will handle this by checking "r_l" and "s_l" for null)
             if (s_l[il] == nullptr) continue;
 
-            // Write value type
+            // Write S tensor type
             const int32_t s_type_i = (int32_t)s_l[il]->type;
             io.write(&s_type_i, sizeof(s_type_i));
 
-            // Write row size of value
+            // Write row size of S tensor
             const uint64_t s_size_row = ggml_row_size(s_l[il]->type, hparams.n_embd_s());
             io.write(&s_size_row, sizeof(s_size_row));
 
-            // Read each range of cells of s_size length each into tmp_buf and write out
+            // Write each range of S tensor rows
             for (const auto & range : cell_ranges) {
                 const size_t range_size = range.second - range.first;
                 const size_t buf_size = range_size * s_size_row;
@@ -830,7 +828,7 @@ void llama_memory_recurrent::state_write_data(llama_io_write_i & io, const std::
             }
         }
     } else {
-        // When v is transposed, we also need the element size and get the element ranges from each row
+        // When S tensor is transposed, we also need the element size and get the element ranges from each row
         const uint32_t mem_size = size;
         for (uint32_t il = 0; il < n_layer; ++il) {
             // skip null layers (read_data will handle this by checking "r_l" and "s_l" for null)
@@ -838,7 +836,7 @@ void llama_memory_recurrent::state_write_data(llama_io_write_i & io, const std::
 
             const uint32_t n_embd_s = hparams.n_embd_s();
 
-            // Write value type
+            // Write S tensor type
             const int32_t s_type_i = (int32_t)s_l[il]->type;
             io.write(&s_type_i, sizeof(s_type_i));
 
@@ -851,7 +849,7 @@ void llama_memory_recurrent::state_write_data(llama_io_write_i & io, const std::
 
             // For each row, we get the element values of each cell
             for (uint32_t j = 0; j < n_embd_s; ++j) {
-                // Read each range of cells of v_size_el length each into tmp_buf and write out
+                // Write each range of cells of s_size_el length
                 for (const auto & range : cell_ranges) {
                     const size_t range_size = range.second - range.first;
                     const size_t src_offset = (range.first + j * mem_size) * s_size_el;

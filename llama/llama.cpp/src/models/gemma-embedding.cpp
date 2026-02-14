@@ -1,7 +1,5 @@
 #include "models.h"
 
-
-
 llm_build_gemma_embedding::llm_build_gemma_embedding(const llama_model & model, const llm_graph_params & params) :
     llm_graph_context(params) {
     const int64_t n_embd_head = hparams.n_embd_head_k;
@@ -12,10 +10,8 @@ llm_build_gemma_embedding::llm_build_gemma_embedding(const llama_model & model, 
     inpL = build_inp_embd(model.tok_embd);
 
     // important: do not normalize weights for raw embeddings input (i.e. encoded image emdeddings)
-    if (ubatch.token) {
-        inpL = ggml_scale(ctx0, inpL, sqrtf(n_embd));
-        cb(inpL, "inp_scaled", -1);
-    }
+    inpL = ggml_scale(ctx0, inpL, ubatch.token ? sqrtf(n_embd) : 1.0f);
+    cb(inpL, "inp_scaled", -1);
 
     // inp_pos - contains the positions
     ggml_tensor * inp_pos = build_inp_pos();
