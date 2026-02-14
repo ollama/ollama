@@ -271,11 +271,9 @@ type StreamErrorEvent struct {
 
 // FromMessagesRequest converts an Anthropic MessagesRequest to an Ollama api.ChatRequest
 func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
+	logutil.Trace("anthropic: converting request", "req", TraceMessagesRequest(r))
+
 	var messages []api.Message
-	logutil.Trace("anthropic: converting messages request",
-		"incoming_shape", traceMessagesRequestShape(r),
-		"incoming_request", traceMessagesRequestPayload(r),
-	)
 
 	if r.System != nil {
 		switch sys := r.System.(type) {
@@ -283,7 +281,6 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 			if sys != "" {
 				messages = append(messages, api.Message{Role: "system", Content: sys})
 			}
-			logutil.Trace("anthropic: converted system prompt", "format", "string", "chars", len(sys))
 		case []any:
 			// System can be an array of content blocks
 			var content strings.Builder
@@ -299,31 +296,15 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 			if content.Len() > 0 {
 				messages = append(messages, api.Message{Role: "system", Content: content.String()})
 			}
-			logutil.Trace("anthropic: converted system prompt", "format", "blocks", "blocks", len(sys), "text_chars", content.Len())
 		}
 	}
 
 	for i, msg := range r.Messages {
-		logutil.Trace("anthropic: converting message",
-			"index", i,
-			"incoming_shape", traceMessageParamShape(msg),
-			"incoming_message", traceMessageParamPayload(msg),
-		)
 		converted, err := convertMessage(msg)
 		if err != nil {
-			logutil.Trace("anthropic: message conversion failed",
-				"index", i,
-				"incoming_shape", traceMessageParamShape(msg),
-				"incoming_message", traceMessageParamPayload(msg),
-				"error", err,
-			)
+			logutil.Trace("anthropic: message conversion failed", "index", i, "role", msg.Role, "err", err)
 			return nil, err
 		}
-		logutil.Trace("anthropic: converted message",
-			"index", i,
-			"converted_shape", traceAPIMessagesShape(converted),
-			"converted_messages", traceAPIMessagesPayload(converted),
-		)
 		messages = append(messages, converted...)
 	}
 
@@ -361,10 +342,7 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 		// If a user-defined tool also uses that name in the same request, drop the
 		// user-defined one to avoid ambiguous tool-call routing.
 		if hasBuiltinWebSearch && !strings.HasPrefix(t.Type, "web_search") && t.Name == "web_search" {
-			logutil.Trace("anthropic: dropping colliding custom web_search tool",
-				"incoming_tool_shape", traceToolShape(t),
-				"incoming_tool", traceToolPayload(t),
-			)
+			logutil.Trace("anthropic: dropping colliding custom web_search tool", "tool", TraceTool(t))
 			continue
 		}
 
@@ -372,12 +350,6 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 		if err != nil {
 			return nil, err
 		}
-		logutil.Trace("anthropic: converted tool",
-			"incoming_tool_shape", traceToolShape(t),
-			"incoming_tool", traceToolPayload(t),
-			"converted_tool_shape", traceAPIToolShape(tool),
-			"converted_tool", traceAPIToolPayload(tool),
-		)
 		tools = append(tools, tool)
 	}
 
@@ -395,388 +367,19 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 		Tools:    tools,
 		Think:    think,
 	}
-	logutil.Trace("anthropic: converted messages request",
-		"incoming_shape", traceMessagesRequestShape(r),
-		"converted_shape", traceChatRequestShape(convertedRequest),
-		"converted_request", traceChatRequestPayload(convertedRequest),
-	)
+	logutil.Trace("anthropic: converted request", "req", TraceChatRequest(convertedRequest))
 
 	return convertedRequest, nil
-}
-
-func messageContentType(content any) string {
-	switch content.(type) {
-	case string:
-		return "string"
-	case []any:
-		return "blocks"
-	default:
-		return fmt.Sprintf("%T", content)
-	}
-}
-
-func traceMessagesRequestShape(r MessagesRequest) map[string]any {
-	return map[string]any{
-		"model":             r.Model,
-		"max_tokens":        r.MaxTokens,
-		"messages":          len(r.Messages),
-		"message_shapes":    traceMessageParamsShape(r.Messages),
-		"tools":             len(r.Tools),
-		"tool_shapes":       traceToolsShape(r.Tools),
-		"stream":            r.Stream,
-		"has_system":        r.System != nil,
-		"system_type":       messageContentType(r.System),
-		"has_thinking":      r.Thinking != nil,
-		"has_tool_choice":   r.ToolChoice != nil,
-		"has_metadata":      r.Metadata != nil,
-		"stop_sequences":    len(r.StopSequences),
-		"has_temperature":   r.Temperature != nil,
-		"has_top_p":         r.TopP != nil,
-		"has_top_k":         r.TopK != nil,
-		"temperature_value": valueOrNil(r.Temperature),
-		"top_p_value":       valueOrNil(r.TopP),
-		"top_k_value":       valueOrNil(r.TopK),
-	}
-}
-
-func traceMessagesRequestPayload(r MessagesRequest) map[string]any {
-	return map[string]any{
-		"model":          r.Model,
-		"max_tokens":     r.MaxTokens,
-		"messages":       traceMessageParamsPayload(r.Messages),
-		"system":         traceAnthropicContent(r.System),
-		"stream":         r.Stream,
-		"tools":          traceToolsPayload(r.Tools),
-		"tool_choice":    traceJSON(r.ToolChoice),
-		"thinking":       traceJSON(r.Thinking),
-		"metadata":       traceJSON(r.Metadata),
-		"stop_sequences": r.StopSequences,
-		"temperature":    valueOrNil(r.Temperature),
-		"top_p":          valueOrNil(r.TopP),
-		"top_k":          valueOrNil(r.TopK),
-	}
-}
-
-func traceMessageParamsShape(messages []MessageParam) []map[string]any {
-	out := make([]map[string]any, 0, len(messages))
-	for _, msg := range messages {
-		out = append(out, traceMessageParamShape(msg))
-	}
-	return out
-}
-
-func traceMessageParamsPayload(messages []MessageParam) []map[string]any {
-	out := make([]map[string]any, 0, len(messages))
-	for _, msg := range messages {
-		out = append(out, traceMessageParamPayload(msg))
-	}
-	return out
-}
-
-func traceMessageParamShape(msg MessageParam) map[string]any {
-	return map[string]any{
-		"role":         msg.Role,
-		"content_type": messageContentType(msg.Content),
-		"block_types":  traceContentBlockTypes(msg.Content),
-	}
-}
-
-func traceMessageParamPayload(msg MessageParam) map[string]any {
-	return map[string]any{
-		"role":    msg.Role,
-		"content": traceAnthropicContent(msg.Content),
-	}
-}
-
-func traceContentBlockTypes(content any) []string {
-	blocks, ok := content.([]any)
-	if !ok {
-		return nil
-	}
-
-	blockTypes := make([]string, 0, len(blocks))
-	for _, block := range blocks {
-		blockMap, ok := block.(map[string]any)
-		if !ok {
-			blockTypes = append(blockTypes, fmt.Sprintf("%T", block))
-			continue
-		}
-		blockType, _ := blockMap["type"].(string)
-		blockTypes = append(blockTypes, blockType)
-	}
-	return blockTypes
-}
-
-func traceAnthropicContent(content any) any {
-	switch c := content.(type) {
-	case nil:
-		return nil
-	case string:
-		return c
-	case []any:
-		blocks := make([]any, 0, len(c))
-		for _, block := range c {
-			blockMap, ok := block.(map[string]any)
-			if !ok {
-				blocks = append(blocks, block)
-				continue
-			}
-			blocks = append(blocks, traceAnthropicBlock(blockMap))
-		}
-		return blocks
-	default:
-		return traceJSON(c)
-	}
-}
-
-func traceAnthropicBlock(block map[string]any) map[string]any {
-	blockType, _ := block["type"].(string)
-	out := map[string]any{
-		"type": blockType,
-	}
-
-	switch blockType {
-	case "text":
-		out["text"] = block["text"]
-	case "thinking":
-		out["thinking"] = block["thinking"]
-	case "tool_use", "server_tool_use":
-		out["id"] = block["id"]
-		out["name"] = block["name"]
-		out["input"] = block["input"]
-	case "tool_result", "web_search_tool_result":
-		out["tool_use_id"] = block["tool_use_id"]
-		out["content"] = block["content"]
-	case "image":
-		if source, ok := block["source"].(map[string]any); ok {
-			out["source"] = map[string]any{
-				"type":       source["type"],
-				"media_type": source["media_type"],
-				"url":        source["url"],
-				"data_len":   len(fmt.Sprint(source["data"])),
-			}
-		}
-	default:
-		out["block"] = block
-	}
-
-	return out
-}
-
-func traceToolsShape(tools []Tool) []map[string]any {
-	out := make([]map[string]any, 0, len(tools))
-	for _, tool := range tools {
-		out = append(out, traceToolShape(tool))
-	}
-	return out
-}
-
-func traceToolsPayload(tools []Tool) []map[string]any {
-	out := make([]map[string]any, 0, len(tools))
-	for _, tool := range tools {
-		out = append(out, traceToolPayload(tool))
-	}
-	return out
-}
-
-func traceToolShape(t Tool) map[string]any {
-	return map[string]any{
-		"type":       t.Type,
-		"name":       t.Name,
-		"has_schema": len(t.InputSchema) > 0,
-		"max_uses":   t.MaxUses,
-	}
-}
-
-func traceToolPayload(t Tool) map[string]any {
-	return map[string]any{
-		"type":         t.Type,
-		"name":         t.Name,
-		"description":  t.Description,
-		"input_schema": traceJSON(t.InputSchema),
-		"max_uses":     t.MaxUses,
-	}
-}
-
-func traceChatRequestShape(req *api.ChatRequest) map[string]any {
-	if req == nil {
-		return nil
-	}
-
-	stream := false
-	if req.Stream != nil {
-		stream = *req.Stream
-	}
-
-	return map[string]any{
-		"model":          req.Model,
-		"messages":       len(req.Messages),
-		"message_shapes": traceAPIMessagesShape(req.Messages),
-		"tools":          len(req.Tools),
-		"tool_shapes":    traceAPIToolsShape(req.Tools),
-		"stream":         stream,
-		"options":        len(req.Options),
-		"has_think":      req.Think != nil,
-	}
-}
-
-func traceChatRequestPayload(req *api.ChatRequest) map[string]any {
-	if req == nil {
-		return nil
-	}
-
-	stream := false
-	if req.Stream != nil {
-		stream = *req.Stream
-	}
-
-	return map[string]any{
-		"model":    req.Model,
-		"messages": traceAPIMessagesPayload(req.Messages),
-		"tools":    traceAPIToolsPayload(req.Tools),
-		"stream":   stream,
-		"options":  req.Options,
-		"think":    traceJSON(req.Think),
-	}
-}
-
-func traceAPIMessagesShape(messages []api.Message) []map[string]any {
-	out := make([]map[string]any, 0, len(messages))
-	for _, message := range messages {
-		out = append(out, traceAPIMessageShape(message))
-	}
-	return out
-}
-
-func traceAPIMessagesPayload(messages []api.Message) []map[string]any {
-	out := make([]map[string]any, 0, len(messages))
-	for _, message := range messages {
-		out = append(out, traceAPIMessagePayload(message))
-	}
-	return out
-}
-
-func traceAPIMessageShape(message api.Message) map[string]any {
-	return map[string]any{
-		"role":             message.Role,
-		"content_chars":    len(message.Content),
-		"thinking_chars":   len(message.Thinking),
-		"images":           len(message.Images),
-		"tool_calls":       len(message.ToolCalls),
-		"has_tool_name":    message.ToolName != "",
-		"has_tool_call_id": message.ToolCallID != "",
-	}
-}
-
-func traceAPIMessagePayload(message api.Message) map[string]any {
-	return map[string]any{
-		"role":         message.Role,
-		"content":      message.Content,
-		"thinking":     message.Thinking,
-		"image_bytes":  traceImageSizes(message.Images),
-		"tool_calls":   traceAPIToolCallsPayload(message.ToolCalls),
-		"tool_name":    message.ToolName,
-		"tool_call_id": message.ToolCallID,
-	}
-}
-
-func traceImageSizes(images []api.ImageData) []int {
-	sizes := make([]int, 0, len(images))
-	for _, image := range images {
-		sizes = append(sizes, len(image))
-	}
-	return sizes
-}
-
-func traceAPIToolsShape(tools api.Tools) []map[string]any {
-	out := make([]map[string]any, 0, len(tools))
-	for _, tool := range tools {
-		out = append(out, traceAPIToolShape(tool))
-	}
-	return out
-}
-
-func traceAPIToolsPayload(tools api.Tools) []map[string]any {
-	out := make([]map[string]any, 0, len(tools))
-	for _, tool := range tools {
-		out = append(out, traceAPIToolPayload(tool))
-	}
-	return out
-}
-
-func traceAPIToolShape(tool api.Tool) map[string]any {
-	return map[string]any{
-		"type":            tool.Type,
-		"name":            tool.Function.Name,
-		"has_description": tool.Function.Description != "",
-		"required":        len(tool.Function.Parameters.Required),
-	}
-}
-
-func traceAPIToolPayload(tool api.Tool) map[string]any {
-	return map[string]any{
-		"type":        tool.Type,
-		"function":    tool.Function.Name,
-		"description": tool.Function.Description,
-		"parameters":  traceJSON(tool.Function.Parameters),
-	}
-}
-
-func traceAPIToolCallsPayload(toolCalls []api.ToolCall) []map[string]any {
-	out := make([]map[string]any, 0, len(toolCalls))
-	for _, toolCall := range toolCalls {
-		out = append(out, map[string]any{
-			"id":   toolCall.ID,
-			"name": toolCall.Function.Name,
-			"args": traceJSON(toolCall.Function.Arguments),
-		})
-	}
-	return out
-}
-
-func traceJSON(v any) any {
-	if v == nil {
-		return nil
-	}
-
-	data, err := json.Marshal(v)
-	if err != nil {
-		return map[string]any{
-			"marshal_error": err.Error(),
-			"type":          fmt.Sprintf("%T", v),
-		}
-	}
-
-	var out any
-	if err := json.Unmarshal(data, &out); err != nil {
-		return string(data)
-	}
-	return out
-}
-
-func valueOrNil[T any](v *T) any {
-	if v == nil {
-		return nil
-	}
-	return *v
 }
 
 // convertMessage converts an Anthropic MessageParam to Ollama api.Message(s)
 func convertMessage(msg MessageParam) ([]api.Message, error) {
 	var messages []api.Message
 	role := strings.ToLower(msg.Role)
-	logutil.Trace("anthropic: convertMessage",
-		"incoming_shape", traceMessageParamShape(msg),
-		"incoming_message", traceMessageParamPayload(msg),
-	)
 
 	switch content := msg.Content.(type) {
 	case string:
 		messages = append(messages, api.Message{Role: role, Content: content})
-		logutil.Trace("anthropic: converted string message",
-			"converted_shape", traceAPIMessagesShape(messages),
-			"converted_messages", traceAPIMessagesPayload(messages),
-		)
 
 	case []any:
 		var textContent strings.Builder
@@ -929,27 +532,20 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 		// Add tool results as separate messages
 		messages = append(messages, toolResults...)
 		logutil.Trace("anthropic: converted block message",
-			"incoming_shape", traceMessageParamShape(msg),
-			"incoming_message", traceMessageParamPayload(msg),
+			"role", role,
 			"blocks", len(content),
-			"text_blocks", textBlocks,
-			"image_blocks", imageBlocks,
-			"tool_use_blocks", toolUseBlocks,
-			"tool_result_blocks", toolResultBlocks,
-			"server_tool_use_blocks", serverToolUseBlocks,
-			"web_search_tool_result_blocks", webSearchToolResultBlocks,
-			"thinking_blocks", thinkingBlocks,
-			"unknown_blocks", unknownBlocks,
-			"converted_shape", traceAPIMessagesShape(messages),
-			"converted_messages", traceAPIMessagesPayload(messages),
+			"text", textBlocks,
+			"image", imageBlocks,
+			"tool_use", toolUseBlocks,
+			"tool_result", toolResultBlocks,
+			"server_tool_use", serverToolUseBlocks,
+			"web_search_result", webSearchToolResultBlocks,
+			"thinking", thinkingBlocks,
+			"unknown", unknownBlocks,
+			"messages", TraceAPIMessages(messages),
 		)
 
 	default:
-		logutil.Trace("anthropic: invalid message content type",
-			"incoming_shape", traceMessageParamShape(msg),
-			"incoming_message", traceMessageParamPayload(msg),
-			"content_type", fmt.Sprintf("%T", content),
-		)
 		return nil, fmt.Errorf("invalid message content type: %T", content)
 	}
 
@@ -1020,11 +616,6 @@ func formatWebSearchToolResultContent(content any) string {
 // convertTool converts an Anthropic Tool to an Ollama api.Tool, returning true if it's a server tool
 func convertTool(t Tool) (api.Tool, bool, error) {
 	if strings.HasPrefix(t.Type, "web_search") {
-		logutil.Trace("anthropic: converting tool",
-			"incoming_tool_shape", traceToolShape(t),
-			"incoming_tool", traceToolPayload(t),
-			"builtin_web_search", true,
-		)
 		props := api.NewToolPropertiesMap()
 		props.Set("query", api.ToolProperty{
 			Type:        api.PropertyType{"string"},
@@ -1047,19 +638,10 @@ func convertTool(t Tool) (api.Tool, bool, error) {
 	var params api.ToolFunctionParameters
 	if len(t.InputSchema) > 0 {
 		if err := json.Unmarshal(t.InputSchema, &params); err != nil {
-			logutil.Trace("anthropic: invalid custom tool schema",
-				"incoming_tool_shape", traceToolShape(t),
-				"incoming_tool", traceToolPayload(t),
-				"error", err,
-			)
+			logutil.Trace("anthropic: invalid tool schema", "tool", t.Name, "err", err)
 			return api.Tool{}, false, fmt.Errorf("invalid input_schema for tool %q: %w", t.Name, err)
 		}
 	}
-	logutil.Trace("anthropic: converting tool",
-		"incoming_tool_shape", traceToolShape(t),
-		"incoming_tool", traceToolPayload(t),
-		"builtin_web_search", false,
-	)
 
 	return api.Tool{
 		Type: "function",
@@ -1565,13 +1147,8 @@ func WebSearch(ctx context.Context, query string, maxResults int) (*OllamaWebSea
 		return nil, fmt.Errorf("failed to parse web search URL: %w", err)
 	}
 	logutil.TraceContext(ctx, "anthropic: web search request",
-		"request_shape", map[string]any{
-			"query_chars": len(strings.TrimSpace(query)),
-			"max_results": maxResults,
-		},
-		"request", reqBody,
-		"host", searchURL.Hostname(),
-		"path", searchURL.Path,
+		"query", TraceTruncateString(query),
+		"max_results", maxResults,
 		"url", searchURL.String(),
 	)
 
@@ -1587,7 +1164,7 @@ func WebSearch(ctx context.Context, query string, maxResults int) (*OllamaWebSea
 			return nil, fmt.Errorf("failed to sign web search request: %w", err)
 		}
 	}
-	logutil.TraceContext(ctx, "anthropic: web search auth mode", "signed", signature != "", "host", searchURL.Hostname())
+	logutil.TraceContext(ctx, "anthropic: web search auth", "signed", signature != "")
 
 	req, err := http.NewRequestWithContext(ctx, "POST", searchURL.String(), bytes.NewReader(body))
 	if err != nil {
@@ -1604,10 +1181,7 @@ func WebSearch(ctx context.Context, query string, maxResults int) (*OllamaWebSea
 		return nil, fmt.Errorf("web search request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	logutil.TraceContext(ctx, "anthropic: web search response received",
-		"status", resp.StatusCode,
-		"status_text", resp.Status,
-	)
+	logutil.TraceContext(ctx, "anthropic: web search response", "status", resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
@@ -1618,10 +1192,7 @@ func WebSearch(ctx context.Context, query string, maxResults int) (*OllamaWebSea
 	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
 		return nil, fmt.Errorf("failed to decode web search response: %w", err)
 	}
-	logutil.TraceContext(ctx, "anthropic: web search decoded",
-		"response_shape", map[string]any{"results": len(searchResp.Results)},
-		"response", searchResp,
-	)
+	logutil.TraceContext(ctx, "anthropic: web search results", "count", len(searchResp.Results))
 
 	return &searchResp, nil
 }

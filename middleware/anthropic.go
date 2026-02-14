@@ -60,11 +60,7 @@ func (w *AnthropicWriter) writeResponse(data []byte) (int, error) {
 		w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
 
 		events := w.converter.Process(chatResponse)
-		logutil.Trace("anthropic middleware: stream conversion",
-			"incoming_shape", traceChatResponseShape(chatResponse),
-			"incoming_chunk", traceChatResponsePayload(chatResponse),
-			"events", len(events),
-		)
+		logutil.Trace("anthropic middleware: stream chunk", "resp", anthropic.TraceChatResponse(chatResponse), "events", len(events))
 		for _, event := range events {
 			if err := w.writeEvent(event.Event, event.Data); err != nil {
 				return 0, err
@@ -75,12 +71,7 @@ func (w *AnthropicWriter) writeResponse(data []byte) (int, error) {
 
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
 	response := anthropic.ToMessagesResponse(w.id, chatResponse)
-	logutil.Trace("anthropic middleware: response conversion",
-		"incoming_shape", traceChatResponseShape(chatResponse),
-		"incoming_response", traceChatResponsePayload(chatResponse),
-		"converted_shape", traceAnthropicResponseShape(response),
-		"converted_response", traceAnthropicResponsePayload(response),
-	)
+	logutil.Trace("anthropic middleware: converted response", "resp", anthropic.TraceMessagesResponse(response))
 	return len(data), json.NewEncoder(w.ResponseWriter).Encode(response)
 }
 
@@ -170,12 +161,10 @@ func (w *WebSearchAnthropicWriter) Write(data []byte) (int, error) {
 	}
 
 	webSearchCall, hasWebSearch, hasOtherTools := findWebSearchToolCall(chatResponse.Message.ToolCalls)
-	logutil.Trace("anthropic middleware: processed upstream chunk",
-		"incoming_shape", traceChatResponseShape(chatResponse),
-		"incoming_chunk", traceChatResponsePayload(chatResponse),
-		"stream", w.stream,
-		"has_web_search", hasWebSearch,
-		"has_other_tools", hasOtherTools,
+	logutil.Trace("anthropic middleware: upstream chunk",
+		"resp", anthropic.TraceChatResponse(chatResponse),
+		"web_search", hasWebSearch,
+		"other_tools", hasOtherTools,
 	)
 	if hasWebSearch && hasOtherTools {
 		// Prefer web_search if both server and client tools are present in one chunk.
@@ -195,10 +184,8 @@ func (w *WebSearchAnthropicWriter) Write(data []byte) (int, error) {
 	if w.stream {
 		// Let the original generation continue to completion while web search runs in parallel.
 		logutil.Trace("anthropic middleware: starting async web_search loop",
-			"web_search_call_shape", traceToolCallShape(webSearchCall),
-			"web_search_call", traceToolCallPayload(webSearchCall),
-			"initial_response_shape", traceChatResponseShape(chatResponse),
-			"initial_response", traceChatResponsePayload(chatResponse),
+			"tool_call", anthropic.TraceToolCall(webSearchCall),
+			"resp", anthropic.TraceChatResponse(chatResponse),
 		)
 		w.startLoopWorker(chatResponse, webSearchCall)
 		if chatResponse.Done {
@@ -217,12 +204,9 @@ func (w *WebSearchAnthropicWriter) Write(data []byte) (int, error) {
 		OutputTokens: max(w.observedEvalCount, chatResponse.Metrics.EvalCount),
 	}
 	logutil.Trace("anthropic middleware: starting sync web_search loop",
-		"web_search_call_shape", traceToolCallShape(webSearchCall),
-		"web_search_call", traceToolCallPayload(webSearchCall),
-		"initial_response_shape", traceChatResponseShape(chatResponse),
-		"initial_response", traceChatResponsePayload(chatResponse),
-		"initial_input_tokens", initialUsage.InputTokens,
-		"initial_output_tokens", initialUsage.OutputTokens,
+		"tool_call", anthropic.TraceToolCall(webSearchCall),
+		"resp", anthropic.TraceChatResponse(chatResponse),
+		"usage", initialUsage,
 	)
 	response, loopErr := w.runWebSearchLoop(loopCtx, chatResponse, webSearchCall, initialUsage)
 	if loopErr != nil {
@@ -242,14 +226,9 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 
 	followUpTools := append(api.Tools(nil), w.chatReq.Tools...)
 	usage := initialUsage
-	logutil.TraceContext(ctx, "anthropic middleware: web_search loop initialized",
+	logutil.TraceContext(ctx, "anthropic middleware: web_search loop init",
 		"model", w.req.Model,
-		"incoming_request_shape", traceChatRequestShape(w.chatReq),
-		"incoming_request", traceChatRequestPayload(w.chatReq),
-		"initial_response_shape", traceChatResponseShape(initialResponse),
-		"initial_response", traceChatResponsePayload(initialResponse),
-		"initial_tool_call_shape", traceToolCallShape(initialToolCall),
-		"initial_tool_call", traceToolCallPayload(initialToolCall),
+		"tool_call", anthropic.TraceToolCall(initialToolCall),
 		"messages", len(followUpMessages),
 		"tools", len(followUpTools),
 		"max_loops", maxWebSearchLoops,
@@ -273,11 +252,8 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 		query := extractQueryFromToolCall(&currentToolCall)
 		logutil.TraceContext(ctx, "anthropic middleware: web_search loop iteration",
 			"loop", loop,
-			"query", query,
-			"current_tool_call_shape", traceToolCallShape(currentToolCall),
-			"current_tool_call", traceToolCallPayload(currentToolCall),
-			"followup_messages", len(followUpMessages),
-			"followup_tools", len(followUpTools),
+			"query", anthropic.TraceTruncateString(query),
+			"messages", len(followUpMessages),
 		)
 		if query == "" {
 			return anthropic.MessagesResponse{}, &webSearchLoopError{
@@ -302,11 +278,9 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 				err:   err,
 			}
 		}
-		logutil.TraceContext(ctx, "anthropic middleware: web_search request succeeded",
+		logutil.TraceContext(ctx, "anthropic middleware: web_search results",
 			"loop", loop,
-			"query", query,
 			"results", len(searchResp.Results),
-			"search_response", traceJSON(searchResp),
 		)
 
 		toolUseID := loopServerToolUseID(w.inner.id, loop)
@@ -347,10 +321,9 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 				err:   err,
 			}
 		}
-		logutil.TraceContext(ctx, "anthropic middleware: followup /api/chat succeeded",
+		logutil.TraceContext(ctx, "anthropic middleware: followup response",
 			"loop", loop,
-			"response_shape", traceChatResponseShape(followUpResponse),
-			"response", traceChatResponsePayload(followUpResponse),
+			"resp", anthropic.TraceChatResponse(followUpResponse),
 		)
 
 		usage.InputTokens += followUpResponse.Metrics.PromptEvalCount
@@ -366,8 +339,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 			finalResponse := w.combineServerAndFinalContent(serverContent, followUpResponse, usage)
 			logutil.TraceContext(ctx, "anthropic middleware: web_search loop complete",
 				"loop", loop,
-				"final_response_shape", traceAnthropicResponseShape(finalResponse),
-				"final_response", traceAnthropicResponsePayload(finalResponse),
+				"resp", anthropic.TraceMessagesResponse(finalResponse),
 			)
 			return finalResponse, nil
 		}
@@ -377,10 +349,6 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 	}
 
 	maxLoopQuery := extractQueryFromToolCall(&currentToolCall)
-	logutil.TraceContext(ctx, "anthropic middleware: web_search loop max reached",
-		"max_loops", maxWebSearchLoops,
-		"query", maxLoopQuery,
-	)
 	maxLoopToolUseID := loopServerToolUseID(w.inner.id, maxWebSearchLoops+1)
 	serverContent = append(serverContent,
 		anthropic.ContentBlock{
@@ -408,9 +376,8 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 		StopReason: "end_turn",
 		Usage:      usage,
 	}
-	logutil.TraceContext(ctx, "anthropic middleware: web_search loop max response",
-		"response_shape", traceAnthropicResponseShape(maxResponse),
-		"response", traceAnthropicResponsePayload(maxResponse),
+	logutil.TraceContext(ctx, "anthropic middleware: web_search loop max reached",
+		"resp", anthropic.TraceMessagesResponse(maxResponse),
 	)
 	return maxResponse, nil
 }
@@ -429,12 +396,8 @@ func (w *WebSearchAnthropicWriter) startLoopWorker(initialResponse api.ChatRespo
 	w.loopResultCh = make(chan webSearchLoopResult, 1)
 	w.loopInFlight = true
 	logutil.Trace("anthropic middleware: loop worker started",
-		"initial_input_tokens", initialUsage.InputTokens,
-		"initial_output_tokens", initialUsage.OutputTokens,
-		"initial_tool_call_shape", traceToolCallShape(initialToolCall),
-		"initial_tool_call", traceToolCallPayload(initialToolCall),
-		"initial_response_shape", traceChatResponseShape(initialResponse),
-		"initial_response", traceChatResponsePayload(initialResponse),
+		"usage", initialUsage,
+		"tool_call", anthropic.TraceToolCall(initialToolCall),
 	)
 
 	go func() {
@@ -468,10 +431,7 @@ func (w *WebSearchAnthropicWriter) writeLoopResult() error {
 		w.applyObservedUsageDeltaToUsage(&usage)
 		return w.sendError(result.loopErr.code, result.loopErr.query, usage)
 	}
-	logutil.Trace("anthropic middleware: loop worker returned response",
-		"response_shape", traceAnthropicResponseShape(result.response),
-		"response", traceAnthropicResponsePayload(result.response),
-	)
+	logutil.Trace("anthropic middleware: loop worker done", "resp", anthropic.TraceMessagesResponse(result.response))
 
 	w.applyObservedUsageDelta(&result.response)
 	return w.writeTerminalResponse(result.response)
@@ -603,8 +563,7 @@ func (w *WebSearchAnthropicWriter) callFollowUpChat(ctx context.Context, message
 	chatURL := envconfig.Host().String() + "/api/chat"
 	logutil.TraceContext(ctx, "anthropic middleware: followup request",
 		"url", chatURL,
-		"request_shape", traceChatRequestShape(&followUp),
-		"request", traceChatRequestPayload(&followUp),
+		"req", anthropic.TraceChatRequest(&followUp),
 	)
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", chatURL, bytes.NewReader(body))
 	if err != nil {
@@ -631,10 +590,7 @@ func (w *WebSearchAnthropicWriter) callFollowUpChat(ctx context.Context, message
 	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
 		return api.ChatResponse{}, err
 	}
-	logutil.TraceContext(ctx, "anthropic middleware: followup decoded response",
-		"response_shape", traceChatResponseShape(chatResp),
-		"response", traceChatResponsePayload(chatResp),
-	)
+	logutil.TraceContext(ctx, "anthropic middleware: followup decoded", "resp", anthropic.TraceChatResponse(chatResp))
 
 	return chatResp, nil
 }
@@ -856,13 +812,7 @@ func (w *WebSearchAnthropicWriter) webSearchErrorResponse(errorCode, query strin
 // sendError sends a web search error response.
 func (w *WebSearchAnthropicWriter) sendError(errorCode, query string, usage anthropic.Usage) error {
 	response := w.webSearchErrorResponse(errorCode, query, usage)
-	logutil.Trace("anthropic middleware: sending web_search error response",
-		"error_code", errorCode,
-		"query", query,
-		"usage", usage,
-		"response_shape", traceAnthropicResponseShape(response),
-		"response", traceAnthropicResponsePayload(response),
-	)
+	logutil.Trace("anthropic middleware: web_search error", "code", errorCode, "query", query, "usage", usage)
 	return w.writeTerminalResponse(response)
 }
 
@@ -956,230 +906,6 @@ func AnthropicMessagesMiddleware() gin.HandlerFunc {
 
 		c.Next()
 	}
-}
-
-func traceChatRequestShape(req *api.ChatRequest) map[string]any {
-	if req == nil {
-		return nil
-	}
-
-	stream := false
-	if req.Stream != nil {
-		stream = *req.Stream
-	}
-
-	return map[string]any{
-		"model":          req.Model,
-		"messages":       len(req.Messages),
-		"message_shapes": traceAPIMessagesShape(req.Messages),
-		"tools":          len(req.Tools),
-		"tool_shapes":    traceAPIToolsShape(req.Tools),
-		"stream":         stream,
-		"options":        len(req.Options),
-		"has_think":      req.Think != nil,
-	}
-}
-
-func traceChatRequestPayload(req *api.ChatRequest) map[string]any {
-	if req == nil {
-		return nil
-	}
-
-	stream := false
-	if req.Stream != nil {
-		stream = *req.Stream
-	}
-
-	return map[string]any{
-		"model":    req.Model,
-		"messages": traceAPIMessagesPayload(req.Messages),
-		"tools":    traceAPIToolsPayload(req.Tools),
-		"stream":   stream,
-		"options":  req.Options,
-		"think":    traceJSON(req.Think),
-	}
-}
-
-func traceChatResponseShape(resp api.ChatResponse) map[string]any {
-	return map[string]any{
-		"model":         resp.Model,
-		"done":          resp.Done,
-		"done_reason":   resp.DoneReason,
-		"message_shape": traceAPIMessageShape(resp.Message),
-		"metrics": map[string]any{
-			"prompt_eval_count": resp.Metrics.PromptEvalCount,
-			"eval_count":        resp.Metrics.EvalCount,
-		},
-	}
-}
-
-func traceChatResponsePayload(resp api.ChatResponse) map[string]any {
-	return map[string]any{
-		"model":       resp.Model,
-		"created_at":  resp.CreatedAt,
-		"done":        resp.Done,
-		"done_reason": resp.DoneReason,
-		"message":     traceAPIMessagePayload(resp.Message),
-		"metrics":     traceJSON(resp.Metrics),
-	}
-}
-
-func traceAnthropicResponseShape(resp anthropic.MessagesResponse) map[string]any {
-	return map[string]any{
-		"id":            resp.ID,
-		"model":         resp.Model,
-		"content":       len(resp.Content),
-		"content_types": traceAnthropicContentTypes(resp.Content),
-		"stop_reason":   resp.StopReason,
-		"usage":         resp.Usage,
-	}
-}
-
-func traceAnthropicResponsePayload(resp anthropic.MessagesResponse) map[string]any {
-	return map[string]any{
-		"id":            resp.ID,
-		"type":          resp.Type,
-		"role":          resp.Role,
-		"model":         resp.Model,
-		"content":       traceJSON(resp.Content),
-		"stop_reason":   resp.StopReason,
-		"stop_sequence": resp.StopSequence,
-		"usage":         resp.Usage,
-	}
-}
-
-func traceAnthropicContentTypes(content []anthropic.ContentBlock) []string {
-	types := make([]string, 0, len(content))
-	for _, block := range content {
-		types = append(types, block.Type)
-	}
-	return types
-}
-
-func traceAPIMessagesShape(messages []api.Message) []map[string]any {
-	out := make([]map[string]any, 0, len(messages))
-	for _, message := range messages {
-		out = append(out, traceAPIMessageShape(message))
-	}
-	return out
-}
-
-func traceAPIMessagesPayload(messages []api.Message) []map[string]any {
-	out := make([]map[string]any, 0, len(messages))
-	for _, message := range messages {
-		out = append(out, traceAPIMessagePayload(message))
-	}
-	return out
-}
-
-func traceAPIMessageShape(message api.Message) map[string]any {
-	return map[string]any{
-		"role":             message.Role,
-		"content_chars":    len(message.Content),
-		"thinking_chars":   len(message.Thinking),
-		"images":           len(message.Images),
-		"tool_calls":       len(message.ToolCalls),
-		"has_tool_name":    message.ToolName != "",
-		"has_tool_call_id": message.ToolCallID != "",
-	}
-}
-
-func traceAPIMessagePayload(message api.Message) map[string]any {
-	return map[string]any{
-		"role":         message.Role,
-		"content":      message.Content,
-		"thinking":     message.Thinking,
-		"image_bytes":  traceImageSizes(message.Images),
-		"tool_calls":   traceToolCallsPayload(message.ToolCalls),
-		"tool_name":    message.ToolName,
-		"tool_call_id": message.ToolCallID,
-	}
-}
-
-func traceImageSizes(images []api.ImageData) []int {
-	sizes := make([]int, 0, len(images))
-	for _, image := range images {
-		sizes = append(sizes, len(image))
-	}
-	return sizes
-}
-
-func traceAPIToolsShape(tools api.Tools) []map[string]any {
-	out := make([]map[string]any, 0, len(tools))
-	for _, tool := range tools {
-		out = append(out, traceAPIToolShape(tool))
-	}
-	return out
-}
-
-func traceAPIToolsPayload(tools api.Tools) []map[string]any {
-	out := make([]map[string]any, 0, len(tools))
-	for _, tool := range tools {
-		out = append(out, traceAPIToolPayload(tool))
-	}
-	return out
-}
-
-func traceAPIToolShape(tool api.Tool) map[string]any {
-	return map[string]any{
-		"type":            tool.Type,
-		"name":            tool.Function.Name,
-		"has_description": tool.Function.Description != "",
-		"required":        len(tool.Function.Parameters.Required),
-	}
-}
-
-func traceAPIToolPayload(tool api.Tool) map[string]any {
-	return map[string]any{
-		"type":        tool.Type,
-		"name":        tool.Function.Name,
-		"description": tool.Function.Description,
-		"parameters":  traceJSON(tool.Function.Parameters),
-	}
-}
-
-func traceToolCallShape(toolCall api.ToolCall) map[string]any {
-	return map[string]any{
-		"id":   toolCall.ID,
-		"name": toolCall.Function.Name,
-		"args": toolCall.Function.Arguments.Len(),
-	}
-}
-
-func traceToolCallPayload(toolCall api.ToolCall) map[string]any {
-	return map[string]any{
-		"id":   toolCall.ID,
-		"name": toolCall.Function.Name,
-		"args": traceJSON(toolCall.Function.Arguments),
-	}
-}
-
-func traceToolCallsPayload(toolCalls []api.ToolCall) []map[string]any {
-	out := make([]map[string]any, 0, len(toolCalls))
-	for _, toolCall := range toolCalls {
-		out = append(out, traceToolCallPayload(toolCall))
-	}
-	return out
-}
-
-func traceJSON(v any) any {
-	if v == nil {
-		return nil
-	}
-
-	data, err := json.Marshal(v)
-	if err != nil {
-		return map[string]any{
-			"marshal_error": err.Error(),
-			"type":          fmt.Sprintf("%T", v),
-		}
-	}
-
-	var out any
-	if err := json.Unmarshal(data, &out); err != nil {
-		return string(data)
-	}
-	return out
 }
 
 // hasWebSearchTool checks if the request tools include a web_search tool
