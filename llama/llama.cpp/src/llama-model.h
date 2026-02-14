@@ -119,11 +119,13 @@ enum llm_type {
     LLM_TYPE_21B_A3B, // Ernie MoE small
     LLM_TYPE_30B_A3B,
     LLM_TYPE_31B_A3_5B,
+    LLM_TYPE_35B_A3B, // Qwen3.5
     LLM_TYPE_48B_A3B, // Kimi Linear
     LLM_TYPE_80B_A3B, // Qwen3 Next
     LLM_TYPE_100B_A6B,
     LLM_TYPE_102B_A12B, // Solar-Open
     LLM_TYPE_106B_A12B, // GLM-4.5-Air
+    LLM_TYPE_196B_A11B, // Step3.5-Flash
     LLM_TYPE_230B_A10B, // Minimax M2
     LLM_TYPE_235B_A22B,
     LLM_TYPE_300B_A47B, // Ernie MoE big
@@ -321,6 +323,9 @@ struct llama_layer {
 
     // qwen3next
     struct ggml_tensor * ssm_beta_alpha = nullptr;
+
+    // qwen3.5
+    struct ggml_tensor * ssm_alpha = nullptr;
 
     // rwkv
     struct ggml_tensor * time_mix_w1         = nullptr;

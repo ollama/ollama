@@ -80,6 +80,8 @@
 #define FC_SSM_CONV                    900
 #define FC_SOLVE_TRI                   1000
 #define FC_COUNT_EQUAL                 1100
+#define FC_UNARY                       1200
+#define FC_BIN                         1300
 
 // op-specific constants
 #define OP_FLASH_ATTN_EXT_NQPSG 8
@@ -87,6 +89,35 @@
 
 #define OP_FLASH_ATTN_EXT_VEC_NQPSG 1
 #define OP_FLASH_ATTN_EXT_VEC_NCPSG 32
+
+#define OP_UNARY_NUM_SCALE      10
+#define OP_UNARY_NUM_FILL       11
+#define OP_UNARY_NUM_CLAMP      12
+#define OP_UNARY_NUM_SQR        13
+#define OP_UNARY_NUM_SQRT       14
+#define OP_UNARY_NUM_SIN        15
+#define OP_UNARY_NUM_COS        16
+#define OP_UNARY_NUM_LOG        17
+#define OP_UNARY_NUM_LEAKY_RELU 18
+
+#define OP_UNARY_NUM_TANH        100
+#define OP_UNARY_NUM_RELU        101
+#define OP_UNARY_NUM_SIGMOID     102
+#define OP_UNARY_NUM_GELU        103
+#define OP_UNARY_NUM_GELU_ERF    104
+#define OP_UNARY_NUM_GELU_QUICK  105
+#define OP_UNARY_NUM_SILU        106
+#define OP_UNARY_NUM_ELU         107
+#define OP_UNARY_NUM_NEG         108
+#define OP_UNARY_NUM_ABS         109
+#define OP_UNARY_NUM_SGN         110
+#define OP_UNARY_NUM_STEP        111
+#define OP_UNARY_NUM_HARDSWISH   112
+#define OP_UNARY_NUM_HARDSIGMOID 113
+#define OP_UNARY_NUM_EXP         114
+#define OP_UNARY_NUM_SOFTPLUS    115
+#define OP_UNARY_NUM_EXPM1       116
+
 
 // kernel argument structs
 //
@@ -122,6 +153,31 @@ typedef struct {
     uint64_t nb3;
     int32_t  dim;
 } ggml_metal_kargs_concat;
+
+typedef struct {
+    int32_t  ne00;
+    int32_t  ne01;
+    int32_t  ne02;
+    int32_t  ne03;
+    uint64_t nb00;
+    uint64_t nb01;
+    uint64_t nb02;
+    uint64_t nb03;
+    int32_t  ne0;
+    int32_t  ne1;
+    int32_t  ne2;
+    int32_t  ne3;
+    uint64_t nb0;
+    uint64_t nb1;
+    uint64_t nb2;
+    uint64_t nb3;
+    float    slope;
+    float    scale;
+    float    bias;
+    float    val;
+    float    min;
+    float    max;
+} ggml_metal_kargs_unary;
 
 typedef struct {
     int32_t  ne00;
@@ -179,20 +235,6 @@ typedef struct {
     uint64_t nb2;
     uint64_t nb3;
 } ggml_metal_kargs_repeat;
-
-typedef struct {
-    float scale;
-    float bias;
-} ggml_metal_kargs_scale;
-
-typedef struct {
-    float val;
-} ggml_metal_kargs_fill;
-
-typedef struct {
-    float min;
-    float max;
-} ggml_metal_kargs_clamp;
 
 typedef struct {
     int64_t  nk0;
@@ -497,8 +539,21 @@ typedef struct {
 
 typedef struct {
     int32_t  ne00;
-    int32_t  ne00_4;
+    int32_t  ne01;
+    int32_t  ne02;
+    int32_t  ne03;
+    uint64_t nb00;
     uint64_t nb01;
+    uint64_t nb02;
+    uint64_t nb03;
+    int32_t  ne0;
+    int32_t  ne1;
+    int32_t  ne2;
+    int32_t  ne3;
+    uint64_t nb0;
+    uint64_t nb1;
+    uint64_t nb2;
+    uint64_t nb3;
     float    eps;
 } ggml_metal_kargs_l2_norm;
 
@@ -879,10 +934,6 @@ typedef struct {
     int      dim;
     int      max_period;
 } ggml_metal_kargs_timestep_embedding;
-
-typedef struct {
-    float    slope;
-} ggml_metal_kargs_leaky_relu;
 
 typedef struct {
     int32_t  ne00;

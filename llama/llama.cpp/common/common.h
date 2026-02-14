@@ -269,7 +269,6 @@ struct common_params_speculative {
 
     uint16_t ngram_size_n     = 12; // ngram size for lookup
     uint16_t ngram_size_m     = 48; // mgram size for speculative tokens
-    uint16_t ngram_check_rate =  1; // check rate for ngram lookup
     uint16_t ngram_min_hits   =  1; // minimum hits at ngram/mgram lookup for mgram to be proposed
 
     std::shared_ptr<common_ngram_mod> ngram_mod;

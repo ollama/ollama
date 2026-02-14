@@ -10,6 +10,7 @@
 #include "ggml-backend.h"
 #include "gguf.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstdlib>
@@ -685,8 +686,8 @@ ggml_tensor * clip_graph::build_rope_2d(
     {
         first = ggml_view_3d(ctx0, cur,
             n_dim/2, n_head, n_pos,
-            ggml_row_size(cur->type, n_dim),
-            ggml_row_size(cur->type, n_dim*n_head),
+            cur->nb[1],
+            cur->nb[2],
             0);
         first = ggml_rope_ext(
             ctx0,
@@ -704,8 +705,8 @@ ggml_tensor * clip_graph::build_rope_2d(
     {
         second = ggml_view_3d(ctx0, cur,
             n_dim/2, n_head, n_pos,
-            ggml_row_size(cur->type, n_dim),
-            ggml_row_size(cur->type, n_dim*n_head),
+            cur->nb[1],
+            cur->nb[2],
             n_dim/2 * ggml_element_size(cur));
         second = ggml_rope_ext(
             ctx0,
@@ -837,6 +838,10 @@ static ggml_cgraph * clip_image_build_graph(clip_ctx * ctx, const clip_image_f32
         case PROJECTOR_TYPE_KIMIVL:
             {
                 builder = std::make_unique<clip_graph_kimivl>(ctx, img);
+            } break;
+        case PROJECTOR_TYPE_KIMIK25:
+            {
+                builder = std::make_unique<clip_graph_kimik25>(ctx, img);
             } break;
         case PROJECTOR_TYPE_COGVLM:
             {
@@ -1133,9 +1138,8 @@ struct clip_model_loader {
                 case PROJECTOR_TYPE_LFM2:
                     {
                         get_u32(KEY_PROJ_SCALE_FACTOR, hparams.n_merge, false);
-                        // ref: https://huggingface.co/LiquidAI/LFM2-VL-3B/blob/main/preprocessor_config.json
-                        // config above specifies number of tokens after downsampling, while here it is before, relax lowerbound to 64
-                        hparams.set_limit_image_tokens(64, 1024);
+                        // ref: https://huggingface.co/LiquidAI/LFM2.5-VL-1.6B/blob/main/processor_config.json
+                        hparams.set_limit_image_tokens(64, 256);
                     } break;
                 case PROJECTOR_TYPE_PIXTRAL:
                 case PROJECTOR_TYPE_LIGHTONOCR:
@@ -1155,6 +1159,22 @@ struct clip_model_loader {
                         // TODO: check kimivl preprocessor for exact values
                         hparams.set_limit_image_tokens(8, 1024);
                         hparams.set_warmup_n_tokens(256); // avoid OOM on warmup
+                    } break;
+                case PROJECTOR_TYPE_KIMIK25:
+                    {
+                        hparams.rope_theta = 10000.0f;
+                        get_u32(KEY_PROJ_SCALE_FACTOR, hparams.n_merge, false);
+
+                        int min_pixels = 0, max_pixels = 0;
+                        get_u32(KEY_IMAGE_MIN_PIXELS, min_pixels, false);
+                        get_u32(KEY_IMAGE_MAX_PIXELS, max_pixels, false);
+                        if (min_pixels > 0 && max_pixels > 0) {
+                            hparams.image_min_pixels = min_pixels;
+                            hparams.image_max_pixels = max_pixels;
+                            hparams.warmup_image_size = static_cast<int>(std::sqrt(max_pixels));
+                        } else {
+                            hparams.set_limit_image_tokens(2, 4096);
+                        }
                     } break;
                 case PROJECTOR_TYPE_GEMMA3:
                     {
@@ -1685,6 +1705,7 @@ struct clip_model_loader {
                     model.mm_2_b = get_tensor(string_format(TN_LLAVA_PROJ, 2, "bias"));
                 } break;
             case PROJECTOR_TYPE_KIMIVL:
+            case PROJECTOR_TYPE_KIMIK25:
                 {
                     model.mm_input_norm_w = get_tensor(TN_MM_INP_NORM);
                     model.mm_input_norm_b = get_tensor(TN_MM_INP_NORM_B);
@@ -2850,6 +2871,119 @@ private:
     }
 };
 
+// ref: https://github.com/huggingface/transformers/blob/v5.1.0/src/transformers/models/lfm2_vl/image_processing_lfm2_vl_fast.py
+// some of the logic is similar to llava_uhd, but with different hyperparameters and some logic is unique (e.g. grid layout)
+struct lfm2_vl_image_processor {
+    // ref: https://huggingface.co/LiquidAI/LFM2.5-VL-1.6B/blob/main/processor_config.json
+    static constexpr int   min_tiles            = 2;
+    static constexpr int   max_tiles            = 10;
+    static constexpr float max_pixels_tolerance = 2.0f;
+    static constexpr int   tile_size            = 512;
+
+    static llava_uhd::slice_instructions get_slice_instructions(struct clip_ctx * ctx, const clip_image_size & original_size) {
+        llava_uhd::slice_instructions inst;
+        const auto & params  = ctx->model.hparams;
+        const int align_size = params.patch_size * params.n_merge;
+
+        inst.interpolation_overview = img_tool::RESIZE_ALGO_BILINEAR;
+        inst.interpolation_refined  = img_tool::RESIZE_ALGO_BILINEAR;
+        inst.overview_size          = img_tool::calc_size_preserved_ratio(original_size, align_size, params.image_min_pixels, params.image_max_pixels);
+
+        // tile if either dimension exceeds tile_size with tolerance
+        const bool needs_tiling = original_size.width > tile_size * max_pixels_tolerance || original_size.height > tile_size * max_pixels_tolerance;
+
+        if (!needs_tiling) {
+            inst.refined_size = clip_image_size{0, 0};
+            inst.grid_size    = clip_image_size{0, 0};
+            return inst;
+        }
+
+        const clip_image_size grid = get_grid_layout(original_size.height, original_size.width);
+
+        inst.grid_size    = grid;
+        inst.refined_size = clip_image_size{tile_size * grid.width, tile_size * grid.height};
+
+        LOG_DBG("%s: original size: %d x %d, overview size: %d x %d, refined size: %d x %d, grid size: %d x %d\n",
+                __func__,
+                original_size.width, original_size.height,
+                inst.overview_size.width, inst.overview_size.height,
+                inst.refined_size.width, inst.refined_size.height,
+                grid.width, grid.height);
+
+        for (int row = 0; row < grid.height; row++) {
+            for (int col = 0; col < grid.width; col++) {
+                llava_uhd::slice_coordinates slice;
+                slice.x    = col * tile_size;
+                slice.y    = row * tile_size;
+                slice.size = clip_image_size{tile_size, tile_size};
+                inst.slices.push_back(slice);
+                LOG_DBG("%s: slice %d: x=%d, y=%d, size=%d x %d\n",
+                        __func__, (int)inst.slices.size() - 1,
+                        slice.x, slice.y, slice.size.width, slice.size.height);
+            }
+        }
+
+        return inst;
+    }
+
+private:
+    static clip_image_size find_closest_aspect_ratio(
+            float aspect_ratio,
+            const std::vector<clip_image_size> & target_ratios,
+            int width, int height) {
+        float best_ratio_diff = std::numeric_limits<float>::max();
+        clip_image_size best_ratio = {1, 1};
+        const float area = static_cast<float>(width * height);
+
+        for (const auto & ratio : target_ratios) {
+            const float target_aspect_ratio = static_cast<float>(ratio.width) / ratio.height;
+            const float ratio_diff = std::abs(aspect_ratio - target_aspect_ratio);
+            if (ratio_diff < best_ratio_diff) {
+                best_ratio_diff = ratio_diff;
+                best_ratio = ratio;
+            } else if (ratio_diff == best_ratio_diff) {
+                const float target_area = static_cast<float>(tile_size * tile_size * ratio.width * ratio.height);
+                if (area > 0.5f * target_area) {
+                    best_ratio = ratio;
+                }
+            }
+        }
+        return best_ratio;
+    }
+
+    static std::vector<clip_image_size> get_target_ratios() {
+        std::vector<clip_image_size> ratios;
+        for (int n = min_tiles; n <= max_tiles; n++) {
+            for (int w = 1; w <= n; w++) {
+                for (int h = 1; h <= n; h++) {
+                    if (w * h >= min_tiles && w * h <= max_tiles) {
+                        bool found = false;
+                        for (const auto & r : ratios) {
+                            if (r.width == w && r.height == h) {
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            ratios.push_back({w, h});
+                        }
+                    }
+                }
+            }
+        }
+        std::sort(ratios.begin(), ratios.end(), [](const clip_image_size & a, const clip_image_size & b) {
+            return a.width * a.height < b.width * b.height;
+        });
+        return ratios;
+    }
+
+    static clip_image_size get_grid_layout(int height, int width) {
+        const float aspect_ratio = static_cast<float>(width) / height;
+        const auto ratios = get_target_ratios();
+        return find_closest_aspect_ratio(aspect_ratio, ratios, width, height);
+    }
+};
+
 // returns the normalized float tensor for llava-1.5, for spatial_unpad with anyres processing for llava-1.6 it returns the normalized image patch tensors as a vector
 // res_imgs memory is being allocated here, previous allocations will be freed if found
 bool clip_image_preprocess(struct clip_ctx * ctx, const clip_image_u8 * img, struct clip_image_f32_batch * res_imgs) {
@@ -3064,6 +3198,20 @@ bool clip_image_preprocess(struct clip_ctx * ctx, const clip_image_u8 * img, str
             } break;
 
         case PROJECTOR_TYPE_LFM2:
+            {
+                auto const inst = lfm2_vl_image_processor::get_slice_instructions(ctx, original_size);
+                std::vector<clip_image_u8_ptr> imgs = llava_uhd::slice_image(img, inst);
+
+                for (size_t i = 0; i < imgs.size(); ++i) {
+                    clip_image_f32_ptr res(clip_image_f32_init());
+                    normalize_image_u8_to_f32(*imgs[i], *res, params.image_mean, params.image_std);
+                    res_imgs->entries.push_back(std::move(res));
+                }
+
+                res_imgs->grid_x = inst.grid_size.width;
+                res_imgs->grid_y = inst.grid_size.height;
+            } break;
+
         case PROJECTOR_TYPE_KIMIVL:
             {
                 GGML_ASSERT(params.image_min_pixels > 0 && params.image_max_pixels > 0);
@@ -3075,8 +3223,24 @@ bool clip_image_preprocess(struct clip_ctx * ctx, const clip_image_u8 * img, str
                 const std::array<uint8_t, 3> pad_color = {122, 116, 104};
 
                 clip_image_u8 resized_img;
-                const bool pad = (ctx->proj_type() != PROJECTOR_TYPE_LFM2);
-                img_tool::resize(*img, resized_img, target_size, img_tool::RESIZE_ALGO_BILINEAR, pad, pad_color);
+                img_tool::resize(*img, resized_img, target_size, img_tool::RESIZE_ALGO_BILINEAR, true, pad_color);
+                clip_image_f32_ptr res(clip_image_f32_init());
+                normalize_image_u8_to_f32(resized_img, *res, params.image_mean, params.image_std);
+                res_imgs->entries.push_back(std::move(res));
+            } break;
+
+        case PROJECTOR_TYPE_KIMIK25:
+            {
+                GGML_ASSERT(params.image_min_pixels > 0 && params.image_max_pixels > 0);
+                const clip_image_size target_size = img_tool::calc_size_preserved_ratio(
+                    original_size,
+                    params.patch_size * params.n_merge,
+                    params.image_min_pixels,
+                    params.image_max_pixels);
+                const std::array<uint8_t, 3> pad_color = {0, 0, 0};
+
+                clip_image_u8 resized_img;
+                img_tool::resize(*img, resized_img, target_size, img_tool::RESIZE_ALGO_BICUBIC, true, pad_color);
                 clip_image_f32_ptr res(clip_image_f32_init());
                 normalize_image_u8_to_f32(resized_img, *res, params.image_mean, params.image_std);
                 res_imgs->entries.push_back(std::move(res));
@@ -3290,6 +3454,7 @@ int clip_n_output_tokens(const struct clip_ctx * ctx, struct clip_image_f32 * im
             } break;
         case PROJECTOR_TYPE_LFM2:
         case PROJECTOR_TYPE_KIMIVL:
+        case PROJECTOR_TYPE_KIMIK25:
             {
                 // dynamic size
                 int out_patch_size = params.patch_size * ctx->model.hparams.n_merge;
@@ -3631,6 +3796,7 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
             } break;
         case PROJECTOR_TYPE_PIXTRAL:
         case PROJECTOR_TYPE_KIMIVL:
+        case PROJECTOR_TYPE_KIMIK25:
         case PROJECTOR_TYPE_LIGHTONOCR:
             {
                 // set the 2D positions
@@ -3767,6 +3933,47 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
         ggml_backend_tensor_get(embeddings, vec, 0, ggml_nbytes(embeddings));
     }
 
+    // Debug: dump final embeddings if MTMD_DEBUG_EMBEDDINGS is set
+    if (std::getenv("MTMD_DEBUG_EMBEDDINGS") != nullptr) {
+        const int64_t n_embd = embeddings->ne[0];
+        const int64_t n_tokens = embeddings->ne[1];
+        std::vector<float> emb_data(n_embd * n_tokens);
+        ggml_backend_tensor_get(embeddings, emb_data.data(), 0, ggml_nbytes(embeddings));
+
+        LOG_INF("\n=== MTMD_DEBUG_EMBEDDINGS ===\n");
+        LOG_INF("Shape: [%lld, %lld]\n", (long long)n_embd, (long long)n_tokens);
+
+        // Print first few values of first token
+        LOG_INF("Token 0 (first 16 values): ");
+        for (int i = 0; i < std::min((int64_t)16, n_embd); i++) {
+            LOG_INF("%.6f ", emb_data[i]);
+        }
+        LOG_INF("\n");
+
+        // Print last few values of first token
+        if (n_embd > 16) {
+            LOG_INF("Token 0 (last 16 values):  ");
+            for (int64_t i = n_embd - 16; i < n_embd; i++) {
+                LOG_INF("%.6f ", emb_data[i]);
+            }
+            LOG_INF("\n");
+        }
+
+        // Compute and print statistics
+        float sum = 0.0f, sum_sq = 0.0f, min_val = emb_data[0], max_val = emb_data[0];
+        for (size_t i = 0; i < emb_data.size(); i++) {
+            sum += emb_data[i];
+            sum_sq += emb_data[i] * emb_data[i];
+            min_val = std::min(min_val, emb_data[i]);
+            max_val = std::max(max_val, emb_data[i]);
+        }
+        float mean = sum / emb_data.size();
+        float variance = (sum_sq / emb_data.size()) - (mean * mean);
+        LOG_INF("Stats: mean=%.6f, std=%.6f, min=%.6f, max=%.6f, sum=%.6f\n",
+                mean, sqrtf(variance), min_val, max_val, sum);
+        LOG_INF("=== END MTMD_DEBUG_EMBEDDINGS ===\n\n");
+    }
+
     return true;
 }
 
@@ -3813,6 +4020,7 @@ int clip_n_mmproj_embd(const struct clip_ctx * ctx) {
             return ctx->model.mm_2_w->ne[1];
         case PROJECTOR_TYPE_LFM2:
         case PROJECTOR_TYPE_KIMIVL:
+        case PROJECTOR_TYPE_KIMIK25:
             return ctx->model.mm_2_w->ne[1];
         case PROJECTOR_TYPE_COGVLM:
             return ctx->model.mm_4h_to_h_w->ne[1];

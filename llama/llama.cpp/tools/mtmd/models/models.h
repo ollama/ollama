@@ -109,3 +109,10 @@ struct clip_graph_mobilenetv5 : clip_graph {
         ggml_tensor * inp,
         const mobilenetv5_block & block);
 };
+
+struct clip_graph_kimik25 : clip_graph {
+    clip_graph_kimik25(clip_ctx * ctx, const clip_image_f32 & img) : clip_graph(ctx, img) {}
+    ggml_cgraph * build() override;
+
+    ggml_tensor * resize_position_embeddings_3d(uint32_t interpolation_mode);
+};

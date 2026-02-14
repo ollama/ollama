@@ -10,11 +10,11 @@ Signed-off-by: Gabe Goodhart <ghart@us.ibm.com>
  2 files changed, 13 insertions(+)
 
 diff --git a/tools/mtmd/mtmd.cpp b/tools/mtmd/mtmd.cpp
-index d037e834f..a8f329263 100644
+index b7636279c..73ca4d339 100644
 --- a/tools/mtmd/mtmd.cpp
 +++ b/tools/mtmd/mtmd.cpp
-@@ -87,6 +87,16 @@ enum mtmd_slice_tmpl {
-     MTMD_SLICE_TMPL_IDEFICS3,
+@@ -88,6 +88,16 @@ enum mtmd_slice_tmpl {
+     MTMD_SLICE_TMPL_LFM2,
  };
  
 +mtmd_input_text* mtmd_input_text_init(const char * text, bool add_special, bool parse_special) {

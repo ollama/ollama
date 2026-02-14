@@ -160,7 +160,7 @@ index 2e9ddf224..6a399bdb1 100644
  
  static struct ggml_backend_i blas_backend_i = {
 diff --git a/ggml/src/ggml-cann/ggml-cann.cpp b/ggml/src/ggml-cann/ggml-cann.cpp
-index 6737b5557..3d6cfef8b 100644
+index 90a15f217..02a781c31 100644
 --- a/ggml/src/ggml-cann/ggml-cann.cpp
 +++ b/ggml/src/ggml-cann/ggml-cann.cpp
 @@ -2187,8 +2187,10 @@ static void evaluate_and_capture_cann_graph(ggml_backend_cann_context * cann_ctx
@@ -198,7 +198,7 @@ index ddf1737a3..622cf5d24 100644
  
  static const struct ggml_backend_i ggml_backend_cpu_i = {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 38eed354c..710c78f56 100644
+index 227c9691f..74ea72915 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -3993,9 +3993,11 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
@@ -215,10 +215,10 @@ index 38eed354c..710c78f56 100644
  
      bool use_cuda_graph             = false;
 diff --git a/ggml/src/ggml-hexagon/ggml-hexagon.cpp b/ggml/src/ggml-hexagon/ggml-hexagon.cpp
-index 4f0a1620f..a8635dc97 100644
+index 54f998649..57b47e8ab 100644
 --- a/ggml/src/ggml-hexagon/ggml-hexagon.cpp
 +++ b/ggml/src/ggml-hexagon/ggml-hexagon.cpp
-@@ -2471,9 +2471,11 @@ static inline int last_compute_op(ggml_cgraph * graph) {
+@@ -2543,9 +2543,11 @@ static inline int last_compute_op(ggml_cgraph * graph) {
      return last;
  }
  
@@ -283,7 +283,7 @@ index 281fa1bdb..b5f7adf89 100644
      bool reuse = rpc_ctx->gc.is_cached(cgraph);
      if (reuse) {
 diff --git a/ggml/src/ggml-sycl/ggml-sycl.cpp b/ggml/src/ggml-sycl/ggml-sycl.cpp
-index 3746dc4d7..243ce1def 100644
+index 336172700..9e1e2510e 100644
 --- a/ggml/src/ggml-sycl/ggml-sycl.cpp
 +++ b/ggml/src/ggml-sycl/ggml-sycl.cpp
 @@ -4374,9 +4374,11 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
@@ -315,10 +315,10 @@ index 411ae7c23..8b6447344 100644
  
      if (vk_instance.debug_utils_support) {
 diff --git a/ggml/src/ggml-webgpu/ggml-webgpu.cpp b/ggml/src/ggml-webgpu/ggml-webgpu.cpp
-index 4ef50e365..082051ca9 100644
+index 32e120266..72ad83e3c 100644
 --- a/ggml/src/ggml-webgpu/ggml-webgpu.cpp
 +++ b/ggml/src/ggml-webgpu/ggml-webgpu.cpp
-@@ -2094,8 +2094,9 @@ static std::optional<webgpu_command> ggml_webgpu_encode_node(webgpu_context ctx,
+@@ -2151,8 +2151,9 @@ static std::optional<webgpu_command> ggml_webgpu_encode_node(webgpu_context ctx,
      }
  }
  

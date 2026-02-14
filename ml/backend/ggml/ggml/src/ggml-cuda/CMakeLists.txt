@@ -64,7 +64,7 @@ if (CUDAToolkit_FOUND)
         FetchContent_Declare(
             CCCL
             GIT_REPOSITORY https://github.com/nvidia/cccl.git
-            GIT_TAG        v3.2.0-rc2
+            GIT_TAG        v3.2.0
             GIT_SHALLOW    TRUE
         )
 

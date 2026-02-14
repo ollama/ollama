@@ -12,10 +12,10 @@ Subject: [PATCH] add argsort and cuda copy for i32
  5 files changed, 413 insertions(+), 11 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index ce15b18ce..4bdb7c890 100644
+index ed4535020..e952acf9d 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
-@@ -7958,6 +7958,45 @@ static void ggml_compute_forward_argsort_f32(
+@@ -7957,6 +7957,45 @@ static void ggml_compute_forward_argsort_f32(
      }
  }
  
@@ -61,7 +61,7 @@ index ce15b18ce..4bdb7c890 100644
  void ggml_compute_forward_argsort(
      const ggml_compute_params * params,
      ggml_tensor * dst) {
-@@ -7969,6 +8008,10 @@ void ggml_compute_forward_argsort(
+@@ -7968,6 +8007,10 @@ void ggml_compute_forward_argsort(
              {
                  ggml_compute_forward_argsort_f32(params, dst);
              } break;
@@ -291,10 +291,10 @@ index ee84303ef..178e82d76 100644
          if (can_be_transposed) {
              ggml_cpy_scalar_cuda<nv_bfloat16, nv_bfloat16, true>
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 612a42a1e..4e3ddc338 100644
+index a385a50b9..e92075cea 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -5032,8 +5032,77 @@ kernel void kernel_argsort_f32_i32(
+@@ -4701,8 +4701,77 @@ kernel void kernel_argsort_f32_i32(
      }
  }
  
@@ -372,7 +372,7 @@ index 612a42a1e..4e3ddc338 100644
  
  typedef void (argsort_merge_t)(
          constant   ggml_metal_kargs_argsort_merge & args,
-@@ -5188,8 +5257,154 @@ kernel void kernel_argsort_merge_f32_i32(
+@@ -4857,8 +4926,154 @@ kernel void kernel_argsort_merge_f32_i32(
      }
  }
  
@@ -525,5 +525,5 @@ index 612a42a1e..4e3ddc338 100644
 +template [[host_name("kernel_argsort_merge_i32_i32_asc")]]  kernel argsort_merge_t kernel_argsort_merge_i32_i32<GGML_SORT_ORDER_ASC>;
 +template [[host_name("kernel_argsort_merge_i32_i32_desc")]] kernel argsort_merge_t kernel_argsort_merge_i32_i32<GGML_SORT_ORDER_DESC>;
  
- kernel void kernel_leaky_relu_f32(
-         constant     ggml_metal_kargs_leaky_relu & args,
+ constant bool FC_flash_attn_ext_pad_has_mask [[function_constant(FC_FLASH_ATTN_EXT_PAD + 0)]];
+ 
