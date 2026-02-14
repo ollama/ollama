@@ -34,7 +34,6 @@ func tryLoadFromDir(dir string) bool {
 
 	for _, match := range matches {
 		path := filepath.Join(dir, match)
-		slog.Info("Loading MLX dynamic library", "path", path)
 
 		cPath := C.CString(path)
 		defer C.free(unsafe.Pointer(cPath))
@@ -51,7 +50,6 @@ func tryLoadFromDir(dir string) bool {
 			continue
 		}
 
-		slog.Info("Loaded MLX dynamic library", "path", path)
 		return true
 	}
 	return false
