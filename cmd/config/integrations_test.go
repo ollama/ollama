@@ -16,6 +16,28 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type stubEditorRunner struct {
+	edited   [][]string
+	ranModel string
+}
+
+func (s *stubEditorRunner) Run(model string, args []string) error {
+	s.ranModel = model
+	return nil
+}
+
+func (s *stubEditorRunner) String() string { return "StubEditor" }
+
+func (s *stubEditorRunner) Paths() []string { return nil }
+
+func (s *stubEditorRunner) Edit(models []string) error {
+	cloned := append([]string(nil), models...)
+	s.edited = append(s.edited, cloned)
+	return nil
+}
+
+func (s *stubEditorRunner) Models() []string { return nil }
+
 func TestIntegrationLookup(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -149,6 +171,10 @@ func TestLaunchCmd_TUICallback(t *testing.T) {
 	})
 
 	t.Run("integration arg bypasses TUI", func(t *testing.T) {
+		srv := httptest.NewServer(http.NotFoundHandler())
+		defer srv.Close()
+		t.Setenv("OLLAMA_HOST", srv.URL)
+
 		tuiCalled := false
 		mockTUI := func(cmd *cobra.Command) {
 			tuiCalled = true
@@ -394,14 +420,14 @@ func names(items []ModelItem) []string {
 func TestBuildModelList_NoExistingModels(t *testing.T) {
 	items, _, _, _ := buildModelList(nil, nil, "")
 
-	want := []string{"glm-5:cloud", "kimi-k2.5:cloud", "glm-4.7-flash", "qwen3:8b"}
+	want := []string{"minimax-m2.5:cloud", "glm-5:cloud", "kimi-k2.5:cloud", "glm-4.7-flash", "qwen3:8b"}
 	if diff := cmp.Diff(want, names(items)); diff != "" {
 		t.Errorf("with no existing models, items should be recommended in order (-want +got):\n%s", diff)
 	}
 
 	for _, item := range items {
-		if !strings.HasSuffix(item.Description, "install?") {
-			t.Errorf("item %q should have description ending with 'install?', got %q", item.Name, item.Description)
+		if !strings.HasSuffix(item.Description, "(not downloaded)") {
+			t.Errorf("item %q should have description ending with '(not downloaded)', got %q", item.Name, item.Description)
 		}
 	}
 }
@@ -416,7 +442,7 @@ func TestBuildModelList_OnlyLocalModels_CloudRecsAtBottom(t *testing.T) {
 	got := names(items)
 
 	// Recommended pinned at top (local recs first, then cloud recs when only-local), then installed non-recs
-	want := []string{"glm-4.7-flash", "qwen3:8b", "glm-5:cloud", "kimi-k2.5:cloud", "llama3.2", "qwen2.5"}
+	want := []string{"glm-4.7-flash", "qwen3:8b", "minimax-m2.5:cloud", "glm-5:cloud", "kimi-k2.5:cloud", "llama3.2", "qwen2.5"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("recs pinned at top, local recs before cloud recs (-want +got):\n%s", diff)
 	}
@@ -432,7 +458,7 @@ func TestBuildModelList_BothCloudAndLocal_RegularSort(t *testing.T) {
 	got := names(items)
 
 	// All recs pinned at top (cloud before local in mixed case), then non-recs
-	want := []string{"glm-5:cloud", "kimi-k2.5:cloud", "glm-4.7-flash", "qwen3:8b", "llama3.2"}
+	want := []string{"minimax-m2.5:cloud", "glm-5:cloud", "kimi-k2.5:cloud", "glm-4.7-flash", "qwen3:8b", "llama3.2"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("recs pinned at top, cloud recs first in mixed case (-want +got):\n%s", diff)
 	}
@@ -463,12 +489,12 @@ func TestBuildModelList_ExistingRecommendedMarked(t *testing.T) {
 	for _, item := range items {
 		switch item.Name {
 		case "glm-4.7-flash", "glm-5:cloud":
-			if strings.HasSuffix(item.Description, "install?") {
-				t.Errorf("installed recommended %q should not have 'install?' suffix, got %q", item.Name, item.Description)
+			if strings.HasSuffix(item.Description, "(not downloaded)") {
+				t.Errorf("installed recommended %q should not have '(not downloaded)' suffix, got %q", item.Name, item.Description)
 			}
-		case "kimi-k2.5:cloud", "qwen3:8b":
-			if !strings.HasSuffix(item.Description, "install?") {
-				t.Errorf("non-installed recommended %q should have 'install?' suffix, got %q", item.Name, item.Description)
+		case "minimax-m2.5:cloud", "kimi-k2.5:cloud", "qwen3:8b":
+			if !strings.HasSuffix(item.Description, "(not downloaded)") {
+				t.Errorf("non-installed recommended %q should have '(not downloaded)' suffix, got %q", item.Name, item.Description)
 			}
 		}
 	}
@@ -486,7 +512,7 @@ func TestBuildModelList_ExistingCloudModelsNotPushedToBottom(t *testing.T) {
 	// glm-4.7-flash and glm-5:cloud are installed so they sort normally;
 	// kimi-k2.5:cloud and qwen3:8b are not installed so they go to the bottom
 	// All recs: cloud first in mixed case, then local, in rec order within each
-	want := []string{"glm-5:cloud", "kimi-k2.5:cloud", "glm-4.7-flash", "qwen3:8b"}
+	want := []string{"minimax-m2.5:cloud", "glm-5:cloud", "kimi-k2.5:cloud", "glm-4.7-flash", "qwen3:8b"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("all recs, cloud first in mixed case (-want +got):\n%s", diff)
 	}
@@ -504,15 +530,15 @@ func TestBuildModelList_HasRecommendedCloudModel_OnlyNonInstalledAtBottom(t *tes
 	// kimi-k2.5:cloud is installed so it sorts normally;
 	// the rest of the recommendations are not installed so they go to the bottom
 	// All recs pinned at top (cloud first in mixed case), then non-recs
-	want := []string{"glm-5:cloud", "kimi-k2.5:cloud", "glm-4.7-flash", "qwen3:8b", "llama3.2"}
+	want := []string{"minimax-m2.5:cloud", "glm-5:cloud", "kimi-k2.5:cloud", "glm-4.7-flash", "qwen3:8b", "llama3.2"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("recs pinned at top, cloud first in mixed case (-want +got):\n%s", diff)
 	}
 
 	for _, item := range items {
 		if !slices.Contains([]string{"kimi-k2.5:cloud", "llama3.2"}, item.Name) {
-			if !strings.HasSuffix(item.Description, "install?") {
-				t.Errorf("non-installed %q should have 'install?' suffix, got %q", item.Name, item.Description)
+			if !strings.HasSuffix(item.Description, "(not downloaded)") {
+				t.Errorf("non-installed %q should have '(not downloaded)' suffix, got %q", item.Name, item.Description)
 			}
 		}
 	}
@@ -648,7 +674,7 @@ func TestBuildModelList_RecsAboveNonRecs(t *testing.T) {
 	lastRecIdx := -1
 	firstNonRecIdx := len(got)
 	for i, name := range got {
-		isRec := name == "glm-4.7-flash" || name == "qwen3:8b" || name == "glm-5:cloud" || name == "kimi-k2.5:cloud"
+		isRec := name == "glm-4.7-flash" || name == "qwen3:8b" || name == "minimax-m2.5:cloud" || name == "glm-5:cloud" || name == "kimi-k2.5:cloud"
 		if isRec && i > lastRecIdx {
 			lastRecIdx = i
 		}
@@ -680,7 +706,7 @@ func TestEditorIntegration_SavedConfigSkipsSelection(t *testing.T) {
 	setTestHome(t, tmpDir)
 
 	// Save a config for opencode so it looks like a previous launch
-	if err := saveIntegration("opencode", []string{"llama3.2"}); err != nil {
+	if err := SaveIntegration("opencode", []string{"llama3.2"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -694,6 +720,137 @@ func TestEditorIntegration_SavedConfigSkipsSelection(t *testing.T) {
 	}
 	if saved.Models[0] != "llama3.2" {
 		t.Errorf("expected llama3.2, got %s", saved.Models[0])
+	}
+}
+
+func TestResolveEditorLaunchModels_PicksWhenAllFiltered(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status":
+			fmt.Fprintf(w, `{"cloud":{"disabled":true,"source":"config"}}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	pickerCalled := false
+	models, err := resolveEditorModels("opencode", []string{"glm-5:cloud"}, func() ([]string, error) {
+		pickerCalled = true
+		return []string{"llama3.2"}, nil
+	})
+	if err != nil {
+		t.Fatalf("resolveEditorLaunchModels returned error: %v", err)
+	}
+	if !pickerCalled {
+		t.Fatal("expected model picker to be called when all models are filtered")
+	}
+	if diff := cmp.Diff([]string{"llama3.2"}, models); diff != "" {
+		t.Fatalf("resolved models mismatch (-want +got):\n%s", diff)
+	}
+
+	saved, err := loadIntegration("opencode")
+	if err != nil {
+		t.Fatalf("failed to reload integration config: %v", err)
+	}
+	if diff := cmp.Diff([]string{"llama3.2"}, saved.Models); diff != "" {
+		t.Fatalf("saved models mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolveEditorLaunchModels_FiltersAndSkipsPickerWhenLocalRemains(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status":
+			fmt.Fprintf(w, `{"cloud":{"disabled":true,"source":"config"}}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	pickerCalled := false
+	models, err := resolveEditorModels("droid", []string{"llama3.2", "glm-5:cloud"}, func() ([]string, error) {
+		pickerCalled = true
+		return []string{"qwen3:8b"}, nil
+	})
+	if err != nil {
+		t.Fatalf("resolveEditorLaunchModels returned error: %v", err)
+	}
+	if pickerCalled {
+		t.Fatal("picker should not be called when a local model remains")
+	}
+	if diff := cmp.Diff([]string{"llama3.2"}, models); diff != "" {
+		t.Fatalf("resolved models mismatch (-want +got):\n%s", diff)
+	}
+
+	saved, err := loadIntegration("droid")
+	if err != nil {
+		t.Fatalf("failed to reload integration config: %v", err)
+	}
+	if diff := cmp.Diff([]string{"llama3.2"}, saved.Models); diff != "" {
+		t.Fatalf("saved models mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestLaunchCmd_ModelFlagFiltersDisabledCloudFromSavedConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	if err := SaveIntegration("stubeditor", []string{"glm-5:cloud"}); err != nil {
+		t.Fatalf("failed to seed saved config: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status":
+			fmt.Fprintf(w, `{"cloud":{"disabled":true,"source":"config"}}`)
+		case "/api/show":
+			fmt.Fprintf(w, `{"model":"llama3.2"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	stub := &stubEditorRunner{}
+	old, existed := integrations["stubeditor"]
+	integrations["stubeditor"] = stub
+	defer func() {
+		if existed {
+			integrations["stubeditor"] = old
+		} else {
+			delete(integrations, "stubeditor")
+		}
+	}()
+
+	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command) {})
+	cmd.SetArgs([]string{"stubeditor", "--model", "llama3.2"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("launch command failed: %v", err)
+	}
+
+	saved, err := loadIntegration("stubeditor")
+	if err != nil {
+		t.Fatalf("failed to reload integration config: %v", err)
+	}
+	if diff := cmp.Diff([]string{"llama3.2"}, saved.Models); diff != "" {
+		t.Fatalf("saved models mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff([][]string{{"llama3.2"}}, stub.edited); diff != "" {
+		t.Fatalf("editor models mismatch (-want +got):\n%s", diff)
+	}
+	if stub.ranModel != "llama3.2" {
+		t.Fatalf("expected launch to run with llama3.2, got %q", stub.ranModel)
 	}
 }
 
@@ -1234,7 +1391,7 @@ func TestIntegrationModels(t *testing.T) {
 	})
 
 	t.Run("returns all saved models", func(t *testing.T) {
-		if err := saveIntegration("droid", []string{"llama3.2", "qwen3:8b"}); err != nil {
+		if err := SaveIntegration("droid", []string{"llama3.2", "qwen3:8b"}); err != nil {
 			t.Fatal(err)
 		}
 		got := IntegrationModels("droid")

@@ -133,6 +133,7 @@ func FromValues[S ~[]E, E arrayTypes](s S, shape ...int) *Array {
 }
 
 func (t *Array) Set(other *Array) {
+	Free(t.desc.inputs...)
 	other.desc.numRefs++
 	t.desc.inputs = []*Array{other}
 	C.mlx_array_set(&t.ctx, other.ctx)
@@ -248,9 +249,9 @@ func Free(s ...*Array) (n int) {
 	free := make([]*Array, 0, 8192)
 	fn := func(t *Array) {
 		if t.Valid() {
-			free = append(free, t.desc.inputs...)
 			t.desc.numRefs--
 			if t.desc.numRefs <= 0 {
+				free = append(free, t.desc.inputs...)
 				logutil.Trace("Free", "t", t)
 				n += t.NumBytes()
 				C.mlx_array_free(t.ctx)

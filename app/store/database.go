@@ -14,7 +14,7 @@ import (
 
 // currentSchemaVersion defines the current database schema version.
 // Increment this when making schema changes that require migrations.
-const currentSchemaVersion = 12
+const currentSchemaVersion = 13
 
 // database wraps the SQLite connection.
 // SQLite handles its own locking for concurrent access:
@@ -84,6 +84,7 @@ func (db *database) init() error {
 		sidebar_open BOOLEAN NOT NULL DEFAULT 0,
 		think_enabled BOOLEAN NOT NULL DEFAULT 0,
 		think_level TEXT NOT NULL DEFAULT '',
+		cloud_setting_migrated BOOLEAN NOT NULL DEFAULT 0,
 		remote TEXT NOT NULL DEFAULT '', -- deprecated
 		schema_version INTEGER NOT NULL DEFAULT %d
 	);
@@ -244,6 +245,12 @@ func (db *database) migrate() error {
 				return fmt.Errorf("migrate v11 to v12: %w", err)
 			}
 			version = 12
+		case 12:
+			// add cloud_setting_migrated column to settings table
+			if err := db.migrateV12ToV13(); err != nil {
+				return fmt.Errorf("migrate v12 to v13: %w", err)
+			}
+			version = 13
 		default:
 			// If we have a version we don't recognize, just set it to current
 			// This might happen during development
@@ -445,6 +452,21 @@ func (db *database) migrateV11ToV12() error {
 	}
 
 	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 12`)
+	if err != nil {
+		return fmt.Errorf("update schema version: %w", err)
+	}
+
+	return nil
+}
+
+// migrateV12ToV13 adds cloud_setting_migrated to settings.
+func (db *database) migrateV12ToV13() error {
+	_, err := db.conn.Exec(`ALTER TABLE settings ADD COLUMN cloud_setting_migrated BOOLEAN NOT NULL DEFAULT 0`)
+	if err != nil && !duplicateColumnError(err) {
+		return fmt.Errorf("add cloud_setting_migrated column: %w", err)
+	}
+
+	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 13`)
 	if err != nil {
 		return fmt.Errorf("update schema version: %w", err)
 	}
@@ -1108,9 +1130,9 @@ func (db *database) getSettings() (Settings, error) {
 	var s Settings
 
 	err := db.conn.QueryRow(`
-		SELECT expose, survey, browser, models, agent, tools, working_dir, context_length, airplane_mode, turbo_enabled, websearch_enabled, selected_model, sidebar_open, think_enabled, think_level 
+		SELECT expose, survey, browser, models, agent, tools, working_dir, context_length, turbo_enabled, websearch_enabled, selected_model, sidebar_open, think_enabled, think_level
 		FROM settings
-	`).Scan(&s.Expose, &s.Survey, &s.Browser, &s.Models, &s.Agent, &s.Tools, &s.WorkingDir, &s.ContextLength, &s.AirplaneMode, &s.TurboEnabled, &s.WebSearchEnabled, &s.SelectedModel, &s.SidebarOpen, &s.ThinkEnabled, &s.ThinkLevel)
+	`).Scan(&s.Expose, &s.Survey, &s.Browser, &s.Models, &s.Agent, &s.Tools, &s.WorkingDir, &s.ContextLength, &s.TurboEnabled, &s.WebSearchEnabled, &s.SelectedModel, &s.SidebarOpen, &s.ThinkEnabled, &s.ThinkLevel)
 	if err != nil {
 		return Settings{}, fmt.Errorf("get settings: %w", err)
 	}
@@ -1121,12 +1143,38 @@ func (db *database) getSettings() (Settings, error) {
 func (db *database) setSettings(s Settings) error {
 	_, err := db.conn.Exec(`
 		UPDATE settings 
-		SET expose = ?, survey = ?, browser = ?, models = ?, agent = ?, tools = ?, working_dir = ?, context_length = ?, airplane_mode = ?, turbo_enabled = ?, websearch_enabled = ?, selected_model = ?, sidebar_open = ?, think_enabled = ?, think_level = ?
-	`, s.Expose, s.Survey, s.Browser, s.Models, s.Agent, s.Tools, s.WorkingDir, s.ContextLength, s.AirplaneMode, s.TurboEnabled, s.WebSearchEnabled, s.SelectedModel, s.SidebarOpen, s.ThinkEnabled, s.ThinkLevel)
+		SET expose = ?, survey = ?, browser = ?, models = ?, agent = ?, tools = ?, working_dir = ?, context_length = ?, turbo_enabled = ?, websearch_enabled = ?, selected_model = ?, sidebar_open = ?, think_enabled = ?, think_level = ?
+	`, s.Expose, s.Survey, s.Browser, s.Models, s.Agent, s.Tools, s.WorkingDir, s.ContextLength, s.TurboEnabled, s.WebSearchEnabled, s.SelectedModel, s.SidebarOpen, s.ThinkEnabled, s.ThinkLevel)
 	if err != nil {
 		return fmt.Errorf("set settings: %w", err)
 	}
 	return nil
+}
+
+func (db *database) isCloudSettingMigrated() (bool, error) {
+	var migrated bool
+	err := db.conn.QueryRow("SELECT cloud_setting_migrated FROM settings").Scan(&migrated)
+	if err != nil {
+		return false, fmt.Errorf("get cloud setting migration status: %w", err)
+	}
+	return migrated, nil
+}
+
+func (db *database) setCloudSettingMigrated(migrated bool) error {
+	_, err := db.conn.Exec("UPDATE settings SET cloud_setting_migrated = ?", migrated)
+	if err != nil {
+		return fmt.Errorf("set cloud setting migration status: %w", err)
+	}
+	return nil
+}
+
+func (db *database) getAirplaneMode() (bool, error) {
+	var airplaneMode bool
+	err := db.conn.QueryRow("SELECT airplane_mode FROM settings").Scan(&airplaneMode)
+	if err != nil {
+		return false, fmt.Errorf("get airplane_mode: %w", err)
+	}
+	return airplaneMode, nil
 }
 
 func (db *database) getWindowSize() (int, int, error) {
