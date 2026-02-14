@@ -27,7 +27,7 @@ func TestIntegrationConfig(t *testing.T) {
 
 	t.Run("save and load round-trip", func(t *testing.T) {
 		models := []string{"llama3.2", "mistral", "qwen2.5"}
-		if err := saveIntegration("claude", models); err != nil {
+		if err := SaveIntegration("claude", models); err != nil {
 			t.Fatal(err)
 		}
 
@@ -46,8 +46,55 @@ func TestIntegrationConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("save and load aliases", func(t *testing.T) {
+		models := []string{"llama3.2"}
+		if err := SaveIntegration("claude", models); err != nil {
+			t.Fatal(err)
+		}
+		aliases := map[string]string{
+			"primary": "llama3.2:70b",
+			"fast":    "llama3.2:8b",
+		}
+		if err := saveAliases("claude", aliases); err != nil {
+			t.Fatal(err)
+		}
+
+		config, err := loadIntegration("claude")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if config.Aliases == nil {
+			t.Fatal("expected aliases to be saved")
+		}
+		for k, v := range aliases {
+			if config.Aliases[k] != v {
+				t.Errorf("alias %s: expected %s, got %s", k, v, config.Aliases[k])
+			}
+		}
+	})
+
+	t.Run("saveIntegration preserves aliases", func(t *testing.T) {
+		if err := SaveIntegration("claude", []string{"model-a"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := saveAliases("claude", map[string]string{"primary": "model-a", "fast": "model-small"}); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := SaveIntegration("claude", []string{"model-b"}); err != nil {
+			t.Fatal(err)
+		}
+		config, err := loadIntegration("claude")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if config.Aliases["primary"] != "model-a" {
+			t.Errorf("expected aliases to be preserved, got %v", config.Aliases)
+		}
+	})
+
 	t.Run("defaultModel returns first model", func(t *testing.T) {
-		saveIntegration("codex", []string{"model-a", "model-b"})
+		SaveIntegration("codex", []string{"model-a", "model-b"})
 
 		config, _ := loadIntegration("codex")
 		defaultModel := ""
@@ -71,7 +118,7 @@ func TestIntegrationConfig(t *testing.T) {
 	})
 
 	t.Run("app name is case-insensitive", func(t *testing.T) {
-		saveIntegration("Claude", []string{"model-x"})
+		SaveIntegration("Claude", []string{"model-x"})
 
 		config, err := loadIntegration("claude")
 		if err != nil {
@@ -87,8 +134,8 @@ func TestIntegrationConfig(t *testing.T) {
 	})
 
 	t.Run("multiple integrations in single file", func(t *testing.T) {
-		saveIntegration("app1", []string{"model-1"})
-		saveIntegration("app2", []string{"model-2"})
+		SaveIntegration("app1", []string{"model-1"})
+		SaveIntegration("app2", []string{"model-2"})
 
 		config1, _ := loadIntegration("app1")
 		config2, _ := loadIntegration("app2")
@@ -125,8 +172,8 @@ func TestListIntegrations(t *testing.T) {
 	})
 
 	t.Run("returns all saved integrations", func(t *testing.T) {
-		saveIntegration("claude", []string{"model-1"})
-		saveIntegration("droid", []string{"model-2"})
+		SaveIntegration("claude", []string{"model-1"})
+		SaveIntegration("droid", []string{"model-2"})
 
 		configs, err := listIntegrations()
 		if err != nil {
@@ -214,7 +261,7 @@ func TestSaveIntegration_NilModels(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
-	if err := saveIntegration("test", nil); err != nil {
+	if err := SaveIntegration("test", nil); err != nil {
 		t.Fatalf("saveIntegration with nil models failed: %v", err)
 	}
 
@@ -234,7 +281,7 @@ func TestSaveIntegration_EmptyAppName(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
-	err := saveIntegration("", []string{"model"})
+	err := SaveIntegration("", []string{"model"})
 	if err == nil {
 		t.Error("expected error for empty app name, got nil")
 	}
@@ -464,7 +511,7 @@ func TestMigrateConfig(t *testing.T) {
 		os.WriteFile(filepath.Join(legacyDir, "config.json"), []byte(`{"integrations":{"claude":{"models":["llama3.2"]}}}`), 0o644)
 
 		// load triggers migration, then save should write to new path
-		if err := saveIntegration("codex", []string{"qwen2.5"}); err != nil {
+		if err := SaveIntegration("codex", []string{"qwen2.5"}); err != nil {
 			t.Fatal(err)
 		}
 

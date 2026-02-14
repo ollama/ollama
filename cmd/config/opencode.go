@@ -1,7 +1,9 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -10,11 +12,33 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 )
 
 // OpenCode implements Runner and Editor for OpenCode integration
 type OpenCode struct{}
+
+// cloudModelLimit holds context and output token limits for a cloud model.
+type cloudModelLimit struct {
+	Context int
+	Output  int
+}
+
+// lookupCloudModelLimit returns the token limits for a cloud model.
+// It tries the exact name first, then strips the ":cloud" suffix.
+func lookupCloudModelLimit(name string) (cloudModelLimit, bool) {
+	if l, ok := cloudModelLimits[name]; ok {
+		return l, true
+	}
+	base := strings.TrimSuffix(name, ":cloud")
+	if base != name {
+		if l, ok := cloudModelLimits[base]; ok {
+			return l, true
+		}
+	}
+	return cloudModelLimit{}, false
+}
 
 func (o *OpenCode) String() string { return "OpenCode" }
 
@@ -27,6 +51,16 @@ func (o *OpenCode) Run(model string, args []string) error {
 	models := []string{model}
 	if config, err := loadIntegration("opencode"); err == nil && len(config.Models) > 0 {
 		models = config.Models
+	}
+	var err error
+	models, err = resolveEditorModels("opencode", models, func() ([]string, error) {
+		return selectModels(context.Background(), "opencode", "")
+	})
+	if errors.Is(err, errCancelled) {
+		return nil
+	}
+	if err != nil {
+		return err
 	}
 	if err := o.Edit(models); err != nil {
 		return fmt.Errorf("setup failed: %w", err)
@@ -113,6 +147,8 @@ func (o *OpenCode) Edit(modelList []string) error {
 		}
 	}
 
+	client, _ := api.ClientFromEnvironment()
+
 	for _, model := range modelList {
 		if existing, ok := models[model].(map[string]any); ok {
 			// migrate existing models without _launch marker
@@ -122,12 +158,29 @@ func (o *OpenCode) Edit(modelList []string) error {
 					existing["name"] = strings.TrimSuffix(name, " [Ollama]")
 				}
 			}
+			if isCloudModel(context.Background(), client, model) {
+				if l, ok := lookupCloudModelLimit(model); ok {
+					existing["limit"] = map[string]any{
+						"context": l.Context,
+						"output":  l.Output,
+					}
+				}
+			}
 			continue
 		}
-		models[model] = map[string]any{
+		entry := map[string]any{
 			"name":    model,
 			"_launch": true,
 		}
+		if isCloudModel(context.Background(), client, model) {
+			if l, ok := lookupCloudModelLimit(model); ok {
+				entry["limit"] = map[string]any{
+					"context": l.Context,
+					"output":  l.Output,
+				}
+			}
+		}
+		models[model] = entry
 	}
 
 	ollama["models"] = models

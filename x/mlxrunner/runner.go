@@ -1,204 +1,174 @@
 //go:build mlx
 
-// Package mlxrunner provides a unified MLX runner for both LLM and image generation models.
 package mlxrunner
 
 import (
 	"context"
-	"encoding/json"
-	"flag"
-	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
+	"strings"
 	"time"
 
-	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/x/imagegen"
-	"github.com/ollama/ollama/x/imagegen/mlx"
+	"golang.org/x/sync/errgroup"
+
+	"github.com/ollama/ollama/x/imagegen/tokenizer"
+	"github.com/ollama/ollama/x/mlxrunner/cache"
+	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/model"
+	"github.com/ollama/ollama/x/mlxrunner/model/base"
+	"github.com/ollama/ollama/x/mlxrunner/sample"
 )
 
-// Execute is the entry point for the unified MLX runner subprocess.
-func Execute(args []string) error {
-	// Set up logging with appropriate level from environment
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: envconfig.LogLevel()})))
+type Request struct {
+	TextCompletionsRequest
+	Responses chan Response
+	Pipeline  func(Request) error
 
-	fs := flag.NewFlagSet("mlx-runner", flag.ExitOnError)
-	modelName := fs.String("model", "", "path to model")
-	port := fs.Int("port", 0, "port to listen on")
+	sample.Sampler
+	caches []cache.Cache
+}
 
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
+type TextCompletionsRequest struct {
+	Prompt  string `json:"prompt"`
+	Options struct {
+		Temperature float32 `json:"temperature"`
+		TopP        float32 `json:"top_p"`
+		MinP        float32 `json:"min_p"`
+		TopK        int     `json:"top_k"`
+		MaxTokens   int     `json:"max_tokens"`
 
-	if *modelName == "" {
-		return fmt.Errorf("--model is required")
-	}
-	if *port == 0 {
-		return fmt.Errorf("--port is required")
-	}
+		// Deprecated: use MaxTokens instead
+		NumPredict int `json:"num_predict"`
+	} `json:"options"`
+}
 
-	// Initialize MLX
-	if err := mlx.InitMLX(); err != nil {
-		slog.Error("unable to initialize MLX", "error", err)
-		return err
-	}
-	slog.Info("MLX library initialized")
+type Response struct {
+	Text       string    `json:"content,omitempty"`
+	Token      int       `json:"token,omitempty"`
+	Logprobs   []float32 `json:"logprobs,omitempty"`
+	Done       bool      `json:"done,omitempty"`
+	DoneReason int       `json:"done_reason,omitempty"`
 
-	// Detect model type from capabilities
-	mode := detectModelMode(*modelName)
-	slog.Info("starting mlx runner", "model", *modelName, "port", *port, "mode", mode)
+	PromptTokens             int           `json:"prompt_eval_count,omitempty"`
+	PromptTokensDuration     time.Duration `json:"prompt_eval_duration,omitempty"`
+	CompletionTokens         int           `json:"eval_count,omitempty"`
+	CompletionTokensDuration time.Duration `json:"eval_duration,omitempty"`
+	TotalTokens              int           `json:"total_tokens,omitempty"`
+}
 
-	// Create and start server
-	server, err := newServer(*modelName, *port, mode)
+type Runner struct {
+	Model        base.Model
+	Tokenizer    *tokenizer.Tokenizer
+	Requests     chan Request
+	CacheEntries map[int32]*CacheEntry
+}
+
+func (r *Runner) Load(modelName string) error {
+	root, err := model.Open(modelName)
 	if err != nil {
-		return fmt.Errorf("failed to create server: %w", err)
+		return err
 	}
+	defer root.Close()
 
-	// Set up HTTP handlers
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", server.healthHandler)
-	mux.HandleFunc("/completion", server.completionHandler)
-
-	// LLM-specific endpoints
-	if mode == ModeLLM {
-		mux.HandleFunc("/tokenize", server.tokenizeHandler)
-		mux.HandleFunc("/embedding", server.embeddingHandler)
-	}
-
-	httpServer := &http.Server{
-		Addr:    fmt.Sprintf("127.0.0.1:%d", *port),
-		Handler: mux,
-	}
-
-	// Handle shutdown
-	done := make(chan struct{})
-	go func() {
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-		<-sigCh
-		slog.Info("shutting down mlx runner")
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		httpServer.Shutdown(ctx)
-		close(done)
-	}()
-
-	slog.Info("mlx runner listening", "addr", httpServer.Addr)
-	if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
+	m, err := base.New(root)
+	if err != nil {
 		return err
 	}
 
-	<-done
+	// Load all tensor blobs from manifest
+	tensors, err := loadTensorsFromManifest(root)
+	if err != nil {
+		return err
+	}
+
+	// Assign weights to model (model-specific logic)
+	loadWeights := base.Weights(m)
+	if err := loadWeights(tensors); err != nil {
+		return err
+	}
+
+	r.Model = m
+	r.Tokenizer = m.Tokenizer()
 	return nil
 }
 
-// detectModelMode determines whether a model is an LLM or image generation model.
-func detectModelMode(modelName string) ModelMode {
-	// Check for image generation model by looking at model_index.json
-	modelType := imagegen.DetectModelType(modelName)
-	if modelType != "" {
-		// Known image generation model types
-		switch modelType {
-		case "ZImagePipeline", "FluxPipeline", "Flux2KleinPipeline":
-			return ModeImageGen
+// loadTensorsFromManifest loads all tensor blobs from the manifest into a
+// flat map, deduplicating by digest and remapping safetensors key suffixes.
+//
+// Uses a two-phase approach: first loads all raw tensors, then remaps
+// .bias → _qbias with complete knowledge of which base names have .scale
+// entries. This avoids a race condition where Go map iteration order could
+// cause .bias to be processed before .scale within the same blob.
+func loadTensorsFromManifest(root *model.Root) (map[string]*mlx.Array, error) {
+	// Phase 1: Load all tensors raw from all blobs
+	rawTensors := make(map[string]*mlx.Array)
+	seen := make(map[string]bool)
+	for _, layer := range root.Manifest.GetTensorLayers("") {
+		if seen[layer.Digest] {
+			continue
+		}
+		seen[layer.Digest] = true
+		blobPath := root.Manifest.BlobPath(layer.Digest)
+		for name, arr := range mlx.Load(blobPath) {
+			rawTensors[name] = arr
 		}
 	}
 
-	// Default to LLM mode for safetensors models without known image gen types
-	return ModeLLM
-}
-
-// server holds the model and handles HTTP requests.
-type server struct {
-	mode      ModelMode
-	modelName string
-	port      int
-
-	// Image generation model (when mode == ModeImageGen)
-	imageModel ImageModel
-
-	// LLM model (when mode == ModeLLM)
-	llmModel *llmState
-}
-
-// newServer creates a new server instance and loads the appropriate model.
-func newServer(modelName string, port int, mode ModelMode) (*server, error) {
-	s := &server{
-		mode:      mode,
-		modelName: modelName,
-		port:      port,
-	}
-
-	switch mode {
-	case ModeImageGen:
-		if err := s.loadImageModel(); err != nil {
-			return nil, fmt.Errorf("failed to load image model: %w", err)
-		}
-	case ModeLLM:
-		if err := s.loadLLMModel(); err != nil {
-			return nil, fmt.Errorf("failed to load LLM model: %w", err)
+	// Phase 2: Identify all base names that have .scale tensors and remap them
+	scaleBaseNames := make(map[string]bool)
+	allTensors := make(map[string]*mlx.Array, len(rawTensors))
+	for name, arr := range rawTensors {
+		if strings.HasSuffix(name, ".scale") {
+			baseName := strings.TrimSuffix(name, ".scale")
+			allTensors[baseName+"_scale"] = arr
+			scaleBaseNames[baseName] = true
 		}
 	}
 
-	return s, nil
+	// Phase 3: Process remaining tensors with complete scale knowledge
+	for name, arr := range rawTensors {
+		if strings.HasSuffix(name, ".scale") {
+			continue // already handled
+		}
+		if strings.HasSuffix(name, ".bias") && !strings.HasSuffix(name, ".weight_qbias") {
+			baseName := strings.TrimSuffix(name, ".bias")
+			if scaleBaseNames[baseName] {
+				allTensors[baseName+"_qbias"] = arr
+			} else {
+				allTensors[name] = arr
+			}
+		} else {
+			allTensors[name] = arr
+		}
+	}
+
+	slog.Info("Loaded tensors from manifest", "count", len(allTensors))
+	return allTensors, nil
 }
 
-func (s *server) healthHandler(w http.ResponseWriter, r *http.Request) {
-	resp := HealthResponse{Status: "ok"}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
-}
+func (r *Runner) Run(host, port string, mux http.Handler) error {
+	g, ctx := errgroup.WithContext(context.Background())
 
-func (s *server) completionHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
+	g.Go(func() error {
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case request := <-r.Requests:
+				if err := request.Pipeline(request); err != nil {
+					break
+				}
 
-	var req Request
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
+				close(request.Responses)
+			}
+		}
+	})
 
-	switch s.mode {
-	case ModeImageGen:
-		s.handleImageCompletion(w, r, req)
-	case ModeLLM:
-		s.handleLLMCompletion(w, r, req)
-	}
-}
+	g.Go(func() error {
+		slog.Info("Starting HTTP server", "host", host, "port", port)
+		return http.ListenAndServe(net.JoinHostPort(host, port), mux)
+	})
 
-func (s *server) tokenizeHandler(w http.ResponseWriter, r *http.Request) {
-	if s.llmModel == nil {
-		http.Error(w, "LLM model not loaded", http.StatusInternalServerError)
-		return
-	}
-
-	var req struct {
-		Content string `json:"content"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	tok := s.llmModel.model.Tokenizer()
-	tokens := tok.Encode(req.Content, false)
-
-	// Convert int32 to int for JSON response
-	intTokens := make([]int, len(tokens))
-	for i, t := range tokens {
-		intTokens[i] = int(t)
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string][]int{"tokens": intTokens})
-}
-
-func (s *server) embeddingHandler(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "embeddings not yet implemented for MLX models", http.StatusNotImplemented)
+	return g.Wait()
 }

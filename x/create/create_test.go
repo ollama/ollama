@@ -586,6 +586,39 @@ func TestShouldQuantizeTensor(t *testing.T) {
 	}
 }
 
+func TestExpertGroupPrefix(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+	}{
+		// Expert tensors should return the group prefix
+		{"model.layers.1.mlp.experts.0.down_proj.weight", "model.layers.1.mlp.experts"},
+		{"model.layers.1.mlp.experts.63.gate_proj.weight", "model.layers.1.mlp.experts"},
+		{"model.layers.0.mlp.experts.0.up_proj.weight", "model.layers.0.mlp.experts"},
+
+		// Shared expert tensors should return their own group prefix
+		{"model.layers.1.mlp.shared_experts.down_proj.weight", "model.layers.1.mlp.shared_experts"},
+		{"model.layers.2.mlp.shared_experts.gate_proj.weight", "model.layers.2.mlp.shared_experts"},
+
+		// Non-expert tensors should return empty string
+		{"model.layers.0.mlp.down_proj.weight", ""},    // dense layer, no experts
+		{"model.layers.1.mlp.gate.weight", ""},         // routing gate, not an expert
+		{"model.embed_tokens.weight", ""},              // embedding
+		{"model.layers.0.self_attn.q_proj.weight", ""}, // attention
+		{"model.norm.weight", ""},                      // norm
+		{"lm_head.weight", ""},                         // output head
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ExpertGroupPrefix(tt.name)
+			if got != tt.want {
+				t.Errorf("ExpertGroupPrefix(%q) = %q, want %q", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCreateSafetensorsModel_WithQuantize(t *testing.T) {
 	dir := t.TempDir()
 
@@ -751,7 +784,7 @@ func TestCreateImageGenModel_WithQuantize(t *testing.T) {
 
 	progressFn := func(status string) {}
 
-	err := CreateImageGenModel("test-imagegen", dir, "q8", createLayer, createTensorLayer, writeManifest, progressFn)
+	err := CreateImageGenModel("test-imagegen", dir, "int8", createLayer, createTensorLayer, writeManifest, progressFn)
 	if err != nil {
 		t.Fatalf("CreateImageGenModel failed: %v", err)
 	}

@@ -147,7 +147,7 @@ ARG PARALLEL
 WORKDIR /go/src/github.com/ollama/ollama
 COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
-COPY x/ml/backend/mlx x/ml/backend/mlx
+COPY x/imagegen/mlx x/imagegen/mlx
 COPY go.mod go.sum .
 COPY MLX_VERSION .
 RUN curl -fsSL https://golang.org/dl/go$(awk '/^go/ { print $2 }' go.mod).linux-$(case $(uname -m) in x86_64) echo amd64 ;; aarch64) echo arm64 ;; esac).tar.gz | tar xz -C /usr/local
