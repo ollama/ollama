@@ -76,6 +76,8 @@ type LlamaServer interface {
 	VRAMSize() uint64 // Total VRAM across all GPUs
 	TotalSize() uint64
 	VRAMByGPU(id ml.DeviceID) uint64
+	GPULayerCount() int
+	TotalLayerCount() int
 	Pid() int
 	GetPort() int
 	GetDeviceInfos(ctx context.Context) []ml.DeviceInfo
@@ -1870,6 +1872,14 @@ func (s *llmServer) TotalSize() uint64 {
 	}
 
 	return mem
+}
+
+func (s *llmServer) GPULayerCount() int {
+	return s.loadRequest.GPULayers.Sum()
+}
+
+func (s *llmServer) TotalLayerCount() int {
+	return int(s.totalLayers)
 }
 
 func (s *llmServer) VRAMByGPU(id ml.DeviceID) uint64 {

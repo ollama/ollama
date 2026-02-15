@@ -657,6 +657,12 @@ components:
         context_length:
           type: integer
           description: Context length for the running model
+        gpu_layers:
+          type: integer
+          description: Number of model layers offloaded to GPU
+        total_layers:
+          type: integer
+          description: Total number of layers in the model
     PsResponse:
       type: object
       properties:

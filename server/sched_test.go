@@ -799,6 +799,8 @@ func (s *mockLlm) Close() error {
 func (s *mockLlm) VRAMSize() uint64                                   { return s.vramSize }
 func (s *mockLlm) TotalSize() uint64                                  { return s.totalSize }
 func (s *mockLlm) VRAMByGPU(id ml.DeviceID) uint64                    { return s.vramByGPU[id] }
+func (s *mockLlm) GPULayerCount() int                                 { return 0 }
+func (s *mockLlm) TotalLayerCount() int                               { return 0 }
 func (s *mockLlm) Pid() int                                           { return -1 }
 func (s *mockLlm) GetPort() int                                       { return -1 }
 func (s *mockLlm) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo { return nil }

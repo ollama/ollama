@@ -1813,13 +1813,15 @@ func (s *Server) PsHandler(c *gin.Context) {
 		}
 
 		mr := api.ProcessModelResponse{
-			Model:     model.ShortName,
-			Name:      model.ShortName,
-			Size:      int64(v.totalSize),
-			SizeVRAM:  int64(v.vramSize),
-			Digest:    model.Digest,
-			Details:   modelDetails,
-			ExpiresAt: v.expiresAt,
+			Model:       model.ShortName,
+			Name:        model.ShortName,
+			Size:        int64(v.totalSize),
+			SizeVRAM:    int64(v.vramSize),
+			Digest:      model.Digest,
+			Details:     modelDetails,
+			ExpiresAt:   v.expiresAt,
+			GPULayers:   v.gpuLayerCount,
+			TotalLayers: v.totalLayerCount,
 		}
 		if v.Options != nil {
 			mr.ContextLength = v.Options.NumCtx

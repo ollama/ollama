@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"net"
 	"net/http"
 	"os"
@@ -746,18 +745,14 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 
 	for _, m := range models.Models {
 		if len(args) == 0 || strings.HasPrefix(m.Name, args[0]) {
-			var procStr string
+		var procStr string
 			switch {
-			case m.SizeVRAM == 0:
-				procStr = "100% CPU"
-			case m.SizeVRAM == m.Size:
-				procStr = "100% GPU"
-			case m.SizeVRAM > m.Size || m.Size == 0:
-				procStr = "Unknown"
+			case m.GPULayers == 0:
+				procStr = fmt.Sprintf("%d/%d CPU", m.TotalLayers, m.TotalLayers)
+			case m.GPULayers >= m.TotalLayers:
+				procStr = fmt.Sprintf("%d/%d GPU", m.TotalLayers, m.TotalLayers)
 			default:
-				sizeCPU := m.Size - m.SizeVRAM
-				cpuPercent := math.Round(float64(sizeCPU) / float64(m.Size) * 100)
-				procStr = fmt.Sprintf("%d%%/%d%% CPU/GPU", int(cpuPercent), int(100-cpuPercent))
+				procStr = fmt.Sprintf("%d/%d CPU/GPU", m.GPULayers, m.TotalLayers)
 			}
 
 			var until string
