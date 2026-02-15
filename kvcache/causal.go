@@ -3,7 +3,6 @@ package kvcache
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"math"
 	"slices"
 
@@ -40,22 +39,17 @@ type Causal struct {
 
 	// ** current forward pass **
 
-	// curReserve indicates that this forward pass is only for
-	// memory reservation and we should not update our metadata
-	// based on it.
-	curReserve bool
-
-	// the active layer for Get and Put
-	curLayer int
-
-	// starting location for data storage for this batch
-	curLoc int
-
 	// size of the current batch
 	curBatchSize int
 
+	// locations for data storage for this batch
+	curLoc ml.Tensor
+
 	// mask of the cache as used by this batch
 	curMask ml.Tensor
+
+	// the active layer for Get and Put
+	curLayer int
 
 	// locations in the cache that are needed for this batch
 	curCellRange cellRange
@@ -146,10 +140,6 @@ func (c *Causal) Init(backend ml.Backend, dtype ml.DType, maxSequences, capacity
 		c.config.CachePadding = 1
 	}
 
-	if c.config.MaskBatchPadding == 0 {
-		c.config.MaskBatchPadding = 1
-	}
-
 	if c.config.MaskDType == ml.DTypeOther {
 		c.config.MaskDType = ml.DTypeF32
 	}
@@ -160,7 +150,15 @@ func (c *Causal) Init(backend ml.Backend, dtype ml.DType, maxSequences, capacity
 	if c.swaMemorySize == 0 {
 		c.swaMemorySize = c.swaWindowSize
 	}
-	if int(c.swaMemorySize) > capacity {
+	// We will allocate space in the cache for the stop token, which won't be part of a follow on
+	// sequence, so allocate an extra token of storage to ensure that we can jump back without
+	// causing a cache break. As an optimization, only do this when we have parallel sequences
+	// because the extra token will live in the batch buffer and won't get overwritten if we
+	// only have a single sequence.
+	if c.swaMemorySize != math.MaxInt32 && maxSequences > 1 {
+		c.swaMemorySize = max(c.swaMemorySize, c.swaWindowSize+1)
+	}
+	if int(c.swaMemorySize) >= capacity {
 		c.swaMemorySize = math.MaxInt32
 	}
 
@@ -198,52 +196,52 @@ func (c *Causal) Close() {
 }
 
 func (c *Causal) StartForward(ctx ml.Context, batch input.Batch, reserve bool) error {
-	c.curReserve = reserve
 	c.curBatchSize = len(batch.Positions)
 	c.curSequences = batch.Sequences
 	c.curPositions = batch.Positions
 	c.opts.Except = nil
 
-	if !c.curReserve {
+	var locs []int32
+	if !reserve {
 		c.updateSlidingWindow()
 
 		var err error
-		c.curLoc, err = c.findStartLoc()
-		if errors.Is(err, ErrKvCacheFull) {
-			c.defrag()
-			c.curLoc, err = c.findStartLoc()
-		}
+		locs, err = c.findLocs()
 		if err != nil {
-			slog.Warn("unable to find a kv cache slot", "cache", c)
 			return err
 		}
 
 		for i, pos := range batch.Positions {
 			seq := batch.Sequences[i]
+			loc := int(locs[i])
 
-			c.cells[c.curLoc+i] = cacheCell{pos: pos, sequences: []int{seq}}
+			c.cells[loc] = cacheCell{pos: pos, sequences: []int{seq}}
 
 			seqRange, ok := c.cellRanges[seq]
 			if !ok {
 				seqRange = newRange()
 			}
 
-			seqRange.min = min(seqRange.min, c.curLoc+i)
-			c.curCellRange.min = min(c.curCellRange.min, c.curLoc+i)
+			seqRange.min = min(seqRange.min, loc)
+			c.curCellRange.min = min(c.curCellRange.min, loc)
 
-			seqRange.max = max(seqRange.max, c.curLoc+i)
-			c.curCellRange.max = max(c.curCellRange.max, c.curLoc+i)
+			seqRange.max = max(seqRange.max, loc)
+			c.curCellRange.max = max(c.curCellRange.max, loc)
 
 			c.cellRanges[seq] = seqRange
 		}
 	} else {
 		// If we are reserving memory, don't update any of the cache metadata but set the size
 		// to the worst case.
-		c.curLoc = 0
+		locs = make([]int32, c.curBatchSize)
+		for i := range locs {
+			locs[i] = int32(i)
+		}
 		c.curCellRange.min = 0
 		c.curCellRange.max = len(c.cells) - 1
 	}
 
+	c.curLoc = ctx.Input().FromInts(locs, len(locs))
 	c.curMask = c.buildMask(ctx)
 
 	return nil
@@ -256,22 +254,20 @@ func newRange() cellRange {
 	}
 }
 
-// Find the first contiguous block of at least curBatchSize
-func (c *Causal) findStartLoc() (int, error) {
-	var start, count int
+// Returns a slice of locations where each token in the batch should be stored
+func (c *Causal) findLocs() ([]int32, error) {
+	loc := make([]int32, 0, c.curBatchSize)
+
 	for i := range c.cells {
 		if len(c.cells[i].sequences) == 0 {
-			count++
-			if count >= c.curBatchSize {
-				return start, nil
+			loc = append(loc, int32(i))
+			if len(loc) >= c.curBatchSize {
+				return loc, nil
 			}
-		} else {
-			start = i + 1
-			count = 0
 		}
 	}
 
-	return 0, fmt.Errorf("%w (cache: %v batch: %v)", ErrKvCacheFull, len(c.cells), c.curBatchSize)
+	return nil, fmt.Errorf("%w (cache: %v batch: %v)", ErrKvCacheFull, len(c.cells), c.curBatchSize)
 }
 
 func (c *Causal) updateSlidingWindow() {
@@ -288,23 +284,44 @@ func (c *Causal) updateSlidingWindow() {
 		return
 	}
 
+	type lowestPosition struct {
+		pos      int32
+		curBatch bool
+	}
+
 	// create a map of unique sequences to the lowest position in that sequence
-	lowestPos := make(map[int]int32)
+	lowestPos := make(map[int]lowestPosition)
 	for i := range c.curPositions {
 		seq := c.curSequences[i]
 
-		pos, ok := lowestPos[seq]
+		lowest, ok := lowestPos[seq]
 		if !ok {
-			pos = c.curPositions[i]
-		} else if c.curPositions[i] < pos {
-			pos = c.curPositions[i]
+			lowest = lowestPosition{pos: c.curPositions[i], curBatch: true}
+		} else if c.curPositions[i] < lowest.pos {
+			lowest.pos = c.curPositions[i]
 		}
 
-		lowestPos[seq] = pos
+		lowestPos[seq] = lowest
+	}
+
+	// for any sequences are not part of this batch, clean up any tokens
+	// that are no longer needed after the processing of the previous
+	// batch
+	for seq, seqRange := range c.cellRanges {
+		if _, ok := lowestPos[seq]; !ok {
+			var last int32
+			for i := seqRange.min; i <= seqRange.max; i++ {
+				if slices.Contains(c.cells[i].sequences, seq) {
+					last = max(last, c.cells[i].pos)
+				}
+			}
+
+			lowestPos[seq] = lowestPosition{pos: last + 1, curBatch: false}
+		}
 	}
 
 	// delete any entries that are beyond the window of the oldest position in the sequence
-	for seq, pos := range lowestPos {
+	for seq, lowest := range lowestPos {
 		oldRange, ok := c.cellRanges[seq]
 		if !ok {
 			continue
@@ -314,13 +331,13 @@ func (c *Causal) updateSlidingWindow() {
 
 		for i := oldRange.min; i <= oldRange.max; i++ {
 			if slices.Contains(c.cells[i].sequences, seq) {
-				if c.cells[i].pos < pos-c.swaMemorySize {
+				if c.cells[i].pos < lowest.pos-c.swaMemorySize {
 					c.cells[i].sequences = slices.DeleteFunc(c.cells[i].sequences, func(s int) bool { return s == seq })
 				} else {
 					newRange.min = min(newRange.min, i)
 					newRange.max = max(newRange.max, i)
 				}
-				if c.cells[i].pos >= pos-c.swaWindowSize {
+				if lowest.curBatch && c.cells[i].pos >= lowest.pos-c.swaWindowSize {
 					c.curCellRange.min = min(c.curCellRange.min, i)
 					c.curCellRange.max = max(c.curCellRange.max, i)
 				}
@@ -343,19 +360,12 @@ func roundUp(length, pad int) int {
 // token in the history should apply. This is based on both the sequence and causality (the
 // position of the history is not ahead of the token in the batch).
 func (c *Causal) buildMask(ctx ml.Context) ml.Tensor {
-	// Align and pad the two dimensions as required by the backend
-	batchSize := roundUp(c.curBatchSize, c.config.MaskBatchPadding)
-
 	c.curCellRange.min = roundDown(c.curCellRange.min, c.config.CachePadding)
 	c.curCellRange.max = roundUp(c.curCellRange.max+1, c.config.CachePadding) - 1
 
 	length := c.curCellRange.max - c.curCellRange.min + 1
 
-	if c.curReserve {
-		return ctx.Input().Empty(c.config.MaskDType, length, batchSize)
-	}
-
-	mask := make([]float32, batchSize*length)
+	mask := make([]float32, c.curBatchSize*length)
 
 	for i := range c.curBatchSize {
 		enabled := !slices.Contains(c.opts.Except, i)
@@ -369,158 +379,13 @@ func (c *Causal) buildMask(ctx ml.Context) ml.Tensor {
 		}
 	}
 
-	// Mask out any padding tokens we added. For padding that we added to the cache history, this
-	// has already been masked out because the sequence doesn't match.
-	for i := c.curBatchSize * length; i < len(mask); i++ {
-		mask[i] = float32(math.Inf(-1))
-	}
-
-	maskTensor := ctx.Input().FromFloatSlice(mask, length, batchSize)
+	maskTensor := ctx.Input().FromFloats(mask, length, c.curBatchSize)
 
 	if c.config.MaskDType != ml.DTypeF32 {
 		maskTensor = maskTensor.Cast(ctx, c.config.MaskDType)
 	}
 
 	return maskTensor
-}
-
-func (c *Causal) moveCells(ctx ml.Context, src, dst, length int) {
-	for i, key := range c.keys {
-		if key == nil {
-			continue
-		}
-
-		kHeadDim := key.Dim(0)
-		numKVHeads := key.Dim(1)
-		rowSize := key.Stride(2)
-
-		kSrcView := key.View(ctx, rowSize*src, kHeadDim*numKVHeads*length)
-		kDstView := key.View(ctx, rowSize*dst, kHeadDim*numKVHeads*length)
-
-		value := c.values[i]
-		var vSrcView, vDstView ml.Tensor
-		if c.config.PermutedV {
-			vHeadDim := value.Dim(1)
-			elemSize := value.Stride(0)
-
-			vSrcView = value.View(ctx, elemSize*src, length, len(c.cells)*elemSize, vHeadDim*numKVHeads)
-			vDstView = value.View(ctx, elemSize*dst, length, len(c.cells)*elemSize, vHeadDim*numKVHeads)
-		} else {
-			vHeadDim := value.Dim(0)
-			rowSize := value.Stride(2)
-
-			vSrcView = value.View(ctx, rowSize*src, vHeadDim*numKVHeads*length)
-			vDstView = value.View(ctx, rowSize*dst, vHeadDim*numKVHeads*length)
-		}
-
-		ctx.Forward(
-			kSrcView.Copy(ctx, kDstView),
-			vSrcView.Copy(ctx, vDstView),
-		)
-	}
-}
-
-func (c *Causal) defrag() {
-	slog.Debug("defragmenting kv cache")
-
-	// Defrag strategy:
-	// - Search for empty holes at the beginning of the cache,
-	//   filling them with active data starting at the end
-	// - If there are contiguous elements that need to be moved,
-	//   combine them into a single operation by holding new moves
-	//   until we see that the next one is non-contiguous
-	// - Fill up the context with the maximum number of operations it
-	//   can hold then compute that and continue with a new context
-	//
-	// We could try to optimize placement by grouping blocks from
-	// the same sequences together but most likely the next forward
-	// pass will disrupt this anyways, so the real world benefit
-	// seems limited as this time.
-
-	ctx := c.backend.NewContext()
-
-	// For every move, 6 tensors are required per layer (2 views and a
-	// copy for each of k and v). We also need to refer to the original
-	// k and v cache tensors - once per layer, not per move.
-	layers := 0
-	for _, key := range c.keys {
-		if key == nil {
-			continue
-		}
-		layers++
-	}
-
-	maxMoves := (ctx.MaxGraphNodes() - 2*layers) / (6 * layers)
-	moves := 0
-
-	var pendingSrc, pendingDst, pendingLen int
-	src := len(c.cells) - 1
-
-	for dst := 0; dst < src; dst++ {
-		if len(c.cells[dst].sequences) == 0 {
-			for ; src > dst; src-- {
-				if len(c.cells[src].sequences) != 0 {
-					c.cells[dst] = c.cells[src]
-					c.cells[src] = cacheCell{}
-
-					if pendingLen > 0 {
-						if src == pendingSrc-pendingLen && dst == pendingDst+pendingLen {
-							pendingSrc = src
-							pendingLen++
-							break
-						} else {
-							c.moveCells(ctx, pendingSrc, pendingDst, pendingLen)
-							moves++
-						}
-					}
-
-					pendingSrc = src
-					pendingDst = dst
-					pendingLen = 1
-
-					break
-				}
-			}
-		}
-
-		if moves >= maxMoves {
-			ctx.Compute()
-			ctx.Close()
-			ctx = c.backend.NewContext()
-
-			moves = 0
-		}
-	}
-
-	if pendingLen > 0 {
-		c.moveCells(ctx, pendingSrc, pendingDst, pendingLen)
-		moves++
-	}
-
-	if moves > 0 {
-		ctx.Compute()
-	}
-	ctx.Close()
-
-	// Reset range metadata
-	for seq := range c.cellRanges {
-		seqRange := newRange()
-
-		for i, cell := range c.cells {
-			if slices.Contains(cell.sequences, seq) {
-				if i < seqRange.min {
-					seqRange.min = i
-				}
-				if i > seqRange.max {
-					seqRange.max = i
-				}
-			}
-		}
-
-		c.cellRanges[seq] = seqRange
-	}
-
-	c.updateSlidingWindow()
 }
 
 func (c *Causal) SetLayer(layer int) {
@@ -607,18 +472,25 @@ func (c *Causal) Put(ctx ml.Context, key, value ml.Tensor) {
 		}
 	}
 
-	rowSize := c.keys[c.curLayer].Stride(2)
-	ctx.Forward(key.Copy(ctx, c.keys[c.curLayer].View(ctx, rowSize*c.curLoc, kHeadDim*numKVHeads*batchSize)))
+	key = key.Reshape(ctx, kHeadDim*numKVHeads, batchSize)
+	keyCache := c.keys[c.curLayer]
+	keyCache = keyCache.Reshape(ctx, kHeadDim*numKVHeads, len(c.cells))
+	ctx.Forward(keyCache.SetRows(ctx, key, c.curLoc))
 
 	if c.config.PermutedV {
-		elemSize := c.values[c.curLayer].Stride(0)
+		value = value.Reshape(ctx, vHeadDim*numKVHeads, 1, batchSize)
+		value = value.Permute(ctx, 2, 0, 1, 3)
 
-		value = value.Permute(ctx, 1, 2, 0, 3)
-		ctx.Forward(value.Copy(ctx, c.values[c.curLayer].View(ctx, elemSize*c.curLoc, batchSize, len(c.cells)*elemSize, vHeadDim*numKVHeads)))
+		valueCache := c.values[c.curLayer]
+		valueCache = valueCache.Reshape(ctx, 1, len(c.cells), vHeadDim*numKVHeads)
+
+		ctx.Forward(valueCache.SetRows(ctx, value, c.curLoc))
 	} else {
-		rowSize := c.values[c.curLayer].Stride(2)
+		value = value.Reshape(ctx, vHeadDim*numKVHeads, batchSize)
+		valueCache := c.values[c.curLayer]
+		valueCache = valueCache.Reshape(ctx, vHeadDim*numKVHeads, len(c.cells))
 
-		ctx.Forward(value.Copy(ctx, c.values[c.curLayer].View(ctx, rowSize*c.curLoc, vHeadDim*numKVHeads*batchSize)))
+		ctx.Forward(valueCache.SetRows(ctx, value, c.curLoc))
 	}
 }
 
@@ -657,9 +529,11 @@ func (c *Causal) CanResume(seq int, pos int32) bool {
 
 	// for sliding window, check that the window of the new sequence is contained in
 	// the window of what we are storing
+	var first int32 = math.MaxInt32
 	var last int32 = -1
 	for i := seqRange.min; i <= seqRange.max; i++ {
 		if slices.Contains(c.cells[i].sequences, seq) {
+			first = min(first, c.cells[i].pos)
 			last = max(last, c.cells[i].pos)
 		}
 	}
@@ -668,10 +542,8 @@ func (c *Causal) CanResume(seq int, pos int32) bool {
 		return false
 	}
 
-	lastWindowStart := max(0, last-c.swaMemorySize)
 	posWindowStart := max(0, pos-c.swaWindowSize)
-
-	return posWindowStart >= lastWindowStart
+	return posWindowStart >= first && pos <= last+1
 }
 
 func (c *Causal) shift(seq int, beginIndex, offset int32) error {
@@ -707,7 +579,7 @@ func (c *Causal) shift(seq int, beginIndex, offset int32) error {
 		offsets = offsets[batchFirst : batchLast+1]
 
 		ctx := c.backend.NewContext()
-		kShift := ctx.Input().FromIntSlice(offsets, len(offsets))
+		kShift := ctx.Input().FromInts(offsets, len(offsets))
 
 		for i, key := range c.keys {
 			if key == nil {

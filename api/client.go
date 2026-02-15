@@ -45,6 +45,12 @@ func checkError(resp *http.Response, body []byte) error {
 		return nil
 	}
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		authError := AuthorizationError{StatusCode: resp.StatusCode}
+		json.Unmarshal(body, &authError)
+		return authError
+	}
+
 	apiError := StatusError{StatusCode: resp.StatusCode}
 
 	err := json.Unmarshal(body, &apiError)
@@ -159,7 +165,7 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 	return nil
 }
 
-const maxBufferSize = 512 * format.KiloByte
+const maxBufferSize = 8 * format.MegaByte
 
 func (c *Client) stream(ctx context.Context, method, path string, data any, fn func([]byte) error) error {
 	var buf io.Reader
@@ -214,15 +220,29 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 	scanner.Buffer(scanBuf, maxBufferSize)
 	for scanner.Scan() {
 		var errorResponse struct {
-			Error string `json:"error,omitempty"`
+			Error     string `json:"error,omitempty"`
+			SigninURL string `json:"signin_url,omitempty"`
 		}
 
 		bts := scanner.Bytes()
 		if err := json.Unmarshal(bts, &errorResponse); err != nil {
-			return fmt.Errorf("unmarshal: %w", err)
+			if response.StatusCode >= http.StatusBadRequest {
+				return StatusError{
+					StatusCode:   response.StatusCode,
+					Status:       response.Status,
+					ErrorMessage: string(bts),
+				}
+			}
+			return errors.New(string(bts))
 		}
 
-		if response.StatusCode >= http.StatusBadRequest {
+		if response.StatusCode == http.StatusUnauthorized {
+			return AuthorizationError{
+				StatusCode: response.StatusCode,
+				Status:     response.Status,
+				SigninURL:  errorResponse.SigninURL,
+			}
+		} else if response.StatusCode >= http.StatusBadRequest {
 			return StatusError{
 				StatusCode:   response.StatusCode,
 				Status:       response.Status,
@@ -327,7 +347,7 @@ type CreateProgressFunc func(ProgressResponse) error
 // Create creates a model from a [Modelfile]. fn is a progress function that
 // behaves similarly to other methods (see [Client.Pull]).
 //
-// [Modelfile]: https://github.com/ollama/ollama/blob/main/docs/modelfile.md
+// [Modelfile]: https://github.com/ollama/ollama/blob/main/docs/modelfile.mdx
 func (c *Client) Create(ctx context.Context, req *CreateRequest, fn CreateProgressFunc) error {
 	return c.stream(ctx, http.MethodPost, "/api/create", req, func(bts []byte) error {
 		var resp ProgressResponse
@@ -427,4 +447,54 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 	}
 
 	return version.Version, nil
+}
+
+// CloudStatusExperimental returns whether cloud features are disabled on the server.
+func (c *Client) CloudStatusExperimental(ctx context.Context) (*StatusResponse, error) {
+	var status StatusResponse
+	if err := c.do(ctx, http.MethodGet, "/api/status", nil, &status); err != nil {
+		return nil, err
+	}
+
+	return &status, nil
+}
+
+// Signout will signout a client for a local ollama server.
+func (c *Client) Signout(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, "/api/signout", nil, nil)
+}
+
+// Disconnect will disconnect an ollama instance from ollama.com.
+func (c *Client) Disconnect(ctx context.Context, encodedKey string) error {
+	return c.do(ctx, http.MethodDelete, fmt.Sprintf("/api/user/keys/%s", encodedKey), nil, nil)
+}
+
+func (c *Client) Whoami(ctx context.Context) (*UserResponse, error) {
+	var resp UserResponse
+	if err := c.do(ctx, http.MethodPost, "/api/me", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// AliasRequest is the request body for creating or updating a model alias.
+type AliasRequest struct {
+	Alias          string `json:"alias"`
+	Target         string `json:"target"`
+	PrefixMatching bool   `json:"prefix_matching,omitempty"`
+}
+
+// SetAliasExperimental creates or updates a model alias via the experimental aliases API.
+func (c *Client) SetAliasExperimental(ctx context.Context, req *AliasRequest) error {
+	return c.do(ctx, http.MethodPost, "/api/experimental/aliases", req, nil)
+}
+
+// AliasDeleteRequest is the request body for deleting a model alias.
+type AliasDeleteRequest struct {
+	Alias string `json:"alias"`
+}
+
+// DeleteAliasExperimental deletes a model alias via the experimental aliases API.
+func (c *Client) DeleteAliasExperimental(ctx context.Context, req *AliasDeleteRequest) error {
+	return c.do(ctx, http.MethodDelete, "/api/experimental/aliases", req, nil)
 }

@@ -58,6 +58,48 @@ func useMoreBits(iLayer, nLayers int) bool {
 	return iLayer < (nLayers/8) || iLayer >= 7*nLayers/8 || (iLayer-nLayers/8)%3 == 2
 }
 
+func qwen3nextQuantType(name string) (fsggml.TensorType, bool) {
+	switch {
+	// Full attention
+	case strings.HasSuffix(name, ".attn_q.weight"):
+		return fsggml.TensorTypeQ4_K, true
+	case strings.HasSuffix(name, ".attn_k.weight"):
+		return fsggml.TensorTypeQ4_K, true
+	case strings.HasSuffix(name, ".attn_v.weight"):
+		return fsggml.TensorTypeQ6_K, true
+	case strings.HasSuffix(name, ".attn_output.weight"):
+		return fsggml.TensorTypeQ4_K, true
+
+	// Linear attention (Gated Delta Net) after split
+	case strings.HasSuffix(name, ".attn_qkv.weight"):
+		return fsggml.TensorTypeQ4_K, true
+	case strings.HasSuffix(name, ".attn_gate.weight"):
+		return fsggml.TensorTypeQ4_K, true
+
+	// SSM
+	case strings.HasSuffix(name, ".ssm_ba.weight"):
+		return fsggml.TensorTypeQ4_K, true
+	case strings.HasSuffix(name, ".ssm_out.weight"):
+		return fsggml.TensorTypeQ4_K, true
+
+	// MoE experts + shared experts
+	case strings.HasSuffix(name, ".ffn_down_exps.weight"):
+		return fsggml.TensorTypeQ6_K, true
+	case strings.HasSuffix(name, ".ffn_down_shexp.weight"):
+		return fsggml.TensorTypeQ6_K, true
+	case strings.HasSuffix(name, ".ffn_gate_exps.weight"):
+		return fsggml.TensorTypeQ4_K, true
+	case strings.HasSuffix(name, ".ffn_gate_shexp.weight"):
+		return fsggml.TensorTypeQ4_K, true
+	case strings.HasSuffix(name, ".ffn_up_exps.weight"):
+		return fsggml.TensorTypeQ4_K, true
+	case strings.HasSuffix(name, ".ffn_up_shexp.weight"):
+		return fsggml.TensorTypeQ4_K, true
+	}
+
+	return 0, false
+}
+
 func getTensorNewType(kv fsggml.KV, qs *quantizeState, newType fsggml.TensorType, name string, shape []uint64, ftype fsggml.FileType) fsggml.TensorType {
 	// Ported from llama_tensor_get_type, removed unsupported quantization types
 	nExperts := max(1, kv.Uint("expert_count", 0))
@@ -95,6 +137,13 @@ func getTensorNewType(kv fsggml.KV, qs *quantizeState, newType fsggml.TensorType
 			// for the 8-expert model, bumping this to Q8_0 trades just ~128MB
 			newType = fsggml.TensorTypeQ8_0
 		}
+	} else if strings.Contains(name, "attn_k_b.weight") ||
+		strings.Contains(name, "attn_v_b.weight") ||
+		strings.Contains(name, "attn_kv_a_mqa.weight") ||
+		strings.Contains(name, "attn_q_a.weight") ||
+		strings.Contains(name, "attn_q_b.weight") {
+		// MLA tensors need higher precision to avoid quality degradation
+		newType = fsggml.TensorTypeQ8_0
 	} else if strings.Contains(name, "ffn_down") {
 		iLayer := qs.iFfnDown
 		n_layer := qs.nFfnDown
@@ -175,7 +224,6 @@ func quantize(in, out *os.File, orig *fsggml.GGML, newFileType fsggml.FileType, 
 	origTensors := orig.Tensors().Items()
 	outputTensors := make([]*fsggml.Tensor, len(origTensors))
 	for i, tensor := range origTensors {
-		tensor := tensor
 		newType := newType(tensor, kv, qs, newFileType)
 		newTensor := &fsggml.Tensor{
 			Name:  tensor.Name,
@@ -199,8 +247,8 @@ func newType(t *fsggml.Tensor, kv fsggml.KV, qs *quantizeState, ftype fsggml.Fil
 	name := t.Name
 	quantize := strings.HasSuffix(name, "weight")
 
-	// don't quantize vision stuff
-	quantize = quantize && (!strings.Contains(name, "v.") || strings.Contains(name, "_v."))
+	// don't quantize vision encoder tensors (named with "v." prefix)
+	quantize = quantize && !strings.HasPrefix(name, "v.")
 	quantize = quantize && !strings.Contains(name, "mm.")
 
 	// quantize only 2D and 3D tensors (experts)
@@ -211,6 +259,7 @@ func newType(t *fsggml.Tensor, kv fsggml.KV, qs *quantizeState, ftype fsggml.Fil
 
 	// do not quantize expert gating tensors
 	quantize = quantize && !strings.Contains(name, "ffn_gate_inp.weight")
+	quantize = quantize && !strings.Contains(name, "ffn_gate_inp_shexp.weight")
 
 	// do not quantize positional embeddings and token types (BERT)
 	quantize = quantize && (name != "position_embd.weight")
@@ -219,6 +268,9 @@ func newType(t *fsggml.Tensor, kv fsggml.KV, qs *quantizeState, ftype fsggml.Fil
 	// do not quantize Mamba's small yet 2D weights
 	// NOTE: can't use LLM_TN here because the layer number is not known
 	quantize = quantize && !strings.Contains(name, "ssm_conv1d.weight")
+
+	// do not quantize LFM2's shortconv kernel weights
+	quantize = quantize && !strings.Contains(name, "shortconv.conv.weight")
 
 	// do not quantize RWKV's time_mix_first tensors
 	quantize = quantize && !strings.Contains(name, "time_mix_first.weight")
@@ -235,6 +287,12 @@ func newType(t *fsggml.Tensor, kv fsggml.KV, qs *quantizeState, ftype fsggml.Fil
 
 	newType := fsggml.TensorType(t.Kind)
 	if quantize {
+		if kv.Architecture() == "qwen3next" && (ftype == fsggml.FileTypeQ4_K_M || ftype == fsggml.FileTypeQ4_K_S) {
+			if qt, ok := qwen3nextQuantType(name); ok {
+				return qt
+			}
+		}
+
 		// get more optimal quantization type based on the tensor shape, layer, etc.
 		newType = getTensorNewType(kv, qs, defaultType, t.Name, t.Shape, ftype)
 		if newType != defaultType {

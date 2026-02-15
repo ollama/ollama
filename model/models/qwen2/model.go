@@ -10,16 +10,20 @@ import (
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
-	"github.com/ollama/ollama/ml/nn/fast"
 	"github.com/ollama/ollama/ml/nn/rope"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
+	"github.com/ollama/ollama/tokenizer"
 )
 
 type Options struct {
 	hiddenSize, numHeads, numKVHeads int
 	headDim, ropeDim                 int
 	eps, ropeBase, ropeScale         float32
+}
+
+func (o Options) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions ml.Tensor) ml.Tensor {
+	return nn.RoPE(ctx, states, positions, cmp.Or(o.ropeDim, o.headDim, o.hiddenSize/o.numHeads), o.ropeBase, 1./o.ropeScale, rope.WithTypeNeoX())
 }
 
 type Attention struct {
@@ -32,7 +36,6 @@ type Attention struct {
 func (attn Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
 	batchSize := hiddenStates.Dim(1)
 	headDim := cmp.Or(opts.headDim, opts.hiddenSize/opts.numHeads)
-	ropeDim := cmp.Or(opts.ropeDim, headDim)
 
 	query := attn.Query.Forward(ctx, hiddenStates)
 	query = query.Reshape(ctx, headDim, opts.numHeads, batchSize)
@@ -43,8 +46,8 @@ func (attn Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor,
 	value := attn.Value.Forward(ctx, hiddenStates)
 	value = value.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
 
-	query = fast.RoPE(ctx, query, positions, ropeDim, opts.ropeBase, opts.ropeScale, rope.WithTypeNeoX())
-	key = fast.RoPE(ctx, key, positions, ropeDim, opts.ropeBase, opts.ropeScale, rope.WithTypeNeoX())
+	query = opts.applyRotaryPositionEmbeddings(ctx, query, positions)
+	key = opts.applyRotaryPositionEmbeddings(ctx, key, positions)
 
 	attention := nn.Attention(ctx, query, key, value, 1.0/math.Sqrt(float64(headDim)), cache)
 	attention = attention.Reshape(ctx, headDim*opts.numHeads, batchSize)
@@ -59,7 +62,7 @@ type MLP struct {
 }
 
 func (mlp MLP) Forward(ctx ml.Context, hiddenStates ml.Tensor) ml.Tensor {
-	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates).SILU(ctx).Mul(ctx, mlp.Up.Forward(ctx, hiddenStates))
+	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates).SILU(ctx, mlp.Up.Forward(ctx, hiddenStates))
 	return mlp.Down.Forward(ctx, hiddenStates)
 }
 
@@ -90,7 +93,7 @@ func (d DecoderLayer) Forward(ctx ml.Context, hiddenStates, positions, outputs m
 
 type Model struct {
 	model.Base
-	model.BytePairEncoding
+	tokenizer.Tokenizer
 
 	TokenEmbedding *nn.Embedding  `gguf:"token_embd"`
 	Layers         []DecoderLayer `gguf:"blk"`
@@ -102,7 +105,7 @@ type Model struct {
 
 // Forward implements model.Model.
 func (m Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
+	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
 
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 
@@ -111,7 +114,7 @@ func (m Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 
 		var outputs ml.Tensor
 		if i == len(m.Layers)-1 {
-			outputs = ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
+			outputs = batch.Outputs
 		}
 
 		hiddenStates = layer.Forward(ctx, hiddenStates, positions, outputs, m.Cache, &m.Options)
@@ -123,8 +126,7 @@ func (m Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 }
 
 func (m Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	ropeDim := cmp.Or(m.ropeDim, m.hiddenSize/m.numHeads)
-	return fast.RoPE(ctx, key, shift, ropeDim, m.ropeBase, m.ropeScale, rope.WithTypeNeoX()), nil
+	return m.applyRotaryPositionEmbeddings(ctx, key, shift), nil
 }
 
 func New(c fs.Config) (model.Model, error) {
@@ -138,9 +140,8 @@ func New(c fs.Config) (model.Model, error) {
 	}
 	m := Model{
 		Layers: make([]DecoderLayer, c.Uint("block_count")),
-		BytePairEncoding: model.NewBytePairEncoding(
-			c.String("tokenizer.ggml.pretokenizer", `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
-			&model.Vocabulary{
+		Tokenizer: tokenizer.NewBytePairEncoding(
+			&tokenizer.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Types:  c.Ints("tokenizer.ggml.token_type"),
 				Merges: c.Strings("tokenizer.ggml.merges"),
@@ -152,6 +153,7 @@ func New(c fs.Config) (model.Model, error) {
 					c.Ints("tokenizer.ggml.eos_token_ids")...,
 				),
 			},
+			`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
 		),
 		Options: Options{
 			hiddenSize: int(c.Uint("embedding_length")),
@@ -160,7 +162,7 @@ func New(c fs.Config) (model.Model, error) {
 			headDim:    int(c.Uint("attention.key_length")),
 			ropeDim:    int(c.Uint("rope.dimension_count")),
 			ropeBase:   c.Float("rope.freq_base"),
-			ropeScale:  c.Float("rope.freq_scale", 1),
+			ropeScale:  c.Float("rope.scaling.factor", 1),
 			eps:        c.Float("attention.layer_norm_rms_epsilon"),
 		},
 	}

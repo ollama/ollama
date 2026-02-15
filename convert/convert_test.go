@@ -18,6 +18,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+	fsc "github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/fs/ggml"
 )
 
@@ -27,7 +29,7 @@ type tensorData struct {
 	Shape   []int  `json:"shape"`
 }
 
-func convertFull(t *testing.T, fsys fs.FS) (*os.File, ggml.KV, ggml.Tensors) {
+func convertFull(t *testing.T, fsys fs.FS) (*os.File, fsc.Config, ggml.Tensors) {
 	t.Helper()
 
 	f, err := os.CreateTemp(t.TempDir(), "f16")
@@ -58,9 +60,10 @@ func convertFull(t *testing.T, fsys fs.FS) (*os.File, ggml.KV, ggml.Tensors) {
 	return r, m.KV(), m.Tensors()
 }
 
-func generateResultsJSON(t *testing.T, f *os.File, kv ggml.KV, tensors ggml.Tensors) map[string]string {
+func generateResultsJSON(t *testing.T, f *os.File, kv fsc.Config, tensors ggml.Tensors) map[string]string {
 	actual := make(map[string]string)
-	for k, v := range kv {
+	for k := range kv.Keys() {
+		v := kv.Value(k)
 		if s, ok := v.(json.Marshaler); !ok {
 			actual[k] = fmt.Sprintf("%v", v)
 		} else {
@@ -276,7 +279,7 @@ func generateSafetensorTestData(t *testing.T, tempDir string, tensorData map[str
 func TestConvertAdapter(t *testing.T) {
 	type AdapterCase struct {
 		Name     string
-		BaseKV   map[string]any
+		BaseKV   KV
 		Expected map[string]string
 	}
 
@@ -339,13 +342,8 @@ func TestConvertAdapter(t *testing.T) {
 			}
 
 			actual := generateResultsJSON(t, r, m.KV(), m.Tensors())
-
-			for _, k := range slices.Sorted(maps.Keys(c.Expected)) {
-				if v, ok := actual[k]; !ok {
-					t.Errorf("missing %s", k)
-				} else if v != c.Expected[k] {
-					t.Errorf("unexpected %s: want %s, got %s", k, c.Expected[k], v)
-				}
+			if diff := cmp.Diff(c.Expected, actual); diff != "" {
+				t.Errorf("mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

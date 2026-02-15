@@ -1,0 +1,59 @@
+---
+title: Quickstart
+---
+
+Ollama is available on macOS, Windows, and Linux.
+
+<a
+  href="https://ollama.com/download"
+  target="_blank"
+  className="inline-block px-6 py-2 bg-black rounded-full dark:bg-neutral-700 text-white font-normal border-none"
+>
+  Download Ollama
+</a>
+
+## Get Started
+
+Run `ollama` in your terminal to open the interactive menu:
+
+```sh
+ollama
+```
+
+Navigate with `↑/↓`, press `enter` to launch, `→` to change model, and `esc` to quit.
+
+The menu provides quick access to:
+- **Run a model** - Start an interactive chat
+- **Launch tools** - Claude Code, Codex, OpenClaw, and more
+- **Additional integrations** - Available under "More..."
+
+## Coding
+
+Launch coding tools with Ollama models:
+
+```sh
+ollama launch claude
+```
+
+```sh
+ollama launch codex
+```
+
+```sh
+ollama launch opencode
+```
+
+See [integrations](/integrations) for all supported tools.
+
+## API
+
+Use the [API](/api) to integrate Ollama into your applications:
+
+```sh
+curl http://localhost:11434/api/chat -d '{
+  "model": "gemma3",
+  "messages": [{ "role": "user", "content": "Hello!" }]
+}'
+```
+
+See the [API documentation](/api) for Python, JavaScript, and other integrations.

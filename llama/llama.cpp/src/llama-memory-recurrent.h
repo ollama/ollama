@@ -4,6 +4,7 @@
 #include "llama-graph.h"
 #include "llama-memory.h"
 
+#include <map>
 #include <set>
 #include <vector>
 
@@ -12,21 +13,17 @@
 //
 
 // TODO: extract the cache state used for graph computation into llama_memory_recurrent_context_i
-//       see the implementation of llama_kv_cache_unified_context_i for an example how to do it
+//       see the implementation of llama_kv_cache_context_i for an example how to do it
 class llama_memory_recurrent : public llama_memory_i {
 public:
-
-    // this callback is used to filter out layers that should not be included in the cache
-    using layer_filter_cb = std::function<bool(int32_t il)>;
-
     llama_memory_recurrent(
-            const llama_model &  model,
-              layer_filter_cb && filter,
-                    ggml_type    type_r,
-                    ggml_type    type_s,
-                         bool    offload,
-                     uint32_t    mem_size,
-                     uint32_t    n_seq_max);
+            const llama_model & model,
+                    ggml_type   type_r,
+                    ggml_type   type_s,
+                         bool   offload,
+                     uint32_t   mem_size,
+                     uint32_t   n_seq_max,
+        const layer_filter_cb & filter);
 
     ~llama_memory_recurrent() = default;
 
@@ -54,6 +51,8 @@ public:
     llama_pos seq_pos_min(llama_seq_id seq_id) const override;
     llama_pos seq_pos_max(llama_seq_id seq_id) const override;
 
+    std::map<ggml_backend_buffer_type_t, size_t> memory_breakdown() const override;
+
     bool prepare(const std::vector<llama_ubatch> & ubatches);
 
     // find a contiguous slot of memory cells and emplace the ubatch there
@@ -63,8 +62,8 @@ public:
 
     // state write/load
 
-    void state_write(llama_io_write_i & io, llama_seq_id seq_id = -1) const override;
-    void state_read (llama_io_read_i  & io, llama_seq_id seq_id = -1) override;
+    void state_write(llama_io_write_i & io, llama_seq_id seq_id = -1, llama_state_seq_flags flags = 0) const override;
+    void state_read (llama_io_read_i  & io, llama_seq_id seq_id = -1, llama_state_seq_flags flags = 0) override;
 
     uint32_t head = 0; // the location where the batch will be placed in the cache (see find_slot())
     uint32_t size = 0; // total number of cells, shared across all sequences
@@ -110,8 +109,8 @@ private:
 
     const uint32_t n_seq_max = 1;
 
-    std::vector<ggml_context_ptr>        ctxs;
-    std::vector<ggml_backend_buffer_ptr> bufs;
+    // ggml contexts for the KV cache along with the allocated backend buffers:
+    std::vector<std::pair<ggml_context_ptr, ggml_backend_buffer_ptr>> ctxs_bufs;
 
     size_t total_size() const;
 

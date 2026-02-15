@@ -7,15 +7,18 @@ import (
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
-	"github.com/ollama/ollama/ml/nn/fast"
 	"github.com/ollama/ollama/ml/nn/rope"
-	"github.com/ollama/ollama/model/input"
 )
 
 type TextOptions struct {
 	hiddenSize, numHeads, numKVHeads int
 	ropeDim, originalContextLength   int
 	eps, ropeBase, ropeScale         float32
+	mropeSections                    []int
+}
+
+func (o TextOptions) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions ml.Tensor) ml.Tensor {
+	return nn.RoPE(ctx, states, positions, o.ropeDim, o.ropeBase, 1./o.ropeScale, rope.WithMRoPE(o.mropeSections))
 }
 
 type TextModel struct {
@@ -25,6 +28,7 @@ type TextModel struct {
 	Output         *nn.Linear    `gguf:"output,alt:token_embd"`
 
 	*TextOptions
+	positionCache []int32
 }
 
 func NewTextModel(c fs.Config) *TextModel {
@@ -38,7 +42,15 @@ func NewTextModel(c fs.Config) *TextModel {
 			originalContextLength: int(c.Uint("context_length", 128000)),
 			eps:                   c.Float("attention.layer_norm_rms_epsilon"),
 			ropeBase:              c.Float("rope.freq_base"),
-			ropeScale:             c.Float("rope.freq_scale", 1),
+			ropeScale:             c.Float("rope.scaling.factor", 1),
+			mropeSections: func() []int {
+				sections := c.Ints("rope.mrope_section")
+				s := make([]int, len(sections))
+				for i, section := range sections {
+					s[i] = int(section)
+				}
+				return s
+			}(),
 		},
 	}
 
@@ -60,11 +72,11 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 
 	q := sa.Query.Forward(ctx, hiddenState)
 	q = q.Reshape(ctx, headDim, opts.numHeads, batchSize)
-	q = fast.RoPE(ctx, q, positionIDs, opts.ropeDim, opts.ropeBase, opts.ropeScale, rope.WithOriginalContextLength(opts.originalContextLength), rope.WithTypeNeoX())
+	q = opts.applyRotaryPositionEmbeddings(ctx, q, positionIDs)
 
 	k := sa.Key.Forward(ctx, hiddenState)
 	k = k.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
-	k = fast.RoPE(ctx, k, positionIDs, opts.ropeDim, opts.ropeBase, opts.ropeScale, rope.WithOriginalContextLength(opts.originalContextLength), rope.WithTypeNeoX())
+	k = opts.applyRotaryPositionEmbeddings(ctx, k, positionIDs)
 
 	v := sa.Value.Forward(ctx, hiddenState)
 	v = v.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
@@ -78,7 +90,8 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 
 // Shift applies rotary position embeddings to the key tensor for causal attention caching
 func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return fast.RoPE(ctx, key, shift, m.ropeDim, m.ropeBase, m.ropeScale, rope.WithOriginalContextLength(m.originalContextLength), rope.WithTypeNeoX()), nil
+	m.positionCache = nil
+	return m.applyRotaryPositionEmbeddings(ctx, key, shift), nil
 }
 
 // MLP implements the feed-forward network component with SwiGLU activation
@@ -90,7 +103,7 @@ type MLP struct {
 
 func (mlp *MLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *TextOptions) ml.Tensor {
 	// Apply SwiGLU activation gating
-	hiddenState = mlp.Gate.Forward(ctx, hiddenState).SILU(ctx).Mul(ctx, mlp.Up.Forward(ctx, hiddenState))
+	hiddenState = mlp.Gate.Forward(ctx, hiddenState).SILU(ctx, mlp.Up.Forward(ctx, hiddenState))
 	// Project back to hidden dimension
 	return mlp.Down.Forward(ctx, hiddenState)
 }
@@ -123,29 +136,4 @@ func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs, outputs ml.Ten
 	hiddenState = l.MLPNorm.Forward(ctx, hiddenState, opts.eps)
 	hiddenState = l.MLP.Forward(ctx, hiddenState, opts)
 	return hiddenState.Add(ctx, residual)
-}
-
-func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor, batch input.Batch, cache kvcache.Cache) (ml.Tensor, error) {
-	// Initial token embedding
-	hiddenStates := m.TokenEmbedding.Forward(ctx, inputs).Duplicate(ctx)
-
-	for _, mi := range batch.Multimodal {
-		img := mi.Multimodal[0].Tensor
-		ctx.Forward(img.Copy(ctx, hiddenStates.View(ctx, mi.Index*hiddenStates.Stride(1), img.Dim(0)*img.Dim(1))))
-	}
-
-	// Process through transformer layers
-	for i, layer := range m.Layers {
-		cache.SetLayer(i)
-
-		var lastLayerOutputs ml.Tensor
-		if i == len(m.Layers)-1 {
-			lastLayerOutputs = outputs
-		}
-
-		hiddenStates = layer.Forward(ctx, hiddenStates, positions, lastLayerOutputs, cache, m.TextOptions)
-	}
-
-	hiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)
-	return m.Output.Forward(ctx, hiddenStates), nil
 }

@@ -34,8 +34,8 @@ type InputCache struct {
 func NewInputCache(model model.Model, kvCacheType string, kvSize int32, numSlots int, batchSize int, multiUserCache bool) (*InputCache, error) {
 	numCtx := kvSize / int32(numSlots)
 
-	if numCtx < 1 {
-		return nil, fmt.Errorf("must have at least one kv cache entry per parallel sequence (kv: %v parallel: %v)", kvSize, numSlots)
+	if int(numCtx) < batchSize {
+		return nil, fmt.Errorf("kv size must be at least as large as batch size * parallel (kv: %v batch: %v parallel: %v)", kvSize, batchSize, numSlots)
 	}
 
 	slots := make([]InputCacheSlot, numSlots)
@@ -70,11 +70,9 @@ func kvCacheTypeFromStr(s string) ml.DType {
 }
 
 func (c *InputCache) Close() {
-	if c == nil {
-		return
+	if c != nil && c.cache != nil {
+		c.cache.Close()
 	}
-
-	c.cache.Close()
 }
 
 // Locking: Operations on InputCacheSlot (including finding one
@@ -86,7 +84,7 @@ type InputCacheSlot struct {
 	Id int
 
 	// Inputs that are stored in the KV cache
-	Inputs []input.Input
+	Inputs []*input.Input
 
 	// is this cache actively being processed as part of a sequence?
 	InUse bool
@@ -95,7 +93,7 @@ type InputCacheSlot struct {
 	lastUsed time.Time
 }
 
-func (c *InputCache) LoadCacheSlot(prompt []input.Input) (*InputCacheSlot, []input.Input, error) {
+func (c *InputCache) LoadCacheSlot(prompt []*input.Input, cachePrompt bool) (*InputCacheSlot, []*input.Input, error) {
 	var slot *InputCacheSlot
 	var numPast int32
 	var err error
@@ -113,6 +111,10 @@ func (c *InputCache) LoadCacheSlot(prompt []input.Input) (*InputCacheSlot, []inp
 		return nil, nil, err
 	}
 
+	if !cachePrompt {
+		numPast = 0
+	}
+
 	slot.InUse = true
 	slot.lastUsed = time.Now()
 
@@ -122,8 +124,17 @@ func (c *InputCache) LoadCacheSlot(prompt []input.Input) (*InputCacheSlot, []inp
 	}
 
 	if c.cache != nil {
-		if numPast > 0 && !c.cache.CanResume(slot.Id, numPast) {
-			numPast = 0
+		if numPast > 0 {
+			// Recurrent caches use checkpoints to pick a safe resume position.
+			if cc, ok := c.cache.(kvcache.CheckpointCache); ok {
+				if restored, ok := cc.PrepareRestore(slot.Id, numPast); ok {
+					numPast = restored
+				} else {
+					numPast = 0
+				}
+			} else if !c.cache.CanResume(slot.Id, numPast) {
+				numPast = 0
+			}
 		}
 
 		err = c.cache.Remove(slot.Id, numPast, math.MaxInt32)
@@ -146,7 +157,7 @@ func (c *InputCache) LoadCacheSlot(prompt []input.Input) (*InputCacheSlot, []inp
 	return slot, prompt, nil
 }
 
-func (c *InputCache) findLongestCacheSlot(prompt []input.Input) (*InputCacheSlot, int32, error) {
+func (c *InputCache) findLongestCacheSlot(prompt []*input.Input) (*InputCacheSlot, int32, error) {
 	longest := int32(-1)
 	var longestSlot *InputCacheSlot
 
@@ -169,7 +180,7 @@ func (c *InputCache) findLongestCacheSlot(prompt []input.Input) (*InputCacheSlot
 	return longestSlot, longest, nil
 }
 
-func (c *InputCache) findBestCacheSlot(prompt []input.Input) (*InputCacheSlot, int32, error) {
+func (c *InputCache) findBestCacheSlot(prompt []*input.Input) (*InputCacheSlot, int32, error) {
 	oldest := time.Now()
 	var oldestSlot *InputCacheSlot
 
@@ -205,7 +216,7 @@ func (c *InputCache) findBestCacheSlot(prompt []input.Input) (*InputCacheSlot, i
 	if longest > 0 && longestSlot != oldestSlot {
 		slog.Debug("forking cache slot", "src", longestSlot.Id, "dst", oldestSlot.Id, "inputs", longest, "total",
 			len(longestSlot.Inputs))
-		oldestSlot.Inputs = make([]input.Input, longest)
+		oldestSlot.Inputs = make([]*input.Input, longest)
 		copy(oldestSlot.Inputs, longestSlot.Inputs[:longest])
 		if c.cache != nil {
 			c.cache.CopyPrefix(longestSlot.Id, oldestSlot.Id, longest)
@@ -215,7 +226,7 @@ func (c *InputCache) findBestCacheSlot(prompt []input.Input) (*InputCacheSlot, i
 	return oldestSlot, longest, nil
 }
 
-func countCommonPrefix(a []input.Input, b []input.Input) int32 {
+func countCommonPrefix(a []*input.Input, b []*input.Input) int32 {
 	var count int32
 
 	for i := range a {
@@ -233,24 +244,32 @@ func countCommonPrefix(a []input.Input, b []input.Input) int32 {
 	return count
 }
 
-// TODO(jessegross): If we need to reprocess the inputs we should ensure that
-// we don't split up a SameBatch
-func (c *InputCache) ShiftDiscard(inputLen int32, numKeep int32) int32 {
-	targetFree := (c.numCtx - numKeep) / 2
-	targetFree = max(targetFree, 1)
+// ShiftDiscard computes how many inputs can be discarded from the cache. Inputs in the same batch
+// are discarded together.
+func (c *InputCache) ShiftDiscard(inputs []*input.Input, numKeep int32) int32 {
+	targetFree := max((c.numCtx-numKeep)/2, 1)
+	currentFree := c.numCtx - int32(len(inputs))
 
-	currentFree := c.numCtx - inputLen
-	discard := targetFree - currentFree
+	var discard, sameBatch int32
+	for _, input := range inputs[numKeep:] {
+		if sameBatch <= 0 && currentFree >= targetFree {
+			break
+		}
 
-	if discard < 0 {
-		discard = 0
+		sameBatch--
+		currentFree++
+		discard++
+
+		if input.SameBatch > 0 {
+			sameBatch = int32(input.SameBatch)
+		}
 	}
 
 	return discard
 }
 
 type ErrReprocessInputs struct {
-	Inputs []input.Input
+	Inputs []*input.Input
 }
 
 func (e *ErrReprocessInputs) Error() string {
@@ -267,7 +286,7 @@ func (c *InputCache) ShiftCacheSlot(slot *InputCacheSlot, numKeep int32) error {
 	}
 
 	inputLen := int32(len(slot.Inputs))
-	discard := c.ShiftDiscard(inputLen, numKeep)
+	discard := c.ShiftDiscard(slot.Inputs, numKeep)
 
 	if discard <= 0 {
 		return nil
@@ -283,13 +302,13 @@ func (c *InputCache) ShiftCacheSlot(slot *InputCacheSlot, numKeep int32) error {
 				"id", slot.Id, "error", err)
 
 			// Create new input slice with preserved tokens (numKeep + remaining tokens after discard)
-			newInputs := make([]input.Input, numKeep+inputLen-(numKeep+discard))
+			newInputs := make([]*input.Input, numKeep+inputLen-(numKeep+discard))
 			copy(newInputs[:numKeep], slot.Inputs[:numKeep])
 			copy(newInputs[numKeep:], slot.Inputs[numKeep+discard:])
 
 			// Reset the cache
 			_ = c.cache.Remove(slot.Id, 0, math.MaxInt32)
-			slot.Inputs = []input.Input{}
+			slot.Inputs = []*input.Input{}
 
 			// Return error with inputs that need to be reprocessed
 			return &ErrReprocessInputs{Inputs: newInputs}

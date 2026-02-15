@@ -41,9 +41,9 @@ static std::string build_repetition(const std::string & item_rule, int min_items
     return result;
 }
 
-static void _build_min_max_int(int min_value, int max_value, std::stringstream & out, int decimals_left = 16, bool top_level = true) {
-    auto has_min = min_value != std::numeric_limits<int>::min();
-    auto has_max = max_value != std::numeric_limits<int>::max();
+static void _build_min_max_int(int64_t min_value, int64_t max_value, std::stringstream & out, int decimals_left = 16, bool top_level = true) {
+    auto has_min = min_value != std::numeric_limits<int64_t>::min();
+    auto has_max = max_value != std::numeric_limits<int64_t>::max();
 
     auto digit_range = [&](char from, char to) {
         out << "[";
@@ -159,7 +159,7 @@ static void _build_min_max_int(int min_value, int max_value, std::stringstream &
     if (has_min) {
         if (min_value < 0) {
             out << "\"-\" (";
-            _build_min_max_int(std::numeric_limits<int>::min(), -min_value, out, decimals_left, /* top_level= */ false);
+            _build_min_max_int(std::numeric_limits<int64_t>::min(), -min_value, out, decimals_left, /* top_level= */ false);
             out << ") | [0] | [1-9] ";
             more_digits(0, decimals_left - 1);
         } else if (min_value == 0) {
@@ -194,7 +194,7 @@ static void _build_min_max_int(int min_value, int max_value, std::stringstream &
             }
             digit_range(c, c);
             out << " (";
-            _build_min_max_int(std::stoi(min_s.substr(1)), std::numeric_limits<int>::max(), out, less_decimals, /* top_level= */ false);
+            _build_min_max_int(std::stoll(min_s.substr(1)), std::numeric_limits<int64_t>::max(), out, less_decimals, /* top_level= */ false);
             out << ")";
             if (c < '9') {
                 out << " | ";
@@ -216,7 +216,7 @@ static void _build_min_max_int(int min_value, int max_value, std::stringstream &
             _build_min_max_int(0, max_value, out, decimals_left, /* top_level= */ true);
         } else {
             out << "\"-\" (";
-            _build_min_max_int(-max_value, std::numeric_limits<int>::max(), out, decimals_left, /* top_level= */ false);
+            _build_min_max_int(-max_value, std::numeric_limits<int64_t>::max(), out, decimals_left, /* top_level= */ false);
             out << ")";
         }
         return;
@@ -257,20 +257,21 @@ std::unordered_map<std::string, BuiltinRule> STRING_FORMAT_RULES = {
 };
 
 static bool is_reserved_name(const std::string & name) {
-    static std::unordered_set<std::string> RESERVED_NAMES;
-    if (RESERVED_NAMES.empty()) {
-        RESERVED_NAMES.insert("root");
-        for (const auto &p : PRIMITIVE_RULES) RESERVED_NAMES.insert(p.first);
-        for (const auto &p : STRING_FORMAT_RULES) RESERVED_NAMES.insert(p.first);
-    }
+    static const std::unordered_set<std::string> RESERVED_NAMES = [] {
+        std::unordered_set<std::string> s;
+        s.insert("root");
+        for (const auto & p : PRIMITIVE_RULES) s.insert(p.first);
+        for (const auto & p : STRING_FORMAT_RULES) s.insert(p.first);
+        return s;
+    }();
     return RESERVED_NAMES.find(name) != RESERVED_NAMES.end();
 }
 
 std::regex INVALID_RULE_CHARS_RE("[^a-zA-Z0-9-]+");
-std::regex GRAMMAR_LITERAL_ESCAPE_RE("[\r\n\"]");
+std::regex GRAMMAR_LITERAL_ESCAPE_RE("[\r\n\"\\\\]");
 std::regex GRAMMAR_RANGE_LITERAL_ESCAPE_RE("[\r\n\"\\]\\-\\\\]");
 std::unordered_map<char, std::string> GRAMMAR_LITERAL_ESCAPES = {
-    {'\r', "\\r"}, {'\n', "\\n"}, {'"', "\\\""}, {'-', "\\-"}, {']', "\\]"}
+    {'\r', "\\r"}, {'\n', "\\n"}, {'"', "\\\""}, {'-', "\\-"}, {']', "\\]"}, {'\\', "\\\\"}
 };
 
 std::unordered_set<char> NON_LITERAL_SET = {'|', '.', '(', ')', '[', ']', '{', '}', '*', '+', '?'};
@@ -302,8 +303,11 @@ static std::string format_literal(const std::string & literal) {
     return "\"" + escaped + "\"";
 }
 
-class SchemaConverter {
+std::string gbnf_format_literal(const std::string & literal) { return format_literal(literal); }
+
+class common_schema_converter {
 private:
+    friend class common_schema_info;
     friend std::string build_grammar(const std::function<void(const common_grammar_builder &)> & cb, const common_grammar_options & options);
     std::function<json(const std::string &)> _fetch_json;
     bool _dotall;
@@ -600,7 +604,10 @@ private:
     }
 
     std::string _resolve_ref(const std::string & ref) {
-        std::string ref_name = ref.substr(ref.find_last_of('/') + 1);
+        auto it = ref.find('#');
+        std::string ref_fragment = it != std::string::npos ? ref.substr(it + 1) : ref;
+        static const std::regex nonalphanumeric_regex(R"([^a-zA-Z0-9-]+)");
+        std::string ref_name = "ref" + std::regex_replace(ref_fragment, nonalphanumeric_regex, "-");
         if (_rules.find(ref_name) == _rules.end() && _refs_being_resolved.find(ref) == _refs_being_resolved.end()) {
             _refs_being_resolved.insert(ref);
             json resolved = _refs[ref];
@@ -723,7 +730,7 @@ private:
     }
 
 public:
-    SchemaConverter(
+    common_schema_converter(
         const std::function<json(const std::string &)> & fetch_json,
         bool dotall)
           : _fetch_json(fetch_json), _dotall(dotall)
@@ -773,11 +780,24 @@ public:
                         std::vector<std::string> tokens = string_split(pointer, "/");
                         for (size_t i = 1; i < tokens.size(); ++i) {
                             std::string sel = tokens[i];
-                            if (target.is_null() || !target.contains(sel)) {
+                            if (target.is_object() && target.contains(sel)) {
+                                target = target[sel];
+                            } else if (target.is_array()) {
+                                size_t sel_index;
+                                try {
+                                    sel_index = std::stoul(sel);
+                                } catch (const std::invalid_argument & e) {
+                                    sel_index = target.size();
+                                }
+                                if (sel_index >= target.size()) {
+                                    _errors.push_back("Error resolving ref " + ref + ": " + sel + " not in " + target.dump());
+                                    return;
+                                }
+                                target = target[sel_index];
+                            } else {
                                 _errors.push_back("Error resolving ref " + ref + ": " + sel + " not in " + target.dump());
                                 return;
                             }
-                            target = target[sel];
                         }
                         _refs[ref] = target;
                     }
@@ -843,9 +863,10 @@ public:
                 _build_object_rule(
                     properties, required, name,
                     schema.contains("additionalProperties") ? schema["additionalProperties"] : json()));
-        } else if ((schema_type.is_null() || schema_type == "object") && schema.contains("allOf")) {
+        } else if ((schema_type.is_null() || schema_type == "object" || schema_type == "string") && schema.contains("allOf")) {
             std::unordered_set<std::string> required;
             std::vector<std::pair<std::string, json>> properties;
+            std::map<std::string, size_t> enum_values;
             std::string hybrid_name = name;
             std::function<void(const json &, bool)> add_component = [&](const json & comp_schema, bool is_required) {
                 if (comp_schema.contains("$ref")) {
@@ -856,6 +877,14 @@ public:
                         if (is_required) {
                             required.insert(prop.key());
                         }
+                    }
+                } else if (comp_schema.contains("enum")) {
+                    for (const auto & v : comp_schema["enum"]) {
+                        const auto rule = _generate_constant_rule(v);
+                        if (enum_values.find(rule) == enum_values.end()) {
+                            enum_values[rule] = 0;
+                        }
+                        enum_values[rule] += 1;
                     }
                 } else {
                   // todo warning
@@ -868,6 +897,17 @@ public:
                     }
                 } else {
                     add_component(t, true);
+                }
+            }
+            if (!enum_values.empty()) {
+                std::vector<std::string> enum_intersection;
+                for (const auto & p : enum_values) {
+                    if (p.second == schema["allOf"].size()) {
+                        enum_intersection.push_back(p.first);
+                    }
+                }
+                if (!enum_intersection.empty()) {
+                    return _add_rule(rule_name, "(" + string_join(enum_intersection, " | ") + ") space");
                 }
             }
             return _add_rule(rule_name, _build_object_rule(properties, required, hybrid_name, json()));
@@ -904,17 +944,17 @@ public:
             int max_len = schema.contains("maxLength") ? schema["maxLength"].get<int>() : std::numeric_limits<int>::max();
             return _add_rule(rule_name, "\"\\\"\" " + build_repetition(char_rule, min_len, max_len) + " \"\\\"\" space");
         } else if (schema_type == "integer" && (schema.contains("minimum") || schema.contains("exclusiveMinimum") || schema.contains("maximum") || schema.contains("exclusiveMaximum"))) {
-            int min_value = std::numeric_limits<int>::min();
-            int max_value = std::numeric_limits<int>::max();
+            int64_t min_value = std::numeric_limits<int64_t>::min();
+            int64_t max_value = std::numeric_limits<int64_t>::max();
             if (schema.contains("minimum")) {
-                min_value = schema["minimum"].get<int>();
+                min_value = schema["minimum"].get<int64_t>();
             } else if (schema.contains("exclusiveMinimum")) {
-                min_value = schema["exclusiveMinimum"].get<int>() + 1;
+                min_value = schema["exclusiveMinimum"].get<int64_t>() + 1;
             }
             if (schema.contains("maximum")) {
-                max_value = schema["maximum"].get<int>();
+                max_value = schema["maximum"].get<int64_t>();
             } else if (schema.contains("exclusiveMaximum")) {
-                max_value = schema["exclusiveMaximum"].get<int>() - 1;
+                max_value = schema["exclusiveMaximum"].get<int64_t>() - 1;
             }
             std::stringstream out;
             out << "(";
@@ -935,7 +975,7 @@ public:
 
     void check_errors() {
         if (!_errors.empty()) {
-            throw std::runtime_error("JSON schema conversion failed:\n" + string_join(_errors, "\n"));
+            throw std::invalid_argument("JSON schema conversion failed:\n" + string_join(_errors, "\n"));
         }
         if (!_warnings.empty()) {
             fprintf(stderr, "WARNING: JSON schema conversion was incomplete: %s\n", string_join(_warnings, "; ").c_str());
@@ -950,6 +990,134 @@ public:
         return ss.str();
     }
 };
+
+// common_schema_info implementation (pimpl)
+
+common_schema_info::common_schema_info()
+    : impl_(std::make_unique<common_schema_converter>(
+        [](const std::string &) { return json(); },
+        false)) {}
+
+common_schema_info::~common_schema_info() = default;
+
+common_schema_info::common_schema_info(common_schema_info &&) noexcept = default;
+common_schema_info & common_schema_info::operator=(common_schema_info &&) noexcept = default;
+
+void common_schema_info::resolve_refs(nlohmann::ordered_json & schema) {
+    impl_->resolve_refs(schema, "");
+}
+
+// Determines if a JSON schema can resolve to a string type through any path.
+// Some models emit raw string values rather than JSON-encoded strings for string parameters.
+// If any branch of the schema (via oneOf, anyOf, $ref, etc.) permits a string, this returns
+// true, allowing callers to handle the value as a raw string for simplicity.
+bool common_schema_info::resolves_to_string(const nlohmann::ordered_json & schema) {
+    std::unordered_set<std::string> visited_refs;
+
+    std::function<bool(const json &)> check = [&](const json & s) -> bool {
+        if (!s.is_object()) {
+            return false;
+        }
+
+        // Handle $ref
+        if (s.contains("$ref")) {
+            const std::string & ref = s["$ref"];
+            if (visited_refs.find(ref) != visited_refs.end()) {
+                // Circular reference, assume not a string to be safe
+                return false;
+            }
+            visited_refs.insert(ref);
+            auto it = impl_->_refs.find(ref);
+            if (it != impl_->_refs.end()) {
+                return check(it->second);
+            }
+            return false;
+        }
+
+        // Check type field
+        if (s.contains("type")) {
+            const json & schema_type = s["type"];
+            if (schema_type.is_string()) {
+                if (schema_type == "string") {
+                    return true;
+                }
+            } else if (schema_type.is_array()) {
+                // Type can be an array like ["string", "null"]
+                for (const auto & t : schema_type) {
+                    if (t == "string") {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // Check oneOf/anyOf - if any alternative can be a string
+        if (s.contains("oneOf")) {
+            for (const auto & alt : s["oneOf"]) {
+                if (check(alt)) {
+                    return true;
+                }
+            }
+        }
+        if (s.contains("anyOf")) {
+            for (const auto & alt : s["anyOf"]) {
+                if (check(alt)) {
+                    return true;
+                }
+            }
+        }
+
+        // Check allOf - all components must be compatible with string type
+        if (s.contains("allOf")) {
+            bool all_string = true;
+            for (const auto & component : s["allOf"]) {
+                if (!check(component)) {
+                    all_string = false;
+                    break;
+                }
+            }
+            if (all_string) {
+                return true;
+            }
+        }
+
+        // Check const - if the constant value is a string
+        if (s.contains("const")) {
+            if (s["const"].is_string()) {
+                return true;
+            }
+        }
+
+        // Check enum - if any enum value is a string
+        if (s.contains("enum")) {
+            for (const auto & val : s["enum"]) {
+                if (val.is_string()) {
+                    return true;
+                }
+            }
+        }
+
+        // String-specific keywords imply string type
+        if (s.contains("pattern") || s.contains("minLength") || s.contains("maxLength")) {
+            return true;
+        }
+
+        // Check format - many formats imply string
+        if (s.contains("format")) {
+            const std::string & fmt = s["format"];
+            if (fmt == "date" || fmt == "time" || fmt == "date-time" ||
+                fmt == "uri" || fmt == "email" || fmt == "hostname" ||
+                fmt == "ipv4" || fmt == "ipv6" || fmt == "uuid" ||
+                fmt.find("uuid") == 0) {
+                return true;
+            }
+        }
+
+        return false;
+    };
+
+    return check(schema);
+}
 
 std::string json_schema_to_grammar(const json & schema, bool force_gbnf) {
 #ifdef LLAMA_USE_LLGUIDANCE
@@ -967,7 +1135,7 @@ std::string json_schema_to_grammar(const json & schema, bool force_gbnf) {
 }
 
 std::string build_grammar(const std::function<void(const common_grammar_builder &)> & cb, const common_grammar_options & options) {
-    SchemaConverter converter([&](const std::string &) { return json(); }, options.dotall);
+    common_schema_converter converter([&](const std::string &) { return json(); }, options.dotall);
     common_grammar_builder builder {
         /* .add_rule = */ [&](const std::string & name, const std::string & rule) {
             return converter._add_rule(name, rule);

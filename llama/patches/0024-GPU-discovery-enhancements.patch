@@ -1,0 +1,1286 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Hiltgen <daniel@ollama.com>
+Date: Tue, 26 Aug 2025 12:48:29 -0700
+Subject: [PATCH] GPU discovery enhancements
+
+Expose more information about the devices through backend props, and leverage
+management libraries for more accurate VRAM usage reporting if available.
+
+vulkan: get GPU ID (ollama v0.11.5)
+
+Signed-off-by: Xiaodong Ye <xiaodong.ye@mthreads.com>
+
+Vulkan PCI and Memory
+
+fix vulkan PCI ID and ID handling
+---
+ ggml/include/ggml-backend.h          |   6 +
+ ggml/src/CMakeLists.txt              |   2 +
+ ggml/src/ggml-cuda/ggml-cuda.cu      |  65 ++++
+ ggml/src/ggml-cuda/vendors/hip.h     |   3 +
+ ggml/src/ggml-impl.h                 |   8 +
+ ggml/src/ggml-metal/ggml-metal.cpp   |   2 +
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 169 +++++++-
+ ggml/src/mem_hip.cpp                 | 558 +++++++++++++++++++++++++++
+ ggml/src/mem_nvml.cpp                | 209 ++++++++++
+ 9 files changed, 1005 insertions(+), 17 deletions(-)
+ create mode 100644 ggml/src/mem_hip.cpp
+ create mode 100644 ggml/src/mem_nvml.cpp
+
+diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
+index 92ca32a4b..6ad583f09 100644
+--- a/ggml/include/ggml-backend.h
++++ b/ggml/include/ggml-backend.h
+@@ -169,6 +169,12 @@ extern "C" {
+         const char * device_id;
+         // device capabilities
+         struct ggml_backend_dev_caps caps;
++        int driver_major;
++        int driver_minor;
++        int compute_major;
++        int compute_minor;
++        int integrated;
++        const char *library;
+     };
+ 
+     GGML_API const char *                  ggml_backend_dev_name(ggml_backend_dev_t device);
+diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
+index d55aed348..99ae293cc 100644
+--- a/ggml/src/CMakeLists.txt
++++ b/ggml/src/CMakeLists.txt
+@@ -205,6 +205,8 @@ add_library(ggml-base
+             ggml-threading.h
+             ggml-quants.c
+             ggml-quants.h
++            mem_hip.cpp
++            mem_nvml.cpp
+             gguf.cpp)
+ 
+ set_target_properties(ggml-base PROPERTIES
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index 6852d2e20..334a30135 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -267,6 +267,16 @@ static ggml_cuda_device_info ggml_cuda_init() {
+     for (int id = 0; id < info.device_count; ++id) {
+         int device_vmm = 0;
+ 
++#if defined(GGML_USE_HIP)
++        if (std::getenv("GGML_CUDA_INIT") != NULL) {
++            GGML_LOG_INFO("%s: initializing rocBLAS on device %d\n", __func__, id);
++            CUDA_CHECK(cudaSetDevice(id));
++            // rocblas_initialize will SIGABRT if the GPU isn't supported
++            rocblas_initialize();
++            GGML_LOG_INFO("%s: rocBLAS initialized on device %d\n", __func__, id);
++        }
++#endif
++
+ #if defined(GGML_USE_VMM)
+         CUdevice device;
+         CU_CHECK(cuDeviceGet(&device, id));
+@@ -320,6 +330,11 @@ static ggml_cuda_device_info ggml_cuda_init() {
+ #else
+         info.devices[id].smpbo = prop.sharedMemPerBlockOptin;
+         info.devices[id].cc = 100*prop.major + 10*prop.minor;
++#ifdef __CUDA_ARCH_LIST__
++        if (std::getenv("GGML_CUDA_INIT") != NULL) {
++            GGML_ASSERT(ggml_cuda_has_arch(info.devices[id].cc) && "ggml was not compiled with support for this arch");
++        }
++#endif // defined(__CUDA_ARCH_LIST__)
+         GGML_LOG_INFO("  Device %d: %s, compute capability %d.%d, VMM: %s, ID: %s\n",
+                         id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no",
+                         ggml_cuda_parse_uuid(prop, id).c_str());
+@@ -4317,6 +4332,11 @@ struct ggml_backend_cuda_device_context {
+     std::string description;
+     std::string pci_bus_id;
+     std::string id;
++    int major;
++    int minor;
++    int driver_major;
++    int driver_minor;
++    int integrated;
+ };
+ 
+ static const char * ggml_backend_cuda_device_get_name(ggml_backend_dev_t dev) {
+@@ -4413,6 +4433,28 @@ static const char * ggml_backend_cuda_device_get_id(ggml_backend_dev_t dev) {
+ static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t * free, size_t * total) {
+     ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
+     ggml_cuda_set_device(ctx->device);
++
++#if defined(GGML_USE_HIP)
++    if (ggml_hip_mgmt_init() == 0) {
++        int status = ggml_hip_get_device_memory(ctx->pci_bus_id.c_str(), free, total, ctx->integrated != 0);
++        if (status == 0) {
++            GGML_LOG_DEBUG("%s device %s utilizing AMD specific memory reporting free: %zu total: %zu\n", __func__, ctx->pci_bus_id.c_str(), *free, *total);
++            ggml_hip_mgmt_release();
++            return;
++        }
++        ggml_hip_mgmt_release();
++    }
++#else
++    if (ggml_nvml_init() == 0) {
++        int status = ggml_nvml_get_device_memory(ctx->id.c_str(), free, total);
++        if (status == 0) {
++            GGML_LOG_DEBUG("%s device %s utilizing NVML memory reporting free: %zu total: %zu\n", __func__, ctx->id.c_str(), *free, *total);
++            ggml_nvml_release();
++            return;
++        }
++        ggml_nvml_release();
++    }
++#endif
+     CUDA_CHECK(cudaMemGetInfo(free, total));
+ 
+ // ref: https://github.com/ggml-org/llama.cpp/pull/17368
+@@ -4445,6 +4487,7 @@ static enum ggml_backend_dev_type ggml_backend_cuda_device_get_type(ggml_backend
+     return GGML_BACKEND_DEVICE_TYPE_GPU;
+ }
+ 
++#define GGML_HIP_NAME "HIP"
+ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
+     ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
+ 
+@@ -4458,6 +4501,19 @@ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_back
+     // If you need the memory data, call ggml_backend_dev_memory() explicitly.
+     props->memory_total = props->memory_free = 0;
+ 
++#if defined(GGML_USE_HIP)
++    int cc = ggml_cuda_info().devices[ctx->device].cc - GGML_CUDA_CC_OFFSET_AMD;
++    props->compute_major = cc / 0x100;
++    props->compute_minor = cc - (props->compute_major * 0x100);
++#else
++    props->compute_major = ctx->major;
++    props->compute_minor = ctx->minor;
++#endif
++    props->driver_major = ctx->driver_major;
++    props->driver_minor = ctx->driver_minor;
++    props->integrated = ctx->integrated;
++    props->library = GGML_CUDA_NAME;
++
+     bool host_buffer = getenv("GGML_CUDA_NO_PINNED") == nullptr;
+ #ifdef GGML_CUDA_NO_PEER_COPY
+     bool events = false;
+@@ -5047,6 +5103,7 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
+         std::lock_guard<std::mutex> lock(mutex);
+         if (!initialized) {
+             ggml_backend_cuda_reg_context * ctx = new ggml_backend_cuda_reg_context;
++            int driverVersion = 0;
+ 
+             for (int i = 0; i < ggml_cuda_info().device_count; i++) {
+                 ggml_backend_cuda_device_context * dev_ctx = new ggml_backend_cuda_device_context;
+@@ -5062,6 +5119,14 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
+                 snprintf(pci_bus_id, sizeof(pci_bus_id), "%04x:%02x:%02x.0", prop.pciDomainID, prop.pciBusID, prop.pciDeviceID);
+                 dev_ctx->pci_bus_id = pci_bus_id;
+ 
++                dev_ctx->major = prop.major;
++                dev_ctx->minor = prop.minor;
++                if (driverVersion == 0) {
++                    CUDA_CHECK(cudaDriverGetVersion(&driverVersion));
++                }
++                dev_ctx->driver_major = driverVersion / 1000;
++                dev_ctx->driver_minor = (driverVersion - (dev_ctx->driver_major * 1000)) / 10;
++                dev_ctx->integrated = prop.integrated;
+                 ggml_backend_dev_t dev = new ggml_backend_device {
+                     /* .iface   = */ ggml_backend_cuda_device_interface,
+                     /* .reg     = */ &reg,
+diff --git a/ggml/src/ggml-cuda/vendors/hip.h b/ggml/src/ggml-cuda/vendors/hip.h
+index 4e162258d..d89e35a8e 100644
+--- a/ggml/src/ggml-cuda/vendors/hip.h
++++ b/ggml/src/ggml-cuda/vendors/hip.h
+@@ -5,6 +5,8 @@
+ #include <hipblas/hipblas.h>
+ #include <hip/hip_fp16.h>
+ #include <hip/hip_bf16.h>
++// for rocblas_initialize()
++#include "rocblas/rocblas.h"
+ 
+ #if defined(GGML_HIP_ROCWMMA_FATTN)
+ #include <rocwmma/rocwmma-version.hpp>
+@@ -51,6 +53,7 @@
+ #define cudaDeviceProp hipDeviceProp_t
+ #define cudaDeviceReset hipDeviceReset
+ #define cudaDeviceSynchronize hipDeviceSynchronize
++#define cudaDriverGetVersion hipDriverGetVersion
+ #define cudaError_t hipError_t
+ #define cudaErrorPeerAccessAlreadyEnabled hipErrorPeerAccessAlreadyEnabled
+ #define cudaErrorPeerAccessNotEnabled hipErrorPeerAccessNotEnabled
+diff --git a/ggml/src/ggml-impl.h b/ggml/src/ggml-impl.h
+index fe57d4c58..dba8f4695 100644
+--- a/ggml/src/ggml-impl.h
++++ b/ggml/src/ggml-impl.h
+@@ -677,6 +677,14 @@ static inline bool ggml_can_fuse_subgraph(const struct ggml_cgraph * cgraph,
+     return ggml_can_fuse_subgraph_ext(cgraph, idxs, count, ops, outputs, num_outputs);
+ }
+ 
++// Management libraries for fetching more accurate free VRAM data
++GGML_API int ggml_nvml_init();
++GGML_API int ggml_nvml_get_device_memory(const char *uuid, size_t *free, size_t *total);
++GGML_API void ggml_nvml_release();
++GGML_API int ggml_hip_mgmt_init();
++GGML_API int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total, bool is_integrated_gpu);
++GGML_API void ggml_hip_mgmt_release();
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
+index ba95b4acc..f6f8f7a10 100644
+--- a/ggml/src/ggml-metal/ggml-metal.cpp
++++ b/ggml/src/ggml-metal/ggml-metal.cpp
+@@ -546,6 +546,7 @@ static enum ggml_backend_dev_type ggml_backend_metal_device_get_type(ggml_backen
+     GGML_UNUSED(dev);
+ }
+ 
++#define GGML_METAL_NAME "Metal"
+ static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
+     props->name        = ggml_backend_metal_device_get_name(dev);
+     props->description = ggml_backend_metal_device_get_description(dev);
+@@ -554,6 +555,7 @@ static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, ggml_bac
+ 
+     ggml_backend_metal_device_get_memory(dev, &props->memory_free, &props->memory_total);
+ 
++    props->library = GGML_METAL_NAME;
+     props->caps = {
+         /* .async                 = */ true,
+         /* .host_buffer           = */ false,
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 5349bce24..0103fd03a 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -236,6 +236,7 @@ class vk_memory_logger;
+ class vk_perf_logger;
+ static void ggml_vk_destroy_buffer(vk_buffer& buf);
+ static void ggml_vk_synchronize(ggml_backend_vk_context * ctx);
++static std::string ggml_vk_get_device_id(int device);
+ 
+ static constexpr uint32_t mul_mat_vec_max_cols = 8;
+ static constexpr uint32_t p021_max_gqa_ratio = 8;
+@@ -12350,6 +12351,29 @@ static void ggml_vk_get_device_description(int device, char * description, size_
+     snprintf(description, description_size, "%s", props.deviceName.data());
+ }
+ 
++static std::string ggml_vk_get_device_id(int device) {
++    ggml_vk_instance_init();
++
++    std::vector<vk::PhysicalDevice> devices = vk_instance.instance.enumeratePhysicalDevices();
++
++    vk::PhysicalDeviceProperties2 props;
++    vk::PhysicalDeviceIDProperties deviceIDProps;
++    props.pNext = &deviceIDProps;
++    devices[device].getProperties2(&props);
++
++    const auto& uuid = deviceIDProps.deviceUUID;
++    char id[64];
++    snprintf(id, sizeof(id),
++        "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
++        uuid[0], uuid[1], uuid[2], uuid[3],
++        uuid[4], uuid[5],
++        uuid[6], uuid[7],
++        uuid[8], uuid[9],
++        uuid[10], uuid[11], uuid[12], uuid[13], uuid[14], uuid[15]
++    );
++    return std::string(id);
++}
++
+ // backend interface
+ 
+ #define UNUSED GGML_UNUSED
+@@ -13628,15 +13652,72 @@ void ggml_backend_vk_get_device_description(int device, char * description, size
+     ggml_vk_get_device_description(dev_idx, description, description_size);
+ }
+ 
+-void ggml_backend_vk_get_device_memory(int device, size_t * free, size_t * total) {
++std::string ggml_backend_vk_get_device_id(int device) {
+     GGML_ASSERT(device < (int) vk_instance.device_indices.size());
+-    GGML_ASSERT(device < (int) vk_instance.device_supports_membudget.size());
++    int dev_idx = vk_instance.device_indices[device];
++    return ggml_vk_get_device_id(dev_idx);
++}
++
++//////////////////////////
++
++struct ggml_backend_vk_device_context {
++    size_t device;
++    std::string name;
++    std::string description;
++    bool is_integrated_gpu;
++    // Combined string id in the form "dddd:bb:dd.f" (domain:bus:device.function)
++    std::string pci_id;
++    std::string id;
++    std::string uuid;
++    int major;
++    int minor;
++    int driver_major;
++    int driver_minor;
++};
+ 
+-    vk::PhysicalDevice vkdev = vk_instance.instance.enumeratePhysicalDevices()[vk_instance.device_indices[device]];
++void ggml_backend_vk_get_device_memory(ggml_backend_vk_device_context *ctx, size_t * free, size_t * total) {
++    GGML_ASSERT(ctx->device < (int) vk_instance.device_indices.size());
++    GGML_ASSERT(ctx->device < (int) vk_instance.device_supports_membudget.size());
++
++    vk::PhysicalDevice vkdev = vk_instance.instance.enumeratePhysicalDevices()[vk_instance.device_indices[ctx->device]];
+     vk::PhysicalDeviceMemoryBudgetPropertiesEXT budgetprops;
+     vk::PhysicalDeviceMemoryProperties2 memprops = {};
+-    const bool membudget_supported = vk_instance.device_supports_membudget[device];
++    const bool membudget_supported = vk_instance.device_supports_membudget[ctx->device];
+     const bool is_integrated_gpu = vkdev.getProperties().deviceType == vk::PhysicalDeviceType::eIntegratedGpu;
++    
++    vk::PhysicalDeviceProperties2 props2;
++    vkdev.getProperties2(&props2);
++
++    if (!is_integrated_gpu)
++    {
++        // Use vendor specific management libraries for best VRAM reporting if available
++        switch (props2.properties.vendorID) {
++        case VK_VENDOR_ID_AMD:
++            if (ggml_hip_mgmt_init() == 0) {
++                int status = ggml_hip_get_device_memory(ctx->pci_id != "" ? ctx->pci_id.c_str() : ctx->uuid.c_str(), free, total, ctx->is_integrated_gpu);
++                if (status == 0) {
++                    GGML_LOG_DEBUG("%s device %s utilizing AMD specific memory reporting free: %zu total: %zu\n", __func__, ctx->pci_id != "" ? ctx->pci_id.c_str() : ctx->uuid.c_str(), *free, *total);
++                    ggml_hip_mgmt_release();
++                    return;
++                }
++                ggml_hip_mgmt_release();
++            }
++            break;
++        case VK_VENDOR_ID_NVIDIA:
++            if (ggml_nvml_init() == 0) {
++                int status = ggml_nvml_get_device_memory(ctx->uuid.c_str(), free, total);
++                if (status == 0) {
++                    GGML_LOG_DEBUG("%s device %s utilizing NVML memory reporting free: %zu total: %zu\n", __func__, ctx->uuid.c_str(), *free, *total);
++                    ggml_nvml_release();
++                    return;
++                }
++                ggml_nvml_release();
++            }
++            break;
++        }
++    }
++    // else fallback to memory budget if supported
++
+ 
+     if (membudget_supported) {
+         memprops.pNext = &budgetprops;
+@@ -13688,8 +13769,13 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
+         }
+     }
+ 
++    vk::PhysicalDeviceProperties2 props2;
+     if (!ext_support) {
+-        return "";
++        device.getProperties2(&props2);
++        if (props2.properties.vendorID != VK_VENDOR_ID_AMD) {
++            return "";
++        }
++        // AMD doesn't claim to support PCI ID, but actually does, so try anyway and check for non-zero
+     }
+ 
+     vk::PhysicalDeviceProperties2 props = {};
+@@ -13706,19 +13792,24 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
+ 
+     char pci_bus_id[16] = {};
+     snprintf(pci_bus_id, sizeof(pci_bus_id), "%04x:%02x:%02x.%x", pci_domain, pci_bus, pci_device, pci_function);
++    if (pci_domain == 0 && pci_bus == 0 && pci_device == 0 && pci_function == 0) {
++        return "";
++    }
+ 
+     return std::string(pci_bus_id);
+ }
+ 
+-//////////////////////////
+-
+-struct ggml_backend_vk_device_context {
+-    size_t device;
+-    std::string name;
+-    std::string description;
+-    bool is_integrated_gpu;
+-    std::string pci_bus_id;
+-};
++static bool ggml_backend_vk_parse_pci_bus_id(const std::string & id, int *domain, int *bus, int *device) {
++    if (id.empty()) return false;
++    unsigned int d = 0, b = 0, dev = 0, func = 0;
++    // Expected format: dddd:bb:dd.f (all hex)
++    int n = sscanf(id.c_str(), "%4x:%2x:%2x.%1x", &d, &b, &dev, &func);
++    if (n < 4) return false;
++    if (domain) *domain = (int) d;
++    if (bus) *bus = (int) b;
++    if (device) *device = (int) dev;
++    return true;
++}
+ 
+ static const char * ggml_backend_vk_device_get_name(ggml_backend_dev_t dev) {
+     ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)dev->context;
+@@ -13730,9 +13821,14 @@ static const char * ggml_backend_vk_device_get_description(ggml_backend_dev_t de
+     return ctx->description.c_str();
+ }
+ 
++static const char * ggml_backend_vk_device_get_id(ggml_backend_dev_t dev) {
++    ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)dev->context;
++    return ctx->id.c_str();
++}
++
+ static void ggml_backend_vk_device_get_memory(ggml_backend_dev_t device, size_t * free, size_t * total) {
+     ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)device->context;
+-    ggml_backend_vk_get_device_memory(ctx->device, free, total);
++    ggml_backend_vk_get_device_memory(ctx, free, total);
+ }
+ 
+ static ggml_backend_buffer_type_t ggml_backend_vk_device_get_buffer_type(ggml_backend_dev_t dev) {
+@@ -13756,8 +13852,9 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
+ 
+     props->name        = ggml_backend_vk_device_get_name(dev);
+     props->description = ggml_backend_vk_device_get_description(dev);
++    props->id          = ggml_backend_vk_device_get_id(dev);
+     props->type        = ggml_backend_vk_device_get_type(dev);
+-    props->device_id   = ctx->pci_bus_id.empty() ? nullptr : ctx->pci_bus_id.c_str();
++    props->device_id   = ctx->pci_id.empty() ? nullptr : ctx->pci_id.c_str();
+     ggml_backend_vk_device_get_memory(dev, &props->memory_free, &props->memory_total);
+     props->caps = {
+         /* .async                 = */ false,
+@@ -13765,6 +13862,13 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
+         /* .buffer_from_host_ptr  = */ false,
+         /* .events                = */ false,
+     };
++
++    props->compute_major = ctx->major;
++    props->compute_minor = ctx->minor;
++    props->driver_major = ctx->driver_major;
++    props->driver_minor = ctx->driver_minor;
++    props->integrated = ctx->is_integrated_gpu;
++    props->library = GGML_VK_NAME;
+ }
+ 
+ static ggml_backend_t ggml_backend_vk_device_init(ggml_backend_dev_t dev, const char * params) {
+@@ -14331,6 +14435,8 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
+         static std::mutex mutex;
+         std::lock_guard<std::mutex> lock(mutex);
+         if (!initialized) {
++            std::vector<vk::PhysicalDevice> vk_devices = vk_instance.instance.enumeratePhysicalDevices();
++
+             for (int i = 0; i < ggml_backend_vk_get_device_count(); i++) {
+                 ggml_backend_vk_device_context * ctx = new ggml_backend_vk_device_context;
+                 char desc[256];
+@@ -14339,12 +14445,41 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
+                 ctx->name = GGML_VK_NAME + std::to_string(i);
+                 ctx->description = desc;
+                 ctx->is_integrated_gpu = ggml_backend_vk_get_device_type(i) == vk::PhysicalDeviceType::eIntegratedGpu;
+-                ctx->pci_bus_id = ggml_backend_vk_get_device_pci_id(i);
++                ctx->pci_id = ggml_backend_vk_get_device_pci_id(i);
++                ctx->id = ggml_backend_vk_get_device_id(i);
+                 devices.push_back(new ggml_backend_device {
+                     /* .iface   = */ ggml_backend_vk_device_i,
+                     /* .reg     = */ reg,
+                     /* .context = */ ctx,
+                 });
++
++                // Gather additional information about the device
++                int dev_idx = vk_instance.device_indices[i];
++                vk::PhysicalDeviceProperties props1;
++                vk_devices[dev_idx].getProperties(&props1);
++                vk::PhysicalDeviceProperties2 props2;
++                vk::PhysicalDeviceIDProperties device_id_props;
++                vk::PhysicalDevicePCIBusInfoPropertiesEXT  pci_bus_props;
++                vk::PhysicalDeviceDriverProperties driver_props;
++                props2.pNext = &device_id_props;
++                device_id_props.pNext = &pci_bus_props;
++                pci_bus_props.pNext = &driver_props;
++                vk_devices[dev_idx].getProperties2(&props2);
++                std::ostringstream oss;
++                oss << std::hex << std::setfill('0');
++                int byteIdx = 0;
++                for (int i = 0; i < 16; ++i, ++byteIdx) {
++                    oss << std::setw(2) << static_cast<int>(device_id_props.deviceUUID[i]);
++                    if (byteIdx == 3 || byteIdx == 5 || byteIdx == 7 || byteIdx == 9) {
++                        oss << '-';
++                    }
++                }
++                ctx->uuid = oss.str();
++                ctx->major = 0;
++                ctx->minor = 0;
++                // TODO regex parse driver_props.driverInfo for a X.Y or X.Y.Z version string
++                ctx->driver_major = 0;
++                ctx->driver_minor = 0;
+             }
+             initialized = true;
+         }
+diff --git a/ggml/src/mem_hip.cpp b/ggml/src/mem_hip.cpp
+new file mode 100644
+index 000000000..23c765806
+--- /dev/null
++++ b/ggml/src/mem_hip.cpp
+@@ -0,0 +1,558 @@
++#include "ggml.h"
++#include "ggml-impl.h"
++
++#ifdef _WIN32
++// AMD Device Library eXtra (ADLX)
++//
++// https://github.com/GPUOpen-LibrariesAndSDKs/ADLX
++//
++// This Windows-only library provides accurate VRAM reporting for AMD GPUs.
++// The runtime DLL is installed with every AMD Driver on Windows, however
++// the SDK isn't a part of the HIP SDK packaging.  As such, we avoid including
++// the headers from the SDK to simplify building from source.
++//
++// ADLX relies heavily on function pointer tables.
++// Only the minimal set of types are defined below to facilitate
++// finding the target AMD GPU(s) and querying their current VRAM usage
++// Unused function parameters are commented out to avoid unnecessary type
++// definitions.
++
++#include <filesystem>
++#include <mutex>
++
++#define WIN32_LEAN_AND_MEAN
++#ifndef NOMINMAX
++#  define NOMINMAX
++#endif
++#include <windows.h>
++
++namespace fs = std::filesystem;
++
++#include <stdio.h>
++#include <stdint.h>
++
++// Begin minimal ADLX definitions - derived from tag v1.0 (Dec 2022)
++typedef     uint64_t            adlx_uint64;
++typedef     uint32_t            adlx_uint32;
++typedef     int32_t             adlx_int32;
++typedef     adlx_int32          adlx_int;
++typedef     adlx_uint32         adlx_uint;
++typedef     long                adlx_long;
++typedef     uint8_t             adlx_uint8;
++typedef enum
++{
++    ADLX_OK = 0,                    /**< @ENG_START_DOX This result indicates success. @ENG_END_DOX */
++    ADLX_ALREADY_ENABLED,           /**< @ENG_START_DOX This result indicates that the asked action is already enabled. @ENG_END_DOX */
++    ADLX_ALREADY_INITIALIZED,       /**< @ENG_START_DOX This result indicates that ADLX has a unspecified type of initialization. @ENG_END_DOX */
++    ADLX_FAIL,                      /**< @ENG_START_DOX This result indicates an unspecified failure. @ENG_END_DOX */
++    ADLX_INVALID_ARGS,              /**< @ENG_START_DOX This result indicates that the arguments are invalid. @ENG_END_DOX */
++    ADLX_BAD_VER,                   /**< @ENG_START_DOX This result indicates that the asked version is incompatible with the current version. @ENG_END_DOX */
++    ADLX_UNKNOWN_INTERFACE,         /**< @ENG_START_DOX This result indicates that an unknown interface was asked. @ENG_END_DOX */
++    ADLX_TERMINATED,                /**< @ENG_START_DOX This result indicates that the calls were made in an interface after ADLX was terminated. @ENG_END_DOX */
++    ADLX_ADL_INIT_ERROR,            /**< @ENG_START_DOX This result indicates that the ADL initialization failed. @ENG_END_DOX */
++    ADLX_NOT_FOUND,                 /**< @ENG_START_DOX This result indicates that the item is not found. @ENG_END_DOX */
++    ADLX_INVALID_OBJECT,            /**< @ENG_START_DOX This result indicates that the method was called into an invalid object. @ENG_END_DOX */
++    ADLX_ORPHAN_OBJECTS,            /**< @ENG_START_DOX This result indicates that ADLX was terminated with outstanding ADLX objects. Any interface obtained from ADLX points to invalid memory and calls in their methods will result in unexpected behavior. @ENG_END_DOX */
++    ADLX_NOT_SUPPORTED,             /**< @ENG_START_DOX This result indicates that the asked feature is not supported. @ENG_END_DOX */
++    ADLX_PENDING_OPERATION,         /**< @ENG_START_DOX This result indicates a failure due to an operation currently in progress. @ENG_END_DOX */
++    ADLX_GPU_INACTIVE               /**< @ENG_START_DOX This result indicates that the GPU is inactive. @ENG_END_DOX */
++} ADLX_RESULT;
++#define ADLX_SUCCEEDED(x) (ADLX_OK == (x) || ADLX_ALREADY_ENABLED == (x) || ADLX_ALREADY_INITIALIZED == (x))
++#define ADLX_FAILED(x) (ADLX_OK != (x)  && ADLX_ALREADY_ENABLED != (x) && ADLX_ALREADY_INITIALIZED != (x))
++#define ADLX_VER_MAJOR       1
++#define ADLX_VER_MINOR       0
++#define ADLX_VER_RELEASE     5
++#define ADLX_VER_BUILD_NUM   30
++#define ADLX_MAKE_FULL_VER(VERSION_MAJOR, VERSION_MINOR, VERSION_RELEASE, VERSION_BUILD_NUM)    ( ((adlx_uint64)(VERSION_MAJOR) << 48ull) | ((adlx_uint64)(VERSION_MINOR) << 32ull) | ((adlx_uint64)(VERSION_RELEASE) << 16ull)  | (adlx_uint64)(VERSION_BUILD_NUM))
++#define ADLX_FULL_VERSION ADLX_MAKE_FULL_VER(ADLX_VER_MAJOR, ADLX_VER_MINOR, ADLX_VER_RELEASE, ADLX_VER_BUILD_NUM)
++#define ADLX_CORE_LINK          __declspec(dllexport)
++#define ADLX_STD_CALL           __stdcall
++#define ADLX_CDECL_CALL         __cdecl
++#define ADLX_FAST_CALL          __fastcall
++#define ADLX_INLINE              __inline
++#define ADLX_FORCEINLINE         __forceinline
++#define ADLX_NO_VTABLE          __declspec(novtable)
++
++#if defined(__cplusplus)
++typedef     bool                adlx_bool;
++#else
++typedef     adlx_uint8           adlx_bool;
++#define     true                1
++#define     false               0
++#endif
++
++typedef struct IADLXSystem IADLXSystem;
++typedef struct IADLXGPUList IADLXGPUList;
++typedef struct IADLXGPU IADLXGPU;
++typedef struct IADLXInterface IADLXInterface;
++typedef struct IADLXPerformanceMonitoringServices IADLXPerformanceMonitoringServices;
++typedef struct IADLXGPUMetrics IADLXGPUMetrics;
++typedef struct IADLXGPUMetricsSupport IADLXGPUMetricsSupport;
++
++typedef struct IADLXSystemVtbl
++{
++    // IADLXSystem interface
++    ADLX_RESULT (ADLX_STD_CALL *GetHybridGraphicsType)(/* IADLXSystem* pThis, ADLX_HG_TYPE* hgType */);
++    ADLX_RESULT (ADLX_STD_CALL *GetGPUs)(IADLXSystem* pThis, IADLXGPUList** ppGPUs); // Used
++    ADLX_RESULT (ADLX_STD_CALL *QueryInterface)(/* IADLXSystem* pThis, const wchar_t* interfaceId, void** ppInterface */);
++    ADLX_RESULT (ADLX_STD_CALL *GetDisplaysServices)(/* IADLXSystem* pThis, IADLXDisplayServices** ppDispServices */);
++    ADLX_RESULT (ADLX_STD_CALL *GetDesktopsServices)(/* IADLXSystem* pThis, IADLXDesktopServices** ppDeskServices */);
++    ADLX_RESULT (ADLX_STD_CALL *GetGPUsChangedHandling)(/* IADLXSystem* pThis, IADLXGPUsChangedHandling** ppGPUsChangedHandling */);
++    ADLX_RESULT (ADLX_STD_CALL *EnableLog)(/* IADLXSystem* pThis, ADLX_LOG_DESTINATION mode, ADLX_LOG_SEVERITY severity, IADLXLog* pLogger, const wchar_t* fileName */);
++    ADLX_RESULT (ADLX_STD_CALL *Get3DSettingsServices)(/* IADLXSystem* pThis, IADLX3DSettingsServices** pp3DSettingsServices */);
++    ADLX_RESULT (ADLX_STD_CALL *GetGPUTuningServices)(/* IADLXSystem* pThis, IADLXGPUTuningServices** ppGPUTuningServices */);
++    ADLX_RESULT (ADLX_STD_CALL *GetPerformanceMonitoringServices)(IADLXSystem* pThis, IADLXPerformanceMonitoringServices** ppPerformanceMonitoringServices); // Used
++    ADLX_RESULT (ADLX_STD_CALL *TotalSystemRAM)(/* IADLXSystem* pThis, adlx_uint* ramMB */);
++    ADLX_RESULT (ADLX_STD_CALL *GetI2C)(/* IADLXSystem* pThis, IADLXGPU* pGPU, IADLXI2C** ppI2C */);
++} IADLXSystemVtbl;
++struct IADLXSystem { const IADLXSystemVtbl *pVtbl; };
++
++typedef struct IADLXGPUVtbl
++{
++    //IADLXInterface
++    adlx_long (ADLX_STD_CALL *Acquire)(/* IADLXGPU* pThis */);
++    adlx_long (ADLX_STD_CALL *Release)(IADLXGPU* pThis); // Used
++    ADLX_RESULT (ADLX_STD_CALL *QueryInterface)(/* IADLXGPU* pThis, const wchar_t* interfaceId, void** ppInterface */);
++
++    //IADLXGPU
++    ADLX_RESULT (ADLX_STD_CALL *VendorId)(/* IADLXGPU* pThis, const char** vendorId */);
++    ADLX_RESULT (ADLX_STD_CALL *ASICFamilyType)(/* IADLXGPU* pThis, ADLX_ASIC_FAMILY_TYPE* asicFamilyType */);
++    ADLX_RESULT (ADLX_STD_CALL *Type)(/* IADLXGPU* pThis, ADLX_GPU_TYPE* gpuType */);
++    ADLX_RESULT (ADLX_STD_CALL *IsExternal)(/* IADLXGPU* pThis, adlx_bool* isExternal */);
++    ADLX_RESULT (ADLX_STD_CALL *Name)(/* IADLXGPU* pThis, const char** gpuName */);
++    ADLX_RESULT (ADLX_STD_CALL *DriverPath)(/* IADLXGPU* pThis, const char** driverPath */);
++    ADLX_RESULT (ADLX_STD_CALL *PNPString)(/* IADLXGPU* pThis, const char** pnpString */);
++    ADLX_RESULT (ADLX_STD_CALL *HasDesktops)(/* IADLXGPU* pThis, adlx_bool* hasDesktops */);
++    ADLX_RESULT (ADLX_STD_CALL *TotalVRAM)(IADLXGPU* pThis, adlx_uint* vramMB); // Used
++    ADLX_RESULT (ADLX_STD_CALL *VRAMType)(/* IADLXGPU* pThis, const char** type */);
++    ADLX_RESULT (ADLX_STD_CALL *BIOSInfo)(/* IADLXGPU* pThis, const char** partNumber, const char** version, const char** date */);
++    ADLX_RESULT (ADLX_STD_CALL *DeviceId)(/* IADLXGPU* pThis, const char** deviceId */);
++    ADLX_RESULT (ADLX_STD_CALL *RevisionId)(/* IADLXGPU* pThis, const char** revisionId */);
++    ADLX_RESULT (ADLX_STD_CALL *SubSystemId)(/* IADLXGPU* pThis, const char** subSystemId */);
++    ADLX_RESULT (ADLX_STD_CALL *SubSystemVendorId)(/* IADLXGPU* pThis, const char** subSystemVendorId */);
++    ADLX_RESULT (ADLX_STD_CALL *UniqueId)(IADLXGPU* pThis, adlx_int* uniqueId); // Used
++} IADLXGPUVtbl;
++struct IADLXGPU { const IADLXGPUVtbl *pVtbl; };
++
++typedef struct IADLXGPUListVtbl
++{
++    //IADLXInterface
++    adlx_long (ADLX_STD_CALL *Acquire)(/* IADLXGPUList* pThis */);
++    adlx_long (ADLX_STD_CALL *Release)(IADLXGPUList* pThis); // Used
++    ADLX_RESULT (ADLX_STD_CALL *QueryInterface)(/* IADLXGPUList* pThis, const wchar_t* interfaceId, void** ppInterface */);
++
++    //IADLXList
++    adlx_uint (ADLX_STD_CALL *Size)(/* IADLXGPUList* pThis */);
++    adlx_uint8 (ADLX_STD_CALL *Empty)(/* IADLXGPUList* pThis */);
++    adlx_uint (ADLX_STD_CALL *Begin)(IADLXGPUList* pThis); // Used
++    adlx_uint (ADLX_STD_CALL *End)(IADLXGPUList* pThis); // Used
++    ADLX_RESULT (ADLX_STD_CALL *At)(/* IADLXGPUList* pThis, const adlx_uint location, IADLXInterface** ppItem */);
++    ADLX_RESULT (ADLX_STD_CALL *Clear)(/* IADLXGPUList* pThis */);
++    ADLX_RESULT (ADLX_STD_CALL *Remove_Back)(/* IADLXGPUList* pThis */);
++    ADLX_RESULT (ADLX_STD_CALL *Add_Back)(/* IADLXGPUList* pThis, IADLXInterface* pItem */);
++
++    //IADLXGPUList
++    ADLX_RESULT (ADLX_STD_CALL *At_GPUList)(IADLXGPUList* pThis, const adlx_uint location, IADLXGPU** ppItem); // Used
++    ADLX_RESULT (ADLX_STD_CALL *Add_Back_GPUList)(/* IADLXGPUList* pThis, IADLXGPU* pItem */);
++
++} IADLXGPUListVtbl;
++struct IADLXGPUList { const IADLXGPUListVtbl *pVtbl; };
++
++typedef struct IADLXPerformanceMonitoringServicesVtbl
++{
++    //IADLXInterface
++    adlx_long (ADLX_STD_CALL *Acquire)(/* IADLXPerformanceMonitoringServices* pThis */);
++    adlx_long (ADLX_STD_CALL *Release)(IADLXPerformanceMonitoringServices* pThis); // Used
++    ADLX_RESULT (ADLX_STD_CALL *QueryInterface)(/* IADLXPerformanceMonitoringServices* pThis, const wchar_t* interfaceId, void** ppInterface */);
++
++    //IADLXPerformanceMonitoringServices
++    ADLX_RESULT (ADLX_STD_CALL *GetSamplingIntervalRange)(/* IADLXPerformanceMonitoringServices* pThis, ADLX_IntRange* range */);
++    ADLX_RESULT (ADLX_STD_CALL *SetSamplingInterval)(/* IADLXPerformanceMonitoringServices* pThis, adlx_int intervalMs */);
++    ADLX_RESULT (ADLX_STD_CALL *GetSamplingInterval)(/* IADLXPerformanceMonitoringServices* pThis, adlx_int* intervalMs */);
++    ADLX_RESULT (ADLX_STD_CALL *GetMaxPerformanceMetricsHistorySizeRange)(/* IADLXPerformanceMonitoringServices* pThis, ADLX_IntRange* range */);
++    ADLX_RESULT (ADLX_STD_CALL *SetMaxPerformanceMetricsHistorySize)(/* IADLXPerformanceMonitoringServices* pThis, adlx_int sizeSec */);
++    ADLX_RESULT (ADLX_STD_CALL *GetMaxPerformanceMetricsHistorySize)(/* IADLXPerformanceMonitoringServices* pThis, adlx_int* sizeSec */);
++    ADLX_RESULT (ADLX_STD_CALL *ClearPerformanceMetricsHistory)(/* IADLXPerformanceMonitoringServices* pThis */);
++    ADLX_RESULT (ADLX_STD_CALL *GetCurrentPerformanceMetricsHistorySize)(/* IADLXPerformanceMonitoringServices* pThis, adlx_int* sizeSec */);
++    ADLX_RESULT (ADLX_STD_CALL *StartPerformanceMetricsTracking)(/* IADLXPerformanceMonitoringServices* pThis */);
++    ADLX_RESULT (ADLX_STD_CALL *StopPerformanceMetricsTracking)(/* IADLXPerformanceMonitoringServices* pThis */);
++    ADLX_RESULT (ADLX_STD_CALL *GetAllMetricsHistory)(/* IADLXPerformanceMonitoringServices* pThis, adlx_int startMs, adlx_int stopMs, IADLXAllMetricsList** ppMetricsList */);
++    ADLX_RESULT (ADLX_STD_CALL *GetGPUMetricsHistory)(/* IADLXPerformanceMonitoringServices* pThis, IADLXGPU* pGPU, adlx_int startMs, adlx_int stopMs, IADLXGPUMetricsList** ppMetricsList */);
++    ADLX_RESULT (ADLX_STD_CALL *GetSystemMetricsHistory)(/* IADLXPerformanceMonitoringServices* pThis, adlx_int startMs, adlx_int stopMs, IADLXSystemMetricsList** ppMetricsList */);
++    ADLX_RESULT (ADLX_STD_CALL *GetFPSHistory)(/* IADLXPerformanceMonitoringServices* pThis, adlx_int startMs, adlx_int stopMs, IADLXFPSList** ppMetricsList */);
++    ADLX_RESULT (ADLX_STD_CALL *GetCurrentAllMetrics)(/* IADLXPerformanceMonitoringServices* pThis, IADLXAllMetrics** ppMetrics */);
++    ADLX_RESULT (ADLX_STD_CALL *GetCurrentGPUMetrics)(IADLXPerformanceMonitoringServices* pThis, IADLXGPU* pGPU, IADLXGPUMetrics** ppMetrics); // Used
++    ADLX_RESULT (ADLX_STD_CALL *GetCurrentSystemMetrics)(/* IADLXPerformanceMonitoringServices* pThis, IADLXSystemMetrics** ppMetrics */);
++    ADLX_RESULT (ADLX_STD_CALL *GetCurrentFPS)(/* IADLXPerformanceMonitoringServices* pThis, IADLXFPS** ppMetrics */);
++    ADLX_RESULT (ADLX_STD_CALL *GetSupportedGPUMetrics)(IADLXPerformanceMonitoringServices* pThis, IADLXGPU* pGPU, IADLXGPUMetricsSupport** ppMetricsSupported); // Used
++    ADLX_RESULT (ADLX_STD_CALL *GetSupportedSystemMetrics)(/* IADLXPerformanceMonitoringServices* pThis, IADLXSystemMetricsSupport** ppMetricsSupported */);
++}IADLXPerformanceMonitoringServicesVtbl;
++struct IADLXPerformanceMonitoringServices { const IADLXPerformanceMonitoringServicesVtbl *pVtbl; };
++
++typedef struct IADLXGPUMetricsSupportVtbl
++{
++    //IADLXInterface
++    adlx_long (ADLX_STD_CALL* Acquire)(/* IADLXGPUMetricsSupport* pThis */);
++    adlx_long (ADLX_STD_CALL* Release)(IADLXGPUMetricsSupport* pThis); // Used
++    ADLX_RESULT (ADLX_STD_CALL* QueryInterface)(/* IADLXGPUMetricsSupport* pThis, const wchar_t* interfaceId, void** ppInterface */);
++
++    //IADLXGPUMetricsSupport
++    ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUUsage)(/* IADLXGPUMetricsSupport* pThis, adlx_bool* supported */);
++    ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUClockSpeed)(/* IADLXGPUMetricsSupport* pThis, adlx_bool* supported */);
++    ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUVRAMClockSpeed)(/* IADLXGPUMetricsSupport* pThis, adlx_bool* supported */);
++    ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUTemperature)(/* IADLXGPUMetricsSupport* pThis, adlx_bool* supported */);
++    ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUHotspotTemperature)(/* IADLXGPUMetricsSupport* pThis, adlx_bool* supported */);
++    ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUPower)(/* IADLXGPUMetricsSupport* pThis, adlx_bool* supported */);
++    ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUTotalBoardPower)(/* IADLXGPUMetricsSupport* pThis, adlx_bool* supported */);
++    ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUFanSpeed)(/* IADLXGPUMetricsSupport* pThis, adlx_bool* supported */);
++    ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUVRAM)(IADLXGPUMetricsSupport* pThis, adlx_bool* supported); // Used
++    ADLX_RESULT (ADLX_STD_CALL* IsSupportedGPUVoltage)(/* IADLXGPUMetricsSupport* pThis, adlx_bool* supported */);
++
++    ADLX_RESULT (ADLX_STD_CALL* GetGPUUsageRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
++    ADLX_RESULT (ADLX_STD_CALL* GetGPUClockSpeedRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
++    ADLX_RESULT (ADLX_STD_CALL* GetGPUVRAMClockSpeedRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
++    ADLX_RESULT (ADLX_STD_CALL* GetGPUTemperatureRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
++    ADLX_RESULT (ADLX_STD_CALL* GetGPUHotspotTemperatureRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
++    ADLX_RESULT (ADLX_STD_CALL* GetGPUPowerRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
++    ADLX_RESULT (ADLX_STD_CALL* GetGPUFanSpeedRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
++    ADLX_RESULT (ADLX_STD_CALL* GetGPUVRAMRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
++    ADLX_RESULT (ADLX_STD_CALL* GetGPUVoltageRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
++    ADLX_RESULT (ADLX_STD_CALL* GetGPUTotalBoardPowerRange)(/* IADLXGPUMetricsSupport* pThis, adlx_int* minValue, adlx_int* maxValue */);
++} IADLXGPUMetricsSupportVtbl;
++struct IADLXGPUMetricsSupport { const IADLXGPUMetricsSupportVtbl *pVtbl; };
++
++typedef struct IADLXGPUMetricsVtbl
++{
++    //IADLXInterface
++    adlx_long (ADLX_STD_CALL* Acquire)(/* IADLXGPUMetrics* pThis */);
++    adlx_long (ADLX_STD_CALL* Release)(IADLXGPUMetrics* pThis); // Used
++    ADLX_RESULT (ADLX_STD_CALL* QueryInterface)(/* IADLXGPUMetrics* pThis, const wchar_t* interfaceId, void** ppInterface */);
++
++    //IADLXGPUMetrics
++    ADLX_RESULT (ADLX_STD_CALL* TimeStamp)(/* IADLXGPUMetrics* pThis, adlx_int64* ms */);
++    ADLX_RESULT (ADLX_STD_CALL* GPUUsage)(/* IADLXGPUMetrics* pThis, adlx_double* data */);
++    ADLX_RESULT (ADLX_STD_CALL* GPUClockSpeed)(/* IADLXGPUMetrics* pThis, adlx_int* data */);
++    ADLX_RESULT (ADLX_STD_CALL* GPUVRAMClockSpeed)(/* IADLXGPUMetrics* pThis, adlx_int* data */);
++    ADLX_RESULT (ADLX_STD_CALL* GPUTemperature)(/* IADLXGPUMetrics* pThis, adlx_double* data */);
++    ADLX_RESULT (ADLX_STD_CALL* GPUHotspotTemperature)(/* IADLXGPUMetrics* pThis, adlx_double* data */);
++    ADLX_RESULT (ADLX_STD_CALL* GPUPower)(/* IADLXGPUMetrics* pThis, adlx_double* data */);
++    ADLX_RESULT (ADLX_STD_CALL* GPUTotalBoardPower)(/* IADLXGPUMetrics* pThis, adlx_double* data */);
++    ADLX_RESULT (ADLX_STD_CALL* GPUFanSpeed)(/* IADLXGPUMetrics* pThis, adlx_int* data */);
++    ADLX_RESULT (ADLX_STD_CALL* GPUVRAM)(IADLXGPUMetrics* pThis, adlx_int* data); // Used
++    ADLX_RESULT (ADLX_STD_CALL* GPUVoltage)(/* IADLXGPUMetrics* pThis, adlx_int* data */);
++} IADLXGPUMetricsVtbl;
++struct IADLXGPUMetrics { const IADLXGPUMetricsVtbl *pVtbl; };
++
++struct {
++  void *handle;
++  ADLX_RESULT (*ADLXInitialize)(adlx_uint64 version, IADLXSystem** ppSystem);
++  ADLX_RESULT (*ADLXInitializeWithIncompatibleDriver)(adlx_uint64 version, IADLXSystem** ppSystem);
++  ADLX_RESULT (*ADLXQueryVersion)(const char** version);
++  ADLX_RESULT (*ADLXTerminate)();
++  IADLXSystem *sys;
++} adlx { NULL, NULL, NULL, NULL, NULL, NULL };
++static std::mutex ggml_adlx_lock;
++
++extern "C" {
++
++int ggml_hip_mgmt_init() {
++    std::lock_guard<std::mutex> lock(ggml_adlx_lock);
++    if (adlx.handle != NULL) {
++        // Already initialized
++        return 0;
++    }
++    DWORD old_mode = SetErrorMode(SEM_FAILCRITICALERRORS);
++    SetErrorMode(old_mode | SEM_FAILCRITICALERRORS);
++    fs::path libPath = fs::path("\\Windows") / fs::path("System32") / fs::path("amdadlx64.dll");
++
++    adlx.handle = (void*)LoadLibraryW(libPath.wstring().c_str());
++    if (adlx.handle == NULL) {
++        return ADLX_NOT_FOUND;
++    }
++
++    adlx.ADLXInitialize = (ADLX_RESULT (*)(adlx_uint64 version, IADLXSystem **ppSystem)) GetProcAddress((HMODULE)(adlx.handle), "ADLXInitialize");
++    adlx.ADLXInitializeWithIncompatibleDriver = (ADLX_RESULT (*)(adlx_uint64 version, IADLXSystem **ppSystem)) GetProcAddress((HMODULE)(adlx.handle), "ADLXInitializeWithIncompatibleDriver");
++    adlx.ADLXTerminate = (ADLX_RESULT (*)()) GetProcAddress((HMODULE)(adlx.handle), "ADLXTerminate");
++    adlx.ADLXQueryVersion = (ADLX_RESULT (*)(const char **version)) GetProcAddress((HMODULE)(adlx.handle), "ADLXQueryVersion");
++    if (adlx.ADLXInitialize == NULL || adlx.ADLXInitializeWithIncompatibleDriver == NULL || adlx.ADLXTerminate == NULL) {
++        GGML_LOG_INFO("%s unable to locate required symbols in amdadlx64.dll, falling back to hip free memory reporting", __func__);
++        FreeLibrary((HMODULE)(adlx.handle));
++        adlx.handle = NULL;
++        return ADLX_NOT_FOUND;
++    }
++
++    SetErrorMode(old_mode);
++
++    // Aid in troubleshooting...
++    if (adlx.ADLXQueryVersion != NULL) {
++        const char *version = NULL;
++        ADLX_RESULT status = adlx.ADLXQueryVersion(&version);
++        if (ADLX_SUCCEEDED(status)) {
++            GGML_LOG_DEBUG("%s located ADLX version %s\n", __func__, version);  
++        }
++    }
++
++    ADLX_RESULT status = adlx.ADLXInitialize(ADLX_FULL_VERSION, &adlx.sys);
++    if (ADLX_FAILED(status)) {
++        // GGML_LOG_DEBUG("%s failed to initialize ADLX error=%d - attempting with incompatible driver...\n", __func__, status);
++        // Try with the incompatible driver
++        status = adlx.ADLXInitializeWithIncompatibleDriver(ADLX_FULL_VERSION, &adlx.sys);
++        if (ADLX_FAILED(status)) {
++            GGML_LOG_INFO("%s failed to initialize ADLX error=%d\n", __func__, status);
++            FreeLibrary((HMODULE)(adlx.handle));
++            adlx.handle = NULL;
++            adlx.sys = NULL;
++            return status;
++        }
++        // GGML_LOG_DEBUG("%s initialized ADLX with incpomatible driver\n", __func__);
++    }
++    return ADLX_OK;
++}
++
++void ggml_hip_mgmt_release() {
++    std::lock_guard<std::mutex> lock(ggml_adlx_lock);
++    if (adlx.handle == NULL) {
++        // Already free
++        return;
++    }
++    ADLX_RESULT status = adlx.ADLXTerminate();
++    if (ADLX_FAILED(status)) {
++        GGML_LOG_INFO("%s failed to terminate Adlx %d\n", __func__, status);
++        // Unload anyway...
++    }
++    FreeLibrary((HMODULE)(adlx.handle));
++    adlx.handle = NULL;
++}
++
++#define adlx_gdm_cleanup \
++    if (gpuMetricsSupport != NULL) gpuMetricsSupport->pVtbl->Release(gpuMetricsSupport); \
++    if (gpuMetrics != NULL) gpuMetrics->pVtbl->Release(gpuMetrics); \
++    if (perfMonitoringServices != NULL) perfMonitoringServices->pVtbl->Release(perfMonitoringServices); \
++    if (gpus != NULL) gpus->pVtbl->Release(gpus); \
++    if (gpu != NULL) gpu->pVtbl->Release(gpu)
++
++int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total, bool is_integrated_gpu) {
++    std::lock_guard<std::mutex> lock(ggml_adlx_lock);
++    if (adlx.handle == NULL) {
++        GGML_LOG_INFO("%s ADLX was not initialized\n", __func__);
++        return ADLX_ADL_INIT_ERROR;
++    }
++    IADLXGPUMetricsSupport *gpuMetricsSupport = NULL;
++    IADLXPerformanceMonitoringServices *perfMonitoringServices = NULL;
++    IADLXGPUList* gpus = NULL;
++    IADLXGPU* gpu = NULL;
++    IADLXGPUMetrics *gpuMetrics = NULL;
++    ADLX_RESULT status;
++
++    uint32_t pci_domain, pci_bus, pci_device, pci_function;
++    if (sscanf(id, "%04x:%02x:%02x.%x", &pci_domain, &pci_bus, &pci_device, &pci_function) != 4) {
++        // TODO - parse other formats?
++        GGML_LOG_DEBUG("%s device ID was not a PCI ID %s\n", __func__, id);
++        return ADLX_NOT_FOUND;
++    }
++    status = adlx.sys->pVtbl->GetPerformanceMonitoringServices(adlx.sys, &perfMonitoringServices);
++    if (ADLX_FAILED(status)) {
++        GGML_LOG_INFO("%s GetPerformanceMonitoringServices failed %d\n", __func__, status);
++        return status;
++    }
++
++    status = adlx.sys->pVtbl->GetGPUs(adlx.sys, &gpus);
++    if (ADLX_FAILED(status)) {
++        GGML_LOG_INFO("%s GetGPUs failed %d\n", __func__, status);
++        adlx_gdm_cleanup;
++        return status;
++    }
++
++    // Get GPU list
++    for (adlx_uint crt = gpus->pVtbl->Begin(gpus); crt != gpus->pVtbl->End(gpus); ++crt)
++    {
++        status = gpus->pVtbl->At_GPUList(gpus, crt, &gpu);
++        if (ADLX_FAILED(status))
++        {
++            GGML_LOG_INFO("%s %d] At_GPUList failed %d\n", __func__, crt, status);
++            continue;
++        }
++        adlx_int uniqueID;
++        status = gpu->pVtbl->UniqueId(gpu, &uniqueID);
++        if (ADLX_FAILED(status)) {
++            GGML_LOG_INFO("%s %d] UniqueId lookup failed %d\n", __func__, crt, status);
++            gpu->pVtbl->Release(gpu);
++            gpu = NULL;
++            continue;
++        }
++        if ((((uniqueID >> 8) & 0xff) != pci_bus) || ((uniqueID & 0xff) != pci_device)) {
++            gpu->pVtbl->Release(gpu);
++            gpu = NULL;
++            continue;
++        }
++        // Any failures at this point should cause a fall-back to other APIs
++        status = perfMonitoringServices->pVtbl->GetSupportedGPUMetrics(perfMonitoringServices, gpu, &gpuMetricsSupport);
++        if (ADLX_FAILED(status)) {
++            GGML_LOG_INFO("%s GetSupportedGPUMetrics failed %d\n", __func__, status);
++            adlx_gdm_cleanup;
++            return status;
++        }
++        status = perfMonitoringServices->pVtbl->GetCurrentGPUMetrics(perfMonitoringServices, gpu, &gpuMetrics);
++        if (ADLX_FAILED(status)) {
++            GGML_LOG_INFO("%s GetCurrentGPUMetrics failed %d\n", __func__, status);
++            adlx_gdm_cleanup;
++            return status;
++        }
++
++        adlx_bool supported = false;
++        status = gpuMetricsSupport->pVtbl->IsSupportedGPUVRAM(gpuMetricsSupport, &supported);
++        if (ADLX_FAILED(status)) {
++            GGML_LOG_INFO("%s IsSupportedGPUVRAM failed %d\n", __func__, status);
++            adlx_gdm_cleanup;
++            return status;
++        }
++        
++        adlx_uint totalVRAM = 0;
++        status = gpu->pVtbl->TotalVRAM(gpu, &totalVRAM);
++        if (ADLX_FAILED(status)) {
++            GGML_LOG_INFO("%s TotalVRAM failed %d\n", __func__, status);
++            adlx_gdm_cleanup;
++            return status;
++        }
++
++        adlx_int usedVRAM = 0;
++        status = gpuMetrics->pVtbl->GPUVRAM(gpuMetrics, &usedVRAM);
++        if (ADLX_FAILED(status)) {
++            GGML_LOG_INFO("%s GPUVRAM failed %d\n", __func__, status);
++            adlx_gdm_cleanup;
++            return status;
++        }
++        *total = size_t(totalVRAM) * 1024 * 1024;
++        *free = size_t(totalVRAM-usedVRAM) * 1024 * 1024;
++
++        adlx_gdm_cleanup;
++        return ADLX_OK;
++    }
++    adlx_gdm_cleanup;
++    return ADLX_NOT_FOUND;
++}
++
++} // extern "C"
++
++#else // #ifdef _WIN32
++
++#include <fstream>
++#include <iostream>
++#include <sstream>
++#include <string>
++#include <vector>
++#include <filesystem>
++
++#include <sys/stat.h>
++#include <dirent.h>
++#include <unistd.h>
++#include <glob.h>
++namespace fs = std::filesystem;
++
++extern "C" {
++
++int ggml_hip_mgmt_init() {
++    return 0;
++}
++void ggml_hip_mgmt_release() {}
++int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total, bool is_integrated_gpu) {
++    GGML_LOG_INFO("%s searching for device %s\n", __func__, id);
++    const std::string drmDeviceGlob = "/sys/class/drm/card*/device/uevent";
++    const std::string drmTotalMemoryFile = "mem_info_vram_total";
++    const std::string drmUsedMemoryFile = "mem_info_vram_used";
++    const std::string drmGTTTotalMemoryFile = "mem_info_gtt_total";
++    const std::string drmGTTUsedMemoryFile = "mem_info_gtt_used";
++    const std::string drmUeventPCISlotLabel = "PCI_SLOT_NAME=";
++
++
++    glob_t glob_result;
++    glob(drmDeviceGlob.c_str(), GLOB_NOSORT, NULL, &glob_result);
++
++    for (size_t i = 0; i < glob_result.gl_pathc; ++i) {
++        const char* device_file = glob_result.gl_pathv[i];
++        std::ifstream file(device_file);
++        if (!file.is_open()) {
++            std::cerr << "Failed to open sysfs node" << std::endl;
++            globfree(&glob_result);
++            return 1;
++        }
++
++        std::string line;
++        while (std::getline(file, line)) {
++            // Check for PCI_SLOT_NAME label
++            if (line.find(drmUeventPCISlotLabel) == 0) {
++                std::istringstream iss(line.substr(drmUeventPCISlotLabel.size()));
++                std::string pciSlot;
++                iss >> pciSlot;
++                if (pciSlot == std::string(id)) {
++                    std::string dir = fs::path(device_file).parent_path().string();
++
++                    std::string totalFile = dir + "/" + drmTotalMemoryFile;
++                    std::ifstream totalFileStream(totalFile.c_str());
++                    if (!totalFileStream.is_open()) {
++                        GGML_LOG_DEBUG("%s Failed to read sysfs node %s\n", __func__, totalFile.c_str());
++                        file.close();
++                        globfree(&glob_result);
++                        return 1;
++                    }
++
++                    uint64_t memory;
++                    totalFileStream >> memory;
++
++                    std::string usedFile = dir + "/" + drmUsedMemoryFile;
++                    std::ifstream usedFileStream(usedFile.c_str());
++                    if (!usedFileStream.is_open()) {
++                        GGML_LOG_DEBUG("%s Failed to read sysfs node %s\n", __func__, usedFile.c_str());
++                        file.close();
++                        globfree(&glob_result);
++                        return 1;
++                    }
++
++                    uint64_t memoryUsed;
++                    usedFileStream >> memoryUsed;
++
++                    if (is_integrated_gpu) {
++                        std::string totalFile = dir + "/" + drmGTTTotalMemoryFile;
++                        std::ifstream totalFileStream(totalFile.c_str());
++                        if (!totalFileStream.is_open()) {
++                            GGML_LOG_DEBUG("%s Failed to read sysfs node %s\n", __func__, totalFile.c_str());
++                            file.close();
++                            globfree(&glob_result);
++                            return 1;
++                        }
++                        uint64_t gtt;
++                        totalFileStream >> gtt;
++                        std::string usedFile = dir + "/" + drmGTTUsedMemoryFile;
++                        std::ifstream usedFileStream(usedFile.c_str());
++                        if (!usedFileStream.is_open()) {
++                            GGML_LOG_DEBUG("%s Failed to read sysfs node %s\n", __func__, usedFile.c_str());
++                            file.close();
++                            globfree(&glob_result);
++                            return 1;
++                        }
++                        uint64_t gttUsed;
++                        usedFileStream >> gttUsed;
++                        memory += gtt;
++                        memoryUsed += gttUsed;
++                    }
++
++                    *total = memory;
++                    *free = memory - memoryUsed;
++
++                    file.close();
++                    globfree(&glob_result);
++                    return 0;
++                }
++            }
++        }
++
++        file.close();
++    }
++    GGML_LOG_DEBUG("%s unable to find matching device\n", __func__);
++    globfree(&glob_result);
++    return 1;
++}
++
++} // extern "C"
++
++#endif // #ifdef _WIN32
+\ No newline at end of file
+diff --git a/ggml/src/mem_nvml.cpp b/ggml/src/mem_nvml.cpp
+new file mode 100644
+index 000000000..c9073cef0
+--- /dev/null
++++ b/ggml/src/mem_nvml.cpp
+@@ -0,0 +1,209 @@
++// NVIDIA Management Library (NVML)
++//
++// https://developer.nvidia.com/management-library-nvml
++//
++// This library provides accurate VRAM reporting for NVIDIA GPUs, particularly
++// on Windows, where the cuda library provides inaccurate VRAM usage metrics. The
++// runtime DLL is installed with every driver on Windows, and most Linux
++// systems, and the headers are included in the standard CUDA SDK install.  As
++// such, we can include the header here to simplify the code.
++
++
++#include "ggml-impl.h"
++#include <filesystem>
++#include <mutex>
++#include <array>
++
++#ifdef _WIN32
++#    define WIN32_LEAN_AND_MEAN
++#    ifndef NOMINMAX
++#        define NOMINMAX
++#    endif
++#    include <windows.h>
++#else
++#    include <dlfcn.h>
++#    include <unistd.h>
++#endif
++
++namespace fs = std::filesystem;
++
++// Minimal definitions to avoid including the nvml.h header
++typedef enum nvmlReturn_enum
++{
++    // cppcheck-suppress *
++    NVML_SUCCESS = 0,                          //!< The operation was successful
++    NVML_ERROR_UNINITIALIZED = 1,              //!< NVML was not first initialized with nvmlInit()
++    NVML_ERROR_INVALID_ARGUMENT = 2,           //!< A supplied argument is invalid
++    NVML_ERROR_NOT_SUPPORTED = 3,              //!< The requested operation is not available on target device
++    NVML_ERROR_NO_PERMISSION = 4,              //!< The current user does not have permission for operation
++    NVML_ERROR_ALREADY_INITIALIZED = 5,        //!< Deprecated: Multiple initializations are now allowed through ref counting
++    NVML_ERROR_NOT_FOUND = 6,                  //!< A query to find an object was unsuccessful
++    NVML_ERROR_INSUFFICIENT_SIZE = 7,          //!< An input argument is not large enough
++    NVML_ERROR_INSUFFICIENT_POWER = 8,         //!< A device's external power cables are not properly attached
++    NVML_ERROR_DRIVER_NOT_LOADED = 9,          //!< NVIDIA driver is not loaded
++    NVML_ERROR_TIMEOUT = 10,                   //!< User provided timeout passed
++    NVML_ERROR_IRQ_ISSUE = 11,                 //!< NVIDIA Kernel detected an interrupt issue with a GPU
++    NVML_ERROR_LIBRARY_NOT_FOUND = 12,         //!< NVML Shared Library couldn't be found or loaded
++    NVML_ERROR_FUNCTION_NOT_FOUND = 13,        //!< Local version of NVML doesn't implement this function
++    NVML_ERROR_CORRUPTED_INFOROM = 14,         //!< infoROM is corrupted
++    NVML_ERROR_GPU_IS_LOST = 15,               //!< The GPU has fallen off the bus or has otherwise become inaccessible
++    NVML_ERROR_RESET_REQUIRED = 16,            //!< The GPU requires a reset before it can be used again
++    NVML_ERROR_OPERATING_SYSTEM = 17,          //!< The GPU control device has been blocked by the operating system/cgroups
++    NVML_ERROR_LIB_RM_VERSION_MISMATCH = 18,   //!< RM detects a driver/library version mismatch
++    NVML_ERROR_IN_USE = 19,                    //!< An operation cannot be performed because the GPU is currently in use
++    NVML_ERROR_MEMORY = 20,                    //!< Insufficient memory
++    NVML_ERROR_NO_DATA = 21,                   //!< No data
++    NVML_ERROR_VGPU_ECC_NOT_SUPPORTED = 22,    //!< The requested vgpu operation is not available on target device, becasue ECC is enabled
++    NVML_ERROR_INSUFFICIENT_RESOURCES = 23,    //!< Ran out of critical resources, other than memory
++    NVML_ERROR_FREQ_NOT_SUPPORTED = 24,        //!< Ran out of critical resources, other than memory
++    NVML_ERROR_ARGUMENT_VERSION_MISMATCH = 25, //!< The provided version is invalid/unsupported
++    NVML_ERROR_DEPRECATED  = 26,               //!< The requested functionality has been deprecated
++    NVML_ERROR_NOT_READY = 27,                 //!< The system is not ready for the request
++    NVML_ERROR_GPU_NOT_FOUND = 28,             //!< No GPUs were found
++    NVML_ERROR_INVALID_STATE = 29,             //!< Resource not in correct state to perform requested operation
++    NVML_ERROR_UNKNOWN = 999                   //!< An internal driver error occurred
++} nvmlReturn_t;
++typedef struct nvmlDevice_st* nvmlDevice_t;
++typedef struct nvmlMemory_st
++{
++    unsigned long long total;        //!< Total physical device memory (in bytes)
++    unsigned long long free;         //!< Unallocated device memory (in bytes)
++    unsigned long long used;         //!< Sum of Reserved and Allocated device memory (in bytes).
++                                     //!< Note that the driver/GPU always sets aside a small amount of memory for bookkeeping
++} nvmlMemory_t;
++// end nvml.h definitions
++
++struct {
++  void *handle;
++  nvmlReturn_t (*nvmlInit_v2)(void);
++  nvmlReturn_t (*nvmlShutdown)(void);
++  nvmlReturn_t (*nvmlDeviceGetHandleByUUID)(const char *, nvmlDevice_t *);
++  nvmlReturn_t (*nvmlDeviceGetMemoryInfo)(nvmlDevice_t, nvmlMemory_t *);
++  const char * (*nvmlErrorString)(nvmlReturn_t result);
++} nvml { NULL, NULL, NULL, NULL, NULL };
++static std::mutex ggml_nvml_lock;
++
++extern "C" {
++
++int ggml_nvml_init() {
++    std::lock_guard<std::mutex> lock(ggml_nvml_lock);
++    if (nvml.handle != NULL) {
++        // Already initialized
++        return 0;
++    }
++#ifdef _WIN32
++    DWORD old_mode = SetErrorMode(SEM_FAILCRITICALERRORS);
++    SetErrorMode(old_mode | SEM_FAILCRITICALERRORS);
++    fs::path libPath[2];
++    const char * programDir = std::getenv("ProgramW6432");
++    if (programDir == NULL) {
++        libPath[0] = fs::path("Program Files") / fs::path("NVIDIA Corporation") / fs::path("NVSMI") / fs::path("NVML.dll");
++    } else {
++        libPath[0] = fs::path(programDir) / fs::path("NVIDIA Corporation") / fs::path("NVSMI") / fs::path("NVML.dll");
++    }
++    libPath[1] = fs::path("\\Windows") / fs::path("System32") / fs::path("NVML.dll");
++
++    for (int i = 0; i < 2; i++) {
++        nvml.handle = (void*)LoadLibraryW(libPath[i].wstring().c_str());
++        if (nvml.handle != NULL) {
++            break;
++        }
++    }
++    if (nvml.handle == NULL) {
++        return NVML_ERROR_NOT_FOUND;
++    }
++
++    nvml.nvmlInit_v2 = (nvmlReturn_enum (*)()) GetProcAddress((HMODULE)(nvml.handle), "nvmlInit_v2");
++    nvml.nvmlShutdown = (nvmlReturn_enum (*)()) GetProcAddress((HMODULE)(nvml.handle), "nvmlShutdown");
++    nvml.nvmlDeviceGetHandleByUUID = (nvmlReturn_t (*)(const char *, nvmlDevice_t *)) GetProcAddress((HMODULE)(nvml.handle), "nvmlDeviceGetHandleByUUID");
++    nvml.nvmlDeviceGetMemoryInfo = (nvmlReturn_t (*)(nvmlDevice_t, nvmlMemory_t *)) GetProcAddress((HMODULE)(nvml.handle), "nvmlDeviceGetMemoryInfo");
++    nvml.nvmlErrorString = (const char * (*)(nvmlReturn_enum)) GetProcAddress((HMODULE)(nvml.handle), "nvmlErrorString");
++    if (nvml.nvmlInit_v2 == NULL || nvml.nvmlShutdown == NULL || nvml.nvmlDeviceGetHandleByUUID == NULL || nvml.nvmlDeviceGetMemoryInfo == NULL || nvml.nvmlErrorString == NULL) {
++        GGML_LOG_INFO("%s unable to locate required symbols in NVML.dll", __func__);
++        FreeLibrary((HMODULE)(nvml.handle));
++        nvml.handle = NULL;
++        return NVML_ERROR_NOT_FOUND;
++    }
++
++    SetErrorMode(old_mode);
++
++    nvmlReturn_t status = nvml.nvmlInit_v2();
++    if (status != NVML_SUCCESS) {
++        GGML_LOG_INFO("%s unable to initialize NVML: %s\n", __func__, nvml.nvmlErrorString(status));
++        FreeLibrary((HMODULE)(nvml.handle));
++        nvml.handle = NULL;
++        return status;
++    }
++#else
++    constexpr std::array<const char*, 2> libPaths = {
++        "/usr/lib/wsl/lib/libnvidia-ml.so.1", // Favor WSL2 path if present
++        "libnvidia-ml.so.1" // On a non-WSL2 system, it should be in the path
++    };
++    for (const char* path : libPaths) {
++        nvml.handle = dlopen(path, RTLD_LAZY);
++        if (nvml.handle) break;
++    }
++    if (nvml.handle == NULL) {
++        GGML_LOG_INFO("%s unable to load libnvidia-ml: %s\n", __func__, dlerror());
++        return NVML_ERROR_NOT_FOUND;
++    }
++    nvml.nvmlInit_v2 = (nvmlReturn_enum (*)()) dlsym(nvml.handle, "nvmlInit_v2");
++    nvml.nvmlShutdown = (nvmlReturn_enum (*)()) dlsym(nvml.handle, "nvmlShutdown");
++    nvml.nvmlDeviceGetHandleByUUID = (nvmlReturn_t (*)(const char *, nvmlDevice_t *)) dlsym(nvml.handle, "nvmlDeviceGetHandleByUUID");
++    nvml.nvmlDeviceGetMemoryInfo = (nvmlReturn_t (*)(nvmlDevice_t, nvmlMemory_t *)) dlsym(nvml.handle, "nvmlDeviceGetMemoryInfo");
++    nvml.nvmlErrorString = (const char * (*)(nvmlReturn_enum)) dlsym(nvml.handle, "nvmlErrorString");
++    if (nvml.nvmlInit_v2 == NULL || nvml.nvmlShutdown == NULL || nvml.nvmlDeviceGetHandleByUUID == NULL || nvml.nvmlDeviceGetMemoryInfo == NULL) {
++        GGML_LOG_INFO("%s unable to locate required symbols in libnvidia-ml.so", __func__);
++        dlclose(nvml.handle);
++        nvml.handle = NULL;
++        return NVML_ERROR_NOT_FOUND;
++    }
++    nvmlReturn_t status = nvml.nvmlInit_v2();
++    if (status != NVML_SUCCESS) {
++        GGML_LOG_INFO("%s unable to initialize NVML: %s\n", __func__, nvml.nvmlErrorString(status));
++        dlclose(nvml.handle);
++        nvml.handle = NULL;
++        return status;
++    }
++#endif
++    return NVML_SUCCESS;
++}
++
++void ggml_nvml_release() {
++    std::lock_guard<std::mutex> lock(ggml_nvml_lock);
++    if (nvml.handle == NULL) {
++        // Already free
++        return;
++    }
++    nvmlReturn_enum status = nvml.nvmlShutdown();
++    if (status != NVML_SUCCESS) {
++        GGML_LOG_INFO("%s failed to shutdown NVML: %s\n", __func__, nvml.nvmlErrorString(status));
++    }
++#ifdef _WIN32
++    FreeLibrary((HMODULE)(nvml.handle));
++#else
++    dlclose(nvml.handle);
++#endif
++    nvml.handle = NULL;
++}
++
++int ggml_nvml_get_device_memory(const char *uuid, size_t *free, size_t *total) {
++    std::lock_guard<std::mutex> lock(ggml_nvml_lock);
++    if (nvml.handle == NULL) {
++        return NVML_ERROR_UNINITIALIZED;
++    }
++    nvmlDevice_t device;
++    auto status = nvml.nvmlDeviceGetHandleByUUID(uuid, &device);
++    if (status != NVML_SUCCESS) {
++        return status;
++    }
++    nvmlMemory_t memInfo = {0};
++    status = nvml.nvmlDeviceGetMemoryInfo(device, &memInfo);
++    if (status == NVML_SUCCESS) {
++        *free = memInfo.free;
++        *total = memInfo.total;
++    }
++    return status;
++}
++
++}
+\ No newline at end of file

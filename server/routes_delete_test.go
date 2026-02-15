@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -47,9 +48,9 @@ func TestDelete(t *testing.T) {
 	})
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
-		filepath.Join(p, "blobs", "sha256-8f2c2167d789c6b2302dff965160fa5029f6a24096d262c1cbb469f21a045382"),
-		filepath.Join(p, "blobs", "sha256-a4e5e156ddec27e286f75328784d7106b60a4eb1d246e950a001a3f944fbda99"),
-		filepath.Join(p, "blobs", "sha256-ca239d7bd8ea90e4a5d2e6bf88f8d74a47b14336e73eb4e18bed4dd325018116"),
+		filepath.Join(p, "blobs", "sha256-136bf7c76bac2ec09d6617885507d37829e04b41acc47687d45e512b544e893a"),
+		filepath.Join(p, "blobs", "sha256-6bcdb8859d417753645538d7bbfbd7ca91a3f0c191aef5379c53c05e86b669dd"),
+		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 		filepath.Join(p, "blobs", "sha256-fe7ac77b725cda2ccad03f88a880ecdfd7a33192d6cae08fce2c0ee1455991ed"),
 	})
 
@@ -64,8 +65,8 @@ func TestDelete(t *testing.T) {
 	})
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
-		filepath.Join(p, "blobs", "sha256-8f2c2167d789c6b2302dff965160fa5029f6a24096d262c1cbb469f21a045382"),
-		filepath.Join(p, "blobs", "sha256-a4e5e156ddec27e286f75328784d7106b60a4eb1d246e950a001a3f944fbda99"),
+		filepath.Join(p, "blobs", "sha256-136bf7c76bac2ec09d6617885507d37829e04b41acc47687d45e512b544e893a"),
+		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 		filepath.Join(p, "blobs", "sha256-fe7ac77b725cda2ccad03f88a880ecdfd7a33192d6cae08fce2c0ee1455991ed"),
 	})
 
@@ -89,17 +90,17 @@ func TestDeleteDuplicateLayers(t *testing.T) {
 	n := model.ParseName("test")
 
 	var b bytes.Buffer
-	if err := json.NewEncoder(&b).Encode(&ConfigV2{}); err != nil {
+	if err := json.NewEncoder(&b).Encode(&model.ConfigV2{}); err != nil {
 		t.Fatal(err)
 	}
 
-	config, err := NewLayer(&b, "application/vnd.docker.container.image.v1+json")
+	config, err := manifest.NewLayer(&b, "application/vnd.docker.container.image.v1+json")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// create a manifest with duplicate layers
-	if err := WriteManifest(n, config, []Layer{config}); err != nil {
+	if err := manifest.WriteManifest(n, config, []manifest.Layer{config}); err != nil {
 		t.Fatal(err)
 	}
 

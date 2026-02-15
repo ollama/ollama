@@ -28,6 +28,7 @@ type bertModel struct {
 	LayerNormEPS          float32 `json:"layer_norm_eps"`
 	LayerNormEpsilon      float32 `json:"layer_norm_epsilon"`
 	NormEpsilon           float32 `json:"norm_epsilon"`
+	normalizeEmbeddings   bool
 
 	PoolingType uint32
 }
@@ -54,9 +55,11 @@ func (p *bertModel) parseMore(fsys fs.FS) error {
 
 	var pooling string
 	for _, m := range modules {
-		if m.Type == "sentence_transformers.models.Pooling" {
+		switch m.Type {
+		case "sentence_transformers.models.Pooling":
 			pooling = m.Path
-			break
+		case "sentence_transformers.models.Normalize":
+			p.normalizeEmbeddings = true
 		}
 	}
 
@@ -85,11 +88,12 @@ func (p *bertModel) parseMore(fsys fs.FS) error {
 	return nil
 }
 
-func (p *bertModel) KV(t *Tokenizer) ggml.KV {
+func (p *bertModel) KV(t *Tokenizer) KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "bert"
 	kv["bert.attention.causal"] = false
 	kv["bert.pooling_type"] = p.PoolingType
+	kv["bert.normalize_embeddings"] = p.normalizeEmbeddings
 
 	kv["bert.block_count"] = cmp.Or(p.NLayers, p.NumHiddenLayers, p.NLayer)
 

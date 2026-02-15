@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -29,12 +30,15 @@ import (
 	"github.com/containerd/console"
 	"github.com/mattn/go-runewidth"
 	"github.com/olekukonko/tablewriter"
+	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/config"
+	"github.com/ollama/ollama/cmd/tui"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/parser"
@@ -45,7 +49,50 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/types/syncmap"
 	"github.com/ollama/ollama/version"
+	xcmd "github.com/ollama/ollama/x/cmd"
+	"github.com/ollama/ollama/x/create"
+	xcreateclient "github.com/ollama/ollama/x/create/client"
+	"github.com/ollama/ollama/x/imagegen"
 )
+
+func init() {
+	// Override default selectors to use Bubbletea TUI instead of raw terminal I/O.
+	config.DefaultSingleSelector = func(title string, items []config.ModelItem) (string, error) {
+		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
+		result, err := tui.SelectSingle(title, tuiItems)
+		if errors.Is(err, tui.ErrCancelled) {
+			return "", config.ErrCancelled
+		}
+		return result, err
+	}
+
+	config.DefaultMultiSelector = func(title string, items []config.ModelItem, preChecked []string) ([]string, error) {
+		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
+		result, err := tui.SelectMultiple(title, tuiItems, preChecked)
+		if errors.Is(err, tui.ErrCancelled) {
+			return nil, config.ErrCancelled
+		}
+		return result, err
+	}
+
+	config.DefaultSignIn = func(modelName, signInURL string) (string, error) {
+		userName, err := tui.RunSignIn(modelName, signInURL)
+		if errors.Is(err, tui.ErrCancelled) {
+			return "", config.ErrCancelled
+		}
+		return userName, err
+	}
+
+	config.DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		ok, err := tui.RunConfirm(prompt)
+		if errors.Is(err, tui.ErrCancelled) {
+			return false, config.ErrCancelled
+		}
+		return ok, err
+	}
+}
+
+const ConnectInstructions = "If your browser did not open, navigate to:\n    %s\n\n"
 
 // ensureThinkingSupport emits a warning if the model does not advertise thinking support
 func ensureThinkingSupport(ctx context.Context, client *api.Client, name string) {
@@ -56,10 +103,8 @@ func ensureThinkingSupport(ctx context.Context, client *api.Client, name string)
 	if err != nil {
 		return
 	}
-	for _, cap := range resp.Capabilities {
-		if cap == model.CapabilityThinking {
-			return
-		}
+	if slices.Contains(resp.Capabilities, model.CapabilityThinking) {
+		return
 	}
 	fmt.Fprintf(os.Stderr, "warning: model %q does not support thinking output\n", name)
 }
@@ -90,11 +135,88 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 
+	// Validate model name early to fail fast
+	modelName := args[0]
+	name := model.ParseName(modelName)
+	if !name.IsValid() {
+		return fmt.Errorf("invalid model name: %s", modelName)
+	}
+
+	// Check for --experimental flag for safetensors model creation
+	experimental, _ := cmd.Flags().GetBool("experimental")
+	if experimental {
+		// Get Modelfile content - either from -f flag or default to "FROM ."
+		var reader io.Reader
+		filename, err := getModelfileName(cmd)
+		if os.IsNotExist(err) || filename == "" {
+			// No Modelfile specified or found - use default
+			reader = strings.NewReader("FROM .\n")
+		} else if err != nil {
+			return err
+		} else {
+			f, err := os.Open(filename)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			reader = f
+		}
+
+		// Parse the Modelfile
+		modelfile, err := parser.ParseFile(reader)
+		if err != nil {
+			return fmt.Errorf("failed to parse Modelfile: %w", err)
+		}
+
+		// Extract FROM path and configuration
+		var modelDir string
+		mfConfig := &xcreateclient.ModelfileConfig{}
+
+		for _, cmd := range modelfile.Commands {
+			switch cmd.Name {
+			case "model":
+				modelDir = cmd.Args
+			case "template":
+				mfConfig.Template = cmd.Args
+			case "system":
+				mfConfig.System = cmd.Args
+			case "license":
+				mfConfig.License = cmd.Args
+			}
+		}
+
+		if modelDir == "" {
+			modelDir = "."
+		}
+
+		// Resolve relative paths based on Modelfile location
+		if !filepath.IsAbs(modelDir) && filename != "" {
+			modelDir = filepath.Join(filepath.Dir(filename), modelDir)
+		}
+
+		quantize, _ := cmd.Flags().GetString("quantize")
+		return xcreateclient.CreateModel(xcreateclient.CreateOptions{
+			ModelName: modelName,
+			ModelDir:  modelDir,
+			Quantize:  quantize,
+			Modelfile: mfConfig,
+		}, p)
+	}
+
 	var reader io.Reader
 
 	filename, err := getModelfileName(cmd)
 	if os.IsNotExist(err) {
 		if filename == "" {
+			// No Modelfile found - check if current directory is an image gen model
+			if create.IsTensorModelDir(".") {
+				quantize, _ := cmd.Flags().GetString("quantize")
+				return xcreateclient.CreateModel(xcreateclient.CreateOptions{
+					ModelName: modelName,
+					ModelDir:  ".",
+					Quantize:  quantize,
+				}, p)
+			}
 			reader = strings.NewReader("FROM .\n")
 		} else {
 			return errModelfileNotFound
@@ -126,7 +248,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 	spinner.Stop()
 
-	req.Model = args[0]
+	req.Model = modelName
 	quantize, _ := cmd.Flags().GetString("quantize")
 	if quantize != "" {
 		req.Quantize = quantize
@@ -280,6 +402,32 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
 		return err
 	}
 
+	if info, err := client.Show(cmd.Context(), &api.ShowRequest{Model: opts.Model}); err != nil {
+		return err
+	} else if info.RemoteHost != "" {
+		// Cloud model, no need to load/unload
+
+		isCloud := strings.HasPrefix(info.RemoteHost, "https://ollama.com")
+
+		// Check if user is signed in for ollama.com cloud models
+		if isCloud {
+			if _, err := client.Whoami(cmd.Context()); err != nil {
+				return err
+			}
+		}
+
+		if opts.ShowConnect {
+			p.StopAndClear()
+			if isCloud {
+				fmt.Fprintf(os.Stderr, "Connecting to '%s' on 'ollama.com' ⚡\n", info.RemoteModel)
+			} else {
+				fmt.Fprintf(os.Stderr, "Connecting to '%s' on '%s'\n", info.RemoteModel, info.RemoteHost)
+			}
+		}
+
+		return nil
+	}
+
 	req := &api.GenerateRequest{
 		Model:     opts.Model,
 		KeepAlive: opts.KeepAlive,
@@ -288,7 +436,9 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
 		Think: opts.Think,
 	}
 
-	return client.Generate(cmd.Context(), req, func(api.GenerateResponse) error { return nil })
+	return client.Generate(cmd.Context(), req, func(r api.GenerateResponse) error {
+		return nil
+	})
 }
 
 func StopHandler(cmd *cobra.Command, args []string) error {
@@ -305,13 +455,52 @@ func StopHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func generateEmbedding(cmd *cobra.Command, modelName, input string, keepAlive *api.Duration, truncate *bool, dimensions int) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	req := &api.EmbedRequest{
+		Model: modelName,
+		Input: input,
+	}
+	if keepAlive != nil {
+		req.KeepAlive = keepAlive
+	}
+	if truncate != nil {
+		req.Truncate = truncate
+	}
+	if dimensions > 0 {
+		req.Dimensions = dimensions
+	}
+
+	resp, err := client.Embed(cmd.Context(), req)
+	if err != nil {
+		return err
+	}
+
+	if len(resp.Embeddings) == 0 {
+		return errors.New("no embeddings returned")
+	}
+
+	output, err := json.Marshal(resp.Embeddings[0])
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(output))
+
+	return nil
+}
+
 func RunHandler(cmd *cobra.Command, args []string) error {
 	interactive := true
 
 	opts := runOptions{
-		Model:    args[0],
-		WordWrap: os.Getenv("TERM") == "xterm-256color",
-		Options:  map[string]any{},
+		Model:       args[0],
+		WordWrap:    os.Getenv("TERM") == "xterm-256color",
+		Options:     map[string]any{},
+		ShowConnect: true,
 	}
 
 	format, err := cmd.Flags().GetString("format")
@@ -368,7 +557,12 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
-		prompts = append([]string{string(in)}, prompts...)
+		// Only prepend stdin content if it's not empty
+		stdinContent := string(in)
+		if len(stdinContent) > 0 {
+			prompts = append([]string{stdinContent}, prompts...)
+		}
+		opts.ShowConnect = false
 		opts.WordWrap = false
 		interactive = false
 	}
@@ -387,6 +581,17 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 	opts.WordWrap = !nowrap
 
+	useImagegen := false
+	if cmd.Flags().Lookup("imagegen") != nil {
+		useImagegen, err = cmd.Flags().GetBool("imagegen")
+		if err != nil {
+			return err
+		}
+	}
+	if useImagegen {
+		opts.Options["use_imagegen_runner"] = true
+	}
+
 	// Fill out the rest of the options based on information about the
 	// model.
 	client, err := api.ClientFromEnvironment()
@@ -395,6 +600,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	name := args[0]
+
 	info, err := func() (*api.ShowResponse, error) {
 		showReq := &api.ShowRequest{Name: name}
 		info, err := client.Show(cmd.Context(), showReq)
@@ -433,8 +639,53 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 	opts.ParentModel = info.Details.ParentModel
 
+	// Check if this is an embedding model
+	isEmbeddingModel := slices.Contains(info.Capabilities, model.CapabilityEmbedding)
+
+	// If it's an embedding model, handle embedding generation
+	if isEmbeddingModel {
+		if opts.Prompt == "" {
+			return errors.New("embedding models require input text. Usage: ollama run " + name + " \"your text here\"")
+		}
+
+		// Get embedding-specific flags
+		var truncate *bool
+		if truncateFlag, err := cmd.Flags().GetBool("truncate"); err == nil && cmd.Flags().Changed("truncate") {
+			truncate = &truncateFlag
+		}
+
+		dimensions, err := cmd.Flags().GetInt("dimensions")
+		if err != nil {
+			return err
+		}
+
+		return generateEmbedding(cmd, name, opts.Prompt, opts.KeepAlive, truncate, dimensions)
+	}
+
+	// Check if this is an image generation model
+	if slices.Contains(info.Capabilities, model.CapabilityImage) {
+		if opts.Prompt == "" && !interactive {
+			return errors.New("image generation models require a prompt. Usage: ollama run " + name + " \"your prompt here\"")
+		}
+		return imagegen.RunCLI(cmd, name, opts.Prompt, interactive, opts.KeepAlive)
+	}
+
+	// Check for experimental flag
+	isExperimental, _ := cmd.Flags().GetBool("experimental")
+	yoloMode, _ := cmd.Flags().GetBool("experimental-yolo")
+	enableWebsearch, _ := cmd.Flags().GetBool("experimental-websearch")
+
 	if interactive {
 		if err := loadOrUnloadModel(cmd, &opts); err != nil {
+			var sErr api.AuthorizationError
+			if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
+				fmt.Printf("You need to be signed in to Ollama to run Cloud models.\n\n")
+
+				if sErr.SigninURL != "" {
+					fmt.Printf(ConnectInstructions, sErr.SigninURL)
+				}
+				return nil
+			}
 			return err
 		}
 
@@ -450,9 +701,68 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 			}
 		}
 
+		// Use experimental agent loop with tools
+		if isExperimental {
+			return xcmd.GenerateInteractive(cmd, opts.Model, opts.WordWrap, opts.Options, opts.Think, opts.HideThinking, opts.KeepAlive, yoloMode, enableWebsearch)
+		}
+
 		return generateInteractive(cmd, opts)
 	}
 	return generate(cmd, opts)
+}
+
+func SigninHandler(cmd *cobra.Command, args []string) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	user, err := client.Whoami(cmd.Context())
+	if err != nil {
+		var aErr api.AuthorizationError
+		if errors.As(err, &aErr) && aErr.StatusCode == http.StatusUnauthorized {
+			fmt.Println("You need to be signed in to Ollama to run Cloud models.")
+			fmt.Println()
+
+			if aErr.SigninURL != "" {
+				_ = browser.OpenURL(aErr.SigninURL)
+				fmt.Printf(ConnectInstructions, aErr.SigninURL)
+			}
+			return nil
+		}
+		return err
+	}
+
+	if user != nil && user.Name != "" {
+		fmt.Printf("You are already signed in as user '%s'\n", user.Name)
+		fmt.Println()
+		return nil
+	}
+
+	return nil
+}
+
+func SignoutHandler(cmd *cobra.Command, args []string) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	err = client.Signout(cmd.Context())
+	if err != nil {
+		var aErr api.AuthorizationError
+		if errors.As(err, &aErr) && aErr.StatusCode == http.StatusUnauthorized {
+			fmt.Println("You are not signed in to ollama.com")
+			fmt.Println()
+			return nil
+		} else {
+			return err
+		}
+	}
+
+	fmt.Println("You have signed out of ollama.com")
+	fmt.Println()
+	return nil
 }
 
 func PushHandler(cmd *cobra.Command, args []string) error {
@@ -464,6 +774,25 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 	insecure, err := cmd.Flags().GetBool("insecure")
 	if err != nil {
 		return err
+	}
+
+	n := model.ParseName(args[0])
+	if strings.HasSuffix(n.Host, ".ollama.ai") || strings.HasSuffix(n.Host, ".ollama.com") {
+		_, err := client.Whoami(cmd.Context())
+		if err != nil {
+			var aErr api.AuthorizationError
+			if errors.As(err, &aErr) && aErr.StatusCode == http.StatusUnauthorized {
+				fmt.Println("You need to be signed in to push models to ollama.com.")
+				fmt.Println()
+
+				if aErr.SigninURL != "" {
+					fmt.Printf(ConnectInstructions, aErr.SigninURL)
+				}
+				return nil
+			}
+
+			return err
+		}
 	}
 
 	p := progress.NewProgress(os.Stderr)
@@ -481,7 +810,11 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 
 			bar, ok := bars[resp.Digest]
 			if !ok {
-				bar = progress.NewBar(fmt.Sprintf("pushing %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
+				msg := resp.Status
+				if msg == "" {
+					msg = fmt.Sprintf("pushing %s...", resp.Digest[7:19])
+				}
+				bar = progress.NewBar(msg, resp.Total, resp.Completed)
 				bars[resp.Digest] = bar
 				p.Add(resp.Digest, bar)
 			}
@@ -502,12 +835,12 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 
 	request := api.PushRequest{Name: args[0], Insecure: insecure}
 
-	n := model.ParseName(args[0])
 	if err := client.Push(cmd.Context(), &request, fn); err != nil {
 		if spinner != nil {
 			spinner.Stop()
 		}
-		if strings.Contains(err.Error(), "access denied") {
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "access denied") || strings.Contains(errStr, "unauthorized") {
 			return errors.New("you are not authorized to push to this namespace, create the model under a namespace you own")
 		}
 		return err
@@ -541,7 +874,14 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 
 	for _, m := range models.Models {
 		if len(args) == 0 || strings.HasPrefix(strings.ToLower(m.Name), strings.ToLower(args[0])) {
-			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), format.HumanTime(m.ModifiedAt, "Never")})
+			var size string
+			if m.RemoteModel != "" {
+				size = "-"
+			} else {
+				size = format.HumanBytes(m.Size)
+			}
+
+			data = append(data, []string{m.Name, m.Digest[:12], size, format.HumanTime(m.ModifiedAt, "Never")})
 		}
 	}
 
@@ -620,23 +960,21 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Unload the model if it's running before deletion
-	opts := &runOptions{
-		Model:     args[0],
-		KeepAlive: &api.Duration{Duration: 0},
-	}
-	if err := loadOrUnloadModel(cmd, opts); err != nil {
-		if !strings.Contains(err.Error(), "not found") {
-			return fmt.Errorf("unable to stop existing running model \"%s\": %s", args[0], err)
+	for _, arg := range args {
+		// Unload the model if it's running before deletion
+		if err := loadOrUnloadModel(cmd, &runOptions{
+			Model:     arg,
+			KeepAlive: &api.Duration{Duration: 0},
+		}); err != nil {
+			if !strings.Contains(strings.ToLower(err.Error()), "not found") {
+				fmt.Fprintf(os.Stderr, "Warning: unable to stop model '%s'\n", arg)
+			}
 		}
-	}
 
-	for _, name := range args {
-		req := api.DeleteRequest{Name: name}
-		if err := client.Delete(cmd.Context(), &req); err != nil {
+		if err := client.Delete(cmd.Context(), &api.DeleteRequest{Name: arg}); err != nil {
 			return err
 		}
-		fmt.Printf("deleted '%s'\n", name)
+		fmt.Printf("deleted '%s'\n", arg)
 	}
 	return nil
 }
@@ -738,17 +1076,48 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 	}
 
 	tableRender("Model", func() (rows [][]string) {
+		if resp.RemoteHost != "" {
+			rows = append(rows, []string{"", "Remote model", resp.RemoteModel})
+			rows = append(rows, []string{"", "Remote URL", resp.RemoteHost})
+		}
+
 		if resp.ModelInfo != nil {
-			arch := resp.ModelInfo["general.architecture"].(string)
-			rows = append(rows, []string{"", "architecture", arch})
-			rows = append(rows, []string{"", "parameters", format.HumanNumber(uint64(resp.ModelInfo["general.parameter_count"].(float64)))})
-			rows = append(rows, []string{"", "context length", strconv.FormatFloat(resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)].(float64), 'f', -1, 64)})
-			rows = append(rows, []string{"", "embedding length", strconv.FormatFloat(resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)].(float64), 'f', -1, 64)})
+			arch, _ := resp.ModelInfo["general.architecture"].(string)
+			if arch != "" {
+				rows = append(rows, []string{"", "architecture", arch})
+			}
+
+			var paramStr string
+			if resp.Details.ParameterSize != "" {
+				paramStr = resp.Details.ParameterSize
+			} else if v, ok := resp.ModelInfo["general.parameter_count"]; ok {
+				if f, ok := v.(float64); ok {
+					paramStr = format.HumanNumber(uint64(f))
+				}
+			}
+			if paramStr != "" {
+				rows = append(rows, []string{"", "parameters", paramStr})
+			}
+
+			if v, ok := resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)]; ok {
+				if f, ok := v.(float64); ok {
+					rows = append(rows, []string{"", "context length", strconv.FormatFloat(f, 'f', -1, 64)})
+				}
+			}
+
+			if v, ok := resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)]; ok {
+				if f, ok := v.(float64); ok {
+					rows = append(rows, []string{"", "embedding length", strconv.FormatFloat(f, 'f', -1, 64)})
+				}
+			}
 		} else {
 			rows = append(rows, []string{"", "architecture", resp.Details.Family})
 			rows = append(rows, []string{"", "parameters", resp.Details.ParameterSize})
 		}
 		rows = append(rows, []string{"", "quantization", resp.Details.QuantizationLevel})
+		if resp.Requires != "" {
+			rows = append(rows, []string{"", "requires", resp.Requires})
+		}
 		return
 	})
 
@@ -991,6 +1360,52 @@ type runOptions struct {
 	KeepAlive    *api.Duration
 	Think        *api.ThinkValue
 	HideThinking bool
+	ShowConnect  bool
+}
+
+func (r runOptions) Copy() runOptions {
+	var messages []api.Message
+	if r.Messages != nil {
+		messages = make([]api.Message, len(r.Messages))
+		copy(messages, r.Messages)
+	}
+
+	var images []api.ImageData
+	if r.Images != nil {
+		images = make([]api.ImageData, len(r.Images))
+		copy(images, r.Images)
+	}
+
+	var opts map[string]any
+	if r.Options != nil {
+		opts = make(map[string]any, len(r.Options))
+		for k, v := range r.Options {
+			opts[k] = v
+		}
+	}
+
+	var think *api.ThinkValue
+	if r.Think != nil {
+		cThink := *r.Think
+		think = &cThink
+	}
+
+	return runOptions{
+		Model:        r.Model,
+		ParentModel:  r.ParentModel,
+		Prompt:       r.Prompt,
+		Messages:     messages,
+		WordWrap:     r.WordWrap,
+		Format:       r.Format,
+		System:       r.System,
+		Images:       images,
+		Options:      opts,
+		MultiModal:   r.MultiModal,
+		KeepAlive:    r.KeepAlive,
+		Think:        think,
+		HideThinking: r.HideThinking,
+		ShowConnect:  r.ShowConnect,
+	}
 }
 
 type displayResponseState struct {
@@ -1190,7 +1605,7 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		latest.Summary()
 	}
 
-	return &api.Message{Role: role, Content: fullResponse.String()}, nil
+	return &api.Message{Role: role, Thinking: thinkingContent.String(), Content: fullResponse.String()}, nil
 }
 
 func generate(cmd *cobra.Command, opts runOptions) error {
@@ -1398,7 +1813,7 @@ func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 		if err := startApp(cmd.Context(), client); err != nil {
-			return fmt.Errorf("ollama server not responding - %w", err)
+			return err
 		}
 	}
 	return nil
@@ -1439,6 +1854,216 @@ Environment Variables:
 	cmd.SetUsageTemplate(cmd.UsageTemplate() + envUsage)
 }
 
+// ensureServerRunning checks if the ollama server is running and starts it in the background if not.
+func ensureServerRunning(ctx context.Context) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	// Check if server is already running
+	if err := client.Heartbeat(ctx); err == nil {
+		return nil // server is already running
+	}
+
+	// Server not running, start it in the background
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("could not find executable: %w", err)
+	}
+
+	serverCmd := exec.CommandContext(ctx, exe, "serve")
+	serverCmd.Env = os.Environ()
+	serverCmd.SysProcAttr = backgroundServerSysProcAttr()
+	if err := serverCmd.Start(); err != nil {
+		return fmt.Errorf("failed to start server: %w", err)
+	}
+
+	// Wait for the server to be ready
+	for {
+		time.Sleep(500 * time.Millisecond)
+		if err := client.Heartbeat(ctx); err == nil {
+			return nil // server has started
+		}
+	}
+}
+
+// runInteractiveTUI runs the main interactive TUI menu.
+func runInteractiveTUI(cmd *cobra.Command) {
+	// Ensure the server is running before showing the TUI
+	if err := ensureServerRunning(cmd.Context()); err != nil {
+		fmt.Fprintf(os.Stderr, "Error starting server: %v\n", err)
+		return
+	}
+
+	// Selector adapters for tui
+	singleSelector := func(title string, items []config.ModelItem) (string, error) {
+		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
+		result, err := tui.SelectSingle(title, tuiItems)
+		if errors.Is(err, tui.ErrCancelled) {
+			return "", config.ErrCancelled
+		}
+		return result, err
+	}
+
+	multiSelector := func(title string, items []config.ModelItem, preChecked []string) ([]string, error) {
+		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
+		result, err := tui.SelectMultiple(title, tuiItems, preChecked)
+		if errors.Is(err, tui.ErrCancelled) {
+			return nil, config.ErrCancelled
+		}
+		return result, err
+	}
+
+	for {
+		result, err := tui.Run()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			return
+		}
+
+		runModel := func(modelName string) {
+			client, err := api.ClientFromEnvironment()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				return
+			}
+			if err := config.ShowOrPull(cmd.Context(), client, modelName); err != nil {
+				if errors.Is(err, config.ErrCancelled) {
+					return
+				}
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				return
+			}
+			_ = config.SetLastModel(modelName)
+			opts := runOptions{
+				Model:       modelName,
+				WordWrap:    os.Getenv("TERM") == "xterm-256color",
+				Options:     map[string]any{},
+				ShowConnect: true,
+			}
+			if err := loadOrUnloadModel(cmd, &opts); err != nil {
+				fmt.Fprintf(os.Stderr, "Error loading model: %v\n", err)
+				return
+			}
+			if err := generateInteractive(cmd, opts); err != nil {
+				fmt.Fprintf(os.Stderr, "Error running model: %v\n", err)
+			}
+		}
+
+		launchIntegration := func(name string) bool {
+			// If not configured or model no longer exists, prompt for model selection
+			configuredModel := config.IntegrationModel(name)
+			if configuredModel == "" || !config.ModelExists(cmd.Context(), configuredModel) || config.IsCloudModelDisabled(cmd.Context(), configuredModel) {
+				err := config.ConfigureIntegrationWithSelectors(cmd.Context(), name, singleSelector, multiSelector)
+				if errors.Is(err, config.ErrCancelled) {
+					return false // Return to main menu
+				}
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error configuring %s: %v\n", name, err)
+					return true
+				}
+			}
+			if err := config.LaunchIntegration(name); err != nil {
+				fmt.Fprintf(os.Stderr, "Error launching %s: %v\n", name, err)
+			}
+			return true
+		}
+
+		switch result.Selection {
+		case tui.SelectionNone:
+			// User quit
+			return
+		case tui.SelectionRunModel:
+			_ = config.SetLastSelection("run")
+			if modelName := config.LastModel(); modelName != "" && !config.IsCloudModelDisabled(cmd.Context(), modelName) {
+				runModel(modelName)
+			} else {
+				modelName, err := config.SelectModelWithSelector(cmd.Context(), singleSelector)
+				if errors.Is(err, config.ErrCancelled) {
+					continue // Return to main menu
+				}
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error selecting model: %v\n", err)
+					continue
+				}
+				runModel(modelName)
+			}
+		case tui.SelectionChangeRunModel:
+			_ = config.SetLastSelection("run")
+			// Use model from modal if selected, otherwise show picker
+			modelName := result.Model
+			if modelName == "" {
+				var err error
+				modelName, err = config.SelectModelWithSelector(cmd.Context(), singleSelector)
+				if errors.Is(err, config.ErrCancelled) {
+					continue // Return to main menu
+				}
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error selecting model: %v\n", err)
+					continue
+				}
+			}
+			if config.IsCloudModelDisabled(cmd.Context(), modelName) {
+				continue // Return to main menu
+			}
+			runModel(modelName)
+		case tui.SelectionIntegration:
+			_ = config.SetLastSelection(result.Integration)
+			if !launchIntegration(result.Integration) {
+				continue // Return to main menu
+			}
+		case tui.SelectionChangeIntegration:
+			_ = config.SetLastSelection(result.Integration)
+			if len(result.Models) > 0 {
+				// Filter out cloud-disabled models
+				var filtered []string
+				for _, m := range result.Models {
+					if !config.IsCloudModelDisabled(cmd.Context(), m) {
+						filtered = append(filtered, m)
+					}
+				}
+				if len(filtered) == 0 {
+					continue
+				}
+				result.Models = filtered
+				// Multi-select from modal (Editor integrations)
+				if err := config.SaveAndEditIntegration(result.Integration, result.Models); err != nil {
+					fmt.Fprintf(os.Stderr, "Error configuring %s: %v\n", result.Integration, err)
+					continue
+				}
+				if err := config.LaunchIntegrationWithModel(result.Integration, result.Models[0]); err != nil {
+					fmt.Fprintf(os.Stderr, "Error launching %s: %v\n", result.Integration, err)
+				}
+			} else if result.Model != "" {
+				if config.IsCloudModelDisabled(cmd.Context(), result.Model) {
+					continue
+				}
+				// Single-select from modal - save and launch
+				if err := config.SaveIntegration(result.Integration, []string{result.Model}); err != nil {
+					fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
+					continue
+				}
+				if err := config.LaunchIntegrationWithModel(result.Integration, result.Model); err != nil {
+					fmt.Fprintf(os.Stderr, "Error launching %s: %v\n", result.Integration, err)
+				}
+			} else {
+				err := config.ConfigureIntegrationWithSelectors(cmd.Context(), result.Integration, singleSelector, multiSelector)
+				if errors.Is(err, config.ErrCancelled) {
+					continue // Return to main menu
+				}
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error configuring %s: %v\n", result.Integration, err)
+					continue
+				}
+				if err := config.LaunchIntegration(result.Integration); err != nil {
+					fmt.Fprintf(os.Stderr, "Error launching %s: %v\n", result.Integration, err)
+				}
+			}
+		}
+	}
+}
+
 func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	cobra.EnableCommandSorting = false
@@ -1461,22 +2086,31 @@ func NewCLI() *cobra.Command {
 				return
 			}
 
-			cmd.Print(cmd.UsageString())
+			runInteractiveTUI(cmd)
 		},
 	}
 
 	rootCmd.Flags().BoolP("version", "v", false, "Show version information")
+	rootCmd.Flags().Bool("verbose", false, "Show timings for response")
+	rootCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 
 	createCmd := &cobra.Command{
-		Use:     "create MODEL",
-		Short:   "Create a model",
-		Args:    cobra.ExactArgs(1),
-		PreRunE: checkServerHeartbeat,
-		RunE:    CreateHandler,
+		Use:   "create MODEL",
+		Short: "Create a model",
+		Args:  cobra.ExactArgs(1),
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			// Skip server check for experimental mode (writes directly to disk)
+			if experimental, _ := cmd.Flags().GetBool("experimental"); experimental {
+				return nil
+			}
+			return checkServerHeartbeat(cmd, args)
+		},
+		RunE: CreateHandler,
 	}
 
 	createCmd.Flags().StringP("file", "f", "", "Name of the Modelfile (default \"Modelfile\")")
 	createCmd.Flags().StringP("quantize", "q", "", "Quantize model to this level (e.g. q4_K_M)")
+	createCmd.Flags().Bool("experimental", false, "Enable experimental safetensors model creation")
 
 	showCmd := &cobra.Command{
 		Use:     "show MODEL",
@@ -1509,6 +2143,17 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().String("think", "", "Enable thinking mode: true/false or high/medium/low for supported models")
 	runCmd.Flags().Lookup("think").NoOptDefVal = "true"
 	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
+	runCmd.Flags().Bool("truncate", false, "For embedding models: truncate inputs exceeding context length (default: true). Set --truncate=false to error instead")
+	runCmd.Flags().Int("dimensions", 0, "Truncate output embeddings to specified dimension (embedding models only)")
+	runCmd.Flags().Bool("experimental", false, "Enable experimental agent loop with tools")
+	runCmd.Flags().Bool("experimental-yolo", false, "Skip all tool approval prompts (use with caution)")
+	runCmd.Flags().Bool("experimental-websearch", false, "Enable web search tool in experimental mode")
+
+	// Image generation flags (width, height, steps, seed, etc.)
+	imagegen.RegisterFlags(runCmd)
+
+	runCmd.Flags().Bool("imagegen", false, "Use the imagegen runner for LLM inference")
+	runCmd.Flags().MarkHidden("imagegen")
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
@@ -1521,7 +2166,7 @@ func NewCLI() *cobra.Command {
 	serveCmd := &cobra.Command{
 		Use:     "serve",
 		Aliases: []string{"start"},
-		Short:   "Start ollama",
+		Short:   "Start Ollama",
 		Args:    cobra.ExactArgs(0),
 		RunE:    RunServer,
 	}
@@ -1545,6 +2190,40 @@ func NewCLI() *cobra.Command {
 	}
 
 	pushCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+
+	signinCmd := &cobra.Command{
+		Use:     "signin",
+		Short:   "Sign in to ollama.com",
+		Args:    cobra.ExactArgs(0),
+		PreRunE: checkServerHeartbeat,
+		RunE:    SigninHandler,
+	}
+
+	loginCmd := &cobra.Command{
+		Use:     "login",
+		Short:   "Sign in to ollama.com",
+		Hidden:  true,
+		Args:    cobra.ExactArgs(0),
+		PreRunE: checkServerHeartbeat,
+		RunE:    SigninHandler,
+	}
+
+	signoutCmd := &cobra.Command{
+		Use:     "signout",
+		Short:   "Sign out from ollama.com",
+		Args:    cobra.ExactArgs(0),
+		PreRunE: checkServerHeartbeat,
+		RunE:    SignoutHandler,
+	}
+
+	logoutCmd := &cobra.Command{
+		Use:     "logout",
+		Short:   "Sign out from ollama.com",
+		Hidden:  true,
+		Args:    cobra.ExactArgs(0),
+		PreRunE: checkServerHeartbeat,
+		RunE:    SignoutHandler,
+	}
 
 	listCmd := &cobra.Command{
 		Use:     "list",
@@ -1607,7 +2286,8 @@ func NewCLI() *cobra.Command {
 	} {
 		switch cmd {
 		case runCmd:
-			appendEnvDocs(cmd, []envconfig.EnvVar{envVars["OLLAMA_HOST"], envVars["OLLAMA_NOHISTORY"]})
+			imagegen.AppendFlagsDocs(cmd)
+			appendEnvDocs(cmd, []envconfig.EnvVar{envVars["OLLAMA_EDITOR"], envVars["OLLAMA_HOST"], envVars["OLLAMA_NOHISTORY"]})
 		case serveCmd:
 			appendEnvDocs(cmd, []envconfig.EnvVar{
 				envVars["OLLAMA_DEBUG"],
@@ -1618,6 +2298,7 @@ func NewCLI() *cobra.Command {
 				envVars["OLLAMA_MAX_QUEUE"],
 				envVars["OLLAMA_MODELS"],
 				envVars["OLLAMA_NUM_PARALLEL"],
+				envVars["OLLAMA_NO_CLOUD"],
 				envVars["OLLAMA_NOPRUNE"],
 				envVars["OLLAMA_ORIGINS"],
 				envVars["OLLAMA_SCHED_SPREAD"],
@@ -1640,11 +2321,16 @@ func NewCLI() *cobra.Command {
 		stopCmd,
 		pullCmd,
 		pushCmd,
+		signinCmd,
+		loginCmd,
+		signoutCmd,
+		logoutCmd,
 		listCmd,
 		psCmd,
 		copyCmd,
 		deleteCmd,
 		runnerCmd,
+		config.LaunchCmd(checkServerHeartbeat, runInteractiveTUI),
 	)
 
 	return rootCmd

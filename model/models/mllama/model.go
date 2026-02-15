@@ -11,11 +11,12 @@ import (
 	"github.com/ollama/ollama/ml/nn"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
+	"github.com/ollama/ollama/tokenizer"
 )
 
 type Model struct {
 	model.Base
-	model.BytePairEncoding
+	tokenizer.Tokenizer
 
 	*VisionModel `gguf:"v"`
 	*TextModel
@@ -32,9 +33,8 @@ const (
 
 func New(c fs.Config) (model.Model, error) {
 	m := Model{
-		BytePairEncoding: model.NewBytePairEncoding(
-			c.String("tokenizer.ggml.pretokenizer", `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
-			&model.Vocabulary{
+		Tokenizer: tokenizer.NewBytePairEncoding(
+			&tokenizer.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Types:  c.Ints("tokenizer.ggml.token_type"),
 				Merges: c.Strings("tokenizer.ggml.merges"),
@@ -46,6 +46,7 @@ func New(c fs.Config) (model.Model, error) {
 					c.Ints("tokenizer.ggml.eos_token_ids")...,
 				),
 			},
+			`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
 		),
 		ImageProcessor: newImageProcessor(c),
 		VisionModel:    newVisionModel(c),
@@ -80,8 +81,8 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 		f32s = f32s[:m.imageSize*m.imageSize*m.numChannels*m.maxNumTiles]
 	}
 
-	pixelValues := ctx.Input().FromFloatSlice(f32s, m.imageSize, m.imageSize, m.numChannels, m.maxNumTiles)
-	aspectRatio := ctx.Input().FromIntSlice([]int32{int32(ratio.rank)}, 1)
+	pixelValues := ctx.Input().FromFloats(f32s, m.imageSize, m.imageSize, m.numChannels, m.maxNumTiles)
+	aspectRatio := ctx.Input().FromInts([]int32{int32(ratio.rank)}, 1)
 
 	positionIDs := ctx.Arange(0, 1601, 1, ml.DTypeI32)
 	crossAttentionStates := m.VisionModel.Forward(ctx, pixelValues, positionIDs, aspectRatio)
@@ -90,7 +91,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 	return []input.Multimodal{{Tensor: projectedOutputs}}, nil
 }
 
-func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
+func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
 	for i := range inputs {
 		if inputs[i].Multimodal != nil {
 			inputs[i].Token = 128256 // <|image|>
@@ -106,11 +107,10 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 		crossAttentionStates = batch.Multimodal[len(batch.Multimodal)-1].Multimodal[0].Tensor
 	}
 
-	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
-	outputs := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
+	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
 
 	// TODO: attention mask, cross attention mask
-	return m.TextModel.Forward(ctx, batch.Inputs, positions, outputs, crossAttentionStates, nil, m.Cache.(*kvcache.WrapperCache)), nil
+	return m.TextModel.Forward(ctx, batch.Inputs, positions, batch.Outputs, crossAttentionStates, nil, m.Cache.(*kvcache.WrapperCache)), nil
 }
 
 func init() {

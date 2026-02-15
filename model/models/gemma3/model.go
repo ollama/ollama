@@ -12,11 +12,12 @@ import (
 	"github.com/ollama/ollama/ml/nn"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
+	"github.com/ollama/ollama/tokenizer"
 )
 
 type Model struct {
 	model.Base
-	model.SentencePieceModel
+	tokenizer.Tokenizer
 
 	*VisionModel `gguf:"v"`
 	*TextModel
@@ -54,24 +55,35 @@ func (p *MultiModalProjector) Forward(ctx ml.Context, visionOutputs ml.Tensor, i
 }
 
 func New(c fs.Config) (model.Model, error) {
-	m := Model{
-		SentencePieceModel: model.NewSentencePieceModel(
-			&model.Vocabulary{
-				Values: c.Strings("tokenizer.ggml.tokens"),
-				Scores: c.Floats("tokenizer.ggml.scores"),
-				Types:  c.Ints("tokenizer.ggml.token_type"),
-				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
-				BOS:    []int32{int32(c.Uint("tokenizer.ggml.bos_token_id"))},
-				AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
-				EOS: append(
-					[]int32{
-						int32(c.Uint("tokenizer.ggml.eos_token_id")),
-						int32(c.Uint("tokenizer.ggml.eot_token_id", 106)),
-					},
-					c.Ints("tokenizer.ggml.eos_token_ids")...,
-				),
+	vocabulary := tokenizer.Vocabulary{
+		Values: c.Strings("tokenizer.ggml.tokens"),
+		Scores: c.Floats("tokenizer.ggml.scores"),
+		Types:  c.Ints("tokenizer.ggml.token_type"),
+		Merges: c.Strings("tokenizer.ggml.merges"),
+		AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
+		BOS:    []int32{int32(c.Uint("tokenizer.ggml.bos_token_id"))},
+		AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
+		EOS: append(
+			[]int32{
+				int32(c.Uint("tokenizer.ggml.eos_token_id")),
 			},
+			c.Ints("tokenizer.ggml.eos_token_ids")...,
 		),
+	}
+
+	var t tokenizer.Tokenizer
+	switch c.String("tokenizer.ggml.model") {
+	case "gpt2":
+		t = tokenizer.NewBytePairEncoding(&vocabulary)
+	default:
+		// Previous uploads of Gemma 3 on Ollama did not have token 106
+		// (i.e. "<end_of_turn>") so we need to add in case it's not already present
+		vocabulary.EOS = append(vocabulary.EOS, int32(c.Uint("tokenizer.ggml.eot_token_id", 106)))
+		t = tokenizer.NewSentencePiece(&vocabulary)
+	}
+
+	m := Model{
+		Tokenizer:      t,
 		ImageProcessor: newImageProcessor(c),
 		VisionModel:    newVisionModel(c),
 		TextModel:      newTextModel(c),
@@ -101,7 +113,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 		return nil, err
 	}
 
-	pixelValues := ctx.Input().FromFloatSlice(f32s,
+	pixelValues := ctx.Input().FromFloats(f32s,
 		m.ImageProcessor.imageSize,
 		m.ImageProcessor.imageSize,
 		m.ImageProcessor.numChannels,
@@ -112,8 +124,8 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 	return []input.Multimodal{{Tensor: visionOutputs}}, nil
 }
 
-func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
-	var result []input.Input
+func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
+	var result []*input.Input
 
 	for _, inp := range inputs {
 		if len(inp.Multimodal) == 0 {
@@ -122,17 +134,17 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 			inputMultimodal := inp.Multimodal[0].Tensor
 
 			result = append(result,
-				input.Input{Token: 108, SameBatch: inputMultimodal.Dim(1) + 3}, // "\n\n"
-				input.Input{Token: 255999},                                     // "<start_of_image>""
-				input.Input{Multimodal: []input.Multimodal{{Tensor: inputMultimodal}}, MultimodalHash: inp.MultimodalHash}, // image data is on the first placeholder
+				&input.Input{Token: 108, SameBatch: inputMultimodal.Dim(1) + 3}, // "\n\n"
+				&input.Input{Token: 255999},                                     // "<start_of_image>""
+				&input.Input{Multimodal: []input.Multimodal{{Tensor: inputMultimodal}}, MultimodalHash: inp.MultimodalHash}, // image data is on the first placeholder
 			)
 
 			// add image token placeholders
-			result = append(result, slices.Repeat([]input.Input{{Token: 0}}, inputMultimodal.Dim(1)-1)...)
+			result = append(result, slices.Repeat([]*input.Input{{Token: 0}}, inputMultimodal.Dim(1)-1)...)
 
 			result = append(result,
-				input.Input{Token: 256000}, // <end_of_image>
-				input.Input{Token: 108},    // "\n\n"
+				&input.Input{Token: 256000}, // <end_of_image>
+				&input.Input{Token: 108},    // "\n\n"
 			)
 		}
 	}
@@ -141,12 +153,19 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
-	outputs := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
+	hiddenState := m.TextModel.Forward(ctx, batch, m.Cache)
+	hiddenState = m.Output.Forward(ctx, hiddenState)
 
-	return m.TextModel.Forward(ctx, batch.Inputs, positions, outputs, batch, m.Cache), nil
+	if m.TextConfig.finalLogitSoftcap > 0.0 {
+		hiddenState = hiddenState.Scale(ctx, 1.0/float64(m.TextConfig.finalLogitSoftcap))
+		hiddenState = hiddenState.Tanh(ctx)
+		hiddenState = hiddenState.Scale(ctx, float64(m.TextConfig.finalLogitSoftcap))
+	}
+
+	return hiddenState, nil
 }
 
 func init() {
 	model.Register("gemma3", New)
+	model.Register("gemma3_embed", newEmbedModel)
 }

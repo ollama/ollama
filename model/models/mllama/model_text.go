@@ -8,7 +8,6 @@ import (
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
-	"github.com/ollama/ollama/ml/nn/fast"
 	"github.com/ollama/ollama/ml/nn/rope"
 )
 
@@ -26,11 +25,11 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, hiddenState, positions ml.T
 
 	query := sa.Query.Forward(ctx, hiddenState)
 	query = query.Reshape(ctx, headDim, opts.numHeads, batchSize)
-	query = fast.RoPE(ctx, query, positions, opts.ropeDim, opts.ropeBase, opts.ropeScale, rope.WithFactors(sa.RopeFactors))
+	query = opts.applyRotaryPositionEmbeddings(ctx, query, positions, sa.RopeFactors)
 
 	key := sa.Key.Forward(ctx, hiddenState)
 	key = key.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
-	key = fast.RoPE(ctx, key, positions, opts.ropeDim, opts.ropeBase, opts.ropeScale, rope.WithFactors(sa.RopeFactors))
+	key = opts.applyRotaryPositionEmbeddings(ctx, key, positions, sa.RopeFactors)
 
 	value := sa.Value.Forward(ctx, hiddenState)
 	value = value.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
@@ -44,8 +43,8 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, hiddenState, positions ml.T
 
 func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
 	// This will only get called for layers in the cache, which are just the self attention layers
-	if sa, ok := m.Transformer.Layers[layer].(*TextSelfAttentionDecoderLayer); ok {
-		return fast.RoPE(ctx, key, shift, m.ropeDim, m.ropeBase, m.ropeScale, rope.WithFactors(sa.SelfAttention.RopeFactors)), nil
+	if layer, ok := m.Transformer.Layers[layer].(*TextSelfAttentionDecoderLayer); ok {
+		return m.applyRotaryPositionEmbeddings(ctx, key, shift, layer.SelfAttention.RopeFactors), nil
 	}
 
 	return key, nil
@@ -58,7 +57,7 @@ type TextMLP struct {
 }
 
 func (mlp *TextMLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *TextModelOptions) ml.Tensor {
-	hiddenState = mlp.Gate.Forward(ctx, hiddenState).SILU(ctx).Mul(ctx, mlp.Up.Forward(ctx, hiddenState))
+	hiddenState = mlp.Gate.Forward(ctx, hiddenState).SILU(ctx, mlp.Up.Forward(ctx, hiddenState))
 	return mlp.Down.Forward(ctx, hiddenState)
 }
 
@@ -206,6 +205,10 @@ type TextModelOptions struct {
 	crossAttentionLayers []int32
 }
 
+func (o TextModelOptions) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions, factors ml.Tensor) ml.Tensor {
+	return nn.RoPE(ctx, states, positions, o.ropeDim, o.ropeBase, 1./o.ropeScale, rope.WithFactors(factors))
+}
+
 type TextModel struct {
 	TokenEmbedding *nn.Embedding `gguf:"token_embd"`
 	Transformer    *TextDecoder  `gguf:"blk"`
@@ -244,7 +247,7 @@ func newTextModel(c fs.Config) *TextModel {
 			ropeDim:              int(c.Uint("rope.dimension_count")),
 			eps:                  c.Float("attention.layer_norm_rms_epsilon"),
 			ropeBase:             c.Float("rope.freq_base"),
-			ropeScale:            c.Float("rope.freq_scale", 1),
+			ropeScale:            c.Float("rope.scaling.factor", 1),
 			crossAttentionLayers: c.Ints("attention.cross_attention_layers"),
 		},
 	}

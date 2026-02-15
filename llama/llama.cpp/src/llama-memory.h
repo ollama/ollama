@@ -2,7 +2,9 @@
 
 #include "llama.h"
 
+#include <map>
 #include <memory>
+#include <functional>
 
 struct llama_ubatch;
 
@@ -36,8 +38,8 @@ bool llama_memory_status_is_fail(llama_memory_status status);
 
 // the interface for managing the memory context during batch processing
 // this interface is implemented per memory type. see:
-//   - llama_kv_cache_unified_context
-//   - llama_kv_cache_unified_iswa_context
+//   - llama_kv_cache_context
+//   - llama_kv_cache_iswa_context
 //   ...
 //
 // the only method that should mutate the memory and the memory context is llama_memory_i::apply()
@@ -64,6 +66,13 @@ using llama_memory_context_ptr = std::unique_ptr<llama_memory_context_i>;
 // general concept of LLM memory
 // the KV cache is a type of LLM memory, but there can be other types
 struct llama_memory_i {
+    // this callback is used to filter out layers that should not be included in the cache
+    using layer_filter_cb = std::function<bool(int32_t il)>;
+
+    // this callback is used to specify which layers should reuse memory from other layers
+    // return negative value to indicate that the layer il should not reuse memory
+    using layer_reuse_cb = std::function<int32_t(int32_t il)>;
+
     virtual ~llama_memory_i() = default;
 
     // split the input batch into a set of ubatches and verify that they can fit into the cache
@@ -77,7 +86,7 @@ struct llama_memory_i {
     // simulate full cache, used for allocating worst-case compute buffers
     virtual llama_memory_context_ptr init_full() = 0;
 
-    // prepare for any pending memory updates, such as shifts, defrags, etc.
+    // prepare for any pending memory updates, such as shifts, copies, etc.
     // status == LLAMA_MEMORY_STATUS_NO_UPDATE if there is nothing to update
     virtual llama_memory_context_ptr init_update(llama_context * lctx, bool optimize) = 0;
 
@@ -100,17 +109,14 @@ struct llama_memory_i {
     virtual llama_pos seq_pos_min(llama_seq_id seq_id) const = 0;
     virtual llama_pos seq_pos_max(llama_seq_id seq_id) const = 0;
 
+    virtual std::map<ggml_backend_buffer_type_t, size_t> memory_breakdown() const = 0;
+
     //
     // state write/read
     //
 
-    virtual void state_write(llama_io_write_i & io, llama_seq_id seq_id = -1) const = 0;
-    virtual void state_read (llama_io_read_i  & io, llama_seq_id seq_id = -1) = 0;
+    virtual void state_write(llama_io_write_i & io, llama_seq_id seq_id = -1, llama_state_seq_flags flags = 0) const = 0;
+    virtual void state_read (llama_io_read_i  & io, llama_seq_id seq_id = -1, llama_state_seq_flags flags = 0) = 0;
 };
 
 using llama_memory_ptr = std::unique_ptr<llama_memory_i>;
-
-// TODO: temporary until the llama_kv_cache is removed from the public API
-struct llama_kv_cache : public llama_memory_i {
-    virtual ~llama_kv_cache() = default;
-};

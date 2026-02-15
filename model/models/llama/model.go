@@ -2,17 +2,16 @@ package llama
 
 import (
 	"cmp"
-	"fmt"
 	"math"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
-	"github.com/ollama/ollama/ml/nn/fast"
 	"github.com/ollama/ollama/ml/nn/rope"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
+	"github.com/ollama/ollama/tokenizer"
 )
 
 type Options struct {
@@ -21,53 +20,86 @@ type Options struct {
 	eps, ropeBase, ropeScale         float32
 }
 
+func (o Options) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions, factors ml.Tensor) ml.Tensor {
+	return nn.RoPE(ctx, states, positions, cmp.Or(o.ropeDim, o.headDim, o.hiddenSize/o.numHeads), o.ropeBase, 1./o.ropeScale, rope.WithFactors(factors))
+}
+
 type Model struct {
 	model.Base
-	model.BytePairEncoding
+	tokenizer.Tokenizer
 
 	TokenEmbedding *nn.Embedding `gguf:"token_embd"`
 	Layers         []Layer       `gguf:"blk"`
 	OutputNorm     *nn.RMSNorm   `gguf:"output_norm"`
 	Output         *nn.Linear    `gguf:"output,alt:token_embd"`
 
-	*Options
+	Options
 }
 
 func New(c fs.Config) (model.Model, error) {
-	// This model currently only supports the gpt2 tokenizer
-	if c.String("tokenizer.ggml.model") == "llama" {
-		return nil, fmt.Errorf("unsupported tokenizer: llama")
+	if c.Uint("expert_count") > 0 {
+		// TODO: support mixtures of experts
+		return nil, model.ErrUnsupportedModel
 	}
-	// Best effort detection of library/deepseek-coder model(s) which are incompatible
-	if c.String("general.name") == "deepseek-ai" {
-		return nil, fmt.Errorf("unsupported model: %s", c.String("general.name"))
-	}
-	m := Model{
-		BytePairEncoding: model.NewBytePairEncoding(
-			c.String("tokenizer.ggml.pretokenizer", `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
-			&model.Vocabulary{
-				Values: c.Strings("tokenizer.ggml.tokens"),
-				Types:  c.Ints("tokenizer.ggml.token_type"),
-				Merges: c.Strings("tokenizer.ggml.merges"),
-				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
-				BOS:    []int32{int32(c.Uint("tokenizer.ggml.bos_token_id"))},
-				AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
-				EOS: append(
-					[]int32{int32(c.Uint("tokenizer.ggml.eos_token_id"))},
-					c.Ints("tokenizer.ggml.eos_token_ids")...,
-				),
-			},
+
+	var processor tokenizer.Tokenizer
+	vocabulary := tokenizer.Vocabulary{
+		Values: c.Strings("tokenizer.ggml.tokens"),
+		Scores: c.Floats("tokenizer.ggml.scores"),
+		Types:  c.Ints("tokenizer.ggml.token_type"),
+		Merges: c.Strings("tokenizer.ggml.merges"),
+		AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
+		BOS:    []int32{int32(c.Uint("tokenizer.ggml.bos_token_id"))},
+		AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
+		EOS: append(
+			[]int32{int32(c.Uint("tokenizer.ggml.eos_token_id"))},
+			c.Ints("tokenizer.ggml.eos_token_ids")...,
 		),
-		Layers: make([]Layer, c.Uint("block_count")),
-		Options: &Options{
+	}
+	switch c.String("tokenizer.ggml.model") {
+	case "gpt2":
+		var pretokenizers []string
+		switch c.String("tokenizer.ggml.pre") {
+		case "default":
+			// no-op use the default bpe pretokenizer
+		case "qwen2":
+			pretokenizers = []string{
+				"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+			}
+		case "refact":
+			pretokenizers = []string{
+				`\p{N}`,
+				`'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+`,
+			}
+		case "tekken":
+			pretokenizers = []string{
+				"[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]*[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]+|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]+[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]*|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n/]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+			}
+		default:
+			// use a llama-style pretokenizer
+			pretokenizers = []string{
+				"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+			}
+		}
+		processor = tokenizer.NewBytePairEncoding(&vocabulary, pretokenizers...)
+	case "llama":
+		processor = tokenizer.NewSentencePiece(&vocabulary)
+	default:
+		return nil, model.ErrUnsupportedTokenizer
+	}
+
+	m := Model{
+		Tokenizer: processor,
+		Layers:    make([]Layer, c.Uint("block_count")),
+		Options: Options{
 			hiddenSize: int(c.Uint("embedding_length")),
 			numHeads:   int(c.Uint("attention.head_count")),
 			numKVHeads: int(c.Uint("attention.head_count_kv")),
 			headDim:    int(c.Uint("attention.key_length")),
 			ropeDim:    int(c.Uint("rope.dimension_count")),
 			eps:        c.Float("attention.layer_norm_rms_epsilon"),
-			ropeBase:   c.Float("rope.freq_base"),
-			ropeScale:  c.Float("rope.freq_scale", 1),
+			ropeBase:   c.Float("rope.freq_base", 1e5),
+			ropeScale:  c.Float("rope.scaling.factor", 1),
 		},
 	}
 
@@ -87,7 +119,6 @@ type SelfAttention struct {
 func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positions ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
 	headDim := cmp.Or(opts.headDim, opts.hiddenSize/opts.numHeads)
-	ropeDim := cmp.Or(opts.ropeDim, headDim)
 
 	query := sa.Query.Forward(ctx, hiddenState)
 	query = query.Reshape(ctx, headDim, opts.numHeads, batchSize)
@@ -98,8 +129,8 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positions ml.Tenso
 	value := sa.Value.Forward(ctx, hiddenState)
 	value = value.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
 
-	query = fast.RoPE(ctx, query, positions, ropeDim, opts.ropeBase, opts.ropeScale, rope.WithFactors(sa.RopeFactors))
-	key = fast.RoPE(ctx, key, positions, ropeDim, opts.ropeBase, opts.ropeScale, rope.WithFactors(sa.RopeFactors))
+	query = opts.applyRotaryPositionEmbeddings(ctx, query, positions, sa.RopeFactors)
+	key = opts.applyRotaryPositionEmbeddings(ctx, key, positions, sa.RopeFactors)
 
 	attention := nn.Attention(ctx, query, key, value, 1.0/math.Sqrt(float64(headDim)), cache)
 	attention = attention.Reshape(ctx, headDim*opts.numHeads, batchSize)
@@ -107,8 +138,7 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positions ml.Tenso
 }
 
 func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	ropeDim := cmp.Or(m.ropeDim, m.hiddenSize/m.numHeads)
-	return fast.RoPE(ctx, key, shift, ropeDim, m.ropeBase, m.ropeScale, rope.WithFactors(m.Layers[layer].SelfAttention.RopeFactors)), nil
+	return m.applyRotaryPositionEmbeddings(ctx, key, shift, m.Layers[layer].SelfAttention.RopeFactors), nil
 }
 
 type MLP struct {
@@ -118,7 +148,7 @@ type MLP struct {
 }
 
 func (mlp *MLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Options) ml.Tensor {
-	hiddenState = mlp.Gate.Forward(ctx, hiddenState).SILU(ctx).Mul(ctx, mlp.Up.Forward(ctx, hiddenState))
+	hiddenState = mlp.Gate.Forward(ctx, hiddenState).SILU(ctx, mlp.Up.Forward(ctx, hiddenState))
 	return mlp.Down.Forward(ctx, hiddenState)
 }
 
@@ -151,7 +181,7 @@ func (l *Layer) Forward(ctx ml.Context, hiddenState, positions, outputs ml.Tenso
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
+	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
 
 	hiddenState := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 
@@ -160,10 +190,10 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 
 		var outputs ml.Tensor
 		if i == len(m.Layers)-1 {
-			outputs = ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
+			outputs = batch.Outputs
 		}
 
-		hiddenState = layer.Forward(ctx, hiddenState, positions, outputs, m.Cache, m.Options)
+		hiddenState = layer.Forward(ctx, hiddenState, positions, outputs, m.Cache, &m.Options)
 	}
 
 	hiddenState = m.OutputNorm.Forward(ctx, hiddenState, m.eps)

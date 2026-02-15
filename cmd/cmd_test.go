@@ -3,10 +3,13 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -289,6 +292,31 @@ Weigh anchor!
 			t.Errorf("unexpected output (-want +got):\n%s", diff)
 		}
 	})
+
+	t.Run("min version", func(t *testing.T) {
+		var b bytes.Buffer
+		if err := showInfo(&api.ShowResponse{
+			Details: api.ModelDetails{
+				Family:            "test",
+				ParameterSize:     "7B",
+				QuantizationLevel: "FP16",
+			},
+			Requires: "0.14.0",
+		}, false, &b); err != nil {
+			t.Fatal(err)
+		}
+
+		expect := `  Model
+    architecture    test      
+    parameters      7B        
+    quantization    FP16      
+    requires        0.14.0    
+
+`
+		if diff := cmp.Diff(expect, b.String()); diff != "" {
+			t.Errorf("unexpected output (-want +got):\n%s", diff)
+		}
+	})
 }
 
 func TestDeleteHandler(t *testing.T) {
@@ -304,6 +332,8 @@ func TestDeleteHandler(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			} else {
 				w.WriteHeader(http.StatusNotFound)
+				errPayload := `{"error":"model '%s' not found"}`
+				w.Write([]byte(fmt.Sprintf(errPayload, req.Name)))
 			}
 			return
 		}
@@ -346,8 +376,332 @@ func TestDeleteHandler(t *testing.T) {
 	}
 
 	err := DeleteHandler(cmd, []string{"test-model-not-found"})
-	if err == nil || !strings.Contains(err.Error(), "unable to stop existing running model \"test-model-not-found\"") {
+	if err == nil || !strings.Contains(err.Error(), "model 'test-model-not-found' not found") {
 		t.Fatalf("DeleteHandler failed: expected error about stopping non-existent model, got %v", err)
+	}
+}
+
+func TestRunEmbeddingModel(t *testing.T) {
+	reqCh := make(chan api.EmbedRequest, 1)
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" && r.Method == http.MethodPost {
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityEmbedding},
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		}
+		if r.URL.Path == "/api/embed" && r.Method == http.MethodPost {
+			var req api.EmbedRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			reqCh <- req
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(api.EmbedResponse{
+				Model:      "test-embedding-model",
+				Embeddings: [][]float32{{0.1, 0.2, 0.3}},
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		}
+		http.NotFound(w, r)
+	}))
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("truncate", false, "")
+	cmd.Flags().Int("dimensions", 0, "")
+	cmd.Flags().Bool("verbose", false, "")
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- RunHandler(cmd, []string{"test-embedding-model", "hello", "world"})
+	}()
+
+	err := <-errCh
+	w.Close()
+	os.Stdout = oldStdout
+
+	if err != nil {
+		t.Fatalf("RunHandler returned error: %v", err)
+	}
+
+	var out bytes.Buffer
+	io.Copy(&out, r)
+
+	select {
+	case req := <-reqCh:
+		inputText, _ := req.Input.(string)
+		if diff := cmp.Diff("hello world", inputText); diff != "" {
+			t.Errorf("unexpected input (-want +got):\n%s", diff)
+		}
+		if req.Truncate != nil {
+			t.Errorf("expected truncate to be nil, got %v", *req.Truncate)
+		}
+		if req.KeepAlive != nil {
+			t.Errorf("expected keepalive to be nil, got %v", req.KeepAlive)
+		}
+		if req.Dimensions != 0 {
+			t.Errorf("expected dimensions to be 0, got %d", req.Dimensions)
+		}
+	default:
+		t.Fatal("server did not receive embed request")
+	}
+
+	expectOutput := "[0.1,0.2,0.3]\n"
+	if diff := cmp.Diff(expectOutput, out.String()); diff != "" {
+		t.Errorf("unexpected output (-want +got):\n%s", diff)
+	}
+}
+
+func TestRunEmbeddingModelWithFlags(t *testing.T) {
+	reqCh := make(chan api.EmbedRequest, 1)
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" && r.Method == http.MethodPost {
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityEmbedding},
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		}
+		if r.URL.Path == "/api/embed" && r.Method == http.MethodPost {
+			var req api.EmbedRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			reqCh <- req
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(api.EmbedResponse{
+				Model:        "test-embedding-model",
+				Embeddings:   [][]float32{{0.4, 0.5}},
+				LoadDuration: 5 * time.Millisecond,
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		}
+		http.NotFound(w, r)
+	}))
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("truncate", false, "")
+	cmd.Flags().Int("dimensions", 0, "")
+	cmd.Flags().Bool("verbose", false, "")
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
+
+	if err := cmd.Flags().Set("truncate", "true"); err != nil {
+		t.Fatalf("failed to set truncate flag: %v", err)
+	}
+	if err := cmd.Flags().Set("dimensions", "2"); err != nil {
+		t.Fatalf("failed to set dimensions flag: %v", err)
+	}
+	if err := cmd.Flags().Set("keepalive", "5m"); err != nil {
+		t.Fatalf("failed to set keepalive flag: %v", err)
+	}
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- RunHandler(cmd, []string{"test-embedding-model", "test", "input"})
+	}()
+
+	err := <-errCh
+	w.Close()
+	os.Stdout = oldStdout
+
+	if err != nil {
+		t.Fatalf("RunHandler returned error: %v", err)
+	}
+
+	var out bytes.Buffer
+	io.Copy(&out, r)
+
+	select {
+	case req := <-reqCh:
+		inputText, _ := req.Input.(string)
+		if diff := cmp.Diff("test input", inputText); diff != "" {
+			t.Errorf("unexpected input (-want +got):\n%s", diff)
+		}
+		if req.Truncate == nil || !*req.Truncate {
+			t.Errorf("expected truncate pointer true, got %v", req.Truncate)
+		}
+		if req.Dimensions != 2 {
+			t.Errorf("expected dimensions 2, got %d", req.Dimensions)
+		}
+		if req.KeepAlive == nil || req.KeepAlive.Duration != 5*time.Minute {
+			t.Errorf("unexpected keepalive duration: %v", req.KeepAlive)
+		}
+	default:
+		t.Fatal("server did not receive embed request")
+	}
+
+	expectOutput := "[0.4,0.5]\n"
+	if diff := cmp.Diff(expectOutput, out.String()); diff != "" {
+		t.Errorf("unexpected output (-want +got):\n%s", diff)
+	}
+}
+
+func TestRunEmbeddingModelPipedInput(t *testing.T) {
+	reqCh := make(chan api.EmbedRequest, 1)
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" && r.Method == http.MethodPost {
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityEmbedding},
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		}
+		if r.URL.Path == "/api/embed" && r.Method == http.MethodPost {
+			var req api.EmbedRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			reqCh <- req
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(api.EmbedResponse{
+				Model:      "test-embedding-model",
+				Embeddings: [][]float32{{0.6, 0.7}},
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		}
+		http.NotFound(w, r)
+	}))
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("truncate", false, "")
+	cmd.Flags().Int("dimensions", 0, "")
+	cmd.Flags().Bool("verbose", false, "")
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
+
+	// Capture stdin
+	oldStdin := os.Stdin
+	stdinR, stdinW, _ := os.Pipe()
+	os.Stdin = stdinR
+	stdinW.Write([]byte("piped text"))
+	stdinW.Close()
+
+	// Capture stdout
+	oldStdout := os.Stdout
+	stdoutR, stdoutW, _ := os.Pipe()
+	os.Stdout = stdoutW
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- RunHandler(cmd, []string{"test-embedding-model", "additional", "args"})
+	}()
+
+	err := <-errCh
+	stdoutW.Close()
+	os.Stdout = oldStdout
+	os.Stdin = oldStdin
+
+	if err != nil {
+		t.Fatalf("RunHandler returned error: %v", err)
+	}
+
+	var out bytes.Buffer
+	io.Copy(&out, stdoutR)
+
+	select {
+	case req := <-reqCh:
+		inputText, _ := req.Input.(string)
+		// Should combine piped input with command line args
+		if diff := cmp.Diff("piped text additional args", inputText); diff != "" {
+			t.Errorf("unexpected input (-want +got):\n%s", diff)
+		}
+	default:
+		t.Fatal("server did not receive embed request")
+	}
+
+	expectOutput := "[0.6,0.7]\n"
+	if diff := cmp.Diff(expectOutput, out.String()); diff != "" {
+		t.Errorf("unexpected output (-want +got):\n%s", diff)
+	}
+}
+
+func TestRunEmbeddingModelNoInput(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" && r.Method == http.MethodPost {
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityEmbedding},
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		}
+		http.NotFound(w, r)
+	}))
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("truncate", false, "")
+	cmd.Flags().Int("dimensions", 0, "")
+	cmd.Flags().Bool("verbose", false, "")
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
+
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+
+	// Test with no input arguments (only model name)
+	err := RunHandler(cmd, []string{"test-embedding-model"})
+	if err == nil || !strings.Contains(err.Error(), "embedding models require input text") {
+		t.Fatalf("expected error about missing input, got %v", err)
 	}
 }
 
@@ -488,8 +842,34 @@ func TestPushHandler(t *testing.T) {
 						w.(http.Flusher).Flush()
 					}
 				},
+				"/api/me": func(w http.ResponseWriter, r *http.Request) {
+					if r.Method != http.MethodPost {
+						t.Errorf("expected POST request, got %s", r.Method)
+					}
+				},
 			},
 			expectedOutput: "\nYou can find your model at:\n\n\thttps://ollama.com/test-model\n",
+		},
+		{
+			name:      "not signed in push",
+			modelName: "notsignedin-model",
+			serverResponse: map[string]func(w http.ResponseWriter, r *http.Request){
+				"/api/me": func(w http.ResponseWriter, r *http.Request) {
+					if r.Method != http.MethodPost {
+						t.Errorf("expected POST request, got %s", r.Method)
+					}
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusUnauthorized)
+					err := json.NewEncoder(w).Encode(map[string]string{
+						"error":      "unauthorized",
+						"signin_url": "https://somethingsomething",
+					})
+					if err != nil {
+						t.Fatal(err)
+					}
+				},
+			},
+			expectedOutput: "You need to be signed in to push",
 		},
 		{
 			name:      "unauthorized push",
@@ -499,10 +879,15 @@ func TestPushHandler(t *testing.T) {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusUnauthorized)
 					err := json.NewEncoder(w).Encode(map[string]string{
-						"error": "access denied",
+						"error": "403: {\"errors\":[{\"code\":\"ACCESS DENIED\", \"message\":\"access denied\"}]}",
 					})
 					if err != nil {
 						t.Fatal(err)
+					}
+				},
+				"/api/me": func(w http.ResponseWriter, r *http.Request) {
+					if r.Method != http.MethodPost {
+						t.Errorf("expected POST request, got %s", r.Method)
 					}
 				},
 			},
@@ -522,6 +907,10 @@ func TestPushHandler(t *testing.T) {
 			defer mockServer.Close()
 
 			t.Setenv("OLLAMA_HOST", mockServer.URL)
+			tmpDir := t.TempDir()
+			t.Setenv("HOME", tmpDir)
+			t.Setenv("USERPROFILE", tmpDir)
+			initializeKeypair()
 
 			cmd := &cobra.Command{}
 			cmd.Flags().Bool("insecure", false, "")
@@ -557,7 +946,7 @@ func TestPushHandler(t *testing.T) {
 					t.Errorf("expected no error, got %v", err)
 				}
 				if tt.expectedOutput != "" {
-					if got := string(stdout); got != tt.expectedOutput {
+					if got := string(stdout); !strings.Contains(got, tt.expectedOutput) {
 						t.Errorf("expected output %q, got %q", tt.expectedOutput, got)
 					}
 				}
@@ -911,6 +1300,462 @@ func TestNewCreateRequest(t *testing.T) {
 			actual := NewCreateRequest(tt.from, tt.opts)
 			if !cmp.Equal(actual, tt.expected) {
 				t.Errorf("expected output %#v, got %#v", tt.expected, actual)
+			}
+		})
+	}
+}
+
+func TestRunOptions_Copy(t *testing.T) {
+	// Setup test data
+	originalKeepAlive := &api.Duration{Duration: 5 * time.Minute}
+	originalThink := &api.ThinkValue{Value: "test reasoning"}
+
+	original := runOptions{
+		Model:       "test-model",
+		ParentModel: "parent-model",
+		Prompt:      "test prompt",
+		Messages: []api.Message{
+			{Role: "user", Content: "hello"},
+			{Role: "assistant", Content: "hi there"},
+		},
+		WordWrap: true,
+		Format:   "json",
+		System:   "system prompt",
+		Images: []api.ImageData{
+			[]byte("image1"),
+			[]byte("image2"),
+		},
+		Options: map[string]any{
+			"temperature": 0.7,
+			"max_tokens":  1000,
+			"top_p":       0.9,
+		},
+		MultiModal:   true,
+		KeepAlive:    originalKeepAlive,
+		Think:        originalThink,
+		HideThinking: false,
+		ShowConnect:  true,
+	}
+
+	// Test the copy
+	copied := original.Copy()
+
+	// Test 1: Verify the copy is not the same instance
+	if &copied == &original {
+		t.Error("Copy should return a different instance")
+	}
+
+	// Test 2: Verify all fields are copied correctly
+	tests := []struct {
+		name string
+		got  interface{}
+		want interface{}
+	}{
+		{"Model", copied.Model, original.Model},
+		{"ParentModel", copied.ParentModel, original.ParentModel},
+		{"Prompt", copied.Prompt, original.Prompt},
+		{"WordWrap", copied.WordWrap, original.WordWrap},
+		{"Format", copied.Format, original.Format},
+		{"System", copied.System, original.System},
+		{"MultiModal", copied.MultiModal, original.MultiModal},
+		{"HideThinking", copied.HideThinking, original.HideThinking},
+		{"ShowConnect", copied.ShowConnect, original.ShowConnect},
+	}
+
+	for _, tt := range tests {
+		if !reflect.DeepEqual(tt.got, tt.want) {
+			t.Errorf("%s mismatch: got %v, want %v", tt.name, tt.got, tt.want)
+		}
+	}
+
+	// Test 3: Verify Messages slice is deeply copied
+	if len(copied.Messages) != len(original.Messages) {
+		t.Errorf("Messages length mismatch: got %d, want %d", len(copied.Messages), len(original.Messages))
+	}
+
+	if len(copied.Messages) > 0 && &copied.Messages[0] == &original.Messages[0] {
+		t.Error("Messages should be different instances")
+	}
+
+	// Modify original to verify independence
+	if len(original.Messages) > 0 {
+		originalContent := original.Messages[0].Content
+		original.Messages[0].Content = "modified"
+		if len(copied.Messages) > 0 && copied.Messages[0].Content == "modified" {
+			t.Error("Messages should be independent after copy")
+		}
+		// Restore for other tests
+		original.Messages[0].Content = originalContent
+	}
+
+	// Test 4: Verify Images slice is deeply copied
+	if len(copied.Images) != len(original.Images) {
+		t.Errorf("Images length mismatch: got %d, want %d", len(copied.Images), len(original.Images))
+	}
+
+	if len(copied.Images) > 0 && &copied.Images[0] == &original.Images[0] {
+		t.Error("Images should be different instances")
+	}
+
+	// Modify original to verify independence
+	if len(original.Images) > 0 {
+		originalImage := original.Images[0]
+		original.Images[0] = []byte("modified")
+		if len(copied.Images) > 0 && string(copied.Images[0]) == "modified" {
+			t.Error("Images should be independent after copy")
+		}
+		// Restore for other tests
+		original.Images[0] = originalImage
+	}
+
+	// Test 5: Verify Options map is deeply copied
+	if len(copied.Options) != len(original.Options) {
+		t.Errorf("Options length mismatch: got %d, want %d", len(copied.Options), len(original.Options))
+	}
+
+	if len(copied.Options) > 0 && &copied.Options == &original.Options {
+		t.Error("Options map should be different instances")
+	}
+
+	// Modify original to verify independence
+	if len(original.Options) > 0 {
+		originalTemp := original.Options["temperature"]
+		original.Options["temperature"] = 0.9
+		if copied.Options["temperature"] == 0.9 {
+			t.Error("Options should be independent after copy")
+		}
+		// Restore for other tests
+		original.Options["temperature"] = originalTemp
+	}
+
+	// Test 6: Verify KeepAlive pointer is copied (shallow copy)
+	if copied.KeepAlive != original.KeepAlive {
+		t.Error("KeepAlive pointer should be the same (shallow copy)")
+	}
+
+	// Test 7: Verify Think pointer creates a new instance
+	if original.Think != nil && copied.Think == original.Think {
+		t.Error("Think should be a different instance")
+	}
+
+	if original.Think != nil && copied.Think != nil {
+		if !reflect.DeepEqual(copied.Think.Value, original.Think.Value) {
+			t.Errorf("Think.Value mismatch: got %v, want %v", copied.Think.Value, original.Think.Value)
+		}
+	}
+
+	// Test 8: Test with zero values
+	zeroOriginal := runOptions{}
+	zeroCopy := zeroOriginal.Copy()
+
+	if !reflect.DeepEqual(zeroCopy, zeroOriginal) {
+		fmt.Printf("orig: %#v\ncopy: %#v\n", zeroOriginal, zeroCopy)
+		t.Error("Copy of zero value should equal original zero value")
+	}
+}
+
+func TestRunOptions_Copy_EmptySlicesAndMaps(t *testing.T) {
+	// Test with empty slices and maps
+	original := runOptions{
+		Messages: []api.Message{},
+		Images:   []api.ImageData{},
+		Options:  map[string]any{},
+	}
+
+	copied := original.Copy()
+
+	if copied.Messages == nil {
+		t.Error("Empty Messages slice should remain empty, not nil")
+	}
+
+	if copied.Images == nil {
+		t.Error("Empty Images slice should remain empty, not nil")
+	}
+
+	if copied.Options == nil {
+		t.Error("Empty Options map should remain empty, not nil")
+	}
+
+	if len(copied.Messages) != 0 {
+		t.Error("Empty Messages slice should remain empty")
+	}
+
+	if len(copied.Images) != 0 {
+		t.Error("Empty Images slice should remain empty")
+	}
+
+	if len(copied.Options) != 0 {
+		t.Error("Empty Options map should remain empty")
+	}
+}
+
+func TestRunOptions_Copy_NilPointers(t *testing.T) {
+	// Test with nil pointers
+	original := runOptions{
+		KeepAlive: nil,
+		Think:     nil,
+	}
+
+	copied := original.Copy()
+
+	if copied.KeepAlive != nil {
+		t.Error("Nil KeepAlive should remain nil")
+	}
+
+	if copied.Think != nil {
+		t.Error("Nil Think should remain nil")
+	}
+}
+
+func TestRunOptions_Copy_ThinkValueVariants(t *testing.T) {
+	tests := []struct {
+		name  string
+		think *api.ThinkValue
+	}{
+		{"nil Think", nil},
+		{"bool true", &api.ThinkValue{Value: true}},
+		{"bool false", &api.ThinkValue{Value: false}},
+		{"string value", &api.ThinkValue{Value: "reasoning text"}},
+		{"int value", &api.ThinkValue{Value: 42}},
+		{"nil value", &api.ThinkValue{Value: nil}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			original := runOptions{Think: tt.think}
+			copied := original.Copy()
+
+			if tt.think == nil {
+				if copied.Think != nil {
+					t.Error("Nil Think should remain nil")
+				}
+				return
+			}
+
+			if copied.Think == nil {
+				t.Error("Non-nil Think should not become nil")
+				return
+			}
+
+			if copied.Think == original.Think {
+				t.Error("Think should be a different instance")
+			}
+
+			if !reflect.DeepEqual(copied.Think.Value, original.Think.Value) {
+				t.Errorf("Think.Value mismatch: got %v, want %v", copied.Think.Value, original.Think.Value)
+			}
+		})
+	}
+}
+
+func TestShowInfoImageGen(t *testing.T) {
+	var b bytes.Buffer
+	err := showInfo(&api.ShowResponse{
+		Details: api.ModelDetails{
+			Family:            "ZImagePipeline",
+			ParameterSize:     "10.3B",
+			QuantizationLevel: "Q8",
+		},
+		Capabilities: []model.Capability{model.CapabilityImage},
+		Requires:     "0.14.0",
+	}, false, &b)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expect := "  Model\n" +
+		"    architecture    ZImagePipeline    \n" +
+		"    parameters      10.3B             \n" +
+		"    quantization    Q8                \n" +
+		"    requires        0.14.0            \n" +
+		"\n" +
+		"  Capabilities\n" +
+		"    image    \n" +
+		"\n"
+	if diff := cmp.Diff(expect, b.String()); diff != "" {
+		t.Errorf("unexpected output (-want +got):\n%s", diff)
+	}
+}
+
+func TestPushProgressMessage(t *testing.T) {
+	tests := []struct {
+		name    string
+		status  string
+		digest  string
+		wantMsg string
+	}{
+		{
+			name:    "uses status when provided",
+			status:  "uploading model",
+			digest:  "sha256:abc123456789def",
+			wantMsg: "uploading model",
+		},
+		{
+			name:    "falls back to digest when status empty",
+			status:  "",
+			digest:  "sha256:abc123456789def",
+			wantMsg: "pushing abc123456789...",
+		},
+		{
+			name:    "handles short digest gracefully",
+			status:  "",
+			digest:  "sha256:abc",
+			wantMsg: "pushing sha256:abc...",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := tt.status
+			if msg == "" {
+				if len(tt.digest) >= 19 {
+					msg = fmt.Sprintf("pushing %s...", tt.digest[7:19])
+				} else {
+					msg = fmt.Sprintf("pushing %s...", tt.digest)
+				}
+			}
+			if msg != tt.wantMsg {
+				t.Errorf("got %q, want %q", msg, tt.wantMsg)
+			}
+		})
+	}
+}
+
+func TestRunOptions_Copy_Independence(t *testing.T) {
+	// Test that modifications to original don't affect copy
+	originalThink := &api.ThinkValue{Value: "original"}
+	original := runOptions{
+		Model:    "original-model",
+		Messages: []api.Message{{Role: "user", Content: "original"}},
+		Options:  map[string]any{"key": "value"},
+		Think:    originalThink,
+	}
+
+	copied := original.Copy()
+
+	// Modify original
+	original.Model = "modified-model"
+	if len(original.Messages) > 0 {
+		original.Messages[0].Content = "modified"
+	}
+	original.Options["key"] = "modified"
+	if original.Think != nil {
+		original.Think.Value = "modified"
+	}
+
+	// Verify copy is unchanged
+	if copied.Model == "modified-model" {
+		t.Error("Copy Model should not be affected by original modification")
+	}
+
+	if len(copied.Messages) > 0 && copied.Messages[0].Content == "modified" {
+		t.Error("Copy Messages should not be affected by original modification")
+	}
+
+	if copied.Options["key"] == "modified" {
+		t.Error("Copy Options should not be affected by original modification")
+	}
+
+	if copied.Think != nil && copied.Think.Value == "modified" {
+		t.Error("Copy Think should not be affected by original modification")
+	}
+}
+
+func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
+	tests := []struct {
+		name          string
+		remoteHost    string
+		whoamiStatus  int
+		whoamiResp    any
+		expectedError string
+	}{
+		{
+			name:         "ollama.com cloud model - user signed in",
+			remoteHost:   "https://ollama.com",
+			whoamiStatus: http.StatusOK,
+			whoamiResp:   api.UserResponse{Name: "testuser"},
+		},
+		{
+			name:         "ollama.com cloud model - user not signed in",
+			remoteHost:   "https://ollama.com",
+			whoamiStatus: http.StatusUnauthorized,
+			whoamiResp: map[string]string{
+				"error":      "unauthorized",
+				"signin_url": "https://ollama.com/signin",
+			},
+			expectedError: "unauthorized",
+		},
+		{
+			name:         "non-ollama.com remote - no auth check",
+			remoteHost:   "https://other-remote.com",
+			whoamiStatus: http.StatusUnauthorized, // should not be called
+			whoamiResp:   nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			whoamiCalled := false
+			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/show":
+					w.Header().Set("Content-Type", "application/json")
+					if err := json.NewEncoder(w).Encode(api.ShowResponse{
+						RemoteHost:  tt.remoteHost,
+						RemoteModel: "test-model",
+					}); err != nil {
+						http.Error(w, err.Error(), http.StatusInternalServerError)
+					}
+				case "/api/me":
+					whoamiCalled = true
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(tt.whoamiStatus)
+					if tt.whoamiResp != nil {
+						if err := json.NewEncoder(w).Encode(tt.whoamiResp); err != nil {
+							http.Error(w, err.Error(), http.StatusInternalServerError)
+						}
+					}
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer mockServer.Close()
+
+			t.Setenv("OLLAMA_HOST", mockServer.URL)
+
+			cmd := &cobra.Command{}
+			cmd.SetContext(t.Context())
+
+			opts := &runOptions{
+				Model:       "test-cloud-model",
+				ShowConnect: false,
+			}
+
+			err := loadOrUnloadModel(cmd, opts)
+
+			if strings.HasPrefix(tt.remoteHost, "https://ollama.com") {
+				if !whoamiCalled {
+					t.Error("expected whoami to be called for ollama.com cloud model")
+				}
+			} else {
+				if whoamiCalled {
+					t.Error("whoami should not be called for non-ollama.com remote")
+				}
+			}
+
+			if tt.expectedError != "" {
+				if err == nil {
+					t.Errorf("expected error containing %q, got nil", tt.expectedError)
+				} else {
+					var authErr api.AuthorizationError
+					if !errors.As(err, &authErr) {
+						t.Errorf("expected AuthorizationError, got %T: %v", err, err)
+					}
+				}
+			} else {
+				if err != nil {
+					t.Errorf("expected no error, got %v", err)
+				}
 			}
 		})
 	}

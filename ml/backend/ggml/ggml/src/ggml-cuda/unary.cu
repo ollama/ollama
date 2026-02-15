@@ -1,4 +1,5 @@
 #include "unary.cuh"
+#include "convert.cuh"
 
 static __device__ __forceinline__ float op_abs(float x) {
     return fabsf(x);
@@ -17,10 +18,7 @@ static __device__ __forceinline__ float op_step(float x) {
 }
 
 static __device__ __forceinline__ float op_gelu(float x) {
-    const float GELU_COEF_A    = 0.044715f;
-    const float SQRT_2_OVER_PI = 0.79788456080286535587989211986876f;
-
-    return 0.5f*x*(1.0f + tanhf(SQRT_2_OVER_PI*x*(1.0f + GELU_COEF_A*x*x)));
+    return ggml_cuda_op_gelu_single(x);
 }
 
 static __device__ __forceinline__ float op_gelu_erf(float x) {
@@ -36,7 +34,7 @@ static __device__ __forceinline__ float op_gelu_quick(float x) {
 }
 
 static __device__ __forceinline__ float op_silu(float x) {
-    return x / (1.0f + expf(-x));
+    return ggml_cuda_op_silu_single(x);
 }
 
 static __device__ __forceinline__ float op_tanh(float x) {
@@ -83,8 +81,32 @@ static __device__ __forceinline__ float op_log(float x) {
     return logf(x);
 }
 
+static __device__ __forceinline__ float op_expm1(float x) {
+    return expm1f(x);
+}
+
+static __device__ __forceinline__ float op_softplus(float x) {
+    return (x > 20.0f) ? x : logf(1.0f + expf(x));
+}
+
 static __device__ __forceinline__ float op_elu(float x) {
     return (x > 0.f) ? x : expm1f(x);
+}
+
+static __device__ __forceinline__ float op_floor(float x) {
+    return floorf(x);
+}
+
+static __device__ __forceinline__ float op_ceil(float x) {
+    return ceilf(x);
+}
+
+static __device__ __forceinline__ float op_round(float x) {
+    return round(x);
+}
+
+static __device__ __forceinline__ float op_trunc(float x) {
+    return trunc(x);
 }
 
 template <float (*op)(float), typename T>
@@ -203,6 +225,30 @@ void ggml_cuda_op_log(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
 void ggml_cuda_op_elu(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     ggml_cuda_op_unary<op_elu>(ctx, dst);
 }
+
+void ggml_cuda_op_floor(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    ggml_cuda_op_unary<op_floor>(ctx, dst);
+}
+
+void ggml_cuda_op_ceil(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    ggml_cuda_op_unary<op_ceil>(ctx, dst);
+}
+
+void ggml_cuda_op_round(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    ggml_cuda_op_unary<op_round>(ctx, dst);
+}
+
+void ggml_cuda_op_trunc(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    ggml_cuda_op_unary<op_trunc>(ctx, dst);
+}
+
+void ggml_cuda_op_expm1(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    ggml_cuda_op_unary<op_expm1>(ctx, dst);
+}
+
+void ggml_cuda_op_softplus(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    ggml_cuda_op_unary<op_softplus>(ctx, dst);
+}
 /* gated ops */
 
 template <float (*op)(float), typename T>
@@ -316,13 +362,8 @@ static __global__ void swiglu_oai_kernel(const T * x, const T * g, T * dst, cons
 
     float xi = x[j0];
     float gi = g[j1];
-    xi = fminf(xi, limit);
-    gi = fmaxf(fminf(gi, limit), -limit);
 
-    float out_glu = xi / (1.0f + expf(-xi * alpha));
-    out_glu = out_glu * (1.0f + gi);
-
-    dst[i] = out_glu;
+    dst[i] = ggml_cuda_op_swiglu_oai_single(xi, gi, alpha, limit);
 }
 
 template <typename T>
@@ -374,6 +415,59 @@ void ggml_cuda_op_swiglu_oai(ggml_backend_cuda_context & ctx, ggml_tensor * dst)
 
     swiglu_oai_cuda(src0_p, src1_p, (float *)dst_d, ggml_nelements(dst), nc, src0_o / sizeof(float), src1_o / sizeof(float), alpha, limit, stream);
 }
+
+/* CUDA kernel + launcher for xIELU */
+
+template <typename T>
+static __global__ void xielu_kernel(const T * x, T * dst, const int k, float alpha_n, float alpha_p, float beta, float eps) {
+    const int i = blockDim.x*blockIdx.x + threadIdx.x;
+
+    if (i >= k) {
+        return;
+    }
+
+    const float xi = ggml_cuda_cast<float>(x[i]);
+
+    const float gate_pos = (xi > 0.0f);
+    const float y_pos = alpha_p * xi * xi + beta * xi;
+    const float min_v_eps = fminf(xi, eps);
+    const float y_neg = (expm1f(min_v_eps) - xi) * alpha_n + beta * xi;
+    const float out = gate_pos * y_pos + (1.0f - gate_pos) * y_neg;
+
+    dst[i] = ggml_cuda_cast<T>(out);
+}
+
+template <typename T>
+static void xielu_cuda(const T * x, T * dst, const int k, float alpha_n, float alpha_p, float beta, float eps, cudaStream_t stream) {
+    const int num_blocks = (k + CUDA_XIELU_BLOCK_SIZE) / CUDA_XIELU_BLOCK_SIZE;
+    xielu_kernel<<<num_blocks, CUDA_XIELU_BLOCK_SIZE, 0, stream>>>(x, dst, k, alpha_n, alpha_p, beta, eps);
+}
+
+void ggml_cuda_op_xielu(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    const ggml_tensor * src0 = dst->src[0];
+    const void * src0_d = src0->data;
+    void * dst_d = dst->data;
+    cudaStream_t stream = ctx.stream();
+
+    GGML_ASSERT(ggml_is_contiguous(src0));
+
+    GGML_ASSERT(src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16);
+    GGML_ASSERT( dst->type == GGML_TYPE_F32 ||  dst->type == GGML_TYPE_F16);
+    GGML_ASSERT(src0->type == dst->type);
+
+    const float alpha_n = ggml_get_op_params_f32(dst, 1);
+    const float alpha_p = ggml_get_op_params_f32(dst, 2);
+    const float beta    = ggml_get_op_params_f32(dst, 3);
+    const float eps     = ggml_get_op_params_f32(dst, 4);
+
+    if (src0->type == GGML_TYPE_F16) {
+        xielu_cuda((const half *)src0_d, (half *)dst_d, ggml_nelements(src0), alpha_n, alpha_p, beta, eps, stream);
+    } else {
+        xielu_cuda((const float *)src0_d, (float *)dst_d, ggml_nelements(src0), alpha_n, alpha_p, beta, eps, stream);
+    }
+}
+
+
 
 /* silu_back */
 

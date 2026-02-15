@@ -3,6 +3,8 @@ package envconfig
 import (
 	"log/slog"
 	"math"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -37,6 +39,7 @@ func TestHost(t *testing.T) {
 		"https":               {"https://1.2.3.4", "https://1.2.3.4:443"},
 		"https port":          {"https://1.2.3.4:4321", "https://1.2.3.4:4321"},
 		"proxy path":          {"https://example.com/ollama", "https://example.com:443/ollama"},
+		"ollama.com":          {"ollama.com", "https://ollama.com:443"},
 	}
 
 	for name, tt := range cases {
@@ -281,7 +284,7 @@ func TestVar(t *testing.T) {
 
 func TestContextLength(t *testing.T) {
 	cases := map[string]uint{
-		"":     4096,
+		"":     0,
 		"2048": 2048,
 	}
 
@@ -321,6 +324,84 @@ func TestLogLevel(t *testing.T) {
 			t.Setenv("OLLAMA_DEBUG", k)
 			if i := LogLevel(); i != v {
 				t.Errorf("%s: expected %d, got %d", k, v, i)
+			}
+		})
+	}
+}
+
+func TestNoCloud(t *testing.T) {
+	tests := []struct {
+		name          string
+		envValue      string
+		configContent string
+		wantDisabled  bool
+		wantSource    string
+	}{
+		{
+			name:         "neither env nor config",
+			wantDisabled: false,
+			wantSource:   "none",
+		},
+		{
+			name:         "env only",
+			envValue:     "1",
+			wantDisabled: true,
+			wantSource:   "env",
+		},
+		{
+			name:          "config only",
+			configContent: `{"disable_ollama_cloud": true}`,
+			wantDisabled:  true,
+			wantSource:    "config",
+		},
+		{
+			name:          "both env and config",
+			envValue:      "1",
+			configContent: `{"disable_ollama_cloud": true}`,
+			wantDisabled:  true,
+			wantSource:    "both",
+		},
+		{
+			name:          "config false",
+			configContent: `{"disable_ollama_cloud": false}`,
+			wantDisabled:  false,
+			wantSource:    "none",
+		},
+		{
+			name:          "invalid config ignored",
+			configContent: `{invalid json`,
+			wantDisabled:  false,
+			wantSource:    "none",
+		},
+		{
+			name:         "no config file",
+			wantDisabled: false,
+			wantSource:   "none",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			if tt.configContent != "" {
+				configDir := filepath.Join(home, ".ollama")
+				if err := os.MkdirAll(configDir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(configDir, "server.json"), []byte(tt.configContent), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			setTestHome(t, home)
+			t.Setenv("OLLAMA_NO_CLOUD", tt.envValue)
+
+			if got := NoCloud(); got != tt.wantDisabled {
+				t.Errorf("NoCloud() = %v, want %v", got, tt.wantDisabled)
+			}
+
+			if got := NoCloudSource(); got != tt.wantSource {
+				t.Errorf("NoCloudSource() = %q, want %q", got, tt.wantSource)
 			}
 		})
 	}

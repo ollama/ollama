@@ -1,7 +1,7 @@
 package harmony
 
 import (
-	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -266,6 +266,8 @@ type HarmonyMessageHandler struct {
 	state           harmonyMessageState
 	HarmonyParser   *HarmonyParser
 	FunctionNameMap *FunctionNameMap
+	toolAccumulator *HarmonyToolCallAccumulator
+	convertedTools  map[string]struct{}
 }
 
 // NewHarmonyMessageHandler creates a new message handler
@@ -278,6 +280,7 @@ func NewHarmonyMessageHandler() *HarmonyMessageHandler {
 			HeaderEndTag:    "<|message|>",
 		},
 		FunctionNameMap: NewFunctionNameMap(),
+		convertedTools:  make(map[string]struct{}),
 	}
 }
 
@@ -292,7 +295,7 @@ func (h *HarmonyMessageHandler) AddContent(content string, toolParser *HarmonyTo
 	for _, event := range events {
 		switch event := event.(type) {
 		case HarmonyEventHeaderComplete:
-			slog.Log(context.TODO(), logutil.LevelTrace, "harmony event header complete", "header", event.Header)
+			logutil.Trace("harmony event header complete", "header", event.Header)
 			switch event.Header.Channel {
 			case "analysis":
 				if event.Header.Recipient != "" {
@@ -315,7 +318,7 @@ func (h *HarmonyMessageHandler) AddContent(content string, toolParser *HarmonyTo
 				h.state = harmonyMessageState_Normal
 			}
 		case HarmonyEventContentEmitted:
-			slog.Log(context.TODO(), logutil.LevelTrace, "harmony event content", "content", event.Content, "state", h.state)
+			logutil.Trace("harmony event content", "content", event.Content, "state", h.state)
 			if h.state == harmonyMessageState_Normal {
 				contentSb.WriteString(event.Content)
 			} else if h.state == harmonyMessageState_Thinking {
@@ -385,8 +388,85 @@ func NewFunctionNameMap() *FunctionNameMap {
 	}
 }
 
+// Init initializes the handler with tools, optional last message, and think value
+// Implements the Parser interface
+func (h *HarmonyMessageHandler) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
+	// Initialize the harmony parser
+	if h.HarmonyParser == nil {
+		h.HarmonyParser = &HarmonyParser{
+			MessageStartTag: "<|start|>",
+			MessageEndTag:   "<|end|>",
+			HeaderEndTag:    "<|message|>",
+		}
+	}
+
+	// Handle prefill for chat mode
+	if lastMessage != nil {
+		h.HarmonyParser.AddImplicitStartOrPrefill(lastMessage)
+	} else {
+		h.HarmonyParser.AddImplicitStart()
+	}
+
+	// Initialize tool accumulator
+	h.toolAccumulator = h.CreateToolParser()
+
+	// Process tools and return renamed versions
+	if len(tools) == 0 {
+		return tools
+	}
+
+	processedTools := make([]api.Tool, len(tools))
+	copy(processedTools, tools)
+	for i, tool := range processedTools {
+		if tool.Function.Name != "" {
+			processedTools[i].Function.Name = h.FunctionNameMap.ConvertAndAdd(tool.Function.Name)
+			h.convertedTools[tool.Function.Name] = struct{}{}
+		}
+	}
+	return processedTools
+}
+
+// Add implements the Parser interface - processes streamed content and extracts content, thinking, and tool calls
+func (h *HarmonyMessageHandler) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
+	content, thinking, toolContent := h.AddContent(s, h.toolAccumulator)
+	if toolContent != "" {
+		h.toolAccumulator.Add(toolContent)
+	}
+
+	// tool calls always happen one at a time, and always at the end of a message,
+	// so for simplicity we defer parsing them until we know we're done
+	if done {
+		toolName, raw := h.toolAccumulator.Drain()
+		if toolName != nil {
+			name := strings.TrimPrefix(*toolName, "functions.")
+			name = h.FunctionNameMap.OriginalFromConverted(name)
+			var args api.ToolCallFunctionArguments
+			if err := json.Unmarshal([]byte(raw), &args); err != nil {
+				return "", "", nil, fmt.Errorf("error parsing tool call: raw='%s', err=%w", raw, err)
+			}
+			calls = append(calls, api.ToolCall{Function: api.ToolCallFunction{Name: name, Arguments: args}})
+		}
+	}
+
+	return content, thinking, calls, nil
+}
+
+// HasToolSupport implements the Parser interface
+func (h *HarmonyMessageHandler) HasToolSupport() bool {
+	return true
+}
+
+// HasThinkingSupport implements the Parser interface
+func (h *HarmonyMessageHandler) HasThinkingSupport() bool {
+	return true
+}
+
 func (m *FunctionNameMap) ConvertAndAdd(userFunctionName string) string {
 	harmonyFunctionName := m.deriveName(userFunctionName)
+	// built-in functions should not be renamed
+	if userFunctionName == "browser.open" || userFunctionName == "browser.search" || userFunctionName == "browser.find" || userFunctionName == "python" {
+		harmonyFunctionName = userFunctionName
+	}
 	m.userToHarmony[userFunctionName] = harmonyFunctionName
 	m.harmonyToUser[harmonyFunctionName] = userFunctionName
 	return harmonyFunctionName

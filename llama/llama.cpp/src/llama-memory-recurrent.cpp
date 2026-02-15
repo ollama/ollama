@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstring>
 #include <limits>
 #include <map>
 #include <stdexcept>
@@ -16,13 +17,13 @@
 //
 
 llama_memory_recurrent::llama_memory_recurrent(
-        const llama_model &  model,
-          layer_filter_cb && filter,
-                ggml_type    type_r,
-                ggml_type    type_s,
-                     bool    offload,
-                 uint32_t    mem_size,
-                 uint32_t    n_seq_max) : hparams(model.hparams), n_seq_max(n_seq_max) {
+        const llama_model & model,
+                ggml_type   type_r,
+                ggml_type   type_s,
+                     bool   offload,
+                 uint32_t   mem_size,
+                 uint32_t   n_seq_max,
+    const layer_filter_cb & filter) : hparams(model.hparams), n_seq_max(n_seq_max) {
     const int32_t n_layer = hparams.n_layer;
 
     head = 0;
@@ -32,8 +33,15 @@ llama_memory_recurrent::llama_memory_recurrent(
     cells.clear();
     cells.resize(mem_size);
 
+    // define a comparator for the buft -> ctx map to ensure that the order is well-defined:
+    struct ggml_backend_buft_comparator {
+        bool operator()(const ggml_backend_buffer_type_t & lhs, const ggml_backend_buffer_type_t & rhs) const {
+            return strcmp(ggml_backend_buft_name(lhs), ggml_backend_buft_name(rhs)) < 0;
+        }
+    };
+    std::map<ggml_backend_buffer_type_t, ggml_context_ptr, ggml_backend_buft_comparator> ctx_map;
+
     // create a context for each buffer type
-    std::map<ggml_backend_buffer_type_t, ggml_context *> ctx_map;
     auto ctx_for_buft = [&](ggml_backend_buffer_type_t buft) -> ggml_context * {
         auto it = ctx_map.find(buft);
         if (it == ctx_map.end()) {
@@ -48,13 +56,12 @@ llama_memory_recurrent::llama_memory_recurrent(
                 return nullptr;
             }
 
-            ctx_map[buft] = ctx;
-            ctxs.emplace_back(ctx);
+            ctx_map.emplace(buft, ctx);
 
             return ctx;
         }
 
-        return it->second;
+        return it->second.get();
     };
 
     r_l.resize(n_layer);
@@ -93,17 +100,14 @@ llama_memory_recurrent::llama_memory_recurrent(
     }
 
     // allocate tensors and initialize the buffers to avoid NaNs in the padding
-    for (auto it : ctx_map) {
-        auto * buft = it.first;
-        auto * ctx  = it.second;
-
-        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
+    for (auto & [buft, ctx] : ctx_map) {
+        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx.get(), buft);
         if (!buf) {
             throw std::runtime_error("failed to allocate buffer for rs cache");
         }
         ggml_backend_buffer_clear(buf, 0);
         LLAMA_LOG_INFO("%s: %10s RS buffer size = %8.2f MiB\n", __func__, ggml_backend_buffer_name(buf), ggml_backend_buffer_get_size(buf)/1024.0/1024.0);
-        bufs.emplace_back(buf);
+        ctxs_bufs.emplace_back(std::move(ctx), buf);
     }
 
     {
@@ -129,13 +133,14 @@ void llama_memory_recurrent::clear(bool data) {
     used = 0;
 
     if (data) {
-        for (auto & buf : bufs) {
+        for (auto & [_, buf] : ctxs_bufs) {
             ggml_backend_buffer_clear(buf.get(), 0);
         }
     }
 }
 
 bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
+    //printf("[DEBUG] calling llama_memory_recurrent::seq_rm` with `seq_id=%d, p0=%d, p1=%d`\n", seq_id, p0, p1);
     uint32_t new_head = size;
 
     if (p0 < 0) {
@@ -146,7 +151,8 @@ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
         p1 = std::numeric_limits<llama_pos>::max();
     }
 
-    // models like Mamba or RWKV can't have a state partially erased
+    // models like Mamba or RWKV can't have a state partially erased at the end
+    // of the sequence because their state isn't preserved for previous tokens
     if (seq_id >= (int64_t) size) {
         // could be fatal
         return false;
@@ -155,8 +161,9 @@ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
         int32_t & tail_id = cells[seq_id].tail;
         if (tail_id >= 0) {
             const auto & cell = cells[tail_id];
-            // partial intersection is invalid
-            if ((0 < p0 && p0 <= cell.pos) || (0 < p1 && p1 <= cell.pos)) {
+            // partial intersection is invalid if it includes the final pos
+            if (0 < p0 && p0 <= cell.pos && p1 > cell.pos) {
+                //printf("[DEBUG] inside `llama_memory_recurrent::seq_rm`: partial intersection is invalid, so returning false\n");
                 return false;
             }
             // invalidate tails which will be cleared
@@ -167,6 +174,7 @@ bool llama_memory_recurrent::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos
     } else {
         // seq_id is negative, then the range should include everything or nothing
         if (p0 != p1 && (p0 != 0 || p1 != std::numeric_limits<llama_pos>::max())) {
+            //printf("[DEBUG] inside `llama_memory_recurrent::seq_rm`: `seq_id` is negative, so returning false\n");
             return false;
         }
     }
@@ -359,6 +367,14 @@ llama_pos llama_memory_recurrent::seq_pos_max(llama_seq_id seq_id) const {
     return result;
 }
 
+std::map<ggml_backend_buffer_type_t, size_t> llama_memory_recurrent::memory_breakdown() const {
+    std::map<ggml_backend_buffer_type_t, size_t> ret;
+    for (const auto & [_, buf] : ctxs_bufs) {
+        ret[ggml_backend_buffer_get_type(buf.get())] += ggml_backend_buffer_get_size(buf.get());
+    }
+    return ret;
+}
+
 llama_memory_context_ptr llama_memory_recurrent::init_batch(llama_batch_allocr & balloc, uint32_t n_ubatch, bool embd_all) {
     do {
         balloc.split_reset();
@@ -371,7 +387,9 @@ llama_memory_context_ptr llama_memory_recurrent::init_batch(llama_batch_allocr &
                 // if all tokens are output, split by sequence
                 ubatch = balloc.split_seq(n_ubatch);
             } else {
-                ubatch = balloc.split_equal(n_ubatch, false);
+                // TODO: non-sequential equal split can be done if using unified KV cache
+                //       for simplicity, we always use sequential equal split for now
+                ubatch = balloc.split_equal(n_ubatch, true);
             }
 
             if (ubatch.n_tokens == 0) {
@@ -649,7 +667,7 @@ bool llama_memory_recurrent::get_can_shift() const {
 
 size_t llama_memory_recurrent::total_size() const {
     size_t size = 0;
-    for (const auto & buf : bufs) {
+    for (const auto & [_, buf] : ctxs_bufs) {
         size += ggml_backend_buffer_get_size(buf.get());
     }
 
@@ -680,7 +698,9 @@ size_t llama_memory_recurrent::size_s_bytes() const {
     return size_s_bytes;
 }
 
-void llama_memory_recurrent::state_write(llama_io_write_i & io, llama_seq_id seq_id) const {
+void llama_memory_recurrent::state_write(llama_io_write_i & io, llama_seq_id seq_id, llama_state_seq_flags flags) const {
+    GGML_UNUSED(flags);
+
     std::vector<std::pair<uint32_t, uint32_t>> cell_ranges; // ranges, from inclusive, to exclusive
     uint32_t cell_count = 0;
 
@@ -718,7 +738,9 @@ void llama_memory_recurrent::state_write(llama_io_write_i & io, llama_seq_id seq
     state_write_data(io, cell_ranges);
 }
 
-void llama_memory_recurrent::state_read(llama_io_read_i & io, llama_seq_id seq_id) {
+void llama_memory_recurrent::state_read(llama_io_read_i & io, llama_seq_id seq_id, llama_state_seq_flags flags) {
+    GGML_UNUSED(flags);
+
     uint32_t cell_count;
     io.read_to(&cell_count, sizeof(cell_count));
 
@@ -844,8 +866,11 @@ void llama_memory_recurrent::state_write_data(llama_io_write_i & io, const std::
 bool llama_memory_recurrent::state_read_meta(llama_io_read_i & io, uint32_t cell_count, llama_seq_id dest_seq_id) {
     if (dest_seq_id != -1) {
         // single sequence
-
         seq_rm(dest_seq_id, -1, -1);
+
+        if (cell_count == 0) {
+            return true;
+        }
 
         llama_batch_allocr balloc(hparams.n_pos_per_embd());
 

@@ -1,0 +1,13 @@
+#version 450
+
+#include "glu_head.glsl"
+
+const float GELU_COEF_A    = 0.044715f;
+const float SQRT_2_OVER_PI = 0.79788456080286535587989211986876f;
+
+float op(float a, float b) {
+    const float val = SQRT_2_OVER_PI*a*(1.0f + GELU_COEF_A*a*a);
+    return 0.5f*a*(2.0f - 2.0f / (exp(2 * val) + 1)) * b;
+}
+
+#include "glu_main.glsl"

@@ -465,6 +465,7 @@ namespace GGUFMeta {
     // TODO: this is not very clever - figure out something better
     template bool llama_model_loader::get_key_or_arr<std::array<int, 4>>(enum llm_kv kid, std::array<int, 4> & result, uint32_t n, bool required);
     template bool llama_model_loader::get_key_or_arr<std::array<uint32_t, 512>>(enum llm_kv kid, std::array<uint32_t, 512> & result, uint32_t n, bool required);
+    template bool llama_model_loader::get_key_or_arr<std::array<float, 512>>(enum llm_kv kid, std::array<float, 512> & result, uint32_t n, bool required);
     template bool llama_model_loader::get_key_or_arr<uint32_t>(const std::string & key, std::array<uint32_t, 512> & result, uint32_t n, bool required);
 
 llama_model_loader::llama_model_loader(
@@ -472,6 +473,7 @@ llama_model_loader::llama_model_loader(
         std::vector<std::string> & splits,
         bool use_mmap,
         bool check_tensors,
+        bool no_alloc,
         const llama_model_kv_override * param_overrides_p,
         const llama_model_tensor_buft_override * param_tensor_buft_overrides_p) {
     int trace = 0;
@@ -715,6 +717,7 @@ llama_model_loader::llama_model_loader(
 
     this->use_mmap = use_mmap;
     this->check_tensors = check_tensors;
+    this->no_alloc = no_alloc;
 }
 
 std::string llama_model_loader::get_arch_name() const {
@@ -789,6 +792,7 @@ const struct ggml_tensor * llama_model_loader::check_tensor_dims(const std::stri
 }
 
 struct ggml_tensor * llama_model_loader::create_tensor(struct ggml_context * ctx, const std::string & name, const std::initializer_list<int64_t> & ne, int flags) {
+    LLAMA_LOG_DEBUG("%s: loading tensor %s\n", __func__, name.c_str());
     const struct ggml_tensor * cur = check_tensor_dims(name, ne, !(flags & TENSOR_NOT_REQUIRED));
 
     if (cur == NULL) {
