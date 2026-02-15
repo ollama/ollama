@@ -4,29 +4,21 @@ package mlxrunner
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/ollama/ollama/x/imagegen/manifest"
 	"github.com/ollama/ollama/x/imagegen/tokenizer"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/model"
+	"github.com/ollama/ollama/x/mlxrunner/model/base"
 	"github.com/ollama/ollama/x/mlxrunner/sample"
-	"github.com/ollama/ollama/x/models/glm4_moe_lite"
 )
-
-// TextModel is the interface that model implementations must satisfy.
-type TextModel interface {
-	Forward(inputs *mlx.Array, cache []cache.Cache) *mlx.Array
-	Unembed(x *mlx.Array) *mlx.Array
-	NumLayers() int
-}
 
 type Request struct {
 	TextCompletionsRequest
@@ -66,50 +58,93 @@ type Response struct {
 }
 
 type Runner struct {
-	Model        TextModel
+	Model        base.Model
 	Tokenizer    *tokenizer.Tokenizer
 	Requests     chan Request
 	CacheEntries map[int32]*CacheEntry
 }
 
 func (r *Runner) Load(modelName string) error {
-	modelManifest, err := manifest.LoadManifest(modelName)
+	root, err := model.Open(modelName)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+
+	m, err := base.New(root)
 	if err != nil {
 		return err
 	}
 
-	// Read config to detect architecture
-	configData, err := modelManifest.ReadConfig("config.json")
+	// Load all tensor blobs from manifest
+	tensors, err := loadTensorsFromManifest(root)
 	if err != nil {
-		return fmt.Errorf("failed to read config.json: %w", err)
+		return err
 	}
 
-	var archConfig struct {
-		Architectures []string `json:"architectures"`
-	}
-	if err := json.Unmarshal(configData, &archConfig); err != nil {
-		return fmt.Errorf("failed to parse config.json: %w", err)
-	}
-
-	if len(archConfig.Architectures) == 0 {
-		return fmt.Errorf("no architectures found in config.json")
+	// Assign weights to model (model-specific logic)
+	loadWeights := base.Weights(m)
+	if err := loadWeights(tensors); err != nil {
+		return err
 	}
 
-	slog.Info("Model architecture", "arch", archConfig.Architectures[0])
-
-	switch archConfig.Architectures[0] {
-	case "Glm4MoeLiteForCausalLM", "GLM4MoeLite":
-		model, err := glm4_moe_lite.LoadFromManifest(modelManifest)
-		if err != nil {
-			return fmt.Errorf("failed to load GLM4-MoE-Lite model: %w", err)
-		}
-		r.Model = model
-		r.Tokenizer = model.Tokenizer()
-	default:
-		return fmt.Errorf("unsupported architecture: %s", archConfig.Architectures[0])
-	}
-
+	r.Model = m
+	r.Tokenizer = m.Tokenizer()
 	return nil
+}
+
+// loadTensorsFromManifest loads all tensor blobs from the manifest into a
+// flat map, deduplicating by digest and remapping safetensors key suffixes.
+//
+// Uses a two-phase approach: first loads all raw tensors, then remaps
+// .bias → _qbias with complete knowledge of which base names have .scale
+// entries. This avoids a race condition where Go map iteration order could
+// cause .bias to be processed before .scale within the same blob.
+func loadTensorsFromManifest(root *model.Root) (map[string]*mlx.Array, error) {
+	// Phase 1: Load all tensors raw from all blobs
+	rawTensors := make(map[string]*mlx.Array)
+	seen := make(map[string]bool)
+	for _, layer := range root.Manifest.GetTensorLayers("") {
+		if seen[layer.Digest] {
+			continue
+		}
+		seen[layer.Digest] = true
+		blobPath := root.Manifest.BlobPath(layer.Digest)
+		for name, arr := range mlx.Load(blobPath) {
+			rawTensors[name] = arr
+		}
+	}
+
+	// Phase 2: Identify all base names that have .scale tensors and remap them
+	scaleBaseNames := make(map[string]bool)
+	allTensors := make(map[string]*mlx.Array, len(rawTensors))
+	for name, arr := range rawTensors {
+		if strings.HasSuffix(name, ".scale") {
+			baseName := strings.TrimSuffix(name, ".scale")
+			allTensors[baseName+"_scale"] = arr
+			scaleBaseNames[baseName] = true
+		}
+	}
+
+	// Phase 3: Process remaining tensors with complete scale knowledge
+	for name, arr := range rawTensors {
+		if strings.HasSuffix(name, ".scale") {
+			continue // already handled
+		}
+		if strings.HasSuffix(name, ".bias") && !strings.HasSuffix(name, ".weight_qbias") {
+			baseName := strings.TrimSuffix(name, ".bias")
+			if scaleBaseNames[baseName] {
+				allTensors[baseName+"_qbias"] = arr
+			} else {
+				allTensors[name] = arr
+			}
+		} else {
+			allTensors[name] = arr
+		}
+	}
+
+	slog.Info("Loaded tensors from manifest", "count", len(allTensors))
+	return allTensors, nil
 }
 
 func (r *Runner) Run(host, port string, mux http.Handler) error {

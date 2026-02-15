@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
+	internalcloud "github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/progress"
 	"github.com/spf13/cobra"
 )
@@ -234,6 +236,11 @@ func SelectModelWithSelector(ctx context.Context, selector SingleSelector) (stri
 		existing = append(existing, modelInfo{Name: m.Name, Remote: m.RemoteModel != ""})
 	}
 
+	cloudDisabled, _ := cloudStatusDisabled(ctx, client)
+	if cloudDisabled {
+		existing = filterCloudModels(existing)
+	}
+
 	lastModel := LastModel()
 	var preChecked []string
 	if lastModel != "" {
@@ -241,6 +248,10 @@ func SelectModelWithSelector(ctx context.Context, selector SingleSelector) (stri
 	}
 
 	items, _, existingModels, cloudModels := buildModelList(existing, preChecked, lastModel)
+
+	if cloudDisabled {
+		items = filterCloudItems(items)
+	}
 
 	if len(items) == 0 {
 		return "", fmt.Errorf("no models available, run 'ollama pull <model>' first")
@@ -395,6 +406,11 @@ func selectModelsWithSelectors(ctx context.Context, name, current string, single
 		existing = append(existing, modelInfo{Name: m.Name, Remote: m.RemoteModel != ""})
 	}
 
+	cloudDisabled, _ := cloudStatusDisabled(ctx, client)
+	if cloudDisabled {
+		existing = filterCloudModels(existing)
+	}
+
 	var preChecked []string
 	if saved, err := loadIntegration(name); err == nil {
 		preChecked = saved.Models
@@ -403,6 +419,10 @@ func selectModelsWithSelectors(ctx context.Context, name, current string, single
 	}
 
 	items, preChecked, existingModels, cloudModels := buildModelList(existing, preChecked, current)
+
+	if cloudDisabled {
+		items = filterCloudItems(items)
+	}
 
 	if len(items) == 0 {
 		return nil, fmt.Errorf("no models available")
@@ -510,7 +530,16 @@ func listModels(ctx context.Context) ([]ModelItem, map[string]bool, map[string]b
 		})
 	}
 
+	cloudDisabled, _ := cloudStatusDisabled(ctx, client)
+	if cloudDisabled {
+		existing = filterCloudModels(existing)
+	}
+
 	items, _, existingModels, cloudModels := buildModelList(existing, nil, "")
+
+	if cloudDisabled {
+		items = filterCloudItems(items)
+	}
 
 	if len(items) == 0 {
 		return nil, nil, nil, nil, fmt.Errorf("no models available, run 'ollama pull <model>' first")
@@ -539,6 +568,9 @@ func ensureAuth(ctx context.Context, client *api.Client, cloudModels map[string]
 	}
 	if len(selectedCloudModels) == 0 {
 		return nil
+	}
+	if disabled, known := cloudStatusDisabled(ctx, client); known && disabled {
+		return errors.New(internalcloud.DisabledError("remote inference is unavailable"))
 	}
 
 	user, err := client.Whoami(ctx)
@@ -672,25 +704,6 @@ func LaunchIntegrationWithModel(name, modelName string) error {
 	return runIntegration(name, modelName, nil)
 }
 
-// SaveIntegrationModel saves the model for an integration.
-func SaveIntegrationModel(name, modelName string) error {
-	// Load existing models and prepend the new one
-	var models []string
-	if existing, err := loadIntegration(name); err == nil && len(existing.Models) > 0 {
-		models = existing.Models
-		// Remove the model if it already exists
-		for i, m := range models {
-			if m == modelName {
-				models = append(models[:i], models[i+1:]...)
-				break
-			}
-		}
-	}
-	// Prepend the new model
-	models = append([]string{modelName}, models...)
-	return saveIntegration(name, models)
-}
-
 // SaveAndEditIntegration saves the models for an Editor integration and runs its Edit method
 // to write the integration's config files.
 func SaveAndEditIntegration(name string, models []string) error {
@@ -698,7 +711,7 @@ func SaveAndEditIntegration(name string, models []string) error {
 	if !ok {
 		return fmt.Errorf("unknown integration: %s", name)
 	}
-	if err := saveIntegration(name, models); err != nil {
+	if err := SaveIntegration(name, models); err != nil {
 		return fmt.Errorf("failed to save: %w", err)
 	}
 	if editor, isEditor := r.(Editor); isEditor {
@@ -707,6 +720,29 @@ func SaveAndEditIntegration(name string, models []string) error {
 		}
 	}
 	return nil
+}
+
+// resolveEditorModels filters out cloud-disabled models before editor launch.
+// If no models remain, it invokes picker to collect a valid replacement list.
+func resolveEditorModels(name string, models []string, picker func() ([]string, error)) ([]string, error) {
+	filtered := filterDisabledCloudModels(models)
+	if len(filtered) != len(models) {
+		if err := SaveIntegration(name, filtered); err != nil {
+			return nil, fmt.Errorf("failed to save: %w", err)
+		}
+	}
+	if len(filtered) > 0 {
+		return filtered, nil
+	}
+
+	selected, err := picker()
+	if err != nil {
+		return nil, err
+	}
+	if err := SaveIntegration(name, selected); err != nil {
+		return nil, fmt.Errorf("failed to save: %w", err)
+	}
+	return selected, nil
 }
 
 // ConfigureIntegrationWithSelectors allows the user to select/change the model for an integration using custom selectors.
@@ -743,7 +779,7 @@ func ConfigureIntegrationWithSelectors(ctx context.Context, name string, single 
 		}
 	}
 
-	if err := saveIntegration(name, models); err != nil {
+	if err := SaveIntegration(name, models); err != nil {
 		return fmt.Errorf("failed to save: %w", err)
 	}
 
@@ -837,6 +873,10 @@ Examples:
 				return fmt.Errorf("unknown integration: %s", name)
 			}
 
+			if modelFlag != "" && IsCloudModelDisabled(cmd.Context(), modelFlag) {
+				modelFlag = ""
+			}
+
 			// Handle AliasConfigurer integrations (claude, codex)
 			if ac, ok := r.(AliasConfigurer); ok {
 				client, err := api.ClientFromEnvironment()
@@ -864,7 +904,7 @@ Examples:
 						model = cfg.Models[0]
 						// AliasConfigurer integrations use single model; sanitize if multiple
 						if len(cfg.Models) > 1 {
-							_ = saveIntegration(name, []string{model})
+							_ = SaveIntegration(name, []string{model})
 						}
 					}
 				}
@@ -875,8 +915,12 @@ Examples:
 				}
 
 				// Validate saved model still exists
+				cloudCleared := false
 				if model != "" && modelFlag == "" {
-					if _, err := client.Show(cmd.Context(), &api.ShowRequest{Model: model}); err != nil {
+					if disabled, _ := cloudStatusDisabled(cmd.Context(), client); disabled && isCloudModelName(model) {
+						model = ""
+						cloudCleared = true
+					} else if _, err := client.Show(cmd.Context(), &api.ShowRequest{Model: model}); err != nil {
 						fmt.Fprintf(os.Stderr, "%sConfigured model %q not found%s\n\n", ansiGray, model, ansiReset)
 						if err := ShowOrPull(cmd.Context(), client, model); err != nil {
 							model = ""
@@ -886,7 +930,7 @@ Examples:
 
 				// If no valid model or --config flag, show picker
 				if model == "" || configFlag {
-					aliases, _, err := ac.ConfigureAliases(cmd.Context(), model, existingAliases, configFlag)
+					aliases, _, err := ac.ConfigureAliases(cmd.Context(), model, existingAliases, configFlag || cloudCleared)
 					if errors.Is(err, errCancelled) {
 						return nil
 					}
@@ -908,7 +952,7 @@ Examples:
 				if err := syncAliases(cmd.Context(), client, ac, name, model, existingAliases); err != nil {
 					fmt.Fprintf(os.Stderr, "%sWarning: Could not sync aliases: %v%s\n", ansiGray, err, ansiReset)
 				}
-				if err := saveIntegration(name, []string{model}); err != nil {
+				if err := SaveIntegration(name, []string{model}); err != nil {
 					return fmt.Errorf("failed to save: %w", err)
 				}
 
@@ -946,8 +990,35 @@ Examples:
 						}
 					}
 				}
+				models = filterDisabledCloudModels(models)
+				if len(models) == 0 {
+					var err error
+					models, err = selectModels(cmd.Context(), name, "")
+					if errors.Is(err, errCancelled) {
+						return nil
+					}
+					if err != nil {
+						return err
+					}
+				}
 			} else if saved, err := loadIntegration(name); err == nil && len(saved.Models) > 0 && !configFlag {
-				return runIntegration(name, saved.Models[0], passArgs)
+				savedModels := filterDisabledCloudModels(saved.Models)
+				if len(savedModels) != len(saved.Models) {
+					_ = SaveIntegration(name, savedModels)
+				}
+				if len(savedModels) == 0 {
+					// All saved models were cloud — fall through to picker
+					models, err = selectModels(cmd.Context(), name, "")
+					if errors.Is(err, errCancelled) {
+						return nil
+					}
+					if err != nil {
+						return err
+					}
+				} else {
+					models = savedModels
+					return runIntegration(name, models[0], passArgs)
+				}
 			} else {
 				var err error
 				models, err = selectModels(cmd.Context(), name, "")
@@ -974,7 +1045,7 @@ Examples:
 				}
 			}
 
-			if err := saveIntegration(name, models); err != nil {
+			if err := SaveIntegration(name, models); err != nil {
 				return fmt.Errorf("failed to save: %w", err)
 			}
 
@@ -1048,7 +1119,7 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 			continue
 		}
 		items = append(items, rec)
-		if strings.HasSuffix(rec.Name, ":cloud") {
+		if isCloudModelName(rec.Name) {
 			cloudModels[rec.Name] = true
 		}
 	}
@@ -1153,7 +1224,55 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 	return items, preChecked, existingModels, cloudModels
 }
 
-// isCloudModel checks if a model is a cloud model using the Show API.
+// IsCloudModelDisabled reports whether the given model name looks like a cloud
+// model and cloud features are currently disabled on the server.
+func IsCloudModelDisabled(ctx context.Context, name string) bool {
+	if !isCloudModelName(name) {
+		return false
+	}
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return false
+	}
+	disabled, _ := cloudStatusDisabled(ctx, client)
+	return disabled
+}
+
+func isCloudModelName(name string) bool {
+	return strings.HasSuffix(name, ":cloud") || strings.HasSuffix(name, "-cloud")
+}
+
+func filterCloudModels(existing []modelInfo) []modelInfo {
+	filtered := existing[:0]
+	for _, m := range existing {
+		if !m.Remote {
+			filtered = append(filtered, m)
+		}
+	}
+	return filtered
+}
+
+// filterDisabledCloudModels removes cloud models from a list when cloud is disabled.
+func filterDisabledCloudModels(models []string) []string {
+	var filtered []string
+	for _, m := range models {
+		if !IsCloudModelDisabled(context.Background(), m) {
+			filtered = append(filtered, m)
+		}
+	}
+	return filtered
+}
+
+func filterCloudItems(items []ModelItem) []ModelItem {
+	filtered := items[:0]
+	for _, item := range items {
+		if !isCloudModelName(item.Name) {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
 func isCloudModel(ctx context.Context, client *api.Client, name string) bool {
 	if client == nil {
 		return false
@@ -1183,6 +1302,11 @@ func GetModelItems(ctx context.Context) ([]ModelItem, map[string]bool) {
 		existing = append(existing, modelInfo{Name: m.Name, Remote: m.RemoteModel != ""})
 	}
 
+	cloudDisabled, _ := cloudStatusDisabled(ctx, client)
+	if cloudDisabled {
+		existing = filterCloudModels(existing)
+	}
+
 	lastModel := LastModel()
 	var preChecked []string
 	if lastModel != "" {
@@ -1191,7 +1315,23 @@ func GetModelItems(ctx context.Context) ([]ModelItem, map[string]bool) {
 
 	items, _, existingModels, _ := buildModelList(existing, preChecked, lastModel)
 
+	if cloudDisabled {
+		items = filterCloudItems(items)
+	}
+
 	return items, existingModels
+}
+
+func cloudStatusDisabled(ctx context.Context, client *api.Client) (disabled bool, known bool) {
+	status, err := client.CloudStatusExperimental(ctx)
+	if err != nil {
+		var statusErr api.StatusError
+		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound {
+			return false, false
+		}
+		return false, false
+	}
+	return status.Cloud.Disabled, true
 }
 
 func pullModel(ctx context.Context, client *api.Client, model string) error {

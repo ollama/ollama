@@ -581,6 +581,17 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 	opts.WordWrap = !nowrap
 
+	useImagegen := false
+	if cmd.Flags().Lookup("imagegen") != nil {
+		useImagegen, err = cmd.Flags().GetBool("imagegen")
+		if err != nil {
+			return err
+		}
+	}
+	if useImagegen {
+		opts.Options["use_imagegen_runner"] = true
+	}
+
 	// Fill out the rest of the options based on information about the
 	// model.
 	client, err := api.ClientFromEnvironment()
@@ -1887,10 +1898,7 @@ func runInteractiveTUI(cmd *cobra.Command) {
 
 	// Selector adapters for tui
 	singleSelector := func(title string, items []config.ModelItem) (string, error) {
-		tuiItems := make([]tui.SelectItem, len(items))
-		for i, item := range items {
-			tuiItems[i] = tui.SelectItem{Name: item.Name, Description: item.Description, Recommended: item.Recommended}
-		}
+		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
 		result, err := tui.SelectSingle(title, tuiItems)
 		if errors.Is(err, tui.ErrCancelled) {
 			return "", config.ErrCancelled
@@ -1899,10 +1907,7 @@ func runInteractiveTUI(cmd *cobra.Command) {
 	}
 
 	multiSelector := func(title string, items []config.ModelItem, preChecked []string) ([]string, error) {
-		tuiItems := make([]tui.SelectItem, len(items))
-		for i, item := range items {
-			tuiItems[i] = tui.SelectItem{Name: item.Name, Description: item.Description, Recommended: item.Recommended}
-		}
+		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
 		result, err := tui.SelectMultiple(title, tuiItems, preChecked)
 		if errors.Is(err, tui.ErrCancelled) {
 			return nil, config.ErrCancelled
@@ -1949,7 +1954,7 @@ func runInteractiveTUI(cmd *cobra.Command) {
 		launchIntegration := func(name string) bool {
 			// If not configured or model no longer exists, prompt for model selection
 			configuredModel := config.IntegrationModel(name)
-			if configuredModel == "" || !config.ModelExists(cmd.Context(), configuredModel) {
+			if configuredModel == "" || !config.ModelExists(cmd.Context(), configuredModel) || config.IsCloudModelDisabled(cmd.Context(), configuredModel) {
 				err := config.ConfigureIntegrationWithSelectors(cmd.Context(), name, singleSelector, multiSelector)
 				if errors.Is(err, config.ErrCancelled) {
 					return false // Return to main menu
@@ -1971,7 +1976,7 @@ func runInteractiveTUI(cmd *cobra.Command) {
 			return
 		case tui.SelectionRunModel:
 			_ = config.SetLastSelection("run")
-			if modelName := config.LastModel(); modelName != "" {
+			if modelName := config.LastModel(); modelName != "" && !config.IsCloudModelDisabled(cmd.Context(), modelName) {
 				runModel(modelName)
 			} else {
 				modelName, err := config.SelectModelWithSelector(cmd.Context(), singleSelector)
@@ -1999,6 +2004,9 @@ func runInteractiveTUI(cmd *cobra.Command) {
 					continue
 				}
 			}
+			if config.IsCloudModelDisabled(cmd.Context(), modelName) {
+				continue // Return to main menu
+			}
 			runModel(modelName)
 		case tui.SelectionIntegration:
 			_ = config.SetLastSelection(result.Integration)
@@ -2008,6 +2016,17 @@ func runInteractiveTUI(cmd *cobra.Command) {
 		case tui.SelectionChangeIntegration:
 			_ = config.SetLastSelection(result.Integration)
 			if len(result.Models) > 0 {
+				// Filter out cloud-disabled models
+				var filtered []string
+				for _, m := range result.Models {
+					if !config.IsCloudModelDisabled(cmd.Context(), m) {
+						filtered = append(filtered, m)
+					}
+				}
+				if len(filtered) == 0 {
+					continue
+				}
+				result.Models = filtered
 				// Multi-select from modal (Editor integrations)
 				if err := config.SaveAndEditIntegration(result.Integration, result.Models); err != nil {
 					fmt.Fprintf(os.Stderr, "Error configuring %s: %v\n", result.Integration, err)
@@ -2017,8 +2036,11 @@ func runInteractiveTUI(cmd *cobra.Command) {
 					fmt.Fprintf(os.Stderr, "Error launching %s: %v\n", result.Integration, err)
 				}
 			} else if result.Model != "" {
+				if config.IsCloudModelDisabled(cmd.Context(), result.Model) {
+					continue
+				}
 				// Single-select from modal - save and launch
-				if err := config.SaveIntegrationModel(result.Integration, result.Model); err != nil {
+				if err := config.SaveIntegration(result.Integration, []string{result.Model}); err != nil {
 					fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
 					continue
 				}
@@ -2129,6 +2151,9 @@ func NewCLI() *cobra.Command {
 
 	// Image generation flags (width, height, steps, seed, etc.)
 	imagegen.RegisterFlags(runCmd)
+
+	runCmd.Flags().Bool("imagegen", false, "Use the imagegen runner for LLM inference")
+	runCmd.Flags().MarkHidden("imagegen")
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
@@ -2273,6 +2298,7 @@ func NewCLI() *cobra.Command {
 				envVars["OLLAMA_MAX_QUEUE"],
 				envVars["OLLAMA_MODELS"],
 				envVars["OLLAMA_NUM_PARALLEL"],
+				envVars["OLLAMA_NO_CLOUD"],
 				envVars["OLLAMA_NOPRUNE"],
 				envVars["OLLAMA_ORIGINS"],
 				envVars["OLLAMA_SCHED_SPREAD"],

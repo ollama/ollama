@@ -1,6 +1,8 @@
 package envconfig
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -11,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -206,6 +209,8 @@ var (
 	UseAuth = Bool("OLLAMA_AUTH")
 	// Enable Vulkan backend
 	EnableVulkan = Bool("OLLAMA_VULKAN")
+	// NoCloudEnv checks the OLLAMA_NO_CLOUD environment variable.
+	NoCloudEnv = Bool("OLLAMA_NO_CLOUD")
 )
 
 func String(s string) func() string {
@@ -285,6 +290,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners(), "Maximum number of loaded models per GPU"},
 		"OLLAMA_MAX_QUEUE":         {"OLLAMA_MAX_QUEUE", MaxQueue(), "Maximum number of queued requests"},
 		"OLLAMA_MODELS":            {"OLLAMA_MODELS", Models(), "The path to the models directory"},
+		"OLLAMA_NO_CLOUD":          {"OLLAMA_NO_CLOUD", NoCloud(), "Disable Ollama cloud features (remote inference and web search)"},
 		"OLLAMA_NOHISTORY":         {"OLLAMA_NOHISTORY", NoHistory(), "Do not preserve readline history"},
 		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune(), "Do not prune model blobs on startup"},
 		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel(), "Maximum number of parallel requests"},
@@ -333,4 +339,92 @@ func Values() map[string]string {
 // Var returns an environment variable stripped of leading and trailing quotes or spaces
 func Var(key string) string {
 	return strings.Trim(strings.TrimSpace(os.Getenv(key)), "\"'")
+}
+
+// serverConfigData holds the parsed fields from ~/.ollama/server.json.
+type serverConfigData struct {
+	DisableOllamaCloud bool `json:"disable_ollama_cloud,omitempty"`
+}
+
+var (
+	serverCfgMu     sync.RWMutex
+	serverCfgLoaded bool
+	serverCfg       serverConfigData
+)
+
+func loadServerConfig() {
+	serverCfgMu.RLock()
+	if serverCfgLoaded {
+		serverCfgMu.RUnlock()
+		return
+	}
+	serverCfgMu.RUnlock()
+
+	cfg := serverConfigData{}
+	home, err := os.UserHomeDir()
+	if err == nil {
+		path := filepath.Join(home, ".ollama", "server.json")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				slog.Debug("envconfig: could not read server config", "error", err)
+			}
+		} else if err := json.Unmarshal(data, &cfg); err != nil {
+			slog.Debug("envconfig: could not parse server config", "error", err)
+		}
+	}
+
+	serverCfgMu.Lock()
+	defer serverCfgMu.Unlock()
+	if serverCfgLoaded {
+		return
+	}
+	serverCfg = cfg
+	serverCfgLoaded = true
+}
+
+func cachedServerConfig() serverConfigData {
+	serverCfgMu.RLock()
+	defer serverCfgMu.RUnlock()
+	return serverCfg
+}
+
+// ReloadServerConfig refreshes the cached ~/.ollama/server.json settings.
+func ReloadServerConfig() {
+	serverCfgMu.Lock()
+	serverCfgLoaded = false
+	serverCfg = serverConfigData{}
+	serverCfgMu.Unlock()
+
+	loadServerConfig()
+}
+
+// NoCloud returns true if Ollama cloud features are disabled,
+// checking both the OLLAMA_NO_CLOUD environment variable and
+// the disable_ollama_cloud field in ~/.ollama/server.json.
+func NoCloud() bool {
+	if NoCloudEnv() {
+		return true
+	}
+	loadServerConfig()
+	return cachedServerConfig().DisableOllamaCloud
+}
+
+// NoCloudSource returns the source of the cloud-disabled decision.
+// Returns "none", "env", "config", or "both".
+func NoCloudSource() string {
+	envDisabled := NoCloudEnv()
+	loadServerConfig()
+	configDisabled := cachedServerConfig().DisableOllamaCloud
+
+	switch {
+	case envDisabled && configDisabled:
+		return "both"
+	case envDisabled:
+		return "env"
+	case configDisabled:
+		return "config"
+	default:
+		return "none"
+	}
 }
