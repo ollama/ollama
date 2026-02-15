@@ -11,10 +11,10 @@ Subject: [PATCH] interleave multi rope
  4 files changed, 16 insertions(+), 16 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index 0f58aecc2..6bc8d4dc5 100644
+index c90b7db7e..5988ef40b 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
-@@ -5662,14 +5662,14 @@ static void ggml_mrope_cache_init(
+@@ -5663,14 +5663,14 @@ static void ggml_mrope_cache_init(
  
          float theta = theta_t;
          if (is_imrope) { // qwen3vl apply interleaved mrope
