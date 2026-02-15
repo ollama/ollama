@@ -16,7 +16,7 @@ Start building with open models.
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-or [download manually](http://localhost:8080/download/Ollama.dmg)
+or [download manually](https://ollama.com/download/Ollama.dmg)
 
 ### Windows
 
