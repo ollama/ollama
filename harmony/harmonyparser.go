@@ -1,7 +1,6 @@
 package harmony
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -441,24 +440,18 @@ func (h *HarmonyMessageHandler) Add(s string, done bool) (content string, thinki
 		if toolName != nil {
 			name := strings.TrimPrefix(*toolName, "functions.")
 			name = h.FunctionNameMap.OriginalFromConverted(name)
-			// The tool accumulator may contain trailing Harmony tokens after
-			// the JSON arguments (e.g. "<|call|><|start|>assistant...").
-			// Use json.Decoder to extract just the first valid JSON value,
-			// safely ignoring any trailing bytes without risking corruption
-			// of JSON string values that may legitimately contain "<|".
+			// Smaller models (e.g. gpt-oss:20b) often fail to emit all closing
+			// braces before EOS when generating deeply nested tool call JSON.
+			// Try to parse as-is first, then attempt brace repair on failure.
 			var args api.ToolCallFunctionArguments
 			var repair *api.ToolCallRepair
 			trimmed := strings.TrimSpace(raw)
 			if trimmed == "" {
 				trimmed = "{}"
 			}
-			decoder := json.NewDecoder(bytes.NewReader([]byte(trimmed)))
-			if err := decoder.Decode(&args); err != nil {
-				// Try to recover from truncated JSON by appending missing closing braces.
-				// Smaller models often fail to emit all closing braces before EOS.
+			if err := json.Unmarshal([]byte(trimmed), &args); err != nil {
 				if repaired, ok := tryRepairBraces(trimmed); ok {
-					decoder2 := json.NewDecoder(bytes.NewReader([]byte(repaired)))
-					if err2 := decoder2.Decode(&args); err2 != nil {
+					if err2 := json.Unmarshal([]byte(repaired), &args); err2 != nil {
 						return "", "", nil, fmt.Errorf("error parsing tool call: raw='%s', err=%w", raw, err)
 					}
 					addedBraces := len(repaired) - len(trimmed)
