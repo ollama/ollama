@@ -235,6 +235,13 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 type ToolCall struct {
 	ID       string           `json:"id,omitempty"`
 	Function ToolCallFunction `json:"function"`
+	Repaired *ToolCallRepair  `json:"repaired,omitempty"`
+}
+
+// ToolCallRepair describes how a malformed tool call was automatically repaired.
+type ToolCallRepair struct {
+	Original string `json:"original"` // raw output from the model before repair
+	Action   string `json:"action"`   // description of repair performed (e.g. "closed_braces:2")
 }
 
 type ToolCallFunction struct {
