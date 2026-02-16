@@ -309,6 +309,8 @@ console.log(response.message.content);
 - [Screenpipe](https://github.com/mediar-ai/screenpipe) - 24/7 screen and mic recording with AI-powered search
 - [Vibe](https://github.com/thewh1teagle/vibe) - Transcribe and analyze meetings
 - [Page Assist](https://github.com/n4ze3m/page-assist) - Chrome extension for AI-powered browsing
+- [OpenTalkGpt](https://github.com/adarshM84/OpenTalkGpt) (Chrome Extension to manage open-source models supported by Ollama, create custom models, and chat with models from a user-friendly UI)
+- [TextLLaMA](https://github.com/adarshM84/TextLLaMA) A Chrome extension that helps you write emails, correct grammar, and translate text into any language using the current page’s description.
 - [NativeMind](https://github.com/NativeMindBrowser/NativeMindExtension) - Private, on-device browser AI assistant
 - [Ollama Fortress](https://github.com/ParisNeo/ollama_proxy_server) - Security proxy for Ollama
 - [1Panel](https://github.com/1Panel-dev/1Panel/) - Web-based Linux server management
