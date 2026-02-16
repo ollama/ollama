@@ -342,6 +342,14 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 		}
 		defer resp.Body.Close()
 
+		if resp.StatusCode >= http.StatusBadRequest {
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return fmt.Errorf("%d: %s", resp.StatusCode, err)
+			}
+			return fmt.Errorf("%d: %s", resp.StatusCode, body)
+		}
+
 		n, err := io.CopyN(w, io.TeeReader(resp.Body, part), part.Size-part.Completed.Load())
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrUnexpectedEOF) {
 			// rollback progress
