@@ -6,11 +6,12 @@ import (
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
+	"github.com/ollama/ollama/tokenizer"
 )
 
 type Model struct {
 	model.Base
-	model.SentencePiece
+	tokenizer.Tokenizer
 
 	*TextModel
 }
@@ -23,8 +24,8 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 func New(c fs.Config) (model.Model, error) {
 	m := Model{
 		TextModel: newTextModel(c),
-		SentencePiece: model.NewSentencePiece(
-			&model.Vocabulary{
+		Tokenizer: tokenizer.NewSentencePiece(
+			&tokenizer.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Scores: c.Floats("tokenizer.ggml.scores"),
 				Types:  c.Ints("tokenizer.ggml.token_type"),

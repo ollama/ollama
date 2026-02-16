@@ -11,6 +11,7 @@ import {
   FolderIcon,
   BoltIcon,
   WrenchIcon,
+  CloudIcon,
   XMarkIcon,
   CogIcon,
   ArrowLeftIcon,
@@ -18,8 +19,14 @@ import {
 import { Settings as SettingsType } from "@/gotypes";
 import { useNavigate } from "@tanstack/react-router";
 import { useUser } from "@/hooks/useUser";
+import { useCloudStatus } from "@/hooks/useCloudStatus";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getSettings, updateSettings } from "@/api";
+import {
+  getSettings,
+  type CloudStatusResponse,
+  updateCloudSetting,
+  updateSettings,
+} from "@/api";
 
 function AnimatedDots() {
   return (
@@ -53,6 +60,11 @@ export default function Settings() {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [pollingInterval, setPollingInterval] = useState<number | null>(null);
   const navigate = useNavigate();
+  const {
+    cloudDisabled,
+    cloudStatus,
+    isLoading: cloudStatusLoading,
+  } = useCloudStatus();
 
   const {
     data: settingsData,
@@ -69,6 +81,50 @@ export default function Settings() {
     mutationFn: updateSettings,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["settings"] });
+      setShowSaved(true);
+      setTimeout(() => setShowSaved(false), 1500);
+    },
+  });
+
+  const updateCloudMutation = useMutation({
+    mutationFn: (enabled: boolean) => updateCloudSetting(enabled),
+    onMutate: async (enabled: boolean) => {
+      await queryClient.cancelQueries({ queryKey: ["cloudStatus"] });
+
+      const previous = queryClient.getQueryData<CloudStatusResponse | null>([
+        "cloudStatus",
+      ]);
+      const envForcesDisabled =
+        previous?.source === "env" || previous?.source === "both";
+
+      queryClient.setQueryData<CloudStatusResponse | null>(
+        ["cloudStatus"],
+        previous
+          ? {
+              ...previous,
+              disabled: !enabled || envForcesDisabled,
+            }
+          : {
+              disabled: !enabled,
+              source: "config",
+            },
+      );
+
+      return { previous };
+    },
+    onError: (_error, _enabled, context) => {
+      if (context?.previous !== undefined) {
+        queryClient.setQueryData(["cloudStatus"], context.previous);
+      }
+    },
+    onSuccess: (status) => {
+      queryClient.setQueryData<CloudStatusResponse | null>(
+        ["cloudStatus"],
+        status,
+      );
+      queryClient.invalidateQueries({ queryKey: ["models"] });
+      queryClient.invalidateQueries({ queryKey: ["cloudStatus"] });
+
       setShowSaved(true);
       setTimeout(() => setShowSaved(false), 1500);
     },
@@ -149,11 +205,15 @@ export default function Settings() {
         Agent: false,
         Tools: false,
         ContextLength: 4096,
-        AirplaneMode: false,
       });
       updateSettingsMutation.mutate(defaultSettings);
     }
   };
+
+  const cloudOverriddenByEnv =
+    cloudStatus?.source === "env" || cloudStatus?.source === "both";
+  const cloudToggleDisabled =
+    cloudStatusLoading || updateCloudMutation.isPending || cloudOverriddenByEnv;
 
   const handleConnectOllamaAccount = async () => {
     setConnectionError(null);
@@ -237,7 +297,7 @@ export default function Settings() {
         <div className="space-y-4 max-w-2xl mx-auto">
           {/* Connect Ollama Account */}
           <div className="overflow-hidden rounded-xl bg-white dark:bg-neutral-800">
-            <div className="p-4 border-b border-neutral-200 dark:border-neutral-800">
+            <div className="p-4">
               <Field>
                 {isLoading ? (
                   // Loading skeleton, this will only happen if the app started recently
@@ -344,6 +404,34 @@ export default function Settings() {
           {/* Local Configuration */}
           <div className="relative overflow-hidden rounded-xl bg-white dark:bg-neutral-800">
             <div className="space-y-4 p-4">
+              <Field>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start space-x-3 flex-1">
+                    <CloudIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
+                    <div>
+                      <Label>Cloud</Label>
+                      <Description>
+                        {cloudOverriddenByEnv
+                          ? "The OLLAMA_NO_CLOUD environment variable is currently forcing cloud off."
+                          : "Enable cloud models and web search."}
+                      </Description>
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0">
+                    <Switch
+                      checked={!cloudDisabled}
+                      disabled={cloudToggleDisabled}
+                      onChange={(checked) => {
+                        if (cloudOverriddenByEnv) {
+                          return;
+                        }
+                        updateCloudMutation.mutate(checked);
+                      }}
+                    />
+                  </div>
+                </div>
+              </Field>
+
               {/* Expose Ollama */}
               <Field>
                 <div className="flex items-start justify-between gap-4">
@@ -437,35 +525,6 @@ export default function Settings() {
                         ]}
                       />
                     </div>
-                  </div>
-                </div>
-              </Field>
-              {/* Airplane Mode */}
-              <Field>
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex items-start space-x-3 flex-1">
-                    <svg
-                      className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100"
-                      viewBox="0 0 21.5508 17.9033"
-                      fill="currentColor"
-                    >
-                      <path d="M21.5508 8.94727C21.542 7.91895 20.1445 7.17188 18.4658 7.17188L14.9238 7.17188C14.4316 7.17188 14.2471 7.09277 13.957 6.75879L8.05078 0.316406C7.86621 0.105469 7.6377 0 7.37402 0L6.35449 0C6.12598 0 5.99414 0.202148 6.1084 0.448242L9.14941 7.17188L4.68457 7.68164L3.09375 4.76367C2.97949 4.54395 2.78613 4.44727 2.49609 4.44727L2.11816 4.44727C1.88965 4.44727 1.74023 4.59668 1.74023 4.8252L1.74023 13.0693C1.74023 13.2979 1.88965 13.4385 2.11816 13.4385L2.49609 13.4385C2.78613 13.4385 2.97949 13.3418 3.09375 13.1309L4.68457 10.2129L9.14941 10.7227L6.1084 17.4463C5.99414 17.6836 6.12598 17.8945 6.35449 17.8945L7.37402 17.8945C7.6377 17.8945 7.86621 17.7803 8.05078 17.5781L13.957 11.127C14.2471 10.8018 14.4316 10.7227 14.9238 10.7227L18.4658 10.7227C20.1445 10.7227 21.542 9.9668 21.5508 8.94727Z" />
-                    </svg>
-                    <div>
-                      <Label>Airplane mode</Label>
-                      <Description>
-                        Airplane mode keeps data local, disabling cloud models
-                        and web search.
-                      </Description>
-                    </div>
-                  </div>
-                  <div className="flex-shrink-0">
-                    <Switch
-                      checked={settings.AirplaneMode}
-                      onChange={(checked) =>
-                        handleChange("AirplaneMode", checked)
-                      }
-                    />
                   </div>
                 </div>
               </Field>

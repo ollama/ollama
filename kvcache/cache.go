@@ -75,3 +75,10 @@ type Cache interface {
 	// removed by calling Remove(seq, 0, math.MaxInt32)
 	Remove(seq int, beginIndex, endIndex int32) error
 }
+
+// CheckpointCache optionally supports restoring recurrent state to a prior
+// position to avoid full prompt reprocessing when a prefix mismatch occurs.
+// The returned position is the number of tokens that can be kept (prefix length).
+type CheckpointCache interface {
+	PrepareRestore(seq int, targetPos int32) (int32, bool)
+}

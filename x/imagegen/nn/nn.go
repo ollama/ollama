@@ -32,10 +32,16 @@ func NewLinear(weight *mlx.Array, bias *mlx.Array) *Linear {
 
 // NewQuantizedLinear creates a quantized linear layer directly from bf16 weights.
 // Quantizes the weight immediately and evaluates to break lazy dependencies.
+// Note: For modes like "nvfp4", qbiases will be nil.
 func NewQuantizedLinear(weight *mlx.Array, bias *mlx.Array, groupSize, bits int, mode string) *QuantizedLinear {
 	qw, scales, qbiases := mlx.Quantize(weight, groupSize, bits, mode)
 	// Eval immediately so bf16 weight can be freed
-	mlx.Eval(qw, scales, qbiases)
+	// Handle modes that don't return qbiases (e.g., nvfp4)
+	if qbiases != nil {
+		mlx.Eval(qw, scales, qbiases)
+	} else {
+		mlx.Eval(qw, scales)
+	}
 	return &QuantizedLinear{
 		Weight:    qw,
 		Scales:    scales,
@@ -77,10 +83,13 @@ func (l *Linear) ToQuantized(groupSize, bits int, mode string) *QuantizedLinear 
 
 // QuantizedLinear applies an affine transformation using quantized weights.
 // Equivalent to mlx.nn.QuantizedLinear.
+// Supports multiple quantization modes:
+//   - "affine": scale + zero-point bias (QBiases required)
+//   - "nvfp4": NVIDIA FP4 with E4M3 scales (QBiases nil)
 type QuantizedLinear struct {
 	Weight    *mlx.Array // Quantized weight data
 	Scales    *mlx.Array // Scale factors for dequantization
-	QBiases   *mlx.Array // Quantization biases (NOT layer bias)
+	QBiases   *mlx.Array // Quantization biases (NOT layer bias), nil for nvfp4
 	Bias      *mlx.Array // Layer bias [output_dims] or nil
 	GroupSize int
 	Bits      int
@@ -219,4 +228,33 @@ func (ln *LayerNorm) Forward(x *mlx.Array) *mlx.Array {
 		out = mlx.Add(out, ln.Bias)
 	}
 	return out
+}
+
+// MultiLinearLayer is an interface for per-head linear layers.
+// This allows swapping between MultiLinear (bf16) and pre-dequantized weights.
+type MultiLinearLayer interface {
+	Forward(x *mlx.Array) *mlx.Array
+}
+
+// MultiLinear performs per-head linear projections.
+// Weight shape: [num_heads, output_dims, input_dims]
+// Input shape: [B, num_heads, L, input_dims]
+// Output shape: [B, num_heads, L, output_dims]
+type MultiLinear struct {
+	Weight *mlx.Array `weight:"weight"`
+}
+
+// NewMultiLinear creates a MultiLinear layer with the given weight.
+func NewMultiLinear(weight *mlx.Array) *MultiLinear {
+	return &MultiLinear{Weight: weight}
+}
+
+// Forward applies per-head linear transformation: x @ weight.T per head via broadcasting.
+func (ml *MultiLinear) Forward(x *mlx.Array) *mlx.Array {
+	// Weight: [num_heads, output_dims, input_dims]
+	// x: [B, num_heads, L, input_dims]
+	// wT: [num_heads, input_dims, output_dims]
+	// Result: [B, num_heads, L, output_dims]
+	wT := mlx.Transpose(ml.Weight, 0, 2, 1)
+	return mlx.Matmul(x, wT)
 }

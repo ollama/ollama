@@ -1,0 +1,106 @@
+---
+title: OpenCode
+---
+
+OpenCode is an open-source AI coding assistant that runs in your terminal.
+
+## Install
+
+Install the [OpenCode CLI](https://opencode.ai):
+
+```bash
+curl -fsSL https://opencode.ai/install | bash
+```
+
+<Note>OpenCode requires a larger context window. It is recommended to use a context window of at least 64k tokens. See [Context length](/context-length) for more information.</Note>
+
+## Usage with Ollama
+
+### Quick setup
+
+```bash
+ollama launch opencode
+```
+
+To configure without launching:
+
+```shell
+ollama launch opencode --config
+```
+
+### Manual setup
+
+Add a configuration block to `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama",
+      "options": {
+        "baseURL": "http://localhost:11434/v1"
+      },
+      "models": {
+        "qwen3-coder": {
+          "name": "qwen3-coder"
+        }
+      }
+    }
+  }
+}
+```
+
+## Cloud Models
+
+`glm-4.7:cloud` is the recommended model for use with OpenCode.
+
+Add the cloud configuration to `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama",
+      "options": {
+        "baseURL": "http://localhost:11434/v1"
+      },
+      "models": {
+        "glm-4.7:cloud": {
+          "name": "glm-4.7:cloud"
+        }
+      }
+    }
+  }
+}
+```
+
+## Connecting to ollama.com
+
+1. Create an [API key](https://ollama.com/settings/keys) from ollama.com and export it as `OLLAMA_API_KEY`.
+2. Update `~/.config/opencode/opencode.json` to point to ollama.com:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama Cloud",
+      "options": {
+        "baseURL": "https://ollama.com/v1"
+      },
+      "models": {
+        "glm-4.7:cloud": {
+          "name": "glm-4.7:cloud"
+        }
+      }
+    }
+  }
+}
+```
+
+Run `opencode` in a new terminal to load the new settings.

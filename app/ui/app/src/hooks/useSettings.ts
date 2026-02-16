@@ -9,7 +9,6 @@ interface SettingsState {
   webSearchEnabled: boolean;
   selectedModel: string;
   sidebarOpen: boolean;
-  airplaneMode: boolean;
   thinkEnabled: boolean;
   thinkLevel: string;
 }
@@ -51,7 +50,6 @@ export function useSettings() {
       thinkLevel: settingsData?.settings?.ThinkLevel ?? "none",
       selectedModel: settingsData?.settings?.SelectedModel ?? "",
       sidebarOpen: settingsData?.settings?.SidebarOpen ?? false,
-      airplaneMode: settingsData?.settings?.AirplaneMode ?? false,
     }),
     [settingsData?.settings],
   );

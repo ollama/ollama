@@ -1,7 +1,9 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -9,14 +11,38 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 )
 
 // OpenCode implements Runner and Editor for OpenCode integration
 type OpenCode struct{}
 
+// cloudModelLimit holds context and output token limits for a cloud model.
+type cloudModelLimit struct {
+	Context int
+	Output  int
+}
+
+// lookupCloudModelLimit returns the token limits for a cloud model.
+// It tries the exact name first, then strips the ":cloud" suffix.
+func lookupCloudModelLimit(name string) (cloudModelLimit, bool) {
+	if l, ok := cloudModelLimits[name]; ok {
+		return l, true
+	}
+	base := strings.TrimSuffix(name, ":cloud")
+	if base != name {
+		if l, ok := cloudModelLimits[base]; ok {
+			return l, true
+		}
+	}
+	return cloudModelLimit{}, false
+}
+
 func (o *OpenCode) String() string { return "OpenCode" }
 
-func (o *OpenCode) Run(model string) error {
+func (o *OpenCode) Run(model string, args []string) error {
 	if _, err := exec.LookPath("opencode"); err != nil {
 		return fmt.Errorf("opencode is not installed, install from https://opencode.ai")
 	}
@@ -26,11 +52,21 @@ func (o *OpenCode) Run(model string) error {
 	if config, err := loadIntegration("opencode"); err == nil && len(config.Models) > 0 {
 		models = config.Models
 	}
+	var err error
+	models, err = resolveEditorModels("opencode", models, func() ([]string, error) {
+		return selectModels(context.Background(), "opencode", "")
+	})
+	if errors.Is(err, errCancelled) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
 	if err := o.Edit(models); err != nil {
 		return fmt.Errorf("setup failed: %w", err)
 	}
 
-	cmd := exec.Command("opencode")
+	cmd := exec.Command("opencode", args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -88,7 +124,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 			"npm":  "@ai-sdk/openai-compatible",
 			"name": "Ollama (local)",
 			"options": map[string]any{
-				"baseURL": "http://localhost:11434/v1",
+				"baseURL": envconfig.Host().String() + "/v1",
 			},
 		}
 	}
@@ -105,18 +141,46 @@ func (o *OpenCode) Edit(modelList []string) error {
 
 	for name, cfg := range models {
 		if cfgMap, ok := cfg.(map[string]any); ok {
-			if displayName, ok := cfgMap["name"].(string); ok {
-				if strings.HasSuffix(displayName, "[Ollama]") && !selectedSet[name] {
-					delete(models, name)
-				}
+			if isOllamaModel(cfgMap) && !selectedSet[name] {
+				delete(models, name)
 			}
 		}
 	}
 
+	client, _ := api.ClientFromEnvironment()
+
 	for _, model := range modelList {
-		models[model] = map[string]any{
-			"name": fmt.Sprintf("%s [Ollama]", model),
+		if existing, ok := models[model].(map[string]any); ok {
+			// migrate existing models without _launch marker
+			if isOllamaModel(existing) {
+				existing["_launch"] = true
+				if name, ok := existing["name"].(string); ok {
+					existing["name"] = strings.TrimSuffix(name, " [Ollama]")
+				}
+			}
+			if isCloudModel(context.Background(), client, model) {
+				if l, ok := lookupCloudModelLimit(model); ok {
+					existing["limit"] = map[string]any{
+						"context": l.Context,
+						"output":  l.Output,
+					}
+				}
+			}
+			continue
 		}
+		entry := map[string]any{
+			"name":    model,
+			"_launch": true,
+		}
+		if isCloudModel(context.Background(), client, model) {
+			if l, ok := lookupCloudModelLimit(model); ok {
+				entry["limit"] = map[string]any{
+					"context": l.Context,
+					"output":  l.Output,
+				}
+			}
+		}
+		models[model] = entry
 	}
 
 	ollama["models"] = models
@@ -200,4 +264,16 @@ func (o *OpenCode) Models() []string {
 	keys := slices.Collect(maps.Keys(models))
 	slices.Sort(keys)
 	return keys
+}
+
+// isOllamaModel reports whether a model config entry is managed by us
+func isOllamaModel(cfg map[string]any) bool {
+	if v, ok := cfg["_launch"].(bool); ok && v {
+		return true
+	}
+	// previously used [Ollama] as a suffix for the model managed by ollama launch
+	if name, ok := cfg["name"].(string); ok {
+		return strings.HasSuffix(name, "[Ollama]")
+	}
+	return false
 }

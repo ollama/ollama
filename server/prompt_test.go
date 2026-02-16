@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -260,6 +261,71 @@ func TestChatPrompt(t *testing.T) {
 						t.Errorf("expected %q, got %q", tt.images[i], images[i].Data)
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestChatPromptTokenizeCalls(t *testing.T) {
+	tmpl, err := template.Parse(`
+{{- if .System }}{{ .System }} {{ end }}
+{{- if .Prompt }}{{ .Prompt }} {{ end }}
+{{- if .Response }}{{ .Response }} {{ end }}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := Model{Template: tmpl}
+
+	cases := []struct {
+		name         string
+		limit        int
+		msgs         []api.Message
+		maxTokenizes int
+	}{
+		{
+			name:  "all messages fit",
+			limit: 2048,
+			msgs: []api.Message{
+				{Role: "user", Content: "message 1"},
+				{Role: "assistant", Content: "response 1"},
+				{Role: "user", Content: "message 2"},
+				{Role: "assistant", Content: "response 2"},
+				{Role: "user", Content: "message 3"},
+			},
+			maxTokenizes: 1,
+		},
+		{
+			name:  "truncate to last message",
+			limit: 5,
+			msgs: []api.Message{
+				{Role: "user", Content: "message 1"},
+				{Role: "assistant", Content: "response 1"},
+				{Role: "user", Content: "message 2"},
+				{Role: "assistant", Content: "response 2"},
+				{Role: "user", Content: "message 3"},
+			},
+			maxTokenizes: 5,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			tokenizeCount := 0
+			countingTokenize := func(ctx context.Context, s string) ([]int, error) {
+				tokenizeCount++
+				tokens, err := mockRunner{}.Tokenize(ctx, s)
+				return tokens, err
+			}
+
+			opts := api.Options{Runner: api.Runner{NumCtx: tt.limit}}
+			think := false
+			_, _, err := chatPrompt(t.Context(), &model, countingTokenize, &opts, tt.msgs, nil, &api.ThinkValue{Value: think}, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if tokenizeCount > tt.maxTokenizes {
+				t.Errorf("tokenize called %d times, expected at most %d", tokenizeCount, tt.maxTokenizes)
 			}
 		})
 	}

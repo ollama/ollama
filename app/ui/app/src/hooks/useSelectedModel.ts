@@ -7,6 +7,7 @@ import { Model } from "@/gotypes";
 import { FEATURED_MODELS } from "@/utils/mergeModels";
 import { getTotalVRAM } from "@/utils/vram.ts";
 import { getInferenceCompute } from "@/api";
+import { useCloudStatus } from "./useCloudStatus";
 
 export function recommendDefaultModel(totalVRAM: number): string {
   const vram = Math.max(0, Number(totalVRAM) || 0);
@@ -22,6 +23,7 @@ export function recommendDefaultModel(totalVRAM: number): string {
 export function useSelectedModel(currentChatId?: string, searchQuery?: string) {
   const { settings, setSettings } = useSettings();
   const { data: models = [], isLoading } = useModels(searchQuery || "");
+  const { cloudDisabled } = useCloudStatus();
   const { data: chatData, isLoading: isChatLoading } = useChat(
     currentChatId && currentChatId !== "new" ? currentChatId : "",
   );
@@ -46,12 +48,11 @@ export function useSelectedModel(currentChatId?: string, searchQuery?: string) {
   const restoredChatRef = useRef<string | null>(null);
 
   const selectedModel: Model | null = useMemo(() => {
-    // if airplane mode is on and selected model ends with cloud,
-    // switch to recommended default model
-    if (settings.airplaneMode && settings.selectedModel?.endsWith("cloud")) {
+    // If cloud is disabled and selected model ends with cloud, switch to a local default.
+    if (cloudDisabled && settings.selectedModel?.endsWith("cloud")) {
       return (
         models.find((m) => m.model === recommendedModel) ||
-        models.find((m) => m.isCloud) ||
+        models.find((m) => !m.isCloud()) ||
         models.find((m) => m.digest === undefined || m.digest === "") ||
         models[0] ||
         null
@@ -68,7 +69,7 @@ export function useSelectedModel(currentChatId?: string, searchQuery?: string) {
       "qwen3-coder:480b",
     ];
     const shouldMigrate =
-      !settings.airplaneMode &&
+      !cloudDisabled &&
       settings.turboEnabled &&
       baseModelsToMigrate.includes(settings.selectedModel);
 
@@ -96,13 +97,18 @@ export function useSelectedModel(currentChatId?: string, searchQuery?: string) {
         })) ||
       null
     );
-  }, [models, settings.selectedModel, settings.airplaneMode, recommendedModel]);
+  }, [
+    models,
+    settings.selectedModel,
+    cloudDisabled,
+    recommendedModel,
+  ]);
 
   useEffect(() => {
     if (!selectedModel) return;
 
     if (
-      settings.airplaneMode &&
+      cloudDisabled &&
       settings.selectedModel?.endsWith("cloud") &&
       selectedModel.model !== settings.selectedModel
     ) {
@@ -110,13 +116,17 @@ export function useSelectedModel(currentChatId?: string, searchQuery?: string) {
     }
 
     if (
-      !settings.airplaneMode &&
+      !cloudDisabled &&
       settings.turboEnabled &&
       selectedModel.model !== settings.selectedModel
     ) {
       setSettings({ SelectedModel: selectedModel.model, TurboEnabled: false });
     }
-  }, [selectedModel, settings.airplaneMode, settings.selectedModel]);
+  }, [
+    selectedModel,
+    cloudDisabled,
+    settings.selectedModel,
+  ]);
 
   // Set model from chat history when chat data loads
   useEffect(() => {
@@ -169,7 +179,9 @@ export function useSelectedModel(currentChatId?: string, searchQuery?: string) {
 
     const defaultModel =
       models.find((m) => m.model === recommendedModel) ||
-      models.find((m) => m.isCloud()) ||
+      (cloudDisabled
+        ? models.find((m) => !m.isCloud())
+        : models.find((m) => m.isCloud())) ||
       models.find((m) => m.digest === undefined || m.digest === "") ||
       models[0];
 
@@ -181,6 +193,7 @@ export function useSelectedModel(currentChatId?: string, searchQuery?: string) {
     inferenceComputes.length,
     models.length,
     settings.selectedModel,
+    cloudDisabled,
   ]);
 
   // Add the selected model to the models list if it's not already there
