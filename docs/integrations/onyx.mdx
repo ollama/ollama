@@ -1,0 +1,63 @@
+---
+title: Onyx
+---
+
+## Overview
+[Onyx](http://onyx.app/) is a self-hostable Chat UI that integrates with all Ollama models. Features include:
+- Creating custom Agents
+- Web search
+- Deep Research
+- RAG over uploaded documents and connected apps
+- Connectors to applications like Google Drive, Email, Slack, etc.
+- MCP and OpenAPI Actions support
+- Image generation
+- User/Groups management, RBAC, SSO, etc.
+
+Onyx can be deployed for single users or large organizations.
+
+## Install Onyx
+
+Deploy Onyx with the [quickstart guide](https://docs.onyx.app/deployment/getting_started/quickstart).
+
+<Info>
+Resourcing/scaling docs [here](https://docs.onyx.app/deployment/getting_started/resourcing).
+</Info>
+
+## Usage with Ollama 
+
+1. Login to your Onyx deployment (create an account first).
+<div style={{ display: 'flex', justifyContent: 'center' }}>
+  <img 
+    src="/images/onyx-login.png" 
+    alt="Onyx Login Page"
+    width="75%"
+  />
+</div>
+2. In the set-up process select `Ollama` as the LLM provider.
+<div style={{ display: 'flex', justifyContent: 'center' }}>
+  <img 
+    src="/images/onyx-ollama-llm.png" 
+    alt="Onyx Set Up Form"
+    width="75%"
+  />
+</div>
+3. Provide your **Ollama API URL** and select your models.
+<Note>If you're running Onyx in Docker, to access your computer's local network use `http://host.docker.internal` instead of `http://127.0.0.1`.</Note>
+<div style={{ display: 'flex', justifyContent: 'center' }}>
+  <img 
+    src="/images/onyx-ollama-form.png" 
+    alt="Selecting Ollama Models"
+    width="75%"
+  />
+</div>
+
+You can also easily connect up Onyx Cloud with the `Ollama Cloud` tab of the setup.
+
+## Send your first query
+<div style={{ display: 'flex', justifyContent: 'center' }}>
+  <img 
+    src="/images/onyx-query.png" 
+    alt="Onyx Query Example"
+    width="75%"
+  />
+</div>

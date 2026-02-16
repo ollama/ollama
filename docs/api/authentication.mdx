@@ -1,0 +1,63 @@
+---
+title: Authentication
+---
+
+No authentication is required when accessing Ollama's API locally via `http://localhost:11434`.
+
+Authentication is required for the following:
+
+* Running cloud models via ollama.com
+* Publishing models
+* Downloading private models
+
+Ollama supports two authentication methods:
+
+* **Signing in**: sign in from your local installation, and Ollama will automatically take care of authenticating requests to ollama.com when running commands
+* **API keys**: API keys for programmatic access to ollama.com's API
+
+## Signing in
+
+To sign in to ollama.com from your local installation of Ollama, run:
+
+```
+ollama signin
+```
+
+Once signed in, Ollama will automatically authenticate commands as required:
+
+```
+ollama run gpt-oss:120b-cloud
+```
+
+Similarly, when accessing a local API endpoint that requires cloud access, Ollama will automatically authenticate the request:
+
+```shell
+curl http://localhost:11434/api/generate -d '{
+  "model": "gpt-oss:120b-cloud",
+  "prompt": "Why is the sky blue?"
+}'
+```
+
+## API keys
+
+For direct access to ollama.com's API served at `https://ollama.com/api`, authentication via API keys is required.
+
+First, create an [API key](https://ollama.com/settings/keys), then set the `OLLAMA_API_KEY` environment variable:
+
+```shell
+export OLLAMA_API_KEY=your_api_key
+```
+
+Then use the API key in the Authorization header:
+
+```shell
+curl https://ollama.com/api/generate \
+  -H "Authorization: Bearer $OLLAMA_API_KEY" \
+  -d '{
+    "model": "gpt-oss:120b",
+    "prompt": "Why is the sky blue?",
+    "stream": false
+  }'
+```
+
+API keys don't currently expire, however you can revoke them at any time in your [API keys settings](https://ollama.com/settings/keys).

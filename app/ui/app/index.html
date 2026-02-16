@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en" style="overflow: hidden">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="/src/index.css" />
+    <title>Ollama</title>
+  </head>
+  <body class="dark:bg-neutral-900 select-text">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // Add selectFiles method if available
+      if (typeof window.selectFiles === "function") {
+        window.webview = window.webview || {};
+
+        // Single file selection (returns first file or null)
+        window.webview.selectFile = function () {
+          return new Promise((resolve) => {
+            window.__selectFilesCallback = (data) => {
+              window.__selectFilesCallback = null;
+              // For single file, return first file or null
+              resolve(data && data.length > 0 ? data[0] : null);
+            };
+            window.selectFiles();
+          });
+        };
+
+        // Multiple file selection (returns array or null)
+        window.webview.selectMultipleFiles = function () {
+          return new Promise((resolve) => {
+            window.__selectFilesCallback = (data) => {
+              window.__selectFilesCallback = null;
+              resolve(data); // Returns array of files or null if cancelled
+            };
+            window.selectFiles();
+          });
+        };
+      }
+
+      // Add directory selection methods if available
+      if (typeof window.selectModelsDirectory === "function") {
+        window.webview = window.webview || {};
+        window.webview.selectModelsDirectory = function () {
+          return new Promise((resolve) => {
+            window.__selectModelsDirectoryCallback = (path) => {
+              window.__selectModelsDirectoryCallback = null;
+              resolve(path); // Returns directory path or null if cancelled
+            };
+            window.selectModelsDirectory();
+          });
+        };
+      }
+
+      if (typeof window.selectWorkingDirectory === "function") {
+        window.webview = window.webview || {};
+        window.webview.selectWorkingDirectory = function () {
+          return new Promise((resolve) => {
+            window.__selectWorkingDirectoryCallback = (path) => {
+              window.__selectWorkingDirectoryCallback = null;
+              resolve(path); // Returns directory path or null if cancelled
+            };
+            window.selectWorkingDirectory();
+          });
+        };
+      }
+
+      if (typeof window.ready === "function") {
+        const callReady = () => setTimeout(window.ready, 100);
+        if (document.readyState === "complete") {
+          callReady();
+        } else {
+          window.addEventListener("load", callReady);
+        }
+      }
+
+      if (typeof window.resize === "function") {
+        window.addEventListener("resize", function () {
+          window.resize(window.innerWidth, window.innerHeight);
+        });
+      }
+
+      document.addEventListener("keydown", function (e) {
+        if (
+          e.key === "Backspace" &&
+          !e.target.matches("input, textarea, [contenteditable], select")
+        ) {
+          e.preventDefault();
+        }
+
+        // Only prevent navigation shortcuts when not in editable fields
+        if (!e.target.matches("input, textarea, [contenteditable], select")) {
+          // Prevent Cmd/Ctrl + Left/Right arrow navigation
+          if (
+            (e.ctrlKey || e.metaKey) &&
+            (e.key === "ArrowLeft" || e.key === "ArrowRight")
+          ) {
+            e.preventDefault();
+            return false;
+          }
+
+          // Prevent Alt + Left/Right arrow navigation (Windows/Linux)
+          if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+            e.preventDefault();
+            return false;
+          }
+        }
+
+        // Always prevent F5 refresh
+        if (e.key === "F5") {
+          e.preventDefault();
+          return false;
+        }
+
+        // Always prevent Ctrl/Cmd + Shift + R (hard refresh)
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "r") {
+          e.preventDefault();
+          return false;
+        }
+      });
+
+      // Prevent mouse button navigation (back/forward buttons)
+      document.addEventListener("mousedown", function (e) {
+        // Mouse button 3 is back, button 4 is forward
+        if (e.button === 3 || e.button === 4) {
+          e.preventDefault();
+          return false;
+        }
+      });
+
+      // Prevent drag and drop navigation
+      document.addEventListener("dragover", function (e) {
+        e.preventDefault();
+        return false;
+      });
+
+      document.addEventListener("drop", function (e) {
+        e.preventDefault();
+        return false;
+      });
+
+      // TODO (jmorganca): this is a way for different components to elect
+      // to show custom context menu items on top of the default one
+      // we should integrate this better since it's confusing to follow
+      document.addEventListener(
+        "contextmenu",
+        function (e) {
+          window.setContextMenuItems([]);
+          let target = e.target;
+          while (target && target !== document) {
+            if (
+              target.classList &&
+              target.classList.contains("allow-context-menu")
+            ) {
+              return true;
+            }
+            target = target.parentElement;
+          }
+          e.preventDefault();
+          return false;
+        },
+        true,
+      );
+
+      let pendingMenuItems = [];
+      let menuPromiseResolve = null;
+      let menuPromiseReject = null;
+
+      window.menu = function (items) {
+        return new Promise((resolve, reject) => {
+          pendingMenuItems = items;
+          menuPromiseResolve = resolve;
+          menuPromiseReject = reject;
+          window.setContextMenuItems(items);
+        });
+      };
+
+      window.handleContextMenuResult = function (selected) {
+        if (menuPromiseResolve) {
+          menuPromiseResolve(selected);
+          menuPromiseResolve = null;
+          menuPromiseReject = null;
+        }
+        pendingMenuItems = [];
+      };
+    </script>
+  </body>
+</html>

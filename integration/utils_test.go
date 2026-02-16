@@ -38,6 +38,7 @@ var (
 
 	// Note: add newer models at the top of the list to test them first
 	ollamaEngineChatModels = []string{
+		"lfm2.5-thinking",
 		"ministral-3",
 		"qwen3-coder:30b",
 		"gpt-oss:20b",
@@ -143,6 +144,7 @@ var (
 		"granite3.3",
 		"hermes3",
 		"internlm2",
+		"lfm2.5-thinking",
 		"llama-guard3",
 		"llama-pro",
 		"llama2-chinese",
@@ -263,6 +265,7 @@ var (
 		"snowflake-arctic-embed2",
 	}
 	libraryToolsModels = []string{
+		"lfm2.5-thinking",
 		"qwen3-vl",
 		"gpt-oss:20b",
 		"gpt-oss:120b",

@@ -302,6 +302,9 @@ void main() {
         barrier();
     }
 
+    // prevent race on tmpsh
+    barrier();
+
     // reduce across threads
 
     float rowmaxf[rows_per_thread], eMf[rows_per_thread], Moldf[rows_per_thread];

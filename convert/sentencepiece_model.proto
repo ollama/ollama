@@ -213,7 +213,7 @@ message TrainerSpec {
   // Reserved special meta tokens.
   // * -1 is not used.
   // * unk_id must not be -1.
-  // Id must starts with 0 and be contigous.
+  // Id must start with 0 and be contiguous.
   optional int32 unk_id = 40 [default = 0];   // <unk>
   optional int32 bos_id = 41 [default = 1];   // <s>
   optional int32 eos_id = 42 [default = 2];   // </s>

@@ -112,8 +112,8 @@ func (p *MinistralParser) Add(s string, done bool) (content string, thinking str
 			before, _ := splitAtTag(&p.buffer, "}", false)
 			before += "}"
 
-			var data map[string]any
-			if err := json.Unmarshal([]byte(before), &data); err != nil {
+			var args api.ToolCallFunctionArguments
+			if err := json.Unmarshal([]byte(before), &args); err != nil {
 				// todo - throw a better error
 				return "", "", calls, err
 			}
@@ -123,7 +123,7 @@ func (p *MinistralParser) Add(s string, done bool) (content string, thinking str
 			call := api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name:      p.currentTool.Function.Name,
-					Arguments: api.ToolCallFunctionArguments(data),
+					Arguments: args,
 				},
 			}
 			calls = append(calls, call)

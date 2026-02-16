@@ -22,8 +22,10 @@ import (
 	gocmpopts "github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/convert"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -41,7 +43,7 @@ func createBinFile(t *testing.T, kv map[string]any, ti []*ggml.Tensor) (string, 
 	}
 	defer f.Close()
 
-	base := map[string]any{"general.architecture": "test"}
+	var base convert.KV = map[string]any{"general.architecture": "test"}
 	maps.Copy(base, kv)
 
 	if err := ggml.WriteGGUF(f, base, ti); err != nil {
@@ -222,15 +224,15 @@ func TestCreateFromModelInheritsRendererParser(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	manifest, err := ParseNamedManifest(model.ParseName("child"))
+	mf, err := manifest.ParseNamedManifest(model.ParseName("child"))
 	if err != nil {
 		t.Fatalf("parse manifest: %v", err)
 	}
-	if manifest.Config.Digest == "" {
+	if mf.Config.Digest == "" {
 		t.Fatalf("unexpected empty config digest for child manifest")
 	}
 
-	configPath, err := GetBlobsPath(manifest.Config.Digest)
+	configPath, err := manifest.BlobsPath(mf.Config.Digest)
 	if err != nil {
 		t.Fatalf("config blob path: %v", err)
 	}
@@ -241,7 +243,7 @@ func TestCreateFromModelInheritsRendererParser(t *testing.T) {
 	}
 	defer cfgFile.Close()
 
-	var cfg ConfigV2
+	var cfg model.ConfigV2
 	if err := json.NewDecoder(cfgFile).Decode(&cfg); err != nil {
 		t.Fatalf("decode config: %v", err)
 	}

@@ -1,7 +1,6 @@
 package convert
 
 import (
-	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -9,8 +8,10 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"os"
 	"slices"
+	"strings"
 )
 
 const (
@@ -59,7 +60,25 @@ func parseTokenizer(fsys fs.FS, specialTokenTypes []string) (*Tokenizer, error) 
 			addedTokens[t.Content] = t
 		}
 
-		t.Merges = tt.Model.Merges
+		if len(tt.Model.Merges) == 0 {
+			// noop; merges is empty
+		} else if err := json.Unmarshal(tt.Model.Merges, &t.Merges); err == nil {
+			// noop; merges is []string
+		} else if merges, err := func() ([][]string, error) {
+			var merges [][]string
+			if err := json.Unmarshal(tt.Model.Merges, &merges); err != nil {
+				return nil, err
+			}
+
+			return merges, nil
+		}(); err == nil {
+			t.Merges = make([]string, len(merges))
+			for i := range merges {
+				t.Merges[i] = strings.Join(merges[i], " ")
+			}
+		} else {
+			return nil, fmt.Errorf("could not parse tokenizer merges. expected []string or [][]string: %w", err)
+		}
 
 		sha256sum := sha256.New()
 		for _, pt := range tt.PreTokenizer.PreTokenizers {
@@ -80,6 +99,8 @@ func parseTokenizer(fsys fs.FS, specialTokenTypes []string) (*Tokenizer, error) 
 			t.Pre = "deepseek-llm"
 		case "21cde974d587f0d54dc8d56b183cc1e6239600172035c68fbd6d4b9f8da0576e":
 			t.Pre = "deepseek-coder"
+		case "1ff7f41064896984db5d1bb6ff64fa4bc29007d08c1b439e505b7392777a319e":
+			t.Pre = "qwen2"
 		case "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855":
 			// noop, empty pretokenizer
 		default:
@@ -88,6 +109,7 @@ func parseTokenizer(fsys fs.FS, specialTokenTypes []string) (*Tokenizer, error) 
 	}
 
 	if f, err := fsys.Open("tokenizer_config.json"); errors.Is(err, os.ErrNotExist) {
+		// noop
 	} else if err != nil {
 		return nil, err
 	} else {
@@ -99,8 +121,21 @@ func parseTokenizer(fsys fs.FS, specialTokenTypes []string) (*Tokenizer, error) 
 		}
 
 		if template, ok := p["chat_template"]; ok {
-			if err := json.Unmarshal(template, &t.Template); err != nil {
-				return nil, err
+			var s []struct {
+				Name     string `json:"name"`
+				Template string `json:"template"`
+			}
+			if err := json.Unmarshal(template, &t.Template); err == nil {
+				// noop
+			} else if err := json.Unmarshal(template, &s); err == nil {
+				for _, e := range s {
+					if e.Name == "default" {
+						t.Template = e.Template
+						break
+					}
+				}
+			} else {
+				return nil, fmt.Errorf("invalid chat_template: %w", err)
 			}
 		}
 
@@ -136,16 +171,43 @@ func parseTokenizer(fsys fs.FS, specialTokenTypes []string) (*Tokenizer, error) 
 		}
 	}
 
+	if f, err := fsys.Open("generation_config.json"); errors.Is(err, os.ErrNotExist) {
+	} else if err != nil {
+		return nil, err
+	} else {
+		defer f.Close()
+
+		var p map[string]json.RawMessage
+		if err := json.NewDecoder(f).Decode(&p); err != nil {
+			return nil, err
+		}
+
+		for _, st := range specialTokenTypes {
+			if bts, ok := p[fmt.Sprintf("%s_token_id", st)]; ok {
+				var ids []int32
+				if err := json.Unmarshal(bts, &ids); err != nil {
+					// value is not a list so the existing ID is used
+					continue
+				}
+
+				if i := slices.IndexFunc(t.SpecialVocabulary, func(sv *SpecialVocabulary) bool {
+					return sv.Type == st
+				}); i >= 0 {
+					t.SpecialVocabulary[i].IDs = ids
+				}
+			}
+		}
+	}
+
 	return t, nil
 }
 
 type tokenizer struct {
-	Version     string  `json:"version"`
 	AddedTokens []token `json:"added_tokens"`
 	Model       struct {
-		Type   string         `json:"type"`
-		Vocab  map[string]int `json:"vocab"`
-		Merges []string       `json:"merges"`
+		Type   string          `json:"type"`
+		Vocab  map[string]int  `json:"vocab"`
+		Merges json.RawMessage `json:"merges"`
 	} `json:"model"`
 
 	PreTokenizer struct {
@@ -184,32 +246,29 @@ func parseVocabularyFromTokenizer(fsys fs.FS) (*Vocabulary, error) {
 		return nil, err
 	}
 
-	var tokens []token
+	tokens := make(map[int]token, len(t.Model.Vocab))
 	for k, v := range t.Model.Vocab {
-		tokens = append(tokens, token{
+		tokens[v] = token{
 			ID:      v,
 			Content: k,
-		})
+		}
 	}
 
-	for _, t := range t.AddedTokens {
-		t.UserDefined = true
-		tokens = append(tokens, t)
+	for _, token := range t.AddedTokens {
+		token.UserDefined = true
+		tokens[token.ID] = token
 	}
-
-	slices.SortFunc(tokens, func(i, j token) int {
-		return cmp.Compare(i.ID, j.ID)
-	})
 
 	v := Vocabulary{Model: "gpt2"}
-	for _, t := range tokens {
-		v.Tokens = append(v.Tokens, t.Content)
-		v.Scores = append(v.Scores, float32(t.ID))
+	for _, k := range slices.Sorted(maps.Keys(tokens)) {
+		token := tokens[k]
+		v.Tokens = append(v.Tokens, token.Content)
+		v.Scores = append(v.Scores, float32(token.ID))
 
 		switch {
-		case t.Special:
+		case token.Special:
 			v.Types = append(v.Types, tokenTypeControl)
-		case t.UserDefined:
+		case token.UserDefined:
 			v.Types = append(v.Types, tokenTypeUserDefined)
 		default:
 			v.Types = append(v.Types, tokenTypeNormal)
@@ -238,7 +297,7 @@ func parseVocabulary(fsys fs.FS) (*Vocabulary, error) {
 		return pattern.Func(fsys)
 	}
 
-	return nil, errors.New("unknown tensor format")
+	return nil, errors.New("unknown tokenizer format")
 }
 
 type SpecialVocabulary struct {
@@ -246,6 +305,9 @@ type SpecialVocabulary struct {
 	ID       int
 	Content  string
 	AddToken bool
+
+	// IDs is populated by generation_config.json
+	IDs []int32
 }
 
 func (sv SpecialVocabulary) Key() string {

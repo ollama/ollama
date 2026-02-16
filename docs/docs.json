@@ -1,0 +1,174 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "Ollama",
+  "colors": {
+    "primary": "#000",
+    "light": "#b5b5b5",
+    "dark": "#000"
+  },
+  "favicon": "/images/favicon.png",
+  "logo": {
+    "light": "/images/logo.png",
+    "dark": "/images/logo-dark.png",
+    "href": "https://ollama.com"
+  },
+  "theme": "maple",
+  "background": {
+    "color": {
+      "light": "#ffffff",
+      "dark": "#000000"
+    }
+  },
+  "fonts": {
+    "family": "system-ui",
+    "heading": {
+      "family": "system-ui"
+    },
+    "body": {
+      "family": "system-ui"
+    }
+  },
+  "styling": {
+    "codeblocks": "system"
+  },
+  "contextual": {
+    "options": [
+      "copy"
+    ]
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Sign in",
+        "href": "https://ollama.com/signin"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Download",
+      "href": "https://ollama.com/download"
+    }
+  },
+  "api": {
+    "playground": {
+      "display": "simple"
+    },
+    "examples": {
+      "languages": [
+        "curl"
+      ]
+    }
+  },
+  "redirects": [
+    {
+      "source": "/openai",
+      "destination": "/api/openai-compatibility"
+    },
+    {
+      "source": "/api/openai",
+      "destination": "/api/openai-compatibility"
+    },
+    {
+      "source": "/api",
+      "destination": "/api/introduction"
+    }
+  ],
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get started",
+            "pages": [
+              "index",
+              "quickstart",
+              "/cloud"
+            ]
+          },
+          {
+            "group": "Capabilities",
+            "pages": [
+              "/capabilities/streaming",
+              "/capabilities/thinking",
+              "/capabilities/structured-outputs",
+              "/capabilities/vision",
+              "/capabilities/embeddings",
+              "/capabilities/tool-calling",
+              "/capabilities/web-search"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "/integrations/claude-code",
+              "/integrations/vscode",
+              "/integrations/jetbrains",
+              "/integrations/codex",
+              "/integrations/cline",
+              "/integrations/droid",
+              "/integrations/goose",
+              "/integrations/zed",
+              "/integrations/roo-code",
+              "/integrations/n8n",
+              "/integrations/xcode",
+              "/integrations/onyx",
+              "/integrations/marimo"
+            ]
+          },
+          {
+            "group": "More information",
+            "pages": [
+              "/cli",
+              "/modelfile",
+              "/context-length",
+              "/linux",
+              "/macos",
+              "/windows",
+              "/docker",
+              "/import",
+              "/faq",
+              "/gpu",
+              "/troubleshooting"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "openapi": "/openapi.yaml",
+        "groups": [
+          {
+            "group": "API Reference",
+            "pages": [
+              "/api/introduction",
+              "/api/authentication",
+              "/api/streaming",
+              "/api/usage",
+              "/api/errors",
+              "/api/openai-compatibility",
+              "/api/anthropic-compatibility"
+            ]
+          },
+          {
+            "group": "Endpoints",
+            "pages": [
+              "POST /api/generate",
+              "POST /api/chat",
+              "POST /api/embed",
+              "GET /api/tags",
+              "GET /api/ps",
+              "POST /api/show",
+              "POST /api/create",
+              "POST /api/copy",
+              "POST /api/pull",
+              "POST /api/push",
+              "DELETE /api/delete",
+              "GET /api/version"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,103 @@
+---
+title: Quickstart
+---
+
+This quickstart will walk your through running your first model with Ollama. To get started, download Ollama on macOS, Windows or Linux.
+
+<a
+  href="https://ollama.com/download"
+  target="_blank"
+  className="inline-block px-6 py-2 bg-black rounded-full dark:bg-neutral-700 text-white font-normal border-none"
+>
+  Download Ollama
+</a>
+
+## Run a model
+
+<Tabs>
+  <Tab title="CLI">
+    Open a terminal and run the command:
+
+    ```
+    ollama run gemma3
+    ```
+
+  </Tab>
+  <Tab title="cURL">
+    ```
+    ollama pull gemma3
+    ```
+
+    Lastly, chat with the model:
+
+    ```shell
+    curl http://localhost:11434/api/chat -d '{
+      "model": "gemma3",
+      "messages": [{
+        "role": "user",
+        "content": "Hello there!"
+      }],
+      "stream": false
+    }'
+    ```
+
+  </Tab>
+  <Tab title="Python">
+    Start by downloading a model:
+
+    ```
+    ollama pull gemma3
+    ```
+
+    Then install Ollama's Python library:
+
+    ```
+    pip install ollama
+    ```
+
+    Lastly, chat with the model:
+
+    ```python
+    from ollama import chat
+    from ollama import ChatResponse
+
+    response: ChatResponse = chat(model='gemma3', messages=[
+      {
+        'role': 'user',
+        'content': 'Why is the sky blue?',
+      },
+    ])
+    print(response['message']['content'])
+    # or access fields directly from the response object
+    print(response.message.content)
+    ```
+
+  </Tab>
+  <Tab title="JavaScript">
+    Start by downloading a model:
+
+    ```
+    ollama pull gemma3
+    ```
+
+    Then install the Ollama JavaScript library:
+    ```
+    npm i ollama
+    ```
+
+    Lastly, chat with the model:
+
+    ```shell
+    import ollama from 'ollama'
+
+    const response = await ollama.chat({
+      model: 'gemma3',
+      messages: [{ role: 'user', content: 'Why is the sky blue?' }],
+    })
+    console.log(response.message.content)
+    ```
+
+  </Tab>
+</Tabs>
+
+See a full list of available models [here](https://ollama.com/models).

@@ -58,6 +58,22 @@ func ParserForName(name string) Parser {
 		return harmony.NewHarmonyMessageHandler()
 	case "cogito":
 		return &CogitoParser{}
+	case "deepseek3":
+		return &DeepSeek3Parser{hasThinkingSupport: true}
+	case "olmo3":
+		return &Olmo3Parser{}
+	case "olmo3-think":
+		return &Olmo3ThinkParser{}
+	case "nemotron-3-nano":
+		return &Nemotron3NanoParser{}
+	case "functiongemma":
+		return &FunctionGemmaParser{}
+	case "glm-4.7":
+		return &GLM47Parser{}
+	case "lfm2":
+		return &LFM2Parser{hasThinkingSupport: false}
+	case "lfm2-thinking":
+		return &LFM2Parser{hasThinkingSupport: true}
 	default:
 		return nil
 	}

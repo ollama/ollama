@@ -13,6 +13,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/model"
 )
@@ -20,19 +21,19 @@ import (
 var intermediateBlobs map[string]string = make(map[string]string)
 
 type layerGGML struct {
-	Layer
+	manifest.Layer
 	*ggml.GGML
 }
 
 func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressResponse)) (layers []*layerGGML, err error) {
-	m, err := ParseNamedManifest(name)
+	m, err := manifest.ParseNamedManifest(name)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		if err := PullModel(ctx, name.String(), &registryOptions{}, fn); err != nil {
 			return nil, err
 		}
 
-		m, err = ParseNamedManifest(name)
+		m, err = manifest.ParseNamedManifest(name)
 		if err != nil {
 			return nil, err
 		}
@@ -41,7 +42,7 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 	}
 
 	for _, layer := range m.Layers {
-		layer, err := NewLayerFromLayer(layer.Digest, layer.MediaType, name.DisplayShortest())
+		layer, err := manifest.NewLayerFromLayer(layer.Digest, layer.MediaType, name.DisplayShortest())
 		if err != nil {
 			return nil, err
 		}
@@ -50,7 +51,7 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 		case "application/vnd.ollama.image.model",
 			"application/vnd.ollama.image.projector",
 			"application/vnd.ollama.image.adapter":
-			blobpath, err := GetBlobsPath(layer.Digest)
+			blobpath, err := manifest.BlobsPath(layer.Digest)
 			if err != nil {
 				return nil, err
 			}
@@ -81,12 +82,12 @@ func detectChatTemplate(layers []*layerGGML) ([]*layerGGML, error) {
 			if t, err := template.Named(s); err != nil {
 				slog.Debug("template detection", "error", err, "template", s)
 			} else {
-				layer, err := NewLayer(t.Reader(), "application/vnd.ollama.image.template")
+				layer, err := manifest.NewLayer(t.Reader(), "application/vnd.ollama.image.template")
 				if err != nil {
 					return nil, err
 				}
 
-				layer.status = fmt.Sprintf("using autodetected template %s", t.Name)
+				layer.Status = fmt.Sprintf("using autodetected template %s", t.Name)
 				layers = append(layers, &layerGGML{layer, nil})
 
 				if t.Parameters != nil {
@@ -95,7 +96,7 @@ func detectChatTemplate(layers []*layerGGML) ([]*layerGGML, error) {
 						return nil, err
 					}
 
-					layer, err := NewLayer(&b, "application/vnd.ollama.image.params")
+					layer, err := manifest.NewLayer(&b, "application/vnd.ollama.image.params")
 					if err != nil {
 						return nil, err
 					}

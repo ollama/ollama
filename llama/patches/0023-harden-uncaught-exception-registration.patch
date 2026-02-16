@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Hiltgen <daniel@ollama.com>
+Date: Fri, 29 Aug 2025 16:53:08 -0700
+Subject: [PATCH] harden uncaught exception registration
+
+---
+ ggml/src/ggml.cpp | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/ggml/src/ggml.cpp b/ggml/src/ggml.cpp
+index 0d388d455..f5bcb446d 100644
+--- a/ggml/src/ggml.cpp
++++ b/ggml/src/ggml.cpp
+@@ -19,8 +19,12 @@ static bool ggml_uncaught_exception_init = []{
+         return false;
+     }
+     const auto prev{std::get_terminate()};
+-    GGML_ASSERT(prev != ggml_uncaught_exception);
+-    previous_terminate_handler = prev;
++    // GGML_ASSERT(prev != ggml_uncaught_exception);
++    if (prev != ggml_uncaught_exception) {
++        previous_terminate_handler = prev;
++    } else {
++        GGML_LOG_WARN("%s double registration of ggml_uncaught_exception\n", __func__);
++    }
+     std::set_terminate(ggml_uncaught_exception);
+     return true;
+ }();

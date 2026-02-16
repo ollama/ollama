@@ -1,0 +1,56 @@
+---
+title: Codex
+---
+
+
+## Install
+
+Install the [Codex CLI](https://developers.openai.com/codex/cli/):
+
+```
+npm install -g @openai/codex
+```
+
+## Usage with Ollama
+
+<Note>Codex requires a larger context window. It is recommended to use a context window of at least 32K tokens.</Note>
+
+To use `codex` with Ollama, use the `--oss` flag:
+
+```
+codex --oss
+```
+
+### Changing Models
+
+By default, codex will use the local `gpt-oss:20b` model. However, you can specify a different model with the `-m` flag:
+
+```
+codex --oss -m gpt-oss:120b
+```
+
+### Cloud Models
+
+```
+codex --oss -m gpt-oss:120b-cloud
+```
+
+
+## Connecting to ollama.com
+
+
+Create an [API key](https://ollama.com/settings/keys) from ollama.com and export it as `OLLAMA_API_KEY`.
+
+To use ollama.com directly, edit your `~/.codex/config.toml` file to point to ollama.com.
+
+```toml
+model = "gpt-oss:120b"
+model_provider = "ollama"
+
+[model_providers.ollama]
+name = "Ollama"
+base_url = "https://ollama.com/v1"
+env_key = "OLLAMA_API_KEY"
+```
+
+Run `codex` in a new terminal to load the new settings.

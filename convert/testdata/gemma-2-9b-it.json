@@ -1,0 +1,6 @@
+{
+  "general.architecture": "gemma2",
+  "gemma2.attention.sliding_window": "4096",
+  "gemma2.attn_logit_softcapping": "50",
+  "gemma2.final_logit_softcapping": "30"
+}

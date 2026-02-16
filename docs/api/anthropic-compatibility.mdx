@@ -1,0 +1,408 @@
+---
+title: Anthropic compatibility
+---
+
+Ollama provides compatibility with the [Anthropic Messages API](https://docs.anthropic.com/en/api/messages) to help connect existing applications to Ollama, including tools like Claude Code.
+
+## Recommended models
+
+For coding use cases, models like `glm-4.7:cloud`, `minimax-m2.1:cloud`, and `qwen3-coder` are recommended.
+
+Pull a model before use:
+```shell
+ollama pull qwen3-coder
+ollama pull glm-4.7:cloud
+```
+
+## Usage
+
+### Environment variables
+
+To use Ollama with tools that expect the Anthropic API (like Claude Code), set these environment variables:
+
+```shell
+export ANTHROPIC_AUTH_TOKEN=ollama  # required but ignored
+export ANTHROPIC_BASE_URL=http://localhost:11434
+export ANTHROPIC_API_KEY=ollama  # required but ignored
+```
+
+### Simple `/v1/messages` example
+
+<CodeGroup dropdown>
+
+```python basic.py
+import anthropic
+
+client = anthropic.Anthropic(
+    base_url='http://localhost:11434',
+    api_key='ollama',  # required but ignored
+)
+
+message = client.messages.create(
+    model='qwen3-coder',
+    max_tokens=1024,
+    messages=[
+        {'role': 'user', 'content': 'Hello, how are you?'}
+    ]
+)
+print(message.content[0].text)
+```
+
+```javascript basic.js
+import Anthropic from "@anthropic-ai/sdk";
+
+const anthropic = new Anthropic({
+  baseURL: "http://localhost:11434",
+  apiKey: "ollama", // required but ignored
+});
+
+const message = await anthropic.messages.create({
+  model: "qwen3-coder",
+  max_tokens: 1024,
+  messages: [{ role: "user", content: "Hello, how are you?" }],
+});
+
+console.log(message.content[0].text);
+```
+
+```shell basic.sh
+curl -X POST http://localhost:11434/v1/messages \
+-H "Content-Type: application/json" \
+-H "x-api-key: ollama" \
+-H "anthropic-version: 2023-06-01" \
+-d '{
+  "model": "qwen3-coder",
+  "max_tokens": 1024,
+  "messages": [{ "role": "user", "content": "Hello, how are you?" }]
+}'
+```
+
+</CodeGroup>
+
+### Streaming example
+
+<CodeGroup dropdown>
+
+```python streaming.py
+import anthropic
+
+client = anthropic.Anthropic(
+    base_url='http://localhost:11434',
+    api_key='ollama',
+)
+
+with client.messages.stream(
+    model='qwen3-coder',
+    max_tokens=1024,
+    messages=[{'role': 'user', 'content': 'Count from 1 to 10'}]
+) as stream:
+    for text in stream.text_stream:
+        print(text, end='', flush=True)
+```
+
+```javascript streaming.js
+import Anthropic from "@anthropic-ai/sdk";
+
+const anthropic = new Anthropic({
+  baseURL: "http://localhost:11434",
+  apiKey: "ollama",
+});
+
+const stream = await anthropic.messages.stream({
+  model: "qwen3-coder",
+  max_tokens: 1024,
+  messages: [{ role: "user", content: "Count from 1 to 10" }],
+});
+
+for await (const event of stream) {
+  if (
+    event.type === "content_block_delta" &&
+    event.delta.type === "text_delta"
+  ) {
+    process.stdout.write(event.delta.text);
+  }
+}
+```
+
+```shell streaming.sh
+curl -X POST http://localhost:11434/v1/messages \
+-H "Content-Type: application/json" \
+-d '{
+  "model": "qwen3-coder",
+  "max_tokens": 1024,
+  "stream": true,
+  "messages": [{ "role": "user", "content": "Count from 1 to 10" }]
+}'
+```
+
+</CodeGroup>
+
+### Tool calling example
+
+<CodeGroup dropdown>
+
+```python tools.py
+import anthropic
+
+client = anthropic.Anthropic(
+    base_url='http://localhost:11434',
+    api_key='ollama',
+)
+
+message = client.messages.create(
+    model='qwen3-coder',
+    max_tokens=1024,
+    tools=[
+        {
+            'name': 'get_weather',
+            'description': 'Get the current weather in a location',
+            'input_schema': {
+                'type': 'object',
+                'properties': {
+                    'location': {
+                        'type': 'string',
+                        'description': 'The city and state, e.g. San Francisco, CA'
+                    }
+                },
+                'required': ['location']
+            }
+        }
+    ],
+    messages=[{'role': 'user', 'content': "What's the weather in San Francisco?"}]
+)
+
+for block in message.content:
+    if block.type == 'tool_use':
+        print(f'Tool: {block.name}')
+        print(f'Input: {block.input}')
+```
+
+```javascript tools.js
+import Anthropic from "@anthropic-ai/sdk";
+
+const anthropic = new Anthropic({
+  baseURL: "http://localhost:11434",
+  apiKey: "ollama",
+});
+
+const message = await anthropic.messages.create({
+  model: "qwen3-coder",
+  max_tokens: 1024,
+  tools: [
+    {
+      name: "get_weather",
+      description: "Get the current weather in a location",
+      input_schema: {
+        type: "object",
+        properties: {
+          location: {
+            type: "string",
+            description: "The city and state, e.g. San Francisco, CA",
+          },
+        },
+        required: ["location"],
+      },
+    },
+  ],
+  messages: [{ role: "user", content: "What's the weather in San Francisco?" }],
+});
+
+for (const block of message.content) {
+  if (block.type === "tool_use") {
+    console.log("Tool:", block.name);
+    console.log("Input:", block.input);
+  }
+}
+```
+
+```shell tools.sh
+curl -X POST http://localhost:11434/v1/messages \
+-H "Content-Type: application/json" \
+-d '{
+  "model": "qwen3-coder",
+  "max_tokens": 1024,
+  "tools": [
+    {
+      "name": "get_weather",
+      "description": "Get the current weather in a location",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "type": "string",
+            "description": "The city and state"
+          }
+        },
+        "required": ["location"]
+      }
+    }
+  ],
+  "messages": [{ "role": "user", "content": "What is the weather in San Francisco?" }]
+}'
+```
+
+</CodeGroup>
+
+## Using with Claude Code
+
+[Claude Code](https://code.claude.com/docs/en/overview) can be configured to use Ollama as its backend:
+
+```shell
+ANTHROPIC_AUTH_TOKEN=ollama ANTHROPIC_BASE_URL=http://localhost:11434 ANTHROPIC_API_KEY=ollama claude --model qwen3-coder
+```
+
+Or set the environment variables in your shell profile:
+
+```shell
+export ANTHROPIC_AUTH_TOKEN=ollama
+export ANTHROPIC_BASE_URL=http://localhost:11434
+export ANTHROPIC_API_KEY=ollama
+```
+
+Then run Claude Code with any Ollama model:
+
+```shell
+# Local models
+claude --model qwen3-coder
+claude --model gpt-oss:20b
+
+# Cloud models
+claude --model glm-4.7:cloud
+claude --model minimax-m2.1:cloud
+```
+
+## Endpoints
+
+### `/v1/messages`
+
+#### Supported features
+
+- [x] Messages
+- [x] Streaming
+- [x] System prompts
+- [x] Multi-turn conversations
+- [x] Vision (images)
+- [x] Tools (function calling)
+- [x] Tool results
+- [x] Thinking/extended thinking
+
+#### Supported request fields
+
+- [x] `model`
+- [x] `max_tokens`
+- [x] `messages`
+  - [x] Text `content`
+  - [x] Image `content` (base64)
+  - [x] Array of content blocks
+  - [x] `tool_use` blocks
+  - [x] `tool_result` blocks
+  - [x] `thinking` blocks
+- [x] `system` (string or array)
+- [x] `stream`
+- [x] `temperature`
+- [x] `top_p`
+- [x] `top_k`
+- [x] `stop_sequences`
+- [x] `tools`
+- [x] `thinking`
+- [ ] `tool_choice`
+- [ ] `metadata`
+
+#### Supported response fields
+
+- [x] `id`
+- [x] `type`
+- [x] `role`
+- [x] `model`
+- [x] `content` (text, tool_use, thinking blocks)
+- [x] `stop_reason` (end_turn, max_tokens, tool_use)
+- [x] `usage` (input_tokens, output_tokens)
+
+#### Streaming events
+
+- [x] `message_start`
+- [x] `content_block_start`
+- [x] `content_block_delta` (text_delta, input_json_delta, thinking_delta)
+- [x] `content_block_stop`
+- [x] `message_delta`
+- [x] `message_stop`
+- [x] `ping`
+- [x] `error`
+
+## Models
+
+Ollama supports both local and cloud models.
+
+### Local models
+
+Pull a local model before use:
+
+```shell
+ollama pull qwen3-coder
+```
+
+Recommended local models:
+- `qwen3-coder` - Excellent for coding tasks
+- `gpt-oss:20b` - Strong general-purpose model
+
+### Cloud models
+
+Cloud models are available immediately without pulling:
+
+- `glm-4.7:cloud` - High-performance cloud model
+- `minimax-m2.1:cloud` - Fast cloud model
+
+### Default model names
+
+For tooling that relies on default Anthropic model names such as `claude-3-5-sonnet`, use `ollama cp` to copy an existing model name:
+
+```shell
+ollama cp qwen3-coder claude-3-5-sonnet
+```
+
+Afterwards, this new model name can be specified in the `model` field:
+
+```shell
+curl http://localhost:11434/v1/messages \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model": "claude-3-5-sonnet",
+        "max_tokens": 1024,
+        "messages": [
+            {
+                "role": "user",
+                "content": "Hello!"
+            }
+        ]
+    }'
+```
+
+## Differences from the Anthropic API
+
+### Behavior differences
+
+- API key is accepted but not validated
+- `anthropic-version` header is accepted but not used
+- Token counts are approximations based on the underlying model's tokenizer
+
+### Not supported
+
+The following Anthropic API features are not currently supported:
+
+| Feature | Description |
+|---------|-------------|
+| `/v1/messages/count_tokens` | Token counting endpoint |
+| `tool_choice` | Forcing specific tool use or disabling tools |
+| `metadata` | Request metadata (user_id) |
+| Prompt caching | `cache_control` blocks for caching prefixes |
+| Batches API | `/v1/messages/batches` for async batch processing |
+| Citations | `citations` content blocks |
+| PDF support | `document` content blocks with PDF files |
+| Server-sent errors | `error` events during streaming (errors return HTTP status) |
+
+### Partial support
+
+| Feature | Status |
+|---------|--------|
+| Image content | Base64 images supported; URL images not supported |
+| Extended thinking | Basic support; `budget_tokens` accepted but not enforced |

@@ -10,6 +10,20 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
+// testArgs creates ToolCallFunctionArguments from a map (convenience function for tests)
+func testArgs(m map[string]any) api.ToolCallFunctionArguments {
+	args := api.NewToolCallFunctionArguments()
+	for k, v := range m {
+		args.Set(k, v)
+	}
+	return args
+}
+
+// argsComparer provides cmp options for comparing ToolCallFunctionArguments by value
+var argsComparer = cmp.Comparer(func(a, b api.ToolCallFunctionArguments) bool {
+	return cmp.Equal(a.ToMap(), b.ToMap())
+})
+
 const (
 	prefix = `data:image/jpeg;base64,`
 	image  = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
@@ -159,9 +173,9 @@ func TestToToolCallsPreservesIDs(t *testing.T) {
 			Function: api.ToolCallFunction{
 				Index: 2,
 				Name:  "get_weather",
-				Arguments: api.ToolCallFunctionArguments{
+				Arguments: testArgs(map[string]any{
 					"location": "Seattle",
-				},
+				}),
 			},
 		},
 		{
@@ -169,9 +183,9 @@ func TestToToolCallsPreservesIDs(t *testing.T) {
 			Function: api.ToolCallFunction{
 				Index: 7,
 				Name:  "get_time",
-				Arguments: api.ToolCallFunctionArguments{
+				Arguments: testArgs(map[string]any{
 					"timezone": "UTC",
-				},
+				}),
 			},
 		},
 	}
@@ -215,7 +229,7 @@ func TestToToolCallsPreservesIDs(t *testing.T) {
 		t.Errorf("tool calls mismatch (-want +got):\n%s", diff)
 	}
 
-	if diff := cmp.Diff(original, toolCalls); diff != "" {
+	if diff := cmp.Diff(original, toolCalls, argsComparer); diff != "" {
 		t.Errorf("input tool calls mutated (-want +got):\n%s", diff)
 	}
 }
@@ -432,5 +446,88 @@ func TestFromChatRequest_TopLogprobsRange(t *testing.T) {
 				t.Errorf("expected TopLogprobs %d, got %d", tt.topLogprobs, result.TopLogprobs)
 			}
 		})
+	}
+}
+
+func TestFromImageEditRequest_Basic(t *testing.T) {
+	req := ImageEditRequest{
+		Model:  "test-model",
+		Prompt: "make it blue",
+		Image:  prefix + image,
+	}
+
+	result, err := FromImageEditRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Model != "test-model" {
+		t.Errorf("expected model 'test-model', got %q", result.Model)
+	}
+
+	if result.Prompt != "make it blue" {
+		t.Errorf("expected prompt 'make it blue', got %q", result.Prompt)
+	}
+
+	if len(result.Images) != 1 {
+		t.Fatalf("expected 1 image, got %d", len(result.Images))
+	}
+}
+
+func TestFromImageEditRequest_WithSize(t *testing.T) {
+	req := ImageEditRequest{
+		Model:  "test-model",
+		Prompt: "make it blue",
+		Image:  prefix + image,
+		Size:   "512x768",
+	}
+
+	result, err := FromImageEditRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Width != 512 {
+		t.Errorf("expected width 512, got %d", result.Width)
+	}
+
+	if result.Height != 768 {
+		t.Errorf("expected height 768, got %d", result.Height)
+	}
+}
+
+func TestFromImageEditRequest_WithSeed(t *testing.T) {
+	seed := int64(12345)
+	req := ImageEditRequest{
+		Model:  "test-model",
+		Prompt: "make it blue",
+		Image:  prefix + image,
+		Seed:   &seed,
+	}
+
+	result, err := FromImageEditRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Options == nil {
+		t.Fatal("expected options to be set")
+	}
+
+	if result.Options["seed"] != seed {
+		t.Errorf("expected seed %d, got %v", seed, result.Options["seed"])
+	}
+}
+
+func TestFromImageEditRequest_InvalidImage(t *testing.T) {
+	req := ImageEditRequest{
+		Model:  "test-model",
+		Prompt: "make it blue",
+		Image:  "not-valid-base64",
+	}
+
+	_, err := FromImageEditRequest(req)
+	if err == nil {
+		t.Error("expected error for invalid image")
 	}
 }

@@ -24,9 +24,6 @@ struct ggml_metal_command_buffer {
 };
 
 struct ggml_metal {
-    id<MTLDevice>       device;
-    id<MTLCommandQueue> queue; // currently a pointer to the device queue, but might become separate queue [TAG_QUEUE_PER_BACKEND]
-
     ggml_metal_device_t  dev;
     ggml_metal_library_t lib;
 
@@ -91,15 +88,15 @@ ggml_metal_t ggml_metal_init(ggml_metal_device_t dev) {
     // init context
     ggml_metal_t res = calloc(1, sizeof(struct ggml_metal));
 
-    res->device = ggml_metal_device_get_obj(dev);
+    id<MTLDevice> device = ggml_metal_device_get_obj(dev);
 
-    GGML_LOG_INFO("%s: picking default device: %s\n", __func__, [[res->device name] UTF8String]);
+    GGML_LOG_INFO("%s: picking default device: %s\n", __func__, [[device name] UTF8String]);
 
     // TODO: would it be better to have one queue for the backend and one queue for the device?
     //       the graph encoders and async ops would use the backend queue while the sync ops would use the device queue?
     //res->queue = [device newCommandQueue]; [TAG_QUEUE_PER_BACKEND]
-    res->queue = ggml_metal_device_get_queue(dev);
-    if (res->queue == nil) {
+    id<MTLCommandQueue> queue = ggml_metal_device_get_queue(dev);
+    if (queue == nil) {
         GGML_LOG_ERROR("%s: error: failed to create command queue\n", __func__);
         return NULL;
     }
@@ -274,7 +271,8 @@ static struct ggml_metal_buffer_id ggml_metal_get_buffer_id(const struct ggml_te
 void ggml_metal_set_tensor_async(ggml_metal_t ctx, struct ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
     @autoreleasepool {
         // wrap the source data into a Metal buffer
-        id<MTLBuffer> buf_src = [ctx->device newBufferWithBytes:data
+        id<MTLDevice> device = ggml_metal_device_get_obj(ctx->dev);
+        id<MTLBuffer> buf_src = [device newBufferWithBytes:data
                                                          length:size
                                                         options:MTLResourceStorageModeShared];
 
@@ -289,7 +287,8 @@ void ggml_metal_set_tensor_async(ggml_metal_t ctx, struct ggml_tensor * tensor, 
 
         // queue the copy operation into the queue of the Metal context
         // this will be queued at the end, after any currently ongoing GPU operations
-        id<MTLCommandBuffer> cmd_buf = [ctx->queue commandBuffer];
+        id<MTLCommandQueue> queue = ggml_metal_device_get_queue(ctx->dev);
+        id<MTLCommandBuffer> cmd_buf = [queue commandBuffer];
         id<MTLBlitCommandEncoder> encoder = [cmd_buf blitCommandEncoder];
 
         [encoder copyFromBuffer:buf_src
@@ -315,7 +314,8 @@ void ggml_metal_set_tensor_async(ggml_metal_t ctx, struct ggml_tensor * tensor, 
 
 void ggml_metal_get_tensor_async(ggml_metal_t ctx, const struct ggml_tensor * tensor, void * data, size_t offset, size_t size) {
     @autoreleasepool {
-        id<MTLBuffer> buf_dst = [ctx->device newBufferWithBytesNoCopy:data
+        id<MTLDevice> device = ggml_metal_device_get_obj(ctx->dev);
+        id<MTLBuffer> buf_dst = [device newBufferWithBytesNoCopy:data
                                                                length:size
                                                               options:MTLResourceStorageModeShared
                                                           deallocator:nil];
@@ -331,7 +331,8 @@ void ggml_metal_get_tensor_async(ggml_metal_t ctx, const struct ggml_tensor * te
 
         // queue the copy operation into the queue of the Metal context
         // this will be queued at the end, after any currently ongoing GPU operations
-        id<MTLCommandBuffer> cmd_buf = [ctx->queue commandBuffer];
+        id<MTLCommandQueue> queue = ggml_metal_device_get_queue(ctx->dev);
+        id<MTLCommandBuffer> cmd_buf = [queue commandBuffer];
         id<MTLBlitCommandEncoder> encoder = [cmd_buf blitCommandEncoder];
 
         [encoder copyFromBuffer:bid_src.metal
@@ -362,6 +363,9 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
     // number of threads in addition to the main thread
     const int n_cb = ctx->n_cb;
 
+    // keep the memory wired
+    ggml_metal_device_rsets_keep_alive(ctx->dev);
+
     // submit the ggml compute graph to the GPU by creating command buffers and encoding the ops in them
     // the first n_nodes_0 are encoded and submitted for processing directly by the calling thread
     // while these nodes are processing, we start n_cb threads to enqueue the rest of the nodes
@@ -389,7 +393,8 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
 
             if (!ctx->capture_started) {
                 // create capture scope
-                ctx->capture_scope = [[MTLCaptureManager sharedCaptureManager] newCaptureScopeWithDevice:ctx->device];
+                id<MTLDevice> device = ggml_metal_device_get_obj(ctx->dev);
+                ctx->capture_scope = [[MTLCaptureManager sharedCaptureManager] newCaptureScopeWithDevice:device];
 
                 MTLCaptureDescriptor * descriptor = [MTLCaptureDescriptor new];
                 descriptor.captureObject = ctx->capture_scope;
@@ -406,10 +411,13 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
             }
         }
 
+        // short-hand
+        id<MTLCommandQueue> queue = ggml_metal_device_get_queue(ctx->dev);
+
         // the main thread commits the first few commands immediately
         // cmd_buf[n_cb]
         {
-            id<MTLCommandBuffer> cmd_buf = [ctx->queue commandBufferWithUnretainedReferences];
+            id<MTLCommandBuffer> cmd_buf = [queue commandBufferWithUnretainedReferences];
             [cmd_buf retain];
 
             if (ctx->cmd_bufs[n_cb].obj) {
@@ -428,7 +436,7 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
         // prepare the rest of the command buffers asynchronously (optional)
         // cmd_buf[0.. n_cb)
         for (int cb_idx = 0; cb_idx < n_cb; ++cb_idx) {
-            id<MTLCommandBuffer> cmd_buf = [ctx->queue commandBufferWithUnretainedReferences];
+            id<MTLCommandBuffer> cmd_buf = [queue commandBufferWithUnretainedReferences];
             [cmd_buf retain];
 
             if (ctx->cmd_bufs[cb_idx].obj) {
@@ -589,9 +597,11 @@ void ggml_metal_set_abort_callback(ggml_metal_t ctx, ggml_abort_callback abort_c
 }
 
 bool ggml_metal_supports_family(ggml_metal_t ctx, int family) {
-    GGML_ASSERT(ctx->device != nil);
+    GGML_ASSERT(ctx->dev != nil);
 
-    return [ctx->device supportsFamily:(MTLGPUFamilyApple1 + family - 1)];
+    id<MTLDevice> device = ggml_metal_device_get_obj(ctx->dev);
+
+    return [device supportsFamily:(MTLGPUFamilyApple1 + family - 1)];
 }
 
 void ggml_metal_capture_next_compute(ggml_metal_t ctx) {

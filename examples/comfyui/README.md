@@ -2,6 +2,10 @@
 
 This directory contains ComfyUI workflow templates for integrating with Ollama. [ComfyUI](https://github.com/comfyanonymous/ComfyUI) is a powerful and modular node-based interface for working with AI models, primarily focused on image generation but extensible to text generation and other AI tasks.
 
+## Additional Guides
+
+- **[Wan-AI Wan2.1-T2V-14B Setup Guide](./wan-ai-t2v-setup.md)** - Instructions for setting up the Wan-AI text-to-video model with ComfyUI
+
 ## Prerequisites
 
 1. **Ollama** running locally (default: `http://localhost:11434`)

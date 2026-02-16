@@ -1,0 +1,1477 @@
+openapi: 3.1.0
+info:
+  title: Ollama API
+  version: 0.1.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+  description: |
+    OpenAPI specification for the Ollama HTTP API
+servers:
+  - url: http://localhost:11434
+    description: Ollama
+security: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+  parameters:
+    DigestParam:
+      name: digest
+      in: path
+      required: true
+      description: SHA256 digest identifier, prefixed with `sha256:`
+      schema:
+        type: string
+  schemas:
+    ModelOptions:
+      type: object
+      description: Runtime options that control text generation
+      properties:
+        # Sampling Options
+        seed:
+          type: integer
+          description: Random seed used for reproducible outputs
+        temperature:
+          type: number
+          format: float
+          description: Controls randomness in generation (higher = more random)
+        top_k:
+          type: integer
+          description: Limits next token selection to the K most likely
+        top_p:
+          type: number
+          format: float
+          description: Cumulative probability threshold for nucleus sampling
+        min_p:
+          type: number
+          format: float
+          description: Minimum probability threshold for token selection
+        stop:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+          description: Stop sequences that will halt generation
+
+        # Runtime Options
+        num_ctx:
+          type: integer
+          description: Context length size (number of tokens)
+        num_predict:
+          type: integer
+          description: Maximum number of tokens to generate
+      additionalProperties: true
+    GenerateRequest:
+      type: object
+      required: [model]
+      properties:
+        model:
+          type: string
+          description: Model name
+        prompt:
+          type: string
+          description: Text for the model to generate a response from
+        suffix:
+          type: string
+          description: Used for fill-in-the-middle models, text that appears after the user prompt and before the model response
+        images:
+          type: array
+          items:
+            type: string
+            description: Base64-encoded images for models that support image input
+        format:
+          description: Structured output format for the model to generate a response from. Supports either the string `"json"` or a JSON schema object.
+          oneOf:
+            - type: string
+            - type: object
+        system:
+          description: System prompt for the model to generate a response from
+          type: string
+        stream:
+          description: When true, returns a stream of partial responses
+          type: boolean
+          default: true
+        think:
+          oneOf:
+            - type: boolean
+            - type: string
+              enum: [high, medium, low]
+          description: When true, returns separate thinking output in addition to content. Can be a boolean (true/false) or a string ("high", "medium", "low") for supported models.
+        raw:
+          type: boolean
+          description: When true, returns the raw response from the model without any prompt templating
+        keep_alive:
+          oneOf:
+            - type: string
+            - type: number
+          description: Model keep-alive duration (for example `5m` or `0` to unload immediately)
+        options:
+          $ref: "#/components/schemas/ModelOptions"
+        logprobs:
+          type: boolean
+          description: Whether to return log probabilities of the output tokens
+        top_logprobs:
+          type: integer
+          description: Number of most likely tokens to return at each token position when logprobs are enabled
+    GenerateResponse:
+      type: object
+      properties:
+        model:
+          type: string
+          description: Model name
+        created_at:
+          type: string
+          description: ISO 8601 timestamp of response creation
+        response:
+          type: string
+          description: The model's generated text response
+        thinking:
+          type: string
+          description: The model's generated thinking output
+        done:
+          type: boolean
+          description: Indicates whether generation has finished
+        done_reason:
+          type: string
+          description: Reason the generation stopped
+        total_duration:
+          type: integer
+          description: Time spent generating the response in nanoseconds
+        load_duration:
+          type: integer
+          description: Time spent loading the model in nanoseconds
+        prompt_eval_count:
+          type: integer
+          description: Number of input tokens in the prompt
+        prompt_eval_duration:
+          type: integer
+          description: Time spent evaluating the prompt in nanoseconds
+        eval_count:
+          type: integer
+          description: Number of output tokens generated in the response
+        eval_duration:
+          type: integer
+          description: Time spent generating tokens in nanoseconds
+        logprobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/Logprob"
+          description: Log probability information for the generated tokens when logprobs are enabled
+    GenerateStreamEvent:
+      type: object
+      properties:
+        model:
+          type: string
+          description: Model name
+        created_at:
+          type: string
+          description: ISO 8601 timestamp of response creation
+        response:
+          type: string
+          description: The model's generated text response for this chunk
+        thinking:
+          type: string
+          description: The model's generated thinking output for this chunk
+        done:
+          type: boolean
+          description: Indicates whether the stream has finished
+        done_reason:
+          type: string
+          description: Reason streaming finished
+        total_duration:
+          type: integer
+          description: Time spent generating the response in nanoseconds
+        load_duration:
+          type: integer
+          description: Time spent loading the model in nanoseconds
+        prompt_eval_count:
+          type: integer
+          description: Number of input tokens in the prompt
+        prompt_eval_duration:
+          type: integer
+          description: Time spent evaluating the prompt in nanoseconds
+        eval_count:
+          type: integer
+          description: Number of output tokens generated in the response
+        eval_duration:
+          type: integer
+          description: Time spent generating tokens in nanoseconds
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant, tool]
+          description: Author of the message.
+        content:
+          type: string
+          description: Message text content
+        images:
+          type: array
+          items:
+            type: string
+            description: Base64-encoded image content
+          description: Optional list of inline images for multimodal models
+        tool_calls:
+          type: array
+          items:
+            $ref: "#/components/schemas/ToolCall"
+          description: Tool call requests produced by the model
+    ToolCall:
+      type: object
+      properties:
+        function:
+          type: object
+          required: [name]
+          properties:
+            name:
+              type: string
+              description: Name of the function to call
+            description:
+              type: string
+              description: What the function does
+            arguments:
+              type: object
+              description: JSON object of arguments to pass to the function
+    ToolDefinition:
+      type: object
+      required: [type, function]
+      properties:
+        type:
+          type: string
+          enum: [function]
+          description: Type of tool (always `function`)
+        function:
+          type: object
+          required: [name, parameters]
+          properties:
+            name:
+              type: string
+              description: Function name exposed to the model
+            description:
+              type: string
+              description: Human-readable description of the function
+            parameters:
+              type: object
+              description: JSON Schema for the function parameters
+    ChatRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model:
+          type: string
+          description: Model name
+        messages:
+          type: array
+          description: Chat history as an array of message objects (each with a role and content)
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+        tools:
+          type: array
+          description: Optional list of function tools the model may call during the chat
+          items:
+            $ref: "#/components/schemas/ToolDefinition"
+        format:
+          oneOf:
+            - type: string
+              enum: [json]
+            - type: object
+          description: Format to return a response in. Can be `json` or a JSON schema
+        options:
+          $ref: "#/components/schemas/ModelOptions"
+        stream:
+          type: boolean
+          default: true
+        think:
+          oneOf:
+            - type: boolean
+            - type: string
+              enum: [high, medium, low]
+          description: When true, returns separate thinking output in addition to content. Can be a boolean (true/false) or a string ("high", "medium", "low") for supported models.
+        keep_alive:
+          oneOf:
+            - type: string
+            - type: number
+          description: Model keep-alive duration (for example `5m` or `0` to unload immediately)
+        logprobs:
+          type: boolean
+          description: Whether to return log probabilities of the output tokens
+        top_logprobs:
+          type: integer
+          description: Number of most likely tokens to return at each token position when logprobs are enabled
+    ChatResponse:
+      type: object
+      properties:
+        model:
+          type: string
+          description: Model name used to generate this message
+        created_at:
+          type: string
+          format: date-time
+          description: Timestamp of response creation (ISO 8601)
+        message:
+          type: object
+          properties:
+            role:
+              type: string
+              enum: [assistant]
+              description: Always `assistant` for model responses
+            content:
+              type: string
+              description: Assistant message text
+            thinking:
+              type: string
+              description: Optional deliberate thinking trace when `think` is enabled
+            tool_calls:
+              type: array
+              items:
+                $ref: "#/components/schemas/ToolCall"
+              description: Tool calls requested by the assistant
+            images:
+              type: array
+              items:
+                type: string
+              description: Optional base64-encoded images in the response
+        done:
+          type: boolean
+          description: Indicates whether the chat response has finished
+        done_reason:
+          type: string
+          description: Reason the response finished
+        total_duration:
+          type: integer
+          description: Total time spent generating in nanoseconds
+        load_duration:
+          type: integer
+          description: Time spent loading the model in nanoseconds
+        prompt_eval_count:
+          type: integer
+          description: Number of tokens in the prompt
+        prompt_eval_duration:
+          type: integer
+          description: Time spent evaluating the prompt in nanoseconds
+        eval_count:
+          type: integer
+          description: Number of tokens generated in the response
+        eval_duration:
+          type: integer
+          description: Time spent generating tokens in nanoseconds
+        logprobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/Logprob"
+          description: Log probability information for the generated tokens when logprobs are enabled
+    ChatStreamEvent:
+      type: object
+      properties:
+        model:
+          type: string
+          description: Model name used for this stream event
+        created_at:
+          type: string
+          format: date-time
+          description: When this chunk was created (ISO 8601)
+        message:
+          type: object
+          properties:
+            role:
+              type: string
+              description: Role of the message for this chunk
+            content:
+              type: string
+              description: Partial assistant message text
+            thinking:
+              type: string
+              description: Partial thinking text when `think` is enabled
+            tool_calls:
+              type: array
+              items:
+                $ref: "#/components/schemas/ToolCall"
+              description: Partial tool calls, if any
+            images:
+              type: array
+              items:
+                type: string
+              description: Partial base64-encoded images, when present
+        done:
+          type: boolean
+          description: True for the final event in the stream
+    StatusEvent:
+      type: object
+      properties:
+        status:
+          type: string
+          description: Human-readable status message
+        digest:
+          type: string
+          description: Content digest associated with the status, if applicable
+        total:
+          type: integer
+          description: Total number of bytes expected for the operation
+        completed:
+          type: integer
+          description: Number of bytes transferred so far
+    StatusResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          description: Current status message
+    EmbedRequest:
+      type: object
+      required: [model, input]
+      properties:
+        model:
+          type: string
+          description: Model name
+        input:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+          description: Text or array of texts to generate embeddings for
+        truncate:
+          type: boolean
+          default: true
+          description: If true, truncate inputs that exceed the context window. If false, returns an error.
+        dimensions:
+          type: integer
+          description: Number of dimensions to generate embeddings for
+        keep_alive:
+          type: string
+          description: Model keep-alive duration
+        options:
+          $ref: "#/components/schemas/ModelOptions"
+    EmbedResponse:
+      type: object
+      properties:
+        model:
+          type: string
+          description: Model that produced the embeddings
+        embeddings:
+          type: array
+          items:
+            type: array
+            items:
+              type: number
+          description: Array of vector embeddings
+        total_duration:
+          type: integer
+          description: Total time spent generating in nanoseconds
+        load_duration:
+          type: integer
+          description: Load time in nanoseconds
+        prompt_eval_count:
+          type: integer
+          description: Number of input tokens processed to generate embeddings
+    CreateRequest:
+      type: object
+      required: [model]
+      properties:
+        model:
+          type: string
+          description: Name for the model to create
+        from:
+          type: string
+          description: Existing model to create from
+        template:
+          type: string
+          description: Prompt template to use for the model
+        license:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+          description: License string or list of licenses for the model
+        system:
+          type: string
+          description: System prompt to embed in the model
+        parameters:
+          type: object
+          description: Key-value parameters for the model
+        messages:
+          description: Message history to use for the model
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+        quantize:
+          type: string
+          description: Quantization level to apply (e.g. `q4_K_M`, `q8_0`)
+        stream:
+          type: boolean
+          default: true
+          description: Stream status updates
+    CopyRequest:
+      type: object
+      required: [source, destination]
+      properties:
+        source:
+          type: string
+          description: Existing model name to copy from
+        destination:
+          type: string
+          description: New model name to create
+    DeleteRequest:
+      type: object
+      required: [model]
+      properties:
+        model:
+          type: string
+          description: Model name to delete
+    PullRequest:
+      type: object
+      required: [model]
+      properties:
+        model:
+          type: string
+          description: Name of the model to download
+        insecure:
+          type: boolean
+          description: Allow downloading over insecure connections
+        stream:
+          type: boolean
+          default: true
+          description: Stream progress updates
+    PushRequest:
+      type: object
+      required: [model]
+      properties:
+        model:
+          type: string
+          description: Name of the model to publish
+        insecure:
+          type: boolean
+          description: Allow publishing over insecure connections
+        stream:
+          type: boolean
+          default: true
+          description: Stream progress updates
+    ShowRequest:
+      type: object
+      required: [model]
+      properties:
+        model:
+          type: string
+          description: Model name to show
+        verbose:
+          type: boolean
+          description: If true, includes large verbose fields in the response.
+    ShowResponse:
+      type: object
+      properties:
+        parameters:
+          type: string
+          description: Model parameter settings serialized as text
+        license:
+          type: string
+          description: The license of the model
+        modified_at:
+          type: string
+          description: Last modified timestamp in ISO 8601 format
+        details:
+          type: object
+          description: High-level model details
+        template:
+          type: string
+          description: The template used by the model to render prompts
+        capabilities:
+          type: array
+          items:
+            type: string
+          description: List of supported features
+        model_info:
+          type: object
+          description: Additional model metadata
+    ModelSummary:
+      type: object
+      description: Summary information for a locally available model
+      properties:
+        name:
+          type: string
+          description: Model name
+        modified_at:
+          type: string
+          description: Last modified timestamp in ISO 8601 format
+        size:
+          type: integer
+          description: Total size of the model on disk in bytes
+        digest:
+          type: string
+          description: SHA256 digest identifier of the model contents
+        details:
+          type: object
+          description: Additional information about the model's format and family
+          properties:
+            format:
+              type: string
+              description: Model file format (for example `gguf`)
+            family:
+              type: string
+              description: Primary model family (for example `llama`)
+            families:
+              type: array
+              items:
+                type: string
+              description: All families the model belongs to, when applicable
+            parameter_size:
+              type: string
+              description: Approximate parameter count label (for example `7B`, `13B`)
+            quantization_level:
+              type: string
+              description: Quantization level used (for example `Q4_0`)
+    ListResponse:
+      type: object
+      properties:
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/ModelSummary"
+    Ps:
+      type: object
+      properties:
+        model:
+          type: string
+          description: Name of the running model
+        size:
+          type: integer
+          description: Size of the model in bytes
+        digest:
+          type: string
+          description: SHA256 digest of the model
+        details:
+          type: object
+          description: Model details such as format and family
+        expires_at:
+          type: string
+          description: Time when the model will be unloaded
+        size_vram:
+          type: integer
+          description: VRAM usage in bytes
+        context_length:
+          type: integer
+          description: Context length for the running model
+    PsResponse:
+      type: object
+      properties:
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/Ps"
+          description: Currently running models
+    WebSearchRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          description: Search query string
+        max_results:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 5
+          description: Maximum number of results to return
+    WebSearchResult:
+      type: object
+      properties:
+        title:
+          type: string
+          description: Page title of the result
+        url:
+          type: string
+          format: uri
+          description: Resolved URL for the result
+        content:
+          type: string
+          description: Extracted text content snippet
+    WebSearchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/WebSearchResult"
+          description: Array of matching search results
+    WebFetchRequest:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: The URL to fetch
+    WebFetchResponse:
+      type: object
+      properties:
+        title:
+          type: string
+          description: Title of the fetched page
+        content:
+          type: string
+          description: Extracted page content
+        links:
+          type: array
+          items:
+            type: string
+            format: uri
+          description: Links found on the page
+    VersionResponse:
+      type: object
+      properties:
+        version:
+          type: string
+          description: Version of Ollama
+    TokenLogprob:
+      type: object
+      description: Log probability information for a single token alternative
+      properties:
+        token:
+          type: string
+          description: The text representation of the token
+        logprob:
+          type: number
+          description: The log probability of this token
+        bytes:
+          type: array
+          items:
+            type: integer
+          description: The raw byte representation of the token
+    Logprob:
+      type: object
+      description: Log probability information for a generated token
+      properties:
+        token:
+          type: string
+          description: The text representation of the token
+        logprob:
+          type: number
+          description: The log probability of this token
+        bytes:
+          type: array
+          items:
+            type: integer
+          description: The raw byte representation of the token
+        top_logprobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/TokenLogprob"
+          description: Most likely tokens and their log probabilities at this position
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error message describing what went wrong
+paths:
+  /api/generate:
+    post:
+      summary: Generate a response
+      description: Generates a response for the provided prompt
+      operationId: generate
+      x-mint:
+        href: /api/generate
+      x-codeSamples:
+        - lang: bash
+          label: Default
+          source: |
+            curl http://localhost:11434/api/generate -d '{
+              "model": "gemma3",
+              "prompt": "Why is the sky blue?"
+            }'
+        - lang: bash
+          label: Non-streaming
+          source: |
+            curl http://localhost:11434/api/generate -d '{
+              "model": "gemma3",
+              "prompt": "Why is the sky blue?",
+              "stream": false
+            }'
+        - lang: bash
+          label: With options
+          source: |
+            curl http://localhost:11434/api/generate -d '{
+              "model": "gemma3",
+              "prompt": "Why is the sky blue?",
+              "options": {
+                "temperature": 0.8,
+                "top_p": 0.9,
+                "seed": 42
+              }
+            }'
+        - lang: bash
+          label: Structured outputs
+          source: |
+            curl http://localhost:11434/api/generate -d '{
+              "model": "gemma3",
+              "prompt": "What are the populations of the United States and Canada?",
+              "stream": false,
+              "format": {
+                "type": "object",
+                "properties": {
+                  "countries": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "country": {"type": "string"},
+                        "population": {"type": "integer"}
+                      },
+                      "required": ["country", "population"]
+                    }
+                  }
+                },
+                "required": ["countries"]
+              }
+            }'
+        - lang: bash
+          label: With images
+          source: |
+            curl http://localhost:11434/api/generate -d '{
+              "model": "gemma3",
+              "prompt": "What is in this picture?",
+              "images": ["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"]
+            }'
+        - lang: bash
+          label: Load model
+          source: |
+            curl http://localhost:11434/api/generate -d '{
+              "model": "gemma3"
+            }'
+        - lang: bash
+          label: Unload model
+          source: |
+            curl http://localhost:11434/api/generate -d '{
+              "model": "gemma3",
+              "keep_alive": 0
+            }'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateRequest"
+            example:
+              model: gemma3
+              prompt: Why is the sky blue?
+      responses:
+        "200":
+          description: Generation responses
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenerateResponse"
+              example:
+                model: "gemma3"
+                created_at: "2025-10-17T23:14:07.414671Z"
+                response: "Hello! How can I help you today?"
+                done: true
+                done_reason: "stop"
+                total_duration: 174560334
+                load_duration: 101397084
+                prompt_eval_count: 11
+                prompt_eval_duration: 13074791
+                eval_count: 18
+                eval_duration: 52479709
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/GenerateStreamEvent"
+  /api/chat:
+    post:
+      summary: Generate a chat message
+      description: Generate the next chat message in a conversation between a user and an assistant.
+      operationId: chat
+      x-mint:
+        href: /api/chat
+      x-codeSamples:
+        - lang: bash
+          label: Default
+          source: |
+            curl http://localhost:11434/api/chat -d '{
+              "model": "gemma3",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": "why is the sky blue?"
+                }
+              ]
+            }'
+        - lang: bash
+          label: Non-streaming
+          source: |
+            curl http://localhost:11434/api/chat -d '{
+              "model": "gemma3",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": "why is the sky blue?"
+                }
+              ],
+              "stream": false
+            }'
+        - lang: bash
+          label: Structured outputs
+          source: |
+            curl -X POST http://localhost:11434/api/chat -H "Content-Type: application/json" -d '{
+              "model": "gemma3",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": "What are the populations of the United States and Canada?"
+                }
+              ],
+              "stream": false,
+              "format": {
+                "type": "object",
+                "properties": {
+                  "countries": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "country": {"type": "string"},
+                        "population": {"type": "integer"}
+                      },
+                      "required": ["country", "population"]
+                    }
+                  }
+                },
+                "required": ["countries"]
+              }
+            }'
+        - lang: bash
+          label: Tool calling
+          source: |
+            curl http://localhost:11434/api/chat -d '{
+              "model": "qwen3",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": "What is the weather today in Paris?"
+                }
+              ],
+              "stream": false,
+              "tools": [
+                {
+                  "type": "function",
+                  "function": {
+                    "name": "get_current_weather",
+                    "description": "Get the current weather for a location",
+                    "parameters": {
+                      "type": "object",
+                      "properties": {
+                        "location": {
+                          "type": "string",
+                          "description": "The location to get the weather for, e.g. San Francisco, CA"
+                        },
+                        "format": {
+                          "type": "string",
+                          "description": "The format to return the weather in, e.g. 'celsius' or 'fahrenheit'",
+                          "enum": ["celsius", "fahrenheit"]
+                        }
+                      },
+                      "required": ["location", "format"]
+                    }
+                  }
+                }
+              ]
+            }'
+        - lang: bash
+          label: Thinking
+          source: |
+            curl http://localhost:11434/api/chat -d '{
+              "model": "gpt-oss",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": "What is 1+1?"
+                }
+              ],
+              "think": "low"
+            }'
+        - lang: bash
+          label: Images
+          source: |
+            curl http://localhost:11434/api/chat -d '{
+              "model": "gemma3",
+              "messages": [
+                {
+                  "role": "user",
+                  "content": "What is in this image?",
+                  "images": [
+                    "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"
+                  ]
+                }
+              ]
+            }'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+      responses:
+        "200":
+          description: Chat response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatResponse"
+              example:
+                model: "gemma3"
+                created_at: "2025-10-17T23:14:07.414671Z"
+                message:
+                  role: "assistant"
+                  content: "Hello! How can I help you today?"
+                done: true
+                done_reason: "stop"
+                total_duration: 174560334
+                load_duration: 101397084
+                prompt_eval_count: 11
+                prompt_eval_duration: 13074791
+                eval_count: 18
+                eval_duration: 52479709
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/ChatStreamEvent"
+  /api/embed:
+    post:
+      summary: Generate embeddings
+      description: Creates vector embeddings representing the input text
+      operationId: embed
+      x-mint:
+        href: /api/embed
+      x-codeSamples:
+        - lang: bash
+          label: Default
+          source: |
+            curl http://localhost:11434/api/embed -d '{
+              "model": "embeddinggemma",
+              "input": "Why is the sky blue?"
+            }'
+        - lang: bash
+          label: Multiple inputs
+          source: |
+            curl http://localhost:11434/api/embed -d '{
+              "model": "embeddinggemma",
+              "input": [
+                "Why is the sky blue?",
+                "Why is the grass green?"
+              ]
+            }'
+        - lang: bash
+          label: Truncation
+          source: |
+            curl http://localhost:11434/api/embed -d '{
+              "model": "embeddinggemma",
+              "input": "Generate embeddings for this text",
+              "truncate": true
+            }'
+        - lang: bash
+          label: Dimensions
+          source: |
+            curl http://localhost:11434/api/embed -d '{
+              "model": "embeddinggemma",
+              "input": "Generate embeddings for this text",
+              "dimensions": 128
+            }'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmbedRequest"
+            example:
+              model: embeddinggemma
+              input: "Generate embeddings for this text"
+      responses:
+        "200":
+          description: Vector embeddings for the input text
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmbedResponse"
+              example:
+                model: "embeddinggemma"
+                embeddings:
+                  - [
+                      0.010071029,
+                      -0.0017594862,
+                      0.05007221,
+                      0.04692972,
+                      0.054916814,
+                      0.008599704,
+                      0.105441414,
+                      -0.025878139,
+                      0.12958129,
+                      0.031952348,
+                    ]
+                total_duration: 14143917
+                load_duration: 1019500
+                prompt_eval_count: 8
+  /api/tags:
+    get:
+      summary: List models
+      description: Fetch a list of models and their details
+      operationId: list
+      x-mint:
+        href: /api/tags
+      x-codeSamples:
+        - lang: bash
+          label: List models
+          source: |
+            curl http://localhost:11434/api/tags
+      responses:
+        "200":
+          description: List available models
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListResponse"
+              example:
+                models:
+                  - name: "gemma3"
+                    modified_at: "2025-10-03T23:34:03.409490317-07:00"
+                    size: 3338801804
+                    digest: "a2af6cc3eb7fa8be8504abaf9b04e88f17a119ec3f04a3addf55f92841195f5a"
+                    details:
+                      format: "gguf"
+                      family: "gemma"
+                      families:
+                        - "gemma"
+                      parameter_size: "4.3B"
+                      quantization_level: "Q4_K_M"
+  /api/ps:
+    get:
+      summary: List running models
+      description: Retrieve a list of models that are currently running
+      operationId: ps
+      x-mint:
+        href: /api/ps
+      x-codeSamples:
+        - lang: bash
+          label: List running models
+          source: |
+            curl http://localhost:11434/api/ps
+      responses:
+        "200":
+          description: Models currently loaded into memory
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PsResponse"
+              example:
+                models:
+                  - model: "gemma3"
+                    size: 6591830464
+                    digest: "a2af6cc3eb7fa8be8504abaf9b04e88f17a119ec3f04a3addf55f92841195f5a"
+                    details:
+                      parent_model: ""
+                      format: "gguf"
+                      family: "gemma3"
+                      families:
+                        - "gemma3"
+                      parameter_size: "4.3B"
+                      quantization_level: "Q4_K_M"
+                    expires_at: "2025-10-17T16:47:07.93355-07:00"
+                    size_vram: 5333539264
+                    context_length: 4096
+  /api/show:
+    post:
+      summary: Show model details
+      operationId: show
+      x-codeSamples:
+        - lang: bash
+          label: Default
+          source: |
+            curl http://localhost:11434/api/show -d '{
+              "model": "gemma3"
+            }'
+        - lang: bash
+          label: Verbose
+          source: |
+            curl http://localhost:11434/api/show -d '{
+              "model": "gemma3",
+              "verbose": true
+            }'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShowRequest"
+            example:
+              model: gemma3
+      responses:
+        "200":
+          description: Model information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShowResponse"
+              example:
+                parameters: "temperature 0.7\nnum_ctx 2048"
+                license: "Gemma Terms of Use \n\nLast modified: February 21, 2024..."
+                capabilities:
+                  - "completion"
+                  - "vision"
+                modified_at: "2025-08-14T15:49:43.634137516-07:00"
+                details:
+                  parent_model: ""
+                  format: "gguf"
+                  family: "gemma3"
+                  families:
+                    - "gemma3"
+                  parameter_size: "4.3B"
+                  quantization_level: "Q4_K_M"
+                model_info:
+                  gemma3.attention.head_count: 8
+                  gemma3.attention.head_count_kv: 4
+                  gemma3.attention.key_length: 256
+                  gemma3.attention.sliding_window: 1024
+                  gemma3.attention.value_length: 256
+                  gemma3.block_count: 34
+                  gemma3.context_length: 131072
+                  gemma3.embedding_length: 2560
+                  gemma3.feed_forward_length: 10240
+                  gemma3.mm.tokens_per_image: 256
+                  gemma3.vision.attention.head_count: 16
+                  gemma3.vision.attention.layer_norm_epsilon: 0.000001
+                  gemma3.vision.block_count: 27
+                  gemma3.vision.embedding_length: 1152
+                  gemma3.vision.feed_forward_length: 4304
+                  gemma3.vision.image_size: 896
+                  gemma3.vision.num_channels: 3
+                  gemma3.vision.patch_size: 14
+                  general.architecture: "gemma3"
+                  general.file_type: 15
+                  general.parameter_count: 4299915632
+                  general.quantization_version: 2
+                  tokenizer.ggml.add_bos_token: true
+                  tokenizer.ggml.add_eos_token: false
+                  tokenizer.ggml.add_padding_token: false
+                  tokenizer.ggml.add_unknown_token: false
+                  tokenizer.ggml.bos_token_id: 2
+                  tokenizer.ggml.eos_token_id: 1
+                  tokenizer.ggml.merges: null
+                  tokenizer.ggml.model: "llama"
+                  tokenizer.ggml.padding_token_id: 0
+                  tokenizer.ggml.pre: "default"
+                  tokenizer.ggml.scores: null
+                  tokenizer.ggml.token_type: null
+                  tokenizer.ggml.tokens: null
+                  tokenizer.ggml.unknown_token_id: 3
+  /api/create:
+    post:
+      summary: Create a model
+      operationId: create
+      x-mint:
+        href: /api/create
+      x-codeSamples:
+        - lang: bash
+          label: Default
+          source: |
+            curl http://localhost:11434/api/create -d '{
+              "from": "gemma3",
+              "model": "alpaca",
+              "system": "You are Alpaca, a helpful AI assistant. You only answer with Emojis."
+            }'
+        - lang: bash
+          label: Create from existing
+          source: |
+            curl http://localhost:11434/api/create -d '{
+              "model": "ollama",
+              "from": "gemma3",
+              "system": "You are Ollama the llama."
+            }'
+        - lang: bash
+          label: Quantize
+          source: |
+            curl http://localhost:11434/api/create -d '{
+              "model": "llama3.1:8b-instruct-Q4_K_M",
+              "from": "llama3.1:8b-instruct-fp16",
+              "quantize": "q4_K_M"
+            }'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRequest"
+            example:
+              model: mario
+              from: gemma3
+              system: "You are Mario from Super Mario Bros."
+      responses:
+        "200":
+          description: Stream of create status updates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+              example:
+                status: "success"
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/StatusEvent"
+              example:
+                status: "success"
+  /api/copy:
+    post:
+      summary: Copy a model
+      operationId: copy
+      x-mint:
+        href: /api/copy
+      x-codeSamples:
+        - lang: bash
+          label: Copy a model to a new name
+          source: |
+            curl http://localhost:11434/api/copy -d '{
+              "source": "gemma3",
+              "destination": "gemma3-backup"
+            }'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CopyRequest"
+            example:
+              source: gemma3
+              destination: gemma3-backup
+      responses:
+        "200":
+          description: Model successfully copied
+  /api/pull:
+    post:
+      summary: Pull a model
+      operationId: pull
+      x-mint:
+        href: /api/pull
+      x-codeSamples:
+        - lang: bash
+          label: Default
+          source: |
+            curl http://localhost:11434/api/pull -d '{
+              "model": "gemma3"
+            }'
+        - lang: bash
+          label: Non-streaming
+          source: |
+            curl http://localhost:11434/api/pull -d '{
+              "model": "gemma3",
+              "stream": false
+            }'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PullRequest"
+            example:
+              model: gemma3
+      responses:
+        "200":
+          description: Pull status updates.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+              example:
+                status: "success"
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/StatusEvent"
+              example:
+                status: "success"
+  /api/push:
+    post:
+      summary: Push a model
+      operationId: push
+      x-mint:
+        href: /api/push
+      x-codeSamples:
+        - lang: bash
+          label: Push model
+          source: |
+            curl http://localhost:11434/api/push -d '{
+              "model": "my-username/my-model"
+            }'
+        - lang: bash
+          label: Non-streaming
+          source: |
+            curl http://localhost:11434/api/push -d '{
+              "model": "my-username/my-model",
+              "stream": false
+            }'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PushRequest"
+            example:
+              model: my-username/my-model
+      responses:
+        "200":
+          description: Push status updates.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+              example:
+                status: "success"
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/StatusEvent"
+              example:
+                status: "success"
+  /api/delete:
+    delete:
+      summary: Delete a model
+      operationId: delete
+      x-mint:
+        href: /api/delete
+      x-codeSamples:
+        - lang: bash
+          label: Delete model
+          source: |
+            curl -X DELETE http://localhost:11434/api/delete -d '{
+              "model": "gemma3"
+            }'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteRequest"
+            example:
+              model: gemma3
+      responses:
+        "200":
+          description: Model successfully deleted
+  /api/version:
+    get:
+      summary: Get version
+      description: Retrieve the version of the Ollama
+      operationId: version
+      x-codeSamples:
+        - lang: bash
+          label: Default
+          source: |
+            curl http://localhost:11434/api/version
+      responses:
+        "200":
+          description: Version information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionResponse"
+              example:
+                version: "0.12.6"

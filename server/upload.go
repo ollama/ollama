@@ -21,12 +21,14 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/types/model"
 )
 
 var blobUploadManager sync.Map
 
 type blobUpload struct {
-	Layer
+	manifest.Layer
 
 	Total     int64
 	Completed atomic.Int64
@@ -51,7 +53,7 @@ const (
 )
 
 func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *registryOptions) error {
-	p, err := GetBlobsPath(b.Digest)
+	p, err := manifest.BlobsPath(b.Digest)
 	if err != nil {
 		return err
 	}
@@ -59,7 +61,7 @@ func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *reg
 	if b.From != "" {
 		values := requestURL.Query()
 		values.Add("mount", b.Digest)
-		values.Add("from", ParseModelPath(b.From).GetNamespaceRepository())
+		values.Add("from", model.ParseName(b.From).DisplayNamespaceModel())
 		requestURL.RawQuery = values.Encode()
 	}
 
@@ -128,7 +130,7 @@ func (b *blobUpload) Run(ctx context.Context, opts *registryOptions) {
 	defer blobUploadManager.Delete(b.Digest)
 	ctx, b.CancelFunc = context.WithCancel(ctx)
 
-	p, err := GetBlobsPath(b.Digest)
+	p, err := manifest.BlobsPath(b.Digest)
 	if err != nil {
 		b.err = err
 		return
@@ -279,7 +281,7 @@ func (b *blobUpload) uploadPart(ctx context.Context, method string, requestURL *
 	case resp.StatusCode == http.StatusUnauthorized:
 		w.Rollback()
 		challenge := parseRegistryChallenge(resp.Header.Get("www-authenticate"))
-		token, err := getAuthorizationToken(ctx, challenge)
+		token, err := getAuthorizationToken(ctx, challenge, requestURL.Host)
 		if err != nil {
 			return err
 		}
@@ -364,9 +366,9 @@ func (p *progressWriter) Rollback() {
 	p.written = 0
 }
 
-func uploadBlob(ctx context.Context, mp ModelPath, layer Layer, opts *registryOptions, fn func(api.ProgressResponse)) error {
-	requestURL := mp.BaseURL()
-	requestURL = requestURL.JoinPath("v2", mp.GetNamespaceRepository(), "blobs", layer.Digest)
+func uploadBlob(ctx context.Context, n model.Name, layer manifest.Layer, opts *registryOptions, fn func(api.ProgressResponse)) error {
+	requestURL := n.BaseURL()
+	requestURL = requestURL.JoinPath("v2", n.DisplayNamespaceModel(), "blobs", layer.Digest)
 
 	resp, err := makeRequestWithRetry(ctx, http.MethodHead, requestURL, nil, nil, opts)
 	switch {
@@ -388,8 +390,8 @@ func uploadBlob(ctx context.Context, mp ModelPath, layer Layer, opts *registryOp
 	data, ok := blobUploadManager.LoadOrStore(layer.Digest, &blobUpload{Layer: layer})
 	upload := data.(*blobUpload)
 	if !ok {
-		requestURL := mp.BaseURL()
-		requestURL = requestURL.JoinPath("v2", mp.GetNamespaceRepository(), "blobs/uploads/")
+		requestURL := n.BaseURL()
+		requestURL = requestURL.JoinPath("v2", n.DisplayNamespaceModel(), "blobs/uploads/")
 		if err := upload.Prepare(ctx, requestURL, opts); err != nil {
 			blobUploadManager.Delete(layer.Digest)
 			return err

@@ -1,0 +1,182 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "Default",
+      "binaryDir": "${sourceDir}/build",
+      "installDir": "${sourceDir}/dist",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded"
+      }
+    },
+    {
+      "name": "CPU",
+      "inherits": [ "Default" ]
+    },
+    {
+      "name": "CUDA",
+      "inherits": [ "Default" ]
+    },
+    {
+      "name": "CUDA 11",
+      "inherits": [ "CUDA" ],
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "50-virtual;60-virtual;61-virtual;70-virtual;75-virtual;80-virtual;86-virtual;87-virtual;89-virtual;90-virtual",
+        "CMAKE_CUDA_FLAGS": "-Wno-deprecated-gpu-targets -t 2",
+        "OLLAMA_RUNNER_DIR": "cuda_v11"
+      }
+    },
+    {
+      "name": "CUDA 12",
+      "inherits": [ "CUDA" ],
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "50;52;60;61;70;75;80;86;89;90;90a;120",
+        "CMAKE_CUDA_FLAGS": "-Wno-deprecated-gpu-targets -t 2",
+        "OLLAMA_RUNNER_DIR": "cuda_v12"
+      }
+    },
+    {
+      "name": "CUDA 13",
+      "inherits": [ "CUDA" ],
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "75-virtual;80-virtual;86-virtual;87-virtual;89-virtual;90-virtual;90a-virtual;100-virtual;103-virtual;110-virtual;120-virtual;121-virtual",
+        "CMAKE_CUDA_FLAGS": "-t 4",
+        "OLLAMA_RUNNER_DIR": "cuda_v13"
+      }
+    },
+    {
+      "name": "JetPack 5",
+      "inherits": [ "CUDA" ],
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "72;87",
+        "OLLAMA_RUNNER_DIR": "cuda_jetpack5"
+      }
+    },
+    {
+      "name": "JetPack 6",
+      "inherits": [ "CUDA" ],
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "87",
+        "OLLAMA_RUNNER_DIR": "cuda_jetpack6"
+      }
+    },
+    {
+      "name": "ROCm",
+      "inherits": [ "Default" ],
+      "cacheVariables": {
+        "CMAKE_HIP_PLATFORM": "amd"
+      }
+    },
+    {
+      "name": "ROCm 6",
+      "inherits": [ "ROCm" ],
+      "cacheVariables": {
+        "CMAKE_HIP_FLAGS": "-parallel-jobs=4",
+        "AMDGPU_TARGETS": "gfx940;gfx941;gfx942;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102;gfx1151;gfx1200;gfx1201;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-",
+        "OLLAMA_RUNNER_DIR": "rocm"
+      }
+    },
+    {
+      "name": "Vulkan",
+      "inherits": [ "Default" ],
+      "cacheVariables": {
+        "OLLAMA_RUNNER_DIR": "vulkan"
+      }
+    },
+    {
+      "name": "MLX",
+      "inherits": [ "Default" ],
+      "cacheVariables": {
+        "MLX_ENGINE": "ON",
+        "OLLAMA_RUNNER_DIR": "mlx"
+      }
+    },
+    {
+      "name": "MLX CUDA 12",
+      "inherits": [ "MLX", "CUDA 12" ],
+      "cacheVariables": {
+        "OLLAMA_RUNNER_DIR": "mlx_cuda_v12"
+      }
+    },
+    {
+      "name": "MLX CUDA 13",
+      "inherits": [ "MLX", "CUDA 13" ],
+      "cacheVariables": {
+        "OLLAMA_RUNNER_DIR": "mlx_cuda_v13"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "Default",
+      "configurePreset": "Default",
+      "configuration": "Release"
+    },
+    {
+      "name": "CPU",
+      "configurePreset": "Default",
+      "targets": [ "ggml-cpu" ]
+    },
+    {
+      "name": "CUDA",
+      "configurePreset": "CUDA",
+      "targets": [ "ggml-cuda" ]
+    },
+    {
+      "name": "CUDA 11",
+      "inherits": [ "CUDA" ],
+      "configurePreset": "CUDA 11"
+    },
+    {
+      "name": "CUDA 12",
+      "inherits": [ "CUDA" ],
+      "configurePreset": "CUDA 12"
+    },
+    {
+      "name": "CUDA 13",
+      "inherits": [ "CUDA" ],
+      "configurePreset": "CUDA 13"
+    },
+    {
+      "name": "JetPack 5",
+      "inherits": [ "CUDA" ],
+      "configurePreset": "JetPack 5"
+    },
+    {
+      "name": "JetPack 6",
+      "inherits": [ "CUDA" ],
+      "configurePreset": "JetPack 6"
+    },
+    {
+      "name": "ROCm",
+      "configurePreset": "ROCm",
+      "targets": [ "ggml-hip" ]
+    },
+    {
+      "name": "ROCm 6",
+      "inherits": [ "ROCm" ],
+      "configurePreset": "ROCm 6"
+    },
+    {
+      "name": "Vulkan",
+      "targets": [ "ggml-vulkan" ],
+      "configurePreset": "Vulkan"
+    },
+    {
+      "name": "MLX",
+      "targets": [ "mlx", "mlxc" ],
+      "configurePreset": "MLX"
+    },
+    {
+      "name": "MLX CUDA 12",
+      "targets": [ "mlx", "mlxc" ],
+      "configurePreset": "MLX CUDA 12"
+    },
+    {
+      "name": "MLX CUDA 13",
+      "targets": [ "mlx", "mlxc" ],
+      "configurePreset": "MLX CUDA 13"
+    }
+  ]
+}
