@@ -881,7 +881,7 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 				size = format.HumanBytes(m.Size)
 			}
 
-			data = append(data, []string{m.Name, m.Digest[:12], size, format.HumanTime(m.ModifiedAt, "Never")})
+			data = append(data, []string{m.Name, displayDigestID(m.Digest), size, format.HumanTime(m.ModifiedAt, "Never")})
 		}
 	}
 
@@ -936,7 +936,7 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 				until = format.HumanTime(m.ExpiresAt, "Never")
 			}
 			ctxStr := strconv.Itoa(m.ContextLength)
-			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), procStr, ctxStr, until})
+			data = append(data, []string{m.Name, displayDigestID(m.Digest), format.HumanBytes(m.Size), procStr, ctxStr, until})
 		}
 	}
 
@@ -952,6 +952,14 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 	table.Render()
 
 	return nil
+}
+
+func displayDigestID(digest string) string {
+	if len(digest) > 12 {
+		return digest[:12]
+	}
+
+	return digest
 }
 
 func DeleteHandler(cmd *cobra.Command, args []string) error {

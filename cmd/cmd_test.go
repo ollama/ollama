@@ -989,6 +989,15 @@ func TestListHandler(t *testing.T) {
 				"model1    sha256:abc12    1.0 KB    24 hours ago    \n",
 		},
 		{
+			name: "handles short digest without panic",
+			args: []string{},
+			serverResponse: []api.ListModelResponse{
+				{Name: "model1", Digest: "abc", Size: 1024, ModifiedAt: time.Now().Add(-24 * time.Hour)},
+			},
+			expectedOutput: "NAME      ID     SIZE      MODIFIED     \n" +
+				"model1    abc    1.0 KB    24 hours ago    \n",
+		},
+		{
 			name:          "server error",
 			args:          []string{},
 			expectedError: "server error",
