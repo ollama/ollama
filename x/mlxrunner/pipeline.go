@@ -24,9 +24,13 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 
 	caches, tokens := r.FindNearestCache(inputs)
 	if len(caches) == 0 {
-		caches = make([]cache.Cache, r.Model.NumLayers())
-		for i := range caches {
-			caches[i] = cache.NewKVCache()
+		if cacheFactory, ok := r.Model.(interface{ NewCaches() []cache.Cache }); ok {
+			caches = cacheFactory.NewCaches()
+		} else {
+			caches = make([]cache.Cache, r.Model.NumLayers())
+			for i := range caches {
+				caches[i] = cache.NewKVCache()
+			}
 		}
 	}
 

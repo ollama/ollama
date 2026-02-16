@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"strings"
 
 	"github.com/ollama/ollama/x/imagegen/tokenizer"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
@@ -64,9 +63,10 @@ type Config struct {
 	RopeScaling *RopeScaling `json:"rope_scaling"`
 
 	// Quantization parameters (set during load based on model quantization)
-	QuantGroupSize int    `json:"-"` // Group size for quantization (default 64)
-	QuantBits      int    `json:"-"` // Bits per weight (4 or 8)
-	QuantMode      string `json:"-"` // Quantization mode ("affine", etc.)
+	QuantGroupSize int                               `json:"-"` // Group size for quantization (default 64)
+	QuantBits      int                               `json:"-"` // Bits per weight (4 or 8)
+	QuantMode      string                            `json:"-"` // Quantization mode ("affine", etc.)
+	TensorQuant    map[string]*model.TensorQuantInfo `json:"-"`
 
 	// Computed fields
 	QHeadDim int32   `json:"-"` // qk_nope_head_dim + qk_rope_head_dim
@@ -372,22 +372,6 @@ func supportsGatherQMM(mode string, bits int) bool {
 	return mode == "affine" && (bits == 4 || bits == 8)
 }
 
-// quantizationParams returns groupSize, bits, mode for a quantization type string.
-func quantizationParams(quantization string) (groupSize, bits int, mode string) {
-	switch strings.ToUpper(quantization) {
-	case "NVFP4":
-		return 16, 4, "nvfp4"
-	case "FP4", "Q4", "INT4":
-		return 32, 4, "affine"
-	case "MXFP8":
-		return 32, 8, "mxfp8"
-	case "FP8", "Q8", "INT8", "":
-		return 64, 8, "affine"
-	default:
-		return 32, 8, "affine"
-	}
-}
-
 // ExpertWeight holds a single expert's weight with optional quantization components.
 type ExpertWeight struct {
 	Weight    *mlx.Array
@@ -408,7 +392,15 @@ func loadExpertWeight(tensors map[string]*mlx.Array, path string, useQuantized b
 	if scales != nil {
 		qbiases := tensors[path+".weight_qbias"]
 
-		groupSize, bits, mode := cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode
+		groupSize, bits, mode := model.ResolveLinearQuantParams(
+			cfg.QuantGroupSize,
+			cfg.QuantBits,
+			cfg.QuantMode,
+			cfg.TensorQuant,
+			path+".weight",
+			w,
+			scales,
+		)
 
 		if useQuantized && supportsGatherQMM(mode, bits) {
 			return &ExpertWeight{Weight: w, Scales: scales, Biases: qbiases, Bits: bits, GroupSize: groupSize}
@@ -492,7 +484,16 @@ func sanitizeMLAWeights(tensors map[string]*mlx.Array, prefix string, cfg *Confi
 	// Check if quantized and dequantize
 	if scales := tensors[path+".weight_scale"]; scales != nil {
 		qbiases := tensors[path+".weight_qbias"]
-		w = mlx.Dequantize(w, scales, qbiases, cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode)
+		groupSize, bits, mode := model.ResolveLinearQuantParams(
+			cfg.QuantGroupSize,
+			cfg.QuantBits,
+			cfg.QuantMode,
+			cfg.TensorQuant,
+			path+".weight",
+			w,
+			scales,
+		)
+		w = mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode)
 	}
 
 	headDim := cfg.QKNopeHeadDim + cfg.VHeadDim
@@ -505,32 +506,6 @@ func sanitizeMLAWeights(tensors map[string]*mlx.Array, prefix string, cfg *Confi
 	unembedOut := wv
 
 	return embedQ, unembedOut
-}
-
-// makeLinear creates a Linear or QuantizedLinear layer from the tensor map.
-func makeLinear(tensors map[string]*mlx.Array, path string, cfg *Config) nn.LinearLayer {
-	w := tensors[path+".weight"]
-	if w == nil {
-		return nil
-	}
-
-	scales := tensors[path+".weight_scale"]
-	if scales != nil {
-		qbiases := tensors[path+".weight_qbias"]
-		bias := tensors[path+".bias"]
-		return &nn.QuantizedLinear{
-			Weight:    w,
-			Scales:    scales,
-			QBiases:   qbiases,
-			Bias:      bias,
-			GroupSize: cfg.QuantGroupSize,
-			Bits:      cfg.QuantBits,
-			Mode:      cfg.QuantMode,
-		}
-	}
-
-	bias := tensors[path+".bias"]
-	return nn.NewLinear(w, bias)
 }
 
 // newModel creates a new GLM4-MoE-Lite model from a Root (config + tokenizer,
@@ -551,13 +526,14 @@ func newModel(root *model.Root) (base.Model, error) {
 
 	// Set up quantization parameters from pre-scanned metadata
 	if qt := root.QuantType(); qt != "" {
-		_, cfg.QuantBits, cfg.QuantMode = quantizationParams(qt)
+		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams(qt)
 		if gs := root.GroupSize(); gs > 0 {
 			cfg.QuantGroupSize = gs
-		} else {
-			cfg.QuantGroupSize, _, _ = quantizationParams(qt)
 		}
+	} else {
+		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams("")
 	}
+	cfg.TensorQuant = root.AllTensorQuant()
 
 	// Load tokenizer
 	tokData, err := root.Manifest.ReadConfig("tokenizer.json")
@@ -596,7 +572,20 @@ func newModel(root *model.Root) (base.Model, error) {
 // layer creation.
 func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	cfg := m.Config
+	linears := model.NewLinearFactory(tensors, cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant)
 	useQuantized := supportsGatherQMM(cfg.QuantMode, cfg.QuantBits)
+	if !useQuantized && cfg.TensorQuant != nil {
+		for _, tq := range cfg.TensorQuant {
+			if tq == nil {
+				continue
+			}
+			_, bits, mode := model.QuantizationParams(tq.QuantType)
+			if supportsGatherQMM(mode, bits) {
+				useQuantized = true
+				break
+			}
+		}
+	}
 
 	// Load embedding
 	if w := tensors["model.embed_tokens.weight"]; w != nil {
@@ -609,7 +598,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	}
 
 	// Load LM head
-	m.LMHead = makeLinear(tensors, "lm_head", cfg)
+	m.LMHead = linears.Make("lm_head")
 
 	// Load layers
 	for i := int32(0); i < cfg.NumHiddenLayers; i++ {
@@ -617,16 +606,16 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 
 		// Load attention (same for both block types)
 		attn := &MLAAttention{}
-		attn.QAProj = makeLinear(tensors, prefix+".self_attn.q_a_proj", cfg)
+		attn.QAProj = linears.Make(prefix + ".self_attn.q_a_proj")
 		if w := tensors[prefix+".self_attn.q_a_layernorm.weight"]; w != nil {
 			attn.QALayerNorm = nn.NewRMSNorm(w, cfg.RMSNormEps)
 		}
-		attn.QBProj = makeLinear(tensors, prefix+".self_attn.q_b_proj", cfg)
-		attn.KVAProjWithMQA = makeLinear(tensors, prefix+".self_attn.kv_a_proj_with_mqa", cfg)
+		attn.QBProj = linears.Make(prefix + ".self_attn.q_b_proj")
+		attn.KVAProjWithMQA = linears.Make(prefix + ".self_attn.kv_a_proj_with_mqa")
 		if w := tensors[prefix+".self_attn.kv_a_layernorm.weight"]; w != nil {
 			attn.KVALayerNorm = nn.NewRMSNorm(w, cfg.RMSNormEps)
 		}
-		attn.OProj = makeLinear(tensors, prefix+".self_attn.o_proj", cfg)
+		attn.OProj = linears.Make(prefix + ".self_attn.o_proj")
 
 		// Sanitize MLA weights for absorbed attention
 		embedQ, unembedOut := sanitizeMLAWeights(tensors, prefix, cfg)
@@ -647,9 +636,9 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 			}
 
 			block.MLP = &DenseMLP{
-				GateProj: makeLinear(tensors, prefix+".mlp.gate_proj", cfg),
-				UpProj:   makeLinear(tensors, prefix+".mlp.up_proj", cfg),
-				DownProj: makeLinear(tensors, prefix+".mlp.down_proj", cfg),
+				GateProj: linears.Make(prefix + ".mlp.gate_proj"),
+				UpProj:   linears.Make(prefix + ".mlp.up_proj"),
+				DownProj: linears.Make(prefix + ".mlp.down_proj"),
 			}
 
 			m.Layers[i] = block
@@ -690,7 +679,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 			}
 
 			moeGate := &MoEGate{}
-			moeGate.Gate = makeLinear(tensors, prefix+".mlp.gate", cfg)
+			moeGate.Gate = linears.Make(prefix + ".mlp.gate")
 			if bias := tensors[prefix+".mlp.gate.e_score_correction_bias"]; bias != nil {
 				moeGate.EScoreCorrectionBias = bias
 			}
@@ -703,9 +692,9 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 			// Load shared experts if present
 			if cfg.NSharedExperts > 0 {
 				block.MoE.SharedExperts = &SharedExperts{
-					GateProj: makeLinear(tensors, prefix+".mlp.shared_experts.gate_proj", cfg),
-					UpProj:   makeLinear(tensors, prefix+".mlp.shared_experts.up_proj", cfg),
-					DownProj: makeLinear(tensors, prefix+".mlp.shared_experts.down_proj", cfg),
+					GateProj: linears.Make(prefix + ".mlp.shared_experts.gate_proj"),
+					UpProj:   linears.Make(prefix + ".mlp.shared_experts.up_proj"),
+					DownProj: linears.Make(prefix + ".mlp.shared_experts.down_proj"),
 				}
 			}
 
