@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -22,25 +23,6 @@ type OpenCode struct{}
 type cloudModelLimit struct {
 	Context int
 	Output  int
-}
-
-// cloudModelLimits maps cloud model base names to their token limits.
-// TODO(parthsareen): grab context/output limits from model info instead of hardcoding
-var cloudModelLimits = map[string]cloudModelLimit{
-	"cogito-2.1:671b":     {Context: 163_840, Output: 65_536},
-	"deepseek-v3.1:671b":  {Context: 163_840, Output: 163_840},
-	"deepseek-v3.2":       {Context: 163_840, Output: 65_536},
-	"glm-4.6":             {Context: 202_752, Output: 131_072},
-	"glm-4.7":             {Context: 202_752, Output: 131_072},
-	"gpt-oss:120b":        {Context: 131_072, Output: 131_072},
-	"gpt-oss:20b":         {Context: 131_072, Output: 131_072},
-	"kimi-k2:1t":          {Context: 262_144, Output: 262_144},
-	"kimi-k2.5":           {Context: 262_144, Output: 262_144},
-	"kimi-k2-thinking":    {Context: 262_144, Output: 262_144},
-	"nemotron-3-nano:30b": {Context: 1_048_576, Output: 131_072},
-	"qwen3-coder:480b":    {Context: 262_144, Output: 65_536},
-	"qwen3-coder-next":    {Context: 262_144, Output: 32_768},
-	"qwen3-next:80b":      {Context: 262_144, Output: 32_768},
 }
 
 // lookupCloudModelLimit returns the token limits for a cloud model.
@@ -69,6 +51,16 @@ func (o *OpenCode) Run(model string, args []string) error {
 	models := []string{model}
 	if config, err := loadIntegration("opencode"); err == nil && len(config.Models) > 0 {
 		models = config.Models
+	}
+	var err error
+	models, err = resolveEditorModels("opencode", models, func() ([]string, error) {
+		return selectModels(context.Background(), "opencode", "")
+	})
+	if errors.Is(err, errCancelled) {
+		return nil
+	}
+	if err != nil {
+		return err
 	}
 	if err := o.Edit(models); err != nil {
 		return fmt.Errorf("setup failed: %w", err)

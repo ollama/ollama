@@ -77,6 +77,10 @@ func (w *WebFetch) Execute(ctx context.Context, args map[string]any) (any, strin
 }
 
 func performWebFetch(ctx context.Context, targetURL string) (*FetchResponse, error) {
+	if err := ensureCloudEnabledForTool(ctx, "web fetch is unavailable"); err != nil {
+		return nil, err
+	}
+
 	reqBody := FetchRequest{URL: targetURL}
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {

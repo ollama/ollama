@@ -2383,6 +2383,7 @@ func TestImageGenerateStreamFalse(t *testing.T) {
 					llama:       &mock,
 					Options:     &opts,
 					model:       &Model{Config: model.ConfigV2{Capabilities: []string{"image"}}},
+					isImagegen:  true,
 					numParallel: 1,
 				},
 			},

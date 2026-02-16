@@ -2,7 +2,9 @@ package config
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -32,6 +34,16 @@ func (c *Openclaw) Run(model string, args []string) error {
 	} else if config, err := loadIntegration("clawdbot"); err == nil && len(config.Models) > 0 {
 		models = config.Models
 	}
+	var err error
+	models, err = resolveEditorModels("openclaw", models, func() ([]string, error) {
+		return selectModels(context.Background(), "openclaw", "")
+	})
+	if errors.Is(err, errCancelled) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
 	if err := c.Edit(models); err != nil {
 		return fmt.Errorf("setup failed: %w", err)
 	}
@@ -58,7 +70,7 @@ func (c *Openclaw) Run(model string, args []string) error {
 	cmd.Stdout = io.MultiWriter(os.Stdout, &outputBuf)
 	cmd.Stderr = io.MultiWriter(os.Stderr, &outputBuf)
 
-	err := cmd.Run()
+	err = cmd.Run()
 	if err != nil && strings.Contains(outputBuf.String(), "Gateway already running") {
 		fmt.Fprintf(os.Stderr, "%sOpenClaw has been configured with Ollama. Gateway is already running.%s\n", ansiGreen, ansiReset)
 		return nil

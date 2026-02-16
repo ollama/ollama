@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/x/imagegen/manifest"
@@ -195,7 +196,7 @@ func (s *Server) Ping(ctx context.Context) error {
 // waitUntilRunning waits for the subprocess to be ready.
 func (s *Server) waitUntilRunning() error {
 	ctx := context.Background()
-	timeout := time.After(2 * time.Minute)
+	timeout := time.After(envconfig.LoadTimeout())
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 

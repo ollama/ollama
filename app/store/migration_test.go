@@ -127,6 +127,65 @@ func TestNoConfigToMigrate(t *testing.T) {
 	}
 }
 
+func TestCloudMigrationFromAirplaneMode(t *testing.T) {
+	tmpHome := t.TempDir()
+	setTestHome(t, tmpHome)
+	t.Setenv("OLLAMA_NO_CLOUD", "")
+
+	dbPath := filepath.Join(tmpHome, "db.sqlite")
+	db, err := newDatabase(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create database: %v", err)
+	}
+
+	if _, err := db.conn.Exec("UPDATE settings SET airplane_mode = 1, cloud_setting_migrated = 0"); err != nil {
+		db.Close()
+		t.Fatalf("failed to seed airplane migration state: %v", err)
+	}
+	db.Close()
+
+	s := Store{DBPath: dbPath}
+	defer s.Close()
+
+	// Trigger DB initialization + one-time cloud migration.
+	if _, err := s.ID(); err != nil {
+		t.Fatalf("failed to initialize store: %v", err)
+	}
+
+	disabled, err := s.CloudDisabled()
+	if err != nil {
+		t.Fatalf("CloudDisabled() error: %v", err)
+	}
+	if !disabled {
+		t.Fatal("expected cloud to be disabled after migrating airplane_mode=true")
+	}
+
+	configPath := filepath.Join(tmpHome, ".ollama", serverConfigFilename)
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("failed to read migrated server config: %v", err)
+	}
+
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("failed to parse migrated server config: %v", err)
+	}
+	if cfg["disable_ollama_cloud"] != true {
+		t.Fatalf("disable_ollama_cloud = %v, want true", cfg["disable_ollama_cloud"])
+	}
+
+	var airplaneMode, migrated bool
+	if err := s.db.conn.QueryRow("SELECT airplane_mode, cloud_setting_migrated FROM settings").Scan(&airplaneMode, &migrated); err != nil {
+		t.Fatalf("failed to read migration flags from DB: %v", err)
+	}
+	if !airplaneMode {
+		t.Fatal("expected legacy airplane_mode value to remain unchanged")
+	}
+	if !migrated {
+		t.Fatal("expected cloud_setting_migrated to be true")
+	}
+}
+
 const (
 	v1Schema = `
 	CREATE TABLE IF NOT EXISTS settings (
