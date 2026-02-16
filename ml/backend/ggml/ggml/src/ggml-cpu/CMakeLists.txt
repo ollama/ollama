@@ -576,13 +576,13 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
             DOWNLOAD_EXTRACT_TIMESTAMP NEW
             URL_HASH MD5=${KLEIDIAI_ARCHIVE_MD5})
 
-        FetchContent_Populate(KleidiAI_Download)
         FetchContent_GetProperties(KleidiAI_Download
             SOURCE_DIR  KLEIDIAI_SRC
             POPULATED   KLEIDIAI_POPULATED)
 
         if (NOT KLEIDIAI_POPULATED)
-            message(FATAL_ERROR "KleidiAI source downloaded failed.")
+            FetchContent_Populate(KleidiAI_Download)
+            FetchContent_GetProperties(KleidiAI_Download SOURCE_DIR KLEIDIAI_SRC)
         endif()
 
         add_compile_definitions(GGML_USE_CPU_KLEIDIAI)

@@ -769,6 +769,12 @@ static std::vector<size_t> unicode_regex_split_custom(const std::string & text, 
     } else if (regex_expr == "\\p{AFMoE_digits}") {
         // AFMOE digit pattern - use custom implementation for proper splitting
         bpe_offsets = unicode_regex_split_custom_afmoe(text, offsets);
+    } else if (regex_expr == "\\d{1,3}(?=(?:\\d{3})*\\b)") {
+        // tiny_aya digit grouping pattern from tokenizer.json:
+        //   {"type": "Split", "pattern": {"Regex": "\\d{1,3}(?=(?:\\d{3})*\\b)"}, "behavior": "Isolated"}
+        // Splits digits into groups of 3 from the right (e.g., 1234567 -> 1, 234, 567)
+        // TODO: Revisit this regex, incase there are any subtle tokenization differences with the original regex.
+        bpe_offsets = unicode_regex_split_custom_afmoe(text, offsets);
     }
 
     return bpe_offsets;

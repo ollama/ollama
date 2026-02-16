@@ -236,8 +236,7 @@ void ggml_vec_dot_bf16(int n, float * GGML_RESTRICT s, size_t bs, ggml_bf16_t * 
     vfloat32m1_t redsum = __riscv_vfredusum_vs_f32m4_f32m1(vsum0, __riscv_vfmv_v_f_f32m1(0.0f, 1), vl);
     sumf += __riscv_vfmv_f_s_f32m1_f32(redsum);
 
-#endif
-#if defined(__POWER9_VECTOR__)
+#elif defined(__POWER9_VECTOR__) || defined(__VXE__) || defined(__VXE2__)
     const int np = (n & ~(GGML_BF16_STEP - 1));
     if (np > 0) {
         GGML_F32_VEC sum[4] = {GGML_F32_VEC_ZERO};

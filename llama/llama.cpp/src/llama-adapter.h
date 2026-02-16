@@ -39,6 +39,8 @@ private:
     std::vector<ggml_tensor *> tensors; // per layer
 };
 
+using llama_adapter_cvec_ptr = std::shared_ptr<llama_adapter_cvec>;
+
 //
 // llama_adapter_lora
 //
@@ -84,3 +86,4 @@ struct llama_adapter_lora {
 };
 
 using llama_adapter_loras = std::unordered_map<llama_adapter_lora *, float>;
+using llama_adapter_loras_ptr = std::unique_ptr<llama_adapter_loras>;
