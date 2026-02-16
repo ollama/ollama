@@ -1,8 +1,6 @@
 #include "models.h"
 #include "ggml.h"
 
-#include "llama-memory-recurrent.h"
-
 #define CHUNK_SIZE 64
 
 // Causal Conv1d function for Q,K,V
@@ -67,7 +65,7 @@ static ggml_tensor * causal_conv1d(ggml_cgraph * gf, ggml_context * ctx0, ggml_t
 }
 
 llm_build_kimi_linear::llm_build_kimi_linear(const llama_model & model, const llm_graph_params & params) :
-    llm_build_mamba_base(params), model(model) {
+    llm_graph_context_mamba(params), model(model) {
     ggml_tensor * cur;
     ggml_tensor * inpL;
 

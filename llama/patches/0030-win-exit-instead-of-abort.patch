@@ -8,7 +8,7 @@ Subject: [PATCH] win: exit instead of abort
  1 file changed, 6 insertions(+), 1 deletion(-)
 
 diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
-index ed819eaa4..bee8d087b 100644
+index e2a6ff67b..e474a4f90 100644
 --- a/ggml/src/ggml.c
 +++ b/ggml/src/ggml.c
 @@ -252,8 +252,13 @@ void ggml_abort(const char * file, int line, const char * fmt, ...) {

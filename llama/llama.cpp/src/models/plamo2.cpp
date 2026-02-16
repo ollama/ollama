@@ -1,9 +1,7 @@
 #include "models.h"
 
-#include "llama-memory-recurrent.h"
-
 llm_build_plamo2::llm_build_plamo2(const llama_model & model, const llm_graph_params & params) :
-    llm_build_mamba_base(params) {
+    llm_graph_context_mamba(params) {
     ggml_tensor * cur;
     ggml_tensor * inpL;
 

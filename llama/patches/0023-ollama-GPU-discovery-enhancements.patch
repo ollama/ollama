@@ -190,10 +190,10 @@ index 5c172bf5d..14473a97c 100644
  #define cudaErrorPeerAccessAlreadyEnabled hipErrorPeerAccessAlreadyEnabled
  #define cudaErrorPeerAccessNotEnabled hipErrorPeerAccessNotEnabled
 diff --git a/ggml/src/ggml-impl.h b/ggml/src/ggml-impl.h
-index e3714b38a..80ebb059e 100644
+index baadfe9a7..f19417bd7 100644
 --- a/ggml/src/ggml-impl.h
 +++ b/ggml/src/ggml-impl.h
-@@ -680,6 +680,14 @@ static inline bool ggml_can_fuse_subgraph(const struct ggml_cgraph * cgraph,
+@@ -676,6 +676,14 @@ static inline bool ggml_can_fuse_subgraph(const struct ggml_cgraph * cgraph,
      return ggml_can_fuse_subgraph_ext(cgraph, idxs, count, ops, outputs, num_outputs);
  }
  
