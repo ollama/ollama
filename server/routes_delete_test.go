@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -101,6 +102,37 @@ func TestDeleteDuplicateLayers(t *testing.T) {
 
 	// create a manifest with duplicate layers
 	if err := manifest.WriteManifest(n, config, []manifest.Layer{config}); err != nil {
+		t.Fatal(err)
+	}
+
+	w := createRequest(t, s.DeleteHandler, api.DeleteRequest{Name: "test"})
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status code 200, actual %d", w.Code)
+	}
+
+	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{})
+}
+
+func TestDeleteCorruptManifest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	p := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", p)
+	var s Server
+
+	n := model.ParseName("test")
+
+	manifests, err := manifest.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	manifestPath := filepath.Join(manifests, n.Filepath())
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(manifestPath, []byte("not valid json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
