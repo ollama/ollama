@@ -1049,6 +1049,66 @@ func TestListHandler(t *testing.T) {
 	}
 }
 
+func TestListRunningHandlerHandlesEmptyDigest(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/ps" || r.Method != http.MethodGet {
+			t.Errorf("unexpected request to %s %s", r.Method, r.URL.Path)
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+
+		response := api.ProcessResponse{
+			Models: []api.ProcessModelResponse{
+				{
+					Name:          "model1",
+					Digest:        "",
+					Size:          1024,
+					SizeVRAM:      0,
+					ContextLength: 4096,
+					ExpiresAt:     time.Time{},
+				},
+			},
+		}
+
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			t.Fatal(err)
+		}
+	}))
+	defer mockServer.Close()
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	err := ListRunningHandler(cmd, nil)
+
+	w.Close()
+	os.Stdout = oldStdout
+	output, _ := io.ReadAll(r)
+	got := string(output)
+
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if !strings.Contains(got, "model1") {
+		t.Fatalf("expected model name in output, got %q", got)
+	}
+
+	if !strings.Contains(got, "100% CPU") {
+		t.Fatalf("expected processor column in output, got %q", got)
+	}
+
+	if !strings.Contains(got, "Stopping...") {
+		t.Fatalf("expected until status in output, got %q", got)
+	}
+}
+
 func TestCreateHandler(t *testing.T) {
 	tests := []struct {
 		name           string
