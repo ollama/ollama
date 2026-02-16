@@ -27,14 +27,12 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	// Clip images are represented as 768 tokens, each an embedding
 	imageNumTokens := 768
 
-	n := len(msgs) - 1
-	// in reverse, find all messages that fit into context window
-	for i := n; i >= 0; i-- {
-		// always include the last message
-		if i == n {
-			continue
-		}
+	lastMsgIdx := len(msgs) - 1
+	currMsgIdx := 0
 
+	// Start with all messages and remove from the front until it fits in context
+	for i := 0; i <= lastMsgIdx; i++ {
+		// Collect system messages from the portion we're about to skip
 		system = make([]api.Message, 0)
 		for j := range i {
 			if msgs[j].Role == "system" {
@@ -54,20 +52,26 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 		ctxLen := len(s)
 		if m.ProjectorPaths != nil {
-			for _, m := range msgs[i:] {
-				ctxLen += imageNumTokens * len(m.Images)
+			for _, msg := range msgs[i:] {
+				ctxLen += imageNumTokens * len(msg.Images)
 			}
 		}
 
-		if truncate && ctxLen > opts.NumCtx {
-			slog.Debug("truncating input messages which exceed context length", "truncated", len(msgs[i:]))
+		if !truncate || ctxLen <= opts.NumCtx {
+			currMsgIdx = i
 			break
-		} else {
-			n = i
+		}
+
+		// Must always include at least the last message
+		if i == lastMsgIdx {
+			currMsgIdx = lastMsgIdx
+			break
 		}
 	}
 
-	currMsgIdx := n
+	if currMsgIdx > 0 {
+		slog.Debug("truncating input messages which exceed context length", "truncated", len(msgs[currMsgIdx:]))
+	}
 
 	for cnt, msg := range msgs[currMsgIdx:] {
 		if slices.Contains(m.Config.ModelFamilies, "mllama") && len(msg.Images) > 1 {

@@ -111,7 +111,7 @@ func TestServerCmd(t *testing.T) {
 			for _, want := range tt.want {
 				found := false
 				for _, env := range cmd.Env {
-					if strings.Contains(env, want) {
+					if strings.HasPrefix(env, want) {
 						found = true
 						break
 					}
@@ -123,7 +123,7 @@ func TestServerCmd(t *testing.T) {
 
 			for _, dont := range tt.dont {
 				for _, env := range cmd.Env {
-					if strings.Contains(env, dont) {
+					if strings.HasPrefix(env, dont) {
 						t.Errorf("unexpected environment variable: %s", env)
 					}
 				}
@@ -131,6 +131,75 @@ func TestServerCmd(t *testing.T) {
 
 			if cmd.Cancel == nil {
 				t.Error("expected non-nil cancel function")
+			}
+		})
+	}
+}
+
+func TestServerCmdCloudSettingEnv(t *testing.T) {
+	tests := []struct {
+		name          string
+		envValue      string
+		configContent string
+		want          string
+	}{
+		{
+			name: "default cloud enabled",
+			want: "OLLAMA_NO_CLOUD=0",
+		},
+		{
+			name:     "env disables cloud",
+			envValue: "1",
+			want:     "OLLAMA_NO_CLOUD=1",
+		},
+		{
+			name:          "config disables cloud",
+			configContent: `{"disable_ollama_cloud": true}`,
+			want:          "OLLAMA_NO_CLOUD=1",
+		},
+		{
+			name:     "invalid env disables cloud",
+			envValue: "invalid",
+			want:     "OLLAMA_NO_CLOUD=1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpHome := t.TempDir()
+			t.Setenv("HOME", tmpHome)
+			t.Setenv("USERPROFILE", tmpHome)
+			t.Setenv("OLLAMA_NO_CLOUD", tt.envValue)
+
+			if tt.configContent != "" {
+				configDir := filepath.Join(tmpHome, ".ollama")
+				if err := os.MkdirAll(configDir, 0o755); err != nil {
+					t.Fatalf("mkdir config dir: %v", err)
+				}
+				configPath := filepath.Join(configDir, "server.json")
+				if err := os.WriteFile(configPath, []byte(tt.configContent), 0o644); err != nil {
+					t.Fatalf("write config: %v", err)
+				}
+			}
+
+			st := &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+			defer st.Close()
+
+			s := &Server{store: st}
+			cmd, err := s.cmd(t.Context())
+			if err != nil {
+				t.Fatalf("s.cmd() error = %v", err)
+			}
+
+			found := false
+			for _, env := range cmd.Env {
+				if env == tt.want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("expected environment variable %q in command env", tt.want)
 			}
 		})
 	}

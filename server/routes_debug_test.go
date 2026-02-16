@@ -15,6 +15,7 @@ import (
 )
 
 func TestGenerateDebugRenderOnly(t *testing.T) {
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
 	gin.SetMode(gin.TestMode)
 
 	mock := mockRunner{
@@ -208,6 +209,7 @@ func TestGenerateDebugRenderOnly(t *testing.T) {
 }
 
 func TestChatDebugRenderOnly(t *testing.T) {
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
 	gin.SetMode(gin.TestMode)
 
 	mock := mockRunner{

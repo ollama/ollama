@@ -14,6 +14,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"runtime"
+
+	"github.com/ollama/ollama/x/imagegen/manifest"
 )
 
 // SupportedBackends lists the backends that support image generation.
@@ -41,8 +43,8 @@ func CheckPlatformSupport() error {
 // ResolveModelName checks if a model name is a known image generation model.
 // Returns the normalized model name if found, empty string otherwise.
 func ResolveModelName(modelName string) string {
-	manifest, err := LoadManifest(modelName)
-	if err == nil && manifest.HasTensorLayers() {
+	modelManifest, err := manifest.LoadManifest(modelName)
+	if err == nil && modelManifest.HasTensorLayers() {
 		return modelName
 	}
 	return ""
@@ -52,12 +54,12 @@ func ResolveModelName(modelName string) string {
 // Checks both "architecture" (Ollama format) and "_class_name" (diffusers format).
 // Returns empty string if detection fails.
 func DetectModelType(modelName string) string {
-	manifest, err := LoadManifest(modelName)
+	modelManifest, err := manifest.LoadManifest(modelName)
 	if err != nil {
 		return ""
 	}
 
-	data, err := manifest.ReadConfig("model_index.json")
+	data, err := modelManifest.ReadConfig("model_index.json")
 	if err != nil {
 		return ""
 	}

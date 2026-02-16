@@ -205,6 +205,11 @@ func (s *Server) cmd(ctx context.Context) (*exec.Cmd, error) {
 		return nil, err
 	}
 
+	cloudDisabled, err := s.store.CloudDisabled()
+	if err != nil {
+		return nil, err
+	}
+
 	cmd := commandContext(ctx, s.bin, "serve")
 	cmd.Stdout, cmd.Stderr = s.log, s.log
 
@@ -229,6 +234,11 @@ func (s *Server) cmd(ctx context.Context) (*exec.Cmd, error) {
 	}
 	if settings.ContextLength > 0 {
 		env["OLLAMA_CONTEXT_LENGTH"] = strconv.Itoa(settings.ContextLength)
+	}
+	if cloudDisabled {
+		env["OLLAMA_NO_CLOUD"] = "1"
+	} else {
+		env["OLLAMA_NO_CLOUD"] = "0"
 	}
 	cmd.Env = []string{}
 	for k, v := range env {

@@ -2,11 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Model } from "@/gotypes";
 import { getModels } from "@/api";
 import { mergeModels } from "@/utils/mergeModels";
-import { useSettings } from "./useSettings";
 import { useMemo } from "react";
+import { useCloudStatus } from "./useCloudStatus";
 
 export function useModels(searchQuery = "") {
-  const { settings } = useSettings();
+  const { cloudDisabled } = useCloudStatus();
   const localQuery = useQuery<Model[], Error>({
     queryKey: ["models", searchQuery],
     queryFn: () => getModels(searchQuery),
@@ -20,7 +20,7 @@ export function useModels(searchQuery = "") {
   });
 
   const allModels = useMemo(() => {
-    const models = mergeModels(localQuery.data || [], settings.airplaneMode);
+    const models = mergeModels(localQuery.data || [], cloudDisabled);
 
     if (searchQuery && searchQuery.trim()) {
       const query = searchQuery.toLowerCase().trim();
@@ -40,7 +40,7 @@ export function useModels(searchQuery = "") {
     }
 
     return models;
-  }, [localQuery.data, searchQuery, settings.airplaneMode]);
+  }, [localQuery.data, searchQuery, cloudDisabled]);
 
   return {
     ...localQuery,

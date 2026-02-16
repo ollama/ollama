@@ -991,6 +991,19 @@ func Concat(a, b *Array, axis int) *Array {
 	return Concatenate([]*Array{a, b}, axis)
 }
 
+// Stack stacks arrays along a new axis (axis 0 by default)
+func Stack(arrays []*Array, axis int) *Array {
+	handles := make([]C.mlx_array, len(arrays))
+	for i, arr := range arrays {
+		handles[i] = arr.c
+	}
+	vec := C.mlx_vector_array_new_data(&handles[0], C.size_t(len(handles)))
+	res := C.mlx_array_new()
+	C.mlx_stack_axis(&res, vec, C.int(axis), C.default_stream())
+	C.mlx_vector_array_free(vec)
+	return newArray(res)
+}
+
 // Slice slices the array
 func Slice(a *Array, start, stop []int32) *Array {
 	n := len(start)
@@ -1531,6 +1544,18 @@ func (s *SafetensorsFile) Count() int {
 	return 0
 }
 
+// GetMetadata retrieves a metadata value by key from the safetensors file
+func (s *SafetensorsFile) GetMetadata(key string) string {
+	cKey := C.CString(key)
+	defer C.free(unsafe.Pointer(cKey))
+
+	var cValue *C.char
+	if C.mlx_map_string_to_string_get(&cValue, s.metadata, cKey) != 0 {
+		return ""
+	}
+	return C.GoString(cValue)
+}
+
 // Free releases the safetensors file
 func (s *SafetensorsFile) Free() {
 	C.mlx_map_string_to_array_free(s.arrays)
@@ -1557,6 +1582,41 @@ func SaveSafetensors(path string, arrays map[string]*Array) error {
 	// Create empty metadata (optional)
 	cMeta := C.mlx_map_string_to_string_new()
 	defer C.mlx_map_string_to_string_free(cMeta)
+
+	// Save
+	if C.mlx_save_safetensors(cPath, cArrays, cMeta) != 0 {
+		return fmt.Errorf("failed to save safetensors: %s", path)
+	}
+	return nil
+}
+
+// SaveSafetensorsWithMetadata saves arrays to a safetensors file with metadata key/value pairs.
+// This is like SaveSafetensors but inserts metadata into the __metadata__ section.
+func SaveSafetensorsWithMetadata(path string, arrays map[string]*Array, metadata map[string]string) error {
+	cPath := C.CString(path)
+	defer C.free(unsafe.Pointer(cPath))
+
+	// Create the array map
+	cArrays := C.mlx_map_string_to_array_new()
+	defer C.mlx_map_string_to_array_free(cArrays)
+
+	for name, arr := range arrays {
+		cName := C.CString(name)
+		C.mlx_map_string_to_array_insert(cArrays, cName, arr.c)
+		C.free(unsafe.Pointer(cName))
+	}
+
+	// Create metadata map
+	cMeta := C.mlx_map_string_to_string_new()
+	defer C.mlx_map_string_to_string_free(cMeta)
+
+	for key, value := range metadata {
+		cKey := C.CString(key)
+		cValue := C.CString(value)
+		C.mlx_map_string_to_string_insert(cMeta, cKey, cValue)
+		C.free(unsafe.Pointer(cKey))
+		C.free(unsafe.Pointer(cValue))
+	}
 
 	// Save
 	if C.mlx_save_safetensors(cPath, cArrays, cMeta) != 0 {

@@ -449,6 +449,16 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 	return version.Version, nil
 }
 
+// CloudStatusExperimental returns whether cloud features are disabled on the server.
+func (c *Client) CloudStatusExperimental(ctx context.Context) (*StatusResponse, error) {
+	var status StatusResponse
+	if err := c.do(ctx, http.MethodGet, "/api/status", nil, &status); err != nil {
+		return nil, err
+	}
+
+	return &status, nil
+}
+
 // Signout will signout a client for a local ollama server.
 func (c *Client) Signout(ctx context.Context) error {
 	return c.do(ctx, http.MethodPost, "/api/signout", nil, nil)
@@ -465,4 +475,26 @@ func (c *Client) Whoami(ctx context.Context) (*UserResponse, error) {
 		return nil, err
 	}
 	return &resp, nil
+}
+
+// AliasRequest is the request body for creating or updating a model alias.
+type AliasRequest struct {
+	Alias          string `json:"alias"`
+	Target         string `json:"target"`
+	PrefixMatching bool   `json:"prefix_matching,omitempty"`
+}
+
+// SetAliasExperimental creates or updates a model alias via the experimental aliases API.
+func (c *Client) SetAliasExperimental(ctx context.Context, req *AliasRequest) error {
+	return c.do(ctx, http.MethodPost, "/api/experimental/aliases", req, nil)
+}
+
+// AliasDeleteRequest is the request body for deleting a model alias.
+type AliasDeleteRequest struct {
+	Alias string `json:"alias"`
+}
+
+// DeleteAliasExperimental deletes a model alias via the experimental aliases API.
+func (c *Client) DeleteAliasExperimental(ctx context.Context, req *AliasDeleteRequest) error {
+	return c.do(ctx, http.MethodDelete, "/api/experimental/aliases", req, nil)
 }

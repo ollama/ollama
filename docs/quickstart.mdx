@@ -2,7 +2,7 @@
 title: Quickstart
 ---
 
-This quickstart will walk your through running your first model with Ollama. To get started, download Ollama on macOS, Windows or Linux.
+Ollama is available on macOS, Windows, and Linux.
 
 <a
   href="https://ollama.com/download"
@@ -12,92 +12,48 @@ This quickstart will walk your through running your first model with Ollama. To 
   Download Ollama
 </a>
 
-## Run a model
+## Get Started
 
-<Tabs>
-  <Tab title="CLI">
-    Open a terminal and run the command:
+Run `ollama` in your terminal to open the interactive menu:
 
-    ```
-    ollama run gemma3
-    ```
+```sh
+ollama
+```
 
-  </Tab>
-  <Tab title="cURL">
-    ```
-    ollama pull gemma3
-    ```
+Navigate with `↑/↓`, press `enter` to launch, `→` to change model, and `esc` to quit.
 
-    Lastly, chat with the model:
+The menu provides quick access to:
+- **Run a model** - Start an interactive chat
+- **Launch tools** - Claude Code, Codex, OpenClaw, and more
+- **Additional integrations** - Available under "More..."
 
-    ```shell
-    curl http://localhost:11434/api/chat -d '{
-      "model": "gemma3",
-      "messages": [{
-        "role": "user",
-        "content": "Hello there!"
-      }],
-      "stream": false
-    }'
-    ```
+## Coding
 
-  </Tab>
-  <Tab title="Python">
-    Start by downloading a model:
+Launch coding tools with Ollama models:
 
-    ```
-    ollama pull gemma3
-    ```
+```sh
+ollama launch claude
+```
 
-    Then install Ollama's Python library:
+```sh
+ollama launch codex
+```
 
-    ```
-    pip install ollama
-    ```
+```sh
+ollama launch opencode
+```
 
-    Lastly, chat with the model:
+See [integrations](/integrations) for all supported tools.
 
-    ```python
-    from ollama import chat
-    from ollama import ChatResponse
+## API
 
-    response: ChatResponse = chat(model='gemma3', messages=[
-      {
-        'role': 'user',
-        'content': 'Why is the sky blue?',
-      },
-    ])
-    print(response['message']['content'])
-    # or access fields directly from the response object
-    print(response.message.content)
-    ```
+Use the [API](/api) to integrate Ollama into your applications:
 
-  </Tab>
-  <Tab title="JavaScript">
-    Start by downloading a model:
+```sh
+curl http://localhost:11434/api/chat -d '{
+  "model": "gemma3",
+  "messages": [{ "role": "user", "content": "Hello!" }]
+}'
+```
 
-    ```
-    ollama pull gemma3
-    ```
-
-    Then install the Ollama JavaScript library:
-    ```
-    npm i ollama
-    ```
-
-    Lastly, chat with the model:
-
-    ```shell
-    import ollama from 'ollama'
-
-    const response = await ollama.chat({
-      model: 'gemma3',
-      messages: [{ role: 'user', content: 'Why is the sky blue?' }],
-    })
-    console.log(response.message.content)
-    ```
-
-  </Tab>
-</Tabs>
-
-See a full list of available models [here](https://ollama.com/models).
+See the [API documentation](/api) for Python, JavaScript, and other integrations.

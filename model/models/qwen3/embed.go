@@ -7,11 +7,12 @@ import (
 	"github.com/ollama/ollama/ml/nn/pooling"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
+	"github.com/ollama/ollama/tokenizer"
 )
 
 type embedModel struct {
 	model.Base
-	model.BytePairEncoding
+	tokenizer.Tokenizer
 
 	*Model
 	poolingType pooling.Type
@@ -34,8 +35,8 @@ func newEmbed(c fs.Config) (model.Model, error) {
 		layers[i].MLP = &dense{}
 	}
 	m := embedModel{
-		BytePairEncoding: model.NewBytePairEncoding(
-			&model.Vocabulary{
+		Tokenizer: tokenizer.NewBytePairEncoding(
+			&tokenizer.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Types:  c.Ints("tokenizer.ggml.token_type"),
 				Merges: c.Strings("tokenizer.ggml.merges"),
