@@ -248,7 +248,8 @@ type ModelItem struct {
 }
 
 // SingleSelector is a function type for single item selection.
-type SingleSelector func(title string, items []ModelItem) (string, error)
+// current is the name of the previously selected item to highlight; empty means no pre-selection.
+type SingleSelector func(title string, items []ModelItem, current string) (string, error)
 
 // MultiSelector is a function type for multi item selection.
 type MultiSelector func(title string, items []ModelItem, preChecked []string) ([]string, error)
@@ -291,7 +292,7 @@ func SelectModelWithSelector(ctx context.Context, selector SingleSelector) (stri
 		return "", fmt.Errorf("no models available, run 'ollama pull <model>' first")
 	}
 
-	selected, err := selector("Select model to run:", items)
+	selected, err := selector("Select model to run:", items, "")
 	if err != nil {
 		return "", err
 	}
@@ -431,7 +432,7 @@ func selectIntegration() (string, error) {
 		return strings.Compare(a.Name, b.Name)
 	})
 
-	return DefaultSingleSelector("Select integration:", items)
+	return DefaultSingleSelector("Select integration:", items, "")
 }
 
 // selectModelsWithSelectors lets the user select models for an integration using provided selectors.
@@ -489,7 +490,7 @@ func selectModelsWithSelectors(ctx context.Context, name, current string, single
 		if _, ok := r.(AliasConfigurer); ok {
 			prompt = fmt.Sprintf("Select Primary model for %s:", r)
 		}
-		model, err := single(prompt, items)
+		model, err := single(prompt, items, current)
 		if err != nil {
 			return nil, err
 		}
@@ -979,7 +980,7 @@ Examples:
 				}
 
 				// Always show picker so user can change model
-				aliases, _, err := ac.ConfigureAliases(cmd.Context(), model, existingAliases, true)
+				aliases, _, err := ac.ConfigureAliases(cmd.Context(), model, existingAliases, modelFlag == "")
 				if errors.Is(err, errCancelled) {
 					return nil
 				}
