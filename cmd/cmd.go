@@ -182,6 +182,10 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				mfConfig.System = cmd.Args
 			case "license":
 				mfConfig.License = cmd.Args
+			case "parser":
+				mfConfig.Parser = cmd.Args
+			case "renderer":
+				mfConfig.Renderer = cmd.Args
 			}
 		}
 
