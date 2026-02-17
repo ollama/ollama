@@ -2,6 +2,7 @@ package openai
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -280,6 +281,45 @@ func TestFromChatRequest_LogprobsDefault(t *testing.T) {
 	if result.TopLogprobs != 0 {
 		t.Errorf("expected TopLogprobs to be 0 by default, got %d", result.TopLogprobs)
 	}
+}
+
+func TestFromChatRequest_JsonSchemaFormat(t *testing.T) {
+	schema := json.RawMessage(`{"type":"object","properties":{"response":{"type":"string"}},"required":["response"],"additionalProperties":false}`)
+	strict := true
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{Role: "user", Content: "Hello"},
+		},
+		ResponseFormat: &ResponseFormat{
+			Type: "json_schema",
+			JsonSchema: &JsonSchema{
+				Schema: schema,
+			},
+		},
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Format == nil {
+		t.Fatal("expected Format to be set")
+	}
+
+	var got, want map[string]any
+	if err := json.Unmarshal(result.Format, &got); err != nil {
+		t.Fatalf("failed to unmarshal result format: %v", err)
+	}
+	if err := json.Unmarshal(schema, &want); err != nil {
+		t.Fatalf("failed to unmarshal expected schema: %v", err)
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("format mismatch (-want +got):\n%s", diff)
+	}
+
+	_ = strict // strict is part of the OpenAI SDK payload but not used in format conversion
 }
 
 func TestFromCompleteRequest_WithLogprobs(t *testing.T) {
