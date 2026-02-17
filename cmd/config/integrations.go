@@ -979,7 +979,7 @@ Examples:
 					}
 				}
 
-				// Always show picker so user can change model
+				// Show picker so user can change model (skip when --model flag provided)
 				aliases, _, err := ac.ConfigureAliases(cmd.Context(), model, existingAliases, modelFlag == "")
 				if errors.Is(err, errCancelled) {
 					return nil
