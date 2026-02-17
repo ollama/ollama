@@ -382,6 +382,42 @@ func TestUpdateNavigation_Backspace(t *testing.T) {
 	}
 }
 
+// --- cursorForCurrent ---
+
+func TestCursorForCurrent(t *testing.T) {
+	testItems := []SelectItem{
+		{Name: "llama3.2", Recommended: true},
+		{Name: "qwen3:8b", Recommended: true},
+		{Name: "gemma3:latest"},
+		{Name: "deepseek-r1"},
+		{Name: "glm-5:cloud"},
+	}
+
+	tests := []struct {
+		name    string
+		current string
+		want    int
+	}{
+		{"empty current", "", 0},
+		{"exact match", "qwen3:8b", 1},
+		{"no match returns 0", "nonexistent", 0},
+		{"bare name matches with :latest suffix", "gemma3", 2},
+		{"full tag matches bare item", "llama3.2:latest", 0},
+		{"cloud model exact match", "glm-5:cloud", 4},
+		{"cloud model bare name", "glm-5", 4},
+		{"recommended item exact match", "llama3.2", 0},
+		{"recommended item with tag", "qwen3", 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := cursorForCurrent(testItems, tt.current); got != tt.want {
+				t.Errorf("cursorForCurrent(%q) = %d, want %d", tt.current, got, tt.want)
+			}
+		})
+	}
+}
+
 // --- ReorderItems ---
 
 func TestReorderItems(t *testing.T) {

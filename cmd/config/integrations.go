@@ -248,7 +248,8 @@ type ModelItem struct {
 }
 
 // SingleSelector is a function type for single item selection.
-type SingleSelector func(title string, items []ModelItem) (string, error)
+// current is the name of the previously selected item to highlight; empty means no pre-selection.
+type SingleSelector func(title string, items []ModelItem, current string) (string, error)
 
 // MultiSelector is a function type for multi item selection.
 type MultiSelector func(title string, items []ModelItem, preChecked []string) ([]string, error)
@@ -291,7 +292,7 @@ func SelectModelWithSelector(ctx context.Context, selector SingleSelector) (stri
 		return "", fmt.Errorf("no models available, run 'ollama pull <model>' first")
 	}
 
-	selected, err := selector("Select model to run:", items)
+	selected, err := selector("Select model to run:", items, "")
 	if err != nil {
 		return "", err
 	}
@@ -431,7 +432,7 @@ func selectIntegration() (string, error) {
 		return strings.Compare(a.Name, b.Name)
 	})
 
-	return DefaultSingleSelector("Select integration:", items)
+	return DefaultSingleSelector("Select integration:", items, "")
 }
 
 // selectModelsWithSelectors lets the user select models for an integration using provided selectors.
@@ -489,7 +490,7 @@ func selectModelsWithSelectors(ctx context.Context, name, current string, single
 		if _, ok := r.(AliasConfigurer); ok {
 			prompt = fmt.Sprintf("Select Primary model for %s:", r)
 		}
-		model, err := single(prompt, items)
+		model, err := single(prompt, items, current)
 		if err != nil {
 			return nil, err
 		}
@@ -967,11 +968,9 @@ Examples:
 				}
 
 				// Validate saved model still exists
-				cloudCleared := false
 				if model != "" && modelFlag == "" {
 					if disabled, _ := cloudStatusDisabled(cmd.Context(), client); disabled && isCloudModelName(model) {
 						model = ""
-						cloudCleared = true
 					} else if _, err := client.Show(cmd.Context(), &api.ShowRequest{Model: model}); err != nil {
 						fmt.Fprintf(os.Stderr, "%sConfigured model %q not found%s\n\n", ansiGray, model, ansiReset)
 						if err := ShowOrPull(cmd.Context(), client, model); err != nil {
@@ -980,18 +979,16 @@ Examples:
 					}
 				}
 
-				// If no valid model or --config flag, show picker
-				if model == "" || configFlag {
-					aliases, _, err := ac.ConfigureAliases(cmd.Context(), model, existingAliases, configFlag || cloudCleared)
-					if errors.Is(err, errCancelled) {
-						return nil
-					}
-					if err != nil {
-						return err
-					}
-					model = aliases["primary"]
-					existingAliases = aliases
+				// Show picker so user can change model (skip when --model flag provided)
+				aliases, _, err := ac.ConfigureAliases(cmd.Context(), model, existingAliases, modelFlag == "")
+				if errors.Is(err, errCancelled) {
+					return nil
 				}
+				if err != nil {
+					return err
+				}
+				model = aliases["primary"]
+				existingAliases = aliases
 
 				// Ensure cloud models are authenticated
 				if isCloudModel(cmd.Context(), client, model) {
@@ -1053,27 +1050,13 @@ Examples:
 						return err
 					}
 				}
-			} else if saved, err := loadIntegration(name); err == nil && len(saved.Models) > 0 && !configFlag {
-				savedModels := filterDisabledCloudModels(saved.Models)
-				if len(savedModels) != len(saved.Models) {
-					_ = SaveIntegration(name, savedModels)
-				}
-				if len(savedModels) == 0 {
-					// All saved models were cloud — fall through to picker
-					models, err = selectModels(cmd.Context(), name, "")
-					if errors.Is(err, errCancelled) {
-						return nil
-					}
-					if err != nil {
-						return err
-					}
-				} else {
-					models = savedModels
-					return runIntegration(name, models[0], passArgs)
-				}
 			} else {
+				current := ""
+				if saved, err := loadIntegration(name); err == nil && len(saved.Models) > 0 {
+					current = saved.Models[0]
+				}
 				var err error
-				models, err = selectModels(cmd.Context(), name, "")
+				models, err = selectModels(cmd.Context(), name, current)
 				if errors.Is(err, errCancelled) {
 					return nil
 				}

@@ -365,14 +365,27 @@ func (m selectorModel) View() string {
 	return s
 }
 
-func SelectSingle(title string, items []SelectItem) (string, error) {
+// cursorForCurrent returns the item index matching current, or 0 if not found.
+func cursorForCurrent(items []SelectItem, current string) int {
+	if current != "" {
+		for i, item := range items {
+			if item.Name == current || strings.HasPrefix(item.Name, current+":") || strings.HasPrefix(current, item.Name+":") {
+				return i
+			}
+		}
+	}
+	return 0
+}
+
+func SelectSingle(title string, items []SelectItem, current string) (string, error) {
 	if len(items) == 0 {
 		return "", fmt.Errorf("no items to select from")
 	}
 
 	m := selectorModel{
-		title: title,
-		items: items,
+		title:  title,
+		items:  items,
+		cursor: cursorForCurrent(items, current),
 	}
 
 	p := tea.NewProgram(m)
