@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"net/http"
 	"os"
 	"os/exec"
@@ -54,6 +53,7 @@ type AliasConfigurer interface {
 var integrations = map[string]Runner{
 	"claude":   &Claude{},
 	"clawdbot": &Openclaw{},
+	"cline":    &Cline{},
 	"codex":    &Codex{},
 	"moltbot":  &Openclaw{},
 	"droid":    &Droid{},
@@ -102,16 +102,17 @@ var recommendedVRAM = map[string]string{
 var integrationAliases = map[string]bool{
 	"clawdbot": true,
 	"moltbot":  true,
-	"pi":       true,
 }
 
 // integrationInstallHints maps integration names to install URLs.
 var integrationInstallHints = map[string]string{
 	"claude":   "https://code.claude.com/docs/en/quickstart",
+	"cline":    "https://cline.bot/cli",
 	"openclaw": "https://docs.openclaw.ai",
 	"codex":    "https://developers.openai.com/codex/cli/",
 	"droid":    "https://docs.factory.ai/cli/getting-started/quickstart",
 	"opencode": "https://opencode.ai",
+	"pi":       "https://github.com/badlogic/pi-mono",
 }
 
 // hyperlink wraps text in an OSC 8 terminal hyperlink so it is cmd+clickable.
@@ -129,13 +130,21 @@ type IntegrationInfo struct {
 // integrationDescriptions maps integration names to short descriptions.
 var integrationDescriptions = map[string]string{
 	"claude":   "Anthropic's coding tool with subagents",
+	"cline":    "Autonomous coding agent with parallel execution",
 	"codex":    "OpenAI's open-source coding agent",
 	"openclaw": "Personal AI with 100+ skills",
 	"droid":    "Factory's coding agent across terminal and IDEs",
 	"opencode": "Anomaly's open-source coding agent",
+	"pi":       "Minimal AI agent toolkit with plugin support",
 }
 
-// ListIntegrationInfos returns all non-alias registered integrations, sorted by name.
+// integrationOrder defines a custom display order for integrations.
+// Integrations listed here are placed at the end in the given order;
+// all others appear first, sorted alphabetically.
+var integrationOrder = []string{"opencode", "droid", "pi", "cline"}
+
+// ListIntegrationInfos returns all non-alias registered integrations, sorted by name
+// with integrationOrder entries placed at the end.
 func ListIntegrationInfos() []IntegrationInfo {
 	var result []IntegrationInfo
 	for name, r := range integrations {
@@ -148,7 +157,26 @@ func ListIntegrationInfos() []IntegrationInfo {
 			Description: integrationDescriptions[name],
 		})
 	}
+
+	orderRank := make(map[string]int, len(integrationOrder))
+	for i, name := range integrationOrder {
+		orderRank[name] = i + 1 // 1-indexed so 0 means "not in the list"
+	}
+
 	slices.SortFunc(result, func(a, b IntegrationInfo) int {
+		aRank, bRank := orderRank[a.Name], orderRank[b.Name]
+		// Both have custom order: sort by their rank
+		if aRank > 0 && bRank > 0 {
+			return aRank - bRank
+		}
+		// Only one has custom order: it goes last
+		if aRank > 0 {
+			return 1
+		}
+		if bRank > 0 {
+			return -1
+		}
+		// Neither has custom order: alphabetical
 		return strings.Compare(a.Name, b.Name)
 	})
 	return result
@@ -186,8 +214,14 @@ func IsIntegrationInstalled(name string) bool {
 	case "droid":
 		_, err := exec.LookPath("droid")
 		return err == nil
+	case "cline":
+		_, err := exec.LookPath("cline")
+		return err == nil
 	case "opencode":
 		_, err := exec.LookPath("opencode")
+		return err == nil
+	case "pi":
+		_, err := exec.LookPath("pi")
 		return err == nil
 	default:
 		return true // Assume installed for unknown integrations
@@ -367,19 +401,35 @@ func selectIntegration() (string, error) {
 		return "", fmt.Errorf("no integrations available")
 	}
 
-	names := slices.Sorted(maps.Keys(integrations))
 	var items []ModelItem
-	for _, name := range names {
+	for name, r := range integrations {
 		if integrationAliases[name] {
 			continue
 		}
-		r := integrations[name]
 		description := r.String()
 		if conn, err := loadIntegration(name); err == nil && len(conn.Models) > 0 {
 			description = fmt.Sprintf("%s (%s)", r.String(), conn.Models[0])
 		}
 		items = append(items, ModelItem{Name: name, Description: description})
 	}
+
+	orderRank := make(map[string]int, len(integrationOrder))
+	for i, name := range integrationOrder {
+		orderRank[name] = i + 1
+	}
+	slices.SortFunc(items, func(a, b ModelItem) int {
+		aRank, bRank := orderRank[a.Name], orderRank[b.Name]
+		if aRank > 0 && bRank > 0 {
+			return aRank - bRank
+		}
+		if aRank > 0 {
+			return 1
+		}
+		if bRank > 0 {
+			return -1
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
 
 	return DefaultSingleSelector("Select integration:", items)
 }
@@ -812,10 +862,12 @@ Without arguments, this is equivalent to running 'ollama' directly.
 
 Supported integrations:
   claude    Claude Code
+  cline     Cline
   codex     Codex
   droid     Droid
   opencode  OpenCode
   openclaw  OpenClaw (aliases: clawdbot, moltbot)
+  pi        Pi
 
 Examples:
   ollama launch
