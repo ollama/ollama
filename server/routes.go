@@ -29,6 +29,7 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"golang.org/x/image/webp"
 	"golang.org/x/sync/errgroup"
 
@@ -1588,6 +1589,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r := gin.Default()
 	r.HandleMethodNotAllowed = true
 	r.Use(
+		otelgin.Middleware(serviceName),
 		cors.New(corsConfig),
 		allowedHostsMiddleware(s.addr),
 	)
@@ -1663,6 +1665,24 @@ func Serve(ln net.Listener) error {
 	slog.Info("server config", "env", envconfig.Values())
 	cloudDisabled, _ := internalcloud.Status()
 	slog.Info(fmt.Sprintf("Ollama cloud disabled: %t", cloudDisabled))
+
+	// Initialize OpenTelemetry tracer only if explicitly configured
+	ctx := context.Background()
+	if isTracingEnabled() {
+		slog.Warn("opentelemetry tracing is enabled, but not officially supported",
+			"ref", "https://github.com/ollama/ollama/issues/9254#issuecomment-2689225934",
+		)
+		shutdown, err := InitTracer(ctx)
+		if err != nil {
+			slog.Warn("failed to initialize tracer", "error", err)
+		} else {
+			defer func() {
+				if err := shutdown(ctx); err != nil {
+					slog.Error("failed to shutdown tracer", "error", err)
+				}
+			}()
+		}
+	}
 
 	blobsDir, err := manifest.BlobsPath("")
 	if err != nil {
