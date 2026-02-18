@@ -265,24 +265,26 @@ private:
     std::unique_ptr<llama_memory_i> memory;
 
     // decode output (2-dimensional array: [n_outputs][n_vocab])
-    struct buffer_view<float>  logits = {nullptr, 0};
+    buffer_view<float> logits = {nullptr, 0};
 
     // embeddings output (2-dimensional array: [n_outputs][n_embd])
     // populated only when pooling_type == LLAMA_POOLING_TYPE_NONE
-    struct buffer_view<float>  embd = {nullptr, 0};
+    buffer_view<float> embd = {nullptr, 0};
 
     struct sampling_info {
+        // !samplers.empty() to check if any samplers are active
         std::map<llama_seq_id, llama_sampler *> samplers;
 
-        struct buffer_view<float>       logits     = {nullptr, 0};
-        struct buffer_view<llama_token> sampled    = {nullptr, 0};
-        struct buffer_view<float>       probs      = {nullptr, 0};
-        struct buffer_view<llama_token> candidates = {nullptr, 0};
+        buffer_view<float>       logits     = {nullptr, 0};
+        buffer_view<llama_token> sampled    = {nullptr, 0};
+        buffer_view<float>       probs      = {nullptr, 0};
+        buffer_view<llama_token> candidates = {nullptr, 0};
 
         std::vector<uint32_t> logits_count;
         std::vector<uint32_t> probs_count;
         std::vector<uint32_t> candidates_count;
 
+        // optimization
         std::vector<llama_token> token_ids_full_vocab;
     };
 
