@@ -448,6 +448,71 @@ func TestSchedGetRunner(t *testing.T) {
 	b.ctxDone()
 }
 
+func TestSchedGetRunnerUsesDigestKeyWhenModelPathEmpty(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	s := InitScheduler(ctx)
+	opts := api.DefaultOptions()
+	opts.NumCtx = 4
+
+	loadedModel := &Model{Name: "safetensors-a", Digest: "sha-a"}
+	loadedRunner := &runnerRef{
+		model:       loadedModel,
+		modelKey:    schedulerModelKey(loadedModel),
+		llama:       &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}},
+		Options:     &opts,
+		numParallel: 1,
+	}
+
+	s.loadedMu.Lock()
+	s.loaded[loadedRunner.modelKey] = loadedRunner
+	s.loadedMu.Unlock()
+
+	reqModel := &Model{Name: "safetensors-b", Digest: "sha-b"}
+	successCh, errCh := s.GetRunner(ctx, reqModel, opts, nil, false)
+
+	require.Empty(t, successCh)
+	require.Empty(t, errCh)
+	require.Len(t, s.pendingReqCh, 1)
+}
+
+func TestSchedGetRunnerReusesSameDigestWhenModelPathEmpty(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	s := InitScheduler(ctx)
+	opts := api.DefaultOptions()
+	opts.NumCtx = 4
+
+	loadedModel := &Model{Name: "safetensors-a", Digest: "sha-a"}
+	loadedRunner := &runnerRef{
+		model:       loadedModel,
+		modelKey:    schedulerModelKey(loadedModel),
+		llama:       &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}},
+		Options:     &opts,
+		numParallel: 1,
+	}
+
+	s.loadedMu.Lock()
+	s.loaded[loadedRunner.modelKey] = loadedRunner
+	s.loadedMu.Unlock()
+
+	reqCtx, cancelReq := context.WithCancel(ctx)
+	successCh, errCh := s.GetRunner(reqCtx, &Model{Name: "safetensors-a-copy", Digest: "sha-a"}, opts, nil, false)
+	cancelReq()
+
+	select {
+	case runner := <-successCh:
+		require.Equal(t, loadedRunner, runner)
+	default:
+		t.Fatal("expected existing runner to be reused")
+	}
+
+	require.Empty(t, errCh)
+	require.Empty(t, s.pendingReqCh)
+}
+
 func TestSchedExpireRunner(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer done()

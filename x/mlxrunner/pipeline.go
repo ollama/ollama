@@ -18,15 +18,27 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		return errors.New("model not loaded")
 	}
 
-	mlx.EnableCompile()
+	enableCompile := true
+	if modelCompile, ok := r.Model.(interface{ EnableCompile() bool }); ok {
+		enableCompile = modelCompile.EnableCompile()
+	}
+	if enableCompile {
+		mlx.EnableCompile()
+	} else {
+		mlx.DisableCompile()
+	}
 
 	inputs := r.Tokenizer.Encode(request.Prompt, true)
 
 	caches, tokens := r.FindNearestCache(inputs)
 	if len(caches) == 0 {
-		caches = make([]cache.Cache, r.Model.NumLayers())
-		for i := range caches {
-			caches[i] = cache.NewKVCache()
+		if cacheFactory, ok := r.Model.(interface{ NewCaches() []cache.Cache }); ok {
+			caches = cacheFactory.NewCaches()
+		} else {
+			caches = make([]cache.Cache, r.Model.NumLayers())
+			for i := range caches {
+				caches[i] = cache.NewKVCache()
+			}
 		}
 	}
 
