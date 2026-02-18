@@ -64,6 +64,38 @@ type Runner struct {
 	CacheEntries map[int32]*CacheEntry
 }
 
+func releaseTensorMap(tensors map[string]*mlx.Array, keep map[*mlx.Array]struct{}) (count int, bytes int) {
+	if len(tensors) == 0 {
+		return 0, 0
+	}
+
+	seen := make(map[*mlx.Array]bool, len(tensors))
+	toRelease := make([]*mlx.Array, 0, len(tensors))
+	for name, arr := range tensors {
+		if arr == nil || !arr.Valid() {
+			delete(tensors, name)
+			continue
+		}
+		if keep != nil {
+			if _, ok := keep[arr]; ok {
+				continue
+			}
+		}
+		delete(tensors, name)
+		if seen[arr] {
+			continue
+		}
+		seen[arr] = true
+		toRelease = append(toRelease, arr)
+	}
+
+	if len(toRelease) == 0 {
+		return 0, 0
+	}
+
+	return len(toRelease), mlx.Release(toRelease...)
+}
+
 func (r *Runner) Load(modelName string) error {
 	root, err := model.Open(modelName)
 	if err != nil {
@@ -85,7 +117,27 @@ func (r *Runner) Load(modelName string) error {
 	// Assign weights to model (model-specific logic)
 	loadWeights := base.Weights(m)
 	if err := loadWeights(tensors); err != nil {
+		if count, bytes := releaseTensorMap(tensors, nil); count > 0 {
+			slog.Info("Released tensors after load failure", "count", count, "bytes", mlx.PrettyBytes(bytes))
+			mlx.ClearCache()
+		}
 		return err
+	}
+
+	// Pin only model-owned tensor roots. Pinning the full transitive graph can
+	// retain large load-time intermediates and inflate steady-state memory.
+	roots := mlx.Collect(m)
+	mlx.Pin(roots...)
+
+	keep := make(map[*mlx.Array]struct{})
+	for _, arr := range roots {
+		if arr != nil && arr.Valid() {
+			keep[arr] = struct{}{}
+		}
+	}
+	if count, bytes := releaseTensorMap(tensors, keep); count > 0 {
+		slog.Info("Released unused model tensors", "count", count, "bytes", mlx.PrettyBytes(bytes))
+		mlx.ClearCache()
 	}
 
 	r.Model = m

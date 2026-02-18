@@ -279,6 +279,24 @@ func Sigmoid(a *Array) *Array {
 	return a.Sigmoid()
 }
 
+func Exp(a *Array) *Array {
+	out := New("EXP", a)
+	C.mlx_exp(&out.ctx, a.ctx, DefaultStream().ctx)
+	return out
+}
+
+func Log(a *Array) *Array {
+	out := New("LOG", a)
+	C.mlx_log(&out.ctx, a.ctx, DefaultStream().ctx)
+	return out
+}
+
+func SoftmaxAxis(a *Array, axis int, precise bool) *Array {
+	out := New("SOFTMAX_AXIS", a)
+	C.mlx_softmax_axis(&out.ctx, a.ctx, C.int(axis), C.bool(precise), DefaultStream().ctx)
+	return out
+}
+
 func ScaledDotProductAttentionCausal(q, k, v *Array, scale float32, causalMask bool) *Array {
 	mask := New("")
 	sinks := New("")
@@ -384,6 +402,52 @@ func Collect(v any) []*Array {
 	seen := make(map[uintptr]bool)
 	collect(reflect.ValueOf(v), &arrays, seen)
 	return arrays
+}
+
+// Snapshot copies an array into a fresh leaf value with no Go-side graph inputs.
+func Snapshot(a *Array) *Array {
+	if a == nil || !a.Valid() {
+		return a
+	}
+	out := New("SNAPSHOT")
+	C.mlx_copy(&out.ctx, a.ctx, DefaultStream().ctx)
+	return out
+}
+
+// CollectReachable collects arrays from v and all transitive graph inputs.
+func CollectReachable(v any) []*Array {
+	roots := Collect(v)
+	if len(roots) == 0 {
+		return nil
+	}
+
+	seen := make(map[*Array]bool, len(roots))
+	out := make([]*Array, 0, len(roots))
+	stack := append([]*Array(nil), roots...)
+	for len(stack) > 0 {
+		a := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		if a == nil || !a.Valid() || seen[a] {
+			continue
+		}
+		seen[a] = true
+		out = append(out, a)
+		stack = append(stack, a.desc.inputs...)
+	}
+
+	return out
+}
+
+// Detach returns a new Array handle that shares the same MLX value but does
+// not retain Go-side graph input references.
+func Detach(a *Array) *Array {
+	if a == nil || !a.Valid() {
+		return a
+	}
+	out := New("DETACH")
+	C.mlx_array_set(&out.ctx, a.ctx)
+	return out
 }
 
 func collect(v reflect.Value, arrays *[]*Array, seen map[uintptr]bool) {
