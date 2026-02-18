@@ -2403,11 +2403,12 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
 
     const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
 
+    // [TAG_MUL_MAT_ID_CUDA_GRAPHS]
     if (src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32) {
         static_assert(MMVQ_MAX_BATCH_SIZE == MMVF_MAX_BATCH_SIZE);
         if (ne2 <= MMVQ_MAX_BATCH_SIZE) {
             if (ggml_is_quantized(src0->type)) {
-                if (ne2 <= 4) {
+                if (ne2 <= MMVQ_MMID_MAX_BATCH_SIZE) {
                     ggml_cuda_mul_mat_vec_q(ctx, src0, src1, ids, dst);
                     return;
                 }
@@ -2430,6 +2431,8 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
         }
     }
 
+    // note: this path should not be reached when recording CUDA graphs, because it requires stream synchronization
+    // TODO: add asserts to verify this. should work with CUDA, HIP, etc.
     cudaStream_t stream = ctx.stream();
 
     GGML_ASSERT(nb12 % nb11 == 0);
@@ -2990,15 +2993,6 @@ static bool ggml_cuda_graph_check_compability(ggml_cgraph * cgraph) {
     bool use_cuda_graph = true;
     // Loop over nodes in GGML graph to obtain info needed for CUDA graph
 
-    const std::string gemma3n_per_layer_proj_src0_name = "inp_per_layer_selected";
-    const std::string gemma3n_per_layer_proj_src1_name = "per_layer_proj";
-    const std::string ffn_moe_gate_bias_prefix = "ffn_moe_gate_biased";
-    const std::string ffn_moe_up_bias_prefix = "ffn_moe_up_biased";
-    const std::string ffn_moe_down_bias_prefix = "ffn_moe_down_biased";
-    const std::string nemotron_h_block_out_prefix = "nemotron_h_block_out";
-    const std::string mamba2_y_add_d_prefix = "mamba2_y_add_d";
-    const std::string delta_net_prefix = "dnet_add";
-
     for (int i = 0; i < cgraph->n_nodes; i++) {
         ggml_tensor * node = cgraph->nodes[i];
 
@@ -3013,31 +3007,14 @@ static bool ggml_cuda_graph_check_compability(ggml_cgraph * cgraph) {
 #endif
         }
 
-        if (node->op == GGML_OP_MUL_MAT_ID && node->ne[2] != 1) {
-            use_cuda_graph = false; // This node type is not supported by CUDA graph capture
-#ifndef NDEBUG
-            GGML_LOG_DEBUG("%s: disabling CUDA graphs due to unsupported node type\n", __func__);
-#endif
-        }
-
-        if (node->op == GGML_OP_ADD &&
-            node->src[1] && node->src[1]->ne[1] > 1 &&
-            (node->src[0] ? node->src[0]->name != gemma3n_per_layer_proj_src0_name : true) &&
-            (node->src[1] ? node->src[1]->name != gemma3n_per_layer_proj_src1_name : true) &&
-            strncmp(node->name, ffn_moe_gate_bias_prefix.c_str(), ffn_moe_gate_bias_prefix.size()) != 0 &&
-            strncmp(node->name, ffn_moe_up_bias_prefix.c_str(), ffn_moe_up_bias_prefix.size()) != 0 &&
-            strncmp(node->name, ffn_moe_down_bias_prefix.c_str(), ffn_moe_down_bias_prefix.size()) != 0 &&
-            strncmp(node->name, nemotron_h_block_out_prefix.c_str(), nemotron_h_block_out_prefix.size()) != 0 &&
-            strncmp(node->name, mamba2_y_add_d_prefix.c_str(), mamba2_y_add_d_prefix.size()) != 0 &&
-            strncmp(node->name, delta_net_prefix.c_str(), delta_net_prefix.size()) != 0) {
-            // disable CUDA graphs for batch size > 1 for now while excluding the matrix-matrix addition as part of Gemma3n's `project_per_layer_input` operation
-            // by means of matching node names. See
-            // https://github.com/ggml-org/llama.cpp/blob/f9a31eea06a859e34cecb88b4d020c7f03d86cc4/src/llama-model.cpp#L10199-L10241 and
-            // https://github.com/huggingface/transformers/blob/bda75b4011239d065de84aa3e744b67ebfa7b245/src/transformers/models/gemma3n/modeling_gemma3n.py#L1773,
-            // Generally, changes in batch size or context size can cause changes to the grid size of some kernels.
+        // [TAG_MUL_MAT_ID_CUDA_GRAPHS]
+        if (node->op == GGML_OP_MUL_MAT_ID && (!ggml_is_quantized(node->src[0]->type) || node->ne[2] > MMVQ_MMID_MAX_BATCH_SIZE)) {
+            // under these conditions, the mul_mat_id operation will need to synchronize the stream, so we cannot use CUDA graphs
+            // TODO: figure out a way to enable for larger batch sizes, without hurting performance
+            // ref: https://github.com/ggml-org/llama.cpp/pull/18958
             use_cuda_graph = false;
 #ifndef NDEBUG
-            GGML_LOG_DEBUG("%s: disabling CUDA graphs due to batch size > 1 [%s] [%ld %ld %ld %ld]\n", __func__, node->name, node->ne[0], node->ne[1], node->ne[2], node->ne[3]);
+            GGML_LOG_DEBUG("%s: disabling CUDA graphs due to unsupported node type\n", __func__);
 #endif
         }
 

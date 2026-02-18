@@ -670,30 +670,55 @@ static std::vector<T> string_split(const std::string & str, char delim) {
 }
 
 template<>
-inline std::vector<std::string> string_split<std::string>(const std::string & input, char separator)
+inline std::vector<std::string> string_split<std::string>(const std::string & str, char delim)
 {
     std::vector<std::string> parts;
     size_t begin_pos = 0;
-    size_t separator_pos = input.find(separator);
-    while (separator_pos != std::string::npos) {
-        std::string part = input.substr(begin_pos, separator_pos - begin_pos);
+    size_t delim_pos = str.find(delim);
+    while (delim_pos != std::string::npos) {
+        std::string part = str.substr(begin_pos, delim_pos - begin_pos);
         parts.emplace_back(part);
-        begin_pos = separator_pos + 1;
-        separator_pos = input.find(separator, begin_pos);
+        begin_pos = delim_pos + 1;
+        delim_pos = str.find(delim, begin_pos);
     }
-    parts.emplace_back(input.substr(begin_pos, separator_pos - begin_pos));
+    parts.emplace_back(str.substr(begin_pos));
     return parts;
 }
 
-inline bool string_starts_with(const std::string & str,
-                               const std::string & prefix) {  // While we wait for C++20's std::string::starts_with...
-    return str.rfind(prefix, 0) == 0;
+// remove when moving to c++20
+inline bool string_starts_with(std::string_view str, std::string_view prefix) {
+    return str.size() >= prefix.size() &&
+           str.compare(0, prefix.size(), prefix) == 0;
 }
 
-// While we wait for C++20's std::string::ends_with...
-bool string_ends_with(const std::string_view & str, const std::string_view & suffix);
-bool string_remove_suffix(std::string & str, const std::string_view & suffix);
-size_t string_find_partial_stop(const std::string_view & str, const std::string_view & stop);
+// remove when moving to c++20
+inline bool string_ends_with(std::string_view str, std::string_view suffix) {
+    return str.size() >= suffix.size() &&
+           str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+inline bool string_remove_suffix(std::string & str, std::string_view suffix) {
+    if (string_ends_with(str, suffix)) {
+        str.resize(str.size() - suffix.size());
+        return true;
+    }
+    return false;
+}
+
+inline size_t string_find_partial_stop(std::string_view str, std::string_view stop) {
+    if (!str.empty() && !stop.empty()) {
+        const size_t max_len = std::min(str.size(), stop.size());
+        const char last_char = str.back();
+        for (size_t len = max_len; len > 0; --len) {
+            if (stop[len - 1] == last_char) {
+                if (string_ends_with(str, stop.substr(0, len))) {
+                    return str.size() - len;
+                }
+            }
+        }
+    }
+    return std::string::npos;
+}
 
 bool string_parse_kv_override(const char * data, std::vector<llama_model_kv_override> & overrides);
 void string_process_escapes(std::string & input);

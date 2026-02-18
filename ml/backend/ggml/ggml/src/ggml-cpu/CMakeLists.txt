@@ -9,6 +9,11 @@ function(ggml_add_cpu_backend_features cpu_name arch)
     target_compile_definitions(${GGML_CPU_FEATS_NAME} PRIVATE ${ARGN})
     target_compile_definitions(${GGML_CPU_FEATS_NAME} PRIVATE GGML_BACKEND_DL GGML_BACKEND_BUILD GGML_BACKEND_SHARED)
     set_target_properties(${GGML_CPU_FEATS_NAME} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    # Disable LTO for the feature detection code to prevent cross-module optimization
+    # from inlining architecture-specific instructions into the score function.
+    # Without this, LTO can cause SIGILL when loading backends on older CPUs
+    # (e.g., loading power10 backend on power9 crashes before feature check runs).
+    target_compile_options(${GGML_CPU_FEATS_NAME} PRIVATE -fno-lto)
     target_link_libraries(${cpu_name} PRIVATE ${GGML_CPU_FEATS_NAME})
 endfunction()
 

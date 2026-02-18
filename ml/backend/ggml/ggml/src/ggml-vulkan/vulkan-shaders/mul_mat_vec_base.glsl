@@ -32,6 +32,7 @@ layout (push_constant) uniform parameter
     uint expert_i1;
     uint nbi1;
 #else
+    uint base_work_group_y;
     uint ne02;
     uint ne12;
     uint broadcast2;
@@ -45,9 +46,9 @@ uint expert_id;
 
 void get_offsets(out uint a_offset, out uint b_offset, out uint d_offset) {
 #ifdef MUL_MAT_ID
-    const uint expert_i0 = gl_GlobalInvocationID.y;
+    const uint expert_i0 = gl_WorkGroupID.y;
 #else
-    const uint batch_idx = gl_GlobalInvocationID.y;
+    const uint batch_idx = gl_WorkGroupID.y + p.base_work_group_y;
 #endif
 
 #ifndef MUL_MAT_ID
