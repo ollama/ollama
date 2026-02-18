@@ -416,20 +416,19 @@ type multiSelectorModel struct {
 	confirmed    bool
 	width        int
 
-	// singleMode starts true: shows a single-select picker where Enter
-	// adds the chosen model to the existing list. Tab switches to full
-	// multi-select editing mode.
-	singleMode bool
-	singleAdd  string // model picked in single mode
+	// multi enables full multi-select editing mode. The zero value (false)
+	// shows a single-select picker where Enter adds the chosen model to
+	// the existing list. Tab toggles between modes.
+	multi     bool
+	singleAdd string // model picked in single mode
 }
 
 func newMultiSelectorModel(title string, items []SelectItem, preChecked []string) multiSelectorModel {
 	m := multiSelectorModel{
-		title:      title,
-		items:      items,
-		itemIndex:  make(map[string]int, len(items)),
-		checked:    make(map[int]bool),
-		singleMode: true,
+		title:     title,
+		items:     items,
+		itemIndex: make(map[string]int, len(items)),
+		checked:   make(map[int]bool),
 	}
 
 	for i, item := range items {
@@ -564,10 +563,10 @@ func (m multiSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case tea.KeyTab:
-			m.singleMode = !m.singleMode
+			m.multi = !m.multi
 
 		case tea.KeyEnter:
-			if m.singleMode {
+			if !m.multi {
 				if len(filtered) > 0 && m.cursor < len(filtered) {
 					m.singleAdd = filtered[m.cursor].Name
 					m.confirmed = true
@@ -579,7 +578,7 @@ func (m multiSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case tea.KeySpace:
-			if !m.singleMode {
+			if m.multi {
 				m.toggleItem()
 			}
 
@@ -620,7 +619,7 @@ func (m multiSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// On some terminals (e.g. Windows PowerShell), space arrives as
 			// KeyRunes instead of KeySpace. Intercept it so toggle still works.
 			if len(msg.Runes) == 1 && msg.Runes[0] == ' ' {
-				if !m.singleMode {
+				if m.multi {
 					m.toggleItem()
 				}
 			} else {
@@ -680,9 +679,9 @@ func (m multiSelectorModel) View() string {
 		return ""
 	}
 
-	renderItem := m.renderMultiItem
-	if m.singleMode {
-		renderItem = m.renderSingleItem
+	renderItem := m.renderSingleItem
+	if m.multi {
+		renderItem = m.renderMultiItem
 	}
 
 	var s strings.Builder
@@ -764,7 +763,7 @@ func (m multiSelectorModel) View() string {
 
 	s.WriteString("\n")
 
-	if m.singleMode {
+	if !m.multi {
 		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • enter select • tab add multiple • esc cancel"))
 	} else {
 		count := m.selectedCount()

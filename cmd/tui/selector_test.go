@@ -539,7 +539,7 @@ func TestMultiView_CursorIndicator(t *testing.T) {
 
 func TestMultiView_CheckedItemShowsX(t *testing.T) {
 	m := newMultiSelectorModel("Pick:", items("a", "b"), []string{"a"})
-	m.singleMode = false
+	m.multi = true
 	content := m.View()
 
 	if !strings.Contains(content, "[x]") {
@@ -552,7 +552,7 @@ func TestMultiView_CheckedItemShowsX(t *testing.T) {
 
 func TestMultiView_DefaultTag(t *testing.T) {
 	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), []string{"a", "b"})
-	m.singleMode = false
+	m.multi = true
 	content := m.View()
 
 	if !strings.Contains(content, "(default)") {
@@ -593,7 +593,7 @@ func TestMultiView_OverflowIndicator(t *testing.T) {
 
 func TestMultiUpdate_SpaceTogglesItem(t *testing.T) {
 	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), nil)
-	m.singleMode = false
+	m.multi = true
 	m.cursor = 1
 
 	// Simulate space delivered as tea.KeySpace
@@ -610,7 +610,7 @@ func TestMultiUpdate_SpaceTogglesItem(t *testing.T) {
 
 func TestMultiUpdate_SpaceRuneTogglesItem(t *testing.T) {
 	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), nil)
-	m.singleMode = false
+	m.multi = true
 	m.cursor = 1
 
 	// Simulate space delivered as tea.KeyRunes (Windows PowerShell behavior)
@@ -632,8 +632,8 @@ func TestMultiUpdate_SpaceRuneTogglesItem(t *testing.T) {
 
 func TestMulti_StartsInSingleMode(t *testing.T) {
 	m := newMultiSelectorModel("Pick:", items("a", "b"), nil)
-	if !m.singleMode {
-		t.Error("should start in single mode")
+	if m.multi {
+		t.Error("should start in single mode (multi=false)")
 	}
 }
 
@@ -693,19 +693,19 @@ func TestMulti_SingleModeSpaceRuneIsNoop(t *testing.T) {
 func TestMulti_TabTogglesMode(t *testing.T) {
 	m := newMultiSelectorModel("Pick:", items("a", "b"), nil)
 
-	if !m.singleMode {
+	if m.multi {
 		t.Fatal("should start in single mode")
 	}
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = updated.(multiSelectorModel)
-	if m.singleMode {
+	if !m.multi {
 		t.Error("tab should switch to multi mode")
 	}
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
 	m = updated.(multiSelectorModel)
-	if !m.singleMode {
+	if m.multi {
 		t.Error("tab should switch back to single mode")
 	}
 }
@@ -720,7 +720,7 @@ func TestMulti_SingleModeHelpText(t *testing.T) {
 
 func TestMulti_MultiModeHelpText(t *testing.T) {
 	m := newMultiSelectorModel("Pick:", items("a"), nil)
-	m.singleMode = false
+	m.multi = true
 	content := m.View()
 	if !strings.Contains(content, "tab select single") {
 		t.Error("multi mode should show 'tab select single' in help")
@@ -756,7 +756,7 @@ func TestMulti_CursorOnDefaultModel(t *testing.T) {
 
 func TestMulti_LastCheckedIsDefault(t *testing.T) {
 	m := newMultiSelectorModel("Pick:", items("alpha", "beta", "gamma"), nil)
-	m.singleMode = false
+	m.multi = true
 
 	// Check "alpha" then "gamma"
 	m.cursor = 0
