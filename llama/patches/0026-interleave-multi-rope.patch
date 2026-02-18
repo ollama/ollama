@@ -3,6 +3,8 @@ From: Michael Yang <git@mxy.ng>
 Date: Thu, 16 Oct 2025 20:37:19 -0700
 Subject: [PATCH] interleave multi rope
 
+since ollama doesn't use mrope for anything else, change it to mean the
+interleaved version used for qwen3vl
 ---
  ggml/src/ggml-cpu/ops.cpp                           | 8 ++++----
  ggml/src/ggml-cuda/rope.cu                          | 8 ++++----
