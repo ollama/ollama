@@ -55,6 +55,8 @@ enum llama_vocab_pre_type {
     LLAMA_VOCAB_PRE_TYPE_YOUTU           = 44,
     LLAMA_VOCAB_PRE_TYPE_EXAONE_MOE      = 45,
     LLAMA_VOCAB_PRE_TYPE_QWEN35          = 46,
+    LLAMA_VOCAB_PRE_TYPE_TINY_AYA        = 47,
+    LLAMA_VOCAB_PRE_TYPE_JOYAI_LLM       = 48,
 };
 
 struct LLM_KV;

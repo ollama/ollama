@@ -1,10 +1,11 @@
-#include "ggml.h"
 #include "models.h"
+
+#include "llama-memory-recurrent.h"
 
 #define CHUNK_SIZE 64
 
 llm_build_qwen35moe::llm_build_qwen35moe(const llama_model & model, const llm_graph_params & params) :
-    llm_graph_context_mamba(params), model(model) {
+    llm_graph_context(params), model(model) {
     const int64_t n_embd_head = hparams.n_embd_head_v;
 
     GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
