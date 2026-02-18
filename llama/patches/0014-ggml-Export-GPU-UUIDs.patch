@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: nobody <>
-Date: Sat, 10 Jan 2026 15:27:57 -0800
+From: Daniel Hiltgen <daniel@ollama.com>
+Date: Sun, 30 Nov 2025 11:05:56 -0800
 Subject: [PATCH] ggml: Export GPU UUIDs
 
 ---

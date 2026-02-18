@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: jmorganca <jmorganca@gmail.com>
-Date: Sat, 10 Jan 2026 16:12:41 -0800
+From: Daniel Hiltgen <daniel@ollama.com>
+Date: Tue, 26 Aug 2025 12:48:29 -0700
 Subject: [PATCH] ollama: GPU discovery enhancements
 
 Add NVML and ADLX memory reporting for accurate VRAM metrics.

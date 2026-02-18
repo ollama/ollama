@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: inforithmics <thomas.stocker@gmail.com>
-Date: Sat, 14 Feb 2026 12:02:41 +0100
+From: Michael Yang <git@mxy.ng>
+Date: Thu, 16 Oct 2025 20:37:19 -0700
 Subject: [PATCH] interleave multi rope
 
 ---

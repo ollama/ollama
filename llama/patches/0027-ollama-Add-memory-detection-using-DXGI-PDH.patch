@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: jmorganca <jmorganca@gmail.com>
-Date: Sat, 10 Jan 2026 16:17:12 -0800
+From: Viraj Wadhwa <viraj.wadhwa@intel.com>
+Date: Tue, 4 Nov 2025 12:04:04 -0800
 Subject: [PATCH] ollama: Add memory detection using DXGI + PDH
 
 Add Windows-specific VRAM detection using DXGI and PDH performance counters.

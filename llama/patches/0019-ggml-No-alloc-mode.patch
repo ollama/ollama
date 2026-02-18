@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: jmorganca <jmorganca@gmail.com>
-Date: Sat, 10 Jan 2026 15:49:32 -0800
+From: Jesse Gross <jesse@ollama.com>
+Date: Wed, 23 Jul 2025 11:58:49 -0700
 Subject: [PATCH] ggml: No-alloc mode
 
 Adds infrastructure for scheduler no-alloc mode that enables

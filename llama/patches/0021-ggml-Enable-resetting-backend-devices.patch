@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: jmorganca <jmorganca@gmail.com>
-Date: Sat, 10 Jan 2026 15:56:42 -0800
+From: Jesse Gross <jesse@ollama.com>
+Date: Wed, 27 Aug 2025 14:39:48 -0700
 Subject: [PATCH] ggml: Enable resetting backend devices
 
 Allows resetting CUDA devices to free primary context allocations

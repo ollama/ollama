@@ -1,8 +1,9 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: inforithmics <thomas.stocker@gmail.com>
-Date: Wed, 18 Feb 2026 18:27:55 +0100
+From: jmorganca <jmorganca@gmail.com>
+Date: Sun, 20 Apr 2025 16:11:09 -0700
 Subject: [PATCH] solar-pro
 
+adds support for the Solar Pro architecture
 ---
  src/CMakeLists.txt         |   1 +
  src/llama-arch.cpp         |  20 +++++
