@@ -95,7 +95,7 @@ if [ "$OS" = "Darwin" ]; then
         open -a Ollama --args hidden
     fi
 
-    status "Install complete. Run 'ollama' to get started."
+    status "Install complete. You can now run 'ollama'."
     exit 0
 fi
 
