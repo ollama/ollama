@@ -316,6 +316,10 @@ struct llm_build_jais : public llm_graph_context {
     llm_build_jais(const llama_model & model, const llm_graph_params & params);
 };
 
+struct llm_build_jais2 : public llm_graph_context {
+    llm_build_jais2(const llama_model & model, const llm_graph_params & params);
+};
+
 struct llm_build_jamba : public llm_build_mamba_base {
     llm_build_jamba(const llama_model & model, const llm_graph_params & params);
 };

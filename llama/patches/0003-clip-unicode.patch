@@ -10,7 +10,7 @@ filesystems for paths that include wide characters
  1 file changed, 43 insertions(+), 4 deletions(-)
 
 diff --git a/tools/mtmd/clip.cpp b/tools/mtmd/clip.cpp
-index 0796644f0..643e2b3c4 100644
+index 57f6dd00a..3ea3fd9b3 100644
 --- a/tools/mtmd/clip.cpp
 +++ b/tools/mtmd/clip.cpp
 @@ -25,6 +25,19 @@
@@ -33,7 +33,7 @@ index 0796644f0..643e2b3c4 100644
  struct clip_logger_state g_logger_state = {clip_log_callback_default, NULL};
  
  //#define CLIP_DEBUG_FUNCTIONS
-@@ -1885,7 +1898,29 @@ struct clip_model_loader {
+@@ -1882,7 +1895,29 @@ struct clip_model_loader {
          {
              std::vector<uint8_t> read_buf;
  
@@ -63,7 +63,7 @@ index 0796644f0..643e2b3c4 100644
              if (!fin) {
                  throw std::runtime_error(string_format("%s: failed to open %s\n", __func__, fname.c_str()));
              }
-@@ -1912,7 +1947,11 @@ struct clip_model_loader {
+@@ -1909,7 +1944,11 @@ struct clip_model_loader {
                      ggml_backend_tensor_set(cur, read_buf.data(), 0, num_bytes);
                  }
              }
@@ -75,7 +75,7 @@ index 0796644f0..643e2b3c4 100644
  
              LOG_DBG("%s: loaded %zu tensors from %s\n", __func__, tensors_to_load.size(), fname.c_str());
          }
-@@ -2295,7 +2334,7 @@ struct img_tool {
+@@ -2292,7 +2331,7 @@ struct img_tool {
              std::array<uint8_t, 3> pad_color = {0, 0, 0}) {
          dst.nx = target_resolution.width;
          dst.ny = target_resolution.height;
@@ -84,7 +84,7 @@ index 0796644f0..643e2b3c4 100644
  
          if (dst.nx == src.nx && dst.ny == src.ny) {
              // no resize needed, simple copy
-@@ -2348,7 +2387,7 @@ struct img_tool {
+@@ -2345,7 +2384,7 @@ struct img_tool {
      static void crop(const clip_image_u8 & image, clip_image_u8 & dst, int x, int y, int w, int h) {
          dst.nx = w;
          dst.ny = h;
@@ -93,7 +93,7 @@ index 0796644f0..643e2b3c4 100644
  
          for (int i = 0; i < h; ++i) {
              for (int j = 0; j < w; ++j) {
-@@ -2445,7 +2484,7 @@ private:
+@@ -2442,7 +2481,7 @@ private:
      static void resize_bilinear(const clip_image_u8 & src, clip_image_u8 & dst, int target_width, int target_height) {
          dst.nx = target_width;
          dst.ny = target_height;
@@ -102,7 +102,7 @@ index 0796644f0..643e2b3c4 100644
  
          float x_ratio = static_cast<float>(src.nx - 1) / target_width;
          float y_ratio = static_cast<float>(src.ny - 1) / target_height;
-@@ -2484,7 +2523,7 @@ private:
+@@ -2481,7 +2520,7 @@ private:
  
          dst.nx = target_width;
          dst.ny = target_height;

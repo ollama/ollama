@@ -185,7 +185,7 @@ struct mtmd_context {
 
         clip_context_params ctx_clip_params {
             /* use_gpu           */ ctx_params.use_gpu,
-            /* flash_attn_type   */ CLIP_FLASH_ATTN_TYPE_AUTO,
+            /* flash_attn_type   */ mtmd_get_clip_flash_attn_type(ctx_params.flash_attn_type),
             /* image_min_tokens  */ ctx_params.image_min_tokens,
             /* image_max_tokens  */ ctx_params.image_max_tokens,
             /* warmup            */ ctx_params.warmup,

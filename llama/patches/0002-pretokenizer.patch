@@ -10,10 +10,10 @@ logs instead of throwing an error
  1 file changed, 5 insertions(+), 12 deletions(-)
 
 diff --git a/src/llama-vocab.cpp b/src/llama-vocab.cpp
-index 80af181c5..0adf36edc 100644
+index 657df711e..ec118df97 100644
 --- a/src/llama-vocab.cpp
 +++ b/src/llama-vocab.cpp
-@@ -1862,16 +1862,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+@@ -1871,16 +1871,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
          if (type == LLAMA_VOCAB_TYPE_BPE) {
              add_space_prefix = false;
              clean_spaces = true;
@@ -31,7 +31,7 @@ index 80af181c5..0adf36edc 100644
                  pre_type = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
              } else if (
                      tokenizer_pre == "llama3"   ||
-@@ -2077,7 +2068,8 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+@@ -2089,7 +2080,8 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
                  pre_type = LLAMA_VOCAB_PRE_TYPE_SOLAR_OPEN;
                  clean_spaces = false;
              } else {
@@ -41,7 +41,7 @@ index 80af181c5..0adf36edc 100644
              }
          } else if (type == LLAMA_VOCAB_TYPE_SPM) {
              pre_type = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
-@@ -2121,6 +2113,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+@@ -2133,6 +2125,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
          scores = (const float * ) gguf_get_arr_data(ctx, score_idx);
      }
  
@@ -49,7 +49,7 @@ index 80af181c5..0adf36edc 100644
      const int * toktypes = nullptr;
      const int toktype_idx = gguf_find_key(ctx, kv(LLM_KV_TOKENIZER_TOKEN_TYPE).c_str());
      if (toktype_idx != -1) {
-@@ -2142,7 +2135,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+@@ -2154,7 +2147,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
  
          auto & token_data = id_to_token[i];
          token_data.text  = std::move(word);
