@@ -195,6 +195,45 @@ func TestChatDeletionWithCascade(t *testing.T) {
 		}
 	})
 
+	t.Run("deleteAllChats removes all chats", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "test.db")
+		db, err := newDatabase(dbPath)
+		if err != nil {
+			t.Fatalf("failed to create database: %v", err)
+		}
+		defer db.Close()
+
+		chat1 := Chat{ID: "chat-1", Title: "First", CreatedAt: time.Now()}
+		chat2 := Chat{ID: "chat-2", Title: "Second", CreatedAt: time.Now()}
+		if err := db.saveChat(chat1); err != nil {
+			t.Fatalf("failed to save chat1: %v", err)
+		}
+		if err := db.saveChat(chat2); err != nil {
+			t.Fatalf("failed to save chat2: %v", err)
+		}
+
+		chats, err := db.getAllChats()
+		if err != nil {
+			t.Fatalf("getAllChats: %v", err)
+		}
+		if len(chats) != 2 {
+			t.Errorf("expected 2 chats before deleteAllChats, got %d", len(chats))
+		}
+
+		if err := db.deleteAllChats(); err != nil {
+			t.Fatalf("deleteAllChats: %v", err)
+		}
+
+		chats, err = db.getAllChats()
+		if err != nil {
+			t.Fatalf("getAllChats after delete: %v", err)
+		}
+		if len(chats) != 0 {
+			t.Errorf("expected 0 chats after deleteAllChats, got %d", len(chats))
+		}
+	})
+
 	t.Run("foreign keys are enabled", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		dbPath := filepath.Join(tmpDir, "test.db")

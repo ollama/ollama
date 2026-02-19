@@ -711,6 +711,19 @@ func (db *database) deleteChat(id string) error {
 	return nil
 }
 
+// deleteAllChats removes all chats. Messages, tool_calls, and attachments
+// are removed via CASCADE. Used when OLLAMA_GUI_NOHISTORY is set.
+func (db *database) deleteAllChats() error {
+	_, err := db.conn.Exec("DELETE FROM chats")
+	if err != nil {
+		return fmt.Errorf("delete all chats: %w", err)
+	}
+
+	_, _ = db.conn.Exec("PRAGMA wal_checkpoint(TRUNCATE);")
+
+	return nil
+}
+
 func (db *database) updateLastMessage(chatID string, msg Message) error {
 	tx, err := db.conn.Begin()
 	if err != nil {

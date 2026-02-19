@@ -195,6 +195,8 @@ var (
 	KvCacheType = String("OLLAMA_KV_CACHE_TYPE")
 	// NoHistory disables readline history.
 	NoHistory = Bool("OLLAMA_NOHISTORY")
+	// GuiNoHistory disables persisting GUI chat history (clears on new chat, app close, and app start).
+	GuiNoHistory = Bool("OLLAMA_GUI_NOHISTORY")
 	// NoPrune disables pruning of model blobs on startup.
 	NoPrune = Bool("OLLAMA_NOPRUNE")
 	// SchedSpread allows scheduling models across all GPUs.
@@ -292,6 +294,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_MODELS":            {"OLLAMA_MODELS", Models(), "The path to the models directory"},
 		"OLLAMA_NO_CLOUD":          {"OLLAMA_NO_CLOUD", NoCloud(), "Disable Ollama cloud features (remote inference and web search)"},
 		"OLLAMA_NOHISTORY":         {"OLLAMA_NOHISTORY", NoHistory(), "Do not preserve readline history"},
+		"OLLAMA_GUI_NOHISTORY":     {"OLLAMA_GUI_NOHISTORY", GuiNoHistory(), "Do not persist GUI chat history (clears on new chat, app close, and app start)"},
 		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune(), "Do not prune model blobs on startup"},
 		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel(), "Maximum number of parallel requests"},
 		"OLLAMA_ORIGINS":           {"OLLAMA_ORIGINS", AllowedOrigins(), "A comma separated list of allowed origins"},
