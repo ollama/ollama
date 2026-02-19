@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-cmp/cmp"
+	"github.com/klauspost/compress/zstd"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/openai"
@@ -1260,6 +1261,105 @@ func TestImageEditsMiddleware(t *testing.T) {
 
 			if diff := cmp.Diff(&tc.req, capturedRequest); diff != "" {
 				t.Fatalf("requests did not match:\n%s", diff)
+			}
+		})
+	}
+}
+
+func zstdCompress(t *testing.T, data []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w, err := zstd.NewWriter(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func TestResponsesMiddlewareZstd(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		useZstd     bool
+		oversized   bool
+		wantCode    int
+		wantModel   string
+		wantMessage string
+	}{
+		{
+			name:        "plain JSON",
+			body:        `{"model": "test-model", "input": "Hello"}`,
+			wantCode:    http.StatusOK,
+			wantModel:   "test-model",
+			wantMessage: "Hello",
+		},
+		{
+			name:        "zstd compressed",
+			body:        `{"model": "test-model", "input": "Hello"}`,
+			useZstd:     true,
+			wantCode:    http.StatusOK,
+			wantModel:   "test-model",
+			wantMessage: "Hello",
+		},
+		{
+			name:      "zstd over max decompressed size",
+			oversized: true,
+			useZstd:   true,
+			wantCode:  http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var capturedRequest *api.ChatRequest
+
+			gin.SetMode(gin.TestMode)
+			router := gin.New()
+			router.Use(ResponsesMiddleware(), captureRequestMiddleware(&capturedRequest))
+			router.Handle(http.MethodPost, "/v1/responses", func(c *gin.Context) {
+				c.Status(http.StatusOK)
+			})
+
+			var bodyReader io.Reader
+			if tt.oversized {
+				bodyReader = bytes.NewReader(zstdCompress(t, bytes.Repeat([]byte("A"), 9<<20)))
+			} else if tt.useZstd {
+				bodyReader = bytes.NewReader(zstdCompress(t, []byte(tt.body)))
+			} else {
+				bodyReader = strings.NewReader(tt.body)
+			}
+
+			req, _ := http.NewRequest(http.MethodPost, "/v1/responses", bodyReader)
+			req.Header.Set("Content-Type", "application/json")
+			if tt.useZstd || tt.oversized {
+				req.Header.Set("Content-Encoding", "zstd")
+			}
+
+			resp := httptest.NewRecorder()
+			router.ServeHTTP(resp, req)
+
+			if resp.Code != tt.wantCode {
+				t.Fatalf("expected status %d, got %d: %s", tt.wantCode, resp.Code, resp.Body.String())
+			}
+
+			if tt.wantCode != http.StatusOK {
+				return
+			}
+
+			if capturedRequest == nil {
+				t.Fatal("expected captured request, got nil")
+			}
+			if capturedRequest.Model != tt.wantModel {
+				t.Fatalf("expected model %q, got %q", tt.wantModel, capturedRequest.Model)
+			}
+			if len(capturedRequest.Messages) != 1 || capturedRequest.Messages[0].Content != tt.wantMessage {
+				t.Fatalf("expected single user message %q, got %+v", tt.wantMessage, capturedRequest.Messages)
 			}
 		})
 	}

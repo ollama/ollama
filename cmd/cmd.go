@@ -57,9 +57,9 @@ import (
 
 func init() {
 	// Override default selectors to use Bubbletea TUI instead of raw terminal I/O.
-	config.DefaultSingleSelector = func(title string, items []config.ModelItem) (string, error) {
+	config.DefaultSingleSelector = func(title string, items []config.ModelItem, current string) (string, error) {
 		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
-		result, err := tui.SelectSingle(title, tuiItems)
+		result, err := tui.SelectSingle(title, tuiItems, current)
 		if errors.Is(err, tui.ErrCancelled) {
 			return "", config.ErrCancelled
 		}
@@ -182,6 +182,10 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				mfConfig.System = cmd.Args
 			case "license":
 				mfConfig.License = cmd.Args
+			case "parser":
+				mfConfig.Parser = cmd.Args
+			case "renderer":
+				mfConfig.Renderer = cmd.Args
 			}
 		}
 
@@ -1897,9 +1901,9 @@ func runInteractiveTUI(cmd *cobra.Command) {
 	}
 
 	// Selector adapters for tui
-	singleSelector := func(title string, items []config.ModelItem) (string, error) {
+	singleSelector := func(title string, items []config.ModelItem, current string) (string, error) {
 		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
-		result, err := tui.SelectSingle(title, tuiItems)
+		result, err := tui.SelectSingle(title, tuiItems, current)
 		if errors.Is(err, tui.ErrCancelled) {
 			return "", config.ErrCancelled
 		}

@@ -2371,30 +2371,6 @@ func TestImageGenerateStreamFalse(t *testing.T) {
 		return nil
 	}
 
-	opts := api.DefaultOptions()
-	s := Server{
-		sched: &Scheduler{
-			pendingReqCh:  make(chan *LlmRequest, 1),
-			finishedReqCh: make(chan *LlmRequest, 1),
-			expiredCh:     make(chan *runnerRef, 1),
-			unloadedCh:    make(chan any, 1),
-			loaded: map[string]*runnerRef{
-				"": {
-					llama:       &mock,
-					Options:     &opts,
-					model:       &Model{Config: model.ConfigV2{Capabilities: []string{"image"}}},
-					isImagegen:  true,
-					numParallel: 1,
-				},
-			},
-			newServerFn:     newMockServer(&mock),
-			getGpuFn:        getGpuFn,
-			getSystemInfoFn: getSystemInfoFn,
-		},
-	}
-
-	go s.sched.Run(t.Context())
-
 	// Create model manifest with image capability
 	n := model.ParseName("test-image")
 	cfg := model.ConfigV2{Capabilities: []string{"image"}}
@@ -2409,6 +2385,35 @@ func TestImageGenerateStreamFalse(t *testing.T) {
 	if err := manifest.WriteManifest(n, configLayer, nil); err != nil {
 		t.Fatal(err)
 	}
+
+	loadedModel, err := GetModel("test-image")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	opts := api.DefaultOptions()
+	s := Server{
+		sched: &Scheduler{
+			pendingReqCh:  make(chan *LlmRequest, 1),
+			finishedReqCh: make(chan *LlmRequest, 1),
+			expiredCh:     make(chan *runnerRef, 1),
+			unloadedCh:    make(chan any, 1),
+			loaded: map[string]*runnerRef{
+				schedulerModelKey(loadedModel): {
+					llama:       &mock,
+					Options:     &opts,
+					model:       loadedModel,
+					isImagegen:  true,
+					numParallel: 1,
+				},
+			},
+			newServerFn:     newMockServer(&mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+		},
+	}
+
+	go s.sched.Run(t.Context())
 
 	streamFalse := false
 	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{

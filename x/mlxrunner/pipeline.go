@@ -18,7 +18,15 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		return errors.New("model not loaded")
 	}
 
-	mlx.EnableCompile()
+	enableCompile := true
+	if modelCompile, ok := r.Model.(interface{ EnableCompile() bool }); ok {
+		enableCompile = modelCompile.EnableCompile()
+	}
+	if enableCompile {
+		mlx.EnableCompile()
+	} else {
+		mlx.DisableCompile()
+	}
 
 	inputs := r.Tokenizer.Encode(request.Prompt, true)
 
