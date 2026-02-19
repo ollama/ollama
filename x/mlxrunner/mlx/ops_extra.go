@@ -41,14 +41,12 @@ func Dequantize(w, scales, biases *Array, groupSize, bits int, mode string) *Arr
 	optBits := C.mlx_optional_int{value: C.int(bits), has_value: true}
 	optDtype := C.mlx_optional_dtype{has_value: false}
 
-	inputs := []*Array{w, scales}
 	var b C.mlx_array
 	if biases != nil {
 		b = biases.ctx
-		inputs = append(inputs, biases)
 	}
 
-	out := New("DEQUANTIZE", inputs...)
+	out := New("DEQUANTIZE")
 	C.mlx_dequantize(&out.ctx, w.ctx, scales.ctx, b, optGroupSize, optBits, cMode, optDtype, DefaultStream().ctx)
 	return out
 }
@@ -59,14 +57,12 @@ func QuantizedMatmul(x, w, scales, biases *Array, transpose bool, groupSize, bit
 	optGroupSize := C.mlx_optional_int{value: C.int(groupSize), has_value: true}
 	optBits := C.mlx_optional_int{value: C.int(bits), has_value: true}
 
-	inputs := []*Array{x, w, scales}
 	var b C.mlx_array
 	if biases != nil {
 		b = biases.ctx
-		inputs = append(inputs, biases)
 	}
 
-	out := New("QUANTIZED_MATMUL", inputs...)
+	out := New("QUANTIZED_MATMUL")
 	C.mlx_quantized_matmul(&out.ctx, x.ctx, w.ctx, scales.ctx, b, C.bool(transpose), optGroupSize, optBits, cMode, DefaultStream().ctx)
 	return out
 }
@@ -77,22 +73,18 @@ func GatherQMM(x, w, scales *Array, biases, lhsIndices, rhsIndices *Array, trans
 	optGroupSize := C.mlx_optional_int{value: C.int(groupSize), has_value: true}
 	optBits := C.mlx_optional_int{value: C.int(bits), has_value: true}
 
-	inputs := []*Array{x, w, scales}
 	var b, lhs, rhs C.mlx_array
 	if biases != nil {
 		b = biases.ctx
-		inputs = append(inputs, biases)
 	}
 	if lhsIndices != nil {
 		lhs = lhsIndices.ctx
-		inputs = append(inputs, lhsIndices)
 	}
 	if rhsIndices != nil {
 		rhs = rhsIndices.ctx
-		inputs = append(inputs, rhsIndices)
 	}
 
-	out := New("GATHER_QMM", inputs...)
+	out := New("GATHER_QMM")
 	C.mlx_gather_qmm(&out.ctx, x.ctx, w.ctx, scales.ctx, b, lhs, rhs, C.bool(transpose), optGroupSize, optBits, cMode, C.bool(sortedIndices), DefaultStream().ctx)
 	return out
 }
@@ -104,7 +96,7 @@ func Tile(a *Array, reps []int32) *Array {
 	for i, r := range reps {
 		cReps[i] = C.int(r)
 	}
-	out := New("TILE", a)
+	out := New("TILE")
 	C.mlx_tile(&out.ctx, a.ctx, unsafe.SliceData(cReps), C.size_t(len(reps)), DefaultStream().ctx)
 	return out
 }
@@ -116,7 +108,7 @@ func Tri(n, m int32, k int) *Array {
 }
 
 func Where(condition, a, b *Array) *Array {
-	out := New("WHERE", condition, a, b)
+	out := New("WHERE")
 	C.mlx_where(&out.ctx, condition.ctx, a.ctx, b.ctx, DefaultStream().ctx)
 	return out
 }
@@ -131,7 +123,7 @@ func Stack(arrays []*Array, axis int) *Array {
 	vector := C.mlx_vector_array_new_data(unsafe.SliceData(vectorData), C.size_t(len(vectorData)))
 	defer C.mlx_vector_array_free(vector)
 
-	out := New("STACK", arrays...)
+	out := New("STACK")
 	C.mlx_stack_axis(&out.ctx, vector, C.int(axis), DefaultStream().ctx)
 	return out
 }
@@ -153,13 +145,13 @@ func Take(a *Array, indices *Array, axis int) *Array {
 }
 
 func RSqrt(a *Array) *Array {
-	out := New("RSQRT", a)
+	out := New("RSQRT")
 	C.mlx_rsqrt(&out.ctx, a.ctx, DefaultStream().ctx)
 	return out
 }
 
 func Mean(a *Array, axis int, keepDims bool) *Array {
-	out := New("MEAN_AXIS", a)
+	out := New("MEAN_AXIS")
 	C.mlx_mean_axis(&out.ctx, a.ctx, C.int(axis), C.bool(keepDims), DefaultStream().ctx)
 	return out
 }
@@ -235,7 +227,7 @@ func SliceStartStop(a *Array, start, stop []int32) *Array {
 		cStop[i] = C.int(stop[i])
 		cStrides[i] = 1
 	}
-	out := New("SLICE", a)
+	out := New("SLICE")
 	C.mlx_slice(&out.ctx, a.ctx, unsafe.SliceData(cStart), C.size_t(n), unsafe.SliceData(cStop), C.size_t(n), unsafe.SliceData(cStrides), C.size_t(n), DefaultStream().ctx)
 	return out
 }
@@ -257,7 +249,7 @@ func SiLU(a *Array) *Array {
 
 func RoPEWithBase(x *Array, dims int, traditional bool, base, scale float32, offset int) *Array {
 	freqs := New("")
-	out := New("FAST_ROPE", x, freqs)
+	out := New("FAST_ROPE")
 	C.mlx_fast_rope(
 		&out.ctx,
 		x.ctx,
@@ -289,13 +281,13 @@ func ScaledDotProductAttentionCausal(q, k, v *Array, scale float32, causalMask b
 	cMode := C.CString(mode)
 	defer C.free(unsafe.Pointer(cMode))
 
-	out := New("FAST_SDPA", q, k, v, mask, sinks)
+	out := New("FAST_SDPA")
 	C.mlx_fast_scaled_dot_product_attention(&out.ctx, q.ctx, k.ctx, v.ctx, C.float(scale), cMode, mask.ctx, sinks.ctx, DefaultStream().ctx)
 	return out
 }
 
 func RMSNormFn(x, weight *Array, eps float32) *Array {
-	out := New("FAST_RMSNORM", x)
+	out := New("FAST_RMSNORM")
 	C.mlx_fast_rms_norm(&out.ctx, x.ctx, weight.ctx, C.float(eps), DefaultStream().ctx)
 	return out
 }
@@ -322,7 +314,7 @@ func scalarWithDtype(s float32, a *Array) C.mlx_array {
 
 func AddScalar(a *Array, s float32) *Array {
 	scalar := scalarWithDtype(s, a)
-	out := New("ADD_SCALAR", a)
+	out := New("ADD_SCALAR")
 	C.mlx_add(&out.ctx, a.ctx, scalar, DefaultStream().ctx)
 	C.mlx_array_free(scalar)
 	return out
@@ -330,7 +322,7 @@ func AddScalar(a *Array, s float32) *Array {
 
 func MulScalar(a *Array, s float32) *Array {
 	scalar := scalarWithDtype(s, a)
-	out := New("MUL_SCALAR", a)
+	out := New("MUL_SCALAR")
 	C.mlx_multiply(&out.ctx, a.ctx, scalar, DefaultStream().ctx)
 	C.mlx_array_free(scalar)
 	return out
@@ -338,7 +330,7 @@ func MulScalar(a *Array, s float32) *Array {
 
 func DivScalar(a *Array, s float32) *Array {
 	scalar := scalarWithDtype(s, a)
-	out := New("DIV_SCALAR", a)
+	out := New("DIV_SCALAR")
 	C.mlx_divide(&out.ctx, a.ctx, scalar, DefaultStream().ctx)
 	C.mlx_array_free(scalar)
 	return out

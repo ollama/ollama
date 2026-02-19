@@ -47,6 +47,7 @@ func (c *KVCache) Update(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
 			c.values.Set(c.values.Concatenate(2, newValues))
 		} else {
 			c.keys, c.values = newKeys, newValues
+			mlx.Pin(c.keys, c.values)
 		}
 	}
 
@@ -73,12 +74,14 @@ func (c *KVCache) Trim(n int) int {
 }
 
 func (c *KVCache) Clone() Cache {
-	return &KVCache{
+	clone := &KVCache{
 		keys:   c.keys.Clone(),
 		values: c.values.Clone(),
 		offset: c.offset,
 		step:   c.step,
 	}
+	mlx.Pin(clone.keys, clone.values)
+	return clone
 }
 
 func (c *KVCache) Offset() int { return c.offset }
@@ -106,7 +109,8 @@ func (c *RotatingKVCache) Update(keys, values *mlx.Array) (*mlx.Array, *mlx.Arra
 func (c *RotatingKVCache) concat(keys, values *mlx.Array) (newK *mlx.Array, newV *mlx.Array) {
 	slog.Debug("(*RotatingKVCache).concat", "keys_dim", keys.Dims(), "values_dim", values.Dims(), "offset", c.offset, "idx", c.idx, "max_size", c.maxSize)
 	if c.keys == nil {
-		c.keys, c.values = keys, values
+		c.keys, c.values = keys.Clone(), values.Clone()
+		mlx.Pin(c.keys, c.values)
 	} else {
 		if c.idx < c.keys.Dim(2) {
 			c.keys.Set(c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.idx), mlx.Slice()))
@@ -145,6 +149,7 @@ func (c *RotatingKVCache) update(keys, values *mlx.Array) (*mlx.Array, *mlx.Arra
 			c.values.Set(c.values.Concatenate(2, newValues))
 		} else {
 			c.keys, c.values = newKeys, newValues
+			mlx.Pin(c.keys, c.values)
 		}
 		c.idx = prev
 	}
