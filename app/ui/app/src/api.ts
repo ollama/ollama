@@ -10,6 +10,7 @@ import {
   ChatRequest,
   Settings,
   User,
+  AutoStartSettingsResponse,
 } from "@/gotypes";
 import { parseJsonlFromResponse } from "./util/jsonl-parsing";
 import { ollamaClient as ollama } from "./lib/ollama-client";
@@ -288,6 +289,31 @@ export async function updateSettings(settings: Settings): Promise<{
   return {
     settings: new Settings(data.settings),
   };
+}
+
+export async function getAutoStartSettings(): Promise<AutoStartSettingsResponse> {
+  const response = await fetch(`${API_BASE}/api/v1/auto-start`);
+  if (!response.ok) {
+    throw new Error("Failed to fetch auto-start settings");
+  }
+  return (await response.json()) as AutoStartSettingsResponse;
+}
+
+export async function updateAutoStartSettings(settings: {
+  registered: boolean;
+}): Promise<AutoStartSettingsResponse> {
+  const response = await fetch(`${API_BASE}/api/v1/auto-start`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(settings),
+  });
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || "Failed to update auto-start settings");
+  }
+  return (await response.json()) as AutoStartSettingsResponse;
 }
 
 export async function updateCloudSetting(

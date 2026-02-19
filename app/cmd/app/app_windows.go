@@ -3,9 +3,7 @@
 package main
 
 import (
-	"errors"
 	"fmt"
-	"io"
 	"log"
 	"log/slog"
 	"os"
@@ -35,11 +33,10 @@ var (
 	pSetActiveWindow     = u32.NewProc("SetActiveWindow")
 	pIsIconic            = u32.NewProc("IsIconic")
 
-	appPath         = filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "Ollama")
-	appLogPath      = filepath.Join(os.Getenv("LOCALAPPDATA"), "Ollama", "app.log")
-	startupShortcut = filepath.Join(os.Getenv("APPDATA"), "Microsoft", "Windows", "Start Menu", "Programs", "Startup", "Ollama.lnk")
-	ollamaPath      string
-	DesktopAppName  = "ollama app.exe"
+	appPath        = filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "Ollama")
+	appLogPath     = filepath.Join(os.Getenv("LOCALAPPDATA"), "Ollama", "app.log")
+	ollamaPath     string
+	DesktopAppName = "ollama app.exe"
 )
 
 func init() {
@@ -161,7 +158,7 @@ func UpdateAvailable(ver string) error {
 	return app.t.UpdateAvailable(ver)
 }
 
-func osRun(shutdown func(), hasCompletedFirstRun, startHidden bool) {
+func osRun(shutdown func(), _, startHidden bool) {
 	var err error
 	app.shutdown = shutdown
 	app.t, err = wintray.NewTray(app)
@@ -227,52 +224,7 @@ func osRun(shutdown func(), hasCompletedFirstRun, startHidden bool) {
 		centerWindow(ptr)
 	}
 
-	if !hasCompletedFirstRun {
-		// Only create the login shortcut on first start
-		// so we can respect users deletion of the link
-		err = createLoginShortcut()
-		if err != nil {
-			slog.Warn("unable to create login shortcut", "error", err)
-		}
-	}
-
 	app.t.TrayRun() // This will block the main thread
-}
-
-func createLoginShortcut() error {
-	// The installer lays down a shortcut for us so we can copy it without
-	// having to resort to calling COM APIs to establish the shortcut
-	shortcutOrigin := filepath.Join(appPath, "lib", "Ollama.lnk")
-
-	_, err := os.Stat(startupShortcut)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			in, err := os.Open(shortcutOrigin)
-			if err != nil {
-				return fmt.Errorf("unable to open shortcut %s : %w", shortcutOrigin, err)
-			}
-			defer in.Close()
-			out, err := os.Create(startupShortcut)
-			if err != nil {
-				return fmt.Errorf("unable to open startup link %s : %w", startupShortcut, err)
-			}
-			defer out.Close()
-			_, err = io.Copy(out, in)
-			if err != nil {
-				return fmt.Errorf("unable to copy shortcut %s : %w", startupShortcut, err)
-			}
-			err = out.Sync()
-			if err != nil {
-				return fmt.Errorf("unable to sync shortcut %s : %w", startupShortcut, err)
-			}
-			slog.Info("Created Startup shortcut", "shortcut", startupShortcut)
-		} else {
-			slog.Warn("unexpected error looking up Startup shortcut", "error", err)
-		}
-	} else {
-		slog.Debug("Startup link already exists", "shortcut", startupShortcut)
-	}
-	return nil
 }
 
 func LaunchNewApp() {

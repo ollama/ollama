@@ -396,18 +396,10 @@ ollama signin
 | :- | :- |
 | macOS 	| `~/.ollama/id_ed25519.pub`			|
 | Linux		| `/usr/share/ollama/.ollama/id_ed25519.pub`	|
-| Windows	| `C:\Users\<username>\.ollama\id_ed25519.pub`	|
+| Windows	| `%USERPROFILE%\.ollama\id_ed25519.pub`	|
 
-<Note>
-  Replace &lt;username&gt; with your actual Windows user name.
-</Note>
+## How can I stop Ollama from starting when I log in to my computer?
 
-## How can I stop Ollama from starting when I login to my computer?
+Ollama for macOS registers as a login item during installation.  You can disable this if you prefer not to have Ollama automatically start.  Ollama will respect this setting across upgrades, unless you uninstall the application.
 
-Ollama for Windows and macOS register as a login item during installation.  You can disable this if you prefer not to have Ollama automatically start.  Ollama will respect this setting across upgrades, unless you uninstall the application.
-
-**Windows**
-- In `Task Manager` go to the `Startup apps` tab, search for `ollama` then click `Disable`
-
-**MacOS**
 - Open `Settings` and search for "Login Items", find the `Ollama` entry under `Allow in the Background`, then click the slider to disable.

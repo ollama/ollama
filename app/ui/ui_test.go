@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,7 +16,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/ollama/ollama/app/startup"
 	"github.com/ollama/ollama/app/store"
+	"github.com/ollama/ollama/app/ui/responses"
 	"github.com/ollama/ollama/app/updater"
 )
 
@@ -111,6 +114,135 @@ func TestHandlePostApiSettings(t *testing.T) {
 					// Only check Models if explicitly set in the test case
 					if tt.requested.Models != "" && savedSettings.Models != tt.requested.Models {
 						t.Errorf("Models: got %q, want %q", savedSettings.Models, tt.requested.Models)
+					}
+				}
+			}
+		})
+	}
+}
+
+type mockRegistrar struct {
+	platformSupported bool
+	registered        bool
+	wantStateErr      bool
+	wantRegisterErr   bool
+	wantDeregisterErr bool
+}
+
+func (m *mockRegistrar) GetState() (startup.RegistrationState, error) {
+	if m.wantStateErr {
+		return startup.RegistrationState{Supported: m.platformSupported, Registered: m.registered}, errors.New("state error")
+	}
+	return startup.RegistrationState{Supported: m.platformSupported, Registered: m.registered}, nil
+}
+
+func (m *mockRegistrar) Register() error {
+	if m.wantRegisterErr {
+		return errors.New("register error")
+	}
+	return nil
+}
+
+func (m *mockRegistrar) Deregister() error {
+	if m.wantDeregisterErr {
+		return errors.New("deregister error")
+	}
+	return nil
+}
+
+func TestHandlePostAutoStart(t *testing.T) {
+	tests := []struct {
+		name              string
+		givenEnabled      bool
+		expectedState     startup.RegistrationState
+		wantStateErr      bool
+		wantRegisterErr   bool
+		wantDeregisterErr bool
+	}{
+		{name: "register for auto-start", givenEnabled: true, expectedState: startup.RegistrationState{Supported: true, Registered: true}},
+		{name: "deregister from auto-start", givenEnabled: false, expectedState: startup.RegistrationState{Supported: true, Registered: false}},
+		{name: "error fetching state", givenEnabled: true, wantStateErr: true},
+		{name: "error during register", givenEnabled: true, wantRegisterErr: true},
+		{name: "error during deregister", givenEnabled: false, wantDeregisterErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+
+			server := &Server{
+				StartupRegistrar: &mockRegistrar{
+					registered:        tt.expectedState.Registered,
+					wantStateErr:      tt.wantStateErr,
+					wantRegisterErr:   tt.wantRegisterErr,
+					wantDeregisterErr: tt.wantDeregisterErr,
+				},
+				Restart: func() {},
+			}
+
+			body, err := json.Marshal(AutoStartSettings{Registered: tt.givenEnabled})
+			if err != nil {
+				t.Fatalf("failed to marshal test body: %v", err)
+			}
+
+			req := httptest.NewRequest("POST", "/api/v1/auto-start", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+
+			err = server.autoStart(rr, req)
+			if err != nil {
+				if !tt.wantStateErr && !tt.wantRegisterErr && !tt.wantDeregisterErr {
+					t.Errorf("handlePostApiAutoStart() unexpected error: %v", err)
+				}
+			} else {
+				var response responses.AutoStartSettingsResponse
+				if err := json.NewDecoder(rr.Result().Body).Decode(&response); err != nil {
+					t.Errorf("failed to decode response: %v", err)
+				} else {
+					if response.Registered != tt.expectedState.Registered {
+						t.Errorf("response registered = %v, want %v", response.Registered, tt.expectedState.Registered)
+					}
+				}
+			}
+		})
+	}
+
+}
+
+func TestHandleGetAutoStart(t *testing.T) {
+	tests := []struct {
+		name          string
+		expectedState startup.RegistrationState
+		wantErr       bool
+	}{
+		{name: "get auto-start enabled state", expectedState: startup.RegistrationState{Supported: true, Registered: true}},
+		{name: "get auto-start disabled state", expectedState: startup.RegistrationState{Supported: true, Registered: false}},
+		{name: "get auto-start unsupported state", expectedState: startup.RegistrationState{Supported: false, Registered: false}},
+		{name: "error fetching auto-start state", expectedState: startup.RegistrationState{Supported: true, Registered: false}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := &Server{
+				StartupRegistrar: &mockRegistrar{
+					platformSupported: tt.expectedState.Supported,
+					registered:        tt.expectedState.Registered,
+					wantStateErr:      tt.wantErr,
+				},
+			}
+
+			req := httptest.NewRequest("GET", "/api/v1/auto-start", nil)
+			rr := httptest.NewRecorder()
+
+			err := server.getAutoStart(rr, req)
+			if err != nil {
+				if !tt.wantErr {
+					t.Errorf("getAutoStart() unexpected error: %v", err)
+				}
+			} else {
+				var response responses.AutoStartSettingsResponse
+				if err := json.NewDecoder(rr.Result().Body).Decode(&response); err != nil {
+					t.Errorf("failed to decode response: %v", err)
+				} else {
+					if response.Registered != tt.expectedState.Registered {
+						t.Errorf("response registered = %v, want %v", response.Registered, tt.expectedState.Registered)
 					}
 				}
 			}

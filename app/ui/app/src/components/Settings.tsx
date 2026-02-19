@@ -16,6 +16,7 @@ import {
   CogIcon,
   ArrowLeftIcon,
   ArrowDownTrayIcon,
+  RocketLaunchIcon,
 } from "@heroicons/react/20/solid";
 import { Settings as SettingsType } from "@/gotypes";
 import { useNavigate } from "@tanstack/react-router";
@@ -28,6 +29,8 @@ import {
   updateCloudSetting,
   updateSettings,
   getInferenceCompute,
+  getAutoStartSettings,
+  updateAutoStartSettings,
 } from "@/api";
 
 function AnimatedDots() {
@@ -67,6 +70,9 @@ export default function Settings() {
     cloudStatus,
     isLoading: cloudStatusLoading,
   } = useCloudStatus();
+  const [autoStartSettingsError, setAutoStartSettingsError] = useState<
+    string | null
+  >(null);
 
   const {
     data: settingsData,
@@ -90,8 +96,43 @@ export default function Settings() {
     mutationFn: updateSettings,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["settings"] });
+      setAutoStartSettingsError(null);
       setShowSaved(true);
       setTimeout(() => setShowSaved(false), 1500);
+    },
+  });
+
+  const { data: autoStartSettings, isLoading: autoStartSettingsLoading } =
+    useQuery({
+      queryKey: ["autoStart"],
+      queryFn: async () => {
+        try {
+          setAutoStartSettingsError(null);
+          return await getAutoStartSettings();
+        } catch (error) {
+          setAutoStartSettingsError(
+            error instanceof Error
+              ? error.message
+              : "Failed to load auto-start settings. Check the Ollama logs for more information.",
+          );
+          throw error;
+        }
+      },
+    });
+
+  const updateAutoStartMutation = useMutation({
+    mutationFn: updateAutoStartSettings,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["autoStart"] });
+      setShowSaved(true);
+      setTimeout(() => setShowSaved(false), 1500);
+    },
+    onError: (error) => {
+      setAutoStartSettingsError(
+        error instanceof Error
+          ? error.message
+          : "Failed to update auto-start settings. Check the Ollama logs for more information.",
+      );
     },
   });
 
@@ -203,6 +244,19 @@ export default function Settings() {
       }
     },
     [settings, updateSettingsMutation],
+  );
+
+  const handleAutoStartChange = useCallback(
+    (registered: boolean) => {
+      if (autoStartSettings) {
+        const updatedAutoStartSettings = {
+          ...autoStartSettings,
+          registered,
+        };
+        updateAutoStartMutation.mutate(updatedAutoStartSettings);
+      }
+    },
+    [autoStartSettings, updateAutoStartMutation],
   );
 
   const handleResetToDefaults = () => {
@@ -458,11 +512,50 @@ export default function Settings() {
                   <div className="flex-shrink-0">
                     <Switch
                       checked={settings.AutoUpdateEnabled}
-                      onChange={(checked) => handleChange("AutoUpdateEnabled", checked)}
+                      onChange={(checked) =>
+                        handleChange("AutoUpdateEnabled", checked)
+                      }
                     />
                   </div>
                 </div>
               </Field>
+
+              {/* Auto start */}
+              {autoStartSettings && autoStartSettings.supported && (
+                <Field>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start space-x-3 flex-1">
+                      <RocketLaunchIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
+                      <div>
+                        <Label>Start Ollama on login</Label>
+                        <Description>
+                          Automatically start Ollama when the current user logs
+                          in to the computer.
+                        </Description>
+                      </div>
+                    </div>
+                    <div className="flex-shrink-0">
+                      <Switch
+                        disabled={
+                          autoStartSettingsLoading ||
+                          updateAutoStartMutation.isPending
+                        }
+                        checked={autoStartSettings.registered}
+                        onChange={(checked) => {
+                          handleAutoStartChange(checked);
+                        }}
+                      />
+                    </div>
+                  </div>
+                  {autoStartSettingsError && (
+                    <div className="mt-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                      <Text className="text-sm text-red-600 dark:text-red-400">
+                        {autoStartSettingsError}
+                      </Text>
+                    </div>
+                  )}
+                </Field>
+              )}
 
               {/* Expose Ollama */}
               <Field>
@@ -539,7 +632,9 @@ export default function Settings() {
                     </Description>
                     <div className="mt-3">
                       <Slider
-                        value={settings.ContextLength || defaultContextLength || 0}
+                        value={
+                          settings.ContextLength || defaultContextLength || 0
+                        }
                         onChange={(value) => {
                           handleChange("ContextLength", value);
                         }}
