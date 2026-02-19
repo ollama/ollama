@@ -7,9 +7,19 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
+
+func setHome(t *testing.T, dir string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Setenv("USERPROFILE", dir)
+	} else {
+		t.Setenv("HOME", dir)
+	}
+}
 
 func TestCheckForUpdate(t *testing.T) {
 	t.Run("update available", func(t *testing.T) {
@@ -70,7 +80,7 @@ func TestCheckForUpdate(t *testing.T) {
 
 func TestCacheRoundTrip(t *testing.T) {
 	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
+	setHome(t, tmp)
 	os.MkdirAll(filepath.Join(tmp, ".ollama"), 0o755)
 
 	if err := CacheAvailableUpdate(); err != nil {
@@ -92,7 +102,7 @@ func TestCacheRoundTrip(t *testing.T) {
 
 func TestHasCachedUpdateStale(t *testing.T) {
 	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
+	setHome(t, tmp)
 	os.MkdirAll(filepath.Join(tmp, ".ollama"), 0o755)
 
 	if err := CacheAvailableUpdate(); err != nil {
