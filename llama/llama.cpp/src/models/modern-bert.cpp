@@ -104,13 +104,6 @@ llm_build_modern_bert::llm_build_modern_bert(const llama_model & model, const ll
             LLM_NORM, -1);
     cb(cur, "final_norm_out", -1);
 
-    if (hparams.pooling_type == LLAMA_POOLING_TYPE_CLS) {
-        // extracting cls token
-        cur = ggml_view_1d(ctx0, cur, hparams.n_embd, 0);
-        cb(cur, "cls_pooled_embd", -1);
-    }
-
-    cb(cur, "res_embd", -1);
     res->t_embd = cur;
     ggml_build_forward_expand(gf, cur);
 }
