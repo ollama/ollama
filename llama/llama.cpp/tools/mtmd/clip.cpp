@@ -355,9 +355,17 @@ ggml_tensor * clip_graph::build_vit(
                     /* nb2    */ cur->nb[1],
                     /* offset */ ggml_row_size(cur->type, 2 * n_embd));
 
-                // TODO: q/k norm requires row size == n_embd, while here it's d_head
-                // we can add support in the future if needed
-                GGML_ASSERT(layer.q_norm == nullptr && layer.k_norm == nullptr);
+                if (layer.q_norm) {
+                    GGML_ASSERT(layer.q_norm->ne[0] == Qcur->ne[0]);
+                    Qcur = build_norm(Qcur, layer.q_norm, NULL, norm_t, eps, il);
+                    cb(Qcur, "Qcur_norm", il);
+                }
+
+                if (layer.k_norm) {
+                    GGML_ASSERT(layer.k_norm->ne[0] == Kcur->ne[0]);
+                    Kcur = build_norm(Kcur, layer.k_norm, NULL, norm_t, eps, il);
+                    cb(Kcur, "Kcur_norm", il);
+                }
 
             } else {
                 // separate q, k, v
