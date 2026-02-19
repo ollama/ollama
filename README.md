@@ -184,7 +184,7 @@ console.log(response.message.content);
 - [Cherry Studio](https://github.com/kangfenmao/cherry-studio) - Multi-provider desktop client
 - [Ollama App](https://github.com/JHubi1/ollama-app) - Multi-platform client for desktop and mobile
 - [PyGPT](https://github.com/szczyglis-dev/py-gpt) - AI desktop assistant for Linux, Windows, and Mac
-- [Alpaca](https://github.com/Jeffser/Alpaca) - GTK4 client for Linux and macOS
+- [Alpaca](https://github.com/Jeffser/Alpaca) - GTK4 client for Linux
 - [SwiftChat](https://github.com/aws-samples/swift-chat) - Cross-platform including iOS, Android, and Apple Vision Pro
 - [Enchanted](https://github.com/AugustDev/enchanted) - Native macOS and iOS client
 - [RWKV-Runner](https://github.com/josStorer/RWKV-Runner) - Multi-model desktop runner
