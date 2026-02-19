@@ -26,8 +26,6 @@
 #undef mlx_array_new_double
 #undef mlx_array_new_complex
 #undef mlx_array_new_data
-#undef mlx_array_new_data_managed
-#undef mlx_array_new_data_managed_payload
 #undef mlx_array_set
 #undef mlx_array_set_bool
 #undef mlx_array_set_int
@@ -123,7 +121,6 @@
 #undef mlx_disable_compile
 #undef mlx_enable_compile
 #undef mlx_set_compile_mode
-#undef mlx_cuda_is_available
 #undef mlx_device_new
 #undef mlx_device_new_type
 #undef mlx_device_free
@@ -134,16 +131,6 @@
 #undef mlx_device_get_type
 #undef mlx_get_default_device
 #undef mlx_set_default_device
-#undef mlx_device_is_available
-#undef mlx_device_count
-#undef mlx_device_info_new
-#undef mlx_device_info_get
-#undef mlx_device_info_free
-#undef mlx_device_info_has_key
-#undef mlx_device_info_is_string
-#undef mlx_device_info_get_string
-#undef mlx_device_info_get_size
-#undef mlx_device_info_get_keys
 #undef mlx_distributed_all_gather
 #undef mlx_distributed_all_max
 #undef mlx_distributed_all_min
@@ -274,6 +261,7 @@
 #undef mlx_set_cache_limit
 #undef mlx_set_memory_limit
 #undef mlx_set_wired_limit
+#undef mlx_metal_device_info
 #undef mlx_metal_is_available
 #undef mlx_metal_start_capture
 #undef mlx_metal_stop_capture
@@ -614,8 +602,6 @@ extern mlx_array (*mlx_array_new_float64_ptr)(double val);
 extern mlx_array (*mlx_array_new_double_ptr)(double val);
 extern mlx_array (*mlx_array_new_complex_ptr)(float real_val, float imag_val);
 extern mlx_array (*mlx_array_new_data_ptr)(const void* data, const int* shape, int dim, mlx_dtype dtype);
-extern mlx_array (*mlx_array_new_data_managed_ptr)(void* data, const int* shape, int dim, mlx_dtype dtype, void (*dtor)(void*));
-extern mlx_array (*mlx_array_new_data_managed_payload_ptr)(void* data, const int* shape, int dim, mlx_dtype dtype, void* payload, void (*dtor)(void*));
 extern int (*mlx_array_set_ptr)(mlx_array* arr, const mlx_array src);
 extern int (*mlx_array_set_bool_ptr)(mlx_array* arr, bool val);
 extern int (*mlx_array_set_int_ptr)(mlx_array* arr, int val);
@@ -645,7 +631,7 @@ extern int (*mlx_array_item_int32_ptr)(int32_t* res, const mlx_array arr);
 extern int (*mlx_array_item_int64_ptr)(int64_t* res, const mlx_array arr);
 extern int (*mlx_array_item_float32_ptr)(float* res, const mlx_array arr);
 extern int (*mlx_array_item_float64_ptr)(double* res, const mlx_array arr);
-extern int (*mlx_array_item_complex64_ptr)(mlx_complex64_t* res, const mlx_array arr);
+extern int (*mlx_array_item_complex64_ptr)(float _Complex* res, const mlx_array arr);
 #if defined(__aarch64__) || defined(_M_ARM64)
 extern int (*mlx_array_item_float16_ptr)(float16_t* res, const mlx_array arr);
 #endif
@@ -663,7 +649,7 @@ extern const int32_t* (*mlx_array_data_int32_ptr)(const mlx_array arr);
 extern const int64_t* (*mlx_array_data_int64_ptr)(const mlx_array arr);
 extern const float* (*mlx_array_data_float32_ptr)(const mlx_array arr);
 extern const double* (*mlx_array_data_float64_ptr)(const mlx_array arr);
-extern const mlx_complex64_t* (*mlx_array_data_complex64_ptr)(const mlx_array arr);
+extern const float _Complex* (*mlx_array_data_complex64_ptr)(const mlx_array arr);
 #if defined(__aarch64__) || defined(_M_ARM64)
 extern const float16_t* (*mlx_array_data_float16_ptr)(const mlx_array arr);
 #endif
@@ -719,7 +705,6 @@ extern int (*mlx_detail_compile_erase_ptr)(uintptr_t fun_id);
 extern int (*mlx_disable_compile_ptr)(void);
 extern int (*mlx_enable_compile_ptr)(void);
 extern int (*mlx_set_compile_mode_ptr)(mlx_compile_mode mode);
-extern int (*mlx_cuda_is_available_ptr)(bool* res);
 extern mlx_device (*mlx_device_new_ptr)(void);
 extern mlx_device (*mlx_device_new_type_ptr)(mlx_device_type type, int index);
 extern int (*mlx_device_free_ptr)(mlx_device dev);
@@ -730,16 +715,6 @@ extern int (*mlx_device_get_index_ptr)(int* index, mlx_device dev);
 extern int (*mlx_device_get_type_ptr)(mlx_device_type* type, mlx_device dev);
 extern int (*mlx_get_default_device_ptr)(mlx_device* dev);
 extern int (*mlx_set_default_device_ptr)(mlx_device dev);
-extern int (*mlx_device_is_available_ptr)(bool* avail, mlx_device dev);
-extern int (*mlx_device_count_ptr)(int* count, mlx_device_type type);
-extern mlx_device_info (*mlx_device_info_new_ptr)(void);
-extern int (*mlx_device_info_get_ptr)(mlx_device_info* info, mlx_device dev);
-extern int (*mlx_device_info_free_ptr)(mlx_device_info info);
-extern int (*mlx_device_info_has_key_ptr)(bool* exists, mlx_device_info info, const char* key);
-extern int (*mlx_device_info_is_string_ptr)(bool* is_string, mlx_device_info info, const char* key);
-extern int (*mlx_device_info_get_string_ptr)(const char** value, mlx_device_info info, const char* key);
-extern int (*mlx_device_info_get_size_ptr)(size_t* value, mlx_device_info info, const char* key);
-extern int (*mlx_device_info_get_keys_ptr)(mlx_vector_string* keys, mlx_device_info info);
 extern int (*mlx_distributed_all_gather_ptr)(mlx_array* res, const mlx_array x, const mlx_distributed_group group , const mlx_stream S);
 extern int (*mlx_distributed_all_max_ptr)(mlx_array* res, const mlx_array x, const mlx_distributed_group group , const mlx_stream s);
 extern int (*mlx_distributed_all_min_ptr)(mlx_array* res, const mlx_array x, const mlx_distributed_group group , const mlx_stream s);
@@ -870,6 +845,7 @@ extern int (*mlx_reset_peak_memory_ptr)(void);
 extern int (*mlx_set_cache_limit_ptr)(size_t* res, size_t limit);
 extern int (*mlx_set_memory_limit_ptr)(size_t* res, size_t limit);
 extern int (*mlx_set_wired_limit_ptr)(size_t* res, size_t limit);
+extern mlx_metal_device_info_t (*mlx_metal_device_info_ptr)(void);
 extern int (*mlx_metal_is_available_ptr)(bool* res);
 extern int (*mlx_metal_start_capture_ptr)(const char* path);
 extern int (*mlx_metal_stop_capture_ptr)(void);
@@ -1226,10 +1202,6 @@ mlx_array mlx_array_new_complex(float real_val, float imag_val);
 
 mlx_array mlx_array_new_data(const void* data, const int* shape, int dim, mlx_dtype dtype);
 
-mlx_array mlx_array_new_data_managed(void* data, const int* shape, int dim, mlx_dtype dtype, void (*dtor)(void*));
-
-mlx_array mlx_array_new_data_managed_payload(void* data, const int* shape, int dim, mlx_dtype dtype, void* payload, void (*dtor)(void*));
-
 int mlx_array_set(mlx_array* arr, const mlx_array src);
 
 int mlx_array_set_bool(mlx_array* arr, bool val);
@@ -1288,7 +1260,7 @@ int mlx_array_item_float32(float* res, const mlx_array arr);
 
 int mlx_array_item_float64(double* res, const mlx_array arr);
 
-int mlx_array_item_complex64(mlx_complex64_t* res, const mlx_array arr);
+int mlx_array_item_complex64(float _Complex* res, const mlx_array arr);
 
 #if defined(__aarch64__) || defined(_M_ARM64)
 int mlx_array_item_float16(float16_t* res, const mlx_array arr);
@@ -1320,7 +1292,7 @@ const float* mlx_array_data_float32(const mlx_array arr);
 
 const double* mlx_array_data_float64(const mlx_array arr);
 
-const mlx_complex64_t* mlx_array_data_complex64(const mlx_array arr);
+const float _Complex* mlx_array_data_complex64(const mlx_array arr);
 
 #if defined(__aarch64__) || defined(_M_ARM64)
 const float16_t* mlx_array_data_float16(const mlx_array arr);
@@ -1428,8 +1400,6 @@ int mlx_enable_compile(void);
 
 int mlx_set_compile_mode(mlx_compile_mode mode);
 
-int mlx_cuda_is_available(bool* res);
-
 mlx_device mlx_device_new(void);
 
 mlx_device mlx_device_new_type(mlx_device_type type, int index);
@@ -1449,26 +1419,6 @@ int mlx_device_get_type(mlx_device_type* type, mlx_device dev);
 int mlx_get_default_device(mlx_device* dev);
 
 int mlx_set_default_device(mlx_device dev);
-
-int mlx_device_is_available(bool* avail, mlx_device dev);
-
-int mlx_device_count(int* count, mlx_device_type type);
-
-mlx_device_info mlx_device_info_new(void);
-
-int mlx_device_info_get(mlx_device_info* info, mlx_device dev);
-
-int mlx_device_info_free(mlx_device_info info);
-
-int mlx_device_info_has_key(bool* exists, mlx_device_info info, const char* key);
-
-int mlx_device_info_is_string(bool* is_string, mlx_device_info info, const char* key);
-
-int mlx_device_info_get_string(const char** value, mlx_device_info info, const char* key);
-
-int mlx_device_info_get_size(size_t* value, mlx_device_info info, const char* key);
-
-int mlx_device_info_get_keys(mlx_vector_string* keys, mlx_device_info info);
 
 int mlx_distributed_all_gather(mlx_array* res, const mlx_array x, const mlx_distributed_group group , const mlx_stream S);
 
@@ -1729,6 +1679,8 @@ int mlx_set_cache_limit(size_t* res, size_t limit);
 int mlx_set_memory_limit(size_t* res, size_t limit);
 
 int mlx_set_wired_limit(size_t* res, size_t limit);
+
+mlx_metal_device_info_t mlx_metal_device_info(void);
 
 int mlx_metal_is_available(bool* res);
 
