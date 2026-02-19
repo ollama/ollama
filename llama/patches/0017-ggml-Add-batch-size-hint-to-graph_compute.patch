@@ -315,10 +315,10 @@ index a73b0a1ca..77887b990 100644
  
      if (vk_instance.debug_utils_support) {
 diff --git a/ggml/src/ggml-webgpu/ggml-webgpu.cpp b/ggml/src/ggml-webgpu/ggml-webgpu.cpp
-index 17bb2f471..2ce1db92b 100644
+index b5fee4805..abd8c79ee 100644
 --- a/ggml/src/ggml-webgpu/ggml-webgpu.cpp
 +++ b/ggml/src/ggml-webgpu/ggml-webgpu.cpp
-@@ -2026,8 +2026,9 @@ static std::optional<webgpu_command> ggml_webgpu_encode_node(webgpu_context ctx,
+@@ -2027,8 +2027,9 @@ static std::optional<webgpu_command> ggml_webgpu_encode_node(webgpu_context ctx,
      }
  }
  

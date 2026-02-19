@@ -274,10 +274,10 @@ index b35059142..7dc6f0d0b 100644
  
      struct llama_layer_convnext convnext;
 diff --git a/src/models/models.h b/src/models/models.h
-index 920a8e579..0cb1ff210 100644
+index e23918f55..09d7596f5 100644
 --- a/src/models/models.h
 +++ b/src/models/models.h
-@@ -700,6 +700,11 @@ struct llm_build_smollm3 : public llm_graph_context {
+@@ -645,6 +645,11 @@ struct llm_build_smollm3 : public llm_graph_context {
      llm_build_smollm3(const llama_model & model, const llm_graph_params & params);
  };
  
