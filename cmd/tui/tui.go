@@ -429,8 +429,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if m.multiModalSelector.confirmed {
 				var selected []string
-				for _, idx := range m.multiModalSelector.checkOrder {
-					selected = append(selected, m.multiModalSelector.items[idx].Name)
+				if m.multiModalSelector.singleAdd != "" {
+					// Single-add mode: prepend picked model, keep existing deduped
+					selected = []string{m.multiModalSelector.singleAdd}
+					for _, name := range config.IntegrationModels(m.items[m.cursor].integration) {
+						if name != m.multiModalSelector.singleAdd {
+							selected = append(selected, name)
+						}
+					}
+				} else {
+					// Last checked is default (first in result)
+					co := m.multiModalSelector.checkOrder
+					last := co[len(co)-1]
+					selected = []string{m.multiModalSelector.items[last].Name}
+					for _, idx := range co {
+						if idx != last {
+							selected = append(selected, m.multiModalSelector.items[idx].Name)
+						}
+					}
 				}
 				if len(selected) > 0 {
 					m.changeModels = selected
