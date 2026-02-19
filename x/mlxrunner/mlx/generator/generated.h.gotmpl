@@ -4,10 +4,6 @@
 #define MLX_GENERATED_H
 
 #include "dynamic.h"
-{{ range .Functions }}
-#define {{ .Name }} {{ .Name }}_mlx_gen_orig_
-{{- end }}
-
 #include "mlx/c/mlx.h"
 {{ range .Functions }}
 #undef {{ .Name }}
