@@ -88,19 +88,39 @@ func TestGenerateChatRemote(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("Expected POST request, got %s", r.Method)
 		}
-		if r.URL.Path != "/api/chat" {
-			t.Errorf("Expected path '/api/chat', got %s", r.URL.Path)
-		}
 
 		w.WriteHeader(http.StatusOK)
 		w.Header().Set("Content-Type", "application/json")
-		resp := api.ChatResponse{
-			Model:      "test",
-			Done:       true,
-			DoneReason: "load",
-		}
-		if err := json.NewEncoder(w).Encode(&resp); err != nil {
-			t.Fatal(err)
+
+		switch r.URL.Path {
+		case "/api/chat":
+			resp := api.ChatResponse{
+				Model:      "test",
+				Done:       true,
+				DoneReason: "load",
+				Metrics: api.Metrics{
+					PromptEvalCount: 10,
+					EvalCount:       20,
+				},
+			}
+			if err := json.NewEncoder(w).Encode(&resp); err != nil {
+				t.Fatal(err)
+			}
+		case "/api/generate":
+			resp := api.GenerateResponse{
+				Model:      "test",
+				Done:       true,
+				DoneReason: "stop",
+				Metrics: api.Metrics{
+					PromptEvalCount: 5,
+					EvalCount:       15,
+				},
+			}
+			if err := json.NewEncoder(w).Encode(&resp); err != nil {
+				t.Fatal(err)
+			}
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
 		}
 	}))
 	defer rs.Close()
@@ -111,7 +131,7 @@ func TestGenerateChatRemote(t *testing.T) {
 	}
 
 	t.Setenv("OLLAMA_REMOTES", p.Hostname())
-	s := Server{}
+	s := Server{usage: NewUsageTracker()}
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model:      "test-cloud",
 		RemoteHost: rs.URL,
@@ -159,6 +179,61 @@ func TestGenerateChatRemote(t *testing.T) {
 			t.Errorf("expected done reason load, got %s", actual.DoneReason)
 		}
 	})
+
+	t.Run("remote chat usage tracking", func(t *testing.T) {
+		stats := s.usage.Stats()
+		found := false
+		for _, m := range stats.Usage {
+			if m.Model == "test-cloud" {
+				found = true
+				if m.Requests != 1 {
+					t.Errorf("expected 1 request, got %d", m.Requests)
+				}
+				if m.PromptTokens != 10 {
+					t.Errorf("expected 10 prompt tokens, got %d", m.PromptTokens)
+				}
+				if m.CompletionTokens != 20 {
+					t.Errorf("expected 20 completion tokens, got %d", m.CompletionTokens)
+				}
+			}
+		}
+		if !found {
+			t.Error("expected usage entry for test-cloud")
+		}
+	})
+
+	t.Run("remote generate usage tracking", func(t *testing.T) {
+		// Reset the tracker for a clean test
+		s.usage = NewUsageTracker()
+
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:  "test-cloud",
+			Prompt: "hello",
+		})
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", w.Code)
+		}
+
+		stats := s.usage.Stats()
+		found := false
+		for _, m := range stats.Usage {
+			if m.Model == "test-cloud" {
+				found = true
+				if m.Requests != 1 {
+					t.Errorf("expected 1 request, got %d", m.Requests)
+				}
+				if m.PromptTokens != 5 {
+					t.Errorf("expected 5 prompt tokens, got %d", m.PromptTokens)
+				}
+				if m.CompletionTokens != 15 {
+					t.Errorf("expected 15 completion tokens, got %d", m.CompletionTokens)
+				}
+			}
+		}
+		if !found {
+			t.Error("expected usage entry for test-cloud")
+		}
+	})
 }
 
 func TestGenerateChat(t *testing.T) {
@@ -177,6 +252,7 @@ func TestGenerateChat(t *testing.T) {
 	}
 
 	s := Server{
+		usage: NewUsageTracker(),
 		sched: &Scheduler{
 			pendingReqCh:    make(chan *LlmRequest, 1),
 			finishedReqCh:   make(chan *LlmRequest, 1),
@@ -894,6 +970,7 @@ func TestGenerate(t *testing.T) {
 	}
 
 	s := Server{
+		usage: NewUsageTracker(),
 		sched: &Scheduler{
 			pendingReqCh:    make(chan *LlmRequest, 1),
 			finishedReqCh:   make(chan *LlmRequest, 1),
@@ -1378,6 +1455,7 @@ func TestGenerateLogprobs(t *testing.T) {
 		}
 
 		s := &Server{
+			usage: NewUsageTracker(),
 			sched: &Scheduler{
 				pendingReqCh:    make(chan *LlmRequest, 1),
 				finishedReqCh:   make(chan *LlmRequest, 1),
@@ -1558,6 +1636,7 @@ func TestChatLogprobs(t *testing.T) {
 		}
 
 		s := &Server{
+			usage: NewUsageTracker(),
 			sched: &Scheduler{
 				pendingReqCh:    make(chan *LlmRequest, 1),
 				finishedReqCh:   make(chan *LlmRequest, 1),
@@ -1668,6 +1747,7 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 		}
 
 		s := &Server{
+			usage: NewUsageTracker(),
 			sched: &Scheduler{
 				pendingReqCh:    make(chan *LlmRequest, 1),
 				finishedReqCh:   make(chan *LlmRequest, 1),
@@ -2114,6 +2194,7 @@ func TestGenerateUnload(t *testing.T) {
 	var loadFnCalled bool
 
 	s := Server{
+		usage: NewUsageTracker(),
 		sched: &Scheduler{
 			pendingReqCh:    make(chan *LlmRequest, 1),
 			finishedReqCh:   make(chan *LlmRequest, 1),
@@ -2215,6 +2296,7 @@ func TestGenerateWithImages(t *testing.T) {
 	}
 
 	s := Server{
+		usage: NewUsageTracker(),
 		sched: &Scheduler{
 			pendingReqCh:    make(chan *LlmRequest, 1),
 			finishedReqCh:   make(chan *LlmRequest, 1),
@@ -2393,6 +2475,7 @@ func TestImageGenerateStreamFalse(t *testing.T) {
 
 	opts := api.DefaultOptions()
 	s := Server{
+		usage: NewUsageTracker(),
 		sched: &Scheduler{
 			pendingReqCh:  make(chan *LlmRequest, 1),
 			finishedReqCh: make(chan *LlmRequest, 1),
