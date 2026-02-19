@@ -52,7 +52,7 @@ Advanced parameters (optional):
 
 - `format`: the format to return a response in. Format can be `json` or a JSON schema
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.mdx#valid-parameters-and-values) such as `temperature`
-- `system`: system message to (overrides what is defined in the `Modelfile`)
+- `system`: system message to use (overrides what is defined in the `Modelfile`)
 - `template`: the prompt template to use (overrides what is defined in the `Modelfile`)
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `raw`: if `true` no formatting will be applied to the prompt. You may choose to use the `raw` parameter if you are specifying a full templated prompt in your request to the API
@@ -77,7 +77,7 @@ Structured outputs are supported by providing a JSON schema in the `format` para
 Enable JSON mode by setting the `format` parameter to `json`. This will structure the response as a valid JSON object. See the JSON mode [example](#request-json-mode) below.
 
 > [!IMPORTANT]
-> It's important to instruct the model to use JSON in the `prompt`. Otherwise, the model may generate large amounts whitespace.
+> It's important to instruct the model to use JSON in the `prompt`. Otherwise, the model may generate large amounts of whitespace.
 
 ### Examples
 
