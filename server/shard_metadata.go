@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+
+	"github.com/ollama/ollama/manifest"
 )
 
 // ShardMetadata stores information about sharded GGUF models
@@ -18,7 +20,7 @@ type ShardMetadata struct {
 
 // WriteShardMetadata stores shard info for a model layer
 func WriteShardMetadata(digest string, meta ShardMetadata) error {
-	blobPath, err := GetBlobsPath(digest)
+	blobPath, err := manifest.BlobsPath(digest)
 	if err != nil {
 		return err
 	}
@@ -36,7 +38,7 @@ func WriteShardMetadata(digest string, meta ShardMetadata) error {
 
 // ReadShardMetadata loads shard info if it exists
 func ReadShardMetadata(digest string) (*ShardMetadata, error) {
-	blobPath, err := GetBlobsPath(digest)
+	blobPath, err := manifest.BlobsPath(digest)
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +64,7 @@ func ReadShardMetadata(digest string) (*ShardMetadata, error) {
 
 // DeleteShardMetadata removes shard metadata file
 func DeleteShardMetadata(digest string) error {
-	blobPath, err := GetBlobsPath(digest)
+	blobPath, err := manifest.BlobsPath(digest)
 	if err != nil {
 		return err
 	}
