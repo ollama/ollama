@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -76,6 +77,12 @@ type Model struct {
 func (m *Model) Capabilities() []model.Capability {
 	capabilities := []model.Capability{}
 
+	// Check for image generation model via config capabilities
+	if slices.Contains(m.Config.Capabilities, "image") {
+		return []model.Capability{model.CapabilityImage}
+	}
+
+	// Check for completion capability
 	if m.ModelPath != "" {
 		f, err := gguf.Open(m.ModelPath)
 		if err == nil {
@@ -276,6 +283,25 @@ func (m *Model) String() string {
 	return modelfile.String()
 }
 
+func GetManifest(n model.Name) (*manifest.Manifest, string, error) {
+	fp := n.Filepath()
+
+	f, err := os.Open(fp)
+	if err != nil {
+		return nil, "", err
+	}
+	defer f.Close()
+
+	sha256sum := sha256.New()
+
+	var manifestFile manifest.Manifest
+	if err := json.NewDecoder(io.TeeReader(f, sha256sum)).Decode(&manifestFile); err != nil {
+		return nil, "", err
+	}
+
+	return &manifestFile, hex.EncodeToString(sha256sum.Sum(nil)), nil
+}
+
 func GetModel(name string) (*Model, error) {
 	n := model.ParseName(name)
 	mf, err := manifest.ParseNamedManifest(n)
@@ -322,7 +348,7 @@ func GetModel(name string) (*Model, error) {
 				m.ParentModel = layer.From
 				readMainModelFlag = true
 			} else {
-				m.ExtraModelPaths = append(model.ExtraModelPaths, filename)
+				m.ExtraModelPaths = append(m.ExtraModelPaths, filename)
 			}
 		case "application/vnd.ollama.image.embed":
 			// Deprecated in versions  > 0.1.2
@@ -497,6 +523,39 @@ func PruneLayers() error {
 	return nil
 }
 
+func PruneDirectory(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+
+	if info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			return err
+		}
+
+		for _, entry := range entries {
+			if err := PruneDirectory(filepath.Join(path, entry.Name())); err != nil {
+				return err
+			}
+		}
+
+		entries, err = os.ReadDir(path)
+		if err != nil {
+			return err
+		}
+
+		if len(entries) > 0 {
+			return nil
+		}
+
+		return os.Remove(path)
+	}
+
+	return nil
+}
+
 func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
 	n := model.ParseName(name)
 	fn(api.ProgressResponse{Status: "retrieving manifest"})
@@ -610,7 +669,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	}
 
 	skipVerify := make(map[string]bool)
-	isHF := isHuggingFaceRegistry(mp.Registry)
+	isHF := isHuggingFaceRegistry(n.Filepath())
 
 	for i, layer := range layers {
 		cacheHit, err := downloadBlob(ctx, downloadOpts{
@@ -629,10 +688,10 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 				layer.Digest = realDigest.(string)
 				layers[i].Digest = realDigest.(string)
 				// Update the manifest layers
-				for j := range manifest.Layers {
-					if strings.HasPrefix(manifest.Layers[j].Digest, "hf:") {
-						if rd, ok := hfDigestMap.Load(manifest.Layers[j].Digest); ok {
-							manifest.Layers[j].Digest = rd.(string)
+				for j := range mf.Layers {
+					if strings.HasPrefix(mf.Layers[j].Digest, "hf:") {
+						if rd, ok := hfDigestMap.Load(mf.Layers[j].Digest); ok {
+							mf.Layers[j].Digest = rd.(string)
 						}
 					}
 				}
@@ -844,8 +903,8 @@ func pushWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer
 
 func pullModelManifest(ctx context.Context, n model.Name, regOpts *registryOptions) (*manifest.Manifest, error) {
 	// Check if this is a HuggingFace registry
-	if isHuggingFaceRegistry(mp.Registry) {
-		return pullHuggingFaceManifest(ctx, mp, regOpts)
+	if isHuggingFaceRegistry(n.Filepath()) {
+		return pullHuggingFaceManifest(ctx, n, regOpts)
 	}
 
 	requestURL := n.BaseURL().JoinPath("v2", n.DisplayNamespaceModel(), "manifests", n.Tag)
@@ -884,14 +943,14 @@ type HFFileInfo struct {
 }
 
 // pullHuggingFaceManifest pulls a model manifest from HuggingFace
-func pullHuggingFaceManifest(ctx context.Context, mp ModelPath, regOpts *registryOptions) (*Manifest, error) {
+func pullHuggingFaceManifest(ctx context.Context, n model.Name, regOpts *registryOptions) (*manifest.Manifest, error) {
 	// For HuggingFace, the tag might be "main" or could include a subdirectory like "BF16"
 	// We'll use "main" as the revision and the tag as the subdirectory filter
 	revision := "main"
-	subdirFilter := mp.Tag
+	subdirFilter := n.Tag
 
 	// Query HuggingFace API for file tree (always use main revision, recursive)
-	apiURL := fmt.Sprintf("https://huggingface.co/api/models/%s/tree/%s?recursive=true", mp.GetNamespaceRepository(), revision)
+	apiURL := fmt.Sprintf("https://huggingface.co/api/models/%s/tree/%s?recursive=true", n.Namespace, revision)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
@@ -949,9 +1008,9 @@ func pullHuggingFaceManifest(ctx context.Context, mp ModelPath, regOpts *registr
 	// Check if these are split GGUF files
 	shardSets, singles := parser.GroupGGUFShards(extractPaths(ggufFiles))
 
-	var manifest Manifest
-	manifest.SchemaVersion = 2
-	manifest.MediaType = "application/vnd.docker.distribution.manifest.v2+json"
+	var mf manifest.Manifest
+	mf.SchemaVersion = 2
+	mf.MediaType = "application/vnd.docker.distribution.manifest.v2+json"
 
 	// Handle split GGUF files
 	if len(shardSets) > 0 {
@@ -973,7 +1032,7 @@ func pullHuggingFaceManifest(ctx context.Context, mp ModelPath, regOpts *registr
 			}
 
 			// Create a layer for this shard
-			layer := Layer{
+			layer := manifest.Layer{
 				MediaType: "application/vnd.ollama.image.model",
 				Size:      fileInfo.Size,
 				Digest:    "", // Will be computed during download
@@ -981,9 +1040,9 @@ func pullHuggingFaceManifest(ctx context.Context, mp ModelPath, regOpts *registr
 
 			// Store the HuggingFace download URL in the layer
 			// We'll use the digest field temporarily to store the download path
-			layer.Digest = fmt.Sprintf("hf:%s/%s/%s", mp.GetNamespaceRepository(), mp.Tag, fileInfo.Path)
+			layer.Digest = fmt.Sprintf("hf:%s/%s/%s", n.Namespace, n.Tag, fileInfo.Path)
 
-			manifest.Layers = append(manifest.Layers, layer)
+			mf.Layers = append(mf.Layers, layer)
 		}
 	} else if len(singles) > 0 {
 		// Single GGUF file
@@ -1001,16 +1060,16 @@ func pullHuggingFaceManifest(ctx context.Context, mp ModelPath, regOpts *registr
 			return nil, fmt.Errorf("GGUF file info not found")
 		}
 
-		layer := Layer{
+		layer := manifest.Layer{
 			MediaType: "application/vnd.ollama.image.model",
 			Size:      fileInfo.Size,
-			Digest:    fmt.Sprintf("hf:%s/%s/%s", mp.GetNamespaceRepository(), mp.Tag, fileInfo.Path),
+			Digest:    fmt.Sprintf("hf:%s/%s/%s", n.Namespace, n.Tag, fileInfo.Path),
 		}
 
-		manifest.Layers = append(manifest.Layers, layer)
+		mf.Layers = append(mf.Layers, layer)
 	}
 
-	return &manifest, nil
+	return &mf, nil
 }
 
 // extractPaths extracts file paths from HFFileInfo slice

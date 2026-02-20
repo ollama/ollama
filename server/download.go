@@ -700,7 +700,7 @@ func downloadHuggingFaceBlob(ctx context.Context, opts downloadOpts) (cacheHit b
 	hfDigestMap.Store(opts.digest, digest)
 
 	// Move the file to the blobs directory
-	fp, err := GetBlobsPath(digest)
+	fp, err := manifest.BlobsPath(digest)
 	if err != nil {
 		return false, err
 	}
