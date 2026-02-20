@@ -57,23 +57,23 @@ if [ "$OS" = "Darwin" ]; then
 
     DOWNLOAD_URL="https://ollama.com/download/Ollama-darwin.zip${VER_PARAM}"
 
+    status "Downloading Ollama for macOS..."
+    curl --fail --show-error --location --progress-bar \
+        -o "$TEMP_DIR/Ollama-darwin.zip" "$DOWNLOAD_URL"
+
+    unzip -q "$TEMP_DIR/Ollama-darwin.zip" -d "$TEMP_DIR"
+
+    # Download succeeded, now stop and replace the existing installation
     if pgrep -x Ollama >/dev/null 2>&1; then
         status "Stopping running Ollama instance..."
         pkill -x Ollama 2>/dev/null || true
         sleep 2
     fi
 
+    status "Installing Ollama to /Applications..."
     if [ -d "/Applications/Ollama.app" ]; then
-        status "Removing existing Ollama installation..."
         rm -rf "/Applications/Ollama.app"
     fi
-
-    status "Downloading Ollama for macOS..."
-    curl --fail --show-error --location --progress-bar \
-        -o "$TEMP_DIR/Ollama-darwin.zip" "$DOWNLOAD_URL"
-
-    status "Installing Ollama to /Applications..."
-    unzip -q "$TEMP_DIR/Ollama-darwin.zip" -d "$TEMP_DIR"
     mv "$TEMP_DIR/Ollama.app" "/Applications/"
 
     if [ ! -L "/usr/local/bin/ollama" ] || [ "$(readlink "/usr/local/bin/ollama")" != "/Applications/Ollama.app/Contents/Resources/ollama" ]; then
@@ -86,6 +86,12 @@ if [ "$OS" = "Darwin" ]; then
     if [ -z "${OLLAMA_NO_START:-}" ]; then
         status "Starting Ollama..."
         open -a Ollama --args hidden
+
+        # Wait for the server to be ready
+        for i in 1 2 3 4 5; do
+            curl -s http://localhost:11434/ >/dev/null 2>&1 && break
+            sleep 1
+        done
     fi
 
     status "Install complete. You can now run 'ollama'."
@@ -145,7 +151,7 @@ download_and_extract() {
         status "Downloading ${filename}.tar.zst"
         curl --fail --show-error --location --progress-bar \
             "${url_base}/${filename}.tar.zst${VER_PARAM}" | \
-            zstd -d | $SUDO tar -xf - -C "${dest_dir}"
+            zstd -d | tar -xf - -C "${dest_dir}"
         return 0
     fi
 
@@ -153,13 +159,46 @@ download_and_extract() {
     status "Downloading ${filename}.tgz"
     curl --fail --show-error --location --progress-bar \
         "${url_base}/${filename}.tgz${VER_PARAM}" | \
-        $SUDO tar -xzf - -C "${dest_dir}"
+        tar -xzf - -C "${dest_dir}"
 }
 
 for BINDIR in /usr/local/bin /usr/bin /bin; do
     echo $PATH | grep -q $BINDIR && break || continue
 done
 OLLAMA_INSTALL_DIR=$(dirname ${BINDIR})
+
+# Create download directory on the install filesystem to avoid space issues
+# with /tmp (which may be a small tmpfs, especially on WSL2)
+$SUDO mkdir -p "$OLLAMA_INSTALL_DIR"
+DOWNLOAD_DIR=$($SUDO mktemp -d "${OLLAMA_INSTALL_DIR}/.ollama-install.XXXXXX")
+$SUDO chown "$(id -u):$(id -g)" "$DOWNLOAD_DIR"
+cleanup() { $SUDO rm -rf "$DOWNLOAD_DIR"; rm -rf "$TEMP_DIR"; }
+
+status "Downloading ollama..."
+download_and_extract "https://ollama.com/download" "$DOWNLOAD_DIR" "ollama-linux-${ARCH}"
+
+# Check for NVIDIA JetPack systems with additional downloads
+if [ -f /etc/nv_tegra_release ] ; then
+    if grep R36 /etc/nv_tegra_release > /dev/null ; then
+        download_and_extract "https://ollama.com/download" "$DOWNLOAD_DIR" "ollama-linux-${ARCH}-jetpack6"
+    elif grep R35 /etc/nv_tegra_release > /dev/null ; then
+        download_and_extract "https://ollama.com/download" "$DOWNLOAD_DIR" "ollama-linux-${ARCH}-jetpack5"
+    else
+        warning "Unsupported JetPack version detected.  GPU may not be supported"
+    fi
+fi
+
+# All downloads succeeded, now stop and replace the existing installation
+if available systemctl; then
+    if systemctl is-active --quiet ollama; then
+        status "Stopping running ollama service..."
+        $SUDO systemctl stop ollama
+    fi
+elif pgrep -x ollama >/dev/null 2>&1; then
+    status "Stopping running ollama instance..."
+    $SUDO pkill -x ollama 2>/dev/null || true
+    sleep 2
+fi
 
 if [ -d "$OLLAMA_INSTALL_DIR/lib/ollama" ] ; then
     status "Cleaning up old version at $OLLAMA_INSTALL_DIR/lib/ollama"
@@ -168,22 +207,11 @@ fi
 status "Installing ollama to $OLLAMA_INSTALL_DIR"
 $SUDO install -o0 -g0 -m755 -d $BINDIR
 $SUDO install -o0 -g0 -m755 -d "$OLLAMA_INSTALL_DIR/lib/ollama"
-download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}"
+$SUDO cp -a "$DOWNLOAD_DIR"/. "$OLLAMA_INSTALL_DIR/"
 
 if [ "$OLLAMA_INSTALL_DIR/bin/ollama" != "$BINDIR/ollama" ] ; then
     status "Making ollama accessible in the PATH in $BINDIR"
     $SUDO ln -sf "$OLLAMA_INSTALL_DIR/ollama" "$BINDIR/ollama"
-fi
-
-# Check for NVIDIA JetPack systems with additional downloads
-if [ -f /etc/nv_tegra_release ] ; then
-    if grep R36 /etc/nv_tegra_release > /dev/null ; then
-        download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-jetpack6"
-    elif grep R35 /etc/nv_tegra_release > /dev/null ; then
-        download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-jetpack5"
-    else
-        warning "Unsupported JetPack version detected.  GPU may not be supported"
-    fi
 fi
 
 install_success() {
@@ -303,7 +331,8 @@ if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdg
 fi
 
 if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
-    download_and_extract "https://ollama.com/download" "$OLLAMA_INSTALL_DIR" "ollama-linux-${ARCH}-rocm"
+    download_and_extract "https://ollama.com/download" "$DOWNLOAD_DIR" "ollama-linux-${ARCH}-rocm"
+    $SUDO cp -a "$DOWNLOAD_DIR"/. "$OLLAMA_INSTALL_DIR/"
 
     install_success
     status "AMD GPU ready."
