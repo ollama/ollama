@@ -669,7 +669,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	}
 
 	skipVerify := make(map[string]bool)
-	isHF := isHuggingFaceRegistry(n.Filepath())
+	isHF := isHuggingFaceRegistry(n.Host)
 
 	for i, layer := range layers {
 		cacheHit, err := downloadBlob(ctx, downloadOpts{
@@ -903,7 +903,7 @@ func pushWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer
 
 func pullModelManifest(ctx context.Context, n model.Name, regOpts *registryOptions) (*manifest.Manifest, error) {
 	// Check if this is a HuggingFace registry
-	if isHuggingFaceRegistry(n.Filepath()) {
+	if isHuggingFaceRegistry(n.Host) {
 		return pullHuggingFaceManifest(ctx, n, regOpts)
 	}
 
@@ -950,7 +950,7 @@ func pullHuggingFaceManifest(ctx context.Context, n model.Name, regOpts *registr
 	subdirFilter := n.Tag
 
 	// Query HuggingFace API for file tree (always use main revision, recursive)
-	apiURL := fmt.Sprintf("https://huggingface.co/api/models/%s/tree/%s?recursive=true", n.Namespace, revision)
+	apiURL := fmt.Sprintf("https://huggingface.co/api/models/%s/tree/%s?recursive=true", n.DisplayNamespaceModel(), revision)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
@@ -1040,7 +1040,7 @@ func pullHuggingFaceManifest(ctx context.Context, n model.Name, regOpts *registr
 
 			// Store the HuggingFace download URL in the layer
 			// We'll use the digest field temporarily to store the download path
-			layer.Digest = fmt.Sprintf("hf:%s/%s/%s", n.Namespace, n.Tag, fileInfo.Path)
+			layer.Digest = fmt.Sprintf("hf:%s/%s/%s", n.DisplayNamespaceModel(), n.Tag, fileInfo.Path)
 
 			mf.Layers = append(mf.Layers, layer)
 		}
@@ -1063,7 +1063,7 @@ func pullHuggingFaceManifest(ctx context.Context, n model.Name, regOpts *registr
 		layer := manifest.Layer{
 			MediaType: "application/vnd.ollama.image.model",
 			Size:      fileInfo.Size,
-			Digest:    fmt.Sprintf("hf:%s/%s/%s", n.Namespace, n.Tag, fileInfo.Path),
+			Digest:    fmt.Sprintf("hf:%s/%s/%s", n.DisplayNamespaceModel(), n.Tag, fileInfo.Path),
 		}
 
 		mf.Layers = append(mf.Layers, layer)
