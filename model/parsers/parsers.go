@@ -51,6 +51,8 @@ func ParserForName(name string) Parser {
 		p = &Qwen3Parser{hasThinkingSupport: true, defaultThinking: true}
 	case "qwen3-coder":
 		p = &Qwen3CoderParser{}
+	case "qwen35", "qwen35moe", "qwen3_5", "qwen3_5_moe", "qwen3.5", "qwen3.5-moe":
+		p = &Qwen3CoderParser{}
 	case "qwen3-vl-instruct":
 		p = &Qwen3VLParser{hasThinkingSupport: false}
 	case "qwen3-vl-thinking":
