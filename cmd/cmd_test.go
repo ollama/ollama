@@ -974,9 +974,9 @@ func TestListHandler(t *testing.T) {
 				{Name: "model1", Digest: "sha256:abc123", Size: 1024, ModifiedAt: time.Now().Add(-24 * time.Hour)},
 				{Name: "model2", Digest: "sha256:def456", Size: 2048, ModifiedAt: time.Now().Add(-48 * time.Hour)},
 			},
-			expectedOutput: "NAME      ID              SIZE      MODIFIED     \n" +
-				"model1    sha256:abc12    1.0 KB    24 hours ago    \n" +
-				"model2    sha256:def45    2.0 KB    2 days ago      \n",
+			expectedOutput: "NAME      ID              SIZE    MODIFIED     \n" +
+				"model1    sha256:abc12    1 KB    24 hours ago    \n" +
+				"model2    sha256:def45    2 KB    2 days ago      \n",
 		},
 		{
 			name: "filter models by prefix",
@@ -985,8 +985,8 @@ func TestListHandler(t *testing.T) {
 				{Name: "model1", Digest: "sha256:abc123", Size: 1024, ModifiedAt: time.Now().Add(-24 * time.Hour)},
 				{Name: "model2", Digest: "sha256:def456", Size: 2048, ModifiedAt: time.Now().Add(-24 * time.Hour)},
 			},
-			expectedOutput: "NAME      ID              SIZE      MODIFIED     \n" +
-				"model1    sha256:abc12    1.0 KB    24 hours ago    \n",
+			expectedOutput: "NAME      ID              SIZE    MODIFIED     \n" +
+				"model1    sha256:abc12    1 KB    24 hours ago    \n",
 		},
 		{
 			name:          "server error",
