@@ -104,7 +104,21 @@ func (v *Vocabulary) Merge(left, right string) int {
 		}
 	})
 
-	if id, ok := v.merge[left+" "+right]; ok {
+	// Construct the lookup key ("left right") on the stack to avoid a heap
+	// allocation per call. Since Go 1.12, the compiler optimizes
+	// string(buf[:n]) inside a map lookup to use a stack-allocated temporary.
+	// Merge is called for every adjacent token pair during BPE merging —
+	// thousands of times per Encode call — so this matters.
+	needed := len(left) + 1 + len(right)
+	if needed <= 128 {
+		var buf [128]byte
+		n := copy(buf[:], left)
+		buf[n] = ' '
+		n += 1 + copy(buf[n+1:], right)
+		if id, ok := v.merge[string(buf[:n])]; ok {
+			return int(id)
+		}
+	} else if id, ok := v.merge[left+" "+right]; ok {
 		return int(id)
 	}
 
