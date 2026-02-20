@@ -829,8 +829,9 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 
 	if !hasAttachments {
 		WebSearchEnabled := req.WebSearch != nil && *req.WebSearch
+		hasToolsCapability := slices.Contains(details.Capabilities, model.CapabilityTools)
 
-		if WebSearchEnabled {
+		if WebSearchEnabled && hasToolsCapability {
 			if supportsBrowserTools(req.Model) {
 				browserState, ok := s.browserState(chat)
 				if !ok {
@@ -840,7 +841,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 				registry.Register(tools.NewBrowserSearch(browser))
 				registry.Register(tools.NewBrowserOpen(browser))
 				registry.Register(tools.NewBrowserFind(browser))
-			} else if supportsWebSearchTools(req.Model) {
+			} else {
 				registry.Register(&tools.WebSearch{})
 				registry.Register(&tools.WebFetch{})
 			}
@@ -1652,17 +1653,6 @@ func supportsBrowserTools(model string) bool {
 	return strings.HasPrefix(strings.ToLower(model), "gpt-oss")
 }
 
-// Web search tools are simpler, providing only basic web search and fetch capabilities (e.g., "web_search", "web_fetch") without simulating a browser. Currently only qwen3 and deepseek-v3 support web search tools.
-func supportsWebSearchTools(model string) bool {
-	model = strings.ToLower(model)
-	prefixes := []string{"qwen3", "deepseek-v3"}
-	for _, p := range prefixes {
-		if strings.HasPrefix(model, p) {
-			return true
-		}
-	}
-	return false
-}
 
 // buildChatRequest converts store.Chat to api.ChatRequest
 func (s *Server) buildChatRequest(chat *store.Chat, model string, think any, availableTools []map[string]any) (*api.ChatRequest, error) {
