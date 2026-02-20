@@ -24,7 +24,7 @@ type qwen3Model struct {
 	RopeTheta             float32 `json:"rope_theta"`
 	RopeScaling           struct {
 		Type                          string     `json:"type"`
-		Factor                        ropeFactor `json:"factor"`
+		Factor                        float32    `json:"factor"`
 		OriginalMaxPositionEmbeddings uint32     `json:"original_max_position_embeddings"`
 		MropeSection                  []int32    `json:"mrope_section"`
 	} `json:"rope_scaling"`
