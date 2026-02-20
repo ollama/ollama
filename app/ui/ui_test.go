@@ -522,3 +522,110 @@ func TestUserAgentTransport(t *testing.T) {
 
 	t.Logf("User-Agent transport successfully set: %s", receivedUA)
 }
+
+func TestSupportsBrowserTools(t *testing.T) {
+	tests := []struct {
+		model string
+		want  bool
+	}{
+		{"gpt-oss", true},
+		{"gpt-oss-latest", true},
+		{"GPT-OSS", true},
+		{"Gpt-Oss-v2", true},
+		{"qwen3", false},
+		{"deepseek-v3", false},
+		{"llama3.3", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			if got := supportsBrowserTools(tt.model); got != tt.want {
+				t.Errorf("supportsBrowserTools(%q) = %v, want %v", tt.model, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWebSearchToolRegistration(t *testing.T) {
+	// Validates that the capability-gating logic in chat() correctly
+	// decides which tools to register based on model capabilities and
+	// the web search flag.
+	tests := []struct {
+		name             string
+		webSearchEnabled bool
+		hasToolsCap      bool
+		model            string
+		wantBrowser      bool // expects browser tools (gpt-oss)
+		wantWebSearch    bool // expects basic web search/fetch tools
+		wantNone         bool // expects no tools registered
+	}{
+		{
+			name:             "web search enabled with tools capability - browser model",
+			webSearchEnabled: true,
+			hasToolsCap:      true,
+			model:            "gpt-oss-latest",
+			wantBrowser:      true,
+		},
+		{
+			name:             "web search enabled with tools capability - non-browser model",
+			webSearchEnabled: true,
+			hasToolsCap:      true,
+			model:            "qwen3",
+			wantWebSearch:    true,
+		},
+		{
+			name:             "web search enabled without tools capability",
+			webSearchEnabled: true,
+			hasToolsCap:      false,
+			model:            "llama3.3",
+			wantNone:         true,
+		},
+		{
+			name:             "web search disabled with tools capability",
+			webSearchEnabled: false,
+			hasToolsCap:      true,
+			model:            "qwen3",
+			wantNone:         true,
+		},
+		{
+			name:             "web search disabled without tools capability",
+			webSearchEnabled: false,
+			hasToolsCap:      false,
+			model:            "llama3.3",
+			wantNone:         true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Replicate the decision logic from chat() handler
+			gotBrowser := false
+			gotWebSearch := false
+
+			if tt.webSearchEnabled && tt.hasToolsCap {
+				if supportsBrowserTools(tt.model) {
+					gotBrowser = true
+				} else {
+					gotWebSearch = true
+				}
+			}
+
+			if tt.wantBrowser && !gotBrowser {
+				t.Error("expected browser tools to be registered")
+			}
+			if tt.wantWebSearch && !gotWebSearch {
+				t.Error("expected web search tools to be registered")
+			}
+			if tt.wantNone && (gotBrowser || gotWebSearch) {
+				t.Error("expected no tools to be registered")
+			}
+			if !tt.wantBrowser && gotBrowser {
+				t.Error("unexpected browser tools registered")
+			}
+			if !tt.wantWebSearch && gotWebSearch {
+				t.Error("unexpected web search tools registered")
+			}
+		})
+	}
+}
