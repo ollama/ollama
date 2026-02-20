@@ -884,8 +884,12 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 			} else {
 				size = format.HumanBytes(m.Size)
 			}
+			displayID := m.Digest
+			if len(displayID) > 12 {
+				displayID = displayID[:12]
+			}
 
-			data = append(data, []string{m.Name, m.Digest[:12], size, format.HumanTime(m.ModifiedAt, "Never")})
+			data = append(data, []string{m.Name, displayID, size, format.HumanTime(m.ModifiedAt, "Never")})
 		}
 	}
 
