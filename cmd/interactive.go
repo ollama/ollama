@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"github.com/google/shlex"
 	"io"
 	"net/http"
 	"os"
@@ -561,23 +562,12 @@ func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
 }
 
 func normalizeFilePath(fp string) string {
-	return strings.NewReplacer(
-		"\\ ", " ", // Escaped space
-		"\\(", "(", // Escaped left parenthesis
-		"\\)", ")", // Escaped right parenthesis
-		"\\[", "[", // Escaped left square bracket
-		"\\]", "]", // Escaped right square bracket
-		"\\{", "{", // Escaped left curly brace
-		"\\}", "}", // Escaped right curly brace
-		"\\$", "$", // Escaped dollar sign
-		"\\&", "&", // Escaped ampersand
-		"\\;", ";", // Escaped semicolon
-		"\\'", "'", // Escaped single quote
-		"\\\\", "\\", // Escaped backslash
-		"\\*", "*", // Escaped asterisk
-		"\\?", "?", // Escaped question mark
-		"\\~", "~", // Escaped tilde
-	).Replace(fp)
+	// shell tokenizer to handle quotes, escapes, and all POSIX shell characters genericallly.
+	parts, err := shlex.Split(fp)
+	if err != nil || len(parts) == 0 {
+		return fp
+	}
+	return parts[0]
 }
 
 func extractFileNames(input string) []string {
