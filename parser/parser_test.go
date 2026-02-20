@@ -65,6 +65,8 @@ ADAPTER      adapter3
 LICENSE "MIT       "
 PARAMETER param1        value1
 PARAMETER param2    value2
+PARAMETER   param3 value3
+PARAMETER     param4    value4
 TEMPLATE """   {{ if .System }}<|start_header_id|>system<|end_header_id|>
 
 {{ .System }}<|eot_id|>{{ end }}{{ if .Prompt }}<|start_header_id|>user<|end_header_id|>
@@ -85,6 +87,8 @@ TEMPLATE """   {{ if .System }}<|start_header_id|>system<|end_header_id|>
 		{Name: "license", Args: "MIT       "},
 		{Name: "param1", Args: "value1"},
 		{Name: "param2", Args: "value2"},
+		{Name: "param3", Args: "value3"},
+		{Name: "param4", Args: "value4"},
 		{Name: "template", Args: "   {{ if .System }}<|start_header_id|>system<|end_header_id|>\n\n{{ .System }}<|eot_id|>{{ end }}{{ if .Prompt }}<|start_header_id|>user<|end_header_id|>\n\n{{ .Prompt }}<|eot_id|>{{ end }}<|start_header_id|>assistant<|end_header_id|>\n\n{{ .Response }}<|eot_id|>   "},
 	}
 
@@ -281,6 +285,30 @@ You are a multiline file parser. Always parse things.
 			[]Command{
 				{Name: "model", Args: "foo"},
 				{Name: "message", Args: "system: \nYou are a multiline file parser. Always parse things.\n"},
+			},
+			nil,
+		},
+		{
+			`
+FROM foo
+MESSAGE   user   Hello with extra spaces!
+`,
+			[]Command{
+				{Name: "model", Args: "foo"},
+				{Name: "message", Args: "user: Hello with extra spaces!"},
+			},
+			nil,
+		},
+		{
+			`
+FROM foo
+MESSAGE     system     You are a parser.
+MESSAGE     user       Parse this!
+`,
+			[]Command{
+				{Name: "model", Args: "foo"},
+				{Name: "message", Args: "system: You are a parser."},
+				{Name: "message", Args: "user: Parse this!"},
 			},
 			nil,
 		},
