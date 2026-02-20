@@ -13,6 +13,7 @@ type Cache interface {
 	State() (keys, values *mlx.Array)
 	Trim(int) int
 	Clone() Cache
+	Free()
 	Offset() int
 	Len() int
 }
@@ -82,6 +83,11 @@ func (c *KVCache) Clone() Cache {
 	}
 	mlx.Pin(clone.keys, clone.values)
 	return clone
+}
+
+func (c *KVCache) Free() {
+	mlx.Unpin(c.keys, c.values)
+	c.keys, c.values = nil, nil
 }
 
 func (c *KVCache) Offset() int { return c.offset }

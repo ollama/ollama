@@ -125,6 +125,9 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 
 	if slog.Default().Enabled(context.TODO(), logutil.LevelTrace) {
 		mlx.LogArrays()
+		if r.cache != nil {
+			r.cache.LogCache()
+		}
 	}
 
 	return nil
