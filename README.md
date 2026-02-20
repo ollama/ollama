@@ -55,7 +55,7 @@ volumes:
   ollama: {}
 ```
 
-You can just add RPC clients to OLLAMA_RPC_SERVERS by appending them with a comma. 127.0.0.1:50053,192.168.1.1:50053,192.168.1.12:50053 etc.
+You can just add RPC clients to OLLAMA_RPC_SERVERS by appending them with a comma. `127.0.0.1:50053,192.168.1.1:50053,192.168.1.12:50053 etc.`
   
 <div align="center">
   <a href="https://ollama.com">
