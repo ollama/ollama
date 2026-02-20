@@ -28,6 +28,7 @@ import (
 	"github.com/ollama/ollama/format"
 	ofs "github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
@@ -179,7 +180,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 			ch <- resp
 		}
 
-		oldManifest, _ := ParseNamedManifest(name)
+		oldManifest, _ := manifest.ParseNamedManifest(name)
 
 		var baseLayers []*layerGGML
 		var err error
@@ -212,9 +213,9 @@ func (s *Server) CreateHandler(c *gin.Context) {
 				}
 
 				if err == nil && !remote && (config.Renderer == "" || config.Parser == "" || config.Requires == "") {
-					manifest, mErr := ParseNamedManifest(fromName)
-					if mErr == nil && manifest.Config.Digest != "" {
-						configPath, pErr := GetBlobsPath(manifest.Config.Digest)
+					mf, mErr := manifest.ParseNamedManifest(fromName)
+					if mErr == nil && mf.Config.Digest != "" {
+						configPath, pErr := manifest.BlobsPath(mf.Config.Digest)
 						if pErr == nil {
 							if cfgFile, fErr := os.Open(configPath); fErr == nil {
 								var baseConfig model.ConfigV2
@@ -439,7 +440,7 @@ func detectModelTypeFromFiles(files map[string]string) string {
 			return "gguf"
 		} else {
 			// try to see if we can find a gguf file even without the file extension
-			blobPath, err := GetBlobsPath(files[fn])
+			blobPath, err := manifest.BlobsPath(files[fn])
 			if err != nil {
 				slog.Error("error getting blobs path", "file", fn)
 				return ""
@@ -491,7 +492,7 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 			return nil, fmt.Errorf("%w: %s: %s", errFilePath, err, fp)
 		}
 
-		blobPath, err := GetBlobsPath(digest)
+		blobPath, err := manifest.BlobsPath(digest)
 		if err != nil {
 			return nil, err
 		}
@@ -529,7 +530,7 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 		return nil, err
 	}
 
-	layer, err := NewLayer(t, mediaType)
+	layer, err := manifest.NewLayer(t, mediaType)
 	if err != nil {
 		return nil, err
 	}
@@ -562,7 +563,7 @@ func kvFromLayers(baseLayers []*layerGGML) (ofs.Config, error) {
 }
 
 func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, config *model.ConfigV2, fn func(resp api.ProgressResponse)) (err error) {
-	var layers []Layer
+	var layers []manifest.Layer
 	for _, layer := range baseLayers {
 		if layer.GGML != nil {
 			quantType := strings.ToUpper(cmp.Or(r.Quantize, r.Quantization))
@@ -647,13 +648,13 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 	}
 
 	for _, layer := range layers {
-		if layer.status != "" {
-			fn(api.ProgressResponse{Status: layer.status})
+		if layer.Status != "" {
+			fn(api.ProgressResponse{Status: layer.Status})
 		}
 	}
 
 	fn(api.ProgressResponse{Status: "writing manifest"})
-	if err := WriteManifest(name, *configLayer, layers); err != nil {
+	if err := manifest.WriteManifest(name, *configLayer, layers); err != nil {
 		return err
 	}
 
@@ -674,7 +675,7 @@ func quantizeLayer(layer *layerGGML, quantizeType string, fn func(resp api.Progr
 		return nil, err
 	}
 
-	blob, err := GetBlobsPath(layer.Digest)
+	blob, err := manifest.BlobsPath(layer.Digest)
 	if err != nil {
 		return nil, err
 	}
@@ -696,7 +697,7 @@ func quantizeLayer(layer *layerGGML, quantizeType string, fn func(resp api.Progr
 	}
 	temp.Seek(0, io.SeekStart)
 	fn(api.ProgressResponse{Status: "verifying conversion"})
-	newLayer, err := NewLayer(temp, layer.MediaType)
+	newLayer, err := manifest.NewLayer(temp, layer.MediaType)
 	if err != nil {
 		return nil, err
 	}
@@ -716,7 +717,7 @@ func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML
 	var layers []*layerGGML
 
 	fn(api.ProgressResponse{Status: "parsing GGUF"})
-	blobPath, err := GetBlobsPath(digest)
+	blobPath, err := manifest.BlobsPath(digest)
 	if err != nil {
 		return nil, err
 	}
@@ -751,7 +752,7 @@ func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML
 		mediatype = "application/vnd.ollama.image.projector"
 	}
 
-	layer, err := NewLayerFromLayer(digest, mediatype, blob.Name())
+	layer, err := manifest.NewLayerFromLayer(digest, mediatype, blob.Name())
 	if err != nil {
 		slog.Debug("could not create new layer from layer", "error", err)
 		return nil, err
@@ -762,8 +763,8 @@ func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML
 	return detectChatTemplate(layers)
 }
 
-func removeLayer(layers []Layer, mediatype string) []Layer {
-	return slices.DeleteFunc(layers, func(layer Layer) bool {
+func removeLayer(layers []manifest.Layer, mediatype string) []manifest.Layer {
+	return slices.DeleteFunc(layers, func(layer manifest.Layer) bool {
 		if layer.MediaType != mediatype {
 			return false
 		}
@@ -777,7 +778,7 @@ func removeLayer(layers []Layer, mediatype string) []Layer {
 	})
 }
 
-func setTemplate(layers []Layer, t string) ([]Layer, error) {
+func setTemplate(layers []manifest.Layer, t string) ([]manifest.Layer, error) {
 	layers = removeLayer(layers, "application/vnd.ollama.image.template")
 	if _, err := template.Parse(t); err != nil {
 		return nil, fmt.Errorf("%w: %s", errBadTemplate, err)
@@ -787,7 +788,7 @@ func setTemplate(layers []Layer, t string) ([]Layer, error) {
 	}
 
 	blob := strings.NewReader(t)
-	layer, err := NewLayer(blob, "application/vnd.ollama.image.template")
+	layer, err := manifest.NewLayer(blob, "application/vnd.ollama.image.template")
 	if err != nil {
 		return nil, err
 	}
@@ -796,11 +797,11 @@ func setTemplate(layers []Layer, t string) ([]Layer, error) {
 	return layers, nil
 }
 
-func setSystem(layers []Layer, s string) ([]Layer, error) {
+func setSystem(layers []manifest.Layer, s string) ([]manifest.Layer, error) {
 	layers = removeLayer(layers, "application/vnd.ollama.image.system")
 	if s != "" {
 		blob := strings.NewReader(s)
-		layer, err := NewLayer(blob, "application/vnd.ollama.image.system")
+		layer, err := manifest.NewLayer(blob, "application/vnd.ollama.image.system")
 		if err != nil {
 			return nil, err
 		}
@@ -809,9 +810,9 @@ func setSystem(layers []Layer, s string) ([]Layer, error) {
 	return layers, nil
 }
 
-func setLicense(layers []Layer, l string) ([]Layer, error) {
+func setLicense(layers []manifest.Layer, l string) ([]manifest.Layer, error) {
 	blob := strings.NewReader(l)
-	layer, err := NewLayer(blob, "application/vnd.ollama.image.license")
+	layer, err := manifest.NewLayer(blob, "application/vnd.ollama.image.license")
 	if err != nil {
 		return nil, err
 	}
@@ -819,7 +820,7 @@ func setLicense(layers []Layer, l string) ([]Layer, error) {
 	return layers, nil
 }
 
-func setParameters(layers []Layer, p map[string]any) ([]Layer, error) {
+func setParameters(layers []manifest.Layer, p map[string]any) ([]manifest.Layer, error) {
 	if p == nil {
 		p = make(map[string]any)
 	}
@@ -828,7 +829,7 @@ func setParameters(layers []Layer, p map[string]any) ([]Layer, error) {
 			continue
 		}
 
-		digestPath, err := GetBlobsPath(layer.Digest)
+		digestPath, err := manifest.BlobsPath(layer.Digest)
 		if err != nil {
 			return nil, err
 		}
@@ -862,7 +863,7 @@ func setParameters(layers []Layer, p map[string]any) ([]Layer, error) {
 	if err := json.NewEncoder(&b).Encode(p); err != nil {
 		return nil, err
 	}
-	layer, err := NewLayer(&b, "application/vnd.ollama.image.params")
+	layer, err := manifest.NewLayer(&b, "application/vnd.ollama.image.params")
 	if err != nil {
 		return nil, err
 	}
@@ -870,7 +871,7 @@ func setParameters(layers []Layer, p map[string]any) ([]Layer, error) {
 	return layers, nil
 }
 
-func setMessages(layers []Layer, m []api.Message) ([]Layer, error) {
+func setMessages(layers []manifest.Layer, m []api.Message) ([]manifest.Layer, error) {
 	// this leaves the old messages intact if no new messages were specified
 	// which may not be the correct behaviour
 	if len(m) == 0 {
@@ -883,7 +884,7 @@ func setMessages(layers []Layer, m []api.Message) ([]Layer, error) {
 	if err := json.NewEncoder(&b).Encode(m); err != nil {
 		return nil, err
 	}
-	layer, err := NewLayer(&b, "application/vnd.ollama.image.messages")
+	layer, err := manifest.NewLayer(&b, "application/vnd.ollama.image.messages")
 	if err != nil {
 		return nil, err
 	}
@@ -891,7 +892,7 @@ func setMessages(layers []Layer, m []api.Message) ([]Layer, error) {
 	return layers, nil
 }
 
-func createConfigLayer(layers []Layer, config model.ConfigV2) (*Layer, error) {
+func createConfigLayer(layers []manifest.Layer, config model.ConfigV2) (*manifest.Layer, error) {
 	digests := make([]string, len(layers))
 	for i, layer := range layers {
 		digests[i] = layer.Digest
@@ -902,7 +903,7 @@ func createConfigLayer(layers []Layer, config model.ConfigV2) (*Layer, error) {
 	if err := json.NewEncoder(&b).Encode(config); err != nil {
 		return nil, err
 	}
-	layer, err := NewLayer(&b, "application/vnd.docker.container.image.v1+json")
+	layer, err := manifest.NewLayer(&b, "application/vnd.docker.container.image.v1+json")
 	if err != nil {
 		return nil, err
 	}

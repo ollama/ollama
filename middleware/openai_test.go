@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-cmp/cmp"
+	"github.com/klauspost/compress/zstd"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/openai"
@@ -1110,5 +1111,230 @@ func TestImageWriterResponse(t *testing.T) {
 
 	if imageResp.Data[0].B64JSON != "dGVzdC1pbWFnZS1kYXRh" {
 		t.Errorf("expected image data 'dGVzdC1pbWFnZS1kYXRh', got %s", imageResp.Data[0].B64JSON)
+	}
+}
+
+func TestImageEditsMiddleware(t *testing.T) {
+	type testCase struct {
+		name string
+		body string
+		req  api.GenerateRequest
+		err  openai.ErrorResponse
+	}
+
+	var capturedRequest *api.GenerateRequest
+
+	// Base64-encoded test image (1x1 pixel PNG)
+	testImage := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+	decodedImage, _ := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+
+	testCases := []testCase{
+		{
+			name: "image edit basic",
+			body: `{
+				"model": "test-model",
+				"prompt": "make it blue",
+				"image": "` + testImage + `"
+			}`,
+			req: api.GenerateRequest{
+				Model:  "test-model",
+				Prompt: "make it blue",
+				Images: []api.ImageData{decodedImage},
+			},
+		},
+		{
+			name: "image edit with size",
+			body: `{
+				"model": "test-model",
+				"prompt": "make it blue",
+				"image": "` + testImage + `",
+				"size": "512x768"
+			}`,
+			req: api.GenerateRequest{
+				Model:  "test-model",
+				Prompt: "make it blue",
+				Images: []api.ImageData{decodedImage},
+				Width:  512,
+				Height: 768,
+			},
+		},
+		{
+			name: "image edit missing prompt",
+			body: `{
+				"model": "test-model",
+				"image": "` + testImage + `"
+			}`,
+			err: openai.ErrorResponse{
+				Error: openai.Error{
+					Message: "prompt is required",
+					Type:    "invalid_request_error",
+				},
+			},
+		},
+		{
+			name: "image edit missing model",
+			body: `{
+				"prompt": "make it blue",
+				"image": "` + testImage + `"
+			}`,
+			err: openai.ErrorResponse{
+				Error: openai.Error{
+					Message: "model is required",
+					Type:    "invalid_request_error",
+				},
+			},
+		},
+		{
+			name: "image edit missing image",
+			body: `{
+				"model": "test-model",
+				"prompt": "make it blue"
+			}`,
+			err: openai.ErrorResponse{
+				Error: openai.Error{
+					Message: "image is required",
+					Type:    "invalid_request_error",
+				},
+			},
+		},
+	}
+
+	endpoint := func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	}
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(ImageEditsMiddleware(), captureRequestMiddleware(&capturedRequest))
+	router.Handle(http.MethodPost, "/api/generate", endpoint)
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodPost, "/api/generate", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+
+			defer func() { capturedRequest = nil }()
+
+			resp := httptest.NewRecorder()
+			router.ServeHTTP(resp, req)
+
+			if tc.err.Error.Message != "" {
+				var errResp openai.ErrorResponse
+				if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
+					t.Fatal(err)
+				}
+				if diff := cmp.Diff(tc.err, errResp); diff != "" {
+					t.Fatalf("errors did not match:\n%s", diff)
+				}
+				return
+			}
+
+			if resp.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d: %s", resp.Code, resp.Body.String())
+			}
+
+			if diff := cmp.Diff(&tc.req, capturedRequest); diff != "" {
+				t.Fatalf("requests did not match:\n%s", diff)
+			}
+		})
+	}
+}
+
+func zstdCompress(t *testing.T, data []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w, err := zstd.NewWriter(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func TestResponsesMiddlewareZstd(t *testing.T) {
+	tests := []struct {
+		name        string
+		body        string
+		useZstd     bool
+		oversized   bool
+		wantCode    int
+		wantModel   string
+		wantMessage string
+	}{
+		{
+			name:        "plain JSON",
+			body:        `{"model": "test-model", "input": "Hello"}`,
+			wantCode:    http.StatusOK,
+			wantModel:   "test-model",
+			wantMessage: "Hello",
+		},
+		{
+			name:        "zstd compressed",
+			body:        `{"model": "test-model", "input": "Hello"}`,
+			useZstd:     true,
+			wantCode:    http.StatusOK,
+			wantModel:   "test-model",
+			wantMessage: "Hello",
+		},
+		{
+			name:      "zstd over max decompressed size",
+			oversized: true,
+			useZstd:   true,
+			wantCode:  http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var capturedRequest *api.ChatRequest
+
+			gin.SetMode(gin.TestMode)
+			router := gin.New()
+			router.Use(ResponsesMiddleware(), captureRequestMiddleware(&capturedRequest))
+			router.Handle(http.MethodPost, "/v1/responses", func(c *gin.Context) {
+				c.Status(http.StatusOK)
+			})
+
+			var bodyReader io.Reader
+			if tt.oversized {
+				bodyReader = bytes.NewReader(zstdCompress(t, bytes.Repeat([]byte("A"), 9<<20)))
+			} else if tt.useZstd {
+				bodyReader = bytes.NewReader(zstdCompress(t, []byte(tt.body)))
+			} else {
+				bodyReader = strings.NewReader(tt.body)
+			}
+
+			req, _ := http.NewRequest(http.MethodPost, "/v1/responses", bodyReader)
+			req.Header.Set("Content-Type", "application/json")
+			if tt.useZstd || tt.oversized {
+				req.Header.Set("Content-Encoding", "zstd")
+			}
+
+			resp := httptest.NewRecorder()
+			router.ServeHTTP(resp, req)
+
+			if resp.Code != tt.wantCode {
+				t.Fatalf("expected status %d, got %d: %s", tt.wantCode, resp.Code, resp.Body.String())
+			}
+
+			if tt.wantCode != http.StatusOK {
+				return
+			}
+
+			if capturedRequest == nil {
+				t.Fatal("expected captured request, got nil")
+			}
+			if capturedRequest.Model != tt.wantModel {
+				t.Fatalf("expected model %q, got %q", tt.wantModel, capturedRequest.Model)
+			}
+			if len(capturedRequest.Messages) != 1 || capturedRequest.Messages[0].Content != tt.wantMessage {
+				t.Fatalf("expected single user message %q, got %+v", tt.wantMessage, capturedRequest.Messages)
+			}
+		})
 	}
 }

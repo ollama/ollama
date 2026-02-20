@@ -184,7 +184,7 @@ ARG PARALLEL
 WORKDIR /go/src/github.com/ollama/ollama
 COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
-COPY x/ml/backend/mlx x/ml/backend/mlx
+COPY x/imagegen/mlx x/imagegen/mlx
 COPY go.mod go.sum .
 COPY MLX_VERSION .
 RUN curl -fsSL https://golang.org/dl/go$(awk '/^go/ { print $2 }' go.mod).linux-$(case $(uname -m) in x86_64) echo amd64 ;; aarch64) echo arm64 ;; esac).tar.gz | tar xz -C /usr/local
@@ -206,8 +206,10 @@ COPY . .
 RUN git clone --depth 1 --branch "$(cat MLX_VERSION)" https://github.com/ml-explore/mlx-c.git build/_deps/mlx-c-src
 ARG GOFLAGS="'-ldflags=-w -s'"
 ENV CGO_ENABLED=1
-ENV CGO_CFLAGS="-I/go/src/github.com/ollama/ollama/build/_deps/mlx-c-src"
+ARG CGO_CFLAGS
 ARG CGO_CXXFLAGS
+ENV CGO_CFLAGS="${CGO_CFLAGS} -I/go/src/github.com/ollama/ollama/build/_deps/mlx-c-src"
+ENV CGO_CXXFLAGS="${CGO_CXXFLAGS}"
 RUN --mount=type=cache,target=/root/.cache/go-build \
     go build -tags mlx -trimpath -buildmode=pie -o /bin/ollama .
 

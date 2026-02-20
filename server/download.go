@@ -25,6 +25,8 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/types/model"
 )
 
 const maxRetries = 6
@@ -457,7 +459,7 @@ func (b *blobDownload) Wait(ctx context.Context, fn func(api.ProgressResponse)) 
 }
 
 type downloadOpts struct {
-	mp      ModelPath
+	n       model.Name
 	digest  string
 	regOpts *registryOptions
 	fn      func(api.ProgressResponse)
@@ -469,7 +471,7 @@ var hfDigestMap sync.Map // map[string]string
 // downloadBlob downloads a blob from the registry and stores it in the blobs directory
 func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ error) {
 	if opts.digest == "" {
-		return false, fmt.Errorf(("%s: %s"), opts.mp.GetNamespaceRepository(), "digest is empty")
+		return false, fmt.Errorf(("%s: %s"), opts.n.DisplayNamespaceModel(), "digest is empty")
 	}
 
 	// Check if this is a HuggingFace download (digest starts with "hf:")
@@ -477,7 +479,7 @@ func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ erro
 		return downloadHuggingFaceBlob(ctx, opts)
 	}
 
-	fp, err := GetBlobsPath(opts.digest)
+	fp, err := manifest.BlobsPath(opts.digest)
 	if err != nil {
 		return false, err
 	}
@@ -501,8 +503,8 @@ func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ erro
 	data, ok := blobDownloadManager.LoadOrStore(opts.digest, &blobDownload{Name: fp, Digest: opts.digest})
 	download := data.(*blobDownload)
 	if !ok {
-		requestURL := opts.mp.BaseURL()
-		requestURL = requestURL.JoinPath("v2", opts.mp.GetNamespaceRepository(), "blobs", opts.digest)
+		requestURL := opts.n.BaseURL()
+		requestURL = requestURL.JoinPath("v2", opts.n.DisplayNamespaceModel(), "blobs", opts.digest)
 		if err := download.Prepare(ctx, requestURL, opts.regOpts); err != nil {
 			blobDownloadManager.Delete(opts.digest)
 			return false, err

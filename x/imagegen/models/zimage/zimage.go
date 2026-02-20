@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/cache"
+	"github.com/ollama/ollama/x/imagegen/manifest"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/tokenizer"
 	"github.com/ollama/ollama/x/imagegen/vae"
@@ -18,14 +18,14 @@ import (
 // GenerateConfig holds all options for image generation.
 type GenerateConfig struct {
 	Prompt         string
-	NegativePrompt string                // Empty = no CFG
-	CFGScale       float32               // Only used if NegativePrompt is set (default: 4.0)
-	Width          int32                 // Image width (default: 1024)
-	Height         int32                 // Image height (default: 1024)
-	Steps          int                   // Denoising steps (default: 9 for turbo)
-	Seed           int64                 // Random seed
+	NegativePrompt string                     // Empty = no CFG
+	CFGScale       float32                    // Only used if NegativePrompt is set (default: 4.0)
+	Width          int32                      // Image width (default: 1024)
+	Height         int32                      // Image height (default: 1024)
+	Steps          int                        // Denoising steps (default: 9 for turbo)
+	Seed           int64                      // Random seed
 	Progress       func(step, totalSteps int) // Optional progress callback
-	CapturePath    string                // GPU capture path (debug)
+	CapturePath    string                     // GPU capture path (debug)
 
 	// TeaCache options (timestep embedding aware caching)
 	TeaCache          bool    // TeaCache is always enabled for faster inference
@@ -58,7 +58,7 @@ func (m *Model) Load(modelName string) error {
 	m.ModelName = modelName
 
 	// Load manifest
-	manifest, err := imagegen.LoadManifest(modelName)
+	manifest, err := manifest.LoadManifest(modelName)
 	if err != nil {
 		return fmt.Errorf("load manifest: %w", err)
 	}

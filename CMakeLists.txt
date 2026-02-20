@@ -186,7 +186,7 @@ option(MLX_ENGINE "Enable MLX backend" OFF)
 
 if(MLX_ENGINE)
     message(STATUS "Setting up MLX (this takes a while...)")
-    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/x/ml/backend/mlx)
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/x/imagegen/mlx)
 
     # Find CUDA toolkit if MLX is built with CUDA support
     find_package(CUDAToolkit)

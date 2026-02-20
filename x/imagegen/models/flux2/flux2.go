@@ -12,7 +12,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/ollama/ollama/x/imagegen"
+	"github.com/ollama/ollama/x/imagegen/manifest"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/models/qwen3"
 	"github.com/ollama/ollama/x/imagegen/tokenizer"
@@ -61,7 +61,7 @@ func (m *Model) Load(modelName string) error {
 	m.ModelName = modelName
 
 	// Load manifest
-	manifest, err := imagegen.LoadManifest(modelName)
+	manifest, err := manifest.LoadManifest(modelName)
 	if err != nil {
 		return fmt.Errorf("load manifest: %w", err)
 	}
@@ -174,6 +174,20 @@ func (m *Model) GenerateImage(ctx context.Context, prompt string, width, height 
 		Steps:    steps,
 		Seed:     seed,
 		Progress: progress,
+	})
+}
+
+// GenerateImageWithInputs implements runner.ImageEditModel interface.
+// It generates an image conditioned on the provided input images for image editing.
+func (m *Model) GenerateImageWithInputs(ctx context.Context, prompt string, width, height int32, steps int, seed int64, inputImages []image.Image, progress func(step, total int)) (*mlx.Array, error) {
+	return m.GenerateFromConfig(ctx, &GenerateConfig{
+		Prompt:      prompt,
+		Width:       width,
+		Height:      height,
+		Steps:       steps,
+		Seed:        seed,
+		InputImages: inputImages,
+		Progress:    progress,
 	})
 }
 

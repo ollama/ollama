@@ -54,6 +54,8 @@ func TestBuiltInParsersStillWork(t *testing.T) {
 		name string
 	}{
 		{"passthrough"},
+		{"qwen3"},
+		{"qwen3-thinking"},
 		{"qwen3-coder"},
 		{"harmony"},
 	}

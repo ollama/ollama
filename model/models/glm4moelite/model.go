@@ -1,6 +1,7 @@
 package glm4moelite
 
 import (
+	"errors"
 	"math"
 
 	"github.com/ollama/ollama/fs"
@@ -9,7 +10,10 @@ import (
 	"github.com/ollama/ollama/ml/nn"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
+	"github.com/ollama/ollama/tokenizer"
 )
+
+var ErrOldModelFormat = errors.New("this model uses a weight format that is no longer supported; please re-download it")
 
 type Options struct {
 	numExpertsUsed      int
@@ -47,7 +51,9 @@ type Attention struct {
 
 	KVA     *nn.Linear  `gguf:"attn_kv_a_mqa"`
 	KVANorm *nn.RMSNorm `gguf:"attn_kv_a_norm"`
-	KVB     *nn.Linear  `gguf:"attn_kv_b"`
+
+	KB *nn.Linear `gguf:"attn_k_b"`
+	VB *nn.Linear `gguf:"attn_v_b"`
 
 	Output *nn.Linear `gguf:"attn_out,alt:attn_output"`
 }
@@ -78,15 +84,16 @@ func (attn *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor
 	qRot := opts.applyRotaryPositionEmbeddings(ctx, queryChunks[1], positions)
 	kRot = opts.applyRotaryPositionEmbeddings(ctx, kRot, positions)
 	kPass = attn.KVANorm.Forward(ctx, kPass, opts.eps)
-	kPass = attn.KVB.Forward(ctx, kPass)
 
-	kv := kPass.Reshape(ctx, kPass.Dim(0)/opts.numKVHeads, opts.numKVHeads, seqLength)
-	kvChunks := kv.ChunkSections(ctx, 0, opts.kqNopeHeadDim, opts.vHeadDim)
+	// MLA absorption: absorb K projection into query
+	qPass := queryChunks[0].Permute(ctx, 0, 2, 1, 3)
+	qPassAbsorb := attn.KB.Forward(ctx, qPass).Permute(ctx, 0, 2, 1, 3)
+	query = qRot.Concat(ctx, qPassAbsorb, 0)
 
-	kRot = kRot.Repeat(ctx, 1, queryChunks[0].Dim(1))
-	query = qRot.Concat(ctx, queryChunks[0], 0)
-	key := kRot.Concat(ctx, kvChunks[0], 0)
-	attention := nn.Attention(ctx, query, key, kvChunks[1], opts.kqScale, cache)
+	kPass = kPass.Reshape(ctx, opts.kvLoraRank, 1, seqLength)
+	key := kRot.Concat(ctx, kPass, 0)
+
+	attention := nn.AttentionWithVMLA(ctx, query, key, kPass, nil, attn.VB.Weight, opts.kqScale, cache)
 
 	attention = attention.Reshape(ctx, attention.Dim(0)*attention.Dim(1), seqLength)
 	return attn.Output.Forward(ctx, attention)
@@ -192,7 +199,7 @@ func (t *Layer) Forward(ctx ml.Context, hiddenStates, positions, outputs ml.Tens
 
 type Model struct {
 	model.Base
-	model.BytePairEncoding
+	tokenizer.Tokenizer
 
 	TokenEmbedding *nn.Embedding `gguf:"token_embd"`
 	Layers         []Layer       `gguf:"blk"`
@@ -217,7 +224,6 @@ func New(c fs.Config) (model.Model, error) {
 
 	keyLength := int(c.Uint("attention.key_length"))
 	valueLength := int(c.Uint("attention.value_length"))
-
 	kqScale := 1.0 / math.Sqrt(float64(keyLength))
 
 	var pre []string
@@ -231,12 +237,12 @@ func New(c fs.Config) (model.Model, error) {
 	}
 
 	m := Model{
-		BytePairEncoding: model.NewBytePairEncoding(
-			&model.Vocabulary{
+		Tokenizer: tokenizer.NewBytePairEncoding(
+			&tokenizer.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Types:  c.Ints("tokenizer.ggml.token_type"),
 				Merges: c.Strings("tokenizer.ggml.merges"),
-				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
+				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", false),
 				BOS:    []int32{int32(c.Uint("tokenizer.ggml.bos_token_id"))},
 				AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
 				EOS: append(
@@ -277,6 +283,15 @@ func New(c fs.Config) (model.Model, error) {
 
 func (m Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
 	return m.applyRotaryPositionEmbeddings(ctx, key, shift), nil
+}
+
+func (m *Model) Validate() error {
+	for _, layer := range m.Layers {
+		if layer.Attention != nil && (layer.Attention.KB == nil || layer.Attention.VB == nil) {
+			return ErrOldModelFormat
+		}
+	}
+	return nil
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {

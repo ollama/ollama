@@ -10,6 +10,8 @@ func TestModelfileConfig(t *testing.T) {
 		Template: "{{ .Prompt }}",
 		System:   "You are a helpful assistant.",
 		License:  "MIT",
+		Parser:   "qwen3",
+		Renderer: "qwen3",
 	}
 
 	if config.Template != "{{ .Prompt }}" {
@@ -20,6 +22,12 @@ func TestModelfileConfig(t *testing.T) {
 	}
 	if config.License != "MIT" {
 		t.Errorf("License = %q, want %q", config.License, "MIT")
+	}
+	if config.Parser != "qwen3" {
+		t.Errorf("Parser = %q, want %q", config.Parser, "qwen3")
+	}
+	if config.Renderer != "qwen3" {
+		t.Errorf("Renderer = %q, want %q", config.Renderer, "qwen3")
 	}
 }
 
@@ -34,6 +42,12 @@ func TestModelfileConfig_Empty(t *testing.T) {
 	}
 	if config.License != "" {
 		t.Errorf("License should be empty, got %q", config.License)
+	}
+	if config.Parser != "" {
+		t.Errorf("Parser should be empty, got %q", config.Parser)
+	}
+	if config.Renderer != "" {
+		t.Errorf("Renderer should be empty, got %q", config.Renderer)
 	}
 }
 
@@ -52,6 +66,12 @@ func TestModelfileConfig_PartialFields(t *testing.T) {
 	}
 	if config.License != "" {
 		t.Error("License should be empty")
+	}
+	if config.Parser != "" {
+		t.Error("Parser should be empty")
+	}
+	if config.Renderer != "" {
+		t.Error("Renderer should be empty")
 	}
 }
 
@@ -98,6 +118,8 @@ func TestCreateOptions(t *testing.T) {
 			Template: "test",
 			System:   "system",
 			License:  "MIT",
+			Parser:   "qwen3-thinking",
+			Renderer: "qwen3",
 		},
 	}
 
@@ -115,6 +137,92 @@ func TestCreateOptions(t *testing.T) {
 	}
 	if opts.Modelfile.Template != "test" {
 		t.Errorf("Modelfile.Template = %q, want %q", opts.Modelfile.Template, "test")
+	}
+	if opts.Modelfile.Parser != "qwen3-thinking" {
+		t.Errorf("Modelfile.Parser = %q, want %q", opts.Modelfile.Parser, "qwen3-thinking")
+	}
+	if opts.Modelfile.Renderer != "qwen3" {
+		t.Errorf("Modelfile.Renderer = %q, want %q", opts.Modelfile.Renderer, "qwen3")
+	}
+}
+
+func TestResolveParserName(t *testing.T) {
+	tests := []struct {
+		name     string
+		mf       *ModelfileConfig
+		inferred string
+		want     string
+	}{
+		{
+			name:     "nil modelfile uses inferred",
+			mf:       nil,
+			inferred: "qwen3",
+			want:     "qwen3",
+		},
+		{
+			name: "empty parser uses inferred",
+			mf: &ModelfileConfig{
+				Parser: "",
+			},
+			inferred: "qwen3",
+			want:     "qwen3",
+		},
+		{
+			name: "explicit parser overrides inferred",
+			mf: &ModelfileConfig{
+				Parser: "qwen3-thinking",
+			},
+			inferred: "qwen3",
+			want:     "qwen3-thinking",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resolveParserName(tt.mf, tt.inferred); got != tt.want {
+				t.Fatalf("resolveParserName() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveRendererName(t *testing.T) {
+	tests := []struct {
+		name     string
+		mf       *ModelfileConfig
+		inferred string
+		want     string
+	}{
+		{
+			name:     "nil modelfile uses inferred",
+			mf:       nil,
+			inferred: "qwen3-coder",
+			want:     "qwen3-coder",
+		},
+		{
+			name: "empty renderer uses inferred",
+			mf: &ModelfileConfig{
+				Renderer: "",
+			},
+			inferred: "qwen3-coder",
+			want:     "qwen3-coder",
+		},
+		{
+			name: "explicit renderer overrides inferred",
+			mf: &ModelfileConfig{
+				Renderer: "qwen3",
+			},
+			inferred: "qwen3-coder",
+			want:     "qwen3",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resolveRendererName(tt.mf, tt.inferred); got != tt.want {
+				t.Fatalf("resolveRendererName() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

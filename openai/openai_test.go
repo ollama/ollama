@@ -448,3 +448,86 @@ func TestFromChatRequest_TopLogprobsRange(t *testing.T) {
 		})
 	}
 }
+
+func TestFromImageEditRequest_Basic(t *testing.T) {
+	req := ImageEditRequest{
+		Model:  "test-model",
+		Prompt: "make it blue",
+		Image:  prefix + image,
+	}
+
+	result, err := FromImageEditRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Model != "test-model" {
+		t.Errorf("expected model 'test-model', got %q", result.Model)
+	}
+
+	if result.Prompt != "make it blue" {
+		t.Errorf("expected prompt 'make it blue', got %q", result.Prompt)
+	}
+
+	if len(result.Images) != 1 {
+		t.Fatalf("expected 1 image, got %d", len(result.Images))
+	}
+}
+
+func TestFromImageEditRequest_WithSize(t *testing.T) {
+	req := ImageEditRequest{
+		Model:  "test-model",
+		Prompt: "make it blue",
+		Image:  prefix + image,
+		Size:   "512x768",
+	}
+
+	result, err := FromImageEditRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Width != 512 {
+		t.Errorf("expected width 512, got %d", result.Width)
+	}
+
+	if result.Height != 768 {
+		t.Errorf("expected height 768, got %d", result.Height)
+	}
+}
+
+func TestFromImageEditRequest_WithSeed(t *testing.T) {
+	seed := int64(12345)
+	req := ImageEditRequest{
+		Model:  "test-model",
+		Prompt: "make it blue",
+		Image:  prefix + image,
+		Seed:   &seed,
+	}
+
+	result, err := FromImageEditRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Options == nil {
+		t.Fatal("expected options to be set")
+	}
+
+	if result.Options["seed"] != seed {
+		t.Errorf("expected seed %d, got %v", seed, result.Options["seed"])
+	}
+}
+
+func TestFromImageEditRequest_InvalidImage(t *testing.T) {
+	req := ImageEditRequest{
+		Model:  "test-model",
+		Prompt: "make it blue",
+		Image:  "not-valid-base64",
+	}
+
+	_, err := FromImageEditRequest(req)
+	if err == nil {
+		t.Error("expected error for invalid image")
+	}
+}
