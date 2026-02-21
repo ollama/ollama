@@ -171,6 +171,45 @@ func TestStore(t *testing.T) {
 	})
 }
 
+func TestStore_ClearChatHistory(t *testing.T) {
+	s := &Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+	defer s.Close()
+
+	chat1 := NewChat("chat-clear-1")
+	chat1.Title = "First"
+	chat1.Messages = append(chat1.Messages, NewMessage("user", "Hello", nil))
+	chat2 := NewChat("chat-clear-2")
+	chat2.Title = "Second"
+	chat2.Messages = append(chat2.Messages, NewMessage("user", "Hi", nil))
+
+	if err := s.SetChat(*chat1); err != nil {
+		t.Fatalf("SetChat chat1: %v", err)
+	}
+	if err := s.SetChat(*chat2); err != nil {
+		t.Fatalf("SetChat chat2: %v", err)
+	}
+
+	chats, err := s.Chats()
+	if err != nil {
+		t.Fatalf("Chats: %v", err)
+	}
+	if len(chats) != 2 {
+		t.Errorf("expected 2 chats before ClearChatHistory, got %d", len(chats))
+	}
+
+	if err := s.ClearChatHistory(); err != nil {
+		t.Fatalf("ClearChatHistory: %v", err)
+	}
+
+	chats, err = s.Chats()
+	if err != nil {
+		t.Fatalf("Chats after clear: %v", err)
+	}
+	if len(chats) != 0 {
+		t.Errorf("expected 0 chats after ClearChatHistory, got %d", len(chats))
+	}
+}
+
 // setupTestStore creates a temporary store for testing
 func setupTestStore(t *testing.T) (*Store, func()) {
 	t.Helper()
