@@ -4,6 +4,10 @@ include(FetchContent)
 file(READ "${CMAKE_SOURCE_DIR}/MLX_VERSION" MLX_C_GIT_TAG)
 string(STRIP "${MLX_C_GIT_TAG}" MLX_C_GIT_TAG)
 
+# Read MLX core version from top-level file
+file(READ "${CMAKE_SOURCE_DIR}/MLX_CORE_VERSION" MLX_GIT_TAG)
+string(STRIP "${MLX_GIT_TAG}" MLX_GIT_TAG)
+
 set(MLX_C_BUILD_EXAMPLES OFF)
 
 set(MLX_BUILD_GGUF OFF)
@@ -51,10 +55,19 @@ elseif(MLX_CUDA_ARCHITECTURES)
     message(WARNING "MLX_CUDA_ARCHITECTURES specified but CUDA compiler not found, CUDA backend will be disabled")
 endif()
 
+# Pre-declare mlx so our pinned version takes precedence over the one
+# hardcoded in mlx-c's CMakeLists.txt (first FetchContent_Declare wins).
 FetchContent_Declare(
-  mlx-c
-  GIT_REPOSITORY "https://github.com/ml-explore/mlx-c.git"
-  GIT_TAG ${MLX_C_GIT_TAG})
+    mlx
+    GIT_REPOSITORY "https://github.com/ml-explore/mlx.git"
+    GIT_TAG ${MLX_GIT_TAG}
+)
+
+FetchContent_Declare(
+    mlx-c
+    GIT_REPOSITORY "https://github.com/ml-explore/mlx-c.git"
+    GIT_TAG ${MLX_C_GIT_TAG}
+)
 FetchContent_MakeAvailable(mlx-c)
 
 set_target_output_directory(mlx)

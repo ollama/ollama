@@ -228,11 +228,122 @@ function vulkan {
     }
 }
 
+function mlx {
+    mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
+    $cudaMajorVer="13"
+    if ($script:ARCH -ne "arm64") {
+        if ("$script:CUDA_DIRS".Contains("v$cudaMajorVer")) {
+            foreach ($d in $Script:CUDA_DIRS){
+                if ($d.FullName.Contains("v$cudaMajorVer")) {
+                    if (test-path -literalpath (join-path -path $d -childpath "nvcc.exe" ) ) {
+                        $cuda=($d.FullName|split-path -parent)
+                        break
+                    }
+                }
+            }
+
+            # Check for cuDNN - required for MLX CUDA backend
+            # Supports two layouts:
+            # 1. CI/zip extract: CUDNN\include\cudnn.h, lib\x64\, bin\x64\
+            # 2. Official installer: CUDNN\v*\include\{cuda-ver}\cudnn.h, lib\{cuda-ver}\x64\, bin\{cuda-ver}\
+            if ($env:CUDNN_INCLUDE_PATH -and $env:CUDNN_LIBRARY_PATH) {
+                write-host "Using cuDNN from environment: $env:CUDNN_INCLUDE_PATH"
+            } elseif (Test-Path "C:\Program Files\NVIDIA\CUDNN\include\cudnn.h") {
+                # CI/zip layout (flat)
+                $cudnnRoot = "C:\Program Files\NVIDIA\CUDNN"
+                $env:CUDNN_ROOT_DIR = $cudnnRoot
+                $env:CUDNN_INCLUDE_PATH = "$cudnnRoot\include"
+                $env:CUDNN_LIBRARY_PATH = "$cudnnRoot\lib\x64"
+                write-host "Found cuDNN at $cudnnRoot (flat layout)"
+            } else {
+                # Official installer layout (versioned)
+                $cudnnRoot = $null
+                $resolved = Resolve-Path -Path "C:\Program Files\NVIDIA\CUDNN\v*" -ErrorAction SilentlyContinue | Sort-Object -Descending | Select-Object -First 1
+                if ($resolved -and (Test-Path "$($resolved.Path)\include\$cudaMajorVer.0\cudnn.h")) {
+                    $cudnnRoot = $resolved.Path
+                    $env:CUDNN_ROOT_DIR = $cudnnRoot
+                    $env:CUDNN_INCLUDE_PATH = "$cudnnRoot\include\$cudaMajorVer.0"
+                    $env:CUDNN_LIBRARY_PATH = "$cudnnRoot\lib\$cudaMajorVer.0\x64"
+                    write-host "Found cuDNN at $cudnnRoot (official installer, CUDA $cudaMajorVer.0)"
+                } else {
+                    write-host "cuDNN not found - set CUDNN_INCLUDE_PATH and CUDNN_LIBRARY_PATH environment variables"
+                    write-host "Skipping MLX build"
+                    return
+                }
+            }
+
+            write-host "Building MLX CUDA v$cudaMajorVer backend libraries $cuda"
+            $env:CUDAToolkit_ROOT=$cuda
+            & cmake -B build\mlx_cuda_v$cudaMajorVer --preset "MLX CUDA $cudaMajorVer" -T cuda="$cuda" --install-prefix "$script:DIST_DIR"
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --build build\mlx_cuda_v$cudaMajorVer --target mlx --target mlxc --config Release --parallel $script:JOBS
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --install build\mlx_cuda_v$cudaMajorVer --component "MLX" --strip
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        } else {
+            write-host "CUDA v$cudaMajorVer not detected, skipping MLX build"
+        }
+    }
+}
+
 function ollama {
     mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
     write-host "Building ollama CLI"
-    & go build -trimpath -ldflags "-s -w -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" .
+
+    # Check if MLX was built and set up CGO flags for mlx tag
+    # Check multiple locations for mlx-c headers:
+    # 1. From a local MLX build (build/mlx_cuda_*/_deps/mlx-c-src)
+    # 2. From CI-provided headers (build/_deps/mlx-c-src)
+    # 3. From OLLAMA_BUILD_MLX env var with CGO_CFLAGS already set
+    $mlxBuildDirs = Get-ChildItem -Path "build" -Directory -Filter "mlx_cuda_*" -ErrorAction SilentlyContinue
+    $enableMlx = $false
+    $savedCgoFlags = $env:CGO_CFLAGS
+
+    # Check for OLLAMA_BUILD_MLX environment variable (set by CI)
+    if ($env:OLLAMA_BUILD_MLX -eq "1") {
+        $mlxcIncludeDir = "build\_deps\mlx-c-src"
+        if (Test-Path "$mlxcIncludeDir\mlx\c\mlx.h") {
+            write-host "MLX headers detected at $mlxcIncludeDir (via OLLAMA_BUILD_MLX), enabling mlx tag"
+            $enableMlx = $true
+            # CGO_CFLAGS should already be set by CI, but set it if not
+            if (-not $env:CGO_CFLAGS) {
+                $env:CGO_CFLAGS = "-I$((Get-Location).Path)\$mlxcIncludeDir"
+                write-host "CGO_CFLAGS=$env:CGO_CFLAGS"
+            }
+        } else {
+            write-host "OLLAMA_BUILD_MLX set but mlx-c headers not found at $mlxcIncludeDir"
+        }
+    } elseif ($mlxBuildDirs) {
+        $mlxBuildDir = $mlxBuildDirs[0].FullName
+        $mlxcIncludeDir = "$mlxBuildDir\_deps\mlx-c-src"
+        if (Test-Path "$mlxcIncludeDir\mlx\c\mlx.h") {
+            write-host "MLX build detected at $mlxBuildDir, enabling mlx tag"
+            $enableMlx = $true
+            # Set CGO_CFLAGS to find mlx-c headers
+            $env:CGO_CFLAGS = "-I$mlxcIncludeDir"
+            write-host "CGO_CFLAGS=$env:CGO_CFLAGS"
+        } else {
+            write-host "MLX build directory found but mlx-c headers not found at $mlxcIncludeDir"
+        }
+    }
+
+    $buildArgs = @("build")
+    if ($enableMlx) {
+        $buildArgs += "-tags"
+        $buildArgs += "mlx"
+    }
+    $buildArgs += "-trimpath"
+    $buildArgs += "-ldflags"
+    $buildArgs += "-s -w -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release"
+    $buildArgs += "."
+
+    write-host "Running: go $($buildArgs -join ' ')"
+    & go @buildArgs
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+
+    # Restore CGO_CFLAGS
+    $env:CGO_CFLAGS = $savedCgoFlags
+
     cp .\ollama.exe "${script:DIST_DIR}\"
 }
 
@@ -377,6 +488,7 @@ try {
         cuda13
         rocm
         vulkan
+        mlx
         ollama
         app
         deps
