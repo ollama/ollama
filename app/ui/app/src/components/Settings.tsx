@@ -26,6 +26,7 @@ import {
   type CloudStatusResponse,
   updateCloudSetting,
   updateSettings,
+  getInferenceCompute,
 } from "@/api";
 
 function AnimatedDots() {
@@ -76,6 +77,13 @@ export default function Settings() {
   });
 
   const settings = settingsData?.settings || null;
+
+  const { data: inferenceComputeResponse } = useQuery({
+    queryKey: ["inferenceCompute"],
+    queryFn: getInferenceCompute,
+  });
+
+  const defaultContextLength = inferenceComputeResponse?.defaultContextLength;
 
   const updateSettingsMutation = useMutation({
     mutationFn: updateSettings,
@@ -204,7 +212,7 @@ export default function Settings() {
         Models: "",
         Agent: false,
         Tools: false,
-        ContextLength: 4096,
+        ContextLength: 0,
       });
       updateSettingsMutation.mutate(defaultSettings);
     }
@@ -507,13 +515,11 @@ export default function Settings() {
                     </Description>
                     <div className="mt-3">
                       <Slider
-                        value={(() => {
-                          // Otherwise use the settings value
-                          return settings.ContextLength || 4096;
-                        })()}
+                        value={settings.ContextLength || defaultContextLength || 0}
                         onChange={(value) => {
                           handleChange("ContextLength", value);
                         }}
+                        disabled={!defaultContextLength}
                         options={[
                           { value: 4096, label: "4k" },
                           { value: 8192, label: "8k" },

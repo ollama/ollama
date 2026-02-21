@@ -6,10 +6,11 @@ export interface SliderProps {
   value?: number;
   onChange?: (value: number) => void;
   className?: string;
+  disabled?: boolean;
 }
 
 const Slider = React.forwardRef<HTMLDivElement, SliderProps>(
-  ({ label, options, value = 0, onChange }, ref) => {
+  ({ label, options, value = 0, onChange, disabled = false }, ref) => {
     const [selectedValue, setSelectedValue] = React.useState(value);
     const [isDragging, setIsDragging] = React.useState(false);
     const containerRef = React.useRef<HTMLDivElement>(null);
@@ -20,6 +21,7 @@ const Slider = React.forwardRef<HTMLDivElement, SliderProps>(
     }, [value]);
 
     const handleClick = (optionValue: number) => {
+      if (disabled) return;
       setSelectedValue(optionValue);
       onChange?.(optionValue);
     };
@@ -39,6 +41,7 @@ const Slider = React.forwardRef<HTMLDivElement, SliderProps>(
     };
 
     const handleMouseDown = (e: React.MouseEvent) => {
+      if (disabled) return;
       setIsDragging(true);
       e.preventDefault();
     };
@@ -77,7 +80,7 @@ const Slider = React.forwardRef<HTMLDivElement, SliderProps>(
     }
 
     return (
-      <div className="space-y-2" ref={ref}>
+      <div className={`space-y-2 ${disabled ? "opacity-50" : ""}`} ref={ref}>
         {label && <label className="text-sm font-medium">{label}</label>}
         <div className="relative">
           <div className="absolute top-[9px] left-2 right-2 h-1 bg-neutral-200 dark:bg-neutral-700 pointer-events-none rounded-full" />
@@ -88,10 +91,11 @@ const Slider = React.forwardRef<HTMLDivElement, SliderProps>(
                 <button
                   onClick={() => handleClick(option.value)}
                   onMouseDown={handleMouseDown}
-                  className="relative px-3 py-6 -mx-3 -my-6 z-10 cursor-pointer"
+                  disabled={disabled}
+                  className={`relative px-3 py-6 -mx-3 -my-6 z-10 ${disabled ? "cursor-not-allowed" : "cursor-pointer"}`}
                 >
                   <div className="relative w-5 h-5 flex items-center justify-center">
-                    {selectedValue === option.value && (
+                    {selectedValue === option.value && !disabled && (
                       <div className="w-4 h-4 bg-white dark:bg-white border border-neutral-400 dark:border-neutral-500 rounded-full cursor-grab active:cursor-grabbing" />
                     )}
                   </div>
