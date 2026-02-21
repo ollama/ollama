@@ -61,7 +61,7 @@ func makeSlices(dims []int, slices ...slice) (starts, stops, strides []C.int) {
 
 func (t *Array) Slice(slices ...slice) *Array {
 	starts, stops, strides := makeSlices(t.Dims(), slices...)
-	out := New("SLICE", t)
+	out := New("SLICE")
 	C.mlx_slice(
 		&out.ctx, t.ctx,
 		unsafe.SliceData(starts), C.size_t(len(starts)),
@@ -74,7 +74,7 @@ func (t *Array) Slice(slices ...slice) *Array {
 
 func (t *Array) SliceUpdate(other *Array, slices ...slice) *Array {
 	starts, stops, strides := makeSlices(t.Dims(), slices...)
-	out := New("SLICE_UPDATE", t, other)
+	out := New("SLICE_UPDATE")
 	C.mlx_slice_update(
 		&out.ctx, t.ctx, other.ctx,
 		unsafe.SliceData(starts), C.size_t(len(starts)),

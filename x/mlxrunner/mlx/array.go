@@ -7,48 +7,29 @@ import "C"
 
 import (
 	"encoding/binary"
+	"fmt"
 	"log/slog"
 	"reflect"
+	"sort"
 	"strings"
-	"time"
 	"unsafe"
 
 	"github.com/ollama/ollama/logutil"
 )
 
-type tensorDesc struct {
-	name    string
-	inputs  []*Array
-	numRefs int
-}
-
-func (d tensorDesc) LogValue() slog.Value {
-	return slog.GroupValue(
-		slog.String("name", d.name),
-		slog.Int("inputs", len(d.inputs)),
-		slog.Int("num_refs", d.numRefs),
-	)
-}
-
 type Array struct {
-	ctx  C.mlx_array
-	desc tensorDesc
+	ctx    C.mlx_array
+	name   string
+	pinned bool
 }
+
+var arrays []*Array
 
 // constructor utilities
 
-func New(name string, inputs ...*Array) *Array {
-	t := &Array{
-		desc: tensorDesc{
-			name:   name,
-			inputs: inputs,
-		},
-	}
-
-	for _, input := range inputs {
-		input.desc.numRefs++
-	}
-	logutil.Trace("New", "t", t)
+func New(name string) *Array {
+	t := &Array{name: name}
+	arrays = append(arrays, t)
 	return t
 }
 
@@ -133,16 +114,49 @@ func FromValues[S ~[]E, E arrayTypes](s S, shape ...int) *Array {
 }
 
 func (t *Array) Set(other *Array) {
-	Free(t.desc.inputs...)
-	other.desc.numRefs++
-	t.desc.inputs = []*Array{other}
 	C.mlx_array_set(&t.ctx, other.ctx)
 }
 
 func (t *Array) Clone() *Array {
-	tt := New(t.desc.name, t.desc.inputs...)
+	tt := New(t.name)
 	C.mlx_array_set(&tt.ctx, t.ctx)
 	return tt
+}
+
+// lifecycle utilities
+
+// Pin marks arrays as in-use so they are retained during Sweep.
+func Pin(s ...*Array) {
+	for _, t := range s {
+		if t != nil {
+			t.pinned = true
+		}
+	}
+}
+
+// Unpin marks arrays as no longer in-use, allowing Sweep to free them.
+func Unpin(s ...*Array) {
+	for _, t := range s {
+		if t != nil {
+			t.pinned = false
+		}
+	}
+}
+
+// Sweep releases all unpinned arrays, primarily intermediate tensors. MLX will truly
+// free them when there are no other references, including dependencies in the graph.
+func Sweep() {
+	n := 0
+	for _, t := range arrays {
+		if t.pinned && t.Valid() {
+			arrays[n] = t
+			n++
+		} else if t.Valid() {
+			C.mlx_array_free(t.ctx)
+			t.ctx.ctx = nil
+		}
+	}
+	arrays = arrays[:n]
 }
 
 // misc. utilities
@@ -159,7 +173,10 @@ func (t *Array) String() string {
 }
 
 func (t *Array) LogValue() slog.Value {
-	attrs := []slog.Attr{slog.Any("", t.desc)}
+	attrs := []slog.Attr{
+		slog.String("name", t.name),
+		slog.Bool("pinned", t.pinned),
+	}
 	if t.Valid() {
 		attrs = append(attrs,
 			slog.Any("dtype", t.DType()),
@@ -238,37 +255,15 @@ func (t Array) Save(name string) error {
 	return nil
 }
 
-func Free(s ...*Array) (n int) {
-	now := time.Now()
-	defer func() {
-		if n > 0 {
-			logutil.Trace("Freed tensors", "num_bytes", PrettyBytes(n), "took", time.Since(now))
-		}
-	}()
+// LogArrays logs all live arrays, sorted by size
+func LogArrays() {
+	sort.Slice(arrays, func(i, j int) bool {
+		return arrays[i].NumBytes() > arrays[j].NumBytes()
+	})
 
-	free := make([]*Array, 0, 8192)
-	fn := func(t *Array) {
-		if t.Valid() {
-			t.desc.numRefs--
-			if t.desc.numRefs <= 0 {
-				free = append(free, t.desc.inputs...)
-				logutil.Trace("Free", "t", t)
-				n += t.NumBytes()
-				C.mlx_array_free(t.ctx)
-				t.ctx.ctx = nil
-			}
-		}
+	for _, t := range arrays {
+		nb := t.NumBytes()
+		logutil.Trace(fmt.Sprintf("tensor %-60s %5s %5s %v", t.name, t.DType(), PrettyBytes(nb), t.Dims()))
 	}
-
-	for _, t := range s {
-		fn(t)
-	}
-
-	for len(free) > 0 {
-		tail := free[len(free)-1]
-		free = free[:len(free)-1]
-		fn(tail)
-	}
-
-	return n
+	logutil.Trace(fmt.Sprintf("tensors total: %d, size: %s", len(arrays), PrettyBytes(ActiveMemory())))
 }

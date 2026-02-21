@@ -40,8 +40,7 @@ func Execute(args []string) error {
 	flagSet.Parse(args)
 
 	runner := Runner{
-		Requests:     make(chan Request),
-		CacheEntries: make(map[int32]*CacheEntry),
+		Requests: make(chan Request),
 	}
 
 	if err := runner.Load(modelName); err != nil {

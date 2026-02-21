@@ -58,10 +58,10 @@ type Response struct {
 }
 
 type Runner struct {
-	Model        base.Model
-	Tokenizer    *tokenizer.Tokenizer
-	Requests     chan Request
-	CacheEntries map[int32]*CacheEntry
+	Model     base.Model
+	Tokenizer *tokenizer.Tokenizer
+	Requests  chan Request
+	cache     *CacheEntry
 }
 
 func (r *Runner) Load(modelName string) error {

@@ -401,9 +401,6 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	if m.NormScaled == nil {
 		return fmt.Errorf("missing precomputed final norm weight")
 	}
-	collected := mlx.Collect(m)
-	mlx.Eval(collected...)
-
 	return nil
 }
 

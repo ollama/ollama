@@ -702,9 +702,6 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		}
 	}
 
-	collected := mlx.Collect(m)
-	mlx.Eval(collected...)
-
 	return nil
 }
 
