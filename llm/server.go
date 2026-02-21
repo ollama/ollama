@@ -966,6 +966,8 @@ func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMe
 						lastUsedGPU = i
 					}
 
+					gl[i].FreeMemory = min(gl[i].FreeMemory, envconfig.MaxVRAM())
+
 					reserved := uint64(float32(gl[i].FreeMemory)*backoff) + gl[i].MinimumMemory() + envconfig.GpuOverhead() + memory.GPUs[j].Graph
 					if gl[i].FreeMemory > reserved {
 						gl[i].FreeMemory -= reserved
