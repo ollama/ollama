@@ -1,5 +1,7 @@
 #include "common.cuh"
 
+#define MMVF_MAX_BATCH_SIZE 8 // Max. batch size for which to use MMVF kernels.
+
 void ggml_cuda_mul_mat_vec_f(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * ids, ggml_tensor * dst,
     const ggml_cuda_mm_fusion_args_host * fusion = nullptr);
 

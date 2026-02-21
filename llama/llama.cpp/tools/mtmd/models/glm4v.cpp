@@ -2,7 +2,6 @@
 
 ggml_cgraph * clip_graph_glm4v::build() {
     GGML_ASSERT(model.patch_bias != nullptr);
-    GGML_ASSERT(model.position_embeddings != nullptr);
     GGML_ASSERT(model.class_embedding == nullptr);
 
     const int batch_size = 1;
@@ -45,19 +44,22 @@ ggml_cgraph * clip_graph_glm4v::build() {
     // pos-conv norm
     inp = build_norm(inp, model.norm_embd_w, model.norm_embd_b, norm_t, eps, -1);
 
-    // calculate absolute position embedding and apply
-    ggml_tensor * learned_pos_embd = resize_position_embeddings(GGML_SCALE_MODE_BICUBIC);
-    learned_pos_embd = ggml_cont_4d(
-        ctx0, learned_pos_embd,
-        n_embd * 2, n_patches_x / 2, n_patches_y, batch_size);
-    learned_pos_embd = ggml_reshape_4d(
-        ctx0, learned_pos_embd,
-        n_embd * 2, n_patches_x / 2, 2, batch_size * (n_patches_y / 2));
-    learned_pos_embd = ggml_permute(ctx0, learned_pos_embd, 0, 2, 1, 3);
-    learned_pos_embd = ggml_cont_3d(
-        ctx0, learned_pos_embd,
-        n_embd, n_patches_x * n_patches_y, batch_size);
-    cb(learned_pos_embd, "learned_pos_embd", -1);
+    ggml_tensor * learned_pos_embd = nullptr;
+    // Note: GLM-OCR does not have learned position embeddings
+    if (model.position_embeddings != nullptr) {
+        learned_pos_embd = resize_position_embeddings(GGML_SCALE_MODE_BICUBIC);
+        learned_pos_embd = ggml_cont_4d(
+            ctx0, learned_pos_embd,
+            n_embd * 2, n_patches_x / 2, n_patches_y, batch_size);
+        learned_pos_embd = ggml_reshape_4d(
+            ctx0, learned_pos_embd,
+            n_embd * 2, n_patches_x / 2, 2, batch_size * (n_patches_y / 2));
+        learned_pos_embd = ggml_permute(ctx0, learned_pos_embd, 0, 2, 1, 3);
+        learned_pos_embd = ggml_cont_3d(
+            ctx0, learned_pos_embd,
+            n_embd, n_patches_x * n_patches_y, batch_size);
+        cb(learned_pos_embd, "learned_pos_embd", -1);
+    }
 
     auto add_pos = [&](ggml_tensor * cur, const clip_layer &) {
         return ggml_rope_multi(

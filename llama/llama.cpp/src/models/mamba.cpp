@@ -1,7 +1,6 @@
 #include "models.h"
 
-
-llm_build_mamba::llm_build_mamba(const llama_model & model, const llm_graph_params & params) : llm_graph_context_mamba(params) {
+llm_build_mamba::llm_build_mamba(const llama_model & model, const llm_graph_params & params) : llm_build_mamba_base(params) {
     ggml_tensor * cur;
     ggml_tensor * inpL;
 

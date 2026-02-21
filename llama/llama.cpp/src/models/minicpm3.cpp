@@ -9,6 +9,7 @@ llm_build_minicpm3::llm_build_minicpm3(const llama_model & model, const llm_grap
 
     const uint32_t n_embd_head_qk_rope = hparams.n_rot;
     const uint32_t n_embd_head_qk_nope = hparams.n_embd_head_k - hparams.n_rot;
+
     const uint32_t kv_lora_rank = hparams.n_lora_kv;
 
     ggml_tensor * cur;

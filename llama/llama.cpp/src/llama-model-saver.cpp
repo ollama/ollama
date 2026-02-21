@@ -146,6 +146,9 @@ void llama_model_saver::add_kv_from_model() {
     add_kv(LLM_KV_VOCAB_SIZE,                        vocab.n_tokens());
     add_kv(LLM_KV_CONTEXT_LENGTH,                    hparams.n_ctx_train);
     add_kv(LLM_KV_EMBEDDING_LENGTH,                  hparams.n_embd);
+    if (hparams.n_embd_out_impl > 0) {
+        add_kv(LLM_KV_EMBEDDING_LENGTH_OUT,          hparams.n_embd_out_impl);
+    }
     add_kv(LLM_KV_BLOCK_COUNT,                       hparams.n_layer);
     add_kv(LLM_KV_LEADING_DENSE_BLOCK_COUNT,         hparams.n_layer_dense_lead);
     add_kv(LLM_KV_FEED_FORWARD_LENGTH,               hparams.n_ff_arr, true);
@@ -268,6 +271,7 @@ void llama_model_saver::add_tensors_from_model() {
     add_tensor(model.cls_b);
     add_tensor(model.cls_out);
     add_tensor(model.cls_out_b);
+    add_tensor(model.cls_norm);
 
     for (const struct llama_layer & layer : model.layers) {
         for (size_t i = 0; i < sizeof(layer)/sizeof(struct ggml_tensor *); ++i) {

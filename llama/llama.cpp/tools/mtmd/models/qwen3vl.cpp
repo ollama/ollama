@@ -182,7 +182,9 @@ ggml_cgraph * clip_graph_qwen3vl::build() {
         model.mm_1_w, model.mm_1_b,
         ffn_op_type::FFN_GELU, -1);
 
-    embeddings = ggml_concat(ctx0, embeddings, deepstack_features, 0); // concat along the feature dimension
+    if (deepstack_features) {
+        embeddings = ggml_concat(ctx0, embeddings, deepstack_features, 0);
+    } // concat along the feature dimension
 
     // build the graph
     ggml_build_forward_expand(gf, embeddings);
