@@ -24,8 +24,15 @@ type Function struct {
 }
 
 func findHeaders(directory string) ([]string, error) {
+	// Resolve symlinks so WalkDir can traverse symlinked directories
+	// (e.g., Homebrew's /opt/homebrew/include/mlx/c -> Cellar/...)
+	resolved, err := filepath.EvalSymlinks(directory)
+	if err != nil {
+		return nil, err
+	}
+
 	var headers []string
-	err := filepath.WalkDir(directory, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(resolved, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -385,13 +392,33 @@ func main() {
 		outputImpl = outputHeader[:len(outputHeader)-2] + ".c"
 	}
 
-	// Check if header directory exists
+	// If the provided header directory doesn't exist (e.g., no cmake build),
+	// try to find system-installed mlx-c headers. This allows distribution
+	// builds (Homebrew, MacPorts) to regenerate wrappers against their
+	// installed mlx-c version without requiring cmake.
 	if _, err := os.Stat(headerDir); os.IsNotExist(err) {
-		fmt.Fprintf(os.Stderr, "ERROR: MLX-C headers directory not found at: %s\n\n", headerDir)
-		fmt.Fprintf(os.Stderr, "Please run CMake first to download MLX-C dependencies:\n")
-		fmt.Fprintf(os.Stderr, "  cmake -B build\n\n")
-		fmt.Fprintf(os.Stderr, "The CMake build will download and extract MLX-C headers needed for wrapper generation.\n")
-		os.Exit(1)
+		candidates := []string{
+			"/opt/homebrew/include/mlx/c", // Homebrew on Apple Silicon
+			"/usr/local/include/mlx/c",    // Homebrew on Intel, manual installs
+			"/opt/local/include/mlx/c",    // MacPorts
+		}
+		found := false
+		for _, path := range candidates {
+			if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
+				fmt.Fprintf(os.Stderr, "MLX-C headers not at %s, using system headers: %s\n", headerDir, path)
+				headerDir = path
+				found = true
+				break
+			}
+		}
+		if !found {
+			fmt.Fprintf(os.Stderr, "ERROR: MLX-C headers not found at: %s\n\n", headerDir)
+			fmt.Fprintf(os.Stderr, "Either run CMake to fetch headers:\n")
+			fmt.Fprintf(os.Stderr, "  cmake -B build\n\n")
+			fmt.Fprintf(os.Stderr, "Or install mlx-c:\n")
+			fmt.Fprintf(os.Stderr, "  brew install mlx-c\n")
+			os.Exit(1)
+		}
 	}
 
 	fmt.Fprintf(os.Stderr, "Parsing MLX-C headers from: %s\n", headerDir)
