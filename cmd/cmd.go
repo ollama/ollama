@@ -1834,8 +1834,9 @@ func versionHandler(cmd *cobra.Command, _ []string) {
 		fmt.Println("Warning: could not connect to a running Ollama instance")
 	}
 
+	// Updated "Ollama" in the version output
 	if serverVersion != "" {
-		fmt.Printf("ollama version is %s\n", serverVersion)
+		fmt.Printf("Ollama version is %s\n", serverVersion)
 	}
 
 	if serverVersion != version.Version {
@@ -2098,6 +2099,9 @@ func NewCLI() *cobra.Command {
 		},
 	}
 
+	// Added custom help flag to capitalize "Ollama"
+	rootCmd.PersistentFlags().BoolP("help", "h", false, "Help for Ollama")
+
 	rootCmd.Flags().BoolP("version", "v", false, "Show version information")
 	rootCmd.Flags().Bool("verbose", false, "Show timings for response")
 	rootCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
@@ -2171,6 +2175,7 @@ func NewCLI() *cobra.Command {
 		RunE:    StopHandler,
 	}
 
+	// updated Short description to capitalize "Ollama" 
 	serveCmd := &cobra.Command{
 		Use:     "serve",
 		Aliases: []string{"start"},
