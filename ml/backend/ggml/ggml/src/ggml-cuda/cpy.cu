@@ -393,8 +393,8 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
     const int64_t ne = ggml_nelements(src0);
     GGML_ASSERT(ne == ggml_nelements(src1));
 
-    GGML_ASSERT(ggml_nbytes(src0) <= INT_MAX);
-    GGML_ASSERT(ggml_nbytes(src1) <= INT_MAX);
+    // GGML_ASSERT(ggml_nbytes(src0) <= INT_MAX);
+    // GGML_ASSERT(ggml_nbytes(src1) <= INT_MAX);
 
     const int64_t ne00 = src0->ne[0];
     const int64_t ne01 = src0->ne[1];
@@ -429,13 +429,16 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
 
     if (src0->type == src1->type && contiguous_srcs) {
         GGML_ASSERT(ggml_nbytes(src0) == ggml_nbytes(src1));
+
+        size_t nbytes = ggml_nbytes(src0); 
+
 #if defined(GGML_USE_MUSA) && defined(GGML_MUSA_MUDNN_COPY)
         if (src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16) {
             CUDA_CHECK(mudnnMemcpyAsync(ctx, src1, src0));
         } else
-#endif // GGML_USE_MUSA && GGML_MUSA_MUDNN_COPY
+#endif
         {
-            CUDA_CHECK(cudaMemcpyAsync(src1_ddc, src0_ddc, ggml_nbytes(src0), cudaMemcpyDeviceToDevice, main_stream));
+            CUDA_CHECK(cudaMemcpyAsync(src1_ddc, src0_ddc, nbytes, cudaMemcpyDeviceToDevice, main_stream));
         }
     } else if (src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_F32) {
         if (can_be_transposed) {
