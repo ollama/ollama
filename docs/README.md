@@ -20,4 +20,4 @@
 
 * [Troubleshooting Guide](https://docs.ollama.com/troubleshooting)
 * [FAQ](https://docs.ollama.com/faq#faq)
-* [Development guide](./development.md)
+* [Development guide](https://docs.ollama.com/development)
