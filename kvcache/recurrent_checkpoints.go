@@ -281,11 +281,11 @@ func (c *Recurrent) applyCheckpointRestore(restore checkpointRestore) error {
 
 	slotIdx := ctx.Input().FromInts([]int32{int32(restore.slot)}, 1)
 	for layer, src := range entry.conv {
-		buf := c.convBuffer(ctx, layer)
+		buf := c.convBuffer(layer)
 		ctx.Forward(buf.SetRows(ctx, src, slotIdx))
 	}
 	for layer, src := range entry.recurrent {
-		buf := c.recurrentBuffer(ctx, layer)
+		buf := c.recurrentBuffer(layer)
 		ctx.Forward(buf.SetRows(ctx, src, slotIdx))
 	}
 

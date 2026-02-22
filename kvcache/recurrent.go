@@ -187,6 +187,9 @@ func (c *Recurrent) StartForward(ctx ml.Context, batch input.Batch, reserve bool
 		c.curSlots = c.curSlots[:0]
 		c.curSlotsInput = nil
 		c.curSeqTokens = 0
+		c.reserveCheckpoints = false
+		c.writableEnsured = false
+		c.writableError = nil
 		return nil
 	}
 
@@ -232,11 +235,7 @@ func (c *Recurrent) StartForward(ctx ml.Context, batch input.Batch, reserve bool
 		for i := range nSeqs {
 			c.curSlots = append(c.curSlots, i)
 		}
-		c.setCurSlotsInput(ctx)
-		c.reserveCheckpoints = true
-		c.writableEnsured = false
-		c.writableError = nil
-		c.planCheckpoints(batch)
+		c.finalizeStartForward(ctx, batch, true)
 		return nil
 	}
 
@@ -258,18 +257,11 @@ func (c *Recurrent) StartForward(ctx ml.Context, batch input.Batch, reserve bool
 		c.curSlots = append(c.curSlots, slot)
 	}
 
-	if len(newSlots) == 1 {
-		c.zeroSlot(ctx, newSlots[0])
-	} else if len(newSlots) > 1 {
+	if len(newSlots) > 0 {
 		c.zeroSlots(ctx, newSlots)
 	}
 
-	c.setCurSlotsInput(ctx)
-
-	c.writableEnsured = false
-	c.writableError = nil
-	c.reserveCheckpoints = false
-	c.planCheckpoints(batch)
+	c.finalizeStartForward(ctx, batch, false)
 
 	return nil
 }
@@ -280,11 +272,7 @@ func (c *Recurrent) startForwardSingleSeq(ctx ml.Context, seq, seqTokens int, ba
 
 	if reserve {
 		c.curSlots = append(c.curSlots[:0], 0)
-		c.setCurSlotsInput(ctx)
-		c.reserveCheckpoints = true
-		c.writableEnsured = false
-		c.writableError = nil
-		c.planCheckpoints(batch)
+		c.finalizeStartForward(ctx, batch, true)
 		return nil
 	}
 
@@ -298,32 +286,41 @@ func (c *Recurrent) startForwardSingleSeq(ctx ml.Context, seq, seqTokens int, ba
 
 		c.slotForSeq[seq] = slot
 		c.refCount[slot] = 1
-		c.zeroSlot(ctx, slot)
+		slotList := [1]int{slot}
+		c.zeroSlots(ctx, slotList[:])
 	}
 
 	c.curSlots = append(c.curSlots[:0], slot)
-	c.setCurSlotsInput(ctx)
-	c.writableEnsured = false
-	c.writableError = nil
-	c.reserveCheckpoints = false
-	c.planCheckpoints(batch)
+	c.finalizeStartForward(ctx, batch, false)
 
 	return nil
 }
 
+func (c *Recurrent) finalizeStartForward(ctx ml.Context, batch input.Batch, reserve bool) {
+	c.setCurSlotsInput(ctx)
+	c.writableEnsured = false
+	c.writableError = nil
+	c.reserveCheckpoints = reserve
+	c.planCheckpoints(batch)
+}
+
 func (c *Recurrent) setCurSlotsInput(ctx ml.Context) {
-	switch len(c.curSlots) {
+	c.curSlotsInput = c.slotsInput(ctx, c.curSlots)
+}
+
+func (c *Recurrent) slotsInput(ctx ml.Context, slots []int) ml.Tensor {
+	switch len(slots) {
 	case 0:
-		c.curSlotsInput = nil
+		return nil
 	case 1:
-		c.slotScratch[0] = int32(c.curSlots[0])
-		c.curSlotsInput = ctx.Input().FromInts(c.slotScratch[:], 1)
+		c.slotScratch[0] = int32(slots[0])
+		return ctx.Input().FromInts(c.slotScratch[:], 1)
 	default:
-		slots := make([]int32, len(c.curSlots))
-		for i, v := range c.curSlots {
-			slots[i] = int32(v)
+		slotIndices := make([]int32, len(slots))
+		for i, v := range slots {
+			slotIndices[i] = int32(v)
 		}
-		c.curSlotsInput = ctx.Input().FromInts(slots, len(slots))
+		return ctx.Input().FromInts(slotIndices, len(slotIndices))
 	}
 }
 
@@ -342,26 +339,6 @@ func (c *Recurrent) freeSlot(slot int) {
 	}
 }
 
-func (c *Recurrent) zeroSlot(ctx ml.Context, slot int) {
-	inputCtx := ctx.Input()
-	c.slotScratch[0] = int32(slot)
-	slotTensor := inputCtx.FromInts(c.slotScratch[:], 1)
-
-	if len(c.convStates) > 0 {
-		zeros := inputCtx.Zeros(ml.DTypeF32, c.convDim*c.convChannels, 1)
-		for _, buf := range c.convStates {
-			ctx.Forward(buf.SetRows(ctx, zeros, slotTensor))
-		}
-	}
-
-	if len(c.recurrentStates) > 0 {
-		zeros := inputCtx.Zeros(ml.DTypeF32, c.recurrentStateSize, 1)
-		for _, buf := range c.recurrentStates {
-			ctx.Forward(buf.SetRows(ctx, zeros, slotTensor))
-		}
-	}
-}
-
 // zeroSlots zeros recurrent state for the given slots across all cached layers.
 func (c *Recurrent) zeroSlots(ctx ml.Context, slots []int) {
 	if len(slots) == 0 {
@@ -369,12 +346,7 @@ func (c *Recurrent) zeroSlots(ctx ml.Context, slots []int) {
 	}
 
 	inputCtx := ctx.Input()
-
-	slotIndices := make([]int32, len(slots))
-	for i, s := range slots {
-		slotIndices[i] = int32(s)
-	}
-	slotsTensor := inputCtx.FromInts(slotIndices, len(slotIndices))
+	slotsTensor := c.slotsInput(ctx, slots)
 
 	if len(c.convStates) > 0 {
 		zeros := inputCtx.Zeros(ml.DTypeF32, c.convDim*c.convChannels, len(slots))
@@ -552,12 +524,8 @@ func (c *Recurrent) validSlot(slot int) bool {
 	return slot >= 0 && slot < len(c.refCount)
 }
 
-func (c *Recurrent) slotsTensor() ml.Tensor {
-	return c.curSlotsInput
-}
-
 func (c *Recurrent) SlotsTensor() ml.Tensor {
-	return c.slotsTensor()
+	return c.curSlotsInput
 }
 
 // contiguousSlots returns the starting slot if current slots are contiguous and ordered.
@@ -574,23 +542,15 @@ func (c *Recurrent) contiguousSlots() (int, bool) {
 	return start, true
 }
 
-func (c *Recurrent) seqTokens() int {
+func (c *Recurrent) SeqTokens() int {
 	return c.curSeqTokens
 }
 
-func (c *Recurrent) SeqTokens() int {
-	return c.seqTokens()
-}
-
-func (c *Recurrent) numSeqs() int {
+func (c *Recurrent) NumSeqs() int {
 	return len(c.curSeqs)
 }
 
-func (c *Recurrent) NumSeqs() int {
-	return c.numSeqs()
-}
-
-func (c *Recurrent) convBuffer(ctx ml.Context, layer int) ml.Tensor {
+func (c *Recurrent) convBuffer(layer int) ml.Tensor {
 	if buf, ok := c.convStates[layer]; ok {
 		return buf
 	}
@@ -604,7 +564,7 @@ func (c *Recurrent) convBuffer(ctx ml.Context, layer int) ml.Tensor {
 	return buf
 }
 
-func (c *Recurrent) recurrentBuffer(ctx ml.Context, layer int) ml.Tensor {
+func (c *Recurrent) recurrentBuffer(layer int) ml.Tensor {
 	if buf, ok := c.recurrentStates[layer]; ok {
 		return buf
 	}
@@ -616,6 +576,31 @@ func (c *Recurrent) recurrentBuffer(ctx ml.Context, layer int) ml.Tensor {
 	buf := c.recurrentCtxs[layer].Zeros(ml.DTypeF32, c.recurrentStateSize, c.maxSequences)
 	c.recurrentStates[layer] = buf
 	return buf
+}
+
+func (c *Recurrent) ensureWritable(ctx ml.Context) error {
+	c.ensureWritableOnce(ctx)
+	return c.writableError
+}
+
+func (c *Recurrent) currentSlotRows(ctx ml.Context, buf ml.Tensor, rowSize int) ml.Tensor {
+	if start, ok := c.contiguousSlots(); ok {
+		offset := start * buf.Stride(1)
+		return buf.View(ctx, offset, rowSize, buf.Stride(1), c.NumSeqs())
+	}
+
+	return buf.Rows(ctx, c.SlotsTensor())
+}
+
+func (c *Recurrent) writeCurrentSlotRows(ctx ml.Context, buf ml.Tensor, rowSize int, src ml.Tensor) {
+	if start, ok := c.contiguousSlots(); ok {
+		offset := start * buf.Stride(1)
+		view := buf.View(ctx, offset, rowSize, buf.Stride(1), c.NumSeqs())
+		ctx.Forward(src.Copy(ctx, view))
+		return
+	}
+
+	ctx.Forward(buf.SetRows(ctx, src, c.SlotsTensor()))
 }
 
 func (c *Recurrent) ensureWritableOnce(ctx ml.Context) {
@@ -643,48 +628,32 @@ func (c *Recurrent) ensureWritableOnce(ctx ml.Context) {
 
 // ConvState returns conv state for current batch sequences as [convDim, convChannels, nSeqs].
 func (c *Recurrent) ConvState(ctx ml.Context, layer int) (ml.Tensor, error) {
-	c.ensureWritableOnce(ctx)
-
-	if c.writableError != nil {
-		return nil, c.writableError
+	if err := c.ensureWritable(ctx); err != nil {
+		return nil, err
 	}
 
-	buf := c.convBuffer(ctx, layer)
-	var cur ml.Tensor
-	if start, ok := c.contiguousSlots(); ok {
-		offset := start * buf.Stride(1)
-		cur = buf.View(ctx, offset, c.convDim*c.convChannels, buf.Stride(1), c.numSeqs())
-	} else {
-		cur = buf.Rows(ctx, c.slotsTensor())
-	}
-	return cur.Reshape(ctx, c.convDim, c.convChannels, c.numSeqs()), nil
+	buf := c.convBuffer(layer)
+	cur := c.currentSlotRows(ctx, buf, c.convDim*c.convChannels)
+	return cur.Reshape(ctx, c.convDim, c.convChannels, c.NumSeqs()), nil
 }
 
 // UpdateConvState writes new conv state for current batch sequences.
 func (c *Recurrent) UpdateConvState(ctx ml.Context, layer int, newState ml.Tensor) {
-	buf := c.convBuffer(ctx, layer)
-	src := newState.Reshape(ctx, c.convDim*c.convChannels, c.numSeqs())
+	buf := c.convBuffer(layer)
+	src := newState.Reshape(ctx, c.convDim*c.convChannels, c.NumSeqs())
 	srcF32 := src
 	if src.DType() != ml.DTypeF32 {
 		srcF32 = src.Cast(ctx, ml.DTypeF32)
 	}
-	if start, ok := c.contiguousSlots(); ok {
-		offset := start * buf.Stride(1)
-		view := buf.View(ctx, offset, c.convDim*c.convChannels, buf.Stride(1), c.numSeqs())
-		ctx.Forward(srcF32.Copy(ctx, view))
-	} else {
-		ctx.Forward(buf.SetRows(ctx, srcF32, c.slotsTensor()))
-	}
+	c.writeCurrentSlotRows(ctx, buf, c.convDim*c.convChannels, srcF32)
 
 	c.captureConvCheckpoint(ctx, layer, srcF32)
 }
 
 // RecurrentState returns recurrent state for current batch sequences with shape [dims..., nSeqs].
 func (c *Recurrent) RecurrentState(ctx ml.Context, layer int, dims ...int) (ml.Tensor, error) {
-	c.ensureWritableOnce(ctx)
-
-	if c.writableError != nil {
-		return nil, c.writableError
+	if err := c.ensureWritable(ctx); err != nil {
+		return nil, err
 	}
 	if len(dims) == 0 {
 		return nil, ErrInvalidRecurrentShape
@@ -701,26 +670,18 @@ func (c *Recurrent) RecurrentState(ctx ml.Context, layer int, dims ...int) (ml.T
 		return nil, fmt.Errorf("%w: got %v (size %d), want size %d", ErrInvalidRecurrentShape, dims, size, c.recurrentStateSize)
 	}
 
-	buf := c.recurrentBuffer(ctx, layer)
-	var cur ml.Tensor
-	if start, ok := c.contiguousSlots(); ok {
-		offset := start * buf.Stride(1)
-		cur = buf.View(ctx, offset, c.recurrentStateSize, buf.Stride(1), c.numSeqs())
-	} else {
-		cur = buf.Rows(ctx, c.slotsTensor())
-	}
+	buf := c.recurrentBuffer(layer)
+	cur := c.currentSlotRows(ctx, buf, c.recurrentStateSize)
 	shape := make([]int, 0, len(dims)+1)
 	shape = append(shape, dims...)
-	shape = append(shape, c.numSeqs())
+	shape = append(shape, c.NumSeqs())
 	return cur.Reshape(ctx, shape...), nil
 }
 
 // RecurrentState4D returns recurrent state as [dim0, dim1, dim2, nSeqs].
 func (c *Recurrent) RecurrentState4D(ctx ml.Context, layer int, dim0, dim1, dim2 int) (ml.Tensor, error) {
-	c.ensureWritableOnce(ctx)
-
-	if c.writableError != nil {
-		return nil, c.writableError
+	if err := c.ensureWritable(ctx); err != nil {
+		return nil, err
 	}
 	if dim0 <= 0 || dim1 <= 0 || dim2 <= 0 {
 		return nil, ErrInvalidRecurrentShape
@@ -731,32 +692,20 @@ func (c *Recurrent) RecurrentState4D(ctx ml.Context, layer int, dim0, dim1, dim2
 		return nil, fmt.Errorf("%w: got [%d %d %d] (size %d), want size %d", ErrInvalidRecurrentShape, dim0, dim1, dim2, size, c.recurrentStateSize)
 	}
 
-	buf := c.recurrentBuffer(ctx, layer)
-	var cur ml.Tensor
-	if start, ok := c.contiguousSlots(); ok {
-		offset := start * buf.Stride(1)
-		cur = buf.View(ctx, offset, c.recurrentStateSize, buf.Stride(1), c.numSeqs())
-	} else {
-		cur = buf.Rows(ctx, c.slotsTensor())
-	}
-	return cur.Reshape(ctx, dim0, dim1, dim2, c.numSeqs()), nil
+	buf := c.recurrentBuffer(layer)
+	cur := c.currentSlotRows(ctx, buf, c.recurrentStateSize)
+	return cur.Reshape(ctx, dim0, dim1, dim2, c.NumSeqs()), nil
 }
 
 // UpdateRecurrentState writes new recurrent state for current batch sequences.
 func (c *Recurrent) UpdateRecurrentState(ctx ml.Context, layer int, newState ml.Tensor) {
-	buf := c.recurrentBuffer(ctx, layer)
-	src := newState.Reshape(ctx, c.recurrentStateSize, c.numSeqs())
+	buf := c.recurrentBuffer(layer)
+	src := newState.Reshape(ctx, c.recurrentStateSize, c.NumSeqs())
 	srcF32 := src
 	if src.DType() != ml.DTypeF32 {
 		srcF32 = src.Cast(ctx, ml.DTypeF32)
 	}
-	if start, ok := c.contiguousSlots(); ok {
-		offset := start * buf.Stride(1)
-		view := buf.View(ctx, offset, c.recurrentStateSize, buf.Stride(1), c.numSeqs())
-		ctx.Forward(srcF32.Copy(ctx, view))
-	} else {
-		ctx.Forward(buf.SetRows(ctx, srcF32, c.slotsTensor()))
-	}
+	c.writeCurrentSlotRows(ctx, buf, c.recurrentStateSize, srcF32)
 
 	c.captureRecurrentCheckpoint(ctx, layer, srcF32)
 }
