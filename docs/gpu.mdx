@@ -10,7 +10,6 @@ Check your compute compatibility to see if your card is supported:
 
 | Compute Capability | Family              | Cards                                                                                                                          |
 | ------------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| 12.1               | NVIDIA              | `GB10 (DGX Spark)`                                                                                                             |
 | 12.0               | GeForce RTX 50xx    | `RTX 5060` `RTX 5060 Ti` `RTX 5070` `RTX 5070 Ti` `RTX 5080` `RTX 5090`                                                        |
 |                    | NVIDIA Professional | `RTX PRO 4000 Blackwell` `RTX PRO 4500 Blackwell` `RTX PRO 5000 Blackwell` `RTX PRO 6000 Blackwell`                            |
 | 9.0                | NVIDIA              | `H200` `H100`                                                                                                                  |
@@ -55,8 +54,9 @@ sudo modprobe nvidia_uvm`
 
 Ollama supports the following AMD GPUs via the ROCm library:
 
-> **NOTE:**
-> Additional AMD GPU support is provided by the Vulkan Library - see below.
+<Note>
+  Additional AMD GPU support is provided by the Vulkan Library - see below.
+</Note>
 
 
 ### Linux Support
@@ -133,9 +133,9 @@ Ollama supports GPU acceleration on Apple devices via the Metal API.
 
 ## Vulkan GPU Support
 
-> **NOTE:**
-> Vulkan is currently an Experimental feature.  To enable, you must set OLLAMA_VULKAN=1 for the Ollama server as
-described in the [FAQ](faq#how-do-i-configure-ollama-server)
+<Note>
+  Vulkan is currently an Experimental feature. To enable, you must set OLLAMA_VULKAN=1 for the Ollama server as described in the [FAQ](faq#how-do-i-configure-ollama-server)
+</Note>
 
 Additional GPU support on Windows and Linux is provided via
 [Vulkan](https://www.vulkan.org/). On Windows most GPU vendors drivers come
