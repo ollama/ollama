@@ -25,22 +25,6 @@ static ggml_metal_buffer_id ggml_metal_get_buffer_id(const ggml_tensor * t) {
     return ggml_metal_buffer_get_id(ctx, t);
 }
 
-static bool ggml_metal_mul_mm_id_map0_has_specialization(const int ne20) {
-    switch (ne20) {
-        case 1:
-        case 2:
-        case 4:
-        case 6:
-        case 8:
-        case 10:
-        case 16:
-        case 22:
-            return true;
-        default:
-            return false;
-    }
-}
-
 struct ggml_metal_op {
     ggml_metal_op(
         ggml_metal_device_t dev,
@@ -1977,13 +1961,8 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
     // ne21 = n_rows (batch size)
     const int ne21_mm_id_min = 32;
 
-    bool use_mul_mm_id =
-        props_dev->has_simdgroup_mm &&
-        ne00 >= 64 &&
-        (ne21 >= ne21_mm_id_min) &&
-        ggml_metal_mul_mm_id_map0_has_specialization(ne20);
-
-    if (use_mul_mm_id) {
+    if (props_dev->has_simdgroup_mm && ne00 >= 64 && (ne21 >= ne21_mm_id_min) &&
+            (ne20 == 1 || ne20 == 2 || ne20 == 4 || ne20 == 6 || ne20 == 8 || ne20 == 10 || ne20 == 16 || ne20 == 22)) {
         // some Metal matrix data types require aligned pointers
         // ref: https://developer.apple.com/metal/Metal-Shading-Language-Specification.pdf (Table 2.5)
         //switch (op->src[0]->type) {
@@ -2000,83 +1979,77 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
         ggml_metal_buffer_id bid_ids = bid_tpe;
         bid_ids.offs += ggml_metal_op_mul_mat_id_extra_tpe(op);
 
-        auto pipeline_map0 = ggml_metal_library_get_pipeline_mul_mm_id_map0(lib, ne02, ne20);
-        auto pipeline_mm_id = ggml_metal_library_get_pipeline_mul_mm_id(lib, op);
+        {
+            ggml_metal_kargs_mul_mm_id_map0 args = {
+                ne02,
+                ne10,
+                ne11, // n_expert_used (bcast)
+                nb11,
+                nb12,
+                ne21, // n_tokens
+                ne20, // n_expert_used
+                nb21,
+            };
 
-        if (!pipeline_map0.pipeline || !pipeline_mm_id.pipeline) {
-            GGML_LOG_WARN("%s: falling back to mul_mv_id: missing mul_mm_id pipeline for ne20=%d ne02=%d\n", __func__, ne20, ne02);
-            use_mul_mm_id = false;
-        } else {
-            {
-                ggml_metal_kargs_mul_mm_id_map0 args = {
-                    ne02,
-                    ne10,
-                    ne11, // n_expert_used (bcast)
-                    nb11,
-                    nb12,
-                    ne21, // n_tokens
-                    ne20, // n_expert_used
-                    nb21,
-                };
+            auto pipeline = ggml_metal_library_get_pipeline_mul_mm_id_map0(lib, ne02, ne20);
 
-                const size_t smem = pipeline_map0.smem;
+            const size_t smem = pipeline.smem;
 
-                GGML_ASSERT(ne02 <= ggml_metal_pipeline_max_theads_per_threadgroup(pipeline_map0));
+            GGML_ASSERT(ne02 <= ggml_metal_pipeline_max_theads_per_threadgroup(pipeline));
 
-                GGML_ASSERT(smem <= props_dev->max_theadgroup_memory_size);
+            GGML_ASSERT(smem <= props_dev->max_theadgroup_memory_size);
 
-                ggml_metal_encoder_set_pipeline(enc, pipeline_map0);
-                ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
-                ggml_metal_encoder_set_buffer  (enc, bid_src2, 1);
-                ggml_metal_encoder_set_buffer  (enc, bid_tpe,  2);
-                ggml_metal_encoder_set_buffer  (enc, bid_ids,  3);
+            ggml_metal_encoder_set_pipeline(enc, pipeline);
+            ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+            ggml_metal_encoder_set_buffer  (enc, bid_src2, 1);
+            ggml_metal_encoder_set_buffer  (enc, bid_tpe,  2);
+            ggml_metal_encoder_set_buffer  (enc, bid_ids,  3);
 
-                ggml_metal_encoder_set_threadgroup_memory_size(enc, smem, 0);
+            ggml_metal_encoder_set_threadgroup_memory_size(enc, smem, 0);
 
-                ggml_metal_encoder_dispatch_threadgroups(enc, 1, 1, 1, ne02, 1, 1);
-            }
-
-            // this barrier is always needed because the next kernel has to wait for the id maps to be computed
-            ggml_metal_op_concurrency_reset(ctx);
-
-            {
-                ggml_metal_kargs_mul_mm_id args = {
-                    /*.ne00  =*/ ne00,
-                    /*.ne02  =*/ ne02,
-                    /*.nb01  =*/ nb01,
-                    /*.nb02  =*/ nb02,
-                    /*.nb03  =*/ nb03,
-                    /*.ne11  =*/ ne11, // n_expert_used (bcast)
-                    /*.nb10  =*/ nb10,
-                    /*.nb11  =*/ nb11,
-                    /*.nb12  =*/ nb12,
-                    /*.nb13  =*/ nb13,
-                    /*.ne20  =*/ ne20, // n_expert_used
-                    /*.ne21  =*/ ne21, // n_tokens
-                    /*.ne0   =*/ ne0,
-                    /*.ne1   =*/ ne1,
-                    /*.r2    =*/ r2,
-                    /*.r3    =*/ r3,
-                };
-
-                ggml_metal_encoder_set_pipeline(enc, pipeline_mm_id);
-                ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
-                ggml_metal_encoder_set_buffer  (enc, bid_src0, 1);
-                ggml_metal_encoder_set_buffer  (enc, bid_src1, 2);
-                ggml_metal_encoder_set_buffer  (enc, bid_tpe,  3);
-                ggml_metal_encoder_set_buffer  (enc, bid_ids,  4);
-                ggml_metal_encoder_set_buffer  (enc, bid_dst,  5);
-
-                const size_t smem = pipeline_mm_id.smem;
-
-                ggml_metal_encoder_set_threadgroup_memory_size(enc, smem, 0);
-
-                ggml_metal_encoder_dispatch_threadgroups(enc, (ne21 + 31)/32, (ne01 + 63)/64, ne02, 128, 1, 1);
-            }
+            ggml_metal_encoder_dispatch_threadgroups(enc, 1, 1, 1, ne02, 1, 1);
         }
-    }
 
-    if (!use_mul_mm_id) {
+        // this barrier is always needed because the next kernel has to wait for the id maps to be computed
+        ggml_metal_op_concurrency_reset(ctx);
+
+        {
+            auto pipeline = ggml_metal_library_get_pipeline_mul_mm_id(lib, op);
+
+            ggml_metal_kargs_mul_mm_id args = {
+                /*.ne00  =*/ ne00,
+                /*.ne02  =*/ ne02,
+                /*.nb01  =*/ nb01,
+                /*.nb02  =*/ nb02,
+                /*.nb03  =*/ nb03,
+                /*.ne11  =*/ ne11, // n_expert_used (bcast)
+                /*.nb10  =*/ nb10,
+                /*.nb11  =*/ nb11,
+                /*.nb12  =*/ nb12,
+                /*.nb13  =*/ nb13,
+                /*.ne20  =*/ ne20, // n_expert_used
+                /*.ne21  =*/ ne21, // n_tokens
+                /*.ne0   =*/ ne0,
+                /*.ne1   =*/ ne1,
+                /*.r2    =*/ r2,
+                /*.r3    =*/ r3,
+            };
+
+            ggml_metal_encoder_set_pipeline(enc, pipeline);
+            ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+            ggml_metal_encoder_set_buffer  (enc, bid_src0, 1);
+            ggml_metal_encoder_set_buffer  (enc, bid_src1, 2);
+            ggml_metal_encoder_set_buffer  (enc, bid_tpe,  3);
+            ggml_metal_encoder_set_buffer  (enc, bid_ids,  4);
+            ggml_metal_encoder_set_buffer  (enc, bid_dst,  5);
+
+            const size_t smem = pipeline.smem;
+
+            ggml_metal_encoder_set_threadgroup_memory_size(enc, smem, 0);
+
+            ggml_metal_encoder_dispatch_threadgroups(enc, (ne21 + 31)/32, (ne01 + 63)/64, ne02, 128, 1, 1);
+        }
+    } else {
         auto pipeline = ggml_metal_library_get_pipeline_mul_mv_id(lib, op);
 
         const int nr0 = pipeline.nr0;
