@@ -140,6 +140,20 @@ func LoadModel(model string, maxArraySize int) (*ggml.GGML, error) {
 	return ggml, err
 }
 
+// minPositive returns the minimum positive value in values, or 0 if none exist.
+func minPositive(values []uint64) uint64 {
+	var min uint64
+	for _, v := range values {
+		if v == 0 {
+			continue
+		}
+		if min == 0 || v < min {
+			min = v
+		}
+	}
+	return min
+}
+
 // NewLlamaServer will run a server for the given GPUs
 func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath string, f *ggml.GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
 	var llamaModel *llama.Model
@@ -595,7 +609,9 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 	}
 
 	if graphPartialOffload == 0 {
-		headsKV := s.ggml.KV().HeadCountKVMin()
+		// Hybrid/recurrent models can set n_head_kv=0 on recurrent layers.
+		// Use minimum non-zero KV heads to avoid inflating graph estimates.
+		headsKV := minPositive(s.ggml.KV().HeadCountKV())
 		if headsKV == 0 {
 			headsKV = 1
 		}

@@ -1,6 +1,7 @@
 package renderers
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 
@@ -11,16 +12,128 @@ type LFM2Renderer struct {
 	IsThinking bool
 }
 
+const lfm2BOSToken = "<|startoftext|>"
+
+func lfm2RenderSystemContent(content any) string {
+	switch v := content.(type) {
+	case string:
+		return v
+	case []any:
+		var sb strings.Builder
+		for _, item := range v {
+			obj, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+
+			if itemType, _ := obj["type"].(string); itemType == "text" {
+				if text, ok := obj["text"].(string); ok {
+					sb.WriteString(text)
+				}
+			}
+		}
+		return sb.String()
+	default:
+		return ""
+	}
+}
+
+func lfm2JSON(v any) string {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		fallback, _ := json.Marshal(v)
+		return string(fallback)
+	}
+
+	encoded := bytes.TrimSuffix(buf.Bytes(), []byte{'\n'})
+
+	// HF `tojson` defaults to `json.dumps(..., separators=None)`, which inserts
+	// a space after commas and colons.
+	var out strings.Builder
+	out.Grow(len(encoded) + len(encoded)/8)
+
+	inString := false
+	escaped := false
+	for i, b := range encoded {
+		out.WriteByte(b)
+
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if b == '\\' {
+				escaped = true
+				continue
+			}
+			if b == '"' {
+				inString = false
+			}
+			continue
+		}
+
+		if b == '"' {
+			inString = true
+			continue
+		}
+
+		if (b == ':' || b == ',') && i+1 < len(encoded) {
+			next := encoded[i+1]
+			if next != ' ' && next != '\n' && next != '\r' && next != '\t' {
+				out.WriteByte(' ')
+			}
+		}
+	}
+
+	return out.String()
+}
+
+func lfm2RenderContent(content any) string {
+	switch v := content.(type) {
+	case string:
+		return v
+	case []any:
+		var sb strings.Builder
+		for _, item := range v {
+			obj, ok := item.(map[string]any)
+			if !ok {
+				sb.WriteString(lfm2JSON(item))
+				continue
+			}
+
+			itemType, _ := obj["type"].(string)
+			switch itemType {
+			case "image":
+				sb.WriteString("<image>")
+			case "text":
+				if text, ok := obj["text"].(string); ok {
+					sb.WriteString(text)
+				} else {
+					sb.WriteString(lfm2JSON(item))
+				}
+			default:
+				sb.WriteString(lfm2JSON(item))
+			}
+		}
+		return sb.String()
+	default:
+		return lfm2JSON(content)
+	}
+}
+
 func (r *LFM2Renderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
 	var sb strings.Builder
 
-	// Note: BOS token is added by the tokenizer (add_bos_token: true), not the renderer
+	// Match the source chat_template.jinja.
+	sb.WriteString(lfm2BOSToken)
 
 	// Extract first system message if present (to combine with tools)
 	var firstSystemContent string
 	startIdx := 0
 	if len(messages) > 0 && messages[0].Role == "system" {
-		firstSystemContent = messages[0].Content
+		firstSystemContent = lfm2RenderSystemContent(messages[0].Content)
 		startIdx = 1
 	}
 
@@ -31,11 +144,7 @@ func (r *LFM2Renderer) Render(messages []api.Message, tools []api.Tool, thinkVal
 		}
 		firstSystemContent += "List of tools: ["
 		for i, tool := range tools {
-			toolJSON, err := json.Marshal(tool)
-			if err != nil {
-				return "", err
-			}
-			firstSystemContent += string(toolJSON)
+			firstSystemContent += lfm2JSON(tool)
 			if i < len(tools)-1 {
 				firstSystemContent += ", "
 			}
@@ -50,6 +159,8 @@ func (r *LFM2Renderer) Render(messages []api.Message, tools []api.Tool, thinkVal
 		sb.WriteString("<|im_end|>\n")
 	}
 
+	keepPastThinking := r.IsThinking && (thinkValue != nil && thinkValue.Bool())
+
 	// Find the index of the last assistant message for thinking stripping
 	lastAssistantIndex := -1
 	for i := len(messages) - 1; i >= startIdx; i-- {
@@ -59,86 +170,25 @@ func (r *LFM2Renderer) Render(messages []api.Message, tools []api.Tool, thinkVal
 		}
 	}
 
-	// Track whether we need to add generation prompt
-	needsGenerationPrompt := len(messages) > 0
-
 	for i := startIdx; i < len(messages); i++ {
 		message := messages[i]
-		switch message.Role {
-		case "system":
-			// Additional system messages (after the first) are rendered normally
-			sb.WriteString("<|im_start|>system\n")
-			sb.WriteString(message.Content)
-			sb.WriteString("<|im_end|>\n")
+		sb.WriteString("<|im_start|>")
+		sb.WriteString(message.Role)
+		sb.WriteString("\n")
 
-		case "user":
-			sb.WriteString("<|im_start|>user\n")
-			sb.WriteString(message.Content)
-			sb.WriteString("<|im_end|>\n")
-			needsGenerationPrompt = true
-
-		case "assistant":
-			sb.WriteString("<|im_start|>assistant\n")
-
-			// Check if this is the last assistant message
-			isLastAssistant := i == lastAssistantIndex
-
-			// Process content (may need thinking stripped)
-			content := message.Content
-
-			// Handle thinking tags in assistant content
-			keepPastThinking := r.IsThinking && (thinkValue != nil && thinkValue.Bool())
-			if strings.Contains(content, "</think>") {
-				parts := strings.SplitN(content, "</think>", 2)
-				if len(parts) > 1 {
-					if !isLastAssistant && !keepPastThinking {
-						// Strip thinking entirely for past assistant messages
-						content = strings.TrimSpace(parts[1])
-					} else {
-						// Preserve thinking but trim whitespace after </think>
-						content = parts[0] + "</think>" + strings.TrimLeft(parts[1], " \t\n\r")
-					}
-				}
+		content := lfm2RenderContent(message.Content)
+		if message.Role == "assistant" && !keepPastThinking && i != lastAssistantIndex {
+			if idx := strings.LastIndex(content, "</think>"); idx >= 0 {
+				content = strings.TrimSpace(content[idx+len("</think>"):])
 			}
-
-			if len(message.ToolCalls) > 0 {
-				// Assistant with tool calls - write content first (if any after stripping)
-				if content != "" {
-					sb.WriteString(content)
-				}
-
-				for _, toolCall := range message.ToolCalls {
-					sb.WriteString("<|tool_call_start|>")
-					toolCallJSON := map[string]any{
-						"name":      toolCall.Function.Name,
-						"arguments": toolCall.Function.Arguments,
-					}
-					callJSON, _ := json.Marshal(toolCallJSON)
-					sb.WriteString(string(callJSON))
-					sb.WriteString("<|tool_call_end|>")
-				}
-			} else {
-				sb.WriteString(content)
-			}
-
-			sb.WriteString("<|im_end|>\n")
-			needsGenerationPrompt = true // Always add gen prompt after assistant when add_generation_prompt=true
-
-		case "tool":
-			// Tool responses are rendered as plain messages per the chat template
-			sb.WriteString("<|im_start|>tool\n")
-			sb.WriteString(message.Content)
-			sb.WriteString("<|im_end|>\n")
-			needsGenerationPrompt = true
 		}
+
+		sb.WriteString(content)
+		sb.WriteString("<|im_end|>\n")
 	}
 
-	// Add generation prompt
-	if needsGenerationPrompt {
-		sb.WriteString("<|im_start|>assistant\n")
-		// Note: Model is a "thinking-only" model - it will output <think> itself
-		// We don't add <think> tag to the prompt
-	}
+	// RenderWithRenderer always uses add_generation_prompt=true for chat rendering.
+	sb.WriteString("<|im_start|>assistant\n")
 
 	return sb.String(), nil
 }

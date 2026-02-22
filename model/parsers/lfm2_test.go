@@ -528,6 +528,30 @@ func TestLFM2Parser_parseToolCallContent(t *testing.T) {
 			},
 		},
 		{
+			name:    "openai_style_tool_call",
+			content: `{"type":"function","function":{"name":"get_weather","arguments":{"location":"Paris"}}}`,
+			expected: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "get_weather",
+					Arguments: testArgs(map[string]any{
+						"location": "Paris",
+					}),
+				},
+			},
+		},
+		{
+			name:    "stringified_json_arguments",
+			content: `{"name":"get_weather","arguments":"{\"location\":\"Paris\"}"}`,
+			expected: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "get_weather",
+					Arguments: testArgs(map[string]any{
+						"location": "Paris",
+					}),
+				},
+			},
+		},
+		{
 			name:    "complex_arguments",
 			content: `{"name":"process_data","arguments":{"items":["a","b"],"config":{"enabled":true}}}`,
 			expected: api.ToolCall{
@@ -640,6 +664,74 @@ func TestLFM2Parser_parseToolCallsContent(t *testing.T) {
 						Name: "bash",
 						Arguments: testArgs(map[string]any{
 							"command": "curl example.com",
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:    "python_style_complex_literals",
+			content: `[AskUserQuestion(question="What's up?", headers=['Hello!', 'How can I help you?'], options=['Debugging help', 'Code writing assistance'], multiSelect=False, metadata={'priority': 1, 'active': True})]`,
+			expected: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "AskUserQuestion",
+						Arguments: testArgs(map[string]any{
+							"question":    "What's up?",
+							"headers":     []any{"Hello!", "How can I help you?"},
+							"options":     []any{"Debugging help", "Code writing assistance"},
+							"multiSelect": false,
+							"metadata":    map[string]any{"priority": float64(1), "active": true},
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:    "json_array_direct_format",
+			content: `[{"name":"get_weather","arguments":{"location":"Paris"}},{"name":"get_time","arguments":{"timezone":"UTC"}}]`,
+			expected: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "get_weather",
+						Arguments: testArgs(map[string]any{
+							"location": "Paris",
+						}),
+					},
+				},
+				{
+					Function: api.ToolCallFunction{
+						Name: "get_time",
+						Arguments: testArgs(map[string]any{
+							"timezone": "UTC",
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:    "json_array_openai_format",
+			content: `[{"type":"function","function":{"name":"get_weather","arguments":{"location":"Paris"}}}]`,
+			expected: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "get_weather",
+						Arguments: testArgs(map[string]any{
+							"location": "Paris",
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:    "json_stringified_arguments",
+			content: `[{"name":"get_weather","arguments":"{\"location\":\"Paris\"}"}]`,
+			expected: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "get_weather",
+						Arguments: testArgs(map[string]any{
+							"location": "Paris",
 						}),
 					},
 				},
@@ -1084,5 +1176,78 @@ func TestLFM2Parser_EdgeCases(t *testing.T) {
 				t.Errorf("Thinking mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestLFM2Parser_BareToolCallFallback(t *testing.T) {
+	parser := &LFM2Parser{}
+	tools := []api.Tool{
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name: "get_weather",
+			},
+		},
+	}
+	parser.Init(tools, nil, &api.ThinkValue{Value: false})
+
+	content, thinking, calls, err := parser.Add(`[get_weather(location="Paris")]`, true)
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	if content != "" {
+		t.Fatalf("expected empty content, got %q", content)
+	}
+	if thinking != "" {
+		t.Fatalf("expected empty thinking, got %q", thinking)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "get_weather" {
+		t.Fatalf("expected tool name get_weather, got %q", calls[0].Function.Name)
+	}
+}
+
+func TestLFM2Parser_BareUnknownToolCallDoesNotParse(t *testing.T) {
+	parser := &LFM2Parser{}
+	tools := []api.Tool{
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name: "get_weather",
+			},
+		},
+	}
+	parser.Init(tools, nil, &api.ThinkValue{Value: false})
+
+	input := `[unknown_tool(location="Paris")]`
+	content, _, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	if content != input {
+		t.Fatalf("expected content to be preserved, got %q", content)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls, got %d", len(calls))
+	}
+}
+
+func TestLFM2Parser_parseToolCallsContent_JSONArray(t *testing.T) {
+	parser := &LFM2Parser{}
+	input := `[{"name":"get_weather","arguments":{"location":"Paris"}},{"name":"search","arguments":{"query":"news"}}]`
+
+	calls, err := parser.parseToolCallsContent(input)
+	if err != nil {
+		t.Fatalf("parseToolCallsContent() error = %v", err)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 tool calls, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "get_weather" || calls[1].Function.Name != "search" {
+		t.Fatalf("unexpected tool names: %+v", calls)
 	}
 }
