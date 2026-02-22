@@ -1251,3 +1251,49 @@ func TestLFM2Parser_parseToolCallsContent_JSONArray(t *testing.T) {
 		t.Fatalf("unexpected tool names: %+v", calls)
 	}
 }
+
+func TestLFM2Parser_ImagePlaceholdersPreserved(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{
+			name:  "indexed_img_placeholder",
+			input: "[img-0]describe this image",
+		},
+		{
+			name:  "template_image_placeholder",
+			input: "<image>describe this image",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := &LFM2Parser{}
+			tools := []api.Tool{
+				{
+					Type: "function",
+					Function: api.ToolFunction{
+						Name: "bash",
+					},
+				},
+			}
+			parser.Init(tools, nil, &api.ThinkValue{Value: false})
+
+			content, thinking, calls, err := parser.Add(tt.input, true)
+			if err != nil {
+				t.Fatalf("Add() error = %v", err)
+			}
+
+			if content != tt.input {
+				t.Fatalf("expected content %q, got %q", tt.input, content)
+			}
+			if thinking != "" {
+				t.Fatalf("expected empty thinking, got %q", thinking)
+			}
+			if len(calls) != 0 {
+				t.Fatalf("expected no tool calls, got %d", len(calls))
+			}
+		})
+	}
+}

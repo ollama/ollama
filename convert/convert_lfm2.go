@@ -14,6 +14,10 @@ type lfm2Model struct {
 	NumHiddenLayers       uint32   `json:"num_hidden_layers"`
 	MaxPositionEmbeddings uint32   `json:"max_position_embeddings"`
 	IntermediateSize      uint32   `json:"intermediate_size"`
+	BlockFFDim            uint32   `json:"block_ff_dim"`
+	BlockMultipleOf       uint32   `json:"block_multiple_of"`
+	BlockAutoAdjustFFDim  bool     `json:"block_auto_adjust_ff_dim"`
+	BlockFFNDimMultiplier float32  `json:"block_ffn_dim_multiplier"`
 	NumAttentionHeads     uint32   `json:"num_attention_heads"`
 	NumKeyValueHeads      uint32   `json:"num_key_value_heads"`
 	RopeTheta             float32  `json:"rope_theta"`
@@ -57,6 +61,27 @@ func (p *lfm2Model) expertCount() uint32 {
 	return p.NumExperts
 }
 
+func (p *lfm2Model) feedForwardLength() uint32 {
+	ff := p.IntermediateSize
+	if p.BlockFFDim != 0 {
+		ff = p.BlockFFDim
+	}
+
+	if !p.BlockAutoAdjustFFDim || p.BlockMultipleOf == 0 {
+		return ff
+	}
+
+	ff = (2 * ff) / 3
+
+	// Keep default multiplier behavior consistent with llama.cpp conversion.
+	if p.BlockFFNDimMultiplier != 0 {
+		ff = uint32(float32(ff) * p.BlockFFNDimMultiplier)
+	}
+
+	m := p.BlockMultipleOf
+	return m * ((ff + m - 1) / m)
+}
+
 func (p *lfm2Model) hasKnownContextLengthFallbackSignature() bool {
 	return p.isMoE() &&
 		p.VocabSize == 65536 &&
@@ -90,7 +115,7 @@ func (p *lfm2Model) KV(t *Tokenizer) KV {
 	kv["vocab_size"] = p.VocabSize
 	kv["block_count"] = p.NumHiddenLayers
 	kv["embedding_length"] = p.HiddenSize
-	kv["feed_forward_length"] = p.IntermediateSize
+	kv["feed_forward_length"] = p.feedForwardLength()
 	kv["context_length"] = p.contextLength()
 
 	// Build per-layer KV head count array based on layer_types

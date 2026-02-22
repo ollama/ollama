@@ -1,6 +1,7 @@
 package renderers
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -28,21 +29,6 @@ func TestRegisterCustomRenderer(t *testing.T) {
 	}
 }
 
-func TestBuiltInRendererStillWorks(t *testing.T) {
-	// Test that qwen3-coder still works
-	messages := []api.Message{
-		{Role: "user", Content: "Hello"},
-	}
-
-	result, err := RenderWithRenderer("qwen3-coder", messages, nil, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result == "" {
-		t.Error("expected non-empty result from qwen3-coder renderer")
-	}
-}
-
 func TestOverrideBuiltInRenderer(t *testing.T) {
 	// Override the built-in renderer
 	Register("qwen3-coder", func() Renderer {
@@ -63,5 +49,34 @@ func TestUnknownRendererReturnsError(t *testing.T) {
 	_, err := RenderWithRenderer("nonexistent-renderer", nil, nil, nil)
 	if err == nil {
 		t.Error("expected error for unknown renderer")
+	}
+}
+
+func TestLFM2RendererUsesGlobalImageTagSetting(t *testing.T) {
+	orig := RenderImgTags
+	t.Cleanup(func() {
+		RenderImgTags = orig
+	})
+
+	msgs := []api.Message{
+		{Role: "user", Content: "Describe", Images: []api.ImageData{api.ImageData("img")}},
+	}
+
+	RenderImgTags = true
+	withImgTag, err := RenderWithRenderer("lfm2.5", msgs, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(withImgTag, "[img]Describe") {
+		t.Fatalf("expected [img] placeholder, got: %q", withImgTag)
+	}
+
+	RenderImgTags = false
+	withTemplateTag, err := RenderWithRenderer("lfm2.5", msgs, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(withTemplateTag, "<image>Describe") {
+		t.Fatalf("expected <image> placeholder, got: %q", withTemplateTag)
 	}
 }

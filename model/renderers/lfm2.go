@@ -10,6 +10,7 @@ import (
 
 type LFM2Renderer struct {
 	IsThinking bool
+	useImgTags bool
 }
 
 const lfm2BOSToken = "<|startoftext|>"
@@ -90,7 +91,15 @@ func lfm2JSON(v any) string {
 	return out.String()
 }
 
-func lfm2RenderContent(content any) string {
+func lfm2ImagePlaceholder(useImgTags bool) string {
+	if useImgTags {
+		return "[img]"
+	}
+
+	return "<image>"
+}
+
+func lfm2RenderContent(content any, useImgTags bool) string {
 	switch v := content.(type) {
 	case string:
 		return v
@@ -106,7 +115,7 @@ func lfm2RenderContent(content any) string {
 			itemType, _ := obj["type"].(string)
 			switch itemType {
 			case "image":
-				sb.WriteString("<image>")
+				sb.WriteString(lfm2ImagePlaceholder(useImgTags))
 			case "text":
 				if text, ok := obj["text"].(string); ok {
 					sb.WriteString(text)
@@ -121,6 +130,26 @@ func lfm2RenderContent(content any) string {
 	default:
 		return lfm2JSON(content)
 	}
+}
+
+func (r *LFM2Renderer) renderMessageContent(message api.Message) string {
+	content := lfm2RenderContent(message.Content, r.useImgTags)
+	if len(message.Images) == 0 {
+		return content
+	}
+
+	// chatPrompt may already have inserted [img] / [img-n] placeholders.
+	if strings.Contains(content, "[img]") || strings.Contains(content, "[img-") || strings.Contains(content, "<image>") {
+		return content
+	}
+
+	var sb strings.Builder
+	placeholder := lfm2ImagePlaceholder(r.useImgTags)
+	for range message.Images {
+		sb.WriteString(placeholder)
+	}
+	sb.WriteString(content)
+	return sb.String()
 }
 
 func (r *LFM2Renderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
@@ -176,7 +205,7 @@ func (r *LFM2Renderer) Render(messages []api.Message, tools []api.Tool, thinkVal
 		sb.WriteString(message.Role)
 		sb.WriteString("\n")
 
-		content := lfm2RenderContent(message.Content)
+		content := r.renderMessageContent(message)
 		if message.Role == "assistant" && !keepPastThinking && i != lastAssistantIndex {
 			if idx := strings.LastIndex(content, "</think>"); idx >= 0 {
 				content = strings.TrimSpace(content[idx+len("</think>"):])

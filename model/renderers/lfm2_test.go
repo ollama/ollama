@@ -168,6 +168,78 @@ func TestLFM2Renderer_ChatTemplateParity(t *testing.T) {
 	}
 }
 
+func TestLFM2Renderer_Images(t *testing.T) {
+	tests := []struct {
+		name     string
+		renderer *LFM2Renderer
+		message  api.Message
+		expected string
+	}{
+		{
+			name:     "single_image_default_placeholder",
+			renderer: &LFM2Renderer{},
+			message: api.Message{
+				Role:    "user",
+				Content: "Describe this image.",
+				Images:  []api.ImageData{api.ImageData("img1")},
+			},
+			expected: "<|startoftext|><|im_start|>user\n<image>Describe this image.<|im_end|>\n<|im_start|>assistant\n",
+		},
+		{
+			name:     "multiple_images_default_placeholder",
+			renderer: &LFM2Renderer{},
+			message: api.Message{
+				Role:    "user",
+				Content: "Describe these images.",
+				Images:  []api.ImageData{api.ImageData("img1"), api.ImageData("img2")},
+			},
+			expected: "<|startoftext|><|im_start|>user\n<image><image>Describe these images.<|im_end|>\n<|im_start|>assistant\n",
+		},
+		{
+			name:     "single_image_img_tag_placeholder",
+			renderer: &LFM2Renderer{useImgTags: true},
+			message: api.Message{
+				Role:    "user",
+				Content: "Describe this image.",
+				Images:  []api.ImageData{api.ImageData("img1")},
+			},
+			expected: "<|startoftext|><|im_start|>user\n[img]Describe this image.<|im_end|>\n<|im_start|>assistant\n",
+		},
+		{
+			name:     "existing_indexed_img_placeholder_not_duplicated",
+			renderer: &LFM2Renderer{useImgTags: true},
+			message: api.Message{
+				Role:    "user",
+				Content: "[img-0]Describe this image.",
+				Images:  []api.ImageData{api.ImageData("img1")},
+			},
+			expected: "<|startoftext|><|im_start|>user\n[img-0]Describe this image.<|im_end|>\n<|im_start|>assistant\n",
+		},
+		{
+			name:     "existing_template_image_placeholder_not_duplicated",
+			renderer: &LFM2Renderer{},
+			message: api.Message{
+				Role:    "user",
+				Content: "<image>Describe this image.",
+				Images:  []api.ImageData{api.ImageData("img1")},
+			},
+			expected: "<|startoftext|><|im_start|>user\n<image>Describe this image.<|im_end|>\n<|im_start|>assistant\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.renderer.Render([]api.Message{tt.message}, nil, nil)
+			if err != nil {
+				t.Fatalf("Render() error = %v", err)
+			}
+			if diff := cmp.Diff(tt.expected, got); diff != "" {
+				t.Fatalf("Render() mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestLFM2Renderer_JSONFormatting(t *testing.T) {
 	tool := api.Tool{
 		Type: "function",
