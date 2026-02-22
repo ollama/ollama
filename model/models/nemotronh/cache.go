@@ -11,8 +11,10 @@ import (
 // with the layer requirements.
 var ErrUnsupportedBatchLayout = errors.New("nemotronh: unsupported batch layout")
 
-var _ kvcache.Cache = (*HybridCache)(nil)
-var _ kvcache.CheckpointCache = (*HybridCache)(nil)
+var (
+	_ kvcache.Cache           = (*HybridCache)(nil)
+	_ kvcache.CheckpointCache = (*HybridCache)(nil)
+)
 
 // HybridCache adapts the shared recurrent cache base for Nemotron-H naming.
 type HybridCache struct {

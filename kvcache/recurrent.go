@@ -16,9 +16,7 @@ const (
 	DefaultCheckpointInterval = int32(1280)
 )
 
-var (
-	ErrInvalidRecurrentShape = errors.New("kvcache: invalid recurrent state shape")
-)
+var ErrInvalidRecurrentShape = errors.New("kvcache: invalid recurrent state shape")
 
 // Config configures a shared hybrid recurrent cache.
 type RecurrentConfig struct {
@@ -29,8 +27,10 @@ type RecurrentConfig struct {
 	CheckpointLogPrefix string
 }
 
-var _ Cache = (*Recurrent)(nil)
-var _ CheckpointCache = (*Recurrent)(nil)
+var (
+	_ Cache           = (*Recurrent)(nil)
+	_ CheckpointCache = (*Recurrent)(nil)
+)
 
 // Cache stores:
 // - a standard causal KV cache
