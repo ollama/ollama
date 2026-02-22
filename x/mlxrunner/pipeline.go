@@ -7,7 +7,6 @@ import (
 	"errors"
 	"log/slog"
 	"time"
-	"unicode/utf8"
 
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
@@ -18,7 +17,15 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		return errors.New("model not loaded")
 	}
 
-	mlx.EnableCompile()
+	enableCompile := true
+	if modelCompile, ok := r.Model.(interface{ EnableCompile() bool }); ok {
+		enableCompile = modelCompile.EnableCompile()
+	}
+	if enableCompile {
+		mlx.EnableCompile()
+	} else {
+		mlx.DisableCompile()
+	}
 
 	inputs := r.Tokenizer.Encode(request.Prompt, true)
 
@@ -118,13 +125,5 @@ func (r Runner) Decode(sample int32, b *bytes.Buffer) string {
 		return ""
 	}
 
-	if text := b.String(); utf8.ValidString(text) {
-		b.Reset()
-		return text
-	} else if b.Len() >= utf8.UTFMax {
-		b.Reset()
-		return text
-	}
-
-	return ""
+	return flushValidUTF8Prefix(b)
 }

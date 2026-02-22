@@ -8,10 +8,10 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/ollama/ollama/x/imagegen/tokenizer"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
+	"github.com/ollama/ollama/x/tokenizer"
 )
 
 // Model is the interface that model implementations must satisfy.
