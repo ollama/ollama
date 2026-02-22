@@ -3,6 +3,7 @@ package kvcache
 import (
 	"errors"
 	"math"
+	"slices"
 	"testing"
 
 	"github.com/ollama/ollama/ml"
@@ -139,6 +140,66 @@ func TestCacheRecurrentStateShapeValidation(t *testing.T) {
 	_, err := cache.RecurrentState(nil, 0, 3)
 	if !errors.Is(err, ErrInvalidRecurrentShape) {
 		t.Fatalf("expected ErrInvalidRecurrentShape, got %v", err)
+	}
+}
+
+func TestSlotCheckpointStoreShiftRange(t *testing.T) {
+	store := newSlotCheckpointStore(5)
+	store.record(1)
+	store.record(4)
+	store.record(7)
+	store.record(10)
+
+	store.shiftRange(2, 6)
+
+	var positions []int32
+	for i := range store.entries {
+		if store.entries[i].pos >= 0 {
+			positions = append(positions, store.entries[i].pos)
+		}
+	}
+	slices.Sort(positions)
+
+	want := []int32{1, 3, 6}
+	if !slices.Equal(positions, want) {
+		t.Fatalf("unexpected shifted positions: got=%v want=%v", positions, want)
+	}
+	if store.lastPos != 6 {
+		t.Fatalf("expected lastPos 6, got %d", store.lastPos)
+	}
+}
+
+func TestCacheRemoveMiddleShiftsCheckpoints(t *testing.T) {
+	cache := newTestCache()
+	cache.slotForSeq[1] = 0
+	cache.refCount = []int{1}
+	cache.pendingRestore[1] = checkpointRestore{slot: 0, idx: 0, pos: 1}
+
+	store := cache.checkpointStore(0)
+	store.record(1)
+	store.record(4)
+	store.record(7)
+	store.record(10)
+
+	if err := cache.Remove(1, 2, 6); err != nil {
+		t.Fatalf("expected middle remove to succeed, got %v", err)
+	}
+
+	if _, ok := cache.pendingRestore[1]; ok {
+		t.Fatalf("expected pending restore to be cleared after middle remove")
+	}
+
+	var positions []int32
+	for i := range store.entries {
+		if store.entries[i].pos >= 0 {
+			positions = append(positions, store.entries[i].pos)
+		}
+	}
+	slices.Sort(positions)
+
+	want := []int32{1, 3, 6}
+	if !slices.Equal(positions, want) {
+		t.Fatalf("unexpected checkpoint positions after remove: got=%v want=%v", positions, want)
 	}
 }
 

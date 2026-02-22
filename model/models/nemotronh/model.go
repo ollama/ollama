@@ -111,6 +111,12 @@ type Model struct {
 	*Options
 }
 
+// Shift is used for KV cache position shifting.
+// Nemotron-H attention does not apply RoPE, so keys do not need to be transformed.
+func Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
+	return key, nil
+}
+
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 

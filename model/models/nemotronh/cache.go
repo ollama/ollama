@@ -23,6 +23,7 @@ type HybridCache struct {
 
 func NewHybridCache(convDim, convChannels, ssmStateSize int) *HybridCache {
 	base := kvcache.NewRecurrentCache(kvcache.RecurrentConfig{
+		Shift:               Shift,
 		ConvDim:             convDim,
 		ConvChannels:        convChannels,
 		RecurrentStateSize:  ssmStateSize,

@@ -125,6 +125,63 @@ func (s *slotCheckpointStore) pruneAfter(pos int32) {
 	s.lastPos = pos
 }
 
+func (s *slotCheckpointStore) shiftRange(beginIndex, endIndex int32) {
+	if len(s.entries) == 0 {
+		s.size = 0
+		s.next = 0
+		s.lastPos = -1
+		return
+	}
+
+	offset := beginIndex - endIndex
+
+	size := 0
+	next := -1
+	minPos := int32(math.MaxInt32)
+	maxPos := int32(-1)
+	minIdx := 0
+
+	for i := range s.entries {
+		pos := s.entries[i].pos
+		if pos >= 0 {
+			if pos >= beginIndex && pos < endIndex {
+				s.entries[i].pos = -1
+			} else if pos >= endIndex {
+				s.entries[i].pos = pos + offset
+			}
+		}
+
+		pos = s.entries[i].pos
+		if pos >= 0 {
+			size++
+			if pos < minPos {
+				minPos = pos
+				minIdx = i
+			}
+			if pos > maxPos {
+				maxPos = pos
+			}
+		} else if next == -1 {
+			next = i
+		}
+	}
+
+	s.size = size
+	if size == 0 {
+		s.next = 0
+		s.lastPos = -1
+		return
+	}
+
+	if next != -1 {
+		s.next = next
+	} else {
+		// Full ring: overwrite the oldest checkpoint next.
+		s.next = minIdx
+	}
+	s.lastPos = maxPos
+}
+
 func (s *slotCheckpointStore) window() (size int, minPos, maxPos, lastPos int32) {
 	minPos = int32(math.MaxInt32)
 	maxPos = int32(-1)
@@ -334,6 +391,12 @@ func (c *Recurrent) entryComplete(entry *checkpointEntry) bool {
 func (c *Recurrent) clearCheckpoints(slot int) {
 	if store, ok := c.checkpoints[slot]; ok {
 		store.reset()
+	}
+}
+
+func (c *Recurrent) shiftCheckpoints(slot int, beginIndex, endIndex int32) {
+	if store, ok := c.checkpoints[slot]; ok {
+		store.shiftRange(beginIndex, endIndex)
 	}
 }
 

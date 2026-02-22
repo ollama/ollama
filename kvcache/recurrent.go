@@ -455,7 +455,38 @@ func (c *Recurrent) CanResume(seq int, pos int32) bool {
 
 func (c *Recurrent) Remove(seq int, beginIndex, endIndex int32) error {
 	if beginIndex > 0 && endIndex != math.MaxInt32 {
-		return ErrNotSupported
+		if err := c.kv.Remove(seq, beginIndex, endIndex); err != nil {
+			return err
+		}
+		delete(c.pendingRestore, seq)
+
+		slot, ok := c.slotForSeq[seq]
+		if !ok || !c.validSlot(slot) {
+			return nil
+		}
+
+		// Detach shared recurrent state/checkpoints before mutating checkpoint positions.
+		if c.refCount[slot] > 1 {
+			newSlot, err := c.allocSlot()
+			if err != nil {
+				return err
+			}
+			ctx := c.backend.NewContext()
+			c.copyRecurrentState(ctx, slot, newSlot)
+			c.copyCheckpoints(ctx, slot, newSlot)
+			if len(c.convStates) > 0 || len(c.recurrentStates) > 0 {
+				ctx.Compute()
+			}
+			ctx.Close()
+
+			c.refCount[slot]--
+			c.refCount[newSlot] = 1
+			c.slotForSeq[seq] = newSlot
+			slot = newSlot
+		}
+
+		c.shiftCheckpoints(slot, beginIndex, endIndex)
+		return nil
 	}
 
 	if beginIndex > 0 {
