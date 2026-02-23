@@ -28,6 +28,7 @@ import (
 	"github.com/ollama/ollama/app/tools"
 	"github.com/ollama/ollama/app/types/not"
 	"github.com/ollama/ollama/app/ui/responses"
+	"github.com/ollama/ollama/app/updater"
 	"github.com/ollama/ollama/app/version"
 	ollamaAuth "github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
@@ -106,6 +107,10 @@ type Server struct {
 
 	// Dev is true if the server is running in development mode
 	Dev bool
+
+	// Updater for checking and downloading updates
+	Updater             *updater.Updater
+	UpdateAvailableFunc func()
 }
 
 func (s *Server) log() *slog.Logger {
@@ -1445,6 +1450,24 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 
 	if err := s.Store.SetSettings(settings); err != nil {
 		return fmt.Errorf("failed to save settings: %w", err)
+	}
+
+	// Handle auto-update toggle changes
+	if old.AutoUpdateEnabled != settings.AutoUpdateEnabled {
+		if !settings.AutoUpdateEnabled {
+			// Auto-update disabled: cancel any ongoing download
+			if s.Updater != nil {
+				s.Updater.CancelOngoingDownload()
+			}
+		} else {
+			// Auto-update re-enabled: show notification if update is already staged, or trigger immediate check
+			if (updater.IsUpdatePending() || updater.UpdateDownloaded) && s.UpdateAvailableFunc != nil {
+				s.UpdateAvailableFunc()
+			} else if s.Updater != nil {
+				// Trigger the background checker to run immediately
+				s.Updater.TriggerImmediateCheck()
+			}
+		}
 	}
 
 	if old.ContextLength != settings.ContextLength ||
