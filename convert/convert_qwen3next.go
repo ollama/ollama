@@ -550,7 +550,7 @@ func (q *qwen3NextModel) repackAttnQKV() Repacker {
 			// Fallback for already-transposed [in_features, out_features] tensors.
 			out := make([]float32, len(data))
 			copy(out, data)
-			for r := 0; r < rows; r++ {
+			for r := range rows {
 				base := r * cols
 				vStart := base + qDim + kDim
 				vEnd := vStart + vDim
@@ -615,7 +615,7 @@ func (q *qwen3NextModel) repackConv1D() Repacker {
 			out := make([]float32, len(data))
 			copy(out, data)
 			vChannels := totalChannels - qkChannels
-			for r := 0; r < rows; r++ {
+			for r := range rows {
 				base := r * cols
 				vStart := base + qkChannels
 				vEnd := vStart + vChannels
