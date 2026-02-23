@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func TestIsNewReleaseAvailable(t *testing.T) {
 	defer server.Close()
 	slog.Debug("server", "url", server.URL)
 
-	updater := &Updater{Store: &store.Store{}}
+	updater := &Updater{Store: &store.Store{DBPath: filepath.Join(t.TempDir(), "test.db")}}
 	defer updater.Store.Close() // Ensure database is closed
 	UpdateCheckURLBase = server.URL + "/update.json"
 	updatePresent, resp := updater.checkForUpdate(t.Context())
@@ -85,7 +86,7 @@ func TestBackgoundChecker(t *testing.T) {
 	defer server.Close()
 	UpdateCheckURLBase = server.URL + "/update.json"
 
-	updater := &Updater{Store: &store.Store{}}
+	updater := &Updater{Store: &store.Store{DBPath: filepath.Join(t.TempDir(), "test.db")}}
 	defer updater.Store.Close()
 
 	settings, err := updater.Store.Settings()
@@ -141,7 +142,7 @@ func TestAutoUpdateDisabledSkipsDownload(t *testing.T) {
 	defer server.Close()
 	UpdateCheckURLBase = server.URL + "/update.json"
 
-	updater := &Updater{Store: &store.Store{}}
+	updater := &Updater{Store: &store.Store{DBPath: filepath.Join(t.TempDir(), "test.db")}}
 	defer updater.Store.Close()
 
 	// Ensure auto-update is disabled
@@ -167,6 +168,83 @@ func TestAutoUpdateDisabledSkipsDownload(t *testing.T) {
 
 	if downloadAttempted.Load() {
 		t.Fatal("download should not be attempted when auto-update is disabled")
+	}
+}
+
+func TestAutoUpdateReenabledDownloadsUpdate(t *testing.T) {
+	UpdateStageDir = t.TempDir()
+	var downloadAttempted atomic.Bool
+	callbackCalled := make(chan struct{}, 1)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	UpdateCheckInitialDelay = 5 * time.Millisecond
+	UpdateCheckInterval = 5 * time.Millisecond
+	VerifyDownload = func() error {
+		return nil
+	}
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/update.json" {
+			w.Write([]byte(
+				fmt.Sprintf(`{"version": "9.9.9", "url": "%s"}`,
+					server.URL+"/9.9.9/"+Installer)))
+		} else if r.URL.Path == "/9.9.9/"+Installer {
+			downloadAttempted.Store(true)
+			buf := &bytes.Buffer{}
+			zw := zip.NewWriter(buf)
+			zw.Close()
+			io.Copy(w, buf)
+		}
+	}))
+	defer server.Close()
+	UpdateCheckURLBase = server.URL + "/update.json"
+
+	upd := &Updater{Store: &store.Store{DBPath: filepath.Join(t.TempDir(), "test.db")}}
+	defer upd.Store.Close()
+
+	// Start with auto-update disabled
+	settings, err := upd.Store.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.AutoUpdateEnabled = false
+	if err := upd.Store.SetSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	cb := func(ver string) error {
+		select {
+		case callbackCalled <- struct{}{}:
+		default:
+		}
+		return nil
+	}
+
+	upd.StartBackgroundUpdaterChecker(ctx, cb)
+
+	// Wait for a few cycles with auto-update disabled - no download should happen
+	time.Sleep(50 * time.Millisecond)
+	if downloadAttempted.Load() {
+		t.Fatal("download should not happen while auto-update is disabled")
+	}
+
+	// Re-enable auto-update
+	settings.AutoUpdateEnabled = true
+	if err := upd.Store.SetSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for the checker to pick it up and download
+	select {
+	case <-callbackCalled:
+		// Success: download happened and callback was called after re-enabling
+		if !downloadAttempted.Load() {
+			t.Fatal("expected download to be attempted after re-enabling")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("expected download and callback after re-enabling auto-update")
 	}
 }
 
@@ -207,7 +285,7 @@ func TestCancelOngoingDownload(t *testing.T) {
 	defer server.Close()
 	UpdateCheckURLBase = server.URL + "/update.json"
 
-	updater := &Updater{Store: &store.Store{}}
+	updater := &Updater{Store: &store.Store{DBPath: filepath.Join(t.TempDir(), "test.db")}}
 	defer updater.Store.Close()
 
 	_, resp := updater.checkForUpdate(ctx)
@@ -264,7 +342,7 @@ func TestTriggerImmediateCheck(t *testing.T) {
 	defer server.Close()
 	UpdateCheckURLBase = server.URL + "/update.json"
 
-	updater := &Updater{Store: &store.Store{}}
+	updater := &Updater{Store: &store.Store{DBPath: filepath.Join(t.TempDir(), "test.db")}}
 	defer updater.Store.Close()
 
 	cb := func(ver string) error {
