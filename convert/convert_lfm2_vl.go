@@ -404,7 +404,7 @@ func repackPatchEmbeddingWeight(data []float32, srcShape []uint64, channels, pat
 		for y := range patch {
 			for x := range patch {
 				inPixelBase := inBase + (y*patch+x)*channels
-				for c := 0; c < channels; c++ {
+				for c := range channels {
 					src := inPixelBase + c
 					dst := outBase + c*perChannel + y*patch + x
 					repacked[dst] = data[src]

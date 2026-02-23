@@ -86,7 +86,7 @@ func TestProcessImageDynamicTiling(t *testing.T) {
 		t.Fatalf("len(out) = %d, want %d", len(out), wantLen)
 	}
 
-	for i := 0; i < layout.rows*layout.cols; i++ {
+	for i := range layout.rows * layout.cols {
 		if out[i].size != (image.Point{X: 512, Y: 512}) {
 			t.Fatalf("tile[%d] size = %+v, want 512x512", i, out[i].size)
 		}
