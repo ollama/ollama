@@ -250,10 +250,12 @@ type lfm2VLProjectorModel struct {
 	}
 }
 
-var _ ModelConverter = (*lfm2VLTextModel)(nil)
-var _ ModelConverter = (*lfm2VLProjectorModel)(nil)
-var _ moreParser = (*lfm2VLTextModel)(nil)
-var _ moreParser = (*lfm2VLProjectorModel)(nil)
+var (
+	_ ModelConverter = (*lfm2VLTextModel)(nil)
+	_ ModelConverter = (*lfm2VLProjectorModel)(nil)
+	_ moreParser     = (*lfm2VLTextModel)(nil)
+	_ moreParser     = (*lfm2VLProjectorModel)(nil)
+)
 
 func (p *lfm2VLProjectorModel) parseMore(fsys fs.FS) error {
 	bts, err := fs.ReadFile(fsys, "processor_config.json")
@@ -395,12 +397,12 @@ func repackPatchEmbeddingWeight(data []float32, srcShape []uint64, channels, pat
 	repacked := make([]float32, len(data))
 	perChannel := patch * patch
 
-	for o := 0; o < outDim; o++ {
+	for o := range outDim {
 		inBase := o * flatInputDim
 		outBase := o * flatInputDim
 
-		for y := 0; y < patch; y++ {
-			for x := 0; x < patch; x++ {
+		for y := range patch {
+			for x := range patch {
 				inPixelBase := inBase + (y*patch+x)*channels
 				for c := 0; c < channels; c++ {
 					src := inPixelBase + c

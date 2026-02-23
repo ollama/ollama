@@ -63,8 +63,8 @@ func TestProcessImageDynamicTiling(t *testing.T) {
 	// Wide image that should trigger multi-tile splitting.
 	img := image.NewRGBA(image.Rect(0, 0, 3000, 1000))
 	fill := color.RGBA{R: 120, G: 90, B: 60, A: 255}
-	for y := 0; y < 1000; y++ {
-		for x := 0; x < 3000; x++ {
+	for y := range 1000 {
+		for x := range 3000 {
 			img.Set(x, y, fill)
 		}
 	}

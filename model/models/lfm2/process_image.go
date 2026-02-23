@@ -112,8 +112,8 @@ func (p ImageProcessor) ProcessImage(img image.Image) ([]processedVisionImage, p
 
 		resized := imageproc.Resize(img, image.Point{X: targetWidth, Y: targetHeight}, imageproc.ResizeBilinear)
 		images := make([]processedVisionImage, 0, gridWidth*gridHeight+1)
-		for row := 0; row < gridHeight; row++ {
-			for col := 0; col < gridWidth; col++ {
+		for row := range gridHeight {
+			for col := range gridWidth {
 				rect := image.Rect(
 					col*p.tileSize,
 					row*p.tileSize,

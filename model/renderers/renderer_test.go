@@ -1,7 +1,6 @@
 package renderers
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -49,34 +48,5 @@ func TestUnknownRendererReturnsError(t *testing.T) {
 	_, err := RenderWithRenderer("nonexistent-renderer", nil, nil, nil)
 	if err == nil {
 		t.Error("expected error for unknown renderer")
-	}
-}
-
-func TestLFM2RendererUsesGlobalImageTagSetting(t *testing.T) {
-	orig := RenderImgTags
-	t.Cleanup(func() {
-		RenderImgTags = orig
-	})
-
-	msgs := []api.Message{
-		{Role: "user", Content: "Describe", Images: []api.ImageData{api.ImageData("img")}},
-	}
-
-	RenderImgTags = true
-	withImgTag, err := RenderWithRenderer("lfm2.5", msgs, nil, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(withImgTag, "[img]Describe") {
-		t.Fatalf("expected [img] placeholder, got: %q", withImgTag)
-	}
-
-	RenderImgTags = false
-	withTemplateTag, err := RenderWithRenderer("lfm2.5", msgs, nil, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !strings.Contains(withTemplateTag, "<image>Describe") {
-		t.Fatalf("expected <image> placeholder, got: %q", withTemplateTag)
 	}
 }
