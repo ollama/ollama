@@ -117,6 +117,25 @@ jobs:
             install: https://sdk.lunarg.com/sdk/download/1.4.321.1/windows/vulkansdk-windows-X64-1.4.321.1.exe
             flags: ''
             runner_dir: 'vulkan'
+          - os: windows
+            arch: amd64
+            preset: 'MLX CUDA 13'
+            install: https://developer.download.nvidia.com/compute/cuda/13.0.0/local_installers/cuda_13.0.0_windows.exe
+            cudnn-install: https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/windows-x86_64/cudnn-windows-x86_64-9.18.1.3_cuda13-archive.zip
+            cuda-components:
+              - '"cudart"'
+              - '"nvcc"'
+              - '"cublas"'
+              - '"cublas_dev"'
+              - '"cufft"'
+              - '"cufft_dev"'
+              - '"nvrtc"'
+              - '"nvrtc_dev"'
+              - '"crt"'
+              - '"nvvm"'
+              - '"nvptxcompiler"'
+            cuda-version: '13.0'
+            flags: ''
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     env:
@@ -126,7 +145,7 @@ jobs:
         run: |
           choco install -y --no-progress ccache ninja
           ccache -o cache_dir=${{ github.workspace }}\.ccache
-      - if: startsWith(matrix.preset, 'CUDA ') || startsWith(matrix.preset, 'ROCm ') || startsWith(matrix.preset, 'Vulkan')
+      - if: startsWith(matrix.preset, 'CUDA ') || startsWith(matrix.preset, 'ROCm ') || startsWith(matrix.preset, 'Vulkan') || startsWith(matrix.preset, 'MLX ')
         id: cache-install
         uses: actions/cache/restore@v4
         with:
@@ -134,8 +153,9 @@ jobs:
             C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
             C:\Program Files\AMD\ROCm
             C:\VulkanSDK
-          key: ${{ matrix.install }}
-      - if: startsWith(matrix.preset, 'CUDA ')
+            C:\Program Files\NVIDIA\CUDNN
+          key: ${{ matrix.install }}-${{ matrix.cudnn-install }}
+      - if: startsWith(matrix.preset, 'CUDA ') || startsWith(matrix.preset, 'MLX ')
         name: Install CUDA ${{ matrix.cuda-version }}
         run: |
           $ErrorActionPreference = "Stop"
@@ -179,6 +199,23 @@ jobs:
         run: |
           echo "CC=clang.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "CXX=clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - if: startsWith(matrix.preset, 'MLX ')
+        name: Install cuDNN for MLX
+        run: |
+          $ErrorActionPreference = "Stop"
+          $cudnnRoot = "C:\Program Files\NVIDIA\CUDNN"
+          if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
+            Invoke-WebRequest -Uri "${{ matrix.cudnn-install }}" -OutFile "cudnn.zip"
+            Expand-Archive -Path cudnn.zip -DestinationPath cudnn-extracted
+            $cudnnDir = (Get-ChildItem -Path cudnn-extracted -Directory)[0].FullName
+            New-Item -ItemType Directory -Force -Path $cudnnRoot
+            Copy-Item -Path "$cudnnDir\*" -Destination "$cudnnRoot\" -Recurse
+          }
+
+          echo "CUDNN_ROOT_DIR=$cudnnRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "CUDNN_INCLUDE_PATH=$cudnnRoot\include" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "CUDNN_LIBRARY_PATH=$cudnnRoot\lib\x64" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "$cudnnRoot\bin\x64" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - if: ${{ !cancelled() && steps.cache-install.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
@@ -186,7 +223,8 @@ jobs:
             C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
             C:\Program Files\AMD\ROCm
             C:\VulkanSDK
-          key: ${{ matrix.install }}
+            C:\Program Files\NVIDIA\CUDNN
+          key: ${{ matrix.install }}-${{ matrix.cudnn-install }}
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
         with:
@@ -198,7 +236,7 @@ jobs:
           Enter-VsDevShell -VsInstallPath 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
           cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }} --install-prefix "$((pwd).Path)\dist\${{ matrix.os }}-${{ matrix.arch }}"
           cmake --build --parallel ([Environment]::ProcessorCount) --preset "${{ matrix.preset }}"
-          cmake --install build --component "${{ startsWith(matrix.preset, 'CUDA ') && 'CUDA' || startsWith(matrix.preset, 'ROCm ') && 'HIP' || startsWith(matrix.preset, 'Vulkan') && 'Vulkan' || 'CPU' }}" --strip
+          cmake --install build --component "${{ startsWith(matrix.preset, 'MLX ') && 'MLX' || startsWith(matrix.preset, 'CUDA ') && 'CUDA' || startsWith(matrix.preset, 'ROCm ') && 'HIP' || startsWith(matrix.preset, 'Vulkan') && 'Vulkan' || 'CPU' }}" --strip
           Remove-Item -Path dist\lib\ollama\rocm\rocblas\library\*gfx906* -ErrorAction SilentlyContinue
         env:
           CMAKE_GENERATOR: Ninja
@@ -273,6 +311,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+      - name: Clone mlx-c headers for MLX support
+        if: matrix.arch == 'amd64'
+        run: |
+          $mlxVersion = Get-Content -Path MLX_VERSION -Raw
+          $mlxVersion = $mlxVersion.Trim()
+          git clone --depth 1 --branch "$mlxVersion" https://github.com/ml-explore/mlx-c.git build/_deps/mlx-c-src
+          echo "CGO_CFLAGS=-I$((pwd).Path)\build\_deps\mlx-c-src" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "OLLAMA_BUILD_MLX=1" | Out-File -FilePath $env:GITHUB_ENV -Append
       - run: |
           ./scripts/build_windows ollama app
       - name: Log build results

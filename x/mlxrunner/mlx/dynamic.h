@@ -3,7 +3,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
-#define DLSYM(handle, symbol) GetProcAddress((HMODULE)(handle), symbol)
+#define DLSYM(handle, symbol) (void*)GetProcAddress((HMODULE)(handle.ctx), symbol)
 #else
 #include <dlfcn.h>
 #define DLSYM(handle, symbol) dlsym(handle.ctx, symbol)
@@ -23,9 +23,13 @@ typedef uint16_t float16_t;
 typedef uint16_t bfloat16_t;
 #endif
 
-#define ERROR(fmt, ...) fprintf(stderr, "%s %s - ERROR - %s:%d - " fmt "\n", __DATE__, __TIME__, __FILE__, __LINE__, ##__VA_ARGS__); return 1
-#define CHECK(x) if (!(x)) { ERROR("CHECK failed: " #x); }
-#define CHECK_LOAD(handle, x) x##_ = DLSYM(handle, #x); CHECK(x##_)
+// Undef ERROR to avoid conflict with wingdi.h on Windows
+#ifdef ERROR
+#undef ERROR
+#endif
+#define MLX_ERROR(fmt, ...) fprintf(stderr, "%s %s - ERROR - %s:%d - " fmt "\n", __DATE__, __TIME__, __FILE__, __LINE__, ##__VA_ARGS__); return 1
+#define CHECK(x) if (!(x)) { MLX_ERROR("CHECK failed: " #x); }
+#define CHECK_LOAD(handle, x) *(void**)(&x##_) = DLSYM(handle, #x); CHECK(x##_)
 
 typedef struct {
     void* ctx;

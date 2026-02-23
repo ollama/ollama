@@ -5,7 +5,15 @@
 #include "mlx/c/mlx.h"
 #include "mlx_dynamic.h"
 #include <stdio.h>
+
+// Platform-specific dynamic loading
+#ifdef _WIN32
+#include <windows.h>
+#define GET_SYM(handle, name) GetProcAddress((HMODULE)(handle), name)
+#else
 #include <dlfcn.h>
+#define GET_SYM(handle, name) dlsym(handle, name)
+#endif
 
 // Function pointer definitions
 size_t (*mlx_dtype_size_ptr)(mlx_dtype dtype) = NULL;
@@ -598,2880 +606,2880 @@ int mlx_load_functions(void* handle) {
         return -1;
     }
 
-    mlx_dtype_size_ptr = dlsym(handle, "mlx_dtype_size");
+    mlx_dtype_size_ptr = (size_t (*)(mlx_dtype dtype))GET_SYM(handle, "mlx_dtype_size");
     if (mlx_dtype_size_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_dtype_size\n");
         return -1;
     }
-    mlx_array_tostring_ptr = dlsym(handle, "mlx_array_tostring");
+    mlx_array_tostring_ptr = (int (*)(mlx_string* str, const mlx_array arr))GET_SYM(handle, "mlx_array_tostring");
     if (mlx_array_tostring_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_tostring\n");
         return -1;
     }
-    mlx_array_new_ptr = dlsym(handle, "mlx_array_new");
+    mlx_array_new_ptr = (mlx_array (*)(void))GET_SYM(handle, "mlx_array_new");
     if (mlx_array_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_new\n");
         return -1;
     }
-    mlx_array_free_ptr = dlsym(handle, "mlx_array_free");
+    mlx_array_free_ptr = (int (*)(mlx_array arr))GET_SYM(handle, "mlx_array_free");
     if (mlx_array_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_free\n");
         return -1;
     }
-    mlx_array_new_bool_ptr = dlsym(handle, "mlx_array_new_bool");
+    mlx_array_new_bool_ptr = (mlx_array (*)(bool val))GET_SYM(handle, "mlx_array_new_bool");
     if (mlx_array_new_bool_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_new_bool\n");
         return -1;
     }
-    mlx_array_new_int_ptr = dlsym(handle, "mlx_array_new_int");
+    mlx_array_new_int_ptr = (mlx_array (*)(int val))GET_SYM(handle, "mlx_array_new_int");
     if (mlx_array_new_int_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_new_int\n");
         return -1;
     }
-    mlx_array_new_float32_ptr = dlsym(handle, "mlx_array_new_float32");
+    mlx_array_new_float32_ptr = (mlx_array (*)(float val))GET_SYM(handle, "mlx_array_new_float32");
     if (mlx_array_new_float32_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_new_float32\n");
         return -1;
     }
-    mlx_array_new_float_ptr = dlsym(handle, "mlx_array_new_float");
+    mlx_array_new_float_ptr = (mlx_array (*)(float val))GET_SYM(handle, "mlx_array_new_float");
     if (mlx_array_new_float_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_new_float\n");
         return -1;
     }
-    mlx_array_new_float64_ptr = dlsym(handle, "mlx_array_new_float64");
+    mlx_array_new_float64_ptr = (mlx_array (*)(double val))GET_SYM(handle, "mlx_array_new_float64");
     if (mlx_array_new_float64_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_new_float64\n");
         return -1;
     }
-    mlx_array_new_double_ptr = dlsym(handle, "mlx_array_new_double");
+    mlx_array_new_double_ptr = (mlx_array (*)(double val))GET_SYM(handle, "mlx_array_new_double");
     if (mlx_array_new_double_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_new_double\n");
         return -1;
     }
-    mlx_array_new_complex_ptr = dlsym(handle, "mlx_array_new_complex");
+    mlx_array_new_complex_ptr = (mlx_array (*)(float real_val, float imag_val))GET_SYM(handle, "mlx_array_new_complex");
     if (mlx_array_new_complex_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_new_complex\n");
         return -1;
     }
-    mlx_array_new_data_ptr = dlsym(handle, "mlx_array_new_data");
+    mlx_array_new_data_ptr = (mlx_array (*)(const void* data, const int* shape, int dim, mlx_dtype dtype))GET_SYM(handle, "mlx_array_new_data");
     if (mlx_array_new_data_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_new_data\n");
         return -1;
     }
-    mlx_array_set_ptr = dlsym(handle, "mlx_array_set");
+    mlx_array_set_ptr = (int (*)(mlx_array* arr, const mlx_array src))GET_SYM(handle, "mlx_array_set");
     if (mlx_array_set_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_set\n");
         return -1;
     }
-    mlx_array_set_bool_ptr = dlsym(handle, "mlx_array_set_bool");
+    mlx_array_set_bool_ptr = (int (*)(mlx_array* arr, bool val))GET_SYM(handle, "mlx_array_set_bool");
     if (mlx_array_set_bool_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_set_bool\n");
         return -1;
     }
-    mlx_array_set_int_ptr = dlsym(handle, "mlx_array_set_int");
+    mlx_array_set_int_ptr = (int (*)(mlx_array* arr, int val))GET_SYM(handle, "mlx_array_set_int");
     if (mlx_array_set_int_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_set_int\n");
         return -1;
     }
-    mlx_array_set_float32_ptr = dlsym(handle, "mlx_array_set_float32");
+    mlx_array_set_float32_ptr = (int (*)(mlx_array* arr, float val))GET_SYM(handle, "mlx_array_set_float32");
     if (mlx_array_set_float32_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_set_float32\n");
         return -1;
     }
-    mlx_array_set_float_ptr = dlsym(handle, "mlx_array_set_float");
+    mlx_array_set_float_ptr = (int (*)(mlx_array* arr, float val))GET_SYM(handle, "mlx_array_set_float");
     if (mlx_array_set_float_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_set_float\n");
         return -1;
     }
-    mlx_array_set_float64_ptr = dlsym(handle, "mlx_array_set_float64");
+    mlx_array_set_float64_ptr = (int (*)(mlx_array* arr, double val))GET_SYM(handle, "mlx_array_set_float64");
     if (mlx_array_set_float64_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_set_float64\n");
         return -1;
     }
-    mlx_array_set_double_ptr = dlsym(handle, "mlx_array_set_double");
+    mlx_array_set_double_ptr = (int (*)(mlx_array* arr, double val))GET_SYM(handle, "mlx_array_set_double");
     if (mlx_array_set_double_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_set_double\n");
         return -1;
     }
-    mlx_array_set_complex_ptr = dlsym(handle, "mlx_array_set_complex");
+    mlx_array_set_complex_ptr = (int (*)(mlx_array* arr, float real_val, float imag_val))GET_SYM(handle, "mlx_array_set_complex");
     if (mlx_array_set_complex_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_set_complex\n");
         return -1;
     }
-    mlx_array_set_data_ptr = dlsym(handle, "mlx_array_set_data");
+    mlx_array_set_data_ptr = (int (*)(mlx_array* arr, const void* data, const int* shape, int dim, mlx_dtype dtype))GET_SYM(handle, "mlx_array_set_data");
     if (mlx_array_set_data_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_set_data\n");
         return -1;
     }
-    mlx_array_itemsize_ptr = dlsym(handle, "mlx_array_itemsize");
+    mlx_array_itemsize_ptr = (size_t (*)(const mlx_array arr))GET_SYM(handle, "mlx_array_itemsize");
     if (mlx_array_itemsize_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_itemsize\n");
         return -1;
     }
-    mlx_array_size_ptr = dlsym(handle, "mlx_array_size");
+    mlx_array_size_ptr = (size_t (*)(const mlx_array arr))GET_SYM(handle, "mlx_array_size");
     if (mlx_array_size_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_size\n");
         return -1;
     }
-    mlx_array_nbytes_ptr = dlsym(handle, "mlx_array_nbytes");
+    mlx_array_nbytes_ptr = (size_t (*)(const mlx_array arr))GET_SYM(handle, "mlx_array_nbytes");
     if (mlx_array_nbytes_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_nbytes\n");
         return -1;
     }
-    mlx_array_ndim_ptr = dlsym(handle, "mlx_array_ndim");
+    mlx_array_ndim_ptr = (size_t (*)(const mlx_array arr))GET_SYM(handle, "mlx_array_ndim");
     if (mlx_array_ndim_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_ndim\n");
         return -1;
     }
-    mlx_array_shape_ptr = dlsym(handle, "mlx_array_shape");
+    mlx_array_shape_ptr = (const int* (*)(const mlx_array arr))GET_SYM(handle, "mlx_array_shape");
     if (mlx_array_shape_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_shape\n");
         return -1;
     }
-    mlx_array_strides_ptr = dlsym(handle, "mlx_array_strides");
+    mlx_array_strides_ptr = (const size_t* (*)(const mlx_array arr))GET_SYM(handle, "mlx_array_strides");
     if (mlx_array_strides_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_strides\n");
         return -1;
     }
-    mlx_array_dim_ptr = dlsym(handle, "mlx_array_dim");
+    mlx_array_dim_ptr = (int (*)(const mlx_array arr, int dim))GET_SYM(handle, "mlx_array_dim");
     if (mlx_array_dim_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_dim\n");
         return -1;
     }
-    mlx_array_dtype_ptr = dlsym(handle, "mlx_array_dtype");
+    mlx_array_dtype_ptr = (mlx_dtype (*)(const mlx_array arr))GET_SYM(handle, "mlx_array_dtype");
     if (mlx_array_dtype_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_dtype\n");
         return -1;
     }
-    mlx_array_eval_ptr = dlsym(handle, "mlx_array_eval");
+    mlx_array_eval_ptr = (int (*)(mlx_array arr))GET_SYM(handle, "mlx_array_eval");
     if (mlx_array_eval_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_eval\n");
         return -1;
     }
-    mlx_array_item_bool_ptr = dlsym(handle, "mlx_array_item_bool");
+    mlx_array_item_bool_ptr = (int (*)(bool* res, const mlx_array arr))GET_SYM(handle, "mlx_array_item_bool");
     if (mlx_array_item_bool_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_item_bool\n");
         return -1;
     }
-    mlx_array_item_uint8_ptr = dlsym(handle, "mlx_array_item_uint8");
+    mlx_array_item_uint8_ptr = (int (*)(uint8_t* res, const mlx_array arr))GET_SYM(handle, "mlx_array_item_uint8");
     if (mlx_array_item_uint8_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_item_uint8\n");
         return -1;
     }
-    mlx_array_item_uint16_ptr = dlsym(handle, "mlx_array_item_uint16");
+    mlx_array_item_uint16_ptr = (int (*)(uint16_t* res, const mlx_array arr))GET_SYM(handle, "mlx_array_item_uint16");
     if (mlx_array_item_uint16_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_item_uint16\n");
         return -1;
     }
-    mlx_array_item_uint32_ptr = dlsym(handle, "mlx_array_item_uint32");
+    mlx_array_item_uint32_ptr = (int (*)(uint32_t* res, const mlx_array arr))GET_SYM(handle, "mlx_array_item_uint32");
     if (mlx_array_item_uint32_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_item_uint32\n");
         return -1;
     }
-    mlx_array_item_uint64_ptr = dlsym(handle, "mlx_array_item_uint64");
+    mlx_array_item_uint64_ptr = (int (*)(uint64_t* res, const mlx_array arr))GET_SYM(handle, "mlx_array_item_uint64");
     if (mlx_array_item_uint64_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_item_uint64\n");
         return -1;
     }
-    mlx_array_item_int8_ptr = dlsym(handle, "mlx_array_item_int8");
+    mlx_array_item_int8_ptr = (int (*)(int8_t* res, const mlx_array arr))GET_SYM(handle, "mlx_array_item_int8");
     if (mlx_array_item_int8_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_item_int8\n");
         return -1;
     }
-    mlx_array_item_int16_ptr = dlsym(handle, "mlx_array_item_int16");
+    mlx_array_item_int16_ptr = (int (*)(int16_t* res, const mlx_array arr))GET_SYM(handle, "mlx_array_item_int16");
     if (mlx_array_item_int16_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_item_int16\n");
         return -1;
     }
-    mlx_array_item_int32_ptr = dlsym(handle, "mlx_array_item_int32");
+    mlx_array_item_int32_ptr = (int (*)(int32_t* res, const mlx_array arr))GET_SYM(handle, "mlx_array_item_int32");
     if (mlx_array_item_int32_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_item_int32\n");
         return -1;
     }
-    mlx_array_item_int64_ptr = dlsym(handle, "mlx_array_item_int64");
+    mlx_array_item_int64_ptr = (int (*)(int64_t* res, const mlx_array arr))GET_SYM(handle, "mlx_array_item_int64");
     if (mlx_array_item_int64_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_item_int64\n");
         return -1;
     }
-    mlx_array_item_float32_ptr = dlsym(handle, "mlx_array_item_float32");
+    mlx_array_item_float32_ptr = (int (*)(float* res, const mlx_array arr))GET_SYM(handle, "mlx_array_item_float32");
     if (mlx_array_item_float32_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_item_float32\n");
         return -1;
     }
-    mlx_array_item_float64_ptr = dlsym(handle, "mlx_array_item_float64");
+    mlx_array_item_float64_ptr = (int (*)(double* res, const mlx_array arr))GET_SYM(handle, "mlx_array_item_float64");
     if (mlx_array_item_float64_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_item_float64\n");
         return -1;
     }
-    mlx_array_item_complex64_ptr = dlsym(handle, "mlx_array_item_complex64");
+    mlx_array_item_complex64_ptr = (int (*)(float _Complex* res, const mlx_array arr))GET_SYM(handle, "mlx_array_item_complex64");
     if (mlx_array_item_complex64_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_item_complex64\n");
         return -1;
     }
 #if defined(__aarch64__) || defined(_M_ARM64)
-    mlx_array_item_float16_ptr = dlsym(handle, "mlx_array_item_float16");
+    mlx_array_item_float16_ptr = (int (*)(float16_t* res, const mlx_array arr))GET_SYM(handle, "mlx_array_item_float16");
     if (mlx_array_item_float16_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_item_float16\n");
         return -1;
     }
 #endif
 #if defined(__aarch64__) || defined(_M_ARM64)
-    mlx_array_item_bfloat16_ptr = dlsym(handle, "mlx_array_item_bfloat16");
+    mlx_array_item_bfloat16_ptr = (int (*)(bfloat16_t* res, const mlx_array arr))GET_SYM(handle, "mlx_array_item_bfloat16");
     if (mlx_array_item_bfloat16_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_item_bfloat16\n");
         return -1;
     }
 #endif
-    mlx_array_data_bool_ptr = dlsym(handle, "mlx_array_data_bool");
+    mlx_array_data_bool_ptr = (const bool* (*)(const mlx_array arr))GET_SYM(handle, "mlx_array_data_bool");
     if (mlx_array_data_bool_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_data_bool\n");
         return -1;
     }
-    mlx_array_data_uint8_ptr = dlsym(handle, "mlx_array_data_uint8");
+    mlx_array_data_uint8_ptr = (const uint8_t* (*)(const mlx_array arr))GET_SYM(handle, "mlx_array_data_uint8");
     if (mlx_array_data_uint8_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_data_uint8\n");
         return -1;
     }
-    mlx_array_data_uint16_ptr = dlsym(handle, "mlx_array_data_uint16");
+    mlx_array_data_uint16_ptr = (const uint16_t* (*)(const mlx_array arr))GET_SYM(handle, "mlx_array_data_uint16");
     if (mlx_array_data_uint16_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_data_uint16\n");
         return -1;
     }
-    mlx_array_data_uint32_ptr = dlsym(handle, "mlx_array_data_uint32");
+    mlx_array_data_uint32_ptr = (const uint32_t* (*)(const mlx_array arr))GET_SYM(handle, "mlx_array_data_uint32");
     if (mlx_array_data_uint32_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_data_uint32\n");
         return -1;
     }
-    mlx_array_data_uint64_ptr = dlsym(handle, "mlx_array_data_uint64");
+    mlx_array_data_uint64_ptr = (const uint64_t* (*)(const mlx_array arr))GET_SYM(handle, "mlx_array_data_uint64");
     if (mlx_array_data_uint64_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_data_uint64\n");
         return -1;
     }
-    mlx_array_data_int8_ptr = dlsym(handle, "mlx_array_data_int8");
+    mlx_array_data_int8_ptr = (const int8_t* (*)(const mlx_array arr))GET_SYM(handle, "mlx_array_data_int8");
     if (mlx_array_data_int8_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_data_int8\n");
         return -1;
     }
-    mlx_array_data_int16_ptr = dlsym(handle, "mlx_array_data_int16");
+    mlx_array_data_int16_ptr = (const int16_t* (*)(const mlx_array arr))GET_SYM(handle, "mlx_array_data_int16");
     if (mlx_array_data_int16_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_data_int16\n");
         return -1;
     }
-    mlx_array_data_int32_ptr = dlsym(handle, "mlx_array_data_int32");
+    mlx_array_data_int32_ptr = (const int32_t* (*)(const mlx_array arr))GET_SYM(handle, "mlx_array_data_int32");
     if (mlx_array_data_int32_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_data_int32\n");
         return -1;
     }
-    mlx_array_data_int64_ptr = dlsym(handle, "mlx_array_data_int64");
+    mlx_array_data_int64_ptr = (const int64_t* (*)(const mlx_array arr))GET_SYM(handle, "mlx_array_data_int64");
     if (mlx_array_data_int64_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_data_int64\n");
         return -1;
     }
-    mlx_array_data_float32_ptr = dlsym(handle, "mlx_array_data_float32");
+    mlx_array_data_float32_ptr = (const float* (*)(const mlx_array arr))GET_SYM(handle, "mlx_array_data_float32");
     if (mlx_array_data_float32_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_data_float32\n");
         return -1;
     }
-    mlx_array_data_float64_ptr = dlsym(handle, "mlx_array_data_float64");
+    mlx_array_data_float64_ptr = (const double* (*)(const mlx_array arr))GET_SYM(handle, "mlx_array_data_float64");
     if (mlx_array_data_float64_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_data_float64\n");
         return -1;
     }
-    mlx_array_data_complex64_ptr = dlsym(handle, "mlx_array_data_complex64");
+    mlx_array_data_complex64_ptr = (const float _Complex* (*)(const mlx_array arr))GET_SYM(handle, "mlx_array_data_complex64");
     if (mlx_array_data_complex64_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_data_complex64\n");
         return -1;
     }
 #if defined(__aarch64__) || defined(_M_ARM64)
-    mlx_array_data_float16_ptr = dlsym(handle, "mlx_array_data_float16");
+    mlx_array_data_float16_ptr = (const float16_t* (*)(const mlx_array arr))GET_SYM(handle, "mlx_array_data_float16");
     if (mlx_array_data_float16_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_data_float16\n");
         return -1;
     }
 #endif
 #if defined(__aarch64__) || defined(_M_ARM64)
-    mlx_array_data_bfloat16_ptr = dlsym(handle, "mlx_array_data_bfloat16");
+    mlx_array_data_bfloat16_ptr = (const bfloat16_t* (*)(const mlx_array arr))GET_SYM(handle, "mlx_array_data_bfloat16");
     if (mlx_array_data_bfloat16_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_data_bfloat16\n");
         return -1;
     }
 #endif
-    _mlx_array_is_available_ptr = dlsym(handle, "_mlx_array_is_available");
+    _mlx_array_is_available_ptr = (int (*)(bool* res, const mlx_array arr))GET_SYM(handle, "_mlx_array_is_available");
     if (_mlx_array_is_available_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: _mlx_array_is_available\n");
         return -1;
     }
-    _mlx_array_wait_ptr = dlsym(handle, "_mlx_array_wait");
+    _mlx_array_wait_ptr = (int (*)(const mlx_array arr))GET_SYM(handle, "_mlx_array_wait");
     if (_mlx_array_wait_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: _mlx_array_wait\n");
         return -1;
     }
-    _mlx_array_is_contiguous_ptr = dlsym(handle, "_mlx_array_is_contiguous");
+    _mlx_array_is_contiguous_ptr = (int (*)(bool* res, const mlx_array arr))GET_SYM(handle, "_mlx_array_is_contiguous");
     if (_mlx_array_is_contiguous_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: _mlx_array_is_contiguous\n");
         return -1;
     }
-    _mlx_array_is_row_contiguous_ptr = dlsym(handle, "_mlx_array_is_row_contiguous");
+    _mlx_array_is_row_contiguous_ptr = (int (*)(bool* res, const mlx_array arr))GET_SYM(handle, "_mlx_array_is_row_contiguous");
     if (_mlx_array_is_row_contiguous_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: _mlx_array_is_row_contiguous\n");
         return -1;
     }
-    _mlx_array_is_col_contiguous_ptr = dlsym(handle, "_mlx_array_is_col_contiguous");
+    _mlx_array_is_col_contiguous_ptr = (int (*)(bool* res, const mlx_array arr))GET_SYM(handle, "_mlx_array_is_col_contiguous");
     if (_mlx_array_is_col_contiguous_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: _mlx_array_is_col_contiguous\n");
         return -1;
     }
-    mlx_closure_new_ptr = dlsym(handle, "mlx_closure_new");
+    mlx_closure_new_ptr = (mlx_closure (*)(void))GET_SYM(handle, "mlx_closure_new");
     if (mlx_closure_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_new\n");
         return -1;
     }
-    mlx_closure_free_ptr = dlsym(handle, "mlx_closure_free");
+    mlx_closure_free_ptr = (int (*)(mlx_closure cls))GET_SYM(handle, "mlx_closure_free");
     if (mlx_closure_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_free\n");
         return -1;
     }
-    mlx_closure_new_func_ptr = dlsym(handle, "mlx_closure_new_func");
+    mlx_closure_new_func_ptr = (mlx_closure (*)(int (*fun)(mlx_vector_array*, const mlx_vector_array)))GET_SYM(handle, "mlx_closure_new_func");
     if (mlx_closure_new_func_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_new_func\n");
         return -1;
     }
-    mlx_closure_new_func_payload_ptr = dlsym(handle, "mlx_closure_new_func_payload");
+    mlx_closure_new_func_payload_ptr = (mlx_closure (*)(int (*fun)(mlx_vector_array*, const mlx_vector_array, void*), void* payload, void (*dtor)(void*)))GET_SYM(handle, "mlx_closure_new_func_payload");
     if (mlx_closure_new_func_payload_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_new_func_payload\n");
         return -1;
     }
-    mlx_closure_set_ptr = dlsym(handle, "mlx_closure_set");
+    mlx_closure_set_ptr = (int (*)(mlx_closure* cls, const mlx_closure src))GET_SYM(handle, "mlx_closure_set");
     if (mlx_closure_set_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_set\n");
         return -1;
     }
-    mlx_closure_apply_ptr = dlsym(handle, "mlx_closure_apply");
+    mlx_closure_apply_ptr = (int (*)(mlx_vector_array* res, mlx_closure cls, const mlx_vector_array input))GET_SYM(handle, "mlx_closure_apply");
     if (mlx_closure_apply_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_apply\n");
         return -1;
     }
-    mlx_closure_new_unary_ptr = dlsym(handle, "mlx_closure_new_unary");
+    mlx_closure_new_unary_ptr = (mlx_closure (*)(int (*fun)(mlx_array*, const mlx_array)))GET_SYM(handle, "mlx_closure_new_unary");
     if (mlx_closure_new_unary_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_new_unary\n");
         return -1;
     }
-    mlx_closure_kwargs_new_ptr = dlsym(handle, "mlx_closure_kwargs_new");
+    mlx_closure_kwargs_new_ptr = (mlx_closure_kwargs (*)(void))GET_SYM(handle, "mlx_closure_kwargs_new");
     if (mlx_closure_kwargs_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_kwargs_new\n");
         return -1;
     }
-    mlx_closure_kwargs_free_ptr = dlsym(handle, "mlx_closure_kwargs_free");
+    mlx_closure_kwargs_free_ptr = (int (*)(mlx_closure_kwargs cls))GET_SYM(handle, "mlx_closure_kwargs_free");
     if (mlx_closure_kwargs_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_kwargs_free\n");
         return -1;
     }
-    mlx_closure_kwargs_new_func_ptr = dlsym(handle, "mlx_closure_kwargs_new_func");
+    mlx_closure_kwargs_new_func_ptr = (mlx_closure_kwargs (*)(int (*fun)( mlx_vector_array*, const mlx_vector_array, const mlx_map_string_to_array)))GET_SYM(handle, "mlx_closure_kwargs_new_func");
     if (mlx_closure_kwargs_new_func_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_kwargs_new_func\n");
         return -1;
     }
-    mlx_closure_kwargs_new_func_payload_ptr = dlsym(handle, "mlx_closure_kwargs_new_func_payload");
+    mlx_closure_kwargs_new_func_payload_ptr = (mlx_closure_kwargs (*)(int (*fun)( mlx_vector_array*, const mlx_vector_array, const mlx_map_string_to_array, void*), void* payload, void (*dtor)(void*)))GET_SYM(handle, "mlx_closure_kwargs_new_func_payload");
     if (mlx_closure_kwargs_new_func_payload_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_kwargs_new_func_payload\n");
         return -1;
     }
-    mlx_closure_kwargs_set_ptr = dlsym(handle, "mlx_closure_kwargs_set");
+    mlx_closure_kwargs_set_ptr = (int (*)(mlx_closure_kwargs* cls, const mlx_closure_kwargs src))GET_SYM(handle, "mlx_closure_kwargs_set");
     if (mlx_closure_kwargs_set_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_kwargs_set\n");
         return -1;
     }
-    mlx_closure_kwargs_apply_ptr = dlsym(handle, "mlx_closure_kwargs_apply");
+    mlx_closure_kwargs_apply_ptr = (int (*)(mlx_vector_array* res, mlx_closure_kwargs cls, const mlx_vector_array input_0, const mlx_map_string_to_array input_1))GET_SYM(handle, "mlx_closure_kwargs_apply");
     if (mlx_closure_kwargs_apply_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_kwargs_apply\n");
         return -1;
     }
-    mlx_closure_value_and_grad_new_ptr = dlsym(handle, "mlx_closure_value_and_grad_new");
+    mlx_closure_value_and_grad_new_ptr = (mlx_closure_value_and_grad (*)(void))GET_SYM(handle, "mlx_closure_value_and_grad_new");
     if (mlx_closure_value_and_grad_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_value_and_grad_new\n");
         return -1;
     }
-    mlx_closure_value_and_grad_free_ptr = dlsym(handle, "mlx_closure_value_and_grad_free");
+    mlx_closure_value_and_grad_free_ptr = (int (*)(mlx_closure_value_and_grad cls))GET_SYM(handle, "mlx_closure_value_and_grad_free");
     if (mlx_closure_value_and_grad_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_value_and_grad_free\n");
         return -1;
     }
-    mlx_closure_value_and_grad_new_func_ptr = dlsym(handle, "mlx_closure_value_and_grad_new_func");
+    mlx_closure_value_and_grad_new_func_ptr = (mlx_closure_value_and_grad (*)(int (*fun)(mlx_vector_array*, mlx_vector_array*, const mlx_vector_array)))GET_SYM(handle, "mlx_closure_value_and_grad_new_func");
     if (mlx_closure_value_and_grad_new_func_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_value_and_grad_new_func\n");
         return -1;
     }
-    mlx_closure_value_and_grad_new_func_payload_ptr = dlsym(handle, "mlx_closure_value_and_grad_new_func_payload");
+    mlx_closure_value_and_grad_new_func_payload_ptr = (mlx_closure_value_and_grad (*)(int (*fun)( mlx_vector_array*, mlx_vector_array*, const mlx_vector_array, void*), void* payload, void (*dtor)(void*)))GET_SYM(handle, "mlx_closure_value_and_grad_new_func_payload");
     if (mlx_closure_value_and_grad_new_func_payload_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_value_and_grad_new_func_payload\n");
         return -1;
     }
-    mlx_closure_value_and_grad_set_ptr = dlsym(handle, "mlx_closure_value_and_grad_set");
+    mlx_closure_value_and_grad_set_ptr = (int (*)(mlx_closure_value_and_grad* cls, const mlx_closure_value_and_grad src))GET_SYM(handle, "mlx_closure_value_and_grad_set");
     if (mlx_closure_value_and_grad_set_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_value_and_grad_set\n");
         return -1;
     }
-    mlx_closure_value_and_grad_apply_ptr = dlsym(handle, "mlx_closure_value_and_grad_apply");
+    mlx_closure_value_and_grad_apply_ptr = (int (*)(mlx_vector_array* res_0, mlx_vector_array* res_1, mlx_closure_value_and_grad cls, const mlx_vector_array input))GET_SYM(handle, "mlx_closure_value_and_grad_apply");
     if (mlx_closure_value_and_grad_apply_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_value_and_grad_apply\n");
         return -1;
     }
-    mlx_closure_custom_new_ptr = dlsym(handle, "mlx_closure_custom_new");
+    mlx_closure_custom_new_ptr = (mlx_closure_custom (*)(void))GET_SYM(handle, "mlx_closure_custom_new");
     if (mlx_closure_custom_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_custom_new\n");
         return -1;
     }
-    mlx_closure_custom_free_ptr = dlsym(handle, "mlx_closure_custom_free");
+    mlx_closure_custom_free_ptr = (int (*)(mlx_closure_custom cls))GET_SYM(handle, "mlx_closure_custom_free");
     if (mlx_closure_custom_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_custom_free\n");
         return -1;
     }
-    mlx_closure_custom_new_func_ptr = dlsym(handle, "mlx_closure_custom_new_func");
+    mlx_closure_custom_new_func_ptr = (mlx_closure_custom (*)(int (*fun)( mlx_vector_array*, const mlx_vector_array, const mlx_vector_array, const mlx_vector_array)))GET_SYM(handle, "mlx_closure_custom_new_func");
     if (mlx_closure_custom_new_func_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_custom_new_func\n");
         return -1;
     }
-    mlx_closure_custom_new_func_payload_ptr = dlsym(handle, "mlx_closure_custom_new_func_payload");
+    mlx_closure_custom_new_func_payload_ptr = (mlx_closure_custom (*)(int (*fun)( mlx_vector_array*, const mlx_vector_array, const mlx_vector_array, const mlx_vector_array, void*), void* payload, void (*dtor)(void*)))GET_SYM(handle, "mlx_closure_custom_new_func_payload");
     if (mlx_closure_custom_new_func_payload_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_custom_new_func_payload\n");
         return -1;
     }
-    mlx_closure_custom_set_ptr = dlsym(handle, "mlx_closure_custom_set");
+    mlx_closure_custom_set_ptr = (int (*)(mlx_closure_custom* cls, const mlx_closure_custom src))GET_SYM(handle, "mlx_closure_custom_set");
     if (mlx_closure_custom_set_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_custom_set\n");
         return -1;
     }
-    mlx_closure_custom_apply_ptr = dlsym(handle, "mlx_closure_custom_apply");
+    mlx_closure_custom_apply_ptr = (int (*)(mlx_vector_array* res, mlx_closure_custom cls, const mlx_vector_array input_0, const mlx_vector_array input_1, const mlx_vector_array input_2))GET_SYM(handle, "mlx_closure_custom_apply");
     if (mlx_closure_custom_apply_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_custom_apply\n");
         return -1;
     }
-    mlx_closure_custom_jvp_new_ptr = dlsym(handle, "mlx_closure_custom_jvp_new");
+    mlx_closure_custom_jvp_new_ptr = (mlx_closure_custom_jvp (*)(void))GET_SYM(handle, "mlx_closure_custom_jvp_new");
     if (mlx_closure_custom_jvp_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_custom_jvp_new\n");
         return -1;
     }
-    mlx_closure_custom_jvp_free_ptr = dlsym(handle, "mlx_closure_custom_jvp_free");
+    mlx_closure_custom_jvp_free_ptr = (int (*)(mlx_closure_custom_jvp cls))GET_SYM(handle, "mlx_closure_custom_jvp_free");
     if (mlx_closure_custom_jvp_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_custom_jvp_free\n");
         return -1;
     }
-    mlx_closure_custom_jvp_new_func_ptr = dlsym(handle, "mlx_closure_custom_jvp_new_func");
+    mlx_closure_custom_jvp_new_func_ptr = (mlx_closure_custom_jvp (*)(int (*fun)( mlx_vector_array*, const mlx_vector_array, const mlx_vector_array, const int*, size_t _num)))GET_SYM(handle, "mlx_closure_custom_jvp_new_func");
     if (mlx_closure_custom_jvp_new_func_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_custom_jvp_new_func\n");
         return -1;
     }
-    mlx_closure_custom_jvp_new_func_payload_ptr = dlsym(handle, "mlx_closure_custom_jvp_new_func_payload");
+    mlx_closure_custom_jvp_new_func_payload_ptr = (mlx_closure_custom_jvp (*)(int (*fun)( mlx_vector_array*, const mlx_vector_array, const mlx_vector_array, const int*, size_t _num, void*), void* payload, void (*dtor)(void*)))GET_SYM(handle, "mlx_closure_custom_jvp_new_func_payload");
     if (mlx_closure_custom_jvp_new_func_payload_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_custom_jvp_new_func_payload\n");
         return -1;
     }
-    mlx_closure_custom_jvp_set_ptr = dlsym(handle, "mlx_closure_custom_jvp_set");
+    mlx_closure_custom_jvp_set_ptr = (int (*)(mlx_closure_custom_jvp* cls, const mlx_closure_custom_jvp src))GET_SYM(handle, "mlx_closure_custom_jvp_set");
     if (mlx_closure_custom_jvp_set_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_custom_jvp_set\n");
         return -1;
     }
-    mlx_closure_custom_jvp_apply_ptr = dlsym(handle, "mlx_closure_custom_jvp_apply");
+    mlx_closure_custom_jvp_apply_ptr = (int (*)(mlx_vector_array* res, mlx_closure_custom_jvp cls, const mlx_vector_array input_0, const mlx_vector_array input_1, const int* input_2, size_t input_2_num))GET_SYM(handle, "mlx_closure_custom_jvp_apply");
     if (mlx_closure_custom_jvp_apply_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_custom_jvp_apply\n");
         return -1;
     }
-    mlx_closure_custom_vmap_new_ptr = dlsym(handle, "mlx_closure_custom_vmap_new");
+    mlx_closure_custom_vmap_new_ptr = (mlx_closure_custom_vmap (*)(void))GET_SYM(handle, "mlx_closure_custom_vmap_new");
     if (mlx_closure_custom_vmap_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_custom_vmap_new\n");
         return -1;
     }
-    mlx_closure_custom_vmap_free_ptr = dlsym(handle, "mlx_closure_custom_vmap_free");
+    mlx_closure_custom_vmap_free_ptr = (int (*)(mlx_closure_custom_vmap cls))GET_SYM(handle, "mlx_closure_custom_vmap_free");
     if (mlx_closure_custom_vmap_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_custom_vmap_free\n");
         return -1;
     }
-    mlx_closure_custom_vmap_new_func_ptr = dlsym(handle, "mlx_closure_custom_vmap_new_func");
+    mlx_closure_custom_vmap_new_func_ptr = (mlx_closure_custom_vmap (*)(int (*fun)( mlx_vector_array*, mlx_vector_int*, const mlx_vector_array, const int*, size_t _num)))GET_SYM(handle, "mlx_closure_custom_vmap_new_func");
     if (mlx_closure_custom_vmap_new_func_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_custom_vmap_new_func\n");
         return -1;
     }
-    mlx_closure_custom_vmap_new_func_payload_ptr = dlsym(handle, "mlx_closure_custom_vmap_new_func_payload");
+    mlx_closure_custom_vmap_new_func_payload_ptr = (mlx_closure_custom_vmap (*)(int (*fun)( mlx_vector_array*, mlx_vector_int*, const mlx_vector_array, const int*, size_t _num, void*), void* payload, void (*dtor)(void*)))GET_SYM(handle, "mlx_closure_custom_vmap_new_func_payload");
     if (mlx_closure_custom_vmap_new_func_payload_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_custom_vmap_new_func_payload\n");
         return -1;
     }
-    mlx_closure_custom_vmap_set_ptr = dlsym(handle, "mlx_closure_custom_vmap_set");
+    mlx_closure_custom_vmap_set_ptr = (int (*)(mlx_closure_custom_vmap* cls, const mlx_closure_custom_vmap src))GET_SYM(handle, "mlx_closure_custom_vmap_set");
     if (mlx_closure_custom_vmap_set_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_custom_vmap_set\n");
         return -1;
     }
-    mlx_closure_custom_vmap_apply_ptr = dlsym(handle, "mlx_closure_custom_vmap_apply");
+    mlx_closure_custom_vmap_apply_ptr = (int (*)(mlx_vector_array* res_0, mlx_vector_int* res_1, mlx_closure_custom_vmap cls, const mlx_vector_array input_0, const int* input_1, size_t input_1_num))GET_SYM(handle, "mlx_closure_custom_vmap_apply");
     if (mlx_closure_custom_vmap_apply_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_closure_custom_vmap_apply\n");
         return -1;
     }
-    mlx_compile_ptr = dlsym(handle, "mlx_compile");
+    mlx_compile_ptr = (int (*)(mlx_closure* res, const mlx_closure fun, bool shapeless))GET_SYM(handle, "mlx_compile");
     if (mlx_compile_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_compile\n");
         return -1;
     }
-    mlx_detail_compile_ptr = dlsym(handle, "mlx_detail_compile");
+    mlx_detail_compile_ptr = (int (*)(mlx_closure* res, const mlx_closure fun, uintptr_t fun_id, bool shapeless, const uint64_t* constants, size_t constants_num))GET_SYM(handle, "mlx_detail_compile");
     if (mlx_detail_compile_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_detail_compile\n");
         return -1;
     }
-    mlx_detail_compile_clear_cache_ptr = dlsym(handle, "mlx_detail_compile_clear_cache");
+    mlx_detail_compile_clear_cache_ptr = (int (*)(void))GET_SYM(handle, "mlx_detail_compile_clear_cache");
     if (mlx_detail_compile_clear_cache_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_detail_compile_clear_cache\n");
         return -1;
     }
-    mlx_detail_compile_erase_ptr = dlsym(handle, "mlx_detail_compile_erase");
+    mlx_detail_compile_erase_ptr = (int (*)(uintptr_t fun_id))GET_SYM(handle, "mlx_detail_compile_erase");
     if (mlx_detail_compile_erase_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_detail_compile_erase\n");
         return -1;
     }
-    mlx_disable_compile_ptr = dlsym(handle, "mlx_disable_compile");
+    mlx_disable_compile_ptr = (int (*)(void))GET_SYM(handle, "mlx_disable_compile");
     if (mlx_disable_compile_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_disable_compile\n");
         return -1;
     }
-    mlx_enable_compile_ptr = dlsym(handle, "mlx_enable_compile");
+    mlx_enable_compile_ptr = (int (*)(void))GET_SYM(handle, "mlx_enable_compile");
     if (mlx_enable_compile_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_enable_compile\n");
         return -1;
     }
-    mlx_set_compile_mode_ptr = dlsym(handle, "mlx_set_compile_mode");
+    mlx_set_compile_mode_ptr = (int (*)(mlx_compile_mode mode))GET_SYM(handle, "mlx_set_compile_mode");
     if (mlx_set_compile_mode_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_set_compile_mode\n");
         return -1;
     }
-    mlx_device_new_ptr = dlsym(handle, "mlx_device_new");
+    mlx_device_new_ptr = (mlx_device (*)(void))GET_SYM(handle, "mlx_device_new");
     if (mlx_device_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_device_new\n");
         return -1;
     }
-    mlx_device_new_type_ptr = dlsym(handle, "mlx_device_new_type");
+    mlx_device_new_type_ptr = (mlx_device (*)(mlx_device_type type, int index))GET_SYM(handle, "mlx_device_new_type");
     if (mlx_device_new_type_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_device_new_type\n");
         return -1;
     }
-    mlx_device_free_ptr = dlsym(handle, "mlx_device_free");
+    mlx_device_free_ptr = (int (*)(mlx_device dev))GET_SYM(handle, "mlx_device_free");
     if (mlx_device_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_device_free\n");
         return -1;
     }
-    mlx_device_set_ptr = dlsym(handle, "mlx_device_set");
+    mlx_device_set_ptr = (int (*)(mlx_device* dev, const mlx_device src))GET_SYM(handle, "mlx_device_set");
     if (mlx_device_set_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_device_set\n");
         return -1;
     }
-    mlx_device_tostring_ptr = dlsym(handle, "mlx_device_tostring");
+    mlx_device_tostring_ptr = (int (*)(mlx_string* str, mlx_device dev))GET_SYM(handle, "mlx_device_tostring");
     if (mlx_device_tostring_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_device_tostring\n");
         return -1;
     }
-    mlx_device_equal_ptr = dlsym(handle, "mlx_device_equal");
+    mlx_device_equal_ptr = (bool (*)(mlx_device lhs, mlx_device rhs))GET_SYM(handle, "mlx_device_equal");
     if (mlx_device_equal_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_device_equal\n");
         return -1;
     }
-    mlx_device_get_index_ptr = dlsym(handle, "mlx_device_get_index");
+    mlx_device_get_index_ptr = (int (*)(int* index, mlx_device dev))GET_SYM(handle, "mlx_device_get_index");
     if (mlx_device_get_index_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_device_get_index\n");
         return -1;
     }
-    mlx_device_get_type_ptr = dlsym(handle, "mlx_device_get_type");
+    mlx_device_get_type_ptr = (int (*)(mlx_device_type* type, mlx_device dev))GET_SYM(handle, "mlx_device_get_type");
     if (mlx_device_get_type_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_device_get_type\n");
         return -1;
     }
-    mlx_get_default_device_ptr = dlsym(handle, "mlx_get_default_device");
+    mlx_get_default_device_ptr = (int (*)(mlx_device* dev))GET_SYM(handle, "mlx_get_default_device");
     if (mlx_get_default_device_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_get_default_device\n");
         return -1;
     }
-    mlx_set_default_device_ptr = dlsym(handle, "mlx_set_default_device");
+    mlx_set_default_device_ptr = (int (*)(mlx_device dev))GET_SYM(handle, "mlx_set_default_device");
     if (mlx_set_default_device_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_set_default_device\n");
         return -1;
     }
-    mlx_distributed_all_gather_ptr = dlsym(handle, "mlx_distributed_all_gather");
+    mlx_distributed_all_gather_ptr = (int (*)(mlx_array* res, const mlx_array x, const mlx_distributed_group group , const mlx_stream S))GET_SYM(handle, "mlx_distributed_all_gather");
     if (mlx_distributed_all_gather_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_distributed_all_gather\n");
         return -1;
     }
-    mlx_distributed_all_max_ptr = dlsym(handle, "mlx_distributed_all_max");
+    mlx_distributed_all_max_ptr = (int (*)(mlx_array* res, const mlx_array x, const mlx_distributed_group group , const mlx_stream s))GET_SYM(handle, "mlx_distributed_all_max");
     if (mlx_distributed_all_max_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_distributed_all_max\n");
         return -1;
     }
-    mlx_distributed_all_min_ptr = dlsym(handle, "mlx_distributed_all_min");
+    mlx_distributed_all_min_ptr = (int (*)(mlx_array* res, const mlx_array x, const mlx_distributed_group group , const mlx_stream s))GET_SYM(handle, "mlx_distributed_all_min");
     if (mlx_distributed_all_min_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_distributed_all_min\n");
         return -1;
     }
-    mlx_distributed_all_sum_ptr = dlsym(handle, "mlx_distributed_all_sum");
+    mlx_distributed_all_sum_ptr = (int (*)(mlx_array* res, const mlx_array x, const mlx_distributed_group group , const mlx_stream s))GET_SYM(handle, "mlx_distributed_all_sum");
     if (mlx_distributed_all_sum_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_distributed_all_sum\n");
         return -1;
     }
-    mlx_distributed_recv_ptr = dlsym(handle, "mlx_distributed_recv");
+    mlx_distributed_recv_ptr = (int (*)(mlx_array* res, const int* shape, size_t shape_num, mlx_dtype dtype, int src, const mlx_distributed_group group , const mlx_stream s))GET_SYM(handle, "mlx_distributed_recv");
     if (mlx_distributed_recv_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_distributed_recv\n");
         return -1;
     }
-    mlx_distributed_recv_like_ptr = dlsym(handle, "mlx_distributed_recv_like");
+    mlx_distributed_recv_like_ptr = (int (*)(mlx_array* res, const mlx_array x, int src, const mlx_distributed_group group , const mlx_stream s))GET_SYM(handle, "mlx_distributed_recv_like");
     if (mlx_distributed_recv_like_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_distributed_recv_like\n");
         return -1;
     }
-    mlx_distributed_send_ptr = dlsym(handle, "mlx_distributed_send");
+    mlx_distributed_send_ptr = (int (*)(mlx_array* res, const mlx_array x, int dst, const mlx_distributed_group group , const mlx_stream s))GET_SYM(handle, "mlx_distributed_send");
     if (mlx_distributed_send_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_distributed_send\n");
         return -1;
     }
-    mlx_distributed_sum_scatter_ptr = dlsym(handle, "mlx_distributed_sum_scatter");
+    mlx_distributed_sum_scatter_ptr = (int (*)(mlx_array* res, const mlx_array x, const mlx_distributed_group group , const mlx_stream s))GET_SYM(handle, "mlx_distributed_sum_scatter");
     if (mlx_distributed_sum_scatter_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_distributed_sum_scatter\n");
         return -1;
     }
-    mlx_distributed_group_rank_ptr = dlsym(handle, "mlx_distributed_group_rank");
+    mlx_distributed_group_rank_ptr = (int (*)(mlx_distributed_group group))GET_SYM(handle, "mlx_distributed_group_rank");
     if (mlx_distributed_group_rank_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_distributed_group_rank\n");
         return -1;
     }
-    mlx_distributed_group_size_ptr = dlsym(handle, "mlx_distributed_group_size");
+    mlx_distributed_group_size_ptr = (int (*)(mlx_distributed_group group))GET_SYM(handle, "mlx_distributed_group_size");
     if (mlx_distributed_group_size_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_distributed_group_size\n");
         return -1;
     }
-    mlx_distributed_group_split_ptr = dlsym(handle, "mlx_distributed_group_split");
+    mlx_distributed_group_split_ptr = (mlx_distributed_group (*)(mlx_distributed_group group, int color, int key))GET_SYM(handle, "mlx_distributed_group_split");
     if (mlx_distributed_group_split_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_distributed_group_split\n");
         return -1;
     }
-    mlx_distributed_is_available_ptr = dlsym(handle, "mlx_distributed_is_available");
+    mlx_distributed_is_available_ptr = (bool (*)(void))GET_SYM(handle, "mlx_distributed_is_available");
     if (mlx_distributed_is_available_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_distributed_is_available\n");
         return -1;
     }
-    mlx_distributed_init_ptr = dlsym(handle, "mlx_distributed_init");
+    mlx_distributed_init_ptr = (mlx_distributed_group (*)(bool strict))GET_SYM(handle, "mlx_distributed_init");
     if (mlx_distributed_init_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_distributed_init\n");
         return -1;
     }
-    mlx_set_error_handler_ptr = dlsym(handle, "mlx_set_error_handler");
+    mlx_set_error_handler_ptr = (void (*)(mlx_error_handler_func handler, void* data, void (*dtor)(void*)))GET_SYM(handle, "mlx_set_error_handler");
     if (mlx_set_error_handler_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_set_error_handler\n");
         return -1;
     }
-    _mlx_error_ptr = dlsym(handle, "_mlx_error");
+    _mlx_error_ptr = (void (*)(const char* file, const int line, const char* fmt, ...))GET_SYM(handle, "_mlx_error");
     if (_mlx_error_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: _mlx_error\n");
         return -1;
     }
-    mlx_export_function_ptr = dlsym(handle, "mlx_export_function");
+    mlx_export_function_ptr = (int (*)(const char* file, const mlx_closure fun, const mlx_vector_array args, bool shapeless))GET_SYM(handle, "mlx_export_function");
     if (mlx_export_function_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_export_function\n");
         return -1;
     }
-    mlx_export_function_kwargs_ptr = dlsym(handle, "mlx_export_function_kwargs");
+    mlx_export_function_kwargs_ptr = (int (*)(const char* file, const mlx_closure_kwargs fun, const mlx_vector_array args, const mlx_map_string_to_array kwargs, bool shapeless))GET_SYM(handle, "mlx_export_function_kwargs");
     if (mlx_export_function_kwargs_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_export_function_kwargs\n");
         return -1;
     }
-    mlx_function_exporter_new_ptr = dlsym(handle, "mlx_function_exporter_new");
+    mlx_function_exporter_new_ptr = (mlx_function_exporter (*)(const char* file, const mlx_closure fun, bool shapeless))GET_SYM(handle, "mlx_function_exporter_new");
     if (mlx_function_exporter_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_function_exporter_new\n");
         return -1;
     }
-    mlx_function_exporter_free_ptr = dlsym(handle, "mlx_function_exporter_free");
+    mlx_function_exporter_free_ptr = (int (*)(mlx_function_exporter xfunc))GET_SYM(handle, "mlx_function_exporter_free");
     if (mlx_function_exporter_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_function_exporter_free\n");
         return -1;
     }
-    mlx_function_exporter_apply_ptr = dlsym(handle, "mlx_function_exporter_apply");
+    mlx_function_exporter_apply_ptr = (int (*)(const mlx_function_exporter xfunc, const mlx_vector_array args))GET_SYM(handle, "mlx_function_exporter_apply");
     if (mlx_function_exporter_apply_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_function_exporter_apply\n");
         return -1;
     }
-    mlx_function_exporter_apply_kwargs_ptr = dlsym(handle, "mlx_function_exporter_apply_kwargs");
+    mlx_function_exporter_apply_kwargs_ptr = (int (*)(const mlx_function_exporter xfunc, const mlx_vector_array args, const mlx_map_string_to_array kwargs))GET_SYM(handle, "mlx_function_exporter_apply_kwargs");
     if (mlx_function_exporter_apply_kwargs_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_function_exporter_apply_kwargs\n");
         return -1;
     }
-    mlx_imported_function_new_ptr = dlsym(handle, "mlx_imported_function_new");
+    mlx_imported_function_new_ptr = (mlx_imported_function (*)(const char* file))GET_SYM(handle, "mlx_imported_function_new");
     if (mlx_imported_function_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_imported_function_new\n");
         return -1;
     }
-    mlx_imported_function_free_ptr = dlsym(handle, "mlx_imported_function_free");
+    mlx_imported_function_free_ptr = (int (*)(mlx_imported_function xfunc))GET_SYM(handle, "mlx_imported_function_free");
     if (mlx_imported_function_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_imported_function_free\n");
         return -1;
     }
-    mlx_imported_function_apply_ptr = dlsym(handle, "mlx_imported_function_apply");
+    mlx_imported_function_apply_ptr = (int (*)(mlx_vector_array* res, const mlx_imported_function xfunc, const mlx_vector_array args))GET_SYM(handle, "mlx_imported_function_apply");
     if (mlx_imported_function_apply_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_imported_function_apply\n");
         return -1;
     }
-    mlx_imported_function_apply_kwargs_ptr = dlsym(handle, "mlx_imported_function_apply_kwargs");
+    mlx_imported_function_apply_kwargs_ptr = (int (*)(mlx_vector_array* res, const mlx_imported_function xfunc, const mlx_vector_array args, const mlx_map_string_to_array kwargs))GET_SYM(handle, "mlx_imported_function_apply_kwargs");
     if (mlx_imported_function_apply_kwargs_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_imported_function_apply_kwargs\n");
         return -1;
     }
-    mlx_fast_cuda_kernel_config_new_ptr = dlsym(handle, "mlx_fast_cuda_kernel_config_new");
+    mlx_fast_cuda_kernel_config_new_ptr = (mlx_fast_cuda_kernel_config (*)(void))GET_SYM(handle, "mlx_fast_cuda_kernel_config_new");
     if (mlx_fast_cuda_kernel_config_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_cuda_kernel_config_new\n");
         return -1;
     }
-    mlx_fast_cuda_kernel_config_free_ptr = dlsym(handle, "mlx_fast_cuda_kernel_config_free");
+    mlx_fast_cuda_kernel_config_free_ptr = (void (*)(mlx_fast_cuda_kernel_config cls))GET_SYM(handle, "mlx_fast_cuda_kernel_config_free");
     if (mlx_fast_cuda_kernel_config_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_cuda_kernel_config_free\n");
         return -1;
     }
-    mlx_fast_cuda_kernel_config_add_output_arg_ptr = dlsym(handle, "mlx_fast_cuda_kernel_config_add_output_arg");
+    mlx_fast_cuda_kernel_config_add_output_arg_ptr = (int (*)(mlx_fast_cuda_kernel_config cls, const int* shape, size_t size, mlx_dtype dtype))GET_SYM(handle, "mlx_fast_cuda_kernel_config_add_output_arg");
     if (mlx_fast_cuda_kernel_config_add_output_arg_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_cuda_kernel_config_add_output_arg\n");
         return -1;
     }
-    mlx_fast_cuda_kernel_config_set_grid_ptr = dlsym(handle, "mlx_fast_cuda_kernel_config_set_grid");
+    mlx_fast_cuda_kernel_config_set_grid_ptr = (int (*)(mlx_fast_cuda_kernel_config cls, int grid1, int grid2, int grid3))GET_SYM(handle, "mlx_fast_cuda_kernel_config_set_grid");
     if (mlx_fast_cuda_kernel_config_set_grid_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_cuda_kernel_config_set_grid\n");
         return -1;
     }
-    mlx_fast_cuda_kernel_config_set_thread_group_ptr = dlsym(handle, "mlx_fast_cuda_kernel_config_set_thread_group");
+    mlx_fast_cuda_kernel_config_set_thread_group_ptr = (int (*)(mlx_fast_cuda_kernel_config cls, int thread1, int thread2, int thread3))GET_SYM(handle, "mlx_fast_cuda_kernel_config_set_thread_group");
     if (mlx_fast_cuda_kernel_config_set_thread_group_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_cuda_kernel_config_set_thread_group\n");
         return -1;
     }
-    mlx_fast_cuda_kernel_config_set_init_value_ptr = dlsym(handle, "mlx_fast_cuda_kernel_config_set_init_value");
+    mlx_fast_cuda_kernel_config_set_init_value_ptr = (int (*)(mlx_fast_cuda_kernel_config cls, float value))GET_SYM(handle, "mlx_fast_cuda_kernel_config_set_init_value");
     if (mlx_fast_cuda_kernel_config_set_init_value_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_cuda_kernel_config_set_init_value\n");
         return -1;
     }
-    mlx_fast_cuda_kernel_config_set_verbose_ptr = dlsym(handle, "mlx_fast_cuda_kernel_config_set_verbose");
+    mlx_fast_cuda_kernel_config_set_verbose_ptr = (int (*)(mlx_fast_cuda_kernel_config cls, bool verbose))GET_SYM(handle, "mlx_fast_cuda_kernel_config_set_verbose");
     if (mlx_fast_cuda_kernel_config_set_verbose_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_cuda_kernel_config_set_verbose\n");
         return -1;
     }
-    mlx_fast_cuda_kernel_config_add_template_arg_dtype_ptr = dlsym(handle, "mlx_fast_cuda_kernel_config_add_template_arg_dtype");
+    mlx_fast_cuda_kernel_config_add_template_arg_dtype_ptr = (int (*)(mlx_fast_cuda_kernel_config cls, const char* name, mlx_dtype dtype))GET_SYM(handle, "mlx_fast_cuda_kernel_config_add_template_arg_dtype");
     if (mlx_fast_cuda_kernel_config_add_template_arg_dtype_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_cuda_kernel_config_add_template_arg_dtype\n");
         return -1;
     }
-    mlx_fast_cuda_kernel_config_add_template_arg_int_ptr = dlsym(handle, "mlx_fast_cuda_kernel_config_add_template_arg_int");
+    mlx_fast_cuda_kernel_config_add_template_arg_int_ptr = (int (*)(mlx_fast_cuda_kernel_config cls, const char* name, int value))GET_SYM(handle, "mlx_fast_cuda_kernel_config_add_template_arg_int");
     if (mlx_fast_cuda_kernel_config_add_template_arg_int_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_cuda_kernel_config_add_template_arg_int\n");
         return -1;
     }
-    mlx_fast_cuda_kernel_config_add_template_arg_bool_ptr = dlsym(handle, "mlx_fast_cuda_kernel_config_add_template_arg_bool");
+    mlx_fast_cuda_kernel_config_add_template_arg_bool_ptr = (int (*)(mlx_fast_cuda_kernel_config cls, const char* name, bool value))GET_SYM(handle, "mlx_fast_cuda_kernel_config_add_template_arg_bool");
     if (mlx_fast_cuda_kernel_config_add_template_arg_bool_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_cuda_kernel_config_add_template_arg_bool\n");
         return -1;
     }
-    mlx_fast_cuda_kernel_new_ptr = dlsym(handle, "mlx_fast_cuda_kernel_new");
+    mlx_fast_cuda_kernel_new_ptr = (mlx_fast_cuda_kernel (*)(const char* name, const mlx_vector_string input_names, const mlx_vector_string output_names, const char* source, const char* header, bool ensure_row_contiguous, int shared_memory))GET_SYM(handle, "mlx_fast_cuda_kernel_new");
     if (mlx_fast_cuda_kernel_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_cuda_kernel_new\n");
         return -1;
     }
-    mlx_fast_cuda_kernel_free_ptr = dlsym(handle, "mlx_fast_cuda_kernel_free");
+    mlx_fast_cuda_kernel_free_ptr = (void (*)(mlx_fast_cuda_kernel cls))GET_SYM(handle, "mlx_fast_cuda_kernel_free");
     if (mlx_fast_cuda_kernel_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_cuda_kernel_free\n");
         return -1;
     }
-    mlx_fast_cuda_kernel_apply_ptr = dlsym(handle, "mlx_fast_cuda_kernel_apply");
+    mlx_fast_cuda_kernel_apply_ptr = (int (*)(mlx_vector_array* outputs, mlx_fast_cuda_kernel cls, const mlx_vector_array inputs, const mlx_fast_cuda_kernel_config config, const mlx_stream stream))GET_SYM(handle, "mlx_fast_cuda_kernel_apply");
     if (mlx_fast_cuda_kernel_apply_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_cuda_kernel_apply\n");
         return -1;
     }
-    mlx_fast_layer_norm_ptr = dlsym(handle, "mlx_fast_layer_norm");
+    mlx_fast_layer_norm_ptr = (int (*)(mlx_array* res, const mlx_array x, const mlx_array weight , const mlx_array bias , float eps, const mlx_stream s))GET_SYM(handle, "mlx_fast_layer_norm");
     if (mlx_fast_layer_norm_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_layer_norm\n");
         return -1;
     }
-    mlx_fast_metal_kernel_config_new_ptr = dlsym(handle, "mlx_fast_metal_kernel_config_new");
+    mlx_fast_metal_kernel_config_new_ptr = (mlx_fast_metal_kernel_config (*)(void))GET_SYM(handle, "mlx_fast_metal_kernel_config_new");
     if (mlx_fast_metal_kernel_config_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_metal_kernel_config_new\n");
         return -1;
     }
-    mlx_fast_metal_kernel_config_free_ptr = dlsym(handle, "mlx_fast_metal_kernel_config_free");
+    mlx_fast_metal_kernel_config_free_ptr = (void (*)(mlx_fast_metal_kernel_config cls))GET_SYM(handle, "mlx_fast_metal_kernel_config_free");
     if (mlx_fast_metal_kernel_config_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_metal_kernel_config_free\n");
         return -1;
     }
-    mlx_fast_metal_kernel_config_add_output_arg_ptr = dlsym(handle, "mlx_fast_metal_kernel_config_add_output_arg");
+    mlx_fast_metal_kernel_config_add_output_arg_ptr = (int (*)(mlx_fast_metal_kernel_config cls, const int* shape, size_t size, mlx_dtype dtype))GET_SYM(handle, "mlx_fast_metal_kernel_config_add_output_arg");
     if (mlx_fast_metal_kernel_config_add_output_arg_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_metal_kernel_config_add_output_arg\n");
         return -1;
     }
-    mlx_fast_metal_kernel_config_set_grid_ptr = dlsym(handle, "mlx_fast_metal_kernel_config_set_grid");
+    mlx_fast_metal_kernel_config_set_grid_ptr = (int (*)(mlx_fast_metal_kernel_config cls, int grid1, int grid2, int grid3))GET_SYM(handle, "mlx_fast_metal_kernel_config_set_grid");
     if (mlx_fast_metal_kernel_config_set_grid_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_metal_kernel_config_set_grid\n");
         return -1;
     }
-    mlx_fast_metal_kernel_config_set_thread_group_ptr = dlsym(handle, "mlx_fast_metal_kernel_config_set_thread_group");
+    mlx_fast_metal_kernel_config_set_thread_group_ptr = (int (*)(mlx_fast_metal_kernel_config cls, int thread1, int thread2, int thread3))GET_SYM(handle, "mlx_fast_metal_kernel_config_set_thread_group");
     if (mlx_fast_metal_kernel_config_set_thread_group_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_metal_kernel_config_set_thread_group\n");
         return -1;
     }
-    mlx_fast_metal_kernel_config_set_init_value_ptr = dlsym(handle, "mlx_fast_metal_kernel_config_set_init_value");
+    mlx_fast_metal_kernel_config_set_init_value_ptr = (int (*)(mlx_fast_metal_kernel_config cls, float value))GET_SYM(handle, "mlx_fast_metal_kernel_config_set_init_value");
     if (mlx_fast_metal_kernel_config_set_init_value_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_metal_kernel_config_set_init_value\n");
         return -1;
     }
-    mlx_fast_metal_kernel_config_set_verbose_ptr = dlsym(handle, "mlx_fast_metal_kernel_config_set_verbose");
+    mlx_fast_metal_kernel_config_set_verbose_ptr = (int (*)(mlx_fast_metal_kernel_config cls, bool verbose))GET_SYM(handle, "mlx_fast_metal_kernel_config_set_verbose");
     if (mlx_fast_metal_kernel_config_set_verbose_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_metal_kernel_config_set_verbose\n");
         return -1;
     }
-    mlx_fast_metal_kernel_config_add_template_arg_dtype_ptr = dlsym(handle, "mlx_fast_metal_kernel_config_add_template_arg_dtype");
+    mlx_fast_metal_kernel_config_add_template_arg_dtype_ptr = (int (*)(mlx_fast_metal_kernel_config cls, const char* name, mlx_dtype dtype))GET_SYM(handle, "mlx_fast_metal_kernel_config_add_template_arg_dtype");
     if (mlx_fast_metal_kernel_config_add_template_arg_dtype_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_metal_kernel_config_add_template_arg_dtype\n");
         return -1;
     }
-    mlx_fast_metal_kernel_config_add_template_arg_int_ptr = dlsym(handle, "mlx_fast_metal_kernel_config_add_template_arg_int");
+    mlx_fast_metal_kernel_config_add_template_arg_int_ptr = (int (*)(mlx_fast_metal_kernel_config cls, const char* name, int value))GET_SYM(handle, "mlx_fast_metal_kernel_config_add_template_arg_int");
     if (mlx_fast_metal_kernel_config_add_template_arg_int_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_metal_kernel_config_add_template_arg_int\n");
         return -1;
     }
-    mlx_fast_metal_kernel_config_add_template_arg_bool_ptr = dlsym(handle, "mlx_fast_metal_kernel_config_add_template_arg_bool");
+    mlx_fast_metal_kernel_config_add_template_arg_bool_ptr = (int (*)(mlx_fast_metal_kernel_config cls, const char* name, bool value))GET_SYM(handle, "mlx_fast_metal_kernel_config_add_template_arg_bool");
     if (mlx_fast_metal_kernel_config_add_template_arg_bool_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_metal_kernel_config_add_template_arg_bool\n");
         return -1;
     }
-    mlx_fast_metal_kernel_new_ptr = dlsym(handle, "mlx_fast_metal_kernel_new");
+    mlx_fast_metal_kernel_new_ptr = (mlx_fast_metal_kernel (*)(const char* name, const mlx_vector_string input_names, const mlx_vector_string output_names, const char* source, const char* header, bool ensure_row_contiguous, bool atomic_outputs))GET_SYM(handle, "mlx_fast_metal_kernel_new");
     if (mlx_fast_metal_kernel_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_metal_kernel_new\n");
         return -1;
     }
-    mlx_fast_metal_kernel_free_ptr = dlsym(handle, "mlx_fast_metal_kernel_free");
+    mlx_fast_metal_kernel_free_ptr = (void (*)(mlx_fast_metal_kernel cls))GET_SYM(handle, "mlx_fast_metal_kernel_free");
     if (mlx_fast_metal_kernel_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_metal_kernel_free\n");
         return -1;
     }
-    mlx_fast_metal_kernel_apply_ptr = dlsym(handle, "mlx_fast_metal_kernel_apply");
+    mlx_fast_metal_kernel_apply_ptr = (int (*)(mlx_vector_array* outputs, mlx_fast_metal_kernel cls, const mlx_vector_array inputs, const mlx_fast_metal_kernel_config config, const mlx_stream stream))GET_SYM(handle, "mlx_fast_metal_kernel_apply");
     if (mlx_fast_metal_kernel_apply_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_metal_kernel_apply\n");
         return -1;
     }
-    mlx_fast_rms_norm_ptr = dlsym(handle, "mlx_fast_rms_norm");
+    mlx_fast_rms_norm_ptr = (int (*)(mlx_array* res, const mlx_array x, const mlx_array weight , float eps, const mlx_stream s))GET_SYM(handle, "mlx_fast_rms_norm");
     if (mlx_fast_rms_norm_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_rms_norm\n");
         return -1;
     }
-    mlx_fast_rope_ptr = dlsym(handle, "mlx_fast_rope");
+    mlx_fast_rope_ptr = (int (*)(mlx_array* res, const mlx_array x, int dims, bool traditional, mlx_optional_float base, float scale, int offset, const mlx_array freqs , const mlx_stream s))GET_SYM(handle, "mlx_fast_rope");
     if (mlx_fast_rope_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_rope\n");
         return -1;
     }
-    mlx_fast_rope_dynamic_ptr = dlsym(handle, "mlx_fast_rope_dynamic");
+    mlx_fast_rope_dynamic_ptr = (int (*)(mlx_array* res, const mlx_array x, int dims, bool traditional, mlx_optional_float base, float scale, const mlx_array offset, const mlx_array freqs , const mlx_stream s))GET_SYM(handle, "mlx_fast_rope_dynamic");
     if (mlx_fast_rope_dynamic_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_rope_dynamic\n");
         return -1;
     }
-    mlx_fast_scaled_dot_product_attention_ptr = dlsym(handle, "mlx_fast_scaled_dot_product_attention");
+    mlx_fast_scaled_dot_product_attention_ptr = (int (*)(mlx_array* res, const mlx_array queries, const mlx_array keys, const mlx_array values, float scale, const char* mask_mode, const mlx_array mask_arr , const mlx_array sinks , const mlx_stream s))GET_SYM(handle, "mlx_fast_scaled_dot_product_attention");
     if (mlx_fast_scaled_dot_product_attention_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fast_scaled_dot_product_attention\n");
         return -1;
     }
-    mlx_fft_fft_ptr = dlsym(handle, "mlx_fft_fft");
+    mlx_fft_fft_ptr = (int (*)(mlx_array* res, const mlx_array a, int n, int axis, const mlx_stream s))GET_SYM(handle, "mlx_fft_fft");
     if (mlx_fft_fft_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fft_fft\n");
         return -1;
     }
-    mlx_fft_fft2_ptr = dlsym(handle, "mlx_fft_fft2");
+    mlx_fft_fft2_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, const mlx_stream s))GET_SYM(handle, "mlx_fft_fft2");
     if (mlx_fft_fft2_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fft_fft2\n");
         return -1;
     }
-    mlx_fft_fftn_ptr = dlsym(handle, "mlx_fft_fftn");
+    mlx_fft_fftn_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, const mlx_stream s))GET_SYM(handle, "mlx_fft_fftn");
     if (mlx_fft_fftn_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fft_fftn\n");
         return -1;
     }
-    mlx_fft_fftshift_ptr = dlsym(handle, "mlx_fft_fftshift");
+    mlx_fft_fftshift_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, const mlx_stream s))GET_SYM(handle, "mlx_fft_fftshift");
     if (mlx_fft_fftshift_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fft_fftshift\n");
         return -1;
     }
-    mlx_fft_ifft_ptr = dlsym(handle, "mlx_fft_ifft");
+    mlx_fft_ifft_ptr = (int (*)(mlx_array* res, const mlx_array a, int n, int axis, const mlx_stream s))GET_SYM(handle, "mlx_fft_ifft");
     if (mlx_fft_ifft_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fft_ifft\n");
         return -1;
     }
-    mlx_fft_ifft2_ptr = dlsym(handle, "mlx_fft_ifft2");
+    mlx_fft_ifft2_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, const mlx_stream s))GET_SYM(handle, "mlx_fft_ifft2");
     if (mlx_fft_ifft2_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fft_ifft2\n");
         return -1;
     }
-    mlx_fft_ifftn_ptr = dlsym(handle, "mlx_fft_ifftn");
+    mlx_fft_ifftn_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, const mlx_stream s))GET_SYM(handle, "mlx_fft_ifftn");
     if (mlx_fft_ifftn_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fft_ifftn\n");
         return -1;
     }
-    mlx_fft_ifftshift_ptr = dlsym(handle, "mlx_fft_ifftshift");
+    mlx_fft_ifftshift_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, const mlx_stream s))GET_SYM(handle, "mlx_fft_ifftshift");
     if (mlx_fft_ifftshift_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fft_ifftshift\n");
         return -1;
     }
-    mlx_fft_irfft_ptr = dlsym(handle, "mlx_fft_irfft");
+    mlx_fft_irfft_ptr = (int (*)(mlx_array* res, const mlx_array a, int n, int axis, const mlx_stream s))GET_SYM(handle, "mlx_fft_irfft");
     if (mlx_fft_irfft_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fft_irfft\n");
         return -1;
     }
-    mlx_fft_irfft2_ptr = dlsym(handle, "mlx_fft_irfft2");
+    mlx_fft_irfft2_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, const mlx_stream s))GET_SYM(handle, "mlx_fft_irfft2");
     if (mlx_fft_irfft2_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fft_irfft2\n");
         return -1;
     }
-    mlx_fft_irfftn_ptr = dlsym(handle, "mlx_fft_irfftn");
+    mlx_fft_irfftn_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, const mlx_stream s))GET_SYM(handle, "mlx_fft_irfftn");
     if (mlx_fft_irfftn_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fft_irfftn\n");
         return -1;
     }
-    mlx_fft_rfft_ptr = dlsym(handle, "mlx_fft_rfft");
+    mlx_fft_rfft_ptr = (int (*)(mlx_array* res, const mlx_array a, int n, int axis, const mlx_stream s))GET_SYM(handle, "mlx_fft_rfft");
     if (mlx_fft_rfft_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fft_rfft\n");
         return -1;
     }
-    mlx_fft_rfft2_ptr = dlsym(handle, "mlx_fft_rfft2");
+    mlx_fft_rfft2_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, const mlx_stream s))GET_SYM(handle, "mlx_fft_rfft2");
     if (mlx_fft_rfft2_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fft_rfft2\n");
         return -1;
     }
-    mlx_fft_rfftn_ptr = dlsym(handle, "mlx_fft_rfftn");
+    mlx_fft_rfftn_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* n, size_t n_num, const int* axes, size_t axes_num, const mlx_stream s))GET_SYM(handle, "mlx_fft_rfftn");
     if (mlx_fft_rfftn_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_fft_rfftn\n");
         return -1;
     }
-    mlx_load_reader_ptr = dlsym(handle, "mlx_load_reader");
+    mlx_load_reader_ptr = (int (*)(mlx_array* res, mlx_io_reader in_stream, const mlx_stream s))GET_SYM(handle, "mlx_load_reader");
     if (mlx_load_reader_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_load_reader\n");
         return -1;
     }
-    mlx_load_ptr = dlsym(handle, "mlx_load");
+    mlx_load_ptr = (int (*)(mlx_array* res, const char* file, const mlx_stream s))GET_SYM(handle, "mlx_load");
     if (mlx_load_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_load\n");
         return -1;
     }
-    mlx_load_safetensors_reader_ptr = dlsym(handle, "mlx_load_safetensors_reader");
+    mlx_load_safetensors_reader_ptr = (int (*)(mlx_map_string_to_array* res_0, mlx_map_string_to_string* res_1, mlx_io_reader in_stream, const mlx_stream s))GET_SYM(handle, "mlx_load_safetensors_reader");
     if (mlx_load_safetensors_reader_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_load_safetensors_reader\n");
         return -1;
     }
-    mlx_load_safetensors_ptr = dlsym(handle, "mlx_load_safetensors");
+    mlx_load_safetensors_ptr = (int (*)(mlx_map_string_to_array* res_0, mlx_map_string_to_string* res_1, const char* file, const mlx_stream s))GET_SYM(handle, "mlx_load_safetensors");
     if (mlx_load_safetensors_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_load_safetensors\n");
         return -1;
     }
-    mlx_save_writer_ptr = dlsym(handle, "mlx_save_writer");
+    mlx_save_writer_ptr = (int (*)(mlx_io_writer out_stream, const mlx_array a))GET_SYM(handle, "mlx_save_writer");
     if (mlx_save_writer_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_save_writer\n");
         return -1;
     }
-    mlx_save_ptr = dlsym(handle, "mlx_save");
+    mlx_save_ptr = (int (*)(const char* file, const mlx_array a))GET_SYM(handle, "mlx_save");
     if (mlx_save_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_save\n");
         return -1;
     }
-    mlx_save_safetensors_writer_ptr = dlsym(handle, "mlx_save_safetensors_writer");
+    mlx_save_safetensors_writer_ptr = (int (*)(mlx_io_writer in_stream, const mlx_map_string_to_array param, const mlx_map_string_to_string metadata))GET_SYM(handle, "mlx_save_safetensors_writer");
     if (mlx_save_safetensors_writer_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_save_safetensors_writer\n");
         return -1;
     }
-    mlx_save_safetensors_ptr = dlsym(handle, "mlx_save_safetensors");
+    mlx_save_safetensors_ptr = (int (*)(const char* file, const mlx_map_string_to_array param, const mlx_map_string_to_string metadata))GET_SYM(handle, "mlx_save_safetensors");
     if (mlx_save_safetensors_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_save_safetensors\n");
         return -1;
     }
-    mlx_io_reader_new_ptr = dlsym(handle, "mlx_io_reader_new");
+    mlx_io_reader_new_ptr = (mlx_io_reader (*)(void* desc, mlx_io_vtable vtable))GET_SYM(handle, "mlx_io_reader_new");
     if (mlx_io_reader_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_io_reader_new\n");
         return -1;
     }
-    mlx_io_reader_descriptor_ptr = dlsym(handle, "mlx_io_reader_descriptor");
+    mlx_io_reader_descriptor_ptr = (int (*)(void** desc_, mlx_io_reader io))GET_SYM(handle, "mlx_io_reader_descriptor");
     if (mlx_io_reader_descriptor_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_io_reader_descriptor\n");
         return -1;
     }
-    mlx_io_reader_tostring_ptr = dlsym(handle, "mlx_io_reader_tostring");
+    mlx_io_reader_tostring_ptr = (int (*)(mlx_string* str_, mlx_io_reader io))GET_SYM(handle, "mlx_io_reader_tostring");
     if (mlx_io_reader_tostring_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_io_reader_tostring\n");
         return -1;
     }
-    mlx_io_reader_free_ptr = dlsym(handle, "mlx_io_reader_free");
+    mlx_io_reader_free_ptr = (int (*)(mlx_io_reader io))GET_SYM(handle, "mlx_io_reader_free");
     if (mlx_io_reader_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_io_reader_free\n");
         return -1;
     }
-    mlx_io_writer_new_ptr = dlsym(handle, "mlx_io_writer_new");
+    mlx_io_writer_new_ptr = (mlx_io_writer (*)(void* desc, mlx_io_vtable vtable))GET_SYM(handle, "mlx_io_writer_new");
     if (mlx_io_writer_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_io_writer_new\n");
         return -1;
     }
-    mlx_io_writer_descriptor_ptr = dlsym(handle, "mlx_io_writer_descriptor");
+    mlx_io_writer_descriptor_ptr = (int (*)(void** desc_, mlx_io_writer io))GET_SYM(handle, "mlx_io_writer_descriptor");
     if (mlx_io_writer_descriptor_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_io_writer_descriptor\n");
         return -1;
     }
-    mlx_io_writer_tostring_ptr = dlsym(handle, "mlx_io_writer_tostring");
+    mlx_io_writer_tostring_ptr = (int (*)(mlx_string* str_, mlx_io_writer io))GET_SYM(handle, "mlx_io_writer_tostring");
     if (mlx_io_writer_tostring_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_io_writer_tostring\n");
         return -1;
     }
-    mlx_io_writer_free_ptr = dlsym(handle, "mlx_io_writer_free");
+    mlx_io_writer_free_ptr = (int (*)(mlx_io_writer io))GET_SYM(handle, "mlx_io_writer_free");
     if (mlx_io_writer_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_io_writer_free\n");
         return -1;
     }
-    mlx_linalg_cholesky_ptr = dlsym(handle, "mlx_linalg_cholesky");
+    mlx_linalg_cholesky_ptr = (int (*)(mlx_array* res, const mlx_array a, bool upper, const mlx_stream s))GET_SYM(handle, "mlx_linalg_cholesky");
     if (mlx_linalg_cholesky_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_linalg_cholesky\n");
         return -1;
     }
-    mlx_linalg_cholesky_inv_ptr = dlsym(handle, "mlx_linalg_cholesky_inv");
+    mlx_linalg_cholesky_inv_ptr = (int (*)(mlx_array* res, const mlx_array a, bool upper, const mlx_stream s))GET_SYM(handle, "mlx_linalg_cholesky_inv");
     if (mlx_linalg_cholesky_inv_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_linalg_cholesky_inv\n");
         return -1;
     }
-    mlx_linalg_cross_ptr = dlsym(handle, "mlx_linalg_cross");
+    mlx_linalg_cross_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, int axis, const mlx_stream s))GET_SYM(handle, "mlx_linalg_cross");
     if (mlx_linalg_cross_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_linalg_cross\n");
         return -1;
     }
-    mlx_linalg_eig_ptr = dlsym(handle, "mlx_linalg_eig");
+    mlx_linalg_eig_ptr = (int (*)(mlx_array* res_0, mlx_array* res_1, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_linalg_eig");
     if (mlx_linalg_eig_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_linalg_eig\n");
         return -1;
     }
-    mlx_linalg_eigh_ptr = dlsym(handle, "mlx_linalg_eigh");
+    mlx_linalg_eigh_ptr = (int (*)(mlx_array* res_0, mlx_array* res_1, const mlx_array a, const char* UPLO, const mlx_stream s))GET_SYM(handle, "mlx_linalg_eigh");
     if (mlx_linalg_eigh_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_linalg_eigh\n");
         return -1;
     }
-    mlx_linalg_eigvals_ptr = dlsym(handle, "mlx_linalg_eigvals");
+    mlx_linalg_eigvals_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_linalg_eigvals");
     if (mlx_linalg_eigvals_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_linalg_eigvals\n");
         return -1;
     }
-    mlx_linalg_eigvalsh_ptr = dlsym(handle, "mlx_linalg_eigvalsh");
+    mlx_linalg_eigvalsh_ptr = (int (*)(mlx_array* res, const mlx_array a, const char* UPLO, const mlx_stream s))GET_SYM(handle, "mlx_linalg_eigvalsh");
     if (mlx_linalg_eigvalsh_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_linalg_eigvalsh\n");
         return -1;
     }
-    mlx_linalg_inv_ptr = dlsym(handle, "mlx_linalg_inv");
+    mlx_linalg_inv_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_linalg_inv");
     if (mlx_linalg_inv_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_linalg_inv\n");
         return -1;
     }
-    mlx_linalg_lu_ptr = dlsym(handle, "mlx_linalg_lu");
+    mlx_linalg_lu_ptr = (int (*)(mlx_vector_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_linalg_lu");
     if (mlx_linalg_lu_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_linalg_lu\n");
         return -1;
     }
-    mlx_linalg_lu_factor_ptr = dlsym(handle, "mlx_linalg_lu_factor");
+    mlx_linalg_lu_factor_ptr = (int (*)(mlx_array* res_0, mlx_array* res_1, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_linalg_lu_factor");
     if (mlx_linalg_lu_factor_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_linalg_lu_factor\n");
         return -1;
     }
-    mlx_linalg_norm_ptr = dlsym(handle, "mlx_linalg_norm");
+    mlx_linalg_norm_ptr = (int (*)(mlx_array* res, const mlx_array a, double ord, const int* axis , size_t axis_num, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_linalg_norm");
     if (mlx_linalg_norm_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_linalg_norm\n");
         return -1;
     }
-    mlx_linalg_norm_matrix_ptr = dlsym(handle, "mlx_linalg_norm_matrix");
+    mlx_linalg_norm_matrix_ptr = (int (*)(mlx_array* res, const mlx_array a, const char* ord, const int* axis , size_t axis_num, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_linalg_norm_matrix");
     if (mlx_linalg_norm_matrix_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_linalg_norm_matrix\n");
         return -1;
     }
-    mlx_linalg_norm_l2_ptr = dlsym(handle, "mlx_linalg_norm_l2");
+    mlx_linalg_norm_l2_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* axis , size_t axis_num, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_linalg_norm_l2");
     if (mlx_linalg_norm_l2_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_linalg_norm_l2\n");
         return -1;
     }
-    mlx_linalg_pinv_ptr = dlsym(handle, "mlx_linalg_pinv");
+    mlx_linalg_pinv_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_linalg_pinv");
     if (mlx_linalg_pinv_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_linalg_pinv\n");
         return -1;
     }
-    mlx_linalg_qr_ptr = dlsym(handle, "mlx_linalg_qr");
+    mlx_linalg_qr_ptr = (int (*)(mlx_array* res_0, mlx_array* res_1, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_linalg_qr");
     if (mlx_linalg_qr_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_linalg_qr\n");
         return -1;
     }
-    mlx_linalg_solve_ptr = dlsym(handle, "mlx_linalg_solve");
+    mlx_linalg_solve_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_linalg_solve");
     if (mlx_linalg_solve_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_linalg_solve\n");
         return -1;
     }
-    mlx_linalg_solve_triangular_ptr = dlsym(handle, "mlx_linalg_solve_triangular");
+    mlx_linalg_solve_triangular_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, bool upper, const mlx_stream s))GET_SYM(handle, "mlx_linalg_solve_triangular");
     if (mlx_linalg_solve_triangular_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_linalg_solve_triangular\n");
         return -1;
     }
-    mlx_linalg_svd_ptr = dlsym(handle, "mlx_linalg_svd");
+    mlx_linalg_svd_ptr = (int (*)(mlx_vector_array* res, const mlx_array a, bool compute_uv, const mlx_stream s))GET_SYM(handle, "mlx_linalg_svd");
     if (mlx_linalg_svd_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_linalg_svd\n");
         return -1;
     }
-    mlx_linalg_tri_inv_ptr = dlsym(handle, "mlx_linalg_tri_inv");
+    mlx_linalg_tri_inv_ptr = (int (*)(mlx_array* res, const mlx_array a, bool upper, const mlx_stream s))GET_SYM(handle, "mlx_linalg_tri_inv");
     if (mlx_linalg_tri_inv_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_linalg_tri_inv\n");
         return -1;
     }
-    mlx_map_string_to_array_new_ptr = dlsym(handle, "mlx_map_string_to_array_new");
+    mlx_map_string_to_array_new_ptr = (mlx_map_string_to_array (*)(void))GET_SYM(handle, "mlx_map_string_to_array_new");
     if (mlx_map_string_to_array_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_map_string_to_array_new\n");
         return -1;
     }
-    mlx_map_string_to_array_set_ptr = dlsym(handle, "mlx_map_string_to_array_set");
+    mlx_map_string_to_array_set_ptr = (int (*)(mlx_map_string_to_array* map, const mlx_map_string_to_array src))GET_SYM(handle, "mlx_map_string_to_array_set");
     if (mlx_map_string_to_array_set_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_map_string_to_array_set\n");
         return -1;
     }
-    mlx_map_string_to_array_free_ptr = dlsym(handle, "mlx_map_string_to_array_free");
+    mlx_map_string_to_array_free_ptr = (int (*)(mlx_map_string_to_array map))GET_SYM(handle, "mlx_map_string_to_array_free");
     if (mlx_map_string_to_array_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_map_string_to_array_free\n");
         return -1;
     }
-    mlx_map_string_to_array_insert_ptr = dlsym(handle, "mlx_map_string_to_array_insert");
+    mlx_map_string_to_array_insert_ptr = (int (*)(mlx_map_string_to_array map, const char* key, const mlx_array value))GET_SYM(handle, "mlx_map_string_to_array_insert");
     if (mlx_map_string_to_array_insert_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_map_string_to_array_insert\n");
         return -1;
     }
-    mlx_map_string_to_array_get_ptr = dlsym(handle, "mlx_map_string_to_array_get");
+    mlx_map_string_to_array_get_ptr = (int (*)(mlx_array* value, const mlx_map_string_to_array map, const char* key))GET_SYM(handle, "mlx_map_string_to_array_get");
     if (mlx_map_string_to_array_get_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_map_string_to_array_get\n");
         return -1;
     }
-    mlx_map_string_to_array_iterator_new_ptr = dlsym(handle, "mlx_map_string_to_array_iterator_new");
+    mlx_map_string_to_array_iterator_new_ptr = (mlx_map_string_to_array_iterator (*)(mlx_map_string_to_array map))GET_SYM(handle, "mlx_map_string_to_array_iterator_new");
     if (mlx_map_string_to_array_iterator_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_map_string_to_array_iterator_new\n");
         return -1;
     }
-    mlx_map_string_to_array_iterator_free_ptr = dlsym(handle, "mlx_map_string_to_array_iterator_free");
+    mlx_map_string_to_array_iterator_free_ptr = (int (*)(mlx_map_string_to_array_iterator it))GET_SYM(handle, "mlx_map_string_to_array_iterator_free");
     if (mlx_map_string_to_array_iterator_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_map_string_to_array_iterator_free\n");
         return -1;
     }
-    mlx_map_string_to_array_iterator_next_ptr = dlsym(handle, "mlx_map_string_to_array_iterator_next");
+    mlx_map_string_to_array_iterator_next_ptr = (int (*)(const char** key, mlx_array* value, mlx_map_string_to_array_iterator it))GET_SYM(handle, "mlx_map_string_to_array_iterator_next");
     if (mlx_map_string_to_array_iterator_next_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_map_string_to_array_iterator_next\n");
         return -1;
     }
-    mlx_map_string_to_string_new_ptr = dlsym(handle, "mlx_map_string_to_string_new");
+    mlx_map_string_to_string_new_ptr = (mlx_map_string_to_string (*)(void))GET_SYM(handle, "mlx_map_string_to_string_new");
     if (mlx_map_string_to_string_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_map_string_to_string_new\n");
         return -1;
     }
-    mlx_map_string_to_string_set_ptr = dlsym(handle, "mlx_map_string_to_string_set");
+    mlx_map_string_to_string_set_ptr = (int (*)(mlx_map_string_to_string* map, const mlx_map_string_to_string src))GET_SYM(handle, "mlx_map_string_to_string_set");
     if (mlx_map_string_to_string_set_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_map_string_to_string_set\n");
         return -1;
     }
-    mlx_map_string_to_string_free_ptr = dlsym(handle, "mlx_map_string_to_string_free");
+    mlx_map_string_to_string_free_ptr = (int (*)(mlx_map_string_to_string map))GET_SYM(handle, "mlx_map_string_to_string_free");
     if (mlx_map_string_to_string_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_map_string_to_string_free\n");
         return -1;
     }
-    mlx_map_string_to_string_insert_ptr = dlsym(handle, "mlx_map_string_to_string_insert");
+    mlx_map_string_to_string_insert_ptr = (int (*)(mlx_map_string_to_string map, const char* key, const char* value))GET_SYM(handle, "mlx_map_string_to_string_insert");
     if (mlx_map_string_to_string_insert_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_map_string_to_string_insert\n");
         return -1;
     }
-    mlx_map_string_to_string_get_ptr = dlsym(handle, "mlx_map_string_to_string_get");
+    mlx_map_string_to_string_get_ptr = (int (*)(const char** value, const mlx_map_string_to_string map, const char* key))GET_SYM(handle, "mlx_map_string_to_string_get");
     if (mlx_map_string_to_string_get_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_map_string_to_string_get\n");
         return -1;
     }
-    mlx_map_string_to_string_iterator_new_ptr = dlsym(handle, "mlx_map_string_to_string_iterator_new");
+    mlx_map_string_to_string_iterator_new_ptr = (mlx_map_string_to_string_iterator (*)(mlx_map_string_to_string map))GET_SYM(handle, "mlx_map_string_to_string_iterator_new");
     if (mlx_map_string_to_string_iterator_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_map_string_to_string_iterator_new\n");
         return -1;
     }
-    mlx_map_string_to_string_iterator_free_ptr = dlsym(handle, "mlx_map_string_to_string_iterator_free");
+    mlx_map_string_to_string_iterator_free_ptr = (int (*)(mlx_map_string_to_string_iterator it))GET_SYM(handle, "mlx_map_string_to_string_iterator_free");
     if (mlx_map_string_to_string_iterator_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_map_string_to_string_iterator_free\n");
         return -1;
     }
-    mlx_map_string_to_string_iterator_next_ptr = dlsym(handle, "mlx_map_string_to_string_iterator_next");
+    mlx_map_string_to_string_iterator_next_ptr = (int (*)(const char** key, const char** value, mlx_map_string_to_string_iterator it))GET_SYM(handle, "mlx_map_string_to_string_iterator_next");
     if (mlx_map_string_to_string_iterator_next_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_map_string_to_string_iterator_next\n");
         return -1;
     }
-    mlx_clear_cache_ptr = dlsym(handle, "mlx_clear_cache");
+    mlx_clear_cache_ptr = (int (*)(void))GET_SYM(handle, "mlx_clear_cache");
     if (mlx_clear_cache_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_clear_cache\n");
         return -1;
     }
-    mlx_get_active_memory_ptr = dlsym(handle, "mlx_get_active_memory");
+    mlx_get_active_memory_ptr = (int (*)(size_t* res))GET_SYM(handle, "mlx_get_active_memory");
     if (mlx_get_active_memory_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_get_active_memory\n");
         return -1;
     }
-    mlx_get_cache_memory_ptr = dlsym(handle, "mlx_get_cache_memory");
+    mlx_get_cache_memory_ptr = (int (*)(size_t* res))GET_SYM(handle, "mlx_get_cache_memory");
     if (mlx_get_cache_memory_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_get_cache_memory\n");
         return -1;
     }
-    mlx_get_memory_limit_ptr = dlsym(handle, "mlx_get_memory_limit");
+    mlx_get_memory_limit_ptr = (int (*)(size_t* res))GET_SYM(handle, "mlx_get_memory_limit");
     if (mlx_get_memory_limit_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_get_memory_limit\n");
         return -1;
     }
-    mlx_get_peak_memory_ptr = dlsym(handle, "mlx_get_peak_memory");
+    mlx_get_peak_memory_ptr = (int (*)(size_t* res))GET_SYM(handle, "mlx_get_peak_memory");
     if (mlx_get_peak_memory_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_get_peak_memory\n");
         return -1;
     }
-    mlx_reset_peak_memory_ptr = dlsym(handle, "mlx_reset_peak_memory");
+    mlx_reset_peak_memory_ptr = (int (*)(void))GET_SYM(handle, "mlx_reset_peak_memory");
     if (mlx_reset_peak_memory_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_reset_peak_memory\n");
         return -1;
     }
-    mlx_set_cache_limit_ptr = dlsym(handle, "mlx_set_cache_limit");
+    mlx_set_cache_limit_ptr = (int (*)(size_t* res, size_t limit))GET_SYM(handle, "mlx_set_cache_limit");
     if (mlx_set_cache_limit_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_set_cache_limit\n");
         return -1;
     }
-    mlx_set_memory_limit_ptr = dlsym(handle, "mlx_set_memory_limit");
+    mlx_set_memory_limit_ptr = (int (*)(size_t* res, size_t limit))GET_SYM(handle, "mlx_set_memory_limit");
     if (mlx_set_memory_limit_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_set_memory_limit\n");
         return -1;
     }
-    mlx_set_wired_limit_ptr = dlsym(handle, "mlx_set_wired_limit");
+    mlx_set_wired_limit_ptr = (int (*)(size_t* res, size_t limit))GET_SYM(handle, "mlx_set_wired_limit");
     if (mlx_set_wired_limit_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_set_wired_limit\n");
         return -1;
     }
-    mlx_metal_device_info_ptr = dlsym(handle, "mlx_metal_device_info");
+    mlx_metal_device_info_ptr = (mlx_metal_device_info_t (*)(void))GET_SYM(handle, "mlx_metal_device_info");
     if (mlx_metal_device_info_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_metal_device_info\n");
         return -1;
     }
-    mlx_metal_is_available_ptr = dlsym(handle, "mlx_metal_is_available");
+    mlx_metal_is_available_ptr = (int (*)(bool* res))GET_SYM(handle, "mlx_metal_is_available");
     if (mlx_metal_is_available_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_metal_is_available\n");
         return -1;
     }
-    mlx_metal_start_capture_ptr = dlsym(handle, "mlx_metal_start_capture");
+    mlx_metal_start_capture_ptr = (int (*)(const char* path))GET_SYM(handle, "mlx_metal_start_capture");
     if (mlx_metal_start_capture_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_metal_start_capture\n");
         return -1;
     }
-    mlx_metal_stop_capture_ptr = dlsym(handle, "mlx_metal_stop_capture");
+    mlx_metal_stop_capture_ptr = (int (*)(void))GET_SYM(handle, "mlx_metal_stop_capture");
     if (mlx_metal_stop_capture_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_metal_stop_capture\n");
         return -1;
     }
-    mlx_abs_ptr = dlsym(handle, "mlx_abs");
+    mlx_abs_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_abs");
     if (mlx_abs_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_abs\n");
         return -1;
     }
-    mlx_add_ptr = dlsym(handle, "mlx_add");
+    mlx_add_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_add");
     if (mlx_add_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_add\n");
         return -1;
     }
-    mlx_addmm_ptr = dlsym(handle, "mlx_addmm");
+    mlx_addmm_ptr = (int (*)(mlx_array* res, const mlx_array c, const mlx_array a, const mlx_array b, float alpha, float beta, const mlx_stream s))GET_SYM(handle, "mlx_addmm");
     if (mlx_addmm_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_addmm\n");
         return -1;
     }
-    mlx_all_axes_ptr = dlsym(handle, "mlx_all_axes");
+    mlx_all_axes_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_all_axes");
     if (mlx_all_axes_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_all_axes\n");
         return -1;
     }
-    mlx_all_axis_ptr = dlsym(handle, "mlx_all_axis");
+    mlx_all_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, int axis, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_all_axis");
     if (mlx_all_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_all_axis\n");
         return -1;
     }
-    mlx_all_ptr = dlsym(handle, "mlx_all");
+    mlx_all_ptr = (int (*)(mlx_array* res, const mlx_array a, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_all");
     if (mlx_all_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_all\n");
         return -1;
     }
-    mlx_allclose_ptr = dlsym(handle, "mlx_allclose");
+    mlx_allclose_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, double rtol, double atol, bool equal_nan, const mlx_stream s))GET_SYM(handle, "mlx_allclose");
     if (mlx_allclose_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_allclose\n");
         return -1;
     }
-    mlx_any_axes_ptr = dlsym(handle, "mlx_any_axes");
+    mlx_any_axes_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_any_axes");
     if (mlx_any_axes_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_any_axes\n");
         return -1;
     }
-    mlx_any_axis_ptr = dlsym(handle, "mlx_any_axis");
+    mlx_any_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, int axis, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_any_axis");
     if (mlx_any_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_any_axis\n");
         return -1;
     }
-    mlx_any_ptr = dlsym(handle, "mlx_any");
+    mlx_any_ptr = (int (*)(mlx_array* res, const mlx_array a, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_any");
     if (mlx_any_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_any\n");
         return -1;
     }
-    mlx_arange_ptr = dlsym(handle, "mlx_arange");
+    mlx_arange_ptr = (int (*)(mlx_array* res, double start, double stop, double step, mlx_dtype dtype, const mlx_stream s))GET_SYM(handle, "mlx_arange");
     if (mlx_arange_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_arange\n");
         return -1;
     }
-    mlx_arccos_ptr = dlsym(handle, "mlx_arccos");
+    mlx_arccos_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_arccos");
     if (mlx_arccos_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_arccos\n");
         return -1;
     }
-    mlx_arccosh_ptr = dlsym(handle, "mlx_arccosh");
+    mlx_arccosh_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_arccosh");
     if (mlx_arccosh_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_arccosh\n");
         return -1;
     }
-    mlx_arcsin_ptr = dlsym(handle, "mlx_arcsin");
+    mlx_arcsin_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_arcsin");
     if (mlx_arcsin_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_arcsin\n");
         return -1;
     }
-    mlx_arcsinh_ptr = dlsym(handle, "mlx_arcsinh");
+    mlx_arcsinh_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_arcsinh");
     if (mlx_arcsinh_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_arcsinh\n");
         return -1;
     }
-    mlx_arctan_ptr = dlsym(handle, "mlx_arctan");
+    mlx_arctan_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_arctan");
     if (mlx_arctan_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_arctan\n");
         return -1;
     }
-    mlx_arctan2_ptr = dlsym(handle, "mlx_arctan2");
+    mlx_arctan2_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_arctan2");
     if (mlx_arctan2_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_arctan2\n");
         return -1;
     }
-    mlx_arctanh_ptr = dlsym(handle, "mlx_arctanh");
+    mlx_arctanh_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_arctanh");
     if (mlx_arctanh_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_arctanh\n");
         return -1;
     }
-    mlx_argmax_axis_ptr = dlsym(handle, "mlx_argmax_axis");
+    mlx_argmax_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, int axis, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_argmax_axis");
     if (mlx_argmax_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_argmax_axis\n");
         return -1;
     }
-    mlx_argmax_ptr = dlsym(handle, "mlx_argmax");
+    mlx_argmax_ptr = (int (*)(mlx_array* res, const mlx_array a, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_argmax");
     if (mlx_argmax_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_argmax\n");
         return -1;
     }
-    mlx_argmin_axis_ptr = dlsym(handle, "mlx_argmin_axis");
+    mlx_argmin_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, int axis, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_argmin_axis");
     if (mlx_argmin_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_argmin_axis\n");
         return -1;
     }
-    mlx_argmin_ptr = dlsym(handle, "mlx_argmin");
+    mlx_argmin_ptr = (int (*)(mlx_array* res, const mlx_array a, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_argmin");
     if (mlx_argmin_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_argmin\n");
         return -1;
     }
-    mlx_argpartition_axis_ptr = dlsym(handle, "mlx_argpartition_axis");
+    mlx_argpartition_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, int kth, int axis, const mlx_stream s))GET_SYM(handle, "mlx_argpartition_axis");
     if (mlx_argpartition_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_argpartition_axis\n");
         return -1;
     }
-    mlx_argpartition_ptr = dlsym(handle, "mlx_argpartition");
+    mlx_argpartition_ptr = (int (*)(mlx_array* res, const mlx_array a, int kth, const mlx_stream s))GET_SYM(handle, "mlx_argpartition");
     if (mlx_argpartition_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_argpartition\n");
         return -1;
     }
-    mlx_argsort_axis_ptr = dlsym(handle, "mlx_argsort_axis");
+    mlx_argsort_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, int axis, const mlx_stream s))GET_SYM(handle, "mlx_argsort_axis");
     if (mlx_argsort_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_argsort_axis\n");
         return -1;
     }
-    mlx_argsort_ptr = dlsym(handle, "mlx_argsort");
+    mlx_argsort_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_argsort");
     if (mlx_argsort_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_argsort\n");
         return -1;
     }
-    mlx_array_equal_ptr = dlsym(handle, "mlx_array_equal");
+    mlx_array_equal_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, bool equal_nan, const mlx_stream s))GET_SYM(handle, "mlx_array_equal");
     if (mlx_array_equal_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_equal\n");
         return -1;
     }
-    mlx_as_strided_ptr = dlsym(handle, "mlx_as_strided");
+    mlx_as_strided_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* shape, size_t shape_num, const int64_t* strides, size_t strides_num, size_t offset, const mlx_stream s))GET_SYM(handle, "mlx_as_strided");
     if (mlx_as_strided_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_as_strided\n");
         return -1;
     }
-    mlx_astype_ptr = dlsym(handle, "mlx_astype");
+    mlx_astype_ptr = (int (*)(mlx_array* res, const mlx_array a, mlx_dtype dtype, const mlx_stream s))GET_SYM(handle, "mlx_astype");
     if (mlx_astype_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_astype\n");
         return -1;
     }
-    mlx_atleast_1d_ptr = dlsym(handle, "mlx_atleast_1d");
+    mlx_atleast_1d_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_atleast_1d");
     if (mlx_atleast_1d_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_atleast_1d\n");
         return -1;
     }
-    mlx_atleast_2d_ptr = dlsym(handle, "mlx_atleast_2d");
+    mlx_atleast_2d_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_atleast_2d");
     if (mlx_atleast_2d_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_atleast_2d\n");
         return -1;
     }
-    mlx_atleast_3d_ptr = dlsym(handle, "mlx_atleast_3d");
+    mlx_atleast_3d_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_atleast_3d");
     if (mlx_atleast_3d_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_atleast_3d\n");
         return -1;
     }
-    mlx_bitwise_and_ptr = dlsym(handle, "mlx_bitwise_and");
+    mlx_bitwise_and_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_bitwise_and");
     if (mlx_bitwise_and_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_bitwise_and\n");
         return -1;
     }
-    mlx_bitwise_invert_ptr = dlsym(handle, "mlx_bitwise_invert");
+    mlx_bitwise_invert_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_bitwise_invert");
     if (mlx_bitwise_invert_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_bitwise_invert\n");
         return -1;
     }
-    mlx_bitwise_or_ptr = dlsym(handle, "mlx_bitwise_or");
+    mlx_bitwise_or_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_bitwise_or");
     if (mlx_bitwise_or_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_bitwise_or\n");
         return -1;
     }
-    mlx_bitwise_xor_ptr = dlsym(handle, "mlx_bitwise_xor");
+    mlx_bitwise_xor_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_bitwise_xor");
     if (mlx_bitwise_xor_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_bitwise_xor\n");
         return -1;
     }
-    mlx_block_masked_mm_ptr = dlsym(handle, "mlx_block_masked_mm");
+    mlx_block_masked_mm_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, int block_size, const mlx_array mask_out , const mlx_array mask_lhs , const mlx_array mask_rhs , const mlx_stream s))GET_SYM(handle, "mlx_block_masked_mm");
     if (mlx_block_masked_mm_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_block_masked_mm\n");
         return -1;
     }
-    mlx_broadcast_arrays_ptr = dlsym(handle, "mlx_broadcast_arrays");
+    mlx_broadcast_arrays_ptr = (int (*)(mlx_vector_array* res, const mlx_vector_array inputs, const mlx_stream s))GET_SYM(handle, "mlx_broadcast_arrays");
     if (mlx_broadcast_arrays_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_broadcast_arrays\n");
         return -1;
     }
-    mlx_broadcast_to_ptr = dlsym(handle, "mlx_broadcast_to");
+    mlx_broadcast_to_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* shape, size_t shape_num, const mlx_stream s))GET_SYM(handle, "mlx_broadcast_to");
     if (mlx_broadcast_to_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_broadcast_to\n");
         return -1;
     }
-    mlx_ceil_ptr = dlsym(handle, "mlx_ceil");
+    mlx_ceil_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_ceil");
     if (mlx_ceil_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_ceil\n");
         return -1;
     }
-    mlx_clip_ptr = dlsym(handle, "mlx_clip");
+    mlx_clip_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array a_min , const mlx_array a_max , const mlx_stream s))GET_SYM(handle, "mlx_clip");
     if (mlx_clip_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_clip\n");
         return -1;
     }
-    mlx_concatenate_axis_ptr = dlsym(handle, "mlx_concatenate_axis");
+    mlx_concatenate_axis_ptr = (int (*)(mlx_array* res, const mlx_vector_array arrays, int axis, const mlx_stream s))GET_SYM(handle, "mlx_concatenate_axis");
     if (mlx_concatenate_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_concatenate_axis\n");
         return -1;
     }
-    mlx_concatenate_ptr = dlsym(handle, "mlx_concatenate");
+    mlx_concatenate_ptr = (int (*)(mlx_array* res, const mlx_vector_array arrays, const mlx_stream s))GET_SYM(handle, "mlx_concatenate");
     if (mlx_concatenate_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_concatenate\n");
         return -1;
     }
-    mlx_conjugate_ptr = dlsym(handle, "mlx_conjugate");
+    mlx_conjugate_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_conjugate");
     if (mlx_conjugate_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_conjugate\n");
         return -1;
     }
-    mlx_contiguous_ptr = dlsym(handle, "mlx_contiguous");
+    mlx_contiguous_ptr = (int (*)(mlx_array* res, const mlx_array a, bool allow_col_major, const mlx_stream s))GET_SYM(handle, "mlx_contiguous");
     if (mlx_contiguous_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_contiguous\n");
         return -1;
     }
-    mlx_conv1d_ptr = dlsym(handle, "mlx_conv1d");
+    mlx_conv1d_ptr = (int (*)(mlx_array* res, const mlx_array input, const mlx_array weight, int stride, int padding, int dilation, int groups, const mlx_stream s))GET_SYM(handle, "mlx_conv1d");
     if (mlx_conv1d_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_conv1d\n");
         return -1;
     }
-    mlx_conv2d_ptr = dlsym(handle, "mlx_conv2d");
+    mlx_conv2d_ptr = (int (*)(mlx_array* res, const mlx_array input, const mlx_array weight, int stride_0, int stride_1, int padding_0, int padding_1, int dilation_0, int dilation_1, int groups, const mlx_stream s))GET_SYM(handle, "mlx_conv2d");
     if (mlx_conv2d_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_conv2d\n");
         return -1;
     }
-    mlx_conv3d_ptr = dlsym(handle, "mlx_conv3d");
+    mlx_conv3d_ptr = (int (*)(mlx_array* res, const mlx_array input, const mlx_array weight, int stride_0, int stride_1, int stride_2, int padding_0, int padding_1, int padding_2, int dilation_0, int dilation_1, int dilation_2, int groups, const mlx_stream s))GET_SYM(handle, "mlx_conv3d");
     if (mlx_conv3d_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_conv3d\n");
         return -1;
     }
-    mlx_conv_general_ptr = dlsym(handle, "mlx_conv_general");
+    mlx_conv_general_ptr = (int (*)(mlx_array* res, const mlx_array input, const mlx_array weight, const int* stride, size_t stride_num, const int* padding_lo, size_t padding_lo_num, const int* padding_hi, size_t padding_hi_num, const int* kernel_dilation, size_t kernel_dilation_num, const int* input_dilation, size_t input_dilation_num, int groups, bool flip, const mlx_stream s))GET_SYM(handle, "mlx_conv_general");
     if (mlx_conv_general_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_conv_general\n");
         return -1;
     }
-    mlx_conv_transpose1d_ptr = dlsym(handle, "mlx_conv_transpose1d");
+    mlx_conv_transpose1d_ptr = (int (*)(mlx_array* res, const mlx_array input, const mlx_array weight, int stride, int padding, int dilation, int output_padding, int groups, const mlx_stream s))GET_SYM(handle, "mlx_conv_transpose1d");
     if (mlx_conv_transpose1d_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_conv_transpose1d\n");
         return -1;
     }
-    mlx_conv_transpose2d_ptr = dlsym(handle, "mlx_conv_transpose2d");
+    mlx_conv_transpose2d_ptr = (int (*)(mlx_array* res, const mlx_array input, const mlx_array weight, int stride_0, int stride_1, int padding_0, int padding_1, int dilation_0, int dilation_1, int output_padding_0, int output_padding_1, int groups, const mlx_stream s))GET_SYM(handle, "mlx_conv_transpose2d");
     if (mlx_conv_transpose2d_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_conv_transpose2d\n");
         return -1;
     }
-    mlx_conv_transpose3d_ptr = dlsym(handle, "mlx_conv_transpose3d");
+    mlx_conv_transpose3d_ptr = (int (*)(mlx_array* res, const mlx_array input, const mlx_array weight, int stride_0, int stride_1, int stride_2, int padding_0, int padding_1, int padding_2, int dilation_0, int dilation_1, int dilation_2, int output_padding_0, int output_padding_1, int output_padding_2, int groups, const mlx_stream s))GET_SYM(handle, "mlx_conv_transpose3d");
     if (mlx_conv_transpose3d_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_conv_transpose3d\n");
         return -1;
     }
-    mlx_copy_ptr = dlsym(handle, "mlx_copy");
+    mlx_copy_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_copy");
     if (mlx_copy_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_copy\n");
         return -1;
     }
-    mlx_cos_ptr = dlsym(handle, "mlx_cos");
+    mlx_cos_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_cos");
     if (mlx_cos_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_cos\n");
         return -1;
     }
-    mlx_cosh_ptr = dlsym(handle, "mlx_cosh");
+    mlx_cosh_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_cosh");
     if (mlx_cosh_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_cosh\n");
         return -1;
     }
-    mlx_cummax_ptr = dlsym(handle, "mlx_cummax");
+    mlx_cummax_ptr = (int (*)(mlx_array* res, const mlx_array a, int axis, bool reverse, bool inclusive, const mlx_stream s))GET_SYM(handle, "mlx_cummax");
     if (mlx_cummax_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_cummax\n");
         return -1;
     }
-    mlx_cummin_ptr = dlsym(handle, "mlx_cummin");
+    mlx_cummin_ptr = (int (*)(mlx_array* res, const mlx_array a, int axis, bool reverse, bool inclusive, const mlx_stream s))GET_SYM(handle, "mlx_cummin");
     if (mlx_cummin_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_cummin\n");
         return -1;
     }
-    mlx_cumprod_ptr = dlsym(handle, "mlx_cumprod");
+    mlx_cumprod_ptr = (int (*)(mlx_array* res, const mlx_array a, int axis, bool reverse, bool inclusive, const mlx_stream s))GET_SYM(handle, "mlx_cumprod");
     if (mlx_cumprod_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_cumprod\n");
         return -1;
     }
-    mlx_cumsum_ptr = dlsym(handle, "mlx_cumsum");
+    mlx_cumsum_ptr = (int (*)(mlx_array* res, const mlx_array a, int axis, bool reverse, bool inclusive, const mlx_stream s))GET_SYM(handle, "mlx_cumsum");
     if (mlx_cumsum_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_cumsum\n");
         return -1;
     }
-    mlx_degrees_ptr = dlsym(handle, "mlx_degrees");
+    mlx_degrees_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_degrees");
     if (mlx_degrees_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_degrees\n");
         return -1;
     }
-    mlx_depends_ptr = dlsym(handle, "mlx_depends");
+    mlx_depends_ptr = (int (*)(mlx_vector_array* res, const mlx_vector_array inputs, const mlx_vector_array dependencies))GET_SYM(handle, "mlx_depends");
     if (mlx_depends_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_depends\n");
         return -1;
     }
-    mlx_dequantize_ptr = dlsym(handle, "mlx_dequantize");
+    mlx_dequantize_ptr = (int (*)(mlx_array* res, const mlx_array w, const mlx_array scales, const mlx_array biases , mlx_optional_int group_size, mlx_optional_int bits, const char* mode, mlx_optional_dtype dtype, const mlx_stream s))GET_SYM(handle, "mlx_dequantize");
     if (mlx_dequantize_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_dequantize\n");
         return -1;
     }
-    mlx_diag_ptr = dlsym(handle, "mlx_diag");
+    mlx_diag_ptr = (int (*)(mlx_array* res, const mlx_array a, int k, const mlx_stream s))GET_SYM(handle, "mlx_diag");
     if (mlx_diag_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_diag\n");
         return -1;
     }
-    mlx_diagonal_ptr = dlsym(handle, "mlx_diagonal");
+    mlx_diagonal_ptr = (int (*)(mlx_array* res, const mlx_array a, int offset, int axis1, int axis2, const mlx_stream s))GET_SYM(handle, "mlx_diagonal");
     if (mlx_diagonal_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_diagonal\n");
         return -1;
     }
-    mlx_divide_ptr = dlsym(handle, "mlx_divide");
+    mlx_divide_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_divide");
     if (mlx_divide_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_divide\n");
         return -1;
     }
-    mlx_divmod_ptr = dlsym(handle, "mlx_divmod");
+    mlx_divmod_ptr = (int (*)(mlx_vector_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_divmod");
     if (mlx_divmod_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_divmod\n");
         return -1;
     }
-    mlx_einsum_ptr = dlsym(handle, "mlx_einsum");
+    mlx_einsum_ptr = (int (*)(mlx_array* res, const char* subscripts, const mlx_vector_array operands, const mlx_stream s))GET_SYM(handle, "mlx_einsum");
     if (mlx_einsum_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_einsum\n");
         return -1;
     }
-    mlx_equal_ptr = dlsym(handle, "mlx_equal");
+    mlx_equal_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_equal");
     if (mlx_equal_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_equal\n");
         return -1;
     }
-    mlx_erf_ptr = dlsym(handle, "mlx_erf");
+    mlx_erf_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_erf");
     if (mlx_erf_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_erf\n");
         return -1;
     }
-    mlx_erfinv_ptr = dlsym(handle, "mlx_erfinv");
+    mlx_erfinv_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_erfinv");
     if (mlx_erfinv_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_erfinv\n");
         return -1;
     }
-    mlx_exp_ptr = dlsym(handle, "mlx_exp");
+    mlx_exp_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_exp");
     if (mlx_exp_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_exp\n");
         return -1;
     }
-    mlx_expand_dims_axes_ptr = dlsym(handle, "mlx_expand_dims_axes");
+    mlx_expand_dims_axes_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, const mlx_stream s))GET_SYM(handle, "mlx_expand_dims_axes");
     if (mlx_expand_dims_axes_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_expand_dims_axes\n");
         return -1;
     }
-    mlx_expand_dims_ptr = dlsym(handle, "mlx_expand_dims");
+    mlx_expand_dims_ptr = (int (*)(mlx_array* res, const mlx_array a, int axis, const mlx_stream s))GET_SYM(handle, "mlx_expand_dims");
     if (mlx_expand_dims_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_expand_dims\n");
         return -1;
     }
-    mlx_expm1_ptr = dlsym(handle, "mlx_expm1");
+    mlx_expm1_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_expm1");
     if (mlx_expm1_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_expm1\n");
         return -1;
     }
-    mlx_eye_ptr = dlsym(handle, "mlx_eye");
+    mlx_eye_ptr = (int (*)(mlx_array* res, int n, int m, int k, mlx_dtype dtype, const mlx_stream s))GET_SYM(handle, "mlx_eye");
     if (mlx_eye_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_eye\n");
         return -1;
     }
-    mlx_flatten_ptr = dlsym(handle, "mlx_flatten");
+    mlx_flatten_ptr = (int (*)(mlx_array* res, const mlx_array a, int start_axis, int end_axis, const mlx_stream s))GET_SYM(handle, "mlx_flatten");
     if (mlx_flatten_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_flatten\n");
         return -1;
     }
-    mlx_floor_ptr = dlsym(handle, "mlx_floor");
+    mlx_floor_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_floor");
     if (mlx_floor_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_floor\n");
         return -1;
     }
-    mlx_floor_divide_ptr = dlsym(handle, "mlx_floor_divide");
+    mlx_floor_divide_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_floor_divide");
     if (mlx_floor_divide_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_floor_divide\n");
         return -1;
     }
-    mlx_from_fp8_ptr = dlsym(handle, "mlx_from_fp8");
+    mlx_from_fp8_ptr = (int (*)(mlx_array* res, const mlx_array x, mlx_dtype dtype, const mlx_stream s))GET_SYM(handle, "mlx_from_fp8");
     if (mlx_from_fp8_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_from_fp8\n");
         return -1;
     }
-    mlx_full_ptr = dlsym(handle, "mlx_full");
+    mlx_full_ptr = (int (*)(mlx_array* res, const int* shape, size_t shape_num, const mlx_array vals, mlx_dtype dtype, const mlx_stream s))GET_SYM(handle, "mlx_full");
     if (mlx_full_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_full\n");
         return -1;
     }
-    mlx_full_like_ptr = dlsym(handle, "mlx_full_like");
+    mlx_full_like_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array vals, mlx_dtype dtype, const mlx_stream s))GET_SYM(handle, "mlx_full_like");
     if (mlx_full_like_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_full_like\n");
         return -1;
     }
-    mlx_gather_ptr = dlsym(handle, "mlx_gather");
+    mlx_gather_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_vector_array indices, const int* axes, size_t axes_num, const int* slice_sizes, size_t slice_sizes_num, const mlx_stream s))GET_SYM(handle, "mlx_gather");
     if (mlx_gather_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_gather\n");
         return -1;
     }
-    mlx_gather_single_ptr = dlsym(handle, "mlx_gather_single");
+    mlx_gather_single_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array indices, int axis, const int* slice_sizes, size_t slice_sizes_num, const mlx_stream s))GET_SYM(handle, "mlx_gather_single");
     if (mlx_gather_single_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_gather_single\n");
         return -1;
     }
-    mlx_gather_mm_ptr = dlsym(handle, "mlx_gather_mm");
+    mlx_gather_mm_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_array lhs_indices , const mlx_array rhs_indices , bool sorted_indices, const mlx_stream s))GET_SYM(handle, "mlx_gather_mm");
     if (mlx_gather_mm_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_gather_mm\n");
         return -1;
     }
-    mlx_gather_qmm_ptr = dlsym(handle, "mlx_gather_qmm");
+    mlx_gather_qmm_ptr = (int (*)(mlx_array* res, const mlx_array x, const mlx_array w, const mlx_array scales, const mlx_array biases , const mlx_array lhs_indices , const mlx_array rhs_indices , bool transpose, mlx_optional_int group_size, mlx_optional_int bits, const char* mode, bool sorted_indices, const mlx_stream s))GET_SYM(handle, "mlx_gather_qmm");
     if (mlx_gather_qmm_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_gather_qmm\n");
         return -1;
     }
-    mlx_greater_ptr = dlsym(handle, "mlx_greater");
+    mlx_greater_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_greater");
     if (mlx_greater_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_greater\n");
         return -1;
     }
-    mlx_greater_equal_ptr = dlsym(handle, "mlx_greater_equal");
+    mlx_greater_equal_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_greater_equal");
     if (mlx_greater_equal_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_greater_equal\n");
         return -1;
     }
-    mlx_hadamard_transform_ptr = dlsym(handle, "mlx_hadamard_transform");
+    mlx_hadamard_transform_ptr = (int (*)(mlx_array* res, const mlx_array a, mlx_optional_float scale, const mlx_stream s))GET_SYM(handle, "mlx_hadamard_transform");
     if (mlx_hadamard_transform_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_hadamard_transform\n");
         return -1;
     }
-    mlx_identity_ptr = dlsym(handle, "mlx_identity");
+    mlx_identity_ptr = (int (*)(mlx_array* res, int n, mlx_dtype dtype, const mlx_stream s))GET_SYM(handle, "mlx_identity");
     if (mlx_identity_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_identity\n");
         return -1;
     }
-    mlx_imag_ptr = dlsym(handle, "mlx_imag");
+    mlx_imag_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_imag");
     if (mlx_imag_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_imag\n");
         return -1;
     }
-    mlx_inner_ptr = dlsym(handle, "mlx_inner");
+    mlx_inner_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_inner");
     if (mlx_inner_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_inner\n");
         return -1;
     }
-    mlx_isclose_ptr = dlsym(handle, "mlx_isclose");
+    mlx_isclose_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, double rtol, double atol, bool equal_nan, const mlx_stream s))GET_SYM(handle, "mlx_isclose");
     if (mlx_isclose_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_isclose\n");
         return -1;
     }
-    mlx_isfinite_ptr = dlsym(handle, "mlx_isfinite");
+    mlx_isfinite_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_isfinite");
     if (mlx_isfinite_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_isfinite\n");
         return -1;
     }
-    mlx_isinf_ptr = dlsym(handle, "mlx_isinf");
+    mlx_isinf_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_isinf");
     if (mlx_isinf_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_isinf\n");
         return -1;
     }
-    mlx_isnan_ptr = dlsym(handle, "mlx_isnan");
+    mlx_isnan_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_isnan");
     if (mlx_isnan_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_isnan\n");
         return -1;
     }
-    mlx_isneginf_ptr = dlsym(handle, "mlx_isneginf");
+    mlx_isneginf_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_isneginf");
     if (mlx_isneginf_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_isneginf\n");
         return -1;
     }
-    mlx_isposinf_ptr = dlsym(handle, "mlx_isposinf");
+    mlx_isposinf_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_isposinf");
     if (mlx_isposinf_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_isposinf\n");
         return -1;
     }
-    mlx_kron_ptr = dlsym(handle, "mlx_kron");
+    mlx_kron_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_kron");
     if (mlx_kron_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_kron\n");
         return -1;
     }
-    mlx_left_shift_ptr = dlsym(handle, "mlx_left_shift");
+    mlx_left_shift_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_left_shift");
     if (mlx_left_shift_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_left_shift\n");
         return -1;
     }
-    mlx_less_ptr = dlsym(handle, "mlx_less");
+    mlx_less_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_less");
     if (mlx_less_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_less\n");
         return -1;
     }
-    mlx_less_equal_ptr = dlsym(handle, "mlx_less_equal");
+    mlx_less_equal_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_less_equal");
     if (mlx_less_equal_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_less_equal\n");
         return -1;
     }
-    mlx_linspace_ptr = dlsym(handle, "mlx_linspace");
+    mlx_linspace_ptr = (int (*)(mlx_array* res, double start, double stop, int num, mlx_dtype dtype, const mlx_stream s))GET_SYM(handle, "mlx_linspace");
     if (mlx_linspace_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_linspace\n");
         return -1;
     }
-    mlx_log_ptr = dlsym(handle, "mlx_log");
+    mlx_log_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_log");
     if (mlx_log_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_log\n");
         return -1;
     }
-    mlx_log10_ptr = dlsym(handle, "mlx_log10");
+    mlx_log10_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_log10");
     if (mlx_log10_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_log10\n");
         return -1;
     }
-    mlx_log1p_ptr = dlsym(handle, "mlx_log1p");
+    mlx_log1p_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_log1p");
     if (mlx_log1p_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_log1p\n");
         return -1;
     }
-    mlx_log2_ptr = dlsym(handle, "mlx_log2");
+    mlx_log2_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_log2");
     if (mlx_log2_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_log2\n");
         return -1;
     }
-    mlx_logaddexp_ptr = dlsym(handle, "mlx_logaddexp");
+    mlx_logaddexp_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_logaddexp");
     if (mlx_logaddexp_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_logaddexp\n");
         return -1;
     }
-    mlx_logcumsumexp_ptr = dlsym(handle, "mlx_logcumsumexp");
+    mlx_logcumsumexp_ptr = (int (*)(mlx_array* res, const mlx_array a, int axis, bool reverse, bool inclusive, const mlx_stream s))GET_SYM(handle, "mlx_logcumsumexp");
     if (mlx_logcumsumexp_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_logcumsumexp\n");
         return -1;
     }
-    mlx_logical_and_ptr = dlsym(handle, "mlx_logical_and");
+    mlx_logical_and_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_logical_and");
     if (mlx_logical_and_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_logical_and\n");
         return -1;
     }
-    mlx_logical_not_ptr = dlsym(handle, "mlx_logical_not");
+    mlx_logical_not_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_logical_not");
     if (mlx_logical_not_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_logical_not\n");
         return -1;
     }
-    mlx_logical_or_ptr = dlsym(handle, "mlx_logical_or");
+    mlx_logical_or_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_logical_or");
     if (mlx_logical_or_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_logical_or\n");
         return -1;
     }
-    mlx_logsumexp_axes_ptr = dlsym(handle, "mlx_logsumexp_axes");
+    mlx_logsumexp_axes_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_logsumexp_axes");
     if (mlx_logsumexp_axes_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_logsumexp_axes\n");
         return -1;
     }
-    mlx_logsumexp_axis_ptr = dlsym(handle, "mlx_logsumexp_axis");
+    mlx_logsumexp_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, int axis, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_logsumexp_axis");
     if (mlx_logsumexp_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_logsumexp_axis\n");
         return -1;
     }
-    mlx_logsumexp_ptr = dlsym(handle, "mlx_logsumexp");
+    mlx_logsumexp_ptr = (int (*)(mlx_array* res, const mlx_array a, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_logsumexp");
     if (mlx_logsumexp_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_logsumexp\n");
         return -1;
     }
-    mlx_masked_scatter_ptr = dlsym(handle, "mlx_masked_scatter");
+    mlx_masked_scatter_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array mask, const mlx_array src, const mlx_stream s))GET_SYM(handle, "mlx_masked_scatter");
     if (mlx_masked_scatter_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_masked_scatter\n");
         return -1;
     }
-    mlx_matmul_ptr = dlsym(handle, "mlx_matmul");
+    mlx_matmul_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_matmul");
     if (mlx_matmul_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_matmul\n");
         return -1;
     }
-    mlx_max_axes_ptr = dlsym(handle, "mlx_max_axes");
+    mlx_max_axes_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_max_axes");
     if (mlx_max_axes_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_max_axes\n");
         return -1;
     }
-    mlx_max_axis_ptr = dlsym(handle, "mlx_max_axis");
+    mlx_max_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, int axis, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_max_axis");
     if (mlx_max_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_max_axis\n");
         return -1;
     }
-    mlx_max_ptr = dlsym(handle, "mlx_max");
+    mlx_max_ptr = (int (*)(mlx_array* res, const mlx_array a, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_max");
     if (mlx_max_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_max\n");
         return -1;
     }
-    mlx_maximum_ptr = dlsym(handle, "mlx_maximum");
+    mlx_maximum_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_maximum");
     if (mlx_maximum_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_maximum\n");
         return -1;
     }
-    mlx_mean_axes_ptr = dlsym(handle, "mlx_mean_axes");
+    mlx_mean_axes_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_mean_axes");
     if (mlx_mean_axes_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_mean_axes\n");
         return -1;
     }
-    mlx_mean_axis_ptr = dlsym(handle, "mlx_mean_axis");
+    mlx_mean_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, int axis, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_mean_axis");
     if (mlx_mean_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_mean_axis\n");
         return -1;
     }
-    mlx_mean_ptr = dlsym(handle, "mlx_mean");
+    mlx_mean_ptr = (int (*)(mlx_array* res, const mlx_array a, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_mean");
     if (mlx_mean_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_mean\n");
         return -1;
     }
-    mlx_median_ptr = dlsym(handle, "mlx_median");
+    mlx_median_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_median");
     if (mlx_median_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_median\n");
         return -1;
     }
-    mlx_meshgrid_ptr = dlsym(handle, "mlx_meshgrid");
+    mlx_meshgrid_ptr = (int (*)(mlx_vector_array* res, const mlx_vector_array arrays, bool sparse, const char* indexing, const mlx_stream s))GET_SYM(handle, "mlx_meshgrid");
     if (mlx_meshgrid_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_meshgrid\n");
         return -1;
     }
-    mlx_min_axes_ptr = dlsym(handle, "mlx_min_axes");
+    mlx_min_axes_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_min_axes");
     if (mlx_min_axes_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_min_axes\n");
         return -1;
     }
-    mlx_min_axis_ptr = dlsym(handle, "mlx_min_axis");
+    mlx_min_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, int axis, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_min_axis");
     if (mlx_min_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_min_axis\n");
         return -1;
     }
-    mlx_min_ptr = dlsym(handle, "mlx_min");
+    mlx_min_ptr = (int (*)(mlx_array* res, const mlx_array a, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_min");
     if (mlx_min_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_min\n");
         return -1;
     }
-    mlx_minimum_ptr = dlsym(handle, "mlx_minimum");
+    mlx_minimum_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_minimum");
     if (mlx_minimum_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_minimum\n");
         return -1;
     }
-    mlx_moveaxis_ptr = dlsym(handle, "mlx_moveaxis");
+    mlx_moveaxis_ptr = (int (*)(mlx_array* res, const mlx_array a, int source, int destination, const mlx_stream s))GET_SYM(handle, "mlx_moveaxis");
     if (mlx_moveaxis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_moveaxis\n");
         return -1;
     }
-    mlx_multiply_ptr = dlsym(handle, "mlx_multiply");
+    mlx_multiply_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_multiply");
     if (mlx_multiply_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_multiply\n");
         return -1;
     }
-    mlx_nan_to_num_ptr = dlsym(handle, "mlx_nan_to_num");
+    mlx_nan_to_num_ptr = (int (*)(mlx_array* res, const mlx_array a, float nan, mlx_optional_float posinf, mlx_optional_float neginf, const mlx_stream s))GET_SYM(handle, "mlx_nan_to_num");
     if (mlx_nan_to_num_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_nan_to_num\n");
         return -1;
     }
-    mlx_negative_ptr = dlsym(handle, "mlx_negative");
+    mlx_negative_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_negative");
     if (mlx_negative_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_negative\n");
         return -1;
     }
-    mlx_not_equal_ptr = dlsym(handle, "mlx_not_equal");
+    mlx_not_equal_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_not_equal");
     if (mlx_not_equal_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_not_equal\n");
         return -1;
     }
-    mlx_number_of_elements_ptr = dlsym(handle, "mlx_number_of_elements");
+    mlx_number_of_elements_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, bool inverted, mlx_dtype dtype, const mlx_stream s))GET_SYM(handle, "mlx_number_of_elements");
     if (mlx_number_of_elements_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_number_of_elements\n");
         return -1;
     }
-    mlx_ones_ptr = dlsym(handle, "mlx_ones");
+    mlx_ones_ptr = (int (*)(mlx_array* res, const int* shape, size_t shape_num, mlx_dtype dtype, const mlx_stream s))GET_SYM(handle, "mlx_ones");
     if (mlx_ones_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_ones\n");
         return -1;
     }
-    mlx_ones_like_ptr = dlsym(handle, "mlx_ones_like");
+    mlx_ones_like_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_ones_like");
     if (mlx_ones_like_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_ones_like\n");
         return -1;
     }
-    mlx_outer_ptr = dlsym(handle, "mlx_outer");
+    mlx_outer_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_outer");
     if (mlx_outer_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_outer\n");
         return -1;
     }
-    mlx_pad_ptr = dlsym(handle, "mlx_pad");
+    mlx_pad_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, const int* low_pad_size, size_t low_pad_size_num, const int* high_pad_size, size_t high_pad_size_num, const mlx_array pad_value, const char* mode, const mlx_stream s))GET_SYM(handle, "mlx_pad");
     if (mlx_pad_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_pad\n");
         return -1;
     }
-    mlx_pad_symmetric_ptr = dlsym(handle, "mlx_pad_symmetric");
+    mlx_pad_symmetric_ptr = (int (*)(mlx_array* res, const mlx_array a, int pad_width, const mlx_array pad_value, const char* mode, const mlx_stream s))GET_SYM(handle, "mlx_pad_symmetric");
     if (mlx_pad_symmetric_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_pad_symmetric\n");
         return -1;
     }
-    mlx_partition_axis_ptr = dlsym(handle, "mlx_partition_axis");
+    mlx_partition_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, int kth, int axis, const mlx_stream s))GET_SYM(handle, "mlx_partition_axis");
     if (mlx_partition_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_partition_axis\n");
         return -1;
     }
-    mlx_partition_ptr = dlsym(handle, "mlx_partition");
+    mlx_partition_ptr = (int (*)(mlx_array* res, const mlx_array a, int kth, const mlx_stream s))GET_SYM(handle, "mlx_partition");
     if (mlx_partition_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_partition\n");
         return -1;
     }
-    mlx_power_ptr = dlsym(handle, "mlx_power");
+    mlx_power_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_power");
     if (mlx_power_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_power\n");
         return -1;
     }
-    mlx_prod_axes_ptr = dlsym(handle, "mlx_prod_axes");
+    mlx_prod_axes_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_prod_axes");
     if (mlx_prod_axes_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_prod_axes\n");
         return -1;
     }
-    mlx_prod_axis_ptr = dlsym(handle, "mlx_prod_axis");
+    mlx_prod_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, int axis, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_prod_axis");
     if (mlx_prod_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_prod_axis\n");
         return -1;
     }
-    mlx_prod_ptr = dlsym(handle, "mlx_prod");
+    mlx_prod_ptr = (int (*)(mlx_array* res, const mlx_array a, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_prod");
     if (mlx_prod_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_prod\n");
         return -1;
     }
-    mlx_put_along_axis_ptr = dlsym(handle, "mlx_put_along_axis");
+    mlx_put_along_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array indices, const mlx_array values, int axis, const mlx_stream s))GET_SYM(handle, "mlx_put_along_axis");
     if (mlx_put_along_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_put_along_axis\n");
         return -1;
     }
-    mlx_qqmm_ptr = dlsym(handle, "mlx_qqmm");
+    mlx_qqmm_ptr = (int (*)(mlx_array* res, const mlx_array x, const mlx_array w, const mlx_array w_scales , mlx_optional_int group_size, mlx_optional_int bits, const char* mode, const mlx_stream s))GET_SYM(handle, "mlx_qqmm");
     if (mlx_qqmm_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_qqmm\n");
         return -1;
     }
-    mlx_quantize_ptr = dlsym(handle, "mlx_quantize");
+    mlx_quantize_ptr = (int (*)(mlx_vector_array* res, const mlx_array w, mlx_optional_int group_size, mlx_optional_int bits, const char* mode, const mlx_stream s))GET_SYM(handle, "mlx_quantize");
     if (mlx_quantize_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_quantize\n");
         return -1;
     }
-    mlx_quantized_matmul_ptr = dlsym(handle, "mlx_quantized_matmul");
+    mlx_quantized_matmul_ptr = (int (*)(mlx_array* res, const mlx_array x, const mlx_array w, const mlx_array scales, const mlx_array biases , bool transpose, mlx_optional_int group_size, mlx_optional_int bits, const char* mode, const mlx_stream s))GET_SYM(handle, "mlx_quantized_matmul");
     if (mlx_quantized_matmul_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_quantized_matmul\n");
         return -1;
     }
-    mlx_radians_ptr = dlsym(handle, "mlx_radians");
+    mlx_radians_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_radians");
     if (mlx_radians_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_radians\n");
         return -1;
     }
-    mlx_real_ptr = dlsym(handle, "mlx_real");
+    mlx_real_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_real");
     if (mlx_real_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_real\n");
         return -1;
     }
-    mlx_reciprocal_ptr = dlsym(handle, "mlx_reciprocal");
+    mlx_reciprocal_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_reciprocal");
     if (mlx_reciprocal_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_reciprocal\n");
         return -1;
     }
-    mlx_remainder_ptr = dlsym(handle, "mlx_remainder");
+    mlx_remainder_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_remainder");
     if (mlx_remainder_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_remainder\n");
         return -1;
     }
-    mlx_repeat_axis_ptr = dlsym(handle, "mlx_repeat_axis");
+    mlx_repeat_axis_ptr = (int (*)(mlx_array* res, const mlx_array arr, int repeats, int axis, const mlx_stream s))GET_SYM(handle, "mlx_repeat_axis");
     if (mlx_repeat_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_repeat_axis\n");
         return -1;
     }
-    mlx_repeat_ptr = dlsym(handle, "mlx_repeat");
+    mlx_repeat_ptr = (int (*)(mlx_array* res, const mlx_array arr, int repeats, const mlx_stream s))GET_SYM(handle, "mlx_repeat");
     if (mlx_repeat_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_repeat\n");
         return -1;
     }
-    mlx_reshape_ptr = dlsym(handle, "mlx_reshape");
+    mlx_reshape_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* shape, size_t shape_num, const mlx_stream s))GET_SYM(handle, "mlx_reshape");
     if (mlx_reshape_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_reshape\n");
         return -1;
     }
-    mlx_right_shift_ptr = dlsym(handle, "mlx_right_shift");
+    mlx_right_shift_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_right_shift");
     if (mlx_right_shift_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_right_shift\n");
         return -1;
     }
-    mlx_roll_axis_ptr = dlsym(handle, "mlx_roll_axis");
+    mlx_roll_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* shift, size_t shift_num, int axis, const mlx_stream s))GET_SYM(handle, "mlx_roll_axis");
     if (mlx_roll_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_roll_axis\n");
         return -1;
     }
-    mlx_roll_axes_ptr = dlsym(handle, "mlx_roll_axes");
+    mlx_roll_axes_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* shift, size_t shift_num, const int* axes, size_t axes_num, const mlx_stream s))GET_SYM(handle, "mlx_roll_axes");
     if (mlx_roll_axes_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_roll_axes\n");
         return -1;
     }
-    mlx_roll_ptr = dlsym(handle, "mlx_roll");
+    mlx_roll_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* shift, size_t shift_num, const mlx_stream s))GET_SYM(handle, "mlx_roll");
     if (mlx_roll_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_roll\n");
         return -1;
     }
-    mlx_round_ptr = dlsym(handle, "mlx_round");
+    mlx_round_ptr = (int (*)(mlx_array* res, const mlx_array a, int decimals, const mlx_stream s))GET_SYM(handle, "mlx_round");
     if (mlx_round_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_round\n");
         return -1;
     }
-    mlx_rsqrt_ptr = dlsym(handle, "mlx_rsqrt");
+    mlx_rsqrt_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_rsqrt");
     if (mlx_rsqrt_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_rsqrt\n");
         return -1;
     }
-    mlx_scatter_ptr = dlsym(handle, "mlx_scatter");
+    mlx_scatter_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_vector_array indices, const mlx_array updates, const int* axes, size_t axes_num, const mlx_stream s))GET_SYM(handle, "mlx_scatter");
     if (mlx_scatter_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_scatter\n");
         return -1;
     }
-    mlx_scatter_single_ptr = dlsym(handle, "mlx_scatter_single");
+    mlx_scatter_single_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array indices, const mlx_array updates, int axis, const mlx_stream s))GET_SYM(handle, "mlx_scatter_single");
     if (mlx_scatter_single_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_scatter_single\n");
         return -1;
     }
-    mlx_scatter_add_ptr = dlsym(handle, "mlx_scatter_add");
+    mlx_scatter_add_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_vector_array indices, const mlx_array updates, const int* axes, size_t axes_num, const mlx_stream s))GET_SYM(handle, "mlx_scatter_add");
     if (mlx_scatter_add_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_scatter_add\n");
         return -1;
     }
-    mlx_scatter_add_single_ptr = dlsym(handle, "mlx_scatter_add_single");
+    mlx_scatter_add_single_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array indices, const mlx_array updates, int axis, const mlx_stream s))GET_SYM(handle, "mlx_scatter_add_single");
     if (mlx_scatter_add_single_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_scatter_add_single\n");
         return -1;
     }
-    mlx_scatter_add_axis_ptr = dlsym(handle, "mlx_scatter_add_axis");
+    mlx_scatter_add_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array indices, const mlx_array values, int axis, const mlx_stream s))GET_SYM(handle, "mlx_scatter_add_axis");
     if (mlx_scatter_add_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_scatter_add_axis\n");
         return -1;
     }
-    mlx_scatter_max_ptr = dlsym(handle, "mlx_scatter_max");
+    mlx_scatter_max_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_vector_array indices, const mlx_array updates, const int* axes, size_t axes_num, const mlx_stream s))GET_SYM(handle, "mlx_scatter_max");
     if (mlx_scatter_max_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_scatter_max\n");
         return -1;
     }
-    mlx_scatter_max_single_ptr = dlsym(handle, "mlx_scatter_max_single");
+    mlx_scatter_max_single_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array indices, const mlx_array updates, int axis, const mlx_stream s))GET_SYM(handle, "mlx_scatter_max_single");
     if (mlx_scatter_max_single_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_scatter_max_single\n");
         return -1;
     }
-    mlx_scatter_min_ptr = dlsym(handle, "mlx_scatter_min");
+    mlx_scatter_min_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_vector_array indices, const mlx_array updates, const int* axes, size_t axes_num, const mlx_stream s))GET_SYM(handle, "mlx_scatter_min");
     if (mlx_scatter_min_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_scatter_min\n");
         return -1;
     }
-    mlx_scatter_min_single_ptr = dlsym(handle, "mlx_scatter_min_single");
+    mlx_scatter_min_single_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array indices, const mlx_array updates, int axis, const mlx_stream s))GET_SYM(handle, "mlx_scatter_min_single");
     if (mlx_scatter_min_single_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_scatter_min_single\n");
         return -1;
     }
-    mlx_scatter_prod_ptr = dlsym(handle, "mlx_scatter_prod");
+    mlx_scatter_prod_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_vector_array indices, const mlx_array updates, const int* axes, size_t axes_num, const mlx_stream s))GET_SYM(handle, "mlx_scatter_prod");
     if (mlx_scatter_prod_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_scatter_prod\n");
         return -1;
     }
-    mlx_scatter_prod_single_ptr = dlsym(handle, "mlx_scatter_prod_single");
+    mlx_scatter_prod_single_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array indices, const mlx_array updates, int axis, const mlx_stream s))GET_SYM(handle, "mlx_scatter_prod_single");
     if (mlx_scatter_prod_single_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_scatter_prod_single\n");
         return -1;
     }
-    mlx_segmented_mm_ptr = dlsym(handle, "mlx_segmented_mm");
+    mlx_segmented_mm_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_array segments, const mlx_stream s))GET_SYM(handle, "mlx_segmented_mm");
     if (mlx_segmented_mm_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_segmented_mm\n");
         return -1;
     }
-    mlx_sigmoid_ptr = dlsym(handle, "mlx_sigmoid");
+    mlx_sigmoid_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_sigmoid");
     if (mlx_sigmoid_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_sigmoid\n");
         return -1;
     }
-    mlx_sign_ptr = dlsym(handle, "mlx_sign");
+    mlx_sign_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_sign");
     if (mlx_sign_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_sign\n");
         return -1;
     }
-    mlx_sin_ptr = dlsym(handle, "mlx_sin");
+    mlx_sin_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_sin");
     if (mlx_sin_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_sin\n");
         return -1;
     }
-    mlx_sinh_ptr = dlsym(handle, "mlx_sinh");
+    mlx_sinh_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_sinh");
     if (mlx_sinh_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_sinh\n");
         return -1;
     }
-    mlx_slice_ptr = dlsym(handle, "mlx_slice");
+    mlx_slice_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* start, size_t start_num, const int* stop, size_t stop_num, const int* strides, size_t strides_num, const mlx_stream s))GET_SYM(handle, "mlx_slice");
     if (mlx_slice_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_slice\n");
         return -1;
     }
-    mlx_slice_dynamic_ptr = dlsym(handle, "mlx_slice_dynamic");
+    mlx_slice_dynamic_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array start, const int* axes, size_t axes_num, const int* slice_size, size_t slice_size_num, const mlx_stream s))GET_SYM(handle, "mlx_slice_dynamic");
     if (mlx_slice_dynamic_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_slice_dynamic\n");
         return -1;
     }
-    mlx_slice_update_ptr = dlsym(handle, "mlx_slice_update");
+    mlx_slice_update_ptr = (int (*)(mlx_array* res, const mlx_array src, const mlx_array update, const int* start, size_t start_num, const int* stop, size_t stop_num, const int* strides, size_t strides_num, const mlx_stream s))GET_SYM(handle, "mlx_slice_update");
     if (mlx_slice_update_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_slice_update\n");
         return -1;
     }
-    mlx_slice_update_dynamic_ptr = dlsym(handle, "mlx_slice_update_dynamic");
+    mlx_slice_update_dynamic_ptr = (int (*)(mlx_array* res, const mlx_array src, const mlx_array update, const mlx_array start, const int* axes, size_t axes_num, const mlx_stream s))GET_SYM(handle, "mlx_slice_update_dynamic");
     if (mlx_slice_update_dynamic_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_slice_update_dynamic\n");
         return -1;
     }
-    mlx_softmax_axes_ptr = dlsym(handle, "mlx_softmax_axes");
+    mlx_softmax_axes_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, bool precise, const mlx_stream s))GET_SYM(handle, "mlx_softmax_axes");
     if (mlx_softmax_axes_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_softmax_axes\n");
         return -1;
     }
-    mlx_softmax_axis_ptr = dlsym(handle, "mlx_softmax_axis");
+    mlx_softmax_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, int axis, bool precise, const mlx_stream s))GET_SYM(handle, "mlx_softmax_axis");
     if (mlx_softmax_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_softmax_axis\n");
         return -1;
     }
-    mlx_softmax_ptr = dlsym(handle, "mlx_softmax");
+    mlx_softmax_ptr = (int (*)(mlx_array* res, const mlx_array a, bool precise, const mlx_stream s))GET_SYM(handle, "mlx_softmax");
     if (mlx_softmax_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_softmax\n");
         return -1;
     }
-    mlx_sort_axis_ptr = dlsym(handle, "mlx_sort_axis");
+    mlx_sort_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, int axis, const mlx_stream s))GET_SYM(handle, "mlx_sort_axis");
     if (mlx_sort_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_sort_axis\n");
         return -1;
     }
-    mlx_sort_ptr = dlsym(handle, "mlx_sort");
+    mlx_sort_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_sort");
     if (mlx_sort_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_sort\n");
         return -1;
     }
-    mlx_split_ptr = dlsym(handle, "mlx_split");
+    mlx_split_ptr = (int (*)(mlx_vector_array* res, const mlx_array a, int num_splits, int axis, const mlx_stream s))GET_SYM(handle, "mlx_split");
     if (mlx_split_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_split\n");
         return -1;
     }
-    mlx_split_sections_ptr = dlsym(handle, "mlx_split_sections");
+    mlx_split_sections_ptr = (int (*)(mlx_vector_array* res, const mlx_array a, const int* indices, size_t indices_num, int axis, const mlx_stream s))GET_SYM(handle, "mlx_split_sections");
     if (mlx_split_sections_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_split_sections\n");
         return -1;
     }
-    mlx_sqrt_ptr = dlsym(handle, "mlx_sqrt");
+    mlx_sqrt_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_sqrt");
     if (mlx_sqrt_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_sqrt\n");
         return -1;
     }
-    mlx_square_ptr = dlsym(handle, "mlx_square");
+    mlx_square_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_square");
     if (mlx_square_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_square\n");
         return -1;
     }
-    mlx_squeeze_axes_ptr = dlsym(handle, "mlx_squeeze_axes");
+    mlx_squeeze_axes_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, const mlx_stream s))GET_SYM(handle, "mlx_squeeze_axes");
     if (mlx_squeeze_axes_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_squeeze_axes\n");
         return -1;
     }
-    mlx_squeeze_axis_ptr = dlsym(handle, "mlx_squeeze_axis");
+    mlx_squeeze_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, int axis, const mlx_stream s))GET_SYM(handle, "mlx_squeeze_axis");
     if (mlx_squeeze_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_squeeze_axis\n");
         return -1;
     }
-    mlx_squeeze_ptr = dlsym(handle, "mlx_squeeze");
+    mlx_squeeze_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_squeeze");
     if (mlx_squeeze_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_squeeze\n");
         return -1;
     }
-    mlx_stack_axis_ptr = dlsym(handle, "mlx_stack_axis");
+    mlx_stack_axis_ptr = (int (*)(mlx_array* res, const mlx_vector_array arrays, int axis, const mlx_stream s))GET_SYM(handle, "mlx_stack_axis");
     if (mlx_stack_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_stack_axis\n");
         return -1;
     }
-    mlx_stack_ptr = dlsym(handle, "mlx_stack");
+    mlx_stack_ptr = (int (*)(mlx_array* res, const mlx_vector_array arrays, const mlx_stream s))GET_SYM(handle, "mlx_stack");
     if (mlx_stack_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_stack\n");
         return -1;
     }
-    mlx_std_axes_ptr = dlsym(handle, "mlx_std_axes");
+    mlx_std_axes_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, bool keepdims, int ddof, const mlx_stream s))GET_SYM(handle, "mlx_std_axes");
     if (mlx_std_axes_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_std_axes\n");
         return -1;
     }
-    mlx_std_axis_ptr = dlsym(handle, "mlx_std_axis");
+    mlx_std_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, int axis, bool keepdims, int ddof, const mlx_stream s))GET_SYM(handle, "mlx_std_axis");
     if (mlx_std_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_std_axis\n");
         return -1;
     }
-    mlx_std_ptr = dlsym(handle, "mlx_std");
+    mlx_std_ptr = (int (*)(mlx_array* res, const mlx_array a, bool keepdims, int ddof, const mlx_stream s))GET_SYM(handle, "mlx_std");
     if (mlx_std_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_std\n");
         return -1;
     }
-    mlx_stop_gradient_ptr = dlsym(handle, "mlx_stop_gradient");
+    mlx_stop_gradient_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_stop_gradient");
     if (mlx_stop_gradient_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_stop_gradient\n");
         return -1;
     }
-    mlx_subtract_ptr = dlsym(handle, "mlx_subtract");
+    mlx_subtract_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s))GET_SYM(handle, "mlx_subtract");
     if (mlx_subtract_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_subtract\n");
         return -1;
     }
-    mlx_sum_axes_ptr = dlsym(handle, "mlx_sum_axes");
+    mlx_sum_axes_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_sum_axes");
     if (mlx_sum_axes_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_sum_axes\n");
         return -1;
     }
-    mlx_sum_axis_ptr = dlsym(handle, "mlx_sum_axis");
+    mlx_sum_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, int axis, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_sum_axis");
     if (mlx_sum_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_sum_axis\n");
         return -1;
     }
-    mlx_sum_ptr = dlsym(handle, "mlx_sum");
+    mlx_sum_ptr = (int (*)(mlx_array* res, const mlx_array a, bool keepdims, const mlx_stream s))GET_SYM(handle, "mlx_sum");
     if (mlx_sum_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_sum\n");
         return -1;
     }
-    mlx_swapaxes_ptr = dlsym(handle, "mlx_swapaxes");
+    mlx_swapaxes_ptr = (int (*)(mlx_array* res, const mlx_array a, int axis1, int axis2, const mlx_stream s))GET_SYM(handle, "mlx_swapaxes");
     if (mlx_swapaxes_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_swapaxes\n");
         return -1;
     }
-    mlx_take_axis_ptr = dlsym(handle, "mlx_take_axis");
+    mlx_take_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array indices, int axis, const mlx_stream s))GET_SYM(handle, "mlx_take_axis");
     if (mlx_take_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_take_axis\n");
         return -1;
     }
-    mlx_take_ptr = dlsym(handle, "mlx_take");
+    mlx_take_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array indices, const mlx_stream s))GET_SYM(handle, "mlx_take");
     if (mlx_take_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_take\n");
         return -1;
     }
-    mlx_take_along_axis_ptr = dlsym(handle, "mlx_take_along_axis");
+    mlx_take_along_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array indices, int axis, const mlx_stream s))GET_SYM(handle, "mlx_take_along_axis");
     if (mlx_take_along_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_take_along_axis\n");
         return -1;
     }
-    mlx_tan_ptr = dlsym(handle, "mlx_tan");
+    mlx_tan_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_tan");
     if (mlx_tan_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_tan\n");
         return -1;
     }
-    mlx_tanh_ptr = dlsym(handle, "mlx_tanh");
+    mlx_tanh_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_tanh");
     if (mlx_tanh_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_tanh\n");
         return -1;
     }
-    mlx_tensordot_ptr = dlsym(handle, "mlx_tensordot");
+    mlx_tensordot_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, const int* axes_a, size_t axes_a_num, const int* axes_b, size_t axes_b_num, const mlx_stream s))GET_SYM(handle, "mlx_tensordot");
     if (mlx_tensordot_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_tensordot\n");
         return -1;
     }
-    mlx_tensordot_axis_ptr = dlsym(handle, "mlx_tensordot_axis");
+    mlx_tensordot_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_array b, int axis, const mlx_stream s))GET_SYM(handle, "mlx_tensordot_axis");
     if (mlx_tensordot_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_tensordot_axis\n");
         return -1;
     }
-    mlx_tile_ptr = dlsym(handle, "mlx_tile");
+    mlx_tile_ptr = (int (*)(mlx_array* res, const mlx_array arr, const int* reps, size_t reps_num, const mlx_stream s))GET_SYM(handle, "mlx_tile");
     if (mlx_tile_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_tile\n");
         return -1;
     }
-    mlx_to_fp8_ptr = dlsym(handle, "mlx_to_fp8");
+    mlx_to_fp8_ptr = (int (*)(mlx_array* res, const mlx_array x, const mlx_stream s))GET_SYM(handle, "mlx_to_fp8");
     if (mlx_to_fp8_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_to_fp8\n");
         return -1;
     }
-    mlx_topk_axis_ptr = dlsym(handle, "mlx_topk_axis");
+    mlx_topk_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, int k, int axis, const mlx_stream s))GET_SYM(handle, "mlx_topk_axis");
     if (mlx_topk_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_topk_axis\n");
         return -1;
     }
-    mlx_topk_ptr = dlsym(handle, "mlx_topk");
+    mlx_topk_ptr = (int (*)(mlx_array* res, const mlx_array a, int k, const mlx_stream s))GET_SYM(handle, "mlx_topk");
     if (mlx_topk_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_topk\n");
         return -1;
     }
-    mlx_trace_ptr = dlsym(handle, "mlx_trace");
+    mlx_trace_ptr = (int (*)(mlx_array* res, const mlx_array a, int offset, int axis1, int axis2, mlx_dtype dtype, const mlx_stream s))GET_SYM(handle, "mlx_trace");
     if (mlx_trace_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_trace\n");
         return -1;
     }
-    mlx_transpose_axes_ptr = dlsym(handle, "mlx_transpose_axes");
+    mlx_transpose_axes_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, const mlx_stream s))GET_SYM(handle, "mlx_transpose_axes");
     if (mlx_transpose_axes_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_transpose_axes\n");
         return -1;
     }
-    mlx_transpose_ptr = dlsym(handle, "mlx_transpose");
+    mlx_transpose_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_transpose");
     if (mlx_transpose_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_transpose\n");
         return -1;
     }
-    mlx_tri_ptr = dlsym(handle, "mlx_tri");
+    mlx_tri_ptr = (int (*)(mlx_array* res, int n, int m, int k, mlx_dtype type, const mlx_stream s))GET_SYM(handle, "mlx_tri");
     if (mlx_tri_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_tri\n");
         return -1;
     }
-    mlx_tril_ptr = dlsym(handle, "mlx_tril");
+    mlx_tril_ptr = (int (*)(mlx_array* res, const mlx_array x, int k, const mlx_stream s))GET_SYM(handle, "mlx_tril");
     if (mlx_tril_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_tril\n");
         return -1;
     }
-    mlx_triu_ptr = dlsym(handle, "mlx_triu");
+    mlx_triu_ptr = (int (*)(mlx_array* res, const mlx_array x, int k, const mlx_stream s))GET_SYM(handle, "mlx_triu");
     if (mlx_triu_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_triu\n");
         return -1;
     }
-    mlx_unflatten_ptr = dlsym(handle, "mlx_unflatten");
+    mlx_unflatten_ptr = (int (*)(mlx_array* res, const mlx_array a, int axis, const int* shape, size_t shape_num, const mlx_stream s))GET_SYM(handle, "mlx_unflatten");
     if (mlx_unflatten_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_unflatten\n");
         return -1;
     }
-    mlx_var_axes_ptr = dlsym(handle, "mlx_var_axes");
+    mlx_var_axes_ptr = (int (*)(mlx_array* res, const mlx_array a, const int* axes, size_t axes_num, bool keepdims, int ddof, const mlx_stream s))GET_SYM(handle, "mlx_var_axes");
     if (mlx_var_axes_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_var_axes\n");
         return -1;
     }
-    mlx_var_axis_ptr = dlsym(handle, "mlx_var_axis");
+    mlx_var_axis_ptr = (int (*)(mlx_array* res, const mlx_array a, int axis, bool keepdims, int ddof, const mlx_stream s))GET_SYM(handle, "mlx_var_axis");
     if (mlx_var_axis_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_var_axis\n");
         return -1;
     }
-    mlx_var_ptr = dlsym(handle, "mlx_var");
+    mlx_var_ptr = (int (*)(mlx_array* res, const mlx_array a, bool keepdims, int ddof, const mlx_stream s))GET_SYM(handle, "mlx_var");
     if (mlx_var_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_var\n");
         return -1;
     }
-    mlx_view_ptr = dlsym(handle, "mlx_view");
+    mlx_view_ptr = (int (*)(mlx_array* res, const mlx_array a, mlx_dtype dtype, const mlx_stream s))GET_SYM(handle, "mlx_view");
     if (mlx_view_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_view\n");
         return -1;
     }
-    mlx_where_ptr = dlsym(handle, "mlx_where");
+    mlx_where_ptr = (int (*)(mlx_array* res, const mlx_array condition, const mlx_array x, const mlx_array y, const mlx_stream s))GET_SYM(handle, "mlx_where");
     if (mlx_where_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_where\n");
         return -1;
     }
-    mlx_zeros_ptr = dlsym(handle, "mlx_zeros");
+    mlx_zeros_ptr = (int (*)(mlx_array* res, const int* shape, size_t shape_num, mlx_dtype dtype, const mlx_stream s))GET_SYM(handle, "mlx_zeros");
     if (mlx_zeros_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_zeros\n");
         return -1;
     }
-    mlx_zeros_like_ptr = dlsym(handle, "mlx_zeros_like");
+    mlx_zeros_like_ptr = (int (*)(mlx_array* res, const mlx_array a, const mlx_stream s))GET_SYM(handle, "mlx_zeros_like");
     if (mlx_zeros_like_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_zeros_like\n");
         return -1;
     }
-    mlx_random_bernoulli_ptr = dlsym(handle, "mlx_random_bernoulli");
+    mlx_random_bernoulli_ptr = (int (*)(mlx_array* res, const mlx_array p, const int* shape, size_t shape_num, const mlx_array key , const mlx_stream s))GET_SYM(handle, "mlx_random_bernoulli");
     if (mlx_random_bernoulli_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_random_bernoulli\n");
         return -1;
     }
-    mlx_random_bits_ptr = dlsym(handle, "mlx_random_bits");
+    mlx_random_bits_ptr = (int (*)(mlx_array* res, const int* shape, size_t shape_num, int width, const mlx_array key , const mlx_stream s))GET_SYM(handle, "mlx_random_bits");
     if (mlx_random_bits_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_random_bits\n");
         return -1;
     }
-    mlx_random_categorical_shape_ptr = dlsym(handle, "mlx_random_categorical_shape");
+    mlx_random_categorical_shape_ptr = (int (*)(mlx_array* res, const mlx_array logits, int axis, const int* shape, size_t shape_num, const mlx_array key , const mlx_stream s))GET_SYM(handle, "mlx_random_categorical_shape");
     if (mlx_random_categorical_shape_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_random_categorical_shape\n");
         return -1;
     }
-    mlx_random_categorical_num_samples_ptr = dlsym(handle, "mlx_random_categorical_num_samples");
+    mlx_random_categorical_num_samples_ptr = (int (*)(mlx_array* res, const mlx_array logits_, int axis, int num_samples, const mlx_array key , const mlx_stream s))GET_SYM(handle, "mlx_random_categorical_num_samples");
     if (mlx_random_categorical_num_samples_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_random_categorical_num_samples\n");
         return -1;
     }
-    mlx_random_categorical_ptr = dlsym(handle, "mlx_random_categorical");
+    mlx_random_categorical_ptr = (int (*)(mlx_array* res, const mlx_array logits, int axis, const mlx_array key , const mlx_stream s))GET_SYM(handle, "mlx_random_categorical");
     if (mlx_random_categorical_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_random_categorical\n");
         return -1;
     }
-    mlx_random_gumbel_ptr = dlsym(handle, "mlx_random_gumbel");
+    mlx_random_gumbel_ptr = (int (*)(mlx_array* res, const int* shape, size_t shape_num, mlx_dtype dtype, const mlx_array key , const mlx_stream s))GET_SYM(handle, "mlx_random_gumbel");
     if (mlx_random_gumbel_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_random_gumbel\n");
         return -1;
     }
-    mlx_random_key_ptr = dlsym(handle, "mlx_random_key");
+    mlx_random_key_ptr = (int (*)(mlx_array* res, uint64_t seed))GET_SYM(handle, "mlx_random_key");
     if (mlx_random_key_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_random_key\n");
         return -1;
     }
-    mlx_random_laplace_ptr = dlsym(handle, "mlx_random_laplace");
+    mlx_random_laplace_ptr = (int (*)(mlx_array* res, const int* shape, size_t shape_num, mlx_dtype dtype, float loc, float scale, const mlx_array key , const mlx_stream s))GET_SYM(handle, "mlx_random_laplace");
     if (mlx_random_laplace_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_random_laplace\n");
         return -1;
     }
-    mlx_random_multivariate_normal_ptr = dlsym(handle, "mlx_random_multivariate_normal");
+    mlx_random_multivariate_normal_ptr = (int (*)(mlx_array* res, const mlx_array mean, const mlx_array cov, const int* shape, size_t shape_num, mlx_dtype dtype, const mlx_array key , const mlx_stream s))GET_SYM(handle, "mlx_random_multivariate_normal");
     if (mlx_random_multivariate_normal_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_random_multivariate_normal\n");
         return -1;
     }
-    mlx_random_normal_broadcast_ptr = dlsym(handle, "mlx_random_normal_broadcast");
+    mlx_random_normal_broadcast_ptr = (int (*)(mlx_array* res, const int* shape, size_t shape_num, mlx_dtype dtype, const mlx_array loc , const mlx_array scale , const mlx_array key , const mlx_stream s))GET_SYM(handle, "mlx_random_normal_broadcast");
     if (mlx_random_normal_broadcast_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_random_normal_broadcast\n");
         return -1;
     }
-    mlx_random_normal_ptr = dlsym(handle, "mlx_random_normal");
+    mlx_random_normal_ptr = (int (*)(mlx_array* res, const int* shape, size_t shape_num, mlx_dtype dtype, float loc, float scale, const mlx_array key , const mlx_stream s))GET_SYM(handle, "mlx_random_normal");
     if (mlx_random_normal_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_random_normal\n");
         return -1;
     }
-    mlx_random_permutation_ptr = dlsym(handle, "mlx_random_permutation");
+    mlx_random_permutation_ptr = (int (*)(mlx_array* res, const mlx_array x, int axis, const mlx_array key , const mlx_stream s))GET_SYM(handle, "mlx_random_permutation");
     if (mlx_random_permutation_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_random_permutation\n");
         return -1;
     }
-    mlx_random_permutation_arange_ptr = dlsym(handle, "mlx_random_permutation_arange");
+    mlx_random_permutation_arange_ptr = (int (*)(mlx_array* res, int x, const mlx_array key , const mlx_stream s))GET_SYM(handle, "mlx_random_permutation_arange");
     if (mlx_random_permutation_arange_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_random_permutation_arange\n");
         return -1;
     }
-    mlx_random_randint_ptr = dlsym(handle, "mlx_random_randint");
+    mlx_random_randint_ptr = (int (*)(mlx_array* res, const mlx_array low, const mlx_array high, const int* shape, size_t shape_num, mlx_dtype dtype, const mlx_array key , const mlx_stream s))GET_SYM(handle, "mlx_random_randint");
     if (mlx_random_randint_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_random_randint\n");
         return -1;
     }
-    mlx_random_seed_ptr = dlsym(handle, "mlx_random_seed");
+    mlx_random_seed_ptr = (int (*)(uint64_t seed))GET_SYM(handle, "mlx_random_seed");
     if (mlx_random_seed_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_random_seed\n");
         return -1;
     }
-    mlx_random_split_num_ptr = dlsym(handle, "mlx_random_split_num");
+    mlx_random_split_num_ptr = (int (*)(mlx_array* res, const mlx_array key, int num, const mlx_stream s))GET_SYM(handle, "mlx_random_split_num");
     if (mlx_random_split_num_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_random_split_num\n");
         return -1;
     }
-    mlx_random_split_ptr = dlsym(handle, "mlx_random_split");
+    mlx_random_split_ptr = (int (*)(mlx_array* res_0, mlx_array* res_1, const mlx_array key, const mlx_stream s))GET_SYM(handle, "mlx_random_split");
     if (mlx_random_split_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_random_split\n");
         return -1;
     }
-    mlx_random_truncated_normal_ptr = dlsym(handle, "mlx_random_truncated_normal");
+    mlx_random_truncated_normal_ptr = (int (*)(mlx_array* res, const mlx_array lower, const mlx_array upper, const int* shape, size_t shape_num, mlx_dtype dtype, const mlx_array key , const mlx_stream s))GET_SYM(handle, "mlx_random_truncated_normal");
     if (mlx_random_truncated_normal_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_random_truncated_normal\n");
         return -1;
     }
-    mlx_random_uniform_ptr = dlsym(handle, "mlx_random_uniform");
+    mlx_random_uniform_ptr = (int (*)(mlx_array* res, const mlx_array low, const mlx_array high, const int* shape, size_t shape_num, mlx_dtype dtype, const mlx_array key , const mlx_stream s))GET_SYM(handle, "mlx_random_uniform");
     if (mlx_random_uniform_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_random_uniform\n");
         return -1;
     }
-    mlx_stream_new_ptr = dlsym(handle, "mlx_stream_new");
+    mlx_stream_new_ptr = (mlx_stream (*)(void))GET_SYM(handle, "mlx_stream_new");
     if (mlx_stream_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_stream_new\n");
         return -1;
     }
-    mlx_stream_new_device_ptr = dlsym(handle, "mlx_stream_new_device");
+    mlx_stream_new_device_ptr = (mlx_stream (*)(mlx_device dev))GET_SYM(handle, "mlx_stream_new_device");
     if (mlx_stream_new_device_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_stream_new_device\n");
         return -1;
     }
-    mlx_stream_set_ptr = dlsym(handle, "mlx_stream_set");
+    mlx_stream_set_ptr = (int (*)(mlx_stream* stream, const mlx_stream src))GET_SYM(handle, "mlx_stream_set");
     if (mlx_stream_set_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_stream_set\n");
         return -1;
     }
-    mlx_stream_free_ptr = dlsym(handle, "mlx_stream_free");
+    mlx_stream_free_ptr = (int (*)(mlx_stream stream))GET_SYM(handle, "mlx_stream_free");
     if (mlx_stream_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_stream_free\n");
         return -1;
     }
-    mlx_stream_tostring_ptr = dlsym(handle, "mlx_stream_tostring");
+    mlx_stream_tostring_ptr = (int (*)(mlx_string* str, mlx_stream stream))GET_SYM(handle, "mlx_stream_tostring");
     if (mlx_stream_tostring_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_stream_tostring\n");
         return -1;
     }
-    mlx_stream_equal_ptr = dlsym(handle, "mlx_stream_equal");
+    mlx_stream_equal_ptr = (bool (*)(mlx_stream lhs, mlx_stream rhs))GET_SYM(handle, "mlx_stream_equal");
     if (mlx_stream_equal_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_stream_equal\n");
         return -1;
     }
-    mlx_stream_get_device_ptr = dlsym(handle, "mlx_stream_get_device");
+    mlx_stream_get_device_ptr = (int (*)(mlx_device* dev, mlx_stream stream))GET_SYM(handle, "mlx_stream_get_device");
     if (mlx_stream_get_device_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_stream_get_device\n");
         return -1;
     }
-    mlx_stream_get_index_ptr = dlsym(handle, "mlx_stream_get_index");
+    mlx_stream_get_index_ptr = (int (*)(int* index, mlx_stream stream))GET_SYM(handle, "mlx_stream_get_index");
     if (mlx_stream_get_index_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_stream_get_index\n");
         return -1;
     }
-    mlx_synchronize_ptr = dlsym(handle, "mlx_synchronize");
+    mlx_synchronize_ptr = (int (*)(mlx_stream stream))GET_SYM(handle, "mlx_synchronize");
     if (mlx_synchronize_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_synchronize\n");
         return -1;
     }
-    mlx_get_default_stream_ptr = dlsym(handle, "mlx_get_default_stream");
+    mlx_get_default_stream_ptr = (int (*)(mlx_stream* stream, mlx_device dev))GET_SYM(handle, "mlx_get_default_stream");
     if (mlx_get_default_stream_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_get_default_stream\n");
         return -1;
     }
-    mlx_set_default_stream_ptr = dlsym(handle, "mlx_set_default_stream");
+    mlx_set_default_stream_ptr = (int (*)(mlx_stream stream))GET_SYM(handle, "mlx_set_default_stream");
     if (mlx_set_default_stream_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_set_default_stream\n");
         return -1;
     }
-    mlx_default_cpu_stream_new_ptr = dlsym(handle, "mlx_default_cpu_stream_new");
+    mlx_default_cpu_stream_new_ptr = (mlx_stream (*)(void))GET_SYM(handle, "mlx_default_cpu_stream_new");
     if (mlx_default_cpu_stream_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_default_cpu_stream_new\n");
         return -1;
     }
-    mlx_default_gpu_stream_new_ptr = dlsym(handle, "mlx_default_gpu_stream_new");
+    mlx_default_gpu_stream_new_ptr = (mlx_stream (*)(void))GET_SYM(handle, "mlx_default_gpu_stream_new");
     if (mlx_default_gpu_stream_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_default_gpu_stream_new\n");
         return -1;
     }
-    mlx_string_new_ptr = dlsym(handle, "mlx_string_new");
+    mlx_string_new_ptr = (mlx_string (*)(void))GET_SYM(handle, "mlx_string_new");
     if (mlx_string_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_string_new\n");
         return -1;
     }
-    mlx_string_new_data_ptr = dlsym(handle, "mlx_string_new_data");
+    mlx_string_new_data_ptr = (mlx_string (*)(const char* str))GET_SYM(handle, "mlx_string_new_data");
     if (mlx_string_new_data_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_string_new_data\n");
         return -1;
     }
-    mlx_string_set_ptr = dlsym(handle, "mlx_string_set");
+    mlx_string_set_ptr = (int (*)(mlx_string* str, const mlx_string src))GET_SYM(handle, "mlx_string_set");
     if (mlx_string_set_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_string_set\n");
         return -1;
     }
-    mlx_string_data_ptr = dlsym(handle, "mlx_string_data");
+    mlx_string_data_ptr = (const char* (*)(mlx_string str))GET_SYM(handle, "mlx_string_data");
     if (mlx_string_data_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_string_data\n");
         return -1;
     }
-    mlx_string_free_ptr = dlsym(handle, "mlx_string_free");
+    mlx_string_free_ptr = (int (*)(mlx_string str))GET_SYM(handle, "mlx_string_free");
     if (mlx_string_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_string_free\n");
         return -1;
     }
-    mlx_async_eval_ptr = dlsym(handle, "mlx_async_eval");
+    mlx_async_eval_ptr = (int (*)(const mlx_vector_array outputs))GET_SYM(handle, "mlx_async_eval");
     if (mlx_async_eval_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_async_eval\n");
         return -1;
     }
-    mlx_checkpoint_ptr = dlsym(handle, "mlx_checkpoint");
+    mlx_checkpoint_ptr = (int (*)(mlx_closure* res, const mlx_closure fun))GET_SYM(handle, "mlx_checkpoint");
     if (mlx_checkpoint_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_checkpoint\n");
         return -1;
     }
-    mlx_custom_function_ptr = dlsym(handle, "mlx_custom_function");
+    mlx_custom_function_ptr = (int (*)(mlx_closure* res, const mlx_closure fun, const mlx_closure_custom fun_vjp , const mlx_closure_custom_jvp fun_jvp , const mlx_closure_custom_vmap fun_vmap))GET_SYM(handle, "mlx_custom_function");
     if (mlx_custom_function_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_custom_function\n");
         return -1;
     }
-    mlx_custom_vjp_ptr = dlsym(handle, "mlx_custom_vjp");
+    mlx_custom_vjp_ptr = (int (*)(mlx_closure* res, const mlx_closure fun, const mlx_closure_custom fun_vjp))GET_SYM(handle, "mlx_custom_vjp");
     if (mlx_custom_vjp_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_custom_vjp\n");
         return -1;
     }
-    mlx_eval_ptr = dlsym(handle, "mlx_eval");
+    mlx_eval_ptr = (int (*)(const mlx_vector_array outputs))GET_SYM(handle, "mlx_eval");
     if (mlx_eval_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_eval\n");
         return -1;
     }
-    mlx_jvp_ptr = dlsym(handle, "mlx_jvp");
+    mlx_jvp_ptr = (int (*)(mlx_vector_array* res_0, mlx_vector_array* res_1, const mlx_closure fun, const mlx_vector_array primals, const mlx_vector_array tangents))GET_SYM(handle, "mlx_jvp");
     if (mlx_jvp_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_jvp\n");
         return -1;
     }
-    mlx_value_and_grad_ptr = dlsym(handle, "mlx_value_and_grad");
+    mlx_value_and_grad_ptr = (int (*)(mlx_closure_value_and_grad* res, const mlx_closure fun, const int* argnums, size_t argnums_num))GET_SYM(handle, "mlx_value_and_grad");
     if (mlx_value_and_grad_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_value_and_grad\n");
         return -1;
     }
-    mlx_vjp_ptr = dlsym(handle, "mlx_vjp");
+    mlx_vjp_ptr = (int (*)(mlx_vector_array* res_0, mlx_vector_array* res_1, const mlx_closure fun, const mlx_vector_array primals, const mlx_vector_array cotangents))GET_SYM(handle, "mlx_vjp");
     if (mlx_vjp_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vjp\n");
         return -1;
     }
-    mlx_detail_vmap_replace_ptr = dlsym(handle, "mlx_detail_vmap_replace");
+    mlx_detail_vmap_replace_ptr = (int (*)(mlx_vector_array* res, const mlx_vector_array inputs, const mlx_vector_array s_inputs, const mlx_vector_array s_outputs, const int* in_axes, size_t in_axes_num, const int* out_axes, size_t out_axes_num))GET_SYM(handle, "mlx_detail_vmap_replace");
     if (mlx_detail_vmap_replace_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_detail_vmap_replace\n");
         return -1;
     }
-    mlx_detail_vmap_trace_ptr = dlsym(handle, "mlx_detail_vmap_trace");
+    mlx_detail_vmap_trace_ptr = (int (*)(mlx_vector_array* res_0, mlx_vector_array* res_1, const mlx_closure fun, const mlx_vector_array inputs, const int* in_axes, size_t in_axes_num))GET_SYM(handle, "mlx_detail_vmap_trace");
     if (mlx_detail_vmap_trace_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_detail_vmap_trace\n");
         return -1;
     }
-    mlx_vector_array_new_ptr = dlsym(handle, "mlx_vector_array_new");
+    mlx_vector_array_new_ptr = (mlx_vector_array (*)(void))GET_SYM(handle, "mlx_vector_array_new");
     if (mlx_vector_array_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_array_new\n");
         return -1;
     }
-    mlx_vector_array_set_ptr = dlsym(handle, "mlx_vector_array_set");
+    mlx_vector_array_set_ptr = (int (*)(mlx_vector_array* vec, const mlx_vector_array src))GET_SYM(handle, "mlx_vector_array_set");
     if (mlx_vector_array_set_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_array_set\n");
         return -1;
     }
-    mlx_vector_array_free_ptr = dlsym(handle, "mlx_vector_array_free");
+    mlx_vector_array_free_ptr = (int (*)(mlx_vector_array vec))GET_SYM(handle, "mlx_vector_array_free");
     if (mlx_vector_array_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_array_free\n");
         return -1;
     }
-    mlx_vector_array_new_data_ptr = dlsym(handle, "mlx_vector_array_new_data");
+    mlx_vector_array_new_data_ptr = (mlx_vector_array (*)(const mlx_array* data, size_t size))GET_SYM(handle, "mlx_vector_array_new_data");
     if (mlx_vector_array_new_data_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_array_new_data\n");
         return -1;
     }
-    mlx_vector_array_new_value_ptr = dlsym(handle, "mlx_vector_array_new_value");
+    mlx_vector_array_new_value_ptr = (mlx_vector_array (*)(const mlx_array val))GET_SYM(handle, "mlx_vector_array_new_value");
     if (mlx_vector_array_new_value_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_array_new_value\n");
         return -1;
     }
-    mlx_vector_array_set_data_ptr = dlsym(handle, "mlx_vector_array_set_data");
+    mlx_vector_array_set_data_ptr = (int (*)(mlx_vector_array* vec, const mlx_array* data, size_t size))GET_SYM(handle, "mlx_vector_array_set_data");
     if (mlx_vector_array_set_data_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_array_set_data\n");
         return -1;
     }
-    mlx_vector_array_set_value_ptr = dlsym(handle, "mlx_vector_array_set_value");
+    mlx_vector_array_set_value_ptr = (int (*)(mlx_vector_array* vec, const mlx_array val))GET_SYM(handle, "mlx_vector_array_set_value");
     if (mlx_vector_array_set_value_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_array_set_value\n");
         return -1;
     }
-    mlx_vector_array_append_data_ptr = dlsym(handle, "mlx_vector_array_append_data");
+    mlx_vector_array_append_data_ptr = (int (*)(mlx_vector_array vec, const mlx_array* data, size_t size))GET_SYM(handle, "mlx_vector_array_append_data");
     if (mlx_vector_array_append_data_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_array_append_data\n");
         return -1;
     }
-    mlx_vector_array_append_value_ptr = dlsym(handle, "mlx_vector_array_append_value");
+    mlx_vector_array_append_value_ptr = (int (*)(mlx_vector_array vec, const mlx_array val))GET_SYM(handle, "mlx_vector_array_append_value");
     if (mlx_vector_array_append_value_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_array_append_value\n");
         return -1;
     }
-    mlx_vector_array_size_ptr = dlsym(handle, "mlx_vector_array_size");
+    mlx_vector_array_size_ptr = (size_t (*)(mlx_vector_array vec))GET_SYM(handle, "mlx_vector_array_size");
     if (mlx_vector_array_size_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_array_size\n");
         return -1;
     }
-    mlx_vector_array_get_ptr = dlsym(handle, "mlx_vector_array_get");
+    mlx_vector_array_get_ptr = (int (*)(mlx_array* res, const mlx_vector_array vec, size_t idx))GET_SYM(handle, "mlx_vector_array_get");
     if (mlx_vector_array_get_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_array_get\n");
         return -1;
     }
-    mlx_vector_vector_array_new_ptr = dlsym(handle, "mlx_vector_vector_array_new");
+    mlx_vector_vector_array_new_ptr = (mlx_vector_vector_array (*)(void))GET_SYM(handle, "mlx_vector_vector_array_new");
     if (mlx_vector_vector_array_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_vector_array_new\n");
         return -1;
     }
-    mlx_vector_vector_array_set_ptr = dlsym(handle, "mlx_vector_vector_array_set");
+    mlx_vector_vector_array_set_ptr = (int (*)(mlx_vector_vector_array* vec, const mlx_vector_vector_array src))GET_SYM(handle, "mlx_vector_vector_array_set");
     if (mlx_vector_vector_array_set_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_vector_array_set\n");
         return -1;
     }
-    mlx_vector_vector_array_free_ptr = dlsym(handle, "mlx_vector_vector_array_free");
+    mlx_vector_vector_array_free_ptr = (int (*)(mlx_vector_vector_array vec))GET_SYM(handle, "mlx_vector_vector_array_free");
     if (mlx_vector_vector_array_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_vector_array_free\n");
         return -1;
     }
-    mlx_vector_vector_array_new_data_ptr = dlsym(handle, "mlx_vector_vector_array_new_data");
+    mlx_vector_vector_array_new_data_ptr = (mlx_vector_vector_array (*)(const mlx_vector_array* data, size_t size))GET_SYM(handle, "mlx_vector_vector_array_new_data");
     if (mlx_vector_vector_array_new_data_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_vector_array_new_data\n");
         return -1;
     }
-    mlx_vector_vector_array_new_value_ptr = dlsym(handle, "mlx_vector_vector_array_new_value");
+    mlx_vector_vector_array_new_value_ptr = (mlx_vector_vector_array (*)(const mlx_vector_array val))GET_SYM(handle, "mlx_vector_vector_array_new_value");
     if (mlx_vector_vector_array_new_value_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_vector_array_new_value\n");
         return -1;
     }
-    mlx_vector_vector_array_set_data_ptr = dlsym(handle, "mlx_vector_vector_array_set_data");
+    mlx_vector_vector_array_set_data_ptr = (int (*)(mlx_vector_vector_array* vec, const mlx_vector_array* data, size_t size))GET_SYM(handle, "mlx_vector_vector_array_set_data");
     if (mlx_vector_vector_array_set_data_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_vector_array_set_data\n");
         return -1;
     }
-    mlx_vector_vector_array_set_value_ptr = dlsym(handle, "mlx_vector_vector_array_set_value");
+    mlx_vector_vector_array_set_value_ptr = (int (*)(mlx_vector_vector_array* vec, const mlx_vector_array val))GET_SYM(handle, "mlx_vector_vector_array_set_value");
     if (mlx_vector_vector_array_set_value_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_vector_array_set_value\n");
         return -1;
     }
-    mlx_vector_vector_array_append_data_ptr = dlsym(handle, "mlx_vector_vector_array_append_data");
+    mlx_vector_vector_array_append_data_ptr = (int (*)(mlx_vector_vector_array vec, const mlx_vector_array* data, size_t size))GET_SYM(handle, "mlx_vector_vector_array_append_data");
     if (mlx_vector_vector_array_append_data_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_vector_array_append_data\n");
         return -1;
     }
-    mlx_vector_vector_array_append_value_ptr = dlsym(handle, "mlx_vector_vector_array_append_value");
+    mlx_vector_vector_array_append_value_ptr = (int (*)(mlx_vector_vector_array vec, const mlx_vector_array val))GET_SYM(handle, "mlx_vector_vector_array_append_value");
     if (mlx_vector_vector_array_append_value_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_vector_array_append_value\n");
         return -1;
     }
-    mlx_vector_vector_array_size_ptr = dlsym(handle, "mlx_vector_vector_array_size");
+    mlx_vector_vector_array_size_ptr = (size_t (*)(mlx_vector_vector_array vec))GET_SYM(handle, "mlx_vector_vector_array_size");
     if (mlx_vector_vector_array_size_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_vector_array_size\n");
         return -1;
     }
-    mlx_vector_vector_array_get_ptr = dlsym(handle, "mlx_vector_vector_array_get");
+    mlx_vector_vector_array_get_ptr = (int (*)(mlx_vector_array* res, const mlx_vector_vector_array vec, size_t idx))GET_SYM(handle, "mlx_vector_vector_array_get");
     if (mlx_vector_vector_array_get_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_vector_array_get\n");
         return -1;
     }
-    mlx_vector_int_new_ptr = dlsym(handle, "mlx_vector_int_new");
+    mlx_vector_int_new_ptr = (mlx_vector_int (*)(void))GET_SYM(handle, "mlx_vector_int_new");
     if (mlx_vector_int_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_int_new\n");
         return -1;
     }
-    mlx_vector_int_set_ptr = dlsym(handle, "mlx_vector_int_set");
+    mlx_vector_int_set_ptr = (int (*)(mlx_vector_int* vec, const mlx_vector_int src))GET_SYM(handle, "mlx_vector_int_set");
     if (mlx_vector_int_set_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_int_set\n");
         return -1;
     }
-    mlx_vector_int_free_ptr = dlsym(handle, "mlx_vector_int_free");
+    mlx_vector_int_free_ptr = (int (*)(mlx_vector_int vec))GET_SYM(handle, "mlx_vector_int_free");
     if (mlx_vector_int_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_int_free\n");
         return -1;
     }
-    mlx_vector_int_new_data_ptr = dlsym(handle, "mlx_vector_int_new_data");
+    mlx_vector_int_new_data_ptr = (mlx_vector_int (*)(int* data, size_t size))GET_SYM(handle, "mlx_vector_int_new_data");
     if (mlx_vector_int_new_data_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_int_new_data\n");
         return -1;
     }
-    mlx_vector_int_new_value_ptr = dlsym(handle, "mlx_vector_int_new_value");
+    mlx_vector_int_new_value_ptr = (mlx_vector_int (*)(int val))GET_SYM(handle, "mlx_vector_int_new_value");
     if (mlx_vector_int_new_value_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_int_new_value\n");
         return -1;
     }
-    mlx_vector_int_set_data_ptr = dlsym(handle, "mlx_vector_int_set_data");
+    mlx_vector_int_set_data_ptr = (int (*)(mlx_vector_int* vec, int* data, size_t size))GET_SYM(handle, "mlx_vector_int_set_data");
     if (mlx_vector_int_set_data_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_int_set_data\n");
         return -1;
     }
-    mlx_vector_int_set_value_ptr = dlsym(handle, "mlx_vector_int_set_value");
+    mlx_vector_int_set_value_ptr = (int (*)(mlx_vector_int* vec, int val))GET_SYM(handle, "mlx_vector_int_set_value");
     if (mlx_vector_int_set_value_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_int_set_value\n");
         return -1;
     }
-    mlx_vector_int_append_data_ptr = dlsym(handle, "mlx_vector_int_append_data");
+    mlx_vector_int_append_data_ptr = (int (*)(mlx_vector_int vec, int* data, size_t size))GET_SYM(handle, "mlx_vector_int_append_data");
     if (mlx_vector_int_append_data_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_int_append_data\n");
         return -1;
     }
-    mlx_vector_int_append_value_ptr = dlsym(handle, "mlx_vector_int_append_value");
+    mlx_vector_int_append_value_ptr = (int (*)(mlx_vector_int vec, int val))GET_SYM(handle, "mlx_vector_int_append_value");
     if (mlx_vector_int_append_value_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_int_append_value\n");
         return -1;
     }
-    mlx_vector_int_size_ptr = dlsym(handle, "mlx_vector_int_size");
+    mlx_vector_int_size_ptr = (size_t (*)(mlx_vector_int vec))GET_SYM(handle, "mlx_vector_int_size");
     if (mlx_vector_int_size_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_int_size\n");
         return -1;
     }
-    mlx_vector_int_get_ptr = dlsym(handle, "mlx_vector_int_get");
+    mlx_vector_int_get_ptr = (int (*)(int* res, const mlx_vector_int vec, size_t idx))GET_SYM(handle, "mlx_vector_int_get");
     if (mlx_vector_int_get_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_int_get\n");
         return -1;
     }
-    mlx_vector_string_new_ptr = dlsym(handle, "mlx_vector_string_new");
+    mlx_vector_string_new_ptr = (mlx_vector_string (*)(void))GET_SYM(handle, "mlx_vector_string_new");
     if (mlx_vector_string_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_string_new\n");
         return -1;
     }
-    mlx_vector_string_set_ptr = dlsym(handle, "mlx_vector_string_set");
+    mlx_vector_string_set_ptr = (int (*)(mlx_vector_string* vec, const mlx_vector_string src))GET_SYM(handle, "mlx_vector_string_set");
     if (mlx_vector_string_set_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_string_set\n");
         return -1;
     }
-    mlx_vector_string_free_ptr = dlsym(handle, "mlx_vector_string_free");
+    mlx_vector_string_free_ptr = (int (*)(mlx_vector_string vec))GET_SYM(handle, "mlx_vector_string_free");
     if (mlx_vector_string_free_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_string_free\n");
         return -1;
     }
-    mlx_vector_string_new_data_ptr = dlsym(handle, "mlx_vector_string_new_data");
+    mlx_vector_string_new_data_ptr = (mlx_vector_string (*)(const char** data, size_t size))GET_SYM(handle, "mlx_vector_string_new_data");
     if (mlx_vector_string_new_data_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_string_new_data\n");
         return -1;
     }
-    mlx_vector_string_new_value_ptr = dlsym(handle, "mlx_vector_string_new_value");
+    mlx_vector_string_new_value_ptr = (mlx_vector_string (*)(const char* val))GET_SYM(handle, "mlx_vector_string_new_value");
     if (mlx_vector_string_new_value_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_string_new_value\n");
         return -1;
     }
-    mlx_vector_string_set_data_ptr = dlsym(handle, "mlx_vector_string_set_data");
+    mlx_vector_string_set_data_ptr = (int (*)(mlx_vector_string* vec, const char** data, size_t size))GET_SYM(handle, "mlx_vector_string_set_data");
     if (mlx_vector_string_set_data_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_string_set_data\n");
         return -1;
     }
-    mlx_vector_string_set_value_ptr = dlsym(handle, "mlx_vector_string_set_value");
+    mlx_vector_string_set_value_ptr = (int (*)(mlx_vector_string* vec, const char* val))GET_SYM(handle, "mlx_vector_string_set_value");
     if (mlx_vector_string_set_value_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_string_set_value\n");
         return -1;
     }
-    mlx_vector_string_append_data_ptr = dlsym(handle, "mlx_vector_string_append_data");
+    mlx_vector_string_append_data_ptr = (int (*)(mlx_vector_string vec, const char** data, size_t size))GET_SYM(handle, "mlx_vector_string_append_data");
     if (mlx_vector_string_append_data_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_string_append_data\n");
         return -1;
     }
-    mlx_vector_string_append_value_ptr = dlsym(handle, "mlx_vector_string_append_value");
+    mlx_vector_string_append_value_ptr = (int (*)(mlx_vector_string vec, const char* val))GET_SYM(handle, "mlx_vector_string_append_value");
     if (mlx_vector_string_append_value_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_string_append_value\n");
         return -1;
     }
-    mlx_vector_string_size_ptr = dlsym(handle, "mlx_vector_string_size");
+    mlx_vector_string_size_ptr = (size_t (*)(mlx_vector_string vec))GET_SYM(handle, "mlx_vector_string_size");
     if (mlx_vector_string_size_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_string_size\n");
         return -1;
     }
-    mlx_vector_string_get_ptr = dlsym(handle, "mlx_vector_string_get");
+    mlx_vector_string_get_ptr = (int (*)(char** res, const mlx_vector_string vec, size_t idx))GET_SYM(handle, "mlx_vector_string_get");
     if (mlx_vector_string_get_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_vector_string_get\n");
         return -1;
     }
-    mlx_version_ptr = dlsym(handle, "mlx_version");
+    mlx_version_ptr = (int (*)(mlx_string* str_))GET_SYM(handle, "mlx_version");
     if (mlx_version_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_version\n");
         return -1;
