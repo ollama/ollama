@@ -31,10 +31,11 @@ type Options struct {
 	numKVHeadsByLayer []int
 
 	// MoE config
-	numExperts       int
-	numExpertsUsed   int
-	normTopKProb     bool
-	expertGatingFunc uint32
+	numExperts         int
+	numExpertsUsed     int
+	normTopKProb       bool
+	expertWeightsScale float32
+	expertGatingFunc   uint32
 }
 
 const (
@@ -262,6 +263,7 @@ func New(c fs.Config) (model.Model, error) {
 			numExperts:            numExperts,
 			numExpertsUsed:        numExpertsUsed,
 			normTopKProb:          c.Bool("norm_top_k_prob", true),
+			expertWeightsScale:    c.Float("expert_weights_scale", 1.0),
 			expertGatingFunc:      c.Uint("expert_gating_func", expertGatingFuncSoftmax),
 		},
 	}
@@ -446,6 +448,9 @@ func (mlp *sparseMLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Optio
 		weightsSum = weightsSum.Clamp(ctx, 1e-6, float32(math.Inf(1)))
 		routingWeights = routingWeights.Div(ctx, weightsSum)
 		routingWeights = routingWeights.Reshape(ctx, 1, opts.numExpertsUsed, hiddenState.Dim(1))
+	}
+	if opts.expertWeightsScale != 1 {
+		routingWeights = routingWeights.Scale(ctx, float64(opts.expertWeightsScale))
 	}
 
 	// Build routing-weights branch early to enable topk-MoE fusion.

@@ -1,6 +1,7 @@
 package convert
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 	"strings"
@@ -28,6 +29,7 @@ type lfm2Model struct {
 	NumLocalExperts       uint32   `json:"num_local_experts"`
 	NumExpertsPerToken    uint32   `json:"num_experts_per_tok"`
 	NumDenseLayers        uint32   `json:"num_dense_layers"`
+	RoutedScalingFactor   float32  `json:"routed_scaling_factor"`
 	LayerTypes            []string `json:"layer_types"`
 	TieEmbedding          bool     `json:"tie_embedding"`
 	RopeParameters        struct {
@@ -120,11 +122,20 @@ func (p *lfm2Model) KV(t *Tokenizer) KV {
 	kv["context_length"] = p.contextLength()
 
 	// Build per-layer KV head count array based on layer_types
-	// (0 = shortconv layer, non-zero = attention layer with that many KV heads)
+	// (0 = shortconv layer, non-zero = attention layer with that many KV heads).
+	//
+	// Dense LFM2 in HF defaults to all attention layers when layer_types is absent.
+	// Preserve that behavior to avoid accidentally emitting all-conv metadata.
 	kvHeadCounts := make([]uint32, p.NumHiddenLayers)
-	for i := range p.NumHiddenLayers {
-		if int(i) < len(p.LayerTypes) && p.LayerTypes[i] == "full_attention" {
+	if len(p.LayerTypes) == 0 {
+		for i := range p.NumHiddenLayers {
 			kvHeadCounts[i] = p.NumKeyValueHeads
+		}
+	} else {
+		for i := range p.NumHiddenLayers {
+			if int(i) < len(p.LayerTypes) && p.LayerTypes[i] == "full_attention" {
+				kvHeadCounts[i] = p.NumKeyValueHeads
+			}
 		}
 	}
 
@@ -145,6 +156,7 @@ func (p *lfm2Model) KV(t *Tokenizer) KV {
 		kv["expert_feed_forward_length"] = p.MoEIntermediateSize
 		kv["leading_dense_block_count"] = p.NumDenseLayers
 		kv["expert_gating_func"] = uint32(2) // sigmoid
+		kv["expert_weights_scale"] = cmp.Or(p.RoutedScalingFactor, float32(1.0))
 	}
 
 	return kv
