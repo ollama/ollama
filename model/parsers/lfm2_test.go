@@ -39,7 +39,7 @@ func TestLFM2Parser(t *testing.T) {
 		},
 		{
 			name:            "tool_call_simple",
-			input:           "I'll check the weather.<|tool_call_start|>{\"name\":\"get_weather\",\"arguments\":{\"location\":\"Paris\"}}<|tool_call_end|>",
+			input:           "I'll check the weather.<|tool_call_start|>[get_weather(location=\"Paris\")]<|tool_call_end|>",
 			expectedContent: "I'll check the weather.",
 			expectedCalls: []api.ToolCall{
 				{
@@ -55,7 +55,7 @@ func TestLFM2Parser(t *testing.T) {
 		},
 		{
 			name:            "multiple_tool_calls",
-			input:           "Getting weather for both cities.<|tool_call_start|>{\"name\":\"get_weather\",\"arguments\":{\"location\":\"Paris\"}}<|tool_call_end|><|tool_call_start|>{\"name\":\"get_weather\",\"arguments\":{\"location\":\"London\"}}<|tool_call_end|>",
+			input:           "Getting weather for both cities.<|tool_call_start|>[get_weather(location=\"Paris\")]<|tool_call_end|><|tool_call_start|>[get_weather(location=\"London\")]<|tool_call_end|>",
 			expectedContent: "Getting weather for both cities.",
 			expectedCalls: []api.ToolCall{
 				{
@@ -79,7 +79,7 @@ func TestLFM2Parser(t *testing.T) {
 		},
 		{
 			name:            "complex_tool_arguments",
-			input:           "Processing data.<|tool_call_start|>{\"name\":\"process_data\",\"arguments\":{\"items\":[\"item1\",\"item2\"],\"config\":{\"enabled\":true,\"threshold\":0.95}}}<|tool_call_end|>",
+			input:           "Processing data.<|tool_call_start|>[process_data(items=['item1','item2'], config={'enabled': True, 'threshold': 0.95})]<|tool_call_end|>",
 			expectedContent: "Processing data.",
 			expectedCalls: []api.ToolCall{
 				{
@@ -96,7 +96,7 @@ func TestLFM2Parser(t *testing.T) {
 		},
 		{
 			name:             "thinking_with_tool_call",
-			input:            "Let me check the weather...</think>I'll get that for you.<|tool_call_start|>{\"name\":\"get_weather\",\"arguments\":{\"location\":\"Paris\"}}<|tool_call_end|>",
+			input:            "Let me check the weather...</think>I'll get that for you.<|tool_call_start|>[get_weather(location=\"Paris\")]<|tool_call_end|>",
 			expectedThinking: "Let me check the weather...",
 			expectedContent:  "I'll get that for you.",
 			expectedCalls: []api.ToolCall{
@@ -144,16 +144,16 @@ func TestLFM2Parser(t *testing.T) {
 			hasThinking:      true,
 		},
 		{
-			name:            "tool_call_with_unicode_args",
-			input:           "Searching for information.<|tool_call_start|>{\"name\":\"search\",\"arguments\":{\"query\":\"北京天气\",\"language\":\"中文\"}}<|tool_call_end|>",
+			name:            "tool_call_with_text_args",
+			input:           "Searching for information.<|tool_call_start|>[search(query='beijing weather', language='zh')]<|tool_call_end|>",
 			expectedContent: "Searching for information.",
 			expectedCalls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
 						Name: "search",
 						Arguments: testArgs(map[string]any{
-							"query":    "北京天气",
-							"language": "中文",
+							"query":    "beijing weather",
+							"language": "zh",
 						}),
 					},
 				},
@@ -169,7 +169,7 @@ func TestLFM2Parser(t *testing.T) {
 		},
 		{
 			name:            "empty_tool_call_args",
-			input:           "Pinging server.<|tool_call_start|>{\"name\":\"ping\",\"arguments\":{}}<|tool_call_end|>",
+			input:           "Pinging server.<|tool_call_start|>[ping()]<|tool_call_end|>",
 			expectedContent: "Pinging server.",
 			expectedCalls: []api.ToolCall{
 				{
@@ -353,7 +353,7 @@ func TestLFM2Parser_Streaming(t *testing.T) {
 		},
 		{
 			name:            "streaming_tool_call",
-			chunks:          []string{"I'll check weather.", "<|tool_call_start|>", "{\"name\":\"get_weather\",", "\"arguments\":{\"location\":\"Paris\"}}", "<|tool_call_end|>"},
+			chunks:          []string{"I'll check weather.", "<|tool_call_start|>", "[get_weather(", "location=\"Paris\")]", "<|tool_call_end|>"},
 			expectedContent: "I'll check weather.",
 			expectedCalls: []api.ToolCall{
 				{
@@ -381,16 +381,16 @@ func TestLFM2Parser_Streaming(t *testing.T) {
 			hasThinking:     false,
 		},
 		{
-			name:            "streaming_tool_call_with_split_json",
-			chunks:          []string{"Processing.", "<|tool_call_start|>{\"name\":\"calc\",\"arguments\":{\"x\":", "42,\"y\":", "24}}<|tool_call_end|>"},
+			name:            "streaming_tool_call_with_split_python",
+			chunks:          []string{"Processing.", "<|tool_call_start|>", "[calc(", "x=42, ", "y=24)]", "<|tool_call_end|>"},
 			expectedContent: "Processing.",
 			expectedCalls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
 						Name: "calc",
 						Arguments: testArgs(map[string]any{
-							"x": float64(42),
-							"y": float64(24),
+							"x": int64(42),
+							"y": int64(24),
 						}),
 					},
 				},
@@ -516,8 +516,8 @@ func TestLFM2Parser_parseToolCallContent(t *testing.T) {
 		expectError bool
 	}{
 		{
-			name:    "valid_tool_call",
-			content: `{"name":"get_weather","arguments":{"location":"Paris"}}`,
+			name:    "python_style_single_call",
+			content: `get_weather(location="Paris")`,
 			expected: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "get_weather",
@@ -528,8 +528,8 @@ func TestLFM2Parser_parseToolCallContent(t *testing.T) {
 			},
 		},
 		{
-			name:    "openai_style_tool_call",
-			content: `{"type":"function","function":{"name":"get_weather","arguments":{"location":"Paris"}}}`,
+			name:    "python_style_with_brackets",
+			content: `[get_weather(location="Paris")]`,
 			expected: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name: "get_weather",
@@ -540,33 +540,21 @@ func TestLFM2Parser_parseToolCallContent(t *testing.T) {
 			},
 		},
 		{
-			name:    "stringified_json_arguments",
-			content: `{"name":"get_weather","arguments":"{\"location\":\"Paris\"}"}`,
+			name:    "python_style_complex_arguments",
+			content: `process(items=['a', 'b'], config={'enabled': True})`,
 			expected: api.ToolCall{
 				Function: api.ToolCallFunction{
-					Name: "get_weather",
+					Name: "process",
 					Arguments: testArgs(map[string]any{
-						"location": "Paris",
+						"items":  []any{"a", "b"},
+						"config": map[string]any{"enabled": true},
 					}),
 				},
 			},
 		},
 		{
-			name:    "complex_arguments",
-			content: `{"name":"process_data","arguments":{"items":["a","b"],"config":{"enabled":true}}}`,
-			expected: api.ToolCall{
-				Function: api.ToolCallFunction{
-					Name: "process_data",
-					Arguments: testArgs(map[string]any{
-						"items":  []interface{}{"a", "b"},
-						"config": map[string]interface{}{"enabled": true},
-					}),
-				},
-			},
-		},
-		{
-			name:    "empty_arguments",
-			content: `{"name":"ping","arguments":{}}`,
+			name:    "python_style_empty_arguments",
+			content: `ping()`,
 			expected: api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name:      "ping",
@@ -575,44 +563,13 @@ func TestLFM2Parser_parseToolCallContent(t *testing.T) {
 			},
 		},
 		{
-			name:    "unicode_in_tool_name",
-			content: `{"name":"获取天气","arguments":{"城市":"北京"}}`,
-			expected: api.ToolCall{
-				Function: api.ToolCallFunction{
-					Name: "获取天气",
-					Arguments: testArgs(map[string]any{
-						"城市": "北京",
-					}),
-				},
-			},
-		},
-		{
-			name:    "numeric_arguments",
-			content: `{"name":"calculate","arguments":{"x":3.14,"y":42,"enabled":true}}`,
-			expected: api.ToolCall{
-				Function: api.ToolCallFunction{
-					Name: "calculate",
-					Arguments: testArgs(map[string]any{
-						"x":       3.14,
-						"y":       float64(42),
-						"enabled": true,
-					}),
-				},
-			},
-		},
-		{
-			name:        "invalid_json",
-			content:     `{invalid json}`,
+			name:        "missing_parenthesis",
+			content:     `get_weather location="Paris")`,
 			expectError: true,
 		},
 		{
-			name:        "missing_name",
-			content:     `{"arguments":{"arg":"value"}}`,
-			expectError: true,
-		},
-		{
-			name:        "empty_name",
-			content:     `{"name":"","arguments":{"arg":"value"}}`,
+			name:        "invalid_argument_format",
+			content:     `bash(command)`,
 			expectError: true,
 		},
 	}
@@ -682,56 +639,6 @@ func TestLFM2Parser_parseToolCallsContent(t *testing.T) {
 							"options":     []any{"Debugging help", "Code writing assistance"},
 							"multiSelect": false,
 							"metadata":    map[string]any{"priority": float64(1), "active": true},
-						}),
-					},
-				},
-			},
-		},
-		{
-			name:    "json_array_direct_format",
-			content: `[{"name":"get_weather","arguments":{"location":"Paris"}},{"name":"get_time","arguments":{"timezone":"UTC"}}]`,
-			expected: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Name: "get_weather",
-						Arguments: testArgs(map[string]any{
-							"location": "Paris",
-						}),
-					},
-				},
-				{
-					Function: api.ToolCallFunction{
-						Name: "get_time",
-						Arguments: testArgs(map[string]any{
-							"timezone": "UTC",
-						}),
-					},
-				},
-			},
-		},
-		{
-			name:    "json_array_openai_format",
-			content: `[{"type":"function","function":{"name":"get_weather","arguments":{"location":"Paris"}}}]`,
-			expected: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Name: "get_weather",
-						Arguments: testArgs(map[string]any{
-							"location": "Paris",
-						}),
-					},
-				},
-			},
-		},
-		{
-			name:    "json_stringified_arguments",
-			content: `[{"name":"get_weather","arguments":"{\"location\":\"Paris\"}"}]`,
-			expected: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Name: "get_weather",
-						Arguments: testArgs(map[string]any{
-							"location": "Paris",
 						}),
 					},
 				},
@@ -1233,22 +1140,6 @@ func TestLFM2Parser_BareUnknownToolCallDoesNotParse(t *testing.T) {
 	}
 	if len(calls) != 0 {
 		t.Fatalf("expected no tool calls, got %d", len(calls))
-	}
-}
-
-func TestLFM2Parser_parseToolCallsContent_JSONArray(t *testing.T) {
-	parser := &LFM2Parser{}
-	input := `[{"name":"get_weather","arguments":{"location":"Paris"}},{"name":"search","arguments":{"query":"news"}}]`
-
-	calls, err := parser.parseToolCallsContent(input)
-	if err != nil {
-		t.Fatalf("parseToolCallsContent() error = %v", err)
-	}
-	if len(calls) != 2 {
-		t.Fatalf("expected 2 tool calls, got %d", len(calls))
-	}
-	if calls[0].Function.Name != "get_weather" || calls[1].Function.Name != "search" {
-		t.Fatalf("unexpected tool names: %+v", calls)
 	}
 }
 

@@ -14,7 +14,6 @@ import (
 
 // lfm2VLTextModel converts the language model component of LFM2 VL checkpoints.
 type lfm2VLTextModel struct {
-	ModelParameters
 	TextConfig            lfm2Model `json:"text_config"`
 	DoImageSplitting      *bool     `json:"do_image_splitting"`
 	DownsampleFactor      uint32    `json:"downsample_factor"`
@@ -63,6 +62,10 @@ type lfm2VLTextModel struct {
 
 func (p *lfm2VLTextModel) textModel() *lfm2Model {
 	return &p.TextConfig
+}
+
+func (p *lfm2VLTextModel) specialTokenTypes() []string {
+	return p.textModel().specialTokenTypes()
 }
 
 func (p *lfm2VLTextModel) parseMore(fsys fs.FS) error {

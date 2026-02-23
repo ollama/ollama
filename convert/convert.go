@@ -316,9 +316,9 @@ func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 		conv = &glm4MoeLiteModel{}
 	case "GlmOcrForConditionalGeneration":
 		conv = &glmOcrModel{}
-	case "Lfm2ForCausalLM", "LFM2ForCausalLM", "Lfm2MoeForCausalLM", "LFM2MoeForCausalLM":
+	case "Lfm2ForCausalLM", "Lfm2MoeForCausalLM":
 		conv = &lfm2Model{}
-	case "Lfm2VlForConditionalGeneration", "LFM2VlForConditionalGeneration":
+	case "Lfm2VlForConditionalGeneration":
 		conv = &lfm2VLTextModel{}
 	case "Qwen3NextForCausalLM":
 		conv = &qwen3NextModel{}

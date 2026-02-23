@@ -3,7 +3,7 @@ package parsers
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"unicode"
@@ -292,8 +292,7 @@ func (p *LFM2Parser) eat() ([]lfm2Event, bool) {
 				}
 				return events, true
 			} else if err != nil {
-				fmt.Println("lfm2 tool call parsing failed:", err)
-				fmt.Println(toolCallContent)
+				slog.Warn("lfm2 tool call parsing failed", "error", err, "content", toolCallContent)
 			}
 		}
 
@@ -303,110 +302,13 @@ func (p *LFM2Parser) eat() ([]lfm2Event, bool) {
 	return events, false
 }
 
-// parseToolCallsContent parses one or more tool calls from content
-// Supports JSON format and Python-style format including multiple calls: [func1(...),func2(...)]
+// parseToolCallsContent parses one or more Python-style tool calls.
+// Example: [func1(arg='v'), func2(x=1)]
 func (p *LFM2Parser) parseToolCallsContent(content string) ([]api.ToolCall, error) {
 	content = strings.TrimSpace(content)
 
-	// JSON array format:
-	// [{"name":"func","arguments":{...}}, {...}]
-	// [{"type":"function","function":{"name":"func","arguments":{...}}}, {...}]
-	var list []json.RawMessage
-	if err := json.Unmarshal([]byte(content), &list); err == nil && len(list) > 0 {
-		toolCalls := make([]api.ToolCall, 0, len(list))
-		for _, item := range list {
-			toolCall, err := p.parseJSONToolCall(item)
-			if err != nil {
-				return nil, err
-			}
-			toolCalls = append(toolCalls, toolCall)
-		}
-		return toolCalls, nil
-	}
-
-	// Single JSON object format:
-	// {"name":"func","arguments":{...}}
-	// {"type":"function","function":{"name":"func","arguments":{...}}}
-	var object json.RawMessage
-	if err := json.Unmarshal([]byte(content), &object); err == nil && len(object) > 0 {
-		toolCall, err := p.parseJSONToolCall(object)
-		if err == nil {
-			return []api.ToolCall{toolCall}, nil
-		}
-	}
-
-	// Try Python-style format: [func(arg1='val1'),func2(arg2='val2')] or func(arg1='val1')
+	// Parse Python-style format: [func(arg1='val1'),func2(arg2='val2')] or func(arg1='val1')
 	return p.parsePythonStyleToolCalls(content)
-}
-
-func (p *LFM2Parser) parseJSONToolCall(raw json.RawMessage) (api.ToolCall, error) {
-	type directToolCall struct {
-		Name      string          `json:"name"`
-		Arguments json.RawMessage `json:"arguments"`
-	}
-	type wrappedToolCall struct {
-		Type     string `json:"type"`
-		Function struct {
-			Name      string          `json:"name"`
-			Arguments json.RawMessage `json:"arguments"`
-		} `json:"function"`
-	}
-
-	var direct directToolCall
-	if err := json.Unmarshal(raw, &direct); err == nil && direct.Name != "" {
-		args, err := parseToolCallArgumentsJSON(direct.Arguments)
-		if err != nil {
-			return api.ToolCall{}, err
-		}
-		return api.ToolCall{
-			Function: api.ToolCallFunction{
-				Name:      direct.Name,
-				Arguments: args,
-			},
-		}, nil
-	}
-
-	var wrapped wrappedToolCall
-	if err := json.Unmarshal(raw, &wrapped); err == nil && wrapped.Function.Name != "" {
-		args, err := parseToolCallArgumentsJSON(wrapped.Function.Arguments)
-		if err != nil {
-			return api.ToolCall{}, err
-		}
-		return api.ToolCall{
-			Function: api.ToolCallFunction{
-				Name:      wrapped.Function.Name,
-				Arguments: args,
-			},
-		}, nil
-	}
-
-	return api.ToolCall{}, errors.New("invalid tool call: missing name")
-}
-
-func parseToolCallArgumentsJSON(raw json.RawMessage) (api.ToolCallFunctionArguments, error) {
-	if len(raw) == 0 {
-		return api.NewToolCallFunctionArguments(), nil
-	}
-
-	var args api.ToolCallFunctionArguments
-	if err := json.Unmarshal(raw, &args); err == nil {
-		return args, nil
-	}
-
-	var argsString string
-	if err := json.Unmarshal(raw, &argsString); err == nil {
-		args = api.NewToolCallFunctionArguments()
-		argsString = strings.TrimSpace(argsString)
-		if argsString == "" {
-			return args, nil
-		}
-		if err := json.Unmarshal([]byte(argsString), &args); err != nil {
-			return api.ToolCallFunctionArguments{}, err
-		}
-		return args, nil
-	}
-
-	return api.ToolCallFunctionArguments{}, errors.New("invalid tool call arguments")
 }
 
 // parsePythonStyleToolCalls parses one or more Python-style tool calls

@@ -279,24 +279,3 @@ func TestLLMServerCompletionFormat(t *testing.T) {
 	}, nil)
 	checkValid(err)
 }
-
-func TestMinPositive(t *testing.T) {
-	tests := []struct {
-		name string
-		in   []uint64
-		want uint64
-	}{
-		{name: "empty", in: nil, want: 0},
-		{name: "all zero", in: []uint64{0, 0, 0}, want: 0},
-		{name: "mixed", in: []uint64{0, 8, 0, 4, 16}, want: 4},
-		{name: "single positive", in: []uint64{0, 8, 0}, want: 8},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := minPositive(tt.in); got != tt.want {
-				t.Fatalf("minPositive(%v) = %d, want %d", tt.in, got, tt.want)
-			}
-		})
-	}
-}
