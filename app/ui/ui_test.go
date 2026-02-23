@@ -649,7 +649,6 @@ func TestSettingsToggleAutoUpdateOff_CancelsDownload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var cancelCalled atomic.Bool
 	upd := &updater.Updater{Store: &store.Store{
 		DBPath: filepath.Join(t.TempDir(), "db2.sqlite"),
 	}}
@@ -689,8 +688,6 @@ func TestSettingsToggleAutoUpdateOff_CancelsDownload(t *testing.T) {
 	if saved.AutoUpdateEnabled {
 		t.Fatal("expected AutoUpdateEnabled to be false after toggle off")
 	}
-
-	_ = cancelCalled // used to verify cancel flow
 }
 
 func TestSettingsToggleAutoUpdateOn_WithPendingUpdate_ShowsNotification(t *testing.T) {
