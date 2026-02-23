@@ -3,6 +3,7 @@ package renderers
 import (
 	"bytes"
 	"encoding/json"
+	"sort"
 	"strings"
 
 	"github.com/ollama/ollama/api"
@@ -14,6 +15,15 @@ type LFM2Renderer struct {
 }
 
 const lfm2BOSToken = "<|startoftext|>"
+
+const (
+	lfm2ToolListStartTag     = "<|tool_list_start|>"
+	lfm2ToolListEndTag       = "<|tool_list_end|>"
+	lfm2ToolCallStartTag     = "<|tool_call_start|>"
+	lfm2ToolCallEndTag       = "<|tool_call_end|>"
+	lfm2ToolResponseStartTag = "<|tool_response_start|>"
+	lfm2ToolResponseEndTag   = "<|tool_response_end|>"
+)
 
 func lfm2RenderSystemContent(content any) string {
 	switch v := content.(type) {
@@ -132,6 +142,57 @@ func lfm2RenderContent(content any, useImgTags bool) string {
 	}
 }
 
+func lfm2ToolSchema(tool api.Tool) any {
+	if tool.Function.Name == "" {
+		return tool
+	}
+
+	// LFM2 tool prompts in HF are function-schema objects (name/description/parameters)
+	// rather than OpenAI's {type,function} wrapper.
+	return tool.Function
+}
+
+func lfm2ToolCallArgument(v any) string {
+	return lfm2JSON(v)
+}
+
+func lfm2RenderToolCalls(calls []api.ToolCall) string {
+	var sb strings.Builder
+
+	sb.WriteString(lfm2ToolCallStartTag)
+	sb.WriteString("[")
+	for i, tc := range calls {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+
+		sb.WriteString(tc.Function.Name)
+		sb.WriteString("(")
+
+		keys := make([]string, 0, tc.Function.Arguments.Len())
+		for key := range tc.Function.Arguments.All() {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+
+		for j, key := range keys {
+			if j > 0 {
+				sb.WriteString(",")
+			}
+			value, _ := tc.Function.Arguments.Get(key)
+			sb.WriteString(key)
+			sb.WriteString("=")
+			sb.WriteString(lfm2ToolCallArgument(value))
+		}
+
+		sb.WriteString(")")
+	}
+	sb.WriteString("]")
+	sb.WriteString(lfm2ToolCallEndTag)
+
+	return sb.String()
+}
+
 func (r *LFM2Renderer) renderMessageContent(message api.Message) string {
 	content := lfm2RenderContent(message.Content, r.useImgTags)
 	if len(message.Images) == 0 {
@@ -171,14 +232,17 @@ func (r *LFM2Renderer) Render(messages []api.Message, tools []api.Tool, thinkVal
 		if firstSystemContent != "" {
 			firstSystemContent += "\n"
 		}
-		firstSystemContent += "List of tools: ["
+		firstSystemContent += "List of tools: "
+		firstSystemContent += lfm2ToolListStartTag
+		firstSystemContent += "["
 		for i, tool := range tools {
-			firstSystemContent += lfm2JSON(tool)
+			firstSystemContent += lfm2JSON(lfm2ToolSchema(tool))
 			if i < len(tools)-1 {
 				firstSystemContent += ", "
 			}
 		}
 		firstSystemContent += "]"
+		firstSystemContent += lfm2ToolListEndTag
 	}
 
 	// Output first system block if it has content
@@ -210,6 +274,12 @@ func (r *LFM2Renderer) Render(messages []api.Message, tools []api.Tool, thinkVal
 			if idx := strings.LastIndex(content, "</think>"); idx >= 0 {
 				content = strings.TrimSpace(content[idx+len("</think>"):])
 			}
+		}
+		if message.Role == "assistant" && len(message.ToolCalls) > 0 && !strings.Contains(content, lfm2ToolCallStartTag) {
+			content = lfm2RenderToolCalls(message.ToolCalls) + content
+		}
+		if message.Role == "tool" && !strings.Contains(content, lfm2ToolResponseStartTag) {
+			content = lfm2ToolResponseStartTag + content + lfm2ToolResponseEndTag
 		}
 
 		sb.WriteString(content)

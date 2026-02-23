@@ -57,6 +57,9 @@ func TestLFM2MoEKV(t *testing.T) {
 	if got, want := kv["general.architecture"], "lfm2moe"; got != want {
 		t.Fatalf("general.architecture = %v, want %v", got, want)
 	}
+	if got, want := kv["tokenizer.ggml.pre"], "lfm2"; got != want {
+		t.Fatalf("tokenizer.ggml.pre = %v, want %v", got, want)
+	}
 
 	if got, want := kv["expert_count"], uint32(64); got != want {
 		t.Fatalf("expert_count = %v, want %v", got, want)
@@ -112,6 +115,9 @@ func TestLFM2DenseKV(t *testing.T) {
 
 	if got, want := kv["general.architecture"], "lfm2"; got != want {
 		t.Fatalf("general.architecture = %v, want %v", got, want)
+	}
+	if got, want := kv["tokenizer.ggml.pre"], "lfm2"; got != want {
+		t.Fatalf("tokenizer.ggml.pre = %v, want %v", got, want)
 	}
 
 	if _, ok := kv["expert_count"]; ok {
@@ -241,20 +247,20 @@ func TestLFM2KVContextLengthNoOverride(t *testing.T) {
 
 func TestLFM2KVFeedForwardLengthAutoAdjust(t *testing.T) {
 	p := lfm2Model{
-		ModelParameters:        ModelParameters{ModelType: "lfm2", VocabSize: 65536},
-		HiddenSize:             2048,
-		NumHiddenLayers:        16,
-		MaxPositionEmbeddings:  128000,
-		IntermediateSize:       12288, // should be ignored when block_ff_dim is set
-		BlockFFDim:             12288,
-		BlockAutoAdjustFFDim:   true,
-		BlockMultipleOf:        256,
-		BlockFFNDimMultiplier:  1.0,
-		NumAttentionHeads:      32,
-		NumKeyValueHeads:       8,
-		LayerTypes:             []string{"conv", "full_attention"},
-		NormEps:                1e-5,
-		ConvLCache:             3,
+		ModelParameters:       ModelParameters{ModelType: "lfm2", VocabSize: 65536},
+		HiddenSize:            2048,
+		NumHiddenLayers:       16,
+		MaxPositionEmbeddings: 128000,
+		IntermediateSize:      12288, // should be ignored when block_ff_dim is set
+		BlockFFDim:            12288,
+		BlockAutoAdjustFFDim:  true,
+		BlockMultipleOf:       256,
+		BlockFFNDimMultiplier: 1.0,
+		NumAttentionHeads:     32,
+		NumKeyValueHeads:      8,
+		LayerTypes:            []string{"conv", "full_attention"},
+		NormEps:               1e-5,
+		ConvLCache:            3,
 	}
 
 	kv := p.KV(&Tokenizer{Vocabulary: &Vocabulary{Model: "gpt2"}})

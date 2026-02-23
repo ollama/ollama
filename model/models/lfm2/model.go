@@ -29,7 +29,18 @@ type Options struct {
 	// per-layer head counts (LFM2 alternates attention and recurrent layers)
 	numHeadsByLayer   []int
 	numKVHeadsByLayer []int
+
+	// MoE config
+	numExperts       int
+	numExpertsUsed   int
+	normTopKProb     bool
+	expertGatingFunc uint32
 }
+
+const (
+	expertGatingFuncSoftmax = uint32(0)
+	expertGatingFuncSigmoid = uint32(2)
+)
 
 func (o Options) headDimValue() int {
 	// Head dim is shared across layers; fall back to first attention layer head count.
@@ -124,8 +135,19 @@ func (m *Model) Validate() error {
 		if layer.MLPNorm == nil {
 			return fmt.Errorf("lfm2: missing blk.%d.ffn_norm tensor", i)
 		}
-		if layer.MLP == nil || layer.MLP.Up == nil || layer.MLP.Down == nil || layer.MLP.Gate == nil {
+		switch ff := layer.MLP.(type) {
+		case nil:
 			return fmt.Errorf("lfm2: missing blk.%d feed-forward tensors", i)
+		case *denseMLP:
+			if ff.Up == nil || ff.Down == nil || ff.Gate == nil {
+				return fmt.Errorf("lfm2: missing blk.%d dense feed-forward tensors", i)
+			}
+		case *sparseMLP:
+			if ff.Router == nil || ff.Gate == nil || ff.Up == nil || ff.Down == nil {
+				return fmt.Errorf("lfm2: missing blk.%d sparse feed-forward tensors", i)
+			}
+		default:
+			return fmt.Errorf("lfm2: unsupported feed-forward type at blk.%d", i)
 		}
 
 		switch op := layer.Operator.(type) {
@@ -176,12 +198,20 @@ func (m *Model) Validate() error {
 }
 
 func New(c fs.Config) (model.Model, error) {
-	if c.Uint("expert_count") > 0 {
-		return nil, model.ErrUnsupportedModel
-	}
-
 	if c.String("tokenizer.ggml.model") != "gpt2" {
 		return nil, model.ErrUnsupportedTokenizer
+	}
+
+	numExperts := int(c.Uint("expert_count"))
+	isMoE := numExperts > 0
+	numExpertsUsed := int(c.Uint("expert_used_count"))
+	if isMoE {
+		if numExperts <= 0 {
+			return nil, fmt.Errorf("lfm2: invalid expert_count=%d", numExperts)
+		}
+		if numExpertsUsed <= 0 || numExpertsUsed > numExperts {
+			return nil, fmt.Errorf("lfm2: invalid expert_used_count=%d for expert_count=%d", numExpertsUsed, numExperts)
+		}
 	}
 
 	vocabulary := tokenizer.Vocabulary{
@@ -229,6 +259,10 @@ func New(c fs.Config) (model.Model, error) {
 			ropeBase:              c.Float("rope.freq_base"),
 			ropeScale:             c.Float("rope.scaling.factor", 1),
 			originalContextLength: int(c.Uint("rope.scaling.original_context_length")),
+			numExperts:            numExperts,
+			numExpertsUsed:        numExpertsUsed,
+			normTopKProb:          c.Bool("norm_top_k_prob", true),
+			expertGatingFunc:      c.Uint("expert_gating_func", expertGatingFuncSoftmax),
 		},
 	}
 
@@ -298,6 +332,14 @@ func New(c fs.Config) (model.Model, error) {
 
 	m.numHeadsByLayer = make([]int, len(m.Layers))
 	m.numKVHeadsByLayer = make([]int, len(m.Layers))
+	leadingDenseBlockCount := int(c.Uint("leading_dense_block_count"))
+	if leadingDenseBlockCount < 0 {
+		leadingDenseBlockCount = 0
+	}
+	if leadingDenseBlockCount > len(m.Layers) {
+		leadingDenseBlockCount = len(m.Layers)
+	}
+
 	for i := range m.Layers {
 		m.numHeadsByLayer[i] = int(headCount[i])
 		m.numKVHeadsByLayer[i] = int(headCountKV[i])
@@ -306,6 +348,12 @@ func New(c fs.Config) (model.Model, error) {
 			m.Layers[i].Operator = &ShortConv{}
 		} else {
 			m.Layers[i].Operator = &Attention{}
+		}
+
+		if isMoE && i >= leadingDenseBlockCount {
+			m.Layers[i].MLP = &sparseMLP{}
+		} else {
+			m.Layers[i].MLP = &denseMLP{}
 		}
 	}
 
@@ -353,22 +401,74 @@ func (sa *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, 
 	return sa.Output.Forward(ctx, attention)
 }
 
-type MLP struct {
+type FeedForward interface {
+	Forward(ml.Context, ml.Tensor, *Options) ml.Tensor
+}
+
+type denseMLP struct {
 	Up   *nn.Linear `gguf:"ffn_up"`
 	Down *nn.Linear `gguf:"ffn_down"`
 	Gate *nn.Linear `gguf:"ffn_gate"`
 }
 
-func (mlp *MLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Options) ml.Tensor {
+func (mlp *denseMLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Options) ml.Tensor {
 	hiddenState = mlp.Gate.Forward(ctx, hiddenState).SILU(ctx, mlp.Up.Forward(ctx, hiddenState))
 	return mlp.Down.Forward(ctx, hiddenState)
+}
+
+type sparseMLP struct {
+	Router *nn.Linear      `gguf:"ffn_gate_inp"`
+	Gate   *nn.LinearBatch `gguf:"ffn_gate_exps"`
+	Up     *nn.LinearBatch `gguf:"ffn_up_exps"`
+	Down   *nn.LinearBatch `gguf:"ffn_down_exps"`
+	Bias   ml.Tensor       `gguf:"exp_probs_b.bias,alt:exp_probs_b"`
+}
+
+func (mlp *sparseMLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Options) ml.Tensor {
+	// hiddenState: [hidden, tokens]
+	routerLogits := mlp.Router.Forward(ctx, hiddenState)
+
+	probs := routerLogits.Softmax(ctx)
+	if opts.expertGatingFunc == expertGatingFuncSigmoid {
+		probs = routerLogits.Sigmoid(ctx)
+	}
+
+	selectionProbs := probs
+	if mlp.Bias != nil {
+		selectionProbs = selectionProbs.Add(ctx, mlp.Bias)
+	}
+
+	selectedExperts := selectionProbs.TopK(ctx, opts.numExpertsUsed)
+	routingWeights := probs.Reshape(ctx, 1, opts.numExperts, hiddenState.Dim(1)).Rows(ctx, selectedExperts)
+	if opts.normTopKProb {
+		routingWeights = routingWeights.Reshape(ctx, opts.numExpertsUsed, hiddenState.Dim(1))
+		weightsSum := routingWeights.SumRows(ctx)
+		weightsSum = weightsSum.Clamp(ctx, 1e-6, float32(math.Inf(1)))
+		routingWeights = routingWeights.Div(ctx, weightsSum)
+		routingWeights = routingWeights.Reshape(ctx, 1, opts.numExpertsUsed, hiddenState.Dim(1))
+	}
+
+	// Build routing-weights branch early to enable topk-MoE fusion.
+	ctx.Forward(routingWeights)
+
+	hiddenState3D := hiddenState.Reshape(ctx, hiddenState.Dim(0), 1, hiddenState.Dim(1))
+	experts := mlp.Gate.Forward(ctx, hiddenState3D, selectedExperts).SILU(ctx, mlp.Up.Forward(ctx, hiddenState3D, selectedExperts))
+	experts = mlp.Down.Forward(ctx, experts, selectedExperts)
+	experts = experts.Mul(ctx, routingWeights)
+
+	nextState := experts.View(ctx, 0, experts.Dim(0), experts.Stride(2), experts.Dim(2))
+	for i := 1; i < opts.numExpertsUsed; i++ {
+		nextState = nextState.Add(ctx, experts.View(ctx, i*experts.Stride(1), experts.Dim(0), experts.Stride(2), experts.Dim(2)))
+	}
+
+	return nextState
 }
 
 type Layer struct {
 	AttentionNorm *nn.RMSNorm `gguf:"attn_norm"`
 	Operator      Operator
 	MLPNorm       *nn.RMSNorm `gguf:"ffn_norm"`
-	MLP           *MLP
+	MLP           FeedForward
 }
 
 func (l *Layer) Forward(ctx ml.Context, layer int, hiddenState, positions, outputs ml.Tensor, cache *HybridCache, opts *Options) ml.Tensor {
@@ -604,6 +704,11 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
 
 	hiddenState := m.TokenEmbedding.Forward(ctx, batch.Inputs)
+	if len(batch.Multimodal) > 0 {
+		// We splice vision embeddings into token embeddings in-place; duplicate to
+		// avoid aliasing the raw embedding output graph.
+		hiddenState = hiddenState.Duplicate(ctx)
+	}
 	for _, mm := range batch.Multimodal {
 		offset := mm.Index
 		for _, multimodal := range mm.Multimodal {
@@ -634,4 +739,5 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 
 func init() {
 	model.Register("lfm2", New)
+	model.Register("lfm2moe", New)
 }

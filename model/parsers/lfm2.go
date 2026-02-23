@@ -3,7 +3,7 @@ package parsers
 import (
 	"encoding/json"
 	"errors"
-	"log/slog"
+	"fmt"
 	"strconv"
 	"strings"
 	"unicode"
@@ -292,7 +292,8 @@ func (p *LFM2Parser) eat() ([]lfm2Event, bool) {
 				}
 				return events, true
 			} else if err != nil {
-				slog.Warn("lfm2 tool call parsing failed", "error", err, "content", toolCallContent)
+				fmt.Println("lfm2 tool call parsing failed:", err)
+				fmt.Println(toolCallContent)
 			}
 		}
 

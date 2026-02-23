@@ -54,7 +54,7 @@ func TestLFM2Renderer_ChatTemplateParity(t *testing.T) {
 				},
 			},
 			thinkValue: &api.ThinkValue{Value: false},
-			expected: "<|startoftext|><|im_start|>system\nList of tools: [{\"type\": \"function\", \"function\": {\"name\": \"get_weather\", \"parameters\": {\"type\": \"object\", \"properties\": null}}}]<|im_end|>\n" +
+			expected: "<|startoftext|><|im_start|>system\nList of tools: <|tool_list_start|>[{\"name\": \"get_weather\", \"parameters\": {\"type\": \"object\", \"properties\": null}}]<|tool_list_end|><|im_end|>\n" +
 				"<|im_start|>user\nUse tools<|im_end|>\n<|im_start|>assistant\n",
 		},
 		{
@@ -85,11 +85,11 @@ func TestLFM2Renderer_ChatTemplateParity(t *testing.T) {
 				},
 			},
 			thinkValue: &api.ThinkValue{Value: false},
-			expected: "<|startoftext|><|im_start|>system\nFollow instructions.\nList of tools: [{\"type\": \"function\", \"function\": {\"name\": \"tool_a\", \"parameters\": {\"type\": \"object\", \"properties\": null}}}, {\"type\": \"function\", \"function\": {\"name\": \"tool_b\", \"parameters\": {\"type\": \"object\", \"properties\": null}}}]<|im_end|>\n" +
+			expected: "<|startoftext|><|im_start|>system\nFollow instructions.\nList of tools: <|tool_list_start|>[{\"name\": \"tool_a\", \"parameters\": {\"type\": \"object\", \"properties\": null}}, {\"name\": \"tool_b\", \"parameters\": {\"type\": \"object\", \"properties\": null}}]<|tool_list_end|><|im_end|>\n" +
 				"<|im_start|>user\nDo work<|im_end|>\n<|im_start|>assistant\n",
 		},
 		{
-			name:     "assistant_tool_calls_are_not_rendered",
+			name:     "assistant_tool_calls_and_tool_responses_are_rendered",
 			renderer: &LFM2Renderer{IsThinking: false},
 			messages: []api.Message{
 				{Role: "user", Content: "Call a tool"},
@@ -110,7 +110,7 @@ func TestLFM2Renderer_ChatTemplateParity(t *testing.T) {
 				{Role: "tool", Content: "22C"},
 			},
 			thinkValue: &api.ThinkValue{Value: false},
-			expected:   "<|startoftext|><|im_start|>user\nCall a tool<|im_end|>\n<|im_start|>assistant\n<|im_end|>\n<|im_start|>tool\n22C<|im_end|>\n<|im_start|>assistant\n",
+			expected:   "<|startoftext|><|im_start|>user\nCall a tool<|im_end|>\n<|im_start|>assistant\n<|tool_call_start|>[get_weather(location=\"Paris\")]<|tool_call_end|><|im_end|>\n<|im_start|>tool\n<|tool_response_start|>22C<|tool_response_end|><|im_end|>\n<|im_start|>assistant\n",
 		},
 		{
 			name:     "thinking_strips_non_last_assistant_when_disabled",

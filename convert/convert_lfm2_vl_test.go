@@ -159,7 +159,7 @@ func TestLFM2VLTextModelReplacements(t *testing.T) {
 		{
 			name: "nested_language_model_prefix",
 			in:   "model.language_model.model.embedding_norm.weight",
-			want: "output_norm.weight",
+			want: "token_embd_norm.weight",
 		},
 	}
 

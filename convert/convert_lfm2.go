@@ -112,6 +112,7 @@ func (p *lfm2Model) KV(t *Tokenizer) KV {
 
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = architecture
+	kv["tokenizer.ggml.pre"] = "lfm2"
 	kv["vocab_size"] = p.VocabSize
 	kv["block_count"] = p.NumHiddenLayers
 	kv["embedding_length"] = p.HiddenSize
@@ -200,7 +201,7 @@ func (p *lfm2Model) Tensors(ts []Tensor) []*ggml.Tensor {
 func (p *lfm2Model) Replacements() []string {
 	return []string{
 		"model.embed_tokens", "token_embd",
-		"model.embedding_norm", "output_norm",
+		"model.embedding_norm", "token_embd_norm",
 		"model.layers", "blk",
 		"operator_norm", "attn_norm",
 		"self_attn.q_proj", "attn_q",
