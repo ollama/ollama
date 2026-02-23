@@ -113,6 +113,29 @@ func TestLFM2Renderer_ChatTemplateParity(t *testing.T) {
 			expected:   "<|startoftext|><|im_start|>user\nCall a tool<|im_end|>\n<|im_start|>assistant\n<|tool_call_start|>[get_weather(location=\"Paris\")]<|tool_call_end|><|im_end|>\n<|im_start|>tool\n<|tool_response_start|>22C<|tool_response_end|><|im_end|>\n<|im_start|>assistant\n",
 		},
 		{
+			name:     "assistant_tool_calls_with_content_preserves_both",
+			renderer: &LFM2Renderer{IsThinking: false},
+			messages: []api.Message{
+				{Role: "user", Content: "Call a tool"},
+				{
+					Role:    "assistant",
+					Content: "Checking now.",
+					ToolCalls: []api.ToolCall{
+						{
+							Function: api.ToolCallFunction{
+								Name: "get_weather",
+								Arguments: testArgs(map[string]any{
+									"location": "Paris",
+								}),
+							},
+						},
+					},
+				},
+			},
+			thinkValue: &api.ThinkValue{Value: false},
+			expected:   "<|startoftext|><|im_start|>user\nCall a tool<|im_end|>\n<|im_start|>assistant\n<|tool_call_start|>[get_weather(location=\"Paris\")]<|tool_call_end|>\nChecking now.",
+		},
+		{
 			name:     "thinking_strips_non_last_assistant_when_disabled",
 			renderer: &LFM2Renderer{IsThinking: true},
 			messages: []api.Message{

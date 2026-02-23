@@ -307,6 +307,10 @@ func (p *LFM2Parser) eat() ([]lfm2Event, bool) {
 func (p *LFM2Parser) parseToolCallsContent(content string) ([]api.ToolCall, error) {
 	content = strings.TrimSpace(content)
 
+	// Be tolerant of malformed outputs that include wrapper tags without proper pairing.
+	content = strings.TrimSpace(strings.TrimPrefix(content, lfm2ToolCallStartTag))
+	content = strings.TrimSpace(strings.TrimSuffix(content, lfm2ToolCallEndTag))
+
 	// Parse Python-style format: [func(arg1='val1'),func2(arg2='val2')] or func(arg1='val1')
 	return p.parsePythonStyleToolCalls(content)
 }

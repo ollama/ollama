@@ -147,8 +147,7 @@ func lfm2ToolSchema(tool api.Tool) any {
 		return tool
 	}
 
-	// LFM2 tool prompts in HF are function-schema objects (name/description/parameters)
-	// rather than OpenAI's {type,function} wrapper.
+	// LFM2 templates are typically fed function-schema objects (name/description/parameters).
 	return tool.Function
 }
 
@@ -216,7 +215,7 @@ func (r *LFM2Renderer) renderMessageContent(message api.Message) string {
 func (r *LFM2Renderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
 	var sb strings.Builder
 
-	// Match the source chat_template.jinja.
+	// Follow Liquid tool-use formatting for LFM2 tool wrappers.
 	sb.WriteString(lfm2BOSToken)
 
 	// Extract first system message if present (to combine with tools)
@@ -279,7 +278,11 @@ func (r *LFM2Renderer) Render(messages []api.Message, tools []api.Tool, thinkVal
 			}
 		}
 		if message.Role == "assistant" && len(message.ToolCalls) > 0 && !strings.Contains(content, lfm2ToolCallStartTag) {
-			content = lfm2RenderToolCalls(message.ToolCalls) + content
+			if strings.TrimSpace(content) == "" {
+				content = lfm2RenderToolCalls(message.ToolCalls) + content
+			} else {
+				content = lfm2RenderToolCalls(message.ToolCalls) + "\n" + content
+			}
 		}
 		if message.Role == "tool" && !strings.Contains(content, lfm2ToolResponseStartTag) {
 			content = lfm2ToolResponseStartTag + content + lfm2ToolResponseEndTag

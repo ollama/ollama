@@ -673,6 +673,34 @@ func TestLFM2Parser_parseToolCallsContent(t *testing.T) {
 			},
 		},
 		{
+			name:    "single_call_with_orphan_end_tag",
+			content: `[bash(command='ls')]<|tool_call_end|>`,
+			expected: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "bash",
+						Arguments: testArgs(map[string]any{
+							"command": "ls",
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:    "single_call_with_wrapper_tags",
+			content: `<|tool_call_start|>[bash(command='pwd')]<|tool_call_end|>`,
+			expected: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "bash",
+						Arguments: testArgs(map[string]any{
+							"command": "pwd",
+						}),
+					},
+				},
+			},
+		},
+		{
 			name:    "multiple_different_functions",
 			content: `[get_weather(location='Paris'),search(query='news')]`,
 			expected: []api.ToolCall{
