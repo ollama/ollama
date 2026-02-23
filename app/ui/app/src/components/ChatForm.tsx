@@ -17,7 +17,10 @@ import {
 } from "@/hooks/useChats";
 import { useNavigate } from "@tanstack/react-router";
 import { useSelectedModel } from "@/hooks/useSelectedModel";
-import { useHasVisionCapability } from "@/hooks/useModelCapabilities";
+import {
+  useHasVisionCapability,
+  useHasToolsCapability,
+} from "@/hooks/useModelCapabilities";
 import { useUser } from "@/hooks/useUser";
 import { DisplayLogin } from "@/components/DisplayLogin";
 import { ErrorEvent, Message } from "@/gotypes";
@@ -149,12 +152,7 @@ function ChatForm({
   } = useSettings();
   const { cloudDisabled } = useCloudStatus();
 
-  // current supported models for web search
-  const modelLower = selectedModel?.model.toLowerCase() || "";
-  const supportsWebSearch =
-    modelLower.startsWith("gpt-oss") ||
-    modelLower.startsWith("qwen3") ||
-    modelLower.startsWith("deepseek-v3");
+  const supportsWebSearch = useHasToolsCapability(selectedModel?.model);
   // Use per-chat thinking level instead of global
   const thinkLevel: ThinkingLevel =
     settingsThinkLevel === "none" || !settingsThinkLevel
