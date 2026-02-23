@@ -295,6 +295,7 @@ func (kv KV) OllamaEngineRequired() bool {
 		"glm4moelite",
 		"glmocr",
 		"lfm2",
+		"lfm2moe",
 	}, kv.Architecture())
 }
 
@@ -886,6 +887,7 @@ func (f GGML) FlashAttention() bool {
 		"glmocr",
 		"gptoss", "gpt-oss",
 		"lfm2",
+		"lfm2moe",
 		"mistral3",
 		"nemotron_h", "nemotron_h_moe",
 		"olmo3",
