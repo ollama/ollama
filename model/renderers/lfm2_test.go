@@ -122,7 +122,7 @@ func TestLFM2Renderer_ChatTemplateParity(t *testing.T) {
 				{Role: "assistant", Content: "<think>reason2</think>A2"},
 			},
 			thinkValue: &api.ThinkValue{Value: false},
-			expected:   "<|startoftext|><|im_start|>user\nQ1<|im_end|>\n<|im_start|>assistant\nA1<|im_end|>\n<|im_start|>user\nQ2<|im_end|>\n<|im_start|>assistant\n<think>reason2</think>A2<|im_end|>\n<|im_start|>assistant\n",
+			expected:   "<|startoftext|><|im_start|>user\nQ1<|im_end|>\n<|im_start|>assistant\nA1<|im_end|>\n<|im_start|>user\nQ2<|im_end|>\n<|im_start|>assistant\n<think>reason2</think>A2",
 		},
 		{
 			name:     "thinking_preserves_past_assistant_when_enabled",
@@ -134,7 +134,7 @@ func TestLFM2Renderer_ChatTemplateParity(t *testing.T) {
 				{Role: "assistant", Content: "<think>reason2</think>A2"},
 			},
 			thinkValue: &api.ThinkValue{Value: true},
-			expected:   "<|startoftext|><|im_start|>user\nQ1<|im_end|>\n<|im_start|>assistant\n<think>reason1</think>A1<|im_end|>\n<|im_start|>user\nQ2<|im_end|>\n<|im_start|>assistant\n<think>reason2</think>A2<|im_end|>\n<|im_start|>assistant\n",
+			expected:   "<|startoftext|><|im_start|>user\nQ1<|im_end|>\n<|im_start|>assistant\n<think>reason1</think>A1<|im_end|>\n<|im_start|>user\nQ2<|im_end|>\n<|im_start|>assistant\n<think>reason2</think>A2",
 		},
 		{
 			name:     "arbitrary_roles_are_rendered_verbatim",
@@ -152,6 +152,16 @@ func TestLFM2Renderer_ChatTemplateParity(t *testing.T) {
 			messages:   nil,
 			thinkValue: &api.ThinkValue{Value: false},
 			expected:   "<|startoftext|><|im_start|>assistant\n",
+		},
+		{
+			name:     "assistant_prefill_no_generation_prompt",
+			renderer: &LFM2Renderer{IsThinking: false},
+			messages: []api.Message{
+				{Role: "user", Content: "Hi"},
+				{Role: "assistant", Content: "Hello"},
+			},
+			thinkValue: &api.ThinkValue{Value: false},
+			expected:   "<|startoftext|><|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\nHello",
 		},
 	}
 

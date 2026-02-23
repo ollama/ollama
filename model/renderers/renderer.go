@@ -88,10 +88,6 @@ func rendererForName(name string) Renderer {
 		return &LFM2Renderer{IsThinking: false, useImgTags: RenderImgTags}
 	case "lfm2-thinking":
 		return &LFM2Renderer{IsThinking: true, useImgTags: RenderImgTags}
-	case "lfm2.5":
-		return &LFM2Renderer{IsThinking: false, useImgTags: RenderImgTags}
-	case "lfm2.5-thinking":
-		return &LFM2Renderer{IsThinking: true, useImgTags: RenderImgTags}
 	default:
 		return nil
 	}

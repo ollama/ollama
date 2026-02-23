@@ -81,10 +81,6 @@ func ParserForName(name string) Parser {
 		return &LFM2Parser{hasThinkingSupport: false}
 	case "lfm2-thinking":
 		return &LFM2Parser{hasThinkingSupport: true}
-	case "lfm2.5":
-		return &LFM2Parser{hasThinkingSupport: false}
-	case "lfm2.5-thinking":
-		return &LFM2Parser{hasThinkingSupport: true}
 	default:
 		return nil
 	}

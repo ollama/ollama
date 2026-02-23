@@ -265,6 +265,9 @@ func (r *LFM2Renderer) Render(messages []api.Message, tools []api.Tool, thinkVal
 
 	for i := startIdx; i < len(messages); i++ {
 		message := messages[i]
+		lastMessage := i == len(messages)-1
+		prefill := lastMessage && message.Role == "assistant"
+
 		sb.WriteString("<|im_start|>")
 		sb.WriteString(message.Role)
 		sb.WriteString("\n")
@@ -283,11 +286,21 @@ func (r *LFM2Renderer) Render(messages []api.Message, tools []api.Tool, thinkVal
 		}
 
 		sb.WriteString(content)
-		sb.WriteString("<|im_end|>\n")
+		if !prefill {
+			sb.WriteString("<|im_end|>\n")
+		}
 	}
 
-	// RenderWithRenderer always uses add_generation_prompt=true for chat rendering.
-	sb.WriteString("<|im_start|>assistant\n")
+	needsGenerationPrompt := true
+	if len(messages) > 0 && messages[len(messages)-1].Role == "assistant" {
+		needsGenerationPrompt = false
+	}
+
+	if needsGenerationPrompt {
+		// RenderWithRenderer uses add_generation_prompt=true for chat rendering,
+		// unless we're prefilling a trailing assistant message.
+		sb.WriteString("<|im_start|>assistant\n")
+	}
 
 	return sb.String(), nil
 }
