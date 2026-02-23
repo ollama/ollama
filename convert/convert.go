@@ -320,7 +320,7 @@ func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 		conv = &lfm2Model{}
 	case "Lfm2VlForConditionalGeneration":
 		conv = &lfm2VLTextModel{}
-	case "Qwen3NextForCausalLM":
+	case "Qwen3NextForCausalLM", "Qwen3_5ForConditionalGeneration", "Qwen3_5MoeForConditionalGeneration":
 		conv = &qwen3NextModel{}
 	case "NemotronHForCausalLM":
 		conv = &nemotronHModel{}

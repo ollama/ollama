@@ -51,10 +51,15 @@ func rendererForName(name string) Renderer {
 		renderer := &Qwen3CoderRenderer{}
 		return renderer
 	case "qwen3-vl-instruct":
-		renderer := &Qwen3VLRenderer{isThinking: false, useImgTags: RenderImgTags}
+		renderer := &Qwen3VLRenderer{hasThinkingSupport: false, defaultThinking: false, useImgTags: RenderImgTags}
 		return renderer
 	case "qwen3-vl-thinking":
-		renderer := &Qwen3VLRenderer{isThinking: true, useImgTags: RenderImgTags}
+		renderer := &Qwen3VLRenderer{hasThinkingSupport: true, defaultThinking: true, useImgTags: RenderImgTags}
+		return renderer
+	case "qwen3.5", "qwen3-vl":
+		// qwen3.5 and qwen3-vl share one renderer with runtime think toggle.
+		// Default is non-thinking unless think=true is requested.
+		renderer := &Qwen3VLRenderer{hasThinkingSupport: true, defaultThinking: false, useImgTags: RenderImgTags}
 		return renderer
 	case "cogito":
 		renderer := &CogitoRenderer{isThinking: true}

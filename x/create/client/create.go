@@ -264,13 +264,16 @@ func newManifestWriter(opts CreateOptions, capabilities []string, parserName, re
 			}
 		}
 
+		resolvedParser := resolveParserName(opts.Modelfile, parserName)
+		resolvedRenderer := resolveRendererName(opts.Modelfile, rendererName)
+
 		// Create config blob with version requirement
 		configData := model.ConfigV2{
 			ModelFormat:  "safetensors",
 			Capabilities: caps,
 			Requires:     MinOllamaVersion,
-			Parser:       resolveParserName(opts.Modelfile, parserName),
-			Renderer:     resolveRendererName(opts.Modelfile, rendererName),
+			Parser:       resolvedParser,
+			Renderer:     resolvedRenderer,
 		}
 		configJSON, err := json.Marshal(configData)
 		if err != nil {
@@ -427,6 +430,9 @@ func getParserName(modelDir string) string {
 		if strings.Contains(archLower, "deepseek") {
 			return "deepseek3"
 		}
+		if strings.Contains(archLower, "qwen3_5") {
+			return "qwen3.5"
+		}
 		if strings.Contains(archLower, "qwen3") {
 			return "qwen3"
 		}
@@ -440,6 +446,9 @@ func getParserName(modelDir string) string {
 		}
 		if strings.Contains(typeLower, "deepseek") {
 			return "deepseek3"
+		}
+		if strings.Contains(typeLower, "qwen3_5") {
+			return "qwen3.5"
 		}
 		if strings.Contains(typeLower, "qwen3") {
 			return "qwen3"
@@ -475,6 +484,9 @@ func getRendererName(modelDir string) string {
 		if strings.Contains(archLower, "deepseek") {
 			return "deepseek3"
 		}
+		if strings.Contains(archLower, "qwen3_5") {
+			return "qwen3.5"
+		}
 		if strings.Contains(archLower, "qwen3") {
 			return "qwen3-coder"
 		}
@@ -488,6 +500,9 @@ func getRendererName(modelDir string) string {
 		}
 		if strings.Contains(typeLower, "deepseek") {
 			return "deepseek3"
+		}
+		if strings.Contains(typeLower, "qwen3_5") {
+			return "qwen3.5"
 		}
 		if strings.Contains(typeLower, "qwen3") {
 			return "qwen3-coder"

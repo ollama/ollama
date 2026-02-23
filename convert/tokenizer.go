@@ -101,6 +101,8 @@ func parseTokenizer(fsys fs.FS, specialTokenTypes []string) (*Tokenizer, error) 
 			t.Pre = "deepseek-coder"
 		case "1ff7f41064896984db5d1bb6ff64fa4bc29007d08c1b439e505b7392777a319e":
 			t.Pre = "qwen2"
+		case "00431aed57e696b747435f734d1e3b9b1bfd931a121fb5cac7129e97c181e9ba":
+			t.Pre = "qwen35"
 		case "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855":
 			// noop, empty pretokenizer
 		default:
@@ -169,6 +171,13 @@ func parseTokenizer(fsys fs.FS, specialTokenTypes []string) (*Tokenizer, error) 
 				t.SpecialVocabulary = append(t.SpecialVocabulary, &sv)
 			}
 		}
+	}
+
+	// Match upstream behavior: prefer chat_template.jinja when present.
+	if bts, err := fs.ReadFile(fsys, "chat_template.jinja"); err == nil {
+		t.Template = string(bts)
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
 	}
 
 	if f, err := fsys.Open("generation_config.json"); errors.Is(err, os.ErrNotExist) {

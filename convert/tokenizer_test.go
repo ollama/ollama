@@ -80,6 +80,21 @@ func TestParseTokenizer(t *testing.T) {
 			},
 		},
 		{
+			name: "chat template jinja overrides tokenizer config",
+			fsys: createTokenizerFS(t, t.TempDir(), map[string]io.Reader{
+				"tokenizer.json": strings.NewReader(`{}`),
+				"tokenizer_config.json": strings.NewReader(`{
+					"chat_template": "<template from tokenizer config>"
+				}`),
+				"chat_template.jinja": strings.NewReader("<template from jinja>"),
+			}),
+			want: &Tokenizer{
+				Vocabulary: &Vocabulary{Model: "gpt2"},
+				Pre:        "default",
+				Template:   "<template from jinja>",
+			},
+		},
+		{
 			name: "added tokens",
 			fsys: createTokenizerFS(t, t.TempDir(), map[string]io.Reader{
 				"tokenizer.json": strings.NewReader(`{
@@ -384,6 +399,28 @@ func TestParseTokenizer(t *testing.T) {
 					{Type: "bos", Content: "<bos>", ID: 0, AddToken: true},
 				},
 				Pre: "default",
+			},
+		},
+		{
+			name: "qwen35 pretokenizer",
+			fsys: createTokenizerFS(t, t.TempDir(), map[string]io.Reader{
+				"tokenizer.json": strings.NewReader(`{
+					"pre_tokenizer": {
+						"type": "Sequence",
+						"pretokenizers": [
+							{
+								"type": "Split",
+								"pattern": {
+									"Regex": "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?[\\p{L}\\p{M}]+|\\p{N}| ?[^\\s\\p{L}\\p{M}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"
+								}
+							}
+						]
+					}
+				}`),
+			}),
+			want: &Tokenizer{
+				Vocabulary: &Vocabulary{Model: "gpt2"},
+				Pre:        "qwen35",
 			},
 		},
 	}

@@ -7,7 +7,8 @@ import (
 )
 
 type Qwen3VLRenderer struct {
-	isThinking bool
+	hasThinkingSupport bool
+	defaultThinking    bool
 
 	useImgTags bool
 }
@@ -31,8 +32,16 @@ func (r *Qwen3VLRenderer) renderContent(content api.Message) string {
 	return subSb.String()
 }
 
-func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
+func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
 	var sb strings.Builder
+	thinking := false
+	if r.hasThinkingSupport {
+		if thinkValue != nil {
+			thinking = thinkValue.Bool()
+		} else {
+			thinking = r.defaultThinking
+		}
+	}
 
 	if len(tools) > 0 {
 		sb.WriteString(imStartTag + "system\n")
@@ -76,13 +85,13 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 		} else if message.Role == "assistant" {
 			contentReasoning := ""
 
-			if r.isThinking {
+			if r.hasThinkingSupport {
 				if message.Thinking != "" {
 					contentReasoning = message.Thinking
 				}
 			}
 
-			if r.isThinking && i > lastQueryIndex {
+			if thinking && i > lastQueryIndex {
 				if i == len(messages)-1 || contentReasoning != "" {
 					sb.WriteString("<|im_start|>" + message.Role + "\n<think>\n" + strings.Trim(contentReasoning, "\n")) // do we want to add a new line here?
 					if content != "" {
@@ -125,8 +134,12 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 		// prefill at the end
 		if lastMessage && !prefill {
 			sb.WriteString("<|im_start|>assistant\n")
-			if r.isThinking {
+			if thinking {
 				sb.WriteString("<think>\n")
+			} else if r.hasThinkingSupport {
+				// In nothink mode, explicitly close any latent think block so
+				// checkpoints that default to thinking start directly in content.
+				sb.WriteString("</think>\n")
 			}
 		}
 	}
