@@ -33,7 +33,6 @@ func (r *Qwen3VLRenderer) renderContent(content api.Message) string {
 
 func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
 	var sb strings.Builder
-	thinking := r.isThinking
 
 	if len(tools) > 0 {
 		sb.WriteString(imStartTag + "system\n")
@@ -83,7 +82,7 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 				}
 			}
 
-			if thinking && i > lastQueryIndex {
+			if r.isThinking && i > lastQueryIndex {
 				if i == len(messages)-1 || contentReasoning != "" {
 					sb.WriteString("<|im_start|>" + message.Role + "\n<think>\n" + strings.Trim(contentReasoning, "\n")) // do we want to add a new line here?
 					if content != "" {
@@ -126,12 +125,8 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 		// prefill at the end
 		if lastMessage && !prefill {
 			sb.WriteString("<|im_start|>assistant\n")
-			if thinking {
+			if r.isThinking {
 				sb.WriteString("<think>\n")
-			} else if r.isThinking {
-				// In nothink mode, explicitly close any latent think block so
-				// checkpoints that default to thinking start directly in content.
-				sb.WriteString("</think>\n")
 			}
 		}
 	}
