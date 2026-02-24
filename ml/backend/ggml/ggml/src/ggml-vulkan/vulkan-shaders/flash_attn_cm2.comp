@@ -72,6 +72,28 @@ D_TYPE perElemOpGqaStore(const in uint32_t r, const in uint32_t c, const in D_TY
     return elem;
 }
 
+// Store O values for non-GQA split_k. Rows are tokens, not heads.
+D_TYPE perElemOpNonGqaSplitKStore(const in uint32_t r, const in uint32_t c, const in D_TYPE elem, const in uint32_t unused, const in uint32_t iq2, const in uint32_t N) {
+    uint32_t global_row = i * Br + r;
+    if (global_row < N && c < HSV) {
+        uint32_t o_off = HSV * p.ne1
+            * (split_k_index + p.k_num * (global_row + p.ne2 * iq3));
+        data_o[o_off + iq2 * HSV + c] = D_TYPE(elem);
+    }
+    return elem;
+}
+
+// Store L/M values for non-GQA split_k.
+ACC_TYPE perElemOpNonGqaSplitKStoreCol0(const in uint32_t r, const in uint32_t c, const in ACC_TYPE elem, const in uint32_t lm_base, const in uint32_t iq2, const in uint32_t N) {
+    uint32_t global_row = i * Br + r;
+    if (global_row < N && c == 0) {
+        uint32_t lm_off = HSV * p.ne1 * p.k_num * p.ne2 * p.ne3
+            + p.ne1 * 2 * (split_k_index + p.k_num * (global_row + p.ne2 * iq3));
+        data_o[lm_off + lm_base + iq2] = D_TYPE(elem);
+    }
+    return elem;
+}
+
 void main() {
 #ifdef NEEDS_INIT_IQ_SHMEM
     init_iq_shmem(gl_WorkGroupSize);
@@ -290,13 +312,19 @@ void main() {
     if (p.k_num > 1) {
         coopmat<D_TYPE, gl_ScopeWorkgroup, Br, HSV_pad, gl_MatrixUseAccumulator> O_D = coopmat<D_TYPE, gl_ScopeWorkgroup, Br, HSV_pad, gl_MatrixUseAccumulator>(O);
 
-        // note: O and Q have swapped coord 1,2.
-        uint32_t o_offset = HSV * p.ne1 * (split_k_index + p.k_num * (gqa_iq1 + p.ne2 * iq3));
-        coopMatPerElementNV(O_D, O_D, perElemOpGqaStore, o_offset, iq2, N);
+        if (p.gqa_ratio > 1) {
+            // note: O and Q have swapped coord 1,2.
+            uint32_t o_offset = HSV * p.ne1 * (split_k_index + p.k_num * (gqa_iq1 + p.ne2 * iq3));
+            coopMatPerElementNV(O_D, O_D, perElemOpGqaStore, o_offset, iq2, N);
 
-        o_offset = HSV * p.ne1 * p.k_num * p.ne2 * p.ne3 + p.ne1 * 2 * (split_k_index + p.k_num * (gqa_iq1 + p.ne2 * iq3));
-        coopMatPerElementNV(L, L, perElemOpStoreCol0, o_offset, iq2, N);
-        coopMatPerElementNV(M, M, perElemOpStoreCol0, o_offset + p.ne1, iq2, N);
+            o_offset = HSV * p.ne1 * p.k_num * p.ne2 * p.ne3 + p.ne1 * 2 * (split_k_index + p.k_num * (gqa_iq1 + p.ne2 * iq3));
+            coopMatPerElementNV(L, L, perElemOpStoreCol0, o_offset, iq2, N);
+            coopMatPerElementNV(M, M, perElemOpStoreCol0, o_offset + p.ne1, iq2, N);
+        } else {
+            coopMatPerElementNV(O_D, O_D, perElemOpNonGqaSplitKStore, 0u, iq2, N);
+            coopMatPerElementNV(L, L, perElemOpNonGqaSplitKStoreCol0, 0u, iq2, N);
+            coopMatPerElementNV(M, M, perElemOpNonGqaSplitKStoreCol0, p.ne1, iq2, N);
+        }
         return;
     }
 

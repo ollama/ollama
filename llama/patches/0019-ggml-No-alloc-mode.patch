@@ -224,7 +224,7 @@ index 761bd12df..bcc42c5c5 100644
  
  void ggml_backend_sched_set_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node, ggml_backend_t backend) {
 diff --git a/ggml/src/ggml-cuda/common.cuh b/ggml/src/ggml-cuda/common.cuh
-index a3256d59d..4b6992311 100644
+index 36d8a3aaa..321357713 100644
 --- a/ggml/src/ggml-cuda/common.cuh
 +++ b/ggml/src/ggml-cuda/common.cuh
 @@ -37,6 +37,41 @@
@@ -279,7 +279,7 @@ index a3256d59d..4b6992311 100644
  };
  
  template<typename T>
-@@ -1412,11 +1450,15 @@ struct ggml_backend_cuda_context {
+@@ -1399,11 +1437,15 @@ struct ggml_backend_cuda_context {
      // pool
      std::unique_ptr<ggml_cuda_pool> pools[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_STREAMS];
  
@@ -297,7 +297,7 @@ index a3256d59d..4b6992311 100644
          }
          return *pools[device][curr_stream_no];
      }
-@@ -1424,6 +1466,22 @@ struct ggml_backend_cuda_context {
+@@ -1411,6 +1453,22 @@ struct ggml_backend_cuda_context {
      ggml_cuda_pool & pool() {
          return pool(device);
      }
@@ -321,7 +321,7 @@ index a3256d59d..4b6992311 100644
  
  struct ggml_cuda_mm_fusion_args_host {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 6ac06500f..122e54864 100644
+index 0ab859d3c..d3dacc270 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -85,6 +85,8 @@
@@ -557,7 +557,7 @@ index 6ac06500f..122e54864 100644
  };
  
  ggml_backend_buffer_type_t ggml_backend_cuda_buffer_type(int device) {
-@@ -3571,6 +3626,11 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
+@@ -3567,6 +3622,11 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
                      continue;
                  }
  
@@ -569,7 +569,7 @@ index 6ac06500f..122e54864 100644
                  // start of fusion operations
                  static bool disable_fusion = (getenv("GGML_CUDA_DISABLE_FUSION") != nullptr);
                  if (!disable_fusion) {
-@@ -3976,6 +4036,7 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
+@@ -3972,6 +4032,7 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
  
  static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
      ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) backend->context;
@@ -577,7 +577,7 @@ index 6ac06500f..122e54864 100644
  
      GGML_UNUSED(batch_size);
  
-@@ -4014,6 +4075,73 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
+@@ -4031,6 +4092,73 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
      return GGML_STATUS_SUCCESS;
  }
  
@@ -651,7 +651,7 @@ index 6ac06500f..122e54864 100644
  static void ggml_backend_cuda_event_record(ggml_backend_t backend, ggml_backend_event_t event) {
      ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
  
-@@ -4298,6 +4426,9 @@ static const ggml_backend_i ggml_backend_cuda_interface = {
+@@ -4315,6 +4443,9 @@ static const ggml_backend_i ggml_backend_cuda_interface = {
      /* .event_record            = */ ggml_backend_cuda_event_record,
      /* .event_wait              = */ ggml_backend_cuda_event_wait,
      /* .graph_optimize          = */ ggml_backend_cuda_graph_optimize,

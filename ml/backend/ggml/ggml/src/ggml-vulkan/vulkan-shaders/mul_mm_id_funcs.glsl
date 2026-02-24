@@ -43,7 +43,9 @@ void load_row_ids(uint expert_idx, bool nei0_is_pow2, uint ic) {
         uint id = ids[iter++];
         uvec4 ballot = subgroupBallot(in_range && id == expert_idx);
 
-        ballots_sh[gl_SubgroupID] = ballot;
+        if (gl_SubgroupInvocationID == 0) {
+            ballots_sh[gl_SubgroupID] = ballot;
+        }
         barrier();
 
         uint subgroup_base = 0;

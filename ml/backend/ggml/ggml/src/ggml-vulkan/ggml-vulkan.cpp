@@ -405,19 +405,20 @@ enum FaCodePath {
 };
 
 struct vk_fa_pipeline_state {
-    vk_fa_pipeline_state(uint32_t HSK, uint32_t HSV, bool small_rows, bool small_cache, FaCodePath path, bool aligned, bool f32acc, uint32_t flags)
-        : HSK(HSK), HSV(HSV), small_rows(small_rows), small_cache(small_cache), path(path), aligned(aligned), f32acc(f32acc), flags(flags) {}
-
     uint32_t HSK, HSV;
-    bool small_rows, small_cache;
+    uint32_t Br, Bc;
+    uint32_t D_split, row_split;
+    bool shmem_staging;
     FaCodePath path;
+    uint32_t workgroup_size, subgroup_size;
     bool aligned;
     bool f32acc;
     uint32_t flags;
+    uint32_t limit_occupancy_shmem;
 
     bool operator<(const vk_fa_pipeline_state &b) const {
-        return std::tie(HSK, HSV, small_rows, small_cache, path, aligned, f32acc, flags) <
-               std::tie(b.HSK, b.HSV, b.small_rows, b.small_cache, b.path, b.aligned, b.f32acc, b.flags);
+        return std::tie(HSK, HSV, Br, Bc, D_split, row_split, shmem_staging, path, workgroup_size, subgroup_size, aligned, f32acc, flags, limit_occupancy_shmem) <
+               std::tie(b.HSK, b.HSV, b.Br, b.Bc, b.D_split, b.row_split, b.shmem_staging, b.path, b.workgroup_size, b.subgroup_size, b.aligned, b.f32acc, b.flags, b.limit_occupancy_shmem);
     }
 };
 
@@ -624,6 +625,8 @@ struct vk_device_struct {
 
     // floor(log2(maxComputeWorkGroupInvocations))
     uint32_t max_workgroup_size_log2 {};
+
+    bool flash_attention_fp16;
 
     bool coopmat_support;
     bool coopmat_acc_f32_support {};
@@ -1658,6 +1661,7 @@ static bool vk_perf_logger_concurrent = false;
 static bool vk_enable_sync_logger = false;
 // number of calls between perf logger prints
 static uint32_t vk_perf_logger_frequency = 1;
+static std::string vk_pipeline_stats_filter;
 
 class vk_perf_logger {
   public:
@@ -2174,7 +2178,32 @@ static void ggml_vk_create_pipeline_func(vk_device& device, vk_pipeline& pipelin
         executableInfo.pipeline = pipeline->pipeline;
 
         auto statistics = device->device.getPipelineExecutableStatisticsKHR(executableInfo);
+
+        bool print_stats = !vk_pipeline_stats_filter.empty() &&
+                           pipeline->name.find(vk_pipeline_stats_filter) != std::string::npos;
+        if (print_stats) {
+            std::cerr << "ggml_vulkan: pipeline stats for " << pipeline->name << ":" << std::endl;
+        }
+
         for (auto & s : statistics) {
+            if (print_stats) {
+                std::cerr << "ggml_vulkan:   " << s.name.data() << ": ";
+                switch (s.format) {
+                    case vk::PipelineExecutableStatisticFormatKHR::eBool32:
+                        std::cerr << (s.value.b32 ? "true" : "false");
+                        break;
+                    case vk::PipelineExecutableStatisticFormatKHR::eInt64:
+                        std::cerr << s.value.i64;
+                        break;
+                    case vk::PipelineExecutableStatisticFormatKHR::eUint64:
+                        std::cerr << s.value.u64;
+                        break;
+                    case vk::PipelineExecutableStatisticFormatKHR::eFloat64:
+                        std::cerr << s.value.f64;
+                        break;
+                }
+                std::cerr << std::endl;
+            }
             // "Register Count" is reported by NVIDIA drivers.
             if (strcmp(s.name, "Register Count") == 0) {
                 VK_LOG_DEBUG(pipeline->name << " " << s.name << ": " << s.value.u64 << " registers");
@@ -2757,78 +2786,214 @@ static void ggml_vk_wait_events(vk_context& ctx, std::vector<vk::Event>&& events
     );
 }
 
-// number of rows/cols for flash attention shader
-static constexpr uint32_t flash_attention_num_small_rows = 32;
-static constexpr uint32_t scalar_flash_attention_num_small_rows = 1;
+struct vk_fa_tuning_params {
+    FaCodePath path;
+    uint32_t workgroup_size;
+    uint32_t subgroup_size;
+    uint32_t block_rows;
+    uint32_t block_cols;
+    uint32_t d_split;
+    uint32_t row_split;
+    bool shmem_staging;
+    bool disable_subgroups;
+    uint32_t limit_occupancy_shmem;
 
-static uint32_t get_fa_scalar_num_large_rows(uint32_t hsk, uint32_t hsv, bool small_cache) {
-    if (hsv >= 192) {
-        return 2;
-    } else if ((hsv | hsk) & 8 || small_cache) {
-        return 4;
-    } else {
-        return 8;
+    void print() const {
+        std::cerr << "path=" << path << " workgroup_size=" << workgroup_size << " subgroup_size=" << subgroup_size <<
+                     " block_rows=" << block_rows << " block_cols=" << block_cols << " d_split=" << d_split <<
+                     " row_split=" << row_split << " shmem_staging=" << shmem_staging << " disable_subgroups=" << disable_subgroups <<
+                     " limit_occupancy_shmem=" << limit_occupancy_shmem << std::endl;
     }
-}
+};
 
-// The FA coopmat1 shader assumes 16x16x16 matrix multiply support.
-// 128 threads split into four subgroups, each subgroup does 1/4
-// of the Bc dimension.
-static constexpr uint32_t coopmat1_flash_attention_num_large_rows = 16;
-static constexpr uint32_t scalar_flash_attention_Bc = 64;
-static constexpr uint32_t scalar_flash_attention_workgroup_size = 128;
+static bool ggml_vk_flash_attn_scalar_shmem_support(const vk_device& device, const vk_fa_tuning_params& params, uint32_t hsk, uint32_t hsv, bool f32acc);
+static bool ggml_vk_flash_attn_coopmat_shmem_support(const vk_device& device, const vk_fa_tuning_params& params, uint32_t hsk, uint32_t hsv, bool f32acc);
 
-static uint32_t get_fa_num_small_rows(FaCodePath path) {
-    if (path == FA_COOPMAT2) {
-        return flash_attention_num_small_rows;
+static vk_fa_tuning_params get_fa_tuning_params_scalar(const vk_device& device, uint32_t hsk, uint32_t hsv, uint32_t n_rows, uint32_t n_kv, ggml_type kv_type, bool f32acc) {
+    GGML_UNUSED(kv_type);
+
+    vk_fa_tuning_params result{};
+    result.path = FA_SCALAR;
+
+    if (device->vendor_id == VK_VENDOR_ID_INTEL) {
+        // Disable subgroup use due to performance issues when enforcing subgroup sizes
+        result.subgroup_size = 32;
+        result.disable_subgroups = true;
+    } else if (device->vendor_id == VK_VENDOR_ID_AMD && device->architecture != AMD_GCN) {
+        result.subgroup_size = n_rows < 4 ? 32 : device->subgroup_size;
     } else {
-        return scalar_flash_attention_num_small_rows;
+        result.subgroup_size = device->subgroup_size;
     }
-}
 
-static std::array<uint32_t, 2> fa_rows_cols(FaCodePath path, uint32_t hsk, uint32_t hsv, uint32_t clamp, ggml_type type, bool small_rows, bool small_cache) {
-    GGML_UNUSED(clamp);
+    // Row split splits the workgroup so that synchronization only has to happen within subgroups, which avoids barriers
+    uint32_t row_split_max_hsk = 64;
+    if (device->vendor_id == VK_VENDOR_ID_AMD && device->architecture != AMD_GCN && !device->uma) {
+        row_split_max_hsk = n_rows <= 8 ? 64 : 128;
+    }
+    result.row_split = (n_rows < 4 || hsk <= row_split_max_hsk) ? 1 : 4;
 
-    if (path == FA_SCALAR) {
-        if (small_rows) {
-            return {scalar_flash_attention_num_small_rows, 64};
+    if (result.subgroup_size > 32 && (n_rows < 4 || hsk < (result.row_split == 1 ? 128 : 64))) {
+        result.workgroup_size = result.subgroup_size * 2;
+    } else {
+        result.workgroup_size = result.subgroup_size * 4;
+    }
+
+    const uint32_t D = hsk | hsv;
+
+    const bool reduce_block_rows = D & 8 || n_kv < 1024 || device->vendor_id == VK_VENDOR_ID_INTEL;
+
+    if (n_rows == 1) {
+        result.block_rows = 1;
+        result.block_cols = 64;
+    } else {
+        // row_split 1 means higher register use per row, so block size has to be adjusted
+        if (result.row_split == 1) {
+            result.block_rows = n_rows == 2 ? 2 : ((n_rows <= 4 || reduce_block_rows) ? 4 : 8);
         } else {
-            if ((hsv | hsk) & 8) {
-                // HSV/HSK not being a multiple of 16 makes D_split smaller, which makes cols_per_iter
-                // larger, and Bc needs to be >= cols_per_thread. 64 is large enough, 32 is not.
-                return {get_fa_scalar_num_large_rows(hsk, hsv, small_cache), 64};
-            } else {
-                return {get_fa_scalar_num_large_rows(hsk, hsv, small_cache), 32};
-            }
+            result.block_rows = n_rows <= 4 ? 4 : ((n_rows <= 8 || reduce_block_rows) ? 8 : 16);
         }
+
+        result.block_cols = (D & 8) ? 64 : 32;
+    }
+
+    const uint32_t D_lsb = D ^ (D & (D-1));  // extract lowest set bit
+
+    result.d_split = std::min(std::min(result.subgroup_size, 8u), D_lsb / 4);
+
+    result.shmem_staging = (device->vendor_id == VK_VENDOR_ID_NVIDIA && hsk < 256 && hsv < 256) ? 1 : 0;
+
+    if (!reduce_block_rows && !ggml_vk_flash_attn_scalar_shmem_support(device, result, hsk, hsv, f32acc)) {
+        result.block_rows /= 2;
+    }
+
+    // On AMD RDNA, for small head sizes and big batch size the shader uses few registers, so too many subgroups get scheduled
+    // at once and end up thrashing the cache. Fix this by setting a large (unused) shmem buffer that reduces occupancy.
+    // This targets an occupancy of 4 subgroups per SIMD.
+    if (device->vendor_id == VK_VENDOR_ID_AMD && device->properties.limits.maxComputeSharedMemorySize == 65536) {
+        if (device->architecture != AMD_GCN && n_rows >= 64 && hsk <= 128) {
+            // 30kb target for hsk > 64, 26kb for <= 64 due to smaller workgroup size
+            // Values are guessed, tested on RDNA2
+            result.limit_occupancy_shmem = (hsk <= 64 ? 26 : 30) * 1024 / 4 / 4;
+        } else if (device->architecture == AMD_GCN && n_rows <= 8 && hsk >= 256) {
+            // Same thing for GCN, with an occupancy target of 2 subgroups per SIMD.
+            // Here low-batch FA with large head size is affected.
+            // n_rows < 4 switch because workgroup size switches from 128 to 256 there.
+            result.limit_occupancy_shmem = (n_rows < 4 ? 14 : 26) * 1024 / 4 / 4;
+        }
+    }
+
+    return result;
+}
+
+static vk_fa_tuning_params get_fa_tuning_params_coopmat1(const vk_device& device, uint32_t hsk, uint32_t hsv, uint32_t n_rows, uint32_t n_kv, ggml_type kv_type, bool f32acc) {
+    GGML_UNUSED(n_rows);
+    GGML_UNUSED(n_kv);
+    GGML_UNUSED(kv_type);
+    GGML_UNUSED(f32acc);
+
+    vk_fa_tuning_params result{};
+    result.path = FA_COOPMAT1;
+
+    const uint32_t D = hsk | hsv;
+
+    const uint32_t coopmat_block_rows = 16;
+    const uint32_t coopmat_block_cols = 16;
+
+    const uint32_t num_subgroups = 4;
+
+    result.block_rows = coopmat_block_rows;
+    result.block_cols = coopmat_block_cols * num_subgroups;
+    result.row_split = num_subgroups;
+    result.subgroup_size = device->subgroup_size;
+    result.workgroup_size = num_subgroups * result.subgroup_size;
+
+    const uint32_t D_lsb = D ^ (D & (D-1));  // extract lowest set bit
+    result.d_split = std::min(std::min(result.subgroup_size, 8u), D_lsb / 4);
+
+    result.shmem_staging = (device->vendor_id == VK_VENDOR_ID_NVIDIA && hsk < 256 && hsv < 256) ? 1 : 0;
+
+    return result;
+}
+
+static vk_fa_tuning_params get_fa_tuning_params_coopmat2(const vk_device& device, uint32_t hsk, uint32_t hsv, uint32_t n_rows, uint32_t n_kv, ggml_type kv_type, bool f32acc) {
+    GGML_UNUSED(n_kv);
+    GGML_UNUSED(f32acc);
+
+    vk_fa_tuning_params result{};
+    result.path = FA_COOPMAT2;
+
+    const uint32_t D = hsk | hsv;
+
+    const bool small_rows = n_rows < 32;
+
+    if (small_rows) {
+        result.block_rows = 32;
+        result.block_cols = 32;
+    } else if (ggml_is_quantized(kv_type) || hsk >= 256 || hsv >= 256) {
+        result.block_rows = (hsk >= 512 || hsv >= 512) ? 32 : 64;
+        result.block_cols = 32;
+    } else {
+        result.block_rows = 64;
+        result.block_cols = 64;
+    }
+
+    result.subgroup_size = device->subgroup_size;
+    result.workgroup_size = (small_rows && (D % 32) == 0) ? 256 : 128;
+
+    return result;
+}
+
+static vk_fa_tuning_params get_fa_tuning_params(const vk_device& device, uint32_t hsk, uint32_t hsv, uint32_t n_rows, uint32_t n_kv, ggml_type kv_type, bool f32acc) {
+    FaCodePath path = device->coopmat2 ? FA_COOPMAT2 :
+                      device->coopmat1_fa_support ? FA_COOPMAT1 : FA_SCALAR;
+
+    if (path == FA_COOPMAT1 && device->architecture == vk_device_architecture::NVIDIA_TURING) {
+        // Nvidia compiler bug, see https://github.com/ggml-org/llama.cpp/pull/19075#issuecomment-3820716090
+        path = FA_SCALAR;
     }
 
     if (path == FA_COOPMAT1) {
-        if (small_rows) {
-            return {scalar_flash_attention_num_small_rows, scalar_flash_attention_Bc};
-        } else {
-            return {coopmat1_flash_attention_num_large_rows, scalar_flash_attention_Bc};
+        bool shape_ok = (f32acc && device->coopmat_support_16x16x16_f32acc) ||
+                        (!f32acc && device->coopmat_support_16x16x16_f16acc);
+        const vk_fa_tuning_params params = get_fa_tuning_params_coopmat1(device, hsk, hsv, n_rows, n_kv, kv_type, f32acc);
+        bool shmem_ok = ggml_vk_flash_attn_coopmat_shmem_support(device, params, hsk, hsv, f32acc);
+
+        if (!shape_ok || !shmem_ok) {
+            path = FA_SCALAR;
         }
     }
 
-    // small rows, large cols
-    if (small_rows) {
-        return {get_fa_num_small_rows(FA_COOPMAT2), 32};
+    // scalar is faster than coopmat when N==1
+    if (n_rows == 1 && (path == FA_COOPMAT1 || path == FA_COOPMAT2)) {
+        path = FA_SCALAR;
     }
 
-    // small cols to reduce register count
-    if (ggml_is_quantized(type) || hsk >= 256 || hsv >= 256) {
-        if (hsk >= 512 || hsv >= 512) {
-            return {32, 32};
-        } else {
-            return {64, 32};
-        }
+    switch (path) {
+    case FA_SCALAR:
+        return get_fa_tuning_params_scalar(device, hsk, hsv, n_rows, n_kv, kv_type, f32acc);
+    case FA_COOPMAT1:
+        return get_fa_tuning_params_coopmat1(device, hsk, hsv, n_rows, n_kv, kv_type, f32acc);
+    case FA_COOPMAT2:
+        return get_fa_tuning_params_coopmat2(device, hsk, hsv, n_rows, n_kv, kv_type, f32acc);
+    default:
+        throw std::runtime_error("unsupported FaCodePath");
     }
-    return {64, 64};
 }
 
-static uint32_t fa_align(FaCodePath path, uint32_t hsk, uint32_t hsv, ggml_type type, bool small_rows, bool small_cache) {
-    return fa_rows_cols(path, hsk, hsv, 0, type, small_rows, small_cache)[1];
+static vk_fa_pipeline_state get_fa_pipeline_state(const vk_fa_tuning_params& params, uint32_t hsk, uint32_t hsv, bool aligned, bool f32acc,
+                                                  bool use_mask, bool use_mask_opt, bool use_logit_softcap) {
+    uint32_t flags = (use_mask_opt      ? 1 : 0) |
+                     (use_mask          ? 2 : 0) |
+                     (use_logit_softcap ? 4 : 0);
+
+    const uint32_t subgroup_size = params.disable_subgroups ? 0 : params.subgroup_size;
+
+    return vk_fa_pipeline_state{hsk, hsv, params.block_rows, params.block_cols, params.d_split, params.row_split, params.shmem_staging, params.path, params.workgroup_size, subgroup_size, aligned, f32acc, flags, params.limit_occupancy_shmem};
+}
+
+static std::vector<uint32_t> get_fa_spec_constants(const vk_fa_pipeline_state& state) {
+    return {state.workgroup_size, state.Br, state.Bc, state.HSK, state.HSV, !state.aligned, state.D_split,
+            state.row_split, state.subgroup_size, state.shmem_staging ? 1u : 0u, state.flags, state.limit_occupancy_shmem};
 }
 
 static bool ggml_vk_matmul_shmem_support(const vk_device& device, const std::vector<uint32_t>& warptile, bool mul_mat_id, ggml_type src0_type) {
@@ -3195,76 +3360,43 @@ static void ggml_vk_load_shaders(vk_device& device) {
                                        align, disable_robustness, require_full_subgroups, required_subgroup_size);
     };
 
-    auto const &fa_wg_denoms = [&](FaCodePath path, uint32_t hsk, uint32_t hsv, uint32_t clamp, ggml_type type, bool small_rows, bool small_cache) -> std::array<uint32_t, 3> {
-        return {fa_rows_cols(path, hsk, hsv, clamp, type, small_rows, small_cache)[0], 1, 1};
-    };
-
-    auto const &fa_spec_constants = [&](FaCodePath path, uint32_t hsk, uint32_t hsv, uint32_t clamp, ggml_type type, bool small_rows, bool small_cache, uint32_t flags) -> std::vector<uint32_t> {
-        // For large number of rows, 128 invocations seems to work best.
-        // For small number of rows (e.g. N==1), 256 works better. But matrix granularity for 256 is 32, so we
-        // can't use 256 for D==80.
-        // For scalar, use 128 (arbitrary)
-        // The same D_split value is used for both HSK and HSV, so just base it on the union of the LSBs.
-        const uint32_t D = (hsk|hsv);
-        auto rows_cols = fa_rows_cols(path, hsk, hsv, clamp, type, small_rows, small_cache);
-
-        uint32_t wg_size;
-        switch (path) {
-        case FA_COOPMAT2:
-            wg_size = ((small_rows && (D % 32) == 0) ? 256 : 128);
-            break;
-        case FA_COOPMAT1:
-            wg_size = (rows_cols[1] / 16) * device->subgroup_size; // enough subgroups for Bc/MatBc
-            break;
-        default:
-            wg_size = scalar_flash_attention_workgroup_size;
-            break;
-        }
-
-        // D_split can't be larger than a subgroup because we use subgroupShuffle to reduce it.
-        // D_split can't be larger than the LSB of D divided by 4 due to vectorization in the shader.
-        const uint32_t D_lsb = D ^ (D & (D-1));
-        uint32_t D_split = std::min(std::min(device->subgroup_size, 8u), D_lsb / 4);
-
-        // Nvidia prefers shared memory use to load large tiles of K.
-        // Switch to loading from global memory when it would use too much shared memory.
-        // AMD prefers loading K directly from global memory
-        const uint32_t k_load_shmem = device->vendor_id == VK_VENDOR_ID_NVIDIA && hsk < 256 ? 1 : 0;
-
-        return {wg_size, rows_cols[0], rows_cols[1], hsk, hsv, clamp, D_split, device->subgroup_size, k_load_shmem, flags};
-    };
-
 #define CREATE_FA(TYPE, NAMELC, FAPATH, SUFFIX) \
         for (auto &fa : device->pipeline_flash_attn_f32_f16[TYPE]) { \
-            uint32_t HSK = fa.first.HSK; \
-            uint32_t HSV = fa.first.HSV; \
-            bool small_rows = fa.first.small_rows; \
-            bool small_cache = fa.first.small_cache; \
             FaCodePath path = fa.first.path; \
+            uint32_t Br = fa.first.Br; \
+            uint32_t Bc = fa.first.Bc; \
             bool aligned = fa.first.aligned; \
             bool f32acc = fa.first.f32acc; \
-            uint32_t flags = fa.first.flags; \
+            uint32_t fa_sgs = fa.first.subgroup_size; \
+            bool fa_ds = fa.first.subgroup_size == 0; \
             if (path == FAPATH) { \
                 if (aligned) { \
                     if (f32acc) { \
-                        ggml_vk_create_pipeline(device, fa.second, "flash_attn_f32_f16_aligned_f32acc" #NAMELC, flash_attn_f32_f16_ ## NAMELC ##            SUFFIX ## _len,  flash_attn_f32_f16_ ## NAMELC ##            SUFFIX ## _data,  "main", 7, sizeof(vk_flash_attn_push_constants), fa_wg_denoms(FAPATH, HSK,HSV,0,TYPE,small_rows,small_cache), fa_spec_constants(FAPATH, HSK,HSV,0,TYPE,small_rows,small_cache,flags), fa_align(FAPATH,HSK,HSV,TYPE,small_rows,small_cache), true, FAPATH==FA_COOPMAT1, (FAPATH==FA_COOPMAT1 ? device->subgroup_size : 0));     \
+                        ggml_vk_create_pipeline(device, fa.second, "flash_attn_f32_f16_aligned_f32acc" #NAMELC, flash_attn_f32_f16_ ## NAMELC ##            SUFFIX ## _len,  flash_attn_f32_f16_ ## NAMELC ##            SUFFIX ## _data,  "main", 7, sizeof(vk_flash_attn_push_constants), {Br, 1, 1}, get_fa_spec_constants(fa.first), Bc, true, (!fa_ds && (FAPATH!=FA_COOPMAT2)), ((!fa_ds && (FAPATH!=FA_COOPMAT2)) ? fa_sgs : 0));     \
                     } else { \
-                        ggml_vk_create_pipeline(device, fa.second, "flash_attn_f32_f16_aligned_f16acc" #NAMELC, flash_attn_f32_f16_ ## NAMELC ## _f16acc ## SUFFIX ## _len,  flash_attn_f32_f16_ ## NAMELC ## _f16acc ## SUFFIX ## _data,  "main", 7, sizeof(vk_flash_attn_push_constants), fa_wg_denoms(FAPATH, HSK,HSV,0,TYPE,small_rows,small_cache), fa_spec_constants(FAPATH, HSK,HSV,0,TYPE,small_rows,small_cache,flags), fa_align(FAPATH,HSK,HSV,TYPE,small_rows,small_cache), true, FAPATH==FA_COOPMAT1, (FAPATH==FA_COOPMAT1 ? device->subgroup_size : 0));     \
+                        ggml_vk_create_pipeline(device, fa.second, "flash_attn_f32_f16_aligned_f16acc" #NAMELC, flash_attn_f32_f16_ ## NAMELC ## _f16acc ## SUFFIX ## _len,  flash_attn_f32_f16_ ## NAMELC ## _f16acc ## SUFFIX ## _data,  "main", 7, sizeof(vk_flash_attn_push_constants), {Br, 1, 1}, get_fa_spec_constants(fa.first), Bc, true, (!fa_ds && (FAPATH!=FA_COOPMAT2)), ((!fa_ds && (FAPATH!=FA_COOPMAT2)) ? fa_sgs : 0));     \
                     } \
                 } else { \
                     if (f32acc) { \
-                        ggml_vk_create_pipeline(device, fa.second, "flash_attn_f32_f16_f32acc"         #NAMELC, flash_attn_f32_f16_ ## NAMELC ##            SUFFIX ## _len,  flash_attn_f32_f16_ ## NAMELC ##            SUFFIX ## _data,  "main", 7, sizeof(vk_flash_attn_push_constants), fa_wg_denoms(FAPATH, HSK,HSV,1,TYPE,small_rows,small_cache), fa_spec_constants(FAPATH, HSK,HSV,1,TYPE,small_rows,small_cache,flags), 1,                                        true, FAPATH==FA_COOPMAT1, (FAPATH==FA_COOPMAT1 ? device->subgroup_size : 0));     \
+                        ggml_vk_create_pipeline(device, fa.second, "flash_attn_f32_f16_f32acc"         #NAMELC, flash_attn_f32_f16_ ## NAMELC ##            SUFFIX ## _len,  flash_attn_f32_f16_ ## NAMELC ##            SUFFIX ## _data,  "main", 7, sizeof(vk_flash_attn_push_constants), {Br, 1, 1}, get_fa_spec_constants(fa.first), 1,  true, (!fa_ds && (FAPATH!=FA_COOPMAT2)), ((!fa_ds && (FAPATH!=FA_COOPMAT2)) ? fa_sgs : 0));     \
                     } else { \
-                        ggml_vk_create_pipeline(device, fa.second, "flash_attn_f32_f16_f16acc"         #NAMELC, flash_attn_f32_f16_ ## NAMELC ## _f16acc ## SUFFIX ## _len,  flash_attn_f32_f16_ ## NAMELC ## _f16acc ## SUFFIX ## _data,  "main", 7, sizeof(vk_flash_attn_push_constants), fa_wg_denoms(FAPATH, HSK,HSV,1,TYPE,small_rows,small_cache), fa_spec_constants(FAPATH, HSK,HSV,1,TYPE,small_rows,small_cache,flags), 1,                                        true, FAPATH==FA_COOPMAT1, (FAPATH==FA_COOPMAT1 ? device->subgroup_size : 0));     \
+                        ggml_vk_create_pipeline(device, fa.second, "flash_attn_f32_f16_f16acc"         #NAMELC, flash_attn_f32_f16_ ## NAMELC ## _f16acc ## SUFFIX ## _len,  flash_attn_f32_f16_ ## NAMELC ## _f16acc ## SUFFIX ## _data,  "main", 7, sizeof(vk_flash_attn_push_constants), {Br, 1, 1}, get_fa_spec_constants(fa.first), 1,  true, (!fa_ds && (FAPATH!=FA_COOPMAT2)), ((!fa_ds && (FAPATH!=FA_COOPMAT2)) ? fa_sgs : 0));     \
                     } \
                 } \
             } \
         }
 
-    CREATE_FA(GGML_TYPE_F32, f32, FA_SCALAR, )
-    CREATE_FA(GGML_TYPE_F16, f16, FA_SCALAR, )
-    CREATE_FA(GGML_TYPE_Q4_0, q4_0, FA_SCALAR, )
-    CREATE_FA(GGML_TYPE_Q8_0, q8_0, FA_SCALAR, )
+    if (device->flash_attention_fp16) {
+        CREATE_FA(GGML_TYPE_F32, f32, FA_SCALAR, )
+        CREATE_FA(GGML_TYPE_F16, f16, FA_SCALAR, )
+        CREATE_FA(GGML_TYPE_Q4_0, q4_0, FA_SCALAR, )
+        CREATE_FA(GGML_TYPE_Q8_0, q8_0, FA_SCALAR, )
+    } else {
+        CREATE_FA(GGML_TYPE_F32, f32, FA_SCALAR, _fp32)
+        CREATE_FA(GGML_TYPE_F16, f16, FA_SCALAR, _fp32)
+        CREATE_FA(GGML_TYPE_Q4_0, q4_0, FA_SCALAR, _fp32)
+        CREATE_FA(GGML_TYPE_Q8_0, q8_0, FA_SCALAR, _fp32)
+    }
 #if defined(VK_KHR_cooperative_matrix) && defined(GGML_VULKAN_COOPMAT_GLSLC_SUPPORT)
     if (device->coopmat1_fa_support) {
         CREATE_FA(GGML_TYPE_F32, f32, FA_COOPMAT1, _cm1)
@@ -3782,10 +3914,12 @@ static void ggml_vk_load_shaders(vk_device& device) {
         && !device->coopmat_bf16_support
 #endif
         ) {
+        const uint32_t s_warptile_wm = device->subgroup_size == 8 ? 8 : 32;
+
         // use scalar tile sizes
         l_warptile = { 128, 128, 128, 16, subgroup_size_8 * 2, 64, 2, 4, 4, 1, subgroup_size_8 };
         m_warptile = { 128,  64,  64, 16, subgroup_size_8, 32, 2, 4, 2, 1, subgroup_size_8 };
-        s_warptile = { subgroup_size_16, 32, 32, 16, 32, 32, 2, 2, 2, 1, subgroup_size_8 };
+        s_warptile = { subgroup_size_32, 32, 32, 16, s_warptile_wm, 32, 2, 2, 2, 1, subgroup_size_8 };
 
         l_wg_denoms = {128, 128, 1 };
         m_wg_denoms = { 64,  64, 1 };
@@ -4535,6 +4669,7 @@ static void ggml_vk_load_shaders(vk_device& device) {
 }
 
 static bool ggml_vk_khr_cooperative_matrix_support(const vk::PhysicalDeviceProperties& props, const vk::PhysicalDeviceDriverProperties& driver_props, vk_device_architecture arch);
+static uint32_t ggml_vk_intel_shader_core_count(const vk::PhysicalDevice& vkdev);
 
 static vk_device ggml_vk_get_device(size_t idx) {
     VK_LOG_DEBUG("ggml_vk_get_device(" << idx << ")");
@@ -4751,6 +4886,8 @@ static vk_device ggml_vk_get_device(size_t idx) {
             device->shader_core_count = sm_props.shaderSMCount;
         } else if (amd_shader_core_properties2) {
             device->shader_core_count = amd_shader_core_properties2_props.activeComputeUnitCount;
+        } else if (device->vendor_id == VK_VENDOR_ID_INTEL) {
+            device->shader_core_count = ggml_vk_intel_shader_core_count(device->physical_device);
         } else {
             device->shader_core_count = 0;
         }
@@ -4970,11 +5107,7 @@ static vk_device ggml_vk_get_device(size_t idx) {
 
 #if defined(VK_KHR_cooperative_matrix)
         device->coopmat_support = device->coopmat_support && coopmat_features.cooperativeMatrix;
-
-        // coopmat1 fa shader currently assumes 32 invocations per subgroup
-        device->coopmat1_fa_support = device->coopmat_support && device->subgroup_require_full_support &&
-                                      device->subgroup_size_control && device->subgroup_min_size <= 32 &&
-                                      device->subgroup_max_size >= 32;
+        device->coopmat1_fa_support = device->coopmat_support && device->subgroup_require_full_support;
 #endif
 
         if (coopmat2_support) {
@@ -5292,6 +5425,10 @@ static vk_device ggml_vk_get_device(size_t idx) {
             device->mmvq_mode = 1;
         }
 
+        // Driver issues with older AMD GPUs on Windows, see https://github.com/ggml-org/llama.cpp/pull/19625#issuecomment-3940840613
+        const bool is_amd_proprietary_gcn = device->vendor_id == VK_VENDOR_ID_AMD && device->architecture == AMD_GCN && device->driver_id == vk::DriverId::eAmdProprietary;
+        device->flash_attention_fp16 = device->fp16 && !is_amd_proprietary_gcn;
+
         return device;
     }
 
@@ -5542,6 +5679,10 @@ static void ggml_vk_instance_init() {
     vk_perf_logger_concurrent = getenv("GGML_VK_PERF_LOGGER_CONCURRENT") != nullptr;
     vk_enable_sync_logger = getenv("GGML_VK_SYNC_LOGGER") != nullptr;
     vk_memory_logger_enabled = getenv("GGML_VK_MEMORY_LOGGER") != nullptr;
+    const char* GGML_VK_PIPELINE_STATS = getenv("GGML_VK_PIPELINE_STATS");
+    if (GGML_VK_PIPELINE_STATS != nullptr) {
+        vk_pipeline_stats_filter = GGML_VK_PIPELINE_STATS;
+    }
     const char* GGML_VK_PERF_LOGGER_FREQUENCY = getenv("GGML_VK_PERF_LOGGER_FREQUENCY");
 
     if (GGML_VK_PERF_LOGGER_FREQUENCY != nullptr) {
@@ -8421,21 +8562,27 @@ static void ggml_vk_mul_mat_id(ggml_backend_vk_context * ctx, vk_context& subctx
     }
 }
 
-static bool ggml_vk_flash_attn_scalar_shmem_support(const vk_device& device, const uint32_t hsk, uint32_t hsv, bool small_cache) {
+static bool ggml_vk_flash_attn_scalar_shmem_support(const vk_device& device, const vk_fa_tuning_params& params, uint32_t hsk, uint32_t hsv, bool f32acc) {
+    GGML_UNUSED(f32acc);
     // Needs to be kept up to date on shader changes
-    GGML_UNUSED(hsv);
-    const uint32_t wg_size = scalar_flash_attention_workgroup_size;
-    const uint32_t Br = get_fa_scalar_num_large_rows(hsk, hsv, small_cache);
-    const uint32_t Bc = scalar_flash_attention_Bc;
+    const uint32_t wg_size = params.workgroup_size;
+    const uint32_t Br = params.block_rows;
+    const uint32_t Bc = params.block_cols;
 
+    const uint32_t float_type_size = device->flash_attention_fp16 ? sizeof(ggml_fp16_t) : sizeof(float);
+
+    // tmpsh is overestimated slightly
     const uint32_t tmpsh = wg_size * sizeof(float);
-    const uint32_t tmpshv4 = wg_size * 4 * sizeof(float);
+    const uint32_t tmpshv4 = wg_size * 4 * float_type_size;
 
-    const uint32_t masksh = Bc * Br * sizeof(float);
+    const uint32_t masksh = Bc * (Br + 1) * float_type_size;
 
-    const uint32_t Qf = Br * (hsk / 4 + 2) * 4 * sizeof(float);
+    const uint32_t Qf = Br * (hsk / 4 + 1) * 4 * float_type_size;
 
-    const uint32_t total_size = tmpsh + tmpshv4 + masksh + Qf;
+    const uint32_t D = std::max(hsk, hsv);
+    const uint32_t kvsh = params.shmem_staging ? Bc * (D / 4 + 1) * 4 * float_type_size : 4 * float_type_size;
+
+    const uint32_t total_size = tmpsh + tmpshv4 + masksh + Qf + kvsh;
     const bool supported = total_size <= device->properties.limits.maxComputeSharedMemorySize;
 
     VK_LOG_DEBUG("ggml_vk_flash_attn_scalar_shmem_support(HSK=" << hsk << ", HSV=" << hsv << ", total_size=" << total_size << ", supported=" << supported);
@@ -8443,18 +8590,17 @@ static bool ggml_vk_flash_attn_scalar_shmem_support(const vk_device& device, con
     return supported;
 }
 
-static bool ggml_vk_flash_attn_coopmat_shmem_support(const vk_device& device, const uint32_t hsk, uint32_t hsv, bool f32acc, ggml_type kv_type) {
+static bool ggml_vk_flash_attn_coopmat_shmem_support(const vk_device& device, const vk_fa_tuning_params& params, uint32_t hsk, uint32_t hsv, bool f32acc) {
     // Needs to be kept up to date on shader changes
-    GGML_UNUSED(hsv);
-    const auto rows_cols = fa_rows_cols(FA_COOPMAT1, hsk, hsv, 0, kv_type, false, false);
-    const uint32_t Br = rows_cols[0];
-    const uint32_t Bc = rows_cols[1];
+    const uint32_t Br = params.block_rows;
+    const uint32_t Bc = params.block_cols;
 
     const uint32_t MatBr = 16, MatBc = 16;
 
     const uint32_t row_split = Bc / MatBc;
 
     const uint32_t hsk_pad = ROUNDUP_POW2(hsk, 16);
+    const uint32_t hsv_pad = ROUNDUP_POW2(hsv, 16);
 
     const uint32_t acctype = f32acc ? 4 : 2;
     const uint32_t f16vec4 = 8;
@@ -8470,17 +8616,19 @@ static bool ggml_vk_flash_attn_coopmat_shmem_support(const vk_device& device, co
     const uint32_t sfshstride = (hsk <= 128) ? (Br + 8) : Br;
     const uint32_t sfsh = Bc * sfshstride * acctype;
 
-    const bool k_load_shmem = device->vendor_id == VK_VENDOR_ID_NVIDIA && hsk < 256;
-    const uint32_t kshstride = (k_load_shmem ? hsk_pad : MatBr) / 4 + 2;
+    const uint32_t kvshstride = (params.shmem_staging ? std::max(hsk_pad, hsv_pad) : MatBr) / 4 + 2;
     const uint32_t vsh_stride = MatBc / 4 * row_split;
-    const uint32_t ksh = ((kshstride >= vsh_stride) ? (Bc * kshstride) : (Bc * vsh_stride)) * f16vec4;
+    const uint32_t ksh = ((kvshstride >= vsh_stride) ? (Bc * kvshstride) : (Bc * vsh_stride)) * f16vec4;
+
+    const uint32_t osh_stride = params.row_split * MatBr / 4;
+    const uint32_t pvsh = MatBc * osh_stride * f16vec4;
 
     const uint32_t slope = Br * acctype;
 
-    const uint32_t total_size = tmpsh + Qf + Psh + sfsh + ksh + slope;
+    const uint32_t total_size = tmpsh + Qf + Psh + sfsh + ksh + pvsh + slope;
     const bool supported = total_size <= device->properties.limits.maxComputeSharedMemorySize;
 
-    VK_LOG_DEBUG("ggml_vk_flash_attn_coopmat_shmem_support(HSK=" << hsk << ", HSV=" << hsv << ", f32acc=" << f32acc << ", kv_type=" << kv_type << ", total_size=" << total_size << ", supported=" << supported);
+    VK_LOG_DEBUG("ggml_vk_flash_attn_coopmat_shmem_support(HSK=" << hsk << ", HSV=" << hsv << ", f32acc=" << f32acc << ", total_size=" << total_size << ", supported=" << supported);
 
     return supported;
 }
@@ -8538,48 +8686,18 @@ static void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx
     assert(q->type == GGML_TYPE_F32);
     assert(k->type == v->type);
 
-    FaCodePath path = ctx->device->coopmat2 ? FA_COOPMAT2 :
-                      ctx->device->coopmat1_fa_support ? FA_COOPMAT1 : FA_SCALAR;
-
-    if (path == FA_COOPMAT1 && ctx->device->architecture == vk_device_architecture::NVIDIA_TURING) {
-        // Nvidia compiler bug, see https://github.com/ggml-org/llama.cpp/pull/19075#issuecomment-3820716090
-        path = FA_SCALAR;
-    }
-
-    if (path == FA_COOPMAT1) {
-        const bool coopmat_shape_supported = (dst->op_params[3] == GGML_PREC_F32 && ctx->device->coopmat_support_16x16x16_f32acc) ||
-                                             (dst->op_params[3] != GGML_PREC_F32 && ctx->device->coopmat_support_16x16x16_f16acc);
-
-        const bool coopmat_shmem_supported = ggml_vk_flash_attn_coopmat_shmem_support(ctx->device, HSK, HSV, dst->op_params[3] == GGML_PREC_F32, k->type);
-
-        if (!coopmat_shape_supported || !coopmat_shmem_supported) {
-            path = FA_SCALAR;
-        }
-    }
-
     uint32_t gqa_ratio = 1;
     uint32_t qk_ratio = neq2 / nek2;
     uint32_t workgroups_x = (uint32_t)neq1;
     uint32_t workgroups_y = (uint32_t)neq2;
     uint32_t workgroups_z = (uint32_t)neq3;
 
-    const bool small_cache = nek1 < 1024;
+    const bool f32acc = !ctx->device->flash_attention_fp16 || dst->op_params[3] == GGML_PREC_F32;
 
     // For scalar/coopmat1 FA, we can use the "large" size to accommodate qga.
     // For coopmat2 FA, we always use the small size (which is still pretty large for gqa).
-    uint32_t max_gqa;
-    switch (path) {
-    case FA_SCALAR:
-    case FA_COOPMAT1:
-        // We may switch from coopmat1 to scalar, so use the scalar limit for both
-        max_gqa = get_fa_scalar_num_large_rows(HSK, HSV, small_cache);
-        break;
-    case FA_COOPMAT2:
-        max_gqa = get_fa_num_small_rows(FA_COOPMAT2);
-        break;
-    default:
-        GGML_ASSERT(0);
-    }
+    vk_fa_tuning_params tuning_params = get_fa_tuning_params(ctx->device, HSK, HSV, 512, KV, k->type, f32acc);
+    const uint32_t max_gqa = std::min(tuning_params.block_rows, 32u);
 
     if (N <= 8 && qk_ratio > 1 && qk_ratio <= max_gqa &&
         qk_ratio * nek2 == neq2 && nek2 == nev2 && nem2 <= 1) {
@@ -8591,24 +8709,7 @@ static void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx
         workgroups_y /= gqa_ratio;
     }
 
-    bool small_rows = N <= get_fa_num_small_rows(path);
-
-    // coopmat1 does not actually support "small rows" (it needs 16 rows).
-    // So use scalar instead.
-    if (small_rows && path == FA_COOPMAT1) {
-        path = FA_SCALAR;
-    }
-
-    // scalar is faster than coopmat2 when N==1
-    if (N == 1 && path == FA_COOPMAT2) {
-        path = FA_SCALAR;
-    }
-
-    // with large hsk/hsv, scalar path may need to use small_rows to fit in shared memory
-    if (path == FA_SCALAR &&
-        !ggml_vk_flash_attn_scalar_shmem_support(ctx->device, HSK, HSV, small_cache)) {
-        small_rows = true;
-    }
+    tuning_params = get_fa_tuning_params(ctx->device, HSK, HSV, N, KV, k->type, f32acc);
 
     const uint32_t q_stride = (uint32_t)(nbq1 / ggml_type_size(q->type));
     uint32_t k_stride = (uint32_t)(nbk1 / ggml_type_size(k->type));
@@ -8622,17 +8723,15 @@ static void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx
         v_stride /= 4;
     }
 
-    uint32_t alignment = fa_align(path, HSK, HSV, k->type, small_rows, small_cache);
+    const uint32_t alignment = tuning_params.block_cols;
     bool aligned = (KV % alignment) == 0 &&
                    // the "aligned" shader variant will forcibly align strides, for performance
                    (q_stride & 7) == 0 && (k_stride & 7) == 0 && (v_stride & 7) == 0;
 
     // Need to use the coopmat2 variant that clamps loads when HSK/HSV aren't sufficiently aligned.
-    if (((HSK | HSV) % 16) != 0 && path == FA_COOPMAT2) {
+    if (((HSK | HSV) % 16) != 0 && tuning_params.path == FA_COOPMAT2) {
         aligned = false;
     }
-
-    bool f32acc = path == FA_SCALAR || dst->op_params[3] == GGML_PREC_F32;
 
     float scale         = 1.0f;
     float max_bias      = 0.0f;
@@ -8648,12 +8747,8 @@ static void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx
 
     // Only use mask opt when the mask is fairly large. This hasn't been tuned extensively.
     bool use_mask_opt = mask && nem1 >= 32 && nem0 * nem1 > 32768;
-
-    uint32_t flags = (use_mask_opt       ? 1 : 0) |
-                     (mask != nullptr    ? 2 : 0) |
-                     (logit_softcap != 0 ? 4 : 0);
-
-    vk_fa_pipeline_state fa_pipeline_state(HSK, HSV, small_rows, small_cache, path, aligned, f32acc, flags);
+    vk_fa_pipeline_state fa_pipeline_state = get_fa_pipeline_state(tuning_params, HSK, HSV, aligned, f32acc,
+                                                                   mask != nullptr, use_mask_opt, logit_softcap != 0);
 
     vk_pipeline pipeline = nullptr;
 
@@ -8675,20 +8770,33 @@ static void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx
     uint32_t split_kv = KV;
     uint32_t split_k = 1;
 
+    // Intel Alchemist prefers more workgroups
+    const uint32_t shader_core_count_multiplier = (ctx->device->vendor_id == VK_VENDOR_ID_INTEL && ctx->device->architecture != INTEL_XE2) ? 2 : 1;
+
     // Use a placeholder core count if one isn't available. split_k is a big help for perf.
-    const uint32_t shader_core_count = ctx->device->shader_core_count ? ctx->device->shader_core_count : 16;
+    const uint32_t shader_core_count = ctx->device->shader_core_count ? ctx->device->shader_core_count * shader_core_count_multiplier : 16;
+
+    const uint32_t Br = fa_pipeline_state.Br;
+    const uint32_t Bc = fa_pipeline_state.Bc;
+
+    GGML_ASSERT(Br == pipeline->wg_denoms[0]);
+    const uint32_t Tr = CEIL_DIV(N, Br);
 
     // Try to use split_k when KV is large enough to be worth the overhead.
-    // Must either be a single batch or be using gqa, we can't mix the two.
-    if (workgroups_x <= pipeline->wg_denoms[0] && (workgroups_x == 1 || gqa_ratio > 1)) {
-        // Try to run two workgroups per SM.
+    if (gqa_ratio > 1 && workgroups_x <= Br) {
         split_k = shader_core_count * 2 / (workgroups_x * workgroups_y * workgroups_z);
-        if (split_k > 1) {
-            // Try to evenly split KV into split_k chunks, but it needs to be a multiple
-            // of "align", so recompute split_k based on that.
-            split_kv = ROUNDUP_POW2(std::max(1u, KV / split_k), alignment);
-            split_k = CEIL_DIV(KV, split_kv);
+    } else if (gqa_ratio <= 1) {
+        uint32_t total_wgs_no_split = Tr * workgroups_y * workgroups_z;
+        if (total_wgs_no_split < shader_core_count * 2) {
+            split_k = shader_core_count * 2 / total_wgs_no_split;
         }
+    }
+
+    if (split_k > 1) {
+        // Try to evenly split KV into split_k chunks, but it needs to be a multiple
+        // of "align", so recompute split_k based on that.
+        split_kv = ROUNDUP_POW2(std::max(1u, KV / split_k), alignment);
+        split_k = CEIL_DIV(KV, split_kv);
     }
 
     // Reserve space for split_k temporaries. For each split x batch, we need to store the O matrix (D x ne1)
@@ -8703,10 +8811,6 @@ static void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx
         ctx->prealloc_size_split_k = split_k_size;
         ggml_vk_preallocate_buffers(ctx, subctx);
     }
-
-    auto rows_cols = fa_rows_cols(path, HSK, HSV, !aligned, k->type, small_rows, small_cache);
-    const uint32_t Br = rows_cols[0];
-    const uint32_t Bc = rows_cols[1];
 
     const uint32_t mask_opt_num_dwords = CEIL_DIV(nem0, 16 * Bc);
     const uint64_t mask_opt_size = sizeof(uint32_t) * mask_opt_num_dwords * CEIL_DIV(nem1, Br) * nem2 * nem3;
@@ -8787,15 +8891,21 @@ static void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx
         if (ctx->prealloc_split_k_need_sync) {
             ggml_vk_sync_buffers(ctx, subctx);
         }
-        workgroups_x *= pipeline->wg_denoms[0];
+
+        // We reuse workgroups_x to mean the number of splits, so we need to
+        // cancel out the divide by wg_denoms[0].
+        uint32_t dispatch_x;
+        if (gqa_ratio > 1) {
+            workgroups_x *= pipeline->wg_denoms[0];
+            dispatch_x = split_k * workgroups_x;
+        } else {
+            dispatch_x = Tr * split_k * pipeline->wg_denoms[0];
+        }
+
         vk_subbuffer split_k_buf = ggml_vk_subbuffer(ctx, ctx->prealloc_split_k, 0);
         ggml_vk_dispatch_pipeline(ctx, subctx, pipeline,
                                     {q_buf, k_buf, v_buf, mask_buf, sinks_buf, split_k_buf, mask_opt_buf},
-                                    // We only use split_k when group query attention is enabled, which means
-                                    // there's no more than one tile of rows (i.e. workgroups_x would have been
-                                    // one). We reuse workgroups_x to mean the number of splits, so we need to
-                                    // cancel out the divide by wg_denoms[0].
-                                    pc, { split_k * workgroups_x, workgroups_y, workgroups_z });
+                                    pc, { dispatch_x, workgroups_y, workgroups_z });
 
         ggml_vk_sync_buffers(ctx, subctx);
         const vk_op_flash_attn_split_k_reduce_push_constants pc2 = { HSV, (uint32_t)ne1, (uint32_t)ne2, (uint32_t)ne3, split_k, (sinks != nullptr) };
@@ -15564,6 +15674,46 @@ static bool ggml_vk_khr_cooperative_matrix_support(const vk::PhysicalDevicePrope
     }
 }
 
+static uint32_t ggml_vk_intel_shader_core_count(const vk::PhysicalDevice& vkdev) {
+    VkPhysicalDeviceProperties2 props = vkdev.getProperties2();
+
+    if (props.properties.vendorID != VK_VENDOR_ID_INTEL) {
+        return 0;
+    }
+
+    const uint32_t device_id = props.properties.deviceID;
+
+    switch (device_id) {
+    case 0x56A6:  // A310
+        return 6;
+    case 0x5693:  // A370M
+    case 0x56A5:  // A380
+    case 0x56B1:  // Pro A40/A50
+        return 8;
+    case 0x5697:  // A530M
+        return 12;
+    case 0x5692:  // A550M
+    case 0x56B3:  // Pro A60
+        return 16;
+    case 0x56A2:  // A580
+        return 24;
+    case 0x5691:  // A730M
+    case 0x56A1:  // A750
+        return 28;
+    case 0x56A0:  // A770
+    case 0x5690:  // A770M
+        return 32;
+    case 0xE212:  // Pro B50
+        return 16;
+    case 0xE20C:  // B570
+        return 18;
+    case 0xE20B:  // B580
+        return 20;
+    default:
+        return 0;
+    }
+}
+
 // checks
 
 #ifdef GGML_VULKAN_CHECK_RESULTS
@@ -16240,7 +16390,7 @@ static void ggml_vk_check_results_1(ggml_backend_vk_context * ctx, ggml_cgraph *
         ggml_vk_print_graph_origin(tensor, done);
     }
 
-    if (avg_err > 0.5 || std::isnan(avg_err)) {
+    if (avg_err > 0.01 || std::isnan(avg_err)) {
         std::cerr << "ERROR: avg_err=" << avg_err << " in " << ggml_op_name(tensor->op) << " (check " << check_counter << ")" << std::endl;
         std::cerr << "tensor=" << tensor << " tensor->name=" << tensor->name << " tensor->type: " << ggml_type_name(tensor->type) << " ne0=" << tensor->ne[0] << " nb0=" << tensor->nb[0] << " ne1=" << tensor->ne[1] << " nb1=" << tensor->nb[1] << " ne2=" << tensor->ne[2] << " nb2=" << tensor->nb[2] << " ne3=" << tensor->ne[3] << " nb3=" << tensor->nb[3] << " offset=" << tensor->view_offs << std::endl;
         if (src0 != nullptr) {

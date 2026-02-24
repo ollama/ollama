@@ -854,6 +854,10 @@ static ggml_cgraph * clip_image_build_graph(clip_ctx * ctx, const clip_image_f32
             {
                 builder = std::make_unique<clip_graph_kimivl>(ctx, img);
             } break;
+        case PROJECTOR_TYPE_PADDLEOCR:
+            {
+                builder = std::make_unique<clip_graph_paddleocr>(ctx, img);
+            } break;
         case PROJECTOR_TYPE_KIMIK25:
             {
                 builder = std::make_unique<clip_graph_kimik25>(ctx, img);
@@ -1272,6 +1276,14 @@ struct clip_model_loader {
                         hparams.audio_n_fft        = 400;
                         hparams.audio_window_len   = 400;
                         hparams.audio_hop_len      = 160;
+                    } break;
+                case PROJECTOR_TYPE_PADDLEOCR:
+                    {
+                        hparams.n_merge = 2;
+                        get_u32(KEY_IMAGE_MIN_PIXELS, hparams.image_min_pixels);
+                        get_u32(KEY_IMAGE_MAX_PIXELS, hparams.image_max_pixels);
+
+                        hparams.set_warmup_n_tokens(28*28); // avoid OOM on warmup
                     } break;
                 case PROJECTOR_TYPE_LFM2A:
                     {
@@ -1721,6 +1733,7 @@ struct clip_model_loader {
                     model.mm_2_b = get_tensor(string_format(TN_LLAVA_PROJ, 2, "bias"));
                 } break;
             case PROJECTOR_TYPE_KIMIVL:
+            case PROJECTOR_TYPE_PADDLEOCR:
             case PROJECTOR_TYPE_KIMIK25:
                 {
                     model.mm_input_norm_w = get_tensor(TN_MM_INP_NORM);
@@ -3033,6 +3046,7 @@ bool clip_image_preprocess(struct clip_ctx * ctx, const clip_image_u8 * img, str
         case PROJECTOR_TYPE_QWEN25VL:
         case PROJECTOR_TYPE_QWEN3VL:
         case PROJECTOR_TYPE_GLM4V:
+        case PROJECTOR_TYPE_PADDLEOCR:
             {
                 GGML_ASSERT(params.image_min_pixels > 0 && params.image_max_pixels > 0);
                 clip_image_u8 resized;
@@ -3373,6 +3387,7 @@ int clip_n_output_tokens_x(const struct clip_ctx * ctx, struct clip_image_f32 * 
         case PROJECTOR_TYPE_QWEN25VL:
         case PROJECTOR_TYPE_QWEN3VL:
         case PROJECTOR_TYPE_GLM4V:
+        case PROJECTOR_TYPE_PADDLEOCR:
         case PROJECTOR_TYPE_YOUTUVL:
             return (img->nx / params.patch_size) / 2;
         default:
@@ -3389,6 +3404,7 @@ int clip_n_output_tokens_y(const struct clip_ctx * ctx, struct clip_image_f32 * 
         case PROJECTOR_TYPE_QWEN25VL:
         case PROJECTOR_TYPE_QWEN3VL:
         case PROJECTOR_TYPE_GLM4V:
+        case PROJECTOR_TYPE_PADDLEOCR:
         case PROJECTOR_TYPE_YOUTUVL:
             return (img->ny / params.patch_size) / 2;
         default:
@@ -3485,6 +3501,13 @@ int clip_n_output_tokens(const struct clip_ctx * ctx, struct clip_image_f32 * im
                 int x_patch = CLIP_ALIGN(img->nx, out_patch_size) / out_patch_size;
                 int y_patch = CLIP_ALIGN(img->ny, out_patch_size) / out_patch_size;
                 n_patches = x_patch * y_patch;
+            } break;
+        case PROJECTOR_TYPE_PADDLEOCR:
+            {
+                // dynamic size
+                int n_merge = ctx->model.hparams.n_merge;
+                int stride = n_merge * n_merge;
+                n_patches = CLIP_ALIGN(n_patches, stride) / stride;
             } break;
         case PROJECTOR_TYPE_PIXTRAL:
         case PROJECTOR_TYPE_LIGHTONOCR:
@@ -3722,6 +3745,30 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
                 for (int y = 0; y < ph; y += merge_ratio) {
                     for (int x = 0; x < pw; x += merge_ratio) {
                         for (int dy = 0; dy < 2; dy++) {
+                            for (int dx = 0; dx < 2; dx++) {
+                                positions[                  ptr] = y + dy;
+                                positions[    num_patches + ptr] = x + dx;
+                                positions[2 * num_patches + ptr] = y + dy;
+                                positions[3 * num_patches + ptr] = x + dx;
+                                ptr++;
+                            }
+                        }
+                    }
+                }
+
+                set_input_i32("positions", positions);
+            } break;
+        case PROJECTOR_TYPE_PADDLEOCR:
+            {
+                const int merge_ratio = hparams.n_merge;
+                const int pw = image_size_width  / patch_size;
+                const int ph = image_size_height / patch_size;
+                std::vector<int> positions(n_pos * 4);
+                int ptr = 0;
+                // NOTE: same as Qwen-VL, but x and y are swapped
+                for (int y = 0; y < ph; y += merge_ratio) {
+                    for (int dy = 0; dy < 2; dy++) {
+                        for (int x = 0; x < pw; x += merge_ratio) {
                             for (int dx = 0; dx < 2; dx++) {
                                 positions[                  ptr] = y + dy;
                                 positions[    num_patches + ptr] = x + dx;
@@ -4046,6 +4093,7 @@ int clip_n_mmproj_embd(const struct clip_ctx * ctx) {
             return ctx->model.mm_2_w->ne[1];
         case PROJECTOR_TYPE_LFM2:
         case PROJECTOR_TYPE_KIMIVL:
+        case PROJECTOR_TYPE_PADDLEOCR:
         case PROJECTOR_TYPE_KIMIK25:
             return ctx->model.mm_2_w->ne[1];
         case PROJECTOR_TYPE_COGVLM:

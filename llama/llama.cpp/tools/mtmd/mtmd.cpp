@@ -335,6 +335,10 @@ struct mtmd_context {
             img_beg = "<|begin_of_image|>";
             img_end = "<|end_of_image|>";
 
+        } else if (proj == PROJECTOR_TYPE_PADDLEOCR) {
+            // <|IMAGE_START|> ... (image embeddings) ... <|IMAGE_END|>
+            img_beg = "<|IMAGE_START|>";
+            img_end = "<|IMAGE_END|>";
         }
     }
 
@@ -900,6 +904,7 @@ bool mtmd_decode_use_mrope(mtmd_context * ctx) {
         case PROJECTOR_TYPE_QWEN25VL:
         case PROJECTOR_TYPE_QWEN3VL:
         case PROJECTOR_TYPE_GLM4V:
+        case PROJECTOR_TYPE_PADDLEOCR:
             return true;
         default:
             return false;

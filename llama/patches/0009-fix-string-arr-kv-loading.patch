@@ -53,7 +53,7 @@ index ed0d7f2ca..db55f6ed1 100644
  }
  
 diff --git a/src/llama-vocab.cpp b/src/llama-vocab.cpp
-index ec118df97..1e1779904 100644
+index 7e03a532f..8c7972d1b 100644
 --- a/src/llama-vocab.cpp
 +++ b/src/llama-vocab.cpp
 @@ -1827,9 +1827,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {

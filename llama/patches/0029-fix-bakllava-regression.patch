@@ -9,10 +9,10 @@ Rever to prior logic of assuming an empty projector type is mlp
  1 file changed, 4 insertions(+)
 
 diff --git a/tools/mtmd/clip.cpp b/tools/mtmd/clip.cpp
-index 3ea3fd9b3..f6a2ad8b8 100644
+index d12110a5c..db83c9ecf 100644
 --- a/tools/mtmd/clip.cpp
 +++ b/tools/mtmd/clip.cpp
-@@ -988,6 +988,10 @@ struct clip_model_loader {
+@@ -992,6 +992,10 @@ struct clip_model_loader {
              if (proj_type.empty()) {
                  if (modality == CLIP_MODALITY_VISION) {
                      get_string(KEY_VISION_PROJ_TYPE, proj_type, false);

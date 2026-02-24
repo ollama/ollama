@@ -3104,10 +3104,6 @@ static bool ggml_cuda_graph_update_required(ggml_backend_cuda_context * cuda_ctx
     const void * graph_key = ggml_cuda_graph_get_key(cgraph);
     ggml_cuda_graph * graph = cuda_ctx->cuda_graph(graph_key);
 
-    if (graph->instance == nullptr) {
-        res = true;
-    }
-
     // Check if the graph size has changed
     if (graph->props.size() != (size_t)cgraph->n_nodes) {
         res = true;
@@ -4064,14 +4060,35 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, 
 #ifdef USE_CUDA_GRAPH
     graph_key = ggml_cuda_graph_get_key(cgraph);
 
-    use_cuda_graph = ggml_cuda_graph_set_enabled(cuda_ctx, graph_key);
+    ggml_cuda_graph_set_enabled(cuda_ctx, graph_key);
 
     ggml_cuda_graph * graph = cuda_ctx->cuda_graph(graph_key);
     if (graph->is_enabled()) {
-        cuda_graph_update_required = ggml_cuda_graph_update_required(cuda_ctx, cgraph);
-        use_cuda_graph             = ggml_cuda_graph_check_compability(cgraph);
+        const bool graph_compatible = ggml_cuda_graph_check_compability(cgraph);
+        if (graph_compatible) {
+            const bool properties_changed = ggml_cuda_graph_update_required(cuda_ctx, cgraph);
 
-        graph->record_update(use_cuda_graph, cuda_graph_update_required);
+            if (!graph->warmup_complete) {
+                // Warmup: need at least 2 calls with no property change on the 2nd call
+                if (!properties_changed) {
+                    graph->warmup_complete = true;
+                    GGML_LOG_DEBUG("%s: CUDA graph warmup complete\n", __func__);
+                    use_cuda_graph = true;
+                    cuda_graph_update_required = true;
+                }
+                // else: properties changed or first call - execute directly (use_cuda_graph stays false)
+            } else {
+                // Post-warmup: normal CUDA graph operation
+                if (properties_changed) {
+                    // Properties changed - reset warmup, execute directly until stable again
+                    graph->warmup_complete = false;
+                    GGML_LOG_DEBUG("%s: CUDA graph warmup reset\n", __func__);
+                } else {
+                    use_cuda_graph = true;
+                    cuda_graph_update_required = graph->instance == nullptr;
+                }
+            }
+        }
     }
 #endif // USE_CUDA_GRAPH
 

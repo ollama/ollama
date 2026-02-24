@@ -190,6 +190,10 @@ struct llm_build_ernie4_5_moe : public llm_graph_context {
     llm_build_ernie4_5_moe(const llama_model & model, const llm_graph_params & params);
 };
 
+struct llm_build_paddleocr : public llm_graph_context {
+    llm_build_paddleocr(const llama_model & model, const llm_graph_params & params);
+};
+
 template <bool iswa>
 struct llm_build_exaone4 : public llm_graph_context {
     llm_build_exaone4(const llama_model & model, const llm_graph_params & params);

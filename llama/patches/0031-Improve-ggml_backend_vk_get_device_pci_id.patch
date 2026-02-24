@@ -8,10 +8,10 @@ Subject: [PATCH] Improve ggml_backend_vk_get_device_pci_id
  1 file changed, 20 insertions(+), 11 deletions(-)
 
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index aec5e2642..d285a5ff9 100644
+index da80c7076..d4c5f480b 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -14548,10 +14548,10 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
+@@ -14658,10 +14658,10 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
  
      const std::vector<vk::ExtensionProperties> ext_props = device.enumerateDeviceExtensionProperties();
  
@@ -25,7 +25,7 @@ index aec5e2642..d285a5ff9 100644
              ext_support = true;
              break;
          }
-@@ -14565,18 +14565,27 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
+@@ -14675,18 +14675,27 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
      vk::PhysicalDevicePCIBusInfoPropertiesEXT pci_bus_info = {};
  
      props.pNext = &pci_bus_info;

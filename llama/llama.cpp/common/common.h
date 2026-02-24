@@ -804,6 +804,23 @@ void common_batch_add(
     const std::vector<llama_seq_id> & seq_ids,
                                bool   logits);
 
+// decodes a single batch of tokens for a prompt and manages session tokens
+//
+// Note: We save state before the last token so that we can replay it to ensure
+// compatibility with all memory types. Recurrent/hybrid models cannot remove
+// tokens from memory, so this approach works across all model architectures.
+bool common_prompt_batch_decode(
+              struct llama_context * ctx,
+    const std::vector<llama_token> & embd,
+                               int & n_past,
+                               int   n_batch,
+                  std::string_view   state_path,
+                              bool   save_state);
+
+// replays the last token after loading state to regenerate logits
+// used after loading session state to ensure the sampling context has valid logits
+bool common_replay_last_token(struct llama_context * ctx, llama_token last_token, int32_t pos);
+
 //
 // Vocab utils
 //

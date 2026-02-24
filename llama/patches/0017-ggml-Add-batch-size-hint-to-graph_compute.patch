@@ -198,10 +198,10 @@ index ddf1737a3..622cf5d24 100644
  
  static const struct ggml_backend_i ggml_backend_cpu_i = {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 571cb9634..6ac06500f 100644
+index 3f56beab8..0ab859d3c 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -3974,9 +3974,11 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
+@@ -3970,9 +3970,11 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
  }
  #endif // USE_CUDA_GRAPH
  
@@ -215,10 +215,10 @@ index 571cb9634..6ac06500f 100644
  
      bool use_cuda_graph             = false;
 diff --git a/ggml/src/ggml-hexagon/ggml-hexagon.cpp b/ggml/src/ggml-hexagon/ggml-hexagon.cpp
-index 54f998649..57b47e8ab 100644
+index 7a44443a8..6d46006b5 100644
 --- a/ggml/src/ggml-hexagon/ggml-hexagon.cpp
 +++ b/ggml/src/ggml-hexagon/ggml-hexagon.cpp
-@@ -2543,9 +2543,11 @@ static inline int last_compute_op(ggml_cgraph * graph) {
+@@ -2489,9 +2489,11 @@ static inline int last_compute_op(ggml_cgraph * graph) {
      return last;
  }
  
@@ -300,10 +300,10 @@ index 336172700..9e1e2510e 100644
      bool use_sycl_graph = !g_ggml_sycl_disable_graph && check_graph_compatibility(cgraph);
      if (use_sycl_graph) {
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index a73b0a1ca..77887b990 100644
+index 4352abdd3..64f6ca78a 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -13834,8 +13834,9 @@ static uint32_t ggml_vk_fuse_multi_add(ggml_backend_vk_context * ctx, const stru
+@@ -13944,8 +13944,9 @@ static uint32_t ggml_vk_fuse_multi_add(ggml_backend_vk_context * ctx, const stru
      return num_adds;
  }
  
@@ -315,10 +315,10 @@ index a73b0a1ca..77887b990 100644
  
      if (vk_instance.debug_utils_support) {
 diff --git a/ggml/src/ggml-webgpu/ggml-webgpu.cpp b/ggml/src/ggml-webgpu/ggml-webgpu.cpp
-index b5fee4805..abd8c79ee 100644
+index 1c00d3cb2..5e6859506 100644
 --- a/ggml/src/ggml-webgpu/ggml-webgpu.cpp
 +++ b/ggml/src/ggml-webgpu/ggml-webgpu.cpp
-@@ -2027,8 +2027,9 @@ static std::optional<webgpu_command> ggml_webgpu_encode_node(webgpu_context ctx,
+@@ -2035,8 +2035,9 @@ static std::optional<webgpu_command> ggml_webgpu_encode_node(webgpu_context ctx,
      }
  }
  

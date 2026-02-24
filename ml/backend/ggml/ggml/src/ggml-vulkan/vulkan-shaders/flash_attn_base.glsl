@@ -1,16 +1,18 @@
 
 layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
 
-layout (constant_id = 0) const uint32_t WorkGroupSize = 128;
-layout (constant_id = 1) const uint32_t Br = 1;
-layout (constant_id = 2) const uint32_t Bc = 32;
-layout (constant_id = 3) const uint32_t HSK = 32;
-layout (constant_id = 4) const uint32_t HSV = 32;
-layout (constant_id = 5) const uint32_t Clamp = 0;
-layout (constant_id = 6) const uint32_t D_split = 16;
-layout (constant_id = 7) const uint32_t SubGroupSize = 32;
-layout (constant_id = 8) const uint32_t K_LOAD_SHMEM = 0;
-layout (constant_id = 9) const uint32_t Flags = 0;
+layout (constant_id =  0) const uint32_t WorkGroupSize = 128;
+layout (constant_id =  1) const uint32_t Br = 1;
+layout (constant_id =  2) const uint32_t Bc = 32;
+layout (constant_id =  3) const uint32_t HSK = 32;
+layout (constant_id =  4) const uint32_t HSV = 32;
+layout (constant_id =  5) const uint32_t Clamp = 0;
+layout (constant_id =  6) const uint32_t D_split = 16;
+layout (constant_id =  7) const uint32_t row_split = 1;
+layout (constant_id =  8) const uint32_t SubGroupSize = 32;
+layout (constant_id =  9) const uint32_t SHMEM_STAGING = 0;
+layout (constant_id = 10) const uint32_t Flags = 0;
+layout (constant_id = 11) const uint32_t LIMIT_OCCUPANCY_SHMEM = 0;
 
 const bool USE_MASK_OPT  = (Flags & 1) != 0;
 const bool MASK_ENABLE   = (Flags & 2) != 0;
@@ -69,6 +71,7 @@ layout (push_constant) uniform parameter {
 layout (binding = 4) readonly buffer S {float data_s[];};
 
 layout (binding = 5) writeonly buffer O {D_TYPE data_o[];};
+layout (binding = 5) writeonly buffer OV4 {D_TYPEV4 data_ov4[];};
 
 layout (binding = 6) readonly buffer MO {uint32_t data_mask_opt[];};
 
@@ -94,12 +97,12 @@ layout (binding = 2) readonly buffer V_PACKED16 {A_TYPE_PACKED16 v_data_packed16
 #define BLOCK_SIZE 4
 #define BLOCK_BYTE_SIZE 16
 
-vec4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
+FLOAT_TYPEV4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
     // iqs is currently always zero in the flash attention shaders
     if (binding_idx == BINDING_IDX_K) {
-        return k_packed.k_data_packed[a_offset + ib];
+        return FLOAT_TYPEV4(k_packed.k_data_packed[a_offset + ib]);
     } else {
-        return v_packed.v_data_packed[a_offset + ib];
+        return FLOAT_TYPEV4(v_packed.v_data_packed[a_offset + ib]);
     }
 }
 #endif
@@ -107,7 +110,7 @@ vec4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
 #if defined(DATA_A_Q4_0)
 #define BLOCK_BYTE_SIZE 18
 
-vec4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
+FLOAT_TYPEV4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
     if (binding_idx == BINDING_IDX_K) {
         uint vui_lo = uint(k_packed.k_data_packed16[a_offset + ib].qs[(iqs & 0xF) / 2 + 0]);
         uint vui_hi = uint(k_packed.k_data_packed16[a_offset + ib].qs[(iqs & 0xF) / 2 + 1]);
@@ -115,7 +118,7 @@ vec4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
         vui_lo >>= shift;
         vui_hi >>= shift;
 
-        return float(k_packed.k_data_packed16[a_offset + ib].d) * (vec4(vui_lo & 0xF, (vui_lo >> 8) & 0xF, vui_hi & 0xF, (vui_hi >> 8) & 0xF) - 8.0f);
+        return FLOAT_TYPE(k_packed.k_data_packed16[a_offset + ib].d) * (FLOAT_TYPEV4(vui_lo & 0xF, (vui_lo >> 8) & 0xF, vui_hi & 0xF, (vui_hi >> 8) & 0xF) - FLOAT_TYPE(8.0f));
     } else {
         uint vui_lo = uint(v_packed.v_data_packed16[a_offset + ib].qs[(iqs & 0xF) / 2 + 0]);
         uint vui_hi = uint(v_packed.v_data_packed16[a_offset + ib].qs[(iqs & 0xF) / 2 + 1]);
@@ -123,24 +126,24 @@ vec4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
         vui_lo >>= shift;
         vui_hi >>= shift;
 
-        return float(v_packed.v_data_packed16[a_offset + ib].d) * (vec4(vui_lo & 0xF, (vui_lo >> 8) & 0xF, vui_hi & 0xF, (vui_hi >> 8) & 0xF) - 8.0f);
+        return FLOAT_TYPE(v_packed.v_data_packed16[a_offset + ib].d) * (FLOAT_TYPEV4(vui_lo & 0xF, (vui_lo >> 8) & 0xF, vui_hi & 0xF, (vui_hi >> 8) & 0xF) - FLOAT_TYPE(8.0f));
     }
 }
 #endif
 
 #if defined(DATA_A_Q8_0)
 #define BLOCK_BYTE_SIZE 34
-vec4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
+FLOAT_TYPEV4 dequantize4(uint ib, uint iqs, uint a_offset, uint binding_idx) {
     if (binding_idx == BINDING_IDX_K) {
         const i8vec2 v0 = unpack8(int32_t(k_packed.k_data_packed16[a_offset + ib].qs[iqs / 2])).xy; // vec4 used due to #12147
         const i8vec2 v1 = unpack8(int32_t(k_packed.k_data_packed16[a_offset + ib].qs[iqs / 2 + 1])).xy;
 
-        return float(k_packed.k_data_packed16[a_offset + ib].d) * vec4(v0.x, v0.y, v1.x, v1.y);
+        return FLOAT_TYPE(k_packed.k_data_packed16[a_offset + ib].d) * FLOAT_TYPEV4(v0.x, v0.y, v1.x, v1.y);
     } else {
         const i8vec2 v0 = unpack8(int32_t(v_packed.v_data_packed16[a_offset + ib].qs[iqs / 2])).xy; // vec4 used due to #12147
         const i8vec2 v1 = unpack8(int32_t(v_packed.v_data_packed16[a_offset + ib].qs[iqs / 2 + 1])).xy;
 
-        return float(v_packed.v_data_packed16[a_offset + ib].d) * vec4(v0.x, v0.y, v1.x, v1.y);
+        return FLOAT_TYPE(v_packed.v_data_packed16[a_offset + ib].d) * FLOAT_TYPEV4(v0.x, v0.y, v1.x, v1.y);
     }
 }
 #endif
@@ -189,10 +192,16 @@ void init_indices()
     KV = p.KV;
 
     if (p.k_num > 1) {
-        i = 0;
-        // batch and split_k share gl_WorkGroupID.x
-        gqa_iq1 = gl_WorkGroupID.x / p.k_num;
-        split_k_index = gl_WorkGroupID.x % p.k_num;
+        if (p.gqa_ratio > 1) {
+            i = 0;
+            // batch and split_k share gl_WorkGroupID.x
+            gqa_iq1 = gl_WorkGroupID.x / p.k_num;
+            split_k_index = gl_WorkGroupID.x % p.k_num;
+        } else {
+            gqa_iq1 = 0;
+            split_k_index = gl_WorkGroupID.x % p.k_num;
+            i = gl_WorkGroupID.x / p.k_num;
+        }
     } else if (p.gqa_ratio > 1) {
         i = 0;
         gqa_iq1 = gl_WorkGroupID.x;
@@ -244,3 +253,11 @@ void init_indices()
 // Bias applied to softmax to stay in fp16 range.
 // Based on ggml-cuda issue https://github.com/ggml-org/llama.cpp/issues/18606
 const float FATTN_KQ_MAX_OFFSET = 3.0f*0.6931f;
+
+// Store the output when doing grouped query attention.
+// Rows index by Q's dimension 2, and the first N rows are valid.
+void gqaStore(const in uint32_t r, const in uint32_t c, const in FLOAT_TYPEV4 elems, const in uint32_t o_offset, const in uint32_t iq2, const in uint32_t N)
+{
+    uint32_t offset = (iq2 + r) * HSV / 4 + c;
+    data_ov4[o_offset + offset] = D_TYPEV4(elems);
+}
