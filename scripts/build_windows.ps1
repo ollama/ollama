@@ -42,11 +42,12 @@ function checkEnv {
         write-host "No CUDA versions detected"
     }
 
-    # Locate ROCm version
-    if ($null -ne $env:HIP_PATH) {
+    # Locate ROCm v6
+    $rocmDir=(get-item "C:\Program Files\AMD\ROCm\6.*" -ea 'silentlycontinue' | sort-object -Descending | select-object -First 1)
+    if ($null -ne $rocmDir) {
+        $script:HIP_PATH=$rocmDir.FullName
+    } elseif ($null -ne $env:HIP_PATH -and $env:HIP_PATH -match '[/\\]6\.') {
         $script:HIP_PATH=$env:HIP_PATH
-    } else {
-        $script:HIP_PATH=(get-item "C:\Program Files\AMD\ROCm\*\bin\" -ea 'silentlycontinue' | sort-object -Descending)
     }
     
     $inoSetup=(get-item "C:\Program Files*\Inno Setup*\")
@@ -181,7 +182,7 @@ function cuda13 {
     cudaCommon("13")
 }
 
-function rocm {
+function rocm6 {
     mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
     if ($script:ARCH -ne "arm64") {
         if ($script:HIP_PATH) {
@@ -193,9 +194,11 @@ function rocm {
             $env:HIPCXX="${script:HIP_PATH}\bin\clang++.exe"
             $env:HIP_PLATFORM="amd"
             $env:CMAKE_PREFIX_PATH="${script:HIP_PATH}"
+            # Set CC/CXX via environment instead of -D flags to avoid triggering
+            # spurious compiler-change reconfigures that reset CMAKE_INSTALL_PREFIX
+            $env:CC="${script:HIP_PATH}\bin\clang.exe"
+            $env:CXX="${script:HIP_PATH}\bin\clang++.exe"
             & cmake -B build\rocm --preset "ROCm 6" -G Ninja `
-                -DCMAKE_C_COMPILER=clang `
-                -DCMAKE_CXX_COMPILER=clang++ `
                 -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
                 -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
                 --install-prefix $script:DIST_DIR
@@ -203,6 +206,8 @@ function rocm {
             $env:HIPCXX=""
             $env:HIP_PLATFORM=""
             $env:CMAKE_PREFIX_PATH=""
+            $env:CC=""
+            $env:CXX=""
             & cmake --build build\rocm --target ggml-hip --config Release --parallel $script:JOBS
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             & cmake --install build\rocm --component "HIP" --strip
@@ -375,7 +380,7 @@ try {
         cpu
         cuda12
         cuda13
-        rocm
+        rocm6
         vulkan
         ollama
         app
