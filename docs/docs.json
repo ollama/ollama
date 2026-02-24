@@ -107,19 +107,22 @@
             "pages": [
               "/integrations/index",
               {
+                "group": "Assistants",
+                "expanded": true,
+                "pages": [
+                  "/integrations/openclaw"
+                ]
+              },
+              {
                 "group": "Coding",
+                "expanded": true,
                 "pages": [
                   "/integrations/claude-code",
                   "/integrations/codex",
                   "/integrations/opencode",
                   "/integrations/droid",
-                  "/integrations/goose"
-                ]
-              },
-              {
-                "group": "Assistants",
-                "pages": [
-                  "/integrations/openclaw"
+                  "/integrations/goose",
+                  "/integrations/pi"
                 ]
               },
               {

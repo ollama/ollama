@@ -382,6 +382,42 @@ func TestUpdateNavigation_Backspace(t *testing.T) {
 	}
 }
 
+// --- cursorForCurrent ---
+
+func TestCursorForCurrent(t *testing.T) {
+	testItems := []SelectItem{
+		{Name: "llama3.2", Recommended: true},
+		{Name: "qwen3:8b", Recommended: true},
+		{Name: "gemma3:latest"},
+		{Name: "deepseek-r1"},
+		{Name: "glm-5:cloud"},
+	}
+
+	tests := []struct {
+		name    string
+		current string
+		want    int
+	}{
+		{"empty current", "", 0},
+		{"exact match", "qwen3:8b", 1},
+		{"no match returns 0", "nonexistent", 0},
+		{"bare name matches with :latest suffix", "gemma3", 2},
+		{"full tag matches bare item", "llama3.2:latest", 0},
+		{"cloud model exact match", "glm-5:cloud", 4},
+		{"cloud model bare name", "glm-5", 4},
+		{"recommended item exact match", "llama3.2", 0},
+		{"recommended item with tag", "qwen3", 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := cursorForCurrent(testItems, tt.current); got != tt.want {
+				t.Errorf("cursorForCurrent(%q) = %d, want %d", tt.current, got, tt.want)
+			}
+		})
+	}
+}
+
 // --- ReorderItems ---
 
 func TestReorderItems(t *testing.T) {
@@ -503,6 +539,7 @@ func TestMultiView_CursorIndicator(t *testing.T) {
 
 func TestMultiView_CheckedItemShowsX(t *testing.T) {
 	m := newMultiSelectorModel("Pick:", items("a", "b"), []string{"a"})
+	m.multi = true
 	content := m.View()
 
 	if !strings.Contains(content, "[x]") {
@@ -514,11 +551,18 @@ func TestMultiView_CheckedItemShowsX(t *testing.T) {
 }
 
 func TestMultiView_DefaultTag(t *testing.T) {
-	m := newMultiSelectorModel("Pick:", items("a", "b"), []string{"a"})
+	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), []string{"a", "b"})
+	m.multi = true
 	content := m.View()
 
 	if !strings.Contains(content, "(default)") {
-		t.Error("first checked item should have (default) tag")
+		t.Error("should have (default) tag")
+	}
+	// preChecked[0] ("a") should be the default (last in checkOrder)
+	aIdx := strings.Index(content, "a")
+	defaultIdx := strings.Index(content, "(default)")
+	if defaultIdx < aIdx {
+		t.Error("(default) tag should appear after 'a' (the current default)")
 	}
 }
 
@@ -549,6 +593,7 @@ func TestMultiView_OverflowIndicator(t *testing.T) {
 
 func TestMultiUpdate_SpaceTogglesItem(t *testing.T) {
 	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), nil)
+	m.multi = true
 	m.cursor = 1
 
 	// Simulate space delivered as tea.KeySpace
@@ -565,6 +610,7 @@ func TestMultiUpdate_SpaceTogglesItem(t *testing.T) {
 
 func TestMultiUpdate_SpaceRuneTogglesItem(t *testing.T) {
 	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), nil)
+	m.multi = true
 	m.cursor = 1
 
 	// Simulate space delivered as tea.KeyRunes (Windows PowerShell behavior)
@@ -579,6 +625,161 @@ func TestMultiUpdate_SpaceRuneTogglesItem(t *testing.T) {
 	}
 	if m.cursor != 1 {
 		t.Errorf("cursor should stay at 1, got %d", m.cursor)
+	}
+}
+
+// --- Single-add mode ---
+
+func TestMulti_StartsInSingleMode(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b"), nil)
+	if m.multi {
+		t.Error("should start in single mode (multi=false)")
+	}
+}
+
+func TestMulti_SingleModeNoCheckboxes(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b"), nil)
+	content := m.View()
+	if strings.Contains(content, "[x]") || strings.Contains(content, "[ ]") {
+		t.Error("single mode should not show checkboxes")
+	}
+	if !strings.Contains(content, "▸") {
+		t.Error("single mode should show cursor indicator")
+	}
+}
+
+func TestMulti_SingleModeEnterPicksItem(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), nil)
+	m.cursor = 1
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(multiSelectorModel)
+
+	if m.singleAdd != "b" {
+		t.Errorf("enter in single mode should pick cursor item, got %q", m.singleAdd)
+	}
+	if !m.confirmed {
+		t.Error("should set confirmed")
+	}
+}
+
+func TestMulti_SingleModeSpaceIsNoop(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b"), nil)
+	m.cursor = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = updated.(multiSelectorModel)
+
+	if len(m.checked) != 0 {
+		t.Error("space in single mode should not toggle items")
+	}
+}
+
+func TestMulti_SingleModeSpaceRuneIsNoop(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b"), nil)
+	m.cursor = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m = updated.(multiSelectorModel)
+
+	if len(m.checked) != 0 {
+		t.Error("space rune in single mode should not toggle items")
+	}
+	if m.filter != "" {
+		t.Error("space rune in single mode should not add to filter")
+	}
+}
+
+func TestMulti_TabTogglesMode(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b"), nil)
+
+	if m.multi {
+		t.Fatal("should start in single mode")
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(multiSelectorModel)
+	if !m.multi {
+		t.Error("tab should switch to multi mode")
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(multiSelectorModel)
+	if m.multi {
+		t.Error("tab should switch back to single mode")
+	}
+}
+
+func TestMulti_SingleModeHelpText(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a"), nil)
+	content := m.View()
+	if !strings.Contains(content, "tab add multiple") {
+		t.Error("single mode should show 'tab add multiple' in help")
+	}
+}
+
+func TestMulti_MultiModeHelpText(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a"), nil)
+	m.multi = true
+	content := m.View()
+	if !strings.Contains(content, "tab select single") {
+		t.Error("multi mode should show 'tab select single' in help")
+	}
+}
+
+// --- preChecked initialization order ---
+
+func TestMulti_PreCheckedDefaultIsLast(t *testing.T) {
+	// preChecked[0] ("a") is the current default and should end up
+	// last in checkOrder so it gets the (default) tag.
+	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), []string{"a", "b", "c"})
+
+	if len(m.checkOrder) != 3 {
+		t.Fatalf("expected 3 in checkOrder, got %d", len(m.checkOrder))
+	}
+	lastIdx := m.checkOrder[len(m.checkOrder)-1]
+	if m.items[lastIdx].Name != "a" {
+		t.Errorf("preChecked[0] should be last in checkOrder, got %q", m.items[lastIdx].Name)
+	}
+}
+
+func TestMulti_CursorOnDefaultModel(t *testing.T) {
+	// preChecked[0] ("b") is the default; cursor should start on it
+	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), []string{"b", "c"})
+
+	if m.cursor != 1 {
+		t.Errorf("cursor should be on preChecked[0] ('b') at index 1, got %d", m.cursor)
+	}
+}
+
+// --- Multi-mode last-checked is default ---
+
+func TestMulti_LastCheckedIsDefault(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("alpha", "beta", "gamma"), nil)
+	m.multi = true
+
+	// Check "alpha" then "gamma"
+	m.cursor = 0
+	m.toggleItem()
+	m.cursor = 2
+	m.toggleItem()
+
+	// Last checked ("gamma") should be at the end of checkOrder
+	lastIdx := m.checkOrder[len(m.checkOrder)-1]
+	if m.items[lastIdx].Name != "gamma" {
+		t.Errorf("last checked should be 'gamma', got %q", m.items[lastIdx].Name)
+	}
+
+	// The (default) tag renders based on checkOrder[len-1]
+	content := m.View()
+	if !strings.Contains(content, "(default)") {
+		t.Fatal("should show (default) tag")
+	}
+	// "alpha" line should NOT have the default tag
+	for _, line := range strings.Split(content, "\n") {
+		if strings.Contains(line, "alpha") && strings.Contains(line, "(default)") {
+			t.Error("'alpha' (first checked) should not have (default) tag")
+		}
 	}
 }
 

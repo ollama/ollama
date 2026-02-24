@@ -18,7 +18,9 @@
 
 static int mlx_dynamic_open(mlx_dynamic_handle* handle, const char* path) {
     handle->ctx = (void*) DLOPEN(path);
-    CHECK(handle->ctx != NULL);
+    if (handle->ctx == NULL) {
+        return 1;
+    }
     return 0;
 }
 

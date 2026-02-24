@@ -2,6 +2,10 @@
 # This script installs Ollama on Linux and macOS.
 # It detects the current operating system architecture and installs the appropriate version of Ollama.
 
+# Wrap script in main function so that a truncated partial download doesn't end
+# up executing half a script.
+main() {
+
 set -eu
 
 red="$( (/usr/bin/tput bold || :; /usr/bin/tput setaf 1 || :) 2>&-)"
@@ -446,3 +450,6 @@ fi
 
 status "NVIDIA GPU ready."
 install_success
+}
+
+main

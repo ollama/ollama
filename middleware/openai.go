@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/klauspost/compress/zstd"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/openai"
@@ -496,6 +497,17 @@ func (w *ResponsesWriter) Write(data []byte) (int, error) {
 
 func ResponsesMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if c.GetHeader("Content-Encoding") == "zstd" {
+			reader, err := zstd.NewReader(c.Request.Body, zstd.WithDecoderMaxMemory(8<<20))
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, "failed to decompress zstd body"))
+				return
+			}
+			defer reader.Close()
+			c.Request.Body = io.NopCloser(reader)
+			c.Request.Header.Del("Content-Encoding")
+		}
+
 		var req openai.ResponsesRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))

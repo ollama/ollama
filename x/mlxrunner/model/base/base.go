@@ -8,10 +8,10 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/ollama/ollama/x/imagegen/tokenizer"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
+	"github.com/ollama/ollama/x/tokenizer"
 )
 
 // Model is the interface that model implementations must satisfy.
@@ -78,8 +78,21 @@ func New(root *model.Root) (Model, error) {
 	return fn(root)
 }
 
-// Weights returns the model's LoadWeights method, which encapsulates all
-// weight assignment and post-processing (MLA absorption, expert stacking).
+// Weights returns a function that loads model weights, then pins all
+// arrays reachable from the model struct and sweeps everything else.
 func Weights(m Model) func(map[string]*mlx.Array) error {
-	return m.LoadWeights
+	return func(tensors map[string]*mlx.Array) error {
+		if err := m.LoadWeights(tensors); err != nil {
+			return err
+		}
+
+		collected := mlx.Collect(m)
+		for _, arr := range collected {
+			mlx.Pin(arr)
+		}
+		mlx.Sweep()
+		mlx.Eval(collected...)
+
+		return nil
+	}
 }

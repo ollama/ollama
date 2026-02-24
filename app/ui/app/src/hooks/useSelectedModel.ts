@@ -28,11 +28,13 @@ export function useSelectedModel(currentChatId?: string, searchQuery?: string) {
     currentChatId && currentChatId !== "new" ? currentChatId : "",
   );
 
-  const { data: inferenceComputes = [] } = useQuery({
-    queryKey: ["inference-compute"],
+  const { data: inferenceComputeResponse } = useQuery({
+    queryKey: ["inferenceCompute"],
     queryFn: getInferenceCompute,
     enabled: !settings.selectedModel, // Only fetch if no model is selected
   });
+
+  const inferenceComputes = inferenceComputeResponse?.inferenceComputes || [];
 
   const totalVRAM = useMemo(
     () => getTotalVRAM(inferenceComputes),

@@ -55,6 +55,30 @@ func tryLoadFromDir(dir string) bool {
 	return false
 }
 
+// tryLoadByName attempts to load the library using just its name,
+// allowing the system to use rpath, LD_LIBRARY_PATH, or standard search paths.
+// Returns true if the library was successfully loaded.
+func tryLoadByName() bool {
+	libraryName := "libmlxc.dylib"
+	if runtime.GOOS == "linux" {
+		libraryName = "libmlxc.so"
+	}
+
+	cPath := C.CString(libraryName)
+	defer C.free(unsafe.Pointer(cPath))
+
+	var handle C.mlx_dynamic_handle
+	if C.mlx_dynamic_load(&handle, cPath) != 0 {
+		return false
+	}
+	if C.mlx_dynamic_load_symbols(handle) != 0 {
+		C.mlx_dynamic_unload(&handle)
+		return false
+	}
+
+	return true
+}
+
 func init() {
 	switch runtime.GOOS {
 	case "darwin":
@@ -71,6 +95,11 @@ func init() {
 				return
 			}
 		}
+	}
+
+	// Try loading via rpath/standard library search
+	if tryLoadByName() {
+		return
 	}
 
 	// Build search paths: executable directory, then build directories

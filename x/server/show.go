@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"sort"
 	"strings"
@@ -58,7 +59,15 @@ func GetSafetensorsLLMInfo(name model.Name) (map[string]any, error) {
 		}
 	}
 
-	return buildModelInfo(config, totalBytes, tensorCount), nil
+	info := buildModelInfo(config, totalBytes, tensorCount)
+
+	// For quantized models, byte-based estimation can significantly undercount
+	// parameters. Prefer exact counting from tensor shapes in safetensors headers.
+	if paramCount, err := getParameterCountFromManifest(mf); err == nil && paramCount > 0 {
+		info["general.parameter_count"] = paramCount
+	}
+
+	return info, nil
 }
 
 // buildModelInfo constructs the model info map from config and tensor stats.
@@ -149,6 +158,51 @@ func buildModelInfo(config modelConfig, totalTensorBytes, tensorCount int64) map
 	}
 
 	return info
+}
+
+// getParameterCountFromManifest counts model parameters from tensor shapes.
+// This accounts for quantized tensors by using unpacked shapes from
+// getTensorInfoFromManifest.
+func getParameterCountFromManifest(mf *manifest.Manifest) (int64, error) {
+	tensors, err := getTensorInfoFromManifest(mf)
+	if err != nil {
+		return 0, err
+	}
+
+	var total int64
+	for _, tensor := range tensors {
+		if len(tensor.Shape) == 0 {
+			continue
+		}
+
+		elements := int64(1)
+		for _, dim := range tensor.Shape {
+			if dim == 0 {
+				elements = 0
+				break
+			}
+
+			if dim > uint64(math.MaxInt64) {
+				return 0, fmt.Errorf("tensor %s dimension too large: %d", tensor.Name, dim)
+			}
+
+			d := int64(dim)
+			if elements > math.MaxInt64/d {
+				return 0, fmt.Errorf("tensor %s element count overflow", tensor.Name)
+			}
+			elements *= d
+		}
+
+		if elements == 0 {
+			continue
+		}
+		if total > math.MaxInt64-elements {
+			return 0, fmt.Errorf("total parameter count overflow")
+		}
+		total += elements
+	}
+
+	return total, nil
 }
 
 // GetSafetensorsTensorInfo extracts tensor information from safetensors model layers.

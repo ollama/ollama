@@ -714,6 +714,187 @@ func TestGetTensorInfoFromManifest_Quantized(t *testing.T) {
 	}
 }
 
+func TestGetParameterCountFromManifest(t *testing.T) {
+	// Create a temp directory for blobs and set OLLAMA_MODELS
+	tempDir := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", tempDir)
+
+	blobDir := filepath.Join(tempDir, "blobs")
+	if err := os.MkdirAll(blobDir, 0o755); err != nil {
+		t.Fatalf("failed to create blobs dir: %v", err)
+	}
+
+	// Unquantized tensor: [4,5] = 20 params
+	header1 := map[string]any{
+		"model.embed_tokens.weight": map[string]any{
+			"dtype":        "BF16",
+			"shape":        []int64{4, 5},
+			"data_offsets": []int64{0, 40},
+		},
+	}
+	header1JSON, _ := json.Marshal(header1)
+	var buf1 bytes.Buffer
+	binary.Write(&buf1, binary.LittleEndian, uint64(len(header1JSON)))
+	buf1.Write(header1JSON)
+
+	digest1 := "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	blobPath1, err := manifest.BlobsPath(digest1)
+	if err != nil {
+		t.Fatalf("failed to get blob path: %v", err)
+	}
+	if err := os.WriteFile(blobPath1, buf1.Bytes(), 0o644); err != nil {
+		t.Fatalf("failed to write blob1: %v", err)
+	}
+
+	// Quantized int4 tensor with packed shape [10,2] -> unpacked [10,16] = 160 params
+	header2 := map[string]any{
+		"__metadata__": map[string]string{
+			"quant_type": "int4",
+			"group_size": "32",
+		},
+		"model.layers.0.mlp.up_proj.weight": map[string]any{
+			"dtype":        "U32",
+			"shape":        []int64{10, 2},
+			"data_offsets": []int64{0, 80},
+		},
+		"model.layers.0.mlp.up_proj.weight.scale": map[string]any{
+			"dtype":        "BF16",
+			"shape":        []int64{10, 1},
+			"data_offsets": []int64{80, 100},
+		},
+		"model.layers.0.mlp.up_proj.weight.bias": map[string]any{
+			"dtype":        "BF16",
+			"shape":        []int64{10, 1},
+			"data_offsets": []int64{100, 120},
+		},
+	}
+	header2JSON, _ := json.Marshal(header2)
+	var buf2 bytes.Buffer
+	binary.Write(&buf2, binary.LittleEndian, uint64(len(header2JSON)))
+	buf2.Write(header2JSON)
+
+	digest2 := "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+	blobPath2, err := manifest.BlobsPath(digest2)
+	if err != nil {
+		t.Fatalf("failed to get blob path: %v", err)
+	}
+	if err := os.WriteFile(blobPath2, buf2.Bytes(), 0o644); err != nil {
+		t.Fatalf("failed to write blob2: %v", err)
+	}
+
+	mf := &manifest.Manifest{
+		SchemaVersion: 2,
+		MediaType:     "application/vnd.docker.distribution.manifest.v2+json",
+		Layers: []manifest.Layer{
+			{
+				MediaType: manifest.MediaTypeImageTensor,
+				Digest:    digest1,
+				Size:      int64(buf1.Len() + 40),
+				Name:      "model.embed_tokens.weight",
+			},
+			{
+				MediaType: manifest.MediaTypeImageTensor,
+				Digest:    digest2,
+				Size:      int64(buf2.Len() + 120),
+				Name:      "model.layers.0.mlp.up_proj.weight",
+			},
+		},
+	}
+
+	paramCount, err := getParameterCountFromManifest(mf)
+	if err != nil {
+		t.Fatalf("getParameterCountFromManifest() error = %v", err)
+	}
+
+	const want int64 = 180 // 20 + 160
+	if paramCount != want {
+		t.Errorf("parameter_count = %d, want %d", paramCount, want)
+	}
+}
+
+func TestGetParameterCountFromManifest_MixedQuantizedPacked(t *testing.T) {
+	// Create a temp directory for blobs and set OLLAMA_MODELS
+	tempDir := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", tempDir)
+
+	blobDir := filepath.Join(tempDir, "blobs")
+	if err := os.MkdirAll(blobDir, 0o755); err != nil {
+		t.Fatalf("failed to create blobs dir: %v", err)
+	}
+
+	// Packed mixed-precision blob (no global metadata):
+	// - gate_proj: int4 packed [5,8] + scale [5,2] => unpacked [5,64] = 320 params
+	// - down_proj: int8 packed [5,16] + scale [5,1] => unpacked [5,64] = 320 params
+	header := map[string]any{
+		"model.layers.0.mlp.experts.0.gate_proj.weight": map[string]any{
+			"dtype":        "U32",
+			"shape":        []int64{5, 8},
+			"data_offsets": []int64{0, 160},
+		},
+		"model.layers.0.mlp.experts.0.gate_proj.weight.scale": map[string]any{
+			"dtype":        "BF16",
+			"shape":        []int64{5, 2},
+			"data_offsets": []int64{160, 180},
+		},
+		"model.layers.0.mlp.experts.0.gate_proj.weight.bias": map[string]any{
+			"dtype":        "BF16",
+			"shape":        []int64{5, 2},
+			"data_offsets": []int64{180, 200},
+		},
+		"model.layers.0.mlp.experts.0.down_proj.weight": map[string]any{
+			"dtype":        "U32",
+			"shape":        []int64{5, 16},
+			"data_offsets": []int64{200, 520},
+		},
+		"model.layers.0.mlp.experts.0.down_proj.weight.scale": map[string]any{
+			"dtype":        "BF16",
+			"shape":        []int64{5, 1},
+			"data_offsets": []int64{520, 530},
+		},
+		"model.layers.0.mlp.experts.0.down_proj.weight.bias": map[string]any{
+			"dtype":        "BF16",
+			"shape":        []int64{5, 1},
+			"data_offsets": []int64{530, 540},
+		},
+	}
+	headerJSON, _ := json.Marshal(header)
+	var buf bytes.Buffer
+	binary.Write(&buf, binary.LittleEndian, uint64(len(headerJSON)))
+	buf.Write(headerJSON)
+
+	digest := "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+	blobPath, err := manifest.BlobsPath(digest)
+	if err != nil {
+		t.Fatalf("failed to get blob path: %v", err)
+	}
+	if err := os.WriteFile(blobPath, buf.Bytes(), 0o644); err != nil {
+		t.Fatalf("failed to write blob: %v", err)
+	}
+
+	mf := &manifest.Manifest{
+		SchemaVersion: 2,
+		MediaType:     "application/vnd.docker.distribution.manifest.v2+json",
+		Layers: []manifest.Layer{
+			{
+				MediaType: manifest.MediaTypeImageTensor,
+				Digest:    digest,
+				Size:      int64(buf.Len() + 540),
+				Name:      "model.layers.0.mlp.experts",
+			},
+		},
+	}
+
+	paramCount, err := getParameterCountFromManifest(mf)
+	if err != nil {
+		t.Fatalf("getParameterCountFromManifest() error = %v", err)
+	}
+
+	const want int64 = 640 // 320 + 320
+	if paramCount != want {
+		t.Errorf("parameter_count = %d, want %d", paramCount, want)
+	}
+}
+
 func TestParseSafetensorsAllHeaders(t *testing.T) {
 	tests := []struct {
 		name       string

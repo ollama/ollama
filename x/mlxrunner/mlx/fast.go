@@ -20,7 +20,7 @@ func ScaledDotProductAttention(query, key, value, mask *Array, scale float32) *A
 	cMode := C.CString(mode)
 	defer C.free(unsafe.Pointer(cMode))
 
-	out := New("FAST_SDPA", query, key, value, mask, sinks)
+	out := New("FAST_SDPA")
 	C.mlx_fast_scaled_dot_product_attention(&out.ctx, query.ctx, key.ctx, value.ctx, C.float(scale), cMode, mask.ctx, sinks.ctx, DefaultStream().ctx)
 	return out
 }
@@ -31,7 +31,7 @@ type LayerNorm struct {
 }
 
 func (r *LayerNorm) Forward(x *Array, eps float32) *Array {
-	out := New("FAST_LAYERNORM", x)
+	out := New("FAST_LAYERNORM")
 	C.mlx_fast_layer_norm(&out.ctx, x.ctx, r.Weight.ctx, r.Bias.ctx, C.float(eps), DefaultStream().ctx)
 	return out
 }
@@ -41,7 +41,7 @@ type RMSNorm struct {
 }
 
 func (r RMSNorm) Forward(x *Array, eps float32) *Array {
-	out := New("FAST_RMSNORM", x)
+	out := New("FAST_RMSNORM")
 	C.mlx_fast_rms_norm(&out.ctx, x.ctx, r.Weight.ctx, C.float(eps), DefaultStream().ctx)
 	return out
 }
@@ -55,7 +55,7 @@ type RoPE struct {
 
 func (r RoPE) Forward(t *Array, offset int) *Array {
 	freqs := New("")
-	out := New("FAST_ROPE", t, freqs)
+	out := New("FAST_ROPE")
 	C.mlx_fast_rope(
 		&out.ctx,
 		t.ctx,

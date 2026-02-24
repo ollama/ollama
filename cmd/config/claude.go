@@ -126,7 +126,7 @@ func (c *Claude) ConfigureAliases(ctx context.Context, model string, existingAli
 	fmt.Fprintf(os.Stderr, "\n%sModel Configuration%s\n\n", ansiBold, ansiReset)
 
 	if aliases["primary"] == "" || force {
-		primary, err := DefaultSingleSelector("Select model:", items)
+		primary, err := DefaultSingleSelector("Select model:", items, aliases["primary"])
 		if err != nil {
 			return nil, false, err
 		}

@@ -30,6 +30,8 @@ type ModelfileConfig struct {
 	Template string
 	System   string
 	License  string
+	Parser   string
+	Renderer string
 }
 
 // CreateOptions holds all options for model creation.
@@ -37,7 +39,7 @@ type CreateOptions struct {
 	ModelName string
 	ModelDir  string
 	Quantize  string           // "int4", "int8", "nvfp4", or "mxfp8" for quantization
-	Modelfile *ModelfileConfig // template/system/license from Modelfile
+	Modelfile *ModelfileConfig // template/system/license/parser/renderer from Modelfile
 }
 
 // CreateModel imports a model from a local directory.
@@ -267,8 +269,8 @@ func newManifestWriter(opts CreateOptions, capabilities []string, parserName, re
 			ModelFormat:  "safetensors",
 			Capabilities: caps,
 			Requires:     MinOllamaVersion,
-			Parser:       parserName,
-			Renderer:     rendererName,
+			Parser:       resolveParserName(opts.Modelfile, parserName),
+			Renderer:     resolveRendererName(opts.Modelfile, rendererName),
 		}
 		configJSON, err := json.Marshal(configData)
 		if err != nil {
@@ -303,6 +305,22 @@ func newManifestWriter(opts CreateOptions, capabilities []string, parserName, re
 
 		return manifest.WriteManifest(name, configLayer, manifestLayers)
 	}
+}
+
+func resolveParserName(mf *ModelfileConfig, inferred string) string {
+	if mf != nil && mf.Parser != "" {
+		return mf.Parser
+	}
+
+	return inferred
+}
+
+func resolveRendererName(mf *ModelfileConfig, inferred string) string {
+	if mf != nil && mf.Renderer != "" {
+		return mf.Renderer
+	}
+
+	return inferred
 }
 
 // createModelfileLayers creates layers for template, system, and license from Modelfile config.
@@ -410,7 +428,7 @@ func getParserName(modelDir string) string {
 			return "deepseek3"
 		}
 		if strings.Contains(archLower, "qwen3") {
-			return "qwen3-coder"
+			return "qwen3"
 		}
 	}
 
@@ -424,7 +442,7 @@ func getParserName(modelDir string) string {
 			return "deepseek3"
 		}
 		if strings.Contains(typeLower, "qwen3") {
-			return "qwen3-coder"
+			return "qwen3"
 		}
 	}
 
