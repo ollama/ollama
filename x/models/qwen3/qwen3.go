@@ -8,12 +8,12 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/ollama/ollama/x/imagegen/tokenizer"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
 	"github.com/ollama/ollama/x/models/nn"
+	"github.com/ollama/ollama/x/tokenizer"
 )
 
 func init() {
@@ -251,9 +251,6 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 
 		m.Layers[i] = layer
 	}
-
-	collected := mlx.Collect(m)
-	mlx.Eval(collected...)
 
 	return nil
 }

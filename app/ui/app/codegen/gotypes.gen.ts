@@ -289,10 +289,12 @@ export class InferenceCompute {
 }
 export class InferenceComputeResponse {
     inferenceComputes: InferenceCompute[];
+    defaultContextLength: number;
 
     constructor(source: any = {}) {
         if ('string' === typeof source) source = JSON.parse(source);
         this.inferenceComputes = this.convertValues(source["inferenceComputes"], InferenceCompute);
+        this.defaultContextLength = source["defaultContextLength"];
     }
 
 	convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -412,6 +414,7 @@ export class Settings {
     ThinkLevel: string;
     SelectedModel: string;
     SidebarOpen: boolean;
+    AutoUpdateEnabled: boolean;
 
     constructor(source: any = {}) {
         if ('string' === typeof source) source = JSON.parse(source);
@@ -429,6 +432,7 @@ export class Settings {
         this.ThinkLevel = source["ThinkLevel"];
         this.SelectedModel = source["SelectedModel"];
         this.SidebarOpen = source["SidebarOpen"];
+        this.AutoUpdateEnabled = source["AutoUpdateEnabled"];
     }
 }
 export class SettingsResponse {

@@ -12,12 +12,12 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/ollama/ollama/x/imagegen/tokenizer"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
 	"github.com/ollama/ollama/x/mlxrunner/sample"
+	"github.com/ollama/ollama/x/tokenizer"
 )
 
 type Request struct {
@@ -58,10 +58,10 @@ type Response struct {
 }
 
 type Runner struct {
-	Model        base.Model
-	Tokenizer    *tokenizer.Tokenizer
-	Requests     chan Request
-	CacheEntries map[int32]*CacheEntry
+	Model     base.Model
+	Tokenizer *tokenizer.Tokenizer
+	Requests  chan Request
+	cache     *CacheEntry
 }
 
 func (r *Runner) Load(modelName string) error {

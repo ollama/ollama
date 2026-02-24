@@ -1956,6 +1956,10 @@ func runInteractiveTUI(cmd *cobra.Command) {
 		}
 
 		launchIntegration := func(name string) bool {
+			if err := config.EnsureInstalled(name); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				return true
+			}
 			// If not configured or model no longer exists, prompt for model selection
 			configuredModel := config.IntegrationModel(name)
 			if configuredModel == "" || !config.ModelExists(cmd.Context(), configuredModel) || config.IsCloudModelDisabled(cmd.Context(), configuredModel) {

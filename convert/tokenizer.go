@@ -212,8 +212,13 @@ type tokenizer struct {
 
 	PreTokenizer struct {
 		PreTokenizers []struct {
-			Type    string `json:"type"`
-			Pattern struct {
+			Type           string `json:"type"`
+			Behavior       string `json:"behavior"`
+			Invert         bool   `json:"invert"`
+			AddPrefixSpace bool   `json:"add_prefix_space"`
+			TrimOffsets    bool   `json:"trim_offsets"`
+			UseRegex       bool   `json:"use_regex"`
+			Pattern        struct {
 				Regex string `json:"Regex"`
 			} `json:"pattern"`
 		} `json:"pretokenizers"`

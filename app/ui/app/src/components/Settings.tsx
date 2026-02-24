@@ -15,6 +15,7 @@ import {
   XMarkIcon,
   CogIcon,
   ArrowLeftIcon,
+  ArrowDownTrayIcon,
 } from "@heroicons/react/20/solid";
 import { Settings as SettingsType } from "@/gotypes";
 import { useNavigate } from "@tanstack/react-router";
@@ -26,6 +27,7 @@ import {
   type CloudStatusResponse,
   updateCloudSetting,
   updateSettings,
+  getInferenceCompute,
 } from "@/api";
 
 function AnimatedDots() {
@@ -76,6 +78,13 @@ export default function Settings() {
   });
 
   const settings = settingsData?.settings || null;
+
+  const { data: inferenceComputeResponse } = useQuery({
+    queryKey: ["inferenceCompute"],
+    queryFn: getInferenceCompute,
+  });
+
+  const defaultContextLength = inferenceComputeResponse?.defaultContextLength;
 
   const updateSettingsMutation = useMutation({
     mutationFn: updateSettings,
@@ -204,7 +213,7 @@ export default function Settings() {
         Models: "",
         Agent: false,
         Tools: false,
-        ContextLength: 4096,
+        ContextLength: 0,
       });
       updateSettingsMutation.mutate(defaultSettings);
     }
@@ -432,6 +441,29 @@ export default function Settings() {
                 </div>
               </Field>
 
+              {/* Auto Update */}
+              <Field>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start space-x-3 flex-1">
+                    <ArrowDownTrayIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
+                    <div>
+                      <Label>Auto-download updates</Label>
+                      <Description>
+                        {settings.AutoUpdateEnabled
+                          ? "Automatically download updates when available."
+                          : "Updates will not be downloaded automatically."}
+                      </Description>
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0">
+                    <Switch
+                      checked={settings.AutoUpdateEnabled}
+                      onChange={(checked) => handleChange("AutoUpdateEnabled", checked)}
+                    />
+                  </div>
+                </div>
+              </Field>
+
               {/* Expose Ollama */}
               <Field>
                 <div className="flex items-start justify-between gap-4">
@@ -507,13 +539,11 @@ export default function Settings() {
                     </Description>
                     <div className="mt-3">
                       <Slider
-                        value={(() => {
-                          // Otherwise use the settings value
-                          return settings.ContextLength || 4096;
-                        })()}
+                        value={settings.ContextLength || defaultContextLength || 0}
                         onChange={(value) => {
                           handleChange("ContextLength", value);
                         }}
+                        disabled={!defaultContextLength}
                         options={[
                           { value: 4096, label: "4k" },
                           { value: 8192, label: "8k" },

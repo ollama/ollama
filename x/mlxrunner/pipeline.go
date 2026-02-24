@@ -4,11 +4,12 @@ package mlxrunner
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"log/slog"
 	"time"
-	"unicode/utf8"
 
+	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
@@ -46,8 +47,8 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	slog.Info("Prompt processing progress", "processed", processed, "total", total)
 	for total-processed > 1 {
 		n := min(2<<10, total-processed-1)
-		temp := r.Model.Forward(mlx.FromValues(tokens[processed:processed+n], n).ExpandDims(0), caches)
-		defer mlx.Free(temp)
+		r.Model.Forward(mlx.FromValues(tokens[processed:processed+n], n).ExpandDims(0), caches)
+		mlx.Sweep()
 		mlx.Eval(func() []*mlx.Array {
 			s := make([]*mlx.Array, 2*len(caches))
 			for i, c := range caches {
@@ -66,11 +67,16 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		logits = logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1)
 
 		logprobs := logits.Subtract(logits.Logsumexp(true))
-		return request.Sample(logprobs), logprobs
+		sample := request.Sample(logprobs)
+
+		mlx.Pin(sample, logprobs)
+		mlx.Sweep()
+		mlx.AsyncEval(sample, logprobs)
+
+		return sample, logprobs
 	}
 
 	sample, logprobs := step(mlx.FromValues(tokens[processed:], total-processed))
-	mlx.AsyncEval(sample, logprobs)
 
 	var b bytes.Buffer
 
@@ -79,7 +85,6 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	outputs := make([]int32, 0, request.Options.MaxTokens)
 	for i := range request.Options.MaxTokens {
 		nextSample, nextLogprobs := step(sample)
-		mlx.AsyncEval(nextSample, nextLogprobs)
 
 		if i == 0 {
 			slog.Info("Prompt processing progress", "processed", total, "total", total)
@@ -92,6 +97,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		outputs = append(outputs, output)
 
 		if r.Tokenizer.IsEOS(output) {
+			mlx.Unpin(nextSample, nextLogprobs)
 			final.Token = int(output)
 			final.DoneReason = 0
 			final.CompletionTokens = i
@@ -103,7 +109,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 			Token: int(output),
 		}
 
-		mlx.Free(sample, logprobs)
+		mlx.Unpin(sample, logprobs)
 		if i%256 == 0 {
 			mlx.ClearCache()
 		}
@@ -111,10 +117,19 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		sample, logprobs = nextSample, nextLogprobs
 	}
 
-	mlx.Free(sample, logprobs)
+	mlx.Unpin(sample, logprobs)
 	final.CompletionTokensDuration = time.Since(now)
 	request.Responses <- final
 	r.InsertCache(append(inputs, outputs...), caches)
+	mlx.Sweep()
+
+	if slog.Default().Enabled(context.TODO(), logutil.LevelTrace) {
+		mlx.LogArrays()
+		if r.cache != nil {
+			r.cache.LogCache()
+		}
+	}
+
 	return nil
 }
 
@@ -126,13 +141,5 @@ func (r Runner) Decode(sample int32, b *bytes.Buffer) string {
 		return ""
 	}
 
-	if text := b.String(); utf8.ValidString(text) {
-		b.Reset()
-		return text
-	} else if b.Len() >= utf8.UTFMax {
-		b.Reset()
-		return text
-	}
-
-	return ""
+	return flushValidUTF8Prefix(b)
 }
