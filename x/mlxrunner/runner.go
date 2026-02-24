@@ -12,7 +12,6 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
@@ -25,8 +24,9 @@ type Request struct {
 	Responses chan Response
 	Pipeline  func(Request) error
 
+	Ctx context.Context
+
 	sample.Sampler
-	caches []cache.Cache
 }
 
 type TextCompletionsRequest struct {
@@ -157,7 +157,7 @@ func (r *Runner) Run(host, port string, mux http.Handler) error {
 				return nil
 			case request := <-r.Requests:
 				if err := request.Pipeline(request); err != nil {
-					break
+					slog.Info("Request terminated", "error", err)
 				}
 
 				close(request.Responses)
