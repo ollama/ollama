@@ -41,7 +41,6 @@ func (p *Qwen3VLParser) HasThinkingSupport() bool {
 
 func (p *Qwen3VLParser) setInitialState(lastMessage *api.Message) {
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"
-
 	if !p.HasThinkingSupport() {
 		p.state = CollectingContent
 		return
