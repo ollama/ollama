@@ -76,22 +76,6 @@ func shouldUseHarmony(model *Model) bool {
 	return false
 }
 
-func defaultThinkingForModel(model *Model) bool {
-	// qwen3.5/qwen3-vl are runtime-toggle models that should default to
-	// non-thinking unless explicitly requested.
-	if slices.Contains([]string{"qwen3.5", "qwen3-vl"}, model.Config.Parser) ||
-		slices.Contains([]string{"qwen3.5", "qwen3-vl"}, model.Config.Renderer) {
-		return false
-	}
-
-	// Preserve legacy default-on behavior for explicit thinking variants.
-	if model.Config.Parser == "qwen3-vl-thinking" || model.Config.Renderer == "qwen3-vl-thinking" {
-		return true
-	}
-
-	return true
-}
-
 func experimentEnabled(name string) bool {
 	return slices.Contains(strings.Split(os.Getenv("OLLAMA_EXPERIMENT"), ","), name)
 }
@@ -401,7 +385,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	if slices.Contains(modelCaps, model.CapabilityThinking) {
 		caps = append(caps, model.CapabilityThinking)
 		if req.Think == nil {
-			req.Think = &api.ThinkValue{Value: defaultThinkingForModel(m)}
+			req.Think = &api.ThinkValue{Value: true}
 		}
 	} else {
 		if req.Think != nil && req.Think.Bool() {
@@ -2165,7 +2149,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if slices.Contains(modelCaps, model.CapabilityThinking) {
 		caps = append(caps, model.CapabilityThinking)
 		if req.Think == nil {
-			req.Think = &api.ThinkValue{Value: defaultThinkingForModel(m)}
+			req.Think = &api.ThinkValue{Value: true}
 		}
 	} else {
 		if req.Think != nil && req.Think.Bool() {

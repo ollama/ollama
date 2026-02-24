@@ -8,7 +8,6 @@ import (
 
 type Qwen3VLRenderer struct {
 	hasThinkingSupport bool
-	defaultThinking    bool
 
 	useImgTags bool
 }
@@ -32,16 +31,9 @@ func (r *Qwen3VLRenderer) renderContent(content api.Message) string {
 	return subSb.String()
 }
 
-func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
+func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
 	var sb strings.Builder
-	thinking := false
-	if r.hasThinkingSupport {
-		if thinkValue != nil {
-			thinking = thinkValue.Bool()
-		} else {
-			thinking = r.defaultThinking
-		}
-	}
+	thinking := r.hasThinkingSupport
 
 	if len(tools) > 0 {
 		sb.WriteString(imStartTag + "system\n")
