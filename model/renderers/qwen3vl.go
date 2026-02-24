@@ -7,7 +7,7 @@ import (
 )
 
 type Qwen3VLRenderer struct {
-	hasThinkingSupport bool
+	isThinking bool
 
 	useImgTags bool
 }
@@ -33,7 +33,7 @@ func (r *Qwen3VLRenderer) renderContent(content api.Message) string {
 
 func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
 	var sb strings.Builder
-	thinking := r.hasThinkingSupport
+	thinking := r.isThinking
 
 	if len(tools) > 0 {
 		sb.WriteString(imStartTag + "system\n")
@@ -77,7 +77,7 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 		} else if message.Role == "assistant" {
 			contentReasoning := ""
 
-			if r.hasThinkingSupport {
+			if r.isThinking {
 				if message.Thinking != "" {
 					contentReasoning = message.Thinking
 				}
@@ -128,7 +128,7 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 			sb.WriteString("<|im_start|>assistant\n")
 			if thinking {
 				sb.WriteString("<think>\n")
-			} else if r.hasThinkingSupport {
+			} else if r.isThinking {
 				// In nothink mode, explicitly close any latent think block so
 				// checkpoints that default to thinking start directly in content.
 				sb.WriteString("</think>\n")

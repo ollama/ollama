@@ -51,13 +51,13 @@ func rendererForName(name string) Renderer {
 		renderer := &Qwen3CoderRenderer{}
 		return renderer
 	case "qwen3-vl-instruct":
-		renderer := &Qwen3VLRenderer{hasThinkingSupport: false, useImgTags: RenderImgTags}
+		renderer := &Qwen3VLRenderer{isThinking: false, useImgTags: RenderImgTags}
 		return renderer
 	case "qwen3-vl-thinking":
-		renderer := &Qwen3VLRenderer{hasThinkingSupport: true, useImgTags: RenderImgTags}
+		renderer := &Qwen3VLRenderer{isThinking: true, useImgTags: RenderImgTags}
 		return renderer
 	case "qwen3.5", "qwen3-vl":
-		renderer := &Qwen3VLRenderer{hasThinkingSupport: true, useImgTags: RenderImgTags}
+		renderer := &Qwen3VLRenderer{isThinking: true, useImgTags: RenderImgTags}
 		return renderer
 	case "cogito":
 		renderer := &CogitoRenderer{isThinking: true}

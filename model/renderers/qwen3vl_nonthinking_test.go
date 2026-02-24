@@ -509,7 +509,7 @@ I'll check.
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rendered, err := (&Qwen3VLRenderer{hasThinkingSupport: false, useImgTags: tt.useImgTags}).Render(tt.msgs, tt.tools, nil)
+			rendered, err := (&Qwen3VLRenderer{isThinking: false, useImgTags: tt.useImgTags}).Render(tt.msgs, tt.tools, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
