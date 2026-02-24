@@ -211,7 +211,6 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	}
 
 	kvct := strings.ToLower(envconfig.KvCacheType())
-	arch := f.KV().Architecture()
 
 	if tok == nil {
 		flashAttention := ml.FlashAttentionAuto
@@ -221,9 +220,6 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 			} else {
 				flashAttention = ml.FlashAttentionDisabled
 			}
-		} else if fa && slices.Contains([]string{"qwen35", "qwen35moe", "qwen3next"}, arch) {
-			// Keep FA explicit for qwen35-family models to avoid architecture fallback to Auto.
-			flashAttention = ml.FlashAttentionEnabled
 		}
 
 		if kvct != "" {
