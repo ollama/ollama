@@ -589,7 +589,7 @@ const testOpenclawFixture = `{
     "providers": {
       "anthropic": {"apiKey": "xxx"},
       "ollama": {
-        "baseUrl": "http://127.0.0.1:11434/v1",
+        "baseUrl": "http://127.0.0.1:11434",
         "models": [{"id": "old-model", "customField": "preserved"}]
       }
     }
