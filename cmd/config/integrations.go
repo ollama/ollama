@@ -228,6 +228,31 @@ func IsIntegrationInstalled(name string) bool {
 	}
 }
 
+// AutoInstallable returns true if the integration can be automatically
+// installed when not found (e.g. via npm).
+func AutoInstallable(name string) bool {
+	switch strings.ToLower(name) {
+	case "openclaw", "clawdbot", "moltbot":
+		return true
+	default:
+		return false
+	}
+}
+
+// EnsureInstalled checks if an auto-installable integration is present and
+// offers to install it if missing. Returns nil for non-auto-installable
+// integrations or when the binary is already on PATH.
+func EnsureInstalled(name string) error {
+	if !AutoInstallable(name) {
+		return nil
+	}
+	if IsIntegrationInstalled(name) {
+		return nil
+	}
+	_, err := ensureOpenclawInstalled()
+	return err
+}
+
 // IsEditorIntegration returns true if the named integration uses multi-model
 // selection (implements the Editor interface).
 func IsEditorIntegration(name string) bool {
@@ -924,6 +949,10 @@ Examples:
 			r, ok := integrations[strings.ToLower(name)]
 			if !ok {
 				return fmt.Errorf("unknown integration: %s", name)
+			}
+
+			if err := EnsureInstalled(name); err != nil {
+				return err
 			}
 
 			if modelFlag != "" && IsCloudModelDisabled(cmd.Context(), modelFlag) {

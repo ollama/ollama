@@ -1420,11 +1420,6 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) error {
 		settings.Models = envconfig.Models()
 	}
 
-	// set default context length if not set
-	if settings.ContextLength == 0 {
-		settings.ContextLength = 4096
-	}
-
 	// Include current runtime settings
 	settings.Agent = s.Agent
 	settings.Tools = s.Tools
@@ -1500,14 +1495,14 @@ func (s *Server) writeCloudStatus(w http.ResponseWriter) error {
 func (s *Server) getInferenceCompute(w http.ResponseWriter, r *http.Request) error {
 	ctx, cancel := context.WithTimeout(r.Context(), 500*time.Millisecond)
 	defer cancel()
-	serverInferenceComputes, err := server.GetInferenceComputer(ctx)
+	info, err := server.GetInferenceInfo(ctx)
 	if err != nil {
-		s.log().Error("failed to get inference compute", "error", err)
-		return fmt.Errorf("failed to get inference compute: %w", err)
+		s.log().Error("failed to get inference info", "error", err)
+		return fmt.Errorf("failed to get inference info: %w", err)
 	}
 
-	inferenceComputes := make([]responses.InferenceCompute, len(serverInferenceComputes))
-	for i, ic := range serverInferenceComputes {
+	inferenceComputes := make([]responses.InferenceCompute, len(info.Computes))
+	for i, ic := range info.Computes {
 		inferenceComputes[i] = responses.InferenceCompute{
 			Library: ic.Library,
 			Variant: ic.Variant,
@@ -1519,7 +1514,8 @@ func (s *Server) getInferenceCompute(w http.ResponseWriter, r *http.Request) err
 	}
 
 	response := responses.InferenceComputeResponse{
-		InferenceComputes: inferenceComputes,
+		InferenceComputes:    inferenceComputes,
+		DefaultContextLength: info.DefaultContextLength,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

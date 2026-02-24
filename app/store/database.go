@@ -14,7 +14,7 @@ import (
 
 // currentSchemaVersion defines the current database schema version.
 // Increment this when making schema changes that require migrations.
-const currentSchemaVersion = 13
+const currentSchemaVersion = 14
 
 // database wraps the SQLite connection.
 // SQLite handles its own locking for concurrent access:
@@ -73,7 +73,7 @@ func (db *database) init() error {
 		agent BOOLEAN NOT NULL DEFAULT 0,
 		tools BOOLEAN NOT NULL DEFAULT 0,
 		working_dir TEXT NOT NULL DEFAULT '',
-		context_length INTEGER NOT NULL DEFAULT 4096,
+		context_length INTEGER NOT NULL DEFAULT 0,
 		window_width INTEGER NOT NULL DEFAULT 0,
 		window_height INTEGER NOT NULL DEFAULT 0,
 		config_migrated BOOLEAN NOT NULL DEFAULT 0,
@@ -251,6 +251,12 @@ func (db *database) migrate() error {
 				return fmt.Errorf("migrate v12 to v13: %w", err)
 			}
 			version = 13
+		case 13:
+			// change default context_length from 4096 to 0 (VRAM-based tiered defaults)
+			if err := db.migrateV13ToV14(); err != nil {
+				return fmt.Errorf("migrate v13 to v14: %w", err)
+			}
+			version = 14
 		default:
 			// If we have a version we don't recognize, just set it to current
 			// This might happen during development
@@ -467,6 +473,22 @@ func (db *database) migrateV12ToV13() error {
 	}
 
 	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 13`)
+	if err != nil {
+		return fmt.Errorf("update schema version: %w", err)
+	}
+
+	return nil
+}
+
+// migrateV13ToV14 changes the default context_length from 4096 to 0.
+// When context_length is 0, the ollama server uses VRAM-based tiered defaults.
+func (db *database) migrateV13ToV14() error {
+	_, err := db.conn.Exec(`UPDATE settings SET context_length = 0 WHERE context_length = 4096`)
+	if err != nil {
+		return fmt.Errorf("update context_length default: %w", err)
+	}
+
+	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 14`)
 	if err != nil {
 		return fmt.Errorf("update schema version: %w", err)
 	}
