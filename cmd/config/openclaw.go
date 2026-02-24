@@ -505,7 +505,7 @@ func (c *Openclaw) Edit(models []string) error {
 	ollama["baseUrl"] = envconfig.Host().String() + "/v1"
 	// needed to register provider
 	ollama["apiKey"] = "ollama-local"
-	ollama["api"] = "ollama"
+	ollama["api"] = "openai-completions"
 
 	// Build map of existing models to preserve user customizations
 	existingModels, _ := ollama["models"].([]any)
