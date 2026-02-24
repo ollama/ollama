@@ -1,0 +1,79 @@
+---
+title: AdaL
+---
+
+# AdaL
+
+[AdaL](https://adal.sylph.ai) is a local-first AI-powered terminal assistant with local model support via Ollama.
+
+## Features
+
+- **Local Model Support**: Run coding assistants locally using Ollama models
+- **Terminal-based**: Works directly in your terminal
+- **Multi-model**: Supports Claude, GPT-4o, o3-mini, and local Ollama models
+- **Extensible Tools**: File operations, code editing, bash commands, web search
+
+## Installation
+
+Install AdaL CLI:
+
+```bash
+npm install -g @sylphai/adal-cli
+```
+
+Or use the standalone binary:
+
+```bash
+curl -LsSf https://adal.sylph.ai | sh
+```
+
+## Usage with Ollama
+
+### Quick Start
+
+1. Ensure Ollama is running with your preferred model:
+
+```bash
+ollama serve
+ollama pull codellama
+```
+
+2. Launch AdaL:
+
+```bash
+adal
+```
+
+3. Select an Ollama model using the `/model` command:
+
+```
+/model
+```
+
+Navigate to the Ollama section and select your model.
+
+### Using Local Models
+
+AdaL automatically detects running Ollama models. Simply:
+
+1. Start Ollama with your desired model
+2. Select it in AdaL via `/model`
+3. Begin coding with your local model
+
+### Supported Ollama Models
+
+AdaL works with any Ollama model, including:
+
+- Code generation: `codellama`, `codeqwen`, `deepseek-coder`
+- General purpose: `llama3`, `mistral`, `qwen2.5`
+- Multimodal: Models with vision capabilities
+
+## Configuration
+
+AdaL will automatically connect to Ollama at `http://localhost:11434`. To use a different endpoint, configure it in your AdaL settings.
+
+## Resources
+
+- [Website](https://adal.sylph.ai)
+- [GitHub](https://github.com/SylphAI-Inc/adal)
+- [Documentation](https://docs.adal.sylph.ai)
