@@ -61,7 +61,7 @@ type Runner struct {
 	Model     base.Model
 	Tokenizer *tokenizer.Tokenizer
 	Requests  chan Request
-	cache     *CacheEntry
+	cache     kvCache
 }
 
 func (r *Runner) Load(modelName string) error {
