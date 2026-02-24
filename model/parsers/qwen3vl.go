@@ -29,7 +29,6 @@ type Qwen3VLParser struct {
 	buffer             strings.Builder
 	tools              []api.Tool
 	hasThinkingSupport bool
-	defaultThinking    bool
 }
 
 func (p *Qwen3VLParser) HasToolSupport() bool {
@@ -40,18 +39,10 @@ func (p *Qwen3VLParser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
 }
 
-func (p *Qwen3VLParser) setInitialState(lastMessage *api.Message, thinkValue *api.ThinkValue) {
+func (p *Qwen3VLParser) setInitialState(lastMessage *api.Message) {
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"
 
-	thinkingEnabled := false
-	if p.HasThinkingSupport() {
-		if thinkValue != nil {
-			thinkingEnabled = thinkValue.Bool()
-		} else {
-			thinkingEnabled = p.defaultThinking
-		}
-	}
-	if !thinkingEnabled {
+	if !p.HasThinkingSupport() {
 		p.state = CollectingContent
 		return
 	}
@@ -66,7 +57,7 @@ func (p *Qwen3VLParser) setInitialState(lastMessage *api.Message, thinkValue *ap
 
 func (p *Qwen3VLParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
-	p.setInitialState(lastMessage, thinkValue)
+	p.setInitialState(lastMessage)
 	return tools
 }
 
