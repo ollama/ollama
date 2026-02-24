@@ -1,6 +1,7 @@
 package renderers
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -368,5 +369,76 @@ func TestFormatToolCallArgumentThinkingVL(t *testing.T) {
 				t.Errorf("formatToolCallArgument(%v) = %v, want %v", tt.arg, got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestQwen3VLRendererThinkOverride(t *testing.T) {
+	msgs := []api.Message{
+		{Role: "user", Content: "Hello"},
+	}
+
+	renderThinking, err := (&Qwen3VLRenderer{isThinking: true}).Render(msgs, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(renderThinking, "<|im_start|>assistant\n<think>\n") {
+		t.Fatalf("expected default thinking renderer to emit <think>, got:\n%s", renderThinking)
+	}
+
+	renderNonThinking, err := (&Qwen3VLRenderer{isThinking: true}).Render(msgs, nil, &api.ThinkValue{Value: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(renderNonThinking, "<think>") {
+		t.Fatalf("expected think=false override to suppress <think>, got:\n%s", renderNonThinking)
+	}
+
+	renderForcedThinking, err := (&Qwen3VLRenderer{isThinking: false}).Render(msgs, nil, &api.ThinkValue{Value: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(renderForcedThinking, "<|im_start|>assistant\n<think>\n") {
+		t.Fatalf("expected think=true override to emit <think>, got:\n%s", renderForcedThinking)
+	}
+}
+
+func TestQwen3VLRendererThinkOverrideWithExplicitNoThinkPrefill(t *testing.T) {
+	msgs := []api.Message{
+		{Role: "user", Content: "Hello"},
+	}
+
+	renderNonThinking, err := (&Qwen3VLRenderer{
+		isThinking:              true,
+		emitEmptyThinkOnNoThink: true,
+	}).Render(msgs, nil, &api.ThinkValue{Value: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(renderNonThinking, "<|im_start|>assistant\n<think>\n\n</think>\n\n") {
+		t.Fatalf("expected explicit think=false prefill block, got:\n%s", renderNonThinking)
+	}
+}
+
+func TestQwenRendererNameNoThinkBehaviorSplit(t *testing.T) {
+	msgs := []api.Message{
+		{Role: "user", Content: "Hello"},
+	}
+	thinkFalse := &api.ThinkValue{Value: false}
+
+	qwen35Rendered, err := RenderWithRenderer("qwen3.5", msgs, nil, thinkFalse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(qwen35Rendered, "<|im_start|>assistant\n<think>\n\n</think>\n\n") {
+		t.Fatalf("expected qwen3.5 renderer to emit explicit no-think prefill, got:\n%s", qwen35Rendered)
+	}
+
+	qwen3VLRendered, err := RenderWithRenderer("qwen3-vl", msgs, nil, thinkFalse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(qwen3VLRendered, "<|im_start|>assistant\n<think>\n\n</think>\n\n") {
+		t.Fatalf("expected qwen3-vl renderer to keep legacy non-empty no-think behavior, got:\n%s", qwen3VLRendered)
 	}
 }

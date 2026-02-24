@@ -318,59 +318,52 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 	return mm, nil
 }
 
-type modelInput struct {
-	*input.Input
-	position int32
-}
-
 func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
 	m.positionCache = m.positionCache[:0]
-	return slices.Collect(func(yield func(*input.Input) bool) {
-		for i := range inputs {
-			s := []modelInput{{Input: inputs[i]}}
-			if mm := inputs[i].Multimodal; mm != nil {
-				t := mm[0].Tensor
-				s = slices.Repeat([]modelInput{
-					{
-						position: int32(i + 1),
-						Input:    &input.Input{Token: m.imageToken},
-					},
-				}, t.Dim(1)+2)
+	var result []*input.Input
+	appendInput := func(inp *input.Input, position int32) {
+		result = append(result, inp)
+		m.positionCache = append(m.positionCache, position)
+	}
 
-				s[0] = modelInput{
-					Input:    &input.Input{Token: m.visionStart},
-					position: int32(i),
-				}
-
-				s[len(s)-1] = modelInput{
-					Input:    &input.Input{Token: m.visionEnd},
-					position: int32(i + mm[0].Data.(*qwen3vl.Grid).Width/int(m.spatialMergeSize) + 1),
-				}
-
-				s[1] = modelInput{
-					Input: &input.Input{
-						Token:          m.imageToken,
-						Multimodal:     inputs[i].Multimodal,
-						MultimodalHash: inputs[i].MultimodalHash,
-						SameBatch:      t.Dim(1),
-					},
-					position: int32(i + 1),
-				}
-			}
-
-			for _, e := range s {
-				position := e.position
-				if position == 0 && len(m.positionCache) > 0 {
-					position = m.positionCache[len(m.positionCache)-1] + 1
-				}
-
-				m.positionCache = append(m.positionCache, position)
-				if !yield(e.Input) {
-					return
-				}
-			}
+	var p int32
+	for _, inp := range inputs {
+		if inp.Multimodal == nil {
+			appendInput(inp, p)
+			p++
+			continue
 		}
-	}), nil
+
+		grid := inp.Multimodal[0].Data.(*qwen3vl.Grid)
+		tokensPerGrid := inp.Multimodal[0].Tensor.Dim(1)
+
+		appendInput(&input.Input{
+			Token:     m.visionStart,
+			SameBatch: tokensPerGrid + 1,
+		}, p)
+		p++
+
+		appendInput(&input.Input{
+			Token:          m.imageToken,
+			Multimodal:     inp.Multimodal,
+			MultimodalHash: inp.MultimodalHash,
+		}, p)
+
+		for range tokensPerGrid - 1 {
+			appendInput(&input.Input{
+				Token: m.imageToken,
+			}, p)
+		}
+
+		gridSpan := max(grid.Width/int(m.spatialMergeSize), grid.Height/int(m.spatialMergeSize))
+		p = p + int32(gridSpan)
+		appendInput(&input.Input{
+			Token: m.visionEnd,
+		}, p)
+		p++
+	}
+
+	return result, nil
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
@@ -385,9 +378,13 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 			visionOutputs := mi.Multimodal[0].Tensor
 			ctx.Forward(visionOutputs.Copy(ctx, hiddenStates.View(ctx, mi.Index*hiddenStates.Stride(1), visionOutputs.Dim(0)*visionOutputs.Dim(1))))
 
-			deepstackVisualEmbeds = make([]ml.Tensor, len(mi.Multimodal[1:]))
+			if len(mi.Multimodal[1:]) > len(deepstackVisualEmbeds) {
+				deepstackVisualEmbeds = append(deepstackVisualEmbeds, make([]ml.Tensor, len(mi.Multimodal[1:])-len(deepstackVisualEmbeds))...)
+			}
 			for i, mm := range mi.Multimodal[1:] {
-				deepstackVisualEmbeds[i] = ctx.Input().Zeros(mm.Tensor.DType(), hiddenStates.Shape()...)
+				if deepstackVisualEmbeds[i] == nil {
+					deepstackVisualEmbeds[i] = ctx.Input().Zeros(mm.Tensor.DType(), hiddenStates.Shape()...)
+				}
 				ctx.Forward(mm.Tensor.Copy(ctx, deepstackVisualEmbeds[i].View(ctx, mi.Index*deepstackVisualEmbeds[i].Stride(1), mm.Tensor.Dim(0)*mm.Tensor.Dim(1))))
 			}
 		}

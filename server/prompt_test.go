@@ -9,6 +9,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/template"
+	"github.com/ollama/ollama/types/model"
 )
 
 func TestChatPrompt(t *testing.T) {
@@ -328,5 +329,40 @@ func TestChatPromptTokenizeCalls(t *testing.T) {
 				t.Errorf("tokenize called %d times, expected at most %d", tokenizeCount, tt.maxTokenizes)
 			}
 		})
+	}
+}
+
+func TestChatPromptRendererDoesNotRewriteMessageContent(t *testing.T) {
+	msgs := []api.Message{
+		{
+			Role:    "user",
+			Content: "what do these photos have in common?",
+			Images:  []api.ImageData{[]byte("img-1"), []byte("img-2"), []byte("img-3")},
+		},
+	}
+	originalContent := msgs[0].Content
+
+	m := Model{
+		Config:         model.ConfigV2{Renderer: "qwen3-vl"},
+		ProjectorPaths: []string{"vision"},
+	}
+	opts := api.Options{Runner: api.Runner{NumCtx: 8192}}
+	think := false
+
+	prompt, images, err := chatPrompt(t.Context(), &m, mockRunner{}.Tokenize, &opts, msgs, nil, &api.ThinkValue{Value: think}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if msgs[0].Content != originalContent {
+		t.Fatalf("renderer path should not mutate message content: got %q, want %q", msgs[0].Content, originalContent)
+	}
+
+	if got, want := len(images), 3; got != want {
+		t.Fatalf("len(images) = %d, want %d", got, want)
+	}
+
+	if prompt == "" {
+		t.Fatal("prompt is empty")
 	}
 }

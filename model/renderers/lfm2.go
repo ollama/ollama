@@ -3,6 +3,7 @@ package renderers
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -192,21 +193,25 @@ func lfm2RenderToolCalls(calls []api.ToolCall) string {
 	return sb.String()
 }
 
-func (r *LFM2Renderer) renderMessageContent(message api.Message) string {
+func (r *LFM2Renderer) renderMessageContent(message api.Message, imageOffset int) string {
 	content := lfm2RenderContent(message.Content, r.useImgTags)
 	if len(message.Images) == 0 {
 		return content
 	}
 
-	// chatPrompt may already have inserted [img] / [img-n] placeholders.
-	if strings.Contains(content, "[img]") || strings.Contains(content, "[img-") || strings.Contains(content, "<image>") {
-		return content
-	}
-
 	var sb strings.Builder
-	placeholder := lfm2ImagePlaceholder(r.useImgTags)
-	for range message.Images {
-		sb.WriteString(placeholder)
+	if r.useImgTags {
+		for i := range message.Images {
+			sb.WriteString(fmt.Sprintf("[img-%d]", imageOffset+i))
+		}
+	} else {
+		placeholder := lfm2ImagePlaceholder(false)
+		if strings.Contains(content, placeholder) {
+			return content
+		}
+		for range message.Images {
+			sb.WriteString(placeholder)
+		}
 	}
 	sb.WriteString(content)
 	return sb.String()
@@ -262,6 +267,11 @@ func (r *LFM2Renderer) Render(messages []api.Message, tools []api.Tool, thinkVal
 		}
 	}
 
+	imageOffset := 0
+	for i := range startIdx {
+		imageOffset += len(messages[i].Images)
+	}
+
 	for i := startIdx; i < len(messages); i++ {
 		message := messages[i]
 		lastMessage := i == len(messages)-1
@@ -271,7 +281,8 @@ func (r *LFM2Renderer) Render(messages []api.Message, tools []api.Tool, thinkVal
 		sb.WriteString(message.Role)
 		sb.WriteString("\n")
 
-		content := r.renderMessageContent(message)
+		content := r.renderMessageContent(message, imageOffset)
+		imageOffset += len(message.Images)
 		if message.Role == "assistant" && !keepPastThinking && i != lastAssistantIndex {
 			if idx := strings.LastIndex(content, "</think>"); idx >= 0 {
 				content = strings.TrimSpace(content[idx+len("</think>"):])
