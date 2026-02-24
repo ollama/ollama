@@ -55,6 +55,10 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	total, processed := len(tokens), 0
 	slog.Info("Prompt processing progress", "processed", processed, "total", total)
 	for total-processed > 1 {
+		if err := request.Ctx.Err(); err != nil {
+			return err
+		}
+
 		n := min(2<<10, total-processed-1)
 		r.Model.Forward(mlx.FromValues(tokens[processed:processed+n], n).ExpandDims(0), caches)
 		mlx.Sweep()
@@ -92,6 +96,10 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	now := time.Now()
 	final := Response{Done: true, PromptTokens: total, CompletionTokens: request.Options.MaxTokens, DoneReason: 1}
 	for i := range request.Options.MaxTokens {
+		if err := request.Ctx.Err(); err != nil {
+			return err
+		}
+
 		nextSample, nextLogprobs = step(sample)
 
 		if i == 0 {
@@ -111,9 +119,13 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 			break
 		}
 
-		request.Responses <- Response{
+		select {
+		case <-request.Ctx.Done():
+			return request.Ctx.Err()
+		case request.Responses <- Response{
 			Text:  r.Decode(output, &b),
 			Token: int(output),
+		}:
 		}
 
 		mlx.Unpin(sample, logprobs)
@@ -126,8 +138,12 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	}
 
 	final.CompletionTokensDuration = time.Since(now)
-	request.Responses <- final
-	return nil
+	select {
+	case <-request.Ctx.Done():
+		return request.Ctx.Err()
+	case request.Responses <- final:
+		return nil
+	}
 }
 
 func (r Runner) Decode(sample int32, b *bytes.Buffer) string {
