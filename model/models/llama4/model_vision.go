@@ -16,7 +16,7 @@ type VisionAttention struct {
 }
 
 // applyVisionRotaryEmbedding applies 2D rotary embedding to the input tensor.
-// This is equivalent to the Pytorch implmentation using half rotations:
+// This is equivalent to the PyTorch implementation using half rotations:
 //
 //	cos, sin = torch.cos(freqs), torch.sin(freqs)
 //	cos = cos.unsqueeze(-1)
@@ -25,7 +25,7 @@ type VisionAttention struct {
 //	t_out = (t * cos) + (_rotate_half(t) * sin)
 //	t_out = t_out.flatten(3)
 //
-// Which is equivalent to the Pytorch implementation using complex numbers:
+// Which is equivalent to the PyTorch implementation using complex numbers:
 //
 //	t_ = torch.view_as_complex(t.float().reshape(*t.shape[:-1], -1, 2))
 //	freqs_ci = reshape_for_broadcast(freqs_ci=freq_cis, t=t_)  # freqs_ci[:,:,None,:]
