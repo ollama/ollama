@@ -584,7 +584,7 @@ func extractFileNames(input string) []string {
 	// Regex to match file paths starting with optional drive letter, / ./ \ or .\ and include escaped or unescaped spaces (\ or %20)
 	// and followed by more characters and a file extension
 	// This will capture non filename strings, but we'll check for file existence to remove mismatches
-	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp)\b`
+	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp|mp4|webm|mkv|avi|mov|m4v)\b`
 	re := regexp.MustCompile(regexPattern)
 
 	return re.FindAllString(input, -1)
@@ -600,10 +600,10 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		} else if err != nil {
-			fmt.Fprintf(os.Stderr, "Couldn't process image: %q\n", err)
+			fmt.Fprintf(os.Stderr, "Couldn't process file: %q\n", err)
 			return "", imgs, err
 		}
-		fmt.Fprintf(os.Stderr, "Added image '%s'\n", nfp)
+		fmt.Fprintf(os.Stderr, "Added file '%s'\n", nfp)
 		input = strings.ReplaceAll(input, "'"+nfp+"'", "")
 		input = strings.ReplaceAll(input, "'"+fp+"'", "")
 		input = strings.ReplaceAll(input, fp, "")
@@ -677,9 +677,12 @@ func getImageData(filePath string) ([]byte, error) {
 	}
 
 	contentType := http.DetectContentType(buf)
-	allowedTypes := []string{"image/jpeg", "image/jpg", "image/png", "image/webp"}
+	allowedTypes := []string{
+		"image/jpeg", "image/jpg", "image/png", "image/webp",
+		"video/mp4", "video/webm", "video/x-matroska", "video/avi", "video/x-msvideo",
+	}
 	if !slices.Contains(allowedTypes, contentType) {
-		return nil, fmt.Errorf("invalid image type: %s", contentType)
+		return nil, fmt.Errorf("invalid file type: %s (expected image or video)", contentType)
 	}
 
 	info, err := file.Stat()

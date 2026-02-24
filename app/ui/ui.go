@@ -1664,6 +1664,14 @@ func isImageAttachment(filename string) bool {
 	return strings.HasSuffix(ext, ".png") || strings.HasSuffix(ext, ".jpg") || strings.HasSuffix(ext, ".jpeg") || strings.HasSuffix(ext, ".webp")
 }
 
+// isVideoAttachment checks if a filename is a video file
+func isVideoAttachment(filename string) bool {
+	ext := strings.ToLower(filename)
+	return strings.HasSuffix(ext, ".mp4") || strings.HasSuffix(ext, ".mov") ||
+		strings.HasSuffix(ext, ".avi") || strings.HasSuffix(ext, ".mkv") ||
+		strings.HasSuffix(ext, ".webm") || strings.HasSuffix(ext, ".m4v")
+}
+
 // ptr is a convenience function for &literal
 func ptr[T any](v T) *T { return &v }
 
@@ -1688,10 +1696,13 @@ func (s *Server) buildChatRequest(chat *store.Chat, model string, think any, ava
 		sb.WriteString(m.Content)
 
 		var images []api.ImageData
+		var videos []api.ImageData
 		if m.Role == "user" && len(m.Attachments) > 0 {
 			for _, a := range m.Attachments {
 				if isImageAttachment(a.Filename) {
 					images = append(images, api.ImageData(a.Data))
+				} else if isVideoAttachment(a.Filename) {
+					videos = append(videos, api.ImageData(a.Data))
 				} else {
 					content := convertBytesToText(a.Data, a.Filename)
 					sb.WriteString(fmt.Sprintf("\n--- File: %s ---\n%s\n--- End of %s ---",
@@ -1702,6 +1713,7 @@ func (s *Server) buildChatRequest(chat *store.Chat, model string, think any, ava
 
 		apiMsg.Content = sb.String()
 		apiMsg.Images = images
+		apiMsg.Videos = videos
 
 		switch m.Role {
 		case "assistant":

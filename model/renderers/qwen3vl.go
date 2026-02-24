@@ -12,6 +12,11 @@ type Qwen3VLRenderer struct {
 	useImgTags bool
 }
 
+// getVideos returns video data from the message
+func getVideos(msg api.Message) []api.ImageData {
+	return msg.Videos
+}
+
 func (r *Qwen3VLRenderer) renderContent(content api.Message) string {
 	// This assumes all images are at the front of the message - same assumption as ollama/ollama/runner.go
 	var subSb strings.Builder
@@ -25,7 +30,20 @@ func (r *Qwen3VLRenderer) renderContent(content api.Message) string {
 			subSb.WriteString("<|vision_start|><|image_pad|><|vision_end|>")
 		}
 	}
-	// TODO: support videos
+
+	// Render videos using the same vision tokens but with video_pad
+	// Videos should come after images in the message content
+	// Note: This assumes api.Message will have a Videos field similar to Images
+	// For now, we check using reflection to be forward-compatible
+	if videos := getVideos(content); len(videos) > 0 {
+		for range videos {
+			if r.useImgTags {
+				subSb.WriteString("[video]")
+			} else {
+				subSb.WriteString("<|vision_start|><|video_pad|><|vision_end|>")
+			}
+		}
+	}
 
 	subSb.WriteString(content.Content)
 	return subSb.String()

@@ -227,9 +227,71 @@ jobs:
       - name: Run go generate
         run: go generate ./...
 
-      - name: go test
+      # Install FFmpeg library build dependencies
+      - name: Install FFmpeg library build dependencies (ubuntu)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: sudo apt-get update && sudo apt-get install -y nasm yasm wget
+
+      - name: Install FFmpeg build dependencies (macos)
+        if: startsWith(matrix.os, 'macos')
+        run: brew install nasm wget
+
+      # Cache FFmpeg library build
+      - name: Cache FFmpeg libraries
+        id: cache-ffmpeg
+        uses: actions/cache@v4
+        with:
+          path: third_party/ffmpeg/install
+          key: ffmpeg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('third_party/ffmpeg/build.sh', 'third_party/ffmpeg/build_windows.ps1') }}
+
+      # Build minimal FFmpeg library (Linux/macOS)
+      - name: Build minimal FFmpeg (Unix)
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true' && runner.os != 'Windows'
+        run: ./third_party/ffmpeg/build.sh
+        shell: bash
+
+      # Build minimal FFmpeg library (Windows)
+      - name: Build minimal FFmpeg (Windows)
+        if: steps.cache-ffmpeg.outputs.cache-hit != 'true' && runner.os == 'Windows'
+        run: .\third_party\ffmpeg\build_windows.ps1
+        shell: pwsh
+
+      # Test with embedded FFmpeg (Unix)
+      - name: Run tests with embedded FFmpeg (Unix)
+        if: runner.os != 'Windows'
+        run: go test -tags ffmpeg,cgo -count=1 -benchtime=1x ./...
+        env:
+          PKG_CONFIG_PATH: ${{ github.workspace }}/third_party/ffmpeg/install/lib/pkgconfig
+        shell: bash
+
+      # Test with embedded FFmpeg (Windows)
+      - name: Run tests with embedded FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $env:PATH = "${{ github.workspace }}\third_party\ffmpeg\install\lib;$env:PATH"
+          go test -tags ffmpeg,cgo -count=1 -benchtime=1x ./...
+        env:
+          PKG_CONFIG_PATH: ${{ github.workspace }}/third_party/ffmpeg/install/lib/pkgconfig
+        shell: pwsh
+
+      # Install system ffmpeg for fallback testing using local binary
+      - name: Install system ffmpeg (ubuntu)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: sudo apt-get install -y ffmpeg
+
+      - name: Install system ffmpeg (macos)
+        if: startsWith(matrix.os, 'macos')
+        run: brew install ffmpeg
+
+      - name: Install system ffmpeg (windows)
+        if: startsWith(matrix.os, 'windows')
+        run: choco install -y ffmpeg
+
+      # Test fallback mode (without embedded FFmpeg)
+      - name: Run tests in fallback mode
         if: always()
         run: go test -count=1 -benchtime=1x ./...
+        shell: bash
 
       - uses: golangci/golangci-lint-action@v9
         with:

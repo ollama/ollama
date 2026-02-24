@@ -40,9 +40,36 @@ done
 shift $(( $OPTIND - 1 ))
 
 _build_darwin() {
+    # Build minimal FFmpeg libs from source
+    # if not skipped and not already built
+    # for video input support
+    if [ "${SKIP_FFMPEG:-0}" = "0" ] && [ ! -f "third_party/ffmpeg/install/lib/libavcodec.a" ]; then
+        status "Building minimal FFmpeg..."
+        ./third_party/ffmpeg/build.sh
+    elif [ "${SKIP_FFMPEG:-0}" = "1" ]; then
+        status "Skipping FFmpeg build (SKIP_FFMPEG=1)"
+    else
+        status "Using existing FFmpeg build"
+    fi
+
+    # Set PKG_CONFIG_PATH for FFmpeg libraries
+    if [ -f "third_party/ffmpeg/install/lib/pkgconfig/libavcodec.pc" ]; then
+        # Use ONLY our local FFmpeg (prevent homebrew libs from being used)
+        export PKG_CONFIG_PATH="${PWD}/third_party/ffmpeg/install/lib/pkgconfig"
+        # Explicitly set CGO flags to use our local FFmpeg include/lib paths
+        export CGO_CFLAGS="${CGO_CFLAGS} -I${PWD}/third_party/ffmpeg/install/include"
+        export CGO_LDFLAGS="${CGO_LDFLAGS} -L${PWD}/third_party/ffmpeg/install/lib"
+        GO_BUILD_TAGS="-tags ffmpeg,cgo"
+        status "Building with embedded FFmpeg support (local build)"
+    else
+        GO_BUILD_TAGS=""
+        status "Building without embedded FFmpeg (will use system ffmpeg)"
+    fi
+
     for ARCH in $ARCHS; do
         status "Building darwin $ARCH"
-        INSTALL_PREFIX=dist/darwin-$ARCH/        
+        INSTALL_PREFIX=dist/darwin-$ARCH/
+        GOOS=darwin GOARCH=$ARCH CGO_ENABLED=1 go build $GO_BUILD_TAGS -o $INSTALL_PREFIX .
 
         if [ "$ARCH" = "amd64" ]; then
             status "Building darwin $ARCH dynamic backends"
