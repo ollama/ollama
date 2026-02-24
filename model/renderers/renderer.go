@@ -85,9 +85,9 @@ func rendererForName(name string) Renderer {
 	case "glm-ocr":
 		return &GlmOcrRenderer{}
 	case "lfm2":
-		return &LFM2Renderer{IsThinking: false}
+		return &LFM2Renderer{IsThinking: false, useImgTags: RenderImgTags}
 	case "lfm2-thinking":
-		return &LFM2Renderer{IsThinking: true}
+		return &LFM2Renderer{IsThinking: true, useImgTags: RenderImgTags}
 	default:
 		return nil
 	}

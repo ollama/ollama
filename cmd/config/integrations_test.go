@@ -2,14 +2,41 @@ package config
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/ollama/ollama/api"
 	"github.com/spf13/cobra"
 )
+
+type stubEditorRunner struct {
+	edited   [][]string
+	ranModel string
+}
+
+func (s *stubEditorRunner) Run(model string, args []string) error {
+	s.ranModel = model
+	return nil
+}
+
+func (s *stubEditorRunner) String() string { return "StubEditor" }
+
+func (s *stubEditorRunner) Paths() []string { return nil }
+
+func (s *stubEditorRunner) Edit(models []string) error {
+	cloned := append([]string(nil), models...)
+	s.edited = append(s.edited, cloned)
+	return nil
+}
+
+func (s *stubEditorRunner) Models() []string { return nil }
 
 func TestIntegrationLookup(t *testing.T) {
 	tests := []struct {
@@ -89,8 +116,8 @@ func TestLaunchCmd(t *testing.T) {
 	mockCheck := func(cmd *cobra.Command, args []string) error {
 		return nil
 	}
-
-	cmd := LaunchCmd(mockCheck)
+	mockTUI := func(cmd *cobra.Command) {}
+	cmd := LaunchCmd(mockCheck, mockTUI)
 
 	t.Run("command structure", func(t *testing.T) {
 		if cmd.Use != "launch [INTEGRATION] [-- [EXTRA_ARGS...]]" {
@@ -119,6 +146,79 @@ func TestLaunchCmd(t *testing.T) {
 	t.Run("PreRunE is set", func(t *testing.T) {
 		if cmd.PreRunE == nil {
 			t.Error("PreRunE should be set to checkServerHeartbeat")
+		}
+	})
+}
+
+func TestLaunchCmd_TUICallback(t *testing.T) {
+	mockCheck := func(cmd *cobra.Command, args []string) error {
+		return nil
+	}
+
+	t.Run("no args calls TUI", func(t *testing.T) {
+		tuiCalled := false
+		mockTUI := func(cmd *cobra.Command) {
+			tuiCalled = true
+		}
+
+		cmd := LaunchCmd(mockCheck, mockTUI)
+		cmd.SetArgs([]string{})
+		_ = cmd.Execute()
+
+		if !tuiCalled {
+			t.Error("TUI callback should be called when no args provided")
+		}
+	})
+
+	t.Run("integration arg bypasses TUI", func(t *testing.T) {
+		srv := httptest.NewServer(http.NotFoundHandler())
+		defer srv.Close()
+		t.Setenv("OLLAMA_HOST", srv.URL)
+
+		tuiCalled := false
+		mockTUI := func(cmd *cobra.Command) {
+			tuiCalled = true
+		}
+
+		cmd := LaunchCmd(mockCheck, mockTUI)
+		cmd.SetArgs([]string{"claude"})
+		// Will error because claude isn't configured, but that's OK
+		_ = cmd.Execute()
+
+		if tuiCalled {
+			t.Error("TUI callback should NOT be called when integration arg provided")
+		}
+	})
+
+	t.Run("--model flag bypasses TUI", func(t *testing.T) {
+		tuiCalled := false
+		mockTUI := func(cmd *cobra.Command) {
+			tuiCalled = true
+		}
+
+		cmd := LaunchCmd(mockCheck, mockTUI)
+		cmd.SetArgs([]string{"--model", "test-model"})
+		// Will error because no integration specified, but that's OK
+		_ = cmd.Execute()
+
+		if tuiCalled {
+			t.Error("TUI callback should NOT be called when --model flag provided")
+		}
+	})
+
+	t.Run("--config flag bypasses TUI", func(t *testing.T) {
+		tuiCalled := false
+		mockTUI := func(cmd *cobra.Command) {
+			tuiCalled = true
+		}
+
+		cmd := LaunchCmd(mockCheck, mockTUI)
+		cmd.SetArgs([]string{"--config"})
+		// Will error because no integration specified, but that's OK
+		_ = cmd.Execute()
+
+		if tuiCalled {
+			t.Error("TUI callback should NOT be called when --config flag provided")
 		}
 	})
 }
@@ -163,7 +263,7 @@ func TestHasLocalModel_DocumentsHeuristic(t *testing.T) {
 
 func TestLaunchCmd_NilHeartbeat(t *testing.T) {
 	// This should not panic - cmd creation should work even with nil
-	cmd := LaunchCmd(nil)
+	cmd := LaunchCmd(nil, nil)
 	if cmd == nil {
 		t.Fatal("LaunchCmd returned nil")
 	}
@@ -300,7 +400,7 @@ func TestParseArgs(t *testing.T) {
 func TestIsCloudModel(t *testing.T) {
 	// isCloudModel now only uses Show API, so nil client always returns false
 	t.Run("nil client returns false", func(t *testing.T) {
-		models := []string{"glm-4.7:cloud", "kimi-k2.5:cloud", "local-model"}
+		models := []string{"glm-5:cloud", "kimi-k2.5:cloud", "local-model"}
 		for _, model := range models {
 			if isCloudModel(context.Background(), nil, model) {
 				t.Errorf("isCloudModel(%q) with nil client should return false", model)
@@ -309,7 +409,7 @@ func TestIsCloudModel(t *testing.T) {
 	})
 }
 
-func names(items []selectItem) []string {
+func names(items []ModelItem) []string {
 	var out []string
 	for _, item := range items {
 		out = append(out, item.Name)
@@ -320,14 +420,14 @@ func names(items []selectItem) []string {
 func TestBuildModelList_NoExistingModels(t *testing.T) {
 	items, _, _, _ := buildModelList(nil, nil, "")
 
-	want := []string{"glm-4.7-flash", "qwen3:8b", "glm-4.7:cloud", "kimi-k2.5:cloud"}
+	want := []string{"minimax-m2.5:cloud", "glm-5:cloud", "kimi-k2.5:cloud", "glm-4.7-flash", "qwen3:8b"}
 	if diff := cmp.Diff(want, names(items)); diff != "" {
 		t.Errorf("with no existing models, items should be recommended in order (-want +got):\n%s", diff)
 	}
 
 	for _, item := range items {
-		if !strings.HasSuffix(item.Description, "install?") {
-			t.Errorf("item %q should have description ending with 'install?', got %q", item.Name, item.Description)
+		if !strings.HasSuffix(item.Description, "(not downloaded)") {
+			t.Errorf("item %q should have description ending with '(not downloaded)', got %q", item.Name, item.Description)
 		}
 	}
 }
@@ -341,31 +441,33 @@ func TestBuildModelList_OnlyLocalModels_CloudRecsAtBottom(t *testing.T) {
 	items, _, _, _ := buildModelList(existing, nil, "")
 	got := names(items)
 
-	want := []string{"llama3.2", "qwen2.5", "glm-4.7-flash", "glm-4.7:cloud", "kimi-k2.5:cloud", "qwen3:8b"}
+	// Recommended pinned at top (local recs first, then cloud recs when only-local), then installed non-recs
+	want := []string{"glm-4.7-flash", "qwen3:8b", "minimax-m2.5:cloud", "glm-5:cloud", "kimi-k2.5:cloud", "llama3.2", "qwen2.5"}
 	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("cloud recs should be at bottom (-want +got):\n%s", diff)
+		t.Errorf("recs pinned at top, local recs before cloud recs (-want +got):\n%s", diff)
 	}
 }
 
 func TestBuildModelList_BothCloudAndLocal_RegularSort(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "llama3.2:latest", Remote: false},
-		{Name: "glm-4.7:cloud", Remote: true},
+		{Name: "glm-5:cloud", Remote: true},
 	}
 
 	items, _, _, _ := buildModelList(existing, nil, "")
 	got := names(items)
 
-	want := []string{"glm-4.7:cloud", "llama3.2", "glm-4.7-flash", "kimi-k2.5:cloud", "qwen3:8b"}
+	// All recs pinned at top (cloud before local in mixed case), then non-recs
+	want := []string{"minimax-m2.5:cloud", "glm-5:cloud", "kimi-k2.5:cloud", "glm-4.7-flash", "qwen3:8b", "llama3.2"}
 	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("mixed models should be alphabetical (-want +got):\n%s", diff)
+		t.Errorf("recs pinned at top, cloud recs first in mixed case (-want +got):\n%s", diff)
 	}
 }
 
 func TestBuildModelList_PreCheckedFirst(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "llama3.2:latest", Remote: false},
-		{Name: "glm-4.7:cloud", Remote: true},
+		{Name: "glm-5:cloud", Remote: true},
 	}
 
 	items, _, _, _ := buildModelList(existing, []string{"llama3.2"}, "")
@@ -379,20 +481,20 @@ func TestBuildModelList_PreCheckedFirst(t *testing.T) {
 func TestBuildModelList_ExistingRecommendedMarked(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "glm-4.7-flash", Remote: false},
-		{Name: "glm-4.7:cloud", Remote: true},
+		{Name: "glm-5:cloud", Remote: true},
 	}
 
 	items, _, _, _ := buildModelList(existing, nil, "")
 
 	for _, item := range items {
 		switch item.Name {
-		case "glm-4.7-flash", "glm-4.7:cloud":
-			if strings.HasSuffix(item.Description, "install?") {
-				t.Errorf("installed recommended %q should not have 'install?' suffix, got %q", item.Name, item.Description)
+		case "glm-4.7-flash", "glm-5:cloud":
+			if strings.HasSuffix(item.Description, "(not downloaded)") {
+				t.Errorf("installed recommended %q should not have '(not downloaded)' suffix, got %q", item.Name, item.Description)
 			}
-		case "kimi-k2.5:cloud", "qwen3:8b":
-			if !strings.HasSuffix(item.Description, "install?") {
-				t.Errorf("non-installed recommended %q should have 'install?' suffix, got %q", item.Name, item.Description)
+		case "minimax-m2.5:cloud", "kimi-k2.5:cloud", "qwen3:8b":
+			if !strings.HasSuffix(item.Description, "(not downloaded)") {
+				t.Errorf("non-installed recommended %q should have '(not downloaded)' suffix, got %q", item.Name, item.Description)
 			}
 		}
 	}
@@ -401,17 +503,18 @@ func TestBuildModelList_ExistingRecommendedMarked(t *testing.T) {
 func TestBuildModelList_ExistingCloudModelsNotPushedToBottom(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "glm-4.7-flash", Remote: false},
-		{Name: "glm-4.7:cloud", Remote: true},
+		{Name: "glm-5:cloud", Remote: true},
 	}
 
 	items, _, _, _ := buildModelList(existing, nil, "")
 	got := names(items)
 
-	// glm-4.7-flash and glm-4.7:cloud are installed so they sort normally;
+	// glm-4.7-flash and glm-5:cloud are installed so they sort normally;
 	// kimi-k2.5:cloud and qwen3:8b are not installed so they go to the bottom
-	want := []string{"glm-4.7-flash", "glm-4.7:cloud", "kimi-k2.5:cloud", "qwen3:8b"}
+	// All recs: cloud first in mixed case, then local, in rec order within each
+	want := []string{"minimax-m2.5:cloud", "glm-5:cloud", "kimi-k2.5:cloud", "glm-4.7-flash", "qwen3:8b"}
 	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("existing cloud models should sort normally (-want +got):\n%s", diff)
+		t.Errorf("all recs, cloud first in mixed case (-want +got):\n%s", diff)
 	}
 }
 
@@ -426,15 +529,16 @@ func TestBuildModelList_HasRecommendedCloudModel_OnlyNonInstalledAtBottom(t *tes
 
 	// kimi-k2.5:cloud is installed so it sorts normally;
 	// the rest of the recommendations are not installed so they go to the bottom
-	want := []string{"kimi-k2.5:cloud", "llama3.2", "glm-4.7-flash", "glm-4.7:cloud", "qwen3:8b"}
+	// All recs pinned at top (cloud first in mixed case), then non-recs
+	want := []string{"minimax-m2.5:cloud", "glm-5:cloud", "kimi-k2.5:cloud", "glm-4.7-flash", "qwen3:8b", "llama3.2"}
 	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("only non-installed models should be at bottom (-want +got):\n%s", diff)
+		t.Errorf("recs pinned at top, cloud first in mixed case (-want +got):\n%s", diff)
 	}
 
 	for _, item := range items {
 		if !slices.Contains([]string{"kimi-k2.5:cloud", "llama3.2"}, item.Name) {
-			if !strings.HasSuffix(item.Description, "install?") {
-				t.Errorf("non-installed %q should have 'install?' suffix, got %q", item.Name, item.Description)
+			if !strings.HasSuffix(item.Description, "(not downloaded)") {
+				t.Errorf("non-installed %q should have '(not downloaded)' suffix, got %q", item.Name, item.Description)
 			}
 		}
 	}
@@ -476,7 +580,7 @@ func TestBuildModelList_LatestTagStripped(t *testing.T) {
 func TestBuildModelList_ReturnsExistingAndCloudMaps(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "llama3.2:latest", Remote: false},
-		{Name: "glm-4.7:cloud", Remote: true},
+		{Name: "glm-5:cloud", Remote: true},
 	}
 
 	_, _, existingModels, cloudModels := buildModelList(existing, nil, "")
@@ -484,15 +588,15 @@ func TestBuildModelList_ReturnsExistingAndCloudMaps(t *testing.T) {
 	if !existingModels["llama3.2"] {
 		t.Error("llama3.2 should be in existingModels")
 	}
-	if !existingModels["glm-4.7:cloud"] {
-		t.Error("glm-4.7:cloud should be in existingModels")
+	if !existingModels["glm-5:cloud"] {
+		t.Error("glm-5:cloud should be in existingModels")
 	}
 	if existingModels["glm-4.7-flash"] {
 		t.Error("glm-4.7-flash should not be in existingModels (it's a recommendation)")
 	}
 
-	if !cloudModels["glm-4.7:cloud"] {
-		t.Error("glm-4.7:cloud should be in cloudModels")
+	if !cloudModels["glm-5:cloud"] {
+		t.Error("glm-5:cloud should be in cloudModels")
 	}
 	if !cloudModels["kimi-k2.5:cloud"] {
 		t.Error("kimi-k2.5:cloud should be in cloudModels (recommended cloud)")
@@ -502,12 +606,107 @@ func TestBuildModelList_ReturnsExistingAndCloudMaps(t *testing.T) {
 	}
 }
 
+func TestBuildModelList_RecommendedFieldSet(t *testing.T) {
+	existing := []modelInfo{
+		{Name: "glm-4.7-flash", Remote: false},
+		{Name: "llama3.2:latest", Remote: false},
+	}
+
+	items, _, _, _ := buildModelList(existing, nil, "")
+
+	for _, item := range items {
+		switch item.Name {
+		case "glm-4.7-flash", "qwen3:8b", "glm-5:cloud", "kimi-k2.5:cloud":
+			if !item.Recommended {
+				t.Errorf("%q should have Recommended=true", item.Name)
+			}
+		case "llama3.2":
+			if item.Recommended {
+				t.Errorf("%q should have Recommended=false", item.Name)
+			}
+		}
+	}
+}
+
+func TestBuildModelList_MixedCase_CloudRecsFirst(t *testing.T) {
+	existing := []modelInfo{
+		{Name: "llama3.2:latest", Remote: false},
+		{Name: "glm-5:cloud", Remote: true},
+	}
+
+	items, _, _, _ := buildModelList(existing, nil, "")
+	got := names(items)
+
+	// Cloud recs should sort before local recs in mixed case
+	cloudIdx := slices.Index(got, "glm-5:cloud")
+	localIdx := slices.Index(got, "glm-4.7-flash")
+	if cloudIdx > localIdx {
+		t.Errorf("cloud recs should be before local recs in mixed case, got %v", got)
+	}
+}
+
+func TestBuildModelList_OnlyLocal_LocalRecsFirst(t *testing.T) {
+	existing := []modelInfo{
+		{Name: "llama3.2:latest", Remote: false},
+	}
+
+	items, _, _, _ := buildModelList(existing, nil, "")
+	got := names(items)
+
+	// Local recs should sort before cloud recs in only-local case
+	localIdx := slices.Index(got, "glm-4.7-flash")
+	cloudIdx := slices.Index(got, "glm-5:cloud")
+	if localIdx > cloudIdx {
+		t.Errorf("local recs should be before cloud recs in only-local case, got %v", got)
+	}
+}
+
+func TestBuildModelList_RecsAboveNonRecs(t *testing.T) {
+	existing := []modelInfo{
+		{Name: "llama3.2:latest", Remote: false},
+		{Name: "custom-model", Remote: false},
+	}
+
+	items, _, _, _ := buildModelList(existing, nil, "")
+	got := names(items)
+
+	// All recommended models should appear before non-recommended installed models
+	lastRecIdx := -1
+	firstNonRecIdx := len(got)
+	for i, name := range got {
+		isRec := name == "glm-4.7-flash" || name == "qwen3:8b" || name == "minimax-m2.5:cloud" || name == "glm-5:cloud" || name == "kimi-k2.5:cloud"
+		if isRec && i > lastRecIdx {
+			lastRecIdx = i
+		}
+		if !isRec && i < firstNonRecIdx {
+			firstNonRecIdx = i
+		}
+	}
+	if lastRecIdx > firstNonRecIdx {
+		t.Errorf("all recs should be above non-recs, got %v", got)
+	}
+}
+
+func TestBuildModelList_CheckedBeforeRecs(t *testing.T) {
+	existing := []modelInfo{
+		{Name: "llama3.2:latest", Remote: false},
+		{Name: "glm-5:cloud", Remote: true},
+	}
+
+	items, _, _, _ := buildModelList(existing, []string{"llama3.2"}, "")
+	got := names(items)
+
+	if got[0] != "llama3.2" {
+		t.Errorf("checked model should be first even before recs, got %v", got)
+	}
+}
+
 func TestEditorIntegration_SavedConfigSkipsSelection(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
 	// Save a config for opencode so it looks like a previous launch
-	if err := saveIntegration("opencode", []string{"llama3.2"}); err != nil {
+	if err := SaveIntegration("opencode", []string{"llama3.2"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -521,6 +720,137 @@ func TestEditorIntegration_SavedConfigSkipsSelection(t *testing.T) {
 	}
 	if saved.Models[0] != "llama3.2" {
 		t.Errorf("expected llama3.2, got %s", saved.Models[0])
+	}
+}
+
+func TestResolveEditorLaunchModels_PicksWhenAllFiltered(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status":
+			fmt.Fprintf(w, `{"cloud":{"disabled":true,"source":"config"}}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	pickerCalled := false
+	models, err := resolveEditorModels("opencode", []string{"glm-5:cloud"}, func() ([]string, error) {
+		pickerCalled = true
+		return []string{"llama3.2"}, nil
+	})
+	if err != nil {
+		t.Fatalf("resolveEditorLaunchModels returned error: %v", err)
+	}
+	if !pickerCalled {
+		t.Fatal("expected model picker to be called when all models are filtered")
+	}
+	if diff := cmp.Diff([]string{"llama3.2"}, models); diff != "" {
+		t.Fatalf("resolved models mismatch (-want +got):\n%s", diff)
+	}
+
+	saved, err := loadIntegration("opencode")
+	if err != nil {
+		t.Fatalf("failed to reload integration config: %v", err)
+	}
+	if diff := cmp.Diff([]string{"llama3.2"}, saved.Models); diff != "" {
+		t.Fatalf("saved models mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestResolveEditorLaunchModels_FiltersAndSkipsPickerWhenLocalRemains(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status":
+			fmt.Fprintf(w, `{"cloud":{"disabled":true,"source":"config"}}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	pickerCalled := false
+	models, err := resolveEditorModels("droid", []string{"llama3.2", "glm-5:cloud"}, func() ([]string, error) {
+		pickerCalled = true
+		return []string{"qwen3:8b"}, nil
+	})
+	if err != nil {
+		t.Fatalf("resolveEditorLaunchModels returned error: %v", err)
+	}
+	if pickerCalled {
+		t.Fatal("picker should not be called when a local model remains")
+	}
+	if diff := cmp.Diff([]string{"llama3.2"}, models); diff != "" {
+		t.Fatalf("resolved models mismatch (-want +got):\n%s", diff)
+	}
+
+	saved, err := loadIntegration("droid")
+	if err != nil {
+		t.Fatalf("failed to reload integration config: %v", err)
+	}
+	if diff := cmp.Diff([]string{"llama3.2"}, saved.Models); diff != "" {
+		t.Fatalf("saved models mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestLaunchCmd_ModelFlagFiltersDisabledCloudFromSavedConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	if err := SaveIntegration("stubeditor", []string{"glm-5:cloud"}); err != nil {
+		t.Fatalf("failed to seed saved config: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status":
+			fmt.Fprintf(w, `{"cloud":{"disabled":true,"source":"config"}}`)
+		case "/api/show":
+			fmt.Fprintf(w, `{"model":"llama3.2"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	stub := &stubEditorRunner{}
+	old, existed := integrations["stubeditor"]
+	integrations["stubeditor"] = stub
+	defer func() {
+		if existed {
+			integrations["stubeditor"] = old
+		} else {
+			delete(integrations, "stubeditor")
+		}
+	}()
+
+	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command) {})
+	cmd.SetArgs([]string{"stubeditor", "--model", "llama3.2"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("launch command failed: %v", err)
+	}
+
+	saved, err := loadIntegration("stubeditor")
+	if err != nil {
+		t.Fatalf("failed to reload integration config: %v", err)
+	}
+	if diff := cmp.Diff([]string{"llama3.2"}, saved.Models); diff != "" {
+		t.Fatalf("saved models mismatch (-want +got):\n%s", diff)
+	}
+	if diff := cmp.Diff([][]string{{"llama3.2"}}, stub.edited); diff != "" {
+		t.Fatalf("editor models mismatch (-want +got):\n%s", diff)
+	}
+	if stub.ranModel != "llama3.2" {
+		t.Fatalf("expected launch to run with llama3.2, got %q", stub.ranModel)
 	}
 }
 
@@ -538,4 +868,562 @@ func TestAliasConfigurerInterface(t *testing.T) {
 			t.Error("Codex should not implement AliasConfigurer")
 		}
 	})
+}
+
+func TestShowOrPull_ModelExists(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `{"model":"test-model"}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	err := ShowOrPull(context.Background(), client, "test-model")
+	if err != nil {
+		t.Errorf("showOrPull should return nil when model exists, got: %v", err)
+	}
+}
+
+func TestShowOrPull_ModelNotFound_NoTerminal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprintf(w, `{"error":"model not found"}`)
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	// confirmPrompt will fail in test (no terminal), so showOrPull should return an error
+	err := ShowOrPull(context.Background(), client, "missing-model")
+	if err == nil {
+		t.Error("showOrPull should return error when model not found and no terminal available")
+	}
+}
+
+func TestShowOrPull_ShowCalledWithCorrectModel(t *testing.T) {
+	var receivedModel string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" {
+			var req api.ShowRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+				receivedModel = req.Model
+			}
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `{"model":"%s"}`, receivedModel)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	_ = ShowOrPull(context.Background(), client, "qwen3:8b")
+	if receivedModel != "qwen3:8b" {
+		t.Errorf("expected Show to be called with %q, got %q", "qwen3:8b", receivedModel)
+	}
+}
+
+func TestShowOrPull_ModelNotFound_ConfirmYes_Pulls(t *testing.T) {
+	// Set up hook so confirmPrompt doesn't need a terminal
+	oldHook := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		if !strings.Contains(prompt, "missing-model") {
+			t.Errorf("expected prompt to contain model name, got %q", prompt)
+		}
+		return true, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldHook }()
+
+	var pullCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"error":"model not found"}`)
+		case "/api/pull":
+			pullCalled = true
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `{"status":"success"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	err := ShowOrPull(context.Background(), client, "missing-model")
+	if err != nil {
+		t.Errorf("ShowOrPull should succeed after pull, got: %v", err)
+	}
+	if !pullCalled {
+		t.Error("expected pull to be called when user confirms download")
+	}
+}
+
+func TestShowOrPull_ModelNotFound_ConfirmNo_Cancelled(t *testing.T) {
+	oldHook := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		return false, ErrCancelled
+	}
+	defer func() { DefaultConfirmPrompt = oldHook }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"error":"model not found"}`)
+		case "/api/pull":
+			t.Error("pull should not be called when user declines")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	err := ShowOrPull(context.Background(), client, "missing-model")
+	if err == nil {
+		t.Error("ShowOrPull should return error when user declines")
+	}
+}
+
+func TestShowOrPull_CloudModel_SkipsConfirmation(t *testing.T) {
+	// Confirm prompt should NOT be called for cloud models
+	oldHook := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		t.Error("confirm prompt should not be called for cloud models")
+		return false, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldHook }()
+
+	var pullCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"error":"model not found"}`)
+		case "/api/pull":
+			pullCalled = true
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `{"status":"success"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	err := ShowOrPull(context.Background(), client, "glm-5:cloud")
+	if err != nil {
+		t.Errorf("ShowOrPull should succeed for cloud model, got: %v", err)
+	}
+	if !pullCalled {
+		t.Error("expected pull to be called for cloud model without confirmation")
+	}
+}
+
+func TestConfirmPrompt_DelegatesToHook(t *testing.T) {
+	oldHook := DefaultConfirmPrompt
+	var hookCalled bool
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		hookCalled = true
+		if prompt != "test prompt?" {
+			t.Errorf("expected prompt %q, got %q", "test prompt?", prompt)
+		}
+		return true, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldHook }()
+
+	ok, err := confirmPrompt("test prompt?")
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if !ok {
+		t.Error("expected true from hook")
+	}
+	if !hookCalled {
+		t.Error("expected DefaultConfirmPrompt hook to be called")
+	}
+}
+
+func TestEnsureAuth_NoCloudModels(t *testing.T) {
+	// ensureAuth should be a no-op when no cloud models are selected
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("no API calls expected when no cloud models selected")
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	err := ensureAuth(context.Background(), client, map[string]bool{}, []string{"local-model"})
+	if err != nil {
+		t.Errorf("ensureAuth should return nil for non-cloud models, got: %v", err)
+	}
+}
+
+func TestEnsureAuth_CloudModelFilteredCorrectly(t *testing.T) {
+	// ensureAuth should only care about models in cloudModels map
+	var whoamiCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/me" {
+			whoamiCalled = true
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `{"name":"testuser"}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	cloudModels := map[string]bool{"cloud-model:cloud": true}
+	selected := []string{"cloud-model:cloud", "local-model"}
+
+	err := ensureAuth(context.Background(), client, cloudModels, selected)
+	if err != nil {
+		t.Errorf("ensureAuth should succeed when user is authenticated, got: %v", err)
+	}
+	if !whoamiCalled {
+		t.Error("expected whoami to be called for cloud model")
+	}
+}
+
+func TestEnsureAuth_SkipsWhenNoCloudSelected(t *testing.T) {
+	var whoamiCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/me" {
+			whoamiCalled = true
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	// cloudModels has entries but none are in selected
+	cloudModels := map[string]bool{"cloud-model:cloud": true}
+	selected := []string{"local-model"}
+
+	err := ensureAuth(context.Background(), client, cloudModels, selected)
+	if err != nil {
+		t.Errorf("expected nil error, got: %v", err)
+	}
+	if whoamiCalled {
+		t.Error("whoami should not be called when no cloud models are selected")
+	}
+}
+
+func TestHyperlink(t *testing.T) {
+	tests := []struct {
+		name     string
+		url      string
+		text     string
+		wantURL  string
+		wantText string
+	}{
+		{
+			name:     "basic link",
+			url:      "https://example.com",
+			text:     "click here",
+			wantURL:  "https://example.com",
+			wantText: "click here",
+		},
+		{
+			name:     "url with path",
+			url:      "https://example.com/docs/install",
+			text:     "install docs",
+			wantURL:  "https://example.com/docs/install",
+			wantText: "install docs",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := hyperlink(tt.url, tt.text)
+
+			// Should contain OSC 8 escape sequences
+			if !strings.Contains(got, "\033]8;;") {
+				t.Error("should contain OSC 8 open sequence")
+			}
+			if !strings.Contains(got, tt.wantURL) {
+				t.Errorf("should contain URL %q", tt.wantURL)
+			}
+			if !strings.Contains(got, tt.wantText) {
+				t.Errorf("should contain text %q", tt.wantText)
+			}
+
+			// Should have closing OSC 8 sequence
+			wantSuffix := "\033]8;;\033\\"
+			if !strings.HasSuffix(got, wantSuffix) {
+				t.Error("should end with OSC 8 close sequence")
+			}
+		})
+	}
+}
+
+func TestIntegrationInstallHint(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantEmpty bool
+		wantURL   string
+	}{
+		{
+			name:    "claude has hint",
+			input:   "claude",
+			wantURL: "https://code.claude.com/docs/en/quickstart",
+		},
+		{
+			name:    "codex has hint",
+			input:   "codex",
+			wantURL: "https://developers.openai.com/codex/cli/",
+		},
+		{
+			name:    "openclaw has hint",
+			input:   "openclaw",
+			wantURL: "https://docs.openclaw.ai",
+		},
+		{
+			name:      "unknown has no hint",
+			input:     "unknown",
+			wantEmpty: true,
+		},
+		{
+			name:      "empty name has no hint",
+			input:     "",
+			wantEmpty: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IntegrationInstallHint(tt.input)
+			if tt.wantEmpty {
+				if got != "" {
+					t.Errorf("expected empty hint, got %q", got)
+				}
+				return
+			}
+			if !strings.Contains(got, "Install from") {
+				t.Errorf("hint should start with 'Install from', got %q", got)
+			}
+			if !strings.Contains(got, tt.wantURL) {
+				t.Errorf("hint should contain URL %q, got %q", tt.wantURL, got)
+			}
+			// Should be a clickable hyperlink
+			if !strings.Contains(got, "\033]8;;") {
+				t.Error("hint URL should be wrapped in OSC 8 hyperlink")
+			}
+		})
+	}
+}
+
+func TestListIntegrationInfos(t *testing.T) {
+	infos := ListIntegrationInfos()
+
+	t.Run("excludes aliases", func(t *testing.T) {
+		for _, info := range infos {
+			if integrationAliases[info.Name] {
+				t.Errorf("alias %q should not appear in ListIntegrationInfos", info.Name)
+			}
+		}
+	})
+
+	t.Run("sorted with custom order at end", func(t *testing.T) {
+		// integrationOrder entries (cline, opencode) should appear last, in that order.
+		// All other entries should be sorted alphabetically before them.
+		orderRank := make(map[string]int)
+		for i, name := range integrationOrder {
+			orderRank[name] = i + 1
+		}
+		for i := 1; i < len(infos); i++ {
+			aRank, bRank := orderRank[infos[i-1].Name], orderRank[infos[i].Name]
+			switch {
+			case aRank == 0 && bRank == 0:
+				if infos[i-1].Name >= infos[i].Name {
+					t.Errorf("non-ordered items not sorted: %q >= %q", infos[i-1].Name, infos[i].Name)
+				}
+			case aRank > 0 && bRank == 0:
+				t.Errorf("ordered item %q should come after non-ordered %q", infos[i-1].Name, infos[i].Name)
+			case aRank > 0 && bRank > 0:
+				if aRank >= bRank {
+					t.Errorf("ordered items wrong: %q (rank %d) before %q (rank %d)", infos[i-1].Name, aRank, infos[i].Name, bRank)
+				}
+			}
+		}
+	})
+
+	t.Run("all fields populated", func(t *testing.T) {
+		for _, info := range infos {
+			if info.Name == "" {
+				t.Error("Name should not be empty")
+			}
+			if info.DisplayName == "" {
+				t.Errorf("DisplayName for %q should not be empty", info.Name)
+			}
+		}
+	})
+
+	t.Run("includes known integrations", func(t *testing.T) {
+		known := map[string]bool{"claude": false, "codex": false, "opencode": false}
+		for _, info := range infos {
+			if _, ok := known[info.Name]; ok {
+				known[info.Name] = true
+			}
+		}
+		for name, found := range known {
+			if !found {
+				t.Errorf("expected %q in ListIntegrationInfos", name)
+			}
+		}
+	})
+}
+
+func TestBuildModelList_Descriptions(t *testing.T) {
+	t.Run("installed recommended has base description", func(t *testing.T) {
+		existing := []modelInfo{
+			{Name: "qwen3:8b", Remote: false},
+		}
+		items, _, _, _ := buildModelList(existing, nil, "")
+
+		for _, item := range items {
+			if item.Name == "qwen3:8b" {
+				if strings.HasSuffix(item.Description, "install?") {
+					t.Errorf("installed model should not have 'install?' suffix, got %q", item.Description)
+				}
+				if item.Description == "" {
+					t.Error("installed recommended model should have a description")
+				}
+				return
+			}
+		}
+		t.Error("qwen3:8b not found in items")
+	})
+
+	t.Run("not-installed local rec has VRAM in description", func(t *testing.T) {
+		items, _, _, _ := buildModelList(nil, nil, "")
+
+		for _, item := range items {
+			if item.Name == "qwen3:8b" {
+				if !strings.Contains(item.Description, "~11GB") {
+					t.Errorf("not-installed qwen3:8b should show VRAM hint, got %q", item.Description)
+				}
+				return
+			}
+		}
+		t.Error("qwen3:8b not found in items")
+	})
+
+	t.Run("installed local rec omits VRAM", func(t *testing.T) {
+		existing := []modelInfo{
+			{Name: "qwen3:8b", Remote: false},
+		}
+		items, _, _, _ := buildModelList(existing, nil, "")
+
+		for _, item := range items {
+			if item.Name == "qwen3:8b" {
+				if strings.Contains(item.Description, "~11GB") {
+					t.Errorf("installed qwen3:8b should not show VRAM hint, got %q", item.Description)
+				}
+				return
+			}
+		}
+		t.Error("qwen3:8b not found in items")
+	})
+}
+
+func TestLaunchIntegration_UnknownIntegration(t *testing.T) {
+	err := LaunchIntegration("nonexistent-integration")
+	if err == nil {
+		t.Fatal("expected error for unknown integration")
+	}
+	if !strings.Contains(err.Error(), "unknown integration") {
+		t.Errorf("error should mention 'unknown integration', got: %v", err)
+	}
+}
+
+func TestLaunchIntegration_NotConfigured(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	// Claude is a known integration but not configured in temp dir
+	err := LaunchIntegration("claude")
+	if err == nil {
+		t.Fatal("expected error when integration is not configured")
+	}
+	if !strings.Contains(err.Error(), "not configured") {
+		t.Errorf("error should mention 'not configured', got: %v", err)
+	}
+}
+
+func TestIsEditorIntegration(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{"droid", true},
+		{"opencode", true},
+		{"openclaw", true},
+		{"claude", false},
+		{"codex", false},
+		{"nonexistent", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsEditorIntegration(tt.name); got != tt.want {
+				t.Errorf("IsEditorIntegration(%q) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIntegrationModels(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	t.Run("returns nil when not configured", func(t *testing.T) {
+		if got := IntegrationModels("droid"); got != nil {
+			t.Errorf("expected nil, got %v", got)
+		}
+	})
+
+	t.Run("returns all saved models", func(t *testing.T) {
+		if err := SaveIntegration("droid", []string{"llama3.2", "qwen3:8b"}); err != nil {
+			t.Fatal(err)
+		}
+		got := IntegrationModels("droid")
+		want := []string{"llama3.2", "qwen3:8b"}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("IntegrationModels mismatch (-want +got):\n%s", diff)
+		}
+	})
+}
+
+func TestSaveAndEditIntegration_UnknownIntegration(t *testing.T) {
+	err := SaveAndEditIntegration("nonexistent", []string{"model"})
+	if err == nil {
+		t.Fatal("expected error for unknown integration")
+	}
+	if !strings.Contains(err.Error(), "unknown integration") {
+		t.Errorf("error should mention 'unknown integration', got: %v", err)
+	}
 }
