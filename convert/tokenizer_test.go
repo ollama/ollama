@@ -80,21 +80,6 @@ func TestParseTokenizer(t *testing.T) {
 			},
 		},
 		{
-			name: "chat template jinja overrides tokenizer config",
-			fsys: createTokenizerFS(t, t.TempDir(), map[string]io.Reader{
-				"tokenizer.json": strings.NewReader(`{}`),
-				"tokenizer_config.json": strings.NewReader(`{
-					"chat_template": "<template from tokenizer config>"
-				}`),
-				"chat_template.jinja": strings.NewReader("<template from jinja>"),
-			}),
-			want: &Tokenizer{
-				Vocabulary: &Vocabulary{Model: "gpt2"},
-				Pre:        "default",
-				Template:   "<template from jinja>",
-			},
-		},
-		{
 			name: "added tokens",
 			fsys: createTokenizerFS(t, t.TempDir(), map[string]io.Reader{
 				"tokenizer.json": strings.NewReader(`{

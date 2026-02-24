@@ -173,13 +173,6 @@ func parseTokenizer(fsys fs.FS, specialTokenTypes []string) (*Tokenizer, error) 
 		}
 	}
 
-	// Match upstream behavior: prefer chat_template.jinja when present.
-	if bts, err := fs.ReadFile(fsys, "chat_template.jinja"); err == nil {
-		t.Template = string(bts)
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
-
 	if f, err := fsys.Open("generation_config.json"); errors.Is(err, os.ErrNotExist) {
 	} else if err != nil {
 		return nil, err

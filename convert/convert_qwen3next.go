@@ -155,25 +155,25 @@ func (q *qwen3NextModel) parseMore(fsys fs.FS) error {
 	}
 
 	if q.NumHiddenLayers == 0 {
-		return fmt.Errorf("qwen35: num_hidden_layers must be set")
+		return fmt.Errorf("qwen3next: num_hidden_layers must be set")
 	}
 	if q.NumAttentionHeads == 0 {
-		return fmt.Errorf("qwen35: num_attention_heads must be set")
+		return fmt.Errorf("qwen3next: num_attention_heads must be set")
 	}
 	if q.NumKeyValueHeads == 0 {
-		return fmt.Errorf("qwen35: num_key_value_heads must be set")
+		return fmt.Errorf("qwen3next: num_key_value_heads must be set")
 	}
 	if q.HeadDim == 0 {
-		return fmt.Errorf("qwen35: head_dim must be set")
+		return fmt.Errorf("qwen3next: head_dim must be set")
 	}
 	if q.RopeTheta == 0 {
-		return fmt.Errorf("qwen35: rope_theta must be set")
+		return fmt.Errorf("qwen3next: rope_theta must be set")
 	}
 	if q.PartialRotaryFactor <= 0 || q.PartialRotaryFactor > 1 {
-		return fmt.Errorf("qwen35: partial_rotary_factor must be in (0,1], got %v", q.PartialRotaryFactor)
+		return fmt.Errorf("qwen3next: partial_rotary_factor must be in (0,1], got %v", q.PartialRotaryFactor)
 	}
 	if q.LinearNumKeyHeads == 0 || q.LinearNumValueHeads == 0 || q.LinearKeyHeadDim == 0 || q.LinearValueHeadDim == 0 {
-		return fmt.Errorf("qwen35: linear attention config must be set (linear_num_key_heads, linear_num_value_heads, linear_key_head_dim, linear_value_head_dim)")
+		return fmt.Errorf("qwen3next: linear attention config must be set (linear_num_key_heads, linear_num_value_heads, linear_key_head_dim, linear_value_head_dim)")
 	}
 	if _, err := q.kvHeadCounts(); err != nil {
 		return err
@@ -200,16 +200,16 @@ func (q *qwen3NextModel) kvHeadCounts() ([]uint32, error) {
 			}
 		}
 		if !hasFull || !hasRecurrent {
-			return nil, fmt.Errorf("qwen35: layer_types must include both full_attention and linear_attention")
+			return nil, fmt.Errorf("qwen3next: layer_types must include both full_attention and linear_attention")
 		}
 		return kv, nil
 	}
 
 	if q.FullAttentionInterval == 0 {
-		return nil, fmt.Errorf("qwen35: full_attention_interval must be set")
+		return nil, fmt.Errorf("qwen3next: full_attention_interval must be set")
 	}
 	if q.FullAttentionInterval > q.NumHiddenLayers {
-		return nil, fmt.Errorf("qwen35: full_attention_interval (%d) exceeds num_hidden_layers (%d)", q.FullAttentionInterval, q.NumHiddenLayers)
+		return nil, fmt.Errorf("qwen3next: full_attention_interval (%d) exceeds num_hidden_layers (%d)", q.FullAttentionInterval, q.NumHiddenLayers)
 	}
 
 	kv := make([]uint32, q.NumHiddenLayers)
@@ -221,7 +221,7 @@ func (q *qwen3NextModel) kvHeadCounts() ([]uint32, error) {
 		}
 	}
 	if !hasFull {
-		return nil, fmt.Errorf("qwen35: head_count_kv would be all zeros (full_attention_interval=%d, num_hidden_layers=%d)", q.FullAttentionInterval, q.NumHiddenLayers)
+		return nil, fmt.Errorf("qwen3next: head_count_kv would be all zeros (full_attention_interval=%d, num_hidden_layers=%d)", q.FullAttentionInterval, q.NumHiddenLayers)
 	}
 	return kv, nil
 }
