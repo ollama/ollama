@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -20,6 +21,12 @@ import (
 // ImageModel is the interface for image generation models.
 type ImageModel interface {
 	GenerateImage(ctx context.Context, prompt string, width, height int32, steps int, seed int64, progress func(step, total int)) (*mlx.Array, error)
+}
+
+// ImageEditModel extends ImageModel with image editing/conditioning capability.
+type ImageEditModel interface {
+	ImageModel
+	GenerateImageWithInputs(ctx context.Context, prompt string, width, height int32, steps int, seed int64, inputImages []image.Image, progress func(step, total int)) (*mlx.Array, error)
 }
 
 var imageGenMu sync.Mutex
@@ -93,8 +100,31 @@ func (s *server) handleImageCompletion(w http.ResponseWriter, r *http.Request, r
 		flusher.Flush()
 	}
 
-	// Generate image
-	img, err := s.imageModel.GenerateImage(ctx, req.Prompt, req.Width, req.Height, req.Steps, req.Seed, progress)
+	// Decode input images for editing, if provided
+	var inputImages []image.Image
+	for i, raw := range req.Images {
+		decoded, err := DecodeImage(raw)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("invalid image %d: %v", i, err), http.StatusBadRequest)
+			return
+		}
+		inputImages = append(inputImages, decoded)
+	}
+
+	// Dispatch: image editing when inputs are present, plain generation otherwise
+	var img *mlx.Array
+	var err error
+	if len(inputImages) > 0 {
+		editModel, ok := s.imageModel.(ImageEditModel)
+		if !ok {
+			http.Error(w, "model does not support image editing", http.StatusBadRequest)
+			return
+		}
+		slog.Info("generating image with input conditioning", "images", len(inputImages))
+		img, err = editModel.GenerateImageWithInputs(ctx, req.Prompt, req.Width, req.Height, req.Steps, req.Seed, inputImages, progress)
+	} else {
+		img, err = s.imageModel.GenerateImage(ctx, req.Prompt, req.Width, req.Height, req.Steps, req.Seed, progress)
+	}
 	if err != nil {
 		// Don't send error for cancellation
 		if ctx.Err() != nil {
