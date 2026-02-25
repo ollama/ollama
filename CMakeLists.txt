@@ -133,8 +133,6 @@ if(CMAKE_HIP_COMPILER)
 
     if(AMDGPU_TARGETS)
         find_package(hip REQUIRED)
-
-
         add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-hip)
 
         if (WIN32)
