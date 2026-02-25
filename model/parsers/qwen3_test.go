@@ -145,3 +145,26 @@ func TestQwen3ParserToolCall(t *testing.T) {
 		t.Fatalf("expected unit %q, got %v", "celsius", unit)
 	}
 }
+
+func TestQwen35ParserRespectsNoThink(t *testing.T) {
+	parser := ParserForName("qwen3.5")
+	if parser == nil {
+		t.Fatal("expected qwen3.5 parser")
+	}
+
+	parser.Init(nil, nil, &api.ThinkValue{Value: false})
+	content, thinking, calls, err := parser.Add("Hello! How can I help you today?", true)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	if thinking != "" {
+		t.Fatalf("expected no thinking, got %q", thinking)
+	}
+	if content != "Hello! How can I help you today?" {
+		t.Fatalf("expected content %q, got %q", "Hello! How can I help you today?", content)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls, got %d", len(calls))
+	}
+}

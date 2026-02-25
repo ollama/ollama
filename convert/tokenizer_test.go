@@ -386,6 +386,28 @@ func TestParseTokenizer(t *testing.T) {
 				Pre: "default",
 			},
 		},
+		{
+			name: "qwen35 pretokenizer",
+			fsys: createTokenizerFS(t, t.TempDir(), map[string]io.Reader{
+				"tokenizer.json": strings.NewReader(`{
+					"pre_tokenizer": {
+						"type": "Sequence",
+						"pretokenizers": [
+							{
+								"type": "Split",
+								"pattern": {
+									"Regex": "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?[\\p{L}\\p{M}]+|\\p{N}| ?[^\\s\\p{L}\\p{M}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"
+								}
+							}
+						]
+					}
+				}`),
+			}),
+			want: &Tokenizer{
+				Vocabulary: &Vocabulary{Model: "gpt2"},
+				Pre:        "qwen35",
+			},
+		},
 	}
 
 	for _, tt := range cases {
