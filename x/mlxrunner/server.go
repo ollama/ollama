@@ -50,9 +50,10 @@ func Execute(args []string) error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewEncoder(w).Encode(map[string]any{
-			"status":   0,
-			"progress": 100,
+		if err := json.NewEncoder(w).Encode(statusResponse{
+			Status:   0,
+			Progress: 100,
+			Memory:   uint(mlx.ActiveMemory() + mlx.CacheMemory()),
 		}); err != nil {
 			slog.Error("Failed to encode response", "error", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
