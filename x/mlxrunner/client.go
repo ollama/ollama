@@ -19,19 +19,19 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/x/imagegen"
-	"github.com/ollama/ollama/x/imagegen/manifest"
 )
 
 // Client wraps an MLX runner subprocess to implement llm.LlamaServer for LLM models.
 type Client struct {
 	port        int
 	modelName   string
-	vramSize    uint64
+	memory      atomic.Uint64
 	done        chan error
 	client      *http.Client
 	lastErr     string
@@ -98,18 +98,9 @@ func NewClient(modelName string) (*Client, error) {
 		slog.Debug("mlx subprocess library path", "LD_LIBRARY_PATH", pathEnvVal)
 	}
 
-	// Estimate VRAM based on tensor size from manifest
-	var vramSize uint64
-	if modelManifest, err := manifest.LoadManifest(modelName); err == nil {
-		vramSize = uint64(modelManifest.TotalTensorSize())
-	} else {
-		vramSize = 8 * 1024 * 1024 * 1024
-	}
-
 	c := &Client{
 		port:      port,
 		modelName: modelName,
-		vramSize:  vramSize,
 		done:      make(chan error, 1),
 		client:    &http.Client{Timeout: 10 * time.Minute},
 		cmd:       cmd,
@@ -349,9 +340,15 @@ func (c *Client) Pid() int {
 	return -1
 }
 
+type statusResponse struct {
+	Status   int
+	Progress int
+	Memory   uint64
+}
+
 // Ping implements llm.LlamaServer.
 func (c *Client) Ping(ctx context.Context) error {
-	reqURL := fmt.Sprintf("http://127.0.0.1:%d/health", c.port)
+	reqURL := fmt.Sprintf("http://127.0.0.1:%d/v1/status", c.port)
 	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return err
@@ -364,6 +361,12 @@ func (c *Client) Ping(ctx context.Context) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("health check failed: %d", resp.StatusCode)
 	}
+
+	var status statusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return err
+	}
+	c.memory.Store(status.Memory)
 	return nil
 }
 
@@ -390,19 +393,24 @@ func (c *Client) Tokenize(ctx context.Context, content string) ([]int, error) {
 	return tokens, nil
 }
 
-// TotalSize implements llm.LlamaServer.
-func (c *Client) TotalSize() uint64 {
-	return c.vramSize
+func (c *Client) currentMemory() uint64 {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := c.Ping(ctx); err != nil {
+		slog.Warn("failed to get current memory", "error", err)
+	}
+	return c.memory.Load()
+}
+
+// MemorySize implements llm.LlamaServer.
+func (c *Client) MemorySize() (total, vram uint64) {
+	mem := c.currentMemory()
+	return mem, mem
 }
 
 // VRAMByGPU implements llm.LlamaServer.
 func (c *Client) VRAMByGPU(id ml.DeviceID) uint64 {
-	return c.vramSize
-}
-
-// VRAMSize implements llm.LlamaServer.
-func (c *Client) VRAMSize() uint64 {
-	return c.vramSize
+	return c.currentMemory()
 }
 
 // WaitUntilRunning implements llm.LlamaServer.

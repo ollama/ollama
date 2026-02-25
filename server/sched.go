@@ -536,6 +536,7 @@ iGPUScan:
 		}
 	}
 
+	totalSize, vramSize := llama.MemorySize()
 	runner := &runnerRef{
 		model:           req.model,
 		modelPath:       req.model.ModelPath,
@@ -545,8 +546,8 @@ iGPUScan:
 		sessionDuration: sessionDuration,
 		gpus:            gpuIDs,
 		discreteGPUs:    discreteGPUs,
-		vramSize:        llama.VRAMSize(),
-		totalSize:       llama.TotalSize(),
+		totalSize:       totalSize,
+		vramSize:        vramSize,
 		loading:         true,
 		pid:             llama.Pid(),
 	}
@@ -619,6 +620,7 @@ func (s *Scheduler) loadMLX(req *LlmRequest) bool {
 		sessionDuration = req.sessionDuration.Duration
 	}
 
+	totalSize, vramSize := server.MemorySize()
 	runner := &runnerRef{
 		model:           req.model,
 		modelPath:       req.model.ModelPath,
@@ -628,8 +630,8 @@ func (s *Scheduler) loadMLX(req *LlmRequest) bool {
 		loading:         false,
 		isImagegen:      isImagegen,
 		sessionDuration: sessionDuration,
-		totalSize:       server.TotalSize(),
-		vramSize:        server.VRAMSize(),
+		totalSize:       totalSize,
+		vramSize:        vramSize,
 	}
 
 	s.loadedMu.Lock()
