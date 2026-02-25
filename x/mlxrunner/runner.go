@@ -45,10 +45,11 @@ type TextCompletionsRequest struct {
 }
 
 type Runner struct {
-	Model     base.Model
-	Tokenizer *tokenizer.Tokenizer
-	Requests  chan Request
-	cache     kvCache
+	Model         base.Model
+	Tokenizer     *tokenizer.Tokenizer
+	Requests      chan Request
+	cache         kvCache
+	contextLength int
 }
 
 func (r *Runner) Load(modelName string) error {
@@ -77,6 +78,7 @@ func (r *Runner) Load(modelName string) error {
 
 	r.Model = m
 	r.Tokenizer = m.Tokenizer()
+	r.contextLength = m.MaxContextLength()
 	return nil
 }
 

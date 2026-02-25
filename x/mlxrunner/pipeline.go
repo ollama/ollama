@@ -6,9 +6,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net/http"
 	"time"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
@@ -51,9 +54,23 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		return errors.New("empty prompt")
 	}
 
+	if len(inputs) >= r.contextLength {
+		return api.StatusError{
+			StatusCode:   http.StatusBadRequest,
+			ErrorMessage: fmt.Sprintf("input length (%d tokens) exceeds the model's maximum context length (%d tokens)", len(inputs), r.contextLength),
+		}
+	}
+
+	// Cap generation to stay within the model's context length
+	maxGenerate := r.contextLength - len(inputs)
+	if request.Options.MaxTokens <= 0 {
+		request.Options.MaxTokens = maxGenerate
+	} else {
+		request.Options.MaxTokens = min(request.Options.MaxTokens, maxGenerate)
+	}
+
 	session := r.cache.begin(r.Model, inputs)
 	defer session.close()
-
 	caches := session.caches
 	tokens := session.remaining
 
