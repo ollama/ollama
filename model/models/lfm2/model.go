@@ -1,7 +1,11 @@
 package lfm2
 
 import (
+	"bytes"
 	"cmp"
+	"errors"
+	"fmt"
+	"image"
 	"math"
 
 	"github.com/ollama/ollama/fs"
@@ -25,7 +29,19 @@ type Options struct {
 	// per-layer head counts (LFM2 alternates attention and recurrent layers)
 	numHeadsByLayer   []int
 	numKVHeadsByLayer []int
+
+	// MoE config
+	numExperts         int
+	numExpertsUsed     int
+	normTopKProb       bool
+	expertWeightsScale float32
+	expertGatingFunc   uint32
 }
+
+const (
+	expertGatingFuncSoftmax = uint32(0)
+	expertGatingFuncSigmoid = uint32(2)
+)
 
 func (o Options) headDimValue() int {
 	// Head dim is shared across layers; fall back to first attention layer head count.
@@ -67,16 +83,136 @@ type Model struct {
 	OutputNorm     *nn.RMSNorm   `gguf:"output_norm,alt:token_embd_norm"`
 	Output         *nn.Linear    `gguf:"output,alt:token_embd"`
 
+	VisionModel      *VisionModel     `gguf:"v"`
+	VisionProjector  *VisionProjector `gguf:"mm"`
+	ImageProcessor   ImageProcessor
+	imageTokenID     int32
+	imageStartToken  int32
+	imageEndToken    int32
+	imageThumbnailID int32
+	imageRowColIDs   map[imageGridPos]int32
+	useSpecialTokens bool
+	projectorOptions VisionProjectorOptions
+
 	Options
 }
 
-func New(c fs.Config) (model.Model, error) {
-	if c.Uint("expert_count") > 0 {
-		return nil, model.ErrUnsupportedModel
+var _ model.MultimodalProcessor = (*Model)(nil)
+
+type imageGridPos struct {
+	row int
+	col int
+}
+
+type visionEmbeddingLayout struct {
+	rows         int
+	cols         int
+	hasThumbnail bool
+}
+
+type visionChunkData struct {
+	tokens    int
+	row       int
+	col       int
+	thumbnail bool
+	layout    *visionEmbeddingLayout
+}
+
+func (m *Model) Validate() error {
+	if m.TokenEmbedding == nil {
+		return errors.New("lfm2: missing token_embd tensor")
+	}
+	if m.OutputNorm == nil {
+		return errors.New("lfm2: missing output_norm tensor")
+	}
+	if m.Output == nil {
+		return errors.New("lfm2: missing output tensor")
 	}
 
+	for i, layer := range m.Layers {
+		if layer.AttentionNorm == nil {
+			return fmt.Errorf("lfm2: missing blk.%d.attn_norm tensor", i)
+		}
+		if layer.MLPNorm == nil {
+			return fmt.Errorf("lfm2: missing blk.%d.ffn_norm tensor", i)
+		}
+		switch ff := layer.MLP.(type) {
+		case nil:
+			return fmt.Errorf("lfm2: missing blk.%d feed-forward tensors", i)
+		case *denseMLP:
+			if ff.Up == nil || ff.Down == nil || ff.Gate == nil {
+				return fmt.Errorf("lfm2: missing blk.%d dense feed-forward tensors", i)
+			}
+		case *sparseMLP:
+			if ff.Router == nil || ff.Gate == nil || ff.Up == nil || ff.Down == nil {
+				return fmt.Errorf("lfm2: missing blk.%d sparse feed-forward tensors", i)
+			}
+		default:
+			return fmt.Errorf("lfm2: unsupported feed-forward type at blk.%d", i)
+		}
+
+		switch op := layer.Operator.(type) {
+		case *Attention:
+			if op == nil || op.Query == nil || op.Key == nil || op.Value == nil || op.Output == nil || op.QueryNorm == nil || op.KeyNorm == nil {
+				return fmt.Errorf("lfm2: missing blk.%d attention tensors", i)
+			}
+		case *ShortConv:
+			if op == nil || op.Conv == nil || op.Conv.Weight == nil || op.InProj == nil || op.OutProj == nil {
+				return fmt.Errorf("lfm2: missing blk.%d shortconv tensors", i)
+			}
+		default:
+			return fmt.Errorf("lfm2: unsupported operator at blk.%d", i)
+		}
+	}
+
+	if m.VisionModel != nil {
+		if m.VisionModel.PatchEmbedding == nil {
+			return errors.New("lfm2: missing vision patch embedding tensors")
+		}
+		if m.VisionModel.PositionEmbedding == nil {
+			return errors.New("lfm2: missing vision position embedding tensors")
+		}
+		if m.VisionModel.PostLayerNorm == nil {
+			return errors.New("lfm2: missing vision post layer norm tensors")
+		}
+		if len(m.VisionModel.Layers) == 0 {
+			return errors.New("lfm2: missing vision encoder layers")
+		}
+		for i, layer := range m.VisionModel.Layers {
+			if layer.LayerNorm1 == nil || layer.LayerNorm2 == nil || layer.SelfAttention == nil || layer.MLP == nil {
+				return fmt.Errorf("lfm2: missing vision layer tensors at v.blk.%d", i)
+			}
+			if layer.SelfAttention.Query == nil || layer.SelfAttention.Key == nil || layer.SelfAttention.Value == nil || layer.SelfAttention.Output == nil {
+				return fmt.Errorf("lfm2: missing vision attention tensors at v.blk.%d", i)
+			}
+			if layer.MLP.Up == nil || layer.MLP.Down == nil {
+				return fmt.Errorf("lfm2: missing vision feed-forward tensors at v.blk.%d", i)
+			}
+		}
+
+		if m.VisionProjector == nil || m.VisionProjector.Linear1 == nil || m.VisionProjector.Linear2 == nil {
+			return errors.New("lfm2: missing multimodal projector tensors")
+		}
+	}
+
+	return nil
+}
+
+func New(c fs.Config) (model.Model, error) {
 	if c.String("tokenizer.ggml.model") != "gpt2" {
 		return nil, model.ErrUnsupportedTokenizer
+	}
+
+	numExperts := int(c.Uint("expert_count"))
+	isMoE := numExperts > 0
+	numExpertsUsed := int(c.Uint("expert_used_count"))
+	if isMoE {
+		if numExperts <= 0 {
+			return nil, fmt.Errorf("lfm2: invalid expert_count=%d", numExperts)
+		}
+		if numExpertsUsed <= 0 || numExpertsUsed > numExperts {
+			return nil, fmt.Errorf("lfm2: invalid expert_used_count=%d for expert_count=%d", numExpertsUsed, numExperts)
+		}
 	}
 
 	vocabulary := tokenizer.Vocabulary{
@@ -105,8 +241,16 @@ func New(c fs.Config) (model.Model, error) {
 	}
 
 	m := Model{
-		Tokenizer: tokenizer.NewBytePairEncoding(&vocabulary, pretokenizers...),
-		Layers:    make([]Layer, c.Uint("block_count")),
+		Tokenizer:       tokenizer.NewBytePairEncoding(&vocabulary, pretokenizers...),
+		Layers:          make([]Layer, c.Uint("block_count")),
+		ImageProcessor:  newImageProcessor(c),
+		VisionModel:     newVisionModel(c),
+		VisionProjector: &VisionProjector{},
+		imageRowColIDs:  make(map[imageGridPos]int32),
+		projectorOptions: VisionProjectorOptions{
+			scaleFactor:  int(c.Uint("vision.projector.scale_factor", 2)),
+			useLayerNorm: c.Bool("vision.projector.use_layernorm", false),
+		},
 		Options: Options{
 			hiddenSize:            int(c.Uint("embedding_length")),
 			headDim:               int(c.Uint("attention.key_length")),
@@ -116,7 +260,64 @@ func New(c fs.Config) (model.Model, error) {
 			ropeBase:              c.Float("rope.freq_base"),
 			ropeScale:             c.Float("rope.scaling.factor", 1),
 			originalContextLength: int(c.Uint("rope.scaling.original_context_length")),
+			numExperts:            numExperts,
+			numExpertsUsed:        numExpertsUsed,
+			normTopKProb:          c.Bool("norm_top_k_prob", true),
+			expertWeightsScale:    c.Float("expert_weights_scale", 1.0),
+			expertGatingFunc:      c.Uint("expert_gating_func", expertGatingFuncSoftmax),
 		},
+	}
+
+	lookupTokenID := func(token string) int32 {
+		for i, t := range vocabulary.Values {
+			if t == token {
+				return int32(i)
+			}
+		}
+		return 0
+	}
+
+	resolveTokenID := func(explicitKey, token string, fallback uint32) int32 {
+		if explicitKey != "" {
+			if id := c.Uint(explicitKey); id != 0 {
+				return int32(id)
+			}
+		}
+		if tokenID := lookupTokenID(token); tokenID != 0 {
+			return tokenID
+		}
+		return int32(fallback)
+	}
+
+	m.imageTokenID = resolveTokenID("vision.image_token_id", "<image>", 396)
+	m.imageStartToken = resolveTokenID("vision.image_start_token_id", "<|image_start|>", 0)
+	m.imageEndToken = resolveTokenID("vision.image_end_token_id", "<|image_end|>", 0)
+	m.imageThumbnailID = resolveTokenID("vision.image_thumbnail_token_id", "<|img_thumbnail|>", 0)
+	m.useSpecialTokens = c.Bool("vision.use_image_special_tokens", true)
+
+	maxGridTokens := int(c.Uint("vision.max_tiles", 10))
+	if maxGridTokens <= 0 {
+		maxGridTokens = 10
+	}
+	for row := 1; row <= maxGridTokens; row++ {
+		for col := 1; col <= maxGridTokens; col++ {
+			token := fmt.Sprintf("<|img_row_%d_col_%d|>", row, col)
+			if tokenID := lookupTokenID(token); tokenID > 0 {
+				m.imageRowColIDs[imageGridPos{row: row, col: col}] = tokenID
+			}
+		}
+	}
+
+	if !m.useSpecialTokens {
+		m.imageStartToken = 0
+		m.imageEndToken = 0
+		m.imageThumbnailID = 0
+		m.imageRowColIDs = map[imageGridPos]int32{}
+	}
+
+	if c.Uint("vision.block_count") == 0 {
+		m.VisionModel = nil
+		m.VisionProjector = nil
 	}
 
 	type headCounts interface {
@@ -133,6 +334,14 @@ func New(c fs.Config) (model.Model, error) {
 
 	m.numHeadsByLayer = make([]int, len(m.Layers))
 	m.numKVHeadsByLayer = make([]int, len(m.Layers))
+	leadingDenseBlockCount := int(c.Uint("leading_dense_block_count"))
+	if leadingDenseBlockCount < 0 {
+		leadingDenseBlockCount = 0
+	}
+	if leadingDenseBlockCount > len(m.Layers) {
+		leadingDenseBlockCount = len(m.Layers)
+	}
+
 	for i := range m.Layers {
 		m.numHeadsByLayer[i] = int(headCount[i])
 		m.numKVHeadsByLayer[i] = int(headCountKV[i])
@@ -141,6 +350,12 @@ func New(c fs.Config) (model.Model, error) {
 			m.Layers[i].Operator = &ShortConv{}
 		} else {
 			m.Layers[i].Operator = &Attention{}
+		}
+
+		if isMoE && i >= leadingDenseBlockCount {
+			m.Layers[i].MLP = &sparseMLP{}
+		} else {
+			m.Layers[i].MLP = &denseMLP{}
 		}
 	}
 
@@ -188,22 +403,77 @@ func (sa *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, 
 	return sa.Output.Forward(ctx, attention)
 }
 
-type MLP struct {
+type FeedForward interface {
+	Forward(ml.Context, ml.Tensor, *Options) ml.Tensor
+}
+
+type denseMLP struct {
 	Up   *nn.Linear `gguf:"ffn_up"`
 	Down *nn.Linear `gguf:"ffn_down"`
 	Gate *nn.Linear `gguf:"ffn_gate"`
 }
 
-func (mlp *MLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Options) ml.Tensor {
+func (mlp *denseMLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Options) ml.Tensor {
 	hiddenState = mlp.Gate.Forward(ctx, hiddenState).SILU(ctx, mlp.Up.Forward(ctx, hiddenState))
 	return mlp.Down.Forward(ctx, hiddenState)
+}
+
+type sparseMLP struct {
+	Router *nn.Linear      `gguf:"ffn_gate_inp"`
+	Gate   *nn.LinearBatch `gguf:"ffn_gate_exps"`
+	Up     *nn.LinearBatch `gguf:"ffn_up_exps"`
+	Down   *nn.LinearBatch `gguf:"ffn_down_exps"`
+	Bias   ml.Tensor       `gguf:"exp_probs_b.bias,alt:exp_probs_b"`
+}
+
+func (mlp *sparseMLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Options) ml.Tensor {
+	// hiddenState: [hidden, tokens]
+	routerLogits := mlp.Router.Forward(ctx, hiddenState)
+
+	probs := routerLogits.Softmax(ctx)
+	if opts.expertGatingFunc == expertGatingFuncSigmoid {
+		probs = routerLogits.Sigmoid(ctx)
+	}
+
+	selectionProbs := probs
+	if mlp.Bias != nil {
+		selectionProbs = selectionProbs.Add(ctx, mlp.Bias)
+	}
+
+	selectedExperts := selectionProbs.TopK(ctx, opts.numExpertsUsed)
+	routingWeights := probs.Reshape(ctx, 1, opts.numExperts, hiddenState.Dim(1)).Rows(ctx, selectedExperts)
+	if opts.normTopKProb {
+		routingWeights = routingWeights.Reshape(ctx, opts.numExpertsUsed, hiddenState.Dim(1))
+		weightsSum := routingWeights.SumRows(ctx)
+		weightsSum = weightsSum.Clamp(ctx, 1e-6, float32(math.Inf(1)))
+		routingWeights = routingWeights.Div(ctx, weightsSum)
+		routingWeights = routingWeights.Reshape(ctx, 1, opts.numExpertsUsed, hiddenState.Dim(1))
+	}
+	if opts.expertWeightsScale != 1 {
+		routingWeights = routingWeights.Scale(ctx, float64(opts.expertWeightsScale))
+	}
+
+	// Build routing-weights branch early to enable topk-MoE fusion.
+	ctx.Forward(routingWeights)
+
+	hiddenState3D := hiddenState.Reshape(ctx, hiddenState.Dim(0), 1, hiddenState.Dim(1))
+	experts := mlp.Gate.Forward(ctx, hiddenState3D, selectedExperts).SILU(ctx, mlp.Up.Forward(ctx, hiddenState3D, selectedExperts))
+	experts = mlp.Down.Forward(ctx, experts, selectedExperts)
+	experts = experts.Mul(ctx, routingWeights)
+
+	nextState := experts.View(ctx, 0, experts.Dim(0), experts.Stride(2), experts.Dim(2))
+	for i := 1; i < opts.numExpertsUsed; i++ {
+		nextState = nextState.Add(ctx, experts.View(ctx, i*experts.Stride(1), experts.Dim(0), experts.Stride(2), experts.Dim(2)))
+	}
+
+	return nextState
 }
 
 type Layer struct {
 	AttentionNorm *nn.RMSNorm `gguf:"attn_norm"`
 	Operator      Operator
 	MLPNorm       *nn.RMSNorm `gguf:"ffn_norm"`
-	MLP           *MLP
+	MLP           FeedForward
 }
 
 func (l *Layer) Forward(ctx ml.Context, layer int, hiddenState, positions, outputs ml.Tensor, cache *HybridCache, opts *Options) ml.Tensor {
@@ -229,10 +499,233 @@ func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tenso
 	return m.applyRotaryPositionEmbeddings(ctx, key, shift), nil
 }
 
+func multimodalTokenCount(mm input.Multimodal) int {
+	if mm.Tensor != nil {
+		return mm.Tensor.Dim(1)
+	}
+
+	switch data := mm.Data.(type) {
+	case int:
+		return data
+	case int32:
+		return int(data)
+	case visionChunkData:
+		return data.tokens
+	case *visionChunkData:
+		if data != nil {
+			return data.tokens
+		}
+	}
+
+	return 0
+}
+
+func multimodalChunkInfo(mm input.Multimodal) visionChunkData {
+	switch data := mm.Data.(type) {
+	case visionChunkData:
+		return data
+	case *visionChunkData:
+		if data != nil {
+			return *data
+		}
+	}
+
+	return visionChunkData{
+		tokens: multimodalTokenCount(mm),
+	}
+}
+
+func multimodalLayout(mm []input.Multimodal) visionEmbeddingLayout {
+	layout := visionEmbeddingLayout{rows: 1, cols: 1}
+	if len(mm) == 0 {
+		return layout
+	}
+
+	first := multimodalChunkInfo(mm[0])
+	if first.layout != nil {
+		return *first.layout
+	}
+
+	return layout
+}
+
+func (m *Model) imageRowColToken(row, col int) int32 {
+	if row <= 0 || col <= 0 {
+		return 0
+	}
+	return m.imageRowColIDs[imageGridPos{row: row, col: col}]
+}
+
+func (m *Model) appendImageChunk(result []*input.Input, chunk input.Multimodal, imageToken int32, hash uint64) ([]*input.Input, error) {
+	tokenCount := multimodalTokenCount(chunk)
+	if tokenCount <= 0 {
+		return nil, errors.New("lfm2: multimodal input has no tokens")
+	}
+
+	result = append(result, &input.Input{
+		Token:          imageToken,
+		Multimodal:     []input.Multimodal{chunk},
+		MultimodalHash: hash,
+		SameBatch:      tokenCount - 1,
+	})
+
+	for range tokenCount - 1 {
+		result = append(result, &input.Input{Token: imageToken})
+	}
+
+	return result, nil
+}
+
+func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input.Multimodal, error) {
+	if m.VisionModel == nil || m.VisionProjector == nil || len(m.VisionModel.Layers) == 0 {
+		return nil, model.ErrNoVisionModel
+	}
+
+	img, _, err := image.Decode(bytes.NewReader(multimodalData))
+	if err != nil {
+		return nil, err
+	}
+
+	processedImages, layout, err := m.ImageProcessor.ProcessImage(img)
+	if err != nil {
+		return nil, err
+	}
+
+	if m.ImageProcessor.patchSize <= 0 {
+		return nil, errors.New("lfm2: invalid vision patch size")
+	}
+
+	layoutInfo := &visionEmbeddingLayout{
+		rows:         layout.rows,
+		cols:         layout.cols,
+		hasThumbnail: layout.hasThumbnail,
+	}
+
+	mm := make([]input.Multimodal, 0, len(processedImages))
+	for i, processed := range processedImages {
+		patches := visionPatchGrid{
+			Width:  processed.size.X / m.ImageProcessor.patchSize,
+			Height: processed.size.Y / m.ImageProcessor.patchSize,
+		}
+		if patches.Width == 0 || patches.Height == 0 {
+			return nil, errors.New("lfm2: invalid resized image dimensions")
+		}
+
+		pixelValues := ctx.Input().FromFloats(processed.data, processed.size.X, processed.size.Y, m.ImageProcessor.numChannels)
+		visionOutputs := m.VisionModel.Forward(ctx, pixelValues, patches)
+		projected := m.VisionProjector.Forward(ctx, visionOutputs, patches, m.projectorOptions)
+
+		chunk := visionChunkData{
+			tokens:    projected.Dim(1),
+			row:       processed.row,
+			col:       processed.col,
+			thumbnail: processed.thumbnail,
+		}
+		if i == 0 {
+			chunk.layout = layoutInfo
+		}
+
+		mm = append(mm, input.Multimodal{
+			Tensor: projected,
+			Data:   chunk,
+		})
+	}
+
+	return mm, nil
+}
+
+func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
+	var result []*input.Input
+
+	imageToken := m.imageTokenID
+	if imageToken == 0 {
+		imageToken = 396
+	}
+	useSpecialTokens := m.useSpecialTokens || m.imageStartToken > 0 || m.imageEndToken > 0 || m.imageThumbnailID > 0 || len(m.imageRowColIDs) > 0
+
+	for _, inp := range inputs {
+		if len(inp.Multimodal) == 0 {
+			result = append(result, inp)
+			continue
+		}
+
+		layout := multimodalLayout(inp.Multimodal)
+		if layout.rows <= 0 {
+			layout.rows = 1
+		}
+		if layout.cols <= 0 {
+			layout.cols = 1
+		}
+		tiles := layout.rows * layout.cols
+		multitile := tiles > 1
+
+		if useSpecialTokens && m.imageStartToken > 0 {
+			result = append(result, &input.Input{Token: m.imageStartToken})
+		}
+
+		for i, mm := range inp.Multimodal {
+			chunk := multimodalChunkInfo(mm)
+			if chunk.tokens <= 0 {
+				chunk.tokens = multimodalTokenCount(mm)
+			}
+
+			if multitile && !chunk.thumbnail && chunk.row == 0 && chunk.col == 0 && i < tiles {
+				chunk.row = i/layout.cols + 1
+				chunk.col = i%layout.cols + 1
+			}
+			if multitile && layout.hasThumbnail && i == tiles {
+				chunk.thumbnail = true
+			}
+
+			if useSpecialTokens && multitile {
+				if chunk.thumbnail {
+					if m.imageThumbnailID > 0 {
+						result = append(result, &input.Input{Token: m.imageThumbnailID})
+					}
+				} else if marker := m.imageRowColToken(chunk.row, chunk.col); marker > 0 {
+					result = append(result, &input.Input{Token: marker})
+				}
+			}
+
+			var err error
+			result, err = m.appendImageChunk(result, input.Multimodal{
+				Tensor: mm.Tensor,
+				Data:   chunk,
+			}, imageToken, inp.MultimodalHash)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		if useSpecialTokens && m.imageEndToken > 0 {
+			result = append(result, &input.Input{Token: m.imageEndToken})
+		}
+	}
+
+	return result, nil
+}
+
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
 
 	hiddenState := m.TokenEmbedding.Forward(ctx, batch.Inputs)
+	if len(batch.Multimodal) > 0 {
+		// We splice vision embeddings into token embeddings in-place; duplicate to
+		// avoid aliasing the raw embedding output graph.
+		hiddenState = hiddenState.Duplicate(ctx)
+	}
+	for _, mm := range batch.Multimodal {
+		offset := mm.Index
+		for _, multimodal := range mm.Multimodal {
+			if multimodal.Tensor == nil {
+				continue
+			}
+
+			visionOutputs := multimodal.Tensor
+			ctx.Forward(visionOutputs.Copy(ctx, hiddenState.View(ctx, offset*hiddenState.Stride(1), visionOutputs.Dim(0)*visionOutputs.Dim(1))))
+			offset += visionOutputs.Dim(1)
+		}
+	}
 
 	for i, layer := range m.Layers {
 		m.Cache.SetLayer(i)
@@ -251,4 +744,5 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 
 func init() {
 	model.Register("lfm2", New)
+	model.Register("lfm2moe", New)
 }

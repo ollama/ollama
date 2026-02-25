@@ -119,16 +119,13 @@ func NewClient(modelName string) (*Client, error) {
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
 	go func() {
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			slog.Info("mlx-runner", "msg", scanner.Text())
-		}
+		io.Copy(os.Stderr, stdout) //nolint:errcheck
 	}()
 	go func() {
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
 			line := scanner.Text()
-			slog.Warn("mlx-runner", "msg", line)
+			fmt.Fprintln(os.Stderr, line)
 			c.lastErrLock.Lock()
 			c.lastErr = line
 			c.lastErrLock.Unlock()

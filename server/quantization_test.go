@@ -166,6 +166,60 @@ func TestGetTensorNewType(t *testing.T) {
 	}
 }
 
+func TestQwen3LinearAttentionQuantOverride(t *testing.T) {
+	cases := []struct {
+		name     string
+		arch     string
+		tensor   string
+		fileType fsggml.FileType
+		expected fsggml.TensorType
+	}{
+		{
+			name:     "qwen35_beta",
+			arch:     "qwen35",
+			tensor:   "blk.0.ssm_beta.weight",
+			fileType: fsggml.FileTypeQ4_K_M,
+			expected: fsggml.TensorTypeQ4_K,
+		},
+		{
+			name:     "qwen35_alpha",
+			arch:     "qwen35",
+			tensor:   "blk.0.ssm_alpha.weight",
+			fileType: fsggml.FileTypeQ4_K_M,
+			expected: fsggml.TensorTypeQ4_K,
+		},
+		{
+			name:     "qwen35moe_attn_qkv",
+			arch:     "qwen35moe",
+			tensor:   "blk.0.attn_qkv.weight",
+			fileType: fsggml.FileTypeQ4_K_M,
+			expected: fsggml.TensorTypeQ4_K,
+		},
+		{
+			name:     "non_qwen35_falls_back",
+			arch:     "foo",
+			tensor:   "blk.0.attn_qkv.weight",
+			fileType: fsggml.FileTypeQ4_K_M,
+			expected: fsggml.TensorTypeQ5_K,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			kv := fsggml.KV{"general.architecture": tt.arch}
+			got := newType(&fsggml.Tensor{
+				Name:  tt.tensor,
+				Shape: []uint64{256, 256},
+				Kind:  uint32(fsggml.TensorTypeF16),
+			}, kv, &quantizeState{}, tt.fileType)
+
+			if got != tt.expected {
+				t.Fatalf("unexpected tensor type for %s (%s): got %s want %s", tt.tensor, tt.arch, got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestQuantizeModel(t *testing.T) {
 	cases := []struct {
 		name                string
@@ -173,6 +227,7 @@ func TestQuantizeModel(t *testing.T) {
 		tensors             []*fsggml.Tensor
 		newType             string
 		expectedTensorTypes map[string]fsggml.TensorType
+		expectErr           bool
 	}{
 		{
 			name: "f16_q4_k",
@@ -253,6 +308,36 @@ func TestQuantizeModel(t *testing.T) {
 				"output.weight":     fsggml.TensorTypeQ8_0,
 			},
 		},
+		{
+			name: "f32_short_data",
+			kv: map[string]any{
+				"general.architecture": "foo",
+			},
+			tensors: []*fsggml.Tensor{
+				{
+					Name: "blk.0.attn.weight", Kind: uint32(fsggml.TensorTypeF32),
+					Offset: uint64(0), Shape: []uint64{512, 2},
+					WriterTo: bytes.NewReader(make([]byte, 32)),
+				},
+			},
+			newType:   "Q4_K",
+			expectErr: true,
+		},
+		{
+			name: "f16_short_data",
+			kv: map[string]any{
+				"general.architecture": "foo",
+			},
+			tensors: []*fsggml.Tensor{
+				{
+					Name: "blk.0.attn.weight", Kind: uint32(fsggml.TensorTypeF16),
+					Offset: uint64(0), Shape: []uint64{512, 2},
+					WriterTo: bytes.NewReader(make([]byte, 32)),
+				},
+			},
+			newType:   "Q4_K",
+			expectErr: true,
+		},
 	}
 
 	for _, tt := range cases {
@@ -264,6 +349,9 @@ func TestQuantizeModel(t *testing.T) {
 			}
 			defer fp.Close()
 			meta, err := fsggml.Decode(fp, -1)
+			if tt.expectErr && err != nil {
+				return
+			}
 			if err != nil {
 				t.Fatal(err.Error())
 			}
@@ -283,6 +371,12 @@ func TestQuantizeModel(t *testing.T) {
 			}
 
 			err = quantize(fp, tmp, meta, ftype, progress)
+			if tt.expectErr {
+				if err == nil {
+					t.Fatal("expected quantize to return an error")
+				}
+				return
+			}
 			if err != nil {
 				t.Fatalf("error during quantize: %s", err)
 			}

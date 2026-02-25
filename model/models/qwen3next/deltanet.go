@@ -37,7 +37,9 @@ type GatedDeltaNet struct {
 	// Optimized path: pre-split QKV and gate
 	SSMQKV       *nn.Linear  `gguf:"attn_qkv"`  // -> Q, K, V (concatenated)
 	SSMQKVGate   *nn.Linear  `gguf:"attn_gate"` // -> Z gate
-	SSMBetaAlpha *nn.Linear  `gguf:"ssm_ba"`    // -> beta, alpha
+	SSMBetaAlpha *nn.Linear  `gguf:"ssm_ba"`    // -> beta, alpha (legacy qwen3next)
+	SSMBeta      *nn.Linear  `gguf:"ssm_beta"`  // -> beta (qwen35)
+	SSMAlpha     *nn.Linear  `gguf:"ssm_alpha"` // -> alpha (qwen35)
 	SSMConv1D    *convKernel `gguf:"ssm_conv1d"`
 	SSMDT        ml.Tensor   `gguf:"ssm_dt"` // alpha bias
 	SSMA         ml.Tensor   `gguf:"ssm_a"`  // -A_log.exp()
@@ -96,7 +98,6 @@ func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cac
 	headVDim := opts.ssmDInner / numVHeads
 	convKernelSize := opts.convKernelSize
 
-	mixedBA := gdn.SSMBetaAlpha.Forward(ctx, hiddenStates)
 	qkvDim := headKDim*numKHeads*2 + headVDim*numVHeads
 
 	if gdn.SSMQKV == nil || gdn.SSMQKVGate == nil {
@@ -106,24 +107,40 @@ func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cac
 	qkvMixed := gdn.SSMQKV.Forward(ctx, hiddenStates).Reshape(ctx, qkvDim, nSeqTokens, nSeqs)
 	z := gdn.SSMQKVGate.Forward(ctx, hiddenStates)
 
-	baNewDim := 2 * numVHeads / numKHeads
-	mixedBAReshaped := mixedBA.Reshape(ctx, baNewDim, numKHeads, nSeqTokens, nSeqs)
+	var beta ml.Tensor
+	var alpha ml.Tensor
+	switch {
+	case gdn.SSMBetaAlpha != nil:
+		// Legacy qwen3next path: in_proj_ba packs beta/alpha grouped by K-head.
+		mixedBA := gdn.SSMBetaAlpha.Forward(ctx, hiddenStates)
+		baNewDim := 2 * numVHeads / numKHeads
+		mixedBAReshaped := mixedBA.Reshape(ctx, baNewDim, numKHeads, nSeqTokens, nSeqs)
 
-	// Split beta and alpha
-	betaSize := numVHeads / numKHeads
-	alphaSize := numVHeads / numKHeads
+		betaSize := numVHeads / numKHeads
+		alphaSize := numVHeads / numKHeads
 
-	b := mixedBAReshaped.Slice(ctx, 0, 0, betaSize, 1)
-	a := mixedBAReshaped.Slice(ctx, 0, betaSize, betaSize+alphaSize, 1)
+		b := mixedBAReshaped.Slice(ctx, 0, 0, betaSize, 1)
+		a := mixedBAReshaped.Slice(ctx, 0, betaSize, betaSize+alphaSize, 1)
 
-	// Reshape to merge head dimensions
-	beta := b.Contiguous(ctx, numVHeads, 1, nSeqTokens, nSeqs)
-	alpha := a.Contiguous(ctx, numVHeads, nSeqTokens, nSeqs)
+		// Keep beta layout consistent with qwen35 and llama.cpp:
+		// [1, numVHeads, nSeqTokens, nSeqs]
+		beta = b.Contiguous(ctx, 1, numVHeads, nSeqTokens, nSeqs)
+		alpha = a.Contiguous(ctx, numVHeads, nSeqTokens, nSeqs)
+
+	case gdn.SSMBeta != nil && gdn.SSMAlpha != nil:
+		// qwen35 path: beta/alpha are separate projections.
+		beta = gdn.SSMBeta.Forward(ctx, hiddenStates).Reshape(ctx, 1, numVHeads, nSeqTokens, nSeqs)
+		alpha = gdn.SSMAlpha.Forward(ctx, hiddenStates).Reshape(ctx, numVHeads, nSeqTokens, nSeqs)
+
+	default:
+		return nil, errors.New("qwen3next: missing linear attention beta/alpha projections")
+	}
 
 	// Compute gate: softplus(alpha + dt_bias) * -A
 	alphaBiased := alpha.Add(ctx, gdn.SSMDT)
 	alphaSoftplus := alphaBiased.Softplus(ctx)
 	gate := alphaSoftplus.Mul(ctx, gdn.SSMA)
+	gate = gate.Reshape(ctx, 1, numVHeads, nSeqTokens, nSeqs)
 	qkvMixed = qkvMixed.Permute(ctx, 1, 0, 2, 3)
 
 	// Get conv state from cache
@@ -172,16 +189,20 @@ func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cac
 
 	// Repeat interleave Q and K if numKHeads != numVHeads
 	if numKHeads != numVHeads {
-		repeatFactor := numVHeads / numKHeads
+		if opts.vHeadReordered {
+			qConv = qConv.Repeat4D(ctx, headKDim, numVHeads, nSeqTokens, nSeqs)
+			kConv = kConv.Repeat4D(ctx, headKDim, numVHeads, nSeqTokens, nSeqs)
+		} else {
+			repeatFactor := numVHeads / numKHeads
+			qReshaped := qConv.Reshape(ctx, headKDim, 1, numKHeads*nSeqTokens*nSeqs)
+			kReshaped := kConv.Reshape(ctx, headKDim, 1, numKHeads*nSeqTokens*nSeqs)
 
-		qReshaped := qConv.Reshape(ctx, headKDim, 1, numKHeads*nSeqTokens*nSeqs)
-		kReshaped := kConv.Reshape(ctx, headKDim, 1, numKHeads*nSeqTokens*nSeqs)
+			qRepeated := qReshaped.Repeat4D(ctx, headKDim, repeatFactor, numKHeads*nSeqTokens*nSeqs, 1)
+			kRepeated := kReshaped.Repeat4D(ctx, headKDim, repeatFactor, numKHeads*nSeqTokens*nSeqs, 1)
 
-		qRepeated := qReshaped.Repeat4D(ctx, headKDim, repeatFactor, numKHeads*nSeqTokens*nSeqs, 1)
-		kRepeated := kReshaped.Repeat4D(ctx, headKDim, repeatFactor, numKHeads*nSeqTokens*nSeqs, 1)
-
-		qConv = qRepeated.Reshape(ctx, headKDim, numKHeads*repeatFactor, nSeqTokens, nSeqs)
-		kConv = kRepeated.Reshape(ctx, headKDim, numKHeads*repeatFactor, nSeqTokens, nSeqs)
+			qConv = qRepeated.Reshape(ctx, headKDim, numKHeads*repeatFactor, nSeqTokens, nSeqs)
+			kConv = kRepeated.Reshape(ctx, headKDim, numKHeads*repeatFactor, nSeqTokens, nSeqs)
+		}
 	}
 
 	// Choose computation mode based on sequence length
@@ -189,7 +210,9 @@ func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cac
 	if nSeqTokens == 1 {
 		attnOut = gdn.deltaNetAutoregressive(ctx, qConv, kConv, vConv, gate, beta, state, opts, layer, cache)
 	} else {
-		// Use pre-computed masks from opts (created once in Model.Forward)
+		if opts.masks == nil {
+			opts.masks = createMasks(ctx)
+		}
 		attnOut = gdn.deltaNetChunked(ctx, qConv, kConv, vConv, gate, beta, state, opts.masks, opts, layer, cache)
 	}
 
@@ -310,9 +333,10 @@ func (gdn *GatedDeltaNet) deltaNetChunked(
 	q = q.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx, headKDim, nTokens, numVHeads, nSeqs)
 	k = k.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx, headKDim, nTokens, numVHeads, nSeqs)
 	v = v.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx, headVDim, nTokens, numVHeads, nSeqs)
-	gate = gate.Permute(ctx, 2, 0, 3, 1).Contiguous(ctx, nTokens, 1, numVHeads, nSeqs)
-
-	beta = beta.Permute(ctx, 2, 0, 1, 3).Contiguous(ctx)
+	// Match llama.cpp delta-net-base layout:
+	// gate/beta: [1, numVHeads, nTokens, nSeqs] -> [1, nTokens, numVHeads, nSeqs]
+	gate = gate.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx, 1, nTokens, numVHeads, nSeqs)
+	beta = beta.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx, 1, nTokens, numVHeads, nSeqs)
 	state = state.Reshape(ctx, headVDim, headVDim, numVHeads, nSeqs)
 
 	// Compute padding
@@ -324,7 +348,7 @@ func (gdn *GatedDeltaNet) deltaNetChunked(
 		q = q.Pad(ctx, 0, pad, 0, 0)
 		k = k.Pad(ctx, 0, pad, 0, 0)
 		v = v.Pad(ctx, 0, pad, 0, 0)
-		gate = gate.Pad(ctx, pad, 0, 0, 0)
+		gate = gate.Pad(ctx, 0, pad, 0, 0)
 		beta = beta.Pad(ctx, 0, pad, 0, 0)
 	}
 
@@ -344,10 +368,12 @@ func (gdn *GatedDeltaNet) deltaNetChunked(
 	kBeta = kBeta.Reshape(ctx, headKDim, chunkSize, nChunks, numVHeads*nSeqs)
 	vBeta = vBeta.Reshape(ctx, headVDim, chunkSize, nChunks, numVHeads*nSeqs)
 
-	gate = gate.Reshape(ctx, chunkSize, 1, nChunks, numVHeads*nSeqs)
+	// Reshape gate and cumsum over chunk axis.
+	// [1, chunkSize, nChunks, H*nSeqs] -> transpose -> [chunkSize, 1, nChunks, H*nSeqs]
+	gate = gate.Reshape(ctx, 1, chunkSize, nChunks, numVHeads*nSeqs)
 
 	// g_cumsum = cumsum(gate)
-	gCumsum := gate.CumSum(ctx)
+	gCumsum := gate.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx, chunkSize, 1, nChunks, numVHeads*nSeqs).CumSum(ctx)
 
 	// Compute decay mask
 	gcsI := gCumsum.Reshape(ctx, chunkSize, 1, nChunks, numVHeads*nSeqs)

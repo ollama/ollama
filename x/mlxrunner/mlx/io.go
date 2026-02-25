@@ -37,7 +37,9 @@ func Load(path string) iter.Seq2[string, *Array] {
 			}
 
 			name := C.GoString(key)
-			if !yield(name, &Array{ctx: value, desc: tensorDesc{name: name, numRefs: 1000}}) {
+			arr := New(name)
+			arr.ctx = value
+			if !yield(name, arr) {
 				break
 			}
 		}
