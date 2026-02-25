@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/fs"
 	"net"
@@ -111,6 +112,38 @@ func captureLogs(t *testing.T, s *Local) (*Local, bytesResetter) {
 	return &l, logs
 }
 
+func newLoggedRequest(t *testing.T, method, path string, body io.Reader, contentLength int64) *http.Request {
+	t.Helper()
+	ctx := ollama.WithTrace(t.Context(), &ollama.Trace{
+		Update: func(*ollama.Layer, int64, error) {},
+	})
+	req := httptest.NewRequestWithContext(ctx, method, path, body)
+	req.RemoteAddr = "203.0.113.10:4567"
+	req.Proto = "HTTP/2.0"
+	req.ProtoMajor = 2
+	req.ProtoMinor = 0
+	req.ContentLength = contentLength
+	return req
+}
+
+func requireLogContains(t *testing.T, logs bytesResetter, parts ...string) string {
+	t.Helper()
+	got := string(logs.Bytes())
+	for _, part := range parts {
+		if !strings.Contains(got, part) {
+			t.Fatalf("missing %q in logs:\n%s", part, got)
+		}
+	}
+	return got
+}
+
+func requireNoLogs(t *testing.T, logs bytesResetter) {
+	t.Helper()
+	if got := strings.TrimSpace(string(logs.Bytes())); got != "" {
+		t.Fatalf("expected no logs, got:\n%s", got)
+	}
+}
+
 func TestServerDelete(t *testing.T) {
 	check := testutil.Checker(t)
 
@@ -154,6 +187,103 @@ func TestServerDelete(t *testing.T) {
 		t.Logf("logs:\n%s", logs)
 		t.Fatalf("expected log to contain ERROR with invalid argument")
 	}
+}
+
+func TestServerLogging(t *testing.T) {
+	t.Run("info handled request", func(t *testing.T) {
+		s := newTestServer(t, nil)
+		s, logs := captureLogs(t, s)
+
+		body := `{"model":"smol"}`
+		req := newLoggedRequest(t, "DELETE", "/api/delete?trace=info", strings.NewReader(body), int64(len(body)))
+		got := s.sendRequest(t, req)
+		if got.Code != 200 {
+			t.Fatalf("Code = %d; want 200", got.Code)
+		}
+
+		logLine := requireLogContains(t, logs,
+			"level=INFO",
+			"msg=http",
+			"status=200",
+			"method=DELETE",
+			"path=/api/delete",
+			fmt.Sprintf("content-length=%d", len(body)),
+			"remote=",
+			"203.0.113.10:4567",
+			"proto=HTTP/2.0",
+			"query=",
+			"trace=info",
+		)
+		if strings.Contains(logLine, `error="`) {
+			t.Fatalf("expected info log without error attr, got:\n%s", logLine)
+		}
+	})
+
+	t.Run("warn handled request", func(t *testing.T) {
+		s := newTestServer(t, nil)
+		s, logs := captureLogs(t, s)
+
+		body := `{"model":"smol"}`
+		req := newLoggedRequest(t, "GET", "/api/delete?trace=warn", strings.NewReader(body), int64(len(body)))
+		got := s.sendRequest(t, req)
+		checkErrorResponse(t, got, 405, "method_not_allowed", "method not allowed")
+
+		requireLogContains(t, logs,
+			"level=WARN",
+			"msg=http",
+			"status=405",
+			"method=GET",
+			"path=/api/delete",
+			fmt.Sprintf("content-length=%d", len(body)),
+			"remote=",
+			"203.0.113.10:4567",
+			"proto=HTTP/2.0",
+			"query=",
+			"trace=warn",
+			`error="method not allowed"`,
+		)
+	})
+
+	t.Run("error handled request", func(t *testing.T) {
+		s := newTestServer(t, nil)
+		s, logs := captureLogs(t, s)
+
+		req := newLoggedRequest(t, "DELETE", "/api/delete?trace=error", &invalidReader{}, 7)
+		got := s.sendRequest(t, req)
+		checkErrorResponse(t, got, 500, "internal_error", "internal server error")
+
+		requireLogContains(t, logs,
+			"level=ERROR",
+			"msg=http",
+			"status=500",
+			"method=DELETE",
+			"path=/api/delete",
+			"content-length=7",
+			"remote=",
+			"203.0.113.10:4567",
+			"proto=HTTP/2.0",
+			"query=",
+			"trace=error",
+			`error="invalid argument"`,
+		)
+	})
+
+	t.Run("proxied fallback request does not log", func(t *testing.T) {
+		s := newTestServer(t, nil)
+		s, logs := captureLogs(t, s)
+		s.Fallback = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})
+
+		body := `{}`
+		req := newLoggedRequest(t, "DELETE", "/api/unknown?trace=proxy", strings.NewReader(body), int64(len(body)))
+		got := s.sendRequest(t, req)
+		if got.Code != http.StatusNoContent {
+			t.Fatalf("Code = %d; want %d", got.Code, http.StatusNoContent)
+		}
+
+		requireNoLogs(t, logs)
+	})
 }
 
 //go:embed testdata/registry.txt

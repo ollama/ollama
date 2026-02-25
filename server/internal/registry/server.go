@@ -163,10 +163,6 @@ func (s *Local) serveHTTP(rec *statusCodeRecorder, r *http.Request) {
 
 		s.Logger.LogAttrs(r.Context(), level, "http",
 			errattr, // report first in line to make it easy to find
-
-			// TODO(bmizerany): Write a test to ensure that we are logging
-			// all of this correctly. That also goes for the level+error
-			// logic above.
 			slog.Int("status", rec.status()),
 			slog.String("method", r.Method),
 			slog.String("path", r.URL.Path),
