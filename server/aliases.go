@@ -115,6 +115,15 @@ func (s *store) saveLocked() error {
 		return err
 	}
 
+	// Read existing file into a generic map to preserve unknown fields
+	// (e.g. disable_ollama_cloud) that aliasStore doesn't own.
+	existing := make(map[string]json.RawMessage)
+	if data, err := os.ReadFile(s.path); err == nil {
+		if err := json.Unmarshal(data, &existing); err != nil {
+			slog.Debug("failed to parse existing server config; preserving unknown fields skipped", "path", s.path, "error", err)
+		}
+	}
+
 	// Combine exact and prefix entries
 	entries := make([]aliasEntry, 0, len(s.entries)+len(s.prefixEntries))
 	for _, entry := range s.entries {
@@ -126,10 +135,17 @@ func (s *store) saveLocked() error {
 		return strings.Compare(entries[i].Alias, entries[j].Alias) < 0
 	})
 
-	cfg := serverConfig{
-		Version: serverConfigVersion,
-		Aliases: entries,
+	// Overwrite only the keys we own
+	versionJSON, err := json.Marshal(serverConfigVersion)
+	if err != nil {
+		return err
 	}
+	aliasesJSON, err := json.Marshal(entries)
+	if err != nil {
+		return err
+	}
+	existing["version"] = versionJSON
+	existing["aliases"] = aliasesJSON
 
 	f, err := os.CreateTemp(dir, "router-*.json")
 	if err != nil {
@@ -138,7 +154,7 @@ func (s *store) saveLocked() error {
 
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
-	if err := enc.Encode(cfg); err != nil {
+	if err := enc.Encode(existing); err != nil {
 		_ = f.Close()
 		_ = os.Remove(f.Name())
 		return err

@@ -111,7 +111,7 @@ func TestServerCmd(t *testing.T) {
 			for _, want := range tt.want {
 				found := false
 				for _, env := range cmd.Env {
-					if strings.Contains(env, want) {
+					if strings.HasPrefix(env, want) {
 						found = true
 						break
 					}
@@ -123,7 +123,7 @@ func TestServerCmd(t *testing.T) {
 
 			for _, dont := range tt.dont {
 				for _, env := range cmd.Env {
-					if strings.Contains(env, dont) {
+					if strings.HasPrefix(env, dont) {
 						t.Errorf("unexpected environment variable: %s", env)
 					}
 				}
@@ -136,44 +136,119 @@ func TestServerCmd(t *testing.T) {
 	}
 }
 
-func TestGetInferenceComputer(t *testing.T) {
+func TestServerCmdCloudSettingEnv(t *testing.T) {
 	tests := []struct {
-		name string
-		log  string
-		exp  []InferenceCompute
+		name          string
+		envValue      string
+		configContent string
+		want          string
+	}{
+		{
+			name: "default cloud enabled",
+			want: "OLLAMA_NO_CLOUD=0",
+		},
+		{
+			name:     "env disables cloud",
+			envValue: "1",
+			want:     "OLLAMA_NO_CLOUD=1",
+		},
+		{
+			name:          "config disables cloud",
+			configContent: `{"disable_ollama_cloud": true}`,
+			want:          "OLLAMA_NO_CLOUD=1",
+		},
+		{
+			name:     "invalid env disables cloud",
+			envValue: "invalid",
+			want:     "OLLAMA_NO_CLOUD=1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpHome := t.TempDir()
+			t.Setenv("HOME", tmpHome)
+			t.Setenv("USERPROFILE", tmpHome)
+			t.Setenv("OLLAMA_NO_CLOUD", tt.envValue)
+
+			if tt.configContent != "" {
+				configDir := filepath.Join(tmpHome, ".ollama")
+				if err := os.MkdirAll(configDir, 0o755); err != nil {
+					t.Fatalf("mkdir config dir: %v", err)
+				}
+				configPath := filepath.Join(configDir, "server.json")
+				if err := os.WriteFile(configPath, []byte(tt.configContent), 0o644); err != nil {
+					t.Fatalf("write config: %v", err)
+				}
+			}
+
+			st := &store.Store{DBPath: filepath.Join(t.TempDir(), "db.sqlite")}
+			defer st.Close()
+
+			s := &Server{store: st}
+			cmd, err := s.cmd(t.Context())
+			if err != nil {
+				t.Fatalf("s.cmd() error = %v", err)
+			}
+
+			found := false
+			for _, env := range cmd.Env {
+				if env == tt.want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("expected environment variable %q in command env", tt.want)
+			}
+		})
+	}
+}
+
+func TestGetInferenceInfo(t *testing.T) {
+	tests := []struct {
+		name             string
+		log              string
+		expComputes      []InferenceCompute
+		expDefaultCtxLen int
 	}{
 		{
 			name: "metal",
 			log: `time=2025-06-30T09:23:07.374-07:00 level=DEBUG source=sched.go:108 msg="starting llm scheduler"
 time=2025-06-30T09:23:07.416-07:00 level=INFO source=types.go:130 msg="inference compute" id=0 library=metal variant="" compute="" driver=0.0 name="" total="96.0 GiB" available="96.0 GiB"
+time=2025-06-30T09:23:07.417-07:00 level=INFO source=routes.go:1721 msg="vram-based default context" total_vram="96.0 GiB" default_num_ctx=262144
 time=2025-06-30T09:25:56.197-07:00 level=DEBUG source=ggml.go:155 msg="key not found" key=general.alignment default=32
 `,
-			exp: []InferenceCompute{{
+			expComputes: []InferenceCompute{{
 				Library: "metal",
 				Driver:  "0.0",
 				VRAM:    "96.0 GiB",
 			}},
+			expDefaultCtxLen: 262144,
 		},
 		{
 			name: "cpu",
 			log: `time=2025-07-01T17:59:51.470Z level=INFO source=gpu.go:377 msg="no compatible GPUs were discovered"
 time=2025-07-01T17:59:51.470Z level=INFO source=types.go:130 msg="inference compute" id=0 library=cpu variant="" compute="" driver=0.0 name="" total="31.3 GiB" available="30.4 GiB"
+time=2025-07-01T17:59:51.471Z level=INFO source=routes.go:1721 msg="vram-based default context" total_vram="31.3 GiB" default_num_ctx=32768
 [GIN] 2025/07/01 - 18:00:09 | 200 |      50.263µs | 100.126.204.152 | HEAD     "/"
 `,
-			exp: []InferenceCompute{{
+			expComputes: []InferenceCompute{{
 				Library: "cpu",
 				Driver:  "0.0",
 				VRAM:    "31.3 GiB",
 			}},
+			expDefaultCtxLen: 32768,
 		},
 		{
 			name: "cuda1",
 			log: `time=2025-07-01T19:33:43.162Z level=DEBUG source=amd_linux.go:419 msg="amdgpu driver not detected /sys/module/amdgpu"
 releasing cuda driver library
 time=2025-07-01T19:33:43.162Z level=INFO source=types.go:130 msg="inference compute" id=GPU-452cac9f-6960-839c-4fb3-0cec83699196 library=cuda variant=v12 compute=6.1 driver=12.7 name="NVIDIA GeForce GT 1030" total="3.9 GiB" available="3.9 GiB"
+time=2025-07-01T19:33:43.163Z level=INFO source=routes.go:1721 msg="vram-based default context" total_vram="3.9 GiB" default_num_ctx=4096
 [GIN] 2025/07/01 - 18:00:09 | 200 |      50.263µs | 100.126.204.152 | HEAD     "/"
 `,
-			exp: []InferenceCompute{{
+			expComputes: []InferenceCompute{{
 				Library: "cuda",
 				Variant: "v12",
 				Compute: "6.1",
@@ -181,6 +256,7 @@ time=2025-07-01T19:33:43.162Z level=INFO source=types.go:130 msg="inference comp
 				Name:    "NVIDIA GeForce GT 1030",
 				VRAM:    "3.9 GiB",
 			}},
+			expDefaultCtxLen: 4096,
 		},
 		{
 			name: "frank",
@@ -188,9 +264,10 @@ time=2025-07-01T19:33:43.162Z level=INFO source=types.go:130 msg="inference comp
 		releasing cuda driver library
 		time=2025-07-01T19:36:13.315Z level=INFO source=types.go:130 msg="inference compute" id=GPU-d6de3398-9932-6902-11ec-fee8e424c8a2 library=cuda variant=v12 compute=7.5 driver=12.8 name="NVIDIA GeForce RTX 2080 Ti" total="10.6 GiB" available="10.4 GiB"
 		time=2025-07-01T19:36:13.315Z level=INFO source=types.go:130 msg="inference compute" id=GPU-9abb57639fa80c50 library=rocm variant="" compute=gfx1030 driver=6.3 name=1002:73bf total="16.0 GiB" available="1.3 GiB"
+		time=2025-07-01T19:36:13.316Z level=INFO source=routes.go:1721 msg="vram-based default context" total_vram="26.6 GiB" default_num_ctx=32768
 		[GIN] 2025/07/01 - 18:00:09 | 200 |      50.263µs | 100.126.204.152 | HEAD     "/"
 		`,
-			exp: []InferenceCompute{
+			expComputes: []InferenceCompute{
 				{
 					Library: "cuda",
 					Variant: "v12",
@@ -207,6 +284,20 @@ time=2025-07-01T19:33:43.162Z level=INFO source=types.go:130 msg="inference comp
 					VRAM:    "16.0 GiB",
 				},
 			},
+			expDefaultCtxLen: 32768,
+		},
+		{
+			name: "missing_default_context",
+			log: `time=2025-06-30T09:23:07.374-07:00 level=DEBUG source=sched.go:108 msg="starting llm scheduler"
+time=2025-06-30T09:23:07.416-07:00 level=INFO source=types.go:130 msg="inference compute" id=0 library=metal variant="" compute="" driver=0.0 name="" total="96.0 GiB" available="96.0 GiB"
+time=2025-06-30T09:25:56.197-07:00 level=DEBUG source=ggml.go:155 msg="key not found" key=general.alignment default=32
+`,
+			expComputes: []InferenceCompute{{
+				Library: "metal",
+				Driver:  "0.0",
+				VRAM:    "96.0 GiB",
+			}},
+			expDefaultCtxLen: 0, // No default context line, should return 0
 		},
 	}
 	for _, tt := range tests {
@@ -219,18 +310,21 @@ time=2025-07-01T19:33:43.162Z level=INFO source=types.go:130 msg="inference comp
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
 			defer cancel()
-			ics, err := GetInferenceComputer(ctx)
+			info, err := GetInferenceInfo(ctx)
 			if err != nil {
-				t.Fatalf(" failed to get inference compute: %v", err)
+				t.Fatalf("failed to get inference info: %v", err)
 			}
-			if !reflect.DeepEqual(ics, tt.exp) {
-				t.Fatalf("got:\n%#v\nwant:\n%#v", ics, tt.exp)
+			if !reflect.DeepEqual(info.Computes, tt.expComputes) {
+				t.Fatalf("computes mismatch\ngot:\n%#v\nwant:\n%#v", info.Computes, tt.expComputes)
+			}
+			if info.DefaultContextLength != tt.expDefaultCtxLen {
+				t.Fatalf("default context length mismatch: got %d, want %d", info.DefaultContextLength, tt.expDefaultCtxLen)
 			}
 		})
 	}
 }
 
-func TestGetInferenceComputerTimeout(t *testing.T) {
+func TestGetInferenceInfoTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
 	defer cancel()
 	tmpDir := t.TempDir()
@@ -239,7 +333,7 @@ func TestGetInferenceComputerTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to write log file %s: %s", serverLogPath, err)
 	}
-	_, err = GetInferenceComputer(ctx)
+	_, err = GetInferenceInfo(ctx)
 	if err == nil {
 		t.Fatal("expected timeout")
 	}

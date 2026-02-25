@@ -449,6 +449,16 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 	return version.Version, nil
 }
 
+// CloudStatusExperimental returns whether cloud features are disabled on the server.
+func (c *Client) CloudStatusExperimental(ctx context.Context) (*StatusResponse, error) {
+	var status StatusResponse
+	if err := c.do(ctx, http.MethodGet, "/api/status", nil, &status); err != nil {
+		return nil, err
+	}
+
+	return &status, nil
+}
+
 // Signout will signout a client for a local ollama server.
 func (c *Client) Signout(ctx context.Context) error {
 	return c.do(ctx, http.MethodPost, "/api/signout", nil, nil)

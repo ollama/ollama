@@ -165,6 +165,7 @@ type Tensor interface {
 	Conv2D(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 	Conv3D(ctx Context, weight Tensor, c, s0, s1, s2, p0, p1, p2, d0, d1, d2 int) Tensor
 	SSMConv(ctx Context, kernel Tensor) Tensor
+	SSMScan(ctx Context, x, dt, A, B, C, ids Tensor) Tensor
 
 	IM2Col(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
@@ -196,6 +197,7 @@ type Tensor interface {
 	Concat(ctx Context, t2 Tensor, dim int) Tensor
 	Rows(ctx Context, t2 Tensor) Tensor
 	SetRows(ctx Context, src Tensor, idxs Tensor) Tensor
+	SetInplace(ctx Context, src Tensor, nb1, nb2, nb3, offset int) Tensor
 	Copy(ctx Context, t2 Tensor) Tensor
 	Duplicate(ctx Context) Tensor
 

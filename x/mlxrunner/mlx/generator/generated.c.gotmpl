@@ -1,0 +1,17 @@
+// This code is auto-generated; DO NOT EDIT.
+
+#include "generated.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+{{ range .Functions }}
+{{ .Type }} (*{{ .Name }}_){{ .Parameters }} = NULL;
+{{- end }}
+
+int mlx_dynamic_load_symbols(mlx_dynamic_handle handle) {
+{{- range .Functions }}
+    CHECK_LOAD(handle, {{ .Name }});
+{{- end }}
+    return 0;
+}

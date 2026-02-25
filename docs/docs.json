@@ -105,21 +105,55 @@
           {
             "group": "Integrations",
             "pages": [
-              "/integrations/claude-code",
-              "/integrations/cline",
-              "/integrations/openclaw",
-              "/integrations/codex",
-              "/integrations/droid",
-              "/integrations/goose",
-              "/integrations/jetbrains",
-              "/integrations/marimo",
-              "/integrations/n8n",
-              "/integrations/onyx",
-              "/integrations/opencode",
-              "/integrations/roo-code",
-              "/integrations/vscode",
-              "/integrations/xcode",
-              "/integrations/zed"
+              "/integrations/index",
+              {
+                "group": "Assistants",
+                "expanded": true,
+                "pages": [
+                  "/integrations/openclaw"
+                ]
+              },
+              {
+                "group": "Coding",
+                "expanded": true,
+                "pages": [
+                  "/integrations/claude-code",
+                  "/integrations/codex",
+                  "/integrations/opencode",
+                  "/integrations/droid",
+                  "/integrations/goose",
+                  "/integrations/pi"
+                ]
+              },
+              {
+                "group": "IDEs & Editors",
+                "pages": [
+                  "/integrations/cline",
+                  "/integrations/jetbrains",
+                  "/integrations/roo-code",
+                  "/integrations/vscode",
+                  "/integrations/xcode",
+                  "/integrations/zed"
+                ]
+              },
+              {
+                "group": "Chat & RAG",
+                "pages": [
+                  "/integrations/onyx"
+                ]
+              },
+              {
+                "group": "Automation",
+                "pages": [
+                  "/integrations/n8n"
+                ]
+              },
+              {
+                "group": "Notebooks",
+                "pages": [
+                  "/integrations/marimo"
+                ]
+              }
             ]
           },
           {
