@@ -165,11 +165,12 @@ export function ChatSidebar({ currentChatId }: ChatSidebarProps) {
 
   const handleDeleteChat = useCallback(
     async (chatId: string) => {
-      const confirmed = window.confirm(
-        `Are you sure you want to remove this chat?`,
-      );
+      const selectedAction = await window.menu([
+        { label: "Remove this chat", enabled: true },
+        { label: "Cancel", enabled: true },
+      ]);
 
-      if (!confirmed) return;
+      if (selectedAction !== "Remove this chat") return;
 
       try {
         await deleteMutation.mutateAsync(chatId);
