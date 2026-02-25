@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"slices"
 	"strings"
 	"unsafe"
 
@@ -61,7 +62,7 @@ func useMoreBits(iLayer, nLayers int) bool {
 	return iLayer < (nLayers/8) || iLayer >= 7*nLayers/8 || (iLayer-nLayers/8)%3 == 2
 }
 
-func qwen3nextQuantType(name string) (fsggml.TensorType, bool) {
+func qwen3LinearAttnQuantType(name string) (fsggml.TensorType, bool) {
 	switch {
 	// Full attention
 	case strings.HasSuffix(name, ".attn_q.weight"):
@@ -81,6 +82,10 @@ func qwen3nextQuantType(name string) (fsggml.TensorType, bool) {
 
 	// SSM
 	case strings.HasSuffix(name, ".ssm_ba.weight"):
+		return fsggml.TensorTypeQ4_K, true
+	case strings.HasSuffix(name, ".ssm_beta.weight"):
+		return fsggml.TensorTypeQ4_K, true
+	case strings.HasSuffix(name, ".ssm_alpha.weight"):
 		return fsggml.TensorTypeQ4_K, true
 	case strings.HasSuffix(name, ".ssm_out.weight"):
 		return fsggml.TensorTypeQ4_K, true
@@ -290,8 +295,8 @@ func newType(t *fsggml.Tensor, kv fsggml.KV, qs *quantizeState, ftype fsggml.Fil
 
 	newType := fsggml.TensorType(t.Kind)
 	if quantize {
-		if kv.Architecture() == "qwen3next" && (ftype == fsggml.FileTypeQ4_K_M || ftype == fsggml.FileTypeQ4_K_S) {
-			if qt, ok := qwen3nextQuantType(name); ok {
+		if slices.Contains([]string{"qwen3next", "qwen35", "qwen35moe"}, kv.Architecture()) && (ftype == fsggml.FileTypeQ4_K_M || ftype == fsggml.FileTypeQ4_K_S) {
+			if qt, ok := qwen3LinearAttnQuantType(name); ok {
 				return qt
 			}
 		}

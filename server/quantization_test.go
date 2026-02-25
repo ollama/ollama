@@ -166,6 +166,60 @@ func TestGetTensorNewType(t *testing.T) {
 	}
 }
 
+func TestQwen3LinearAttentionQuantOverride(t *testing.T) {
+	cases := []struct {
+		name     string
+		arch     string
+		tensor   string
+		fileType fsggml.FileType
+		expected fsggml.TensorType
+	}{
+		{
+			name:     "qwen35_beta",
+			arch:     "qwen35",
+			tensor:   "blk.0.ssm_beta.weight",
+			fileType: fsggml.FileTypeQ4_K_M,
+			expected: fsggml.TensorTypeQ4_K,
+		},
+		{
+			name:     "qwen35_alpha",
+			arch:     "qwen35",
+			tensor:   "blk.0.ssm_alpha.weight",
+			fileType: fsggml.FileTypeQ4_K_M,
+			expected: fsggml.TensorTypeQ4_K,
+		},
+		{
+			name:     "qwen35moe_attn_qkv",
+			arch:     "qwen35moe",
+			tensor:   "blk.0.attn_qkv.weight",
+			fileType: fsggml.FileTypeQ4_K_M,
+			expected: fsggml.TensorTypeQ4_K,
+		},
+		{
+			name:     "non_qwen35_falls_back",
+			arch:     "foo",
+			tensor:   "blk.0.attn_qkv.weight",
+			fileType: fsggml.FileTypeQ4_K_M,
+			expected: fsggml.TensorTypeQ5_K,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			kv := fsggml.KV{"general.architecture": tt.arch}
+			got := newType(&fsggml.Tensor{
+				Name:  tt.tensor,
+				Shape: []uint64{256, 256},
+				Kind:  uint32(fsggml.TensorTypeF16),
+			}, kv, &quantizeState{}, tt.fileType)
+
+			if got != tt.expected {
+				t.Fatalf("unexpected tensor type for %s (%s): got %s want %s", tt.tensor, tt.arch, got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestQuantizeModel(t *testing.T) {
 	cases := []struct {
 		name                string
