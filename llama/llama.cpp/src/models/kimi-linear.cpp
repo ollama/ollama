@@ -116,6 +116,8 @@ llm_build_kimi_linear::llm_build_kimi_linear(const llama_model & model, const ll
         cur = build_norm(inpL, layer.attn_norm, NULL, LLM_NORM_RMS, il);
         cb(cur, "attn_norm", il);
 
+        ggml_build_forward_expand(gf, cur);
+
         // Check layer type by checking which tensors exist
         // KDA layers have ssm_a_log tensor, MLA layers have wkv_a_mqa tensor
         bool is_kda = (layer.ssm_a != nullptr);
