@@ -1,8 +1,10 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Inforithmics <thomas.stocker@gmail.com>
-Date: Wed, 25 Feb 2026 19:12:20 +0100
+From: jmorganca <jmorganca@gmail.com>
+Date: Sat, 10 Jan 2026 15:36:34 -0800
 Subject: [PATCH] ggml: Add batch size hint to graph_compute
 
+This adds a batch_size parameter to backend graph_compute functions
+to provide optimization hints for processing.
 ---
  ggml/include/ggml-backend.h               |     5 +-
  ggml/src/ggml-backend-impl.h              |     4 +-
