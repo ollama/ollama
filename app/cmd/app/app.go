@@ -35,6 +35,7 @@ import (
 var (
 	wv           = &Webview{}
 	uiServerPort int
+	appStore     *store.Store
 )
 
 var debug = strings.EqualFold(os.Getenv("OLLAMA_DEBUG"), "true") || os.Getenv("OLLAMA_DEBUG") == "1"
@@ -208,6 +209,7 @@ func main() {
 	uiServerPort = port
 
 	st := &store.Store{}
+	appStore = st
 
 	// Enable CORS in development mode
 	if devMode {
@@ -360,8 +362,7 @@ func startHiddenTasks() {
 			slog.Info("deferring pending update for fast startup")
 		} else {
 			// Check if auto-update is enabled before automatically upgrading
-			st := &store.Store{}
-			settings, err := st.Settings()
+			settings, err := appStore.Settings()
 			if err != nil {
 				slog.Warn("failed to load settings for upgrade check", "error", err)
 			} else if !settings.AutoUpdateEnabled {
