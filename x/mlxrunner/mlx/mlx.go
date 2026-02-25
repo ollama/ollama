@@ -19,7 +19,7 @@ func doEval(outputs []*Array, async bool) {
 	defer C.mlx_vector_array_free(vector)
 
 	for _, output := range outputs {
-		if output.Valid() {
+		if output != nil && output.Valid() {
 			C.mlx_vector_array_append_value(vector, output.ctx)
 		}
 	}
