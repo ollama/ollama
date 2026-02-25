@@ -83,6 +83,9 @@ type GenerateRequest struct {
 	// Stream specifies whether the response is streaming; it is true by default.
 	Stream *bool `json:"stream,omitempty"`
 
+	// StreamOptions controls streaming keepalive behavior.
+	StreamOptions *StreamOptions `json:"stream_options,omitempty"`
+
 	// Raw set to true means that no formatting will be applied to the prompt.
 	Raw bool `json:"raw,omitempty"`
 
@@ -154,6 +157,9 @@ type ChatRequest struct {
 	// Stream enables streaming of returned responses; true by default.
 	Stream *bool `json:"stream,omitempty"`
 
+	// StreamOptions controls streaming keepalive behavior.
+	StreamOptions *StreamOptions `json:"stream_options,omitempty"`
+
 	// Format is the format to return the response in (e.g. "json").
 	Format json.RawMessage `json:"format,omitempty"`
 
@@ -194,6 +200,13 @@ type ChatRequest struct {
 }
 
 type Tools []Tool
+
+// StreamOptions controls optional behavior for streaming responses.
+type StreamOptions struct {
+	// HeartbeatMS controls server-side stream keepalive frequency in milliseconds.
+	// If omitted, the server default is used. Values <= 0 disable keepalives.
+	HeartbeatMS *int `json:"heartbeat_ms,omitempty"`
+}
 
 func (t Tools) String() string {
 	bts, _ := json.Marshal(t)

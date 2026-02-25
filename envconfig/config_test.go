@@ -262,6 +262,28 @@ func TestLoadTimeout(t *testing.T) {
 	}
 }
 
+func TestStreamHeartbeatMS(t *testing.T) {
+	cases := map[string]int{
+		"":      10000,
+		"1000":  1000,
+		"0":     0,
+		"-1":    -1,
+		"25000": 25000,
+		// invalid values fall back to default
+		"abc": 10000,
+		"1s":  10000,
+	}
+
+	for tt, expect := range cases {
+		t.Run(tt, func(t *testing.T) {
+			t.Setenv("OLLAMA_STREAM_HEARTBEAT_MS", tt)
+			if actual := StreamHeartbeatMS(); actual != expect {
+				t.Errorf("%s: expected %d, got %d", tt, expect, actual)
+			}
+		})
+	}
+}
+
 func TestVar(t *testing.T) {
 	cases := map[string]string{
 		"value":       "value",

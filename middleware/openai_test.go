@@ -64,6 +64,10 @@ var (
 	True  = true
 )
 
+func intPtr(v int) *int {
+	return &v
+}
+
 func captureRequestMiddleware(capturedRequest any) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		bodyBytes, _ := io.ReadAll(c.Request.Body)
@@ -185,6 +189,33 @@ func TestChatMiddleware(t *testing.T) {
 				},
 				Format: json.RawMessage(`"json"`),
 				Stream: &True,
+			},
+		},
+		{
+			name: "chat handler with heartbeat stream option",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "Hello"}
+				],
+				"stream": true,
+				"stream_options": {"include_usage": true, "heartbeat_ms": 250},
+				"temperature": 3.0
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "Hello",
+					},
+				},
+				Options: map[string]any{
+					"temperature": 3.0,
+					"top_p":       1.0,
+				},
+				Stream:        &True,
+				StreamOptions: &api.StreamOptions{HeartbeatMS: intPtr(250)},
 			},
 		},
 		{
@@ -687,6 +718,28 @@ func TestCompletionsMiddleware(t *testing.T) {
 			},
 		},
 		{
+			name: "completions handler stream with heartbeat",
+			body: `{
+				"model": "test-model",
+				"prompt": "Hello",
+				"stream": true,
+				"stream_options": {"include_usage": true, "heartbeat_ms": 500},
+				"temperature": 0.8
+			}`,
+			req: api.GenerateRequest{
+				Model:  "test-model",
+				Prompt: "Hello",
+				Options: map[string]any{
+					"frequency_penalty": 0.0,
+					"presence_penalty":  0.0,
+					"temperature":       0.8,
+					"top_p":             1.0,
+				},
+				Stream:        &True,
+				StreamOptions: &api.StreamOptions{HeartbeatMS: intPtr(500)},
+			},
+		},
+		{
 			name: "completions handler error forwarding",
 			body: `{
 				"model": "test-model",
@@ -822,6 +875,66 @@ func TestEmbeddingsMiddleware(t *testing.T) {
 
 			capturedRequest = nil
 		})
+	}
+}
+
+func TestChatMiddleware_StreamKeepaliveChunk(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	router.Use(ChatMiddleware())
+	router.POST("/v1/chat/completions", func(c *gin.Context) {
+		c.Status(http.StatusOK)
+
+		keepalive := api.ChatResponse{
+			Model:     "test-model",
+			CreatedAt: time.Now().UTC(),
+			Message:   api.Message{Role: "assistant"},
+			Done:      false,
+		}
+		k, err := json.Marshal(keepalive)
+		if err != nil {
+			t.Fatalf("failed to marshal keepalive: %v", err)
+		}
+		if _, err := c.Writer.Write(append(k, '\n')); err != nil {
+			t.Fatalf("failed to write keepalive: %v", err)
+		}
+
+		final := api.ChatResponse{
+			Model:      "test-model",
+			CreatedAt:  time.Now().UTC(),
+			Message:    api.Message{Role: "assistant", Content: "done"},
+			Done:       true,
+			DoneReason: "stop",
+		}
+		f, err := json.Marshal(final)
+		if err != nil {
+			t.Fatalf("failed to marshal final chunk: %v", err)
+		}
+		if _, err := c.Writer.Write(append(f, '\n')); err != nil {
+			t.Fatalf("failed to write final chunk: %v", err)
+		}
+	})
+
+	reqBody := `{
+		"model": "test-model",
+		"stream": true,
+		"messages": [{"role":"user","content":"hello"}]
+	}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "data: [DONE]\n\n") {
+		t.Fatalf("expected final [DONE] event, got body: %s", body)
+	}
+
+	// Keepalive should be represented as a regular no-op SSE data chunk.
+	if strings.Count(body, "data: {") < 2 {
+		t.Fatalf("expected at least two SSE data chunks, got body: %s", body)
 	}
 }
 

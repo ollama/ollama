@@ -89,6 +89,7 @@ type EmbedRequest struct {
 
 type StreamOptions struct {
 	IncludeUsage bool `json:"include_usage"`
+	HeartbeatMS  *int `json:"heartbeat_ms,omitempty"`
 }
 
 type Reasoning struct {
@@ -601,11 +602,20 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	}
 
 	return &api.ChatRequest{
-		Model:           r.Model,
-		Messages:        messages,
-		Format:          format,
-		Options:         options,
-		Stream:          &r.Stream,
+		Model:    r.Model,
+		Messages: messages,
+		Format:   format,
+		Options:  options,
+		Stream:   &r.Stream,
+		StreamOptions: func() *api.StreamOptions {
+			if r.StreamOptions == nil || r.StreamOptions.HeartbeatMS == nil {
+				return nil
+			}
+
+			return &api.StreamOptions{
+				HeartbeatMS: r.StreamOptions.HeartbeatMS,
+			}
+		}(),
 		Tools:           r.Tools,
 		Think:           think,
 		Logprobs:        r.Logprobs != nil && *r.Logprobs,
@@ -727,10 +737,19 @@ func FromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 	}
 
 	return api.GenerateRequest{
-		Model:           r.Model,
-		Prompt:          r.Prompt,
-		Options:         options,
-		Stream:          &r.Stream,
+		Model:   r.Model,
+		Prompt:  r.Prompt,
+		Options: options,
+		Stream:  &r.Stream,
+		StreamOptions: func() *api.StreamOptions {
+			if r.StreamOptions == nil || r.StreamOptions.HeartbeatMS == nil {
+				return nil
+			}
+
+			return &api.StreamOptions{
+				HeartbeatMS: r.StreamOptions.HeartbeatMS,
+			}
+		}(),
 		Suffix:          r.Suffix,
 		Logprobs:        logprobs,
 		TopLogprobs:     topLogprobs,
