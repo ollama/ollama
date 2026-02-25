@@ -74,8 +74,7 @@ type LlamaServer interface {
 	Tokenize(ctx context.Context, content string) ([]int, error)
 	Detokenize(ctx context.Context, tokens []int) (string, error)
 	Close() error
-	VRAMSize() uint64 // Total VRAM across all GPUs
-	TotalSize() uint64
+	MemorySize() (total, vram uint64)
 	VRAMByGPU(id ml.DeviceID) uint64
 	Pid() int
 	GetPort() int
@@ -685,8 +684,9 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 	// Windows CUDA should not use mmap for best performance
 	// Linux  with a model larger than free space, mmap leads to thrashing
 	// For CPU loads we want the memory to be allocated, not FS cache
+	totalSize, _ := s.MemorySize()
 	if (runtime.GOOS == "windows" && len(gpus) > 0 && gpus[0].Library == "CUDA" && s.options.UseMMap == nil) ||
-		(runtime.GOOS == "linux" && systemInfo.FreeMemory < s.TotalSize() && s.options.UseMMap == nil) ||
+		(runtime.GOOS == "linux" && systemInfo.FreeMemory < totalSize && s.options.UseMMap == nil) ||
 		(len(gpus) == 0 && s.options.UseMMap == nil) ||
 		(len(gpus) > 0 && gpus[0].Library == "Vulkan" && s.options.UseMMap == nil) ||
 		(s.options.UseMMap != nil && !*s.options.UseMMap) {
@@ -1849,16 +1849,16 @@ func (s *llamaServer) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {
 	return nil
 }
 
-func (s *llmServer) VRAMSize() uint64 {
+func (s *llmServer) MemorySize() (total, vram uint64) {
 	if s.mem == nil {
-		return 0
+		return 0, 0
 	}
-
-	var mem uint64
 
 	for _, g := range s.mem.GPUs {
-		mem += g.Size()
+		vram += g.Size()
 	}
+
+	total = s.mem.InputWeights + s.mem.CPU.Size() + vram
 
 	// Some elements are always on CPU. However, if we have allocated all layers
 	// on the GPU then include the CPU components as well, to represent complete offloading.
@@ -1870,25 +1870,11 @@ func (s *llmServer) VRAMSize() uint64 {
 		}
 	}
 	if noCPULayers {
-		mem += s.mem.InputWeights
-		mem += s.mem.CPU.Graph
+		vram += s.mem.InputWeights
+		vram += s.mem.CPU.Graph
 	}
 
-	return mem
-}
-
-func (s *llmServer) TotalSize() uint64 {
-	if s.mem == nil {
-		return 0
-	}
-
-	mem := s.mem.InputWeights
-	mem += s.mem.CPU.Size()
-	for _, g := range s.mem.GPUs {
-		mem += g.Size()
-	}
-
-	return mem
+	return total, vram
 }
 
 func (s *llmServer) VRAMByGPU(id ml.DeviceID) uint64 {
