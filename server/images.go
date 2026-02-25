@@ -71,6 +71,10 @@ type Model struct {
 	Template *template.Template
 }
 
+func (m *Model) IsMLX() bool {
+	return m.Config.ModelFormat == "safetensors"
+}
+
 // Capabilities returns the capabilities that the model supports
 func (m *Model) Capabilities() []model.Capability {
 	capabilities := []model.Capability{}

@@ -231,7 +231,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					}
 
 					// Check for experimental safetensors LLM models
-					if pending.model.Config.ModelFormat == "safetensors" {
+					if pending.model.IsMLX() {
 						if slices.Contains(pending.model.Config.Capabilities, "completion") {
 							// LLM model with safetensors format - use MLX runner
 							if s.loadMLX(pending) {
@@ -764,7 +764,7 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 	defer cancel()
 	if !reflect.DeepEqual(runner.model.AdapterPaths, req.model.AdapterPaths) || // have the adapters changed?
 		!reflect.DeepEqual(runner.model.ProjectorPaths, req.model.ProjectorPaths) || // have the projectors changed?
-		!reflect.DeepEqual(optsExisting, optsNew) || // have the runner options changed?
+		(!runner.model.IsMLX() && !reflect.DeepEqual(optsExisting, optsNew)) || // have the runner options changed?
 		runner.llama.Ping(ctx) != nil {
 		return true
 	}

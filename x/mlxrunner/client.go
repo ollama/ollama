@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math"
 	"math/rand"
 	"net"
 	"net/http"
@@ -30,15 +29,16 @@ import (
 
 // Client wraps an MLX runner subprocess to implement llm.LlamaServer for LLM models.
 type Client struct {
-	port        int
-	modelName   string
-	memory      atomic.Uint64
-	done        chan error
-	client      *http.Client
-	lastErr     string
-	lastErrLock sync.Mutex
-	mu          sync.Mutex
-	cmd         *exec.Cmd
+	port          int
+	modelName     string
+	contextLength atomic.Int64
+	memory        atomic.Uint64
+	done          chan error
+	client        *http.Client
+	lastErr       string
+	lastErrLock   sync.Mutex
+	mu            sync.Mutex
+	cmd           *exec.Cmd
 }
 
 // NewClient spawns a new MLX runner subprocess for LLM models and waits until it's ready.
@@ -297,7 +297,7 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 }
 
 func (c *Client) ContextLength() int {
-	return math.MaxInt
+	return int(c.contextLength.Load())
 }
 
 // Detokenize implements llm.LlamaServer.
@@ -351,9 +351,10 @@ func (c *Client) Pid() int {
 }
 
 type statusResponse struct {
-	Status   int
-	Progress int
-	Memory   uint64
+	Status        int
+	Progress      int
+	ContextLength int
+	Memory        uint64
 }
 
 // Ping implements llm.LlamaServer.
@@ -376,7 +377,10 @@ func (c *Client) Ping(ctx context.Context) error {
 	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
 		return err
 	}
+
+	c.contextLength.Store(int64(status.ContextLength))
 	c.memory.Store(status.Memory)
+
 	return nil
 }
 
