@@ -434,11 +434,11 @@ func TestQwenRendererNameNoThinkBehaviorSplit(t *testing.T) {
 		t.Fatalf("expected qwen3.5 renderer to emit explicit no-think prefill, got:\n%s", qwen35Rendered)
 	}
 
-	qwen3VLRendered, err := RenderWithRenderer("qwen3-vl", msgs, nil, thinkFalse)
+	qwen3VLRendered, err := RenderWithRenderer("qwen3-vl-thinking", msgs, nil, thinkFalse)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(qwen3VLRendered, "<|im_start|>assistant\n<think>\n\n</think>\n\n") {
-		t.Fatalf("expected qwen3-vl renderer to keep legacy non-empty no-think behavior, got:\n%s", qwen3VLRendered)
+		t.Fatalf("expected qwen3-vl-thinking renderer to keep legacy non-empty no-think behavior, got:\n%s", qwen3VLRendered)
 	}
 }

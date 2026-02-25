@@ -343,7 +343,7 @@ func TestChatPromptRendererDoesNotRewriteMessageContent(t *testing.T) {
 	originalContent := msgs[0].Content
 
 	m := Model{
-		Config:         model.ConfigV2{Renderer: "qwen3-vl"},
+		Config:         model.ConfigV2{Renderer: "qwen3-vl-instruct"},
 		ProjectorPaths: []string{"vision"},
 	}
 	opts := api.Options{Runner: api.Runner{NumCtx: 8192}}
