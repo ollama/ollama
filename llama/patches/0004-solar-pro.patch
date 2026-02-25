@@ -173,10 +173,10 @@ index 1501e392c..37b69a4b3 100644
  llama_model_loader::llama_model_loader(
          const std::string & fname,
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index c93e29555..cf6369b8c 100644
+index 52408c525..43732ada3 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -2183,6 +2183,21 @@ void llama_model::load_hparams(llama_model_loader & ml) {
+@@ -2184,6 +2184,21 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                      default: type = LLM_TYPE_UNKNOWN;
                 }
              } break;
@@ -198,7 +198,7 @@ index c93e29555..cf6369b8c 100644
          case LLM_ARCH_WAVTOKENIZER_DEC:
              {
                  ml.get_key(LLM_KV_ATTENTION_LAYERNORM_EPS,    hparams.f_norm_eps);
-@@ -6100,6 +6115,34 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
+@@ -6105,6 +6120,34 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
  
                          layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
  
@@ -233,7 +233,7 @@ index c93e29555..cf6369b8c 100644
                          layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
                          layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
                          layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
-@@ -8674,6 +8717,10 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
+@@ -8679,6 +8722,10 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
              {
                  llm = std::make_unique<llm_build_chameleon>(*this, params);
              } break;
@@ -244,7 +244,7 @@ index c93e29555..cf6369b8c 100644
          case LLM_ARCH_WAVTOKENIZER_DEC:
              {
                  llm = std::make_unique<llm_build_wavtokenizer_dec>(*this, params);
-@@ -8977,6 +9024,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
+@@ -8982,6 +9029,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
          case LLM_ARCH_GRANITE_MOE:
          case LLM_ARCH_GRANITE_HYBRID:
          case LLM_ARCH_CHAMELEON:
@@ -253,7 +253,7 @@ index c93e29555..cf6369b8c 100644
          case LLM_ARCH_NEO_BERT:
          case LLM_ARCH_SMOLLM3:
 diff --git a/src/llama-model.h b/src/llama-model.h
-index 422ed4569..adbc28e0b 100644
+index 96e407a0b..4aecdd8ee 100644
 --- a/src/llama-model.h
 +++ b/src/llama-model.h
 @@ -80,6 +80,7 @@ enum llm_type {
@@ -264,7 +264,7 @@ index 422ed4569..adbc28e0b 100644
      LLM_TYPE_26B,
      LLM_TYPE_27B,
      LLM_TYPE_30B,
-@@ -437,6 +438,8 @@ struct llama_layer {
+@@ -438,6 +439,8 @@ struct llama_layer {
      struct ggml_tensor * indexer_attn_k   = nullptr;
      struct ggml_tensor * indexer_attn_q_b = nullptr; // note: for lora a/b, not bias
  
