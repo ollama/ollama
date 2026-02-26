@@ -74,6 +74,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	caches := session.caches
 	tokens := session.remaining
 
+	now := time.Now()
 	total, processed := len(tokens), 0
 	for total-processed > 1 {
 		if err := request.Ctx.Err(); err != nil {
@@ -114,8 +115,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 
 	var b bytes.Buffer
 
-	now := time.Now()
-	final := CompletionResponse{Done: true, PromptEvalCount: total, EvalCount: request.Options.MaxTokens, DoneReason: 1}
+	final := CompletionResponse{Done: true, PromptEvalCount: len(inputs), EvalCount: request.Options.MaxTokens, DoneReason: 1}
 	for i := range request.Options.MaxTokens {
 		if err := request.Ctx.Err(); err != nil {
 			return err
