@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/x/imagegen"
@@ -192,6 +193,20 @@ type completionOpts struct {
 	NumPredict  int     `json:"num_predict,omitempty"`
 }
 
+type CompletionResponse struct {
+	Content    string
+	Done       bool
+	DoneReason int
+
+	PromptEvalCount    int
+	PromptEvalDuration time.Duration
+	EvalCount          int
+	EvalDuration       time.Duration
+	PeakMemory         uint64
+
+	Error *api.StatusError
+}
+
 // Close terminates the subprocess.
 func (c *Client) Close() error {
 	c.mu.Lock()
@@ -251,19 +266,14 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
-		var raw struct {
-			Content            string `json:"content,omitempty"`
-			Done               bool   `json:"done"`
-			DoneReason         int    `json:"done_reason,omitempty"`
-			PromptEvalCount    int    `json:"prompt_eval_count,omitempty"`
-			PromptEvalDuration int    `json:"prompt_eval_duration,omitempty"`
-			EvalCount          int    `json:"eval_count,omitempty"`
-			EvalDuration       int    `json:"eval_duration,omitempty"`
-			PeakMemory         uint64 `json:"peak_memory,omitempty"`
-		}
+		var raw CompletionResponse
 		if err := json.Unmarshal(scanner.Bytes(), &raw); err != nil {
 			slog.Debug("mlx response parse error", "error", err, "line", string(scanner.Bytes()))
 			continue
+		}
+
+		if raw.Error != nil {
+			return *raw.Error
 		}
 
 		cresp := llm.CompletionResponse{
@@ -271,9 +281,9 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 			Done:               raw.Done,
 			DoneReason:         llm.DoneReason(raw.DoneReason),
 			PromptEvalCount:    raw.PromptEvalCount,
-			PromptEvalDuration: time.Duration(raw.PromptEvalDuration),
+			PromptEvalDuration: raw.PromptEvalDuration,
 			EvalCount:          raw.EvalCount,
-			EvalDuration:       time.Duration(raw.EvalDuration),
+			EvalDuration:       raw.EvalDuration,
 			PeakMemory:         raw.PeakMemory,
 		}
 
