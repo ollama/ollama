@@ -78,6 +78,12 @@ func (c *kvCache) findRemaining(tokens []int32) []int32 {
 		prefix++
 	}
 
+	// Always keep at least one token to re-evaluate so the
+	// pipeline can seed token generation from it.
+	if prefix == len(tokens) && prefix > 0 {
+		prefix--
+	}
+
 	if prefix < len(c.tokens) {
 		trim := len(c.tokens) - prefix
 		for _, kv := range c.caches {
