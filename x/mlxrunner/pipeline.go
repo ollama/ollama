@@ -47,6 +47,10 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	mlx.ResetPeakMemory()
 
 	inputs := r.Tokenizer.Encode(request.Prompt, true)
+	if len(inputs) == 0 {
+		return errors.New("empty prompt")
+	}
+
 	session := r.cache.begin(r.Model, inputs)
 	defer session.close()
 
@@ -54,7 +58,6 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	tokens := session.remaining
 
 	total, processed := len(tokens), 0
-	slog.Info("Prompt processing progress", "processed", processed, "total", total)
 	for total-processed > 1 {
 		if err := request.Ctx.Err(); err != nil {
 			return err
@@ -104,7 +107,6 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		nextSample, nextLogprobs = step(sample)
 
 		if i == 0 {
-			slog.Info("Prompt processing progress", "processed", total, "total", total)
 			mlx.Eval(sample)
 			final.PromptTokensDuration = time.Since(now)
 			now = time.Now()
