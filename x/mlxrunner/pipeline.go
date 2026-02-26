@@ -13,27 +13,11 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/logutil"
-	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
-func prefillChunkSize(lowMemoryDecode bool) int {
-	if lowMemoryDecode {
-		return 32
-	}
+func prefillChunkSize() int {
 	return 2 << 10
-}
-
-func hasRecurrentCaches(caches []cache.Cache) bool {
-	for _, c := range caches {
-		if c == nil {
-			continue
-		}
-		if _, ok := c.(*cache.RecurrentCache); ok {
-			return true
-		}
-	}
-	return false
 }
 
 func (r *Runner) TextGenerationPipeline(request Request) error {
@@ -98,16 +82,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	defer session.close()
 	caches := session.caches
 	tokens := session.remaining
-	lowMemoryDecode := false
-	if m, ok := r.Model.(interface{ LowMemoryDecode() bool }); ok {
-		lowMemoryDecode = m.LowMemoryDecode()
-	}
-	// Keep recurrent models on the conservative decode path to avoid async graph
-	// growth until the faster recurrent async path is reintroduced separately.
-	if hasRecurrentCaches(caches) {
-		lowMemoryDecode = true
-	}
-	prefillChunk := prefillChunkSize(lowMemoryDecode)
+	prefillChunk := prefillChunkSize()
 
 	materializeCaches := func() {
 		state := make([]*mlx.Array, 0, 2*len(caches))
@@ -139,7 +114,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		mlx.ClearCache()
 	}
 
-	step := func(token *mlx.Array, async bool) (*mlx.Array, *mlx.Array) {
+	step := func(token *mlx.Array) (*mlx.Array, *mlx.Array) {
 		fwd := r.Model.Forward(token.ExpandDims(0), caches)
 		logits := r.Model.Unembed(fwd)
 		logits = logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1)
@@ -149,17 +124,12 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 
 		mlx.Pin(sample, logprobs)
 		mlx.Sweep()
-		if async {
-			mlx.AsyncEval(sample, logprobs)
-		}
+		mlx.AsyncEval(sample, logprobs)
 
 		return sample, logprobs
 	}
 
-	sample, logprobs = step(mlx.FromValues(tokens[processed:], total-processed), !lowMemoryDecode)
-	if lowMemoryDecode {
-		materializeCaches()
-	}
+	sample, logprobs = step(mlx.FromValues(tokens[processed:], total-processed))
 
 	var b bytes.Buffer
 
@@ -169,10 +139,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 			return err
 		}
 
-		nextSample, nextLogprobs = nil, nil
-		if !lowMemoryDecode {
-			nextSample, nextLogprobs = step(sample, true)
-		}
+		nextSample, nextLogprobs = step(sample)
 
 		if i == 0 {
 			mlx.Eval(sample)
@@ -195,19 +162,6 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		case request.Responses <- CompletionResponse{
 			Content: r.Decode(output, &b),
 		}:
-		}
-
-		if lowMemoryDecode {
-			mlx.Unpin(sample, logprobs)
-			sample, logprobs = nil, nil
-			mlx.Sweep()
-			if i+1 >= request.Options.MaxTokens {
-				break
-			}
-			mlx.ClearCache()
-			sample, logprobs = step(mlx.FromValues([]int32{output}, 1), false)
-			materializeCaches()
-			continue
 		}
 
 		mlx.Unpin(sample, logprobs)

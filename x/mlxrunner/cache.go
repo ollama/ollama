@@ -68,21 +68,27 @@ func (c *kvCache) trimToPrefix(prefix int) {
 	}
 }
 
+func (c *kvCache) ensureCaches(m base.Model) {
+	if len(c.caches) != 0 {
+		return
+	}
+	if cacheFactory, ok := m.(interface{ NewCaches() []cache.Cache }); ok {
+		c.caches = cacheFactory.NewCaches()
+		return
+	}
+	c.caches = make([]cache.Cache, m.NumLayers())
+	for i := range c.caches {
+		c.caches[i] = cache.NewKVCache()
+	}
+}
+
 // begin prepares caches for a new request. It finds the nearest
 // matching cache or creates new caches if none match.
 func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
-	if len(c.caches) == 0 {
-		if cacheFactory, ok := m.(interface{ NewCaches() []cache.Cache }); ok {
-			c.caches = cacheFactory.NewCaches()
-		} else {
-			c.caches = make([]cache.Cache, m.NumLayers())
-			for i := range c.caches {
-				c.caches[i] = cache.NewKVCache()
-			}
-		}
-	}
+	c.ensureCaches(m)
 
 	remaining := c.findRemaining(inputs)
+	c.ensureCaches(m)
 
 	return &cacheSession{
 		cache:     c,
