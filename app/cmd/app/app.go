@@ -296,8 +296,15 @@ func main() {
 
 	// Check for pending updates on startup (show tray notification if update is ready)
 	if updater.IsUpdatePending() {
-		slog.Debug("update pending on startup, showing tray notification")
-		UpdateAvailable("")
+		// On Windows, the tray is initialized in osRun(). Calling UpdateAvailable
+		// before that would dereference a nil tray callback.
+		// TODO: refactor so the update check runs after platform init on all platforms.
+		if runtime.GOOS == "windows" {
+			slog.Debug("update pending on startup, deferring tray notification until tray initialization")
+		} else {
+			slog.Debug("update pending on startup, showing tray notification")
+			UpdateAvailable("")
+		}
 	}
 
 	hasCompletedFirstRun, err := st.HasCompletedFirstRun()
