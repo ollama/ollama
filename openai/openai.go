@@ -96,12 +96,13 @@ type Reasoning struct {
 }
 
 type ChatCompletionRequest struct {
-	Model            string          `json:"model"`
-	Messages         []Message       `json:"messages"`
-	Stream           bool            `json:"stream"`
-	StreamOptions    *StreamOptions  `json:"stream_options"`
-	MaxTokens        *int            `json:"max_tokens"`
-	Seed             *int            `json:"seed"`
+	Model               string          `json:"model"`
+	Messages            []Message       `json:"messages"`
+	Stream              bool            `json:"stream"`
+	StreamOptions       *StreamOptions  `json:"stream_options"`
+	MaxTokens           *int            `json:"max_tokens"`
+	MaxCompletionTokens *int            `json:"max_completion_tokens"`
+	Seed                *int            `json:"seed"`
 	Stop             any             `json:"stop"`
 	Temperature      *float64        `json:"temperature"`
 	FrequencyPenalty *float64        `json:"frequency_penalty"`
@@ -139,11 +140,12 @@ type ChatCompletionChunk struct {
 
 // TODO (https://github.com/ollama/ollama/issues/5259): support []string, []int and [][]int
 type CompletionRequest struct {
-	Model            string         `json:"model"`
-	Prompt           string         `json:"prompt"`
-	FrequencyPenalty float32        `json:"frequency_penalty"`
-	MaxTokens        *int           `json:"max_tokens"`
-	PresencePenalty  float32        `json:"presence_penalty"`
+	Model               string         `json:"model"`
+	Prompt              string         `json:"prompt"`
+	FrequencyPenalty    float32        `json:"frequency_penalty"`
+	MaxTokens           *int           `json:"max_tokens"`
+	MaxCompletionTokens *int           `json:"max_completion_tokens"`
+	PresencePenalty     float32        `json:"presence_penalty"`
 	Seed             *int           `json:"seed"`
 	Stop             any            `json:"stop"`
 	Stream           bool           `json:"stream"`
@@ -538,7 +540,10 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		options["stop"] = stops
 	}
 
-	if r.MaxTokens != nil {
+	switch {
+	case r.MaxCompletionTokens != nil:
+		options["num_predict"] = *r.MaxCompletionTokens
+	case r.MaxTokens != nil:
 		options["num_predict"] = *r.MaxTokens
 	}
 
@@ -695,7 +700,10 @@ func FromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 		options["stop"] = stops
 	}
 
-	if r.MaxTokens != nil {
+	switch {
+	case r.MaxCompletionTokens != nil:
+		options["num_predict"] = *r.MaxCompletionTokens
+	case r.MaxTokens != nil:
 		options["num_predict"] = *r.MaxTokens
 	}
 
