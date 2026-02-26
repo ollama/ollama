@@ -98,7 +98,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	var b bytes.Buffer
 
 	now := time.Now()
-	final := Response{Done: true, PromptTokens: total, CompletionTokens: request.Options.MaxTokens, DoneReason: 1}
+	final := CompletionResponse{Done: true, PromptEvalCount: total, EvalCount: request.Options.MaxTokens, DoneReason: 1}
 	for i := range request.Options.MaxTokens {
 		if err := request.Ctx.Err(); err != nil {
 			return err
@@ -108,7 +108,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 
 		if i == 0 {
 			mlx.Eval(sample)
-			final.PromptTokensDuration = time.Since(now)
+			final.PromptEvalDuration = time.Since(now)
 			now = time.Now()
 		}
 
@@ -116,18 +116,16 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		session.outputs = append(session.outputs, output)
 
 		if r.Tokenizer.IsEOS(output) {
-			final.Token = int(output)
 			final.DoneReason = 0
-			final.CompletionTokens = i
+			final.EvalCount = i
 			break
 		}
 
 		select {
 		case <-request.Ctx.Done():
 			return request.Ctx.Err()
-		case request.Responses <- Response{
-			Text:  r.Decode(output, &b),
-			Token: int(output),
+		case request.Responses <- CompletionResponse{
+			Content: r.Decode(output, &b),
 		}:
 		}
 
@@ -140,7 +138,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		}
 	}
 
-	final.CompletionTokensDuration = time.Since(now)
+	final.EvalDuration = time.Since(now)
 	final.PeakMemory = uint64(mlx.PeakMemory())
 	select {
 	case <-request.Ctx.Done():

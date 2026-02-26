@@ -79,7 +79,7 @@ func Execute(args []string) error {
 	})
 
 	mux.HandleFunc("POST /v1/completions", func(w http.ResponseWriter, r *http.Request) {
-		request := Request{Responses: make(chan Response)}
+		request := Request{Responses: make(chan CompletionResponse)}
 
 		if err := json.NewDecoder(r.Body).Decode(&request.TextCompletionsRequest); err != nil {
 			slog.Error("Failed to decode request", "error", err)
