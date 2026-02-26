@@ -461,7 +461,14 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 			if err != nil {
 				return nil, err
 			}
-			messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolName: toolName, ToolCallID: msg.ToolCallID})
+			// Normalize empty string content to omit it when tool_calls are present,
+			// matching the behavior of null/omitted content. The OpenAI API spec treats
+			// content: "" and content: null equivalently for assistant messages with tool_calls.
+			if content == "" && len(toolCalls) > 0 {
+				messages = append(messages, api.Message{Role: msg.Role, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolCallID: msg.ToolCallID})
+			} else {
+				messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolName: toolName, ToolCallID: msg.ToolCallID})
+			}
 		case []any:
 			for _, c := range content {
 				data, ok := c.(map[string]any)
