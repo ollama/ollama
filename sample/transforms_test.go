@@ -295,6 +295,49 @@ func TestMinP(t *testing.T) {
 	}
 }
 
+func TestApplyPenalties(t *testing.T) {
+	t.Run("empty recent tokens", func(t *testing.T) {
+		tokens := toTokens([]float32{1.0, 2.0, 3.0})
+		applyPenalties(tokens, nil, 2.0, 1.0, 1.0)
+		compareLogits(t, "empty recent", []float32{1.0, 2.0, 3.0}, tokens)
+	})
+
+	t.Run("repeat penalty positive and negative logits", func(t *testing.T) {
+		tokens := toTokens([]float32{4.0, -2.0, 1.0})
+		applyPenalties(tokens, []int32{0, 1}, 2.0, 0.0, 0.0)
+		// token 0: positive logit 4.0 / 2.0 = 2.0
+		// token 1: negative logit -2.0 * 2.0 = -4.0
+		// token 2: not in recent, unchanged
+		compareLogits(t, "repeat penalty", []float32{2.0, -4.0, 1.0}, tokens)
+	})
+
+	t.Run("frequency penalty proportional to count", func(t *testing.T) {
+		tokens := toTokens([]float32{5.0, 3.0, 1.0})
+		applyPenalties(tokens, []int32{0, 0, 0, 1}, 1.0, 1.0, 0.0)
+		// token 0: count=3, subtract 1.0*3 = 3.0 → 5.0 - 3.0 = 2.0
+		// token 1: count=1, subtract 1.0*1 = 1.0 → 3.0 - 1.0 = 2.0
+		// token 2: not in recent
+		compareLogits(t, "frequency penalty", []float32{2.0, 2.0, 1.0}, tokens)
+	})
+
+	t.Run("presence penalty flat", func(t *testing.T) {
+		tokens := toTokens([]float32{5.0, 3.0, 1.0})
+		applyPenalties(tokens, []int32{0, 0, 0, 1}, 1.0, 0.0, 1.5)
+		// token 0: appeared, subtract 1.5 → 5.0 - 1.5 = 3.5
+		// token 1: appeared, subtract 1.5 → 3.0 - 1.5 = 1.5
+		// token 2: not in recent
+		compareLogits(t, "presence penalty", []float32{3.5, 1.5, 1.0}, tokens)
+	})
+
+	t.Run("combined penalties stack", func(t *testing.T) {
+		tokens := toTokens([]float32{6.0, -1.0})
+		applyPenalties(tokens, []int32{0, 0, 1}, 2.0, 0.5, 1.0)
+		// token 0: repeat → 6.0/2.0 = 3.0, freq → 3.0 - 0.5*2 = 2.0, pres → 2.0 - 1.0 = 1.0
+		// token 1: repeat → -1.0*2.0 = -2.0, freq → -2.0 - 0.5*1 = -2.5, pres → -2.5 - 1.0 = -3.5
+		compareLogits(t, "combined", []float32{1.0, -3.5}, tokens)
+	})
+}
+
 func BenchmarkTransforms(b *testing.B) {
 	// Generate random logits
 	tokens := make([]token, 1<<16)

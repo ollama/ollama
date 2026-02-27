@@ -268,7 +268,6 @@ I'll tell you something interesting about cats`,
 			expected: `<|im_start|>user
 call tool<|im_end|>
 <|im_start|>assistant
-
 <tool_call>
 <function=echo>
 <parameter=payload>
@@ -287,6 +286,121 @@ call tool<|im_end|>
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rendered, err := (&Qwen3CoderRenderer{}).Render(tt.msgs, tt.tools, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(rendered, tt.expected); diff != "" {
+				t.Errorf("mismatch (-got +want):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestQwen3CoderRendererThinking(t *testing.T) {
+	tests := []struct {
+		name     string
+		renderer Qwen3CoderRenderer
+		msgs     []api.Message
+		tools    []api.Tool
+		think    *api.ThinkValue
+		expected string
+	}{
+		{
+			name:     "thinking with content",
+			renderer: Qwen3CoderRenderer{isThinking: true},
+			msgs: []api.Message{
+				{Role: "user", Content: "Hello"},
+				{Role: "assistant", Thinking: "Let me think about this.", Content: "Hi there!"},
+				{Role: "user", Content: "How are you?"},
+			},
+			expected: `<|im_start|>user
+Hello<|im_end|>
+<|im_start|>assistant
+<think>
+Let me think about this.
+</think>
+
+Hi there!<|im_end|>
+<|im_start|>user
+How are you?<|im_end|>
+<|im_start|>assistant
+<think>
+`,
+		},
+		{
+			name:     "thinking with tool calls and empty content",
+			renderer: Qwen3CoderRenderer{isThinking: true},
+			msgs: []api.Message{
+				{Role: "user", Content: "What's the weather?"},
+				{
+					Role:     "assistant",
+					Thinking: "I need to check the weather.",
+					ToolCalls: []api.ToolCall{
+						{Function: api.ToolCallFunction{
+							Name:      "get_weather",
+							Arguments: testArgs(map[string]any{"location": "Paris"}),
+						}},
+					},
+				},
+			},
+			expected: `<|im_start|>user
+What's the weather?<|im_end|>
+<|im_start|>assistant
+<think>
+I need to check the weather.
+</think>
+
+` + "<tool_call>\n<function=get_weather>\n<parameter=location>\nParis\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>assistant\n<think>\n",
+		},
+		{
+			name:     "thinking with tool calls and content",
+			renderer: Qwen3CoderRenderer{isThinking: true},
+			msgs: []api.Message{
+				{Role: "user", Content: "What's the weather?"},
+				{
+					Role:     "assistant",
+					Thinking: "I need to check.",
+					Content:  "Let me look that up.",
+					ToolCalls: []api.ToolCall{
+						{Function: api.ToolCallFunction{
+							Name:      "get_weather",
+							Arguments: testArgs(map[string]any{"location": "Paris"}),
+						}},
+					},
+				},
+			},
+			expected: `<|im_start|>user
+What's the weather?<|im_end|>
+<|im_start|>assistant
+<think>
+I need to check.
+</think>
+
+Let me look that up.` + "\n\n<tool_call>\n<function=get_weather>\n<parameter=location>\nParis\n</parameter>\n</function>\n</tool_call><|im_end|>\n<|im_start|>assistant\n<think>\n",
+		},
+		{
+			name:     "think=false with emitEmptyThinkOnNoThink",
+			renderer: Qwen3CoderRenderer{isThinking: true, emitEmptyThinkOnNoThink: true},
+			think:    &api.ThinkValue{Value: false},
+			msgs: []api.Message{
+				{Role: "user", Content: "Hello"},
+			},
+			expected: "<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+		},
+		{
+			name:     "think override from false to true",
+			renderer: Qwen3CoderRenderer{isThinking: false},
+			think:    &api.ThinkValue{Value: true},
+			msgs: []api.Message{
+				{Role: "user", Content: "Hello"},
+			},
+			expected: "<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n<think>\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rendered, err := tt.renderer.Render(tt.msgs, tt.tools, tt.think)
 			if err != nil {
 				t.Fatal(err)
 			}

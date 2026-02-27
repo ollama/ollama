@@ -13,7 +13,7 @@ import (
 
 func TestWeighted(t *testing.T) {
 	logits := []float32{-10, 3, -10, -10}
-	sampler := NewSampler(0, 0, 0, 0, 0, nil)
+	sampler := NewSampler(0, 0, 0, 0, 0, 1.0, 0.0, 0.0, 0, nil)
 	got, err := sampler.Sample(logits)
 	if err != nil {
 		t.Error(err)
@@ -25,7 +25,7 @@ func TestWeighted(t *testing.T) {
 	}
 
 	logits = []float32{-100, -10, 0, 10}
-	sampler = NewSampler(0, 0, 0, 0, 0, nil)
+	sampler = NewSampler(0, 0, 0, 0, 0, 1.0, 0.0, 0.0, 0, nil)
 	got, err = sampler.Sample(logits)
 	if err != nil {
 		t.Error(err)
@@ -39,7 +39,7 @@ func TestWeighted(t *testing.T) {
 	// Test very high p
 	logits = []float32{1.0, 0.9999999999999999, 0.5, 0.1}
 	// Use extremely small topP to filter out all tokens
-	sampler = NewSampler(1.0, 0, 1e-10, 0, 0, nil)
+	sampler = NewSampler(1.0, 0, 1e-10, 0, 0, 1.0, 0.0, 0.0, 0, nil)
 	got, err = sampler.Sample(logits)
 	if err != nil {
 		t.Error(err)
@@ -52,7 +52,7 @@ func TestWeighted(t *testing.T) {
 	}
 
 	logits = []float32{float32(math.NaN()), float32(math.NaN()), float32(math.NaN())}
-	sampler = NewSampler(1, 0, 0.95, 0.05, 0, nil)
+	sampler = NewSampler(1, 0, 0.95, 0.05, 0, 1.0, 0.0, 0.0, 0, nil)
 	got, err = sampler.Sample(logits)
 	if err == nil {
 		t.Errorf("expected error, got %d", got)
@@ -149,10 +149,115 @@ func TestGrammar(t *testing.T) {
 	}
 }
 
+func TestSamplerRepeatPenalty(t *testing.T) {
+	// Token 1 has the highest logit; if we penalize it, token 3 should win
+	logits := []float32{-10, 5, -10, 4}
+	sampler := NewSampler(0, 0, 0, 0, 0, 2.0, 0.0, 0.0, 64, nil)
+	// Simulate having generated token 1 recently
+	sampler.recentTokens = []int32{1}
+
+	got, err := sampler.Sample(logits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// With repeat_penalty=2.0, token 1's logit goes from 5 to 2.5
+	// Token 3 has logit 4, so it should win with greedy (temp=0)
+	if got != 3 {
+		t.Errorf("expected token 3 to win after repeat penalty on token 1, got %d", got)
+	}
+}
+
+func TestSamplerFrequencyPenalty(t *testing.T) {
+	// Token 1 has the highest logit; frequency penalty proportional to count
+	logits := []float32{-10, 5, -10, 4}
+	sampler := NewSampler(0, 0, 0, 0, 0, 1.0, 2.0, 0.0, 64, nil)
+	// Token 1 appeared twice
+	sampler.recentTokens = []int32{1, 1}
+
+	got, err := sampler.Sample(logits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// frequency_penalty=2.0, count=2 → subtract 4.0 from token 1: 5-4=1
+	// Token 3 has logit 4, should win
+	if got != 3 {
+		t.Errorf("expected token 3 to win after frequency penalty on token 1, got %d", got)
+	}
+}
+
+func TestSamplerPresencePenalty(t *testing.T) {
+	// Token 1 has the highest logit; flat presence penalty
+	logits := []float32{-10, 5, -10, 4}
+	sampler := NewSampler(0, 0, 0, 0, 0, 1.0, 0.0, 2.0, 64, nil)
+	// Token 1 appeared once
+	sampler.recentTokens = []int32{1}
+
+	got, err := sampler.Sample(logits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// presence_penalty=2.0 → subtract 2.0 from token 1: 5-2=3
+	// Token 3 has logit 4, should win
+	if got != 3 {
+		t.Errorf("expected token 3 to win after presence penalty on token 1, got %d", got)
+	}
+}
+
+func TestSamplerPenaltiesNeutralNoOp(t *testing.T) {
+	logits := []float32{-10, 5, -10, 3}
+	// Neutral penalties: repeat=1.0, freq=0, pres=0
+	sampler := NewSampler(0, 0, 0, 0, 0, 1.0, 0.0, 0.0, 64, nil)
+	sampler.recentTokens = []int32{1, 1, 1}
+
+	got, err := sampler.Sample(logits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No penalties applied, token 1 (logit=5) should still win
+	if got != 1 {
+		t.Errorf("expected token 1 with neutral penalties, got %d", got)
+	}
+}
+
+func TestRecordTokenRingBuffer(t *testing.T) {
+	windowSize := 4
+	sampler := NewSampler(0, 0, 0, 0, 0, 1.0, 0.0, 0.0, windowSize, nil)
+
+	// Fill the window
+	for i := range windowSize {
+		sampler.recordToken(int32(i))
+	}
+	if len(sampler.recentTokens) != windowSize {
+		t.Fatalf("expected len %d, got %d", windowSize, len(sampler.recentTokens))
+	}
+
+	// Record many more tokens — length must stay at windowSize
+	for i := range 1000 {
+		sampler.recordToken(int32(100 + i))
+	}
+	if len(sampler.recentTokens) != windowSize {
+		t.Fatalf("expected len %d after 1000 extra tokens, got %d", windowSize, len(sampler.recentTokens))
+	}
+	if cap(sampler.recentTokens) != windowSize {
+		t.Fatalf("expected cap %d (bounded), got %d", windowSize, cap(sampler.recentTokens))
+	}
+
+	// The window should contain the last 4 tokens: 1096, 1097, 1098, 1099
+	counts := make(map[int32]bool)
+	for _, id := range sampler.recentTokens {
+		counts[id] = true
+	}
+	for i := 1096; i < 1100; i++ {
+		if !counts[int32(i)] {
+			t.Errorf("expected token %d in window, got %v", i, sampler.recentTokens)
+		}
+	}
+}
+
 func BenchmarkSample(b *testing.B) {
 	samplers := map[string]Sampler{
-		"Greedy":   NewSampler(0, 0, 0, 0, 0, nil), // Use NewSampler with temp=0 for greedy
-		"Weighted": NewSampler(0.5, 10, 0.9, 0.2, -1, nil),
+		"Greedy":   NewSampler(0, 0, 0, 0, 0, 1.0, 0.0, 0.0, 0, nil), // Use NewSampler with temp=0 for greedy
+		"Weighted": NewSampler(0.5, 10, 0.9, 0.2, -1, 1.0, 0.0, 0.0, 0, nil),
 	}
 
 	// Generate random logits for benchmarking

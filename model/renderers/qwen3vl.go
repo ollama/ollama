@@ -79,7 +79,7 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, think
 		imageOffset = nextImageOffset
 
 		lastMessage := i == len(messages)-1
-		prefill := lastMessage && message.Role == "assistant"
+		prefill := lastMessage && message.Role == "assistant" && len(message.ToolCalls) == 0
 
 		if message.Role == "user" || message.Role == "system" && i != 0 {
 			sb.WriteString("<|im_start|>" + message.Role + "\n" + content + "<|im_end|>\n")
@@ -94,9 +94,10 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, think
 
 			if isThinking && i > lastQueryIndex {
 				if i == len(messages)-1 || contentReasoning != "" {
-					sb.WriteString("<|im_start|>" + message.Role + "\n<think>\n" + strings.Trim(contentReasoning, "\n")) // do we want to add a new line here?
+					sb.WriteString("<|im_start|>" + message.Role + "\n<think>\n" + strings.Trim(contentReasoning, "\n"))
+					sb.WriteString("\n</think>\n\n")
 					if content != "" {
-						sb.WriteString("\n</think>\n\n" + strings.TrimLeft(content, "\n"))
+						sb.WriteString(strings.TrimLeft(content, "\n"))
 					}
 				} else {
 					sb.WriteString("<|im_start|>" + message.Role + "\n" + content)

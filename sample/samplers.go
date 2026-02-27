@@ -17,12 +17,18 @@ type token struct {
 }
 
 type Sampler struct {
-	rng         *rand.Rand
-	topK        int
-	topP        float32
-	minP        float32
-	temperature float32
-	grammar     *GrammarSampler
+	rng              *rand.Rand
+	topK             int
+	topP             float32
+	minP             float32
+	temperature      float32
+	grammar          *GrammarSampler
+	repeatPenalty    float32
+	frequencyPenalty float32
+	presencePenalty  float32
+	repeatLastN      int
+	recentTokens     []int32
+	recentTokenPos   int
 }
 
 func (s *Sampler) Sample(logits []float32) (int32, error) {
@@ -34,6 +40,11 @@ func (s *Sampler) Sample(logits []float32) (int32, error) {
 	for i := range logits {
 		tokens[i].id = int32(i)
 		tokens[i].value = logits[i]
+	}
+
+	penaltiesActive := s.repeatPenalty != 1.0 || s.frequencyPenalty != 0.0 || s.presencePenalty != 0.0
+	if penaltiesActive {
+		applyPenalties(tokens, s.recentTokens, s.repeatPenalty, s.frequencyPenalty, s.presencePenalty)
 	}
 
 	t, err := s.sample(tokens)
@@ -48,6 +59,7 @@ func (s *Sampler) Sample(logits []float32) (int32, error) {
 		s.grammar.Apply(top)
 		if !math.IsInf(float64(top[0].value), -1) {
 			s.grammar.Accept(top[0].id)
+			s.recordToken(top[0].id)
 			return top[0].id, nil
 		}
 
@@ -58,6 +70,9 @@ func (s *Sampler) Sample(logits []float32) (int32, error) {
 			tokens[i].id = int32(i)
 			tokens[i].value = logits[i]
 		}
+		if penaltiesActive {
+			applyPenalties(tokens, s.recentTokens, s.repeatPenalty, s.frequencyPenalty, s.presencePenalty)
+		}
 		s.grammar.Apply(tokens)
 		t, err = s.sample(tokens)
 		if err != nil {
@@ -66,6 +81,7 @@ func (s *Sampler) Sample(logits []float32) (int32, error) {
 		s.grammar.Accept(t.id)
 	}
 
+	s.recordToken(t.id)
 	return t.id, nil
 }
 
@@ -127,7 +143,11 @@ func (s *Sampler) sample(tokens []token) (token, error) {
 }
 
 // TODO(parthsareen): update sampler interface to use json unmarshal https://github.com/ollama/ollama/issues/9278
-func NewSampler(temperature float32, topK int, topP float32, minP float32, seed int, grammar *GrammarSampler) Sampler {
+func NewSampler(
+	temperature float32, topK int, topP float32, minP float32, seed int,
+	repeatPenalty float32, frequencyPenalty float32, presencePenalty float32, repeatLastN int,
+	grammar *GrammarSampler,
+) Sampler {
 	var rng *rand.Rand
 	if seed != -1 {
 		// PCG requires two parameters: sequence and stream
@@ -154,14 +174,35 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 		minP = 1.0
 	}
 
-	return Sampler{
-		rng:         rng,
-		topK:        topK,
-		topP:        topP,
-		minP:        minP,
-		temperature: temperature,
-		grammar:     grammar,
+	if repeatLastN < 0 {
+		repeatLastN = 0
 	}
+
+	return Sampler{
+		rng:              rng,
+		topK:             topK,
+		topP:             topP,
+		minP:             minP,
+		temperature:      temperature,
+		grammar:          grammar,
+		repeatPenalty:    repeatPenalty,
+		frequencyPenalty: frequencyPenalty,
+		presencePenalty:  presencePenalty,
+		repeatLastN:      repeatLastN,
+		recentTokens:     make([]int32, 0, repeatLastN),
+	}
+}
+
+func (s *Sampler) recordToken(id int32) {
+	if s.repeatLastN == 0 {
+		return
+	}
+	if len(s.recentTokens) < s.repeatLastN {
+		s.recentTokens = append(s.recentTokens, id)
+	} else {
+		s.recentTokens[s.recentTokenPos] = id
+	}
+	s.recentTokenPos = (s.recentTokenPos + 1) % s.repeatLastN
 }
 
 type GrammarSampler struct {
