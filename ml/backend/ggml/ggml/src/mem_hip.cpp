@@ -331,6 +331,7 @@ void ggml_hip_mgmt_release() {
     if (gpus != NULL) gpus->pVtbl->Release(gpus); \
     if (gpu != NULL) gpu->pVtbl->Release(gpu)
 
+// Windows: `id` must be PCI bus id (BDF)
 int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total, bool is_integrated_gpu) {
     std::lock_guard<std::mutex> lock(ggml_adlx_lock);
     if (adlx.handle == NULL) {
@@ -436,121 +437,124 @@ int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total, bool
 
 #else // #ifdef _WIN32
 
-#include <fstream>
-#include <iostream>
-#include <sstream>
 #include <string>
-#include <vector>
-#include <filesystem>
+#include <cstdlib>
+#include <dlfcn.h>
+#include <mutex>
 
-#include <sys/stat.h>
-#include <dirent.h>
-#include <unistd.h>
-#include <glob.h>
-namespace fs = std::filesystem;
+using hipError_t = int;
+static constexpr hipError_t hipSuccess = 0;
+
+struct {
+  void *handle;
+  hipError_t (*hipGetDevice)(int *);
+  hipError_t (*hipSetDevice)(int);
+  hipError_t (*hipMemGetInfo)(size_t *, size_t *);
+  const char *(*hipGetErrorString)(hipError_t);
+} hip = { NULL, NULL, NULL, NULL, NULL };
+static std::mutex ggml_hip_lock;
 
 extern "C" {
 
 int ggml_hip_mgmt_init() {
+    std::lock_guard<std::mutex> lock(ggml_hip_lock);
+    if (hip.handle != NULL) {
+        return 0;
+    }
+
+    hip.handle = dlopen("libamdhip64.so", RTLD_LAZY);
+
+    if (hip.handle == NULL) {
+        GGML_LOG_DEBUG("%s unable to load HIP runtime: %s\n", __func__, dlerror());
+        return 1;
+    }
+
+    hip.hipGetDevice = (hipError_t (*)(int *)) dlsym(hip.handle, "hipGetDevice");
+    hip.hipSetDevice = (hipError_t (*)(int)) dlsym(hip.handle, "hipSetDevice");
+    hip.hipMemGetInfo = (hipError_t (*)(size_t *, size_t *)) dlsym(hip.handle, "hipMemGetInfo");
+    hip.hipGetErrorString = (const char *(*)(hipError_t)) dlsym(hip.handle, "hipGetErrorString");
+
+    if (hip.hipSetDevice == NULL || hip.hipMemGetInfo == NULL) {
+        GGML_LOG_DEBUG("%s unable to locate required HIP symbols\n", __func__);
+        dlclose(hip.handle);
+        hip.handle = NULL;
+        hip.hipGetDevice = NULL;
+        hip.hipSetDevice = NULL;
+        hip.hipMemGetInfo = NULL;
+        hip.hipGetErrorString = NULL;
+        return 1;
+    }
+
     return 0;
 }
-void ggml_hip_mgmt_release() {}
-int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total, bool is_integrated_gpu) {
-    GGML_LOG_INFO("%s searching for device %s\n", __func__, id);
-    const std::string drmDeviceGlob = "/sys/class/drm/card*/device/uevent";
-    const std::string drmTotalMemoryFile = "mem_info_vram_total";
-    const std::string drmUsedMemoryFile = "mem_info_vram_used";
-    const std::string drmGTTTotalMemoryFile = "mem_info_gtt_total";
-    const std::string drmGTTUsedMemoryFile = "mem_info_gtt_used";
-    const std::string drmUeventPCISlotLabel = "PCI_SLOT_NAME=";
-
-
-    glob_t glob_result;
-    glob(drmDeviceGlob.c_str(), GLOB_NOSORT, NULL, &glob_result);
-
-    for (size_t i = 0; i < glob_result.gl_pathc; ++i) {
-        const char* device_file = glob_result.gl_pathv[i];
-        std::ifstream file(device_file);
-        if (!file.is_open()) {
-            std::cerr << "Failed to open sysfs node" << std::endl;
-            globfree(&glob_result);
-            return 1;
-        }
-
-        std::string line;
-        while (std::getline(file, line)) {
-            // Check for PCI_SLOT_NAME label
-            if (line.find(drmUeventPCISlotLabel) == 0) {
-                std::istringstream iss(line.substr(drmUeventPCISlotLabel.size()));
-                std::string pciSlot;
-                iss >> pciSlot;
-                if (pciSlot == std::string(id)) {
-                    std::string dir = fs::path(device_file).parent_path().string();
-
-                    std::string totalFile = dir + "/" + drmTotalMemoryFile;
-                    std::ifstream totalFileStream(totalFile.c_str());
-                    if (!totalFileStream.is_open()) {
-                        GGML_LOG_DEBUG("%s Failed to read sysfs node %s\n", __func__, totalFile.c_str());
-                        file.close();
-                        globfree(&glob_result);
-                        return 1;
-                    }
-
-                    uint64_t memory;
-                    totalFileStream >> memory;
-
-                    std::string usedFile = dir + "/" + drmUsedMemoryFile;
-                    std::ifstream usedFileStream(usedFile.c_str());
-                    if (!usedFileStream.is_open()) {
-                        GGML_LOG_DEBUG("%s Failed to read sysfs node %s\n", __func__, usedFile.c_str());
-                        file.close();
-                        globfree(&glob_result);
-                        return 1;
-                    }
-
-                    uint64_t memoryUsed;
-                    usedFileStream >> memoryUsed;
-
-                    if (is_integrated_gpu) {
-                        std::string totalFile = dir + "/" + drmGTTTotalMemoryFile;
-                        std::ifstream totalFileStream(totalFile.c_str());
-                        if (!totalFileStream.is_open()) {
-                            GGML_LOG_DEBUG("%s Failed to read sysfs node %s\n", __func__, totalFile.c_str());
-                            file.close();
-                            globfree(&glob_result);
-                            return 1;
-                        }
-                        uint64_t gtt;
-                        totalFileStream >> gtt;
-                        std::string usedFile = dir + "/" + drmGTTUsedMemoryFile;
-                        std::ifstream usedFileStream(usedFile.c_str());
-                        if (!usedFileStream.is_open()) {
-                            GGML_LOG_DEBUG("%s Failed to read sysfs node %s\n", __func__, usedFile.c_str());
-                            file.close();
-                            globfree(&glob_result);
-                            return 1;
-                        }
-                        uint64_t gttUsed;
-                        usedFileStream >> gttUsed;
-                        memory += gtt;
-                        memoryUsed += gttUsed;
-                    }
-
-                    *total = memory;
-                    *free = memory - memoryUsed;
-
-                    file.close();
-                    globfree(&glob_result);
-                    return 0;
-                }
-            }
-        }
-
-        file.close();
+void ggml_hip_mgmt_release() {
+    std::lock_guard<std::mutex> lock(ggml_hip_lock);
+    if (hip.handle == NULL) {
+        return;
     }
-    GGML_LOG_DEBUG("%s unable to find matching device\n", __func__);
-    globfree(&glob_result);
-    return 1;
+
+    dlclose(hip.handle);
+    hip.handle = NULL;
+    hip.hipGetDevice = NULL;
+    hip.hipSetDevice = NULL;
+    hip.hipMemGetInfo = NULL;
+    hip.hipGetErrorString = NULL;
+}
+// Linux: use HIP runtime only.
+// `id` must be a device index string (e.g. "0").
+int ggml_hip_get_device_memory(const char *id, size_t *free, size_t *total, bool is_integrated_gpu) {
+    GGML_UNUSED(is_integrated_gpu);
+    GGML_LOG_INFO("%s searching for device %s\n", __func__, id ? id : "<null>");
+
+    if (id == nullptr || *id == '\0') {
+        GGML_LOG_DEBUG("%s invalid device identifier\n", __func__);
+        return 1;
+    }
+
+    char *end = nullptr;
+    long device_index = strtol(id ? id : "", &end, 10);
+    bool valid_index = id != nullptr && end != nullptr && *id != '\0' && *end == '\0' && device_index >= 0;
+    if (!valid_index) {
+        GGML_LOG_DEBUG("%s invalid HIP device index: %s\n", __func__, id ? id : "<null>");
+        return 1;
+    }
+
+    std::lock_guard<std::mutex> lock(ggml_hip_lock);
+    if (hip.handle == NULL || hip.hipSetDevice == NULL || hip.hipMemGetInfo == NULL) {
+        GGML_LOG_DEBUG("%s HIP runtime not initialized\n", __func__);
+        return 1;
+    }
+
+    int target_device = static_cast<int>(device_index);
+
+    int original_device = -1;
+    bool have_original_device = hip.hipGetDevice != nullptr && hip.hipGetDevice(&original_device) == hipSuccess;
+
+    hipError_t err = hip.hipSetDevice(target_device);
+    if (err != hipSuccess) {
+        if (hip.hipGetErrorString != nullptr) {
+            GGML_LOG_DEBUG("%s failed to set HIP device %d: %s\n", __func__, target_device, hip.hipGetErrorString(err));
+        }
+        return 1;
+    }
+
+    err = hip.hipMemGetInfo(free, total);
+
+    if (have_original_device && original_device != target_device) {
+        hipError_t restore_err = hip.hipSetDevice(original_device);
+        if (restore_err != hipSuccess && hip.hipGetErrorString != nullptr) {
+            GGML_LOG_DEBUG("%s failed to restore HIP device %d: %s\n", __func__, original_device, hip.hipGetErrorString(restore_err));
+        }
+    }
+
+    if (err != hipSuccess) {
+        if (hip.hipGetErrorString != nullptr) {
+            GGML_LOG_DEBUG("%s hipMemGetInfo failed for device %d: %s\n", __func__, target_device, hip.hipGetErrorString(err));
+        }
+        return 1;
+    }
+
+    return 0;
 }
 
 } // extern "C"
