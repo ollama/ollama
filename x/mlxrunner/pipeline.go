@@ -44,6 +44,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	} else {
 		mlx.DisableCompile()
 	}
+	mlx.ResetPeakMemory()
 
 	inputs := r.Tokenizer.Encode(request.Prompt, true)
 	session := r.cache.begin(r.Model, inputs)
@@ -138,6 +139,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	}
 
 	final.CompletionTokensDuration = time.Since(now)
+	final.PeakMemory = uint64(mlx.PeakMemory())
 	select {
 	case <-request.Ctx.Done():
 		return request.Ctx.Err()

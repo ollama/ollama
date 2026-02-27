@@ -54,6 +54,7 @@ type Response struct {
 	PromptTokensDuration     time.Duration `json:"prompt_eval_duration,omitempty"`
 	CompletionTokens         int           `json:"eval_count,omitempty"`
 	CompletionTokensDuration time.Duration `json:"eval_duration,omitempty"`
+	PeakMemory               uint64        `json:"peak_memory,omitempty"`
 	TotalTokens              int           `json:"total_tokens,omitempty"`
 }
 

@@ -64,6 +64,10 @@ func PeakMemory() int {
 	return int(peak)
 }
 
+func ResetPeakMemory() {
+	C.mlx_reset_peak_memory()
+}
+
 type Memory struct{}
 
 func (Memory) LogValue() slog.Value {
