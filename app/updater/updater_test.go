@@ -351,10 +351,13 @@ func TestTriggerImmediateCheck(t *testing.T) {
 
 	updater.StartBackgroundUpdaterChecker(ctx, cb)
 
-	// Wait for goroutine to start and pass initial delay
-	time.Sleep(10 * time.Millisecond)
+	// Wait for the initial check that fires after the initial delay
+	select {
+	case <-checkDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("initial check did not happen")
+	}
 
-	// With 1 hour interval, no check should have happened yet
 	initialCount := checkCount.Load()
 
 	// Trigger immediate check

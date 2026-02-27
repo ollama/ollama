@@ -268,6 +268,7 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 			PromptEvalDuration int    `json:"prompt_eval_duration,omitempty"`
 			EvalCount          int    `json:"eval_count,omitempty"`
 			EvalDuration       int    `json:"eval_duration,omitempty"`
+			PeakMemory         uint64 `json:"peak_memory,omitempty"`
 		}
 		if err := json.Unmarshal(scanner.Bytes(), &raw); err != nil {
 			slog.Debug("mlx response parse error", "error", err, "line", string(scanner.Bytes()))
@@ -282,6 +283,7 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 			PromptEvalDuration: time.Duration(raw.PromptEvalDuration),
 			EvalCount:          raw.EvalCount,
 			EvalDuration:       time.Duration(raw.EvalDuration),
+			PeakMemory:         raw.PeakMemory,
 		}
 
 		fn(cresp)
