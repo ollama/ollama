@@ -230,3 +230,89 @@ func TestQwen35ParserRespectsNoThink(t *testing.T) {
 		t.Fatalf("expected no tool calls, got %d", len(calls))
 	}
 }
+
+func TestQwen3ParserToolCallIndexing(t *testing.T) {
+	parser := &Qwen3Parser{hasThinkingSupport: false, defaultThinking: false}
+	parser.Init(nil, nil, &api.ThinkValue{Value: false})
+
+	input := `<tool_call>{"name":"first","arguments":{"a":"1"}}</tool_call>
+<tool_call>{"name":"second","arguments":{"b":"2"}}</tool_call>
+<tool_call>{"name":"third","arguments":{"c":"3"}}</tool_call>`
+	_, _, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	want := []api.ToolCall{
+		{Function: api.ToolCallFunction{Name: "first", Arguments: args(`{"a":"1"}`), Index: 0}},
+		{Function: api.ToolCallFunction{Name: "second", Arguments: args(`{"b":"2"}`), Index: 1}},
+		{Function: api.ToolCallFunction{Name: "third", Arguments: args(`{"c":"3"}`), Index: 2}},
+	}
+	if len(calls) != len(want) {
+		t.Fatalf("expected %d calls, got %d", len(want), len(calls))
+	}
+	for i := range want {
+		if !toolCallEqual(calls[i], want[i]) {
+			t.Fatalf("call %d mismatch: got %#v, want %#v", i, calls[i], want[i])
+		}
+	}
+}
+
+func TestQwen3ParserToolCallIndexingStreaming(t *testing.T) {
+	parser := &Qwen3Parser{hasThinkingSupport: false, defaultThinking: false}
+	parser.Init(nil, nil, &api.ThinkValue{Value: false})
+
+	var all []api.ToolCall
+
+	_, _, calls, err := parser.Add(`<tool_call>{"name":"first","arguments":{"a":"1"}}</tool_call><tool_call>{"name":"second","arguments":{"b":"2"}`, false)
+	if err != nil {
+		t.Fatalf("step 1 parse failed: %v", err)
+	}
+	all = append(all, calls...)
+
+	_, _, calls, err = parser.Add(`}</tool_call><tool_call>{"name":"third","arguments":{"c":"3"}}</tool_call>`, true)
+	if err != nil {
+		t.Fatalf("step 2 parse failed: %v", err)
+	}
+	all = append(all, calls...)
+
+	want := []api.ToolCall{
+		{Function: api.ToolCallFunction{Name: "first", Arguments: args(`{"a":"1"}`), Index: 0}},
+		{Function: api.ToolCallFunction{Name: "second", Arguments: args(`{"b":"2"}`), Index: 1}},
+		{Function: api.ToolCallFunction{Name: "third", Arguments: args(`{"c":"3"}`), Index: 2}},
+	}
+	if len(all) != len(want) {
+		t.Fatalf("expected %d calls, got %d", len(want), len(all))
+	}
+	for i := range want {
+		if !toolCallEqual(all[i], want[i]) {
+			t.Fatalf("call %d mismatch: got %#v, want %#v", i, all[i], want[i])
+		}
+	}
+}
+
+func TestQwen3ParserToolCallIndexResetOnInit(t *testing.T) {
+	parser := &Qwen3Parser{hasThinkingSupport: false, defaultThinking: false}
+	parser.Init(nil, nil, &api.ThinkValue{Value: false})
+
+	_, _, _, err := parser.Add(`<tool_call>{"name":"first","arguments":{"a":"1"}}</tool_call>`, true)
+	if err != nil {
+		t.Fatalf("first parse failed: %v", err)
+	}
+
+	parser.Init(nil, nil, &api.ThinkValue{Value: false})
+	_, _, calls, err := parser.Add(`<tool_call>{"name":"second","arguments":{"b":"2"}}</tool_call>`, true)
+	if err != nil {
+		t.Fatalf("second parse failed: %v", err)
+	}
+
+	want := api.ToolCall{
+		Function: api.ToolCallFunction{Name: "second", Arguments: args(`{"b":"2"}`), Index: 0},
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if !toolCallEqual(calls[0], want) {
+		t.Fatalf("got %#v, want %#v", calls[0], want)
+	}
+}
