@@ -90,19 +90,23 @@ func schedulerModelKey(m *Model) string {
 	if m == nil {
 		return ""
 	}
+	var prefix string
+	if m.Reranking {
+		prefix = "rerank:"
+	}
 	if m.ModelPath != "" {
-		return m.ModelPath
+		return prefix + m.ModelPath
 	}
 	if m.Digest != "" {
-		return "digest:" + m.Digest
+		return prefix + "digest:" + m.Digest
 	}
 	if m.Name != "" {
-		return "name:" + m.Name
+		return prefix + "name:" + m.Name
 	}
 	if m.ShortName != "" {
-		return "short:" + m.ShortName
+		return prefix + "short:" + m.ShortName
 	}
-	return ""
+	return prefix
 }
 
 // context must be canceled to decrement ref count and release the runner

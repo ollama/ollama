@@ -302,6 +302,11 @@ func (c *Client) Detokenize(ctx context.Context, tokens []int) (string, error) {
 	return "", errors.New("not supported")
 }
 
+// Rerank implements llm.LlamaServer.
+func (c *Client) Rerank(ctx context.Context, req llm.RerankRequest, fn func(llm.RerankResponse)) error {
+	return errors.New("not supported")
+}
+
 // Embedding implements llm.LlamaServer.
 func (c *Client) Embedding(ctx context.Context, input string) ([]float32, int, error) {
 	return nil, 0, errors.New("not supported")

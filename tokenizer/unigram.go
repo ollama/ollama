@@ -113,14 +113,13 @@ func (v *xcdaArrayView) GetValue(index uint32) (uint32, error) {
 	return packedNode & ((1 << 31) - 1), nil
 }
 
-// bestTokenization 表示最佳分词结果
 type bestTokenization struct {
 	tokenId     int32
 	inputOffset int
 	scoreSum    float64
 }
 
-// Unigram 实现 Unigram 分词器
+// Unigram Tokenizer
 type Unigram struct {
 	xcdaView                xcdaArrayView
 	vocab                   *Vocabulary
@@ -309,7 +308,7 @@ func (u *Unigram) getFallbackChar(input string) (string, int, error) {
 
 func (u *Unigram) normalize(input string) (string, error) {
 	var normalized strings.Builder
-	normalized.Grow(len(input) + 10) // 预分配空间
+	normalized.Grow(len(input) + 10)
 
 	shallPrependSpace := !u.vocab.TreatWhitespaceAsSuffix && u.vocab.AddSpacePrefix
 	shallAppendSpace := u.vocab.TreatWhitespaceAsSuffix && u.vocab.AddSpacePrefix
@@ -496,7 +495,7 @@ func (u *Unigram) backtrackTokenization(
 
 func (u *Unigram) Decode(ids []int32) (string, error) {
 	var sb strings.Builder
-	sb.Grow(len(ids) * 4) // 预分配空间
+	sb.Grow(len(ids) * 4)
 
 	for i, id := range ids {
 		if id < 0 || int(id) >= len(u.vocab.Values) {
