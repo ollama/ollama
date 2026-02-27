@@ -204,6 +204,24 @@ func (p *Qwen3Parser) eat() ([]qwen3Event, bool) {
 			p.maybeThinkingOpenAtBOL = false
 		}
 
+		thinkingCloseIdx := strings.Index(acc, qwen3ThinkingCloseTag)
+		toolOpenIdx := strings.Index(acc, qwen3ToolOpenTag)
+
+		// If a tool call starts before </think>, treat that as the end of thinking
+		// for parsing purposes and continue in tool-call mode.
+		if toolOpenIdx != -1 && (thinkingCloseIdx == -1 || toolOpenIdx < thinkingCloseIdx) {
+			before, after := p.splitAtTag(qwen3ToolOpenTag, true)
+			if len(before) > 0 {
+				events = append(events, qwen3EventThinkingContent{content: before})
+			}
+			if after == "" {
+				p.state = qwen3ParserStateToolStartedEatingWhitespace
+			} else {
+				p.state = qwen3ParserStateCollectingToolContent
+			}
+			return events, true
+		}
+
 		if strings.Contains(acc, qwen3ThinkingCloseTag) {
 			thinking, remaining := p.splitAtTag(qwen3ThinkingCloseTag, true)
 			if len(thinking) > 0 {
@@ -215,7 +233,7 @@ func (p *Qwen3Parser) eat() ([]qwen3Event, bool) {
 				p.state = qwen3ParserStateCollectingContent
 			}
 			return events, true
-		} else if overlapLen := overlap(acc, qwen3ThinkingCloseTag); overlapLen > 0 {
+		} else if overlapLen := max(overlap(acc, qwen3ThinkingCloseTag), overlap(acc, qwen3ToolOpenTag)); overlapLen > 0 {
 			beforePartialTag := acc[:len(acc)-overlapLen]
 			trailingWsLen := trailingWhitespaceLen(beforePartialTag)
 			ambiguousStart := len(beforePartialTag) - trailingWsLen

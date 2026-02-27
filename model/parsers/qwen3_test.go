@@ -146,6 +146,68 @@ func TestQwen3ParserToolCall(t *testing.T) {
 	}
 }
 
+func TestQwen3ParserThinkingWithToolCallBeforeThinkingClose(t *testing.T) {
+	parser := &Qwen3Parser{hasThinkingSupport: true, defaultThinking: true}
+	parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+	input := "Let me think<tool_call>{\"name\":\"get_weather\",\"arguments\":{\"location\":\"San Francisco\",\"unit\":\"celsius\"}}</tool_call>"
+	content, thinking, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	if content != "" {
+		t.Fatalf("expected empty content, got %q", content)
+	}
+	if thinking != "Let me think" {
+		t.Fatalf("expected thinking %q, got %q", "Let me think", thinking)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "get_weather" {
+		t.Fatalf("expected tool name %q, got %q", "get_weather", calls[0].Function.Name)
+	}
+}
+
+func TestQwen3ParserThinkingWithSplitToolOpenTag(t *testing.T) {
+	parser := &Qwen3Parser{hasThinkingSupport: true, defaultThinking: true}
+	parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+	content, thinking, calls, err := parser.Add("Let me think<tool_ca", false)
+	if err != nil {
+		t.Fatalf("parse failed on first chunk: %v", err)
+	}
+	if content != "" || thinking != "Let me think" || len(calls) != 0 {
+		t.Fatalf(
+			"expected content=%q thinking=%q calls=%d, got content=%q thinking=%q calls=%d",
+			"",
+			"Let me think",
+			0,
+			content,
+			thinking,
+			len(calls),
+		)
+	}
+
+	content, thinking, calls, err = parser.Add("ll>{\"name\":\"get_weather\",\"arguments\":{\"location\":\"SF\"}}</tool_call>", true)
+	if err != nil {
+		t.Fatalf("parse failed on second chunk: %v", err)
+	}
+	if content != "" {
+		t.Fatalf("expected empty content, got %q", content)
+	}
+	if thinking != "" {
+		t.Fatalf("expected no additional thinking on second chunk, got %q", thinking)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "get_weather" {
+		t.Fatalf("expected tool name %q, got %q", "get_weather", calls[0].Function.Name)
+	}
+}
+
 func TestQwen35ParserRespectsNoThink(t *testing.T) {
 	parser := ParserForName("qwen3.5")
 	if parser == nil {
