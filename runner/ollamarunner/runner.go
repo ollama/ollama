@@ -893,6 +893,10 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		req.Options.TopP,
 		req.Options.MinP,
 		req.Options.Seed,
+		req.Options.RepeatPenalty,
+		req.Options.FrequencyPenalty,
+		req.Options.PresencePenalty,
+		req.Options.RepeatLastN,
 		grammar,
 	)
 

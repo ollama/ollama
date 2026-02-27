@@ -1121,6 +1121,143 @@ func TestQwen3CoderParserToolCallIndexResetOnInit(t *testing.T) {
 	}
 }
 
+func TestQwen3CoderParserThinkingEnabled(t *testing.T) {
+	parser := &Qwen3CoderParser{hasThinkingSupport: true, defaultThinking: true}
+	parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+	content, thinking, calls, err := parser.Add("Let me think...</think>Answer here.", true)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if thinking != "Let me think..." {
+		t.Fatalf("expected thinking %q, got %q", "Let me think...", thinking)
+	}
+	if content != "Answer here." {
+		t.Fatalf("expected content %q, got %q", "Answer here.", content)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls, got %d", len(calls))
+	}
+}
+
+func TestQwen3CoderParserThinkingWithToolCall(t *testing.T) {
+	parser := &Qwen3CoderParser{hasThinkingSupport: true, defaultThinking: true}
+	parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+	input := "I need to check the weather</think>\n\n<tool_call>\n<function=get_weather>\n<parameter=location>\nParis\n</parameter>\n</function>\n</tool_call>"
+	content, thinking, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if thinking != "I need to check the weather" {
+		t.Fatalf("expected thinking %q, got %q", "I need to check the weather", thinking)
+	}
+	if content != "" {
+		t.Fatalf("expected empty content, got %q", content)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "get_weather" {
+		t.Fatalf("expected tool name %q, got %q", "get_weather", calls[0].Function.Name)
+	}
+}
+
+func TestQwen3CoderParserToolCallInterruptsThinking(t *testing.T) {
+	// Tool call tag appears before </think> — treat as end of thinking
+	parser := &Qwen3CoderParser{hasThinkingSupport: true, defaultThinking: true}
+	parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+	input := "I need to check<tool_call>\n<function=get_weather>\n<parameter=location>\nParis\n</parameter>\n</function>\n</tool_call>"
+	content, thinking, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if thinking != "I need to check" {
+		t.Fatalf("expected thinking %q, got %q", "I need to check", thinking)
+	}
+	if content != "" {
+		t.Fatalf("expected empty content, got %q", content)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+}
+
+func TestQwen3CoderParserThinkingSplitChunks(t *testing.T) {
+	parser := &Qwen3CoderParser{hasThinkingSupport: true, defaultThinking: true}
+	parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+	// First chunk: partial thinking
+	content, thinking, calls, err := parser.Add("thinking about", false)
+	if err != nil {
+		t.Fatalf("chunk 1: %v", err)
+	}
+	if content != "" {
+		t.Fatalf("chunk 1: expected empty content, got %q", content)
+	}
+	if thinking != "thinking about" {
+		t.Fatalf("chunk 1: expected thinking %q, got %q", "thinking about", thinking)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("chunk 1: expected no calls, got %d", len(calls))
+	}
+
+	// Second chunk: close thinking and tool call
+	content, thinking, calls, err = parser.Add(" it</think>\n\n<tool_call>\n<function=test>\n<parameter=a>\n1\n</parameter>\n</function>\n</tool_call>", true)
+	if err != nil {
+		t.Fatalf("chunk 2: %v", err)
+	}
+	if thinking != " it" {
+		t.Fatalf("chunk 2: expected thinking %q, got %q", " it", thinking)
+	}
+	if content != "" {
+		t.Fatalf("chunk 2: expected empty content, got %q", content)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("chunk 2: expected 1 call, got %d", len(calls))
+	}
+}
+
+func TestQwen3CoderParserThinkingLeadingTagStripped(t *testing.T) {
+	parser := &Qwen3CoderParser{hasThinkingSupport: true, defaultThinking: true}
+	parser.Init(nil, nil, &api.ThinkValue{Value: true})
+
+	// Some models re-emit the opening <think> tag
+	content, thinking, calls, err := parser.Add("<think>\nHello world</think>Final.", true)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if thinking != "Hello world" {
+		t.Fatalf("expected thinking %q, got %q", "Hello world", thinking)
+	}
+	if content != "Final." {
+		t.Fatalf("expected content %q, got %q", "Final.", content)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no calls, got %d", len(calls))
+	}
+}
+
+func TestQwen3CoderParserThinkingDisabled(t *testing.T) {
+	parser := &Qwen3CoderParser{hasThinkingSupport: true, defaultThinking: true}
+	parser.Init(nil, nil, &api.ThinkValue{Value: false})
+
+	content, thinking, calls, err := parser.Add("Direct answer", true)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if thinking != "" {
+		t.Fatalf("expected no thinking, got %q", thinking)
+	}
+	if content != "Direct answer" {
+		t.Fatalf("expected content %q, got %q", "Direct answer", content)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no calls, got %d", len(calls))
+	}
+}
+
 func TestQwenXMLTransform(t *testing.T) {
 	cases := []struct {
 		desc string

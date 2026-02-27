@@ -26,13 +26,18 @@ const (
 const (
 	qwenParserState_LookingForToolStart qwenParserState = iota
 	qwenParserState_CollectingToolContent
+	qwenParserState_CollectingThinking
+	qwenParserState_ThinkingDoneTransition
 )
 
 type Qwen3CoderParser struct {
-	state     qwenParserState
-	acc       strings.Builder
-	tools     []api.Tool
-	callIndex int
+	state                  qwenParserState
+	acc                    strings.Builder
+	tools                  []api.Tool
+	callIndex              int
+	hasThinkingSupport     bool
+	defaultThinking        bool
+	maybeThinkingOpenAtBOL bool
 }
 
 func (p *Qwen3CoderParser) HasToolSupport() bool {
@@ -40,13 +45,27 @@ func (p *Qwen3CoderParser) HasToolSupport() bool {
 }
 
 func (p *Qwen3CoderParser) HasThinkingSupport() bool {
-	return false
+	return p.hasThinkingSupport
 }
 
 func (p *Qwen3CoderParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
+	p.acc.Reset()
 	p.callIndex = 0
-	return tools // Qwen doesn't modify tools
+
+	thinkingEnabled := thinkValue != nil && thinkValue.Bool()
+	if thinkValue == nil {
+		thinkingEnabled = p.defaultThinking
+	}
+
+	if p.hasThinkingSupport && thinkingEnabled {
+		p.state = qwenParserState_CollectingThinking
+		p.maybeThinkingOpenAtBOL = true
+	} else {
+		p.state = qwenParserState_LookingForToolStart
+		p.maybeThinkingOpenAtBOL = false
+	}
+	return tools
 }
 
 func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error) {
@@ -55,7 +74,8 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 	events := p.parseEvents()
 
 	var toolCalls []api.ToolCall
-	var sb strings.Builder
+	var contentSb strings.Builder
+	var thinkingSb strings.Builder
 	for _, event := range events {
 		switch event := event.(type) {
 		case qwenEventRawToolCall:
@@ -67,15 +87,14 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 			toolCall.Function.Index = p.callIndex
 			p.callIndex++
 			toolCalls = append(toolCalls, toolCall)
+		case qwenEventThinkingContent:
+			thinkingSb.WriteString(event.content)
 		case qwenEventContent:
-			// TODO(drifkin): if the same turn contains multiple interleaved content
-			// events, we naively append them together here. See the note below about
-			// `qwenEvent`s for more details
-			sb.WriteString(event.content)
+			contentSb.WriteString(event.content)
 		}
 	}
 
-	return sb.String(), "", toolCalls, nil
+	return contentSb.String(), thinkingSb.String(), toolCalls, nil
 }
 
 func (p *Qwen3CoderParser) parseEvents() []qwenEvent {
@@ -119,6 +138,11 @@ type qwenEventContent struct {
 func (qwenEventContent) isQwenEvent()     {}
 func (qwenEventRawToolCall) isQwenEvent() {}
 
+const (
+	thinkOpenTag  = "<think>"
+	thinkCloseTag = "</think>"
+)
+
 // eat consumes the parser's buffer, and returns a list of any unambiguous
 // events from the current parser state. If the parser transitions to another
 // state, it may have additional events to emit on the next call, which is what
@@ -127,6 +151,101 @@ func eat(p *Qwen3CoderParser) ([]qwenEvent, bool) {
 	var events []qwenEvent
 
 	switch p.state {
+	case qwenParserState_CollectingThinking:
+		acc := p.acc.String()
+
+		// Strip optional leading <think> tag (some checkpoints re-emit it)
+		if p.maybeThinkingOpenAtBOL {
+			trimmed := strings.TrimLeftFunc(acc, unicode.IsSpace)
+			if strings.HasPrefix(trimmed, thinkOpenTag) {
+				after := strings.TrimPrefix(trimmed, thinkOpenTag)
+				after = strings.TrimLeftFunc(after, unicode.IsSpace)
+				p.acc.Reset()
+				p.acc.WriteString(after)
+				p.maybeThinkingOpenAtBOL = false
+				if after == "" {
+					return events, false
+				}
+				return events, true
+			}
+			if strings.HasPrefix(thinkOpenTag, trimmed) {
+				// Partial match — could still become the open tag
+				return events, false
+			}
+			p.maybeThinkingOpenAtBOL = false
+		}
+
+		thinkCloseIdx := strings.Index(acc, thinkCloseTag)
+		toolOpenIdx := strings.Index(acc, toolOpenTag)
+
+		// If a tool call starts before </think>, treat that as the end of thinking
+		if toolOpenIdx != -1 && (thinkCloseIdx == -1 || toolOpenIdx < thinkCloseIdx) {
+			before := acc[:toolOpenIdx]
+			before = strings.TrimRightFunc(before, unicode.IsSpace)
+			if len(before) > 0 {
+				events = append(events, qwenEventThinkingContent{content: before})
+			}
+			after := acc[toolOpenIdx+len(toolOpenTag):]
+			p.acc.Reset()
+			p.acc.WriteString(after)
+			p.state = qwenParserState_CollectingToolContent
+			return events, true
+		}
+
+		if thinkCloseIdx != -1 {
+			thinking := acc[:thinkCloseIdx]
+			thinking = strings.TrimRightFunc(thinking, unicode.IsSpace)
+			if len(thinking) > 0 {
+				events = append(events, qwenEventThinkingContent{content: thinking})
+			}
+			after := strings.TrimLeftFunc(acc[thinkCloseIdx+len(thinkCloseTag):], unicode.IsSpace)
+			p.acc.Reset()
+			p.acc.WriteString(after)
+			if after == "" {
+				p.state = qwenParserState_ThinkingDoneTransition
+			} else {
+				p.state = qwenParserState_LookingForToolStart
+			}
+			return events, true
+		}
+
+		// Check for partial tag overlaps
+		if overlapLen := max(overlap(acc, thinkCloseTag), overlap(acc, toolOpenTag)); overlapLen > 0 {
+			beforePartialTag := acc[:len(acc)-overlapLen]
+			trailingWsLen := trailingWhitespaceLen(beforePartialTag)
+			ambiguousStart := len(beforePartialTag) - trailingWsLen
+			unambiguous := acc[:ambiguousStart]
+			ambiguous := acc[ambiguousStart:]
+			p.acc.Reset()
+			p.acc.WriteString(ambiguous)
+			if len(unambiguous) > 0 {
+				events = append(events, qwenEventThinkingContent{content: unambiguous})
+			}
+			return events, false
+		}
+
+		// No tags found — emit unambiguous thinking content, withhold trailing whitespace
+		whitespaceLen := trailingWhitespaceLen(acc)
+		ambiguousStart := len(acc) - whitespaceLen
+		unambiguous := acc[:ambiguousStart]
+		ambiguous := acc[ambiguousStart:]
+		p.acc.Reset()
+		p.acc.WriteString(ambiguous)
+		if len(unambiguous) > 0 {
+			events = append(events, qwenEventThinkingContent{content: unambiguous})
+		}
+		return events, false
+
+	case qwenParserState_ThinkingDoneTransition:
+		trimmed := strings.TrimLeftFunc(p.acc.String(), unicode.IsSpace)
+		p.acc.Reset()
+		if trimmed == "" {
+			return nil, false
+		}
+		p.state = qwenParserState_LookingForToolStart
+		p.acc.WriteString(trimmed)
+		return nil, true
+
 	case qwenParserState_LookingForToolStart:
 		if strings.Contains(p.acc.String(), toolOpenTag) {
 			// we found a full tool open tag, so we can emit the content before the

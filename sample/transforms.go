@@ -114,6 +114,35 @@ func topP(ts []token, p float32) []token {
 	return ts
 }
 
+// applyPenalties adjusts logits for tokens that appear in recentTokens.
+// repeatPenalty uses multiplicative scaling (llama.cpp semantics),
+// frequencyPenalty subtracts proportionally to occurrence count,
+// presencePenalty subtracts a flat amount for any token that appeared.
+func applyPenalties(tokens []token, recentTokens []int32, repeatPenalty, frequencyPenalty, presencePenalty float32) {
+	if len(recentTokens) == 0 {
+		return
+	}
+	counts := make(map[int32]int, len(recentTokens))
+	for _, id := range recentTokens {
+		counts[id]++
+	}
+	for i := range tokens {
+		count, found := counts[tokens[i].id]
+		if !found {
+			continue
+		}
+		if repeatPenalty != 1.0 {
+			if tokens[i].value > 0 {
+				tokens[i].value /= repeatPenalty
+			} else {
+				tokens[i].value *= repeatPenalty
+			}
+		}
+		tokens[i].value -= frequencyPenalty * float32(count)
+		tokens[i].value -= presencePenalty
+	}
+}
+
 // minP filters tokens with probabilities >= p * max_prob
 // requires ts to be sorted in descending order of probabilities
 func minP(ts []token, p float32) []token {

@@ -55,7 +55,10 @@ abc`,
 Tell me a story in two sentences.<|im_end|>
 <|im_start|>assistant
 <think>
-To make this story interesting, I will speak in poetry.`,
+To make this story interesting, I will speak in poetry.
+</think>
+
+`,
 		},
 		{
 			name: "Multiple thinking",
@@ -88,7 +91,10 @@ abc<|im_end|>
 What is the weather like in San Francisco?<|im_end|>
 <|im_start|>assistant
 <think>
-Speak poetry after the first sentence.</think><think>Speak poetry after the second sentence.`,
+Speak poetry after the first sentence.</think><think>Speak poetry after the second sentence.
+</think>
+
+`,
 		},
 		// NOTE: Servers automatically prepend a [img-<n>] tag
 		// 		{
