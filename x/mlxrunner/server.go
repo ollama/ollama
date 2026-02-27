@@ -5,6 +5,7 @@ package mlxrunner
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -98,19 +99,36 @@ func Execute(args []string) error {
 			request.Options.TopK,
 		)
 
-		runner.Requests <- request
+		var cancel context.CancelFunc
+		request.Ctx, cancel = context.WithCancel(r.Context())
+		defer cancel()
+
+		select {
+		case <-r.Context().Done():
+			return
+		case runner.Requests <- request:
+		}
 
 		w.Header().Set("Content-Type", "application/jsonl")
 		w.WriteHeader(http.StatusOK)
 		enc := json.NewEncoder(w)
-		for response := range request.Responses {
-			if err := enc.Encode(response); err != nil {
-				slog.Error("Failed to encode response", "error", err)
+		for {
+			select {
+			case <-r.Context().Done():
 				return
-			}
+			case response, ok := <-request.Responses:
+				if !ok {
+					return
+				}
 
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
+				if err := enc.Encode(response); err != nil {
+					slog.Error("Failed to encode response", "error", err)
+					return
+				}
+
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+				}
 			}
 		}
 	})

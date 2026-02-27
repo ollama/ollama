@@ -98,8 +98,12 @@ func TestQwen3VLThinkingParserStreaming(t *testing.T) {
 			desc: "nested thinking and tool call (outside thinking, inside tool call)",
 			steps: []step{
 				{
-					input:      "I'm thinking<tool_call>I'm nested tool call</tool_call></think>",
-					wantEvents: []qwenEvent{qwenEventThinkingContent{content: "I'm thinking<tool_call>I'm nested tool call</tool_call>"}},
+					input: "I'm thinking<tool_call>I'm nested tool call</tool_call></think>",
+					wantEvents: []qwenEvent{
+						qwenEventThinkingContent{content: "I'm thinking"},
+						qwenEventRawToolCall{raw: "I'm nested tool call"},
+						qwenEventContent{content: "</think>"},
+					},
 				},
 			},
 		},
@@ -109,8 +113,7 @@ func TestQwen3VLThinkingParserStreaming(t *testing.T) {
 				{
 					input: "<tool_call>I'm nested tool call<think>I'm thinking</think></tool_call>",
 					wantEvents: []qwenEvent{
-						qwenEventThinkingContent{content: "<tool_call>I'm nested tool call<think>I'm thinking"},
-						qwenEventContent{content: "</tool_call>"},
+						qwenEventRawToolCall{raw: "I'm nested tool call<think>I'm thinking</think>"},
 					},
 				},
 			},
@@ -121,8 +124,8 @@ func TestQwen3VLThinkingParserStreaming(t *testing.T) {
 				{
 					input: "I'm thinking<tool_call>I'm NOT a nested tool call</think></tool_call><tool_call>I'm nested tool call 2<think></tool_call></think>",
 					wantEvents: []qwenEvent{
-						qwenEventThinkingContent{content: "I'm thinking<tool_call>I'm NOT a nested tool call"},
-						qwenEventContent{content: "</tool_call>"},
+						qwenEventThinkingContent{content: "I'm thinking"},
+						qwenEventRawToolCall{raw: "I'm NOT a nested tool call</think>"},
 						qwenEventRawToolCall{raw: "I'm nested tool call 2<think>"},
 						qwenEventContent{content: "</think>"},
 					},
