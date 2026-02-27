@@ -1,27 +1,20 @@
-package qwen3next
+package kvcache
 
 import (
 	"log/slog"
 	"math"
 
-	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model/input"
-)
-
-const (
-	checkpointCountDefault    = 32
-	checkpointMinPosDefault   = int32(16)
-	checkpointIntervalDefault = int32(1280)
 )
 
 // TODO(jmorganca): Add byte-serialized host-RAM checkpoints to reduce GPU
 // memory usage while preserving prefix reuse for recurrent state.
 
 type checkpointEntry struct {
-	pos   int32
-	conv  map[int]ml.Tensor
-	delta map[int]ml.Tensor
+	pos       int32
+	conv      map[int]ml.Tensor
+	recurrent map[int]ml.Tensor
 }
 
 type slotCheckpointStore struct {
@@ -132,6 +125,63 @@ func (s *slotCheckpointStore) pruneAfter(pos int32) {
 	s.lastPos = pos
 }
 
+func (s *slotCheckpointStore) shiftRange(beginIndex, endIndex int32) {
+	if len(s.entries) == 0 {
+		s.size = 0
+		s.next = 0
+		s.lastPos = -1
+		return
+	}
+
+	offset := beginIndex - endIndex
+
+	size := 0
+	next := -1
+	minPos := int32(math.MaxInt32)
+	maxPos := int32(-1)
+	minIdx := 0
+
+	for i := range s.entries {
+		pos := s.entries[i].pos
+		if pos >= 0 {
+			if pos >= beginIndex && pos < endIndex {
+				s.entries[i].pos = -1
+			} else if pos >= endIndex {
+				s.entries[i].pos = pos + offset
+			}
+		}
+
+		pos = s.entries[i].pos
+		if pos >= 0 {
+			size++
+			if pos < minPos {
+				minPos = pos
+				minIdx = i
+			}
+			if pos > maxPos {
+				maxPos = pos
+			}
+		} else if next == -1 {
+			next = i
+		}
+	}
+
+	s.size = size
+	if size == 0 {
+		s.next = 0
+		s.lastPos = -1
+		return
+	}
+
+	if next != -1 {
+		s.next = next
+	} else {
+		// Full ring: overwrite the oldest checkpoint next.
+		s.next = minIdx
+	}
+	s.lastPos = maxPos
+}
+
 func (s *slotCheckpointStore) window() (size int, minPos, maxPos, lastPos int32) {
 	minPos = int32(math.MaxInt32)
 	maxPos = int32(-1)
@@ -155,7 +205,14 @@ func (s *slotCheckpointStore) window() (size int, minPos, maxPos, lastPos int32)
 	return size, minPos, maxPos, s.lastPos
 }
 
-func (c *HybridCache) planCheckpoints(batch input.Batch) {
+func (c *Recurrent) checkpointTag() string {
+	if c.logPrefix == "" {
+		return "kvcache.recurrent"
+	}
+	return c.logPrefix
+}
+
+func (c *Recurrent) planCheckpoints(batch input.Batch) {
 	if c.checkpointCount == 0 || len(c.curSeqs) == 0 {
 		c.curCheckpointPos = c.curCheckpointPos[:0]
 		for k := range c.curCheckpointSlots {
@@ -201,7 +258,7 @@ func (c *HybridCache) planCheckpoints(batch input.Batch) {
 	}
 }
 
-func (c *HybridCache) checkpointStore(slot int) *slotCheckpointStore {
+func (c *Recurrent) checkpointStore(slot int) *slotCheckpointStore {
 	store, ok := c.checkpoints[slot]
 	if ok {
 		return store
@@ -211,7 +268,7 @@ func (c *HybridCache) checkpointStore(slot int) *slotCheckpointStore {
 	return store
 }
 
-func (c *HybridCache) checkpointIndexForSlot(slot int, pos int32) int {
+func (c *Recurrent) checkpointIndexForSlot(slot int, pos int32) int {
 	if c.checkpointCount == 0 {
 		return -1
 	}
@@ -226,7 +283,7 @@ func (c *HybridCache) checkpointIndexForSlot(slot int, pos int32) int {
 	return idx
 }
 
-func (c *HybridCache) hasCheckpoint(seq int, pos int32) bool {
+func (c *Recurrent) hasCheckpoint(seq int, pos int32) bool {
 	if pos <= 0 {
 		return false
 	}
@@ -242,7 +299,7 @@ func (c *HybridCache) hasCheckpoint(seq int, pos int32) bool {
 	return ok
 }
 
-func (c *HybridCache) PrepareRestore(seq int, targetPos int32) (int32, bool) {
+func (c *Recurrent) PrepareRestore(seq int, targetPos int32) (int32, bool) {
 	if targetPos <= 0 {
 		return 0, false
 	}
@@ -252,13 +309,13 @@ func (c *HybridCache) PrepareRestore(seq int, targetPos int32) (int32, bool) {
 	}
 	store, ok := c.checkpoints[slot]
 	if !ok {
-		slog.Debug("qwen3next: checkpoint miss", "seq", seq, "slot", slot, "target", targetPos, "size", 0)
+		slog.Debug(c.checkpointTag()+": checkpoint miss", "seq", seq, "slot", slot, "target", targetPos, "size", 0)
 		return 0, false
 	}
 	idx, pos, ok := store.bestIndex(targetPos)
 	if !ok {
 		size, minPos, maxPos, lastPos := store.window()
-		slog.Debug("qwen3next: checkpoint miss", "seq", seq, "slot", slot, "target", targetPos, "size", size,
+		slog.Debug(c.checkpointTag()+": checkpoint miss", "seq", seq, "slot", slot, "target", targetPos, "size", size,
 			"min", minPos, "max", maxPos, "last", lastPos)
 		return 0, false
 	}
@@ -270,10 +327,10 @@ func (c *HybridCache) PrepareRestore(seq int, targetPos int32) (int32, bool) {
 	return pos + 1, true
 }
 
-func (c *HybridCache) applyCheckpointRestore(restore checkpointRestore) error {
+func (c *Recurrent) applyCheckpointRestore(restore checkpointRestore) error {
 	entry, ok := c.restoreEntry(restore)
 	if !ok {
-		return kvcache.ErrNotSupported
+		return ErrNotSupported
 	}
 
 	ctx := c.backend.NewContext()
@@ -281,15 +338,15 @@ func (c *HybridCache) applyCheckpointRestore(restore checkpointRestore) error {
 
 	slotIdx := ctx.Input().FromInts([]int32{int32(restore.slot)}, 1)
 	for layer, src := range entry.conv {
-		buf := c.convBuffer(ctx, layer)
+		buf := c.convBuffer(layer)
 		ctx.Forward(buf.SetRows(ctx, src, slotIdx))
 	}
-	for layer, src := range entry.delta {
-		buf := c.deltaBuffer(ctx, layer)
+	for layer, src := range entry.recurrent {
+		buf := c.recurrentBuffer(layer)
 		ctx.Forward(buf.SetRows(ctx, src, slotIdx))
 	}
 
-	if len(entry.conv) > 0 || len(entry.delta) > 0 {
+	if len(entry.conv) > 0 || len(entry.recurrent) > 0 {
 		ctx.Compute()
 	}
 	store := c.checkpoints[restore.slot]
@@ -297,12 +354,12 @@ func (c *HybridCache) applyCheckpointRestore(restore checkpointRestore) error {
 	return nil
 }
 
-func (c *HybridCache) restoreComplete(restore checkpointRestore) bool {
+func (c *Recurrent) restoreComplete(restore checkpointRestore) bool {
 	_, ok := c.restoreEntry(restore)
 	return ok
 }
 
-func (c *HybridCache) restoreEntry(restore checkpointRestore) (*checkpointEntry, bool) {
+func (c *Recurrent) restoreEntry(restore checkpointRestore) (*checkpointEntry, bool) {
 	store, ok := c.checkpoints[restore.slot]
 	if !ok || restore.idx < 0 || restore.idx >= len(store.entries) {
 		return nil, false
@@ -317,27 +374,33 @@ func (c *HybridCache) restoreEntry(restore checkpointRestore) (*checkpointEntry,
 	return entry, true
 }
 
-func (c *HybridCache) entryComplete(entry *checkpointEntry) bool {
+func (c *Recurrent) entryComplete(entry *checkpointEntry) bool {
 	for layer := range c.convStates {
 		if entry.conv == nil || entry.conv[layer] == nil {
 			return false
 		}
 	}
-	for layer := range c.deltaStates {
-		if entry.delta == nil || entry.delta[layer] == nil {
+	for layer := range c.recurrentStates {
+		if entry.recurrent == nil || entry.recurrent[layer] == nil {
 			return false
 		}
 	}
 	return true
 }
 
-func (c *HybridCache) clearCheckpoints(slot int) {
+func (c *Recurrent) clearCheckpoints(slot int) {
 	if store, ok := c.checkpoints[slot]; ok {
 		store.reset()
 	}
 }
 
-func (c *HybridCache) copyCheckpoints(ctx ml.Context, srcSlot, dstSlot int) {
+func (c *Recurrent) shiftCheckpoints(slot int, beginIndex, endIndex int32) {
+	if store, ok := c.checkpoints[slot]; ok {
+		store.shiftRange(beginIndex, endIndex)
+	}
+}
+
+func (c *Recurrent) copyCheckpoints(ctx ml.Context, srcSlot, dstSlot int) {
 	if c.checkpointCount == 0 {
 		return
 	}
@@ -363,19 +426,19 @@ func (c *HybridCache) copyCheckpoints(ctx ml.Context, srcSlot, dstSlot int) {
 				ctx.Forward(src.Copy(ctx, dst))
 			}
 		}
-		if srcEntry.delta != nil {
-			if dstEntry.delta == nil {
-				dstEntry.delta = make(map[int]ml.Tensor)
+		if srcEntry.recurrent != nil {
+			if dstEntry.recurrent == nil {
+				dstEntry.recurrent = make(map[int]ml.Tensor)
 			}
-			for layer, src := range srcEntry.delta {
-				dst := c.ensureCheckpointDelta(layer, dstEntry)
+			for layer, src := range srcEntry.recurrent {
+				dst := c.ensureCheckpointRecurrent(layer, dstEntry)
 				ctx.Forward(src.Copy(ctx, dst))
 			}
 		}
 	}
 }
 
-func (c *HybridCache) captureConvCheckpoint(ctx ml.Context, layer int, src ml.Tensor) {
+func (c *Recurrent) captureConvCheckpoint(ctx ml.Context, layer int, src ml.Tensor) {
 	if c.checkpointCount == 0 {
 		return
 	}
@@ -402,12 +465,12 @@ func (c *HybridCache) captureConvCheckpoint(ctx ml.Context, layer int, src ml.Te
 	}
 }
 
-func (c *HybridCache) captureDeltaCheckpoint(ctx ml.Context, layer int, src ml.Tensor) {
+func (c *Recurrent) captureRecurrentCheckpoint(ctx ml.Context, layer int, src ml.Tensor) {
 	if c.checkpointCount == 0 {
 		return
 	}
 	if c.reserveCheckpoints {
-		c.reserveCheckpointDelta(layer)
+		c.reserveCheckpointRecurrent(layer)
 		return
 	}
 	if len(c.curCheckpointPos) == 0 {
@@ -423,13 +486,13 @@ func (c *HybridCache) captureDeltaCheckpoint(ctx ml.Context, layer int, src ml.T
 			continue
 		}
 		entry := &c.checkpoints[slot].entries[idx]
-		dst := c.ensureCheckpointDelta(layer, entry)
+		dst := c.ensureCheckpointRecurrent(layer, entry)
 		seqSlice := src.Slice(ctx, 1, i, i+1, 1)
 		ctx.Forward(seqSlice.Copy(ctx, dst))
 	}
 }
 
-func (c *HybridCache) ensureCheckpointConv(layer int, entry *checkpointEntry) ml.Tensor {
+func (c *Recurrent) ensureCheckpointConv(layer int, entry *checkpointEntry) ml.Tensor {
 	if entry.conv == nil {
 		entry.conv = make(map[int]ml.Tensor)
 	}
@@ -446,24 +509,24 @@ func (c *HybridCache) ensureCheckpointConv(layer int, entry *checkpointEntry) ml
 	return t
 }
 
-func (c *HybridCache) ensureCheckpointDelta(layer int, entry *checkpointEntry) ml.Tensor {
-	if entry.delta == nil {
-		entry.delta = make(map[int]ml.Tensor)
+func (c *Recurrent) ensureCheckpointRecurrent(layer int, entry *checkpointEntry) ml.Tensor {
+	if entry.recurrent == nil {
+		entry.recurrent = make(map[int]ml.Tensor)
 	}
-	if t, ok := entry.delta[layer]; ok {
+	if t, ok := entry.recurrent[layer]; ok {
 		return t
 	}
-	ctx, ok := c.checkpointDeltaCtxs[layer]
+	ctx, ok := c.checkpointRecurCtxs[layer]
 	if !ok {
 		ctx = c.backend.NewContextSize(c.checkpointCtxSize).Layer(layer)
-		c.checkpointDeltaCtxs[layer] = ctx
+		c.checkpointRecurCtxs[layer] = ctx
 	}
-	t := ctx.Zeros(ml.DTypeF32, c.deltaStateSize, 1)
-	entry.delta[layer] = t
+	t := ctx.Zeros(ml.DTypeF32, c.recurrentStateSize, 1)
+	entry.recurrent[layer] = t
 	return t
 }
 
-func (c *HybridCache) reserveCheckpointConv(layer int) {
+func (c *Recurrent) reserveCheckpointConv(layer int) {
 	key := checkpointReserveKey(layer, 0)
 	if _, ok := c.checkpointReserved[key]; ok {
 		return
@@ -478,7 +541,7 @@ func (c *HybridCache) reserveCheckpointConv(layer int) {
 	c.checkpointReserved[key] = struct{}{}
 }
 
-func (c *HybridCache) reserveCheckpointDelta(layer int) {
+func (c *Recurrent) reserveCheckpointRecurrent(layer int) {
 	key := checkpointReserveKey(layer, 1)
 	if _, ok := c.checkpointReserved[key]; ok {
 		return
@@ -487,7 +550,7 @@ func (c *HybridCache) reserveCheckpointDelta(layer int) {
 		store := c.checkpointStore(slot)
 		for i := range store.entries {
 			entry := &store.entries[i]
-			_ = c.ensureCheckpointDelta(layer, entry)
+			_ = c.ensureCheckpointRecurrent(layer, entry)
 		}
 	}
 	c.checkpointReserved[key] = struct{}{}

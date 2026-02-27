@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"slices"
 	"strings"
 	"unsafe"
 
@@ -33,6 +34,9 @@ func (q quantizer) WriteTo(w io.Writer) (int64, error) {
 		slog.Warn("file read error", "tensor", q.from.Name, "file", q.Name(), "error", err)
 		return 0, fmt.Errorf("unable to read tensor %s from %s: %s", q.from.Name, q.Name(), err)
 	}
+	if uint64(len(data)) < q.from.Size() {
+		return 0, fmt.Errorf("tensor %s data size %d is less than expected %d from shape %v", q.from.Name, len(data), q.from.Size(), q.from.Shape)
+	}
 	var f32s []float32
 	newType := fsggml.TensorType(q.to.Kind)
 	if fsggml.TensorType(q.from.Kind) == fsggml.TensorTypeF32 {
@@ -58,7 +62,7 @@ func useMoreBits(iLayer, nLayers int) bool {
 	return iLayer < (nLayers/8) || iLayer >= 7*nLayers/8 || (iLayer-nLayers/8)%3 == 2
 }
 
-func qwen3nextQuantType(name string) (fsggml.TensorType, bool) {
+func qwen3LinearAttnQuantType(name string) (fsggml.TensorType, bool) {
 	switch {
 	// Full attention
 	case strings.HasSuffix(name, ".attn_q.weight"):
@@ -78,6 +82,10 @@ func qwen3nextQuantType(name string) (fsggml.TensorType, bool) {
 
 	// SSM
 	case strings.HasSuffix(name, ".ssm_ba.weight"):
+		return fsggml.TensorTypeQ4_K, true
+	case strings.HasSuffix(name, ".ssm_beta.weight"):
+		return fsggml.TensorTypeQ4_K, true
+	case strings.HasSuffix(name, ".ssm_alpha.weight"):
 		return fsggml.TensorTypeQ4_K, true
 	case strings.HasSuffix(name, ".ssm_out.weight"):
 		return fsggml.TensorTypeQ4_K, true
@@ -287,8 +295,8 @@ func newType(t *fsggml.Tensor, kv fsggml.KV, qs *quantizeState, ftype fsggml.Fil
 
 	newType := fsggml.TensorType(t.Kind)
 	if quantize {
-		if kv.Architecture() == "qwen3next" && (ftype == fsggml.FileTypeQ4_K_M || ftype == fsggml.FileTypeQ4_K_S) {
-			if qt, ok := qwen3nextQuantType(name); ok {
+		if slices.Contains([]string{"qwen3next", "qwen35", "qwen35moe"}, kv.Architecture()) && (ftype == fsggml.FileTypeQ4_K_M || ftype == fsggml.FileTypeQ4_K_S) {
+			if qt, ok := qwen3LinearAttnQuantType(name); ok {
 				return qt
 			}
 		}

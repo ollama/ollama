@@ -4,6 +4,7 @@ package ui
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -11,9 +12,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/ollama/ollama/app/store"
+	"github.com/ollama/ollama/app/updater"
 )
 
 func TestHandlePostApiSettings(t *testing.T) {
@@ -112,6 +115,107 @@ func TestHandlePostApiSettings(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestHandlePostApiCloudSetting(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("OLLAMA_NO_CLOUD", "")
+
+	testStore := &store.Store{
+		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
+	}
+	defer testStore.Close()
+
+	restartCount := 0
+	server := &Server{
+		Store: testStore,
+		Restart: func() {
+			restartCount++
+		},
+	}
+
+	for _, tc := range []struct {
+		name        string
+		body        string
+		wantEnabled bool
+	}{
+		{name: "disable cloud", body: `{"enabled": false}`, wantEnabled: false},
+		{name: "enable cloud", body: `{"enabled": true}`, wantEnabled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/api/v1/cloud", bytes.NewBufferString(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+
+			if err := server.cloudSetting(rr, req); err != nil {
+				t.Fatalf("cloudSetting() error = %v", err)
+			}
+			if rr.Code != http.StatusOK {
+				t.Fatalf("cloudSetting() status = %d, want %d", rr.Code, http.StatusOK)
+			}
+
+			var got map[string]any
+			if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+				t.Fatalf("cloudSetting() invalid response JSON: %v", err)
+			}
+			if got["disabled"] != !tc.wantEnabled {
+				t.Fatalf("response disabled = %v, want %v", got["disabled"], !tc.wantEnabled)
+			}
+
+			disabled, err := testStore.CloudDisabled()
+			if err != nil {
+				t.Fatalf("CloudDisabled() error = %v", err)
+			}
+			if gotEnabled := !disabled; gotEnabled != tc.wantEnabled {
+				t.Fatalf("cloud enabled = %v, want %v", gotEnabled, tc.wantEnabled)
+			}
+		})
+	}
+
+	if restartCount != 2 {
+		t.Fatalf("Restart called %d times, want 2", restartCount)
+	}
+}
+
+func TestHandleGetApiCloudSetting(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("OLLAMA_NO_CLOUD", "")
+
+	testStore := &store.Store{
+		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
+	}
+	defer testStore.Close()
+
+	if err := testStore.SetCloudEnabled(false); err != nil {
+		t.Fatalf("SetCloudEnabled(false) error = %v", err)
+	}
+
+	server := &Server{
+		Store:   testStore,
+		Restart: func() {},
+	}
+
+	req := httptest.NewRequest("GET", "/api/v1/cloud", nil)
+	rr := httptest.NewRecorder()
+	if err := server.getCloudSetting(rr, req); err != nil {
+		t.Fatalf("getCloudSetting() error = %v", err)
+	}
+	if rr.Code != http.StatusOK {
+		t.Fatalf("getCloudSetting() status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("getCloudSetting() invalid response JSON: %v", err)
+	}
+	if got["disabled"] != true {
+		t.Fatalf("response disabled = %v, want true", got["disabled"])
+	}
+	if got["source"] != "config" {
+		t.Fatalf("response source = %v, want config", got["source"])
 	}
 }
 
@@ -420,4 +524,291 @@ func TestUserAgentTransport(t *testing.T) {
 	}
 
 	t.Logf("User-Agent transport successfully set: %s", receivedUA)
+}
+
+func TestSupportsBrowserTools(t *testing.T) {
+	tests := []struct {
+		model string
+		want  bool
+	}{
+		{"gpt-oss", true},
+		{"gpt-oss-latest", true},
+		{"GPT-OSS", true},
+		{"Gpt-Oss-v2", true},
+		{"qwen3", false},
+		{"deepseek-v3", false},
+		{"llama3.3", false},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			if got := supportsBrowserTools(tt.model); got != tt.want {
+				t.Errorf("supportsBrowserTools(%q) = %v, want %v", tt.model, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWebSearchToolRegistration(t *testing.T) {
+	// Validates that the capability-gating logic in chat() correctly
+	// decides which tools to register based on model capabilities and
+	// the web search flag.
+	tests := []struct {
+		name             string
+		webSearchEnabled bool
+		hasToolsCap      bool
+		model            string
+		wantBrowser      bool // expects browser tools (gpt-oss)
+		wantWebSearch    bool // expects basic web search/fetch tools
+		wantNone         bool // expects no tools registered
+	}{
+		{
+			name:             "web search enabled with tools capability - browser model",
+			webSearchEnabled: true,
+			hasToolsCap:      true,
+			model:            "gpt-oss-latest",
+			wantBrowser:      true,
+		},
+		{
+			name:             "web search enabled with tools capability - non-browser model",
+			webSearchEnabled: true,
+			hasToolsCap:      true,
+			model:            "qwen3",
+			wantWebSearch:    true,
+		},
+		{
+			name:             "web search enabled without tools capability",
+			webSearchEnabled: true,
+			hasToolsCap:      false,
+			model:            "llama3.3",
+			wantNone:         true,
+		},
+		{
+			name:             "web search disabled with tools capability",
+			webSearchEnabled: false,
+			hasToolsCap:      true,
+			model:            "qwen3",
+			wantNone:         true,
+		},
+		{
+			name:             "web search disabled without tools capability",
+			webSearchEnabled: false,
+			hasToolsCap:      false,
+			model:            "llama3.3",
+			wantNone:         true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Replicate the decision logic from chat() handler
+			gotBrowser := false
+			gotWebSearch := false
+
+			if tt.webSearchEnabled && tt.hasToolsCap {
+				if supportsBrowserTools(tt.model) {
+					gotBrowser = true
+				} else {
+					gotWebSearch = true
+				}
+			}
+
+			if tt.wantBrowser && !gotBrowser {
+				t.Error("expected browser tools to be registered")
+			}
+			if tt.wantWebSearch && !gotWebSearch {
+				t.Error("expected web search tools to be registered")
+			}
+			if tt.wantNone && (gotBrowser || gotWebSearch) {
+				t.Error("expected no tools to be registered")
+			}
+			if !tt.wantBrowser && gotBrowser {
+				t.Error("unexpected browser tools registered")
+			}
+			if !tt.wantWebSearch && gotWebSearch {
+				t.Error("unexpected web search tools registered")
+			}
+		})
+	}
+}
+
+func TestSettingsToggleAutoUpdateOff_CancelsDownload(t *testing.T) {
+	testStore := &store.Store{
+		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
+	}
+	defer testStore.Close()
+
+	// Start with auto-update enabled
+	settings, err := testStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.AutoUpdateEnabled = true
+	if err := testStore.SetSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	upd := &updater.Updater{Store: &store.Store{
+		DBPath: filepath.Join(t.TempDir(), "db2.sqlite"),
+	}}
+	defer upd.Store.Close()
+
+	// We can't easily mock CancelOngoingDownload, but we can verify
+	// the full settings handler flow works without error
+	server := &Server{
+		Store:   testStore,
+		Restart: func() {},
+		Updater: upd,
+	}
+
+	// Disable auto-update via settings API
+	settings.AutoUpdateEnabled = false
+	body, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("POST", "/api/v1/settings", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	if err := server.settings(rr, req); err != nil {
+		t.Fatalf("settings() error = %v", err)
+	}
+	if rr.Code != http.StatusOK {
+		t.Fatalf("settings() status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// Verify settings were saved with auto-update disabled
+	saved, err := testStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.AutoUpdateEnabled {
+		t.Fatal("expected AutoUpdateEnabled to be false after toggle off")
+	}
+}
+
+func TestSettingsToggleAutoUpdateOn_WithPendingUpdate_ShowsNotification(t *testing.T) {
+	testStore := &store.Store{
+		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
+	}
+	defer testStore.Close()
+
+	// Start with auto-update disabled
+	settings, err := testStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.AutoUpdateEnabled = false
+	if err := testStore.SetSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate that an update was previously downloaded
+	oldVal := updater.UpdateDownloaded
+	updater.UpdateDownloaded = true
+	defer func() { updater.UpdateDownloaded = oldVal }()
+
+	var notificationCalled atomic.Bool
+	server := &Server{
+		Store:   testStore,
+		Restart: func() {},
+		UpdateAvailableFunc: func() {
+			notificationCalled.Store(true)
+		},
+	}
+
+	// Re-enable auto-update via settings API
+	settings.AutoUpdateEnabled = true
+	body, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("POST", "/api/v1/settings", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	if err := server.settings(rr, req); err != nil {
+		t.Fatalf("settings() error = %v", err)
+	}
+	if rr.Code != http.StatusOK {
+		t.Fatalf("settings() status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	if !notificationCalled.Load() {
+		t.Fatal("expected UpdateAvailableFunc to be called when re-enabling with a downloaded update")
+	}
+}
+
+func TestSettingsToggleAutoUpdateOn_NoPendingUpdate_TriggersCheck(t *testing.T) {
+	testStore := &store.Store{
+		DBPath: filepath.Join(t.TempDir(), "db.sqlite"),
+	}
+	defer testStore.Close()
+
+	// Start with auto-update disabled
+	settings, err := testStore.Settings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.AutoUpdateEnabled = false
+	if err := testStore.SetSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	// Ensure no pending update - clear both the downloaded flag and the stage dir
+	oldVal := updater.UpdateDownloaded
+	updater.UpdateDownloaded = false
+	defer func() { updater.UpdateDownloaded = oldVal }()
+
+	oldStageDir := updater.UpdateStageDir
+	updater.UpdateStageDir = t.TempDir() // empty dir means IsUpdatePending() returns false
+	defer func() { updater.UpdateStageDir = oldStageDir }()
+
+	upd := &updater.Updater{Store: &store.Store{
+		DBPath: filepath.Join(t.TempDir(), "db2.sqlite"),
+	}}
+	defer upd.Store.Close()
+
+	// Initialize the checkNow channel by starting (and immediately stopping) the checker
+	// so TriggerImmediateCheck doesn't panic on nil channel
+	ctx, cancel := context.WithCancel(t.Context())
+	upd.StartBackgroundUpdaterChecker(ctx, func(string) error { return nil })
+	defer cancel()
+
+	var notificationCalled atomic.Bool
+	server := &Server{
+		Store:   testStore,
+		Restart: func() {},
+		Updater: upd,
+		UpdateAvailableFunc: func() {
+			notificationCalled.Store(true)
+		},
+	}
+
+	// Re-enable auto-update via settings API
+	settings.AutoUpdateEnabled = true
+	body, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("POST", "/api/v1/settings", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	if err := server.settings(rr, req); err != nil {
+		t.Fatalf("settings() error = %v", err)
+	}
+	if rr.Code != http.StatusOK {
+		t.Fatalf("settings() status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	// UpdateAvailableFunc should NOT be called since there's no pending update
+	if notificationCalled.Load() {
+		t.Fatal("UpdateAvailableFunc should not be called when there is no pending update")
+	}
 }

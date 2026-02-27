@@ -140,7 +140,7 @@ func TestClaudeModelEnvVars(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
 
-		saveIntegration("claude", []string{"qwen3:8b"})
+		SaveIntegration("claude", []string{"qwen3:8b"})
 		saveAliases("claude", map[string]string{"primary": "qwen3:8b"})
 
 		got := envMap(c.modelEnvVars("qwen3:8b"))
@@ -162,7 +162,7 @@ func TestClaudeModelEnvVars(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
 
-		saveIntegration("claude", []string{"llama3.2:70b"})
+		SaveIntegration("claude", []string{"llama3.2:70b"})
 		saveAliases("claude", map[string]string{
 			"primary": "llama3.2:70b",
 			"fast":    "llama3.2:8b",
@@ -187,7 +187,7 @@ func TestClaudeModelEnvVars(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
 
-		saveIntegration("claude", []string{"saved-model"})
+		SaveIntegration("claude", []string{"saved-model"})
 		saveAliases("claude", map[string]string{"primary": "saved-model"})
 
 		got := envMap(c.modelEnvVars("different-model"))

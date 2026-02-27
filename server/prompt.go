@@ -124,6 +124,11 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 				ID:   len(images),
 				Data: i,
 			}
+			images = append(images, imgData)
+
+			if m.Config.Renderer != "" {
+				continue
+			}
 
 			imgTag := fmt.Sprintf("[img-%d]", imgData.ID)
 			if !strings.Contains(prompt, "[img]") {
@@ -131,8 +136,6 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 			} else {
 				prompt = strings.Replace(prompt, "[img]", imgTag, 1)
 			}
-
-			images = append(images, imgData)
 		}
 		msgs[currMsgIdx+cnt].Content = prefix + prompt
 	}

@@ -45,7 +45,8 @@ type InferenceCompute struct {
 }
 
 type InferenceComputeResponse struct {
-	InferenceComputes []InferenceCompute `json:"inferenceComputes"`
+	InferenceComputes    []InferenceCompute `json:"inferenceComputes"`
+	DefaultContextLength int                `json:"defaultContextLength"`
 }
 
 type ModelCapabilitiesResponse struct {

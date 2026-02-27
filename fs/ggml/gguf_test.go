@@ -11,21 +11,21 @@ import (
 )
 
 func TestWriteGGUF(t *testing.T) {
-	b := bytes.NewBuffer(make([]byte, 2*3))
+	tensorData := make([]byte, 2*3*4) // 6 F32 elements = 24 bytes
 	for range 8 {
 		t.Run("shuffle", func(t *testing.T) {
 			t.Parallel()
 
 			ts := []*Tensor{
-				{Name: "token_embd.weight", Shape: []uint64{2, 3}, WriterTo: b},
-				{Name: "blk.0.ffn_norm.weight", Shape: []uint64{2, 3}, WriterTo: b},
-				{Name: "blk.0.attn_norm.weight", Shape: []uint64{2, 3}, WriterTo: b},
-				{Name: "blk.1.ffn_up.weight", Shape: []uint64{2, 3}, WriterTo: b},
-				{Name: "blk.2.ffn_norm.weight", Shape: []uint64{2, 3}, WriterTo: b},
-				{Name: "blk.1.ffn_down.weight", Shape: []uint64{2, 3}, WriterTo: b},
-				{Name: "blk.0.attn_k.weight", Shape: []uint64{2, 3}, WriterTo: b},
-				{Name: "output_norm.weight", Shape: []uint64{3, 2}, WriterTo: b},
-				{Name: "output.weight", Shape: []uint64{3, 2}, WriterTo: b},
+				{Name: "token_embd.weight", Shape: []uint64{2, 3}, WriterTo: bytes.NewReader(tensorData)},
+				{Name: "blk.0.ffn_norm.weight", Shape: []uint64{2, 3}, WriterTo: bytes.NewReader(tensorData)},
+				{Name: "blk.0.attn_norm.weight", Shape: []uint64{2, 3}, WriterTo: bytes.NewReader(tensorData)},
+				{Name: "blk.1.ffn_up.weight", Shape: []uint64{2, 3}, WriterTo: bytes.NewReader(tensorData)},
+				{Name: "blk.2.ffn_norm.weight", Shape: []uint64{2, 3}, WriterTo: bytes.NewReader(tensorData)},
+				{Name: "blk.1.ffn_down.weight", Shape: []uint64{2, 3}, WriterTo: bytes.NewReader(tensorData)},
+				{Name: "blk.0.attn_k.weight", Shape: []uint64{2, 3}, WriterTo: bytes.NewReader(tensorData)},
+				{Name: "output_norm.weight", Shape: []uint64{3, 2}, WriterTo: bytes.NewReader(tensorData)},
+				{Name: "output.weight", Shape: []uint64{3, 2}, WriterTo: bytes.NewReader(tensorData)},
 			}
 
 			rand.Shuffle(len(ts), func(i, j int) {
@@ -98,4 +98,32 @@ func TestWriteGGUF(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("truncated_tensor_data", func(t *testing.T) {
+		t.Parallel()
+
+		ts := []*Tensor{
+			{Name: "blk.0.attn.weight", Kind: 0, Shape: []uint64{512, 2}, WriterTo: bytes.NewBuffer(make([]byte, 32))},
+		}
+
+		w, err := os.CreateTemp(t.TempDir(), "truncated_*.bin")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer w.Close()
+
+		if err := WriteGGUF(w, KV{"general.architecture": "test"}, ts); err != nil {
+			t.Fatal(err)
+		}
+
+		r, err := os.Open(w.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+
+		if _, err := Decode(r, -1); err == nil {
+			t.Error("Decode should reject GGUF files where tensor data extends beyond file size")
+		}
+	})
 }

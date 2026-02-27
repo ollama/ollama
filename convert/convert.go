@@ -257,10 +257,11 @@ func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	bts = sanitizeNonFiniteJSON(bts)
 
 	var p ModelParameters
 	if err := json.Unmarshal(bts, &p); err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("parse config.json: %w", err)
 	}
 
 	if len(p.Architectures) < 1 {
@@ -315,16 +316,20 @@ func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 		conv = &glm4MoeLiteModel{}
 	case "GlmOcrForConditionalGeneration":
 		conv = &glmOcrModel{}
-	case "Lfm2ForCausalLM":
+	case "Lfm2ForCausalLM", "Lfm2MoeForCausalLM":
 		conv = &lfm2Model{}
-	case "Qwen3NextForCausalLM":
+	case "Lfm2VlForConditionalGeneration":
+		conv = &lfm2VLTextModel{}
+	case "Qwen3NextForCausalLM", "Qwen3_5ForConditionalGeneration", "Qwen3_5MoeForConditionalGeneration":
 		conv = &qwen3NextModel{}
+	case "NemotronHForCausalLM":
+		conv = &nemotronHModel{}
 	default:
 		return nil, nil, fmt.Errorf("unsupported architecture %q", p.Architectures[0])
 	}
 
 	if err := json.Unmarshal(bts, conv); err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("parse config.json for %q: %w", p.Architectures[0], err)
 	}
 
 	if t, ok := conv.(moreParser); ok {

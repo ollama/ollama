@@ -5,6 +5,7 @@ package manifest
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/ollama/ollama/x/imagegen/mlx"
@@ -18,6 +19,8 @@ type ManifestWeights struct {
 	tensors     map[string]ManifestLayer // name -> layer
 	cache       map[string]*mlx.Array    // name -> loaded array
 	nativeCache []*mlx.SafetensorsFile   // keep native handles alive
+	quantType   string                   // quantization type from blob metadata (e.g., "int4", "int8")
+	groupSize   int                      // quantization group size from blob metadata
 }
 
 // LoadWeightsFromManifest creates a weight loader from manifest storage.
@@ -54,43 +57,134 @@ func LoadWeightsFromManifest(manifest *ModelManifest, component string) (*Manife
 
 // Load loads all tensor blobs using native mmap (zero-copy).
 // Blobs are stored in safetensors format for native mlx_load_safetensors mmap.
-// If dtype is non-zero, tensors are converted to the specified dtype.
+// Combined quantized blobs contain tensors keyed by name, name+".scale", and optional name+".bias"
+// with quantization metadata. Scale and bias are stored in cache as name+"_scale"
+// and name+"_qbias" for compatibility with downstream loading code.
+// Packed blobs (e.g., for expert groups) contain multiple tensors; the manifest name
+// is a group prefix and individual tensors are loaded by their actual names from the blob.
+// If dtype is non-zero, non-quantized tensors are converted to the specified dtype.
 func (mw *ManifestWeights) Load(dtype mlx.Dtype) error {
 	// Track native handles to free after batch eval
 	nativeHandles := make([]*mlx.SafetensorsFile, 0, len(mw.tensors))
 	arrays := make([]*mlx.Array, 0, len(mw.tensors))
 
+	// Group tensors by digest to avoid loading the same blob multiple times
+	type blobEntry struct {
+		name  string
+		layer ManifestLayer
+	}
+	blobGroups := make(map[string][]blobEntry)
 	for name, layer := range mw.tensors {
-		path := mw.manifest.BlobPath(layer.Digest)
+		blobGroups[layer.Digest] = append(blobGroups[layer.Digest], blobEntry{name, layer})
+	}
+
+	for digest, entries := range blobGroups {
+		path := mw.manifest.BlobPath(digest)
 
 		// Load blob as safetensors (native mmap, zero-copy)
 		sf, err := mlx.LoadSafetensorsNative(path)
 		if err != nil {
-			// Free any handles we've accumulated
 			for _, h := range nativeHandles {
 				h.Free()
 			}
-			return fmt.Errorf("load %s: %w", name, err)
+			return fmt.Errorf("load %s: %w", entries[0].name, err)
 		}
 		nativeHandles = append(nativeHandles, sf)
 
-		// Blob contains single tensor named "data"
-		arr := sf.Get("data")
-		if arr == nil {
-			for _, h := range nativeHandles {
-				h.Free()
+		// Read quantization metadata from blob
+		if qt := sf.GetMetadata("quant_type"); qt != "" && mw.quantType == "" {
+			mw.quantType = qt
+			if gs := sf.GetMetadata("group_size"); gs != "" {
+				mw.groupSize, _ = strconv.Atoi(gs)
 			}
-			return fmt.Errorf("tensor 'data' not found in blob for %s", name)
 		}
 
-		// Convert dtype if needed
-		if dtype != 0 && arr.Dtype() != dtype {
-			arr = mlx.AsType(arr, dtype)
+		for _, entry := range entries {
+			name := entry.name
+
+			// Try to get tensor by stripped name first, then with component prefix,
+			// then fall back to "data" for legacy blobs created by older versions
+			// that stored all tensors with the generic key "data".
+			lookupName := name
+			arr := sf.Get(lookupName)
+			if arr == nil && mw.component != "" {
+				lookupName = mw.component + "/" + name
+				arr = sf.Get(lookupName)
+			}
+			if arr == nil {
+				// Legacy blob format: tensor stored as "data"
+				lookupName = "data"
+				arr = sf.Get(lookupName)
+			}
+			if arr != nil {
+				// Single-tensor blob or tensor found by name
+				if dtype != 0 && arr.Dtype() != dtype {
+					arr = mlx.AsType(arr, dtype)
+				}
+				arr = mlx.Contiguous(arr)
+				mw.cache[name] = arr
+				arrays = append(arrays, arr)
+
+				// Check for scale tensor
+				if scale := sf.Get(lookupName + ".scale"); scale != nil {
+					scale = mlx.Contiguous(scale)
+					mw.cache[name+"_scale"] = scale
+					arrays = append(arrays, scale)
+				}
+
+				// Check for bias tensor
+				if bias := sf.Get(lookupName + ".bias"); bias != nil {
+					bias = mlx.Contiguous(bias)
+					mw.cache[name+"_qbias"] = bias
+					arrays = append(arrays, bias)
+				}
+			} else {
+				// Packed blob: manifest name is a group prefix, not a tensor name.
+				// Load all individual tensors from the blob.
+				tensorNames, err := ParseBlobTensorNames(path)
+				if err != nil {
+					for _, h := range nativeHandles {
+						h.Free()
+					}
+					return fmt.Errorf("parse packed blob for %s: %w", name, err)
+				}
+
+				for _, tensorName := range tensorNames {
+					tArr := sf.Get(tensorName)
+					if tArr == nil {
+						continue
+					}
+
+					if dtype != 0 && tArr.Dtype() != dtype {
+						tArr = mlx.AsType(tArr, dtype)
+					}
+					tArr = mlx.Contiguous(tArr)
+
+					// Strip component prefix from blob-internal names so cache keys
+					// match the stripped names used by LoadModule.
+					cacheName := tensorName
+					if mw.component != "" {
+						cacheName = strings.TrimPrefix(tensorName, mw.component+"/")
+					}
+					mw.cache[cacheName] = tArr
+					arrays = append(arrays, tArr)
+
+					// Check for scale tensor
+					if scale := sf.Get(tensorName + ".scale"); scale != nil {
+						scale = mlx.Contiguous(scale)
+						mw.cache[cacheName+"_scale"] = scale
+						arrays = append(arrays, scale)
+					}
+
+					// Check for bias tensor
+					if bias := sf.Get(tensorName + ".bias"); bias != nil {
+						bias = mlx.Contiguous(bias)
+						mw.cache[cacheName+"_qbias"] = bias
+						arrays = append(arrays, bias)
+					}
+				}
+			}
 		}
-		// Make contiguous copy to ensure independence from mmap
-		arr = mlx.Contiguous(arr)
-		mw.cache[name] = arr
-		arrays = append(arrays, arr)
 	}
 
 	// Batch evaluate all tensors at once (much faster than one at a time)
@@ -117,30 +211,50 @@ func (mw *ManifestWeights) GetTensor(name string) (*mlx.Array, error) {
 }
 
 // ListTensors returns all tensor names in sorted order.
+// Includes both manifest tensor names and scale/bias entries from combined blobs.
 func (mw *ManifestWeights) ListTensors() []string {
-	names := make([]string, 0, len(mw.tensors))
+	seen := make(map[string]bool, len(mw.tensors)+len(mw.cache))
 	for name := range mw.tensors {
+		seen[name] = true
+	}
+	// Also include cache entries (scale/bias from combined blobs)
+	for name := range mw.cache {
+		seen[name] = true
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	return names
 }
 
-// HasTensor checks if a tensor exists.
+// HasTensor checks if a tensor exists in the manifest or cache.
 func (mw *ManifestWeights) HasTensor(name string) bool {
-	_, ok := mw.tensors[name]
-	return ok
+	if _, ok := mw.tensors[name]; ok {
+		return true
+	}
+	// Also check cache for scale/bias entries from combined blobs
+	if _, ok := mw.cache[name]; ok {
+		return true
+	}
+	return false
 }
 
-// Quantization returns the model's quantization type from model_index.json.
+// Quantization returns the model's quantization type.
+// Returns the quant_type from blob metadata (e.g., "int4", "int8", "nvfp4", "mxfp8").
 // Returns empty string if not quantized.
-// Falls back to detecting from tensor names and shapes if not in config.
+// Falls back to model_index.json for image gen models.
 func (mw *ManifestWeights) Quantization() string {
+	if mw.quantType != "" {
+		return strings.ToUpper(mw.quantType)
+	}
+
 	if mw.manifest == nil {
 		return ""
 	}
 
-	// Try to read from model_index.json first
+	// Fallback: read from model_index.json (for image gen models)
 	var index struct {
 		Quantization string `json:"quantization"`
 	}
@@ -148,89 +262,22 @@ func (mw *ManifestWeights) Quantization() string {
 		return index.Quantization
 	}
 
-	// Fallback: detect from tensor names
-	// Check if any tensors have _scale suffix (indicates quantization)
-	hasScales := false
-	hasQBias := false
-	for name := range mw.tensors {
-		if strings.HasSuffix(name, ".weight_scale") {
-			hasScales = true
-		}
-		if strings.HasSuffix(name, ".weight_qbias") {
-			hasQBias = true
-		}
-	}
-
-	if !hasScales {
-		// No scales = not quantized
-		return ""
-	}
-
-	// Has scales but no qbias = NVFP4 (or other non-affine mode)
-	if !hasQBias {
-		return "NVFP4"
-	}
-
-	// Has both scales and qbias = affine mode
-	// Need to determine FP4 vs FP8 from tensor shapes
-	// FP4: weight last dim is 1/8 of scales last dim * group_size
-	// FP8: weight last dim is 1/4 of scales last dim * group_size
-	//
-	// For affine mode with group_size=32:
-	// - FP4 (4 bits): 8 elements packed per uint32, so weight_dim = orig_dim / 8
-	// - FP8 (8 bits): 4 elements packed per uint32, so weight_dim = orig_dim / 4
-	// scales_dim = orig_dim / group_size
-	// So: weight_dim / scales_dim = group_size / pack_factor
-	// FP4: ratio = 32/8 = 4
-	// FP8: ratio = 32/4 = 8
-
-	// Find a weight/scale pair to check the ratio
-	for name := range mw.tensors {
-		if !strings.HasSuffix(name, ".weight") || strings.Contains(name, "_scale") || strings.Contains(name, "_qbias") {
-			continue
-		}
-		scaleName := name + "_scale"
-		if _, ok := mw.tensors[scaleName]; !ok {
-			continue
-		}
-
-		// Load both tensors to check shapes
-		weightLayer := mw.tensors[name]
-		scaleLayer := mw.tensors[scaleName]
-
-		// Get shapes from manifest layer metadata if available
-		// For now, default to FP4 since it's more common
-		// The actual shape check would require loading the tensor
-
-		// Simple heuristic: check if scale tensor is ~4x smaller than weight
-		// FP4: weight is packed 8 per uint32, scales are 1 per group (32)
-		// So scale size should be ~weight_size * 8 / 32 = weight_size / 4
-		// FP8: weight is packed 4 per uint32, scales are 1 per group (32)
-		// So scale size should be ~weight_size * 4 / 32 = weight_size / 8
-
-		// Rough size heuristic (assuming float16 scales)
-		// Q4: scale_bytes ≈ weight_bytes / 4 * 2 / 4 = weight_bytes / 8
-		// Q8: scale_bytes ≈ weight_bytes / 8 * 2 / 4 = weight_bytes / 16
-		ratio := float64(weightLayer.Size) / float64(scaleLayer.Size)
-		if ratio < 12 {
-			// Closer to 8 = Q4
-			return "Q4"
-		}
-		// Closer to 16 = Q8
-		return "Q8"
-	}
-
-	// Default to Q4 for affine mode (most common)
-	return "Q4"
+	return ""
 }
 
-// GroupSize returns the quantization group size from model_index.json.
+// GroupSize returns the quantization group size.
+// Returns the group_size from blob metadata.
 // Returns 0 if not specified (caller should use default based on quantization type).
 func (mw *ManifestWeights) GroupSize() int {
+	if mw.groupSize > 0 {
+		return mw.groupSize
+	}
+
 	if mw.manifest == nil {
 		return 0
 	}
 
+	// Fallback: read from model_index.json (for image gen models)
 	var index struct {
 		GroupSize int `json:"group_size"`
 	}
