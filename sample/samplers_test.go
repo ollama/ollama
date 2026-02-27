@@ -219,6 +219,41 @@ func TestSamplerPenaltiesNeutralNoOp(t *testing.T) {
 	}
 }
 
+func TestRecordTokenRingBuffer(t *testing.T) {
+	windowSize := 4
+	sampler := NewSampler(0, 0, 0, 0, 0, 1.0, 0.0, 0.0, windowSize, nil)
+
+	// Fill the window
+	for i := range windowSize {
+		sampler.recordToken(int32(i))
+	}
+	if len(sampler.recentTokens) != windowSize {
+		t.Fatalf("expected len %d, got %d", windowSize, len(sampler.recentTokens))
+	}
+
+	// Record many more tokens — length must stay at windowSize
+	for i := range 1000 {
+		sampler.recordToken(int32(100 + i))
+	}
+	if len(sampler.recentTokens) != windowSize {
+		t.Fatalf("expected len %d after 1000 extra tokens, got %d", windowSize, len(sampler.recentTokens))
+	}
+	if cap(sampler.recentTokens) != windowSize {
+		t.Fatalf("expected cap %d (bounded), got %d", windowSize, cap(sampler.recentTokens))
+	}
+
+	// The window should contain the last 4 tokens: 1096, 1097, 1098, 1099
+	counts := make(map[int32]bool)
+	for _, id := range sampler.recentTokens {
+		counts[id] = true
+	}
+	for i := 1096; i < 1100; i++ {
+		if !counts[int32(i)] {
+			t.Errorf("expected token %d in window, got %v", i, sampler.recentTokens)
+		}
+	}
+}
+
 func BenchmarkSample(b *testing.B) {
 	samplers := map[string]Sampler{
 		"Greedy":   NewSampler(0, 0, 0, 0, 0, 1.0, 0.0, 0.0, 0, nil), // Use NewSampler with temp=0 for greedy

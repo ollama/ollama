@@ -28,6 +28,7 @@ type Sampler struct {
 	presencePenalty  float32
 	repeatLastN      int
 	recentTokens     []int32
+	recentTokenPos   int
 }
 
 func (s *Sampler) Sample(logits []float32) (int32, error) {
@@ -188,7 +189,7 @@ func NewSampler(
 		frequencyPenalty: frequencyPenalty,
 		presencePenalty:  presencePenalty,
 		repeatLastN:      repeatLastN,
-		recentTokens:     make([]int32, 0, max(repeatLastN, 0)),
+		recentTokens:     make([]int32, 0, repeatLastN),
 	}
 }
 
@@ -196,10 +197,12 @@ func (s *Sampler) recordToken(id int32) {
 	if s.repeatLastN == 0 {
 		return
 	}
-	s.recentTokens = append(s.recentTokens, id)
-	if len(s.recentTokens) > s.repeatLastN {
-		s.recentTokens = s.recentTokens[len(s.recentTokens)-s.repeatLastN:]
+	if len(s.recentTokens) < s.repeatLastN {
+		s.recentTokens = append(s.recentTokens, id)
+	} else {
+		s.recentTokens[s.recentTokenPos] = id
 	}
+	s.recentTokenPos = (s.recentTokenPos + 1) % s.repeatLastN
 }
 
 type GrammarSampler struct {
