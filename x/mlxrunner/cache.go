@@ -78,6 +78,11 @@ func (c *kvCache) findRemaining(tokens []int32) []int32 {
 		prefix++
 	}
 
+	if prefix == len(tokens) && prefix > 0 {
+		// Leave one token to run through the model so we can sample a response.
+		prefix--
+	}
+
 	if prefix < len(c.tokens) {
 		trim := len(c.tokens) - prefix
 		for _, kv := range c.caches {
