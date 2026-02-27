@@ -176,6 +176,7 @@ func (c *RecurrentCache) State() (*mlx.Array, *mlx.Array) {
 	return c.convState, c.deltaState
 }
 
+// Materialize returns the recurrent state roots (conv and delta) held by the cache.
 func (c *RecurrentCache) Materialize() []*mlx.Array {
 	out := make([]*mlx.Array, 0, 2)
 	if c.convState != nil && c.convState.Valid() {
