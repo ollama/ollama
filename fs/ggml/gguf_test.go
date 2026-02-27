@@ -101,6 +101,44 @@ func TestWriteGGUF(t *testing.T) {
 		})
 	}
 
+	t.Run("truncated_tensor_data", func(t *testing.T) {
+		t.Parallel()
+
+		ts := []*Tensor{
+			{Name: "blk.0.attn.weight", Kind: 0, Shape: []uint64{512, 2}, WriterTo: bytes.NewBuffer(make([]byte, 32))},
+		}
+
+		w, err := os.CreateTemp(t.TempDir(), "truncated_*.bin")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer w.Close()
+
+		if err := WriteGGUF(w, KV{"general.architecture": "test"}, ts); err != nil {
+			t.Fatal(err)
+		}
+
+		r, err := os.Open(w.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+
+		if _, err := Decode(r, -1); err == nil {
+			t.Error("Decode should reject GGUF files where tensor data extends beyond file size")
+		}
+	})
+}
+
+// TestDecodeGGUFCorruptInputs verifies that Decode returns descriptive errors
+// (rather than panicking) when presented with malformed or corrupt GGUF data.
+//
+// On unpatched code, the oversized-string and oversized-array cases below
+// trigger a runtime panic "makeslice: len out of range": the large uint64
+// length values wrap to -1 when cast to int, and make([]T, -1) panics.
+// The too-many-dims case would cause an out-of-memory allocation for
+// sufficiently large dim counts on corrupt files.
+func TestDecodeGGUFCorruptInputs(t *testing.T) {
 	// writeMinimalGGUF writes a minimal GGUF v3 file with one KV pair of the
 	// given raw key/value bytes (caller is responsible for correct framing).
 	// The KV byte slice must include the 8-byte length-prefixed key and 4-byte
@@ -138,8 +176,8 @@ func TestWriteGGUF(t *testing.T) {
 	t.Run("oversized_string_length_returns_error", func(t *testing.T) {
 		t.Parallel()
 
-		// maxUint64 cast to int on 64-bit gives -1: previously caused
-		// make([]byte, -1) → runtime panic "makeslice: len out of range".
+		// Without the fix: int(math.MaxUint64) == -1 on 64-bit platforms,
+		// so make([]byte, -1) panics with "makeslice: len out of range".
 		for _, rawLen := range []uint64{
 			math.MaxUint64,
 			math.MaxInt64 + 1,
@@ -157,7 +195,7 @@ func TestWriteGGUF(t *testing.T) {
 	t.Run("oversized_array_length_returns_error", func(t *testing.T) {
 		t.Parallel()
 
-		// Build a KV pair whose value is an array with a huge element count.
+		// Without the fix: int(math.MaxUint64) == -1, so newArray(-1, ...) panics.
 		var buf bytes.Buffer
 		le := binary.LittleEndian
 		key := "tokenizer.ggml.tokens"
@@ -206,41 +244,13 @@ func TestWriteGGUF(t *testing.T) {
 		for i := 0; i < 5; i++ {
 			binary.Write(f, le, uint64(4)) // shape dimension
 		}
-		binary.Write(f, le, uint32(0))  // kind = F32
-		binary.Write(f, le, uint64(0))  // offset
+		binary.Write(f, le, uint32(0)) // kind = F32
+		binary.Write(f, le, uint64(0)) // offset
 
 		f.Seek(0, 0)
 		_, err = Decode(f, -1)
 		if err == nil {
 			t.Error("expected error for tensor with >4 dims, got nil")
-		}
-	})
-
-	t.Run("truncated_tensor_data", func(t *testing.T) {
-		t.Parallel()
-
-		ts := []*Tensor{
-			{Name: "blk.0.attn.weight", Kind: 0, Shape: []uint64{512, 2}, WriterTo: bytes.NewBuffer(make([]byte, 32))},
-		}
-
-		w, err := os.CreateTemp(t.TempDir(), "truncated_*.bin")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer w.Close()
-
-		if err := WriteGGUF(w, KV{"general.architecture": "test"}, ts); err != nil {
-			t.Fatal(err)
-		}
-
-		r, err := os.Open(w.Name())
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer r.Close()
-
-		if _, err := Decode(r, -1); err == nil {
-			t.Error("Decode should reject GGUF files where tensor data extends beyond file size")
 		}
 	})
 }
