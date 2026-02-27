@@ -17,7 +17,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"iter"
 	"log/slog"
 	"maps"
 	"os"
@@ -75,70 +74,6 @@ type layerDevice struct {
 	bt C.ggml_backend_buffer_type_t
 }
 
-type config struct {
-	cfg       fs.Config
-	reranking bool
-}
-
-func (c *config) Architecture() string {
-	return c.cfg.Architecture()
-}
-
-func (c *config) String(key string, defaultValue ...string) string {
-	return c.cfg.String(key, defaultValue...)
-}
-
-func (c *config) Uint(key string, defaultValue ...uint32) uint32 {
-	if c.reranking && key == "pooling_type" {
-		return uint32(pooling.TypeRank)
-	}
-	return c.cfg.Uint(key, defaultValue...)
-}
-
-func (c *config) Float(key string, defaultValue ...float32) float32 {
-	return c.cfg.Float(key, defaultValue...)
-}
-
-func (c *config) Bool(key string, defaultValue ...bool) bool {
-	return c.cfg.Bool(key, defaultValue...)
-}
-
-func (c *config) Uint8(key string, defaultValue ...uint8) uint8 {
-	return c.cfg.Uint8(key, defaultValue...)
-}
-
-func (c *config) Strings(key string, defaultValue ...[]string) []string {
-	return c.cfg.Strings(key, defaultValue...)
-}
-
-func (c *config) Ints(key string, defaultValue ...[]int32) []int32 {
-	return c.cfg.Ints(key, defaultValue...)
-}
-
-func (c *config) Floats(key string, defaultValue ...[]float32) []float32 {
-	return c.cfg.Floats(key, defaultValue...)
-}
-
-func (c *config) Bools(key string, defaultValue ...[]bool) []bool {
-	return c.cfg.Bools(key, defaultValue...)
-}
-
-func (c *config) Uint8s(key string, defaultValue ...[]uint8) []uint8 {
-	return c.cfg.Uint8s(key, defaultValue...)
-}
-
-func (c *config) Len() int {
-	return c.cfg.Len()
-}
-
-func (c *config) Keys() iter.Seq[string] {
-	return c.cfg.Keys()
-}
-
-func (c *config) Value(key string) any {
-	return c.cfg.Value(key)
-}
-
 type Backend struct {
 	// modelPath is the location of the model data
 	modelPath string
@@ -182,8 +117,6 @@ type Backend struct {
 
 	// weightBuffers are the GGML contexts and buffers for allocating weights
 	weightBuffers map[*C.struct_ggml_context]C.ggml_backend_buffer_t
-
-	reranking bool
 }
 
 var once sync.Once
@@ -486,7 +419,11 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		logutil.Trace("model weights", "buffer", C.GoString(C.ggml_backend_buffer_name(bs)),
 			"size", format.HumanBytes2(uint64(C.ggml_backend_buffer_get_size(bs))))
 	}
-
+	if params.Reranking {
+		kv := meta.KV()
+		// Overwrite the pooling_type to enable reranking functionality
+		kv[kv.Architecture()+".pooling_type"] = uint32(pooling.TypeRank)
+	}
 	return &Backend{
 		modelPath:         modelPath,
 		allocMemory:       params.AllocMemory,
@@ -513,7 +450,6 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		btDeviceMemory: btDeviceMemory,
 		maxGraphNodes:  maxGraphNodes,
 		weightBuffers:  bbs,
-		reranking:      params.Reranking,
 	}, nil
 }
 
@@ -718,10 +654,7 @@ func (b *Backend) BackendMemory() ml.BackendMemory {
 }
 
 func (b *Backend) Config() fs.Config {
-	return &config{
-		cfg:       b.meta.KV(),
-		reranking: b.reranking,
-	}
+	return b.meta.KV()
 }
 
 func (b *Backend) Get(name string) ml.Tensor {
