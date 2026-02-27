@@ -38,6 +38,7 @@ type Qwen3Parser struct {
 	state                  qwen3ParserState
 	buffer                 strings.Builder
 	tools                  []api.Tool
+	callIndex              int
 	hasThinkingSupport     bool
 	defaultThinking        bool
 	maybeThinkingOpenAtBOL bool
@@ -54,6 +55,7 @@ func (p *Qwen3Parser) HasThinkingSupport() bool {
 func (p *Qwen3Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
 	p.buffer.Reset()
+	p.callIndex = 0
 
 	thinkingEnabled := thinkValue != nil && thinkValue.Bool()
 	if thinkValue == nil {
@@ -106,6 +108,8 @@ func (p *Qwen3Parser) Add(s string, done bool) (content string, thinking string,
 				slog.Warn("qwen3 tool call parsing failed", "error", err)
 				return "", "", nil, err
 			}
+			toolCall.Function.Index = p.callIndex
+			p.callIndex++
 			calls = append(calls, toolCall)
 		case qwen3EventThinkingContent:
 			thinkingSb.WriteString(event.content)
