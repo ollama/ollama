@@ -150,13 +150,18 @@ func (u *uploader) uploadOnce(ctx context.Context, blob Blob) (int64, error) {
 		u.logger.Debug("uploading blob", "digest", blob.Digest, "size", blob.Size)
 	}
 
+	// Check if blob already exists (may have been uploaded by another
+	// concurrent process since the initial HEAD check)
+	if exists, err := u.exists(ctx, blob); err != nil {
+		return 0, err
+	} else if exists {
+		return 0, nil
+	}
+
 	// Init upload
 	uploadURL, err := u.initUpload(ctx, blob)
 	if err != nil {
 		return 0, err
-	}
-	if uploadURL == "" {
-		return 0, nil // blob already exists
 	}
 
 	// Open file
@@ -218,10 +223,6 @@ func (u *uploader) initUpload(ctx context.Context, blob Blob) (string, error) {
 			return "", err
 		}
 		return u.initUpload(ctx, blob)
-	}
-
-	if resp.StatusCode == http.StatusCreated {
-		return "", nil // blob already exists
 	}
 
 	if resp.StatusCode != http.StatusAccepted {
