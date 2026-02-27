@@ -32,6 +32,7 @@ type Request struct {
 
 type TextCompletionsRequest struct {
 	Prompt  string `json:"prompt"`
+	Think   *bool  `json:"think,omitempty"`
 	Options struct {
 		Temperature float32 `json:"temperature"`
 		TopP        float32 `json:"top_p"`

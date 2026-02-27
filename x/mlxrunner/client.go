@@ -182,6 +182,7 @@ func (c *Client) waitUntilRunning() error {
 // completionRequest is a properly-tagged version of llm.CompletionRequest for JSON serialization.
 type completionRequest struct {
 	Prompt  string          `json:"prompt"`
+	Think   *bool           `json:"think,omitempty"`
 	Options *completionOpts `json:"options,omitempty"`
 }
 
@@ -228,8 +229,15 @@ func (c *Client) Close() error {
 
 // Completion implements llm.LlamaServer.
 func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
+	var think *bool
+	if req.Think != nil {
+		enabled := req.Think.Bool()
+		think = &enabled
+	}
+
 	creq := completionRequest{
 		Prompt: req.Prompt,
+		Think:  think,
 	}
 	if req.Options != nil {
 		creq.Options = &completionOpts{
