@@ -51,6 +51,7 @@ type AliasConfigurer interface {
 
 // integrations is the registry of available integrations.
 var integrations = map[string]Runner{
+	"autohand": &Autohand{},
 	"claude":   &Claude{},
 	"clawdbot": &Openclaw{},
 	"cline":    &Cline{},
@@ -106,6 +107,7 @@ var integrationAliases = map[string]bool{
 
 // integrationInstallHints maps integration names to install URLs.
 var integrationInstallHints = map[string]string{
+	"autohand": "https://github.com/autohandai/code-cli",
 	"claude":   "https://code.claude.com/docs/en/quickstart",
 	"cline":    "https://cline.bot/cli",
 	"openclaw": "https://docs.openclaw.ai",
@@ -129,6 +131,7 @@ type IntegrationInfo struct {
 
 // integrationDescriptions maps integration names to short descriptions.
 var integrationDescriptions = map[string]string{
+	"autohand": "Autonomous AI coding agent in your terminal",
 	"claude":   "Anthropic's coding tool with subagents",
 	"cline":    "Autonomous coding agent with parallel execution",
 	"codex":    "OpenAI's open-source coding agent",
@@ -141,7 +144,7 @@ var integrationDescriptions = map[string]string{
 // integrationOrder defines a custom display order for integrations.
 // Integrations listed here are placed at the end in the given order;
 // all others appear first, sorted alphabetically.
-var integrationOrder = []string{"opencode", "droid", "pi", "cline"}
+var integrationOrder = []string{"opencode", "droid", "pi", "autohand", "cline"}
 
 // ListIntegrationInfos returns all non-alias registered integrations, sorted by name
 // with integrationOrder entries placed at the end.
@@ -219,6 +222,9 @@ func IsIntegrationInstalled(name string) bool {
 		return err == nil
 	case "opencode":
 		_, err := exec.LookPath("opencode")
+		return err == nil
+	case "autohand":
+		_, err := exec.LookPath("autohand")
 		return err == nil
 	case "pi":
 		_, err := exec.LookPath("pi")
@@ -887,6 +893,7 @@ func LaunchCmd(checkServerHeartbeat func(cmd *cobra.Command, args []string) erro
 Without arguments, this is equivalent to running 'ollama' directly.
 
 Supported integrations:
+  autohand  Autohand Code
   claude    Claude Code
   cline     Cline
   codex     Codex
