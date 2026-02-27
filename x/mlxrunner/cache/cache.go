@@ -69,6 +69,7 @@ func (c *KVCache) State() (*mlx.Array, *mlx.Array) {
 		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice())
 }
 
+// Materialize returns the backing key/value buffers currently held by the cache.
 func (c *KVCache) Materialize() []*mlx.Array {
 	out := make([]*mlx.Array, 0, 2)
 	if c.keys != nil && c.keys.Valid() {
