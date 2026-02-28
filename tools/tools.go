@@ -73,10 +73,25 @@ func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
 		}
 
 		if !found {
-			return nil, content
+			// Fallback: some models (e.g. qwen2.5-coder) output raw JSON
+			// tool calls without the expected tag wrapper. If the accumulated
+			// content starts with '{', switch to raw-JSON parsing mode.
+			if p.tag != "{" && p.tag != "[" {
+				trimmed := strings.TrimSpace(content)
+				if len(trimmed) > 0 && trimmed[0] == '{' {
+					p.tag = "{"
+					p.buffer = []byte(trimmed)
+					content = ""
+					p.state = toolsState_ToolCalling
+				} else {
+					return nil, content
+				}
+			} else {
+				return nil, content
+			}
+		} else {
+			p.state = toolsState_ToolCalling
 		}
-
-		p.state = toolsState_ToolCalling
 	}
 
 	for {
