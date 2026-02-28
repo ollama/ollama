@@ -14,8 +14,8 @@ describe("Model merging logic", () => {
     const merged = mergeModels(localModels);
 
     // First verify cloud models are first and in FEATURED_MODELS order
-    const cloudModels = FEATURED_MODELS.filter((m: string) =>
-      m.endsWith("cloud"),
+    const cloudModels = FEATURED_MODELS.filter(
+      (m: string) => m.endsWith("cloud") || m === "gemini-3-pro-preview",
     );
     for (let i = 0; i < cloudModels.length; i++) {
       expect(merged[i].model).toBe(cloudModels[i]);
@@ -24,7 +24,7 @@ describe("Model merging logic", () => {
 
     // Then verify non-cloud featured models are next and in FEATURED_MODELS order
     const nonCloudFeatured = FEATURED_MODELS.filter(
-      (m: string) => !m.endsWith("cloud"),
+      (m: string) => !m.endsWith("cloud") && m !== "gemini-3-pro-preview",
     );
     for (let i = 0; i < nonCloudFeatured.length; i++) {
       const model = merged[i + cloudModels.length];
@@ -54,9 +54,9 @@ describe("Model merging logic", () => {
     const cloudModels = merged.filter((m) => m.isCloud());
     expect(cloudModels.length).toBe(0);
 
-    // Should have non-cloud featured models
+    // Should have non-cloud featured models (excluding gemini-3-pro-preview which is treated as cloud)
     const nonCloudFeatured = FEATURED_MODELS.filter(
-      (m) => !m.endsWith("cloud"),
+      (m) => !m.endsWith("cloud") && m !== "gemini-3-pro-preview",
     );
     for (let i = 0; i < nonCloudFeatured.length; i++) {
       const model = merged[i];
@@ -74,7 +74,9 @@ describe("Model merging logic", () => {
     const merged = mergeModels([]);
 
     // First verify cloud models are first and in FEATURED_MODELS order
-    const cloudModels = FEATURED_MODELS.filter((m) => m.endsWith("cloud"));
+    const cloudModels = FEATURED_MODELS.filter(
+      (m) => m.endsWith("cloud") || m === "gemini-3-pro-preview",
+    );
     for (let i = 0; i < cloudModels.length; i++) {
       expect(merged[i].model).toBe(cloudModels[i]);
       expect(merged[i].isCloud()).toBe(true);
@@ -82,7 +84,7 @@ describe("Model merging logic", () => {
 
     // Then verify non-cloud featured models are next and in FEATURED_MODELS order
     const nonCloudFeatured = FEATURED_MODELS.filter(
-      (m) => !m.endsWith("cloud"),
+      (m) => !m.endsWith("cloud") && m !== "gemini-3-pro-preview",
     );
     for (let i = 0; i < nonCloudFeatured.length; i++) {
       const model = merged[i + cloudModels.length];
@@ -104,7 +106,9 @@ describe("Model merging logic", () => {
     const merged = mergeModels(localModels);
 
     // First verify cloud models are first and in FEATURED_MODELS order
-    const cloudModels = FEATURED_MODELS.filter((m) => m.endsWith("cloud"));
+    const cloudModels = FEATURED_MODELS.filter(
+      (m) => m.endsWith("cloud") || m === "gemini-3-pro-preview",
+    );
     for (let i = 0; i < cloudModels.length; i++) {
       expect(merged[i].model).toBe(cloudModels[i]);
       expect(merged[i].isCloud()).toBe(true);
@@ -112,7 +116,7 @@ describe("Model merging logic", () => {
 
     // Then verify non-cloud featured models are next and in FEATURED_MODELS order
     const nonCloudFeatured = FEATURED_MODELS.filter(
-      (m) => !m.endsWith("cloud"),
+      (m) => !m.endsWith("cloud") && m !== "gemini-3-pro-preview",
     );
     for (let i = 0; i < nonCloudFeatured.length; i++) {
       const model = merged[i + cloudModels.length];
