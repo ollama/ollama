@@ -874,6 +874,23 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Get the --names-only flag value
+	namesOnly, err := cmd.Flags().GetBool("names-only")
+	if err != nil {
+		return err
+	}
+
+	// If --names-only flag is set, just print model names
+	if namesOnly {
+		for _, m := range models.Models {
+			if len(args) == 0 || strings.HasPrefix(strings.ToLower(m.Name), strings.ToLower(args[0])) {
+				fmt.Println(m.Name)
+			}
+		}
+		return nil
+	}
+
+	// Original table output logic
 	var data [][]string
 
 	for _, m := range models.Models {
@@ -2240,6 +2257,8 @@ func NewCLI() *cobra.Command {
 		PreRunE: checkServerHeartbeat,
 		RunE:    ListHandler,
 	}
+
+	listCmd.Flags().Bool("names-only", false, "Only show model names")
 
 	psCmd := &cobra.Command{
 		Use:     "ps",
