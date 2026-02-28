@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	DefaultCheckpointCount    = 32
+	DefaultCheckpointCount    = 24
 	DefaultCheckpointMinPos   = int32(16)
-	DefaultCheckpointInterval = int32(1280)
+	DefaultCheckpointInterval = int32(1664)
 )
 
 var ErrInvalidRecurrentShape = errors.New("kvcache: invalid recurrent state shape")

@@ -290,6 +290,7 @@ func (kv KV) OllamaEngineRequired() bool {
 		"olmo3",
 		"qwen25vl",
 		"qwen3", "qwen3moe",
+		"qwen35", "qwen35moe",
 		"qwen3next",
 		"qwen3vl", "qwen3vlmoe",
 		"glm4moelite",
@@ -868,7 +869,12 @@ func (f GGML) SupportsFlashAttention() bool {
 		return false
 	}
 
-	if arch := f.KV().Architecture(); slices.Contains([]string{"gemma2"}, arch) {
+	arch := f.KV().Architecture()
+	if slices.Contains([]string{"qwen35", "qwen35moe", "qwen3next"}, arch) {
+		return true
+	}
+
+	if slices.Contains([]string{"gemma2"}, arch) {
 		return false
 	}
 
@@ -892,6 +898,7 @@ func (f GGML) FlashAttention() bool {
 		"nemotron_h", "nemotron_h_moe",
 		"olmo3",
 		"qwen3", "qwen3moe",
+		"qwen35", "qwen35moe",
 		"qwen3next",
 		"qwen3vl", "qwen3vlmoe",
 	}, f.KV().String("general.architecture"))

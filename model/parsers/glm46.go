@@ -32,9 +32,10 @@ const (
 )
 
 type GLM46Parser struct {
-	state  glm46ParserState
-	buffer strings.Builder
-	tools  []api.Tool
+	state     glm46ParserState
+	buffer    strings.Builder
+	tools     []api.Tool
+	callIndex int
 }
 
 func (p *GLM46Parser) HasToolSupport() bool {
@@ -48,6 +49,7 @@ func (p *GLM46Parser) HasThinkingSupport() bool {
 // func (p *GLM46Parser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
 func (p *GLM46Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
+	p.callIndex = 0
 	return tools
 }
 
@@ -89,6 +91,8 @@ func (p *GLM46Parser) Add(s string, done bool) (content string, thinking string,
 				slog.Warn("glm-4.6 tool call parsing failed", "error", err)
 				return "", "", nil, err
 			}
+			toolCall.Function.Index = p.callIndex
+			p.callIndex++
 			toolCalls = append(toolCalls, toolCall)
 		case glm46EventThinkingContent:
 			thinkingSb.WriteString(event.content)

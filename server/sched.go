@@ -231,7 +231,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					}
 
 					// Check for experimental safetensors LLM models
-					if pending.model.Config.ModelFormat == "safetensors" {
+					if pending.model.IsMLX() {
 						if slices.Contains(pending.model.Config.Capabilities, "completion") {
 							// LLM model with safetensors format - use MLX runner
 							if s.loadMLX(pending) {
@@ -447,7 +447,7 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo
 
 	// Some architectures are not safe with num_parallel > 1.
 	// ref: https://github.com/ollama/ollama/issues/4165
-	if slices.Contains([]string{"mllama", "qwen3vl", "qwen3vlmoe", "qwen3next", "lfm2", "lfm2moe", "nemotron_h", "nemotron_h_moe"}, req.model.Config.ModelFamily) && numParallel != 1 {
+	if slices.Contains([]string{"mllama", "qwen3vl", "qwen3vlmoe", "qwen35", "qwen35moe", "qwen3next", "lfm2", "lfm2moe", "nemotron_h", "nemotron_h_moe"}, req.model.Config.ModelFamily) && numParallel != 1 {
 		numParallel = 1
 		slog.Warn("model architecture does not currently support parallel requests", "architecture", req.model.Config.ModelFamily)
 	}
@@ -536,6 +536,7 @@ iGPUScan:
 		}
 	}
 
+	totalSize, vramSize := llama.MemorySize()
 	runner := &runnerRef{
 		model:           req.model,
 		modelPath:       req.model.ModelPath,
@@ -545,8 +546,8 @@ iGPUScan:
 		sessionDuration: sessionDuration,
 		gpus:            gpuIDs,
 		discreteGPUs:    discreteGPUs,
-		vramSize:        llama.VRAMSize(),
-		totalSize:       llama.TotalSize(),
+		totalSize:       totalSize,
+		vramSize:        vramSize,
 		loading:         true,
 		pid:             llama.Pid(),
 	}
@@ -619,6 +620,7 @@ func (s *Scheduler) loadMLX(req *LlmRequest) bool {
 		sessionDuration = req.sessionDuration.Duration
 	}
 
+	totalSize, vramSize := server.MemorySize()
 	runner := &runnerRef{
 		model:           req.model,
 		modelPath:       req.model.ModelPath,
@@ -628,8 +630,8 @@ func (s *Scheduler) loadMLX(req *LlmRequest) bool {
 		loading:         false,
 		isImagegen:      isImagegen,
 		sessionDuration: sessionDuration,
-		totalSize:       server.TotalSize(),
-		vramSize:        server.VRAMSize(),
+		totalSize:       totalSize,
+		vramSize:        vramSize,
 	}
 
 	s.loadedMu.Lock()
@@ -762,7 +764,7 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 	defer cancel()
 	if !reflect.DeepEqual(runner.model.AdapterPaths, req.model.AdapterPaths) || // have the adapters changed?
 		!reflect.DeepEqual(runner.model.ProjectorPaths, req.model.ProjectorPaths) || // have the projectors changed?
-		!reflect.DeepEqual(optsExisting, optsNew) || // have the runner options changed?
+		(!runner.model.IsMLX() && !reflect.DeepEqual(optsExisting, optsNew)) || // have the runner options changed?
 		runner.llama.Ping(ctx) != nil {
 		return true
 	}

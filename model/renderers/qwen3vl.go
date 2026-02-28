@@ -1,6 +1,7 @@
 package renderers
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/ollama/ollama/api"
@@ -9,10 +10,11 @@ import (
 type Qwen3VLRenderer struct {
 	isThinking bool
 
-	useImgTags bool
+	emitEmptyThinkOnNoThink bool
+	useImgTags              bool
 }
 
-func (r *Qwen3VLRenderer) renderContent(content api.Message) string {
+func (r *Qwen3VLRenderer) renderContent(content api.Message, imageOffset int) (string, int) {
 	// This assumes all images are at the front of the message - same assumption as ollama/ollama/runner.go
 	var subSb strings.Builder
 	for range content.Images {
@@ -20,7 +22,8 @@ func (r *Qwen3VLRenderer) renderContent(content api.Message) string {
 		// model backends, and so we should eventually parameterize this or
 		// only output a placeholder such as [img]
 		if r.useImgTags {
-			subSb.WriteString("[img]")
+			subSb.WriteString(fmt.Sprintf("[img-%d]", imageOffset))
+			imageOffset++
 		} else {
 			subSb.WriteString("<|vision_start|><|image_pad|><|vision_end|>")
 		}
@@ -28,11 +31,16 @@ func (r *Qwen3VLRenderer) renderContent(content api.Message) string {
 	// TODO: support videos
 
 	subSb.WriteString(content.Content)
-	return subSb.String()
+	return subSb.String(), imageOffset
 }
 
-func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *api.ThinkValue) (string, error) {
+func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error) {
 	var sb strings.Builder
+
+	isThinking := r.isThinking
+	if think != nil {
+		isThinking = think.Bool()
+	}
 
 	if len(tools) > 0 {
 		sb.WriteString(imStartTag + "system\n")
@@ -57,7 +65,7 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 		message := messages[i]
 		if multiStepTool && message.Role == "user" {
 			// Check if content starts with <tool_response> and ends with </tool_response>
-			content := r.renderContent(message)
+			content, _ := r.renderContent(message, 0)
 			if !(strings.HasPrefix(content, "<tool_response>") && strings.HasSuffix(content, "</tool_response>")) {
 				multiStepTool = false
 				lastQueryIndex = i
@@ -65,8 +73,10 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 		}
 	}
 
+	imageOffset := 0
 	for i, message := range messages {
-		content := r.renderContent(message)
+		content, nextImageOffset := r.renderContent(message, imageOffset)
+		imageOffset = nextImageOffset
 
 		lastMessage := i == len(messages)-1
 		prefill := lastMessage && message.Role == "assistant"
@@ -76,13 +86,13 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 		} else if message.Role == "assistant" {
 			contentReasoning := ""
 
-			if r.isThinking {
+			if isThinking {
 				if message.Thinking != "" {
 					contentReasoning = message.Thinking
 				}
 			}
 
-			if r.isThinking && i > lastQueryIndex {
+			if isThinking && i > lastQueryIndex {
 				if i == len(messages)-1 || contentReasoning != "" {
 					sb.WriteString("<|im_start|>" + message.Role + "\n<think>\n" + strings.Trim(contentReasoning, "\n")) // do we want to add a new line here?
 					if content != "" {
@@ -125,8 +135,10 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, _ *ap
 		// prefill at the end
 		if lastMessage && !prefill {
 			sb.WriteString("<|im_start|>assistant\n")
-			if r.isThinking {
+			if isThinking {
 				sb.WriteString("<think>\n")
+			} else if r.emitEmptyThinkOnNoThink {
+				sb.WriteString("<think>\n\n</think>\n\n")
 			}
 		}
 	}

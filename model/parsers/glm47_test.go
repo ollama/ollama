@@ -97,3 +97,91 @@ func TestGLM47ParserToolCallEscaping(t *testing.T) {
 		t.Fatalf("expected %#v, got %#v", expected, toolCall)
 	}
 }
+
+func TestGLM47ParserToolCallIndexing(t *testing.T) {
+	parser := GLM47Parser{}
+	parser.Init(nil, nil, nil)
+
+	input := `plan</think>
+<tool_call>first<arg_key>a</arg_key><arg_value>1</arg_value></tool_call>
+<tool_call>second<arg_key>b</arg_key><arg_value>2</arg_value></tool_call>
+<tool_call>third<arg_key>c</arg_key><arg_value>3</arg_value></tool_call>`
+
+	_, _, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	want := []api.ToolCall{
+		{Function: api.ToolCallFunction{Name: "first", Arguments: args(`{"a":"1"}`), Index: 0}},
+		{Function: api.ToolCallFunction{Name: "second", Arguments: args(`{"b":"2"}`), Index: 1}},
+		{Function: api.ToolCallFunction{Name: "third", Arguments: args(`{"c":"3"}`), Index: 2}},
+	}
+	if len(calls) != len(want) {
+		t.Fatalf("expected %d calls, got %d", len(want), len(calls))
+	}
+	for i := range want {
+		if !toolCallEqual(calls[i], want[i]) {
+			t.Fatalf("call %d mismatch: got %#v, want %#v", i, calls[i], want[i])
+		}
+	}
+}
+
+func TestGLM47ParserToolCallIndexingStreaming(t *testing.T) {
+	parser := GLM47Parser{}
+	parser.Init(nil, nil, nil)
+
+	var all []api.ToolCall
+
+	_, _, calls, err := parser.Add("plan</think><tool_call>first<arg_key>a</arg_key><arg_value>1</arg_value></tool_call><tool_call>second<arg_key>b</arg_key>", false)
+	if err != nil {
+		t.Fatalf("step 1 parse failed: %v", err)
+	}
+	all = append(all, calls...)
+
+	_, _, calls, err = parser.Add("<arg_value>2</arg_value></tool_call><tool_call>third<arg_key>c</arg_key><arg_value>3</arg_value></tool_call>", true)
+	if err != nil {
+		t.Fatalf("step 2 parse failed: %v", err)
+	}
+	all = append(all, calls...)
+
+	want := []api.ToolCall{
+		{Function: api.ToolCallFunction{Name: "first", Arguments: args(`{"a":"1"}`), Index: 0}},
+		{Function: api.ToolCallFunction{Name: "second", Arguments: args(`{"b":"2"}`), Index: 1}},
+		{Function: api.ToolCallFunction{Name: "third", Arguments: args(`{"c":"3"}`), Index: 2}},
+	}
+	if len(all) != len(want) {
+		t.Fatalf("expected %d calls, got %d", len(want), len(all))
+	}
+	for i := range want {
+		if !toolCallEqual(all[i], want[i]) {
+			t.Fatalf("call %d mismatch: got %#v, want %#v", i, all[i], want[i])
+		}
+	}
+}
+
+func TestGLM47ParserToolCallIndexResetOnInit(t *testing.T) {
+	parser := GLM47Parser{}
+	parser.Init(nil, nil, nil)
+
+	_, _, _, err := parser.Add("plan</think><tool_call>first<arg_key>a</arg_key><arg_value>1</arg_value></tool_call>", true)
+	if err != nil {
+		t.Fatalf("first parse failed: %v", err)
+	}
+
+	parser.Init(nil, nil, nil)
+	_, _, calls, err := parser.Add("plan</think><tool_call>second<arg_key>b</arg_key><arg_value>2</arg_value></tool_call>", true)
+	if err != nil {
+		t.Fatalf("second parse failed: %v", err)
+	}
+
+	want := api.ToolCall{
+		Function: api.ToolCallFunction{Name: "second", Arguments: args(`{"b":"2"}`), Index: 0},
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if !toolCallEqual(calls[0], want) {
+		t.Fatalf("got %#v, want %#v", calls[0], want)
+	}
+}

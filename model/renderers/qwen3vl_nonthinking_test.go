@@ -101,7 +101,7 @@ Let me analyze this image.`,
 			},
 			useImgTags: true,
 			expected: `<|im_start|>user
-[img]Describe this image.<|im_end|>
+[img-0]Describe this image.<|im_end|>
 <|im_start|>assistant
 Let me analyze this image.`,
 		},
@@ -123,7 +123,7 @@ Let me analyze this image.`,
 			},
 			useImgTags: true,
 			expected: `<|im_start|>user
-[img][img]Describe these images.<|im_end|>
+[img-0][img-1]Describe these images.<|im_end|>
 <|im_start|>assistant
 Let me analyze this image.`,
 		},

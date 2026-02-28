@@ -56,60 +56,46 @@ var (
 	tokenVisionEnd   int32 = 151653
 )
 
-type modelInput struct {
-	*input.Input
-	position int32
-}
-
 // PostTokenize arranges Qwen 3 VL's inputs for the forward pass
 func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
 	m.positionCache = m.positionCache[:0]
-	return slices.Collect(func(yield func(*input.Input) bool) {
-		for i := range inputs {
-			s := []modelInput{{Input: inputs[i]}}
-			if mm := inputs[i].Multimodal; mm != nil {
-				t := mm[0].Tensor
-				s = slices.Repeat([]modelInput{
-					{
-						position: int32(i + 1),
-						Input:    &input.Input{Token: tokenVision},
-					},
-				}, t.Dim(1)+1+1)
+	var result []*input.Input
+	appendInput := func(inp *input.Input, position int32) {
+		result = append(result, inp)
+		m.positionCache = append(m.positionCache, position)
+	}
 
-				s[0] = modelInput{
-					Input:    &input.Input{Token: tokenVisionStart},
-					position: int32(i),
-				}
-
-				s[len(s)-1] = modelInput{
-					Input:    &input.Input{Token: tokenVisionEnd},
-					position: int32(i + mm[0].Data.(*Grid).Width/m.spatialMergeSize + 1),
-				}
-
-				s[1] = modelInput{
-					Input: &input.Input{
-						Token:          tokenVision,
-						Multimodal:     inputs[i].Multimodal,
-						MultimodalHash: inputs[i].MultimodalHash,
-						SameBatch:      t.Dim(1),
-					},
-					position: int32(i + 1),
-				}
-			}
-
-			for _, e := range s {
-				position := e.position
-				if position == 0 && len(m.positionCache) > 0 {
-					position = m.positionCache[len(m.positionCache)-1] + 1
-				}
-
-				m.positionCache = append(m.positionCache, position)
-				if !yield(e.Input) {
-					return
-				}
-			}
+	var p int32
+	for _, inp := range inputs {
+		if inp.Multimodal == nil {
+			appendInput(inp, p)
+			p++
+			continue
 		}
-	}), nil
+
+		grid := inp.Multimodal[0].Data.(*Grid)
+		tokensPerGrid := inp.Multimodal[0].Tensor.Dim(1)
+
+		appendInput(&input.Input{Token: tokenVisionStart}, p)
+		p++
+
+		appendInput(&input.Input{
+			Token:          tokenVision,
+			Multimodal:     inp.Multimodal,
+			MultimodalHash: inp.MultimodalHash,
+			SameBatch:      tokensPerGrid,
+		}, p)
+
+		for range tokensPerGrid - 1 {
+			appendInput(&input.Input{Token: tokenVision}, p)
+		}
+
+		p = p + int32(grid.Width/m.spatialMergeSize)
+		appendInput(&input.Input{Token: tokenVisionEnd}, p)
+		p++
+	}
+
+	return result, nil
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
@@ -143,9 +129,13 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 			}
 		}
 
-		deepstackVisualEmbeds = make([]ml.Tensor, len(mi.Multimodal[1:]))
+		if len(mi.Multimodal[1:]) > len(deepstackVisualEmbeds) {
+			deepstackVisualEmbeds = append(deepstackVisualEmbeds, make([]ml.Tensor, len(mi.Multimodal[1:])-len(deepstackVisualEmbeds))...)
+		}
 		for i, mm := range mi.Multimodal[1:] {
-			deepstackVisualEmbeds[i] = ctx.Input().Zeros(mm.Tensor.DType(), hiddenStates.Shape()...)
+			if deepstackVisualEmbeds[i] == nil {
+				deepstackVisualEmbeds[i] = ctx.Input().Zeros(mm.Tensor.DType(), hiddenStates.Shape()...)
+			}
 			ctx.Forward(mm.Tensor.Copy(ctx, deepstackVisualEmbeds[i].View(ctx, mi.Index*deepstackVisualEmbeds[i].Stride(1), mm.Tensor.Dim(0)*mm.Tensor.Dim(1))))
 		}
 	}
@@ -189,8 +179,8 @@ func New(c fs.Config) (model.Model, error) {
 			`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
 		),
 		TextModel:      newTextModel(c),
-		VisionModel:    newVisionModel(c),
-		ImageProcessor: newImageProcessor(c),
+		VisionModel:    NewVisionModel(c),
+		ImageProcessor: NewImageProcessor(c),
 	}
 
 	m.Cache = kvcache.NewCausalCache(func(ctx ml.Context, layer int, key, positions ml.Tensor) (ml.Tensor, error) {

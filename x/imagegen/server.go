@@ -374,14 +374,9 @@ func (s *Server) Close() error {
 	return nil
 }
 
-// VRAMSize returns the estimated VRAM usage.
-func (s *Server) VRAMSize() uint64 {
-	return s.vramSize
-}
-
-// TotalSize returns the total memory usage.
-func (s *Server) TotalSize() uint64 {
-	return s.vramSize
+// MemorySize returns the total and VRAM memory usage.
+func (s *Server) MemorySize() (total, vram uint64) {
+	return s.vramSize, s.vramSize
 }
 
 // VRAMByGPU returns VRAM usage for a specific GPU.

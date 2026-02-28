@@ -236,16 +236,6 @@ func TestLFM2Renderer_Images(t *testing.T) {
 				Content: "Describe this image.",
 				Images:  []api.ImageData{api.ImageData("img1")},
 			},
-			expected: "<|startoftext|><|im_start|>user\n[img]Describe this image.<|im_end|>\n<|im_start|>assistant\n",
-		},
-		{
-			name:     "existing_indexed_img_placeholder_not_duplicated",
-			renderer: &LFM2Renderer{useImgTags: true},
-			message: api.Message{
-				Role:    "user",
-				Content: "[img-0]Describe this image.",
-				Images:  []api.ImageData{api.ImageData("img1")},
-			},
 			expected: "<|startoftext|><|im_start|>user\n[img-0]Describe this image.<|im_end|>\n<|im_start|>assistant\n",
 		},
 		{

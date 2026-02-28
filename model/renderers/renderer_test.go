@@ -29,17 +29,27 @@ func TestRegisterCustomRenderer(t *testing.T) {
 }
 
 func TestBuiltInRendererStillWorks(t *testing.T) {
-	// Test that qwen3-coder still works
+	tests := []struct {
+		name string
+	}{
+		{name: "qwen3-coder"},
+		{name: "qwen3.5"},
+	}
+
 	messages := []api.Message{
 		{Role: "user", Content: "Hello"},
 	}
 
-	result, err := RenderWithRenderer("qwen3-coder", messages, nil, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if result == "" {
-		t.Error("expected non-empty result from qwen3-coder renderer")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := RenderWithRenderer(tt.name, messages, nil, nil)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result == "" {
+				t.Fatalf("expected non-empty result from %s renderer", tt.name)
+			}
+		})
 	}
 }
 

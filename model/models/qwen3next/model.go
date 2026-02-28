@@ -1,9 +1,12 @@
 package qwen3next
 
 import (
+	"bytes"
 	"cmp"
 	"fmt"
+	"image"
 	"math"
+	"slices"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/ml"
@@ -11,6 +14,7 @@ import (
 	"github.com/ollama/ollama/ml/nn/rope"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
+	"github.com/ollama/ollama/model/models/qwen3vl"
 	"github.com/ollama/ollama/tokenizer"
 )
 
@@ -41,9 +45,14 @@ type Options struct {
 	ssmNGroup      int // num_k_heads
 	ssmDtRank      int // num_v_heads
 	convKernelSize int // SSM conv kernel size
+	vHeadReordered bool
 
 	// Per-layer type from GGUF metadata
 	isRecurrent []bool
+
+	// RoPE mode config (used by qwen35/qwen35moe)
+	mropeSections    []int
+	mropeInterleaved bool
 
 	// Pre-computed masks for chunked attention (created once per forward pass)
 	masks *Masks
@@ -54,7 +63,17 @@ func (o Options) headDim() int {
 }
 
 func (o Options) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions ml.Tensor) ml.Tensor {
-	opts := []func(*rope.Options){rope.WithTypeNeoX()}
+	var opts []func(*rope.Options)
+	if len(o.mropeSections) > 0 {
+		if o.mropeInterleaved {
+			opts = append(opts, rope.WithInterleaveMRoPE(o.mropeSections))
+		} else {
+			opts = append(opts, rope.WithMRoPE(o.mropeSections))
+		}
+	} else {
+		opts = append(opts, rope.WithTypeNeoX())
+	}
+
 	if o.ropeType == "yarn" {
 		attnFactor := float32(1.0 / (1.0 + 0.1*math.Log(float64(o.ropeScale))))
 		opts = append(opts,
@@ -214,20 +233,190 @@ type Model struct {
 	OutputNorm     *nn.RMSNorm   `gguf:"output_norm"`
 	Output         *nn.Linear    `gguf:"output,alt:token_embd"`
 
-	Layers []Layer `gguf:"blk"`
+	Layers []Layer              `gguf:"blk"`
+	Vision *qwen3vl.VisionModel `gguf:"v"`
+
+	ImageProcessor *qwen3vl.ImageProcessor
 
 	*Options
+
+	positionCache    []int32
+	imageToken       int32
+	visionStart      int32
+	visionEnd        int32
+	spatialMergeSize uint32
+}
+
+func (m *Model) mapPosition(id int32) int32 {
+	if id < int32(len(m.positionCache)) {
+		return m.positionCache[id]
+	}
+	if len(m.positionCache) > 0 {
+		return id - int32(len(m.positionCache)) + m.positionCache[len(m.positionCache)-1] + 1
+	}
+	return id
+}
+
+func (m *Model) buildPositions(ctx ml.Context, batch input.Batch) ml.Tensor {
+	if len(m.mropeSections) == 0 {
+		return ctx.Input().FromInts(batch.Positions, len(batch.Positions))
+	}
+
+	// ggml MRoPE expects [time, height, width, extra] for each token.
+	positionSlice := [][]int32{
+		make([]int32, len(batch.Positions)),
+		make([]int32, len(batch.Positions)),
+		make([]int32, len(batch.Positions)),
+		make([]int32, len(batch.Positions)),
+	}
+
+	for i, id := range batch.Positions {
+		p := m.mapPosition(id)
+		positionSlice[0][i] = p
+		positionSlice[1][i] = p
+		positionSlice[2][i] = p
+	}
+
+	if m.Vision != nil {
+		for _, mi := range batch.Multimodal {
+			grid, ok := mi.Multimodal[0].Data.(*qwen3vl.Grid)
+			if !ok {
+				continue
+			}
+			w := max(1, grid.Width/int(m.spatialMergeSize))
+			for i := range mi.Multimodal[0].Tensor.Dim(1) {
+				positionSlice[1][mi.Index+i] += int32(i / w)
+				positionSlice[2][mi.Index+i] += int32(i % w)
+			}
+		}
+	}
+
+	return ctx.Input().FromInts(slices.Concat(positionSlice...), len(positionSlice[0])*len(positionSlice))
+}
+
+func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input.Multimodal, error) {
+	if m.Vision == nil || m.ImageProcessor == nil || len(m.Vision.Layers) == 0 {
+		return nil, model.ErrNoVisionModel
+	}
+
+	img, _, err := image.Decode(bytes.NewReader(multimodalData))
+	if err != nil {
+		return nil, err
+	}
+
+	pixelValues, grid, err := m.ImageProcessor.ProcessImage(ctx, img)
+	if err != nil {
+		return nil, err
+	}
+
+	visionOutputs, deepstackVisualEmbeds := m.Vision.Forward(ctx, pixelValues, grid)
+	mm := []input.Multimodal{{Tensor: visionOutputs, Data: grid}}
+	for i := range deepstackVisualEmbeds {
+		mm = append(mm, input.Multimodal{Tensor: deepstackVisualEmbeds[i]})
+	}
+
+	return mm, nil
+}
+
+func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
+	m.positionCache = m.positionCache[:0]
+	var result []*input.Input
+	appendInput := func(inp *input.Input, position int32) {
+		result = append(result, inp)
+		m.positionCache = append(m.positionCache, position)
+	}
+
+	var p int32
+	for _, inp := range inputs {
+		if inp.Multimodal == nil {
+			appendInput(inp, p)
+			p++
+			continue
+		}
+
+		grid := inp.Multimodal[0].Data.(*qwen3vl.Grid)
+		tokensPerGrid := inp.Multimodal[0].Tensor.Dim(1)
+
+		appendInput(&input.Input{
+			Token:     m.visionStart,
+			SameBatch: tokensPerGrid + 1,
+		}, p)
+		p++
+
+		appendInput(&input.Input{
+			Token:          m.imageToken,
+			Multimodal:     inp.Multimodal,
+			MultimodalHash: inp.MultimodalHash,
+		}, p)
+
+		for range tokensPerGrid - 1 {
+			appendInput(&input.Input{
+				Token: m.imageToken,
+			}, p)
+		}
+
+		gridSpan := max(grid.Width/int(m.spatialMergeSize), grid.Height/int(m.spatialMergeSize))
+		p = p + int32(gridSpan)
+		appendInput(&input.Input{
+			Token: m.visionEnd,
+		}, p)
+		p++
+	}
+
+	return result, nil
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	positions := ctx.Input().FromInts(batch.Positions, len(batch.Positions))
+	positions := m.buildPositions(ctx, batch)
 
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
+	if len(batch.Multimodal) > 0 {
+		hiddenStates = hiddenStates.Duplicate(ctx)
+
+		var deepstackVisualEmbeds []ml.Tensor
+		for _, mi := range batch.Multimodal {
+			visionOutputs := mi.Multimodal[0].Tensor
+			ctx.Forward(visionOutputs.Copy(ctx, hiddenStates.View(ctx, mi.Index*hiddenStates.Stride(1), visionOutputs.Dim(0)*visionOutputs.Dim(1))))
+
+			if len(mi.Multimodal[1:]) > len(deepstackVisualEmbeds) {
+				deepstackVisualEmbeds = append(deepstackVisualEmbeds, make([]ml.Tensor, len(mi.Multimodal[1:])-len(deepstackVisualEmbeds))...)
+			}
+			for i, mm := range mi.Multimodal[1:] {
+				if deepstackVisualEmbeds[i] == nil {
+					deepstackVisualEmbeds[i] = ctx.Input().Zeros(mm.Tensor.DType(), hiddenStates.Shape()...)
+				}
+				ctx.Forward(mm.Tensor.Copy(ctx, deepstackVisualEmbeds[i].View(ctx, mi.Index*deepstackVisualEmbeds[i].Stride(1), mm.Tensor.Dim(0)*mm.Tensor.Dim(1))))
+			}
+		}
+
+		cache := m.Cache.(*HybridCache)
+		m.Options.masks = nil
+		for i, layer := range m.Layers {
+			cache.SetLayer(i)
+
+			var outputs ml.Tensor
+			if i == len(m.Layers)-1 {
+				outputs = batch.Outputs
+			}
+
+			var err error
+			hiddenStates, err = layer.Forward(ctx, i, hiddenStates, positions, outputs, cache, m.Options)
+			if err != nil {
+				return nil, err
+			}
+			if i < len(deepstackVisualEmbeds) {
+				hiddenStates = hiddenStates.Add(ctx, deepstackVisualEmbeds[i])
+			}
+		}
+
+		hiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)
+		return m.Output.Forward(ctx, hiddenStates), nil
+	}
 
 	cache := m.Cache.(*HybridCache)
 
-	// Create masks once per forward pass
-	m.Options.masks = createMasks(ctx)
+	// Masks are allocated lazily only for chunked recurrent prefill.
+	m.Options.masks = nil
 
 	for i, layer := range m.Layers {
 		cache.SetLayer(i)
@@ -249,10 +438,17 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 }
 
 func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
+	m.positionCache = nil
+	if len(m.mropeSections) > 0 {
+		shift = shift.Repeat(ctx, 1, 4).Reshape(ctx, -1)
+	}
 	return m.applyRotaryPositionEmbeddings(ctx, key, shift), nil
 }
 
-var _ model.Model = (*Model)(nil)
+var (
+	_ model.Model               = (*Model)(nil)
+	_ model.MultimodalProcessor = (*Model)(nil)
+)
 
 func New(c fs.Config) (model.Model, error) {
 	numLayers := int(c.Uint("block_count"))
@@ -303,6 +499,22 @@ func New(c fs.Config) (model.Model, error) {
 		}
 	}
 
+	mropeSections := c.Ints("mrope_sections", nil)
+	if len(mropeSections) == 0 {
+		mropeSections = c.Ints("rope.mrope_section", nil)
+	}
+	if len(mropeSections) == 0 {
+		mropeSections = c.Ints("rope.dimension_sections", nil)
+	}
+	if len(mropeSections) > 4 {
+		mropeSections = mropeSections[:4]
+	}
+
+	ropeType := c.String("rope.scaling.type")
+	if ropeType == "" {
+		ropeType = c.String("rope.type")
+	}
+
 	opts := &Options{
 		hiddenSize: int(c.Uint("embedding_length")),
 		numHeads:   int(c.Uint("attention.head_count")),
@@ -318,7 +530,7 @@ func New(c fs.Config) (model.Model, error) {
 		valueLength:           int(c.Uint("attention.value_length")),
 		ropeDim:               int(c.Uint("rope.dimension_count")),
 		eps:                   c.Float("attention.layer_norm_rms_epsilon"),
-		ropeType:              c.String("rope.scaling.type"),
+		ropeType:              ropeType,
 		ropeBase:              c.Float("rope.freq_base"),
 		ropeScale:             c.Float("rope.scaling.factor", 1),
 		originalContextLength: int(c.Uint("rope.scaling.original_context_length")),
@@ -331,7 +543,16 @@ func New(c fs.Config) (model.Model, error) {
 		ssmNGroup:             int(c.Uint("ssm.group_count")),
 		ssmDtRank:             int(c.Uint("ssm.time_step_rank")),
 		convKernelSize:        int(c.Uint("ssm.conv_kernel")),
+		vHeadReordered:        c.Bool("ssm.v_head_reordered", false),
 		isRecurrent:           isRecurrent,
+		mropeSections: slices.Collect(func(yield func(int) bool) {
+			for _, section := range mropeSections {
+				if !yield(int(section)) {
+					return
+				}
+			}
+		}),
+		mropeInterleaved: c.Bool("rope.mrope_interleaved", c.Bool("mrope_interleaved", false)),
 	}
 	if opts.numKVHeads == 0 {
 		return nil, fmt.Errorf("qwen3next: attention.head_count_kv array must include at least one non-zero value")
@@ -353,6 +574,19 @@ func New(c fs.Config) (model.Model, error) {
 		return nil, fmt.Errorf("qwen3next: headKDim (%d) != headVDim (%d) not supported; state computations require equal dimensions", headKDim, headVDim)
 	}
 
+	var vision *qwen3vl.VisionModel
+	var imageProcessor *qwen3vl.ImageProcessor
+	if c.Uint("vision.block_count", 0) > 0 {
+		vision = qwen3vl.NewVisionModel(c)
+		processor := qwen3vl.NewImageProcessor(c)
+		imageProcessor = &processor
+	}
+
+	spatialMergeSize := c.Uint("vision.spatial_merge_size", 2)
+	if spatialMergeSize == 0 {
+		spatialMergeSize = 2
+	}
+
 	m := Model{
 		Tokenizer: tokenizer.NewBytePairEncoding(
 			&tokenizer.Vocabulary{
@@ -371,8 +605,14 @@ func New(c fs.Config) (model.Model, error) {
 			},
 			`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
 		),
-		Layers:  layers,
-		Options: opts,
+		Layers:           layers,
+		Vision:           vision,
+		ImageProcessor:   imageProcessor,
+		Options:          opts,
+		imageToken:       int32(c.Uint("image_token_id", 151655)),
+		visionStart:      int32(c.Uint("vision_start_token_id", 151652)),
+		visionEnd:        int32(c.Uint("vision_end_token_id", 151653)),
+		spatialMergeSize: spatialMergeSize,
 	}
 
 	m.Cache = NewHybridCache(m.Shift, convDim, convChannels, deltaStateSize)
@@ -380,5 +620,7 @@ func New(c fs.Config) (model.Model, error) {
 }
 
 func init() {
+	model.Register("qwen35", New)
+	model.Register("qwen35moe", New)
 	model.Register("qwen3next", New)
 }

@@ -245,7 +245,22 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 	padding := ggufPadding(offset, int64(alignment))
 	llm.tensorOffset = uint64(offset + padding)
 
+	// get file size to validate tensor bounds
+	fileSize, err := rs.Seek(0, io.SeekEnd)
+	if err != nil {
+		return fmt.Errorf("failed to determine file size: %w", err)
+	}
+
+	if _, err := rs.Seek(offset, io.SeekStart); err != nil {
+		return fmt.Errorf("failed to seek back after size check: %w", err)
+	}
+
 	for _, tensor := range llm.tensors {
+		tensorEnd := llm.tensorOffset + tensor.Offset + tensor.Size()
+		if tensorEnd > uint64(fileSize) {
+			return fmt.Errorf("tensor %q offset+size (%d) exceeds file size (%d)", tensor.Name, tensorEnd, fileSize)
+		}
+
 		offset, err := rs.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return fmt.Errorf("failed to get current offset: %w", err)

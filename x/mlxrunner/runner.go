@@ -4,15 +4,15 @@ package mlxrunner
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
 	"strings"
-	"time"
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/ollama/ollama/x/mlxrunner/cache"
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
@@ -22,11 +22,12 @@ import (
 
 type Request struct {
 	TextCompletionsRequest
-	Responses chan Response
+	Responses chan CompletionResponse
 	Pipeline  func(Request) error
 
+	Ctx context.Context
+
 	sample.Sampler
-	caches []cache.Cache
 }
 
 type TextCompletionsRequest struct {
@@ -43,25 +44,12 @@ type TextCompletionsRequest struct {
 	} `json:"options"`
 }
 
-type Response struct {
-	Text       string    `json:"content,omitempty"`
-	Token      int       `json:"token,omitempty"`
-	Logprobs   []float32 `json:"logprobs,omitempty"`
-	Done       bool      `json:"done,omitempty"`
-	DoneReason int       `json:"done_reason,omitempty"`
-
-	PromptTokens             int           `json:"prompt_eval_count,omitempty"`
-	PromptTokensDuration     time.Duration `json:"prompt_eval_duration,omitempty"`
-	CompletionTokens         int           `json:"eval_count,omitempty"`
-	CompletionTokensDuration time.Duration `json:"eval_duration,omitempty"`
-	TotalTokens              int           `json:"total_tokens,omitempty"`
-}
-
 type Runner struct {
-	Model     base.Model
-	Tokenizer *tokenizer.Tokenizer
-	Requests  chan Request
-	cache     *CacheEntry
+	Model         base.Model
+	Tokenizer     *tokenizer.Tokenizer
+	Requests      chan Request
+	cache         kvCache
+	contextLength int
 }
 
 func (r *Runner) Load(modelName string) error {
@@ -90,6 +78,7 @@ func (r *Runner) Load(modelName string) error {
 
 	r.Model = m
 	r.Tokenizer = m.Tokenizer()
+	r.contextLength = m.MaxContextLength()
 	return nil
 }
 
@@ -157,7 +146,18 @@ func (r *Runner) Run(host, port string, mux http.Handler) error {
 				return nil
 			case request := <-r.Requests:
 				if err := request.Pipeline(request); err != nil {
-					break
+					slog.Info("Request terminated", "error", err)
+					var statusErr api.StatusError
+					if !errors.As(err, &statusErr) {
+						statusErr = api.StatusError{
+							StatusCode:   http.StatusInternalServerError,
+							ErrorMessage: err.Error(),
+						}
+					}
+					select {
+					case request.Responses <- CompletionResponse{Error: &statusErr}:
+					case <-request.Ctx.Done():
+					}
 				}
 
 				close(request.Responses)

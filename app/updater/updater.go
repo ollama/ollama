@@ -289,6 +289,7 @@ func (u *Updater) TriggerImmediateCheck() {
 
 func (u *Updater) StartBackgroundUpdaterChecker(ctx context.Context, cb func(string) error) {
 	u.checkNow = make(chan struct{}, 1)
+	u.checkNow <- struct{}{} // Trigger first check after initial delay
 	go func() {
 		// Don't blast an update message immediately after startup
 		time.Sleep(UpdateCheckInitialDelay)
@@ -333,7 +334,7 @@ func (u *Updater) StartBackgroundUpdaterChecker(ctx context.Context, cb func(str
 				continue
 			}
 
-			// Download successful - show tray notification (regardless of toggle state)
+			// Download successful - show tray notification
 			err = cb(resp.UpdateVersion)
 			if err != nil {
 				slog.Warn("failed to register update available with tray", "error", err)

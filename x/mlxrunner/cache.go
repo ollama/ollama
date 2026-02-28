@@ -9,59 +9,105 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/model/base"
 )
 
-// CacheEntry stores a single sequence
-type CacheEntry struct {
-	Tokens []int32
-	Caches []cache.Cache
+type kvCache struct {
+	// For now we only support a single entry, so this is just one sequence
+	tokens []int32
+	caches []cache.Cache
 }
 
-// FindNearestCache finds the longest common prefix between tokens and the cached sequence
-func (r *Runner) FindNearestCache(tokens []int32) ([]cache.Cache, []int32) {
-	if r.cache == nil {
-		slog.Info("Cache miss", "left", len(tokens))
-		return nil, tokens
+// cacheSession manages caches for a single pipeline run.
+// Callers should append generated tokens to outputs and
+// defer close to save the cache state.
+type cacheSession struct {
+	cache   *kvCache
+	inputs  []int32
+	outputs []int32
+
+	caches    []cache.Cache
+	remaining []int32
+}
+
+// begin prepares caches for a new request. It finds the nearest
+// matching cache or creates new caches if none match.
+func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
+	if len(c.caches) == 0 {
+		if cacheFactory, ok := m.(interface{ NewCaches() []cache.Cache }); ok {
+			c.caches = cacheFactory.NewCaches()
+		} else {
+			c.caches = make([]cache.Cache, m.NumLayers())
+			for i := range c.caches {
+				c.caches[i] = cache.NewKVCache()
+			}
+		}
 	}
 
-	// Find longest common prefix
+	remaining := c.findRemaining(inputs)
+
+	return &cacheSession{
+		cache:     c,
+		inputs:    inputs,
+		caches:    c.caches,
+		remaining: remaining,
+	}
+}
+
+// close saves the token state if the forward pass ran.
+func (s *cacheSession) close() {
+	if offset := s.caches[0].Offset(); offset > 0 {
+		// Ensure that if we have run the forward pass and set the metadata
+		// that we also actually have the data
+		arrays := make([]*mlx.Array, 0, 2*len(s.caches))
+		for _, c := range s.caches {
+			k, v := c.State()
+			arrays = append(arrays, k, v)
+		}
+		mlx.AsyncEval(arrays...)
+
+		s.cache.tokens = append(s.inputs, s.outputs...)[:offset]
+	}
+}
+
+// findRemaining finds the longest common prefix between tokens and the cached
+// sequence, trims stale cache entries, and returns the remaining tokens.
+func (c *kvCache) findRemaining(tokens []int32) []int32 {
 	prefix := 0
-	for prefix < len(tokens) && prefix < len(r.cache.Tokens) && tokens[prefix] == r.cache.Tokens[prefix] {
+	for prefix < len(tokens) && prefix < len(c.tokens) && tokens[prefix] == c.tokens[prefix] {
 		prefix++
 	}
 
-	switch {
-	case prefix == 0:
-		for _, c := range r.cache.Caches {
-			c.Free()
+	// Always keep at least one token to re-evaluate so the
+	// pipeline can seed token generation from it.
+	if prefix == len(tokens) && prefix > 0 {
+		prefix--
+	}
+
+	if prefix < len(c.tokens) {
+		trim := len(c.tokens) - prefix
+		for _, kv := range c.caches {
+			kv.Trim(trim)
 		}
-		r.cache = nil
+		c.tokens = c.tokens[:prefix]
+	}
+
+	if prefix == 0 {
 		slog.Info("Cache miss", "left", len(tokens))
-		return nil, tokens
-	case prefix < len(r.cache.Tokens):
-		trim := len(r.cache.Tokens) - prefix
-		for _, c := range r.cache.Caches {
-			c.Trim(trim)
-		}
-		r.cache.Tokens = r.cache.Tokens[:prefix]
+	} else {
+		slog.Info("Cache hit", "total", len(tokens), "cached", prefix, "left", len(tokens[prefix:]))
 	}
-
-	slog.Info("Cache hit", "total", len(tokens), "cached", prefix, "left", len(tokens[prefix:]))
-	return r.cache.Caches, tokens[prefix:]
+	return tokens[prefix:]
 }
 
-func (r *Runner) InsertCache(tokens []int32, caches []cache.Cache) {
-	r.cache = &CacheEntry{
-		Tokens: tokens,
-		Caches: caches,
+func (c *kvCache) log() {
+	if len(c.caches) == 0 {
+		return
 	}
-}
-
-func (c *CacheEntry) LogCache() {
 	var totalBytes int
-	for _, kv := range c.Caches {
+	for _, kv := range c.caches {
 		k, v := kv.State()
 		totalBytes += k.NumBytes() + v.NumBytes()
 	}
-	logutil.Trace(fmt.Sprintf("kv cache tokens: %d, size: %s", c.Caches[0].Offset(), mlx.PrettyBytes(totalBytes)))
+	logutil.Trace(fmt.Sprintf("kv cache tokens: %d, size: %s", c.caches[0].Offset(), mlx.PrettyBytes(totalBytes)))
 }

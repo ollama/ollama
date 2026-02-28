@@ -1345,6 +1345,21 @@ func (t *Tensor) SetRows(ctx ml.Context, src ml.Tensor, idxs ml.Tensor) ml.Tenso
 	}
 }
 
+func (t *Tensor) SetInplace(ctx ml.Context, src ml.Tensor, nb1, nb2, nb3, offset int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_set_inplace(
+			ctx.(*Context).ctx,
+			t.t,
+			src.(*Tensor).t,
+			C.size_t(nb1),
+			C.size_t(nb2),
+			C.size_t(nb3),
+			C.size_t(offset),
+		),
+	}
+}
+
 func (t *Tensor) Copy(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,
