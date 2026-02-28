@@ -79,6 +79,16 @@ Enable JSON mode by setting the `format` parameter to `json`. This will structur
 > [!IMPORTANT]
 > It's important to instruct the model to use JSON in the `prompt`. Otherwise, the model may generate large amounts whitespace.
 
+#### Errors
+
+If computation of the model fails, a status code of 500 ("Internal server error") will be returned along with a JSON object:
+
+```json
+{
+"error":"model runner has unexpectedly stopped, this may be due to resource limitations or an internal error, check ollama server logs for details"
+}
+```
+
 ### Examples
 
 #### Generate request (Streaming)
@@ -532,6 +542,15 @@ Models can also explain the result of the tool call in the response. See the [Ch
 ### Structured outputs
 
 Structured outputs are supported by providing a JSON schema in the `format` parameter. The model will generate a response that matches the schema. See the [Chat request (Structured outputs)](#chat-request-structured-outputs) example below.
+
+### Errors
+If computation of the model fails, a status code of 500 ("Internal server error") will be returned along with a JSON object:
+
+```json
+{
+"error":"model runner has unexpectedly stopped, this may be due to resource limitations or an internal error, check ollama server logs for details"
+}
+```
 
 ### Examples
 
