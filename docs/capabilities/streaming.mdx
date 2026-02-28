@@ -50,7 +50,7 @@ To enable streaming in the SDKs, set the `stream` parameter to `True`.
         content += chunk.message.content
 
       # append the accumulated fields to the messages for the next request
-      new_messages = [{ role: 'assistant', thinking: thinking, content: content }]
+      new_messages = [{ 'role': 'assistant', 'thinking': thinking, 'content': content }]
     ```
   </Tab>
   <Tab title="JavaScript">
