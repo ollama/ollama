@@ -761,6 +761,9 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			return nil, 0, fmt.Errorf("input after truncation exceeds maximum context length")
 		}
 
+		slog.Warn("embedding input truncated to fit context window",
+			"original_tokens", len(tokens),
+			"truncated_to", ctxLen)
 		truncatedTokens := tokens[:ctxLen]
 		truncated, err := r.Detokenize(ctx, truncatedTokens)
 		if err != nil {
