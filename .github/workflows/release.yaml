@@ -114,7 +114,7 @@ jobs:
           - os: windows
             arch: amd64
             preset: Vulkan
-            install: https://sdk.lunarg.com/sdk/download/1.4.321.1/windows/vulkansdk-windows-X64-1.4.321.1.exe
+            install: https://sdk.lunarg.com/sdk/download/1.4.341.1/windows/vulkansdk-windows-X64-1.4.341.1.exe
             flags: ''
             runner_dir: 'vulkan'
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
