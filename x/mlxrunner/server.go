@@ -16,11 +16,88 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/model/base"
 	"github.com/ollama/ollama/x/mlxrunner/sample"
+	"github.com/ollama/ollama/x/models/qwen3_5"
 )
+
+type samplingConfig struct {
+	temperature      float32
+	topP             float32
+	minP             float32
+	topK             int
+	repeatLastN      int
+	repeatPenalty    float32
+	presencePenalty  float32
+	frequencyPenalty float32
+}
+
+func defaultSamplingConfig(m base.Model, think *bool) samplingConfig {
+	if _, ok := m.(*qwen3_5.Model); ok {
+		cfg := samplingConfig{
+			temperature:      1.0,
+			topP:             0.95,
+			minP:             0.0,
+			topK:             20,
+			repeatLastN:      64,
+			repeatPenalty:    1.0,
+			presencePenalty:  1.5,
+			frequencyPenalty: 0.0,
+		}
+		if think != nil && !*think {
+			cfg.temperature = 0.7
+			cfg.topP = 0.8
+		}
+		return cfg
+	}
+
+	opts := api.DefaultOptions()
+	return samplingConfig{
+		temperature:      opts.Temperature,
+		topP:             opts.TopP,
+		minP:             opts.MinP,
+		topK:             opts.TopK,
+		repeatLastN:      opts.RepeatLastN,
+		repeatPenalty:    opts.RepeatPenalty,
+		presencePenalty:  opts.PresencePenalty,
+		frequencyPenalty: opts.FrequencyPenalty,
+	}
+}
+
+func resolveSamplingConfig(m base.Model, req Request) samplingConfig {
+	cfg := defaultSamplingConfig(m, req.Think)
+
+	if req.Options.Temperature != nil {
+		cfg.temperature = *req.Options.Temperature
+	}
+	if req.Options.TopP != nil {
+		cfg.topP = *req.Options.TopP
+	}
+	if req.Options.MinP != nil {
+		cfg.minP = *req.Options.MinP
+	}
+	if req.Options.TopK != nil {
+		cfg.topK = *req.Options.TopK
+	}
+	if req.Options.RepeatLastN != nil {
+		cfg.repeatLastN = *req.Options.RepeatLastN
+	}
+	if req.Options.RepeatPenalty != nil {
+		cfg.repeatPenalty = *req.Options.RepeatPenalty
+	}
+	if req.Options.PresencePenalty != nil {
+		cfg.presencePenalty = *req.Options.PresencePenalty
+	}
+	if req.Options.FrequencyPenalty != nil {
+		cfg.frequencyPenalty = *req.Options.FrequencyPenalty
+	}
+
+	return cfg
+}
 
 func Execute(args []string) error {
 	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
@@ -90,12 +167,18 @@ func Execute(args []string) error {
 
 		request.Options.MaxTokens = cmp.Or(request.Options.MaxTokens, request.Options.NumPredict)
 
+		sampling := resolveSamplingConfig(runner.Model, request)
+
 		request.Pipeline = runner.TextGenerationPipeline
 		request.Sampler = sample.New(
-			request.Options.Temperature,
-			request.Options.TopP,
-			request.Options.MinP,
-			request.Options.TopK,
+			sampling.temperature,
+			sampling.topP,
+			sampling.minP,
+			sampling.topK,
+			sampling.repeatLastN,
+			sampling.repeatPenalty,
+			sampling.presencePenalty,
+			sampling.frequencyPenalty,
 		)
 
 		var cancel context.CancelFunc

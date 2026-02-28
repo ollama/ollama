@@ -1453,11 +1453,12 @@ type ImageData struct {
 }
 
 type CompletionRequest struct {
-	Prompt  string
-	Format  json.RawMessage
-	Images  []ImageData
-	Options *api.Options
-	Think   *api.ThinkValue
+	Prompt          string
+	Format          json.RawMessage
+	Images          []ImageData
+	Options         *api.Options
+	Think           *api.ThinkValue
+	ExplicitOptions map[string]struct{}
 
 	Grammar  string // set before sending the request to the subprocess
 	Shift    bool

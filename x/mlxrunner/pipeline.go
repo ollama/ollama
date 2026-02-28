@@ -82,6 +82,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	defer session.close()
 	caches := session.caches
 	tokens := session.remaining
+	history := append([]int32(nil), session.inputs...)
 	prefillChunk := prefillChunkSize()
 
 	materializeCaches := func() {
@@ -114,13 +115,13 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		mlx.ClearCache()
 	}
 
-	step := func(token *mlx.Array) (*mlx.Array, *mlx.Array) {
+	step := func(token *mlx.Array, history []int32) (*mlx.Array, *mlx.Array) {
 		fwd := r.Model.Forward(token.ExpandDims(0), caches)
 		logits := r.Model.Unembed(fwd)
 		logits = logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1)
 
 		logprobs := logits.Subtract(logits.Logsumexp(true))
-		sample := request.Sample(logprobs)
+		sample := request.Sample(logprobs, history)
 
 		mlx.Pin(sample, logprobs)
 		mlx.Sweep()
@@ -129,7 +130,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		return sample, logprobs
 	}
 
-	sample, logprobs = step(mlx.FromValues(tokens[processed:], total-processed))
+	sample, logprobs = step(mlx.FromValues(tokens[processed:], total-processed), history)
 
 	var b bytes.Buffer
 
@@ -139,8 +140,6 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 			return err
 		}
 
-		nextSample, nextLogprobs = step(sample)
-
 		if i == 0 {
 			mlx.Eval(sample)
 			final.PromptEvalDuration = time.Since(now)
@@ -149,6 +148,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 
 		output := int32(sample.Int())
 		session.outputs = append(session.outputs, output)
+		history = append(history, output)
 
 		if r.Tokenizer.IsEOS(output) {
 			final.DoneReason = 0
@@ -163,6 +163,8 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 			Content: r.Decode(output, &b),
 		}:
 		}
+
+		nextSample, nextLogprobs = step(sample, history)
 
 		mlx.Unpin(sample, logprobs)
 		sample, logprobs = nextSample, nextLogprobs

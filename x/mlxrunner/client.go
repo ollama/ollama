@@ -187,11 +187,15 @@ type completionRequest struct {
 }
 
 type completionOpts struct {
-	Temperature float32 `json:"temperature,omitempty"`
-	TopP        float32 `json:"top_p,omitempty"`
-	MinP        float32 `json:"min_p,omitempty"`
-	TopK        int     `json:"top_k,omitempty"`
-	NumPredict  int     `json:"num_predict,omitempty"`
+	Temperature      *float32 `json:"temperature,omitempty"`
+	TopP             *float32 `json:"top_p,omitempty"`
+	MinP             *float32 `json:"min_p,omitempty"`
+	TopK             *int     `json:"top_k,omitempty"`
+	RepeatLastN      *int     `json:"repeat_last_n,omitempty"`
+	RepeatPenalty    *float32 `json:"repeat_penalty,omitempty"`
+	PresencePenalty  *float32 `json:"presence_penalty,omitempty"`
+	FrequencyPenalty *float32 `json:"frequency_penalty,omitempty"`
+	NumPredict       int      `json:"num_predict,omitempty"`
 }
 
 type CompletionResponse struct {
@@ -241,11 +245,15 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 	}
 	if req.Options != nil {
 		creq.Options = &completionOpts{
-			Temperature: req.Options.Temperature,
-			TopP:        req.Options.TopP,
-			MinP:        req.Options.MinP,
-			TopK:        req.Options.TopK,
-			NumPredict:  req.Options.NumPredict,
+			Temperature:      float32Ptr(req.Options.Temperature, hasExplicitOption(req.ExplicitOptions, "temperature")),
+			TopP:             float32Ptr(req.Options.TopP, hasExplicitOption(req.ExplicitOptions, "top_p")),
+			MinP:             float32Ptr(req.Options.MinP, hasExplicitOption(req.ExplicitOptions, "min_p")),
+			TopK:             intPtr(req.Options.TopK, hasExplicitOption(req.ExplicitOptions, "top_k")),
+			RepeatLastN:      intPtr(req.Options.RepeatLastN, hasExplicitOption(req.ExplicitOptions, "repeat_last_n")),
+			RepeatPenalty:    float32Ptr(req.Options.RepeatPenalty, hasExplicitOption(req.ExplicitOptions, "repeat_penalty")),
+			PresencePenalty:  float32Ptr(req.Options.PresencePenalty, hasExplicitOption(req.ExplicitOptions, "presence_penalty")),
+			FrequencyPenalty: float32Ptr(req.Options.FrequencyPenalty, hasExplicitOption(req.ExplicitOptions, "frequency_penalty")),
+			NumPredict:       req.Options.NumPredict,
 		}
 	}
 
@@ -302,6 +310,25 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 	}
 
 	return scanner.Err()
+}
+
+func hasExplicitOption(explicit map[string]struct{}, key string) bool {
+	_, ok := explicit[key]
+	return ok
+}
+
+func float32Ptr(v float32, ok bool) *float32 {
+	if !ok {
+		return nil
+	}
+	return &v
+}
+
+func intPtr(v int, ok bool) *int {
+	if !ok {
+		return nil
+	}
+	return &v
 }
 
 func (c *Client) ContextLength() int {
