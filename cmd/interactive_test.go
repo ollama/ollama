@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ollama/ollama/api"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -83,4 +84,15 @@ func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, imgs, 1)
 	assert.Equal(t, cleaned, "before  after")
+}
+
+func TestBuildTranscript(t *testing.T) {
+	msgs := []api.Message{
+		{Role: "system", Content: "You are helpful."},
+		{Role: "user", Content: "Hello"},
+		{Role: "assistant", Content: "Hi there!"},
+	}
+	got := buildTranscript("llama3", msgs)
+	want := "llama3\n\nSystem: You are helpful.\n\nUser: Hello\n\nAssistant: Hi there!\n"
+	assert.Equal(t, want, got)
 }
