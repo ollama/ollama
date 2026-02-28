@@ -327,6 +327,8 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 			runner.refMu.Lock()
 			runner.refCount--
 			if runner.refCount <= 0 {
+				// Runner is now idle, allow system sleep
+				GetPowerManager().AllowSleep()
 				if runner.sessionDuration <= 0 {
 					slog.Debug("runner with zero duration has gone idle, expiring to unload", "runner", runner)
 					if runner.expireTimer != nil {
@@ -419,7 +421,12 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *LlmRequest) {
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
+	wasIdle := runner.refCount == 0
 	runner.refCount++
+	if wasIdle {
+		// Runner is now active, prevent system sleep
+		GetPowerManager().PreventSleep()
+	}
 	if runner.expireTimer != nil {
 		runner.expireTimer.Stop()
 		runner.expireTimer = nil
@@ -581,6 +588,8 @@ iGPUScan:
 			runner.pid = llama.Pid()
 		}
 		runner.refCount++
+		// First request on new runner, prevent system sleep
+		GetPowerManager().PreventSleep()
 		runner.loading = false
 		go func() {
 			<-req.ctx.Done()
