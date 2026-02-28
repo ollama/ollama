@@ -490,6 +490,10 @@ var (
 	_ model.MultimodalProcessor = (*Model)(nil)
 )
 
+func defaultVHeadReordered(arch string) bool {
+	return arch == "qwen35" || arch == "qwen35moe"
+}
+
 func inferRecurrentLayers(headCountKV []uint64, numLayers int, fullAttentionInterval uint32) ([]bool, error) {
 	isRecurrent := make([]bool, numLayers)
 
@@ -625,7 +629,7 @@ func New(c fs.Config) (model.Model, error) {
 		ssmNGroup:             int(c.Uint("ssm.group_count")),
 		ssmDtRank:             int(c.Uint("ssm.time_step_rank")),
 		convKernelSize:        int(c.Uint("ssm.conv_kernel")),
-		vHeadReordered:        c.Bool("ssm.v_head_reordered", false),
+		vHeadReordered:        c.Bool("ssm.v_head_reordered", defaultVHeadReordered(c.Architecture())),
 		isRecurrent:           isRecurrent,
 		mropeSections: slices.Collect(func(yield func(int) bool) {
 			for _, section := range mropeSections {

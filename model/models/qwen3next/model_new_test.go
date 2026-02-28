@@ -51,3 +51,15 @@ func TestInferRecurrentLayersAllZeroRejects(t *testing.T) {
 		t.Fatalf("unexpected error = %v", err)
 	}
 }
+
+func TestDefaultVHeadReordered(t *testing.T) {
+	if !defaultVHeadReordered("qwen35") {
+		t.Fatal("defaultVHeadReordered(qwen35) = false, want true")
+	}
+	if !defaultVHeadReordered("qwen35moe") {
+		t.Fatal("defaultVHeadReordered(qwen35moe) = false, want true")
+	}
+	if defaultVHeadReordered("qwen3next") {
+		t.Fatal("defaultVHeadReordered(qwen3next) = true, want false")
+	}
+}
