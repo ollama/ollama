@@ -101,6 +101,11 @@ func (f *File) readTensor() (TensorInfo, error) {
 		return TensorInfo{}, err
 	}
 
+	const maxDims = 4
+	if dims > maxDims {
+		return TensorInfo{}, fmt.Errorf("invalid tensor dimension count: %d", dims)
+	}
+
 	shape := make([]uint64, dims)
 	for i := range dims {
 		shape[i], err = read[uint64](f)
