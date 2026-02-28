@@ -117,6 +117,9 @@ inline float32x4_t mul(float32x4_t x, float32x4_t y) { return vec_mul(x, y); }
 #endif
 
 #if defined(__MMA__)
+#ifndef vector
+#define vector __vector
+#endif
 #include "sgemm-ppc.h"
 #endif
 ////////////////////////////////////////////////////////////////////////////////////////////////////
