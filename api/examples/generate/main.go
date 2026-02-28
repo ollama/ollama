@@ -8,6 +8,11 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
+var (
+	False = false
+	True  = true
+)
+
 func main() {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -19,7 +24,7 @@ func main() {
 		Prompt: "how many planets are there?",
 
 		// set streaming to false
-		Stream: new(bool),
+		Stream: &False,
 	}
 
 	ctx := context.Background()

@@ -8,6 +8,11 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
+var (
+	False = false
+	True  = true
+)
+
 func main() {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -18,6 +23,8 @@ func main() {
 	req := &api.GenerateRequest{
 		Model:  "gemma2",
 		Prompt: "how many planets are there?",
+		// set streaming to false
+		Stream: &True,
 	}
 
 	ctx := context.Background()
