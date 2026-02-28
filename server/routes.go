@@ -1807,7 +1807,18 @@ func waitForStream(c *gin.Context, ch chan any) {
 }
 
 func streamResponse(c *gin.Context, ch chan any) {
-	c.Header("Content-Type", "application/x-ndjson")
+	// If the preferred content type is text/event-stream, assume SSE
+	accept := c.GetHeader("Accept")
+	sse := strings.HasPrefix(accept, "text/event-stream")
+
+	var contentType string
+	if sse {
+		contentType = "text/event-stream"
+	} else {
+		contentType = "application/x-ndjson"
+	}
+	c.Header("Content-Type", contentType)
+
 	c.Stream(func(w io.Writer) bool {
 		val, ok := <-ch
 		if !ok {
@@ -1844,8 +1855,15 @@ func streamResponse(c *gin.Context, ch chan any) {
 			return false
 		}
 
-		// Delineate chunks with new-line delimiter
-		bts = append(bts, '\n')
+		if sse {
+			// For text/event-stream, format chunks as events of the default type "message"
+			bts = append([]byte{'d', 'a', 't', 'a', ':', ' '}, bts...)
+			bts = append(bts, '\n', '\n')
+		} else {
+			// For application/x-ndjson, delineate chunks with new-line delimiter
+			bts = append(bts, '\n')
+		}
+
 		if _, err := w.Write(bts); err != nil {
 			slog.Info(fmt.Sprintf("streamResponse: w.Write failed with %s", err))
 			return false
