@@ -890,7 +890,13 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"NAME", "ID", "SIZE", "MODIFIED"})
+	
+	// Check for --no-headers flag
+	noHeaders, _ := cmd.Flags().GetBool("no-headers")
+	if !noHeaders {
+		table.SetHeader([]string{"NAME", "ID", "SIZE", "MODIFIED"})
+	}
+	
 	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
 	table.SetAlignment(tablewriter.ALIGN_LEFT)
 	table.SetHeaderLine(false)
@@ -2240,6 +2246,8 @@ func NewCLI() *cobra.Command {
 		PreRunE: checkServerHeartbeat,
 		RunE:    ListHandler,
 	}
+
+	listCmd.Flags().Bool("no-headers", false, "Don't print column headers")
 
 	psCmd := &cobra.Command{
 		Use:     "ps",
