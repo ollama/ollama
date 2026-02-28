@@ -1400,8 +1400,9 @@ func chatInfoFromChat(chat store.Chat) responses.ChatInfo {
 		if msg.Role == "user" && userExcerpt == "" {
 			userExcerpt = msg.Content
 		}
-		// update the updated at time
-		if msg.UpdatedAt.After(updatedAt) {
+		// update the updated at time based on user messages only
+		// this ensures conversations are sorted by last user message, not last response
+		if msg.Role == "user" && msg.UpdatedAt.After(updatedAt) {
 			updatedAt = msg.UpdatedAt
 		}
 	}
