@@ -1630,6 +1630,8 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/chat", s.ChatHandler)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
+	r.POST("/api/web_search", s.WebSearchHandler)
+	r.POST("/api/web_fetch", s.WebFetchHandler)
 
 	// Inference (OpenAI compatibility)
 	r.POST("/v1/chat/completions", middleware.ChatMiddleware(), s.ChatHandler)
