@@ -216,7 +216,8 @@ jobs:
           node-version: '20'
       - name: Install UI dependencies
         working-directory: ./app/ui/app
-        run: npm ci
+        run: |
+          npm ci || npm ci || npm ci
       - name: Install tscriptify
         run: |
           go install github.com/tkrajina/typescriptify-golang-structs/tscriptify@latest

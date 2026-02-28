@@ -1879,7 +1879,8 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
                     tokenizer_pre == "falcon-h1" ||
                     tokenizer_pre == "pixtral"  ||
                     tokenizer_pre == "midm-2.0" ||
-                    tokenizer_pre == "lfm2") {
+                    tokenizer_pre == "lfm2"     ||
+                    tokenizer_pre == "jina-v5-nano") {
                 pre_type = LLAMA_VOCAB_PRE_TYPE_LLAMA3;
                 ignore_merges = true;
                 add_bos = true;

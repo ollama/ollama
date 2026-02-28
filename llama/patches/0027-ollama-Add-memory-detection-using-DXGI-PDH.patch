@@ -41,7 +41,7 @@ index 80ebb059e..b502fdf78 100644
  #ifdef __cplusplus
  }
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 1e0bf7864..da80c7076 100644
+index a170bc0c9..02d4f8805 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -74,6 +74,7 @@ DispatchLoaderDynamic & ggml_vk_default_dispatcher();
@@ -52,7 +52,7 @@ index 1e0bf7864..da80c7076 100644
  
  typedef struct VkPhysicalDeviceShaderBfloat16FeaturesKHR {
      VkStructureType                       sType;
-@@ -14699,6 +14700,7 @@ struct ggml_backend_vk_device_context {
+@@ -14802,6 +14803,7 @@ struct ggml_backend_vk_device_context {
      std::string pci_id;
      std::string id;
      std::string uuid;
@@ -60,7 +60,7 @@ index 1e0bf7864..da80c7076 100644
      int major;
      int minor;
      int driver_major;
-@@ -14723,6 +14725,20 @@ static const char * ggml_backend_vk_device_get_id(ggml_backend_dev_t dev) {
+@@ -14826,6 +14828,20 @@ static const char * ggml_backend_vk_device_get_id(ggml_backend_dev_t dev) {
  
  static void ggml_backend_vk_device_get_memory(ggml_backend_dev_t device, size_t * free, size_t * total) {
      ggml_backend_vk_device_context * ctx = (ggml_backend_vk_device_context *)device->context;
@@ -81,7 +81,7 @@ index 1e0bf7864..da80c7076 100644
  
      // Use vendor specific management libraries for best VRAM reporting if available
      if (!ctx->is_integrated_gpu) {
-@@ -15517,6 +15533,14 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
+@@ -15620,6 +15636,14 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                      }
                  }
                  ctx->uuid = oss.str();

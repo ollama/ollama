@@ -626,8 +626,6 @@ struct vk_device_struct {
     // floor(log2(maxComputeWorkGroupInvocations))
     uint32_t max_workgroup_size_log2 {};
 
-    bool flash_attention_fp16;
-
     bool coopmat_support;
     bool coopmat_acc_f32_support {};
     bool coopmat_acc_f16_support {};
@@ -2980,11 +2978,15 @@ static vk_fa_tuning_params get_fa_tuning_params(const vk_device& device, uint32_
     }
 }
 
-static vk_fa_pipeline_state get_fa_pipeline_state(const vk_fa_tuning_params& params, uint32_t hsk, uint32_t hsv, bool aligned, bool f32acc,
+static vk_fa_pipeline_state get_fa_pipeline_state(const vk_device& device, const vk_fa_tuning_params& params, uint32_t hsk, uint32_t hsv, bool aligned, bool f32acc,
                                                   bool use_mask, bool use_mask_opt, bool use_logit_softcap) {
+    const bool old_amd_windows = device->vendor_id == VK_VENDOR_ID_AMD && device->driver_id == vk::DriverId::eAmdProprietary &&
+                                 (device->architecture == AMD_GCN || device->architecture == AMD_RDNA1 || device->architecture == AMD_RDNA2);
+
     uint32_t flags = (use_mask_opt      ? 1 : 0) |
                      (use_mask          ? 2 : 0) |
-                     (use_logit_softcap ? 4 : 0);
+                     (use_logit_softcap ? 4 : 0) |
+                     (old_amd_windows   ? 8 : 0);
 
     const uint32_t subgroup_size = params.disable_subgroups ? 0 : params.subgroup_size;
 
@@ -3386,7 +3388,7 @@ static void ggml_vk_load_shaders(vk_device& device) {
             } \
         }
 
-    if (device->flash_attention_fp16) {
+    if (device->fp16) {
         CREATE_FA(GGML_TYPE_F32, f32, FA_SCALAR, )
         CREATE_FA(GGML_TYPE_F16, f16, FA_SCALAR, )
         CREATE_FA(GGML_TYPE_Q4_0, q4_0, FA_SCALAR, )
@@ -5424,10 +5426,6 @@ static vk_device ggml_vk_get_device(size_t idx) {
         } else if (getenv("GGML_VK_FORCE_MMVQ")) {
             device->mmvq_mode = 1;
         }
-
-        // Driver issues with older AMD GPUs on Windows, see https://github.com/ggml-org/llama.cpp/pull/19625#issuecomment-3940840613
-        const bool is_amd_proprietary_gcn = device->vendor_id == VK_VENDOR_ID_AMD && device->architecture == AMD_GCN && device->driver_id == vk::DriverId::eAmdProprietary;
-        device->flash_attention_fp16 = device->fp16 && !is_amd_proprietary_gcn;
 
         return device;
     }
@@ -8569,7 +8567,7 @@ static bool ggml_vk_flash_attn_scalar_shmem_support(const vk_device& device, con
     const uint32_t Br = params.block_rows;
     const uint32_t Bc = params.block_cols;
 
-    const uint32_t float_type_size = device->flash_attention_fp16 ? sizeof(ggml_fp16_t) : sizeof(float);
+    const uint32_t float_type_size = device->fp16 ? sizeof(ggml_fp16_t) : sizeof(float);
 
     // tmpsh is overestimated slightly
     const uint32_t tmpsh = wg_size * sizeof(float);
@@ -8692,7 +8690,7 @@ static void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx
     uint32_t workgroups_y = (uint32_t)neq2;
     uint32_t workgroups_z = (uint32_t)neq3;
 
-    const bool f32acc = !ctx->device->flash_attention_fp16 || dst->op_params[3] == GGML_PREC_F32;
+    const bool f32acc = !ctx->device->fp16 || dst->op_params[3] == GGML_PREC_F32;
 
     // For scalar/coopmat1 FA, we can use the "large" size to accommodate qga.
     // For coopmat2 FA, we always use the small size (which is still pretty large for gqa).
@@ -8747,7 +8745,7 @@ static void ggml_vk_flash_attn(ggml_backend_vk_context * ctx, vk_context& subctx
 
     // Only use mask opt when the mask is fairly large. This hasn't been tuned extensively.
     bool use_mask_opt = mask && nem1 >= 32 && nem0 * nem1 > 32768;
-    vk_fa_pipeline_state fa_pipeline_state = get_fa_pipeline_state(tuning_params, HSK, HSV, aligned, f32acc,
+    vk_fa_pipeline_state fa_pipeline_state = get_fa_pipeline_state(ctx->device, tuning_params, HSK, HSV, aligned, f32acc,
                                                                    mask != nullptr, use_mask_opt, logit_softcap != 0);
 
     vk_pipeline pipeline = nullptr;
@@ -13847,12 +13845,11 @@ static bool ggml_vk_can_fuse_rope_set_rows(ggml_backend_vk_context * ctx, const 
     return true;
 }
 
-// Check whether the tensors overlap in memory but are not equal.
-// Fusions can potenitally overwrite src tensors in ways that are not prevented
-// by ggml-alloc. If the fusion is entirely elementwise, then it's OK for them
-// to overlap if they are exactly equal.
-// XXX TODO this check is probably missing from several fusion optimizations.
-static bool ggml_vk_tensors_overlap_but_not_equal(const ggml_tensor * a, const ggml_tensor * b) {
+// Check whether the tensors overlap in memory.
+// Fusions can potentially overwrite src tensors in ways that are not prevented
+// by ggml-alloc. If the fusion src is being applied in a way that's elementwise
+// with the destination, then it's OK for them to overlap if they are exactly equal.
+static bool ggml_vk_tensors_overlap(const ggml_tensor * a, const ggml_tensor * b, bool elementwise) {
     ggml_backend_vk_buffer_context * a_buf_ctx = (ggml_backend_vk_buffer_context *)a->buffer->context;
     vk_buffer a_buf = a_buf_ctx->dev_buffer;
     ggml_backend_vk_buffer_context * b_buf_ctx = (ggml_backend_vk_buffer_context *)b->buffer->context;
@@ -13863,7 +13860,7 @@ static bool ggml_vk_tensors_overlap_but_not_equal(const ggml_tensor * a, const g
         auto b_base = vk_tensor_offset(b) + b->view_offs;
         auto b_size = ggml_nbytes(b);
 
-        if (a_base == b_base && a_size == b_size) {
+        if (elementwise && a_base == b_base && a_size == b_size) {
             return false;
         }
 
@@ -13898,13 +13895,6 @@ static bool ggml_vk_can_fuse_rms_norm_mul_rope(ggml_backend_vk_context * ctx, co
 
     // shared memory size for passing data from mul->rope
     if (mul->ne[0] > 1024) {
-        return false;
-    }
-
-    // must not overwrite srcs in a way that's not elementwise
-    ggml_tensor *other_src = mul->src[0] == rms ? mul->src[1] : mul->src[0];
-    if (ggml_vk_tensors_overlap_but_not_equal(rms->src[0], rope) ||
-        ggml_vk_tensors_overlap_but_not_equal(other_src, rope)) {
         return false;
     }
 
@@ -13967,6 +13957,18 @@ static uint32_t ggml_vk_fuse_multi_add(ggml_backend_vk_context * ctx, const stru
         return 0;
     }
     return num_adds;
+}
+
+static int32_t find_first_set(uint32_t x) {
+    int32_t ret = 0;
+    if (!x) {
+        return -1;
+    }
+    while (!(x & 1)) {
+        x >>= 1;
+        ret++;
+    }
+    return ret;
 }
 
 static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
@@ -14068,6 +14070,12 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
             total_mul_mat_bytes += bytes;
         }
 
+        // op_srcs_fused_elementwise indicates whether an op's srcs all contribute to
+        // the fused result in an elementwise-way. This affects whether the memory for
+        // the src is allowed to overlap the memory for the destination.
+        // The array is sized to handle the largest fusion (asserted later).
+        bool op_srcs_fused_elementwise[12];
+
         ctx->fused_topk_moe_mode = TOPK_MOE_COUNT;
         ctx->fused_topk_moe_scale = false;
         const char *fusion_string {};
@@ -14076,39 +14084,68 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
             if (num_adds) {
                 ctx->num_additional_fused_ops = num_adds - 1;
                 fusion_string = "MULTI_ADD";
+                std::fill_n(op_srcs_fused_elementwise, ctx->num_additional_fused_ops + 1, true);
             } else if (ggml_vk_can_fuse(ctx, cgraph, i, { GGML_OP_MUL_MAT, GGML_OP_ADD, GGML_OP_ADD })) {
                 ctx->num_additional_fused_ops = 2;
                 fusion_string = "MUL_MAT_ADD_ADD";
+                op_srcs_fused_elementwise[0] = false;
+                op_srcs_fused_elementwise[1] = true;
+                op_srcs_fused_elementwise[2] = true;
             } else if (ggml_vk_can_fuse(ctx, cgraph, i, { GGML_OP_MUL_MAT, GGML_OP_ADD })) {
                 ctx->num_additional_fused_ops = 1;
                 fusion_string = "MUL_MAT_ADD";
+                op_srcs_fused_elementwise[0] = false;
+                op_srcs_fused_elementwise[1] = true;
             } else if (ggml_vk_can_fuse(ctx, cgraph, i, { GGML_OP_MUL_MAT_ID, GGML_OP_ADD_ID, GGML_OP_MUL })) {
                 ctx->num_additional_fused_ops = 2;
                 fusion_string = "MUL_MAT_ID_ADD_ID_MUL";
+                op_srcs_fused_elementwise[0] = false;
+                op_srcs_fused_elementwise[1] = true;
+                op_srcs_fused_elementwise[2] = true;
             } else if (ggml_vk_can_fuse(ctx, cgraph, i, { GGML_OP_MUL_MAT_ID, GGML_OP_ADD_ID })) {
                 ctx->num_additional_fused_ops = 1;
                 fusion_string = "MUL_MAT_ID_ADD_ID";
+                op_srcs_fused_elementwise[0] = false;
+                op_srcs_fused_elementwise[1] = true;
             } else if (ggml_vk_can_fuse(ctx, cgraph, i, { GGML_OP_MUL_MAT_ID, GGML_OP_MUL })) {
                 ctx->num_additional_fused_ops = 1;
                 fusion_string = "MUL_MAT_ID_MUL";
+                op_srcs_fused_elementwise[0] = false;
+                op_srcs_fused_elementwise[1] = true;
             } else if (ggml_can_fuse_subgraph(cgraph, i, { GGML_OP_RMS_NORM, GGML_OP_MUL, GGML_OP_ROPE, GGML_OP_VIEW, GGML_OP_SET_ROWS }, { i + 4 }) &&
                        ggml_check_edges(cgraph, i, rms_norm_mul_rope_view_set_rows_edges) &&
                        ggml_vk_can_fuse_rms_norm_mul_rope(ctx, cgraph, i) &&
                        ggml_vk_can_fuse_rope_set_rows(ctx, cgraph, i + 2)) {
                 ctx->num_additional_fused_ops = 4;
                 fusion_string = "RMS_NORM_MUL_ROPE_VIEW_SET_ROWS";
+                op_srcs_fused_elementwise[0] = false;
+                op_srcs_fused_elementwise[1] = false;
+                op_srcs_fused_elementwise[2] = false;
+                op_srcs_fused_elementwise[3] = false;
+                op_srcs_fused_elementwise[4] = false;
             } else if (ggml_vk_can_fuse(ctx, cgraph, i, { GGML_OP_RMS_NORM, GGML_OP_MUL, GGML_OP_ROPE })&&
                        ggml_vk_can_fuse_rms_norm_mul_rope(ctx, cgraph, i)) {
                 ctx->num_additional_fused_ops = 2;
                 fusion_string = "RMS_NORM_MUL_ROPE";
+                // rope is approximately elementwise - whole rows are done by a single workgroup and it's row-wise
+                op_srcs_fused_elementwise[0] = false;
+                op_srcs_fused_elementwise[1] = true;
+                op_srcs_fused_elementwise[2] = true;
             } else if (ggml_vk_can_fuse(ctx, cgraph, i, { GGML_OP_RMS_NORM, GGML_OP_MUL })) {
                 ctx->num_additional_fused_ops = 1;
                 fusion_string = "RMS_NORM_MUL";
+                // rms_norm is not elementwise, but whole rows must be consumed and the scale factor computed before
+                // they are overwritten, and one workgroup per row. So close enough.
+                op_srcs_fused_elementwise[0] = true;
+                op_srcs_fused_elementwise[1] = true;
             } else if (ggml_can_fuse_subgraph(cgraph, i, { GGML_OP_ROPE, GGML_OP_VIEW, GGML_OP_SET_ROWS }, { i + 2 }) &&
                        ggml_check_edges(cgraph, i, rope_view_set_rows_edges) &&
                        ggml_vk_can_fuse_rope_set_rows(ctx, cgraph, i)) {
                 ctx->num_additional_fused_ops = 2;
                 fusion_string = "ROPE_VIEW_SET_ROWS";
+                op_srcs_fused_elementwise[0] = false;
+                op_srcs_fused_elementwise[1] = false;
+                op_srcs_fused_elementwise[2] = false;
             } else if (ggml_can_fuse_subgraph(cgraph, i, topk_moe_early_softmax_norm, { i + 3, i + 9 }) &&
                        ggml_check_edges(cgraph, i, topk_moe_early_softmax_norm_edges) &&
                        ggml_vk_can_fuse_topk_moe(ctx, cgraph, i, TOPK_MOE_EARLY_SOFTMAX_NORM)) {
@@ -14117,6 +14154,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
                 ctx->fused_ops_write_mask |= 1 << 3;
                 ctx->fused_topk_moe_mode = TOPK_MOE_EARLY_SOFTMAX_NORM;
                 fusion_string = "TOPK_MOE_EARLY_SOFTMAX_NORM";
+                std::fill_n(op_srcs_fused_elementwise, ctx->num_additional_fused_ops + 1, false);
             } else if (ggml_can_fuse_subgraph(cgraph, i, topk_moe_sigmoid_norm_bias, { i + 4, i + 10 }) &&
                        ggml_check_edges(cgraph, i, topk_moe_sigmoid_norm_bias_edges) &&
                        ggml_vk_can_fuse_topk_moe(ctx, cgraph, i, TOPK_MOE_SIGMOID_NORM_BIAS)) {
@@ -14125,6 +14163,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
                 ctx->fused_ops_write_mask |= 1 << 4;
                 ctx->fused_topk_moe_mode = TOPK_MOE_SIGMOID_NORM_BIAS;
                 fusion_string = "TOPK_MOE_SIGMOID_NORM_BIAS";
+                std::fill_n(op_srcs_fused_elementwise, ctx->num_additional_fused_ops + 1, false);
             } else if (ggml_can_fuse_subgraph(cgraph, i, topk_moe_early_softmax, { i + 3, i + 4 }) &&
                        ggml_check_edges(cgraph, i, topk_moe_early_softmax_edges) &&
                        ggml_vk_can_fuse_topk_moe(ctx, cgraph, i, TOPK_MOE_EARLY_SOFTMAX)) {
@@ -14133,6 +14172,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
                 ctx->fused_ops_write_mask |= 1 << 3;
                 ctx->fused_topk_moe_mode = TOPK_MOE_EARLY_SOFTMAX;
                 fusion_string = "TOPK_MOE_EARLY_SOFTMAX";
+                std::fill_n(op_srcs_fused_elementwise, ctx->num_additional_fused_ops + 1, false);
             } else if (ggml_can_fuse_subgraph(cgraph, i, topk_moe_late_softmax, { i + 1, i + 5 }) &&
                        ggml_check_edges(cgraph, i, topk_moe_late_softmax_edges) &&
                        ggml_vk_can_fuse_topk_moe(ctx, cgraph, i, TOPK_MOE_LATE_SOFTMAX)) {
@@ -14141,6 +14181,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
                 ctx->fused_ops_write_mask |= 1 << 1;
                 ctx->fused_topk_moe_mode = TOPK_MOE_LATE_SOFTMAX;
                 fusion_string = "TOPK_MOE_LATE_SOFTMAX";
+                std::fill_n(op_srcs_fused_elementwise, ctx->num_additional_fused_ops + 1, false);
             }
             if (ctx->fused_topk_moe_mode != TOPK_MOE_COUNT) {
                 // Look for an additional scale op to fuse - occurs in deepseek2 and nemotron3 nano.
@@ -14148,10 +14189,72 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
                     ggml_can_fuse_subgraph(cgraph, i + ctx->num_additional_fused_ops, { GGML_OP_GET_ROWS, GGML_OP_SCALE }, { i + ctx->num_additional_fused_ops + 1 })) {
                     ctx->fused_topk_moe_scale = true;
                     ctx->num_additional_fused_ops++;
+                    op_srcs_fused_elementwise[ctx->num_additional_fused_ops] = false;
                 }
             }
         }
+        GGML_ASSERT(ctx->num_additional_fused_ops < (int)(sizeof(op_srcs_fused_elementwise) / sizeof(op_srcs_fused_elementwise[0])));
         ctx->fused_ops_write_mask |= 1 << ctx->num_additional_fused_ops;
+
+        // Check whether fusion would overwrite src operands while they're still in use.
+        // If so, disable fusion.
+        if (ctx->num_additional_fused_ops) {
+            // There are up to two output nodes - topk_moe has two.
+            uint32_t bits = ctx->fused_ops_write_mask & ~(1 << ctx->num_additional_fused_ops);
+            ggml_tensor *output_nodes[2] {};
+            output_nodes[0] = cgraph->nodes[i + ctx->num_additional_fused_ops];
+            if (bits) {
+                int output_idx = find_first_set(bits);
+                GGML_ASSERT(bits == (1u << output_idx));
+                output_nodes[1] = cgraph->nodes[i + output_idx];
+            }
+
+            bool need_disable = false;
+
+            // topk_moe often overwrites the source, but for a given row all the src values are
+            // loaded before anything is stored. If there's only one row, this is safe, so treat
+            // this as a special case.
+            bool is_topk_moe_single_row = ctx->fused_topk_moe_mode != TOPK_MOE_COUNT &&
+                                          ggml_nrows(cgraph->nodes[i]->src[0]) == 1;
+
+            if (!is_topk_moe_single_row) {
+                for (int j = 0; j < 2; ++j) {
+                    ggml_tensor *dst = output_nodes[j];
+                    if (!dst) {
+                        continue;
+                    }
+                    // Loop over all srcs of all nodes in the fusion. If the src overlaps
+                    // the destination and the src is not an intermediate node that's being
+                    // elided, then disable fusion.
+                    for (int k = 0; k <= ctx->num_additional_fused_ops; ++k) {
+                        for (uint32_t s = 0; s < GGML_MAX_SRC; ++s) {
+                            ggml_tensor *src = cgraph->nodes[i + k]->src[s];
+                            if (!src || src->op == GGML_OP_NONE) {
+                                continue;
+                            }
+                            if (ggml_vk_tensors_overlap(src, dst, op_srcs_fused_elementwise[k])) {
+                                bool found = false;
+                                for (int n = 0; n < k; ++n) {
+                                    if (cgraph->nodes[i + n] == src) {
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                                if (!found) {
+                                    need_disable = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (need_disable) {
+                ctx->num_additional_fused_ops = 0;
+                ctx->fused_ops_write_mask = 1;
+                ctx->fused_topk_moe_mode = TOPK_MOE_COUNT;
+                ctx->fused_topk_moe_scale = false;
+            }
+        }
 
         // Signal the almost_ready fence when the graph is mostly complete (< 20% remaining)
         bool almost_ready = (cgraph->n_nodes - i) < cgraph->n_nodes / 5;

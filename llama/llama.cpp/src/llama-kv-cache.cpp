@@ -978,6 +978,9 @@ bool llama_kv_cache::get_can_shift() const {
     if (model.arch == LLM_ARCH_STEP35) {
         return false;
     }
+    if (hparams.n_pos_per_embd() > 1) {
+        return false;
+    }
     return true;
 }
 
