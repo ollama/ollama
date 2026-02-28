@@ -746,6 +746,78 @@ func TestSchedNeedsReload(t *testing.T) {
 	require.False(t, resp)
 }
 
+func TestRunnerCtxLenReuseLimit(t *testing.T) {
+	ctx := context.Background()
+	const (
+		baseCtx      = 8000
+		largerCtx    = 12000
+		smallerCtx   = 4000
+		midCtx       = 6000
+	)
+
+	opts := api.DefaultOptions()
+	opts.NumCtx = baseCtx
+	opts.Runner.NumCtx = baseCtx
+
+	runner := &runnerRef{
+		model: &Model{
+			AdapterPaths:   []string{"adapter"},
+			ProjectorPaths: []string{"projector"},
+		},
+		Options:        &opts,
+		llama:          &mockLlm{},
+		numParallel:    1,
+		maxContext:     baseCtx,
+		ctxLenReuseRemaining: ctxLenReuseLimit,
+	}
+
+	newRequest := func(numCtx int) *LlmRequest {
+		reqOpts := *runner.Options
+		reqOpts.NumCtx = numCtx
+		reqOpts.Runner = runner.Options.Runner
+		reqOpts.Runner.NumCtx = numCtx
+		return &LlmRequest{
+			ctx:   ctx,
+			model: runner.model,
+			opts:  reqOpts,
+		}
+	}
+
+	for i := uint(0); i < ctxLenReuseLimit; i++ {
+		req := newRequest(smallerCtx)
+		require.False(t, runner.needsReload(ctx, req), "iteration %d should reuse", i)
+		require.Equal(t, ctxLenReuseLimit-(i+1), runner.ctxLenReuseRemaining)
+	}
+
+	reqAtLimit := newRequest(smallerCtx)
+	require.True(t, runner.needsReload(ctx, reqAtLimit))
+	require.Equal(t, uint(0), runner.ctxLenReuseRemaining)
+
+	reqReset := newRequest(baseCtx)
+	require.False(t, runner.needsReload(ctx, reqReset))
+	require.Equal(t, ctxLenReuseLimit, runner.ctxLenReuseRemaining)
+	require.Equal(t, baseCtx, runner.maxContext)
+
+	reqAfterReset := newRequest(smallerCtx)
+	require.False(t, runner.needsReload(ctx, reqAfterReset))
+	require.Equal(t, ctxLenReuseLimit-1, runner.ctxLenReuseRemaining)
+
+	// A larger context request should trigger reload, while refreshing counters.
+	reqGrow := newRequest(largerCtx)
+	require.True(t, runner.needsReload(ctx, reqGrow))
+	require.Equal(t, ctxLenReuseLimit, runner.ctxLenReuseRemaining)
+	require.Equal(t, largerCtx, runner.maxContext)
+
+	// Simulate reload completing with new context baseline.
+	runner.Options.NumCtx = largerCtx
+	runner.Options.Runner.NumCtx = largerCtx
+
+	// Smaller request after growth should decrement from refreshed counter.
+	reqAfterGrowth := newRequest(midCtx)
+	require.False(t, runner.needsReload(ctx, reqAfterGrowth))
+	require.Equal(t, ctxLenReuseLimit-1, runner.ctxLenReuseRemaining)
+}
+
 func TestSchedUnloadAllRunners(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer done()
