@@ -1048,13 +1048,16 @@ nextLayer:
 		if vramSize > systemInfo.TotalMemory {
 			// disable partial offloading when model is greater than total system memory as this
 			// can lead to locking up the system
+			slog.Warn("model requires more memory than system total, disabling GPU offload to prevent system lockup",
+				"model_vram_required", format.HumanBytes2(vramSize),
+				"system_total_memory", format.HumanBytes2(systemInfo.TotalMemory))
 			s.options.NumGPU = 0
 			gpuLayers = ml.GPULayersList{}
 		}
 	}
 
 	if len(systemGPUs) > 0 && gpuLayers.Sum() == 0 {
-		slog.Debug("insufficient VRAM to load any model layers")
+		slog.Warn("insufficient VRAM to load any model layers, model will run entirely on CPU")
 	}
 
 	return nil
