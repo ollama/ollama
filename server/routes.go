@@ -1769,6 +1769,14 @@ func Serve(ln net.Listener) error {
 	}
 	slog.Info("vram-based default context", "total_vram", format.HumanBytes2(totalVRAM), "default_num_ctx", s.defaultNumCtx)
 
+	preloadCtx, preloadCancel := context.WithCancel(ctx)
+	defer preloadCancel()
+	go func() {
+		if err := preloadModels(preloadCtx); err != nil && !errors.Is(err, context.Canceled) {
+			slog.Error("failed to preload models", "error", err)
+		}
+	}()
+
 	err = srvr.Serve(ln)
 	// If server is closed from the signal handler, wait for the ctx to be done
 	// otherwise error out quickly
