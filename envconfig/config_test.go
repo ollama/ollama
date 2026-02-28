@@ -1,6 +1,7 @@
 package envconfig
 
 import (
+	"fmt"
 	"log/slog"
 	"math"
 	"os"
@@ -157,9 +158,12 @@ func TestBool(t *testing.T) {
 		"false": false,
 		"1":     true,
 		"0":     false,
-		// invalid values
-		"random":    true,
-		"something": true,
+		// invalid values fall back to default (false for Bool)
+		"random":    false,
+		"something": false,
+		"yes":       false,
+		"on":        false,
+		"enabled":   false,
 	}
 
 	for k, v := range cases {
@@ -167,6 +171,42 @@ func TestBool(t *testing.T) {
 			t.Setenv("OLLAMA_BOOL", k)
 			if b := Bool("OLLAMA_BOOL")(); b != v {
 				t.Errorf("%s: expected %t, got %t", k, v, b)
+			}
+		})
+	}
+}
+
+func TestBoolWithDefault(t *testing.T) {
+	cases := []struct {
+		value        string
+		defaultValue bool
+		expect       bool
+	}{
+		// valid values override the default
+		{"true", false, true},
+		{"false", true, false},
+		{"1", false, true},
+		{"0", true, false},
+		// empty value returns the default unchanged
+		{"", true, true},
+		{"", false, false},
+		// invalid values fall back to the default, not hardcoded true
+		{"yes", false, false},
+		{"yes", true, true},
+		{"on", false, false},
+		{"on", true, true},
+		{"enabled", false, false},
+		{"enabled", true, true},
+		{"random", false, false},
+		{"random", true, true},
+	}
+
+	for _, tt := range cases {
+		name := fmt.Sprintf("value=%q default=%v", tt.value, tt.defaultValue)
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("OLLAMA_BOOL_WITH_DEFAULT", tt.value)
+			if b := BoolWithDefault("OLLAMA_BOOL_WITH_DEFAULT")(tt.defaultValue); b != tt.expect {
+				t.Errorf("%s: expected %v, got %v", name, tt.expect, b)
 			}
 		})
 	}
