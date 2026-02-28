@@ -193,7 +193,7 @@ function rocm {
             $env:HIPCXX="${script:HIP_PATH}\bin\clang++.exe"
             $env:HIP_PLATFORM="amd"
             $env:CMAKE_PREFIX_PATH="${script:HIP_PATH}"
-            & cmake -B build\rocm --preset "ROCm 6" -G Ninja `
+            & cmake -B build\rocm --preset "ROCm 7" -G Ninja `
                 -DCMAKE_C_COMPILER=clang `
                 -DCMAKE_CXX_COMPILER=clang++ `
                 -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `

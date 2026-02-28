@@ -106,9 +106,9 @@ jobs:
             flags: ''
           - os: windows
             arch: amd64
-            preset: 'ROCm 6'
-            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
-            rocm-version: '6.2'
+            preset: 'ROCm 7'
+            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-26.Q1-Win11-For-HIP.exe
+            rocm-version: '7.1.1'
             flags: '-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma"'
             runner_dir: 'rocm'
           - os: windows
