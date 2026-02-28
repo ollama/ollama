@@ -966,7 +966,7 @@ void llama_kv_cache::apply_ubatch(const slot_info & sinfo, const llama_ubatch & 
 }
 
 bool llama_kv_cache::get_can_shift() const {
-    return true;
+    return hparams.n_pos_per_embd() == 1;
 }
 
 uint32_t llama_kv_cache::get_size() const {

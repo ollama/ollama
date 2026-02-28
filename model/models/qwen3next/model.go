@@ -485,6 +485,9 @@ func New(c fs.Config) (model.Model, error) {
 	// Determine if MoE
 	isMoE := c.Uint("expert_count") > 0
 
+	_ = isMoE
+	return nil, fmt.Errorf("qwen3next: deferring to C++ runner for DeltaNet inference")
+
 	for i := range layers {
 		if isRecurrent[i] {
 			layers[i].Operator = &GatedDeltaNet{Layer: i}

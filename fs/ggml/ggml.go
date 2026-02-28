@@ -63,7 +63,8 @@ func (kv KV) EmbeddingLength() uint64 {
 func (kv KV) HeadCount() []uint64 {
 	headCountDefault := uint32(1)
 	headCount := kv.UintOrArrayValueAsArray("attention.head_count", headCountDefault)
-	if len(headCount) == 1 {
+	isScalar := len(headCount) == 1
+	if isScalar {
 		headCountDefault = headCount[0]
 	}
 	nLayers := int(kv.BlockCount())
@@ -78,6 +79,17 @@ func (kv KV) HeadCount() []uint64 {
 			out[i] = uint64(headCount[i])
 		}
 	}
+
+	if isScalar {
+		if fullAttnInterval := kv.Uint("full_attention_interval"); fullAttnInterval > 0 {
+			for i := range out {
+				if (uint32(i)+1)%fullAttnInterval != 0 {
+					out[i] = 0
+				}
+			}
+		}
+	}
+
 	return out
 }
 
@@ -92,12 +104,13 @@ func (kv KV) HeadCountMin() uint64 {
 func (kv KV) HeadCountKV() []uint64 {
 	headCountKVDefault := uint32(1)
 	headCountKV := kv.UintOrArrayValueAsArray("attention.head_count_kv", headCountKVDefault)
-	if len(headCountKV) == 1 {
+	isScalar := len(headCountKV) == 1
+	if isScalar {
 		headCountKVDefault = headCountKV[0]
 	}
 	nLayers := int(kv.BlockCount())
 	if len(headCountKV) > nLayers {
-		slog.Warn("got more elements of attention.head_count than layers", "len(headCountKV)", len(headCountKV), "layers", nLayers)
+		slog.Warn("got more elements of attention.head_count_kv than layers", "len(headCountKV)", len(headCountKV), "layers", nLayers)
 	}
 	out := make([]uint64, nLayers)
 	for i := range nLayers {
@@ -107,6 +120,17 @@ func (kv KV) HeadCountKV() []uint64 {
 			out[i] = uint64(headCountKV[i])
 		}
 	}
+
+	if isScalar {
+		if fullAttnInterval := kv.Uint("full_attention_interval"); fullAttnInterval > 0 {
+			for i := range out {
+				if (uint32(i)+1)%fullAttnInterval != 0 {
+					out[i] = 0
+				}
+			}
+		}
+	}
+
 	return out
 }
 

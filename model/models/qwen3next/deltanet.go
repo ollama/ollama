@@ -41,8 +41,8 @@ type GatedDeltaNet struct {
 	SSMBeta      *nn.Linear  `gguf:"ssm_beta"`  // -> beta (qwen35)
 	SSMAlpha     *nn.Linear  `gguf:"ssm_alpha"` // -> alpha (qwen35)
 	SSMConv1D    *convKernel `gguf:"ssm_conv1d"`
-	SSMDT        ml.Tensor   `gguf:"ssm_dt"` // alpha bias
-	SSMA         ml.Tensor   `gguf:"ssm_a"`  // -A_log.exp()
+	SSMDT        ml.Tensor   `gguf:"ssm_dt.bias"` // alpha bias
+	SSMA         ml.Tensor   `gguf:"ssm_a"`       // -A_log.exp()
 	SSMNorm      *nn.RMSNorm `gguf:"ssm_norm"`
 	SSMOut       *nn.Linear  `gguf:"ssm_out"`
 
