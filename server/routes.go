@@ -47,6 +47,7 @@ import (
 	"github.com/ollama/ollama/model/renderers"
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/server/internal/registry"
+	"github.com/ollama/ollama/server/tokenizerloader"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/thinking"
 	"github.com/ollama/ollama/tools"
@@ -1521,6 +1522,128 @@ func allowedHost(host string) bool {
 	return false
 }
 
+type tokenizeRequest struct {
+	Model   string         `json:"model"`
+	Content string         `json:"content"`
+	Options map[string]any `json:"options"`
+}
+
+type tokenizeResponse struct {
+	Model         string        `json:"model"`
+	Tokens        []int         `json:"tokens"`
+	TotalDuration time.Duration `json:"total_duration,omitempty"`
+	LoadDuration  time.Duration `json:"load_duration,omitempty"`
+}
+
+type detokenizeRequest struct {
+	Model   string         `json:"model"`
+	Tokens  []int          `json:"tokens"`
+	Options map[string]any `json:"options"`
+}
+
+type detokenizeResponse struct {
+	Model         string        `json:"model"`
+	Content       string        `json:"content"`
+	TotalDuration time.Duration `json:"total_duration,omitempty"`
+	LoadDuration  time.Duration `json:"load_duration,omitempty"`
+}
+
+func (s *Server) TokenizeHandler(c *gin.Context) {
+	checkpointStart := time.Now()
+
+	var req tokenizeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		if errors.Is(err, io.EOF) {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+			return
+		}
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	name := model.ParseName(req.Model)
+	if !name.IsValid() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+
+	tk, isFallback, err := tokenizerloader.Get(c.Request.Context(), name.String())
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
+		return
+	}
+
+	checkpointLoaded := time.Now()
+
+	tokens, err := tk.Tokenize(req.Content)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
+		return
+	}
+
+	if isFallback {
+		slog.Debug("tokenize: using fallback scheduler", "model", req.Model)
+	} else {
+		slog.Debug("tokenize: using vocab-only", "model", req.Model)
+	}
+
+	resp := tokenizeResponse{
+		Model:         req.Model,
+		Tokens:        tokens,
+		TotalDuration: time.Since(checkpointStart),
+		LoadDuration:  checkpointLoaded.Sub(checkpointStart),
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+func (s *Server) DetokenizeHandler(c *gin.Context) {
+	checkpointStart := time.Now()
+
+	var req detokenizeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		if errors.Is(err, io.EOF) {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+			return
+		}
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	name := model.ParseName(req.Model)
+	if !name.IsValid() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+
+	tk, isFallback, err := tokenizerloader.Get(c.Request.Context(), name.String())
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
+		return
+	}
+
+	checkpointLoaded := time.Now()
+
+	content, err := tk.Detokenize(req.Tokens)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
+		return
+	}
+
+	if isFallback {
+		slog.Debug("detokenize: using fallback scheduler", "model", req.Model)
+	} else {
+		slog.Debug("detokenize: using vocab-only", "model", req.Model)
+	}
+
+	resp := detokenizeResponse{
+		Model:         req.Model,
+		Content:       content,
+		TotalDuration: time.Since(checkpointStart),
+		LoadDuration:  checkpointLoaded.Sub(checkpointStart),
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
 func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if addr == nil {
@@ -1630,6 +1753,8 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/chat", s.ChatHandler)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
+	r.POST("/api/tokenize", s.TokenizeHandler)
+	r.POST("/api/detokenize", s.DetokenizeHandler)
 
 	// Inference (OpenAI compatibility)
 	r.POST("/v1/chat/completions", middleware.ChatMiddleware(), s.ChatHandler)
@@ -1656,6 +1781,26 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 		}
 		return rs, nil
 	}
+
+	tokenizerloader.RegisterFallbackHooks(
+		func(modelName, text string) ([]int, error) {
+			// Use the same path you already use in TokenizeHandler to schedule a runner
+			name := model.ParseName(modelName)
+			r, _, _, err := s.scheduleRunner(context.Background(), name.String(), []model.Capability{}, nil, nil)
+			if err != nil {
+				return nil, err
+			}
+			return r.Tokenize(context.Background(), text)
+		},
+		func(modelName string, tokens []int) (string, error) {
+			name := model.ParseName(modelName)
+			r, _, _, err := s.scheduleRunner(context.Background(), name.String(), []model.Capability{}, nil, nil)
+			if err != nil {
+				return "", err
+			}
+			return r.Detokenize(context.Background(), tokens)
+		},
+	)
 
 	return r, nil
 }

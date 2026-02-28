@@ -4,13 +4,17 @@
   </a>
 </p>
 
-# Ollama
+---
 
 Start building with open models.
 
 ## Download
 
-### macOS
+> [!WARNING]  
+> **Experimental API:** *The /api/tokenize and /api/detokenize endpoints are not part of upstream Ollama’s stable API.*  
+> **Compatibility risk:** *They may break with future Ollama releases, since internal tokenizer APIs can change without notice.*  
+> **Performance trade-offs:** *Cold-starts may still load full model runners; more vocab-only optimization is under active development.*  
+> **No stability guarantees:** *This fork is intended for experimentation, benchmarking, and development.*  
 
 ```shell
 curl -fsSL https://ollama.com/install.sh | sh
@@ -18,7 +22,6 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 or [download manually](https://ollama.com/download/Ollama.dmg)
 
-### Windows
 
 ```shell
 irm https://ollama.com/install.ps1 | iex
@@ -26,7 +29,7 @@ irm https://ollama.com/install.ps1 | iex
 
 or [download manually](https://ollama.com/download/OllamaSetup.exe)
 
-### Linux
+`ollama-vocab-tokenizer` extends [Ollama](https://github.com/ollama/ollama) with two new HTTP API endpoints:
 
 ```shell
 curl -fsSL https://ollama.com/install.sh | sh
@@ -91,6 +94,13 @@ See the [quickstart guide](https://docs.ollama.com/quickstart) for more details.
 
 Ollama has a REST API for running and managing models.
 
+```json
+{
+  "model": "mistral:latest",
+  "tokens": [7080, 29477],
+  "total_duration": 1234567,
+  "load_duration": 456789
+}
 ```
 curl http://localhost:11434/api/chat -d '{
   "model": "gemma3",
