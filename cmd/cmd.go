@@ -1486,10 +1486,10 @@ func thinkingOutputClosingText(plainText bool) string {
 	return readline.ColorGrey + readline.ColorBold + text + readline.ColorDefault
 }
 
-func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
+func chat(cmd *cobra.Command, opts runOptions) (*api.Message, *api.Metrics, error) {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	p := progress.NewProgress(os.Stderr)
@@ -1582,7 +1582,7 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 
 	if err := client.Chat(cancelCtx, req, fn); err != nil {
 		if errors.Is(err, context.Canceled) {
-			return nil, nil
+			return nil, nil, nil
 		}
 
 		// this error should ideally be wrapped properly by the client
@@ -1590,9 +1590,9 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 			p.StopAndClear()
 			fmt.Println("An error occurred while processing your message. Please try again.")
 			fmt.Println()
-			return nil, nil
+			return nil, nil, nil
 		}
-		return nil, err
+		return nil, nil, err
 	}
 
 	if len(opts.Messages) > 0 {
@@ -1602,14 +1602,14 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 
 	verbose, err := cmd.Flags().GetBool("verbose")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if verbose {
 		latest.Summary()
 	}
 
-	return &api.Message{Role: role, Thinking: thinkingContent.String(), Content: fullResponse.String()}, nil
+	return &api.Message{Role: role, Thinking: thinkingContent.String(), Content: fullResponse.String()}, &latest.Metrics, nil
 }
 
 func generate(cmd *cobra.Command, opts runOptions) error {

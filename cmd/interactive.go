@@ -31,6 +31,9 @@ const (
 )
 
 func generateInteractive(cmd *cobra.Command, opts runOptions) error {
+	var sessionPromptTokens int64
+	var sessionCompletionTokens int64
+
 	usage := func() {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
 		fmt.Fprintln(os.Stderr, "  /set            Set session variables")
@@ -38,6 +41,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /load <model>   Load a session or model")
 		fmt.Fprintln(os.Stderr, "  /save <model>   Save your current session")
 		fmt.Fprintln(os.Stderr, "  /clear          Clear session context")
+		fmt.Fprintln(os.Stderr, "  /usage          Show session token usage")
 		fmt.Fprintln(os.Stderr, "  /bye            Exit")
 		fmt.Fprintln(os.Stderr, "  /?, /help       Help for a command")
 		fmt.Fprintln(os.Stderr, "  /? shortcuts    Help for keyboard shortcuts")
@@ -459,6 +463,9 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			} else {
 				usageShow()
 			}
+		case strings.HasPrefix(line, "/usage"):
+			fmt.Printf("prompt tokens:     %d\n", sessionPromptTokens)
+			fmt.Printf("completion tokens: %d\n", sessionCompletionTokens)
 		case strings.HasPrefix(line, "/help"), strings.HasPrefix(line, "/?"):
 			args := strings.Fields(line)
 			if len(args) > 1 {
@@ -513,7 +520,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 			opts.Messages = append(opts.Messages, newMessage)
 
-			assistant, err := chat(cmd, opts)
+			assistant, metrics, err := chat(cmd, opts)
 			if err != nil {
 				if strings.Contains(err.Error(), "does not support thinking") ||
 					strings.Contains(err.Error(), "invalid think value") {
@@ -522,6 +529,10 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					continue
 				}
 				return err
+			}
+			if metrics != nil {
+				sessionPromptTokens += int64(metrics.PromptEvalCount)
+				sessionCompletionTokens += int64(metrics.EvalCount)
 			}
 			if assistant != nil {
 				opts.Messages = append(opts.Messages, *assistant)
