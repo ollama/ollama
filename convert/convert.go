@@ -236,6 +236,8 @@ func ConvertAdapter(fsys fs.FS, f *os.File, baseKV ofs.Config) error {
 		conv = &llamaAdapter{}
 	case "gemma2":
 		conv = &gemma2Adapter{}
+	case "qwen2":
+		conv = &qwen2Adapter{}
 	default:
 		return errors.New("unsupported architecture")
 	}
