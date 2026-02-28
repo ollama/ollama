@@ -84,3 +84,57 @@ func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	assert.Len(t, imgs, 1)
 	assert.Equal(t, cleaned, "before  after")
 }
+
+func TestNormalizeFilePath(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "Standard Space (Backward Compat)",
+			input:    `my\ file.jpg`,
+			expected: `my file.jpg`,
+		},
+		{
+			name:     "Parentheses and Brackets (Backward Compat)",
+			input:    `file\ \(\[\{\}\]\).jpg`, // Escaped (, [, {, }, ], )
+			expected: `file ([{}]).jpg`,
+		},
+		{
+			name:     "Shell Specials: $ & ; * ? ~ (Backward Compat)",
+			input:    `file\ \$\&\;\*\?\~.jpg`,
+			expected: `file $&;*?~.jpg`,
+		},
+		{
+			name:     "Quotes and Backslashes (Backward Compat)",
+			input:    `it\'s\ \\\ path.jpg`, // matches \' and \\
+			expected: `it's \ path.jpg`,
+		},
+		{
+			name:     "The New Fix: @ Symbol (Covers recent PR)",
+			input:    `image\@home.jpg`,
+			expected: `image@home.jpg`,
+		},
+		{
+			name:     "The New Fix: Double Quotes and Bangs (Your Find)",
+			input:    `test_\!_\"image\".jpg`,
+			expected: `test_!_"image".jpg`,
+		},
+		{
+			name:     "Complex Mixed Case",
+			input:    `\"Cool\"\ \@\ \(Image\)\!.jpg`, // "Cool" @ (Image)!.jpg
+			expected: `"Cool" @ (Image)!.jpg`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := normalizeFilePath(tt.input)
+			if result != tt.expected {
+				t.Errorf("Failed %s:\nInput:    %s\nExpected: %s\nGot:      %s",
+					tt.name, tt.input, tt.expected, result)
+			}
+		})
+	}
+}
