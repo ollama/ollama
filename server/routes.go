@@ -1563,28 +1563,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	corsConfig := cors.DefaultConfig()
 	corsConfig.AllowWildcard = true
 	corsConfig.AllowBrowserExtensions = true
-	corsConfig.AllowHeaders = []string{
-		"Authorization",
-		"Content-Type",
-		"User-Agent",
-		"Accept",
-		"X-Requested-With",
-
-		// OpenAI compatibility headers
-		"OpenAI-Beta",
-		"x-stainless-arch",
-		"x-stainless-async",
-		"x-stainless-custom-poll-interval",
-		"x-stainless-helper-method",
-		"x-stainless-lang",
-		"x-stainless-os",
-		"x-stainless-package-version",
-		"x-stainless-poll-helper",
-		"x-stainless-retry-count",
-		"x-stainless-runtime",
-		"x-stainless-runtime-version",
-		"x-stainless-timeout",
-	}
+	corsConfig.AllowAllHeaders = true
 	corsConfig.AllowOrigins = envconfig.AllowedOrigins()
 
 	r := gin.Default()
