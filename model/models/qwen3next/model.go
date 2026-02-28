@@ -437,6 +437,46 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	return m.Output.Forward(ctx, hiddenStates), nil
 }
 
+func (m *Model) Validate() error {
+	if m.Options == nil {
+		return fmt.Errorf("qwen3next: missing model options")
+	}
+	if len(m.Layers) != len(m.Options.isRecurrent) {
+		return fmt.Errorf("qwen3next: layer config mismatch: have %d layers, %d recurrent flags", len(m.Layers), len(m.Options.isRecurrent))
+	}
+
+	for i, layer := range m.Layers {
+		if !m.Options.isRecurrent[i] {
+			continue
+		}
+
+		gdn, ok := layer.Operator.(*GatedDeltaNet)
+		if !ok || gdn == nil {
+			return fmt.Errorf("qwen3next: layer %d expected recurrent operator", i)
+		}
+		if gdn.SSMQKV == nil || gdn.SSMQKVGate == nil {
+			return fmt.Errorf("qwen3next: layer %d missing attn_qkv/attn_gate projections", i)
+		}
+		if gdn.SSMBetaAlpha == nil && (gdn.SSMBeta == nil || gdn.SSMAlpha == nil) {
+			return fmt.Errorf("qwen3next: layer %d missing linear attention beta/alpha projections", i)
+		}
+		if gdn.SSMDT == nil {
+			return fmt.Errorf("qwen3next: layer %d missing ssm_dt tensor", i)
+		}
+		if gdn.SSMA == nil {
+			return fmt.Errorf("qwen3next: layer %d missing ssm_a tensor", i)
+		}
+		if gdn.SSMConv1D == nil || gdn.SSMConv1D.Weight == nil {
+			return fmt.Errorf("qwen3next: layer %d missing ssm_conv1d tensor", i)
+		}
+		if gdn.SSMNorm == nil || gdn.SSMOut == nil {
+			return fmt.Errorf("qwen3next: layer %d missing ssm_norm/ssm_out projections", i)
+		}
+	}
+
+	return nil
+}
+
 func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
 	m.positionCache = nil
 	if len(m.mropeSections) > 0 {
