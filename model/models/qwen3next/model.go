@@ -450,6 +450,60 @@ var (
 	_ model.MultimodalProcessor = (*Model)(nil)
 )
 
+func inferRecurrentLayers(headCountKV []uint64, numLayers int, fullAttentionInterval uint32) ([]bool, error) {
+	isRecurrent := make([]bool, numLayers)
+
+	hasZero := false
+	hasFull := false
+	for i := range numLayers {
+		if i >= len(headCountKV) {
+			continue
+		}
+
+		if headCountKV[i] == 0 {
+			isRecurrent[i] = true
+			hasZero = true
+		} else {
+			hasFull = true
+		}
+	}
+	if hasZero && hasFull {
+		return isRecurrent, nil
+	}
+	if !hasFull {
+		return nil, fmt.Errorf("qwen3next: attention.head_count_kv must include at least one non-zero value")
+	}
+
+	// Compatibility path: older imports store a scalar KV head count and omit
+	// per-layer recurrent flags. Derive the hybrid layout from the interval.
+	interval := int(fullAttentionInterval)
+	if interval == 0 {
+		interval = min(4, numLayers)
+	}
+	if interval <= 0 {
+		return nil, fmt.Errorf("qwen3next: invalid block_count (%d)", numLayers)
+	}
+	if interval > numLayers {
+		return nil, fmt.Errorf("qwen3next: full_attention_interval (%d) exceeds block_count (%d)", interval, numLayers)
+	}
+
+	hasZero = false
+	hasFull = false
+	for i := range numLayers {
+		isRecurrent[i] = (i+1)%interval != 0
+		if isRecurrent[i] {
+			hasZero = true
+		} else {
+			hasFull = true
+		}
+	}
+	if !hasZero || !hasFull {
+		return nil, fmt.Errorf("qwen3next: full_attention_interval (%d) does not produce a mixed recurrent/full layout", interval)
+	}
+
+	return isRecurrent, nil
+}
+
 func New(c fs.Config) (model.Model, error) {
 	numLayers := int(c.Uint("block_count"))
 	layers := make([]Layer, numLayers)
@@ -460,26 +514,14 @@ func New(c fs.Config) (model.Model, error) {
 		HeadCountKV() []uint64
 	}
 
-	var isRecurrent []bool
 	var headCountKV []uint64
 	if hc, ok := c.(headCounts); ok {
 		headCountKV = hc.HeadCountKV()
 	}
 
-	isRecurrent = make([]bool, numLayers)
-	hasZero := false
-	hasFull := false
-	for i := range numLayers {
-		// If KV head count is 0, it's a recurrent layer
-		if i < len(headCountKV) && headCountKV[i] == 0 {
-			isRecurrent[i] = true
-			hasZero = true
-		} else if i < len(headCountKV) && headCountKV[i] > 0 {
-			hasFull = true
-		}
-	}
-	if !hasZero || !hasFull {
-		return nil, fmt.Errorf("qwen3next: invalid attention.head_count_kv array; expected mix of zero and non-zero values")
+	isRecurrent, err := inferRecurrentLayers(headCountKV, numLayers, c.Uint("full_attention_interval"))
+	if err != nil {
+		return nil, err
 	}
 
 	// Determine if MoE
@@ -555,7 +597,7 @@ func New(c fs.Config) (model.Model, error) {
 		mropeInterleaved: c.Bool("rope.mrope_interleaved", c.Bool("mrope_interleaved", false)),
 	}
 	if opts.numKVHeads == 0 {
-		return nil, fmt.Errorf("qwen3next: attention.head_count_kv array must include at least one non-zero value")
+		return nil, fmt.Errorf("qwen3next: attention.head_count_kv must include at least one non-zero value")
 	}
 
 	// Calculate cache dimensions
