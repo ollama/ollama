@@ -1540,6 +1540,11 @@ func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 
 		if addr, err := netip.ParseAddr(host); err == nil {
 			if addr.IsLoopback() || addr.IsPrivate() || addr.IsUnspecified() || isLocalIP(addr) {
+				if c.Request.Method == http.MethodOptions {
+					c.AbortWithStatus(http.StatusNoContent)
+					return
+				}
+
 				c.Next()
 				return
 			}
