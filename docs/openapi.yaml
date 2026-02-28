@@ -117,6 +117,15 @@ components:
         top_logprobs:
           type: integer
           description: Number of most likely tokens to return at each token position when logprobs are enabled
+        width:
+          type: integer
+          description: (Experimental) Width of the generated image in pixels. For image generation models only.
+        height:
+          type: integer
+          description: (Experimental) Height of the generated image in pixels. For image generation models only.
+        steps:
+          type: integer
+          description: (Experimental) Number of diffusion steps. For image generation models only.
     GenerateResponse:
       type: object
       properties:
@@ -161,6 +170,15 @@ components:
           items:
             $ref: "#/components/schemas/Logprob"
           description: Log probability information for the generated tokens when logprobs are enabled
+        image:
+          type: string
+          description: (Experimental) Base64-encoded generated image data. For image generation models only.
+        completed:
+          type: integer
+          description: (Experimental) Number of completed diffusion steps. For image generation streaming progress.
+        total:
+          type: integer
+          description: (Experimental) Total number of diffusion steps. For image generation streaming progress.
     GenerateStreamEvent:
       type: object
       properties:
@@ -200,6 +218,15 @@ components:
         eval_duration:
           type: integer
           description: Time spent generating tokens in nanoseconds
+        image:
+          type: string
+          description: (Experimental) Base64-encoded generated image data. For image generation models only.
+        completed:
+          type: integer
+          description: (Experimental) Number of completed diffusion steps. For image generation streaming progress.
+        total:
+          type: integer
+          description: (Experimental) Total number of diffusion steps. For image generation streaming progress.
     ChatMessage:
       type: object
       required: [role, content]
