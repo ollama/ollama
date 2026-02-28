@@ -74,6 +74,17 @@ if [ "$OS" = "Darwin" ]; then
 
     status "Installing Ollama to /Applications..."
     unzip -q "$TEMP_DIR/Ollama-darwin.zip" -d "$TEMP_DIR"
+
+    status "Verifying signature..."
+    if ! codesign --verify --deep --strict "$TEMP_DIR/Ollama.app" 2>/dev/null; then
+        error "Signature verification failed for Ollama.app"
+    fi
+
+    # Verify it's signed by Ollama team ID 
+    if ! codesign -dvv "$TEMP_DIR/Ollama.app" 2>&1 | grep -q "TeamIdentifier=3MU9H2V9Y9"; then
+        error "Unexpected signer for Ollama.app"
+    fi
+
     mv "$TEMP_DIR/Ollama.app" "/Applications/"
 
     if [ ! -L "/usr/local/bin/ollama" ] || [ "$(readlink "/usr/local/bin/ollama")" != "/Applications/Ollama.app/Contents/Resources/ollama" ]; then
