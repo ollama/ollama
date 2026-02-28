@@ -1,0 +1,41 @@
+---
+title: AutoHand
+---
+
+AutoHand is an autonomous AI coding agent that lives in your terminal.
+
+## Install
+
+Install [AutoHand](https://github.com/autohandai/code-cli):
+
+```bash
+npm install -g autohand-cli
+```
+
+## Usage with Ollama
+
+### Quick setup
+
+```bash
+ollama launch autohand
+```
+
+To configure without launching:
+
+```shell
+ollama launch autohand --config
+```
+
+### Manual setup
+
+Edit `~/.autohand/config.json`:
+
+```json
+{
+  "provider": "ollama",
+  "ollama": {
+    "baseUrl": "http://localhost:11434",
+    "model": "qwen3-coder"
+  }
+}
+```
