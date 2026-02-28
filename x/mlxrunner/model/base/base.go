@@ -20,6 +20,7 @@ type Model interface {
 	Unembed(x *mlx.Array) *mlx.Array
 	NumLayers() int
 	Tokenizer() *tokenizer.Tokenizer
+	MaxContextLength() int
 
 	// LoadWeights receives all tensors loaded from the manifest and assigns
 	// them to model fields. Model-specific logic (MLA absorption, expert

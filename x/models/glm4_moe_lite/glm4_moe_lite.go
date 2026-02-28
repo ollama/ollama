@@ -733,7 +733,7 @@ func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 func (m *Model) NumLayers() int { return len(m.Layers) }
 
 // MaxContextLength returns the maximum context length
-func (m *Model) MaxContextLength() int32 { return m.MaxPositionEmbeddings }
+func (m *Model) MaxContextLength() int { return int(m.MaxPositionEmbeddings) }
 
 // VocabSize returns the vocabulary size
 func (m *Model) VocabSize() int32 { return m.Config.VocabSize }
