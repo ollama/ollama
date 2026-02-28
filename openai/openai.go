@@ -461,7 +461,17 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 			if err != nil {
 				return nil, err
 			}
-			messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolName: toolName, ToolCallID: msg.ToolCallID})
+			// Normalize empty content to "" for messages with tool calls.
+			// The OpenAI spec treats content as nullable for assistant messages
+			// with tool_calls, but some clients (e.g. Vercel AI SDK) send
+			// content: "" instead of null. Passing an empty string through to
+			// the model template can cause rendering issues (e.g. qwen3-coder
+			// switching from structured tool_calls to text markup mode).
+			if content == "" && len(toolCalls) > 0 {
+				messages = append(messages, api.Message{Role: msg.Role, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolName: toolName, ToolCallID: msg.ToolCallID})
+			} else {
+				messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolName: toolName, ToolCallID: msg.ToolCallID})
+			}
 		case []any:
 			for _, c := range content {
 				data, ok := c.(map[string]any)

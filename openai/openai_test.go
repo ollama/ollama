@@ -449,6 +449,146 @@ func TestFromChatRequest_TopLogprobsRange(t *testing.T) {
 	}
 }
 
+func TestFromChatRequest_EmptyContentWithToolCalls(t *testing.T) {
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{
+				Role:    "assistant",
+				Content: "",
+				ToolCalls: []ToolCall{
+					{
+						ID:   "call_1",
+						Type: "function",
+						Function: struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						}{
+							Name:      "get_weather",
+							Arguments: `{"location":"Seattle"}`,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(result.Messages))
+	}
+
+	msg := result.Messages[0]
+
+	// Empty content with tool calls should be normalized to omit content,
+	// matching the behavior of null/nil content with tool calls.
+	if msg.Content != "" {
+		t.Errorf("expected empty content, got %q", msg.Content)
+	}
+
+	if len(msg.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(msg.ToolCalls))
+	}
+
+	if msg.ToolCalls[0].Function.Name != "get_weather" {
+		t.Errorf("expected tool call name 'get_weather', got %q", msg.ToolCalls[0].Function.Name)
+	}
+}
+
+func TestFromChatRequest_NullContentWithToolCalls(t *testing.T) {
+	// When content is nil (null in JSON), tool calls should still be preserved
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{
+				Role:    "assistant",
+				Content: nil,
+				ToolCalls: []ToolCall{
+					{
+						ID:   "call_1",
+						Type: "function",
+						Function: struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						}{
+							Name:      "get_weather",
+							Arguments: `{"location":"Seattle"}`,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(result.Messages))
+	}
+
+	msg := result.Messages[0]
+
+	if msg.Content != "" {
+		t.Errorf("expected empty content, got %q", msg.Content)
+	}
+
+	if len(msg.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(msg.ToolCalls))
+	}
+}
+
+func TestFromChatRequest_NonEmptyContentWithToolCalls(t *testing.T) {
+	// When content is non-empty alongside tool calls, it should be preserved
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{
+				Role:    "assistant",
+				Content: "Let me check the weather.",
+				ToolCalls: []ToolCall{
+					{
+						ID:   "call_1",
+						Type: "function",
+						Function: struct {
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+						}{
+							Name:      "get_weather",
+							Arguments: `{"location":"Seattle"}`,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(result.Messages))
+	}
+
+	msg := result.Messages[0]
+
+	if msg.Content != "Let me check the weather." {
+		t.Errorf("expected content 'Let me check the weather.', got %q", msg.Content)
+	}
+
+	if len(msg.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(msg.ToolCalls))
+	}
+}
+
 func TestFromImageEditRequest_Basic(t *testing.T) {
 	req := ImageEditRequest{
 		Model:  "test-model",
