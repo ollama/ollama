@@ -2,6 +2,7 @@ package openai
 
 import (
 	"encoding/base64"
+	"strings"
 	"testing"
 	"time"
 
@@ -530,4 +531,48 @@ func TestFromImageEditRequest_InvalidImage(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for invalid image")
 	}
+}
+
+func TestGenerateID(t *testing.T) {
+	t.Run("has correct prefix", func(t *testing.T) {
+		id := GenerateID("chatcmpl")
+		if !strings.HasPrefix(id, "chatcmpl-") {
+			t.Errorf("expected prefix 'chatcmpl-', got %q", id)
+		}
+	})
+
+	t.Run("has sufficient length", func(t *testing.T) {
+		id := GenerateID("chatcmpl")
+		// "chatcmpl-" (9) + 24 base64 chars = 33 total
+		if len(id) < 30 {
+			t.Errorf("expected ID length >= 30, got %d (%q)", len(id), id)
+		}
+	})
+
+	t.Run("unique IDs", func(t *testing.T) {
+		seen := make(map[string]bool)
+		for range 1000 {
+			id := GenerateID("test")
+			if seen[id] {
+				t.Fatalf("duplicate ID generated: %q", id)
+			}
+			seen[id] = true
+		}
+	})
+
+	t.Run("different prefixes", func(t *testing.T) {
+		id1 := GenerateID("cmpl")
+		id2 := GenerateID("chatcmpl")
+		id3 := GenerateID("resp")
+
+		if !strings.HasPrefix(id1, "cmpl-") {
+			t.Errorf("expected prefix 'cmpl-', got %q", id1)
+		}
+		if !strings.HasPrefix(id2, "chatcmpl-") {
+			t.Errorf("expected prefix 'chatcmpl-', got %q", id2)
+		}
+		if !strings.HasPrefix(id3, "resp-") {
+			t.Errorf("expected prefix 'resp-', got %q", id3)
+		}
+	})
 }
