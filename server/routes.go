@@ -93,6 +93,17 @@ type Server struct {
 	aliasesErr    error
 }
 
+func coerceOpenAICompatThink(c *gin.Context, model string, parser string, think *api.ThinkValue) *api.ThinkValue {
+	if think == nil || !think.IsString() || parser == "harmony" {
+		return think
+	}
+	if _, ok := c.Get("openai_compat"); !ok {
+		return think
+	}
+	slog.Warn("coercing unsupported think level to boolean for openai compatibility", "model", model, "parser", parser, "think", think.String())
+	return &api.ThinkValue{Value: true}
+}
+
 func init() {
 	switch mode {
 	case gin.DebugMode:
@@ -369,6 +380,8 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			builtinParser.Init(nil, nil, req.Think)
 		}
 	}
+
+	req.Think = coerceOpenAICompatThink(c, req.Model, m.Config.Parser, req.Think)
 
 	// Validate Think value: string values currently only allowed for harmony/gptoss models
 	if req.Think != nil && req.Think.IsString() && m.Config.Parser != "harmony" {
@@ -2240,6 +2253,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		})
 		return
 	}
+
+	req.Think = coerceOpenAICompatThink(c, req.Model, m.Config.Parser, req.Think)
 
 	// Validate Think value: string values currently only allowed for harmony/gptoss models
 	if req.Think != nil && req.Think.IsString() && m.Config.Parser != "harmony" {

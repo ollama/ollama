@@ -161,6 +161,76 @@ func TestGenerateChatRemote(t *testing.T) {
 	})
 }
 
+func TestCoerceOpenAICompatThink(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+
+	tests := []struct {
+		name   string
+		setup  func()
+		parser string
+		think  *api.ThinkValue
+		want   any
+	}{
+		{
+			name:   "nil remains nil",
+			parser: "",
+			think:  nil,
+			want:   nil,
+		},
+		{
+			name:   "harmony preserves level",
+			parser: "harmony",
+			think:  &api.ThinkValue{Value: "high"},
+			want:   "high",
+		},
+		{
+			name:   "non-openai context preserves level",
+			parser: "chatml",
+			think:  &api.ThinkValue{Value: "high"},
+			want:   "high",
+		},
+		{
+			name: "openai context coerces level to bool",
+			setup: func() {
+				c.Set("openai_compat", true)
+			},
+			parser: "chatml",
+			think:  &api.ThinkValue{Value: "high"},
+			want:   true,
+		},
+		{
+			name:   "bool value unchanged",
+			parser: "chatml",
+			think:  &api.ThinkValue{Value: false},
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c.Keys = nil
+			if tt.setup != nil {
+				tt.setup()
+			}
+			got := coerceOpenAICompatThink(c, "test-model", tt.parser, tt.think)
+			if tt.want == nil {
+				if got != nil {
+					t.Fatalf("expected nil think, got %+v", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("expected think value %v, got nil", tt.want)
+			}
+			if got.Value != tt.want {
+				t.Fatalf("expected think value %v, got %v", tt.want, got.Value)
+			}
+		})
+	}
+}
+
 func TestGenerateChat(t *testing.T) {
 	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
 	gin.SetMode(gin.TestMode)

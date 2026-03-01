@@ -96,6 +96,72 @@ func TestFromChatRequest_WithImage(t *testing.T) {
 	}
 }
 
+func TestFromChatRequest_ReasoningEffortMapping(t *testing.T) {
+	tests := []struct {
+		name string
+		req  ChatCompletionRequest
+		want any
+	}{
+		{
+			name: "flat none maps to bool false",
+			req: ChatCompletionRequest{
+				Model:           "test-model",
+				Messages:        []Message{{Role: "user", Content: "hi"}},
+				ReasoningEffort: func() *string { s := "none"; return &s }(),
+			},
+			want: false,
+		},
+		{
+			name: "flat high maps to string high",
+			req: ChatCompletionRequest{
+				Model:           "test-model",
+				Messages:        []Message{{Role: "user", Content: "hi"}},
+				ReasoningEffort: func() *string { s := "high"; return &s }(),
+			},
+			want: "high",
+		},
+		{
+			name: "nested reasoning effort wins over flat field",
+			req: ChatCompletionRequest{
+				Model:           "test-model",
+				Messages:        []Message{{Role: "user", Content: "hi"}},
+				Reasoning:       &Reasoning{Effort: "medium"},
+				ReasoningEffort: func() *string { s := "low"; return &s }(),
+			},
+			want: "medium",
+		},
+		{
+			name: "omitted effort leaves think nil",
+			req: ChatCompletionRequest{
+				Model:    "test-model",
+				Messages: []Message{{Role: "user", Content: "hi"}},
+			},
+			want: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := FromChatRequest(tt.req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if tt.want == nil {
+				if got.Think != nil {
+					t.Fatalf("expected nil think, got %+v", got.Think)
+				}
+				return
+			}
+			if got.Think == nil {
+				t.Fatalf("expected think value %v, got nil", tt.want)
+			}
+			if got.Think.Value != tt.want {
+				t.Fatalf("expected think value %v, got %v", tt.want, got.Think.Value)
+			}
+		})
+	}
+}
+
 func TestFromCompleteRequest_Basic(t *testing.T) {
 	temp := float32(0.8)
 	req := CompletionRequest{

@@ -582,6 +582,10 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	var think *api.ThinkValue
 	var effort string
 
+	if r.Reasoning != nil && r.ReasoningEffort != nil && r.Reasoning.Effort != "" && *r.ReasoningEffort != "" && r.Reasoning.Effort != *r.ReasoningEffort {
+		slog.Warn("reasoning effort mismatch: using reasoning.effort over reasoning_effort", "reasoning_effort", *r.ReasoningEffort, "reasoning.effort", r.Reasoning.Effort)
+	}
+
 	if r.Reasoning != nil {
 		effort = r.Reasoning.Effort
 	} else if r.ReasoningEffort != nil {

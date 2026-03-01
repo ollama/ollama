@@ -188,6 +188,32 @@ func TestChatMiddleware(t *testing.T) {
 			},
 		},
 		{
+			name: "chat handler reasoning field precedence",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "Hello"}
+				],
+				"reasoning": {"effort": "medium"},
+				"reasoning_effort": "low"
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "Hello",
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Think:  &api.ThinkValue{Value: "medium"},
+				Stream: &False,
+			},
+		},
+		{
 			name: "chat handler with image content",
 			body: `{
 				"model": "test-model",
@@ -600,6 +626,29 @@ func TestChatMiddleware(t *testing.T) {
 				t.Fatalf("errors did not match for %s:\n%s", tc.name, diff)
 			}
 		})
+	}
+}
+
+func TestChatMiddleware_SetsOpenAICompatFlag(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var flagSet bool
+	router := gin.New()
+	router.Use(ChatMiddleware())
+	router.POST("/v1/chat/completions", func(c *gin.Context) {
+		_, flagSet = c.Get("openai_compat")
+		c.Status(http.StatusOK)
+	})
+
+	body := `{"model":"test-model","messages":[{"role":"user","content":"Hi"}]}`
+	req, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if !flagSet {
+		t.Error("expected openai_compat flag to be set in context")
 	}
 }
 

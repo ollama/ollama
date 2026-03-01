@@ -416,6 +416,8 @@ func ChatMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		c.Set("openai_compat", true)
+
 		if err := json.NewEncoder(&b).Encode(chatReq); err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, openai.NewError(http.StatusInternalServerError, err.Error()))
 			return
