@@ -461,6 +461,16 @@ export class SettingsResponse {
 	    return a;
 	}
 }
+export class AutoStartSettingsResponse {
+    supported: boolean;
+    registered: boolean;
+
+    constructor(source: any = {}) {
+        if ('string' === typeof source) source = JSON.parse(source);
+        this.supported = source["supported"];
+        this.registered = source["registered"];
+    }
+}
 export class HealthResponse {
     healthy: boolean;
 

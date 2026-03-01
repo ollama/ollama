@@ -97,6 +97,14 @@ type SettingsResponse struct {
 	Settings store.Settings `json:"settings"`
 }
 
+// AutoStartSettingsResponse contains the current settings related to the app's auto-start behavior on system startup.
+type AutoStartSettingsResponse struct {
+	// Is auto-start supported on the current platform?
+	Supported bool `json:"supported"`
+	// Is the app registered to auto-start on system startup?
+	Registered bool `json:"registered"`
+}
+
 type HealthResponse struct {
 	Healthy bool `json:"healthy"`
 }

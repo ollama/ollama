@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/server"
+	"github.com/ollama/ollama/app/startup"
 	"github.com/ollama/ollama/app/store"
 	"github.com/ollama/ollama/app/tools"
 	"github.com/ollama/ollama/app/types/not"
@@ -94,16 +95,22 @@ const (
 	EventDownload   Event = "download"
 )
 
+// Request body for autoStart API
+type AutoStartSettings struct {
+	Registered bool `json:"registered"`
+}
+
 type Server struct {
-	Logger       *slog.Logger
-	Restart      func()
-	Token        string
-	Store        *store.Store
-	ToolRegistry *tools.Registry
-	Tools        bool   // if true, the server will use single-turn tools to fulfill the user's request
-	WebSearch    bool   // if true, the server will use single-turn browser tool to fulfill the user's request
-	Agent        bool   // if true, the server will use multi-turn tools to fulfill the user's request
-	WorkingDir   string // Working directory for all agent operations
+	Logger           *slog.Logger
+	Restart          func()
+	Token            string
+	Store            *store.Store
+	ToolRegistry     *tools.Registry
+	StartupRegistrar startup.Registrar
+	Tools            bool   // if true, the server will use single-turn tools to fulfill the user's request
+	WebSearch        bool   // if true, the server will use single-turn browser tool to fulfill the user's request
+	Agent            bool   // if true, the server will use multi-turn tools to fulfill the user's request
+	WorkingDir       string // Working directory for all agent operations
 
 	// Dev is true if the server is running in development mode
 	Dev bool
@@ -289,6 +296,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/model/upstream", handle(s.modelUpstream))
 	mux.Handle("GET /api/v1/settings", handle(s.getSettings))
 	mux.Handle("POST /api/v1/settings", handle(s.settings))
+	mux.Handle("GET /api/v1/auto-start", handle(s.getAutoStart))
+	mux.Handle("POST /api/v1/auto-start", handle(s.autoStart))
 	mux.Handle("GET /api/v1/cloud", handle(s.getCloudSetting))
 	mux.Handle("POST /api/v1/cloud", handle(s.cloudSetting))
 
@@ -1479,6 +1488,48 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 	w.Header().Set("Content-Type", "application/json")
 	return json.NewEncoder(w).Encode(responses.SettingsResponse{
 		Settings: settings,
+	})
+}
+
+func (s *Server) getAutoStart(w http.ResponseWriter, r *http.Request) error {
+	registrationState, err := s.StartupRegistrar.GetState()
+	if err != nil {
+		return fmt.Errorf("Failed to read current autostart state; %w", err)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	return json.NewEncoder(w).Encode(responses.AutoStartSettingsResponse{
+		Supported:  registrationState.Supported,
+		Registered: registrationState.Registered,
+	})
+}
+
+func (s *Server) autoStart(w http.ResponseWriter, r *http.Request) error {
+	var autoStartSettings AutoStartSettings
+	if err := json.NewDecoder(r.Body).Decode(&autoStartSettings); err != nil {
+		return fmt.Errorf("invalid request body: %w", err)
+	}
+
+	if autoStartSettings.Registered {
+		if err := s.StartupRegistrar.Register(); err != nil {
+			return fmt.Errorf("Failed to register startup application: %w", err)
+		}
+	} else {
+		if err := s.StartupRegistrar.Deregister(); err != nil {
+			return fmt.Errorf("Failed to deregister startup application: %w", err)
+		}
+	}
+
+	// Grab the new registration state
+	registrationState, err := s.StartupRegistrar.GetState()
+	if err != nil {
+		return fmt.Errorf("Updated the autostart preference, but failed to read current autostart state; %w", err)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	return json.NewEncoder(w).Encode(responses.AutoStartSettingsResponse{
+		Supported:  registrationState.Supported,
+		Registered: registrationState.Registered,
 	})
 }
 
