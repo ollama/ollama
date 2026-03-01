@@ -385,6 +385,17 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	if slices.Contains(modelCaps, model.CapabilityThinking) {
 		caps = append(caps, model.CapabilityThinking)
 		if req.Think == nil {
+			// Check for stored think default in model options
+			if thinkVal, ok := m.Options["think"]; ok {
+				switch v := thinkVal.(type) {
+				case bool:
+					req.Think = &api.ThinkValue{Value: v}
+				case string:
+					req.Think = &api.ThinkValue{Value: v}
+				}
+			}
+		}
+		if req.Think == nil {
 			req.Think = &api.ThinkValue{Value: true}
 		}
 	} else {
@@ -2153,6 +2164,17 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	modelCaps := m.Capabilities()
 	if slices.Contains(modelCaps, model.CapabilityThinking) {
 		caps = append(caps, model.CapabilityThinking)
+		if req.Think == nil {
+			// Check for stored think default in model options
+			if thinkVal, ok := m.Options["think"]; ok {
+				switch v := thinkVal.(type) {
+				case bool:
+					req.Think = &api.ThinkValue{Value: v}
+				case string:
+					req.Think = &api.ThinkValue{Value: v}
+				}
+			}
+		}
 		if req.Think == nil {
 			req.Think = &api.ThinkValue{Value: true}
 		}
