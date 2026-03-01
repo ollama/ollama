@@ -429,24 +429,13 @@ func Collect(v any) []*Array {
 	return arrays
 }
 
-// Snapshot copies an array into a fresh leaf value with no Go-side graph inputs.
-func Snapshot(a *Array) *Array {
+// Copy copies an array into a fresh leaf value with no Go-side graph inputs.
+func Copy(a *Array) *Array {
 	if a == nil || !a.Valid() {
 		return a
 	}
-	out := New("SNAPSHOT")
+	out := New("COPY")
 	C.mlx_copy(&out.ctx, a.ctx, DefaultStream().ctx)
-	return out
-}
-
-// Detach returns a new Array handle that shares the same MLX value but does
-// not retain Go-side graph input references.
-func Detach(a *Array) *Array {
-	if a == nil || !a.Valid() {
-		return a
-	}
-	out := New("DETACH")
-	C.mlx_array_set(&out.ctx, a.ctx)
 	return out
 }
 

@@ -26,10 +26,6 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	}
 
 	ctx := request.Ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
 	var (
 		sample, logprobs         *mlx.Array
 		nextSample, nextLogprobs *mlx.Array

@@ -20,21 +20,19 @@ type RecurrentCache struct {
 	headKDim  int
 }
 
-func (c *RecurrentCache) setStateMaterialized(dst **mlx.Array, v *mlx.Array) {
+func (c *RecurrentCache) setStateMaterialized(old, v *mlx.Array) *mlx.Array {
 	if v == nil || !v.Valid() {
-		return
+		return old
 	}
-	if *dst == v {
-		return
+	if old == v {
+		return old
 	}
 
 	// Break dependency chains so recurrent state does not retain the full
 	// per-token compute graph over time.
-	snap := mlx.Snapshot(v)
+	snap := mlx.Copy(v)
 	mlx.Eval(snap)
 
-	old := *dst
-	*dst = snap
 	mlx.Pin(snap)
 
 	// Drop references to the previous cached state root and transient incoming
@@ -46,40 +44,40 @@ func (c *RecurrentCache) setStateMaterialized(dst **mlx.Array, v *mlx.Array) {
 	if v != snap && v != old {
 		mlx.Unpin(v)
 	}
+
+	return snap
 }
 
-func (c *RecurrentCache) setStateRaw(dst **mlx.Array, v *mlx.Array) {
+func (c *RecurrentCache) setStateRaw(old, v *mlx.Array) *mlx.Array {
 	if v == nil || !v.Valid() {
-		return
+		return old
 	}
-	if *dst == v {
-		return
+	if old == v {
+		return old
 	}
 
-	old := *dst
-	*dst = v
 	mlx.Pin(v)
 	if old != nil && old != v {
 		mlx.Unpin(old)
 	}
+
+	return v
 }
 
-func (c *RecurrentCache) setStateDetached(dst **mlx.Array, v *mlx.Array, ensureContiguous bool) {
+func (c *RecurrentCache) setStateDetached(old, v *mlx.Array, ensureContiguous bool) *mlx.Array {
 	if v == nil || !v.Valid() {
-		return
+		return old
 	}
-	if *dst == v {
-		return
+	if old == v {
+		return old
 	}
 
 	root := v
 	if ensureContiguous {
 		root = mlx.Contiguous(v, false)
 	}
-	detached := mlx.Detach(root)
+	detached := root.Clone()
 
-	old := *dst
-	*dst = detached
 	mlx.Pin(detached)
 	if old != nil && old != detached {
 		mlx.Unpin(old)
@@ -88,13 +86,15 @@ func (c *RecurrentCache) setStateDetached(dst **mlx.Array, v *mlx.Array, ensureC
 	// Intentionally do not force-release root/v here. In the fast path, the detached
 	// handle aliases the same MLX value and may still be lazily computed. Releasing the
 	// source handles can invalidate the cached state before the next eval/sweep point.
+
+	return detached
 }
 
 func snapshotPinned(a *mlx.Array) *mlx.Array {
 	if a == nil || !a.Valid() {
 		return nil
 	}
-	snap := mlx.Snapshot(a)
+	snap := mlx.Copy(a)
 	mlx.Eval(snap)
 	mlx.Pin(snap)
 	return snap
@@ -124,10 +124,10 @@ func (c *RecurrentCache) ensure(batch int, dtype mlx.DType) {
 	}
 
 	if needConv {
-		c.setStateRaw(&c.convState, mlx.Zeros(dtype, batch, c.convTail, c.convDim))
+		c.convState = c.setStateRaw(c.convState, mlx.Zeros(dtype, batch, c.convTail, c.convDim))
 	}
 	if needDelta {
-		c.setStateRaw(&c.deltaState, mlx.Zeros(dtype, batch, c.numVHeads, c.headVDim, c.headKDim))
+		c.deltaState = c.setStateRaw(c.deltaState, mlx.Zeros(dtype, batch, c.numVHeads, c.headVDim, c.headKDim))
 	}
 }
 
@@ -137,7 +137,7 @@ func (c *RecurrentCache) ConvState(batch int, dtype mlx.DType) *mlx.Array {
 }
 
 func (c *RecurrentCache) SetConvState(v *mlx.Array) {
-	c.setStateMaterialized(&c.convState, v)
+	c.convState = c.setStateMaterialized(c.convState, v)
 }
 
 // SetConvStateFast stores conv state without forcing an immediate snapshot/eval.
@@ -145,7 +145,7 @@ func (c *RecurrentCache) SetConvState(v *mlx.Array) {
 // sync/sweep point. The conv-state input is usually a slice view, so request a
 // compact contiguous copy to avoid pinning the whole source buffer.
 func (c *RecurrentCache) SetConvStateFast(v *mlx.Array) {
-	c.setStateDetached(&c.convState, v, true)
+	c.convState = c.setStateDetached(c.convState, v, true)
 }
 
 func (c *RecurrentCache) DeltaState(batch int, dtype mlx.DType) *mlx.Array {
@@ -154,14 +154,14 @@ func (c *RecurrentCache) DeltaState(batch int, dtype mlx.DType) *mlx.Array {
 }
 
 func (c *RecurrentCache) SetDeltaState(v *mlx.Array) {
-	c.setStateMaterialized(&c.deltaState, v)
+	c.deltaState = c.setStateMaterialized(c.deltaState, v)
 }
 
 // SetDeltaStateFast stores delta state without forcing an immediate snapshot/eval.
 // Use only for decode hot paths that accept higher transient memory until the next
 // sync/sweep point.
 func (c *RecurrentCache) SetDeltaStateFast(v *mlx.Array) {
-	c.setStateDetached(&c.deltaState, v, false)
+	c.deltaState = c.setStateDetached(c.deltaState, v, false)
 }
 
 func (c *RecurrentCache) Advance(n int) {

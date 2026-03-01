@@ -8,14 +8,13 @@ import "C"
 
 import (
 	"sync"
-	"sync/atomic"
 	"unsafe"
 )
 
 var (
 	gatedDeltaMetalKernelOnce sync.Once
 	gatedDeltaMetalKernel     C.mlx_fast_metal_kernel
-	gatedDeltaMetalDisabled   atomic.Bool
+	gatedDeltaMetalDisabled   bool
 )
 
 const gatedDeltaMetalKernelSource = `
@@ -108,7 +107,7 @@ func cStringVector(values []string) (C.mlx_vector_string, func(), bool) {
 func initGatedDeltaMetalKernel() {
 	inputs, freeInputs, ok := cStringVector([]string{"q", "k", "v", "g", "beta", "state_in", "T"})
 	if !ok {
-		gatedDeltaMetalDisabled.Store(true)
+		gatedDeltaMetalDisabled = true
 		freeInputs()
 		return
 	}
@@ -116,7 +115,7 @@ func initGatedDeltaMetalKernel() {
 
 	outputs, freeOutputs, ok := cStringVector([]string{"y", "state_out"})
 	if !ok {
-		gatedDeltaMetalDisabled.Store(true)
+		gatedDeltaMetalDisabled = true
 		freeOutputs()
 		return
 	}
@@ -143,7 +142,7 @@ func initGatedDeltaMetalKernel() {
 // GatedDeltaKernel runs a fused Metal kernel for the qwen3.5 recurrent update.
 // It returns ok=false on unsupported shapes/devices or kernel setup/apply failure.
 func GatedDeltaKernel(q, k, v, g, beta, state *Array) (y, nextState *Array, ok bool) {
-	if gatedDeltaMetalDisabled.Load() {
+	if gatedDeltaMetalDisabled {
 		return nil, nil, false
 	}
 	if q == nil || k == nil || v == nil || g == nil || beta == nil || state == nil {
@@ -190,7 +189,7 @@ func GatedDeltaKernel(q, k, v, g, beta, state *Array) (y, nextState *Array, ok b
 	}
 
 	gatedDeltaMetalKernelOnce.Do(initGatedDeltaMetalKernel)
-	if gatedDeltaMetalDisabled.Load() {
+	if gatedDeltaMetalDisabled {
 		return nil, nil, false
 	}
 
@@ -200,7 +199,7 @@ func GatedDeltaKernel(q, k, v, g, beta, state *Array) (y, nextState *Array, ok b
 	cInT := C.CString("InT")
 	defer C.free(unsafe.Pointer(cInT))
 	if C.mlx_fast_metal_kernel_config_add_template_arg_dtype(cfg, cInT, C.mlx_dtype(dtype)) != 0 {
-		gatedDeltaMetalDisabled.Store(true)
+		gatedDeltaMetalDisabled = true
 		return nil, nil, false
 	}
 	for _, tpl := range []struct {
@@ -216,7 +215,7 @@ func GatedDeltaKernel(q, k, v, g, beta, state *Array) (y, nextState *Array, ok b
 		rc := C.mlx_fast_metal_kernel_config_add_template_arg_int(cfg, cn, C.int(tpl.value))
 		C.free(unsafe.Pointer(cn))
 		if rc != 0 {
-			gatedDeltaMetalDisabled.Store(true)
+			gatedDeltaMetalDisabled = true
 			return nil, nil, false
 		}
 	}
@@ -224,15 +223,15 @@ func GatedDeltaKernel(q, k, v, g, beta, state *Array) (y, nextState *Array, ok b
 	yShape := []C.int{C.int(B), C.int(T), C.int(Hv), C.int(Dv)}
 	stateShape := []C.int{C.int(B), C.int(Hv), C.int(Dv), C.int(Dk)}
 	if C.mlx_fast_metal_kernel_config_add_output_arg(cfg, unsafe.SliceData(yShape), C.size_t(len(yShape)), C.mlx_dtype(dtype)) != 0 {
-		gatedDeltaMetalDisabled.Store(true)
+		gatedDeltaMetalDisabled = true
 		return nil, nil, false
 	}
 	if C.mlx_fast_metal_kernel_config_add_output_arg(cfg, unsafe.SliceData(stateShape), C.size_t(len(stateShape)), C.mlx_dtype(dtype)) != 0 {
-		gatedDeltaMetalDisabled.Store(true)
+		gatedDeltaMetalDisabled = true
 		return nil, nil, false
 	}
 	if C.mlx_fast_metal_kernel_config_set_grid(cfg, 32, C.int(Dv), C.int(B*Hv)) != 0 {
-		gatedDeltaMetalDisabled.Store(true)
+		gatedDeltaMetalDisabled = true
 		return nil, nil, false
 	}
 	threadY := Dv
@@ -240,7 +239,7 @@ func GatedDeltaKernel(q, k, v, g, beta, state *Array) (y, nextState *Array, ok b
 		threadY = 4
 	}
 	if C.mlx_fast_metal_kernel_config_set_thread_group(cfg, 32, C.int(threadY), 1) != 0 {
-		gatedDeltaMetalDisabled.Store(true)
+		gatedDeltaMetalDisabled = true
 		return nil, nil, false
 	}
 
@@ -260,7 +259,7 @@ func GatedDeltaKernel(q, k, v, g, beta, state *Array) (y, nextState *Array, ok b
 	outVec := C.mlx_vector_array_new()
 	defer C.mlx_vector_array_free(outVec)
 	if C.mlx_fast_metal_kernel_apply(&outVec, gatedDeltaMetalKernel, inVec, cfg, DefaultStream().ctx) != 0 {
-		gatedDeltaMetalDisabled.Store(true)
+		gatedDeltaMetalDisabled = true
 		return nil, nil, false
 	}
 	if int(C.mlx_vector_array_size(outVec)) < 2 {
@@ -272,4 +271,102 @@ func GatedDeltaKernel(q, k, v, g, beta, state *Array) (y, nextState *Array, ok b
 	C.mlx_vector_array_get(&y.ctx, outVec, 0)
 	C.mlx_vector_array_get(&nextState.ctx, outVec, 1)
 	return y, nextState, true
+}
+
+func repeatHeadsForGatedDelta(x *Array, repeatFactor int) *Array {
+	if repeatFactor <= 1 {
+		return x
+	}
+	shape := x.Dims()
+	x = ExpandDims(x, 3)
+	x = Tile(x, []int32{1, 1, 1, int32(repeatFactor), 1})
+	return Reshape(x, int32(shape[0]), int32(shape[1]), int32(shape[2]*repeatFactor), int32(shape[3]))
+}
+
+func gatedDeltaFallback(q, k, v, g, beta, state *Array) (y, nextState *Array) {
+	if q == nil || k == nil || v == nil || g == nil || beta == nil || state == nil {
+		return nil, nil
+	}
+	if !q.Valid() || !k.Valid() || !v.Valid() || !g.Valid() || !beta.Valid() || !state.Valid() {
+		return nil, nil
+	}
+
+	qd := q.Dims()
+	kd := k.Dims()
+	vd := v.Dims()
+	gd := g.Dims()
+	bd := beta.Dims()
+	sd := state.Dims()
+	if len(qd) != 4 || len(kd) != 4 || len(vd) != 4 || len(gd) != 3 || len(bd) != 3 || len(sd) != 4 {
+		return nil, nil
+	}
+
+	B, T, Hk, Dk := int32(qd[0]), int32(qd[1]), int32(qd[2]), int32(qd[3])
+	Hv, Dv := int32(vd[2]), int32(vd[3])
+	if T <= 0 || Hk <= 0 || Dk <= 0 || Hv <= 0 || Dv <= 0 || Hv%Hk != 0 {
+		return nil, nil
+	}
+	if kd[0] != int(B) || kd[1] != int(T) || kd[2] != int(Hk) || kd[3] != int(Dk) {
+		return nil, nil
+	}
+	if vd[0] != int(B) || vd[1] != int(T) {
+		return nil, nil
+	}
+	if gd[0] != int(B) || gd[1] != int(T) || gd[2] != int(Hv) {
+		return nil, nil
+	}
+	if bd[0] != int(B) || bd[1] != int(T) || bd[2] != int(Hv) {
+		return nil, nil
+	}
+	if sd[0] != int(B) || sd[1] != int(Hv) || sd[2] != int(Dv) || sd[3] != int(Dk) {
+		return nil, nil
+	}
+
+	repeatFactor := int(Hv / Hk)
+	q = repeatHeadsForGatedDelta(q, repeatFactor)
+	k = repeatHeadsForGatedDelta(k, repeatFactor)
+
+	nextState = state
+	if T == 1 {
+		qt := Squeeze(q, 1)
+		kt := Squeeze(k, 1)
+		vt := Squeeze(v, 1)
+		gt := Squeeze(g, 1)
+		bt := Squeeze(beta, 1)
+
+		nextState = Mul(nextState, ExpandDims(ExpandDims(gt, -1), -1))
+		kvMem := Sum(Mul(nextState, ExpandDims(kt, 2)), -1, false)
+		delta := Mul(Sub(vt, kvMem), ExpandDims(bt, -1))
+		nextState = Add(nextState, Mul(ExpandDims(kt, 2), ExpandDims(delta, -1)))
+		yt := Sum(Mul(nextState, ExpandDims(qt, 2)), -1, false)
+		return ExpandDims(yt, 1), nextState
+	}
+
+	outs := make([]*Array, 0, T)
+	for t := int32(0); t < T; t++ {
+		qt := Squeeze(SliceStartStop(q, []int32{0, t, 0, 0}, []int32{B, t + 1, Hv, Dk}), 1)
+		kt := Squeeze(SliceStartStop(k, []int32{0, t, 0, 0}, []int32{B, t + 1, Hv, Dk}), 1)
+		vt := Squeeze(SliceStartStop(v, []int32{0, t, 0, 0}, []int32{B, t + 1, Hv, Dv}), 1)
+		gt := Squeeze(SliceStartStop(g, []int32{0, t, 0}, []int32{B, t + 1, Hv}), 1)
+		bt := Squeeze(SliceStartStop(beta, []int32{0, t, 0}, []int32{B, t + 1, Hv}), 1)
+
+		nextState = Mul(nextState, ExpandDims(ExpandDims(gt, -1), -1))
+		kvMem := Sum(Mul(nextState, ExpandDims(kt, 2)), -1, false)
+		delta := Mul(Sub(vt, kvMem), ExpandDims(bt, -1))
+		nextState = Add(nextState, Mul(ExpandDims(kt, 2), ExpandDims(delta, -1)))
+		yt := Sum(Mul(nextState, ExpandDims(qt, 2)), -1, false)
+		outs = append(outs, ExpandDims(yt, 1))
+	}
+	return Concatenate(outs, 1), nextState
+}
+
+// GatedDelta runs the recurrent update operation.
+//
+// It uses the fused Metal kernel when available and otherwise falls back to a
+// backend-agnostic MLX implementation with identical inputs/outputs.
+func GatedDelta(q, k, v, g, beta, state *Array) (y, nextState *Array) {
+	if y, nextState, ok := GatedDeltaKernel(q, k, v, g, beta, state); ok {
+		return y, nextState
+	}
+	return gatedDeltaFallback(q, k, v, g, beta, state)
 }

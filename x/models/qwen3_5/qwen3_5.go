@@ -437,15 +437,15 @@ func freeTensorKeys(tensors map[string]*mlx.Array, keys ...string) {
 	}
 }
 
-func stackAndDetach(parts []*mlx.Array) *mlx.Array {
+func stackAndClone(parts []*mlx.Array) *mlx.Array {
 	if len(parts) == 0 {
 		return nil
 	}
 	stacked := mlx.Stack(parts, 0)
-	detached := mlx.Detach(stacked)
-	mlx.Eval(detached)
+	cloned := stacked.Clone()
+	mlx.Eval(cloned)
 	mlx.Unpin(stacked)
-	return detached
+	return cloned
 }
 
 func transposeExpertWeightForGatherMM(w *mlx.Array) *mlx.Array {
@@ -453,10 +453,10 @@ func transposeExpertWeightForGatherMM(w *mlx.Array) *mlx.Array {
 		return w
 	}
 	t := mlx.Transpose(w, 0, 2, 1)
-	d := mlx.Detach(t)
-	mlx.Eval(d)
+	cloned := t.Clone()
+	mlx.Eval(cloned)
 	mlx.Unpin(t)
-	return d
+	return cloned
 }
 
 func describeMoEProjection(prefix string, w *stackedExpertWeights) string {
@@ -612,12 +612,12 @@ func collectPerExpertProjection(tensors map[string]*mlx.Array, cfg *Config, useQ
 		return nil
 	}
 
-	out := &stackedExpertWeights{Weight: stackAndDetach(weights), Bits: bits, GroupSize: groupSize, Mode: mode}
+	out := &stackedExpertWeights{Weight: stackAndClone(weights), Bits: bits, GroupSize: groupSize, Mode: mode}
 	if len(scales) == len(weights) {
-		out.Scales = stackAndDetach(scales)
+		out.Scales = stackAndClone(scales)
 	}
 	if len(biases) == len(weights) {
-		out.Biases = stackAndDetach(biases)
+		out.Biases = stackAndClone(biases)
 	}
 	freeTensorKeys(tensors, consumedKeys...)
 	return out
@@ -1073,16 +1073,6 @@ func softplus(x *mlx.Array) *mlx.Array {
 	return mlx.Log(mlx.AddScalar(mlx.Exp(x), 1.0))
 }
 
-func repeatHeads(x *mlx.Array, repeatFactor int32) *mlx.Array {
-	if repeatFactor <= 1 {
-		return x
-	}
-	shape := x.Dims()
-	x = mlx.ExpandDims(x, 3)
-	x = mlx.Tile(x, []int32{1, 1, 1, repeatFactor, 1})
-	return mlx.Reshape(x, int32(shape[0]), int32(shape[1]), int32(shape[2])*repeatFactor, int32(shape[3]))
-}
-
 func depthwiseCausalConv1d(x, w *mlx.Array, outLen int32) *mlx.Array {
 	if x == nil || w == nil {
 		return nil
@@ -1235,7 +1225,6 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Co
 	k = mlx.Reshape(k, B, L, cfg.LinearNumKeyHeads, cfg.LinearKeyHeadDim)
 	v = mlx.Reshape(v, B, L, cfg.LinearNumValueHeads, cfg.LinearValueHeadDim)
 	invScale := float32(1.0 / math.Sqrt(float64(cfg.LinearKeyHeadDim)))
-	repeatFactor := cfg.LinearNumValueHeads / cfg.LinearNumKeyHeads
 	q = mlx.MulScalar(mlx.RMSNormFn(q, nil, 1e-6), invScale*invScale)
 	k = mlx.MulScalar(mlx.RMSNormFn(k, nil, 1e-6), invScale)
 
@@ -1256,50 +1245,7 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Co
 		state = mlx.Zeros(x.DType(), int(B), int(cfg.LinearNumValueHeads), int(cfg.LinearValueHeadDim), int(cfg.LinearKeyHeadDim))
 	}
 
-	var out *mlx.Array
-	if fusedOut, fusedState, fused := mlx.GatedDeltaKernel(q, k, v, gDecay, beta, state); fused {
-		out = fusedOut
-		state = fusedState
-	} else if L == 1 {
-		if repeatFactor > 1 {
-			q = repeatHeads(q, repeatFactor)
-			k = repeatHeads(k, repeatFactor)
-		}
-		// Fast decode path: avoid per-token slice/append graph construction.
-		qt := mlx.Squeeze(q, 1)
-		kt := mlx.Squeeze(k, 1)
-		vt := mlx.Squeeze(v, 1)
-		gt := mlx.Squeeze(gDecay, 1)
-		bt := mlx.Squeeze(beta, 1)
-
-		state = mlx.Mul(state, mlx.ExpandDims(mlx.ExpandDims(gt, -1), -1))
-		kvMem := mlx.Sum(mlx.Mul(state, mlx.ExpandDims(kt, 2)), -1, false)
-		delta := mlx.Mul(mlx.Sub(vt, kvMem), mlx.ExpandDims(bt, -1))
-		state = mlx.Add(state, mlx.Mul(mlx.ExpandDims(kt, 2), mlx.ExpandDims(delta, -1)))
-		yt := mlx.Sum(mlx.Mul(state, mlx.ExpandDims(qt, 2)), -1, false)
-		out = mlx.ExpandDims(yt, 1)
-	} else {
-		if repeatFactor > 1 {
-			q = repeatHeads(q, repeatFactor)
-			k = repeatHeads(k, repeatFactor)
-		}
-		outs := make([]*mlx.Array, 0, L)
-		for t := int32(0); t < L; t++ {
-			qt := mlx.Squeeze(mlx.SliceStartStop(q, []int32{0, t, 0, 0}, []int32{B, t + 1, cfg.LinearNumValueHeads, cfg.LinearKeyHeadDim}), 1)
-			kt := mlx.Squeeze(mlx.SliceStartStop(k, []int32{0, t, 0, 0}, []int32{B, t + 1, cfg.LinearNumValueHeads, cfg.LinearKeyHeadDim}), 1)
-			vt := mlx.Squeeze(mlx.SliceStartStop(v, []int32{0, t, 0, 0}, []int32{B, t + 1, cfg.LinearNumValueHeads, cfg.LinearValueHeadDim}), 1)
-			gt := mlx.Squeeze(mlx.SliceStartStop(gDecay, []int32{0, t, 0}, []int32{B, t + 1, cfg.LinearNumValueHeads}), 1)
-			bt := mlx.Squeeze(mlx.SliceStartStop(beta, []int32{0, t, 0}, []int32{B, t + 1, cfg.LinearNumValueHeads}), 1)
-
-			state = mlx.Mul(state, mlx.ExpandDims(mlx.ExpandDims(gt, -1), -1))
-			kvMem := mlx.Sum(mlx.Mul(state, mlx.ExpandDims(kt, 2)), -1, false)
-			delta := mlx.Mul(mlx.Sub(vt, kvMem), mlx.ExpandDims(bt, -1))
-			state = mlx.Add(state, mlx.Mul(mlx.ExpandDims(kt, 2), mlx.ExpandDims(delta, -1)))
-			yt := mlx.Sum(mlx.Mul(state, mlx.ExpandDims(qt, 2)), -1, false)
-			outs = append(outs, mlx.ExpandDims(yt, 1))
-		}
-		out = mlx.Concatenate(outs, 1)
-	}
+	out, state := mlx.GatedDelta(q, k, v, gDecay, beta, state)
 	out = mlx.RMSNormFn(out, g.NormWeight, cfg.RMSNormEps)
 	out = mlx.Mul(out, mlx.SiLU(z))
 	out = mlx.Reshape(out, B, L, valueDim)
@@ -1448,10 +1394,4 @@ func (m *Model) NewCaches() []cache.Cache {
 		}
 	}
 	return caches
-}
-
-// DisablePromptCache returns false to allow append-only prompt cache reuse.
-// Recurrent caches report CanTrim=false, so divergent prefixes are dropped.
-func (m *Model) DisablePromptCache() bool {
-	return false
 }

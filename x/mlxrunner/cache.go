@@ -109,6 +109,8 @@ func (s *cacheSession) close() {
 		if kv == nil {
 			continue
 		}
+		// Mixed cache types (e.g. recurrent + KV) can transiently report different
+		// offsets, so use the minimum as the safe reusable token prefix.
 		if off := kv.Offset(); offset < 0 || off < offset {
 			offset = off
 		}
