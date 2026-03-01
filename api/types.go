@@ -597,6 +597,7 @@ type Options struct {
 	PresencePenalty  float32  `json:"presence_penalty,omitempty"`
 	FrequencyPenalty float32  `json:"frequency_penalty,omitempty"`
 	Stop             []string `json:"stop,omitempty"`
+	TokenRepeatLimit int      `json:"token_repeat_limit,omitempty"`
 }
 
 // Runner options which must be set when the model is loaded into memory
