@@ -1,4 +1,7 @@
-# Development
+---
+title: Development
+description: Install prerequisites for Ollama development
+---
 
 Install prerequisites:
 
@@ -11,8 +14,9 @@ Then build and run Ollama from the root directory of the repository:
 go run . serve
 ```
 
-> [!NOTE]
-> Ollama includes native code compiled with CGO.  From time to time these data structures can change and CGO can get out of sync resulting in unexpected crashes.  You can force a full build of the native code by running `go clean -cache` first. 
+<Note>
+  Ollama includes native code compiled with CGO. From time to time these data structures can change and CGO can get out of sync resulting in unexpected crashes. You can force a full build of the native code by running `go clean -cache` first.
+</Note> 
 
 
 ## macOS (Apple Silicon)
@@ -59,23 +63,27 @@ cmake -B build
 cmake --build build --config Release
 ```
 
-> Building for Vulkan requires VULKAN_SDK environment variable:
-> 
-> PowerShell
-> ```powershell
-> $env:VULKAN_SDK="C:\VulkanSDK\<version>"
-> ```
-> CMD
-> ```cmd
-> set VULKAN_SDK=C:\VulkanSDK\<version>
-> ```
+<Note>
+  Building for Vulkan requires VULKAN_SDK environment variable:
 
-> [!IMPORTANT]
-> Building for ROCm requires additional flags:
-> ```
-> cmake -B build -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
-> cmake --build build --config Release
-> ```
+  **PowerShell**
+  ```powershell
+  $env:VULKAN_SDK="C:\VulkanSDK\<version>"
+  ```
+
+  **CMD**
+  ```cmd
+  set VULKAN_SDK=C:\VulkanSDK\<version>
+  ```
+</Note>
+
+<Warning>
+  Building for ROCm requires additional flags:
+  ```
+  cmake -B build -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+  cmake --build build --config Release
+  ```
+</Warning>
 
 
 
@@ -101,8 +109,9 @@ Install prerequisites:
 - (Optional) VULKAN GPU support
     - [VULKAN SDK](https://vulkan.lunarg.com/sdk/home) - useful for AMD/Intel GPUs
     - Or install via package manager: `sudo apt install vulkan-sdk` (Ubuntu/Debian) or `sudo dnf install vulkan-sdk` (Fedora/CentOS)
-> [!IMPORTANT]
-> Ensure prerequisites are in `PATH` before running CMake.
+<Warning>
+  Ensure prerequisites are in `PATH` before running CMake.
+</Warning>
 
 
 Then, configure and build the project:
@@ -138,34 +147,29 @@ To run tests, use `go test`:
 go test ./...
 ```
 
-> NOTE: In rare circumstances, you may need to change a package using the new
-> "synctest" package in go1.24.
->
-> If you do not have the "synctest" package enabled, you will not see build or
-> test failures resulting from your change(s), if any, locally, but CI will
-> break.
->
-> If you see failures in CI, you can either keep pushing changes to see if the
-> CI build passes, or you can enable the "synctest" package locally to see the
-> failures before pushing.
->
-> To enable the "synctest" package for testing, run the following command:
->
-> ```shell
-> GOEXPERIMENT=synctest go test ./...
-> ```
->
-> If you wish to enable synctest for all go commands, you can set the
-> `GOEXPERIMENT` environment variable in your shell profile or by using:
->
-> ```shell
-> go env -w GOEXPERIMENT=synctest
-> ```
->
-> Which will enable the "synctest" package for all go commands without needing
-> to set it for all shell sessions.
->
-> The synctest package is not required for production builds.
+<Note>
+  In rare circumstances, you may need to change a package using the new "synctest" package in go1.24.
+
+  If you do not have the "synctest" package enabled, you will not see build or test failures resulting from your change(s), if any, locally, but CI will break.
+
+  If you see failures in CI, you can either keep pushing changes to see if the CI build passes, or you can enable the "synctest" package locally to see the failures before pushing.
+
+  To enable the "synctest" package for testing, run the following command:
+
+  ```shell
+  GOEXPERIMENT=synctest go test ./...
+  ```
+
+  If you wish to enable synctest for all go commands, you can set the `GOEXPERIMENT` environment variable in your shell profile or by using:
+
+  ```shell
+  go env -w GOEXPERIMENT=synctest
+  ```
+
+  Which will enable the "synctest" package for all go commands without needing to set it for all shell sessions.
+
+  The synctest package is not required for production builds.
+</Note>
 
 ## Library detection
 

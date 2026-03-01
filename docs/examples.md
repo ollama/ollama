@@ -11,4 +11,4 @@ Ollama JavaScript examples at [ollama-js/examples](https://github.com/ollama/oll
 
 
 ## OpenAI compatibility examples
-Ollama OpenAI compatibility examples at [ollama/examples/openai](../docs/openai.md)
+Ollama OpenAI compatibility examples at [ollama/examples/openai](https://docs.ollama.com/api/openai-compatibility)

@@ -169,7 +169,8 @@
               "/import",
               "/faq",
               "/gpu",
-              "/troubleshooting"
+              "/troubleshooting",
+              "/development"
             ]
           }
         ]
