@@ -302,10 +302,10 @@ index 336172700..9e1e2510e 100644
      bool use_sycl_graph = !g_ggml_sycl_disable_graph && check_graph_compatibility(cgraph);
      if (use_sycl_graph) {
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 66d5c5f7c..855120de6 100644
+index ec9b0c2d1..3b0370d85 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -13946,8 +13946,9 @@ static int32_t find_first_set(uint32_t x) {
+@@ -14051,8 +14051,9 @@ static int32_t find_first_set(uint32_t x) {
      return ret;
  }
  
@@ -16746,7 +16746,7 @@ index 9b6938abf..9c5f3ae84 100644
  }
  
 diff --git a/ggml/src/ggml-zendnn/ggml-zendnn.cpp b/ggml/src/ggml-zendnn/ggml-zendnn.cpp
-index 551c15bb4..e1277cd9f 100644
+index c87603040..88b3bd628 100644
 --- a/ggml/src/ggml-zendnn/ggml-zendnn.cpp
 +++ b/ggml/src/ggml-zendnn/ggml-zendnn.cpp
 @@ -204,9 +204,11 @@ static void ggml_backend_zendnn_free(ggml_backend_t backend) {

@@ -668,7 +668,7 @@ namespace ggml_cuda_mma {
 
         return ret;
     }
-#elif defined(AMD_WMMA_AVAILABLE)
+#elif defined(AMD_WMMA_AVAILABLE) || defined(AMD_MFMA_AVAILABLE)
     template <int I, int J>
     static __device__ __forceinline__ tile<I, J/2, half2> get_half2(const tile<I, J, float> & tile_float) {
         tile<I, J/2, half2> ret;
@@ -964,6 +964,34 @@ namespace ggml_cuda_mma {
         GGML_UNUSED_VARS(D, A, B);
         NO_DEVICE_CODE;
 #endif // defined(RDNA4)
+#elif defined(AMD_MFMA_AVAILABLE)
+        // MFMA: FP16 input, FP32 accumulate, convert back to half2.
+        using halfx4_t = __attribute__((ext_vector_type(4))) _Float16;
+        using floatx4_t = __attribute__((ext_vector_type(4))) float;
+
+        // Convert existing half2 accumulator to float for MFMA:
+        floatx4_t acc_f32;
+        {
+            const halfx4_t acc_h = reinterpret_cast<const halfx4_t&>(D.x[0]);
+#pragma unroll
+            for (int i = 0; i < 4; ++i) {
+                acc_f32[i] = (float)acc_h[i];
+            }
+        }
+
+        const halfx4_t& a_frag = reinterpret_cast<const halfx4_t&>(A.x[0]);
+        const halfx4_t& b_frag = reinterpret_cast<const halfx4_t&>(B.x[0]);
+        acc_f32 = __builtin_amdgcn_mfma_f32_16x16x16f16(a_frag, b_frag, acc_f32, 0, 0, 0);
+
+        // Convert back to half2:
+        {
+            halfx4_t result_h;
+#pragma unroll
+            for (int i = 0; i < 4; ++i) {
+                result_h[i] = (_Float16)acc_f32[i];
+            }
+            reinterpret_cast<halfx4_t&>(D.x[0]) = result_h;
+        }
 #else
         GGML_UNUSED_VARS(D, A, B);
         NO_DEVICE_CODE;
