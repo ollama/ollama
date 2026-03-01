@@ -1473,6 +1473,9 @@ type CompletionRequest struct {
 	Height int32 `json:"height,omitempty"`
 	Steps  int32 `json:"steps,omitempty"`
 	Seed   int64 `json:"seed,omitempty"`
+
+	// PromptEvalProgress specifies the token interval for prompt evaluation progress updates
+	PromptEvalProgress int `json:"prompt_eval_progress,omitempty"`
 }
 
 // DoneReason represents the reason why a completion response is done
@@ -1531,6 +1534,12 @@ type CompletionResponse struct {
 
 	// TotalSteps is the total number of steps for image generation
 	TotalSteps int `json:"total_steps,omitempty"`
+
+	// PromptEvalCompleted is the number of tokens processed during prompt evaluation
+	PromptEvalCompleted int `json:"prompt_eval_completed,omitempty"`
+
+	// PromptEvalTotal is the total number of tokens to process during prompt evaluation
+	PromptEvalTotal int `json:"prompt_eval_total,omitempty"`
 }
 
 func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
@@ -1664,10 +1673,12 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 				return ctx.Err()
 			}
 
-			if c.Content != "" {
+			if c.Content != "" || c.PromptEvalCompleted > 0 {
 				fn(CompletionResponse{
-					Content:  c.Content,
-					Logprobs: c.Logprobs,
+					Content:             c.Content,
+					Logprobs:            c.Logprobs,
+					PromptEvalCompleted: c.PromptEvalCompleted,
+					PromptEvalTotal:     c.PromptEvalTotal,
 				})
 			}
 

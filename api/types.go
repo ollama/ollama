@@ -142,6 +142,11 @@ type GenerateRequest struct {
 	// Steps is the number of diffusion steps for image generation.
 	// Only used for image generation models.
 	Steps int32 `json:"steps,omitempty"`
+
+	// PromptEvalProgress specifies the token interval for prompt evaluation progress updates.
+	// When set to N (N > 0), the server will send a progress update every N tokens processed.
+	// Set to 0 or omit to disable progress updates during prompt eval.
+	PromptEvalProgress int `json:"prompt_eval_progress,omitempty"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].
@@ -192,6 +197,11 @@ type ChatRequest struct {
 	// each with an associated log probability. Only applies when Logprobs is true.
 	// Valid values are 0-20. Default is 0 (only return the selected token's logprob).
 	TopLogprobs int `json:"top_logprobs,omitempty"`
+
+	// PromptEvalProgress specifies the token interval for prompt evaluation progress updates.
+	// When set to N (N > 0), the server will send a progress update every N tokens processed.
+	// Set to 0 or omit to disable progress updates during prompt eval.
+	PromptEvalProgress int `json:"prompt_eval_progress,omitempty"`
 }
 
 type Tools []Tool
@@ -559,6 +569,14 @@ type ChatResponse struct {
 	// if requested via the Logprobs parameter.
 	Logprobs []Logprob `json:"logprobs,omitempty"`
 
+	// PromptEvalCompleted is the number of tokens processed during prompt evaluation.
+	// Only present when prompt_eval_progress is set in the request.
+	PromptEvalCompleted int64 `json:"prompt_eval_completed,omitempty"`
+
+	// PromptEvalTotal is the total number of tokens to process during prompt evaluation.
+	// Only present when prompt_eval_progress is set in the request.
+	PromptEvalTotal int64 `json:"prompt_eval_total,omitempty"`
+
 	Metrics
 }
 
@@ -900,6 +918,14 @@ type GenerateResponse struct {
 	// Total is the total number of steps for image generation.
 	// Only present for image generation models during streaming.
 	Total int64 `json:"total,omitempty"`
+
+	// PromptEvalCompleted is the number of tokens processed during prompt evaluation.
+	// Only present when prompt_eval_progress is set in the request.
+	PromptEvalCompleted int64 `json:"prompt_eval_completed,omitempty"`
+
+	// PromptEvalTotal is the total number of tokens to process during prompt evaluation.
+	// Only present when prompt_eval_progress is set in the request.
+	PromptEvalTotal int64 `json:"prompt_eval_total,omitempty"`
 }
 
 // ModelDetails provides details about a model.
