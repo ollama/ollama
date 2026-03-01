@@ -1,22 +1,16 @@
 import { useEffect, useState, useCallback } from "react";
-import { Switch } from "@/components/ui/switch";
+import { Tab, TabGroup, TabList, TabPanel, TabPanels } from "@headlessui/react";
 import { Text } from "@/components/ui/text";
-import { Input } from "@/components/ui/input";
 import { Field, Label, Description } from "@/components/ui/fieldset";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Slider } from "@/components/ui/slider";
 import {
-  WifiIcon,
-  FolderIcon,
   BoltIcon,
   WrenchIcon,
-  CloudIcon,
   XMarkIcon,
-  CogIcon,
   ArrowLeftIcon,
-  ArrowDownTrayIcon,
 } from "@heroicons/react/20/solid";
+import { Switch } from "@/components/ui/switch";
 import { Settings as SettingsType } from "@/gotypes";
 import { useNavigate } from "@tanstack/react-router";
 import { useUser } from "@/hooks/useUser";
@@ -29,6 +23,11 @@ import {
   updateSettings,
   getInferenceCompute,
 } from "@/api";
+import GeneralTab from "@/components/settings/GeneralTab";
+import GpuPerformanceTab from "@/components/settings/GpuPerformanceTab";
+import GenerationDefaultsTab from "@/components/settings/GenerationDefaultsTab";
+import NetworkSecurityTab from "@/components/settings/NetworkSecurityTab";
+import clsx from "clsx";
 
 function AnimatedDots() {
   return (
@@ -43,6 +42,13 @@ function AnimatedDots() {
     </span>
   );
 }
+
+const tabs = [
+  { name: "General" },
+  { name: "GPU & Performance" },
+  { name: "Generation" },
+  { name: "Network" },
+];
 
 export default function Settings() {
   const queryClient = useQueryClient();
@@ -185,7 +191,10 @@ export default function Settings() {
   }, [pollingInterval]);
 
   const handleChange = useCallback(
-    (field: keyof SettingsType, value: boolean | string | number) => {
+    (
+      field: keyof SettingsType,
+      value: boolean | string | number | null,
+    ) => {
       if (settings) {
         const updatedSettings = new SettingsType({
           ...settings,
@@ -214,6 +223,32 @@ export default function Settings() {
         Agent: false,
         Tools: false,
         ContextLength: 0,
+        // General
+        DebugLogging: false,
+        KeepAliveDuration: "",
+        // GPU & Performance
+        FlashAttention: false,
+        KvCacheType: "",
+        NumParallel: 0,
+        GpuOverhead: 0,
+        SchedSpread: false,
+        EnableVulkan: false,
+        // Generation Defaults
+        DefaultTemperature: null,
+        DefaultTopK: null,
+        DefaultTopP: null,
+        DefaultMinP: null,
+        DefaultRepeatPenalty: null,
+        DefaultRepeatLastN: null,
+        DefaultSeed: null,
+        DefaultNumPredict: null,
+        // Network & Security
+        OllamaHost: "",
+        HttpProxy: "",
+        HttpsProxy: "",
+        NoProxy: "",
+        CorsOrigins: "",
+        AllowedRemotes: "",
       });
       updateSettingsMutation.mutate(defaultSettings);
     }
@@ -410,156 +445,59 @@ export default function Settings() {
               )}
             </div>
           </div>
-          {/* Local Configuration */}
-          <div className="relative overflow-hidden rounded-xl bg-white dark:bg-neutral-800">
-            <div className="space-y-4 p-4">
-              <Field>
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex items-start space-x-3 flex-1">
-                    <CloudIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
-                    <div>
-                      <Label>Cloud</Label>
-                      <Description>
-                        {cloudOverriddenByEnv
-                          ? "The OLLAMA_NO_CLOUD environment variable is currently forcing cloud off."
-                          : "Enable cloud models and web search."}
-                      </Description>
-                    </div>
-                  </div>
-                  <div className="flex-shrink-0">
-                    <Switch
-                      checked={!cloudDisabled}
-                      disabled={cloudToggleDisabled}
-                      onChange={(checked) => {
-                        if (cloudOverriddenByEnv) {
-                          return;
-                        }
-                        updateCloudMutation.mutate(checked);
-                      }}
-                    />
-                  </div>
-                </div>
-              </Field>
 
-              {/* Auto Update */}
-              <Field>
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex items-start space-x-3 flex-1">
-                    <ArrowDownTrayIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
-                    <div>
-                      <Label>Auto-download updates</Label>
-                      <Description>
-                        {settings.AutoUpdateEnabled
-                          ? "Automatically download updates when available."
-                          : "Updates will not be downloaded automatically."}
-                      </Description>
-                    </div>
-                  </div>
-                  <div className="flex-shrink-0">
-                    <Switch
-                      checked={settings.AutoUpdateEnabled}
-                      onChange={(checked) => handleChange("AutoUpdateEnabled", checked)}
-                    />
-                  </div>
-                </div>
-              </Field>
-
-              {/* Expose Ollama */}
-              <Field>
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex items-start space-x-3 flex-1">
-                    <WifiIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
-                    <div>
-                      <Label>Expose Ollama to the network</Label>
-                      <Description>
-                        Allow other devices or services to access Ollama.
-                      </Description>
-                    </div>
-                  </div>
-                  <div className="flex-shrink-0">
-                    <Switch
-                      checked={settings.Expose}
-                      onChange={(checked) => handleChange("Expose", checked)}
-                    />
-                  </div>
-                </div>
-              </Field>
-
-              {/* Model Directory */}
-              <Field>
-                <div className="flex items-start space-x-3">
-                  <FolderIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
-                  <div className="w-full">
-                    <Label>Model location</Label>
-                    <Description>Location where models are stored.</Description>
-                    <div className="mt-2 flex items-center space-x-2">
-                      <Input
-                        value={settings.Models || ""}
-                        onChange={(e) => handleChange("Models", e.target.value)}
-                        readOnly
-                      />
-                      <Button
-                        type="button"
-                        color="white"
-                        className="px-2"
-                        onClick={async () => {
-                          if (window.webview?.selectModelsDirectory) {
-                            try {
-                              const directory =
-                                await window.webview.selectModelsDirectory();
-                              if (directory) {
-                                handleChange("Models", directory);
-                              }
-                            } catch (error) {
-                              console.error(
-                                "Error selecting models directory:",
-                                error,
-                              );
-                            }
-                          }
-                        }}
-                      >
-                        <FolderIcon className="w-4 h-4 mr-1" />
-                        Browse
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </Field>
-
-              {/* Context Length */}
-              <Field>
-                <div className="flex items-start space-x-3">
-                  <CogIcon className="mt-1 h-5 w-5 flex-shrink-0 text-black dark:text-neutral-100" />
-                  <div className="w-full">
-                    <Label>Context length</Label>
-                    <Description>
-                      Context length determines how much of your conversation
-                      local LLMs can remember and use to generate responses.
-                    </Description>
-                    <div className="mt-3">
-                      <Slider
-                        value={settings.ContextLength || defaultContextLength || 0}
-                        onChange={(value) => {
-                          handleChange("ContextLength", value);
-                        }}
-                        disabled={!defaultContextLength}
-                        options={[
-                          { value: 4096, label: "4k" },
-                          { value: 8192, label: "8k" },
-                          { value: 16384, label: "16k" },
-                          { value: 32768, label: "32k" },
-                          { value: 65536, label: "64k" },
-                          { value: 131072, label: "128k" },
-                          { value: 262144, label: "256k" },
-                        ]}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </Field>
-            </div>
-          </div>
+          {/* Tabbed Settings */}
+          <TabGroup>
+            <TabList className="flex space-x-1 rounded-xl bg-neutral-100 dark:bg-neutral-800 p-1">
+              {tabs.map((tab) => (
+                <Tab
+                  key={tab.name}
+                  className={({ selected }) =>
+                    clsx(
+                      "w-full rounded-lg py-2 text-sm font-medium leading-5 transition-colors",
+                      "focus:outline-hidden",
+                      selected
+                        ? "bg-white dark:bg-neutral-700 text-neutral-900 dark:text-white shadow-sm"
+                        : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-300 hover:bg-white/50 dark:hover:bg-neutral-700/50",
+                    )
+                  }
+                >
+                  {tab.name}
+                </Tab>
+              ))}
+            </TabList>
+            <TabPanels className="mt-3">
+              <TabPanel>
+                <GeneralTab
+                  settings={settings}
+                  onChange={handleChange}
+                  cloudDisabled={cloudDisabled}
+                  cloudOverriddenByEnv={cloudOverriddenByEnv}
+                  cloudToggleDisabled={cloudToggleDisabled}
+                  updateCloudMutation={updateCloudMutation}
+                  defaultContextLength={defaultContextLength}
+                />
+              </TabPanel>
+              <TabPanel>
+                <GpuPerformanceTab
+                  settings={settings}
+                  onChange={handleChange}
+                />
+              </TabPanel>
+              <TabPanel>
+                <GenerationDefaultsTab
+                  settings={settings}
+                  onChange={handleChange}
+                />
+              </TabPanel>
+              <TabPanel>
+                <NetworkSecurityTab
+                  settings={settings}
+                  onChange={handleChange}
+                />
+              </TabPanel>
+            </TabPanels>
+          </TabGroup>
 
           {/* Agent Mode */}
           {window.OLLAMA_TOOLS && (
@@ -622,10 +560,10 @@ export default function Settings() {
         {(showSaved || restartMessage) && (
           <div className="fixed bottom-4 left-1/2 transform -translate-x-1/2 transition-opacity duration-300 z-50">
             <Badge
-              color="green"
-              className="!bg-green-500 !text-white dark:!bg-green-600"
+              color={restartMessage ? "amber" : "green"}
+              className={restartMessage ? "!bg-amber-500 !text-white dark:!bg-amber-600" : "!bg-green-500 !text-white dark:!bg-green-600"}
             >
-              Saved
+              {restartMessage ? "Server will restart to apply changes" : "Saved"}
             </Badge>
           </div>
         )}

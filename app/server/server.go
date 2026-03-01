@@ -222,7 +222,9 @@ func (s *Server) cmd(ctx context.Context) (*exec.Cmd, error) {
 	env := map[string]string{}
 	for _, kv := range os.Environ() {
 		s := strings.SplitN(kv, "=", 2)
-		env[s[0]] = s[1]
+		if len(s) == 2 {
+			env[s[0]] = s[1]
+		}
 	}
 	if settings.Expose {
 		env["OLLAMA_HOST"] = "0.0.0.0"
@@ -244,6 +246,52 @@ func (s *Server) cmd(ctx context.Context) (*exec.Cmd, error) {
 		env["OLLAMA_NO_CLOUD"] = "1"
 	} else {
 		env["OLLAMA_NO_CLOUD"] = "0"
+	}
+
+	// Extended settings
+	if settings.DebugLogging {
+		env["OLLAMA_DEBUG"] = "1"
+	}
+	if settings.KeepAliveDuration != "" {
+		env["OLLAMA_KEEP_ALIVE"] = settings.KeepAliveDuration
+	}
+	if settings.FlashAttention {
+		env["OLLAMA_FLASH_ATTENTION"] = "1"
+	}
+	if settings.KvCacheType != "" {
+		env["OLLAMA_KV_CACHE_TYPE"] = settings.KvCacheType
+	}
+	if settings.NumParallel > 0 {
+		env["OLLAMA_NUM_PARALLEL"] = strconv.Itoa(settings.NumParallel)
+	}
+	if settings.GpuOverhead > 0 {
+		env["OLLAMA_GPU_OVERHEAD"] = strconv.FormatInt(settings.GpuOverhead, 10)
+	}
+	if settings.SchedSpread {
+		env["OLLAMA_SCHED_SPREAD"] = "1"
+	}
+	if settings.EnableVulkan {
+		env["OLLAMA_VULKAN"] = "1"
+	}
+	if settings.OllamaHost != "" {
+		if _, exists := env["OLLAMA_HOST"]; !exists {
+			env["OLLAMA_HOST"] = settings.OllamaHost
+		}
+	}
+	if settings.HttpProxy != "" {
+		env["HTTP_PROXY"] = settings.HttpProxy
+	}
+	if settings.HttpsProxy != "" {
+		env["HTTPS_PROXY"] = settings.HttpsProxy
+	}
+	if settings.NoProxy != "" {
+		env["NO_PROXY"] = settings.NoProxy
+	}
+	if settings.CorsOrigins != "" && !settings.Browser {
+		env["OLLAMA_ORIGINS"] = settings.CorsOrigins
+	}
+	if settings.AllowedRemotes != "" {
+		env["OLLAMA_REMOTES"] = settings.AllowedRemotes
 	}
 	cmd.Env = []string{}
 	for k, v := range env {

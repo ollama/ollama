@@ -169,6 +169,52 @@ type Settings struct {
 
 	// AutoUpdateEnabled indicates if automatic updates should be downloaded
 	AutoUpdateEnabled bool
+
+	// --- Extended Settings (PR #1) ---
+
+	// General
+	// DebugLogging enables debug-level logging (maps to OLLAMA_DEBUG)
+	DebugLogging bool
+	// KeepAliveDuration controls how long models stay loaded in memory (maps to OLLAMA_KEEP_ALIVE, e.g. "5m", "1h", "-1")
+	KeepAliveDuration string
+
+	// GPU & Performance
+	// FlashAttention enables experimental flash attention (maps to OLLAMA_FLASH_ATTENTION)
+	FlashAttention bool
+	// KvCacheType sets K/V cache quantization type (maps to OLLAMA_KV_CACHE_TYPE: "f16", "q8_0", "q4_0")
+	KvCacheType string
+	// NumParallel sets maximum number of parallel requests (maps to OLLAMA_NUM_PARALLEL)
+	NumParallel int
+	// GpuOverhead reserves VRAM per GPU in bytes (maps to OLLAMA_GPU_OVERHEAD)
+	GpuOverhead int64
+	// SchedSpread distributes model layers across all GPUs (maps to OLLAMA_SCHED_SPREAD)
+	SchedSpread bool
+	// EnableVulkan enables experimental Vulkan GPU support (maps to OLLAMA_VULKAN)
+	EnableVulkan bool
+
+	// Generation Defaults (nil = use model/system default)
+	DefaultTemperature   *float64 `json:"DefaultTemperature,omitempty"`
+	DefaultTopK          *int     `json:"DefaultTopK,omitempty"`
+	DefaultTopP          *float64 `json:"DefaultTopP,omitempty"`
+	DefaultMinP          *float64 `json:"DefaultMinP,omitempty"`
+	DefaultRepeatPenalty *float64 `json:"DefaultRepeatPenalty,omitempty"`
+	DefaultRepeatLastN   *int     `json:"DefaultRepeatLastN,omitempty"`
+	DefaultSeed          *int     `json:"DefaultSeed,omitempty"`
+	DefaultNumPredict    *int     `json:"DefaultNumPredict,omitempty"`
+
+	// Network & Security
+	// OllamaHost sets the server address and port (maps to OLLAMA_HOST)
+	OllamaHost string
+	// HttpProxy sets the HTTP proxy (maps to HTTP_PROXY)
+	HttpProxy string
+	// HttpsProxy sets the HTTPS proxy (maps to HTTPS_PROXY)
+	HttpsProxy string
+	// NoProxy sets proxy exclusions (maps to NO_PROXY)
+	NoProxy string
+	// CorsOrigins sets allowed CORS origins (maps to OLLAMA_ORIGINS)
+	CorsOrigins string
+	// AllowedRemotes sets allowed hosts for remote models (maps to OLLAMA_REMOTES)
+	AllowedRemotes string
 }
 
 type Store struct {
