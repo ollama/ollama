@@ -1062,8 +1062,10 @@ func (s *Server) DeleteHandler(c *gin.Context) {
 func (s *Server) ShowHandler(c *gin.Context) {
 	var req api.ShowRequest
 	err := c.ShouldBindJSON(&req)
+
+	model := strings.TrimPrefix(c.Param("model"), "/")
 	switch {
-	case errors.Is(err, io.EOF):
+	case errors.Is(err, io.EOF) && model == "":
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
 		return
 	case err != nil:
@@ -1075,6 +1077,8 @@ func (s *Server) ShowHandler(c *gin.Context) {
 		// noop
 	} else if req.Name != "" {
 		req.Model = req.Name
+	} else if model != "" {
+		req.Model = model
 	} else {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
@@ -1636,7 +1640,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/v1/completions", middleware.CompletionsMiddleware(), s.GenerateHandler)
 	r.POST("/v1/embeddings", middleware.EmbeddingsMiddleware(), s.EmbedHandler)
 	r.GET("/v1/models", middleware.ListMiddleware(), s.ListHandler)
-	r.GET("/v1/models/:model", middleware.RetrieveMiddleware(), s.ShowHandler)
+	r.GET("/v1/models/*model", middleware.RetrieveMiddleware(), s.ShowHandler)
 	r.POST("/v1/responses", middleware.ResponsesMiddleware(), s.ChatHandler)
 	// OpenAI-compatible image generation endpoints
 	r.POST("/v1/images/generations", middleware.ImageGenerationsMiddleware(), s.GenerateHandler)
