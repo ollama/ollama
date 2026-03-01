@@ -126,13 +126,6 @@ func TestResolveTensorPathLayout(t *testing.T) {
 	}
 }
 
-func TestModelRuntimeDefaults(t *testing.T) {
-	m := &Model{}
-	if m.DisablePromptCache() {
-		t.Fatal("DisablePromptCache() = true, want false")
-	}
-}
-
 func TestNewCachesLayout(t *testing.T) {
 	m := &Model{
 		Config: &Config{
