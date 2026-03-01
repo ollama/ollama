@@ -14,7 +14,7 @@ import (
 
 // currentSchemaVersion defines the current database schema version.
 // Increment this when making schema changes that require migrations.
-const currentSchemaVersion = 15
+const currentSchemaVersion = 16
 
 // database wraps the SQLite connection.
 // SQLite handles its own locking for concurrent access:
@@ -87,6 +87,28 @@ func (db *database) init() error {
 		cloud_setting_migrated BOOLEAN NOT NULL DEFAULT 0,
 		remote TEXT NOT NULL DEFAULT '', -- deprecated
 		auto_update_enabled BOOLEAN NOT NULL DEFAULT 1,
+		debug_logging BOOLEAN NOT NULL DEFAULT 0,
+		keep_alive_duration TEXT NOT NULL DEFAULT '',
+		flash_attention BOOLEAN NOT NULL DEFAULT 0,
+		kv_cache_type TEXT NOT NULL DEFAULT '',
+		num_parallel INTEGER NOT NULL DEFAULT 0,
+		gpu_overhead INTEGER NOT NULL DEFAULT 0,
+		sched_spread BOOLEAN NOT NULL DEFAULT 0,
+		enable_vulkan BOOLEAN NOT NULL DEFAULT 0,
+		default_temperature REAL,
+		default_top_k INTEGER,
+		default_top_p REAL,
+		default_min_p REAL,
+		default_repeat_penalty REAL,
+		default_repeat_last_n INTEGER,
+		default_seed INTEGER,
+		default_num_predict INTEGER,
+		ollama_host TEXT NOT NULL DEFAULT '',
+		http_proxy TEXT NOT NULL DEFAULT '',
+		https_proxy TEXT NOT NULL DEFAULT '',
+		no_proxy TEXT NOT NULL DEFAULT '',
+		cors_origins TEXT NOT NULL DEFAULT '',
+		allowed_remotes TEXT NOT NULL DEFAULT '',
 		schema_version INTEGER NOT NULL DEFAULT %d
 	);
 
@@ -264,6 +286,12 @@ func (db *database) migrate() error {
 				return fmt.Errorf("migrate v14 to v15: %w", err)
 			}
 			version = 15
+		case 15:
+			// add extended settings columns (GPU, performance, generation defaults, network)
+			if err := db.migrateV15ToV16(); err != nil {
+				return fmt.Errorf("migrate v15 to v16: %w", err)
+			}
+			version = 16
 		default:
 			// If we have a version we don't recognize, just set it to current
 			// This might happen during development
@@ -511,6 +539,51 @@ func (db *database) migrateV14ToV15() error {
 	}
 
 	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 15`)
+	if err != nil {
+		return fmt.Errorf("update schema version: %w", err)
+	}
+
+	return nil
+}
+
+// migrateV15ToV16 adds extended settings columns for GPU, performance, generation defaults, and network
+func (db *database) migrateV15ToV16() error {
+	columns := []struct {
+		name string
+		sql  string
+	}{
+		{"debug_logging", "BOOLEAN NOT NULL DEFAULT 0"},
+		{"keep_alive_duration", "TEXT NOT NULL DEFAULT ''"},
+		{"flash_attention", "BOOLEAN NOT NULL DEFAULT 0"},
+		{"kv_cache_type", "TEXT NOT NULL DEFAULT ''"},
+		{"num_parallel", "INTEGER NOT NULL DEFAULT 0"},
+		{"gpu_overhead", "INTEGER NOT NULL DEFAULT 0"},
+		{"sched_spread", "BOOLEAN NOT NULL DEFAULT 0"},
+		{"enable_vulkan", "BOOLEAN NOT NULL DEFAULT 0"},
+		{"default_temperature", "REAL"},
+		{"default_top_k", "INTEGER"},
+		{"default_top_p", "REAL"},
+		{"default_min_p", "REAL"},
+		{"default_repeat_penalty", "REAL"},
+		{"default_repeat_last_n", "INTEGER"},
+		{"default_seed", "INTEGER"},
+		{"default_num_predict", "INTEGER"},
+		{"ollama_host", "TEXT NOT NULL DEFAULT ''"},
+		{"http_proxy", "TEXT NOT NULL DEFAULT ''"},
+		{"https_proxy", "TEXT NOT NULL DEFAULT ''"},
+		{"no_proxy", "TEXT NOT NULL DEFAULT ''"},
+		{"cors_origins", "TEXT NOT NULL DEFAULT ''"},
+		{"allowed_remotes", "TEXT NOT NULL DEFAULT ''"},
+	}
+
+	for _, col := range columns {
+		_, err := db.conn.Exec(fmt.Sprintf("ALTER TABLE settings ADD COLUMN %s %s", col.name, col.sql))
+		if err != nil && !duplicateColumnError(err) {
+			return fmt.Errorf("add %s column: %w", col.name, err)
+		}
+	}
+
+	_, err := db.conn.Exec("UPDATE settings SET schema_version = 16")
 	if err != nil {
 		return fmt.Errorf("update schema version: %w", err)
 	}
@@ -1166,9 +1239,15 @@ func (db *database) getSettings() (Settings, error) {
 	var s Settings
 
 	err := db.conn.QueryRow(`
-		SELECT expose, survey, browser, models, agent, tools, working_dir, context_length, turbo_enabled, websearch_enabled, selected_model, sidebar_open, think_enabled, think_level, auto_update_enabled
+		SELECT expose, survey, browser, models, agent, tools, working_dir, context_length, turbo_enabled, websearch_enabled, selected_model, sidebar_open, think_enabled, think_level, auto_update_enabled,
+			debug_logging, keep_alive_duration, flash_attention, kv_cache_type, num_parallel, gpu_overhead, sched_spread, enable_vulkan,
+			default_temperature, default_top_k, default_top_p, default_min_p, default_repeat_penalty, default_repeat_last_n, default_seed, default_num_predict,
+			ollama_host, http_proxy, https_proxy, no_proxy, cors_origins, allowed_remotes
 		FROM settings
-	`).Scan(&s.Expose, &s.Survey, &s.Browser, &s.Models, &s.Agent, &s.Tools, &s.WorkingDir, &s.ContextLength, &s.TurboEnabled, &s.WebSearchEnabled, &s.SelectedModel, &s.SidebarOpen, &s.ThinkEnabled, &s.ThinkLevel, &s.AutoUpdateEnabled)
+	`).Scan(&s.Expose, &s.Survey, &s.Browser, &s.Models, &s.Agent, &s.Tools, &s.WorkingDir, &s.ContextLength, &s.TurboEnabled, &s.WebSearchEnabled, &s.SelectedModel, &s.SidebarOpen, &s.ThinkEnabled, &s.ThinkLevel, &s.AutoUpdateEnabled,
+		&s.DebugLogging, &s.KeepAliveDuration, &s.FlashAttention, &s.KvCacheType, &s.NumParallel, &s.GpuOverhead, &s.SchedSpread, &s.EnableVulkan,
+		&s.DefaultTemperature, &s.DefaultTopK, &s.DefaultTopP, &s.DefaultMinP, &s.DefaultRepeatPenalty, &s.DefaultRepeatLastN, &s.DefaultSeed, &s.DefaultNumPredict,
+		&s.OllamaHost, &s.HttpProxy, &s.HttpsProxy, &s.NoProxy, &s.CorsOrigins, &s.AllowedRemotes)
 	if err != nil {
 		return Settings{}, fmt.Errorf("get settings: %w", err)
 	}
@@ -1179,8 +1258,14 @@ func (db *database) getSettings() (Settings, error) {
 func (db *database) setSettings(s Settings) error {
 	_, err := db.conn.Exec(`
 		UPDATE settings
-		SET expose = ?, survey = ?, browser = ?, models = ?, agent = ?, tools = ?, working_dir = ?, context_length = ?, turbo_enabled = ?, websearch_enabled = ?, selected_model = ?, sidebar_open = ?, think_enabled = ?, think_level = ?, auto_update_enabled = ?
-	`, s.Expose, s.Survey, s.Browser, s.Models, s.Agent, s.Tools, s.WorkingDir, s.ContextLength, s.TurboEnabled, s.WebSearchEnabled, s.SelectedModel, s.SidebarOpen, s.ThinkEnabled, s.ThinkLevel, s.AutoUpdateEnabled)
+		SET expose = ?, survey = ?, browser = ?, models = ?, agent = ?, tools = ?, working_dir = ?, context_length = ?, turbo_enabled = ?, websearch_enabled = ?, selected_model = ?, sidebar_open = ?, think_enabled = ?, think_level = ?, auto_update_enabled = ?,
+			debug_logging = ?, keep_alive_duration = ?, flash_attention = ?, kv_cache_type = ?, num_parallel = ?, gpu_overhead = ?, sched_spread = ?, enable_vulkan = ?,
+			default_temperature = ?, default_top_k = ?, default_top_p = ?, default_min_p = ?, default_repeat_penalty = ?, default_repeat_last_n = ?, default_seed = ?, default_num_predict = ?,
+			ollama_host = ?, http_proxy = ?, https_proxy = ?, no_proxy = ?, cors_origins = ?, allowed_remotes = ?
+	`, s.Expose, s.Survey, s.Browser, s.Models, s.Agent, s.Tools, s.WorkingDir, s.ContextLength, s.TurboEnabled, s.WebSearchEnabled, s.SelectedModel, s.SidebarOpen, s.ThinkEnabled, s.ThinkLevel, s.AutoUpdateEnabled,
+		s.DebugLogging, s.KeepAliveDuration, s.FlashAttention, s.KvCacheType, s.NumParallel, s.GpuOverhead, s.SchedSpread, s.EnableVulkan,
+		s.DefaultTemperature, s.DefaultTopK, s.DefaultTopP, s.DefaultMinP, s.DefaultRepeatPenalty, s.DefaultRepeatLastN, s.DefaultSeed, s.DefaultNumPredict,
+		s.OllamaHost, s.HttpProxy, s.HttpsProxy, s.NoProxy, s.CorsOrigins, s.AllowedRemotes)
 	if err != nil {
 		return fmt.Errorf("set settings: %w", err)
 	}

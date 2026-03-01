@@ -1472,7 +1472,21 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 
 	if old.ContextLength != settings.ContextLength ||
 		old.Models != settings.Models ||
-		old.Expose != settings.Expose {
+		old.Expose != settings.Expose ||
+		old.FlashAttention != settings.FlashAttention ||
+		old.KvCacheType != settings.KvCacheType ||
+		old.NumParallel != settings.NumParallel ||
+		old.GpuOverhead != settings.GpuOverhead ||
+		old.SchedSpread != settings.SchedSpread ||
+		old.EnableVulkan != settings.EnableVulkan ||
+		old.OllamaHost != settings.OllamaHost ||
+		old.DebugLogging != settings.DebugLogging ||
+		old.KeepAliveDuration != settings.KeepAliveDuration ||
+		old.HttpProxy != settings.HttpProxy ||
+		old.HttpsProxy != settings.HttpsProxy ||
+		old.NoProxy != settings.NoProxy ||
+		old.CorsOrigins != settings.CorsOrigins ||
+		old.AllowedRemotes != settings.AllowedRemotes {
 		s.Restart()
 	}
 
