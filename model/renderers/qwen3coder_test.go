@@ -316,10 +316,6 @@ func TestQwen3CoderRendererThinking(t *testing.T) {
 			expected: `<|im_start|>user
 Hello<|im_end|>
 <|im_start|>assistant
-<think>
-Let me think about this.
-</think>
-
 Hi there!<|im_end|>
 <|im_start|>user
 How are you?<|im_end|>
@@ -395,6 +391,86 @@ Let me look that up.` + "\n\n<tool_call>\n<function=get_weather>\n<parameter=loc
 				{Role: "user", Content: "Hello"},
 			},
 			expected: "<|im_start|>user\nHello<|im_end|>\n<|im_start|>assistant\n<think>\n",
+		},
+		{
+			name:     "multi-turn strips historical thinking",
+			renderer: Qwen3CoderRenderer{isThinking: true},
+			msgs: []api.Message{
+				{Role: "user", Content: "What's the weather?"},
+				{
+					Role:     "assistant",
+					Thinking: "I need to check the weather.",
+					ToolCalls: []api.ToolCall{
+						{Function: api.ToolCallFunction{
+							Name:      "get_weather",
+							Arguments: testArgs(map[string]any{"location": "Paris"}),
+						}},
+					},
+				},
+				{Role: "tool", Content: `{"temp": 18}`},
+				{Role: "assistant", Thinking: "Got the result.", Content: "It's 18°C in Paris."},
+				{Role: "user", Content: "What about London?"},
+			},
+			expected: `<|im_start|>user
+What's the weather?<|im_end|>
+<|im_start|>assistant
+<tool_call>
+<function=get_weather>
+<parameter=location>
+Paris
+</parameter>
+</function>
+</tool_call><|im_end|>
+<|im_start|>user
+<tool_response>
+{"temp": 18}
+</tool_response><|im_end|>
+<|im_start|>assistant
+It's 18°C in Paris.<|im_end|>
+<|im_start|>user
+What about London?<|im_end|>
+<|im_start|>assistant
+<think>
+`,
+		},
+		{
+			name:     "current round thinking preserved in tool loop",
+			renderer: Qwen3CoderRenderer{isThinking: true},
+			msgs: []api.Message{
+				{Role: "user", Content: "What's the weather?"},
+				{
+					Role:     "assistant",
+					Thinking: "I need to check.",
+					ToolCalls: []api.ToolCall{
+						{Function: api.ToolCallFunction{
+							Name:      "get_weather",
+							Arguments: testArgs(map[string]any{"location": "Paris"}),
+						}},
+					},
+				},
+				{Role: "tool", Content: `{"temp": 18}`},
+			},
+			expected: `<|im_start|>user
+What's the weather?<|im_end|>
+<|im_start|>assistant
+<think>
+I need to check.
+</think>
+
+<tool_call>
+<function=get_weather>
+<parameter=location>
+Paris
+</parameter>
+</function>
+</tool_call><|im_end|>
+<|im_start|>user
+<tool_response>
+{"temp": 18}
+</tool_response><|im_end|>
+<|im_start|>assistant
+<think>
+`,
 		},
 	}
 

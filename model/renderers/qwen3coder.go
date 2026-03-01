@@ -143,6 +143,17 @@ func (r *Qwen3CoderRenderer) Render(messages []api.Message, tools []api.Tool, th
 		isThinking = think.Bool()
 	}
 
+	// Thinking traces are only preserved for the current round (after the
+	// last real user query). Previous rounds' reasoning is stripped to match
+	// the HuggingFace Jinja2 template convention the model was trained on.
+	lastQueryIndex := -1
+	for i := len(filteredMessages) - 1; i >= 0; i-- {
+		if filteredMessages[i].Role == "user" {
+			lastQueryIndex = i
+			break
+		}
+	}
+
 	for i, message := range filteredMessages {
 		lastMessage := i == len(filteredMessages)-1
 		prefill := lastMessage && message.Role == "assistant" && len(message.ToolCalls) == 0
@@ -150,8 +161,7 @@ func (r *Qwen3CoderRenderer) Render(messages []api.Message, tools []api.Tool, th
 		case "assistant":
 			sb.WriteString(imStartTag + "assistant\n")
 
-			// Emit thinking block if present
-			if isThinking && message.Thinking != "" {
+			if isThinking && message.Thinking != "" && i > lastQueryIndex {
 				sb.WriteString("<think>\n" + strings.Trim(message.Thinking, "\n") + "\n</think>\n\n")
 			}
 
