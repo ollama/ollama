@@ -1,23 +1,51 @@
 #pragma once
 
-#include "../llama-model.h"
-#include "../llama-graph.h"
+#include "llama-model.h"
+#include "llama-graph.h"
 
-// TODO: remove in follow-up PR - move to .cpp files
-#include "../llama-memory-recurrent.h"
+// note: almost all graphs require atleast sqrtf, so include cmath globally
 #include <cmath>
 
-struct llm_graph_context_mamba : public llm_graph_context {
-    llm_graph_context_mamba(const llm_graph_params & params);
+//
+// base classes
+//
 
-    virtual ~llm_graph_context_mamba() = default;
+struct llm_build_mamba_base : public llm_graph_context {
+    llm_build_mamba_base(const llm_graph_params & params);
+
+    virtual ~llm_build_mamba_base() = default;
 
     ggml_tensor * build_mamba_layer(llm_graph_input_rs * inp, ggml_tensor * cur, const llama_model & model, const llama_ubatch & ubatch, int il);
     ggml_tensor * build_mamba2_layer(llm_graph_input_rs * inp, ggml_tensor * cur, const llama_model & model, const llama_ubatch & ubatch, int il) const;
 
 };
 
-// Base class for RWKV-related models
+struct llm_build_delta_net_base : public llm_graph_context {
+    llm_build_delta_net_base(const llm_graph_params & params);
+
+    virtual ~llm_build_delta_net_base() = default;
+
+    // returns pair of output and new state
+    std::pair<ggml_tensor *, ggml_tensor *> build_delta_net_chunking(
+                ggml_tensor * q,
+                ggml_tensor * k,
+                ggml_tensor * v,
+                ggml_tensor * g,
+                ggml_tensor * b,
+                ggml_tensor * s,
+                        int   il);
+
+    // returns pair of output and new state
+    std::pair<ggml_tensor *, ggml_tensor *> build_delta_net_autoregressive(
+                ggml_tensor * q,
+                ggml_tensor * k,
+                ggml_tensor * v,
+                ggml_tensor * g,
+                ggml_tensor * b,
+                ggml_tensor * s,
+                int           il);
+};
+
 struct llm_build_rwkv6_base : public llm_graph_context {
     const llama_model & model;
 
@@ -57,6 +85,10 @@ struct llm_build_rwkv7_base : public llm_graph_context {
                                        const llama_ubatch & ubatch,
                                        int                  il) const;
 };
+
+//
+// models
+//
 
 struct llm_build_afmoe : public llm_graph_context {
     llm_build_afmoe(const llama_model & model, const llm_graph_params & params);
@@ -158,6 +190,10 @@ struct llm_build_ernie4_5_moe : public llm_graph_context {
     llm_build_ernie4_5_moe(const llama_model & model, const llm_graph_params & params);
 };
 
+struct llm_build_paddleocr : public llm_graph_context {
+    llm_build_paddleocr(const llama_model & model, const llm_graph_params & params);
+};
+
 template <bool iswa>
 struct llm_build_exaone4 : public llm_graph_context {
     llm_build_exaone4(const llama_model & model, const llm_graph_params & params);
@@ -167,11 +203,15 @@ struct llm_build_exaone : public llm_graph_context {
     llm_build_exaone(const llama_model & model, const llm_graph_params & params);
 };
 
+struct llm_build_exaone_moe : public llm_graph_context {
+    llm_build_exaone_moe(const llama_model & model, const llm_graph_params & params);
+};
+
 struct llm_build_falcon : public llm_graph_context {
     llm_build_falcon(const llama_model & model, const llm_graph_params & params);
 };
 
-struct llm_build_falcon_h1 : public llm_graph_context_mamba {
+struct llm_build_falcon_h1 : public llm_build_mamba_base {
     llm_build_falcon_h1(const llama_model & model, const llm_graph_params & params);
 };
 
@@ -249,7 +289,7 @@ private:
         const int                 il);
 };
 
-struct llm_build_granite_hybrid : public llm_graph_context_mamba {
+struct llm_build_granite_hybrid : public llm_build_mamba_base {
     llm_build_granite_hybrid(const llama_model & model, const llm_graph_params & params);
     ggml_tensor * build_layer_ffn(ggml_tensor * cur, ggml_tensor * inpSA, const llama_model & model, const int il);
     ggml_tensor * build_attention_layer(ggml_tensor * cur, ggml_tensor * inp_pos, llm_graph_input_attn_kv * inp_attn,
@@ -280,19 +320,44 @@ struct llm_build_jais : public llm_graph_context {
     llm_build_jais(const llama_model & model, const llm_graph_params & params);
 };
 
-struct llm_build_jamba : public llm_graph_context_mamba {
+struct llm_build_jais2 : public llm_graph_context {
+    llm_build_jais2(const llama_model & model, const llm_graph_params & params);
+};
+
+struct llm_build_jamba : public llm_build_mamba_base {
     llm_build_jamba(const llama_model & model, const llm_graph_params & params);
 };
 
-struct llm_build_lfm2 : public llm_graph_context {
+struct llm_build_kimi_linear : public llm_build_delta_net_base {
+    llm_build_kimi_linear(const llama_model & model, const llm_graph_params & params);
+
+    std::pair<ggml_tensor *, ggml_tensor *> build_kda_autoregressive(
+                ggml_tensor * q,
+                ggml_tensor * k,
+                ggml_tensor * v,
+                ggml_tensor * gk,
+                ggml_tensor * beta,
+                ggml_tensor * state,
+                        int   il);
+
+    std::pair<ggml_tensor *, ggml_tensor *> build_kda_chunking(
+                ggml_tensor * q,
+                ggml_tensor * k,
+                ggml_tensor * v,
+                ggml_tensor * gk,
+                ggml_tensor * beta,
+                ggml_tensor * state,
+                ggml_tensor * causal_mask,
+                ggml_tensor * identity,
+                ggml_tensor * diag_mask,
+                        int   il);
+
     const llama_model & model;
+};
 
+template <bool iswa>
+struct llm_build_lfm2 : public llm_graph_context {
     llm_build_lfm2(const llama_model & model, const llm_graph_params & params);
-    ggml_tensor * build_moe_feed_forward(ggml_tensor * cur, int il) const;
-    ggml_tensor * build_dense_feed_forward(ggml_tensor * cur, int il) const;
-    ggml_tensor * build_attn_block(ggml_tensor * cur, ggml_tensor * inp_pos, llm_graph_input_attn_kv * inp_attn, int il) const;
-    ggml_tensor * build_shortconv_block(ggml_tensor * cur, llm_graph_input_rs * inp_recr, int il);
-
 };
 
 struct llm_build_llada : public llm_graph_context {
@@ -303,6 +368,7 @@ struct llm_build_llada_moe : public llm_graph_context {
     llm_build_llada_moe(const llama_model & model, const llm_graph_params & params);
 };
 
+template <bool embed>
 struct llm_build_llama : public llm_graph_context {
     llm_build_llama(const llama_model & model, const llm_graph_params & params);
 };
@@ -311,8 +377,16 @@ struct llm_build_llama_iswa : public llm_graph_context {
     llm_build_llama_iswa(const llama_model & model, const llm_graph_params & params);
 };
 
-struct llm_build_mamba : public llm_graph_context_mamba {
+struct llm_build_maincoder : public llm_graph_context {
+    llm_build_maincoder(const llama_model & model, const llm_graph_params & params);
+};
+
+struct llm_build_mamba : public llm_build_mamba_base {
     llm_build_mamba(const llama_model & model, const llm_graph_params & params);
+};
+
+struct llm_build_mimo2_iswa : public llm_graph_context {
+    llm_build_mimo2_iswa(const llama_model & model, const llm_graph_params & params);
 };
 
 struct llm_build_minicpm3 : public llm_graph_context {
@@ -327,6 +401,10 @@ struct llm_build_mistral3 : public llm_graph_context {
     llm_build_mistral3(const llama_model & model, const llm_graph_params & params);
 };
 
+struct llm_build_modern_bert : public llm_graph_context {
+    llm_build_modern_bert(const llama_model & model, const llm_graph_params & params);
+};
+
 struct llm_build_mpt : public llm_graph_context {
     llm_build_mpt(const llama_model & model, const llm_graph_params & params);
 };
@@ -335,15 +413,19 @@ struct llm_build_nemotron : public llm_graph_context {
     llm_build_nemotron(const llama_model & model, const llm_graph_params & params);
 };
 
-struct llm_build_nemotron_h : public llm_graph_context_mamba {
+struct llm_build_nemotron_h : public llm_build_mamba_base {
     llm_build_nemotron_h(const llama_model & model, const llm_graph_params & params);
-    ggml_tensor * build_ffn_layer(ggml_tensor * cur, const llama_model & model, const int il);
+    ggml_tensor * build_ffn_layer(ggml_tensor * cur, const llama_model & model, int il);
     ggml_tensor * build_attention_layer(ggml_tensor * cur, llm_graph_input_attn_kv * inp_attn,
-        const llama_model & model, const int64_t n_embd_head, const int il);
+        const llama_model & model, int64_t n_embd_head, int il);
 };
 
 struct llm_build_neo_bert : public llm_graph_context {
     llm_build_neo_bert(const llama_model & model, const llm_graph_params & params);
+};
+
+struct llm_build_eurobert : public llm_graph_context {
+    llm_build_eurobert(const llama_model & model, const llm_graph_params & params);
 };
 
 template <bool iswa>
@@ -384,7 +466,7 @@ struct llm_build_phi3 : public llm_graph_context {
     llm_build_phi3(const llama_model & model, const llm_graph_params & params);
 };
 
-struct llm_build_plamo2 : public llm_graph_context_mamba {
+struct llm_build_plamo2 : public llm_build_mamba_base {
     llm_build_plamo2(const llama_model & model, const llm_graph_params & params);
     private:
         ggml_tensor * build_plamo2_mamba_layer(llm_graph_input_rs * inp, ggml_tensor * cur, const llama_model & model, const llama_ubatch & ubatch, int il);
@@ -394,6 +476,11 @@ struct llm_build_plamo2 : public llm_graph_context_mamba {
 
 struct llm_build_plamo : public llm_graph_context {
     llm_build_plamo(const llama_model & model, const llm_graph_params & params);
+};
+
+template <bool iswa>
+struct llm_build_plamo3 : public llm_graph_context {
+    llm_build_plamo3(const llama_model & model, const llm_graph_params & params);
 };
 
 struct llm_build_plm : public llm_graph_context {
@@ -427,7 +514,8 @@ struct llm_build_qwen3vl : public llm_graph_context {
 struct llm_build_qwen3vlmoe : public llm_graph_context {
     llm_build_qwen3vlmoe(const llama_model & model, const llm_graph_params & params);
 };
-struct llm_build_qwen3next : public llm_graph_context_mamba {
+
+struct llm_build_qwen3next : public llm_build_delta_net_base {
     llm_build_qwen3next(const llama_model & model, const llm_graph_params & params);
 private:
     ggml_tensor * build_layer_attn(
@@ -439,41 +527,89 @@ private:
     ggml_tensor * build_layer_attn_linear(
          llm_graph_input_rs * inp,
                 ggml_tensor * cur,
-                ggml_tensor * causal_mask,
-                ggml_tensor * identity,
-                ggml_tensor * diag_mask,
                         int   il);
 
     ggml_tensor * build_layer_ffn(
                 ggml_tensor * cur,
                         int   il);
 
-    ggml_tensor * build_delta_net_chunking(
-                ggml_tensor * q,
-                ggml_tensor * k,
-                ggml_tensor * v,
-                ggml_tensor * g,
-                ggml_tensor * beta,
-                ggml_tensor * state,
-                ggml_tensor * causal_mask,
-                ggml_tensor * identity,
-                ggml_tensor * diag_mask,
+    ggml_tensor * build_norm_gated(
+                ggml_tensor * input,
+                ggml_tensor * weights,
+                ggml_tensor * gate,
+                        int   layer);
+
+    // returns pair of qkv, z
+    std::pair<ggml_tensor *, ggml_tensor *> build_qkvz(
+                ggml_tensor * input,
                         int   il);
 
-    ggml_tensor * build_delta_net_autoregressive(
-                ggml_tensor * q,
-                ggml_tensor * k,
-                ggml_tensor * v,
-                ggml_tensor * g,
-                ggml_tensor * beta,
-                ggml_tensor * state,
-                int           il);
+    const llama_model & model;
+};
+
+struct llm_build_qwen35 : public llm_build_delta_net_base {
+    llm_build_qwen35(const llama_model & model, const llm_graph_params & params);
+private:
+    ggml_tensor * build_layer_attn(
+    llm_graph_input_attn_kv * inp_attn,
+                ggml_tensor * cur,
+                ggml_tensor * inp_pos,
+                        int * sections,
+                        int   il);
+
+    ggml_tensor * build_layer_attn_linear(
+         llm_graph_input_rs * inp,
+                ggml_tensor * cur,
+                        int   il);
+
+    ggml_tensor * build_layer_ffn(
+                ggml_tensor * cur,
+                        int   il);
 
     ggml_tensor * build_norm_gated(
                 ggml_tensor * input,
                 ggml_tensor * weights,
                 ggml_tensor * gate,
                         int   layer);
+
+    // returns pair of qkv, z
+    std::pair<ggml_tensor *, ggml_tensor *> build_qkvz(
+                ggml_tensor * input,
+                        int   il);
+
+    const llama_model & model;
+};
+
+// TODO: derive llm_build_delta_net_base instead
+struct llm_build_qwen35moe : public llm_build_delta_net_base {
+    llm_build_qwen35moe(const llama_model & model, const llm_graph_params & params);
+private:
+    ggml_tensor * build_layer_attn(
+    llm_graph_input_attn_kv * inp_attn,
+                ggml_tensor * cur,
+                ggml_tensor * inp_pos,
+                        int * sections,
+                        int   il);
+
+    ggml_tensor * build_layer_attn_linear(
+         llm_graph_input_rs * inp,
+                ggml_tensor * cur,
+                        int   il);
+
+    ggml_tensor * build_layer_ffn(
+                ggml_tensor * cur,
+                        int   il);
+
+    ggml_tensor * build_norm_gated(
+                ggml_tensor * input,
+                ggml_tensor * weights,
+                ggml_tensor * gate,
+                        int   layer);
+
+    // returns pair of qkv, z
+    std::pair<ggml_tensor *, ggml_tensor *> build_qkvz(
+                ggml_tensor * input,
+                        int   il);
 
     const llama_model & model;
 };
@@ -530,6 +666,10 @@ struct llm_build_starcoder2 : public llm_graph_context {
 
 struct llm_build_starcoder : public llm_graph_context {
     llm_build_starcoder(const llama_model & model, const llm_graph_params & params);
+};
+
+struct llm_build_step35_iswa : public llm_graph_context {
+    llm_build_step35_iswa(const llama_model & model, const llm_graph_params & params);
 };
 
 struct llm_build_t5_dec : public llm_graph_context {

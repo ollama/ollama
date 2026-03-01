@@ -411,6 +411,9 @@ static void llama_adapter_lora_init_impl(llama_model & model, const char * path_
         }
     }
 
+    // register adapter with model
+    model.loras.insert(&adapter);
+
     LLAMA_LOG_INFO("%s: loaded %zu tensors from lora file\n", __func__, adapter.ab_map.size()*2);
 }
 
@@ -468,8 +471,8 @@ int32_t llama_adapter_meta_val_str_by_index(const llama_adapter_lora * adapter, 
     return snprintf(buf, buf_size, "%s", it->second.c_str());
 }
 
-void llama_adapter_lora_free(llama_adapter_lora * adapter) {
-    delete adapter;
+void llama_adapter_lora_free(llama_adapter_lora *) {
+    // deprecated: adapters are freed by llama_model's destructor
 }
 
 uint64_t llama_adapter_get_alora_n_invocation_tokens(const struct llama_adapter_lora * adapter) {

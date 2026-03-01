@@ -21,7 +21,9 @@ struct llama_sampler_deleter {
 };
 
 struct llama_adapter_lora_deleter {
-    void operator()(llama_adapter_lora * adapter) { llama_adapter_lora_free(adapter); }
+    void operator()(llama_adapter_lora *) {
+        // llama_adapter_lora_free is deprecated
+    }
 };
 
 typedef std::unique_ptr<llama_model, llama_model_deleter> llama_model_ptr;

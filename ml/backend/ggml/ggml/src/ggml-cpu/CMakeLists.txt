@@ -9,6 +9,11 @@ function(ggml_add_cpu_backend_features cpu_name arch)
     target_compile_definitions(${GGML_CPU_FEATS_NAME} PRIVATE ${ARGN})
     target_compile_definitions(${GGML_CPU_FEATS_NAME} PRIVATE GGML_BACKEND_DL GGML_BACKEND_BUILD GGML_BACKEND_SHARED)
     set_target_properties(${GGML_CPU_FEATS_NAME} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    # Disable LTO for the feature detection code to prevent cross-module optimization
+    # from inlining architecture-specific instructions into the score function.
+    # Without this, LTO can cause SIGILL when loading backends on older CPUs
+    # (e.g., loading power10 backend on power9 crashes before feature check runs).
+    target_compile_options(${GGML_CPU_FEATS_NAME} PRIVATE -fno-lto)
     target_link_libraries(${cpu_name} PRIVATE ${GGML_CPU_FEATS_NAME})
 endfunction()
 
@@ -458,12 +463,16 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
             if (GGML_RV_ZFH)
                 string(APPEND MARCH_STR "_zfh")
             endif()
+
             if (GGML_XTHEADVECTOR)
                 string(APPEND MARCH_STR "_xtheadvector")
             elseif (GGML_RVV)
                 string(APPEND MARCH_STR "_v")
                 if (GGML_RV_ZVFH)
                     string(APPEND MARCH_STR "_zvfh")
+                endif()
+                if (GGML_RV_ZVFBFWMA)
+                    string(APPEND MARCH_STR "_zvfbfwma")
                 endif()
             endif()
             if (GGML_RV_ZICBOP)
@@ -557,34 +566,31 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
 
         # Fetch KleidiAI sources:
         include(FetchContent)
-        set(KLEIDIAI_COMMIT_TAG "v1.14.0")
+        set(KLEIDIAI_COMMIT_TAG "v1.16.0")
         set(KLEIDIAI_DOWNLOAD_URL "https://github.com/ARM-software/kleidiai/archive/refs/tags/${KLEIDIAI_COMMIT_TAG}.tar.gz")
-        set(KLEIDIAI_ARCHIVE_MD5  "45e110675d93f99f82c23a1afcca76bc")
+        set(KLEIDIAI_ARCHIVE_MD5  "0a9e9008adb6031f9e8cf70dff4a3321")
 
         if (POLICY CMP0135)
             cmake_policy(SET CMP0135 NEW)
         endif()
 
+        # TODO: Use FetchContent_MakeAvailable with EXCLUDE_FROM_ALL after bumping minimum CMake version to 3.28+
+        # Using FetchContent_Populate instead to avoid EXCLUDE_FROM_ALL which requires CMake 3.28
         FetchContent_Declare(KleidiAI_Download
             URL ${KLEIDIAI_DOWNLOAD_URL}
             DOWNLOAD_EXTRACT_TIMESTAMP NEW
             URL_HASH MD5=${KLEIDIAI_ARCHIVE_MD5})
 
-        FetchContent_MakeAvailable(KleidiAI_Download)
         FetchContent_GetProperties(KleidiAI_Download
             SOURCE_DIR  KLEIDIAI_SRC
             POPULATED   KLEIDIAI_POPULATED)
 
         if (NOT KLEIDIAI_POPULATED)
-            message(FATAL_ERROR "KleidiAI source downloaded failed.")
+            FetchContent_Populate(KleidiAI_Download)
+            FetchContent_GetProperties(KleidiAI_Download SOURCE_DIR KLEIDIAI_SRC)
         endif()
 
         add_compile_definitions(GGML_USE_CPU_KLEIDIAI)
-
-        # Remove kleidiai target after fetching it
-        if (TARGET kleidiai)
-            set_target_properties(kleidiai PROPERTIES EXCLUDE_FROM_ALL TRUE)
-        endif()
 
         list(APPEND GGML_CPU_SOURCES
             ggml-cpu/kleidiai/kleidiai.cpp
@@ -611,6 +617,7 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
         string(FIND "${ARCH_FLAGS_TEMP}" "+dotprod" DOTPROD_ENABLED)
         string(FIND "${ARCH_FLAGS_TEMP}" "+i8mm" I8MM_ENABLED)
         string(FIND "${ARCH_FLAGS_TEMP}" "+sme" SME_ENABLED)
+        string(FIND "${ARCH_FLAGS_TEMP}" "+sve" SVE_ENABLED)
 
         set(PRIVATE_ARCH_FLAGS ${ARCH_FLAGS_TEMP})
 
@@ -653,6 +660,15 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
                 ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/kai_rhs_pack_kxn_bf16p2vlx2b_f32_x32_sme.c
                 ${KLEIDIAI_SRC}/kai/kai_common_sme_asm.S)
             set(PRIVATE_ARCH_FLAGS "-fno-tree-vectorize;${PRIVATE_ARCH_FLAGS}+sve+sve2")
+        endif()
+
+        if (NOT SVE_ENABLED MATCHES -1)
+            list(APPEND GGML_KLEIDIAI_SOURCES
+                ${KLEIDIAI_SRC}/kai/kai_common_sve_asm.S
+                ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p1x8_qsi4c32p8x8_1x8_sve_dotprod_asm.S
+                ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p1x8_qsi4c32p8x8_1x8_sve_dotprod.c
+                ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p4x8_qsi4c32p8x8_16x8_sve_i8mm_asm.S
+                ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p4x8_qsi4c32p8x8_16x8_sve_i8mm.c)
         endif()
 
         set_source_files_properties(${GGML_KLEIDIAI_SOURCES} PROPERTIES COMPILE_OPTIONS "${PRIVATE_ARCH_FLAGS}")

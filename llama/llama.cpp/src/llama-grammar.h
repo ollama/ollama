@@ -130,6 +130,8 @@ struct llama_grammar_parser {
 struct llama_grammar_trigger_pattern {
     std::string pattern;
     std::regex  regex;
+
+    size_t find(const std::string & input) const;
 };
 
 struct llama_grammar {

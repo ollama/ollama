@@ -21,6 +21,7 @@ layout (binding = 1) writeonly buffer D {D_TYPE data_d[];};
 #define NEAREST  0
 #define BILINEAR 1
 #define BICUBIC  2
+#define BILINEAR_ANTIALIAS 513
 
 layout (constant_id = 0) const uint scale_mode = 0;
 
@@ -60,6 +61,56 @@ float interpolate_bilinear(uint i10, uint i11, uint i12, uint i13) {
     const ivec2 c1 = min(ivec2(c0f + 1), ne0 - 1);
 
     return fetch_bilinear(c0, c1, d, i12, i13);
+}
+
+float triangle_filter(float x) {
+    return max(1.0f - abs(x), 0.0f);
+}
+
+float interpolate_bilinear_antialias(uint i10, uint i11, uint i12, uint i13) {
+    const float support1  = max(1.0f, 1.0f / p.sf1);
+    const float invscale1 = 1.0f / support1;
+    const float support0  = max(1.0f, 1.0f / p.sf0);
+    const float invscale0 = 1.0f / support0;
+
+    const uint i02 = uint(i12 / p.sf2);
+    const uint i03 = uint(i13 / p.sf3);
+
+    const float y = (float(i11) + p.pixel_offset) / p.sf1;
+    const float x = (float(i10) + p.pixel_offset) / p.sf0;
+
+    // the range of source pixels that contribute
+    const int x_min = max(int(x - support0 + p.pixel_offset), 0);
+    const int x_max = min(int(x + support0 + p.pixel_offset), int(p.ne00));
+    const int y_min = max(int(y - support1 + p.pixel_offset), 0);
+    const int y_max = min(int(y + support1 + p.pixel_offset), int(p.ne01));
+
+    // bilinear filter with antialiasing
+    float val = 0.0f;
+    float total_weight = 0.0f;
+
+    for (int sy = y_min; sy < y_max; sy++) {
+        const float weight_y = triangle_filter((sy - y + p.pixel_offset) * invscale1);
+
+        for (int sx = x_min; sx < x_max; sx++) {
+            const float weight_x = triangle_filter((sx - x + p.pixel_offset) * invscale0);
+            const float weight = weight_x * weight_y;
+
+            if (weight <= 0.0f) {
+                continue;
+            }
+
+            const float pixel = data_a[p.a_offset + i03 * p.nb03 + i02 * p.nb02 + sy * p.nb01 + sx * p.nb00];
+            val += pixel * weight;
+            total_weight += weight;
+        }
+    }
+
+    if (total_weight > 0.0f) {
+        val /= total_weight;
+    }
+
+    return val;
 }
 
 // Bicubic interpolation with alpha = -0.75
@@ -117,6 +168,9 @@ void main() {
             break;
         case BICUBIC:
             result = interpolate_bicubic(i10, i11, i12, i13);
+            break;
+        case BILINEAR_ANTIALIAS:
+            result = interpolate_bilinear_antialias(i10, i11, i12, i13);
             break;
     }
 

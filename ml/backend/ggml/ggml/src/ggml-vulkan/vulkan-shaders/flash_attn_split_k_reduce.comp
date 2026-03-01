@@ -12,7 +12,8 @@ layout (binding = 2) writeonly buffer D {float data_d[];};
 
 layout (push_constant) uniform parameter {
     uint D;
-    uint N;
+    uint ne1;
+    uint ne2;
     uint ne3;
     uint k_num;
     uint sinks;
@@ -24,15 +25,15 @@ void main() {
     // Each workgroup handles a row
     const uint n = gl_WorkGroupID.x;
     const uint tid = gl_LocalInvocationID.x;
-    const uint iq3 = gl_WorkGroupID.z;
+    const uint i2 = gl_WorkGroupID.z % p.ne2;
+    const uint i3 = gl_WorkGroupID.z / p.ne2;
 
     uint D = p.D;
-    uint N = p.N;
     uint k_num = p.k_num;
 
-    uint l_offset = D * N * p.ne3 * k_num + N * iq3 * k_num * 2 + n;
-    uint m_offset = D * N * p.ne3 * k_num + N * iq3 * k_num * 2 + N + n;
-    uint lm_stride = N * 2;
+    uint l_offset = D * p.ne1 * p.ne2 * p.ne3 * k_num + p.ne1 * 2 * (0/*split_k_index*/ + p.k_num * (i2 + p.ne2 * i3)) + n;
+    uint m_offset = D * p.ne1 * p.ne2 * p.ne3 * k_num + p.ne1 * 2 * (0/*split_k_index*/ + p.k_num * (i2 + p.ne2 * i3)) + p.ne1 + n;
+    uint lm_stride = p.ne1 * 2;
 
     // Compute the max m value for the row
     float m_max = -1.0/0.0;
@@ -99,7 +100,7 @@ void main() {
     if (d < D) {
         float O = 0.0;
         [[unroll]] for (uint k = 0; k < k_num; ++k) {
-            uint o_offset = D * N * (k + iq3 * k_num) + D * n + d;
+            uint o_offset = D * p.ne1 * (k + p.k_num * (i2 + p.ne2 * i3)) + D * n + d;
             float m = data_a[m_offset + k * lm_stride];
             O += exp(m - m_max) * data_a[o_offset];
         }
@@ -115,6 +116,6 @@ void main() {
         const float FLT_MAX = uintBitsToFloat(0x7F7FFFFF);
         O = clamp(O, -FLT_MAX, FLT_MAX);
 
-        data_d[iq3 * D * N + D * n + d] = O;
+        data_d[(i3 * p.ne2 + i2) * p.ne1 * D + D * n + d] = O;
     }
 }

@@ -31,10 +31,6 @@ func NewHybridCache(shift func(ctx ml.Context, layer int, key, shift ml.Tensor) 
 	return &HybridCache{Recurrent: base}
 }
 
-func (c *HybridCache) slotsTensor() ml.Tensor {
-	return c.SlotsTensor()
-}
-
 func (c *HybridCache) seqTokens() int {
 	return c.SeqTokens()
 }

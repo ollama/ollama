@@ -1,0 +1,63 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: inforithmics <thomas.stocker@gmail.com>
+Date: Sat, 7 Feb 2026 21:35:07 +0100
+Subject: [PATCH] Improve ggml_backend_vk_get_device_pci_id
+
+---
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 31 ++++++++++++++++++----------
+ 1 file changed, 20 insertions(+), 11 deletions(-)
+
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 12eddaeb0..72ff8b0ed 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -14838,10 +14838,10 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
+ 
+     const std::vector<vk::ExtensionProperties> ext_props = device.enumerateDeviceExtensionProperties();
+ 
+-    bool ext_support = false;
+-
++    vk::PhysicalDeviceProperties devProps = device.getProperties();
++    bool ext_support = devProps.vendorID == VK_VENDOR_ID_AMD || devProps.vendorID == VK_VENDOR_ID_NVIDIA;
+     for (const auto& properties : ext_props) {
+-        if (strcmp("VK_EXT_pci_bus_info", properties.extensionName) == 0) {
++        if (strcmp(properties.extensionName, VK_EXT_PCI_BUS_INFO_EXTENSION_NAME) == 0) {
+             ext_support = true;
+             break;
+         }
+@@ -14855,18 +14855,27 @@ static std::string ggml_backend_vk_get_device_pci_id(int device_idx) {
+     vk::PhysicalDevicePCIBusInfoPropertiesEXT pci_bus_info = {};
+ 
+     props.pNext = &pci_bus_info;
++    try {
++        device.getProperties2(&props);
+ 
+-    device.getProperties2(&props);
++        // If not supported and values are 0, it might be invalid
++        if (!ext_support && pci_bus_info.pciDomain == 0 && pci_bus_info.pciBus == 0 &&
++            pci_bus_info.pciDevice == 0 && pci_bus_info.pciFunction == 0) {
++            return "";
++        }
+ 
+-    const uint32_t pci_domain = pci_bus_info.pciDomain;
+-    const uint32_t pci_bus = pci_bus_info.pciBus;
+-    const uint32_t pci_device = pci_bus_info.pciDevice;
+-    const uint8_t pci_function = (uint8_t) pci_bus_info.pciFunction; // pci function is between 0 and 7, prevent printf overflow warning
++        const uint32_t pci_domain = pci_bus_info.pciDomain;
++        const uint32_t pci_bus = pci_bus_info.pciBus;
++        const uint32_t pci_device = pci_bus_info.pciDevice;
++        const uint8_t pci_function = (uint8_t) pci_bus_info.pciFunction; // pci function is between 0 and 7, prevent printf overflow warning
+ 
+-    char pci_bus_id[16] = {};
+-    snprintf(pci_bus_id, sizeof(pci_bus_id), "%04x:%02x:%02x.%x", pci_domain, pci_bus, pci_device, pci_function);
++        char pci_bus_id[16] = {};
++        snprintf(pci_bus_id, sizeof(pci_bus_id), "%04x:%02x:%02x.%x", pci_domain, pci_bus, pci_device, pci_function);
+ 
+-    return std::string(pci_bus_id);
++        return std::string(pci_bus_id);
++    } catch(...) {
++        return "";
++    }
+ }
+ 
+ //////////////////////////

@@ -1,4 +1,4 @@
 int LLAMA_BUILD_NUMBER = 0;
-char const *LLAMA_COMMIT = "ec98e2002";
+char const *LLAMA_COMMIT = "319146247e643695f94a558e8ae686277dd4f8da";
 char const *LLAMA_COMPILER = "";
 char const *LLAMA_BUILD_TARGET = "";

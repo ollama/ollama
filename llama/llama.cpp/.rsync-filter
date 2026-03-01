@@ -7,6 +7,7 @@ include /common/json-schema-to-grammar.*
 include /common/json.*
 include /common/log.*
 include /common/sampling.*
+include /common/unicode.*
 include /include/
 include /include/llama.*
 include /include/llama-*.*

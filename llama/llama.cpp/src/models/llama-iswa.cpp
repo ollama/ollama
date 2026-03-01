@@ -25,8 +25,12 @@ llm_build_llama_iswa::llm_build_llama_iswa(const llama_model & model, const llm_
     ggml_tensor * inp_out_ids = build_inp_out_ids();
 
     for (int il = 0; il < n_layer; ++il) {
+        const float freq_base_l  = model.get_rope_freq_base (cparams, il);
+        const float freq_scale_l = model.get_rope_freq_scale(cparams, il);
+
         ggml_tensor * inpSA = inpL;
 
+        // This overlaps with SWA layers in current models, so get_rope_freq_base/scale may be superfluous
         const bool use_rope = hparams.n_no_rope_layer_step > 0 &&
                               (il + 1) % hparams.n_no_rope_layer_step != 0;
 
@@ -67,13 +71,13 @@ llm_build_llama_iswa::llm_build_llama_iswa(const llama_model & model, const llm_
             if (use_rope) {
                 Qcur = ggml_rope_ext(
                         ctx0, Qcur, inp_pos, rope_factors,
-                        n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
+                        n_rot, rope_type, n_ctx_orig, freq_base_l, freq_scale_l,
                         ext_factor, attn_factor, beta_fast, beta_slow
                         );
 
                 Kcur = ggml_rope_ext(
                         ctx0, Kcur, inp_pos, rope_factors,
-                        n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
+                        n_rot, rope_type, n_ctx_orig, freq_base_l, freq_scale_l,
                         ext_factor, attn_factor, beta_fast, beta_slow
                         );
             } else if (inp_attn_scale) {
