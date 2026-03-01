@@ -454,6 +454,17 @@ func (gdn *GatedDeltaNet) deltaNetChunked(
 	vT := v.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx, chunkSize, headVDim, nChunks, numVHeads*nSeqs)
 	stateT := state.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx, headVDim, headVDim, 1, numVHeads*nSeqs)
 
+	// Collect chunk outputs and concatenate at the end instead of using
+	// SetInplace. SetInplace creates GGML_OP_SET with a view of an
+	// intermediate (buffer-less) tensor. With partial GPU offload the ggml
+	// scheduler cannot determine the correct backend for that view, which
+	// can cause it to dispatch the op to CUDA while the data is in host
+	// memory, resulting in a cudaMemcpyDeviceToDevice crash.
+	// Concat creates fresh tensors whose backend is inferred from their
+	// inputs — the same layer's computation — so the scheduler always
+	// places them on the correct device.
+	chunkOutputs := make([]ml.Tensor, nChunks)
+
 	for chunk := range nChunks {
 		qChunk := q.Slice(ctx, 2, chunk, chunk+1, 1)
 		vTChunk := vT.Slice(ctx, 2, chunk, chunk+1, 1)
@@ -475,14 +486,7 @@ func (gdn *GatedDeltaNet) deltaNetChunked(
 		vAttn := vTNewChunk.Mulmat(ctx, attnChunk)
 		coreAttnOutChunk := attnInter.Add(ctx, vAttn)
 
-		v = v.SetInplace(
-			ctx,
-			coreAttnOutChunk,
-			v.Stride(1),
-			v.Stride(2),
-			v.Stride(3),
-			chunk*v.Stride(2),
-		)
+		chunkOutputs[chunk] = coreAttnOutChunk
 
 		// Update state for next chunk
 		gExpLastChunk := gLastExp.Slice(ctx, 2, chunk, chunk+1, 1)
@@ -493,6 +497,12 @@ func (gdn *GatedDeltaNet) deltaNetChunked(
 		// stateT = stateT * g_last + kgdmulvnew
 		stateT = stateT.Mul(ctx, gExpLastChunk)
 		stateT = stateT.Add(ctx, kgdMulVNew)
+	}
+
+	// Build the full output by concatenating chunks along the chunk dimension (dim 2).
+	v = chunkOutputs[0]
+	for i := 1; i < nChunks; i++ {
+		v = v.Concat(ctx, chunkOutputs[i], 2)
 	}
 
 	// Final reshape
