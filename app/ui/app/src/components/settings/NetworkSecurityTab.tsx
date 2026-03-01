@@ -12,7 +12,7 @@ import type { Settings } from "@/gotypes";
 
 interface NetworkSecurityTabProps {
   settings: Settings;
-  onChange: (field: keyof Settings, value: boolean | string | number) => void;
+  onChange: (field: keyof Settings, value: boolean | string | number | null) => void;
 }
 
 export default function NetworkSecurityTab({

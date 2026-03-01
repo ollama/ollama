@@ -14,19 +14,16 @@ import {
   ClockIcon,
 } from "@heroicons/react/20/solid";
 import type { Settings } from "@/gotypes";
-import type { InferenceComputeResponse } from "@/gotypes";
 import type { CloudStatusResponse } from "@/api";
 
 interface GeneralTabProps {
   settings: Settings;
-  onChange: (field: keyof Settings, value: boolean | string | number) => void;
+  onChange: (field: keyof Settings, value: boolean | string | number | null) => void;
   cloudDisabled: boolean;
-  cloudStatus: CloudStatusResponse | null | undefined;
   cloudOverriddenByEnv: boolean;
   cloudToggleDisabled: boolean;
   updateCloudMutation: UseMutationResult<CloudStatusResponse, Error, boolean>;
   defaultContextLength: number | undefined;
-  inferenceComputeResponse: InferenceComputeResponse | undefined;
 }
 
 export default function GeneralTab({

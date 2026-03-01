@@ -472,12 +472,10 @@ export default function Settings() {
                   settings={settings}
                   onChange={handleChange}
                   cloudDisabled={cloudDisabled}
-                  cloudStatus={cloudStatus}
                   cloudOverriddenByEnv={cloudOverriddenByEnv}
                   cloudToggleDisabled={cloudToggleDisabled}
                   updateCloudMutation={updateCloudMutation}
                   defaultContextLength={defaultContextLength}
-                  inferenceComputeResponse={inferenceComputeResponse}
                 />
               </TabPanel>
               <TabPanel>
@@ -562,10 +560,10 @@ export default function Settings() {
         {(showSaved || restartMessage) && (
           <div className="fixed bottom-4 left-1/2 transform -translate-x-1/2 transition-opacity duration-300 z-50">
             <Badge
-              color="green"
-              className="!bg-green-500 !text-white dark:!bg-green-600"
+              color={restartMessage ? "amber" : "green"}
+              className={restartMessage ? "!bg-amber-500 !text-white dark:!bg-amber-600" : "!bg-green-500 !text-white dark:!bg-green-600"}
             >
-              Saved
+              {restartMessage ? "Server will restart to apply changes" : "Saved"}
             </Badge>
           </div>
         )}

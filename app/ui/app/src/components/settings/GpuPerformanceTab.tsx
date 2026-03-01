@@ -14,7 +14,7 @@ import type { Settings } from "@/gotypes";
 
 interface GpuPerformanceTabProps {
   settings: Settings;
-  onChange: (field: keyof Settings, value: boolean | string | number) => void;
+  onChange: (field: keyof Settings, value: boolean | string | number | null) => void;
 }
 
 const kvCacheOptions = [

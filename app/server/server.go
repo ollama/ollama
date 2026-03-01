@@ -222,7 +222,9 @@ func (s *Server) cmd(ctx context.Context) (*exec.Cmd, error) {
 	env := map[string]string{}
 	for _, kv := range os.Environ() {
 		s := strings.SplitN(kv, "=", 2)
-		env[s[0]] = s[1]
+		if len(s) == 2 {
+			env[s[0]] = s[1]
+		}
 	}
 	if settings.Expose {
 		env["OLLAMA_HOST"] = "0.0.0.0"
@@ -285,7 +287,7 @@ func (s *Server) cmd(ctx context.Context) (*exec.Cmd, error) {
 	if settings.NoProxy != "" {
 		env["NO_PROXY"] = settings.NoProxy
 	}
-	if settings.CorsOrigins != "" {
+	if settings.CorsOrigins != "" && !settings.Browser {
 		env["OLLAMA_ORIGINS"] = settings.CorsOrigins
 	}
 	if settings.AllowedRemotes != "" {
