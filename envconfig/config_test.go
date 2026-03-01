@@ -158,8 +158,8 @@ func TestBool(t *testing.T) {
 		"1":     true,
 		"0":     false,
 		// invalid values
-		"random":    true,
-		"something": true,
+		"random":    false,
+		"something": false,
 	}
 
 	for k, v := range cases {
