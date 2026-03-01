@@ -762,9 +762,31 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		}
 
 		truncatedTokens := tokens[:ctxLen]
-		truncated, err := r.Detokenize(ctx, truncatedTokens)
-		if err != nil {
-			return nil, 0, err
+		var truncated string
+
+		for {
+			truncated, err = r.Detokenize(ctx, truncatedTokens)
+			if err != nil {
+				return nil, 0, err
+			}
+
+			reTokenized, err := r.Tokenize(ctx, truncated)
+			if err != nil {
+				return nil, 0, err
+			}
+
+			if len(reTokenized) <= ctxLen {
+				break
+			}
+
+			overshoot := len(reTokenized) - ctxLen
+			reduction := max(1, overshoot+(overshoot/10))
+
+			if len(truncatedTokens) <= reduction {
+				return nil, 0, fmt.Errorf("input cannot be truncated to fit context length %d (current: %d tokens)", ctxLen, len(reTokenized))
+			}
+
+			truncatedTokens = truncatedTokens[:len(truncatedTokens)-reduction]
 		}
 		return r.Embedding(ctx, truncated)
 	}
