@@ -14,6 +14,8 @@ Certain API endpoints stream responses by default, such as `/api/generate`. Thes
 {"model":"gemma3","created_at":"2025-10-26T17:15:24.166576Z","response":"!","done":true, "done_reason": "stop"}
 ```
 
+To reduce browser and WebView idle timeout failures, streaming endpoints can send keepalive chunks when output is quiet. Configure this per request with `stream_options.heartbeat_ms` (milliseconds). If not set, the default is `10000`; values `<= 0` disable keepalives.
+
 ## Disabling streaming
 
 Streaming can be disabled by providing `{"stream": false}` in the request body for any endpoint that support streaming. This will cause responses to be returned in the `application/json` format instead:

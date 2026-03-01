@@ -65,6 +65,13 @@ components:
           type: integer
           description: Maximum number of tokens to generate
       additionalProperties: true
+    StreamOptions:
+      type: object
+      description: Optional controls for streaming responses
+      properties:
+        heartbeat_ms:
+          type: integer
+          description: Keepalive interval in milliseconds for idle streaming gaps (default 10000, values <=0 disable)
     GenerateRequest:
       type: object
       required: [model]
@@ -95,6 +102,8 @@ components:
           description: When true, returns a stream of partial responses
           type: boolean
           default: true
+        stream_options:
+          $ref: "#/components/schemas/StreamOptions"
         think:
           oneOf:
             - type: boolean
@@ -287,6 +296,8 @@ components:
         stream:
           type: boolean
           default: true
+        stream_options:
+          $ref: "#/components/schemas/StreamOptions"
         think:
           oneOf:
             - type: boolean

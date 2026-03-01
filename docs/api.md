@@ -32,6 +32,8 @@ All durations are returned in nanoseconds.
 
 Certain endpoints stream responses as JSON objects. Streaming can be disabled by providing `{"stream": false}` for these endpoints.
 
+To mitigate browser and WebView idle timeouts during long quiet model phases, streaming endpoints can emit keepalive chunks when no model output has been sent for a period of time. Configure this with `stream_options.heartbeat_ms` (milliseconds). If omitted, the server default is `10000` ms. Values `<= 0` disable keepalives.
+
 ## Generate a completion
 
 ```
@@ -55,6 +57,8 @@ Advanced parameters (optional):
 - `system`: system message to (overrides what is defined in the `Modelfile`)
 - `template`: the prompt template to use (overrides what is defined in the `Modelfile`)
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
+- `stream_options`: options for streaming behavior
+  - `heartbeat_ms`: keepalive interval in milliseconds for idle streaming gaps (default `10000`, values `<=0` disable)
 - `raw`: if `true` no formatting will be applied to the prompt. You may choose to use the `raw` parameter if you are specifying a full templated prompt in your request to the API
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 - `context` (deprecated): the context parameter returned from a previous request to `/generate`, this can be used to keep a short conversational memory
@@ -519,6 +523,8 @@ Advanced parameters (optional):
 - `format`: the format to return a response in. Format can be `json` or a JSON schema.
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.mdx#valid-parameters-and-values) such as `temperature`
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
+- `stream_options`: options for streaming behavior
+  - `heartbeat_ms`: keepalive interval in milliseconds for idle streaming gaps (default `10000`, values `<=0` disable)
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 
 ### Tool calling

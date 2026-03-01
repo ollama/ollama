@@ -531,3 +531,55 @@ func TestFromImageEditRequest_InvalidImage(t *testing.T) {
 		t.Error("expected error for invalid image")
 	}
 }
+
+func TestFromChatRequest_StreamHeartbeatOption(t *testing.T) {
+	heartbeat := 250
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{Role: "user", Content: "Hello"},
+		},
+		Stream: true,
+		StreamOptions: &StreamOptions{
+			HeartbeatMS: &heartbeat,
+		},
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.StreamOptions == nil || result.StreamOptions.HeartbeatMS == nil {
+		t.Fatal("expected stream heartbeat option to be mapped")
+	}
+
+	if *result.StreamOptions.HeartbeatMS != heartbeat {
+		t.Fatalf("expected heartbeat %d, got %d", heartbeat, *result.StreamOptions.HeartbeatMS)
+	}
+}
+
+func TestFromCompleteRequest_StreamHeartbeatOption(t *testing.T) {
+	heartbeat := 500
+	req := CompletionRequest{
+		Model:  "test-model",
+		Prompt: "Hello",
+		Stream: true,
+		StreamOptions: &StreamOptions{
+			HeartbeatMS: &heartbeat,
+		},
+	}
+
+	result, err := FromCompleteRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.StreamOptions == nil || result.StreamOptions.HeartbeatMS == nil {
+		t.Fatal("expected stream heartbeat option to be mapped")
+	}
+
+	if *result.StreamOptions.HeartbeatMS != heartbeat {
+		t.Fatalf("expected heartbeat %d, got %d", heartbeat, *result.StreamOptions.HeartbeatMS)
+	}
+}

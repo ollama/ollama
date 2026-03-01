@@ -282,53 +282,101 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			slog.Warn("embedded messages in the model not supported with '/api/generate'; try '/api/chat' instead")
 		}
 
+		isStreaming := req.Stream == nil || *req.Stream
 		contentType := "application/x-ndjson"
-		if req.Stream != nil && !*req.Stream {
+		if !isStreaming {
 			contentType = "application/json; charset=utf-8"
 		}
 		c.Header("Content-Type", contentType)
 
-		fn := func(resp api.GenerateResponse) error {
-			resp.Model = origModel
-			resp.RemoteModel = m.Config.RemoteModel
-			resp.RemoteHost = m.Config.RemoteHost
-
-			data, err := json.Marshal(resp)
-			if err != nil {
-				return err
-			}
-
-			if _, err = c.Writer.Write(append(data, '\n')); err != nil {
-				return err
-			}
-			c.Writer.Flush()
-			return nil
-		}
-
 		client := api.NewClient(remoteURL, http.DefaultClient)
-		err = client.Generate(c, &req, fn)
-		if err != nil {
-			var authError api.AuthorizationError
-			if errors.As(err, &authError) {
-				sURL, sErr := signinURL()
-				if sErr != nil {
-					slog.Error(sErr.Error())
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
-					return
+		if !isStreaming {
+			fn := func(resp api.GenerateResponse) error {
+				resp.Model = origModel
+				resp.RemoteModel = m.Config.RemoteModel
+				resp.RemoteHost = m.Config.RemoteHost
+
+				data, err := json.Marshal(resp)
+				if err != nil {
+					return err
 				}
 
-				c.JSON(authError.StatusCode, gin.H{"error": "unauthorized", "signin_url": sURL})
+				if _, err = c.Writer.Write(append(data, '\n')); err != nil {
+					return err
+				}
+				c.Writer.Flush()
+				return nil
+			}
+
+			err = client.Generate(c, &req, fn)
+			if err != nil {
+				var authError api.AuthorizationError
+				if errors.As(err, &authError) {
+					sURL, sErr := signinURL()
+					if sErr != nil {
+						slog.Error(sErr.Error())
+						c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
+						return
+					}
+
+					c.JSON(authError.StatusCode, gin.H{"error": "unauthorized", "signin_url": sURL})
+					return
+				}
+				var apiError api.StatusError
+				if errors.As(err, &apiError) {
+					c.JSON(apiError.StatusCode, apiError)
+					return
+				}
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
-			var apiError api.StatusError
-			if errors.As(err, &apiError) {
-				c.JSON(apiError.StatusCode, apiError)
-				return
-			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+
 			return
 		}
 
+		ctx := c.Request.Context()
+		ch := make(chan any)
+		go func() {
+			defer close(ch)
+
+			fn := func(resp api.GenerateResponse) error {
+				resp.Model = origModel
+				resp.RemoteModel = m.Config.RemoteModel
+				resp.RemoteHost = m.Config.RemoteHost
+				if !sendStreamItem(ctx, ch, resp) {
+					return context.Canceled
+				}
+				return nil
+			}
+
+			if err := client.Generate(c, &req, fn); err != nil {
+				var authError api.AuthorizationError
+				if errors.As(err, &authError) {
+					sURL, sErr := signinURL()
+					if sErr != nil {
+						slog.Error(sErr.Error())
+						sendStreamItem(ctx, ch, gin.H{"error": "error getting authorization details", "status": http.StatusInternalServerError})
+						return
+					}
+
+					sendStreamItem(ctx, ch, gin.H{"error": "unauthorized", "signin_url": sURL, "status": authError.StatusCode})
+					return
+				}
+
+				var apiError api.StatusError
+				if errors.As(err, &apiError) {
+					sendStreamItem(ctx, ch, gin.H{"error": apiError.ErrorMessage, "status": apiError.StatusCode})
+					return
+				}
+
+				sendStreamItem(ctx, ch, gin.H{"error": err.Error()})
+			}
+		}()
+
+		streamResponseWithOptions(c, ch, streamResponseOptions{
+			heartbeatInterval: streamHeartbeatInterval(req.StreamOptions),
+			heartbeatValue:    generateHeartbeatValue(origModel),
+		})
 		return
 	}
 
@@ -661,7 +709,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	streamResponse(c, ch)
+	streamResponseWithOptions(c, ch, streamResponseOptions{
+		heartbeatInterval: streamHeartbeatInterval(req.StreamOptions),
+		heartbeatValue:    generateHeartbeatValue(req.Model),
+	})
 }
 
 func (s *Server) EmbedHandler(c *gin.Context) {
@@ -1806,53 +1857,162 @@ func waitForStream(c *gin.Context, ch chan any) {
 	c.JSON(http.StatusOK, latest)
 }
 
+type streamResponseOptions struct {
+	heartbeatInterval time.Duration
+	heartbeatValue    func() any
+}
+
+func streamHeartbeatInterval(options *api.StreamOptions) time.Duration {
+	ms := envconfig.StreamHeartbeatMS()
+	if options != nil && options.HeartbeatMS != nil {
+		ms = *options.HeartbeatMS
+	}
+
+	if ms <= 0 {
+		return 0
+	}
+
+	return time.Duration(ms) * time.Millisecond
+}
+
+func chatHeartbeatValue(model string) func() any {
+	return func() any {
+		return api.ChatResponse{
+			Model:     model,
+			CreatedAt: time.Now().UTC(),
+			Message:   api.Message{Role: "assistant"},
+			Done:      false,
+		}
+	}
+}
+
+func generateHeartbeatValue(model string) func() any {
+	return func() any {
+		return api.GenerateResponse{
+			Model:     model,
+			CreatedAt: time.Now().UTC(),
+			Done:      false,
+		}
+	}
+}
+
 func streamResponse(c *gin.Context, ch chan any) {
-	c.Header("Content-Type", "application/x-ndjson")
-	c.Stream(func(w io.Writer) bool {
-		val, ok := <-ch
-		if !ok {
-			return false
-		}
+	streamResponseWithOptions(c, ch, streamResponseOptions{})
+}
 
-		// errors are provided as a gin.H with an "error" field and
-		// an optional "status" field.  For errors that are streamed
-		// before any content, we need to set the status code and
-		// content type for the error.
-		if h, ok := val.(gin.H); ok {
-			if e, ok := h["error"].(string); ok {
-				status, ok := h["status"].(int)
-				if !ok {
-					status = http.StatusInternalServerError
-				}
-
-				if !c.Writer.Written() {
-					c.Header("Content-Type", "application/json")
-					c.JSON(status, gin.H{"error": e})
-				} else {
-					if err := json.NewEncoder(c.Writer).Encode(gin.H{"error": e}); err != nil {
-						slog.Error("streamResponse failed to encode json error", "error", err)
-					}
-				}
-
-				return false
-			}
-		}
-
-		bts, err := json.Marshal(val)
-		if err != nil {
-			slog.Info(fmt.Sprintf("streamResponse: json.Marshal failed with %s", err))
-			return false
-		}
-
-		// Delineate chunks with new-line delimiter
-		bts = append(bts, '\n')
-		if _, err := w.Write(bts); err != nil {
-			slog.Info(fmt.Sprintf("streamResponse: w.Write failed with %s", err))
-			return false
-		}
-
+func sendStreamItem(ctx context.Context, ch chan<- any, val any) bool {
+	select {
+	case ch <- val:
 		return true
-	})
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func writeStreamValue(c *gin.Context, val any) bool {
+	w := c.Writer
+
+	// errors are provided as a gin.H with an "error" field and
+	// an optional "status" field. For errors that are streamed
+	// before any content, we need to set the status code and
+	// content type for the error.
+	if h, ok := val.(gin.H); ok {
+		if e, ok := h["error"].(string); ok {
+			status, ok := h["status"].(int)
+			if !ok {
+				status = http.StatusInternalServerError
+			}
+
+			payload := gin.H{"error": e}
+			if signinURL, ok := h["signin_url"].(string); ok {
+				payload["signin_url"] = signinURL
+			}
+
+			if !c.Writer.Written() {
+				c.Header("Content-Type", "application/json")
+				c.JSON(status, payload)
+			} else {
+				if err := json.NewEncoder(c.Writer).Encode(payload); err != nil {
+					slog.Error("streamResponse failed to encode json error", "error", err)
+				}
+				w.Flush()
+			}
+
+			return false
+		}
+	}
+
+	bts, err := json.Marshal(val)
+	if err != nil {
+		slog.Info(fmt.Sprintf("streamResponse: json.Marshal failed with %s", err))
+		return false
+	}
+
+	// Delineate chunks with new-line delimiter
+	bts = append(bts, '\n')
+	if _, err := w.Write(bts); err != nil {
+		slog.Info(fmt.Sprintf("streamResponse: w.Write failed with %s", err))
+		return false
+	}
+	w.Flush()
+
+	return true
+}
+
+func streamResponseWithOptions(c *gin.Context, ch <-chan any, opts streamResponseOptions) {
+	c.Header("Content-Type", "application/x-ndjson")
+
+	ctx := context.Background()
+	if c.Request != nil {
+		ctx = c.Request.Context()
+	}
+
+	lastRealOutputAt := time.Now()
+	lastWriteAt := lastRealOutputAt
+
+	var heartbeat *time.Ticker
+	if opts.heartbeatInterval > 0 && opts.heartbeatValue != nil {
+		heartbeat = time.NewTicker(opts.heartbeatInterval)
+		defer heartbeat.Stop()
+	}
+
+	for {
+		var heartbeatC <-chan time.Time
+		if heartbeat != nil {
+			heartbeatC = heartbeat.C
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-heartbeatC:
+			if heartbeat == nil {
+				continue
+			}
+
+			now := time.Now()
+			if now.Sub(lastRealOutputAt) < opts.heartbeatInterval || now.Sub(lastWriteAt) < opts.heartbeatInterval {
+				continue
+			}
+
+			if !writeStreamValue(c, opts.heartbeatValue()) {
+				return
+			}
+			lastWriteAt = time.Now()
+		case val, ok := <-ch:
+			if !ok {
+				return
+			}
+
+			if !writeStreamValue(c, val) {
+				return
+			}
+
+			now := time.Now()
+			lastRealOutputAt = now
+			lastWriteAt = now
+		}
+	}
 }
 
 func (s *Server) StatusHandler(c *gin.Context) {
@@ -2095,53 +2255,101 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 		}
 
+		isStreaming := req.Stream == nil || *req.Stream
 		contentType := "application/x-ndjson"
-		if req.Stream != nil && !*req.Stream {
+		if !isStreaming {
 			contentType = "application/json; charset=utf-8"
 		}
 		c.Header("Content-Type", contentType)
 
-		fn := func(resp api.ChatResponse) error {
-			resp.Model = origModel
-			resp.RemoteModel = m.Config.RemoteModel
-			resp.RemoteHost = m.Config.RemoteHost
-
-			data, err := json.Marshal(resp)
-			if err != nil {
-				return err
-			}
-
-			if _, err = c.Writer.Write(append(data, '\n')); err != nil {
-				return err
-			}
-			c.Writer.Flush()
-			return nil
-		}
-
 		client := api.NewClient(remoteURL, http.DefaultClient)
-		err = client.Chat(c, &req, fn)
-		if err != nil {
-			var authError api.AuthorizationError
-			if errors.As(err, &authError) {
-				sURL, sErr := signinURL()
-				if sErr != nil {
-					slog.Error(sErr.Error())
-					c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
-					return
+		if !isStreaming {
+			fn := func(resp api.ChatResponse) error {
+				resp.Model = origModel
+				resp.RemoteModel = m.Config.RemoteModel
+				resp.RemoteHost = m.Config.RemoteHost
+
+				data, err := json.Marshal(resp)
+				if err != nil {
+					return err
 				}
 
-				c.JSON(authError.StatusCode, gin.H{"error": "unauthorized", "signin_url": sURL})
+				if _, err = c.Writer.Write(append(data, '\n')); err != nil {
+					return err
+				}
+				c.Writer.Flush()
+				return nil
+			}
+
+			err = client.Chat(c, &req, fn)
+			if err != nil {
+				var authError api.AuthorizationError
+				if errors.As(err, &authError) {
+					sURL, sErr := signinURL()
+					if sErr != nil {
+						slog.Error(sErr.Error())
+						c.JSON(http.StatusInternalServerError, gin.H{"error": "error getting authorization details"})
+						return
+					}
+
+					c.JSON(authError.StatusCode, gin.H{"error": "unauthorized", "signin_url": sURL})
+					return
+				}
+				var apiError api.StatusError
+				if errors.As(err, &apiError) {
+					c.JSON(apiError.StatusCode, apiError)
+					return
+				}
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
-			var apiError api.StatusError
-			if errors.As(err, &apiError) {
-				c.JSON(apiError.StatusCode, apiError)
-				return
-			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+
 			return
 		}
 
+		ctx := c.Request.Context()
+		ch := make(chan any)
+		go func() {
+			defer close(ch)
+
+			fn := func(resp api.ChatResponse) error {
+				resp.Model = origModel
+				resp.RemoteModel = m.Config.RemoteModel
+				resp.RemoteHost = m.Config.RemoteHost
+				if !sendStreamItem(ctx, ch, resp) {
+					return context.Canceled
+				}
+				return nil
+			}
+
+			if err := client.Chat(c, &req, fn); err != nil {
+				var authError api.AuthorizationError
+				if errors.As(err, &authError) {
+					sURL, sErr := signinURL()
+					if sErr != nil {
+						slog.Error(sErr.Error())
+						sendStreamItem(ctx, ch, gin.H{"error": "error getting authorization details", "status": http.StatusInternalServerError})
+						return
+					}
+
+					sendStreamItem(ctx, ch, gin.H{"error": "unauthorized", "signin_url": sURL, "status": authError.StatusCode})
+					return
+				}
+
+				var apiError api.StatusError
+				if errors.As(err, &apiError) {
+					sendStreamItem(ctx, ch, gin.H{"error": apiError.ErrorMessage, "status": apiError.StatusCode})
+					return
+				}
+
+				sendStreamItem(ctx, ch, gin.H{"error": err.Error()})
+			}
+		}()
+
+		streamResponseWithOptions(c, ch, streamResponseOptions{
+			heartbeatInterval: streamHeartbeatInterval(req.StreamOptions),
+			heartbeatValue:    chatHeartbeatValue(origModel),
+		})
 		return
 	}
 
@@ -2505,7 +2713,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	streamResponse(c, ch)
+	streamResponseWithOptions(c, ch, streamResponseOptions{
+		heartbeatInterval: streamHeartbeatInterval(req.StreamOptions),
+		heartbeatValue:    chatHeartbeatValue(req.Model),
+	})
 }
 
 func handleScheduleError(c *gin.Context, name string, err error) {
@@ -2608,57 +2819,89 @@ func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, mo
 		images = append(images, llm.ImageData{ID: i, Data: imgData})
 	}
 
-	var streamStarted bool
 	var finalResponse api.GenerateResponse
+	if !isStreaming {
+		if err := runner.Completion(c.Request.Context(), llm.CompletionRequest{
+			Prompt: req.Prompt,
+			Width:  req.Width,
+			Height: req.Height,
+			Steps:  req.Steps,
+			Seed:   seed,
+			Images: images,
+		}, func(cr llm.CompletionResponse) {
+			res := api.GenerateResponse{
+				Model:     req.Model,
+				CreatedAt: time.Now().UTC(),
+				Done:      cr.Done,
+			}
 
-	if err := runner.Completion(c.Request.Context(), llm.CompletionRequest{
-		Prompt: req.Prompt,
-		Width:  req.Width,
-		Height: req.Height,
-		Steps:  req.Steps,
-		Seed:   seed,
-		Images: images,
-	}, func(cr llm.CompletionResponse) {
-		streamStarted = true
-		res := api.GenerateResponse{
-			Model:     req.Model,
-			CreatedAt: time.Now().UTC(),
-			Done:      cr.Done,
-		}
+			if cr.TotalSteps > 0 {
+				res.Completed = int64(cr.Step)
+				res.Total = int64(cr.TotalSteps)
+			}
 
-		if cr.TotalSteps > 0 {
-			res.Completed = int64(cr.Step)
-			res.Total = int64(cr.TotalSteps)
-		}
+			if cr.Image != "" {
+				res.Image = cr.Image
+			}
 
-		if cr.Image != "" {
-			res.Image = cr.Image
-		}
+			if cr.Done {
+				res.DoneReason = cr.DoneReason.String()
+				res.Metrics.TotalDuration = time.Since(checkpointStart)
+				res.Metrics.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+			}
 
-		if cr.Done {
-			res.DoneReason = cr.DoneReason.String()
-			res.Metrics.TotalDuration = time.Since(checkpointStart)
-			res.Metrics.LoadDuration = checkpointLoaded.Sub(checkpointStart)
-		}
-
-		if !isStreaming {
 			finalResponse = res
+		}); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
-		data, _ := json.Marshal(res)
-		c.Writer.Write(append(data, '\n'))
-		c.Writer.Flush()
-	}); err != nil {
-		// Only send JSON error if streaming hasn't started yet
-		// (once streaming starts, headers are committed and we can't change status code)
-		if !streamStarted {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		}
+		c.JSON(http.StatusOK, finalResponse)
 		return
 	}
 
-	if !isStreaming {
-		c.JSON(http.StatusOK, finalResponse)
-	}
+	ctx := c.Request.Context()
+	ch := make(chan any)
+	go func() {
+		defer close(ch)
+
+		if err := runner.Completion(ctx, llm.CompletionRequest{
+			Prompt: req.Prompt,
+			Width:  req.Width,
+			Height: req.Height,
+			Steps:  req.Steps,
+			Seed:   seed,
+			Images: images,
+		}, func(cr llm.CompletionResponse) {
+			res := api.GenerateResponse{
+				Model:     req.Model,
+				CreatedAt: time.Now().UTC(),
+				Done:      cr.Done,
+			}
+
+			if cr.TotalSteps > 0 {
+				res.Completed = int64(cr.Step)
+				res.Total = int64(cr.TotalSteps)
+			}
+
+			if cr.Image != "" {
+				res.Image = cr.Image
+			}
+
+			if cr.Done {
+				res.DoneReason = cr.DoneReason.String()
+				res.Metrics.TotalDuration = time.Since(checkpointStart)
+				res.Metrics.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+			}
+
+			sendStreamItem(ctx, ch, res)
+		}); err != nil {
+			sendStreamItem(ctx, ch, gin.H{"error": err.Error()})
+		}
+	}()
+
+	streamResponseWithOptions(c, ch, streamResponseOptions{
+		heartbeatInterval: streamHeartbeatInterval(req.StreamOptions),
+		heartbeatValue:    generateHeartbeatValue(req.Model),
+	})
 }
