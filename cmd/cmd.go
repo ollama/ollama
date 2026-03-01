@@ -964,6 +964,15 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Get model sizes before deletion for summary
+	modelSizes := make(map[string]int64)
+	if listResp, err := client.List(cmd.Context()); err == nil {
+		for _, m := range listResp.Models {
+			modelSizes[m.Name] = m.Size
+		}
+	}
+
+	var totalSize int64
 	for _, arg := range args {
 		// Unload the model if it's running before deletion
 		if err := loadOrUnloadModel(cmd, &runOptions{
@@ -978,7 +987,12 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 		if err := client.Delete(cmd.Context(), &api.DeleteRequest{Name: arg}); err != nil {
 			return err
 		}
+		totalSize += modelSizes[arg]
 		fmt.Printf("deleted '%s'\n", arg)
+	}
+
+	if len(args) > 1 && totalSize > 0 {
+		fmt.Printf("\ntotal freed: %s\n", format.HumanBytes(totalSize))
 	}
 	return nil
 }
