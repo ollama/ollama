@@ -61,11 +61,12 @@ Ollama supports the following AMD GPUs via the ROCm library:
 
 ### Linux Support
 
-| Family         | Cards and accelerators                                                                                                                         |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| AMD Radeon RX  | `7900 XTX` `7900 XT` `7900 GRE` `7800 XT` `7700 XT` `7600 XT` `7600` `6950 XT` `6900 XTX` `6900XT` `6800 XT` `6800` `Vega 64`                  |
-| AMD Radeon PRO | `W7900` `W7800` `W7700` `W7600` `W7500` `W6900X` `W6800X Duo` `W6800X` `W6800` `V620` `V420` `V340` `V320` `Vega II Duo` `Vega II` `SSG`       |
-| AMD Instinct   | `MI300X` `MI300A` `MI300` `MI250X` `MI250` `MI210` `MI200` `MI100` `MI60`                                                                      |
+| Family         | Cards and accelerators                                                                                                                                         |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AMD Radeon RX  | `9070 XT` `9070` `7900 XTX` `7900 XT` `7900 GRE` `7800 XT` `7700 XT` `7600 XT` `7600` `6950 XT` `6900 XTX` `6900XT` `6800 XT` `6800` `5700 XT` `5700` `5600 XT` `5500 XT` |
+| AMD Radeon PRO | `W7900` `W7800` `W7700` `W7600` `W7500` `W6900X` `W6800X Duo` `W6800X` `W6800` `V620`                                                                        |
+| AMD Ryzen AI   | `Ryzen AI Max+ 395` `Ryzen AI Max 390` `Ryzen AI Max 385` `Ryzen AI 9 HX 475` `Ryzen AI 9 HX 470` `Ryzen AI 9 465` `Ryzen AI 9 HX 375` `Ryzen AI 9 HX 370` `Ryzen AI 9 365` |
+| AMD Instinct   | `MI350X` `MI300X` `MI300A` `MI250X` `MI250` `MI210` `MI100`                                                                                                   |
 
 ### Windows Support
 
@@ -97,17 +98,20 @@ This table shows some example GPUs that map to these LLVM targets:
 | **LLVM Target** | **An Example GPU** |
 |-----------------|---------------------|
 | gfx908 | Radeon Instinct MI100 |
-| gfx90a | Radeon Instinct MI210 |
-| gfx940 | Radeon Instinct MI300 |
-| gfx941 | |
-| gfx942 | |
+| gfx90a | Radeon Instinct MI210/MI250 |
+| gfx942 | Radeon Instinct MI300X/MI300A |
+| gfx950 | Radeon Instinct MI350X |
+| gfx1010 | Radeon RX 5700 XT |
+| gfx1012 | Radeon RX 5500 XT |
 | gfx1030 | Radeon PRO V620 |
 | gfx1100 | Radeon PRO W7900 |
 | gfx1101 | Radeon PRO W7700 |
 | gfx1102 | Radeon RX 7600 |
-
-AMD is working on enhancing ROCm v6 to broaden support for families of GPUs in a
-future release which should increase support for more GPUs.
+| gfx1103 | Radeon 780M |
+| gfx1150 | Ryzen AI 9 HX 375 |
+| gfx1151 | Ryzen AI Max+ 395 |
+| gfx1200 | Radeon RX 9070 |
+| gfx1201 | Radeon RX 9070 XT |
 
 Reach out on [Discord](https://discord.gg/ollama) or file an
 [issue](https://github.com/ollama/ollama/issues) for additional help.
