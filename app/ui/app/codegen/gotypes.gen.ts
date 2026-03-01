@@ -216,12 +216,14 @@ export class ChatResponse {
 export class Model {
     model: string;
     digest?: string;
+    size?: number;
     modified_at?: Time;
 
     constructor(source: any = {}) {
         if ('string' === typeof source) source = JSON.parse(source);
         this.model = source["model"];
         this.digest = source["digest"];
+        this.size = source["size"];
         this.modified_at = this.convertValues(source["modified_at"], Time);
     }
 
