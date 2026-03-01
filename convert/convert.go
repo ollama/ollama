@@ -90,6 +90,11 @@ func (kv KV) Bool(key string, defaultValue ...bool) bool {
 	return val
 }
 
+func (kv KV) Uint8(key string, defaultValue ...uint8) uint8 {
+	val, _ := keyValue(kv, key, append(defaultValue, 0)...)
+	return val
+}
+
 func (kv KV) Strings(key string, defaultValue ...[]string) []string {
 	val, _ := keyValue(kv, key, append(defaultValue, []string{""})...)
 	return val
@@ -112,6 +117,11 @@ func (kv KV) Floats(key string, defaultValue ...[]float32) []float32 {
 
 func (kv KV) Bools(key string, defaultValue ...[]bool) []bool {
 	val, _ := keyValue(kv, key, append(defaultValue, []bool{false})...)
+	return val
+}
+
+func (kv KV) Uint8s(key string, defaultValue ...[]uint8) []uint8 {
+	val, _ := keyValue(kv, key, append(defaultValue, []uint8{0})...)
 	return val
 }
 

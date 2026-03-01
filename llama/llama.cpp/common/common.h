@@ -329,7 +329,7 @@ struct common_params {
     // offload params
     std::vector<ggml_backend_dev_t> devices; // devices to use for offloading
 
-    int32_t n_gpu_layers       = -1;               // number of layers to store in VRAM (-1 - use default)
+    int32_t n_gpu_layers       = -1;               // number of layers to store in VRAM, -1 is auto, <= -2 is all
     int32_t main_gpu           = 0;                // the GPU that is used for scratch and small tensors
     float   tensor_split[128]  = {0};              // how split tensors should be distributed across GPUs
     bool    fit_params         = true;             // whether to fit unset model/context parameters to free device memory
@@ -475,7 +475,8 @@ struct common_params {
     bool enable_chat_template = true;
     common_reasoning_format reasoning_format = COMMON_REASONING_FORMAT_DEEPSEEK;
     int reasoning_budget = -1;
-    bool prefill_assistant = true;                                                                          // if true, any trailing assistant message will be prefilled into the response
+    bool prefill_assistant = true; // if true, any trailing assistant message will be prefilled into the response
+    int sleep_idle_seconds = -1;   // if >0, server will sleep after this many seconds of idle time
 
     std::vector<std::string> api_keys;
 
@@ -484,8 +485,11 @@ struct common_params {
 
     std::map<std::string, std::string> default_template_kwargs;
 
+    // webui configs
+    bool webui = true;
+    std::string webui_config_json;
+
     // "advanced" endpoints are disabled by default for better security
-    bool webui            = true;
     bool endpoint_slots   = true;
     bool endpoint_props   = false; // only control POST requests, not GET
     bool endpoint_metrics = false;

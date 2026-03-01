@@ -53,7 +53,7 @@ func TestForward(t *testing.T) {
 			defer ctx.Close()
 
 			tt := ctx.Input().Arange(0, 16, 1, ml.DTypeF32).Reshape(ctx, 8, 2)
-			tt = typ.Forward(ctx, tt)
+			tt = typ.Forward(ctx, tt, nil, nil)
 
 			ctx.Forward(tt).Compute(tt)
 			if diff := cmp.Diff(want, tt.Floats()); diff != "" {

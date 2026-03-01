@@ -35,6 +35,7 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
+	"github.com/ollama/ollama/ml/nn/pooling"
 	"github.com/ollama/ollama/ml/nn/rope"
 	"golang.org/x/sync/errgroup"
 )
@@ -418,7 +419,11 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		logutil.Trace("model weights", "buffer", C.GoString(C.ggml_backend_buffer_name(bs)),
 			"size", format.HumanBytes2(uint64(C.ggml_backend_buffer_get_size(bs))))
 	}
-
+	if params.Reranking {
+		kv := meta.KV()
+		// Overwrite the pooling_type to enable reranking functionality
+		kv[kv.Architecture()+".pooling_type"] = uint32(pooling.TypeRank)
+	}
 	return &Backend{
 		modelPath:         modelPath,
 		allocMemory:       params.AllocMemory,

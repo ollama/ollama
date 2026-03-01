@@ -401,13 +401,7 @@ vec4 dequantize4(uint ib, uint iqs, uint a_offset) {
     const uint sl = (data_a[a_offset + ib].scales_l[ib32/2] >> (4 * (ib32 & 1))) & 0xF;
     const uint sh = (data_a[a_offset + ib].scales_h >> (2 * ib32)) & 3;
     const uint qshift = (iqs & 16) >> 2;
-    u8vec4 qs = u8vec4(
-        data_a[a_offset + ib].qs[iq + 0],
-        data_a[a_offset + ib].qs[iq + 1],
-        data_a[a_offset + ib].qs[iq + 2],
-        data_a[a_offset + ib].qs[iq + 3]
-    );
-    qs = (qs >> qshift) & uint8_t(0xF);
+    const u8vec4 qs = unpack8((data_a_packed32[a_offset + ib].qs[iq/4] >> qshift) & 0x0F0F0F0F);
 
     const float dl = float(int(sl | (sh << 4)) - 32);
     return dl * vec4(

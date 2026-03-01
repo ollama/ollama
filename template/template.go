@@ -203,6 +203,8 @@ type Values struct {
 	// whether or not the user explicitly set the thinking flag (vs. it being
 	// implicitly false). Templates can't see whether `Think` is nil
 	IsThinkSet bool
+	Query      string
+	Document   string
 
 	// forceLegacy is a flag used to test compatibility with legacy templates
 	forceLegacy bool
@@ -268,8 +270,10 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 			"Think":      v.Think,
 			"ThinkLevel": v.ThinkLevel,
 			"IsThinkSet": v.IsThinkSet,
+			"Query":      v.Query,
+			"Document":   v.Document,
 		})
-	} else if !v.forceLegacy && slices.Contains(vars, "messages") {
+	} else if !v.forceLegacy && (slices.Contains(vars, "messages") || slices.Contains(vars, "document")) {
 		return t.Template.Execute(w, map[string]any{
 			"System":     system,
 			"Messages":   convertMessagesForTemplate(messages),
@@ -278,6 +282,8 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 			"Think":      v.Think,
 			"ThinkLevel": v.ThinkLevel,
 			"IsThinkSet": v.IsThinkSet,
+			"Query":      v.Query,
+			"Document":   v.Document,
 		})
 	}
 

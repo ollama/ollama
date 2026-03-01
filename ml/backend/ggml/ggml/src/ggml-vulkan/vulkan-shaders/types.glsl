@@ -172,15 +172,11 @@ struct block_q8_0
     float16_t d;
     int8_t qs[32];
 };
+
 struct block_q8_0_packed16
 {
     float16_t d;
     int16_t qs[32/2];
-};
-struct block_q8_0_packed32
-{
-    float16_t d;
-    int32_t qs[32/4];
 };
 
 #if defined(DATA_A_Q8_0)
@@ -189,7 +185,6 @@ struct block_q8_0_packed32
 #define QUANT_AUXF 1
 #define A_TYPE block_q8_0
 #define A_TYPE_PACKED16 block_q8_0_packed16
-#define A_TYPE_PACKED32 block_q8_0_packed32
 #define DATA_A_QUANT_LEGACY
 #endif
 
@@ -201,11 +196,13 @@ struct block_q8_1
     f16vec2 ds;
     int8_t qs[32];
 };
+
 struct block_q8_1_packed16
 {
     f16vec2 ds;
     int16_t qs[16];
 };
+
 struct block_q8_1_packed32
 {
     f16vec2 ds;
@@ -218,6 +215,7 @@ struct block_q8_1_x4
     f16vec2 ds[4];
     int32_t qs[32];
 };
+
 struct block_q8_1_x4_packed128
 {
     f16vec2 ds[4];
@@ -1346,10 +1344,28 @@ struct block_iq4_xs
     uint8_t qs[QUANT_K_IQ4_XS/2];
 };
 
+struct block_iq4_xs_packed16
+{
+    float16_t d;
+    uint16_t scales_h;
+    uint16_t scales_l[QUANT_K_IQ4_XS/128];
+    uint16_t qs[QUANT_K_IQ4_XS/4];
+};
+
+struct block_iq4_xs_packed32
+{
+    float16_t d;
+    uint16_t scales_h;
+    uint32_t scales_l;
+    uint32_t qs[QUANT_K_IQ4_XS/8];
+};
+
 #if defined(DATA_A_IQ4_XS)
 #define QUANT_K QUANT_K_IQ4_XS
 #define QUANT_R QUANT_R_IQ4_XS
 #define A_TYPE block_iq4_xs
+#define A_TYPE_PACKED16 block_iq4_xs_packed16
+#define A_TYPE_PACKED32 block_iq4_xs_packed32
 #endif
 
 #define QUANT_K_IQ4_NL 32

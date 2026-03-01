@@ -71,6 +71,7 @@ type LlamaServer interface {
 	WaitUntilRunning(ctx context.Context) error
 	Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error
 	Embedding(ctx context.Context, input string) ([]float32, int, error)
+	Rerank(ctx context.Context, req RerankRequest, fn func(RerankResponse)) error
 	Tokenize(ctx context.Context, content string) ([]int, error)
 	Detokenize(ctx context.Context, tokens []int) (string, error)
 	Close() error
@@ -171,7 +172,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 
 	opts.NumBatch = min(opts.NumBatch, opts.NumCtx)
 
-	loadRequest := LoadRequest{LoraPath: adapters, KvSize: opts.NumCtx * numParallel, BatchSize: opts.NumBatch, Parallel: numParallel, MultiUserCache: envconfig.MultiUserCache()}
+	loadRequest := LoadRequest{LoraPath: adapters, KvSize: opts.NumCtx * numParallel, BatchSize: opts.NumBatch, Parallel: numParallel, MultiUserCache: envconfig.MultiUserCache(), Reranking: opts.Reranking}
 
 	defaultThreads := systemInfo.ThreadCount
 	if opts.NumThread > 0 {
@@ -484,6 +485,7 @@ type LoadRequest struct {
 	ProjectorPath string
 	MainGPU       int
 	UseMmap       bool
+	Reranking     bool
 }
 
 type LoadResponse struct {
@@ -1762,6 +1764,72 @@ func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, int
 	}
 
 	return e.Embedding, e.PromptEvalCount, nil
+}
+
+type RerankRequest struct {
+	Model   string   `json:"model"`
+	Query   *string  `json:"query"`
+	Prompts []string `json:"prompts"`
+}
+
+type RerankResult struct {
+	Index          int     `json:"index"`
+	RelevanceScore float32 `json:"relevance_score"`
+}
+
+type RerankResponse struct {
+	Results []RerankResult `json:"results"`
+}
+
+func (s *llmServer) Rerank(ctx context.Context, req RerankRequest, fn func(RerankResponse)) error {
+	if err := s.sem.Acquire(ctx, 1); err != nil {
+		slog.Error("Failed to acquire semaphore", "error", err)
+		return err
+	}
+	defer s.sem.Release(1)
+
+	status, err := s.getServerStatusRetry(ctx)
+	if err != nil {
+		return err
+	} else if status != ServerStatusReady {
+		return fmt.Errorf("unexpected server status: %s", status.String())
+	}
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("error marshaling rerank data: %w", err)
+	}
+
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/rerank", s.port), bytes.NewBuffer(data))
+	if err != nil {
+		return fmt.Errorf("error creating rerank request: %w", err)
+	}
+
+	r.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(r)
+	if err != nil {
+		return fmt.Errorf("do rerank request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("error reading rerank response: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		log.Printf("llm rerank error: %s", body)
+		return fmt.Errorf("%s", body)
+	}
+
+	var rr RerankResponse
+	if err := json.Unmarshal(body, &rr); err != nil {
+		return fmt.Errorf("unmarshal tokenize response: %w", err)
+	}
+	fn(rr)
+
+	return nil
 }
 
 func (s *llamaServer) Tokenize(ctx context.Context, content string) ([]int, error) {
