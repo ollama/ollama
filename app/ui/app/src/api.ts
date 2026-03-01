@@ -402,11 +402,15 @@ export async function* pullModel(
 
   for await (const event of parseJsonlFromResponse<{
     status: string;
+    error?: string;
     digest?: string;
     total?: number;
     completed?: number;
     done?: boolean;
   }>(response)) {
+    if (event.error) {
+      throw new Error(event.error);
+    }
     yield event;
   }
 }
@@ -439,9 +443,26 @@ export async function getModelsDetailed(): Promise<DetailedModel[]> {
       model: (m.model || m.name || "").replace(/:latest$/, ""),
       digest: m.digest || "",
       size: m.size || 0,
-      modified_at: new Date(m.modified_at),
+      modified_at: m.modified_at ? new Date(m.modified_at) : new Date(NaN),
       details: m.details,
     }));
+}
+
+export async function copyModel(
+  source: string,
+  destination: string,
+): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/copy`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source, destination }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(
+      data.error || `Failed to copy model: ${response.statusText}`,
+    );
+  }
 }
 
 export async function deleteModel(modelName: string): Promise<void> {
@@ -454,8 +475,15 @@ export async function deleteModel(modelName: string): Promise<void> {
   });
 
   if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.error || `Failed to delete model: ${response.statusText}`);
+    const text = await response.text().catch(() => "");
+    let errorMsg = `Failed to delete model: ${response.statusText || response.status}`;
+    try {
+      const data = JSON.parse(text);
+      if (data.error) errorMsg = data.error;
+    } catch {
+      // not JSON, use default message
+    }
+    throw new Error(errorMsg);
   }
 }
 
@@ -491,6 +519,57 @@ export async function showModel(modelName: string): Promise<ShowModelResponse> {
   }
 
   return response.json();
+}
+
+export interface ModelSettingsData {
+  model: string;
+  temperature?: number;
+  context_length?: number;
+  top_k?: number;
+  top_p?: number;
+  system_prompt?: string;
+}
+
+export async function getModelSettings(
+  modelName: string,
+): Promise<ModelSettingsData> {
+  const response = await fetch(
+    `${API_BASE}/api/v1/model-settings/${encodeURIComponent(modelName)}`,
+  );
+  if (!response.ok) {
+    throw new Error(`Failed to fetch model settings: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function updateModelSettings(
+  modelName: string,
+  settings: Partial<ModelSettingsData>,
+): Promise<ModelSettingsData> {
+  const response = await fetch(
+    `${API_BASE}/api/v1/model-settings/${encodeURIComponent(modelName)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(settings),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`Failed to update model settings: ${response.statusText}`);
+  }
+  return response.json();
+}
+
+export async function deleteModelSettings(
+  modelName: string,
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE}/api/v1/model-settings/${encodeURIComponent(modelName)}`,
+    { method: "DELETE" },
+  );
+  if (!response.ok) {
+    throw new Error(`Failed to delete model settings: ${response.statusText}`);
+  }
 }
 
 export async function getInferenceCompute(): Promise<InferenceComputeResponse> {

@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -10,15 +10,27 @@ import {
   ChevronDownIcon,
   ChevronUpIcon,
   CircleStackIcon,
+  DocumentDuplicateIcon,
+  ChevronUpDownIcon,
+  CheckIcon,
 } from "@heroicons/react/20/solid";
 import {
   getModelsDetailed,
   deleteModel,
   pullModel,
   showModel,
+  copyModel,
+  getModelSettings,
+  updateModelSettings,
+  deleteModelSettings,
   type ShowModelResponse,
   type DetailedModel,
+  type ModelSettingsData,
 } from "@/api";
+
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
@@ -33,15 +45,31 @@ function formatBytes(bytes: number): string {
 
 function formatDate(date: unknown): string {
   if (!date) return "—";
-  // Model.modified_at may be a Time object (empty class), a Date, or a string
   const d = date instanceof Date ? date : new Date(String(date));
   if (isNaN(d.getTime())) return "—";
+  // Guard against epoch (Jan 1 1970) from new Date(null)
+  if (d.getFullYear() < 2000) return "—";
   return d.toLocaleDateString(undefined, {
     year: "numeric",
     month: "short",
     day: "numeric",
   });
 }
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+type SortKey = "name-asc" | "name-desc" | "size-asc" | "size-desc" | "date-asc" | "date-desc";
+
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: "name-asc", label: "Name A → Z" },
+  { key: "name-desc", label: "Name Z → A" },
+  { key: "size-desc", label: "Size (largest)" },
+  { key: "size-asc", label: "Size (smallest)" },
+  { key: "date-desc", label: "Newest first" },
+  { key: "date-asc", label: "Oldest first" },
+];
 
 interface PullState {
   modelName: string;
@@ -53,14 +81,208 @@ interface PullState {
   done: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// ModelSettingsPanel (inline in expanded ModelCard)
+// ---------------------------------------------------------------------------
+
+function ModelSettingsPanel({ modelName }: { modelName: string }) {
+  const [settings, setSettings] = useState<ModelSettingsData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    getModelSettings(modelName)
+      .then((data) => {
+        if (!cancelled) {
+          setSettings(data);
+          setLoading(false);
+        }
+      })
+      .catch((err) => {
+        console.warn("Failed to load model settings:", err);
+        if (!cancelled) {
+          setSettings({ model: modelName });
+          setLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [modelName]);
+
+  const handleChange = (field: keyof ModelSettingsData, value: string) => {
+    if (!settings) return;
+    setDirty(true);
+
+    const numVal = value === "" ? undefined : Number(value);
+    if (field === "system_prompt") {
+      setSettings({ ...settings, [field]: value });
+    } else {
+      setSettings({ ...settings, [field]: numVal });
+    }
+  };
+
+  const handleSave = async () => {
+    if (!settings) return;
+    setSaving(true);
+    try {
+      await updateModelSettings(modelName, settings);
+      setDirty(false);
+    } catch (err) {
+      console.error("Failed to save model settings:", err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleReset = async () => {
+    setSaving(true);
+    try {
+      await deleteModelSettings(modelName);
+      setSettings({ model: modelName });
+      setDirty(false);
+    } catch (err) {
+      console.error("Failed to reset model settings:", err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="animate-pulse h-3 bg-neutral-200 dark:bg-neutral-700 rounded w-1/3 mt-2" />
+    );
+  }
+
+  const inputClass =
+    "w-full rounded-md border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-neutral-900 dark:text-white focus:outline-none focus:ring-1 focus:ring-blue-500";
+
+  return (
+    <div className="mt-3 pt-3 border-t border-neutral-100 dark:border-neutral-700 space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">
+          Per-model settings
+        </span>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={handleReset}
+            disabled={saving}
+            className="text-[10px] text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 disabled:opacity-50"
+          >
+            Reset
+          </button>
+          {dirty && (
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="text-[10px] px-2 py-0.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {saving ? "Saving..." : "Save"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+        <div>
+          <label className="block text-[10px] text-neutral-500 dark:text-neutral-400 mb-0.5">
+            Temperature
+          </label>
+          <input
+            type="number"
+            step="0.1"
+            min="0"
+            max="2"
+            value={settings?.temperature ?? ""}
+            onChange={(e) => handleChange("temperature", e.target.value)}
+            placeholder="default"
+            className={inputClass}
+          />
+        </div>
+        <div>
+          <label className="block text-[10px] text-neutral-500 dark:text-neutral-400 mb-0.5">
+            Context length
+          </label>
+          <input
+            type="number"
+            step="1024"
+            min="0"
+            value={settings?.context_length ?? ""}
+            onChange={(e) => handleChange("context_length", e.target.value)}
+            placeholder="default"
+            className={inputClass}
+          />
+        </div>
+        <div>
+          <label className="block text-[10px] text-neutral-500 dark:text-neutral-400 mb-0.5">
+            Top K
+          </label>
+          <input
+            type="number"
+            step="1"
+            min="0"
+            value={settings?.top_k ?? ""}
+            onChange={(e) => handleChange("top_k", e.target.value)}
+            placeholder="default"
+            className={inputClass}
+          />
+        </div>
+        <div>
+          <label className="block text-[10px] text-neutral-500 dark:text-neutral-400 mb-0.5">
+            Top P
+          </label>
+          <input
+            type="number"
+            step="0.05"
+            min="0"
+            max="1"
+            value={settings?.top_p ?? ""}
+            onChange={(e) => handleChange("top_p", e.target.value)}
+            placeholder="default"
+            className={inputClass}
+          />
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-[10px] text-neutral-500 dark:text-neutral-400 mb-0.5">
+          System prompt
+        </label>
+        <textarea
+          value={settings?.system_prompt ?? ""}
+          onChange={(e) => handleChange("system_prompt", e.target.value)}
+          placeholder="Override system prompt for this model..."
+          rows={2}
+          className={`${inputClass} resize-y`}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ModelCard
+// ---------------------------------------------------------------------------
+
 function ModelCard({
   model,
   onDelete,
+  onCopy,
   isPulling,
+  selected,
+  onToggleSelect,
+  batchMode,
 }: {
   model: DetailedModel;
   onDelete: (name: string) => void;
+  onCopy: (name: string) => void;
   isPulling: boolean;
+  selected: boolean;
+  onToggleSelect: (name: string) => void;
+  batchMode: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [details, setDetails] = useState<ShowModelResponse | null>(null);
@@ -77,8 +299,8 @@ function ModelCard({
       try {
         const data = await showModel(model.model);
         setDetails(data);
-      } catch {
-        // silently fail - details section just won't show extra info
+      } catch (err) {
+        console.warn(`Failed to load details for ${model.model}:`, err);
       } finally {
         setLoadingDetails(false);
       }
@@ -93,12 +315,42 @@ function ModelCard({
     [model.model, onDelete],
   );
 
+  const handleCopy = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onCopy(model.model);
+    },
+    [model.model, onCopy],
+  );
+
+  const handleCheckbox = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onToggleSelect(model.model);
+    },
+    [model.model, onToggleSelect],
+  );
+
   return (
     <div className="rounded-xl bg-white dark:bg-neutral-800 overflow-hidden">
       <div
         className="flex items-center p-4 cursor-pointer hover:bg-neutral-50 dark:hover:bg-neutral-700/50"
         onClick={handleExpand}
       >
+        {/* Batch selection checkbox */}
+        {batchMode && (
+          <button
+            onClick={handleCheckbox}
+            className={`mr-3 flex-shrink-0 h-5 w-5 rounded border-2 flex items-center justify-center transition-colors ${
+              selected
+                ? "bg-blue-600 border-blue-600 text-white"
+                : "border-neutral-300 dark:border-neutral-600 hover:border-blue-400"
+            }`}
+          >
+            {selected && <CheckIcon className="h-3.5 w-3.5" />}
+          </button>
+        )}
+
         <CircleStackIcon className="h-5 w-5 flex-shrink-0 text-neutral-400 dark:text-neutral-500 mr-3" />
         <div className="flex-1 min-w-0">
           <h3 className="text-sm font-medium text-neutral-900 dark:text-white truncate">
@@ -110,7 +362,15 @@ function ModelCard({
             {model.modified_at ? `Modified ${formatDate(model.modified_at)}` : ""}
           </p>
         </div>
-        <div className="flex items-center gap-2 ml-2">
+        <div className="flex items-center gap-1 ml-2">
+          <button
+            onClick={handleCopy}
+            disabled={isPulling}
+            className="p-1.5 rounded-lg text-neutral-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors disabled:opacity-50"
+            title="Copy / Alias"
+          >
+            <DocumentDuplicateIcon className="h-4 w-4" />
+          </button>
           <button
             onClick={handleDelete}
             disabled={isPulling}
@@ -132,9 +392,7 @@ function ModelCard({
           <div className="pt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
             {model.digest && (
               <>
-                <span className="text-neutral-500 dark:text-neutral-400">
-                  Digest
-                </span>
+                <span className="text-neutral-500 dark:text-neutral-400">Digest</span>
                 <span className="text-neutral-900 dark:text-neutral-200 font-mono truncate">
                   {model.digest.substring(0, 12)}
                 </span>
@@ -142,9 +400,7 @@ function ModelCard({
             )}
             {(model.details?.family || details?.details?.family) && (
               <>
-                <span className="text-neutral-500 dark:text-neutral-400">
-                  Family
-                </span>
+                <span className="text-neutral-500 dark:text-neutral-400">Family</span>
                 <span className="text-neutral-900 dark:text-neutral-200">
                   {model.details?.family || details?.details?.family}
                 </span>
@@ -152,9 +408,7 @@ function ModelCard({
             )}
             {(model.details?.parameter_size || details?.details?.parameter_size) && (
               <>
-                <span className="text-neutral-500 dark:text-neutral-400">
-                  Parameters
-                </span>
+                <span className="text-neutral-500 dark:text-neutral-400">Parameters</span>
                 <span className="text-neutral-900 dark:text-neutral-200">
                   {model.details?.parameter_size || details?.details?.parameter_size}
                 </span>
@@ -162,9 +416,7 @@ function ModelCard({
             )}
             {(model.details?.quantization_level || details?.details?.quantization_level) && (
               <>
-                <span className="text-neutral-500 dark:text-neutral-400">
-                  Quantization
-                </span>
+                <span className="text-neutral-500 dark:text-neutral-400">Quantization</span>
                 <span className="text-neutral-900 dark:text-neutral-200">
                   {model.details?.quantization_level || details?.details?.quantization_level}
                 </span>
@@ -172,9 +424,7 @@ function ModelCard({
             )}
             {(model.details?.format || details?.details?.format) && (
               <>
-                <span className="text-neutral-500 dark:text-neutral-400">
-                  Format
-                </span>
+                <span className="text-neutral-500 dark:text-neutral-400">Format</span>
                 <span className="text-neutral-900 dark:text-neutral-200">
                   {model.details?.format || details?.details?.format}
                 </span>
@@ -196,11 +446,18 @@ function ModelCard({
               </div>
             )}
           </div>
+
+          {/* Per-model settings */}
+          <ModelSettingsPanel modelName={model.model} />
         </div>
       )}
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Popular models list for Pull dialog
+// ---------------------------------------------------------------------------
 
 const POPULAR_MODELS = [
   { name: "llama3.2", desc: "Meta Llama 3.2", sizes: ["1b", "3b"] },
@@ -212,6 +469,10 @@ const POPULAR_MODELS = [
   { name: "llama3.3", desc: "Meta Llama 3.3", sizes: ["70b"] },
   { name: "nomic-embed-text", desc: "Nomic Embed", sizes: ["v1.5"] },
 ];
+
+// ---------------------------------------------------------------------------
+// Pull Dialog
+// ---------------------------------------------------------------------------
 
 function PullDialog({
   onClose,
@@ -248,12 +509,11 @@ function PullDialog({
   const progress =
     pullState?.total && pullState.total > 0
       ? Math.min(
-          Math.round((pullState.completed ?? 0) / pullState.total * 100),
+          Math.round(((pullState.completed ?? 0) / pullState.total) * 100),
           100,
         )
       : 0;
 
-  // Filter popular models based on search input
   const filteredPopular = modelName.trim()
     ? POPULAR_MODELS.filter(
         (m) =>
@@ -409,14 +669,260 @@ function PullDialog({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Copy Dialog
+// ---------------------------------------------------------------------------
+
+function CopyDialog({
+  sourceModel,
+  onClose,
+  onCopied,
+}: {
+  sourceModel: string;
+  onClose: () => void;
+  onCopied: () => void;
+}) {
+  const [newName, setNewName] = useState("");
+  const [copying, setCopying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = newName.trim();
+    if (!name) return;
+
+    setCopying(true);
+    setError(null);
+    try {
+      await copyModel(sourceModel, name);
+      onCopied();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to copy model");
+    } finally {
+      setCopying(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div className="bg-white dark:bg-neutral-800 rounded-2xl shadow-xl w-full max-w-sm mx-4 overflow-hidden">
+        <div className="p-4 border-b border-neutral-200 dark:border-neutral-700 flex items-center justify-between">
+          <h2 className="text-sm font-medium text-neutral-900 dark:text-white">
+            Copy / Alias Model
+          </h2>
+          <button
+            onClick={onClose}
+            disabled={copying}
+            className="p-1 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-700 disabled:opacity-50"
+          >
+            <XMarkIcon className="h-5 w-5 text-neutral-500" />
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-4 space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-neutral-500 dark:text-neutral-400 mb-1">
+              Source
+            </label>
+            <p className="text-sm text-neutral-900 dark:text-white font-mono bg-neutral-50 dark:bg-neutral-900 rounded-lg px-3 py-2">
+              {sourceModel}
+            </p>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-neutral-500 dark:text-neutral-400 mb-1">
+              New name
+            </label>
+            <input
+              ref={inputRef}
+              type="text"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="e.g. my-custom-model"
+              disabled={copying}
+              className="w-full rounded-lg border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-neutral-900 dark:text-white placeholder-neutral-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+            />
+          </div>
+          {error && (
+            <p className="text-xs text-red-500 dark:text-red-400">{error}</p>
+          )}
+          <div className="flex justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={copying}
+              className="px-3 py-1.5 rounded-lg text-sm text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-700 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={!newName.trim() || copying}
+              className="px-3 py-1.5 rounded-lg text-sm bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {copying ? "Copying..." : "Copy"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Batch Action Bar
+// ---------------------------------------------------------------------------
+
+function BatchActionBar({
+  count,
+  onDelete,
+  onCancel,
+  deleting,
+}: {
+  count: number;
+  onDelete: () => void;
+  onCancel: () => void;
+  deleting: boolean;
+}) {
+  return (
+    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 rounded-2xl bg-neutral-900 dark:bg-neutral-700 shadow-xl px-5 py-3 text-white">
+      <span className="text-sm font-medium">
+        {count} model{count !== 1 ? "s" : ""} selected
+      </span>
+      <div className="h-4 w-px bg-neutral-600" />
+      <button
+        onClick={onDelete}
+        disabled={deleting}
+        className="flex items-center gap-1.5 text-sm text-red-400 hover:text-red-300 disabled:opacity-50"
+      >
+        <TrashIcon className="h-4 w-4" />
+        {deleting ? "Deleting..." : "Delete"}
+      </button>
+      <button
+        onClick={onCancel}
+        disabled={deleting}
+        className="text-sm text-neutral-400 hover:text-white disabled:opacity-50"
+      >
+        Cancel
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sort Dropdown
+// ---------------------------------------------------------------------------
+
+function SortDropdown({
+  value,
+  onChange,
+}: {
+  value: SortKey;
+  onChange: (key: SortKey) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const current = SORT_OPTIONS.find((o) => o.key === value);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs text-neutral-600 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+      >
+        <ChevronUpDownIcon className="h-3.5 w-3.5" />
+        {current?.label ?? "Sort"}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 w-40 rounded-xl bg-white dark:bg-neutral-800 shadow-lg border border-neutral-200 dark:border-neutral-700 py-1 z-50">
+          {SORT_OPTIONS.map((opt) => (
+            <button
+              key={opt.key}
+              onClick={() => {
+                onChange(opt.key);
+                setOpen(false);
+              }}
+              className={`w-full text-left px-3 py-1.5 text-xs hover:bg-neutral-100 dark:hover:bg-neutral-700 ${
+                opt.key === value
+                  ? "text-blue-600 dark:text-blue-400 font-medium"
+                  : "text-neutral-700 dark:text-neutral-300"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sorting helper
+// ---------------------------------------------------------------------------
+
+function sortModels(models: DetailedModel[], key: SortKey): DetailedModel[] {
+  const sorted = [...models];
+  switch (key) {
+    case "name-asc":
+      return sorted.sort((a, b) => a.model.localeCompare(b.model));
+    case "name-desc":
+      return sorted.sort((a, b) => b.model.localeCompare(a.model));
+    case "size-desc":
+      return sorted.sort((a, b) => (b.size || 0) - (a.size || 0));
+    case "size-asc":
+      return sorted.sort((a, b) => (a.size || 0) - (b.size || 0));
+    case "date-desc":
+      return sorted.sort(
+        (a, b) =>
+          (b.modified_at?.getTime?.() ?? 0) - (a.modified_at?.getTime?.() ?? 0),
+      );
+    case "date-asc":
+      return sorted.sort(
+        (a, b) =>
+          (a.modified_at?.getTime?.() ?? 0) - (b.modified_at?.getTime?.() ?? 0),
+      );
+    default:
+      return sorted;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Main ModelManager
+// ---------------------------------------------------------------------------
+
 export default function ModelManager() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const isWindows = navigator.platform.toLowerCase().includes("win");
+
   const [search, setSearch] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey>("name-asc");
   const [showPullDialog, setShowPullDialog] = useState(false);
   const [pullState, setPullState] = useState<PullState | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Batch selection
+  const [selectedModels, setSelectedModels] = useState<Set<string>>(new Set());
+  const [batchDeleting, setBatchDeleting] = useState(false);
+  const batchMode = selectedModels.size > 0;
+
+  // Copy dialog
+  const [copySource, setCopySource] = useState<string | null>(null);
 
   const {
     data: models,
@@ -427,9 +933,35 @@ export default function ModelManager() {
     queryFn: () => getModelsDetailed(),
   });
 
-  const filteredModels = models?.filter((m) =>
-    m.model.toLowerCase().includes(search.toLowerCase()),
-  );
+  const filteredAndSorted = useMemo(() => {
+    if (!models) return [];
+    const filtered = search
+      ? models.filter((m) => m.model.toLowerCase().includes(search.toLowerCase()))
+      : models;
+    return sortModels(filtered, sortKey);
+  }, [models, search, sortKey]);
+
+  // Clear selection when models change
+  useEffect(() => {
+    setSelectedModels((prev) => {
+      if (!models) return new Set();
+      const modelNames = new Set(models.map((m) => m.model));
+      const next = new Set<string>();
+      for (const name of prev) {
+        if (modelNames.has(name)) next.add(name);
+      }
+      return next;
+    });
+  }, [models]);
+
+  const toggleSelect = useCallback((name: string) => {
+    setSelectedModels((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }, []);
 
   const handleDelete = useCallback(
     async (modelName: string) => {
@@ -452,6 +984,46 @@ export default function ModelManager() {
     [queryClient],
   );
 
+  const handleBatchDelete = useCallback(async () => {
+    const names = Array.from(selectedModels);
+    const confirmed = window.confirm(
+      `Are you sure you want to delete ${names.length} model${names.length !== 1 ? "s" : ""}?\n\n${names.join("\n")}\n\nThis cannot be undone.`,
+    );
+    if (!confirmed) return;
+
+    setBatchDeleting(true);
+    const errors: string[] = [];
+    for (const name of names) {
+      try {
+        await deleteModel(name);
+      } catch (err) {
+        errors.push(`${name}: ${err instanceof Error ? err.message : "Unknown error"}`);
+      }
+    }
+    setBatchDeleting(false);
+    setSelectedModels(new Set());
+    queryClient.invalidateQueries({ queryKey: ["localModels"] });
+    queryClient.invalidateQueries({ queryKey: ["models"] });
+
+    if (errors.length > 0) {
+      window.alert(`Some models failed to delete:\n\n${errors.join("\n")}`);
+    }
+  }, [selectedModels, queryClient]);
+
+  const handleCancelBatch = useCallback(() => {
+    setSelectedModels(new Set());
+  }, []);
+
+  const handleCopy = useCallback((name: string) => {
+    setCopySource(name);
+  }, []);
+
+  const handleCopied = useCallback(() => {
+    setCopySource(null);
+    queryClient.invalidateQueries({ queryKey: ["localModels"] });
+    queryClient.invalidateQueries({ queryKey: ["models"] });
+  }, [queryClient]);
+
   const handlePull = useCallback(
     async (modelName: string) => {
       setPullState({
@@ -465,6 +1037,10 @@ export default function ModelManager() {
 
       try {
         for await (const event of pullModel(modelName, controller.signal)) {
+          // Handle server-streamed error events
+          if ((event as any).error) {
+            throw new Error((event as any).error);
+          }
           setPullState((prev) => ({
             ...prev!,
             status: event.status,
@@ -481,11 +1057,13 @@ export default function ModelManager() {
         queryClient.invalidateQueries({ queryKey: ["localModels"] });
         queryClient.invalidateQueries({ queryKey: ["models"] });
       } catch (err) {
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted) {
+          setPullState((prev) => prev ? ({ ...prev, done: true, status: "Cancelled" }) : null);
+          return;
+        }
         setPullState((prev) => ({
           ...prev!,
-          error:
-            err instanceof Error ? err.message : "Unknown error",
+          error: err instanceof Error ? err.message : "Unknown error",
           done: true,
         }));
       } finally {
@@ -505,6 +1083,20 @@ export default function ModelManager() {
   }, []);
 
   const isPulling = pullState !== null && !pullState.done && !pullState.error;
+
+  // Select all visible models
+  const handleSelectAll = useCallback(() => {
+    const visibleNames = filteredAndSorted.map((m) => m.model);
+    setSelectedModels((prev) => {
+      const allSelected = visibleNames.every((n) => prev.has(n));
+      if (allSelected) {
+        // Deselect all
+        return new Set();
+      }
+      // Select all visible
+      return new Set(visibleNames);
+    });
+  }, [filteredAndSorted]);
 
   return (
     <main className="flex h-screen w-full flex-col select-none dark:bg-neutral-900">
@@ -548,16 +1140,30 @@ export default function ModelManager() {
 
       <div className="w-full p-6 overflow-y-auto flex-1 overscroll-contain">
         <div className="space-y-4 max-w-2xl mx-auto">
-          {/* Search */}
-          <div className="relative">
-            <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search models..."
-              className="w-full rounded-xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 pl-9 pr-4 py-2 text-sm text-neutral-900 dark:text-white placeholder-neutral-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+          {/* Search + Sort + Batch select controls */}
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-400" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search models..."
+                className="w-full rounded-xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 pl-9 pr-4 py-2 text-sm text-neutral-900 dark:text-white placeholder-neutral-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <SortDropdown value={sortKey} onChange={setSortKey} />
+            {filteredAndSorted.length > 1 && (
+              <button
+                onClick={handleSelectAll}
+                className="px-2.5 py-1.5 rounded-lg text-xs text-neutral-600 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800"
+              >
+                {filteredAndSorted.length > 0 &&
+                filteredAndSorted.every((m) => selectedModels.has(m.model))
+                  ? "Deselect all"
+                  : "Select all"}
+              </button>
+            )}
           </div>
 
           {/* Model list */}
@@ -582,18 +1188,23 @@ export default function ModelManager() {
             <div className="rounded-xl bg-white dark:bg-neutral-800 p-4 text-sm text-red-500 dark:text-red-400">
               Failed to load models.
             </div>
-          ) : filteredModels && filteredModels.length > 0 ? (
+          ) : filteredAndSorted.length > 0 ? (
             <div className="space-y-2">
               <p className="text-xs text-neutral-500 dark:text-neutral-400 px-1">
-                {filteredModels.length} model
-                {filteredModels.length !== 1 ? "s" : ""} installed
+                {filteredAndSorted.length} model
+                {filteredAndSorted.length !== 1 ? "s" : ""}
+                {search ? " found" : " installed"}
               </p>
-              {filteredModels.map((model) => (
+              {filteredAndSorted.map((model) => (
                 <ModelCard
                   key={model.model}
                   model={model}
                   onDelete={handleDelete}
+                  onCopy={handleCopy}
                   isPulling={isPulling}
+                  selected={selectedModels.has(model.model)}
+                  onToggleSelect={toggleSelect}
+                  batchMode={batchMode}
                 />
               ))}
             </div>
@@ -618,12 +1229,32 @@ export default function ModelManager() {
         </div>
       </div>
 
+      {/* Batch action bar */}
+      {batchMode && (
+        <BatchActionBar
+          count={selectedModels.size}
+          onDelete={handleBatchDelete}
+          onCancel={handleCancelBatch}
+          deleting={batchDeleting}
+        />
+      )}
+
+      {/* Pull dialog */}
       {showPullDialog && (
         <PullDialog
           onClose={handleClosePullDialog}
           onPull={handlePull}
           pullState={pullState}
           installedModels={models?.map((m) => m.model) ?? []}
+        />
+      )}
+
+      {/* Copy dialog */}
+      {copySource && (
+        <CopyDialog
+          sourceModel={copySource}
+          onClose={() => setCopySource(null)}
+          onCopied={handleCopied}
         />
       )}
     </main>

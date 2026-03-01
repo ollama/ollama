@@ -169,7 +169,7 @@ func (s *Server) ollamaProxy() http.Handler {
 
 				newProxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 					s.log().Error("proxy error", "error", err, "path", r.URL.Path, "target", target.String())
-					http.Error(w, "proxy error: "+err.Error(), http.StatusBadGateway)
+					http.Error(w, "service temporarily unavailable", http.StatusBadGateway)
 				}
 
 				proxy = newProxy
@@ -292,16 +292,41 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/cloud", handle(s.getCloudSetting))
 	mux.Handle("POST /api/v1/cloud", handle(s.cloudSetting))
 
+	mux.Handle("GET /api/v1/model-settings/{model...}", handle(s.getModelSettings))
+	mux.Handle("POST /api/v1/model-settings/{model...}", handle(s.setModelSettings))
+	mux.Handle("DELETE /api/v1/model-settings/{model...}", handle(s.deleteModelSettings))
+
 	// Ollama proxy endpoints
 	ollamaProxy := s.ollamaProxy()
+
+	// Authenticated proxy wrapper for destructive operations
+	authProxy := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !s.Dev {
+				cookie, err := r.Cookie("token")
+				if err != nil || cookie.Value != s.Token {
+					w.WriteHeader(http.StatusForbidden)
+					json.NewEncoder(w).Encode(map[string]string{"error": "Token is required"})
+					return
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+
+	// Read-only proxy endpoints
 	mux.Handle("GET /api/tags", ollamaProxy)
 	mux.Handle("POST /api/show", ollamaProxy)
 	mux.Handle("GET /api/version", ollamaProxy)
 	mux.Handle("GET /api/status", ollamaProxy)
 	mux.Handle("HEAD /api/version", ollamaProxy)
-	mux.Handle("POST /api/pull", ollamaProxy)
-	mux.Handle("DELETE /api/delete", ollamaProxy)
-	mux.Handle("POST /api/copy", ollamaProxy)
+
+	// Destructive proxy endpoints — require authentication
+	mux.Handle("POST /api/pull", authProxy(ollamaProxy))
+	mux.Handle("DELETE /api/delete", authProxy(ollamaProxy))
+	mux.Handle("POST /api/copy", authProxy(ollamaProxy))
+
+	// Auth-related proxy endpoints
 	mux.Handle("POST /api/me", ollamaProxy)
 	mux.Handle("POST /api/signout", ollamaProxy)
 
@@ -1485,6 +1510,59 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 	})
 }
 
+func (s *Server) getModelSettings(w http.ResponseWriter, r *http.Request) error {
+	model := r.PathValue("model")
+	if model == "" {
+		return fmt.Errorf("model name is required")
+	}
+
+	settings, err := s.Store.GetModelSettings(model)
+	if err != nil {
+		return fmt.Errorf("failed to load model settings: %w", err)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if settings == nil {
+		// Return empty settings with just the model name
+		return json.NewEncoder(w).Encode(store.ModelSettings{Model: model})
+	}
+	return json.NewEncoder(w).Encode(settings)
+}
+
+func (s *Server) setModelSettings(w http.ResponseWriter, r *http.Request) error {
+	model := r.PathValue("model")
+	if model == "" {
+		return fmt.Errorf("model name is required")
+	}
+
+	var settings store.ModelSettings
+	if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
+		return fmt.Errorf("invalid request body: %w", err)
+	}
+	settings.Model = model
+
+	if err := s.Store.SetModelSettings(&settings); err != nil {
+		return fmt.Errorf("failed to save model settings: %w", err)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	return json.NewEncoder(w).Encode(settings)
+}
+
+func (s *Server) deleteModelSettings(w http.ResponseWriter, r *http.Request) error {
+	model := r.PathValue("model")
+	if model == "" {
+		return fmt.Errorf("model name is required")
+	}
+
+	if err := s.Store.DeleteModelSettings(model); err != nil {
+		return fmt.Errorf("failed to delete model settings: %w", err)
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
 func (s *Server) cloudSetting(w http.ResponseWriter, r *http.Request) error {
 	var req struct {
 		Enabled bool `json:"enabled"`
@@ -1754,11 +1832,36 @@ func (s *Server) buildChatRequest(chat *store.Chat, model string, think any, ava
 		}
 	}
 
+	// Load per-model settings overrides
+	options := make(map[string]any)
+	if modelSettings, err := s.Store.GetModelSettings(model); err == nil && modelSettings != nil {
+		if modelSettings.Temperature != nil {
+			options["temperature"] = *modelSettings.Temperature
+		}
+		if modelSettings.ContextLength != nil {
+			options["num_ctx"] = *modelSettings.ContextLength
+		}
+		if modelSettings.TopK != nil {
+			options["top_k"] = *modelSettings.TopK
+		}
+		if modelSettings.TopP != nil {
+			options["top_p"] = *modelSettings.TopP
+		}
+		// Prepend system prompt if set
+		if modelSettings.SystemPrompt != "" {
+			msgs = append([]api.Message{{Role: "system", Content: modelSettings.SystemPrompt}}, msgs...)
+		}
+	}
+
 	req := &api.ChatRequest{
 		Model:    model,
 		Messages: msgs,
 		Stream:   ptr(true),
 		Think:    thinkValue,
+	}
+
+	if len(options) > 0 {
+		req.Options = options
 	}
 
 	if len(availableTools) > 0 {
