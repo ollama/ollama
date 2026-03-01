@@ -301,6 +301,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("HEAD /api/version", ollamaProxy)
 	mux.Handle("POST /api/me", ollamaProxy)
 	mux.Handle("POST /api/signout", ollamaProxy)
+	mux.Handle("GET /api/ps", ollamaProxy)
 
 	// React app - catch all non-API routes and serve the React app
 	mux.Handle("GET /", s.appHandler())
@@ -1528,12 +1529,15 @@ func (s *Server) getInferenceCompute(w http.ResponseWriter, r *http.Request) err
 	inferenceComputes := make([]responses.InferenceCompute, len(info.Computes))
 	for i, ic := range info.Computes {
 		inferenceComputes[i] = responses.InferenceCompute{
-			Library: ic.Library,
-			Variant: ic.Variant,
-			Compute: ic.Compute,
-			Driver:  ic.Driver,
-			Name:    ic.Name,
-			VRAM:    ic.VRAM,
+			Library:     ic.Library,
+			Variant:     ic.Variant,
+			Compute:     ic.Compute,
+			Driver:      ic.Driver,
+			Name:        ic.Name,
+			VRAM:        ic.VRAM,
+			Description: ic.Description,
+			Available:   ic.Available,
+			Type:        ic.Type,
 		}
 	}
 

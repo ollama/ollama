@@ -2,6 +2,8 @@ package server
 
 import (
 	"testing"
+
+	"github.com/ollama/ollama/envconfig"
 )
 
 func TestModelOptionsNumCtxPriority(t *testing.T) {
@@ -121,6 +123,69 @@ func TestModelOptionsNumCtxPriority(t *testing.T) {
 
 			if opts.NumCtx != tt.expectedNumCtx {
 				t.Errorf("NumCtx = %d, want %d", opts.NumCtx, tt.expectedNumCtx)
+			}
+		})
+	}
+}
+
+func TestDefaultNumCtxWithNumParallel(t *testing.T) {
+	tests := []struct {
+		name           string
+		numParallel    string // empty means not set
+		defaultNumCtx  int
+		expectedNumCtx int
+	}{
+		{
+			name:           "parallel=1 no change",
+			numParallel:    "1",
+			defaultNumCtx:  32768,
+			expectedNumCtx: 32768,
+		},
+		{
+			name:           "parallel=2 halves context",
+			numParallel:    "2",
+			defaultNumCtx:  32768,
+			expectedNumCtx: 16384,
+		},
+		{
+			name:           "parallel=4 quarters context",
+			numParallel:    "4",
+			defaultNumCtx:  262144,
+			expectedNumCtx: 65536,
+		},
+		{
+			name:           "parallel=2 low vram tier",
+			numParallel:    "2",
+			defaultNumCtx:  4096,
+			expectedNumCtx: 2048,
+		},
+		{
+			name:           "parallel=0 treated as 1",
+			numParallel:    "0",
+			defaultNumCtx:  32768,
+			expectedNumCtx: 32768,
+		},
+		{
+			name:           "parallel not set uses default 1",
+			numParallel:    "",
+			defaultNumCtx:  32768,
+			expectedNumCtx: 32768,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.numParallel != "" {
+				t.Setenv("OLLAMA_NUM_PARALLEL", tt.numParallel)
+			}
+
+			defaultNumCtx := tt.defaultNumCtx
+			if numParallel := max(int(envconfig.NumParallel()), 1); numParallel > 1 {
+				defaultNumCtx /= numParallel
+			}
+
+			if defaultNumCtx != tt.expectedNumCtx {
+				t.Errorf("defaultNumCtx = %d, want %d", defaultNumCtx, tt.expectedNumCtx)
 			}
 		})
 	}

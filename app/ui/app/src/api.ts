@@ -418,6 +418,36 @@ export async function getInferenceCompute(): Promise<InferenceComputeResponse> {
   return new InferenceComputeResponse(data);
 }
 
+export interface ProcessModelResponse {
+  name: string;
+  model: string;
+  size: number;
+  digest: string;
+  details?: {
+    parent_model: string;
+    format: string;
+    family: string;
+    families: string[];
+    parameter_size: string;
+    quantization_level: string;
+  };
+  expires_at: string;
+  size_vram: number;
+  context_length: number;
+}
+
+export interface ProcessResponse {
+  models: ProcessModelResponse[];
+}
+
+export async function getRunningModels(): Promise<ProcessResponse> {
+  const response = await fetch(`${API_BASE}/api/ps`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch running models: ${response.statusText}`);
+  }
+  return response.json();
+}
+
 export async function fetchHealth(): Promise<boolean> {
   try {
     // Use the /api/version endpoint as a health check

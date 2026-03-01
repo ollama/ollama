@@ -1767,6 +1767,12 @@ func Serve(ln net.Listener) error {
 	default:
 		s.defaultNumCtx = 4096
 	}
+
+	// Adjust for parallelism since KV cache allocates NumCtx * NumParallel
+	if numParallel := max(int(envconfig.NumParallel()), 1); numParallel > 1 {
+		s.defaultNumCtx /= numParallel
+	}
+
 	slog.Info("vram-based default context", "total_vram", format.HumanBytes2(totalVRAM), "default_num_ctx", s.defaultNumCtx)
 
 	err = srvr.Serve(ln)
