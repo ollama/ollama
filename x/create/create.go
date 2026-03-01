@@ -288,6 +288,18 @@ func normalizeQuantType(quantize string) string {
 	}
 }
 
+func isStackedExpertWeight(name string) bool {
+	// Combined/stacked expert tensors may be emitted either as "...proj.weight" (per-expert)
+	// or "...proj" (pre-stacked packed tensor).
+	if strings.HasSuffix(name, ".bias") || strings.HasSuffix(name, ".scale") || strings.HasSuffix(name, ".qbias") {
+		return false
+	}
+
+	return strings.Contains(name, ".mlp.switch_mlp.") ||
+		strings.Contains(name, ".mlp.experts.") ||
+		strings.Contains(name, ".mlp.shared_experts.")
+}
+
 // GetTensorQuantization returns the appropriate quantization type for a tensor.
 // Returns "" if the tensor should not be quantized.
 // This implements mixed-precision quantization:
@@ -296,18 +308,25 @@ func normalizeQuantType(quantize string) string {
 //   - Down projection weights: int8 (more sensitive, would be Q6 in GGML but no MLX kernel)
 //   - Norms, embeddings, biases, routing gates: no quantization
 func GetTensorQuantization(name string, shape []int32, quantize string) string {
+	stackedExpert := isStackedExpertWeight(name)
+
 	// Use basic name-based check first
-	if !ShouldQuantize(name, "") {
+	if !stackedExpert && !ShouldQuantize(name, "") {
 		return ""
 	}
 
-	// Only quantize 2D tensors (linear layers) - skip 1D (biases, norms) and higher-D (convolutions if any)
-	if len(shape) != 2 {
+	// Quantize standard linear weights (2D). Also allow stacked expert weights (3D),
+	// e.g. qwen switch_mlp / experts combined tensors.
+	if len(shape) != 2 && !(len(shape) == 3 && stackedExpert) {
 		return ""
 	}
 
 	// Skip small tensors (less than 1024 elements) - not worth quantizing
-	if len(shape) >= 2 && int64(shape[0])*int64(shape[1]) < 1024 {
+	var elems int64 = 1
+	for _, d := range shape {
+		elems *= int64(d)
+	}
+	if elems < 1024 {
 		return ""
 	}
 
