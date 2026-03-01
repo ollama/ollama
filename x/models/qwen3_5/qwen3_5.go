@@ -1378,6 +1378,10 @@ func (m *Model) NumLayers() int {
 	return len(m.Layers)
 }
 
+func (m *Model) MaxContextLength() int {
+	return int(m.MaxPositionEmbeddings)
+}
+
 func (m *Model) Tokenizer() *tokenizer.Tokenizer {
 	return m.tok
 }
