@@ -1485,6 +1485,8 @@ const (
 	DoneReasonLength
 	// DoneReasonConnectionClosed indicates the completion stopped due to the connection being closed
 	DoneReasonConnectionClosed
+	// DoneReasonRepeat indicates the completion stopped due to token repeat limit
+	DoneReasonRepeat
 )
 
 func (d DoneReason) String() string {
@@ -1493,6 +1495,8 @@ func (d DoneReason) String() string {
 		return "length"
 	case DoneReasonStop:
 		return "stop"
+	case DoneReasonRepeat:
+		return "repeat"
 	default:
 		return "" // closed
 	}
@@ -1650,18 +1654,23 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 			if err := json.Unmarshal(evt, &c); err != nil {
 				return fmt.Errorf("error unmarshalling llm prediction response: %v", err)
 			}
-			switch {
-			case strings.TrimSpace(c.Content) == lastToken:
-				tokenRepeat++
-			default:
-				lastToken = strings.TrimSpace(c.Content)
-				tokenRepeat = 0
+			trimmed := strings.TrimSpace(c.Content)
+			if trimmed != "" {
+				if trimmed == lastToken {
+					tokenRepeat++
+				} else {
+					lastToken = trimmed
+					tokenRepeat = 0
+				}
 			}
 
-			// 30 picked as an arbitrary max token repeat limit, modify as needed
-			if tokenRepeat > 30 {
+			if req.Options.TokenRepeatLimit > 0 && tokenRepeat > req.Options.TokenRepeatLimit {
 				slog.Debug("prediction aborted, token repeat limit reached")
-				return ctx.Err()
+				fn(CompletionResponse{
+					Done:       true,
+					DoneReason: DoneReasonRepeat,
+				})
+				return nil
 			}
 
 			if c.Content != "" {
