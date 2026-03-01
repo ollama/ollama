@@ -130,6 +130,35 @@ func (s *Server) modelOptions(model *Model, requestOpts map[string]any) (api.Opt
 	return opts, nil
 }
 
+func explicitOptions(modelOpts, requestOpts map[string]any) map[string]struct{} {
+	keys := []string{
+		"temperature",
+		"top_p",
+		"min_p",
+		"top_k",
+		"repeat_last_n",
+		"repeat_penalty",
+		"presence_penalty",
+		"frequency_penalty",
+	}
+
+	explicit := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		if optionSpecified(modelOpts, requestOpts, key) {
+			explicit[key] = struct{}{}
+		}
+	}
+	return explicit
+}
+
+func optionSpecified(modelOpts, requestOpts map[string]any, key string) bool {
+	if _, ok := requestOpts[key]; ok {
+		return true
+	}
+	_, ok := modelOpts[key]
+	return ok
+}
+
 // scheduleRunner schedules a runner after validating inputs such as capabilities and model options.
 // It returns the allocated runner, model instance, and consolidated options if successful and error otherwise.
 func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.Capability, requestOpts map[string]any, keepAlive *api.Duration) (llm.LlamaServer, *Model, *api.Options, error) {
@@ -539,14 +568,16 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		var sb strings.Builder
 		defer close(ch)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:      prompt,
-			Images:      images,
-			Format:      req.Format,
-			Options:     opts,
-			Shift:       req.Shift == nil || *req.Shift,
-			Truncate:    req.Truncate == nil || *req.Truncate,
-			Logprobs:    req.Logprobs,
-			TopLogprobs: req.TopLogprobs,
+			Prompt:          prompt,
+			Images:          images,
+			Format:          req.Format,
+			Options:         opts,
+			Think:           req.Think,
+			ExplicitOptions: explicitOptions(m.Options, req.Options),
+			Shift:           req.Shift == nil || *req.Shift,
+			Truncate:        req.Truncate == nil || *req.Truncate,
+			Logprobs:        req.Logprobs,
+			TopLogprobs:     req.TopLogprobs,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
 				Model:     req.Model,
@@ -2298,14 +2329,16 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			// sets up new context given parent context per request
 			ctx, cancel := context.WithCancel(c.Request.Context())
 			err := r.Completion(ctx, llm.CompletionRequest{
-				Prompt:      prompt,
-				Images:      images,
-				Format:      currentFormat,
-				Options:     opts,
-				Shift:       req.Shift == nil || *req.Shift,
-				Truncate:    truncate,
-				Logprobs:    req.Logprobs,
-				TopLogprobs: req.TopLogprobs,
+				Prompt:          prompt,
+				Images:          images,
+				Format:          currentFormat,
+				Options:         opts,
+				Think:           req.Think,
+				ExplicitOptions: explicitOptions(m.Options, req.Options),
+				Shift:           req.Shift == nil || *req.Shift,
+				Truncate:        truncate,
+				Logprobs:        req.Logprobs,
+				TopLogprobs:     req.TopLogprobs,
 			}, func(r llm.CompletionResponse) {
 				res := api.ChatResponse{
 					Model:     req.Model,

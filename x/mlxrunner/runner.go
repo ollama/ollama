@@ -32,12 +32,17 @@ type Request struct {
 
 type TextCompletionsRequest struct {
 	Prompt  string `json:"prompt"`
+	Think   *bool  `json:"think,omitempty"`
 	Options struct {
-		Temperature float32 `json:"temperature"`
-		TopP        float32 `json:"top_p"`
-		MinP        float32 `json:"min_p"`
-		TopK        int     `json:"top_k"`
-		MaxTokens   int     `json:"max_tokens"`
+		Temperature      *float32 `json:"temperature"`
+		TopP             *float32 `json:"top_p"`
+		MinP             *float32 `json:"min_p"`
+		TopK             *int     `json:"top_k"`
+		RepeatLastN      *int     `json:"repeat_last_n"`
+		RepeatPenalty    *float32 `json:"repeat_penalty"`
+		PresencePenalty  *float32 `json:"presence_penalty"`
+		FrequencyPenalty *float32 `json:"frequency_penalty"`
+		MaxTokens        int      `json:"max_tokens"`
 
 		// Deprecated: use MaxTokens instead
 		NumPredict int `json:"num_predict"`
