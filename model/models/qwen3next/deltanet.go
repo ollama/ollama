@@ -41,8 +41,8 @@ type GatedDeltaNet struct {
 	SSMBeta      *nn.Linear  `gguf:"ssm_beta"`  // -> beta (qwen35)
 	SSMAlpha     *nn.Linear  `gguf:"ssm_alpha"` // -> alpha (qwen35)
 	SSMConv1D    *convKernel `gguf:"ssm_conv1d"`
-	SSMDT        ml.Tensor   `gguf:"ssm_dt"` // alpha bias
-	SSMA         ml.Tensor   `gguf:"ssm_a"`  // -A_log.exp()
+	SSMDT        ml.Tensor   `gguf:"ssm_dt,alt:ssm_dt.bias"` // alpha bias
+	SSMA         ml.Tensor   `gguf:"ssm_a"`                  // -A_log.exp()
 	SSMNorm      *nn.RMSNorm `gguf:"ssm_norm"`
 	SSMOut       *nn.Linear  `gguf:"ssm_out"`
 
@@ -134,6 +134,18 @@ func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cac
 
 	default:
 		return nil, errors.New("qwen3next: missing linear attention beta/alpha projections")
+	}
+	if gdn.SSMDT == nil {
+		return nil, errors.New("qwen3next: missing linear attention ssm_dt tensor")
+	}
+	if gdn.SSMA == nil {
+		return nil, errors.New("qwen3next: missing linear attention ssm_a tensor")
+	}
+	if gdn.SSMConv1D == nil || gdn.SSMConv1D.Weight == nil {
+		return nil, errors.New("qwen3next: missing linear attention ssm_conv1d tensor")
+	}
+	if gdn.SSMNorm == nil || gdn.SSMOut == nil {
+		return nil, errors.New("qwen3next: missing linear attention ssm_norm/ssm_out projections")
 	}
 
 	// Compute gate: softplus(alpha + dt_bias) * -A
