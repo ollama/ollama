@@ -613,6 +613,9 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 	// if cid is the literal string "new", then we create a new chat before
 	// performing our normal actions
 	if cid == "new" {
+		if envconfig.GuiNoHistory() {
+			_ = s.Store.ClearChatHistory()
+		}
 		u, err := uuid.NewV7()
 		if err != nil {
 			return fmt.Errorf("failed to generate new chat id: %w", err)

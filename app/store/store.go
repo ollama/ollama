@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ollama/ollama/app/types/not"
+	"github.com/ollama/ollama/envconfig"
 )
 
 type File struct {
@@ -264,6 +265,13 @@ func (s *Store) ensureDB() error {
 		return fmt.Errorf("migrate cloud setting: %w", err)
 	}
 
+	// Clear chat history on startup when OLLAMA_GUI_NOHISTORY is set
+	if envconfig.GuiNoHistory() {
+		if err := s.clearChatHistoryLocked(); err != nil {
+			slog.Warn("failed to clear chat history on startup", "error", err)
+		}
+	}
+
 	return nil
 }
 
@@ -453,6 +461,34 @@ func (s *Store) DeleteChat(id string) error {
 	return nil
 }
 
+// ClearChatHistory removes all chats, messages, attachments, and cached images.
+// Used when OLLAMA_GUI_NOHISTORY is set.
+func (s *Store) ClearChatHistory() error {
+	if err := s.ensureDB(); err != nil {
+		return err
+	}
+
+	s.dbMu.Lock()
+	defer s.dbMu.Unlock()
+	if s.db == nil {
+		return nil
+	}
+	return s.clearChatHistoryLocked()
+}
+
+// clearChatHistoryLocked removes all chats and image cache. Caller must hold s.dbMu and s.db must be non-nil.
+func (s *Store) clearChatHistoryLocked() error {
+	if err := s.db.deleteAllChats(); err != nil {
+		return err
+	}
+	imgDir := s.ImgDir()
+	if err := os.RemoveAll(imgDir); err != nil {
+		slog.Warn("failed to clear image cache", "dir", imgDir, "error", err)
+		// Don't fail; database is already cleared
+	}
+	return nil
+}
+
 func (s *Store) WindowSize() (int, int, error) {
 	if err := s.ensureDB(); err != nil {
 		return 0, 0, err
@@ -523,6 +559,11 @@ func (s *Store) Close() error {
 	defer s.dbMu.Unlock()
 
 	if s.db != nil {
+		if envconfig.GuiNoHistory() {
+			if err := s.clearChatHistoryLocked(); err != nil {
+				slog.Warn("failed to clear chat history on close", "error", err)
+			}
+		}
 		return s.db.Close()
 	}
 	return nil
