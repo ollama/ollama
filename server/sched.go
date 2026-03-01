@@ -132,6 +132,20 @@ func (s *Scheduler) GetRunner(c context.Context, m *Model, opts api.Options, ses
 	s.loadedMu.Unlock()
 	if runner != nil && !runner.needsReload(c, req) {
 		req.useLoadedRunner(runner, s.finishedReqCh)
+	} else if runner != nil {
+		runner.refMu.Lock()
+		busy := runner.refCount > 0
+		runner.refMu.Unlock()
+		if busy {
+			slog.Warn("runner needs reload but has active requests, serving with current options", "model", key)
+			req.useLoadedRunner(runner, s.finishedReqCh)
+		} else {
+			select {
+			case s.pendingReqCh <- req:
+			default:
+				req.errCh <- ErrMaxQueue
+			}
+		}
 	} else {
 		select {
 		case s.pendingReqCh <- req:
@@ -186,6 +200,14 @@ func (s *Scheduler) processPending(ctx context.Context) {
 
 				if runner != nil {
 					if runner.needsReload(ctx, pending) {
+						runner.refMu.Lock()
+						busy := runner.refCount > 0
+						runner.refMu.Unlock()
+						if busy {
+							slog.Warn("runner needs reload but has active requests, serving with current options", "model", pendingKey)
+							pending.useLoadedRunner(runner, s.finishedReqCh)
+							break
+						}
 						slog.Debug("reloading", "runner", runner)
 						runnerToExpire = runner
 					} else {
