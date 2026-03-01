@@ -203,6 +203,13 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 			return fmt.Errorf("failed to read tensor dimensions: %w", err)
 		}
 
+		// GGML supports at most GGML_MAX_DIMS=4 dimensions; guard against
+		// corrupt values before allocating.
+		const maxDims = 4
+		if dims > maxDims {
+			return fmt.Errorf("tensor %q has invalid number of dimensions: %d > %d", name, dims, maxDims)
+		}
+
 		shape := make([]uint64, dims)
 		for i := 0; uint32(i) < dims; i++ {
 			shape[i], err = readGGUF[uint64](llm, rs)
@@ -356,7 +363,17 @@ func readGGUFString(llm *gguf, r io.Reader) (string, error) {
 		return "", err
 	}
 
-	length := int(llm.ByteOrder.Uint64(buf))
+	// Read raw uint64 first so we can validate before casting to int.
+	// An invalid (e.g. corrupt) length can overflow int on 64-bit platforms,
+	// turning a large uint64 into a negative value and causing a runtime panic
+	// in make([]byte, length).
+	rawLength := llm.ByteOrder.Uint64(buf)
+	const maxStringLength = 1 << 30 // 1 GiB is far beyond any legitimate GGUF string
+	if rawLength > maxStringLength {
+		return "", fmt.Errorf("GGUF string length too large: %d", rawLength)
+	}
+
+	length := int(rawLength)
 	if length > len(llm.scratch) {
 		buf = make([]byte, length)
 	} else {
@@ -430,6 +447,14 @@ func readGGUFArray(llm *gguf, r io.Reader) (any, error) {
 	n, err := readGGUF[uint64](llm, r)
 	if err != nil {
 		return nil, err
+	}
+
+	// Guard against corrupt length values that would overflow int on 64-bit
+	// platforms.  Real GGUF arrays (including full tokenizer vocabularies)
+	// never exceed a few hundred thousand elements.
+	const maxArrayElements = 1 << 32 // 4 billion elements
+	if n > maxArrayElements {
+		return nil, fmt.Errorf("GGUF array too large: %d elements", n)
 	}
 
 	switch t {
