@@ -1900,6 +1900,21 @@ func runInteractiveTUI(cmd *cobra.Command) {
 		return
 	}
 
+	if version.Version != "0.0.0" && version.IsOfficialInstall() && version.IsLocalHost(envconfig.Host()) {
+		if version.HasCachedUpdate() {
+			fmt.Print("A new version of Ollama is available. Run \"ollama update\" to install.\n\n")
+			_ = version.ClearCachedUpdate()
+		}
+
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if available, err := version.CheckForUpdate(ctx); err == nil && available {
+				_ = version.CacheAvailableUpdate()
+			}
+		}()
+	}
+
 	// Selector adapters for tui
 	singleSelector := func(title string, items []config.ModelItem, current string) (string, error) {
 		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
@@ -2321,6 +2336,18 @@ func NewCLI() *cobra.Command {
 		}
 	}
 
+	updateCmd := &cobra.Command{
+		Use:   "update",
+		Short: "Update Ollama to the latest version",
+		Args:  cobra.ExactArgs(0),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			force, _ := cmd.Flags().GetBool("force")
+			_ = version.ClearCachedUpdate()
+			return version.DoUpdate(force)
+		},
+	}
+	updateCmd.Flags().BoolP("force", "f", false, "Force update even if installed via a package manager")
+
 	rootCmd.AddCommand(
 		serveCmd,
 		createCmd,
@@ -2338,6 +2365,7 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		runnerCmd,
+		updateCmd,
 		config.LaunchCmd(checkServerHeartbeat, runInteractiveTUI),
 	)
 
