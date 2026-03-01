@@ -276,6 +276,9 @@ export class InferenceCompute {
     driver: string;
     name: string;
     vram: string;
+    description?: string;
+    available?: string;
+    type?: string;
 
     constructor(source: any = {}) {
         if ('string' === typeof source) source = JSON.parse(source);
@@ -285,6 +288,9 @@ export class InferenceCompute {
         this.driver = source["driver"];
         this.name = source["name"];
         this.vram = source["vram"];
+        this.description = source["description"];
+        this.available = source["available"];
+        this.type = source["type"];
     }
 }
 export class InferenceComputeResponse {

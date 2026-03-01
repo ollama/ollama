@@ -1529,12 +1529,15 @@ func (s *Server) getInferenceCompute(w http.ResponseWriter, r *http.Request) err
 	inferenceComputes := make([]responses.InferenceCompute, len(info.Computes))
 	for i, ic := range info.Computes {
 		inferenceComputes[i] = responses.InferenceCompute{
-			Library: ic.Library,
-			Variant: ic.Variant,
-			Compute: ic.Compute,
-			Driver:  ic.Driver,
-			Name:    ic.Name,
-			VRAM:    ic.VRAM,
+			Library:     ic.Library,
+			Variant:     ic.Variant,
+			Compute:     ic.Compute,
+			Driver:      ic.Driver,
+			Name:        ic.Name,
+			VRAM:        ic.VRAM,
+			Description: ic.Description,
+			Available:   ic.Available,
+			Type:        ic.Type,
 		}
 	}
 

@@ -13,17 +13,22 @@ import {
   getRunningModels,
   type ProcessModelResponse,
 } from "@/api";
+import { InferenceCompute } from "@/gotypes";
 
 function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
   const k = 1024;
   const sizes = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  const i = Math.min(
+    Math.floor(Math.log(bytes) / Math.log(k)),
+    sizes.length - 1,
+  );
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 }
 
 function formatTimeRemaining(expiresAt: string): string {
   const expires = new Date(expiresAt);
+  if (isNaN(expires.getTime())) return "Unknown";
   const now = new Date();
   const diff = expires.getTime() - now.getTime();
   if (diff <= 0) return "Expiring...";
@@ -34,33 +39,57 @@ function formatTimeRemaining(expiresAt: string): string {
   return `${hours}h ${remainingMinutes}m remaining`;
 }
 
-function GpuCard({
-  gpu,
-}: {
-  gpu: {
-    library: string;
-    variant: string;
-    compute: string;
-    driver: string;
-    name: string;
-    vram: string;
-  };
-}) {
+function GpuCard({ gpu }: { gpu: InferenceCompute }) {
   return (
     <div className="rounded-xl bg-white p-4 dark:bg-neutral-800">
       <div className="flex items-start space-x-3">
         <CpuChipIcon className="mt-0.5 h-5 w-5 flex-shrink-0 text-blue-500 dark:text-blue-400" />
         <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-medium text-neutral-900 dark:text-white truncate">
-            {gpu.name}
-          </h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-medium text-neutral-900 dark:text-white truncate">
+              {gpu.description || gpu.name}
+            </h3>
+            {gpu.type && (
+              <span
+                className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+                  gpu.type === "iGPU"
+                    ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                    : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                }`}
+              >
+                {gpu.type === "iGPU" ? "Integrated" : "Discrete"}
+              </span>
+            )}
+          </div>
+          {gpu.description && gpu.description !== gpu.name && (
+            <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+              {gpu.name}
+            </p>
+          )}
+
+          {/* VRAM bar */}
+          {gpu.vram && gpu.available && (
+            <div className="mt-2">
+              <div className="flex justify-between text-xs mb-1">
+                <span className="text-neutral-500 dark:text-neutral-400">
+                  VRAM
+                </span>
+                <span className="text-neutral-900 dark:text-neutral-200">
+                  {gpu.available} free / {gpu.vram} total
+                </span>
+              </div>
+              <div className="h-1.5 w-full rounded-full bg-neutral-200 dark:bg-neutral-700">
+                <VramBar total={gpu.vram} available={gpu.available} />
+              </div>
+            </div>
+          )}
+          {gpu.vram && !gpu.available && (
+            <div className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+              VRAM: {gpu.vram}
+            </div>
+          )}
+
           <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
-            <div className="text-xs text-neutral-500 dark:text-neutral-400">
-              VRAM
-            </div>
-            <div className="text-xs text-neutral-900 dark:text-neutral-200">
-              {gpu.vram}
-            </div>
             <div className="text-xs text-neutral-500 dark:text-neutral-400">
               Library
             </div>
@@ -94,9 +123,56 @@ function GpuCard({
   );
 }
 
+function VramBar({ total, available }: { total: string; available: string }) {
+  const parseSize = (s: string): number => {
+    const match = s.match(/([\d.]+)\s*(B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)/i);
+    if (!match) return 0;
+    const val = parseFloat(match[1]);
+    const unit = match[2].toUpperCase();
+    const multipliers: Record<string, number> = {
+      B: 1,
+      KB: 1024,
+      KIB: 1024,
+      MB: 1024 ** 2,
+      MIB: 1024 ** 2,
+      GB: 1024 ** 3,
+      GIB: 1024 ** 3,
+      TB: 1024 ** 4,
+      TIB: 1024 ** 4,
+    };
+    return val * (multipliers[unit] || 1);
+  };
+
+  const totalBytes = parseSize(total);
+  const availableBytes = parseSize(available);
+  if (totalBytes <= 0) return null;
+  const usedPercent = Math.min(
+    Math.max(
+      Math.round(((totalBytes - availableBytes) / totalBytes) * 100),
+      0,
+    ),
+    100,
+  );
+
+  return (
+    <div
+      className={`h-1.5 rounded-full transition-all ${
+        usedPercent > 90
+          ? "bg-red-500 dark:bg-red-400"
+          : usedPercent > 70
+            ? "bg-amber-500 dark:bg-amber-400"
+            : "bg-blue-500 dark:bg-blue-400"
+      }`}
+      style={{ width: `${usedPercent}%` }}
+    />
+  );
+}
+
 function ModelCard({ model }: { model: ProcessModelResponse }) {
   const vramPercent =
-    model.size > 0 ? Math.round((model.size_vram / model.size) * 100) : 0;
+    model.size > 0
+      ? Math.min(Math.round((model.size_vram / model.size) * 100), 100)
+      : 0;
 
   return (
     <div className="rounded-xl bg-white p-4 dark:bg-neutral-800">
@@ -114,7 +190,8 @@ function ModelCard({ model }: { model: ProcessModelResponse }) {
                   GPU offload
                 </span>
                 <span className="text-neutral-900 dark:text-neutral-200">
-                  {formatBytes(model.size_vram)} / {formatBytes(model.size)} ({vramPercent}%)
+                  {formatBytes(model.size_vram)} / {formatBytes(model.size)} (
+                  {vramPercent}%)
                 </span>
               </div>
               <div className="h-1.5 w-full rounded-full bg-neutral-200 dark:bg-neutral-700">
@@ -168,12 +245,20 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const isWindows = navigator.platform.toLowerCase().includes("win");
 
-  const { data: inferenceData, isLoading: gpuLoading } = useQuery({
+  const {
+    data: inferenceData,
+    isLoading: gpuLoading,
+    error: gpuError,
+  } = useQuery({
     queryKey: ["inferenceCompute"],
     queryFn: getInferenceCompute,
   });
 
-  const { data: processData, isLoading: modelsLoading } = useQuery({
+  const {
+    data: processData,
+    isLoading: modelsLoading,
+    error: modelsError,
+  } = useQuery({
     queryKey: ["runningModels"],
     queryFn: getRunningModels,
     refetchInterval: 5000,
@@ -229,6 +314,10 @@ export default function Dashboard() {
                   <div className="h-3 bg-neutral-200 dark:bg-neutral-700 rounded w-1/2" />
                 </div>
               </div>
+            ) : gpuError ? (
+              <div className="rounded-xl bg-white dark:bg-neutral-800 p-4 text-sm text-red-500 dark:text-red-400">
+                Failed to load GPU information.
+              </div>
             ) : gpus.length > 0 ? (
               <div className="space-y-3">
                 {gpus.map((gpu, i) => (
@@ -261,6 +350,10 @@ export default function Dashboard() {
                   <div className="h-4 bg-neutral-200 dark:bg-neutral-700 rounded w-1/3" />
                   <div className="h-3 bg-neutral-200 dark:bg-neutral-700 rounded w-1/2" />
                 </div>
+              </div>
+            ) : modelsError ? (
+              <div className="rounded-xl bg-white dark:bg-neutral-800 p-4 text-sm text-red-500 dark:text-red-400">
+                Failed to load running models.
               </div>
             ) : models.length > 0 ? (
               <div className="space-y-3">
