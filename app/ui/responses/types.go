@@ -28,6 +28,7 @@ type ChatResponse struct {
 type Model struct {
 	Model      string     `json:"model"`
 	Digest     string     `json:"digest,omitempty"`
+	Size       int64      `json:"size,omitempty"`
 	ModifiedAt *time.Time `json:"modified_at,omitempty"`
 }
 

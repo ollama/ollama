@@ -299,6 +299,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/version", ollamaProxy)
 	mux.Handle("GET /api/status", ollamaProxy)
 	mux.Handle("HEAD /api/version", ollamaProxy)
+	mux.Handle("POST /api/pull", ollamaProxy)
+	mux.Handle("DELETE /api/delete", ollamaProxy)
+	mux.Handle("POST /api/copy", ollamaProxy)
 	mux.Handle("POST /api/me", ollamaProxy)
 	mux.Handle("POST /api/signout", ollamaProxy)
 

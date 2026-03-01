@@ -135,11 +135,16 @@ export async function getModels(query?: string): Promise<Model[]> {
         // Remove the latest tag from the returned model
         const modelName = m.name.replace(/:latest$/, "");
 
-        return new Model({
+        const model = new Model({
           model: modelName,
           digest: m.digest,
-          modified_at: m.modified_at ? new Date(m.modified_at) : undefined,
+          size: m.size,
         });
+        // Set modified_at directly to bypass Time class wrapper which loses date data
+        (model as any).modified_at = m.modified_at
+          ? new Date(m.modified_at)
+          : undefined;
+        return model;
       });
 
     // Filter by query if provided
@@ -382,12 +387,12 @@ export async function* pullModel(
   completed?: number;
   done?: boolean;
 }> {
-  const response = await fetch(`${API_BASE}/api/v1/models/pull`, {
+  const response = await fetch(`${API_BASE}/api/pull`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ name: modelName }),
+    body: JSON.stringify({ model: modelName, stream: true }),
     signal,
   });
 
@@ -404,6 +409,88 @@ export async function* pullModel(
   }>(response)) {
     yield event;
   }
+}
+
+export interface DetailedModel {
+  model: string;
+  digest: string;
+  size: number;
+  modified_at: Date;
+  details?: {
+    format: string;
+    family: string;
+    families: string[];
+    parameter_size: string;
+    quantization_level: string;
+  };
+}
+
+export async function getModelsDetailed(): Promise<DetailedModel[]> {
+  const response = await fetch(`${API_BASE}/api/tags`);
+  if (!response.ok) throw new Error("Failed to fetch models");
+  const data = await response.json();
+  return (data.models || [])
+    .filter((m: any) => {
+      const families = m.details?.families;
+      if (!families || families.length === 0) return true;
+      return !families.every((f: string) => f.toLowerCase().includes("bert"));
+    })
+    .map((m: any) => ({
+      model: (m.model || m.name || "").replace(/:latest$/, ""),
+      digest: m.digest || "",
+      size: m.size || 0,
+      modified_at: new Date(m.modified_at),
+      details: m.details,
+    }));
+}
+
+export async function deleteModel(modelName: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/api/delete`, {
+    method: "DELETE",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ model: modelName }),
+  });
+
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || `Failed to delete model: ${response.statusText}`);
+  }
+}
+
+export interface ShowModelResponse {
+  license?: string;
+  modelfile?: string;
+  parameters?: string;
+  template?: string;
+  system?: string;
+  details: {
+    parent_model: string;
+    format: string;
+    family: string;
+    families: string[];
+    parameter_size: string;
+    quantization_level: string;
+  };
+  model_info?: Record<string, unknown>;
+  modified_at?: string;
+}
+
+export async function showModel(modelName: string): Promise<ShowModelResponse> {
+  const response = await fetch(`${API_BASE}/api/show`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ model: modelName }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to show model: ${response.statusText}`);
+  }
+
+  return response.json();
 }
 
 export async function getInferenceCompute(): Promise<InferenceComputeResponse> {
