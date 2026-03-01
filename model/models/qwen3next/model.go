@@ -466,6 +466,29 @@ func New(c fs.Config) (model.Model, error) {
 		headCountKV = hc.HeadCountKV()
 	}
 
+	// If head_count_kv is a uniform scalar (e.g. from third-party GGUFs like
+	// Unsloth that store it as a single uint32 instead of a per-layer array),
+	// reconstruct the per-layer array using full_attention_interval.
+	if interval := int(c.Uint("full_attention_interval")); interval > 0 {
+		allSame := true
+		for i := 1; i < len(headCountKV); i++ {
+			if headCountKV[i] != headCountKV[0] {
+				allSame = false
+				break
+			}
+		}
+		if allSame && len(headCountKV) > 0 && headCountKV[0] > 0 {
+			kvVal := headCountKV[0]
+			for i := range headCountKV {
+				if (i+1)%interval == 0 {
+					headCountKV[i] = kvVal
+				} else {
+					headCountKV[i] = 0
+				}
+			}
+		}
+	}
+
 	isRecurrent = make([]bool, numLayers)
 	hasZero := false
 	hasFull := false
