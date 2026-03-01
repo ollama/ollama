@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/internal/orderedmap"
 	"github.com/ollama/ollama/types/model"
 )
@@ -569,6 +570,7 @@ type DebugInfo struct {
 
 type Metrics struct {
 	TotalDuration      time.Duration `json:"total_duration,omitempty"`
+	PeakMemory         uint64        `json:"peak_memory,omitempty"`
 	LoadDuration       time.Duration `json:"load_duration,omitempty"`
 	PromptEvalCount    int           `json:"prompt_eval_count,omitempty"`
 	PromptEvalDuration time.Duration `json:"prompt_eval_duration,omitempty"`
@@ -834,6 +836,16 @@ type TokenResponse struct {
 	Token string `json:"token"`
 }
 
+type CloudStatus struct {
+	Disabled bool   `json:"disabled"`
+	Source   string `json:"source"`
+}
+
+// StatusResponse is the response from [Client.CloudStatusExperimental].
+type StatusResponse struct {
+	Cloud CloudStatus `json:"cloud"`
+}
+
 // GenerateResponse is the response passed into [GenerateResponseFunc].
 type GenerateResponse struct {
 	// Model is the model name that generated the response.
@@ -924,6 +936,10 @@ func (m *Metrics) Summary() {
 		fmt.Fprintf(os.Stderr, "total duration:       %v\n", m.TotalDuration)
 	}
 
+	if m.PeakMemory > 0 {
+		fmt.Fprintf(os.Stderr, "peak memory:          %s\n", formatPeakMemory(m.PeakMemory))
+	}
+
 	if m.LoadDuration > 0 {
 		fmt.Fprintf(os.Stderr, "load duration:        %v\n", m.LoadDuration)
 	}
@@ -945,6 +961,14 @@ func (m *Metrics) Summary() {
 		fmt.Fprintf(os.Stderr, "eval duration:        %s\n", m.EvalDuration)
 		fmt.Fprintf(os.Stderr, "eval rate:            %.2f tokens/s\n", float64(m.EvalCount)/m.EvalDuration.Seconds())
 	}
+}
+
+func formatPeakMemory(b uint64) string {
+	if b >= format.GibiByte {
+		return fmt.Sprintf("%.3f GiB", float64(b)/float64(format.GibiByte))
+	}
+
+	return format.HumanBytes2(b)
 }
 
 func (opts *Options) FromMap(m map[string]any) error {

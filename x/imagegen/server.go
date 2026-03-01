@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/x/imagegen/manifest"
@@ -195,7 +196,7 @@ func (s *Server) Ping(ctx context.Context) error {
 // waitUntilRunning waits for the subprocess to be ready.
 func (s *Server) waitUntilRunning() error {
 	ctx := context.Background()
-	timeout := time.After(2 * time.Minute)
+	timeout := time.After(envconfig.LoadTimeout())
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -373,14 +374,9 @@ func (s *Server) Close() error {
 	return nil
 }
 
-// VRAMSize returns the estimated VRAM usage.
-func (s *Server) VRAMSize() uint64 {
-	return s.vramSize
-}
-
-// TotalSize returns the total memory usage.
-func (s *Server) TotalSize() uint64 {
-	return s.vramSize
+// MemorySize returns the total and VRAM memory usage.
+func (s *Server) MemorySize() (total, vram uint64) {
+	return s.vramSize, s.vramSize
 }
 
 // VRAMByGPU returns VRAM usage for a specific GPU.

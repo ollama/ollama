@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -50,6 +51,16 @@ func (d *Droid) Run(model string, args []string) error {
 	models := []string{model}
 	if config, err := loadIntegration("droid"); err == nil && len(config.Models) > 0 {
 		models = config.Models
+	}
+	var err error
+	models, err = resolveEditorModels("droid", models, func() ([]string, error) {
+		return selectModels(context.Background(), "droid", "")
+	})
+	if errors.Is(err, errCancelled) {
+		return nil
+	}
+	if err != nil {
+		return err
 	}
 	if err := d.Edit(models); err != nil {
 		return fmt.Errorf("setup failed: %w", err)

@@ -85,7 +85,7 @@ func TestSaveAliases_PreservesModels(t *testing.T) {
 	setTestHome(t, tmpDir)
 
 	// First save integration with models
-	if err := saveIntegration("claude", []string{"model1", "model2"}); err != nil {
+	if err := SaveIntegration("claude", []string{"model1", "model2"}); err != nil {
 		t.Fatalf("failed to save integration: %v", err)
 	}
 
@@ -604,7 +604,7 @@ func TestModelsAndAliasesMustStayInSync(t *testing.T) {
 		}
 
 		// Save integration with same model (this is the pattern we use)
-		if err := saveIntegration("claude", []string{"model-a"}); err != nil {
+		if err := SaveIntegration("claude", []string{"model-a"}); err != nil {
 			t.Fatal(err)
 		}
 
@@ -619,7 +619,7 @@ func TestModelsAndAliasesMustStayInSync(t *testing.T) {
 		setTestHome(t, tmpDir)
 
 		// Simulate out-of-sync state (like manual edit or bug)
-		if err := saveIntegration("claude", []string{"old-model"}); err != nil {
+		if err := SaveIntegration("claude", []string{"old-model"}); err != nil {
 			t.Fatal(err)
 		}
 		if err := saveAliases("claude", map[string]string{"primary": "new-model"}); err != nil {
@@ -634,7 +634,7 @@ func TestModelsAndAliasesMustStayInSync(t *testing.T) {
 		}
 
 		// The fix: when updating aliases, also update models
-		if err := saveIntegration("claude", []string{loaded.Aliases["primary"]}); err != nil {
+		if err := SaveIntegration("claude", []string{loaded.Aliases["primary"]}); err != nil {
 			t.Fatal(err)
 		}
 
@@ -650,7 +650,7 @@ func TestModelsAndAliasesMustStayInSync(t *testing.T) {
 		setTestHome(t, tmpDir)
 
 		// Initial state
-		if err := saveIntegration("claude", []string{"initial-model"}); err != nil {
+		if err := SaveIntegration("claude", []string{"initial-model"}); err != nil {
 			t.Fatal(err)
 		}
 		if err := saveAliases("claude", map[string]string{"primary": "initial-model"}); err != nil {
@@ -662,7 +662,7 @@ func TestModelsAndAliasesMustStayInSync(t *testing.T) {
 		if err := saveAliases("claude", newAliases); err != nil {
 			t.Fatal(err)
 		}
-		if err := saveIntegration("claude", []string{newAliases["primary"]}); err != nil {
+		if err := SaveIntegration("claude", []string{newAliases["primary"]}); err != nil {
 			t.Fatal(err)
 		}
 

@@ -4,7 +4,6 @@ import {
   ChatEvent,
   DownloadEvent,
   ErrorEvent,
-  InferenceCompute,
   InferenceComputeResponse,
   ModelCapabilitiesResponse,
   Model,
@@ -27,6 +26,12 @@ declare module "@/gotypes" {
 Model.prototype.isCloud = function (): boolean {
   return this.model.endsWith("cloud");
 };
+
+export type CloudStatusSource = "env" | "config" | "both" | "none";
+export interface CloudStatusResponse {
+  disabled: boolean;
+  source: CloudStatusSource;
+}
 // Helper function to convert Uint8Array to base64
 function uint8ArrayToBase64(uint8Array: Uint8Array): string {
   const chunkSize = 0x8000; // 32KB chunks to avoid stack overflow
@@ -285,6 +290,28 @@ export async function updateSettings(settings: Settings): Promise<{
   };
 }
 
+export async function updateCloudSetting(
+  enabled: boolean,
+): Promise<CloudStatusResponse> {
+  const response = await fetch(`${API_BASE}/api/v1/cloud`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || "Failed to update cloud setting");
+  }
+
+  const data = await response.json();
+  return {
+    disabled: Boolean(data.disabled),
+    source: (data.source as CloudStatusSource) || "none",
+  };
+}
+
 export async function renameChat(chatId: string, title: string): Promise<void> {
   const response = await fetch(`${API_BASE}/api/v1/chat/${chatId}/rename`, {
     method: "PUT",
@@ -379,7 +406,7 @@ export async function* pullModel(
   }
 }
 
-export async function getInferenceCompute(): Promise<InferenceCompute[]> {
+export async function getInferenceCompute(): Promise<InferenceComputeResponse> {
   const response = await fetch(`${API_BASE}/api/v1/inference-compute`);
   if (!response.ok) {
     throw new Error(
@@ -388,8 +415,7 @@ export async function getInferenceCompute(): Promise<InferenceCompute[]> {
   }
 
   const data = await response.json();
-  const inferenceComputeResponse = new InferenceComputeResponse(data);
-  return inferenceComputeResponse.inferenceComputes || [];
+  return new InferenceComputeResponse(data);
 }
 
 export async function fetchHealth(): Promise<boolean> {
@@ -413,4 +439,17 @@ export async function fetchHealth(): Promise<boolean> {
     console.error("Error checking health:", error);
     return false;
   }
+}
+
+export async function getCloudStatus(): Promise<CloudStatusResponse | null> {
+  const response = await fetch(`${API_BASE}/api/v1/cloud`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch cloud status: ${response.status}`);
+  }
+
+  const data = await response.json();
+  return {
+    disabled: Boolean(data.disabled),
+    source: (data.source as CloudStatusSource) || "none",
+  };
 }
