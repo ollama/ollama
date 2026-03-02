@@ -426,8 +426,14 @@ func TestBuildModelList_NoExistingModels(t *testing.T) {
 	}
 
 	for _, item := range items {
-		if !strings.HasSuffix(item.Description, "(not downloaded)") {
-			t.Errorf("item %q should have description ending with '(not downloaded)', got %q", item.Name, item.Description)
+		if strings.HasSuffix(item.Name, ":cloud") {
+			if strings.HasSuffix(item.Description, "(not downloaded)") {
+				t.Errorf("cloud model %q should not have '(not downloaded)' suffix, got %q", item.Name, item.Description)
+			}
+		} else {
+			if !strings.HasSuffix(item.Description, "(not downloaded)") {
+				t.Errorf("item %q should have description ending with '(not downloaded)', got %q", item.Name, item.Description)
+			}
 		}
 	}
 }
@@ -492,9 +498,13 @@ func TestBuildModelList_ExistingRecommendedMarked(t *testing.T) {
 			if strings.HasSuffix(item.Description, "(not downloaded)") {
 				t.Errorf("installed recommended %q should not have '(not downloaded)' suffix, got %q", item.Name, item.Description)
 			}
-		case "minimax-m2.5:cloud", "kimi-k2.5:cloud", "qwen3:8b":
+		case "qwen3:8b":
 			if !strings.HasSuffix(item.Description, "(not downloaded)") {
 				t.Errorf("non-installed recommended %q should have '(not downloaded)' suffix, got %q", item.Name, item.Description)
+			}
+		case "minimax-m2.5:cloud", "kimi-k2.5:cloud":
+			if strings.HasSuffix(item.Description, "(not downloaded)") {
+				t.Errorf("cloud model %q should not have '(not downloaded)' suffix, got %q", item.Name, item.Description)
 			}
 		}
 	}
@@ -536,7 +546,13 @@ func TestBuildModelList_HasRecommendedCloudModel_OnlyNonInstalledAtBottom(t *tes
 	}
 
 	for _, item := range items {
-		if !slices.Contains([]string{"kimi-k2.5:cloud", "llama3.2"}, item.Name) {
+		isCloud := strings.HasSuffix(item.Name, ":cloud")
+		isInstalled := slices.Contains([]string{"kimi-k2.5:cloud", "llama3.2"}, item.Name)
+		if isInstalled || isCloud {
+			if strings.HasSuffix(item.Description, "(not downloaded)") {
+				t.Errorf("installed or cloud model %q should not have '(not downloaded)' suffix, got %q", item.Name, item.Description)
+			}
+		} else {
 			if !strings.HasSuffix(item.Description, "(not downloaded)") {
 				t.Errorf("non-installed %q should have '(not downloaded)' suffix, got %q", item.Name, item.Description)
 			}

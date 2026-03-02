@@ -148,7 +148,13 @@ type signInCheckMsg struct {
 type clearStatusMsg struct{}
 
 func (m *model) modelExists(name string) bool {
-	if m.availableModels == nil || name == "" {
+	if name == "" {
+		return false
+	}
+	if modelref.HasExplicitCloudSource(name) {
+		return true
+	}
+	if m.availableModels == nil {
 		return false
 	}
 	if m.availableModels[name] {
