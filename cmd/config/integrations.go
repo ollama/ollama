@@ -546,16 +546,28 @@ func selectModelsWithSelectors(ctx context.Context, name, current string, single
 	return selected, nil
 }
 
+// TODO(parthsareen): consolidate pull logic from call sites
 func pullIfNeeded(ctx context.Context, client *api.Client, existingModels map[string]bool, model string) error {
+	if isCloudModelName(model) || existingModels[model] {
+		return nil
+	}
+	return confirmAndPull(ctx, client, model)
+}
+
+// TODO(parthsareen): pull this out to tui package
+// ShowOrPull checks if a model exists via client.Show and offers to pull it if not found.
+func ShowOrPull(ctx context.Context, client *api.Client, model string) error {
+	if _, err := client.Show(ctx, &api.ShowRequest{Model: model}); err == nil {
+		return nil
+	}
 	if isCloudModelName(model) {
 		return nil
 	}
+	return confirmAndPull(ctx, client, model)
+}
 
-	if existingModels[model] {
-		return nil
-	}
-	msg := fmt.Sprintf("Download %s?", model)
-	if ok, err := confirmPrompt(msg); err != nil {
+func confirmAndPull(ctx context.Context, client *api.Client, model string) error {
+	if ok, err := confirmPrompt(fmt.Sprintf("Download %s?", model)); err != nil {
 		return err
 	} else if !ok {
 		return errCancelled
@@ -565,26 +577,6 @@ func pullIfNeeded(ctx context.Context, client *api.Client, existingModels map[st
 		return fmt.Errorf("failed to pull %s: %w", model, err)
 	}
 	return nil
-}
-
-// TODO(parthsareen): pull this out to tui package
-// ShowOrPull checks if a model exists via client.Show and offers to pull it if not found.
-func ShowOrPull(ctx context.Context, client *api.Client, model string) error {
-	if _, err := client.Show(ctx, &api.ShowRequest{Model: model}); err == nil {
-		return nil
-	}
-
-	if isCloudModelName(model) {
-		return nil
-	}
-
-	if ok, err := confirmPrompt(fmt.Sprintf("Download %s?", model)); err != nil {
-		return err
-	} else if !ok {
-		return errCancelled
-	}
-	fmt.Fprintf(os.Stderr, "\n")
-	return pullModel(ctx, client, model)
 }
 
 func listModels(ctx context.Context) ([]ModelItem, map[string]bool, map[string]bool, *api.Client, error) {
@@ -1209,7 +1201,7 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 	// When user has no models, preserve recommended order.
 	notInstalled := make(map[string]bool)
 	for i := range items {
-		if !existingModels[items[i].Name] {
+		if !existingModels[items[i].Name] && !cloudModels[items[i].Name] {
 			notInstalled[items[i].Name] = true
 			var parts []string
 			if items[i].Description != "" {
