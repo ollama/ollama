@@ -1077,7 +1077,7 @@ func DefaultOptions() Options {
 		TopP:             0.9,
 		TypicalP:         1.0,
 		RepeatLastN:      64,
-		RepeatPenalty:    1.1,
+		RepeatPenalty:    1.0,
 		PresencePenalty:  0.0,
 		FrequencyPenalty: 0.0,
 		Seed:             -1,
