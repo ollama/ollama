@@ -156,7 +156,7 @@ func BoolWithDefault(k string) func(defaultValue bool) bool {
 		if s := Var(k); s != "" {
 			b, err := strconv.ParseBool(s)
 			if err != nil {
-				return true
+				return defaultValue
 			}
 
 			return b
