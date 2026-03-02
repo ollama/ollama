@@ -14,6 +14,7 @@ extern NSString *SystemWidePath;
 @interface AppDelegate () <NSWindowDelegate, WKNavigationDelegate, WKUIDelegate>
 @property(strong, nonatomic) NSStatusItem *statusItem;
 @property(assign, nonatomic) BOOL updateAvailable;
+@property(assign, nonatomic) BOOL systemShutdownInProgress;
 @end
 
 @implementation AppDelegate
@@ -40,6 +41,13 @@ bool firstTimeRun,startHidden; // Set in run before initialization
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)aNotification {
+    // Register for system shutdown/restart notification so we can allow termination
+    [[[NSWorkspace sharedWorkspace] notificationCenter]
+        addObserver:self
+           selector:@selector(systemWillPowerOff:)
+               name:NSWorkspaceWillPowerOffNotification
+             object:nil];
+
     // if we're in development mode, set the app icon
     NSString *bundlePath = [[NSBundle mainBundle] bundlePath];
     if (![bundlePath hasSuffix:@".app"]) {
@@ -278,7 +286,18 @@ bool firstTimeRun,startHidden; // Set in run before initialization
     [NSApp activateIgnoringOtherApps:YES];
 }
 
+- (void)systemWillPowerOff:(NSNotification *)notification {
+    // Set flag so applicationShouldTerminate: knows to allow termination.
+    // The system will call applicationShouldTerminate: after posting this notification.
+    self.systemShutdownInProgress = YES;
+}
+
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
+    // Allow termination if the system is shutting down or restarting
+    if (self.systemShutdownInProgress) {
+        return NSTerminateNow;
+    }
+    // Otherwise just hide the app (for Cmd+Q, close button, etc.)
     [NSApp hide:nil];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
     return NSTerminateCancel;

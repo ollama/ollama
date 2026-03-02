@@ -147,7 +147,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
-				extraEnvs := ml.GetVisibleDevicesEnv(devices[i : i+1])
+				extraEnvs := ml.GetVisibleDevicesEnv(devices[i:i+1], true)
 				devices[i].AddInitValidation(extraEnvs)
 				if len(bootstrapDevices(ctx2ndPass, devices[i].LibraryPath, extraEnvs)) == 0 {
 					slog.Debug("filtering device which didn't fully initialize",
@@ -333,7 +333,8 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 			defer cancel()
 
 			// Apply any dev filters to avoid re-discovering unsupported devices, and get IDs correct
-			devFilter := ml.GetVisibleDevicesEnv(devices)
+			// We avoid CUDA filters here to keep ROCm from failing to discover GPUs in a mixed environment
+			devFilter := ml.GetVisibleDevicesEnv(devices, false)
 
 			for dir := range libDirs {
 				updatedDevices := bootstrapDevices(ctx, []string{ml.LibOllamaPath, dir}, devFilter)

@@ -10,12 +10,7 @@
 
 layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
 
-layout (binding = 0) readonly buffer A {A_TYPE data_a[];};
-layout (binding = 1) readonly buffer B {B_TYPE data_b[];};
-layout (binding = 2) writeonly buffer D {D_TYPE dst[];};
-
-layout (binding = 0) readonly buffer AV4 {A_TYPE_VEC4 data_a_v4[];};
-layout (binding = 1) readonly buffer BV4 {B_TYPE_VEC4 data_b_v4[];};
+#include "mul_mat_vec_iface.glsl"
 
 layout(constant_id = 0) const int BLOCK_SIZE = 32;
 // gqa_ratio is in the range [1,8]
@@ -29,6 +24,7 @@ layout (push_constant) uniform parameter
     uint nchannels_y;
     uint b_offset;
     uint d_offset;
+    uint fusion_flags;
 } p;
 
 #if !USE_SUBGROUP_ADD
@@ -148,7 +144,13 @@ void main() {
         [[unroll]] for (uint c = 0; c < gqa_ratio; ++c) {
             // dst is not transposed and not permuted
             const uint idst = (channel + c)*nrows_dst + row_dst;
-            dst[idst] = temp[c];
+            if ((p.fusion_flags & MAT_VEC_FUSION_FLAGS_BIAS0) != 0) {
+                temp[c] += FLOAT_TYPE(data_fuse0[idst]);
+            }
+            if ((p.fusion_flags & MAT_VEC_FUSION_FLAGS_BIAS1) != 0) {
+                temp[c] += FLOAT_TYPE(data_fuse1[idst]);
+            }
+            data_d[idst] = temp[c];
         }
     }
 }

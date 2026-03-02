@@ -16,6 +16,7 @@
 - [Generate Embeddings](#generate-embeddings)
 - [List Running Models](#list-running-models)
 - [Version](#version)
+- [Experimental: Image Generation](#image-generation-experimental)
 
 ## Conventions
 
@@ -50,13 +51,22 @@ Generate a response for a given prompt with a provided model. This is a streamin
 Advanced parameters (optional):
 
 - `format`: the format to return a response in. Format can be `json` or a JSON schema
-- `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
+- `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.mdx#valid-parameters-and-values) such as `temperature`
 - `system`: system message to (overrides what is defined in the `Modelfile`)
 - `template`: the prompt template to use (overrides what is defined in the `Modelfile`)
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `raw`: if `true` no formatting will be applied to the prompt. You may choose to use the `raw` parameter if you are specifying a full templated prompt in your request to the API
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 - `context` (deprecated): the context parameter returned from a previous request to `/generate`, this can be used to keep a short conversational memory
+
+Experimental image generation parameters (for image generation models only):
+
+> [!WARNING]
+> These parameters are experimental and may change in future versions.
+
+- `width`: width of the generated image in pixels
+- `height`: height of the generated image in pixels
+- `steps`: number of diffusion steps
 
 #### Structured outputs
 
@@ -507,7 +517,7 @@ The `message` object has the following fields:
 Advanced parameters (optional):
 
 - `format`: the format to return a response in. Format can be `json` or a JSON schema.
-- `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
+- `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.mdx#valid-parameters-and-values) such as `temperature`
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 
@@ -895,11 +905,11 @@ curl http://localhost:11434/api/chat -d '{
       "tool_calls": [
         {
           "function": {
-            "name": "get_temperature",
+            "name": "get_weather",
             "arguments": {
               "city": "Toronto"
             }
-          },
+          }
         }
       ]
     },
@@ -907,7 +917,7 @@ curl http://localhost:11434/api/chat -d '{
     {
       "role": "tool",
       "content": "11 degrees celsius",
-      "tool_name": "get_temperature",
+      "tool_name": "get_weather"
     }
   ],
   "stream": false,
@@ -1189,7 +1199,7 @@ If you are creating a model from a safetensors directory or from a GGUF file, yo
 - `template`: (optional) the prompt template for the model
 - `license`: (optional) a string or list of strings containing the license or licenses for the model
 - `system`: (optional) a string containing the system prompt for the model
-- `parameters`: (optional) a dictionary of parameters for the model (see [Modelfile](./modelfile.md#valid-parameters-and-values) for a list of parameters)
+- `parameters`: (optional) a dictionary of parameters for the model (see [Modelfile](./modelfile.mdx#valid-parameters-and-values) for a list of parameters)
 - `messages`: (optional) a list of message objects used to create a conversation
 - `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
 - `quantize` (optional): quantize a non-quantized (e.g. float16) model
@@ -1698,7 +1708,7 @@ Generate embeddings from a model
 Advanced parameters:
 
 - `truncate`: truncates the end of each input to fit within context length. Returns error if `false` and context length is exceeded. Defaults to `true`
-- `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
+- `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.mdx#valid-parameters-and-values) such as `temperature`
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 - `dimensions`: number of dimensions for the embedding
 
@@ -1817,7 +1827,7 @@ Generate embeddings from a model
 
 Advanced parameters:
 
-- `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
+- `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.mdx#valid-parameters-and-values) such as `temperature`
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 
 ### Examples
@@ -1865,5 +1875,57 @@ curl http://localhost:11434/api/version
 ```json
 {
   "version": "0.5.1"
+}
+```
+
+## Experimental Features
+
+### Image Generation (Experimental)
+
+> [!WARNING]
+> Image generation is experimental and may change in future versions.
+
+Image generation is now supported through the standard `/api/generate` endpoint when using image generation models. The API automatically detects when an image generation model is being used.
+
+See the [Generate a completion](#generate-a-completion) section for the full API documentation. The experimental image generation parameters (`width`, `height`, `steps`) are documented there.
+
+#### Example
+
+##### Request
+
+```shell
+curl http://localhost:11434/api/generate -d '{
+  "model": "x/z-image-turbo",
+  "prompt": "a sunset over mountains",
+  "width": 1024,
+  "height": 768
+}'
+```
+
+##### Response (streaming)
+
+Progress updates during generation:
+
+```json
+{
+  "model": "x/z-image-turbo",
+  "created_at": "2024-01-15T10:30:00.000000Z",
+  "completed": 5,
+  "total": 20,
+  "done": false
+}
+```
+
+##### Final Response
+
+```json
+{
+  "model": "x/z-image-turbo",
+  "created_at": "2024-01-15T10:30:15.000000Z",
+  "image": "iVBORw0KGgoAAAANSUhEUg...",
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 15000000000,
+  "load_duration": 2000000000
 }
 ```

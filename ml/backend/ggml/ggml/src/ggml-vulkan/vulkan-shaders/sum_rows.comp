@@ -1,6 +1,7 @@
 #version 450
 
 #include "types.glsl"
+#include "sum_rows.glsl"
 
 #extension GL_EXT_control_flow_attributes : enable
 
@@ -10,30 +11,6 @@ layout (binding = 0) readonly buffer A {A_TYPE data_a[];};
 layout (binding = 1) writeonly buffer D {D_TYPE data_d[];};
 
 layout (constant_id = 0) const uint BLOCK_SIZE = 32;
-
-layout (push_constant) uniform parameter
-{
-    uint n_cols;
-    uint ne01, ne02;
-    uint nb01, nb02, nb03;
-    uint nb11, nb12, nb13;
-    float weight;
-    uint misalign_offsets;
-    uint ne0_12mp, ne0_12L;
-    uint ne0_1mp, ne0_1L;
-} p;
-
-uint get_aoffset() { return p.misalign_offsets >> 16; }
-uint get_doffset() { return p.misalign_offsets & 0xFFFF; }
-
-// see init_fastdiv_values in ggml-vulkan.cpp
-uint fastdiv(uint n, uint mp, uint L) {
-    uint msbs, lsbs;
-    // msbs = mulhi(n, mp)
-    umulExtended(n, mp, msbs, lsbs);
-    return (msbs + n) >> L;
-}
-
 
 shared FLOAT_TYPE tmp[BLOCK_SIZE];
 

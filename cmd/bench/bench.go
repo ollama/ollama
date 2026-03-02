@@ -48,8 +48,8 @@ func OutputMetrics(w io.Writer, format string, metrics []Metrics, verbose bool) 
 	case "benchstat":
 		if verbose {
 			printHeader := func() {
-				fmt.Printf("sysname: %s\n", runtime.GOOS)
-				fmt.Printf("machine: %s\n", runtime.GOARCH)
+				fmt.Fprintf(w, "sysname: %s\n", runtime.GOOS)
+				fmt.Fprintf(w, "machine: %s\n", runtime.GOARCH)
 			}
 			once.Do(printHeader)
 		}
@@ -147,6 +147,17 @@ func BenchmarkChat(fOpt flagOptions) error {
 		return err
 	}
 
+	var out io.Writer = os.Stdout
+	if fOpt.outputFile != nil && *fOpt.outputFile != "" {
+		f, err := os.OpenFile(*fOpt.outputFile, os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: cannot open output file %s: %v\n", *fOpt.outputFile, err)
+			return err
+		}
+		defer f.Close()
+		out = f
+	}
+
 	for _, model := range models {
 		for range *fOpt.epochs {
 			options := make(map[string]interface{})
@@ -241,13 +252,14 @@ func BenchmarkChat(fOpt flagOptions) error {
 				},
 			}
 
-			OutputMetrics(os.Stdout, *fOpt.format, metrics, *fOpt.verbose)
+			OutputMetrics(out, *fOpt.format, metrics, *fOpt.verbose)
 
 			if *fOpt.keepAlive > 0 {
 				time.Sleep(time.Duration(*fOpt.keepAlive*float64(time.Second)) + 200*time.Millisecond)
 			}
 		}
 	}
+
 	return nil
 }
 

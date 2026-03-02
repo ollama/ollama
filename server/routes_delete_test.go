@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -89,17 +90,17 @@ func TestDeleteDuplicateLayers(t *testing.T) {
 	n := model.ParseName("test")
 
 	var b bytes.Buffer
-	if err := json.NewEncoder(&b).Encode(&ConfigV2{}); err != nil {
+	if err := json.NewEncoder(&b).Encode(&model.ConfigV2{}); err != nil {
 		t.Fatal(err)
 	}
 
-	config, err := NewLayer(&b, "application/vnd.docker.container.image.v1+json")
+	config, err := manifest.NewLayer(&b, "application/vnd.docker.container.image.v1+json")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// create a manifest with duplicate layers
-	if err := WriteManifest(n, config, []Layer{config}); err != nil {
+	if err := manifest.WriteManifest(n, config, []manifest.Layer{config}); err != nil {
 		t.Fatal(err)
 	}
 

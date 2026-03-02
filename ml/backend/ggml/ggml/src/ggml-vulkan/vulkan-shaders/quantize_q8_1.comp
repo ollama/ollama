@@ -61,7 +61,7 @@ void quantize() {
 
     const uint a_idx = ib * 8 + iqs;
 
-    vec4 vals = a_idx < p.ne ? data_a[a_idx] : vec4(0.0f);
+    vec4 vals = a_idx < p.ne / 4 ? data_a[a_idx] : vec4(0.0f);
     const vec4 abs_vals = abs(vals);
 
     // Find absolute max for each block

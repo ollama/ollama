@@ -88,7 +88,7 @@ func (p *bertModel) parseMore(fsys fs.FS) error {
 	return nil
 }
 
-func (p *bertModel) KV(t *Tokenizer) ggml.KV {
+func (p *bertModel) KV(t *Tokenizer) KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "bert"
 	kv["bert.attention.causal"] = false
