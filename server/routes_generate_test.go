@@ -162,6 +162,7 @@ func TestGenerateChatRemote(t *testing.T) {
 }
 
 func TestGenerateChat(t *testing.T) {
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
 	gin.SetMode(gin.TestMode)
 
 	mock := mockRunner{
@@ -878,6 +879,7 @@ func TestGenerateChat(t *testing.T) {
 }
 
 func TestGenerate(t *testing.T) {
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
 	gin.SetMode(gin.TestMode)
 
 	mock := mockRunner{
@@ -2355,6 +2357,7 @@ func TestGenerateWithImages(t *testing.T) {
 // TestImageGenerateStreamFalse tests that image generation respects stream=false
 // and returns a single JSON response instead of streaming ndjson.
 func TestImageGenerateStreamFalse(t *testing.T) {
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
 	gin.SetMode(gin.TestMode)
 
 	p := t.TempDir()
@@ -2367,29 +2370,6 @@ func TestImageGenerateStreamFalse(t *testing.T) {
 		fn(llm.CompletionResponse{Step: 3, TotalSteps: 3, Done: true, DoneReason: llm.DoneReasonStop, Image: "base64image"})
 		return nil
 	}
-
-	opts := api.DefaultOptions()
-	s := Server{
-		sched: &Scheduler{
-			pendingReqCh:  make(chan *LlmRequest, 1),
-			finishedReqCh: make(chan *LlmRequest, 1),
-			expiredCh:     make(chan *runnerRef, 1),
-			unloadedCh:    make(chan any, 1),
-			loaded: map[string]*runnerRef{
-				"": {
-					llama:       &mock,
-					Options:     &opts,
-					model:       &Model{Config: model.ConfigV2{Capabilities: []string{"image"}}},
-					numParallel: 1,
-				},
-			},
-			newServerFn:     newMockServer(&mock),
-			getGpuFn:        getGpuFn,
-			getSystemInfoFn: getSystemInfoFn,
-		},
-	}
-
-	go s.sched.Run(t.Context())
 
 	// Create model manifest with image capability
 	n := model.ParseName("test-image")
@@ -2405,6 +2385,35 @@ func TestImageGenerateStreamFalse(t *testing.T) {
 	if err := manifest.WriteManifest(n, configLayer, nil); err != nil {
 		t.Fatal(err)
 	}
+
+	loadedModel, err := GetModel("test-image")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	opts := api.DefaultOptions()
+	s := Server{
+		sched: &Scheduler{
+			pendingReqCh:  make(chan *LlmRequest, 1),
+			finishedReqCh: make(chan *LlmRequest, 1),
+			expiredCh:     make(chan *runnerRef, 1),
+			unloadedCh:    make(chan any, 1),
+			loaded: map[string]*runnerRef{
+				schedulerModelKey(loadedModel): {
+					llama:       &mock,
+					Options:     &opts,
+					model:       loadedModel,
+					isImagegen:  true,
+					numParallel: 1,
+				},
+			},
+			newServerFn:     newMockServer(&mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+		},
+	}
+
+	go s.sched.Run(t.Context())
 
 	streamFalse := false
 	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"slices"
 	"strings"
 	"unsafe"
 
@@ -33,6 +34,9 @@ func (q quantizer) WriteTo(w io.Writer) (int64, error) {
 		slog.Warn("file read error", "tensor", q.from.Name, "file", q.Name(), "error", err)
 		return 0, fmt.Errorf("unable to read tensor %s from %s: %s", q.from.Name, q.Name(), err)
 	}
+	if uint64(len(data)) < q.from.Size() {
+		return 0, fmt.Errorf("tensor %s data size %d is less than expected %d from shape %v", q.from.Name, len(data), q.from.Size(), q.from.Shape)
+	}
 	var f32s []float32
 	newType := fsggml.TensorType(q.to.Kind)
 	if fsggml.TensorType(q.from.Kind) == fsggml.TensorTypeF32 {
@@ -56,6 +60,52 @@ type quantizeState struct {
 
 func useMoreBits(iLayer, nLayers int) bool {
 	return iLayer < (nLayers/8) || iLayer >= 7*nLayers/8 || (iLayer-nLayers/8)%3 == 2
+}
+
+func qwen3LinearAttnQuantType(name string) (fsggml.TensorType, bool) {
+	switch {
+	// Full attention
+	case strings.HasSuffix(name, ".attn_q.weight"):
+		return fsggml.TensorTypeQ4_K, true
+	case strings.HasSuffix(name, ".attn_k.weight"):
+		return fsggml.TensorTypeQ4_K, true
+	case strings.HasSuffix(name, ".attn_v.weight"):
+		return fsggml.TensorTypeQ6_K, true
+	case strings.HasSuffix(name, ".attn_output.weight"):
+		return fsggml.TensorTypeQ4_K, true
+
+	// Linear attention (Gated Delta Net) after split
+	case strings.HasSuffix(name, ".attn_qkv.weight"):
+		return fsggml.TensorTypeQ4_K, true
+	case strings.HasSuffix(name, ".attn_gate.weight"):
+		return fsggml.TensorTypeQ4_K, true
+
+	// SSM
+	case strings.HasSuffix(name, ".ssm_ba.weight"):
+		return fsggml.TensorTypeQ4_K, true
+	case strings.HasSuffix(name, ".ssm_beta.weight"):
+		return fsggml.TensorTypeQ4_K, true
+	case strings.HasSuffix(name, ".ssm_alpha.weight"):
+		return fsggml.TensorTypeQ4_K, true
+	case strings.HasSuffix(name, ".ssm_out.weight"):
+		return fsggml.TensorTypeQ4_K, true
+
+	// MoE experts + shared experts
+	case strings.HasSuffix(name, ".ffn_down_exps.weight"):
+		return fsggml.TensorTypeQ6_K, true
+	case strings.HasSuffix(name, ".ffn_down_shexp.weight"):
+		return fsggml.TensorTypeQ6_K, true
+	case strings.HasSuffix(name, ".ffn_gate_exps.weight"):
+		return fsggml.TensorTypeQ4_K, true
+	case strings.HasSuffix(name, ".ffn_gate_shexp.weight"):
+		return fsggml.TensorTypeQ4_K, true
+	case strings.HasSuffix(name, ".ffn_up_exps.weight"):
+		return fsggml.TensorTypeQ4_K, true
+	case strings.HasSuffix(name, ".ffn_up_shexp.weight"):
+		return fsggml.TensorTypeQ4_K, true
+	}
+
+	return 0, false
 }
 
 func getTensorNewType(kv fsggml.KV, qs *quantizeState, newType fsggml.TensorType, name string, shape []uint64, ftype fsggml.FileType) fsggml.TensorType {
@@ -217,6 +267,7 @@ func newType(t *fsggml.Tensor, kv fsggml.KV, qs *quantizeState, ftype fsggml.Fil
 
 	// do not quantize expert gating tensors
 	quantize = quantize && !strings.Contains(name, "ffn_gate_inp.weight")
+	quantize = quantize && !strings.Contains(name, "ffn_gate_inp_shexp.weight")
 
 	// do not quantize positional embeddings and token types (BERT)
 	quantize = quantize && (name != "position_embd.weight")
@@ -244,6 +295,12 @@ func newType(t *fsggml.Tensor, kv fsggml.KV, qs *quantizeState, ftype fsggml.Fil
 
 	newType := fsggml.TensorType(t.Kind)
 	if quantize {
+		if slices.Contains([]string{"qwen3next", "qwen35", "qwen35moe"}, kv.Architecture()) && (ftype == fsggml.FileTypeQ4_K_M || ftype == fsggml.FileTypeQ4_K_S) {
+			if qt, ok := qwen3LinearAttnQuantType(name); ok {
+				return qt
+			}
+		}
+
 		// get more optimal quantization type based on the tensor shape, layer, etc.
 		newType = getTensorNewType(kv, qs, defaultType, t.Name, t.Shape, ftype)
 		if newType != defaultType {

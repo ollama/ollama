@@ -1251,6 +1251,55 @@ func TestDroidEdit_LargeNumberOfModels(t *testing.T) {
 	}
 }
 
+func TestDroidEdit_LocalModelDefaultMaxOutput(t *testing.T) {
+	d := &Droid{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	settingsDir := filepath.Join(tmpDir, ".factory")
+	settingsPath := filepath.Join(settingsDir, "settings.json")
+
+	if err := d.Edit([]string{"llama3.2"}); err != nil {
+		t.Fatal(err)
+	}
+
+	data, _ := os.ReadFile(settingsPath)
+	var settings map[string]any
+	json.Unmarshal(data, &settings)
+
+	models := settings["customModels"].([]any)
+	entry := models[0].(map[string]any)
+	if entry["maxOutputTokens"] != float64(64000) {
+		t.Errorf("local model maxOutputTokens = %v, want 64000", entry["maxOutputTokens"])
+	}
+}
+
+func TestDroidEdit_CloudModelLimitsUsed(t *testing.T) {
+	// Verify that every cloud model in cloudModelLimits has a valid output
+	// value that would be used for maxOutputTokens when isCloudModel returns true.
+	// :cloud suffix stripping must also work since that's how users specify them.
+	for name, expected := range cloudModelLimits {
+		t.Run(name, func(t *testing.T) {
+			l, ok := lookupCloudModelLimit(name)
+			if !ok {
+				t.Fatalf("lookupCloudModelLimit(%q) returned false", name)
+			}
+			if l.Output != expected.Output {
+				t.Errorf("output = %d, want %d", l.Output, expected.Output)
+			}
+			// Also verify :cloud suffix lookup
+			cloudName := name + ":cloud"
+			l2, ok := lookupCloudModelLimit(cloudName)
+			if !ok {
+				t.Fatalf("lookupCloudModelLimit(%q) returned false", cloudName)
+			}
+			if l2.Output != expected.Output {
+				t.Errorf(":cloud output = %d, want %d", l2.Output, expected.Output)
+			}
+		})
+	}
+}
+
 func TestDroidEdit_ArraysWithMixedTypes(t *testing.T) {
 	d := &Droid{}
 	tmpDir := t.TempDir()

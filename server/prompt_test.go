@@ -2,12 +2,14 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/template"
+	"github.com/ollama/ollama/types/model"
 )
 
 func TestChatPrompt(t *testing.T) {
@@ -262,5 +264,105 @@ func TestChatPrompt(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestChatPromptTokenizeCalls(t *testing.T) {
+	tmpl, err := template.Parse(`
+{{- if .System }}{{ .System }} {{ end }}
+{{- if .Prompt }}{{ .Prompt }} {{ end }}
+{{- if .Response }}{{ .Response }} {{ end }}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := Model{Template: tmpl}
+
+	cases := []struct {
+		name         string
+		limit        int
+		msgs         []api.Message
+		maxTokenizes int
+	}{
+		{
+			name:  "all messages fit",
+			limit: 2048,
+			msgs: []api.Message{
+				{Role: "user", Content: "message 1"},
+				{Role: "assistant", Content: "response 1"},
+				{Role: "user", Content: "message 2"},
+				{Role: "assistant", Content: "response 2"},
+				{Role: "user", Content: "message 3"},
+			},
+			maxTokenizes: 1,
+		},
+		{
+			name:  "truncate to last message",
+			limit: 5,
+			msgs: []api.Message{
+				{Role: "user", Content: "message 1"},
+				{Role: "assistant", Content: "response 1"},
+				{Role: "user", Content: "message 2"},
+				{Role: "assistant", Content: "response 2"},
+				{Role: "user", Content: "message 3"},
+			},
+			maxTokenizes: 5,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			tokenizeCount := 0
+			countingTokenize := func(ctx context.Context, s string) ([]int, error) {
+				tokenizeCount++
+				tokens, err := mockRunner{}.Tokenize(ctx, s)
+				return tokens, err
+			}
+
+			opts := api.Options{Runner: api.Runner{NumCtx: tt.limit}}
+			think := false
+			_, _, err := chatPrompt(t.Context(), &model, countingTokenize, &opts, tt.msgs, nil, &api.ThinkValue{Value: think}, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if tokenizeCount > tt.maxTokenizes {
+				t.Errorf("tokenize called %d times, expected at most %d", tokenizeCount, tt.maxTokenizes)
+			}
+		})
+	}
+}
+
+func TestChatPromptRendererDoesNotRewriteMessageContent(t *testing.T) {
+	msgs := []api.Message{
+		{
+			Role:    "user",
+			Content: "what do these photos have in common?",
+			Images:  []api.ImageData{[]byte("img-1"), []byte("img-2"), []byte("img-3")},
+		},
+	}
+	originalContent := msgs[0].Content
+
+	m := Model{
+		Config:         model.ConfigV2{Renderer: "qwen3-vl-instruct"},
+		ProjectorPaths: []string{"vision"},
+	}
+	opts := api.Options{Runner: api.Runner{NumCtx: 8192}}
+	think := false
+
+	prompt, images, err := chatPrompt(t.Context(), &m, mockRunner{}.Tokenize, &opts, msgs, nil, &api.ThinkValue{Value: think}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if msgs[0].Content != originalContent {
+		t.Fatalf("renderer path should not mutate message content: got %q, want %q", msgs[0].Content, originalContent)
+	}
+
+	if got, want := len(images), 3; got != want {
+		t.Fatalf("len(images) = %d, want %d", got, want)
+	}
+
+	if prompt == "" {
+		t.Fatal("prompt is empty")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/ollama/ollama/envconfig"
 	"golang.org/x/mod/semver"
 )
 
@@ -14,23 +15,28 @@ type Codex struct{}
 
 func (c *Codex) String() string { return "Codex" }
 
-func (c *Codex) args(model string) []string {
+func (c *Codex) args(model string, extra []string) []string {
 	args := []string{"--oss"}
 	if model != "" {
 		args = append(args, "-m", model)
 	}
+	args = append(args, extra...)
 	return args
 }
 
-func (c *Codex) Run(model string) error {
+func (c *Codex) Run(model string, args []string) error {
 	if err := checkCodexVersion(); err != nil {
 		return err
 	}
 
-	cmd := exec.Command("codex", c.args(model)...)
+	cmd := exec.Command("codex", c.args(model, args)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	cmd.Env = append(os.Environ(),
+		"OPENAI_BASE_URL="+envconfig.Host().String()+"/v1/",
+		"OPENAI_API_KEY=ollama",
+	)
 	return cmd.Run()
 }
 

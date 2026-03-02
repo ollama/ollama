@@ -2,7 +2,7 @@
 title: Quickstart
 ---
 
-This quickstart will walk your through running your first model with Ollama. To get started, download Ollama on macOS, Windows or Linux.
+Ollama is available on macOS, Windows, and Linux.
 
 <a
   href="https://ollama.com/download"
@@ -12,131 +12,56 @@ This quickstart will walk your through running your first model with Ollama. To 
   Download Ollama
 </a>
 
-## Run a model
+## Get Started
 
-<Tabs>
-  <Tab title="CLI">
-    Open a terminal and run the command:
-
-    ```sh
-    ollama run gemma3
-    ```
-
-  </Tab>
-  <Tab title="cURL">
-    ```sh
-    ollama pull gemma3
-    ```
-
-    Lastly, chat with the model:
-
-    ```shell
-    curl http://localhost:11434/api/chat -d '{
-      "model": "gemma3",
-      "messages": [{
-        "role": "user",
-        "content": "Hello there!"
-      }],
-      "stream": false
-    }'
-    ```
-
-  </Tab>
-  <Tab title="Python">
-    Start by downloading a model:
-
-    ```sh
-    ollama pull gemma3
-    ```
-
-    Then install Ollama's Python library:
-
-    ```sh
-    pip install ollama
-    ```
-
-    Lastly, chat with the model:
-
-    ```python
-    from ollama import chat
-    from ollama import ChatResponse
-
-    response: ChatResponse = chat(model='gemma3', messages=[
-      {
-        'role': 'user',
-        'content': 'Why is the sky blue?',
-      },
-    ])
-    print(response['message']['content'])
-    # or access fields directly from the response object
-    print(response.message.content)
-    ```
-
-  </Tab>
-  <Tab title="JavaScript">
-    Start by downloading a model:
-
-    ```
-    ollama pull gemma3
-    ```
-
-    Then install the Ollama JavaScript library:
-    ```
-    npm i ollama
-    ```
-
-    Lastly, chat with the model:
-
-    ```shell
-    import ollama from 'ollama'
-
-    const response = await ollama.chat({
-      model: 'gemma3',
-      messages: [{ role: 'user', content: 'Why is the sky blue?' }],
-    })
-    console.log(response.message.content)
-    ```
-
-  </Tab>
-</Tabs>
-
-See a full list of available models [here](https://ollama.com/models).
-
-## Coding 
-
-For coding use cases, we recommend using the `glm-4.7-flash` model. 
-
-Note: this model requires 23 GB of VRAM with 64000 tokens context length.
-```sh
-ollama pull glm-4.7-flash 
-```
-
-Alternatively, you can use a more powerful cloud model (with full context length):
-```sh
-ollama pull glm-4.7:cloud
-```
-
-Use `ollama launch` to quickly set up a coding tool with Ollama models:
+Run `ollama` in your terminal to open the interactive menu:
 
 ```sh
-ollama launch
+ollama
 ```
 
-### Supported integrations
+Navigate with `↑/↓`, press `enter` to launch, `→` to change model, and `esc` to quit.
 
-- [OpenCode](/integrations/opencode) - Open-source coding assistant
-- [Claude Code](/integrations/claude-code) - Anthropic's agentic coding tool
-- [Codex](/integrations/codex) - OpenAI's coding assistant
-- [Droid](/integrations/droid) - Factory's AI coding agent
+The menu provides quick access to:
+- **Run a model** - Start an interactive chat
+- **Launch tools** - Claude Code, Codex, OpenClaw, and more
+- **Additional integrations** - Available under "More..."
 
-### Launch with a specific model
+## Assistants
+
+Launch [OpenClaw](/integrations/openclaw), a personal AI with 100+ skills:
 
 ```sh
-ollama launch claude --model glm-4.7-flash
+ollama launch openclaw
 ```
 
-### Configure without launching
+## Coding
+
+Launch [Claude Code](/integrations/claude-code) and other coding tools with Ollama models:
 
 ```sh
-ollama launch claude --config
+ollama launch claude
 ```
+
+```sh
+ollama launch codex
+```
+
+```sh
+ollama launch opencode
+```
+
+See [integrations](/integrations) for all supported tools.
+
+## API
+
+Use the [API](/api) to integrate Ollama into your applications:
+
+```sh
+curl http://localhost:11434/api/chat -d '{
+  "model": "gemma3",
+  "messages": [{ "role": "user", "content": "Hello!" }]
+}'
+```
+
+See the [API documentation](/api) for Python, JavaScript, and other integrations.

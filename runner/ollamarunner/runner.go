@@ -37,6 +37,7 @@ import (
 	"github.com/ollama/ollama/model/input"
 	"github.com/ollama/ollama/runner/common"
 	"github.com/ollama/ollama/sample"
+	"github.com/ollama/ollama/tokenizer"
 
 	_ "github.com/ollama/ollama/model/models"
 )
@@ -210,9 +211,9 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 }
 
 // calculateLogprobs converts raw logits to log probabilities and finds top K tokens
-func calculateLogprobs(logits []float32, selectedToken int32, topK int, textProcessor model.TextProcessor) []llm.Logprob {
+func calculateLogprobs(logits []float32, selectedToken int32, topK int, tok tokenizer.Tokenizer) []llm.Logprob {
 	decoder := func(tokenID int) string {
-		text, _ := textProcessor.Decode([]int32{int32(tokenID)})
+		text, _ := tok.Decode([]int32{int32(tokenID)})
 		return text
 	}
 	return common.CalculateLogprobs(logits, int(selectedToken), topK, decoder)
@@ -242,7 +243,7 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]*input.Input, 
 
 	for i, part := range parts {
 		// text - tokenize
-		tokens, err := s.model.(model.TextProcessor).Encode(part, i == 0)
+		tokens, err := s.model.(tokenizer.Tokenizer).Encode(part, i == 0)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -514,13 +515,6 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 			continue
 		}
 
-		// if past the num predict limit
-		if seq.numPredict > 0 && seq.numPredicted >= seq.numPredict {
-			s.removeSequence(seqIdx, llm.DoneReasonLength)
-			nextBatch.seqs[seqIdx] = nil
-			continue
-		}
-
 		if !s.cache.enabled {
 			seq.inputs = append(seq.cache.Inputs, seq.inputs...)
 			seq.cache.Inputs = []*input.Input{}
@@ -568,6 +562,7 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 					if errors.As(err, &reprocess) {
 						// Prepend these inputs to the sequence's inputs queue for reprocessing
 						seq.inputs = append(reprocess.Inputs, seq.inputs...)
+						seq.sampler.Reset()
 						// Skip this sequence but continue processing the rest
 						nextBatch.seqs[seqIdx] = nil // clear this sequence for this batch
 						err = nil
@@ -698,6 +693,12 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		// (unless we take down the whole runner).
 		if len(seq.pendingInputs) > 0 {
 			seq.cache.Inputs = append(seq.cache.Inputs, seq.pendingInputs...)
+			for _, inp := range seq.pendingInputs {
+				if len(inp.Multimodal) != 0 {
+					continue
+				}
+				seq.sampler.Accept(inp.Token)
+			}
 			seq.pendingInputs = []*input.Input{}
 		}
 
@@ -709,7 +710,6 @@ func (s *Server) computeBatch(activeBatch batchState) {
 			continue
 		}
 
-		seq.numPredicted++
 		nextToken := &input.Input{Token: 0} // placeholder we'll fill in after Compute/Floats
 		seq.inputs = []*input.Input{nextToken}
 		nextBatchTokens[i] = nextToken
@@ -740,8 +740,14 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		if seq == nil || nextBatchTokens[i] == nil {
 			continue
 		}
+		// If the sequence was replaced while this batch was computing, discard results.
+		if activeBatch.seqs[i] != seq {
+			logutil.Trace("computeBatch: sequence replaced, discarding its results", "batchID", activeBatch.id, "seqIdx", i)
+			continue
+		}
 
 		seq.lastUpdatedAt = t
+		seq.numPredicted++
 		if seq.numPredicted == 1 {
 			seq.processingDuration = seq.lastUpdatedAt.Sub(seq.startedAt)
 			seq.startedAt = seq.lastUpdatedAt
@@ -766,7 +772,7 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		nextBatchTokens[i].Token = token
 
 		// if it's an end of sequence token, break
-		if s.model.(model.TextProcessor).Is(token, model.SpecialEOS) {
+		if s.model.(tokenizer.Tokenizer).Is(token, tokenizer.SpecialEOS) {
 			// TODO (jmorganca): we should send this back
 			// as it's important for the /api/generate context
 			// seq.responses <- piece
@@ -775,18 +781,25 @@ func (s *Server) computeBatch(activeBatch batchState) {
 			continue
 		}
 
-		piece, err := s.model.(model.TextProcessor).Decode([]int32{token})
+		piece, err := s.model.(tokenizer.Tokenizer).Decode([]int32{token})
 		if err != nil {
 			panic("failed to decode token")
 		}
 
 		// Calculate logprobs if requested (after EOS check to avoid logprobs for EOS tokens)
 		if seq.logprobs {
-			logprobs := calculateLogprobs(logits, token, seq.topLogprobs, s.model.(model.TextProcessor))
+			logprobs := calculateLogprobs(logits, token, seq.topLogprobs, s.model.(tokenizer.Tokenizer))
 			seq.pendingLogprobs = append(seq.pendingLogprobs, logprobs...)
 		}
 
 		seq.pendingResponses = append(seq.pendingResponses, piece)
+
+		// if past the num predict limit
+		if seq.numPredict > 0 && seq.numPredicted >= seq.numPredict {
+			s.removeSequence(i, llm.DoneReasonLength)
+			continue
+		}
+
 		sequence := strings.Join(seq.pendingResponses, "")
 
 		if ok, stop := common.FindStop(sequence, seq.stop); ok {
@@ -873,7 +886,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	var grammar *sample.GrammarSampler
 	var err error
 	if req.Grammar != "" {
-		grammar, err = sample.NewGrammarSampler(s.model.(model.TextProcessor), req.Grammar)
+		grammar, err = sample.NewGrammarSampler(s.model.(tokenizer.Tokenizer), req.Grammar)
 		if err != nil {
 			http.Error(w, "failed to load model vocabulary required for format", http.StatusInternalServerError)
 			return
@@ -886,6 +899,9 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		req.Options.TopK,
 		req.Options.TopP,
 		req.Options.MinP,
+		req.Options.RepeatPenalty,
+		req.Options.PresencePenalty,
+		req.Options.FrequencyPenalty,
 		req.Options.Seed,
 		grammar,
 	)
@@ -930,6 +946,14 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 				s.seqsSem.Release(1)
 				http.Error(w, fmt.Sprintf("Failed to load cache: %v", err), http.StatusInternalServerError)
 				return
+			}
+
+			seq.sampler.Reset()
+			for _, inp := range seq.cache.Inputs {
+				if len(inp.Multimodal) != 0 {
+					continue
+				}
+				seq.sampler.Accept(inp.Token)
 			}
 
 			s.seqs[i] = seq

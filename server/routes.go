@@ -22,6 +22,7 @@ import (
 	"os/signal"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -37,6 +38,7 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
+	internalcloud "github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/manifest"
@@ -51,11 +53,16 @@ import (
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
-	"github.com/ollama/ollama/x/imagegen"
+	imagegenmanifest "github.com/ollama/ollama/x/imagegen/manifest"
 	xserver "github.com/ollama/ollama/x/server"
 )
 
 const signinURLStr = "https://ollama.com/connect?name=%s&key=%s"
+
+const (
+	cloudErrRemoteInferenceUnavailable    = "remote model is unavailable"
+	cloudErrRemoteModelDetailsUnavailable = "remote model details are unavailable"
+)
 
 func shouldUseHarmony(model *Model) bool {
 	if slices.Contains([]string{"gptoss", "gpt-oss"}, model.Config.ModelFamily) {
@@ -75,16 +82,15 @@ func experimentEnabled(name string) bool {
 
 var useClient2 = experimentEnabled("client2")
 
-// Low VRAM mode is based on the sum of total VRAM (not free) and triggers
-// reduced context length on some models
-var lowVRAMThreshold uint64 = 20 * format.GibiByte
-
 var mode string = gin.DebugMode
 
 type Server struct {
-	addr    net.Addr
-	sched   *Scheduler
-	lowVRAM bool
+	addr          net.Addr
+	sched         *Scheduler
+	defaultNumCtx int
+	aliasesOnce   sync.Once
+	aliases       *store
+	aliasesErr    error
 }
 
 func init() {
@@ -107,8 +113,12 @@ var (
 	errBadTemplate = errors.New("template error")
 )
 
-func modelOptions(model *Model, requestOpts map[string]any) (api.Options, error) {
+func (s *Server) modelOptions(model *Model, requestOpts map[string]any) (api.Options, error) {
 	opts := api.DefaultOptions()
+	if opts.NumCtx == 0 {
+		opts.NumCtx = s.defaultNumCtx
+	}
+
 	if err := opts.FromMap(model.Options); err != nil {
 		return api.Options{}, err
 	}
@@ -140,21 +150,15 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 		return nil, nil, nil, fmt.Errorf("%s %w", name, err)
 	}
 
-	opts, err := modelOptions(model, requestOpts)
+	useImagegen, _ := requestOpts["use_imagegen_runner"].(bool)
+	delete(requestOpts, "use_imagegen_runner")
+
+	opts, err := s.modelOptions(model, requestOpts)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
-	// This model is much more capable with a larger context, so set that
-	// unless it would penalize performance too much
-	if !s.lowVRAM && slices.Contains([]string{
-		"gptoss", "gpt-oss",
-		"qwen3vl", "qwen3vlmoe",
-	}, model.Config.ModelFamily) {
-		opts.NumCtx = max(opts.NumCtx, 8192)
-	}
-
-	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive)
+	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive, useImagegen)
 	var runner *runnerRef
 	select {
 	case runner = <-runnerCh:
@@ -200,9 +204,16 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	resolvedName, _, err := s.resolveAlias(name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	name = resolvedName
+
 	// We cannot currently consolidate this into GetModel because all we'll
 	// induce infinite recursion given the current code structure.
-	name, err := getExistingName(name)
+	name, err = getExistingName(name)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
 		return
@@ -227,6 +238,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	if m.Config.RemoteHost != "" && m.Config.RemoteModel != "" {
+		if disabled, _ := internalcloud.Status(); disabled {
+			c.JSON(http.StatusForbidden, gin.H{"error": internalcloud.DisabledError(cloudErrRemoteInferenceUnavailable)})
+			return
+		}
+
 		origModel := req.Model
 
 		remoteURL, err := url.Parse(m.Config.RemoteHost)
@@ -468,7 +484,8 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		// the real chat handler, but doing this as a stopgap to get renderer
 		// support for generate
 		if values.Messages != nil && values.Suffix == "" && req.Template == "" {
-			prompt, images, err = chatPrompt(c.Request.Context(), m, r.Tokenize, opts, values.Messages, []api.Tool{}, req.Think, req.Truncate == nil || *req.Truncate)
+			genTruncate := (req.Truncate == nil || *req.Truncate) && !m.IsMLX()
+			prompt, images, err = chatPrompt(c.Request.Context(), m, r.Tokenize, opts, values.Messages, []api.Tool{}, req.Think, genTruncate)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
@@ -541,6 +558,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					PromptEvalDuration: cr.PromptEvalDuration,
 					EvalCount:          cr.EvalCount,
 					EvalDuration:       cr.EvalDuration,
+					PeakMemory:         cr.PeakMemory,
 				},
 				Logprobs: toAPILogprobs(cr.Logprobs),
 			}
@@ -1064,9 +1082,12 @@ func (s *Server) ShowHandler(c *gin.Context) {
 
 	resp, err := GetModelInfo(req)
 	if err != nil {
+		var statusErr api.StatusError
 		switch {
 		case os.IsNotExist(err):
 			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+		case errors.As(err, &statusErr):
+			c.JSON(statusErr.StatusCode, gin.H{"error": statusErr.ErrorMessage})
 		case err.Error() == errtypes.InvalidModelNameErrMsg:
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		default:
@@ -1093,6 +1114,15 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		return nil, err
 	}
 
+	if m.Config.RemoteHost != "" {
+		if disabled, _ := internalcloud.Status(); disabled {
+			return nil, api.StatusError{
+				StatusCode:   http.StatusForbidden,
+				ErrorMessage: internalcloud.DisabledError(cloudErrRemoteModelDetailsUnavailable),
+			}
+		}
+	}
+
 	modelDetails := api.ModelDetails{
 		ParentModel:       m.ParentModel,
 		Format:            m.Config.ModelFormat,
@@ -1104,7 +1134,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 
 	// For image generation models, populate details from imagegen package
 	if slices.Contains(m.Capabilities(), model.CapabilityImage) {
-		if info, err := imagegen.GetModelInfo(name.String()); err == nil {
+		if info, err := imagegenmanifest.GetModelInfo(name.String()); err == nil {
 			modelDetails.Family = info.Architecture
 			modelDetails.ParameterSize = format.HumanNumber(uint64(info.ParameterCount))
 			modelDetails.QuantizationLevel = info.Quantization
@@ -1569,6 +1599,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.GET("/", func(c *gin.Context) { c.String(http.StatusOK, "Ollama is running") })
 	r.HEAD("/api/version", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"version": version.Version}) })
 	r.GET("/api/version", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"version": version.Version}) })
+	r.GET("/api/status", s.StatusHandler)
 
 	// Local model cache management (new implementation is at end of function)
 	r.POST("/api/pull", s.PullHandler)
@@ -1589,6 +1620,9 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
 	r.POST("/api/copy", s.CopyHandler)
+	r.GET("/api/experimental/aliases", s.ListAliasesHandler)
+	r.POST("/api/experimental/aliases", s.CreateAliasHandler)
+	r.DELETE("/api/experimental/aliases", s.DeleteAliasHandler)
 
 	// Inference
 	r.GET("/api/ps", s.PsHandler)
@@ -1629,6 +1663,8 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 func Serve(ln net.Listener) error {
 	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
 	slog.Info("server config", "env", envconfig.Values())
+	cloudDisabled, _ := internalcloud.Status()
+	slog.Info(fmt.Sprintf("Ollama cloud disabled: %t", cloudDisabled))
 
 	blobsDir, err := manifest.BlobsPath("")
 	if err != nil {
@@ -1720,10 +1756,18 @@ func Serve(ln net.Listener) error {
 	for _, gpu := range gpus {
 		totalVRAM += gpu.TotalMemory - envconfig.GpuOverhead()
 	}
-	if totalVRAM < lowVRAMThreshold {
-		s.lowVRAM = true
-		slog.Info("entering low vram mode", "total vram", format.HumanBytes2(totalVRAM), "threshold", format.HumanBytes2(lowVRAMThreshold))
+
+	// Set default context based on VRAM tier
+	// Use slightly lower thresholds (47/23 GiB vs. 48/24 GiB) to account for small differences in the exact value
+	switch {
+	case totalVRAM >= 47*format.GibiByte:
+		s.defaultNumCtx = 262144
+	case totalVRAM >= 23*format.GibiByte:
+		s.defaultNumCtx = 32768
+	default:
+		s.defaultNumCtx = 4096
 	}
+	slog.Info("vram-based default context", "total_vram", format.HumanBytes2(totalVRAM), "default_num_ctx", s.defaultNumCtx)
 
 	err = srvr.Serve(ln)
 	// If server is closed from the signal handler, wait for the ctx to be done
@@ -1808,6 +1852,16 @@ func streamResponse(c *gin.Context, ch chan any) {
 		}
 
 		return true
+	})
+}
+
+func (s *Server) StatusHandler(c *gin.Context) {
+	disabled, source := internalcloud.Status()
+	c.JSON(http.StatusOK, api.StatusResponse{
+		Cloud: api.CloudStatus{
+			Disabled: disabled,
+			Source:   source,
+		},
 	})
 }
 
@@ -1897,8 +1951,11 @@ func (s *Server) PsHandler(c *gin.Context) {
 			Details:   modelDetails,
 			ExpiresAt: v.expiresAt,
 		}
-		if v.Options != nil {
-			mr.ContextLength = v.Options.NumCtx
+		if v.llama != nil {
+			mr.ContextLength = v.llama.ContextLength()
+			total, vram := v.llama.MemorySize()
+			mr.Size = int64(total)
+			mr.SizeVRAM = int64(vram)
 		}
 		// The scheduler waits to set expiresAt, so if a model is loading it's
 		// possible that it will be set to the unix epoch. For those cases, just
@@ -1951,13 +2008,20 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	name, err := getExistingName(name)
+	resolvedName, _, err := s.resolveAlias(name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	name = resolvedName
+
+	name, err = getExistingName(name)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
 	}
 
-	m, err := GetModel(req.Model)
+	m, err := GetModel(name.String())
 	if err != nil {
 		switch {
 		case os.IsNotExist(err):
@@ -1990,6 +2054,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	if m.Config.RemoteHost != "" && m.Config.RemoteModel != "" {
+		if disabled, _ := internalcloud.Status(); disabled {
+			c.JSON(http.StatusForbidden, gin.H{"error": internalcloud.DisabledError(cloudErrRemoteInferenceUnavailable)})
+			return
+		}
+
 		origModel := req.Model
 
 		remoteURL, err := url.Parse(m.Config.RemoteHost)
@@ -2149,6 +2218,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	truncate := req.Truncate == nil || *req.Truncate
+	if m.IsMLX() {
+		truncate = false
+	}
 	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, processedTools, req.Think, truncate)
 	if err != nil {
 		slog.Error("chat prompt error", "error", err)
@@ -2245,6 +2317,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						PromptEvalDuration: r.PromptEvalDuration,
 						EvalCount:          r.EvalCount,
 						EvalDuration:       r.EvalDuration,
+						PeakMemory:         r.PeakMemory,
 					},
 					Logprobs: toAPILogprobs(r.Logprobs),
 				}

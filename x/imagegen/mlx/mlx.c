@@ -20,6 +20,8 @@ mlx_array (*mlx_array_new_float64_ptr)(double val) = NULL;
 mlx_array (*mlx_array_new_double_ptr)(double val) = NULL;
 mlx_array (*mlx_array_new_complex_ptr)(float real_val, float imag_val) = NULL;
 mlx_array (*mlx_array_new_data_ptr)(const void* data, const int* shape, int dim, mlx_dtype dtype) = NULL;
+mlx_array (*mlx_array_new_data_managed_ptr)(void* data, const int* shape, int dim, mlx_dtype dtype, void (*dtor)(void*)) = NULL;
+mlx_array (*mlx_array_new_data_managed_payload_ptr)(void* data, const int* shape, int dim, mlx_dtype dtype, void* payload, void (*dtor)(void*)) = NULL;
 int (*mlx_array_set_ptr)(mlx_array* arr, const mlx_array src) = NULL;
 int (*mlx_array_set_bool_ptr)(mlx_array* arr, bool val) = NULL;
 int (*mlx_array_set_int_ptr)(mlx_array* arr, int val) = NULL;
@@ -49,7 +51,7 @@ int (*mlx_array_item_int32_ptr)(int32_t* res, const mlx_array arr) = NULL;
 int (*mlx_array_item_int64_ptr)(int64_t* res, const mlx_array arr) = NULL;
 int (*mlx_array_item_float32_ptr)(float* res, const mlx_array arr) = NULL;
 int (*mlx_array_item_float64_ptr)(double* res, const mlx_array arr) = NULL;
-int (*mlx_array_item_complex64_ptr)(float _Complex* res, const mlx_array arr) = NULL;
+int (*mlx_array_item_complex64_ptr)(mlx_complex64_t* res, const mlx_array arr) = NULL;
 #if defined(__aarch64__) || defined(_M_ARM64)
 int (*mlx_array_item_float16_ptr)(float16_t* res, const mlx_array arr) = NULL;
 #endif
@@ -67,7 +69,7 @@ const int32_t* (*mlx_array_data_int32_ptr)(const mlx_array arr) = NULL;
 const int64_t* (*mlx_array_data_int64_ptr)(const mlx_array arr) = NULL;
 const float* (*mlx_array_data_float32_ptr)(const mlx_array arr) = NULL;
 const double* (*mlx_array_data_float64_ptr)(const mlx_array arr) = NULL;
-const float _Complex* (*mlx_array_data_complex64_ptr)(const mlx_array arr) = NULL;
+const mlx_complex64_t* (*mlx_array_data_complex64_ptr)(const mlx_array arr) = NULL;
 #if defined(__aarch64__) || defined(_M_ARM64)
 const float16_t* (*mlx_array_data_float16_ptr)(const mlx_array arr) = NULL;
 #endif
@@ -123,6 +125,7 @@ int (*mlx_detail_compile_erase_ptr)(uintptr_t fun_id) = NULL;
 int (*mlx_disable_compile_ptr)(void) = NULL;
 int (*mlx_enable_compile_ptr)(void) = NULL;
 int (*mlx_set_compile_mode_ptr)(mlx_compile_mode mode) = NULL;
+int (*mlx_cuda_is_available_ptr)(bool* res) = NULL;
 mlx_device (*mlx_device_new_ptr)(void) = NULL;
 mlx_device (*mlx_device_new_type_ptr)(mlx_device_type type, int index) = NULL;
 int (*mlx_device_free_ptr)(mlx_device dev) = NULL;
@@ -133,6 +136,16 @@ int (*mlx_device_get_index_ptr)(int* index, mlx_device dev) = NULL;
 int (*mlx_device_get_type_ptr)(mlx_device_type* type, mlx_device dev) = NULL;
 int (*mlx_get_default_device_ptr)(mlx_device* dev) = NULL;
 int (*mlx_set_default_device_ptr)(mlx_device dev) = NULL;
+int (*mlx_device_is_available_ptr)(bool* avail, mlx_device dev) = NULL;
+int (*mlx_device_count_ptr)(int* count, mlx_device_type type) = NULL;
+mlx_device_info (*mlx_device_info_new_ptr)(void) = NULL;
+int (*mlx_device_info_get_ptr)(mlx_device_info* info, mlx_device dev) = NULL;
+int (*mlx_device_info_free_ptr)(mlx_device_info info) = NULL;
+int (*mlx_device_info_has_key_ptr)(bool* exists, mlx_device_info info, const char* key) = NULL;
+int (*mlx_device_info_is_string_ptr)(bool* is_string, mlx_device_info info, const char* key) = NULL;
+int (*mlx_device_info_get_string_ptr)(const char** value, mlx_device_info info, const char* key) = NULL;
+int (*mlx_device_info_get_size_ptr)(size_t* value, mlx_device_info info, const char* key) = NULL;
+int (*mlx_device_info_get_keys_ptr)(mlx_vector_string* keys, mlx_device_info info) = NULL;
 int (*mlx_distributed_all_gather_ptr)(mlx_array* res, const mlx_array x, const mlx_distributed_group group , const mlx_stream S) = NULL;
 int (*mlx_distributed_all_max_ptr)(mlx_array* res, const mlx_array x, const mlx_distributed_group group , const mlx_stream s) = NULL;
 int (*mlx_distributed_all_min_ptr)(mlx_array* res, const mlx_array x, const mlx_distributed_group group , const mlx_stream s) = NULL;
@@ -263,7 +276,6 @@ int (*mlx_reset_peak_memory_ptr)(void) = NULL;
 int (*mlx_set_cache_limit_ptr)(size_t* res, size_t limit) = NULL;
 int (*mlx_set_memory_limit_ptr)(size_t* res, size_t limit) = NULL;
 int (*mlx_set_wired_limit_ptr)(size_t* res, size_t limit) = NULL;
-mlx_metal_device_info_t (*mlx_metal_device_info_ptr)(void) = NULL;
 int (*mlx_metal_is_available_ptr)(bool* res) = NULL;
 int (*mlx_metal_start_capture_ptr)(const char* path) = NULL;
 int (*mlx_metal_stop_capture_ptr)(void) = NULL;
@@ -656,6 +668,16 @@ int mlx_load_functions(void* handle) {
     mlx_array_new_data_ptr = dlsym(handle, "mlx_array_new_data");
     if (mlx_array_new_data_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_array_new_data\n");
+        return -1;
+    }
+    mlx_array_new_data_managed_ptr = dlsym(handle, "mlx_array_new_data_managed");
+    if (mlx_array_new_data_managed_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_array_new_data_managed\n");
+        return -1;
+    }
+    mlx_array_new_data_managed_payload_ptr = dlsym(handle, "mlx_array_new_data_managed_payload");
+    if (mlx_array_new_data_managed_payload_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_array_new_data_managed_payload\n");
         return -1;
     }
     mlx_array_set_ptr = dlsym(handle, "mlx_array_set");
@@ -1141,6 +1163,11 @@ int mlx_load_functions(void* handle) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_set_compile_mode\n");
         return -1;
     }
+    mlx_cuda_is_available_ptr = dlsym(handle, "mlx_cuda_is_available");
+    if (mlx_cuda_is_available_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_cuda_is_available\n");
+        return -1;
+    }
     mlx_device_new_ptr = dlsym(handle, "mlx_device_new");
     if (mlx_device_new_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_device_new\n");
@@ -1189,6 +1216,56 @@ int mlx_load_functions(void* handle) {
     mlx_set_default_device_ptr = dlsym(handle, "mlx_set_default_device");
     if (mlx_set_default_device_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_set_default_device\n");
+        return -1;
+    }
+    mlx_device_is_available_ptr = dlsym(handle, "mlx_device_is_available");
+    if (mlx_device_is_available_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_device_is_available\n");
+        return -1;
+    }
+    mlx_device_count_ptr = dlsym(handle, "mlx_device_count");
+    if (mlx_device_count_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_device_count\n");
+        return -1;
+    }
+    mlx_device_info_new_ptr = dlsym(handle, "mlx_device_info_new");
+    if (mlx_device_info_new_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_device_info_new\n");
+        return -1;
+    }
+    mlx_device_info_get_ptr = dlsym(handle, "mlx_device_info_get");
+    if (mlx_device_info_get_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_device_info_get\n");
+        return -1;
+    }
+    mlx_device_info_free_ptr = dlsym(handle, "mlx_device_info_free");
+    if (mlx_device_info_free_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_device_info_free\n");
+        return -1;
+    }
+    mlx_device_info_has_key_ptr = dlsym(handle, "mlx_device_info_has_key");
+    if (mlx_device_info_has_key_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_device_info_has_key\n");
+        return -1;
+    }
+    mlx_device_info_is_string_ptr = dlsym(handle, "mlx_device_info_is_string");
+    if (mlx_device_info_is_string_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_device_info_is_string\n");
+        return -1;
+    }
+    mlx_device_info_get_string_ptr = dlsym(handle, "mlx_device_info_get_string");
+    if (mlx_device_info_get_string_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_device_info_get_string\n");
+        return -1;
+    }
+    mlx_device_info_get_size_ptr = dlsym(handle, "mlx_device_info_get_size");
+    if (mlx_device_info_get_size_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_device_info_get_size\n");
+        return -1;
+    }
+    mlx_device_info_get_keys_ptr = dlsym(handle, "mlx_device_info_get_keys");
+    if (mlx_device_info_get_keys_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_device_info_get_keys\n");
         return -1;
     }
     mlx_distributed_all_gather_ptr = dlsym(handle, "mlx_distributed_all_gather");
@@ -1839,11 +1916,6 @@ int mlx_load_functions(void* handle) {
     mlx_set_wired_limit_ptr = dlsym(handle, "mlx_set_wired_limit");
     if (mlx_set_wired_limit_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_set_wired_limit\n");
-        return -1;
-    }
-    mlx_metal_device_info_ptr = dlsym(handle, "mlx_metal_device_info");
-    if (mlx_metal_device_info_ptr == NULL) {
-        fprintf(stderr, "MLX: Failed to load symbol: mlx_metal_device_info\n");
         return -1;
     }
     mlx_metal_is_available_ptr = dlsym(handle, "mlx_metal_is_available");
@@ -3528,6 +3600,14 @@ mlx_array mlx_array_new_data(const void* data, const int* shape, int dim, mlx_dt
     return mlx_array_new_data_ptr(data, shape, dim, dtype);
 }
 
+mlx_array mlx_array_new_data_managed(void* data, const int* shape, int dim, mlx_dtype dtype, void (*dtor)(void*)) {
+    return mlx_array_new_data_managed_ptr(data, shape, dim, dtype, dtor);
+}
+
+mlx_array mlx_array_new_data_managed_payload(void* data, const int* shape, int dim, mlx_dtype dtype, void* payload, void (*dtor)(void*)) {
+    return mlx_array_new_data_managed_payload_ptr(data, shape, dim, dtype, payload, dtor);
+}
+
 int mlx_array_set(mlx_array* arr, const mlx_array src) {
     return mlx_array_set_ptr(arr, src);
 }
@@ -3644,7 +3724,7 @@ int mlx_array_item_float64(double* res, const mlx_array arr) {
     return mlx_array_item_float64_ptr(res, arr);
 }
 
-int mlx_array_item_complex64(float _Complex* res, const mlx_array arr) {
+int mlx_array_item_complex64(mlx_complex64_t* res, const mlx_array arr) {
     return mlx_array_item_complex64_ptr(res, arr);
 }
 
@@ -3704,7 +3784,7 @@ const double* mlx_array_data_float64(const mlx_array arr) {
     return mlx_array_data_float64_ptr(arr);
 }
 
-const float _Complex* mlx_array_data_complex64(const mlx_array arr) {
+const mlx_complex64_t* mlx_array_data_complex64(const mlx_array arr) {
     return mlx_array_data_complex64_ptr(arr);
 }
 
@@ -3916,6 +3996,10 @@ int mlx_set_compile_mode(mlx_compile_mode mode) {
     return mlx_set_compile_mode_ptr(mode);
 }
 
+int mlx_cuda_is_available(bool* res) {
+    return mlx_cuda_is_available_ptr(res);
+}
+
 mlx_device mlx_device_new(void) {
     return mlx_device_new_ptr();
 }
@@ -3954,6 +4038,46 @@ int mlx_get_default_device(mlx_device* dev) {
 
 int mlx_set_default_device(mlx_device dev) {
     return mlx_set_default_device_ptr(dev);
+}
+
+int mlx_device_is_available(bool* avail, mlx_device dev) {
+    return mlx_device_is_available_ptr(avail, dev);
+}
+
+int mlx_device_count(int* count, mlx_device_type type) {
+    return mlx_device_count_ptr(count, type);
+}
+
+mlx_device_info mlx_device_info_new(void) {
+    return mlx_device_info_new_ptr();
+}
+
+int mlx_device_info_get(mlx_device_info* info, mlx_device dev) {
+    return mlx_device_info_get_ptr(info, dev);
+}
+
+int mlx_device_info_free(mlx_device_info info) {
+    return mlx_device_info_free_ptr(info);
+}
+
+int mlx_device_info_has_key(bool* exists, mlx_device_info info, const char* key) {
+    return mlx_device_info_has_key_ptr(exists, info, key);
+}
+
+int mlx_device_info_is_string(bool* is_string, mlx_device_info info, const char* key) {
+    return mlx_device_info_is_string_ptr(is_string, info, key);
+}
+
+int mlx_device_info_get_string(const char** value, mlx_device_info info, const char* key) {
+    return mlx_device_info_get_string_ptr(value, info, key);
+}
+
+int mlx_device_info_get_size(size_t* value, mlx_device_info info, const char* key) {
+    return mlx_device_info_get_size_ptr(value, info, key);
+}
+
+int mlx_device_info_get_keys(mlx_vector_string* keys, mlx_device_info info) {
+    return mlx_device_info_get_keys_ptr(keys, info);
 }
 
 int mlx_distributed_all_gather(mlx_array* res, const mlx_array x, const mlx_distributed_group group , const mlx_stream S) {
@@ -4474,10 +4598,6 @@ int mlx_set_memory_limit(size_t* res, size_t limit) {
 
 int mlx_set_wired_limit(size_t* res, size_t limit) {
     return mlx_set_wired_limit_ptr(res, limit);
-}
-
-mlx_metal_device_info_t mlx_metal_device_info(void) {
-    return mlx_metal_device_info_ptr();
 }
 
 int mlx_metal_is_available(bool* res) {

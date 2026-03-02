@@ -45,6 +45,12 @@ func ParserForName(name string) Parser {
 	var p Parser
 
 	switch name {
+	case "qwen3":
+		p = &Qwen3Parser{hasThinkingSupport: false, defaultThinking: false}
+	case "qwen3-thinking":
+		p = &Qwen3Parser{hasThinkingSupport: true, defaultThinking: true}
+	case "qwen3.5":
+		p = &Qwen3Parser{hasThinkingSupport: true, defaultThinking: true}
 	case "qwen3-coder":
 		p = &Qwen3CoderParser{}
 	case "qwen3-vl-instruct":
@@ -71,6 +77,8 @@ func ParserForName(name string) Parser {
 		return &FunctionGemmaParser{}
 	case "glm-4.7":
 		return &GLM47Parser{}
+	case "glm-ocr":
+		return &GlmOcrParser{}
 	case "lfm2":
 		return &LFM2Parser{hasThinkingSupport: false}
 	case "lfm2-thinking":
