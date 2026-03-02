@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { useSettings } from "@/hooks/useSettings";
+import { useEffect, useState } from "react";
 
 export function SidebarLayout({
   sidebar,
@@ -11,11 +12,22 @@ export function SidebarLayout({
 }>) {
   const { settings, setSettings } = useSettings();
   const isWindows = navigator.platform.toLowerCase().includes("win");
+  
+  // Track whether we've hydrated from backend to prevent animation on load
+  const [isHydrated, setIsHydrated] = useState(false);
+  
+  useEffect(() => {
+    // Enable transitions after initial render completes
+    const timer = requestAnimationFrame(() => {
+      setIsHydrated(true);
+    });
+    return () => cancelAnimationFrame(timer);
+  }, []);
 
   return (
-    <div className={`flex transition-[width] duration-300 dark:bg-neutral-900`}>
+    <div className={`flex ${isHydrated ? "transition-[width] duration-300" : ""} dark:bg-neutral-900`}>
       <div
-        className={`absolute flex mx-2 py-2 z-20 items-center transition-[left] duration-375 text-neutral-500 dark:text-neutral-400 ${settings.sidebarOpen ? (isWindows ? "left-2" : "left-[204px]") : isWindows ? "left-2" : "left-20"}`}
+        className={`absolute flex mx-2 py-2 z-20 items-center ${isHydrated ? "transition-[left] duration-375" : ""} text-neutral-500 dark:text-neutral-400 ${settings.sidebarOpen ? (isWindows ? "left-2" : "left-[204px]") : isWindows ? "left-2" : "left-20"}`}
       >
         <button
           onClick={() => setSettings({ SidebarOpen: !settings.sidebarOpen })}
@@ -57,7 +69,7 @@ export function SidebarLayout({
         </Link>
       </div>
       <div
-        className={`flex flex-col transition-[width] duration-300 max-h-screen ${settings.sidebarOpen ? "w-64" : "w-0"}`}
+        className={`flex flex-col ${isHydrated ? "transition-[width] duration-300" : ""} max-h-screen ${settings.sidebarOpen ? "w-64" : "w-0"}`}
       >
         <div
           onDoubleClick={() => window.doubleClick && window.doubleClick()}
