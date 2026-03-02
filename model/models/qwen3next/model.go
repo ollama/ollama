@@ -466,43 +466,13 @@ func New(c fs.Config) (model.Model, error) {
 		headCountKV = hc.HeadCountKV()
 	}
 
-	// If head_count_kv is a uniform scalar (e.g. from third-party GGUFs like
-	// Unsloth that store it as a single uint32 instead of a per-layer array),
-	// reconstruct the per-layer array using full_attention_interval.
-	if interval := int(c.Uint("full_attention_interval")); interval > 0 {
-		allSame := true
-		for i := 1; i < len(headCountKV); i++ {
-			if headCountKV[i] != headCountKV[0] {
-				allSame = false
-				break
-			}
-		}
-		if allSame && len(headCountKV) > 0 && headCountKV[0] > 0 {
-			kvVal := headCountKV[0]
-			for i := range headCountKV {
-				if (i+1)%interval == 0 {
-					headCountKV[i] = kvVal
-				} else {
-					headCountKV[i] = 0
-				}
-			}
-		}
-	}
-
+	// Determine recurrent vs full-attention layers from full_attention_interval,
+	// matching llama.cpp's approach. This avoids depending on head_count_kv being
+	// a per-layer array (third-party GGUFs like Unsloth store it as a scalar).
+	interval := int(c.Uint("full_attention_interval", 4))
 	isRecurrent = make([]bool, numLayers)
-	hasZero := false
-	hasFull := false
 	for i := range numLayers {
-		// If KV head count is 0, it's a recurrent layer
-		if i < len(headCountKV) && headCountKV[i] == 0 {
-			isRecurrent[i] = true
-			hasZero = true
-		} else if i < len(headCountKV) && headCountKV[i] > 0 {
-			hasFull = true
-		}
-	}
-	if !hasZero || !hasFull {
-		return nil, fmt.Errorf("qwen3next: invalid attention.head_count_kv array; expected mix of zero and non-zero values")
+		isRecurrent[i] = (i+1)%interval != 0
 	}
 
 	// Determine if MoE
@@ -566,7 +536,7 @@ func New(c fs.Config) (model.Model, error) {
 		ssmNGroup:             int(c.Uint("ssm.group_count")),
 		ssmDtRank:             int(c.Uint("ssm.time_step_rank")),
 		convKernelSize:        int(c.Uint("ssm.conv_kernel")),
-		vHeadReordered:        c.Bool("ssm.v_head_reordered", false),
+		vHeadReordered:        c.Bool("ssm.v_head_reordered", c.Architecture() != "qwen3next"),
 		isRecurrent:           isRecurrent,
 		mropeSections: slices.Collect(func(yield func(int) bool) {
 			for _, section := range mropeSections {
@@ -575,7 +545,7 @@ func New(c fs.Config) (model.Model, error) {
 				}
 			}
 		}),
-		mropeInterleaved: c.Bool("rope.mrope_interleaved", c.Bool("mrope_interleaved", false)),
+		mropeInterleaved: c.Bool("rope.mrope_interleaved", c.Bool("mrope_interleaved", c.Architecture() != "qwen3next")),
 	}
 	if opts.numKVHeads == 0 {
 		return nil, fmt.Errorf("qwen3next: attention.head_count_kv array must include at least one non-zero value")

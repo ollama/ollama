@@ -284,9 +284,7 @@ func (q *qwen3NextModel) KV(t *Tokenizer) KV {
 		kv["rope.mrope_section"] = sections
 		kv["rope.dimension_sections"] = sections
 	}
-	if q.RopeParameters.MRopeInterleaved {
-		kv["rope.mrope_interleaved"] = true
-	}
+	kv["rope.mrope_interleaved"] = q.RopeParameters.MRopeInterleaved
 
 	if q.RopeScaling.Type != "" && q.RopeScaling.Type != "default" {
 		kv["rope.scaling.type"] = q.RopeScaling.Type
@@ -313,9 +311,7 @@ func (q *qwen3NextModel) KV(t *Tokenizer) KV {
 	kv["ssm.group_count"] = q.LinearNumKeyHeads
 	kv["ssm.time_step_rank"] = q.LinearNumValueHeads
 	kv["ssm.conv_kernel"] = q.LinearConvKernelDim
-	if q.shouldReorderVHeads() {
-		kv["ssm.v_head_reordered"] = true
-	}
+	kv["ssm.v_head_reordered"] = q.shouldReorderVHeads()
 	if q.FullAttentionInterval > 0 {
 		kv["full_attention_interval"] = q.FullAttentionInterval
 	}

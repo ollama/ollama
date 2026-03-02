@@ -114,8 +114,11 @@ func TestQwen3NextKVLegacyConfig(t *testing.T) {
 		t.Fatalf("unexpected attention.head_count_kv: got %v want %v", got, want)
 	}
 
-	if _, ok := kv["ssm.v_head_reordered"]; ok {
-		t.Fatalf("legacy qwen3next should not enable ssm.v_head_reordered")
+	if got, ok := kv["ssm.v_head_reordered"].(bool); !ok || got {
+		t.Fatalf("expected ssm.v_head_reordered=false for legacy qwen3next, got %v (%T)", kv["ssm.v_head_reordered"], kv["ssm.v_head_reordered"])
+	}
+	if got, ok := kv["rope.mrope_interleaved"].(bool); !ok || got {
+		t.Fatalf("expected rope.mrope_interleaved=false for legacy qwen3next, got %v (%T)", kv["rope.mrope_interleaved"], kv["rope.mrope_interleaved"])
 	}
 	if got, want := kv["norm_top_k_prob"], true; got != want {
 		t.Fatalf("unexpected norm_top_k_prob: got %v want %v", got, want)
