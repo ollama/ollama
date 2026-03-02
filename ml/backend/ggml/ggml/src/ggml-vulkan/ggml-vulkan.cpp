@@ -7576,6 +7576,18 @@ static bool ggml_vk_should_use_mmvq(const vk_device& device, uint32_t m, uint32_
             return false;
         }
 
+        if (device->driver_id == vk::DriverId::eIntelProprietaryWindows) {
+            // Intel Windows proprietary driver tuning
+            switch (src0_type) {
+            case GGML_TYPE_MXFP4:
+            case GGML_TYPE_Q4_K:
+            case GGML_TYPE_Q5_K:
+                return false;
+            default:
+                return true;
+            }
+        }
+
         switch (src0_type) {
         // From tests on A770 Linux, may need more tuning
         case GGML_TYPE_Q4_0:

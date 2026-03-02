@@ -302,10 +302,10 @@ index 336172700..9e1e2510e 100644
      bool use_sycl_graph = !g_ggml_sycl_disable_graph && check_graph_compatibility(cgraph);
      if (use_sycl_graph) {
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index ec9b0c2d1..3b0370d85 100644
+index c9ca7a986..008b82e9b 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -14051,8 +14051,9 @@ static int32_t find_first_set(uint32_t x) {
+@@ -14063,8 +14063,9 @@ static int32_t find_first_set(uint32_t x) {
      return ret;
  }
  
