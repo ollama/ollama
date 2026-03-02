@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
+	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/version"
 )
 
@@ -209,7 +210,7 @@ func (m *model) openMultiModelModal(integration string) {
 }
 
 func isCloudModel(name string) bool {
-	return strings.HasSuffix(name, ":cloud") || strings.HasSuffix(name, "-cloud")
+	return modelref.HasExplicitCloudSource(name)
 }
 
 func cloudStatusDisabled(client *api.Client) bool {

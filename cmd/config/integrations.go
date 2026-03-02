@@ -14,6 +14,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
+	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/progress"
 	"github.com/spf13/cobra"
 )
@@ -324,12 +325,7 @@ func SelectModelWithSelector(ctx context.Context, selector SingleSelector) (stri
 
 	// If the selected model isn't installed, pull it first
 	if !existingModels[selected] {
-		if cloudModels[selected] {
-			// Cloud models only pull a small manifest; no confirmation needed
-			if err := pullModel(ctx, client, selected); err != nil {
-				return "", fmt.Errorf("failed to pull %s: %w", selected, err)
-			}
-		} else {
+		if !isCloudModelName(selected) {
 			msg := fmt.Sprintf("Download %s?", selected)
 			if ok, err := confirmPrompt(msg); err != nil {
 				return "", err
@@ -524,7 +520,7 @@ func selectModelsWithSelectors(ctx context.Context, name, current string, single
 
 	var toPull []string
 	for _, m := range selected {
-		if !existingModels[m] {
+		if !existingModels[m] && !isCloudModelName(m) {
 			toPull = append(toPull, m)
 		}
 	}
@@ -551,6 +547,10 @@ func selectModelsWithSelectors(ctx context.Context, name, current string, single
 }
 
 func pullIfNeeded(ctx context.Context, client *api.Client, existingModels map[string]bool, model string) error {
+	if isCloudModelName(model) {
+		return nil
+	}
+
 	if existingModels[model] {
 		return nil
 	}
@@ -573,11 +573,11 @@ func ShowOrPull(ctx context.Context, client *api.Client, model string) error {
 	if _, err := client.Show(ctx, &api.ShowRequest{Model: model}); err == nil {
 		return nil
 	}
-	// Cloud models only pull a small manifest; skip the download confirmation
-	// TODO(parthsareen): consolidate with cloud config changes
-	if strings.HasSuffix(model, "cloud") {
-		return pullModel(ctx, client, model)
+
+	if isCloudModelName(model) {
+		return nil
 	}
+
 	if ok, err := confirmPrompt(fmt.Sprintf("Download %s?", model)); err != nil {
 		return err
 	} else if !ok {
@@ -1303,7 +1303,8 @@ func IsCloudModelDisabled(ctx context.Context, name string) bool {
 }
 
 func isCloudModelName(name string) bool {
-	return strings.HasSuffix(name, ":cloud") || strings.HasSuffix(name, "-cloud")
+	// TODO(drifkin): Replace this wrapper with inlining once things stabilize a bit
+	return modelref.HasExplicitCloudSource(name)
 }
 
 func filterCloudModels(existing []modelInfo) []modelInfo {
