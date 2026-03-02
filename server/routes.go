@@ -558,7 +558,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					PromptEvalDuration: cr.PromptEvalDuration,
 					EvalCount:          cr.EvalCount,
 					EvalDuration:       cr.EvalDuration,
-					PeakMemory:         cr.PeakMemory,
 				},
 				Logprobs: toAPILogprobs(cr.Logprobs),
 			}
@@ -2317,7 +2316,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						PromptEvalDuration: r.PromptEvalDuration,
 						EvalCount:          r.EvalCount,
 						EvalDuration:       r.EvalDuration,
-						PeakMemory:         r.PeakMemory,
 					},
 					Logprobs: toAPILogprobs(r.Logprobs),
 				}
