@@ -3,22 +3,20 @@ package parser
 import (
 	"bufio"
 	"bytes"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"maps"
 	"net/http"
 	"os"
 	"os/user"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 
 	"golang.org/x/mod/semver"
-	"golang.org/x/sync/errgroup"
 	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
 
@@ -54,7 +52,10 @@ var deprecatedParameters = []string{
 
 // CreateRequest creates a new *api.CreateRequest from an existing Modelfile
 func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error) {
-	req := &api.CreateRequest{}
+	req := &api.CreateRequest{
+		Files:    make(map[string]string),
+		Adapters: make(map[string]string),
+	}
 
 	var messages []api.Message
 	var licenses []string
@@ -63,12 +64,7 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 	for _, c := range f.Commands {
 		switch c.Name {
 		case "model":
-			path, err := expandPath(c.Args, relativeDir)
-			if err != nil {
-				return nil, err
-			}
-
-			digestMap, err := fileDigestMap(path)
+			files, err := filesMap(c.Args, relativeDir)
 			if errors.Is(err, os.ErrNotExist) {
 				req.From = c.Args
 				continue
@@ -76,25 +72,14 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 				return nil, err
 			}
 
-			if req.Files == nil {
-				req.Files = digestMap
-			} else {
-				for k, v := range digestMap {
-					req.Files[k] = v
-				}
-			}
+			maps.Copy(req.Files, files)
 		case "adapter":
-			path, err := expandPath(c.Args, relativeDir)
+			files, err := filesMap(c.Args, relativeDir)
 			if err != nil {
 				return nil, err
 			}
 
-			digestMap, err := fileDigestMap(path)
-			if err != nil {
-				return nil, err
-			}
-
-			req.Adapters = digestMap
+			maps.Copy(req.Adapters, files)
 		case "template":
 			req.Template = c.Args
 		case "system":
@@ -154,106 +139,66 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 	return req, nil
 }
 
-func fileDigestMap(path string) (map[string]string, error) {
-	fl := make(map[string]string)
+func filesMap(args, base string) (map[string]string, error) {
+	path, err := expandPath(args, base)
+	if err != nil {
+		return nil, err
+	}
 
 	fi, err := os.Stat(path)
 	if err != nil {
 		return nil, err
 	}
 
-	var files []string
-	if fi.IsDir() {
-		fs, err := filesForModel(path)
-		if err != nil {
-			return nil, err
-		}
-
-		for _, f := range fs {
-			f, err := filepath.EvalSymlinks(f)
-			if err != nil {
-				return nil, err
-			}
-
-			rel, err := filepath.Rel(path, f)
-			if err != nil {
-				return nil, err
-			}
-
-			if !filepath.IsLocal(rel) {
-				return nil, fmt.Errorf("insecure path: %s", rel)
-			}
-
-			files = append(files, f)
-		}
-	} else {
-		files = []string{path}
+	mapping := make(map[string]string)
+	if !fi.IsDir() {
+		return map[string]string{
+			filepath.Base(path): "abs:" + path,
+		}, nil
 	}
 
-	var mu sync.Mutex
-	var g errgroup.Group
-	g.SetLimit(max(runtime.GOMAXPROCS(0)-1, 1))
-	for _, f := range files {
-		g.Go(func() error {
-			digest, err := digestForFile(f)
-			if err != nil {
-				return err
-			}
-
-			mu.Lock()
-			defer mu.Unlock()
-			fl[f] = digest
-			return nil
-		})
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return nil, err
 	}
+	defer root.Close()
 
-	if err := g.Wait(); err != nil {
+	files, err := filesForModel(root)
+	if err != nil {
 		return nil, err
 	}
 
-	return fl, nil
+	for _, file := range files {
+		// create a temporary mapping from relative path to absolute path
+		mapping[file] = "abs:" + filepath.Join(root.Name(), file)
+	}
+
+	return mapping, nil
 }
 
-func digestForFile(filename string) (string, error) {
-	filepath, err := filepath.EvalSymlinks(filename)
-	if err != nil {
-		return "", err
-	}
-
-	bin, err := os.Open(filepath)
-	if err != nil {
-		return "", err
-	}
-	defer bin.Close()
-
-	hash := sha256.New()
-	if _, err := io.Copy(hash, bin); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
-}
-
-func filesForModel(path string) ([]string, error) {
+func filesForModel(root *os.Root) ([]string, error) {
 	detectContentType := func(path string) (string, error) {
-		f, err := os.Open(path)
+		f, err := root.Open(path)
 		if err != nil {
 			return "", err
 		}
 		defer f.Close()
 
-		var b bytes.Buffer
-		b.Grow(512)
-
-		if _, err := io.CopyN(&b, f, 512); err != nil && !errors.Is(err, io.EOF) {
+		bts := make([]byte, 512)
+		n, err := io.ReadFull(f, bts)
+		if errors.Is(err, io.ErrUnexpectedEOF) {
+			// short read, use what we have
+			bts = bts[:n]
+		} else if err != nil {
 			return "", err
 		}
 
-		contentType, _, _ := strings.Cut(http.DetectContentType(b.Bytes()), ";")
+		contentType, _, _ := strings.Cut(http.DetectContentType(bts), ";")
 		return contentType, nil
 	}
 
 	glob := func(pattern, contentType string) ([]string, error) {
-		matches, err := filepath.Glob(pattern)
+		matches, err := fs.Glob(root.FS(), pattern)
 		if err != nil {
 			return nil, err
 		}
@@ -262,7 +207,7 @@ func filesForModel(path string) ([]string, error) {
 			if ct, err := detectContentType(match); err != nil {
 				return nil, err
 			} else if len(contentType) > 0 && ct != contentType {
-				return nil, fmt.Errorf("invalid content type: expected %s for %s", ct, match)
+				return nil, fmt.Errorf("invalid content type: expected %s for %s, got %s", ct, match, contentType)
 			}
 		}
 
@@ -271,25 +216,25 @@ func filesForModel(path string) ([]string, error) {
 
 	var files []string
 	// some safetensors files do not properly match "application/octet-stream", so skip checking their contentType
-	if st, _ := glob(filepath.Join(path, "model*.safetensors"), ""); len(st) > 0 {
+	if st, _ := glob("model*.safetensors", ""); len(st) > 0 {
 		// safetensors files might be unresolved git lfs references; skip if they are
 		// covers model-x-of-y.safetensors, model.fp32-x-of-y.safetensors, model.safetensors
 		files = append(files, st...)
-	} else if st, _ := glob(filepath.Join(path, "consolidated*.safetensors"), ""); len(st) > 0 {
+	} else if st, _ := glob("consolidated*.safetensors", ""); len(st) > 0 {
 		// covers consolidated.safetensors
 		files = append(files, st...)
-	} else if pt, _ := glob(filepath.Join(path, "pytorch_model*.bin"), "application/zip"); len(pt) > 0 {
+	} else if pt, _ := glob("pytorch_model*.bin", "application/zip"); len(pt) > 0 {
 		// pytorch files might also be unresolved git lfs references; skip if they are
 		// covers pytorch_model-x-of-y.bin, pytorch_model.fp32-x-of-y.bin, pytorch_model.bin
 		files = append(files, pt...)
-	} else if pt, _ := glob(filepath.Join(path, "consolidated*.pth"), "application/zip"); len(pt) > 0 {
+	} else if pt, _ := glob("consolidated*.pth", "application/zip"); len(pt) > 0 {
 		// pytorch files might also be unresolved git lfs references; skip if they are
 		// covers consolidated.x.pth, consolidated.pth
 		files = append(files, pt...)
-	} else if gg, _ := glob(filepath.Join(path, "*.gguf"), "application/octet-stream"); len(gg) > 0 {
+	} else if gg, _ := glob("*.gguf", "application/octet-stream"); len(gg) > 0 {
 		// covers gguf files ending in .gguf
 		files = append(files, gg...)
-	} else if gg, _ := glob(filepath.Join(path, "*.bin"), "application/octet-stream"); len(gg) > 0 {
+	} else if gg, _ := glob("*.bin", "application/octet-stream"); len(gg) > 0 {
 		// covers gguf files ending in .bin
 		files = append(files, gg...)
 	} else {
@@ -297,7 +242,7 @@ func filesForModel(path string) ([]string, error) {
 	}
 
 	// add configuration files, json files are detected as text/plain
-	js, err := glob(filepath.Join(path, "*.json"), "text/plain")
+	js, err := glob("*.json", "text/plain")
 	if err != nil {
 		return nil, err
 	}
@@ -305,7 +250,7 @@ func filesForModel(path string) ([]string, error) {
 
 	// bert models require a nested config.json
 	// TODO(mxyng): merge this with the glob above
-	js, err = glob(filepath.Join(path, "**/*.json"), "text/plain")
+	js, err = glob("**/*.json", "text/plain")
 	if err != nil {
 		return nil, err
 	}
@@ -313,9 +258,9 @@ func filesForModel(path string) ([]string, error) {
 
 	// add tokenizer.model if it exists (tokenizer.json is automatically picked up by the previous glob)
 	// tokenizer.model might be a unresolved git lfs reference; error if it is
-	if tks, _ := glob(filepath.Join(path, "tokenizer.model"), "application/octet-stream"); len(tks) > 0 {
+	if tks, _ := glob("tokenizer.model", "application/octet-stream"); len(tks) > 0 {
 		files = append(files, tks...)
-	} else if tks, _ := glob(filepath.Join(path, "**/tokenizer.model"), "text/plain"); len(tks) > 0 {
+	} else if tks, _ := glob("**/tokenizer.model", "text/plain"); len(tks) > 0 {
 		// some times tokenizer.model is in a subdirectory (e.g. meta-llama/Meta-Llama-3-8B)
 		files = append(files, tks...)
 	}
