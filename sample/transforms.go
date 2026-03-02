@@ -56,7 +56,14 @@ func applyPenalty(logit float32, count int, repeatPenalty float32, presencePenal
 		}
 	}
 
-	logit -= float32(count)*frequencyPenalty + presencePenalty
+	if frequencyPenalty != 0 {
+		logit -= float32(count) * frequencyPenalty
+	}
+
+	if presencePenalty != 0 {
+		logit -= presencePenalty
+	}
+
 	return logit
 }
 
