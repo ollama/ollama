@@ -699,7 +699,20 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		}
 	}
 
-	name, err := getExistingName(model.ParseName(req.Model))
+	name := model.ParseName(req.Model)
+	if !name.IsValid() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+
+	resolvedName, _, err := s.resolveAlias(name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	name = resolvedName
+
+	name, err = getExistingName(name)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
 		return
