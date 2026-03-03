@@ -5,12 +5,12 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
-type modelSourceRequirement = modelref.ModelSource
+type modelSource = modelref.ModelSource
 
 const (
-	modelSourceUnspecified modelSourceRequirement = modelref.ModelSourceUnspecified
-	modelSourceLocal       modelSourceRequirement = modelref.ModelSourceLocal
-	modelSourceCloud       modelSourceRequirement = modelref.ModelSourceCloud
+	modelSourceUnspecified modelSource = modelref.ModelSourceUnspecified
+	modelSourceLocal       modelSource = modelref.ModelSourceLocal
+	modelSourceCloud       modelSource = modelref.ModelSourceCloud
 )
 
 var (
@@ -30,7 +30,7 @@ type parsedModelRef struct {
 	Name model.Name
 	// Source captures explicit source intent from the original input.
 	// Example: "gpt-oss:20b:cloud" -> modelSourceCloud.
-	Source modelSourceRequirement
+	Source modelSource
 }
 
 func parseAndValidateModelRef(raw string) (parsedModelRef, error) {
@@ -54,7 +54,7 @@ func parseAndValidateModelRef(raw string) (parsedModelRef, error) {
 	}, nil
 }
 
-func parseAndValidatePullModelRef(raw string) (parsedModelRef, error) {
+func parseNormalizePullModelRef(raw string) (parsedModelRef, error) {
 	var zero parsedModelRef
 
 	parsedRef, err := modelref.ParseRef(raw)

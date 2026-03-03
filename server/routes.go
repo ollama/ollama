@@ -941,7 +941,7 @@ func (s *Server) PullHandler(c *gin.Context) {
 	// this roundabout way of "adding" cloud models won't be needed anymore). So
 	// right here normalize any `:cloud` models into the legacy-style suffixes
 	// `:<tag>-cloud` and `:cloud`
-	modelRef, err := parseAndValidatePullModelRef(cmp.Or(req.Model, req.Name))
+	modelRef, err := parseNormalizePullModelRef(cmp.Or(req.Model, req.Name))
 	if err != nil {
 		writeModelRefParseError(c, err, http.StatusBadRequest, errtypes.InvalidModelNameErrMsg)
 		return
@@ -1075,7 +1075,7 @@ func (s *Server) DeleteHandler(c *gin.Context) {
 		return
 	}
 
-	modelRef, err := parseAndValidatePullModelRef(cmp.Or(r.Model, r.Name))
+	modelRef, err := parseNormalizePullModelRef(cmp.Or(r.Model, r.Name))
 	if err != nil {
 		switch {
 		case errors.Is(err, errConflictingModelSource):
