@@ -21,6 +21,17 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		return errors.New("model not loaded")
 	}
 
+	enableCompile := true
+	if modelCompile, ok := r.Model.(interface{ EnableCompile() bool }); ok {
+		enableCompile = modelCompile.EnableCompile()
+	}
+	if enableCompile {
+		mlx.EnableCompile()
+	} else {
+		mlx.DisableCompile()
+	}
+	mlx.ResetPeakMemory()
+
 	var (
 		sample, logprobs         *mlx.Array
 		nextSample, nextLogprobs *mlx.Array
@@ -36,18 +47,8 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 			mlx.LogArrays()
 			r.cache.log()
 		}
+		slog.Info("peak memory", "size", mlx.PrettyBytes(mlx.PeakMemory()))
 	}()
-
-	enableCompile := true
-	if modelCompile, ok := r.Model.(interface{ EnableCompile() bool }); ok {
-		enableCompile = modelCompile.EnableCompile()
-	}
-	if enableCompile {
-		mlx.EnableCompile()
-	} else {
-		mlx.DisableCompile()
-	}
-	mlx.ResetPeakMemory()
 
 	inputs := r.Tokenizer.Encode(request.Prompt, true)
 	if len(inputs) == 0 {
@@ -156,7 +157,6 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	}
 
 	final.EvalDuration = time.Since(now)
-	final.PeakMemory = uint64(mlx.PeakMemory())
 	select {
 	case <-request.Ctx.Done():
 		return request.Ctx.Err()

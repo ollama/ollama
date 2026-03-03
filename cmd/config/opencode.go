@@ -12,8 +12,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/internal/modelref"
 )
 
 // OpenCode implements Runner and Editor for OpenCode integration
@@ -26,13 +26,13 @@ type cloudModelLimit struct {
 }
 
 // lookupCloudModelLimit returns the token limits for a cloud model.
-// It tries the exact name first, then strips the ":cloud" suffix.
+// It tries the exact name first, then strips explicit cloud suffixes.
 func lookupCloudModelLimit(name string) (cloudModelLimit, bool) {
 	if l, ok := cloudModelLimits[name]; ok {
 		return l, true
 	}
-	base := strings.TrimSuffix(name, ":cloud")
-	if base != name {
+	base, stripped := modelref.StripCloudSourceTag(name)
+	if stripped {
 		if l, ok := cloudModelLimits[base]; ok {
 			return l, true
 		}
@@ -122,11 +122,16 @@ func (o *OpenCode) Edit(modelList []string) error {
 	if !ok {
 		ollama = map[string]any{
 			"npm":  "@ai-sdk/openai-compatible",
-			"name": "Ollama (local)",
+			"name": "Ollama",
 			"options": map[string]any{
 				"baseURL": envconfig.Host().String() + "/v1",
 			},
 		}
+	}
+
+	// Migrate legacy provider name
+	if name, _ := ollama["name"].(string); name == "Ollama (local)" {
+		ollama["name"] = "Ollama"
 	}
 
 	models, ok := ollama["models"].(map[string]any)
@@ -147,7 +152,6 @@ func (o *OpenCode) Edit(modelList []string) error {
 		}
 	}
 
-	client, _ := api.ClientFromEnvironment()
 
 	for _, model := range modelList {
 		if existing, ok := models[model].(map[string]any); ok {
@@ -158,7 +162,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 					existing["name"] = strings.TrimSuffix(name, " [Ollama]")
 				}
 			}
-			if isCloudModel(context.Background(), client, model) {
+			if isCloudModelName(model) {
 				if l, ok := lookupCloudModelLimit(model); ok {
 					existing["limit"] = map[string]any{
 						"context": l.Context,
@@ -172,7 +176,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 			"name":    model,
 			"_launch": true,
 		}
-		if isCloudModel(context.Background(), client, model) {
+		if isCloudModelName(model) {
 			if l, ok := lookupCloudModelLimit(model); ok {
 				entry["limit"] = map[string]any{
 					"context": l.Context,

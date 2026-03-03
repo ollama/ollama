@@ -232,6 +232,44 @@ func TestOpenCodeEdit(t *testing.T) {
 		}
 	})
 
+	t.Run("migrate Ollama (local) provider name", func(t *testing.T) {
+		cleanup()
+		os.MkdirAll(configDir, 0o755)
+		os.WriteFile(configPath, []byte(`{"provider":{"ollama":{"name":"Ollama (local)","npm":"@ai-sdk/openai-compatible","options":{"baseURL":"http://localhost:11434/v1"}}}}`), 0o644)
+
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
+			t.Fatal(err)
+		}
+
+		data, _ := os.ReadFile(configPath)
+		var cfg map[string]any
+		json.Unmarshal(data, &cfg)
+		provider := cfg["provider"].(map[string]any)
+		ollama := provider["ollama"].(map[string]any)
+		if ollama["name"] != "Ollama" {
+			t.Errorf("provider name not migrated: got %q, want %q", ollama["name"], "Ollama")
+		}
+	})
+
+	t.Run("preserve custom provider name", func(t *testing.T) {
+		cleanup()
+		os.MkdirAll(configDir, 0o755)
+		os.WriteFile(configPath, []byte(`{"provider":{"ollama":{"name":"My Custom Ollama","npm":"@ai-sdk/openai-compatible","options":{"baseURL":"http://localhost:11434/v1"}}}}`), 0o644)
+
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
+			t.Fatal(err)
+		}
+
+		data, _ := os.ReadFile(configPath)
+		var cfg map[string]any
+		json.Unmarshal(data, &cfg)
+		provider := cfg["provider"].(map[string]any)
+		ollama := provider["ollama"].(map[string]any)
+		if ollama["name"] != "My Custom Ollama" {
+			t.Errorf("custom provider name was changed: got %q, want %q", ollama["name"], "My Custom Ollama")
+		}
+	})
+
 	t.Run("remove model preserves non-ollama models", func(t *testing.T) {
 		cleanup()
 		os.MkdirAll(configDir, 0o755)

@@ -17,6 +17,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
+	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/logutil"
 )
 
@@ -919,7 +920,7 @@ func hasWebSearchTool(tools []anthropic.Tool) bool {
 }
 
 func isCloudModelName(name string) bool {
-	return strings.HasSuffix(name, ":cloud") || strings.HasSuffix(name, "-cloud")
+	return modelref.HasExplicitCloudSource(name)
 }
 
 // extractQueryFromToolCall extracts the search query from a web_search tool call
