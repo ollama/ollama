@@ -20,6 +20,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
+	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/readline"
 	"github.com/ollama/ollama/types/model"
@@ -43,7 +44,7 @@ const (
 // isLocalModel checks if the model is running locally (not a cloud model).
 // TODO: Improve local/cloud model identification - could check model metadata
 func isLocalModel(modelName string) bool {
-	return !strings.HasSuffix(modelName, "-cloud")
+	return !modelref.HasExplicitCloudSource(modelName)
 }
 
 // isLocalServer checks if connecting to a local Ollama server.

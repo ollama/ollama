@@ -107,15 +107,12 @@ func (c *Claude) ConfigureAliases(ctx context.Context, model string, existingAli
 	}
 
 	if !force && aliases["primary"] != "" {
-		client, _ := api.ClientFromEnvironment()
-		if isCloudModel(ctx, client, aliases["primary"]) {
-			if isCloudModel(ctx, client, aliases["fast"]) {
-				return aliases, false, nil
-			}
-		} else {
-			delete(aliases, "fast")
+		if isCloudModelName(aliases["primary"]) {
+			aliases["fast"] = aliases["primary"]
 			return aliases, false, nil
 		}
+		delete(aliases, "fast")
+		return aliases, false, nil
 	}
 
 	items, existingModels, cloudModels, client, err := listModels(ctx)
@@ -139,10 +136,8 @@ func (c *Claude) ConfigureAliases(ctx context.Context, model string, existingAli
 		aliases["primary"] = primary
 	}
 
-	if isCloudModel(ctx, client, aliases["primary"]) {
-		if aliases["fast"] == "" || !isCloudModel(ctx, client, aliases["fast"]) {
-			aliases["fast"] = aliases["primary"]
-		}
+	if isCloudModelName(aliases["primary"]) {
+		aliases["fast"] = aliases["primary"]
 	} else {
 		delete(aliases, "fast")
 	}

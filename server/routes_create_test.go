@@ -794,6 +794,43 @@ func TestCreateAndShowRemoteModel(t *testing.T) {
 	fmt.Printf("resp = %#v\n", resp)
 }
 
+func TestCreateFromCloudSourceSuffix(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	var s Server
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model: "test-cloud-from-suffix",
+		From:  "gpt-oss:20b:cloud",
+		Info: map[string]any{
+			"capabilities": []string{"completion"},
+		},
+		Stream: &stream,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, got %d", w.Code)
+	}
+
+	w = createRequest(t, s.ShowHandler, api.ShowRequest{Model: "test-cloud-from-suffix"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, got %d", w.Code)
+	}
+
+	var resp api.ShowResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.RemoteHost != "https://ollama.com:443" {
+		t.Fatalf("expected remote host https://ollama.com:443, got %q", resp.RemoteHost)
+	}
+
+	if resp.RemoteModel != "gpt-oss:20b" {
+		t.Fatalf("expected remote model gpt-oss:20b, got %q", resp.RemoteModel)
+	}
+}
+
 func TestCreateLicenses(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
