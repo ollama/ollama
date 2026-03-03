@@ -184,3 +184,85 @@ func TestNormalizePullName(t *testing.T) {
 		})
 	}
 }
+
+func TestParseSourceSuffix(t *testing.T) {
+	tests := []struct {
+		name         string
+		input        string
+		wantBase     string
+		wantSource   ModelSource
+		wantExplicit bool
+	}{
+		{
+			name:         "explicit cloud suffix",
+			input:        "gpt-oss:20b:cloud",
+			wantBase:     "gpt-oss:20b",
+			wantSource:   ModelSourceCloud,
+			wantExplicit: true,
+		},
+		{
+			name:         "explicit local suffix",
+			input:        "qwen3:8b:local",
+			wantBase:     "qwen3:8b",
+			wantSource:   ModelSourceLocal,
+			wantExplicit: true,
+		},
+		{
+			name:         "legacy cloud suffix on tag",
+			input:        "gpt-oss:20b-cloud",
+			wantBase:     "gpt-oss:20b",
+			wantSource:   ModelSourceCloud,
+			wantExplicit: true,
+		},
+		{
+			name:         "legacy cloud suffix does not match model segment",
+			input:        "my-cloud-model",
+			wantBase:     "my-cloud-model",
+			wantSource:   ModelSourceUnspecified,
+			wantExplicit: false,
+		},
+		{
+			name:         "legacy cloud suffix blocked when suffix includes slash",
+			input:        "foo:bar-cloud/baz",
+			wantBase:     "foo:bar-cloud/baz",
+			wantSource:   ModelSourceUnspecified,
+			wantExplicit: false,
+		},
+		{
+			name:         "unknown suffix is not explicit source",
+			input:        "gpt-oss:clod",
+			wantBase:     "gpt-oss:clod",
+			wantSource:   ModelSourceUnspecified,
+			wantExplicit: false,
+		},
+		{
+			name:         "uppercase suffix is accepted",
+			input:        "gpt-oss:20b:CLOUD",
+			wantBase:     "gpt-oss:20b",
+			wantSource:   ModelSourceCloud,
+			wantExplicit: true,
+		},
+		{
+			name:         "no suffix",
+			input:        "llama3.2",
+			wantBase:     "llama3.2",
+			wantSource:   ModelSourceUnspecified,
+			wantExplicit: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotBase, gotSource, gotExplicit := parseSourceSuffix(tt.input)
+			if gotBase != tt.wantBase {
+				t.Fatalf("base = %q, want %q", gotBase, tt.wantBase)
+			}
+			if gotSource != tt.wantSource {
+				t.Fatalf("source = %v, want %v", gotSource, tt.wantSource)
+			}
+			if gotExplicit != tt.wantExplicit {
+				t.Fatalf("explicit = %v, want %v", gotExplicit, tt.wantExplicit)
+			}
+		})
+	}
+}

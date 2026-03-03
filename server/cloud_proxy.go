@@ -136,6 +136,9 @@ func cloudModelPathPassthroughMiddleware(disabledOperation string) gin.HandlerFu
 }
 
 func proxyCloudJSONRequest(c *gin.Context, payload any, disabledOperation string) {
+	// TEMP(drifkin): we currently split out this `WithPath` method because we are
+	// mapping `/v1/messages` + web_search to `/api/chat` temporarily. Once we
+	// stop doing this, we can inline this method.
 	proxyCloudJSONRequestWithPath(c, payload, c.Request.URL.Path, disabledOperation)
 }
 
