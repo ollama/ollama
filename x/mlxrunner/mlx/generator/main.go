@@ -17,11 +17,21 @@ import (
 //go:embed *.gotmpl
 var fsys embed.FS
 
+// optionalSymbols lists symbols that may not be present in all builds
+// (e.g., float16/bfloat16 are unavailable in CUDA builds of MLX).
+var optionalSymbols = map[string]bool{
+	"mlx_array_item_float16":  true,
+	"mlx_array_item_bfloat16": true,
+	"mlx_array_data_float16":  true,
+	"mlx_array_data_bfloat16": true,
+}
+
 type Function struct {
 	Type,
 	Name,
 	Parameters,
 	Args string
+	Optional bool
 }
 
 func ParseFunction(node *tree_sitter.Node, tc *tree_sitter.TreeCursor, source []byte) Function {
@@ -104,7 +114,9 @@ func main() {
 		matches := qc.Matches(query, tree.RootNode(), bts)
 		for match := matches.Next(); match != nil; match = matches.Next() {
 			for _, capture := range match.Captures {
-				funs = append(funs, ParseFunction(&capture.Node, tc, bts))
+				fn := ParseFunction(&capture.Node, tc, bts)
+				fn.Optional = optionalSymbols[fn.Name]
+				funs = append(funs, fn)
 			}
 		}
 	}

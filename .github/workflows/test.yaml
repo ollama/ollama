@@ -37,7 +37,7 @@ jobs:
               | xargs python3 -c "import sys; from pathlib import Path; print(any(Path(x).match(glob) for x in sys.argv[1:] for glob in '$*'.split(' ')))"
           }
 
-          echo changed=$(changed 'llama/llama.cpp/**/*' 'ml/backend/ggml/ggml/**/*') | tee -a $GITHUB_OUTPUT
+          echo changed=$(changed 'llama/llama.cpp/**/*' 'ml/backend/ggml/ggml/**/*' '.github/**/*') | tee -a $GITHUB_OUTPUT
           echo vendorsha=$(make -f Makefile.sync print-base) | tee -a $GITHUB_OUTPUT
 
   linux:
@@ -60,6 +60,10 @@ jobs:
               mesa-vulkan-drivers vulkan-tools
               libvulkan1 libvulkan-dev
               vulkan-sdk cmake ccache g++ make
+          - preset: 'MLX CUDA 13'
+            container: nvidia/cuda:13.0.0-devel-ubuntu22.04
+            extra-packages: libcudnn9-dev-cuda-13 libopenblas-dev liblapack-dev liblapacke-dev git curl
+            flags: '-DCMAKE_CUDA_ARCHITECTURES=87 -DBLAS_INCLUDE_DIRS=/usr/include/x86_64-linux-gnu -DLAPACK_INCLUDE_DIRS=/usr/include/x86_64-linux-gnu'
     runs-on: linux
     container: ${{ matrix.container }}
     steps:
@@ -76,6 +80,10 @@ jobs:
             $sudo apt-get update
           fi
           $sudo apt-get install -y cmake ccache ${{ matrix.extra-packages }}
+          # MLX requires CMake 3.25+, install from official releases
+          if [ "${{ matrix.preset }}" = "MLX CUDA 13" ]; then
+            curl -fsSL https://github.com/Kitware/CMake/releases/download/v3.31.2/cmake-3.31.2-linux-$(uname -m).tar.gz | $sudo tar xz -C /usr/local --strip-components 1
+          fi
           # Export VULKAN_SDK if provided by LunarG package (defensive)
           if [ -d "/usr/lib/x86_64-linux-gnu/vulkan" ] && [ "${{ matrix.preset }}" = "Vulkan" ]; then
             echo "VULKAN_SDK=/usr" >> $GITHUB_ENV
@@ -87,8 +95,8 @@ jobs:
           path: /github/home/.cache/ccache
           key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}-${{ needs.changes.outputs.vendorsha }}
       - run: |
-          cmake --preset ${{ matrix.preset }} ${{ matrix.flags }}
-          cmake --build --preset ${{ matrix.preset }} --parallel
+          cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }}
+          cmake --build --preset "${{ matrix.preset }}" --parallel
 
   windows:
     needs: [changes]
@@ -114,12 +122,29 @@ jobs:
             flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma"'
           - preset: Vulkan
             install: https://sdk.lunarg.com/sdk/download/1.4.321.1/windows/vulkansdk-windows-X64-1.4.321.1.exe
+          - preset: 'MLX CUDA 13'
+            install: https://developer.download.nvidia.com/compute/cuda/13.0.0/local_installers/cuda_13.0.0_windows.exe
+            cudnn-install: https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/windows-x86_64/cudnn-windows-x86_64-9.18.1.3_cuda13-archive.zip
+            flags: '-DCMAKE_CUDA_ARCHITECTURES=80'
+            cuda-components:
+              - '"cudart"'
+              - '"nvcc"'
+              - '"cublas"'
+              - '"cublas_dev"'
+              - '"cufft"'
+              - '"cufft_dev"'
+              - '"nvrtc"'
+              - '"nvrtc_dev"'
+              - '"crt"'
+              - '"nvvm"'
+              - '"nvptxcompiler"'
+            cuda-version: '13.0'
     runs-on: windows
     steps:
       - run: |
           choco install -y --no-progress ccache ninja
           ccache -o cache_dir=${{ github.workspace }}\.ccache
-      - if: matrix.preset == 'CUDA' || matrix.preset == 'ROCm' || matrix.preset == 'Vulkan'
+      - if: matrix.preset == 'CUDA' || matrix.preset == 'ROCm' || matrix.preset == 'Vulkan' || matrix.preset == 'MLX CUDA 13'
         id: cache-install
         uses: actions/cache/restore@v4
         with:
@@ -127,8 +152,9 @@ jobs:
             C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
             C:\Program Files\AMD\ROCm
             C:\VulkanSDK
-          key: ${{ matrix.install }}
-      - if: matrix.preset == 'CUDA'
+            C:\Program Files\NVIDIA\CUDNN
+          key: ${{ matrix.install }}-${{ matrix.cudnn-install }}
+      - if: matrix.preset == 'CUDA' || matrix.preset == 'MLX CUDA 13'
         name: Install CUDA ${{ matrix.cuda-version }}
         run: |
           $ErrorActionPreference = "Stop"
@@ -164,10 +190,27 @@ jobs:
             Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
             Start-Process -FilePath .\install.exe -ArgumentList "-c","--am","--al","in" -NoNewWindow -Wait
           }
-          
+
           $vulkanPath = (Resolve-Path "C:\VulkanSDK\*").path
           echo "$vulkanPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           echo "VULKAN_SDK=$vulkanPath" >> $env:GITHUB_ENV
+      - if: matrix.preset == 'MLX CUDA 13'
+        name: Install cuDNN for MLX
+        run: |
+          $ErrorActionPreference = "Stop"
+          $cudnnRoot = "C:\Program Files\NVIDIA\CUDNN"
+          if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
+            Invoke-WebRequest -Uri "${{ matrix.cudnn-install }}" -OutFile "cudnn.zip"
+            Expand-Archive -Path cudnn.zip -DestinationPath cudnn-extracted
+            $cudnnDir = (Get-ChildItem -Path cudnn-extracted -Directory)[0].FullName
+            New-Item -ItemType Directory -Force -Path $cudnnRoot
+            Copy-Item -Path "$cudnnDir\*" -Destination "$cudnnRoot\" -Recurse
+          }
+
+          echo "CUDNN_ROOT_DIR=$cudnnRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "CUDNN_INCLUDE_PATH=$cudnnRoot\include" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "CUDNN_LIBRARY_PATH=$cudnnRoot\lib\x64" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "$cudnnRoot\bin\x64" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - if: ${{ !cancelled() && steps.cache-install.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
@@ -175,7 +218,8 @@ jobs:
             C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
             C:\Program Files\AMD\ROCm
             C:\VulkanSDK
-          key: ${{ matrix.install }}
+            C:\Program Files\NVIDIA\CUDNN
+          key: ${{ matrix.install }}-${{ matrix.cudnn-install }}
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
         with:

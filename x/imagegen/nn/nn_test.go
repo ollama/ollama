@@ -1,5 +1,3 @@
-//go:build mlx
-
 package nn
 
 import (
