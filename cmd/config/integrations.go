@@ -723,10 +723,8 @@ func syncAliases(ctx context.Context, client *api.Client, ac AliasConfigurer, na
 	}
 	aliases["primary"] = model
 
-	if isCloudModel(ctx, client, model) {
-		if aliases["fast"] == "" || !isCloudModel(ctx, client, aliases["fast"]) {
-			aliases["fast"] = model
-		}
+	if isCloudModelName(model) {
+		aliases["fast"] = model
 	} else {
 		delete(aliases, "fast")
 	}
@@ -1012,7 +1010,7 @@ Examples:
 				existingAliases = aliases
 
 				// Ensure cloud models are authenticated
-				if isCloudModel(cmd.Context(), client, model) {
+				if isCloudModelName(model) {
 					if err := ensureAuth(cmd.Context(), client, map[string]bool{model: true}, []string{model}); err != nil {
 						return err
 					}

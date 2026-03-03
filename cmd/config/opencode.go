@@ -12,7 +12,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/internal/modelref"
 )
@@ -148,7 +147,6 @@ func (o *OpenCode) Edit(modelList []string) error {
 		}
 	}
 
-	client, _ := api.ClientFromEnvironment()
 
 	for _, model := range modelList {
 		if existing, ok := models[model].(map[string]any); ok {
@@ -159,7 +157,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 					existing["name"] = strings.TrimSuffix(name, " [Ollama]")
 				}
 			}
-			if isCloudModel(context.Background(), client, model) {
+			if isCloudModelName(model) {
 				if l, ok := lookupCloudModelLimit(model); ok {
 					existing["limit"] = map[string]any{
 						"context": l.Context,
@@ -173,7 +171,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 			"name":    model,
 			"_launch": true,
 		}
-		if isCloudModel(context.Background(), client, model) {
+		if isCloudModelName(model) {
 			if l, ok := lookupCloudModelLimit(model); ok {
 				entry["limit"] = map[string]any{
 					"context": l.Context,
