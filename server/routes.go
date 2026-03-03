@@ -489,7 +489,8 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		// the real chat handler, but doing this as a stopgap to get renderer
 		// support for generate
 		if values.Messages != nil && values.Suffix == "" && req.Template == "" {
-			prompt, images, err = chatPrompt(c.Request.Context(), m, r.Tokenize, opts, values.Messages, []api.Tool{}, req.Think, req.Truncate == nil || *req.Truncate)
+			genTruncate := (req.Truncate == nil || *req.Truncate) && !m.IsMLX()
+			prompt, images, err = chatPrompt(c.Request.Context(), m, r.Tokenize, opts, values.Messages, []api.Tool{}, req.Think, genTruncate)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
@@ -562,6 +563,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					PromptEvalDuration: cr.PromptEvalDuration,
 					EvalCount:          cr.EvalCount,
 					EvalDuration:       cr.EvalDuration,
+					PeakMemory:         cr.PeakMemory,
 				},
 				Logprobs: toAPILogprobs(cr.Logprobs),
 			}
@@ -602,6 +604,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				s.metrics.PromptEvalDuration.Add(c.Request.Context(), cr.PromptEvalDuration.Seconds(), attrs)
 				s.metrics.EvalCount.Add(c.Request.Context(), int64(cr.EvalCount), attrs)
 				s.metrics.EvalDuration.Add(c.Request.Context(), cr.EvalDuration.Seconds(), attrs)
+				s.metrics.PeakMemory.Record(c.Request.Context(), int64(cr.PeakMemory), attrs)
 
 				if !req.Raw {
 					tokens, err := r.Tokenize(c.Request.Context(), prompt+sb.String())
@@ -839,6 +842,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	s.metrics.LoadDuration.Add(c.Request.Context(), resp.LoadDuration.Seconds(), attrs)
 	s.metrics.PromptEvalCount.Add(c.Request.Context(), int64(resp.PromptEvalCount), attrs)
 	s.metrics.PromptEvalDuration.Add(c.Request.Context(), resp.TotalDuration.Seconds(), attrs)
+	// reset? s.metrics.PeakMemory.Record(c.Request.Context(), int64(resp.PeakMemory), attrs)
 
 	c.JSON(http.StatusOK, resp)
 }
@@ -1988,6 +1992,9 @@ func (s *Server) PsHandler(c *gin.Context) {
 		}
 		if v.llama != nil {
 			mr.ContextLength = v.llama.ContextLength()
+			total, vram := v.llama.MemorySize()
+			mr.Size = int64(total)
+			mr.SizeVRAM = int64(vram)
 		}
 		// The scheduler waits to set expiresAt, so if a model is loading it's
 		// possible that it will be set to the unix epoch. For those cases, just
@@ -2250,6 +2257,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	truncate := req.Truncate == nil || *req.Truncate
+	if m.IsMLX() {
+		truncate = false
+	}
 	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, processedTools, req.Think, truncate)
 	if err != nil {
 		slog.Error("chat prompt error", "error", err)
@@ -2346,6 +2356,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						PromptEvalDuration: r.PromptEvalDuration,
 						EvalCount:          r.EvalCount,
 						EvalDuration:       r.EvalDuration,
+						PeakMemory:         r.PeakMemory,
 					},
 					Logprobs: toAPILogprobs(r.Logprobs),
 				}
@@ -2365,6 +2376,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					s.metrics.PromptEvalDuration.Add(c.Request.Context(), r.PromptEvalDuration.Seconds(), attrs)
 					s.metrics.EvalCount.Add(c.Request.Context(), int64(r.EvalCount), attrs)
 					s.metrics.EvalDuration.Add(c.Request.Context(), r.EvalDuration.Seconds(), attrs)
+					s.metrics.PeakMemory.Record(c.Request.Context(), int64(r.PeakMemory), attrs)
 				}
 
 				if builtinParser != nil {

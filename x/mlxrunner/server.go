@@ -50,9 +50,11 @@ func Execute(args []string) error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewEncoder(w).Encode(map[string]any{
-			"status":   0,
-			"progress": 100,
+		if err := json.NewEncoder(w).Encode(statusResponse{
+			Status:        0,
+			Progress:      100,
+			ContextLength: runner.contextLength,
+			Memory:        uint64(mlx.ActiveMemory() + mlx.CacheMemory()),
 		}); err != nil {
 			slog.Error("Failed to encode response", "error", err)
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -78,7 +80,7 @@ func Execute(args []string) error {
 	})
 
 	mux.HandleFunc("POST /v1/completions", func(w http.ResponseWriter, r *http.Request) {
-		request := Request{Responses: make(chan Response)}
+		request := Request{Responses: make(chan CompletionResponse)}
 
 		if err := json.NewDecoder(r.Body).Decode(&request.TextCompletionsRequest); err != nil {
 			slog.Error("Failed to decode request", "error", err)
@@ -87,9 +89,6 @@ func Execute(args []string) error {
 		}
 
 		request.Options.MaxTokens = cmp.Or(request.Options.MaxTokens, request.Options.NumPredict)
-		if request.Options.MaxTokens < 1 {
-			request.Options.MaxTokens = 16 << 10
-		}
 
 		request.Pipeline = runner.TextGenerationPipeline
 		request.Sampler = sample.New(

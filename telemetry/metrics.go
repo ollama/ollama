@@ -28,6 +28,7 @@ type Metrics struct {
 	PromptEvalDuration metric.Float64Counter
 	EvalCount          metric.Int64Counter
 	EvalDuration       metric.Float64Counter
+	PeakMemory         metric.Int64Gauge
 }
 
 func NewMetrics(meter metric.Meter) *Metrics {
@@ -79,6 +80,12 @@ func NewMetrics(meter metric.Meter) *Metrics {
 		metric.WithUnit("seconds"),
 	)
 
+	peakMemory, _ := meter.Int64Gauge(
+		"ollama_peak_memory_bytes",
+		metric.WithDescription("The peak memory used during the computation in bytes."),
+		metric.WithUnit("bytes"),
+	)
+
 	return &Metrics{
 		Start:              build,
 		Requests:           req,
@@ -88,6 +95,7 @@ func NewMetrics(meter metric.Meter) *Metrics {
 		PromptEvalDuration: promptEvalDuration,
 		EvalCount:          evalCount,
 		EvalDuration:       evalDuration,
+		PeakMemory:         peakMemory,
 	}
 }
 
