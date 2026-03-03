@@ -504,6 +504,7 @@ func generateEmbedding(cmd *cobra.Command, modelName, input string, keepAlive *a
 	return nil
 }
 
+// TODO(parthsareen): consolidate with TUI signin flow
 func handleCloudAuthorizationError(err error) bool {
 	var authErr api.AuthorizationError
 	if errors.As(err, &authErr) && authErr.StatusCode == http.StatusUnauthorized {
