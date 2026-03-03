@@ -161,7 +161,7 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 		return nil, nil, nil, fmt.Errorf("%s %w", name, err)
 	}
 
-	useImagegen, _ := requestOpts["use_imagegen_runner"].(bool)
+	// Deprecated runner override option; ignore if present.
 	delete(requestOpts, "use_imagegen_runner")
 
 	opts, err := s.modelOptions(model, requestOpts)
@@ -169,7 +169,7 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 		return nil, nil, nil, err
 	}
 
-	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive, useImagegen)
+	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive)
 	var runner *runnerRef
 	select {
 	case runner = <-runnerCh:
