@@ -16,7 +16,7 @@ go run . serve
 
 <Note>
   Ollama includes native code compiled with CGO. From time to time these data structures can change and CGO can get out of sync resulting in unexpected crashes. You can force a full build of the native code by running `go clean -cache` first.
-</Note> 
+</Note>
 
 
 ## macOS (Apple Silicon)
@@ -109,9 +109,9 @@ Install prerequisites:
 - (Optional) VULKAN GPU support
     - [VULKAN SDK](https://vulkan.lunarg.com/sdk/home) - useful for AMD/Intel GPUs
     - Or install via package manager: `sudo apt install vulkan-sdk` (Ubuntu/Debian) or `sudo dnf install vulkan-sdk` (Fedora/CentOS)
-<Warning>
+<Note>
   Ensure prerequisites are in `PATH` before running CMake.
-</Warning>
+</Note>
 
 
 Then, configure and build the project:
@@ -147,29 +147,29 @@ To run tests, use `go test`:
 go test ./...
 ```
 
-<Note>
-  In rare circumstances, you may need to change a package using the new "synctest" package in go1.24.
+## Go 1.24+ requirement
 
-  If you do not have the "synctest" package enabled, you will not see build or test failures resulting from your change(s), if any, locally, but CI will break.
+In rare circumstances, you may need to change a package using the new "synctest" package in go1.24.
 
-  If you see failures in CI, you can either keep pushing changes to see if the CI build passes, or you can enable the "synctest" package locally to see the failures before pushing.
+If you do not have the "synctest" package enabled, you will not see build or test failures resulting from your change(s), if any, locally, but CI will break.
 
-  To enable the "synctest" package for testing, run the following command:
+If you see failures in CI, you can either keep pushing changes to see if the CI build passes, or you can enable the "synctest" package locally to see the failures before pushing.
 
-  ```shell
-  GOEXPERIMENT=synctest go test ./...
-  ```
+To enable the "synctest" package for testing, run the following command:
 
-  If you wish to enable synctest for all go commands, you can set the `GOEXPERIMENT` environment variable in your shell profile or by using:
+```shell
+GOEXPERIMENT=synctest go test ./...
+```
 
-  ```shell
-  go env -w GOEXPERIMENT=synctest
-  ```
+If you wish to enable synctest for all go commands, you can set the `GOEXPERIMENT` environment variable in your shell profile or by using:
 
-  Which will enable the "synctest" package for all go commands without needing to set it for all shell sessions.
+```shell
+go env -w GOEXPERIMENT=synctest
+```
 
-  The synctest package is not required for production builds.
-</Note>
+Which will enable the "synctest" package for all go commands without needing to set it for all shell sessions.
+
+The synctest package is not required for production builds.
 
 ## Library detection
 
