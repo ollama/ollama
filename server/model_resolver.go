@@ -45,3 +45,29 @@ func parseAndValidateModelRef(raw string) (parsedModelRef, error) {
 		Source:   parsed.Source,
 	}, nil
 }
+
+func parseAndValidatePullModelRef(raw string) (parsedModelRef, error) {
+	var zero parsedModelRef
+
+	parsedRef, err := modelref.ParseRef(raw)
+	if err != nil {
+		return zero, err
+	}
+
+	normalizedName, _, err := modelref.NormalizePullName(raw)
+	if err != nil {
+		return zero, err
+	}
+
+	name := model.ParseName(normalizedName)
+	if !name.IsValid() {
+		return zero, model.Unqualified(name)
+	}
+
+	return parsedModelRef{
+		Original: parsedRef.Original,
+		Base:     normalizedName,
+		Name:     name,
+		Source:   parsedRef.Source,
+	}, nil
+}

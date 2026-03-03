@@ -102,6 +102,39 @@ func TestCloudDisabledBlocksRemoteOperations(t *testing.T) {
 	})
 }
 
+func TestDeleteHandlerNormalizesExplicitSourceSuffixes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+
+	s := Server{}
+
+	tests := []string{
+		"gpt-oss:20b:local",
+		"gpt-oss:20b:cloud",
+		"qwen3:cloud",
+	}
+
+	for _, modelName := range tests {
+		t.Run(modelName, func(t *testing.T) {
+			w := createRequest(t, s.DeleteHandler, api.DeleteRequest{
+				Model: modelName,
+			})
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("expected status 404, got %d (%s)", w.Code, w.Body.String())
+			}
+
+			var resp map[string]string
+			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+				t.Fatal(err)
+			}
+			want := "model '" + modelName + "' not found"
+			if resp["error"] != want {
+				t.Fatalf("unexpected error: got %q, want %q", resp["error"], want)
+			}
+		})
+	}
+}
+
 func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())

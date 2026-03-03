@@ -117,3 +117,70 @@ func TestParseRef(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizePullName(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantName  string
+		wantCloud bool
+		wantErr   error
+	}{
+		{
+			name:     "explicit local strips source",
+			input:    "gpt-oss:20b:local",
+			wantName: "gpt-oss:20b",
+		},
+		{
+			name:      "explicit cloud with size maps to legacy dash cloud tag",
+			input:     "gpt-oss:20b:cloud",
+			wantName:  "gpt-oss:20b-cloud",
+			wantCloud: true,
+		},
+		{
+			name:      "legacy cloud with size remains stable",
+			input:     "gpt-oss:20b-cloud",
+			wantName:  "gpt-oss:20b-cloud",
+			wantCloud: true,
+		},
+		{
+			name:      "explicit cloud without tag maps to cloud tag",
+			input:     "qwen3:cloud",
+			wantName:  "qwen3:cloud",
+			wantCloud: true,
+		},
+		{
+			name:      "host port without tag keeps host port and appends cloud tag",
+			input:     "localhost:11434/library/foo:cloud",
+			wantName:  "localhost:11434/library/foo:cloud",
+			wantCloud: true,
+		},
+		{
+			name:    "conflicting source suffixes fail",
+			input:   "foo:cloud:local",
+			wantErr: ErrConflictingSourceSuffix,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotName, gotCloud, err := NormalizePullName(tt.input)
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("NormalizePullName(%q) error = %v, want %v", tt.input, err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("NormalizePullName(%q) returned error: %v", tt.input, err)
+			}
+
+			if gotName != tt.wantName {
+				t.Fatalf("normalized name = %q, want %q", gotName, tt.wantName)
+			}
+			if gotCloud != tt.wantCloud {
+				t.Fatalf("cloud = %v, want %v", gotCloud, tt.wantCloud)
+			}
+		})
+	}
+}

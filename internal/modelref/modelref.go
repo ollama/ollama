@@ -66,6 +66,33 @@ func StripCloudSourceTag(raw string) (string, bool) {
 	return parsedRef.Base, true
 }
 
+func NormalizePullName(raw string) (string, bool, error) {
+	parsedRef, err := ParseRef(raw)
+	if err != nil {
+		return "", false, err
+	}
+
+	if parsedRef.Source != ModelSourceCloud {
+		return parsedRef.Base, false, nil
+	}
+
+	return toLegacyCloudPullName(parsedRef.Base), true, nil
+}
+
+func toLegacyCloudPullName(base string) string {
+	if hasExplicitTag(base) {
+		return base + "-cloud"
+	}
+
+	return base + ":cloud"
+}
+
+func hasExplicitTag(name string) bool {
+	lastSlash := strings.LastIndex(name, "/")
+	lastColon := strings.LastIndex(name, ":")
+	return lastColon > lastSlash
+}
+
 func parseSourceSuffix(raw string) (string, ModelSource, bool) {
 	idx := strings.LastIndex(raw, ":")
 	if idx >= 0 {

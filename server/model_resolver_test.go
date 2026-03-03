@@ -125,3 +125,46 @@ func TestParseModelSelector(t *testing.T) {
 		}
 	})
 }
+
+func TestParsePullModelRef(t *testing.T) {
+	t.Run("explicit local is normalized", func(t *testing.T) {
+		got, err := parseAndValidatePullModelRef("gpt-oss:20b:local")
+		if err != nil {
+			t.Fatalf("parseAndValidatePullModelRef returned error: %v", err)
+		}
+
+		if got.Source != modelSourceLocal {
+			t.Fatalf("expected source local, got %v", got.Source)
+		}
+
+		if got.Base != "gpt-oss:20b" {
+			t.Fatalf("expected base gpt-oss:20b, got %q", got.Base)
+		}
+	})
+
+	t.Run("explicit cloud with size maps to legacy cloud suffix", func(t *testing.T) {
+		got, err := parseAndValidatePullModelRef("gpt-oss:20b:cloud")
+		if err != nil {
+			t.Fatalf("parseAndValidatePullModelRef returned error: %v", err)
+		}
+		if got.Base != "gpt-oss:20b-cloud" {
+			t.Fatalf("expected base gpt-oss:20b-cloud, got %q", got.Base)
+		}
+		if got.Name.String() != "registry.ollama.ai/library/gpt-oss:20b-cloud" {
+			t.Fatalf("unexpected resolved name: %q", got.Name.String())
+		}
+	})
+
+	t.Run("explicit cloud without size maps to cloud tag", func(t *testing.T) {
+		got, err := parseAndValidatePullModelRef("qwen3:cloud")
+		if err != nil {
+			t.Fatalf("parseAndValidatePullModelRef returned error: %v", err)
+		}
+		if got.Base != "qwen3:cloud" {
+			t.Fatalf("expected base qwen3:cloud, got %q", got.Base)
+		}
+		if got.Name.String() != "registry.ollama.ai/library/qwen3:cloud" {
+			t.Fatalf("unexpected resolved name: %q", got.Name.String())
+		}
+	})
+}
