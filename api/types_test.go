@@ -378,6 +378,46 @@ func TestToolCallFunction_IndexAlwaysMarshals(t *testing.T) {
 	assert.Equal(t, float64(3), raw["index"])
 }
 
+func TestToolCallThoughtSignatureRoundtrip(t *testing.T) {
+	sig := []byte("opaque-gemini3-signature")
+	original := ToolCall{
+		ID:               "call_xyz",
+		ThoughtSignature: sig,
+		Function: ToolCallFunction{
+			Name:      "search",
+			Arguments: testArgs(map[string]any{"query": "ollama"}),
+		},
+	}
+
+	data, err := json.Marshal(original)
+	require.NoError(t, err)
+
+	var decoded ToolCall
+	require.NoError(t, json.Unmarshal(data, &decoded))
+
+	assert.Equal(t, original.ID, decoded.ID)
+	assert.Equal(t, original.ThoughtSignature, decoded.ThoughtSignature)
+	assert.Equal(t, original.Function.Name, decoded.Function.Name)
+}
+
+func TestToolCallThoughtSignatureOmittedWhenEmpty(t *testing.T) {
+	tc := ToolCall{
+		ID: "call_abc",
+		Function: ToolCallFunction{
+			Name:      "ping",
+			Arguments: testArgs(map[string]any{}),
+		},
+	}
+
+	data, err := json.Marshal(tc)
+	require.NoError(t, err)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(data, &raw))
+	_, exists := raw["thought_signature"]
+	assert.False(t, exists, "thought_signature should be absent when not set")
+}
+
 func TestPropertyType_UnmarshalJSON(t *testing.T) {
 	tests := []struct {
 		name     string
