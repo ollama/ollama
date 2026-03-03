@@ -22,12 +22,22 @@ func TestIsLocalModel(t *testing.T) {
 		},
 		{
 			name:      "cloud model",
-			modelName: "gpt-4-cloud",
+			modelName: "gpt-oss:latest-cloud",
+			expected:  false,
+		},
+		{
+			name:      "cloud model with :cloud suffix",
+			modelName: "gpt-oss:cloud",
 			expected:  false,
 		},
 		{
 			name:      "cloud model with version",
-			modelName: "claude-3-cloud",
+			modelName: "gpt-oss:20b-cloud",
+			expected:  false,
+		},
+		{
+			name:      "cloud model with version and :cloud suffix",
+			modelName: "gpt-oss:20b:cloud",
 			expected:  false,
 		},
 		{
@@ -134,7 +144,7 @@ func TestTruncateToolOutput(t *testing.T) {
 		{
 			name:          "long output cloud model - uses 10k limit",
 			output:        string(localLimitOutput), // 20k chars, under 10k token limit
-			modelName:     "gpt-4-cloud",
+			modelName:     "gpt-oss:latest-cloud",
 			host:          "",
 			shouldTrim:    false,
 			expectedLimit: defaultTokenLimit,
@@ -142,7 +152,7 @@ func TestTruncateToolOutput(t *testing.T) {
 		{
 			name:          "very long output cloud model - trimmed at 10k",
 			output:        string(defaultLimitOutput),
-			modelName:     "gpt-4-cloud",
+			modelName:     "gpt-oss:latest-cloud",
 			host:          "",
 			shouldTrim:    true,
 			expectedLimit: defaultTokenLimit,

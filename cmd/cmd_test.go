@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -702,6 +703,139 @@ func TestRunEmbeddingModelNoInput(t *testing.T) {
 	err := RunHandler(cmd, []string{"test-embedding-model"})
 	if err == nil || !strings.Contains(err.Error(), "embedding models require input text") {
 		t.Fatalf("expected error about missing input, got %v", err)
+	}
+}
+
+func TestRunHandler_CloudAuthErrorOnShow_PrintsSigninMessage(t *testing.T) {
+	var generateCalled bool
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/show" && r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusUnauthorized)
+			if err := json.NewEncoder(w).Encode(map[string]string{
+				"error":      "unauthorized",
+				"signin_url": "https://ollama.com/signin",
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		case r.URL.Path == "/api/generate" && r.Method == http.MethodPost:
+			generateCalled = true
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.GenerateResponse{Done: true}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("truncate", false, "")
+	cmd.Flags().Int("dimensions", 0, "")
+	cmd.Flags().Bool("verbose", false, "")
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
+
+	oldStdout := os.Stdout
+	readOut, writeOut, _ := os.Pipe()
+	os.Stdout = writeOut
+	t.Cleanup(func() { os.Stdout = oldStdout })
+
+	err := RunHandler(cmd, []string{"gpt-oss:20b:cloud", "hi"})
+
+	_ = writeOut.Close()
+	var out bytes.Buffer
+	_, _ = io.Copy(&out, readOut)
+
+	if err != nil {
+		t.Fatalf("RunHandler returned error: %v", err)
+	}
+
+	if generateCalled {
+		t.Fatal("expected run to stop before /api/generate after unauthorized /api/show")
+	}
+
+	if !strings.Contains(out.String(), "You need to be signed in to Ollama to run Cloud models.") {
+		t.Fatalf("expected sign-in guidance message, got %q", out.String())
+	}
+
+	if !strings.Contains(out.String(), "https://ollama.com/signin") {
+		t.Fatalf("expected signin_url in output, got %q", out.String())
+	}
+}
+
+func TestRunHandler_CloudAuthErrorOnGenerate_PrintsSigninMessage(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/show" && r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityCompletion},
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		case r.URL.Path == "/api/generate" && r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusUnauthorized)
+			if err := json.NewEncoder(w).Encode(map[string]string{
+				"error":      "unauthorized",
+				"signin_url": "https://ollama.com/signin",
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("truncate", false, "")
+	cmd.Flags().Int("dimensions", 0, "")
+	cmd.Flags().Bool("verbose", false, "")
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
+
+	oldStdout := os.Stdout
+	readOut, writeOut, _ := os.Pipe()
+	os.Stdout = writeOut
+	t.Cleanup(func() { os.Stdout = oldStdout })
+
+	err := RunHandler(cmd, []string{"gpt-oss:20b:cloud", "hi"})
+
+	_ = writeOut.Close()
+	var out bytes.Buffer
+	_, _ = io.Copy(&out, readOut)
+
+	if err != nil {
+		t.Fatalf("RunHandler returned error: %v", err)
+	}
+
+	if !strings.Contains(out.String(), "You need to be signed in to Ollama to run Cloud models.") {
+		t.Fatalf("expected sign-in guidance message, got %q", out.String())
+	}
+
+	if !strings.Contains(out.String(), "https://ollama.com/signin") {
+		t.Fatalf("expected signin_url in output, got %q", out.String())
 	}
 }
 
@@ -1664,20 +1798,26 @@ func TestRunOptions_Copy_Independence(t *testing.T) {
 func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 	tests := []struct {
 		name          string
+		model         string
 		remoteHost    string
+		remoteModel   string
 		whoamiStatus  int
 		whoamiResp    any
 		expectedError string
 	}{
 		{
 			name:         "ollama.com cloud model - user signed in",
+			model:        "test-cloud-model",
 			remoteHost:   "https://ollama.com",
+			remoteModel:  "test-model",
 			whoamiStatus: http.StatusOK,
 			whoamiResp:   api.UserResponse{Name: "testuser"},
 		},
 		{
 			name:         "ollama.com cloud model - user not signed in",
+			model:        "test-cloud-model",
 			remoteHost:   "https://ollama.com",
+			remoteModel:  "test-model",
 			whoamiStatus: http.StatusUnauthorized,
 			whoamiResp: map[string]string{
 				"error":      "unauthorized",
@@ -1687,7 +1827,33 @@ func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 		},
 		{
 			name:         "non-ollama.com remote - no auth check",
+			model:        "test-cloud-model",
 			remoteHost:   "https://other-remote.com",
+			remoteModel:  "test-model",
+			whoamiStatus: http.StatusUnauthorized, // should not be called
+			whoamiResp:   nil,
+		},
+		{
+			name:         "explicit :cloud model - auth check without remote metadata",
+			model:        "kimi-k2.5:cloud",
+			remoteHost:   "",
+			remoteModel:  "",
+			whoamiStatus: http.StatusOK,
+			whoamiResp:   api.UserResponse{Name: "testuser"},
+		},
+		{
+			name:         "explicit -cloud model - auth check without remote metadata",
+			model:        "kimi-k2.5:latest-cloud",
+			remoteHost:   "",
+			remoteModel:  "",
+			whoamiStatus: http.StatusOK,
+			whoamiResp:   api.UserResponse{Name: "testuser"},
+		},
+		{
+			name:         "dash cloud-like name without explicit source does not require auth",
+			model:        "test-cloud-model",
+			remoteHost:   "",
+			remoteModel:  "",
 			whoamiStatus: http.StatusUnauthorized, // should not be called
 			whoamiResp:   nil,
 		},
@@ -1702,7 +1868,7 @@ func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 					w.Header().Set("Content-Type", "application/json")
 					if err := json.NewEncoder(w).Encode(api.ShowResponse{
 						RemoteHost:  tt.remoteHost,
-						RemoteModel: "test-model",
+						RemoteModel: tt.remoteModel,
 					}); err != nil {
 						http.Error(w, err.Error(), http.StatusInternalServerError)
 					}
@@ -1715,6 +1881,8 @@ func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 							http.Error(w, err.Error(), http.StatusInternalServerError)
 						}
 					}
+				case "/api/generate":
+					w.WriteHeader(http.StatusOK)
 				default:
 					http.NotFound(w, r)
 				}
@@ -1727,13 +1895,13 @@ func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 			cmd.SetContext(t.Context())
 
 			opts := &runOptions{
-				Model:       "test-cloud-model",
+				Model:       tt.model,
 				ShowConnect: false,
 			}
 
 			err := loadOrUnloadModel(cmd, opts)
 
-			if strings.HasPrefix(tt.remoteHost, "https://ollama.com") {
+			if strings.HasPrefix(tt.remoteHost, "https://ollama.com") || modelref.HasExplicitCloudSource(tt.model) {
 				if !whoamiCalled {
 					t.Error("expected whoami to be called for ollama.com cloud model")
 				}
