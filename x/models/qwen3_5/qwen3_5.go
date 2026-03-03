@@ -431,7 +431,6 @@ func freeTensorKeys(tensors map[string]*mlx.Array, keys ...string) {
 			continue
 		}
 		if t := tensors[k]; t != nil {
-			mlx.Unpin(t)
 			delete(tensors, k)
 		}
 	}
@@ -444,7 +443,6 @@ func stackAndClone(parts []*mlx.Array) *mlx.Array {
 	stacked := mlx.Stack(parts, 0)
 	cloned := stacked.Clone()
 	mlx.Eval(cloned)
-	mlx.Unpin(stacked)
 	return cloned
 }
 
@@ -455,7 +453,6 @@ func transposeExpertWeightForGatherMM(w *mlx.Array) *mlx.Array {
 	t := mlx.Transpose(w, 0, 2, 1)
 	cloned := t.Clone()
 	mlx.Eval(cloned)
-	mlx.Unpin(t)
 	return cloned
 }
 

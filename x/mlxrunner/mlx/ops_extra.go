@@ -429,7 +429,6 @@ func Collect(v any) []*Array {
 	return arrays
 }
 
-// Copy copies an array into a fresh leaf value with no Go-side graph inputs.
 func Copy(a *Array) *Array {
 	if a == nil || !a.Valid() {
 		return a

@@ -139,16 +139,13 @@ func initGatedDeltaMetalKernel() {
 	)
 }
 
-// GatedDeltaKernel runs a fused Metal kernel for the qwen3.5 recurrent update.
+// gatedDeltaKernel runs a fused Metal kernel for the qwen3.5 recurrent update.
 // It returns ok=false on unsupported shapes/devices or kernel setup/apply failure.
-func GatedDeltaKernel(q, k, v, g, beta, state *Array) (y, nextState *Array, ok bool) {
+func gatedDeltaKernel(q, k, v, g, beta, state *Array) (y, nextState *Array, ok bool) {
 	if gatedDeltaMetalDisabled {
 		return nil, nil, false
 	}
 	if q == nil || k == nil || v == nil || g == nil || beta == nil || state == nil {
-		return nil, nil, false
-	}
-	if !q.Valid() || !k.Valid() || !v.Valid() || !g.Valid() || !beta.Valid() || !state.Valid() {
 		return nil, nil, false
 	}
 
@@ -287,9 +284,6 @@ func gatedDeltaFallback(q, k, v, g, beta, state *Array) (y, nextState *Array) {
 	if q == nil || k == nil || v == nil || g == nil || beta == nil || state == nil {
 		return nil, nil
 	}
-	if !q.Valid() || !k.Valid() || !v.Valid() || !g.Valid() || !beta.Valid() || !state.Valid() {
-		return nil, nil
-	}
 
 	qd := q.Dims()
 	kd := k.Dims()
@@ -365,8 +359,12 @@ func gatedDeltaFallback(q, k, v, g, beta, state *Array) (y, nextState *Array) {
 // It uses the fused Metal kernel when available and otherwise falls back to a
 // backend-agnostic MLX implementation with identical inputs/outputs.
 func GatedDelta(q, k, v, g, beta, state *Array) (y, nextState *Array) {
-	if y, nextState, ok := GatedDeltaKernel(q, k, v, g, beta, state); ok {
+	if y, nextState, ok := gatedDeltaKernel(q, k, v, g, beta, state); ok {
 		return y, nextState
 	}
-	return gatedDeltaFallback(q, k, v, g, beta, state)
+	y, nextState = gatedDeltaFallback(q, k, v, g, beta, state)
+	if y == nil || nextState == nil {
+		panic("mlx.GatedDelta: fallback failed (invalid inputs or unsupported shapes)")
+	}
+	return y, nextState
 }

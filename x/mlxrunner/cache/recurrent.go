@@ -41,9 +41,6 @@ func (c *RecurrentCache) setStateMaterialized(old, v *mlx.Array) *mlx.Array {
 	if old != nil && old != snap {
 		mlx.Unpin(old)
 	}
-	if v != snap && v != old {
-		mlx.Unpin(v)
-	}
 
 	return snap
 }
@@ -82,10 +79,6 @@ func (c *RecurrentCache) setStateDetached(old, v *mlx.Array, ensureContiguous bo
 	if old != nil && old != detached {
 		mlx.Unpin(old)
 	}
-
-	// Intentionally do not force-release root/v here. In the fast path, the detached
-	// handle aliases the same MLX value and may still be lazily computed. Releasing the
-	// source handles can invalidate the cached state before the next eval/sweep point.
 
 	return detached
 }
