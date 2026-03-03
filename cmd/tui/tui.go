@@ -11,7 +11,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
-	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/version"
 )
 
@@ -148,13 +147,7 @@ type signInCheckMsg struct {
 type clearStatusMsg struct{}
 
 func (m *model) modelExists(name string) bool {
-	if name == "" {
-		return false
-	}
-	if modelref.HasExplicitCloudSource(name) {
-		return true
-	}
-	if m.availableModels == nil {
+	if m.availableModels == nil || name == "" {
 		return false
 	}
 	if m.availableModels[name] {
@@ -216,7 +209,7 @@ func (m *model) openMultiModelModal(integration string) {
 }
 
 func isCloudModel(name string) bool {
-	return modelref.HasExplicitCloudSource(name)
+	return strings.HasSuffix(name, ":cloud") || strings.HasSuffix(name, "-cloud")
 }
 
 func cloudStatusDisabled(client *api.Client) bool {
