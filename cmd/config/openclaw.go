@@ -608,16 +608,16 @@ func clearSessionModelOverride(primary string) {
 
 const webSearchNpmPackage = "@ollama/openclaw-web-search"
 
-// ensureWebSearchPlugin installs the openclaw-web-search extension into the OpenClaw
-// extensions directory if it isn't already present. Returns true if the extension
-// is available (either already installed or just installed).
+// ensureWebSearchPlugin installs the openclaw-web-search extension into the
+// user-level extensions directory (~/.openclaw/extensions/) if it isn't already
+// present. Returns true if the extension is available.
 func ensureWebSearchPlugin() bool {
-	extDir := openclawExtensionsDir()
-	if extDir == "" {
+	home, err := os.UserHomeDir()
+	if err != nil {
 		return false
 	}
 
-	pluginDir := filepath.Join(extDir, "openclaw-web-search")
+	pluginDir := filepath.Join(home, ".openclaw", "extensions", "openclaw-web-search")
 	if _, err := os.Stat(filepath.Join(pluginDir, "index.ts")); err == nil {
 		return true // already installed
 	}
@@ -704,30 +704,6 @@ func registerWebSearchPlugin() {
 		return
 	}
 	_ = os.WriteFile(configPath, out, 0o600)
-}
-
-// openclawExtensionsDir resolves the extensions directory inside the openclaw
-// npm package. Returns "" if the binary or path cannot be resolved.
-func openclawExtensionsDir() string {
-	bin, err := exec.LookPath("openclaw")
-	if err != nil {
-		bin, err = exec.LookPath("clawdbot")
-		if err != nil {
-			return ""
-		}
-	}
-	binPath, err := filepath.EvalSymlinks(bin)
-	if err != nil {
-		return ""
-	}
-	// The binary symlink resolves to <pkg>/openclaw.mjs (package root).
-	// Extensions live at <pkg>/extensions/.
-	pkgDir := filepath.Dir(binPath)
-	extDir := filepath.Join(pkgDir, "extensions")
-	if info, err := os.Stat(extDir); err == nil && info.IsDir() {
-		return extDir
-	}
-	return ""
 }
 
 // openclawModelConfig builds an OpenClaw model config entry with capability detection.

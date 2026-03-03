@@ -154,6 +154,10 @@ func handleURLSchemeRequest(urlScheme string) {
 }
 
 func UpdateAvailable(ver string) error {
+	if app.t == nil {
+		slog.Debug("tray not yet initialized, skipping update notification")
+		return nil
+	}
 	return app.t.UpdateAvailable(ver)
 }
 
@@ -163,6 +167,14 @@ func osRun(shutdown func(), hasCompletedFirstRun, startHidden bool) {
 	app.t, err = wintray.NewTray(app)
 	if err != nil {
 		log.Fatalf("Failed to start: %s", err)
+	}
+
+	// Check for pending updates now that the tray is initialized.
+	// The platform-independent check in app.go fires before osRun,
+	// when app.t is still nil, so we must re-check here.
+	if updater.IsUpdatePending() {
+		slog.Debug("update pending on startup, showing tray notification")
+		UpdateAvailable("")
 	}
 
 	signals := make(chan os.Signal, 1)

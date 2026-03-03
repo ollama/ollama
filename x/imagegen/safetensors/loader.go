@@ -37,9 +37,11 @@ func QuantizationParams(quantization string) (groupSize, bits int, mode string) 
 	case "MXFP8":
 		// Microsoft MX FP8: group_size=32, bits=8, E4M3 scales (no qbias)
 		return 32, 8, "mxfp8"
-	case "FP8", "Q8", "INT8", "":
+	case "FP8", "Q8", "INT8":
 		// 8-bit quantization with affine mode (default for quantized models)
 		return 64, 8, "affine"
+	case "":
+		return 0, 0, ""
 	default:
 		return 32, 8, "affine" // Default to affine
 	}

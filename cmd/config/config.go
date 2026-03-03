@@ -233,6 +233,9 @@ func ModelExists(ctx context.Context, name string) bool {
 	if name == "" {
 		return false
 	}
+	if isCloudModelName(name) {
+		return true
+	}
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return false

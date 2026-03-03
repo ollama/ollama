@@ -295,6 +295,86 @@ func TestMinP(t *testing.T) {
 	}
 }
 
+func TestTokenCounts(t *testing.T) {
+	history := make([]int32, 70)
+	history[0] = 7
+	history[69] = 7
+
+	counts := tokenCounts(history, 8)
+	if got := counts[7]; got != 1 {
+		t.Fatalf("lookback mismatch: got %d want %d", got, 1)
+	}
+}
+
+func TestApplyPenalty(t *testing.T) {
+	logit := applyPenalty(5.0, 3, 1.0, 1.5, 0.5)
+	if math.Abs(float64(logit-2.0)) > 1e-6 {
+		t.Fatalf("unexpected penalty result: got %f want %f", logit, 2.0)
+	}
+
+	logit = applyPenalty(4.0, 1, 2.0, 0, 0)
+	if math.Abs(float64(logit-2.0)) > 1e-6 {
+		t.Fatalf("unexpected repeat penalty result for positive logits: got %f want %f", logit, 2.0)
+	}
+
+	logit = applyPenalty(-4.0, 1, 2.0, 0, 0)
+	if math.Abs(float64(logit-(-8.0))) > 1e-6 {
+		t.Fatalf("unexpected repeat penalty result for negative logits: got %f want %f", logit, -8.0)
+	}
+}
+
+func TestSamplerPresencePenalty(t *testing.T) {
+	logits := []float32{0.0, 5.0, 0.0}
+
+	baseline := NewSampler(0, 0, 1, 0, 1, 0, 0, -1, nil)
+	baseline.Accept(1)
+	got, err := baseline.Sample(logits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 1 {
+		t.Fatalf("unexpected baseline token: got %d want %d", got, 1)
+	}
+
+	presence := NewSampler(0, 0, 1, 0, 1, 6, 0, -1, nil)
+	presence.Accept(1)
+	got, err = presence.Sample(logits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == 1 {
+		t.Fatalf("presence penalty did not change repeated token selection")
+	}
+}
+
+func TestSamplerFrequencyPenalty(t *testing.T) {
+	logits := []float32{0.0, 5.0, 4.0}
+
+	baseline := NewSampler(0, 0, 1, 0, 1, 0, 0, -1, nil)
+	baseline.Accept(1)
+	baseline.Accept(1)
+	baseline.Accept(1)
+	got, err := baseline.Sample(logits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 1 {
+		t.Fatalf("unexpected baseline token: got %d want %d", got, 1)
+	}
+
+	frequency := NewSampler(0, 0, 1, 0, 1, 0, 1.0, -1, nil)
+	frequency.Accept(1)
+	frequency.Accept(1)
+	frequency.Accept(1)
+	got, err = frequency.Sample(logits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 2 {
+		t.Fatalf("frequency penalty did not demote repeated token as expected: got %d want %d", got, 2)
+	}
+}
+
 func BenchmarkTransforms(b *testing.B) {
 	// Generate random logits
 	tokens := make([]token, 1<<16)

@@ -4,11 +4,15 @@ package mlxrunner
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net/http"
 	"time"
 
-	"github.com/ollama/ollama/x/mlxrunner/cache"
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
@@ -26,27 +30,61 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	} else {
 		mlx.DisableCompile()
 	}
+	mlx.ResetPeakMemory()
+
+	var (
+		sample, logprobs         *mlx.Array
+		nextSample, nextLogprobs *mlx.Array
+	)
+
+	defer func() {
+		mlx.Unpin(sample, logprobs)
+		mlx.Unpin(nextSample, nextLogprobs)
+		mlx.Sweep()
+		mlx.ClearCache()
+
+		if slog.Default().Enabled(context.TODO(), logutil.LevelTrace) {
+			mlx.LogArrays()
+			r.cache.log()
+		}
+		slog.Info("peak memory", "size", mlx.PrettyBytes(mlx.PeakMemory()))
+	}()
 
 	inputs := r.Tokenizer.Encode(request.Prompt, true)
+	if len(inputs) == 0 {
+		return errors.New("empty prompt")
+	}
 
-	caches, tokens := r.FindNearestCache(inputs)
-	if len(caches) == 0 {
-		if cacheFactory, ok := r.Model.(interface{ NewCaches() []cache.Cache }); ok {
-			caches = cacheFactory.NewCaches()
-		} else {
-			caches = make([]cache.Cache, r.Model.NumLayers())
-			for i := range caches {
-				caches[i] = cache.NewKVCache()
-			}
+	if len(inputs) >= r.contextLength {
+		return api.StatusError{
+			StatusCode:   http.StatusBadRequest,
+			ErrorMessage: fmt.Sprintf("input length (%d tokens) exceeds the model's maximum context length (%d tokens)", len(inputs), r.contextLength),
 		}
 	}
 
+	// Cap generation to stay within the model's context length
+	maxGenerate := r.contextLength - len(inputs)
+	if request.Options.MaxTokens <= 0 {
+		request.Options.MaxTokens = maxGenerate
+	} else {
+		request.Options.MaxTokens = min(request.Options.MaxTokens, maxGenerate)
+	}
+
+	session := r.cache.begin(r.Model, inputs)
+	defer session.close()
+	caches := session.caches
+	tokens := session.remaining
+
+	now := time.Now()
 	total, processed := len(tokens), 0
-	slog.Info("Prompt processing progress", "processed", processed, "total", total)
 	for total-processed > 1 {
+		if err := request.Ctx.Err(); err != nil {
+			return err
+		}
+
 		n := min(2<<10, total-processed-1)
-		temp := r.Model.Forward(mlx.FromValues(tokens[processed:processed+n], n).ExpandDims(0), caches)
-		defer mlx.Free(temp)
+		r.Model.Forward(mlx.FromValues(tokens[processed:processed+n], n).ExpandDims(0), caches)
+		mlx.Sweep()
 		mlx.Eval(func() []*mlx.Array {
 			s := make([]*mlx.Array, 2*len(caches))
 			for i, c := range caches {
@@ -65,56 +103,66 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		logits = logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1)
 
 		logprobs := logits.Subtract(logits.Logsumexp(true))
-		return request.Sample(logprobs), logprobs
+		sample := request.Sample(logprobs)
+
+		mlx.Pin(sample, logprobs)
+		mlx.Sweep()
+		mlx.AsyncEval(sample, logprobs)
+
+		return sample, logprobs
 	}
 
-	sample, logprobs := step(mlx.FromValues(tokens[processed:], total-processed))
-	mlx.AsyncEval(sample, logprobs)
+	sample, logprobs = step(mlx.FromValues(tokens[processed:], total-processed))
 
 	var b bytes.Buffer
 
-	now := time.Now()
-	final := Response{Done: true, PromptTokens: total, CompletionTokens: request.Options.MaxTokens, DoneReason: 1}
-	outputs := make([]int32, 0, request.Options.MaxTokens)
+	final := CompletionResponse{Done: true, PromptEvalCount: len(inputs), EvalCount: request.Options.MaxTokens, DoneReason: 1}
 	for i := range request.Options.MaxTokens {
-		nextSample, nextLogprobs := step(sample)
-		mlx.AsyncEval(nextSample, nextLogprobs)
+		if err := request.Ctx.Err(); err != nil {
+			return err
+		}
+
+		nextSample, nextLogprobs = step(sample)
 
 		if i == 0 {
-			slog.Info("Prompt processing progress", "processed", total, "total", total)
 			mlx.Eval(sample)
-			final.PromptTokensDuration = time.Since(now)
+			final.PromptEvalDuration = time.Since(now)
 			now = time.Now()
 		}
 
 		output := int32(sample.Int())
-		outputs = append(outputs, output)
+		session.outputs = append(session.outputs, output)
 
 		if r.Tokenizer.IsEOS(output) {
-			final.Token = int(output)
 			final.DoneReason = 0
-			final.CompletionTokens = i
+			final.EvalCount = i
 			break
 		}
 
-		request.Responses <- Response{
-			Text:  r.Decode(output, &b),
-			Token: int(output),
+		select {
+		case <-request.Ctx.Done():
+			return request.Ctx.Err()
+		case request.Responses <- CompletionResponse{
+			Content: r.Decode(output, &b),
+		}:
 		}
 
-		mlx.Free(sample, logprobs)
+		mlx.Unpin(sample, logprobs)
+		sample, logprobs = nextSample, nextLogprobs
+		nextSample, nextLogprobs = nil, nil
+
 		if i%256 == 0 {
 			mlx.ClearCache()
 		}
-
-		sample, logprobs = nextSample, nextLogprobs
 	}
 
-	mlx.Free(sample, logprobs)
-	final.CompletionTokensDuration = time.Since(now)
-	request.Responses <- final
-	r.InsertCache(append(inputs, outputs...), caches)
-	return nil
+	final.EvalDuration = time.Since(now)
+	select {
+	case <-request.Ctx.Done():
+		return request.Ctx.Err()
+	case request.Responses <- final:
+		return nil
+	}
 }
 
 func (r Runner) Decode(sample int32, b *bytes.Buffer) string {

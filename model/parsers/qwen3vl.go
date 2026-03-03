@@ -180,7 +180,22 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 			return events, false
 		}
 	case CollectingThinkingContent:
-		if strings.Contains(p.buffer.String(), thinkingCloseTag) {
+		acc := p.buffer.String()
+		thinkingCloseIdx := strings.Index(acc, thinkingCloseTag)
+		toolOpenIdx := strings.Index(acc, toolOpenTag)
+
+		// If a tool call starts before </think>, treat that as the end of thinking
+		// for parsing purposes and continue in tool-call mode.
+		if toolOpenIdx != -1 && (thinkingCloseIdx == -1 || toolOpenIdx < thinkingCloseIdx) {
+			before, _ := splitAtTag(&p.buffer, toolOpenTag, false)
+			if len(before) > 0 {
+				events = append(events, qwenEventThinkingContent{content: before})
+			}
+			p.state = CollectingToolContent
+			return events, true
+		}
+
+		if strings.Contains(acc, thinkingCloseTag) {
 			thinking, remaining := splitAtTag(&p.buffer, thinkingCloseTag, true)
 			if len(thinking) > 0 {
 				events = append(events, qwenEventThinkingContent{content: thinking})
@@ -191,13 +206,13 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 				p.state = CollectingContent
 			}
 			return events, true
-		} else if overlapLen := overlap(p.buffer.String(), thinkingCloseTag); overlapLen > 0 {
-			beforePartialTag := p.buffer.String()[:len(p.buffer.String())-overlapLen]
+		} else if overlapLen := max(overlap(acc, thinkingCloseTag), overlap(acc, toolOpenTag)); overlapLen > 0 {
+			beforePartialTag := acc[:len(acc)-overlapLen]
 			trailingWhitespaceLen := trailingWhitespaceLen(beforePartialTag)
 			ambiguousStart := len(beforePartialTag) - trailingWhitespaceLen
 
-			unambiguous := p.buffer.String()[:ambiguousStart]
-			ambiguous := p.buffer.String()[ambiguousStart:]
+			unambiguous := acc[:ambiguousStart]
+			ambiguous := acc[ambiguousStart:]
 			p.buffer.Reset()
 			p.buffer.WriteString(ambiguous)
 			if len(unambiguous) > 0 {
@@ -205,11 +220,11 @@ func (p *Qwen3VLParser) eat() ([]qwenEvent, bool) {
 			}
 			return events, false
 		} else {
-			whitespaceLen := trailingWhitespaceLen(p.buffer.String())
-			ambiguousStart := len(p.buffer.String()) - whitespaceLen
+			whitespaceLen := trailingWhitespaceLen(acc)
+			ambiguousStart := len(acc) - whitespaceLen
 
-			unambiguous := p.buffer.String()[:ambiguousStart]
-			ambiguous := p.buffer.String()[ambiguousStart:]
+			unambiguous := acc[:ambiguousStart]
+			ambiguous := acc[ambiguousStart:]
 			p.buffer.Reset()
 			p.buffer.WriteString(ambiguous)
 			if len(unambiguous) > 0 {

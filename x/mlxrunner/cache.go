@@ -3,94 +3,111 @@
 package mlxrunner
 
 import (
+	"fmt"
 	"log/slog"
 
+	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
+	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/model/base"
 )
 
-type CacheEntry struct {
-	Caches  []cache.Cache
-	Count   int
-	Entries map[int32]*CacheEntry
+type kvCache struct {
+	// For now we only support a single entry, so this is just one sequence
+	tokens []int32
+	caches []cache.Cache
 }
 
-func (s Runner) FindNearestCache(tokens []int32) ([]cache.Cache, []int32) {
-	current := &CacheEntry{Entries: s.CacheEntries}
-	index, cacheIndex := 0, -1
-	for _, token := range tokens {
-		if _, ok := current.Entries[token]; !ok {
-			break
-		}
+// cacheSession manages caches for a single pipeline run.
+// Callers should append generated tokens to outputs and
+// defer close to save the cache state.
+type cacheSession struct {
+	cache   *kvCache
+	inputs  []int32
+	outputs []int32
 
-		current = current.Entries[token]
-		if len(current.Caches) > 0 {
-			cacheIndex = index
-		}
-
-		index += 1
-	}
-
-	if cacheIndex == len(tokens)-1 {
-		slog.Info("Cache hit", "type", "exact", "total", len(tokens), "cached", len(tokens), "left", len(tokens))
-		return current.Caches, []int32{}
-	} else if cacheIndex > 1 {
-		slog.Info("Cache hit", "type", "partial", "total", len(tokens), "cached", cacheIndex+1, "left", len(tokens[cacheIndex+1:]))
-		return current.Caches, tokens[cacheIndex+1:]
-	} else if index > 0 && cacheIndex < 0 {
-		type stackItem struct {
-			entry  *CacheEntry
-			tokens []int32
-		}
-
-		var best, item stackItem
-		stack := []stackItem{{entry: current, tokens: []int32{}}}
-		for len(stack) > 0 {
-			item, stack = stack[len(stack)-1], stack[:len(stack)-1]
-			if len(item.entry.Caches) > 0 {
-				if len(best.tokens) == 0 || len(item.tokens) < len(best.tokens) {
-					best = item
-				}
-			} else {
-				for token, entry := range item.entry.Entries {
-					stack = append(stack, stackItem{
-						entry:  entry,
-						tokens: append(item.tokens, token),
-					})
-				}
-			}
-		}
-
-		prefix := min(len(tokens)-1, index)
-		caches := make([]cache.Cache, len(best.entry.Caches))
-		trim := len(best.tokens)+1
-		for i := range caches {
-			caches[i] = best.entry.Caches[i].Clone()
-			caches[i].Trim(trim)
-		}
-
-		slog.Info("Cache hit", "type", "prefix", "total", len(tokens), "cached", prefix, "left", len(tokens[prefix:]), "trimmed", trim)
-		return caches, tokens[prefix:]
-	}
-
-	slog.Info("Cache miss", "left", len(tokens))
-	return nil, tokens
+	caches    []cache.Cache
+	remaining []int32
 }
 
-func (s *Runner) InsertCache(tokens []int32, caches []cache.Cache) {
-	current := &CacheEntry{Entries: s.CacheEntries}
-	for _, token := range tokens {
-		if _, ok := current.Entries[token]; !ok {
-			current.Entries[token] = &CacheEntry{
-				Entries: make(map[int32]*CacheEntry),
+// begin prepares caches for a new request. It finds the nearest
+// matching cache or creates new caches if none match.
+func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
+	if len(c.caches) == 0 {
+		if cacheFactory, ok := m.(interface{ NewCaches() []cache.Cache }); ok {
+			c.caches = cacheFactory.NewCaches()
+		} else {
+			c.caches = make([]cache.Cache, m.NumLayers())
+			for i := range c.caches {
+				c.caches[i] = cache.NewKVCache()
 			}
 		}
-
-		current = current.Entries[token]
 	}
 
-	if len(current.Caches) > 0 {
-		current.Count += 1
+	remaining := c.findRemaining(inputs)
+
+	return &cacheSession{
+		cache:     c,
+		inputs:    inputs,
+		caches:    c.caches,
+		remaining: remaining,
+	}
+}
+
+// close saves the token state if the forward pass ran.
+func (s *cacheSession) close() {
+	if offset := s.caches[0].Offset(); offset > 0 {
+		// Ensure that if we have run the forward pass and set the metadata
+		// that we also actually have the data
+		arrays := make([]*mlx.Array, 0, 2*len(s.caches))
+		for _, c := range s.caches {
+			k, v := c.State()
+			arrays = append(arrays, k, v)
+		}
+		mlx.AsyncEval(arrays...)
+
+		s.cache.tokens = append(s.inputs, s.outputs...)[:offset]
+	}
+}
+
+// findRemaining finds the longest common prefix between tokens and the cached
+// sequence, trims stale cache entries, and returns the remaining tokens.
+func (c *kvCache) findRemaining(tokens []int32) []int32 {
+	prefix := 0
+	for prefix < len(tokens) && prefix < len(c.tokens) && tokens[prefix] == c.tokens[prefix] {
+		prefix++
+	}
+
+	// Always keep at least one token to re-evaluate so the
+	// pipeline can seed token generation from it.
+	if prefix == len(tokens) && prefix > 0 {
+		prefix--
+	}
+
+	if prefix < len(c.tokens) {
+		trim := len(c.tokens) - prefix
+		for _, kv := range c.caches {
+			kv.Trim(trim)
+		}
+		c.tokens = c.tokens[:prefix]
+	}
+
+	if prefix == 0 {
+		slog.Info("Cache miss", "left", len(tokens))
 	} else {
-		current.Caches = caches
+		slog.Info("Cache hit", "total", len(tokens), "cached", prefix, "left", len(tokens[prefix:]))
 	}
+	return tokens[prefix:]
+}
+
+func (c *kvCache) log() {
+	if len(c.caches) == 0 {
+		return
+	}
+	var totalBytes int
+	for _, kv := range c.caches {
+		k, v := kv.State()
+		totalBytes += k.NumBytes() + v.NumBytes()
+	}
+	logutil.Trace(fmt.Sprintf("kv cache tokens: %d, size: %s", c.caches[0].Offset(), mlx.PrettyBytes(totalBytes)))
 }

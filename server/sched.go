@@ -33,7 +33,6 @@ type LlmRequest struct {
 	successCh       chan *runnerRef
 	errCh           chan error
 	schedAttempts   uint
-	useImagegen     bool
 }
 
 type Scheduler struct {
@@ -106,7 +105,7 @@ func schedulerModelKey(m *Model) string {
 }
 
 // context must be canceled to decrement ref count and release the runner
-func (s *Scheduler) GetRunner(c context.Context, m *Model, opts api.Options, sessionDuration *api.Duration, useImagegen bool) (chan *runnerRef, chan error) {
+func (s *Scheduler) GetRunner(c context.Context, m *Model, opts api.Options, sessionDuration *api.Duration) (chan *runnerRef, chan error) {
 	if opts.NumCtx < 4 {
 		opts.NumCtx = 4
 	}
@@ -123,7 +122,6 @@ func (s *Scheduler) GetRunner(c context.Context, m *Model, opts api.Options, ses
 		sessionDuration: sessionDuration,
 		successCh:       make(chan *runnerRef, 1),
 		errCh:           make(chan error, 1),
-		useImagegen:     useImagegen,
 	}
 
 	key := schedulerModelKey(req.model)
@@ -231,7 +229,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					}
 
 					// Check for experimental safetensors LLM models
-					if pending.model.Config.ModelFormat == "safetensors" {
+					if pending.model.IsMLX() {
 						if slices.Contains(pending.model.Config.Capabilities, "completion") {
 							// LLM model with safetensors format - use MLX runner
 							if s.loadMLX(pending) {
@@ -447,7 +445,7 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo
 
 	// Some architectures are not safe with num_parallel > 1.
 	// ref: https://github.com/ollama/ollama/issues/4165
-	if slices.Contains([]string{"mllama", "qwen3vl", "qwen3vlmoe", "qwen3next", "lfm2", "lfm2moe"}, req.model.Config.ModelFamily) && numParallel != 1 {
+	if slices.Contains([]string{"mllama", "qwen3vl", "qwen3vlmoe", "qwen35", "qwen35moe", "qwen3next", "lfm2", "lfm2moe", "nemotron_h", "nemotron_h_moe"}, req.model.Config.ModelFamily) && numParallel != 1 {
 		numParallel = 1
 		slog.Warn("model architecture does not currently support parallel requests", "architecture", req.model.Config.ModelFamily)
 	}
@@ -536,6 +534,7 @@ iGPUScan:
 		}
 	}
 
+	totalSize, vramSize := llama.MemorySize()
 	runner := &runnerRef{
 		model:           req.model,
 		modelPath:       req.model.ModelPath,
@@ -545,8 +544,8 @@ iGPUScan:
 		sessionDuration: sessionDuration,
 		gpus:            gpuIDs,
 		discreteGPUs:    discreteGPUs,
-		vramSize:        llama.VRAMSize(),
-		totalSize:       llama.TotalSize(),
+		totalSize:       totalSize,
+		vramSize:        vramSize,
 		loading:         true,
 		pid:             llama.Pid(),
 	}
@@ -592,20 +591,15 @@ iGPUScan:
 	return false
 }
 
-// loadMLX loads an experimental safetensors model using the unified MLX runner.
-// This supports both LLM (completion) and image generation models.
+// loadMLX loads an experimental safetensors model using MLX runners.
+// Image models use x/imagegen; LLM models use x/mlxrunner.
 func (s *Scheduler) loadMLX(req *LlmRequest) bool {
 	modelName := req.model.ShortName
 	var server llm.LlamaServer
 	var err error
 
-	isImagegen := false
 	if slices.Contains(req.model.Config.Capabilities, "image") {
-		server, err = imagegen.NewServer(modelName, imagegen.ModeImageGen)
-		isImagegen = true
-	} else if req.useImagegen {
-		server, err = imagegen.NewServer(modelName, imagegen.ModeLLM)
-		isImagegen = true
+		server, err = imagegen.NewServer(modelName)
 	} else {
 		server, err = mlxrunner.NewClient(modelName)
 	}
@@ -619,6 +613,7 @@ func (s *Scheduler) loadMLX(req *LlmRequest) bool {
 		sessionDuration = req.sessionDuration.Duration
 	}
 
+	totalSize, vramSize := server.MemorySize()
 	runner := &runnerRef{
 		model:           req.model,
 		modelPath:       req.model.ModelPath,
@@ -626,10 +621,10 @@ func (s *Scheduler) loadMLX(req *LlmRequest) bool {
 		llama:           server,
 		Options:         &req.opts,
 		loading:         false,
-		isImagegen:      isImagegen,
+		isImagegen:      slices.Contains(req.model.Config.Capabilities, "image"),
 		sessionDuration: sessionDuration,
-		totalSize:       server.TotalSize(),
-		vramSize:        server.VRAMSize(),
+		totalSize:       totalSize,
+		vramSize:        vramSize,
 	}
 
 	s.loadedMu.Lock()
@@ -735,8 +730,8 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
 
-	// Check if runner type (imagegen vs mlxrunner) matches what's requested
-	wantImagegen := req.useImagegen || slices.Contains(req.model.Config.Capabilities, "image")
+	// Check if runner type (imagegen vs mlxrunner) matches what's requested.
+	wantImagegen := slices.Contains(req.model.Config.Capabilities, "image")
 	if runner.isImagegen != wantImagegen {
 		return true
 	}
@@ -762,7 +757,7 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 	defer cancel()
 	if !reflect.DeepEqual(runner.model.AdapterPaths, req.model.AdapterPaths) || // have the adapters changed?
 		!reflect.DeepEqual(runner.model.ProjectorPaths, req.model.ProjectorPaths) || // have the projectors changed?
-		!reflect.DeepEqual(optsExisting, optsNew) || // have the runner options changed?
+		(!runner.model.IsMLX() && !reflect.DeepEqual(optsExisting, optsNew)) || // have the runner options changed?
 		runner.llama.Ping(ctx) != nil {
 		return true
 	}
