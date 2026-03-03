@@ -28,16 +28,12 @@ func (c *RecurrentCache) setStateMaterialized(old, v *mlx.Array) *mlx.Array {
 		return old
 	}
 
-	// Break dependency chains so recurrent state does not retain the full
-	// per-token compute graph over time.
-	snap := mlx.Copy(v)
-	mlx.Eval(snap)
-
+	// Keep this as a lazy clone; unlike Copy+Eval, this does not force immediate
+	// materialization of the recurrent state.
+	snap := v.Clone()
 	mlx.Pin(snap)
 
-	// Drop references to the previous cached state root and transient incoming
-	// graph root now that a detached snapshot is retained in cache. Actual
-	// cleanup happens at the runner's normal sweep points.
+	// Drop references to the previous cached state root.
 	if old != nil && old != snap {
 		mlx.Unpin(old)
 	}
