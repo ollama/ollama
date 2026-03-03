@@ -1,5 +1,4 @@
-<div align="center">
-  <a href="https://ollama.com">
+<div align="center"><a href="https://ollama.com">
     <img alt="ollama" width="240" src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
   </a>
 </div>
@@ -44,7 +43,7 @@ To run and chat with [Gemma 3](https://ollama.com/library/gemma3):
 
 ```shell
 ollama run gemma3
-```
+Pl```
 
 ## Model library
 
