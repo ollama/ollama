@@ -86,7 +86,7 @@ func rendererForName(name string) Renderer {
 	case "glm-4.7":
 		return &GLM47Renderer{}
 	case "glm-ocr":
-		return &GlmOcrRenderer{}
+		return &GlmOcrRenderer{useImgTags: RenderImgTags}
 	case "lfm2":
 		return &LFM2Renderer{IsThinking: false, useImgTags: RenderImgTags}
 	case "lfm2-thinking":
