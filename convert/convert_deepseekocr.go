@@ -41,7 +41,7 @@ type deepseekocr struct {
 	} `json:"vision_config"`
 }
 
-func (m *deepseekocr) KV(t *Tokenizer) ggml.KV {
+func (m *deepseekocr) KV(t *Tokenizer) KV {
 	kv := m.ModelParameters.KV(t)
 	kv["general.architecture"] = "deepseekocr"
 	kv["block_count"] = m.LanguageConfig.HiddenLayers

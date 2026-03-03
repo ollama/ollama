@@ -12,23 +12,23 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
-	"net/url"
 	"os"
 	"runtime"
 	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/app/auth"
 	"github.com/ollama/ollama/app/server"
 	"github.com/ollama/ollama/app/store"
 	"github.com/ollama/ollama/app/tools"
 	"github.com/ollama/ollama/app/types/not"
 	"github.com/ollama/ollama/app/ui/responses"
+	"github.com/ollama/ollama/app/updater"
 	"github.com/ollama/ollama/app/version"
 	ollamaAuth "github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
@@ -107,6 +107,10 @@ type Server struct {
 
 	// Dev is true if the server is running in development mode
 	Dev bool
+
+	// Updater for checking and downloading updates
+	Updater             *updater.Updater
+	UpdateAvailableFunc func()
 }
 
 func (s *Server) log() *slog.Logger {
@@ -118,40 +122,66 @@ func (s *Server) log() *slog.Logger {
 
 // ollamaProxy creates a reverse proxy handler to the Ollama server
 func (s *Server) ollamaProxy() http.Handler {
-	ollamaHost := os.Getenv("OLLAMA_HOST")
-	if ollamaHost == "" {
-		ollamaHost = "http://127.0.0.1:11434"
-	}
+	var (
+		proxy   http.Handler
+		proxyMu sync.Mutex
+	)
 
-	if !strings.HasPrefix(ollamaHost, "http://") && !strings.HasPrefix(ollamaHost, "https://") {
-		ollamaHost = "http://" + ollamaHost
-	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxyMu.Lock()
+		p := proxy
+		proxyMu.Unlock()
 
-	target, err := url.Parse(ollamaHost)
-	if err != nil {
-		s.log().Error("failed to parse OLLAMA_HOST", "error", err, "host", ollamaHost)
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			http.Error(w, "failed to configure proxy", http.StatusInternalServerError)
-		})
-	}
+		if p == nil {
+			proxyMu.Lock()
+			if proxy == nil {
+				var err error
+				for i := range 2 {
+					if i > 0 {
+						s.log().Warn("ollama server not ready, retrying", "attempt", i+1)
+						time.Sleep(1 * time.Second)
+					}
 
-	s.log().Info("configuring ollama proxy", "target", target.String())
+					err = WaitForServer(context.Background(), 10*time.Second)
+					if err == nil {
+						break
+					}
+				}
 
-	proxy := httputil.NewSingleHostReverseProxy(target)
+				if err != nil {
+					proxyMu.Unlock()
+					s.log().Error("ollama server not ready after retries", "error", err)
+					http.Error(w, "Ollama server is not ready", http.StatusServiceUnavailable)
+					return
+				}
 
-	originalDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
-		originalDirector(req)
-		req.Host = target.Host
-		s.log().Debug("proxying request", "method", req.Method, "path", req.URL.Path, "target", target.Host)
-	}
+				target := envconfig.Host()
+				s.log().Info("configuring ollama proxy", "target", target.String())
 
-	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		s.log().Error("proxy error", "error", err, "path", r.URL.Path, "target", target.String())
-		http.Error(w, "proxy error: "+err.Error(), http.StatusBadGateway)
-	}
+				newProxy := httputil.NewSingleHostReverseProxy(target)
 
-	return proxy
+				originalDirector := newProxy.Director
+				newProxy.Director = func(req *http.Request) {
+					originalDirector(req)
+					req.Host = target.Host
+					s.log().Debug("proxying request", "method", req.Method, "path", req.URL.Path, "target", target.Host)
+				}
+
+				newProxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+					s.log().Error("proxy error", "error", err, "path", r.URL.Path, "target", target.String())
+					http.Error(w, "proxy error: "+err.Error(), http.StatusBadGateway)
+				}
+
+				proxy = newProxy
+				p = newProxy
+			} else {
+				p = proxy
+			}
+			proxyMu.Unlock()
+		}
+
+		p.ServeHTTP(w, r)
+	})
 }
 
 type errHandlerFunc func(http.ResponseWriter, *http.Request) error
@@ -259,16 +289,18 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/model/upstream", handle(s.modelUpstream))
 	mux.Handle("GET /api/v1/settings", handle(s.getSettings))
 	mux.Handle("POST /api/v1/settings", handle(s.settings))
+	mux.Handle("GET /api/v1/cloud", handle(s.getCloudSetting))
+	mux.Handle("POST /api/v1/cloud", handle(s.cloudSetting))
 
 	// Ollama proxy endpoints
 	ollamaProxy := s.ollamaProxy()
 	mux.Handle("GET /api/tags", ollamaProxy)
 	mux.Handle("POST /api/show", ollamaProxy)
-
-	mux.Handle("GET /api/v1/me", handle(s.me))
-	mux.Handle("POST /api/v1/disconnect", handle(s.disconnect))
-	mux.Handle("GET /api/v1/connect", handle(s.connectURL))
-	mux.Handle("GET /api/v1/health", handle(s.health))
+	mux.Handle("GET /api/version", ollamaProxy)
+	mux.Handle("GET /api/status", ollamaProxy)
+	mux.Handle("HEAD /api/version", ollamaProxy)
+	mux.Handle("POST /api/me", ollamaProxy)
+	mux.Handle("POST /api/signout", ollamaProxy)
 
 	// React app - catch all non-API routes and serve the React app
 	mux.Handle("GET /", s.appHandler())
@@ -338,7 +370,7 @@ func (s *Server) doSelfSigned(ctx context.Context, method, path string) (*http.R
 }
 
 // UserData fetches user data from ollama.com API for the current ollama key
-func (s *Server) UserData(ctx context.Context) (*responses.User, error) {
+func (s *Server) UserData(ctx context.Context) (*api.UserResponse, error) {
 	resp, err := s.doSelfSigned(ctx, http.MethodPost, "/api/me")
 	if err != nil {
 		return nil, fmt.Errorf("failed to call ollama.com/api/me: %w", err)
@@ -349,7 +381,7 @@ func (s *Server) UserData(ctx context.Context) (*responses.User, error) {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
 	}
 
-	var user responses.User
+	var user api.UserResponse
 	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
 		return nil, fmt.Errorf("failed to parse user response: %w", err)
 	}
@@ -368,29 +400,27 @@ func (s *Server) UserData(ctx context.Context) (*responses.User, error) {
 	return &user, nil
 }
 
-func waitForServer(ctx context.Context) error {
-	timeout := time.Now().Add(10 * time.Second)
-	// TODO: this avoids an error on first load of the app
-	// however we should either show a loading state or
-	// wait for the Ollama server to be ready before redirecting
-	for {
+// WaitForServer waits for the Ollama server to be ready
+func WaitForServer(ctx context.Context, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
 		c, err := api.ClientFromEnvironment()
 		if err != nil {
 			return err
 		}
 		if _, err := c.Version(ctx); err == nil {
-			break
-		}
-		if time.Now().After(timeout) {
-			return fmt.Errorf("timeout waiting for Ollama server to be ready")
+			slog.Debug("ollama server is ready")
+			return nil
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	return nil
+	return errors.New("timeout waiting for Ollama server to be ready")
 }
 
 func (s *Server) createChat(w http.ResponseWriter, r *http.Request) error {
-	waitForServer(r.Context())
+	if err := WaitForServer(r.Context(), 10*time.Second); err != nil {
+		return err
+	}
 
 	id, err := uuid.NewV7()
 	if err != nil {
@@ -804,8 +834,9 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 
 	if !hasAttachments {
 		WebSearchEnabled := req.WebSearch != nil && *req.WebSearch
+		hasToolsCapability := slices.Contains(details.Capabilities, model.CapabilityTools)
 
-		if WebSearchEnabled {
+		if WebSearchEnabled && hasToolsCapability {
 			if supportsBrowserTools(req.Model) {
 				browserState, ok := s.browserState(chat)
 				if !ok {
@@ -815,7 +846,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 				registry.Register(tools.NewBrowserSearch(browser))
 				registry.Register(tools.NewBrowserOpen(browser))
 				registry.Register(tools.NewBrowserFind(browser))
-			} else if supportsWebSearchTools(req.Model) {
+			} else {
 				registry.Register(&tools.WebSearch{})
 				registry.Register(&tools.WebFetch{})
 			}
@@ -975,7 +1006,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 				for _, toolCall := range res.Message.ToolCalls {
 					// continues loop as tools were executed
 					toolsExecuted = true
-					result, content, err := registry.Execute(ctx, toolCall.Function.Name, toolCall.Function.Arguments)
+					result, content, err := registry.Execute(ctx, toolCall.Function.Name, toolCall.Function.Arguments.ToMap())
 					if err != nil {
 						errContent := fmt.Sprintf("Error: %v", err)
 						toolErrMsg := store.NewMessage("tool", errContent, nil)
@@ -1395,11 +1426,6 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) error {
 		settings.Models = envconfig.Models()
 	}
 
-	// set default context length if not set
-	if settings.ContextLength == 0 {
-		settings.ContextLength = 4096
-	}
-
 	// Include current runtime settings
 	settings.Agent = s.Agent
 	settings.Tools = s.Tools
@@ -1426,6 +1452,24 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 		return fmt.Errorf("failed to save settings: %w", err)
 	}
 
+	// Handle auto-update toggle changes
+	if old.AutoUpdateEnabled != settings.AutoUpdateEnabled {
+		if !settings.AutoUpdateEnabled {
+			// Auto-update disabled: cancel any ongoing download
+			if s.Updater != nil {
+				s.Updater.CancelOngoingDownload()
+			}
+		} else {
+			// Auto-update re-enabled: show notification if update is already staged, or trigger immediate check
+			if (updater.IsUpdatePending() || updater.UpdateDownloaded) && s.UpdateAvailableFunc != nil {
+				s.UpdateAvailableFunc()
+			} else if s.Updater != nil {
+				// Trigger the background checker to run immediately
+				s.Updater.TriggerImmediateCheck()
+			}
+		}
+	}
+
 	if old.ContextLength != settings.ContextLength ||
 		old.Models != settings.Models ||
 		old.Expose != settings.Expose {
@@ -1438,140 +1482,51 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 	})
 }
 
-func (s *Server) me(w http.ResponseWriter, r *http.Request) error {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return nil
+func (s *Server) cloudSetting(w http.ResponseWriter, r *http.Request) error {
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return fmt.Errorf("invalid request body: %w", err)
 	}
 
-	user, err := s.UserData(r.Context())
-	if err != nil {
-		// If fetching from API fails, try to return cached user data if available
-		if cachedUser, cacheErr := s.Store.User(); cacheErr == nil && cachedUser != nil {
-			s.log().Info("API request failed, returning cached user data", "error", err)
-			responseUser := &responses.User{
-				Name:  cachedUser.Name,
-				Email: cachedUser.Email,
-				Plan:  cachedUser.Plan,
-			}
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			return json.NewEncoder(w).Encode(responseUser)
-		}
-
-		s.log().Error("failed to get user data", "error", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return json.NewEncoder(w).Encode(responses.Error{
-			Error: "failed to get user data",
-		})
+	if err := s.Store.SetCloudEnabled(req.Enabled); err != nil {
+		return fmt.Errorf("failed to persist cloud setting: %w", err)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	return json.NewEncoder(w).Encode(user)
+	s.Restart()
+
+	return s.writeCloudStatus(w)
 }
 
-func (s *Server) disconnect(w http.ResponseWriter, r *http.Request) error {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return nil
-	}
-
-	if err := s.Store.ClearUser(); err != nil {
-		s.log().Warn("failed to clear cached user data", "error", err)
-	}
-
-	// Get the SSH public key to encode for the delete request
-	pubKey, err := ollamaAuth.GetPublicKey()
-	if err != nil {
-		s.log().Error("failed to get public key", "error", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return json.NewEncoder(w).Encode(responses.Error{
-			Error: "failed to get public key",
-		})
-	}
-
-	// Encode the key using base64 URL encoding
-	encodedKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
-
-	// Call the /api/user/keys/{encodedKey} endpoint with DELETE
-	resp, err := s.doSelfSigned(r.Context(), http.MethodDelete, fmt.Sprintf("/api/user/keys/%s", encodedKey))
-	if err != nil {
-		s.log().Error("failed to call ollama.com/api/user/keys", "error", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return json.NewEncoder(w).Encode(responses.Error{
-			Error: "failed to disconnect from ollama.com",
-		})
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		s.log().Error("disconnect request failed", "status", resp.StatusCode)
-		w.WriteHeader(http.StatusInternalServerError)
-		return json.NewEncoder(w).Encode(responses.Error{
-			Error: "failed to disconnect from ollama.com",
-		})
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	return json.NewEncoder(w).Encode(map[string]string{"status": "disconnected"})
+func (s *Server) getCloudSetting(w http.ResponseWriter, r *http.Request) error {
+	return s.writeCloudStatus(w)
 }
 
-func (s *Server) connectURL(w http.ResponseWriter, r *http.Request) error {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return nil
-	}
-
-	connectURL, err := auth.BuildConnectURL(OllamaDotCom)
+func (s *Server) writeCloudStatus(w http.ResponseWriter) error {
+	disabled, source, err := s.Store.CloudStatus()
 	if err != nil {
-		s.log().Error("failed to build connect URL", "error", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return json.NewEncoder(w).Encode(responses.Error{
-			Error: "failed to build connect URL",
-		})
+		return fmt.Errorf("failed to load cloud status: %w", err)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	return json.NewEncoder(w).Encode(map[string]string{
-		"connect_url": connectURL,
-	})
-}
-
-func (s *Server) health(w http.ResponseWriter, r *http.Request) error {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return nil
-	}
-
-	healthy := false
-	c, err := api.ClientFromEnvironment()
-	if err == nil {
-		if _, err := c.Version(r.Context()); err == nil {
-			healthy = true
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	return json.NewEncoder(w).Encode(responses.HealthResponse{
-		Healthy: healthy,
+	return json.NewEncoder(w).Encode(map[string]any{
+		"disabled": disabled,
+		"source":   source,
 	})
 }
 
 func (s *Server) getInferenceCompute(w http.ResponseWriter, r *http.Request) error {
 	ctx, cancel := context.WithTimeout(r.Context(), 500*time.Millisecond)
 	defer cancel()
-	serverInferenceComputes, err := server.GetInferenceComputer(ctx)
+	info, err := server.GetInferenceInfo(ctx)
 	if err != nil {
-		s.log().Error("failed to get inference compute", "error", err)
-		return fmt.Errorf("failed to get inference compute: %w", err)
+		s.log().Error("failed to get inference info", "error", err)
+		return fmt.Errorf("failed to get inference info: %w", err)
 	}
 
-	inferenceComputes := make([]responses.InferenceCompute, len(serverInferenceComputes))
-	for i, ic := range serverInferenceComputes {
+	inferenceComputes := make([]responses.InferenceCompute, len(info.Computes))
+	for i, ic := range info.Computes {
 		inferenceComputes[i] = responses.InferenceCompute{
 			Library: ic.Library,
 			Variant: ic.Variant,
@@ -1583,7 +1538,8 @@ func (s *Server) getInferenceCompute(w http.ResponseWriter, r *http.Request) err
 	}
 
 	response := responses.InferenceComputeResponse{
-		InferenceComputes: inferenceComputes,
+		InferenceComputes:    inferenceComputes,
+		DefaultContextLength: info.DefaultContextLength,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1659,13 +1615,13 @@ func convertToOllamaTool(toolSchema map[string]any) api.Tool {
 
 	tool.Function.Parameters.Type = "object"
 	tool.Function.Parameters.Required = []string{}
-	tool.Function.Parameters.Properties = make(map[string]api.ToolProperty)
+	tool.Function.Parameters.Properties = api.NewToolPropertiesMap()
 
 	if schemaProps, ok := toolSchema["schema"].(map[string]any); ok {
 		tool.Function.Parameters.Type = getStringFromMap(schemaProps, "type", "object")
 
 		if props, ok := schemaProps["properties"].(map[string]any); ok {
-			tool.Function.Parameters.Properties = make(map[string]api.ToolProperty)
+			tool.Function.Parameters.Properties = api.NewToolPropertiesMap()
 
 			for propName, propDef := range props {
 				if propMap, ok := propDef.(map[string]any); ok {
@@ -1673,7 +1629,7 @@ func convertToOllamaTool(toolSchema map[string]any) api.Tool {
 						Type:        api.PropertyType{getStringFromMap(propMap, "type", "string")},
 						Description: getStringFromMap(propMap, "description", ""),
 					}
-					tool.Function.Parameters.Properties[propName] = prop
+					tool.Function.Parameters.Properties.Set(propName, prop)
 				}
 			}
 		}
@@ -1716,17 +1672,6 @@ func supportsBrowserTools(model string) bool {
 	return strings.HasPrefix(strings.ToLower(model), "gpt-oss")
 }
 
-// Web search tools are simpler, providing only basic web search and fetch capabilities (e.g., "web_search", "web_fetch") without simulating a browser. Currently only qwen3 and deepseek-v3 support web search tools.
-func supportsWebSearchTools(model string) bool {
-	model = strings.ToLower(model)
-	prefixes := []string{"qwen3", "deepseek-v3"}
-	for _, p := range prefixes {
-		if strings.HasPrefix(model, p) {
-			return true
-		}
-	}
-	return false
-}
 
 // buildChatRequest converts store.Chat to api.ChatRequest
 func (s *Server) buildChatRequest(chat *store.Chat, model string, think any, availableTools []map[string]any) (*api.ChatRequest, error) {

@@ -8,6 +8,10 @@
 #include <sys/sysctl.h>
 #endif
 
+#if !defined(HWCAP2_SVE2)
+#define HWCAP2_SVE2 (1 << 1)
+#endif
+
 #if !defined(HWCAP2_I8MM)
 #define HWCAP2_I8MM (1 << 13)
 #endif

@@ -1542,8 +1542,10 @@ static __device__ __forceinline__ void vec_dot_q2_K_q8_1_mma(
             tile_C Cm;
             if (k01 >= MMQ_TILE_NE_K * 3/4) {
                 tile_A A1;
-                A1.x[0] = 0x01010101;
-                A1.x[1] = 0x01010101;
+#pragma unroll
+                for (int l = 0; l < tile_A::ne; ++l) {
+                    A1.x[l] = 0x01010101;
+                }
                 mma(Cm, A1, B);
             }
 

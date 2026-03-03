@@ -72,6 +72,23 @@ public:
         void clear() {
             idxs.clear();
         }
+
+        // check if indices are contiguous starting from head()
+        bool is_contiguous() const {
+            if (idxs.empty() || idxs[0].empty()) {
+                return true;
+            }
+            if (idxs.size() > 1) {
+                return false;
+            }
+            const uint32_t h = idxs[0][0];
+            for (size_t i = 0; i < idxs[0].size(); ++i) {
+                if (idxs[0][i] != h + i) {
+                    return false;
+                }
+            }
+            return true;
+        }
     };
 
     using slot_info_vec_t = std::vector<slot_info>;
@@ -264,8 +281,8 @@ private:
     void state_write_meta(llama_io_write_i & io, const cell_ranges_t & cr, llama_seq_id seq_id = -1) const;
     void state_write_data(llama_io_write_i & io, const cell_ranges_t & cr) const;
 
-    bool state_read_meta(llama_io_read_i & io, uint32_t strm, uint32_t cell_count, llama_seq_id dest_seq_id = -1);
-    bool state_read_data(llama_io_read_i & io, uint32_t strm, uint32_t cell_count);
+    bool state_read_meta(llama_io_read_i & io, uint32_t strm, uint32_t cell_count,       slot_info & sinfo, llama_seq_id dest_seq_id = -1);
+    bool state_read_data(llama_io_read_i & io, uint32_t strm, uint32_t cell_count, const slot_info & sinfo);
 };
 
 class llama_kv_cache_context : public llama_memory_context_i {

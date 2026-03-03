@@ -25,6 +25,7 @@ layout (push_constant) uniform parameter {
     uint orig_ncols;
     uint ncols_input;
     uint ncols_output;
+    uint k;
     uint nrows;
     uint first_pass;
     uint last_pass;
@@ -37,6 +38,7 @@ shared int counts[SUBGROUP_SIZE];
 shared int sh_min_idx;
 shared uint sh_total;
 shared uint offset_partials[BLOCK_SIZE / SUBGROUP_SIZE];
+shared uint eq_min_partials[BLOCK_SIZE / SUBGROUP_SIZE];
 
 // Map float values to uint such that comparisons still work.
 // Positive values set the high bit, negative values are inverted.
@@ -60,7 +62,7 @@ void topk(const uint row) {
             const uint row_offset = row * p.ncols_input;
             dst_row[tid] = ivec2(gl_GlobalInvocationID.x, floatBitsToInt(data_a[row_offset + gl_GlobalInvocationID.x]));
         } else {
-            const uint row_offset = row * p.orig_ncols;
+            const uint row_offset = row * p.ncols_input;
             dst_row[tid] = data_s[row_offset + gl_GlobalInvocationID.x];
         }
     } else {
@@ -68,7 +70,7 @@ void topk(const uint row) {
     }
     barrier();
 
-    if (p.ncols_output == 1) {
+    if (p.k == 1) {
         // Fast path for single output - just do a max reduction
         [[unroll]] for (int s = BLOCK_SIZE / 2; s >= 1; s /= 2) {
             if (tid < s) {
@@ -98,7 +100,7 @@ void topk(const uint row) {
         uint range_max = 0xFF800000;
         // How many are above the current range, and how many we need to find.
         uint total = 0;
-        uint limit = min(p.ncols_output, p.ncols_input - gl_WorkGroupID.x * BLOCK_SIZE);
+        uint limit = min(p.k, p.ncols_input - gl_WorkGroupID.x * BLOCK_SIZE);
 
         while (mask != 0) {
             barrier();
@@ -139,7 +141,7 @@ void topk(const uint row) {
             range_max = range_min + ((min_idx + 1) << shift);
             range_min = range_min + (min_idx << shift);
 
-            if (total == p.ncols_output) {
+            if (total == p.k) {
                 break;
             }
             total -= counts[min_idx];
@@ -155,37 +157,82 @@ void topk(const uint row) {
         // We need to compact these values to the start of the dst_row array.
         // Have each subgroup count how many items it'll store, so other
         // subgroups can compute their base offset.
-        bool top = f2ui(intBitsToFloat(v.y)) >= range_min;
-        uvec4 b = subgroupBallot(top);
-        uint bit_count = subgroupBallotBitCount(b);
-        if ((tid % SUBGROUP_SIZE) == 0) {
-            offset_partials[tid / SUBGROUP_SIZE] = bit_count;
-        }
-        barrier();
-
-        uint out_idx = 0;
-        [[unroll]] for (int i = 0; i < BLOCK_SIZE / SUBGROUP_SIZE; ++i) {
-            if (i < tid / SUBGROUP_SIZE) {
-                out_idx += offset_partials[i];
+        // Values strictly greater than range_min must be stored. For values equal
+        // to range_min, there can be ties and it's possible we'll need to store
+        // an arbitrary subset of them.
+        // If total == p.k, have a fast path where we don't need to handle ties.
+        if (total == p.k) {
+            bool top = f2ui(intBitsToFloat(v.y)) >= range_min;
+            uvec4 b = subgroupBallot(top);
+            uint bit_count = subgroupBallotBitCount(b);
+            if ((tid % SUBGROUP_SIZE) == 0) {
+                offset_partials[tid / SUBGROUP_SIZE] = bit_count;
             }
-        }
+            barrier();
 
-        uint bit_count_ex = subgroupBallotExclusiveBitCount(b);
-        if (top) {
-            // TODO: Copy directly to the output?
-            dst_row[out_idx + bit_count_ex] = v;
+            uint out_idx = 0;
+            [[unroll]] for (int i = 0; i < BLOCK_SIZE / SUBGROUP_SIZE; ++i) {
+                if (i < tid / SUBGROUP_SIZE) {
+                    out_idx += offset_partials[i];
+                }
+            }
+
+            uint bit_count_ex = subgroupBallotExclusiveBitCount(b);
+            if (top) {
+                // TODO: Copy directly to the output?
+                dst_row[out_idx + bit_count_ex] = v;
+            }
+        } else {
+            bool top = f2ui(intBitsToFloat(v.y)) > range_min;
+            bool eq_min = f2ui(intBitsToFloat(v.y)) == range_min;
+            uvec4 b_top = subgroupBallot(top);
+            uvec4 b_eq_min = subgroupBallot(eq_min);
+            uint bit_count_top = subgroupBallotBitCount(b_top);
+            uint bit_count_eq_min = subgroupBallotBitCount(b_eq_min);
+            if ((tid % SUBGROUP_SIZE) == 0) {
+                offset_partials[tid / SUBGROUP_SIZE] = bit_count_top;
+                eq_min_partials[tid / SUBGROUP_SIZE] = bit_count_eq_min;
+            }
+            barrier();
+
+            uint out_idx = 0;
+            uint eq_min_base = 0;
+            uint eq_min_idx = 0;
+            [[unroll]] for (int i = 0; i < BLOCK_SIZE / SUBGROUP_SIZE; ++i) {
+                if (i < tid / SUBGROUP_SIZE) {
+                    out_idx += offset_partials[i];
+                    eq_min_idx += eq_min_partials[i];
+                }
+                eq_min_base += offset_partials[i];
+            }
+            // range_min values are stored at the end
+            eq_min_idx += eq_min_base;
+
+            uint bit_count_ex_top = subgroupBallotExclusiveBitCount(b_top);
+            uint bit_count_ex_eq_min = subgroupBallotExclusiveBitCount(b_eq_min);
+            if (top) {
+                // TODO: Copy directly to the output?
+                dst_row[out_idx + bit_count_ex_top] = v;
+            }
+            if (eq_min && eq_min_idx + bit_count_ex_eq_min < p.k) {
+                dst_row[eq_min_idx + bit_count_ex_eq_min] = v;
+            }
         }
 
         barrier();
     }
 
-    if (tid < p.ncols_output && gl_GlobalInvocationID.x < p.orig_ncols) {
+    if (tid < p.k) {
         if (p.last_pass != 0) {
-            const uint row_offset = row * p.ncols_output;
-            data_d[row_offset + tid] = dst_row[tid].x;
+            if (gl_GlobalInvocationID.x < p.ncols_input) {
+                const uint row_offset = row * p.k;
+                data_d[row_offset + tid] = dst_row[tid].x;
+            }
         } else {
-            const uint row_offset = row * p.orig_ncols + gl_WorkGroupID.x * p.ncols_output;
-            data_t[row_offset + tid] = dst_row[tid];
+            if (gl_WorkGroupID.x * p.k + tid < p.ncols_output) {
+                const uint row_offset = row * p.ncols_output + gl_WorkGroupID.x * p.k;
+                data_t[row_offset + tid] = dst_row[tid];
+            }
         }
     }
 }

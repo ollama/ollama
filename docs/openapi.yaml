@@ -596,6 +596,15 @@ components:
         name:
           type: string
           description: Model name
+        model:
+          type: string
+          description: Model name
+        remote_model:
+          type: string
+          description: Name of the upstream model, if the model is remote
+        remote_host:
+          type: string
+          description: URL of the upstream Ollama host, if the model is remote
         modified_at:
           type: string
           description: Last modified timestamp in ISO 8601 format
@@ -636,6 +645,9 @@ components:
     Ps:
       type: object
       properties:
+        name:
+          type: string
+          description: Name of the running model
         model:
           type: string
           description: Name of the running model
@@ -1137,6 +1149,7 @@ paths:
               example:
                 models:
                   - name: "gemma3"
+                    model: "gemma3"
                     modified_at: "2025-10-03T23:34:03.409490317-07:00"
                     size: 3338801804
                     digest: "a2af6cc3eb7fa8be8504abaf9b04e88f17a119ec3f04a3addf55f92841195f5a"
@@ -1168,7 +1181,8 @@ paths:
                 $ref: "#/components/schemas/PsResponse"
               example:
                 models:
-                  - model: "gemma3"
+                  - name: "gemma3"
+                    model: "gemma3"
                     size: 6591830464
                     digest: "a2af6cc3eb7fa8be8504abaf9b04e88f17a119ec3f04a3addf55f92841195f5a"
                     details:

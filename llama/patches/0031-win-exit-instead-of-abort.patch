@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Hiltgen <daniel@ollama.com>
+Date: Tue, 18 Nov 2025 09:58:23 -0800
+Subject: [PATCH] win: exit instead of abort
+
+---
+ ggml/src/ggml.c | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
+index eb3ae72ea..c9242a15a 100644
+--- a/ggml/src/ggml.c
++++ b/ggml/src/ggml.c
+@@ -250,8 +250,13 @@ void ggml_abort(const char * file, int line, const char * fmt, ...) {
+         fprintf(stderr, "%s\n", message);
+         ggml_print_backtrace();
+     }
+-
++#if defined(_WIN32)
++    fflush(stderr);
++    fflush(stdout);
++    exit(1);
++#else
+     abort();
++#endif
+ }
+ 
+ // ggml_print_backtrace is registered with std::set_terminate by ggml.cpp

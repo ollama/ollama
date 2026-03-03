@@ -37,7 +37,7 @@ void llama_log_callback_default(ggml_log_level level, const char * text, void * 
 template <typename T>
 struct no_init {
     T value;
-    no_init() { /* do nothing */ }
+    no_init() = default;
 };
 
 struct time_meas {

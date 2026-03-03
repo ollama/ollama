@@ -126,10 +126,10 @@ func TestRoutes(t *testing.T) {
 			t.Fatalf("failed to create model: %v", err)
 		}
 
-		config := &ConfigV2{
+		config := &model.ConfigV2{
 			OS:           "linux",
 			Architecture: "amd64",
-			RootFS: RootFS{
+			RootFS: model.RootFS{
 				Type: "layers",
 			},
 		}
@@ -723,15 +723,20 @@ func TestShow(t *testing.T) {
 
 func TestNormalize(t *testing.T) {
 	type testCase struct {
-		input []float32
+		input       []float32
+		expectError bool
 	}
 
 	testCases := []testCase{
-		{input: []float32{1}},
-		{input: []float32{0, 1, 2, 3}},
-		{input: []float32{0.1, 0.2, 0.3}},
-		{input: []float32{-0.1, 0.2, 0.3, -0.4}},
-		{input: []float32{0, 0, 0}},
+		{input: []float32{1}, expectError: false},
+		{input: []float32{0, 1, 2, 3}, expectError: false},
+		{input: []float32{0.1, 0.2, 0.3}, expectError: false},
+		{input: []float32{-0.1, 0.2, 0.3, -0.4}, expectError: false},
+		{input: []float32{0, 0, 0}, expectError: false},
+		{input: []float32{float32(math.NaN()), 0.2, 0.3}, expectError: true},
+		{input: []float32{0.1, float32(math.NaN()), 0.3}, expectError: true},
+		{input: []float32{float32(math.Inf(1)), 0.2, 0.3}, expectError: true},
+		{input: []float32{float32(math.Inf(-1)), 0.2, 0.3}, expectError: true},
 	}
 
 	isNormalized := func(vec []float32) (res bool) {
@@ -748,9 +753,18 @@ func TestNormalize(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run("", func(t *testing.T) {
-			normalized := normalize(tc.input)
-			if !isNormalized(normalized) {
-				t.Errorf("Vector %v is not normalized", tc.input)
+			normalized, err := normalize(tc.input)
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("Expected error for input %v, but got none", tc.input)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Unexpected error for input %v: %v", tc.input, err)
+				}
+				if !isNormalized(normalized) {
+					t.Errorf("Vector %v is not normalized", tc.input)
+				}
 			}
 		})
 	}
@@ -775,7 +789,7 @@ func TestFilterThinkTags(t *testing.T) {
 				{Role: "user", Content: "What is the answer?"},
 			},
 			model: &Model{
-				Config: ConfigV2{
+				Config: model.ConfigV2{
 					ModelFamily: "qwen3",
 				},
 			},
@@ -793,7 +807,7 @@ func TestFilterThinkTags(t *testing.T) {
 				{Role: "user", Content: "What is the answer?"},
 			},
 			model: &Model{
-				Config: ConfigV2{
+				Config: model.ConfigV2{
 					ModelFamily: "qwen3",
 				},
 			},
@@ -815,7 +829,7 @@ func TestFilterThinkTags(t *testing.T) {
 				{Role: "assistant", Content: "<think>thinking yet again</think>hjk"},
 			},
 			model: &Model{
-				Config: ConfigV2{
+				Config: model.ConfigV2{
 					ModelFamily: "qwen3",
 				},
 			},
@@ -833,7 +847,7 @@ func TestFilterThinkTags(t *testing.T) {
 				{Role: "user", Content: "What is the answer?"},
 			},
 			model: &Model{
-				Config: ConfigV2{
+				Config: model.ConfigV2{
 					ModelFamily: "llama3",
 				},
 			},
@@ -853,7 +867,7 @@ func TestFilterThinkTags(t *testing.T) {
 			model: &Model{
 				Name:      "registry.ollama.ai/library/deepseek-r1:latest",
 				ShortName: "deepseek-r1:7b",
-				Config:    ConfigV2{},
+				Config:    model.ConfigV2{},
 			},
 		},
 	}

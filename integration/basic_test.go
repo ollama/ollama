@@ -144,3 +144,47 @@ func TestUnicodeModelDir(t *testing.T) {
 	}
 	ChatTestHelper(ctx, t, req, blueSkyExpected)
 }
+
+// TestNumPredict verifies that when num_predict is set, the model generates
+// exactly that many tokens. It uses logprobs to count the actual tokens output.
+func TestNumPredict(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+
+	if err := PullIfMissing(ctx, client, "qwen3:0.6b"); err != nil {
+		t.Fatalf("failed to pull model: %v", err)
+	}
+
+	req := api.GenerateRequest{
+		Model:    "qwen3:0.6b",
+		Prompt:   "Write a long story.",
+		Stream:   &stream,
+		Logprobs: true,
+		Options: map[string]any{
+			"num_predict": 10,
+			"temperature": 0,
+			"seed":        123,
+		},
+	}
+
+	logprobCount := 0
+	var finalResponse api.GenerateResponse
+	err := client.Generate(ctx, &req, func(resp api.GenerateResponse) error {
+		logprobCount += len(resp.Logprobs)
+		if resp.Done {
+			finalResponse = resp
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("generate failed: %v", err)
+	}
+
+	if logprobCount != 10 {
+		t.Errorf("expected 10 tokens (logprobs), got %d (EvalCount=%d, DoneReason=%s)",
+			logprobCount, finalResponse.EvalCount, finalResponse.DoneReason)
+	}
+}

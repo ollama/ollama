@@ -25,6 +25,10 @@ time_meas::~time_meas() {
     }
 }
 
+void llama_log_get(ggml_log_callback * log_callback, void ** user_data) {
+    ggml_log_get(log_callback, user_data);
+}
+
 void llama_log_set(ggml_log_callback log_callback, void * user_data) {
     ggml_log_set(log_callback, user_data);
     g_logger_state.log_callback = log_callback ? log_callback : llama_log_callback_default;

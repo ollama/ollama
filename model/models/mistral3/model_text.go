@@ -8,7 +8,7 @@ import (
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
-	"github.com/ollama/ollama/ml/nn/fast"
+	"github.com/ollama/ollama/ml/nn/rope"
 	"github.com/ollama/ollama/model/input"
 )
 
@@ -18,6 +18,30 @@ type TextOptions struct {
 	eps, ropeBase, ropeScale         float32
 	ropeOrigPosEmbeddings            int
 	ropeScalingBeta                  float32
+	ropeType                         string
+	ropeExtrapolation                float32
+	ropeBetaFast                     float32
+	ropeBetaSlow                     float32
+	ropeMscale                       float32
+	ropeMscaleAllDim                 float32
+}
+
+func (o TextOptions) applyRotaryPositionEmbeddings(ctx ml.Context, states, positions ml.Tensor) ml.Tensor {
+	var ropeOpts []func(*rope.Options)
+	if o.ropeType == "yarn" {
+		if o.ropeMscale != 0 && o.ropeMscaleAllDim != 0 {
+			ropeOpts = append(ropeOpts, rope.WithAttentionFactor(1.0/float32(0.1*math.Log(float64(o.ropeScale))+1.0)))
+		}
+
+		ropeOpts = append(ropeOpts,
+			rope.WithOriginalContextLength(o.ropeOrigPosEmbeddings),
+			rope.WithExtrapolationFactor(o.ropeExtrapolation),
+			rope.WithBetaFast(o.ropeBetaFast),
+			rope.WithBetaSlow(o.ropeBetaSlow),
+		)
+	}
+
+	return nn.RoPE(ctx, states, positions, o.ropeDim, o.ropeBase, 1./o.ropeScale, ropeOpts...)
 }
 
 type TextModel struct {
@@ -42,11 +66,11 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs, posit
 
 	q := sa.Query.Forward(ctx, hiddenState)
 	q = q.Reshape(ctx, headDim, opts.numHeads, batchSize)
-	q = fast.RoPE(ctx, q, positionIDs, opts.ropeDim, opts.ropeBase, 1./opts.ropeScale)
+	q = opts.applyRotaryPositionEmbeddings(ctx, q, positionIDs)
 
 	k := sa.Key.Forward(ctx, hiddenState)
 	k = k.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
-	k = fast.RoPE(ctx, k, positionIDs, opts.ropeDim, opts.ropeBase, 1./opts.ropeScale)
+	k = opts.applyRotaryPositionEmbeddings(ctx, k, positionIDs)
 
 	v := sa.Value.Forward(ctx, hiddenState)
 	v = v.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
@@ -61,7 +85,7 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs, posit
 }
 
 func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return fast.RoPE(ctx, key, shift, m.ropeDim, m.ropeBase, 1./m.ropeScale), nil
+	return m.applyRotaryPositionEmbeddings(ctx, key, shift), nil
 }
 
 type MLP struct {
@@ -147,9 +171,15 @@ func newTextModel(c fs.Config) *TextModel {
 			ropeDim:               int(c.Uint("rope.dimension_count")),
 			eps:                   c.Float("attention.layer_norm_rms_epsilon"),
 			ropeBase:              c.Float("rope.freq_base"),
-			ropeScale:             c.Float("rope.scaling.factor", 1),
+			ropeScale:             c.Float("rope.scaling.factor", 1.0),
 			ropeOrigPosEmbeddings: int(c.Uint("rope.scaling.original_context_length")),
-			ropeScalingBeta:       c.Float("rope.scaling_beta"),
+			ropeScalingBeta:       c.Float("rope.scaling_beta", 0.1),
+			ropeBetaFast:          c.Float("rope.scaling.beta_fast", 32.0),
+			ropeBetaSlow:          c.Float("rope.scaling.beta_slow", 1.0),
+			ropeType:              c.String("rope.scaling.type"),
+			ropeMscale:            c.Float("rope.scaling.mscale"),
+			ropeMscaleAllDim:      c.Float("rope.scaling.mscale_all_dim"),
+			ropeExtrapolation:     c.Float("rope.scaling.extrapolation_factor", 1),
 		},
 	}
 }

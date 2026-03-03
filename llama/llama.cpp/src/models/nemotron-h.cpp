@@ -107,12 +107,41 @@ ggml_tensor * llm_build_nemotron_h::build_attention_layer(ggml_tensor *         
 }
 
 ggml_tensor * llm_build_nemotron_h::build_ffn_layer(ggml_tensor * cur, const llama_model & model, const int il) {
-    cur = build_ffn(cur,
-            model.layers[il].ffn_up, model.layers[il].ffn_up_b, NULL,
-            NULL, NULL, NULL,
-            model.layers[il].ffn_down, model.layers[il].ffn_down_b, NULL,
-            NULL, LLM_FFN_RELU_SQR, LLM_FFN_PAR, il);
-    cb(cur, "ffn_out", il);
+    if (model.layers[il].ffn_gate_inp == nullptr) {
+        cur = build_ffn(cur,
+                model.layers[il].ffn_up,   model.layers[il].ffn_up_b,   NULL,
+                NULL,                      NULL,                        NULL,
+                model.layers[il].ffn_down, model.layers[il].ffn_down_b, NULL,
+                NULL,
+                LLM_FFN_RELU_SQR, LLM_FFN_PAR, il);
+        cb(cur, "ffn_out", il);
+    } else {
+        ggml_tensor * ffn_inp = cur;
+        ggml_tensor * moe_out =
+            build_moe_ffn(ffn_inp,
+                    model.layers[il].ffn_gate_inp,
+                    model.layers[il].ffn_up_exps,
+                    nullptr, // no gate
+                    model.layers[il].ffn_down_exps,
+                    model.layers[il].ffn_exp_probs_b,
+                    n_expert, n_expert_used,
+                    LLM_FFN_RELU_SQR, hparams.expert_weights_norm,
+                    true, hparams.expert_weights_scale,
+                    LLAMA_EXPERT_GATING_FUNC_TYPE_SIGMOID,
+                    il);
+        cb(moe_out, "ffn_moe_out", il);
+
+        ggml_tensor * ffn_shexp = build_ffn(ffn_inp,
+                    model.layers[il].ffn_up_shexp,  NULL, NULL,
+                    NULL /* no gate */           ,  NULL, NULL,
+                    model.layers[il].ffn_down_shexp, NULL, NULL,
+                    NULL,
+                    LLM_FFN_RELU_SQR, LLM_FFN_PAR, il);
+        cb(ffn_shexp, "ffn_shexp", il);
+
+        cur = ggml_add(ctx0, moe_out, ffn_shexp);
+        cb(cur, "ffn_out", il);
+    }
 
     cur = build_cvec(cur, il);
     cb(cur, "l_out", il);

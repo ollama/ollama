@@ -7,7 +7,7 @@ import (
 	"slices"
 
 	"github.com/ollama/ollama/llama"
-	"github.com/ollama/ollama/model"
+	"github.com/ollama/ollama/tokenizer"
 )
 
 // token represents information about a single token during sampling
@@ -16,13 +16,31 @@ type token struct {
 	value float32 // The raw logit or probability from the model
 }
 
+const DefaultPenaltyLookback = 64
+
 type Sampler struct {
 	rng         *rand.Rand
 	topK        int
 	topP        float32
 	minP        float32
 	temperature float32
+	repeat      float32
+	presence    float32
+	frequency   float32
+	history     []int32
 	grammar     *GrammarSampler
+}
+
+func (s *Sampler) Reset() {
+	s.history = s.history[:0]
+}
+
+func (s *Sampler) Accept(token int32) {
+	s.history = append(s.history, token)
+	if len(s.history) > DefaultPenaltyLookback {
+		copy(s.history, s.history[len(s.history)-DefaultPenaltyLookback:])
+		s.history = s.history[:DefaultPenaltyLookback]
+	}
 }
 
 func (s *Sampler) Sample(logits []float32) (int32, error) {
@@ -30,10 +48,17 @@ func (s *Sampler) Sample(logits []float32) (int32, error) {
 		return -1, errors.New("sample: no logits provided to sample")
 	}
 
+	counts := tokenCounts(s.history, len(logits))
+
 	tokens := make([]token, len(logits))
 	for i := range logits {
+		value := logits[i]
+		if count := counts[int32(i)]; count > 0 {
+			value = applyPenalty(value, count, s.repeat, s.presence, s.frequency)
+		}
+
 		tokens[i].id = int32(i)
-		tokens[i].value = logits[i]
+		tokens[i].value = value
 	}
 
 	t, err := s.sample(tokens)
@@ -55,8 +80,12 @@ func (s *Sampler) Sample(logits []float32) (int32, error) {
 		// we need to reset them before applying the grammar and
 		// sampling again
 		for i := range logits {
+			value := logits[i]
+			if count := counts[int32(i)]; count > 0 {
+				value = applyPenalty(value, count, s.repeat, s.presence, s.frequency)
+			}
 			tokens[i].id = int32(i)
-			tokens[i].value = logits[i]
+			tokens[i].value = value
 		}
 		s.grammar.Apply(tokens)
 		t, err = s.sample(tokens)
@@ -127,7 +156,7 @@ func (s *Sampler) sample(tokens []token) (token, error) {
 }
 
 // TODO(parthsareen): update sampler interface to use json unmarshal https://github.com/ollama/ollama/issues/9278
-func NewSampler(temperature float32, topK int, topP float32, minP float32, seed int, grammar *GrammarSampler) Sampler {
+func NewSampler(temperature float32, topK int, topP float32, minP float32, repeatPenalty float32, presencePenalty float32, frequencyPenalty float32, seed int, grammar *GrammarSampler) Sampler {
 	var rng *rand.Rand
 	if seed != -1 {
 		// PCG requires two parameters: sequence and stream
@@ -154,12 +183,19 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 		minP = 1.0
 	}
 
+	if repeatPenalty <= 0 {
+		repeatPenalty = 1.0
+	}
+
 	return Sampler{
 		rng:         rng,
 		topK:        topK,
 		topP:        topP,
 		minP:        minP,
 		temperature: temperature,
+		repeat:      repeatPenalty,
+		presence:    presencePenalty,
+		frequency:   frequencyPenalty,
 		grammar:     grammar,
 	}
 }
@@ -168,15 +204,15 @@ type GrammarSampler struct {
 	grammar *llama.Grammar
 }
 
-func NewGrammarSampler(model model.TextProcessor, grammarStr string) (*GrammarSampler, error) {
-	vocabIds := make([]uint32, len(model.Vocabulary().Values))
-	pieces := make([]string, len(model.Vocabulary().Values))
-	for i := range model.Vocabulary().Values {
-		pieces[i], _ = model.Decode([]int32{int32(i)})
+func NewGrammarSampler(tok tokenizer.Tokenizer, grammarStr string) (*GrammarSampler, error) {
+	vocabIds := make([]uint32, len(tok.Vocabulary().Values))
+	pieces := make([]string, len(tok.Vocabulary().Values))
+	for i := range tok.Vocabulary().Values {
+		pieces[i], _ = tok.Decode([]int32{int32(i)})
 		vocabIds[i] = uint32(i)
 	}
 
-	grammar := llama.NewGrammar(grammarStr, vocabIds, pieces, model.Vocabulary().EOS)
+	grammar := llama.NewGrammar(grammarStr, vocabIds, pieces, tok.Vocabulary().EOS)
 	if grammar == nil {
 		return nil, errors.New("sample: failed to initialize grammar")
 	}

@@ -8,7 +8,7 @@ import {
 } from "react";
 import { Model } from "@/gotypes";
 import { useSelectedModel } from "@/hooks/useSelectedModel";
-import { useSettings } from "@/hooks/useSettings";
+import { useCloudStatus } from "@/hooks/useCloudStatus";
 import { useQueryClient } from "@tanstack/react-query";
 import { getModelUpstreamInfo } from "@/api";
 import { ArrowDownTrayIcon } from "@heroicons/react/24/outline";
@@ -34,7 +34,7 @@ export const ModelPicker = forwardRef<
     chatId,
     searchQuery,
   );
-  const { settings } = useSettings();
+  const { cloudDisabled } = useCloudStatus();
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
@@ -219,7 +219,7 @@ export const ModelPicker = forwardRef<
             models={models}
             selectedModel={selectedModel}
             onModelSelect={handleModelSelect}
-            airplaneMode={settings.airplaneMode}
+            cloudDisabled={cloudDisabled}
             isOpen={isOpen}
           />
         </div>
@@ -233,13 +233,13 @@ export const ModelList = forwardRef(function ModelList(
     models,
     selectedModel,
     onModelSelect,
-    airplaneMode,
+    cloudDisabled,
     isOpen,
   }: {
     models: Model[];
     selectedModel: Model | null;
     onModelSelect: (model: Model) => void;
-    airplaneMode: boolean;
+    cloudDisabled: boolean;
     isOpen: boolean;
   },
   ref,
@@ -348,7 +348,7 @@ export const ModelList = forwardRef(function ModelList(
                   </svg>
                 )}
                 {model.digest === undefined &&
-                  (airplaneMode || !model.isCloud()) && (
+                  (cloudDisabled || !model.isCloud()) && (
                     <ArrowDownTrayIcon
                       className="h-4 w-4 text-neutral-500 dark:text-neutral-400"
                       strokeWidth={1.75}
