@@ -39,19 +39,23 @@ func Execute(args []string) error {
 		return fmt.Errorf("--port is required")
 	}
 
-	// Initialize MLX
+	// Detect model type from capabilities
+	mode := detectModelMode(*modelName)
+	slog.Info("starting mlx runner", "model", *modelName, "port", *port, "mode", mode)
+
+	if mode != ModeImageGen {
+		return fmt.Errorf("imagegen runner only supports image generation models")
+	}
+
+	// Initialize MLX only for image generation mode.
 	if err := mlx.InitMLX(); err != nil {
 		slog.Error("unable to initialize MLX", "error", err)
 		return err
 	}
 	slog.Info("MLX library initialized")
 
-	// Detect model type from capabilities
-	mode := detectModelMode(*modelName)
-	slog.Info("starting mlx runner", "model", *modelName, "port", *port, "mode", mode)
-
 	// Create and start server
-	server, err := newServer(*modelName, *port, mode)
+	server, err := newServer(*modelName, *port)
 	if err != nil {
 		return fmt.Errorf("failed to create server: %w", err)
 	}
@@ -60,12 +64,6 @@ func Execute(args []string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", server.healthHandler)
 	mux.HandleFunc("/completion", server.completionHandler)
-
-	// LLM-specific endpoints
-	if mode == ModeLLM {
-		mux.HandleFunc("/tokenize", server.tokenizeHandler)
-		mux.HandleFunc("/embedding", server.embeddingHandler)
-	}
 
 	httpServer := &http.Server{
 		Addr:    fmt.Sprintf("127.0.0.1:%d", *port),
@@ -112,34 +110,22 @@ func detectModelMode(modelName string) ModelMode {
 
 // server holds the model and handles HTTP requests.
 type server struct {
-	mode      ModelMode
 	modelName string
 	port      int
 
-	// Image generation model (when mode == ModeImageGen)
+	// Image generation model.
 	imageModel ImageModel
-
-	// LLM model (when mode == ModeLLM)
-	llmModel *llmState
 }
 
-// newServer creates a new server instance and loads the appropriate model.
-func newServer(modelName string, port int, mode ModelMode) (*server, error) {
+// newServer creates a new server instance for image generation models.
+func newServer(modelName string, port int) (*server, error) {
 	s := &server{
-		mode:      mode,
 		modelName: modelName,
 		port:      port,
 	}
 
-	switch mode {
-	case ModeImageGen:
-		if err := s.loadImageModel(); err != nil {
-			return nil, fmt.Errorf("failed to load image model: %w", err)
-		}
-	case ModeLLM:
-		if err := s.loadLLMModel(); err != nil {
-			return nil, fmt.Errorf("failed to load LLM model: %w", err)
-		}
+	if err := s.loadImageModel(); err != nil {
+		return nil, fmt.Errorf("failed to load image model: %w", err)
 	}
 
 	return s, nil
@@ -163,41 +149,5 @@ func (s *server) completionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	switch s.mode {
-	case ModeImageGen:
-		s.handleImageCompletion(w, r, req)
-	case ModeLLM:
-		s.handleLLMCompletion(w, r, req)
-	}
-}
-
-func (s *server) tokenizeHandler(w http.ResponseWriter, r *http.Request) {
-	if s.llmModel == nil {
-		http.Error(w, "LLM model not loaded", http.StatusInternalServerError)
-		return
-	}
-
-	var req struct {
-		Content string `json:"content"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	tok := s.llmModel.model.Tokenizer()
-	tokens := tok.Encode(req.Content, false)
-
-	// Convert int32 to int for JSON response
-	intTokens := make([]int, len(tokens))
-	for i, t := range tokens {
-		intTokens[i] = int(t)
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string][]int{"tokens": intTokens})
-}
-
-func (s *server) embeddingHandler(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "embeddings not yet implemented for MLX models", http.StatusNotImplemented)
+	s.handleImageCompletion(w, r, req)
 }

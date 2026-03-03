@@ -33,7 +33,6 @@ type LlmRequest struct {
 	successCh       chan *runnerRef
 	errCh           chan error
 	schedAttempts   uint
-	useImagegen     bool
 }
 
 type Scheduler struct {
@@ -106,7 +105,7 @@ func schedulerModelKey(m *Model) string {
 }
 
 // context must be canceled to decrement ref count and release the runner
-func (s *Scheduler) GetRunner(c context.Context, m *Model, opts api.Options, sessionDuration *api.Duration, useImagegen bool) (chan *runnerRef, chan error) {
+func (s *Scheduler) GetRunner(c context.Context, m *Model, opts api.Options, sessionDuration *api.Duration) (chan *runnerRef, chan error) {
 	if opts.NumCtx < 4 {
 		opts.NumCtx = 4
 	}
@@ -123,7 +122,6 @@ func (s *Scheduler) GetRunner(c context.Context, m *Model, opts api.Options, ses
 		sessionDuration: sessionDuration,
 		successCh:       make(chan *runnerRef, 1),
 		errCh:           make(chan error, 1),
-		useImagegen:     useImagegen,
 	}
 
 	key := schedulerModelKey(req.model)
@@ -593,20 +591,15 @@ iGPUScan:
 	return false
 }
 
-// loadMLX loads an experimental safetensors model using the unified MLX runner.
-// This supports both LLM (completion) and image generation models.
+// loadMLX loads an experimental safetensors model using MLX runners.
+// Image models use x/imagegen; LLM models use x/mlxrunner.
 func (s *Scheduler) loadMLX(req *LlmRequest) bool {
 	modelName := req.model.ShortName
 	var server llm.LlamaServer
 	var err error
 
-	isImagegen := false
 	if slices.Contains(req.model.Config.Capabilities, "image") {
-		server, err = imagegen.NewServer(modelName, imagegen.ModeImageGen)
-		isImagegen = true
-	} else if req.useImagegen {
-		server, err = imagegen.NewServer(modelName, imagegen.ModeLLM)
-		isImagegen = true
+		server, err = imagegen.NewServer(modelName)
 	} else {
 		server, err = mlxrunner.NewClient(modelName)
 	}
@@ -628,7 +621,7 @@ func (s *Scheduler) loadMLX(req *LlmRequest) bool {
 		llama:           server,
 		Options:         &req.opts,
 		loading:         false,
-		isImagegen:      isImagegen,
+		isImagegen:      slices.Contains(req.model.Config.Capabilities, "image"),
 		sessionDuration: sessionDuration,
 		totalSize:       totalSize,
 		vramSize:        vramSize,
@@ -737,8 +730,8 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
 
-	// Check if runner type (imagegen vs mlxrunner) matches what's requested
-	wantImagegen := req.useImagegen || slices.Contains(req.model.Config.Capabilities, "image")
+	// Check if runner type (imagegen vs mlxrunner) matches what's requested.
+	wantImagegen := slices.Contains(req.model.Config.Capabilities, "image")
 	if runner.isImagegen != wantImagegen {
 		return true
 	}
