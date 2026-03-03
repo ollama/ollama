@@ -83,10 +83,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	materializeCaches := func() {
 		state := make([]*mlx.Array, 0, 2*len(caches))
 		for _, c := range caches {
-			if c == nil {
-				continue
-			}
-			state = append(state, c.Materialize()...)
+			state = appendCacheState(state, c)
 		}
 		if len(state) == 0 {
 			return

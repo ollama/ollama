@@ -9,8 +9,8 @@ import (
 
 type Cache interface {
 	Update(keys, values *mlx.Array) (newKeys, newValues *mlx.Array)
+	// State returns the cache-owned state roots that should be kept/evaluated.
 	State() (keys, values *mlx.Array)
-	Materialize() []*mlx.Array
 	CanTrim() bool
 	Trim(int) int
 	Clone() Cache
@@ -62,23 +62,10 @@ func (c *KVCache) Update(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
 }
 
 func (c *KVCache) State() (*mlx.Array, *mlx.Array) {
-	if c.offset == c.keys.Dim(2) {
-		return c.keys, c.values
+	if c.keys == nil || c.values == nil {
+		return nil, nil
 	}
-	return c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice()),
-		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice())
-}
-
-// Materialize returns the backing key/value buffers currently held by the cache.
-func (c *KVCache) Materialize() []*mlx.Array {
-	out := make([]*mlx.Array, 0, 2)
-	if c.keys != nil && c.keys.Valid() {
-		out = append(out, c.keys)
-	}
-	if c.values != nil && c.values.Valid() {
-		out = append(out, c.values)
-	}
-	return out
+	return c.keys, c.values
 }
 
 func (c *KVCache) CanTrim() bool { return true }
@@ -199,9 +186,8 @@ func (c *RotatingKVCache) update(keys, values *mlx.Array) (*mlx.Array, *mlx.Arra
 }
 
 func (c *RotatingKVCache) State() (*mlx.Array, *mlx.Array) {
-	if c.offset < c.keys.Dim(2) {
-		return c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice()),
-			c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice())
+	if c.keys == nil || c.values == nil {
+		return nil, nil
 	}
 	return c.keys, c.values
 }

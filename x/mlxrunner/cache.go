@@ -30,6 +30,22 @@ type cacheSession struct {
 	remaining []int32
 }
 
+func appendCacheState(dst []*mlx.Array, c cache.Cache) []*mlx.Array {
+	if c == nil {
+		return dst
+	}
+
+	keys, values := c.State()
+	if keys != nil && keys.Valid() {
+		dst = append(dst, keys)
+	}
+	if values != nil && values.Valid() {
+		dst = append(dst, values)
+	}
+
+	return dst
+}
+
 func (c *kvCache) free() {
 	for i, kv := range c.caches {
 		if kv == nil {
@@ -114,7 +130,7 @@ func (s *cacheSession) close() {
 		if off := kv.Offset(); offset < 0 || off < offset {
 			offset = off
 		}
-		arrays = append(arrays, kv.Materialize()...)
+		arrays = appendCacheState(arrays, kv)
 	}
 	if offset <= 0 {
 		return
@@ -176,7 +192,7 @@ func (c *kvCache) log() {
 		if off := kv.Offset(); offset < 0 || off < offset {
 			offset = off
 		}
-		for _, a := range kv.Materialize() {
+		for _, a := range appendCacheState(nil, kv) {
 			totalBytes += a.NumBytes()
 		}
 	}
