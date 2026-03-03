@@ -51,7 +51,7 @@ Generate a response for a given prompt with a provided model. This is a streamin
 Advanced parameters (optional):
 
 - `format`: the format to return a response in. Format can be `json` or a JSON schema
-- `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile#valid-parameters-and-values) such as `temperature`
+- `options`: additional model parameters listed in the documentation for the [Modelfile](https://docs.ollama.com/modelfile#valid-parameters-and-values) such as `temperature`
 - `system`: system message to (overrides what is defined in the `Modelfile`)
 - `template`: the prompt template to use (overrides what is defined in the `Modelfile`)
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
