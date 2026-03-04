@@ -12,8 +12,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/internal/modelref"
 )
 
 // OpenCode implements Runner and Editor for OpenCode integration
@@ -26,13 +26,13 @@ type cloudModelLimit struct {
 }
 
 // lookupCloudModelLimit returns the token limits for a cloud model.
-// It tries the exact name first, then strips explicit cloud suffixes.
+// It tries the exact name first, then strips the ":cloud" suffix.
 func lookupCloudModelLimit(name string) (cloudModelLimit, bool) {
 	if l, ok := cloudModelLimits[name]; ok {
 		return l, true
 	}
-	base, stripped := modelref.StripCloudSourceTag(name)
-	if stripped {
+	base := strings.TrimSuffix(name, ":cloud")
+	if base != name {
 		if l, ok := cloudModelLimits[base]; ok {
 			return l, true
 		}
@@ -152,6 +152,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 		}
 	}
 
+	client, _ := api.ClientFromEnvironment()
 
 	for _, model := range modelList {
 		if existing, ok := models[model].(map[string]any); ok {
@@ -162,7 +163,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 					existing["name"] = strings.TrimSuffix(name, " [Ollama]")
 				}
 			}
-			if isCloudModelName(model) {
+			if isCloudModel(context.Background(), client, model) {
 				if l, ok := lookupCloudModelLimit(model); ok {
 					existing["limit"] = map[string]any{
 						"context": l.Context,
@@ -176,7 +177,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 			"name":    model,
 			"_launch": true,
 		}
-		if isCloudModelName(model) {
+		if isCloudModel(context.Background(), client, model) {
 			if l, ok := lookupCloudModelLimit(model); ok {
 				entry["limit"] = map[string]any{
 					"context": l.Context,

@@ -110,26 +110,19 @@ func (s *Server) CreateHandler(c *gin.Context) {
 
 		if r.From != "" {
 			slog.Debug("create model from model name", "from", r.From)
-			fromRef, err := parseAndValidateModelRef(r.From)
-			if err != nil {
+			fromName := model.ParseName(r.From)
+			if !fromName.IsValid() {
 				ch <- gin.H{"error": errtypes.InvalidModelNameErrMsg, "status": http.StatusBadRequest}
 				return
 			}
-
-			fromName := fromRef.Name
-			remoteHost := r.RemoteHost
-			if fromRef.Source == modelSourceCloud && remoteHost == "" {
-				remoteHost = cloudProxyBaseURL
-			}
-
-			if remoteHost != "" {
-				ru, err := remoteURL(remoteHost)
+			if r.RemoteHost != "" {
+				ru, err := remoteURL(r.RemoteHost)
 				if err != nil {
 					ch <- gin.H{"error": "bad remote", "status": http.StatusBadRequest}
 					return
 				}
 
-				config.RemoteModel = fromRef.Base
+				config.RemoteModel = r.From
 				config.RemoteHost = ru
 				remote = true
 			} else {
