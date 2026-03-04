@@ -20,27 +20,6 @@ type RecurrentCache struct {
 	headKDim  int
 }
 
-func (c *RecurrentCache) setStateMaterialized(old, v *mlx.Array) *mlx.Array {
-	if v == nil || !v.Valid() {
-		return old
-	}
-	if old == v {
-		return old
-	}
-
-	// Keep this as a lazy clone; unlike Copy+Eval, this does not force immediate
-	// materialization of the recurrent state.
-	snap := v.Clone()
-	mlx.Pin(snap)
-
-	// Drop references to the previous cached state root.
-	if old != nil && old != snap {
-		mlx.Unpin(old)
-	}
-
-	return snap
-}
-
 func (c *RecurrentCache) setStateRaw(old, v *mlx.Array) *mlx.Array {
 	if v == nil || !v.Valid() {
 		return old
@@ -126,14 +105,6 @@ func (c *RecurrentCache) ConvState(batch int, dtype mlx.DType) *mlx.Array {
 }
 
 func (c *RecurrentCache) SetConvState(v *mlx.Array) {
-	c.convState = c.setStateMaterialized(c.convState, v)
-}
-
-// SetConvStateFast stores conv state without forcing an immediate snapshot/eval.
-// Use only for decode hot paths that accept higher transient memory until the next
-// sync/sweep point. The conv-state input is usually a slice view, so request a
-// compact contiguous copy to avoid pinning the whole source buffer.
-func (c *RecurrentCache) SetConvStateFast(v *mlx.Array) {
 	c.convState = c.setStateDetached(c.convState, v, true)
 }
 
@@ -143,13 +114,6 @@ func (c *RecurrentCache) DeltaState(batch int, dtype mlx.DType) *mlx.Array {
 }
 
 func (c *RecurrentCache) SetDeltaState(v *mlx.Array) {
-	c.deltaState = c.setStateMaterialized(c.deltaState, v)
-}
-
-// SetDeltaStateFast stores delta state without forcing an immediate snapshot/eval.
-// Use only for decode hot paths that accept higher transient memory until the next
-// sync/sweep point.
-func (c *RecurrentCache) SetDeltaStateFast(v *mlx.Array) {
 	c.deltaState = c.setStateDetached(c.deltaState, v, false)
 }
 

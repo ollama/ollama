@@ -1192,7 +1192,6 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Co
 	}
 
 	convInput := mlx.Concatenate([]*mlx.Array{convState, qkv}, 1)
-	fastRecurrentWrite := L == 1
 	var convOut *mlx.Array
 	if g.Conv1D != nil {
 		convOut = g.Conv1D.Forward(convInput)
@@ -1204,13 +1203,7 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Co
 		total := int32(convInput.Dim(1))
 		start := total - convTail
 		nextConv := mlx.SliceStartStop(convInput, []int32{0, start, 0}, []int32{B, total, int32(convInput.Dim(2))})
-		// Always snapshot/materialize recurrent state so prefill does not retain
-		// full token-unrolled graphs across requests.
-		if fastRecurrentWrite {
-			rc.SetConvStateFast(nextConv)
-		} else {
-			rc.SetConvState(nextConv)
-		}
+		rc.SetConvState(nextConv)
 	}
 
 	keyDim := cfg.LinearNumKeyHeads * cfg.LinearKeyHeadDim
@@ -1248,11 +1241,7 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Co
 	out = mlx.Reshape(out, B, L, valueDim)
 	out = g.OutProj.Forward(out)
 	if rc != nil {
-		if fastRecurrentWrite {
-			rc.SetDeltaStateFast(state)
-		} else {
-			rc.SetDeltaState(state)
-		}
+		rc.SetDeltaState(state)
 		rc.Advance(int(L))
 	}
 	return out

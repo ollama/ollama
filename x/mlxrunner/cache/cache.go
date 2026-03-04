@@ -65,7 +65,8 @@ func (c *KVCache) State() (*mlx.Array, *mlx.Array) {
 	if c.keys == nil || c.values == nil {
 		return nil, nil
 	}
-	return c.keys, c.values
+	return c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice()),
+		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice())
 }
 
 func (c *KVCache) CanTrim() bool { return true }
@@ -189,7 +190,8 @@ func (c *RotatingKVCache) State() (*mlx.Array, *mlx.Array) {
 	if c.keys == nil || c.values == nil {
 		return nil, nil
 	}
-	return c.keys, c.values
+	return c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice()),
+		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice())
 }
 
 func (c *RotatingKVCache) CanTrim() bool { return true }
