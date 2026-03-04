@@ -336,6 +336,16 @@ func TestApplyPenalties(t *testing.T) {
 		// token 1: repeat → -1.0*2.0 = -2.0, freq → -2.0 - 0.5*1 = -2.5, pres → -2.5 - 1.0 = -3.5
 		compareLogits(t, "combined", []float32{1.0, -3.5}, tokens)
 	})
+
+	t.Run("out-of-bounds token IDs are ignored", func(t *testing.T) {
+		tokens := toTokens([]float32{4.0, 2.0, 1.0})
+		// Include negative IDs, IDs >= vocabSize (3), and one valid ID (1)
+		applyPenalties(tokens, []int32{-1, 1, 3, 100, -50}, 2.0, 0.0, 0.0)
+		// Only token 1 should be penalized (positive logit: 2.0 / 2.0 = 1.0)
+		// token 0: unchanged (not in valid recent tokens)
+		// token 2: unchanged (ID 3 is out of bounds for vocab size 3)
+		compareLogits(t, "oob ignored", []float32{4.0, 1.0, 1.0}, tokens)
+	})
 }
 
 func BenchmarkTransforms(b *testing.B) {

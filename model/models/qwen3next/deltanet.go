@@ -136,6 +136,19 @@ func (gdn *GatedDeltaNet) Forward(ctx ml.Context, hiddenStates, _ ml.Tensor, cac
 		return nil, errors.New("qwen3next: missing linear attention beta/alpha projections")
 	}
 
+	if gdn.SSMDT == nil {
+		return nil, errors.New("qwen3next: missing linear attention ssm_dt tensor")
+	}
+	if gdn.SSMA == nil {
+		return nil, errors.New("qwen3next: missing linear attention ssm_a tensor")
+	}
+	if gdn.SSMConv1D == nil || gdn.SSMConv1D.Weight == nil {
+		return nil, errors.New("qwen3next: missing linear attention ssm_conv1d tensor")
+	}
+	if gdn.SSMNorm == nil || gdn.SSMOut == nil {
+		return nil, errors.New("qwen3next: missing linear attention ssm_norm/ssm_out projections")
+	}
+
 	// Compute gate: softplus(alpha + dt_bias) * -A
 	alphaBiased := alpha.Add(ctx, gdn.SSMDT)
 	alphaSoftplus := alphaBiased.Softplus(ctx)

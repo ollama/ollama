@@ -122,8 +122,12 @@ func applyPenalties(tokens []token, recentTokens []int32, repeatPenalty, frequen
 	if len(recentTokens) == 0 {
 		return
 	}
+	vocabSize := len(tokens)
 	counts := make(map[int32]int, len(recentTokens))
 	for _, id := range recentTokens {
+		if id < 0 || int(id) >= vocabSize {
+			continue
+		}
 		counts[id]++
 	}
 	for i := range tokens {
