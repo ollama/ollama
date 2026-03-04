@@ -101,6 +101,16 @@ type selectorModel struct {
 	width        int
 }
 
+func selectorModelWithCurrent(title string, items []SelectItem, current string) selectorModel {
+	m := selectorModel{
+		title:  title,
+		items:  items,
+		cursor: cursorForCurrent(items, current),
+	}
+	m.updateScroll(m.otherStart())
+	return m
+}
+
 func (m selectorModel) filteredItems() []SelectItem {
 	if m.filter == "" {
 		return m.items
@@ -382,11 +392,7 @@ func SelectSingle(title string, items []SelectItem, current string) (string, err
 		return "", fmt.Errorf("no items to select from")
 	}
 
-	m := selectorModel{
-		title:  title,
-		items:  items,
-		cursor: cursorForCurrent(items, current),
-	}
+	m := selectorModelWithCurrent(title, items, current)
 
 	p := tea.NewProgram(m)
 	finalModel, err := p.Run()
