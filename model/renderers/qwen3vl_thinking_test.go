@@ -426,12 +426,13 @@ func TestQwenRendererNameNoThinkBehaviorSplit(t *testing.T) {
 	}
 	thinkFalse := &api.ThinkValue{Value: false}
 
+	// qwen3.5 now uses Qwen3CoderRenderer which does not handle ThinkValue
 	qwen35Rendered, err := RenderWithRenderer("qwen3.5", msgs, nil, thinkFalse)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(qwen35Rendered, "<|im_start|>assistant\n<think>\n\n</think>\n\n") {
-		t.Fatalf("expected qwen3.5 renderer to emit explicit no-think prefill, got:\n%s", qwen35Rendered)
+	if !strings.Contains(qwen35Rendered, "<|im_start|>assistant\n") {
+		t.Fatalf("expected qwen3.5 renderer to emit assistant prefill, got:\n%s", qwen35Rendered)
 	}
 
 	qwen3VLRendered, err := RenderWithRenderer("qwen3-vl-thinking", msgs, nil, thinkFalse)

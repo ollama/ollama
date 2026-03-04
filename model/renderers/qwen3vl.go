@@ -97,6 +97,8 @@ func (r *Qwen3VLRenderer) Render(messages []api.Message, tools []api.Tool, think
 					sb.WriteString("<|im_start|>" + message.Role + "\n<think>\n" + strings.Trim(contentReasoning, "\n")) // do we want to add a new line here?
 					if content != "" {
 						sb.WriteString("\n</think>\n\n" + strings.TrimLeft(content, "\n"))
+					} else if i < len(messages)-1 {
+						sb.WriteString("\n</think>")
 					}
 				} else {
 					sb.WriteString("<|im_start|>" + message.Role + "\n" + content)
