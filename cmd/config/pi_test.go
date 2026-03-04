@@ -437,6 +437,11 @@ func TestPiEdit(t *testing.T) {
 			t.Errorf("defaultModel = %v, want llama3.2", settings["defaultModel"])
 		}
 
+		// Verify defaultThinkingLevel is set to off
+		if settings["defaultThinkingLevel"] != "off" {
+			t.Errorf("defaultThinkingLevel = %v, want off", settings["defaultThinkingLevel"])
+		}
+
 		// Verify other fields are preserved
 		if settings["theme"] != "dark" {
 			t.Errorf("theme = %v, want dark (preserved)", settings["theme"])

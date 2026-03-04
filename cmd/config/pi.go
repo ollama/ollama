@@ -155,6 +155,8 @@ func (p *Pi) Edit(models []string) error {
 
 	settings["defaultProvider"] = "ollama"
 	settings["defaultModel"] = models[0]
+	// TODO(parthsareen): temporary fix for happy path install. should treat thinking level as true for thinking when needed
+	settings["defaultThinkingLevel"] = "off"
 
 	settingsData, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
