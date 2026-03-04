@@ -31,7 +31,7 @@ func TestIntegrationConfig(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		config, err := loadIntegration("claude")
+		config, err := LoadIntegration("claude")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -55,11 +55,11 @@ func TestIntegrationConfig(t *testing.T) {
 			"primary": "llama3.2:70b",
 			"fast":    "llama3.2:8b",
 		}
-		if err := saveAliases("claude", aliases); err != nil {
+		if err := SaveAliases("claude", aliases); err != nil {
 			t.Fatal(err)
 		}
 
-		config, err := loadIntegration("claude")
+		config, err := LoadIntegration("claude")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -77,14 +77,14 @@ func TestIntegrationConfig(t *testing.T) {
 		if err := SaveIntegration("claude", []string{"model-a"}); err != nil {
 			t.Fatal(err)
 		}
-		if err := saveAliases("claude", map[string]string{"primary": "model-a", "fast": "model-small"}); err != nil {
+		if err := SaveAliases("claude", map[string]string{"primary": "model-a", "fast": "model-small"}); err != nil {
 			t.Fatal(err)
 		}
 
 		if err := SaveIntegration("claude", []string{"model-b"}); err != nil {
 			t.Fatal(err)
 		}
-		config, err := loadIntegration("claude")
+		config, err := LoadIntegration("claude")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -96,7 +96,7 @@ func TestIntegrationConfig(t *testing.T) {
 	t.Run("defaultModel returns first model", func(t *testing.T) {
 		SaveIntegration("codex", []string{"model-a", "model-b"})
 
-		config, _ := loadIntegration("codex")
+		config, _ := LoadIntegration("codex")
 		defaultModel := ""
 		if len(config.Models) > 0 {
 			defaultModel = config.Models[0]
@@ -120,7 +120,7 @@ func TestIntegrationConfig(t *testing.T) {
 	t.Run("app name is case-insensitive", func(t *testing.T) {
 		SaveIntegration("Claude", []string{"model-x"})
 
-		config, err := loadIntegration("claude")
+		config, err := LoadIntegration("claude")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -137,8 +137,8 @@ func TestIntegrationConfig(t *testing.T) {
 		SaveIntegration("app1", []string{"model-1"})
 		SaveIntegration("app2", []string{"model-2"})
 
-		config1, _ := loadIntegration("app1")
-		config2, _ := loadIntegration("app2")
+		config1, _ := LoadIntegration("app1")
+		config2, _ := LoadIntegration("app2")
 
 		defaultModel1 := ""
 		if len(config1.Models) > 0 {
@@ -251,7 +251,7 @@ func TestLoadIntegration_CorruptedJSON(t *testing.T) {
 	os.MkdirAll(dir, 0o755)
 	os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{corrupted json`), 0o644)
 
-	_, err := loadIntegration("test")
+	_, err := LoadIntegration("test")
 	if err == nil {
 		t.Error("expected error for nonexistent integration in corrupted file")
 	}
@@ -265,7 +265,7 @@ func TestSaveIntegration_NilModels(t *testing.T) {
 		t.Fatalf("saveIntegration with nil models failed: %v", err)
 	}
 
-	config, err := loadIntegration("test")
+	config, err := LoadIntegration("test")
 	if err != nil {
 		t.Fatalf("loadIntegration failed: %v", err)
 	}
@@ -294,7 +294,7 @@ func TestLoadIntegration_NonexistentIntegration(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
-	_, err := loadIntegration("nonexistent")
+	_, err := LoadIntegration("nonexistent")
 	if err == nil {
 		t.Error("expected error for nonexistent integration, got nil")
 	}

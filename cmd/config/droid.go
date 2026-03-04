@@ -1,9 +1,7 @@
 package config
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -44,25 +42,6 @@ func (d *Droid) String() string { return "Droid" }
 func (d *Droid) Run(model string, args []string) error {
 	if _, err := exec.LookPath("droid"); err != nil {
 		return fmt.Errorf("droid is not installed, install from https://docs.factory.ai/cli/getting-started/quickstart")
-	}
-
-	// Call Edit() to ensure config is up-to-date before launch
-	models := []string{model}
-	if config, err := loadIntegration("droid"); err == nil && len(config.Models) > 0 {
-		models = config.Models
-	}
-	var err error
-	models, err = resolveEditorModels("droid", models, func() ([]string, error) {
-		return selectModels(context.Background(), "droid", "")
-	})
-	if errors.Is(err, errCancelled) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if err := d.Edit(models); err != nil {
-		return fmt.Errorf("setup failed: %w", err)
 	}
 
 	cmd := exec.Command("droid", args...)
@@ -129,7 +108,7 @@ func (d *Droid) Edit(models []string) error {
 	var defaultModelID string
 	for i, model := range models {
 		maxOutput := 64000
-		if isCloudModelName(model) {
+		if IsCloudModelName(model) {
 			if l, ok := lookupCloudModelLimit(model); ok {
 				maxOutput = l.Output
 			}

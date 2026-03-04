@@ -24,10 +24,11 @@ var ErrCancelled = errors.New("cancelled")
 var errCancelled = ErrCancelled
 
 // DefaultConfirmPrompt provides a TUI-based confirmation prompt.
-// When set, confirmPrompt delegates to it instead of using raw terminal I/O.
+// When set, ConfirmPrompt delegates to it instead of using raw terminal I/O.
 var DefaultConfirmPrompt func(prompt string) (bool, error)
 
-func confirmPrompt(prompt string) (bool, error) {
+// ConfirmPrompt asks the user to confirm an action using the configured prompt hook.
+func ConfirmPrompt(prompt string) (bool, error) {
 	if DefaultConfirmPrompt != nil {
 		return DefaultConfirmPrompt(prompt)
 	}

@@ -141,7 +141,7 @@ func TestClaudeModelEnvVars(t *testing.T) {
 		setTestHome(t, tmpDir)
 
 		SaveIntegration("claude", []string{"qwen3:8b"})
-		saveAliases("claude", map[string]string{"primary": "qwen3:8b"})
+		SaveAliases("claude", map[string]string{"primary": "qwen3:8b"})
 
 		got := envMap(c.modelEnvVars("qwen3:8b"))
 		if got["ANTHROPIC_DEFAULT_OPUS_MODEL"] != "qwen3:8b" {
@@ -163,7 +163,7 @@ func TestClaudeModelEnvVars(t *testing.T) {
 		setTestHome(t, tmpDir)
 
 		SaveIntegration("claude", []string{"llama3.2:70b"})
-		saveAliases("claude", map[string]string{
+		SaveAliases("claude", map[string]string{
 			"primary": "llama3.2:70b",
 			"fast":    "llama3.2:8b",
 		})
@@ -188,7 +188,7 @@ func TestClaudeModelEnvVars(t *testing.T) {
 		setTestHome(t, tmpDir)
 
 		SaveIntegration("claude", []string{"saved-model"})
-		saveAliases("claude", map[string]string{"primary": "saved-model"})
+		SaveAliases("claude", map[string]string{"primary": "saved-model"})
 
 		got := envMap(c.modelEnvVars("different-model"))
 		if got["ANTHROPIC_DEFAULT_OPUS_MODEL"] != "saved-model" {

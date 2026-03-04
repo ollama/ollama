@@ -26,15 +26,6 @@ func (p *Pi) Run(model string, args []string) error {
 		return fmt.Errorf("pi is not installed, install with: npm install -g @mariozechner/pi-coding-agent")
 	}
 
-	// Call Edit() to ensure config is up-to-date before launch
-	models := []string{model}
-	if config, err := loadIntegration("pi"); err == nil && len(config.Models) > 0 {
-		models = config.Models
-	}
-	if err := p.Edit(models); err != nil {
-		return fmt.Errorf("setup failed: %w", err)
-	}
-
 	cmd := exec.Command("pi", args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

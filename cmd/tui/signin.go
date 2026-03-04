@@ -1,14 +1,23 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
 )
+
+type signInTickMsg struct{}
+
+type signInCheckMsg struct {
+	signedIn bool
+	userName string
+}
 
 type signInModel struct {
 	modelName string
@@ -102,6 +111,18 @@ func renderSignIn(modelName, signInURL string, spinner, width int) string {
 	s.WriteString(selectorHelpStyle.Render("esc cancel"))
 
 	return lipgloss.NewStyle().PaddingLeft(2).Render(s.String())
+}
+
+func checkSignIn() tea.Msg {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return signInCheckMsg{signedIn: false}
+	}
+	user, err := client.Whoami(context.Background())
+	if err == nil && user != nil && user.Name != "" {
+		return signInCheckMsg{signedIn: true, userName: user.Name}
+	}
+	return signInCheckMsg{signedIn: false}
 }
 
 // RunSignIn shows a bubbletea sign-in dialog and polls until the user signs in or cancels.

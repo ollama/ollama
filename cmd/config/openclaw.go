@@ -35,7 +35,7 @@ func (c *Openclaw) Run(model string, args []string) error {
 	}
 
 	firstLaunch := true
-	if integrationConfig, err := loadIntegration("openclaw"); err == nil {
+	if integrationConfig, err := LoadIntegration("openclaw"); err == nil {
 		firstLaunch = !integrationConfig.Onboarded
 	}
 
@@ -45,7 +45,7 @@ func (c *Openclaw) Run(model string, args []string) error {
 		fmt.Fprintf(os.Stderr, "  A bad prompt can trick it into doing unsafe things.\n\n")
 		fmt.Fprintf(os.Stderr, "%s  Learn more: https://docs.openclaw.ai/gateway/security%s\n\n", ansiGray, ansiReset)
 
-		ok, err := confirmPrompt("I understand the risks. Continue?")
+		ok, err := ConfirmPrompt("I understand the risks. Continue?")
 		if err != nil {
 			return err
 		}
@@ -426,7 +426,7 @@ func ensureOpenclawInstalled() (string, error) {
 			"and select OpenClaw")
 	}
 
-	ok, err := confirmPrompt("OpenClaw is not installed. Install with npm?")
+	ok, err := ConfirmPrompt("OpenClaw is not installed. Install with npm?")
 	if err != nil {
 		return "", err
 	}

@@ -75,7 +75,7 @@ func (c *Claude) Run(model string, args []string) error {
 func (c *Claude) modelEnvVars(model string) []string {
 	primary := model
 	fast := model
-	if cfg, err := loadIntegration("claude"); err == nil && cfg.Aliases != nil {
+	if cfg, err := LoadIntegration("claude"); err == nil && cfg.Aliases != nil {
 		if p := cfg.Aliases["primary"]; p != "" {
 			primary = p
 		}
@@ -107,7 +107,7 @@ func (c *Claude) ConfigureAliases(ctx context.Context, model string, existingAli
 	}
 
 	if !force && aliases["primary"] != "" {
-		if isCloudModelName(aliases["primary"]) {
+		if IsCloudModelName(aliases["primary"]) {
 			aliases["fast"] = aliases["primary"]
 			return aliases, false, nil
 		}
@@ -123,6 +123,9 @@ func (c *Claude) ConfigureAliases(ctx context.Context, model string, existingAli
 	fmt.Fprintf(os.Stderr, "\n%sModel Configuration%s\n\n", ansiBold, ansiReset)
 
 	if aliases["primary"] == "" || force {
+		if DefaultSingleSelector == nil {
+			return nil, false, fmt.Errorf("no selector configured")
+		}
 		primary, err := DefaultSingleSelector("Select model:", items, aliases["primary"])
 		if err != nil {
 			return nil, false, err
@@ -130,13 +133,13 @@ func (c *Claude) ConfigureAliases(ctx context.Context, model string, existingAli
 		if err := pullIfNeeded(ctx, client, existingModels, primary); err != nil {
 			return nil, false, err
 		}
-		if err := ensureAuth(ctx, client, cloudModels, []string{primary}); err != nil {
+		if err := EnsureAuth(ctx, client, cloudModels, []string{primary}); err != nil {
 			return nil, false, err
 		}
 		aliases["primary"] = primary
 	}
 
-	if isCloudModelName(aliases["primary"]) {
+	if IsCloudModelName(aliases["primary"]) {
 		aliases["fast"] = aliases["primary"]
 	} else {
 		delete(aliases, "fast")

@@ -1799,6 +1799,7 @@ func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 	tests := []struct {
 		name          string
 		model         string
+		showStatus    int
 		remoteHost    string
 		remoteModel   string
 		whoamiStatus  int
@@ -1842,6 +1843,13 @@ func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 			whoamiResp:   api.UserResponse{Name: "testuser"},
 		},
 		{
+			name:         "explicit :cloud model without local stub still authenticates",
+			model:        "minimax-m2.5:cloud",
+			showStatus:   http.StatusNotFound,
+			whoamiStatus: http.StatusOK,
+			whoamiResp:   api.UserResponse{Name: "testuser"},
+		},
+		{
 			name:         "explicit -cloud model - auth check without remote metadata",
 			model:        "kimi-k2.5:latest-cloud",
 			remoteHost:   "",
@@ -1865,6 +1873,11 @@ func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/show":
+					if tt.showStatus != 0 && tt.showStatus != http.StatusOK {
+						w.WriteHeader(tt.showStatus)
+						_ = json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+						return
+					}
 					w.Header().Set("Content-Type", "application/json")
 					if err := json.NewEncoder(w).Encode(api.ShowResponse{
 						RemoteHost:  tt.remoteHost,

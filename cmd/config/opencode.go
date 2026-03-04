@@ -1,9 +1,7 @@
 package config
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -42,25 +40,6 @@ func (o *OpenCode) String() string { return "OpenCode" }
 func (o *OpenCode) Run(model string, args []string) error {
 	if _, err := exec.LookPath("opencode"); err != nil {
 		return fmt.Errorf("opencode is not installed, install from https://opencode.ai")
-	}
-
-	// Call Edit() to ensure config is up-to-date before launch
-	models := []string{model}
-	if config, err := loadIntegration("opencode"); err == nil && len(config.Models) > 0 {
-		models = config.Models
-	}
-	var err error
-	models, err = resolveEditorModels("opencode", models, func() ([]string, error) {
-		return selectModels(context.Background(), "opencode", "")
-	})
-	if errors.Is(err, errCancelled) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if err := o.Edit(models); err != nil {
-		return fmt.Errorf("setup failed: %w", err)
 	}
 
 	cmd := exec.Command("opencode", args...)
@@ -158,7 +137,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 					existing["name"] = strings.TrimSuffix(name, " [Ollama]")
 				}
 			}
-			if isCloudModelName(model) {
+			if IsCloudModelName(model) {
 				if l, ok := lookupCloudModelLimit(model); ok {
 					existing["limit"] = map[string]any{
 						"context": l.Context,
@@ -172,7 +151,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 			"name":    model,
 			"_launch": true,
 		}
-		if isCloudModelName(model) {
+		if IsCloudModelName(model) {
 			if l, ok := lookupCloudModelLimit(model); ok {
 				entry["limit"] = map[string]any{
 					"context": l.Context,

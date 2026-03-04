@@ -20,6 +20,9 @@ type integration struct {
 	Onboarded bool              `json:"onboarded,omitempty"`
 }
 
+// IntegrationConfig is the persisted config for one integration.
+type IntegrationConfig = integration
+
 type config struct {
 	Integrations  map[string]*integration `json:"integrations"`
 	LastModel     string                  `json:"last_model,omitempty"`
@@ -174,7 +177,7 @@ func integrationOnboarded(appName string) error {
 
 // IntegrationModel returns the first configured model for an integration, or empty string if not configured.
 func IntegrationModel(appName string) string {
-	integrationConfig, err := loadIntegration(appName)
+	integrationConfig, err := LoadIntegration(appName)
 	if err != nil || len(integrationConfig.Models) == 0 {
 		return ""
 	}
@@ -183,7 +186,7 @@ func IntegrationModel(appName string) string {
 
 // IntegrationModels returns all configured models for an integration, or nil.
 func IntegrationModels(appName string) []string {
-	integrationConfig, err := loadIntegration(appName)
+	integrationConfig, err := LoadIntegration(appName)
 	if err != nil || len(integrationConfig.Models) == 0 {
 		return nil
 	}
@@ -233,7 +236,7 @@ func ModelExists(ctx context.Context, name string) bool {
 	if name == "" {
 		return false
 	}
-	if isCloudModelName(name) {
+	if IsCloudModelName(name) {
 		return true
 	}
 	client, err := api.ClientFromEnvironment()
@@ -252,7 +255,8 @@ func ModelExists(ctx context.Context, name string) bool {
 	return false
 }
 
-func loadIntegration(appName string) (*integration, error) {
+// LoadIntegration returns the saved config for one integration.
+func LoadIntegration(appName string) (*integration, error) {
 	cfg, err := load()
 	if err != nil {
 		return nil, err
@@ -266,7 +270,8 @@ func loadIntegration(appName string) (*integration, error) {
 	return integrationConfig, nil
 }
 
-func saveAliases(appName string, aliases map[string]string) error {
+// SaveAliases replaces the saved aliases for one integration.
+func SaveAliases(appName string, aliases map[string]string) error {
 	if appName == "" {
 		return errors.New("app name cannot be empty")
 	}

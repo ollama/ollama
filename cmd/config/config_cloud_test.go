@@ -45,12 +45,12 @@ func TestSaveAliases_ReplacesNotMerges(t *testing.T) {
 		"primary": "cloud-model",
 		"fast":    "cloud-model",
 	}
-	if err := saveAliases("claude", initial); err != nil {
+	if err := SaveAliases("claude", initial); err != nil {
 		t.Fatalf("failed to save initial aliases: %v", err)
 	}
 
 	// Verify both are saved
-	loaded, err := loadIntegration("claude")
+	loaded, err := LoadIntegration("claude")
 	if err != nil {
 		t.Fatalf("failed to load: %v", err)
 	}
@@ -63,12 +63,12 @@ func TestSaveAliases_ReplacesNotMerges(t *testing.T) {
 		"primary": "local-model",
 		// fast intentionally missing
 	}
-	if err := saveAliases("claude", updated); err != nil {
+	if err := SaveAliases("claude", updated); err != nil {
 		t.Fatalf("failed to save updated aliases: %v", err)
 	}
 
 	// Verify fast is GONE (not merged/preserved)
-	loaded, err = loadIntegration("claude")
+	loaded, err = LoadIntegration("claude")
 	if err != nil {
 		t.Fatalf("failed to load after update: %v", err)
 	}
@@ -91,12 +91,12 @@ func TestSaveAliases_PreservesModels(t *testing.T) {
 
 	// Then update aliases
 	aliases := map[string]string{"primary": "new-model"}
-	if err := saveAliases("claude", aliases); err != nil {
+	if err := SaveAliases("claude", aliases); err != nil {
 		t.Fatalf("failed to save aliases: %v", err)
 	}
 
 	// Verify models are preserved
-	loaded, err := loadIntegration("claude")
+	loaded, err := LoadIntegration("claude")
 	if err != nil {
 		t.Fatalf("failed to load: %v", err)
 	}
@@ -111,16 +111,16 @@ func TestSaveAliases_EmptyMap(t *testing.T) {
 	setTestHome(t, tmpDir)
 
 	// Save with aliases
-	if err := saveAliases("claude", map[string]string{"primary": "model", "fast": "model"}); err != nil {
+	if err := SaveAliases("claude", map[string]string{"primary": "model", "fast": "model"}); err != nil {
 		t.Fatalf("failed to save: %v", err)
 	}
 
 	// Save empty map
-	if err := saveAliases("claude", map[string]string{}); err != nil {
+	if err := SaveAliases("claude", map[string]string{}); err != nil {
 		t.Fatalf("failed to save empty: %v", err)
 	}
 
-	loaded, err := loadIntegration("claude")
+	loaded, err := LoadIntegration("claude")
 	if err != nil {
 		t.Fatalf("failed to load: %v", err)
 	}
@@ -135,16 +135,16 @@ func TestSaveAliases_NilMap(t *testing.T) {
 	setTestHome(t, tmpDir)
 
 	// Save with aliases first
-	if err := saveAliases("claude", map[string]string{"primary": "model"}); err != nil {
+	if err := SaveAliases("claude", map[string]string{"primary": "model"}); err != nil {
 		t.Fatalf("failed to save: %v", err)
 	}
 
 	// Save nil map - should clear aliases
-	if err := saveAliases("claude", nil); err != nil {
+	if err := SaveAliases("claude", nil); err != nil {
 		t.Fatalf("failed to save nil: %v", err)
 	}
 
-	loaded, err := loadIntegration("claude")
+	loaded, err := LoadIntegration("claude")
 	if err != nil {
 		t.Fatalf("failed to load: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestSaveAliases_NilMap(t *testing.T) {
 
 // TestSaveAliases_EmptyAppName returns error
 func TestSaveAliases_EmptyAppName(t *testing.T) {
-	err := saveAliases("", map[string]string{"primary": "model"})
+	err := SaveAliases("", map[string]string{"primary": "model"})
 	if err == nil {
 		t.Error("expected error for empty app name")
 	}
@@ -165,12 +165,12 @@ func TestSaveAliases_CaseInsensitive(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
-	if err := saveAliases("Claude", map[string]string{"primary": "model1"}); err != nil {
+	if err := SaveAliases("Claude", map[string]string{"primary": "model1"}); err != nil {
 		t.Fatalf("failed to save: %v", err)
 	}
 
 	// Load with different case
-	loaded, err := loadIntegration("claude")
+	loaded, err := LoadIntegration("claude")
 	if err != nil {
 		t.Fatalf("failed to load: %v", err)
 	}
@@ -179,11 +179,11 @@ func TestSaveAliases_CaseInsensitive(t *testing.T) {
 	}
 
 	// Update with different case
-	if err := saveAliases("CLAUDE", map[string]string{"primary": "model2"}); err != nil {
+	if err := SaveAliases("CLAUDE", map[string]string{"primary": "model2"}); err != nil {
 		t.Fatalf("failed to update: %v", err)
 	}
 
-	loaded, err = loadIntegration("claude")
+	loaded, err = LoadIntegration("claude")
 	if err != nil {
 		t.Fatalf("failed to load after update: %v", err)
 	}
@@ -198,11 +198,11 @@ func TestSaveAliases_CreatesIntegration(t *testing.T) {
 	setTestHome(t, tmpDir)
 
 	// Save aliases for non-existent integration
-	if err := saveAliases("newintegration", map[string]string{"primary": "model"}); err != nil {
+	if err := SaveAliases("newintegration", map[string]string{"primary": "model"}); err != nil {
 		t.Fatalf("failed to save: %v", err)
 	}
 
-	loaded, err := loadIntegration("newintegration")
+	loaded, err := LoadIntegration("newintegration")
 	if err != nil {
 		t.Fatalf("failed to load: %v", err)
 	}
@@ -371,12 +371,12 @@ func TestAtomicUpdate_ServerSucceedsConfigSaved(t *testing.T) {
 		t.Fatal("server should succeed")
 	}
 
-	if err := saveAliases("claude", map[string]string{"primary": "model"}); err != nil {
+	if err := SaveAliases("claude", map[string]string{"primary": "model"}); err != nil {
 		t.Fatalf("saveAliases failed: %v", err)
 	}
 
 	// Verify it was actually saved
-	loaded, err := loadIntegration("claude")
+	loaded, err := LoadIntegration("claude")
 	if err != nil {
 		t.Fatalf("failed to load: %v", err)
 	}
@@ -408,7 +408,7 @@ func TestConfigFile_PreservesUnknownFields(t *testing.T) {
 	os.WriteFile(configPath, []byte(initialConfig), 0o644)
 
 	// Update aliases
-	if err := saveAliases("claude", map[string]string{"primary": "model2"}); err != nil {
+	if err := SaveAliases("claude", map[string]string{"primary": "model2"}); err != nil {
 		t.Fatalf("failed to save: %v", err)
 	}
 
@@ -464,11 +464,11 @@ func TestModelNameEdgeCases(t *testing.T) {
 			setTestHome(t, tmpDir)
 
 			aliases := map[string]string{"primary": tc.model}
-			if err := saveAliases("claude", aliases); err != nil {
+			if err := SaveAliases("claude", aliases); err != nil {
 				t.Fatalf("failed to save model %q: %v", tc.model, err)
 			}
 
-			loaded, err := loadIntegration("claude")
+			loaded, err := LoadIntegration("claude")
 			if err != nil {
 				t.Fatalf("failed to load: %v", err)
 			}
@@ -485,7 +485,7 @@ func TestSwitchingScenarios(t *testing.T) {
 		setTestHome(t, tmpDir)
 
 		// Initial cloud config
-		if err := saveAliases("claude", map[string]string{
+		if err := SaveAliases("claude", map[string]string{
 			"primary": "cloud-model",
 			"fast":    "cloud-model",
 		}); err != nil {
@@ -493,13 +493,13 @@ func TestSwitchingScenarios(t *testing.T) {
 		}
 
 		// Switch to local (no fast)
-		if err := saveAliases("claude", map[string]string{
+		if err := SaveAliases("claude", map[string]string{
 			"primary": "local-model",
 		}); err != nil {
 			t.Fatal(err)
 		}
 
-		loaded, _ := loadIntegration("claude")
+		loaded, _ := LoadIntegration("claude")
 		if loaded.Aliases["fast"] != "" {
 			t.Errorf("fast should be removed, got %q", loaded.Aliases["fast"])
 		}
@@ -513,21 +513,21 @@ func TestSwitchingScenarios(t *testing.T) {
 		setTestHome(t, tmpDir)
 
 		// Initial local config
-		if err := saveAliases("claude", map[string]string{
+		if err := SaveAliases("claude", map[string]string{
 			"primary": "local-model",
 		}); err != nil {
 			t.Fatal(err)
 		}
 
 		// Switch to cloud (with fast)
-		if err := saveAliases("claude", map[string]string{
+		if err := SaveAliases("claude", map[string]string{
 			"primary": "cloud-model",
 			"fast":    "cloud-model",
 		}); err != nil {
 			t.Fatal(err)
 		}
 
-		loaded, _ := loadIntegration("claude")
+		loaded, _ := LoadIntegration("claude")
 		if loaded.Aliases["fast"] != "cloud-model" {
 			t.Errorf("fast should be cloud-model, got %q", loaded.Aliases["fast"])
 		}
@@ -538,7 +538,7 @@ func TestSwitchingScenarios(t *testing.T) {
 		setTestHome(t, tmpDir)
 
 		// Initial cloud config
-		if err := saveAliases("claude", map[string]string{
+		if err := SaveAliases("claude", map[string]string{
 			"primary": "cloud-model-1",
 			"fast":    "cloud-model-1",
 		}); err != nil {
@@ -546,14 +546,14 @@ func TestSwitchingScenarios(t *testing.T) {
 		}
 
 		// Switch to different cloud
-		if err := saveAliases("claude", map[string]string{
+		if err := SaveAliases("claude", map[string]string{
 			"primary": "cloud-model-2",
 			"fast":    "cloud-model-2",
 		}); err != nil {
 			t.Fatal(err)
 		}
 
-		loaded, _ := loadIntegration("claude")
+		loaded, _ := LoadIntegration("claude")
 		if loaded.Aliases["primary"] != "cloud-model-2" {
 			t.Errorf("primary should be cloud-model-2, got %q", loaded.Aliases["primary"])
 		}
@@ -599,7 +599,7 @@ func TestModelsAndAliasesMustStayInSync(t *testing.T) {
 		setTestHome(t, tmpDir)
 
 		// Save aliases with one model
-		if err := saveAliases("claude", map[string]string{"primary": "model-a"}); err != nil {
+		if err := SaveAliases("claude", map[string]string{"primary": "model-a"}); err != nil {
 			t.Fatal(err)
 		}
 
@@ -608,7 +608,7 @@ func TestModelsAndAliasesMustStayInSync(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		loaded, _ := loadIntegration("claude")
+		loaded, _ := LoadIntegration("claude")
 		if loaded.Aliases["primary"] != loaded.Models[0] {
 			t.Errorf("aliases.primary (%q) != models[0] (%q)", loaded.Aliases["primary"], loaded.Models[0])
 		}
@@ -622,11 +622,11 @@ func TestModelsAndAliasesMustStayInSync(t *testing.T) {
 		if err := SaveIntegration("claude", []string{"old-model"}); err != nil {
 			t.Fatal(err)
 		}
-		if err := saveAliases("claude", map[string]string{"primary": "new-model"}); err != nil {
+		if err := SaveAliases("claude", map[string]string{"primary": "new-model"}); err != nil {
 			t.Fatal(err)
 		}
 
-		loaded, _ := loadIntegration("claude")
+		loaded, _ := LoadIntegration("claude")
 
 		// They should be different (this is the bug state)
 		if loaded.Models[0] == loaded.Aliases["primary"] {
@@ -638,7 +638,7 @@ func TestModelsAndAliasesMustStayInSync(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		loaded, _ = loadIntegration("claude")
+		loaded, _ = LoadIntegration("claude")
 		if loaded.Models[0] != loaded.Aliases["primary"] {
 			t.Errorf("after fix: models[0] (%q) should equal aliases.primary (%q)",
 				loaded.Models[0], loaded.Aliases["primary"])
@@ -653,20 +653,20 @@ func TestModelsAndAliasesMustStayInSync(t *testing.T) {
 		if err := SaveIntegration("claude", []string{"initial-model"}); err != nil {
 			t.Fatal(err)
 		}
-		if err := saveAliases("claude", map[string]string{"primary": "initial-model"}); err != nil {
+		if err := SaveAliases("claude", map[string]string{"primary": "initial-model"}); err != nil {
 			t.Fatal(err)
 		}
 
 		// Update aliases AND models together
 		newAliases := map[string]string{"primary": "updated-model"}
-		if err := saveAliases("claude", newAliases); err != nil {
+		if err := SaveAliases("claude", newAliases); err != nil {
 			t.Fatal(err)
 		}
 		if err := SaveIntegration("claude", []string{newAliases["primary"]}); err != nil {
 			t.Fatal(err)
 		}
 
-		loaded, _ := loadIntegration("claude")
+		loaded, _ := LoadIntegration("claude")
 		if loaded.Models[0] != "updated-model" {
 			t.Errorf("models[0] should be updated-model, got %q", loaded.Models[0])
 		}

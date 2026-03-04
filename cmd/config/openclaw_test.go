@@ -116,9 +116,9 @@ func TestOpenclawRunFirstLaunchPersistence(t *testing.T) {
 		if err := c.Run("llama3.2", []string{"gateway", "--status"}); err != nil {
 			t.Fatalf("Run() error = %v", err)
 		}
-		integrationConfig, err := loadIntegration("openclaw")
+		integrationConfig, err := LoadIntegration("openclaw")
 		if err != nil {
-			t.Fatalf("loadIntegration() error = %v", err)
+			t.Fatalf("LoadIntegration() error = %v", err)
 		}
 		if !integrationConfig.Onboarded {
 			t.Fatal("expected onboarding flag to be persisted after successful run")
@@ -147,7 +147,7 @@ func TestOpenclawRunFirstLaunchPersistence(t *testing.T) {
 		if err := c.Run("llama3.2", []string{"gateway", "--status"}); err == nil {
 			t.Fatal("expected run failure")
 		}
-		integrationConfig, err := loadIntegration("openclaw")
+		integrationConfig, err := LoadIntegration("openclaw")
 		if err == nil && integrationConfig.Onboarded {
 			t.Fatal("expected onboarding flag to remain unset after failed run")
 		}
@@ -1528,7 +1528,7 @@ func TestIntegrationOnboarded(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
 
-		integrationConfig, err := loadIntegration("openclaw")
+		integrationConfig, err := LoadIntegration("openclaw")
 		if err == nil && integrationConfig.Onboarded {
 			t.Error("expected false for fresh config")
 		}
@@ -1542,7 +1542,7 @@ func TestIntegrationOnboarded(t *testing.T) {
 		if err := integrationOnboarded("openclaw"); err != nil {
 			t.Fatal(err)
 		}
-		integrationConfig, err := loadIntegration("openclaw")
+		integrationConfig, err := LoadIntegration("openclaw")
 		if err != nil || !integrationConfig.Onboarded {
 			t.Error("expected true after integrationOnboarded")
 		}
@@ -1556,7 +1556,7 @@ func TestIntegrationOnboarded(t *testing.T) {
 		if err := integrationOnboarded("OpenClaw"); err != nil {
 			t.Fatal(err)
 		}
-		integrationConfig, err := loadIntegration("openclaw")
+		integrationConfig, err := LoadIntegration("openclaw")
 		if err != nil || !integrationConfig.Onboarded {
 			t.Error("expected true when set with different case")
 		}
@@ -1575,7 +1575,7 @@ func TestIntegrationOnboarded(t *testing.T) {
 		}
 
 		// Verify onboarded is set
-		integrationConfig, err := loadIntegration("openclaw")
+		integrationConfig, err := LoadIntegration("openclaw")
 		if err != nil || !integrationConfig.Onboarded {
 			t.Error("expected true after integrationOnboarded")
 		}

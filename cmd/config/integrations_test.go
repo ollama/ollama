@@ -13,13 +13,23 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
-	"github.com/spf13/cobra"
 )
 
 type stubEditorRunner struct {
 	edited   [][]string
 	ranModel string
 }
+
+type stubRunner struct {
+	ranModel string
+}
+
+func (s *stubRunner) Run(model string, args []string) error {
+	s.ranModel = model
+	return nil
+}
+
+func (s *stubRunner) String() string { return "StubRunner" }
 
 func (s *stubEditorRunner) Run(model string, args []string) error {
 	s.ranModel = model
@@ -111,120 +121,8 @@ func TestHasLocalModel(t *testing.T) {
 	}
 }
 
-func TestLaunchCmd(t *testing.T) {
-	// Mock checkServerHeartbeat that always succeeds
-	mockCheck := func(cmd *cobra.Command, args []string) error {
-		return nil
-	}
-	mockTUI := func(cmd *cobra.Command) {}
-	cmd := LaunchCmd(mockCheck, mockTUI)
-
-	t.Run("command structure", func(t *testing.T) {
-		if cmd.Use != "launch [INTEGRATION] [-- [EXTRA_ARGS...]]" {
-			t.Errorf("Use = %q, want %q", cmd.Use, "launch [INTEGRATION] [-- [EXTRA_ARGS...]]")
-		}
-		if cmd.Short == "" {
-			t.Error("Short description should not be empty")
-		}
-		if cmd.Long == "" {
-			t.Error("Long description should not be empty")
-		}
-	})
-
-	t.Run("flags exist", func(t *testing.T) {
-		modelFlag := cmd.Flags().Lookup("model")
-		if modelFlag == nil {
-			t.Error("--model flag should exist")
-		}
-
-		configFlag := cmd.Flags().Lookup("config")
-		if configFlag == nil {
-			t.Error("--config flag should exist")
-		}
-	})
-
-	t.Run("PreRunE is set", func(t *testing.T) {
-		if cmd.PreRunE == nil {
-			t.Error("PreRunE should be set to checkServerHeartbeat")
-		}
-	})
-}
-
-func TestLaunchCmd_TUICallback(t *testing.T) {
-	mockCheck := func(cmd *cobra.Command, args []string) error {
-		return nil
-	}
-
-	t.Run("no args calls TUI", func(t *testing.T) {
-		tuiCalled := false
-		mockTUI := func(cmd *cobra.Command) {
-			tuiCalled = true
-		}
-
-		cmd := LaunchCmd(mockCheck, mockTUI)
-		cmd.SetArgs([]string{})
-		_ = cmd.Execute()
-
-		if !tuiCalled {
-			t.Error("TUI callback should be called when no args provided")
-		}
-	})
-
-	t.Run("integration arg bypasses TUI", func(t *testing.T) {
-		srv := httptest.NewServer(http.NotFoundHandler())
-		defer srv.Close()
-		t.Setenv("OLLAMA_HOST", srv.URL)
-
-		tuiCalled := false
-		mockTUI := func(cmd *cobra.Command) {
-			tuiCalled = true
-		}
-
-		cmd := LaunchCmd(mockCheck, mockTUI)
-		cmd.SetArgs([]string{"claude"})
-		// Will error because claude isn't configured, but that's OK
-		_ = cmd.Execute()
-
-		if tuiCalled {
-			t.Error("TUI callback should NOT be called when integration arg provided")
-		}
-	})
-
-	t.Run("--model flag bypasses TUI", func(t *testing.T) {
-		tuiCalled := false
-		mockTUI := func(cmd *cobra.Command) {
-			tuiCalled = true
-		}
-
-		cmd := LaunchCmd(mockCheck, mockTUI)
-		cmd.SetArgs([]string{"--model", "test-model"})
-		// Will error because no integration specified, but that's OK
-		_ = cmd.Execute()
-
-		if tuiCalled {
-			t.Error("TUI callback should NOT be called when --model flag provided")
-		}
-	})
-
-	t.Run("--config flag bypasses TUI", func(t *testing.T) {
-		tuiCalled := false
-		mockTUI := func(cmd *cobra.Command) {
-			tuiCalled = true
-		}
-
-		cmd := LaunchCmd(mockCheck, mockTUI)
-		cmd.SetArgs([]string{"--config"})
-		// Will error because no integration specified, but that's OK
-		_ = cmd.Execute()
-
-		if tuiCalled {
-			t.Error("TUI callback should NOT be called when --config flag provided")
-		}
-	})
-}
-
 func TestRunIntegration_UnknownIntegration(t *testing.T) {
-	err := runIntegration("unknown-integration", "model", nil)
+	err := RunIntegration("unknown-integration", "model", nil)
 	if err == nil {
 		t.Error("expected error for unknown integration, got nil")
 	}
@@ -258,19 +156,6 @@ func TestHasLocalModel_DocumentsHeuristic(t *testing.T) {
 				t.Errorf("hasLocalModel(%v) = %v, want %v (%s)", tt.models, got, tt.want, tt.reason)
 			}
 		})
-	}
-}
-
-func TestLaunchCmd_NilHeartbeat(t *testing.T) {
-	// This should not panic - cmd creation should work even with nil
-	cmd := LaunchCmd(nil, nil)
-	if cmd == nil {
-		t.Fatal("LaunchCmd returned nil")
-	}
-
-	// PreRunE should be nil when passed nil
-	if cmd.PreRunE != nil {
-		t.Log("Note: PreRunE is set even when nil is passed (acceptable)")
 	}
 }
 
@@ -418,7 +303,7 @@ func names(items []ModelItem) []string {
 }
 
 func TestBuildModelList_NoExistingModels(t *testing.T) {
-	items, _, _, _ := buildModelList(nil, nil, "")
+	items, _, _, _ := BuildModelList(nil, nil, "")
 
 	want := []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5:cloud", "minimax-m2.5:cloud", "glm-4.7-flash", "qwen3.5"}
 	if diff := cmp.Diff(want, names(items)); diff != "" {
@@ -444,7 +329,7 @@ func TestBuildModelList_OnlyLocalModels_CloudRecsAtBottom(t *testing.T) {
 		{Name: "qwen2.5:latest", Remote: false},
 	}
 
-	items, _, _, _ := buildModelList(existing, nil, "")
+	items, _, _, _ := BuildModelList(existing, nil, "")
 	got := names(items)
 
 	// Recommended pinned at top (local recs first, then cloud recs when only-local), then installed non-recs
@@ -460,7 +345,7 @@ func TestBuildModelList_BothCloudAndLocal_RegularSort(t *testing.T) {
 		{Name: "glm-5:cloud", Remote: true},
 	}
 
-	items, _, _, _ := buildModelList(existing, nil, "")
+	items, _, _, _ := BuildModelList(existing, nil, "")
 	got := names(items)
 
 	// All recs pinned at top (cloud before local in mixed case), then non-recs
@@ -476,7 +361,7 @@ func TestBuildModelList_PreCheckedFirst(t *testing.T) {
 		{Name: "glm-5:cloud", Remote: true},
 	}
 
-	items, _, _, _ := buildModelList(existing, []string{"llama3.2"}, "")
+	items, _, _, _ := BuildModelList(existing, []string{"llama3.2"}, "")
 	got := names(items)
 
 	if got[0] != "llama3.2" {
@@ -490,7 +375,7 @@ func TestBuildModelList_ExistingRecommendedMarked(t *testing.T) {
 		{Name: "glm-5:cloud", Remote: true},
 	}
 
-	items, _, _, _ := buildModelList(existing, nil, "")
+	items, _, _, _ := BuildModelList(existing, nil, "")
 
 	for _, item := range items {
 		switch item.Name {
@@ -516,7 +401,7 @@ func TestBuildModelList_ExistingCloudModelsNotPushedToBottom(t *testing.T) {
 		{Name: "glm-5:cloud", Remote: true},
 	}
 
-	items, _, _, _ := buildModelList(existing, nil, "")
+	items, _, _, _ := BuildModelList(existing, nil, "")
 	got := names(items)
 
 	// glm-4.7-flash and glm-5:cloud are installed so they sort normally;
@@ -534,7 +419,7 @@ func TestBuildModelList_HasRecommendedCloudModel_OnlyNonInstalledAtBottom(t *tes
 		{Name: "kimi-k2.5:cloud", Remote: true},
 	}
 
-	items, _, _, _ := buildModelList(existing, nil, "")
+	items, _, _, _ := BuildModelList(existing, nil, "")
 	got := names(items)
 
 	// kimi-k2.5:cloud is installed so it sorts normally;
@@ -566,7 +451,7 @@ func TestBuildModelList_LatestTagStripped(t *testing.T) {
 		{Name: "llama3.2:latest", Remote: false},
 	}
 
-	items, _, existingModels, _ := buildModelList(existing, nil, "")
+	items, _, existingModels, _ := BuildModelList(existing, nil, "")
 	got := names(items)
 
 	// :latest should be stripped from display names
@@ -599,7 +484,7 @@ func TestBuildModelList_ReturnsExistingAndCloudMaps(t *testing.T) {
 		{Name: "glm-5:cloud", Remote: true},
 	}
 
-	_, _, existingModels, cloudModels := buildModelList(existing, nil, "")
+	_, _, existingModels, cloudModels := BuildModelList(existing, nil, "")
 
 	if !existingModels["llama3.2"] {
 		t.Error("llama3.2 should be in existingModels")
@@ -631,7 +516,7 @@ func TestBuildModelList_RecommendedFieldSet(t *testing.T) {
 		{Name: "llama3.2:latest", Remote: false},
 	}
 
-	items, _, _, _ := buildModelList(existing, nil, "")
+	items, _, _, _ := BuildModelList(existing, nil, "")
 
 	for _, item := range items {
 		switch item.Name {
@@ -653,7 +538,7 @@ func TestBuildModelList_MixedCase_CloudRecsFirst(t *testing.T) {
 		{Name: "glm-5:cloud", Remote: true},
 	}
 
-	items, _, _, _ := buildModelList(existing, nil, "")
+	items, _, _, _ := BuildModelList(existing, nil, "")
 	got := names(items)
 
 	// Cloud recs should sort before local recs in mixed case
@@ -669,7 +554,7 @@ func TestBuildModelList_OnlyLocal_LocalRecsFirst(t *testing.T) {
 		{Name: "llama3.2:latest", Remote: false},
 	}
 
-	items, _, _, _ := buildModelList(existing, nil, "")
+	items, _, _, _ := BuildModelList(existing, nil, "")
 	got := names(items)
 
 	// Local recs should sort before cloud recs in only-local case
@@ -686,7 +571,7 @@ func TestBuildModelList_RecsAboveNonRecs(t *testing.T) {
 		{Name: "custom-model", Remote: false},
 	}
 
-	items, _, _, _ := buildModelList(existing, nil, "")
+	items, _, _, _ := BuildModelList(existing, nil, "")
 	got := names(items)
 
 	// All recommended models should appear before non-recommended installed models
@@ -712,7 +597,7 @@ func TestBuildModelList_CheckedBeforeRecs(t *testing.T) {
 		{Name: "glm-5:cloud", Remote: true},
 	}
 
-	items, _, _, _ := buildModelList(existing, []string{"llama3.2"}, "")
+	items, _, _, _ := BuildModelList(existing, []string{"llama3.2"}, "")
 	got := names(items)
 
 	if got[0] != "llama3.2" {
@@ -730,7 +615,7 @@ func TestEditorIntegration_SavedConfigSkipsSelection(t *testing.T) {
 	}
 
 	// Verify loadIntegration returns the saved models
-	saved, err := loadIntegration("opencode")
+	saved, err := LoadIntegration("opencode")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -772,7 +657,7 @@ func TestResolveEditorLaunchModels_PicksWhenAllFiltered(t *testing.T) {
 		t.Fatalf("resolved models mismatch (-want +got):\n%s", diff)
 	}
 
-	saved, err := loadIntegration("opencode")
+	saved, err := LoadIntegration("opencode")
 	if err != nil {
 		t.Fatalf("failed to reload integration config: %v", err)
 	}
@@ -811,65 +696,12 @@ func TestResolveEditorLaunchModels_FiltersAndSkipsPickerWhenLocalRemains(t *test
 		t.Fatalf("resolved models mismatch (-want +got):\n%s", diff)
 	}
 
-	saved, err := loadIntegration("droid")
+	saved, err := LoadIntegration("droid")
 	if err != nil {
 		t.Fatalf("failed to reload integration config: %v", err)
 	}
 	if diff := cmp.Diff([]string{"llama3.2"}, saved.Models); diff != "" {
 		t.Fatalf("saved models mismatch (-want +got):\n%s", diff)
-	}
-}
-
-func TestLaunchCmd_ModelFlagFiltersDisabledCloudFromSavedConfig(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-
-	if err := SaveIntegration("stubeditor", []string{"glm-5:cloud"}); err != nil {
-		t.Fatalf("failed to seed saved config: %v", err)
-	}
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/status":
-			fmt.Fprintf(w, `{"cloud":{"disabled":true,"source":"config"}}`)
-		case "/api/show":
-			fmt.Fprintf(w, `{"model":"llama3.2"}`)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer srv.Close()
-	t.Setenv("OLLAMA_HOST", srv.URL)
-
-	stub := &stubEditorRunner{}
-	old, existed := integrations["stubeditor"]
-	integrations["stubeditor"] = stub
-	defer func() {
-		if existed {
-			integrations["stubeditor"] = old
-		} else {
-			delete(integrations, "stubeditor")
-		}
-	}()
-
-	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command) {})
-	cmd.SetArgs([]string{"stubeditor", "--model", "llama3.2"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("launch command failed: %v", err)
-	}
-
-	saved, err := loadIntegration("stubeditor")
-	if err != nil {
-		t.Fatalf("failed to reload integration config: %v", err)
-	}
-	if diff := cmp.Diff([]string{"llama3.2"}, saved.Models); diff != "" {
-		t.Fatalf("saved models mismatch (-want +got):\n%s", diff)
-	}
-	if diff := cmp.Diff([][]string{{"llama3.2"}}, stub.edited); diff != "" {
-		t.Fatalf("editor models mismatch (-want +got):\n%s", diff)
-	}
-	if stub.ranModel != "llama3.2" {
-		t.Fatalf("expected launch to run with llama3.2, got %q", stub.ranModel)
 	}
 }
 
@@ -1175,7 +1007,7 @@ func TestConfirmPrompt_DelegatesToHook(t *testing.T) {
 	}
 	defer func() { DefaultConfirmPrompt = oldHook }()
 
-	ok, err := confirmPrompt("test prompt?")
+	ok, err := ConfirmPrompt("test prompt?")
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -1197,7 +1029,7 @@ func TestEnsureAuth_NoCloudModels(t *testing.T) {
 	u, _ := url.Parse(srv.URL)
 	client := api.NewClient(u, srv.Client())
 
-	err := ensureAuth(context.Background(), client, map[string]bool{}, []string{"local-model"})
+	err := EnsureAuth(context.Background(), client, map[string]bool{}, []string{"local-model"})
 	if err != nil {
 		t.Errorf("ensureAuth should return nil for non-cloud models, got: %v", err)
 	}
@@ -1223,7 +1055,7 @@ func TestEnsureAuth_CloudModelFilteredCorrectly(t *testing.T) {
 	cloudModels := map[string]bool{"cloud-model:cloud": true}
 	selected := []string{"cloud-model:cloud", "local-model"}
 
-	err := ensureAuth(context.Background(), client, cloudModels, selected)
+	err := EnsureAuth(context.Background(), client, cloudModels, selected)
 	if err != nil {
 		t.Errorf("ensureAuth should succeed when user is authenticated, got: %v", err)
 	}
@@ -1249,7 +1081,7 @@ func TestEnsureAuth_SkipsWhenNoCloudSelected(t *testing.T) {
 	cloudModels := map[string]bool{"cloud-model:cloud": true}
 	selected := []string{"local-model"}
 
-	err := ensureAuth(context.Background(), client, cloudModels, selected)
+	err := EnsureAuth(context.Background(), client, cloudModels, selected)
 	if err != nil {
 		t.Errorf("expected nil error, got: %v", err)
 	}
@@ -1429,7 +1261,7 @@ func TestBuildModelList_Descriptions(t *testing.T) {
 		existing := []modelInfo{
 			{Name: "qwen3.5", Remote: false},
 		}
-		items, _, _, _ := buildModelList(existing, nil, "")
+		items, _, _, _ := BuildModelList(existing, nil, "")
 
 		for _, item := range items {
 			if item.Name == "qwen3.5" {
@@ -1446,7 +1278,7 @@ func TestBuildModelList_Descriptions(t *testing.T) {
 	})
 
 	t.Run("not-installed local rec has VRAM in description", func(t *testing.T) {
-		items, _, _, _ := buildModelList(nil, nil, "")
+		items, _, _, _ := BuildModelList(nil, nil, "")
 
 		for _, item := range items {
 			if item.Name == "qwen3.5" {
@@ -1463,7 +1295,7 @@ func TestBuildModelList_Descriptions(t *testing.T) {
 		existing := []modelInfo{
 			{Name: "qwen3.5", Remote: false},
 		}
-		items, _, _, _ := buildModelList(existing, nil, "")
+		items, _, _, _ := BuildModelList(existing, nil, "")
 
 		for _, item := range items {
 			if item.Name == "qwen3.5" {
@@ -1475,30 +1307,6 @@ func TestBuildModelList_Descriptions(t *testing.T) {
 		}
 		t.Error("qwen3.5 not found in items")
 	})
-}
-
-func TestLaunchIntegration_UnknownIntegration(t *testing.T) {
-	err := LaunchIntegration("nonexistent-integration")
-	if err == nil {
-		t.Fatal("expected error for unknown integration")
-	}
-	if !strings.Contains(err.Error(), "unknown integration") {
-		t.Errorf("error should mention 'unknown integration', got: %v", err)
-	}
-}
-
-func TestLaunchIntegration_NotConfigured(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-
-	// Claude is a known integration but not configured in temp dir
-	err := LaunchIntegration("claude")
-	if err == nil {
-		t.Fatal("expected error when integration is not configured")
-	}
-	if !strings.Contains(err.Error(), "not configured") {
-		t.Errorf("error should mention 'not configured', got: %v", err)
-	}
 }
 
 func TestIsEditorIntegration(t *testing.T) {
@@ -1542,14 +1350,4 @@ func TestIntegrationModels(t *testing.T) {
 			t.Errorf("IntegrationModels mismatch (-want +got):\n%s", diff)
 		}
 	})
-}
-
-func TestSaveAndEditIntegration_UnknownIntegration(t *testing.T) {
-	err := SaveAndEditIntegration("nonexistent", []string{"model"})
-	if err == nil {
-		t.Fatal("expected error for unknown integration")
-	}
-	if !strings.Contains(err.Error(), "unknown integration") {
-		t.Errorf("error should mention 'unknown integration', got: %v", err)
-	}
 }
