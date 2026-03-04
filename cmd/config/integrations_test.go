@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,7 @@ import (
 type stubEditorRunner struct {
 	edited   [][]string
 	ranModel string
+	editErr  error
 }
 
 type stubRunner struct {
@@ -41,6 +43,9 @@ func (s *stubEditorRunner) String() string { return "StubEditor" }
 func (s *stubEditorRunner) Paths() []string { return nil }
 
 func (s *stubEditorRunner) Edit(models []string) error {
+	if s.editErr != nil {
+		return s.editErr
+	}
 	cloned := append([]string(nil), models...)
 	s.edited = append(s.edited, cloned)
 	return nil
@@ -705,6 +710,29 @@ func TestResolveEditorLaunchModels_FiltersAndSkipsPickerWhenLocalRemains(t *test
 	}
 }
 
+func TestPrepareEditorIntegration_SavesOnlyAfterSuccessfulEdit(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	if err := SaveIntegration("droid", []string{"existing-model"}); err != nil {
+		t.Fatalf("failed to seed config: %v", err)
+	}
+
+	editor := &stubEditorRunner{editErr: errors.New("boom")}
+	err := PrepareEditorIntegration("droid", editor, editor, []string{"new-model"})
+	if err == nil || !strings.Contains(err.Error(), "setup failed") {
+		t.Fatalf("expected setup failure, got %v", err)
+	}
+
+	saved, err := LoadIntegration("droid")
+	if err != nil {
+		t.Fatalf("failed to reload saved config: %v", err)
+	}
+	if diff := cmp.Diff([]string{"existing-model"}, saved.Models); diff != "" {
+		t.Fatalf("saved models mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestAliasConfigurerInterface(t *testing.T) {
 	t.Run("claude implements AliasConfigurer", func(t *testing.T) {
 		claude := &Claude{}
@@ -1087,6 +1115,66 @@ func TestEnsureAuth_SkipsWhenNoCloudSelected(t *testing.T) {
 	}
 	if whoamiCalled {
 		t.Error("whoami should not be called when no cloud models are selected")
+	}
+}
+
+func TestEnsureAuth_PreservesCancelledSignInHook(t *testing.T) {
+	oldSignIn := DefaultSignIn
+	DefaultSignIn = func(modelName, signInURL string) (string, error) {
+		return "", ErrCancelled
+	}
+	defer func() { DefaultSignIn = oldSignIn }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"error":"not found"}`)
+		case "/api/me":
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprintf(w, `{"error":"unauthorized","signin_url":"https://example.com/signin"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	err := EnsureAuth(context.Background(), client, map[string]bool{"cloud-model:cloud": true}, []string{"cloud-model:cloud"})
+	if !errors.Is(err, ErrCancelled) {
+		t.Fatalf("expected ErrCancelled, got %v", err)
+	}
+}
+
+func TestEnsureAuth_DeclinedFallbackReturnsCancelled(t *testing.T) {
+	oldConfirm := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		return false, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldConfirm }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"error":"not found"}`)
+		case "/api/me":
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprintf(w, `{"error":"unauthorized","signin_url":"https://example.com/signin"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	err := EnsureAuth(context.Background(), client, map[string]bool{"cloud-model:cloud": true}, []string{"cloud-model:cloud"})
+	if !errors.Is(err, ErrCancelled) {
+		t.Fatalf("expected ErrCancelled, got %v", err)
 	}
 }
 

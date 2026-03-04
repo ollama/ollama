@@ -301,16 +301,6 @@ func OverrideIntegration(name string, runner Runner) func() {
 	}
 }
 
-// UsesMultiModelEditorFlow reports whether the integration uses the shared multi-model editor flow.
-func UsesMultiModelEditorFlow(name string) bool {
-	switch strings.ToLower(name) {
-	case "cline", "droid", "opencode", "pi":
-		return true
-	default:
-		return false
-	}
-}
-
 // SelectModel lets the user select a model to run.
 // ModelItem represents a model for selection.
 type ModelItem struct {
@@ -604,6 +594,9 @@ func EnsureAuth(ctx context.Context, client *api.Client, cloudModels map[string]
 
 	if DefaultSignIn != nil {
 		_, err := DefaultSignIn(modelList, aErr.SigninURL)
+		if errors.Is(err, ErrCancelled) {
+			return ErrCancelled
+		}
 		if err != nil {
 			return fmt.Errorf("%s requires sign in", modelList)
 		}
@@ -612,8 +605,14 @@ func EnsureAuth(ctx context.Context, client *api.Client, cloudModels map[string]
 
 	// Fallback: plain text sign-in flow
 	yes, err := ConfirmPrompt(fmt.Sprintf("sign in to use %s?", modelList))
-	if err != nil || !yes {
-		return fmt.Errorf("%s requires sign in", modelList)
+	if errors.Is(err, ErrCancelled) {
+		return ErrCancelled
+	}
+	if err != nil {
+		return err
+	}
+	if !yes {
+		return ErrCancelled
 	}
 
 	fmt.Fprintf(os.Stderr, "\nTo sign in, navigate to:\n    %s\n\n", aErr.SigninURL)
@@ -684,11 +683,11 @@ func PrepareEditorIntegration(name string, runner Runner, editor Editor, models 
 	} else if !ok {
 		return errCancelled
 	}
-	if err := SaveIntegration(name, models); err != nil {
-		return fmt.Errorf("failed to save: %w", err)
-	}
 	if err := editor.Edit(models); err != nil {
 		return fmt.Errorf("setup failed: %w", err)
+	}
+	if err := SaveIntegration(name, models); err != nil {
+		return fmt.Errorf("failed to save: %w", err)
 	}
 	return nil
 }

@@ -225,7 +225,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				}
 				return err
 			}
-			if err := loadOrUnloadModel(cmd, &opts); err != nil {
+			if err := loadOrUnloadModel(cmd, &opts, true); err != nil {
 				if strings.Contains(err.Error(), "not found") {
 					fmt.Printf("Couldn't find model '%s'\n", opts.Model)
 					opts = origOpts.Copy()

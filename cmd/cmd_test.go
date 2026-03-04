@@ -18,7 +18,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -1797,14 +1796,17 @@ func TestRunOptions_Copy_Independence(t *testing.T) {
 
 func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 	tests := []struct {
-		name          string
-		model         string
-		showStatus    int
-		remoteHost    string
-		remoteModel   string
-		whoamiStatus  int
-		whoamiResp    any
-		expectedError string
+		name                   string
+		model                  string
+		showStatus             int
+		remoteHost             string
+		remoteModel            string
+		whoamiStatus           int
+		whoamiResp             any
+		allowCloudShowNotFound bool
+		expectWhoami           bool
+		expectedError          string
+		expectAuthError        bool
 	}{
 		{
 			name:         "ollama.com cloud model - user signed in",
@@ -1813,6 +1815,7 @@ func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 			remoteModel:  "test-model",
 			whoamiStatus: http.StatusOK,
 			whoamiResp:   api.UserResponse{Name: "testuser"},
+			expectWhoami: true,
 		},
 		{
 			name:         "ollama.com cloud model - user not signed in",
@@ -1824,7 +1827,9 @@ func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 				"error":      "unauthorized",
 				"signin_url": "https://ollama.com/signin",
 			},
-			expectedError: "unauthorized",
+			expectWhoami:    true,
+			expectedError:   "unauthorized",
+			expectAuthError: true,
 		},
 		{
 			name:         "non-ollama.com remote - no auth check",
@@ -1841,13 +1846,26 @@ func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 			remoteModel:  "",
 			whoamiStatus: http.StatusOK,
 			whoamiResp:   api.UserResponse{Name: "testuser"},
+			expectWhoami: true,
 		},
 		{
-			name:         "explicit :cloud model without local stub still authenticates",
-			model:        "minimax-m2.5:cloud",
-			showStatus:   http.StatusNotFound,
-			whoamiStatus: http.StatusOK,
-			whoamiResp:   api.UserResponse{Name: "testuser"},
+			name:            "explicit :cloud model without local stub returns not found by default",
+			model:           "minimax-m2.5:cloud",
+			showStatus:      http.StatusNotFound,
+			whoamiStatus:    http.StatusOK,
+			whoamiResp:      api.UserResponse{Name: "testuser"},
+			expectedError:   "not found",
+			expectWhoami:    false,
+			expectAuthError: false,
+		},
+		{
+			name:                   "explicit :cloud model without local stub can opt into auth-only connect",
+			model:                  "minimax-m2.5:cloud",
+			showStatus:             http.StatusNotFound,
+			whoamiStatus:           http.StatusOK,
+			whoamiResp:             api.UserResponse{Name: "testuser"},
+			allowCloudShowNotFound: true,
+			expectWhoami:           true,
 		},
 		{
 			name:         "explicit -cloud model - auth check without remote metadata",
@@ -1856,6 +1874,7 @@ func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 			remoteModel:  "",
 			whoamiStatus: http.StatusOK,
 			whoamiResp:   api.UserResponse{Name: "testuser"},
+			expectWhoami: true,
 		},
 		{
 			name:         "dash cloud-like name without explicit source does not require auth",
@@ -1912,25 +1931,24 @@ func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 				ShowConnect: false,
 			}
 
-			err := loadOrUnloadModel(cmd, opts)
+			err := loadOrUnloadModel(cmd, opts, tt.allowCloudShowNotFound)
 
-			if strings.HasPrefix(tt.remoteHost, "https://ollama.com") || modelref.HasExplicitCloudSource(tt.model) {
-				if !whoamiCalled {
-					t.Error("expected whoami to be called for ollama.com cloud model")
-				}
-			} else {
-				if whoamiCalled {
-					t.Error("whoami should not be called for non-ollama.com remote")
-				}
+			if whoamiCalled != tt.expectWhoami {
+				t.Errorf("whoami called = %v, want %v", whoamiCalled, tt.expectWhoami)
 			}
 
 			if tt.expectedError != "" {
 				if err == nil {
 					t.Errorf("expected error containing %q, got nil", tt.expectedError)
 				} else {
-					var authErr api.AuthorizationError
-					if !errors.As(err, &authErr) {
-						t.Errorf("expected AuthorizationError, got %T: %v", err, err)
+					if !tt.expectAuthError && !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tt.expectedError)) {
+						t.Errorf("expected error containing %q, got %v", tt.expectedError, err)
+					}
+					if tt.expectAuthError {
+						var authErr api.AuthorizationError
+						if !errors.As(err, &authErr) {
+							t.Errorf("expected AuthorizationError, got %T: %v", err, err)
+						}
 					}
 				}
 			} else {

@@ -250,9 +250,6 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 	if err != nil {
 		return err
 	}
-	if err := config.EnsureIntegrationInstalled(name, runner); err != nil {
-		return err
-	}
 
 	launchClient, err := newLauncherClient(ctx)
 	if err != nil {
@@ -260,19 +257,13 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 	}
 	saved, _ := config.LoadIntegration(name)
 
-	switch typed := runner.(type) {
-	case config.AliasConfigurer:
-		return launchClient.launchAliasConfiguredIntegration(name, runner, typed, saved, req)
-	default:
-		if config.UsesMultiModelEditorFlow(name) {
-			editor, ok := runner.(config.Editor)
-			if !ok {
-				return fmt.Errorf("%s does not support editor configuration", runner)
-			}
-			return launchClient.launchEditorIntegration(name, runner, editor, saved, req)
-		}
-		return launchClient.launchSingleIntegration(name, runner, saved, req)
+	if aliasConfigurer, ok := runner.(config.AliasConfigurer); ok {
+		return launchClient.launchAliasConfiguredIntegration(name, runner, aliasConfigurer, saved, req)
 	}
+	if editor, ok := runner.(config.Editor); ok {
+		return launchClient.launchEditorIntegration(name, runner, editor, saved, req)
+	}
+	return launchClient.launchSingleIntegration(name, runner, saved, req)
 }
 
 // SelectIntegration lets the user choose which integration to launch.
@@ -319,7 +310,8 @@ func (c *launcherClient) buildLauncherState() (*LauncherState, error) {
 func (c *launcherClient) buildLauncherIntegrationState(info config.IntegrationInfo) (LauncherIntegrationState, error) {
 	installed := config.IsIntegrationInstalled(info.Name)
 	autoInstallable := config.AutoInstallable(info.Name)
-	currentModel, usable, err := c.integrationLauncherModelState(info.Name)
+	isEditor := config.IsEditorIntegration(info.Name)
+	currentModel, usable, err := c.launcherModelState(info.Name, isEditor)
 	if err != nil {
 		return LauncherIntegrationState{}, err
 	}
@@ -335,17 +327,17 @@ func (c *launcherClient) buildLauncherIntegrationState(info config.IntegrationIn
 		CurrentModel:    currentModel,
 		ModelUsable:     usable,
 		InstallHint:     config.IntegrationInstallHint(info.Name),
-		Editor:          config.UsesMultiModelEditorFlow(info.Name),
+		Editor:          isEditor,
 	}, nil
 }
 
-func (c *launcherClient) integrationLauncherModelState(name string) (string, bool, error) {
+func (c *launcherClient) launcherModelState(name string, isEditor bool) (string, bool, error) {
 	cfg, err := config.LoadIntegration(name)
 	if err != nil || len(cfg.Models) == 0 {
 		return "", false, nil
 	}
 
-	if config.UsesMultiModelEditorFlow(name) {
+	if isEditor {
 		filtered := c.filterDisabledCloudModels(cfg.Models)
 		if len(filtered) > 0 {
 			return filtered[0], true, nil
@@ -423,13 +415,7 @@ func (c *launcherClient) launchSingleIntegration(name string, runner config.Runn
 		return fmt.Errorf("failed to save: %w", err)
 	}
 
-	if editor, ok := runner.(config.Editor); ok {
-		if err := config.PrepareEditorIntegration(name, runner, editor, []string{target}); err != nil {
-			return err
-		}
-	}
-
-	return launchAfterConfiguration(runner, target, req)
+	return launchAfterConfiguration(name, runner, target, req)
 }
 
 func (c *launcherClient) launchEditorIntegration(name string, runner config.Runner, editor config.Editor, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
@@ -449,11 +435,13 @@ func (c *launcherClient) launchEditorIntegration(name string, runner config.Runn
 		return nil
 	}
 
-	if err := config.PrepareEditorIntegration(name, runner, editor, models); err != nil {
-		return err
+	if needsConfigure || req.ModelOverride != "" {
+		if err := config.PrepareEditorIntegration(name, runner, editor, models); err != nil {
+			return err
+		}
 	}
 
-	return launchAfterConfiguration(runner, models[0], req)
+	return launchAfterConfiguration(name, runner, models[0], req)
 }
 
 func (c *launcherClient) launchAliasConfiguredIntegration(name string, runner config.Runner, aliases config.AliasConfigurer, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
@@ -510,7 +498,7 @@ func (c *launcherClient) launchAliasConfiguredIntegration(name string, runner co
 		return fmt.Errorf("failed to save: %w", err)
 	}
 
-	return launchAfterConfiguration(runner, primary, req)
+	return launchAfterConfiguration(name, runner, primary, req)
 }
 
 func (c *launcherClient) selectSingleModelWithSelector(title, current string, selector config.SingleSelector) (string, error) {
@@ -714,7 +702,7 @@ func syncAliases(ctx context.Context, client *api.Client, aliasConfigurer config
 	return config.SaveAliases(name, aliases)
 }
 
-func launchAfterConfiguration(runner config.Runner, model string, req IntegrationLaunchRequest) error {
+func launchAfterConfiguration(name string, runner config.Runner, model string, req IntegrationLaunchRequest) error {
 	if req.ConfigureOnly {
 		launch, err := config.ConfirmPrompt(fmt.Sprintf("Launch %s now?", runner))
 		if err != nil {
@@ -723,6 +711,9 @@ func launchAfterConfiguration(runner config.Runner, model string, req Integratio
 		if !launch {
 			return nil
 		}
+	}
+	if err := config.EnsureIntegrationInstalled(name, runner); err != nil {
+		return err
 	}
 	return runIntegration(runner, model, req.ExtraArgs)
 }
