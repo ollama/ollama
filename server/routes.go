@@ -370,12 +370,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 	}
 
-	// Validate Think value: string values currently only allowed for harmony/gptoss models
-	if req.Think != nil && req.Think.IsString() && m.Config.Parser != "harmony" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("think value %q is not supported for this model", req.Think.String())})
-		return
-	}
-
 	caps := []model.Capability{model.CapabilityCompletion}
 	if req.Suffix != "" {
 		caps = append(caps, model.CapabilityInsert)
@@ -2237,12 +2231,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				ImageCount:       len(images),
 			},
 		})
-		return
-	}
-
-	// Validate Think value: string values currently only allowed for harmony/gptoss models
-	if req.Think != nil && req.Think.IsString() && m.Config.Parser != "harmony" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("think value %q is not supported for this model", req.Think.String())})
 		return
 	}
 
