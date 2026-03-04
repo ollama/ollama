@@ -150,7 +150,7 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 		return nil, nil, nil, fmt.Errorf("%s %w", name, err)
 	}
 
-	useImagegen, _ := requestOpts["use_imagegen_runner"].(bool)
+	// Deprecated runner override option; ignore if present.
 	delete(requestOpts, "use_imagegen_runner")
 
 	opts, err := s.modelOptions(model, requestOpts)
@@ -158,7 +158,7 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 		return nil, nil, nil, err
 	}
 
-	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive, useImagegen)
+	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive)
 	var runner *runnerRef
 	select {
 	case runner = <-runnerCh:
@@ -558,7 +558,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					PromptEvalDuration: cr.PromptEvalDuration,
 					EvalCount:          cr.EvalCount,
 					EvalDuration:       cr.EvalDuration,
-					PeakMemory:         cr.PeakMemory,
 				},
 				Logprobs: toAPILogprobs(cr.Logprobs),
 			}
@@ -2317,7 +2316,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						PromptEvalDuration: r.PromptEvalDuration,
 						EvalCount:          r.EvalCount,
 						EvalDuration:       r.EvalDuration,
-						PeakMemory:         r.PeakMemory,
 					},
 					Logprobs: toAPILogprobs(r.Logprobs),
 				}

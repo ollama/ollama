@@ -144,6 +144,37 @@ func TestCreateFromBin(t *testing.T) {
 		filepath.Join(p, "blobs", "sha256-6bcdb8859d417753645538d7bbfbd7ca91a3f0c191aef5379c53c05e86b669dd"),
 		filepath.Join(p, "blobs", "sha256-89a2116c3a82d6a97f59f748d86ed4417214353fd178ee54df418fde32495fad"),
 	})
+
+	t.Run("empty file digest", func(t *testing.T) {
+		w := createRequest(t, s.CreateHandler, api.CreateRequest{
+			Name:   "my-gguf-model",
+			Files:  map[string]string{"0.gguf": ""},
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected status 400, got %d", w.Code)
+		}
+		if !strings.Contains(w.Body.String(), "invalid digest format") {
+			t.Errorf("expected invalid digest format error, got:\n%s", w.Body.String())
+		}
+	})
+
+	t.Run("empty adapter digest", func(t *testing.T) {
+		w := createRequest(t, s.CreateHandler, api.CreateRequest{
+			Name:     "my-gguf-model",
+			Files:    map[string]string{"0.gguf": digest},
+			Adapters: map[string]string{"adapter.gguf": ""},
+			Stream:   &stream,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected status 400, got %d", w.Code)
+		}
+		if !strings.Contains(w.Body.String(), "invalid digest format") {
+			t.Errorf("expected invalid digest format error, got:\n%s", w.Body.String())
+		}
+	})
 }
 
 func TestCreateFromModel(t *testing.T) {

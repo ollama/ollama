@@ -8,7 +8,21 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-type GlmOcrRenderer struct{}
+type GlmOcrRenderer struct {
+	useImgTags bool
+}
+
+func (r *GlmOcrRenderer) renderContent(message api.Message, imageOffset int) (string, int) {
+	var sb strings.Builder
+	for range message.Images {
+		if r.useImgTags {
+			sb.WriteString(fmt.Sprintf("[img-%d]", imageOffset))
+			imageOffset++
+		}
+	}
+	sb.WriteString(message.Content)
+	return sb.String(), imageOffset
+}
 
 func (r *GlmOcrRenderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
 	var sb strings.Builder
@@ -38,11 +52,14 @@ func (r *GlmOcrRenderer) Render(messages []api.Message, tools []api.Tool, thinkV
 		thinkingExplicitlySet = true
 	}
 
+	imageOffset := 0
 	for i, message := range messages {
 		switch message.Role {
 		case "user":
 			sb.WriteString("<|user|>\n")
-			sb.WriteString(message.Content)
+			content, nextOffset := r.renderContent(message, imageOffset)
+			imageOffset = nextOffset
+			sb.WriteString(content)
 			if thinkingExplicitlySet && !enableThinking && !strings.HasSuffix(message.Content, "/nothink") {
 				sb.WriteString("/nothink")
 			}
