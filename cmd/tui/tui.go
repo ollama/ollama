@@ -337,9 +337,9 @@ const (
 )
 
 type TUIAction struct {
-	Kind        TUIActionKind
-	Integration string
-	Change      bool
+	Kind           TUIActionKind
+	Integration    string
+	ForceConfigure bool
 }
 
 func (a TUIAction) LastSelection() string {
@@ -354,22 +354,22 @@ func (a TUIAction) LastSelection() string {
 }
 
 func (a TUIAction) RunModelRequest() launch.RunModelRequest {
-	return launch.RunModelRequest{ForcePicker: a.Change}
+	return launch.RunModelRequest{ForcePicker: a.ForceConfigure}
 }
 
 func (a TUIAction) IntegrationLaunchRequest() launch.IntegrationLaunchRequest {
 	return launch.IntegrationLaunchRequest{
 		Name:           a.Integration,
-		ForceConfigure: a.Change,
+		ForceConfigure: a.ForceConfigure,
 	}
 }
 
-func actionForMenuItem(item menuItem, change bool) TUIAction {
+func actionForMenuItem(item menuItem, forceConfigure bool) TUIAction {
 	switch {
 	case item.isRunModel:
-		return TUIAction{Kind: TUIActionRunModel, Change: change}
+		return TUIAction{Kind: TUIActionRunModel, ForceConfigure: forceConfigure}
 	case item.integration != "":
-		return TUIAction{Kind: TUIActionLaunchIntegration, Integration: item.integration, Change: change}
+		return TUIAction{Kind: TUIActionLaunchIntegration, Integration: item.integration, ForceConfigure: forceConfigure}
 	default:
 		return TUIAction{Kind: TUIActionNone}
 	}

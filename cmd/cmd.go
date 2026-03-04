@@ -1955,7 +1955,7 @@ func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 }
 
 // runInteractiveTUI runs the main interactive TUI menu.
-func runInteractiveTUI(cmd *cobra.Command) {
+func runInteractiveTUI(cmd *cobra.Command, invocation launch.LauncherInvocation) {
 	// Ensure the server is running before showing the TUI
 	if err := ensureServerRunning(cmd.Context()); err != nil {
 		fmt.Fprintf(os.Stderr, "Error starting server: %v\n", err)
@@ -1963,33 +1963,37 @@ func runInteractiveTUI(cmd *cobra.Command) {
 	}
 
 	deps := launcherDeps{
-		buildState:        launch.BuildLauncherState,
-		runMenu:           tui.RunMenu,
-		resolveRunModel:   launch.ResolveRunModel,
-		launchIntegration: launch.LaunchIntegration,
-		runModel:          launchInteractiveModel,
+		buildState:               launch.BuildLauncherState,
+		runMenu:                  tui.RunMenu,
+		resolveRunModel:          launch.ResolveRunModel,
+		resolveRequestedRunModel: launch.ResolveRequestedRunModel,
+		launchIntegration:        launch.LaunchIntegration,
+		runModel:                 launchInteractiveModel,
 	}
 
+	currentInvocation := invocation
 	for {
-		continueLoop, err := runInteractiveTUIStep(cmd, deps)
+		continueLoop, err := runInteractiveTUIStep(cmd, currentInvocation, deps)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		}
 		if !continueLoop {
 			return
 		}
+		currentInvocation = launch.LauncherInvocation{}
 	}
 }
 
 type launcherDeps struct {
-	buildState        func(context.Context) (*launch.LauncherState, error)
-	runMenu           func(*launch.LauncherState) (tui.TUIAction, error)
-	resolveRunModel   func(context.Context, launch.RunModelRequest) (string, error)
-	launchIntegration func(context.Context, launch.IntegrationLaunchRequest) error
-	runModel          func(*cobra.Command, string) error
+	buildState               func(context.Context) (*launch.LauncherState, error)
+	runMenu                  func(*launch.LauncherState) (tui.TUIAction, error)
+	resolveRunModel          func(context.Context, launch.RunModelRequest) (string, error)
+	resolveRequestedRunModel func(context.Context, string) (string, error)
+	launchIntegration        func(context.Context, launch.IntegrationLaunchRequest) error
+	runModel                 func(*cobra.Command, string) error
 }
 
-func runInteractiveTUIStep(cmd *cobra.Command, deps launcherDeps) (bool, error) {
+func runInteractiveTUIStep(cmd *cobra.Command, invocation launch.LauncherInvocation, deps launcherDeps) (bool, error) {
 	state, err := deps.buildState(cmd.Context())
 	if err != nil {
 		return false, fmt.Errorf("build launcher state: %w", err)
@@ -2000,7 +2004,7 @@ func runInteractiveTUIStep(cmd *cobra.Command, deps launcherDeps) (bool, error) 
 		return false, fmt.Errorf("run launcher menu: %w", err)
 	}
 
-	return runLauncherAction(cmd, action, deps)
+	return runLauncherAction(cmd, invocation, action, deps)
 }
 
 func saveLauncherSelection(action tui.TUIAction) {
@@ -2008,13 +2012,21 @@ func saveLauncherSelection(action tui.TUIAction) {
 	_ = config.SetLastSelection(action.LastSelection())
 }
 
-func runLauncherAction(cmd *cobra.Command, action tui.TUIAction, deps launcherDeps) (bool, error) {
+func runLauncherAction(cmd *cobra.Command, invocation launch.LauncherInvocation, action tui.TUIAction, deps launcherDeps) (bool, error) {
 	switch action.Kind {
 	case tui.TUIActionNone:
 		return false, nil
 	case tui.TUIActionRunModel:
 		saveLauncherSelection(action)
-		modelName, err := deps.resolveRunModel(cmd.Context(), action.RunModelRequest())
+		var (
+			modelName string
+			err       error
+		)
+		if !action.ForceConfigure && invocation.ModelOverride != "" {
+			modelName, err = deps.resolveRequestedRunModel(cmd.Context(), invocation.ModelOverride)
+		} else {
+			modelName, err = deps.resolveRunModel(cmd.Context(), action.RunModelRequest())
+		}
 		if errors.Is(err, config.ErrCancelled) {
 			return true, nil
 		}
@@ -2027,7 +2039,12 @@ func runLauncherAction(cmd *cobra.Command, action tui.TUIAction, deps launcherDe
 		return true, nil
 	case tui.TUIActionLaunchIntegration:
 		saveLauncherSelection(action)
-		err := deps.launchIntegration(cmd.Context(), action.IntegrationLaunchRequest())
+		req := action.IntegrationLaunchRequest()
+		if !action.ForceConfigure {
+			req.ModelOverride = invocation.ModelOverride
+			req.ExtraArgs = append([]string(nil), invocation.ExtraArgs...)
+		}
+		err := deps.launchIntegration(cmd.Context(), req)
 		if errors.Is(err, config.ErrCancelled) {
 			return true, nil
 		}
@@ -2062,7 +2079,7 @@ func NewCLI() *cobra.Command {
 				return
 			}
 
-			runInteractiveTUI(cmd)
+			runInteractiveTUI(cmd, launch.LauncherInvocation{})
 		},
 	}
 

@@ -94,7 +94,7 @@ func TestMenuRightOnRunSelectsChangeRun(t *testing.T) {
 	menu := newModel(launcherTestState())
 	updated, _ := menu.Update(tea.KeyMsg{Type: tea.KeyRight})
 	got := updated.(model)
-	want := TUIAction{Kind: TUIActionRunModel, Change: true}
+	want := TUIAction{Kind: TUIActionRunModel, ForceConfigure: true}
 	if !got.selected || got.action != want {
 		t.Fatalf("expected right on run to select change-run action, got selected=%v action=%v", got.selected, got.action)
 	}
@@ -116,7 +116,7 @@ func TestMenuRightOnIntegrationSelectsConfigure(t *testing.T) {
 	menu.cursor = 1
 	updated, _ := menu.Update(tea.KeyMsg{Type: tea.KeyRight})
 	got := updated.(model)
-	want := TUIAction{Kind: TUIActionLaunchIntegration, Integration: "claude", Change: true}
+	want := TUIAction{Kind: TUIActionLaunchIntegration, Integration: "claude", ForceConfigure: true}
 	if !got.selected || got.action != want {
 		t.Fatalf("expected right on integration to configure, got selected=%v action=%v", got.selected, got.action)
 	}

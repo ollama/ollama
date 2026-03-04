@@ -25,6 +25,14 @@ func unexpectedRunModelResolution(t *testing.T) func(context.Context, launch.Run
 	}
 }
 
+func unexpectedRequestedRunModelResolution(t *testing.T) func(context.Context, string) (string, error) {
+	t.Helper()
+	return func(ctx context.Context, model string) (string, error) {
+		t.Fatalf("did not expect requested run-model resolution: %s", model)
+		return "", nil
+	}
+}
+
 func unexpectedIntegrationLaunch(t *testing.T) func(context.Context, launch.IntegrationLaunchRequest) error {
 	t.Helper()
 	return func(ctx context.Context, req launch.IntegrationLaunchRequest) error {
@@ -55,7 +63,7 @@ func TestRunInteractiveTUI_RunModelActionsUseResolveRunModel(t *testing.T) {
 		},
 		{
 			name:      "right forces picker",
-			action:    tui.TUIAction{Kind: tui.TUIActionRunModel, Change: true},
+			action:    tui.TUIAction{Kind: tui.TUIActionRunModel, ForceConfigure: true},
 			wantForce: true,
 			wantModel: "glm-5:cloud",
 		},
@@ -85,7 +93,8 @@ func TestRunInteractiveTUI_RunModelActionsUseResolveRunModel(t *testing.T) {
 					gotReq = req
 					return tt.wantModel, nil
 				},
-				launchIntegration: unexpectedIntegrationLaunch(t),
+				resolveRequestedRunModel: unexpectedRequestedRunModelResolution(t),
+				launchIntegration:        unexpectedIntegrationLaunch(t),
 				runModel: func(cmd *cobra.Command, model string) error {
 					launched = model
 					return nil
@@ -95,7 +104,7 @@ func TestRunInteractiveTUI_RunModelActionsUseResolveRunModel(t *testing.T) {
 			cmd := &cobra.Command{}
 			cmd.SetContext(context.Background())
 			for {
-				continueLoop, err := runInteractiveTUIStep(cmd, deps)
+				continueLoop, err := runInteractiveTUIStep(cmd, launch.LauncherInvocation{}, deps)
 				if err != nil {
 					t.Fatalf("unexpected step error: %v", err)
 				}
@@ -129,7 +138,7 @@ func TestRunInteractiveTUI_IntegrationActionsUseLaunchIntegration(t *testing.T) 
 		},
 		{
 			name:      "right forces configure",
-			action:    tui.TUIAction{Kind: tui.TUIActionLaunchIntegration, Integration: "claude", Change: true},
+			action:    tui.TUIAction{Kind: tui.TUIActionLaunchIntegration, Integration: "claude", ForceConfigure: true},
 			wantForce: true,
 		},
 	}
@@ -152,8 +161,9 @@ func TestRunInteractiveTUI_IntegrationActionsUseLaunchIntegration(t *testing.T) 
 				buildState: func(ctx context.Context) (*launch.LauncherState, error) {
 					return &launch.LauncherState{}, nil
 				},
-				runMenu:         runMenu,
-				resolveRunModel: unexpectedRunModelResolution(t),
+				runMenu:                  runMenu,
+				resolveRunModel:          unexpectedRunModelResolution(t),
+				resolveRequestedRunModel: unexpectedRequestedRunModelResolution(t),
 				launchIntegration: func(ctx context.Context, req launch.IntegrationLaunchRequest) error {
 					gotReq = req
 					return nil
@@ -164,7 +174,7 @@ func TestRunInteractiveTUI_IntegrationActionsUseLaunchIntegration(t *testing.T) 
 			cmd := &cobra.Command{}
 			cmd.SetContext(context.Background())
 			for {
-				continueLoop, err := runInteractiveTUIStep(cmd, deps)
+				continueLoop, err := runInteractiveTUIStep(cmd, launch.LauncherInvocation{}, deps)
 				if err != nil {
 					t.Fatalf("unexpected step error: %v", err)
 				}
@@ -192,14 +202,15 @@ func TestRunLauncherAction_RunModelContinuesAfterCancellation(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 
-	continueLoop, err := runLauncherAction(cmd, tui.TUIAction{Kind: tui.TUIActionRunModel}, launcherDeps{
+	continueLoop, err := runLauncherAction(cmd, launch.LauncherInvocation{}, tui.TUIAction{Kind: tui.TUIActionRunModel}, launcherDeps{
 		buildState: nil,
 		runMenu:    nil,
 		resolveRunModel: func(ctx context.Context, req launch.RunModelRequest) (string, error) {
 			return "", config.ErrCancelled
 		},
-		launchIntegration: unexpectedIntegrationLaunch(t),
-		runModel:          unexpectedModelLaunch(t),
+		resolveRequestedRunModel: unexpectedRequestedRunModelResolution(t),
+		launchIntegration:        unexpectedIntegrationLaunch(t),
+		runModel:                 unexpectedModelLaunch(t),
 	})
 
 	if err != nil {
@@ -216,10 +227,11 @@ func TestRunLauncherAction_IntegrationContinuesAfterCancellation(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.Background())
 
-	continueLoop, err := runLauncherAction(cmd, tui.TUIAction{Kind: tui.TUIActionLaunchIntegration, Integration: "claude"}, launcherDeps{
-		buildState:      nil,
-		runMenu:         nil,
-		resolveRunModel: unexpectedRunModelResolution(t),
+	continueLoop, err := runLauncherAction(cmd, launch.LauncherInvocation{}, tui.TUIAction{Kind: tui.TUIActionLaunchIntegration, Integration: "claude"}, launcherDeps{
+		buildState:               nil,
+		runMenu:                  nil,
+		resolveRunModel:          unexpectedRunModelResolution(t),
+		resolveRequestedRunModel: unexpectedRequestedRunModelResolution(t),
 		launchIntegration: func(ctx context.Context, req launch.IntegrationLaunchRequest) error {
 			return config.ErrCancelled
 		},
@@ -231,5 +243,155 @@ func TestRunLauncherAction_IntegrationContinuesAfterCancellation(t *testing.T) {
 	}
 	if !continueLoop {
 		t.Fatal("expected cancellation to continue the menu loop")
+	}
+}
+
+func TestRunLauncherAction_RunModelUsesInvocationOverrideOnEnter(t *testing.T) {
+	setCmdTestHome(t, t.TempDir())
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+
+	var gotModel string
+	var launched string
+	continueLoop, err := runLauncherAction(cmd, launch.LauncherInvocation{ModelOverride: "qwen3.5:cloud"}, tui.TUIAction{Kind: tui.TUIActionRunModel}, launcherDeps{
+		resolveRunModel: unexpectedRunModelResolution(t),
+		resolveRequestedRunModel: func(ctx context.Context, model string) (string, error) {
+			gotModel = model
+			return model, nil
+		},
+		launchIntegration: unexpectedIntegrationLaunch(t),
+		runModel: func(cmd *cobra.Command, model string) error {
+			launched = model
+			return nil
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !continueLoop {
+		t.Fatal("expected menu loop to continue after launch")
+	}
+	if gotModel != "qwen3.5:cloud" {
+		t.Fatalf("expected requested model override to be used, got %q", gotModel)
+	}
+	if launched != "qwen3.5:cloud" {
+		t.Fatalf("expected launched model to use override, got %q", launched)
+	}
+	if got := config.LastSelection(); got != "run" {
+		t.Fatalf("expected last selection to be run, got %q", got)
+	}
+}
+
+func TestRunLauncherAction_RunModelIgnoresInvocationOverrideOnChange(t *testing.T) {
+	setCmdTestHome(t, t.TempDir())
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+
+	var gotReq launch.RunModelRequest
+	var launched string
+	continueLoop, err := runLauncherAction(cmd, launch.LauncherInvocation{ModelOverride: "qwen3.5:cloud"}, tui.TUIAction{Kind: tui.TUIActionRunModel, ForceConfigure: true}, launcherDeps{
+		resolveRunModel: func(ctx context.Context, req launch.RunModelRequest) (string, error) {
+			gotReq = req
+			return "llama3.2", nil
+		},
+		resolveRequestedRunModel: unexpectedRequestedRunModelResolution(t),
+		launchIntegration:        unexpectedIntegrationLaunch(t),
+		runModel: func(cmd *cobra.Command, model string) error {
+			launched = model
+			return nil
+		},
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !continueLoop {
+		t.Fatal("expected menu loop to continue after launch")
+	}
+	if !gotReq.ForcePicker {
+		t.Fatal("expected change action to force the picker")
+	}
+	if launched != "llama3.2" {
+		t.Fatalf("expected launched model to come from picker flow, got %q", launched)
+	}
+}
+
+func TestRunLauncherAction_IntegrationUsesInvocationOverrideOnEnter(t *testing.T) {
+	setCmdTestHome(t, t.TempDir())
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+
+	var gotReq launch.IntegrationLaunchRequest
+	continueLoop, err := runLauncherAction(cmd, launch.LauncherInvocation{
+		ModelOverride: "qwen3.5:cloud",
+		ExtraArgs:     []string{"--sandbox", "workspace-write"},
+	}, tui.TUIAction{Kind: tui.TUIActionLaunchIntegration, Integration: "claude"}, launcherDeps{
+		resolveRunModel:          unexpectedRunModelResolution(t),
+		resolveRequestedRunModel: unexpectedRequestedRunModelResolution(t),
+		launchIntegration: func(ctx context.Context, req launch.IntegrationLaunchRequest) error {
+			gotReq = req
+			return nil
+		},
+		runModel: unexpectedModelLaunch(t),
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !continueLoop {
+		t.Fatal("expected menu loop to continue after launch")
+	}
+	if gotReq.Name != "claude" {
+		t.Fatalf("expected integration name to be passed through, got %q", gotReq.Name)
+	}
+	if gotReq.ModelOverride != "qwen3.5:cloud" {
+		t.Fatalf("expected model override to be forwarded, got %q", gotReq.ModelOverride)
+	}
+	if gotReq.ForceConfigure {
+		t.Fatal("expected enter action not to force configure")
+	}
+	if len(gotReq.ExtraArgs) != 2 || gotReq.ExtraArgs[0] != "--sandbox" || gotReq.ExtraArgs[1] != "workspace-write" {
+		t.Fatalf("unexpected extra args: %v", gotReq.ExtraArgs)
+	}
+}
+
+func TestRunLauncherAction_IntegrationIgnoresInvocationOverrideOnChange(t *testing.T) {
+	setCmdTestHome(t, t.TempDir())
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+
+	var gotReq launch.IntegrationLaunchRequest
+	continueLoop, err := runLauncherAction(cmd, launch.LauncherInvocation{
+		ModelOverride: "qwen3.5:cloud",
+		ExtraArgs:     []string{"--sandbox", "workspace-write"},
+	}, tui.TUIAction{Kind: tui.TUIActionLaunchIntegration, Integration: "claude", ForceConfigure: true}, launcherDeps{
+		resolveRunModel:          unexpectedRunModelResolution(t),
+		resolveRequestedRunModel: unexpectedRequestedRunModelResolution(t),
+		launchIntegration: func(ctx context.Context, req launch.IntegrationLaunchRequest) error {
+			gotReq = req
+			return nil
+		},
+		runModel: unexpectedModelLaunch(t),
+	})
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !continueLoop {
+		t.Fatal("expected menu loop to continue after configure")
+	}
+	if gotReq.ModelOverride != "" {
+		t.Fatalf("expected change action to ignore model override, got %q", gotReq.ModelOverride)
+	}
+	if len(gotReq.ExtraArgs) != 0 {
+		t.Fatalf("expected change action to ignore extra args, got %v", gotReq.ExtraArgs)
+	}
+	if !gotReq.ForceConfigure {
+		t.Fatal("expected change action to force configure")
 	}
 }
