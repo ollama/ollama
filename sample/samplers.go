@@ -178,6 +178,10 @@ func NewSampler(
 		repeatLastN = 0
 	}
 
+	if repeatPenalty <= 0 {
+		repeatPenalty = 1.0
+	}
+
 	return Sampler{
 		rng:              rng,
 		topK:             topK,
