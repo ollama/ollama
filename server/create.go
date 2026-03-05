@@ -64,6 +64,9 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	config.Renderer = r.Renderer
 	config.Parser = r.Parser
 	config.Requires = r.Requires
+	if r.Think != nil {
+		config.Think = &model.Think{Value: r.Think.Value}
+	}
 
 	for v, digest := range r.Files {
 		if !fs.ValidPath(v) {
@@ -150,6 +153,9 @@ func (s *Server) CreateHandler(c *gin.Context) {
 									}
 									if config.Requires == "" {
 										config.Requires = baseConfig.Requires
+									}
+									if config.Think == nil {
+										config.Think = baseConfig.Think
 									}
 								}
 								cfgFile.Close()

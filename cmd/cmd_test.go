@@ -1760,3 +1760,38 @@ func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 		})
 	}
 }
+
+func TestNewCreateRequestThink(t *testing.T) {
+	cases := []struct {
+		name  string
+		think *api.ThinkValue
+	}{
+		{"nil", nil},
+		{"true", &api.ThinkValue{Value: true}},
+		{"false", &api.ThinkValue{Value: false}},
+		{"high", &api.ThinkValue{Value: "high"}},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := runOptions{
+				Model: "base-model",
+				Think: tt.think,
+			}
+			req := NewCreateRequest("saved-model", opts)
+
+			if tt.think == nil {
+				if req.Think != nil {
+					t.Errorf("expected nil Think, got %v", req.Think)
+				}
+			} else {
+				if req.Think == nil {
+					t.Fatalf("expected non-nil Think")
+				}
+				if req.Think.Value != tt.think.Value {
+					t.Errorf("expected Think.Value %v, got %v", tt.think.Value, req.Think.Value)
+				}
+			}
+		})
+	}
+}

@@ -289,3 +289,34 @@ func TestModelCheckCapabilities(t *testing.T) {
 		})
 	}
 }
+
+func TestModelStringThink(t *testing.T) {
+	cases := []struct {
+		name     string
+		think    *model.Think
+		contains string
+		absent   bool
+	}{
+		{"nil", nil, "", true},
+		{"true", &model.Think{Value: true}, "PARAMETER think", false},
+		{"false", &model.Think{Value: false}, "PARAMETER think false", false},
+		{"high", &model.Think{Value: "high"}, "PARAMETER think high", false},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &Model{Config: model.ConfigV2{Think: tt.think}}
+			s := m.String()
+
+			if tt.absent {
+				if strings.Contains(s, "PARAMETER think") {
+					t.Errorf("expected no PARAMETER think in output, got: %s", s)
+				}
+			} else {
+				if !strings.Contains(s, tt.contains) {
+					t.Errorf("expected %q in output, got: %s", tt.contains, s)
+				}
+			}
+		})
+	}
+}

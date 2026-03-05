@@ -2449,3 +2449,117 @@ func TestImageGenerateStreamFalse(t *testing.T) {
 		t.Errorf("expected done=true")
 	}
 }
+
+func TestChatModelThinkDefault(t *testing.T) {
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
+	gin.SetMode(gin.TestMode)
+
+	mock := mockRunner{
+		CompletionResponse: llm.CompletionResponse{
+			Done:               true,
+			DoneReason:         llm.DoneReasonStop,
+			PromptEvalCount:    1,
+			PromptEvalDuration: 1,
+			EvalCount:          1,
+			EvalDuration:       1,
+		},
+	}
+
+	s := Server{
+		sched: &Scheduler{
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(&mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+			waitForRecovery: 250 * time.Millisecond,
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				time.Sleep(time.Millisecond)
+				req.successCh <- &runnerRef{
+					llama: &mock,
+				}
+				return false
+			},
+		},
+	}
+
+	go s.sched.Run(t.Context())
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
+
+	thinkFalse := api.ThinkValue{Value: false}
+
+	// Create model with think=false default
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model: "test-think-default",
+		Files: map[string]string{"file.gguf": digest},
+		Think: &thinkFalse,
+		Template: `{{- range .Messages }}{{ .Role }}: {{ .Content }}
+{{ end }}`,
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200 on create, got %d: %s", w.Code, w.Body.String())
+	}
+
+	t.Run("think persisted in config and round-trips", func(t *testing.T) {
+		m, err := GetModel("test-think-default")
+		if err != nil {
+			t.Fatalf("GetModel failed: %v", err)
+		}
+		if m.Config.Think == nil {
+			t.Fatal("expected Config.Think to be set, got nil")
+		}
+		if v, ok := m.Config.Think.Value.(bool); !ok || v != false {
+			t.Errorf("expected Config.Think.Value = false, got %v (%T)", m.Config.Think.Value, m.Config.Think.Value)
+		}
+	})
+
+	t.Run("model default applied when request omits think", func(t *testing.T) {
+		w = createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model:    "test-think-default",
+			Messages: []api.Message{{Role: "user", Content: "hello"}},
+			Stream:   &stream,
+		})
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("explicit think overrides model default", func(t *testing.T) {
+		w = createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model:    "test-think-default",
+			Messages: []api.Message{{Role: "user", Content: "hello"}},
+			Think:    &api.ThinkValue{Value: false},
+			Stream:   &stream,
+		})
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+}

@@ -557,6 +557,10 @@ func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
 		req.Messages = opts.Messages
 	}
 
+	if opts.Think != nil {
+		req.Think = opts.Think
+	}
+
 	return req
 }
 

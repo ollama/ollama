@@ -118,6 +118,18 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 		case "message":
 			role, msg, _ := strings.Cut(c.Args, ": ")
 			messages = append(messages, api.Message{Role: role, Content: msg})
+		case "think":
+			v := strings.ToLower(strings.TrimSpace(c.Args))
+			switch v {
+			case "", "true":
+				req.Think = &api.ThinkValue{Value: true}
+			case "false":
+				req.Think = &api.ThinkValue{Value: false}
+			case "high", "medium", "low":
+				req.Think = &api.ThinkValue{Value: v}
+			default:
+				return nil, fmt.Errorf("invalid value for think parameter: %q (must be true, false, high, medium, or low)", c.Args)
+			}
 		default:
 			if slices.Contains(deprecatedParameters, c.Name) {
 				fmt.Printf("warning: parameter %s is deprecated\n", c.Name)

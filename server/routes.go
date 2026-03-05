@@ -232,6 +232,13 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	// Apply model-stored think default if request doesn't specify.
+	// Precedence: explicit API request think > Modelfile default > auto-default
+	// (thinking-capable models like Qwen3/DeepSeek R1 auto-enable thinking).
+	if req.Think == nil && m.Config.Think != nil {
+		req.Think = &api.ThinkValue{Value: m.Config.Think.Value}
+	}
+
 	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
 		return
@@ -2031,6 +2038,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
 		return
+	}
+
+	// Apply model-stored think default if request doesn't specify.
+	// Precedence: explicit API request think > Modelfile default > auto-default
+	// (thinking-capable models like Qwen3/DeepSeek R1 auto-enable thinking).
+	if req.Think == nil && m.Config.Think != nil {
+		req.Think = &api.ThinkValue{Value: m.Config.Think.Value}
 	}
 
 	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {

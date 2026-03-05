@@ -781,6 +781,88 @@ MESSAGE assistant Hi! How are you?
 	}
 }
 
+func TestCreateRequestThink(t *testing.T) {
+	cases := []struct {
+		input    string
+		expected *api.CreateRequest
+		err      string
+	}{
+		{
+			"FROM test\nPARAMETER think true\n",
+			&api.CreateRequest{From: "test", Think: &api.ThinkValue{Value: true}},
+			"",
+		},
+		{
+			"FROM test\nPARAMETER think false\n",
+			&api.CreateRequest{From: "test", Think: &api.ThinkValue{Value: false}},
+			"",
+		},
+		{
+			"FROM test\nPARAMETER think high\n",
+			&api.CreateRequest{From: "test", Think: &api.ThinkValue{Value: "high"}},
+			"",
+		},
+		{
+			"FROM test\nPARAMETER think medium\n",
+			&api.CreateRequest{From: "test", Think: &api.ThinkValue{Value: "medium"}},
+			"",
+		},
+		{
+			"FROM test\nPARAMETER think low\n",
+			&api.CreateRequest{From: "test", Think: &api.ThinkValue{Value: "low"}},
+			"",
+		},
+		{
+			// case-insensitive + whitespace normalization
+			"FROM test\nPARAMETER think    HIGH\n",
+			&api.CreateRequest{From: "test", Think: &api.ThinkValue{Value: "high"}},
+			"",
+		},
+		{
+			"FROM test\nPARAMETER think garbage\n",
+			nil,
+			"invalid value for think parameter",
+		},
+		{
+			// last wins
+			"FROM test\nPARAMETER think false\nPARAMETER think high\n",
+			&api.CreateRequest{From: "test", Think: &api.ThinkValue{Value: "high"}},
+			"",
+		},
+		{
+			// no think parameter
+			"FROM test\n",
+			&api.CreateRequest{From: "test"},
+			"",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run("", func(t *testing.T) {
+			p, err := ParseFile(strings.NewReader(c.input))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			req, err := p.CreateRequest("")
+			if c.err != "" {
+				if err == nil || !strings.Contains(err.Error(), c.err) {
+					t.Fatalf("expected error containing %q, got %v", c.err, err)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if diff := cmp.Diff(req, c.expected); diff != "" {
+				t.Errorf("mismatch (-got +want):\n%s", diff)
+			}
+		})
+	}
+}
+
 func getSHA256Digest(t *testing.T, r io.Reader) (string, int64) {
 	t.Helper()
 
