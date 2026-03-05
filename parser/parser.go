@@ -11,10 +11,14 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
+	"golang.org/x/mod/semver"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
 
@@ -36,7 +40,17 @@ func (f Modelfile) String() string {
 	return sb.String()
 }
 
-var deprecatedParameters = []string{"penalize_newline"}
+var deprecatedParameters = []string{
+	"penalize_newline",
+	"low_vram",
+	"f16_kv",
+	"logits_all",
+	"vocab_only",
+	"use_mlock",
+	"mirostat",
+	"mirostat_tau",
+	"mirostat_eta",
+}
 
 // CreateRequest creates a new *api.CreateRequest from an existing Modelfile
 func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error) {
@@ -87,6 +101,20 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 			req.System = c.Args
 		case "license":
 			licenses = append(licenses, c.Args)
+		case "renderer":
+			req.Renderer = c.Args
+		case "parser":
+			req.Parser = c.Args
+		case "requires":
+			// golang.org/x/mod/semver requires "v" prefix
+			requires := c.Args
+			if !strings.HasPrefix(requires, "v") {
+				requires = "v" + requires
+			}
+			if !semver.IsValid(requires) {
+				return nil, fmt.Errorf("requires must be a valid semver (e.g. 0.14.0)")
+			}
+			req.Requires = strings.TrimPrefix(requires, "v")
 		case "message":
 			role, msg, _ := strings.Cut(c.Args, ": ")
 			messages = append(messages, api.Message{Role: role, Content: msg})
@@ -136,20 +164,51 @@ func fileDigestMap(path string) (map[string]string, error) {
 
 	var files []string
 	if fi.IsDir() {
-		files, err = filesForModel(path)
+		fs, err := filesForModel(path)
 		if err != nil {
 			return nil, err
+		}
+
+		for _, f := range fs {
+			f, err := filepath.EvalSymlinks(f)
+			if err != nil {
+				return nil, err
+			}
+
+			rel, err := filepath.Rel(path, f)
+			if err != nil {
+				return nil, err
+			}
+
+			if !filepath.IsLocal(rel) {
+				return nil, fmt.Errorf("insecure path: %s", rel)
+			}
+
+			files = append(files, f)
 		}
 	} else {
 		files = []string{path}
 	}
 
+	var mu sync.Mutex
+	var g errgroup.Group
+	g.SetLimit(max(runtime.GOMAXPROCS(0)-1, 1))
 	for _, f := range files {
-		digest, err := digestForFile(f)
-		if err != nil {
-			return nil, err
-		}
-		fl[f] = digest
+		g.Go(func() error {
+			digest, err := digestForFile(f)
+			if err != nil {
+				return err
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+			fl[f] = digest
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 
 	return fl, nil
@@ -199,11 +258,11 @@ func filesForModel(path string) ([]string, error) {
 			return nil, err
 		}
 
-		for _, safetensor := range matches {
-			if ct, err := detectContentType(safetensor); err != nil {
+		for _, match := range matches {
+			if ct, err := detectContentType(match); err != nil {
 				return nil, err
-			} else if ct != contentType {
-				return nil, fmt.Errorf("invalid content type: expected %s for %s", ct, safetensor)
+			} else if len(contentType) > 0 && ct != contentType {
+				return nil, fmt.Errorf("invalid content type: expected %s for %s", ct, match)
 			}
 		}
 
@@ -211,15 +270,13 @@ func filesForModel(path string) ([]string, error) {
 	}
 
 	var files []string
-	if st, _ := glob(filepath.Join(path, "model*.safetensors"), "application/octet-stream"); len(st) > 0 {
+	// some safetensors files do not properly match "application/octet-stream", so skip checking their contentType
+	if st, _ := glob(filepath.Join(path, "model*.safetensors"), ""); len(st) > 0 {
 		// safetensors files might be unresolved git lfs references; skip if they are
 		// covers model-x-of-y.safetensors, model.fp32-x-of-y.safetensors, model.safetensors
 		files = append(files, st...)
-	} else if st, _ := glob(filepath.Join(path, "adapters.safetensors"), "application/octet-stream"); len(st) > 0 {
-		// covers adapters.safetensors
-		files = append(files, st...)
-	} else if st, _ := glob(filepath.Join(path, "adapter_model.safetensors"), "application/octet-stream"); len(st) > 0 {
-		// covers adapter_model.safetensors
+	} else if st, _ := glob(filepath.Join(path, "consolidated*.safetensors"), ""); len(st) > 0 {
+		// covers consolidated.safetensors
 		files = append(files, st...)
 	} else if pt, _ := glob(filepath.Join(path, "pytorch_model*.bin"), "application/zip"); len(pt) > 0 {
 		// pytorch files might also be unresolved git lfs references; skip if they are
@@ -254,9 +311,9 @@ func filesForModel(path string) ([]string, error) {
 	}
 	files = append(files, js...)
 
+	// add tokenizer.model if it exists (tokenizer.json is automatically picked up by the previous glob)
+	// tokenizer.model might be a unresolved git lfs reference; error if it is
 	if tks, _ := glob(filepath.Join(path, "tokenizer.model"), "application/octet-stream"); len(tks) > 0 {
-		// add tokenizer.model if it exists, tokenizer.json is automatically picked up by the previous glob
-		// tokenizer.model might be a unresolved git lfs reference; error if it is
 		files = append(files, tks...)
 	} else if tks, _ := glob(filepath.Join(path, "**/tokenizer.model"), "text/plain"); len(tks) > 0 {
 		// some times tokenizer.model is in a subdirectory (e.g. meta-llama/Meta-Llama-3-8B)
@@ -276,7 +333,7 @@ func (c Command) String() string {
 	switch c.Name {
 	case "model":
 		fmt.Fprintf(&sb, "FROM %s", c.Args)
-	case "license", "template", "system", "adapter":
+	case "license", "template", "system", "adapter", "renderer", "parser", "requires":
 		fmt.Fprintf(&sb, "%s %s", strings.ToUpper(c.Name), quote(c.Args))
 	case "message":
 		role, message, _ := strings.Cut(c.Args, ": ")
@@ -302,7 +359,7 @@ const (
 var (
 	errMissingFrom        = errors.New("no FROM line")
 	errInvalidMessageRole = errors.New("message role must be one of \"system\", \"user\", or \"assistant\"")
-	errInvalidCommand     = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"parameter\", or \"message\"")
+	errInvalidCommand     = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"renderer\", \"parser\", \"parameter\", \"message\", or \"requires\"")
 )
 
 type ParserError struct {
@@ -562,7 +619,7 @@ func isValidMessageRole(role string) bool {
 
 func isValidCommand(cmd string) bool {
 	switch strings.ToLower(cmd) {
-	case "from", "license", "template", "system", "adapter", "parameter", "message":
+	case "from", "license", "template", "system", "adapter", "renderer", "parser", "parameter", "message", "requires":
 		return true
 	default:
 		return false

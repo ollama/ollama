@@ -1360,7 +1360,7 @@ func file_sentencepiece_model_proto_rawDescGZIP() []byte {
 
 var file_sentencepiece_model_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
 var file_sentencepiece_model_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
-var file_sentencepiece_model_proto_goTypes = []interface{}{
+var file_sentencepiece_model_proto_goTypes = []any{
 	(TrainerSpec_ModelType)(0),         // 0: sentencepiece.TrainerSpec.ModelType
 	(ModelProto_SentencePiece_Type)(0), // 1: sentencepiece.ModelProto.SentencePiece.Type
 	(*TrainerSpec)(nil),                // 2: sentencepiece.TrainerSpec
@@ -1392,7 +1392,7 @@ func file_sentencepiece_model_proto_init() {
 		return
 	}
 	if !protoimpl.UnsafeEnabled {
-		file_sentencepiece_model_proto_msgTypes[0].Exporter = func(v interface{}, i int) interface{} {
+		file_sentencepiece_model_proto_msgTypes[0].Exporter = func(v any, i int) any {
 			switch v := v.(*TrainerSpec); i {
 			case 0:
 				return &v.state
@@ -1406,7 +1406,7 @@ func file_sentencepiece_model_proto_init() {
 				return nil
 			}
 		}
-		file_sentencepiece_model_proto_msgTypes[1].Exporter = func(v interface{}, i int) interface{} {
+		file_sentencepiece_model_proto_msgTypes[1].Exporter = func(v any, i int) any {
 			switch v := v.(*NormalizerSpec); i {
 			case 0:
 				return &v.state
@@ -1420,7 +1420,7 @@ func file_sentencepiece_model_proto_init() {
 				return nil
 			}
 		}
-		file_sentencepiece_model_proto_msgTypes[2].Exporter = func(v interface{}, i int) interface{} {
+		file_sentencepiece_model_proto_msgTypes[2].Exporter = func(v any, i int) any {
 			switch v := v.(*SelfTestData); i {
 			case 0:
 				return &v.state
@@ -1434,7 +1434,7 @@ func file_sentencepiece_model_proto_init() {
 				return nil
 			}
 		}
-		file_sentencepiece_model_proto_msgTypes[3].Exporter = func(v interface{}, i int) interface{} {
+		file_sentencepiece_model_proto_msgTypes[3].Exporter = func(v any, i int) any {
 			switch v := v.(*ModelProto); i {
 			case 0:
 				return &v.state
@@ -1448,7 +1448,7 @@ func file_sentencepiece_model_proto_init() {
 				return nil
 			}
 		}
-		file_sentencepiece_model_proto_msgTypes[4].Exporter = func(v interface{}, i int) interface{} {
+		file_sentencepiece_model_proto_msgTypes[4].Exporter = func(v any, i int) any {
 			switch v := v.(*SelfTestData_Sample); i {
 			case 0:
 				return &v.state
@@ -1460,7 +1460,7 @@ func file_sentencepiece_model_proto_init() {
 				return nil
 			}
 		}
-		file_sentencepiece_model_proto_msgTypes[5].Exporter = func(v interface{}, i int) interface{} {
+		file_sentencepiece_model_proto_msgTypes[5].Exporter = func(v any, i int) any {
 			switch v := v.(*ModelProto_SentencePiece); i {
 			case 0:
 				return &v.state

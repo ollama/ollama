@@ -1,6 +1,17 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
+
+#if defined(__VXE__) || defined(__VXE2__)
+#include <vecintrin.h>
+#endif
+
+#ifdef _MSC_VER
+#define NOINLINE __declspec(noinline)
+#else
+#define NOINLINE __attribute__((__noinline__))
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif

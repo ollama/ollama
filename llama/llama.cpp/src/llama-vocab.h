@@ -4,179 +4,177 @@
 
 #include <string>
 #include <vector>
-#include <unordered_map>
-#include <map>
-#include <set>
+#include <memory>
 
-static const char * llama_model_vocab_type_name(enum llama_vocab_type type){
-    switch (type) {
-        case LLAMA_VOCAB_TYPE_NONE: return "no vocab";
-        case LLAMA_VOCAB_TYPE_SPM:  return "SPM";
-        case LLAMA_VOCAB_TYPE_BPE:  return "BPE";
-        case LLAMA_VOCAB_TYPE_WPM:  return "WPM";
-        case LLAMA_VOCAB_TYPE_UGM:  return "UGM";
-        case LLAMA_VOCAB_TYPE_RWKV: return "RWKV";
-        default:                    return "unknown";
-    }
-}
-
-struct llm_tokenizer;
-
-struct llama_vocab {
-    using id    = llama_token;
-    using token = std::string;
-    using tattr = llama_token_attr;
-
-    struct token_data {
-        token text;
-        float score;
-        tattr attr;
-    };
-
-    uint32_t n_vocab = 0; // TODO: not great because has to keep in sync with hparams.n_vocab
-
-    enum llama_vocab_type     type     = LLAMA_VOCAB_TYPE_SPM;
-    enum llama_vocab_pre_type type_pre = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
-
-    int max_token_len = 0; // used for optimizing longest token search
-
-    std::unordered_map<token, id> token_to_id;
-    std::vector<token_data>       id_to_token;
-
-    std::vector<id>    cache_special_tokens;
-    std::vector<token> cache_token_to_piece; // llama_token_to_piece(special = true);
-
-    std::map<std::pair<std::string, std::string>, int> bpe_ranks;
-
-    // default LLaMA special tokens
-    // TODO: should we set all of these to LLAMA_TOKEN_NULL?
-    id special_bos_id  = 1;
-    id special_eos_id  = 2;
-    id special_eot_id  = LLAMA_TOKEN_NULL;
-    id special_eom_id  = LLAMA_TOKEN_NULL;
-    id special_unk_id  = 0;
-    id special_sep_id  = LLAMA_TOKEN_NULL;
-    id special_pad_id  = LLAMA_TOKEN_NULL;
-    id special_cls_id  = LLAMA_TOKEN_NULL; // TODO: revisit if this is really needed https://github.com/ggerganov/llama.cpp/pull/10930
-    id special_mask_id = LLAMA_TOKEN_NULL;
-
-    id linefeed_id = 13;
-
-    // fim tokens
-    id special_fim_pre_id = LLAMA_TOKEN_NULL;
-    id special_fim_suf_id = LLAMA_TOKEN_NULL;
-    id special_fim_mid_id = LLAMA_TOKEN_NULL;
-    id special_fim_pad_id = LLAMA_TOKEN_NULL;
-    id special_fim_rep_id = LLAMA_TOKEN_NULL; // repo
-    id special_fim_sep_id = LLAMA_TOKEN_NULL; // file separator
-
-    // set of all tokens that cause "end of generation"
-    std::set<id> special_eog_ids;
-
-    // tokenizer flags
-    bool tokenizer_add_space_prefix           = false;
-    bool tokenizer_add_bos                    = false;
-    bool tokenizer_add_eos                    = false;
-    bool tokenizer_ignore_merges              = false;
-    bool tokenizer_clean_spaces               = false;  // clean_up_tokenization_spaces
-    bool tokenizer_remove_extra_whitespaces   = false;
-    bool tokenizer_escape_whitespaces         = true;
-    bool tokenizer_treat_whitespace_as_suffix = false;
-
-    std::vector<char> precompiled_charsmap;
-
-    llm_tokenizer * tokenizer = nullptr;
-
-    llama_vocab() = default;
-    ~llama_vocab();
-
-    int find_bpe_rank(const std::string & token_left, const std::string & token_right) const;
-
-    void init_tokenizer();
+// pre-tokenization types
+enum llama_vocab_pre_type {
+    LLAMA_VOCAB_PRE_TYPE_DEFAULT         = 0,
+    LLAMA_VOCAB_PRE_TYPE_LLAMA3          = 1,
+    LLAMA_VOCAB_PRE_TYPE_DEEPSEEK_LLM    = 2,
+    LLAMA_VOCAB_PRE_TYPE_DEEPSEEK_CODER  = 3,
+    LLAMA_VOCAB_PRE_TYPE_FALCON          = 4,
+    LLAMA_VOCAB_PRE_TYPE_MPT             = 5,
+    LLAMA_VOCAB_PRE_TYPE_STARCODER       = 6,
+    LLAMA_VOCAB_PRE_TYPE_GPT2            = 7,
+    LLAMA_VOCAB_PRE_TYPE_REFACT          = 8,
+    LLAMA_VOCAB_PRE_TYPE_COMMAND_R       = 9,
+    LLAMA_VOCAB_PRE_TYPE_STABLELM2       = 10,
+    LLAMA_VOCAB_PRE_TYPE_QWEN2           = 11,
+    LLAMA_VOCAB_PRE_TYPE_OLMO            = 12,
+    LLAMA_VOCAB_PRE_TYPE_DBRX            = 13,
+    LLAMA_VOCAB_PRE_TYPE_SMAUG           = 14,
+    LLAMA_VOCAB_PRE_TYPE_PORO            = 15,
+    LLAMA_VOCAB_PRE_TYPE_CHATGLM3        = 16,
+    LLAMA_VOCAB_PRE_TYPE_CHATGLM4        = 17,
+    LLAMA_VOCAB_PRE_TYPE_VIKING          = 18,
+    LLAMA_VOCAB_PRE_TYPE_JAIS            = 19,
+    LLAMA_VOCAB_PRE_TYPE_TEKKEN          = 20,
+    LLAMA_VOCAB_PRE_TYPE_SMOLLM          = 21,
+    LLAMA_VOCAB_PRE_TYPE_CODESHELL       = 22,
+    LLAMA_VOCAB_PRE_TYPE_BLOOM           = 23,
+    LLAMA_VOCAB_PRE_TYPE_GPT3_FINNISH    = 24,
+    LLAMA_VOCAB_PRE_TYPE_EXAONE          = 25,
+    LLAMA_VOCAB_PRE_TYPE_CHAMELEON       = 26,
+    LLAMA_VOCAB_PRE_TYPE_MINERVA         = 27,
+    LLAMA_VOCAB_PRE_TYPE_DEEPSEEK3_LLM   = 28,
+    LLAMA_VOCAB_PRE_TYPE_GPT4O           = 29,
+    LLAMA_VOCAB_PRE_TYPE_SUPERBPE        = 30,
+    LLAMA_VOCAB_PRE_TYPE_TRILLION        = 31,
+    LLAMA_VOCAB_PRE_TYPE_BAILINGMOE      = 32,
+    LLAMA_VOCAB_PRE_TYPE_LLAMA4          = 33,
+    LLAMA_VOCAB_PRE_TYPE_PIXTRAL         = 34,
+    LLAMA_VOCAB_PRE_TYPE_SEED_CODER      = 35,
+    LLAMA_VOCAB_PRE_TYPE_HUNYUAN         = 36,
+    LLAMA_VOCAB_PRE_TYPE_KIMI_K2         = 37,
+    LLAMA_VOCAB_PRE_TYPE_HUNYUAN_DENSE   = 38,
+    LLAMA_VOCAB_PRE_TYPE_GROK_2          = 39,
+    LLAMA_VOCAB_PRE_TYPE_GRANITE_DOCLING = 40,
+    LLAMA_VOCAB_PRE_TYPE_MINIMAX_M2      = 41,
+    LLAMA_VOCAB_PRE_TYPE_AFMOE           = 42,
 };
 
-//
-// internal API
-//
+struct LLM_KV;
+struct llama_model_loader;
 
-// TODO: rename to llama_tokenize_impl
-// TODO: This should probably be in llama.h
-std::vector<llama_vocab::id> llama_tokenize_internal(
-        const llama_vocab & vocab,
-        std::string raw_text,
-        bool add_special,
-        bool parse_special = false);
+struct llama_vocab {
+    struct token_data {
+        std::string      text;
+        float            score;
+        llama_token_attr attr;
+    };
 
-// TODO: move the API below as member functions of llama_vocab
-llama_token llama_byte_to_token_impl(const llama_vocab & vocab, uint8_t ch);
+    llama_vocab();
+    ~llama_vocab();
 
-const char * llama_token_get_text_impl(const struct llama_vocab & vocab, llama_token token);
+    void load(llama_model_loader & ml, const LLM_KV & kv);
 
-float llama_token_get_score_impl(const struct llama_vocab & vocab, llama_token token);
+    std::string get_tokenizer_model() const;
+    std::string get_tokenizer_pre() const;
 
-llama_token_attr llama_token_get_attr_impl(const struct llama_vocab & vocab, llama_token token);
+    enum llama_vocab_type     get_type()     const;
+    enum llama_vocab_pre_type get_pre_type() const;
 
-bool llama_token_is_eog_impl(const struct llama_vocab & vocab, llama_token token);
+    uint32_t n_tokens() const;
+    uint32_t n_token_types() const;
 
-bool llama_token_is_control_impl(const struct llama_vocab & vocab, llama_token token);
+    std::string type_name() const;
 
-llama_token llama_token_bos_impl(const struct llama_vocab & vocab);
-llama_token llama_token_eos_impl(const struct llama_vocab & vocab);
-llama_token llama_token_eot_impl(const struct llama_vocab & vocab);
-llama_token llama_token_eom_impl(const struct llama_vocab & vocab);
-llama_token llama_token_cls_impl(const struct llama_vocab & vocab);
-llama_token llama_token_sep_impl(const struct llama_vocab & vocab);
-llama_token llama_token_nl_impl (const struct llama_vocab & vocab);
-llama_token llama_token_pad_impl(const struct llama_vocab & vocab);
+    bool is_normal      (llama_token id) const;
+    bool is_unknown     (llama_token id) const;
+    bool is_control     (llama_token id) const;
+    bool is_byte        (llama_token id) const;
+    bool is_user_defined(llama_token id) const;
+    bool is_unused      (llama_token id) const;
+    bool is_eog         (llama_token id) const;
 
-llama_token llama_token_prefix_impl(const struct llama_vocab & vocab);
-llama_token llama_token_middle_impl(const struct llama_vocab & vocab);
-llama_token llama_token_suffix_impl(const struct llama_vocab & vocab);
+    uint8_t     token_to_byte(llama_token id) const;
+    llama_token byte_to_token(uint8_t ch)     const;
 
-llama_token llama_token_fim_pre_impl(const struct llama_vocab & vocab);
-llama_token llama_token_fim_suf_impl(const struct llama_vocab & vocab);
-llama_token llama_token_fim_mid_impl(const struct llama_vocab & vocab);
-llama_token llama_token_fim_pad_impl(const struct llama_vocab & vocab);
-llama_token llama_token_fim_rep_impl(const struct llama_vocab & vocab);
-llama_token llama_token_fim_sep_impl(const struct llama_vocab & vocab);
+    llama_token text_to_token(const std::string & text) const;
 
-bool llama_add_bos_token_impl(const struct llama_vocab & vocab);
-bool llama_add_eos_token_impl(const struct llama_vocab & vocab);
+    const token_data & get_token_data(llama_token id) const;
 
-int32_t llama_tokenize_impl(
-        const struct llama_vocab & vocab,
-                      const char * text,
-                         int32_t   text_len,
-                     llama_token * tokens,
-                         int32_t   n_tokens_max,
-                            bool   add_special,
-                            bool   parse_special);
+    const char *     token_get_text (llama_token id) const;
+    float            token_get_score(llama_token id) const;
+    llama_token_attr token_get_attr (llama_token id) const;
 
-// does not write null-terminator to buf
-int32_t llama_token_to_piece_impl(
-        const struct llama_vocab & vocab,
-                     llama_token   token,
-                            char * buf,
-                         int32_t   length,
-                         int32_t   lstrip,
-                            bool   special);
+    llama_token token_bos() const;
+    llama_token token_eos() const;
+    llama_token token_eot() const;
+    llama_token token_eom() const;
+    llama_token token_unk() const;
+    llama_token token_sep() const;
+    llama_token token_nl () const;
+    llama_token token_pad() const;
+    llama_token token_mask() const;
 
-// check if token0 is contained as a prefix in token1
-bool llama_token_is_prefix_impl(
-        const struct llama_vocab & vocab,
-                     llama_token   token0,
-                     llama_token   token1);
+    llama_token token_prefix() const;
+    llama_token token_middle() const;
+    llama_token token_suffix() const;
 
-int32_t llama_detokenize_impl(
-        const struct llama_vocab & vocab,
-               const llama_token * tokens,
-                         int32_t   n_tokens,
-                            char * text,
-                         int32_t   text_len_max,
-                            bool   remove_special,
-                            bool   unparse_special);
+    llama_token token_fim_pre() const;
+    llama_token token_fim_suf() const;
+    llama_token token_fim_mid() const;
+    llama_token token_fim_pad() const;
+    llama_token token_fim_rep() const;
+    llama_token token_fim_sep() const;
 
-std::string llama_detokenize(
-        const struct llama_vocab & vocab,
-  const std::vector<llama_token> & tokens,
-                            bool   special);
+    bool get_add_space_prefix          () const;
+    bool get_add_bos                   () const;
+    bool get_add_eos                   () const;
+    bool get_add_sep                   () const;
+    bool get_ignore_merges             () const;
+    bool get_clean_spaces              () const;
+    bool get_remove_extra_whitespaces  () const;
+    bool get_escape_whitespaces        () const;
+    bool get_treat_whitespace_as_suffix() const;
+
+    int max_token_len() const;
+
+    int find_bpe_rank(const std::string & token_left, const std::string & token_right) const;
+    std::vector<std::string> get_bpe_merges() const;
+
+    std::vector<char> get_precompiled_charsmap() const;
+
+    int32_t tokenize(
+                   const char * text,
+                      int32_t   text_len,
+                  llama_token * tokens,
+                      int32_t   n_tokens_max,
+                         bool   add_special,
+                         bool   parse_special) const;
+
+    std::vector<llama_token> tokenize(
+            const std::string & raw_text,
+                         bool   add_special,
+                         bool   parse_special = false) const;
+
+    // does not write null-terminator to buf
+    int32_t token_to_piece(
+                  llama_token   token,
+                         char * buf,
+                      int32_t   length,
+                      int32_t   lstrip,
+                         bool   special) const;
+
+    // use cached data
+    const std::string & token_to_piece(llama_token token) const;
+
+    int32_t detokenize(
+            const llama_token * tokens,
+                      int32_t   n_tokens,
+                         char * text,
+                      int32_t   text_len_max,
+                         bool   remove_special,
+                         bool   unparse_special) const;
+
+    std::string detokenize(
+            const std::vector<llama_token> & tokens,
+                                      bool   special) const;
+
+    void print_info() const;
+
+private:
+    struct impl;
+    std::unique_ptr<impl> pimpl;
+};

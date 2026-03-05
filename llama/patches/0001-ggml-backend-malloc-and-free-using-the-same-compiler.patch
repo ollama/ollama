@@ -1,0 +1,205 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: jmorganca <jmorganca@gmail.com>
+Date: Thu, 6 Jun 2024 23:55:47 -0700
+Subject: [PATCH] ggml-backend: malloc and free using the same compiler
+
+On Windows, the CUDA backend must be compiled with MSVC but generic
+portions compiled with CGo use either GCC or Clang. Since
+ggml_backend_buffer_t spans these two components, it can be allocated
+and freed using different compilers. Specifically, it is malloced by
+MSVC and freed by Clang, which can cause problems.
+
+This moves freeing of the buffers into the backends to avoid the
+problem.
+---
+ ggml/src/ggml-backend.cpp            | 9 +++++++--
+ ggml/src/ggml-cann/ggml-cann.cpp     | 2 ++
+ ggml/src/ggml-cuda/ggml-cuda.cu      | 3 +++
+ ggml/src/ggml-metal/ggml-metal.cpp   | 2 ++
+ ggml/src/ggml-opencl/ggml-opencl.cpp | 1 +
+ ggml/src/ggml-rpc/ggml-rpc.cpp       | 1 +
+ ggml/src/ggml-sycl/ggml-sycl.cpp     | 3 +++
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp | 2 ++
+ 8 files changed, 21 insertions(+), 2 deletions(-)
+
+diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
+index 8547ecc84..9f37ca70c 100644
+--- a/ggml/src/ggml-backend.cpp
++++ b/ggml/src/ggml-backend.cpp
+@@ -112,7 +112,6 @@ void ggml_backend_buffer_free(ggml_backend_buffer_t buffer) {
+     if (buffer->iface.free_buffer != NULL) {
+         buffer->iface.free_buffer(buffer);
+     }
+-    delete buffer;
+ }
+ 
+ size_t ggml_backend_buffer_get_size(ggml_backend_buffer_t buffer) {
+@@ -591,6 +590,7 @@ static void ggml_backend_multi_buffer_free_buffer(ggml_backend_buffer_t buffer)
+ 
+     free(ctx->buffers);
+     free(ctx);
++    delete buffer;
+ }
+ 
+ static void ggml_backend_multi_buffer_clear(ggml_backend_buffer_t buffer, uint8_t value) {
+@@ -2125,6 +2125,11 @@ static void * ggml_backend_cpu_buffer_get_base(ggml_backend_buffer_t buffer) {
+ static void ggml_backend_cpu_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     GGML_ASSERT(buffer);
+     ggml_aligned_free(buffer->context, buffer->size);
++    delete buffer;
++}
++
++static void ggml_backend_cpu_ptr_buffer_free_buffer(ggml_backend_buffer_t buffer) {
++    delete buffer;
+ }
+ 
+ static void ggml_backend_cpu_buffer_memset_tensor(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, uint8_t value, size_t offset, size_t size) {
+@@ -2177,7 +2182,7 @@ static const struct ggml_backend_buffer_i ggml_backend_cpu_buffer_i = {
+ };
+ 
+ static const struct ggml_backend_buffer_i ggml_backend_cpu_buffer_from_ptr_i = {
+-    /* .free_buffer     = */ NULL, // ptr is not owned by the buffer, so it does not need to be freed
++    /* .free_buffer     = */ ggml_backend_cpu_ptr_buffer_free_buffer, // ptr is not owned by the buffer but need to free the buffer itself
+     /* .get_base        = */ ggml_backend_cpu_buffer_get_base,
+     /* .init_tensor     = */ NULL, // no initialization required
+     /* .memset_tensor   = */ ggml_backend_cpu_buffer_memset_tensor,
+diff --git a/ggml/src/ggml-cann/ggml-cann.cpp b/ggml/src/ggml-cann/ggml-cann.cpp
+index da624c587..efc63e092 100644
+--- a/ggml/src/ggml-cann/ggml-cann.cpp
++++ b/ggml/src/ggml-cann/ggml-cann.cpp
+@@ -831,6 +831,7 @@ static bool ggml_backend_buffer_is_cann(ggml_backend_buffer_t buffer) {
+ static void ggml_backend_cann_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     ggml_backend_cann_buffer_context * ctx = (ggml_backend_cann_buffer_context *) buffer->context;
+     delete ctx;
++    delete buffer;
+ }
+ 
+ /**
+@@ -1570,6 +1571,7 @@ static const char * ggml_backend_cann_host_buffer_name(ggml_backend_buffer_t buf
+  */
+ static void ggml_backend_cann_host_buffer_free(ggml_backend_buffer_t buffer) {
+     ACL_CHECK(aclrtFreeHost(buffer->context));
++    delete buffer;
+ }
+ 
+ /**
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index ab0f6fe9c..6519af435 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -583,6 +583,7 @@ struct ggml_backend_cuda_buffer_context {
+ static void ggml_backend_cuda_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
+     delete ctx;
++    delete buffer;
+ }
+ 
+ static bool ggml_backend_buffer_is_cuda(ggml_backend_buffer_t buffer) {
+@@ -838,6 +839,7 @@ struct ggml_backend_cuda_split_buffer_context {
+ static void ggml_backend_cuda_split_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     ggml_backend_cuda_split_buffer_context * ctx = (ggml_backend_cuda_split_buffer_context *)buffer->context;
+     delete ctx;
++    delete buffer;
+ }
+ 
+ static void * ggml_backend_cuda_split_buffer_get_base(ggml_backend_buffer_t buffer) {
+@@ -1119,6 +1121,7 @@ static bool ggml_backend_buft_is_cuda_host(ggml_backend_buffer_type_t buft) {
+ 
+ static void ggml_backend_cuda_host_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     CUDA_CHECK(cudaFreeHost(buffer->context));
++    delete buffer;
+ }
+ 
+ static void * ggml_cuda_host_malloc(size_t size) {
+diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
+index 70bf6f3d9..f2b7fe692 100644
+--- a/ggml/src/ggml-metal/ggml-metal.cpp
++++ b/ggml/src/ggml-metal/ggml-metal.cpp
+@@ -25,6 +25,7 @@ static void ggml_backend_metal_buffer_shared_free_buffer(ggml_backend_buffer_t b
+     GGML_ASSERT(ggml_metal_buffer_is_shared(ctx));
+ 
+     ggml_metal_buffer_free(ctx);
++    delete buffer;
+ }
+ 
+ static void * ggml_backend_metal_buffer_shared_get_base(ggml_backend_buffer_t buffer) {
+@@ -99,6 +100,7 @@ static void ggml_backend_metal_buffer_private_free_buffer(ggml_backend_buffer_t
+     GGML_ASSERT(!ggml_metal_buffer_is_shared(ctx));
+ 
+     ggml_metal_buffer_free(ctx);
++    delete buffer;
+ }
+ 
+ static void * ggml_backend_metal_buffer_private_get_base(ggml_backend_buffer_t buffer) {
+diff --git a/ggml/src/ggml-opencl/ggml-opencl.cpp b/ggml/src/ggml-opencl/ggml-opencl.cpp
+index 0d37587f6..ff373d413 100644
+--- a/ggml/src/ggml-opencl/ggml-opencl.cpp
++++ b/ggml/src/ggml-opencl/ggml-opencl.cpp
+@@ -3417,6 +3417,7 @@ struct ggml_backend_opencl_buffer_context {
+ static void ggml_backend_opencl_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     ggml_backend_opencl_buffer_context * ctx = (ggml_backend_opencl_buffer_context *) buffer->context;
+     delete ctx;
++    delete buffer;
+ }
+ 
+ static void * ggml_backend_opencl_buffer_get_base(ggml_backend_buffer_t buffer) {
+diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
+index 18a45d2d9..89041805e 100644
+--- a/ggml/src/ggml-rpc/ggml-rpc.cpp
++++ b/ggml/src/ggml-rpc/ggml-rpc.cpp
+@@ -556,6 +556,7 @@ static void ggml_backend_rpc_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     bool status = send_rpc_cmd(ctx->sock, RPC_CMD_FREE_BUFFER, &request, sizeof(request), nullptr, 0);
+     RPC_STATUS_ASSERT(status);
+     delete ctx;
++    delete buffer;
+ }
+ 
+ static void * ggml_backend_rpc_buffer_get_base(ggml_backend_buffer_t buffer) {
+diff --git a/ggml/src/ggml-sycl/ggml-sycl.cpp b/ggml/src/ggml-sycl/ggml-sycl.cpp
+index e996d98be..84b679315 100644
+--- a/ggml/src/ggml-sycl/ggml-sycl.cpp
++++ b/ggml/src/ggml-sycl/ggml-sycl.cpp
+@@ -356,6 +356,7 @@ ggml_backend_sycl_buffer_free_buffer(ggml_backend_buffer_t buffer) try {
+     ggml_sycl_set_device(ctx->device);
+ 
+     delete ctx;
++    delete buffer;
+ }
+ catch (sycl::exception const &exc) {
+   std::cerr << exc.what() << "Exception caught at file:" << __FILE__
+@@ -817,6 +818,7 @@ struct ggml_backend_sycl_split_buffer_context {
+ static void ggml_backend_sycl_split_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     ggml_backend_sycl_split_buffer_context * ctx = (ggml_backend_sycl_split_buffer_context *)buffer->context;
+     delete ctx;
++    delete buffer;
+ }
+ 
+ static void * ggml_backend_sycl_split_buffer_get_base(ggml_backend_buffer_t buffer) {
+@@ -1159,6 +1161,7 @@ static const char * ggml_backend_sycl_host_buffer_type_name(ggml_backend_buffer_
+ 
+ static void ggml_backend_sycl_host_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     ggml_sycl_host_free(buffer->context);
++    delete buffer;
+ }
+ 
+ static ggml_backend_buffer_t ggml_backend_sycl_host_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 34ec09d40..120191ca0 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -12365,6 +12365,7 @@ static void ggml_backend_vk_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     ggml_backend_vk_buffer_context * ctx = (ggml_backend_vk_buffer_context *)buffer->context;
+     ggml_vk_destroy_buffer(ctx->dev_buffer);
+     delete ctx;
++    delete buffer;
+ }
+ 
+ static void * ggml_backend_vk_buffer_get_base(ggml_backend_buffer_t buffer) {
+@@ -12508,6 +12509,7 @@ static const char * ggml_backend_vk_host_buffer_name(ggml_backend_buffer_t buffe
+ static void ggml_backend_vk_host_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     VK_LOG_MEMORY("ggml_backend_vk_host_buffer_free_buffer()");
+     ggml_vk_host_free(vk_instance.devices[0], buffer->context);
++    delete buffer;
+ }
+ 
+ static ggml_backend_buffer_t ggml_backend_vk_host_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {

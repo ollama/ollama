@@ -3,122 +3,95 @@ package server
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
-	"github.com/ollama/ollama/model/mllama"
+	"github.com/ollama/ollama/model/renderers"
 	"github.com/ollama/ollama/template"
 )
 
 type tokenizeFunc func(context.Context, string) ([]int, error)
 
-var errTooManyImages = errors.New("vision model only supports a single image per message")
-
 // chatPrompt accepts a list of messages and returns the prompt and images that should be used for the next chat turn.
 // chatPrompt truncates any messages that exceed the context window of the model, making sure to always include 1) the
 // latest message and 2) system messages
-func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool) (prompt string, images []llm.ImageData, _ error) {
+func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool, think *api.ThinkValue, truncate bool) (prompt string, images []llm.ImageData, _ error) {
 	var system []api.Message
 
-	isMllama := checkMllamaModelFamily(m)
-
-	var imageNumTokens int
 	// TODO: Ideally we would compute this from the projector metadata but some pieces are implementation dependent
-	if isMllama {
-		// Our mllama implementation packs all of the embeddings into a single token
-		imageNumTokens = 1
-	} else {
-		// Clip images are represented as 768 tokens, each an embedding
-		imageNumTokens = 768
-	}
+	// Clip images are represented as 768 tokens, each an embedding
+	imageNumTokens := 768
 
-	n := len(msgs) - 1
-	// in reverse, find all messages that fit into context window
-	for i := n; i >= 0; i-- {
-		if isMllama && len(msgs[i].Images) > 1 {
-			return "", nil, errTooManyImages
-		}
+	lastMsgIdx := len(msgs) - 1
+	currMsgIdx := 0
 
-		// always include the last message
-		if i == n {
-			continue
-		}
-
-		system = make([]api.Message, 0)
-		for j := range i {
-			if msgs[j].Role == "system" {
-				system = append(system, msgs[j])
+	if truncate {
+		// Start with all messages and remove from the front until it fits in context
+		for i := 0; i <= lastMsgIdx; i++ {
+			// Collect system messages from the portion we're about to skip
+			system = make([]api.Message, 0)
+			for j := range i {
+				if msgs[j].Role == "system" {
+					system = append(system, msgs[j])
+				}
 			}
-		}
 
-		var b bytes.Buffer
-		if err := m.Template.Execute(&b, template.Values{Messages: append(system, msgs[i:]...), Tools: tools}); err != nil {
-			return "", nil, err
-		}
-
-		s, err := tokenize(ctx, b.String())
-		if err != nil {
-			return "", nil, err
-		}
-
-		ctxLen := len(s)
-		if m.ProjectorPaths != nil {
-			for _, m := range msgs[i:] {
-				ctxLen += imageNumTokens * len(m.Images)
+			p, err := renderPrompt(m, append(system, msgs[i:]...), tools, think)
+			if err != nil {
+				return "", nil, err
 			}
-		}
 
-		if ctxLen > opts.NumCtx {
-			slog.Debug("truncating input messages which exceed context length", "truncated", len(msgs[i:]))
-			break
-		} else {
-			n = i
+			s, err := tokenize(ctx, p)
+			if err != nil {
+				return "", nil, err
+			}
+
+			ctxLen := len(s)
+			if m.ProjectorPaths != nil {
+				for _, msg := range msgs[i:] {
+					ctxLen += imageNumTokens * len(msg.Images)
+				}
+			}
+
+			if ctxLen <= opts.NumCtx {
+				currMsgIdx = i
+				break
+			}
+
+			// Must always include at least the last message
+			if i == lastMsgIdx {
+				currMsgIdx = lastMsgIdx
+				break
+			}
 		}
 	}
 
-	currMsgIdx := n
+	if currMsgIdx > 0 {
+		slog.Debug("truncating input messages which exceed context length", "truncated", len(msgs[currMsgIdx:]))
+	}
 
 	for cnt, msg := range msgs[currMsgIdx:] {
-		prefix := ""
-		imgPrompt := ""
+		if slices.Contains(m.Config.ModelFamilies, "mllama") && len(msg.Images) > 1 {
+			return "", nil, errors.New("this model only supports one image while more than one image requested")
+		}
+
+		var prefix string
 		prompt := msg.Content
 
 		for _, i := range msg.Images {
-			var imgData llm.ImageData
+			imgData := llm.ImageData{
+				ID:   len(images),
+				Data: i,
+			}
+			images = append(images, imgData)
 
-			if isMllama {
-				data, opts, err := mllama.Preprocess(bytes.NewReader(i))
-				if err != nil {
-					return "", nil, err
-				}
-
-				buf := new(bytes.Buffer)
-				err = binary.Write(buf, binary.LittleEndian, data)
-				if err != nil {
-					return "", nil, err
-				}
-
-				ar, ok := opts["aspectRatioIndex"].(int)
-				if !ok {
-					return "", nil, fmt.Errorf("missing aspect ratio for image")
-				}
-
-				imgData = llm.ImageData{
-					ID:            len(images),
-					Data:          buf.Bytes(),
-					AspectRatioID: ar,
-				}
-				imgPrompt = "<|image|>"
-			} else {
-				imgData = llm.ImageData{
-					ID:   len(images),
-					Data: i,
-				}
+			if m.Config.Renderer != "" {
+				continue
 			}
 
 			imgTag := fmt.Sprintf("[img-%d]", imgData.ID)
@@ -127,26 +100,37 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 			} else {
 				prompt = strings.Replace(prompt, "[img]", imgTag, 1)
 			}
-
-			images = append(images, imgData)
 		}
-		msgs[currMsgIdx+cnt].Content = prefix + imgPrompt + prompt
+		msgs[currMsgIdx+cnt].Content = prefix + prompt
 	}
 
 	// truncate any messages that do not fit into the context window
-	var b bytes.Buffer
-	if err := m.Template.Execute(&b, template.Values{Messages: append(system, msgs[currMsgIdx:]...), Tools: tools}); err != nil {
+	p, err := renderPrompt(m, append(system, msgs[currMsgIdx:]...), tools, think)
+	if err != nil {
 		return "", nil, err
 	}
 
-	return b.String(), images, nil
+	return p, images, nil
 }
 
-func checkMllamaModelFamily(m *Model) bool {
-	for _, arch := range m.Config.ModelFamilies {
-		if arch == "mllama" {
-			return true
+func renderPrompt(m *Model, msgs []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error) {
+	if m.Config.Renderer != "" {
+		rendered, err := renderers.RenderWithRenderer(m.Config.Renderer, msgs, tools, think)
+		if err != nil {
+			return "", err
 		}
+		return rendered, nil
 	}
-	return false
+
+	var b bytes.Buffer
+	thinkVal := false
+	thinkLevel := ""
+	if think != nil {
+		thinkVal = think.Bool()
+		thinkLevel = think.String()
+	}
+	if err := m.Template.Execute(&b, template.Values{Messages: msgs, Tools: tools, Think: thinkVal, ThinkLevel: thinkLevel, IsThinkSet: think != nil}); err != nil {
+		return "", err
+	}
+	return b.String(), nil
 }

@@ -5,8 +5,8 @@
 .swp
 dist
 build
-ollama
 .cache
+.gocache
 *.exe
 .idea
 test_data
@@ -14,3 +14,4 @@ test_data
 __debug_bin*
 llama/build
 llama/vendor
+/ollama

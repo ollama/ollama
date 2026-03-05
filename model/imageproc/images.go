@@ -25,12 +25,15 @@ const (
 
 // Composite returns an image with the alpha channel removed by drawing over a white background.
 func Composite(img image.Image) image.Image {
-	dst := image.NewRGBA(img.Bounds())
-
 	white := color.RGBA{255, 255, 255, 255}
-	draw.Draw(dst, dst.Bounds(), &image.Uniform{white}, image.Point{}, draw.Src)
-	draw.Draw(dst, dst.Bounds(), img, img.Bounds().Min, draw.Over)
+	return CompositeColor(img, white)
+}
 
+// CompositeColor returns an image with the alpha channel removed by drawing over a white background.
+func CompositeColor(img image.Image, color color.Color) image.Image {
+	dst := image.NewRGBA(img.Bounds())
+	draw.Draw(dst, dst.Bounds(), &image.Uniform{color}, image.Point{}, draw.Src)
+	draw.Draw(dst, dst.Bounds(), img, img.Bounds().Min, draw.Over)
 	return dst
 }
 
@@ -52,6 +55,31 @@ func Resize(img image.Image, newSize image.Point, method int) image.Image {
 
 	kernel.Scale(dst, dst.Rect, img, img.Bounds(), draw.Over, nil)
 
+	return dst
+}
+
+// Pad returns an image which has been resized to fit within a new size, preserving aspect ratio, and padded with a color.
+func Pad(img image.Image, newSize image.Point, color color.Color, kernel draw.Interpolator) image.Image {
+	dst := image.NewRGBA(image.Rect(0, 0, newSize.X, newSize.Y))
+	draw.Draw(dst, dst.Bounds(), &image.Uniform{color}, image.Point{}, draw.Src)
+
+	var minPoint, maxPoint image.Point
+	if img.Bounds().Dx() > img.Bounds().Dy() {
+		// landscape
+		height := newSize.X * img.Bounds().Dy() / img.Bounds().Dx()
+		minPoint = image.Point{0, (newSize.Y - height) / 2}
+		maxPoint = image.Point{newSize.X, height + minPoint.Y}
+	} else {
+		// portrait
+		width := newSize.Y * img.Bounds().Dx() / img.Bounds().Dy()
+		minPoint = image.Point{(newSize.X - width) / 2, 0}
+		maxPoint = image.Point{minPoint.X + width, newSize.Y}
+	}
+
+	kernel.Scale(dst, image.Rectangle{
+		Min: minPoint,
+		Max: maxPoint,
+	}, img, img.Bounds(), draw.Over, nil)
 	return dst
 }
 

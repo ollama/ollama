@@ -1,0 +1,11 @@
+#version 450
+
+#include "glu_head.glsl"
+
+const float GELU_QUICK_COEF = -1.702f;
+
+float op(float a, float b) {
+    return a * (1.0f / (1.0f + exp(GELU_QUICK_COEF * a))) * b;
+}
+
+#include "glu_main.glsl"

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>English</string>
+    <key>CFBundleExecutable</key>
+    <string>Squirrel</string>
+    <key>CFBundleIconFile</key>
+    <string/>
+    <key>CFBundleIdentifier</key>
+    <string>com.github.Squirrel</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>Squirrel</string>
+    <key>CFBundlePackageType</key>
+    <string>FMWK</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>DTCompiler</key>
+    <string>com.apple.compilers.llvm.clang.1_0</string>
+    <key>DTSDKBuild</key>
+    <string>22E245</string>
+    <key>DTSDKName</key>
+    <string>macosx13.3</string>
+    <key>DTXcode</key>
+    <string>1431</string>
+    <key>DTXcodeBuild</key>
+    <string>14E300c</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright © 2013 GitHub. All rights reserved.</string>
+    <key>NSPrincipalClass</key>
+    <string/>
+  </dict>
+</plist>

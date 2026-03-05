@@ -1,0 +1,684 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jesse Gross <jesse@ollama.com>
+Date: Wed, 23 Jul 2025 11:58:49 -0700
+Subject: [PATCH] ggml: No-alloc mode
+
+Callers can set a scheduler to be no-alloc, meaning that
+it does not allocate memory for tensors or operations. This can
+be used for calculating memory requirements. Tensors and graphs
+must be recreated with no-alloc set to false before loading data.
+---
+ ggml/include/ggml-backend.h     |   1 +
+ ggml/src/ggml-backend-impl.h    |  16 +++
+ ggml/src/ggml-backend.cpp       |  75 ++++++++++-
+ ggml/src/ggml-cuda/common.cuh   |  62 ++++++++-
+ ggml/src/ggml-cuda/ggml-cuda.cu | 224 ++++++++++++++++++++++++++------
+ 5 files changed, 333 insertions(+), 45 deletions(-)
+
+diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
+index 93c95602d..dbbb61d9c 100644
+--- a/ggml/include/ggml-backend.h
++++ b/ggml/include/ggml-backend.h
+@@ -305,6 +305,7 @@ extern "C" {
+ 
+     // Initialize a backend scheduler, backends with low index are given priority over backends with high index
+     GGML_API ggml_backend_sched_t ggml_backend_sched_new(ggml_backend_t * backends, ggml_backend_buffer_type_t * bufts, int n_backends, size_t graph_size, bool parallel, bool op_offload);
++    GGML_API ggml_backend_sched_t ggml_backend_sched_new_ext(ggml_backend_t * backends, ggml_backend_buffer_type_t * bufts, int n_backends, size_t graph_size, bool parallel, bool op_offload, bool alloc_buffers);
+     GGML_API void                 ggml_backend_sched_free(ggml_backend_sched_t sched);
+ 
+     // Provide a hint on the batch size to optimize processing (uses heuristics if unset)
+diff --git a/ggml/src/ggml-backend-impl.h b/ggml/src/ggml-backend-impl.h
+index 0f5b03cef..7bdf9d81f 100644
+--- a/ggml/src/ggml-backend-impl.h
++++ b/ggml/src/ggml-backend-impl.h
+@@ -26,12 +26,17 @@ extern "C" {
+         size_t                (*get_alloc_size)(ggml_backend_buffer_type_t buft, const struct ggml_tensor * tensor);
+         // (optional) check if tensor data is in host memory and uses standard ggml tensor layout (defaults to false)
+         bool                  (*is_host)       (ggml_backend_buffer_type_t buft);
++
++        // (optional) returns a dummy buffer that is equivalent to one created by alloc_buffer but without actually being backed
++        // by memory
++        ggml_backend_buffer_t (*noalloc_buffer)(ggml_backend_buffer_type_t buft, size_t size);
+     };
+ 
+     struct ggml_backend_buffer_type {
+         struct ggml_backend_buffer_type_i  iface;
+         ggml_backend_dev_t device;
+         void * context;
++        bool no_alloc;
+     };
+ 
+     //
+@@ -63,6 +68,7 @@ extern "C" {
+         void * context;
+         size_t size;
+         enum ggml_backend_buffer_usage usage;
++        bool no_alloc;
+     };
+ 
+     GGML_API ggml_backend_buffer_t ggml_backend_buffer_init(
+@@ -117,6 +123,16 @@ extern "C" {
+ 
+         // (optional) sort/optimize the nodes in the graph
+         void                      (*graph_optimize)    (ggml_backend_t backend, struct ggml_cgraph * cgraph);
++
++        // (optional) reserves intermediate buffers needed for the compution
++        // if alloc is true, memory is actually allocated, otherwise the required amount is just returned by buffer_size
++        enum ggml_status          (*graph_reserve)     (ggml_backend_t backend, struct ggml_cgraph * cgraph, bool alloc);
++
++        // (optional) returns the memory needed after calling graph_reserve
++        size_t                    (*buffer_size)       (ggml_backend_t backend);
++
++        // (optional) frees memory from intermediate buffers that was allocated either by graph_compute or graph_reserve
++        void                      (*reset)             (ggml_backend_t backend);
+     };
+ 
+     struct ggml_backend {
+diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
+index 498186a7c..7746e8b92 100644
+--- a/ggml/src/ggml-backend.cpp
++++ b/ggml/src/ggml-backend.cpp
+@@ -36,11 +36,25 @@ const char * ggml_backend_buft_name(ggml_backend_buffer_type_t buft) {
+ }
+ 
+ ggml_backend_buffer_t ggml_backend_buft_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
+-    GGML_ASSERT(buft);
+     if (size == 0) {
+         // return a dummy buffer for zero-sized allocations
+         return ggml_backend_buffer_init(buft, {}, NULL, 0);
+     }
++
++    if (buft->no_alloc) {
++        ggml_backend_buffer_t buf;
++
++        if (buft->iface.noalloc_buffer != NULL) {
++            buf = buft->iface.noalloc_buffer(buft, size);
++        } else {
++            buf = ggml_backend_buffer_init(buft, {}, NULL, size);
++        }
++
++        buf->no_alloc = true;
++        return buf;
++    }
++
++    GGML_ASSERT(buft);
+     return buft->iface.alloc_buffer(buft, size);
+ }
+ 
+@@ -94,7 +108,8 @@ ggml_backend_buffer_t ggml_backend_buffer_init(
+         /* .buft      = */ buft,
+         /* .context   = */ context,
+         /* .size      = */ size,
+-        /* .usage     = */ GGML_BACKEND_BUFFER_USAGE_ANY
++        /* .usage     = */ GGML_BACKEND_BUFFER_USAGE_ANY,
++        /* .no_alloc  = */ false
+     };
+ 
+     return buffer;
+@@ -126,6 +141,12 @@ void * ggml_backend_buffer_get_base(ggml_backend_buffer_t buffer) {
+         return NULL;
+     }
+ 
++    // If we aren't allocating memory, return a placeholder non-NULL pointer
++    // that meets alignment requirements
++    if (buffer->no_alloc) {
++        return (void *)ggml_backend_buffer_get_alignment(buffer);
++    }
++
+     // FIXME JG: a multi_buffer has a non-zero size, according to the above comment get_base is not optional,
+     //     I don't know whether the above comment is correct
+     if (!buffer->iface.get_base) {
+@@ -736,6 +757,12 @@ struct ggml_backend_sched {
+     int debug_realloc;
+     int debug_graph_size;
+     int debug_prev_graph_size;
++
++    // allocate buffers on attached ggml_backend_buffer_type_t's and during reservation
++    // if false, dummy buffers are used for faster memory sizing calculations
++    // the scheduler needs to be recreated with allocated buffers before it can be used
++    // for computation
++    bool alloc_buffers;
+ };
+ 
+ #define hash_id(tensor) ggml_hash_find_or_insert(&sched->hash_set, tensor)
+@@ -1635,6 +1662,17 @@ ggml_backend_sched_t ggml_backend_sched_new(
+         size_t graph_size,
+         bool parallel,
+         bool op_offload) {
++            return ggml_backend_sched_new_ext(backends, bufts, n_backends, graph_size, parallel, op_offload, true);
++        }
++
++ggml_backend_sched_t ggml_backend_sched_new_ext(
++        ggml_backend_t * backends,
++        ggml_backend_buffer_type_t * bufts,
++        int n_backends,
++        size_t graph_size,
++        bool parallel,
++        bool op_offload,
++        bool alloc_buffers) {
+     GGML_ASSERT(n_backends > 0);
+     GGML_ASSERT(n_backends <= GGML_SCHED_MAX_BACKENDS);
+     GGML_ASSERT(ggml_backend_dev_type(ggml_backend_get_device(backends[n_backends - 1])) == GGML_BACKEND_DEVICE_TYPE_CPU);
+@@ -1687,11 +1725,14 @@ ggml_backend_sched_t ggml_backend_sched_new(
+                 sched->events[b][c] = ggml_backend_event_new(backends[b]->device);
+             }
+         }
++
++        sched->bufts[b]->no_alloc = !alloc_buffers;
+     }
+ 
+     sched->galloc = ggml_gallocr_new_n(sched->bufts, n_backends);
+     sched->op_offload = op_offload;
+     sched->batch_size = -1;
++    sched->alloc_buffers = alloc_buffers;
+ 
+     ggml_backend_sched_reset(sched);
+ 
+@@ -1706,6 +1747,10 @@ void ggml_backend_sched_free(ggml_backend_sched_t sched) {
+         for (int c = 0; c < sched->n_copies; c++) {
+             ggml_backend_event_free(sched->events[b][c]);
+         }
++
++        if (sched->backends[b]->iface.reset != NULL) {
++            sched->backends[b]->iface.reset(sched->backends[b]);
++        }
+     }
+     ggml_gallocr_free(sched->galloc);
+     ggml_free(sched->ctx);
+@@ -1765,6 +1810,24 @@ bool ggml_backend_sched_reserve(ggml_backend_sched_t sched, struct ggml_cgraph *
+         return false;
+     }
+ 
++    if (!ggml_gallocr_alloc_graph(sched->galloc, &sched->graph)) {
++        return false;
++    }
++
++    struct ggml_backend_sched_split * splits = sched->splits;
++    for (int i = 0; i < sched->n_splits; i++) {
++        struct ggml_backend_sched_split * split = &splits[i];
++        int split_backend_id = split->backend_id;
++        ggml_backend_t split_backend = sched->backends[split_backend_id];
++
++        if (split_backend->iface.graph_reserve != NULL) {
++            enum ggml_status ec = split_backend->iface.graph_reserve(split_backend, &split->graph, sched->alloc_buffers);
++            if (ec != GGML_STATUS_SUCCESS) {
++                return false;
++            }
++        }
++    }
++
+     ggml_backend_sched_reset(sched);
+ 
+     return true;
+@@ -1870,7 +1933,13 @@ size_t ggml_backend_sched_get_attempted_buffer_size(ggml_backend_sched_t sched,
+     int backend_index = ggml_backend_sched_backend_id(sched, backend);
+     GGML_ASSERT(backend_index >= 0 && backend_index < sched->n_backends);
+ 
+-    return ggml_gallocr_get_attempted_buffer_size(sched->galloc, backend_index);
++    size_t size = ggml_gallocr_get_attempted_buffer_size(sched->galloc, backend_index);
++
++    if (backend->iface.buffer_size != NULL) {
++        size += backend->iface.buffer_size(backend);
++    }
++
++    return size;
+ }
+ 
+ void ggml_backend_sched_set_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node, ggml_backend_t backend) {
+diff --git a/ggml/src/ggml-cuda/common.cuh b/ggml/src/ggml-cuda/common.cuh
+index 9fcb2f9fd..e800ee8f6 100644
+--- a/ggml/src/ggml-cuda/common.cuh
++++ b/ggml/src/ggml-cuda/common.cuh
+@@ -37,6 +37,41 @@
+ #include "vendors/cuda.h"
+ #endif // defined(GGML_USE_HIP)
+ 
++extern bool reserving_graph;
++
++// If we are reserving the graph, pointers might be invalid and will fail if cudaMemcpyAsync tries to validate them.
++// However, since we don't actually expect a result, we don't need to actually do the memcpy.
++static cudaError_t cudaMemcpyAsyncReserve ( void* dst, const void* src, size_t count, cudaMemcpyKind kind, cudaStream_t stream = 0 ) {
++    if (!reserving_graph) {
++        return cudaMemcpyAsync(dst, src, count, kind, stream);
++    } else {
++        return cudaSuccess;
++    }
++}
++
++static cudaError_t cudaMemcpy2DAsyncReserve ( void* dst, size_t dpitch, const void* src, size_t spitch, size_t width, size_t height, cudaMemcpyKind kind, cudaStream_t stream = 0 ) {
++    if (!reserving_graph) {
++        return cudaMemcpy2DAsync(dst, dpitch, src, spitch, width, height, kind, stream);
++    } else {
++        return cudaSuccess;
++    }
++}
++
++static cudaError_t cudaMemsetAsyncReserve ( void* devPtr, int value, size_t count, cudaStream_t stream = 0 ) {
++    if (!reserving_graph) {
++        return cudaMemsetAsync(devPtr, value, count, stream);
++    } else {
++        return cudaSuccess;
++    }
++}
++
++#undef cudaMemcpyAsync
++#define cudaMemcpyAsync cudaMemcpyAsyncReserve
++#undef cudaMemcpy2DAsync
++#define cudaMemcpy2DAsync cudaMemcpy2DAsyncReserve
++#undef cudaMemsetAsync
++#define cudaMemsetAsync cudaMemsetAsyncReserve
++
+ #define STRINGIZE_IMPL(...) #__VA_ARGS__
+ #define STRINGIZE(...) STRINGIZE_IMPL(__VA_ARGS__)
+ 
+@@ -941,6 +976,9 @@ struct ggml_cuda_pool {
+ 
+     virtual void * alloc(size_t size, size_t * actual_size) = 0;
+     virtual void free(void * ptr, size_t size) = 0;
++
++    virtual bool alloc_memory() = 0;
++    virtual size_t alloc_size() = 0;
+ };
+ 
+ template<typename T>
+@@ -1232,11 +1270,15 @@ struct ggml_backend_cuda_context {
+     // pool
+     std::unique_ptr<ggml_cuda_pool> pools[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_STREAMS];
+ 
+-    static std::unique_ptr<ggml_cuda_pool> new_pool_for_device(int device, int stream_no);
++    static std::unique_ptr<ggml_cuda_pool> new_pool_for_device(int device, int stream_no, bool alloc);
+ 
+     ggml_cuda_pool & pool(int device) {
+         if (pools[device][curr_stream_no] == nullptr) {
+-            pools[device][curr_stream_no] = new_pool_for_device(device, curr_stream_no);
++            bool alloc = true;
++            if (pools[device][0] != nullptr) {
++                alloc = pools[device][0]->alloc_memory();
++            }
++            pools[device][curr_stream_no] = new_pool_for_device(device, curr_stream_no, alloc);
+         }
+         return *pools[device][curr_stream_no];
+     }
+@@ -1244,6 +1286,22 @@ struct ggml_backend_cuda_context {
+     ggml_cuda_pool & pool() {
+         return pool(device);
+     }
++
++    void pool_set_alloc(bool alloc) {
++        GGML_ASSERT(pools[device][curr_stream_no] == nullptr || pools[device][curr_stream_no]->alloc_memory() == alloc);
++
++        if (pools[device][curr_stream_no] == nullptr) {
++            pools[device][curr_stream_no] = new_pool_for_device(device, curr_stream_no, alloc);
++        }
++    }
++
++    size_t pool_get_alloc_size(int stream_no) {
++        if (pools[device][stream_no] == nullptr) {
++            return 0;
++        }
++
++        return pools[device][stream_no]->alloc_size();
++    }
+ };
+ 
+ struct ggml_cuda_mm_fusion_args_host {
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index 25548629d..eeaae3fe4 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -365,6 +365,8 @@ const ggml_cuda_device_info & ggml_cuda_info() {
+ 
+ // #define DEBUG_CUDA_MALLOC
+ 
++#define CUDA_ALIGNMENT 128
++
+ // buffer pool for cuda (legacy)
+ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
+     static const int MAX_BUFFERS = 256;
+@@ -377,9 +379,12 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
+ 
+     ggml_cuda_buffer buffer_pool[MAX_BUFFERS] = {};
+     size_t pool_size = 0;
++    bool allocate = true;
++    size_t last_alloc = 0;
+ 
+-    explicit ggml_cuda_pool_leg(int device) :
+-        device(device) {
++    explicit ggml_cuda_pool_leg(int device, bool alloc) :
++        device(device),
++        allocate(alloc) {
+     }
+ 
+     ~ggml_cuda_pool_leg() {
+@@ -387,7 +392,9 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
+         for (int i = 0; i < MAX_BUFFERS; ++i) {
+             ggml_cuda_buffer & b = buffer_pool[i];
+             if (b.ptr != nullptr) {
+-                CUDA_CHECK(cudaFree(b.ptr));
++                if (allocate) {
++                    CUDA_CHECK(cudaFree(b.ptr));
++                }
+                 pool_size -= b.size;
+             }
+         }
+@@ -435,8 +442,15 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
+         void * ptr;
+         size_t look_ahead_size = (size_t) (1.05 * size);
+         look_ahead_size = 256 * ((look_ahead_size + 255)/256);
+-        ggml_cuda_set_device(device);
+-        CUDA_CHECK(ggml_cuda_device_malloc(&ptr, look_ahead_size, device));
++        if (allocate) {
++            ggml_cuda_set_device(device);
++            if (ggml_cuda_device_malloc(&ptr, look_ahead_size, device) != cudaSuccess) {
++                    last_alloc = look_ahead_size;
++                    throw std::bad_alloc();
++            }
++        } else {
++            ptr = (void *)CUDA_ALIGNMENT;
++        }
+         *actual_size = look_ahead_size;
+         pool_size += look_ahead_size;
+ #ifdef DEBUG_CUDA_MALLOC
+@@ -456,10 +470,20 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
+             }
+         }
+         GGML_LOG_DEBUG(GGML_CUDA_NAME " buffer pool full, increase MAX_CUDA_BUFFERS\n");
+-        ggml_cuda_set_device(device);
+-        CUDA_CHECK(cudaFree(ptr));
++        if (allocate) {
++            ggml_cuda_set_device(device);
++            CUDA_CHECK(cudaFree(ptr));
++        }
+         pool_size -= size;
+     }
++
++    bool alloc_memory() override {
++        return allocate;
++    }
++
++    size_t alloc_size() override {
++        return pool_size + last_alloc;
++    }
+ };
+ 
+ // pool with virtual memory
+@@ -471,18 +495,24 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
+     CUdeviceptr pool_addr = 0;
+     size_t pool_used = 0;
+     size_t pool_size = 0;
++    bool allocate = true;
++    size_t last_alloc = 0;
+     size_t granularity;
+ #if defined(GGML_USE_HIP)
+     std::vector<std::pair<CUdeviceptr, size_t>> mappings;
+ #endif
+ 
+-    explicit ggml_cuda_pool_vmm(int device) :
++    explicit ggml_cuda_pool_vmm(int device, bool alloc) :
+         device(device),
+-        granularity(ggml_cuda_info().devices[device].vmm_granularity) {
++        granularity(ggml_cuda_info().devices[device].vmm_granularity),
++        allocate(alloc) {
++        if (!allocate) {
++            pool_addr = (CUdeviceptr)CUDA_ALIGNMENT;
++        }
+     }
+ 
+     ~ggml_cuda_pool_vmm() {
+-        if (pool_addr != 0) {
++        if (pool_addr != 0 && allocate) {
+ #if defined(GGML_USE_HIP)
+             // Workaround for https://github.com/ROCm/ROCR-Runtime/issues/285
+             for (std::pair<CUdeviceptr, size_t> & mapping : mappings) {
+@@ -509,35 +539,49 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
+ 
+             GGML_ASSERT(pool_size + reserve_size <= CUDA_POOL_VMM_MAX_SIZE);
+ 
+-            // allocate more physical memory
+-            CUmemAllocationProp prop = {};
+-            prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+-            prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+-            prop.location.id = device;
+-            CUmemGenericAllocationHandle handle;
+-            CU_CHECK(cuMemCreate(&handle, reserve_size, &prop, 0));
+-
+-            // reserve virtual address space (if not already reserved)
+-            if (pool_addr == 0) {
+-                CU_CHECK(cuMemAddressReserve(&pool_addr, CUDA_POOL_VMM_MAX_SIZE, 0, 0, 0));
+-            }
++            if (allocate) {
++                // allocate more physical memory
++                CUmemAllocationProp prop = {};
++                prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
++                prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
++                prop.location.id = device;
++                CUmemGenericAllocationHandle handle;
++                if (cuMemCreate(&handle, reserve_size, &prop, 0) != CUDA_SUCCESS) {
++                    last_alloc = reserve_size;
++                    throw std::bad_alloc();
++                }
+ 
+-            // map at the end of the pool
+-            CUdeviceptr start_ptr = (CUdeviceptr)((char *)(pool_addr) + pool_size);
+-            CU_CHECK(cuMemMap(start_ptr, reserve_size, 0, handle, 0));
+-#if defined(GGML_USE_HIP)
+-            mappings.push_back({start_ptr, reserve_size});
+-#endif
++                // reserve virtual address space (if not already reserved)
++                if (pool_addr == 0) {
++                    CU_CHECK(cuMemAddressReserve(&pool_addr, CUDA_POOL_VMM_MAX_SIZE, 0, 0, 0));
++                }
+ 
+-            // the memory allocation handle is no longer needed after mapping
+-            CU_CHECK(cuMemRelease(handle));
++                // map at the end of the pool
++                CUdeviceptr start_ptr = (CUdeviceptr)((char *)(pool_addr) + pool_size);
++                if (cuMemMap(start_ptr, reserve_size, 0, handle, 0) != CUDA_SUCCESS) {
++                    last_alloc = reserve_size;
++                    CU_CHECK(cuMemRelease(handle));
++                    throw std::bad_alloc();
++                }
++
++                // the memory allocation handle is no longer needed after mapping
++                CU_CHECK(cuMemRelease(handle));
++
++                // set access
++                CUmemAccessDesc access = {};
++                access.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
++                access.location.id = device;
++                access.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
++                if (cuMemSetAccess((CUdeviceptr)((char *)(pool_addr) + pool_size), reserve_size, &access, 1) != CUDA_SUCCESS) {
++                    CU_CHECK(cuMemUnmap(start_ptr, reserve_size));
++                    last_alloc = reserve_size;
++                    throw std::bad_alloc();
++                }
+ 
+-            // set access
+-            CUmemAccessDesc access = {};
+-            access.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+-            access.location.id = device;
+-            access.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+-            CU_CHECK(cuMemSetAccess((CUdeviceptr)((char *)(pool_addr) + pool_size), reserve_size, &access, 1));
++    #if defined(GGML_USE_HIP)
++                mappings.push_back({start_ptr, reserve_size});
++    #endif
++            }
+ 
+             // add to the pool
+             pool_size += reserve_size;
+@@ -570,17 +614,27 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
+         // all deallocations must be in reverse order of the allocations
+         GGML_ASSERT(ptr == (void *) ((char *)(pool_addr) + pool_used));
+     }
++
++    bool alloc_memory() override {
++        return allocate;
++    }
++
++    size_t alloc_size() override {
++        return pool_size + last_alloc;
++    }
++
+ };
+ #endif // defined(GGML_USE_VMM)
+ 
+ std::unique_ptr<ggml_cuda_pool> ggml_backend_cuda_context::new_pool_for_device(int                  device,
+-                                                                               [[maybe_unused]] int stream_no) {
++                                                                               [[maybe_unused]] int stream_no,
++                                                                               bool alloc) {
+ #if defined(GGML_USE_VMM)
+     if (ggml_cuda_info().devices[device].vmm) {
+-        return std::unique_ptr<ggml_cuda_pool>(new ggml_cuda_pool_vmm(device));
++        return std::unique_ptr<ggml_cuda_pool>(new ggml_cuda_pool_vmm(device, alloc));
+     }
+ #endif // defined(GGML_USE_VMM)
+-    return std::unique_ptr<ggml_cuda_pool>(new ggml_cuda_pool_leg(device));
++    return std::unique_ptr<ggml_cuda_pool>(new ggml_cuda_pool_leg(device, alloc));
+ }
+ 
+ // destroying a cuBLAS handle while a graph is being captured in a different thread can result in a CUDA error
+@@ -764,11 +818,20 @@ static ggml_backend_buffer_t ggml_backend_cuda_buffer_type_alloc_buffer(ggml_bac
+ }
+ 
+ static size_t ggml_backend_cuda_buffer_type_get_alignment(ggml_backend_buffer_type_t buft) {
+-    return 128;
++    return CUDA_ALIGNMENT;
+ 
+     GGML_UNUSED(buft);
+ }
+ 
++static ggml_backend_buffer_t ggml_backend_cuda_buffer_type_noalloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
++    ggml_backend_cuda_buffer_type_context * buft_ctx = (ggml_backend_cuda_buffer_type_context *)buft->context;
++
++    void * dev_ptr = (void *)ggml_backend_cuda_buffer_type_get_alignment(buft);
++    ggml_backend_cuda_buffer_context * ctx = new ggml_backend_cuda_buffer_context(buft_ctx->device, dev_ptr);
++
++    return ggml_backend_buffer_init(buft, {}, ctx, size);
++}
++
+ static size_t ggml_backend_cuda_buffer_type_get_alloc_size(ggml_backend_buffer_type_t buft, const ggml_tensor * tensor) {
+     size_t size = ggml_nbytes(tensor);
+     int64_t ne0 = tensor->ne[0];
+@@ -792,6 +855,7 @@ static const ggml_backend_buffer_type_i ggml_backend_cuda_buffer_type_interface
+     /* .get_max_size     = */ NULL, // defaults to SIZE_MAX
+     /* .get_alloc_size   = */ ggml_backend_cuda_buffer_type_get_alloc_size,
+     /* .is_host          = */ NULL,
++    /* .noalloc_buffer   = */ ggml_backend_cuda_buffer_type_noalloc_buffer,
+ };
+ 
+ ggml_backend_buffer_type_t ggml_backend_cuda_buffer_type(int device) {
+@@ -3274,6 +3338,7 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph * cgraph, int node_idx,
+ 
+ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph * cgraph,
+     bool & graph_evaluated_or_captured, bool & use_cuda_graph, bool & cuda_graph_update_required) {
++
+     // flag used to determine whether it is an integrated_gpu
+     const bool integrated = ggml_cuda_info().devices[cuda_ctx->device].integrated;
+ 
+@@ -3410,6 +3475,10 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
+                     continue;
+                 }
+ 
++                // When reserving, we are forcing CUDA graphs but this operation is not graph-safe so we need to skip it
++                if (reserving_graph && node->op == GGML_OP_MUL_MAT_ID && node->ne[2] != 1) {
++                    continue;
++                }
+ 
+                 // start of fusion operations
+                 static bool disable_fusion = (getenv("GGML_CUDA_DISABLE_FUSION") != nullptr);
+@@ -3754,6 +3823,7 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
+ 
+ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
+     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
++    cuda_ctx->pool_set_alloc(true);
+ 
+     ggml_cuda_set_device(cuda_ctx->device);
+ 
+@@ -3829,6 +3899,77 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
+     return GGML_STATUS_SUCCESS;
+ }
+ 
++// This is used to skip operations that are not graph safe during the reservation process.
++bool reserving_graph = false;
++
++static enum ggml_status ggml_backend_cuda_graph_reserve(ggml_backend_t backend, ggml_cgraph * cgraph, bool alloc) {
++    ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
++    cuda_ctx->pool_set_alloc(alloc);
++
++    #ifdef USE_CUDA_GRAPH
++    if (cuda_ctx->cuda_graph == nullptr) {
++        cuda_ctx->cuda_graph.reset(new ggml_cuda_graph());
++    }
++    #endif
++
++    ggml_cuda_set_device(cuda_ctx->device);
++
++    {
++        std::lock_guard<std::mutex> lock(ggml_cuda_lock);
++        ggml_cuda_lock_counter.fetch_add(1, std::memory_order_relaxed);
++    }
++
++    reserving_graph = true;
++
++    // Create CuBLAS handles early to avoid synchronous allocations during graph capture.
++    cuda_ctx->cublas_handle();
++
++    CUDA_CHECK(cudaStreamBeginCapture(cuda_ctx->stream(), cudaStreamCaptureModeRelaxed));
++
++    enum ggml_status result = GGML_STATUS_SUCCESS;
++
++    try {
++        bool use_cuda_graph = false;
++        bool cuda_graph_update_required = false;
++        bool graph_evaluated_or_captured = false;
++
++        evaluate_and_capture_cuda_graph(cuda_ctx, cgraph, graph_evaluated_or_captured, use_cuda_graph, cuda_graph_update_required);
++    } catch (const std::exception &e) {
++        result = GGML_STATUS_FAILED;
++    }
++
++    cudaGraph_t graph;
++    CUDA_CHECK(cudaStreamEndCapture(cuda_ctx->stream(), &graph));
++    CUDA_CHECK(cudaGraphDestroy(graph));
++
++    reserving_graph = false;
++
++    {
++        std::lock_guard<std::mutex> lock(ggml_cuda_lock);
++        if (ggml_cuda_lock_counter.fetch_sub(1, std::memory_order_relaxed) == 1) {
++            ggml_cuda_lock_cv.notify_all();
++        }
++    }
++
++    return result;
++}
++
++static size_t ggml_backend_cuda_buffer_size(ggml_backend_t backend) {
++    ggml_backend_cuda_context * ctx = (ggml_backend_cuda_context *)backend->context;
++    size_t allocs = 0;
++    for (int i = 0; i < GGML_CUDA_MAX_STREAMS; i++) {
++        allocs += ctx->pool_get_alloc_size(i);
++    }
++    return allocs;
++}
++
++static void ggml_backend_cuda_reset(ggml_backend_t backend) {
++    ggml_backend_cuda_context * ctx = (ggml_backend_cuda_context *)backend->context;
++    for (int i = 0; i < GGML_CUDA_MAX_STREAMS; i++) {
++        ctx->pools[ctx->device][i] = NULL;
++    }
++}
++
+ static void ggml_backend_cuda_event_record(ggml_backend_t backend, ggml_backend_event_t event) {
+     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
+ 
+@@ -4097,6 +4238,9 @@ static const ggml_backend_i ggml_backend_cuda_interface = {
+     /* .event_record            = */ ggml_backend_cuda_event_record,
+     /* .event_wait              = */ ggml_backend_cuda_event_wait,
+     /* .graph_optimize          = */ ggml_backend_cuda_graph_optimize,
++    /* .graph_reserve           = */ ggml_backend_cuda_graph_reserve,
++    /* .buffer_size             = */ ggml_backend_cuda_buffer_size,
++    /* .reset                   = */ ggml_backend_cuda_reset,
+ };
+ 
+ static ggml_guid_t ggml_backend_cuda_guid() {

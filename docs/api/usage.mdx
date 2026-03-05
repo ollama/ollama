@@ -1,0 +1,36 @@
+---
+title: Usage
+---
+
+Ollama's API responses include metrics that can be used for measuring performance and model usage:
+
+* `total_duration`: How long the response took to generate
+* `load_duration`: How long the model took to load
+* `prompt_eval_count`: How many input tokens were processed
+* `prompt_eval_duration`: How long it took to evaluate the prompt
+* `eval_count`: How many output tokens were processes
+* `eval_duration`: How long it took to generate the output tokens
+
+All timing values are measured in nanoseconds.
+
+## Example response
+
+For endpoints that return usage metrics, the response body will include the usage fields. For example, a non-streaming call to `/api/generate` may return the following response:
+
+```json
+{
+  "model": "gemma3",
+  "created_at": "2025-10-17T23:14:07.414671Z",
+  "response": "Hello! How can I help you today?",
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 174560334,
+  "load_duration": 101397084,
+  "prompt_eval_count": 11,
+  "prompt_eval_duration": 13074791,
+  "eval_count": 18,
+  "eval_duration": 52479709
+}
+```
+
+For endpoints that return **streaming responses**, usage fields are included as part of the final chunk, where `done` is `true`.

@@ -1,0 +1,36 @@
+---
+title: Errors
+---
+
+## Status codes
+
+Endpoints return appropriate HTTP status codes based on the success or failure of the request in the HTTP status line (e.g. `HTTP/1.1 200 OK` or `HTTP/1.1 400 Bad Request`). Common status codes are:
+
+- `200`: Success
+- `400`: Bad Request (missing parameters, invalid JSON, etc.)
+- `404`: Not Found (model doesn't exist, etc.)
+- `429`: Too Many Requests (e.g. when a rate limit is exceeded)
+- `500`: Internal Server Error
+- `502`: Bad Gateway (e.g. when a cloud model cannot be reached)
+
+## Error messages
+
+Errors are returned in the `application/json` format with the following structure, with the error message in the `error` property:
+
+```json
+{
+  "error": "the model failed to generate a response"
+}
+```
+
+## Errors that occur while streaming
+
+If an error occurs mid-stream, the error will be returned as an object in the `application/x-ndjson` format with an `error` property. Since the response has already started, the status code of the response will not be changed.
+
+```json
+{"model":"gemma3","created_at":"2025-10-26T17:21:21.196249Z","response":" Yes","done":false}
+{"model":"gemma3","created_at":"2025-10-26T17:21:21.207235Z","response":".","done":false}
+{"model":"gemma3","created_at":"2025-10-26T17:21:21.219166Z","response":"I","done":false}
+{"model":"gemma3","created_at":"2025-10-26T17:21:21.231094Z","response":"can","done":false}
+{"error":"an error was encountered while running the model"}
+```
