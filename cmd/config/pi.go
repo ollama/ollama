@@ -107,7 +107,8 @@ func (p *Pi) Edit(models []string) error {
 
 	// Build new models list:
 	// 1. Keep user-managed models (no _launch marker) - untouched
-	// 2. Keep ollama-managed models (_launch marker) that are still selected
+	// 2. Keep ollama-managed models (_launch marker) that are still selected,
+	//    except stale cloud entries that should be rebuilt below
 	// 3. Add new ollama-managed models
 	var newModels []any
 	for _, m := range existingModels {
@@ -117,7 +118,13 @@ func (p *Pi) Edit(models []string) error {
 				if !isPiOllamaModel(modelObj) {
 					newModels = append(newModels, m)
 				} else if selectedSet[id] {
-					// Ollama-managed and still selected - keep it
+					// Rebuild stale managed cloud entries so createConfig refreshes
+					// the whole entry instead of patching it in place.
+					if !hasContextWindow(modelObj) {
+						if _, ok := lookupCloudModelLimit(id); ok {
+							continue
+						}
+					}
 					newModels = append(newModels, m)
 					selectedSet[id] = false
 				}
@@ -197,6 +204,19 @@ func isPiOllamaModel(cfg map[string]any) bool {
 		return true
 	}
 	return false
+}
+
+func hasContextWindow(cfg map[string]any) bool {
+	switch v := cfg["contextWindow"].(type) {
+	case float64:
+		return v > 0
+	case int:
+		return v > 0
+	case int64:
+		return v > 0
+	default:
+		return false
+	}
 }
 
 // createConfig builds Pi model config with capability detection
