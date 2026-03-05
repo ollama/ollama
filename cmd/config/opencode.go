@@ -122,11 +122,16 @@ func (o *OpenCode) Edit(modelList []string) error {
 	if !ok {
 		ollama = map[string]any{
 			"npm":  "@ai-sdk/openai-compatible",
-			"name": "Ollama (local)",
+			"name": "Ollama",
 			"options": map[string]any{
 				"baseURL": envconfig.Host().String() + "/v1",
 			},
 		}
+	}
+
+	// Migrate legacy provider name
+	if name, _ := ollama["name"].(string); name == "Ollama (local)" {
+		ollama["name"] = "Ollama"
 	}
 
 	models, ok := ollama["models"].(map[string]any)

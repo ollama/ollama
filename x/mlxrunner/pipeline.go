@@ -16,11 +16,26 @@ import (
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
+func prefillChunkSize() int {
+	return 2 << 10
+}
+
 func (r *Runner) TextGenerationPipeline(request Request) error {
 	if r.Model == nil {
 		return errors.New("model not loaded")
 	}
 
+	enableCompile := true
+	if modelCompile, ok := r.Model.(interface{ EnableCompile() bool }); ok {
+		enableCompile = modelCompile.EnableCompile()
+	}
+	if enableCompile {
+		mlx.EnableCompile()
+	} else {
+		mlx.DisableCompile()
+	}
+	mlx.ResetPeakMemory()
+	ctx := request.Ctx
 	var (
 		sample, logprobs         *mlx.Array
 		nextSample, nextLogprobs *mlx.Array
@@ -36,18 +51,8 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 			mlx.LogArrays()
 			r.cache.log()
 		}
+		slog.Info("peak memory", "size", mlx.PrettyBytes(mlx.PeakMemory()))
 	}()
-
-	enableCompile := true
-	if modelCompile, ok := r.Model.(interface{ EnableCompile() bool }); ok {
-		enableCompile = modelCompile.EnableCompile()
-	}
-	if enableCompile {
-		mlx.EnableCompile()
-	} else {
-		mlx.DisableCompile()
-	}
-	mlx.ResetPeakMemory()
 
 	inputs := r.Tokenizer.Encode(request.Prompt, true)
 	if len(inputs) == 0 {
@@ -73,24 +78,30 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	defer session.close()
 	caches := session.caches
 	tokens := session.remaining
+	prefillChunk := prefillChunkSize()
+
+	materializeCaches := func() {
+		state := make([]*mlx.Array, 0, 2*len(caches))
+		for _, c := range caches {
+			state = appendCacheState(state, c)
+		}
+		if len(state) == 0 {
+			return
+		}
+		mlx.Eval(state...)
+	}
 
 	now := time.Now()
 	total, processed := len(tokens), 0
 	for total-processed > 1 {
-		if err := request.Ctx.Err(); err != nil {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 
-		n := min(2<<10, total-processed-1)
+		n := min(prefillChunk, total-processed-1)
 		r.Model.Forward(mlx.FromValues(tokens[processed:processed+n], n).ExpandDims(0), caches)
 		mlx.Sweep()
-		mlx.Eval(func() []*mlx.Array {
-			s := make([]*mlx.Array, 2*len(caches))
-			for i, c := range caches {
-				s[2*i], s[2*i+1] = c.State()
-			}
-			return s
-		}()...)
+		materializeCaches()
 		processed += n
 		slog.Info("Prompt processing progress", "processed", processed, "total", total)
 		mlx.ClearCache()
@@ -117,7 +128,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 
 	final := CompletionResponse{Done: true, PromptEvalCount: len(inputs), EvalCount: request.Options.MaxTokens, DoneReason: 1}
 	for i := range request.Options.MaxTokens {
-		if err := request.Ctx.Err(); err != nil {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 
@@ -139,8 +150,8 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		}
 
 		select {
-		case <-request.Ctx.Done():
-			return request.Ctx.Err()
+		case <-ctx.Done():
+			return ctx.Err()
 		case request.Responses <- CompletionResponse{
 			Content: r.Decode(output, &b),
 		}:
@@ -156,10 +167,9 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	}
 
 	final.EvalDuration = time.Since(now)
-	final.PeakMemory = uint64(mlx.PeakMemory())
 	select {
-	case <-request.Ctx.Done():
-		return request.Ctx.Err()
+	case <-ctx.Done():
+		return ctx.Err()
 	case request.Responses <- final:
 		return nil
 	}
