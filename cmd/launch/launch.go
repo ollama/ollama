@@ -10,6 +10,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // IntegrationInfo re-exports config integration display metadata for the TUI.
@@ -56,6 +57,10 @@ type IntegrationLaunchRequest struct {
 type LauncherInvocation struct {
 	ModelOverride string
 	ExtraArgs     []string
+}
+
+var isInteractiveSession = func() bool {
+	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 }
 
 // ListIntegrationInfos returns the registered integrations in launcher display order.
@@ -488,7 +493,9 @@ func (c *launcherClient) launchAliasConfiguredIntegration(ctx context.Context, n
 	forceConfigure := req.ForceConfigure
 	if primary == "" {
 		forceConfigure = true
-	} else {
+	} else if req.ModelOverride == "" {
+		// Only auto-force reconfiguration for saved/default models.
+		// Explicit --model overrides should be respected and validated via ensureModelsReady.
 		usable, err := c.savedModelUsable(ctx, primary)
 		if err != nil {
 			return err
@@ -603,9 +610,14 @@ func (c *launcherClient) ensureModelsReady(ctx context.Context, models []string)
 		return nil
 	}
 
+	missingModelPolicy := config.MissingModelPromptPull
+	if !isInteractiveSession() {
+		missingModelPolicy = config.MissingModelFail
+	}
+
 	cloudModels := make(map[string]bool, len(models))
 	for _, model := range models {
-		if err := config.ShowOrPull(ctx, c.apiClient, model); err != nil {
+		if err := config.ShowOrPullWithPolicy(ctx, c.apiClient, model, missingModelPolicy); err != nil {
 			return err
 		}
 		if config.IsCloudModelName(model) {

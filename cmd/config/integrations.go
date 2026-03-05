@@ -493,15 +493,42 @@ func pullIfNeeded(ctx context.Context, client *api.Client, existingModels map[st
 	return confirmAndPull(ctx, client, model)
 }
 
+// MissingModelPolicy controls how model-not-found errors should be handled.
+type MissingModelPolicy int
+
+const (
+	// MissingModelPromptPull prompts the user to download missing local models.
+	MissingModelPromptPull MissingModelPolicy = iota
+	// MissingModelFail returns an error for missing local models without prompting.
+	MissingModelFail
+)
+
 // ShowOrPull checks if a model exists via client.Show and offers to pull it if not found.
 func ShowOrPull(ctx context.Context, client *api.Client, model string) error {
+	return ShowOrPullWithPolicy(ctx, client, model, MissingModelPromptPull)
+}
+
+// ShowOrPullWithPolicy checks if a model exists and applies the provided missing-model policy.
+func ShowOrPullWithPolicy(ctx context.Context, client *api.Client, model string, policy MissingModelPolicy) error {
 	if _, err := client.Show(ctx, &api.ShowRequest{Model: model}); err == nil {
 		return nil
+	} else {
+		var statusErr api.StatusError
+		if !errors.As(err, &statusErr) || statusErr.StatusCode != http.StatusNotFound {
+			return err
+		}
 	}
+
 	if IsCloudModelName(model) {
 		return nil
 	}
-	return confirmAndPull(ctx, client, model)
+
+	switch policy {
+	case MissingModelFail:
+		return fmt.Errorf("model %q not found; run 'ollama pull %s' first", model, model)
+	default:
+		return confirmAndPull(ctx, client, model)
+	}
 }
 
 func confirmAndPull(ctx context.Context, client *api.Client, model string) error {

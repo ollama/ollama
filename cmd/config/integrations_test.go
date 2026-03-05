@@ -769,6 +769,143 @@ func TestShowOrPull_ModelExists(t *testing.T) {
 	}
 }
 
+func TestShowOrPullWithPolicy_ModelExists(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" {
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `{"model":"test-model"}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	err := ShowOrPullWithPolicy(context.Background(), client, "test-model", MissingModelFail)
+	if err != nil {
+		t.Errorf("ShowOrPullWithPolicy should return nil when model exists, got: %v", err)
+	}
+}
+
+func TestShowOrPullWithPolicy_ModelNotFound_FailDoesNotPromptOrPull(t *testing.T) {
+	oldHook := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		t.Fatal("confirm prompt should not be called with fail policy")
+		return false, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldHook }()
+
+	var pullCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"error":"model not found"}`)
+		case "/api/pull":
+			pullCalled = true
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `{"status":"success"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	err := ShowOrPullWithPolicy(context.Background(), client, "missing-model", MissingModelFail)
+	if err == nil {
+		t.Fatal("expected fail policy to return an error for missing model")
+	}
+	if !strings.Contains(err.Error(), "ollama pull missing-model") {
+		t.Fatalf("expected actionable pull guidance, got: %v", err)
+	}
+	if pullCalled {
+		t.Fatal("expected pull not to be called with fail policy")
+	}
+}
+
+func TestShowOrPullWithPolicy_ModelNotFound_PromptPolicyPulls(t *testing.T) {
+	oldHook := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		if !strings.Contains(prompt, "missing-model") {
+			t.Fatalf("expected prompt to mention missing model, got %q", prompt)
+		}
+		return true, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldHook }()
+
+	var pullCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"error":"model not found"}`)
+		case "/api/pull":
+			pullCalled = true
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `{"status":"success"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	err := ShowOrPullWithPolicy(context.Background(), client, "missing-model", MissingModelPromptPull)
+	if err != nil {
+		t.Fatalf("expected prompt policy to pull and succeed, got %v", err)
+	}
+	if !pullCalled {
+		t.Fatal("expected pull to be called with prompt policy")
+	}
+}
+
+func TestShowOrPullWithPolicy_CloudModelSkipsPullForAllPolicies(t *testing.T) {
+	oldHook := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		t.Fatal("confirm prompt should not be called for explicit cloud models")
+		return false, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldHook }()
+
+	for _, policy := range []MissingModelPolicy{MissingModelPromptPull, MissingModelFail} {
+		t.Run(fmt.Sprintf("policy=%d", policy), func(t *testing.T) {
+			var pullCalled bool
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/show":
+					w.WriteHeader(http.StatusNotFound)
+					fmt.Fprintf(w, `{"error":"model not found"}`)
+				case "/api/pull":
+					pullCalled = true
+					w.WriteHeader(http.StatusOK)
+					fmt.Fprintf(w, `{"status":"success"}`)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+
+			u, _ := url.Parse(srv.URL)
+			client := api.NewClient(u, srv.Client())
+
+			err := ShowOrPullWithPolicy(context.Background(), client, "glm-5:cloud", policy)
+			if err != nil {
+				t.Fatalf("expected cloud model to bypass pull for policy %d, got %v", policy, err)
+			}
+			if pullCalled {
+				t.Fatalf("expected pull not to be called for cloud model with policy %d", policy)
+			}
+		})
+	}
+}
+
 func TestShowOrPull_ModelNotFound_NoTerminal(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)

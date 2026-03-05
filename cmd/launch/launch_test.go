@@ -3,7 +3,6 @@ package launch
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -67,6 +66,15 @@ func withIntegrationOverride(t *testing.T, name string, runner config.Runner) {
 	t.Helper()
 	restore := config.OverrideIntegration(name, runner)
 	t.Cleanup(restore)
+}
+
+func withInteractiveSession(t *testing.T, interactive bool) {
+	t.Helper()
+	old := isInteractiveSession
+	isInteractiveSession = func() bool { return interactive }
+	t.Cleanup(func() {
+		isInteractiveSession = old
+	})
 }
 
 func withLauncherHooks(t *testing.T) {
@@ -209,12 +217,14 @@ func TestResolveRequestedRunModel_DoesNotPersistOnFailure(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
+	withInteractiveSession(t, false)
 
 	if err := config.SetLastModel("existing-model"); err != nil {
 		t.Fatalf("failed to seed last model: %v", err)
 	}
 
 	config.DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		t.Fatal("confirm prompt should not be called in headless missing-model flow")
 		return false, nil
 	}
 
@@ -230,7 +240,7 @@ func TestResolveRequestedRunModel_DoesNotPersistOnFailure(t *testing.T) {
 	t.Setenv("OLLAMA_HOST", srv.URL)
 
 	_, err := ResolveRequestedRunModel(context.Background(), "missing-model")
-	if !errors.Is(err, config.ErrCancelled) {
+	if err == nil || !strings.Contains(err.Error(), "ollama pull missing-model") {
 		t.Fatalf("expected missing model flow to stop before saving, got %v", err)
 	}
 	if got := config.LastModel(); got != "existing-model" {
@@ -780,6 +790,76 @@ func TestLaunchIntegration_ClaudeForceConfigureReprompts(t *testing.T) {
 	}
 }
 
+func TestLaunchIntegration_ClaudeModelOverrideSkipsAliasSelector(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, true)
+
+	binDir := t.TempDir()
+	writeFakeBinary(t, binDir, "claude")
+	t.Setenv("PATH", binDir)
+
+	var selectorCalls int
+	config.DefaultSingleSelector = func(title string, items []config.ModelItem, current string) (string, error) {
+		selectorCalls++
+		return "", fmt.Errorf("selector should not run when --model override is set")
+	}
+
+	var confirmCalls int
+	config.DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		confirmCalls++
+		if !strings.Contains(prompt, "glm-4") {
+			t.Fatalf("expected download prompt for override model, got %q", prompt)
+		}
+		return true, nil
+	}
+
+	var pullCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":"model not found"}`)
+		case "/api/pull":
+			pullCalled = true
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, `{"status":"success"}`)
+		case "/api/experimental/aliases":
+			fmt.Fprint(w, `{}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:          "claude",
+		ModelOverride: "glm-4",
+	}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+
+	if selectorCalls != 0 {
+		t.Fatalf("expected model override to skip alias selector, got %d calls", selectorCalls)
+	}
+	if confirmCalls == 0 {
+		t.Fatal("expected missing override model to prompt for download in interactive mode")
+	}
+	if !pullCalled {
+		t.Fatal("expected missing override model to be pulled after confirmation")
+	}
+
+	saved, err := config.LoadIntegration("claude")
+	if err != nil {
+		t.Fatalf("failed to reload saved config: %v", err)
+	}
+	if saved.Models[0] != "glm-4" {
+		t.Fatalf("expected saved primary to match override, got %q", saved.Models[0])
+	}
+}
+
 func TestLaunchIntegration_ConfigureOnlyPrompt(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
@@ -826,6 +906,183 @@ func TestLaunchIntegration_ConfigureOnlyPrompt(t *testing.T) {
 	}
 	if !slices.Contains(prompts, "Launch StubSingle now?") {
 		t.Fatalf("expected launch confirmation prompt, got %v", prompts)
+	}
+}
+
+func TestLaunchIntegration_ModelOverrideHeadlessMissingFailsWithoutPrompt(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, false)
+
+	binDir := t.TempDir()
+	writeFakeBinary(t, binDir, "droid")
+	t.Setenv("PATH", binDir)
+
+	runner := &launcherSingleRunner{}
+	withIntegrationOverride(t, "droid", runner)
+
+	confirmCalled := false
+	config.DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		confirmCalled = true
+		return true, nil
+	}
+
+	pullCalled := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":"model not found"}`)
+		case "/api/pull":
+			pullCalled = true
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, `{"status":"success"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:          "droid",
+		ModelOverride: "missing-model",
+	})
+	if err == nil {
+		t.Fatal("expected missing model to fail in headless mode")
+	}
+	if !strings.Contains(err.Error(), "ollama pull missing-model") {
+		t.Fatalf("expected actionable missing model error, got %v", err)
+	}
+	if confirmCalled {
+		t.Fatal("expected no confirmation prompt in headless mode")
+	}
+	if pullCalled {
+		t.Fatal("expected pull request not to run in headless mode")
+	}
+	if runner.ranModel != "" {
+		t.Fatalf("expected launch to abort before running integration, got %q", runner.ranModel)
+	}
+}
+
+func TestLaunchIntegration_ModelOverrideInteractiveMissingPromptsAndPulls(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, true)
+
+	binDir := t.TempDir()
+	writeFakeBinary(t, binDir, "droid")
+	t.Setenv("PATH", binDir)
+
+	runner := &launcherSingleRunner{}
+	withIntegrationOverride(t, "droid", runner)
+
+	confirmCalled := false
+	config.DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		confirmCalled = true
+		if !strings.Contains(prompt, "missing-model") {
+			t.Fatalf("expected prompt to mention missing model, got %q", prompt)
+		}
+		return true, nil
+	}
+
+	pullCalled := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":"model not found"}`)
+		case "/api/pull":
+			pullCalled = true
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, `{"status":"success"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:          "droid",
+		ModelOverride: "missing-model",
+	})
+	if err != nil {
+		t.Fatalf("expected interactive override to prompt/pull and succeed, got %v", err)
+	}
+	if !confirmCalled {
+		t.Fatal("expected interactive flow to prompt before pulling missing model")
+	}
+	if !pullCalled {
+		t.Fatal("expected pull request to run after interactive confirmation")
+	}
+	if runner.ranModel != "missing-model" {
+		t.Fatalf("expected integration to run with pulled model, got %q", runner.ranModel)
+	}
+}
+
+func TestLaunchIntegration_HeadlessSelectorFlowFailsWithoutPrompt(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, false)
+
+	binDir := t.TempDir()
+	writeFakeBinary(t, binDir, "droid")
+	t.Setenv("PATH", binDir)
+
+	runner := &launcherSingleRunner{}
+	withIntegrationOverride(t, "droid", runner)
+
+	config.DefaultSingleSelector = func(title string, items []config.ModelItem, current string) (string, error) {
+		return "missing-model", nil
+	}
+
+	confirmCalled := false
+	config.DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		confirmCalled = true
+		return true, nil
+	}
+
+	pullCalled := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
+		case "/api/show":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":"model not found"}`)
+		case "/api/pull":
+			pullCalled = true
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, `{"status":"success"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:           "droid",
+		ForceConfigure: true,
+	})
+	if err == nil {
+		t.Fatal("expected headless selector flow to fail on missing model")
+	}
+	if !strings.Contains(err.Error(), "ollama pull missing-model") {
+		t.Fatalf("expected actionable missing model error, got %v", err)
+	}
+	if confirmCalled {
+		t.Fatal("expected no confirmation prompt in headless selector flow")
+	}
+	if pullCalled {
+		t.Fatal("expected no pull request in headless selector flow")
+	}
+	if runner.ranModel != "" {
+		t.Fatalf("expected flow to abort before launch, got %q", runner.ranModel)
 	}
 }
 
