@@ -291,8 +291,7 @@ func ToChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 	}
 }
 
-// ToChunk converts an api.ChatResponse to ChatCompletionChunk
-func ToChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
+func toChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
 	toolCalls := ToToolCalls(r.Message.ToolCalls)
 
 	var logprobs *ChoiceLogprobs
@@ -321,6 +320,32 @@ func ToChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChu
 			Logprobs: logprobs,
 		}},
 	}
+}
+
+// ToChunks converts an api.ChatResponse to one or more ChatCompletionChunk values.
+func ToChunks(id string, r api.ChatResponse, toolCallSent bool) []ChatCompletionChunk {
+	hasMixedResponse := r.Message.Thinking != "" && (r.Message.Content != "" || len(r.Message.ToolCalls) > 0)
+	if !hasMixedResponse {
+		return []ChatCompletionChunk{toChunk(id, r, toolCallSent)}
+	}
+
+	reasoningOnly := r
+	reasoningOnly.Message.Content = ""
+	reasoningOnly.Message.ToolCalls = nil
+	reasoningOnly.DoneReason = ""
+
+	contentOrToolCalls := r
+	contentOrToolCalls.Message.Thinking = ""
+
+	return []ChatCompletionChunk{
+		toChunk(id, reasoningOnly, toolCallSent),
+		toChunk(id, contentOrToolCalls, toolCallSent),
+	}
+}
+
+// Deprecated: use ToChunks for streaming conversion.
+func ToChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
+	return toChunk(id, r, toolCallSent)
 }
 
 // ToUsageGenerate converts an api.GenerateResponse to Usage
