@@ -666,6 +666,9 @@ func TestLookupCloudModelLimit(t *testing.T) {
 	}{
 		{"glm-4.7", true, 202_752, 131_072},
 		{"glm-4.7:cloud", true, 202_752, 131_072},
+		{"glm-5:cloud", true, 202_752, 131_072},
+		{"gpt-oss:120b-cloud", true, 131_072, 131_072},
+		{"gpt-oss:20b-cloud", true, 131_072, 131_072},
 		{"kimi-k2.5", true, 262_144, 262_144},
 		{"kimi-k2.5:cloud", true, 262_144, 262_144},
 		{"deepseek-v3.2", true, 163_840, 65_536},

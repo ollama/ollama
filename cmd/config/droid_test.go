@@ -1277,7 +1277,8 @@ func TestDroidEdit_LocalModelDefaultMaxOutput(t *testing.T) {
 func TestDroidEdit_CloudModelLimitsUsed(t *testing.T) {
 	// Verify that every cloud model in cloudModelLimits has a valid output
 	// value that would be used for maxOutputTokens when isCloudModel returns true.
-	// :cloud suffix stripping must also work since that's how users specify them.
+	// Cloud suffix normalization must also work since integrations may see either
+	// :cloud or -cloud model names.
 	for name, expected := range cloudModelLimits {
 		t.Run(name, func(t *testing.T) {
 			l, ok := lookupCloudModelLimit(name)
@@ -1295,6 +1296,15 @@ func TestDroidEdit_CloudModelLimitsUsed(t *testing.T) {
 			}
 			if l2.Output != expected.Output {
 				t.Errorf(":cloud output = %d, want %d", l2.Output, expected.Output)
+			}
+			// Also verify -cloud suffix lookup
+			dashCloudName := name + "-cloud"
+			l3, ok := lookupCloudModelLimit(dashCloudName)
+			if !ok {
+				t.Fatalf("lookupCloudModelLimit(%q) returned false", dashCloudName)
+			}
+			if l3.Output != expected.Output {
+				t.Errorf("-cloud output = %d, want %d", l3.Output, expected.Output)
 			}
 		})
 	}

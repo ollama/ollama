@@ -81,6 +81,7 @@ var cloudModelLimits = map[string]cloudModelLimit{
 	"deepseek-v3.2":       {Context: 163_840, Output: 65_536},
 	"glm-4.6":             {Context: 202_752, Output: 131_072},
 	"glm-4.7":             {Context: 202_752, Output: 131_072},
+	"glm-5":               {Context: 202_752, Output: 131_072},
 	"gpt-oss:120b":        {Context: 131_072, Output: 131_072},
 	"gpt-oss:20b":         {Context: 131_072, Output: 131_072},
 	"kimi-k2:1t":          {Context: 262_144, Output: 262_144},
