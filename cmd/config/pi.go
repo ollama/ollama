@@ -205,6 +205,9 @@ func createConfig(ctx context.Context, client *api.Client, modelID string) map[s
 		"id":      modelID,
 		"_launch": true,
 	}
+	if l, ok := lookupCloudModelLimit(modelID); ok {
+		cfg["contextWindow"] = l.Context
+	}
 
 	resp, err := client.Show(ctx, &api.ShowRequest{Model: modelID})
 	if err != nil {
@@ -223,7 +226,8 @@ func createConfig(ctx context.Context, client *api.Client, modelID string) map[s
 		cfg["reasoning"] = true
 	}
 
-	// Extract context window from ModelInfo
+	// Extract context window from ModelInfo. For known cloud models, the
+	// pre-filled shared limit remains unless the server provides a positive value.
 	for key, val := range resp.ModelInfo {
 		if strings.HasSuffix(key, ".context_length") {
 			if ctxLen, ok := val.(float64); ok && ctxLen > 0 {
