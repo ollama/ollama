@@ -8,13 +8,34 @@ import (
 type Cache interface {
 	Update(keys, values *mlx.Array) (newKeys, newValues *mlx.Array)
 	// State returns the cache-owned state roots that should be kept/evaluated.
-	State() (keys, values *mlx.Array)
-	CanTrim() bool
-	Trim(int) int
-	Clone() Cache
+	State() []*mlx.Array
 	Free()
 	Offset() int
-	Len() int
+
+	// Snapshot copies cache state from fromOffset to current offset into
+	// pinned VRAM arrays. The active cache is unchanged.
+	Snapshot(fromOffset int) Snapshot
+
+	// Restore brings the cache to target. If snapshot is nil, rewinds
+	// using the cache's own live state.
+	Restore(snapshot Snapshot, target int) bool
+
+	// Merge combines two sequential snapshots [a,b) and [b,c) into [a,c).
+	// Takes ownership of both inputs.
+	Merge(parent, child Snapshot) Snapshot
+
+	// Split divides a snapshot [a,c) at offset b into [a,b) and [b,c).
+	// Takes ownership of the input. Cache types that cannot split
+	// (e.g. recurrent) return (nil, snapshot).
+	Split(snapshot Snapshot, at int) (parent, child Snapshot)
+}
+
+// Snapshot is paged-out cache state that can be restored later.
+type Snapshot interface {
+	// Size returns the byte size of the paged-out data (in VRAM).
+	Size() int
+	// Close unpins the snapshot's arrays so they can be freed by Sweep.
+	Close()
 }
 
 type KVCache struct {
@@ -59,40 +80,148 @@ func (c *KVCache) Update(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
 		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice())
 }
 
-func (c *KVCache) State() (*mlx.Array, *mlx.Array) {
+func (c *KVCache) State() []*mlx.Array {
 	if c.keys == nil || c.values == nil {
+		return nil
+	}
+	return []*mlx.Array{
+		c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice()),
+		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice()),
+	}
+}
+
+// kvSnapshot holds paged-out KV data for a range [fromOffset, toOffset).
+type kvSnapshot struct {
+	keys, values         *mlx.Array
+	fromOffset, toOffset int
+}
+
+func (s *kvSnapshot) Size() int { return s.keys.NumBytes() + s.values.NumBytes() }
+func (s *kvSnapshot) Close()    { mlx.Unpin(s.keys, s.values) }
+
+func (c *KVCache) Snapshot(fromOffset int) Snapshot {
+	if c.keys == nil || c.offset <= fromOffset {
+		return nil
+	}
+	from := max(0, fromOffset)
+	to := c.offset
+
+	kSlice := c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(from, to), mlx.Slice())
+	vSlice := c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(from, to), mlx.Slice())
+	kCopy := mlx.Copy(kSlice)
+	vCopy := mlx.Copy(vSlice)
+	mlx.Pin(kCopy, vCopy)
+	mlx.AsyncEval(kCopy, vCopy)
+
+	return &kvSnapshot{
+		keys:       kCopy,
+		values:     vCopy,
+		fromOffset: from,
+		toOffset:   to,
+	}
+}
+
+func (c *KVCache) Restore(snapshot Snapshot, target int) bool {
+	if snapshot == nil {
+		// Rewind using live state — just clamp offset.
+		target = max(0, min(target, c.offset))
+		c.offset = target
+		return true
+	}
+
+	snap := snapshot.(*kvSnapshot)
+
+	// Check that the cache has data up to the snapshot's starting point.
+	if c.offset < snap.fromOffset {
+		return false
+	}
+
+	// Rewind to snapshot start, then feed snapshot data through Update.
+	c.offset = snap.fromOffset
+	c.Update(snap.keys, snap.values)
+
+	// Clamp to target if needed (target may be less than full snapshot).
+	if target < c.offset {
+		c.offset = target
+	}
+
+	return true
+}
+
+func (c *KVCache) Merge(parent, child Snapshot) Snapshot {
+	if parent == nil || child == nil {
+		if parent != nil {
+			parent.Close()
+		}
+		if child != nil {
+			child.Close()
+		}
+		return nil
+	}
+	p := parent.(*kvSnapshot)
+	ch := child.(*kvSnapshot)
+
+	mk := p.keys.Concatenate(2, ch.keys)
+	mv := p.values.Concatenate(2, ch.values)
+	mlx.Pin(mk, mv)
+	mlx.AsyncEval(mk, mv)
+
+	p.Close()
+	ch.Close()
+
+	return &kvSnapshot{
+		keys:       mk,
+		values:     mv,
+		fromOffset: p.fromOffset,
+		toOffset:   ch.toOffset,
+	}
+}
+
+func (c *KVCache) Split(snapshot Snapshot, at int) (Snapshot, Snapshot) {
+	if snapshot == nil {
 		return nil, nil
 	}
-	return c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice()),
-		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice())
-}
-
-func (c *KVCache) CanTrim() bool { return true }
-
-func (c *KVCache) Trim(n int) int {
-	n = min(c.offset, n)
-	c.offset -= n
-	return n
-}
-
-func (c *KVCache) Clone() Cache {
-	clone := &KVCache{
-		keys:   c.keys.Clone(),
-		values: c.values.Clone(),
-		offset: c.offset,
-		step:   c.step,
+	snap := snapshot.(*kvSnapshot)
+	splitIdx := at - snap.fromOffset
+	seqLen := snap.toOffset - snap.fromOffset
+	if splitIdx <= 0 {
+		return nil, snapshot
 	}
-	mlx.Pin(clone.keys, clone.values)
-	return clone
+	if splitIdx >= seqLen {
+		return snapshot, nil
+	}
+
+	pk := mlx.Copy(snap.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, splitIdx), mlx.Slice()))
+	pv := mlx.Copy(snap.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, splitIdx), mlx.Slice()))
+	ck := mlx.Copy(snap.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(splitIdx, seqLen), mlx.Slice()))
+	cv := mlx.Copy(snap.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(splitIdx, seqLen), mlx.Slice()))
+	mlx.Pin(pk, pv, ck, cv)
+	mlx.AsyncEval(pk, pv, ck, cv)
+
+	snap.Close()
+
+	p := &kvSnapshot{
+		keys:       pk,
+		values:     pv,
+		fromOffset: snap.fromOffset,
+		toOffset:   at,
+	}
+	ch := &kvSnapshot{
+		keys:       ck,
+		values:     cv,
+		fromOffset: at,
+		toOffset:   snap.toOffset,
+	}
+	return p, ch
 }
 
 func (c *KVCache) Free() {
 	mlx.Unpin(c.keys, c.values)
 	c.keys, c.values = nil, nil
+	c.offset = 0
 }
 
 func (c *KVCache) Offset() int { return c.offset }
-func (c *KVCache) Len() int    { return c.offset }
 
 // RotatingKVCache implements sliding window attention with bounded memory
 type RotatingKVCache struct {
@@ -184,29 +313,104 @@ func (c *RotatingKVCache) update(keys, values *mlx.Array) (*mlx.Array, *mlx.Arra
 		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, validLen), mlx.Slice())
 }
 
-func (c *RotatingKVCache) State() (*mlx.Array, *mlx.Array) {
+func (c *RotatingKVCache) State() []*mlx.Array {
 	if c.keys == nil || c.values == nil {
-		return nil, nil
+		return nil
 	}
-	return c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice()),
-		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice())
-}
-
-func (c *RotatingKVCache) CanTrim() bool { return true }
-
-func (c *RotatingKVCache) Trim(n int) int {
-	n = min(c.offset, n)
-	c.offset -= n
-	c.idx -= n
-	return n
-}
-
-func (c *RotatingKVCache) Clone() Cache {
-	return &RotatingKVCache{
-		maxSize: c.maxSize,
-		idx:     c.idx,
-		KVCache: c.KVCache.Clone().(*KVCache),
+	return []*mlx.Array{
+		c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice()),
+		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice()),
 	}
 }
 
-func (c *RotatingKVCache) Len() int { return min(c.offset, c.maxSize) }
+// rotatingSnapshot holds paged-out data for a RotatingKVCache.
+type rotatingSnapshot struct {
+	kvSnapshot     // embedded KV data
+	idx        int // buffer write position at snapshot time
+}
+
+func (s *rotatingSnapshot) Size() int { return s.kvSnapshot.Size() }
+func (s *rotatingSnapshot) Close()    { s.kvSnapshot.Close() }
+
+func (c *RotatingKVCache) Snapshot(fromOffset int) Snapshot {
+	if c.keys == nil || c.offset <= fromOffset {
+		return nil
+	}
+
+	state := c.State()
+	k := state[0].Clone()
+	v := state[1].Clone()
+	mlx.Pin(k, v)
+
+	return &rotatingSnapshot{
+		kvSnapshot: kvSnapshot{
+			keys:       k,
+			values:     v,
+			fromOffset: fromOffset,
+			toOffset:   c.offset,
+		},
+		idx: c.idx,
+	}
+}
+
+func (c *RotatingKVCache) Restore(snapshot Snapshot, target int) bool {
+	if snapshot == nil {
+		// Live rewind is only safe when the buffer hasn't filled yet
+		// (offset <= maxSize). Once the window has shifted, rewinding
+		// leaves fewer than maxSize trailing tokens to attend to —
+		// a snapshot is required to restore the full window.
+		if c.offset > c.maxSize {
+			return false
+		}
+		target = max(0, min(target, c.offset))
+		c.offset = target
+		c.idx = target
+		return true
+	}
+
+	snap := snapshot.(*rotatingSnapshot)
+
+	// Reject if clamping would leave an incomplete window.
+	if target < snap.toOffset && snap.toOffset > c.maxSize {
+		return false
+	}
+
+	// Restore from snapshot: rebuild buffer state.
+	// Free existing state first.
+	if c.keys != nil {
+		mlx.Unpin(c.keys, c.values)
+	}
+	c.keys = snap.keys.Clone()
+	c.values = snap.values.Clone()
+	mlx.Pin(c.keys, c.values)
+	c.offset = snap.toOffset
+	c.idx = snap.idx
+
+	// Clamp to target if needed.
+	if target < c.offset {
+		target = max(0, target)
+		c.offset = target
+		c.idx = target
+	}
+	return true
+}
+
+func (c *RotatingKVCache) Merge(parent, child Snapshot) Snapshot {
+	// For rotating caches, the child snapshot supersedes the parent
+	// since it contains the full window state.
+	if parent != nil {
+		parent.Close()
+	}
+	return child
+}
+
+func (c *RotatingKVCache) Split(snapshot Snapshot, at int) (Snapshot, Snapshot) {
+	// Rotating cache snapshots contain the full window state.
+	// Cannot cleanly split a ring buffer at an arbitrary point.
+	return nil, snapshot
+}
+
+func (c *RotatingKVCache) Free() {
+	c.KVCache.Free()
+	c.idx = 0
+}
