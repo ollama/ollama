@@ -151,7 +151,7 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 		return nil, nil, nil, fmt.Errorf("%s %w", name, err)
 	}
 
-	useImagegen, _ := requestOpts["use_imagegen_runner"].(bool)
+	// Deprecated runner override option; ignore if present.
 	delete(requestOpts, "use_imagegen_runner")
 
 	opts, err := s.modelOptions(model, requestOpts)
@@ -159,7 +159,8 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 		return nil, nil, nil, err
 	}
 	model.Reranking = opts.Reranking
-	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive, useImagegen)
+
+	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive)
 	var runner *runnerRef
 	select {
 	case runner = <-runnerCh:
@@ -371,12 +372,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 	}
 
-	// Validate Think value: string values currently only allowed for harmony/gptoss models
-	if req.Think != nil && req.Think.IsString() && m.Config.Parser != "harmony" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("think value %q is not supported for this model", req.Think.String())})
-		return
-	}
-
 	caps := []model.Capability{model.CapabilityCompletion}
 	if req.Suffix != "" {
 		caps = append(caps, model.CapabilityInsert)
@@ -485,7 +480,8 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		// the real chat handler, but doing this as a stopgap to get renderer
 		// support for generate
 		if values.Messages != nil && values.Suffix == "" && req.Template == "" {
-			prompt, images, err = chatPrompt(c.Request.Context(), m, r.Tokenize, opts, values.Messages, []api.Tool{}, req.Think, req.Truncate == nil || *req.Truncate)
+			genTruncate := (req.Truncate == nil || *req.Truncate) && !m.IsMLX()
+			prompt, images, err = chatPrompt(c.Request.Context(), m, r.Tokenize, opts, values.Messages, []api.Tool{}, req.Think, genTruncate)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
@@ -558,7 +554,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					PromptEvalDuration: cr.PromptEvalDuration,
 					EvalCount:          cr.EvalCount,
 					EvalDuration:       cr.EvalDuration,
-					PeakMemory:         cr.PeakMemory,
 				},
 				Logprobs: toAPILogprobs(cr.Logprobs),
 			}
@@ -2057,6 +2052,9 @@ func (s *Server) PsHandler(c *gin.Context) {
 		}
 		if v.llama != nil {
 			mr.ContextLength = v.llama.ContextLength()
+			total, vram := v.llama.MemorySize()
+			mr.Size = int64(total)
+			mr.SizeVRAM = int64(vram)
 		}
 		// The scheduler waits to set expiresAt, so if a model is loading it's
 		// possible that it will be set to the unix epoch. For those cases, just
@@ -2319,6 +2317,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	truncate := req.Truncate == nil || *req.Truncate
+	if m.IsMLX() {
+		truncate = false
+	}
 	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, processedTools, req.Think, truncate)
 	if err != nil {
 		slog.Error("chat prompt error", "error", err)
@@ -2336,12 +2337,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				ImageCount:       len(images),
 			},
 		})
-		return
-	}
-
-	// Validate Think value: string values currently only allowed for harmony/gptoss models
-	if req.Think != nil && req.Think.IsString() && m.Config.Parser != "harmony" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("think value %q is not supported for this model", req.Think.String())})
 		return
 	}
 
@@ -2415,7 +2410,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						PromptEvalDuration: r.PromptEvalDuration,
 						EvalCount:          r.EvalCount,
 						EvalDuration:       r.EvalDuration,
-						PeakMemory:         r.PeakMemory,
 					},
 					Logprobs: toAPILogprobs(r.Logprobs),
 				}

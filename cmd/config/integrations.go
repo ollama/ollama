@@ -90,6 +90,7 @@ var cloudModelLimits = map[string]cloudModelLimit{
 	"qwen3-coder:480b":    {Context: 262_144, Output: 65_536},
 	"qwen3-coder-next":    {Context: 262_144, Output: 32_768},
 	"qwen3-next:80b":      {Context: 262_144, Output: 32_768},
+	"qwen3.5":             {Context: 262_144, Output: 32_768},
 }
 
 // recommendedVRAM maps local recommended models to their approximate VRAM requirement.
