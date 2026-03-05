@@ -415,6 +415,32 @@ export class Settings {
     SelectedModel: string;
     SidebarOpen: boolean;
     AutoUpdateEnabled: boolean;
+    // General
+    DebugLogging: boolean;
+    KeepAliveDuration: string;
+    // GPU & Performance
+    FlashAttention: boolean;
+    KvCacheType: string;
+    NumParallel: number;
+    GpuOverhead: number;
+    SchedSpread: boolean;
+    EnableVulkan: boolean;
+    // Generation Defaults (null = use model/system default)
+    DefaultTemperature: number | null;
+    DefaultTopK: number | null;
+    DefaultTopP: number | null;
+    DefaultMinP: number | null;
+    DefaultRepeatPenalty: number | null;
+    DefaultRepeatLastN: number | null;
+    DefaultSeed: number | null;
+    DefaultNumPredict: number | null;
+    // Network & Security
+    OllamaHost: string;
+    HttpProxy: string;
+    HttpsProxy: string;
+    NoProxy: string;
+    CorsOrigins: string;
+    AllowedRemotes: string;
 
     constructor(source: any = {}) {
         if ('string' === typeof source) source = JSON.parse(source);
@@ -433,6 +459,32 @@ export class Settings {
         this.SelectedModel = source["SelectedModel"];
         this.SidebarOpen = source["SidebarOpen"];
         this.AutoUpdateEnabled = source["AutoUpdateEnabled"];
+        // General
+        this.DebugLogging = source["DebugLogging"];
+        this.KeepAliveDuration = source["KeepAliveDuration"];
+        // GPU & Performance
+        this.FlashAttention = source["FlashAttention"];
+        this.KvCacheType = source["KvCacheType"];
+        this.NumParallel = source["NumParallel"];
+        this.GpuOverhead = source["GpuOverhead"];
+        this.SchedSpread = source["SchedSpread"];
+        this.EnableVulkan = source["EnableVulkan"];
+        // Generation Defaults
+        this.DefaultTemperature = source["DefaultTemperature"] ?? null;
+        this.DefaultTopK = source["DefaultTopK"] ?? null;
+        this.DefaultTopP = source["DefaultTopP"] ?? null;
+        this.DefaultMinP = source["DefaultMinP"] ?? null;
+        this.DefaultRepeatPenalty = source["DefaultRepeatPenalty"] ?? null;
+        this.DefaultRepeatLastN = source["DefaultRepeatLastN"] ?? null;
+        this.DefaultSeed = source["DefaultSeed"] ?? null;
+        this.DefaultNumPredict = source["DefaultNumPredict"] ?? null;
+        // Network & Security
+        this.OllamaHost = source["OllamaHost"];
+        this.HttpProxy = source["HttpProxy"];
+        this.HttpsProxy = source["HttpsProxy"];
+        this.NoProxy = source["NoProxy"];
+        this.CorsOrigins = source["CorsOrigins"];
+        this.AllowedRemotes = source["AllowedRemotes"];
     }
 }
 export class SettingsResponse {
