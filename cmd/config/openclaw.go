@@ -502,7 +502,7 @@ func (c *Openclaw) Edit(models []string) error {
 		ollama = make(map[string]any)
 	}
 
-	ollama["baseUrl"] = envconfig.Host().String() + "/v1"
+	ollama["baseUrl"] = envconfig.Host().String()
 	// needed to register provider
 	ollama["apiKey"] = "ollama-local"
 	ollama["api"] = "ollama"
