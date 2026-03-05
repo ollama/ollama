@@ -260,6 +260,7 @@ console.log(response.message.content);
 
 ### Frameworks & Agents
 
+- [AgentField](https://github.com/Agent-Field/agentfield) - Open-source control plane for building and orchestrating autonomous AI agents ([docs](https://agentfield.ai/docs))
 - [AutoGPT](https://github.com/Significant-Gravitas/AutoGPT/blob/master/docs/content/platform/ollama.md) - Autonomous AI agent platform
 - [crewAI](https://github.com/crewAIInc/crewAI) - Multi-agent orchestration framework
 - [Strands Agents](https://github.com/strands-agents/sdk-python) - Model-driven agent building by AWS
@@ -268,7 +269,6 @@ console.log(response.message.content);
 - [Stakpak](https://github.com/stakpak/agent) - Open source DevOps agent
 - [Hexabot](https://github.com/hexastack/hexabot) - Conversational AI builder
 - [Neuro SAN](https://github.com/cognizant-ai-lab/neuro-san-studio) - Multi-agent orchestration ([docs](https://github.com/cognizant-ai-lab/neuro-san-studio/blob/main/docs/user_guide.md#ollama))
-- [AgentField](https://github.com/Agent-Field/agentfield) - Open-source control plane for building and orchestrating autonomous AI agents ([docs](https://agentfield.ai/docs))
 
 ### RAG & Knowledge Bases
 
