@@ -35,6 +35,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
 		fmt.Fprintln(os.Stderr, "  /set            Set session variables")
 		fmt.Fprintln(os.Stderr, "  /show           Show model information")
+		fmt.Fprintln(os.Stderr, "  /skills         Show active skills")
 		fmt.Fprintln(os.Stderr, "  /load <model>   Load a session or model")
 		fmt.Fprintln(os.Stderr, "  /save <model>   Save your current session")
 		fmt.Fprintln(os.Stderr, "  /clear          Clear session context")
@@ -458,6 +459,10 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				}
 			} else {
 				usageShow()
+			}
+		case strings.HasPrefix(line, "/skills"):
+			if err := printActiveSkills(os.Stderr, true); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			}
 		case strings.HasPrefix(line, "/help"), strings.HasPrefix(line, "/?"):
 			args := strings.Fields(line)

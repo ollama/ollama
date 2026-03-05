@@ -66,6 +66,37 @@ I'm a basic program that prints the famous "Hello, world!" message to the consol
 ollama run gemma3 "What's in this image? /Users/jmorgan/Desktop/smile.png"
 ```
 
+### Manage skills (MVP)
+
+```
+ollama skills list
+ollama skills install ./my-skill
+ollama skills enable my-skill
+ollama skills disable my-skill
+ollama skills run my-skill --allow filesystem.read -- arg1 arg2
+```
+
+`skill.toml` schema:
+
+```toml
+name = "my-skill"
+description = "What this skill does"
+version = "0.1.0"
+command = "./run.sh"
+args = ["--flag"]
+
+[io]
+inputs = ["text"]
+outputs = ["text"]
+
+[permissions]
+required = ["filesystem.read"]
+```
+
+When you run `ollama run <model>` interactively, Ollama shows active skills and what each one can do.
+Use `/skills` in chat to re-display the current active skills.
+You can also grant permissions via `OLLAMA_SKILL_ALLOW` (comma-separated), e.g. `OLLAMA_SKILL_ALLOW=filesystem.read,network.fetch`.
+
 ### Generate embeddings
 
 ```
