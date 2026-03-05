@@ -14,6 +14,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	sampler "github.com/ollama/ollama/x/mlxrunner/sample"
 )
 
 func prefillChunkSize() int {
@@ -74,6 +75,18 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		request.Options.MaxTokens = min(request.Options.MaxTokens, maxGenerate)
 	}
 
+	if request.Sampler == nil {
+		request.Sampler = sampler.New(
+			request.Options.Temperature,
+			request.Options.TopP,
+			request.Options.MinP,
+			request.Options.TopK,
+			request.Options.RepeatLastN,
+			request.Options.PresencePenalty,
+		)
+	}
+	request.Sampler.ResetHistory(inputs)
+
 	session := r.cache.begin(r.Model, inputs)
 	defer session.close()
 	caches := session.caches
@@ -113,7 +126,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		logits = logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1)
 
 		logprobs := logits.Subtract(logits.Logsumexp(true))
-		sample := request.Sample(logprobs)
+		sample := request.Sampler.Sample(logprobs)
 
 		mlx.Pin(sample, logprobs)
 		mlx.Sweep()
@@ -132,8 +145,6 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 			return err
 		}
 
-		nextSample, nextLogprobs = step(sample)
-
 		if i == 0 {
 			mlx.Eval(sample)
 			final.PromptEvalDuration = time.Since(now)
@@ -142,6 +153,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 
 		output := int32(sample.Int())
 		session.outputs = append(session.outputs, output)
+		request.Sampler.AppendToken(output)
 
 		if r.Tokenizer.IsEOS(output) {
 			final.DoneReason = 0
@@ -157,6 +169,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		}:
 		}
 
+		nextSample, nextLogprobs = step(sample)
 		mlx.Unpin(sample, logprobs)
 		sample, logprobs = nextSample, nextLogprobs
 		nextSample, nextLogprobs = nil, nil
