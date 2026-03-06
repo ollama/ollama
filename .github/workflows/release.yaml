@@ -144,7 +144,9 @@ jobs:
       - name: Install system dependencies
         run: |
           choco install -y --no-progress ccache ninja
-          ccache -o cache_dir=${{ github.workspace }}\.ccache
+          if (Get-Command ccache -ErrorAction SilentlyContinue) {
+            ccache -o cache_dir=${{ github.workspace }}\.ccache
+          }
       - if: startsWith(matrix.preset, 'CUDA ') || startsWith(matrix.preset, 'ROCm ') || startsWith(matrix.preset, 'Vulkan') || startsWith(matrix.preset, 'MLX ')
         id: cache-install
         uses: actions/cache/restore@v4
