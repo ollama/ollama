@@ -6,6 +6,72 @@ Ollama provides compatibility with parts of the [OpenAI API](https://platform.op
 
 ## Usage
 
+### Ollama native parameters
+
+Ollama supports passing native parameters through the `options` field while using OpenAI-compatible endpoints.
+
+- **`think`** (boolean): Enable thinking/reasoning mode for models that support it.
+- **`keep_alive`** (string or number): Keep the model loaded in memory after a request (for example `"30m"` or seconds as a number).
+
+<CodeGroup dropdown>
+
+```python options.py
+from openai import OpenAI
+
+client = OpenAI(
+    base_url='http://localhost:11434/v1/',
+    api_key='ollama',  # required but ignored
+)
+
+chat_completion = client.chat.completions.create(
+    model='qwen3:8b',
+    messages=[{'role': 'user', 'content': 'What is 25 * 17? Think step by step.'}],
+    extra_body={
+        'options': {
+            'think': True,
+            'keep_alive': '30m',
+        }
+    },
+)
+
+print(chat_completion.choices[0].message.content)
+```
+
+```javascript options.js
+import OpenAI from "openai";
+
+const openai = new OpenAI({
+  baseURL: "http://localhost:11434/v1/",
+  apiKey: "ollama", // required but ignored
+});
+
+const chatCompletion = await openai.chat.completions.create({
+  model: "qwen3:8b",
+  messages: [{ role: "user", content: "What is 25 * 17? Think step by step." }],
+  options: {
+    think: true,
+    keep_alive: "30m",
+  },
+});
+
+console.log(chatCompletion.choices[0].message.content);
+```
+
+```shell options.sh
+curl -X POST http://localhost:11434/v1/chat/completions \
+-H "Content-Type: application/json" \
+-d '{
+  "model": "qwen3:8b",
+  "messages": [{ "role": "user", "content": "What is 25 * 17? Think step by step." }],
+  "options": {
+    "think": true,
+    "keep_alive": "30m"
+  }
+}'
+```
+
+</CodeGroup>
+
 ### Simple `v1/chat/completions` example
 
 <CodeGroup dropdown>
