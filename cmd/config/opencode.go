@@ -26,7 +26,7 @@ type cloudModelLimit struct {
 }
 
 // lookupCloudModelLimit returns the token limits for a cloud model.
-// It normalizes common cloud suffixes before checking the shared limit map.
+// It normalizes explicit cloud source suffixes before checking the shared limit map.
 func lookupCloudModelLimit(name string) (cloudModelLimit, bool) {
 	base, stripped := modelref.StripCloudSourceTag(name)
 	if stripped {
