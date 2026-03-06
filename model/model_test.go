@@ -67,6 +67,7 @@ func (f *fakeTensor) Tri(ctx ml.Context, _ int) ml.Tensor                       
 func (f *fakeTensor) Fill(ctx ml.Context, _ float32) ml.Tensor                     { return f }
 func (f *fakeTensor) Repeat4D(ctx ml.Context, _, _, _, _ int) ml.Tensor            { return f }
 func (f *fakeTensor) SolveTri(ctx ml.Context, _ ml.Tensor, _, _, _ bool) ml.Tensor { return f }
+func (f *fakeTensor) SSMScan(ctx ml.Context, _, _, _, _, _, _ ml.Tensor) ml.Tensor { return f }
 
 func (m *fakeBackend) Get(name string) ml.Tensor {
 	if slices.Contains(m.names, name) {

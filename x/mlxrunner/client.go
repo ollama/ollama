@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math"
 	"math/rand"
 	"net"
 	"net/http"
@@ -19,25 +18,27 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/x/imagegen"
-	"github.com/ollama/ollama/x/imagegen/manifest"
 )
 
 // Client wraps an MLX runner subprocess to implement llm.LlamaServer for LLM models.
 type Client struct {
-	port        int
-	modelName   string
-	vramSize    uint64
-	done        chan error
-	client      *http.Client
-	lastErr     string
-	lastErrLock sync.Mutex
-	mu          sync.Mutex
-	cmd         *exec.Cmd
+	port          int
+	modelName     string
+	contextLength atomic.Int64
+	memory        atomic.Uint64
+	done          chan error
+	client        *http.Client
+	lastErr       string
+	lastErrLock   sync.Mutex
+	mu            sync.Mutex
+	cmd           *exec.Cmd
 }
 
 // NewClient spawns a new MLX runner subprocess for LLM models and waits until it's ready.
@@ -98,18 +99,9 @@ func NewClient(modelName string) (*Client, error) {
 		slog.Debug("mlx subprocess library path", "LD_LIBRARY_PATH", pathEnvVal)
 	}
 
-	// Estimate VRAM based on tensor size from manifest
-	var vramSize uint64
-	if modelManifest, err := manifest.LoadManifest(modelName); err == nil {
-		vramSize = uint64(modelManifest.TotalTensorSize())
-	} else {
-		vramSize = 8 * 1024 * 1024 * 1024
-	}
-
 	c := &Client{
 		port:      port,
 		modelName: modelName,
-		vramSize:  vramSize,
 		done:      make(chan error, 1),
 		client:    &http.Client{Timeout: 10 * time.Minute},
 		cmd:       cmd,
@@ -119,16 +111,13 @@ func NewClient(modelName string) (*Client, error) {
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
 	go func() {
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			slog.Info("mlx-runner", "msg", scanner.Text())
-		}
+		io.Copy(os.Stderr, stdout) //nolint:errcheck
 	}()
 	go func() {
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
 			line := scanner.Text()
-			slog.Warn("mlx-runner", "msg", line)
+			fmt.Fprintln(os.Stderr, line)
 			c.lastErrLock.Lock()
 			c.lastErr = line
 			c.lastErrLock.Unlock()
@@ -204,6 +193,19 @@ type completionOpts struct {
 	NumPredict  int     `json:"num_predict,omitempty"`
 }
 
+type CompletionResponse struct {
+	Content    string
+	Done       bool
+	DoneReason int
+
+	PromptEvalCount    int
+	PromptEvalDuration time.Duration
+	EvalCount          int
+	EvalDuration       time.Duration
+
+	Error *api.StatusError
+}
+
 // Close terminates the subprocess.
 func (c *Client) Close() error {
 	c.mu.Lock()
@@ -263,18 +265,14 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
-		var raw struct {
-			Content            string `json:"content,omitempty"`
-			Done               bool   `json:"done"`
-			DoneReason         int    `json:"done_reason,omitempty"`
-			PromptEvalCount    int    `json:"prompt_eval_count,omitempty"`
-			PromptEvalDuration int    `json:"prompt_eval_duration,omitempty"`
-			EvalCount          int    `json:"eval_count,omitempty"`
-			EvalDuration       int    `json:"eval_duration,omitempty"`
-		}
+		var raw CompletionResponse
 		if err := json.Unmarshal(scanner.Bytes(), &raw); err != nil {
 			slog.Debug("mlx response parse error", "error", err, "line", string(scanner.Bytes()))
 			continue
+		}
+
+		if raw.Error != nil {
+			return *raw.Error
 		}
 
 		cresp := llm.CompletionResponse{
@@ -282,9 +280,9 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 			Done:               raw.Done,
 			DoneReason:         llm.DoneReason(raw.DoneReason),
 			PromptEvalCount:    raw.PromptEvalCount,
-			PromptEvalDuration: time.Duration(raw.PromptEvalDuration),
+			PromptEvalDuration: raw.PromptEvalDuration,
 			EvalCount:          raw.EvalCount,
-			EvalDuration:       time.Duration(raw.EvalDuration),
+			EvalDuration:       raw.EvalDuration,
 		}
 
 		fn(cresp)
@@ -297,7 +295,7 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 }
 
 func (c *Client) ContextLength() int {
-	return math.MaxInt
+	return int(c.contextLength.Load())
 }
 
 // Detokenize implements llm.LlamaServer.
@@ -350,9 +348,16 @@ func (c *Client) Pid() int {
 	return -1
 }
 
+type statusResponse struct {
+	Status        int
+	Progress      int
+	ContextLength int
+	Memory        uint64
+}
+
 // Ping implements llm.LlamaServer.
 func (c *Client) Ping(ctx context.Context) error {
-	reqURL := fmt.Sprintf("http://127.0.0.1:%d/health", c.port)
+	reqURL := fmt.Sprintf("http://127.0.0.1:%d/v1/status", c.port)
 	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return err
@@ -365,6 +370,15 @@ func (c *Client) Ping(ctx context.Context) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("health check failed: %d", resp.StatusCode)
 	}
+
+	var status statusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return err
+	}
+
+	c.contextLength.Store(int64(status.ContextLength))
+	c.memory.Store(status.Memory)
+
 	return nil
 }
 
@@ -391,19 +405,24 @@ func (c *Client) Tokenize(ctx context.Context, content string) ([]int, error) {
 	return tokens, nil
 }
 
-// TotalSize implements llm.LlamaServer.
-func (c *Client) TotalSize() uint64 {
-	return c.vramSize
+func (c *Client) currentMemory() uint64 {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := c.Ping(ctx); err != nil {
+		slog.Warn("failed to get current memory", "error", err)
+	}
+	return c.memory.Load()
+}
+
+// MemorySize implements llm.LlamaServer.
+func (c *Client) MemorySize() (total, vram uint64) {
+	mem := c.currentMemory()
+	return mem, mem
 }
 
 // VRAMByGPU implements llm.LlamaServer.
 func (c *Client) VRAMByGPU(id ml.DeviceID) uint64 {
-	return c.vramSize
-}
-
-// VRAMSize implements llm.LlamaServer.
-func (c *Client) VRAMSize() uint64 {
-	return c.vramSize
+	return c.currentMemory()
 }
 
 // WaitUntilRunning implements llm.LlamaServer.

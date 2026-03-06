@@ -145,6 +145,12 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	// Check for --experimental flag for safetensors model creation
 	experimental, _ := cmd.Flags().GetBool("experimental")
 	if experimental {
+		host := envconfig.Host()
+		h, _, _ := net.SplitHostPort(host.Host)
+		ip := net.ParseIP(h)
+		if ip == nil || (!ip.IsLoopback() && !ip.IsUnspecified()) {
+			return errors.New("remote safetensor model creation not yet supported")
+		}
 		// Get Modelfile content - either from -f flag or default to "FROM ."
 		var reader io.Reader
 		filename, err := getModelfileName(cmd)
@@ -214,6 +220,12 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		if filename == "" {
 			// No Modelfile found - check if current directory is an image gen model
 			if create.IsTensorModelDir(".") {
+				host := envconfig.Host()
+				h, _, _ := net.SplitHostPort(host.Host)
+				ip := net.ParseIP(h)
+				if ip == nil || (!ip.IsLoopback() && !ip.IsUnspecified()) {
+					return errors.New("remote safetensor model creation not yet supported")
+				}
 				quantize, _ := cmd.Flags().GetString("quantize")
 				return xcreateclient.CreateModel(xcreateclient.CreateOptions{
 					ModelName: modelName,
@@ -584,17 +596,6 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	opts.WordWrap = !nowrap
-
-	useImagegen := false
-	if cmd.Flags().Lookup("imagegen") != nil {
-		useImagegen, err = cmd.Flags().GetBool("imagegen")
-		if err != nil {
-			return err
-		}
-	}
-	if useImagegen {
-		opts.Options["use_imagegen_runner"] = true
-	}
 
 	// Fill out the rest of the options based on information about the
 	// model.
@@ -1956,6 +1957,10 @@ func runInteractiveTUI(cmd *cobra.Command) {
 		}
 
 		launchIntegration := func(name string) bool {
+			if err := config.EnsureInstalled(name); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				return true
+			}
 			// If not configured or model no longer exists, prompt for model selection
 			configuredModel := config.IntegrationModel(name)
 			if configuredModel == "" || !config.ModelExists(cmd.Context(), configuredModel) || config.IsCloudModelDisabled(cmd.Context(), configuredModel) {

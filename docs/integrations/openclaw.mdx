@@ -4,47 +4,65 @@ title: OpenClaw
 
 OpenClaw is a personal AI assistant that runs on your own devices. It bridges messaging services (WhatsApp, Telegram, Slack, Discord, iMessage, and more) to AI coding agents through a centralized gateway.
 
-## Install
-
-Install [OpenClaw](https://openclaw.ai/) 
-
-```bash
-npm install -g openclaw@latest
-```
-
-Then run the onboarding wizard:
-
-```bash
-openclaw onboard --install-daemon
-```
-
-<Note>OpenClaw requires a larger context window. It is recommended to use a context window of at least 64k tokens. See [Context length](/context-length) for more information.</Note>
-
-## Usage with Ollama
-
-### Quick setup
+## Quick start
 
 ```bash
 ollama launch openclaw
 ```
 
+Ollama handles everything automatically:
+
+1. **Install** — If OpenClaw isn't installed, Ollama prompts to install it via npm
+2. **Security** — On the first launch, a security notice explains the risks of tool access
+3. **Model** — Pick a model from the selector (local or cloud)
+4. **Onboarding** — Ollama configures the provider, installs the gateway daemon, and sets your model as the primary
+5. **Gateway** — Starts in the background and opens the OpenClaw TUI
+
+<Note>OpenClaw requires a larger context window. It is recommended to use a context window of at least 64k tokens if using local models. See [Context length](/context-length) for more information.</Note>
+
 <Note>Previously known as Clawdbot. `ollama launch clawdbot` still works as an alias.</Note>
 
-This configures OpenClaw to use Ollama and starts the gateway.
-If the gateway is already running, no changes need to be made as the gateway will auto-reload the changes. 
+## Configure without launching
 
+To change the model without starting the gateway and TUI:
 
-To configure without launching:
-
-```shell
+```bash
 ollama launch openclaw --config
 ```
 
-## Recommended Models
+To use a specific model directly:
 
-- `qwen3-coder`
-- `glm-4.7`
-- `gpt-oss:20b`
-- `gpt-oss:120b`
+```bash
+ollama launch openclaw --model kimi-k2.5:cloud
+```
 
-Cloud models are also available at [ollama.com/search?c=cloud](https://ollama.com/search?c=cloud).
+If the gateway is already running, it restarts automatically to pick up the new model.
+
+## Recommended models
+
+**Cloud models**:
+
+- `kimi-k2.5:cloud` — Multimodal reasoning with subagents
+- `minimax-m2.5:cloud` — Fast, efficient coding and real-world productivity
+- `glm-5:cloud` — Reasoning and code generation
+
+**Local models:**
+
+- `glm-4.7-flash` — Reasoning and code generation locally (~25 GB VRAM)
+
+More models at [ollama.com/search](https://ollama.com/search?c=cloud).
+
+## Connect messaging apps
+
+```bash
+openclaw configure --section channels
+```
+
+Link WhatsApp, Telegram, Slack, Discord, or iMessage to chat with your local models from anywhere.
+
+## Stopping the gateway
+
+```bash
+openclaw gateway stop
+```
+

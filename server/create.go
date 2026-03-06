@@ -65,9 +65,20 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	config.Parser = r.Parser
 	config.Requires = r.Requires
 
-	for v := range r.Files {
+	for v, digest := range r.Files {
 		if !fs.ValidPath(v) {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": errFilePath.Error()})
+			return
+		}
+		if digest == "" {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": manifest.ErrInvalidDigestFormat.Error()})
+			return
+		}
+	}
+
+	for _, digest := range r.Adapters {
+		if digest == "" {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": manifest.ErrInvalidDigestFormat.Error()})
 			return
 		}
 	}

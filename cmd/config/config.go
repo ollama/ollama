@@ -15,8 +15,9 @@ import (
 )
 
 type integration struct {
-	Models  []string          `json:"models"`
-	Aliases map[string]string `json:"aliases,omitempty"`
+	Models    []string          `json:"models"`
+	Aliases   map[string]string `json:"aliases,omitempty"`
+	Onboarded bool              `json:"onboarded,omitempty"`
 }
 
 type config struct {
@@ -139,34 +140,54 @@ func SaveIntegration(appName string, models []string) error {
 	key := strings.ToLower(appName)
 	existing := cfg.Integrations[key]
 	var aliases map[string]string
-	if existing != nil && existing.Aliases != nil {
+	var onboarded bool
+	if existing != nil {
 		aliases = existing.Aliases
+		onboarded = existing.Onboarded
 	}
 
 	cfg.Integrations[key] = &integration{
-		Models:  models,
-		Aliases: aliases,
+		Models:    models,
+		Aliases:   aliases,
+		Onboarded: onboarded,
 	}
 
 	return save(cfg)
 }
 
+// integrationOnboarded marks an integration as onboarded in ollama's config.
+func integrationOnboarded(appName string) error {
+	cfg, err := load()
+	if err != nil {
+		return err
+	}
+
+	key := strings.ToLower(appName)
+	existing := cfg.Integrations[key]
+	if existing == nil {
+		existing = &integration{}
+	}
+	existing.Onboarded = true
+	cfg.Integrations[key] = existing
+	return save(cfg)
+}
+
 // IntegrationModel returns the first configured model for an integration, or empty string if not configured.
 func IntegrationModel(appName string) string {
-	ic, err := loadIntegration(appName)
-	if err != nil || len(ic.Models) == 0 {
+	integrationConfig, err := loadIntegration(appName)
+	if err != nil || len(integrationConfig.Models) == 0 {
 		return ""
 	}
-	return ic.Models[0]
+	return integrationConfig.Models[0]
 }
 
 // IntegrationModels returns all configured models for an integration, or nil.
 func IntegrationModels(appName string) []string {
-	ic, err := loadIntegration(appName)
-	if err != nil || len(ic.Models) == 0 {
+	integrationConfig, err := loadIntegration(appName)
+	if err != nil || len(integrationConfig.Models) == 0 {
 		return nil
 	}
-	return ic.Models
+	return integrationConfig.Models
 }
 
 // LastModel returns the last model that was run, or empty string if none.
@@ -234,12 +255,12 @@ func loadIntegration(appName string) (*integration, error) {
 		return nil, err
 	}
 
-	ic, ok := cfg.Integrations[strings.ToLower(appName)]
+	integrationConfig, ok := cfg.Integrations[strings.ToLower(appName)]
 	if !ok {
 		return nil, os.ErrNotExist
 	}
 
-	return ic, nil
+	return integrationConfig, nil
 }
 
 func saveAliases(appName string, aliases map[string]string) error {
@@ -272,8 +293,8 @@ func listIntegrations() ([]integration, error) {
 	}
 
 	result := make([]integration, 0, len(cfg.Integrations))
-	for _, ic := range cfg.Integrations {
-		result = append(result, *ic)
+	for _, integrationConfig := range cfg.Integrations {
+		result = append(result, *integrationConfig)
 	}
 
 	return result, nil

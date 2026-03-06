@@ -235,9 +235,6 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		m.Layers[i] = layer
 	}
 
-	collected := mlx.Collect(m)
-	mlx.Eval(collected...)
-
 	return nil
 }
 
@@ -263,6 +260,10 @@ func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 
 func (m *Model) NumLayers() int {
 	return len(m.Layers)
+}
+
+func (m *Model) MaxContextLength() int {
+	return int(m.MaxPositionEmbeddings)
 }
 
 func (m *Model) Tokenizer() *tokenizer.Tokenizer {

@@ -81,6 +81,7 @@ var cloudModelLimits = map[string]cloudModelLimit{
 	"deepseek-v3.2":       {Context: 163_840, Output: 65_536},
 	"glm-4.6":             {Context: 202_752, Output: 131_072},
 	"glm-4.7":             {Context: 202_752, Output: 131_072},
+	"glm-5":               {Context: 202_752, Output: 131_072},
 	"gpt-oss:120b":        {Context: 131_072, Output: 131_072},
 	"gpt-oss:20b":         {Context: 131_072, Output: 131_072},
 	"kimi-k2:1t":          {Context: 262_144, Output: 262_144},
@@ -90,6 +91,7 @@ var cloudModelLimits = map[string]cloudModelLimit{
 	"qwen3-coder:480b":    {Context: 262_144, Output: 65_536},
 	"qwen3-coder-next":    {Context: 262_144, Output: 32_768},
 	"qwen3-next:80b":      {Context: 262_144, Output: 32_768},
+	"qwen3.5":             {Context: 262_144, Output: 32_768},
 }
 
 // recommendedVRAM maps local recommended models to their approximate VRAM requirement.
@@ -226,6 +228,31 @@ func IsIntegrationInstalled(name string) bool {
 	default:
 		return true // Assume installed for unknown integrations
 	}
+}
+
+// AutoInstallable returns true if the integration can be automatically
+// installed when not found (e.g. via npm).
+func AutoInstallable(name string) bool {
+	switch strings.ToLower(name) {
+	case "openclaw", "clawdbot", "moltbot":
+		return true
+	default:
+		return false
+	}
+}
+
+// EnsureInstalled checks if an auto-installable integration is present and
+// offers to install it if missing. Returns nil for non-auto-installable
+// integrations or when the binary is already on PATH.
+func EnsureInstalled(name string) error {
+	if !AutoInstallable(name) {
+		return nil
+	}
+	if IsIntegrationInstalled(name) {
+		return nil
+	}
+	_, err := ensureOpenclawInstalled()
+	return err
 }
 
 // IsEditorIntegration returns true if the named integration uses multi-model
@@ -924,6 +951,10 @@ Examples:
 			r, ok := integrations[strings.ToLower(name)]
 			if !ok {
 				return fmt.Errorf("unknown integration: %s", name)
+			}
+
+			if err := EnsureInstalled(name); err != nil {
+				return err
 			}
 
 			if modelFlag != "" && IsCloudModelDisabled(cmd.Context(), modelFlag) {

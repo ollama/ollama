@@ -16,10 +16,10 @@ import (
 )
 
 type Function struct {
-	Name          string
-	ReturnType    string
-	Params        string
-	ParamNames    []string
+	Name            string
+	ReturnType      string
+	Params          string
+	ParamNames      []string
 	NeedsARM64Guard bool
 }
 
@@ -28,6 +28,11 @@ func findHeaders(directory string) ([]string, error) {
 	err := filepath.WalkDir(directory, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		// Private headers contain C++ implementation helpers and are not part of
+		// the C API surface; parsing them can produce invalid wrapper signatures.
+		if d.IsDir() && d.Name() == "private" {
+			return fs.SkipDir
 		}
 		if !d.IsDir() && strings.HasSuffix(path, ".h") {
 			headers = append(headers, path)
@@ -194,10 +199,10 @@ func parseFunctions(content string) []Function {
 		needsGuard := needsARM64Guard(funcName, returnType, params)
 
 		functions = append(functions, Function{
-			Name:           funcName,
-			ReturnType:     returnType,
-			Params:         params,
-			ParamNames:     paramNames,
+			Name:            funcName,
+			ReturnType:      returnType,
+			Params:          params,
+			ParamNames:      paramNames,
 			NeedsARM64Guard: needsGuard,
 		})
 	}

@@ -26,16 +26,14 @@ type cloudModelLimit struct {
 }
 
 // lookupCloudModelLimit returns the token limits for a cloud model.
-// It tries the exact name first, then strips the ":cloud" suffix.
+// It normalizes common cloud suffixes before checking the shared limit map.
 func lookupCloudModelLimit(name string) (cloudModelLimit, bool) {
+	// TODO(parthsareen): migrate to using cloud check instead.
+	for _, suffix := range []string{"-cloud", ":cloud"} {
+		name = strings.TrimSuffix(name, suffix)
+	}
 	if l, ok := cloudModelLimits[name]; ok {
 		return l, true
-	}
-	base := strings.TrimSuffix(name, ":cloud")
-	if base != name {
-		if l, ok := cloudModelLimits[base]; ok {
-			return l, true
-		}
 	}
 	return cloudModelLimit{}, false
 }
@@ -122,11 +120,16 @@ func (o *OpenCode) Edit(modelList []string) error {
 	if !ok {
 		ollama = map[string]any{
 			"npm":  "@ai-sdk/openai-compatible",
-			"name": "Ollama (local)",
+			"name": "Ollama",
 			"options": map[string]any{
 				"baseURL": envconfig.Host().String() + "/v1",
 			},
 		}
+	}
+
+	// Migrate legacy provider name
+	if name, _ := ollama["name"].(string); name == "Ollama (local)" {
+		ollama["name"] = "Ollama"
 	}
 
 	models, ok := ollama["models"].(map[string]any)

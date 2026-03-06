@@ -4,7 +4,6 @@ import {
   ChatEvent,
   DownloadEvent,
   ErrorEvent,
-  InferenceCompute,
   InferenceComputeResponse,
   ModelCapabilitiesResponse,
   Model,
@@ -407,7 +406,7 @@ export async function* pullModel(
   }
 }
 
-export async function getInferenceCompute(): Promise<InferenceCompute[]> {
+export async function getInferenceCompute(): Promise<InferenceComputeResponse> {
   const response = await fetch(`${API_BASE}/api/v1/inference-compute`);
   if (!response.ok) {
     throw new Error(
@@ -416,8 +415,7 @@ export async function getInferenceCompute(): Promise<InferenceCompute[]> {
   }
 
   const data = await response.json();
-  const inferenceComputeResponse = new InferenceComputeResponse(data);
-  return inferenceComputeResponse.inferenceComputes || [];
+  return new InferenceComputeResponse(data);
 }
 
 export async function fetchHealth(): Promise<boolean> {

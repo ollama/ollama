@@ -41,6 +41,11 @@ type InferenceCompute struct {
 	VRAM    string
 }
 
+type InferenceInfo struct {
+	Computes             []InferenceCompute
+	DefaultContextLength int
+}
+
 func New(s *store.Store, devMode bool) *Server {
 	p := resolvePath("ollama")
 	return &Server{store: s, bin: p, dev: devMode}
@@ -272,9 +277,12 @@ func openRotatingLog() (io.WriteCloser, error) {
 
 // Attempt to retrieve inference compute information from the server
 // log.  Set ctx to timeout to control how long to wait for the logs to appear
-func GetInferenceComputer(ctx context.Context) ([]InferenceCompute, error) {
-	inference := []InferenceCompute{}
-	marker := regexp.MustCompile(`inference compute.*library=`)
+func GetInferenceInfo(ctx context.Context) (*InferenceInfo, error) {
+	info := &InferenceInfo{}
+	computeMarker := regexp.MustCompile(`inference compute.*library=`)
+	defaultCtxMarker := regexp.MustCompile(`vram-based default context`)
+	defaultCtxRegex := regexp.MustCompile(`default_num_ctx=(\d+)`)
+
 	q := `inference compute.*%s=["]([^"]*)["]`
 	nq := `inference compute.*%s=(\S+)\s`
 	type regex struct {
@@ -340,8 +348,8 @@ func GetInferenceComputer(ctx context.Context) ([]InferenceCompute, error) {
 		scanner := bufio.NewScanner(file)
 		for scanner.Scan() {
 			line := scanner.Text()
-			match := marker.FindStringSubmatch(line)
-			if len(match) > 0 {
+			// Check for inference compute lines
+			if computeMarker.MatchString(line) {
 				ic := InferenceCompute{
 					Library: get("library", line),
 					Variant: get("variant", line),
@@ -352,12 +360,25 @@ func GetInferenceComputer(ctx context.Context) ([]InferenceCompute, error) {
 				}
 
 				slog.Info("Matched", "inference compute", ic)
-				inference = append(inference, ic)
-			} else {
-				// Break out on first non matching line after we start matching
-				if len(inference) > 0 {
-					return inference, nil
+				info.Computes = append(info.Computes, ic)
+				continue
+			}
+			// Check for default context length line
+			if defaultCtxMarker.MatchString(line) {
+				match := defaultCtxRegex.FindStringSubmatch(line)
+				if len(match) > 1 {
+					numCtx, err := strconv.Atoi(match[1])
+					if err == nil {
+						info.DefaultContextLength = numCtx
+						slog.Info("Matched default context length", "default_num_ctx", numCtx)
+					}
 				}
+				return info, nil
+			}
+			// If we've found compute info but hit a non-matching line, return what we have
+			// This handles older server versions that don't log the default context line
+			if len(info.Computes) > 0 {
+				return info, nil
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
