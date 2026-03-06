@@ -2106,6 +2106,69 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 			t.Errorf("expected final done reason stop, got %s", last.DoneReason)
 		}
 	})
+
+	t.Run("format applied when think disabled", func(t *testing.T) {
+		var (
+			requestsMu sync.Mutex
+			requests   []llm.CompletionRequest
+		)
+
+		format := json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}}}`)
+
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+			requestsMu.Lock()
+			requests = append(requests, r)
+			requestsMu.Unlock()
+
+			fn(llm.CompletionResponse{
+				Content:            `{"answer":"42"}`,
+				Done:               true,
+				DoneReason:         llm.DoneReasonStop,
+				PromptEvalCount:    1,
+				PromptEvalDuration: 1,
+				EvalCount:          1,
+				EvalDuration:       1,
+			})
+			return nil
+		}
+
+		think := false
+		streamRequest := false
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model:    "test-thinking",
+			Messages: []api.Message{{Role: "user", Content: "respond in json"}},
+			Think:    &api.ThinkValue{Value: think},
+			Stream:   &streamRequest,
+			Format:   format,
+		})
+
+		mock.CompletionFn = nil
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", w.Code)
+		}
+
+		if len(requests) != 1 {
+			t.Fatalf("expected one completion call, got %d", len(requests))
+		}
+
+		if requests[0].Format == nil {
+			t.Error("expected format to be passed to completion when think is disabled")
+		}
+
+		if !bytes.Equal([]byte(format), []byte(requests[0].Format)) {
+			t.Errorf("expected completion format to match request format")
+		}
+
+		var resp api.ChatResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+
+		if resp.Message.Content != `{"answer":"42"}` {
+			t.Errorf("expected content %q, got %q", `{"answer":"42"}`, resp.Message.Content)
+		}
+	})
 }
 
 func TestGenerateUnload(t *testing.T) {
