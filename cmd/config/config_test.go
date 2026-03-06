@@ -10,6 +10,7 @@ import (
 // setTestHome sets both HOME (Unix) and USERPROFILE (Windows) for cross-platform tests
 func setTestHome(t *testing.T, dir string) {
 	t.Setenv("HOME", dir)
+	t.Setenv("TMPDIR", dir)
 	t.Setenv("USERPROFILE", dir)
 }
 

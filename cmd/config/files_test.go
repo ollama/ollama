@@ -18,8 +18,15 @@ func mustMarshal(t *testing.T, v any) []byte {
 	return data
 }
 
-func TestWriteWithBackup(t *testing.T) {
+func isolatedTempDir(t *testing.T) string {
+	t.Helper()
 	tmpDir := t.TempDir()
+	t.Setenv("TMPDIR", tmpDir)
+	return tmpDir
+}
+
+func TestWriteWithBackup(t *testing.T) {
+	tmpDir := isolatedTempDir(t)
 
 	t.Run("creates file", func(t *testing.T) {
 		path := filepath.Join(tmpDir, "new.json")
@@ -180,7 +187,7 @@ func TestWriteWithBackup_FailsIfBackupFails(t *testing.T) {
 		t.Skip("permission tests unreliable on Windows")
 	}
 
-	tmpDir := t.TempDir()
+	tmpDir := isolatedTempDir(t)
 	path := filepath.Join(tmpDir, "config.json")
 
 	// Create original file
@@ -215,7 +222,7 @@ func TestWriteWithBackup_PermissionDenied(t *testing.T) {
 		t.Skip("permission tests unreliable on Windows")
 	}
 
-	tmpDir := t.TempDir()
+	tmpDir := isolatedTempDir(t)
 
 	// Create a read-only directory
 	readOnlyDir := filepath.Join(tmpDir, "readonly")
@@ -234,7 +241,7 @@ func TestWriteWithBackup_PermissionDenied(t *testing.T) {
 // TestWriteWithBackup_DirectoryDoesNotExist verifies behavior when target directory doesn't exist.
 // writeWithBackup doesn't create directories - caller is responsible.
 func TestWriteWithBackup_DirectoryDoesNotExist(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := isolatedTempDir(t)
 	path := filepath.Join(tmpDir, "nonexistent", "subdir", "config.json")
 
 	err := writeWithBackup(path, []byte(`{"test": true}`))
@@ -252,7 +259,7 @@ func TestWriteWithBackup_SymlinkTarget(t *testing.T) {
 		t.Skip("symlink tests may require admin on Windows")
 	}
 
-	tmpDir := t.TempDir()
+	tmpDir := isolatedTempDir(t)
 	realFile := filepath.Join(tmpDir, "real.json")
 	symlink := filepath.Join(tmpDir, "link.json")
 
@@ -276,7 +283,7 @@ func TestWriteWithBackup_SymlinkTarget(t *testing.T) {
 // TestBackupToTmp_SpecialCharsInFilename verifies backup works with special characters.
 // User may have config files with unusual names.
 func TestBackupToTmp_SpecialCharsInFilename(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := isolatedTempDir(t)
 
 	// File with spaces and special chars
 	path := filepath.Join(tmpDir, "my config (backup).json")
@@ -305,7 +312,7 @@ func TestCopyFile_PreservesPermissions(t *testing.T) {
 		t.Skip("permission preservation tests unreliable on Windows")
 	}
 
-	tmpDir := t.TempDir()
+	tmpDir := isolatedTempDir(t)
 	src := filepath.Join(tmpDir, "src.json")
 	dst := filepath.Join(tmpDir, "dst.json")
 
@@ -327,7 +334,7 @@ func TestCopyFile_PreservesPermissions(t *testing.T) {
 
 // TestCopyFile_SourceNotFound verifies clear error when source doesn't exist.
 func TestCopyFile_SourceNotFound(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := isolatedTempDir(t)
 	src := filepath.Join(tmpDir, "nonexistent.json")
 	dst := filepath.Join(tmpDir, "dst.json")
 
@@ -339,7 +346,7 @@ func TestCopyFile_SourceNotFound(t *testing.T) {
 
 // TestWriteWithBackup_TargetIsDirectory verifies error when path points to a directory.
 func TestWriteWithBackup_TargetIsDirectory(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := isolatedTempDir(t)
 	dirPath := filepath.Join(tmpDir, "actualdir")
 	os.MkdirAll(dirPath, 0o755)
 
@@ -351,7 +358,7 @@ func TestWriteWithBackup_TargetIsDirectory(t *testing.T) {
 
 // TestWriteWithBackup_EmptyData verifies writing zero bytes works correctly.
 func TestWriteWithBackup_EmptyData(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := isolatedTempDir(t)
 	path := filepath.Join(tmpDir, "empty.json")
 
 	err := writeWithBackup(path, []byte{})
@@ -375,7 +382,7 @@ func TestWriteWithBackup_FileUnreadableButDirWritable(t *testing.T) {
 		t.Skip("permission tests unreliable on Windows")
 	}
 
-	tmpDir := t.TempDir()
+	tmpDir := isolatedTempDir(t)
 	path := filepath.Join(tmpDir, "unreadable.json")
 
 	// Create file and make it unreadable
@@ -393,7 +400,7 @@ func TestWriteWithBackup_FileUnreadableButDirWritable(t *testing.T) {
 // TestWriteWithBackup_RapidSuccessiveWrites verifies backup works with multiple writes
 // within the same second (timestamp collision scenario).
 func TestWriteWithBackup_RapidSuccessiveWrites(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := isolatedTempDir(t)
 	path := filepath.Join(tmpDir, "rapid.json")
 
 	// Create initial file
@@ -432,6 +439,7 @@ func TestWriteWithBackup_BackupDirIsFile(t *testing.T) {
 		t.Skip("test modifies system temp directory")
 	}
 
+	tmpDir := isolatedTempDir(t)
 	// Create a file at the backup directory path
 	backupPath := backupDir()
 	// Clean up any existing directory first
@@ -443,7 +451,6 @@ func TestWriteWithBackup_BackupDirIsFile(t *testing.T) {
 		os.MkdirAll(backupPath, 0o755)
 	}()
 
-	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "test.json")
 	os.WriteFile(path, []byte(`{"original": true}`), 0o644)
 
@@ -459,7 +466,7 @@ func TestWriteWithBackup_NoOrphanTempFiles(t *testing.T) {
 		t.Skip("permission tests unreliable on Windows")
 	}
 
-	tmpDir := t.TempDir()
+	tmpDir := isolatedTempDir(t)
 
 	// Count existing temp files
 	countTempFiles := func() int {
