@@ -1143,6 +1143,7 @@ Examples:
 
 	cmd.Flags().StringVar(&modelFlag, "model", "", "Model to use")
 	cmd.Flags().BoolVar(&configFlag, "config", false, "Configure without launching")
+	cmd.Flags().Bool("verbose", false, "Show timings for response")
 	return cmd
 }
 

@@ -141,6 +141,11 @@ func TestLaunchCmd(t *testing.T) {
 		if configFlag == nil {
 			t.Error("--config flag should exist")
 		}
+
+		verboseFlag := cmd.Flags().Lookup("verbose")
+		if verboseFlag == nil {
+			t.Error("--verbose flag should exist")
+		}
 	})
 
 	t.Run("PreRunE is set", func(t *testing.T) {
