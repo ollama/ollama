@@ -714,16 +714,17 @@ func TestLookupCloudModelLimit(t *testing.T) {
 		wantContext int
 		wantOutput  int
 	}{
-		{"glm-4.7", true, 202_752, 131_072},
+		{"glm-4.7", false, 0, 0},
 		{"glm-4.7:cloud", true, 202_752, 131_072},
 		{"glm-5:cloud", true, 202_752, 131_072},
 		{"gpt-oss:120b-cloud", true, 131_072, 131_072},
 		{"gpt-oss:20b-cloud", true, 131_072, 131_072},
-		{"kimi-k2.5", true, 262_144, 262_144},
+		{"kimi-k2.5", false, 0, 0},
 		{"kimi-k2.5:cloud", true, 262_144, 262_144},
-		{"deepseek-v3.2", true, 163_840, 65_536},
+		{"deepseek-v3.2", false, 0, 0},
 		{"deepseek-v3.2:cloud", true, 163_840, 65_536},
-		{"qwen3-coder:480b", true, 262_144, 65_536},
+		{"qwen3-coder:480b", false, 0, 0},
+		{"qwen3-coder:480b:cloud", true, 262_144, 65_536},
 		{"qwen3-coder-next:cloud", true, 262_144, 32_768},
 		{"llama3.2", false, 0, 0},
 		{"unknown-model:cloud", false, 0, 0},
