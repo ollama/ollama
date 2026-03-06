@@ -89,35 +89,6 @@ type ModelItem struct {
 	Recommended bool
 }
 
-// LaunchIntegrationByName launches the named integration using saved config or prompts for setup.
-func LaunchIntegrationByName(name string) error {
-	return LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: name})
-}
-
-// LaunchIntegrationWithModel launches the named integration with the specified model.
-func LaunchIntegrationWithModel(name, modelName string) error {
-	return LaunchIntegration(context.Background(), IntegrationLaunchRequest{
-		Name:          name,
-		ModelOverride: modelName,
-	})
-}
-
-// SaveAndEditIntegration saves the models for an integration and, when supported,
-// runs its Edit method to write any integration-managed config files.
-func SaveAndEditIntegration(name string, models []string) error {
-	key, runner, err := LookupIntegration(name)
-	if err != nil {
-		return err
-	}
-
-	editor, ok := runner.(Editor)
-	if !ok {
-		return config.SaveIntegration(key, models)
-	}
-
-	return PrepareEditorIntegration(key, runner, editor, models)
-}
-
 // ConfigureIntegrationWithSelectors allows the user to select/change the model for an integration using custom selectors.
 func ConfigureIntegrationWithSelectors(ctx context.Context, name string, single SingleSelector, multi MultiSelector) error {
 	oldSingle := DefaultSingleSelector
@@ -287,20 +258,6 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 		return launchClient.launchEditorIntegration(ctx, name, runner, editor, saved, req)
 	}
 	return launchClient.launchSingleIntegration(ctx, name, runner, saved, req)
-}
-
-// SelectIntegration lets the user choose which integration to launch.
-func SelectIntegration() (string, error) {
-	if DefaultSingleSelector == nil {
-		return "", fmt.Errorf("no selector configured")
-	}
-
-	items, err := IntegrationSelectionItems()
-	if err != nil {
-		return "", err
-	}
-
-	return DefaultSingleSelector("Select integration:", items, "")
 }
 
 func (c *launcherClient) buildLauncherState(ctx context.Context) (*LauncherState, error) {

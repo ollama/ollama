@@ -160,39 +160,6 @@ func TestLaunchCmdNilHeartbeat(t *testing.T) {
 	}
 }
 
-func TestLaunchIntegrationByNameUnknownIntegration(t *testing.T) {
-	err := LaunchIntegrationByName("nonexistent-integration")
-	if err == nil {
-		t.Fatal("expected error for unknown integration")
-	}
-	if !strings.Contains(err.Error(), "unknown integration") {
-		t.Errorf("error should mention 'unknown integration', got: %v", err)
-	}
-}
-
-func TestLaunchIntegrationByNameNotConfigured(t *testing.T) {
-	tmpDir := t.TempDir()
-	setLaunchTestHome(t, tmpDir)
-
-	err := LaunchIntegrationByName("claude")
-	if err == nil {
-		t.Fatal("expected error when integration is not configured")
-	}
-	if !strings.Contains(err.Error(), "no selector configured") {
-		t.Errorf("error should mention missing selector, got: %v", err)
-	}
-}
-
-func TestSaveAndEditIntegrationUnknownIntegration(t *testing.T) {
-	err := SaveAndEditIntegration("nonexistent", []string{"model"})
-	if err == nil {
-		t.Fatal("expected error for unknown integration")
-	}
-	if !strings.Contains(err.Error(), "unknown integration") {
-		t.Errorf("error should mention 'unknown integration', got: %v", err)
-	}
-}
-
 func TestLaunchCmdModelFlagFiltersDisabledCloudFromSavedConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)

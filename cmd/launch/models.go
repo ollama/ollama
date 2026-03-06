@@ -82,36 +82,6 @@ const (
 	MissingModelFail
 )
 
-// SelectModelWithSelector prompts the user to select a model using the provided selector.
-func SelectModelWithSelector(ctx context.Context, selector SingleSelector) (string, error) {
-	if selector == nil {
-		return "", fmt.Errorf("no selector configured")
-	}
-
-	items, existingModels, cloudModels, client, err := listModels(ctx)
-	if err != nil {
-		return "", err
-	}
-
-	current := config.LastModel()
-	selected, err := selector("Select model to run:", items, current)
-	if err != nil {
-		return "", err
-	}
-	if err := pullIfNeeded(ctx, client, existingModels, selected); err != nil {
-		return "", err
-	}
-	if err := EnsureAuth(ctx, client, cloudModels, []string{selected}); err != nil {
-		return "", err
-	}
-	return selected, nil
-}
-
-// SelectModel lets the user select a model to run.
-func SelectModel(ctx context.Context) (string, error) {
-	return SelectModelWithSelector(ctx, DefaultSingleSelector)
-}
-
 // OpenBrowser opens the URL in the user's browser.
 func OpenBrowser(url string) {
 	switch runtime.GOOS {
@@ -201,11 +171,6 @@ func EnsureAuth(ctx context.Context, client *api.Client, cloudModels map[string]
 			}
 		}
 	}
-}
-
-// IntegrationSelectionItems returns the sorted integration items shown by launcher selection UIs.
-func SelectIntegrationItems() ([]ModelItem, error) {
-	return IntegrationSelectionItems()
 }
 
 func selectModelsWithSelectors(ctx context.Context, name, current string, single SingleSelector, multi MultiSelector) ([]string, error) {
