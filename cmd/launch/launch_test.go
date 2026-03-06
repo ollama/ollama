@@ -187,67 +187,6 @@ func TestResolveRunModel_UsesSavedModelWithoutSelector(t *testing.T) {
 	}
 }
 
-func TestResolveRequestedRunModel_PersistsRequestedModel(t *testing.T) {
-	tmpDir := t.TempDir()
-	setLaunchTestHome(t, tmpDir)
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/show" {
-			fmt.Fprint(w, `{"model":"llama3.2"}`)
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer srv.Close()
-	t.Setenv("OLLAMA_HOST", srv.URL)
-
-	model, err := ResolveRequestedRunModel(context.Background(), "llama3.2")
-	if err != nil {
-		t.Fatalf("ResolveRequestedRunModel returned error: %v", err)
-	}
-	if model != "llama3.2" {
-		t.Fatalf("expected requested model to be returned, got %q", model)
-	}
-	if got := config.LastModel(); got != "llama3.2" {
-		t.Fatalf("expected last model to be updated, got %q", got)
-	}
-}
-
-func TestResolveRequestedRunModel_DoesNotPersistOnFailure(t *testing.T) {
-	tmpDir := t.TempDir()
-	setLaunchTestHome(t, tmpDir)
-	withLauncherHooks(t)
-	withInteractiveSession(t, false)
-
-	if err := config.SetLastModel("existing-model"); err != nil {
-		t.Fatalf("failed to seed last model: %v", err)
-	}
-
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
-		t.Fatal("confirm prompt should not be called in headless missing-model flow")
-		return false, nil
-	}
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/show" {
-			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprint(w, `{"error":"not found"}`)
-			return
-		}
-		http.NotFound(w, r)
-	}))
-	defer srv.Close()
-	t.Setenv("OLLAMA_HOST", srv.URL)
-
-	_, err := ResolveRequestedRunModel(context.Background(), "missing-model")
-	if err == nil || !strings.Contains(err.Error(), "ollama pull missing-model") {
-		t.Fatalf("expected missing model flow to stop before saving, got %v", err)
-	}
-	if got := config.LastModel(); got != "existing-model" {
-		t.Fatalf("expected last model to remain unchanged, got %q", got)
-	}
-}
-
 func TestResolveRunModel_ForcePickerAlwaysUsesSelector(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)

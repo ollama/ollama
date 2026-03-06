@@ -16,7 +16,7 @@ func TestLaunchCmd(t *testing.T) {
 	mockCheck := func(cmd *cobra.Command, args []string) error {
 		return nil
 	}
-	mockTUI := func(cmd *cobra.Command, inv LauncherInvocation) {}
+	mockTUI := func(cmd *cobra.Command) {}
 	cmd := LaunchCmd(mockCheck, mockTUI)
 
 	t.Run("command structure", func(t *testing.T) {
@@ -54,10 +54,8 @@ func TestLaunchCmdTUICallback(t *testing.T) {
 
 	t.Run("no args calls TUI", func(t *testing.T) {
 		tuiCalled := false
-		var gotInv LauncherInvocation
-		mockTUI := func(cmd *cobra.Command, inv LauncherInvocation) {
+		mockTUI := func(cmd *cobra.Command) {
 			tuiCalled = true
-			gotInv = inv
 		}
 
 		cmd := LaunchCmd(mockCheck, mockTUI)
@@ -67,9 +65,6 @@ func TestLaunchCmdTUICallback(t *testing.T) {
 		if !tuiCalled {
 			t.Error("TUI callback should be called when no args provided")
 		}
-		if diff := cmp.Diff(LauncherInvocation{}, gotInv); diff != "" {
-			t.Fatalf("launcher invocation mismatch (-want +got):\n%s", diff)
-		}
 	})
 
 	t.Run("integration arg bypasses TUI", func(t *testing.T) {
@@ -78,7 +73,7 @@ func TestLaunchCmdTUICallback(t *testing.T) {
 		t.Setenv("OLLAMA_HOST", srv.URL)
 
 		tuiCalled := false
-		mockTUI := func(cmd *cobra.Command, inv LauncherInvocation) {
+		mockTUI := func(cmd *cobra.Command) {
 			tuiCalled = true
 		}
 
@@ -91,63 +86,66 @@ func TestLaunchCmdTUICallback(t *testing.T) {
 		}
 	})
 
-	t.Run("--model flag opens TUI with invocation", func(t *testing.T) {
+	t.Run("--model flag without integration returns error", func(t *testing.T) {
 		tuiCalled := false
-		var gotInv LauncherInvocation
-		mockTUI := func(cmd *cobra.Command, inv LauncherInvocation) {
+		mockTUI := func(cmd *cobra.Command) {
 			tuiCalled = true
-			gotInv = inv
 		}
 
 		cmd := LaunchCmd(mockCheck, mockTUI)
 		cmd.SetArgs([]string{"--model", "test-model"})
-		_ = cmd.Execute()
+		err := cmd.Execute()
 
-		if !tuiCalled {
-			t.Error("TUI callback should be called when --model flag provided without an integration")
+		if err == nil {
+			t.Fatal("expected --model without an integration to fail")
 		}
-		want := LauncherInvocation{ModelOverride: "test-model"}
-		if diff := cmp.Diff(want, gotInv); diff != "" {
-			t.Fatalf("launcher invocation mismatch (-want +got):\n%s", diff)
+		if !strings.Contains(err.Error(), "require an integration name") {
+			t.Fatalf("expected integration-name guidance, got %v", err)
+		}
+		if tuiCalled {
+			t.Error("TUI callback should NOT be called when --model is provided without an integration")
 		}
 	})
 
-	t.Run("--config flag bypasses TUI", func(t *testing.T) {
+	t.Run("--config flag without integration returns error", func(t *testing.T) {
 		tuiCalled := false
-		mockTUI := func(cmd *cobra.Command, inv LauncherInvocation) {
+		mockTUI := func(cmd *cobra.Command) {
 			tuiCalled = true
 		}
 
 		cmd := LaunchCmd(mockCheck, mockTUI)
 		cmd.SetArgs([]string{"--config"})
-		_ = cmd.Execute()
+		err := cmd.Execute()
 
+		if err == nil {
+			t.Fatal("expected --config without an integration to fail")
+		}
+		if !strings.Contains(err.Error(), "require an integration name") {
+			t.Fatalf("expected integration-name guidance, got %v", err)
+		}
 		if tuiCalled {
-			t.Error("TUI callback should NOT be called when --config flag provided")
+			t.Error("TUI callback should NOT be called when --config is provided without an integration")
 		}
 	})
 
-	t.Run("--model flag forwards extra args through TUI invocation", func(t *testing.T) {
+	t.Run("extra args without integration return error", func(t *testing.T) {
 		tuiCalled := false
-		var gotInv LauncherInvocation
-		mockTUI := func(cmd *cobra.Command, inv LauncherInvocation) {
+		mockTUI := func(cmd *cobra.Command) {
 			tuiCalled = true
-			gotInv = inv
 		}
 
 		cmd := LaunchCmd(mockCheck, mockTUI)
 		cmd.SetArgs([]string{"--model", "test-model", "--", "--sandbox", "workspace-write"})
-		_ = cmd.Execute()
+		err := cmd.Execute()
 
-		if !tuiCalled {
-			t.Error("TUI callback should be called when --model flag is provided without an integration")
+		if err == nil {
+			t.Fatal("expected flags and extra args without an integration to fail")
 		}
-		want := LauncherInvocation{
-			ModelOverride: "test-model",
-			ExtraArgs:     []string{"--sandbox", "workspace-write"},
+		if !strings.Contains(err.Error(), "require an integration name") {
+			t.Fatalf("expected integration-name guidance, got %v", err)
 		}
-		if diff := cmp.Diff(want, gotInv); diff != "" {
-			t.Fatalf("launcher invocation mismatch (-want +got):\n%s", diff)
+		if tuiCalled {
+			t.Error("TUI callback should NOT be called when flags or extra args are provided without an integration")
 		}
 	})
 }
@@ -220,7 +218,7 @@ func TestLaunchCmdModelFlagFiltersDisabledCloudFromSavedConfig(t *testing.T) {
 	restore := OverrideIntegration("stubeditor", stub)
 	defer restore()
 
-	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command, inv LauncherInvocation) {})
+	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command) {})
 	cmd.SetArgs([]string{"stubeditor", "--model", "llama3.2"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("launch command failed: %v", err)
@@ -275,7 +273,7 @@ func TestLaunchCmdIntegrationArgPromptsForModelWithSavedSelection(t *testing.T) 
 		return "qwen3:8b", nil
 	}
 
-	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command, inv LauncherInvocation) {})
+	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command) {})
 	cmd.SetArgs([]string{"stubapp"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("launch command failed: %v", err)

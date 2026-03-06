@@ -50,12 +50,6 @@ type IntegrationLaunchRequest struct {
 	ExtraArgs      []string
 }
 
-// LauncherInvocation carries one-shot root launcher overrides derived from CLI flags.
-type LauncherInvocation struct {
-	ModelOverride string
-	ExtraArgs     []string
-}
-
 var isInteractiveSession = func() bool {
 	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 }
@@ -157,7 +151,7 @@ func ConfigureIntegration(ctx context.Context, name string) error {
 
 // LaunchCmd returns the cobra command for launching integrations.
 // The runTUI callback is called when the root launcher UI should be shown.
-func LaunchCmd(checkServerHeartbeat func(cmd *cobra.Command, args []string) error, runTUI func(cmd *cobra.Command, inv LauncherInvocation)) *cobra.Command {
+func LaunchCmd(checkServerHeartbeat func(cmd *cobra.Command, args []string) error, runTUI func(cmd *cobra.Command)) *cobra.Command {
 	var modelFlag string
 	var configFlag bool
 
@@ -167,6 +161,7 @@ func LaunchCmd(checkServerHeartbeat func(cmd *cobra.Command, args []string) erro
 		Long: `Launch the Ollama interactive menu, or directly launch a specific integration.
 
 Without arguments, this is equivalent to running 'ollama' directly.
+Flags and extra arguments require an integration name.
 
 Supported integrations:
   claude    Claude Code
@@ -187,11 +182,6 @@ Examples:
 		Args:    cobra.ArbitraryArgs,
 		PreRunE: checkServerHeartbeat,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) == 0 && modelFlag == "" && !configFlag {
-				runTUI(cmd, LauncherInvocation{})
-				return nil
-			}
-
 			var name string
 			var passArgs []string
 			dashIdx := cmd.ArgsLenAtDash()
@@ -213,23 +203,12 @@ Examples:
 				passArgs = args[dashIdx:]
 			}
 
-			if name == "" && modelFlag != "" && !configFlag {
-				runTUI(cmd, LauncherInvocation{
-					ModelOverride: modelFlag,
-					ExtraArgs:     append([]string(nil), passArgs...),
-				})
-				return nil
-			}
-
 			if name == "" {
-				var err error
-				name, err = SelectIntegration()
-				if errors.Is(err, ErrCancelled) {
-					return nil
+				if cmd.Flags().Changed("model") || cmd.Flags().Changed("config") || len(passArgs) > 0 {
+					return fmt.Errorf("flags and extra args require an integration name, for example: 'ollama launch claude --model qwen3.5'")
 				}
-				if err != nil {
-					return err
-				}
+				runTUI(cmd)
+				return nil
 			}
 
 			err := LaunchIntegration(cmd.Context(), IntegrationLaunchRequest{
@@ -286,15 +265,6 @@ func ResolveRunModel(ctx context.Context, req RunModelRequest) (string, error) {
 		return "", err
 	}
 	return launchClient.resolveRunModel(ctx, req)
-}
-
-// ResolveRequestedRunModel validates and persists an explicitly requested chat model.
-func ResolveRequestedRunModel(ctx context.Context, model string) (string, error) {
-	launchClient, err := newLauncherClient()
-	if err != nil {
-		return "", err
-	}
-	return launchClient.resolveRequestedRunModel(ctx, model)
 }
 
 // LaunchIntegration runs the canonical launcher flow for one integration.
@@ -426,16 +396,6 @@ func (c *launcherClient) resolveRunModel(ctx context.Context, req RunModelReques
 
 	model, err := c.selectSingleModelWithSelector(ctx, "Select model to run:", current, DefaultSingleSelector)
 	if err != nil {
-		return "", err
-	}
-	if err := config.SetLastModel(model); err != nil {
-		return "", err
-	}
-	return model, nil
-}
-
-func (c *launcherClient) resolveRequestedRunModel(ctx context.Context, model string) (string, error) {
-	if err := c.ensureModelsReady(ctx, []string{model}); err != nil {
 		return "", err
 	}
 	if err := config.SetLastModel(model); err != nil {
