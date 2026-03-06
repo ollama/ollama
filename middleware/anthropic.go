@@ -496,6 +496,9 @@ func buildWebSearchAssistantMessage(response api.ChatResponse, webSearchCall api
 	if response.Message.Thinking != "" {
 		assistantMsg.Thinking = response.Message.Thinking
 	}
+	if response.Message.Signature != "" {
+		assistantMsg.Signature = response.Message.Signature
+	}
 	return assistantMsg
 }
 

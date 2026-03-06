@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/ollama/ollama/api"
 )
@@ -1553,4 +1555,122 @@ func TestCitation(t *testing.T) {
 	if unmarshaled.CitedText != "Some cited text..." {
 		t.Errorf("cited_text mismatch: expected 'Some cited text...', got %q", unmarshaled.CitedText)
 	}
+}
+
+func TestConvertMessage_WithThinkingSignature(t *testing.T) {
+	msg := MessageParam{
+		Role: "assistant",
+		Content: []any{
+			map[string]any{
+				"type":      "thinking",
+				"thinking":  "I am thinking...",
+				"signature": "sig_abc123",
+			},
+			map[string]any{
+				"type": "text",
+				"text": "Hello!",
+			},
+		},
+	}
+
+	messages, err := convertMessage(msg)
+	require.NoError(t, err)
+
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(messages))
+	}
+
+	if messages[0].Thinking != "I am thinking..." {
+		t.Errorf("expected thinking 'I am thinking...', got %q", messages[0].Thinking)
+	}
+
+	if messages[0].Signature != "sig_abc123" {
+		t.Errorf("expected signature 'sig_abc123', got %q", messages[0].Signature)
+	}
+}
+
+func TestToMessagesResponse_WithThinkingSignature(t *testing.T) {
+	resp := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Role:      "assistant",
+			Content:   "Hello!",
+			Thinking:  "I am thinking...",
+			Signature: "sig_abc123",
+		},
+	}
+
+	result := ToMessagesResponse("msg_123", resp)
+
+	foundThinking := false
+	for _, block := range result.Content {
+		if block.Type == "thinking" {
+			foundThinking = true
+			if block.Signature != "sig_abc123" {
+				t.Errorf("expected signature 'sig_abc123', got %q", block.Signature)
+			}
+		}
+	}
+
+	if !foundThinking {
+		t.Error("expected thinking block in response")
+	}
+}
+
+func TestStreamConverter_WithThinkingAndSignature(t *testing.T) {
+	conv := NewStreamConverter("msg_123", "test-model", 0)
+
+	// First chunk with thinking
+	resp1 := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Role:     "assistant",
+			Thinking: "Let me think",
+		},
+		Metrics: api.Metrics{PromptEvalCount: 10},
+	}
+
+	events1 := conv.Process(resp1)
+	// message_start, content_block_start (thinking), content_block_delta (thinking)
+	require.Len(t, events1, 3)
+	assert.Equal(t, "message_start", events1[0].Event)
+	assert.Equal(t, "content_block_start", events1[1].Event)
+	assert.Equal(t, "content_block_delta", events1[2].Event)
+	assert.Equal(t, "thinking_delta", events1[2].Data.(ContentBlockDeltaEvent).Delta.Type)
+
+	// Second chunk with signature
+	resp2 := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Role:      "assistant",
+			Signature: "sig123",
+		},
+	}
+
+	events2 := conv.Process(resp2)
+	// content_block_delta (signature)
+	require.Len(t, events2, 1)
+	assert.Equal(t, "content_block_delta", events2[0].Event)
+	assert.Equal(t, "signature_delta", events2[0].Data.(ContentBlockDeltaEvent).Delta.Type)
+	assert.Equal(t, "sig123", events2[0].Data.(ContentBlockDeltaEvent).Delta.Signature)
+
+	// Final chunk with content
+	resp3 := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Role:    "assistant",
+			Content: "Hello",
+		},
+		Done:       true,
+		DoneReason: "stop",
+		Metrics:    api.Metrics{EvalCount: 5},
+	}
+
+	events3 := conv.Process(resp3)
+	// content_block_stop (thinking), content_block_start (text), content_block_delta (text),
+	// content_block_stop (text), message_delta, message_stop
+	require.Len(t, events3, 6)
+	assert.Equal(t, "content_block_stop", events3[0].Event)
+	assert.Equal(t, "content_block_start", events3[1].Event)
+	assert.Equal(t, "content_block_delta", events3[2].Event)
 }

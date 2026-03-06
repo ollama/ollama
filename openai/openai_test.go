@@ -814,3 +814,50 @@ func TestFromImageEditRequest_InvalidImage(t *testing.T) {
 		t.Error("expected error for invalid image")
 	}
 }
+
+func TestToChatCompletion_Signature(t *testing.T) {
+	resp := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Role:      "assistant",
+			Content:   "Hello",
+			Thinking:  "Thought...",
+			Signature: "sig123",
+			ToolCalls: []api.ToolCall{
+				{
+					ID: "call1",
+					Function: api.ToolCallFunction{
+						Name:             "test_tool",
+						Arguments:        testArgs(map[string]any{"arg1": "val1"}),
+						ThoughtSignature: "thought_sig456",
+					},
+				},
+			},
+		},
+		Done: true,
+	}
+
+	result := ToChatCompletion("test-id", resp)
+
+	if len(result.Choices) != 1 {
+		t.Fatalf("expected 1 choice, got %d", len(result.Choices))
+	}
+
+	msg := result.Choices[0].Message
+	if msg.Reasoning != "Thought..." {
+		t.Errorf("expected reasoning %q, got %q", "Thought...", msg.Reasoning)
+	}
+
+	if msg.Signature != "sig123" {
+		t.Errorf("expected signature %q, got %q", "sig123", msg.Signature)
+	}
+
+	if len(msg.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(msg.ToolCalls))
+	}
+
+	tc := msg.ToolCalls[0]
+	if tc.Function.ThoughtSignature != "thought_sig456" {
+		t.Errorf("expected thought_signature %q, got %q", "thought_sig456", tc.Function.ThoughtSignature)
+	}
+}

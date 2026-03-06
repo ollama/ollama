@@ -35,6 +35,7 @@ type Message struct {
 	Role       string     `json:"role"`
 	Content    any        `json:"content"`
 	Reasoning  string     `json:"reasoning,omitempty"`
+	Signature  string     `json:"signature,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	Name       string     `json:"name,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
@@ -180,8 +181,9 @@ type ToolCall struct {
 	Index    int    `json:"index"`
 	Type     string `json:"type"`
 	Function struct {
-		Name      string `json:"name"`
-		Arguments string `json:"arguments"`
+		Name             string `json:"name"`
+		Arguments        string `json:"arguments"`
+		ThoughtSignature string `json:"thought_signature,omitempty"`
 	} `json:"function"`
 }
 
@@ -246,6 +248,7 @@ func ToToolCalls(tc []api.ToolCall) []ToolCall {
 		toolCalls[i].Type = "function"
 		toolCalls[i].Function.Name = tc.Function.Name
 		toolCalls[i].Index = tc.Function.Index
+		toolCalls[i].Function.ThoughtSignature = tc.Function.ThoughtSignature
 
 		args, err := json.Marshal(tc.Function.Arguments)
 		if err != nil {
@@ -275,7 +278,7 @@ func ToChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 		SystemFingerprint: "fp_ollama",
 		Choices: []Choice{{
 			Index:   0,
-			Message: Message{Role: r.Message.Role, Content: r.Message.Content, ToolCalls: toolCalls, Reasoning: r.Message.Thinking},
+			Message: Message{Role: r.Message.Role, Content: r.Message.Content, ToolCalls: toolCalls, Reasoning: r.Message.Thinking, Signature: r.Message.Signature},
 			FinishReason: func(reason string) *string {
 				if len(toolCalls) > 0 {
 					reason = "tool_calls"
@@ -307,7 +310,7 @@ func toChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChu
 		SystemFingerprint: "fp_ollama",
 		Choices: []ChunkChoice{{
 			Index: 0,
-			Delta: Message{Role: "assistant", Content: r.Message.Content, ToolCalls: toolCalls, Reasoning: r.Message.Thinking},
+			Delta: Message{Role: "assistant", Content: r.Message.Content, ToolCalls: toolCalls, Reasoning: r.Message.Thinking, Signature: r.Message.Signature},
 			FinishReason: func(reason string) *string {
 				if len(reason) > 0 {
 					if toolCallSent || len(toolCalls) > 0 {
@@ -490,7 +493,7 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 			if err != nil {
 				return nil, err
 			}
-			messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolName: toolName, ToolCallID: msg.ToolCallID})
+			messages = append(messages, api.Message{Role: msg.Role, Content: content, Thinking: msg.Reasoning, Signature: msg.Signature, ToolCalls: toolCalls, ToolName: toolName, ToolCallID: msg.ToolCallID})
 		case []any:
 			for _, c := range content {
 				data, ok := c.(map[string]any)
@@ -537,6 +540,7 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 				messages[len(messages)-1].ToolName = toolName
 				messages[len(messages)-1].ToolCallID = msg.ToolCallID
 				messages[len(messages)-1].Thinking = msg.Reasoning
+				messages[len(messages)-1].Signature = msg.Signature
 			}
 		default:
 			// content is only optional if tool calls are present
@@ -548,7 +552,7 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 			if err != nil {
 				return nil, err
 			}
-			messages = append(messages, api.Message{Role: msg.Role, Thinking: msg.Reasoning, ToolCalls: toolCalls, ToolCallID: msg.ToolCallID})
+			messages = append(messages, api.Message{Role: msg.Role, Thinking: msg.Reasoning, Signature: msg.Signature, ToolCalls: toolCalls, ToolCallID: msg.ToolCallID})
 		}
 	}
 
@@ -696,6 +700,7 @@ func FromCompletionToolCall(toolCalls []ToolCall) ([]api.ToolCall, error) {
 	for i, tc := range toolCalls {
 		apiToolCalls[i].ID = tc.ID
 		apiToolCalls[i].Function.Name = tc.Function.Name
+		apiToolCalls[i].Function.ThoughtSignature = tc.Function.ThoughtSignature
 		err := json.Unmarshal([]byte(tc.Function.Arguments), &apiToolCalls[i].Function.Arguments)
 		if err != nil {
 			return nil, errors.New("invalid tool call arguments")
