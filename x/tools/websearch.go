@@ -15,6 +15,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/auth"
+	internalcloud "github.com/ollama/ollama/internal/cloud"
 )
 
 const (
@@ -77,6 +78,10 @@ type webSearchResult struct {
 // Execute performs the web search.
 // Uses Ollama key signing for authentication - this makes requests via ollama.com API.
 func (w *WebSearchTool) Execute(args map[string]any) (string, error) {
+	if internalcloud.Disabled() {
+		return "", errors.New(internalcloud.DisabledError("web search is unavailable"))
+	}
+
 	query, ok := args["query"].(string)
 	if !ok || query == "" {
 		return "", fmt.Errorf("query parameter is required")

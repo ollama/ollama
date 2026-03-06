@@ -32,6 +32,8 @@ type LFM2Parser struct {
 	hasThinkingSupport       bool
 	needsThinkingLeadingTrim bool // trim leading whitespace after <think> tag
 	needsContentLeadingTrim  bool // trim leading whitespace after </think> tag
+	toolNames                map[string]struct{}
+	hasTools                 bool
 }
 
 func (p *LFM2Parser) HasToolSupport() bool {
@@ -63,6 +65,13 @@ func (p *LFM2Parser) setInitialState(lastMessage *api.Message, thinkValue *api.T
 }
 
 func (p *LFM2Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
+	p.toolNames = make(map[string]struct{}, len(tools))
+	p.hasTools = len(tools) > 0
+	for _, tool := range tools {
+		if tool.Function.Name != "" {
+			p.toolNames[tool.Function.Name] = struct{}{}
+		}
+	}
 	p.setInitialState(lastMessage, thinkValue)
 	return tools
 }
@@ -105,7 +114,31 @@ func (p *LFM2Parser) Add(s string, done bool) (content string, thinking string, 
 		}
 	}
 
+	// Fallback for models that emit bare tool calls without <|tool_call_*|> wrappers.
+	if done && len(toolCalls) == 0 && p.hasTools {
+		candidate := strings.TrimSpace(contentSb.String())
+		if fallbackCalls, parseErr := p.parseToolCallsContent(candidate); parseErr == nil && p.toolCallsAllowed(fallbackCalls) {
+			contentSb.Reset()
+			toolCalls = append(toolCalls, fallbackCalls...)
+		}
+	}
+
 	return contentSb.String(), thinkingSb.String(), toolCalls, nil
+}
+
+func (p *LFM2Parser) toolCallsAllowed(calls []api.ToolCall) bool {
+	if len(calls) == 0 {
+		return false
+	}
+	if len(p.toolNames) == 0 {
+		return true
+	}
+	for _, call := range calls {
+		if _, ok := p.toolNames[call.Function.Name]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *LFM2Parser) parseEvents() []lfm2Event {
@@ -269,36 +302,16 @@ func (p *LFM2Parser) eat() ([]lfm2Event, bool) {
 	return events, false
 }
 
-// parseToolCallsContent parses one or more tool calls from content
-// Supports JSON format and Python-style format including multiple calls: [func1(...),func2(...)]
+// parseToolCallsContent parses one or more Python-style tool calls.
+// Example: [func1(arg='v'), func2(x=1)]
 func (p *LFM2Parser) parseToolCallsContent(content string) ([]api.ToolCall, error) {
 	content = strings.TrimSpace(content)
 
-	// Try JSON format first: {"name": "func", "arguments": {...}}
-	var parsed struct {
-		Name      string          `json:"name"`
-		Arguments json.RawMessage `json:"arguments"`
-	}
+	// Be tolerant of malformed outputs that include wrapper tags without proper pairing.
+	content = strings.TrimSpace(strings.TrimPrefix(content, lfm2ToolCallStartTag))
+	content = strings.TrimSpace(strings.TrimSuffix(content, lfm2ToolCallEndTag))
 
-	if err := json.Unmarshal([]byte(content), &parsed); err == nil && parsed.Name != "" {
-		var args api.ToolCallFunctionArguments
-		if len(parsed.Arguments) > 0 {
-			if err := json.Unmarshal(parsed.Arguments, &args); err != nil {
-				return nil, err
-			}
-		} else {
-			args = api.NewToolCallFunctionArguments()
-		}
-
-		return []api.ToolCall{{
-			Function: api.ToolCallFunction{
-				Name:      parsed.Name,
-				Arguments: args,
-			},
-		}}, nil
-	}
-
-	// Try Python-style format: [func(arg1='val1'),func2(arg2='val2')] or func(arg1='val1')
+	// Parse Python-style format: [func(arg1='val1'),func2(arg2='val2')] or func(arg1='val1')
 	return p.parsePythonStyleToolCalls(content)
 }
 
@@ -417,21 +430,16 @@ func (p *LFM2Parser) parseToolCallContent(content string) (api.ToolCall, error) 
 
 // parsePythonArgs parses Python-style keyword arguments: key='value', key2="value2"
 func parsePythonArgs(argsStr string, args *api.ToolCallFunctionArguments) error {
-	// Simple state machine to parse key='value' pairs
-	// Handles: command='ls', flag="-la", count=42, enabled=true
-	var key string
 	i := 0
-
 	for i < len(argsStr) {
-		// Skip whitespace
-		for i < len(argsStr) && (argsStr[i] == ' ' || argsStr[i] == '\t' || argsStr[i] == '\n') {
+		// Skip separators and whitespace.
+		for i < len(argsStr) && (argsStr[i] == ',' || unicode.IsSpace(rune(argsStr[i]))) {
 			i++
 		}
 		if i >= len(argsStr) {
 			break
 		}
 
-		// Parse key
 		keyStart := i
 		for i < len(argsStr) && argsStr[i] != '=' && argsStr[i] != ',' {
 			i++
@@ -439,60 +447,238 @@ func parsePythonArgs(argsStr string, args *api.ToolCallFunctionArguments) error 
 		if i >= len(argsStr) || argsStr[i] != '=' {
 			return errors.New("invalid argument: expected '='")
 		}
-		key = strings.TrimSpace(argsStr[keyStart:i])
+
+		key := strings.TrimSpace(argsStr[keyStart:i])
+		if key == "" {
+			return errors.New("invalid argument: empty key")
+		}
 		i++ // skip '='
 
-		// Skip whitespace after =
-		for i < len(argsStr) && (argsStr[i] == ' ' || argsStr[i] == '\t') {
+		for i < len(argsStr) && unicode.IsSpace(rune(argsStr[i])) {
 			i++
 		}
-
-		// Parse value
-		var value string
-		if i < len(argsStr) && (argsStr[i] == '\'' || argsStr[i] == '"') {
-			// Quoted string
-			quote := argsStr[i]
-			i++
-			valueStart := i
-			for i < len(argsStr) && argsStr[i] != quote {
-				if argsStr[i] == '\\' && i+1 < len(argsStr) {
-					i += 2 // skip escaped char
-				} else {
-					i++
-				}
-			}
-			value = argsStr[valueStart:i]
-			if i < len(argsStr) {
-				i++ // skip closing quote
-			}
-			args.Set(key, value)
-		} else {
-			// Unquoted value (number, bool, etc)
-			valueStart := i
-			for i < len(argsStr) && argsStr[i] != ',' {
-				i++
-			}
-			value = strings.TrimSpace(argsStr[valueStart:i])
-
-			// Try to parse as number or bool
-			if v, err := strconv.ParseInt(value, 10, 64); err == nil {
-				args.Set(key, v)
-			} else if v, err := strconv.ParseFloat(value, 64); err == nil {
-				args.Set(key, v)
-			} else if value == "true" {
-				args.Set(key, true)
-			} else if value == "false" {
-				args.Set(key, false)
-			} else {
-				args.Set(key, value)
-			}
+		if i >= len(argsStr) {
+			return errors.New("invalid argument: missing value")
 		}
 
-		// Skip comma and whitespace
-		for i < len(argsStr) && (argsStr[i] == ',' || argsStr[i] == ' ' || argsStr[i] == '\t' || argsStr[i] == '\n') {
+		value, next, err := parsePythonArgValue(argsStr, i)
+		if err != nil {
+			return err
+		}
+		args.Set(key, value)
+		i = next
+
+		// Optional trailing comma before next key/value.
+		if i < len(argsStr) && argsStr[i] == ',' {
 			i++
 		}
 	}
 
 	return nil
+}
+
+func parsePythonArgValue(s string, i int) (any, int, error) {
+	if i >= len(s) {
+		return nil, i, errors.New("invalid argument: missing value")
+	}
+
+	// Quoted string literal.
+	if s[i] == '\'' || s[i] == '"' {
+		quote := s[i]
+		i++
+		start := i
+		for i < len(s) {
+			if s[i] == '\\' && i+1 < len(s) {
+				i += 2
+				continue
+			}
+			if s[i] == quote {
+				value := s[start:i]
+				i++
+				return value, i, nil
+			}
+			i++
+		}
+		return nil, i, errors.New("invalid argument: unterminated string")
+	}
+
+	// Unquoted literal. Consume until top-level comma.
+	start := i
+	depthParen, depthSquare, depthCurly := 0, 0, 0
+	inString := false
+	var quote byte
+	escaped := false
+
+	for i < len(s) {
+		ch := s[i]
+		if inString {
+			if escaped {
+				escaped = false
+			} else if ch == '\\' {
+				escaped = true
+			} else if ch == quote {
+				inString = false
+			}
+			i++
+			continue
+		}
+
+		switch ch {
+		case '\'', '"':
+			inString = true
+			quote = ch
+		case '(':
+			depthParen++
+		case ')':
+			if depthParen > 0 {
+				depthParen--
+			}
+		case '[':
+			depthSquare++
+		case ']':
+			if depthSquare > 0 {
+				depthSquare--
+			}
+		case '{':
+			depthCurly++
+		case '}':
+			if depthCurly > 0 {
+				depthCurly--
+			}
+		case ',':
+			if depthParen == 0 && depthSquare == 0 && depthCurly == 0 {
+				token := strings.TrimSpace(s[start:i])
+				value, err := parsePythonLiteral(token)
+				return value, i, err
+			}
+		}
+		i++
+	}
+
+	token := strings.TrimSpace(s[start:i])
+	value, err := parsePythonLiteral(token)
+	return value, i, err
+}
+
+func parsePythonLiteral(token string) (any, error) {
+	switch token {
+	case "":
+		return "", nil
+	case "true", "True":
+		return true, nil
+	case "false", "False":
+		return false, nil
+	case "null", "None":
+		return nil, nil
+	}
+
+	if v, err := strconv.ParseInt(token, 10, 64); err == nil {
+		return v, nil
+	}
+	if v, err := strconv.ParseFloat(token, 64); err == nil {
+		return v, nil
+	}
+
+	if strings.HasPrefix(token, "[") || strings.HasPrefix(token, "{") {
+		var parsed any
+		if err := json.Unmarshal([]byte(token), &parsed); err == nil {
+			return parsed, nil
+		}
+
+		if converted, err := pythonLiteralToJSON(token); err == nil {
+			if err := json.Unmarshal([]byte(converted), &parsed); err == nil {
+				return parsed, nil
+			}
+		}
+	}
+
+	return token, nil
+}
+
+func pythonLiteralToJSON(s string) (string, error) {
+	var out strings.Builder
+	out.Grow(len(s) + len(s)/8)
+
+	inString := false
+	var quote byte
+	escaped := false
+
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+
+		if inString {
+			if escaped {
+				out.WriteByte(ch)
+				escaped = false
+				continue
+			}
+
+			if ch == '\\' {
+				out.WriteByte(ch)
+				escaped = true
+				continue
+			}
+
+			if ch == quote {
+				out.WriteByte('"')
+				inString = false
+				continue
+			}
+
+			if quote == '\'' && ch == '"' {
+				out.WriteString(`\"`)
+				continue
+			}
+
+			out.WriteByte(ch)
+			continue
+		}
+
+		if ch == '\'' || ch == '"' {
+			inString = true
+			quote = ch
+			escaped = false
+			out.WriteByte('"')
+			continue
+		}
+
+		// Replace Python identifiers with JSON equivalents when outside strings.
+		if isIdentStart(ch) {
+			j := i + 1
+			for j < len(s) && isIdentPart(s[j]) {
+				j++
+			}
+
+			ident := s[i:j]
+			switch ident {
+			case "True":
+				out.WriteString("true")
+			case "False":
+				out.WriteString("false")
+			case "None":
+				out.WriteString("null")
+			default:
+				out.WriteString(ident)
+			}
+
+			i = j - 1
+			continue
+		}
+
+		out.WriteByte(ch)
+	}
+
+	if inString {
+		return "", errors.New("unterminated string")
+	}
+
+	return out.String(), nil
+}
+
+func isIdentStart(b byte) bool {
+	return (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || b == '_'
+}
+
+func isIdentPart(b byte) bool {
+	return isIdentStart(b) || (b >= '0' && b <= '9')
 }

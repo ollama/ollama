@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/ollama/ollama/x/imagegen"
+	"github.com/ollama/ollama/x/imagegen/manifest"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/safetensors"
 	"github.com/ollama/ollama/x/imagegen/vae"
@@ -562,7 +562,7 @@ func (ub *UpDecoderBlock2D) Forward(x *mlx.Array) *mlx.Array {
 	if ub.Upsample != nil {
 		// Stage 1: Upsample2x (nearest neighbor)
 		{
-					prev := x
+			prev := x
 			x = Upsample2x(x)
 			prev.Free()
 			mlx.Eval(x)
@@ -570,7 +570,7 @@ func (ub *UpDecoderBlock2D) Forward(x *mlx.Array) *mlx.Array {
 
 		// Stage 2: Upsample conv
 		{
-					prev := x
+			prev := x
 			x = ub.Upsample.Forward(x)
 			prev.Free()
 			mlx.Eval(x)
@@ -643,16 +643,16 @@ type VAEDecoder struct {
 }
 
 // Load loads the VAE decoder from ollama blob storage.
-func (m *VAEDecoder) Load(manifest *imagegen.ModelManifest) error {
+func (m *VAEDecoder) Load(modelManifest *manifest.ModelManifest) error {
 	// Load config from blob
 	var cfg VAEConfig
-	if err := manifest.ReadConfigJSON("vae/config.json", &cfg); err != nil {
+	if err := modelManifest.ReadConfigJSON("vae/config.json", &cfg); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 	m.Config = &cfg
 
 	// Load weights from tensor blobs
-	weights, err := imagegen.LoadWeightsFromManifest(manifest, "vae")
+	weights, err := manifest.LoadWeightsFromManifest(modelManifest, "vae")
 	if err != nil {
 		return fmt.Errorf("weights: %w", err)
 	}

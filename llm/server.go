@@ -34,6 +34,7 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model"
+	"github.com/ollama/ollama/tokenizer"
 )
 
 type filteredEnv []string
@@ -73,13 +74,13 @@ type LlamaServer interface {
 	Tokenize(ctx context.Context, content string) ([]int, error)
 	Detokenize(ctx context.Context, tokens []int) (string, error)
 	Close() error
-	VRAMSize() uint64 // Total VRAM across all GPUs
-	TotalSize() uint64
+	MemorySize() (total, vram uint64)
 	VRAMByGPU(id ml.DeviceID) uint64
 	Pid() int
 	GetPort() int
 	GetDeviceInfos(ctx context.Context) []ml.DeviceInfo
 	HasExited() bool
+	ContextLength() int
 }
 
 // llmServer is an instance of a runner hosting a single model
@@ -115,7 +116,7 @@ type llamaServer struct {
 type ollamaServer struct {
 	llmServer
 
-	textProcessor model.TextProcessor // textProcessor handles text encoding/decoding
+	tokenizer tokenizer.Tokenizer // tokenizer handles text encoding/decoding
 }
 
 // LoadModel will load a model from disk. The model must be in the GGML format.
@@ -141,11 +142,11 @@ func LoadModel(model string, maxArraySize int) (*ggml.GGML, error) {
 // NewLlamaServer will run a server for the given GPUs
 func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath string, f *ggml.GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
 	var llamaModel *llama.Model
-	var textProcessor model.TextProcessor
+	var tok tokenizer.Tokenizer
 	var err error
 	if envconfig.NewEngine() || f.KV().OllamaEngineRequired() {
 		if len(projectors) == 0 {
-			textProcessor, err = model.NewTextProcessor(modelPath)
+			tok, err = model.NewTextProcessor(modelPath)
 		} else {
 			err = errors.New("split vision models aren't supported")
 		}
@@ -154,7 +155,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 			slog.Debug("model not yet supported by Ollama engine, switching to compatibility mode", "model", modelPath, "error", err)
 		}
 	}
-	if textProcessor == nil {
+	if tok == nil {
 		llamaModel, err = llama.LoadModelFromFile(modelPath, llama.ModelParams{VocabOnly: true})
 		if err != nil {
 			return nil, err
@@ -210,7 +211,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 
 	kvct := strings.ToLower(envconfig.KvCacheType())
 
-	if textProcessor == nil {
+	if tok == nil {
 		flashAttention := ml.FlashAttentionAuto
 		if faUserSet {
 			if fa {
@@ -260,7 +261,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	gpuLibs := ml.LibraryPaths(gpus)
 	status := NewStatusWriter(os.Stderr)
 	cmd, port, err := StartRunner(
-		textProcessor != nil,
+		tok != nil,
 		modelPath,
 		gpuLibs,
 		status,
@@ -309,8 +310,8 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		}
 	}()
 
-	if textProcessor != nil {
-		return &ollamaServer{llmServer: s, textProcessor: textProcessor}, nil
+	if tok != nil {
+		return &ollamaServer{llmServer: s, tokenizer: tok}, nil
 	} else {
 		return &llamaServer{llmServer: s, ggml: f}, nil
 	}
@@ -683,8 +684,9 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 	// Windows CUDA should not use mmap for best performance
 	// Linux  with a model larger than free space, mmap leads to thrashing
 	// For CPU loads we want the memory to be allocated, not FS cache
+	totalSize, _ := s.MemorySize()
 	if (runtime.GOOS == "windows" && len(gpus) > 0 && gpus[0].Library == "CUDA" && s.options.UseMMap == nil) ||
-		(runtime.GOOS == "linux" && systemInfo.FreeMemory < s.TotalSize() && s.options.UseMMap == nil) ||
+		(runtime.GOOS == "linux" && systemInfo.FreeMemory < totalSize && s.options.UseMMap == nil) ||
 		(len(gpus) == 0 && s.options.UseMMap == nil) ||
 		(len(gpus) > 0 && gpus[0].Library == "Vulkan" && s.options.UseMMap == nil) ||
 		(s.options.UseMMap != nil && !*s.options.UseMMap) {
@@ -1200,7 +1202,8 @@ func (s *llmServer) initModel(ctx context.Context, req LoadRequest, operation Lo
 
 	resp, err := http.DefaultClient.Do(r)
 	if err != nil {
-		return nil, fmt.Errorf("do load request: %w", err)
+		slog.Error("do load request", "error", err)
+		return nil, errors.New("model failed to load, this may be due to resource limitations or an internal error, check ollama server logs for details")
 	}
 	defer resp.Body.Close()
 
@@ -1772,7 +1775,7 @@ func (s *llamaServer) Tokenize(ctx context.Context, content string) ([]int, erro
 }
 
 func (s *ollamaServer) Tokenize(ctx context.Context, content string) ([]int, error) {
-	tokens, err := s.textProcessor.Encode(content, false)
+	tokens, err := s.tokenizer.Encode(content, false)
 	if err != nil {
 		return nil, err
 	}
@@ -1807,7 +1810,7 @@ func (s *ollamaServer) Detokenize(ctx context.Context, tokens []int) (string, er
 		toks[i] = int32(t)
 	}
 
-	content, err := s.textProcessor.Decode(toks)
+	content, err := s.tokenizer.Decode(toks)
 	if err != nil {
 		return "", err
 	}
@@ -1845,16 +1848,16 @@ func (s *llamaServer) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {
 	return nil
 }
 
-func (s *llmServer) VRAMSize() uint64 {
+func (s *llmServer) MemorySize() (total, vram uint64) {
 	if s.mem == nil {
-		return 0
+		return 0, 0
 	}
-
-	var mem uint64
 
 	for _, g := range s.mem.GPUs {
-		mem += g.Size()
+		vram += g.Size()
 	}
+
+	total = s.mem.InputWeights + s.mem.CPU.Size() + vram
 
 	// Some elements are always on CPU. However, if we have allocated all layers
 	// on the GPU then include the CPU components as well, to represent complete offloading.
@@ -1866,25 +1869,11 @@ func (s *llmServer) VRAMSize() uint64 {
 		}
 	}
 	if noCPULayers {
-		mem += s.mem.InputWeights
-		mem += s.mem.CPU.Graph
+		vram += s.mem.InputWeights
+		vram += s.mem.CPU.Graph
 	}
 
-	return mem
-}
-
-func (s *llmServer) TotalSize() uint64 {
-	if s.mem == nil {
-		return 0
-	}
-
-	mem := s.mem.InputWeights
-	mem += s.mem.CPU.Size()
-	for _, g := range s.mem.GPUs {
-		mem += g.Size()
-	}
-
-	return mem
+	return total, vram
 }
 
 func (s *llmServer) VRAMByGPU(id ml.DeviceID) uint64 {
@@ -1899,6 +1888,10 @@ func (s *llmServer) VRAMByGPU(id ml.DeviceID) uint64 {
 	}
 
 	return 0
+}
+
+func (s *llmServer) ContextLength() int {
+	return s.options.NumCtx
 }
 
 func (s *ollamaServer) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {

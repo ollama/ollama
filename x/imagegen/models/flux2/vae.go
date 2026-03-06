@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/ollama/ollama/x/imagegen"
+	"github.com/ollama/ollama/x/imagegen/manifest"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/nn"
 	"github.com/ollama/ollama/x/imagegen/safetensors"
@@ -15,21 +15,21 @@ import (
 
 // VAEConfig holds AutoencoderKLFlux2 configuration
 type VAEConfig struct {
-	ActFn             string  `json:"act_fn"`              // "silu"
-	BatchNormEps      float32 `json:"batch_norm_eps"`      // 0.0001
-	BatchNormMomentum float32 `json:"batch_norm_momentum"` // 0.1
-	BlockOutChannels  []int32 `json:"block_out_channels"`  // [128, 256, 512, 512]
-	ForceUpcast       bool    `json:"force_upcast"`        // true
-	InChannels        int32   `json:"in_channels"`         // 3
-	LatentChannels    int32   `json:"latent_channels"`     // 32
-	LayersPerBlock    int32   `json:"layers_per_block"`    // 2
+	ActFn             string  `json:"act_fn"`                  // "silu"
+	BatchNormEps      float32 `json:"batch_norm_eps"`          // 0.0001
+	BatchNormMomentum float32 `json:"batch_norm_momentum"`     // 0.1
+	BlockOutChannels  []int32 `json:"block_out_channels"`      // [128, 256, 512, 512]
+	ForceUpcast       bool    `json:"force_upcast"`            // true
+	InChannels        int32   `json:"in_channels"`             // 3
+	LatentChannels    int32   `json:"latent_channels"`         // 32
+	LayersPerBlock    int32   `json:"layers_per_block"`        // 2
 	MidBlockAddAttn   bool    `json:"mid_block_add_attention"` // true
-	NormNumGroups     int32   `json:"norm_num_groups"`     // 32
-	OutChannels       int32   `json:"out_channels"`        // 3
-	PatchSize         []int32 `json:"patch_size"`          // [2, 2]
-	SampleSize        int32   `json:"sample_size"`         // 1024
-	UsePostQuantConv  bool    `json:"use_post_quant_conv"` // true
-	UseQuantConv      bool    `json:"use_quant_conv"`      // true
+	NormNumGroups     int32   `json:"norm_num_groups"`         // 32
+	OutChannels       int32   `json:"out_channels"`            // 3
+	PatchSize         []int32 `json:"patch_size"`              // [2, 2]
+	SampleSize        int32   `json:"sample_size"`             // 1024
+	UsePostQuantConv  bool    `json:"use_post_quant_conv"`     // true
+	UseQuantConv      bool    `json:"use_quant_conv"`          // true
 }
 
 // BatchNorm2D implements 2D batch normalization with running statistics
@@ -356,18 +356,18 @@ func (db *DownEncoderBlock2D) Forward(x *mlx.Array) *mlx.Array {
 }
 
 // Load loads the Flux2 VAE from ollama blob storage.
-func (m *AutoencoderKLFlux2) Load(manifest *imagegen.ModelManifest) error {
+func (m *AutoencoderKLFlux2) Load(modelManifest *manifest.ModelManifest) error {
 	fmt.Print("  Loading VAE... ")
 
 	// Load config from blob
 	var cfg VAEConfig
-	if err := manifest.ReadConfigJSON("vae/config.json", &cfg); err != nil {
+	if err := modelManifest.ReadConfigJSON("vae/config.json", &cfg); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 	m.Config = &cfg
 
 	// Load weights from tensor blobs
-	weights, err := imagegen.LoadWeightsFromManifest(manifest, "vae")
+	weights, err := manifest.LoadWeightsFromManifest(modelManifest, "vae")
 	if err != nil {
 		return fmt.Errorf("weights: %w", err)
 	}

@@ -8,12 +8,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ollama/ollama/model"
+	"github.com/ollama/ollama/tokenizer"
 )
 
 func TestWeighted(t *testing.T) {
 	logits := []float32{-10, 3, -10, -10}
-	sampler := NewSampler(0, 0, 0, 0, 0, nil)
+	sampler := NewSampler(0, 0, 0, 0, 1, 0, 0, 0, nil)
 	got, err := sampler.Sample(logits)
 	if err != nil {
 		t.Error(err)
@@ -25,7 +25,7 @@ func TestWeighted(t *testing.T) {
 	}
 
 	logits = []float32{-100, -10, 0, 10}
-	sampler = NewSampler(0, 0, 0, 0, 0, nil)
+	sampler = NewSampler(0, 0, 0, 0, 1, 0, 0, 0, nil)
 	got, err = sampler.Sample(logits)
 	if err != nil {
 		t.Error(err)
@@ -39,7 +39,7 @@ func TestWeighted(t *testing.T) {
 	// Test very high p
 	logits = []float32{1.0, 0.9999999999999999, 0.5, 0.1}
 	// Use extremely small topP to filter out all tokens
-	sampler = NewSampler(1.0, 0, 1e-10, 0, 0, nil)
+	sampler = NewSampler(1.0, 0, 1e-10, 0, 1, 0, 0, 0, nil)
 	got, err = sampler.Sample(logits)
 	if err != nil {
 		t.Error(err)
@@ -52,7 +52,7 @@ func TestWeighted(t *testing.T) {
 	}
 
 	logits = []float32{float32(math.NaN()), float32(math.NaN()), float32(math.NaN())}
-	sampler = NewSampler(1, 0, 0.95, 0.05, 0, nil)
+	sampler = NewSampler(1, 0, 0.95, 0.05, 1, 0, 0, 0, nil)
 	got, err = sampler.Sample(logits)
 	if err == nil {
 		t.Errorf("expected error, got %d", got)
@@ -60,10 +60,10 @@ func TestWeighted(t *testing.T) {
 	}
 }
 
-func modelHelper(t testing.TB) model.BytePairEncoding {
+func modelHelper(t testing.TB) tokenizer.Tokenizer {
 	t.Helper()
 
-	f, err := os.Open(filepath.Join("..", "model", "testdata", "llama3.2", "encoder.json"))
+	f, err := os.Open(filepath.FromSlash("../tokenizer/testdata/llama3.2/encoder.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,8 +81,8 @@ func modelHelper(t testing.TB) model.BytePairEncoding {
 
 	merges := make([]string, 0, 1)
 	// Only need vocab for Grammar Test
-	return model.NewBytePairEncoding(
-		&model.Vocabulary{
+	return tokenizer.NewBytePairEncoding(
+		&tokenizer.Vocabulary{
 			Values: tokens,
 			Types:  make([]int32, len(vocab)),
 			Merges: merges,
@@ -151,8 +151,8 @@ func TestGrammar(t *testing.T) {
 
 func BenchmarkSample(b *testing.B) {
 	samplers := map[string]Sampler{
-		"Greedy":   NewSampler(0, 0, 0, 0, 0, nil), // Use NewSampler with temp=0 for greedy
-		"Weighted": NewSampler(0.5, 10, 0.9, 0.2, -1, nil),
+		"Greedy":   NewSampler(0, 0, 0, 0, 1, 0, 0, 0, nil), // Use NewSampler with temp=0 for greedy
+		"Weighted": NewSampler(0.5, 10, 0.9, 0.2, 1, 0, 0, -1, nil),
 	}
 
 	// Generate random logits for benchmarking

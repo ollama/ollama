@@ -10,7 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -75,6 +78,7 @@ Image Generation Flags (experimental):
 // RunCLI handles the CLI for image generation models.
 // Returns true if it handled the request, false if the caller should continue with normal flow.
 // Supports flags: --width, --height, --steps, --seed, --negative
+// Image paths can be included in the prompt and will be extracted automatically.
 func RunCLI(cmd *cobra.Command, name string, prompt string, interactive bool, keepAlive *api.Duration) error {
 	// Get options from flags (with env var defaults)
 	opts := DefaultOptions()
@@ -111,9 +115,16 @@ func generateImageWithOptions(cmd *cobra.Command, modelName, prompt string, keep
 		return err
 	}
 
+	// Extract any image paths from the prompt
+	prompt, images, err := extractFileData(prompt)
+	if err != nil {
+		return err
+	}
+
 	req := &api.GenerateRequest{
 		Model:  modelName,
 		Prompt: prompt,
+		Images: images,
 		Width:  int32(opts.Width),
 		Height: int32(opts.Height),
 		Steps:  int32(opts.Steps),
@@ -254,14 +265,33 @@ func runInteractive(cmd *cobra.Command, modelName string, keepAlive *api.Duratio
 			printCurrentSettings(opts)
 			continue
 		case strings.HasPrefix(line, "/"):
-			fmt.Fprintf(os.Stderr, "Unknown command: %s (try /help)\n", line)
+			// Check if it's a file path, not a command
+			args := strings.Fields(line)
+			isFile := false
+			for _, f := range extractFileNames(line) {
+				if strings.HasPrefix(f, args[0]) {
+					isFile = true
+					break
+				}
+			}
+			if !isFile {
+				fmt.Fprintf(os.Stderr, "Unknown command: %s (try /help)\n", args[0])
+				continue
+			}
+		}
+
+		// Extract any image paths from the input
+		prompt, images, err := extractFileData(line)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			continue
 		}
 
 		// Generate image with current options
 		req := &api.GenerateRequest{
 			Model:  modelName,
-			Prompt: line,
+			Prompt: prompt,
+			Images: images,
 			Width:  int32(opts.Width),
 			Height: int32(opts.Height),
 			Steps:  int32(opts.Steps),
@@ -485,4 +515,62 @@ func displayImageInTerminal(imagePath string) bool {
 	default:
 		return false
 	}
+}
+
+// extractFileNames finds image file paths in the input string.
+func extractFileNames(input string) []string {
+	// Regex to match file paths with image extensions
+	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp)\b`
+	re := regexp.MustCompile(regexPattern)
+	return re.FindAllString(input, -1)
+}
+
+// extractFileData extracts image data from file paths found in the input.
+// Returns the cleaned prompt (with file paths removed) and the image data.
+func extractFileData(input string) (string, []api.ImageData, error) {
+	filePaths := extractFileNames(input)
+	var imgs []api.ImageData
+
+	for _, fp := range filePaths {
+		// Normalize shell escapes
+		nfp := strings.ReplaceAll(fp, "\\ ", " ")
+		nfp = strings.ReplaceAll(nfp, "\\(", "(")
+		nfp = strings.ReplaceAll(nfp, "\\)", ")")
+		nfp = strings.ReplaceAll(nfp, "%20", " ")
+
+		data, err := getImageData(nfp)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			return "", nil, err
+		}
+		fmt.Fprintf(os.Stderr, "Added image '%s'\n", nfp)
+		input = strings.ReplaceAll(input, fp, "")
+		imgs = append(imgs, data)
+	}
+	return strings.TrimSpace(input), imgs, nil
+}
+
+// getImageData reads and validates image data from a file.
+func getImageData(filePath string) ([]byte, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	buf := make([]byte, 512)
+	_, err = file.Read(buf)
+	if err != nil {
+		return nil, err
+	}
+
+	contentType := http.DetectContentType(buf)
+	allowedTypes := []string{"image/jpeg", "image/jpg", "image/png", "image/webp"}
+	if !slices.Contains(allowedTypes, contentType) {
+		return nil, fmt.Errorf("invalid image type: %s", contentType)
+	}
+
+	// Re-read the full file
+	return os.ReadFile(filePath)
 }

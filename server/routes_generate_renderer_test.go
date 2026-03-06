@@ -20,6 +20,7 @@ import (
 // TestGenerateWithBuiltinRenderer tests that api/generate uses built-in renderers
 // when in chat-like flow (messages present, no suffix, no template)
 func TestGenerateWithBuiltinRenderer(t *testing.T) {
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
 	gin.SetMode(gin.TestMode)
 
 	mock := mockRunner{
@@ -204,6 +205,7 @@ func TestGenerateWithBuiltinRenderer(t *testing.T) {
 
 // TestGenerateWithDebugRenderOnly tests that debug_render_only works with built-in renderers
 func TestGenerateWithDebugRenderOnly(t *testing.T) {
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
 	gin.SetMode(gin.TestMode)
 
 	mock := mockRunner{

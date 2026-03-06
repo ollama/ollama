@@ -7,6 +7,8 @@ import (
 	"encoding/base64"
 	"fmt"
 	"image"
+	"image/color"
+	"image/draw"
 	_ "image/jpeg"
 	"image/png"
 	"os"
@@ -111,6 +113,7 @@ func clampF(v, min, max float32) float32 {
 }
 
 // DecodeImage decodes image bytes with EXIF orientation applied.
+// Transparent images are composited onto a white background.
 func DecodeImage(data []byte) (image.Image, error) {
 	orientation := readJPEGOrientation(data)
 
@@ -119,7 +122,31 @@ func DecodeImage(data []byte) (image.Image, error) {
 		return nil, err
 	}
 
+	img = flattenAlpha(img)
 	return applyOrientation(img, orientation), nil
+}
+
+// flattenAlpha composites an image onto a white background,
+// removing any transparency. This is needed because image
+// generation models don't handle alpha channels well.
+func flattenAlpha(img image.Image) image.Image {
+	if _, ok := img.(*image.RGBA); !ok {
+		if _, ok := img.(*image.NRGBA); !ok {
+			// No alpha channel, return as-is
+			return img
+		}
+	}
+
+	bounds := img.Bounds()
+	dst := image.NewRGBA(bounds)
+
+	// Fill with white background
+	draw.Draw(dst, bounds, &image.Uniform{color.White}, image.Point{}, draw.Src)
+
+	// Composite the image on top
+	draw.Draw(dst, bounds, img, bounds.Min, draw.Over)
+
+	return dst
 }
 
 // readJPEGOrientation extracts EXIF orientation from JPEG bytes.

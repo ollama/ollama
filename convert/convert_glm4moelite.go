@@ -6,6 +6,10 @@ import (
 	"log/slog"
 	"regexp"
 	"strconv"
+	"strings"
+
+	"github.com/pdevine/tensor"
+	"github.com/pdevine/tensor/native"
 
 	"github.com/ollama/ollama/fs/ggml"
 )
@@ -69,6 +73,9 @@ func (p *glm4MoeLiteModel) KV(t *Tokenizer) KV {
 	kv["glm4moelite.rope.dimension_count"] = p.QKRopeHeadDim
 	kv["glm4moelite.rope.freq_base"] = cmp.Or(p.RopeTheta, float32(1000000.0))
 
+	kv["glm4moelite.attention.key_length_mla"] = p.KVLoraRank + p.QKRopeHeadDim
+	kv["glm4moelite.attention.value_length_mla"] = p.KVLoraRank
+
 	kv["tokenizer.ggml.pre"] = "glm4"
 
 	return kv
@@ -97,6 +104,67 @@ func (p *glm4MoeLiteModel) Replacements() []string {
 		"mlp.up_proj", "ffn_up",
 		"mlp.gate.e_score_correction_bias", "exp_probs_b.bias",
 		"mlp.gate", "ffn_gate_inp",
+	}
+}
+
+// repackKVB extracts K or V from the combined KV_B tensor for MLA absorption.
+// K output row-major: [n_head, kv_lora_rank, qk_nope] -> GGML ne[]={qk_nope, kv_lora_rank, n_head}
+// V output row-major: [n_head, v_head, kv_lora_rank] -> GGML ne[]={kv_lora_rank, v_head, n_head}
+func (p *glm4MoeLiteModel) repackKVB(extractK bool, kvFirst bool, numHeads int) Repacker {
+	qkNope := int(p.QKNopeHeadDim)
+	vHeadDim := int(p.VHeadDim)
+	kvLoraRank := int(p.KVLoraRank)
+	kvPerHead := qkNope + vHeadDim
+
+	return func(_ string, data []float32, shape []uint64) ([]float32, error) {
+		dims := make([]int, len(shape))
+		for i := range shape {
+			dims[i] = int(shape[i])
+		}
+
+		var tt tensor.Tensor = tensor.New(tensor.WithShape(dims...), tensor.WithBacking(data))
+		var err error
+
+		// Normalize to [n_head * (qk_nope + v_head), kv_lora_rank] layout
+		if kvFirst {
+			tt, err = tensor.Transpose(tt, 1, 0)
+			if err != nil {
+				return nil, err
+			}
+			tt = tensor.Materialize(tt)
+		}
+
+		// Reshape to [n_head, qk_nope + v_head, kv_lora_rank]
+		if err := tt.Reshape(numHeads, kvPerHead, kvLoraRank); err != nil {
+			return nil, err
+		}
+
+		if extractK {
+			// Slice K: [n_head, qk_nope, kv_lora_rank]
+			tt, err = tt.Slice(nil, tensor.S(0, qkNope), nil)
+			if err != nil {
+				return nil, err
+			}
+			tt = tensor.Materialize(tt)
+			// Transpose to [n_head, kv_lora_rank, qk_nope]
+			tt, err = tensor.Transpose(tt, 0, 2, 1)
+			if err != nil {
+				return nil, err
+			}
+			tt = tensor.Materialize(tt)
+		} else {
+			// Slice V: [n_head, v_head, kv_lora_rank] - already correct layout
+			tt, err = tt.Slice(nil, tensor.S(qkNope, kvPerHead), nil)
+			if err != nil {
+				return nil, err
+			}
+			tt = tensor.Materialize(tt)
+		}
+
+		if err := tt.Reshape(tt.Shape().TotalSize()); err != nil {
+			return nil, err
+		}
+		return native.VectorF32(tt.(*tensor.Dense))
 	}
 }
 
@@ -139,6 +207,52 @@ func (p *glm4MoeLiteModel) Tensors(s []Tensor) (out []*ggml.Tensor) {
 			slog.Debug("skipping layer", "name", t.Name())
 			continue
 		}
+
+		// Split attn_kv_b into separate attn_k_b and attn_v_b for MLA absorption
+		if strings.HasSuffix(t.Name(), ".attn_kv_b.weight") {
+			qkNope := int(p.QKNopeHeadDim)
+			vHeadDim := int(p.VHeadDim)
+			kvLoraRank := int(p.KVLoraRank)
+			kvPerHead := qkNope + vHeadDim
+			numHeads := int(p.NumAttentionHeads)
+			kvFirst := true
+			if len(t.Shape()) == 2 {
+				switch {
+				case int(t.Shape()[0]) == kvLoraRank:
+					if kvPerHead > 0 && int(t.Shape()[1])%kvPerHead == 0 {
+						numHeads = int(t.Shape()[1]) / kvPerHead
+					}
+					kvFirst = true
+				case int(t.Shape()[1]) == kvLoraRank:
+					if kvPerHead > 0 && int(t.Shape()[0])%kvPerHead == 0 {
+						numHeads = int(t.Shape()[0]) / kvPerHead
+					}
+					kvFirst = false
+				default:
+					slog.Warn("glm4moelite: unexpected attn_kv_b layout", "name", t.Name(), "shape", t.Shape())
+				}
+			}
+
+			kTensor := t.Clone()
+			kTensor.SetRepacker(p.repackKVB(true, kvFirst, numHeads))
+			out = append(out, &ggml.Tensor{
+				Name:     strings.Replace(t.Name(), "attn_kv_b", "attn_k_b", 1),
+				Kind:     t.Kind(),
+				Shape:    []uint64{uint64(numHeads), uint64(kvLoraRank), uint64(qkNope)},
+				WriterTo: kTensor,
+			})
+
+			vTensor := t.Clone()
+			vTensor.SetRepacker(p.repackKVB(false, kvFirst, numHeads))
+			out = append(out, &ggml.Tensor{
+				Name:     strings.Replace(t.Name(), "attn_kv_b", "attn_v_b", 1),
+				Kind:     t.Kind(),
+				Shape:    []uint64{uint64(numHeads), uint64(vHeadDim), uint64(kvLoraRank)},
+				WriterTo: vTensor,
+			})
+			continue
+		}
+
 		out = append(out, &ggml.Tensor{
 			Name:     t.Name(),
 			Kind:     t.Kind(),
