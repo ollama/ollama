@@ -18,7 +18,8 @@ type Sampler struct {
 	RepeatLastN     int
 	PresencePenalty float32
 
-	history    []int32
+	history    *mlx.Array
+	historyLen int
 	transforms []Transform
 }
 
@@ -59,12 +60,61 @@ func New(temp, top_p, min_p float32, top_k, repeatLastN int, presencePenalty flo
 	return s
 }
 
-func (s *Sampler) ResetHistory(history []int32) {
-	s.history = append(s.history[:0], history...)
+func (s *Sampler) usesHistory() bool {
+	return s.PresencePenalty != 0
 }
 
-func (s *Sampler) AppendToken(token int32) {
-	s.history = append(s.history, token)
+func (s *Sampler) setHistory(history *mlx.Array, historyLen int) {
+	if history != nil && history.Valid() {
+		mlx.Pin(history)
+	}
+	if s.history != nil && s.history != history {
+		mlx.Unpin(s.history)
+	}
+	s.history = history
+	s.historyLen = historyLen
+}
+
+func (s *Sampler) ResetHistory(history []int32) {
+	if !s.usesHistory() {
+		return
+	}
+	if s.RepeatLastN > 0 && len(history) > s.RepeatLastN {
+		history = history[len(history)-s.RepeatLastN:]
+	}
+	if len(history) == 0 {
+		s.setHistory(nil, 0)
+		return
+	}
+
+	tokens := append([]int32(nil), history...)
+	s.setHistory(mlx.NewArrayInt32(tokens, []int32{int32(len(tokens))}), len(tokens))
+}
+
+func (s *Sampler) AppendToken(token *mlx.Array) {
+	if !s.usesHistory() || token == nil || !token.Valid() {
+		return
+	}
+
+	next := token.AsType(mlx.DTypeInt32).Reshape(token.Size())
+	nextLen := next.Size()
+
+	if s.history != nil && s.history.Valid() && s.historyLen > 0 {
+		next = s.history.Concatenate(0, next)
+		nextLen += s.historyLen
+	}
+
+	if s.RepeatLastN > 0 && nextLen > s.RepeatLastN {
+		trim := nextLen - s.RepeatLastN
+		next = next.Slice(mlx.Slice(trim, nextLen))
+		nextLen = s.RepeatLastN
+	}
+
+	s.setHistory(next, nextLen)
+}
+
+func (s *Sampler) Free() {
+	s.setHistory(nil, 0)
 }
 
 func (s *Sampler) Sample(logits *mlx.Array) *mlx.Array {
@@ -96,9 +146,19 @@ func topP(s *Sampler, logprobs *mlx.Array) *mlx.Array {
 	return logprobs.PutAlongAxis(order, filtered, -1)
 }
 
-func minP(_ *Sampler, logprobs *mlx.Array) *mlx.Array {
-	// TODO: implement
-	return logprobs
+func minP(s *Sampler, logprobs *mlx.Array) *mlx.Array {
+	if s.MinP <= 0 || s.MinP > 1 {
+		return logprobs
+	}
+
+	maxLogprobs := logprobs.TakeAlongAxis(logprobs.Argmax(-1, true), -1)
+	minLogprobs := mlx.AddScalar(maxLogprobs, float32(math.Log(float64(s.MinP))))
+
+	return mlx.Where(
+		logprobs.Less(minLogprobs),
+		mlx.FromValue(float32(math.Inf(-1))),
+		logprobs,
+	)
 }
 
 func topK(s *Sampler, logprobs *mlx.Array) *mlx.Array {
@@ -116,47 +176,15 @@ func topK(s *Sampler, logprobs *mlx.Array) *mlx.Array {
 }
 
 func penalty(s *Sampler, logprobs *mlx.Array) *mlx.Array {
-	if len(s.history) == 0 {
+	if s.history == nil || !s.history.Valid() || s.historyLen == 0 || s.PresencePenalty == 0 {
 		return logprobs
 	}
 
-	if s.PresencePenalty == 0 {
-		return logprobs
-	}
-
-	vocab := logprobs.Dim(logprobs.NumDims() - 1)
-	if vocab <= 0 {
-		return logprobs
-	}
-
-	start := 0
-	if s.RepeatLastN > 0 && s.RepeatLastN < len(s.history) {
-		start = len(s.history) - s.RepeatLastN
-	}
-
-	seen := make(map[int32]struct{}, len(s.history)-start)
-	indices := make([]int32, 0, len(s.history)-start)
-	for _, token := range s.history[start:] {
-		if token < 0 || token >= int32(vocab) {
-			continue
-		}
-		if _, ok := seen[token]; ok {
-			continue
-		}
-		seen[token] = struct{}{}
-		indices = append(indices, token)
-	}
-
-	if len(indices) == 0 {
-		return logprobs
-	}
-
-	indexShape := []int32{int32(len(indices))}
+	tokenIndices := s.history
 	if logprobs.NumDims() > 1 {
-		indexShape = []int32{1, int32(len(indices))}
+		tokenIndices = tokenIndices.ExpandDims(0)
 	}
 
-	tokenIndices := mlx.NewArrayInt32(indices, indexShape)
 	selected := logprobs.TakeAlongAxis(tokenIndices, -1)
 	adjusted := mlx.AddScalar(selected, -s.PresencePenalty)
 	return logprobs.PutAlongAxis(tokenIndices, adjusted, -1)
