@@ -36,7 +36,7 @@ func (c *Openclaw) Run(model string, args []string) error {
 	}
 
 	firstLaunch := true
-	if integrationConfig, err := config.LoadIntegration("openclaw"); err == nil {
+	if integrationConfig, err := loadStoredIntegrationConfig("openclaw"); err == nil {
 		firstLaunch = !integrationConfig.Onboarded
 	}
 

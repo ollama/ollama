@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 
@@ -182,6 +183,10 @@ Examples:
 				return nil
 			}
 
+			if modelFlag != "" && IsCloudModelDisabled(cmd.Context(), modelFlag) {
+				modelFlag = ""
+			}
+
 			err := LaunchIntegration(cmd.Context(), IntegrationLaunchRequest{
 				Name:           name,
 				ModelOverride:  modelFlag,
@@ -244,12 +249,17 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 	if err != nil {
 		return err
 	}
+	if !req.ConfigureOnly {
+		if err := EnsureIntegrationInstalled(name, runner); err != nil {
+			return err
+		}
+	}
 
 	launchClient, err := newLauncherClient()
 	if err != nil {
 		return err
 	}
-	saved, _ := config.LoadIntegration(name)
+	saved, _ := loadStoredIntegrationConfig(name)
 
 	if aliasConfigurer, ok := runner.(AliasConfigurer); ok {
 		return launchClient.launchAliasConfiguredIntegration(ctx, name, runner, aliasConfigurer, saved, req)
@@ -261,9 +271,7 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 }
 
 func (c *launcherClient) buildLauncherState(ctx context.Context) (*LauncherState, error) {
-	if err := c.loadModelInventoryOnce(ctx); err != nil {
-		return nil, err
-	}
+	_ = c.loadModelInventoryOnce(ctx)
 
 	state := &LauncherState{
 		LastSelection: config.LastSelection(),
@@ -272,7 +280,7 @@ func (c *launcherClient) buildLauncherState(ctx context.Context) (*LauncherState
 	}
 	runModelUsable, err := c.savedModelUsable(ctx, state.RunModel)
 	if err != nil {
-		return nil, err
+		runModelUsable = false
 	}
 	state.RunModelUsable = runModelUsable
 
@@ -312,7 +320,7 @@ func (c *launcherClient) buildLauncherIntegrationState(ctx context.Context, info
 }
 
 func (c *launcherClient) launcherModelState(ctx context.Context, name string, isEditor bool) (string, bool, error) {
-	cfg, err := config.LoadIntegration(name)
+	cfg, err := loadStoredIntegrationConfig(name)
 	if err != nil || len(cfg.Models) == 0 {
 		return "", false, nil
 	}
@@ -328,7 +336,7 @@ func (c *launcherClient) launcherModelState(ctx context.Context, name string, is
 	model := cfg.Models[0]
 	usable, err := c.savedModelUsable(ctx, model)
 	if err != nil {
-		return "", false, err
+		return model, false, nil
 	}
 	return model, usable, nil
 }
@@ -608,9 +616,31 @@ func (c *launcherClient) filterDisabledCloudModels(ctx context.Context, models [
 
 func (c *launcherClient) savedModelUsable(ctx context.Context, name string) (bool, error) {
 	if err := c.loadModelInventoryOnce(ctx); err != nil {
-		return false, err
+		return c.showBasedModelUsable(ctx, name)
 	}
 	return c.singleModelUsable(name), nil
+}
+
+func (c *launcherClient) showBasedModelUsable(ctx context.Context, name string) (bool, error) {
+	if name == "" {
+		return false, nil
+	}
+
+	info, err := c.apiClient.Show(ctx, &api.ShowRequest{Model: name})
+	if err != nil {
+		var statusErr api.StatusError
+		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound {
+			return false, nil
+		}
+		return false, err
+	}
+
+	if IsCloudModelName(name) || info.RemoteModel != "" {
+		c.ensureCloudStatus(ctx)
+		return !c.cloudDisabled, nil
+	}
+
+	return true, nil
 }
 
 func (c *launcherClient) singleModelUsable(name string) bool {
@@ -703,6 +733,51 @@ func launchAfterConfiguration(name string, runner Runner, model string, req Inte
 		return err
 	}
 	return runIntegration(runner, model, req.ExtraArgs)
+}
+
+func loadStoredIntegrationConfig(name string) (*config.IntegrationConfig, error) {
+	cfg, err := config.LoadIntegration(name)
+	if err == nil {
+		return cfg, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+
+	spec, specErr := LookupIntegrationSpec(name)
+	if specErr != nil {
+		return nil, err
+	}
+
+	for _, alias := range spec.Aliases {
+		legacy, legacyErr := config.LoadIntegration(alias)
+		if legacyErr == nil {
+			migrateLegacyIntegrationConfig(spec.Name, legacy)
+			if migrated, migratedErr := config.LoadIntegration(spec.Name); migratedErr == nil {
+				return migrated, nil
+			}
+			return legacy, nil
+		}
+		if legacyErr != nil && !errors.Is(legacyErr, os.ErrNotExist) {
+			return nil, legacyErr
+		}
+	}
+
+	return nil, err
+}
+
+func migrateLegacyIntegrationConfig(canonical string, legacy *config.IntegrationConfig) {
+	if legacy == nil {
+		return
+	}
+
+	_ = config.SaveIntegration(canonical, append([]string(nil), legacy.Models...))
+	if len(legacy.Aliases) > 0 {
+		_ = config.SaveAliases(canonical, cloneAliases(legacy.Aliases))
+	}
+	if legacy.Onboarded {
+		_ = config.MarkIntegrationOnboarded(canonical)
+	}
 }
 
 func primaryModelFromConfig(cfg *config.IntegrationConfig) string {

@@ -206,6 +206,65 @@ func TestLaunchCmdModelFlagFiltersDisabledCloudFromSavedConfig(t *testing.T) {
 	}
 }
 
+func TestLaunchCmdModelFlagClearsDisabledCloudOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status":
+			fmt.Fprintf(w, `{"cloud":{"disabled":true,"source":"config"}}`)
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
+		case "/api/show":
+			fmt.Fprint(w, `{"model":"llama3.2"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	stub := &launcherSingleRunner{}
+	restore := OverrideIntegration("stubapp", stub)
+	defer restore()
+
+	oldSelector := DefaultSingleSelector
+	defer func() { DefaultSingleSelector = oldSelector }()
+
+	var selectorCalls int
+	var gotCurrent string
+	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+		selectorCalls++
+		gotCurrent = current
+		return "llama3.2", nil
+	}
+
+	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command) {})
+	cmd.SetArgs([]string{"stubapp", "--model", "glm-5:cloud"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("launch command failed: %v", err)
+	}
+
+	if selectorCalls != 1 {
+		t.Fatalf("expected disabled cloud override to fall back to selector, got %d calls", selectorCalls)
+	}
+	if gotCurrent != "" {
+		t.Fatalf("expected disabled override to be cleared before selection, got current %q", gotCurrent)
+	}
+	if stub.ranModel != "llama3.2" {
+		t.Fatalf("expected launch to run with replacement local model, got %q", stub.ranModel)
+	}
+
+	saved, err := config.LoadIntegration("stubapp")
+	if err != nil {
+		t.Fatalf("failed to reload integration config: %v", err)
+	}
+	if diff := cmp.Diff([]string{"llama3.2"}, saved.Models); diff != "" {
+		t.Fatalf("saved models mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestLaunchCmdIntegrationArgPromptsForModelWithSavedSelection(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)

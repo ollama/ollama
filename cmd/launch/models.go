@@ -200,7 +200,7 @@ func selectModelsWithSelectors(ctx context.Context, name, current string, single
 	}
 
 	var preChecked []string
-	if saved, err := config.LoadIntegration(key); err == nil {
+	if saved, err := loadStoredIntegrationConfig(key); err == nil {
 		preChecked = saved.Models
 	} else if editor, ok := runner.(Editor); ok {
 		preChecked = editor.Models()

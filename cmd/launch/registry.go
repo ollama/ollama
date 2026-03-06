@@ -5,8 +5,6 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
-
-	"github.com/ollama/ollama/cmd/config"
 )
 
 // IntegrationInstallSpec describes how launcher should detect and guide installation.
@@ -291,7 +289,7 @@ func IntegrationSelectionItems() ([]ModelItem, error) {
 	items := make([]ModelItem, 0, len(visible))
 	for _, spec := range visible {
 		description := spec.Runner.String()
-		if conn, err := config.LoadIntegration(spec.Name); err == nil && len(conn.Models) > 0 {
+		if conn, err := loadStoredIntegrationConfig(spec.Name); err == nil && len(conn.Models) > 0 {
 			description = fmt.Sprintf("%s (%s)", spec.Runner.String(), conn.Models[0])
 		}
 		items = append(items, ModelItem{Name: spec.Name, Description: description})

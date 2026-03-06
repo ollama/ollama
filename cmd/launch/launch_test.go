@@ -51,6 +51,7 @@ func (r *launcherSingleRunner) String() string { return "StubSingle" }
 func setLaunchTestHome(t *testing.T, dir string) {
 	t.Helper()
 	t.Setenv("HOME", dir)
+	t.Setenv("TMPDIR", dir)
 	t.Setenv("USERPROFILE", dir)
 }
 
@@ -144,6 +145,96 @@ func TestBuildLauncherState_InstalledAndCloudDisabled(t *testing.T) {
 	}
 	if state.Integrations["opencode"].CurrentModel != "llama3.2" {
 		t.Fatalf("expected editor current model to fall back to remaining local model, got %q", state.Integrations["opencode"].CurrentModel)
+	}
+}
+
+func TestBuildLauncherState_MigratesLegacyOpenclawAliasConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+
+	if err := config.SaveIntegration("clawdbot", []string{"llama3.2"}); err != nil {
+		t.Fatalf("failed to seed legacy alias config: %v", err)
+	}
+	if err := config.SaveAliases("clawdbot", map[string]string{"primary": "llama3.2"}); err != nil {
+		t.Fatalf("failed to seed legacy alias map: %v", err)
+	}
+	if err := config.MarkIntegrationOnboarded("clawdbot"); err != nil {
+		t.Fatalf("failed to seed legacy onboarding state: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	state, err := BuildLauncherState(context.Background())
+	if err != nil {
+		t.Fatalf("BuildLauncherState returned error: %v", err)
+	}
+	if state.Integrations["openclaw"].CurrentModel != "llama3.2" {
+		t.Fatalf("expected openclaw state to reuse legacy alias config, got %q", state.Integrations["openclaw"].CurrentModel)
+	}
+
+	migrated, err := config.LoadIntegration("openclaw")
+	if err != nil {
+		t.Fatalf("expected canonical config to be migrated, got %v", err)
+	}
+	if !slices.Equal(migrated.Models, []string{"llama3.2"}) {
+		t.Fatalf("unexpected migrated models: %v", migrated.Models)
+	}
+	if migrated.Aliases["primary"] != "llama3.2" {
+		t.Fatalf("expected aliases to migrate, got %v", migrated.Aliases)
+	}
+	if !migrated.Onboarded {
+		t.Fatal("expected onboarding state to migrate to canonical openclaw key")
+	}
+}
+
+func TestBuildLauncherState_ToleratesInventoryFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+
+	if err := config.SetLastModel("llama3.2"); err != nil {
+		t.Fatalf("failed to seed last model: %v", err)
+	}
+	if err := config.SaveIntegration("claude", []string{"qwen3:8b"}); err != nil {
+		t.Fatalf("failed to seed claude config: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			w.WriteHeader(http.StatusInternalServerError)
+			fmt.Fprint(w, `{"error":"temporary failure"}`)
+		case "/api/show":
+			var req apiShowRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			fmt.Fprintf(w, `{"model":%q}`, req.Model)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	state, err := BuildLauncherState(context.Background())
+	if err != nil {
+		t.Fatalf("BuildLauncherState should tolerate inventory failure, got %v", err)
+	}
+	if !state.RunModelUsable {
+		t.Fatal("expected saved run model to remain usable via show fallback")
+	}
+	if state.Integrations["claude"].CurrentModel != "qwen3:8b" {
+		t.Fatalf("expected saved integration model to remain visible, got %q", state.Integrations["claude"].CurrentModel)
+	}
+	if !state.Integrations["claude"].ModelUsable {
+		t.Fatal("expected saved integration model to remain usable via show fallback")
 	}
 }
 
@@ -544,6 +635,40 @@ func TestLaunchIntegration_OpenclawPreservesExistingModelList(t *testing.T) {
 	}
 	if diff := compareStrings(saved.Models, []string{"llama3.2", "mistral"}); diff != "" {
 		t.Fatalf("unexpected saved models (-want +got):\n%s", diff)
+	}
+}
+
+func TestLaunchIntegration_OpenclawInstallsBeforeConfigSideEffects(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+
+	t.Setenv("PATH", t.TempDir())
+
+	editor := &launcherEditorRunner{}
+	withIntegrationOverride(t, "openclaw", editor)
+
+	selectorCalled := false
+	DefaultMultiSelector = func(title string, items []ModelItem, preChecked []string) ([]string, error) {
+		selectorCalled = true
+		return []string{"llama3.2"}, nil
+	}
+
+	err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "openclaw"})
+	if err == nil {
+		t.Fatal("expected launch to fail before configuration when OpenClaw is missing")
+	}
+	if !strings.Contains(err.Error(), "npm was not found") {
+		t.Fatalf("expected install prerequisite error, got %v", err)
+	}
+	if selectorCalled {
+		t.Fatal("expected install check to happen before model selection")
+	}
+	if len(editor.edited) != 0 {
+		t.Fatalf("expected no editor writes before install succeeds, got %v", editor.edited)
+	}
+	if _, statErr := os.Stat(filepath.Join(tmpDir, ".openclaw", "openclaw.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("expected no OpenClaw config file to be created, stat err = %v", statErr)
 	}
 }
 
