@@ -40,6 +40,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /show           Show model information")
 		fmt.Fprintln(os.Stderr, "  /skills         Show active skills")
 		fmt.Fprintln(os.Stderr, "  /skill ...      Run an active skill in chat")
+		fmt.Fprintln(os.Stderr, "  /skilltrace     Show recent skill invocations")
 		fmt.Fprintln(os.Stderr, "  /load <model>   Load a session or model")
 		fmt.Fprintln(os.Stderr, "  /save <model>   Save your current session")
 		fmt.Fprintln(os.Stderr, "  /clear          Clear session context")
@@ -139,6 +140,8 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 	var sb strings.Builder
 	var multiline MultilineState
 	var thinkExplicitlySet bool = opts.Think != nil
+	skillTraces := make([]string, 0, 32)
+
 	for {
 		line, err := scanner.Readline()
 		switch {
@@ -467,6 +470,15 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			if err := printActiveSkills(os.Stderr, true); err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			}
+		case strings.HasPrefix(line, "/skilltrace"):
+			if len(skillTraces) == 0 {
+				fmt.Fprintln(os.Stderr, "No skill invocations yet.")
+				continue
+			}
+			fmt.Fprintln(os.Stderr, "Skill invocation trace:")
+			for _, trace := range skillTraces {
+				fmt.Fprintf(os.Stderr, "  - %s\n", trace)
+			}
 		case strings.HasPrefix(line, "/skill "):
 			args := strings.Fields(line)
 			if len(args) < 2 {
@@ -481,6 +493,14 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			var errBuf bytes.Buffer
 
 			runErr := skills.RunWithOptions(cmd.Context(), name, skillArgs, nil, &outBuf, &errBuf, skills.RunOptions{})
+			if runErr != nil {
+				additional, grantErr := maybePromptForPermissions(name, runErr, false)
+				if grantErr == nil {
+					runErr = skills.RunWithOptions(cmd.Context(), name, skillArgs, nil, &outBuf, &errBuf, skills.RunOptions{
+						GrantedPermissions: additional,
+					})
+				}
+			}
 
 			duration := time.Since(started).Round(time.Millisecond)
 			rawOutput := strings.TrimSpace(outBuf.String())
@@ -495,12 +515,19 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				preview = preview[:140] + "..."
 			}
 
+			status := "ok"
 			if runErr != nil {
+				status = "error"
 				fmt.Fprintf(os.Stderr, "skill %s failed: %v\n", name, runErr)
 			} else {
 				fmt.Fprintf(os.Stderr, "[skill %s] %s\n", name, rawOutput)
 			}
-			fmt.Fprintf(os.Stderr, "skill=%s duration=%s output=%q\n", name, duration, preview)
+
+			traceLine := fmt.Sprintf("%s skill=%s status=%s duration=%s output=%q", time.Now().Format("15:04:05"), name, status, duration, preview)
+			skillTraces = append(skillTraces, traceLine)
+			if len(skillTraces) > 30 {
+				skillTraces = skillTraces[len(skillTraces)-30:]
+			}
 		case strings.HasPrefix(line, "/help"), strings.HasPrefix(line, "/?"):
 			args := strings.Fields(line)
 			if len(args) > 1 {
