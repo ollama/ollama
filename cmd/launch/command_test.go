@@ -217,7 +217,7 @@ func TestLaunchCmdModelFlagFiltersDisabledCloudFromSavedConfig(t *testing.T) {
 	t.Setenv("OLLAMA_HOST", srv.URL)
 
 	stub := &launcherEditorRunner{}
-	restore := config.OverrideIntegration("stubeditor", stub)
+	restore := OverrideIntegration("stubeditor", stub)
 	defer restore()
 
 	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command, inv LauncherInvocation) {})
@@ -263,14 +263,14 @@ func TestLaunchCmdIntegrationArgPromptsForModelWithSavedSelection(t *testing.T) 
 	t.Setenv("OLLAMA_HOST", srv.URL)
 
 	stub := &launcherSingleRunner{}
-	restore := config.OverrideIntegration("stubapp", stub)
+	restore := OverrideIntegration("stubapp", stub)
 	defer restore()
 
-	oldSelector := config.DefaultSingleSelector
-	defer func() { config.DefaultSingleSelector = oldSelector }()
+	oldSelector := DefaultSingleSelector
+	defer func() { DefaultSingleSelector = oldSelector }()
 
 	var gotCurrent string
-	config.DefaultSingleSelector = func(title string, items []config.ModelItem, current string) (string, error) {
+	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
 		gotCurrent = current
 		return "qwen3:8b", nil
 	}

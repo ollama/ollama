@@ -1,4 +1,4 @@
-package config
+package launch
 
 import (
 	"errors"
@@ -20,12 +20,30 @@ const (
 // ErrCancelled is returned when the user cancels a selection.
 var ErrCancelled = errors.New("cancelled")
 
-// errCancelled is kept as an alias for backward compatibility within the package.
+// errCancelled is kept as an internal alias for existing call sites.
 var errCancelled = ErrCancelled
 
 // DefaultConfirmPrompt provides a TUI-based confirmation prompt.
 // When set, ConfirmPrompt delegates to it instead of using raw terminal I/O.
 var DefaultConfirmPrompt func(prompt string) (bool, error)
+
+// SingleSelector is a function type for single item selection.
+// current is the name of the previously selected item to highlight; empty means no pre-selection.
+type SingleSelector func(title string, items []ModelItem, current string) (string, error)
+
+// MultiSelector is a function type for multi item selection.
+type MultiSelector func(title string, items []ModelItem, preChecked []string) ([]string, error)
+
+// DefaultSingleSelector is the default single-select implementation.
+var DefaultSingleSelector SingleSelector
+
+// DefaultMultiSelector is the default multi-select implementation.
+var DefaultMultiSelector MultiSelector
+
+// DefaultSignIn provides a TUI-based sign-in flow.
+// When set, EnsureAuth uses it instead of plain text prompts.
+// Returns the signed-in username or an error.
+var DefaultSignIn func(modelName, signInURL string) (string, error)
 
 // ConfirmPrompt asks the user to confirm an action using the configured prompt hook.
 func ConfirmPrompt(prompt string) (bool, error) {

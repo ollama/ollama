@@ -3,15 +3,12 @@
 package config
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/ollama/ollama/api"
 )
 
 type integration struct {
@@ -158,8 +155,8 @@ func SaveIntegration(appName string, models []string) error {
 	return save(cfg)
 }
 
-// integrationOnboarded marks an integration as onboarded in ollama's config.
-func integrationOnboarded(appName string) error {
+// MarkIntegrationOnboarded marks an integration as onboarded in Ollama's config.
+func MarkIntegrationOnboarded(appName string) error {
 	cfg, err := load()
 	if err != nil {
 		return err
@@ -229,30 +226,6 @@ func SetLastSelection(selection string) error {
 	}
 	cfg.LastSelection = selection
 	return save(cfg)
-}
-
-// ModelExists checks if a model exists on the Ollama server.
-func ModelExists(ctx context.Context, name string) bool {
-	if name == "" {
-		return false
-	}
-	if IsCloudModelName(name) {
-		return true
-	}
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return false
-	}
-	models, err := client.List(ctx)
-	if err != nil {
-		return false
-	}
-	for _, m := range models.Models {
-		if m.Name == name || strings.HasPrefix(m.Name, name+":") {
-			return true
-		}
-	}
-	return false
 }
 
 // LoadIntegration returns the saved config for one integration.

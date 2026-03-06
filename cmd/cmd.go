@@ -59,36 +59,36 @@ import (
 
 func init() {
 	// Override default selectors to use Bubbletea TUI instead of raw terminal I/O.
-	config.DefaultSingleSelector = func(title string, items []config.ModelItem, current string) (string, error) {
+	launch.DefaultSingleSelector = func(title string, items []launch.ModelItem, current string) (string, error) {
 		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
 		result, err := tui.SelectSingle(title, tuiItems, current)
 		if errors.Is(err, tui.ErrCancelled) {
-			return "", config.ErrCancelled
+			return "", launch.ErrCancelled
 		}
 		return result, err
 	}
 
-	config.DefaultMultiSelector = func(title string, items []config.ModelItem, preChecked []string) ([]string, error) {
+	launch.DefaultMultiSelector = func(title string, items []launch.ModelItem, preChecked []string) ([]string, error) {
 		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
 		result, err := tui.SelectMultiple(title, tuiItems, preChecked)
 		if errors.Is(err, tui.ErrCancelled) {
-			return nil, config.ErrCancelled
+			return nil, launch.ErrCancelled
 		}
 		return result, err
 	}
 
-	config.DefaultSignIn = func(modelName, signInURL string) (string, error) {
+	launch.DefaultSignIn = func(modelName, signInURL string) (string, error) {
 		userName, err := tui.RunSignIn(modelName, signInURL)
 		if errors.Is(err, tui.ErrCancelled) {
-			return "", config.ErrCancelled
+			return "", launch.ErrCancelled
 		}
 		return userName, err
 	}
 
-	config.DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	launch.DefaultConfirmPrompt = func(prompt string) (bool, error) {
 		ok, err := tui.RunConfirm(prompt)
 		if errors.Is(err, tui.ErrCancelled) {
-			return false, config.ErrCancelled
+			return false, launch.ErrCancelled
 		}
 		return ok, err
 	}
@@ -393,7 +393,7 @@ func (w *progressWriter) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
-func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions, allowCloudShowNotFound bool) error {
+func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
 	p := progress.NewProgress(os.Stderr)
 	defer p.StopAndClear()
 
@@ -406,31 +406,8 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions, allowCloudShowNotFo
 	}
 
 	requestedCloud := modelref.HasExplicitCloudSource(opts.Model)
-	connectToCloud := func(remoteModel string) error {
-		if _, err := client.Whoami(cmd.Context()); err != nil {
-			return err
-		}
-
-		if opts.ShowConnect {
-			p.StopAndClear()
-			fmt.Fprintf(os.Stderr, "Connecting to '%s' on 'ollama.com' ⚡\n", remoteModel)
-		}
-
-		return nil
-	}
 
 	if info, err := client.Show(cmd.Context(), &api.ShowRequest{Model: opts.Model}); err != nil {
-		var sErr api.StatusError
-		// TODO(parthsareen): remove this guard once cloud models are available in /api/show
-		// Interactive callers can allow explicit cloud models to skip the local
-		// /api/show stub and just verify auth/connectivity instead.
-		if requestedCloud && allowCloudShowNotFound && errors.As(err, &sErr) && sErr.StatusCode == http.StatusNotFound {
-			remoteModel, _ := modelref.StripCloudSourceTag(opts.Model)
-			if remoteModel == "" {
-				remoteModel = opts.Model
-			}
-			return connectToCloud(remoteModel)
-		}
 		return err
 	} else if info.RemoteHost != "" || requestedCloud {
 		// Cloud model, no need to load/unload
@@ -439,22 +416,22 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions, allowCloudShowNotFo
 
 		// Check if user is signed in for ollama.com cloud models
 		if isCloud {
-			if err := connectToCloud(func() string {
-				remoteModel := info.RemoteModel
-				if remoteModel == "" {
-					remoteModel = opts.Model
-				}
-				return remoteModel
-			}()); err != nil {
+			if _, err := client.Whoami(cmd.Context()); err != nil {
 				return err
 			}
-		} else if opts.ShowConnect {
+		}
+
+		if opts.ShowConnect {
 			p.StopAndClear()
 			remoteModel := info.RemoteModel
 			if remoteModel == "" {
 				remoteModel = opts.Model
 			}
-			fmt.Fprintf(os.Stderr, "Connecting to '%s' on '%s'\n", remoteModel, info.RemoteHost)
+			if isCloud {
+				fmt.Fprintf(os.Stderr, "Connecting to '%s' on 'ollama.com' ⚡\n", remoteModel)
+			} else {
+				fmt.Fprintf(os.Stderr, "Connecting to '%s' on '%s'\n", remoteModel, info.RemoteHost)
+			}
 		}
 
 		return nil
@@ -478,7 +455,7 @@ func StopHandler(cmd *cobra.Command, args []string) error {
 		Model:     args[0],
 		KeepAlive: &api.Duration{Duration: 0},
 	}
-	if err := loadOrUnloadModel(cmd, opts, false); err != nil {
+	if err := loadOrUnloadModel(cmd, opts); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			return fmt.Errorf("couldn't find model \"%s\" to stop", args[0])
 		}
@@ -718,7 +695,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	enableWebsearch, _ := cmd.Flags().GetBool("experimental-websearch")
 
 	if interactive {
-		if err := loadOrUnloadModel(cmd, &opts, true); err != nil {
+		if err := loadOrUnloadModel(cmd, &opts); err != nil {
 			var sErr api.AuthorizationError
 			if errors.As(err, &sErr) && sErr.StatusCode == http.StatusUnauthorized {
 				fmt.Printf("You need to be signed in to Ollama to run Cloud models.\n\n")
@@ -1013,7 +990,7 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 		if err := loadOrUnloadModel(cmd, &runOptions{
 			Model:     arg,
 			KeepAlive: &api.Duration{Duration: 0},
-		}, false); err != nil {
+		}); err != nil {
 			if !strings.Contains(strings.ToLower(err.Error()), "not found") {
 				fmt.Fprintf(os.Stderr, "Warning: unable to stop model '%s'\n", arg)
 			}
@@ -1945,7 +1922,7 @@ func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
 	}
 	// loadOrUnloadModel is cloud-safe here: remote/cloud models skip local preload
 	// and only validate auth/connectivity before interactive chat starts.
-	if err := loadOrUnloadModel(cmd, &opts, true); err != nil {
+	if err := loadOrUnloadModel(cmd, &opts); err != nil {
 		return fmt.Errorf("error loading model: %w", err)
 	}
 	if err := generateInteractive(cmd, opts); err != nil {
@@ -2027,7 +2004,7 @@ func runLauncherAction(cmd *cobra.Command, invocation launch.LauncherInvocation,
 		} else {
 			modelName, err = deps.resolveRunModel(cmd.Context(), action.RunModelRequest())
 		}
-		if errors.Is(err, config.ErrCancelled) {
+		if errors.Is(err, launch.ErrCancelled) {
 			return true, nil
 		}
 		if err != nil {
@@ -2045,7 +2022,7 @@ func runLauncherAction(cmd *cobra.Command, invocation launch.LauncherInvocation,
 			req.ExtraArgs = append([]string(nil), invocation.ExtraArgs...)
 		}
 		err := deps.launchIntegration(cmd.Context(), req)
-		if errors.Is(err, config.ErrCancelled) {
+		if errors.Is(err, launch.ErrCancelled) {
 			return true, nil
 		}
 		if err != nil {

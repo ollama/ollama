@@ -206,7 +206,7 @@ func TestRunLauncherAction_RunModelContinuesAfterCancellation(t *testing.T) {
 		buildState: nil,
 		runMenu:    nil,
 		resolveRunModel: func(ctx context.Context, req launch.RunModelRequest) (string, error) {
-			return "", config.ErrCancelled
+			return "", launch.ErrCancelled
 		},
 		resolveRequestedRunModel: unexpectedRequestedRunModelResolution(t),
 		launchIntegration:        unexpectedIntegrationLaunch(t),
@@ -233,7 +233,7 @@ func TestRunLauncherAction_IntegrationContinuesAfterCancellation(t *testing.T) {
 		resolveRunModel:          unexpectedRunModelResolution(t),
 		resolveRequestedRunModel: unexpectedRequestedRunModelResolution(t),
 		launchIntegration: func(ctx context.Context, req launch.IntegrationLaunchRequest) error {
-			return config.ErrCancelled
+			return launch.ErrCancelled
 		},
 		runModel: unexpectedModelLaunch(t),
 	})

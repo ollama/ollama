@@ -1,4 +1,4 @@
-package config
+package launch
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"runtime"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/envconfig"
 )
 
@@ -75,7 +76,7 @@ func (c *Claude) Run(model string, args []string) error {
 func (c *Claude) modelEnvVars(model string) []string {
 	primary := model
 	fast := model
-	if cfg, err := LoadIntegration("claude"); err == nil && cfg.Aliases != nil {
+	if cfg, err := config.LoadIntegration("claude"); err == nil && cfg.Aliases != nil {
 		if p := cfg.Aliases["primary"]; p != "" {
 			primary = p
 		}

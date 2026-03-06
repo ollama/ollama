@@ -9,7 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/cmd/config"
+	"github.com/ollama/ollama/cmd/launch"
 )
 
 type signInTickMsg struct{}
@@ -127,7 +127,7 @@ func checkSignIn() tea.Msg {
 
 // RunSignIn shows a bubbletea sign-in dialog and polls until the user signs in or cancels.
 func RunSignIn(modelName, signInURL string) (string, error) {
-	config.OpenBrowser(signInURL)
+	launch.OpenBrowser(signInURL)
 
 	m := signInModel{
 		modelName: modelName,

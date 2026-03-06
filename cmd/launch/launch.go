@@ -13,9 +13,6 @@ import (
 	"golang.org/x/term"
 )
 
-// IntegrationInfo re-exports config integration display metadata for the TUI.
-type IntegrationInfo = config.IntegrationInfo
-
 // LauncherState is the launch-owned snapshot used to render the root launcher menu.
 type LauncherState struct {
 	LastSelection  string
@@ -63,9 +60,39 @@ var isInteractiveSession = func() bool {
 	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 }
 
-// ListIntegrationInfos returns the registered integrations in launcher display order.
-func ListIntegrationInfos() []IntegrationInfo {
-	return config.ListIntegrationInfos()
+// Runner executes a model with an integration.
+type Runner interface {
+	Run(model string, args []string) error
+	String() string
+}
+
+// Editor can edit config files for integrations that support model configuration.
+type Editor interface {
+	Paths() []string
+	Edit(models []string) error
+	Models() []string
+}
+
+// AliasConfigurer can configure model aliases for integrations like Claude and Codex.
+type AliasConfigurer interface {
+	ConfigureAliases(ctx context.Context, primaryModel string, existing map[string]string, force bool) (map[string]string, bool, error)
+	SetAliases(ctx context.Context, aliases map[string]string) error
+}
+
+type modelInfo struct {
+	Name        string
+	Remote      bool
+	ToolCapable bool
+}
+
+// ModelInfo re-exports launcher model inventory details for callers.
+type ModelInfo = modelInfo
+
+// ModelItem represents a model for selection UIs.
+type ModelItem struct {
+	Name        string
+	Description string
+	Recommended bool
 }
 
 // LaunchIntegrationByName launches the named integration using saved config or prompts for setup.
@@ -84,32 +111,32 @@ func LaunchIntegrationWithModel(name, modelName string) error {
 // SaveAndEditIntegration saves the models for an integration and, when supported,
 // runs its Edit method to write any integration-managed config files.
 func SaveAndEditIntegration(name string, models []string) error {
-	key, runner, err := config.LookupIntegration(name)
+	key, runner, err := LookupIntegration(name)
 	if err != nil {
 		return err
 	}
 
-	editor, ok := runner.(config.Editor)
+	editor, ok := runner.(Editor)
 	if !ok {
 		return config.SaveIntegration(key, models)
 	}
 
-	return config.PrepareEditorIntegration(key, runner, editor, models)
+	return PrepareEditorIntegration(key, runner, editor, models)
 }
 
 // ConfigureIntegrationWithSelectors allows the user to select/change the model for an integration using custom selectors.
-func ConfigureIntegrationWithSelectors(ctx context.Context, name string, single config.SingleSelector, multi config.MultiSelector) error {
-	oldSingle := config.DefaultSingleSelector
-	oldMulti := config.DefaultMultiSelector
+func ConfigureIntegrationWithSelectors(ctx context.Context, name string, single SingleSelector, multi MultiSelector) error {
+	oldSingle := DefaultSingleSelector
+	oldMulti := DefaultMultiSelector
 	if single != nil {
-		config.DefaultSingleSelector = single
+		DefaultSingleSelector = single
 	}
 	if multi != nil {
-		config.DefaultMultiSelector = multi
+		DefaultMultiSelector = multi
 	}
 	defer func() {
-		config.DefaultSingleSelector = oldSingle
-		config.DefaultMultiSelector = oldMulti
+		DefaultSingleSelector = oldSingle
+		DefaultMultiSelector = oldMulti
 	}()
 
 	return LaunchIntegration(ctx, IntegrationLaunchRequest{
@@ -197,7 +224,7 @@ Examples:
 			if name == "" {
 				var err error
 				name, err = SelectIntegration()
-				if errors.Is(err, config.ErrCancelled) {
+				if errors.Is(err, ErrCancelled) {
 					return nil
 				}
 				if err != nil {
@@ -212,7 +239,7 @@ Examples:
 				ConfigureOnly:  configFlag,
 				ExtraArgs:      passArgs,
 			})
-			if errors.Is(err, config.ErrCancelled) {
+			if errors.Is(err, ErrCancelled) {
 				return nil
 			}
 			return err
@@ -226,7 +253,7 @@ Examples:
 
 type launcherClient struct {
 	apiClient         *api.Client
-	modelInventory    []config.ModelInfo
+	modelInventory    []ModelInfo
 	cloudDisabled     bool
 	cloudStatusLoaded bool
 	inventoryLoaded   bool
@@ -272,7 +299,7 @@ func ResolveRequestedRunModel(ctx context.Context, model string) (string, error)
 
 // LaunchIntegration runs the canonical launcher flow for one integration.
 func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error {
-	name, runner, err := config.LookupIntegration(req.Name)
+	name, runner, err := LookupIntegration(req.Name)
 	if err != nil {
 		return err
 	}
@@ -283,10 +310,10 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 	}
 	saved, _ := config.LoadIntegration(name)
 
-	if aliasConfigurer, ok := runner.(config.AliasConfigurer); ok {
+	if aliasConfigurer, ok := runner.(AliasConfigurer); ok {
 		return launchClient.launchAliasConfiguredIntegration(ctx, name, runner, aliasConfigurer, saved, req)
 	}
-	if editor, ok := runner.(config.Editor); ok {
+	if editor, ok := runner.(Editor); ok {
 		return launchClient.launchEditorIntegration(ctx, name, runner, editor, saved, req)
 	}
 	return launchClient.launchSingleIntegration(ctx, name, runner, saved, req)
@@ -294,16 +321,16 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 
 // SelectIntegration lets the user choose which integration to launch.
 func SelectIntegration() (string, error) {
-	if config.DefaultSingleSelector == nil {
+	if DefaultSingleSelector == nil {
 		return "", fmt.Errorf("no selector configured")
 	}
 
-	items, err := config.IntegrationSelectionItems()
+	items, err := IntegrationSelectionItems()
 	if err != nil {
 		return "", err
 	}
 
-	return config.DefaultSingleSelector("Select integration:", items, "")
+	return DefaultSingleSelector("Select integration:", items, "")
 }
 
 func (c *launcherClient) buildLauncherState(ctx context.Context) (*LauncherState, error) {
@@ -322,7 +349,7 @@ func (c *launcherClient) buildLauncherState(ctx context.Context) (*LauncherState
 	}
 	state.RunModelUsable = runModelUsable
 
-	for _, info := range config.ListIntegrationInfos() {
+	for _, info := range ListIntegrationInfos() {
 		integrationState, err := c.buildLauncherIntegrationState(ctx, info)
 		if err != nil {
 			return nil, err
@@ -333,10 +360,10 @@ func (c *launcherClient) buildLauncherState(ctx context.Context) (*LauncherState
 	return state, nil
 }
 
-func (c *launcherClient) buildLauncherIntegrationState(ctx context.Context, info config.IntegrationInfo) (LauncherIntegrationState, error) {
-	installed := config.IsIntegrationInstalled(info.Name)
-	autoInstallable := config.AutoInstallable(info.Name)
-	isEditor := config.IsEditorIntegration(info.Name)
+func (c *launcherClient) buildLauncherIntegrationState(ctx context.Context, info IntegrationInfo) (LauncherIntegrationState, error) {
+	installed := IsIntegrationInstalled(info.Name)
+	autoInstallable := AutoInstallable(info.Name)
+	isEditor := IsEditorIntegration(info.Name)
 	currentModel, usable, err := c.launcherModelState(ctx, info.Name, isEditor)
 	if err != nil {
 		return LauncherIntegrationState{}, err
@@ -352,7 +379,7 @@ func (c *launcherClient) buildLauncherIntegrationState(ctx context.Context, info
 		Changeable:      installed || autoInstallable,
 		CurrentModel:    currentModel,
 		ModelUsable:     usable,
-		InstallHint:     config.IntegrationInstallHint(info.Name),
+		InstallHint:     IntegrationInstallHint(info.Name),
 		Editor:          isEditor,
 	}, nil
 }
@@ -397,7 +424,7 @@ func (c *launcherClient) resolveRunModel(ctx context.Context, req RunModelReques
 		}
 	}
 
-	model, err := c.selectSingleModelWithSelector(ctx, "Select model to run:", current, config.DefaultSingleSelector)
+	model, err := c.selectSingleModelWithSelector(ctx, "Select model to run:", current, DefaultSingleSelector)
 	if err != nil {
 		return "", err
 	}
@@ -417,7 +444,7 @@ func (c *launcherClient) resolveRequestedRunModel(ctx context.Context, model str
 	return model, nil
 }
 
-func (c *launcherClient) launchSingleIntegration(ctx context.Context, name string, runner config.Runner, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
+func (c *launcherClient) launchSingleIntegration(ctx context.Context, name string, runner Runner, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
 	current := primaryModelFromConfig(saved)
 	target := req.ModelOverride
 	needsConfigure := req.ForceConfigure
@@ -434,7 +461,7 @@ func (c *launcherClient) launchSingleIntegration(ctx context.Context, name strin
 	}
 
 	if needsConfigure {
-		selected, err := c.selectSingleModelWithSelector(ctx, fmt.Sprintf("Select model for %s:", runner), target, config.DefaultSingleSelector)
+		selected, err := c.selectSingleModelWithSelector(ctx, fmt.Sprintf("Select model for %s:", runner), target, DefaultSingleSelector)
 		if err != nil {
 			return err
 		}
@@ -454,7 +481,7 @@ func (c *launcherClient) launchSingleIntegration(ctx context.Context, name strin
 	return launchAfterConfiguration(name, runner, target, req)
 }
 
-func (c *launcherClient) launchEditorIntegration(ctx context.Context, name string, runner config.Runner, editor config.Editor, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
+func (c *launcherClient) launchEditorIntegration(ctx context.Context, name string, runner Runner, editor Editor, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
 	models, needsConfigure := c.resolveEditorLaunchModels(ctx, saved, req)
 
 	if needsConfigure {
@@ -472,7 +499,7 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 	}
 
 	if needsConfigure || req.ModelOverride != "" {
-		if err := config.PrepareEditorIntegration(name, runner, editor, models); err != nil {
+		if err := PrepareEditorIntegration(name, runner, editor, models); err != nil {
 			return err
 		}
 	}
@@ -480,7 +507,7 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 	return launchAfterConfiguration(name, runner, models[0], req)
 }
 
-func (c *launcherClient) launchAliasConfiguredIntegration(ctx context.Context, name string, runner config.Runner, aliases config.AliasConfigurer, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
+func (c *launcherClient) launchAliasConfiguredIntegration(ctx context.Context, name string, runner Runner, aliases AliasConfigurer, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
 	primary := req.ModelOverride
 	var existingAliases map[string]string
 	if saved != nil {
@@ -539,7 +566,7 @@ func (c *launcherClient) launchAliasConfiguredIntegration(ctx context.Context, n
 	return launchAfterConfiguration(name, runner, primary, req)
 }
 
-func (c *launcherClient) selectSingleModelWithSelector(ctx context.Context, title, current string, selector config.SingleSelector) (string, error) {
+func (c *launcherClient) selectSingleModelWithSelector(ctx context.Context, title, current string, selector SingleSelector) (string, error) {
 	if selector == nil {
 		return "", fmt.Errorf("no selector configured")
 	}
@@ -559,8 +586,8 @@ func (c *launcherClient) selectSingleModelWithSelector(ctx context.Context, titl
 	return selected, nil
 }
 
-func (c *launcherClient) selectMultiModelsForIntegration(ctx context.Context, runner config.Runner, preChecked []string) ([]string, error) {
-	if config.DefaultMultiSelector == nil {
+func (c *launcherClient) selectMultiModelsForIntegration(ctx context.Context, runner Runner, preChecked []string) ([]string, error) {
+	if DefaultMultiSelector == nil {
 		return nil, fmt.Errorf("no selector configured")
 	}
 
@@ -569,7 +596,7 @@ func (c *launcherClient) selectMultiModelsForIntegration(ctx context.Context, ru
 		return nil, err
 	}
 
-	selected, err := config.DefaultMultiSelector(fmt.Sprintf("Select models for %s:", runner), items, orderedChecked)
+	selected, err := DefaultMultiSelector(fmt.Sprintf("Select models for %s:", runner), items, orderedChecked)
 	if err != nil {
 		return nil, err
 	}
@@ -579,14 +606,14 @@ func (c *launcherClient) selectMultiModelsForIntegration(ctx context.Context, ru
 	return selected, nil
 }
 
-func (c *launcherClient) loadSelectableModels(ctx context.Context, preChecked []string, current, emptyMessage string) ([]config.ModelItem, []string, error) {
+func (c *launcherClient) loadSelectableModels(ctx context.Context, preChecked []string, current, emptyMessage string) ([]ModelItem, []string, error) {
 	if err := c.loadModelInventoryOnce(ctx); err != nil {
 		return nil, nil, err
 	}
 
-	items, orderedChecked, _, _ := config.BuildModelList(c.modelInventory, preChecked, current)
+	items, orderedChecked, _, _ := BuildModelList(c.modelInventory, preChecked, current)
 	if c.cloudDisabled {
-		items = config.FilterCloudItems(items)
+		items = FilterCloudItems(items)
 		orderedChecked = c.filterDisabledCloudModels(ctx, orderedChecked)
 	}
 	if len(items) == 0 {
@@ -610,22 +637,22 @@ func (c *launcherClient) ensureModelsReady(ctx context.Context, models []string)
 		return nil
 	}
 
-	missingModelPolicy := config.MissingModelPromptPull
+	missingModelPolicy := MissingModelPromptPull
 	if !isInteractiveSession() {
-		missingModelPolicy = config.MissingModelFail
+		missingModelPolicy = MissingModelFail
 	}
 
 	cloudModels := make(map[string]bool, len(models))
 	for _, model := range models {
-		if err := config.ShowOrPullWithPolicy(ctx, c.apiClient, model, missingModelPolicy); err != nil {
+		if err := ShowOrPullWithPolicy(ctx, c.apiClient, model, missingModelPolicy); err != nil {
 			return err
 		}
-		if config.IsCloudModelName(model) {
+		if IsCloudModelName(model) {
 			cloudModels[model] = true
 		}
 	}
 
-	return config.EnsureAuth(ctx, c.apiClient, cloudModels, models)
+	return EnsureAuth(ctx, c.apiClient, cloudModels, models)
 }
 
 func (c *launcherClient) resolveEditorLaunchModels(ctx context.Context, saved *config.IntegrationConfig, req IntegrationLaunchRequest) ([]string, bool) {
@@ -655,7 +682,7 @@ func (c *launcherClient) filterDisabledCloudModels(ctx context.Context, models [
 
 	filtered := make([]string, 0, len(models))
 	for _, model := range models {
-		if !config.IsCloudModelName(model) {
+		if !IsCloudModelName(model) {
 			filtered = append(filtered, model)
 		}
 	}
@@ -673,7 +700,7 @@ func (c *launcherClient) singleModelUsable(name string) bool {
 	if name == "" {
 		return false
 	}
-	if config.IsCloudModelName(name) {
+	if IsCloudModelName(name) {
 		return !c.cloudDisabled
 	}
 	return c.hasLocalModel(name)
@@ -695,7 +722,7 @@ func (c *launcherClient) ensureCloudStatus(ctx context.Context) {
 	if c.cloudStatusLoaded {
 		return
 	}
-	c.cloudDisabled, _ = config.CloudStatusDisabled(ctx, c.apiClient)
+	c.cloudDisabled, _ = CloudStatusDisabled(ctx, c.apiClient)
 	c.cloudStatusLoaded = true
 }
 
@@ -712,28 +739,28 @@ func (c *launcherClient) loadModelInventoryOnce(ctx context.Context) error {
 	c.ensureCloudStatus(ctx)
 	c.modelInventory = c.modelInventory[:0]
 	for _, model := range resp.Models {
-		c.modelInventory = append(c.modelInventory, config.ModelInfo{
+		c.modelInventory = append(c.modelInventory, ModelInfo{
 			Name:   model.Name,
 			Remote: model.RemoteModel != "",
 		})
 	}
 	if c.cloudDisabled {
-		c.modelInventory = config.FilterCloudModels(c.modelInventory)
+		c.modelInventory = FilterCloudModels(c.modelInventory)
 	}
 	c.inventoryLoaded = true
 	return nil
 }
 
-func runIntegration(runner config.Runner, modelName string, args []string) error {
+func runIntegration(runner Runner, modelName string, args []string) error {
 	fmt.Fprintf(os.Stderr, "\nLaunching %s with %s...\n", runner, modelName)
 	return runner.Run(modelName, args)
 }
 
-func syncAliases(ctx context.Context, client *api.Client, aliasConfigurer config.AliasConfigurer, name, model string, existing map[string]string) error {
+func syncAliases(ctx context.Context, client *api.Client, aliasConfigurer AliasConfigurer, name, model string, existing map[string]string) error {
 	aliases := cloneAliases(existing)
 	aliases["primary"] = model
 
-	if config.IsCloudModelName(model) {
+	if IsCloudModelName(model) {
 		aliases["fast"] = model
 	} else {
 		delete(aliases, "fast")
@@ -745,9 +772,9 @@ func syncAliases(ctx context.Context, client *api.Client, aliasConfigurer config
 	return config.SaveAliases(name, aliases)
 }
 
-func launchAfterConfiguration(name string, runner config.Runner, model string, req IntegrationLaunchRequest) error {
+func launchAfterConfiguration(name string, runner Runner, model string, req IntegrationLaunchRequest) error {
 	if req.ConfigureOnly {
-		launch, err := config.ConfirmPrompt(fmt.Sprintf("Launch %s now?", runner))
+		launch, err := ConfirmPrompt(fmt.Sprintf("Launch %s now?", runner))
 		if err != nil {
 			return err
 		}
@@ -755,7 +782,7 @@ func launchAfterConfiguration(name string, runner config.Runner, model string, r
 			return nil
 		}
 	}
-	if err := config.EnsureIntegrationInstalled(name, runner); err != nil {
+	if err := EnsureIntegrationInstalled(name, runner); err != nil {
 		return err
 	}
 	return runIntegration(runner, model, req.ExtraArgs)
@@ -783,7 +810,7 @@ func cloneAliases(aliases map[string]string) map[string]string {
 func normalizedAliases(primary string, aliases map[string]string) map[string]string {
 	normalized := cloneAliases(aliases)
 	normalized["primary"] = primary
-	if config.IsCloudModelName(primary) {
+	if IsCloudModelName(primary) {
 		normalized["fast"] = primary
 	} else {
 		delete(normalized, "fast")

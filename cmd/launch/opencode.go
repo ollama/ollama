@@ -1,4 +1,4 @@
-package config
+package launch
 
 import (
 	"encoding/json"
@@ -11,29 +11,10 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/internal/modelref"
 )
 
 // OpenCode implements Runner and Editor for OpenCode integration
 type OpenCode struct{}
-
-// cloudModelLimit holds context and output token limits for a cloud model.
-type cloudModelLimit struct {
-	Context int
-	Output  int
-}
-
-// lookupCloudModelLimit returns the token limits for a cloud model.
-// It normalizes explicit cloud source suffixes before checking the shared limit map.
-func lookupCloudModelLimit(name string) (cloudModelLimit, bool) {
-	base, stripped := modelref.StripCloudSourceTag(name)
-	if stripped {
-		if l, ok := cloudModelLimits[base]; ok {
-			return l, true
-		}
-	}
-	return cloudModelLimit{}, false
-}
 
 func (o *OpenCode) String() string { return "OpenCode" }
 

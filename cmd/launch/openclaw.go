@@ -1,4 +1,4 @@
-package config
+package launch
 
 import (
 	"context"
@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/types/model"
 )
@@ -35,7 +36,7 @@ func (c *Openclaw) Run(model string, args []string) error {
 	}
 
 	firstLaunch := true
-	if integrationConfig, err := LoadIntegration("openclaw"); err == nil {
+	if integrationConfig, err := config.LoadIntegration("openclaw"); err == nil {
 		firstLaunch = !integrationConfig.Onboarded
 	}
 
@@ -107,7 +108,7 @@ func (c *Openclaw) Run(model string, args []string) error {
 			return windowsHint(err)
 		}
 		if firstLaunch {
-			if err := integrationOnboarded("openclaw"); err != nil {
+			if err := config.MarkIntegrationOnboarded("openclaw"); err != nil {
 				return fmt.Errorf("failed to save onboarding state: %w", err)
 			}
 		}
@@ -166,7 +167,7 @@ func (c *Openclaw) Run(model string, args []string) error {
 	}
 
 	if firstLaunch {
-		if err := integrationOnboarded("openclaw"); err != nil {
+		if err := config.MarkIntegrationOnboarded("openclaw"); err != nil {
 			return fmt.Errorf("failed to save onboarding state: %w", err)
 		}
 	}

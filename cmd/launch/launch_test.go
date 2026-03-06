@@ -62,9 +62,9 @@ func writeFakeBinary(t *testing.T, dir, name string) {
 	}
 }
 
-func withIntegrationOverride(t *testing.T, name string, runner config.Runner) {
+func withIntegrationOverride(t *testing.T, name string, runner Runner) {
 	t.Helper()
-	restore := config.OverrideIntegration(name, runner)
+	restore := OverrideIntegration(name, runner)
 	t.Cleanup(restore)
 }
 
@@ -79,15 +79,15 @@ func withInteractiveSession(t *testing.T, interactive bool) {
 
 func withLauncherHooks(t *testing.T) {
 	t.Helper()
-	oldSingle := config.DefaultSingleSelector
-	oldMulti := config.DefaultMultiSelector
-	oldConfirm := config.DefaultConfirmPrompt
-	oldSignIn := config.DefaultSignIn
+	oldSingle := DefaultSingleSelector
+	oldMulti := DefaultMultiSelector
+	oldConfirm := DefaultConfirmPrompt
+	oldSignIn := DefaultSignIn
 	t.Cleanup(func() {
-		config.DefaultSingleSelector = oldSingle
-		config.DefaultMultiSelector = oldMulti
-		config.DefaultConfirmPrompt = oldConfirm
-		config.DefaultSignIn = oldSignIn
+		DefaultSingleSelector = oldSingle
+		DefaultMultiSelector = oldMulti
+		DefaultConfirmPrompt = oldConfirm
+		DefaultSignIn = oldSignIn
 	})
 }
 
@@ -157,7 +157,7 @@ func TestResolveRunModel_UsesSavedModelWithoutSelector(t *testing.T) {
 	}
 
 	selectorCalled := false
-	config.DefaultSingleSelector = func(title string, items []config.ModelItem, current string) (string, error) {
+	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
 		selectorCalled = true
 		return "", nil
 	}
@@ -223,7 +223,7 @@ func TestResolveRequestedRunModel_DoesNotPersistOnFailure(t *testing.T) {
 		t.Fatalf("failed to seed last model: %v", err)
 	}
 
-	config.DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
 		t.Fatal("confirm prompt should not be called in headless missing-model flow")
 		return false, nil
 	}
@@ -258,7 +258,7 @@ func TestResolveRunModel_ForcePickerAlwaysUsesSelector(t *testing.T) {
 	}
 
 	var selectorCalls int
-	config.DefaultSingleSelector = func(title string, items []config.ModelItem, current string) (string, error) {
+	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
 		selectorCalls++
 		if current != "llama3.2" {
 			t.Fatalf("expected current selection to be last model, got %q", current)
@@ -299,12 +299,12 @@ func TestResolveRunModel_UsesSignInHookForCloudModel(t *testing.T) {
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
 
-	config.DefaultSingleSelector = func(title string, items []config.ModelItem, current string) (string, error) {
+	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
 		return "glm-5:cloud", nil
 	}
 
 	signInCalled := false
-	config.DefaultSignIn = func(modelName, signInURL string) (string, error) {
+	DefaultSignIn = func(modelName, signInURL string) (string, error) {
 		signInCalled = true
 		if modelName != "glm-5:cloud" {
 			t.Fatalf("unexpected model passed to sign-in: %q", modelName)
@@ -357,13 +357,13 @@ func TestLaunchIntegration_EditorForceConfigure(t *testing.T) {
 	withIntegrationOverride(t, "droid", editor)
 
 	var multiCalled bool
-	config.DefaultMultiSelector = func(title string, items []config.ModelItem, preChecked []string) ([]string, error) {
+	DefaultMultiSelector = func(title string, items []ModelItem, preChecked []string) ([]string, error) {
 		multiCalled = true
 		return []string{"llama3.2", "qwen3:8b"}, nil
 	}
 
 	var proceedPrompt bool
-	config.DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
 		if prompt == "Proceed?" {
 			proceedPrompt = true
 		}
@@ -481,7 +481,7 @@ func TestLaunchIntegration_EditorCloudDisabledFallsBackToSelector(t *testing.T) 
 	}
 
 	var multiCalled bool
-	config.DefaultMultiSelector = func(title string, items []config.ModelItem, preChecked []string) ([]string, error) {
+	DefaultMultiSelector = func(title string, items []ModelItem, preChecked []string) ([]string, error) {
 		multiCalled = true
 		return []string{"llama3.2"}, nil
 	}
@@ -525,7 +525,7 @@ func TestLaunchIntegration_ConfiguredEditorLaunchSkipsReconfigure(t *testing.T) 
 		t.Fatalf("failed to seed config: %v", err)
 	}
 
-	config.DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
 		t.Fatalf("did not expect prompt during a normal editor launch: %s", prompt)
 		return false, nil
 	}
@@ -617,12 +617,12 @@ func TestLaunchIntegration_ConfigureOnlyDoesNotRequireInstalledBinary(t *testing
 	editor := &launcherEditorRunner{paths: []string{"/tmp/settings.json"}}
 	withIntegrationOverride(t, "droid", editor)
 
-	config.DefaultMultiSelector = func(title string, items []config.ModelItem, preChecked []string) ([]string, error) {
+	DefaultMultiSelector = func(title string, items []ModelItem, preChecked []string) ([]string, error) {
 		return []string{"llama3.2"}, nil
 	}
 
 	var prompts []string
-	config.DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
 		prompts = append(prompts, prompt)
 		if strings.Contains(prompt, "Launch LauncherEditor now?") {
 			return false, nil
@@ -750,7 +750,7 @@ func TestLaunchIntegration_ClaudeForceConfigureReprompts(t *testing.T) {
 	}
 
 	var selectorCalls int
-	config.DefaultSingleSelector = func(title string, items []config.ModelItem, current string) (string, error) {
+	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
 		selectorCalls++
 		return "glm-5:cloud", nil
 	}
@@ -801,13 +801,13 @@ func TestLaunchIntegration_ClaudeModelOverrideSkipsAliasSelector(t *testing.T) {
 	t.Setenv("PATH", binDir)
 
 	var selectorCalls int
-	config.DefaultSingleSelector = func(title string, items []config.ModelItem, current string) (string, error) {
+	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
 		selectorCalls++
 		return "", fmt.Errorf("selector should not run when --model override is set")
 	}
 
 	var confirmCalls int
-	config.DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
 		confirmCalls++
 		if !strings.Contains(prompt, "glm-4") {
 			t.Fatalf("expected download prompt for override model, got %q", prompt)
@@ -868,12 +868,12 @@ func TestLaunchIntegration_ConfigureOnlyPrompt(t *testing.T) {
 	runner := &launcherSingleRunner{}
 	withIntegrationOverride(t, "stubsingle", runner)
 
-	config.DefaultSingleSelector = func(title string, items []config.ModelItem, current string) (string, error) {
+	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
 		return "llama3.2", nil
 	}
 
 	var prompts []string
-	config.DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
 		prompts = append(prompts, prompt)
 		if strings.Contains(prompt, "Launch StubSingle now?") {
 			return false, nil
@@ -923,7 +923,7 @@ func TestLaunchIntegration_ModelOverrideHeadlessMissingFailsWithoutPrompt(t *tes
 	withIntegrationOverride(t, "droid", runner)
 
 	confirmCalled := false
-	config.DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
 		confirmCalled = true
 		return true, nil
 	}
@@ -980,7 +980,7 @@ func TestLaunchIntegration_ModelOverrideInteractiveMissingPromptsAndPulls(t *tes
 	withIntegrationOverride(t, "droid", runner)
 
 	confirmCalled := false
-	config.DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
 		confirmCalled = true
 		if !strings.Contains(prompt, "missing-model") {
 			t.Fatalf("expected prompt to mention missing model, got %q", prompt)
@@ -1036,12 +1036,12 @@ func TestLaunchIntegration_HeadlessSelectorFlowFailsWithoutPrompt(t *testing.T) 
 	runner := &launcherSingleRunner{}
 	withIntegrationOverride(t, "droid", runner)
 
-	config.DefaultSingleSelector = func(title string, items []config.ModelItem, current string) (string, error) {
+	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
 		return "missing-model", nil
 	}
 
 	confirmCalled := false
-	config.DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
 		confirmCalled = true
 		return true, nil
 	}

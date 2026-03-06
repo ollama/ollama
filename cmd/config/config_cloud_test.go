@@ -1,7 +1,6 @@
 package config
 
 import (
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -440,11 +439,6 @@ func containsHelper(s, substr string) bool {
 	return false
 }
 
-func TestClaudeImplementsAliasConfigurer(t *testing.T) {
-	c := &Claude{}
-	var _ AliasConfigurer = c // Compile-time check
-}
-
 func TestModelNameEdgeCases(t *testing.T) {
 	testCases := []struct {
 		name  string
@@ -559,36 +553,6 @@ func TestSwitchingScenarios(t *testing.T) {
 		}
 		if loaded.Aliases["fast"] != "cloud-model-2" {
 			t.Errorf("fast should be cloud-model-2, got %q", loaded.Aliases["fast"])
-		}
-	})
-}
-
-func TestToolCapabilityFiltering(t *testing.T) {
-	t.Run("all models checked for tool capability", func(t *testing.T) {
-		// Both cloud and local models are checked for tool capability via Show API
-		// Only models with "tools" in capabilities are included
-		m := modelInfo{Name: "tool-model", Remote: false, ToolCapable: true}
-		if !m.ToolCapable {
-			t.Error("tool capable model should be marked as such")
-		}
-	})
-
-	t.Run("modelInfo includes ToolCapable field", func(t *testing.T) {
-		m := modelInfo{Name: "test", Remote: true, ToolCapable: true}
-		if !m.ToolCapable {
-			t.Error("ToolCapable field should be accessible")
-		}
-	})
-}
-
-func TestIsCloudModel_RequiresClient(t *testing.T) {
-	t.Run("nil client always returns false", func(t *testing.T) {
-		// isCloudModel now only uses Show API, no suffix detection
-		if isCloudModel(context.Background(), nil, "model:cloud") {
-			t.Error("nil client should return false regardless of suffix")
-		}
-		if isCloudModel(context.Background(), nil, "local-model") {
-			t.Error("nil client should return false")
 		}
 	})
 }

@@ -1796,17 +1796,16 @@ func TestRunOptions_Copy_Independence(t *testing.T) {
 
 func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 	tests := []struct {
-		name                   string
-		model                  string
-		showStatus             int
-		remoteHost             string
-		remoteModel            string
-		whoamiStatus           int
-		whoamiResp             any
-		allowCloudShowNotFound bool
-		expectWhoami           bool
-		expectedError          string
-		expectAuthError        bool
+		name            string
+		model           string
+		showStatus      int
+		remoteHost      string
+		remoteModel     string
+		whoamiStatus    int
+		whoamiResp      any
+		expectWhoami    bool
+		expectedError   string
+		expectAuthError bool
 	}{
 		{
 			name:         "ollama.com cloud model - user signed in",
@@ -1857,15 +1856,6 @@ func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 			expectedError:   "not found",
 			expectWhoami:    false,
 			expectAuthError: false,
-		},
-		{
-			name:                   "explicit :cloud model without local stub can opt into auth-only connect",
-			model:                  "minimax-m2.5:cloud",
-			showStatus:             http.StatusNotFound,
-			whoamiStatus:           http.StatusOK,
-			whoamiResp:             api.UserResponse{Name: "testuser"},
-			allowCloudShowNotFound: true,
-			expectWhoami:           true,
 		},
 		{
 			name:         "explicit -cloud model - auth check without remote metadata",
@@ -1931,7 +1921,7 @@ func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 				ShowConnect: false,
 			}
 
-			err := loadOrUnloadModel(cmd, opts, tt.allowCloudShowNotFound)
+			err := loadOrUnloadModel(cmd, opts)
 
 			if whoamiCalled != tt.expectWhoami {
 				t.Errorf("whoami called = %v, want %v", whoamiCalled, tt.expectWhoami)

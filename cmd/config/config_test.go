@@ -13,14 +13,6 @@ func setTestHome(t *testing.T, dir string) {
 	t.Setenv("USERPROFILE", dir)
 }
 
-// editorPaths is a test helper that safely calls Paths if the runner implements Editor
-func editorPaths(r Runner) []string {
-	if editor, ok := r.(Editor); ok {
-		return editor.Paths()
-	}
-	return nil
-}
-
 func TestIntegrationConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -181,64 +173,6 @@ func TestListIntegrations(t *testing.T) {
 		}
 		if len(configs) != 2 {
 			t.Errorf("expected 2 integrations, got %d", len(configs))
-		}
-	})
-}
-
-func TestEditorPaths(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-
-	t.Run("returns empty for claude (no Editor)", func(t *testing.T) {
-		r := integrations["claude"]
-		paths := editorPaths(r)
-		if len(paths) != 0 {
-			t.Errorf("expected no paths for claude, got %v", paths)
-		}
-	})
-
-	t.Run("returns empty for codex (no Editor)", func(t *testing.T) {
-		r := integrations["codex"]
-		paths := editorPaths(r)
-		if len(paths) != 0 {
-			t.Errorf("expected no paths for codex, got %v", paths)
-		}
-	})
-
-	t.Run("returns empty for droid when no config exists", func(t *testing.T) {
-		r := integrations["droid"]
-		paths := editorPaths(r)
-		if len(paths) != 0 {
-			t.Errorf("expected no paths, got %v", paths)
-		}
-	})
-
-	t.Run("returns path for droid when config exists", func(t *testing.T) {
-		settingsDir, _ := os.UserHomeDir()
-		settingsDir = filepath.Join(settingsDir, ".factory")
-		os.MkdirAll(settingsDir, 0o755)
-		os.WriteFile(filepath.Join(settingsDir, "settings.json"), []byte(`{}`), 0o644)
-
-		r := integrations["droid"]
-		paths := editorPaths(r)
-		if len(paths) != 1 {
-			t.Errorf("expected 1 path, got %d", len(paths))
-		}
-	})
-
-	t.Run("returns paths for opencode when configs exist", func(t *testing.T) {
-		home, _ := os.UserHomeDir()
-		configDir := filepath.Join(home, ".config", "opencode")
-		stateDir := filepath.Join(home, ".local", "state", "opencode")
-		os.MkdirAll(configDir, 0o755)
-		os.MkdirAll(stateDir, 0o755)
-		os.WriteFile(filepath.Join(configDir, "opencode.json"), []byte(`{}`), 0o644)
-		os.WriteFile(filepath.Join(stateDir, "model.json"), []byte(`{}`), 0o644)
-
-		r := integrations["opencode"]
-		paths := editorPaths(r)
-		if len(paths) != 2 {
-			t.Errorf("expected 2 paths, got %d: %v", len(paths), paths)
 		}
 	})
 }
