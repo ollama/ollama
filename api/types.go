@@ -698,6 +698,9 @@ type CreateRequest struct {
 	// Messages is a list of messages added to the model before chat and generation requests.
 	Messages []Message `json:"messages,omitempty"`
 
+	// Think is the default thinking mode for the model.
+	Think *ThinkValue `json:"think,omitempty"`
+
 	Renderer string `json:"renderer,omitempty"`
 	Parser   string `json:"parser,omitempty"`
 

@@ -142,6 +142,18 @@ Thinking streams interleave reasoning tokens before answer tokens. Detect the fi
   </Tab>
 </Tabs>
 
+## Set a default in a Modelfile
+
+Use `PARAMETER think` to bake a default thinking mode into a model. The setting is inherited by derived models via `FROM` and included when saving with `/save`.
+
+```
+FROM qwen3
+PARAMETER think false
+SYSTEM You are a concise assistant.
+```
+
+Requests that set `think` explicitly override the Modelfile default.
+
 ## CLI quick reference
 
 - Enable thinking for a single run: `ollama run deepseek-r1 --think "Where should I visit in Lisbon?"`

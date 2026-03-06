@@ -66,7 +66,7 @@ type Model struct {
 	License        []string
 	Digest         string
 	Options        map[string]any
-	Messages       []api.Message
+	Messages []api.Message
 
 	Template *template.Template
 }
@@ -253,6 +253,22 @@ func (m *Model) String() string {
 				Args: fmt.Sprintf("%v", v),
 			})
 		}
+	}
+
+	if m.Config.Think != nil {
+		args := ""
+		switch v := m.Config.Think.Value.(type) {
+		case bool:
+			if !v {
+				args = "false"
+			}
+		case string:
+			args = strings.ToLower(v)
+		}
+		modelfile.Commands = append(modelfile.Commands, parser.Command{
+			Name: "think",
+			Args: args,
+		})
 	}
 
 	for _, license := range m.License {
