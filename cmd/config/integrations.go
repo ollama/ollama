@@ -14,7 +14,6 @@ import (
 
 	"github.com/ollama/ollama/api"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
-	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/progress"
 	"github.com/spf13/cobra"
 )
@@ -82,6 +81,7 @@ var cloudModelLimits = map[string]cloudModelLimit{
 	"deepseek-v3.2":       {Context: 163_840, Output: 65_536},
 	"glm-4.6":             {Context: 202_752, Output: 131_072},
 	"glm-4.7":             {Context: 202_752, Output: 131_072},
+	"glm-5":               {Context: 202_752, Output: 131_072},
 	"gpt-oss:120b":        {Context: 131_072, Output: 131_072},
 	"gpt-oss:20b":         {Context: 131_072, Output: 131_072},
 	"kimi-k2:1t":          {Context: 262_144, Output: 262_144},
@@ -91,6 +91,7 @@ var cloudModelLimits = map[string]cloudModelLimit{
 	"qwen3-coder:480b":    {Context: 262_144, Output: 65_536},
 	"qwen3-coder-next":    {Context: 262_144, Output: 32_768},
 	"qwen3-next:80b":      {Context: 262_144, Output: 32_768},
+	"qwen3.5":             {Context: 262_144, Output: 32_768},
 }
 
 // recommendedVRAM maps local recommended models to their approximate VRAM requirement.
@@ -325,7 +326,12 @@ func SelectModelWithSelector(ctx context.Context, selector SingleSelector) (stri
 
 	// If the selected model isn't installed, pull it first
 	if !existingModels[selected] {
-		if !isCloudModelName(selected) {
+		if cloudModels[selected] {
+			// Cloud models only pull a small manifest; no confirmation needed
+			if err := pullModel(ctx, client, selected); err != nil {
+				return "", fmt.Errorf("failed to pull %s: %w", selected, err)
+			}
+		} else {
 			msg := fmt.Sprintf("Download %s?", selected)
 			if ok, err := confirmPrompt(msg); err != nil {
 				return "", err
@@ -520,7 +526,7 @@ func selectModelsWithSelectors(ctx context.Context, name, current string, single
 
 	var toPull []string
 	for _, m := range selected {
-		if !existingModels[m] && !isCloudModelName(m) {
+		if !existingModels[m] {
 			toPull = append(toPull, m)
 		}
 	}
@@ -546,28 +552,12 @@ func selectModelsWithSelectors(ctx context.Context, name, current string, single
 	return selected, nil
 }
 
-// TODO(parthsareen): consolidate pull logic from call sites
 func pullIfNeeded(ctx context.Context, client *api.Client, existingModels map[string]bool, model string) error {
-	if isCloudModelName(model) || existingModels[model] {
+	if existingModels[model] {
 		return nil
 	}
-	return confirmAndPull(ctx, client, model)
-}
-
-// TODO(parthsareen): pull this out to tui package
-// ShowOrPull checks if a model exists via client.Show and offers to pull it if not found.
-func ShowOrPull(ctx context.Context, client *api.Client, model string) error {
-	if _, err := client.Show(ctx, &api.ShowRequest{Model: model}); err == nil {
-		return nil
-	}
-	if isCloudModelName(model) {
-		return nil
-	}
-	return confirmAndPull(ctx, client, model)
-}
-
-func confirmAndPull(ctx context.Context, client *api.Client, model string) error {
-	if ok, err := confirmPrompt(fmt.Sprintf("Download %s?", model)); err != nil {
+	msg := fmt.Sprintf("Download %s?", model)
+	if ok, err := confirmPrompt(msg); err != nil {
 		return err
 	} else if !ok {
 		return errCancelled
@@ -577,6 +567,26 @@ func confirmAndPull(ctx context.Context, client *api.Client, model string) error
 		return fmt.Errorf("failed to pull %s: %w", model, err)
 	}
 	return nil
+}
+
+// TODO(parthsareen): pull this out to tui package
+// ShowOrPull checks if a model exists via client.Show and offers to pull it if not found.
+func ShowOrPull(ctx context.Context, client *api.Client, model string) error {
+	if _, err := client.Show(ctx, &api.ShowRequest{Model: model}); err == nil {
+		return nil
+	}
+	// Cloud models only pull a small manifest; skip the download confirmation
+	// TODO(parthsareen): consolidate with cloud config changes
+	if strings.HasSuffix(model, "cloud") {
+		return pullModel(ctx, client, model)
+	}
+	if ok, err := confirmPrompt(fmt.Sprintf("Download %s?", model)); err != nil {
+		return err
+	} else if !ok {
+		return errCancelled
+	}
+	fmt.Fprintf(os.Stderr, "\n")
+	return pullModel(ctx, client, model)
 }
 
 func listModels(ctx context.Context) ([]ModelItem, map[string]bool, map[string]bool, *api.Client, error) {
@@ -723,8 +733,10 @@ func syncAliases(ctx context.Context, client *api.Client, ac AliasConfigurer, na
 	}
 	aliases["primary"] = model
 
-	if isCloudModelName(model) {
-		aliases["fast"] = model
+	if isCloudModel(ctx, client, model) {
+		if aliases["fast"] == "" || !isCloudModel(ctx, client, aliases["fast"]) {
+			aliases["fast"] = model
+		}
 	} else {
 		delete(aliases, "fast")
 	}
@@ -1010,7 +1022,7 @@ Examples:
 				existingAliases = aliases
 
 				// Ensure cloud models are authenticated
-				if isCloudModelName(model) {
+				if isCloudModel(cmd.Context(), client, model) {
 					if err := ensureAuth(cmd.Context(), client, map[string]bool{model: true}, []string{model}); err != nil {
 						return err
 					}
@@ -1199,7 +1211,7 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 	// When user has no models, preserve recommended order.
 	notInstalled := make(map[string]bool)
 	for i := range items {
-		if !existingModels[items[i].Name] && !cloudModels[items[i].Name] {
+		if !existingModels[items[i].Name] {
 			notInstalled[items[i].Name] = true
 			var parts []string
 			if items[i].Description != "" {
@@ -1293,8 +1305,7 @@ func IsCloudModelDisabled(ctx context.Context, name string) bool {
 }
 
 func isCloudModelName(name string) bool {
-	// TODO(drifkin): Replace this wrapper with inlining once things stabilize a bit
-	return modelref.HasExplicitCloudSource(name)
+	return strings.HasSuffix(name, ":cloud") || strings.HasSuffix(name, "-cloud")
 }
 
 func filterCloudModels(existing []modelInfo) []modelInfo {

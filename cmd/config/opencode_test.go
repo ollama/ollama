@@ -3,6 +3,8 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -657,6 +659,54 @@ func TestOpenCodeEdit_CloudModelLimitStructure(t *testing.T) {
 	}
 }
 
+func TestOpenCodeEdit_BackfillsCloudModelLimitOnExistingEntry(t *testing.T) {
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" {
+			fmt.Fprintf(w, `{"capabilities":[],"model_info":{},"remote_model":"glm-5"}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	configDir := filepath.Join(tmpDir, ".config", "opencode")
+	configPath := filepath.Join(configDir, "opencode.json")
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(configPath, []byte(`{
+		"provider": {
+			"ollama": {
+				"models": {
+					"glm-5:cloud": {
+						"name": "glm-5:cloud",
+						"_launch": true
+					}
+				}
+			}
+		}
+	}`), 0o644)
+
+	if err := o.Edit([]string{"glm-5:cloud"}); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := readOpenCodeModel(t, configPath, "glm-5:cloud")
+	limit, ok := entry["limit"].(map[string]any)
+	if !ok {
+		t.Fatal("cloud model limit was not added on re-edit")
+	}
+	if limit["context"] != float64(202_752) {
+		t.Errorf("context = %v, want 202752", limit["context"])
+	}
+	if limit["output"] != float64(131_072) {
+		t.Errorf("output = %v, want 131072", limit["output"])
+	}
+}
+
 func TestLookupCloudModelLimit(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -666,6 +716,9 @@ func TestLookupCloudModelLimit(t *testing.T) {
 	}{
 		{"glm-4.7", true, 202_752, 131_072},
 		{"glm-4.7:cloud", true, 202_752, 131_072},
+		{"glm-5:cloud", true, 202_752, 131_072},
+		{"gpt-oss:120b-cloud", true, 131_072, 131_072},
+		{"gpt-oss:20b-cloud", true, 131_072, 131_072},
 		{"kimi-k2.5", true, 262_144, 262_144},
 		{"kimi-k2.5:cloud", true, 262_144, 262_144},
 		{"deepseek-v3.2", true, 163_840, 65_536},
