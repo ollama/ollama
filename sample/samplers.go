@@ -74,6 +74,16 @@ func (s *Sampler) Sample(logits []float32) (int32, error) {
 			applyPenalties(tokens, s.recentTokens, s.repeatPenalty, s.frequencyPenalty, s.presencePenalty)
 		}
 		s.grammar.Apply(tokens)
+		allRejected := true
+		for _, tok := range tokens {
+			if !math.IsInf(float64(tok.value), -1) {
+				allRejected = false
+				break
+			}
+		}
+		if allRejected {
+			return -1, errors.New("sample: grammar rejected all tokens — grammar may be malformed or the generation reached an impossible state")
+		}
 		t, err = s.sample(tokens)
 		if err != nil {
 			return -1, err
@@ -213,7 +223,20 @@ type GrammarSampler struct {
 	grammar *llama.Grammar
 }
 
+// NewGrammarSampler creates a grammar sampler that constrains from the first token.
+// Used by structured output (JSON format) for all models.
 func NewGrammarSampler(tok tokenizer.Tokenizer, grammarStr string) (*GrammarSampler, error) {
+	return newGrammarSampler(tok, grammarStr, nil)
+}
+
+// NewGrammarSamplerLazy creates a grammar sampler that stays dormant until a
+// trigger pattern matches. See [llama.NewGrammarLazy] for trigger semantics.
+// Used by grammar-constrained tool call generation (currently Qwen 3.5 only).
+func NewGrammarSamplerLazy(tok tokenizer.Tokenizer, grammarStr string, triggerPatterns []string) (*GrammarSampler, error) {
+	return newGrammarSampler(tok, grammarStr, triggerPatterns)
+}
+
+func newGrammarSampler(tok tokenizer.Tokenizer, grammarStr string, triggerPatterns []string) (*GrammarSampler, error) {
 	vocabIds := make([]uint32, len(tok.Vocabulary().Values))
 	pieces := make([]string, len(tok.Vocabulary().Values))
 	for i := range tok.Vocabulary().Values {
@@ -221,7 +244,12 @@ func NewGrammarSampler(tok tokenizer.Tokenizer, grammarStr string) (*GrammarSamp
 		vocabIds[i] = uint32(i)
 	}
 
-	grammar := llama.NewGrammar(grammarStr, vocabIds, pieces, tok.Vocabulary().EOS)
+	var grammar *llama.Grammar
+	if len(triggerPatterns) > 0 {
+		grammar = llama.NewGrammarLazy(grammarStr, vocabIds, pieces, tok.Vocabulary().EOS, triggerPatterns)
+	} else {
+		grammar = llama.NewGrammar(grammarStr, vocabIds, pieces, tok.Vocabulary().EOS)
+	}
 	if grammar == nil {
 		return nil, errors.New("sample: failed to initialize grammar")
 	}

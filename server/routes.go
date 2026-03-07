@@ -2199,6 +2199,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	var builtinParser parsers.Parser
 	processedTools := req.Tools
 
+	var toolGrammar string
+	var toolGrammarTriggerPatterns []string
+
 	if m.Config.Parser != "" {
 		builtinParser = parsers.ParserForName(m.Config.Parser)
 		if builtinParser != nil {
@@ -2209,6 +2212,44 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 			// Initialize parser and get processed tools
 			processedTools = builtinParser.Init(req.Tools, lastMessage, req.Think)
+		}
+	}
+
+	// Build grammar-constrained tool call grammar for Qwen 3.5.
+	// The grammar ensures the model can only produce valid function/parameter
+	// names and well-formed XML tool call structure. It activates lazily —
+	// only after the model outputs <tool_call>, leaving thinking and content
+	// generation unconstrained.
+	if m.Config.Parser == "qwen3.5" && builtinParser != nil && builtinParser.HasToolSupport() && len(req.Tools) > 0 {
+		toolsJSON, err := json.Marshal(req.Tools)
+		if err != nil {
+			slog.Error("failed to serialize tools for grammar", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build tool call grammar: " + err.Error()})
+			return
+		}
+		grammar, err := llm.ToolCallGrammarFromJSON(string(toolsJSON))
+		if err != nil {
+			slog.Error("failed to build tool call grammar", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build tool call grammar: " + err.Error()})
+			return
+		}
+		toolGrammar = grammar
+		// Regex trigger patterns for lazy grammar activation.
+		// The grammar engine uses std::regex_match (full-string match on the
+		// accumulated token buffer). The first capture group determines where
+		// grammar constraint enforcement begins.
+		//
+		// Mode-dependent because the renderer prefills differently:
+		//   Thinking mode:     prefills "<think>\n" — model generates </think> in output
+		//   Non-thinking mode: prefills "<think>\n\n</think>\n\n" — </think> is in prompt, not output
+		isThinking := req.Think != nil && req.Think.Bool()
+		if isThinking {
+			// Require </think> before <tool_call> so the grammar doesn't
+			// activate on hallucinated tool calls inside thinking text.
+			toolGrammarTriggerPatterns = []string{`[\s\S]*</think>[\s\S]*?(<tool_call>[\s\S]*)`}
+		} else {
+			// No </think> in generated text — trigger on first <tool_call>.
+			toolGrammarTriggerPatterns = []string{`[\s\S]*?(<tool_call>[\s\S]*)`}
 		}
 	}
 
@@ -2290,14 +2331,16 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			// sets up new context given parent context per request
 			ctx, cancel := context.WithCancel(c.Request.Context())
 			err := r.Completion(ctx, llm.CompletionRequest{
-				Prompt:      prompt,
-				Images:      images,
-				Format:      currentFormat,
-				Options:     opts,
-				Shift:       req.Shift == nil || *req.Shift,
-				Truncate:    truncate,
-				Logprobs:    req.Logprobs,
-				TopLogprobs: req.TopLogprobs,
+				Prompt:                 prompt,
+				Images:                 images,
+				Format:                 currentFormat,
+				Grammar:                toolGrammar,
+				GrammarTriggerPatterns: toolGrammarTriggerPatterns,
+				Options:                opts,
+				Shift:                  req.Shift == nil || *req.Shift,
+				Truncate:               truncate,
+				Logprobs:               req.Logprobs,
+				TopLogprobs:            req.TopLogprobs,
 			}, func(r llm.CompletionResponse) {
 				res := api.ChatResponse{
 					Model:     req.Model,

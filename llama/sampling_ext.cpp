@@ -114,6 +114,42 @@ struct llama_grammar *grammar_init(char* grammar, uint32_t* tokens, size_t n_tok
     }
 }
 
+struct llama_grammar *grammar_init_lazy(
+    char* grammar,
+    uint32_t* tokens, size_t n_tokens,
+    const char** pieces,
+    uint32_t* eog_tokens, size_t n_eog_tokens,
+    const char** trigger_patterns, size_t n_trigger_patterns
+) {
+    try {
+        if (grammar == nullptr) {
+            LLAMA_LOG_ERROR("%s: null grammar input\n", __func__);
+            return nullptr;
+        }
+
+        ollama_vocab *vocab = new ollama_vocab();
+        vocab->set_eog_tokens(eog_tokens, n_eog_tokens);
+        vocab->add_token_pieces(tokens, n_tokens, pieces);
+
+        struct llama_grammar *g = llama_grammar_init_impl(
+            nullptr, vocab, grammar, "root",
+            true,                                    // lazy = true
+            trigger_patterns, n_trigger_patterns,    // trigger patterns
+            nullptr, 0                               // no trigger tokens
+        );
+        if (g == nullptr) {
+            LLAMA_LOG_ERROR("%s: failed to initialize lazy grammar\n", __func__);
+            delete vocab;
+            return nullptr;
+        }
+        return g;
+
+    } catch (const std::exception& e) {
+        LLAMA_LOG_ERROR("%s: exception during initialization: %s\n", __func__, e.what());
+        return nullptr;
+    }
+}
+
 void grammar_free(struct llama_grammar *g) {
     if (g != nullptr) {
         if (g->vocab != nullptr) {
@@ -301,7 +337,7 @@ static std::string validate_tool_json(const json & tool, size_t index) {
         if (!params.is_object()) {
             return idx + ": 'parameters' is not an object";
         }
-        if (params.contains("properties")) {
+        if (params.contains("properties") && !params["properties"].is_null()) {
             const auto & props = params["properties"];
             if (!props.is_object()) {
                 return idx + ": 'properties' is not an object";

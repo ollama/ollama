@@ -61,8 +61,8 @@ func (r *Qwen35Renderer) renderContent(content api.Message, imageOffset int) (st
 	return subSb.String(), imageOffset
 }
 
-func splitQwen35ReasoningContent(content, messageThinking string, isThinking bool) (reasoning string, remaining string) {
-	if isThinking && messageThinking != "" {
+func splitQwen35ReasoningContent(content, messageThinking string) (reasoning string, remaining string) {
+	if messageThinking != "" {
 		return strings.TrimSpace(messageThinking), content
 	}
 
@@ -138,9 +138,9 @@ func (r *Qwen35Renderer) Render(messages []api.Message, tools []api.Tool, think 
 		if message.Role == "user" || (message.Role == "system" && i != 0) {
 			sb.WriteString(imStartTag + message.Role + "\n" + content + imEndTag + "\n")
 		} else if message.Role == "assistant" {
-			contentReasoning, content := splitQwen35ReasoningContent(content, message.Thinking, isThinking)
+			contentReasoning, content := splitQwen35ReasoningContent(content, message.Thinking)
 
-			if isThinking && i > lastQueryIndex {
+			if i > lastQueryIndex {
 				sb.WriteString(imStartTag + message.Role + "\n<think>\n" + contentReasoning + "\n</think>\n\n" + content)
 			} else {
 				sb.WriteString(imStartTag + message.Role + "\n" + content)

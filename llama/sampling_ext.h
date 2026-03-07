@@ -34,6 +34,13 @@ extern "C"
 
 
     struct llama_grammar *grammar_init(char* grammar, uint32_t* tokens, size_t n_tokens, const char** pieces, uint32_t* eog_tokens, size_t n_eog_tokens);
+    struct llama_grammar *grammar_init_lazy(
+        char* grammar,
+        uint32_t* tokens, size_t n_tokens,
+        const char** pieces,
+        uint32_t* eog_tokens, size_t n_eog_tokens,
+        const char** trigger_patterns, size_t n_trigger_patterns
+    );
     void grammar_free(struct llama_grammar *g);
     void grammar_apply(struct llama_grammar *g, struct llama_token_data_array *tokens);
     void grammar_accept(struct llama_grammar *g, llama_token id);

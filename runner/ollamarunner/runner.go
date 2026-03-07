@@ -879,7 +879,11 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	var grammar *sample.GrammarSampler
 	var err error
 	if req.Grammar != "" {
-		grammar, err = sample.NewGrammarSampler(s.model.(tokenizer.Tokenizer), req.Grammar)
+		if len(req.GrammarTriggerPatterns) > 0 {
+			grammar, err = sample.NewGrammarSamplerLazy(s.model.(tokenizer.Tokenizer), req.Grammar, req.GrammarTriggerPatterns)
+		} else {
+			grammar, err = sample.NewGrammarSampler(s.model.(tokenizer.Tokenizer), req.Grammar)
+		}
 		if err != nil {
 			http.Error(w, "failed to load model vocabulary required for format", http.StatusInternalServerError)
 			return

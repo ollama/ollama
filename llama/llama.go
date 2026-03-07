@@ -712,7 +712,21 @@ type Grammar struct {
 	mu sync.Mutex
 }
 
+// NewGrammar creates a grammar that constrains sampling from the first token.
+// Used by structured output (JSON format) for all models.
 func NewGrammar(grammar string, vocabIds []uint32, vocabValues []string, eogTokens []int32) *Grammar {
+	return newGrammar(grammar, vocabIds, vocabValues, eogTokens, nil)
+}
+
+// NewGrammarLazy creates a grammar that stays dormant until a trigger pattern
+// matches the accumulated generated text. The first capture group in the
+// matching regex determines where constraint enforcement begins.
+// Used by grammar-constrained tool call generation (currently Qwen 3.5 only).
+func NewGrammarLazy(grammar string, vocabIds []uint32, vocabValues []string, eogTokens []int32, triggerPatterns []string) *Grammar {
+	return newGrammar(grammar, vocabIds, vocabValues, eogTokens, triggerPatterns)
+}
+
+func newGrammar(grammar string, vocabIds []uint32, vocabValues []string, eogTokens []int32, triggerPatterns []string) *Grammar {
 	cGrammar := C.CString(grammar)
 	defer C.free(unsafe.Pointer(cGrammar))
 
@@ -732,12 +746,54 @@ func NewGrammar(grammar string, vocabIds []uint32, vocabValues []string, eogToke
 		cEogTokens[i] = C.uint32_t(token)
 	}
 
+	if len(triggerPatterns) > 0 {
+		cTriggerPatterns := make([]*C.char, len(triggerPatterns))
+		for i, p := range triggerPatterns {
+			cTriggerPatterns[i] = C.CString(p)
+			defer C.free(unsafe.Pointer(cTriggerPatterns[i]))
+		}
+		g := C.grammar_init_lazy(
+			cGrammar,
+			unsafe.SliceData(cTokens), C.size_t(len(cTokens)),
+			unsafe.SliceData(cPieces),
+			unsafe.SliceData(cEogTokens), C.size_t(len(cEogTokens)),
+			unsafe.SliceData(cTriggerPatterns), C.size_t(len(cTriggerPatterns)),
+		)
+		if g == nil {
+			return nil
+		}
+		return &Grammar{c: g}
+	}
+
 	g := C.grammar_init(cGrammar, unsafe.SliceData(cTokens), C.size_t(len(cTokens)), unsafe.SliceData(cPieces), unsafe.SliceData(cEogTokens), C.size_t(len(cEogTokens)))
 	if g == nil {
 		return nil
 	}
-
 	return &Grammar{c: g}
+}
+
+func ToolCallGrammarFromJSON(toolsJSON string) (string, error) {
+	cToolsJSON := C.CString(toolsJSON)
+	defer C.free(unsafe.Pointer(cToolsJSON))
+
+	const maxGrammarLen = 64 * 1024
+	const maxErrorLen = 1024
+
+	grammarBuf := make([]byte, maxGrammarLen)
+	errorBuf := make([]byte, maxErrorLen)
+
+	rc := C.tool_call_grammar_from_json(
+		cToolsJSON,
+		(*C.char)(unsafe.Pointer(&grammarBuf[0])),
+		C.size_t(maxGrammarLen),
+		(*C.char)(unsafe.Pointer(&errorBuf[0])),
+		C.size_t(maxErrorLen),
+	)
+	if rc != 0 {
+		errMsg := C.GoString((*C.char)(unsafe.Pointer(&errorBuf[0])))
+		return "", fmt.Errorf("tool_call_grammar_from_json (code %d): %s", int(rc), errMsg)
+	}
+	return C.GoString((*C.char)(unsafe.Pointer(&grammarBuf[0]))), nil
 }
 
 func (g *Grammar) Free() {

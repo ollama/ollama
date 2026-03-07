@@ -1445,6 +1445,15 @@ number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)?
 ws ::= ([ \t\n] ws)?
 `
 
+// ToolCallGrammarFromJSON builds a GBNF grammar string that constrains generation
+// to well-formed XML tool calls matching the provided tools. The input is a JSON
+// array of api.Tool objects. The grammar enforces valid function names, parameter
+// names, and XML structure using trie-based exclusion patterns for free-text values.
+// Currently produces Qwen 3.5 XML format (<tool_call>/<function=...>/<parameter=...>).
+func ToolCallGrammarFromJSON(toolsJSON string) (string, error) {
+	return llama.ToolCallGrammarFromJSON(toolsJSON)
+}
+
 const maxBufferSize = 512 * format.KiloByte
 
 type ImageData struct {
@@ -1458,8 +1467,18 @@ type CompletionRequest struct {
 	Images  []ImageData
 	Options *api.Options
 
-	Grammar  string // set before sending the request to the subprocess
-	Shift    bool
+	// Grammar is a GBNF grammar string. When set, it constrains token sampling.
+	// For structured output (JSON format): set by Completion() from Format field.
+	// For tool call grammars: set by the chat handler before calling Completion().
+	Grammar string
+
+	// GrammarTriggerPatterns holds regex patterns for lazy grammar activation.
+	// When non-empty, the grammar stays dormant until a pattern matches the
+	// accumulated output. The first capture group marks where enforcement begins.
+	// Currently only used by Qwen 3.5 tool call grammar (set in ChatHandler).
+	GrammarTriggerPatterns []string `json:"grammar_trigger_patterns,omitempty"`
+
+	Shift bool
 	Truncate bool
 
 	// Logprobs specifies whether to include log probabilities in the response
@@ -1536,7 +1555,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	slog.Debug("completion request", "images", len(req.Images), "prompt", len(req.Prompt), "format", string(req.Format))
 	logutil.Trace("completion request", "prompt", req.Prompt)
 
-	if len(req.Format) > 0 {
+	if req.Grammar == "" && len(req.Format) > 0 {
 		switch string(req.Format) {
 		case `null`, `""`:
 			// Field was set, but "missing" a value. We accept
