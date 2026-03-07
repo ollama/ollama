@@ -329,13 +329,23 @@ func ToChunks(id string, r api.ChatResponse, toolCallSent bool) []ChatCompletion
 		return []ChatCompletionChunk{toChunk(id, r, toolCallSent)}
 	}
 
-	reasoningOnly := r
-	reasoningOnly.Message.Content = ""
-	reasoningOnly.Message.ToolCalls = nil
-	reasoningOnly.DoneReason = ""
+	reasoningOnly := api.ChatResponse{
+		Model: r.Model,
+		Message: api.Message{
+			Thinking: r.Message.Thinking,
+		},
+		// The logprobs here might include tokens not in this chunk because we now split between thinking and content/tool calls.
+		Logprobs: r.Logprobs,
+	}
 
-	contentOrToolCalls := r
-	contentOrToolCalls.Message.Thinking = ""
+	contentOrToolCalls := api.ChatResponse{
+		Model: r.Model,
+		Message: api.Message{
+			Content:   r.Message.Content,
+			ToolCalls: r.Message.ToolCalls,
+		},
+		DoneReason: r.DoneReason,
+	}
 
 	return []ChatCompletionChunk{
 		toChunk(id, reasoningOnly, toolCallSent),

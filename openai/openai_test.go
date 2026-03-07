@@ -633,6 +633,44 @@ func TestToChunks_SplitsThinkingAndContentWhenNotDone(t *testing.T) {
 	}
 }
 
+func TestToChunks_SplitSendsLogprobsOnlyOnFirstChunk(t *testing.T) {
+	resp := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Thinking: "thinking",
+			Content:  "content",
+		},
+		Logprobs: []api.Logprob{
+			{
+				TokenLogprob: api.TokenLogprob{
+					Token:   "tok",
+					Logprob: -0.25,
+				},
+			},
+		},
+		Done:       true,
+		DoneReason: "stop",
+	}
+
+	chunks := ToChunks("test-id", resp, false)
+	if len(chunks) != 2 {
+		t.Fatalf("expected 2 chunks, got %d", len(chunks))
+	}
+
+	first := chunks[0].Choices[0]
+	if first.Logprobs == nil {
+		t.Fatal("expected first chunk to include logprobs")
+	}
+	if len(first.Logprobs.Content) != 1 || first.Logprobs.Content[0].Token != "tok" {
+		t.Fatalf("unexpected first chunk logprobs: %+v", first.Logprobs.Content)
+	}
+
+	second := chunks[1].Choices[0]
+	if second.Logprobs != nil {
+		t.Fatalf("expected second chunk logprobs to be nil, got %+v", second.Logprobs)
+	}
+}
+
 func TestToChunk_LegacyMixedThinkingAndContentSingleChunk(t *testing.T) {
 	resp := api.ChatResponse{
 		Model: "test-model",
