@@ -30,13 +30,12 @@ import (
 // Server wraps an MLX runner subprocess to implement llm.LlamaServer.
 //
 // This implementation is compatible with Ollama's scheduler and can be loaded/unloaded
-// like any other model. It supports both LLM (safetensors) and image generation models.
+// like any other model. It is used for image generation models.
 type Server struct {
 	mu          sync.Mutex
 	cmd         *exec.Cmd
 	port        int
 	modelName   string
-	mode        ModelMode
 	vramSize    uint64
 	done        chan error
 	client      *http.Client
@@ -45,7 +44,7 @@ type Server struct {
 }
 
 // NewServer spawns a new MLX runner subprocess and waits until it's ready.
-func NewServer(modelName string, mode ModelMode) (*Server, error) {
+func NewServer(modelName string) (*Server, error) {
 	// Validate platform support before attempting to start
 	if err := CheckPlatformSupport(); err != nil {
 		return nil, err
@@ -119,7 +118,6 @@ func NewServer(modelName string, mode ModelMode) (*Server, error) {
 		cmd:       cmd,
 		port:      port,
 		modelName: modelName,
-		mode:      mode,
 		vramSize:  vramSize,
 		done:      make(chan error, 1),
 		client:    &http.Client{Timeout: 10 * time.Minute},
@@ -145,7 +143,7 @@ func NewServer(modelName string, mode ModelMode) (*Server, error) {
 		}
 	}()
 
-	slog.Info("starting mlx runner subprocess", "exe", exe, "model", modelName, "port", port, "mode", mode)
+	slog.Info("starting mlx runner subprocess", "exe", exe, "model", modelName, "port", port)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start mlx runner: %w", err)
 	}
@@ -374,14 +372,9 @@ func (s *Server) Close() error {
 	return nil
 }
 
-// VRAMSize returns the estimated VRAM usage.
-func (s *Server) VRAMSize() uint64 {
-	return s.vramSize
-}
-
-// TotalSize returns the total memory usage.
-func (s *Server) TotalSize() uint64 {
-	return s.vramSize
+// MemorySize returns the total and VRAM memory usage.
+func (s *Server) MemorySize() (total, vram uint64) {
+	return s.vramSize, s.vramSize
 }
 
 // VRAMByGPU returns VRAM usage for a specific GPU.
@@ -401,36 +394,7 @@ func (s *Server) Embedding(ctx context.Context, input string) ([]float32, int, e
 
 // Tokenize tokenizes the input content.
 func (s *Server) Tokenize(ctx context.Context, content string) ([]int, error) {
-	body, err := json.Marshal(map[string]string{"content": content})
-	if err != nil {
-		return nil, err
-	}
-
-	url := fmt.Sprintf("http://127.0.0.1:%d/tokenize", s.port)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("tokenize failed: %d", resp.StatusCode)
-	}
-
-	var result struct {
-		Tokens []int `json:"tokens"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-
-	return result.Tokens, nil
+	return nil, errors.New("tokenization not supported for image generation models")
 }
 
 // Detokenize converts tokens back to text.

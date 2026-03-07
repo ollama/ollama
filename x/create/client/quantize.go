@@ -21,7 +21,7 @@ var quantizeParams = map[string]struct {
 	bits      int
 	mode      string
 }{
-	"int4":  {32, 4, "affine"},
+	"int4":  {64, 4, "affine"},
 	"nvfp4": {16, 4, "nvfp4"},
 	"int8":  {64, 8, "affine"},
 	"mxfp8": {32, 8, "mxfp8"},

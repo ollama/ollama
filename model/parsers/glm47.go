@@ -11,6 +11,7 @@ type GLM47Parser struct {
 
 func (p *GLM47Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
+	p.callIndex = 0
 	// When thinking is enabled (nil or true), the prompt ends with <think>,
 	// so model output starts directly with thinking content (no opening tag).
 	if thinkValue == nil || thinkValue.Bool() {

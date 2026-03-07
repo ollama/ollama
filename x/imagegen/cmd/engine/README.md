@@ -10,17 +10,7 @@ go build -tags mlx -o engine ./x/imagegen/cmd/engine
 
 ## Text Generation
 
-```bash
-./engine -model /path/to/model -prompt "Hello" -max-tokens 100
-```
-
-Options:
-
-- `-temperature` - sampling temperature (default 0.7)
-- `-top-p` - nucleus sampling (default 0.9)
-- `-top-k` - top-k sampling (default 40)
-
-Supports: Llama, Gemma3, GPT-OSS
+Text generation models are no longer supported by this engine.
 
 ## Image Generation
 
