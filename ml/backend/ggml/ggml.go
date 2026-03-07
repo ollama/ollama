@@ -1677,11 +1677,11 @@ func (t *Tensor) SSMConv(ctx ml.Context, kernel ml.Tensor) ml.Tensor {
 	}
 }
 
-func (t *Tensor) SSMScan(ctx ml.Context, x, dt, A, B, D, ids ml.Tensor) ml.Tensor {
+func (t *Tensor) SSMScan(ctx ml.Context, x, dt, A, B, CM, ids ml.Tensor) ml.Tensor {
 
 	return &Tensor{
 		b: t.b,
-		t: C.ggml_ssm_scan(ctx.(*Context).ctx, t.t, x.(*Tensor).t, dt.(*Tensor).t, A.(*Tensor).t, B.(*Tensor).t, D.(*Tensor).t, ids.(*Tensor).t),
+		t: C.ggml_ssm_scan(ctx.(*Context).ctx, t.t, x.(*Tensor).t, dt.(*Tensor).t, A.(*Tensor).t, B.(*Tensor).t, CM.(*Tensor).t, ids.(*Tensor).t),
 	}
 }
 
