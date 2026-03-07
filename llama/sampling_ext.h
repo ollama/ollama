@@ -38,6 +38,76 @@ extern "C"
     void grammar_apply(struct llama_grammar *g, struct llama_token_data_array *tokens);
     void grammar_accept(struct llama_grammar *g, llama_token id);
 
+    // =========================================================================
+    // Tool Call Grammar Builder
+    // =========================================================================
+    //
+    // Builds a GBNF grammar from a JSON array of tool definitions for the
+    // Qwen 3.5 / Qwen3-Coder XML tool call format:
+    //
+    //   <tool_call>
+    //   <function=name>
+    //   <parameter=param>
+    //   value
+    //   </parameter>
+    //   </function>
+    //   </tool_call>
+    //
+    // The grammar constrains generation so the model can ONLY produce:
+    //   - Function names that are one of the declared tool names
+    //   - Parameter names that are declared for the matched function
+    //   - Well-formed XML nesting
+    //   - One or more parallel tool calls
+    //
+    // Parameter values are free text (no JSON schema type constraints).
+    // The strict post-generation parser catches type mismatches.
+    //
+    // Expected JSON format (matches Ollama api.Tool serialization):
+    //   [
+    //     {
+    //       "function": {
+    //         "name": "get_weather",
+    //         "parameters": {
+    //           "type": "object",
+    //           "required": ["location"],
+    //           "properties": {
+    //             "location": {"type": "string"},
+    //             "unit": {"type": "string"}
+    //           }
+    //         }
+    //       }
+    //     }
+    //   ]
+
+    // Error codes — all negative, TOOL_GRAMMAR_OK (0) on success.
+    #define TOOL_GRAMMAR_OK                   0
+    #define TOOL_GRAMMAR_ERR_NULL_INPUT      -1
+    #define TOOL_GRAMMAR_ERR_NULL_OUTPUT     -2
+    #define TOOL_GRAMMAR_ERR_ZERO_LENGTH     -3
+    #define TOOL_GRAMMAR_ERR_INVALID_JSON    -4
+    #define TOOL_GRAMMAR_ERR_NOT_ARRAY       -5
+    #define TOOL_GRAMMAR_ERR_EMPTY_TOOLS     -6
+    #define TOOL_GRAMMAR_ERR_INVALID_TOOL    -7
+    #define TOOL_GRAMMAR_ERR_TRUNCATED       -8
+    #define TOOL_GRAMMAR_ERR_GRAMMAR_BUILD   -9
+    #define TOOL_GRAMMAR_ERR_DUPLICATE_NAME -10
+
+    // Build a GBNF grammar string from a JSON array of tool definitions.
+    //
+    // On success: writes the null-terminated GBNF string to grammar_out,
+    //             returns TOOL_GRAMMAR_OK (0).
+    // On failure: writes a diagnostic to error_out (if non-NULL),
+    //             returns a negative error code.
+    //
+    // The caller owns both buffers. Neither may alias the other.
+    // error_out and error_max_len may be NULL/0 to suppress diagnostics.
+    int tool_call_grammar_from_json(
+        const char  * tools_json,
+        char        * grammar_out,
+        size_t        grammar_max_len,
+        char        * error_out,
+        size_t        error_max_len
+    );
 
 #ifdef __cplusplus
 }
