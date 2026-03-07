@@ -60,7 +60,8 @@ extern "C"
     //   - One or more parallel tool calls
     //
     // Parameter values are free text (no JSON schema type constraints).
-    // The strict post-generation parser catches type mismatches.
+    // Type mismatches are rare for well-trained models and are a tolerated
+    // tradeoff — see Section 3.2 of grammar_constrained_tool_calls_plan.md.
     //
     // Expected JSON format (matches Ollama api.Tool serialization):
     //   [
