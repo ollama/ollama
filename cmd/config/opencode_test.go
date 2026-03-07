@@ -3,6 +3,8 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -229,6 +231,44 @@ func TestOpenCodeEdit(t *testing.T) {
 		// [Ollama] suffix should be stripped
 		if name, ok := entry["name"].(string); !ok || name != "llama3.2" {
 			t.Errorf("name suffix not stripped: got %q", entry["name"])
+		}
+	})
+
+	t.Run("migrate Ollama (local) provider name", func(t *testing.T) {
+		cleanup()
+		os.MkdirAll(configDir, 0o755)
+		os.WriteFile(configPath, []byte(`{"provider":{"ollama":{"name":"Ollama (local)","npm":"@ai-sdk/openai-compatible","options":{"baseURL":"http://localhost:11434/v1"}}}}`), 0o644)
+
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
+			t.Fatal(err)
+		}
+
+		data, _ := os.ReadFile(configPath)
+		var cfg map[string]any
+		json.Unmarshal(data, &cfg)
+		provider := cfg["provider"].(map[string]any)
+		ollama := provider["ollama"].(map[string]any)
+		if ollama["name"] != "Ollama" {
+			t.Errorf("provider name not migrated: got %q, want %q", ollama["name"], "Ollama")
+		}
+	})
+
+	t.Run("preserve custom provider name", func(t *testing.T) {
+		cleanup()
+		os.MkdirAll(configDir, 0o755)
+		os.WriteFile(configPath, []byte(`{"provider":{"ollama":{"name":"My Custom Ollama","npm":"@ai-sdk/openai-compatible","options":{"baseURL":"http://localhost:11434/v1"}}}}`), 0o644)
+
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
+			t.Fatal(err)
+		}
+
+		data, _ := os.ReadFile(configPath)
+		var cfg map[string]any
+		json.Unmarshal(data, &cfg)
+		provider := cfg["provider"].(map[string]any)
+		ollama := provider["ollama"].(map[string]any)
+		if ollama["name"] != "My Custom Ollama" {
+			t.Errorf("custom provider name was changed: got %q, want %q", ollama["name"], "My Custom Ollama")
 		}
 	})
 
@@ -619,6 +659,54 @@ func TestOpenCodeEdit_CloudModelLimitStructure(t *testing.T) {
 	}
 }
 
+func TestOpenCodeEdit_BackfillsCloudModelLimitOnExistingEntry(t *testing.T) {
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" {
+			fmt.Fprintf(w, `{"capabilities":[],"model_info":{},"remote_model":"glm-5"}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	configDir := filepath.Join(tmpDir, ".config", "opencode")
+	configPath := filepath.Join(configDir, "opencode.json")
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(configPath, []byte(`{
+		"provider": {
+			"ollama": {
+				"models": {
+					"glm-5:cloud": {
+						"name": "glm-5:cloud",
+						"_launch": true
+					}
+				}
+			}
+		}
+	}`), 0o644)
+
+	if err := o.Edit([]string{"glm-5:cloud"}); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := readOpenCodeModel(t, configPath, "glm-5:cloud")
+	limit, ok := entry["limit"].(map[string]any)
+	if !ok {
+		t.Fatal("cloud model limit was not added on re-edit")
+	}
+	if limit["context"] != float64(202_752) {
+		t.Errorf("context = %v, want 202752", limit["context"])
+	}
+	if limit["output"] != float64(131_072) {
+		t.Errorf("output = %v, want 131072", limit["output"])
+	}
+}
+
 func TestLookupCloudModelLimit(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -626,13 +714,17 @@ func TestLookupCloudModelLimit(t *testing.T) {
 		wantContext int
 		wantOutput  int
 	}{
-		{"glm-4.7", true, 202_752, 131_072},
+		{"glm-4.7", false, 0, 0},
 		{"glm-4.7:cloud", true, 202_752, 131_072},
-		{"kimi-k2.5", true, 262_144, 262_144},
+		{"glm-5:cloud", true, 202_752, 131_072},
+		{"gpt-oss:120b-cloud", true, 131_072, 131_072},
+		{"gpt-oss:20b-cloud", true, 131_072, 131_072},
+		{"kimi-k2.5", false, 0, 0},
 		{"kimi-k2.5:cloud", true, 262_144, 262_144},
-		{"deepseek-v3.2", true, 163_840, 65_536},
+		{"deepseek-v3.2", false, 0, 0},
 		{"deepseek-v3.2:cloud", true, 163_840, 65_536},
-		{"qwen3-coder:480b", true, 262_144, 65_536},
+		{"qwen3-coder:480b", false, 0, 0},
+		{"qwen3-coder:480b:cloud", true, 262_144, 65_536},
 		{"qwen3-coder-next:cloud", true, 262_144, 32_768},
 		{"llama3.2", false, 0, 0},
 		{"unknown-model:cloud", false, 0, 0},

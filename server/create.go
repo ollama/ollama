@@ -65,9 +65,20 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	config.Parser = r.Parser
 	config.Requires = r.Requires
 
-	for v := range r.Files {
+	for v, digest := range r.Files {
 		if !fs.ValidPath(v) {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": errFilePath.Error()})
+			return
+		}
+		if digest == "" {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": manifest.ErrInvalidDigestFormat.Error()})
+			return
+		}
+	}
+
+	for _, digest := range r.Adapters {
+		if digest == "" {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": manifest.ErrInvalidDigestFormat.Error()})
 			return
 		}
 	}
@@ -99,19 +110,26 @@ func (s *Server) CreateHandler(c *gin.Context) {
 
 		if r.From != "" {
 			slog.Debug("create model from model name", "from", r.From)
-			fromName := model.ParseName(r.From)
-			if !fromName.IsValid() {
+			fromRef, err := parseAndValidateModelRef(r.From)
+			if err != nil {
 				ch <- gin.H{"error": errtypes.InvalidModelNameErrMsg, "status": http.StatusBadRequest}
 				return
 			}
-			if r.RemoteHost != "" {
-				ru, err := remoteURL(r.RemoteHost)
+
+			fromName := fromRef.Name
+			remoteHost := r.RemoteHost
+			if fromRef.Source == modelSourceCloud && remoteHost == "" {
+				remoteHost = cloudProxyBaseURL
+			}
+
+			if remoteHost != "" {
+				ru, err := remoteURL(remoteHost)
 				if err != nil {
 					ch <- gin.H{"error": "bad remote", "status": http.StatusBadRequest}
 					return
 				}
 
-				config.RemoteModel = r.From
+				config.RemoteModel = fromRef.Base
 				config.RemoteHost = ru
 				remote = true
 			} else {

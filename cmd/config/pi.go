@@ -107,7 +107,8 @@ func (p *Pi) Edit(models []string) error {
 
 	// Build new models list:
 	// 1. Keep user-managed models (no _launch marker) - untouched
-	// 2. Keep ollama-managed models (_launch marker) that are still selected
+	// 2. Keep ollama-managed models (_launch marker) that are still selected,
+	//    except stale cloud entries that should be rebuilt below
 	// 3. Add new ollama-managed models
 	var newModels []any
 	for _, m := range existingModels {
@@ -117,7 +118,13 @@ func (p *Pi) Edit(models []string) error {
 				if !isPiOllamaModel(modelObj) {
 					newModels = append(newModels, m)
 				} else if selectedSet[id] {
-					// Ollama-managed and still selected - keep it
+					// Rebuild stale managed cloud entries so createConfig refreshes
+					// the whole entry instead of patching it in place.
+					if !hasContextWindow(modelObj) {
+						if _, ok := lookupCloudModelLimit(id); ok {
+							continue
+						}
+					}
 					newModels = append(newModels, m)
 					selectedSet[id] = false
 				}
@@ -199,11 +206,27 @@ func isPiOllamaModel(cfg map[string]any) bool {
 	return false
 }
 
+func hasContextWindow(cfg map[string]any) bool {
+	switch v := cfg["contextWindow"].(type) {
+	case float64:
+		return v > 0
+	case int:
+		return v > 0
+	case int64:
+		return v > 0
+	default:
+		return false
+	}
+}
+
 // createConfig builds Pi model config with capability detection
 func createConfig(ctx context.Context, client *api.Client, modelID string) map[string]any {
 	cfg := map[string]any{
 		"id":      modelID,
 		"_launch": true,
+	}
+	if l, ok := lookupCloudModelLimit(modelID); ok {
+		cfg["contextWindow"] = l.Context
 	}
 
 	resp, err := client.Show(ctx, &api.ShowRequest{Model: modelID})
@@ -223,7 +246,8 @@ func createConfig(ctx context.Context, client *api.Client, modelID string) map[s
 		cfg["reasoning"] = true
 	}
 
-	// Extract context window from ModelInfo
+	// Extract context window from ModelInfo. For known cloud models, the
+	// pre-filled shared limit remains unless the server provides a positive value.
 	for key, val := range resp.ModelInfo {
 		if strings.HasSuffix(key, ".context_length") {
 			if ctxLen, ok := val.(float64); ok && ctxLen > 0 {

@@ -426,8 +426,14 @@ func TestBuildModelList_NoExistingModels(t *testing.T) {
 	}
 
 	for _, item := range items {
-		if !strings.HasSuffix(item.Description, "(not downloaded)") {
-			t.Errorf("item %q should have description ending with '(not downloaded)', got %q", item.Name, item.Description)
+		if strings.HasSuffix(item.Name, ":cloud") {
+			if strings.HasSuffix(item.Description, "(not downloaded)") {
+				t.Errorf("cloud model %q should not have '(not downloaded)' suffix, got %q", item.Name, item.Description)
+			}
+		} else {
+			if !strings.HasSuffix(item.Description, "(not downloaded)") {
+				t.Errorf("item %q should have description ending with '(not downloaded)', got %q", item.Name, item.Description)
+			}
 		}
 	}
 }
@@ -492,9 +498,13 @@ func TestBuildModelList_ExistingRecommendedMarked(t *testing.T) {
 			if strings.HasSuffix(item.Description, "(not downloaded)") {
 				t.Errorf("installed recommended %q should not have '(not downloaded)' suffix, got %q", item.Name, item.Description)
 			}
-		case "minimax-m2.5:cloud", "kimi-k2.5:cloud", "qwen3:8b":
+		case "qwen3:8b":
 			if !strings.HasSuffix(item.Description, "(not downloaded)") {
 				t.Errorf("non-installed recommended %q should have '(not downloaded)' suffix, got %q", item.Name, item.Description)
+			}
+		case "minimax-m2.5:cloud", "kimi-k2.5:cloud":
+			if strings.HasSuffix(item.Description, "(not downloaded)") {
+				t.Errorf("cloud model %q should not have '(not downloaded)' suffix, got %q", item.Name, item.Description)
 			}
 		}
 	}
@@ -536,7 +546,13 @@ func TestBuildModelList_HasRecommendedCloudModel_OnlyNonInstalledAtBottom(t *tes
 	}
 
 	for _, item := range items {
-		if !slices.Contains([]string{"kimi-k2.5:cloud", "llama3.2"}, item.Name) {
+		isCloud := strings.HasSuffix(item.Name, ":cloud")
+		isInstalled := slices.Contains([]string{"kimi-k2.5:cloud", "llama3.2"}, item.Name)
+		if isInstalled || isCloud {
+			if strings.HasSuffix(item.Description, "(not downloaded)") {
+				t.Errorf("installed or cloud model %q should not have '(not downloaded)' suffix, got %q", item.Name, item.Description)
+			}
+		} else {
 			if !strings.HasSuffix(item.Description, "(not downloaded)") {
 				t.Errorf("non-installed %q should have '(not downloaded)' suffix, got %q", item.Name, item.Description)
 			}
@@ -1000,8 +1016,8 @@ func TestShowOrPull_ModelNotFound_ConfirmNo_Cancelled(t *testing.T) {
 	}
 }
 
-func TestShowOrPull_CloudModel_SkipsConfirmation(t *testing.T) {
-	// Confirm prompt should NOT be called for cloud models
+func TestShowOrPull_CloudModel_DoesNotPull(t *testing.T) {
+	// Confirm prompt should NOT be called for explicit cloud models
 	oldHook := DefaultConfirmPrompt
 	DefaultConfirmPrompt = func(prompt string) (bool, error) {
 		t.Error("confirm prompt should not be called for cloud models")
@@ -1032,8 +1048,115 @@ func TestShowOrPull_CloudModel_SkipsConfirmation(t *testing.T) {
 	if err != nil {
 		t.Errorf("ShowOrPull should succeed for cloud model, got: %v", err)
 	}
-	if !pullCalled {
-		t.Error("expected pull to be called for cloud model without confirmation")
+	if pullCalled {
+		t.Error("expected pull not to be called for cloud model")
+	}
+}
+
+func TestShowOrPull_CloudLegacySuffix_DoesNotPull(t *testing.T) {
+	// Confirm prompt should NOT be called for explicit cloud models
+	oldHook := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		t.Error("confirm prompt should not be called for cloud models")
+		return false, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldHook }()
+
+	var pullCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"error":"model not found"}`)
+		case "/api/pull":
+			pullCalled = true
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `{"status":"success"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	err := ShowOrPull(context.Background(), client, "gpt-oss:20b-cloud")
+	if err != nil {
+		t.Errorf("ShowOrPull should succeed for cloud model, got: %v", err)
+	}
+	if pullCalled {
+		t.Error("expected pull not to be called for cloud model")
+	}
+}
+
+func TestPullIfNeeded_CloudModel_DoesNotPull(t *testing.T) {
+	oldHook := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		t.Error("confirm prompt should not be called for cloud models")
+		return false, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldHook }()
+
+	err := pullIfNeeded(context.Background(), nil, map[string]bool{}, "glm-5:cloud")
+	if err != nil {
+		t.Fatalf("expected no error for cloud model, got %v", err)
+	}
+
+	err = pullIfNeeded(context.Background(), nil, map[string]bool{}, "gpt-oss:20b-cloud")
+	if err != nil {
+		t.Fatalf("expected no error for cloud model with legacy suffix, got %v", err)
+	}
+}
+
+func TestSelectModelsWithSelectors_CloudSelection_DoesNotPull(t *testing.T) {
+	var pullCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/status":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"error":"not found"}`)
+		case "/api/tags":
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `{"models":[]}`)
+		case "/api/me":
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `{"name":"test-user"}`)
+		case "/api/pull":
+			pullCalled = true
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `{"status":"success"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"error":"not found"}`)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	single := func(title string, items []ModelItem, current string) (string, error) {
+		for _, item := range items {
+			if item.Name == "glm-5:cloud" {
+				return item.Name, nil
+			}
+		}
+		t.Fatalf("expected glm-5:cloud in selector items, got %v", items)
+		return "", nil
+	}
+
+	multi := func(title string, items []ModelItem, preChecked []string) ([]string, error) {
+		return nil, fmt.Errorf("multi selector should not be called")
+	}
+
+	selected, err := selectModelsWithSelectors(context.Background(), "codex", "", single, multi)
+	if err != nil {
+		t.Fatalf("selectModelsWithSelectors returned error: %v", err)
+	}
+	if !slices.Equal(selected, []string{"glm-5:cloud"}) {
+		t.Fatalf("unexpected selected models: %v", selected)
+	}
+	if pullCalled {
+		t.Fatal("expected cloud selection to skip pull")
 	}
 }
 

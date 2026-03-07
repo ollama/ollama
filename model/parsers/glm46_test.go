@@ -846,6 +846,47 @@ line3</arg_value>`,
 				},
 			},
 		},
+		{
+			name:  "unclosed arg_value at end",
+			tools: []api.Tool{},
+			rawToolCall: `get-weather
+<arg_key>city</arg_key>
+<arg_value>Paris`,
+			wantToolCall: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name:      "get-weather",
+					Arguments: args(`{"city": "Paris"}`),
+				},
+			},
+		},
+		{
+			name:  "unclosed arg_value before next arg_key",
+			tools: []api.Tool{},
+			rawToolCall: `get-weather
+<arg_key>city</arg_key>
+<arg_value>Paris<arg_key>unit</arg_key>
+<arg_value>celsius</arg_value>`,
+			wantToolCall: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name:      "get-weather",
+					Arguments: args(`{"city": "Paris", "unit": "celsius"}`),
+				},
+			},
+		},
+		{
+			name:  "multiple unclosed arg_values",
+			tools: []api.Tool{},
+			rawToolCall: `get-weather
+<arg_key>city</arg_key>
+<arg_value>Paris<arg_key>unit</arg_key>
+<arg_value>celsius`,
+			wantToolCall: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name:      "get-weather",
+					Arguments: args(`{"city": "Paris", "unit": "celsius"}`),
+				},
+			},
+		},
 	}
 
 	for i, tc := range cases {
@@ -856,6 +897,48 @@ line3</arg_value>`,
 			}
 			if !toolCallEqual(gotToolCall, tc.wantToolCall) {
 				t.Errorf("case %d (%s): got tool call %#v, want %#v", i, tc.name, gotToolCall, tc.wantToolCall)
+			}
+		})
+	}
+}
+
+func TestRepairUnclosedArgValues(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "already valid",
+			input: `<arg_key>k</arg_key><arg_value>v</arg_value>`,
+			want:  `<arg_key>k</arg_key><arg_value>v</arg_value>`,
+		},
+		{
+			name:  "unclosed at end",
+			input: `<arg_key>k</arg_key><arg_value>v`,
+			want:  `<arg_key>k</arg_key><arg_value>v</arg_value>`,
+		},
+		{
+			name:  "unclosed before next arg_key",
+			input: `<arg_key>a</arg_key><arg_value>1<arg_key>b</arg_key><arg_value>2</arg_value>`,
+			want:  `<arg_key>a</arg_key><arg_value>1</arg_value><arg_key>b</arg_key><arg_value>2</arg_value>`,
+		},
+		{
+			name:  "no arg_value tags",
+			input: `just plain text`,
+			want:  `just plain text`,
+		},
+		{
+			name:  "multiple unclosed",
+			input: `<arg_key>a</arg_key><arg_value>1<arg_key>b</arg_key><arg_value>2`,
+			want:  `<arg_key>a</arg_key><arg_value>1</arg_value><arg_key>b</arg_key><arg_value>2</arg_value>`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := repairUnclosedArgValues(tc.input)
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
 			}
 		})
 	}

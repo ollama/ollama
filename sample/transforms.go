@@ -25,6 +25,48 @@ func (h *tokenHeap) Pop() any {
 	return x
 }
 
+func tokenCounts(history []int32, vocabSize int) map[int32]int {
+	if len(history) == 0 {
+		return nil
+	}
+
+	start := 0
+	if len(history) > DefaultPenaltyLookback {
+		start = len(history) - DefaultPenaltyLookback
+	}
+
+	counts := make(map[int32]int, len(history)-start)
+	for _, token := range history[start:] {
+		if token < 0 || int(token) >= vocabSize {
+			continue
+		}
+		counts[token]++
+	}
+
+	return counts
+}
+
+func applyPenalty(logit float32, count int, repeatPenalty float32, presencePenalty float32, frequencyPenalty float32) float32 {
+	if repeatPenalty != 1.0 {
+		// Preserve ordering for negative logits when applying repeat penalty.
+		if logit < 0 {
+			logit *= repeatPenalty
+		} else {
+			logit /= repeatPenalty
+		}
+	}
+
+	if frequencyPenalty != 0 {
+		logit -= float32(count) * frequencyPenalty
+	}
+
+	if presencePenalty != 0 {
+		logit -= presencePenalty
+	}
+
+	return logit
+}
+
 // temperature applies scaling to the logits
 func temperature(ts []token, temp float32) {
 	// Ensure temperature clipping near 0 to avoid numerical instability

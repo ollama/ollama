@@ -192,6 +192,48 @@ func TestPiEdit(t *testing.T) {
 		}
 	})
 
+	t.Run("rebuilds stale existing managed cloud model", func(t *testing.T) {
+		cleanup()
+		os.MkdirAll(configDir, 0o755)
+
+		existingConfig := `{
+			"providers": {
+				"ollama": {
+					"baseUrl": "http://localhost:11434/v1",
+					"api": "openai-completions",
+					"apiKey": "ollama",
+					"models": [
+						{"id": "glm-5:cloud", "_launch": true, "legacyField": "stale"}
+					]
+				}
+			}
+		}`
+		if err := os.WriteFile(configPath, []byte(existingConfig), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := pi.Edit([]string{"glm-5:cloud"}); err != nil {
+			t.Fatalf("Edit() error = %v", err)
+		}
+
+		cfg := readConfig()
+		providers := cfg["providers"].(map[string]any)
+		ollama := providers["ollama"].(map[string]any)
+		modelsArray := ollama["models"].([]any)
+		modelEntry := modelsArray[0].(map[string]any)
+
+		if modelEntry["contextWindow"] != float64(202_752) {
+			t.Errorf("contextWindow = %v, want 202752", modelEntry["contextWindow"])
+		}
+		input, ok := modelEntry["input"].([]any)
+		if !ok || len(input) != 1 || input[0] != "text" {
+			t.Errorf("input = %v, want [text]", modelEntry["input"])
+		}
+		if _, ok := modelEntry["legacyField"]; ok {
+			t.Error("legacyField should be removed when stale managed cloud entry is rebuilt")
+		}
+	})
+
 	t.Run("replaces old models with new ones", func(t *testing.T) {
 		cleanup()
 		os.MkdirAll(configDir, 0o755)
@@ -795,6 +837,60 @@ func TestCreateConfig(t *testing.T) {
 		}
 		if _, ok := cfg["contextWindow"]; ok {
 			t.Error("contextWindow should not be set when show fails")
+		}
+	})
+
+	t.Run("falls back to cloud context when show fails", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"error":"model not found"}`)
+		}))
+		defer srv.Close()
+
+		u, _ := url.Parse(srv.URL)
+		client := api.NewClient(u, srv.Client())
+
+		cfg := createConfig(context.Background(), client, "kimi-k2.5:cloud")
+
+		if cfg["contextWindow"] != 262_144 {
+			t.Errorf("contextWindow = %v, want 262144", cfg["contextWindow"])
+		}
+	})
+
+	t.Run("falls back to cloud context when model info is empty", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/show" {
+				fmt.Fprintf(w, `{"capabilities":[],"model_info":{}}`)
+				return
+			}
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+
+		u, _ := url.Parse(srv.URL)
+		client := api.NewClient(u, srv.Client())
+
+		cfg := createConfig(context.Background(), client, "glm-5:cloud")
+
+		if cfg["contextWindow"] != 202_752 {
+			t.Errorf("contextWindow = %v, want 202752", cfg["contextWindow"])
+		}
+	})
+
+	t.Run("falls back to cloud context for dash cloud suffix", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"error":"model not found"}`)
+		}))
+		defer srv.Close()
+
+		u, _ := url.Parse(srv.URL)
+		client := api.NewClient(u, srv.Client())
+
+		cfg := createConfig(context.Background(), client, "gpt-oss:120b-cloud")
+
+		if cfg["contextWindow"] != 131_072 {
+			t.Errorf("contextWindow = %v, want 131072", cfg["contextWindow"])
 		}
 	})
 

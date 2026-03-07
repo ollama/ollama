@@ -18,9 +18,6 @@ import (
 	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/imagegen/mlx"
 	"github.com/ollama/ollama/x/imagegen/models/flux2"
-	"github.com/ollama/ollama/x/imagegen/models/gemma3"
-	"github.com/ollama/ollama/x/imagegen/models/gpt_oss"
-	"github.com/ollama/ollama/x/imagegen/models/llama"
 	"github.com/ollama/ollama/x/imagegen/models/zimage"
 	"github.com/ollama/ollama/x/imagegen/safetensors"
 )
@@ -170,11 +167,11 @@ func main() {
 			log.Fatal(err)
 		}
 
-		// Load image if provided and model supports it
+		// Load image if provided and model supports it.
 		var image *mlx.Array
 		if *imagePath != "" {
 			if mm, ok := m.(interface{ ImageSize() int32 }); ok {
-				image, err = gemma3.ProcessImage(*imagePath, mm.ImageSize())
+				image, err = imagegen.ProcessImage(*imagePath, mm.ImageSize())
 				if err != nil {
 					log.Fatal("load image:", err)
 				}
@@ -236,14 +233,8 @@ func load(modelPath string) (Model, error) {
 	}
 
 	switch kind {
-	case "gpt_oss":
-		return gpt_oss.Load(modelPath)
-	case "gemma3":
-		return gemma3.Load(modelPath)
-	case "gemma3_text":
-		return gemma3.LoadText(modelPath)
 	default:
-		return llama.Load(modelPath)
+		return nil, fmt.Errorf("model type %q is not supported by x/imagegen/cmd/engine", kind)
 	}
 }
 
