@@ -1616,7 +1616,7 @@ ggml_tensor * llm_graph_context::build_inp_attn_scale() const {
 ggml_tensor * llm_graph_context::build_inp_out_ids() const {
     // note: when all tokens are output, we could skip this optimization to spare the ggml_get_rows() calls,
     //       but this would make the graph topology depend on the number of output tokens, which can interere with
-    //       features that require constant topology such as pipline parallelism
+    //       features that require constant topology such as pipeline parallelism
     //       ref: https://github.com/ggml-org/llama.cpp/pull/14275#issuecomment-2987424471
     //if (n_outputs < n_tokens) {
     //    return nullptr;
@@ -1779,7 +1779,7 @@ ggml_tensor * llm_graph_context::build_attn_mha(
         if (v_mla) {
 #if 0
             // v_mla can be applied as a matrix-vector multiplication with broadcasting across dimension 3 == n_tokens.
-            // However, the code is optimized for dimensions 0 and 1 being large, so this is ineffient.
+            // However, the code is optimized for dimensions 0 and 1 being large, so this is inefficient.
             cur = ggml_reshape_4d(ctx0, cur, v_mla->ne[0], 1, n_head, n_tokens);
             cur = ggml_mul_mat(ctx0, v_mla, cur);
 #else

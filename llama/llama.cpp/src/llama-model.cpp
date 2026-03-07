@@ -61,6 +61,7 @@ const char * llm_type_name(llm_type type) {
         case LLM_TYPE_0_3B:          return "0.3B";
         case LLM_TYPE_0_5B:          return "0.5B";
         case LLM_TYPE_0_6B:          return "0.6B";
+        case LLM_TYPE_0_8B:          return "0.8B";
         case LLM_TYPE_1B:            return "1B";
         case LLM_TYPE_1_2B:          return "1.2B";
         case LLM_TYPE_1_3B:          return "1.3B";
@@ -132,12 +133,14 @@ const char * llm_type_name(llm_type type) {
         case LLM_TYPE_100B_A6B:      return "100B.A6B";
         case LLM_TYPE_102B_A12B:     return "102B.A12B";
         case LLM_TYPE_106B_A12B:     return "106B.A12B";
+        case LLM_TYPE_122B_A10B:     return "122B.A10B";
         case LLM_TYPE_196B_A11B:     return "196B.A11B";
         case LLM_TYPE_230B_A10B:     return "230B.A10B";
         case LLM_TYPE_235B_A22B:     return "235B.A22B";
         case LLM_TYPE_300B_A47B:     return "300B.A47B";
         case LLM_TYPE_310B_A15B:     return "310B.A15B";
         case LLM_TYPE_355B_A32B:     return "355B.A32B";
+        case LLM_TYPE_397B_A17B:     return "397B.A17B";
         case LLM_TYPE_744B_A40B:     return "744B.A40B";
         case LLM_TYPE_E2B:           return "E2B";
         case LLM_TYPE_E4B:           return "E4B";
@@ -1524,7 +1527,7 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                 }
 
                 switch (hparams.n_layer) {
-                    // TODO: Jamba layers are a bit heterogenous, so naming this is hard.
+                    // TODO: Jamba layers are a bit heterogeneous, so naming this is hard.
                     case 12: // 900M  8x???M
                     case 32: // 51B  16x?B
                     default: type = LLM_TYPE_UNKNOWN;
@@ -2543,7 +2546,9 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                 }
 
                 switch (hparams.n_layer) {
-                    case 24: type = LLM_TYPE_2B; break;
+                    case 24: type = hparams.n_embd == 1024 ? LLM_TYPE_0_8B : LLM_TYPE_2B; break;
+                    case 32: type = hparams.n_embd == 2560 ? LLM_TYPE_4B : LLM_TYPE_9B; break;
+                    case 64: type = LLM_TYPE_27B; break;
                     default: type = LLM_TYPE_UNKNOWN;
                 }
             } break;
@@ -2572,8 +2577,9 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                 }
 
                 switch (hparams.n_layer) {
-                    case 28: type = LLM_TYPE_35B_A3B; break;
-                    case 48: type = LLM_TYPE_80B_A3B; break;
+                    case 40: type = LLM_TYPE_35B_A3B; break;
+                    case 48: type = LLM_TYPE_122B_A10B; break;
+                    case 60: type = LLM_TYPE_397B_A17B; break;
                     default: type = LLM_TYPE_UNKNOWN;
                 }
             } break;

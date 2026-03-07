@@ -10,7 +10,7 @@ Subject: [PATCH] ggml-metal: guard mul_mat_id map0 and add ne20=22
  2 files changed, 3 insertions(+), 1 deletion(-)
 
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index 3d5db0b79..771cb3876 100644
+index b3390352f..222c274ef 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
 @@ -2207,7 +2207,8 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
@@ -24,7 +24,7 @@ index 3d5db0b79..771cb3876 100644
          // ref: https://developer.apple.com/metal/Metal-Shading-Language-Specification.pdf (Table 2.5)
          //switch (op->src[0]->type) {
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 1fbdfc385..36b5a6812 100644
+index a97290404..db2e8862e 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
 @@ -9127,6 +9127,7 @@ template [[host_name("kernel_mul_mm_id_map0_ne20_6" )]] kernel kernel_mul_mm_id_

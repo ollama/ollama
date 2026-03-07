@@ -235,7 +235,7 @@ static __global__ void quantize_mmq_q8_1(
     q.z = roundf(xi.z*d_inv);
     q.w = roundf(xi.w*d_inv);
 
-    // Write back 4 int8 values as a single 32 bit value for better memroy bandwidth:
+    // Write back 4 int8 values as a single 32 bit value for better memory bandwidth:
     char4 * yqs4 = (char4 *) y[ib].qs;
     yqs4[iqs/4] = q;
 

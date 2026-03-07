@@ -1,6 +1,6 @@
 #include "models.h"
 
-#define CHUNK_SIZE 64
+#include "llama-impl.h"
 
 // utility to get one slice from the third dimension
 // input dim:  [x, y, c, b]
@@ -41,6 +41,13 @@ std::pair<ggml_tensor *, ggml_tensor *> llm_build_delta_net_base::build_delta_ne
     GGML_ASSERT(b->ne[0] == 1   && b->ne[1] == H_v && b->ne[2] == n_tokens && b->ne[3] == n_seqs);
     GGML_ASSERT(s->ne[0] == S_v && s->ne[1] == S_v && s->ne[2] == H_v      && s->ne[3] == n_seqs);
 
+    if (cparams.fused_gdn_ch) {
+        //ggml_tensor * result = ggml_gated_delta_net(ctx0, q, k, v, g, b, s);
+        //cb(result, LLAMA_TENSOR_NAME_FGDNCH, il);
+
+        GGML_ABORT("not implemented yet");
+    }
+
     const float scale = 1.0f / sqrtf(S_k);
 
     q = ggml_scale(ctx0, q, scale);
@@ -57,7 +64,7 @@ std::pair<ggml_tensor *, ggml_tensor *> llm_build_delta_net_base::build_delta_ne
     g = ggml_permute(ctx0, g, 0, 2, 1, 3); // [g_0, n_tokens, H_v, n_seqs]
     b = ggml_permute(ctx0, b, 0, 2, 1, 3); // [  1, n_tokens, H_v, n_seqs]
 
-    const int CS = CHUNK_SIZE;
+    const int CS = kda ? 16 : 64; // chunk size
 
     const int pad = (CS - n_tokens % CS) % CS;
     const int n_chunks = (n_tokens + pad) / CS;
@@ -317,6 +324,26 @@ std::pair<ggml_tensor *, ggml_tensor *> llm_build_delta_net_base::build_delta_ne
     GGML_ASSERT(                   g->ne[1] == H_v && g->ne[2] == n_tokens && g->ne[3] == n_seqs);
     GGML_ASSERT(b->ne[0] == 1   && b->ne[1] == H_v && b->ne[2] == n_tokens && b->ne[3] == n_seqs);
     GGML_ASSERT(s->ne[0] == S_v && s->ne[1] == S_v && s->ne[2] == H_v      && s->ne[3] == n_seqs);
+
+    if (cparams.fused_gdn_ar) {
+        ggml_tensor * result = ggml_gated_delta_net(ctx0, q, k, v, g, b, s);
+        cb(result, LLAMA_TENSOR_NAME_FGDNAR, il);
+
+        ggml_tensor * output = ggml_view_4d(ctx0, result,
+            S_v, H_v, n_tokens, n_seqs,
+            ggml_row_size(result->type, S_v),
+            ggml_row_size(result->type, S_v * H_v),
+            ggml_row_size(result->type, S_v * H_v * n_tokens), 0);
+
+        ggml_tensor * new_state = ggml_view_4d(ctx0, result,
+            S_v, S_v, H_v, n_seqs,
+            ggml_row_size(result->type, S_v),
+            ggml_row_size(result->type, S_v * S_v),
+            ggml_row_size(result->type, S_v * S_v * H_v),
+            ggml_row_size(result->type, S_v * H_v * n_tokens * n_seqs));
+
+        return {output, new_state};
+    }
 
     const float scale = 1.0f / sqrtf(S_k);
 

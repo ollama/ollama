@@ -119,6 +119,18 @@ __launch_bounds__(4 * WARP_SIZE, 1) __global__ void topk_moe_cuda(const float * 
         }
     }
 
+    // Sanitize NaN to -FLT_MAX so the iterative argmax produces unique expert IDs.
+    // NaN comparisons always return false, which would cause the same expert to be
+    // selected repeatedly. -FLT_MAX compares normally and is still excluded by the
+    // -INFINITY sentinel used after each selection round.
+    // More relevant for the cuBLAS path. See https://github.com/ggml-org/llama.cpp/issues/19659
+#pragma unroll
+    for (int i = 0; i < experts_per_thread; i++) {
+        if (__isnanf(wt[i])) {
+            wt[i] = -FLT_MAX;
+        }
+    }
+
     // selection_wt is only needed when bias is present (selection uses wt + bias)
     // when no bias, we use wt directly for both selection and weight values
     float selection_wt[has_bias ? experts_per_thread : 1];

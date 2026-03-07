@@ -781,7 +781,7 @@ void ggml_gemv_q4_K_8x8_q8_K(int                        n,
 
                 const uint8_t * q4_base = q4_ptr[b].qs + sb * QK_K;
 
-                // Load the 64 quants from q8K duplicated to use vecdots with the interelaved columns
+                // Load the 64 quants from q8K duplicated to use vecdots with the interleaved columns
                 // but still need the qs to use the low and hi bits from q4
                 const int8_t * q8_base = q8_ptr[b].qs + sb * 64;
                 int8x16_t      q8_qs[8];
@@ -3796,7 +3796,7 @@ void ggml_gemm_q4_K_8x8_q8_K(int                        n,
 
                 for (int b = 0; b < nb; b++) {
                     // bsums pairs belongs to the same q8_k subblock
-                    // 64 elemnts loaded and made sum of 0-7 and 8-15 sum || 16-23 and 24 - 31 sum
+                    // 64 elements loaded and made sum of 0-7 and 8-15 sum || 16-23 and 24 - 31 sum
                     const int16x8_t bsums[4]{
                         vpaddq_s16(vld1q_s16(q8_ptr[b].bsums + 16 * 0), vld1q_s16(q8_ptr[b].bsums + 16 * 0 + 8)),
                         vpaddq_s16(vld1q_s16(q8_ptr[b].bsums + 16 * 1), vld1q_s16(q8_ptr[b].bsums + 16 * 1 + 8)),

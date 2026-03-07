@@ -146,7 +146,7 @@ llm_build_deepseek2::llm_build_deepseek2(const llama_model & model, const llm_gr
                     cb(Qcur, "Qcur_attn_temp_scaled", il);
                 }
 
-                // note: MLA with the absorption optimzation converts into MQA (ie: GQA with 1 group)
+                // note: MLA with the absorption optimization converts into MQA (ie: GQA with 1 group)
                 cur = build_attn(inp_attn_k,
                         model.layers[il].wo, NULL,
                         Qcur, Kcur, Vcur, nullptr, nullptr, model.layers[il].wv_b, kq_scale, il);

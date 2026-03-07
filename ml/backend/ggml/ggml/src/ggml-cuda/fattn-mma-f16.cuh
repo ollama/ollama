@@ -1215,7 +1215,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     }
 
     // If attention sinks are used, potentially re-scale if KQ_max is small.
-    // Also add the sink as a value to KQ_rowsum, this is done after synchonization of KQ_rowsum
+    // Also add the sink as a value to KQ_rowsum, this is done after synchronization of KQ_rowsum
     //     so it's being done unconditionally for every thread.
     if (!is_fixup && (np == 1 || threadIdx.y % np == 0) && sinks_f) {
         float KQ_max_scale[cols_per_thread];

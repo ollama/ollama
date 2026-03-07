@@ -54,6 +54,7 @@ enum llm_type {
     LLM_TYPE_0_3B,
     LLM_TYPE_0_5B,
     LLM_TYPE_0_6B,
+    LLM_TYPE_0_8B,
     LLM_TYPE_1B,
     LLM_TYPE_1_2B,
     LLM_TYPE_1_3B,
@@ -126,12 +127,14 @@ enum llm_type {
     LLM_TYPE_100B_A6B,
     LLM_TYPE_102B_A12B, // Solar-Open
     LLM_TYPE_106B_A12B, // GLM-4.5-Air
+    LLM_TYPE_122B_A10B, // Qwen3.5
     LLM_TYPE_196B_A11B, // Step3.5-Flash
     LLM_TYPE_230B_A10B, // Minimax M2
     LLM_TYPE_235B_A22B,
     LLM_TYPE_300B_A47B, // Ernie MoE big
     LLM_TYPE_310B_A15B, // /MiMo-V2-Flash
     LLM_TYPE_355B_A32B, // GLM-4.5
+    LLM_TYPE_397B_A17B, // Qwen3.5
     LLM_TYPE_744B_A40B, // GLM-5
     LLM_TYPE_E2B,
     LLM_TYPE_E4B,

@@ -46,7 +46,7 @@ struct clip_hparams {
     float image_std[3];
 
     // for models using dynamic image size, we need to have a smaller image size to warmup
-    // otherwise, user will get OOM everytime they load the model
+    // otherwise, user will get OOM every time they load the model
     int32_t warmup_image_size = 0;
     int32_t warmup_audio_size = 3000;
 
@@ -221,7 +221,7 @@ struct clip_model {
     // embeddings
     ggml_tensor * class_embedding = nullptr;
     ggml_tensor * patch_embeddings_0 = nullptr;
-    ggml_tensor * patch_embeddings_1 = nullptr;  // second Conv2D kernel when we decouple Conv3D along temproal dimension (Qwen2VL)
+    ggml_tensor * patch_embeddings_1 = nullptr;  // second Conv2D kernel when we decouple Conv3D along temporal dimension (Qwen2VL)
     ggml_tensor * patch_bias = nullptr;
     ggml_tensor * position_embeddings = nullptr;
     ggml_tensor * norm_embd_w = nullptr;

@@ -1281,7 +1281,7 @@ struct ggml_metal_buffer {
     bool use_residency_sets;
 
     // optional MTLResidencySet
-    // note: cannot use explicity "id<MTLResidencySet>" here because it is not available on certain OSes
+    // note: cannot use explicitly "id<MTLResidencySet>" here because it is not available on certain OSes
     id rset;
 
     // pointers to global device

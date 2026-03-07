@@ -27,7 +27,7 @@ to provide optimization hints for processing.
  create mode 100644 ggml/src/ggml-vulkan/ggml-vulkan.cpp.orig
 
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
-index 99412fe56..97f630faa 100644
+index e7fbfaa85..e701248bc 100644
 --- a/ggml/include/ggml-backend.h
 +++ b/ggml/include/ggml-backend.h
 @@ -98,7 +98,7 @@ extern "C" {
@@ -65,7 +65,7 @@ index 59190b7c4..a833756f9 100644
          // (optional) event synchronization
          // record an event on this stream
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index c1f4f63ba..761bd12df 100644
+index c4be126f7..7bc060b30 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
 @@ -355,14 +355,14 @@ enum ggml_status ggml_backend_graph_plan_compute(ggml_backend_t backend, ggml_ba
@@ -104,7 +104,7 @@ index c1f4f63ba..761bd12df 100644
                  for (int b = 0; b < src_backend_id; b++) {
                      if (ggml_backend_supports_op(sched->backends[b], tensor) && ggml_backend_offload_op(sched->backends[b], tensor)) {
                          SET_CAUSE(tensor, "1.off");
-@@ -1579,7 +1581,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+@@ -1583,7 +1585,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
          }
  
          if (!sched->callback_eval) {
@@ -113,7 +113,7 @@ index c1f4f63ba..761bd12df 100644
              if (ec != GGML_STATUS_SUCCESS) {
                  return ec;
              }
-@@ -1601,7 +1603,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+@@ -1605,7 +1607,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
  
                  struct ggml_cgraph gv = ggml_graph_view(&split->graph, j0, j1 + 1);
  
@@ -122,7 +122,7 @@ index c1f4f63ba..761bd12df 100644
                  if (ec != GGML_STATUS_SUCCESS) {
                      return ec;
                  }
-@@ -1691,12 +1693,17 @@ ggml_backend_sched_t ggml_backend_sched_new(
+@@ -1695,12 +1697,17 @@ ggml_backend_sched_t ggml_backend_sched_new(
  
      sched->galloc = ggml_gallocr_new_n(sched->bufts, n_backends);
      sched->op_offload = op_offload;
@@ -141,7 +141,7 @@ index c1f4f63ba..761bd12df 100644
      if (sched == NULL) {
          return;
 diff --git a/ggml/src/ggml-blas/ggml-blas.cpp b/ggml/src/ggml-blas/ggml-blas.cpp
-index 2e9ddf224..6a399bdb1 100644
+index 5de64b816..6cc1b157d 100644
 --- a/ggml/src/ggml-blas/ggml-blas.cpp
 +++ b/ggml/src/ggml-blas/ggml-blas.cpp
 @@ -220,7 +220,7 @@ static void ggml_backend_blas_free(ggml_backend_t backend) {
@@ -200,10 +200,10 @@ index ddf1737a3..622cf5d24 100644
  
  static const struct ggml_backend_i ggml_backend_cpu_i = {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 3f56beab8..0ab859d3c 100644
+index f12c36f58..3ad1683df 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -3970,9 +3970,11 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
+@@ -4099,9 +4099,11 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
  }
  #endif // USE_CUDA_GRAPH
  
@@ -217,10 +217,10 @@ index 3f56beab8..0ab859d3c 100644
  
      bool use_cuda_graph             = false;
 diff --git a/ggml/src/ggml-hexagon/ggml-hexagon.cpp b/ggml/src/ggml-hexagon/ggml-hexagon.cpp
-index 7a44443a8..6d46006b5 100644
+index d6e9776b8..fd5ebe504 100644
 --- a/ggml/src/ggml-hexagon/ggml-hexagon.cpp
 +++ b/ggml/src/ggml-hexagon/ggml-hexagon.cpp
-@@ -2489,9 +2489,11 @@ static inline int last_compute_op(ggml_cgraph * graph) {
+@@ -2549,9 +2549,11 @@ static inline int last_compute_op(ggml_cgraph * graph) {
      return last;
  }
  
@@ -234,7 +234,7 @@ index 7a44443a8..6d46006b5 100644
  
      const int last = last_compute_op(graph);
 diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
-index 8d2c93a95..ba12c7c14 100644
+index 488517de3..f3241dc4a 100644
 --- a/ggml/src/ggml-metal/ggml-metal.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal.cpp
 @@ -526,9 +526,11 @@ static bool ggml_backend_metal_cpy_tensor_async(ggml_backend_t backend_src, ggml
@@ -251,10 +251,10 @@ index 8d2c93a95..ba12c7c14 100644
  }
  
 diff --git a/ggml/src/ggml-opencl/ggml-opencl.cpp b/ggml/src/ggml-opencl/ggml-opencl.cpp
-index d7742fa13..28c251129 100644
+index a1e5514ff..21362de2f 100644
 --- a/ggml/src/ggml-opencl/ggml-opencl.cpp
 +++ b/ggml/src/ggml-opencl/ggml-opencl.cpp
-@@ -3316,9 +3316,11 @@ static void ggml_opencl_op_rms_norm_fused(ggml_backend_t backend, ggml_tensor *
+@@ -3523,9 +3523,11 @@ static void ggml_opencl_op_rms_norm_fused(ggml_backend_t backend, ggml_tensor *
  static void ggml_opencl_op_norm_fused(ggml_backend_t backend, ggml_tensor * norm_tensor, ggml_tensor * mul_tensor, ggml_tensor * add_tensor);
  static void ggml_opencl_op_group_norm_fused(ggml_backend_t backend, ggml_tensor * gn_tensor, ggml_tensor * mul_tensor, ggml_tensor * add_tensor);
  
@@ -16717,10 +16717,10 @@ index 000000000..a07de51d9
 +
 +GGML_BACKEND_DL_IMPL(ggml_backend_vk_reg)
 diff --git a/ggml/src/ggml-webgpu/ggml-webgpu.cpp b/ggml/src/ggml-webgpu/ggml-webgpu.cpp
-index 1c00d3cb2..5e6859506 100644
+index b2ef2d590..a6f2846e4 100644
 --- a/ggml/src/ggml-webgpu/ggml-webgpu.cpp
 +++ b/ggml/src/ggml-webgpu/ggml-webgpu.cpp
-@@ -2035,8 +2035,9 @@ static std::optional<webgpu_command> ggml_webgpu_encode_node(webgpu_context ctx,
+@@ -2206,8 +2206,9 @@ static std::optional<webgpu_command> ggml_webgpu_encode_node(webgpu_context ctx,
      }
  }
  

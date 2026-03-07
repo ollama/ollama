@@ -12,10 +12,10 @@ Subject: [PATCH] add argsort and cuda copy for i32
  5 files changed, 413 insertions(+), 11 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index b7a70e06f..c90b7db7e 100644
+index 331e071a2..87230c7ba 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
-@@ -8022,6 +8022,45 @@ static void ggml_compute_forward_argsort_f32(
+@@ -8027,6 +8027,45 @@ static void ggml_compute_forward_argsort_f32(
      }
  }
  
@@ -61,7 +61,7 @@ index b7a70e06f..c90b7db7e 100644
  void ggml_compute_forward_argsort(
      const ggml_compute_params * params,
      ggml_tensor * dst) {
-@@ -8033,6 +8072,10 @@ void ggml_compute_forward_argsort(
+@@ -8038,6 +8077,10 @@ void ggml_compute_forward_argsort(
              {
                  ggml_compute_forward_argsort_f32(params, dst);
              } break;
@@ -291,7 +291,7 @@ index ee84303ef..178e82d76 100644
          if (can_be_transposed) {
              ggml_cpy_scalar_cuda<nv_bfloat16, nv_bfloat16, true>
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 6c349aa0c..628af4bb4 100644
+index a58e641ad..010466fbb 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
 @@ -4736,8 +4736,77 @@ kernel void kernel_argsort_f32_i32(

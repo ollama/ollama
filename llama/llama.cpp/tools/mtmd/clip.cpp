@@ -2330,7 +2330,7 @@ static void normalize_image_u8_to_f32(const clip_image_u8 & src, clip_image_f32 
     }
 }
 
-// set of tools to manupulate images
+// set of tools to manipulate images
 // in the future, we can have HW acceleration by allowing this struct to access 3rd party lib like imagick or opencv
 struct img_tool {
     enum resize_algo {

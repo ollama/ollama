@@ -3,7 +3,7 @@
 #include "llama-model.h"
 #include "llama-graph.h"
 
-// note: almost all graphs require atleast sqrtf, so include cmath globally
+// note: almost all graphs require at least sqrtf, so include cmath globally
 #include <cmath>
 
 //

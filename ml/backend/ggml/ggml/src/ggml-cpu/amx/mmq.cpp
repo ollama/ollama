@@ -195,7 +195,7 @@ struct tile_config_t{
 // will be needed.
 //
 // Here another commonly used pattern 1-3-3 is skipped, as it is mostly used when m <=16;
-// and the sinlge batch gemm (m=1) has a special fast path with `avx512-vnni`.
+// and the single batch gemm (m=1) has a special fast path with `avx512-vnni`.
 //
 // ref: https://www.intel.com/content/www/us/en/developer/articles/code-sample/
 //    advanced-matrix-extensions-intrinsics-functions.html
@@ -1379,8 +1379,8 @@ struct tinygemm_kernel_vnni<block_q8_0, block_q4_0, float, BLOCK_M, BLOCK_N, BLO
         // sum of offsets, shared across COLS
         //
         // avx512-vnni does not have `_mm512_dpbssd_epi32`,
-        // need to transfrom ss to us:
-        //   a * (b - 8) is equavilent to b * a - 8 * a
+        // need to transform ss to us:
+        //   a * (b - 8) is equivalent to b * a - 8 * a
         //   s    u   u                   u   s   u   s
         //
         __m512i vcomp;

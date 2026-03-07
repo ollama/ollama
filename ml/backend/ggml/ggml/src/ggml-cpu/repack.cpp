@@ -3032,7 +3032,7 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
             case GGML_OP_MUL_MAT_ID:
                 {
                     size = ggml_row_size(PARAM_TYPE, ggml_nelements(op->src[1]));
-                    size = GGML_PAD(size, sizeof(int64_t)); // + padding for next bloc.
+                    size = GGML_PAD(size, sizeof(int64_t)); // + padding for next block.
 
                     const int64_t ne02 = op->src[0]->ne[2]; // n_as, n_expert
                     const int64_t ne12 = op->src[1]->ne[2]; // n_tokens
@@ -3297,7 +3297,7 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
         auto * wdata          = (char *)params->wdata;
         auto * wdata_src1_end = (char *)wdata + GGML_PAD(nbw3, sizeof(int64_t));
 
-        // total of [n_as][ne12 + 1] elemets of type mmid_row_mapping (2*int32_t = int64_t)
+        // total of [n_as][ne12 + 1] elements of type mmid_row_mapping (2*int32_t = int64_t)
         auto * matrix_row_counts = (int64_t *) (wdata_src1_end);                                        // [n_as]
         struct mmid_row_mapping * matrix_rows = (struct mmid_row_mapping *) (matrix_row_counts + n_as); // [n_as][ne12]
 

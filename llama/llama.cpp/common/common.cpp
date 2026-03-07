@@ -676,7 +676,7 @@ bool fs_validate_filename(const std::string & filename, bool allow_subdirs) {
 
     size_t offset = 0;
     while (offset < filename.size()) {
-        utf8_parse_result result = parse_utf8_codepoint(filename, offset);
+        utf8_parse_result result = common_parse_utf8_codepoint(filename, offset);
 
         if (result.status != utf8_parse_result::SUCCESS) {
             return false;

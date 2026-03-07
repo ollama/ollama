@@ -533,7 +533,7 @@ class tinyBLAS {
         if constexpr (RN > 1) {
             return mnpack<RM, RN-1, BM>(m, n, SIZE_N, BN);
         } else {
-            GGML_LOG_ERROR("mnpack<%d, %d> bloc size not supported\n", RM, (int)SIZE_N);
+            GGML_LOG_ERROR("mnpack<%d, %d> block size not supported\n", RM, (int)SIZE_N);
             GGML_ASSERT(false); // we have miss something.
         }
     }
@@ -711,7 +711,7 @@ class tinyBLAS_RVV {
         if constexpr (RN > 1) {
             return mnpack<RM, RN-1, BM>(m, n, SIZE_N, BN);
         } else {
-            GGML_LOG_ERROR("mnpack<%d, %d> bloc size not supported\n", RM, (int)SIZE_N);
+            GGML_LOG_ERROR("mnpack<%d, %d> block size not supported\n", RM, (int)SIZE_N);
             GGML_ASSERT(false); // we have miss something.
         }
     }
@@ -2497,7 +2497,7 @@ class tinyBLAS_Q0_PPC {
                 for (int r = 0; r < 8; r++) {
                     const block_q4_0 * current_blk = rows_base[r] + blk;
                     vector float v_scale = vec_extract_fp32_from_shorth(vec_splats(current_blk->d));
-                    vector signed char v_qs = reinterpret_cast<vector signed char>(vec_xl(0, current_blk->qs));
+                    vector signed char v_qs = vec_xl(0, (const vector signed char *)current_blk->qs);
                     vector signed char c1, c2;
                     unpack_q4_to_q8(v_qs, c1, c2);
                     convert_and_scale_q8(c1, v_scale, hp_res[r][0], hp_res[r][1]);
@@ -2611,14 +2611,14 @@ class tinyBLAS_Q0_PPC {
                 i = (cols >> 2);
                 if (i > 0) {
                     do {
-                        c1[1] = reinterpret_cast<vector signed char>(vec_xl(0, aoffset1->qs));
-                        c2[1] = reinterpret_cast<vector signed char>(vec_xl(0, aoffset2->qs));
-                        c3[1] = reinterpret_cast<vector signed char>(vec_xl(0, aoffset3->qs));
-                        c4[1] = reinterpret_cast<vector signed char>(vec_xl(0, aoffset4->qs));
-                        c5[1] = reinterpret_cast<vector signed char>(vec_xl(0, aoffset5->qs));
-                        c6[1] = reinterpret_cast<vector signed char>(vec_xl(0, aoffset6->qs));
-                        c7[1] = reinterpret_cast<vector signed char>(vec_xl(0, aoffset7->qs));
-                        c8[1] = reinterpret_cast<vector signed char>(vec_xl(0, aoffset8->qs));
+                        c1[1] = vec_xl(0, (const vector signed char *)aoffset1->qs);
+                        c2[1] = vec_xl(0, (const vector signed char *)aoffset2->qs);
+                        c3[1] = vec_xl(0, (const vector signed char *)aoffset3->qs);
+                        c4[1] = vec_xl(0, (const vector signed char *)aoffset4->qs);
+                        c5[1] = vec_xl(0, (const vector signed char *)aoffset5->qs);
+                        c6[1] = vec_xl(0, (const vector signed char *)aoffset6->qs);
+                        c7[1] = vec_xl(0, (const vector signed char *)aoffset7->qs);
+                        c8[1] = vec_xl(0, (const vector signed char *)aoffset8->qs);
 
                         process_q4_elements(c1, & comparray[0]);
                         process_q4_elements(c2, & comparray[1]);
@@ -2657,10 +2657,10 @@ class tinyBLAS_Q0_PPC {
             i = (cols >> 2);
             if (i > 0) {
                 do {
-                    c1[1] = reinterpret_cast<vector signed char>(vec_xl(0, aoffset1->qs));
-                    c2[1] = reinterpret_cast<vector signed char>(vec_xl(0, aoffset2->qs));
-                    c3[1] = reinterpret_cast<vector signed char>(vec_xl(0, aoffset3->qs));
-                    c4[1] = reinterpret_cast<vector signed char>(vec_xl(0, aoffset4->qs));
+                    c1[1] = vec_xl(0, (const vector signed char *)aoffset1->qs);
+                    c2[1] = vec_xl(0, (const vector signed char *)aoffset2->qs);
+                    c3[1] = vec_xl(0, (const vector signed char *)aoffset3->qs);
+                    c4[1] = vec_xl(0, (const vector signed char *)aoffset4->qs);
 
                     process_q4_elements(c1, & comparray[0]);
                     process_q4_elements(c2, & comparray[1]);
@@ -2686,9 +2686,9 @@ class tinyBLAS_Q0_PPC {
             if (i > 0) {
                 do {
                     switch(rows) {
-                        case 3: c3[1] = reinterpret_cast<vector signed char>(vec_xl(0, aoffset3->qs));
-                        case 2: c2[1] = reinterpret_cast<vector signed char>(vec_xl(0, aoffset2->qs));
-                        case 1: c1[1] = reinterpret_cast<vector signed char>(vec_xl(0, aoffset1->qs));
+                        case 3: c3[1] = vec_xl(0, (const vector signed char *)aoffset3->qs);
+                        case 2: c2[1] = vec_xl(0, (const vector signed char *)aoffset2->qs);
+                        case 1: c1[1] = vec_xl(0, (const vector signed char *)aoffset1->qs);
                             break;
                     }
                     process_q4_elements(c1, & comparray[0]);

@@ -375,7 +375,7 @@ static void ggml_compute_forward_dup_bytes(
         const size_t rs = ne00 * type_size;
 
         if (nb00 == type_size) {
-            // src0 is contigous on first dimension, copy by rows
+            // src0 is contiguous on first dimension, copy by rows
             for (int64_t i03 = 0; i03 < ne03; i03++) {
                 for (int64_t i02 = 0; i02 < ne02; i02++) {
                     id += rs * ir0;
@@ -1795,7 +1795,7 @@ void ggml_compute_forward_repeat(
             {
                 ggml_compute_forward_repeat_f32(params, dst);
             } break;
-        // TODO: templateify the implemenation and support for I64
+        // TODO: templateify the implementation and support for I64
         //       ref https://github.com/ggml-org/llama.cpp/pull/14274#discussion_r2169492225
         //case GGML_TYPE_I64:
         //    {
@@ -2129,12 +2129,12 @@ static void ggml_compute_forward_gelu_f32(
 
 #ifndef NDEBUG
         for (int k = 0; k < nc; k++) {
-            const float x = ((float *) ((char *) dst->data + i1*( dst->nb[1])))[k];
+            const float x = ((float *) ((char *) dst->data + i3*nb3 + i2*nb2 + i1*(dst->nb[1])))[k];
             GGML_UNUSED(x);
             assert(!isnan(x));
             assert(!isinf(x));
         }
-#endif
+#endif // NDEBUG
     }
 }
 
@@ -2176,13 +2176,13 @@ static void ggml_compute_forward_gelu_f16(
 
 #ifndef NDEBUG
         for (int k = 0; k < nc; k++) {
-            const ggml_fp16_t x = ((ggml_fp16_t *) ((char *) dst->data + i1*( dst->nb[1])))[k];
+            const ggml_fp16_t x = ((ggml_fp16_t *) ((char *) dst->data + i3*nb3 + i2*nb2 + i1*( dst->nb[1])))[k];
             const float v = GGML_CPU_FP16_TO_FP32(x);
             GGML_UNUSED(v);
             assert(!isnan(v));
             assert(!isinf(v));
         }
-#endif
+#endif // NDEBUG
     }
 }
 
@@ -2325,12 +2325,12 @@ static void ggml_compute_forward_gelu_erf_f32(
 
 #ifndef NDEBUG
         for (int k = 0; k < nc; k++) {
-            const float x = ((float *) ((char *) dst->data + i1*( dst->nb[1])))[k];
+            const float x = ((float *) ((char *) dst->data + i3*nb3 + i2*nb2 + i1*(dst->nb[1])))[k];
             GGML_UNUSED(x);
             assert(!isnan(x));
             assert(!isinf(x));
         }
-#endif
+#endif // NDEBUG
     }
 }
 
@@ -2372,13 +2372,13 @@ static void ggml_compute_forward_gelu_erf_f16(
 
 #ifndef NDEBUG
         for (int k = 0; k < nc; k++) {
-            const ggml_fp16_t x = ((ggml_fp16_t *) ((char *) dst->data + i1*( dst->nb[1])))[k];
+            const ggml_fp16_t x = ((ggml_fp16_t *) ((char *) dst->data + i3*nb3 + i2*nb2 + i1*( dst->nb[1])))[k];
             const float v = GGML_CPU_FP16_TO_FP32(x);
             GGML_UNUSED(v);
             assert(!isnan(v));
             assert(!isinf(v));
         }
-#endif
+#endif // NDEBUG
     }
 }
 
@@ -2444,12 +2444,12 @@ static void ggml_compute_forward_gelu_quick_f32(
 
 #ifndef NDEBUG
         for (int k = 0; k < nc; k++) {
-            const float x = ((float *) ((char *) dst->data + i1*( dst->nb[1])))[k];
+            const float x = ((float *) ((char *) dst->data + i3*nb3 + i2*nb2 + i1*(dst->nb[1])))[k];
             GGML_UNUSED(x);
             assert(!isnan(x));
             assert(!isinf(x));
         }
-#endif
+#endif // NDEBUG
     }
 }
 
@@ -2491,13 +2491,13 @@ static void ggml_compute_forward_gelu_quick_f16(
 
 #ifndef NDEBUG
         for (int k = 0; k < nc; k++) {
-            const ggml_fp16_t x = ((ggml_fp16_t *) ((char *) dst->data + i1*( dst->nb[1])))[k];
+            const ggml_fp16_t x = ((ggml_fp16_t *) ((char *) dst->data + i3*nb3 + i2*nb2 + i1*( dst->nb[1])))[k];
             const float v = GGML_CPU_FP16_TO_FP32(x);
             GGML_UNUSED(v);
             assert(!isnan(v));
             assert(!isinf(v));
         }
-#endif
+#endif // NDEBUG
     }
 }
 
@@ -2563,12 +2563,12 @@ static void ggml_compute_forward_silu_f32(
 
 #ifndef NDEBUG
         for (int k = 0; k < nc; k++) {
-            const float x = ((float *) ((char *) dst->data + i1*(dst->nb[1])))[k];
+            const float x = ((float *) ((char *) dst->data + i3*nb3 + i2*nb2 + i1*(dst->nb[1])))[k];
             GGML_UNUSED(x);
             assert(!isnan(x));
             assert(!isinf(x));
         }
-#endif
+#endif // NDEBUG
     }
 }
 
@@ -2610,13 +2610,13 @@ static void ggml_compute_forward_silu_f16(
 
 #ifndef NDEBUG
         for (int k = 0; k < nc; k++) {
-            const ggml_fp16_t x = ((ggml_fp16_t *) ((char *) dst->data + i1*(dst->nb[1])))[k];
+            const ggml_fp16_t x = ((ggml_fp16_t *) ((char *) dst->data + i3*nb3 + i2*nb2 + i1*( dst->nb[1])))[k];
             const float v = GGML_CPU_FP16_TO_FP32(x);
             GGML_UNUSED(v);
             assert(!isnan(v));
             assert(!isinf(v));
         }
-#endif
+#endif // NDEBUG
     }
 }
 
@@ -2766,7 +2766,7 @@ static void ggml_compute_forward_silu_back_f32(
             assert(!isnan(x));
             assert(!isinf(x));
         }
-#endif
+#endif // NDEBUG
     }
 }
 
@@ -2802,7 +2802,7 @@ static void ggml_compute_forward_silu_back_f16(
                 (ggml_fp16_t *) ((char *) src1->data + i1*(src1->nb[1])),
                 (ggml_fp16_t *) ((char *) grad->data + i1*(grad->nb[1])));
 
-    #ifndef NDEBUG
+#ifndef NDEBUG
         for (int k = 0; k < nc; k++) {
             const float x = ((ggml_fp16_t *) ((char *) dst->data + i1*( dst->nb[1])))[k];
             const float v = GGML_CPU_FP16_TO_FP32(x);
@@ -2810,7 +2810,7 @@ static void ggml_compute_forward_silu_back_f16(
             assert(!isnan(v));
             assert(!isinf(v));
         }
-    #endif
+#endif // NDEBUG
     }
 }
 
@@ -2893,7 +2893,7 @@ static void ggml_compute_forward_reglu_f32(
             assert(!isnan(x));
             assert(!isinf(x));
         }
-#endif
+#endif // NDEBUG
     }
 }
 
@@ -2953,7 +2953,7 @@ static void ggml_compute_forward_reglu_f16(
             assert(!isnan(v));
             assert(!isinf(v));
         }
-#endif
+#endif // NDEBUG
     }
 }
 
@@ -3036,7 +3036,7 @@ static void ggml_compute_forward_geglu_f32(
             assert(!isnan(x));
             assert(!isinf(x));
         }
-#endif
+#endif // NDEBUG
     }
 }
 
@@ -3096,7 +3096,7 @@ static void ggml_compute_forward_geglu_f16(
             assert(!isnan(v));
             assert(!isinf(v));
         }
-#endif
+#endif // NDEBUG
     }
 }
 
@@ -3179,7 +3179,7 @@ static void ggml_compute_forward_swiglu_f32(
             assert(!isnan(x));
             assert(!isinf(x));
         }
-#endif
+#endif // NDEBUG
     }
 }
 
@@ -3239,7 +3239,7 @@ static void ggml_compute_forward_swiglu_f16(
             assert(!isnan(v));
             assert(!isinf(v));
         }
-#endif
+#endif // NDEBUG
     }
 }
 
@@ -3330,7 +3330,7 @@ static void ggml_compute_forward_swiglu_oai_f32(
             assert(!isnan(x));
             assert(!isinf(x));
         }
-#endif
+#endif // NDEBUG
     }
 }
 
@@ -3409,7 +3409,7 @@ static void ggml_compute_forward_geglu_erf_f32(
             assert(!isnan(x));
             assert(!isinf(x));
         }
-#endif
+#endif // NDEBUG
     }
 }
 
@@ -3469,7 +3469,7 @@ static void ggml_compute_forward_geglu_erf_f16(
             assert(!isnan(v));
             assert(!isinf(v));
         }
-#endif
+#endif // NDEBUG
     }
 }
 
@@ -3552,7 +3552,7 @@ static void ggml_compute_forward_geglu_quick_f32(
             assert(!isnan(x));
             assert(!isinf(x));
         }
-#endif
+#endif // NDEBUG
     }
 }
 
@@ -3612,7 +3612,7 @@ static void ggml_compute_forward_geglu_quick_f16(
             assert(!isnan(v));
             assert(!isinf(v));
         }
-#endif
+#endif // NDEBUG
     }
 }
 
@@ -5303,7 +5303,7 @@ static void ggml_compute_forward_soft_max_f32(
                     //printf("p[%d] = %f\n", i, p[i]);
                     assert(!isnan(wp[i]));
                 }
-#endif
+#endif // NDEBUG
 
                 float max = -INFINITY;
                 ggml_vec_max_f32(ne00, &max, wp);
@@ -5328,7 +5328,7 @@ static void ggml_compute_forward_soft_max_f32(
                     assert(!isnan(dp[i]));
                     assert(!isinf(dp[i]));
                 }
-#endif
+#endif // NDEBUG
             }
         }
     }
@@ -5402,7 +5402,7 @@ static void ggml_compute_forward_soft_max_ext_back_f32(
             assert(!isnan(dy[i]));
             assert(!isnan(y[i]));
         }
-#endif
+#endif // NDEBUG
         // Jii = yi - yi*yi
         // Jij = -yi*yj
         // J = diag(y)-y.T*y
@@ -5435,7 +5435,7 @@ static void ggml_compute_forward_soft_max_ext_back_f32(
             assert(!isnan(dx[i]));
             assert(!isinf(dx[i]));
         }
-#endif
+#endif // NDEBUG
     }
 }
 
@@ -5803,27 +5803,32 @@ static void ggml_compute_forward_rope_flt(
 
     const int32_t * pos = (const int32_t *) src1->data;
 
+    int64_t last_i2 = -1;
+
     for (int64_t i3 = 0; i3 < ne3; i3++) { // batch
         for (int64_t i2 = 0; i2 < ne2; i2++) { // seq-len
-
-            float * cache = (float *) params->wdata + (ne0 + CACHE_LINE_SIZE_F32)*ith;
-            if (!mrope_used) {
-                const int64_t p = pos[i2];
-                ggml_rope_cache_init(p, freq_scale, freq_factors, corr_dims, ne0, ext_factor, attn_factor, cache, sin_sign, theta_scale);
-            }
-            else {
-                const int64_t p_t = pos[i2];
-                const int64_t p_h = pos[i2 + ne2];
-                const int64_t p_w = pos[i2 + ne2 * 2];
-                const int64_t p_e = pos[i2 + ne2 * 3];
-                ggml_mrope_cache_init(
-                    p_t, p_h, p_w, p_e, sections, is_imrope, is_vision,
-                    freq_scale, freq_factors, corr_dims, ne0, ext_factor, attn_factor, cache, sin_sign, theta_scale);
-            }
-
             for (int64_t i1 = 0; i1 < ne1; i1++) { // attn-heads
-                if (ir++ < ir0) continue;
+                if (ir++ < ir0) continue; // skip rows mapped to other threads
                 if (ir   > ir1) break;
+
+                float * cache = (float *) params->wdata + (ne0 + CACHE_LINE_SIZE_F32)*ith;
+                if (last_i2 != i2) {
+                    if (!mrope_used) {
+                        const int64_t p = pos[i2];
+                        ggml_rope_cache_init(p, freq_scale, freq_factors, corr_dims, ne0, ext_factor, attn_factor, cache, sin_sign, theta_scale);
+                    }
+                    else {
+                        const int64_t p_t = pos[i2];
+                        const int64_t p_h = pos[i2 + ne2];
+                        const int64_t p_w = pos[i2 + ne2 * 2];
+                        const int64_t p_e = pos[i2 + ne2 * 3];
+                        ggml_mrope_cache_init(
+                            p_t, p_h, p_w, p_e, sections, is_imrope, is_vision,
+                            freq_scale, freq_factors, corr_dims, ne0, ext_factor, attn_factor, cache, sin_sign, theta_scale);
+                    }
+
+                    last_i2 = i2;
+                }
 
                 T * src = (T *)((char *) src0->data + i3*nb03 + i2*nb02 + i1*nb01);
                 T * dst_data  = (T *)((char *)  dst->data + i3*nb3  + i2*nb2  + i1*nb1);
@@ -10418,6 +10423,190 @@ void ggml_compute_forward_solve_tri(const struct ggml_compute_params * params, s
     }
 }
 
+// ggml_compute_forward_gated_delta_net
+static void ggml_compute_forward_gated_delta_net_one_chunk(
+    const ggml_compute_params * params,
+    ggml_tensor * dst,
+    int64_t ir0,
+    int64_t ir1) {
+
+    ggml_tensor * src_q     = dst->src[0];
+    ggml_tensor * src_k     = dst->src[1];
+    ggml_tensor * src_v     = dst->src[2];
+    ggml_tensor * src_g     = dst->src[3];
+    ggml_tensor * src_beta  = dst->src[4];
+    ggml_tensor * src_state = dst->src[5];
+
+    const int64_t S_v      = src_v->ne[0];
+    const int64_t H        = src_v->ne[1];
+    const int64_t n_tokens = src_v->ne[2];
+    const int64_t n_seqs   = src_v->ne[3];
+
+    GGML_ASSERT(ggml_is_contiguous_rows(src_q));
+    GGML_ASSERT(ggml_is_contiguous_rows(src_k));
+    GGML_ASSERT(ggml_is_contiguous_rows(src_v));
+    GGML_ASSERT(ggml_is_contiguous(src_g));
+    GGML_ASSERT(ggml_is_contiguous(src_beta));
+    GGML_ASSERT(ggml_is_contiguous(src_state));
+
+    GGML_ASSERT(src_g->ne[0] == 1 || src_g->ne[0] == S_v);
+    GGML_ASSERT(src_beta->ne[0] == 1);
+
+    GGML_TENSOR_LOCALS(int64_t, neq, src_q, ne);
+    GGML_TENSOR_LOCALS(size_t,  nbq, src_q, nb);
+    GGML_TENSOR_LOCALS(int64_t, nek, src_k, ne);
+    GGML_TENSOR_LOCALS(size_t,  nbk, src_k, nb);
+    GGML_TENSOR_LOCALS(int64_t, nev, src_v, ne);
+    GGML_TENSOR_LOCALS(size_t,  nbv, src_v, nb);
+    GGML_TENSOR_LOCALS(int64_t, neg, src_g, ne);
+    GGML_TENSOR_LOCALS(size_t,  nbg, src_g, nb);
+    GGML_TENSOR_LOCALS(size_t,  nbb, src_beta, nb);
+
+    const bool kda = (neg0 == S_v);
+
+    // scratch layout per thread: [delta(S_v)]
+    const int64_t scratch_per_thread = S_v;
+    const int ith = params->ith;
+
+    float * delta = (float *)params->wdata + ith * scratch_per_thread + CACHE_LINE_SIZE_F32;
+
+    // output layout: [attn_scores | new_states]
+    // attn_scores: S_v * H * n_tokens * n_seqs floats
+    // new_states:  S_v * S_v * H * n_seqs floats
+    const int64_t attn_score_elems = S_v * H * n_tokens * n_seqs;
+    float * attn_out_base  = (float *)dst->data;
+    float * state_out_base = (float *)dst->data + attn_score_elems;
+
+    const float * state_in_base = (const float *)src_state->data;
+
+    const int64_t rq1 = nev1 / neq1;
+    const int64_t rk1 = nev1 / nek1;
+    const int64_t rq3 = nev3 / neq3;
+    const int64_t rk3 = nev3 / nek3;
+
+    const float scale = 1.0f / sqrtf((float) S_v);
+
+    for (int64_t ir = ir0; ir < ir1; ++ir) {
+        const int64_t iv1 = ir % H; // head_index
+        const int64_t iv3 = ir / H; // sequence
+
+        const int64_t iq1 = iv1 / rq1;
+        const int64_t ik1 = iv1 / rk1;
+
+        const int64_t iq3 = iv3 / rq3;
+        const int64_t ik3 = iv3 / rk3;
+
+        float * s_out = state_out_base + (iv3 * H + iv1) * S_v * S_v;
+
+        // copy input state into output buffer and operate in-place
+        const float * s_in = state_in_base + (iv3 * H + iv1) * S_v * S_v;
+        memcpy(s_out, s_in, S_v * S_v * sizeof(float));
+
+        // attn output pointer for first token of this (head, seq)
+        float * attn_data = attn_out_base + (iv3 * n_tokens * H + iv1) * S_v;
+
+        for (int64_t t = 0; t < n_tokens; t++) {
+            const float * q_d = (const float *)((const char *)src_q->data + iq3 * nbq3 + t * nbq2 + iq1 * nbq1);
+            const float * k_d = (const float *)((const char *)src_k->data + ik3 * nbk3 + t * nbk2 + ik1 * nbk1);
+            const float * v_d = (const float *)((const char *)src_v->data + iv3 * nbv3 + t * nbv2 + iv1 * nbv1);
+
+            const float beta_val = *(const float *)((const char *)src_beta->data + iv3 * nbb3 + t * nbb2 + iv1 * nbb1);
+            const float * g_d   =  (const float *)((const char *)src_g->data    + iv3 * nbg3 + t * nbg2 + iv1 * nbg1);
+
+            if (kda) {
+                for (int64_t i = 0; i < S_v; ++i) {
+                    ggml_vec_scale_f32(S_v, &s_out[i * S_v], expf(g_d[i]));
+                }
+            } else {
+                ggml_vec_scale_f32(S_v * S_v, s_out, expf(g_d[0]));
+            }
+
+            // delta[j] = sum_i S[j][i] * k[i]
+            memset(delta, 0, S_v * sizeof(float));
+            for (int64_t i = 0; i < S_v; ++i) {
+                ggml_vec_mad_f32(S_v, delta, &s_out[i * S_v], k_d[i]);
+            }
+            for (int64_t j = 0; j < S_v; ++j) {
+                delta[j] = (v_d[j] - delta[j]) * beta_val;
+            }
+
+            // outer product: S[j][i] += k[i] * delta[j]
+            for (int64_t i = 0; i < S_v; ++i) {
+                ggml_vec_mad_f32(S_v, &s_out[i * S_v], delta, k_d[i]);
+            }
+
+            // attn_out[j] = sum_i S[j][i] * q[i]
+            memset(attn_data, 0, S_v * sizeof(float));
+            for (int64_t i = 0; i < S_v; ++i) {
+                ggml_vec_mad_f32(S_v, attn_data, &s_out[i * S_v], q_d[i]);
+            }
+            ggml_vec_scale_f32(S_v, attn_data, scale);
+
+            attn_data += S_v * H; // advance to next token
+        }
+
+    }
+}
+
+
+static void ggml_compute_forward_gated_delta_net_f32(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+
+    ggml_tensor * V = dst->src[2];
+    int64_t nr = V->ne[1] * V->ne[3];
+
+    // disable for NUMA
+    const bool disable_chunking = ggml_is_numa();
+
+    int nth = params->nth;
+    int ith = params->ith;
+
+    // 4x chunks per thread
+    int nth_scaled = nth * 4;
+    int64_t chunk_size = (nr + nth_scaled - 1) / nth_scaled;
+    int64_t nchunk     = (nr + chunk_size - 1) / chunk_size;
+
+    if (nth == 1 || nchunk < nth || disable_chunking) {
+      nchunk = nth;
+    }
+
+    if (ith == 0) {
+      ggml_threadpool_chunk_set(params->threadpool, nth);
+    }
+
+    ggml_barrier(params->threadpool);
+
+    const int64_t dr = (nr + nchunk - 1) / nchunk;
+
+    int current_chunk = ith;
+
+    while (current_chunk < nchunk) {
+        const int64_t ir0 = dr * current_chunk;
+        const int64_t ir1 = MIN(ir0 + dr, nr);
+
+        ggml_compute_forward_gated_delta_net_one_chunk(params, dst, ir0, ir1);
+        current_chunk = ggml_threadpool_chunk_add(params->threadpool, 1);
+    }
+}
+
+void ggml_compute_forward_gated_delta_net(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+    const ggml_tensor * src0 = dst->src[0];
+
+    switch (src0->type) {
+        case GGML_TYPE_F32:
+            {
+                ggml_compute_forward_gated_delta_net_f32(params, dst);
+            } break;
+        default:
+            {
+                GGML_ABORT("fatal error");
+            }
+    }
+}
+
 // ggml_compute_forward_rwkv_wkv7
 
 static void ggml_compute_forward_rwkv_wkv7_f32(
@@ -10743,7 +10932,7 @@ static void ggml_compute_forward_cross_entropy_loss_f32(
             assert(!isnan(s0[i]));
             assert(!isnan(s1[i]));
         }
-#endif
+#endif // NDEBUG
 
         float max = -INFINITY;
         ggml_vec_max_f32(nc, &max, s0);
@@ -10762,7 +10951,7 @@ static void ggml_compute_forward_cross_entropy_loss_f32(
             assert(!isnan(st[i]));
             assert(!isinf(st[i]));
         }
-#endif
+#endif // NDEBUG
     }
     sums[ith] = sum_thread;
     ggml_barrier(params->threadpool);
@@ -10835,7 +11024,7 @@ static void ggml_compute_forward_cross_entropy_loss_back_f32(
             assert(!isnan(s0[i]));
             assert(!isnan(s1[i]));
         }
-#endif
+#endif // NDEBUG
 
         // soft_max
         float max = -INFINITY;
@@ -10853,7 +11042,7 @@ static void ggml_compute_forward_cross_entropy_loss_back_f32(
             assert(!isnan(ds0[i]));
             assert(!isinf(ds0[i]));
         }
-#endif
+#endif // NDEBUG
     }
 }
 

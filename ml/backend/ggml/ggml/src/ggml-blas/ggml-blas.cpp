@@ -340,8 +340,8 @@ static const char * ggml_backend_blas_device_get_description(ggml_backend_dev_t 
 }
 
 static void ggml_backend_blas_device_get_memory(ggml_backend_dev_t dev, size_t * free, size_t * total) {
-    // TODO
-    *free = 0;
+    // no memory to report
+    *free  = 0;
     *total = 0;
 
     GGML_UNUSED(dev);

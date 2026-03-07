@@ -70,4 +70,6 @@ std::string llama_format_tensor_shape(const struct ggml_tensor * t);
 
 std::string gguf_kv_to_str(const struct gguf_context * ctx_gguf, int i);
 
-#define LLAMA_TENSOR_NAME_FATTN "__fattn__"
+#define LLAMA_TENSOR_NAME_FATTN  "__fattn__"
+#define LLAMA_TENSOR_NAME_FGDNAR "__fgdnar__"
+#define LLAMA_TENSOR_NAME_FGDNCH "__fgdnch__"
