@@ -31,10 +31,13 @@ Check your compute compatibility to see if your card is supported:
 | 5.2                | GeForce GTX         | `GTX TITAN X` `GTX 980 Ti` `GTX 980` `GTX 970` `GTX 960` `GTX 950`                                                             |
 |                    | Quadro              | `M6000 24GB` `M6000` `M5000` `M5500M` `M4000` `M2200` `M2000` `M620`                                                           |
 |                    | Tesla               | `M60` `M40`                                                                                                                    |
-| 5.0                | GeForce GTX         | `GTX 750 Ti` `GTX 750` `NVS 810`                                                                                               |
+| 5.0                | GeForce GTX         | `GTX 750 Ti` `GTX 750` `NVS 810` `GTX 960M`                                                                                    |
 |                    | Quadro              | `K2200` `K1200` `K620` `M1200` `M520` `M5000M` `M4000M` `M3000M` `M2000M` `M1000M` `K620M` `M600M` `M500M`                     |
 
 For building locally to support older GPUs, see [developer](./development#linux-cuda-nvidia)
+
+> Tip; `nvidia-smi --query-gpu=compute_cap --format=csv` may be more up-to-date
+> than above table
 
 ### GPU Selection
 
