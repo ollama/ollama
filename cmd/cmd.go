@@ -132,6 +132,17 @@ func getModelfileName(cmd *cobra.Command) (string, error) {
 	return absName, nil
 }
 
+// isLocalhost returns true if the configured Ollama host is a loopback or unspecified address.
+func isLocalhost() bool {
+	host := envconfig.Host()
+	h, _, _ := net.SplitHostPort(host.Host)
+	if h == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && (ip.IsLoopback() || ip.IsUnspecified())
+}
+
 func CreateHandler(cmd *cobra.Command, args []string) error {
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
@@ -146,10 +157,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	// Check for --experimental flag for safetensors model creation
 	experimental, _ := cmd.Flags().GetBool("experimental")
 	if experimental {
-		host := envconfig.Host()
-		h, _, _ := net.SplitHostPort(host.Host)
-		ip := net.ParseIP(h)
-		if ip == nil || (!ip.IsLoopback() && !ip.IsUnspecified()) {
+		if !isLocalhost() {
 			return errors.New("remote safetensor model creation not yet supported")
 		}
 		// Get Modelfile content - either from -f flag or default to "FROM ."
@@ -221,10 +229,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		if filename == "" {
 			// No Modelfile found - check if current directory is an image gen model
 			if create.IsTensorModelDir(".") {
-				host := envconfig.Host()
-				h, _, _ := net.SplitHostPort(host.Host)
-				ip := net.ParseIP(h)
-				if ip == nil || (!ip.IsLoopback() && !ip.IsUnspecified()) {
+				if !isLocalhost() {
 					return errors.New("remote safetensor model creation not yet supported")
 				}
 				quantize, _ := cmd.Flags().GetString("quantize")

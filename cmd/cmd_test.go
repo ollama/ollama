@@ -1928,3 +1928,38 @@ func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
 		})
 	}
 }
+
+func TestIsLocalhost(t *testing.T) {
+	tests := []struct {
+		name     string
+		host     string
+		expected bool
+	}{
+		{"default empty", "", true},
+		{"localhost no port", "localhost", true},
+		{"localhost with port", "localhost:11435", true},
+		{"127.0.0.1 no port", "127.0.0.1", true},
+		{"127.0.0.1 with port", "127.0.0.1:11434", true},
+		{"0.0.0.0 no port", "0.0.0.0", true},
+		{"0.0.0.0 with port", "0.0.0.0:11434", true},
+		{"::1 no port", "::1", true},
+		{"[::1] with port", "[::1]:11434", true},
+		{"loopback with scheme", "http://localhost:11434", true},
+		{"remote hostname", "example.com", false},
+		{"remote hostname with port", "example.com:11434", false},
+		{"remote IP", "192.168.1.1", false},
+		{"remote IP with port", "192.168.1.1:11434", false},
+		{"remote with scheme", "http://example.com:11434", false},
+		{"https remote", "https://example.com:443", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_HOST", tt.host)
+			got := isLocalhost()
+			if got != tt.expected {
+				t.Errorf("isLocalhost() with OLLAMA_HOST=%q = %v, want %v", tt.host, got, tt.expected)
+			}
+		})
+	}
+}
