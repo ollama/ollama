@@ -89,6 +89,16 @@ func (d *Droid) Edit(models []string) error {
 		json.Unmarshal(data, &settings) // ignore error, zero values are fine
 	}
 
+	settingsMap = updateDroidSettings(settingsMap, settings, models)
+
+	data, err := json.MarshalIndent(settingsMap, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeWithBackup(settingsPath, data)
+}
+
+func updateDroidSettings(settingsMap map[string]any, settings droidSettings, models []string) map[string]any {
 	// Keep only non-Ollama models from the raw map (preserves extra fields)
 	// Rebuild Ollama models
 	var nonOllamaModels []any
@@ -144,12 +154,7 @@ func (d *Droid) Edit(models []string) error {
 	}
 
 	settingsMap["sessionDefaultSettings"] = sessionSettings
-
-	data, err := json.MarshalIndent(settingsMap, "", "  ")
-	if err != nil {
-		return err
-	}
-	return writeWithBackup(settingsPath, data)
+	return settingsMap
 }
 
 func (d *Droid) Models() []string {
