@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -204,7 +205,25 @@ func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disable
 	c.Status(resp.StatusCode)
 
 	if err := copyProxyResponseBody(c.Writer, resp.Body); err != nil {
-		c.Error(err) //nolint:errcheck
+		ctxErr := c.Request.Context().Err()
+		if errors.Is(err, context.Canceled) && errors.Is(ctxErr, context.Canceled) {
+			slog.Debug(
+				"cloud proxy response stream closed by client",
+				"path", c.Request.URL.Path,
+				"status", resp.StatusCode,
+			)
+			return
+		}
+
+		slog.Warn(
+			"cloud proxy response copy failed",
+			"path", c.Request.URL.Path,
+			"status", resp.StatusCode,
+			"request_context_canceled", ctxErr != nil,
+			"request_context_err", ctxErr,
+			"error", err,
+		)
+		return
 	}
 }
 
