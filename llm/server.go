@@ -1502,6 +1502,10 @@ func (d DoneReason) String() string {
 type TokenLogprob struct {
 	Token   string  `json:"token"`
 	Logprob float64 `json:"logprob"`
+	// Bytes holds the raw token bytes, base64-encoded in JSON.
+	// The Token field may contain U+FFFD after JSON marshaling for
+	// partial UTF-8 sequences; Bytes is not affected.
+	Bytes []byte `json:"bytes,omitempty"`
 }
 
 // Logprob contains log probability information for a generated token.

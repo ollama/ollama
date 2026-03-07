@@ -7,8 +7,8 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
-// TokenDecoderFunc is a function that converts token IDs to text.
-type TokenDecoderFunc func(tokenID int) string
+// TokenDecoderFunc is a function that converts token IDs to text and raw bytes.
+type TokenDecoderFunc func(tokenID int) (string, []byte)
 
 // CalculateLogprobs converts raw logits to log probabilities and finds top K tokens.
 // It uses numerically stable softmax to compute log probabilities.
@@ -38,12 +38,13 @@ func CalculateLogprobs(logits []float32, selectedToken int, topK int, decoder To
 
 	// Step 2: Get selected token's information
 	selectedLogprob := logProbs[selectedToken]
-	selectedText := decoder(selectedToken)
+	selectedText, selectedBytes := decoder(selectedToken)
 
 	result := llm.Logprob{
 		TokenLogprob: llm.TokenLogprob{
 			Token:   selectedText,
 			Logprob: float64(selectedLogprob),
+			Bytes:   selectedBytes,
 		},
 	}
 
@@ -66,10 +67,11 @@ func CalculateLogprobs(logits []float32, selectedToken int, topK int, decoder To
 		k := min(topK, len(pairs))
 		topLogprobs := make([]llm.TokenLogprob, k)
 		for i := range k {
-			tokenText := decoder(pairs[i].tokenID)
+			tokenText, tokenBytes := decoder(pairs[i].tokenID)
 			topLogprobs[i] = llm.TokenLogprob{
 				Token:   tokenText,
 				Logprob: float64(pairs[i].logprob),
+				Bytes:   tokenBytes,
 			}
 		}
 		result.TopLogprobs = topLogprobs

@@ -187,7 +187,11 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 
 // calculateLogprobsLlama converts raw logits to log probabilities and finds top K tokens
 func calculateLogprobsLlama(logits []float32, selectedToken int, topK int, model *llama.Model) []llm.Logprob {
-	return common.CalculateLogprobs(logits, selectedToken, topK, model.TokenToPiece)
+	decoder := func(tokenID int) (string, []byte) {
+		raw := model.TokenToPieceBytes(tokenID)
+		return string(raw), raw
+	}
+	return common.CalculateLogprobs(logits, selectedToken, topK, decoder)
 }
 
 // inputs processes the prompt and images into a list of inputs
