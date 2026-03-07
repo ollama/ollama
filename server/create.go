@@ -145,7 +145,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 									if config.Renderer == "" && r.Template == "" {
 										config.Renderer = baseConfig.Renderer
 									}
-									if config.Parser == "" && r.Template == "" {
+									if config.Parser == "" {
 										config.Parser = baseConfig.Parser
 									}
 									if config.Requires == "" {

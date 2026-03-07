@@ -287,7 +287,7 @@ func TestCreateFromModelInheritsRendererParser(t *testing.T) {
 	}
 }
 
-func TestCreateFromModelSkipsRendererParserWithCustomTemplate(t *testing.T) {
+func TestCreateFromModelSkipsRendererWithCustomTemplate(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	p := t.TempDir()
@@ -312,7 +312,7 @@ func TestCreateFromModelSkipsRendererParserWithCustomTemplate(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	// Create child with custom template — should NOT inherit renderer/parser
+	// Create child with custom template — should NOT inherit renderer, but SHOULD inherit parser
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:     "child",
 		From:     "base",
@@ -350,8 +350,8 @@ func TestCreateFromModelSkipsRendererParserWithCustomTemplate(t *testing.T) {
 	if cfg.Renderer != "" {
 		t.Fatalf("expected empty renderer when custom template provided, got %q", cfg.Renderer)
 	}
-	if cfg.Parser != "" {
-		t.Fatalf("expected empty parser when custom template provided, got %q", cfg.Parser)
+	if cfg.Parser != parser {
+		t.Fatalf("expected parser %q to be inherited even with custom template, got %q", parser, cfg.Parser)
 	}
 }
 
