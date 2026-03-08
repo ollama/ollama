@@ -42,15 +42,15 @@ type Attention struct {
 }
 
 func (attn *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
-	batchSize := hiddenStates.Dim(1)
+	seqLength := hiddenStates.Dim(1)
 
 	query := attn.Query.Forward(ctx, hiddenStates)
 	key := attn.Key.Forward(ctx, hiddenStates)
 	value := attn.Value.Forward(ctx, hiddenStates)
 
-	query = query.Reshape(ctx, opts.headDim, opts.numHeads, batchSize)
-	key = key.Reshape(ctx, opts.headDim, opts.numKVHeads, batchSize)
-	value = value.Reshape(ctx, opts.headDim, opts.numKVHeads, batchSize)
+	query = query.Reshape(ctx, opts.headDim, opts.numHeads, seqLength)
+	key = key.Reshape(ctx, opts.headDim, opts.numKVHeads, seqLength)
+	value = value.Reshape(ctx, opts.headDim, opts.numKVHeads, seqLength)
 
 	if attn.QueryNorm != nil {
 		query = attn.QueryNorm.Forward(ctx, query, opts.eps)
@@ -63,7 +63,7 @@ func (attn *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor
 	key = opts.applyRotaryPositionEmbeddings(ctx, key, positions)
 
 	attention := nn.Attention(ctx, query, key, value, 1./math.Sqrt(float64(opts.headDim)), cache)
-	attention = attention.Reshape(ctx, attention.Dim(0)*attention.Dim(1), batchSize)
+	attention = attention.Reshape(ctx, attention.Dim(0)*attention.Dim(1), seqLength)
 	return attn.Output.Forward(ctx, attention)
 }
 
@@ -185,6 +185,18 @@ func New(c fs.Config) (model.Model, error) {
 		}
 	}
 
+	var pre []string
+	switch c.String("tokenizer.ggml.pre") {
+	case "deepseek-v3":
+		pre = []string{
+			"\\p{N}{1,3}",
+			`[一-龥぀-ゟ゠-ヿ]+`,
+			"[!\"#$%&'()*+,\\-./:;<=>?@\\[\\\\\\]^_`{|}~][A-Za-z]+|[^\r\n\\p{L}\\p{P}\\p{S}]?[\\p{L}\\p{M}]+| ?[\\p{P}\\p{S}]+[\r\n]*|\\s*[\r\n]+|\\s+(?!\\S)|\\s+",
+		}
+	default:
+		return nil, model.ErrUnsupportedTokenizer
+	}
+
 	m := Model{
 		Tokenizer: tokenizer.NewBytePairEncoding(
 			&tokenizer.Vocabulary{
@@ -199,7 +211,7 @@ func New(c fs.Config) (model.Model, error) {
 					c.Ints("tokenizer.ggml.eos_token_ids")...,
 				),
 			},
-			`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
+			pre...,
 		),
 		Layers: layers,
 		Options: &Options{
