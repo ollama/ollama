@@ -27,7 +27,7 @@ llm_build_plamo2::llm_build_plamo2(const llama_model & model, const llm_graph_pa
         cur = build_norm(inpL, model.layers[il].attn_norm, NULL, LLM_NORM_RMS, il);
 
         // check if this layer is Mamba or Attention
-        bool is_mamba_layer = hparams.is_recurrent(il);
+        const bool is_mamba_layer = hparams.is_recurrent(il);
 
         if (is_mamba_layer) {
             // PLaMo-2 Mamba layer
@@ -171,6 +171,8 @@ ggml_tensor * llm_build_plamo2::build_plamo2_mamba_layer(llm_graph_input_rs * in
     GGML_ASSERT(n_seqs != 0);
     GGML_ASSERT(ubatch.equal_seqs());
     GGML_ASSERT(ubatch.n_tokens == n_seq_tokens * n_seqs);
+    GGML_ASSERT(d_inner % n_head == 0);
+    GGML_ASSERT(n_group == 0);
 
     ggml_tensor * conv_states_all = mctx_cur->get_r_l(il);
     ggml_tensor * ssm_states_all  = mctx_cur->get_s_l(il);

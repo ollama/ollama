@@ -1719,7 +1719,7 @@ private:
 };
 
 void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
-    struct gguf_context * ctx = ml.meta.get();
+    struct gguf_context * ctx = ml.metadata;
 
     // determine vocab type
     {

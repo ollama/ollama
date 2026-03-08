@@ -285,10 +285,10 @@ index 281fa1bdb..b5f7adf89 100644
      bool reuse = rpc_ctx->gc.is_cached(cgraph);
      if (reuse) {
 diff --git a/ggml/src/ggml-sycl/ggml-sycl.cpp b/ggml/src/ggml-sycl/ggml-sycl.cpp
-index 336172700..9e1e2510e 100644
+index 4599783c2..53a515382 100644
 --- a/ggml/src/ggml-sycl/ggml-sycl.cpp
 +++ b/ggml/src/ggml-sycl/ggml-sycl.cpp
-@@ -4374,9 +4374,11 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
+@@ -4406,9 +4406,11 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
  }
  #endif
  
@@ -302,10 +302,10 @@ index 336172700..9e1e2510e 100644
      bool use_sycl_graph = !g_ggml_sycl_disable_graph && check_graph_compatibility(cgraph);
      if (use_sycl_graph) {
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index c9ca7a986..008b82e9b 100644
+index b4273da1a..b393848fa 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -14063,8 +14063,9 @@ static int32_t find_first_set(uint32_t x) {
+@@ -14068,8 +14068,9 @@ static int32_t find_first_set(uint32_t x) {
      return ret;
  }
  

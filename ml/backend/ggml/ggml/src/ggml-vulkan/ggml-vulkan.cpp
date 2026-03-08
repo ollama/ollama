@@ -746,6 +746,7 @@ struct vk_device_struct {
 
     // [src/dst 0=fp32,1=fp16]
     vk_pipeline pipeline_exp[2];
+    vk_pipeline pipeline_elu[2];
     vk_pipeline pipeline_gelu[2];
     vk_pipeline pipeline_gelu_erf[2];
     vk_pipeline pipeline_gelu_quick[2];
@@ -4375,6 +4376,7 @@ static void ggml_vk_load_shaders(vk_device& device) {
     ggml_vk_create_pipeline(device, device->pipeline_ ## name [0], #name "_f32", name ## _f32_len, name ## _f32_data, "main", 2, sizeof(vk_op_push_constants), {512, 1, 1}, {}, 1);  \
     ggml_vk_create_pipeline(device, device->pipeline_ ## name [1], #name "_f16", name ## _f16_len, name ## _f16_data, "main", 2, sizeof(vk_op_push_constants), {512, 1, 1}, {}, 1);
 
+    CREATE_UNARY(elu)
     CREATE_UNARY(gelu)
     CREATE_UNARY(gelu_erf)
     CREATE_UNARY(gelu_quick)
@@ -9243,6 +9245,8 @@ static vk_pipeline ggml_vk_op_get_pipeline(ggml_backend_vk_context * ctx, const 
         switch (ggml_get_unary_op(dst)) {
             case GGML_UNARY_OP_EXP:
                 return ctx->device->pipeline_exp[dst->type == GGML_TYPE_F16];
+            case GGML_UNARY_OP_ELU:
+                return ctx->device->pipeline_elu[dst->type == GGML_TYPE_F16];
             case GGML_UNARY_OP_SILU:
                 return ctx->device->pipeline_silu[dst->type == GGML_TYPE_F16];
             case GGML_UNARY_OP_GELU:
@@ -12854,6 +12858,7 @@ static bool ggml_vk_build_graph(ggml_backend_vk_context * ctx, ggml_cgraph * cgr
         }
 
         switch (ggml_get_unary_op(node)) {
+        case GGML_UNARY_OP_ELU:
         case GGML_UNARY_OP_EXP:
         case GGML_UNARY_OP_SILU:
         case GGML_UNARY_OP_GELU:
@@ -15058,6 +15063,7 @@ static bool ggml_backend_vk_device_supports_op(ggml_backend_dev_t dev, const ggm
         case GGML_OP_UNARY:
             switch (ggml_get_unary_op(op)) {
                 case GGML_UNARY_OP_EXP:
+                case GGML_UNARY_OP_ELU:
                 case GGML_UNARY_OP_GELU:
                 case GGML_UNARY_OP_GELU_ERF:
                 case GGML_UNARY_OP_GELU_QUICK:
@@ -16219,6 +16225,9 @@ static void ggml_vk_check_results_0(ggml_backend_vk_context * ctx, ggml_cgraph *
             switch (ggml_get_unary_op(tensor)) {
             case GGML_UNARY_OP_EXP:
                 tensor_clone = ggml_exp(ggml_ctx, src_clone[0]);
+                break;
+            case GGML_UNARY_OP_ELU:
+                tensor_clone = ggml_elu(ggml_ctx, src_clone[0]);
                 break;
             case GGML_UNARY_OP_SILU:
                 tensor_clone = ggml_silu(ggml_ctx, src_clone[0]);

@@ -109,10 +109,10 @@ index 5cc1b5431..5c172bf5d 100644
  #define cudaError_t hipError_t
  #define cudaErrorPeerAccessAlreadyEnabled hipErrorPeerAccessAlreadyEnabled
 diff --git a/src/llama.cpp b/src/llama.cpp
-index 6da90d6f1..c5aec0816 100644
+index 872e659ed..2419093aa 100644
 --- a/src/llama.cpp
 +++ b/src/llama.cpp
-@@ -997,10 +997,12 @@ static struct llama_model * llama_model_load_from_file_impl(
+@@ -1005,10 +1005,12 @@ static struct llama_model * llama_model_load_from_file_impl(
      for (auto * dev : model->devices) {
          ggml_backend_dev_props props;
          ggml_backend_dev_get_props(dev, &props);
@@ -125,4 +125,4 @@ index 6da90d6f1..c5aec0816 100644
 +                memory_free/1024/1024);
      }
  
-     const int status = llama_model_load(path_model, splits, *model, params);
+     const int status = llama_model_load(metadata, set_tensor_data, set_tensor_data_ud, path_model, splits, *model, params);

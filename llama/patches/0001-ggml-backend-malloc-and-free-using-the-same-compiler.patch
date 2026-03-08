@@ -156,10 +156,10 @@ index d7c8ad8c1..281fa1bdb 100644
  
  static void * ggml_backend_rpc_buffer_get_base(ggml_backend_buffer_t buffer) {
 diff --git a/ggml/src/ggml-sycl/ggml-sycl.cpp b/ggml/src/ggml-sycl/ggml-sycl.cpp
-index 0614d7e8f..336172700 100644
+index dfacde0af..4599783c2 100644
 --- a/ggml/src/ggml-sycl/ggml-sycl.cpp
 +++ b/ggml/src/ggml-sycl/ggml-sycl.cpp
-@@ -356,6 +356,7 @@ ggml_backend_sycl_buffer_free_buffer(ggml_backend_buffer_t buffer) try {
+@@ -385,6 +385,7 @@ ggml_backend_sycl_buffer_free_buffer(ggml_backend_buffer_t buffer) try {
      ggml_sycl_set_device(ctx->device);
  
      delete ctx;
@@ -167,7 +167,7 @@ index 0614d7e8f..336172700 100644
  }
  catch (sycl::exception const &exc) {
    std::cerr << exc.what() << "Exception caught at file:" << __FILE__
-@@ -817,6 +818,7 @@ struct ggml_backend_sycl_split_buffer_context {
+@@ -846,6 +847,7 @@ struct ggml_backend_sycl_split_buffer_context {
  static void ggml_backend_sycl_split_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      ggml_backend_sycl_split_buffer_context * ctx = (ggml_backend_sycl_split_buffer_context *)buffer->context;
      delete ctx;
@@ -175,7 +175,7 @@ index 0614d7e8f..336172700 100644
  }
  
  static void * ggml_backend_sycl_split_buffer_get_base(ggml_backend_buffer_t buffer) {
-@@ -1175,6 +1177,7 @@ inline void free_aligned_mem_host(void * memblock) {
+@@ -1204,6 +1206,7 @@ inline void free_aligned_mem_host(void * memblock) {
  
  static void ggml_backend_sycl_host_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      free_aligned_mem_host((void *)buffer->context);
@@ -184,10 +184,10 @@ index 0614d7e8f..336172700 100644
  
  static ggml_backend_buffer_t ggml_backend_sycl_host_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 23d6d39e0..c9ca7a986 100644
+index 0bf7d2e24..b4273da1a 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -13227,6 +13227,7 @@ static void ggml_backend_vk_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+@@ -13232,6 +13232,7 @@ static void ggml_backend_vk_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      ggml_backend_vk_buffer_context * ctx = (ggml_backend_vk_buffer_context *)buffer->context;
      ggml_vk_destroy_buffer(ctx->dev_buffer);
      delete ctx;
@@ -195,7 +195,7 @@ index 23d6d39e0..c9ca7a986 100644
  }
  
  static void * ggml_backend_vk_buffer_get_base(ggml_backend_buffer_t buffer) {
-@@ -13370,6 +13371,7 @@ static const char * ggml_backend_vk_host_buffer_name(ggml_backend_buffer_t buffe
+@@ -13375,6 +13376,7 @@ static const char * ggml_backend_vk_host_buffer_name(ggml_backend_buffer_t buffe
  static void ggml_backend_vk_host_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      VK_LOG_MEMORY("ggml_backend_vk_host_buffer_free_buffer()");
      ggml_vk_host_free(vk_instance.devices[0], buffer->context);

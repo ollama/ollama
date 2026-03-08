@@ -104,6 +104,7 @@ enum llama_example {
     LLAMA_EXAMPLE_DIFFUSION,
     LLAMA_EXAMPLE_FINETUNE,
     LLAMA_EXAMPLE_FIT_PARAMS,
+    LLAMA_EXAMPLE_RESULTS,
 
     LLAMA_EXAMPLE_COUNT,
 };
@@ -455,6 +456,8 @@ struct common_params {
     size_t multiple_choice_tasks = 0; // number of tasks to use when computing the TruthfulQA score. If 0, all tasks will be computed
 
     bool   kl_divergence    = false; // compute KL divergence
+
+    bool check             = false; // check rather than generate results for llama-results
 
     bool usage             = false; // print usage
     bool completion        = false; // print source-able completion script

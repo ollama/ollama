@@ -4,6 +4,7 @@
 
 #include <string>
 #include <set>
+#include <vector>
 
 //
 // gguf constants (sync with gguf.py)
@@ -610,6 +611,8 @@ struct llm_tensor_info {
     llm_tensor_layer layer;
     ggml_op op;
 };
+
+std::vector<llm_arch> llm_arch_all();
 
 const char * llm_arch_name(llm_arch arch);
 

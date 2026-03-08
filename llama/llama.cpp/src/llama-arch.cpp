@@ -4,6 +4,7 @@
 
 #include <map>
 #include <set>
+#include <vector>
 
 static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
     { LLM_ARCH_CLIP,             "clip"             }, // dummy, only used by llama-quantize
@@ -2804,6 +2805,15 @@ std::string LLM_TN_IMPL::str() const {
     }
 
     return name;
+}
+
+std::vector<llm_arch> llm_arch_all() {
+    std::vector<llm_arch> ret;
+    ret.reserve(LLM_ARCH_NAMES.size());
+    for (const auto & [arch, _] : LLM_ARCH_NAMES) {
+        ret.push_back(arch);
+    }
+    return ret;
 }
 
 const char * llm_arch_name(llm_arch arch) {

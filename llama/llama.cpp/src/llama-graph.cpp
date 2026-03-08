@@ -509,6 +509,7 @@ void llm_graph_input_attn_cross::set_input(const llama_ubatch * ubatch) {
     float * data = (float *) cross_kq_mask->data;
 
     for (int i = 0; i < n_tokens; ++i) {
+        GGML_ASSERT(!cross->seq_ids_enc.empty() && "llama_encode must be called first");
         for (int j = 0; j < n_enc; ++j) {
             float f = -INFINITY;
 
@@ -1150,6 +1151,7 @@ ggml_tensor * llm_graph_context::build_ffn(
     return cur;
 }
 
+// TODO remove redundant scale_w argument
 ggml_tensor * llm_graph_context::build_moe_ffn(
          ggml_tensor * cur,
          ggml_tensor * gate_inp,
@@ -1607,6 +1609,7 @@ ggml_tensor * llm_graph_context::build_inp_attn_scale() const {
     // this need to be 1x1xN for broadcasting
     cur = ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, 1, 1, n_tokens);
     ggml_set_input(cur);
+    ggml_set_name(cur, "attn_scale");
 
     res->add_input(std::move(inp));
 

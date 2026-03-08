@@ -5,6 +5,7 @@
 #include "ggml-cpu.h"
 #include "ggml-backend.h"
 #include "ggml-opt.h"
+#include "gguf.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -440,19 +441,30 @@ extern "C" {
 
     LLAMA_API void llama_detach_threadpool(struct llama_context * ctx);
 
+    typedef void (*llama_model_set_tensor_data_t)(struct ggml_tensor * tensor, void * userdata);
+
+    // Create a new model from GGUF metadata as well as a function to set the tensor data
+    //   - tensors are created as GGML_TYPE_F32 by default,
+    //     override by adding a tensor with the same name but a different name to the context
+    LLAMA_API struct llama_model * llama_model_init_from_user(
+                    struct gguf_context * metadata,
+          llama_model_set_tensor_data_t   set_tensor_data,    // function to initialize tensor data with
+                                   void * set_tensor_data_ud, // userdata for function
+              struct llama_model_params   params);
+
     DEPRECATED(LLAMA_API struct llama_model * llama_load_model_from_file(
                              const char * path_model,
               struct llama_model_params   params),
             "use llama_model_load_from_file instead");
 
-    // Load the model from a file
+    // Load a model from a file
     // If the file is split into multiple parts, the file name must follow this pattern: <name>-%05d-of-%05d.gguf
     // If the split file name does not follow this pattern, use llama_model_load_from_splits
     LLAMA_API struct llama_model * llama_model_load_from_file(
                              const char * path_model,
               struct llama_model_params   params);
 
-    // Load the model from multiple splits (support custom naming scheme)
+    // Load a model from multiple splits (support custom naming scheme)
     // The paths must be in the correct order
     LLAMA_API struct llama_model * llama_model_load_from_splits(
                              const char ** paths,

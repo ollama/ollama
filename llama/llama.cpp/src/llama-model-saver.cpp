@@ -7,14 +7,19 @@
 #include "llama-model.h"
 #include "llama-vocab.h"
 
+#include <cstdint>
 #include <string>
 
-llama_model_saver::llama_model_saver(const struct llama_model & model) : model(model), llm_kv(model.arch) {
-    gguf_ctx = gguf_init_empty();
-}
+llama_model_saver::llama_model_saver(const struct llama_model * model) :
+    gguf_ctx(gguf_init_empty()), gguf_ctx_owned(true), model(model), llm_kv(model->arch) {}
+
+llama_model_saver::llama_model_saver(enum llm_arch arch, struct gguf_context * gguf_ctx) :
+        gguf_ctx(gguf_ctx == nullptr ? gguf_init_empty() : gguf_ctx), gguf_ctx_owned(gguf_ctx == nullptr), model(nullptr), llm_kv(arch) {}
 
 llama_model_saver::~llama_model_saver() {
-    gguf_free(gguf_ctx);
+    if (gguf_ctx_owned) {
+        gguf_free(gguf_ctx);
+    }
 }
 
 void llama_model_saver::add_kv(const enum llm_kv key, const uint32_t value) {
@@ -46,7 +51,8 @@ void llama_model_saver::add_kv(const enum llm_kv key, const char value) {
 
 template <typename Container>
 void llama_model_saver::add_kv(const enum llm_kv key, const Container & value, const bool per_layer) {
-    const size_t n_values = per_layer ? size_t(model.hparams.n_layer) : value.size();
+    GGML_ASSERT(model != nullptr || !per_layer);
+    const size_t n_values = per_layer ? size_t(model->hparams.n_layer) : value.size();
     GGML_ASSERT(n_values <= value.size());
 
     if (n_values == 0) {
@@ -83,6 +89,8 @@ void llama_model_saver::add_kv(const enum llm_kv key, const Container & value, c
         GGML_ABORT("fatal error");
     }
 }
+// instantiate for external usage:
+template void llama_model_saver::add_kv<std::vector<uint32_t>>(const enum llm_kv, const std::vector<uint32_t> &, const bool);
 
 void llama_model_saver::add_kv(const enum llm_kv key, const std::vector<std::string> & value) {
     std::vector<const char *> tmp(value.size());
@@ -104,37 +112,39 @@ void llama_model_saver::add_tensor(const struct ggml_tensor * tensor) {
 }
 
 void llama_model_saver::add_kv_from_model() {
-    const llama_hparams & hparams = model.hparams;
-    const llama_vocab   & vocab   = model.vocab;
+    const llama_hparams & hparams = model->hparams;
+    const llama_vocab   & vocab   = model->vocab;
 
     const int32_t n_vocab = vocab.n_tokens();
     std::vector<std::string> tokens(n_vocab);
     std::vector<float>       scores(n_vocab);
     std::vector<int32_t>     token_types(n_vocab);
 
-    for (int32_t id = 0; id < n_vocab; ++id) {
-        const llama_vocab::token_data & token_data = vocab.get_token_data(id);
+    if (vocab.get_type() != LLAMA_VOCAB_TYPE_NONE) {
+        for (int32_t id = 0; id < n_vocab; ++id) {
+            const llama_vocab::token_data & token_data = vocab.get_token_data(id);
 
-        tokens[id] = token_data.text;
-        scores[id] = token_data.score;
+            tokens[id] = token_data.text;
+            scores[id] = token_data.score;
 
-        switch(token_data.attr) {
-            case LLAMA_TOKEN_ATTR_UNKNOWN:      token_types[id] = LLAMA_TOKEN_TYPE_UNKNOWN;      break;
-            case LLAMA_TOKEN_ATTR_UNUSED:       token_types[id] = LLAMA_TOKEN_TYPE_UNUSED;       break;
-            case LLAMA_TOKEN_ATTR_NORMAL:       token_types[id] = LLAMA_TOKEN_TYPE_NORMAL;       break;
-            case LLAMA_TOKEN_ATTR_CONTROL:      token_types[id] = LLAMA_TOKEN_TYPE_CONTROL;      break;
-            case LLAMA_TOKEN_ATTR_USER_DEFINED: token_types[id] = LLAMA_TOKEN_TYPE_USER_DEFINED; break;
-            case LLAMA_TOKEN_ATTR_BYTE:         token_types[id] = LLAMA_TOKEN_TYPE_BYTE;         break;
-            case LLAMA_TOKEN_ATTR_UNDEFINED:
-            default:                            token_types[id] = LLAMA_TOKEN_TYPE_UNDEFINED;    break;
+            switch(token_data.attr) {
+                case LLAMA_TOKEN_ATTR_UNKNOWN:      token_types[id] = LLAMA_TOKEN_TYPE_UNKNOWN;      break;
+                case LLAMA_TOKEN_ATTR_UNUSED:       token_types[id] = LLAMA_TOKEN_TYPE_UNUSED;       break;
+                case LLAMA_TOKEN_ATTR_NORMAL:       token_types[id] = LLAMA_TOKEN_TYPE_NORMAL;       break;
+                case LLAMA_TOKEN_ATTR_CONTROL:      token_types[id] = LLAMA_TOKEN_TYPE_CONTROL;      break;
+                case LLAMA_TOKEN_ATTR_USER_DEFINED: token_types[id] = LLAMA_TOKEN_TYPE_USER_DEFINED; break;
+                case LLAMA_TOKEN_ATTR_BYTE:         token_types[id] = LLAMA_TOKEN_TYPE_BYTE;         break;
+                case LLAMA_TOKEN_ATTR_UNDEFINED:
+                default:                            token_types[id] = LLAMA_TOKEN_TYPE_UNDEFINED;    break;
+            }
         }
     }
 
     // add_kv(LLM_KV_GENERAL_TYPE,                      ???);
-    add_kv(LLM_KV_GENERAL_ARCHITECTURE,              model.arch_name());
+    add_kv(LLM_KV_GENERAL_ARCHITECTURE,              model->arch_name());
     // add_kv(LLM_KV_GENERAL_QUANTIZATION_VERSION,      ???);
     // add_kv(LLM_KV_GENERAL_ALIGNMENT,                 ???);
-    add_kv(LLM_KV_GENERAL_NAME,                      model.name);
+    add_kv(LLM_KV_GENERAL_NAME,                      model->name);
     // add_kv(LLM_KV_GENERAL_AUTHOR,                    ???);
     // add_kv(LLM_KV_GENERAL_VERSION,                   ???);
     // add_kv(LLM_KV_GENERAL_URL,                       ???);
@@ -255,25 +265,25 @@ void llama_model_saver::add_kv_from_model() {
 }
 
 void llama_model_saver::add_tensors_from_model() {
-    if (std::string(model.output->name) != std::string(model.tok_embd->name)) {
-        add_tensor(model.tok_embd); // some models use the same tensor for tok_embd and output
+    if (std::string(model->output->name) != std::string(model->tok_embd->name)) {
+        add_tensor(model->tok_embd); // some models use the same tensor for tok_embd and output
     }
-    add_tensor(model.type_embd);
-    add_tensor(model.pos_embd);
-    add_tensor(model.tok_norm);
-    add_tensor(model.tok_norm_b);
-    add_tensor(model.output_norm);
-    add_tensor(model.output_norm_b);
-    add_tensor(model.output);
-    add_tensor(model.output_b);
-    add_tensor(model.output_norm_enc);
-    add_tensor(model.cls);
-    add_tensor(model.cls_b);
-    add_tensor(model.cls_out);
-    add_tensor(model.cls_out_b);
-    add_tensor(model.cls_norm);
+    add_tensor(model->type_embd);
+    add_tensor(model->pos_embd);
+    add_tensor(model->tok_norm);
+    add_tensor(model->tok_norm_b);
+    add_tensor(model->output_norm);
+    add_tensor(model->output_norm_b);
+    add_tensor(model->output);
+    add_tensor(model->output_b);
+    add_tensor(model->output_norm_enc);
+    add_tensor(model->cls);
+    add_tensor(model->cls_b);
+    add_tensor(model->cls_out);
+    add_tensor(model->cls_out_b);
+    add_tensor(model->cls_norm);
 
-    for (const struct llama_layer & layer : model.layers) {
+    for (const struct llama_layer & layer : model->layers) {
         for (size_t i = 0; i < sizeof(layer)/sizeof(struct ggml_tensor *); ++i) {
             add_tensor(reinterpret_cast<const struct ggml_tensor * const *>(&layer)[i]);
         }

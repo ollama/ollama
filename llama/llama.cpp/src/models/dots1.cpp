@@ -91,7 +91,7 @@ llm_build_dots1::llm_build_dots1(const llama_model & model, const llm_graph_para
                 model.layers[il].ffn_exp_probs_b,
                 n_expert, n_expert_used,
                 LLM_FFN_SILU, hparams.expert_weights_norm,
-                true, hparams.expert_weights_scale,
+                hparams.expert_weights_scale, hparams.expert_weights_scale,
                 (llama_expert_gating_func_type) hparams.expert_gating_func,
                 il);
             cb(moe_out, "ffn_moe_out", il);
