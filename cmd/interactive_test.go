@@ -64,6 +64,33 @@ d:\path with\spaces\thirteen.WEBP some ending
 	assert.Contains(t, res[12], "d:")
 }
 
+func TestExtractFileNamesTildePaths(t *testing.T) {
+	input := `describe this ~/photos/cat.jpg and also ~/Downloads/dog.png`
+	res := extractFileNames(input)
+	assert.Len(t, res, 2)
+	assert.Contains(t, res[0], "~/photos/cat.jpg")
+	assert.Contains(t, res[1], "~/Downloads/dog.png")
+}
+
+func TestNormalizeFilePathExpandsTilde(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot determine home directory")
+	}
+
+	result := normalizeFilePath("~/photos/cat.jpg")
+	expected := filepath.Join(home, "photos/cat.jpg")
+	assert.Equal(t, expected, result)
+
+	// Ensure non-tilde paths are not modified
+	result = normalizeFilePath("/absolute/path/cat.jpg")
+	assert.Equal(t, "/absolute/path/cat.jpg", result)
+
+	// Ensure escaped tilde is unescaped but not expanded
+	result = normalizeFilePath("\\~/photos/cat.jpg")
+	assert.Equal(t, "~/photos/cat.jpg", result)
+}
+
 // Ensure that file paths wrapped in single quotes are removed with the quotes.
 func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	dir := t.TempDir()
