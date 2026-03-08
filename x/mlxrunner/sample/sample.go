@@ -65,10 +65,10 @@ func (s *Sampler) usesHistory() bool {
 }
 
 func (s *Sampler) setHistory(history *mlx.Array, historyLen int) {
-	if history != nil && history.Valid() {
+	if history != nil {
 		mlx.Pin(history)
 	}
-	if s.history != nil && s.history != history {
+	if s.history != nil {
 		mlx.Unpin(s.history)
 	}
 	s.history = history
@@ -92,14 +92,14 @@ func (s *Sampler) ResetHistory(history []int32) {
 }
 
 func (s *Sampler) AppendToken(token *mlx.Array) {
-	if !s.usesHistory() || token == nil || !token.Valid() {
+	if !s.usesHistory() || token == nil {
 		return
 	}
 
-	next := token.AsType(mlx.DTypeInt32).Reshape(token.Size())
+	next := token.AsType(mlx.DTypeInt32)
 	nextLen := next.Size()
 
-	if s.history != nil && s.history.Valid() && s.historyLen > 0 {
+	if s.history != nil && s.historyLen > 0 {
 		next = s.history.Concatenate(0, next)
 		nextLen += s.historyLen
 	}
@@ -176,7 +176,7 @@ func topK(s *Sampler, logprobs *mlx.Array) *mlx.Array {
 }
 
 func penalty(s *Sampler, logprobs *mlx.Array) *mlx.Array {
-	if s.history == nil || !s.history.Valid() || s.historyLen == 0 || s.PresencePenalty == 0 {
+	if s.history == nil || s.historyLen == 0 || s.PresencePenalty == 0 {
 		return logprobs
 	}
 
