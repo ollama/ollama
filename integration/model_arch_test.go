@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -123,7 +122,7 @@ func TestModelsEmbed(t *testing.T) {
 		slog.Warn("No VRAM info available, testing all models, so larger ones might timeout...")
 	}
 
-	data, err := ioutil.ReadFile(filepath.Join("testdata", "embed.json"))
+	data, err := os.ReadFile(filepath.Join("testdata", "embed.json"))
 	if err != nil {
 		t.Fatalf("failed to open test data file: %s", err)
 	}
