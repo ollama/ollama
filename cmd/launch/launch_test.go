@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -58,7 +59,12 @@ func setLaunchTestHome(t *testing.T, dir string) {
 func writeFakeBinary(t *testing.T, dir, name string) {
 	t.Helper()
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	data := []byte("#!/bin/sh\nexit 0\n")
+	if runtime.GOOS == "windows" {
+		path += ".cmd"
+		data = []byte("@echo off\r\nexit /b 0\r\n")
+	}
+	if err := os.WriteFile(path, data, 0o755); err != nil {
 		t.Fatalf("failed to write fake binary: %v", err)
 	}
 }
