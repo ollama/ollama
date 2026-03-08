@@ -42,6 +42,9 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	)
 
 	defer func() {
+		if request.Sampler != nil {
+			request.Sampler.Free()
+		}
 		mlx.Unpin(sample, logprobs)
 		mlx.Unpin(nextSample, nextLogprobs)
 		mlx.Sweep()
@@ -73,6 +76,8 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	} else {
 		request.Options.MaxTokens = min(request.Options.MaxTokens, maxGenerate)
 	}
+
+	request.Sampler.ResetHistory(inputs)
 
 	session := r.cache.begin(r.Model, inputs)
 	defer session.close()
@@ -113,7 +118,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		logits = logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1)
 
 		logprobs := logits.Subtract(logits.Logsumexp(true))
-		sample := request.Sample(logprobs)
+		sample := request.Sampler.Sample(logprobs)
 
 		mlx.Pin(sample, logprobs)
 		mlx.Sweep()
@@ -132,6 +137,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 			return err
 		}
 
+		request.Sampler.AppendToken(sample)
 		nextSample, nextLogprobs = step(sample)
 
 		if i == 0 {
