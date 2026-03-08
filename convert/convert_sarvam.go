@@ -275,9 +275,9 @@ func (p *sarvamMoEModel) Tensors(s []Tensor) (out []*ggml.Tensor) {
 		return uint32(blkNum) >= minValue
 	}
 
-	qSize := uint64(p.NumAttentionHeads * p.HeadDim)
-	kSize := uint64(p.NumKeyValueHeads * p.HeadDim)
-	vSize := uint64(p.NumKeyValueHeads * p.HeadDim)
+	qSize := uint64(p.NumAttentionHeads) * uint64(p.HeadDim)
+	kSize := uint64(p.NumKeyValueHeads) * uint64(p.HeadDim)
+	vSize := uint64(p.NumKeyValueHeads) * uint64(p.HeadDim)
 
 	out, s = mergeTensors(s, merges...)
 	for _, t := range s {
