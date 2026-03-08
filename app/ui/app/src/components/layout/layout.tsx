@@ -1,5 +1,6 @@
 import { Link } from "@tanstack/react-router";
 import { useSettings } from "@/hooks/useSettings";
+import { useState, useEffect } from "react";
 
 export function SidebarLayout({
   sidebar,
@@ -12,10 +13,22 @@ export function SidebarLayout({
   const { settings, setSettings } = useSettings();
   const isWindows = navigator.platform.toLowerCase().includes("win");
 
+  // Suppress transitions on initial mount so the sidebar appears
+  // open immediately without animating (fixes #12954)
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    requestAnimationFrame(() => setMounted(true));
+  }, []);
+
+  const transition = mounted ? "transition-[width] duration-300" : "";
+  const buttonTransition = mounted ? "transition-[left] duration-375" : "";
+  const opacityTransition = mounted ? "transition-opacity duration-375" : "";
+  const mainTransition = mounted ? "transition-all duration-300" : "";
+
   return (
-    <div className={`flex transition-[width] duration-300 dark:bg-neutral-900`}>
+    <div className={`flex ${transition} dark:bg-neutral-900`}>
       <div
-        className={`absolute flex mx-2 py-2 z-20 items-center transition-[left] duration-375 text-neutral-500 dark:text-neutral-400 ${settings.sidebarOpen ? (isWindows ? "left-2" : "left-[204px]") : isWindows ? "left-2" : "left-20"}`}
+        className={`absolute flex mx-2 py-2 z-20 items-center ${buttonTransition} text-neutral-500 dark:text-neutral-400 ${settings.sidebarOpen ? (isWindows ? "left-2" : "left-[204px]") : isWindows ? "left-2" : "left-20"}`}
       >
         <button
           onClick={() => setSettings({ SidebarOpen: !settings.sidebarOpen })}
@@ -39,7 +52,7 @@ export function SidebarLayout({
           to="/c/$chatId"
           params={{ chatId: "new" }}
           title="New chat"
-          className={`flex ml-1 items-center justify-center rounded-full transition-opacity duration-375 h-9 w-9 hover:bg-neutral-100 dark:hover:bg-neutral-700 ${
+          className={`flex ml-1 items-center justify-center rounded-full ${opacityTransition} h-9 w-9 hover:bg-neutral-100 dark:hover:bg-neutral-700 ${
             settings.sidebarOpen
               ? "opacity-0 pointer-events-none"
               : "opacity-100"
@@ -57,7 +70,7 @@ export function SidebarLayout({
         </Link>
       </div>
       <div
-        className={`flex flex-col transition-[width] duration-300 max-h-screen ${settings.sidebarOpen ? "w-64" : "w-0"}`}
+        className={`flex flex-col ${transition} max-h-screen ${settings.sidebarOpen ? "w-64" : "w-0"}`}
       >
         <div
           onDoubleClick={() => window.doubleClick && window.doubleClick()}
@@ -67,7 +80,7 @@ export function SidebarLayout({
         {settings.sidebarOpen && sidebar}
       </div>
       <main
-        className={`flex flex-1 flex-col min-w-0 transition-all duration-300`}
+        className={`flex flex-1 flex-col min-w-0 ${mainTransition}`}
       >
         <div
           className={`h-13 flex-none w-full z-10 flex items-center bg-white dark:bg-neutral-900 ${isWindows ? "xl:hidden" : "xl:fixed xl:bg-transparent xl:dark:bg-transparent"}`}
