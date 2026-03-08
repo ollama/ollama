@@ -13,6 +13,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/internal/fileutil"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -140,7 +141,7 @@ func (p *Pi) Edit(models []string) error {
 	if err != nil {
 		return err
 	}
-	if err := writeWithBackup(configPath, configData); err != nil {
+	if err := fileutil.WriteWithBackup(configPath, configData); err != nil {
 		return err
 	}
 
@@ -158,7 +159,7 @@ func (p *Pi) Edit(models []string) error {
 	if err != nil {
 		return err
 	}
-	return writeWithBackup(settingsPath, settingsData)
+	return fileutil.WriteWithBackup(settingsPath, settingsData)
 }
 
 func (p *Pi) Models() []string {
@@ -168,7 +169,7 @@ func (p *Pi) Models() []string {
 	}
 
 	configPath := filepath.Join(home, ".pi", "agent", "models.json")
-	config, err := readJSONFile(configPath)
+	config, err := fileutil.ReadJSON(configPath)
 	if err != nil {
 		return nil
 	}

@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/ollama/ollama/internal/fileutil"
 )
 
 type integration struct {
@@ -124,7 +126,7 @@ func save(cfg *config) error {
 		return err
 	}
 
-	return writeWithBackup(path, data)
+	return fileutil.WriteWithBackup(path, data)
 }
 
 func SaveIntegration(appName string, models []string) error {

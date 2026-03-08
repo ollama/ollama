@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ollama/ollama/internal/fileutil"
 )
 
 func TestDroidIntegration(t *testing.T) {
@@ -362,7 +364,7 @@ func TestDroidEdit_DuplicateModels(t *testing.T) {
 		t.Fatalf("Edit with duplicates failed: %v", err)
 	}
 
-	settings, err := readJSONFile(settingsPath)
+	settings, err := fileutil.ReadJSON(settingsPath)
 	if err != nil {
 		t.Fatalf("readJSONFile failed: %v", err)
 	}
@@ -392,7 +394,7 @@ func TestDroidEdit_MalformedModelEntry(t *testing.T) {
 	}
 
 	// Malformed entries (non-object) are dropped - only valid model objects are preserved
-	settings, _ := readJSONFile(settingsPath)
+	settings, _ := fileutil.ReadJSON(settingsPath)
 	customModels, _ := settings["customModels"].([]any)
 
 	// Should have: 1 new Ollama model only (malformed entries dropped)
@@ -419,7 +421,7 @@ func TestDroidEdit_WrongTypeSessionSettings(t *testing.T) {
 	}
 
 	// Should create proper sessionDefaultSettings
-	settings, _ := readJSONFile(settingsPath)
+	settings, _ := fileutil.ReadJSON(settingsPath)
 	session, ok := settings["sessionDefaultSettings"].(map[string]any)
 	if !ok {
 		t.Fatalf("sessionDefaultSettings should be map after setup, got %T", settings["sessionDefaultSettings"])

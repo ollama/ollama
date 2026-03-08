@@ -1,4 +1,4 @@
-package config
+package fileutil
 
 import (
 	"encoding/json"
@@ -8,6 +8,21 @@ import (
 	"runtime"
 	"testing"
 )
+
+func TestMain(m *testing.M) {
+	tmpRoot, err := os.MkdirTemp("", "fileutil-test-*")
+	if err != nil {
+		panic(err)
+	}
+
+	if err := os.Setenv("TMPDIR", tmpRoot); err != nil {
+		panic(err)
+	}
+
+	code := m.Run()
+	_ = os.RemoveAll(tmpRoot)
+	os.Exit(code)
+}
 
 func mustMarshal(t *testing.T, v any) []byte {
 	t.Helper()
@@ -20,9 +35,7 @@ func mustMarshal(t *testing.T, v any) []byte {
 
 func isolatedTempDir(t *testing.T) string {
 	t.Helper()
-	tmpDir := t.TempDir()
-	t.Setenv("TMPDIR", tmpDir)
-	return tmpDir
+	return t.TempDir()
 }
 
 func TestWriteWithBackup(t *testing.T) {
@@ -32,7 +45,7 @@ func TestWriteWithBackup(t *testing.T) {
 		path := filepath.Join(tmpDir, "new.json")
 		data := mustMarshal(t, map[string]string{"key": "value"})
 
-		if err := writeWithBackup(path, data); err != nil {
+		if err := WriteWithBackup(path, data); err != nil {
 			t.Fatal(err)
 		}
 
@@ -50,17 +63,17 @@ func TestWriteWithBackup(t *testing.T) {
 		}
 	})
 
-	t.Run("creates backup in /tmp/ollama-backups", func(t *testing.T) {
+	t.Run("creates backup in the temp backup directory", func(t *testing.T) {
 		path := filepath.Join(tmpDir, "backup.json")
 
 		os.WriteFile(path, []byte(`{"original": true}`), 0o644)
 
 		data := mustMarshal(t, map[string]bool{"updated": true})
-		if err := writeWithBackup(path, data); err != nil {
+		if err := WriteWithBackup(path, data); err != nil {
 			t.Fatal(err)
 		}
 
-		entries, err := os.ReadDir(backupDir())
+		entries, err := os.ReadDir(BackupDir())
 		if err != nil {
 			t.Fatal("backup directory not created")
 		}
@@ -70,7 +83,7 @@ func TestWriteWithBackup(t *testing.T) {
 			if filepath.Ext(entry.Name()) != ".json" {
 				name := entry.Name()
 				if len(name) > len("backup.json.") && name[:len("backup.json.")] == "backup.json." {
-					backupPath := filepath.Join(backupDir(), name)
+					backupPath := filepath.Join(BackupDir(), name)
 					backup, err := os.ReadFile(backupPath)
 					if err == nil {
 						var backupData map[string]bool
@@ -86,7 +99,7 @@ func TestWriteWithBackup(t *testing.T) {
 		}
 
 		if !foundBackup {
-			t.Error("backup file not created in /tmp/ollama-backups")
+			t.Error("backup file not created in backup directory")
 		}
 
 		current, _ := os.ReadFile(path)
@@ -101,11 +114,11 @@ func TestWriteWithBackup(t *testing.T) {
 		path := filepath.Join(tmpDir, "nobak.json")
 
 		data := mustMarshal(t, map[string]string{"new": "file"})
-		if err := writeWithBackup(path, data); err != nil {
+		if err := WriteWithBackup(path, data); err != nil {
 			t.Fatal(err)
 		}
 
-		entries, _ := os.ReadDir(backupDir())
+		entries, _ := os.ReadDir(BackupDir())
 		for _, entry := range entries {
 			if len(entry.Name()) > len("nobak.json.") && entry.Name()[:len("nobak.json.")] == "nobak.json." {
 				t.Error("backup should not exist for new file")
@@ -118,11 +131,11 @@ func TestWriteWithBackup(t *testing.T) {
 
 		data := mustMarshal(t, map[string]string{"key": "value"})
 
-		if err := writeWithBackup(path, data); err != nil {
+		if err := WriteWithBackup(path, data); err != nil {
 			t.Fatal(err)
 		}
 
-		entries1, _ := os.ReadDir(backupDir())
+		entries1, _ := os.ReadDir(BackupDir())
 		countBefore := 0
 		for _, e := range entries1 {
 			if len(e.Name()) > len("unchanged.json.") && e.Name()[:len("unchanged.json.")] == "unchanged.json." {
@@ -130,11 +143,11 @@ func TestWriteWithBackup(t *testing.T) {
 			}
 		}
 
-		if err := writeWithBackup(path, data); err != nil {
+		if err := WriteWithBackup(path, data); err != nil {
 			t.Fatal(err)
 		}
 
-		entries2, _ := os.ReadDir(backupDir())
+		entries2, _ := os.ReadDir(BackupDir())
 		countAfter := 0
 		for _, e := range entries2 {
 			if len(e.Name()) > len("unchanged.json.") && e.Name()[:len("unchanged.json.")] == "unchanged.json." {
@@ -152,11 +165,11 @@ func TestWriteWithBackup(t *testing.T) {
 
 		os.WriteFile(path, []byte(`{"v": 1}`), 0o644)
 		data := mustMarshal(t, map[string]int{"v": 2})
-		if err := writeWithBackup(path, data); err != nil {
+		if err := WriteWithBackup(path, data); err != nil {
 			t.Fatal(err)
 		}
 
-		entries, _ := os.ReadDir(backupDir())
+		entries, _ := os.ReadDir(BackupDir())
 		var found bool
 		for _, entry := range entries {
 			name := entry.Name()
@@ -168,7 +181,7 @@ func TestWriteWithBackup(t *testing.T) {
 					}
 				}
 				found = true
-				os.Remove(filepath.Join(backupDir(), name))
+				os.Remove(filepath.Join(BackupDir(), name))
 				break
 			}
 		}
@@ -195,13 +208,13 @@ func TestWriteWithBackup_FailsIfBackupFails(t *testing.T) {
 	os.WriteFile(path, originalContent, 0o644)
 
 	// Make backup directory read-only to force backup failure
-	backupDir := backupDir()
+	backupDir := BackupDir()
 	os.MkdirAll(backupDir, 0o755)
 	os.Chmod(backupDir, 0o444) // Read-only
 	defer os.Chmod(backupDir, 0o755)
 
 	newContent := []byte(`{"updated": true}`)
-	err := writeWithBackup(path, newContent)
+	err := WriteWithBackup(path, newContent)
 
 	// Should fail because backup couldn't be created
 	if err == nil {
@@ -231,7 +244,7 @@ func TestWriteWithBackup_PermissionDenied(t *testing.T) {
 	defer os.Chmod(readOnlyDir, 0o755)
 
 	path := filepath.Join(readOnlyDir, "config.json")
-	err := writeWithBackup(path, []byte(`{"test": true}`))
+	err := WriteWithBackup(path, []byte(`{"test": true}`))
 
 	if err == nil {
 		t.Error("expected permission error, got nil")
@@ -244,7 +257,7 @@ func TestWriteWithBackup_DirectoryDoesNotExist(t *testing.T) {
 	tmpDir := isolatedTempDir(t)
 	path := filepath.Join(tmpDir, "nonexistent", "subdir", "config.json")
 
-	err := writeWithBackup(path, []byte(`{"test": true}`))
+	err := WriteWithBackup(path, []byte(`{"test": true}`))
 
 	// Should fail because directory doesn't exist
 	if err == nil {
@@ -268,7 +281,7 @@ func TestWriteWithBackup_SymlinkTarget(t *testing.T) {
 	os.Symlink(realFile, symlink)
 
 	// Write through symlink
-	err := writeWithBackup(symlink, []byte(`{"v": 2}`))
+	err := WriteWithBackup(symlink, []byte(`{"v": 2}`))
 	if err != nil {
 		t.Fatalf("writeWithBackup through symlink failed: %v", err)
 	}
@@ -350,7 +363,7 @@ func TestWriteWithBackup_TargetIsDirectory(t *testing.T) {
 	dirPath := filepath.Join(tmpDir, "actualdir")
 	os.MkdirAll(dirPath, 0o755)
 
-	err := writeWithBackup(dirPath, []byte(`{"test": true}`))
+	err := WriteWithBackup(dirPath, []byte(`{"test": true}`))
 	if err == nil {
 		t.Error("expected error when target is a directory, got nil")
 	}
@@ -361,7 +374,7 @@ func TestWriteWithBackup_EmptyData(t *testing.T) {
 	tmpDir := isolatedTempDir(t)
 	path := filepath.Join(tmpDir, "empty.json")
 
-	err := writeWithBackup(path, []byte{})
+	err := WriteWithBackup(path, []byte{})
 	if err != nil {
 		t.Fatalf("writeWithBackup with empty data failed: %v", err)
 	}
@@ -391,7 +404,7 @@ func TestWriteWithBackup_FileUnreadableButDirWritable(t *testing.T) {
 	defer os.Chmod(path, 0o644)
 
 	// Should fail because we can't read the file to compare/backup
-	err := writeWithBackup(path, []byte(`{"updated": true}`))
+	err := WriteWithBackup(path, []byte(`{"updated": true}`))
 	if err == nil {
 		t.Error("expected error when file is unreadable, got nil")
 	}
@@ -409,7 +422,7 @@ func TestWriteWithBackup_RapidSuccessiveWrites(t *testing.T) {
 	// Rapid successive writes
 	for i := 1; i <= 3; i++ {
 		data := []byte(fmt.Sprintf(`{"v": %d}`, i))
-		if err := writeWithBackup(path, data); err != nil {
+		if err := WriteWithBackup(path, data); err != nil {
 			t.Fatalf("write %d failed: %v", i, err)
 		}
 	}
@@ -421,7 +434,7 @@ func TestWriteWithBackup_RapidSuccessiveWrites(t *testing.T) {
 	}
 
 	// Verify at least one backup exists
-	entries, _ := os.ReadDir(backupDir())
+	entries, _ := os.ReadDir(BackupDir())
 	var backupCount int
 	for _, e := range entries {
 		if len(e.Name()) > len("rapid.json.") && e.Name()[:len("rapid.json.")] == "rapid.json." {
@@ -441,7 +454,7 @@ func TestWriteWithBackup_BackupDirIsFile(t *testing.T) {
 
 	tmpDir := isolatedTempDir(t)
 	// Create a file at the backup directory path
-	backupPath := backupDir()
+	backupPath := BackupDir()
 	// Clean up any existing directory first
 	os.RemoveAll(backupPath)
 	// Create a file instead of directory
@@ -454,7 +467,7 @@ func TestWriteWithBackup_BackupDirIsFile(t *testing.T) {
 	path := filepath.Join(tmpDir, "test.json")
 	os.WriteFile(path, []byte(`{"original": true}`), 0o644)
 
-	err := writeWithBackup(path, []byte(`{"updated": true}`))
+	err := WriteWithBackup(path, []byte(`{"updated": true}`))
 	if err == nil {
 		t.Error("expected error when backup dir is a file, got nil")
 	}
@@ -500,7 +513,7 @@ func TestWriteWithBackup_NoOrphanTempFiles(t *testing.T) {
 	badPath := filepath.Join(tmpDir, "isdir")
 	os.MkdirAll(badPath, 0o755)
 
-	_ = writeWithBackup(badPath, []byte(`{"test": true}`))
+	_ = WriteWithBackup(badPath, []byte(`{"test": true}`))
 
 	after := countTempFiles()
 	if after > before {

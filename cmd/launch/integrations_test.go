@@ -22,17 +22,6 @@ type stubEditorRunner struct {
 	editErr  error
 }
 
-type stubRunner struct {
-	ranModel string
-}
-
-func (s *stubRunner) Run(model string, args []string) error {
-	s.ranModel = model
-	return nil
-}
-
-func (s *stubRunner) String() string { return "StubRunner" }
-
 func (s *stubEditorRunner) Run(model string, args []string) error {
 	s.ranModel = model
 	return nil

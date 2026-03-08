@@ -9,6 +9,7 @@ import (
 	"slices"
 
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/internal/fileutil"
 )
 
 // Droid implements Runner and Editor for Droid integration
@@ -95,7 +96,7 @@ func (d *Droid) Edit(models []string) error {
 	if err != nil {
 		return err
 	}
-	return writeWithBackup(settingsPath, data)
+	return fileutil.WriteWithBackup(settingsPath, data)
 }
 
 func updateDroidSettings(settingsMap map[string]any, settings droidSettings, models []string) map[string]any {

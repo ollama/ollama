@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/internal/fileutil"
 )
 
 // OpenCode implements Runner and Editor for OpenCode integration
@@ -151,7 +152,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 	if err != nil {
 		return err
 	}
-	if err := writeWithBackup(configPath, configData); err != nil {
+	if err := fileutil.WriteWithBackup(configPath, configData); err != nil {
 		return err
 	}
 
@@ -203,7 +204,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 	if err != nil {
 		return err
 	}
-	return writeWithBackup(statePath, stateData)
+	return fileutil.WriteWithBackup(statePath, stateData)
 }
 
 func (o *OpenCode) Models() []string {
@@ -211,7 +212,7 @@ func (o *OpenCode) Models() []string {
 	if err != nil {
 		return nil
 	}
-	config, err := readJSONFile(filepath.Join(home, ".config", "opencode", "opencode.json"))
+	config, err := fileutil.ReadJSON(filepath.Join(home, ".config", "opencode", "opencode.json"))
 	if err != nil {
 		return nil
 	}

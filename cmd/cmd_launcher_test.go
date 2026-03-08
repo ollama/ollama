@@ -201,7 +201,6 @@ func TestRunLauncherAction_RunModelContinuesAfterCancellation(t *testing.T) {
 		launchIntegration: unexpectedIntegrationLaunch(t),
 		runModel:          unexpectedModelLaunch(t),
 	})
-
 	if err != nil {
 		t.Fatalf("expected nil error on cancellation, got %v", err)
 	}
@@ -225,7 +224,6 @@ func TestRunLauncherAction_IntegrationContinuesAfterCancellation(t *testing.T) {
 		},
 		runModel: unexpectedModelLaunch(t),
 	})
-
 	if err != nil {
 		t.Fatalf("expected nil error on cancellation, got %v", err)
 	}

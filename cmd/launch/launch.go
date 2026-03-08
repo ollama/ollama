@@ -320,8 +320,9 @@ func (c *launcherClient) buildLauncherIntegrationState(ctx context.Context, info
 }
 
 func (c *launcherClient) launcherModelState(ctx context.Context, name string, isEditor bool) (string, bool, error) {
-	cfg, err := loadStoredIntegrationConfig(name)
-	if err != nil || len(cfg.Models) == 0 {
+	cfg, loadErr := loadStoredIntegrationConfig(name)
+	hasModels := loadErr == nil && len(cfg.Models) > 0
+	if !hasModels {
 		return "", false, nil
 	}
 
@@ -334,11 +335,8 @@ func (c *launcherClient) launcherModelState(ctx context.Context, name string, is
 	}
 
 	model := cfg.Models[0]
-	usable, err := c.savedModelUsable(ctx, model)
-	if err != nil {
-		return model, false, nil
-	}
-	return model, usable, nil
+	usable, usableErr := c.savedModelUsable(ctx, model)
+	return model, usableErr == nil && usable, nil
 }
 
 func (c *launcherClient) resolveRunModel(ctx context.Context, req RunModelRequest) (string, error) {

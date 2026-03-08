@@ -15,6 +15,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
+	"github.com/ollama/ollama/internal/fileutil"
 	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/progress"
 )
@@ -260,10 +261,6 @@ func selectModelsWithSelectors(ctx context.Context, name, current string, single
 	return selected, nil
 }
 
-func selectModels(ctx context.Context, name, current string) ([]string, error) {
-	return selectModelsWithSelectors(ctx, name, current, DefaultSingleSelector, DefaultMultiSelector)
-}
-
 func pullIfNeeded(ctx context.Context, client *api.Client, existingModels map[string]bool, model string) error {
 	if IsCloudModelName(model) || existingModels[model] {
 		return nil
@@ -401,7 +398,7 @@ func confirmEditorEdit(runner Runner, editor Editor) (bool, error) {
 	for _, path := range paths {
 		fmt.Fprintf(os.Stderr, "  %s\n", path)
 	}
-	fmt.Fprintf(os.Stderr, "Backups will be saved to %s/\n\n", backupDir())
+	fmt.Fprintf(os.Stderr, "Backups will be saved to %s/\n\n", fileutil.BackupDir())
 
 	return ConfirmPrompt("Proceed?")
 }

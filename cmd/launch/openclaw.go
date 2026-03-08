@@ -17,6 +17,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/internal/fileutil"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -562,7 +563,7 @@ func (c *Openclaw) Edit(models []string) error {
 	if err != nil {
 		return err
 	}
-	if err := writeWithBackup(configPath, data); err != nil {
+	if err := fileutil.WriteWithBackup(configPath, data); err != nil {
 		return err
 	}
 
@@ -777,9 +778,9 @@ func (c *Openclaw) Models() []string {
 		return nil
 	}
 
-	config, err := readJSONFile(filepath.Join(home, ".openclaw", "openclaw.json"))
+	config, err := fileutil.ReadJSON(filepath.Join(home, ".openclaw", "openclaw.json"))
 	if err != nil {
-		config, err = readJSONFile(filepath.Join(home, ".clawdbot", "clawdbot.json"))
+		config, err = fileutil.ReadJSON(filepath.Join(home, ".clawdbot", "clawdbot.json"))
 		if err != nil {
 			return nil
 		}

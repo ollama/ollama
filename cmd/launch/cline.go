@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/internal/fileutil"
 )
 
 // Cline implements Runner and Editor for the Cline CLI integration
@@ -77,7 +78,7 @@ func (c *Cline) Edit(models []string) error {
 	if err != nil {
 		return err
 	}
-	return writeWithBackup(configPath, data)
+	return fileutil.WriteWithBackup(configPath, data)
 }
 
 func (c *Cline) Models() []string {
@@ -86,7 +87,7 @@ func (c *Cline) Models() []string {
 		return nil
 	}
 
-	config, err := readJSONFile(filepath.Join(home, ".cline", "data", "globalState.json"))
+	config, err := fileutil.ReadJSON(filepath.Join(home, ".cline", "data", "globalState.json"))
 	if err != nil {
 		return nil
 	}
