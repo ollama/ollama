@@ -113,9 +113,9 @@ if(CMAKE_CUDA_COMPILER)
     )
 endif()
 
-set(WINDOWS_AMDGPU_TARGETS_EXCLUDE_REGEX "^gfx(908|90a|1200|1201):xnack[+-]$"
+set(WINDOWS_AMDGPU_TARGETS_EXCLUDE_REGEX "^gfx(908|90a):xnack[+-]$|^gfx(940|941)$"
     CACHE STRING
-    "Regular expression describing AMDGPU_TARGETS not supported on Windows. Override to force building these targets. Default \"^gfx(908|90a|1200|1201):xnack[+-]$\"."
+    "Regular expression describing AMDGPU_TARGETS not supported on Windows. Override to force building these targets. Default \"^gfx(908|90a):xnack[+-]$|^gfx(940|941)$\"."
 )
 
 check_language(HIP)
@@ -124,7 +124,7 @@ if(CMAKE_HIP_COMPILER)
 
     if(NOT AMDGPU_TARGETS)
         find_package(hip REQUIRED)
-        list(FILTER AMDGPU_TARGETS INCLUDE REGEX "^gfx(94[012]|101[02]|1030|110[012]|120[01])$")
+        list(FILTER AMDGPU_TARGETS INCLUDE REGEX "^gfx(94[012]|101[02]|1030|110[012]|115[01]|120[01])$")
     endif()
 
     if(WIN32 AND WINDOWS_AMDGPU_TARGETS_EXCLUDE_REGEX)
