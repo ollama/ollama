@@ -15,11 +15,16 @@ const (
 	testImage = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
 )
 
-// testArgs creates ToolCallFunctionArguments from a map (convenience function for tests)
-func testArgs(m map[string]any) api.ToolCallFunctionArguments {
+// textContent is a convenience for constructing []ContentBlock with a single text block in tests.
+func textContent(s string) []ContentBlock {
+	return []ContentBlock{{Type: "text", Text: &s}}
+}
+
+// makeArgs creates ToolCallFunctionArguments from key-value pairs (convenience function for tests)
+func makeArgs(kvs ...any) api.ToolCallFunctionArguments {
 	args := api.NewToolCallFunctionArguments()
-	for k, v := range m {
-		args.Set(k, v)
+	for i := 0; i < len(kvs)-1; i += 2 {
+		args.Set(kvs[i].(string), kvs[i+1])
 	}
 	return args
 }
@@ -29,7 +34,7 @@ func TestFromMessagesRequest_Basic(t *testing.T) {
 		Model:     "test-model",
 		MaxTokens: 1024,
 		Messages: []MessageParam{
-			{Role: "user", Content: "Hello"},
+			{Role: "user", Content: textContent("Hello")},
 		},
 	}
 
@@ -61,7 +66,7 @@ func TestFromMessagesRequest_WithSystemPrompt(t *testing.T) {
 		MaxTokens: 1024,
 		System:    "You are a helpful assistant.",
 		Messages: []MessageParam{
-			{Role: "user", Content: "Hello"},
+			{Role: "user", Content: textContent("Hello")},
 		},
 	}
 
@@ -88,7 +93,7 @@ func TestFromMessagesRequest_WithSystemPromptArray(t *testing.T) {
 			map[string]any{"type": "text", "text": " Be concise."},
 		},
 		Messages: []MessageParam{
-			{Role: "user", Content: "Hello"},
+			{Role: "user", Content: textContent("Hello")},
 		},
 	}
 
@@ -113,7 +118,7 @@ func TestFromMessagesRequest_WithOptions(t *testing.T) {
 	req := MessagesRequest{
 		Model:         "test-model",
 		MaxTokens:     2048,
-		Messages:      []MessageParam{{Role: "user", Content: "Hello"}},
+		Messages:      []MessageParam{{Role: "user", Content: textContent("Hello")}},
 		Temperature:   &temp,
 		TopP:          &topP,
 		TopK:          &topK,
@@ -148,14 +153,14 @@ func TestFromMessagesRequest_WithImage(t *testing.T) {
 		Messages: []MessageParam{
 			{
 				Role: "user",
-				Content: []any{
-					map[string]any{"type": "text", "text": "What's in this image?"},
-					map[string]any{
-						"type": "image",
-						"source": map[string]any{
-							"type":       "base64",
-							"media_type": "image/png",
-							"data":       testImage,
+				Content: []ContentBlock{
+					{Type: "text", Text: ptr("What's in this image?")},
+					{
+						Type: "image",
+						Source: &ImageSource{
+							Type:      "base64",
+							MediaType: "image/png",
+							Data:      testImage,
 						},
 					},
 				},
@@ -190,15 +195,15 @@ func TestFromMessagesRequest_WithToolUse(t *testing.T) {
 		Model:     "test-model",
 		MaxTokens: 1024,
 		Messages: []MessageParam{
-			{Role: "user", Content: "What's the weather in Paris?"},
+			{Role: "user", Content: textContent("What's the weather in Paris?")},
 			{
 				Role: "assistant",
-				Content: []any{
-					map[string]any{
-						"type":  "tool_use",
-						"id":    "call_123",
-						"name":  "get_weather",
-						"input": map[string]any{"location": "Paris"},
+				Content: []ContentBlock{
+					{
+						Type:  "tool_use",
+						ID:    "call_123",
+						Name:  "get_weather",
+						Input: makeArgs("location", "Paris"),
 					},
 				},
 			},
@@ -234,11 +239,11 @@ func TestFromMessagesRequest_WithToolResult(t *testing.T) {
 		Messages: []MessageParam{
 			{
 				Role: "user",
-				Content: []any{
-					map[string]any{
-						"type":        "tool_result",
-						"tool_use_id": "call_123",
-						"content":     "The weather in Paris is sunny, 22°C",
+				Content: []ContentBlock{
+					{
+						Type:      "tool_result",
+						ToolUseID: "call_123",
+						Content:   "The weather in Paris is sunny, 22°C",
 					},
 				},
 			},
@@ -270,7 +275,7 @@ func TestFromMessagesRequest_WithTools(t *testing.T) {
 	req := MessagesRequest{
 		Model:     "test-model",
 		MaxTokens: 1024,
-		Messages:  []MessageParam{{Role: "user", Content: "Hello"}},
+		Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
 		Tools: []Tool{
 			{
 				Name:        "get_weather",
@@ -305,7 +310,7 @@ func TestFromMessagesRequest_DropsCustomWebSearchWhenBuiltinPresent(t *testing.T
 	req := MessagesRequest{
 		Model:     "test-model",
 		MaxTokens: 1024,
-		Messages:  []MessageParam{{Role: "user", Content: "Hello"}},
+		Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
 		Tools: []Tool{
 			{
 				Type: "web_search_20250305",
@@ -346,7 +351,7 @@ func TestFromMessagesRequest_KeepsCustomWebSearchWhenBuiltinAbsent(t *testing.T)
 	req := MessagesRequest{
 		Model:     "test-model",
 		MaxTokens: 1024,
-		Messages:  []MessageParam{{Role: "user", Content: "Hello"}},
+		Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
 		Tools: []Tool{
 			{
 				Type:        "custom",
@@ -377,7 +382,7 @@ func TestFromMessagesRequest_WithThinking(t *testing.T) {
 	req := MessagesRequest{
 		Model:     "test-model",
 		MaxTokens: 1024,
-		Messages:  []MessageParam{{Role: "user", Content: "Hello"}},
+		Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
 		Thinking:  &ThinkingConfig{Type: "enabled", BudgetTokens: 1000},
 	}
 
@@ -399,13 +404,13 @@ func TestFromMessagesRequest_ThinkingOnlyBlock(t *testing.T) {
 		Model:     "test-model",
 		MaxTokens: 1024,
 		Messages: []MessageParam{
-			{Role: "user", Content: "Hello"},
+			{Role: "user", Content: textContent("Hello")},
 			{
 				Role: "assistant",
-				Content: []any{
-					map[string]any{
-						"type":     "thinking",
-						"thinking": "Let me think about this...",
+				Content: []ContentBlock{
+					{
+						Type:     "thinking",
+						Thinking: ptr("Let me think about this..."),
 					},
 				},
 			},
@@ -434,10 +439,10 @@ func TestFromMessagesRequest_ToolUseMissingID(t *testing.T) {
 		Messages: []MessageParam{
 			{
 				Role: "assistant",
-				Content: []any{
-					map[string]any{
-						"type": "tool_use",
-						"name": "get_weather",
+				Content: []ContentBlock{
+					{
+						Type: "tool_use",
+						Name: "get_weather",
 					},
 				},
 			},
@@ -460,10 +465,10 @@ func TestFromMessagesRequest_ToolUseMissingName(t *testing.T) {
 		Messages: []MessageParam{
 			{
 				Role: "assistant",
-				Content: []any{
-					map[string]any{
-						"type": "tool_use",
-						"id":   "call_123",
+				Content: []ContentBlock{
+					{
+						Type: "tool_use",
+						ID:   "call_123",
 					},
 				},
 			},
@@ -483,7 +488,7 @@ func TestFromMessagesRequest_InvalidToolSchema(t *testing.T) {
 	req := MessagesRequest{
 		Model:     "test-model",
 		MaxTokens: 1024,
-		Messages:  []MessageParam{{Role: "user", Content: "Hello"}},
+		Messages:  []MessageParam{{Role: "user", Content: textContent("Hello")}},
 		Tools: []Tool{
 			{
 				Name:        "bad_tool",
@@ -548,7 +553,7 @@ func TestToMessagesResponse_WithToolCalls(t *testing.T) {
 					ID: "call_123",
 					Function: api.ToolCallFunction{
 						Name:      "get_weather",
-						Arguments: testArgs(map[string]any{"location": "Paris"}),
+						Arguments: makeArgs("location", "Paris"),
 					},
 				},
 			},
@@ -760,7 +765,7 @@ func TestStreamConverter_WithToolCalls(t *testing.T) {
 					ID: "call_123",
 					Function: api.ToolCallFunction{
 						Name:      "get_weather",
-						Arguments: testArgs(map[string]any{"location": "Paris"}),
+						Arguments: makeArgs("location", "Paris"),
 					},
 				},
 			},
@@ -843,7 +848,7 @@ func TestStreamConverter_ThinkingDirectlyFollowedByToolCall(t *testing.T) {
 					ID: "call_abc",
 					Function: api.ToolCallFunction{
 						Name:      "ask_user",
-						Arguments: testArgs(map[string]any{"question": "cats or dogs?"}),
+						Arguments: makeArgs("question", "cats or dogs?"),
 					},
 				},
 			},
@@ -965,7 +970,7 @@ func TestStreamConverter_MultipleToolCallsWithMixedValidity(t *testing.T) {
 					ID: "call_good",
 					Function: api.ToolCallFunction{
 						Name:      "good_function",
-						Arguments: testArgs(map[string]any{"location": "Paris"}),
+						Arguments: makeArgs("location", "Paris"),
 					},
 				},
 				{
@@ -1140,7 +1145,7 @@ func TestEstimateTokens_SimpleMessage(t *testing.T) {
 	req := CountTokensRequest{
 		Model: "test-model",
 		Messages: []MessageParam{
-			{Role: "user", Content: "Hello, world!"},
+			{Role: "user", Content: textContent("Hello, world!")},
 		},
 	}
 
@@ -1161,7 +1166,7 @@ func TestEstimateTokens_WithSystemPrompt(t *testing.T) {
 		Model:  "test-model",
 		System: "You are a helpful assistant.",
 		Messages: []MessageParam{
-			{Role: "user", Content: "Hello"},
+			{Role: "user", Content: textContent("Hello")},
 		},
 	}
 
@@ -1177,7 +1182,7 @@ func TestEstimateTokens_WithTools(t *testing.T) {
 	req := CountTokensRequest{
 		Model: "test-model",
 		Messages: []MessageParam{
-			{Role: "user", Content: "What's the weather?"},
+			{Role: "user", Content: textContent("What's the weather?")},
 		},
 		Tools: []Tool{
 			{
@@ -1200,17 +1205,17 @@ func TestEstimateTokens_WithThinking(t *testing.T) {
 	req := CountTokensRequest{
 		Model: "test-model",
 		Messages: []MessageParam{
-			{Role: "user", Content: "Hello"},
+			{Role: "user", Content: textContent("Hello")},
 			{
 				Role: "assistant",
-				Content: []any{
-					map[string]any{
-						"type":     "thinking",
-						"thinking": "Let me think about this carefully...",
+				Content: []ContentBlock{
+					{
+						Type:     "thinking",
+						Thinking: ptr("Let me think about this carefully..."),
 					},
-					map[string]any{
-						"type": "text",
-						"text": "Here is my response.",
+					{
+						Type: "text",
+						Text: ptr("Here is my response."),
 					},
 				},
 			},
@@ -1308,12 +1313,12 @@ func TestConvertTool_RegularTool(t *testing.T) {
 func TestConvertMessage_ServerToolUse(t *testing.T) {
 	msg := MessageParam{
 		Role: "assistant",
-		Content: []any{
-			map[string]any{
-				"type":  "server_tool_use",
-				"id":    "srvtoolu_123",
-				"name":  "web_search",
-				"input": map[string]any{"query": "test query"},
+		Content: []ContentBlock{
+			{
+				Type:  "server_tool_use",
+				ID:    "srvtoolu_123",
+				Name:  "web_search",
+				Input: makeArgs("query", "test query"),
 			},
 		},
 	}
@@ -1344,11 +1349,11 @@ func TestConvertMessage_ServerToolUse(t *testing.T) {
 func TestConvertMessage_WebSearchToolResult(t *testing.T) {
 	msg := MessageParam{
 		Role: "user",
-		Content: []any{
-			map[string]any{
-				"type":        "web_search_tool_result",
-				"tool_use_id": "srvtoolu_123",
-				"content": []any{
+		Content: []ContentBlock{
+			{
+				Type:      "web_search_tool_result",
+				ToolUseID: "srvtoolu_123",
+				Content: []any{
 					map[string]any{
 						"type":  "web_search_result",
 						"title": "Test Result",
@@ -1385,11 +1390,11 @@ func TestConvertMessage_WebSearchToolResult(t *testing.T) {
 func TestConvertMessage_WebSearchToolResultEmptyStillCreatesToolMessage(t *testing.T) {
 	msg := MessageParam{
 		Role: "user",
-		Content: []any{
-			map[string]any{
-				"type":        "web_search_tool_result",
-				"tool_use_id": "srvtoolu_empty",
-				"content":     []any{},
+		Content: []ContentBlock{
+			{
+				Type:      "web_search_tool_result",
+				ToolUseID: "srvtoolu_empty",
+				Content:   []any{},
 			},
 		},
 	}
@@ -1416,11 +1421,11 @@ func TestConvertMessage_WebSearchToolResultEmptyStillCreatesToolMessage(t *testi
 func TestConvertMessage_WebSearchToolResultErrorStillCreatesToolMessage(t *testing.T) {
 	msg := MessageParam{
 		Role: "user",
-		Content: []any{
-			map[string]any{
-				"type":        "web_search_tool_result",
-				"tool_use_id": "srvtoolu_error",
-				"content": map[string]any{
+		Content: []ContentBlock{
+			{
+				Type:      "web_search_tool_result",
+				ToolUseID: "srvtoolu_error",
+				Content: map[string]any{
 					"type":       "web_search_tool_result_error",
 					"error_code": "max_uses_exceeded",
 				},
