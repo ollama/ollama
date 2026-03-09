@@ -131,11 +131,28 @@ The MLX engine enables running safetensor based models. It requires building the
 
 ### macOS (Apple Silicon)
 
+Requires the Metal toolchain. Install [Xcode](https://developer.apple.com/xcode/) first, then:
+
+```shell
+xcodebuild -downloadComponent MetalToolchain
+```
+
+Verify it's installed correctly (should print "no input files"):
+
+```shell
+xcrun metal
+```
+
+Then build:
+
 ```shell
 cmake -B build --preset MLX
 cmake --build build --preset MLX --parallel
 cmake --install build --component MLX
 ```
+
+> [!NOTE]
+> Without the Metal toolchain, cmake will silently complete with Metal disabled. Check the cmake output for `Setting MLX_BUILD_METAL=OFF` which indicates the toolchain is missing.
 
 ### Windows / Linux (CUDA)
 
