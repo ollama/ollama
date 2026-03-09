@@ -54,6 +54,7 @@ import (
 	"github.com/ollama/ollama/types/syncmap"
 	"github.com/ollama/ollama/version"
 	xcmd "github.com/ollama/ollama/x/cmd"
+	"github.com/ollama/ollama/x/create"
 	xcreateclient "github.com/ollama/ollama/x/create/client"
 	"github.com/ollama/ollama/x/imagegen"
 )
@@ -166,10 +167,6 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	// This gates both safetensors LLM and imagegen model creation
 	experimental, _ := cmd.Flags().GetBool("experimental")
 	if experimental {
-		if !isLocalhost() {
-			return errors.New("remote safetensor model creation not yet supported")
-		}
-
 		// Get Modelfile content - either from -f flag or default to "FROM ."
 		var reader io.Reader
 		filename, err := getModelfileName(cmd)
@@ -204,7 +201,28 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		}
 
 		quantize, _ := cmd.Flags().GetString("quantize")
-		return xcreateclient.CreateModel(xcreateclient.CreateOptions{
+
+		// Imagegen models use local-only path (tensor extraction + model_index.json
+		// normalization not yet ported to the remote pipeline).
+		if create.IsTensorModelDir(modelDir) && !create.IsSafetensorsModelDir(modelDir) {
+			if !isLocalhost() {
+				return fmt.Errorf("image generation model creation requires a local server")
+			}
+			return xcreateclient.CreateModel(xcreateclient.CreateOptions{
+				ModelName: modelName,
+				ModelDir:  modelDir,
+				Quantize:  quantize,
+				Modelfile: mfConfig,
+			}, p)
+		}
+
+		// Safetensors LLM: always use the API path (faster than local due to
+		// parallel pipeline, and provides a single code path for all servers).
+		client, err := api.ClientFromEnvironment()
+		if err != nil {
+			return err
+		}
+		return xcreateclient.CreateModelRemote(cmd.Context(), client, xcreateclient.RemoteCreateOptions{
 			ModelName: modelName,
 			ModelDir:  modelDir,
 			Quantize:  quantize,

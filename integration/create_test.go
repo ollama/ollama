@@ -19,8 +19,8 @@ import (
 const testdataModelsDir = "testdata/models"
 
 // skipIfRemote skips the test if OLLAMA_HOST points to a non-local server.
-// Safetensors/imagegen creation requires localhost since it reads model files
-// from disk and uses the --experimental CLI path.
+// Imagegen creation requires localhost since it writes blobs directly to disk.
+// Safetensors LLM creation works against any server via the API pipeline.
 func skipIfRemote(t *testing.T) {
 	t.Helper()
 	host := os.Getenv("OLLAMA_HOST")
@@ -131,20 +131,37 @@ func runOllamaCreate(ctx context.Context, t *testing.T, args ...string) {
 	createCmd.Stdout = os.Stdout
 	createCmd.Stderr = io.MultiWriter(os.Stderr, &createStderr)
 	if err := createCmd.Run(); err != nil {
-		if strings.Contains(createStderr.String(), "remote") {
+		stderr := createStderr.String()
+		if strings.Contains(stderr, "requires a local server") || strings.Contains(stderr, "remote server") {
 			t.Skip("safetensors creation requires a local server")
 		}
-		t.Fatalf("ollama create failed: %v", err)
+		t.Fatalf("ollama create failed: %v\nstderr: %s", err, stderr)
 	}
 }
 
 func TestCreateSafetensorsLLM(t *testing.T) {
-	skipIfRemote(t)
+	// No skipIfRemote — safetensors LLM creation works against any server
+	// via the API-based pipeline (blob upload + CreateRequest).
 
-	modelDir := filepath.Join(testdataModelsDir, "TinyLlama-1.1B")
-	downloadHFModel(t, "TinyLlama/TinyLlama-1.1B-Chat-v1.0", modelDir)
+	// Allow overriding the model directory via env var for testing with
+	// larger models (e.g., OLLAMA_TEST_SAFETENSORS_MODEL_DIR=/path/to/Qwen3-32B).
+	modelDir := os.Getenv("OLLAMA_TEST_SAFETENSORS_MODEL_DIR")
+	if modelDir == "" {
+		modelDir = filepath.Join(testdataModelsDir, "TinyLlama-1.1B")
+		downloadHFModel(t, "TinyLlama/TinyLlama-1.1B-Chat-v1.0", modelDir)
+	} else {
+		t.Logf("Using existing safetensors model at %s", modelDir)
+	}
+
+	// Verify it looks like a valid safetensors model directory
+	if _, err := os.Stat(filepath.Join(modelDir, "config.json")); err != nil {
+		t.Fatalf("config.json not found in %s — not a valid safetensors model directory", modelDir)
+	}
 
 	ensureMLXLibraryPath(t)
+
+	// Use isolated model storage so remote-mode tests start with empty blobs
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -152,7 +169,7 @@ func TestCreateSafetensorsLLM(t *testing.T) {
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 
-	modelName := "test-tinyllama-safetensors"
+	modelName := "test-safetensors-llm"
 
 	absModelDir, err := filepath.Abs(modelDir)
 	if err != nil {
@@ -160,18 +177,33 @@ func TestCreateSafetensorsLLM(t *testing.T) {
 	}
 
 	// Create a Modelfile pointing to the model directory.
-	// Include a chat template since the safetensors importer doesn't extract
-	// chat_template from tokenizer_config.json yet.
-	modelfileContent := "FROM " + absModelDir + "\n" +
-		"TEMPLATE \"{{ if .System }}<|system|>\n{{ .System }}</s>\n{{ end }}" +
-		"{{ if .Prompt }}<|user|>\n{{ .Prompt }}</s>\n{{ end }}" +
-		"<|assistant|>\n{{ .Response }}</s>\n\"\n"
+	// For the default TinyLlama, include a chat template since the importer
+	// doesn't extract chat_template from tokenizer_config.json yet.
+	// For custom models, use just FROM and rely on the model's built-in template
+	// (or the architecture-inferred parser/renderer).
+	customModel := os.Getenv("OLLAMA_TEST_SAFETENSORS_MODEL_DIR") != ""
+	var modelfileContent string
+	if customModel {
+		modelfileContent = "FROM " + absModelDir + "\n"
+	} else {
+		modelfileContent = "FROM " + absModelDir + "\n" +
+			"TEMPLATE \"{{ if .System }}<|system|>\n{{ .System }}</s>\n{{ end }}" +
+			"{{ if .Prompt }}<|user|>\n{{ .Prompt }}</s>\n{{ end }}" +
+			"<|assistant|>\n{{ .Response }}</s>\n\"\n"
+	}
 	tmpModelfile := filepath.Join(t.TempDir(), "Modelfile")
 	if err := os.WriteFile(tmpModelfile, []byte(modelfileContent), 0o644); err != nil {
 		t.Fatalf("Failed to write Modelfile: %v", err)
 	}
 
-	runOllamaCreate(ctx, t, modelName, "--experimental", "-f", tmpModelfile)
+	createArgs := []string{modelName, "--experimental", "-f", tmpModelfile}
+	if q := os.Getenv("OLLAMA_TEST_QUANTIZE"); q != "" {
+		createArgs = append(createArgs, "--quantize", q)
+	}
+
+	createStart := time.Now()
+	runOllamaCreate(ctx, t, createArgs...)
+	t.Logf("Create took %s", time.Since(createStart))
 
 	// Verify model exists via show
 	showReq := &api.ShowRequest{Name: modelName}
@@ -199,12 +231,21 @@ func TestCreateSafetensorsLLM(t *testing.T) {
 		return nil
 	})
 	if err != nil {
+		if customModel {
+			// Custom models may not be supported by the runner — log and continue
+			t.Logf("Chat failed (may be unsupported architecture): %v", err)
+			return
+		}
 		t.Fatalf("Chat failed: %v", err)
 	}
 
 	text := output.String()
 	t.Logf("Generated output: %q", text)
-	assertCoherentOutput(t, text)
+	if customModel && text == "" {
+		t.Logf("Empty output from custom model (may need specific chat template) — skipping coherence check")
+	} else {
+		assertCoherentOutput(t, text)
+	}
 
 	// Cleanup: delete the model
 	deleteReq := &api.DeleteRequest{Model: modelName}

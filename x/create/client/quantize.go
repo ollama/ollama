@@ -112,12 +112,15 @@ func loadAndQuantizeArray(r io.Reader, name, quantize string, arrays map[string]
 	return tmpPath, toEval, st, nil
 }
 
-// quantizeTensor loads a tensor from safetensors format, quantizes it,
+// QuantizeTensor loads a tensor from safetensors format, quantizes it,
 // and returns a single combined safetensors blob with the quantized weight, scale, and optional bias.
 // Tensor keys use the original tensor name: name, name.scale, name.bias.
 // The blob includes __metadata__ with quant_type and group_size.
 // Supported quantization types: "int4", "nvfp4", "mxfp4", "int8", "mxfp8".
-func quantizeTensor(r io.Reader, tensorName, dtype string, shape []int32, quantize string) (blobData []byte, err error) {
+//
+// This is called both from the local create path and server-side to quantize
+// individual tensor blobs uploaded by the client.
+func QuantizeTensor(r io.Reader, tensorName, dtype string, shape []int32, quantize string) (blobData []byte, err error) {
 	arrays := make(map[string]*mlx.Array)
 	tmpPath, toEval, st, err := loadAndQuantizeArray(r, tensorName, quantize, arrays)
 	if tmpPath != "" {

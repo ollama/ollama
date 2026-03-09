@@ -704,6 +704,15 @@ type CreateRequest struct {
 	// Requires is the minimum version of Ollama required by the model.
 	Requires string `json:"requires,omitempty"`
 
+	// ModelFormat specifies the model storage format. When set to "safetensors",
+	// the server assembles a safetensors manifest from pre-uploaded blob layers
+	// instead of converting to GGUF. Files must map tensor/config names to blob digests.
+	ModelFormat string `json:"model_format,omitempty"`
+
+	// Capabilities lists model capabilities (e.g., "completion", "image", "thinking").
+	// Used with model_format="safetensors" to set capabilities in the config layer.
+	Capabilities []string `json:"capabilities,omitempty"`
+
 	// Info is a map of additional information for the model
 	Info map[string]any `json:"info,omitempty"`
 

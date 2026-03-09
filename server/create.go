@@ -31,6 +31,9 @@ import (
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
+	"github.com/ollama/ollama/x/create"
+	xcreateclient "github.com/ollama/ollama/x/create/client"
+	"github.com/ollama/ollama/x/safetensors"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -100,6 +103,16 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		defer close(ch)
 		fn := func(resp api.ProgressResponse) {
 			ch <- resp
+		}
+
+		// Safetensors format: assemble manifest from pre-uploaded blobs
+		if r.ModelFormat == "safetensors" {
+			if err := createSafetensorsModel(r, name, config, fn); err != nil {
+				ch <- gin.H{"error": err.Error()}
+				return
+			}
+			ch <- api.ProgressResponse{Status: "success"}
+			return
 		}
 
 		oldManifest, _ := manifest.ParseNamedManifest(name)
@@ -274,6 +287,162 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	}
 
 	streamResponse(c, ch)
+}
+
+// createSafetensorsModel assembles a safetensors model manifest from pre-uploaded blobs.
+// The client has already split tensors into individual blobs and uploaded them via /api/blobs/:digest.
+// This function validates all blobs exist, builds the manifest layers, and writes the manifest.
+// When r.Quantize is set and the client uploaded unquantized tensors, the server quantizes
+// eligible tensors using MLX before building the manifest.
+func createSafetensorsModel(r api.CreateRequest, name model.Name, config *model.ConfigV2, fn func(resp api.ProgressResponse)) error {
+	if len(r.Files) == 0 {
+		return errNoFilesProvided
+	}
+
+	quantize := strings.ToLower(cmp.Or(r.Quantize, r.Quantization))
+	if quantize != "" && !xcreateclient.QuantizeSupported() {
+		return fmt.Errorf("quantization to %s requested but MLX is not available on this server", quantize)
+	}
+
+	fn(api.ProgressResponse{Status: "validating blobs"})
+
+	// Validate all blob digests exist and build manifest layers.
+	// If quantization is requested, quantize eligible tensor blobs server-side.
+	var layers []manifest.Layer
+	for filePath, digest := range r.Files {
+		if !fs.ValidPath(filePath) {
+			return fmt.Errorf("%w: %s", errFilePath, filePath)
+		}
+
+		blobPath, err := manifest.BlobsPath(digest)
+		if err != nil {
+			return fmt.Errorf("invalid digest for %s: %w", filePath, err)
+		}
+
+		info, err := os.Stat(blobPath)
+		if err != nil {
+			return fmt.Errorf("blob not found for %s (digest %s): %w", filePath, digest, err)
+		}
+
+		mediaType := safetensorsMediaType(filePath)
+
+		// Server-side quantization: read tensor metadata from the blob,
+		// check if it should be quantized, and if so quantize it into a new blob.
+		if quantize != "" && mediaType == manifest.MediaTypeImageTensor {
+			layer, quantized, err := maybeQuantizeTensorBlob(blobPath, filePath, digest, quantize, fn)
+			if err != nil {
+				return fmt.Errorf("server-side quantization of %s: %w", filePath, err)
+			}
+			if quantized {
+				layers = append(layers, layer)
+				continue
+			}
+		}
+
+		layers = append(layers, manifest.Layer{
+			MediaType: mediaType,
+			Digest:    digest,
+			Size:      info.Size(),
+			Name:      filePath,
+		})
+	}
+
+	// Set safetensors-specific config
+	config.ModelFormat = "safetensors"
+	config.Capabilities = r.Capabilities
+
+	// Add template, system, license layers
+	var err error
+	if r.Template != "" {
+		layers, err = setTemplate(layers, r.Template)
+		if err != nil {
+			return err
+		}
+	}
+
+	if r.System != "" {
+		layers, err = setSystem(layers, r.System)
+		if err != nil {
+			return err
+		}
+	}
+
+	if r.License != nil {
+		switch l := r.License.(type) {
+		case string:
+			if l != "" {
+				layers, err = setLicense(layers, l)
+				if err != nil {
+					return err
+				}
+			}
+		case any:
+			var licenses []string
+			b, _ := json.Marshal(l)
+			if err := json.Unmarshal(b, &licenses); err != nil {
+				return err
+			}
+			for _, v := range licenses {
+				layers, err = setLicense(layers, v)
+				if err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	fn(api.ProgressResponse{Status: "writing manifest"})
+
+	configLayer, err := createConfigLayer(layers, *config)
+	if err != nil {
+		return fmt.Errorf("failed to create config layer: %w", err)
+	}
+
+	return manifest.WriteManifest(name, *configLayer, layers)
+}
+
+// maybeQuantizeTensorBlob reads a tensor blob, checks if it should be quantized,
+// and if so, quantizes it and writes the result as a new blob.
+// Returns the new manifest layer and true if quantized, or zero-value and false if not.
+func maybeQuantizeTensorBlob(blobPath, tensorName, originalDigest, quantize string, fn func(resp api.ProgressResponse)) (manifest.Layer, bool, error) {
+	meta, err := safetensors.ReadBlobMeta(blobPath)
+	if err != nil {
+		return manifest.Layer{}, false, fmt.Errorf("failed to read tensor metadata: %w", err)
+	}
+
+	quantType := create.GetTensorQuantization(tensorName, meta.Shape, quantize)
+	if quantType == "" {
+		return manifest.Layer{}, false, nil
+	}
+
+	fn(api.ProgressResponse{Status: fmt.Sprintf("quantizing %s to %s", tensorName, quantType)})
+
+	f, err := os.Open(blobPath)
+	if err != nil {
+		return manifest.Layer{}, false, err
+	}
+	defer f.Close()
+
+	blobData, err := xcreateclient.QuantizeTensor(f, tensorName, meta.Dtype, meta.Shape, quantType)
+	if err != nil {
+		return manifest.Layer{}, false, err
+	}
+
+	layer, err := manifest.NewLayer(bytes.NewReader(blobData), manifest.MediaTypeImageTensor)
+	if err != nil {
+		return manifest.Layer{}, false, err
+	}
+
+	layer.Name = tensorName
+	return layer, true, nil
+}
+
+// safetensorsMediaType returns the appropriate media type for a file in a safetensors model.
+func safetensorsMediaType(filePath string) string {
+	if strings.HasSuffix(filePath, ".json") {
+		return "application/vnd.ollama.image.json"
+	}
+	return manifest.MediaTypeImageTensor
 }
 
 func remoteURL(raw string) (string, error) {
