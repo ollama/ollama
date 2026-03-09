@@ -329,27 +329,21 @@ func ToChunks(id string, r api.ChatResponse, toolCallSent bool) []ChatCompletion
 		return []ChatCompletionChunk{toChunk(id, r, toolCallSent)}
 	}
 
-	reasoningOnly := api.ChatResponse{
-		Model: r.Model,
-		Message: api.Message{
-			Thinking: r.Message.Thinking,
-		},
-		// The logprobs here might include tokens not in this chunk because we now split between thinking and content/tool calls.
-		Logprobs: r.Logprobs,
-	}
+	reasoningChunk := toChunk(id, r, toolCallSent)
+	// The logprobs here might include tokens not in this chunk because we now split between thinking and content/tool calls.
+	reasoningChunk.Choices[0].Delta.Content = ""
+	reasoningChunk.Choices[0].Delta.ToolCalls = nil
+	reasoningChunk.Choices[0].FinishReason = nil
 
-	contentOrToolCalls := api.ChatResponse{
-		Model: r.Model,
-		Message: api.Message{
-			Content:   r.Message.Content,
-			ToolCalls: r.Message.ToolCalls,
-		},
-		DoneReason: r.DoneReason,
-	}
+	contentOrToolCallsChunk := toChunk(id, r, toolCallSent)
+	// Keep both split chunks on the same timestamp since they represent one logical emission.
+	contentOrToolCallsChunk.Created = reasoningChunk.Created
+	contentOrToolCallsChunk.Choices[0].Delta.Reasoning = ""
+	contentOrToolCallsChunk.Choices[0].Logprobs = nil
 
 	return []ChatCompletionChunk{
-		toChunk(id, reasoningOnly, toolCallSent),
-		toChunk(id, contentOrToolCalls, toolCallSent),
+		reasoningChunk,
+		contentOrToolCallsChunk,
 	}
 }
 
