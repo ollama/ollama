@@ -78,12 +78,20 @@ func TestModelOptionsNumCtxPriority(t *testing.T) {
 			expectedNumCtx: 4096,
 		},
 		{
-			name:           "high vram tier default",
+			name:           "mid vram tier default",
 			envContextLen:  "",
-			defaultNumCtx:  262144,
+			defaultNumCtx:  16384,
 			modelNumCtx:    0,
 			requestNumCtx:  0,
-			expectedNumCtx: 262144,
+			expectedNumCtx: 16384,
+		},
+		{
+			name:           "high vram tier default",
+			envContextLen:  "",
+			defaultNumCtx:  65536,
+			modelNumCtx:    0,
+			requestNumCtx:  0,
+			expectedNumCtx: 65536,
 		},
 	}
 

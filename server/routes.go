@@ -1830,12 +1830,15 @@ func Serve(ln net.Listener) error {
 	}
 
 	// Set default context based on VRAM tier
-	// Use slightly lower thresholds (47/23 GiB vs. 48/24 GiB) to account for small differences in the exact value
+	// Use conservative values to prevent large models from spilling to CPU
+	// due to oversized KV cache, which causes severe performance degradation.
 	switch {
+	case totalVRAM >= 72*format.GibiByte:
+		s.defaultNumCtx = 65536
 	case totalVRAM >= 47*format.GibiByte:
-		s.defaultNumCtx = 262144
+		s.defaultNumCtx = 16384
 	case totalVRAM >= 23*format.GibiByte:
-		s.defaultNumCtx = 32768
+		s.defaultNumCtx = 8192
 	default:
 		s.defaultNumCtx = 4096
 	}
