@@ -51,7 +51,7 @@ jobs:
             container: nvidia/cuda:13.0.0-devel-ubuntu22.04
             flags: '-DCMAKE_CUDA_ARCHITECTURES=87'
           - preset: ROCm
-            container: rocm/dev-ubuntu-22.04:6.1.2
+            container: rocm/dev-ubuntu-22.04:7.2
             extra-packages: rocm-libs
             flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_PREFIX_PATH=/opt/rocm'
           - preset: Vulkan
