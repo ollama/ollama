@@ -805,6 +805,10 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	embedding := <-seq.embedding
+	if err := llm.ValidateEmbedding(embedding); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	if err := json.NewEncoder(w).Encode(&llm.EmbeddingResponse{
 		Embedding:       embedding,

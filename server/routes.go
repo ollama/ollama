@@ -909,6 +909,10 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 
 	var e []float64
 	for _, v := range embedding {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "model produced invalid embedding values (NaN or Inf)"})
+			return
+		}
 		e = append(e, float64(v))
 	}
 
