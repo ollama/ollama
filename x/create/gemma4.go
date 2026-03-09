@@ -1,11 +1,8 @@
 package create
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -18,26 +15,11 @@ type gemma4ImportTransform struct {
 	numExperts int
 }
 
-// gemma4Config is a minimal subset of the Gemma 4 config.json used for quant decisions.
-type gemma4Config struct {
-	NumHiddenLayers int `json:"num_hidden_layers"`
-	NumExperts      int `json:"num_experts"`
-	TextConfig      struct {
-		NumHiddenLayers int `json:"num_hidden_layers"`
-		NumExperts      int `json:"num_experts"`
-	} `json:"text_config"`
+func newGemma4ImportTransform(_ string, cfg sourceModelConfig) (tensorImportTransform, error) {
+	return newGemma4ImportTransformFromConfig(cfg), nil
 }
 
-func newGemma4ImportTransform(modelDir string, _ sourceModelConfig) (tensorImportTransform, error) {
-	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
-	if err != nil {
-		return gemma4ImportTransform{}, nil //nolint:nilerr // fallback to no heuristic
-	}
-	var cfg gemma4Config
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return gemma4ImportTransform{}, nil //nolint:nilerr // fallback to no heuristic
-	}
-
+func newGemma4ImportTransformFromConfig(cfg sourceModelConfig) gemma4ImportTransform {
 	numLayers := cfg.NumHiddenLayers
 	if numLayers == 0 {
 		numLayers = cfg.TextConfig.NumHiddenLayers
@@ -47,7 +29,7 @@ func newGemma4ImportTransform(modelDir string, _ sourceModelConfig) (tensorImpor
 		numExperts = cfg.TextConfig.NumExperts
 	}
 
-	return gemma4ImportTransform{numLayers: numLayers, numExperts: numExperts}, nil
+	return gemma4ImportTransform{numLayers: numLayers, numExperts: numExperts}
 }
 
 func (t gemma4ImportTransform) skipTensor(name string) bool {

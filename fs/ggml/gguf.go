@@ -3,11 +3,13 @@ package ggml
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"runtime"
 	"slices"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/ollama/ollama/fs"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 )
 
 type containerGGUF struct {
@@ -86,6 +89,14 @@ const (
 	ggufTypeFloat64
 )
 
+const (
+	maxGGUFKeyValueCount = 1_000_000
+	maxGGUFTensorCount   = 1_000_000
+	maxGGUFTensorDims    = 8
+	maxGGUFStringLength  = 16 << 20
+	maxGGUFArrayLength   = 10_000_000
+)
+
 type gguf struct {
 	*containerGGUF
 
@@ -139,6 +150,13 @@ func (llm *gguf) numKV() uint64 {
 }
 
 func (llm *gguf) Decode(rs io.ReadSeeker) error {
+	if llm.numKV() > maxGGUFKeyValueCount {
+		return fmt.Errorf("gguf key-value count %d exceeds limit %d", llm.numKV(), maxGGUFKeyValueCount)
+	}
+	if llm.numTensor() > maxGGUFTensorCount {
+		return fmt.Errorf("gguf tensor count %d exceeds limit %d", llm.numTensor(), maxGGUFTensorCount)
+	}
+
 	// decode key-values
 	for i := 0; uint64(i) < llm.numKV(); i++ {
 		k, err := readGGUFString(llm, rs)
@@ -202,6 +220,9 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 		if err != nil {
 			return fmt.Errorf("failed to read tensor dimensions: %w", err)
 		}
+		if dims > maxGGUFTensorDims {
+			return fmt.Errorf("tensor %q dimensions %d exceeds limit %d", name, dims, maxGGUFTensorDims)
+		}
 
 		shape := make([]uint64, dims)
 		for i := 0; uint32(i) < dims; i++ {
@@ -214,6 +235,9 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 		kind, err := readGGUF[uint32](llm, rs)
 		if err != nil {
 			return fmt.Errorf("failed to read tensor kind: %w", err)
+		}
+		if err := validateGGUFTensorShape(kind, shape); err != nil {
+			return fmt.Errorf("invalid tensor %q: %w", name, err)
 		}
 
 		offset, err := readGGUF[uint64](llm, rs)
@@ -279,6 +303,27 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 	return nil
 }
 
+func validateGGUFTensorShape(kind uint32, shape []uint64) error {
+	tensorType := TensorType(kind)
+	typeSize := tensorType.TypeSize()
+	blockSize := tensorType.BlockSize()
+	if typeSize == 0 || blockSize == 0 {
+		return fmt.Errorf("unsupported tensor kind %d", kind)
+	}
+
+	elements := uint64(1)
+	for _, dim := range shape {
+		if dim != 0 && elements > math.MaxUint64/dim {
+			return fmt.Errorf("shape %v overflows uint64", shape)
+		}
+		elements *= dim
+	}
+	if typeSize != 0 && elements > math.MaxUint64/typeSize {
+		return fmt.Errorf("shape %v byte size overflows uint64", shape)
+	}
+	return nil
+}
+
 func readGGUF[T any](llm *gguf, r io.Reader) (T, error) {
 	var t T
 	err := binary.Read(r, llm.ByteOrder, &t)
@@ -297,6 +342,12 @@ func readGGUFV1String(llm *gguf, r io.Reader) (string, error) {
 	var length uint64
 	if err := binary.Read(r, llm.ByteOrder, &length); err != nil {
 		return "", err
+	}
+	if length == 0 {
+		return "", fmt.Errorf("invalid gguf v1 string length 0")
+	}
+	if length > maxGGUFStringLength {
+		return "", fmt.Errorf("gguf string length %d exceeds limit %d", length, maxGGUFStringLength)
 	}
 
 	var b bytes.Buffer
@@ -320,7 +371,9 @@ func readGGUFV1StringsData(llm *gguf, r io.Reader, a *array[string]) (any, error
 
 			a.values[i] = e
 		} else {
-			_ = discardGGUFString(llm, r)
+			if err := discardGGUFString(llm, r); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -334,7 +387,11 @@ func discardGGUFString(llm *gguf, r io.Reader) error {
 		return err
 	}
 
-	size := int(llm.ByteOrder.Uint64(buf))
+	size64 := llm.ByteOrder.Uint64(buf)
+	if size64 > maxGGUFStringLength {
+		return fmt.Errorf("gguf string length %d exceeds limit %d", size64, maxGGUFStringLength)
+	}
+	size := int(size64)
 	for size > 0 {
 		n, err := r.Read(llm.scratch[:min(size, cap(llm.scratch))])
 		if err != nil {
@@ -356,7 +413,11 @@ func readGGUFString(llm *gguf, r io.Reader) (string, error) {
 		return "", err
 	}
 
-	length := int(llm.ByteOrder.Uint64(buf))
+	length64 := llm.ByteOrder.Uint64(buf)
+	if length64 > maxGGUFStringLength {
+		return "", fmt.Errorf("gguf string length %d exceeds limit %d", length64, maxGGUFStringLength)
+	}
+	length := int(length64)
 	if length > len(llm.scratch) {
 		buf = make([]byte, length)
 	} else {
@@ -394,7 +455,9 @@ func readGGUFStringsData(llm *gguf, r io.Reader, a *array[string]) (any, error) 
 
 			a.values[i] = e
 		} else {
-			discardGGUFString(llm, r)
+			if err := discardGGUFString(llm, r); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -430,6 +493,12 @@ func readGGUFArray(llm *gguf, r io.Reader) (any, error) {
 	n, err := readGGUF[uint64](llm, r)
 	if err != nil {
 		return nil, err
+	}
+	if n > maxGGUFArrayLength {
+		return nil, fmt.Errorf("gguf array length %d exceeds limit %d", n, maxGGUFArrayLength)
+	}
+	if n > uint64(math.MaxInt) {
+		return nil, fmt.Errorf("gguf array length %d overflows int", n)
 	}
 
 	switch t {
@@ -523,7 +592,18 @@ func writeGGUFArray[S ~[]E, E any](w io.Writer, t uint32, s S) error {
 	return binary.Write(w, binary.LittleEndian, s)
 }
 
+type WriteGGUFOptions struct {
+	// AvailableMemory is a rough estimate of currently available physical
+	// memory. When set, tensor writes use a memory budget derived from this
+	// value so machines with headroom can run more writers.
+	AvailableMemory uint64
+}
+
 func WriteGGUF(f *os.File, kv fs.Config, ts []*Tensor) error {
+	return WriteGGUFWithOptions(f, kv, ts, WriteGGUFOptions{})
+}
+
+func WriteGGUFWithOptions(f *os.File, kv fs.Config, ts []*Tensor, opts WriteGGUFOptions) error {
 	arch := kv.String("general.architecture")
 	if arch == "" {
 		return fmt.Errorf("architecture not set")
@@ -579,18 +659,148 @@ func WriteGGUF(f *os.File, kv fs.Config, ts []*Tensor) error {
 	}
 	offset += ggufPadding(offset, int64(alignment))
 
-	var g errgroup.Group
-	g.SetLimit(runtime.GOMAXPROCS(0))
-	// TODO consider reducing if tensors size * gomaxprocs is larger than free memory
+	// Tensor writes are offset-based, so independent tensors can be written
+	// concurrently. Keep that parallelism bounded by memory first and CPU
+	// second: many WriterTo implementations stream cheaply, but conversion and
+	// quantization writers can materialize whole tensors plus f32 intermediates.
+	//
+	// If the caller provides a current free-memory estimate, use a byte-budget
+	// semaphore so machines with headroom can run more than the conservative
+	// fallback cap. The budget deliberately leaves both a fractional reserve and
+	// an absolute pad because OS "free memory" is approximate and tensor working
+	// set estimates are intentionally coarse.
+	memoryBudget := ggufWriteMemoryBudget(opts.AvailableMemory)
+	limit := ggufWriteConcurrencyLimitForBudget(memoryBudget)
+	sem := semaphore.NewWeighted(ggufWriteSemaphoreLimit(limit, memoryBudget))
+	g, ctx := errgroup.WithContext(context.Background())
+	g.SetLimit(limit)
 	for _, t := range ts {
 		w := io.NewOffsetWriter(f, offset+int64(t.Offset))
+		weight := ggufTensorWriteWeight(t, limit, memoryBudget)
 		g.Go(func() error {
+			if err := sem.Acquire(ctx, weight); err != nil {
+				return err
+			}
+			defer sem.Release(weight)
 			_, err := t.WriteTo(w)
 			return err
 		})
 	}
 
 	return g.Wait()
+}
+
+func ggufWriteConcurrencyLimit() int {
+	return ggufWriteConcurrencyLimitForBudget(0)
+}
+
+func ggufWriteConcurrencyLimitForBudget(memoryBudget uint64) int {
+	// Cap tensor writes below GOMAXPROCS so large-model quantization does not
+	// scale peak memory with every logical processor. Four workers preserves
+	// useful overlap for file-backed streaming tensors while keeping
+	// conversion-heavy paths bounded on machines with many cores. When we have
+	// an explicit memory budget, the budget semaphore becomes the primary guard,
+	// so allow the CPU scheduler to use the configured process parallelism.
+	limit := runtime.GOMAXPROCS(0)
+	if memoryBudget == 0 {
+		limit = min(limit, 4)
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	return limit
+}
+
+type ggufWriteMemoryEstimator interface {
+	GGUFWriteMemoryEstimate() uint64
+}
+
+const (
+	ggufWriteMemoryReserve = 8 << 30
+	maxInt64Uint           = ^uint64(0) >> 1
+)
+
+func ggufWriteMemoryBudget(availableMemory uint64) uint64 {
+	if availableMemory == 0 {
+		return 0
+	}
+	if availableMemory > maxInt64Uint {
+		return 0
+	}
+
+	budget := availableMemory - availableMemory/4
+	if availableMemory > ggufWriteMemoryReserve {
+		budget = min(budget, availableMemory-ggufWriteMemoryReserve)
+	}
+	return budget
+}
+
+func ggufWriteSemaphoreLimit(limit int, memoryBudget uint64) int64 {
+	if memoryBudget > 0 {
+		if memoryBudget > maxInt64Uint {
+			return int64(maxInt64Uint)
+		}
+		return int64(memoryBudget)
+	}
+	return int64(limit)
+}
+
+func ggufTensorWriteWeight(t *Tensor, limit int, memoryBudget uint64) int64 {
+	if memoryBudget > 0 {
+		return ggufTensorWriteMemoryWeight(t, memoryBudget)
+	}
+
+	// This threshold is intentionally about write working set, not CPU count or
+	// final GGUF size. Quantized tensors can have small output blocks while the
+	// writer still materializes source bytes plus an f32 conversion buffer.
+	// Use coarse semaphore weights instead of making every large write
+	// exclusive: that keeps the pathological fan-out bounded while preserving
+	// enough overlap for large-model quantization to make forward progress.
+	if limit <= 1 {
+		return 1
+	}
+
+	estimate := ggufTensorWriteMemoryEstimate(t)
+	switch {
+	case estimate >= 8<<30:
+		return int64(limit)
+	case estimate >= 1<<30:
+		return int64(min(2, limit))
+	default:
+		return 1
+	}
+}
+
+func ggufTensorWriteMemoryWeight(t *Tensor, memoryBudget uint64) int64 {
+	estimate := ggufTensorWriteMemoryEstimate(t)
+	if estimate == 0 {
+		return 1
+	}
+	estimate = min(estimate, memoryBudget)
+	if estimate > maxInt64Uint {
+		return int64(maxInt64Uint)
+	}
+	return int64(estimate)
+}
+
+func ggufTensorWriteMemoryEstimate(t *Tensor) uint64 {
+	estimate := t.Size()
+	if t.WriterTo != nil {
+		if estimator, ok := t.WriterTo.(ggufWriteMemoryEstimator); ok {
+			estimate = max(estimate, estimator.GGUFWriteMemoryEstimate())
+		}
+	}
+	if TensorType(t.Kind).IsQuantized() {
+		estimate = max(estimate, saturatingMul(t.Elements(), 4))
+	}
+	return estimate
+}
+
+func saturatingMul(a, b uint64) uint64 {
+	if b != 0 && a > ^uint64(0)/b {
+		return ^uint64(0)
+	}
+	return a * b
 }
 
 func ggufWriteKV(ws io.WriteSeeker, arch, k string, v any) error {

@@ -57,3 +57,8 @@ var DefaultStream = sync.OnceValue(func() Stream {
 	C.mlx_get_default_stream(&s, DefaultDevice().ctx)
 	return Stream{s}
 })
+
+// DefaultCPUStream returns a cached CPU stream for load operations.
+var DefaultCPUStream = sync.OnceValue(func() Stream {
+	return Stream{C.mlx_default_cpu_stream_new()}
+})
