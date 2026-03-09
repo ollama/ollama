@@ -183,29 +183,9 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to parse Modelfile: %w", err)
 		}
 
-		// Extract FROM path and configuration
-		var modelDir string
-		mfConfig := &xcreateclient.ModelfileConfig{}
-
-		for _, cmd := range modelfile.Commands {
-			switch cmd.Name {
-			case "model":
-				modelDir = cmd.Args
-			case "template":
-				mfConfig.Template = cmd.Args
-			case "system":
-				mfConfig.System = cmd.Args
-			case "license":
-				mfConfig.License = cmd.Args
-			case "parser":
-				mfConfig.Parser = cmd.Args
-			case "renderer":
-				mfConfig.Renderer = cmd.Args
-			}
-		}
-
-		if modelDir == "" {
-			modelDir = "."
+		modelDir, mfConfig, err := xcreateclient.ConfigFromModelfile(modelfile)
+		if err != nil {
+			return err
 		}
 
 		// Resolve relative paths based on Modelfile location
