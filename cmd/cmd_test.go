@@ -2277,3 +2277,30 @@ func TestIsLocalhost(t *testing.T) {
 		})
 	}
 }
+
+func TestUseRemoteCreate(t *testing.T) {
+	tests := []struct {
+		name     string
+		host     string
+		force    bool
+		expected bool
+	}{
+		{"local default", "127.0.0.1:11434", false, false},
+		{"local forced", "127.0.0.1:11434", true, true},
+		{"remote default", "example.com:11434", false, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			old := forceRemoteCreate
+			forceRemoteCreate = func() bool { return tt.force }
+			t.Cleanup(func() { forceRemoteCreate = old })
+
+			t.Setenv("OLLAMA_HOST", tt.host)
+			got := useRemoteCreate()
+			if got != tt.expected {
+				t.Errorf("useRemoteCreate() with OLLAMA_HOST=%q forceRemoteCreate=%v = %v, want %v", tt.host, tt.force, got, tt.expected)
+			}
+		})
+	}
+}

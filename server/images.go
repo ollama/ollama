@@ -81,84 +81,123 @@ func (m *Model) IsMLX() bool {
 	return m.Config.ModelFormat == "safetensors"
 }
 
+func appendCapability(capabilities []model.Capability, capability model.Capability) []model.Capability {
+	if slices.Contains(capabilities, capability) {
+		return capabilities
+	}
+	return append(capabilities, capability)
+}
+
 // Capabilities returns the capabilities that the model supports
 func (m *Model) Capabilities() []model.Capability {
 	capabilities := []model.Capability{}
 
-	if m.ModelPath != "" {
-		f, err := gguf.Open(m.ModelPath)
-		if err == nil {
-			defer f.Close()
-
-			if f.KeyValue("pooling_type").Valid() {
-				capabilities = append(capabilities, model.CapabilityEmbedding)
-			} else {
-				// If no embedding is specified, we assume the model supports completion
-				capabilities = append(capabilities, model.CapabilityCompletion)
-			}
-			if f.KeyValue("vision.block_count").Valid() {
-				capabilities = append(capabilities, model.CapabilityVision)
-			}
-			if f.KeyValue("audio.block_count").Valid() {
-				capabilities = append(capabilities, model.CapabilityAudio)
-			}
-		} else {
-			slog.Error("couldn't open model file", "error", err)
-		}
-	}
-
-	// Also include capabilities from the model config (e.g. vision capability
-	// set during creation for MLX/safetensors models).
-	if len(m.Config.Capabilities) > 0 {
-		for _, c := range m.Config.Capabilities {
-			cap := model.Capability(c)
-			if !slices.Contains(capabilities, cap) {
-				capabilities = append(capabilities, cap)
-			}
-		}
-	}
+	capabilities = m.configCapabilities(capabilities)
+	capabilities = m.projectorCapabilities(capabilities)
+	capabilities = m.templateCapabilities(capabilities)
+	capabilities = m.parserCapabilities(capabilities)
+	capabilities = m.modelFamilyCapabilities(capabilities)
+	capabilities = m.ggufCapabilities(capabilities)
+	capabilities = m.filterUnsupportedCapabilities(capabilities)
 
 	if len(capabilities) == 0 {
 		slog.Warn("unknown capabilities for model", "model", m.Name)
 	}
 
-	if m.Template == nil {
-		return capabilities
-	}
+	return capabilities
+}
 
-	builtinParser := parsers.ParserForName(m.Config.Parser)
-	// Check for tools capability
-	v, err := m.Template.Vars()
-	if err != nil {
-		slog.Warn("model template contains errors", "error", err)
+func (m *Model) configCapabilities(capabilities []model.Capability) []model.Capability {
+	for _, c := range m.Config.Capabilities {
+		capabilities = appendCapability(capabilities, model.Capability(c))
 	}
-	if slices.Contains(v, "tools") || (builtinParser != nil && builtinParser.HasToolSupport()) {
-		capabilities = append(capabilities, model.CapabilityTools)
-	}
+	return capabilities
+}
 
-	// Check for insert capability
-	if slices.Contains(v, "suffix") {
-		capabilities = append(capabilities, model.CapabilityInsert)
-	}
-
-	// Check for vision capability in projector-based models
+func (m *Model) projectorCapabilities(capabilities []model.Capability) []model.Capability {
+	// Projector-based models are vision capable independent of the prompt
+	// template or parser used to format model input.
 	if len(m.ProjectorPaths) > 0 {
-		capabilities = append(capabilities, model.CapabilityVision)
+		capabilities = appendCapability(capabilities, model.CapabilityVision)
 	}
+	return capabilities
+}
 
-	// Skip the thinking check if it's already set
-	if slices.Contains(capabilities, "thinking") {
+func (m *Model) templateCapabilities(capabilities []model.Capability) []model.Capability {
+	// Template variables provide the generic capability signal for templated
+	// chat models.
+	if m.Template != nil {
+		v, err := m.Template.Vars()
+		if err != nil {
+			slog.Warn("model template contains errors", "error", err)
+		}
+		if slices.Contains(v, "tools") {
+			capabilities = appendCapability(capabilities, model.CapabilityTools)
+		}
+		if slices.Contains(v, "suffix") {
+			capabilities = appendCapability(capabilities, model.CapabilityInsert)
+		}
+
+		openingTag, closingTag := thinking.InferTags(m.Template.Template)
+		if openingTag != "" && closingTag != "" {
+			capabilities = appendCapability(capabilities, model.CapabilityThinking)
+		}
+	}
+	return capabilities
+}
+
+func (m *Model) parserCapabilities(capabilities []model.Capability) []model.Capability {
+	// Parser support is the generic capability signal for renderer/parser based
+	// models, including safetensors models that do not carry a template layer.
+	builtinParser := parsers.ParserForName(m.Config.Parser)
+	if builtinParser != nil {
+		if builtinParser.HasToolSupport() {
+			capabilities = appendCapability(capabilities, model.CapabilityTools)
+		}
+		if builtinParser.HasThinkingSupport() {
+			capabilities = appendCapability(capabilities, model.CapabilityThinking)
+		}
+	}
+	return capabilities
+}
+
+func (m *Model) modelFamilyCapabilities(capabilities []model.Capability) []model.Capability {
+	isGptoss := slices.Contains([]string{"gptoss", "gpt-oss"}, m.Config.ModelFamily)
+	if isGptoss {
+		capabilities = appendCapability(capabilities, model.CapabilityThinking)
+	}
+	return capabilities
+}
+
+func (m *Model) ggufCapabilities(capabilities []model.Capability) []model.Capability {
+	if m.ModelPath == "" {
 		return capabilities
 	}
 
-	// Check for thinking capability
-	openingTag, closingTag := thinking.InferTags(m.Template.Template)
-	hasTags := openingTag != "" && closingTag != ""
-	isGptoss := slices.Contains([]string{"gptoss", "gpt-oss"}, m.Config.ModelFamily)
-	if hasTags || isGptoss || (builtinParser != nil && builtinParser.HasThinkingSupport()) {
-		capabilities = append(capabilities, model.CapabilityThinking)
+	f, err := gguf.Open(m.ModelPath)
+	if err != nil {
+		slog.Error("couldn't open model file", "error", err)
+		return capabilities
+	}
+	defer f.Close()
+
+	if f.KeyValue("pooling_type").Valid() {
+		capabilities = appendCapability(capabilities, model.CapabilityEmbedding)
+	} else {
+		// If no embedding is specified, we assume the model supports completion.
+		capabilities = appendCapability(capabilities, model.CapabilityCompletion)
+	}
+	if f.KeyValue("vision.block_count").Valid() {
+		capabilities = appendCapability(capabilities, model.CapabilityVision)
+	}
+	if f.KeyValue("audio.block_count").Valid() {
+		capabilities = appendCapability(capabilities, model.CapabilityAudio)
 	}
 
+	return capabilities
+}
+
+func (m *Model) filterUnsupportedCapabilities(capabilities []model.Capability) []model.Capability {
 	// Temporary workaround — suppress vision/audio for gemma4 MLX models
 	// until multimodal runtime pipeline lands. Remove when imageproc.go is wired up.
 	if m.Config.ModelFormat == "safetensors" && isGemma4Renderer(m.Config.Renderer) {
@@ -166,7 +205,6 @@ func (m *Model) Capabilities() []model.Capability {
 			return c == model.CapabilityVision || c == "audio"
 		})
 	}
-
 	return capabilities
 }
 

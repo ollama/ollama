@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unsafe"
 
+	"github.com/ollama/ollama/discover"
 	fsggml "github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/ml/backend/ggml"
 )
@@ -48,6 +49,29 @@ func (q quantizer) WriteTo(w io.Writer) (int64, error) {
 	n, err := w.Write(data)
 	q.progressFn(q.from.Size())
 	return int64(n), err
+}
+
+func (q quantizer) GGUFWriteMemoryEstimate() uint64 {
+	estimate := q.from.Size()
+	if q.from.Kind != q.to.Kind {
+		estimate = saturatingAdd(estimate, saturatingMul(q.from.Elements(), 4))
+		estimate = saturatingAdd(estimate, q.to.Size())
+	}
+	return estimate
+}
+
+func saturatingAdd(a, b uint64) uint64 {
+	if a > ^uint64(0)-b {
+		return ^uint64(0)
+	}
+	return a + b
+}
+
+func saturatingMul(a, b uint64) uint64 {
+	if b != 0 && a > ^uint64(0)/b {
+		return ^uint64(0)
+	}
+	return a * b
 }
 
 type quantizeState struct {
@@ -255,7 +279,13 @@ func quantize(in, out *os.File, orig *fsggml.GGML, newFileType fsggml.FileType, 
 			progressFn: progressFn,
 		}
 	}
-	return fsggml.WriteGGUF(out, kv, outputTensors)
+	var opts fsggml.WriteGGUFOptions
+	if mem, err := discover.GetCPUMem(); err == nil {
+		opts.AvailableMemory = mem.FreeMemory
+	} else {
+		slog.Debug("unable to estimate free system memory for GGUF write", "error", err)
+	}
+	return fsggml.WriteGGUFWithOptions(out, kv, outputTensors, opts)
 }
 
 func newType(t *fsggml.Tensor, kv fsggml.KV, qs *quantizeState, ftype fsggml.FileType) fsggml.TensorType {
