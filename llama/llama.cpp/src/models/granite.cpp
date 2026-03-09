@@ -1,6 +1,5 @@
 #include "models.h"
 
-
 llm_build_granite::llm_build_granite(
     const llama_model & model,
     const llm_graph_params & params)
@@ -175,7 +174,7 @@ ggml_tensor * llm_build_granite::build_layer_ffn(
                 nullptr,
                 n_expert, n_expert_used,
                 LLM_FFN_SILU, true,
-                false, 0.0,
+                hparams.expert_weights_scale,
                 LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX,
                 il);
         cb(moe_out, "ffn_moe_out", il);

@@ -257,7 +257,14 @@ static ggml_cuda_device_info ggml_cuda_init() {
     GGML_ASSERT(info.device_count <= GGML_CUDA_MAX_DEVICES);
 
     int64_t total_vram = 0;
-    GGML_LOG_INFO("%s: found %d " GGML_CUDA_NAME " devices:\n", __func__, info.device_count);
+    for (int id = 0; id < info.device_count; ++id) {
+        cudaDeviceProp prop;
+        CUDA_CHECK(cudaGetDeviceProperties(&prop, id));
+        total_vram += prop.totalGlobalMem;
+    }
+    GGML_LOG_INFO("%s: found %d " GGML_CUDA_NAME " devices (Total VRAM: %zu MiB):\n",
+                  __func__, info.device_count, (size_t)(total_vram / (1024 * 1024)));
+    total_vram = 0;
 
     std::vector<std::pair<int, std::string>> turing_devices_without_mma;
     for (int id = 0; id < info.device_count; ++id) {
@@ -305,6 +312,12 @@ static ggml_cuda_device_info ggml_cuda_init() {
 #else
         info.devices[id].supports_cooperative_launch = false;
 #endif // !(GGML_USE_MUSA)
+
+        // cudaMemGetInfo returns info for the current device
+        size_t free_mem;
+        CUDA_CHECK(cudaSetDevice(id));
+        CUDA_CHECK(cudaMemGetInfo(&free_mem, NULL));
+
 #if defined(GGML_USE_HIP)
         info.devices[id].smpbo = prop.sharedMemPerBlock;
 
@@ -319,18 +332,21 @@ static ggml_cuda_device_info ggml_cuda_init() {
                 info.devices[id].cc += prop.minor * 0x10;
             }
         }
-        GGML_LOG_INFO("  Device %d: %s, %s (0x%x), VMM: %s, Wave Size: %d, ID: %s\n",
+        GGML_LOG_INFO("  Device %d: %s, %s (0x%x), VMM: %s, Wave Size: %d, VRAM: %zu MiB (%zu MiB free), ID: %s\n",
                       id, prop.name, prop.gcnArchName, info.devices[id].cc & 0xffff,
-                      device_vmm ? "yes" : "no", prop.warpSize, ggml_cuda_parse_uuid(prop, id).c_str());
+                      device_vmm ? "yes" : "no", prop.warpSize,
+                      (size_t)(prop.totalGlobalMem / (1024 * 1024)), free_mem / (1024 * 1024), 
+                      ggml_cuda_parse_uuid(prop, id).c_str());
 #elif defined(GGML_USE_MUSA)
         // FIXME: Ensure compatibility with varying warp sizes across different MUSA archs.
         info.devices[id].warp_size = 32;
         info.devices[id].smpbo = prop.sharedMemPerBlockOptin;
         info.devices[id].cc = GGML_CUDA_CC_OFFSET_MTHREADS + prop.major * 0x100;
         info.devices[id].cc += prop.minor * 0x10;
-        GGML_LOG_INFO("  Device %d: %s, compute capability %d.%d, VMM: %s, ID: %s\n",
-                        id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no",
-                        ggml_cuda_parse_uuid(prop, id).c_str());
+        GGML_LOG_INFO("  Device %d: %s, compute capability %d.%d, VMM: %s, VRAM: %zu MiB (%zu MiB free), ID: %s\n",
+                      id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no",
+                      (size_t)(prop.totalGlobalMem / (1024 * 1024)), free_mem / (1024 * 1024),
+                      ggml_cuda_parse_uuid(prop, id).c_str());
 #else
         info.devices[id].smpbo = prop.sharedMemPerBlockOptin;
         info.devices[id].cc = 100*prop.major + 10*prop.minor;
@@ -339,9 +355,10 @@ static ggml_cuda_device_info ggml_cuda_init() {
             GGML_ASSERT(ggml_cuda_has_arch(info.devices[id].cc) && "ggml was not compiled with support for this arch");
         }
 #endif // defined(__CUDA_ARCH_LIST__)
-        GGML_LOG_INFO("  Device %d: %s, compute capability %d.%d, VMM: %s, ID: %s\n",
-                        id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no",
-                        ggml_cuda_parse_uuid(prop, id).c_str());
+        GGML_LOG_INFO("  Device %d: %s, compute capability %d.%d, VMM: %s, VRAM: %zu MiB (%zu MiB free), ID: %s\n",
+                      id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no",
+                      (size_t)(prop.totalGlobalMem / (1024 * 1024)), free_mem / (1024 * 1024),
+                       ggml_cuda_parse_uuid(prop, id).c_str());
         std::string device_name(prop.name);
         if (device_name == "NVIDIA GeForce MX450") {
             turing_devices_without_mma.push_back({ id, device_name });

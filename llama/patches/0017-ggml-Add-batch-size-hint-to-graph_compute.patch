@@ -200,10 +200,10 @@ index ddf1737a3..622cf5d24 100644
  
  static const struct ggml_backend_i ggml_backend_cpu_i = {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index f12c36f58..3ad1683df 100644
+index e53d94a1c..cf1a1db41 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -4099,9 +4099,11 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
+@@ -4116,9 +4116,11 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
  }
  #endif // USE_CUDA_GRAPH
  
@@ -302,10 +302,10 @@ index 4599783c2..53a515382 100644
      bool use_sycl_graph = !g_ggml_sycl_disable_graph && check_graph_compatibility(cgraph);
      if (use_sycl_graph) {
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index b4273da1a..b393848fa 100644
+index aa4781b98..649486e3a 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -14068,8 +14068,9 @@ static int32_t find_first_set(uint32_t x) {
+@@ -14102,8 +14102,9 @@ static int32_t find_first_set(uint32_t x) {
      return ret;
  }
  

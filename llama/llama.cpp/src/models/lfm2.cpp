@@ -23,10 +23,16 @@ llm_build_lfm2<iswa>::llm_build_lfm2(const llama_model & model, const llm_graph_
     };
     auto build_moe_feed_forward = [&model, this](ggml_tensor * cur, int il) -> ggml_tensor * {
         return build_moe_ffn(cur,
-                            model.layers[il].ffn_gate_inp, model.layers[il].ffn_up_exps,
-                            model.layers[il].ffn_gate_exps, model.layers[il].ffn_down_exps,
-                            model.layers[il].ffn_exp_probs_b, n_expert, n_expert_used, LLM_FFN_SILU, true, false, 0.0,
-                            static_cast<llama_expert_gating_func_type>(hparams.expert_gating_func), il);
+                model.layers[il].ffn_gate_inp,
+                model.layers[il].ffn_up_exps,
+                model.layers[il].ffn_gate_exps,
+                model.layers[il].ffn_down_exps,
+                model.layers[il].ffn_exp_probs_b,
+                n_expert, n_expert_used,
+                LLM_FFN_SILU, true,
+                hparams.expert_weights_scale,
+                static_cast<llama_expert_gating_func_type>(hparams.expert_gating_func),
+                il);
     };
     auto build_attn_block = [&model, this](ggml_tensor *   cur,
                                            ggml_tensor *   inp_pos,

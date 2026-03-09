@@ -1,6 +1,5 @@
 #include "models.h"
 
-
 llm_build_exaone_moe::llm_build_exaone_moe(const llama_model & model, const llm_graph_params & params) :
     llm_graph_context(params) {
     const int64_t n_embd_head = hparams.n_embd_head_k;
@@ -100,7 +99,7 @@ llm_build_exaone_moe::llm_build_exaone_moe(const llama_model & model, const llm_
                 model.layers[il].ffn_exp_probs_b,
                 n_expert, n_expert_used,
                 LLM_FFN_SILU, hparams.expert_weights_norm,
-                hparams.expert_weights_scale, hparams.expert_weights_scale,
+                hparams.expert_weights_scale,
                 (llama_expert_gating_func_type) hparams.expert_gating_func,
                 il);
             cb(moe_out, "ffn_moe_out", il);

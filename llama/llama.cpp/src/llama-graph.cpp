@@ -1151,7 +1151,6 @@ ggml_tensor * llm_graph_context::build_ffn(
     return cur;
 }
 
-// TODO remove redundant scale_w argument
 ggml_tensor * llm_graph_context::build_moe_ffn(
          ggml_tensor * cur,
          ggml_tensor * gate_inp,
@@ -1163,7 +1162,6 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
              int64_t   n_expert_used,
      llm_ffn_op_type   type_op,
                 bool   norm_w,
-                bool   scale_w,
                float   w_scale,
          llama_expert_gating_func_type gating_op,
                  int   il,
@@ -1180,7 +1178,6 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         n_expert_used,
         type_op,
         norm_w,
-        scale_w,
         w_scale,
         gating_op,
         il,
@@ -1204,7 +1201,6 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
              int64_t   n_expert_used,
      llm_ffn_op_type   type_op,
                 bool   norm_w,
-                bool   scale_w,
                float   w_scale,
         llama_expert_gating_func_type gating_op,
                  int   il,
@@ -1332,7 +1328,7 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
 
         weights = ggml_reshape_3d(ctx0, weights, 1, n_expert_used, n_tokens);
     }
-    if (scale_w) {
+    if (w_scale != 0.0f && w_scale != 1.0f) {
         weights = ggml_scale(ctx0, weights, w_scale);
         cb(weights, "ffn_moe_weights_scaled", il);
     }

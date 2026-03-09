@@ -93,7 +93,7 @@ llm_build_smallthinker<iswa>::llm_build_smallthinker(const llama_model & model, 
                     nullptr,
                     n_expert, n_expert_used,
                     LLM_FFN_RELU, true,
-                    false, 0.0,
+                    hparams.expert_weights_scale,
                     static_cast<llama_expert_gating_func_type>(hparams.expert_gating_func),
                     il, probs);
 

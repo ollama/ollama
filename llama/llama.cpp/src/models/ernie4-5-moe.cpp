@@ -1,7 +1,5 @@
 #include "models.h"
 
-
-
 llm_build_ernie4_5_moe::llm_build_ernie4_5_moe(const llama_model & model, const llm_graph_params & params) :
     llm_graph_context(params) {
     const int64_t n_embd_head = hparams.n_embd_head_v;
@@ -103,7 +101,7 @@ llm_build_ernie4_5_moe::llm_build_ernie4_5_moe(const llama_model & model, const 
                                         model.layers[il].ffn_exp_probs_b,
                                         n_expert, n_expert_used,
                                         LLM_FFN_SILU, true,
-                                        false, 0.0,
+                                        hparams.expert_weights_scale,
                                         LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX,
                                         il);
             cb(moe_out, "ffn_moe_out", il);

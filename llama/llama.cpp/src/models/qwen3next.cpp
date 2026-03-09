@@ -475,11 +475,15 @@ ggml_tensor * llm_build_qwen3next::build_layer_ffn(ggml_tensor * cur, const int 
         // MoE branch
         ggml_tensor * moe_out =
             build_moe_ffn(cur,
-                model.layers[il].ffn_gate_inp, model.layers[il].ffn_up_exps,
-                model.layers[il].ffn_gate_exps, model.layers[il].ffn_down_exps,
+                model.layers[il].ffn_gate_inp,
+                model.layers[il].ffn_up_exps,
+                model.layers[il].ffn_gate_exps,
+                model.layers[il].ffn_down_exps,
                 nullptr,
-                n_expert, n_expert_used, LLM_FFN_SILU,
-                true, false, 0.0, LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX, il,
+                n_expert, n_expert_used,
+                LLM_FFN_SILU, true,
+                hparams.expert_weights_scale,
+                LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX, il,
                 nullptr, model.layers[il].ffn_gate_up_exps);
         cb(moe_out, "ffn_moe_out", il);
 

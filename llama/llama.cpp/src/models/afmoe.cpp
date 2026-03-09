@@ -127,7 +127,6 @@ llm_build_afmoe::llm_build_afmoe(const llama_model & model, const llm_graph_para
                     n_expert, n_expert_used,
                     LLM_FFN_SILU,
                     hparams.expert_weights_norm,           // norm_w (route_norm=True)
-                    hparams.expert_weights_scale,          // scale_w
                     hparams.expert_weights_scale,          // w_scale (route_scale=2.826)
                     (llama_expert_gating_func_type) hparams.expert_gating_func,
                     il);

@@ -92,7 +92,7 @@ llm_build_olmoe::llm_build_olmoe(const llama_model & model, const llm_graph_para
                 nullptr,
                 n_expert, n_expert_used,
                 LLM_FFN_SILU, false,
-                false, 0.0,
+                hparams.expert_weights_scale,
                 LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX,
                 il);
         cb(cur, "ffn_moe_out", il);

@@ -91,7 +91,7 @@ llm_build_qwen3moe::llm_build_qwen3moe(const llama_model & model, const llm_grap
                     nullptr,
                     n_expert, n_expert_used,
                     LLM_FFN_SILU, true,
-                    false, 0.0,
+                    hparams.expert_weights_scale,
                     LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX,
                     il);
         cb(moe_out, "ffn_moe_out", il);

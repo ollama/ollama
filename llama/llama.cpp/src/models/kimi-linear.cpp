@@ -1,5 +1,4 @@
 #include "models.h"
-#include "ggml.h"
 
 #include "llama-memory-recurrent.h"
 
@@ -341,7 +340,7 @@ llm_build_kimi_linear::llm_build_kimi_linear(const llama_model & model, const ll
                 hparams.n_expert,
                 hparams.n_expert_used,
                 LLM_FFN_SILU, true,
-                hparams.expert_weights_scale, hparams.expert_weights_scale,
+                hparams.expert_weights_scale,
                 (llama_expert_gating_func_type) hparams.expert_gating_func,
                 il);
             cb(moe_out, "ffn_moe_out", il);

@@ -1,4 +1,3 @@
-
 #include "models.h"
 
 llm_build_minimax_m2::llm_build_minimax_m2(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
@@ -91,7 +90,7 @@ llm_build_minimax_m2::llm_build_minimax_m2(const llama_model & model, const llm_
                 model.layers[il].ffn_exp_probs_b,
                 n_expert, n_expert_used,
                 LLM_FFN_SILU, true,
-                false, 0.0,
+                hparams.expert_weights_scale,
                 (llama_expert_gating_func_type) hparams.expert_gating_func,
                 il);
         cb(cur, "ffn_moe_out", il);

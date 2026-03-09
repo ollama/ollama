@@ -124,7 +124,7 @@ ggml_tensor * llm_build_nemotron_h::build_ffn_layer(ggml_tensor * cur, const lla
                     model.layers[il].ffn_exp_probs_b,
                     n_expert, n_expert_used,
                     LLM_FFN_RELU_SQR, hparams.expert_weights_norm,
-                    hparams.expert_weights_scale, hparams.expert_weights_scale,
+                    hparams.expert_weights_scale,
                     LLAMA_EXPERT_GATING_FUNC_TYPE_SIGMOID,
                     il);
         cb(moe_out, "ffn_moe_out", il);

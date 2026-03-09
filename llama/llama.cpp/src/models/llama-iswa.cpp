@@ -134,7 +134,7 @@ llm_build_llama_iswa::llm_build_llama_iswa(const llama_model & model, const llm_
                     nullptr,
                     n_expert, n_expert_used,
                     LLM_FFN_SILU, false,
-                    false, 0.0,
+                    hparams.expert_weights_scale,
                     LLAMA_EXPERT_GATING_FUNC_TYPE_SIGMOID,
                     il);
 
