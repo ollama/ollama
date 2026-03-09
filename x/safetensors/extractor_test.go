@@ -392,3 +392,116 @@ func TestOpenForExtraction_MetadataIgnored(t *testing.T) {
 		t.Errorf("TensorCount() = %d, want 1 (metadata should be stripped)", ext.TensorCount())
 	}
 }
+
+func writeMalformedSafetensors(t *testing.T, path string, header any, data []byte) {
+	t.Helper()
+
+	headerJSON, err := json.Marshal(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	padding := (8 - len(headerJSON)%8) % 8
+	headerJSON = append(headerJSON, bytes.Repeat([]byte(" "), padding)...)
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	if err := binary.Write(f, binary.LittleEndian, uint64(len(headerJSON))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(headerJSON); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(data); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOpenForExtractionRejectsHugeHeaderSize(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "huge-header.safetensors")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := binary.Write(f, binary.LittleEndian, uint64(MaxHeaderSize+1)); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	if _, err := OpenForExtraction(path); err == nil {
+		t.Fatal("OpenForExtraction succeeded, want huge header error")
+	}
+}
+
+func TestOpenForExtractionRejectsInvalidTensorBounds(t *testing.T) {
+	tests := []struct {
+		name   string
+		header map[string]tensorInfo
+		data   []byte
+	}{
+		{
+			name: "negative offset",
+			header: map[string]tensorInfo{
+				"weight": {Dtype: "F32", Shape: []int32{1}, DataOffsets: [2]int{-1, 4}},
+			},
+			data: make([]byte, 4),
+		},
+		{
+			name: "reversed offset",
+			header: map[string]tensorInfo{
+				"weight": {Dtype: "F32", Shape: []int32{1}, DataOffsets: [2]int{4, 0}},
+			},
+			data: make([]byte, 4),
+		},
+		{
+			name: "beyond data size",
+			header: map[string]tensorInfo{
+				"weight": {Dtype: "F32", Shape: []int32{2}, DataOffsets: [2]int{0, 8}},
+			},
+			data: make([]byte, 4),
+		},
+		{
+			name: "shape size mismatch",
+			header: map[string]tensorInfo{
+				"weight": {Dtype: "F32", Shape: []int32{2}, DataOffsets: [2]int{0, 4}},
+			},
+			data: make([]byte, 4),
+		},
+		{
+			name: "overlap",
+			header: map[string]tensorInfo{
+				"a": {Dtype: "F32", Shape: []int32{1}, DataOffsets: [2]int{0, 4}},
+				"b": {Dtype: "F32", Shape: []int32{1}, DataOffsets: [2]int{2, 6}},
+			},
+			data: make([]byte, 6),
+		},
+		{
+			name: "unsupported dtype",
+			header: map[string]tensorInfo{
+				"weight": {Dtype: "NOT_REAL", Shape: []int32{1}, DataOffsets: [2]int{0, 4}},
+			},
+			data: make([]byte, 4),
+		},
+		{
+			name: "negative shape",
+			header: map[string]tensorInfo{
+				"weight": {Dtype: "F32", Shape: []int32{-1}, DataOffsets: [2]int{0, 4}},
+			},
+			data: make([]byte, 4),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "invalid.safetensors")
+			writeMalformedSafetensors(t, path, tt.header, tt.data)
+
+			if _, err := OpenForExtraction(path); err == nil {
+				t.Fatal("OpenForExtraction succeeded, want error")
+			}
+		})
+	}
+}

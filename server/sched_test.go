@@ -380,16 +380,16 @@ func TestSchedRequestsMultipleLoadedModels(t *testing.T) {
 	s.loadedMu.Lock()
 	require.Len(t, s.loaded, 2)
 	s.loadedMu.Unlock()
-	// Mark b done so it can unload
-	b.ctxDone()
-	// Report recovered VRAM usage so scheduler will finish waiting and unload
-	time.Sleep(1 * time.Millisecond)
+	// Report recovered VRAM usage before marking b done so the scheduler's
+	// recovery check cannot race with this test setup.
 	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
 		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
 		g.TotalMemory = 24 * format.GigaByte
 		g.FreeMemory = 24 * format.GigaByte
 		return []ml.DeviceInfo{g}
 	}
+	// Mark b done so it can unload
+	b.ctxDone()
 	select {
 	case resp := <-d.req.successCh:
 		require.Equal(t, resp.llama, d.srv)

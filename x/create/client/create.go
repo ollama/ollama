@@ -18,12 +18,10 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/manifest"
-	modelparsers "github.com/ollama/ollama/model/parsers"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/x/create"
-	imagemanifest "github.com/ollama/ollama/x/imagegen/manifest"
 	"github.com/ollama/ollama/x/safetensors"
 )
 
@@ -155,7 +153,7 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 		// Set parser and renderer name based on architecture
 		parserName = getParserName(opts.ModelDir)
 		rendererName = getRendererName(opts.ModelDir)
-		capabilities = inferSafetensorsCapabilities(opts.ModelDir, resolveParserName(opts.Modelfile, parserName))
+		capabilities = create.InferSafetensorsCapabilitiesFromDirWithParser(opts.ModelDir, resolveParserName(opts.Modelfile, parserName))
 	} else if isBaseModelWithDraft {
 		modelType = "safetensors model"
 		spinnerKey = "create"
@@ -196,7 +194,7 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 	}
 
 	if isBaseModelWithDraft {
-		err = createModelFromBaseWithDraft(opts, draftLayers, progressFn)
+		err = createSafetensorsModelFromBase(opts, draftLayers, progressFn)
 		spinner.Stop()
 		if err != nil {
 			return err
@@ -243,87 +241,30 @@ func appendLayersManifestWriter(next create.ManifestWriter, extra []create.Layer
 	}
 }
 
-func createModelFromBaseWithDraft(opts CreateOptions, draftLayers []create.LayerInfo, progressFn func(string)) error {
+// createSafetensorsModelFromBase is the local counterpart to the remote/API
+// base-overlay path in remote.go and the server-side manifest assembly in
+// server/create.go:createSafetensorsModel. Keep all three flows aligned: they
+// preserve the stored base model and only append draft overlay layers.
+func createSafetensorsModelFromBase(opts CreateOptions, draftLayers []create.LayerInfo, progressFn func(string)) error {
 	progressFn(fmt.Sprintf("loading base model %s", opts.ModelDir))
-	baseManifest, err := imagemanifest.LoadManifest(opts.ModelDir)
+	baseModel, err := create.LoadStoredSafetensorsLLMBaseModel(opts.ModelDir)
 	if err != nil {
 		return err
 	}
-
-	baseConfig, err := readConfigV2(baseManifest)
-	if err != nil {
+	if _, err := create.ResolveBaseModelQuantization(baseModel.Config, opts.Quantize); err != nil {
 		return err
 	}
-	opts.BaseConfig = baseConfig
+	opts.BaseConfig = baseModel.Config
+	opts.Quantize = ""
 
-	configLayer := baseManifest.GetConfigLayer("config.json")
-	if configLayer == nil {
-		return fmt.Errorf("base model %s does not contain config.json", opts.ModelDir)
-	}
-
-	layers := make([]create.LayerInfo, 0, len(baseManifest.Manifest.Layers)+len(draftLayers))
-	for _, layer := range baseManifest.Manifest.Layers {
-		layers = append(layers, create.LayerInfo{
-			Digest:    layer.Digest,
-			Size:      layer.Size,
-			MediaType: layer.MediaType,
-			Name:      layer.Name,
-		})
-	}
-	layers = append(layers, draftLayers...)
+	layers := append(append([]create.LayerInfo{}, baseModel.Layers...), draftLayers...)
 
 	progressFn(fmt.Sprintf("writing manifest for %s", opts.ModelName))
-	return newManifestWriter(opts, baseConfig.Capabilities, baseConfig.Parser, baseConfig.Renderer)(
+	return newManifestWriter(opts, baseModel.Config.Capabilities, baseModel.Config.Parser, baseModel.Config.Renderer)(
 		opts.ModelName,
-		create.LayerInfo{
-			Digest:    configLayer.Digest,
-			Size:      configLayer.Size,
-			MediaType: configLayer.MediaType,
-			Name:      configLayer.Name,
-		},
+		create.LayerInfo{},
 		layers,
 	)
-}
-
-func readConfigV2(m *imagemanifest.ModelManifest) (*model.ConfigV2, error) {
-	data, err := os.ReadFile(m.BlobPath(m.Manifest.Config.Digest))
-	if err != nil {
-		return nil, fmt.Errorf("failed to read base config: %w", err)
-	}
-
-	var cfg model.ConfigV2
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse base config: %w", err)
-	}
-	return &cfg, nil
-}
-
-func inferSafetensorsCapabilities(modelDir, parserName string) []string {
-	capabilities := []string{"completion"}
-
-	// Qwen3.5 multimodal checkpoints use ConditionalGeneration architectures.
-	if supportsVision(modelDir) {
-		capabilities = append(capabilities, "vision")
-	}
-
-	if supportsAudio(modelDir) {
-		capabilities = append(capabilities, "audio")
-	}
-
-	var builtinParser modelparsers.Parser
-	if parserName != "" {
-		builtinParser = modelparsers.ParserForName(parserName)
-	}
-
-	if builtinParser != nil && builtinParser.HasToolSupport() {
-		capabilities = append(capabilities, "tools")
-	}
-
-	if supportsThinking(modelDir) || (builtinParser != nil && builtinParser.HasThinkingSupport()) {
-		capabilities = append(capabilities, "thinking")
-	}
-
-	return capabilities
 }
 
 // newLayerCreator returns a LayerCreator callback for creating config/JSON layers.
@@ -361,8 +302,8 @@ func createQuantizedLayers(r io.Reader, name, dtype string, shape []int32, quant
 		return nil, fmt.Errorf("quantization requires MLX support")
 	}
 
-	// Quantize the tensor into a single combined blob
-	blobData, err := quantizeTensor(r, name, dtype, shape, quantize)
+	// Quantize the tensor into a single combined blob.
+	blobData, err := QuantizeTensor(r, name, dtype, shape, quantize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to quantize %s: %w", name, err)
 	}
@@ -418,22 +359,33 @@ func newPackedTensorLayerCreator() create.PackedTensorLayerCreator {
 			if !QuantizeSupported() {
 				return create.LayerInfo{}, fmt.Errorf("quantization requires MLX support")
 			}
-			blobData, err := quantizePackedGroup(groupName, tensors)
+			blobData, err := QuantizePackedGroup(groupName, tensors)
 			if err != nil {
 				return create.LayerInfo{}, fmt.Errorf("failed to quantize packed group %s: %w", groupName, err)
 			}
 			blobReader = bytes.NewReader(blobData)
 		} else {
 			// Build unquantized packed blob using streaming reader
-			// Extract raw tensor data from safetensors-wrapped readers
 			var tds []*safetensors.TensorData
+			allFileBacked := true
 			for _, t := range tensors {
-				rawData, err := safetensors.ExtractRawFromSafetensors(t.Reader)
-				if err != nil {
-					return create.LayerInfo{}, fmt.Errorf("failed to extract tensor %s: %w", t.Name, err)
+				if t.TensorData == nil {
+					allFileBacked = false
+					break
 				}
-				td := safetensors.NewTensorDataFromBytes(t.Name, t.Dtype, t.Shape, rawData)
-				tds = append(tds, td)
+				tds = append(tds, t.TensorData.WithName(t.Name))
+			}
+
+			if !allFileBacked {
+				tds = nil
+				for _, t := range tensors {
+					rawData, err := safetensors.ExtractRawFromSafetensors(t.Reader)
+					if err != nil {
+						return create.LayerInfo{}, fmt.Errorf("failed to extract tensor %s: %w", t.Name, err)
+					}
+					td := safetensors.NewTensorDataFromBytes(t.Name, t.Dtype, t.Shape, rawData)
+					tds = append(tds, td)
+				}
 			}
 			blobReader = safetensors.BuildPackedSafetensorsReader(tds)
 		}
@@ -487,12 +439,7 @@ func newManifestWriter(opts CreateOptions, capabilities []string, parserName, re
 		configData.Parser = resolveParserName(opts.Modelfile, parserName)
 		configData.Renderer = resolveRendererName(opts.Modelfile, rendererName)
 		if opts.Modelfile != nil && opts.Modelfile.Draft != "" {
-			configData.Draft = &model.Draft{
-				ModelFormat:  "safetensors",
-				Architecture: "Gemma4AssistantForCausalLM",
-				TensorPrefix: "draft.",
-				Config:       "draft/config.json",
-			}
+			configData.Draft = create.DraftModelConfig()
 		}
 		configJSON, err := json.Marshal(configData)
 		if err != nil {
@@ -587,87 +534,6 @@ func createModelfileLayers(mf *ModelfileConfig) ([]manifest.Layer, error) {
 	}
 
 	return layers, nil
-}
-
-// supportsThinking checks if the model supports thinking mode based on known
-// architectures that do not expose a cleaner signal in their local metadata.
-func supportsThinking(modelDir string) bool {
-	configPath := filepath.Join(modelDir, "config.json")
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return false
-	}
-
-	var cfg struct {
-		Architectures []string `json:"architectures"`
-		ModelType     string   `json:"model_type"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return false
-	}
-
-	// Check architectures that support thinking
-	thinkingArchitectures := []string{
-		"glm4moe",  // GLM-4 MoE models
-		"deepseek", // DeepSeek models
-		"qwen3",    // Qwen3 models
-	}
-
-	// Check the architecture list
-	for _, arch := range cfg.Architectures {
-		archLower := strings.ToLower(arch)
-		for _, thinkArch := range thinkingArchitectures {
-			if strings.Contains(archLower, thinkArch) {
-				return true
-			}
-		}
-	}
-
-	// Also check model_type
-	if cfg.ModelType != "" {
-		typeLower := strings.ToLower(cfg.ModelType)
-		for _, thinkArch := range thinkingArchitectures {
-			if strings.Contains(typeLower, thinkArch) {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
-// supportsVision checks if the model has a vision encoder by looking for
-// vision_config in config.json.
-func supportsVision(modelDir string) bool {
-	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
-	if err != nil {
-		return false
-	}
-
-	var cfg struct {
-		VisionConfig *map[string]any `json:"vision_config"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return false
-	}
-
-	return cfg.VisionConfig != nil
-}
-
-func supportsAudio(modelDir string) bool {
-	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
-	if err != nil {
-		return false
-	}
-
-	var cfg struct {
-		AudioConfig *map[string]any `json:"audio_config"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return false
-	}
-
-	return cfg.AudioConfig != nil
 }
 
 // getParserName returns the parser name for a model based on its architecture.

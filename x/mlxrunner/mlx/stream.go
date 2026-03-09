@@ -21,11 +21,14 @@ var (
 	defaultDeviceSet bool
 	defaultStream    Stream
 	defaultStreamSet bool
+	defaultCPUStream Stream
+	defaultCPUSet    bool
 )
 
 func resetDefaultStreamCache() {
 	defaultDeviceSet = false
 	defaultStreamSet = false
+	defaultCPUSet = false
 }
 
 func DefaultDevice() Device {
@@ -76,4 +79,14 @@ func DefaultStream() Stream {
 	}
 
 	return defaultStream
+}
+
+// DefaultCPUStream returns a cached CPU stream for load operations.
+func DefaultCPUStream() Stream {
+	if !defaultCPUSet {
+		defaultCPUStream = Stream{C.mlx_default_cpu_stream_new()}
+		defaultCPUSet = true
+	}
+
+	return defaultCPUStream
 }

@@ -217,6 +217,25 @@ func resolveExperimentalDraftDir(ref, filename string) (string, error) {
 	return "", fmt.Errorf("DRAFT model references are not supported with --experimental yet: %s", ref)
 }
 
+func useRemoteCreate() bool {
+	return forceRemoteCreate() || !isLocalhost()
+}
+
+var forceRemoteCreate = func() bool {
+	return boolEnv("OLLAMA_CREATE_REMOTE")
+}
+
+func boolEnv(name string) bool {
+	if s := strings.TrimSpace(os.Getenv(name)); s != "" {
+		b, err := strconv.ParseBool(s)
+		if err != nil {
+			return true
+		}
+		return b
+	}
+	return false
+}
+
 func CreateHandler(cmd *cobra.Command, args []string) error {
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
@@ -236,10 +255,6 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return errors.New("--draft-quantize requires --experimental")
 	}
 	if experimental {
-		if !isLocalhost() {
-			return errors.New("remote safetensor model creation not yet supported")
-		}
-
 		// Get Modelfile content - either from -f flag or default to "FROM ."
 		var reader io.Reader
 		filename, err := getModelfileName(cmd)
@@ -277,8 +292,42 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			mfConfig.Draft = draftDir
 		}
 
+		// TODO: If the Modelfile has no LICENSE and FROM resolves to a directory,
+		// consider a shallow scan for LICENSE*, COPYING*, NOTICE, and README.md.
 		quantize, _ := cmd.Flags().GetString("quantize")
-		return xcreateclient.CreateModel(xcreateclient.CreateOptions{
+
+		// Imagegen models use local-only path (tensor extraction + model_index.json
+		// normalization not yet ported to the remote pipeline).
+		if xcreate.IsTensorModelDir(modelDir) && !xcreate.IsSafetensorsModelDir(modelDir) {
+			if !isLocalhost() {
+				return fmt.Errorf("image generation model creation requires a local server")
+			}
+			return xcreateclient.CreateModel(xcreateclient.CreateOptions{
+				ModelName:     modelName,
+				ModelDir:      modelDir,
+				Quantize:      quantize,
+				DraftQuantize: draftQuantize,
+				Modelfile:     mfConfig,
+			}, p)
+		}
+
+		if !useRemoteCreate() {
+			return xcreateclient.CreateModel(xcreateclient.CreateOptions{
+				ModelName:     modelName,
+				ModelDir:      modelDir,
+				Quantize:      quantize,
+				DraftQuantize: draftQuantize,
+				Modelfile:     mfConfig,
+			}, p)
+		}
+
+		// Safetensors LLM with a non-local host: upload prepared layers and
+		// let the remote server assemble the manifest.
+		client, err := api.ClientFromEnvironment()
+		if err != nil {
+			return err
+		}
+		return xcreateclient.CreateModelRemote(cmd.Context(), client, xcreateclient.RemoteCreateOptions{
 			ModelName:     modelName,
 			ModelDir:      modelDir,
 			Quantize:      quantize,
