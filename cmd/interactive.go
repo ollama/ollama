@@ -563,6 +563,7 @@ func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
 func normalizeFilePath(fp string) string {
 	return strings.NewReplacer(
 		"\\ ", " ", // Escaped space
+		"%20", " ", // URL-encoded space from some terminal drag-and-drop flows
 		"\\(", "(", // Escaped left parenthesis
 		"\\)", ")", // Escaped right parenthesis
 		"\\[", "[", // Escaped left square bracket
@@ -604,6 +605,8 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 			return "", imgs, err
 		}
 		fmt.Fprintf(os.Stderr, "Added image '%s'\n", nfp)
+		input = strings.ReplaceAll(input, "\""+nfp+"\"", "")
+		input = strings.ReplaceAll(input, "\""+fp+"\"", "")
 		input = strings.ReplaceAll(input, "'"+nfp+"'", "")
 		input = strings.ReplaceAll(input, "'"+fp+"'", "")
 		input = strings.ReplaceAll(input, fp, "")
