@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -566,6 +567,8 @@ func normalizeFilePath(fp string) string {
 	if strings.HasPrefix(fp, "~/") {
 		if home, err := os.UserHomeDir(); err == nil {
 			fp = filepath.Join(home, fp[2:])
+		} else {
+			slog.Debug("failed to expand tilde in file path", "path", fp, "error", err)
 		}
 	}
 

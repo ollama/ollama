@@ -70,6 +70,14 @@ func TestExtractFileNamesTildePaths(t *testing.T) {
 	assert.Len(t, res, 2)
 	assert.Contains(t, res[0], "~/photos/cat.jpg")
 	assert.Contains(t, res[1], "~/Downloads/dog.png")
+
+	// Edge cases: double tilde and tilde-space should not be matched as tilde paths
+	input = `check ~~/photos/cat.jpg and ~ /photos/dog.png`
+	res = extractFileNames(input)
+	for _, r := range res {
+		assert.NotContains(t, r, "~~")
+		assert.NotContains(t, r, "~ ")
+	}
 }
 
 func TestNormalizeFilePathExpandsTilde(t *testing.T) {
