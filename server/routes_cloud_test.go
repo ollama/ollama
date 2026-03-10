@@ -17,6 +17,7 @@ import (
 	"github.com/ollama/ollama/api"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
 	"github.com/ollama/ollama/middleware"
+	"github.com/ollama/ollama/version"
 )
 
 func TestStatusHandler(t *testing.T) {
@@ -206,6 +207,9 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 
 		if got := capture.header.Get("X-Test-Header"); got != "api-header" {
 			t.Fatalf("expected forwarded X-Test-Header=api-header, got %q", got)
+		}
+		if got := capture.header.Get(cloudProxyClientVersionHeader); got != version.Version {
+			t.Fatalf("expected %s=%q, got %q", cloudProxyClientVersionHeader, version.Version, got)
 		}
 	})
 
