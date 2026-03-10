@@ -1,5 +1,3 @@
-//go:build mlx
-
 // Package gemma3 provides the Gemma 3 text model implementation for MLX.
 package gemma3
 

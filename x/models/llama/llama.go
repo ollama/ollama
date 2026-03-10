@@ -1,5 +1,3 @@
-//go:build mlx
-
 // Package llama provides a Llama-style decoder-only transformer for MLX.
 package llama
 

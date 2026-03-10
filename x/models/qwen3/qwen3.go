@@ -1,5 +1,3 @@
-//go:build mlx
-
 // Package qwen3 provides the Qwen3 text model implementation for MLX.
 package qwen3
 

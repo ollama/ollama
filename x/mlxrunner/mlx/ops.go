@@ -1,5 +1,3 @@
-//go:build mlx
-
 package mlx
 
 // #include "generated.h"
@@ -87,6 +85,12 @@ func (t *Array) Concatenate(axis int, others ...*Array) *Array {
 	return out
 }
 
+func (t *Array) Cumsum(axis int, reverse, inclusive bool) *Array {
+	out := New("CUMSUM")
+	C.mlx_cumsum(&out.ctx, t.ctx, C.int(axis), C.bool(reverse), C.bool(inclusive), DefaultStream().ctx)
+	return out
+}
+
 func (t *Array) Divide(other *Array) *Array {
 	out := New("DIVIDE")
 	C.mlx_divide(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
@@ -126,6 +130,12 @@ func (t *Array) GatherMM(other, lhs, rhs *Array, sorted bool) *Array {
 func (t *Array) Logsumexp(keepDims bool) *Array {
 	out := New("LOGSUMEXP")
 	C.mlx_logsumexp(&out.ctx, t.ctx, C.bool(keepDims), DefaultStream().ctx)
+	return out
+}
+
+func (t *Array) Less(other *Array) *Array {
+	out := New("LESS")
+	C.mlx_less(&out.ctx, t.ctx, other.ctx, DefaultStream().ctx)
 	return out
 }
 

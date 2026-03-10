@@ -62,6 +62,8 @@ const signinURLStr = "https://ollama.com/connect?name=%s&key=%s"
 const (
 	cloudErrRemoteInferenceUnavailable    = "remote model is unavailable"
 	cloudErrRemoteModelDetailsUnavailable = "remote model details are unavailable"
+	cloudErrWebSearchUnavailable          = "web search is unavailable"
+	cloudErrWebFetchUnavailable           = "web fetch is unavailable"
 )
 
 func writeModelRefParseError(c *gin.Context, err error, fallbackStatus int, fallbackMessage string) {
@@ -1693,6 +1695,8 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.GET("/api/experimental/aliases", s.ListAliasesHandler)
 	r.POST("/api/experimental/aliases", s.CreateAliasHandler)
 	r.DELETE("/api/experimental/aliases", s.DeleteAliasHandler)
+	r.POST("/api/experimental/web_search", s.WebSearchExperimentalHandler)
+	r.POST("/api/experimental/web_fetch", s.WebFetchExperimentalHandler)
 
 	// Inference
 	r.GET("/api/ps", s.PsHandler)
@@ -1935,6 +1939,29 @@ func (s *Server) StatusHandler(c *gin.Context) {
 			Source:   source,
 		},
 	})
+}
+
+func (s *Server) WebSearchExperimentalHandler(c *gin.Context) {
+	s.webExperimentalProxyHandler(c, "/api/web_search", cloudErrWebSearchUnavailable)
+}
+
+func (s *Server) WebFetchExperimentalHandler(c *gin.Context) {
+	s.webExperimentalProxyHandler(c, "/api/web_fetch", cloudErrWebFetchUnavailable)
+}
+
+func (s *Server) webExperimentalProxyHandler(c *gin.Context, proxyPath, disabledOperation string) {
+	body, err := readRequestBody(c.Request)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if len(bytes.TrimSpace(body)) == 0 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	}
+
+	proxyCloudRequestWithPath(c, body, proxyPath, disabledOperation)
 }
 
 func (s *Server) WhoamiHandler(c *gin.Context) {

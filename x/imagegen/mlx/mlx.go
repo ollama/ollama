@@ -1,9 +1,7 @@
-//go:build mlx
-
 package mlx
 
 /*
-#cgo CFLAGS: -O3 -I${SRCDIR}/../../../build/_deps/mlx-c-src -I${SRCDIR}
+#cgo CFLAGS: -O3 -I${SRCDIR}/../../mlxrunner/mlx/include -I${SRCDIR}
 #cgo darwin LDFLAGS: -lc++ -framework Metal -framework Foundation -framework Accelerate
 #cgo linux LDFLAGS: -lstdc++ -ldl
 #cgo windows LDFLAGS: -lstdc++
@@ -32,7 +30,7 @@ static inline void set_default_stream(mlx_stream s) {
     _default_stream = s;
 }
 
-// CPU stream for file loading (Load primitive only runs on CPU)
+// CPU stream for operations that only support CPU evaluation
 static inline mlx_stream cpu_stream() {
     if (_cpu_stream.ctx == NULL) {
         _cpu_stream = mlx_default_cpu_stream_new();
@@ -45,8 +43,11 @@ static inline mlx_stream cpu_stream() {
 // nocallback: function won't call back into Go
 */
 import "C"
+
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"sync"
@@ -1502,15 +1503,21 @@ type SafetensorsFile struct {
 	metadata C.mlx_map_string_to_string
 }
 
-// LoadSafetensorsNative loads a safetensors file using MLX's optimized loader
-// Note: Uses CPU stream because Load primitive only runs on CPU
+// LoadSafetensorsNative loads a safetensors file using MLX's optimized loader.
+// On CUDA, Load::eval_gpu is implemented so we use the default (GPU) stream.
+// On Metal, Load::eval_gpu is not implemented so we must use the CPU stream.
 func LoadSafetensorsNative(path string) (*SafetensorsFile, error) {
 	cPath := C.CString(path)
 	defer C.free(unsafe.Pointer(cPath))
 
+	stream := C.default_stream()
+	if runtime.GOOS == "darwin" {
+		stream = C.cpu_stream()
+	}
+
 	var arrays C.mlx_map_string_to_array
 	var metadata C.mlx_map_string_to_string
-	if C.mlx_load_safetensors(&arrays, &metadata, cPath, C.cpu_stream()) != 0 {
+	if C.mlx_load_safetensors(&arrays, &metadata, cPath, stream) != 0 {
 		return nil, fmt.Errorf("failed to load safetensors: %s", path)
 	}
 	return &SafetensorsFile{arrays: arrays, metadata: metadata}, nil
@@ -1689,11 +1696,91 @@ func ArgmaxKeepArray(logits *Array) *Array {
 //
 // Thread safety: Protected by randomStateMu, mimicking Python's GIL behavior.
 // All random functions that use global state acquire this lock.
-var RandomState = []*Array{nil}
-var randomStateMu sync.Mutex
+var (
+	RandomState   = []*Array{nil}
+	randomStateMu sync.Mutex
+)
 
-var mlxInitialized bool
-var mlxInitError error
+var (
+	mlxInitialized bool
+	mlxInitError   error
+)
+
+// mlxLibName returns the platform-specific shared library filename.
+func mlxLibName() string {
+	switch runtime.GOOS {
+	case "windows":
+		return "mlxc.dll"
+	case "darwin":
+		return "libmlxc.dylib"
+	default:
+		return "libmlxc.so"
+	}
+}
+
+// findMLXLibrary searches for the MLX shared library in standard locations.
+// Returns the path to the library, or empty string if not found.
+func findMLXLibrary() string {
+	libName := mlxLibName()
+
+	// 1. OLLAMA_LIBRARY_PATH — check each dir and mlx_* subdirs
+	if paths, ok := os.LookupEnv("OLLAMA_LIBRARY_PATH"); ok {
+		for _, dir := range filepath.SplitList(paths) {
+			candidate := filepath.Join(dir, libName)
+			if _, err := os.Stat(candidate); err == nil {
+				return candidate
+			}
+			if mlxDirs, err := filepath.Glob(filepath.Join(dir, "mlx*")); err == nil {
+				for _, mlxDir := range mlxDirs {
+					candidate = filepath.Join(mlxDir, libName)
+					if _, err := os.Stat(candidate); err == nil {
+						return candidate
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Executable directory and lib/ollama/mlx* subdirs
+	if exe, err := os.Executable(); err == nil {
+		if eval, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = eval
+		}
+		exeDir := filepath.Dir(exe)
+
+		// Check exe dir directly (macOS copies dylib here)
+		candidate := filepath.Join(exeDir, libName)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+
+		// Check exe_dir/lib/ollama/mlx* subdirectories
+		// and exe_dir/../lib/ollama/mlx* (standard bin/lib sibling layout)
+		for _, libOllamaDir := range []string{
+			filepath.Join(exeDir, "lib", "ollama"),
+			filepath.Join(exeDir, "..", "lib", "ollama"),
+		} {
+			if mlxDirs, err := filepath.Glob(filepath.Join(libOllamaDir, "mlx*")); err == nil {
+				for _, mlxDir := range mlxDirs {
+					candidate = filepath.Join(mlxDir, libName)
+					if _, err := os.Stat(candidate); err == nil {
+						return candidate
+					}
+				}
+			}
+		}
+	}
+
+	// 3. Build directory (for tests run from repo root)
+	if cwd, err := os.Getwd(); err == nil {
+		candidate := filepath.Join(cwd, "build", "lib", "ollama", libName)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+
+	return ""
+}
 
 // InitMLX initializes the MLX library by dynamically loading libmlxc.
 // This must be called before using any MLX functions.
@@ -1703,9 +1790,16 @@ func InitMLX() error {
 		return mlxInitError
 	}
 
-	// Try to load the MLX dynamic library
-	ret := C.mlx_dynamic_init()
-	if ret != 0 {
+	// Search for the library using Go path discovery
+	libPath := findMLXLibrary()
+	if libPath == "" {
+		mlxInitError = fmt.Errorf("failed to initialize MLX: %s not found", mlxLibName())
+		return mlxInitError
+	}
+
+	cPath := C.CString(libPath)
+	defer C.free(unsafe.Pointer(cPath))
+	if C.mlx_dynamic_init_path(cPath) != 0 {
 		errMsg := C.GoString(C.mlx_dynamic_error())
 		mlxInitError = fmt.Errorf("failed to initialize MLX: %s", errMsg)
 		return mlxInitError
@@ -1713,8 +1807,7 @@ func InitMLX() error {
 
 	// Initialize all function pointers via dlsym
 	handle := C.mlx_get_handle()
-	ret = C.mlx_load_functions(handle)
-	if ret != 0 {
+	if C.mlx_load_functions(handle) != 0 {
 		mlxInitError = fmt.Errorf("failed to load MLX function symbols")
 		return mlxInitError
 	}
