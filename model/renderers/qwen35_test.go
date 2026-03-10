@@ -175,6 +175,42 @@ func TestQwen35RendererBackToBackToolCallsAndResponses(t *testing.T) {
 	}
 }
 
+func TestQwen35RendererStructuredToolArgumentsUseSpacedJSON(t *testing.T) {
+	renderer := &Qwen35Renderer{isThinking: true}
+
+	msgs := []api.Message{
+		{Role: "user", Content: "call tool"},
+		{
+			Role: "assistant",
+			ToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "echo",
+						Arguments: testArgsOrdered([]orderedArg{
+							{
+								Key: "payload",
+								Value: map[string]any{
+									"content": "if (x < 5 && y > 3) {}",
+								},
+							},
+						}),
+					},
+				},
+			},
+		},
+	}
+
+	got, err := renderer.Render(msgs, nil, nil)
+	if err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+
+	want := "<parameter=payload>\n{\"content\": \"if (x < 5 && y > 3) {}\"}\n</parameter>"
+	if !strings.Contains(got, want) {
+		t.Fatalf("expected spaced, non-escaped JSON tool argument, got:\n%s", got)
+	}
+}
+
 func TestQwen35RendererInterleavedThinkingAndTools(t *testing.T) {
 	renderer := &Qwen35Renderer{isThinking: true}
 

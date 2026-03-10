@@ -355,7 +355,12 @@ func TestFormatToolCallArgumentThinkingVL(t *testing.T) {
 		{
 			name:     "map",
 			arg:      map[string]any{"foo": "bar"},
-			expected: "{\"foo\":\"bar\"}",
+			expected: "{\"foo\": \"bar\"}",
+		},
+		{
+			name:     "map with html chars",
+			arg:      map[string]any{"content": "if (x < 5 && y > 3) {}"},
+			expected: "{\"content\": \"if (x < 5 && y > 3) {}\"}",
 		},
 		{
 			name:     "number",

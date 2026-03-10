@@ -1,6 +1,7 @@
 package renderers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -247,13 +248,59 @@ func formatToolCallArgument(value any) string {
 	if reflect.TypeOf(value) != nil {
 		kind := reflect.TypeOf(value).Kind()
 		if kind == reflect.Map || kind == reflect.Slice || kind == reflect.Array {
-			if marshalled, err := json.Marshal(value); err == nil {
+			if marshalled, err := marshalQwenToolCallArgument(value); err == nil {
 				return string(marshalled)
 			}
 		}
 	}
 
 	return fmt.Sprintf("%v", value)
+}
+
+func marshalQwenToolCallArgument(value any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+
+	if err := enc.Encode(value); err != nil {
+		return nil, err
+	}
+
+	// Encoder.Encode appends a trailing newline.
+	b := bytes.TrimSuffix(buf.Bytes(), []byte{'\n'})
+
+	out := make([]byte, 0, len(b)+len(b)/8)
+	inStr, esc := false, false
+	for _, c := range b {
+		if inStr {
+			out = append(out, c)
+			if esc {
+				esc = false
+				continue
+			}
+			if c == '\\' {
+				esc = true
+				continue
+			}
+			if c == '"' {
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+			out = append(out, c)
+		case ':':
+			out = append(out, ':', ' ')
+		case ',':
+			out = append(out, ',', ' ')
+		default:
+			out = append(out, c)
+		}
+	}
+
+	return out, nil
 }
 
 func formatToolDefinitionType(tp api.PropertyType) string {

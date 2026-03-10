@@ -271,7 +271,7 @@ call tool<|im_end|>
 <tool_call>
 <function=echo>
 <parameter=payload>
-{"foo":"bar"}
+{"foo": "bar"}
 </parameter>
 </function>
 </tool_call><|im_end|>
@@ -502,7 +502,17 @@ func TestFormatToolCallArgument(t *testing.T) {
 		{
 			name:     "map",
 			arg:      map[string]any{"foo": "bar"},
-			expected: "{\"foo\":\"bar\"}",
+			expected: "{\"foo\": \"bar\"}",
+		},
+		{
+			name:     "map with html chars",
+			arg:      map[string]any{"content": "if (x < 5 && y > 3) {}"},
+			expected: "{\"content\": \"if (x < 5 && y > 3) {}\"}",
+		},
+		{
+			name:     "array",
+			arg:      []any{"a", true, 1},
+			expected: "[\"a\", true, 1]",
 		},
 		{
 			name:     "number",
