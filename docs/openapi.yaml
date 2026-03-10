@@ -200,6 +200,11 @@ components:
         eval_duration:
           type: integer
           description: Time spent generating tokens in nanoseconds
+        logprobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/Logprob"
+          description: Log probability information for the generated tokens when logprobs are enabled
     ChatMessage:
       type: object
       required: [role, content]
