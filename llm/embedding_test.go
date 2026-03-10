@@ -61,6 +61,11 @@ func TestValidateEmbedding(t *testing.T) {
 			input:   []float32{-0.1, -0.2, -0.3},
 			wantErr: false,
 		},
+		{
+			name:    "MaxFloat32 is valid",
+			input:   []float32{math.MaxFloat32, -math.MaxFloat32, 0.1},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
