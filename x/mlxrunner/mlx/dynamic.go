@@ -126,6 +126,22 @@ func init() {
 
 	if cwd, err := os.Getwd(); err == nil {
 		searchDirs = append(searchDirs, filepath.Join(cwd, "build", "lib", "ollama"))
+
+		// Walk up from cwd to find the repo root (containing go.mod) so that
+		// tests running from a package subdirectory can find the build output.
+		for dir := cwd; ; {
+			if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+				if dir != cwd {
+					searchDirs = append(searchDirs, filepath.Join(dir, "build", "lib", "ollama"))
+				}
+				break
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
 	}
 
 	// Also scan mlx_* subdirectories within each search dir

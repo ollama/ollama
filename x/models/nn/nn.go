@@ -152,15 +152,7 @@ func (ln *LayerNorm) Forward(x *mlx.Array) *mlx.Array {
 	if eps == 0 {
 		eps = 1e-5
 	}
-	mean := mlx.Mean(x, -1, true)
-	centered := x.Subtract(mean)
-	variance := mlx.Mean(centered.Multiply(centered), -1, true)
-	normalized := centered.Multiply(mlx.RSqrt(mlx.AddScalar(variance, eps)))
-	out := normalized.Multiply(ln.Weight)
-	if ln.Bias != nil && ln.Bias.Valid() {
-		out = out.Add(ln.Bias)
-	}
-	return out
+	return mlx.LayerNormFn(x, ln.Weight, ln.Bias, eps)
 }
 
 // MultiLinearLayer is an interface for per-head linear layers.
