@@ -97,8 +97,18 @@ func main() {
 	qc := tree_sitter.NewQueryCursor()
 	defer qc.Close()
 
-	var funs []Function
+	var files []string
 	for _, arg := range flag.Args() {
+		matches, err := filepath.Glob(arg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error expanding glob %s: %v\n", arg, err)
+			continue
+		}
+		files = append(files, matches...)
+	}
+
+	var funs []Function
+	for _, arg := range files {
 		bts, err := os.ReadFile(arg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", arg, err)

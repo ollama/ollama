@@ -1,6 +1,6 @@
 package mlx
 
-//go:generate sh -c "go run generator/main.go -output=. ./include/mlx/c/*.h"
+//go:generate go run generator/main.go -output=. ./include/mlx/c/*.h
 
 // #cgo CXXFLAGS: -std=c++17
 // #cgo CPPFLAGS: -I${SRCDIR}/include
