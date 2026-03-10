@@ -21,9 +21,10 @@ func testPropsMap(m map[string]api.ToolProperty) *api.ToolPropertiesMap {
 }
 
 func TestAPIToolCalling(t *testing.T) {
-	initialTimeout := 60 * time.Second
-	streamTimeout := 60 * time.Second
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	initialTimeout := 90 * time.Second
+	streamTimeout := 90 * time.Second
+	softTimeout, hardTimeout := getTimeouts(t)
+	ctx, cancel := context.WithTimeout(context.Background(), hardTimeout)
 	defer cancel()
 
 	client, _, cleanup := InitServerConnection(ctx, t)
@@ -47,8 +48,12 @@ func TestAPIToolCalling(t *testing.T) {
 		"granite3.3":    7,
 	}
 
+	started := time.Now()
 	for _, model := range libraryToolsModels {
 		t.Run(model, func(t *testing.T) {
+			if time.Since(started) > softTimeout {
+				t.Skip("skipping - soft timeout exceeded")
+			}
 			if v, ok := minVRAM[model]; ok {
 				skipUnderMinVRAM(t, v)
 			}

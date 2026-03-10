@@ -119,8 +119,7 @@ llm_build_hunyuan_moe::llm_build_hunyuan_moe(const llama_model & model, const ll
                 n_expert, n_expert_used,
                 LLM_FFN_SILU,
                 true, // norm_topk_prob
-                false,
-                0.0,
+                hparams.expert_weights_scale,
                 LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX,
                 il);
         cb(cur_moe, "ffn_moe_out", il);
