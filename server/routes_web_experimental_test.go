@@ -90,7 +90,7 @@ func TestExperimentalWebEndpointsPassthrough(t *testing.T) {
 				t.Fatal(err)
 			}
 			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Authorization", "Bearer should-not-forward")
+			req.Header.Set("Authorization", "Bearer should-forward")
 			req.Header.Set("X-Test-Header", "web-experimental")
 
 			resp, err := local.Client().Do(req)
@@ -109,8 +109,8 @@ func TestExperimentalWebEndpointsPassthrough(t *testing.T) {
 			if !bytes.Contains([]byte(capture.body), []byte(tt.assertBody)) {
 				t.Fatalf("expected upstream body to contain %q, got %q", tt.assertBody, capture.body)
 			}
-			if got := capture.header.Get("Authorization"); got != "" {
-				t.Fatalf("expected no forwarded Authorization header, got %q", got)
+			if got := capture.header.Get("Authorization"); got != "Bearer should-forward" {
+				t.Fatalf("expected forwarded Authorization header, got %q", got)
 			}
 			if got := capture.header.Get("X-Test-Header"); got != "web-experimental" {
 				t.Fatalf("expected forwarded X-Test-Header=web-experimental, got %q", got)

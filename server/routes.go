@@ -1961,8 +1961,6 @@ func (s *Server) webExperimentalProxyHandler(c *gin.Context, proxyPath, disabled
 		return
 	}
 
-	// Experimental web endpoints always use server-side cloud signing.
-	c.Request.Header.Del("Authorization")
 	proxyCloudRequestWithPath(c, body, proxyPath, disabledOperation)
 }
 
