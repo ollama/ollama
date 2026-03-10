@@ -1,5 +1,3 @@
-//go:build mlx
-
 // Package imagegen provides a unified MLX runner for both LLM and image generation models.
 package imagegen
 

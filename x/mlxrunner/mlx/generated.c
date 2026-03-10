@@ -2299,8 +2299,8 @@ int mlx_dynamic_load_symbols(mlx_dynamic_handle handle) {
     CHECK_LOAD(handle, mlx_array_item_float32);
     CHECK_LOAD(handle, mlx_array_item_float64);
     CHECK_LOAD(handle, mlx_array_item_complex64);
-    CHECK_LOAD(handle, mlx_array_item_float16);
-    CHECK_LOAD(handle, mlx_array_item_bfloat16);
+    OPTIONAL_LOAD(handle, mlx_array_item_float16);
+    OPTIONAL_LOAD(handle, mlx_array_item_bfloat16);
     CHECK_LOAD(handle, mlx_array_data_bool);
     CHECK_LOAD(handle, mlx_array_data_uint8);
     CHECK_LOAD(handle, mlx_array_data_uint16);
@@ -2313,8 +2313,8 @@ int mlx_dynamic_load_symbols(mlx_dynamic_handle handle) {
     CHECK_LOAD(handle, mlx_array_data_float32);
     CHECK_LOAD(handle, mlx_array_data_float64);
     CHECK_LOAD(handle, mlx_array_data_complex64);
-    CHECK_LOAD(handle, mlx_array_data_float16);
-    CHECK_LOAD(handle, mlx_array_data_bfloat16);
+    OPTIONAL_LOAD(handle, mlx_array_data_float16);
+    OPTIONAL_LOAD(handle, mlx_array_data_bfloat16);
     CHECK_LOAD(handle, _mlx_array_is_available);
     CHECK_LOAD(handle, _mlx_array_wait);
     CHECK_LOAD(handle, _mlx_array_is_contiguous);

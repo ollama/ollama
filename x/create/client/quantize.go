@@ -1,5 +1,3 @@
-//go:build mlx
-
 package client
 
 import (
@@ -194,9 +192,10 @@ func quantizePackedGroup(inputs []create.PackedTensorInput) ([]byte, error) {
 	return blobData, nil
 }
 
-// QuantizeSupported returns true if quantization is supported (MLX build)
+// QuantizeSupported returns true if quantization is supported (MLX library available)
 func QuantizeSupported() bool {
-	return true
+	mlx.InitMLX()
+	return mlx.IsMLXAvailable()
 }
 
 // ensureTempDir creates the temp directory for quantization if it doesn't exist
