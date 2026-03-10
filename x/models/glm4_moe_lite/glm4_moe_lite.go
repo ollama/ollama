@@ -1,5 +1,3 @@
-//go:build mlx
-
 // Package glm4_moe_lite provides the GLM4-MoE-Lite implementation for MLX.
 // This model uses Multi-head Latent Attention (MLA) and Mixture of Experts (MoE).
 package glm4_moe_lite

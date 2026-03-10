@@ -2,12 +2,17 @@
 
 ARG FLAVOR=${TARGETARCH}
 
-ARG ROCMVERSION=6.3.3
+ARG ROCMVERSION=7.2
 ARG JETPACK5VERSION=r35.4.1
 ARG JETPACK6VERSION=r36.4.0
 ARG CMAKEVERSION=3.31.2
 ARG NINJAVERSION=1.12.1
 ARG VULKANVERSION=1.4.321.1
+
+# Default empty stages for local MLX source overrides.
+# Override with: docker build --build-context local-mlx=../mlx --build-context local-mlx-c=../mlx-c
+FROM scratch AS local-mlx
+FROM scratch AS local-mlx-c
 
 FROM --platform=linux/amd64 rocm/dev-almalinux-8:${ROCMVERSION}-complete AS base-amd64
 RUN dnf install -y yum-utils ccache gcc-toolset-11-gcc gcc-toolset-11-gcc-c++ gcc-toolset-11-binutils \
@@ -77,13 +82,13 @@ RUN --mount=type=cache,target=/root/.ccache \
         && cmake --install build --component CUDA --strip
 
 
-FROM base AS rocm-6
+FROM base AS rocm-7
 ENV PATH=/opt/rocm/hcc/bin:/opt/rocm/hip/bin:/opt/rocm/bin:/opt/rocm/hcc/bin:$PATH
 COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'ROCm 6' \
-        && cmake --build --preset 'ROCm 6' -- -l $(nproc) \
+    cmake --preset 'ROCm 7' \
+        && cmake --build --preset 'ROCm 7' -- -l $(nproc) \
         && cmake --install build --component HIP --strip
 RUN rm -f dist/lib/ollama/rocm/rocblas/library/*gfx90[06]*
 
@@ -152,12 +157,20 @@ COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 COPY x/imagegen/mlx x/imagegen/mlx
 COPY go.mod go.sum .
-COPY MLX_VERSION .
+COPY MLX_VERSION MLX_CORE_VERSION .
 RUN curl -fsSL https://golang.org/dl/go$(awk '/^go/ { print $2 }' go.mod).linux-$(case $(uname -m) in x86_64) echo amd64 ;; aarch64) echo arm64 ;; esac).tar.gz | tar xz -C /usr/local
 ENV PATH=/usr/local/go/bin:$PATH
 RUN go mod download
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'MLX CUDA 13' -DBLAS_INCLUDE_DIRS=/usr/include/openblas -DLAPACK_INCLUDE_DIRS=/usr/include/openblas \
+    --mount=type=bind,from=local-mlx,target=/tmp/local-mlx \
+    --mount=type=bind,from=local-mlx-c,target=/tmp/local-mlx-c \
+    if [ -f /tmp/local-mlx/CMakeLists.txt ]; then \
+        export OLLAMA_MLX_SOURCE=/tmp/local-mlx; \
+    fi \
+    && if [ -f /tmp/local-mlx-c/CMakeLists.txt ]; then \
+        export OLLAMA_MLX_C_SOURCE=/tmp/local-mlx-c; \
+    fi \
+    && cmake --preset 'MLX CUDA 13' -DBLAS_INCLUDE_DIRS=/usr/include/openblas -DLAPACK_INCLUDE_DIRS=/usr/include/openblas \
         && cmake --build --preset 'MLX CUDA 13' -- -l $(nproc) \
         && cmake --install build --component MLX --strip
 
@@ -168,16 +181,14 @@ RUN curl -fsSL https://golang.org/dl/go$(awk '/^go/ { print $2 }' go.mod).linux-
 ENV PATH=/usr/local/go/bin:$PATH
 RUN go mod download
 COPY . .
-# Clone mlx-c headers for CGO (version from MLX_VERSION file)
-RUN git clone --depth 1 --branch "$(cat MLX_VERSION)" https://github.com/ml-explore/mlx-c.git build/_deps/mlx-c-src
 ARG GOFLAGS="'-ldflags=-w -s'"
 ENV CGO_ENABLED=1
 ARG CGO_CFLAGS
 ARG CGO_CXXFLAGS
-ENV CGO_CFLAGS="${CGO_CFLAGS} -I/go/src/github.com/ollama/ollama/build/_deps/mlx-c-src"
+ENV CGO_CFLAGS="${CGO_CFLAGS}"
 ENV CGO_CXXFLAGS="${CGO_CXXFLAGS}"
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    go build -tags mlx -trimpath -buildmode=pie -o /bin/ollama .
+    go build -trimpath -buildmode=pie -o /bin/ollama .
 
 FROM --platform=linux/amd64 scratch AS amd64
 # COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/
@@ -194,7 +205,7 @@ COPY --from=jetpack-5 dist/lib/ollama/ /lib/ollama/
 COPY --from=jetpack-6 dist/lib/ollama/ /lib/ollama/
 
 FROM scratch AS rocm
-COPY --from=rocm-6 dist/lib/ollama /lib/ollama
+COPY --from=rocm-7 dist/lib/ollama /lib/ollama
 
 FROM ${FLAVOR} AS archive
 COPY --from=cpu dist/lib/ollama /lib/ollama

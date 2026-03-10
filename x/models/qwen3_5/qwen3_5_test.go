@@ -1,5 +1,3 @@
-//go:build mlx
-
 package qwen3_5
 
 import (

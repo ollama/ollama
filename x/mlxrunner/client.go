@@ -72,14 +72,23 @@ func NewClient(modelName string) (*Client, error) {
 	cmd := exec.Command(exe, "runner", "--mlx-engine", "--model", modelName, "--port", strconv.Itoa(port))
 	cmd.Env = os.Environ()
 
-	// On Linux, set LD_LIBRARY_PATH to include MLX library directories
-	if runtime.GOOS == "linux" {
+	// Set library path environment variable for MLX libraries
+	// Linux: LD_LIBRARY_PATH, Windows: PATH
+	var libPathEnvVar string
+	switch runtime.GOOS {
+	case "linux":
+		libPathEnvVar = "LD_LIBRARY_PATH"
+	case "windows":
+		libPathEnvVar = "PATH"
+	}
+
+	if libPathEnvVar != "" {
 		libraryPaths := []string{ml.LibOllamaPath}
 		if mlxDirs, err := filepath.Glob(filepath.Join(ml.LibOllamaPath, "mlx_*")); err == nil {
 			libraryPaths = append(libraryPaths, mlxDirs...)
 		}
 
-		if existingPath, ok := os.LookupEnv("LD_LIBRARY_PATH"); ok {
+		if existingPath, ok := os.LookupEnv(libPathEnvVar); ok {
 			libraryPaths = append(libraryPaths, filepath.SplitList(existingPath)...)
 		}
 
@@ -87,16 +96,20 @@ func NewClient(modelName string) (*Client, error) {
 
 		found := false
 		for i := range cmd.Env {
-			if strings.HasPrefix(cmd.Env[i], "LD_LIBRARY_PATH=") {
-				cmd.Env[i] = "LD_LIBRARY_PATH=" + pathEnvVal
+			envName := cmd.Env[i]
+			if runtime.GOOS == "windows" {
+				envName = strings.ToUpper(envName)
+			}
+			if strings.HasPrefix(envName, libPathEnvVar+"=") {
+				cmd.Env[i] = libPathEnvVar + "=" + pathEnvVal
 				found = true
 				break
 			}
 		}
 		if !found {
-			cmd.Env = append(cmd.Env, "LD_LIBRARY_PATH="+pathEnvVal)
+			cmd.Env = append(cmd.Env, libPathEnvVar+"="+pathEnvVal)
 		}
-		slog.Debug("mlx subprocess library path", "LD_LIBRARY_PATH", pathEnvVal)
+		slog.Debug("mlx subprocess library path", libPathEnvVar, pathEnvVal)
 	}
 
 	c := &Client{

@@ -1,5 +1,3 @@
-//go:build mlx
-
 package mlx
 
 // #include "dynamic.h"
@@ -24,10 +22,16 @@ func CheckInit() error {
 	return initError
 }
 
-// tryLoadFromDir searches a directory for libmlxc.* and tries to load it.
+// tryLoadFromDir searches a directory for the mlxc shared library and tries to load it.
 // Returns true if the library was successfully loaded.
 func tryLoadFromDir(dir string) bool {
-	matches, err := fs.Glob(os.DirFS(dir), "libmlxc.*")
+	// On Windows, MSVC produces mlxc.dll (no lib prefix)
+	// On Unix, it's libmlxc.so or libmlxc.dylib
+	pattern := "libmlxc.*"
+	if runtime.GOOS == "windows" {
+		pattern = "mlxc.*"
+	}
+	matches, err := fs.Glob(os.DirFS(dir), pattern)
 	if err != nil || len(matches) == 0 {
 		return false
 	}
@@ -60,7 +64,10 @@ func tryLoadFromDir(dir string) bool {
 // Returns true if the library was successfully loaded.
 func tryLoadByName() bool {
 	libraryName := "libmlxc.dylib"
-	if runtime.GOOS == "linux" {
+	switch runtime.GOOS {
+	case "windows":
+		libraryName = "mlxc.dll"
+	case "linux":
 		libraryName = "libmlxc.so"
 	}
 
@@ -81,18 +88,24 @@ func tryLoadByName() bool {
 
 func init() {
 	switch runtime.GOOS {
-	case "darwin":
+	case "darwin", "linux", "windows":
 
-	case "windows":
 	default:
 		return
 	}
 
-	// Try OLLAMA_LIBRARY_PATH first
+	// Try OLLAMA_LIBRARY_PATH first, including mlx_* subdirectories
 	if paths, ok := os.LookupEnv("OLLAMA_LIBRARY_PATH"); ok {
 		for _, dir := range filepath.SplitList(paths) {
 			if tryLoadFromDir(dir) {
 				return
+			}
+			if mlxDirs, err := filepath.Glob(filepath.Join(dir, "mlx_*")); err == nil {
+				for _, mlxDir := range mlxDirs {
+					if tryLoadFromDir(mlxDir) {
+						return
+					}
+				}
 			}
 		}
 	}
@@ -115,12 +128,21 @@ func init() {
 		searchDirs = append(searchDirs, filepath.Join(cwd, "build", "lib", "ollama"))
 	}
 
+	// Also scan mlx_* subdirectories within each search dir
+	var expanded []string
 	for _, dir := range searchDirs {
+		expanded = append(expanded, dir)
+		if mlxDirs, err := filepath.Glob(filepath.Join(dir, "mlx_*")); err == nil {
+			expanded = append(expanded, mlxDirs...)
+		}
+	}
+
+	for _, dir := range expanded {
 		if tryLoadFromDir(dir) {
 			return
 		}
 	}
 
 	initError = fmt.Errorf("failed to load MLX dynamic library (searched: %v)", searchDirs)
-	slog.Warn("MLX dynamic library not available", "error", initError)
+	slog.Debug("MLX dynamic library not available", "error", initError)
 }

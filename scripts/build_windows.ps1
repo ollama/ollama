@@ -4,7 +4,10 @@
 #
 # gcloud auth application-default login
 
-$ErrorActionPreference = "Stop"
+# Use "Continue" so that stderr output from native commands (e.g. CGo warnings)
+# is not promoted to a terminating exception by the try/catch block.
+# All native commands already check $LASTEXITCODE explicitly.
+$ErrorActionPreference = "Continue"
 
 mkdir -Force -path .\dist | Out-Null
 
@@ -16,13 +19,13 @@ function checkEnv {
         if ($null -ne $arch) {
             $script:ARCH = ($arch.ToString().ToLower()).Replace("x64", "amd64")
         } else {
-            write-host "WARNING: old powershell detected, assuming amd64 architecture - set `$env:ARCH to override"
+            Write-Output "WARNING: old powershell detected, assuming amd64 architecture - set `$env:ARCH to override"
             $script:ARCH="amd64"
         }
     }
     $script:TARGET_ARCH=$script:ARCH
     Write-host "Building for ${script:TARGET_ARCH}"
-    write-host "Locating required tools and paths"
+    Write-Output "Locating required tools and paths"
     $script:SRC_DIR=$PWD
 
     # Locate CUDA versions
@@ -37,16 +40,17 @@ function checkEnv {
         $script:CUDA_DIRS=($cudaList | sort-object -Descending)
     }
     if ($script:CUDA_DIRS.length -gt 0) {
-        write-host "Available CUDA Versions: $script:CUDA_DIRS"
+        Write-Output "Available CUDA Versions: $script:CUDA_DIRS"
     } else {
-        write-host "No CUDA versions detected"
+        Write-Output "No CUDA versions detected"
     }
 
-    # Locate ROCm version
-    if ($null -ne $env:HIP_PATH) {
+    # Locate ROCm v6
+    $rocmDir=(get-item "C:\Program Files\AMD\ROCm\6.*" -ea 'silentlycontinue' | sort-object -Descending | select-object -First 1)
+    if ($null -ne $rocmDir) {
+        $script:HIP_PATH=$rocmDir.FullName
+    } elseif ($null -ne $env:HIP_PATH -and $env:HIP_PATH -match '[/\\]6\.') {
         $script:HIP_PATH=$env:HIP_PATH
-    } else {
-        $script:HIP_PATH=(get-item "C:\Program Files\AMD\ROCm\*\bin\" -ea 'silentlycontinue' | sort-object -Descending)
     }
     
     $inoSetup=(get-item "C:\Program Files*\Inno Setup*\")
@@ -78,7 +82,7 @@ function checkEnv {
     } else {
         $script:PKG_VERSION="0.0.0"
     }
-    write-host "Building Ollama $script:VERSION with package version $script:PKG_VERSION"
+    Write-Output "Building Ollama $script:VERSION with package version $script:PKG_VERSION"
 
     # Note: Windows Kits 10 signtool crashes with GCP's plugin
     if ($null -eq $env:SIGN_TOOL) {
@@ -87,12 +91,32 @@ function checkEnv {
         ${script:SignTool}=${env:SIGN_TOOL}
     }
     if ("${env:KEY_CONTAINER}") {
-        ${script:OLLAMA_CERT}=$(resolve-path "${script:SRC_DIR}\ollama_inc.crt")
-        Write-host "Code signing enabled"
+        if (Test-Path "${script:SRC_DIR}\ollama_inc.crt") {
+            ${script:OLLAMA_CERT}=$(resolve-path "${script:SRC_DIR}\ollama_inc.crt")
+            Write-host "Code signing enabled"
+        } else {
+            Write-Output "WARNING: KEY_CONTAINER is set but ollama_inc.crt not found at ${script:SRC_DIR}\ollama_inc.crt - code signing disabled"
+        }
     } else {
-        write-host "Code signing disabled - please set KEY_CONTAINERS to sign and copy ollama_inc.crt to the top of the source tree"
+        Write-Output "Code signing disabled - please set KEY_CONTAINERS to sign and copy ollama_inc.crt to the top of the source tree"
     }
-    $script:JOBS=([Environment]::ProcessorCount)
+    if ($env:OLLAMA_BUILD_PARALLEL) {
+        $script:JOBS=[int]$env:OLLAMA_BUILD_PARALLEL
+    } else {
+        # Use physical core count rather than logical processors (hyperthreads)
+        # to avoid saturating the system during builds
+        try {
+            $cores = (Get-CimInstance Win32_Processor | Measure-Object -Property NumberOfCores -Sum).Sum
+        } catch {
+            $cores = 0
+        }
+        if ($cores -gt 0) {
+            $script:JOBS = $cores
+        } else {
+            $script:JOBS = [Environment]::ProcessorCount
+        }
+    }
+    Write-Output "Build parallelism: $script:JOBS (set OLLAMA_BUILD_PARALLEL to override)"
 }
 
 
@@ -127,7 +151,7 @@ function cuda11 {
                     }
                 }
             }
-            write-host "Building CUDA v$cudaMajorVer backend libraries $cuda"
+            Write-Output "Building CUDA v$cudaMajorVer backend libraries $cuda"
             $env:CUDAToolkit_ROOT=$cuda
             & cmake -B build\cuda_v$cudaMajorVer --preset "CUDA $cudaMajorVer" -T cuda="$cuda" -DCMAKE_CUDA_COMPILER="$cuda\bin\nvcc.exe" -G "Visual Studio 16 2019" --install-prefix "$script:DIST_DIR"
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
@@ -136,12 +160,12 @@ function cuda11 {
             & cmake --install build\cuda_v$cudaMajorVer --component "CUDA" --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         } else {
-            write-host "CUDA v$cudaMajorVer not detected, skipping"
+            Write-Output "CUDA v$cudaMajorVer not detected, skipping"
         }
     } else {
-        write-host "not arch we wanted"
+        Write-Output "not arch we wanted"
     }
-    write-host "done"
+    Write-Output "done"
 }
 
 function cudaCommon {
@@ -159,7 +183,7 @@ function cudaCommon {
                     }
                 }
             }
-            write-host "Building CUDA v$cudaMajorVer backend libraries $cuda"
+            Write-Output "Building CUDA v$cudaMajorVer backend libraries $cuda"
             $env:CUDAToolkit_ROOT=$cuda
             & cmake -B build\cuda_v$cudaMajorVer --preset "CUDA $cudaMajorVer" -T cuda="$cuda" --install-prefix "$script:DIST_DIR"
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
@@ -168,7 +192,7 @@ function cudaCommon {
             & cmake --install build\cuda_v$cudaMajorVer --component "CUDA" --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         } else {
-            write-host "CUDA v$cudaMajorVer not detected, skipping"
+            Write-Output "CUDA v$cudaMajorVer not detected, skipping"
         }
     }
 }
@@ -181,11 +205,11 @@ function cuda13 {
     cudaCommon("13")
 }
 
-function rocm {
+function rocm6 {
     mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
     if ($script:ARCH -ne "arm64") {
         if ($script:HIP_PATH) {
-            write-host "Building ROCm backend libraries $script:HIP_PATH"
+            Write-Output "Building ROCm backend libraries $script:HIP_PATH"
             if (-Not (get-command -ErrorAction silent ninja)) {
                 $NINJA_DIR=(gci -path (Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation -r -fi ninja.exe).Directory.FullName
                 $env:PATH="$NINJA_DIR;$env:PATH"
@@ -193,9 +217,11 @@ function rocm {
             $env:HIPCXX="${script:HIP_PATH}\bin\clang++.exe"
             $env:HIP_PLATFORM="amd"
             $env:CMAKE_PREFIX_PATH="${script:HIP_PATH}"
+            # Set CC/CXX via environment instead of -D flags to avoid triggering
+            # spurious compiler-change reconfigures that reset CMAKE_INSTALL_PREFIX
+            $env:CC="${script:HIP_PATH}\bin\clang.exe"
+            $env:CXX="${script:HIP_PATH}\bin\clang++.exe"
             & cmake -B build\rocm --preset "ROCm 6" -G Ninja `
-                -DCMAKE_C_COMPILER=clang `
-                -DCMAKE_CXX_COMPILER=clang++ `
                 -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
                 -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
                 --install-prefix $script:DIST_DIR
@@ -203,20 +229,22 @@ function rocm {
             $env:HIPCXX=""
             $env:HIP_PLATFORM=""
             $env:CMAKE_PREFIX_PATH=""
+            $env:CC=""
+            $env:CXX=""
             & cmake --build build\rocm --target ggml-hip --config Release --parallel $script:JOBS
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             & cmake --install build\rocm --component "HIP" --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             Remove-Item -Path $script:DIST_DIR\lib\ollama\rocm\rocblas\library\*gfx906* -ErrorAction SilentlyContinue
         } else {
-            write-host "ROCm not detected, skipping"
+            Write-Output "ROCm not detected, skipping"
         }
     }
 }
 
 function vulkan {
     if ($env:VULKAN_SDK) {
-        write-host "Building Vulkan backend libraries"
+        Write-Output "Building Vulkan backend libraries"
         & cmake -B build\vulkan --preset Vulkan --install-prefix $script:DIST_DIR
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         & cmake --build build\vulkan --target ggml-vulkan --config Release --parallel $script:JOBS
@@ -224,33 +252,91 @@ function vulkan {
         & cmake --install build\vulkan  --component Vulkan --strip
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     } else {
-        write-host "Vulkan not detected, skipping"
+        Write-Output "Vulkan not detected, skipping"
+    }
+}
+
+function mlxCuda13 {
+    mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
+    $cudaMajorVer="13"
+    if ($script:ARCH -ne "arm64") {
+        if ("$script:CUDA_DIRS".Contains("v$cudaMajorVer")) {
+            foreach ($d in $Script:CUDA_DIRS){
+                if ($d.FullName.Contains("v$cudaMajorVer")) {
+                    if (test-path -literalpath (join-path -path $d -childpath "nvcc.exe" ) ) {
+                        $cuda=($d.FullName|split-path -parent)
+                        break
+                    }
+                }
+            }
+
+            # Check for cuDNN - required for MLX CUDA backend
+            # Supports two layouts:
+            # 1. CI/zip extract: CUDNN\include\cudnn.h, lib\x64\, bin\x64\
+            # 2. Official installer: CUDNN\v*\include\{cuda-ver}\cudnn.h, lib\{cuda-ver}\x64\, bin\{cuda-ver}\
+            if ($env:CUDNN_INCLUDE_PATH -and $env:CUDNN_LIBRARY_PATH) {
+                Write-Output "Using cuDNN from environment: $env:CUDNN_INCLUDE_PATH"
+            } elseif (Test-Path "C:\Program Files\NVIDIA\CUDNN\include\cudnn.h") {
+                # CI/zip layout (flat)
+                $cudnnRoot = "C:\Program Files\NVIDIA\CUDNN"
+                $env:CUDNN_ROOT_DIR = $cudnnRoot
+                $env:CUDNN_INCLUDE_PATH = "$cudnnRoot\include"
+                $env:CUDNN_LIBRARY_PATH = "$cudnnRoot\lib\x64"
+                Write-Output "Found cuDNN at $cudnnRoot (flat layout)"
+            } else {
+                # Official installer layout (versioned)
+                $cudnnRoot = $null
+                $resolved = Resolve-Path -Path "C:\Program Files\NVIDIA\CUDNN\v*" -ErrorAction SilentlyContinue | Sort-Object -Descending | Select-Object -First 1
+                if ($resolved -and (Test-Path "$($resolved.Path)\include\$cudaMajorVer.0\cudnn.h")) {
+                    $cudnnRoot = $resolved.Path
+                    $env:CUDNN_ROOT_DIR = $cudnnRoot
+                    $env:CUDNN_INCLUDE_PATH = "$cudnnRoot\include\$cudaMajorVer.0"
+                    $env:CUDNN_LIBRARY_PATH = "$cudnnRoot\lib\$cudaMajorVer.0\x64"
+                    Write-Output "Found cuDNN at $cudnnRoot (official installer, CUDA $cudaMajorVer.0)"
+                } else {
+                    Write-Output "cuDNN not found - set CUDNN_INCLUDE_PATH and CUDNN_LIBRARY_PATH environment variables"
+                    Write-Output "Skipping MLX build"
+                    return
+                }
+            }
+
+            Write-Output "Building MLX CUDA v$cudaMajorVer backend libraries $cuda"
+            $env:CUDAToolkit_ROOT=$cuda
+            & cmake -B build\mlx_cuda_v$cudaMajorVer --preset "MLX CUDA $cudaMajorVer" -T cuda="$cuda" --install-prefix "$script:DIST_DIR"
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --build build\mlx_cuda_v$cudaMajorVer --target mlx --target mlxc --config Release --parallel $script:JOBS -- /nodeReuse:false
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --install build\mlx_cuda_v$cudaMajorVer --component "MLX" --strip
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        } else {
+            Write-Output "CUDA v$cudaMajorVer not detected, skipping MLX build"
+        }
     }
 }
 
 function ollama {
     mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
-    write-host "Building ollama CLI"
+    Write-Output "Building ollama CLI"
     & go build -trimpath -ldflags "-s -w -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     cp .\ollama.exe "${script:DIST_DIR}\"
 }
 
 function app {
-    write-host "Building Ollama App $script:VERSION with package version $script:PKG_VERSION"
+    Write-Output "Building Ollama App $script:VERSION with package version $script:PKG_VERSION"
 
     if (!(Get-Command npm -ErrorAction SilentlyContinue)) {
-        write-host "npm is not installed. Please install Node.js and npm first:"
-        write-host "   Visit: https://nodejs.org/"
+        Write-Output "npm is not installed. Please install Node.js and npm first:"
+        Write-Output "   Visit: https://nodejs.org/"
         exit 1
     }
 
     if (!(Get-Command tsc -ErrorAction SilentlyContinue)) {
-        write-host "Installing TypeScript compiler..."
+        Write-Output "Installing TypeScript compiler..."
         npm install -g typescript
     }
     if (!(Get-Command tscriptify -ErrorAction SilentlyContinue)) {
-        write-host "Installing tscriptify..."
+        Write-Output "Installing tscriptify..."
         go install github.com/tkrajina/typescriptify-golang-structs/tscriptify@latest
     }
     if (!(Get-Command tscriptify -ErrorAction SilentlyContinue)) {
@@ -260,32 +346,32 @@ function app {
     Push-Location app/ui/app
     npm install
     if ($LASTEXITCODE -ne 0) { 
-        write-host "ERROR: npm install failed with exit code $LASTEXITCODE"
+        Write-Output "ERROR: npm install failed with exit code $LASTEXITCODE"
         exit $LASTEXITCODE
     }
 
-    write-host "Building React application..."
+    Write-Output "Building React application..."
     npm run build
     if ($LASTEXITCODE -ne 0) { 
-        write-host "ERROR: npm run build failed with exit code $LASTEXITCODE"
+        Write-Output "ERROR: npm run build failed with exit code $LASTEXITCODE"
         exit $LASTEXITCODE
     }
 
     # Check if dist directory exists and has content
     if (!(Test-Path "dist")) {
-        write-host "ERROR: dist directory was not created by npm run build"
+        Write-Output "ERROR: dist directory was not created by npm run build"
         exit 1
     }
 
     $distFiles = Get-ChildItem "dist" -Recurse
     if ($distFiles.Count -eq 0) {
-        write-host "ERROR: dist directory is empty after npm run build"
+        Write-Output "ERROR: dist directory is empty after npm run build"
         exit 1
     }
 
     Pop-Location
 
-    write-host "Running go generate"
+    Write-Output "Running go generate"
     & go generate ./...
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
 	& go build -trimpath -ldflags "-s -w -H windowsgui -X=github.com/ollama/ollama/app/version.Version=$script:VERSION" -o .\dist\windows-ollama-app-${script:ARCH}.exe ./app/cmd/app/
@@ -293,42 +379,42 @@ function app {
 }
 
 function deps {
-    write-host "Download MSVC Redistributables"
+    Write-Output "Download MSVC Redistributables"
     mkdir -Force -path "${script:SRC_DIR}\dist\\windows-arm64" | Out-Null
     mkdir -Force -path "${script:SRC_DIR}\dist\\windows-amd64" | Out-Null
-    invoke-webrequest -Uri "https://aka.ms/vs/17/release/vc_redist.arm64.exe" -OutFile  "${script:SRC_DIR}\dist\windows-arm64\vc_redist.arm64.exe"
-    invoke-webrequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile  "${script:SRC_DIR}\dist\windows-amd64\vc_redist.x64.exe"
-    write-host "Done."
+    invoke-webrequest -Uri "https://aka.ms/vs/17/release/vc_redist.arm64.exe" -OutFile  "${script:SRC_DIR}\dist\windows-arm64\vc_redist.arm64.exe" -ErrorAction Stop
+    invoke-webrequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile  "${script:SRC_DIR}\dist\windows-amd64\vc_redist.x64.exe" -ErrorAction Stop
+    Write-Output "Done."
 }
 
 function sign {
     # Copy install.ps1 to dist for release packaging
-    write-host "Copying install.ps1 to dist"
-    Copy-Item -Path "${script:SRC_DIR}\scripts\install.ps1" -Destination "${script:SRC_DIR}\dist\install.ps1"
+    Write-Output "Copying install.ps1 to dist"
+    Copy-Item -Path "${script:SRC_DIR}\scripts\install.ps1" -Destination "${script:SRC_DIR}\dist\install.ps1" -ErrorAction Stop
 
     if ("${env:KEY_CONTAINER}") {
-        write-host "Signing Ollama executables, scripts and libraries"
+        Write-Output "Signing Ollama executables, scripts and libraries"
         & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
             /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} `
             $(get-childitem -path "${script:SRC_DIR}\dist\windows-*" -r -include @('*.exe', '*.dll'))
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
 
-        write-host "Signing install.ps1"
+        Write-Output "Signing install.ps1"
         & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
             /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} `
             "${script:SRC_DIR}\dist\install.ps1"
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     } else {
-        write-host "Signing not enabled"
+        Write-Output "Signing not enabled"
     }
 }
 
 function installer {
     if ($null -eq ${script:INNO_SETUP_DIR}) {
-        write-host "ERROR: missing Inno Setup installation directory - install from https://jrsoftware.org/isdl.php"
+        Write-Output "ERROR: missing Inno Setup installation directory - install from https://jrsoftware.org/isdl.php"
         exit 1
     }
-    write-host "Building Ollama Installer"
+    Write-Output "Building Ollama Installer"
     cd "${script:SRC_DIR}\app"
     $env:PKG_VERSION=$script:PKG_VERSION
     if ("${env:KEY_CONTAINER}") {
@@ -342,24 +428,24 @@ function installer {
 function zip {
     if (Test-Path -Path "${script:SRC_DIR}\dist\windows-amd64") {
         if (Test-Path -Path "${script:SRC_DIR}\dist\windows-amd64\lib\ollama\rocm") {
-            write-host "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-amd64-rocm.zip"
+            Write-Output "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-amd64-rocm.zip"
             # Temporarily adjust paths so we can retain the same directory structure
             Remove-Item -ea 0 -r "${script:SRC_DIR}\dist\windows-amd64-rocm"
             mkdir -Force -path "${script:SRC_DIR}\dist\windows-amd64-rocm\lib\ollama"
             Write-Output "Extract this ROCm zip file to the same location where you extracted ollama-windows-amd64.zip" > "${script:SRC_DIR}\dist\windows-amd64-rocm\README.txt"
-            Move-Item -path "${script:SRC_DIR}\dist\windows-amd64\lib\ollama\rocm" -destination "${script:SRC_DIR}\dist\windows-amd64-rocm\lib\ollama"
+            Move-Item -path "${script:SRC_DIR}\dist\windows-amd64\lib\ollama\rocm" -destination "${script:SRC_DIR}\dist\windows-amd64-rocm\lib\ollama" -ErrorAction Stop
             Compress-Archive -CompressionLevel Optimal -Path "${script:SRC_DIR}\dist\windows-amd64-rocm\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-amd64-rocm.zip" -Force
         }
 
-        write-host "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-amd64.zip"
+        Write-Output "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-amd64.zip"
         Compress-Archive -CompressionLevel Optimal -Path "${script:SRC_DIR}\dist\windows-amd64\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-amd64.zip" -Force
         if (Test-Path -Path "${script:SRC_DIR}\dist\windows-amd64-rocm") {
-            Move-Item -destination "${script:SRC_DIR}\dist\windows-amd64\lib\ollama\rocm" -path "${script:SRC_DIR}\dist\windows-amd64-rocm\lib\ollama\rocm"
+            Move-Item -destination "${script:SRC_DIR}\dist\windows-amd64\lib\ollama\rocm" -path "${script:SRC_DIR}\dist\windows-amd64-rocm\lib\ollama\rocm" -ErrorAction Stop
         }
     }
 
     if (Test-Path -Path "${script:SRC_DIR}\dist\windows-arm64") {
-        write-host "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-arm64.zip"
+        Write-Output "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-arm64.zip"
         Compress-Archive -CompressionLevel Optimal -Path "${script:SRC_DIR}\dist\windows-arm64\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-arm64.zip" -Force
     }
 }
@@ -375,8 +461,9 @@ try {
         cpu
         cuda12
         cuda13
-        rocm
+        rocm6
         vulkan
+        mlxCuda13
         ollama
         app
         deps
@@ -385,13 +472,13 @@ try {
         zip
     } else {
         for ( $i = 0; $i -lt $args.count; $i++ ) {
-            write-host "running build step $($args[$i])"
+            Write-Output "running build step $($args[$i])"
             & $($args[$i])
         } 
     }
 } catch {
-    write-host "Build Failed"
-    write-host $_
+    Write-Error "Build Failed: $($_.Exception.Message)"
+    Write-Error "$($_.ScriptStackTrace)"
 } finally {
     set-location $script:SRC_DIR
     $env:PKG_VERSION=""
