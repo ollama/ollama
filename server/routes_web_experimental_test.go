@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
+	"github.com/ollama/ollama/version"
 )
 
 type webExperimentalUpstreamCapture struct {
@@ -92,6 +93,7 @@ func TestExperimentalWebEndpointsPassthrough(t *testing.T) {
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Authorization", "Bearer should-forward")
 			req.Header.Set("X-Test-Header", "web-experimental")
+			req.Header.Set(cloudProxyClientVersionHeader, "should-be-overwritten")
 
 			resp, err := local.Client().Do(req)
 			if err != nil {
@@ -114,6 +116,9 @@ func TestExperimentalWebEndpointsPassthrough(t *testing.T) {
 			}
 			if got := capture.header.Get("X-Test-Header"); got != "web-experimental" {
 				t.Fatalf("expected forwarded X-Test-Header=web-experimental, got %q", got)
+			}
+			if got := capture.header.Get(cloudProxyClientVersionHeader); got != version.Version {
+				t.Fatalf("expected %s=%q, got %q", cloudProxyClientVersionHeader, version.Version, got)
 			}
 		})
 	}
