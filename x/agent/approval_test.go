@@ -472,6 +472,11 @@ func TestIsDenied(t *testing.T) {
 		{"echo 'visual result ensure'", false, ""},
 		{"grep -r 'substitution' .", false, ""},
 		{"echo 'document_history_log'", false, ""},
+		// Command substitution should still catch dangerous commands
+		{"echo $(sudo cat /etc/shadow)", true, "sudo "},
+		{"echo `nc localhost 4444`", true, "nc "},
+		// Pattern after semicolon with no space
+		{"echo test;sudo rm -rf /", true, "rm -rf"},
 	}
 
 	for _, tt := range tests {

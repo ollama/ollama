@@ -233,8 +233,9 @@ func stripHeredocs(command string) string {
 	return result.String()
 }
 
-// commandPrefixes are characters that can precede a command name in shell.
-var commandPrefixes = []string{"|", "&&", "||", ";", "(", "\n", "\t"}
+// commandPrefixes are shell operators/syntax that can precede a command name.
+// This covers pipelines, logical operators, subshells, and command substitution.
+var commandPrefixes = []string{"|", "&&", "||", ";", "(", "$(", "`", "\n", "\t"}
 
 // matchesAtCommandPosition checks whether a pattern appears at a position
 // where it could be an actual command (start of string or after a shell operator).
@@ -266,6 +267,8 @@ func matchesAtCommandPosition(commandLower, patternLower string) bool {
 
 // commandPatterns are deny patterns that should only match at command
 // positions to avoid false positives from substrings in code/data.
+// When adding new deny patterns to denyPatterns, consider whether the pattern
+// could appear as a substring in normal code and add it here if so.
 var commandPatterns = map[string]bool{
 	"sudo ":   true,
 	"su ":     true,
