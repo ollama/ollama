@@ -399,7 +399,7 @@ func TestFromMessagesRequest_WithThinkingDisabled(t *testing.T) {
 		Model:     "test-model",
 		MaxTokens: 1024,
 		Messages:  []MessageParam{{Role: "user", Content: "Hello"}},
-		Thinking:  &ThinkingConfig{Type: "disabled", BudgetTokens: 1000},
+		Thinking:  &ThinkingConfig{Type: "disabled"},
 	}
 
 	result, err := FromMessagesRequest(req)
