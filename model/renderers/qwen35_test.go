@@ -211,6 +211,57 @@ func TestQwen35RendererStructuredToolArgumentsUseSpacedJSON(t *testing.T) {
 	}
 }
 
+func TestQwen35RendererToolDefinitionsUseLiteralHTMLChars(t *testing.T) {
+	renderer := &Qwen35Renderer{isThinking: true}
+
+	tools := []api.Tool{
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "get_weather",
+				Description: "Returns temperature in <fahrenheit> & <celsius>",
+				Parameters: api.ToolFunctionParameters{
+					Type: "object",
+					Properties: testPropsOrdered([]orderedProp{
+						{
+							Key: "location",
+							Value: api.ToolProperty{
+								Type:        api.PropertyType{"string"},
+								Description: "City name with <tag> & symbol",
+							},
+						},
+						{
+							Key: "filters",
+							Value: api.ToolProperty{
+								Type: api.PropertyType{"array"},
+								Items: map[string]any{
+									"type":        "string",
+									"description": "Use < and > literally & keep order",
+								},
+							},
+						},
+					}),
+					Required: []string{"location"},
+				},
+			},
+		},
+	}
+
+	got, err := renderer.Render([]api.Message{{Role: "user", Content: "call tool"}}, tools, nil)
+	if err != nil {
+		t.Fatalf("render failed: %v", err)
+	}
+
+	if strings.Contains(got, "\\u003c") || strings.Contains(got, "\\u003e") || strings.Contains(got, "\\u0026") {
+		t.Fatalf("expected literal <, >, and & in tool definitions, got:\n%s", got)
+	}
+
+	want := `{"type": "function", "function": {"name": "get_weather", "description": "Returns temperature in <fahrenheit> & <celsius>", "parameters": {"type": "object", "required": ["location"], "properties": {"location": {"type": "string", "description": "City name with <tag> & symbol"}, "filters": {"type": "array", "items": {"description": "Use < and > literally & keep order", "type": "string"}}}}}}`
+	if !strings.Contains(got, want) {
+		t.Fatalf("expected literal nested tool definition JSON, got:\n%s", got)
+	}
+}
+
 func TestQwen35RendererInterleavedThinkingAndTools(t *testing.T) {
 	renderer := &Qwen35Renderer{isThinking: true}
 

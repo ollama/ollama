@@ -39,10 +39,9 @@ func renderAdditionalKeys(obj any, handledKeys map[string]bool) string {
 		switch v := value.(type) {
 		case map[string]any, []any:
 			jsonBytes, _ := json.Marshal(v)
-			// TODO(drifkin): it would be nice to format the JSON here similarly to
-			// python's default json.dumps behavior (spaces after commas and colons).
-			// This would let us be byte-for-byte compatible with the reference
-			// implementation for most common inputs
+			// TODO(drifkin): This is wrong for qwen3-coder nested JSON values.
+			// The reference template uses `render_extra_keys(... | tojson | safe)`,
+			// so this should emit spaced JSON with literal <, >, and &.
 			jsonStr := string(jsonBytes)
 			sb.WriteString("\n<" + key + ">" + jsonStr + "</" + key + ">")
 		case nil:
@@ -312,10 +311,8 @@ func formatToolDefinitionType(tp api.PropertyType) string {
 		return tp[0]
 	}
 
-	// TODO(drifkin): it would be nice to format the JSON here similarly to
-	// python's default json.dumps behavior (spaces after commas and colons).
-	// This would let us be byte-for-byte compatible with the reference
-	// implementation for most common inputs
+	// TODO(drifkin): This is wrong for qwen3-coder multi-type definitions.
+	// The reference template uses Python string formatting here, not compact JSON.
 	jsonBytes, err := json.Marshal(tp)
 	if err != nil {
 		return "[]"

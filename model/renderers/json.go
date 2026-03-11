@@ -1,12 +1,12 @@
 package renderers
 
-import "encoding/json"
+import "github.com/ollama/ollama/internal/jsonutil"
 
 // marshalWithSpaces marshals v to JSON and adds a space after each ':' and ','
 // that appears outside of string values. This matches the formatting expected
 // by certain model architectures.
 func marshalWithSpaces(v any) ([]byte, error) {
-	b, err := json.Marshal(v)
+	b, err := jsonutil.Marshal(v)
 	if err != nil {
 		return nil, err
 	}

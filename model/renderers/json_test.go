@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/ollama/ollama/api"
 )
 
 func TestMarshalWithSpaces(t *testing.T) {
@@ -341,5 +342,48 @@ func TestMarshalWithSpaces(t *testing.T) {
 				t.Errorf("mismatch (-got +want):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestMarshalWithSpacesToolTypesUseLiteralHTMLChars(t *testing.T) {
+	input := api.Tool{
+		Type: "function",
+		Function: api.ToolFunction{
+			Name:        "get_weather",
+			Description: "Returns temperature in <fahrenheit> & <celsius>",
+			Parameters: api.ToolFunctionParameters{
+				Type: "object",
+				Properties: testPropsOrdered([]orderedProp{
+					{
+						Key: "location",
+						Value: api.ToolProperty{
+							Type:        api.PropertyType{"string"},
+							Description: "City name with <tag> & symbol",
+						},
+					},
+					{
+						Key: "filters",
+						Value: api.ToolProperty{
+							Type: api.PropertyType{"array"},
+							Items: map[string]any{
+								"type":        "string",
+								"description": "Use < and > literally & keep order",
+							},
+						},
+					},
+				}),
+				Required: []string{"location"},
+			},
+		},
+	}
+
+	result, err := marshalWithSpaces(input)
+	if err != nil {
+		t.Fatalf("marshalWithSpaces failed: %v", err)
+	}
+
+	got := string(result)
+	if diff := cmp.Diff(got, `{"type": "function", "function": {"name": "get_weather", "description": "Returns temperature in <fahrenheit> & <celsius>", "parameters": {"type": "object", "required": ["location"], "properties": {"location": {"type": "string", "description": "City name with <tag> & symbol"}, "filters": {"type": "array", "items": {"description": "Use < and > literally & keep order", "type": "string"}}}}}}`); diff != "" {
+		t.Fatalf("unexpected serialized tool (-got +want):\n%s", diff)
 	}
 }

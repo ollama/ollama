@@ -3,9 +3,11 @@
 package orderedmap
 
 import (
+	"bytes"
 	"encoding/json"
 	"iter"
 
+	"github.com/ollama/ollama/internal/jsonutil"
 	orderedmap "github.com/wk8/go-ordered-map/v2"
 )
 
@@ -83,7 +85,33 @@ func (m *Map[K, V]) MarshalJSON() ([]byte, error) {
 	if m == nil || m.om == nil {
 		return []byte("null"), nil
 	}
-	return json.Marshal(m.om)
+
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+
+	first := true
+	for pair := m.om.Oldest(); pair != nil; pair = pair.Next() {
+		if !first {
+			buf.WriteByte(',')
+		}
+		first = false
+
+		key, err := jsonutil.Marshal(pair.Key)
+		if err != nil {
+			return nil, err
+		}
+		value, err := jsonutil.Marshal(pair.Value)
+		if err != nil {
+			return nil, err
+		}
+
+		buf.Write(key)
+		buf.WriteByte(':')
+		buf.Write(value)
+	}
+
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
 }
 
 // UnmarshalJSON implements json.Unmarshaler. The insertion order matches the

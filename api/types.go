@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/internal/jsonutil"
 	"github.com/ollama/ollama/internal/orderedmap"
 	"github.com/ollama/ollama/types/model"
 )
@@ -313,7 +314,7 @@ func (t ToolCallFunctionArguments) MarshalJSON() ([]byte, error) {
 	if t.om == nil {
 		return []byte("{}"), nil
 	}
-	return json.Marshal(t.om)
+	return t.om.MarshalJSON()
 }
 
 type Tool struct {
@@ -347,10 +348,10 @@ func (pt *PropertyType) UnmarshalJSON(data []byte) error {
 func (pt PropertyType) MarshalJSON() ([]byte, error) {
 	if len(pt) == 1 {
 		// If there's only one type, marshal as a string
-		return json.Marshal(pt[0])
+		return jsonutil.Marshal(pt[0])
 	}
 	// Otherwise marshal as an array
-	return json.Marshal([]string(pt))
+	return jsonutil.Marshal([]string(pt))
 }
 
 // String returns a string representation of the PropertyType
@@ -421,7 +422,7 @@ func (t ToolPropertiesMap) MarshalJSON() ([]byte, error) {
 	if t.om == nil {
 		return []byte("null"), nil
 	}
-	return json.Marshal(t.om)
+	return t.om.MarshalJSON()
 }
 
 func (t *ToolPropertiesMap) UnmarshalJSON(data []byte) error {
