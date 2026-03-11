@@ -66,11 +66,12 @@ var integrations = map[string]Runner{
 // recommendedModels are shown when the user has no models or as suggestions.
 // Order matters: local models first, then cloud models.
 var recommendedModels = []ModelItem{
-	{Name: "minimax-m2.5:cloud", Description: "Fast, efficient coding and real-world productivity", Recommended: true},
-	{Name: "glm-5:cloud", Description: "Reasoning and code generation", Recommended: true},
 	{Name: "kimi-k2.5:cloud", Description: "Multimodal reasoning with subagents", Recommended: true},
+	{Name: "qwen3.5:cloud", Description: "Reasoning, coding, and agentic tool use with vision", Recommended: true},
+	{Name: "glm-5:cloud", Description: "Reasoning and code generation", Recommended: true},
+	{Name: "minimax-m2.5:cloud", Description: "Fast, efficient coding and real-world productivity", Recommended: true},
 	{Name: "glm-4.7-flash", Description: "Reasoning and code generation locally", Recommended: true},
-	{Name: "qwen3:8b", Description: "Efficient all-purpose assistant", Recommended: true},
+	{Name: "qwen3.5", Description: "Reasoning, coding, and visual understanding locally", Recommended: true},
 }
 
 // cloudModelLimits maps cloud model base names to their token limits.
@@ -98,7 +99,7 @@ var cloudModelLimits = map[string]cloudModelLimit{
 // recommendedVRAM maps local recommended models to their approximate VRAM requirement.
 var recommendedVRAM = map[string]string{
 	"glm-4.7-flash": "~25GB",
-	"qwen3:8b":      "~11GB",
+	"qwen3.5":       "~11GB",
 }
 
 // integrationAliases are hidden from the interactive selector but work as CLI arguments.
