@@ -654,9 +654,13 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 
 	err = os.WriteFile(fp, manifestJSON, 0o644)
 	if err != nil {
-		slog.Info(fmt.Sprintf("couldn't write to %s", fp))
-		return err
+		return fmt.Errorf(
+			"failed to write manifest for %s: %w. "+
+				"model blobs may already exist; fix permissions and run `ollama pull %s` again",
+			n.String(), err, n.String(),
+		)
 	}
+	
 
 	if !envconfig.NoPrune() && len(deleteMap) > 0 {
 		fn(api.ProgressResponse{Status: "removing unused layers"})
