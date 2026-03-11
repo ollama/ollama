@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -82,4 +83,25 @@ func Sign(ctx context.Context, bts []byte) (string, error) {
 
 	// signature is <pubkey>:<signature>
 	return fmt.Sprintf("%s:%s", bytes.TrimSpace(parts[1]), base64.StdEncoding.EncodeToString(signedData.Blob)), nil
+}
+
+// SignRequest adds a nonce query parameter and an Authorization header with
+// an Ed25519 signature to req.
+func SignRequest(ctx context.Context, req *http.Request) error {
+	nonce, err := NewNonce(rand.Reader, 16)
+	if err != nil {
+		return err
+	}
+
+	q := req.URL.Query()
+	q.Set("nonce", nonce)
+	req.URL.RawQuery = q.Encode()
+
+	data := []byte(fmt.Sprintf("%s,%s", req.Method, req.URL.RequestURI()))
+	signature, err := Sign(ctx, data)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", signature)
+	return nil
 }
