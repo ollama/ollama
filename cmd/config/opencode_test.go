@@ -723,6 +723,8 @@ func TestLookupCloudModelLimit(t *testing.T) {
 		{"kimi-k2.5:cloud", true, 262_144, 262_144},
 		{"deepseek-v3.2", false, 0, 0},
 		{"deepseek-v3.2:cloud", true, 163_840, 65_536},
+		{"qwen3.5", false, 0, 0},
+		{"qwen3.5:cloud", true, 262_144, 32_768},
 		{"qwen3-coder:480b", false, 0, 0},
 		{"qwen3-coder:480b:cloud", true, 262_144, 65_536},
 		{"qwen3-coder-next:cloud", true, 262_144, 32_768},
