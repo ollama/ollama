@@ -16,9 +16,14 @@ import (
 )
 
 var initError error
+var initLoadError string
 
 // CheckInit returns any error that occurred during MLX dynamic library initialization.
+// When initialization failed, detailed load errors are logged to help diagnose the issue.
 func CheckInit() error {
+	if initError != nil && initLoadError != "" {
+		slog.Error(initLoadError)
+	}
 	return initError
 }
 
@@ -44,12 +49,12 @@ func tryLoadFromDir(dir string) bool {
 
 		var handle C.mlx_dynamic_handle
 		if C.mlx_dynamic_load(&handle, cPath) != 0 {
-			slog.Error("Failed to load MLX dynamic library", "path", path)
+			initLoadError = fmt.Sprintf("failed to load MLX dynamic library: path=%s", path)
 			continue
 		}
 
 		if C.mlx_dynamic_load_symbols(handle) != 0 {
-			slog.Error("Failed to load MLX dynamic library symbols", "path", path)
+			initLoadError = fmt.Sprintf("failed to load MLX dynamic library symbols: path=%s", path)
 			C.mlx_dynamic_unload(&handle)
 			continue
 		}
