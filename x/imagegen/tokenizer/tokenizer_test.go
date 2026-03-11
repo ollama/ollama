@@ -82,14 +82,14 @@ func TestRoundtrip(t *testing.T) {
 		"50%",
 
 		// Unicode
-		"こんにちは",          // Japanese
-		"你好",              // Chinese
-		"مرحبا",            // Arabic (RTL)
-		"🎉",               // Emoji
-		"Hello 世界",        // Mixed
-		"café",             // Accented
-		"naïve",            // Diaeresis
-		"Ω≈ç√∫",            // Math symbols
+		"こんにちは",    // Japanese
+		"你好",       // Chinese
+		"مرحبا",    // Arabic (RTL)
+		"🎉",        // Emoji
+		"Hello 世界", // Mixed
+		"café",     // Accented
+		"naïve",    // Diaeresis
+		"Ω≈ç√∫",    // Math symbols
 
 		// Code
 		"func main() {}",
@@ -362,7 +362,7 @@ func TestBPEPretokenizer(t *testing.T) {
 		{"don't", []string{"don", "'t"}},
 		{"I'm", []string{"I", "'m"}},
 		{"123", []string{"123"}},
-		{"12345", []string{"12345"}}, // GPT-2 pattern matches any digit sequence
+		{"12345", []string{"12345"}},       // GPT-2 pattern matches any digit sequence
 		{"a  b", []string{"a", " ", " b"}}, // whitespace boundary: last space prepends to word
 		{"   ", []string{"   "}},           // pure whitespace stays together
 		{"\n\n", []string{"\n\n"}},         // newlines stay together
@@ -454,11 +454,11 @@ func TestWordPiecePretokenizer(t *testing.T) {
 		expected []string
 	}{
 		{"Hello", []string{"Hello"}},
-		{"Hello world", []string{"Hello", "world"}},           // whitespace stripped
+		{"Hello world", []string{"Hello", "world"}},             // whitespace stripped
 		{"Hello, world!", []string{"Hello", ",", "world", "!"}}, // punct separate
-		{"don't", []string{"don", "'", "t"}},                   // apostrophe separate (unlike BPE)
-		{"   spaces   ", []string{"spaces"}},                   // whitespace stripped
-		{"Hello.World", []string{"Hello", ".", "World"}},       // punct splits
+		{"don't", []string{"don", "'", "t"}},                    // apostrophe separate (unlike BPE)
+		{"   spaces   ", []string{"spaces"}},                    // whitespace stripped
+		{"Hello.World", []string{"Hello", ".", "World"}},        // punct splits
 		{"test@email.com", []string{"test", "@", "email", ".", "com"}},
 	}
 
