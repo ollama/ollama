@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/rand"
 	"net/http"
 	"strings"
@@ -93,7 +94,12 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 		}
 
 		if chatResponse.Done {
-			c := chunks[len(chunks)-1]
+			c := openai.ToChunk(w.id, chatResponse, w.toolCallSent)
+			if len(chunks) > 0 {
+				c = chunks[len(chunks)-1]
+			} else {
+				slog.Warn("ToChunks returned no chunks; falling back to ToChunk for usage chunk", "id", w.id, "model", chatResponse.Model)
+			}
 			if w.streamOptions != nil && w.streamOptions.IncludeUsage {
 				u := openai.ToUsage(chatResponse)
 				c.Usage = &u
