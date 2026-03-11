@@ -16,8 +16,8 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
+	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/internal/fileutil"
 	"github.com/ollama/ollama/types/model"
 )
 

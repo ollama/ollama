@@ -10,8 +10,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/internal/fileutil"
 )
 
 // OpenCode implements Runner and Editor for OpenCode integration

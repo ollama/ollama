@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ollama/ollama/internal/fileutil"
+	"github.com/ollama/ollama/cmd/internal/fileutil"
 )
 
 type integration struct {

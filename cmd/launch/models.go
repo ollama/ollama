@@ -14,8 +14,8 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
+	"github.com/ollama/ollama/cmd/internal/fileutil"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
-	"github.com/ollama/ollama/internal/fileutil"
 	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/progress"
 )
