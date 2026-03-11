@@ -649,7 +649,11 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(fp), 0o755); err != nil {
-		return err
+		return fmt.Errorf(
+			"failed to create manifest directory for %s: %w. "+
+				"model blobs may already exist; fix permissions and run `ollama pull %s` again",
+			n.String(), err, n.String(),
+		)
 	}
 
 	err = os.WriteFile(fp, manifestJSON, 0o644)
@@ -660,7 +664,6 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 			n.String(), err, n.String(),
 		)
 	}
-	
 
 	if !envconfig.NoPrune() && len(deleteMap) > 0 {
 		fn(api.ProgressResponse{Status: "removing unused layers"})
