@@ -68,7 +68,7 @@ func (s Sampler) PenalizesHistory() bool {
 }
 
 func (s *Sampler) applyHistoryPenalties(tokens []token) {
-	if s.counts == nil || len(s.counts) == 0 {
+	if len(s.counts) == 0 {
 		return
 	}
 

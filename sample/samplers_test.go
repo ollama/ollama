@@ -66,7 +66,7 @@ func TestSamplerNoopPenaltiesSkipHistory(t *testing.T) {
 		t.Fatal("expected no-op penalties to disable history tracking")
 	}
 
-	for i := 0; i < DefaultPenaltyLookback+10; i++ {
+	for range DefaultPenaltyLookback + 10 {
 		sampler.Accept(1)
 	}
 
@@ -85,7 +85,7 @@ func TestSamplerActivePenaltiesTrackLookback(t *testing.T) {
 		t.Fatal("expected non-default penalties to enable history tracking")
 	}
 
-	for i := 0; i < DefaultPenaltyLookback+10; i++ {
+	for range DefaultPenaltyLookback + 10 {
 		sampler.Accept(7)
 	}
 
