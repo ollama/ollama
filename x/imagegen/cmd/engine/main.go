@@ -79,6 +79,10 @@ func main() {
 		log.Fatalf("MLX initialization failed: %v", mlx.GetMLXInitError())
 	}
 
+	// Restore strict error handling now that we know MLX is working.
+	// During init(), a safe handler prevented exit(-1) on GPU errors.
+	mlx.RestoreDefaultErrorHandler()
+
 	// CPU profiling
 	if *cpuProfile != "" {
 		f, err := os.Create(*cpuProfile)
