@@ -649,19 +649,24 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(fp), 0o755); err != nil {
+		// rollback partial download
+		_ = deleteUnusedLayers(deleteMap)
+
 		return fmt.Errorf(
-			"failed to create manifest directory for %s: %w. "+
-				"model blobs may already exist; fix permissions and run `ollama pull %s` again",
-			n.String(), err, n.String(),
+			"failed to create manifest directory for %s: %w",
+			n.String(),
+			err,
 		)
 	}
 
-	err = os.WriteFile(fp, manifestJSON, 0o644)
-	if err != nil {
+	if err := os.WriteFile(fp, manifestJSON, 0o644); err != nil {
+		// rollback partial download
+		_ = deleteUnusedLayers(deleteMap)
+
 		return fmt.Errorf(
-			"failed to write manifest for %s: %w. "+
-				"model blobs may already exist; fix permissions and run `ollama pull %s` again",
-			n.String(), err, n.String(),
+			"failed to write manifest for %s: %w",
+			n.String(),
+			err,
 		)
 	}
 
