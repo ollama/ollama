@@ -335,7 +335,7 @@ func SelectModelWithSelector(ctx context.Context, selector SingleSelector) (stri
 				return "", errCancelled
 			}
 			fmt.Fprintf(os.Stderr, "\n")
-			if err := pullModel(ctx, client, selected); err != nil {
+			if err := PullModel(ctx, client, selected); err != nil {
 				return "", fmt.Errorf("failed to pull %s: %w", selected, err)
 			}
 		}
@@ -535,7 +535,7 @@ func selectModelsWithSelectors(ctx context.Context, name, current string, single
 		}
 		for _, m := range toPull {
 			fmt.Fprintf(os.Stderr, "\n")
-			if err := pullModel(ctx, client, m); err != nil {
+			if err := PullModel(ctx, client, m); err != nil {
 				return nil, fmt.Errorf("failed to pull %s: %w", m, err)
 			}
 		}
@@ -575,7 +575,7 @@ func confirmAndPull(ctx context.Context, client *api.Client, model string) error
 		return errCancelled
 	}
 	fmt.Fprintf(os.Stderr, "\n")
-	if err := pullModel(ctx, client, model); err != nil {
+	if err := PullModel(ctx, client, model); err != nil {
 		return fmt.Errorf("failed to pull %s: %w", model, err)
 	}
 	return nil
@@ -1391,7 +1391,7 @@ func cloudStatusDisabled(ctx context.Context, client *api.Client) (disabled bool
 	return status.Cloud.Disabled, true
 }
 
-func pullModel(ctx context.Context, client *api.Client, model string) error {
+func PullModel(ctx context.Context, client *api.Client, model string) error {
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 

@@ -36,6 +36,7 @@ import (
 	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/fitcheck"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
@@ -1439,6 +1440,69 @@ func (s *Server) ListHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, api.ListResponse{Models: models})
 }
 
+// FitHandler returns hardware capabilities and a ranked list of model compatibility candidates.
+func (s *Server) FitHandler(c *gin.Context) {
+	modelsDir := envconfig.Models()
+	hw, err := fitcheck.Collect(modelsDir)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	candidates := fitcheck.Score(hw, fitcheck.Requirements)
+
+	// Mark candidates that are already installed locally.
+	if ms, err := manifest.Manifests(true); err == nil {
+		installed := make(map[string]bool, len(ms))
+		for n := range ms {
+			installed[n.DisplayShortest()] = true
+		}
+		for i := range candidates {
+			if installed[candidates[i].Req.Name] {
+				candidates[i].Installed = true
+			}
+		}
+	}
+
+	// apply optional query filters
+	if family := c.Query("family"); family != "" {
+		var filtered []fitcheck.ModelCandidate
+		for _, c2 := range candidates {
+			if strings.Contains(strings.ToLower(c2.Req.Family), strings.ToLower(family)) {
+				filtered = append(filtered, c2)
+			}
+		}
+		candidates = filtered
+	}
+	if tag := c.Query("tags"); tag != "" {
+		var filtered []fitcheck.ModelCandidate
+		for _, c2 := range candidates {
+			for _, t2 := range c2.Req.Tags {
+				if strings.EqualFold(t2, tag) {
+					filtered = append(filtered, c2)
+					break
+				}
+			}
+		}
+		candidates = filtered
+	}
+	showAll := c.Query("all") == "true"
+	if !showAll {
+		var filtered []fitcheck.ModelCandidate
+		for _, c2 := range candidates {
+			if c2.Tier != fitcheck.TierTooLarge {
+				filtered = append(filtered, c2)
+			}
+		}
+		candidates = filtered
+	}
+
+	c.JSON(http.StatusOK, fitcheck.FitResponse{
+		System: hw,
+		Models: candidates,
+	})
+}
+
 func (s *Server) CopyHandler(c *gin.Context) {
 	var r api.CopyRequest
 	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
@@ -1672,6 +1736,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.HEAD("/api/version", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"version": version.Version}) })
 	r.GET("/api/version", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"version": version.Version}) })
 	r.GET("/api/status", s.StatusHandler)
+	r.GET("/api/fit", s.FitHandler)
 
 	// Local model cache management (new implementation is at end of function)
 	r.POST("/api/pull", s.PullHandler)

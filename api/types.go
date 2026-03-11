@@ -922,6 +922,76 @@ type UserResponse struct {
 	Plan      string    `json:"plan,omitempty"`
 }
 
+// FitDeviceID identifies a GPU device.
+type FitDeviceID struct {
+	ID      string `json:"id"`
+	Library string `json:"backend,omitempty"`
+}
+
+// FitDeviceInfo describes a GPU device as seen by the fit subsystem.
+type FitDeviceInfo struct {
+	FitDeviceID
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	TotalMemory uint64 `json:"total_memory"`
+	FreeMemory  uint64 `json:"free_memory,omitempty"`
+	ComputeMajor int   `json:"-"`
+	ComputeMinor int   `json:"-"`
+}
+
+// FitHardwareProfile describes the hardware capabilities of the machine.
+type FitHardwareProfile struct {
+	GPUs                []FitDeviceInfo `json:"gpus"`
+	BestGPU             *FitDeviceInfo  `json:"best_gpu,omitempty"`
+	RAMTotalBytes       uint64          `json:"ram_total_bytes"`
+	RAMAvailableBytes   uint64          `json:"ram_available_bytes"`
+	DiskModelPathBytes  uint64          `json:"disk_model_path_bytes"`
+	DiskModelAvailBytes uint64          `json:"disk_model_avail_bytes"`
+	ModelsDir           string          `json:"models_dir"`
+	OS                  string          `json:"os"`
+	Arch                string          `json:"arch"`
+}
+
+// FitModelRequirement describes hardware requirements for one model variant.
+type FitModelRequirement struct {
+	Name       string   `json:"name"`
+	Family     string   `json:"family"`
+	Quant      string   `json:"quant"`
+	DiskSizeMB uint64   `json:"disk_size_mb,omitempty"`
+	VRAMMinMB  uint64   `json:"vram_min_mb,omitempty"`
+	RAMMinMB   uint64   `json:"ram_min_mb,omitempty"`
+	Tags       []string `json:"tags,omitempty"`
+}
+
+// FitModelCandidate is a scored model entry returned by GET /api/fit.
+type FitModelCandidate struct {
+	Req       FitModelRequirement `json:"req"`
+	Tier      int                 `json:"tier"`
+	Score     float64             `json:"score"`
+	RunMode   string              `json:"run_mode"`
+	EstTPS    int                 `json:"est_tps"`
+	Notes     []string            `json:"notes,omitempty"`
+	Installed bool                `json:"installed"`
+}
+
+// FitResponse is returned by GET /api/fit.
+type FitResponse struct {
+	System FitHardwareProfile  `json:"system"`
+	Models []FitModelCandidate `json:"models"`
+}
+
+// FitRequest carries optional query parameters for GET /api/fit.
+type FitRequest struct {
+	// All, when true, includes models that are too large to run on this hardware.
+	All bool
+
+	// Family filters results to a specific model family (case-insensitive substring match).
+	Family string
+
+	// Tags filters results to models with a specific tag (e.g. "code", "vision", "embed").
+	Tags string
+}
+
 // Tensor describes the metadata for a given tensor.
 type Tensor struct {
 	Name  string   `json:"name"`

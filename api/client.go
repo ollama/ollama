@@ -498,3 +498,46 @@ type AliasDeleteRequest struct {
 func (c *Client) DeleteAliasExperimental(ctx context.Context, req *AliasDeleteRequest) error {
 	return c.do(ctx, http.MethodDelete, "/api/experimental/aliases", req, nil)
 }
+
+// Fit queries the server for hardware capabilities and ranked model compatibility.
+func (c *Client) Fit(ctx context.Context, req FitRequest) (*FitResponse, error) {
+	requestURL := c.base.JoinPath("/api/fit")
+	q := requestURL.Query()
+	if req.All {
+		q.Set("all", "true")
+	}
+	if req.Family != "" {
+		q.Set("family", req.Family)
+	}
+	if req.Tags != "" {
+		q.Set("tags", req.Tags)
+	}
+	requestURL.RawQuery = q.Encode()
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json")
+
+	respObj, err := c.http.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer respObj.Body.Close()
+
+	respBody, err := io.ReadAll(respObj.Body)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkError(respObj, respBody); err != nil {
+		return nil, err
+	}
+
+	var resp FitResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}

@@ -49,6 +49,7 @@ type menuItem struct {
 	integration string // integration name for loading model config, empty if not an integration
 	isRunModel  bool
 	isOthers    bool
+	isFitCheck  bool
 }
 
 var mainMenuItems = []menuItem{
@@ -56,6 +57,11 @@ var mainMenuItems = []menuItem{
 		title:       "Run a model",
 		description: "Start an interactive chat with a model",
 		isRunModel:  true,
+	},
+	{
+		title:       "Fit Check",
+		description: "See which models are compatible with this machine",
+		isFitCheck:  true,
 	},
 	{
 		title:       "Launch Claude Code",
@@ -133,6 +139,9 @@ type model struct {
 	signInModel     string
 	signInSpinner   int
 	signInFromModal bool // true if sign-in was triggered from modal (not main menu)
+
+	showingFitCheck bool
+	fitCheckModel   FitCheckModel
 
 	width     int    // terminal width from WindowSizeMsg
 	statusMsg string // temporary status message shown near help text
@@ -420,6 +429,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.showingFitCheck {
+		updated, cmd := m.fitCheckModel.Update(msg)
+		m.fitCheckModel = updated
+		if m.fitCheckModel.cancelled {
+			m.showingFitCheck = false
+			return m, nil
+		}
+		if m.fitCheckModel.confirmed {
+			m.selected = true
+			m.quitting = true
+			return m, tea.Quit
+		}
+		return m, cmd
+	}
+
 	if m.showingMultiModal {
 		switch msg := msg.(type) {
 		case tea.KeyMsg:
@@ -531,6 +555,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter", " ":
 			item := m.items[m.cursor]
 
+			// Fit Check: open the tabbed interactive screen
+			if item.isFitCheck {
+				m.fitCheckModel = NewFitCheckModel()
+				m.fitCheckModel.width = m.width
+				m.showingFitCheck = true
+				return m, m.fitCheckModel.Init()
+			}
+
 			if item.integration != "" && !config.IsIntegrationInstalled(item.integration) && !config.AutoInstallable(item.integration) {
 				return m, nil
 			}
@@ -591,6 +623,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	if m.quitting {
 		return ""
+	}
+
+	if m.showingFitCheck {
+		return m.fitCheckModel.View()
 	}
 
 	if m.showingSignIn {
@@ -698,6 +734,8 @@ const (
 	SelectionChangeRunModel
 	SelectionIntegration       // Generic integration selection
 	SelectionChangeIntegration // Generic change model for integration
+	SelectionFitCheck          // Run the hardware fit-check
+	SelectionFitCheckPull      // Pull models chosen in the fit-check screen
 )
 
 type Result struct {
@@ -744,6 +782,17 @@ func Run() (Result, error) {
 
 	if item.isRunModel {
 		return Result{Selection: SelectionRunModel}, nil
+	}
+
+	if item.isFitCheck {
+		// User confirmed model selection inside fit check
+		if fm.fitCheckModel.confirmed {
+			return Result{
+				Selection: SelectionFitCheckPull,
+				Models:    fm.fitCheckModel.Selected(),
+			}, nil
+		}
+		return Result{Selection: SelectionNone}, nil
 	}
 
 	return Result{

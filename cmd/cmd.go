@@ -2002,6 +2002,27 @@ func runInteractiveTUI(cmd *cobra.Command) {
 		case tui.SelectionNone:
 			// User quit
 			return
+		case tui.SelectionFitCheck:
+			// legacy path — no longer reached; fit check now runs inside the TUI loop
+			continue
+		case tui.SelectionFitCheckPull:
+			client, err := api.ClientFromEnvironment()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				continue
+			}
+			for _, modelName := range result.Models {
+				if err := config.PullModel(cmd.Context(), client, modelName); err != nil {
+					if errors.Is(err, context.Canceled) {
+						break
+					}
+					fmt.Fprintf(os.Stderr, "Error pulling %s: %v\n", modelName, err)
+				} else {
+					fmt.Printf("✓ %s ready\n", modelName)
+				}
+			}
+			fmt.Print("\nAll models processed. Press Enter to return to the menu...")
+			fmt.Scanln()
 		case tui.SelectionRunModel:
 			_ = config.SetLastSelection("run")
 			if modelName := config.LastModel(); modelName != "" && !config.IsCloudModelDisabled(cmd.Context(), modelName) {
@@ -2358,6 +2379,7 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		runnerCmd,
+		fitCmd(),
 		config.LaunchCmd(checkServerHeartbeat, runInteractiveTUI),
 	)
 
