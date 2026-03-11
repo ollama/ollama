@@ -8,6 +8,7 @@ package mlx
 
 // Use generated wrappers instead of direct MLX headers
 #include "mlx.h"
+#include "mlx_error_handler.h"
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -1836,11 +1837,31 @@ func init() {
 		return
 	}
 
+	// Enter safe mode: replace the default exit(-1) error handler with one
+	// that logs and stores errors. This prevents a GPU init failure from
+	// killing the entire process during startup.
+	C.mlx_set_safe_init_mode()
+
 	// Lock main goroutine to OS thread for CUDA context stability.
 	// CUDA contexts are bound to threads; Go can migrate goroutines between threads.
 	runtime.LockOSThread()
 	RandomState[0] = RandomKey(uint64(time.Now().UnixMilli()))
 	Keep(RandomState[0]) // Global state should persist
+
+	// Check if the RandomKey call silently failed under safe mode
+	if C.mlx_had_init_error() != 0 {
+		msg := C.GoString(C.mlx_get_init_error())
+		mlxInitError = fmt.Errorf("MLX GPU init failed: %s", msg)
+		mlxInitialized = false
+		return
+	}
+}
+
+// RestoreDefaultErrorHandler restores the default MLX error handler (exit on error).
+// Call this from runner entry points after confirming MLX is available,
+// to get the original strict error behavior during actual MLX work.
+func RestoreDefaultErrorHandler() {
+	C.mlx_set_default_error_mode()
 }
 
 // RandomKey creates a PRNG key from a seed
