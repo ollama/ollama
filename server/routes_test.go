@@ -721,6 +721,80 @@ func TestShow(t *testing.T) {
 	}
 }
 
+func TestShowContextLengthUsesServerDefault(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	s := Server{defaultNumCtx: 4096}
+
+	// Create a model with a training context of 131072 (128K)
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture": "llama",
+		"llama.context_length": uint32(131072),
+	}, nil)
+
+	createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name:  "ctx-test-model",
+		Files: map[string]string{"model.gguf": digest},
+	})
+
+	// Without OLLAMA_CONTEXT_LENGTH set, should use VRAM-based default (4096)
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{Name: "ctx-test-model"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	var resp api.ShowResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	ctxLen, ok := resp.ModelInfo["llama.context_length"]
+	if !ok {
+		t.Fatal("expected llama.context_length in ModelInfo")
+	}
+
+	// JSON decodes numbers as float64
+	if int(ctxLen.(float64)) != 4096 {
+		t.Errorf("expected context_length 4096 (server default), got %v", ctxLen)
+	}
+}
+
+func TestShowContextLengthUsesEnvVar(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "8192")
+
+	s := Server{defaultNumCtx: 4096}
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture": "llama",
+		"llama.context_length": uint32(131072),
+	}, nil)
+
+	createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name:  "ctx-test-model",
+		Files: map[string]string{"model.gguf": digest},
+	})
+
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{Name: "ctx-test-model"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	var resp api.ShowResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	ctxLen, ok := resp.ModelInfo["llama.context_length"]
+	if !ok {
+		t.Fatal("expected llama.context_length in ModelInfo")
+	}
+
+	if int(ctxLen.(float64)) != 8192 {
+		t.Errorf("expected context_length 8192 (env var), got %v", ctxLen)
+	}
+}
+
 func TestNormalize(t *testing.T) {
 	type testCase struct {
 		input       []float32
