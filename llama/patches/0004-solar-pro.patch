@@ -11,11 +11,11 @@ adds support for the Solar Pro architecture
  src/llama-hparams.cpp      |   8 ++
  src/llama-hparams.h        |   5 ++
  src/llama-model-loader.cpp |   2 +-
- src/llama-model.cpp        |  48 ++++++++++++
+ src/llama-model.cpp        |  48 +++++++++++
  src/llama-model.h          |   3 +
  src/models/models.h        |   5 ++
- src/models/solar.cpp       | 155 +++++++++++++++++++++++++++++++++++++
- 10 files changed, 249 insertions(+), 1 deletion(-)
+ src/models/solar.cpp       | 158 +++++++++++++++++++++++++++++++++++++
+ 10 files changed, 252 insertions(+), 1 deletion(-)
  create mode 100644 src/models/solar.cpp
 
 diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
@@ -291,15 +291,16 @@ index a86b2b1eb..0df43654a 100644
  };
 diff --git a/src/models/solar.cpp b/src/models/solar.cpp
 new file mode 100644
-index 000000000..65925da33
+index 000000000..97383928c
 --- /dev/null
 +++ b/src/models/solar.cpp
-@@ -0,0 +1,155 @@
+@@ -0,0 +1,158 @@
 +#include "models.h"
 +
 +llm_build_solar::llm_build_solar(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
-+        GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());
-+        GGML_ASSERT(n_embd_head == n_rot);
++        const int64_t n_embd_head = hparams.n_embd_head_v;
++        GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
++        GGML_ASSERT(n_embd_head == hparams.n_rot);
 +
 +        struct ggml_tensor * cur;
 +        struct ggml_tensor * inpL;
@@ -450,3 +451,5 @@ index 000000000..65925da33
 +        cb(cur, "result_output", -1);
 +        res->t_logits = cur;
 +
++        ggml_build_forward_expand(gf, cur);
++}
