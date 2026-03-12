@@ -2,8 +2,8 @@
 
 llm_build_nemotron_h::llm_build_nemotron_h(const llama_model & model, const llm_graph_params & params) :
     llm_build_mamba_base(params) {
-    const int64_t n_embd_head = hparams.n_embd_head_v;
-    GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
+    const int64_t n_embd_head = hparams.n_embd_head_v();
+    GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());
 
     ggml_tensor * cur;
     ggml_tensor * inpL;
@@ -114,9 +114,18 @@ ggml_tensor * llm_build_nemotron_h::build_ffn_layer(ggml_tensor * cur, const lla
                 LLM_FFN_RELU_SQR, LLM_FFN_PAR, il);
         cb(cur, "ffn_out", il);
     } else {
-        ggml_tensor * ffn_inp = cur;
+        ggml_tensor * inp_emb    = cur;
+        ggml_tensor * inp_latent = cur;
+
+        if (model.layers[il].ffn_latent_down) {
+            inp_latent = ggml_mul_mat(ctx0, model.layers[il].ffn_latent_down, cur);
+        }
+
+        ggml_tensor * router_logits = build_lora_mm(model.layers[il].ffn_gate_inp, cur);
+        cb(router_logits, "ffn_moe_logits", il);
+
         ggml_tensor * moe_out =
-            build_moe_ffn(ffn_inp,
+            build_moe_ffn(inp_latent,
                     model.layers[il].ffn_gate_inp,
                     model.layers[il].ffn_up_exps,
                     nullptr, // no gate
@@ -126,10 +135,15 @@ ggml_tensor * llm_build_nemotron_h::build_ffn_layer(ggml_tensor * cur, const lla
                     LLM_FFN_RELU_SQR, hparams.expert_weights_norm,
                     hparams.expert_weights_scale,
                     LLAMA_EXPERT_GATING_FUNC_TYPE_SIGMOID,
-                    il);
+                    il,
+                    router_logits);
         cb(moe_out, "ffn_moe_out", il);
 
-        ggml_tensor * ffn_shexp = build_ffn(ffn_inp,
+        if (model.layers[il].ffn_latent_up) {
+            moe_out = ggml_mul_mat(ctx0, model.layers[il].ffn_latent_up, moe_out);
+        }
+
+        ggml_tensor * ffn_shexp = build_ffn(inp_emb,
                     model.layers[il].ffn_up_shexp,  NULL, NULL,
                     NULL /* no gate */           ,  NULL, NULL,
                     model.layers[il].ffn_down_shexp, NULL, NULL,

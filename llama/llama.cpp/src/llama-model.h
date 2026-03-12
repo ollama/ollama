@@ -127,6 +127,7 @@ enum llm_type {
     LLM_TYPE_100B_A6B,
     LLM_TYPE_102B_A12B, // Solar-Open
     LLM_TYPE_106B_A12B, // GLM-4.5-Air
+    LLM_TYPE_120B_A12B, // Nemotron 3 Super
     LLM_TYPE_122B_A10B, // Qwen3.5
     LLM_TYPE_196B_A11B, // Step3.5-Flash
     LLM_TYPE_230B_A10B, // Minimax M2
@@ -295,6 +296,15 @@ struct llama_layer {
     struct ggml_tensor * ffn_up_exps_b     = nullptr;
     struct ggml_tensor * ffn_gate_up_exps_b = nullptr;
 
+    // ff MoE per-expert scales (NVFP4 per-tensor scale2)
+    struct ggml_tensor * ffn_gate_exps_s   = nullptr;
+    struct ggml_tensor * ffn_down_exps_s   = nullptr;
+    struct ggml_tensor * ffn_up_exps_s     = nullptr;
+
+    // ff MoE latent proj
+    struct ggml_tensor * ffn_latent_down = nullptr;
+    struct ggml_tensor * ffn_latent_up   = nullptr;
+
     // ff shared expert (shexp)
     struct ggml_tensor * ffn_gate_inp_shexp = nullptr;
     struct ggml_tensor * ffn_gate_shexp     = nullptr;
@@ -388,13 +398,13 @@ struct llama_layer {
     struct ggml_tensor * rope_freqs = nullptr;
 
     // bitnet scale
-    struct ggml_tensor * wq_scale       = nullptr;
-    struct ggml_tensor * wk_scale       = nullptr;
-    struct ggml_tensor * wv_scale       = nullptr;
-    struct ggml_tensor * wo_scale       = nullptr;
-    struct ggml_tensor * ffn_gate_scale = nullptr;
-    struct ggml_tensor * ffn_up_scale   = nullptr;
-    struct ggml_tensor * ffn_down_scale = nullptr;
+    struct ggml_tensor * wq_s       = nullptr;
+    struct ggml_tensor * wk_s       = nullptr;
+    struct ggml_tensor * wv_s       = nullptr;
+    struct ggml_tensor * wo_s       = nullptr;
+    struct ggml_tensor * ffn_gate_s = nullptr;
+    struct ggml_tensor * ffn_up_s   = nullptr;
+    struct ggml_tensor * ffn_down_s = nullptr;
 
     // altup & laurel
     struct ggml_tensor * per_layer_inp_gate   = nullptr;

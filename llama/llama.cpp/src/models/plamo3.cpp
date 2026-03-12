@@ -3,8 +3,8 @@
 template <bool iswa>
 llm_build_plamo3<iswa>::llm_build_plamo3(const llama_model & model, const llm_graph_params & params) :
     llm_graph_context(params) {
-    const int64_t head_dim_q = hparams.n_embd_head_k;
-    const int64_t head_dim_v = hparams.n_embd_head_v;
+    const int64_t head_dim_q = hparams.n_embd_head_k();
+    const int64_t head_dim_v = hparams.n_embd_head_v();
 
     ggml_tensor * cur;
     ggml_tensor * inpL = build_inp_embd(model.tok_embd);

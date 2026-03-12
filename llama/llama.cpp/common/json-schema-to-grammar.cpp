@@ -790,7 +790,7 @@ public:
                             } else if (target.is_array()) {
                                 size_t sel_index;
                                 try {
-                                    sel_index = std::stoul(sel);
+                                    sel_index = std::stoull(sel);
                                 } catch (const std::invalid_argument & e) {
                                     sel_index = target.size();
                                 }

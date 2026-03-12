@@ -39,7 +39,7 @@ llm_build_lfm2<iswa>::llm_build_lfm2(const llama_model & model, const llm_graph_
                                            inp_attn_type * inp_attn,
                                            int             il) -> ggml_tensor * {
         GGML_ASSERT(hparams.n_embd_v_gqa(il) == hparams.n_embd_k_gqa(il));
-        const auto n_embd_head = hparams.n_embd_head_v;
+        const auto n_embd_head = hparams.n_embd_head_v();
         const auto n_head_kv   = hparams.n_head_kv(il);
 
         auto * q = build_lora_mm(model.layers[il].wq, cur);

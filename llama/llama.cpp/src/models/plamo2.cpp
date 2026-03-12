@@ -106,9 +106,9 @@ ggml_tensor * llm_build_plamo2::build_plamo2_attn_layer(llm_graph_input_attn_kv 
         cb(qkv, "wqkv", il);
 
         // split QKV tensor into Q, K, V
-        const int64_t n_embd_head_q = hparams.n_embd_head_k;
-        const int64_t n_embd_head_k = hparams.n_embd_head_k;
-        const int64_t n_embd_head_v = hparams.n_embd_head_v;
+        const int64_t n_embd_head_q = hparams.n_embd_head_k();
+        const int64_t n_embd_head_k = hparams.n_embd_head_k();
+        const int64_t n_embd_head_v = hparams.n_embd_head_v();
         int32_t       n_head        = hparams.n_head(il);
         int32_t       n_head_kv     = hparams.n_head_kv(il);
 
