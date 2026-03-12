@@ -41,7 +41,7 @@ var DefaultSingleSelector SingleSelector
 var DefaultMultiSelector MultiSelector
 
 // DefaultSignIn provides a TUI-based sign-in flow.
-// When set, EnsureAuth uses it instead of plain text prompts.
+// When set, ensureAuth uses it instead of plain text prompts.
 // Returns the signed-in username or an error.
 var DefaultSignIn func(modelName, signInURL string) (string, error)
 

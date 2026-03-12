@@ -93,11 +93,11 @@ func (p LaunchPolicy) confirmPolicy() launchConfirmPolicy {
 	}
 }
 
-func (p LaunchPolicy) missingModelPolicy() MissingModelPolicy {
+func (p LaunchPolicy) missingModelPolicy() missingModelPolicy {
 	if p.MissingModel == LaunchMissingModelFail {
-		return MissingModelFail
+		return missingModelFail
 	}
-	return MissingModelPromptPull
+	return missingModelPromptPull
 }
 
 // IntegrationLaunchRequest controls the canonical integration launcher flow.
@@ -250,9 +250,9 @@ Examples:
 				return nil
 			}
 
-			if modelFlag != "" && IsCloudModelName(modelFlag) {
+			if modelFlag != "" && isCloudModelName(modelFlag) {
 				if client, err := api.ClientFromEnvironment(); err == nil {
-					if disabled, _ := CloudStatusDisabled(cmd.Context(), client); disabled {
+					if disabled, _ := cloudStatusDisabled(cmd.Context(), client); disabled {
 						fmt.Fprintf(os.Stderr, "Warning: ignoring --model %s because cloud is disabled\n", modelFlag)
 						modelFlag = ""
 					}
@@ -503,7 +503,7 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 	}
 
 	if needsConfigure || req.ModelOverride != "" {
-		if err := PrepareEditorIntegration(name, runner, editor, models); err != nil {
+		if err := prepareEditorIntegration(name, runner, editor, models); err != nil {
 			return err
 		}
 	}
@@ -615,9 +615,9 @@ func (c *launcherClient) loadSelectableModels(ctx context.Context, preChecked []
 		return nil, nil, err
 	}
 
-	items, orderedChecked, _, _ := BuildModelList(c.modelInventory, preChecked, current)
+	items, orderedChecked, _, _ := buildModelList(c.modelInventory, preChecked, current)
 	if c.cloudDisabled {
-		items = FilterCloudItems(items)
+		items = filterCloudItems(items)
 		orderedChecked = c.filterDisabledCloudModels(ctx, orderedChecked)
 	}
 	if len(items) == 0 {
@@ -643,15 +643,15 @@ func (c *launcherClient) ensureModelsReady(ctx context.Context, models []string)
 
 	cloudModels := make(map[string]bool, len(models))
 	for _, model := range models {
-		if err := ShowOrPullWithPolicy(ctx, c.apiClient, model, c.policy.missingModelPolicy()); err != nil {
-			return err
-		}
-		if IsCloudModelName(model) {
+		isCloudModel := isCloudModelName(model)
+		if isCloudModel {
 			cloudModels[model] = true
 		}
+		if err := showOrPullWithPolicy(ctx, c.apiClient, model, c.policy.missingModelPolicy(), isCloudModel); err != nil {
+			return err
+		}
 	}
-
-	return EnsureAuth(ctx, c.apiClient, cloudModels, models)
+	return ensureAuth(ctx, c.apiClient, cloudModels, models)
 }
 
 func (c *launcherClient) resolveEditorLaunchModels(ctx context.Context, saved *config.IntegrationConfig, req IntegrationLaunchRequest) ([]string, bool) {
@@ -681,7 +681,7 @@ func (c *launcherClient) filterDisabledCloudModels(ctx context.Context, models [
 
 	filtered := make([]string, 0, len(models))
 	for _, model := range models {
-		if !IsCloudModelName(model) {
+		if !isCloudModelName(model) {
 			filtered = append(filtered, model)
 		}
 	}
@@ -709,7 +709,7 @@ func (c *launcherClient) showBasedModelUsable(ctx context.Context, name string) 
 		return false, err
 	}
 
-	if IsCloudModelName(name) || info.RemoteModel != "" {
+	if isCloudModelName(name) || info.RemoteModel != "" {
 		c.ensureCloudStatus(ctx)
 		return !c.cloudDisabled, nil
 	}
@@ -721,7 +721,7 @@ func (c *launcherClient) singleModelUsable(name string) bool {
 	if name == "" {
 		return false
 	}
-	if IsCloudModelName(name) {
+	if isCloudModelName(name) {
 		return !c.cloudDisabled
 	}
 	return c.hasLocalModel(name)
@@ -743,7 +743,7 @@ func (c *launcherClient) ensureCloudStatus(ctx context.Context) {
 	if c.cloudStatusLoaded {
 		return
 	}
-	c.cloudDisabled, _ = CloudStatusDisabled(ctx, c.apiClient)
+	c.cloudDisabled, _ = cloudStatusDisabled(ctx, c.apiClient)
 	c.cloudStatusLoaded = true
 }
 
@@ -766,7 +766,7 @@ func (c *launcherClient) loadModelInventoryOnce(ctx context.Context) error {
 		})
 	}
 	if c.cloudDisabled {
-		c.modelInventory = FilterCloudModels(c.modelInventory)
+		c.modelInventory = filterCloudModels(c.modelInventory)
 	}
 	c.inventoryLoaded = true
 	return nil
@@ -781,7 +781,7 @@ func syncAliases(ctx context.Context, client *api.Client, aliasConfigurer AliasC
 	aliases := cloneAliases(existing)
 	aliases["primary"] = model
 
-	if IsCloudModelName(model) {
+	if isCloudModelName(model) {
 		aliases["fast"] = model
 	} else {
 		delete(aliases, "fast")
@@ -876,7 +876,7 @@ func cloneAliases(aliases map[string]string) map[string]string {
 func normalizedAliases(primary string, aliases map[string]string) map[string]string {
 	normalized := cloneAliases(aliases)
 	normalized["primary"] = primary
-	if IsCloudModelName(primary) {
+	if isCloudModelName(primary) {
 		normalized["fast"] = primary
 	} else {
 		delete(normalized, "fast")

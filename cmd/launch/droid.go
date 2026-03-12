@@ -119,7 +119,7 @@ func updateDroidSettings(settingsMap map[string]any, settings droidSettings, mod
 	var defaultModelID string
 	for i, model := range models {
 		maxOutput := 64000
-		if IsCloudModelName(model) {
+		if isCloudModelName(model) {
 			if l, ok := lookupCloudModelLimit(model); ok {
 				maxOutput = l.Output
 			}

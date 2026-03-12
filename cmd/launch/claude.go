@@ -108,7 +108,7 @@ func (c *Claude) ConfigureAliases(ctx context.Context, model string, existingAli
 	}
 
 	if !force && aliases["primary"] != "" {
-		if IsCloudModelName(aliases["primary"]) {
+		if isCloudModelName(aliases["primary"]) {
 			aliases["fast"] = aliases["primary"]
 			return aliases, false, nil
 		}
@@ -134,13 +134,13 @@ func (c *Claude) ConfigureAliases(ctx context.Context, model string, existingAli
 		if err := pullIfNeeded(ctx, client, existingModels, primary); err != nil {
 			return nil, false, err
 		}
-		if err := EnsureAuth(ctx, client, cloudModels, []string{primary}); err != nil {
+		if err := ensureAuth(ctx, client, cloudModels, []string{primary}); err != nil {
 			return nil, false, err
 		}
 		aliases["primary"] = primary
 	}
 
-	if IsCloudModelName(aliases["primary"]) {
+	if isCloudModelName(aliases["primary"]) {
 		aliases["fast"] = aliases["primary"]
 	} else {
 		delete(aliases, "fast")

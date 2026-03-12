@@ -282,6 +282,7 @@ func IntegrationSelectionItems() ([]ModelItem, error) {
 // IsIntegrationInstalled checks if an integration binary is installed.
 func IsIntegrationInstalled(name string) bool {
 	spec, err := LookupIntegrationSpec(name)
+	// treat integration as not installed if not found
 	if err != nil {
 		return false
 	}

@@ -74,14 +74,14 @@ func lookupCloudModelLimit(name string) (cloudModelLimit, bool) {
 	return cloudModelLimit{}, false
 }
 
-// MissingModelPolicy controls how model-not-found errors should be handled.
-type MissingModelPolicy int
+// missingModelPolicy controls how model-not-found errors should be handled.
+type missingModelPolicy int
 
 const (
-	// MissingModelPromptPull prompts the user to download missing local models.
-	MissingModelPromptPull MissingModelPolicy = iota
-	// MissingModelFail returns an error for missing local models without prompting.
-	MissingModelFail
+	// missingModelPromptPull prompts the user to download missing local models.
+	missingModelPromptPull missingModelPolicy = iota
+	// missingModelFail returns an error for missing local models without prompting.
+	missingModelFail
 )
 
 // OpenBrowser opens the URL in the user's browser.
@@ -96,8 +96,8 @@ func OpenBrowser(url string) {
 	}
 }
 
-// EnsureAuth ensures the user is signed in before cloud-backed models run.
-func EnsureAuth(ctx context.Context, client *api.Client, cloudModels map[string]bool, selected []string) error {
+// ensureAuth ensures the user is signed in before cloud-backed models run.
+func ensureAuth(ctx context.Context, client *api.Client, cloudModels map[string]bool, selected []string) error {
 	var selectedCloudModels []string
 	for _, m := range selected {
 		if cloudModels[m] {
@@ -107,7 +107,7 @@ func EnsureAuth(ctx context.Context, client *api.Client, cloudModels map[string]
 	if len(selectedCloudModels) == 0 {
 		return nil
 	}
-	if disabled, known := CloudStatusDisabled(ctx, client); known && disabled {
+	if disabled, known := cloudStatusDisabled(ctx, client); known && disabled {
 		return errors.New(internalcloud.DisabledError("remote inference is unavailable"))
 	}
 
@@ -175,102 +175,15 @@ func EnsureAuth(ctx context.Context, client *api.Client, cloudModels map[string]
 	}
 }
 
-func selectModelsWithSelectors(ctx context.Context, name, current string, single SingleSelector, multi MultiSelector) ([]string, error) {
-	key, runner, err := LookupIntegration(name)
-	if err != nil {
-		return nil, err
-	}
-
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return nil, err
-	}
-
-	models, err := client.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	var existing []modelInfo
-	for _, m := range models.Models {
-		existing = append(existing, modelInfo{Name: m.Name, Remote: m.RemoteModel != ""})
-	}
-
-	cloudDisabled, _ := CloudStatusDisabled(ctx, client)
-	if cloudDisabled {
-		existing = FilterCloudModels(existing)
-	}
-
-	var preChecked []string
-	if saved, err := loadStoredIntegrationConfig(key); err == nil {
-		preChecked = saved.Models
-	} else if editor, ok := runner.(Editor); ok {
-		preChecked = editor.Models()
-	}
-
-	items, preChecked, existingModels, cloudModels := BuildModelList(existing, preChecked, current)
-	if cloudDisabled {
-		items = FilterCloudItems(items)
-	}
-	if len(items) == 0 {
-		return nil, fmt.Errorf("no models available")
-	}
-
-	var selected []string
-	if _, ok := runner.(Editor); ok {
-		selected, err = multi(fmt.Sprintf("Select models for %s:", runner), items, preChecked)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		prompt := fmt.Sprintf("Select model for %s:", runner)
-		if _, ok := runner.(AliasConfigurer); ok {
-			prompt = fmt.Sprintf("Select Primary model for %s:", runner)
-		}
-		model, err := single(prompt, items, current)
-		if err != nil {
-			return nil, err
-		}
-		selected = []string{model}
-	}
-
-	var toPull []string
-	for _, m := range selected {
-		if !existingModels[m] && !IsCloudModelName(m) {
-			toPull = append(toPull, m)
-		}
-	}
-	if len(toPull) > 0 {
-		msg := fmt.Sprintf("Download %s?", strings.Join(toPull, ", "))
-		if ok, err := ConfirmPrompt(msg); err != nil {
-			return nil, err
-		} else if !ok {
-			return nil, errCancelled
-		}
-		for _, m := range toPull {
-			fmt.Fprintf(os.Stderr, "\n")
-			if err := pullModel(ctx, client, m, false); err != nil {
-				return nil, fmt.Errorf("failed to pull %s: %w", m, err)
-			}
-		}
-	}
-
-	if err := EnsureAuth(ctx, client, cloudModels, selected); err != nil {
-		return nil, err
-	}
-
-	return selected, nil
-}
-
 func pullIfNeeded(ctx context.Context, client *api.Client, existingModels map[string]bool, model string) error {
-	if IsCloudModelName(model) || existingModels[model] {
+	if isCloudModelName(model) || existingModels[model] {
 		return nil
 	}
 	return confirmAndPull(ctx, client, model)
 }
 
-// ShowOrPullWithPolicy checks if a model exists and applies the provided missing-model policy.
-func ShowOrPullWithPolicy(ctx context.Context, client *api.Client, model string, policy MissingModelPolicy) error {
+// showOrPullWithPolicy checks if a model exists and applies the provided missing-model policy.
+func showOrPullWithPolicy(ctx context.Context, client *api.Client, model string, policy missingModelPolicy, isCloudModel bool) error {
 	if _, err := client.Show(ctx, &api.ShowRequest{Model: model}); err == nil {
 		return nil
 	} else {
@@ -280,15 +193,15 @@ func ShowOrPullWithPolicy(ctx context.Context, client *api.Client, model string,
 		}
 	}
 
-	if IsCloudModelName(model) {
-		if disabled, known := CloudStatusDisabled(ctx, client); known && disabled {
+	if isCloudModel {
+		if disabled, known := cloudStatusDisabled(ctx, client); known && disabled {
 			return errors.New(internalcloud.DisabledError("remote inference is unavailable"))
 		}
 		return fmt.Errorf("model %q not found", model)
 	}
 
 	switch policy {
-	case MissingModelFail:
+	case missingModelFail:
 		return fmt.Errorf("model %q not found; run 'ollama pull %s' first", model, model)
 	default:
 		return confirmAndPull(ctx, client, model)
@@ -324,14 +237,14 @@ func listModels(ctx context.Context) ([]ModelItem, map[string]bool, map[string]b
 		existing = append(existing, modelInfo{Name: m.Name, Remote: m.RemoteModel != ""})
 	}
 
-	cloudDisabled, _ := CloudStatusDisabled(ctx, client)
+	cloudDisabled, _ := cloudStatusDisabled(ctx, client)
 	if cloudDisabled {
-		existing = FilterCloudModels(existing)
+		existing = filterCloudModels(existing)
 	}
 
-	items, _, existingModels, cloudModels := BuildModelList(existing, nil, "")
+	items, _, existingModels, cloudModels := buildModelList(existing, nil, "")
 	if cloudDisabled {
-		items = FilterCloudItems(items)
+		items = filterCloudItems(items)
 	}
 	if len(items) == 0 {
 		return nil, nil, nil, nil, fmt.Errorf("no models available, run 'ollama pull <model>' first")
@@ -340,8 +253,8 @@ func listModels(ctx context.Context) ([]ModelItem, map[string]bool, map[string]b
 	return items, existingModels, cloudModels, client, nil
 }
 
-// PrepareEditorIntegration persists models and applies editor-managed config files.
-func PrepareEditorIntegration(name string, runner Runner, editor Editor, models []string) error {
+// prepareEditorIntegration persists models and applies editor-managed config files.
+func prepareEditorIntegration(name string, runner Runner, editor Editor, models []string) error {
 	if ok, err := confirmEditorEdit(runner, editor); err != nil {
 		return err
 	} else if !ok {
@@ -356,8 +269,8 @@ func PrepareEditorIntegration(name string, runner Runner, editor Editor, models 
 	return nil
 }
 
-// RunIntegration executes a configured integration with the selected model.
-func RunIntegration(name, modelName string, args []string) error {
+// runNamedIntegration executes a configured integration with the selected model.
+func runNamedIntegration(name, modelName string, args []string) error {
 	_, runner, err := LookupIntegration(name)
 	if err != nil {
 		return err
@@ -381,8 +294,8 @@ func confirmEditorEdit(runner Runner, editor Editor) (bool, error) {
 	return ConfirmPrompt("Proceed?")
 }
 
-// BuildModelList merges existing models with recommendations for selection UIs.
-func BuildModelList(existing []modelInfo, preChecked []string, current string) (items []ModelItem, orderedChecked []string, existingModels, cloudModels map[string]bool) {
+// buildModelList merges existing models with recommendations for selection UIs.
+func buildModelList(existing []modelInfo, preChecked []string, current string) (items []ModelItem, orderedChecked []string, existingModels, cloudModels map[string]bool) {
 	existingModels = make(map[string]bool)
 	cloudModels = make(map[string]bool)
 	recommended := make(map[string]bool)
@@ -413,7 +326,7 @@ func BuildModelList(existing []modelInfo, preChecked []string, current string) (
 			continue
 		}
 		items = append(items, rec)
-		if IsCloudModelName(rec.Name) {
+		if isCloudModelName(rec.Name) {
 			cloudModels[rec.Name] = true
 		}
 	}
@@ -503,13 +416,13 @@ func BuildModelList(existing []modelInfo, preChecked []string, current string) (
 	return items, preChecked, existingModels, cloudModels
 }
 
-// IsCloudModelName reports whether the model name has an explicit cloud source.
-func IsCloudModelName(name string) bool {
+// isCloudModelName reports whether the model name has an explicit cloud source.
+func isCloudModelName(name string) bool {
 	return modelref.HasExplicitCloudSource(name)
 }
 
-// FilterCloudModels drops remote-only models from the given inventory.
-func FilterCloudModels(existing []modelInfo) []modelInfo {
+// filterCloudModels drops remote-only models from the given inventory.
+func filterCloudModels(existing []modelInfo) []modelInfo {
 	filtered := existing[:0]
 	for _, m := range existing {
 		if !m.Remote {
@@ -519,11 +432,11 @@ func FilterCloudModels(existing []modelInfo) []modelInfo {
 	return filtered
 }
 
-// FilterCloudItems removes cloud models from selection items.
-func FilterCloudItems(items []ModelItem) []ModelItem {
+// filterCloudItems removes cloud models from selection items.
+func filterCloudItems(items []ModelItem) []ModelItem {
 	filtered := items[:0]
 	for _, item := range items {
-		if !IsCloudModelName(item.Name) {
+		if !isCloudModelName(item.Name) {
 			filtered = append(filtered, item)
 		}
 	}
@@ -541,44 +454,8 @@ func isCloudModel(ctx context.Context, client *api.Client, name string) bool {
 	return resp.RemoteModel != ""
 }
 
-// GetModelItems returns a list of model items including recommendations for the TUI.
-func GetModelItems(ctx context.Context) ([]ModelItem, map[string]bool) {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return nil, nil
-	}
-
-	models, err := client.List(ctx)
-	if err != nil {
-		return nil, nil
-	}
-
-	var existing []modelInfo
-	for _, m := range models.Models {
-		existing = append(existing, modelInfo{Name: m.Name, Remote: m.RemoteModel != ""})
-	}
-
-	cloudDisabled, _ := CloudStatusDisabled(ctx, client)
-	if cloudDisabled {
-		existing = FilterCloudModels(existing)
-	}
-
-	lastModel := config.LastModel()
-	var preChecked []string
-	if lastModel != "" {
-		preChecked = []string{lastModel}
-	}
-
-	items, _, existingModels, _ := BuildModelList(existing, preChecked, lastModel)
-	if cloudDisabled {
-		items = FilterCloudItems(items)
-	}
-
-	return items, existingModels
-}
-
-// CloudStatusDisabled returns whether cloud usage is currently disabled.
-func CloudStatusDisabled(ctx context.Context, client *api.Client) (disabled bool, known bool) {
+// cloudStatusDisabled returns whether cloud usage is currently disabled.
+func cloudStatusDisabled(ctx context.Context, client *api.Client) (disabled bool, known bool) {
 	status, err := client.CloudStatusExperimental(ctx)
 	if err != nil {
 		var statusErr api.StatusError
