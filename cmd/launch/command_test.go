@@ -1,9 +1,12 @@
 package launch
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -11,6 +14,32 @@ import (
 	"github.com/ollama/ollama/cmd/config"
 	"github.com/spf13/cobra"
 )
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create stderr pipe: %v", err)
+	}
+	os.Stderr = w
+	defer func() {
+		os.Stderr = oldStderr
+	}()
+
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+
+	fn()
+
+	_ = w.Close()
+	return <-done
+}
 
 func TestLaunchCmd(t *testing.T) {
 	mockCheck := func(cmd *cobra.Command, args []string) error {
@@ -37,6 +66,9 @@ func TestLaunchCmd(t *testing.T) {
 		}
 		if cmd.Flags().Lookup("config") == nil {
 			t.Error("--config flag should exist")
+		}
+		if cmd.Flags().Lookup("bypass") == nil {
+			t.Error("--bypass flag should exist")
 		}
 	})
 
@@ -242,9 +274,11 @@ func TestLaunchCmdModelFlagClearsDisabledCloudOverride(t *testing.T) {
 
 	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command) {})
 	cmd.SetArgs([]string{"stubapp", "--model", "glm-5:cloud"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("launch command failed: %v", err)
-	}
+	stderr := captureStderr(t, func() {
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("launch command failed: %v", err)
+		}
+	})
 
 	if selectorCalls != 1 {
 		t.Fatalf("expected disabled cloud override to fall back to selector, got %d calls", selectorCalls)
@@ -255,6 +289,9 @@ func TestLaunchCmdModelFlagClearsDisabledCloudOverride(t *testing.T) {
 	if stub.ranModel != "llama3.2" {
 		t.Fatalf("expected launch to run with replacement local model, got %q", stub.ranModel)
 	}
+	if !strings.Contains(stderr, "Warning: ignoring --model glm-5:cloud because cloud is disabled") {
+		t.Fatalf("expected disabled-cloud warning, got stderr: %q", stderr)
+	}
 
 	saved, err := config.LoadIntegration("stubapp")
 	if err != nil {
@@ -262,6 +299,95 @@ func TestLaunchCmdModelFlagClearsDisabledCloudOverride(t *testing.T) {
 	}
 	if diff := cmp.Diff([]string{"llama3.2"}, saved.Models); diff != "" {
 		t.Fatalf("saved models mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestLaunchCmdBypass_AutoConfirmsLaunchPromptPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, false)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			fmt.Fprint(w, `{"model":"llama3.2"}`)
+		case "/api/status":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":"not found"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	stub := &launcherEditorRunner{paths: []string{"/tmp/stubeditor.json"}}
+	restore := OverrideIntegration("stubeditor", stub)
+	defer restore()
+
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		t.Fatalf("unexpected prompt with --bypass: %q", prompt)
+		return false, nil
+	}
+
+	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command) {})
+	cmd.SetArgs([]string{"stubeditor", "--model", "llama3.2", "--bypass"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("launch command with --bypass failed: %v", err)
+	}
+
+	if diff := cmp.Diff([][]string{{"llama3.2"}}, stub.edited); diff != "" {
+		t.Fatalf("editor models mismatch (-want +got):\n%s", diff)
+	}
+	if stub.ranModel != "llama3.2" {
+		t.Fatalf("expected launch to run with llama3.2, got %q", stub.ranModel)
+	}
+}
+
+func TestLaunchCmdHeadlessWithoutBypass_ReturnsActionableConfirmError(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, false)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			fmt.Fprint(w, `{"model":"llama3.2"}`)
+		case "/api/status":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":"not found"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	stub := &launcherEditorRunner{paths: []string{"/tmp/stubeditor.json"}}
+	restore := OverrideIntegration("stubeditor", stub)
+	defer restore()
+
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		t.Fatalf("unexpected prompt in headless non-bypass mode: %q", prompt)
+		return false, nil
+	}
+
+	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command) {})
+	cmd.SetArgs([]string{"stubeditor", "--model", "llama3.2"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected launch command to fail without --bypass in headless mode")
+	}
+	if !strings.Contains(err.Error(), "re-run with --bypass") {
+		t.Fatalf("expected actionable --bypass guidance, got %v", err)
+	}
+	if len(stub.edited) != 0 {
+		t.Fatalf("expected no editor writes when confirmation is blocked, got %v", stub.edited)
+	}
+	if stub.ranModel != "" {
+		t.Fatalf("expected launch to abort before run, got %q", stub.ranModel)
 	}
 }
 

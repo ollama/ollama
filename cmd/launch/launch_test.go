@@ -1034,6 +1034,64 @@ func TestLaunchIntegration_ModelOverrideHeadlessMissingFailsWithoutPrompt(t *tes
 	}
 }
 
+func TestLaunchIntegration_ModelOverrideHeadlessCanOverrideMissingModelPolicy(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, false)
+
+	binDir := t.TempDir()
+	writeFakeBinary(t, binDir, "droid")
+	t.Setenv("PATH", binDir)
+
+	runner := &launcherSingleRunner{}
+	withIntegrationOverride(t, "droid", runner)
+
+	confirmCalled := false
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		confirmCalled = true
+		if !strings.Contains(prompt, "missing-model") {
+			t.Fatalf("expected prompt to mention missing model, got %q", prompt)
+		}
+		return true, nil
+	}
+
+	pullCalled := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":"model not found"}`)
+		case "/api/pull":
+			pullCalled = true
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, `{"status":"success"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	customPolicy := LaunchPolicy{MissingModel: LaunchMissingModelPromptToPull}
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:          "droid",
+		ModelOverride: "missing-model",
+		Policy:        &customPolicy,
+	}); err != nil {
+		t.Fatalf("expected policy override to allow prompt/pull in headless mode, got %v", err)
+	}
+	if !confirmCalled {
+		t.Fatal("expected confirmation prompt when missing-model policy is overridden to prompt/pull")
+	}
+	if !pullCalled {
+		t.Fatal("expected pull request to run when missing-model policy is overridden to prompt/pull")
+	}
+	if runner.ranModel != "missing-model" {
+		t.Fatalf("expected integration to launch after pull, got %q", runner.ranModel)
+	}
+}
+
 func TestLaunchIntegration_ModelOverrideInteractiveMissingPromptsAndPulls(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)

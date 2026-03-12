@@ -42,6 +42,64 @@ type RunModelRequest struct {
 	ForcePicker bool
 }
 
+// LaunchConfirmMode controls confirmation behavior across launch flows.
+type LaunchConfirmMode int
+
+const (
+	// LaunchConfirmPrompt prompts the user for confirmation.
+	LaunchConfirmPrompt LaunchConfirmMode = iota
+	// LaunchConfirmAutoApprove skips prompts and treats confirmation as accepted.
+	LaunchConfirmAutoApprove
+	// LaunchConfirmRequireBypass rejects confirmation requests with a --bypass hint.
+	LaunchConfirmRequireBypass
+)
+
+// LaunchMissingModelMode controls local missing-model handling in launch flows.
+type LaunchMissingModelMode int
+
+const (
+	// LaunchMissingModelPromptToPull prompts to pull a missing local model.
+	LaunchMissingModelPromptToPull LaunchMissingModelMode = iota
+	// LaunchMissingModelFail fails immediately when a local model is missing.
+	LaunchMissingModelFail
+)
+
+// LaunchPolicy controls launch behavior that may vary by caller context.
+type LaunchPolicy struct {
+	Confirm      LaunchConfirmMode
+	MissingModel LaunchMissingModelMode
+}
+
+func defaultLaunchPolicy(interactive bool) LaunchPolicy {
+	policy := LaunchPolicy{
+		Confirm:      LaunchConfirmPrompt,
+		MissingModel: LaunchMissingModelPromptToPull,
+	}
+	if !interactive {
+		policy.Confirm = LaunchConfirmRequireBypass
+		policy.MissingModel = LaunchMissingModelFail
+	}
+	return policy
+}
+
+func (p LaunchPolicy) confirmPolicy() launchConfirmPolicy {
+	switch p.Confirm {
+	case LaunchConfirmAutoApprove:
+		return launchConfirmPolicy{bypass: true}
+	case LaunchConfirmRequireBypass:
+		return launchConfirmPolicy{requireBypassMessage: true}
+	default:
+		return launchConfirmPolicy{}
+	}
+}
+
+func (p LaunchPolicy) missingModelPolicy() MissingModelPolicy {
+	if p.MissingModel == LaunchMissingModelFail {
+		return MissingModelFail
+	}
+	return MissingModelPromptPull
+}
+
 // IntegrationLaunchRequest controls the canonical integration launcher flow.
 type IntegrationLaunchRequest struct {
 	Name           string
@@ -49,6 +107,7 @@ type IntegrationLaunchRequest struct {
 	ForceConfigure bool
 	ConfigureOnly  bool
 	ExtraArgs      []string
+	Policy         *LaunchPolicy
 }
 
 var isInteractiveSession = func() bool {
@@ -126,6 +185,7 @@ func ConfigureIntegration(ctx context.Context, name string) error {
 func LaunchCmd(checkServerHeartbeat func(cmd *cobra.Command, args []string) error, runTUI func(cmd *cobra.Command)) *cobra.Command {
 	var modelFlag string
 	var configFlag bool
+	var bypassFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "launch [INTEGRATION] [-- [EXTRA_ARGS...]]",
@@ -154,6 +214,13 @@ Examples:
 		Args:    cobra.ArbitraryArgs,
 		PreRunE: checkServerHeartbeat,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			policy := defaultLaunchPolicy(isInteractiveSession())
+			if bypassFlag {
+				policy.Confirm = LaunchConfirmAutoApprove
+			}
+			restoreConfirmPolicy := withLaunchConfirmPolicy(policy.confirmPolicy())
+			defer restoreConfirmPolicy()
+
 			var name string
 			var passArgs []string
 			dashIdx := cmd.ArgsLenAtDash()
@@ -198,6 +265,7 @@ Examples:
 				ForceConfigure: configFlag || modelFlag == "",
 				ConfigureOnly:  configFlag,
 				ExtraArgs:      passArgs,
+				Policy:         &policy,
 			})
 			if errors.Is(err, ErrCancelled) {
 				return nil
@@ -208,6 +276,7 @@ Examples:
 
 	cmd.Flags().StringVar(&modelFlag, "model", "", "Model to use")
 	cmd.Flags().BoolVar(&configFlag, "config", false, "Configure without launching")
+	cmd.Flags().BoolVar(&bypassFlag, "bypass", false, "Bypass confirmation prompts")
 	return cmd
 }
 
@@ -217,9 +286,10 @@ type launcherClient struct {
 	cloudDisabled     bool
 	cloudStatusLoaded bool
 	inventoryLoaded   bool
+	policy            LaunchPolicy
 }
 
-func newLauncherClient() (*launcherClient, error) {
+func newLauncherClient(policy LaunchPolicy) (*launcherClient, error) {
 	apiClient, err := api.ClientFromEnvironment()
 	if err != nil {
 		return nil, err
@@ -227,12 +297,13 @@ func newLauncherClient() (*launcherClient, error) {
 
 	return &launcherClient{
 		apiClient: apiClient,
+		policy:    policy,
 	}, nil
 }
 
 // BuildLauncherState returns the launch-owned root launcher menu snapshot.
 func BuildLauncherState(ctx context.Context) (*LauncherState, error) {
-	launchClient, err := newLauncherClient()
+	launchClient, err := newLauncherClient(defaultLaunchPolicy(isInteractiveSession()))
 	if err != nil {
 		return nil, err
 	}
@@ -241,7 +312,7 @@ func BuildLauncherState(ctx context.Context) (*LauncherState, error) {
 
 // ResolveRunModel returns the model that should be used for interactive chat.
 func ResolveRunModel(ctx context.Context, req RunModelRequest) (string, error) {
-	launchClient, err := newLauncherClient()
+	launchClient, err := newLauncherClient(defaultLaunchPolicy(isInteractiveSession()))
 	if err != nil {
 		return "", err
 	}
@@ -260,7 +331,12 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 		}
 	}
 
-	launchClient, err := newLauncherClient()
+	policy := defaultLaunchPolicy(isInteractiveSession())
+	if req.Policy != nil {
+		policy = *req.Policy
+	}
+
+	launchClient, err := newLauncherClient(policy)
 	if err != nil {
 		return err
 	}
@@ -565,14 +641,9 @@ func (c *launcherClient) ensureModelsReady(ctx context.Context, models []string)
 		return nil
 	}
 
-	missingModelPolicy := MissingModelPromptPull
-	if !isInteractiveSession() {
-		missingModelPolicy = MissingModelFail
-	}
-
 	cloudModels := make(map[string]bool, len(models))
 	for _, model := range models {
-		if err := ShowOrPullWithPolicy(ctx, c.apiClient, model, missingModelPolicy); err != nil {
+		if err := ShowOrPullWithPolicy(ctx, c.apiClient, model, c.policy.missingModelPolicy()); err != nil {
 			return err
 		}
 		if IsCloudModelName(model) {

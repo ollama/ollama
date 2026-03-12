@@ -45,8 +45,41 @@ var DefaultMultiSelector MultiSelector
 // Returns the signed-in username or an error.
 var DefaultSignIn func(modelName, signInURL string) (string, error)
 
+type launchConfirmPolicy struct {
+	bypass               bool
+	requireBypassMessage bool
+}
+
+var currentLaunchConfirmPolicy launchConfirmPolicy
+
+func (p launchConfirmPolicy) chain(next launchConfirmPolicy) launchConfirmPolicy {
+	chained := launchConfirmPolicy{
+		bypass:               p.bypass || next.bypass,
+		requireBypassMessage: p.requireBypassMessage || next.requireBypassMessage,
+	}
+	if chained.bypass {
+		chained.requireBypassMessage = false
+	}
+	return chained
+}
+
+func withLaunchConfirmPolicy(policy launchConfirmPolicy) func() {
+	old := currentLaunchConfirmPolicy
+	currentLaunchConfirmPolicy = old.chain(policy)
+	return func() {
+		currentLaunchConfirmPolicy = old
+	}
+}
+
 // ConfirmPrompt asks the user to confirm an action using the configured prompt hook.
 func ConfirmPrompt(prompt string) (bool, error) {
+	if currentLaunchConfirmPolicy.bypass {
+		return true, nil
+	}
+	if currentLaunchConfirmPolicy.requireBypassMessage {
+		return false, fmt.Errorf("%s requires confirmation; re-run with --bypass to continue", prompt)
+	}
+
 	if DefaultConfirmPrompt != nil {
 		return DefaultConfirmPrompt(prompt)
 	}
