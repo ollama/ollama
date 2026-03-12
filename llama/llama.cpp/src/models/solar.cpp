@@ -1,9 +1,8 @@
 #include "models.h"
 
 llm_build_solar::llm_build_solar(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
-        const int64_t n_embd_head = hparams.n_embd_head_v;
-        GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
-        GGML_ASSERT(n_embd_head == hparams.n_rot);
+        GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());
+        GGML_ASSERT(n_embd_head == n_rot);
 
         struct ggml_tensor * cur;
         struct ggml_tensor * inpL;
@@ -154,5 +153,3 @@ llm_build_solar::llm_build_solar(const llama_model & model, const llm_graph_para
         cb(cur, "result_output", -1);
         res->t_logits = cur;
 
-        ggml_build_forward_expand(gf, cur);
-}
