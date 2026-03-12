@@ -5,7 +5,6 @@ package integration
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"log/slog"
 	"math"
 	"os"
@@ -71,7 +70,7 @@ func doModelPerfTest(t *testing.T, chatModels []string) {
 		slog.Warn("No VRAM info available, testing all models, so larger ones might timeout...")
 	}
 
-	data, err := ioutil.ReadFile(filepath.Join("testdata", "shakespeare.txt"))
+	data, err := os.ReadFile(filepath.Join("testdata", "shakespeare.txt"))
 	if err != nil {
 		t.Fatalf("failed to open test data file: %s", err)
 	}
