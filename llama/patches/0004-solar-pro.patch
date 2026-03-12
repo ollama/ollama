@@ -291,16 +291,16 @@ index a86b2b1eb..0df43654a 100644
  };
 diff --git a/src/models/solar.cpp b/src/models/solar.cpp
 new file mode 100644
-index 000000000..97383928c
+index 000000000..e0f35bc0f
 --- /dev/null
 +++ b/src/models/solar.cpp
 @@ -0,0 +1,158 @@
 +#include "models.h"
 +
 +llm_build_solar::llm_build_solar(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
-+        const int64_t n_embd_head = hparams.n_embd_head_v;
-+        GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
-+        GGML_ASSERT(n_embd_head == hparams.n_rot);
++        const int64_t n_embd_head = hparams.n_embd_head_v();
++        GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());
++        GGML_ASSERT(n_embd_head == hparams.n_rot());
 +
 +        struct ggml_tensor * cur;
 +        struct ggml_tensor * inpL;
