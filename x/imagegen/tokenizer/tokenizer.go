@@ -443,6 +443,7 @@ func Load(path string) (*Tokenizer, error) {
 
 // loadFromTokenizerJSON parses a tokenizer.json file
 func loadFromTokenizerJSON(data []byte, dir string) (*Tokenizer, error) {
+
 	var raw struct {
 		Model struct {
 			Type   string           `json:"type"` // "BPE" or "WordPiece"

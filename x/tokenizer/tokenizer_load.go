@@ -44,6 +44,7 @@ func LoadFromBytesWithConfig(data []byte, config *TokenizerConfig) (*Tokenizer, 
 
 // loadFromTokenizerJSON parses tokenizer.json content from bytes.
 func loadFromTokenizerJSON(data []byte) (*Tokenizer, error) {
+
 	var raw struct {
 		Model struct {
 			Type   string           `json:"type"` // "BPE"

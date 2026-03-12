@@ -71,7 +71,7 @@ func CompileShapeless(fn ClosureFunc, shapeless bool) *CompiledFunc {
 	// Create the closure from the Go callback
 	closure := C.mlx_closure_new_func_payload(
 		(*[0]byte)(C.goClosureCallback),
-		unsafe.Pointer(&handle),
+		unsafe.Pointer(uintptr(handle)),
 		(*[0]byte)(C.goClosureDestructor),
 	)
 
@@ -131,7 +131,7 @@ func borrowArray(array C.mlx_array) *Array {
 }
 
 //export goClosureCallback
-func goClosureCallback(res *C.mlx_vector_array, input C.mlx_vector_array, payload *cgo.Handle) C.int {
+func goClosureCallback(res *C.mlx_vector_array, input C.mlx_vector_array, payload unsafe.Pointer) C.int {
 	// Set flag to disable AddCleanup during callback
 	closureCallbackMu.Lock()
 	inClosureCallback = true
@@ -143,7 +143,8 @@ func goClosureCallback(res *C.mlx_vector_array, input C.mlx_vector_array, payloa
 	}()
 
 	// Recover the Go function from the handle
-	fn := payload.Value().(ClosureFunc)
+	handle := cgo.Handle(payload)
+	fn := handle.Value().(ClosureFunc)
 
 	// Convert input vector to Go slice - use borrowArray since MLX owns these
 	numInputs := int(C.mlx_vector_array_size(input))
@@ -167,6 +168,7 @@ func goClosureCallback(res *C.mlx_vector_array, input C.mlx_vector_array, payloa
 }
 
 //export goClosureDestructor
-func goClosureDestructor(payload *cgo.Handle) {
-	payload.Delete()
+func goClosureDestructor(payload unsafe.Pointer) {
+	handle := cgo.Handle(payload)
+	handle.Delete()
 }

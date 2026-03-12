@@ -228,7 +228,7 @@ func hasWeightsWithPrefix(weights WeightSource, prefix string) bool {
 func loadSlice(v reflect.Value, weights WeightSource, prefix string, errs *[]string) {
 	elemStructType := v.Type().Elem().Elem()
 
-	for i := range v.Len() {
+	for i := 0; i < v.Len(); i++ {
 		elem := v.Index(i)
 		if elem.IsNil() {
 			elem.Set(reflect.New(elemStructType))

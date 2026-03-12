@@ -470,14 +470,14 @@ func collect(v reflect.Value, arrays *[]*Array, seen map[uintptr]bool) {
 			}
 			return
 		}
-		for i := range v.NumField() {
+		for i := 0; i < v.NumField(); i++ {
 			field := v.Field(i)
 			if field.CanInterface() {
 				collect(field, arrays, seen)
 			}
 		}
 	case reflect.Slice:
-		for i := range v.Len() {
+		for i := 0; i < v.Len(); i++ {
 			collect(v.Index(i), arrays, seen)
 		}
 	case reflect.Map:
