@@ -15,8 +15,10 @@ import (
 	"unsafe"
 )
 
-var initError error
-var initLoadError string
+var (
+	initError     error
+	initLoadError string
+)
 
 // CheckInit returns any error that occurred during MLX dynamic library initialization.
 // When initialization failed, detailed load errors are logged to help diagnose the issue.

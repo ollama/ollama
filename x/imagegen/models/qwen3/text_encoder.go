@@ -292,7 +292,7 @@ func (te *TextEncoder) EncodePrompt(tok *tokenizer.Tokenizer, prompt string, max
 	}
 
 	maskData := make([]float32, maxLen)
-	for i := range len(tokens) {
+	for i := range tokens {
 		maskData[i] = 1.0
 	}
 

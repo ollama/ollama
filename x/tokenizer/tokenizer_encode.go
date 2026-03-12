@@ -223,7 +223,7 @@ func (t *Tokenizer) Encode(s string, addBOS bool) []int32 {
 		results := make([][]int32, numWorkers)
 		var wg sync.WaitGroup
 
-		for i := 0; i < numWorkers; i++ {
+		for i := range numWorkers {
 			start := i * chunksPer
 			end := start + chunksPer
 			if end > len(allChunks) {
