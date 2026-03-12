@@ -306,10 +306,15 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	for _, t := range meta.Tensors().Items() {
 		switch {
 		case contains(t.Name, "position_embd", "token_embd", "token_norm_embd", "token_types"):
-			createTensor(tensor{source: t}, input.bts, -1)
-			if _, ok := meta.Tensors().GroupLayers()["output"]; !ok && t.Name == "token_embd.weight" {
-				createTensor(tensor{source: t, target: "output.weight"}, output.bts, blocks)
-			}
+            if t.Name == "token_embd.weight" {
+                createTensor(tensor{source: t}, output.bts, blocks)
+            } else {
+                createTensor(tensor{source: t}, input.bts, -1)
+            }
+
+            if _, ok := meta.Tensors().GroupLayers()["output"]; !ok && t.Name == "token_embd.weight" {
+                createTensor(tensor{source: t, target: "output.weight"}, output.bts, blocks)
+            }
 		case contains(t.Name, "cls", "output", "output_norm",
 			"altup_proj", "altup_unembd_proj",
 			"per_layer_token_embd", "per_layer_model_proj", "per_layer_proj_norm"):
