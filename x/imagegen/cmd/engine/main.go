@@ -172,7 +172,7 @@ func main() {
 		// Load image if provided and model supports it.
 		var image *mlx.Array
 		if *imagePath != "" {
-			if mm, ok := m.(interface{ ImageSize() int32 }); ok {
+			if mm, ok := m.(MultimodalModel); ok {
 				image, err = imagegen.ProcessImage(*imagePath, mm.ImageSize())
 				if err != nil {
 					log.Fatal("load image:", err)
@@ -182,7 +182,7 @@ func main() {
 			}
 		}
 
-		err = generate(context.Background(), m, input{
+		_ = generate(context.Background(), m, input{
 			Prompt:       *prompt,
 			Image:        image,
 			MaxTokens:    *maxTokens,
@@ -217,17 +217,6 @@ func listModelTensors(modelPath string) error {
 	return nil
 }
 
-// loadModel builds and evaluates a model using the common load pattern.
-// Release safetensors BEFORE eval - lazy arrays have captured their data,
-// and this reduces peak memory by ~6GB (matches mlx-lm behavior).
-func loadModel[T Model](build func() T, cleanup func()) T {
-	m := build()
-	weights := mlx.Collect(m)
-	cleanup()
-	mlx.Eval(weights...)
-	return m
-}
-
 func load(modelPath string) (Model, error) {
 	kind, err := detectModelKind(modelPath)
 	if err != nil {
@@ -245,7 +234,7 @@ func detectModelKind(modelPath string) (string, error) {
 	if _, err := os.Stat(indexPath); err == nil {
 		data, err := os.ReadFile(indexPath)
 		if err != nil {
-			return "zimage", nil
+			return "", err
 		}
 		var index struct {
 			ClassName string `json:"_class_name"`

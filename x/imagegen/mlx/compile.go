@@ -11,6 +11,7 @@ extern int goClosureCallback(mlx_vector_array* res, mlx_vector_array input, void
 extern void goClosureDestructor(void* payload);
 */
 import "C"
+
 import (
 	"runtime/cgo"
 	"sync"
@@ -18,8 +19,10 @@ import (
 )
 
 // inClosureCallback is set to true during closure callback execution.
-var inClosureCallback bool
-var closureCallbackMu sync.Mutex
+var (
+	inClosureCallback bool
+	closureCallbackMu sync.Mutex
+)
 
 // InClosureCallback returns true if we're currently executing inside a closure callback.
 func InClosureCallback() bool {
@@ -68,7 +71,7 @@ func CompileShapeless(fn ClosureFunc, shapeless bool) *CompiledFunc {
 	// Create the closure from the Go callback
 	closure := C.mlx_closure_new_func_payload(
 		(*[0]byte)(C.goClosureCallback),
-		unsafe.Pointer(handle),
+		unsafe.Pointer(uintptr(handle)),
 		(*[0]byte)(C.goClosureDestructor),
 	)
 

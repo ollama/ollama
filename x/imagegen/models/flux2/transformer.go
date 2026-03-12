@@ -502,20 +502,6 @@ func (m *Flux2Transformer2DModel) Forward(patches, txtEmbeds *mlx.Array, timeste
 // Note: QK normalization uses mlx.RMSNorm (the fast version) directly
 // See applyQKNorm function below
 
-// compiledSwiGLU fuses: silu(gate) * up
-// Called 30x per step (10 in dual-stream + 20 in single-stream blocks)
-var compiledSwiGLU *mlx.CompiledFunc
-
-func getCompiledSwiGLU() *mlx.CompiledFunc {
-	if compiledSwiGLU == nil {
-		compiledSwiGLU = mlx.CompileShapeless(func(inputs []*mlx.Array) []*mlx.Array {
-			gate, up := inputs[0], inputs[1]
-			return []*mlx.Array{mlx.Mul(mlx.SiLU(gate), up)}
-		}, true)
-	}
-	return compiledSwiGLU
-}
-
 // Helper functions
 
 // parseModulation3 extracts 3 modulation params (shift, scale, gate) starting at offset
