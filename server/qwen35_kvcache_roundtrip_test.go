@@ -12,14 +12,21 @@ import (
 )
 
 type qwen35RoundTripCase struct {
-	name                        string
-	think                       bool
-	rawGeneratedSuffix          string
-	expectFullGeneratedReuse    bool
-	expectNoCompletedToolCall   bool
-	expectNoPartialReuseOnAbort bool
-	clientStyle                 qwen35ClientStyle
-	toolResultStyle             qwen35ToolResultStyle
+	name                         string
+	think                        bool
+	rawGeneratedSuffix           string
+	expectParsedContent          string
+	expectParsedThinking         string
+	expectCanonicalizedBody      string
+	allowCanonicalizationDrift   bool
+	expectFullGeneratedReuse     bool
+	expectFullAssistantRoundTrip bool
+	expectToolCallBodyRoundTrip  bool
+	expectFreshUserBoundaryShift bool
+	expectNoCompletedToolCall    bool
+	clientStyle                  qwen35ClientStyle
+	toolResultStyle              qwen35ToolResultStyle
+	continuationStyle            qwen35ContinuationStyle
 }
 
 type qwen35ClientStyle string
@@ -36,25 +43,33 @@ const (
 	qwen35ToolResultUserToolResponse qwen35ToolResultStyle = "user-tool-response"
 )
 
+type qwen35ContinuationStyle string
+
+const (
+	qwen35ContinuationToolOnly  qwen35ContinuationStyle = "tool-only"
+	qwen35ContinuationFreshUser qwen35ContinuationStyle = "fresh-user"
+)
+
 type qwen35RoundTripObservation struct {
-	prevPrompt                 string
-	nextPrompt                 string
-	prevFull                   string
-	prevAssistantTranscript    string
-	nextAssistantTranscript    string
-	totalPrefixReuseBytes      int
-	generatedReuseBytes        int
-	generatedTotalBytes        int
-	assistantTranscriptCommon  int
-	prefillStub                string
-	prefillStubReuseBytes      int
-	toolCallBody               string
-	toolCallBodyReuseBytes     int
-	baseHistoryBytes           int
-	baseHistoryReuseBytes      int
-	content                    string
-	thinking                   string
-	calls                      []api.ToolCall
+	prevPrompt                string
+	nextPrompt                string
+	prevFull                  string
+	prevAssistantTranscript   string
+	nextAssistantTranscript   string
+	totalPrefixReuseBytes     int
+	generatedReuseBytes       int
+	generatedTotalBytes       int
+	assistantTranscriptCommon int
+	prefillStub               string
+	prefillStubReuseBytes     int
+	toolCallBody              string
+	toolCallBodyReuseBytes    int
+	baseHistoryBytes          int
+	baseHistoryReuseBytes     int
+	content                   string
+	thinking                  string
+	calls                     []api.ToolCall
+	continuationStyle         qwen35ContinuationStyle
 }
 
 func TestQwen35KVCacheRoundTripConsistency(t *testing.T) {
@@ -85,109 +100,294 @@ func TestQwen35KVCacheRoundTripConsistency(t *testing.T) {
 
 	cases := []qwen35RoundTripCase{
 		{
-			name:                     "canonical scalar tool call with think=false",
-			think:                    false,
-			rawGeneratedSuffix:       qwen35ToolCallXML("exec", "cmd", "ls -la"),
-			expectFullGeneratedReuse: true,
-			clientStyle:              qwen35ClientStyleDirectStructured,
-			toolResultStyle:          qwen35ToolResultRoleTool,
+			name:                         "tool-only continuation: canonical scalar tool call with think=false",
+			think:                        false,
+			rawGeneratedSuffix:           qwen35ToolCallXML("exec", "cmd", "ls -la"),
+			expectParsedContent:          "",
+			expectParsedThinking:         "",
+			expectCanonicalizedBody:      qwen35ToolCallXML("exec", "cmd", "ls -la"),
+			expectFullGeneratedReuse:     true,
+			expectFullAssistantRoundTrip: true,
+			expectToolCallBodyRoundTrip:  true,
+			clientStyle:                  qwen35ClientStyleDirectStructured,
+			toolResultStyle:              qwen35ToolResultRoleTool,
+			continuationStyle:            qwen35ContinuationToolOnly,
 		},
 		{
-			name:                     "canonical scalar tool call with think=true",
-			think:                    true,
-			rawGeneratedSuffix:       "</think>\n\n" + qwen35ToolCallXML("exec", "cmd", "ls -la"),
-			expectFullGeneratedReuse: true,
-			clientStyle:              qwen35ClientStyleDirectStructured,
-			toolResultStyle:          qwen35ToolResultRoleTool,
+			name:                         "tool-only continuation: canonical scalar tool call with think=false and prose before tool call",
+			think:                        false,
+			rawGeneratedSuffix:           "I'll run that now.\n\n" + qwen35ToolCallXML("exec", "cmd", "ls -la"),
+			expectParsedContent:          "I'll run that now.",
+			expectParsedThinking:         "",
+			expectCanonicalizedBody:      qwen35ToolCallXML("exec", "cmd", "ls -la"),
+			expectFullGeneratedReuse:     true,
+			expectFullAssistantRoundTrip: true,
+			expectToolCallBodyRoundTrip:  true,
+			clientStyle:                  qwen35ClientStyleDirectStructured,
+			toolResultStyle:              qwen35ToolResultRoleTool,
+			continuationStyle:            qwen35ContinuationToolOnly,
 		},
 		{
-			name:                     "canonical structured JSON argument",
-			think:                    false,
-			rawGeneratedSuffix:       qwen35ToolCallXML("exec", "payload", `{"a": 1, "b": 2}`),
-			expectFullGeneratedReuse: true,
-			clientStyle:              qwen35ClientStyleDirectStructured,
-			toolResultStyle:          qwen35ToolResultRoleTool,
+			name:                         "tool-only continuation: canonical scalar tool call with think=true",
+			think:                        true,
+			rawGeneratedSuffix:           "\n</think>\n\n" + qwen35ToolCallXML("exec", "cmd", "ls -la"),
+			expectParsedContent:          "",
+			expectParsedThinking:         "",
+			expectCanonicalizedBody:      qwen35ToolCallXML("exec", "cmd", "ls -la"),
+			expectFullGeneratedReuse:     true,
+			expectFullAssistantRoundTrip: true,
+			expectToolCallBodyRoundTrip:  true,
+			clientStyle:                  qwen35ClientStyleDirectStructured,
+			toolResultStyle:              qwen35ToolResultRoleTool,
+			continuationStyle:            qwen35ContinuationToolOnly,
 		},
 		{
-			name:                     "compact structured JSON spacing",
-			think:                    false,
-			rawGeneratedSuffix:       qwen35ToolCallXML("exec", "payload", `{"a":1,"b":2}`),
-			expectFullGeneratedReuse: true,
-			clientStyle:              qwen35ClientStyleDirectStructured,
-			toolResultStyle:          qwen35ToolResultRoleTool,
+			name:                         "tool-only continuation: canonical scalar tool call with think=true and explicit reasoning before tool call",
+			think:                        true,
+			rawGeneratedSuffix:           "Need to inspect the workspace first.\n</think>\n\n" + qwen35ToolCallXML("exec", "cmd", "ls -la"),
+			expectParsedContent:          "",
+			expectParsedThinking:         "Need to inspect the workspace first.",
+			expectCanonicalizedBody:      qwen35ToolCallXML("exec", "cmd", "ls -la"),
+			expectFullGeneratedReuse:     true,
+			expectFullAssistantRoundTrip: true,
+			expectToolCallBodyRoundTrip:  true,
+			clientStyle:                  qwen35ClientStyleDirectStructured,
+			toolResultStyle:              qwen35ToolResultRoleTool,
+			continuationStyle:            qwen35ContinuationToolOnly,
 		},
 		{
-			name:                     "extra structured JSON spacing",
-			think:                    false,
-			rawGeneratedSuffix:       qwen35ToolCallXML("exec", "payload", `{  "a" : 1,   "b" : 2  }`),
-			expectFullGeneratedReuse: true,
-			clientStyle:              qwen35ClientStyleDirectStructured,
-			toolResultStyle:          qwen35ToolResultRoleTool,
+			name:                         "tool-only continuation: canonical structured JSON argument",
+			think:                        false,
+			rawGeneratedSuffix:           qwen35ToolCallXML("exec", "payload", `{"a": 1, "b": 2}`),
+			expectParsedContent:          "",
+			expectParsedThinking:         "",
+			expectCanonicalizedBody:      qwen35ToolCallXML("exec", "payload", `{"a": 1, "b": 2}`),
+			expectFullGeneratedReuse:     true,
+			expectFullAssistantRoundTrip: true,
+			expectToolCallBodyRoundTrip:  true,
+			clientStyle:                  qwen35ClientStyleDirectStructured,
+			toolResultStyle:              qwen35ToolResultRoleTool,
+			continuationStyle:            qwen35ContinuationToolOnly,
 		},
 		{
-			name:                     "noncanonical key order",
-			think:                    false,
-			rawGeneratedSuffix:       qwen35ToolCallXML("exec", "payload", `{"z": 1, "a": 2}`),
-			expectFullGeneratedReuse: true,
-			clientStyle:              qwen35ClientStyleDirectStructured,
-			toolResultStyle:          qwen35ToolResultRoleTool,
+			name:                         "tool-only continuation: canonical structured JSON argument via json roundtrip client",
+			think:                        false,
+			rawGeneratedSuffix:           qwen35ToolCallXML("exec", "payload", `{"a": 1, "b": 2}`),
+			expectParsedContent:          "",
+			expectParsedThinking:         "",
+			expectCanonicalizedBody:      qwen35ToolCallXML("exec", "payload", `{"a": 1, "b": 2}`),
+			expectFullGeneratedReuse:     true,
+			expectFullAssistantRoundTrip: true,
+			expectToolCallBodyRoundTrip:  true,
+			clientStyle:                  qwen35ClientStyleJSONRoundTrip,
+			toolResultStyle:              qwen35ToolResultRoleTool,
+			continuationStyle:            qwen35ContinuationToolOnly,
 		},
 		{
-			name:                     "nested key order drift",
-			think:                    false,
-			rawGeneratedSuffix:       qwen35ToolCallXML("exec", "payload", `{"outer": {"z": 1, "a": 2}, "b": 3}`),
-			expectFullGeneratedReuse: true,
-			clientStyle:              qwen35ClientStyleDirectStructured,
-			toolResultStyle:          qwen35ToolResultRoleTool,
+			name:                         "tool-only continuation: canonical scalar tool call with user-style tool_response wrapper",
+			think:                        false,
+			rawGeneratedSuffix:           qwen35ToolCallXML("exec", "cmd", "ls -la"),
+			expectParsedContent:          "",
+			expectParsedThinking:         "",
+			expectCanonicalizedBody:      qwen35ToolCallXML("exec", "cmd", "ls -la"),
+			expectFullGeneratedReuse:     true,
+			expectFullAssistantRoundTrip: true,
+			expectToolCallBodyRoundTrip:  true,
+			clientStyle:                  qwen35ClientStyleDirectStructured,
+			toolResultStyle:              qwen35ToolResultUserToolResponse,
+			continuationStyle:            qwen35ContinuationToolOnly,
 		},
 		{
-			name:                     "number lexical form 1.0",
-			think:                    false,
-			rawGeneratedSuffix:       qwen35ToolCallXML("exec", "n", "1.0"),
-			expectFullGeneratedReuse: true,
-			clientStyle:              qwen35ClientStyleDirectStructured,
-			toolResultStyle:          qwen35ToolResultRoleTool,
+			name:                       "tool-only continuation: compact structured JSON spacing",
+			think:                      false,
+			rawGeneratedSuffix:         qwen35ToolCallXML("exec", "payload", `{"a":1,"b":2}`),
+			expectParsedContent:        "",
+			expectParsedThinking:       "",
+			expectCanonicalizedBody:    qwen35ToolCallXML("exec", "payload", `{"a": 1, "b": 2}`),
+			allowCanonicalizationDrift: true,
+			clientStyle:                qwen35ClientStyleDirectStructured,
+			toolResultStyle:            qwen35ToolResultRoleTool,
+			continuationStyle:          qwen35ContinuationToolOnly,
 		},
 		{
-			name:                     "number lexical form 1e3",
-			think:                    false,
-			rawGeneratedSuffix:       qwen35ToolCallXML("exec", "n", "1e3"),
-			expectFullGeneratedReuse: true,
-			clientStyle:              qwen35ClientStyleDirectStructured,
-			toolResultStyle:          qwen35ToolResultRoleTool,
+			name:                       "tool-only continuation: extra structured JSON spacing",
+			think:                      false,
+			rawGeneratedSuffix:         qwen35ToolCallXML("exec", "payload", `{  "a" : 1,   "b" : 2  }`),
+			expectParsedContent:        "",
+			expectParsedThinking:       "",
+			expectCanonicalizedBody:    qwen35ToolCallXML("exec", "payload", `{"a": 1, "b": 2}`),
+			allowCanonicalizationDrift: true,
+			clientStyle:                qwen35ClientStyleDirectStructured,
+			toolResultStyle:            qwen35ToolResultRoleTool,
+			continuationStyle:          qwen35ContinuationToolOnly,
 		},
 		{
-			name:                     "literal html chars remain literal",
-			think:                    false,
-			rawGeneratedSuffix:       qwen35ToolCallXML("exec", "payload", `{"snippet": "if (x < 5 && y > 3) {}", "tag": "<ok>&</ok>"}`),
-			expectFullGeneratedReuse: true,
-			clientStyle:              qwen35ClientStyleDirectStructured,
-			toolResultStyle:          qwen35ToolResultRoleTool,
+			name:                         "tool-only continuation: noncanonical key order",
+			think:                        false,
+			rawGeneratedSuffix:           qwen35ToolCallXML("exec", "payload", `{"z": 1, "a": 2}`),
+			expectParsedContent:          "",
+			expectParsedThinking:         "",
+			expectCanonicalizedBody:      qwen35ToolCallXML("exec", "payload", `{"z": 1, "a": 2}`),
+			expectFullGeneratedReuse:     true,
+			expectFullAssistantRoundTrip: true,
+			expectToolCallBodyRoundTrip:  true,
+			clientStyle:                  qwen35ClientStyleDirectStructured,
+			toolResultStyle:              qwen35ToolResultRoleTool,
+			continuationStyle:            qwen35ContinuationToolOnly,
 		},
 		{
-			name:                     "real client resend via JSON roundtrip and user tool_response",
-			think:                    false,
-			rawGeneratedSuffix:       qwen35ToolCallXML("exec", "payload", `{"z": 1, "a": 2}`),
-			expectFullGeneratedReuse: true,
-			clientStyle:              qwen35ClientStyleJSONRoundTrip,
-			toolResultStyle:          qwen35ToolResultUserToolResponse,
+			name:                         "tool-only continuation: nested key order drift",
+			think:                        false,
+			rawGeneratedSuffix:           qwen35ToolCallXML("exec", "payload", `{"outer": {"z": 1, "a": 2}, "b": 3}`),
+			expectParsedContent:          "",
+			expectParsedThinking:         "",
+			expectCanonicalizedBody:      qwen35ToolCallXML("exec", "payload", `{"outer": {"z": 1, "a": 2}, "b": 3}`),
+			expectFullGeneratedReuse:     true,
+			expectFullAssistantRoundTrip: true,
+			expectToolCallBodyRoundTrip:  true,
+			clientStyle:                  qwen35ClientStyleDirectStructured,
+			toolResultStyle:              qwen35ToolResultRoleTool,
+			continuationStyle:            qwen35ContinuationToolOnly,
 		},
 		{
-			name:                     "real client resend via JSON roundtrip canonical scalar",
-			think:                    false,
-			rawGeneratedSuffix:       qwen35ToolCallXML("exec", "cmd", "ls -la"),
-			expectFullGeneratedReuse: true,
-			clientStyle:              qwen35ClientStyleJSONRoundTrip,
-			toolResultStyle:          qwen35ToolResultRoleTool,
+			name:                         "tool-only continuation: number lexical form 1.0",
+			think:                        false,
+			rawGeneratedSuffix:           qwen35ToolCallXML("exec", "n", "1.0"),
+			expectParsedContent:          "",
+			expectParsedThinking:         "",
+			expectCanonicalizedBody:      qwen35ToolCallXML("exec", "n", "1.0"),
+			expectFullGeneratedReuse:     true,
+			expectFullAssistantRoundTrip: true,
+			expectToolCallBodyRoundTrip:  true,
+			clientStyle:                  qwen35ClientStyleDirectStructured,
+			toolResultStyle:              qwen35ToolResultRoleTool,
+			continuationStyle:            qwen35ContinuationToolOnly,
 		},
 		{
-			name:                        "cancelled tool call before close tag",
-			think:                       false,
-			rawGeneratedSuffix:          "<tool_call>\n<function=exec>\n<parameter=cmd>\nls",
-			expectNoCompletedToolCall:   true,
-			expectNoPartialReuseOnAbort: true,
-			clientStyle:                 qwen35ClientStyleJSONRoundTrip,
-			toolResultStyle:             qwen35ToolResultRoleTool,
+			name:                         "tool-only continuation: number lexical form 1e3",
+			think:                        false,
+			rawGeneratedSuffix:           qwen35ToolCallXML("exec", "n", "1e3"),
+			expectParsedContent:          "",
+			expectParsedThinking:         "",
+			expectCanonicalizedBody:      qwen35ToolCallXML("exec", "n", "1e3"),
+			expectFullGeneratedReuse:     true,
+			expectFullAssistantRoundTrip: true,
+			expectToolCallBodyRoundTrip:  true,
+			clientStyle:                  qwen35ClientStyleDirectStructured,
+			toolResultStyle:              qwen35ToolResultRoleTool,
+			continuationStyle:            qwen35ContinuationToolOnly,
+		},
+		{
+			name:                         "tool-only continuation: literal html chars remain literal",
+			think:                        false,
+			rawGeneratedSuffix:           qwen35ToolCallXML("exec", "payload", `{"snippet": "if (x < 5 && y > 3) {}", "tag": "<ok>&</ok>"}`),
+			expectParsedContent:          "",
+			expectParsedThinking:         "",
+			expectCanonicalizedBody:      qwen35ToolCallXML("exec", "payload", `{"snippet": "if (x < 5 && y > 3) {}", "tag": "<ok>&</ok>"}`),
+			expectFullGeneratedReuse:     true,
+			expectFullAssistantRoundTrip: true,
+			expectToolCallBodyRoundTrip:  true,
+			clientStyle:                  qwen35ClientStyleDirectStructured,
+			toolResultStyle:              qwen35ToolResultRoleTool,
+			continuationStyle:            qwen35ContinuationToolOnly,
+		},
+		{
+			name:                         "tool-only continuation: real client resend via JSON roundtrip and user tool_response",
+			think:                        false,
+			rawGeneratedSuffix:           qwen35ToolCallXML("exec", "payload", `{"z": 1, "a": 2}`),
+			expectParsedContent:          "",
+			expectParsedThinking:         "",
+			expectCanonicalizedBody:      qwen35ToolCallXML("exec", "payload", `{"z": 1, "a": 2}`),
+			expectFullGeneratedReuse:     true,
+			expectFullAssistantRoundTrip: true,
+			expectToolCallBodyRoundTrip:  true,
+			clientStyle:                  qwen35ClientStyleJSONRoundTrip,
+			toolResultStyle:              qwen35ToolResultUserToolResponse,
+			continuationStyle:            qwen35ContinuationToolOnly,
+		},
+		{
+			name:                         "tool-only continuation: real client resend via JSON roundtrip canonical scalar",
+			think:                        false,
+			rawGeneratedSuffix:           qwen35ToolCallXML("exec", "cmd", "ls -la"),
+			expectParsedContent:          "",
+			expectParsedThinking:         "",
+			expectCanonicalizedBody:      qwen35ToolCallXML("exec", "cmd", "ls -la"),
+			expectFullGeneratedReuse:     true,
+			expectFullAssistantRoundTrip: true,
+			expectToolCallBodyRoundTrip:  true,
+			clientStyle:                  qwen35ClientStyleJSONRoundTrip,
+			toolResultStyle:              qwen35ToolResultRoleTool,
+			continuationStyle:            qwen35ContinuationToolOnly,
+		},
+		{
+			name:                         "fresh-user continuation: canonical scalar tool call stays stable after the expected boundary shift",
+			think:                        false,
+			rawGeneratedSuffix:           qwen35ToolCallXML("exec", "cmd", "ls -la"),
+			expectParsedContent:          "",
+			expectParsedThinking:         "",
+			expectCanonicalizedBody:      qwen35ToolCallXML("exec", "cmd", "ls -la"),
+			expectToolCallBodyRoundTrip:  true,
+			expectFreshUserBoundaryShift: true,
+			clientStyle:                  qwen35ClientStyleDirectStructured,
+			toolResultStyle:              qwen35ToolResultRoleTool,
+			continuationStyle:            qwen35ContinuationFreshUser,
+		},
+		{
+			name:                         "fresh-user continuation: real client resend via JSON roundtrip keeps a canonical scalar tool-call body stable",
+			think:                        false,
+			rawGeneratedSuffix:           qwen35ToolCallXML("exec", "cmd", "ls -la"),
+			expectParsedContent:          "",
+			expectParsedThinking:         "",
+			expectCanonicalizedBody:      qwen35ToolCallXML("exec", "cmd", "ls -la"),
+			expectToolCallBodyRoundTrip:  true,
+			expectFreshUserBoundaryShift: true,
+			clientStyle:                  qwen35ClientStyleJSONRoundTrip,
+			toolResultStyle:              qwen35ToolResultRoleTool,
+			continuationStyle:            qwen35ContinuationFreshUser,
+		},
+		{
+			name:                      "tool-only continuation: cancelled tool call before close tag",
+			think:                     false,
+			rawGeneratedSuffix:        "<tool_call>\n<function=exec>\n<parameter=cmd>\nls",
+			expectParsedContent:       "",
+			expectParsedThinking:      "",
+			expectNoCompletedToolCall: true,
+			clientStyle:               qwen35ClientStyleJSONRoundTrip,
+			toolResultStyle:           qwen35ToolResultRoleTool,
+			continuationStyle:         qwen35ContinuationToolOnly,
+		},
+		{
+			name:                      "tool-only continuation: cancelled think=true reasoning before think close",
+			think:                     true,
+			rawGeneratedSuffix:        "Need to inspect the workspace first.",
+			expectParsedContent:       "",
+			expectParsedThinking:      "Need to inspect the workspace first.",
+			expectNoCompletedToolCall: true,
+			clientStyle:               qwen35ClientStyleDirectStructured,
+			toolResultStyle:           qwen35ToolResultRoleTool,
+			continuationStyle:         qwen35ContinuationToolOnly,
+		},
+		{
+			name:                      "tool-only continuation: cancelled think=true after think close but before tool call completes",
+			think:                     true,
+			rawGeneratedSuffix:        "Need to inspect the workspace first.\n</think>\n\n<tool_call>\n<function=exec>\n<parameter=cmd>\nls",
+			expectParsedContent:       "",
+			expectParsedThinking:      "Need to inspect the workspace first.",
+			expectNoCompletedToolCall: true,
+			clientStyle:               qwen35ClientStyleDirectStructured,
+			toolResultStyle:           qwen35ToolResultRoleTool,
+			continuationStyle:         qwen35ContinuationToolOnly,
+		},
+		{
+			name:                      "tool-only continuation: cancelled think=false with prose before tool call completes",
+			think:                     false,
+			rawGeneratedSuffix:        "I'll run that now.\n\n<tool_call>\n<function=exec>\n<parameter=cmd>\nls",
+			expectParsedContent:       "I'll run that now.",
+			expectParsedThinking:      "",
+			expectNoCompletedToolCall: true,
+			clientStyle:               qwen35ClientStyleDirectStructured,
+			toolResultStyle:           qwen35ToolResultRoleTool,
+			continuationStyle:         qwen35ContinuationToolOnly,
 		},
 	}
 
@@ -201,15 +401,51 @@ func TestQwen35KVCacheRoundTripConsistency(t *testing.T) {
 		}
 
 		if tc.expectNoCompletedToolCall {
+			if obs.content != tc.expectParsedContent {
+				issues = append(issues, fmt.Sprintf("%s\nunexpected parsed assistant content for cancellation case.\nExpected content:\n%q\nObserved content:\n%q\nRaw generated suffix:\n%s",
+					tc.name, tc.expectParsedContent, obs.content, obs.rawGeneratedSuffix()))
+			}
+			if obs.thinking != tc.expectParsedThinking {
+				issues = append(issues, fmt.Sprintf("%s\nunexpected parsed assistant thinking for cancellation case.\nExpected thinking:\n%q\nObserved thinking:\n%q\nRaw generated suffix:\n%s",
+					tc.name, tc.expectParsedThinking, obs.thinking, obs.rawGeneratedSuffix()))
+			}
 			if len(obs.calls) != 0 {
 				issues = append(issues, fmt.Sprintf("%s\nexpected cancellation before `</tool_call>` to surface no completed tool calls, but parser produced %d call(s): %#v",
 					tc.name, len(obs.calls), obs.calls))
 			}
-			if tc.expectNoPartialReuseOnAbort && obs.generatedReuseBytes != 0 {
-				issues = append(issues, fmt.Sprintf("%s\nexpected an aborted partial tool call to reuse 0/%d generated bytes on the next turn, but reused %d bytes.\nThis would mean the history path is replaying partial assistant output, which should never happen.\nPrevious suffix:\n%s\nNext assistant transcript:\n%s",
-					tc.name, obs.generatedTotalBytes, obs.generatedReuseBytes, obs.rawGeneratedSuffix(), obs.nextAssistantTranscript))
+			if strings.Contains(obs.nextAssistantTranscript, "<tool_call>") {
+				issues = append(issues, fmt.Sprintf("%s\nexpected cancellation before `</tool_call>` to drop the incomplete tool-call XML from historical assistant replay, but the next assistant transcript still contains `<tool_call>`.\nRaw generated suffix:\n%s\nNext assistant transcript:\n%s",
+					tc.name, obs.rawGeneratedSuffix(), obs.nextAssistantTranscript))
 			}
 			continue
+		}
+
+		if obs.content != tc.expectParsedContent {
+			issues = append(issues, fmt.Sprintf("%s\nunexpected parsed assistant content.\nExpected content:\n%q\nObserved content:\n%q\nRaw generated suffix:\n%s",
+				tc.name, tc.expectParsedContent, obs.content, obs.rawGeneratedSuffix()))
+		}
+		if obs.thinking != tc.expectParsedThinking {
+			issues = append(issues, fmt.Sprintf("%s\nunexpected parsed assistant thinking.\nExpected thinking:\n%q\nObserved thinking:\n%q\nRaw generated suffix:\n%s",
+				tc.name, tc.expectParsedThinking, obs.thinking, obs.rawGeneratedSuffix()))
+		}
+
+		if tc.expectCanonicalizedBody != "" && obs.toolCallBody != tc.expectCanonicalizedBody {
+			issues = append(issues, fmt.Sprintf("%s\nunexpected canonicalized historical tool-call body.\nExpected canonical body:\n%s\nObserved canonical body:\n%s\nRaw generated suffix:\n%s",
+				tc.name, tc.expectCanonicalizedBody, obs.toolCallBody, obs.rawGeneratedSuffix()))
+		}
+		if tc.allowCanonicalizationDrift {
+			rawToolCallBody := qwen35RawToolCallBody(obs.rawGeneratedSuffix())
+			if tc.rawGeneratedSuffix == tc.expectCanonicalizedBody {
+				issues = append(issues, fmt.Sprintf("%s\ntest setup bug: allowCanonicalizationDrift is set, but the raw generated suffix already matches the expected canonical body.\nRaw generated suffix:\n%s",
+					tc.name, obs.rawGeneratedSuffix()))
+			}
+			if rawToolCallBody == "" {
+				issues = append(issues, fmt.Sprintf("%s\ntest setup bug: allowCanonicalizationDrift is set, but no tool-call body could be extracted from the raw generated suffix.\nRaw generated suffix:\n%s",
+					tc.name, obs.rawGeneratedSuffix()))
+			} else if obs.toolCallBody == rawToolCallBody {
+				issues = append(issues, fmt.Sprintf("%s\nexpected non-canonical tool-call JSON to be canonicalized to the official Qwen 3.5 form, but the historical assistant replay kept the original non-canonical bytes.\nRaw generated suffix:\n%s\nObserved historical tool-call body:\n%s",
+					tc.name, obs.rawGeneratedSuffix(), obs.toolCallBody))
+			}
 		}
 
 		if obs.baseHistoryReuseBytes != obs.baseHistoryBytes {
@@ -228,7 +464,7 @@ func TestQwen35KVCacheRoundTripConsistency(t *testing.T) {
 			))
 		}
 
-		if obs.prefillStub != "" && obs.prefillStubReuseBytes != len(obs.prefillStub) {
+		if tc.continuationStyle == qwen35ContinuationToolOnly && obs.prefillStub != "" && obs.prefillStubReuseBytes != len(obs.prefillStub) {
 			issues = append(issues, fmt.Sprintf(
 				"%s\nassistant prefill stub did not round-trip.\n"+
 					"Prefill stub reused: %d/%d bytes\n"+
@@ -244,7 +480,7 @@ func TestQwen35KVCacheRoundTripConsistency(t *testing.T) {
 			))
 		}
 
-		if obs.toolCallBodyReuseBytes != len(obs.toolCallBody) {
+		if tc.expectToolCallBodyRoundTrip && obs.toolCallBodyReuseBytes != len(obs.toolCallBody) {
 			issues = append(issues, fmt.Sprintf(
 				"%s\ntool-call body did not round-trip byte-for-byte.\n"+
 					"Tool-call body reused: %d/%d bytes\n"+
@@ -264,8 +500,18 @@ func TestQwen35KVCacheRoundTripConsistency(t *testing.T) {
 			issues = append(issues, qwen35GeneratedReuseFailure(tc.name, obs))
 		}
 
-		if obs.assistantTranscriptCommon != len(obs.prevAssistantTranscript) || obs.prevAssistantTranscript != obs.nextAssistantTranscript {
+		if tc.expectFullAssistantRoundTrip && (obs.assistantTranscriptCommon != len(obs.prevAssistantTranscript) || obs.prevAssistantTranscript != obs.nextAssistantTranscript) {
 			issues = append(issues, qwen35AssistantTranscriptFailure(tc.name, obs))
+		}
+
+		if tc.expectFreshUserBoundaryShift {
+			if obs.prefillStub == "" {
+				issues = append(issues, fmt.Sprintf("%s\nexpected a prompt-side assistant prefill stub before the generated tool call, but none was found.\nPrevious assistant transcript:\n%s",
+					tc.name, obs.prevAssistantTranscript))
+			} else if obs.prefillStubReuseBytes >= len(obs.prefillStub) {
+				issues = append(issues, fmt.Sprintf("%s\nexpected a fresh-user continuation to break at the assistant prefill boundary, but the prefill stub still round-tripped completely.\nThis usually means the scenario stopped being a true 'fresh user after tool result' case.\nPrefill stub:\n%s\nPrevious assistant transcript:\n%s\nNext historical assistant transcript:\n%s",
+					tc.name, obs.prefillStub, obs.prevAssistantTranscript, obs.nextAssistantTranscript))
+			}
 		}
 
 		if strings.Contains(obs.nextAssistantTranscript, `\u003c`) || strings.Contains(obs.nextAssistantTranscript, `\u003e`) || strings.Contains(obs.nextAssistantTranscript, `\u0026`) {
@@ -280,7 +526,10 @@ func TestQwen35KVCacheRoundTripConsistency(t *testing.T) {
 				"Why this matters:\n"+
 				"- `runner/llamarunner/cache.go` reuses KV state by matching a common input prefix.\n"+
 				"- Any divergence in the rerendered next-turn prompt forces prompt reprocessing from that boundary onward.\n"+
-				"- In rapid tool loops, that means extra prompt ingestion, lower throughput, and avoidable cache misses exactly where agentic coding sessions spend their time.\n\n"+
+				"- This harness separates the two real continuation shapes:\n"+
+				"  * tool-result-only continuation, which is the primary agentic loop and should round-trip cleanly for canonical outputs\n"+
+				"  * fresh-user continuation, where a boundary shift is expected but the historical tool-call body should still stay stable\n"+
+				"- In rapid tool loops, failures here mean extra prompt ingestion, lower throughput, and avoidable cache misses exactly where coding agents spend their time.\n\n"+
 				"Collected issues:\n\n%s",
 			strings.Join(issues, "\n\n---\n\n"),
 		)
@@ -340,7 +589,13 @@ func observeQwen35RoundTrip(baseMessages []api.Message, tools []api.Tool, tc qwe
 			return qwen35RoundTripObservation{}, fmt.Errorf("unknown tool result style %q", tc.toolResultStyle)
 		}
 	}
-	nextMessages = append(nextMessages, api.Message{Role: "user", Content: "continue"})
+	switch tc.continuationStyle {
+	case qwen35ContinuationToolOnly:
+	case qwen35ContinuationFreshUser:
+		nextMessages = append(nextMessages, api.Message{Role: "user", Content: "continue"})
+	default:
+		return qwen35RoundTripObservation{}, fmt.Errorf("unknown continuation style %q", tc.continuationStyle)
+	}
 
 	nextPrompt, err := renderers.RenderWithRenderer("qwen3.5", nextMessages, tools, think)
 	if err != nil {
@@ -402,6 +657,7 @@ func observeQwen35RoundTrip(baseMessages []api.Message, tools []api.Tool, tc qwe
 		content:                   content,
 		thinking:                  thinking,
 		calls:                     calls,
+		continuationStyle:         tc.continuationStyle,
 	}, nil
 }
 
@@ -409,12 +665,12 @@ func qwen35GeneratedReuseFailure(name string, obs qwen35RoundTripObservation) st
 	divergence := qwen35CommonPrefixLen(obs.prevFull, obs.nextPrompt)
 
 	return fmt.Sprintf(
-		"%s\nexpected the next prompt to reuse the full generated assistant suffix (%d/%d bytes), but only reused %d/%d bytes.\n"+
+		"%s\nexpected the next prompt to reuse the full model-emitted assistant suffix (%d/%d bytes, excluding `<|im_end|>`), but only reused %d/%d bytes.\n"+
 			"Region summary:\n"+
 			"- stable prior history reused: %d/%d bytes\n"+
 			"- assistant prefill stub reused: %d/%d bytes\n"+
 			"- assistant tool-call body reused: %d/%d bytes\n"+
-			"This is a direct KV-cache miss: the next request cannot fully reuse the assistant tool-call tokens it just generated.\n"+
+			"This is a direct KV-cache miss in the tool-result-only continuation path: the next request cannot fully reuse the assistant tool-call tokens it just generated.\n"+
 			"Previous prompt tail around divergence:\n%s\n"+
 			"Next prompt tail around divergence:\n%s\n"+
 			"Previous assistant transcript as cached after generation:\n%s\n"+
@@ -515,6 +771,13 @@ func qwen35SplitAssistantTranscript(transcript string) (prefillStub string, tool
 		return body[:idx], body[idx:]
 	}
 	return body, ""
+}
+
+func qwen35RawToolCallBody(raw string) string {
+	if idx := strings.Index(raw, "<tool_call>"); idx != -1 {
+		return raw[idx:]
+	}
+	return ""
 }
 
 func qwen35ToolCallXML(name, param, value string) string {
