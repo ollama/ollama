@@ -51,7 +51,7 @@ index dbcb5ef5d..ab763741d 100644
  
  set_target_properties(ggml-base PROPERTIES
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index d7a2f6a4b..b88cd4ac5 100644
+index fcea93998..ba3633f1d 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -270,6 +270,16 @@ static ggml_cuda_device_info ggml_cuda_init() {
@@ -144,7 +144,7 @@ index d7a2f6a4b..b88cd4ac5 100644
  
      bool host_buffer = getenv("GGML_CUDA_NO_PINNED") == nullptr;
  #ifdef GGML_CUDA_NO_PEER_COPY
-@@ -5413,6 +5466,7 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
+@@ -5419,6 +5472,7 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
          if (!initialized) {
              ggml_backend_cuda_reg_context * ctx = new ggml_backend_cuda_reg_context;
              const int min_batch_size = getenv("GGML_OP_OFFLOAD_MIN_BATCH") ? atoi(getenv("GGML_OP_OFFLOAD_MIN_BATCH")) : 32;
@@ -152,7 +152,7 @@ index d7a2f6a4b..b88cd4ac5 100644
  
              for (int i = 0; i < ggml_cuda_info().device_count; i++) {
                  ggml_backend_cuda_device_context * dev_ctx = new ggml_backend_cuda_device_context;
-@@ -5427,6 +5481,15 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
+@@ -5433,6 +5487,15 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
                  char pci_bus_id[16] = {};
                  snprintf(pci_bus_id, sizeof(pci_bus_id), "%04x:%02x:%02x.0", prop.pciDomainID, prop.pciBusID, prop.pciDeviceID);
                  dev_ctx->pci_bus_id = pci_bus_id;
@@ -190,10 +190,10 @@ index 5c172bf5d..14473a97c 100644
  #define cudaErrorPeerAccessAlreadyEnabled hipErrorPeerAccessAlreadyEnabled
  #define cudaErrorPeerAccessNotEnabled hipErrorPeerAccessNotEnabled
 diff --git a/ggml/src/ggml-impl.h b/ggml/src/ggml-impl.h
-index e3714b38a..80ebb059e 100644
+index 925686559..119159c97 100644
 --- a/ggml/src/ggml-impl.h
 +++ b/ggml/src/ggml-impl.h
-@@ -680,6 +680,14 @@ static inline bool ggml_can_fuse_subgraph(const struct ggml_cgraph * cgraph,
+@@ -735,6 +735,14 @@ static inline bool ggml_can_fuse_subgraph(const struct ggml_cgraph * cgraph,
      return ggml_can_fuse_subgraph_ext(cgraph, idxs, count, ops, outputs, num_outputs);
  }
  
@@ -229,10 +229,10 @@ index f3241dc4a..304101821 100644
          /* .async                = */ true,
          /* .host_buffer          = */ false,
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 649486e3a..b3b36b4da 100644
+index fc0fa691c..8de63d2f6 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -243,6 +243,7 @@ class vk_memory_logger;
+@@ -255,6 +255,7 @@ class vk_memory_logger;
  class vk_perf_logger;
  static void ggml_vk_destroy_buffer(vk_buffer& buf);
  static void ggml_vk_synchronize(ggml_backend_vk_context * ctx);
@@ -240,7 +240,7 @@ index 649486e3a..b3b36b4da 100644
  
  static constexpr uint32_t mul_mat_vec_max_cols = 8;
  static constexpr uint32_t p021_max_gqa_ratio = 8;
-@@ -13222,6 +13223,29 @@ static void ggml_vk_get_device_description(int device, char * description, size_
+@@ -13242,6 +13243,29 @@ static void ggml_vk_get_device_description(int device, char * description, size_
      snprintf(description, description_size, "%s", props.deviceName.data());
  }
  
@@ -270,7 +270,7 @@ index 649486e3a..b3b36b4da 100644
  // backend interface
  
  #define UNUSED GGML_UNUSED
-@@ -14902,7 +14926,14 @@ struct ggml_backend_vk_device_context {
+@@ -14931,7 +14955,14 @@ struct ggml_backend_vk_device_context {
      std::string name;
      std::string description;
      bool is_integrated_gpu;
@@ -286,7 +286,7 @@ index 649486e3a..b3b36b4da 100644
      int op_offload_min_batch_size;
  };
  
-@@ -14916,8 +14947,48 @@ static const char * ggml_backend_vk_device_get_description(ggml_backend_dev_t de
+@@ -14945,8 +14976,48 @@ static const char * ggml_backend_vk_device_get_description(ggml_backend_dev_t de
      return ctx->description.c_str();
  }
  
@@ -335,7 +335,7 @@ index 649486e3a..b3b36b4da 100644
      ggml_backend_vk_get_device_memory(ctx->device, free, total);
  }
  
-@@ -14942,15 +15013,23 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
+@@ -14971,15 +15042,23 @@ static void ggml_backend_vk_device_get_props(ggml_backend_dev_t dev, struct ggml
  
      props->name        = ggml_backend_vk_device_get_name(dev);
      props->description = ggml_backend_vk_device_get_description(dev);
@@ -362,7 +362,7 @@ index 649486e3a..b3b36b4da 100644
  }
  
  static ggml_backend_t ggml_backend_vk_device_init(ggml_backend_dev_t dev, const char * params) {
-@@ -15644,7 +15723,9 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
+@@ -15677,7 +15756,9 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
          static std::mutex mutex;
          std::lock_guard<std::mutex> lock(mutex);
          if (!initialized) {
@@ -372,7 +372,7 @@ index 649486e3a..b3b36b4da 100644
              for (int i = 0; i < ggml_backend_vk_get_device_count(); i++) {
                  ggml_backend_vk_device_context * ctx = new ggml_backend_vk_device_context;
                  char desc[256];
-@@ -15653,13 +15734,42 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
+@@ -15686,13 +15767,42 @@ static ggml_backend_dev_t ggml_backend_vk_reg_get_device(ggml_backend_reg_t reg,
                  ctx->name = GGML_VK_NAME + std::to_string(i);
                  ctx->description = desc;
                  ctx->is_integrated_gpu = ggml_backend_vk_get_device_type(i) == vk::PhysicalDeviceType::eIntegratedGpu;
