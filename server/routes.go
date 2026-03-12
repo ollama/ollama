@@ -1168,23 +1168,21 @@ func (s *Server) ShowHandler(c *gin.Context) {
 		return
 	}
 
-	// For local (non-remote) models, override the context_length in ModelInfo
-	// with the server's effective context length so clients see what the model
-	// will actually run with, not just the training context from the GGUF file.
+	// For local models, override the context_length in ModelInfo
+	// with the server's context length so clients see what the model
+	// will actually run with, not just the context from the GGUF file.
 	if resp.RemoteHost == "" && resp.ModelInfo != nil && m != nil {
 		effectiveCtx := int(envconfig.ContextLength())
 		if effectiveCtx == 0 {
 			effectiveCtx = s.defaultNumCtx
 		}
 
-		// Apply model-level num_ctx override if set
 		if numCtx, ok := m.Options["num_ctx"]; ok {
 			if v, ok := numCtx.(float64); ok {
 				effectiveCtx = int(v)
 			}
 		}
 
-		// Find and override the {arch}.context_length key
 		for k := range resp.ModelInfo {
 			if strings.HasSuffix(k, ".context_length") {
 				resp.ModelInfo[k] = effectiveCtx
