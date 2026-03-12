@@ -34,28 +34,28 @@ func TestWithLaunchConfirmPolicy_ChainsAndRestores(t *testing.T) {
 		return true, nil
 	}
 
-	restoreOuter := withLaunchConfirmPolicy(launchConfirmPolicy{requireBypassMessage: true})
-	restoreInner := withLaunchConfirmPolicy(launchConfirmPolicy{bypass: true})
+	restoreOuter := withLaunchConfirmPolicy(launchConfirmPolicy{requireYesMessage: true})
+	restoreInner := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
 
 	ok, err := ConfirmPrompt("test prompt")
 	if err != nil {
-		t.Fatalf("expected bypass policy to allow prompt, got error: %v", err)
+		t.Fatalf("expected --yes policy to allow prompt, got error: %v", err)
 	}
 	if !ok {
-		t.Fatal("expected bypass policy to auto-accept prompt")
+		t.Fatal("expected --yes policy to auto-accept prompt")
 	}
 	if hookCalls != 0 {
-		t.Fatalf("expected bypass to skip hook, got %d hook calls", hookCalls)
+		t.Fatalf("expected --yes to skip hook, got %d hook calls", hookCalls)
 	}
 
 	restoreInner()
 
 	_, err = ConfirmPrompt("test prompt")
 	if err == nil {
-		t.Fatal("expected requireBypassMessage policy to block prompt")
+		t.Fatal("expected requireYesMessage policy to block prompt")
 	}
-	if !strings.Contains(err.Error(), "re-run with --bypass") {
-		t.Fatalf("expected actionable bypass error, got: %v", err)
+	if !strings.Contains(err.Error(), "re-run with --yes") {
+		t.Fatalf("expected actionable --yes error, got: %v", err)
 	}
 	if hookCalls != 0 {
 		t.Fatalf("expected blocking policy to skip hook, got %d hook calls", hookCalls)

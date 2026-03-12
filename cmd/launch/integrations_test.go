@@ -115,8 +115,8 @@ func TestHasLocalModel(t *testing.T) {
 	}
 }
 
-func TestRunIntegration_UnknownIntegration(t *testing.T) {
-	err := runNamedIntegration("unknown-integration", "model", nil)
+func TestLookupIntegration_UnknownIntegration(t *testing.T) {
+	_, _, err := LookupIntegration("unknown-integration")
 	if err == nil {
 		t.Error("expected error for unknown integration, got nil")
 	}
@@ -126,8 +126,13 @@ func TestRunIntegration_UnknownIntegration(t *testing.T) {
 }
 
 func TestIsIntegrationInstalled_UnknownIntegrationReturnsFalse(t *testing.T) {
-	if IsIntegrationInstalled("unknown-integration") {
-		t.Fatal("expected unknown integration to report not installed")
+	stderr := captureStderr(t, func() {
+		if IsIntegrationInstalled("unknown-integration") {
+			t.Fatal("expected unknown integration to report not installed")
+		}
+	})
+	if !strings.Contains(stderr, `Ollama couldn't find integration "unknown-integration", so it'll show up as not installed.`) {
+		t.Fatalf("expected unknown-integration warning, got stderr: %q", stderr)
 	}
 }
 
@@ -810,6 +815,42 @@ func TestShowOrPullWithPolicy_ModelNotFound_PromptPolicyPulls(t *testing.T) {
 	}
 }
 
+func TestShowOrPullWithPolicy_ModelNotFound_AutoPullPolicyPullsWithoutPrompt(t *testing.T) {
+	oldHook := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		t.Fatalf("confirm prompt should not be called with auto-pull policy: %q", prompt)
+		return false, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldHook }()
+
+	var pullCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprintf(w, `{"error":"model not found"}`)
+		case "/api/pull":
+			pullCalled = true
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprintf(w, `{"status":"success"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	client := api.NewClient(u, srv.Client())
+
+	err := showOrPullWithPolicy(context.Background(), client, "missing-model", missingModelAutoPull, false)
+	if err != nil {
+		t.Fatalf("expected auto-pull policy to pull and succeed, got %v", err)
+	}
+	if !pullCalled {
+		t.Fatal("expected pull to be called with auto-pull policy")
+	}
+}
+
 func TestShowOrPullWithPolicy_CloudModelNotFound_FailsEarlyForAllPolicies(t *testing.T) {
 	oldHook := DefaultConfirmPrompt
 	DefaultConfirmPrompt = func(prompt string) (bool, error) {
@@ -818,7 +859,7 @@ func TestShowOrPullWithPolicy_CloudModelNotFound_FailsEarlyForAllPolicies(t *tes
 	}
 	defer func() { DefaultConfirmPrompt = oldHook }()
 
-	for _, policy := range []missingModelPolicy{missingModelPromptPull, missingModelFail} {
+	for _, policy := range []missingModelPolicy{missingModelPromptPull, missingModelAutoPull, missingModelFail} {
 		t.Run(fmt.Sprintf("policy=%d", policy), func(t *testing.T) {
 			var pullCalled bool
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -864,7 +905,7 @@ func TestShowOrPullWithPolicy_CloudModelDisabled_FailsWithCloudDisabledError(t *
 	}
 	defer func() { DefaultConfirmPrompt = oldHook }()
 
-	for _, policy := range []missingModelPolicy{missingModelPromptPull, missingModelFail} {
+	for _, policy := range []missingModelPolicy{missingModelPromptPull, missingModelAutoPull, missingModelFail} {
 		t.Run(fmt.Sprintf("policy=%d", policy), func(t *testing.T) {
 			var pullCalled bool
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1092,25 +1133,6 @@ func TestShowOrPull_CloudLegacySuffix_NotFoundDoesNotPull(t *testing.T) {
 	}
 }
 
-func TestPullIfNeeded_CloudModel_DoesNotPull(t *testing.T) {
-	oldHook := DefaultConfirmPrompt
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
-		t.Error("confirm prompt should not be called for cloud models")
-		return false, nil
-	}
-	defer func() { DefaultConfirmPrompt = oldHook }()
-
-	err := pullIfNeeded(context.Background(), nil, map[string]bool{}, "glm-5:cloud")
-	if err != nil {
-		t.Fatalf("expected no error for cloud model, got %v", err)
-	}
-
-	err = pullIfNeeded(context.Background(), nil, map[string]bool{}, "gpt-oss:20b-cloud")
-	if err != nil {
-		t.Fatalf("expected no error for cloud model with legacy suffix, got %v", err)
-	}
-}
-
 func TestConfirmPrompt_DelegatesToHook(t *testing.T) {
 	oldHook := DefaultConfirmPrompt
 	var hookCalled bool
@@ -1314,7 +1336,7 @@ func TestHyperlink(t *testing.T) {
 	}
 }
 
-func TestIntegrationInstallHint(t *testing.T) {
+func TestIntegration_InstallHint(t *testing.T) {
 	tests := []struct {
 		name      string
 		input     string
@@ -1350,7 +1372,11 @@ func TestIntegrationInstallHint(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := IntegrationInstallHint(tt.input)
+			got := ""
+			integration, err := integrationFor(tt.input)
+			if err == nil {
+				got = integration.installHint
+			}
 			if tt.wantEmpty {
 				if got != "" {
 					t.Errorf("expected empty hint, got %q", got)
@@ -1485,7 +1511,7 @@ func TestBuildModelList_Descriptions(t *testing.T) {
 	})
 }
 
-func TestIsEditorIntegration(t *testing.T) {
+func TestIntegration_Editor(t *testing.T) {
 	tests := []struct {
 		name string
 		want bool
@@ -1499,8 +1525,13 @@ func TestIsEditorIntegration(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := IsEditorIntegration(tt.name); got != tt.want {
-				t.Errorf("IsEditorIntegration(%q) = %v, want %v", tt.name, got, tt.want)
+			got := false
+			integration, err := integrationFor(tt.name)
+			if err == nil {
+				got = integration.editor
+			}
+			if got != tt.want {
+				t.Errorf("integrationFor(%q).editor = %v, want %v", tt.name, got, tt.want)
 			}
 		})
 	}

@@ -67,8 +67,8 @@ func TestLaunchCmd(t *testing.T) {
 		if cmd.Flags().Lookup("config") == nil {
 			t.Error("--config flag should exist")
 		}
-		if cmd.Flags().Lookup("bypass") == nil {
-			t.Error("--bypass flag should exist")
+		if cmd.Flags().Lookup("yes") == nil {
+			t.Error("--yes flag should exist")
 		}
 	})
 
@@ -302,7 +302,7 @@ func TestLaunchCmdModelFlagClearsDisabledCloudOverride(t *testing.T) {
 	}
 }
 
-func TestLaunchCmdBypass_AutoConfirmsLaunchPromptPath(t *testing.T) {
+func TestLaunchCmdYes_AutoConfirmsLaunchPromptPath(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -327,14 +327,14 @@ func TestLaunchCmdBypass_AutoConfirmsLaunchPromptPath(t *testing.T) {
 	defer restore()
 
 	DefaultConfirmPrompt = func(prompt string) (bool, error) {
-		t.Fatalf("unexpected prompt with --bypass: %q", prompt)
+		t.Fatalf("unexpected prompt with --yes: %q", prompt)
 		return false, nil
 	}
 
 	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command) {})
-	cmd.SetArgs([]string{"stubeditor", "--model", "llama3.2", "--bypass"})
+	cmd.SetArgs([]string{"stubeditor", "--model", "llama3.2", "--yes"})
 	if err := cmd.Execute(); err != nil {
-		t.Fatalf("launch command with --bypass failed: %v", err)
+		t.Fatalf("launch command with --yes failed: %v", err)
 	}
 
 	if diff := cmp.Diff([][]string{{"llama3.2"}}, stub.edited); diff != "" {
@@ -345,7 +345,53 @@ func TestLaunchCmdBypass_AutoConfirmsLaunchPromptPath(t *testing.T) {
 	}
 }
 
-func TestLaunchCmdHeadlessWithoutBypass_ReturnsActionableConfirmError(t *testing.T) {
+func TestLaunchCmdHeadlessWithYes_AutoPullsMissingLocalModel(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, false)
+
+	var pullCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":"model not found"}`)
+		case "/api/pull":
+			pullCalled = true
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, `{"status":"success"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	stub := &launcherSingleRunner{}
+	restore := OverrideIntegration("stubapp", stub)
+	defer restore()
+
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		t.Fatalf("unexpected prompt with --yes in headless autopull path: %q", prompt)
+		return false, nil
+	}
+
+	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command) {})
+	cmd.SetArgs([]string{"stubapp", "--model", "missing-model", "--yes"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("launch command with --yes failed: %v", err)
+	}
+
+	if !pullCalled {
+		t.Fatal("expected missing local model to be auto-pulled with --yes in headless mode")
+	}
+	if stub.ranModel != "missing-model" {
+		t.Fatalf("expected launch to run with pulled model, got %q", stub.ranModel)
+	}
+}
+
+func TestLaunchCmdHeadlessWithoutYes_ReturnsActionableConfirmError(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -370,7 +416,7 @@ func TestLaunchCmdHeadlessWithoutBypass_ReturnsActionableConfirmError(t *testing
 	defer restore()
 
 	DefaultConfirmPrompt = func(prompt string) (bool, error) {
-		t.Fatalf("unexpected prompt in headless non-bypass mode: %q", prompt)
+		t.Fatalf("unexpected prompt in headless non-yes mode: %q", prompt)
 		return false, nil
 	}
 
@@ -378,10 +424,10 @@ func TestLaunchCmdHeadlessWithoutBypass_ReturnsActionableConfirmError(t *testing
 	cmd.SetArgs([]string{"stubeditor", "--model", "llama3.2"})
 	err := cmd.Execute()
 	if err == nil {
-		t.Fatal("expected launch command to fail without --bypass in headless mode")
+		t.Fatal("expected launch command to fail without --yes in headless mode")
 	}
-	if !strings.Contains(err.Error(), "re-run with --bypass") {
-		t.Fatalf("expected actionable --bypass guidance, got %v", err)
+	if !strings.Contains(err.Error(), "re-run with --yes") {
+		t.Fatalf("expected actionable --yes guidance, got %v", err)
 	}
 	if len(stub.edited) != 0 {
 		t.Fatalf("expected no editor writes when confirmation is blocked, got %v", stub.edited)
