@@ -989,10 +989,10 @@ func BenchmarkLayerLike(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		x := Ones(1, hidden)
 		// Simulate attention-like ops with proper shapes
-		h := Matmul(x, w)                    // [1, 256] @ [256, 256] = [1, 256]
-		h = Add(h, Matmul(h, w))             // residual
-		h = Mul(h, Sigmoid(Matmul(h, w)))    // gating
-		h = Matmul(h, w)                     // output projection
+		h := Matmul(x, w)                  // [1, 256] @ [256, 256] = [1, 256]
+		h = Add(h, Matmul(h, w))           // residual
+		h = Mul(h, Sigmoid(Matmul(h, w)))  // gating
+		h = Matmul(h, w)                   // output projection
 		h = Add(x, RMSNormNoWeight(h, 1e-5)) // residual + norm
 		Keep(h)
 		AsyncEval(h)

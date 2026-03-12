@@ -21,7 +21,9 @@ import (
 type Request struct {
 	TextCompletionsRequest
 	Responses chan CompletionResponse
-	Pipeline  func(context.Context, Request) error
+	Pipeline  func(Request) error
+
+	Ctx context.Context
 
 	Sampler *sample.Sampler
 }
@@ -143,7 +145,7 @@ func (r *Runner) Run(host, port string, mux http.Handler) error {
 			case <-ctx.Done():
 				return nil
 			case request := <-r.Requests:
-				if err := request.Pipeline(ctx, request); err != nil {
+				if err := request.Pipeline(request); err != nil {
 					slog.Info("Request terminated", "error", err)
 					var statusErr api.StatusError
 					if !errors.As(err, &statusErr) {
@@ -154,7 +156,7 @@ func (r *Runner) Run(host, port string, mux http.Handler) error {
 					}
 					select {
 					case request.Responses <- CompletionResponse{Error: &statusErr}:
-					case <-ctx.Done():
+					case <-request.Ctx.Done():
 					}
 				}
 

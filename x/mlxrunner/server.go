@@ -3,6 +3,7 @@ package mlxrunner
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -103,6 +104,10 @@ func Execute(args []string) error {
 			request.Options.RepeatLastN,
 			request.Options.PresencePenalty,
 		)
+
+		var cancel context.CancelFunc
+		request.Ctx, cancel = context.WithCancel(r.Context())
+		defer cancel()
 
 		select {
 		case <-r.Context().Done():

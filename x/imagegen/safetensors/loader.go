@@ -95,7 +95,7 @@ func LoadModule(dst any, weights WeightSource, prefix string) error {
 func loadStruct(v reflect.Value, weights WeightSource, prefix string, errs *[]string, parentOptional bool) {
 	t := v.Type()
 
-	for i := range t.NumField() {
+	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 		fieldVal := v.Field(i)
 

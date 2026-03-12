@@ -18,7 +18,7 @@ func prefillChunkSize() int {
 	return 2 << 10
 }
 
-func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) error {
+func (r *Runner) TextGenerationPipeline(request Request) error {
 	if r.Model == nil {
 		return errors.New("model not loaded")
 	}
@@ -33,6 +33,7 @@ func (r *Runner) TextGenerationPipeline(ctx context.Context, request Request) er
 		mlx.DisableCompile()
 	}
 	mlx.ResetPeakMemory()
+	ctx := request.Ctx
 	var (
 		sample, logprobs         *mlx.Array
 		nextSample, nextLogprobs *mlx.Array

@@ -52,13 +52,13 @@ func applyRoPEQwen3(x *mlx.Array, seqLen int32, theta float32) *mlx.Array {
 
 	freqsArr := make([]float32, half)
 	logTheta := float32(math.Log(float64(theta)))
-	for i := range half {
+	for i := int32(0); i < half; i++ {
 		freqsArr[i] = float32(math.Exp(float64(-logTheta * float32(i) / float32(half))))
 	}
 	freqs := mlx.NewArray(freqsArr, []int32{half})
 
 	posArr := make([]float32, seqLen)
-	for i := range seqLen {
+	for i := int32(0); i < seqLen; i++ {
 		posArr[i] = float32(i)
 	}
 	pos := mlx.NewArray(posArr, []int32{seqLen})
@@ -292,7 +292,7 @@ func (te *TextEncoder) EncodePrompt(tok *tokenizer.Tokenizer, prompt string, max
 	}
 
 	maskData := make([]float32, maxLen)
-	for i := range len(tokens) {
+	for i := 0; i < len(tokens); i++ {
 		maskData[i] = 1.0
 	}
 

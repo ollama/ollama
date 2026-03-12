@@ -135,7 +135,7 @@ func (gn *GroupNormLayer) forwardTiled(x *mlx.Array, B, H, W, C int32) *mlx.Arra
 	mlx.Eval(mean, invStd)
 
 	// Tile along H dimension
-	tileH := 512 * 512 / W
+	tileH := int32(512 * 512 / W)
 	if tileH < 1 {
 		tileH = 1
 	}
