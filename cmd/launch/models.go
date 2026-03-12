@@ -80,6 +80,8 @@ type missingModelPolicy int
 const (
 	// missingModelPromptPull prompts the user to download missing local models.
 	missingModelPromptPull missingModelPolicy = iota
+	// missingModelAutoPull downloads missing local models without prompting.
+	missingModelAutoPull
 	// missingModelFail returns an error for missing local models without prompting.
 	missingModelFail
 )
@@ -175,13 +177,6 @@ func ensureAuth(ctx context.Context, client *api.Client, cloudModels map[string]
 	}
 }
 
-func pullIfNeeded(ctx context.Context, client *api.Client, existingModels map[string]bool, model string) error {
-	if isCloudModelName(model) || existingModels[model] {
-		return nil
-	}
-	return confirmAndPull(ctx, client, model)
-}
-
 // showOrPullWithPolicy checks if a model exists and applies the provided missing-model policy.
 func showOrPullWithPolicy(ctx context.Context, client *api.Client, model string, policy missingModelPolicy, isCloudModel bool) error {
 	if _, err := client.Show(ctx, &api.ShowRequest{Model: model}); err == nil {
@@ -201,6 +196,8 @@ func showOrPullWithPolicy(ctx context.Context, client *api.Client, model string,
 	}
 
 	switch policy {
+	case missingModelAutoPull:
+		return pullMissingModel(ctx, client, model)
 	case missingModelFail:
 		return fmt.Errorf("model %q not found; run 'ollama pull %s' first", model, model)
 	default:
@@ -215,6 +212,10 @@ func confirmAndPull(ctx context.Context, client *api.Client, model string) error
 		return errCancelled
 	}
 	fmt.Fprintf(os.Stderr, "\n")
+	return pullMissingModel(ctx, client, model)
+}
+
+func pullMissingModel(ctx context.Context, client *api.Client, model string) error {
 	if err := pullModel(ctx, client, model, false); err != nil {
 		return fmt.Errorf("failed to pull %s: %w", model, err)
 	}
@@ -267,16 +268,6 @@ func prepareEditorIntegration(name string, runner Runner, editor Editor, models 
 		return fmt.Errorf("failed to save: %w", err)
 	}
 	return nil
-}
-
-// runNamedIntegration executes a configured integration with the selected model.
-func runNamedIntegration(name, modelName string, args []string) error {
-	_, runner, err := LookupIntegration(name)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(os.Stderr, "\nLaunching %s with %s...\n", runner, modelName)
-	return runner.Run(modelName, args)
 }
 
 func confirmEditorEdit(runner Runner, editor Editor) (bool, error) {

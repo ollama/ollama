@@ -2,6 +2,7 @@ package launch
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"slices"
 	"strings"
@@ -281,85 +282,73 @@ func IntegrationSelectionItems() ([]ModelItem, error) {
 
 // IsIntegrationInstalled checks if an integration binary is installed.
 func IsIntegrationInstalled(name string) bool {
-	spec, err := LookupIntegrationSpec(name)
-	// treat integration as not installed if not found
+	integration, err := integrationFor(name)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "Ollama couldn't find integration %q, so it'll show up as not installed.\n", name)
 		return false
 	}
-	if spec.Install.CheckInstalled == nil {
-		return true
-	}
-	return spec.Install.CheckInstalled()
+	return integration.installed
 }
 
-// AutoInstallable returns true if the integration can be automatically installed when missing.
-func AutoInstallable(name string) bool {
+// integration is resolved registry metadata used by launcher state and install checks.
+// It combines immutable registry spec data with computed runtime traits.
+type integration struct {
+	spec            *IntegrationSpec
+	installed       bool
+	autoInstallable bool
+	editor          bool
+	installHint     string
+}
+
+// integrationFor resolves an integration name into the canonical spec plus
+// derived launcher/install traits used across registry and launch flows.
+func integrationFor(name string) (integration, error) {
 	spec, err := LookupIntegrationSpec(name)
 	if err != nil {
-		return false
+		return integration{}, err
 	}
-	return spec.Install.EnsureInstalled != nil
-}
 
-// EnsureInstalled checks if an auto-installable integration is present and offers to install it if missing.
-func EnsureInstalled(name string) error {
-	spec, err := LookupIntegrationSpec(name)
-	if err != nil {
-		return err
+	installed := true
+	if spec.Install.CheckInstalled != nil {
+		installed = spec.Install.CheckInstalled()
 	}
-	if spec.Install.EnsureInstalled == nil || IsIntegrationInstalled(name) {
-		return nil
-	}
-	return spec.Install.EnsureInstalled()
-}
 
-// IsEditorIntegration returns true if the named integration uses multi-model selection.
-func IsEditorIntegration(name string) bool {
-	_, runner, err := LookupIntegration(name)
-	if err != nil {
-		return false
-	}
-	_, isEditor := runner.(Editor)
-	return isEditor
-}
-
-// IntegrationInstallHint returns a user-friendly install hint for the given integration.
-func IntegrationInstallHint(name string) string {
-	spec, err := LookupIntegrationSpec(name)
-	if err != nil {
-		return ""
-	}
+	_, editor := spec.Runner.(Editor)
+	hint := ""
 	if spec.Install.URL != "" {
-		return "Install from " + hyperlink(spec.Install.URL, spec.Install.URL)
+		hint = "Install from " + hyperlink(spec.Install.URL, spec.Install.URL)
+	} else if len(spec.Install.Command) > 0 {
+		hint = "Install with: " + strings.Join(spec.Install.Command, " ")
 	}
-	if len(spec.Install.Command) > 0 {
-		return "Install with: " + strings.Join(spec.Install.Command, " ")
-	}
-	return ""
+
+	return integration{
+		spec:            spec,
+		installed:       installed,
+		autoInstallable: spec.Install.EnsureInstalled != nil,
+		editor:          editor,
+		installHint:     hint,
+	}, nil
 }
 
 // EnsureIntegrationInstalled installs auto-installable integrations when missing.
 func EnsureIntegrationInstalled(name string, runner Runner) error {
-	if IsIntegrationInstalled(name) {
-		return nil
-	}
-	if AutoInstallable(name) {
-		return EnsureInstalled(name)
-	}
-	return IntegrationInstallError(name, runner)
-}
-
-// IntegrationInstallError reports a user-facing install error for missing integrations.
-func IntegrationInstallError(name string, runner Runner) error {
-	spec, err := LookupIntegrationSpec(name)
+	integration, err := integrationFor(name)
 	if err != nil {
 		return fmt.Errorf("%s is not installed", runner)
 	}
+
+	if integration.installed {
+		return nil
+	}
+	if integration.autoInstallable {
+		return integration.spec.Install.EnsureInstalled()
+	}
+
 	switch {
-	case spec.Install.URL != "":
-		return fmt.Errorf("%s is not installed, install from %s", spec.Name, spec.Install.URL)
-	case len(spec.Install.Command) > 0:
-		return fmt.Errorf("%s is not installed, install with: %s", spec.Name, strings.Join(spec.Install.Command, " "))
+	case integration.spec.Install.URL != "":
+		return fmt.Errorf("%s is not installed, install from %s", integration.spec.Name, integration.spec.Install.URL)
+	case len(integration.spec.Install.Command) > 0:
+		return fmt.Errorf("%s is not installed, install with: %s", integration.spec.Name, strings.Join(integration.spec.Install.Command, " "))
 	default:
 		return fmt.Errorf("%s is not installed", runner)
 	}

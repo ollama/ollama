@@ -46,19 +46,19 @@ var DefaultMultiSelector MultiSelector
 var DefaultSignIn func(modelName, signInURL string) (string, error)
 
 type launchConfirmPolicy struct {
-	bypass               bool
-	requireBypassMessage bool
+	yes               bool
+	requireYesMessage bool
 }
 
 var currentLaunchConfirmPolicy launchConfirmPolicy
 
 func (p launchConfirmPolicy) chain(next launchConfirmPolicy) launchConfirmPolicy {
 	chained := launchConfirmPolicy{
-		bypass:               p.bypass || next.bypass,
-		requireBypassMessage: p.requireBypassMessage || next.requireBypassMessage,
+		yes:               p.yes || next.yes,
+		requireYesMessage: p.requireYesMessage || next.requireYesMessage,
 	}
-	if chained.bypass {
-		chained.requireBypassMessage = false
+	if chained.yes {
+		chained.requireYesMessage = false
 	}
 	return chained
 }
@@ -73,11 +73,11 @@ func withLaunchConfirmPolicy(policy launchConfirmPolicy) func() {
 
 // ConfirmPrompt asks the user to confirm an action using the configured prompt hook.
 func ConfirmPrompt(prompt string) (bool, error) {
-	if currentLaunchConfirmPolicy.bypass {
+	if currentLaunchConfirmPolicy.yes {
 		return true, nil
 	}
-	if currentLaunchConfirmPolicy.requireBypassMessage {
-		return false, fmt.Errorf("%s requires confirmation; re-run with --bypass to continue", prompt)
+	if currentLaunchConfirmPolicy.requireYesMessage {
+		return false, fmt.Errorf("%s requires confirmation; re-run with --yes to continue", prompt)
 	}
 
 	if DefaultConfirmPrompt != nil {

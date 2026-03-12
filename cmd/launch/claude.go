@@ -116,7 +116,7 @@ func (c *Claude) ConfigureAliases(ctx context.Context, model string, existingAli
 		return aliases, false, nil
 	}
 
-	items, existingModels, cloudModels, client, err := listModels(ctx)
+	items, _, cloudModels, client, err := listModels(ctx)
 	if err != nil {
 		return nil, false, err
 	}
@@ -131,7 +131,7 @@ func (c *Claude) ConfigureAliases(ctx context.Context, model string, existingAli
 		if err != nil {
 			return nil, false, err
 		}
-		if err := pullIfNeeded(ctx, client, existingModels, primary); err != nil {
+		if err := showOrPullWithPolicy(ctx, client, primary, missingModelPromptPull, isCloudModelName(primary)); err != nil {
 			return nil, false, err
 		}
 		if err := ensureAuth(ctx, client, cloudModels, []string{primary}); err != nil {

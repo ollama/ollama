@@ -50,8 +50,8 @@ const (
 	LaunchConfirmPrompt LaunchConfirmMode = iota
 	// LaunchConfirmAutoApprove skips prompts and treats confirmation as accepted.
 	LaunchConfirmAutoApprove
-	// LaunchConfirmRequireBypass rejects confirmation requests with a --bypass hint.
-	LaunchConfirmRequireBypass
+	// LaunchConfirmRequireYes rejects confirmation requests with a --yes hint.
+	LaunchConfirmRequireYes
 )
 
 // LaunchMissingModelMode controls local missing-model handling in launch flows.
@@ -60,6 +60,8 @@ type LaunchMissingModelMode int
 const (
 	// LaunchMissingModelPromptToPull prompts to pull a missing local model.
 	LaunchMissingModelPromptToPull LaunchMissingModelMode = iota
+	// LaunchMissingModelAutoPull pulls a missing local model without prompting.
+	LaunchMissingModelAutoPull
 	// LaunchMissingModelFail fails immediately when a local model is missing.
 	LaunchMissingModelFail
 )
@@ -76,7 +78,7 @@ func defaultLaunchPolicy(interactive bool) LaunchPolicy {
 		MissingModel: LaunchMissingModelPromptToPull,
 	}
 	if !interactive {
-		policy.Confirm = LaunchConfirmRequireBypass
+		policy.Confirm = LaunchConfirmRequireYes
 		policy.MissingModel = LaunchMissingModelFail
 	}
 	return policy
@@ -85,19 +87,23 @@ func defaultLaunchPolicy(interactive bool) LaunchPolicy {
 func (p LaunchPolicy) confirmPolicy() launchConfirmPolicy {
 	switch p.Confirm {
 	case LaunchConfirmAutoApprove:
-		return launchConfirmPolicy{bypass: true}
-	case LaunchConfirmRequireBypass:
-		return launchConfirmPolicy{requireBypassMessage: true}
+		return launchConfirmPolicy{yes: true}
+	case LaunchConfirmRequireYes:
+		return launchConfirmPolicy{requireYesMessage: true}
 	default:
 		return launchConfirmPolicy{}
 	}
 }
 
 func (p LaunchPolicy) missingModelPolicy() missingModelPolicy {
-	if p.MissingModel == LaunchMissingModelFail {
+	switch p.MissingModel {
+	case LaunchMissingModelAutoPull:
+		return missingModelAutoPull
+	case LaunchMissingModelFail:
 		return missingModelFail
+	default:
+		return missingModelPromptPull
 	}
-	return missingModelPromptPull
 }
 
 // IntegrationLaunchRequest controls the canonical integration launcher flow.
@@ -185,7 +191,7 @@ func ConfigureIntegration(ctx context.Context, name string) error {
 func LaunchCmd(checkServerHeartbeat func(cmd *cobra.Command, args []string) error, runTUI func(cmd *cobra.Command)) *cobra.Command {
 	var modelFlag string
 	var configFlag bool
-	var bypassFlag bool
+	var yesFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "launch [INTEGRATION] [-- [EXTRA_ARGS...]]",
@@ -215,8 +221,11 @@ Examples:
 		PreRunE: checkServerHeartbeat,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			policy := defaultLaunchPolicy(isInteractiveSession())
-			if bypassFlag {
+			if yesFlag {
 				policy.Confirm = LaunchConfirmAutoApprove
+				if policy.MissingModel == LaunchMissingModelFail {
+					policy.MissingModel = LaunchMissingModelAutoPull
+				}
 			}
 			restoreConfirmPolicy := withLaunchConfirmPolicy(policy.confirmPolicy())
 			defer restoreConfirmPolicy()
@@ -276,17 +285,15 @@ Examples:
 
 	cmd.Flags().StringVar(&modelFlag, "model", "", "Model to use")
 	cmd.Flags().BoolVar(&configFlag, "config", false, "Configure without launching")
-	cmd.Flags().BoolVar(&bypassFlag, "bypass", false, "Bypass confirmation prompts")
+	cmd.Flags().BoolVarP(&yesFlag, "yes", "y", false, "Automatically answer yes to confirmation prompts")
 	return cmd
 }
 
 type launcherClient struct {
-	apiClient         *api.Client
-	modelInventory    []ModelInfo
-	cloudDisabled     bool
-	cloudStatusLoaded bool
-	inventoryLoaded   bool
-	policy            LaunchPolicy
+	apiClient       *api.Client
+	modelInventory  []ModelInfo
+	inventoryLoaded bool
+	policy          LaunchPolicy
 }
 
 func newLauncherClient(policy LaunchPolicy) (*launcherClient, error) {
@@ -377,10 +384,11 @@ func (c *launcherClient) buildLauncherState(ctx context.Context) (*LauncherState
 }
 
 func (c *launcherClient) buildLauncherIntegrationState(ctx context.Context, info IntegrationInfo) (LauncherIntegrationState, error) {
-	installed := IsIntegrationInstalled(info.Name)
-	autoInstallable := AutoInstallable(info.Name)
-	isEditor := IsEditorIntegration(info.Name)
-	currentModel, usable, err := c.launcherModelState(ctx, info.Name, isEditor)
+	integration, err := integrationFor(info.Name)
+	if err != nil {
+		return LauncherIntegrationState{}, err
+	}
+	currentModel, usable, err := c.launcherModelState(ctx, info.Name, integration.editor)
 	if err != nil {
 		return LauncherIntegrationState{}, err
 	}
@@ -389,14 +397,14 @@ func (c *launcherClient) buildLauncherIntegrationState(ctx context.Context, info
 		Name:            info.Name,
 		DisplayName:     info.DisplayName,
 		Description:     info.Description,
-		Installed:       installed,
-		AutoInstallable: autoInstallable,
-		Selectable:      installed || autoInstallable,
-		Changeable:      installed || autoInstallable,
+		Installed:       integration.installed,
+		AutoInstallable: integration.autoInstallable,
+		Selectable:      integration.installed || integration.autoInstallable,
+		Changeable:      integration.installed || integration.autoInstallable,
 		CurrentModel:    currentModel,
 		ModelUsable:     usable,
-		InstallHint:     IntegrationInstallHint(info.Name),
-		Editor:          isEditor,
+		InstallHint:     integration.installHint,
+		Editor:          integration.editor,
 	}, nil
 }
 
@@ -615,8 +623,9 @@ func (c *launcherClient) loadSelectableModels(ctx context.Context, preChecked []
 		return nil, nil, err
 	}
 
+	cloudDisabled, _ := cloudStatusDisabled(ctx, c.apiClient)
 	items, orderedChecked, _, _ := buildModelList(c.modelInventory, preChecked, current)
-	if c.cloudDisabled {
+	if cloudDisabled {
 		items = filterCloudItems(items)
 		orderedChecked = c.filterDisabledCloudModels(ctx, orderedChecked)
 	}
@@ -674,8 +683,9 @@ func (c *launcherClient) resolveEditorLaunchModels(ctx context.Context, saved *c
 }
 
 func (c *launcherClient) filterDisabledCloudModels(ctx context.Context, models []string) []string {
-	c.ensureCloudStatus(ctx)
-	if !c.cloudDisabled {
+	// if connection cannot be established or there is a 404, cloud models will continue to be displayed
+	cloudDisabled, _ := cloudStatusDisabled(ctx, c.apiClient)
+	if !cloudDisabled {
 		return append([]string(nil), models...)
 	}
 
@@ -692,7 +702,7 @@ func (c *launcherClient) savedModelUsable(ctx context.Context, name string) (boo
 	if err := c.loadModelInventoryOnce(ctx); err != nil {
 		return c.showBasedModelUsable(ctx, name)
 	}
-	return c.singleModelUsable(name), nil
+	return c.singleModelUsable(ctx, name), nil
 }
 
 func (c *launcherClient) showBasedModelUsable(ctx context.Context, name string) (bool, error) {
@@ -710,19 +720,21 @@ func (c *launcherClient) showBasedModelUsable(ctx context.Context, name string) 
 	}
 
 	if isCloudModelName(name) || info.RemoteModel != "" {
-		c.ensureCloudStatus(ctx)
-		return !c.cloudDisabled, nil
+		cloudDisabled, _ := cloudStatusDisabled(ctx, c.apiClient)
+
+		return !cloudDisabled, nil
 	}
 
 	return true, nil
 }
 
-func (c *launcherClient) singleModelUsable(name string) bool {
+func (c *launcherClient) singleModelUsable(ctx context.Context, name string) bool {
 	if name == "" {
 		return false
 	}
 	if isCloudModelName(name) {
-		return !c.cloudDisabled
+		cloudDisabled, _ := cloudStatusDisabled(ctx, c.apiClient)
+		return !cloudDisabled
 	}
 	return c.hasLocalModel(name)
 }
@@ -739,14 +751,6 @@ func (c *launcherClient) hasLocalModel(name string) bool {
 	return false
 }
 
-func (c *launcherClient) ensureCloudStatus(ctx context.Context) {
-	if c.cloudStatusLoaded {
-		return
-	}
-	c.cloudDisabled, _ = cloudStatusDisabled(ctx, c.apiClient)
-	c.cloudStatusLoaded = true
-}
-
 func (c *launcherClient) loadModelInventoryOnce(ctx context.Context) error {
 	if c.inventoryLoaded {
 		return nil
@@ -757,7 +761,6 @@ func (c *launcherClient) loadModelInventoryOnce(ctx context.Context) error {
 		return err
 	}
 
-	c.ensureCloudStatus(ctx)
 	c.modelInventory = c.modelInventory[:0]
 	for _, model := range resp.Models {
 		c.modelInventory = append(c.modelInventory, ModelInfo{
@@ -765,7 +768,9 @@ func (c *launcherClient) loadModelInventoryOnce(ctx context.Context) error {
 			Remote: model.RemoteModel != "",
 		})
 	}
-	if c.cloudDisabled {
+
+	cloudDisabled, _ := cloudStatusDisabled(ctx, c.apiClient)
+	if cloudDisabled {
 		c.modelInventory = filterCloudModels(c.modelInventory)
 	}
 	c.inventoryLoaded = true
