@@ -1147,7 +1147,7 @@ func (s *Server) ShowHandler(c *gin.Context) {
 
 	req.Model = modelRef.Base
 
-	resp, err := GetModelInfo(req)
+	resp, m, err := GetModelInfo(req)
 	if err != nil {
 		var statusErr api.StatusError
 		switch {
@@ -1168,27 +1168,52 @@ func (s *Server) ShowHandler(c *gin.Context) {
 		return
 	}
 
+	// For local (non-remote) models, override the context_length in ModelInfo
+	// with the server's effective context length so clients see what the model
+	// will actually run with, not just the training context from the GGUF file.
+	if resp.RemoteHost == "" && resp.ModelInfo != nil && m != nil {
+		effectiveCtx := int(envconfig.ContextLength())
+		if effectiveCtx == 0 {
+			effectiveCtx = s.defaultNumCtx
+		}
+
+		// Apply model-level num_ctx override if set
+		if numCtx, ok := m.Options["num_ctx"]; ok {
+			if v, ok := numCtx.(float64); ok {
+				effectiveCtx = int(v)
+			}
+		}
+
+		// Find and override the {arch}.context_length key
+		for k := range resp.ModelInfo {
+			if strings.HasSuffix(k, ".context_length") {
+				resp.ModelInfo[k] = effectiveCtx
+				break
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, resp)
 }
 
-func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
+func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, *Model, error) {
 	name := model.ParseName(req.Model)
 	if !name.IsValid() {
-		return nil, model.Unqualified(name)
+		return nil, nil, model.Unqualified(name)
 	}
 	name, err := getExistingName(name)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	m, err := GetModel(name.String())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if m.Config.RemoteHost != "" {
 		if disabled, _ := internalcloud.Status(); disabled {
-			return nil, api.StatusError{
+			return nil, nil, api.StatusError{
 				StatusCode:   http.StatusForbidden,
 				ErrorMessage: internalcloud.DisabledError(cloudErrRemoteModelDetailsUnavailable),
 			}
@@ -1240,7 +1265,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 
 	mf, err := manifest.ParseNamedManifest(name)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	resp := &api.ShowResponse{
@@ -1311,7 +1336,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 
 	// skip loading tensor information if this is a remote model
 	if m.Config.RemoteHost != "" && m.Config.RemoteModel != "" {
-		return resp, nil
+		return resp, m, nil
 	}
 
 	if slices.Contains(m.Capabilities(), model.CapabilityImage) {
@@ -1321,7 +1346,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 				resp.Tensors = tensors
 			}
 		}
-		return resp, nil
+		return resp, m, nil
 	}
 
 	// For safetensors LLM models (experimental), populate ModelInfo from config.json
@@ -1335,12 +1360,12 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 				resp.Tensors = tensors
 			}
 		}
-		return resp, nil
+		return resp, m, nil
 	}
 
 	kvData, tensors, err := getModelData(m.ModelPath, req.Verbose)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	delete(kvData, "general.name")
@@ -1356,12 +1381,12 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	if len(m.ProjectorPaths) > 0 {
 		projectorData, _, err := getModelData(m.ProjectorPaths[0], req.Verbose)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		resp.ProjectorInfo = projectorData
 	}
 
-	return resp, nil
+	return resp, m, nil
 }
 
 func getModelData(digest string, verbose bool) (ggml.KV, ggml.Tensors, error) {
