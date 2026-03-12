@@ -861,9 +861,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 			}
 		}
 	}
-	moeLoadSummaries := make([]string, 0)
-
-	for i := int32(0); i < cfg.NumHiddenLayers; i++ {
+	for i := range cfg.NumHiddenLayers {
 		layerPrefix := fmt.Sprintf("%slayers.%d", modelPrefix, i)
 		layer := &Layer{IsLinear: layerIsLinear(cfg, i)}
 
@@ -1009,27 +1007,6 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 				switchMLP.GateWeight = transposeExpertWeightForGatherMM(gateW.Weight)
 				switchMLP.UpWeight = transposeExpertWeightForGatherMM(upW.Weight)
 				switchMLP.DownWeight = transposeExpertWeightForGatherMM(downW.Weight)
-				moeLoadSummaries = append(moeLoadSummaries,
-					fmt.Sprintf(
-						"layer=%d moe_fallback reason=%s %s %s %s",
-						i,
-						summarizeMoEFallbackReason(gateW, upW, downW),
-						describeMoEProjection("gate", gateW),
-						describeMoEProjection("up", upW),
-						describeMoEProjection("down", downW),
-					),
-				)
-			}
-			if switchMLP.UseQuantized {
-				moeLoadSummaries = append(moeLoadSummaries,
-					fmt.Sprintf(
-						"layer=%d moe_quantized %s %s %s",
-						i,
-						describeMoEProjection("gate", gateW),
-						describeMoEProjection("up", upW),
-						describeMoEProjection("down", downW),
-					),
-				)
 			}
 			moe.SwitchMLP = switchMLP
 
@@ -1079,7 +1056,7 @@ func depthwiseCausalConv1d(x, w *mlx.Array, outLen int32) *mlx.Array {
 	C := int32(w.Dim(0))
 	K := int32(w.Dim(1))
 	var out *mlx.Array
-	for i := int32(0); i < K; i++ {
+	for i := range K {
 		seg := mlx.SliceStartStop(x, []int32{0, i, 0}, []int32{B, i + outLen, C})
 		wi := mlx.SliceStartStop(w, []int32{0, i}, []int32{C, i + 1})
 		wi = mlx.Reshape(wi, 1, 1, C)
