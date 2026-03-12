@@ -59,10 +59,10 @@ index 45a49a5dc..f47392de6 100644
      } else {
          if (sector < sections.v[0]) {
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 9fd0aea72..2a08d8b20 100644
+index f04f251ae..e1cc00f1c 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -4262,14 +4262,14 @@ kernel void kernel_rope_multi(
+@@ -4265,14 +4265,14 @@ kernel void kernel_rope_multi(
  
              float theta_base;
              if (FC_rope_is_imrope) {

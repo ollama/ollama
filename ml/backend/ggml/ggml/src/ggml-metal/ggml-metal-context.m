@@ -554,7 +554,7 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
 
         // enter here only when capturing in order to wait for all computation to finish
         // otherwise, we leave the graph to compute asynchronously
-        if (!use_capture && ctx->capture_started) {
+        if (use_capture && ctx->capture_started) {
             // wait for completion and check status of each command buffer
             // needed to detect if the device ran out-of-memory for example (#1881)
             {
@@ -606,6 +606,8 @@ enum ggml_status ggml_metal_graph_compute(ggml_metal_t ctx, struct ggml_cgraph *
 
             [ctx->capture_scope endScope];
             [[MTLCaptureManager sharedCaptureManager] stopCapture];
+
+            ctx->capture_started = false;
         }
     }
 

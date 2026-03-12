@@ -184,10 +184,10 @@ index f887061b2..0b7436ce5 100644
  
  static ggml_backend_buffer_t ggml_backend_sycl_host_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index ce3c85e75..094570875 100644
+index 3c81805b8..671f4bb07 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -13257,6 +13257,7 @@ static void ggml_backend_vk_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+@@ -13360,6 +13360,7 @@ static void ggml_backend_vk_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      ggml_backend_vk_buffer_context * ctx = (ggml_backend_vk_buffer_context *)buffer->context;
      ggml_vk_destroy_buffer(ctx->dev_buffer);
      delete ctx;
@@ -195,7 +195,7 @@ index ce3c85e75..094570875 100644
  }
  
  static void * ggml_backend_vk_buffer_get_base(ggml_backend_buffer_t buffer) {
-@@ -13416,6 +13417,7 @@ static const char * ggml_backend_vk_host_buffer_name(ggml_backend_buffer_t buffe
+@@ -13519,6 +13520,7 @@ static const char * ggml_backend_vk_host_buffer_name(ggml_backend_buffer_t buffe
  static void ggml_backend_vk_host_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      VK_LOG_MEMORY("ggml_backend_vk_host_buffer_free_buffer()");
      ggml_vk_host_free(vk_instance.devices[0], buffer->context);
