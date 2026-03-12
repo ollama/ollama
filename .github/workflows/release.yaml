@@ -583,11 +583,19 @@ jobs:
           for payload in dist/*.txt dist/*.zip dist/*.tgz dist/*.tar.zst dist/*.exe dist/*.dmg dist/*.ps1 dist/*.sh ; do
             echo "Uploading $payload"
             gh release upload ${GITHUB_REF_NAME} $payload --clobber &
-            pids[$!]=$!
+            pids+=($!)
             sleep 1
           done
           echo "Waiting for uploads to complete"
-          for pid in "${pids[*]}"; do
-            wait $pid
+          failed=0
+          for pid in "${pids[@]}"; do
+            if ! wait $pid; then
+              echo "::error::Upload failed (pid $pid)"
+              failed=1
+            fi
           done
+          if [ $failed -ne 0 ]; then
+            echo "One or more uploads failed"
+            exit 1
+          fi
           echo "done"

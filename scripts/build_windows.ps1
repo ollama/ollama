@@ -425,28 +425,93 @@ function installer {
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
 }
 
-function zip {
-    if (Test-Path -Path "${script:SRC_DIR}\dist\windows-amd64") {
-        if (Test-Path -Path "${script:SRC_DIR}\dist\windows-amd64\lib\ollama\rocm") {
-            Write-Output "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-amd64-rocm.zip"
-            # Temporarily adjust paths so we can retain the same directory structure
-            Remove-Item -ea 0 -r "${script:SRC_DIR}\dist\windows-amd64-rocm"
-            mkdir -Force -path "${script:SRC_DIR}\dist\windows-amd64-rocm\lib\ollama"
-            Write-Output "Extract this ROCm zip file to the same location where you extracted ollama-windows-amd64.zip" > "${script:SRC_DIR}\dist\windows-amd64-rocm\README.txt"
-            Move-Item -path "${script:SRC_DIR}\dist\windows-amd64\lib\ollama\rocm" -destination "${script:SRC_DIR}\dist\windows-amd64-rocm\lib\ollama" -ErrorAction Stop
-            Compress-Archive -CompressionLevel Optimal -Path "${script:SRC_DIR}\dist\windows-amd64-rocm\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-amd64-rocm.zip" -Force
+function newZipJob($sourceDir, $destZip) {
+    $use7z = [bool](Get-Command 7z -ErrorAction SilentlyContinue)
+    Start-Job -ScriptBlock {
+        param($src, $dst, $use7z)
+        if ($use7z) {
+            & 7z a -tzip -mx=9 -mmt=on $dst "${src}\*"
+            if ($LASTEXITCODE -ne 0) { throw "7z failed with exit code $LASTEXITCODE" }
+        } else {
+            Compress-Archive -CompressionLevel Optimal -Path "${src}\*" -DestinationPath $dst -Force
         }
+    } -ArgumentList $sourceDir, $destZip, $use7z
+}
 
-        Write-Output "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-amd64.zip"
-        Compress-Archive -CompressionLevel Optimal -Path "${script:SRC_DIR}\dist\windows-amd64\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-amd64.zip" -Force
-        if (Test-Path -Path "${script:SRC_DIR}\dist\windows-amd64-rocm") {
-            Move-Item -destination "${script:SRC_DIR}\dist\windows-amd64\lib\ollama\rocm" -path "${script:SRC_DIR}\dist\windows-amd64-rocm\lib\ollama\rocm" -ErrorAction Stop
+function stageComponents($mainDir, $stagingDir, $pattern, $readmePrefix) {
+    $components = Get-ChildItem -Path "${mainDir}\lib\ollama" -Directory -Filter $pattern -ErrorAction SilentlyContinue
+    if ($components) {
+        Remove-Item -ea 0 -r $stagingDir
+        mkdir -Force -path "${stagingDir}\lib\ollama" | Out-Null
+        Write-Output "Extract this ${readmePrefix} zip file to the same location where you extracted ollama-windows-amd64.zip" > "${stagingDir}\README_${readmePrefix}.txt"
+        foreach ($dir in $components) {
+            Write-Output "  Staging $($dir.Name)"
+            Move-Item -path $dir.FullName -destination "${stagingDir}\lib\ollama\$($dir.Name)"
+        }
+        return $true
+    }
+    return $false
+}
+
+function restoreComponents($mainDir, $stagingDir) {
+    if (Test-Path -Path "${stagingDir}\lib\ollama") {
+        foreach ($dir in (Get-ChildItem -Path "${stagingDir}\lib\ollama" -Directory)) {
+            Move-Item -path $dir.FullName -destination "${mainDir}\lib\ollama\$($dir.Name)"
         }
     }
+    Remove-Item -ea 0 -r $stagingDir
+}
 
-    if (Test-Path -Path "${script:SRC_DIR}\dist\windows-arm64") {
-        Write-Output "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-arm64.zip"
-        Compress-Archive -CompressionLevel Optimal -Path "${script:SRC_DIR}\dist\windows-arm64\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-arm64.zip" -Force
+function zip {
+    $jobs = @()
+    $distDir = "${script:SRC_DIR}\dist"
+    $amd64Dir = "${distDir}\windows-amd64"
+
+    # Remove any stale zip files before starting
+    Remove-Item -ea 0 "${distDir}\ollama-windows-*.zip"
+
+    try {
+        if (Test-Path -Path $amd64Dir) {
+            # Stage ROCm into its own directory for independent compression
+            if (stageComponents $amd64Dir "${distDir}\windows-amd64-rocm" "rocm*" "ROCm") {
+                Write-Output "Generating ${distDir}\ollama-windows-amd64-rocm.zip"
+                $jobs += newZipJob "${distDir}\windows-amd64-rocm" "${distDir}\ollama-windows-amd64-rocm.zip"
+            }
+
+            # Stage MLX into its own directory for independent compression
+            if (stageComponents $amd64Dir "${distDir}\windows-amd64-mlx" "mlx_*" "MLX") {
+                Write-Output "Generating ${distDir}\ollama-windows-amd64-mlx.zip"
+                $jobs += newZipJob "${distDir}\windows-amd64-mlx" "${distDir}\ollama-windows-amd64-mlx.zip"
+            }
+
+            # Compress the main amd64 zip (without rocm/mlx)
+            Write-Output "Generating ${distDir}\ollama-windows-amd64.zip"
+            $jobs += newZipJob $amd64Dir "${distDir}\ollama-windows-amd64.zip"
+        }
+
+        if (Test-Path -Path "${distDir}\windows-arm64") {
+            Write-Output "Generating ${distDir}\ollama-windows-arm64.zip"
+            $jobs += newZipJob "${distDir}\windows-arm64" "${distDir}\ollama-windows-arm64.zip"
+        }
+
+        if ($jobs.Count -gt 0) {
+            Write-Output "Waiting for $($jobs.Count) parallel zip jobs..."
+            $jobs | Wait-Job | Out-Null
+            $failed = $false
+            foreach ($job in $jobs) {
+                if ($job.State -eq 'Failed') {
+                    Write-Error "Zip job failed: $($job.ChildJobs[0].JobStateInfo.Reason)"
+                    $failed = $true
+                }
+                Receive-Job $job
+                Remove-Job $job
+            }
+            if ($failed) { throw "One or more zip jobs failed" }
+        }
+    } finally {
+        # Always restore staged components back into the main tree
+        restoreComponents $amd64Dir "${distDir}\windows-amd64-rocm"
+        restoreComponents $amd64Dir "${distDir}\windows-amd64-mlx"
     }
 }
 
