@@ -238,8 +238,8 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor, grid *Grid)
 	return hiddenStates, deepstackStates
 }
 
-// newVisionModel creates a new instance of the Qwen vision model
-func newVisionModel(c fs.Config) *VisionModel {
+// NewVisionModel creates a new instance of the Qwen vision model.
+func NewVisionModel(c fs.Config) *VisionModel {
 	deepstackVisualIndexes := c.Ints("vision.deepstack_visual_indexes")
 	model := &VisionModel{
 		Layers:          make([]VisionEncoderLayer, c.Uint("vision.block_count", 32)),

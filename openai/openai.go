@@ -291,8 +291,7 @@ func ToChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 	}
 }
 
-// ToChunk converts an api.ChatResponse to ChatCompletionChunk
-func ToChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
+func toChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
 	toolCalls := ToToolCalls(r.Message.ToolCalls)
 
 	var logprobs *ChoiceLogprobs
@@ -321,6 +320,36 @@ func ToChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChu
 			Logprobs: logprobs,
 		}},
 	}
+}
+
+// ToChunks converts an api.ChatResponse to one or more ChatCompletionChunk values.
+func ToChunks(id string, r api.ChatResponse, toolCallSent bool) []ChatCompletionChunk {
+	hasMixedResponse := r.Message.Thinking != "" && (r.Message.Content != "" || len(r.Message.ToolCalls) > 0)
+	if !hasMixedResponse {
+		return []ChatCompletionChunk{toChunk(id, r, toolCallSent)}
+	}
+
+	reasoningChunk := toChunk(id, r, toolCallSent)
+	// The logprobs here might include tokens not in this chunk because we now split between thinking and content/tool calls.
+	reasoningChunk.Choices[0].Delta.Content = ""
+	reasoningChunk.Choices[0].Delta.ToolCalls = nil
+	reasoningChunk.Choices[0].FinishReason = nil
+
+	contentOrToolCallsChunk := toChunk(id, r, toolCallSent)
+	// Keep both split chunks on the same timestamp since they represent one logical emission.
+	contentOrToolCallsChunk.Created = reasoningChunk.Created
+	contentOrToolCallsChunk.Choices[0].Delta.Reasoning = ""
+	contentOrToolCallsChunk.Choices[0].Logprobs = nil
+
+	return []ChatCompletionChunk{
+		reasoningChunk,
+		contentOrToolCallsChunk,
+	}
+}
+
+// Deprecated: use ToChunks for streaming conversion.
+func ToChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
+	return toChunk(id, r, toolCallSent)
 }
 
 // ToUsageGenerate converts an api.GenerateResponse to Usage
@@ -630,6 +659,10 @@ func nameFromToolCallID(messages []Message, toolCallID string) string {
 
 // decodeImageURL decodes a base64 data URI into raw image bytes.
 func decodeImageURL(url string) (api.ImageData, error) {
+	if strings.HasPrefix(url, "http://") || strings.HasPrefix(url, "https://") {
+		return nil, errors.New("image URLs are not currently supported, please use base64 encoded data instead")
+	}
+
 	types := []string{"jpeg", "jpg", "png", "webp"}
 
 	// Support blank mime type to match /api/chat's behavior of taking just unadorned base64
@@ -732,4 +765,105 @@ func FromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 		TopLogprobs:     topLogprobs,
 		DebugRenderOnly: r.DebugRenderOnly,
 	}, nil
+}
+
+// ImageGenerationRequest is an OpenAI-compatible image generation request.
+type ImageGenerationRequest struct {
+	Model          string `json:"model"`
+	Prompt         string `json:"prompt"`
+	N              int    `json:"n,omitempty"`
+	Size           string `json:"size,omitempty"`
+	ResponseFormat string `json:"response_format,omitempty"`
+	Seed           *int64 `json:"seed,omitempty"`
+}
+
+// ImageGenerationResponse is an OpenAI-compatible image generation response.
+type ImageGenerationResponse struct {
+	Created int64            `json:"created"`
+	Data    []ImageURLOrData `json:"data"`
+}
+
+// ImageURLOrData contains either a URL or base64-encoded image data.
+type ImageURLOrData struct {
+	URL     string `json:"url,omitempty"`
+	B64JSON string `json:"b64_json,omitempty"`
+}
+
+// FromImageGenerationRequest converts an OpenAI image generation request to an Ollama GenerateRequest.
+func FromImageGenerationRequest(r ImageGenerationRequest) api.GenerateRequest {
+	req := api.GenerateRequest{
+		Model:  r.Model,
+		Prompt: r.Prompt,
+	}
+	// Parse size if provided (e.g., "1024x768")
+	if r.Size != "" {
+		var w, h int32
+		if _, err := fmt.Sscanf(r.Size, "%dx%d", &w, &h); err == nil {
+			req.Width = w
+			req.Height = h
+		}
+	}
+	if r.Seed != nil {
+		if req.Options == nil {
+			req.Options = map[string]any{}
+		}
+		req.Options["seed"] = *r.Seed
+	}
+	return req
+}
+
+// ToImageGenerationResponse converts an Ollama GenerateResponse to an OpenAI ImageGenerationResponse.
+func ToImageGenerationResponse(resp api.GenerateResponse) ImageGenerationResponse {
+	var data []ImageURLOrData
+	if resp.Image != "" {
+		data = []ImageURLOrData{{B64JSON: resp.Image}}
+	}
+	return ImageGenerationResponse{
+		Created: resp.CreatedAt.Unix(),
+		Data:    data,
+	}
+}
+
+// ImageEditRequest is an OpenAI-compatible image edit request.
+type ImageEditRequest struct {
+	Model  string `json:"model"`
+	Prompt string `json:"prompt"`
+	Image  string `json:"image"`          // Base64-encoded image data
+	Size   string `json:"size,omitempty"` // e.g., "1024x1024"
+	Seed   *int64 `json:"seed,omitempty"`
+}
+
+// FromImageEditRequest converts an OpenAI image edit request to an Ollama GenerateRequest.
+func FromImageEditRequest(r ImageEditRequest) (api.GenerateRequest, error) {
+	req := api.GenerateRequest{
+		Model:  r.Model,
+		Prompt: r.Prompt,
+	}
+
+	// Decode the input image
+	if r.Image != "" {
+		imgData, err := decodeImageURL(r.Image)
+		if err != nil {
+			return api.GenerateRequest{}, fmt.Errorf("invalid image: %w", err)
+		}
+		req.Images = append(req.Images, imgData)
+	}
+
+	// Parse size if provided (e.g., "1024x768")
+	if r.Size != "" {
+		var w, h int32
+		if _, err := fmt.Sscanf(r.Size, "%dx%d", &w, &h); err == nil {
+			req.Width = w
+			req.Height = h
+		}
+	}
+
+	if r.Seed != nil {
+		if req.Options == nil {
+			req.Options = map[string]any{}
+		}
+		req.Options["seed"] = *r.Seed
+	}
+
+	return req, nil
 }

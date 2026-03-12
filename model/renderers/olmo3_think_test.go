@@ -78,7 +78,7 @@ func TestOlmo3ThinkRenderer(t *testing.T) {
 							ID: "call_1",
 							Function: api.ToolCallFunction{
 								Name:      "get_weather",
-								Arguments: map[string]any{"location": "San Francisco"},
+								Arguments: testArgs(map[string]any{"location": "San Francisco"}),
 							},
 						},
 					},

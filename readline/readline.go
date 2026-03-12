@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 type Prompt struct {
@@ -30,16 +31,18 @@ func (p *Prompt) placeholder() string {
 }
 
 type Terminal struct {
-	outchan chan rune
+	reader  *bufio.Reader
 	rawmode bool
 	termios any
 }
 
 type Instance struct {
-	Prompt   *Prompt
-	Terminal *Terminal
-	History  *History
-	Pasting  bool
+	Prompt      *Prompt
+	Terminal    *Terminal
+	History     *History
+	Pasting     bool
+	Prefill     string
+	pastedLines []string
 }
 
 func New(prompt Prompt) (*Instance, error) {
@@ -87,13 +90,48 @@ func (i *Instance) Readline() (string, error) {
 
 	buf, _ := NewBuffer(i.Prompt)
 
+	// Prefill the buffer with any text that we received from an external editor
+	if i.Prefill != "" {
+		lines := strings.Split(i.Prefill, "\n")
+		i.Prefill = ""
+		for idx, l := range lines {
+			for _, r := range l {
+				buf.Add(r)
+			}
+			if idx < len(lines)-1 {
+				i.pastedLines = append(i.pastedLines, buf.String())
+				buf.Buf.Clear()
+				buf.Pos = 0
+				buf.DisplayPos = 0
+				buf.LineHasSpace.Clear()
+				fmt.Println()
+				fmt.Print(i.Prompt.AltPrompt)
+				i.Prompt.UseAlt = true
+			}
+		}
+	}
+
 	var esc bool
 	var escex bool
 	var metaDel bool
 
 	var currentLineBuf []rune
 
+	// draining tracks if we're processing buffered input from cooked mode.
+	// In cooked mode Enter sends \n, but in raw mode Ctrl+J sends \n.
+	// We treat \n from cooked mode as submit, not multiline.
+	// We check Buffered() after the first read since the bufio buffer is
+	// empty until then. This is compatible with """ multiline mode in
+	// interactive.go since each Readline() call is independent.
+	var draining, stopDraining bool
+
 	for {
+		// Apply deferred state change from previous iteration
+		if stopDraining {
+			draining = false
+			stopDraining = false
+		}
+
 		// don't show placeholder when pasting unless we're in multiline mode
 		showPlaceholder := !i.Pasting || i.Prompt.UseAlt
 		if buf.IsEmpty() && showPlaceholder {
@@ -102,6 +140,15 @@ func (i *Instance) Readline() (string, error) {
 		}
 
 		r, err := i.Terminal.Read()
+
+		// After reading, check if there's more buffered data. If so, we're
+		// processing cooked-mode input. Once buffer empties, the current
+		// char is the last buffered one (still drain it), then stop next iteration.
+		if i.Terminal.reader.Buffered() > 0 {
+			draining = true
+		} else if draining {
+			stopDraining = true
+		}
 
 		if buf.IsEmpty() {
 			fmt.Print(ClearToEOL)
@@ -174,6 +221,8 @@ func (i *Instance) Readline() (string, error) {
 		case CharEsc:
 			esc = true
 		case CharInterrupt:
+			i.pastedLines = nil
+			i.Prompt.UseAlt = false
 			return "", ErrInterrupt
 		case CharPrev:
 			i.historyPrev(buf, &currentLineBuf)
@@ -188,7 +237,23 @@ func (i *Instance) Readline() (string, error) {
 		case CharForward:
 			buf.MoveRight()
 		case CharBackspace, CharCtrlH:
-			buf.Remove()
+			if buf.IsEmpty() && len(i.pastedLines) > 0 {
+				lastIdx := len(i.pastedLines) - 1
+				prevLine := i.pastedLines[lastIdx]
+				i.pastedLines = i.pastedLines[:lastIdx]
+				fmt.Print(CursorBOL + ClearToEOL + CursorUp + CursorBOL + ClearToEOL)
+				if len(i.pastedLines) == 0 {
+					fmt.Print(i.Prompt.Prompt)
+					i.Prompt.UseAlt = false
+				} else {
+					fmt.Print(i.Prompt.AltPrompt)
+				}
+				for _, r := range prevLine {
+					buf.Add(r)
+				}
+			} else {
+				buf.Remove()
+			}
 		case CharTab:
 			// todo: convert back to real tabs
 			for range 8 {
@@ -208,16 +273,59 @@ func (i *Instance) Readline() (string, error) {
 			buf.ClearScreen()
 		case CharCtrlW:
 			buf.DeleteWord()
+		case CharBell:
+			output := buf.String()
+			numPastedLines := len(i.pastedLines)
+			if numPastedLines > 0 {
+				output = strings.Join(i.pastedLines, "\n") + "\n" + output
+				i.pastedLines = nil
+			}
+
+			// Move cursor to the last display line of the current buffer
+			currLine := buf.DisplayPos / buf.LineWidth
+			lastLine := buf.DisplaySize() / buf.LineWidth
+			if lastLine > currLine {
+				fmt.Print(CursorDownN(lastLine - currLine))
+			}
+
+			// Clear all lines from bottom to top: buffer wrapped lines + pasted lines
+			for range lastLine + numPastedLines {
+				fmt.Print(CursorBOL + ClearToEOL + CursorUp)
+			}
+			fmt.Print(CursorBOL + ClearToEOL)
+
+			i.Prompt.UseAlt = false
+			return output, ErrEditPrompt
 		case CharCtrlZ:
 			fd := os.Stdin.Fd()
 			return handleCharCtrlZ(fd, i.Terminal.termios)
-		case CharEnter, CharCtrlJ:
+		case CharCtrlJ:
+			// If not draining cooked-mode input, treat as multiline
+			if !draining {
+				i.pastedLines = append(i.pastedLines, buf.String())
+				buf.Buf.Clear()
+				buf.Pos = 0
+				buf.DisplayPos = 0
+				buf.LineHasSpace.Clear()
+				fmt.Println()
+				fmt.Print(i.Prompt.AltPrompt)
+				i.Prompt.UseAlt = true
+				continue
+			}
+			// Draining cooked-mode input: treat \n as submit
+			fallthrough
+		case CharEnter:
 			output := buf.String()
+			if len(i.pastedLines) > 0 {
+				output = strings.Join(i.pastedLines, "\n") + "\n" + output
+				i.pastedLines = nil
+			}
 			if output != "" {
 				i.History.Add(output)
 			}
 			buf.MoveToEnd()
 			fmt.Println()
+			i.Prompt.UseAlt = false
 
 			return output, nil
 		default:
@@ -264,36 +372,21 @@ func NewTerminal() (*Terminal, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	t := &Terminal{
-		outchan: make(chan rune),
-		rawmode: true,
-		termios: termios,
+	if err := UnsetRawMode(fd, termios); err != nil {
+		return nil, err
 	}
 
-	go t.ioloop()
+	t := &Terminal{
+		reader: bufio.NewReader(os.Stdin),
+	}
 
 	return t, nil
 }
 
-func (t *Terminal) ioloop() {
-	buf := bufio.NewReader(os.Stdin)
-
-	for {
-		r, _, err := buf.ReadRune()
-		if err != nil {
-			close(t.outchan)
-			break
-		}
-		t.outchan <- r
-	}
-}
-
 func (t *Terminal) Read() (rune, error) {
-	r, ok := <-t.outchan
-	if !ok {
-		return 0, io.EOF
+	r, _, err := t.reader.ReadRune()
+	if err != nil {
+		return 0, err
 	}
-
 	return r, nil
 }

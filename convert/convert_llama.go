@@ -48,7 +48,7 @@ type llamaModel struct {
 
 var _ ModelConverter = (*llamaModel)(nil)
 
-func (p *llamaModel) KV(t *Tokenizer) ggml.KV {
+func (p *llamaModel) KV(t *Tokenizer) KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "llama"
 	kv["llama.vocab_size"] = p.VocabSize

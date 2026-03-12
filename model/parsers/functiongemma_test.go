@@ -3,6 +3,7 @@ package parsers
 import (
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
 	"github.com/stretchr/testify/assert"
 )
@@ -36,9 +37,9 @@ func TestFunctionGemmaParser(t *testing.T) {
 						Name: "get_weather",
 						Parameters: api.ToolFunctionParameters{
 							Type: "object",
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"city": {Type: api.PropertyType{"string"}},
-							},
+							}),
 						},
 					},
 				},
@@ -47,7 +48,7 @@ func TestFunctionGemmaParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "get_weather",
-						Arguments: api.ToolCallFunctionArguments{"city": "Paris"},
+						Arguments: testArgs(map[string]any{"city": "Paris"}),
 					},
 				},
 			},
@@ -66,7 +67,7 @@ func TestFunctionGemmaParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "get_weather",
-						Arguments: api.ToolCallFunctionArguments{"city": "Paris"},
+						Arguments: testArgs(map[string]any{"city": "Paris"}),
 					},
 				},
 			},
@@ -84,7 +85,7 @@ func TestFunctionGemmaParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "add",
-						Arguments: api.ToolCallFunctionArguments{"a": int64(1), "b": int64(2)},
+						Arguments: testArgs(map[string]any{"a": int64(1), "b": int64(2)}),
 					},
 				},
 			},
@@ -102,7 +103,7 @@ func TestFunctionGemmaParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "set_flag",
-						Arguments: api.ToolCallFunctionArguments{"enabled": true, "verbose": false},
+						Arguments: testArgs(map[string]any{"enabled": true, "verbose": false}),
 					},
 				},
 			},
@@ -124,13 +125,13 @@ func TestFunctionGemmaParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "get_weather",
-						Arguments: api.ToolCallFunctionArguments{"city": "Paris"},
+						Arguments: testArgs(map[string]any{"city": "Paris"}),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
 						Name:      "get_weather",
-						Arguments: api.ToolCallFunctionArguments{"city": "London"},
+						Arguments: testArgs(map[string]any{"city": "London"}),
 					},
 				},
 			},
@@ -152,7 +153,7 @@ func TestFunctionGemmaParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "process",
-						Arguments: api.ToolCallFunctionArguments{"items": []any{"a", "b", "c"}},
+						Arguments: testArgs(map[string]any{"items": []any{"a", "b", "c"}}),
 					},
 				},
 			},
@@ -173,9 +174,9 @@ func TestFunctionGemmaParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name: "update",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"data": map[string]any{"name": "test", "value": int64(42)},
-						},
+						}),
 					},
 				},
 			},
@@ -198,7 +199,7 @@ func TestFunctionGemmaParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "get_time",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 			},
@@ -224,7 +225,7 @@ func TestFunctionGemmaParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "set_temp",
-						Arguments: api.ToolCallFunctionArguments{"value": 3.14},
+						Arguments: testArgs(map[string]any{"value": 3.14}),
 					},
 				},
 			},
@@ -242,7 +243,7 @@ func TestFunctionGemmaParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "test",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 			},
@@ -261,7 +262,7 @@ func TestFunctionGemmaParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "greet",
-						Arguments: api.ToolCallFunctionArguments{"name": "日本語"},
+						Arguments: testArgs(map[string]any{"name": "日本語"}),
 					},
 				},
 			},
@@ -281,11 +282,11 @@ func TestFunctionGemmaParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name: "search",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"query":  "test",
 							"limit":  int64(10),
 							"offset": int64(0),
-						},
+						}),
 					},
 				},
 			},
@@ -308,14 +309,14 @@ func TestFunctionGemmaParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name: "create",
-						Arguments: api.ToolCallFunctionArguments{
+						Arguments: testArgs(map[string]any{
 							"config": map[string]any{
 								"settings": map[string]any{
 									"enabled": true,
 									"name":    "test",
 								},
 							},
-						},
+						}),
 					},
 				},
 			},
@@ -345,13 +346,13 @@ func TestFunctionGemmaParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "get_weather",
-						Arguments: api.ToolCallFunctionArguments{"city": "Paris"},
+						Arguments: testArgs(map[string]any{"city": "Paris"}),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
 						Name:      "get_time",
-						Arguments: api.ToolCallFunctionArguments{"timezone": "UTC"},
+						Arguments: testArgs(map[string]any{"timezone": "UTC"}),
 					},
 				},
 			},
@@ -372,13 +373,13 @@ func TestFunctionGemmaParser(t *testing.T) {
 				{
 					Function: api.ToolCallFunction{
 						Name:      "first",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 				{
 					Function: api.ToolCallFunction{
 						Name:      "second",
-						Arguments: api.ToolCallFunctionArguments{},
+						Arguments: api.NewToolCallFunctionArguments(),
 					},
 				},
 			},
@@ -411,7 +412,9 @@ func TestFunctionGemmaParser(t *testing.T) {
 			}
 
 			assert.Equal(t, tt.expectedText, allContent)
-			assert.Equal(t, tt.expectedCalls, allCalls)
+			if diff := cmp.Diff(tt.expectedCalls, allCalls, argsComparer); diff != "" {
+				t.Errorf("calls mismatch (-want +got):\n%s", diff)
+			}
 		})
 	}
 }

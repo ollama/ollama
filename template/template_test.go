@@ -613,3 +613,159 @@ func TestCollate(t *testing.T) {
 		})
 	}
 }
+
+func TestTemplateArgumentsJSON(t *testing.T) {
+	// Test that {{ .Function.Arguments }} outputs valid JSON, not map[key:value]
+	tmpl := `{{- range .Messages }}{{- range .ToolCalls }}{{ .Function.Arguments }}{{- end }}{{- end }}`
+
+	template, err := Parse(tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	args := api.NewToolCallFunctionArguments()
+	args.Set("location", "Tokyo")
+	args.Set("unit", "celsius")
+
+	var buf bytes.Buffer
+	err = template.Execute(&buf, Values{
+		Messages: []api.Message{{
+			Role: "assistant",
+			ToolCalls: []api.ToolCall{{
+				Function: api.ToolCallFunction{
+					Name:      "get_weather",
+					Arguments: args,
+				},
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := buf.String()
+	// Should be valid JSON, not "map[location:Tokyo unit:celsius]"
+	if strings.HasPrefix(got, "map[") {
+		t.Errorf("Arguments output as Go map format: %s", got)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Errorf("Arguments not valid JSON: %s, error: %v", got, err)
+	}
+}
+
+func TestTemplatePropertiesJSON(t *testing.T) {
+	// Test that {{ .Function.Parameters.Properties }} outputs valid JSON
+	// Note: template must reference .Messages to trigger the modern code path that converts Tools
+	tmpl := `{{- range .Messages }}{{- end }}{{- range .Tools }}{{ .Function.Parameters.Properties }}{{- end }}`
+
+	template, err := Parse(tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	props := api.NewToolPropertiesMap()
+	props.Set("location", api.ToolProperty{Type: api.PropertyType{"string"}, Description: "City name"})
+
+	var buf bytes.Buffer
+	err = template.Execute(&buf, Values{
+		Messages: []api.Message{{Role: "user", Content: "test"}},
+		Tools: api.Tools{{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "get_weather",
+				Description: "Get weather",
+				Parameters: api.ToolFunctionParameters{
+					Type:       "object",
+					Properties: props,
+				},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := buf.String()
+	// Should be valid JSON, not "map[location:{...}]"
+	if strings.HasPrefix(got, "map[") {
+		t.Errorf("Properties output as Go map format: %s", got)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(got), &parsed); err != nil {
+		t.Errorf("Properties not valid JSON: %s, error: %v", got, err)
+	}
+}
+
+func TestTemplateArgumentsRange(t *testing.T) {
+	// Test that we can range over Arguments in templates
+	tmpl := `{{- range .Messages }}{{- range .ToolCalls }}{{- range $k, $v := .Function.Arguments }}{{ $k }}={{ $v }};{{- end }}{{- end }}{{- end }}`
+
+	template, err := Parse(tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	args := api.NewToolCallFunctionArguments()
+	args.Set("city", "Tokyo")
+
+	var buf bytes.Buffer
+	err = template.Execute(&buf, Values{
+		Messages: []api.Message{{
+			Role: "assistant",
+			ToolCalls: []api.ToolCall{{
+				Function: api.ToolCallFunction{
+					Name:      "get_weather",
+					Arguments: args,
+				},
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := buf.String()
+	if got != "city=Tokyo;" {
+		t.Errorf("Range over Arguments failed, got: %s, want: city=Tokyo;", got)
+	}
+}
+
+func TestTemplatePropertiesRange(t *testing.T) {
+	// Test that we can range over Properties in templates
+	// Note: template must reference .Messages to trigger the modern code path that converts Tools
+	tmpl := `{{- range .Messages }}{{- end }}{{- range .Tools }}{{- range $name, $prop := .Function.Parameters.Properties }}{{ $name }}:{{ $prop.Type }};{{- end }}{{- end }}`
+
+	template, err := Parse(tmpl)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	props := api.NewToolPropertiesMap()
+	props.Set("location", api.ToolProperty{Type: api.PropertyType{"string"}})
+
+	var buf bytes.Buffer
+	err = template.Execute(&buf, Values{
+		Messages: []api.Message{{Role: "user", Content: "test"}},
+		Tools: api.Tools{{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name: "get_weather",
+				Parameters: api.ToolFunctionParameters{
+					Type:       "object",
+					Properties: props,
+				},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := buf.String()
+	if got != "location:string;" {
+		t.Errorf("Range over Properties failed, got: %s, want: location:string;", got)
+	}
+}

@@ -17,11 +17,15 @@ import {
 } from "@/hooks/useChats";
 import { useNavigate } from "@tanstack/react-router";
 import { useSelectedModel } from "@/hooks/useSelectedModel";
-import { useHasVisionCapability } from "@/hooks/useModelCapabilities";
+import {
+  useHasVisionCapability,
+  useHasToolsCapability,
+} from "@/hooks/useModelCapabilities";
 import { useUser } from "@/hooks/useUser";
 import { DisplayLogin } from "@/components/DisplayLogin";
 import { ErrorEvent, Message } from "@/gotypes";
 import { useSettings } from "@/hooks/useSettings";
+import { useCloudStatus } from "@/hooks/useCloudStatus";
 import { ThinkButton } from "./ThinkButton";
 import { ErrorMessage } from "./ErrorMessage";
 import { processFiles } from "@/utils/fileValidation";
@@ -141,19 +145,14 @@ function ChatForm({
   const {
     settings: {
       webSearchEnabled,
-      airplaneMode,
       thinkEnabled,
       thinkLevel: settingsThinkLevel,
     },
     setSettings,
   } = useSettings();
+  const { cloudDisabled } = useCloudStatus();
 
-  // current supported models for web search
-  const modelLower = selectedModel?.model.toLowerCase() || "";
-  const supportsWebSearch =
-    modelLower.startsWith("gpt-oss") ||
-    modelLower.startsWith("qwen3") ||
-    modelLower.startsWith("deepseek-v3");
+  const supportsWebSearch = useHasToolsCapability(selectedModel?.model);
   // Use per-chat thinking level instead of global
   const thinkLevel: ThinkingLevel =
     settingsThinkLevel === "none" || !settingsThinkLevel
@@ -179,6 +178,12 @@ function ChatForm({
     webSearchEnabled,
     setSettings,
   ]);
+
+  useEffect(() => {
+    if (cloudDisabled && webSearchEnabled) {
+      setSettings({ WebSearchEnabled: false });
+    }
+  }, [cloudDisabled, webSearchEnabled, setSettings]);
 
   const removeFile = (index: number) => {
     setMessage((prev) => ({
@@ -234,19 +239,19 @@ function ChatForm({
 
   // Determine if login banner should be shown
   const shouldShowLoginBanner =
+    !cloudDisabled &&
     !isLoadingUser &&
     !isAuthenticated &&
-    ((webSearchEnabled && supportsWebSearch) ||
-      (selectedModel?.isCloud() && !airplaneMode));
+    ((webSearchEnabled && supportsWebSearch) || selectedModel?.isCloud());
 
   // Determine which feature to highlight in the banner
   const getActiveFeatureForBanner = () => {
+    if (cloudDisabled) return null;
     if (!isAuthenticated) {
       if (loginPromptFeature) return loginPromptFeature;
-      if (webSearchEnabled && selectedModel?.isCloud() && !airplaneMode)
-        return "webSearch";
+      if (webSearchEnabled && selectedModel?.isCloud()) return "webSearch";
       if (webSearchEnabled) return "webSearch";
-      if (selectedModel?.isCloud() && !airplaneMode) return "turbo";
+      if (selectedModel?.isCloud()) return "turbo";
     }
     return null;
   };
@@ -269,11 +274,12 @@ function ChatForm({
   useEffect(() => {
     if (
       isAuthenticated ||
-      (!webSearchEnabled && !!selectedModel?.isCloud() && !airplaneMode)
+      cloudDisabled ||
+      (!webSearchEnabled && !!selectedModel?.isCloud())
     ) {
       setLoginPromptFeature(null);
     }
-  }, [isAuthenticated, webSearchEnabled, selectedModel, airplaneMode]);
+  }, [isAuthenticated, webSearchEnabled, selectedModel, cloudDisabled]);
 
   // When entering edit mode, populate the composition with existing data
   useEffect(() => {
@@ -465,6 +471,10 @@ function ChatForm({
   const handleSubmit = async () => {
     if (!message.content.trim() || isStreaming || isDownloading) return;
 
+    if (cloudDisabled && selectedModel?.isCloud()) {
+      return;
+    }
+
     // Check if cloud mode is enabled but user is not authenticated
     if (shouldShowLoginBanner) {
       return;
@@ -478,7 +488,8 @@ function ChatForm({
       }),
     );
 
-    const useWebSearch = supportsWebSearch && webSearchEnabled && !airplaneMode;
+    const useWebSearch =
+      supportsWebSearch && webSearchEnabled && !cloudDisabled;
     const useThink = modelSupportsThinkingLevels
       ? thinkLevel
       : supportsThinkToggling
@@ -899,7 +910,7 @@ function ChatForm({
                 )}
                 <WebSearchButton
                   ref={webSearchButtonRef}
-                  isVisible={supportsWebSearch && airplaneMode === false}
+                  isVisible={supportsWebSearch && cloudDisabled === false}
                   isActive={webSearchEnabled}
                   onToggle={() => {
                     if (!webSearchEnabled && !isAuthenticated) {
@@ -940,6 +951,7 @@ function ChatForm({
                 !isDownloading &&
                 (!message.content.trim() ||
                   shouldShowLoginBanner ||
+                  (cloudDisabled && selectedModel?.isCloud()) ||
                   message.fileErrors.length > 0)
               }
               className={`flex items-center justify-center h-9 w-9 rounded-full disabled:cursor-default cursor-pointer bg-black text-white dark:bg-white dark:text-black disabled:opacity-10 focus:outline-none focus:ring-2 focus:ring-blue-500`}

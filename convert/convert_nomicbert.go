@@ -87,7 +87,7 @@ func (p *nomicbertModel) parseMore(fsys fs.FS) error {
 	return nil
 }
 
-func (p *nomicbertModel) KV(t *Tokenizer) ggml.KV {
+func (p *nomicbertModel) KV(t *Tokenizer) KV {
 	kv := p.ModelParameters.KV(t)
 
 	// Determine architecture based on MoE parameters (following qwen3 pattern)

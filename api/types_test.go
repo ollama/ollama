@@ -11,6 +11,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testPropsMap creates a ToolPropertiesMap from a map (convenience function for tests, order not preserved)
+func testPropsMap(m map[string]ToolProperty) *ToolPropertiesMap {
+	props := NewToolPropertiesMap()
+	for k, v := range m {
+		props.Set(k, v)
+	}
+	return props
+}
+
+// testArgs creates ToolCallFunctionArguments from a map (convenience function for tests, order not preserved)
+func testArgs(m map[string]any) ToolCallFunctionArguments {
+	args := NewToolCallFunctionArguments()
+	for k, v := range m {
+		args.Set(k, v)
+	}
+	return args
+}
+
 func TestKeepAliveParsingFromJSON(t *testing.T) {
 	tests := []struct {
 		name string
@@ -309,9 +327,9 @@ func TestToolFunctionParameters_MarshalJSON(t *testing.T) {
 			input: ToolFunctionParameters{
 				Type:     "object",
 				Required: []string{"name"},
-				Properties: map[string]ToolProperty{
+				Properties: testPropsMap(map[string]ToolProperty{
 					"name": {Type: PropertyType{"string"}},
-				},
+				}),
 			},
 			expected: `{"type":"object","required":["name"],"properties":{"name":{"type":"string"}}}`,
 		},
@@ -319,9 +337,9 @@ func TestToolFunctionParameters_MarshalJSON(t *testing.T) {
 			name: "no required",
 			input: ToolFunctionParameters{
 				Type: "object",
-				Properties: map[string]ToolProperty{
+				Properties: testPropsMap(map[string]ToolProperty{
 					"name": {Type: PropertyType{"string"}},
-				},
+				}),
 			},
 			expected: `{"type":"object","properties":{"name":{"type":"string"}}}`,
 		},
@@ -339,7 +357,7 @@ func TestToolFunctionParameters_MarshalJSON(t *testing.T) {
 func TestToolCallFunction_IndexAlwaysMarshals(t *testing.T) {
 	fn := ToolCallFunction{
 		Name:      "echo",
-		Arguments: ToolCallFunctionArguments{"message": "hi"},
+		Arguments: testArgs(map[string]any{"message": "hi"}),
 	}
 
 	data, err := json.Marshal(fn)
@@ -529,7 +547,7 @@ func TestToolPropertyNestedProperties(t *testing.T) {
 			expected: ToolProperty{
 				Type:        PropertyType{"object"},
 				Description: "Location details",
-				Properties: map[string]ToolProperty{
+				Properties: testPropsMap(map[string]ToolProperty{
 					"address": {
 						Type:        PropertyType{"string"},
 						Description: "Street address",
@@ -538,7 +556,7 @@ func TestToolPropertyNestedProperties(t *testing.T) {
 						Type:        PropertyType{"string"},
 						Description: "City name",
 					},
-				},
+				}),
 			},
 		},
 		{
@@ -566,22 +584,22 @@ func TestToolPropertyNestedProperties(t *testing.T) {
 			expected: ToolProperty{
 				Type:        PropertyType{"object"},
 				Description: "Event",
-				Properties: map[string]ToolProperty{
+				Properties: testPropsMap(map[string]ToolProperty{
 					"location": {
 						Type:        PropertyType{"object"},
 						Description: "Location",
-						Properties: map[string]ToolProperty{
+						Properties: testPropsMap(map[string]ToolProperty{
 							"coordinates": {
 								Type:        PropertyType{"object"},
 								Description: "GPS coordinates",
-								Properties: map[string]ToolProperty{
+								Properties: testPropsMap(map[string]ToolProperty{
 									"lat": {Type: PropertyType{"number"}, Description: "Latitude"},
 									"lng": {Type: PropertyType{"number"}, Description: "Longitude"},
-								},
+								}),
 							},
-						},
+						}),
 					},
-				},
+				}),
 			},
 		},
 	}
@@ -591,7 +609,13 @@ func TestToolPropertyNestedProperties(t *testing.T) {
 			var prop ToolProperty
 			err := json.Unmarshal([]byte(tt.input), &prop)
 			require.NoError(t, err)
-			assert.Equal(t, tt.expected, prop)
+
+			// Compare JSON representations since pointer comparison doesn't work
+			expectedJSON, err := json.Marshal(tt.expected)
+			require.NoError(t, err)
+			actualJSON, err := json.Marshal(prop)
+			require.NoError(t, err)
+			assert.JSONEq(t, string(expectedJSON), string(actualJSON))
 
 			// Round-trip test: marshal and unmarshal again
 			data, err := json.Marshal(prop)
@@ -600,7 +624,10 @@ func TestToolPropertyNestedProperties(t *testing.T) {
 			var prop2 ToolProperty
 			err = json.Unmarshal(data, &prop2)
 			require.NoError(t, err)
-			assert.Equal(t, tt.expected, prop2)
+
+			prop2JSON, err := json.Marshal(prop2)
+			require.NoError(t, err)
+			assert.JSONEq(t, string(expectedJSON), string(prop2JSON))
 		})
 	}
 }
@@ -616,12 +643,12 @@ func TestToolFunctionParameters_String(t *testing.T) {
 			params: ToolFunctionParameters{
 				Type:     "object",
 				Required: []string{"name"},
-				Properties: map[string]ToolProperty{
+				Properties: testPropsMap(map[string]ToolProperty{
 					"name": {
 						Type:        PropertyType{"string"},
 						Description: "The name of the person",
 					},
-				},
+				}),
 			},
 			expected: `{"type":"object","required":["name"],"properties":{"name":{"type":"string","description":"The name of the person"}}}`,
 		},
@@ -638,7 +665,7 @@ func TestToolFunctionParameters_String(t *testing.T) {
 					s.Self = s
 					return s
 				}(),
-				Properties: map[string]ToolProperty{},
+				Properties: testPropsMap(map[string]ToolProperty{}),
 			},
 			expected: "",
 		},
@@ -650,4 +677,236 @@ func TestToolFunctionParameters_String(t *testing.T) {
 			assert.Equal(t, test.expected, result)
 		})
 	}
+}
+
+func TestToolCallFunctionArguments_OrderPreservation(t *testing.T) {
+	t.Run("marshal preserves insertion order", func(t *testing.T) {
+		args := NewToolCallFunctionArguments()
+		args.Set("zebra", "z")
+		args.Set("apple", "a")
+		args.Set("mango", "m")
+
+		data, err := json.Marshal(args)
+		require.NoError(t, err)
+
+		// Should preserve insertion order, not alphabetical
+		assert.Equal(t, `{"zebra":"z","apple":"a","mango":"m"}`, string(data))
+	})
+
+	t.Run("unmarshal preserves JSON order", func(t *testing.T) {
+		jsonData := `{"zebra":"z","apple":"a","mango":"m"}`
+
+		var args ToolCallFunctionArguments
+		err := json.Unmarshal([]byte(jsonData), &args)
+		require.NoError(t, err)
+
+		// Verify iteration order matches JSON order
+		var keys []string
+		for k := range args.All() {
+			keys = append(keys, k)
+		}
+		assert.Equal(t, []string{"zebra", "apple", "mango"}, keys)
+	})
+
+	t.Run("round trip preserves order", func(t *testing.T) {
+		original := `{"z":1,"a":2,"m":3,"b":4}`
+
+		var args ToolCallFunctionArguments
+		err := json.Unmarshal([]byte(original), &args)
+		require.NoError(t, err)
+
+		data, err := json.Marshal(args)
+		require.NoError(t, err)
+
+		assert.Equal(t, original, string(data))
+	})
+
+	t.Run("String method returns ordered JSON", func(t *testing.T) {
+		args := NewToolCallFunctionArguments()
+		args.Set("c", 3)
+		args.Set("a", 1)
+		args.Set("b", 2)
+
+		assert.Equal(t, `{"c":3,"a":1,"b":2}`, args.String())
+	})
+
+	t.Run("Get retrieves correct values", func(t *testing.T) {
+		args := NewToolCallFunctionArguments()
+		args.Set("key1", "value1")
+		args.Set("key2", 42)
+
+		v, ok := args.Get("key1")
+		assert.True(t, ok)
+		assert.Equal(t, "value1", v)
+
+		v, ok = args.Get("key2")
+		assert.True(t, ok)
+		assert.Equal(t, 42, v)
+
+		_, ok = args.Get("nonexistent")
+		assert.False(t, ok)
+	})
+
+	t.Run("Len returns correct count", func(t *testing.T) {
+		args := NewToolCallFunctionArguments()
+		assert.Equal(t, 0, args.Len())
+
+		args.Set("a", 1)
+		assert.Equal(t, 1, args.Len())
+
+		args.Set("b", 2)
+		assert.Equal(t, 2, args.Len())
+	})
+
+	t.Run("empty args marshal to empty object", func(t *testing.T) {
+		args := NewToolCallFunctionArguments()
+		data, err := json.Marshal(args)
+		require.NoError(t, err)
+		assert.Equal(t, `{}`, string(data))
+	})
+
+	t.Run("zero value args marshal to empty object", func(t *testing.T) {
+		var args ToolCallFunctionArguments
+		assert.Equal(t, "{}", args.String())
+	})
+}
+
+func TestToolPropertiesMap_OrderPreservation(t *testing.T) {
+	t.Run("marshal preserves insertion order", func(t *testing.T) {
+		props := NewToolPropertiesMap()
+		props.Set("zebra", ToolProperty{Type: PropertyType{"string"}})
+		props.Set("apple", ToolProperty{Type: PropertyType{"number"}})
+		props.Set("mango", ToolProperty{Type: PropertyType{"boolean"}})
+
+		data, err := json.Marshal(props)
+		require.NoError(t, err)
+
+		// Should preserve insertion order, not alphabetical
+		expected := `{"zebra":{"type":"string"},"apple":{"type":"number"},"mango":{"type":"boolean"}}`
+		assert.Equal(t, expected, string(data))
+	})
+
+	t.Run("unmarshal preserves JSON order", func(t *testing.T) {
+		jsonData := `{"zebra":{"type":"string"},"apple":{"type":"number"},"mango":{"type":"boolean"}}`
+
+		var props ToolPropertiesMap
+		err := json.Unmarshal([]byte(jsonData), &props)
+		require.NoError(t, err)
+
+		// Verify iteration order matches JSON order
+		var keys []string
+		for k := range props.All() {
+			keys = append(keys, k)
+		}
+		assert.Equal(t, []string{"zebra", "apple", "mango"}, keys)
+	})
+
+	t.Run("round trip preserves order", func(t *testing.T) {
+		original := `{"z":{"type":"string"},"a":{"type":"number"},"m":{"type":"boolean"}}`
+
+		var props ToolPropertiesMap
+		err := json.Unmarshal([]byte(original), &props)
+		require.NoError(t, err)
+
+		data, err := json.Marshal(props)
+		require.NoError(t, err)
+
+		assert.Equal(t, original, string(data))
+	})
+
+	t.Run("Get retrieves correct values", func(t *testing.T) {
+		props := NewToolPropertiesMap()
+		props.Set("name", ToolProperty{Type: PropertyType{"string"}, Description: "The name"})
+		props.Set("age", ToolProperty{Type: PropertyType{"integer"}, Description: "The age"})
+
+		v, ok := props.Get("name")
+		assert.True(t, ok)
+		assert.Equal(t, "The name", v.Description)
+
+		v, ok = props.Get("age")
+		assert.True(t, ok)
+		assert.Equal(t, "The age", v.Description)
+
+		_, ok = props.Get("nonexistent")
+		assert.False(t, ok)
+	})
+
+	t.Run("Len returns correct count", func(t *testing.T) {
+		props := NewToolPropertiesMap()
+		assert.Equal(t, 0, props.Len())
+
+		props.Set("a", ToolProperty{})
+		assert.Equal(t, 1, props.Len())
+
+		props.Set("b", ToolProperty{})
+		assert.Equal(t, 2, props.Len())
+	})
+
+	t.Run("nil props marshal to null", func(t *testing.T) {
+		var props *ToolPropertiesMap
+		data, err := json.Marshal(props)
+		require.NoError(t, err)
+		assert.Equal(t, `null`, string(data))
+	})
+
+	t.Run("ToMap returns regular map", func(t *testing.T) {
+		props := NewToolPropertiesMap()
+		props.Set("a", ToolProperty{Type: PropertyType{"string"}})
+		props.Set("b", ToolProperty{Type: PropertyType{"number"}})
+
+		m := props.ToMap()
+		assert.Equal(t, 2, len(m))
+		assert.Equal(t, PropertyType{"string"}, m["a"].Type)
+		assert.Equal(t, PropertyType{"number"}, m["b"].Type)
+	})
+}
+
+func TestToolCallFunctionArguments_ComplexValues(t *testing.T) {
+	t.Run("nested objects preserve order", func(t *testing.T) {
+		jsonData := `{"outer":{"z":1,"a":2},"simple":"value"}`
+
+		var args ToolCallFunctionArguments
+		err := json.Unmarshal([]byte(jsonData), &args)
+		require.NoError(t, err)
+
+		// Outer keys should be in order
+		var keys []string
+		for k := range args.All() {
+			keys = append(keys, k)
+		}
+		assert.Equal(t, []string{"outer", "simple"}, keys)
+	})
+
+	t.Run("arrays as values", func(t *testing.T) {
+		args := NewToolCallFunctionArguments()
+		args.Set("items", []string{"a", "b", "c"})
+		args.Set("numbers", []int{1, 2, 3})
+
+		data, err := json.Marshal(args)
+		require.NoError(t, err)
+
+		assert.Equal(t, `{"items":["a","b","c"],"numbers":[1,2,3]}`, string(data))
+	})
+}
+
+func TestToolPropertiesMap_NestedProperties(t *testing.T) {
+	t.Run("nested properties preserve order", func(t *testing.T) {
+		props := NewToolPropertiesMap()
+
+		nestedProps := NewToolPropertiesMap()
+		nestedProps.Set("z_field", ToolProperty{Type: PropertyType{"string"}})
+		nestedProps.Set("a_field", ToolProperty{Type: PropertyType{"number"}})
+
+		props.Set("outer", ToolProperty{
+			Type:       PropertyType{"object"},
+			Properties: nestedProps,
+		})
+
+		data, err := json.Marshal(props)
+		require.NoError(t, err)
+
+		// Both outer and inner should preserve order
+		expected := `{"outer":{"type":"object","properties":{"z_field":{"type":"string"},"a_field":{"type":"number"}}}}`
+		assert.Equal(t, expected, string(data))
+	})
 }

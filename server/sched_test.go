@@ -448,6 +448,71 @@ func TestSchedGetRunner(t *testing.T) {
 	b.ctxDone()
 }
 
+func TestSchedGetRunnerUsesDigestKeyWhenModelPathEmpty(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	s := InitScheduler(ctx)
+	opts := api.DefaultOptions()
+	opts.NumCtx = 4
+
+	loadedModel := &Model{Name: "safetensors-a", Digest: "sha-a"}
+	loadedRunner := &runnerRef{
+		model:       loadedModel,
+		modelKey:    schedulerModelKey(loadedModel),
+		llama:       &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}},
+		Options:     &opts,
+		numParallel: 1,
+	}
+
+	s.loadedMu.Lock()
+	s.loaded[loadedRunner.modelKey] = loadedRunner
+	s.loadedMu.Unlock()
+
+	reqModel := &Model{Name: "safetensors-b", Digest: "sha-b"}
+	successCh, errCh := s.GetRunner(ctx, reqModel, opts, nil)
+
+	require.Empty(t, successCh)
+	require.Empty(t, errCh)
+	require.Len(t, s.pendingReqCh, 1)
+}
+
+func TestSchedGetRunnerReusesSameDigestWhenModelPathEmpty(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer done()
+
+	s := InitScheduler(ctx)
+	opts := api.DefaultOptions()
+	opts.NumCtx = 4
+
+	loadedModel := &Model{Name: "safetensors-a", Digest: "sha-a"}
+	loadedRunner := &runnerRef{
+		model:       loadedModel,
+		modelKey:    schedulerModelKey(loadedModel),
+		llama:       &mockLlm{vramByGPU: map[ml.DeviceID]uint64{}},
+		Options:     &opts,
+		numParallel: 1,
+	}
+
+	s.loadedMu.Lock()
+	s.loaded[loadedRunner.modelKey] = loadedRunner
+	s.loadedMu.Unlock()
+
+	reqCtx, cancelReq := context.WithCancel(ctx)
+	successCh, errCh := s.GetRunner(reqCtx, &Model{Name: "safetensors-a-copy", Digest: "sha-a"}, opts, nil)
+	cancelReq()
+
+	select {
+	case runner := <-successCh:
+		require.Equal(t, loadedRunner, runner)
+	default:
+		t.Fatal("expected existing runner to be reused")
+	}
+
+	require.Empty(t, errCh)
+	require.Empty(t, s.pendingReqCh)
+}
+
 func TestSchedExpireRunner(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer done()
@@ -796,11 +861,101 @@ func (s *mockLlm) Close() error {
 	s.closeCalled = true
 	return s.closeResp
 }
-func (s *mockLlm) VRAMSize() uint64                                   { return s.vramSize }
-func (s *mockLlm) TotalSize() uint64                                  { return s.totalSize }
+func (s *mockLlm) MemorySize() (uint64, uint64)                       { return s.totalSize, s.vramSize }
 func (s *mockLlm) VRAMByGPU(id ml.DeviceID) uint64                    { return s.vramByGPU[id] }
 func (s *mockLlm) Pid() int                                           { return -1 }
 func (s *mockLlm) GetPort() int                                       { return -1 }
 func (s *mockLlm) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo { return nil }
 func (s *mockLlm) HasExited() bool                                    { return false }
 func (s *mockLlm) GetActiveDeviceIDs() []ml.DeviceID                  { return nil }
+func (s *mockLlm) ContextLength() int                                 { return 0 }
+
+// TestImageGenRunnerCanBeEvicted verifies that an image generation model
+// loaded in the scheduler can be evicted when idle.
+func TestImageGenRunnerCanBeEvicted(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+
+	s := InitScheduler(ctx)
+	s.getGpuFn = getGpuFn
+	s.getSystemInfoFn = getSystemInfoFn
+
+	// Simulate an image gen runner already loaded
+	imageGenRunner := &runnerRef{
+		model:           &Model{Name: "z-image", ModelPath: "/fake/image/model"},
+		modelPath:       "/fake/image/model",
+		llama:           &mockLlm{vramSize: 21 * format.GigaByte, vramByGPU: map[ml.DeviceID]uint64{}},
+		sessionDuration: 5 * time.Millisecond,
+		refCount:        0, // idle
+	}
+
+	s.loadedMu.Lock()
+	s.loaded["/fake/image/model"] = imageGenRunner
+	s.loadedMu.Unlock()
+
+	// Verify the image gen runner is loaded
+	s.loadedMu.Lock()
+	require.Len(t, s.loaded, 1)
+	s.loadedMu.Unlock()
+
+	// findRunnerToUnload should find the idle image gen runner
+	runner := s.findRunnerToUnload()
+	require.NotNil(t, runner)
+	require.Equal(t, "/fake/image/model", runner.modelPath)
+}
+
+// TestImageGenSchedulerCoexistence verifies that image generation models
+// can coexist with language models in the scheduler and VRAM is tracked correctly.
+func TestImageGenSchedulerCoexistence(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+
+	s := InitScheduler(ctx)
+	s.getGpuFn = getGpuFn
+	s.getSystemInfoFn = getSystemInfoFn
+
+	// Load both an imagegen runner and a language model runner
+	imageGenRunner := &runnerRef{
+		model:           &Model{Name: "flux", ModelPath: "/fake/flux/model"},
+		modelPath:       "/fake/flux/model",
+		llama:           &mockLlm{vramSize: 8 * format.GigaByte, vramByGPU: map[ml.DeviceID]uint64{{Library: "Metal"}: 8 * format.GigaByte}},
+		sessionDuration: 10 * time.Millisecond,
+		numParallel:     1,
+		refCount:        0,
+	}
+
+	langModelRunner := &runnerRef{
+		model:           &Model{Name: "llama3", ModelPath: "/fake/llama3/model"},
+		modelPath:       "/fake/llama3/model",
+		llama:           &mockLlm{vramSize: 4 * format.GigaByte, vramByGPU: map[ml.DeviceID]uint64{{Library: "Metal"}: 4 * format.GigaByte}},
+		sessionDuration: 10 * time.Millisecond,
+		numParallel:     1,
+		refCount:        0,
+	}
+
+	s.loadedMu.Lock()
+	s.loaded["/fake/flux/model"] = imageGenRunner
+	s.loaded["/fake/llama3/model"] = langModelRunner
+	s.loadedMu.Unlock()
+
+	// Verify both are loaded
+	s.loadedMu.Lock()
+	require.Len(t, s.loaded, 2)
+	require.NotNil(t, s.loaded["/fake/flux/model"])
+	require.NotNil(t, s.loaded["/fake/llama3/model"])
+	s.loadedMu.Unlock()
+
+	// Verify updateFreeSpace accounts for both
+	gpus := []ml.DeviceInfo{
+		{
+			DeviceID:    ml.DeviceID{Library: "Metal"},
+			TotalMemory: 24 * format.GigaByte,
+			FreeMemory:  24 * format.GigaByte,
+		},
+	}
+	s.updateFreeSpace(gpus)
+
+	// Free memory should be reduced by both models
+	expectedFree := uint64(24*format.GigaByte) - uint64(8*format.GigaByte) - uint64(4*format.GigaByte)
+	require.Equal(t, expectedFree, gpus[0].FreeMemory)
+}

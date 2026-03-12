@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"log/slog"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -158,6 +160,27 @@ func (kv KV) SSMGroupCount() uint64 {
 	return uint64(kv.Uint("ssm.group_count"))
 }
 
+func (kv KV) FFNLength() []uint64 {
+	ffnLengthDefault := uint32(0)
+	ffnLength := kv.UintOrArrayValueAsArray("feed_forward_length", ffnLengthDefault)
+	if len(ffnLength) == 1 {
+		ffnLengthDefault = ffnLength[0]
+	}
+	nLayers := int(kv.BlockCount())
+	if len(ffnLength) > nLayers {
+		slog.Warn("got more elements of feed_forward_length than layers", "len(ffnLength)", len(ffnLength), "layers", nLayers)
+	}
+	out := make([]uint64, nLayers)
+	for i := range nLayers {
+		if i >= len(ffnLength) {
+			out[i] = uint64(ffnLengthDefault)
+		} else {
+			out[i] = uint64(ffnLength[i])
+		}
+	}
+	return out
+}
+
 // general types
 
 func (kv KV) String(key string, defaultValue ...string) string {
@@ -239,6 +262,18 @@ func (kv KV) Bools(key string, defaultValue ...[]bool) []bool {
 	return val.values
 }
 
+func (kv KV) Len() int {
+	return len(kv)
+}
+
+func (kv KV) Keys() iter.Seq[string] {
+	return maps.Keys(kv)
+}
+
+func (kv KV) Value(key string) any {
+	return kv[key]
+}
+
 func (kv KV) OllamaEngineRequired() bool {
 	return slices.Contains([]string{
 		"bert",
@@ -250,11 +285,18 @@ func (kv KV) OllamaEngineRequired() bool {
 		"llama4",
 		"mistral3",
 		"mllama",
+		"nemotron_h", "nemotron_h_moe",
 		"nomic-bert",
 		"olmo3",
 		"qwen25vl",
 		"qwen3", "qwen3moe",
+		"qwen35", "qwen35moe",
+		"qwen3next",
 		"qwen3vl", "qwen3vlmoe",
+		"glm4moelite",
+		"glmocr",
+		"lfm2",
+		"lfm2moe",
 	}, kv.Architecture())
 }
 
@@ -827,7 +869,12 @@ func (f GGML) SupportsFlashAttention() bool {
 		return false
 	}
 
-	if arch := f.KV().Architecture(); slices.Contains([]string{"gemma2"}, arch) {
+	arch := f.KV().Architecture()
+	if slices.Contains([]string{"qwen35", "qwen35moe", "qwen3next"}, arch) {
+		return true
+	}
+
+	if slices.Contains([]string{"gemma2"}, arch) {
 		return false
 	}
 
@@ -842,10 +889,17 @@ func (f GGML) FlashAttention() bool {
 	return slices.Contains([]string{
 		"bert",
 		"gemma3",
+		"glm4moelite",
+		"glmocr",
 		"gptoss", "gpt-oss",
+		"lfm2",
+		"lfm2moe",
 		"mistral3",
+		"nemotron_h", "nemotron_h_moe",
 		"olmo3",
 		"qwen3", "qwen3moe",
+		"qwen35", "qwen35moe",
+		"qwen3next",
 		"qwen3vl", "qwen3vlmoe",
 	}, f.KV().String("general.architecture"))
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -93,19 +94,48 @@ func TestDeleteDuplicateLayers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	config, err := NewLayer(&b, "application/vnd.docker.container.image.v1+json")
+	config, err := manifest.NewLayer(&b, "application/vnd.docker.container.image.v1+json")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// create a manifest with duplicate layers
-	if err := WriteManifest(n, config, []Layer{config}); err != nil {
+	if err := manifest.WriteManifest(n, config, []manifest.Layer{config}); err != nil {
 		t.Fatal(err)
 	}
 
 	w := createRequest(t, s.DeleteHandler, api.DeleteRequest{Name: "test"})
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status code 200, actual %d", w.Code)
+	}
+
+	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{})
+}
+
+func TestDeleteCloudSourceNormalizesToLegacyName(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	p := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", p)
+
+	var s Server
+
+	_, digest := createBinFile(t, nil, nil)
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name:  "gpt-oss:20b-cloud",
+		Files: map[string]string{"test.gguf": digest},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{
+		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "gpt-oss", "20b-cloud"),
+	})
+
+	w = createRequest(t, s.DeleteHandler, api.DeleteRequest{Name: "gpt-oss:20b:cloud"})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d (%s)", w.Code, w.Body.String())
 	}
 
 	checkFileExists(t, filepath.Join(p, "manifests", "*", "*", "*", "*"), []string{})
