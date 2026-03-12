@@ -206,24 +206,6 @@ func LookupIntegrationSpec(name string) (*IntegrationSpec, error) {
 	return spec, nil
 }
 
-// OverrideIntegration replaces one registry entry's runner and returns a restore function.
-func OverrideIntegration(name string, runner Runner) func() {
-	spec, err := LookupIntegrationSpec(name)
-	if err != nil {
-		key := strings.ToLower(name)
-		integrationSpecsByName[key] = &IntegrationSpec{Name: key, Runner: runner}
-		return func() {
-			delete(integrationSpecsByName, key)
-		}
-	}
-
-	original := spec.Runner
-	spec.Runner = runner
-	return func() {
-		spec.Runner = original
-	}
-}
-
 // LookupIntegration resolves a registry name to the canonical key and runner.
 func LookupIntegration(name string) (string, Runner, error) {
 	spec, err := LookupIntegrationSpec(name)
@@ -301,7 +283,7 @@ func IntegrationSelectionItems() ([]ModelItem, error) {
 func IsIntegrationInstalled(name string) bool {
 	spec, err := LookupIntegrationSpec(name)
 	if err != nil {
-		return true
+		return false
 	}
 	if spec.Install.CheckInstalled == nil {
 		return true

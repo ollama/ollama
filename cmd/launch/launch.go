@@ -183,8 +183,13 @@ Examples:
 				return nil
 			}
 
-			if modelFlag != "" && IsCloudModelDisabled(cmd.Context(), modelFlag) {
-				modelFlag = ""
+			if modelFlag != "" && IsCloudModelName(modelFlag) {
+				if client, err := api.ClientFromEnvironment(); err == nil {
+					if disabled, _ := CloudStatusDisabled(cmd.Context(), client); disabled {
+						fmt.Fprintf(os.Stderr, "Warning: ignoring --model %s because cloud is disabled\n", modelFlag)
+						modelFlag = ""
+					}
+				}
 			}
 
 			err := LaunchIntegration(cmd.Context(), IntegrationLaunchRequest{

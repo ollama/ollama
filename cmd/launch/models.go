@@ -286,7 +286,10 @@ func ShowOrPullWithPolicy(ctx context.Context, client *api.Client, model string,
 	}
 
 	if IsCloudModelName(model) {
-		return nil
+		if disabled, known := CloudStatusDisabled(ctx, client); known && disabled {
+			return errors.New(internalcloud.DisabledError("remote inference is unavailable"))
+		}
+		return fmt.Errorf("model %q not found", model)
 	}
 
 	switch policy {
@@ -340,27 +343,6 @@ func listModels(ctx context.Context) ([]ModelItem, map[string]bool, map[string]b
 	}
 
 	return items, existingModels, cloudModels, client, nil
-}
-
-func resolveEditorModels(name string, models []string, picker func() ([]string, error)) ([]string, error) {
-	filtered := filterDisabledCloudModels(models)
-	if len(filtered) != len(models) {
-		if err := config.SaveIntegration(name, filtered); err != nil {
-			return nil, fmt.Errorf("failed to save: %w", err)
-		}
-	}
-	if len(filtered) > 0 {
-		return filtered, nil
-	}
-
-	selected, err := picker()
-	if err != nil {
-		return nil, err
-	}
-	if err := config.SaveIntegration(name, selected); err != nil {
-		return nil, fmt.Errorf("failed to save: %w", err)
-	}
-	return selected, nil
 }
 
 // PrepareEditorIntegration persists models and applies editor-managed config files.
@@ -526,19 +508,6 @@ func BuildModelList(existing []modelInfo, preChecked []string, current string) (
 	return items, preChecked, existingModels, cloudModels
 }
 
-// IsCloudModelDisabled reports whether the given model name looks like a cloud model and cloud features are disabled.
-func IsCloudModelDisabled(ctx context.Context, name string) bool {
-	if !IsCloudModelName(name) {
-		return false
-	}
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return false
-	}
-	disabled, _ := CloudStatusDisabled(ctx, client)
-	return disabled
-}
-
 // IsCloudModelName reports whether the model name has an explicit cloud source.
 func IsCloudModelName(name string) bool {
 	return modelref.HasExplicitCloudSource(name)
@@ -549,16 +518,6 @@ func FilterCloudModels(existing []modelInfo) []modelInfo {
 	filtered := existing[:0]
 	for _, m := range existing {
 		if !m.Remote {
-			filtered = append(filtered, m)
-		}
-	}
-	return filtered
-}
-
-func filterDisabledCloudModels(models []string) []string {
-	var filtered []string
-	for _, m := range models {
-		if !IsCloudModelDisabled(context.Background(), m) {
 			filtered = append(filtered, m)
 		}
 	}

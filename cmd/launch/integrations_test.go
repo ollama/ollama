@@ -125,6 +125,12 @@ func TestRunIntegration_UnknownIntegration(t *testing.T) {
 	}
 }
 
+func TestIsIntegrationInstalled_UnknownIntegrationReturnsFalse(t *testing.T) {
+	if IsIntegrationInstalled("unknown-integration") {
+		t.Fatal("expected unknown integration to report not installed")
+	}
+}
+
 func TestHasLocalModel_DocumentsHeuristic(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -621,81 +627,30 @@ func TestEditorIntegration_SavedConfigSkipsSelection(t *testing.T) {
 	}
 }
 
-func TestResolveEditorLaunchModels_PicksWhenAllFiltered(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-
+func TestLauncherClientFilterDisabledCloudModels_ChecksStatusOncePerInvocation(t *testing.T) {
+	var statusCalls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/status":
+			statusCalls++
 			fmt.Fprintf(w, `{"cloud":{"disabled":true,"source":"config"}}`)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
 	defer srv.Close()
-	t.Setenv("OLLAMA_HOST", srv.URL)
 
-	pickerCalled := false
-	models, err := resolveEditorModels("opencode", []string{"glm-5:cloud"}, func() ([]string, error) {
-		pickerCalled = true
-		return []string{"llama3.2"}, nil
-	})
-	if err != nil {
-		t.Fatalf("resolveEditorLaunchModels returned error: %v", err)
-	}
-	if !pickerCalled {
-		t.Fatal("expected model picker to be called when all models are filtered")
-	}
-	if diff := cmp.Diff([]string{"llama3.2"}, models); diff != "" {
-		t.Fatalf("resolved models mismatch (-want +got):\n%s", diff)
+	u, _ := url.Parse(srv.URL)
+	client := &launcherClient{
+		apiClient: api.NewClient(u, srv.Client()),
 	}
 
-	saved, err := LoadIntegration("opencode")
-	if err != nil {
-		t.Fatalf("failed to reload integration config: %v", err)
+	filtered := client.filterDisabledCloudModels(context.Background(), []string{"llama3.2", "glm-5:cloud", "qwen3.5:cloud"})
+	if diff := cmp.Diff([]string{"llama3.2"}, filtered); diff != "" {
+		t.Fatalf("filtered models mismatch (-want +got):\n%s", diff)
 	}
-	if diff := cmp.Diff([]string{"llama3.2"}, saved.Models); diff != "" {
-		t.Fatalf("saved models mismatch (-want +got):\n%s", diff)
-	}
-}
-
-func TestResolveEditorLaunchModels_FiltersAndSkipsPickerWhenLocalRemains(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/status":
-			fmt.Fprintf(w, `{"cloud":{"disabled":true,"source":"config"}}`)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer srv.Close()
-	t.Setenv("OLLAMA_HOST", srv.URL)
-
-	pickerCalled := false
-	models, err := resolveEditorModels("droid", []string{"llama3.2", "glm-5:cloud"}, func() ([]string, error) {
-		pickerCalled = true
-		return []string{"qwen3.5"}, nil
-	})
-	if err != nil {
-		t.Fatalf("resolveEditorLaunchModels returned error: %v", err)
-	}
-	if pickerCalled {
-		t.Fatal("picker should not be called when a local model remains")
-	}
-	if diff := cmp.Diff([]string{"llama3.2"}, models); diff != "" {
-		t.Fatalf("resolved models mismatch (-want +got):\n%s", diff)
-	}
-
-	saved, err := LoadIntegration("droid")
-	if err != nil {
-		t.Fatalf("failed to reload integration config: %v", err)
-	}
-	if diff := cmp.Diff([]string{"llama3.2"}, saved.Models); diff != "" {
-		t.Fatalf("saved models mismatch (-want +got):\n%s", diff)
+	if statusCalls != 1 {
+		t.Fatalf("expected one cloud status lookup, got %d", statusCalls)
 	}
 }
 
@@ -855,7 +810,7 @@ func TestShowOrPullWithPolicy_ModelNotFound_PromptPolicyPulls(t *testing.T) {
 	}
 }
 
-func TestShowOrPullWithPolicy_CloudModelSkipsPullForAllPolicies(t *testing.T) {
+func TestShowOrPullWithPolicy_CloudModelNotFound_FailsEarlyForAllPolicies(t *testing.T) {
 	oldHook := DefaultConfirmPrompt
 	DefaultConfirmPrompt = func(prompt string) (bool, error) {
 		t.Fatal("confirm prompt should not be called for explicit cloud models")
@@ -871,6 +826,9 @@ func TestShowOrPullWithPolicy_CloudModelSkipsPullForAllPolicies(t *testing.T) {
 				case "/api/show":
 					w.WriteHeader(http.StatusNotFound)
 					fmt.Fprintf(w, `{"error":"model not found"}`)
+				case "/api/status":
+					w.WriteHeader(http.StatusNotFound)
+					fmt.Fprintf(w, `{"error":"not found"}`)
 				case "/api/pull":
 					pullCalled = true
 					w.WriteHeader(http.StatusOK)
@@ -885,8 +843,57 @@ func TestShowOrPullWithPolicy_CloudModelSkipsPullForAllPolicies(t *testing.T) {
 			client := api.NewClient(u, srv.Client())
 
 			err := ShowOrPullWithPolicy(context.Background(), client, "glm-5:cloud", policy)
-			if err != nil {
-				t.Fatalf("expected cloud model to bypass pull for policy %d, got %v", policy, err)
+			if err == nil {
+				t.Fatalf("expected cloud model not-found error for policy %d", policy)
+			}
+			if !strings.Contains(err.Error(), `model "glm-5:cloud" not found`) {
+				t.Fatalf("expected not-found error for policy %d, got %v", policy, err)
+			}
+			if pullCalled {
+				t.Fatalf("expected pull not to be called for cloud model with policy %d", policy)
+			}
+		})
+	}
+}
+
+func TestShowOrPullWithPolicy_CloudModelDisabled_FailsWithCloudDisabledError(t *testing.T) {
+	oldHook := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		t.Fatal("confirm prompt should not be called for explicit cloud models")
+		return false, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldHook }()
+
+	for _, policy := range []MissingModelPolicy{MissingModelPromptPull, MissingModelFail} {
+		t.Run(fmt.Sprintf("policy=%d", policy), func(t *testing.T) {
+			var pullCalled bool
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/show":
+					w.WriteHeader(http.StatusNotFound)
+					fmt.Fprintf(w, `{"error":"model not found"}`)
+				case "/api/status":
+					w.WriteHeader(http.StatusOK)
+					fmt.Fprintf(w, `{"cloud":{"disabled":true,"source":"config"}}`)
+				case "/api/pull":
+					pullCalled = true
+					w.WriteHeader(http.StatusOK)
+					fmt.Fprintf(w, `{"status":"success"}`)
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+
+			u, _ := url.Parse(srv.URL)
+			client := api.NewClient(u, srv.Client())
+
+			err := ShowOrPullWithPolicy(context.Background(), client, "glm-5:cloud", policy)
+			if err == nil {
+				t.Fatalf("expected cloud disabled error for policy %d", policy)
+			}
+			if !strings.Contains(err.Error(), "remote inference is unavailable") {
+				t.Fatalf("expected cloud disabled error for policy %d, got %v", policy, err)
 			}
 			if pullCalled {
 				t.Fatalf("expected pull not to be called for cloud model with policy %d", policy)
@@ -1005,7 +1012,7 @@ func TestShowOrPull_ModelNotFound_ConfirmNo_Cancelled(t *testing.T) {
 	}
 }
 
-func TestShowOrPull_CloudModel_DoesNotPull(t *testing.T) {
+func TestShowOrPull_CloudModel_NotFoundDoesNotPull(t *testing.T) {
 	// Confirm prompt should NOT be called for explicit cloud models
 	oldHook := DefaultConfirmPrompt
 	DefaultConfirmPrompt = func(prompt string) (bool, error) {
@@ -1034,15 +1041,18 @@ func TestShowOrPull_CloudModel_DoesNotPull(t *testing.T) {
 	client := api.NewClient(u, srv.Client())
 
 	err := ShowOrPull(context.Background(), client, "glm-5:cloud")
-	if err != nil {
-		t.Errorf("ShowOrPull should succeed for cloud model, got: %v", err)
+	if err == nil {
+		t.Error("ShowOrPull should return not-found error for cloud model")
+	}
+	if !strings.Contains(err.Error(), `model "glm-5:cloud" not found`) {
+		t.Errorf("expected cloud model not-found error, got: %v", err)
 	}
 	if pullCalled {
 		t.Error("expected pull not to be called for cloud model")
 	}
 }
 
-func TestShowOrPull_CloudLegacySuffix_DoesNotPull(t *testing.T) {
+func TestShowOrPull_CloudLegacySuffix_NotFoundDoesNotPull(t *testing.T) {
 	// Confirm prompt should NOT be called for explicit cloud models
 	oldHook := DefaultConfirmPrompt
 	DefaultConfirmPrompt = func(prompt string) (bool, error) {
@@ -1071,8 +1081,11 @@ func TestShowOrPull_CloudLegacySuffix_DoesNotPull(t *testing.T) {
 	client := api.NewClient(u, srv.Client())
 
 	err := ShowOrPull(context.Background(), client, "gpt-oss:20b-cloud")
-	if err != nil {
-		t.Errorf("ShowOrPull should succeed for cloud model, got: %v", err)
+	if err == nil {
+		t.Error("ShowOrPull should return not-found error for cloud model")
+	}
+	if !strings.Contains(err.Error(), `model "gpt-oss:20b-cloud" not found`) {
+		t.Errorf("expected cloud model not-found error, got: %v", err)
 	}
 	if pullCalled {
 		t.Error("expected pull not to be called for cloud model")

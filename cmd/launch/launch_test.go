@@ -356,8 +356,7 @@ func TestResolveRunModel_UsesSignInHookForCloudModel(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			fmt.Fprint(w, `{"error":"not found"}`)
 		case "/api/show":
-			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprint(w, `{"error":"not found"}`)
+			fmt.Fprint(w, `{"remote_model":"glm-5"}`)
 		case "/api/me":
 			w.WriteHeader(http.StatusUnauthorized)
 			fmt.Fprint(w, `{"error":"unauthorized","signin_url":"https://example.com/signin"}`)
@@ -751,8 +750,7 @@ func TestLaunchIntegration_ClaudeSyncsAliasesAndSavesPrimary(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			fmt.Fprint(w, `{"error":"not found"}`)
 		case "/api/show":
-			w.WriteHeader(http.StatusNotFound)
-			fmt.Fprint(w, `{"error":"not found"}`)
+			fmt.Fprint(w, `{"remote_model":"glm-5"}`)
 		case "/api/me":
 			fmt.Fprint(w, `{"name":"test-user"}`)
 		case "/api/experimental/aliases":
