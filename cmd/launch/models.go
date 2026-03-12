@@ -269,11 +269,6 @@ func pullIfNeeded(ctx context.Context, client *api.Client, existingModels map[st
 	return confirmAndPull(ctx, client, model)
 }
 
-// ShowOrPull checks if a model exists via client.Show and offers to pull it if not found.
-func ShowOrPull(ctx context.Context, client *api.Client, model string) error {
-	return ShowOrPullWithPolicy(ctx, client, model, MissingModelPromptPull)
-}
-
 // ShowOrPullWithPolicy checks if a model exists and applies the provided missing-model policy.
 func ShowOrPullWithPolicy(ctx context.Context, client *api.Client, model string, policy MissingModelPolicy) error {
 	if _, err := client.Show(ctx, &api.ShowRequest{Model: model}); err == nil {
