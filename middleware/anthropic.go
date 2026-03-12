@@ -240,15 +240,6 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 
 	var serverContent []anthropic.ContentBlock
 
-	if !isCloudModelName(w.req.Model) {
-		logutil.TraceContext(ctx, "anthropic middleware: web_search execution blocked", "reason", "non_cloud_model")
-		return anthropic.MessagesResponse{}, &webSearchLoopError{
-			code:  "web_search_not_supported_for_local_models",
-			query: extractQueryFromToolCall(&initialToolCall),
-			usage: usage,
-		}
-	}
-
 	for loop := 1; loop <= maxWebSearchLoops; loop++ {
 		query := extractQueryFromToolCall(&currentToolCall)
 		logutil.TraceContext(ctx, "anthropic middleware: web_search loop iteration",

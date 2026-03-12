@@ -1,18 +1,21 @@
-//go:build mlx
-
 package mlx
 
-//go:generate cmake -S . -B build -DCMAKE_INSTALL_PREFIX=dist -DCMAKE_BUILD_TYPE=Release
-//go:generate cmake --build build --parallel
-//go:generate cmake --install build
-//go:generate sh -c "go run generator/main.go -output=. ./dist/include/mlx/c/*.h"
+//go:generate go run generator/main.go -output=. ./include/mlx/c/*.h
 
 // #cgo CXXFLAGS: -std=c++17
-// #cgo CPPFLAGS: -I${SRCDIR}/dist/include
-// #cgo LDFLAGS: -L${SRCDIR}/dist/lib -lstdc++
+// #cgo CPPFLAGS: -I${SRCDIR}/include
+// #cgo LDFLAGS: -lstdc++
 // #cgo darwin LDFLAGS: -framework Foundation -framework Metal -framework Accelerate
 // #include "generated.h"
 import "C"
+
+// Version returns the MLX core library version string.
+func Version() string {
+	str := C.mlx_string_new()
+	defer C.mlx_string_free(str)
+	C.mlx_version(&str)
+	return C.GoString(C.mlx_string_data(str))
+}
 
 func doEval(outputs []*Array, async bool) {
 	vector := C.mlx_vector_array_new()
