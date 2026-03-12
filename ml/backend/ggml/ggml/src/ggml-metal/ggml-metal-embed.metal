@@ -4094,6 +4094,7 @@ template [[host_name("kernel_unary_f16_f16_4")]] kernel kernel_unary_t kernel_un
 constant short FC_bin_op [[function_constant(FC_BIN + 0)]];
 constant short FC_bin_f  [[function_constant(FC_BIN + 1)]];
 constant bool  FC_bin_rb [[function_constant(FC_BIN + 2)]];
+constant bool  FC_bin_cb [[function_constant(FC_BIN + 3)]];
 
 template <typename T0, typename T1, typename T>
 kernel void kernel_bin_fuse_impl(
@@ -4107,11 +4108,12 @@ kernel void kernel_bin_fuse_impl(
 #define FC_OP FC_bin_op
 #define FC_F  FC_bin_f
 #define FC_RB FC_bin_rb
+#define FC_CB FC_bin_cb
 
     if (FC_RB) {
         // row broadcast
-        const uint i0 = tgpig.x;
-        const uint i1 = i0%args.ne10;
+        const uint i0 = tgpig.y*args.ne00 + tgpig.x;
+        const uint i1 = FC_CB ? tgpig.x%args.ne10 : tgpig.x;
 
         device const T0 * src0_row = (device const T0 *) (src0);
         device       T  * dst_row  = (device       T  *) (dst);
@@ -4183,7 +4185,7 @@ kernel void kernel_bin_fuse_impl(
             device const T1 * src1_ptr = (device const T1 *) (src1 + args.o1[0] + i13*args.nb13 + i12*args.nb12 + i11*args.nb11);
 
             for (int i0 = tpitg.x; i0 < args.ne0; i0 += ntg.x) {
-                const int i10 = i0%args.ne10;
+                const int i10 = FC_CB ? i0%args.ne10 : i0;
 
                 if (FC_OP == 0) {
                     dst_ptr[i0] = src0_ptr[i0] + src1_ptr[i10];
@@ -4208,7 +4210,7 @@ kernel void kernel_bin_fuse_impl(
             }
 
             for (int i0 = tpitg.x; i0 < args.ne0; i0 += ntg.x) {
-                const int i10 = i0%args.ne10;
+                const int i10 = FC_CB ? i0%args.ne10 : i0;
 
                 T res = src0_ptr[i0];
 
@@ -4244,6 +4246,7 @@ kernel void kernel_bin_fuse_impl(
 #undef FC_OP
 #undef FC_F
 #undef FC_RB
+#undef FC_CB
 }
 
 typedef decltype(kernel_bin_fuse_impl<float, float, float>) kernel_bin_fuse_t;
