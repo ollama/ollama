@@ -331,6 +331,19 @@ func ScaledDotProductAttentionCausal(q, k, v *Array, scale float32, causalMask b
 	return out
 }
 
+func LayerNormFn(x, weight, bias *Array, eps float32) *Array {
+	out := New("FAST_LAYERNORM")
+	var w, b C.mlx_array
+	if weight != nil {
+		w = weight.ctx
+	}
+	if bias != nil {
+		b = bias.ctx
+	}
+	C.mlx_fast_layer_norm(&out.ctx, x.ctx, w, b, C.float(eps), DefaultStream().ctx)
+	return out
+}
+
 func RMSNormFn(x, weight *Array, eps float32) *Array {
 	out := New("FAST_RMSNORM")
 	var w C.mlx_array

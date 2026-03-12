@@ -152,15 +152,7 @@ func (ln *LayerNorm) Forward(x *mlx.Array) *mlx.Array {
 	if eps == 0 {
 		eps = 1e-5
 	}
-	mean := mlx.Mean(x, -1, true)
-	centered := x.Subtract(mean)
-	variance := mlx.Mean(centered.Multiply(centered), -1, true)
-	normalized := centered.Multiply(mlx.RSqrt(mlx.AddScalar(variance, eps)))
-	out := normalized.Multiply(ln.Weight)
-	if ln.Bias != nil && ln.Bias.Valid() {
-		out = out.Add(ln.Bias)
-	}
-	return out
+	return mlx.LayerNormFn(x, ln.Weight, ln.Bias, eps)
 }
 
 // MultiLinearLayer is an interface for per-head linear layers.
@@ -183,17 +175,6 @@ func (ml *MultiLinear) Forward(x *mlx.Array) *mlx.Array {
 	return x.Matmul(wT)
 }
 
-// RepeatKV repeats K/V tensors for grouped query attention.
-func RepeatKV(x *mlx.Array, repeatFactor int32) *mlx.Array {
-	if repeatFactor == 1 {
-		return x
-	}
-	shape := x.Dims()
-	x = x.ExpandDims(2)
-	reps := []int32{1, 1, repeatFactor, 1, 1}
-	x = mlx.Tile(x, reps)
-	return mlx.Reshape(x, int32(shape[0]), int32(shape[1])*repeatFactor, int32(shape[2]), int32(shape[3]))
-}
 
 // ApplyCausalMask applies causal (lower triangular) mask to attention scores.
 func ApplyCausalMask(scores *mlx.Array) *mlx.Array {
