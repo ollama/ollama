@@ -175,17 +175,6 @@ func (ml *MultiLinear) Forward(x *mlx.Array) *mlx.Array {
 	return x.Matmul(wT)
 }
 
-// RepeatKV repeats K/V tensors for grouped query attention.
-func RepeatKV(x *mlx.Array, repeatFactor int32) *mlx.Array {
-	if repeatFactor == 1 {
-		return x
-	}
-	shape := x.Dims()
-	x = x.ExpandDims(2)
-	reps := []int32{1, 1, repeatFactor, 1, 1}
-	x = mlx.Tile(x, reps)
-	return mlx.Reshape(x, int32(shape[0]), int32(shape[1])*repeatFactor, int32(shape[2]), int32(shape[3]))
-}
 
 // ApplyCausalMask applies causal (lower triangular) mask to attention scores.
 func ApplyCausalMask(scores *mlx.Array) *mlx.Array {
