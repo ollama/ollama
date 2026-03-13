@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 
 	"github.com/ollama/ollama/envconfig"
 )
@@ -68,10 +69,18 @@ func (c *Claude) Run(model string, args []string) error {
 
 // modelEnvVars returns Claude Code env vars that route all model tiers through Ollama.
 func (c *Claude) modelEnvVars(model string) []string {
-	return []string{
+	env := []string{
 		"ANTHROPIC_DEFAULT_OPUS_MODEL=" + model,
 		"ANTHROPIC_DEFAULT_SONNET_MODEL=" + model,
 		"ANTHROPIC_DEFAULT_HAIKU_MODEL=" + model,
 		"CLAUDE_CODE_SUBAGENT_MODEL=" + model,
 	}
+
+	if isCloudModelName(model) {
+		if l, ok := lookupCloudModelLimit(model); ok {
+			env = append(env, "CLAUDE_CODE_AUTO_COMPACT_WINDOW="+strconv.Itoa(l.Context))
+		}
+	}
+
+	return env
 }
