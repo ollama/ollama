@@ -799,6 +799,107 @@ func TestStreamConverter_WithToolCalls(t *testing.T) {
 	}
 }
 
+// TestStreamConverter_ThinkingDirectlyFollowedByToolCall verifies that when a
+// model emits a thinking block followed directly by a tool_use block (with no
+// text block in between), the streaming converter correctly closes the thinking
+// block and increments the content index before opening the tool_use block.
+// Previously, the converter reused contentIndex=0 for the tool_use block,
+// which caused "Content block not found" errors in clients. See #14816.
+func TestStreamConverter_ThinkingDirectlyFollowedByToolCall(t *testing.T) {
+	conv := NewStreamConverter("msg_123", "test-model", 0)
+
+	// First chunk: thinking content (no text)
+	resp1 := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Role:     "assistant",
+			Thinking: "I should call the tool.",
+		},
+	}
+	events1 := conv.Process(resp1)
+
+	// Should have: message_start, content_block_start(thinking), content_block_delta(thinking)
+	if len(events1) < 3 {
+		t.Fatalf("expected at least 3 events for thinking chunk, got %d", len(events1))
+	}
+	if events1[0].Event != "message_start" {
+		t.Errorf("expected first event 'message_start', got %q", events1[0].Event)
+	}
+	thinkingStart, ok := events1[1].Data.(ContentBlockStartEvent)
+	if !ok || thinkingStart.ContentBlock.Type != "thinking" {
+		t.Errorf("expected content_block_start(thinking) as second event, got %+v", events1[1])
+	}
+	if thinkingStart.Index != 0 {
+		t.Errorf("expected thinking block at index 0, got %d", thinkingStart.Index)
+	}
+
+	// Second chunk: tool call (no text between thinking and tool)
+	resp2 := api.ChatResponse{
+		Model: "test-model",
+		Message: api.Message{
+			Role: "assistant",
+			ToolCalls: []api.ToolCall{
+				{
+					ID: "call_abc",
+					Function: api.ToolCallFunction{
+						Name:      "ask_user",
+						Arguments: testArgs(map[string]any{"question": "cats or dogs?"}),
+					},
+				},
+			},
+		},
+		Done:       true,
+		DoneReason: "stop",
+		Metrics:    api.Metrics{PromptEvalCount: 10, EvalCount: 5},
+	}
+	events2 := conv.Process(resp2)
+
+	// Expect: content_block_stop(index=0), content_block_start(tool_use, index=1),
+	//         content_block_delta(input_json_delta, index=1), content_block_stop(index=1),
+	//         message_delta, message_stop
+	var thinkingStop, toolStart, toolDelta, toolStop *StreamEvent
+	for i := range events2 {
+		e := &events2[i]
+		switch e.Event {
+		case "content_block_stop":
+			if stop, ok := e.Data.(ContentBlockStopEvent); ok {
+				if stop.Index == 0 && thinkingStop == nil {
+					thinkingStop = e
+				} else if stop.Index == 1 {
+					toolStop = e
+				}
+			}
+		case "content_block_start":
+			if start, ok := e.Data.(ContentBlockStartEvent); ok && start.ContentBlock.Type == "tool_use" {
+				toolStart = e
+			}
+		case "content_block_delta":
+			if delta, ok := e.Data.(ContentBlockDeltaEvent); ok && delta.Delta.Type == "input_json_delta" {
+				toolDelta = e
+			}
+		}
+	}
+
+	if thinkingStop == nil {
+		t.Error("expected content_block_stop for thinking block (index 0)")
+	}
+	if toolStart == nil {
+		t.Fatal("expected content_block_start for tool_use block")
+	}
+	if start, ok := toolStart.Data.(ContentBlockStartEvent); !ok || start.Index != 1 {
+		t.Errorf("expected tool_use block at index 1, got %+v", toolStart.Data)
+	}
+	if toolDelta == nil {
+		t.Error("expected input_json_delta event for tool call")
+	}
+	if delta, ok := toolDelta.Data.(ContentBlockDeltaEvent); !ok || delta.Index != 1 {
+		t.Errorf("expected tool delta at index 1, got %+v", toolDelta.Data)
+	}
+	if toolStop == nil {
+		t.Error("expected content_block_stop for tool_use block (index 1)")
+	}
+}
+
 func TestStreamConverter_ToolCallWithUnmarshalableArgs(t *testing.T) {
 	// Test that unmarshalable arguments (like channels) are handled gracefully
 	// and don't cause a panic or corrupt stream
