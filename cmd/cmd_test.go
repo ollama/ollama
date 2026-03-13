@@ -1346,6 +1346,20 @@ func TestNewCreateRequest(t *testing.T) {
 			},
 		},
 		{
+			"explicit cloud model preserves source when parent lacks it",
+			"newmodel",
+			runOptions{
+				Model:       "qwen3.5:cloud",
+				ParentModel: "qwen3.5",
+				Messages:    []api.Message{},
+				WordWrap:    true,
+			},
+			&api.CreateRequest{
+				From:  "qwen3.5:cloud",
+				Model: "newmodel",
+			},
+		},
+		{
 			"parent model as filepath test",
 			"newmodel",
 			runOptions{
