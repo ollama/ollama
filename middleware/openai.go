@@ -515,7 +515,7 @@ func ResponsesMiddleware() gin.HandlerFunc {
 				return
 			}
 			defer reader.Close()
-			c.Request.Body = io.NopCloser(io.LimitReader(reader, maxDecompressedBodySize))
+			c.Request.Body = http.MaxBytesReader(c.Writer, io.NopCloser(reader), maxDecompressedBodySize)
 			c.Request.Header.Del("Content-Encoding")
 		}
 

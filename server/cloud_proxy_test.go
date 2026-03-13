@@ -197,6 +197,42 @@ func TestCloudPassthroughMiddleware_ZstdBody(t *testing.T) {
 	}
 }
 
+func TestCloudPassthroughMiddleware_ZstdBodyTooLarge(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	// Create a body that exceeds the 20MB limit
+	oversized := make([]byte, maxDecompressedBodySize+1024)
+	for i := range oversized {
+		oversized[i] = 'A'
+	}
+
+	var compressed bytes.Buffer
+	w, err := zstd.NewWriter(&compressed)
+	if err != nil {
+		t.Fatalf("zstd writer: %v", err)
+	}
+	if _, err := w.Write(oversized); err != nil {
+		t.Fatalf("zstd write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("zstd close: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(compressed.Bytes()))
+	req.Header.Set("Content-Encoding", "zstd")
+	rec := httptest.NewRecorder()
+
+	r := gin.New()
+	r.POST("/v1/responses", cloudPassthroughMiddleware("test"), func(c *gin.Context) {
+		t.Fatal("handler should not be reached for oversized body")
+	})
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d", rec.Code)
+	}
+}
+
 func TestBuildCloudSignatureChallengeOverwritesExistingTimestamp(t *testing.T) {
 	req, err := http.NewRequest(http.MethodPost, "https://ollama.com/v1/messages?beta=true&ts=999", nil)
 	if err != nil {
