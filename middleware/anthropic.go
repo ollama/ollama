@@ -17,6 +17,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
+	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/logutil"
 )
 
@@ -238,15 +239,6 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 	currentToolCall := initialToolCall
 
 	var serverContent []anthropic.ContentBlock
-
-	if !isCloudModelName(w.req.Model) {
-		logutil.TraceContext(ctx, "anthropic middleware: web_search execution blocked", "reason", "non_cloud_model")
-		return anthropic.MessagesResponse{}, &webSearchLoopError{
-			code:  "web_search_not_supported_for_local_models",
-			query: extractQueryFromToolCall(&initialToolCall),
-			usage: usage,
-		}
-	}
 
 	for loop := 1; loop <= maxWebSearchLoops; loop++ {
 		query := extractQueryFromToolCall(&currentToolCall)
@@ -919,7 +911,7 @@ func hasWebSearchTool(tools []anthropic.Tool) bool {
 }
 
 func isCloudModelName(name string) bool {
-	return strings.HasSuffix(name, ":cloud") || strings.HasSuffix(name, "-cloud")
+	return modelref.HasExplicitCloudSource(name)
 }
 
 // extractQueryFromToolCall extracts the search query from a web_search tool call

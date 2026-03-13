@@ -216,6 +216,22 @@ func TestUpdateScroll(t *testing.T) {
 	}
 }
 
+func TestSelectorModelWithCurrent_ScrollsToCurrentInMoreSection(t *testing.T) {
+	m := selectorModelWithCurrent("Pick:", mixedItems(), "other-10")
+
+	if m.cursor != 11 {
+		t.Fatalf("cursor = %d, want 11", m.cursor)
+	}
+	if m.scrollOffset == 0 {
+		t.Fatal("scrollOffset should move to reveal current item in More section")
+	}
+
+	content := m.renderContent()
+	if !strings.Contains(content, "▸ other-10") {
+		t.Fatalf("expected current item to be visible and highlighted\n%s", content)
+	}
+}
+
 func TestRenderContent_SectionHeaders(t *testing.T) {
 	m := selectorModel{
 		title: "Pick:",

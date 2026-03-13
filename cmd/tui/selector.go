@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/ollama/ollama/cmd/config"
+	"github.com/ollama/ollama/cmd/launch"
 )
 
 var (
@@ -64,8 +64,8 @@ type SelectItem struct {
 	Recommended bool
 }
 
-// ConvertItems converts config.ModelItem slice to SelectItem slice.
-func ConvertItems(items []config.ModelItem) []SelectItem {
+// ConvertItems converts launch.ModelItem slice to SelectItem slice.
+func ConvertItems(items []launch.ModelItem) []SelectItem {
 	out := make([]SelectItem, len(items))
 	for i, item := range items {
 		out[i] = SelectItem{Name: item.Name, Description: item.Description, Recommended: item.Recommended}
@@ -99,6 +99,16 @@ type selectorModel struct {
 	cancelled    bool
 	helpText     string
 	width        int
+}
+
+func selectorModelWithCurrent(title string, items []SelectItem, current string) selectorModel {
+	m := selectorModel{
+		title:  title,
+		items:  items,
+		cursor: cursorForCurrent(items, current),
+	}
+	m.updateScroll(m.otherStart())
+	return m
 }
 
 func (m selectorModel) filteredItems() []SelectItem {
@@ -382,11 +392,7 @@ func SelectSingle(title string, items []SelectItem, current string) (string, err
 		return "", fmt.Errorf("no items to select from")
 	}
 
-	m := selectorModel{
-		title:  title,
-		items:  items,
-		cursor: cursorForCurrent(items, current),
-	}
+	m := selectorModelWithCurrent(title, items, current)
 
 	p := tea.NewProgram(m)
 	finalModel, err := p.Run()

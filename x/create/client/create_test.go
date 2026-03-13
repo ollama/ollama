@@ -1,7 +1,13 @@
 package client
 
 import (
+	"encoding/json"
+	"os"
+	"strings"
 	"testing"
+
+	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/parser"
 )
 
 func TestModelfileConfig(t *testing.T) {
@@ -28,6 +34,40 @@ func TestModelfileConfig(t *testing.T) {
 	}
 	if config.Renderer != "qwen3" {
 		t.Errorf("Renderer = %q, want %q", config.Renderer, "qwen3")
+	}
+}
+
+func TestConfigFromModelfile(t *testing.T) {
+	modelfile, err := parser.ParseFile(strings.NewReader(`
+FROM ./model
+TEMPLATE {{ .Prompt }}
+PARAMETER temperature 0.7
+PARAMETER stop USER:
+PARAMETER stop ASSISTANT:
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	modelDir, mfConfig, err := ConfigFromModelfile(modelfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if modelDir != "./model" {
+		t.Fatalf("modelDir = %q, want %q", modelDir, "./model")
+	}
+
+	if mfConfig.Template != "{{ .Prompt }}" {
+		t.Fatalf("Template = %q, want %q", mfConfig.Template, "{{ .Prompt }}")
+	}
+
+	if got := mfConfig.Parameters["temperature"]; got != float32(0.7) {
+		t.Fatalf("temperature = %#v, want %v", got, float32(0.7))
+	}
+
+	if got := mfConfig.Parameters["stop"]; got == nil || len(got.([]string)) != 2 {
+		t.Fatalf("unexpected stop params: %#v", got)
 	}
 }
 
@@ -120,6 +160,9 @@ func TestCreateOptions(t *testing.T) {
 			License:  "MIT",
 			Parser:   "qwen3-thinking",
 			Renderer: "qwen3",
+			Parameters: map[string]any{
+				"temperature": float32(0.7),
+			},
 		},
 	}
 
@@ -143,6 +186,9 @@ func TestCreateOptions(t *testing.T) {
 	}
 	if opts.Modelfile.Renderer != "qwen3" {
 		t.Errorf("Modelfile.Renderer = %q, want %q", opts.Modelfile.Renderer, "qwen3")
+	}
+	if opts.Modelfile.Parameters["temperature"] != float32(0.7) {
+		t.Errorf("Modelfile.Parameters[temperature] = %v, want %v", opts.Modelfile.Parameters["temperature"], float32(0.7))
 	}
 }
 
@@ -251,4 +297,45 @@ func TestQuantizeSupported(t *testing.T) {
 	// In non-mlx builds, this should be false
 	// We can't easily test both cases, so just verify it returns something
 	_ = supported
+}
+
+func TestCreateModelfileLayersIncludesParameters(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	layers, err := createModelfileLayers(&ModelfileConfig{
+		Parameters: map[string]any{
+			"temperature": float32(0.7),
+			"stop":        []string{"USER:", "ASSISTANT:"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(layers) != 1 {
+		t.Fatalf("len(layers) = %d, want 1", len(layers))
+	}
+
+	if layers[0].MediaType != "application/vnd.ollama.image.params" {
+		t.Fatalf("MediaType = %q, want %q", layers[0].MediaType, "application/vnd.ollama.image.params")
+	}
+
+	blobPath, err := manifest.BlobsPath(layers[0].Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(blobPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+
+	if got["temperature"] != float64(0.7) {
+		t.Fatalf("temperature = %v, want %v", got["temperature"], float64(0.7))
+	}
 }

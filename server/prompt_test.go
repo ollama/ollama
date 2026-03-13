@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -364,5 +365,35 @@ func TestChatPromptRendererDoesNotRewriteMessageContent(t *testing.T) {
 
 	if prompt == "" {
 		t.Fatal("prompt is empty")
+	}
+}
+
+func TestChatPromptGLMOcrRendererAddsImageTags(t *testing.T) {
+	msgs := []api.Message{
+		{
+			Role:    "user",
+			Content: "extract text",
+			Images:  []api.ImageData{[]byte("img-1"), []byte("img-2")},
+		},
+	}
+
+	m := Model{
+		Config:         model.ConfigV2{Renderer: "glm-ocr"},
+		ProjectorPaths: []string{"vision"},
+	}
+	opts := api.Options{Runner: api.Runner{NumCtx: 8192}}
+	think := false
+
+	prompt, images, err := chatPrompt(t.Context(), &m, mockRunner{}.Tokenize, &opts, msgs, nil, &api.ThinkValue{Value: think}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := len(images), 2; got != want {
+		t.Fatalf("len(images) = %d, want %d", got, want)
+	}
+
+	if !strings.Contains(prompt, "<|user|>\n[img-0][img-1]extract text") {
+		t.Fatalf("prompt missing glm-ocr image tags, got: %q", prompt)
 	}
 }
