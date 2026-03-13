@@ -580,7 +580,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 
 	mf, err := pullModelManifest(ctx, n, regOpts)
 	if err != nil {
-		return fmt.Errorf("pull model manifest: %s", err)
+		return fmt.Errorf("pull model manifest: %w", err)
 	}
 
 	var layers []manifest.Layer
@@ -879,7 +879,7 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 			defer resp.Body.Close()
 			responseBody, err := io.ReadAll(resp.Body)
 			if err != nil {
-				return nil, fmt.Errorf("%d: %s", resp.StatusCode, err)
+				return nil, fmt.Errorf("%d: %w", resp.StatusCode, err)
 			}
 			return nil, fmt.Errorf("%d: %s", resp.StatusCode, responseBody)
 		default:

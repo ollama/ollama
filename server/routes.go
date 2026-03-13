@@ -2734,7 +2734,11 @@ func (s *Server) handleImageGenerate(c *gin.Context, req api.GenerateRequest, mo
 			return
 		}
 
-		data, _ := json.Marshal(res)
+		data, err := json.Marshal(res)
+		if err != nil {
+			slog.Error("failed to marshal streaming response", "error", err)
+			return
+		}
 		c.Writer.Write(append(data, '\n'))
 		c.Writer.Flush()
 	}); err != nil {
