@@ -18,6 +18,9 @@ import (
 	"github.com/ollama/ollama/openai"
 )
 
+// maxDecompressedBodySize limits the size of a decompressed request body
+const maxDecompressedBodySize = 20 << 20
+
 type BaseWriter struct {
 	gin.ResponseWriter
 }
@@ -512,7 +515,7 @@ func ResponsesMiddleware() gin.HandlerFunc {
 				return
 			}
 			defer reader.Close()
-			c.Request.Body = io.NopCloser(reader)
+			c.Request.Body = http.MaxBytesReader(c.Writer, io.NopCloser(reader), maxDecompressedBodySize)
 			c.Request.Header.Del("Content-Encoding")
 		}
 
