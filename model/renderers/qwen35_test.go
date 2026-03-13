@@ -377,6 +377,210 @@ Hello world`
 	}
 }
 
+// TestQwen35RendererAssistantToolCallIsNotPrefill verifies that when the last
+// message in a conversation is an assistant message containing tool calls, the
+// renderer properly closes the turn with <|im_end|> and appends a generation
+// prompt — never treating it as a prefill continuation.
+//
+// This is the counterpart to TestQwen35RendererAssistantPrefillWithThinking,
+// which verifies the correct prefill case (last message is assistant WITHOUT
+// tool calls — the model should continue the partial text).
+//
+// The official Qwen 3.5 Jinja2 template (Qwen/Qwen3.5-27B on HuggingFace)
+// emits <|im_end|> unconditionally after every assistant message. The
+// generation prompt is a separate concern, emitted after all messages. Ollama's
+// Go renderer infers prefill from the message structure: if the last message is
+// an assistant message, it assumes the client is providing partial text for
+// continuation. The critical guard is that this heuristic must NOT apply to
+// assistant messages with tool calls — those are complete turns, not partial
+// prefills. Without the guard, the model sees an unclosed assistant turn ending
+// in </tool_call> with no generation prompt: a token sequence absent from all
+// training data, causing undefined model behavior in exactly the agentic
+// tool-calling loops where Qwen 3.5 is most valuable.
+func TestQwen35RendererAssistantToolCallIsNotPrefill(t *testing.T) {
+	weatherToolCall := api.ToolCall{
+		Function: api.ToolCallFunction{
+			Name: "get_weather",
+			Arguments: testArgsOrdered([]orderedArg{
+				{Key: "location", Value: "Paris"},
+			}),
+		},
+	}
+
+	t.Run("think=true", func(t *testing.T) {
+		renderer := &Qwen35Renderer{isThinking: true}
+		msgs := []api.Message{
+			{Role: "user", Content: "What's the weather in Paris?"},
+			{
+				Role:      "assistant",
+				Content:   "Let me check the weather.",
+				Thinking:  "I should use the weather tool.",
+				ToolCalls: []api.ToolCall{weatherToolCall},
+			},
+		}
+
+		got, err := renderer.Render(msgs, nil, nil)
+		if err != nil {
+			t.Fatalf("render failed: %v", err)
+		}
+
+		// The assistant turn must be closed. The official Qwen 3.5 Jinja2 template
+		// emits <|im_end|> unconditionally after every assistant message. Without it,
+		// the model sees an unclosed turn ending in </tool_call> — a prompt shape
+		// absent from all training data. This typically means the prefill condition
+		// is incorrectly treating assistant messages with tool calls as partial
+		// continuations.
+		//
+		// This scenario triggers when agentic frameworks send conversation history
+		// where the last message is the assistant's tool-calling turn, with tool
+		// results arriving in a separate subsequent request.
+		if !strings.Contains(got, "</tool_call><|im_end|>") {
+			t.Errorf(
+				"missing <|im_end|> after the assistant's tool call.\n\n"+
+					"The official Qwen 3.5 Jinja2 template emits <|im_end|> unconditionally after every "+
+					"assistant message. Without it, the model sees an unclosed assistant turn ending in "+
+					"</tool_call> — a prompt shape absent from all training data. This typically means "+
+					"the prefill condition is incorrectly treating assistant messages with tool calls as "+
+					"partial continuations.\n\n"+
+					"This scenario triggers when agentic frameworks send conversation history where the "+
+					"last message is the assistant's tool-calling turn, with tool results arriving in a "+
+					"separate subsequent request.\n\ngot:\n%s", got,
+			)
+		}
+
+		// A completed assistant turn with tool calls must be followed by a generation
+		// prompt so the model knows to begin a new response. Without it, the model
+		// has no <|im_start|>assistant token to start generating, and inference
+		// behavior is undefined.
+		wantSuffix := "<|im_start|>assistant\n<think>\n"
+		if !strings.HasSuffix(got, wantSuffix) {
+			tail := got
+			if len(tail) > 120 {
+				tail = tail[len(tail)-120:]
+			}
+			t.Errorf(
+				"missing generation prompt after the closed assistant turn.\n\n"+
+					"When the last message is a completed assistant turn with tool calls, the renderer must "+
+					"append a generation prompt (<|im_start|>assistant\\n<think>\\n) so the model begins a "+
+					"new response. Without it, the model has no signal to start generating and inference "+
+					"behavior is undefined.\n\n"+
+					"expected suffix: %q\ngot tail: %q", wantSuffix, tail,
+			)
+		}
+
+		want := `<|im_start|>user
+What's the weather in Paris?<|im_end|>
+<|im_start|>assistant
+<think>
+I should use the weather tool.
+</think>
+
+Let me check the weather.
+
+<tool_call>
+<function=get_weather>
+<parameter=location>
+Paris
+</parameter>
+</function>
+</tool_call><|im_end|>
+<|im_start|>assistant
+<think>
+`
+		if got != want {
+			t.Fatalf(
+				"byte-exact output mismatch.\n\n"+
+					"Any byte-level deviation changes the token IDs the model sees, pushing the input out "+
+					"of the training distribution. In multi-turn agentic conversations, deviations also "+
+					"invalidate the KV cache from the divergence point, forcing expensive recomputation "+
+					"of all subsequent tokens.\n\n"+
+					"--- got ---\n%s\n--- want ---\n%s", got, want,
+			)
+		}
+	})
+
+	t.Run("think=false", func(t *testing.T) {
+		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true}
+		msgs := []api.Message{
+			{Role: "user", Content: "What's the weather in Paris?"},
+			{
+				Role:      "assistant",
+				Content:   "I'll check the weather.",
+				ToolCalls: []api.ToolCall{weatherToolCall},
+			},
+		}
+
+		got, err := renderer.Render(msgs, nil, &api.ThinkValue{Value: false})
+		if err != nil {
+			t.Fatalf("render failed: %v", err)
+		}
+
+		// Same <|im_end|> check as think=true — the official template closes every
+		// assistant message unconditionally regardless of thinking mode.
+		if !strings.Contains(got, "</tool_call><|im_end|>") {
+			t.Errorf(
+				"missing <|im_end|> after the assistant's tool call in think=false mode.\n\n"+
+					"The official Qwen 3.5 template closes every assistant message unconditionally, "+
+					"regardless of whether thinking is enabled. Without <|im_end|>, the model sees an "+
+					"unclosed turn — a prompt shape it was never trained on.\n\ngot:\n%s", got,
+			)
+		}
+
+		// When thinking is disabled, the generation prompt includes an empty thinking
+		// block so the model skips reasoning and proceeds directly to content. Without
+		// this prompt, the model may attempt reasoning when the caller explicitly
+		// requested no thinking, or may fail to generate altogether.
+		wantSuffix := "<|im_start|>assistant\n<think>\n\n</think>\n\n"
+		if !strings.HasSuffix(got, wantSuffix) {
+			tail := got
+			if len(tail) > 120 {
+				tail = tail[len(tail)-120:]
+			}
+			t.Errorf(
+				"missing non-thinking generation prompt after the closed assistant turn.\n\n"+
+					"When thinking is disabled, the generation prompt includes an empty thinking block "+
+					"(<think>\\n\\n</think>\\n\\n) so the model skips reasoning and proceeds directly to "+
+					"content generation. Without this prompt, the model may attempt reasoning when the "+
+					"caller explicitly requested no thinking, or may fail to generate altogether.\n\n"+
+					"expected suffix: %q\ngot tail: %q", wantSuffix, tail,
+			)
+		}
+
+		want := `<|im_start|>user
+What's the weather in Paris?<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+I'll check the weather.
+
+<tool_call>
+<function=get_weather>
+<parameter=location>
+Paris
+</parameter>
+</function>
+</tool_call><|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+`
+		if got != want {
+			t.Fatalf(
+				"byte-exact output mismatch (think=false).\n\n"+
+					"Any byte-level deviation changes the token IDs the model sees, pushing the input out "+
+					"of the training distribution. In multi-turn agentic conversations, deviations also "+
+					"invalidate the KV cache from the divergence point, forcing expensive recomputation "+
+					"of all subsequent tokens.\n\n"+
+					"--- got ---\n%s\n--- want ---\n%s", got, want,
+			)
+		}
+	})
+}
+
 func qwen35MathTools() []api.Tool {
 	return []api.Tool{
 		{
