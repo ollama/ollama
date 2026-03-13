@@ -514,7 +514,7 @@ func TestLaunchCmdIntegrationArgPromptsForModelWithSavedSelection(t *testing.T) 
 	}
 }
 
-func TestLaunchCmdHeadlessYes_IntegrationUsesSavedModelWithoutSelector(t *testing.T) {
+func TestLaunchCmdHeadlessYes_IntegrationRequiresModelEvenWhenSaved(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -548,12 +548,15 @@ func TestLaunchCmdHeadlessYes_IntegrationUsesSavedModelWithoutSelector(t *testin
 
 	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command) {})
 	cmd.SetArgs([]string{"stubapp", "--yes"})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("launch command failed: %v", err)
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected launch command to fail when --yes is used headlessly without --model")
 	}
-
-	if stub.ranModel != "llama3.2" {
-		t.Fatalf("expected launch to use saved model llama3.2, got %q", stub.ranModel)
+	if !strings.Contains(err.Error(), "requires --model <model>") {
+		t.Fatalf("expected actionable --model guidance, got %v", err)
+	}
+	if stub.ranModel != "" {
+		t.Fatalf("expected launch to abort before run, got %q", stub.ranModel)
 	}
 }
 
@@ -584,10 +587,10 @@ func TestLaunchCmdHeadlessYes_IntegrationWithoutSavedModelReturnsError(t *testin
 	cmd.SetArgs([]string{"stubapp", "--yes"})
 	err := cmd.Execute()
 	if err == nil {
-		t.Fatal("expected launch command to fail when no saved model exists in headless --yes mode")
+		t.Fatal("expected launch command to fail when --yes is used headlessly without --model")
 	}
-	if !strings.Contains(err.Error(), "no model configured for stubapp in headless mode") {
-		t.Fatalf("expected actionable no-saved-model error, got %v", err)
+	if !strings.Contains(err.Error(), "requires --model <model>") {
+		t.Fatalf("expected actionable --model guidance, got %v", err)
 	}
 	if stub.ranModel != "" {
 		t.Fatalf("expected launch to abort before run, got %q", stub.ranModel)

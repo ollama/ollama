@@ -315,7 +315,7 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 	var policy LaunchPolicy
 	if req.Policy == nil {
 		policy = defaultLaunchPolicy(isInteractiveSession(), false)
-		fmt.Printf("Launch policy not found from request, using default")
+		fmt.Fprintln(os.Stderr, "Launch policy not found from request, using default")
 	} else {
 		policy = *req.Policy
 	}
@@ -325,8 +325,9 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 		return err
 	}
 	saved, _ := loadStoredIntegrationConfig(name)
-	if policy.Confirm == LaunchConfirmAutoApprove && !isInteractiveSession() && req.ModelOverride == "" && (saved == nil || len(saved.Models) == 0) {
-		return fmt.Errorf("no model configured for %s in headless mode; pass --model <model> or run interactively to select one", name)
+	// In headless --yes mode we cannot prompt, so require an explicit --model.
+	if policy.Confirm == LaunchConfirmAutoApprove && !isInteractiveSession() && req.ModelOverride == "" {
+		return fmt.Errorf("headless --yes launch for %s requires --model <model>", name)
 	}
 
 	if editor, ok := runner.(Editor); ok {
