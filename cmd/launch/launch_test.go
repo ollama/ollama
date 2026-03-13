@@ -330,6 +330,60 @@ func TestResolveRunModel_ForcePickerAlwaysUsesSelector(t *testing.T) {
 	}
 }
 
+func TestResolveRunModel_ForcePicker_DoesNotReorderByLastModel(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+
+	if err := config.SetLastModel("qwen3.5"); err != nil {
+		t.Fatalf("failed to save last model: %v", err)
+	}
+
+	var gotNames []string
+	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+		if current != "qwen3.5" {
+			t.Fatalf("expected current selection to be last model, got %q", current)
+		}
+
+		gotNames = make([]string, 0, len(items))
+		for _, item := range items {
+			gotNames = append(gotNames, item.Name)
+		}
+		return "qwen3.5", nil
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"qwen3.5"},{"name":"glm-4.7-flash"}]}`)
+		case "/api/show":
+			fmt.Fprint(w, `{"model":"qwen3.5"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	_, err := ResolveRunModel(context.Background(), RunModelRequest{ForcePicker: true})
+	if err != nil {
+		t.Fatalf("ResolveRunModel returned error: %v", err)
+	}
+
+	if len(gotNames) == 0 {
+		t.Fatal("expected selector to receive model items")
+	}
+
+	glmIdx := slices.Index(gotNames, "glm-4.7-flash")
+	qwenIdx := slices.Index(gotNames, "qwen3.5")
+	if glmIdx == -1 || qwenIdx == -1 {
+		t.Fatalf("expected recommended local models in selector items, got %v", gotNames)
+	}
+	if qwenIdx < glmIdx {
+		t.Fatalf("expected list order to stay stable and not float last model to top, got %v", gotNames)
+	}
+}
+
 func TestResolveRunModel_UsesSignInHookForCloudModel(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)

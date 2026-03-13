@@ -515,7 +515,7 @@ func (c *launcherClient) selectSingleModelWithSelector(ctx context.Context, titl
 		return "", fmt.Errorf("no selector configured")
 	}
 
-	items, _, err := c.loadSelectableModels(ctx, singleModelPrechecked(current), current, "no models available, run 'ollama pull <model>' first")
+	items, _, err := c.loadSelectableModels(ctx, nil, current, "no models available, run 'ollama pull <model>' first")
 	if err != nil {
 		return "", err
 	}

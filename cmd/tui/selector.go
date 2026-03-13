@@ -377,13 +377,24 @@ func (m selectorModel) View() string {
 
 // cursorForCurrent returns the item index matching current, or 0 if not found.
 func cursorForCurrent(items []SelectItem, current string) int {
-	if current != "" {
-		for i, item := range items {
-			if item.Name == current || strings.HasPrefix(item.Name, current+":") || strings.HasPrefix(current, item.Name+":") {
-				return i
-			}
+	if current == "" {
+		return 0
+	}
+
+	// Prefer exact name matches before tag-prefix fallback so "qwen3.5" does not
+	// incorrectly select "qwen3.5:cloud" (and vice versa) based on list order.
+	for i, item := range items {
+		if item.Name == current {
+			return i
 		}
 	}
+
+	for i, item := range items {
+		if strings.HasPrefix(item.Name, current+":") || strings.HasPrefix(current, item.Name+":") {
+			return i
+		}
+	}
+
 	return 0
 }
 

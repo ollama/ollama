@@ -232,6 +232,25 @@ func TestSelectorModelWithCurrent_ScrollsToCurrentInMoreSection(t *testing.T) {
 	}
 }
 
+func TestSelectorModelWithCurrent_HighlightsExactLocalWhenCloudVariantExists(t *testing.T) {
+	m := selectorModelWithCurrent("Pick:", []SelectItem{
+		{Name: "qwen3.5:cloud", Recommended: true},
+		{Name: "qwen3.5", Recommended: true},
+	}, "qwen3.5")
+
+	if m.cursor != 1 {
+		t.Fatalf("cursor = %d, want 1", m.cursor)
+	}
+
+	content := m.renderContent()
+	if !strings.Contains(content, "▸ qwen3.5") {
+		t.Fatalf("expected local qwen3.5 to be highlighted\n%s", content)
+	}
+	if strings.Contains(content, "▸ qwen3.5:cloud") {
+		t.Fatalf("did not expect cloud qwen3.5:cloud to be highlighted\n%s", content)
+	}
+}
+
 func TestRenderContent_SectionHeaders(t *testing.T) {
 	m := selectorModel{
 		title: "Pick:",
@@ -431,6 +450,28 @@ func TestCursorForCurrent(t *testing.T) {
 				t.Errorf("cursorForCurrent(%q) = %d, want %d", tt.current, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCursorForCurrent_PrefersExactLocalOverCloudPrefix(t *testing.T) {
+	testItems := []SelectItem{
+		{Name: "qwen3.5:cloud", Recommended: true},
+		{Name: "qwen3.5", Recommended: true},
+	}
+
+	if got := cursorForCurrent(testItems, "qwen3.5"); got != 1 {
+		t.Errorf("cursorForCurrent(%q) = %d, want %d", "qwen3.5", got, 1)
+	}
+}
+
+func TestCursorForCurrent_PrefersExactCloudOverLocalPrefix(t *testing.T) {
+	testItems := []SelectItem{
+		{Name: "qwen3.5", Recommended: true},
+		{Name: "qwen3.5:cloud", Recommended: true},
+	}
+
+	if got := cursorForCurrent(testItems, "qwen3.5:cloud"); got != 1 {
+		t.Errorf("cursorForCurrent(%q) = %d, want %d", "qwen3.5:cloud", got, 1)
 	}
 }
 
