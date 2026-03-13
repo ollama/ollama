@@ -540,11 +540,40 @@ func (m *multiSelectorModel) toggleItem() {
 	origIdx := m.itemIndex[item.Name]
 
 	if m.checked[origIdx] {
+		wasDefault := len(m.checkOrder) > 0 && m.checkOrder[len(m.checkOrder)-1] == origIdx
 		delete(m.checked, origIdx)
 		for i, idx := range m.checkOrder {
 			if idx == origIdx {
 				m.checkOrder = append(m.checkOrder[:i], m.checkOrder[i+1:]...)
 				break
+			}
+		}
+		if wasDefault {
+			// When removing the default, pick the nearest checked model above it
+			// (or below if none above) so default fallback follows list order.
+			newDefault := -1
+			for i := origIdx - 1; i >= 0; i-- {
+				if m.checked[i] {
+					newDefault = i
+					break
+				}
+			}
+			if newDefault == -1 {
+				for i := origIdx + 1; i < len(m.items); i++ {
+					if m.checked[i] {
+						newDefault = i
+						break
+					}
+				}
+			}
+			if newDefault != -1 {
+				for i, idx := range m.checkOrder {
+					if idx == newDefault {
+						m.checkOrder = append(m.checkOrder[:i], m.checkOrder[i+1:]...)
+						break
+					}
+				}
+				m.checkOrder = append(m.checkOrder, newDefault)
 			}
 		}
 	} else {

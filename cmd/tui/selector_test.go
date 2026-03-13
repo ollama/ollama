@@ -840,6 +840,34 @@ func TestMulti_LastCheckedIsDefault(t *testing.T) {
 	}
 }
 
+func TestMulti_UncheckingDefaultFallsBackToNearestCheckedAbove(t *testing.T) {
+	// Default is "b", and checked models are "a", "b", "c".
+	// Unticking default should make "a" (the nearest checked item above) default.
+	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), []string{"b", "c", "a"})
+	m.multi = true
+	m.cursor = 1 // "b"
+	m.toggleItem()
+
+	lastIdx := m.checkOrder[len(m.checkOrder)-1]
+	if m.items[lastIdx].Name != "a" {
+		t.Fatalf("expected default to fall back to 'a', got %q", m.items[lastIdx].Name)
+	}
+}
+
+func TestMulti_UncheckingTopDefaultFallsBackToNearestCheckedBelow(t *testing.T) {
+	// Default is top item "a". With no checked item above, fallback should pick
+	// the nearest checked item below ("b").
+	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), []string{"a", "c", "b"})
+	m.multi = true
+	m.cursor = 0 // "a"
+	m.toggleItem()
+
+	lastIdx := m.checkOrder[len(m.checkOrder)-1]
+	if m.items[lastIdx].Name != "b" {
+		t.Fatalf("expected default to fall back to 'b', got %q", m.items[lastIdx].Name)
+	}
+}
+
 // Key message helpers for testing
 
 type keyType = int

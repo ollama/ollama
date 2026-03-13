@@ -535,9 +535,20 @@ func (c *launcherClient) selectMultiModelsForIntegration(ctx context.Context, ru
 		return nil, fmt.Errorf("no selector configured")
 	}
 
-	items, orderedChecked, err := c.loadSelectableModels(ctx, preChecked, firstModel(preChecked), "no models available")
+	current := firstModel(preChecked)
+
+	items, orderedChecked, err := c.loadSelectableModels(ctx, preChecked, current, "no models available")
 	if err != nil {
 		return nil, err
+	}
+	if len(preChecked) > 0 {
+		// Keep list order stable in multi-select even when there are existing checks.
+		// checked/default state still comes from orderedChecked.
+		stableItems, _, stableErr := c.loadSelectableModels(ctx, nil, current, "no models available")
+		if stableErr != nil {
+			return nil, stableErr
+		}
+		items = stableItems
 	}
 
 	selected, err := DefaultMultiSelector(fmt.Sprintf("Select models for %s:", runner), items, orderedChecked)

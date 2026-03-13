@@ -502,6 +502,74 @@ func TestLaunchIntegration_EditorForceConfigure(t *testing.T) {
 	}
 }
 
+func TestLaunchIntegration_EditorForceConfigure_DoesNotFloatCheckedModelsInPicker(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+
+	binDir := t.TempDir()
+	writeFakeBinary(t, binDir, "droid")
+	t.Setenv("PATH", binDir)
+
+	editor := &launcherEditorRunner{}
+	withIntegrationOverride(t, "droid", editor)
+
+	if err := config.SaveIntegration("droid", []string{"qwen3.5:cloud", "qwen3.5"}); err != nil {
+		t.Fatalf("failed to seed config: %v", err)
+	}
+
+	var gotItems []string
+	var gotPreChecked []string
+	DefaultMultiSelector = func(title string, items []ModelItem, preChecked []string) ([]string, error) {
+		for _, item := range items {
+			gotItems = append(gotItems, item.Name)
+		}
+		gotPreChecked = append([]string(nil), preChecked...)
+		return []string{"qwen3.5:cloud", "qwen3.5"}, nil
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"qwen3.5:cloud","remote_model":"qwen3.5"},{"name":"qwen3.5"}]}`)
+		case "/api/show":
+			var req apiShowRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if req.Model == "qwen3.5:cloud" {
+				fmt.Fprint(w, `{"remote_model":"qwen3.5"}`)
+				return
+			}
+			fmt.Fprintf(w, `{"model":%q}`, req.Model)
+		case "/api/me":
+			fmt.Fprint(w, `{"name":"test-user"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:           "droid",
+		ForceConfigure: true,
+	}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+
+	if len(gotItems) == 0 {
+		t.Fatal("expected multi selector to receive items")
+	}
+	if gotItems[0] != "kimi-k2.5:cloud" {
+		t.Fatalf("expected stable recommendation order with kimi-k2.5:cloud first, got %v", gotItems)
+	}
+	if len(gotPreChecked) < 2 {
+		t.Fatalf("expected prechecked models to be preserved, got %v", gotPreChecked)
+	}
+	if gotPreChecked[0] != "qwen3.5:cloud" {
+		t.Fatalf("expected saved default to remain first in prechecked, got %v", gotPreChecked)
+	}
+}
+
 func TestLaunchIntegration_EditorModelOverridePreservesExtras(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)

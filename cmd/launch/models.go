@@ -295,12 +295,25 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 		checked[n] = true
 	}
 
-	for _, item := range items {
-		if item.Name == current || strings.HasPrefix(item.Name, current+":") {
-			current = item.Name
-			break
+	if current != "" {
+		matchedCurrent := false
+		for _, item := range items {
+			if item.Name == current {
+				current = item.Name
+				matchedCurrent = true
+				break
+			}
+		}
+		if !matchedCurrent {
+			for _, item := range items {
+				if strings.HasPrefix(item.Name, current+":") {
+					current = item.Name
+					break
+				}
+			}
 		}
 	}
+
 	if checked[current] {
 		preChecked = append([]string{current}, slices.DeleteFunc(preChecked, func(m string) bool { return m == current })...)
 	}
