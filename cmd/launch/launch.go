@@ -40,6 +40,7 @@ type LauncherIntegrationState struct {
 // RunModelRequest controls how the root launcher resolves the chat model.
 type RunModelRequest struct {
 	ForcePicker bool
+	Policy      *LaunchPolicy
 }
 
 // LaunchConfirmMode controls confirmation behavior across launch flows.
@@ -285,9 +286,12 @@ func BuildLauncherState(ctx context.Context) (*LauncherState, error) {
 // ResolveRunModel returns the model that should be used for interactive chat.
 func ResolveRunModel(ctx context.Context, req RunModelRequest) (string, error) {
 	// Called by the launcher TUI "Run a model" action (cmd/runLauncherAction),
-	// which resolves models separately from LaunchIntegration. Apply --yes here
-	// as well so headless run-model flow uses auto-approve/auto-pull consistently.
+	// which resolves models separately from LaunchIntegration. Callers can pass
+	// Policy directly; otherwise we fall back to ambient --yes/session defaults.
 	policy := defaultLaunchPolicy(isInteractiveSession(), currentLaunchConfirmPolicy.yes)
+	if req.Policy != nil {
+		policy = *req.Policy
+	}
 
 	launchClient, err := newLauncherClient(policy)
 	if err != nil {
@@ -308,8 +312,11 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 		}
 	}
 
-	policy := defaultLaunchPolicy(isInteractiveSession(), false)
-	if req.Policy != nil {
+	var policy LaunchPolicy
+	if req.Policy == nil {
+		policy = defaultLaunchPolicy(isInteractiveSession(), false)
+		fmt.Printf("Launch policy not found from request, using default")
+	} else {
 		policy = *req.Policy
 	}
 
@@ -318,6 +325,9 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 		return err
 	}
 	saved, _ := loadStoredIntegrationConfig(name)
+	if policy.Confirm == LaunchConfirmAutoApprove && !isInteractiveSession() && req.ModelOverride == "" && (saved == nil || len(saved.Models) == 0) {
+		return fmt.Errorf("no model configured for %s in headless mode; pass --model <model> or run interactively to select one", name)
+	}
 
 	if editor, ok := runner.(Editor); ok {
 		return launchClient.launchEditorIntegration(ctx, name, runner, editor, saved, req)

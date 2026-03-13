@@ -392,6 +392,64 @@ func TestResolveRunModel_HeadlessYesAutoPicksLastModel(t *testing.T) {
 	}
 }
 
+func TestResolveRunModel_UsesRequestPolicy(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, false)
+
+	if err := config.SetLastModel("missing-model"); err != nil {
+		t.Fatalf("failed to save last model: %v", err)
+	}
+
+	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+		t.Fatal("selector should not be called when request policy enables headless auto-pick")
+		return "", nil
+	}
+
+	pullCalled := false
+	modelPulled := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
+		case "/api/show":
+			var req apiShowRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if req.Model == "missing-model" && !modelPulled {
+				w.WriteHeader(http.StatusNotFound)
+				fmt.Fprint(w, `{"error":"model not found"}`)
+				return
+			}
+			fmt.Fprintf(w, `{"model":%q}`, req.Model)
+		case "/api/pull":
+			pullCalled = true
+			modelPulled = true
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, `{"status":"success"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	reqPolicy := LaunchPolicy{
+		Confirm:      LaunchConfirmAutoApprove,
+		MissingModel: LaunchMissingModelAutoPull,
+	}
+	model, err := ResolveRunModel(context.Background(), RunModelRequest{Policy: &reqPolicy})
+	if err != nil {
+		t.Fatalf("ResolveRunModel returned error: %v", err)
+	}
+	if model != "missing-model" {
+		t.Fatalf("expected saved last model to be selected, got %q", model)
+	}
+	if !pullCalled {
+		t.Fatal("expected missing saved model to be auto-pulled when request policy enables auto-pull")
+	}
+}
+
 func TestResolveRunModel_ForcePickerAlwaysUsesSelector(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)

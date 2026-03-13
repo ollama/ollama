@@ -556,3 +556,40 @@ func TestLaunchCmdHeadlessYes_IntegrationUsesSavedModelWithoutSelector(t *testin
 		t.Fatalf("expected launch to use saved model llama3.2, got %q", stub.ranModel)
 	}
 }
+
+func TestLaunchCmdHeadlessYes_IntegrationWithoutSavedModelReturnsError(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, false)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	stub := &launcherSingleRunner{}
+	restore := OverrideIntegration("stubapp", stub)
+	defer restore()
+
+	oldSelector := DefaultSingleSelector
+	defer func() { DefaultSingleSelector = oldSelector }()
+	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+		t.Fatal("selector should not be called for headless --yes without saved model")
+		return "", nil
+	}
+
+	cmd := LaunchCmd(func(cmd *cobra.Command, args []string) error { return nil }, func(cmd *cobra.Command) {})
+	cmd.SetArgs([]string{"stubapp", "--yes"})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected launch command to fail when no saved model exists in headless --yes mode")
+	}
+	if !strings.Contains(err.Error(), "no model configured for stubapp in headless mode") {
+		t.Fatalf("expected actionable no-saved-model error, got %v", err)
+	}
+	if stub.ranModel != "" {
+		t.Fatalf("expected launch to abort before run, got %q", stub.ranModel)
+	}
+}
