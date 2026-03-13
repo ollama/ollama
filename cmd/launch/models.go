@@ -222,38 +222,6 @@ func pullMissingModel(ctx context.Context, client *api.Client, model string) err
 	return nil
 }
 
-func listModels(ctx context.Context) ([]ModelItem, map[string]bool, map[string]bool, *api.Client, error) {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-
-	models, err := client.List(ctx)
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-
-	var existing []modelInfo
-	for _, m := range models.Models {
-		existing = append(existing, modelInfo{Name: m.Name, Remote: m.RemoteModel != ""})
-	}
-
-	cloudDisabled, _ := cloudStatusDisabled(ctx, client)
-	if cloudDisabled {
-		existing = filterCloudModels(existing)
-	}
-
-	items, _, existingModels, cloudModels := buildModelList(existing, nil, "")
-	if cloudDisabled {
-		items = filterCloudItems(items)
-	}
-	if len(items) == 0 {
-		return nil, nil, nil, nil, fmt.Errorf("no models available, run 'ollama pull <model>' first")
-	}
-
-	return items, existingModels, cloudModels, client, nil
-}
-
 // prepareEditorIntegration persists models and applies editor-managed config files.
 func prepareEditorIntegration(name string, runner Runner, editor Editor, models []string) error {
 	if ok, err := confirmEditorEdit(runner, editor); err != nil {
