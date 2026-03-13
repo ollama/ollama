@@ -8,7 +8,7 @@ Subject: [PATCH] report LoadLibrary failures
  1 file changed, 15 insertions(+)
 
 diff --git a/ggml/src/ggml-backend-dl.cpp b/ggml/src/ggml-backend-dl.cpp
-index a65cf0090..dc90918fc 100644
+index a65cf0090..b055726b8 100644
 --- a/ggml/src/ggml-backend-dl.cpp
 +++ b/ggml/src/ggml-backend-dl.cpp
 @@ -1,4 +1,7 @@
