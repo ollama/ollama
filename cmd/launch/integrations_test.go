@@ -610,6 +610,36 @@ func TestBuildModelList_CheckedBeforeRecs(t *testing.T) {
 	}
 }
 
+func TestBuildModelList_CurrentPrefersExactLocalOverCloudPrefix(t *testing.T) {
+	existing := []modelInfo{
+		{Name: "qwen3.5:cloud", Remote: true},
+		{Name: "qwen3.5", Remote: false},
+	}
+
+	_, orderedChecked, _, _ := buildModelList(existing, []string{"qwen3.5", "qwen3.5:cloud"}, "qwen3.5")
+	if len(orderedChecked) < 2 {
+		t.Fatalf("expected orderedChecked to preserve both selections, got %v", orderedChecked)
+	}
+	if orderedChecked[0] != "qwen3.5" {
+		t.Fatalf("expected exact local current to stay first, got %v", orderedChecked)
+	}
+}
+
+func TestBuildModelList_CurrentPrefersExactCloudOverLocalPrefix(t *testing.T) {
+	existing := []modelInfo{
+		{Name: "qwen3.5", Remote: false},
+		{Name: "qwen3.5:cloud", Remote: true},
+	}
+
+	_, orderedChecked, _, _ := buildModelList(existing, []string{"qwen3.5:cloud", "qwen3.5"}, "qwen3.5:cloud")
+	if len(orderedChecked) < 2 {
+		t.Fatalf("expected orderedChecked to preserve both selections, got %v", orderedChecked)
+	}
+	if orderedChecked[0] != "qwen3.5:cloud" {
+		t.Fatalf("expected exact cloud current to stay first, got %v", orderedChecked)
+	}
+}
+
 func TestEditorIntegration_SavedConfigSkipsSelection(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
