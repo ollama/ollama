@@ -1222,7 +1222,7 @@ func TestRetrieveMiddleware(t *testing.T) {
 				  "code": null,
 				  "message": "model not found",
 				  "param": null,
-				  "type": "api_error"
+				  "type": "invalid_request_error"
 				}
 			}`,
 		},
