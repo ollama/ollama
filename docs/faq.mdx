@@ -286,6 +286,22 @@ To preload a model using the CLI, use the command:
 ollama run llama3.2 ""
 ```
 
+You can also have Ollama preload models automatically at startup with the `OLLAMA_PRELOAD_MODELS` environment variable. Provide a comma-separated list of models and optional query-style parameters (the same keys you would pass with `ollama run` model parameters) to tune the warm-up request:
+
+```shell
+OLLAMA_PRELOAD_MODELS="llama3.2,phi3?temperature=0.2&num_ctx=4096&keepalive=30m" ollama serve
+```
+
+- Each item is processed in order. Parameters such as `temperature`, `num_ctx`, or other model options are sent just like using `ollama run -p key=value`.
+- Use `keepalive` to control how long the preloaded model stays in memory (e.g., `keepalive=-1` to keep it loaded).
+- Optional `prompt` lets you send text during warm-up; embedding models automatically use `"init"` so they receive a required input without you having to specify it.
+
+For embedding models, a simple configuration like the following warms the model with the implicit `"init"` prompt and leaves it loaded:
+
+```shell
+OLLAMA_PRELOAD_MODELS="mxbai-embed-large?keepalive=-1" ollama serve
+```
+
 ## How do I keep a model loaded in memory or make it unload immediately?
 
 By default models are kept in memory for 5 minutes before being unloaded. This allows for quicker response times if you're making numerous requests to the LLM. If you want to immediately unload a model from memory, use the `ollama stop` command:
