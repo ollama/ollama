@@ -64,10 +64,15 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY         ${OLLAMA_BUILD_DIR})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_DEBUG   ${OLLAMA_BUILD_DIR})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_RELEASE ${OLLAMA_BUILD_DIR})
 
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/include)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-cpu)
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-cpu/amx)
+# Store ggml include paths for use with target_include_directories later.
+# We avoid global include_directories() to prevent polluting the include path
+# for other projects like MLX (whose openblas dependency has its own common.h).
+set(GGML_INCLUDE_DIRS
+    ${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-cpu
+    ${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-cpu/amx
+)
 
 add_compile_definitions(NDEBUG GGML_VERSION=0x0 GGML_COMMIT=0x0)
 
@@ -87,6 +92,14 @@ if(NOT CPU_VARIANTS)
     set(CPU_VARIANTS "ggml-cpu")
 endif()
 
+# Apply ggml include directories to ggml targets only (not globally)
+target_include_directories(ggml-base PRIVATE ${GGML_INCLUDE_DIRS})
+foreach(variant ${CPU_VARIANTS})
+    if(TARGET ${variant})
+        target_include_directories(${variant} PRIVATE ${GGML_INCLUDE_DIRS})
+    endif()
+endforeach()
+
 install(TARGETS ggml-base ${CPU_VARIANTS}
     RUNTIME_DEPENDENCIES
         PRE_EXCLUDE_REGEXES ".*"
@@ -103,6 +116,7 @@ if(CMAKE_CUDA_COMPILER)
 
     find_package(CUDAToolkit)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-cuda)
+    target_include_directories(ggml-cuda PRIVATE ${GGML_INCLUDE_DIRS})
     install(TARGETS ggml-cuda
         RUNTIME_DEPENDENCIES
             DIRECTORIES ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_BIN_DIR}/x64 ${CUDAToolkit_LIBRARY_DIR}
@@ -134,6 +148,7 @@ if(CMAKE_HIP_COMPILER)
     if(AMDGPU_TARGETS)
         find_package(hip REQUIRED)
         add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-hip)
+        target_include_directories(ggml-hip PRIVATE ${GGML_INCLUDE_DIRS})
 
         if (WIN32)
             target_compile_definitions(ggml-hip PRIVATE GGML_CUDA_NO_PEER_COPY)
@@ -148,7 +163,7 @@ if(CMAKE_HIP_COMPILER)
         )
         install(RUNTIME_DEPENDENCY_SET rocm
                 DIRECTORIES ${HIP_BIN_INSTALL_DIR} ${HIP_LIB_INSTALL_DIR}
-                PRE_INCLUDE_REGEXES hipblas rocblas amdhip64 rocsolver amd_comgr hsa-runtime64 rocsparse tinfo rocprofiler-register drm drm_amdgpu numa elf
+                PRE_INCLUDE_REGEXES hipblas rocblas amdhip64 rocsolver amd_comgr hsa-runtime64 rocsparse tinfo rocprofiler-register roctx64 rocroller drm drm_amdgpu numa elf
                 PRE_EXCLUDE_REGEXES ".*"
                 POST_EXCLUDE_REGEXES "system32"
             RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT HIP
@@ -168,6 +183,7 @@ if(NOT APPLE)
     find_package(Vulkan)
     if(Vulkan_FOUND)
         add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-vulkan)
+        target_include_directories(ggml-vulkan PRIVATE ${GGML_INCLUDE_DIRS})
         install(TARGETS ggml-vulkan
             RUNTIME_DEPENDENCIES
                 PRE_INCLUDE_REGEXES vulkan
@@ -179,7 +195,6 @@ if(NOT APPLE)
 endif()
 
 option(MLX_ENGINE "Enable MLX backend" OFF)
-
 if(MLX_ENGINE)
     message(STATUS "Setting up MLX (this takes a while...)")
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/x/imagegen/mlx)
@@ -187,10 +202,36 @@ if(MLX_ENGINE)
     # Find CUDA toolkit if MLX is built with CUDA support
     find_package(CUDAToolkit)
 
+    # Build list of directories for runtime dependency resolution
+    set(MLX_RUNTIME_DIRS ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_BIN_DIR}/x64 ${CUDAToolkit_LIBRARY_DIR})
+    # Add cuDNN bin paths for DLLs (Windows MLX CUDA builds)
+    # CUDNN_ROOT_DIR is the standard CMake variable for cuDNN location
+    if(DEFINED ENV{CUDNN_ROOT_DIR})
+        # cuDNN 9.x has versioned subdirectories under bin/ (e.g., bin/13.0/)
+        file(GLOB CUDNN_BIN_SUBDIRS "$ENV{CUDNN_ROOT_DIR}/bin/*")
+        list(APPEND MLX_RUNTIME_DIRS ${CUDNN_BIN_SUBDIRS})
+    endif()
+    # Add build output directory and MLX dependency build directories
+    list(APPEND MLX_RUNTIME_DIRS ${OLLAMA_BUILD_DIR})
+    # OpenBLAS DLL location (pre-built zip extracts into openblas-src/bin/)
+    list(APPEND MLX_RUNTIME_DIRS ${CMAKE_BINARY_DIR}/_deps/openblas-src/bin)
+    # NCCL: on Linux, if real NCCL is found, cmake bundles libnccl.so via the
+    # regex below. If NCCL is not found, MLX links a static stub (OBJECT lib)
+    # so there is no runtime dependency. This path covers the stub build dir
+    # for windows so we include the DLL in our dependencies.
+    list(APPEND MLX_RUNTIME_DIRS ${CMAKE_BINARY_DIR}/_deps/mlx-build/mlx/distributed/nccl/nccl_stub-prefix/src/nccl_stub-build/Release)
+
+    # Base regexes for runtime dependencies (cross-platform)
+    set(MLX_INCLUDE_REGEXES cublas cublasLt cudart cufft nvrtc nvrtc-builtins cudnn nccl openblas gfortran)
+    # On Windows, also include dl.dll (dlfcn-win32 POSIX emulation layer)
+    if(WIN32)
+        list(APPEND MLX_INCLUDE_REGEXES "^dl\\.dll$")
+    endif()
+
     install(TARGETS mlx mlxc
         RUNTIME_DEPENDENCIES
-            DIRECTORIES ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_BIN_DIR}/x64 ${CUDAToolkit_LIBRARY_DIR}
-            PRE_INCLUDE_REGEXES cublas cublasLt cudart nvrtc nvrtc-builtins cudnn nccl openblas gfortran
+            DIRECTORIES ${MLX_RUNTIME_DIRS}
+            PRE_INCLUDE_REGEXES ${MLX_INCLUDE_REGEXES}
             PRE_EXCLUDE_REGEXES ".*"
         RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
         LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
@@ -205,13 +246,54 @@ if(MLX_ENGINE)
             COMPONENT MLX)
     endif()
 
-    # Manually install cudart and cublas since they might not be picked up as direct dependencies
+    # Install CCCL headers for NVRTC JIT compilation at runtime.
+    # MLX's own install rules use the default component so they get skipped by
+    # --component MLX. Headers are installed alongside libmlx in OLLAMA_INSTALL_DIR.
+    # On Linux, MLX's jit_module.cpp resolves CCCL via
+    # current_binary_dir().parent_path() / "include" / "cccl", so we create a
+    # symlink from lib/ollama/include -> ${OLLAMA_RUNNER_DIR}/include
+    # This will need refinement if we add multiple CUDA versions for MLX in the future.
+    if(EXISTS ${CMAKE_BINARY_DIR}/_deps/cccl-src/include/cuda)
+        install(DIRECTORY ${CMAKE_BINARY_DIR}/_deps/cccl-src/include/cuda
+            DESTINATION ${OLLAMA_INSTALL_DIR}/include/cccl
+            COMPONENT MLX)
+        install(DIRECTORY ${CMAKE_BINARY_DIR}/_deps/cccl-src/include/nv
+            DESTINATION ${OLLAMA_INSTALL_DIR}/include/cccl
+            COMPONENT MLX)
+        if(NOT WIN32 AND NOT APPLE)
+            install(CODE "
+                set(_link \"${CMAKE_INSTALL_PREFIX}/lib/ollama/include\")
+                set(_target \"${OLLAMA_RUNNER_DIR}/include\")
+                if(NOT EXISTS \${_link})
+                    execute_process(COMMAND \${CMAKE_COMMAND} -E create_symlink \${_target} \${_link})
+                endif()
+            " COMPONENT MLX)
+        endif()
+    endif()
+
+    # On Windows, explicitly install dl.dll (dlfcn-win32 POSIX dlopen emulation)
+    # RUNTIME_DEPENDENCIES auto-excludes it via POST_EXCLUDE_FILES_STRICT because
+    # dlfcn-win32 is a known CMake target with its own install rules (which install
+    # to the wrong destination). We must install it explicitly here.
+    if(WIN32)
+        install(FILES ${OLLAMA_BUILD_DIR}/dl.dll
+            DESTINATION ${OLLAMA_INSTALL_DIR}
+            COMPONENT MLX)
+    endif()
+
+    # Manually install CUDA runtime libraries that MLX loads via dlopen
+    # (not detected by RUNTIME_DEPENDENCIES since they aren't link-time deps)
     if(CUDAToolkit_FOUND)
-        file(GLOB CUDART_LIBS
+        file(GLOB MLX_CUDA_LIBS
             "${CUDAToolkit_LIBRARY_DIR}/libcudart.so*"
-            "${CUDAToolkit_LIBRARY_DIR}/libcublas.so*")
-        if(CUDART_LIBS)
-            install(FILES ${CUDART_LIBS}
+            "${CUDAToolkit_LIBRARY_DIR}/libcublas.so*"
+            "${CUDAToolkit_LIBRARY_DIR}/libcublasLt.so*"
+            "${CUDAToolkit_LIBRARY_DIR}/libnvrtc.so*"
+            "${CUDAToolkit_LIBRARY_DIR}/libnvrtc-builtins.so*"
+            "${CUDAToolkit_LIBRARY_DIR}/libcufft.so*"
+            "${CUDAToolkit_LIBRARY_DIR}/libcudnn.so*")
+        if(MLX_CUDA_LIBS)
+            install(FILES ${MLX_CUDA_LIBS}
                 DESTINATION ${OLLAMA_INSTALL_DIR}
                 COMPONENT MLX)
         endif()

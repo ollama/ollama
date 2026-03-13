@@ -181,6 +181,9 @@ func fileDigestMap(path string) (map[string]string, error) {
 			}
 
 			if !filepath.IsLocal(rel) {
+				if strings.Contains(rel, ".cache") {
+					return nil, fmt.Errorf("insecure path: %s\n\nUse --local-dir <dir> when downloading model to disable caching", rel)
+				}
 				return nil, fmt.Errorf("insecure path: %s", rel)
 			}
 

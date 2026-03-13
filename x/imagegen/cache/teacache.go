@@ -1,5 +1,3 @@
-//go:build mlx
-
 // Package cache provides caching mechanisms for diffusion model inference.
 package cache
 

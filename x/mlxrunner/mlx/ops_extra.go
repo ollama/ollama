@@ -1,5 +1,3 @@
-//go:build mlx
-
 package mlx
 
 // #include "generated.h"
@@ -111,6 +109,35 @@ func Where(condition, a, b *Array) *Array {
 	out := New("WHERE")
 	C.mlx_where(&out.ctx, condition.ctx, a.ctx, b.ctx, DefaultStream().ctx)
 	return out
+}
+
+func Conv1d(x, weight *Array, bias *Array, stride, padding, dilation, groups int32) *Array {
+	out := New("CONV1D")
+	C.mlx_conv1d(
+		&out.ctx,
+		x.ctx,
+		weight.ctx,
+		C.int(stride),
+		C.int(padding),
+		C.int(dilation),
+		C.int(groups),
+		DefaultStream().ctx,
+	)
+	if bias != nil && bias.Valid() {
+		out = Add(out, bias)
+	}
+	return out
+}
+
+func Contiguous(a *Array, allowColMajor bool) *Array {
+	out := New("CONTIGUOUS")
+	C.mlx_contiguous(&out.ctx, a.ctx, C.bool(allowColMajor), DefaultStream().ctx)
+	return out
+}
+
+func DepthwiseConv1d(x, weight *Array, bias *Array) *Array {
+	groups := int32(x.Dim(x.NumDims() - 1))
+	return Conv1d(x, weight, bias, 1, 0, 1, groups)
 }
 
 // Convenience wrappers (function-style for the model code)
@@ -271,6 +298,24 @@ func Sigmoid(a *Array) *Array {
 	return a.Sigmoid()
 }
 
+func Exp(a *Array) *Array {
+	out := New("EXP")
+	C.mlx_exp(&out.ctx, a.ctx, DefaultStream().ctx)
+	return out
+}
+
+func Log(a *Array) *Array {
+	out := New("LOG")
+	C.mlx_log(&out.ctx, a.ctx, DefaultStream().ctx)
+	return out
+}
+
+func SoftmaxAxis(a *Array, axis int, precise bool) *Array {
+	out := New("SOFTMAX_AXIS")
+	C.mlx_softmax_axis(&out.ctx, a.ctx, C.int(axis), C.bool(precise), DefaultStream().ctx)
+	return out
+}
+
 func ScaledDotProductAttentionCausal(q, k, v *Array, scale float32, causalMask bool) *Array {
 	mask := New("")
 	sinks := New("")
@@ -286,9 +331,26 @@ func ScaledDotProductAttentionCausal(q, k, v *Array, scale float32, causalMask b
 	return out
 }
 
+func LayerNormFn(x, weight, bias *Array, eps float32) *Array {
+	out := New("FAST_LAYERNORM")
+	var w, b C.mlx_array
+	if weight != nil {
+		w = weight.ctx
+	}
+	if bias != nil {
+		b = bias.ctx
+	}
+	C.mlx_fast_layer_norm(&out.ctx, x.ctx, w, b, C.float(eps), DefaultStream().ctx)
+	return out
+}
+
 func RMSNormFn(x, weight *Array, eps float32) *Array {
 	out := New("FAST_RMSNORM")
-	C.mlx_fast_rms_norm(&out.ctx, x.ctx, weight.ctx, C.float(eps), DefaultStream().ctx)
+	var w C.mlx_array
+	if weight != nil {
+		w = weight.ctx
+	}
+	C.mlx_fast_rms_norm(&out.ctx, x.ctx, w, C.float(eps), DefaultStream().ctx)
 	return out
 }
 
@@ -376,6 +438,15 @@ func Collect(v any) []*Array {
 	seen := make(map[uintptr]bool)
 	collect(reflect.ValueOf(v), &arrays, seen)
 	return arrays
+}
+
+func Copy(a *Array) *Array {
+	if a == nil || !a.Valid() {
+		return a
+	}
+	out := New("COPY")
+	C.mlx_copy(&out.ctx, a.ctx, DefaultStream().ctx)
+	return out
 }
 
 func collect(v reflect.Value, arrays *[]*Array, seen map[uintptr]bool) {

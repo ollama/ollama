@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -19,13 +20,15 @@ import (
 	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
+	"github.com/ollama/ollama/version"
 )
 
 const (
-	defaultCloudProxyBaseURL     = "https://ollama.com:443"
-	defaultCloudProxySigningHost = "ollama.com"
-	cloudProxyBaseURLEnv         = "OLLAMA_CLOUD_BASE_URL"
-	legacyCloudAnthropicKey      = "legacy_cloud_anthropic_web_search"
+	defaultCloudProxyBaseURL      = "https://ollama.com:443"
+	defaultCloudProxySigningHost  = "ollama.com"
+	cloudProxyBaseURLEnv          = "OLLAMA_CLOUD_BASE_URL"
+	legacyCloudAnthropicKey       = "legacy_cloud_anthropic_web_search"
+	cloudProxyClientVersionHeader = "X-Ollama-Client-Version"
 )
 
 var (
@@ -180,6 +183,9 @@ func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disable
 	}
 
 	copyProxyRequestHeaders(outReq.Header, c.Request.Header)
+	if clientVersion := strings.TrimSpace(version.Version); clientVersion != "" {
+		outReq.Header.Set(cloudProxyClientVersionHeader, clientVersion)
+	}
 	if outReq.Header.Get("Content-Type") == "" && len(body) > 0 {
 		outReq.Header.Set("Content-Type", "application/json")
 	}
@@ -204,7 +210,25 @@ func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disable
 	c.Status(resp.StatusCode)
 
 	if err := copyProxyResponseBody(c.Writer, resp.Body); err != nil {
-		c.Error(err) //nolint:errcheck
+		ctxErr := c.Request.Context().Err()
+		if errors.Is(err, context.Canceled) && errors.Is(ctxErr, context.Canceled) {
+			slog.Debug(
+				"cloud proxy response stream closed by client",
+				"path", c.Request.URL.Path,
+				"status", resp.StatusCode,
+			)
+			return
+		}
+
+		slog.Warn(
+			"cloud proxy response copy failed",
+			"path", c.Request.URL.Path,
+			"status", resp.StatusCode,
+			"request_context_canceled", ctxErr != nil,
+			"request_context_err", ctxErr,
+			"error", err,
+		)
+		return
 	}
 }
 

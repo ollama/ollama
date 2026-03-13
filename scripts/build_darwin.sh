@@ -59,7 +59,7 @@ _build_darwin() {
             cmake --install $BUILD_DIR --component CPU
             cmake --install $BUILD_DIR --component MLX
             # Override CGO flags to point to the amd64 build directory
-            MLX_CGO_CFLAGS="-O3 -I$(pwd)/$BUILD_DIR/_deps/mlx-c-src -mmacosx-version-min=14.0"
+            MLX_CGO_CFLAGS="-O3 -mmacosx-version-min=14.0"
             MLX_CGO_LDFLAGS="-ldl -lc++ -framework Accelerate -mmacosx-version-min=14.0"
         else
             BUILD_DIR=build
@@ -70,10 +70,10 @@ _build_darwin() {
             cmake --build --preset MLX --parallel
             cmake --install $BUILD_DIR --component MLX
             # Use default CGO flags from mlx.go for arm64
-            MLX_CGO_CFLAGS="-O3 -I$(pwd)/$BUILD_DIR/_deps/mlx-c-src -mmacosx-version-min=14.0"
+            MLX_CGO_CFLAGS="-O3 -mmacosx-version-min=14.0"
             MLX_CGO_LDFLAGS="-lc++ -framework Metal -framework Foundation -framework Accelerate -mmacosx-version-min=14.0"
         fi
-        GOOS=darwin GOARCH=$ARCH CGO_ENABLED=1 CGO_CFLAGS="$MLX_CGO_CFLAGS" CGO_LDFLAGS="$MLX_CGO_LDFLAGS" go build -tags mlx -o $INSTALL_PREFIX .
+        GOOS=darwin GOARCH=$ARCH CGO_ENABLED=1 CGO_CFLAGS="$MLX_CGO_CFLAGS" CGO_LDFLAGS="$MLX_CGO_LDFLAGS" go build -o $INSTALL_PREFIX .
         # Copy MLX libraries to same directory as executable for dlopen
         cp $INSTALL_PREFIX/lib/ollama/libmlxc.dylib $INSTALL_PREFIX/
         cp $INSTALL_PREFIX/lib/ollama/libmlx.dylib $INSTALL_PREFIX/

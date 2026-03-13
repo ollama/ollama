@@ -1,5 +1,3 @@
-//go:build mlx
-
 // Package vae provides shared utilities for VAE (Variational Autoencoder) operations.
 package vae
 

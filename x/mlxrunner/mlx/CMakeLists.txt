@@ -24,3 +24,7 @@ FetchContent_Declare(
 )
 
 FetchContent_MakeAvailable(mlx-c)
+
+# Sync vendored headers with fetched version
+file(GLOB _mlx_c_hdrs "${mlx-c_SOURCE_DIR}/mlx/c/*.h")
+file(COPY ${_mlx_c_hdrs} DESTINATION "${CMAKE_CURRENT_SOURCE_DIR}/include/mlx/c/")

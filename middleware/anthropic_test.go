@@ -1644,7 +1644,35 @@ func TestWebSearchCloudModelGating(t *testing.T) {
 		}
 	})
 
-	t.Run("local model emits web_search and gets structured error", func(t *testing.T) {
+	t.Run("local model emits web_search and gets results", func(t *testing.T) {
+		// Mock followup server for the model's response after receiving search results
+		followupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			resp := api.ChatResponse{
+				Model:      "llama3.2",
+				Message:    api.Message{Role: "assistant", Content: "Based on search results, here is the answer."},
+				Done:       true,
+				DoneReason: "stop",
+				Metrics:    api.Metrics{PromptEvalCount: 20, EvalCount: 10},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		}))
+		defer followupServer.Close()
+		t.Setenv("OLLAMA_HOST", followupServer.URL)
+
+		// Mock search server
+		searchServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			resp := anthropic.OllamaWebSearchResponse{
+				Results: []anthropic.OllamaWebSearchResult{
+					{Title: "Result", URL: "https://example.com", Content: "content"},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		}))
+		defer searchServer.Close()
+		originalEndpoint := anthropic.WebSearchEndpoint
+		anthropic.WebSearchEndpoint = searchServer.URL
+		defer func() { anthropic.WebSearchEndpoint = originalEndpoint }()
+
 		router := gin.New()
 		router.Use(AnthropicMessagesMiddleware())
 		router.POST("/v1/messages", func(c *gin.Context) {
@@ -1685,16 +1713,23 @@ func TestWebSearchCloudModelGating(t *testing.T) {
 		if err := json.Unmarshal(resp.Body.Bytes(), &result); err != nil {
 			t.Fatalf("unmarshal error: %v", err)
 		}
-		if len(result.Content) != 2 {
-			t.Fatalf("expected 2 content blocks for local model web_search error, got %d", len(result.Content))
+
+		// Should have search result content blocks and the final text response
+		hasText := false
+		hasSearchResult := false
+		for _, block := range result.Content {
+			if block.Type == "text" {
+				hasText = true
+			}
+			if block.Type == "web_search_tool_result" {
+				hasSearchResult = true
+			}
 		}
-		contentJSON, _ := json.Marshal(result.Content[1].Content)
-		var errContent anthropic.WebSearchToolResultError
-		if err := json.Unmarshal(contentJSON, &errContent); err != nil {
-			t.Fatalf("failed to parse web_search error content: %v", err)
+		if !hasText {
+			t.Fatal("expected text content block in response")
 		}
-		if errContent.ErrorCode != "web_search_not_supported_for_local_models" {
-			t.Fatalf("expected web_search_not_supported_for_local_models, got %q", errContent.ErrorCode)
+		if !hasSearchResult {
+			t.Fatal("expected web_search_tool_result content block in response")
 		}
 	})
 

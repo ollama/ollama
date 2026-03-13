@@ -557,6 +557,10 @@ func TestShouldQuantizeTensor(t *testing.T) {
 		// 3D+ tensors should not be quantized
 		{"3D tensor", "conv.weight", []int32{64, 64, 3}, "fp8", false},
 		{"4D tensor", "conv2d.weight", []int32{64, 64, 3, 3}, "fp8", false},
+		{"stacked expert switch_mlp gate_up 3D int8", "model.layers.1.mlp.switch_mlp.gate_up_proj.weight", []int32{64, 22016, 4096}, "int8", true},
+		{"stacked expert experts down_proj 3D int8", "model.layers.1.mlp.experts.down_proj.weight", []int32{64, 4096, 14336}, "int8", true},
+		{"stacked expert combined gate_up 3D int8", "model.language_model.layers.0.mlp.experts.gate_up_proj", []int32{256, 1024, 2048}, "int8", true},
+		{"stacked expert combined down_proj 3D int8", "model.language_model.layers.0.mlp.experts.down_proj", []int32{256, 2048, 512}, "int8", true},
 
 		// Embeddings should not be quantized regardless of shape
 		{"embedding 2D", "embed_tokens.weight", []int32{32000, 4096}, "fp8", false},
@@ -616,6 +620,44 @@ func TestExpertGroupPrefix(t *testing.T) {
 				t.Errorf("ExpertGroupPrefix(%q) = %q, want %q", tt.name, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestGetTensorQuantization_StackedExpert3D(t *testing.T) {
+	gateUp := GetTensorQuantization(
+		"model.layers.1.mlp.switch_mlp.gate_up_proj.weight",
+		[]int32{64, 22016, 4096},
+		"int4",
+	)
+	if gateUp != "int4" {
+		t.Fatalf("gate_up_proj quantization = %q, want %q", gateUp, "int4")
+	}
+
+	down := GetTensorQuantization(
+		"model.layers.1.mlp.experts.down_proj.weight",
+		[]int32{64, 4096, 14336},
+		"int4",
+	)
+	if down != "int8" {
+		t.Fatalf("down_proj quantization = %q, want %q", down, "int8")
+	}
+
+	combinedGateUp := GetTensorQuantization(
+		"model.language_model.layers.0.mlp.experts.gate_up_proj",
+		[]int32{256, 1024, 2048},
+		"int8",
+	)
+	if combinedGateUp != "int8" {
+		t.Fatalf("combined gate_up_proj quantization = %q, want %q", combinedGateUp, "int8")
+	}
+
+	combinedDown := GetTensorQuantization(
+		"model.language_model.layers.0.mlp.experts.down_proj",
+		[]int32{256, 2048, 512},
+		"int4",
+	)
+	if combinedDown != "int8" {
+		t.Fatalf("combined down_proj quantization = %q, want %q", combinedDown, "int8")
 	}
 }
 

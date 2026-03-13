@@ -1,5 +1,3 @@
-//go:build mlx
-
 // Package gemma3 provides the Gemma 3 text model implementation for MLX.
 package gemma3
 
@@ -504,12 +502,8 @@ func (a *Attention) Forward(x *mlx.Array, c cache.Cache, B, L int32, isSliding b
 		k, v = c.Update(k, v)
 	}
 
-	repeatFactor := cfg.NumAttentionHeads / cfg.NumKeyValueHeads
-	if repeatFactor > 1 {
-		k = nn.RepeatKV(k, repeatFactor)
-		v = nn.RepeatKV(v, repeatFactor)
-	}
-
+	// MLX SDPA supports grouped-query attention directly (Q heads can be a
+	// multiple of K/V heads), so avoid materializing repeated K/V tensors.
 	out := mlx.ScaledDotProductAttentionCausal(q, k, v, cfg.Scale, L > 1)
 	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, cfg.NumAttentionHeads*cfg.HeadDim)
 	return a.OProj.Forward(out)

@@ -22,7 +22,6 @@ import (
 	"os/signal"
 	"slices"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -62,6 +61,8 @@ const signinURLStr = "https://ollama.com/connect?name=%s&key=%s"
 const (
 	cloudErrRemoteInferenceUnavailable    = "remote model is unavailable"
 	cloudErrRemoteModelDetailsUnavailable = "remote model details are unavailable"
+	cloudErrWebSearchUnavailable          = "web search is unavailable"
+	cloudErrWebFetchUnavailable           = "web fetch is unavailable"
 )
 
 func writeModelRefParseError(c *gin.Context, err error, fallbackStatus int, fallbackMessage string) {
@@ -99,9 +100,6 @@ type Server struct {
 	addr          net.Addr
 	sched         *Scheduler
 	defaultNumCtx int
-	aliasesOnce   sync.Once
-	aliases       *store
-	aliasesErr    error
 }
 
 func init() {
@@ -161,7 +159,7 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 		return nil, nil, nil, fmt.Errorf("%s %w", name, err)
 	}
 
-	useImagegen, _ := requestOpts["use_imagegen_runner"].(bool)
+	// Deprecated runner override option; ignore if present.
 	delete(requestOpts, "use_imagegen_runner")
 
 	opts, err := s.modelOptions(model, requestOpts)
@@ -169,7 +167,7 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 		return nil, nil, nil, err
 	}
 
-	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive, useImagegen)
+	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive)
 	var runner *runnerRef
 	select {
 	case runner = <-runnerCh:
@@ -222,13 +220,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	name := modelRef.Name
-
-	resolvedName, _, err := s.resolveAlias(name)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	name = resolvedName
 
 	// We cannot currently consolidate this into GetModel because all we'll
 	// induce infinite recursion given the current code structure.
@@ -392,12 +383,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			// no tools or last message for generate endpoint
 			builtinParser.Init(nil, nil, req.Think)
 		}
-	}
-
-	// Validate Think value: string values currently only allowed for harmony/gptoss models
-	if req.Think != nil && req.Think.IsString() && m.Config.Parser != "harmony" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("think value %q is not supported for this model", req.Think.String())})
-		return
 	}
 
 	caps := []model.Capability{model.CapabilityCompletion}
@@ -1696,9 +1681,8 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
 	r.POST("/api/copy", s.CopyHandler)
-	r.GET("/api/experimental/aliases", s.ListAliasesHandler)
-	r.POST("/api/experimental/aliases", s.CreateAliasHandler)
-	r.DELETE("/api/experimental/aliases", s.DeleteAliasHandler)
+	r.POST("/api/experimental/web_search", s.WebSearchExperimentalHandler)
+	r.POST("/api/experimental/web_fetch", s.WebFetchExperimentalHandler)
 
 	// Inference
 	r.GET("/api/ps", s.PsHandler)
@@ -1943,6 +1927,29 @@ func (s *Server) StatusHandler(c *gin.Context) {
 	})
 }
 
+func (s *Server) WebSearchExperimentalHandler(c *gin.Context) {
+	s.webExperimentalProxyHandler(c, "/api/web_search", cloudErrWebSearchUnavailable)
+}
+
+func (s *Server) WebFetchExperimentalHandler(c *gin.Context) {
+	s.webExperimentalProxyHandler(c, "/api/web_fetch", cloudErrWebFetchUnavailable)
+}
+
+func (s *Server) webExperimentalProxyHandler(c *gin.Context, proxyPath, disabledOperation string) {
+	body, err := readRequestBody(c.Request)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if len(bytes.TrimSpace(body)) == 0 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	}
+
+	proxyCloudRequestWithPath(c, body, proxyPath, disabledOperation)
+}
+
 func (s *Server) WhoamiHandler(c *gin.Context) {
 	// todo allow other hosts
 	u, err := url.Parse("https://ollama.com")
@@ -2097,13 +2104,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	name := modelRef.Name
-
-	resolvedName, _, err := s.resolveAlias(name)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	name = resolvedName
 
 	name, err = getExistingName(name)
 	if err != nil {
@@ -2333,12 +2333,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				ImageCount:       len(images),
 			},
 		})
-		return
-	}
-
-	// Validate Think value: string values currently only allowed for harmony/gptoss models
-	if req.Think != nil && req.Think.IsString() && m.Config.Parser != "harmony" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("think value %q is not supported for this model", req.Think.String())})
 		return
 	}
 

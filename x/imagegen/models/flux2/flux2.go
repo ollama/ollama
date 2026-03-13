@@ -1,5 +1,3 @@
-//go:build mlx
-
 // Package flux2 implements the FLUX.2 Klein diffusion transformer model.
 // Klein is a 4B parameter distilled model that supports sub-second inference.
 package flux2

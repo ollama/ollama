@@ -13,9 +13,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/x/create"
@@ -27,11 +30,79 @@ const MinOllamaVersion = "0.14.0"
 
 // ModelfileConfig holds configuration extracted from a Modelfile.
 type ModelfileConfig struct {
-	Template string
-	System   string
-	License  string
-	Parser   string
-	Renderer string
+	Template   string
+	System     string
+	License    string
+	Parser     string
+	Renderer   string
+	Parameters map[string]any
+}
+
+var ignoredModelfileParameters = []string{
+	"penalize_newline",
+	"low_vram",
+	"f16_kv",
+	"logits_all",
+	"vocab_only",
+	"use_mlock",
+	"mirostat",
+	"mirostat_tau",
+	"mirostat_eta",
+}
+
+// ConfigFromModelfile extracts the model directory and x/create-specific
+// Modelfile configuration from a parsed Modelfile.
+func ConfigFromModelfile(modelfile *parser.Modelfile) (string, *ModelfileConfig, error) {
+	var modelDir string
+	mfConfig := &ModelfileConfig{}
+
+	for _, cmd := range modelfile.Commands {
+		switch cmd.Name {
+		case "model":
+			modelDir = cmd.Args
+		case "template":
+			mfConfig.Template = cmd.Args
+		case "system":
+			mfConfig.System = cmd.Args
+		case "license":
+			mfConfig.License = cmd.Args
+		case "parser":
+			mfConfig.Parser = cmd.Args
+		case "renderer":
+			mfConfig.Renderer = cmd.Args
+		case "adapter", "message", "requires":
+			continue
+		default:
+			if slices.Contains(ignoredModelfileParameters, cmd.Name) {
+				continue
+			}
+
+			ps, err := api.FormatParams(map[string][]string{cmd.Name: {cmd.Args}})
+			if err != nil {
+				return "", nil, err
+			}
+
+			if mfConfig.Parameters == nil {
+				mfConfig.Parameters = make(map[string]any)
+			}
+
+			for k, v := range ps {
+				if ks, ok := mfConfig.Parameters[k].([]string); ok {
+					mfConfig.Parameters[k] = append(ks, v.([]string)...)
+				} else if vs, ok := v.([]string); ok {
+					mfConfig.Parameters[k] = vs
+				} else {
+					mfConfig.Parameters[k] = v
+				}
+			}
+		}
+	}
+
+	if modelDir == "" {
+		modelDir = "."
+	}
+
+	return modelDir, mfConfig, nil
 }
 
 // CreateOptions holds all options for model creation.
@@ -39,7 +110,7 @@ type CreateOptions struct {
 	ModelName string
 	ModelDir  string
 	Quantize  string           // "int4", "int8", "nvfp4", or "mxfp8" for quantization
-	Modelfile *ModelfileConfig // template/system/license/parser/renderer from Modelfile
+	Modelfile *ModelfileConfig // template/system/license/parser/renderer/parameters from Modelfile
 }
 
 // CreateModel imports a model from a local directory.
@@ -347,6 +418,19 @@ func createModelfileLayers(mf *ModelfileConfig) ([]manifest.Layer, error) {
 		layer, err := manifest.NewLayer(bytes.NewReader([]byte(mf.License)), "application/vnd.ollama.image.license")
 		if err != nil {
 			return nil, fmt.Errorf("failed to create license layer: %w", err)
+		}
+		layers = append(layers, layer)
+	}
+
+	if len(mf.Parameters) > 0 {
+		var b bytes.Buffer
+		if err := json.NewEncoder(&b).Encode(mf.Parameters); err != nil {
+			return nil, fmt.Errorf("failed to encode parameters: %w", err)
+		}
+
+		layer, err := manifest.NewLayer(&b, "application/vnd.ollama.image.params")
+		if err != nil {
+			return nil, fmt.Errorf("failed to create params layer: %w", err)
 		}
 		layers = append(layers, layer)
 	}

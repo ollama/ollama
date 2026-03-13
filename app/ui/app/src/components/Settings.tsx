@@ -214,6 +214,7 @@ export default function Settings() {
         Agent: false,
         Tools: false,
         ContextLength: 0,
+        AutoUpdateEnabled: true,
       });
       updateSettingsMutation.mutate(defaultSettings);
     }
