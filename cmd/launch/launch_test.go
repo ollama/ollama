@@ -98,6 +98,49 @@ func withLauncherHooks(t *testing.T) {
 	})
 }
 
+func TestDefaultLaunchPolicy(t *testing.T) {
+	tests := []struct {
+		name        string
+		interactive bool
+		yes         bool
+		want        LaunchPolicy
+	}{
+		{
+			name:        "interactive default prompts and prompt-pull",
+			interactive: true,
+			yes:         false,
+			want:        LaunchPolicy{Confirm: LaunchConfirmPrompt, MissingModel: LaunchMissingModelPromptToPull},
+		},
+		{
+			name:        "headless without yes requires yes and fail-missing",
+			interactive: false,
+			yes:         false,
+			want:        LaunchPolicy{Confirm: LaunchConfirmRequireYes, MissingModel: LaunchMissingModelFail},
+		},
+		{
+			name:        "interactive yes auto-approves and auto-pulls",
+			interactive: true,
+			yes:         true,
+			want:        LaunchPolicy{Confirm: LaunchConfirmAutoApprove, MissingModel: LaunchMissingModelAutoPull},
+		},
+		{
+			name:        "headless yes auto-approves and auto-pulls",
+			interactive: false,
+			yes:         true,
+			want:        LaunchPolicy{Confirm: LaunchConfirmAutoApprove, MissingModel: LaunchMissingModelAutoPull},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := defaultLaunchPolicy(tt.interactive, tt.yes)
+			if got != tt.want {
+				t.Fatalf("defaultLaunchPolicy(%v, %v) = %+v, want %+v", tt.interactive, tt.yes, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBuildLauncherState_InstalledAndCloudDisabled(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
@@ -281,6 +324,71 @@ func TestResolveRunModel_UsesSavedModelWithoutSelector(t *testing.T) {
 	}
 	if selectorCalled {
 		t.Fatal("selector should not be called when saved model is usable")
+	}
+}
+
+func TestResolveRunModel_HeadlessYesAutoPicksLastModel(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, false)
+
+	if err := config.SetLastModel("missing-model"); err != nil {
+		t.Fatalf("failed to save last model: %v", err)
+	}
+
+	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+		t.Fatal("selector should not be called in headless --yes mode")
+		return "", nil
+	}
+
+	restoreConfirm := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
+	defer restoreConfirm()
+
+	pullCalled := false
+	modelPulled := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
+		case "/api/show":
+			var req apiShowRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if req.Model == "missing-model" && !modelPulled {
+				w.WriteHeader(http.StatusNotFound)
+				fmt.Fprint(w, `{"error":"model not found"}`)
+				return
+			}
+			fmt.Fprintf(w, `{"model":%q}`, req.Model)
+		case "/api/pull":
+			pullCalled = true
+			modelPulled = true
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, `{"status":"success"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	var model string
+	stderr := captureStderr(t, func() {
+		var err error
+		model, err = ResolveRunModel(context.Background(), RunModelRequest{})
+		if err != nil {
+			t.Fatalf("ResolveRunModel returned error: %v", err)
+		}
+	})
+
+	if model != "missing-model" {
+		t.Fatalf("expected saved last model to be selected, got %q", model)
+	}
+	if !pullCalled {
+		t.Fatal("expected missing saved model to be auto-pulled in headless --yes mode")
+	}
+	if !strings.Contains(stderr, `Headless mode: auto-selected last used model "missing-model"`) {
+		t.Fatalf("expected headless auto-pick message in stderr, got %q", stderr)
 	}
 }
 

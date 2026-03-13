@@ -19,7 +19,7 @@ func TestErrCancelled(t *testing.T) {
 	})
 }
 
-func TestWithLaunchConfirmPolicy_ChainsAndRestores(t *testing.T) {
+func TestWithLaunchConfirmPolicy_ScopesAndRestores(t *testing.T) {
 	oldPolicy := currentLaunchConfirmPolicy
 	oldHook := DefaultConfirmPrompt
 	t.Cleanup(func() {

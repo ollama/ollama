@@ -72,12 +72,18 @@ type LaunchPolicy struct {
 	MissingModel LaunchMissingModelMode
 }
 
-func defaultLaunchPolicy(interactive bool) LaunchPolicy {
+func defaultLaunchPolicy(interactive bool, yes bool) LaunchPolicy {
 	policy := LaunchPolicy{
 		Confirm:      LaunchConfirmPrompt,
 		MissingModel: LaunchMissingModelPromptToPull,
 	}
-	if !interactive {
+	switch {
+	case yes:
+		// if yes flag is set, auto approve and auto pull
+		policy.Confirm = LaunchConfirmAutoApprove
+		policy.MissingModel = LaunchMissingModelAutoPull
+	case !interactive:
+		// otherwise make sure to stop when needed
 		policy.Confirm = LaunchConfirmRequireYes
 		policy.MissingModel = LaunchMissingModelFail
 	}
@@ -149,37 +155,6 @@ type ModelItem struct {
 	Recommended bool
 }
 
-// ConfigureIntegrationWithSelectors allows the user to select/change the model for an integration using custom selectors.
-func ConfigureIntegrationWithSelectors(ctx context.Context, name string, single SingleSelector, multi MultiSelector) error {
-	oldSingle := DefaultSingleSelector
-	oldMulti := DefaultMultiSelector
-	if single != nil {
-		DefaultSingleSelector = single
-	}
-	if multi != nil {
-		DefaultMultiSelector = multi
-	}
-	defer func() {
-		DefaultSingleSelector = oldSingle
-		DefaultMultiSelector = oldMulti
-	}()
-
-	return LaunchIntegration(ctx, IntegrationLaunchRequest{
-		Name:           name,
-		ForceConfigure: true,
-		ConfigureOnly:  true,
-	})
-}
-
-// ConfigureIntegration allows the user to select/change the model for an integration.
-func ConfigureIntegration(ctx context.Context, name string) error {
-	return LaunchIntegration(ctx, IntegrationLaunchRequest{
-		Name:           name,
-		ForceConfigure: true,
-		ConfigureOnly:  true,
-	})
-}
-
 // LaunchCmd returns the cobra command for launching integrations.
 // The runTUI callback is called when the root launcher UI should be shown.
 func LaunchCmd(checkServerHeartbeat func(cmd *cobra.Command, args []string) error, runTUI func(cmd *cobra.Command)) *cobra.Command {
@@ -214,13 +189,8 @@ Examples:
 		Args:    cobra.ArbitraryArgs,
 		PreRunE: checkServerHeartbeat,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			policy := defaultLaunchPolicy(isInteractiveSession())
-			if yesFlag {
-				policy.Confirm = LaunchConfirmAutoApprove
-				if policy.MissingModel == LaunchMissingModelFail {
-					policy.MissingModel = LaunchMissingModelAutoPull
-				}
-			}
+			policy := defaultLaunchPolicy(isInteractiveSession(), yesFlag)
+			// reset when done to make sure state doens't leak between launches
 			restoreConfirmPolicy := withLaunchConfirmPolicy(policy.confirmPolicy())
 			defer restoreConfirmPolicy()
 
@@ -246,7 +216,7 @@ Examples:
 			}
 
 			if name == "" {
-				if cmd.Flags().Changed("model") || cmd.Flags().Changed("config") || len(passArgs) > 0 {
+				if cmd.Flags().Changed("model") || cmd.Flags().Changed("config") || cmd.Flags().Changed("yes") || len(passArgs) > 0 {
 					return fmt.Errorf("flags and extra args require an integration name, for example: 'ollama launch claude --model qwen3.5'")
 				}
 				runTUI(cmd)
@@ -262,10 +232,11 @@ Examples:
 				}
 			}
 
+			headlessYes := yesFlag && !isInteractiveSession()
 			err := LaunchIntegration(cmd.Context(), IntegrationLaunchRequest{
 				Name:           name,
 				ModelOverride:  modelFlag,
-				ForceConfigure: configFlag || modelFlag == "",
+				ForceConfigure: configFlag || (modelFlag == "" && !headlessYes),
 				ConfigureOnly:  configFlag,
 				ExtraArgs:      passArgs,
 				Policy:         &policy,
@@ -304,7 +275,7 @@ func newLauncherClient(policy LaunchPolicy) (*launcherClient, error) {
 
 // BuildLauncherState returns the launch-owned root launcher menu snapshot.
 func BuildLauncherState(ctx context.Context) (*LauncherState, error) {
-	launchClient, err := newLauncherClient(defaultLaunchPolicy(isInteractiveSession()))
+	launchClient, err := newLauncherClient(defaultLaunchPolicy(isInteractiveSession(), false))
 	if err != nil {
 		return nil, err
 	}
@@ -313,7 +284,12 @@ func BuildLauncherState(ctx context.Context) (*LauncherState, error) {
 
 // ResolveRunModel returns the model that should be used for interactive chat.
 func ResolveRunModel(ctx context.Context, req RunModelRequest) (string, error) {
-	launchClient, err := newLauncherClient(defaultLaunchPolicy(isInteractiveSession()))
+	// Called by the launcher TUI "Run a model" action (cmd/runLauncherAction),
+	// which resolves models separately from LaunchIntegration. Apply --yes here
+	// as well so headless run-model flow uses auto-approve/auto-pull consistently.
+	policy := defaultLaunchPolicy(isInteractiveSession(), currentLaunchConfirmPolicy.yes)
+
+	launchClient, err := newLauncherClient(policy)
 	if err != nil {
 		return "", err
 	}
@@ -332,7 +308,7 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 		}
 	}
 
-	policy := defaultLaunchPolicy(isInteractiveSession())
+	policy := defaultLaunchPolicy(isInteractiveSession(), false)
 	if req.Policy != nil {
 		policy = *req.Policy
 	}
@@ -421,6 +397,17 @@ func (c *launcherClient) launcherModelState(ctx context.Context, name string, is
 
 func (c *launcherClient) resolveRunModel(ctx context.Context, req RunModelRequest) (string, error) {
 	current := config.LastModel()
+	if !req.ForcePicker && current != "" && c.policy.Confirm == LaunchConfirmAutoApprove && !isInteractiveSession() {
+		if err := c.ensureModelsReady(ctx, []string{current}); err != nil {
+			return "", err
+		}
+		fmt.Fprintf(os.Stderr, "Headless mode: auto-selected last used model %q\n", current)
+		if err := config.SetLastModel(current); err != nil {
+			return "", err
+		}
+		return current, nil
+	}
+
 	if !req.ForcePicker {
 		usable, err := c.savedModelUsable(ctx, current)
 		if err != nil {
