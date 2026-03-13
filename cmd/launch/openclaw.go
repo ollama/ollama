@@ -1,4 +1,4 @@
-package config
+package launch
 
 import (
 	"context"
@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/config"
+	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/types/model"
 )
@@ -35,7 +37,7 @@ func (c *Openclaw) Run(model string, args []string) error {
 	}
 
 	firstLaunch := true
-	if integrationConfig, err := loadIntegration("openclaw"); err == nil {
+	if integrationConfig, err := loadStoredIntegrationConfig("openclaw"); err == nil {
 		firstLaunch = !integrationConfig.Onboarded
 	}
 
@@ -45,7 +47,7 @@ func (c *Openclaw) Run(model string, args []string) error {
 		fmt.Fprintf(os.Stderr, "  A bad prompt can trick it into doing unsafe things.\n\n")
 		fmt.Fprintf(os.Stderr, "%s  Learn more: https://docs.openclaw.ai/gateway/security%s\n\n", ansiGray, ansiReset)
 
-		ok, err := confirmPrompt("I understand the risks. Continue?")
+		ok, err := ConfirmPrompt("I understand the risks. Continue?")
 		if err != nil {
 			return err
 		}
@@ -107,7 +109,7 @@ func (c *Openclaw) Run(model string, args []string) error {
 			return windowsHint(err)
 		}
 		if firstLaunch {
-			if err := integrationOnboarded("openclaw"); err != nil {
+			if err := config.MarkIntegrationOnboarded("openclaw"); err != nil {
 				return fmt.Errorf("failed to save onboarding state: %w", err)
 			}
 		}
@@ -166,7 +168,7 @@ func (c *Openclaw) Run(model string, args []string) error {
 	}
 
 	if firstLaunch {
-		if err := integrationOnboarded("openclaw"); err != nil {
+		if err := config.MarkIntegrationOnboarded("openclaw"); err != nil {
 			return fmt.Errorf("failed to save onboarding state: %w", err)
 		}
 	}
@@ -426,7 +428,7 @@ func ensureOpenclawInstalled() (string, error) {
 			"and select OpenClaw")
 	}
 
-	ok, err := confirmPrompt("OpenClaw is not installed. Install with npm?")
+	ok, err := ConfirmPrompt("OpenClaw is not installed. Install with npm?")
 	if err != nil {
 		return "", err
 	}
@@ -561,7 +563,7 @@ func (c *Openclaw) Edit(models []string) error {
 	if err != nil {
 		return err
 	}
-	if err := writeWithBackup(configPath, data); err != nil {
+	if err := fileutil.WriteWithBackup(configPath, data); err != nil {
 		return err
 	}
 
@@ -776,9 +778,9 @@ func (c *Openclaw) Models() []string {
 		return nil
 	}
 
-	config, err := readJSONFile(filepath.Join(home, ".openclaw", "openclaw.json"))
+	config, err := fileutil.ReadJSON(filepath.Join(home, ".openclaw", "openclaw.json"))
 	if err != nil {
-		config, err = readJSONFile(filepath.Join(home, ".clawdbot", "clawdbot.json"))
+		config, err = fileutil.ReadJSON(filepath.Join(home, ".clawdbot", "clawdbot.json"))
 		if err != nil {
 			return nil
 		}

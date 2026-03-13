@@ -1,4 +1,4 @@
-package config
+package launch
 
 import (
 	"encoding/json"
@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ollama/ollama/cmd/internal/fileutil"
 )
 
 func TestDroidIntegration(t *testing.T) {
@@ -362,7 +364,7 @@ func TestDroidEdit_DuplicateModels(t *testing.T) {
 		t.Fatalf("Edit with duplicates failed: %v", err)
 	}
 
-	settings, err := readJSONFile(settingsPath)
+	settings, err := fileutil.ReadJSON(settingsPath)
 	if err != nil {
 		t.Fatalf("readJSONFile failed: %v", err)
 	}
@@ -392,7 +394,7 @@ func TestDroidEdit_MalformedModelEntry(t *testing.T) {
 	}
 
 	// Malformed entries (non-object) are dropped - only valid model objects are preserved
-	settings, _ := readJSONFile(settingsPath)
+	settings, _ := fileutil.ReadJSON(settingsPath)
 	customModels, _ := settings["customModels"].([]any)
 
 	// Should have: 1 new Ollama model only (malformed entries dropped)
@@ -419,7 +421,7 @@ func TestDroidEdit_WrongTypeSessionSettings(t *testing.T) {
 	}
 
 	// Should create proper sessionDefaultSettings
-	settings, _ := readJSONFile(settingsPath)
+	settings, _ := fileutil.ReadJSON(settingsPath)
 	session, ok := settings["sessionDefaultSettings"].(map[string]any)
 	if !ok {
 		t.Fatalf("sessionDefaultSettings should be map after setup, got %T", settings["sessionDefaultSettings"])
@@ -1008,33 +1010,33 @@ func TestDroidEdit_ModelNamesWithSpecialCharacters(t *testing.T) {
 }
 
 func TestDroidEdit_MissingCustomModelsKey(t *testing.T) {
-	d := &Droid{}
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-
-	settingsDir := filepath.Join(tmpDir, ".factory")
-	settingsPath := filepath.Join(settingsDir, "settings.json")
-
-	os.MkdirAll(settingsDir, 0o755)
-
 	// No customModels key at all
 	original := `{
 		"diffMode": "github",
 		"sessionDefaultSettings": {"autonomyMode": "auto-high"}
 	}`
-	os.WriteFile(settingsPath, []byte(original), 0o644)
 
-	if err := d.Edit([]string{"model-a"}); err != nil {
+	var settingsStruct droidSettings
+	var settings map[string]any
+	if err := json.Unmarshal([]byte(original), &settings); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(original), &settingsStruct); err != nil {
 		t.Fatal(err)
 	}
 
-	data, _ := os.ReadFile(settingsPath)
-	var settings map[string]any
-	json.Unmarshal(data, &settings)
+	settings = updateDroidSettings(settings, settingsStruct, []string{"model-a"})
 
 	// Original fields preserved
 	if settings["diffMode"] != "github" {
 		t.Error("diffMode not preserved")
+	}
+	session, ok := settings["sessionDefaultSettings"].(map[string]any)
+	if !ok {
+		t.Fatal("sessionDefaultSettings not preserved")
+	}
+	if session["autonomyMode"] != "auto-high" {
+		t.Error("sessionDefaultSettings.autonomyMode not preserved")
 	}
 
 	// customModels created

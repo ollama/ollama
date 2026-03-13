@@ -22,7 +22,6 @@ import (
 	"os/signal"
 	"slices"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -101,9 +100,6 @@ type Server struct {
 	addr          net.Addr
 	sched         *Scheduler
 	defaultNumCtx int
-	aliasesOnce   sync.Once
-	aliases       *store
-	aliasesErr    error
 }
 
 func init() {
@@ -224,13 +220,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	name := modelRef.Name
-
-	resolvedName, _, err := s.resolveAlias(name)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	name = resolvedName
 
 	// We cannot currently consolidate this into GetModel because all we'll
 	// induce infinite recursion given the current code structure.
@@ -1692,9 +1681,6 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
 	r.POST("/api/copy", s.CopyHandler)
-	r.GET("/api/experimental/aliases", s.ListAliasesHandler)
-	r.POST("/api/experimental/aliases", s.CreateAliasHandler)
-	r.DELETE("/api/experimental/aliases", s.DeleteAliasHandler)
 	r.POST("/api/experimental/web_search", s.WebSearchExperimentalHandler)
 	r.POST("/api/experimental/web_fetch", s.WebFetchExperimentalHandler)
 
@@ -2118,13 +2104,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	name := modelRef.Name
-
-	resolvedName, _, err := s.resolveAlias(name)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	name = resolvedName
 
 	name, err = getExistingName(name)
 	if err != nil {

@@ -1,14 +1,13 @@
-package config
+package launch
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 
+	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
 )
 
@@ -20,24 +19,6 @@ func (c *Cline) String() string { return "Cline" }
 func (c *Cline) Run(model string, args []string) error {
 	if _, err := exec.LookPath("cline"); err != nil {
 		return fmt.Errorf("cline is not installed, install with: npm install -g cline")
-	}
-
-	models := []string{model}
-	if config, err := loadIntegration("cline"); err == nil && len(config.Models) > 0 {
-		models = config.Models
-	}
-	var err error
-	models, err = resolveEditorModels("cline", models, func() ([]string, error) {
-		return selectModels(context.Background(), "cline", "")
-	})
-	if errors.Is(err, errCancelled) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if err := c.Edit(models); err != nil {
-		return fmt.Errorf("setup failed: %w", err)
 	}
 
 	cmd := exec.Command("cline", args...)
@@ -97,7 +78,7 @@ func (c *Cline) Edit(models []string) error {
 	if err != nil {
 		return err
 	}
-	return writeWithBackup(configPath, data)
+	return fileutil.WriteWithBackup(configPath, data)
 }
 
 func (c *Cline) Models() []string {
@@ -106,7 +87,7 @@ func (c *Cline) Models() []string {
 		return nil
 	}
 
-	config, err := readJSONFile(filepath.Join(home, ".cline", "data", "globalState.json"))
+	config, err := fileutil.ReadJSON(filepath.Join(home, ".cline", "data", "globalState.json"))
 	if err != nil {
 		return nil
 	}
