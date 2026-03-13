@@ -733,7 +733,7 @@ func TestLaunchIntegration_ConfigureOnlyDoesNotRequireInstalledBinary(t *testing
 	}
 }
 
-func TestLaunchIntegration_ClaudeSyncsAliasesAndSavesPrimary(t *testing.T) {
+func TestLaunchIntegration_ClaudeSavesPrimaryModel(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 
@@ -741,7 +741,7 @@ func TestLaunchIntegration_ClaudeSyncsAliasesAndSavesPrimary(t *testing.T) {
 	writeFakeBinary(t, binDir, "claude")
 	t.Setenv("PATH", binDir)
 
-	var aliasTargets []string
+	var aliasSyncCalled bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/tags":
@@ -754,15 +754,8 @@ func TestLaunchIntegration_ClaudeSyncsAliasesAndSavesPrimary(t *testing.T) {
 		case "/api/me":
 			fmt.Fprint(w, `{"name":"test-user"}`)
 		case "/api/experimental/aliases":
-			if r.Method != http.MethodPost {
-				t.Fatalf("expected alias sync to use POST, got %s", r.Method)
-			}
-			var req map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				t.Fatalf("failed to decode alias request: %v", err)
-			}
-			aliasTargets = append(aliasTargets, fmt.Sprintf("%s=%s", req["alias"], req["target"]))
-			fmt.Fprint(w, `{}`)
+			aliasSyncCalled = true
+			t.Fatalf("did not expect alias sync call after removing Claude alias flow")
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
@@ -784,20 +777,8 @@ func TestLaunchIntegration_ClaudeSyncsAliasesAndSavesPrimary(t *testing.T) {
 	if diff := compareStrings(saved.Models, []string{"glm-5:cloud"}); diff != "" {
 		t.Fatalf("unexpected saved models (-want +got):\n%s", diff)
 	}
-	if saved.Aliases["primary"] != "glm-5:cloud" {
-		t.Fatalf("expected primary alias to match saved model, got %q", saved.Aliases["primary"])
-	}
-	if saved.Aliases["fast"] != "glm-5:cloud" {
-		t.Fatalf("expected fast alias to match cloud primary, got %q", saved.Aliases["fast"])
-	}
-	slices.Sort(aliasTargets)
-	wantTargets := []string{
-		"claude-sonnet-=glm-5:cloud",
-		"claude-haiku-=glm-5:cloud",
-	}
-	slices.Sort(wantTargets)
-	if !slices.Equal(aliasTargets, wantTargets) {
-		t.Fatalf("unexpected synced aliases: %v", aliasTargets)
+	if aliasSyncCalled {
+		t.Fatal("expected Claude launch flow not to sync aliases")
 	}
 }
 
@@ -812,9 +793,6 @@ func TestLaunchIntegration_ClaudeForceConfigureReprompts(t *testing.T) {
 
 	if err := config.SaveIntegration("claude", []string{"qwen3:8b"}); err != nil {
 		t.Fatalf("failed to seed config: %v", err)
-	}
-	if err := config.SaveAliases("claude", map[string]string{"primary": "qwen3:8b"}); err != nil {
-		t.Fatalf("failed to seed aliases: %v", err)
 	}
 
 	var selectorCalls int
@@ -831,8 +809,6 @@ func TestLaunchIntegration_ClaudeForceConfigureReprompts(t *testing.T) {
 			fmt.Fprint(w, `{"model":"qwen3:8b"}`)
 		case "/api/me":
 			fmt.Fprint(w, `{"name":"test-user"}`)
-		case "/api/experimental/aliases":
-			fmt.Fprint(w, `{}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -847,7 +823,7 @@ func TestLaunchIntegration_ClaudeForceConfigureReprompts(t *testing.T) {
 		t.Fatalf("LaunchIntegration returned error: %v", err)
 	}
 	if selectorCalls != 1 {
-		t.Fatalf("expected forced configure to reprompt for alias primary, got %d calls", selectorCalls)
+		t.Fatalf("expected forced configure to reprompt for model selection, got %d calls", selectorCalls)
 	}
 	saved, err := config.LoadIntegration("claude")
 	if err != nil {
@@ -858,7 +834,7 @@ func TestLaunchIntegration_ClaudeForceConfigureReprompts(t *testing.T) {
 	}
 }
 
-func TestLaunchIntegration_ClaudeModelOverrideSkipsAliasSelector(t *testing.T) {
+func TestLaunchIntegration_ClaudeModelOverrideSkipsSelector(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -893,8 +869,6 @@ func TestLaunchIntegration_ClaudeModelOverrideSkipsAliasSelector(t *testing.T) {
 			pullCalled = true
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprint(w, `{"status":"success"}`)
-		case "/api/experimental/aliases":
-			fmt.Fprint(w, `{}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -910,7 +884,7 @@ func TestLaunchIntegration_ClaudeModelOverrideSkipsAliasSelector(t *testing.T) {
 	}
 
 	if selectorCalls != 0 {
-		t.Fatalf("expected model override to skip alias selector, got %d calls", selectorCalls)
+		t.Fatalf("expected model override to skip selector, got %d calls", selectorCalls)
 	}
 	if confirmCalls == 0 {
 		t.Fatal("expected missing override model to prompt for download in interactive mode")

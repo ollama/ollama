@@ -133,12 +133,6 @@ type Editor interface {
 	Models() []string
 }
 
-// AliasConfigurer can configure model aliases for integrations like Claude and Codex.
-type AliasConfigurer interface {
-	ConfigureAliases(ctx context.Context, primaryModel string, existing map[string]string, force bool) (map[string]string, bool, error)
-	SetAliases(ctx context.Context, aliases map[string]string) error
-}
-
 type modelInfo struct {
 	Name        string
 	Remote      bool
@@ -349,9 +343,6 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 	}
 	saved, _ := loadStoredIntegrationConfig(name)
 
-	if aliasConfigurer, ok := runner.(AliasConfigurer); ok {
-		return launchClient.launchAliasConfiguredIntegration(ctx, name, runner, aliasConfigurer, saved, req)
-	}
 	if editor, ok := runner.(Editor); ok {
 		return launchClient.launchEditorIntegration(ctx, name, runner, editor, saved, req)
 	}
@@ -517,65 +508,6 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 	}
 
 	return launchAfterConfiguration(name, runner, models[0], req)
-}
-
-func (c *launcherClient) launchAliasConfiguredIntegration(ctx context.Context, name string, runner Runner, aliases AliasConfigurer, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
-	primary := req.ModelOverride
-	var existingAliases map[string]string
-	if saved != nil {
-		existingAliases = saved.Aliases
-		if primary == "" {
-			primary = primaryModelFromConfig(saved)
-		}
-	}
-
-	forceConfigure := req.ForceConfigure
-	if primary == "" {
-		forceConfigure = true
-	} else if req.ModelOverride == "" {
-		// Only auto-force reconfiguration for saved/default models.
-		// Explicit --model overrides should be respected and validated via ensureModelsReady.
-		usable, err := c.savedModelUsable(ctx, primary)
-		if err != nil {
-			return err
-		}
-		if !usable {
-			forceConfigure = true
-		}
-	}
-
-	resolvedAliases := cloneAliases(existingAliases)
-	if forceConfigure || primary != "" {
-		var changed bool
-		var err error
-		resolvedAliases, changed, err = aliases.ConfigureAliases(ctx, primary, existingAliases, forceConfigure)
-		if err != nil {
-			return err
-		}
-		if changed || primary == "" {
-			primary = resolvedAliases["primary"]
-		}
-	}
-
-	if primary == "" {
-		return nil
-	}
-
-	if err := c.ensureModelsReady(ctx, []string{primary}); err != nil {
-		return err
-	}
-
-	if err := syncAliases(ctx, c.apiClient, aliases, name, primary, resolvedAliases); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not sync aliases: %v\n", err)
-	}
-	if err := config.SaveAliases(name, normalizedAliases(primary, resolvedAliases)); err != nil {
-		return fmt.Errorf("failed to save aliases: %w", err)
-	}
-	if err := config.SaveIntegration(name, []string{primary}); err != nil {
-		return fmt.Errorf("failed to save: %w", err)
-	}
-
-	return launchAfterConfiguration(name, runner, primary, req)
 }
 
 func (c *launcherClient) selectSingleModelWithSelector(ctx context.Context, title, current string, selector SingleSelector) (string, error) {
@@ -782,22 +714,6 @@ func runIntegration(runner Runner, modelName string, args []string) error {
 	return runner.Run(modelName, args)
 }
 
-func syncAliases(ctx context.Context, client *api.Client, aliasConfigurer AliasConfigurer, name, model string, existing map[string]string) error {
-	aliases := cloneAliases(existing)
-	aliases["primary"] = model
-
-	if isCloudModelName(model) {
-		aliases["fast"] = model
-	} else {
-		delete(aliases, "fast")
-	}
-
-	if err := aliasConfigurer.SetAliases(ctx, aliases); err != nil {
-		return err
-	}
-	return config.SaveAliases(name, aliases)
-}
-
 func launchAfterConfiguration(name string, runner Runner, model string, req IntegrationLaunchRequest) error {
 	if req.ConfigureOnly {
 		launch, err := ConfirmPrompt(fmt.Sprintf("Launch %s now?", runner))
@@ -876,17 +792,6 @@ func cloneAliases(aliases map[string]string) map[string]string {
 		cloned[key] = value
 	}
 	return cloned
-}
-
-func normalizedAliases(primary string, aliases map[string]string) map[string]string {
-	normalized := cloneAliases(aliases)
-	normalized["primary"] = primary
-	if isCloudModelName(primary) {
-		normalized["fast"] = primary
-	} else {
-		delete(normalized, "fast")
-	}
-	return normalized
 }
 
 func singleModelPrechecked(current string) []string {

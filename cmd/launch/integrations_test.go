@@ -682,22 +682,6 @@ func TestPrepareEditorIntegration_SavesOnlyAfterSuccessfulEdit(t *testing.T) {
 	}
 }
 
-func TestAliasConfigurerInterface(t *testing.T) {
-	t.Run("claude implements AliasConfigurer", func(t *testing.T) {
-		claude := &Claude{}
-		if _, ok := interface{}(claude).(AliasConfigurer); !ok {
-			t.Error("Claude should implement AliasConfigurer")
-		}
-	})
-
-	t.Run("codex does not implement AliasConfigurer", func(t *testing.T) {
-		codex := &Codex{}
-		if _, ok := interface{}(codex).(AliasConfigurer); ok {
-			t.Error("Codex should not implement AliasConfigurer")
-		}
-	})
-}
-
 func TestShowOrPull_ModelExists(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/show" {
