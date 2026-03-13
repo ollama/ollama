@@ -1,10 +1,14 @@
 package server
 
 import (
+	"bytes"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/klauspost/compress/zstd"
 )
 
 func TestCopyProxyRequestHeaders_StripsConnectionTokenHeaders(t *testing.T) {
@@ -134,6 +138,62 @@ func TestBuildCloudSignatureChallengeIncludesExistingQuery(t *testing.T) {
 	}
 	if req.URL.RawQuery != "beta=true&foo=bar&ts=123" {
 		t.Fatalf("unexpected signed query: %q", req.URL.RawQuery)
+	}
+}
+
+func TestCloudPassthroughMiddleware_ZstdBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	plainBody := []byte(`{"model":"test-model:cloud","messages":[{"role":"user","content":"hi"}]}`)
+	var compressed bytes.Buffer
+	w, err := zstd.NewWriter(&compressed)
+	if err != nil {
+		t.Fatalf("zstd writer: %v", err)
+	}
+	if _, err := w.Write(plainBody); err != nil {
+		t.Fatalf("zstd write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("zstd close: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(compressed.Bytes()))
+	req.Header.Set("Content-Encoding", "zstd")
+	rec := httptest.NewRecorder()
+
+	// Track whether the middleware detected the cloud model by checking
+	// if c.Next() was called (non-cloud path) vs c.Abort() (cloud path).
+	nextCalled := false
+
+	r := gin.New()
+	r.POST("/v1/responses", cloudPassthroughMiddleware("test"), func(c *gin.Context) {
+		nextCalled = true
+		// Verify the body is decompressed and Content-Encoding is removed.
+		body, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		model, ok := extractModelField(body)
+		if !ok {
+			t.Fatal("expected to extract model from decompressed body")
+		}
+		if model != "test-model:cloud" {
+			t.Fatalf("expected model %q, got %q", "test-model:cloud", model)
+		}
+		if enc := c.GetHeader("Content-Encoding"); enc != "" {
+			t.Fatalf("expected Content-Encoding to be removed, got %q", enc)
+		}
+		c.Status(http.StatusOK)
+	})
+	r.ServeHTTP(rec, req)
+
+	// The cloud passthrough middleware should detect the cloud model and
+	// proxy (abort), so the next handler should NOT be called.
+	// However, since there's no actual cloud server to proxy to, the
+	// middleware will attempt to proxy and fail. We just verify it didn't
+	// fall through to c.Next() due to failure to read the compressed body.
+	if nextCalled {
+		t.Fatal("expected cloud passthrough to detect cloud model from zstd body, but it fell through to next handler")
 	}
 }
 

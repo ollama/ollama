@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/klauspost/compress/zstd"
 
 	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
@@ -29,6 +30,9 @@ const (
 	cloudProxyBaseURLEnv          = "OLLAMA_CLOUD_BASE_URL"
 	legacyCloudAnthropicKey       = "legacy_cloud_anthropic_web_search"
 	cloudProxyClientVersionHeader = "X-Ollama-Client-Version"
+
+	// maxDecompressedBodySize limits the size of a decompressed request body
+	maxDecompressedBodySize = 20 << 20
 )
 
 var (
@@ -71,6 +75,19 @@ func cloudPassthroughMiddleware(disabledOperation string) gin.HandlerFunc {
 		if c.Request.Method != http.MethodPost {
 			c.Next()
 			return
+		}
+
+		// Decompress zstd-encoded request bodies so we can inspect the model
+		if c.GetHeader("Content-Encoding") == "zstd" {
+			reader, err := zstd.NewReader(c.Request.Body, zstd.WithDecoderMaxMemory(8<<20))
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "failed to decompress request body"})
+				c.Abort()
+				return
+			}
+			defer reader.Close()
+			c.Request.Body = io.NopCloser(io.LimitReader(reader, maxDecompressedBodySize))
+			c.Request.Header.Del("Content-Encoding")
 		}
 
 		// TODO(drifkin): Avoid full-body buffering here for model detection.
