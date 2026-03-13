@@ -54,14 +54,14 @@ type EmbedWriter struct {
 
 func (w *BaseWriter) writeError(data []byte) (int, error) {
 	var serr api.StatusError
-	err := json.Unmarshal(data, &serr)
-	if err != nil {
-		return 0, err
+	if err := json.Unmarshal(data, &serr); err != nil {
+		// If the error response isn't valid JSON, use the raw bytes as the
+		// error message rather than surfacing a confusing JSON parse error.
+		serr.ErrorMessage = string(data)
 	}
 
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	err = json.NewEncoder(w.ResponseWriter).Encode(openai.NewError(http.StatusInternalServerError, serr.Error()))
-	if err != nil {
+	if err := json.NewEncoder(w.ResponseWriter).Encode(openai.NewError(w.ResponseWriter.Status(), serr.Error())); err != nil {
 		return 0, err
 	}
 
