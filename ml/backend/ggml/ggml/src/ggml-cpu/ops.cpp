@@ -9667,7 +9667,7 @@ void ggml_compute_forward_win_unpart(
     }
 }
 
-//gmml_compute_forward_unary
+//ggml_compute_forward_unary
 
 void ggml_compute_forward_unary(
         const ggml_compute_params * params,
@@ -10520,34 +10520,40 @@ static void ggml_compute_forward_gated_delta_net_one_chunk(
             const float beta_val = *(const float *)((const char *)src_beta->data + iv3 * nbb3 + t * nbb2 + iv1 * nbb1);
             const float * g_d    =  (const float *)((const char *)src_g->data    + iv3 * nbg3 + t * nbg2 + iv1 * nbg1);
 
+            // state is stored transposed: s_out[j*S_v + i] = S[i][j]
+            // so row j of s_out = column j of S (contiguous access)
+
             if (kda) {
+                // precompute exp(g) into delta scratch (reused below)
                 for (int64_t i = 0; i < S_v; ++i) {
-                    ggml_vec_scale_f32(S_v, &s_out[i * S_v], expf(g_d[i]));
+                    delta[i] = expf(g_d[i]);
+                }
+                // S[i][:] *= exp(g[i]) => for each row j of M: M[j][i] *= exp(g[i])
+                for (int64_t j = 0; j < S_v; ++j) {
+                    ggml_vec_mul_f32(S_v, &s_out[j * S_v], &s_out[j * S_v], delta);
                 }
             } else {
                 ggml_vec_scale_f32(S_v * S_v, s_out, expf(g_d[0]));
             }
 
-            // delta[j] = sum_i S[j][i] * k[i]
-            memset(delta, 0, S_v * sizeof(float));
-            for (int64_t i = 0; i < S_v; ++i) {
-                ggml_vec_mad_f32(S_v, delta, &s_out[i * S_v], k_d[i]);
-            }
+            // delta[j] = sum_i S[i][j] * k[i] = dot(row j of M, k)
             for (int64_t j = 0; j < S_v; ++j) {
-                delta[j] = (v_d[j] - delta[j]) * beta_val;
+                float sum = 0.0f;
+                ggml_vec_dot_f32(S_v, &sum, 0, &s_out[j * S_v], 0, k_d, 0, 1);
+                delta[j] = (v_d[j] - sum) * beta_val;
             }
 
-            // outer product: S[j][i] += k[i] * delta[j]
-            for (int64_t i = 0; i < S_v; ++i) {
-                ggml_vec_mad_f32(S_v, &s_out[i * S_v], delta, k_d[i]);
+            // outer product: S[i][j] += k[i] * delta[j] => M[j][i] += delta[j] * k[i]
+            for (int64_t j = 0; j < S_v; ++j) {
+                ggml_vec_mad_f32(S_v, &s_out[j * S_v], k_d, delta[j]);
             }
 
-            // attn_out[j] = sum_i S[j][i] * q[i]
-            memset(attn_data, 0, S_v * sizeof(float));
-            for (int64_t i = 0; i < S_v; ++i) {
-                ggml_vec_mad_f32(S_v, attn_data, &s_out[i * S_v], q_d[i]);
+            // attn_out[j] = sum_i S[i][j] * q[i] = dot(row j of M, q)
+            for (int64_t j = 0; j < S_v; ++j) {
+                float sum = 0.0f;
+                ggml_vec_dot_f32(S_v, &sum, 0, &s_out[j * S_v], 0, q_d, 0, 1);
+                attn_data[j] = sum * scale;
             }
-            ggml_vec_scale_f32(S_v, attn_data, scale);
 
             attn_data += S_v * H; // advance to next token
         }

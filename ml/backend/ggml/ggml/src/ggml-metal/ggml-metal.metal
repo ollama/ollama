@@ -2469,13 +2469,14 @@ kernel void kernel_gated_delta_net_impl(
 
     const float scale = 1.0f / sqrt((float)S_v);
 
-    device const float * s_ptr = (device const float *) (s) + (i23*args.ne21 + i21)*S_v*S_v + i20;
+    // state is stored transposed: M[i20][is] = S[is][i20], so row i20 is contiguous
+    device const float * s_ptr = (device const float *) (s) + (i23*args.ne21 + i21)*S_v*S_v + i20*S_v;
 
     float ls[NSG];
 
     FOR_UNROLL (short j = 0; j < NSG; j++) {
         const short is = tx*NSG + j;
-        ls[j] = s_ptr[is*S_v];
+        ls[j] = s_ptr[is];
     }
 
     device float * dst_attn = (device float *) (dst) + (i23*args.ne22*args.ne21 + i21)*S_v + i20;
@@ -2536,11 +2537,11 @@ kernel void kernel_gated_delta_net_impl(
         g_ptr += args.ne21*G;
     }
 
-    device float * dst_state = (device float *) (dst) + args.ne23*args.ne22*args.ne21*S_v + (i23*args.ne21 + i21)*S_v*S_v + i20;
+    device float * dst_state = (device float *) (dst) + args.ne23*args.ne22*args.ne21*S_v + (i23*args.ne21 + i21)*S_v*S_v + i20*S_v;
 
     FOR_UNROLL (short j = 0; j < NSG; j++) {
         const short is = tx*NSG + j;
-        dst_state[is*S_v] = ls[j];
+        dst_state[is] = ls[j];
     }
 
 #undef S_v
@@ -3006,7 +3007,7 @@ kernel void kernel_l2_norm_impl(
     sumf = shmem_f32[tiisg];
     sumf = simd_sum(sumf);
 
-    const float scale = 1.0f/sqrt(max(sumf, args.eps));
+    const float scale = 1.0f/max(sqrt(sumf), args.eps);
 
     for (int i00 = tpitg.x; i00 < args.ne00; i00 += ntg.x) {
         y[i00] = x[i00] * scale;

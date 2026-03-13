@@ -65,7 +65,7 @@ index 59190b7c4..a833756f9 100644
          // (optional) event synchronization
          // record an event on this stream
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index c4be126f7..7bc060b30 100644
+index c1f4f63ba..761bd12df 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
 @@ -355,14 +355,14 @@ enum ggml_status ggml_backend_graph_plan_compute(ggml_backend_t backend, ggml_ba
@@ -104,7 +104,7 @@ index c4be126f7..7bc060b30 100644
                  for (int b = 0; b < src_backend_id; b++) {
                      if (ggml_backend_supports_op(sched->backends[b], tensor) && ggml_backend_offload_op(sched->backends[b], tensor)) {
                          SET_CAUSE(tensor, "1.off");
-@@ -1583,7 +1585,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+@@ -1579,7 +1581,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
          }
  
          if (!sched->callback_eval) {
@@ -113,7 +113,7 @@ index c4be126f7..7bc060b30 100644
              if (ec != GGML_STATUS_SUCCESS) {
                  return ec;
              }
-@@ -1605,7 +1607,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+@@ -1601,7 +1603,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
  
                  struct ggml_cgraph gv = ggml_graph_view(&split->graph, j0, j1 + 1);
  
@@ -122,7 +122,7 @@ index c4be126f7..7bc060b30 100644
                  if (ec != GGML_STATUS_SUCCESS) {
                      return ec;
                  }
-@@ -1695,12 +1697,17 @@ ggml_backend_sched_t ggml_backend_sched_new(
+@@ -1691,12 +1693,17 @@ ggml_backend_sched_t ggml_backend_sched_new(
  
      sched->galloc = ggml_gallocr_new_n(sched->bufts, n_backends);
      sched->op_offload = op_offload;
@@ -200,10 +200,10 @@ index ddf1737a3..622cf5d24 100644
  
  static const struct ggml_backend_i ggml_backend_cpu_i = {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index c871adbb0..2ff631e4b 100644
+index 639f887ae..0f646d1a9 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -4116,9 +4116,11 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
+@@ -4110,9 +4110,11 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
  }
  #endif // USE_CUDA_GRAPH
  

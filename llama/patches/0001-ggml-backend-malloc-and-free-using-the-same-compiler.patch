@@ -23,7 +23,7 @@ problem.
  8 files changed, 21 insertions(+), 2 deletions(-)
 
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index bc57df20b..fb8bbd778 100644
+index 22c656996..c522fec01 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
 @@ -112,7 +112,6 @@ void ggml_backend_buffer_free(ggml_backend_buffer_t buffer) {
@@ -42,7 +42,7 @@ index bc57df20b..fb8bbd778 100644
  }
  
  static void ggml_backend_multi_buffer_clear(ggml_backend_buffer_t buffer, uint8_t value) {
-@@ -2132,6 +2132,11 @@ static void * ggml_backend_cpu_buffer_get_base(ggml_backend_buffer_t buffer) {
+@@ -2128,6 +2128,11 @@ static void * ggml_backend_cpu_buffer_get_base(ggml_backend_buffer_t buffer) {
  static void ggml_backend_cpu_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      GGML_ASSERT(buffer);
      ggml_aligned_free(buffer->context, buffer->size);
@@ -54,7 +54,7 @@ index bc57df20b..fb8bbd778 100644
  }
  
  static void ggml_backend_cpu_buffer_memset_tensor(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, uint8_t value, size_t offset, size_t size) {
-@@ -2184,7 +2189,7 @@ static const struct ggml_backend_buffer_i ggml_backend_cpu_buffer_i = {
+@@ -2180,7 +2185,7 @@ static const struct ggml_backend_buffer_i ggml_backend_cpu_buffer_i = {
  };
  
  static const struct ggml_backend_buffer_i ggml_backend_cpu_buffer_from_ptr_i = {
@@ -84,7 +84,7 @@ index 3f3de9f0b..90a15f217 100644
  
  /**
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index cda275b8c..3bfb89f00 100644
+index 9d2aacf4b..eba436ca0 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -601,6 +601,7 @@ struct ggml_backend_cuda_buffer_context {

@@ -470,12 +470,12 @@ static bool decode_audio_from_buf(const unsigned char * buf_in, size_t len, int 
 mtmd_bitmap * mtmd_helper_bitmap_init_from_buf(mtmd_context * ctx, const unsigned char * buf, size_t len) {
     if (audio_helpers::is_audio_file((const char *)buf, len)) {
         std::vector<float> pcmf32;
-        int bitrate = mtmd_get_audio_bitrate(ctx);
-        if (bitrate < 0) {
+        const int sample_rate = mtmd_get_audio_sample_rate(ctx);
+        if (sample_rate < 0) {
             LOG_ERR("This model does not support audio input\n");
             return nullptr;
         }
-        if (!audio_helpers::decode_audio_from_buf(buf, len, bitrate, pcmf32)) {
+        if (!audio_helpers::decode_audio_from_buf(buf, len, sample_rate, pcmf32)) {
             LOG_ERR("Unable to read WAV audio file from buffer\n");
             return nullptr;
         }

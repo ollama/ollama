@@ -44,7 +44,7 @@ void main() {
 
     FLOAT_TYPE state[S_V];
     [[unroll]] for (uint i = 0; i < S_V; i++) {
-        state[i] = FLOAT_TYPE(data_state[state_base + i * S_V + col]);
+        state[i] = FLOAT_TYPE(data_state[state_base + col * S_V + i]);
     }
 
     uint attn_off = (seq_id * n_tokens * H + head_id) * S_V;
@@ -123,6 +123,6 @@ void main() {
     }
 
     [[unroll]] for (uint i = 0; i < S_V; i++) {
-        data_dst[s_off + state_base + i * S_V + col] = state[i];
+        data_dst[s_off + state_base + col * S_V + i] = state[i];
     }
 }

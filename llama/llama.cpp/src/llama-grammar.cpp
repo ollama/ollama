@@ -1163,13 +1163,13 @@ struct llama_grammar * llama_grammar_init_impl(
     // if there is a grammar, parse it
     // rules will be empty (default) if there are parse errors
     if (!parser.parse(grammar_str) || parser.rules.empty()) {
-        fprintf(stderr, "%s: failed to parse grammar\n", __func__);
+        LLAMA_LOG_ERROR("failed to parse grammar\n");
         return nullptr;
     }
 
-    // Ensure that there is a "root" node.
-    if (parser.symbol_ids.find("root") == parser.symbol_ids.end()) {
-        fprintf(stderr, "%s: grammar does not contain a 'root' symbol\n", __func__);
+    // Ensure that the grammar contains the start symbol
+    if (parser.symbol_ids.find(grammar_root) == parser.symbol_ids.end()) {
+        LLAMA_LOG_ERROR("grammar does not contain a '%s' symbol\n", grammar_root);
         return nullptr;
     }
 
@@ -1198,7 +1198,7 @@ struct llama_grammar * llama_grammar_init_impl(
             continue;
         }
         if (llama_grammar_detect_left_recursion(vec_rules, i, &rules_visited, &rules_in_progress, &rules_may_be_empty)) {
-            LLAMA_LOG_ERROR("unsupported grammar, left recursion detected for nonterminal at index %zu", i);
+            LLAMA_LOG_ERROR("unsupported grammar, left recursion detected for nonterminal at index %zu\n", i);
             return nullptr;
         }
     }

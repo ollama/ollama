@@ -45,10 +45,11 @@ __global__ void gated_delta_net_cuda(const float * q,
     static_assert(S_v % warp_size == 0, "S_v must be a multiple of warp_size");
     constexpr int rows_per_lane = (S_v + warp_size - 1) / warp_size;
     float         s_shard[rows_per_lane];
+    // state is stored transposed: M[col][i] = S[i][col], row col is contiguous
 #pragma unroll
     for (int r = 0; r < rows_per_lane; r++) {
         const int i = r * warp_size + lane;
-        s_shard[r]  = curr_state[i * S_v + col];
+        s_shard[r]  = curr_state[col * S_v + i];
     }
 
     for (int t = 0; t < n_tokens; t++) {
@@ -126,21 +127,12 @@ __global__ void gated_delta_net_cuda(const float * q,
         attn_data += S_v * H;
     }
 
-    // Write state back to global memory
+    // Write state back to global memory (transposed layout)
 #pragma unroll
     for (int r = 0; r < rows_per_lane; r++) {
         const int i          = r * warp_size + lane;
-        state[i * S_v + col] = s_shard[r];
+        state[col * S_v + i] = s_shard[r];
     }
-}
-
-static size_t calculate_smem(const int sv, int cc)
-{
-    size_t smem = 0;
-    if ((GGML_CUDA_CC_IS_AMD(cc) && !GGML_CUDA_CC_IS_RDNA3(cc) && !GGML_CUDA_CC_IS_RDNA4(cc)) || GGML_CUDA_CC_IS_MTHREADS(cc)) {
-        smem = sv * sv * sizeof(float);
-    }
-    return smem;
 }
 
 template <bool KDA>
@@ -179,18 +171,14 @@ static void launch_gated_delta_net(
                 sb1, sb2, sb3, neqk1_magic, rq3_magic, scale);
             break;
         case 64: {
-            constexpr int sv = 64;
-            size_t smem = calculate_smem(sv, cc);
-            gated_delta_net_cuda<sv, KDA><<<grid_dims, block_dims, smem, stream>>>(
+            gated_delta_net_cuda<64, KDA><<<grid_dims, block_dims, 0, stream>>>(
                 q_d, k_d, v_d, g_d, b_d, s_d, dst_d, H,
                 n_tokens, n_seqs, sq1, sq2, sq3, sv1, sv2, sv3,
                 sb1, sb2, sb3, neqk1_magic, rq3_magic, scale);
             break;
         }
         case 128: {
-            constexpr int sv = 128;
-            size_t smem = calculate_smem(sv, cc);
-            gated_delta_net_cuda<sv, KDA><<<grid_dims, block_dims, smem, stream>>>(
+            gated_delta_net_cuda<128, KDA><<<grid_dims, block_dims, 0, stream>>>(
                 q_d, k_d, v_d, g_d, b_d, s_d, dst_d, H,
                 n_tokens, n_seqs, sq1, sq2, sq3, sv1, sv2, sv3,
                 sb1, sb2, sb3, neqk1_magic, rq3_magic, scale);
