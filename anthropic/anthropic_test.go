@@ -890,7 +890,7 @@ func TestStreamConverter_ThinkingDirectlyFollowedByToolCall(t *testing.T) {
 		t.Errorf("expected tool_use block at index 1, got %+v", toolStart.Data)
 	}
 	if toolDelta == nil {
-		t.Error("expected input_json_delta event for tool call")
+		t.Fatal("expected input_json_delta event for tool call")
 	}
 	if delta, ok := toolDelta.Data.(ContentBlockDeltaEvent); !ok || delta.Index != 1 {
 		t.Errorf("expected tool delta at index 1, got %+v", toolDelta.Data)
