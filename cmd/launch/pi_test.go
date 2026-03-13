@@ -1,4 +1,4 @@
-package config
+package launch
 
 import (
 	"context"
@@ -840,7 +840,7 @@ func TestCreateConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("falls back to cloud context when show fails", func(t *testing.T) {
+	t.Run("cloud model falls back to hardcoded context when show fails", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
 			fmt.Fprintf(w, `{"error":"model not found"}`)
@@ -857,7 +857,7 @@ func TestCreateConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("falls back to cloud context when model info is empty", func(t *testing.T) {
+	t.Run("cloud model falls back to hardcoded context when show omits model info", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/show" {
 				fmt.Fprintf(w, `{"capabilities":[],"model_info":{}}`)
@@ -877,7 +877,7 @@ func TestCreateConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("falls back to cloud context for dash cloud suffix", func(t *testing.T) {
+	t.Run("cloud model with dash suffix falls back to hardcoded context", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
 			fmt.Fprintf(w, `{"error":"model not found"}`)
@@ -893,7 +893,6 @@ func TestCreateConfig(t *testing.T) {
 			t.Errorf("contextWindow = %v, want 131072", cfg["contextWindow"])
 		}
 	})
-
 	t.Run("skips zero context length", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/show" {

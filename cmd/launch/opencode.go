@@ -1,9 +1,7 @@
-package config
+package launch
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -12,55 +10,18 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/internal/modelref"
 )
 
 // OpenCode implements Runner and Editor for OpenCode integration
 type OpenCode struct{}
-
-// cloudModelLimit holds context and output token limits for a cloud model.
-type cloudModelLimit struct {
-	Context int
-	Output  int
-}
-
-// lookupCloudModelLimit returns the token limits for a cloud model.
-// It normalizes explicit cloud source suffixes before checking the shared limit map.
-func lookupCloudModelLimit(name string) (cloudModelLimit, bool) {
-	base, stripped := modelref.StripCloudSourceTag(name)
-	if stripped {
-		if l, ok := cloudModelLimits[base]; ok {
-			return l, true
-		}
-	}
-	return cloudModelLimit{}, false
-}
 
 func (o *OpenCode) String() string { return "OpenCode" }
 
 func (o *OpenCode) Run(model string, args []string) error {
 	if _, err := exec.LookPath("opencode"); err != nil {
 		return fmt.Errorf("opencode is not installed, install from https://opencode.ai")
-	}
-
-	// Call Edit() to ensure config is up-to-date before launch
-	models := []string{model}
-	if config, err := loadIntegration("opencode"); err == nil && len(config.Models) > 0 {
-		models = config.Models
-	}
-	var err error
-	models, err = resolveEditorModels("opencode", models, func() ([]string, error) {
-		return selectModels(context.Background(), "opencode", "")
-	})
-	if errors.Is(err, errCancelled) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if err := o.Edit(models); err != nil {
-		return fmt.Errorf("setup failed: %w", err)
 	}
 
 	cmd := exec.Command("opencode", args...)
@@ -191,7 +152,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 	if err != nil {
 		return err
 	}
-	if err := writeWithBackup(configPath, configData); err != nil {
+	if err := fileutil.WriteWithBackup(configPath, configData); err != nil {
 		return err
 	}
 
@@ -243,7 +204,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 	if err != nil {
 		return err
 	}
-	return writeWithBackup(statePath, stateData)
+	return fileutil.WriteWithBackup(statePath, stateData)
 }
 
 func (o *OpenCode) Models() []string {
@@ -251,7 +212,7 @@ func (o *OpenCode) Models() []string {
 	if err != nil {
 		return nil
 	}
-	config, err := readJSONFile(filepath.Join(home, ".config", "opencode", "opencode.json"))
+	config, err := fileutil.ReadJSON(filepath.Join(home, ".config", "opencode", "opencode.json"))
 	if err != nil {
 		return nil
 	}
