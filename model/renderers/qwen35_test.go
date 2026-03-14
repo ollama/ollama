@@ -262,9 +262,34 @@ func TestQwen35RendererToolDefinitionsUseLiteralHTMLChars(t *testing.T) {
 	}
 }
 
+// TestQwen35RendererInterleavedThinkingAndTools verifies that historical
+// assistant messages with thinking content and tool calls are rendered
+// correctly in both think=true and think=false modes.
+//
+// The think=false subtest is the primary regression detector for the fork's
+// unconditional thinking block fix (commit 4044b63f). The official Qwen 3.5
+// Jinja2 template (Qwen/Qwen3.5-27B on HuggingFace) checks enable_thinking
+// in exactly one place — the generation prompt at the end. Historical
+// assistant messages receive <think> block wrapping based solely on their
+// position relative to last_query_index, with no enable_thinking check.
+//
+// The fork's fix has two parts that work together:
+//   - splitQwen35ReasoningContent (line 65): removed the isThinking parameter
+//     so reasoning extraction is unconditional — the upstream version gates on
+//     isThinking, silently discarding stored reasoning when think=false.
+//   - Rendering condition (line 143): removed the isThinking && prefix so
+//     <think> wrapping is unconditional for messages after lastQueryIndex.
+//
+// If either part regresses, the think=false subtest fails:
+//   - Re-adding isThinking to splitQwen35ReasoningContent causes the reasoning
+//     TEXT to vanish from inside the <think> tags (extraction suppressed).
+//   - Re-adding isThinking && to line 143 causes the <think> TAGS THEMSELVES
+//     to vanish (wrapping suppressed).
+//
+// The think=true subtest would pass in both regression scenarios because
+// isThinking is true, satisfying any re-added gate. This is why the pair
+// of subtests is necessary: think=true alone provides zero protection.
 func TestQwen35RendererInterleavedThinkingAndTools(t *testing.T) {
-	renderer := &Qwen35Renderer{isThinking: true}
-
 	msgs := []api.Message{
 		{Role: "system", Content: "You are a helpful assistant."},
 		{Role: "user", Content: "Plan a picnic in Paris."},
@@ -302,10 +327,10 @@ func TestQwen35RendererInterleavedThinkingAndTools(t *testing.T) {
 		{Role: "tool", Content: "5"},
 	}
 
-	got, err := renderer.Render(msgs, qwen35WeatherUVTools(), nil)
-	if err != nil {
-		t.Fatalf("render failed: %v", err)
-	}
+	// Both assistant messages are at indices 2 and 4, both after
+	// lastQueryIndex=1 (the user message "Plan a picnic in Paris.").
+	// Both have non-empty Thinking fields. The official template wraps
+	// both in <think> blocks unconditionally.
 
 	wantFirstTurn := `<|im_start|>assistant
 <think>
@@ -321,9 +346,6 @@ Paris
 </parameter>
 </function>
 </tool_call><|im_end|>`
-	if !strings.Contains(got, wantFirstTurn) {
-		t.Fatalf("expected first assistant thinking/tool sequence, got:\n%s", got)
-	}
 
 	wantSecondTurn := `<|im_start|>assistant
 <think>
@@ -339,13 +361,100 @@ Paris
 </parameter>
 </function>
 </tool_call><|im_end|>`
-	if !strings.Contains(got, wantSecondTurn) {
-		t.Fatalf("expected second assistant thinking/tool sequence, got:\n%s", got)
-	}
 
-	if !strings.HasSuffix(got, "<|im_start|>assistant\n<think>\n") {
-		t.Fatalf("expected assistant thinking prefill at end, got:\n%s", got)
-	}
+	t.Run("think=true", func(t *testing.T) {
+		renderer := &Qwen35Renderer{isThinking: true}
+		got, err := renderer.Render(msgs, qwen35WeatherUVTools(), nil)
+		if err != nil {
+			t.Fatalf("render failed: %v", err)
+		}
+
+		if !strings.Contains(got, wantFirstTurn) {
+			t.Fatalf("expected first assistant thinking/tool sequence, got:\n%s", got)
+		}
+
+		if !strings.Contains(got, wantSecondTurn) {
+			t.Fatalf("expected second assistant thinking/tool sequence, got:\n%s", got)
+		}
+
+		if !strings.HasSuffix(got, "<|im_start|>assistant\n<think>\n") {
+			t.Fatalf("expected assistant thinking prefill at end, got:\n%s", got)
+		}
+	})
+
+	// think=false: The critical regression test for the fork's unconditional
+	// thinking block fix. The renderer is constructed with isThinking: true
+	// (the struct default), then Render() is called with ThinkValue{Value: false}
+	// to override it at runtime — exactly as happens when a client sends
+	// think: false on a request after previously using think: true.
+	//
+	// The historical assistant messages MUST still contain their <think> blocks
+	// with the full reasoning text. The official Qwen 3.5 template never checks
+	// enable_thinking when rendering historical messages. Stripping <think>
+	// blocks from history when the client switches to think=false produces a
+	// prompt the model was never trained on: every subsequent token ID shifts,
+	// the KV cache is invalidated from the first affected message onward, and
+	// the model's attention patterns break down.
+	//
+	// Only the generation prompt at the end should differ: think=false produces
+	// <think>\n\n</think>\n\n (empty thinking block, 6 tokens matching the
+	// official template) instead of think=true's <think>\n (open block for
+	// the model to fill).
+	t.Run("think=false", func(t *testing.T) {
+		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true}
+		got, err := renderer.Render(msgs, qwen35WeatherUVTools(), &api.ThinkValue{Value: false})
+		if err != nil {
+			t.Fatalf("render failed: %v", err)
+		}
+
+		// Verify that historical thinking blocks are preserved despite think=false.
+		// This is the core assertion: the official template renders <think> blocks
+		// unconditionally for messages after last_query_index.
+		if !strings.Contains(got, wantFirstTurn) {
+			t.Fatalf(
+				"historical thinking block stripped from first assistant turn when think=false.\n\n"+
+					"The official Qwen 3.5 Jinja2 template renders <think> blocks for historical "+
+					"assistant messages unconditionally — enable_thinking is checked in exactly one "+
+					"place (the generation prompt at the end), never in the message rendering loop. "+
+					"Historical messages after last_query_index always get <think> wrapping, even "+
+					"when enable_thinking is false.\n\n"+
+					"If this fails, the isThinking gate was likely re-added to either "+
+					"splitQwen35ReasoningContent (line 65, suppresses reasoning extraction) or "+
+					"the rendering condition (line 143, suppresses <think> tag wrapping).\n\n"+
+					"got:\n%s", got,
+			)
+		}
+
+		if !strings.Contains(got, wantSecondTurn) {
+			t.Fatalf(
+				"historical thinking block stripped from second assistant turn when think=false.\n\n"+
+					"Same cause as above — the isThinking gate was likely re-added. Both historical "+
+					"assistant messages must retain their <think> blocks regardless of the current "+
+					"turn's thinking mode.\n\n"+
+					"got:\n%s", got,
+			)
+		}
+
+		// The generation prompt must use the non-thinking form: an empty <think>
+		// block that signals the model to skip reasoning and generate content
+		// directly. This is the ONLY part of the output that should differ between
+		// think=true and think=false.
+		wantSuffix := "<|im_start|>assistant\n<think>\n\n</think>\n\n"
+		if !strings.HasSuffix(got, wantSuffix) {
+			tail := got
+			if len(tail) > 200 {
+				tail = tail[len(tail)-200:]
+			}
+			t.Fatalf(
+				"wrong generation prompt suffix for think=false.\n\n"+
+					"When thinking is disabled, the generation prompt must include an empty thinking "+
+					"block (<think>\\n\\n</think>\\n\\n — 6 tokens matching the official template's "+
+					"add_generation_prompt block for enable_thinking=false). Without this, the model "+
+					"may attempt reasoning when the caller explicitly requested no thinking.\n\n"+
+					"expected suffix: %q\ngot tail: %q", wantSuffix, tail,
+			)
+		}
+	})
 }
 
 func TestQwen35RendererAssistantPrefillWithThinking(t *testing.T) {
