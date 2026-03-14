@@ -66,14 +66,20 @@ func splitQwen35ReasoningContent(content, messageThinking string) (reasoning str
 		return strings.TrimSpace(messageThinking), content
 	}
 
-	if idx := strings.Index(content, qwen35ThinkCloseTag); idx != -1 {
-		before := content[:idx]
+	// The official Qwen 3.5 Jinja2 template uses:
+	//   reasoning = content.split('</think>')[0]...split('<think>')[-1]...
+	//   content   = content.split('</think>')[-1].lstrip('\n')
+	// Reasoning comes from before the FIRST </think> (split [0]).
+	// Remaining content comes from after the LAST </think> (split [-1]).
+	if firstClose := strings.Index(content, qwen35ThinkCloseTag); firstClose != -1 {
+		before := content[:firstClose]
 		if open := strings.LastIndex(before, qwen35ThinkOpenTag); open != -1 {
 			reasoning = before[open+len(qwen35ThinkOpenTag):]
 		} else {
 			reasoning = before
 		}
-		content = strings.TrimLeft(content[idx+len(qwen35ThinkCloseTag):], "\n")
+		lastClose := strings.LastIndex(content, qwen35ThinkCloseTag)
+		content = strings.TrimLeft(content[lastClose+len(qwen35ThinkCloseTag):], "\n")
 	}
 
 	return strings.TrimSpace(reasoning), content

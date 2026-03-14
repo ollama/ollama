@@ -690,6 +690,284 @@ Paris
 	})
 }
 
+// TestSplitQwen35ReasoningContent tests the function that extracts reasoning
+// and remaining content from an assistant message. This function's output
+// determines the exact bytes the model sees inside <think>...\n</think> and
+// after the \n\n that follows, for every historical assistant message. The
+// renderer wraps the output as:
+//
+//	<|im_start|>assistant\n<think>\n{reasoning}\n</think>\n\n{remaining}
+//
+// The official Qwen 3.5 Jinja2 template (Qwen/Qwen3.5-27B on HuggingFace)
+// has the same two-path extraction structure:
+//
+//	Path 1: if message.reasoning_content is string → use it directly
+//	Path 2: elif '</think>' in content →
+//	           reasoning = content.split('</think>')[0].rstrip('\n').split('<think>')[-1].lstrip('\n')
+//	           content   = content.split('</think>')[-1].lstrip('\n')
+//	Final:  reasoning_content = reasoning_content|trim
+//
+// The fork's Go equivalent uses strings.Index (first </think>),
+// strings.LastIndex (last <think> before it), strings.TrimLeft("\n") on
+// remaining content, and strings.TrimSpace on reasoning. These are equivalent
+// to the template's operations for all realistic inputs (single </think> tag).
+//
+// The most important property tested here is path equivalence: different
+// clients encode the same model turn differently (explicit Thinking field vs
+// inline <think> tags in Content), and all encodings must produce identical
+// (reasoning, remaining) tuples. If they don't, switching clients
+// mid-conversation — or a client upgrading how it stores thinking — changes
+// the rendered prompt, which means the model sees different token IDs for the
+// same conversation history. This causes silent quality degradation (the model
+// receives a prompt shape it was not trained on) and KV cache invalidation
+// (every byte difference in the historical portion forces expensive
+// recomputation of all subsequent tokens).
+func TestSplitQwen35ReasoningContent(t *testing.T) {
+	tests := []struct {
+		name            string
+		content         string
+		messageThinking string
+		wantReasoning   string
+		wantRemaining   string
+	}{
+		// Test 1a-c: Path equivalence. Three different clients encode the same
+		// model turn (reasoning="Let me check the weather", visible="Paris is
+		// 18°C.") in three different ways. All three must produce identical
+		// output so the renderer emits the same bytes regardless of which
+		// client sent the history.
+		{
+			// Client A: well-behaved client that stores the Thinking field
+			// separately from Content, as Ollama's parser delivers them.
+			// This is Path 1 (explicit field).
+			name:            "equivalence/explicit_thinking_field",
+			content:         "Paris is 18°C.",
+			messageThinking: "Let me check the weather",
+			wantReasoning:   "Let me check the weather",
+			wantRemaining:   "Paris is 18°C.",
+		},
+		{
+			// Client B: third-party client that stores the full model output
+			// including the prefilled <think> open tag as a single content
+			// string, with the Thinking field absent (empty in Go). The \n
+			// after <think> and \n before </think> reflect how the model
+			// actually generates: the renderer prefills "<think>\n", the model
+			// outputs "reasoning\n</think>\n\ncontent", so the full captured
+			// string is "<think>\nreasoning\n</think>\ncontent".
+			// This is Path 2a (both tags present).
+			name:            "equivalence/inline_tags_with_open_and_close",
+			content:         "<think>\nLet me check the weather\n</think>\nParis is 18°C.",
+			messageThinking: "",
+			wantReasoning:   "Let me check the weather",
+			wantRemaining:   "Paris is 18°C.",
+		},
+		{
+			// Client C: client that captures only the model's generated tokens
+			// after the renderer's "<think>\n" prefill, not the prefill itself.
+			// The stored content starts with the reasoning text, then
+			// "</think>", then the visible answer. There is no <think> open tag
+			// because it was part of the prefill, not the model's output.
+			// This is Path 2b (close tag without open tag).
+			name:            "equivalence/inline_close_tag_only_after_prefill",
+			content:         "Let me check the weather\n</think>\nParis is 18°C.",
+			messageThinking: "",
+			wantReasoning:   "Let me check the weather",
+			wantRemaining:   "Paris is 18°C.",
+		},
+
+		// Test 2: Multi-line reasoning with internal newlines. The model often
+		// produces multi-step reasoning like "Step 1: ...\nStep 2: ...". The
+		// \n immediately after <think> and immediately before </think> must be
+		// stripped (they are formatting around the tags, not part of the
+		// reasoning), but internal \n between reasoning steps must survive.
+		// The official template does this via rstrip('\n') and lstrip('\n')
+		// which strip only newlines, then |trim which strips all surrounding
+		// whitespace — but internal newlines are preserved because trim only
+		// operates on the ends. The fork's TrimSpace is equivalent.
+		{
+			name:            "inline_tags_multiline_reasoning",
+			content:         "<think>\nStep 1: look up weather\nStep 2: format answer\n</think>\nParis is 18°C.",
+			messageThinking: "",
+			wantReasoning:   "Step 1: look up weather\nStep 2: format answer",
+			wantRemaining:   "Paris is 18°C.",
+		},
+
+		// Test 3: Close tag without open tag — the model's actual raw output
+		// format after the renderer's prefill. When thinking is enabled, the
+		// renderer writes "<|im_start|>assistant\n<think>\n" before the model
+		// generates. The model then produces "reasoning\n</think>\n\nvisible".
+		// The <think> tag is part of the prefill, not the model's output. The
+		// official template handles this identically: split('</think>')[0]
+		// does not require a preceding <think>, and the subsequent
+		// split('<think>')[-1] is a no-op when no <think> exists (Python's
+		// "text".split('<think>') returns ["text"], and [-1] returns "text").
+		{
+			name:            "close_tag_only_model_raw_output",
+			content:         "Let me check\n</think>\nParis is 18°C.",
+			messageThinking: "",
+			wantReasoning:   "Let me check",
+			wantRemaining:   "Paris is 18°C.",
+		},
+
+		// Test 4: Explicit Thinking field takes priority over inline tags.
+		// If a client sends both a non-empty Thinking field AND content with
+		// <think> tags (a malformed but possible input), the function must NOT
+		// double-extract. Path 1 fires at line 65 and returns immediately.
+		// The content is returned exactly as received — the inline tags become
+		// literal characters in the visible portion of the prompt. The renderer
+		// wraps only the explicit field's reasoning in <think>...</think> tags.
+		{
+			name:            "explicit_field_wins_over_inline_tags",
+			content:         "<think>\ninline reasoning\n</think>\nvisible content",
+			messageThinking: "explicit reasoning from Thinking field",
+			wantReasoning:   "explicit reasoning from Thinking field",
+			wantRemaining:   "<think>\ninline reasoning\n</think>\nvisible content",
+		},
+
+		// Test 5: No thinking at all — neither explicit field nor inline tags.
+		// The function returns empty reasoning. The renderer wraps this as
+		// <think>\n\n</think>\n\n (an empty thinking block), which matches the
+		// official template's output when reasoning_content is empty after trim.
+		{
+			name:            "no_thinking_baseline",
+			content:         "just content, no thinking",
+			messageThinking: "",
+			wantReasoning:   "",
+			wantRemaining:   "just content, no thinking",
+		},
+
+		// Test 6: Whitespace-only Thinking field. The string "   \n  " is not
+		// equal to "", so Path 1's guard (messageThinking != "") evaluates to
+		// true and Path 1 fires. strings.TrimSpace returns "". The content is
+		// NOT parsed for inline tags — Path 2 is never reached. The official
+		// template also takes its primary path here ("   \n  " is a string, so
+		// `message.reasoning_content is string` is true), and |trim returns "".
+		// This documents that whitespace-only fields do not fall through to
+		// content parsing.
+		{
+			name:            "whitespace_only_thinking_field",
+			content:         "content that should not be parsed for tags",
+			messageThinking: "   \n  ",
+			wantReasoning:   "",
+			wantRemaining:   "content that should not be parsed for tags",
+		},
+
+		// Test 7: Empty content with explicit thinking. The model produced
+		// reasoning but no visible text — its response is entirely tool calls.
+		// This is a common pattern in agentic use: the model reasons about
+		// which tool to call, then the visible response is just the tool call
+		// XML (which is rendered separately by the tool call loop at lines
+		// 149-166, not by splitQwen35ReasoningContent).
+		{
+			name:            "empty_content_explicit_thinking_tool_call_only",
+			content:         "",
+			messageThinking: "Let me call the function",
+			wantReasoning:   "Let me call the function",
+			wantRemaining:   "",
+		},
+
+		// Test 8: Both empty. The assistant message has no thinking and no
+		// visible content — the turn consists entirely of tool calls with no
+		// reasoning. Path 3: neither messageThinking != "" nor
+		// strings.Index("", "</think>") != -1.
+		{
+			name:            "both_empty_tool_calls_only_no_reasoning",
+			content:         "",
+			messageThinking: "",
+			wantReasoning:   "",
+			wantRemaining:   "",
+		},
+
+		// Test 9: Multiple </think> tags. The official Jinja2 template uses
+		// content.split('</think>')[-1] to extract remaining content, which
+		// takes everything after the LAST </think> tag. Grammar constraints
+		// prevent the model from generating multiple </think> tags when tools
+		// are active, but plain chat without tools has no grammar — the model
+		// generates freely and could produce multiple </think> tags. A client
+		// that stored such output and sent it back as history must not cause
+		// the renderer to include a literal </think> tag in the visible
+		// content portion of the prompt — the model was never trained on
+		// </think> appearing outside the thinking block wrapper.
+		//
+		// The fork currently uses strings.Index (first </think>) at line 69,
+		// which produces remaining="middle\n</think>\nend" — wrong. The fix
+		// is to use strings.LastIndex, matching the official template's [-1]
+		// behavior.
+		{
+			name:            "multiple_close_tags_takes_after_last",
+			content:         "<think>\nfirst\n</think>\nmiddle\n</think>\nend",
+			messageThinking: "",
+			wantReasoning:   "first",
+			wantRemaining:   "end",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotReasoning, gotRemaining := splitQwen35ReasoningContent(tt.content, tt.messageThinking)
+
+			if gotReasoning != tt.wantReasoning {
+				t.Errorf(
+					"reasoning mismatch.\n\n"+
+						"The reasoning value is placed inside <think>\\n{reasoning}\\n</think> by the "+
+						"renderer at line 144. A wrong value means the model sees different tokens inside "+
+						"the thinking block than what it was trained on.\n\n"+
+						"got:  %q\nwant: %q", gotReasoning, tt.wantReasoning,
+				)
+			}
+
+			if gotRemaining != tt.wantRemaining {
+				t.Errorf(
+					"remaining content mismatch.\n\n"+
+						"The remaining value is placed after </think>\\n\\n by the renderer at line 144. "+
+						"A wrong value means the model sees different tokens in the visible content "+
+						"portion of the assistant message than what it was trained on.\n\n"+
+						"got:  %q\nwant: %q", gotRemaining, tt.wantRemaining,
+				)
+			}
+		})
+	}
+
+	// Verify the equivalence property explicitly: the first three test cases
+	// encode the same model turn three different ways. Assert that all three
+	// produce the exact same (reasoning, remaining) tuple. This is a separate
+	// assertion from the individual test cases because the property it tests —
+	// "the model sees the same prompt regardless of which client sent the
+	// history" — is more important than any single extraction path being correct.
+	t.Run("equivalence_across_all_three_client_encodings", func(t *testing.T) {
+		r1, c1 := splitQwen35ReasoningContent(tests[0].content, tests[0].messageThinking) // explicit field
+		r2, c2 := splitQwen35ReasoningContent(tests[1].content, tests[1].messageThinking) // inline both tags
+		r3, c3 := splitQwen35ReasoningContent(tests[2].content, tests[2].messageThinking) // inline close only
+
+		if r1 != r2 || r2 != r3 {
+			t.Errorf(
+				"reasoning differs across client encodings of the same model turn.\n\n"+
+					"Three clients stored the same assistant response differently:\n"+
+					"  Client A (explicit Thinking field):  reasoning=%q\n"+
+					"  Client B (inline <think>...</think>): reasoning=%q\n"+
+					"  Client C (inline </think> only):      reasoning=%q\n\n"+
+					"All three must produce identical reasoning so the renderer emits the same "+
+					"bytes inside <think>...\\n</think> regardless of which client sent the history. "+
+					"Different bytes mean different token IDs, which means the model receives a "+
+					"prompt it was not trained on and the KV cache is invalidated.",
+				r1, r2, r3,
+			)
+		}
+
+		if c1 != c2 || c2 != c3 {
+			t.Errorf(
+				"remaining content differs across client encodings of the same model turn.\n\n"+
+					"Three clients stored the same assistant response differently:\n"+
+					"  Client A (explicit Thinking field):  remaining=%q\n"+
+					"  Client B (inline <think>...</think>): remaining=%q\n"+
+					"  Client C (inline </think> only):      remaining=%q\n\n"+
+					"All three must produce identical remaining content so the renderer emits the "+
+					"same bytes after </think>\\n\\n regardless of which client sent the history.",
+				c1, c2, c3,
+			)
+		}
+	})
+}
+
 func qwen35MathTools() []api.Tool {
 	return []api.Tool{
 		{
