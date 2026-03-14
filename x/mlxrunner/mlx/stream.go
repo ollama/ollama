@@ -1,5 +1,3 @@
-//go:build mlx
-
 package mlx
 
 // #include "generated.h"
@@ -26,6 +24,22 @@ var DefaultDevice = sync.OnceValue(func() Device {
 	C.mlx_get_default_device(&d)
 	return Device{d}
 })
+
+// GPUIsAvailable returns true if a GPU device is available.
+func GPUIsAvailable() bool {
+	dev := C.mlx_device_new_type(C.MLX_GPU, 0)
+	defer C.mlx_device_free(dev)
+	var avail C.bool
+	C.mlx_device_is_available(&avail, dev)
+	return bool(avail)
+}
+
+// SetDefaultDeviceGPU sets the default MLX device to GPU.
+func SetDefaultDeviceGPU() {
+	dev := C.mlx_device_new_type(C.MLX_GPU, 0)
+	C.mlx_set_default_device(dev)
+	C.mlx_device_free(dev)
+}
 
 type Stream struct {
 	ctx C.mlx_stream

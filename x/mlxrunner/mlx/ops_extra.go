@@ -1,5 +1,3 @@
-//go:build mlx
-
 package mlx
 
 // #include "generated.h"
@@ -330,6 +328,19 @@ func ScaledDotProductAttentionCausal(q, k, v *Array, scale float32, causalMask b
 
 	out := New("FAST_SDPA")
 	C.mlx_fast_scaled_dot_product_attention(&out.ctx, q.ctx, k.ctx, v.ctx, C.float(scale), cMode, mask.ctx, sinks.ctx, DefaultStream().ctx)
+	return out
+}
+
+func LayerNormFn(x, weight, bias *Array, eps float32) *Array {
+	out := New("FAST_LAYERNORM")
+	var w, b C.mlx_array
+	if weight != nil {
+		w = weight.ctx
+	}
+	if bias != nil {
+		b = bias.ctx
+	}
+	C.mlx_fast_layer_norm(&out.ctx, x.ctx, w, b, C.float(eps), DefaultStream().ctx)
 	return out
 }
 

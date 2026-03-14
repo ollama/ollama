@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/rand"
 	"net/http"
 	"strings"
@@ -16,6 +17,9 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/openai"
 )
+
+// maxDecompressedBodySize limits the size of a decompressed request body
+const maxDecompressedBodySize = 20 << 20
 
 type BaseWriter struct {
 	gin.ResponseWriter
@@ -53,14 +57,14 @@ type EmbedWriter struct {
 
 func (w *BaseWriter) writeError(data []byte) (int, error) {
 	var serr api.StatusError
-	err := json.Unmarshal(data, &serr)
-	if err != nil {
-		return 0, err
+	if err := json.Unmarshal(data, &serr); err != nil {
+		// If the error response isn't valid JSON, use the raw bytes as the
+		// error message rather than surfacing a confusing JSON parse error.
+		serr.ErrorMessage = string(data)
 	}
 
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	err = json.NewEncoder(w.ResponseWriter).Encode(openai.NewError(http.StatusInternalServerError, serr.Error()))
-	if err != nil {
+	if err := json.NewEncoder(w.ResponseWriter).Encode(openai.NewError(w.ResponseWriter.Status(), serr.Error())); err != nil {
 		return 0, err
 	}
 
@@ -76,22 +80,29 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 
 	// chat chunk
 	if w.stream {
-		c := openai.ToChunk(w.id, chatResponse, w.toolCallSent)
-		d, err := json.Marshal(c)
-		if err != nil {
-			return 0, err
-		}
-		if !w.toolCallSent && len(c.Choices) > 0 && len(c.Choices[0].Delta.ToolCalls) > 0 {
-			w.toolCallSent = true
-		}
-
+		chunks := openai.ToChunks(w.id, chatResponse, w.toolCallSent)
 		w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
-		_, err = w.ResponseWriter.Write([]byte(fmt.Sprintf("data: %s\n\n", d)))
-		if err != nil {
-			return 0, err
+		for _, c := range chunks {
+			d, err := json.Marshal(c)
+			if err != nil {
+				return 0, err
+			}
+			if !w.toolCallSent && len(c.Choices) > 0 && len(c.Choices[0].Delta.ToolCalls) > 0 {
+				w.toolCallSent = true
+			}
+			_, err = w.ResponseWriter.Write([]byte(fmt.Sprintf("data: %s\n\n", d)))
+			if err != nil {
+				return 0, err
+			}
 		}
 
 		if chatResponse.Done {
+			c := openai.ToChunk(w.id, chatResponse, w.toolCallSent)
+			if len(chunks) > 0 {
+				c = chunks[len(chunks)-1]
+			} else {
+				slog.Warn("ToChunks returned no chunks; falling back to ToChunk for usage chunk", "id", w.id, "model", chatResponse.Model)
+			}
 			if w.streamOptions != nil && w.streamOptions.IncludeUsage {
 				u := openai.ToUsage(chatResponse)
 				c.Usage = &u
@@ -504,7 +515,7 @@ func ResponsesMiddleware() gin.HandlerFunc {
 				return
 			}
 			defer reader.Close()
-			c.Request.Body = io.NopCloser(reader)
+			c.Request.Body = http.MaxBytesReader(c.Writer, io.NopCloser(reader), maxDecompressedBodySize)
 			c.Request.Header.Del("Content-Encoding")
 		}
 

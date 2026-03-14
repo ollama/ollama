@@ -3,7 +3,6 @@
 package config
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/internal/fileutil"
 )
 
 type integration struct {
@@ -19,6 +18,9 @@ type integration struct {
 	Aliases   map[string]string `json:"aliases,omitempty"`
 	Onboarded bool              `json:"onboarded,omitempty"`
 }
+
+// IntegrationConfig is the persisted config for one integration.
+type IntegrationConfig = integration
 
 type config struct {
 	Integrations  map[string]*integration `json:"integrations"`
@@ -124,7 +126,7 @@ func save(cfg *config) error {
 		return err
 	}
 
-	return writeWithBackup(path, data)
+	return fileutil.WriteWithBackup(path, data)
 }
 
 func SaveIntegration(appName string, models []string) error {
@@ -155,8 +157,8 @@ func SaveIntegration(appName string, models []string) error {
 	return save(cfg)
 }
 
-// integrationOnboarded marks an integration as onboarded in ollama's config.
-func integrationOnboarded(appName string) error {
+// MarkIntegrationOnboarded marks an integration as onboarded in Ollama's config.
+func MarkIntegrationOnboarded(appName string) error {
 	cfg, err := load()
 	if err != nil {
 		return err
@@ -174,7 +176,7 @@ func integrationOnboarded(appName string) error {
 
 // IntegrationModel returns the first configured model for an integration, or empty string if not configured.
 func IntegrationModel(appName string) string {
-	integrationConfig, err := loadIntegration(appName)
+	integrationConfig, err := LoadIntegration(appName)
 	if err != nil || len(integrationConfig.Models) == 0 {
 		return ""
 	}
@@ -183,7 +185,7 @@ func IntegrationModel(appName string) string {
 
 // IntegrationModels returns all configured models for an integration, or nil.
 func IntegrationModels(appName string) []string {
-	integrationConfig, err := loadIntegration(appName)
+	integrationConfig, err := LoadIntegration(appName)
 	if err != nil || len(integrationConfig.Models) == 0 {
 		return nil
 	}
@@ -228,28 +230,8 @@ func SetLastSelection(selection string) error {
 	return save(cfg)
 }
 
-// ModelExists checks if a model exists on the Ollama server.
-func ModelExists(ctx context.Context, name string) bool {
-	if name == "" {
-		return false
-	}
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return false
-	}
-	models, err := client.List(ctx)
-	if err != nil {
-		return false
-	}
-	for _, m := range models.Models {
-		if m.Name == name || strings.HasPrefix(m.Name, name+":") {
-			return true
-		}
-	}
-	return false
-}
-
-func loadIntegration(appName string) (*integration, error) {
+// LoadIntegration returns the saved config for one integration.
+func LoadIntegration(appName string) (*integration, error) {
 	cfg, err := load()
 	if err != nil {
 		return nil, err
@@ -263,7 +245,8 @@ func loadIntegration(appName string) (*integration, error) {
 	return integrationConfig, nil
 }
 
-func saveAliases(appName string, aliases map[string]string) error {
+// SaveAliases replaces the saved aliases for one integration.
+func SaveAliases(appName string, aliases map[string]string) error {
 	if appName == "" {
 		return errors.New("app name cannot be empty")
 	}

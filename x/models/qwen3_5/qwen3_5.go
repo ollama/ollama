@@ -1,5 +1,3 @@
-//go:build mlx
-
 // Package qwen3_5 provides the Qwen 3.5 text and MoE implementation for MLX.
 package qwen3_5
 
