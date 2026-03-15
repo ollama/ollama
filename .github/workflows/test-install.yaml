@@ -6,6 +6,10 @@ on:
       - 'scripts/install.sh'
       - '.github/workflows/test-install.yaml'
 
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   test:
     strategy:
