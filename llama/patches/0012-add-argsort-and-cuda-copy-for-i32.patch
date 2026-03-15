@@ -233,10 +233,10 @@ index 7697c292d..00d773dd3 100644
 +    *dst = *src;
 +}
 diff --git a/ggml/src/ggml-cuda/cpy.cu b/ggml/src/ggml-cuda/cpy.cu
-index ee84303ef..178e82d76 100644
+index d208acf2d..4fc1c3580 100644
 --- a/ggml/src/ggml-cuda/cpy.cu
 +++ b/ggml/src/ggml-cuda/cpy.cu
-@@ -369,6 +369,43 @@ static void ggml_cpy_f32_iq4_nl_cuda(
+@@ -372,6 +372,43 @@ static void ggml_cpy_f32_iq4_nl_cuda(
          (cx, cdst, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13);
  }
  
@@ -280,7 +280,7 @@ index ee84303ef..178e82d76 100644
  void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, ggml_tensor * src1) {
      const int64_t ne = ggml_nelements(src0);
      GGML_ASSERT(ne == ggml_nelements(src1));
-@@ -495,6 +532,9 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
+@@ -498,6 +535,9 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
              ggml_cpy_scalar_cuda<half, float>
                  (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
          }
@@ -291,7 +291,7 @@ index ee84303ef..178e82d76 100644
          if (can_be_transposed) {
              ggml_cpy_scalar_cuda<nv_bfloat16, nv_bfloat16, true>
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index d4b129ed7..478bc79b4 100644
+index b2328605d..267e490fc 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
 @@ -5130,8 +5130,77 @@ kernel void kernel_argsort_f32_i32(

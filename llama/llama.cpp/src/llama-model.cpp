@@ -7505,6 +7505,12 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
             if (!layer.wo_s && layer.wo) {
                 layer.wo_s = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "scale", i), {1}, TENSOR_NOT_REQUIRED);
             }
+            if (!layer.wqkv_s && layer.wqkv) {
+                layer.wqkv_s = create_tensor(tn(LLM_TENSOR_ATTN_QKV, "scale", i), {1}, TENSOR_NOT_REQUIRED);
+            }
+            if (!layer.wqkv_gate_s && layer.wqkv_gate) {
+                layer.wqkv_gate_s = create_tensor(tn(LLM_TENSOR_ATTN_GATE, "scale", i), {1}, TENSOR_NOT_REQUIRED);
+            }
 
             // dense FFN weight scales (per-tensor, shape {1})
             if (!layer.ffn_gate_s && layer.ffn_gate) {
@@ -7516,6 +7522,15 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
             if (!layer.ffn_up_s && layer.ffn_up) {
                 layer.ffn_up_s = create_tensor(tn(LLM_TENSOR_FFN_UP, "scale", i), {1}, TENSOR_NOT_REQUIRED);
             }
+            if (!layer.ffn_gate_shexp_s && layer.ffn_gate_shexp) {
+                layer.ffn_gate_shexp_s = create_tensor(tn(LLM_TENSOR_FFN_GATE_SHEXP, "scale", i), {1}, TENSOR_NOT_REQUIRED);
+            }
+            if (!layer.ffn_down_shexp_s && layer.ffn_down_shexp) {
+                layer.ffn_down_shexp_s = create_tensor(tn(LLM_TENSOR_FFN_DOWN_SHEXP, "scale", i), {1}, TENSOR_NOT_REQUIRED);
+            }
+            if (!layer.ffn_up_shexp_s && layer.ffn_up_shexp) {
+                layer.ffn_up_shexp_s = create_tensor(tn(LLM_TENSOR_FFN_UP_SHEXP, "scale", i), {1}, TENSOR_NOT_REQUIRED);
+            }
 
             // MoE expert weight scales (per-expert, shape {n_expert})
             if (!layer.ffn_gate_exps_s && layer.ffn_gate_exps) {
@@ -7526,6 +7541,17 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
             }
             if (!layer.ffn_up_exps_s && layer.ffn_up_exps) {
                 layer.ffn_up_exps_s = create_tensor(tn(LLM_TENSOR_FFN_UP_EXPS, "scale", i), {n_expert}, TENSOR_NOT_REQUIRED);
+            }
+
+            // recurrent / linear-attention weight scales (per-tensor, shape {1})
+            if (!layer.ssm_out_s && layer.ssm_out) {
+                layer.ssm_out_s = create_tensor(tn(LLM_TENSOR_SSM_OUT, "scale", i), {1}, TENSOR_NOT_REQUIRED);
+            }
+            if (!layer.ssm_alpha_s && layer.ssm_alpha) {
+                layer.ssm_alpha_s = create_tensor(tn(LLM_TENSOR_SSM_ALPHA, "scale", i), {1}, TENSOR_NOT_REQUIRED);
+            }
+            if (!layer.ssm_beta_s && layer.ssm_beta) {
+                layer.ssm_beta_s = create_tensor(tn(LLM_TENSOR_SSM_BETA, "scale", i), {1}, TENSOR_NOT_REQUIRED);
             }
         }
     }

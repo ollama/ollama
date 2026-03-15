@@ -402,9 +402,17 @@ struct llama_layer {
     struct ggml_tensor * wk_s       = nullptr;
     struct ggml_tensor * wv_s       = nullptr;
     struct ggml_tensor * wo_s       = nullptr;
+    struct ggml_tensor * wqkv_s     = nullptr;
+    struct ggml_tensor * wqkv_gate_s = nullptr;
     struct ggml_tensor * ffn_gate_s = nullptr;
     struct ggml_tensor * ffn_up_s   = nullptr;
     struct ggml_tensor * ffn_down_s = nullptr;
+    struct ggml_tensor * ffn_gate_shexp_s = nullptr;
+    struct ggml_tensor * ffn_up_shexp_s   = nullptr;
+    struct ggml_tensor * ffn_down_shexp_s = nullptr;
+    struct ggml_tensor * ssm_out_s  = nullptr;
+    struct ggml_tensor * ssm_alpha_s = nullptr;
+    struct ggml_tensor * ssm_beta_s  = nullptr;
 
     // altup & laurel
     struct ggml_tensor * per_layer_inp_gate   = nullptr;

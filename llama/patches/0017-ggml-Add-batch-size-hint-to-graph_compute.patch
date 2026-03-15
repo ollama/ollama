@@ -200,10 +200,10 @@ index ddf1737a3..622cf5d24 100644
  
  static const struct ggml_backend_i ggml_backend_cpu_i = {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 639f887ae..0f646d1a9 100644
+index d8308e52a..cf0d9ad94 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -4110,9 +4110,11 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
+@@ -4149,9 +4149,11 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
  }
  #endif // USE_CUDA_GRAPH
  
@@ -217,10 +217,10 @@ index 639f887ae..0f646d1a9 100644
  
      bool use_cuda_graph             = false;
 diff --git a/ggml/src/ggml-hexagon/ggml-hexagon.cpp b/ggml/src/ggml-hexagon/ggml-hexagon.cpp
-index d6e9776b8..fd5ebe504 100644
+index 19917cb11..971e96eef 100644
 --- a/ggml/src/ggml-hexagon/ggml-hexagon.cpp
 +++ b/ggml/src/ggml-hexagon/ggml-hexagon.cpp
-@@ -2549,9 +2549,11 @@ static inline int last_compute_op(ggml_cgraph * graph) {
+@@ -2574,9 +2574,11 @@ static inline int last_compute_op(ggml_cgraph * graph) {
      return last;
  }
  
@@ -285,10 +285,10 @@ index 281fa1bdb..b5f7adf89 100644
      bool reuse = rpc_ctx->gc.is_cached(cgraph);
      if (reuse) {
 diff --git a/ggml/src/ggml-sycl/ggml-sycl.cpp b/ggml/src/ggml-sycl/ggml-sycl.cpp
-index 0b7436ce5..5e85e16b3 100644
+index 6a17769ba..605a5ca6a 100644
 --- a/ggml/src/ggml-sycl/ggml-sycl.cpp
 +++ b/ggml/src/ggml-sycl/ggml-sycl.cpp
-@@ -4409,9 +4409,11 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
+@@ -4416,9 +4416,11 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
  }
  #endif
  
@@ -302,7 +302,7 @@ index 0b7436ce5..5e85e16b3 100644
      bool use_sycl_graph = !g_ggml_sycl_disable_graph && check_graph_compatibility(cgraph);
      if (use_sycl_graph) {
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 671f4bb07..6fbd0ebbf 100644
+index f51f835d4..26b0fdd03 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -14232,8 +14232,9 @@ static int32_t find_first_set(uint32_t x) {

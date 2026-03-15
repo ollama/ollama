@@ -15,7 +15,7 @@ Add luid field to Vulkan device context for device matching.
  create mode 100644 ggml/src/mem_dxgi_pdh.cpp
 
 diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
-index ab763741d..201a260a3 100644
+index 11bd53a82..12528dde3 100644
 --- a/ggml/src/CMakeLists.txt
 +++ b/ggml/src/CMakeLists.txt
 @@ -207,6 +207,7 @@ add_library(ggml-base
@@ -41,7 +41,7 @@ index 119159c97..bf30e258a 100644
  #ifdef __cplusplus
  }
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index a76c8bc69..0e54b3c3e 100644
+index e384d9b77..b40d4270c 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -75,6 +75,7 @@ DispatchLoaderDynamic & ggml_vk_default_dispatcher();

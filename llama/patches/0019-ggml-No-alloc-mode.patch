@@ -321,7 +321,7 @@ index 36d8a3aaa..321357713 100644
  
  struct ggml_cuda_mm_fusion_args_host {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 0f646d1a9..62b284fba 100644
+index cf0d9ad94..064b52592 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -86,6 +86,8 @@
@@ -557,7 +557,7 @@ index 0f646d1a9..62b284fba 100644
  };
  
  ggml_backend_buffer_type_t ggml_backend_cuda_buffer_type(int device) {
-@@ -3691,6 +3746,11 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
+@@ -3730,6 +3785,11 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
                      continue;
                  }
  
@@ -569,7 +569,7 @@ index 0f646d1a9..62b284fba 100644
                  // start of fusion operations
                  static bool disable_fusion = (getenv("GGML_CUDA_DISABLE_FUSION") != nullptr);
                  if (!disable_fusion) {
-@@ -4112,6 +4172,7 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
+@@ -4151,6 +4211,7 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
  
  static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
      ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) backend->context;
@@ -577,7 +577,7 @@ index 0f646d1a9..62b284fba 100644
  
      GGML_UNUSED(batch_size);
  
-@@ -4171,6 +4232,73 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
+@@ -4210,6 +4271,73 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
      return GGML_STATUS_SUCCESS;
  }
  
@@ -651,7 +651,7 @@ index 0f646d1a9..62b284fba 100644
  static void ggml_backend_cuda_event_record(ggml_backend_t backend, ggml_backend_event_t event) {
      ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
  
-@@ -4455,6 +4583,9 @@ static const ggml_backend_i ggml_backend_cuda_interface = {
+@@ -4494,6 +4622,9 @@ static const ggml_backend_i ggml_backend_cuda_interface = {
      /* .event_record            = */ ggml_backend_cuda_event_record,
      /* .event_wait              = */ ggml_backend_cuda_event_wait,
      /* .graph_optimize          = */ ggml_backend_cuda_graph_optimize,

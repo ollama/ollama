@@ -173,7 +173,7 @@ index 413f34c22..bff64fde3 100644
  llama_model_loader::llama_model_loader(
          struct gguf_context * meta,
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 6cc28eff2..3091d6ab2 100644
+index e8e1bbf1c..3c9771f06 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
 @@ -2074,6 +2074,21 @@ void llama_model::load_hparams(llama_model_loader & ml) {
@@ -233,7 +233,7 @@ index 6cc28eff2..3091d6ab2 100644
                          layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
                          layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
                          layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
-@@ -8500,6 +8543,10 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
+@@ -8526,6 +8569,10 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
              {
                  llm = std::make_unique<llm_build_chameleon>(*this, params);
              } break;
@@ -244,7 +244,7 @@ index 6cc28eff2..3091d6ab2 100644
          case LLM_ARCH_WAVTOKENIZER_DEC:
              {
                  llm = std::make_unique<llm_build_wavtokenizer_dec>(*this, params);
-@@ -8803,6 +8850,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
+@@ -8829,6 +8876,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
          case LLM_ARCH_GRANITE_MOE:
          case LLM_ARCH_GRANITE_HYBRID:
          case LLM_ARCH_CHAMELEON:
@@ -253,7 +253,7 @@ index 6cc28eff2..3091d6ab2 100644
          case LLM_ARCH_NEO_BERT:
          case LLM_ARCH_SMOLLM3:
 diff --git a/src/llama-model.h b/src/llama-model.h
-index 9a2dacecc..1455f4dd7 100644
+index 25bf892e7..6d30798b9 100644
 --- a/src/llama-model.h
 +++ b/src/llama-model.h
 @@ -81,6 +81,7 @@ enum llm_type {
@@ -264,7 +264,7 @@ index 9a2dacecc..1455f4dd7 100644
      LLM_TYPE_26B,
      LLM_TYPE_27B,
      LLM_TYPE_30B,
-@@ -453,6 +454,8 @@ struct llama_layer {
+@@ -461,6 +462,8 @@ struct llama_layer {
      struct ggml_tensor * indexer_attn_k   = nullptr;
      struct ggml_tensor * indexer_attn_q_b = nullptr; // note: for lora a/b, not bias
  
