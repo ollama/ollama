@@ -32,9 +32,9 @@ func assertBytesMatchToken(t *testing.T, label, token string, ints []int) {
 }
 
 func TestAPIGenerate(t *testing.T) {
-	initialTimeout := 60 * time.Second
-	streamTimeout := 30 * time.Second
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+	initialTimeout := testDurationEnv("OLLAMA_TEST_INITIAL_TIMEOUT", 60*time.Second)
+	streamTimeout := testDurationEnv("OLLAMA_TEST_STREAM_TIMEOUT", 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testDurationEnv("OLLAMA_TEST_CONTEXT_TIMEOUT", 1*time.Minute))
 	defer cancel()
 	// Set up the test data
 	req := api.GenerateRequest{
@@ -45,6 +45,7 @@ func TestAPIGenerate(t *testing.T) {
 			"seed":        123,
 		},
 	}
+	req.Options = applyTestRunnerOptions(req.Options)
 
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
@@ -187,9 +188,9 @@ func TestAPIGenerate(t *testing.T) {
 }
 
 func TestAPIChat(t *testing.T) {
-	initialTimeout := 60 * time.Second
-	streamTimeout := 30 * time.Second
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+	initialTimeout := testDurationEnv("OLLAMA_TEST_INITIAL_TIMEOUT", 60*time.Second)
+	streamTimeout := testDurationEnv("OLLAMA_TEST_STREAM_TIMEOUT", 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), testDurationEnv("OLLAMA_TEST_CONTEXT_TIMEOUT", 1*time.Minute))
 	defer cancel()
 	// Set up the test data
 	req := api.ChatRequest{
@@ -205,6 +206,7 @@ func TestAPIChat(t *testing.T) {
 			"seed":        123,
 		},
 	}
+	req.Options = applyTestRunnerOptions(req.Options)
 
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()

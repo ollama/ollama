@@ -308,6 +308,65 @@ func init() {
 	}
 }
 
+func testDurationEnv(name string, fallback time.Duration) time.Duration {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback
+	}
+
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		slog.Warn("invalid integration duration override", "env", name, "value", raw, "error", err)
+		return fallback
+	}
+
+	return d
+}
+
+func testIntEnv(name string, fallback int) int {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback
+	}
+
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		slog.Warn("invalid integration integer override", "env", name, "value", raw, "error", err)
+		return fallback
+	}
+
+	return v
+}
+
+func applyTestRunnerOptions(opts map[string]any) map[string]any {
+	if opts == nil {
+		opts = map[string]any{}
+	}
+
+	if _, ok := opts["num_ctx"]; !ok {
+		numCtx := testIntEnv("OLLAMA_TEST_NUM_CTX", testIntEnv("OLLAMA_CONTEXT_LENGTH", 0))
+		if numCtx > 0 {
+			opts["num_ctx"] = numCtx
+		}
+	}
+
+	if _, ok := opts["num_batch"]; !ok {
+		numBatch := testIntEnv("OLLAMA_TEST_NUM_BATCH", 0)
+		if numBatch > 0 {
+			opts["num_batch"] = numBatch
+		}
+	}
+
+	if _, ok := opts["num_predict"]; !ok {
+		numPredict := testIntEnv("OLLAMA_TEST_NUM_PREDICT", 0)
+		if numPredict > 0 {
+			opts["num_predict"] = numPredict
+		}
+	}
+
+	return opts
+}
+
 func FindPort() string {
 	port := 0
 	if a, err := net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {
@@ -540,6 +599,7 @@ func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, strin
 func ChatTestHelper(ctx context.Context, t *testing.T, req api.ChatRequest, anyResp []string) {
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
+	req.Options = applyTestRunnerOptions(req.Options)
 	if err := PullIfMissing(ctx, client, req.Model); err != nil {
 		t.Fatal(err)
 	}
@@ -547,6 +607,9 @@ func ChatTestHelper(ctx context.Context, t *testing.T, req api.ChatRequest, anyR
 }
 
 func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq api.GenerateRequest, anyResp []string, initialTimeout, streamTimeout time.Duration) []int {
+	genReq.Options = applyTestRunnerOptions(genReq.Options)
+	initialTimeout = testDurationEnv("OLLAMA_TEST_INITIAL_TIMEOUT", initialTimeout)
+	streamTimeout = testDurationEnv("OLLAMA_TEST_STREAM_TIMEOUT", streamTimeout)
 	stallTimer := time.NewTimer(initialTimeout)
 	var buf bytes.Buffer
 	var context []int
@@ -655,6 +718,9 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 }
 
 func DoChat(ctx context.Context, t *testing.T, client *api.Client, req api.ChatRequest, anyResp []string, initialTimeout, streamTimeout time.Duration) *api.Message {
+	req.Options = applyTestRunnerOptions(req.Options)
+	initialTimeout = testDurationEnv("OLLAMA_TEST_INITIAL_TIMEOUT", initialTimeout)
+	streamTimeout = testDurationEnv("OLLAMA_TEST_STREAM_TIMEOUT", streamTimeout)
 	stallTimer := time.NewTimer(initialTimeout)
 	var buf bytes.Buffer
 	role := "assistant"
