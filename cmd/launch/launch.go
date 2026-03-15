@@ -313,9 +313,9 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 	}
 
 	var policy LaunchPolicy
+	// TUI does not set a policy, whereas ollama launch <app> does as it can have flags which change the behavior
 	if req.Policy == nil {
 		policy = defaultLaunchPolicy(isInteractiveSession(), false)
-		fmt.Fprintln(os.Stderr, "Launch policy not found from request, using default")
 	} else {
 		policy = *req.Policy
 	}

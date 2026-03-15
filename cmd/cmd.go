@@ -62,6 +62,9 @@ import (
 func init() {
 	// Override default selectors to use Bubbletea TUI instead of raw terminal I/O.
 	launch.DefaultSingleSelector = func(title string, items []launch.ModelItem, current string) (string, error) {
+		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+			return "", fmt.Errorf("model selection requires an interactive terminal; use --model to run in headless mode")
+		}
 		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
 		result, err := tui.SelectSingle(title, tuiItems, current)
 		if errors.Is(err, tui.ErrCancelled) {
@@ -71,6 +74,9 @@ func init() {
 	}
 
 	launch.DefaultMultiSelector = func(title string, items []launch.ModelItem, preChecked []string) ([]string, error) {
+		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+			return nil, fmt.Errorf("model selection requires an interactive terminal; use --model to run in headless mode")
+		}
 		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
 		result, err := tui.SelectMultiple(title, tuiItems, preChecked)
 		if errors.Is(err, tui.ErrCancelled) {
