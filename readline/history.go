@@ -38,12 +38,18 @@ func NewHistory() (*History, error) {
 }
 
 func (h *History) Init() error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
+	var path string
+	if modelsDir := os.Getenv("OLLAMA_MODELS"); modelsDir != "" {
+		// Use parent of OLLAMA_MODELS for history to support portable installations
+		path = filepath.Join(filepath.Dir(modelsDir), "history")
+	} else {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+		path = filepath.Join(home, ".ollama", "history")
 	}
 
-	path := filepath.Join(home, ".ollama", "history")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
