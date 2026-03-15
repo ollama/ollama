@@ -229,7 +229,7 @@ index f3241dc4a..304101821 100644
          /* .async                = */ true,
          /* .host_buffer          = */ false,
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 26b0fdd03..e384d9b77 100644
+index 6fbd0ebbf..a76c8bc69 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -255,6 +255,7 @@ class vk_memory_logger;

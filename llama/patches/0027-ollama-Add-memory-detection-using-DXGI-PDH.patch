@@ -41,7 +41,7 @@ index 119159c97..bf30e258a 100644
  #ifdef __cplusplus
  }
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index e384d9b77..b40d4270c 100644
+index a76c8bc69..0e54b3c3e 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 @@ -75,6 +75,7 @@ DispatchLoaderDynamic & ggml_vk_default_dispatcher();
