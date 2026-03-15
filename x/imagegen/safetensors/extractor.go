@@ -36,6 +36,23 @@ type TensorData struct {
 	reader *io.SectionReader
 }
 
+// WithName returns a shallow copy of TensorData with a different logical tensor
+// name but the same underlying raw data reader.
+func (td *TensorData) WithName(name string) *TensorData {
+	if td == nil {
+		return nil
+	}
+	shape := make([]int32, len(td.Shape))
+	copy(shape, td.Shape)
+	return &TensorData{
+		Name:   name,
+		Dtype:  td.Dtype,
+		Shape:  shape,
+		Size:   td.Size,
+		reader: td.reader,
+	}
+}
+
 // Reader returns an io.Reader for the tensor's raw bytes.
 func (td *TensorData) Reader() io.Reader {
 	return td.reader
@@ -117,8 +134,15 @@ func ExtractRawFromSafetensors(r io.Reader) ([]byte, error) {
 // into a single blob without loading all data into memory.
 // Each TensorData must have been obtained from GetTensor.
 func BuildPackedSafetensorsReader(tensors []*TensorData) io.Reader {
+	return BuildPackedSafetensorsReaderWithMetadata(tensors, nil)
+}
+
+// BuildPackedSafetensorsReaderWithMetadata builds a streaming io.Reader that
+// outputs a valid safetensors file containing multiple tensors and optional
+// metadata.
+func BuildPackedSafetensorsReaderWithMetadata(tensors []*TensorData, metadata map[string]string) io.Reader {
 	// Build the header with sequential data offsets
-	header := make(map[string]tensorInfo, len(tensors))
+	header := make(map[string]any, len(tensors)+1)
 	var offset int
 	for _, td := range tensors {
 		header[td.Name] = tensorInfo{
@@ -127,6 +151,9 @@ func BuildPackedSafetensorsReader(tensors []*TensorData) io.Reader {
 			DataOffsets: [2]int{offset, offset + int(td.Size)},
 		}
 		offset += int(td.Size)
+	}
+	if len(metadata) > 0 {
+		header["__metadata__"] = metadata
 	}
 
 	headerJSON, _ := json.Marshal(header)
