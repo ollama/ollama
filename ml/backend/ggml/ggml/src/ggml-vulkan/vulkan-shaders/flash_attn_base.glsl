@@ -8,6 +8,11 @@ layout (constant_id = 3) const uint32_t HSK = 32;
 layout (constant_id = 4) const uint32_t HSV = 32;
 layout (constant_id = 5) const uint32_t Clamp = 0;
 layout (constant_id = 6) const uint32_t D_split = 16;
+layout (constant_id = 7) const uint32_t Flags = 0;
+
+const bool USE_MASK_OPT  = (Flags & 1) != 0;
+const bool MASK_ENABLE   = (Flags & 2) != 0;
+const bool LOGIT_SOFTCAP = (Flags & 4) != 0;
 
 // Round up head sizes to a multiple of 16, for coopmat1/coopmat2 paths
 const uint32_t HSK_pad = (HSK + 15) & ~15;
@@ -57,12 +62,15 @@ layout (push_constant) uniform parameter {
 } p;
 
 #define SINK_ENABLE_BIT (1<<24)
-#define MASK_ENABLE_BIT (1<<16)
 #define N_LOG2_MASK 0xFFFF
 
 layout (binding = 4) readonly buffer S {float data_s[];};
 
 layout (binding = 5) writeonly buffer O {D_TYPE data_o[];};
+layout (binding = 6) readonly buffer MO {uint32_t data_mask_opt[];};
+
+#define MASK_OPT_ALL_NEG_INF 1
+#define MASK_OPT_ALL_ZERO 2
 
 #define BINDING_IDX_K 0
 #define BINDING_IDX_V 1
@@ -165,7 +173,7 @@ ACC_TYPE perElemOpGetSink(const in uint32_t r, const in uint32_t c, const in ACC
 }
 
 uint32_t i, N, KV, split_k_index, Tr, start_j, end_j,
-         iq2, iq3, rk2, rk3, rv2, rv3, ik2, ik3, iv2, iv3,
+         gqa_iq1, iq2, iq3, rk2, rk3, rv2, rv3, ik2, ik3, iv2, iv3,
          q_stride, k_stride, v_stride, m_stride;
 
 void init_indices()
@@ -173,12 +181,19 @@ void init_indices()
     N = p.N;
     KV = p.KV;
 
-    i = gl_WorkGroupID.x;
-    split_k_index = 0;
-
     if (p.k_num > 1) {
         i = 0;
-        split_k_index = gl_WorkGroupID.x;
+        // batch and split_k share gl_WorkGroupID.x
+        gqa_iq1 = gl_WorkGroupID.x / p.k_num;
+        split_k_index = gl_WorkGroupID.x % p.k_num;
+    } else if (p.gqa_ratio > 1) {
+        i = 0;
+        gqa_iq1 = gl_WorkGroupID.x;
+        split_k_index = 0;
+    } else {
+        i = gl_WorkGroupID.x;
+        gqa_iq1 = 0;
+        split_k_index = 0;
     }
 
     Tr = CEIL_DIV(N, Br);
