@@ -620,10 +620,12 @@ func clearSessionModelOverride(primary string) {
 }
 
 const webSearchNpmPackage = "@ollama/openclaw-web-search"
+const webSearchMinVersion = "0.2.1"
 
 // ensureWebSearchPlugin installs the openclaw-web-search extension into the
 // user-level extensions directory (~/.openclaw/extensions/) if it isn't already
-// present. Returns true if the extension is available.
+// present, or re-installs if the installed version is older than webSearchMinVersion.
+// Returns true if the extension is available.
 func ensureWebSearchPlugin() bool {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -631,8 +633,8 @@ func ensureWebSearchPlugin() bool {
 	}
 
 	pluginDir := filepath.Join(home, ".openclaw", "extensions", "openclaw-web-search")
-	if _, err := os.Stat(filepath.Join(pluginDir, "index.ts")); err == nil {
-		return true // already installed
+	if webSearchPluginUpToDate(pluginDir) {
+		return true
 	}
 
 	npmBin, err := exec.LookPath("npm")
@@ -666,6 +668,41 @@ func ensureWebSearchPlugin() bool {
 	return true
 }
 
+// webSearchPluginUpToDate returns true if the plugin is installed and its
+// package.json version is >= webSearchMinVersion.
+func webSearchPluginUpToDate(pluginDir string) bool {
+	data, err := os.ReadFile(filepath.Join(pluginDir, "package.json"))
+	if err != nil {
+		return false
+	}
+	var pkg struct {
+		Version string `json:"version"`
+	}
+	if json.Unmarshal(data, &pkg) != nil || pkg.Version == "" {
+		return false
+	}
+	return !versionLessThan(pkg.Version, webSearchMinVersion)
+}
+
+// versionLessThan compares two semver-like version strings (major.minor.patch).
+func versionLessThan(a, b string) bool {
+	partsA := strings.SplitN(a, ".", 3)
+	partsB := strings.SplitN(b, ".", 3)
+	for i := 0; i < 3; i++ {
+		var va, vb int
+		if i < len(partsA) {
+			fmt.Sscanf(partsA[i], "%d", &va)
+		}
+		if i < len(partsB) {
+			fmt.Sscanf(partsB[i], "%d", &vb)
+		}
+		if va != vb {
+			return va < vb
+		}
+	}
+	return false
+}
+
 // registerWebSearchPlugin adds plugins.entries.openclaw-web-search to the OpenClaw
 // config so the gateway activates it on next start. Best-effort; silently returns
 // on any error.
@@ -692,24 +729,31 @@ func registerWebSearchPlugin() {
 	if entries == nil {
 		entries = make(map[string]any)
 	}
-	if _, ok := entries["openclaw-web-search"]; ok {
-		return // already registered
-	}
 	entries["openclaw-web-search"] = map[string]any{"enabled": true}
 	plugins["entries"] = entries
 	config["plugins"] = plugins
 
-	// Disable the built-in web search since our plugin replaces it.
+	// Add plugin tools to tools.alsoAllow so they survive the coding profile's
+	// policy pipeline (which has an explicit allow list of core tools only).
 	tools, _ := config["tools"].(map[string]any)
 	if tools == nil {
 		tools = make(map[string]any)
 	}
-	web, _ := tools["web"].(map[string]any)
-	if web == nil {
-		web = make(map[string]any)
+
+	alsoAllow, _ := tools["alsoAllow"].([]any)
+	needed := []string{"ollama_web_search", "ollama_web_fetch"}
+	have := make(map[string]bool, len(alsoAllow))
+	for _, v := range alsoAllow {
+		if s, ok := v.(string); ok {
+			have[s] = true
+		}
 	}
-	web["search"] = map[string]any{"enabled": false}
-	tools["web"] = web
+	for _, name := range needed {
+		if !have[name] {
+			alsoAllow = append(alsoAllow, name)
+		}
+	}
+	tools["alsoAllow"] = alsoAllow
 	config["tools"] = tools
 
 	out, err := json.MarshalIndent(config, "", "  ")
