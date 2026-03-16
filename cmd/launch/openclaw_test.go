@@ -1515,3 +1515,91 @@ func TestIntegrationOnboarded(t *testing.T) {
 		}
 	})
 }
+
+func TestVersionLessThan(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want bool
+	}{
+		{"0.1.7", "0.2.1", true},
+		{"0.2.0", "0.2.1", true},
+		{"0.2.1", "0.2.1", false},
+		{"0.2.2", "0.2.1", false},
+		{"1.0.0", "0.2.1", false},
+		{"0.2.1", "1.0.0", true},
+		{"v0.1.7", "0.2.1", true},
+		{"0.2.1", "v0.2.1", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.a+"_vs_"+tt.b, func(t *testing.T) {
+			if got := versionLessThan(tt.a, tt.b); got != tt.want {
+				t.Errorf("versionLessThan(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWebSearchPluginUpToDate(t *testing.T) {
+	t.Run("missing directory", func(t *testing.T) {
+		if webSearchPluginUpToDate(filepath.Join(t.TempDir(), "nonexistent")) {
+			t.Error("expected false for missing directory")
+		}
+	})
+
+	t.Run("missing package.json", func(t *testing.T) {
+		dir := t.TempDir()
+		if webSearchPluginUpToDate(dir) {
+			t.Error("expected false for missing package.json")
+		}
+	})
+
+	t.Run("old version", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"version":"0.1.7"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if webSearchPluginUpToDate(dir) {
+			t.Error("expected false for old version 0.1.7")
+		}
+	})
+
+	t.Run("exact minimum version", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"version":"0.2.1"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if !webSearchPluginUpToDate(dir) {
+			t.Error("expected true for exact minimum version 0.2.1")
+		}
+	})
+
+	t.Run("newer version", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"version":"1.0.0"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if !webSearchPluginUpToDate(dir) {
+			t.Error("expected true for newer version 1.0.0")
+		}
+	})
+
+	t.Run("invalid json", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`not json`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if webSearchPluginUpToDate(dir) {
+			t.Error("expected false for invalid json")
+		}
+	})
+
+	t.Run("empty version", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"version":""}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if webSearchPluginUpToDate(dir) {
+			t.Error("expected false for empty version")
+		}
+	})
+}
