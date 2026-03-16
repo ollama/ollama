@@ -749,6 +749,15 @@ func registerWebSearchPlugin() {
 		}
 	}
 	tools["alsoAllow"] = alsoAllow
+
+	// Disable built-in web search/fetch since our plugin replaces them.
+	web, _ := tools["web"].(map[string]any)
+	if web == nil {
+		web = make(map[string]any)
+	}
+	web["search"] = map[string]any{"enabled": false}
+	web["fetch"] = map[string]any{"enabled": false}
+	tools["web"] = web
 	config["tools"] = tools
 
 	out, err := json.MarshalIndent(config, "", "  ")
