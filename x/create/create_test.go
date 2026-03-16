@@ -559,9 +559,9 @@ func TestCreateSafetensorsModel_Qwen35Transforms(t *testing.T) {
 	}
 
 	gateUpValues := make([]float32, 2*128*64)
-	for expert := 0; expert < 2; expert++ {
+	for expert := range 2 {
 		base := expert * 128 * 64
-		for i := 0; i < 64*64; i++ {
+		for i := range 64 * 64 {
 			gateUpValues[base+i] = 1
 			gateUpValues[base+64*64+i] = 2
 		}

@@ -276,9 +276,9 @@ func qwen35TransposeConv1D(values []float32, shape []int32) ([]float32, []int32)
 
 	d0, d1, d2 := int(shape[0]), int(shape[1]), int(shape[2])
 	out := make([]float32, len(values))
-	for i := 0; i < d0; i++ {
-		for j := 0; j < d1; j++ {
-			for k := 0; k < d2; k++ {
+	for i := range d0 {
+		for j := range d1 {
+			for k := range d2 {
 				inIdx := (i*d1+j)*d2 + k
 				outIdx := (i*d2+k)*d1 + j
 				out[outIdx] = values[inIdx]
@@ -312,7 +312,7 @@ func qwen35SplitAxis1Raw(raw []byte, dtype string, shape []int32) ([]byte, []byt
 	halfExpertBytes := halfD1 * d2 * elemSize
 	gateRaw := make([]byte, d0*halfExpertBytes)
 	upRaw := make([]byte, d0*halfExpertBytes)
-	for e := 0; e < d0; e++ {
+	for e := range d0 {
 		src := e * perExpertBytes
 		dst := e * halfExpertBytes
 		copy(gateRaw[dst:dst+halfExpertBytes], raw[src:src+halfExpertBytes])
@@ -321,4 +321,3 @@ func qwen35SplitAxis1Raw(raw []byte, dtype string, shape []int32) ([]byte, []byt
 
 	return gateRaw, upRaw, []int32{shape[0], int32(halfD1), shape[2]}, nil
 }
-
