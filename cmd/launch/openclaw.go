@@ -90,10 +90,8 @@ func (c *Openclaw) Run(model string, args []string) error {
 		patchDeviceScopes()
 	}
 
-	if strings.HasSuffix(model, ":cloud") || strings.HasSuffix(model, "-cloud") {
-		if ensureWebSearchPlugin() {
-			registerWebSearchPlugin()
-		}
+	if ensureWebSearchPlugin() {
+		registerWebSearchPlugin()
 	}
 
 	fmt.Fprintf(os.Stderr, "\n%sStarting your assistant — this may take a moment...%s\n\n", ansiGray, ansiReset)
@@ -619,8 +617,10 @@ func clearSessionModelOverride(primary string) {
 	_ = os.WriteFile(path, out, 0o600)
 }
 
-const webSearchNpmPackage = "@ollama/openclaw-web-search"
-const webSearchMinVersion = "0.2.1"
+const (
+	webSearchNpmPackage = "@ollama/openclaw-web-search"
+	webSearchMinVersion = "0.2.1"
+)
 
 // ensureWebSearchPlugin installs the openclaw-web-search extension into the
 // user-level extensions directory (~/.openclaw/extensions/) if it isn't already
@@ -688,7 +688,7 @@ func webSearchPluginUpToDate(pluginDir string) bool {
 func versionLessThan(a, b string) bool {
 	partsA := strings.SplitN(a, ".", 3)
 	partsB := strings.SplitN(b, ".", 3)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		var va, vb int
 		if i < len(partsA) {
 			fmt.Sscanf(partsA[i], "%d", &va)
