@@ -34,12 +34,13 @@ func (w *AnthropicWriter) writeError(data []byte) (int, error) {
 		Error string `json:"error"`
 	}
 	if err := json.Unmarshal(data, &errData); err != nil {
-		return 0, err
+		// If the error response isn't valid JSON, use the raw bytes as the
+		// error message rather than surfacing a confusing JSON parse error.
+		errData.Error = string(data)
 	}
 
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	err := json.NewEncoder(w.ResponseWriter).Encode(anthropic.NewError(w.Status(), errData.Error))
-	if err != nil {
+	if err := json.NewEncoder(w.ResponseWriter).Encode(anthropic.NewError(w.Status(), errData.Error)); err != nil {
 		return 0, err
 	}
 
@@ -239,15 +240,6 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 	currentToolCall := initialToolCall
 
 	var serverContent []anthropic.ContentBlock
-
-	if !isCloudModelName(w.req.Model) {
-		logutil.TraceContext(ctx, "anthropic middleware: web_search execution blocked", "reason", "non_cloud_model")
-		return anthropic.MessagesResponse{}, &webSearchLoopError{
-			code:  "web_search_not_supported_for_local_models",
-			query: extractQueryFromToolCall(&initialToolCall),
-			usage: usage,
-		}
-	}
 
 	for loop := 1; loop <= maxWebSearchLoops; loop++ {
 		query := extractQueryFromToolCall(&currentToolCall)

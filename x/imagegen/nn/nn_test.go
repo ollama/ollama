@@ -1,5 +1,3 @@
-//go:build mlx
-
 package nn
 
 import (
@@ -305,7 +303,7 @@ func BenchmarkLinearSmall(b *testing.B) {
 	mlx.Eval(x)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		out := linear.Forward(x)
 		mlx.Eval(out)
 	}
@@ -322,7 +320,7 @@ func BenchmarkLinearLarge(b *testing.B) {
 	mlx.Eval(x)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		out := linear.Forward(x)
 		mlx.Eval(out)
 	}
@@ -339,7 +337,7 @@ func BenchmarkRMSNorm(b *testing.B) {
 	mlx.Eval(x)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		out := norm.Forward(x, 0)
 		mlx.Eval(out)
 	}
@@ -358,7 +356,7 @@ func BenchmarkEmbedding(b *testing.B) {
 	mlx.Eval(indices)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		out := emb.Forward(indices)
 		mlx.Eval(out)
 	}
@@ -371,7 +369,7 @@ func BenchmarkRepeatKV(b *testing.B) {
 	mlx.Eval(x)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		out := RepeatKV(x, 4)
 		mlx.Eval(out)
 	}

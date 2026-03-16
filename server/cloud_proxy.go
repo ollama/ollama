@@ -16,17 +16,23 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/klauspost/compress/zstd"
 
 	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
+	"github.com/ollama/ollama/version"
 )
 
 const (
-	defaultCloudProxyBaseURL     = "https://ollama.com:443"
-	defaultCloudProxySigningHost = "ollama.com"
-	cloudProxyBaseURLEnv         = "OLLAMA_CLOUD_BASE_URL"
-	legacyCloudAnthropicKey      = "legacy_cloud_anthropic_web_search"
+	defaultCloudProxyBaseURL      = "https://ollama.com:443"
+	defaultCloudProxySigningHost  = "ollama.com"
+	cloudProxyBaseURLEnv          = "OLLAMA_CLOUD_BASE_URL"
+	legacyCloudAnthropicKey       = "legacy_cloud_anthropic_web_search"
+	cloudProxyClientVersionHeader = "X-Ollama-Client-Version"
+
+	// maxDecompressedBodySize limits the size of a decompressed request body
+	maxDecompressedBodySize = 20 << 20
 )
 
 var (
@@ -69,6 +75,19 @@ func cloudPassthroughMiddleware(disabledOperation string) gin.HandlerFunc {
 		if c.Request.Method != http.MethodPost {
 			c.Next()
 			return
+		}
+
+		// Decompress zstd-encoded request bodies so we can inspect the model
+		if c.GetHeader("Content-Encoding") == "zstd" {
+			reader, err := zstd.NewReader(c.Request.Body, zstd.WithDecoderMaxMemory(8<<20))
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "failed to decompress request body"})
+				c.Abort()
+				return
+			}
+			defer reader.Close()
+			c.Request.Body = http.MaxBytesReader(c.Writer, io.NopCloser(reader), maxDecompressedBodySize)
+			c.Request.Header.Del("Content-Encoding")
 		}
 
 		// TODO(drifkin): Avoid full-body buffering here for model detection.
@@ -181,6 +200,9 @@ func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disable
 	}
 
 	copyProxyRequestHeaders(outReq.Header, c.Request.Header)
+	if clientVersion := strings.TrimSpace(version.Version); clientVersion != "" {
+		outReq.Header.Set(cloudProxyClientVersionHeader, clientVersion)
+	}
 	if outReq.Header.Get("Content-Type") == "" && len(body) > 0 {
 		outReq.Header.Set("Content-Type", "application/json")
 	}

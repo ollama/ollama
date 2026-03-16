@@ -1,5 +1,3 @@
-//go:build mlx
-
 package cache
 
 import "github.com/ollama/ollama/x/mlxrunner/mlx"

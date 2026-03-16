@@ -1,5 +1,3 @@
-//go:build mlx
-
 package mlxrunner
 
 import (
@@ -27,6 +25,13 @@ func Execute(args []string) error {
 
 	if err := mlx.CheckInit(); err != nil {
 		return fmt.Errorf("MLX not available: %w", err)
+	}
+
+	if mlx.GPUIsAvailable() {
+		mlx.SetDefaultDeviceGPU()
+		slog.Info("MLX engine initialized", "MLX version", mlx.Version(), "device", "gpu")
+	} else {
+		slog.Info("MLX engine initialized", "MLX version", mlx.Version(), "device", "cpu")
 	}
 
 	var (
