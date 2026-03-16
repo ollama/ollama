@@ -334,12 +334,12 @@ func GetTensorQuantization(name string, shape []int32, quantize string) string {
 	quantNorm := normalizeQuantType(quantize)
 
 	// MLX quantization requires last dimension to be divisible by group size
-	// nvfp4: 16, int4/mxfp8: 32, int8: 64
+	// nvfp4: 16, mxfp8: 32, int4/int8: 64
 	groupSize := int32(32)
 	switch quantNorm {
 	case "nvfp4":
 		groupSize = 16
-	case "int8":
+	case "int4", "int8":
 		groupSize = 64
 	}
 	if shape[len(shape)-1]%groupSize != 0 {
