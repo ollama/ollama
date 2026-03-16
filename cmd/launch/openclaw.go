@@ -429,13 +429,21 @@ func ensureOpenclawInstalled() (string, error) {
 		return "clawdbot", nil
 	}
 
-	if _, err := exec.LookPath("npm"); err != nil {
-		return "", fmt.Errorf("openclaw is not installed and npm was not found\n\n" +
-			"Install Node.js first:\n" +
-			"  https://nodejs.org/\n\n" +
-			"Then rerun:\n" +
-			"  ollama launch\n" +
-			"and select OpenClaw")
+	_, npmErr := exec.LookPath("npm")
+	_, gitErr := exec.LookPath("git")
+	if npmErr != nil || gitErr != nil {
+		var missing []string
+		if npmErr != nil {
+			missing = append(missing, "npm (Node.js): https://nodejs.org/")
+		}
+		if gitErr != nil {
+			missing = append(missing, "git: https://git-scm.com/")
+		}
+		return "", fmt.Errorf("openclaw is not installed and required dependencies are missing\n\n"+
+			"Install the following first:\n  %s\n\n"+
+			"Then rerun:\n"+
+			"  ollama launch\n"+
+			"and select OpenClaw", strings.Join(missing, "\n  "))
 	}
 
 	ok, err := ConfirmPrompt("OpenClaw is not installed. Install with npm?")
