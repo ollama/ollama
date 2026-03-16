@@ -66,16 +66,20 @@ func (c *Openclaw) Run(model string, args []string) error {
 		fmt.Fprintf(os.Stderr, "\n%sSetting up OpenClaw with Ollama...%s\n", ansiGreen, ansiReset)
 		fmt.Fprintf(os.Stderr, "%s  Model: %s%s\n\n", ansiGray, model, ansiReset)
 
-		cmd := exec.Command(bin, "onboard",
+		onboardArgs := []string{
+			"onboard",
 			"--non-interactive",
 			"--accept-risk",
 			"--auth-choice", "ollama",
 			"--custom-base-url", envconfig.Host().String(),
 			"--custom-model-id", model,
-			"--install-daemon",
 			"--skip-channels",
 			"--skip-skills",
-		)
+		}
+		if canInstallDaemon() {
+			onboardArgs = append(onboardArgs, "--install-daemon")
+		}
+		cmd := exec.Command(bin, onboardArgs...)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -396,6 +400,25 @@ func patchScopes(obj map[string]any, key string, required []string) bool {
 		obj[key] = existing
 	}
 	return added
+}
+
+// canInstallDaemon reports whether the openclaw daemon can be installed as a
+// background service. Returns false on Linux when systemd is absent (e.g.
+// containers) so that --install-daemon is omitted and the gateway is started
+// as a foreground child process instead. Returns true in all other cases.
+func canInstallDaemon() bool {
+	if runtime.GOOS != "linux" {
+		return true
+	}
+	// /run/systemd/system exists as a directory when systemd is the init system.
+	// This is absent in most containers.
+	fi, err := os.Stat("/run/systemd/system")
+	if err != nil || !fi.IsDir() {
+		return false
+	}
+	// Even when systemd is the init system, user services require a user
+	// manager instance. XDG_RUNTIME_DIR being set is a prerequisite.
+	return os.Getenv("XDG_RUNTIME_DIR") != ""
 }
 
 func ensureOpenclawInstalled() (string, error) {
