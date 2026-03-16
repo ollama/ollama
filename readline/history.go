@@ -40,8 +40,8 @@ func NewHistory() (*History, error) {
 func (h *History) Init() error {
 	var path string
 	if modelsDir := os.Getenv("OLLAMA_MODELS"); modelsDir != "" {
-		// Use parent of OLLAMA_MODELS for history to support portable installations
-		path = filepath.Join(filepath.Dir(modelsDir), "history")
+		// Use filepath.Clean to handle trailing slashes, then place history inside models directory
+		path = filepath.Join(filepath.Clean(modelsDir), ".history")
 	} else {
 		home, err := os.UserHomeDir()
 		if err != nil {
