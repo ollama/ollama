@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/mod/semver"
+
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
@@ -684,23 +686,16 @@ func webSearchPluginUpToDate(pluginDir string) bool {
 	return !versionLessThan(pkg.Version, webSearchMinVersion)
 }
 
-// versionLessThan compares two semver-like version strings (major.minor.patch).
+// versionLessThan compares two semver version strings (major.minor.patch).
+// Inputs may omit the "v" prefix; it is added automatically for semver.Compare.
 func versionLessThan(a, b string) bool {
-	partsA := strings.SplitN(a, ".", 3)
-	partsB := strings.SplitN(b, ".", 3)
-	for i := range 3 {
-		var va, vb int
-		if i < len(partsA) {
-			fmt.Sscanf(partsA[i], "%d", &va)
-		}
-		if i < len(partsB) {
-			fmt.Sscanf(partsB[i], "%d", &vb)
-		}
-		if va != vb {
-			return va < vb
-		}
+	if !strings.HasPrefix(a, "v") {
+		a = "v" + a
 	}
-	return false
+	if !strings.HasPrefix(b, "v") {
+		b = "v" + b
+	}
+	return semver.Compare(a, b) < 0
 }
 
 // registerWebSearchPlugin adds plugins.entries.openclaw-web-search to the OpenClaw
