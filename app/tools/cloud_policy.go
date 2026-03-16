@@ -5,8 +5,10 @@ package tools
 import (
 	"context"
 	"errors"
+	"net/http"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 	internalcloud "github.com/ollama/ollama/internal/cloud"
 )
 
@@ -17,10 +19,7 @@ func ensureCloudEnabledForTool(ctx context.Context, operation string) error {
 	// the connected server's /api/status endpoint below.
 	disabledMessage := internalcloud.DisabledError(operation)
 
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return errors.New(disabledMessage + " (unable to verify server cloud policy)")
-	}
+	client := api.NewClient(envconfig.ConnectableHost(), http.DefaultClient)
 
 	status, err := client.CloudStatusExperimental(ctx)
 	if err != nil {

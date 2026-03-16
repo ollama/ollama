@@ -155,7 +155,7 @@ func (s *Server) ollamaProxy() http.Handler {
 					return
 				}
 
-				target := envconfig.Host()
+				target := envconfig.ConnectableHost()
 				s.log().Info("configuring ollama proxy", "target", target.String())
 
 				newProxy := httputil.NewSingleHostReverseProxy(target)
@@ -404,10 +404,7 @@ func (s *Server) UserData(ctx context.Context) (*api.UserResponse, error) {
 func WaitForServer(ctx context.Context, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		c, err := api.ClientFromEnvironment()
-		if err != nil {
-			return err
-		}
+		c := api.NewClient(envconfig.ConnectableHost(), http.DefaultClient)
 		if _, err := c.Version(ctx); err == nil {
 			slog.Debug("ollama server is ready")
 			return nil
@@ -720,11 +717,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 	_, cancelLoading := context.WithCancel(ctx)
 	loading := false
 
-	c, err := api.ClientFromEnvironment()
-	if err != nil {
-		cancelLoading()
-		return err
-	}
+	c := api.NewClient(envconfig.ConnectableHost(), http.DefaultClient)
 
 	// Check if the model exists locally by trying to show it
 	// TODO (jmorganca): skip this round trip and instead just act
