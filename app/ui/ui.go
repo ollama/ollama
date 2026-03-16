@@ -404,7 +404,10 @@ func (s *Server) UserData(ctx context.Context) (*api.UserResponse, error) {
 func WaitForServer(ctx context.Context, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		c := api.NewClient(envconfig.ConnectableHost(), http.DefaultClient)
+		c, err := api.ClientFromEnvironment()
+		if err != nil {
+			return err
+		}
 		if _, err := c.Version(ctx); err == nil {
 			slog.Debug("ollama server is ready")
 			return nil
@@ -717,7 +720,11 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 	_, cancelLoading := context.WithCancel(ctx)
 	loading := false
 
-	c := api.NewClient(envconfig.ConnectableHost(), http.DefaultClient)
+	c, err := api.ClientFromEnvironment()
+	if err != nil {
+		cancelLoading()
+		return err
+	}
 
 	// Check if the model exists locally by trying to show it
 	// TODO (jmorganca): skip this round trip and instead just act
