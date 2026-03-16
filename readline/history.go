@@ -7,10 +7,30 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/emirpasic/gods/v2/lists/arraylist"
 )
+
+// homeDir returns the user's home directory, respecting environment variables
+// on Windows (USERPROFILE) and Unix (HOME) before falling back to os.UserHomeDir().
+func homeDir() string {
+	// Check environment variables first to support portable installations
+	if runtime.GOOS == "windows" {
+		if v := os.Getenv("USERPROFILE"); v != "" {
+			return v
+		}
+	}
+	if v := os.Getenv("HOME"); v != "" {
+		return v
+	}
+	// Fall back to os.UserHomeDir() for system-wide value
+	if home, err := os.UserHomeDir(); err == nil {
+		return home
+	}
+	return ""
+}
 
 type History struct {
 	Buf      *arraylist.List[string]
@@ -38,9 +58,9 @@ func NewHistory() (*History, error) {
 }
 
 func (h *History) Init() error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
+	home := homeDir()
+	if home == "" {
+		return errors.New("unable to determine home directory")
 	}
 
 	path := filepath.Join(home, ".ollama", "history")
