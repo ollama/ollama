@@ -304,6 +304,18 @@ func Exp(a *Array) *Array {
 	return out
 }
 
+func Sin(a *Array) *Array {
+	out := New("SIN")
+	C.mlx_sin(&out.ctx, a.ctx, DefaultStream().ctx)
+	return out
+}
+
+func Cos(a *Array) *Array {
+	out := New("COS")
+	C.mlx_cos(&out.ctx, a.ctx, DefaultStream().ctx)
+	return out
+}
+
 func Log(a *Array) *Array {
 	out := New("LOG")
 	C.mlx_log(&out.ctx, a.ctx, DefaultStream().ctx)

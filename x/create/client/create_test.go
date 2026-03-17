@@ -339,3 +339,34 @@ func TestCreateModelfileLayersIncludesParameters(t *testing.T) {
 		t.Fatalf("temperature = %v, want %v", got["temperature"], float64(0.7))
 	}
 }
+
+func TestSupportsVision(t *testing.T) {
+	t.Run("vision_config present", func(t *testing.T) {
+		cfg := parseModelConfig([]byte(`{
+			"vision_config": {"depth": 2},
+			"image_token_id": 151655
+		}`))
+		if !cfg.supportsVision() {
+			t.Fatal("supportsVision() = false, want true")
+		}
+	})
+
+	t.Run("token ids alone imply vision", func(t *testing.T) {
+		cfg := parseModelConfig([]byte(`{
+			"vision_start_token_id": 10,
+			"vision_end_token_id": 11
+		}`))
+		if !cfg.supportsVision() {
+			t.Fatal("supportsVision() = false, want true")
+		}
+	})
+
+	t.Run("plain text model", func(t *testing.T) {
+		cfg := parseModelConfig([]byte(`{
+			"architectures": ["Qwen3_5ForCausalLM"]
+		}`))
+		if cfg.supportsVision() {
+			t.Fatal("supportsVision() = true, want false")
+		}
+	})
+}

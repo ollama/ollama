@@ -11,6 +11,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
@@ -29,7 +30,8 @@ type Request struct {
 }
 
 type TextCompletionsRequest struct {
-	Prompt  string `json:"prompt"`
+	Prompt  string          `json:"prompt"`
+	Images  []llm.ImageData `json:"images,omitempty"`
 	Options struct {
 		Temperature     float32 `json:"temperature"`
 		TopP            float32 `json:"top_p"`

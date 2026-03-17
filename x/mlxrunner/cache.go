@@ -366,6 +366,23 @@ func (s *cacheSession) attachSnapshots(node *trieNode, cacheOffset int) {
 	c.enforceEvictionPolicy()
 }
 
+// clear releases live caches and drops the trie so future requests cannot
+// reuse prompt state keyed only by token IDs.
+func (c *kvCache) clear() {
+	c.freeAll()
+	walkNodes(c.root, func(n *trieNode) bool {
+		for _, s := range n.snapshots {
+			if s != nil {
+				s.Close()
+			}
+		}
+		n.snapshots = nil
+		return true
+	})
+	c.root = nil
+	c.activePath = nil
+}
+
 // freeAll releases all cache layers.
 func (c *kvCache) freeAll() {
 	for _, kv := range c.caches {

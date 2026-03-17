@@ -106,6 +106,7 @@ func (c *Client) WaitUntilRunning(ctx context.Context) error {
 // completionRequest is a properly-tagged version of llm.CompletionRequest for JSON serialization.
 type completionRequest struct {
 	Prompt  string          `json:"prompt"`
+	Images  []llm.ImageData `json:"images,omitempty"`
 	Options *completionOpts `json:"options,omitempty"`
 }
 
@@ -155,6 +156,7 @@ func (c *Client) Close() error {
 func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
 	creq := completionRequest{
 		Prompt: req.Prompt,
+		Images: req.Images,
 	}
 	if req.Options != nil {
 		creq.Options = &completionOpts{
