@@ -1,15 +1,14 @@
-package config
+package launch
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 
+	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
 )
 
@@ -44,25 +43,6 @@ func (d *Droid) String() string { return "Droid" }
 func (d *Droid) Run(model string, args []string) error {
 	if _, err := exec.LookPath("droid"); err != nil {
 		return fmt.Errorf("droid is not installed, install from https://docs.factory.ai/cli/getting-started/quickstart")
-	}
-
-	// Call Edit() to ensure config is up-to-date before launch
-	models := []string{model}
-	if config, err := loadIntegration("droid"); err == nil && len(config.Models) > 0 {
-		models = config.Models
-	}
-	var err error
-	models, err = resolveEditorModels("droid", models, func() ([]string, error) {
-		return selectModels(context.Background(), "droid", "")
-	})
-	if errors.Is(err, errCancelled) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if err := d.Edit(models); err != nil {
-		return fmt.Errorf("setup failed: %w", err)
 	}
 
 	cmd := exec.Command("droid", args...)
@@ -110,6 +90,16 @@ func (d *Droid) Edit(models []string) error {
 		json.Unmarshal(data, &settings) // ignore error, zero values are fine
 	}
 
+	settingsMap = updateDroidSettings(settingsMap, settings, models)
+
+	data, err := json.MarshalIndent(settingsMap, "", "  ")
+	if err != nil {
+		return err
+	}
+	return fileutil.WriteWithBackup(settingsPath, data)
+}
+
+func updateDroidSettings(settingsMap map[string]any, settings droidSettings, models []string) map[string]any {
 	// Keep only non-Ollama models from the raw map (preserves extra fields)
 	// Rebuild Ollama models
 	var nonOllamaModels []any
@@ -165,12 +155,7 @@ func (d *Droid) Edit(models []string) error {
 	}
 
 	settingsMap["sessionDefaultSettings"] = sessionSettings
-
-	data, err := json.MarshalIndent(settingsMap, "", "  ")
-	if err != nil {
-		return err
-	}
-	return writeWithBackup(settingsPath, data)
+	return settingsMap
 }
 
 func (d *Droid) Models() []string {

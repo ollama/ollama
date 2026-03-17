@@ -1,4 +1,4 @@
-package config
+package launch
 
 import (
 	"os"
@@ -117,10 +117,7 @@ func TestClaudeModelEnvVars(t *testing.T) {
 		return m
 	}
 
-	t.Run("falls back to model param when no aliases saved", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-
+	t.Run("maps all Claude model env vars to the provided model", func(t *testing.T) {
 		got := envMap(c.modelEnvVars("llama3.2"))
 		if got["ANTHROPIC_DEFAULT_OPUS_MODEL"] != "llama3.2" {
 			t.Errorf("OPUS = %q, want llama3.2", got["ANTHROPIC_DEFAULT_OPUS_MODEL"])
@@ -134,65 +131,41 @@ func TestClaudeModelEnvVars(t *testing.T) {
 		if got["CLAUDE_CODE_SUBAGENT_MODEL"] != "llama3.2" {
 			t.Errorf("SUBAGENT = %q, want llama3.2", got["CLAUDE_CODE_SUBAGENT_MODEL"])
 		}
-	})
-
-	t.Run("uses primary alias for opus sonnet and subagent", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-
-		SaveIntegration("claude", []string{"qwen3:8b"})
-		saveAliases("claude", map[string]string{"primary": "qwen3:8b"})
-
-		got := envMap(c.modelEnvVars("qwen3:8b"))
-		if got["ANTHROPIC_DEFAULT_OPUS_MODEL"] != "qwen3:8b" {
-			t.Errorf("OPUS = %q, want qwen3:8b", got["ANTHROPIC_DEFAULT_OPUS_MODEL"])
-		}
-		if got["ANTHROPIC_DEFAULT_SONNET_MODEL"] != "qwen3:8b" {
-			t.Errorf("SONNET = %q, want qwen3:8b", got["ANTHROPIC_DEFAULT_SONNET_MODEL"])
-		}
-		if got["ANTHROPIC_DEFAULT_HAIKU_MODEL"] != "qwen3:8b" {
-			t.Errorf("HAIKU = %q, want qwen3:8b (no fast alias)", got["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
-		}
-		if got["CLAUDE_CODE_SUBAGENT_MODEL"] != "qwen3:8b" {
-			t.Errorf("SUBAGENT = %q, want qwen3:8b", got["CLAUDE_CODE_SUBAGENT_MODEL"])
+		if got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "" {
+			t.Errorf("AUTO_COMPACT_WINDOW = %q, want empty for local models", got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
 		}
 	})
 
-	t.Run("uses fast alias for haiku", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-
-		SaveIntegration("claude", []string{"llama3.2:70b"})
-		saveAliases("claude", map[string]string{
-			"primary": "llama3.2:70b",
-			"fast":    "llama3.2:8b",
-		})
-
-		got := envMap(c.modelEnvVars("llama3.2:70b"))
-		if got["ANTHROPIC_DEFAULT_OPUS_MODEL"] != "llama3.2:70b" {
-			t.Errorf("OPUS = %q, want llama3.2:70b", got["ANTHROPIC_DEFAULT_OPUS_MODEL"])
+	t.Run("supports empty model", func(t *testing.T) {
+		got := envMap(c.modelEnvVars(""))
+		if got["ANTHROPIC_DEFAULT_OPUS_MODEL"] != "" {
+			t.Errorf("OPUS = %q, want empty", got["ANTHROPIC_DEFAULT_OPUS_MODEL"])
 		}
-		if got["ANTHROPIC_DEFAULT_SONNET_MODEL"] != "llama3.2:70b" {
-			t.Errorf("SONNET = %q, want llama3.2:70b", got["ANTHROPIC_DEFAULT_SONNET_MODEL"])
+		if got["ANTHROPIC_DEFAULT_SONNET_MODEL"] != "" {
+			t.Errorf("SONNET = %q, want empty", got["ANTHROPIC_DEFAULT_SONNET_MODEL"])
 		}
-		if got["ANTHROPIC_DEFAULT_HAIKU_MODEL"] != "llama3.2:8b" {
-			t.Errorf("HAIKU = %q, want llama3.2:8b", got["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
+		if got["ANTHROPIC_DEFAULT_HAIKU_MODEL"] != "" {
+			t.Errorf("HAIKU = %q, want empty", got["ANTHROPIC_DEFAULT_HAIKU_MODEL"])
 		}
-		if got["CLAUDE_CODE_SUBAGENT_MODEL"] != "llama3.2:70b" {
-			t.Errorf("SUBAGENT = %q, want llama3.2:70b", got["CLAUDE_CODE_SUBAGENT_MODEL"])
+		if got["CLAUDE_CODE_SUBAGENT_MODEL"] != "" {
+			t.Errorf("SUBAGENT = %q, want empty", got["CLAUDE_CODE_SUBAGENT_MODEL"])
+		}
+		if got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "" {
+			t.Errorf("AUTO_COMPACT_WINDOW = %q, want empty", got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
 		}
 	})
 
-	t.Run("alias primary overrides model param", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
+	t.Run("sets auto compact window for known cloud models", func(t *testing.T) {
+		got := envMap(c.modelEnvVars("glm-5:cloud"))
+		if got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "202752" {
+			t.Errorf("AUTO_COMPACT_WINDOW = %q, want 202752", got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
+		}
+	})
 
-		SaveIntegration("claude", []string{"saved-model"})
-		saveAliases("claude", map[string]string{"primary": "saved-model"})
-
-		got := envMap(c.modelEnvVars("different-model"))
-		if got["ANTHROPIC_DEFAULT_OPUS_MODEL"] != "saved-model" {
-			t.Errorf("OPUS = %q, want saved-model", got["ANTHROPIC_DEFAULT_OPUS_MODEL"])
+	t.Run("does not set auto compact window for unknown cloud models", func(t *testing.T) {
+		got := envMap(c.modelEnvVars("unknown-model:cloud"))
+		if got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] != "" {
+			t.Errorf("AUTO_COMPACT_WINDOW = %q, want empty", got["CLAUDE_CODE_AUTO_COMPACT_WINDOW"])
 		}
 	})
 }

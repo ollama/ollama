@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"math"
 	"net"
 	"net/http"
@@ -38,10 +39,12 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
+	"github.com/ollama/ollama/cmd/launch"
 	"github.com/ollama/ollama/cmd/tui"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/internal/modelref"
+	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/readline"
@@ -58,36 +61,42 @@ import (
 
 func init() {
 	// Override default selectors to use Bubbletea TUI instead of raw terminal I/O.
-	config.DefaultSingleSelector = func(title string, items []config.ModelItem, current string) (string, error) {
+	launch.DefaultSingleSelector = func(title string, items []launch.ModelItem, current string) (string, error) {
+		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+			return "", fmt.Errorf("model selection requires an interactive terminal; use --model to run in headless mode")
+		}
 		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
 		result, err := tui.SelectSingle(title, tuiItems, current)
 		if errors.Is(err, tui.ErrCancelled) {
-			return "", config.ErrCancelled
+			return "", launch.ErrCancelled
 		}
 		return result, err
 	}
 
-	config.DefaultMultiSelector = func(title string, items []config.ModelItem, preChecked []string) ([]string, error) {
+	launch.DefaultMultiSelector = func(title string, items []launch.ModelItem, preChecked []string) ([]string, error) {
+		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+			return nil, fmt.Errorf("model selection requires an interactive terminal; use --model to run in headless mode")
+		}
 		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
 		result, err := tui.SelectMultiple(title, tuiItems, preChecked)
 		if errors.Is(err, tui.ErrCancelled) {
-			return nil, config.ErrCancelled
+			return nil, launch.ErrCancelled
 		}
 		return result, err
 	}
 
-	config.DefaultSignIn = func(modelName, signInURL string) (string, error) {
+	launch.DefaultSignIn = func(modelName, signInURL string) (string, error) {
 		userName, err := tui.RunSignIn(modelName, signInURL)
 		if errors.Is(err, tui.ErrCancelled) {
-			return "", config.ErrCancelled
+			return "", launch.ErrCancelled
 		}
 		return userName, err
 	}
 
-	config.DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	launch.DefaultConfirmPrompt = func(prompt string) (bool, error) {
 		ok, err := tui.RunConfirm(prompt)
 		if errors.Is(err, tui.ErrCancelled) {
-			return false, config.ErrCancelled
+			return false, launch.ErrCancelled
 		}
 		return ok, err
 	}
@@ -515,6 +524,50 @@ func handleCloudAuthorizationError(err error) bool {
 	return false
 }
 
+// TEMP(drifkin): To match legacy `ollama run some-model:cloud` behavior, we
+// best-effort pull cloud stub files for any explicit cloud source models.
+// Remove this once `/api/tags` is cloud-aware.
+func ensureCloudStub(ctx context.Context, client *api.Client, modelName string) {
+	if !modelref.HasExplicitCloudSource(modelName) {
+		return
+	}
+
+	normalizedName, _, err := modelref.NormalizePullName(modelName)
+	if err != nil {
+		slog.Warn("failed to normalize pull name", "model", modelName, "error", err, "normalizedName", normalizedName)
+		return
+	}
+
+	listResp, err := client.List(ctx)
+	if err != nil {
+		slog.Warn("failed to list models", "error", err)
+		return
+	}
+
+	if hasListedModelName(listResp.Models, modelName) || hasListedModelName(listResp.Models, normalizedName) {
+		return
+	}
+
+	logutil.Trace("pulling cloud stub", "model", modelName, "normalizedName", normalizedName)
+	err = client.Pull(ctx, &api.PullRequest{
+		Model: normalizedName,
+	}, func(api.ProgressResponse) error {
+		return nil
+	})
+	if err != nil {
+		slog.Warn("failed to pull cloud stub", "model", modelName, "error", err)
+	}
+}
+
+func hasListedModelName(models []api.ListModelResponse, name string) bool {
+	for _, m := range models {
+		if strings.EqualFold(m.Name, name) || strings.EqualFold(m.Model, name) {
+			return true
+		}
+	}
+	return false
+}
+
 func RunHandler(cmd *cobra.Command, args []string) error {
 	interactive := true
 
@@ -634,6 +687,8 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		}
 		return err
 	}
+
+	ensureCloudStub(cmd.Context(), client, name)
 
 	opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, thinkFlag.Changed)
 	if err != nil {
@@ -1912,6 +1967,24 @@ func ensureServerRunning(ctx context.Context) error {
 	}
 }
 
+func launchInteractiveModel(cmd *cobra.Command, modelName string) error {
+	opts := runOptions{
+		Model:       modelName,
+		WordWrap:    os.Getenv("TERM") == "xterm-256color",
+		Options:     map[string]any{},
+		ShowConnect: true,
+	}
+	// loadOrUnloadModel is cloud-safe here: remote/cloud models skip local preload
+	// and only validate auth/connectivity before interactive chat starts.
+	if err := loadOrUnloadModel(cmd, &opts); err != nil {
+		return fmt.Errorf("error loading model: %w", err)
+	}
+	if err := generateInteractive(cmd, opts); err != nil {
+		return fmt.Errorf("error running model: %w", err)
+	}
+	return nil
+}
+
 // runInteractiveTUI runs the main interactive TUI menu.
 func runInteractiveTUI(cmd *cobra.Command) {
 	// Ensure the server is running before showing the TUI
@@ -1920,175 +1993,81 @@ func runInteractiveTUI(cmd *cobra.Command) {
 		return
 	}
 
-	// Selector adapters for tui
-	singleSelector := func(title string, items []config.ModelItem, current string) (string, error) {
-		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
-		result, err := tui.SelectSingle(title, tuiItems, current)
-		if errors.Is(err, tui.ErrCancelled) {
-			return "", config.ErrCancelled
-		}
-		return result, err
-	}
-
-	multiSelector := func(title string, items []config.ModelItem, preChecked []string) ([]string, error) {
-		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
-		result, err := tui.SelectMultiple(title, tuiItems, preChecked)
-		if errors.Is(err, tui.ErrCancelled) {
-			return nil, config.ErrCancelled
-		}
-		return result, err
+	deps := launcherDeps{
+		buildState:        launch.BuildLauncherState,
+		runMenu:           tui.RunMenu,
+		resolveRunModel:   launch.ResolveRunModel,
+		launchIntegration: launch.LaunchIntegration,
+		runModel:          launchInteractiveModel,
 	}
 
 	for {
-		result, err := tui.Run()
+		continueLoop, err := runInteractiveTUIStep(cmd, deps)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		}
+		if !continueLoop {
 			return
 		}
+	}
+}
 
-		runModel := func(modelName string) {
-			client, err := api.ClientFromEnvironment()
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				return
-			}
-			if err := config.ShowOrPull(cmd.Context(), client, modelName); err != nil {
-				if errors.Is(err, config.ErrCancelled) {
-					return
-				}
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				return
-			}
-			_ = config.SetLastModel(modelName)
-			opts := runOptions{
-				Model:       modelName,
-				WordWrap:    os.Getenv("TERM") == "xterm-256color",
-				Options:     map[string]any{},
-				ShowConnect: true,
-			}
-			if err := loadOrUnloadModel(cmd, &opts); err != nil {
-				fmt.Fprintf(os.Stderr, "Error loading model: %v\n", err)
-				return
-			}
-			if err := generateInteractive(cmd, opts); err != nil {
-				fmt.Fprintf(os.Stderr, "Error running model: %v\n", err)
-			}
-		}
+type launcherDeps struct {
+	buildState        func(context.Context) (*launch.LauncherState, error)
+	runMenu           func(*launch.LauncherState) (tui.TUIAction, error)
+	resolveRunModel   func(context.Context, launch.RunModelRequest) (string, error)
+	launchIntegration func(context.Context, launch.IntegrationLaunchRequest) error
+	runModel          func(*cobra.Command, string) error
+}
 
-		launchIntegration := func(name string) bool {
-			if err := config.EnsureInstalled(name); err != nil {
-				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-				return true
-			}
-			// If not configured or model no longer exists, prompt for model selection
-			configuredModel := config.IntegrationModel(name)
-			if configuredModel == "" || !config.ModelExists(cmd.Context(), configuredModel) || config.IsCloudModelDisabled(cmd.Context(), configuredModel) {
-				err := config.ConfigureIntegrationWithSelectors(cmd.Context(), name, singleSelector, multiSelector)
-				if errors.Is(err, config.ErrCancelled) {
-					return false // Return to main menu
-				}
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error configuring %s: %v\n", name, err)
-					return true
-				}
-			}
-			if err := config.LaunchIntegration(name); err != nil {
-				fmt.Fprintf(os.Stderr, "Error launching %s: %v\n", name, err)
-			}
-			return true
-		}
+func runInteractiveTUIStep(cmd *cobra.Command, deps launcherDeps) (bool, error) {
+	state, err := deps.buildState(cmd.Context())
+	if err != nil {
+		return false, fmt.Errorf("build launcher state: %w", err)
+	}
 
-		switch result.Selection {
-		case tui.SelectionNone:
-			// User quit
-			return
-		case tui.SelectionRunModel:
-			_ = config.SetLastSelection("run")
-			if modelName := config.LastModel(); modelName != "" && !config.IsCloudModelDisabled(cmd.Context(), modelName) {
-				runModel(modelName)
-			} else {
-				modelName, err := config.SelectModelWithSelector(cmd.Context(), singleSelector)
-				if errors.Is(err, config.ErrCancelled) {
-					continue // Return to main menu
-				}
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error selecting model: %v\n", err)
-					continue
-				}
-				runModel(modelName)
-			}
-		case tui.SelectionChangeRunModel:
-			_ = config.SetLastSelection("run")
-			// Use model from modal if selected, otherwise show picker
-			modelName := result.Model
-			if modelName == "" {
-				var err error
-				modelName, err = config.SelectModelWithSelector(cmd.Context(), singleSelector)
-				if errors.Is(err, config.ErrCancelled) {
-					continue // Return to main menu
-				}
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error selecting model: %v\n", err)
-					continue
-				}
-			}
-			if config.IsCloudModelDisabled(cmd.Context(), modelName) {
-				continue // Return to main menu
-			}
-			runModel(modelName)
-		case tui.SelectionIntegration:
-			_ = config.SetLastSelection(result.Integration)
-			if !launchIntegration(result.Integration) {
-				continue // Return to main menu
-			}
-		case tui.SelectionChangeIntegration:
-			_ = config.SetLastSelection(result.Integration)
-			if len(result.Models) > 0 {
-				// Filter out cloud-disabled models
-				var filtered []string
-				for _, m := range result.Models {
-					if !config.IsCloudModelDisabled(cmd.Context(), m) {
-						filtered = append(filtered, m)
-					}
-				}
-				if len(filtered) == 0 {
-					continue
-				}
-				result.Models = filtered
-				// Multi-select from modal (Editor integrations)
-				if err := config.SaveAndEditIntegration(result.Integration, result.Models); err != nil {
-					fmt.Fprintf(os.Stderr, "Error configuring %s: %v\n", result.Integration, err)
-					continue
-				}
-				if err := config.LaunchIntegrationWithModel(result.Integration, result.Models[0]); err != nil {
-					fmt.Fprintf(os.Stderr, "Error launching %s: %v\n", result.Integration, err)
-				}
-			} else if result.Model != "" {
-				if config.IsCloudModelDisabled(cmd.Context(), result.Model) {
-					continue
-				}
-				// Single-select from modal - save and launch
-				if err := config.SaveIntegration(result.Integration, []string{result.Model}); err != nil {
-					fmt.Fprintf(os.Stderr, "Error saving config: %v\n", err)
-					continue
-				}
-				if err := config.LaunchIntegrationWithModel(result.Integration, result.Model); err != nil {
-					fmt.Fprintf(os.Stderr, "Error launching %s: %v\n", result.Integration, err)
-				}
-			} else {
-				err := config.ConfigureIntegrationWithSelectors(cmd.Context(), result.Integration, singleSelector, multiSelector)
-				if errors.Is(err, config.ErrCancelled) {
-					continue // Return to main menu
-				}
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error configuring %s: %v\n", result.Integration, err)
-					continue
-				}
-				if err := config.LaunchIntegration(result.Integration); err != nil {
-					fmt.Fprintf(os.Stderr, "Error launching %s: %v\n", result.Integration, err)
-				}
-			}
+	action, err := deps.runMenu(state)
+	if err != nil {
+		return false, fmt.Errorf("run launcher menu: %w", err)
+	}
+
+	return runLauncherAction(cmd, action, deps)
+}
+
+func saveLauncherSelection(action tui.TUIAction) {
+	// Best effort only: this affects menu recall, not launch correctness.
+	_ = config.SetLastSelection(action.LastSelection())
+}
+
+func runLauncherAction(cmd *cobra.Command, action tui.TUIAction, deps launcherDeps) (bool, error) {
+	switch action.Kind {
+	case tui.TUIActionNone:
+		return false, nil
+	case tui.TUIActionRunModel:
+		saveLauncherSelection(action)
+		modelName, err := deps.resolveRunModel(cmd.Context(), action.RunModelRequest())
+		if errors.Is(err, launch.ErrCancelled) {
+			return true, nil
 		}
+		if err != nil {
+			return true, fmt.Errorf("selecting model: %w", err)
+		}
+		if err := deps.runModel(cmd, modelName); err != nil {
+			return true, err
+		}
+		return true, nil
+	case tui.TUIActionLaunchIntegration:
+		saveLauncherSelection(action)
+		err := deps.launchIntegration(cmd.Context(), action.IntegrationLaunchRequest())
+		if errors.Is(err, launch.ErrCancelled) {
+			return true, nil
+		}
+		if err != nil {
+			return true, fmt.Errorf("launching %s: %w", action.Integration, err)
+		}
+		return true, nil
+	default:
+		return false, fmt.Errorf("unknown launcher action: %d", action.Kind)
 	}
 }
 
@@ -2358,7 +2337,7 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		runnerCmd,
-		config.LaunchCmd(checkServerHeartbeat, runInteractiveTUI),
+		launch.LaunchCmd(checkServerHeartbeat, runInteractiveTUI),
 	)
 
 	return rootCmd

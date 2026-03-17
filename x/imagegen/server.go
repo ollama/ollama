@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/x/imagegen/manifest"
@@ -43,11 +44,50 @@ type Server struct {
 	lastErrLock sync.Mutex
 }
 
-// NewServer spawns a new MLX runner subprocess and waits until it's ready.
+// NewServer prepares a new MLX runner server for image generation models.
+// The subprocess is not started until Load() is called.
 func NewServer(modelName string) (*Server, error) {
 	// Validate platform support before attempting to start
 	if err := CheckPlatformSupport(); err != nil {
 		return nil, err
+	}
+
+	return &Server{
+		modelName: modelName,
+		done:      make(chan error, 1),
+		client:    &http.Client{Timeout: 10 * time.Minute},
+	}, nil
+}
+
+// ModelPath returns the path to the model.
+func (s *Server) ModelPath() string {
+	return s.modelName
+}
+
+// Load checks whether the model fits in GPU memory and starts the subprocess.
+func (s *Server) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
+	// Estimate VRAM based on tensor size from manifest
+	if modelManifest, err := manifest.LoadManifest(s.modelName); err == nil {
+		s.vramSize = uint64(modelManifest.TotalTensorSize())
+	} else {
+		s.vramSize = 8 * 1024 * 1024 * 1024
+	}
+
+	if len(gpus) > 0 {
+		available := gpus[0].FreeMemory
+		overhead := gpus[0].MinimumMemory() + envconfig.GpuOverhead()
+		if available > overhead {
+			available -= overhead
+		} else {
+			available = 0
+		}
+
+		if s.vramSize > available {
+			if requireFull {
+				return nil, llm.ErrLoadRequiredFull
+			}
+			return nil, fmt.Errorf("model requires %s but only %s are available (after %s overhead)", format.HumanBytes2(s.vramSize), format.HumanBytes2(available), format.HumanBytes2(overhead))
+		}
 	}
 
 	// Find a free port
@@ -61,6 +101,7 @@ func NewServer(modelName string) (*Server, error) {
 	if port == 0 {
 		port = rand.Intn(65535-49152) + 49152
 	}
+	s.port = port
 
 	// Get the current executable path (we use the same binary with runner subcommand)
 	exe, err := os.Executable()
@@ -72,7 +113,7 @@ func NewServer(modelName string) (*Server, error) {
 	}
 
 	// Spawn subprocess: ollama runner --imagegen-engine --model <path> --port <port>
-	cmd := exec.Command(exe, "runner", "--imagegen-engine", "--model", modelName, "--port", strconv.Itoa(port))
+	cmd := exec.Command(exe, "runner", "--imagegen-engine", "--model", s.modelName, "--port", strconv.Itoa(port))
 	cmd.Env = os.Environ()
 
 	// On Linux, set LD_LIBRARY_PATH to include MLX library directories
@@ -105,23 +146,7 @@ func NewServer(modelName string) (*Server, error) {
 		slog.Debug("mlx subprocess library path", "LD_LIBRARY_PATH", pathEnvVal)
 	}
 
-	// Estimate VRAM based on tensor size from manifest
-	var vramSize uint64
-	if modelManifest, err := manifest.LoadManifest(modelName); err == nil {
-		vramSize = uint64(modelManifest.TotalTensorSize())
-	} else {
-		// Fallback: default to 8GB if manifest can't be loaded
-		vramSize = 8 * 1024 * 1024 * 1024
-	}
-
-	s := &Server{
-		cmd:       cmd,
-		port:      port,
-		modelName: modelName,
-		vramSize:  vramSize,
-		done:      make(chan error, 1),
-		client:    &http.Client{Timeout: 10 * time.Minute},
-	}
+	s.cmd = cmd
 
 	// Forward subprocess stdout/stderr to server logs
 	stdout, _ := cmd.StdoutPipe()
@@ -143,7 +168,7 @@ func NewServer(modelName string) (*Server, error) {
 		}
 	}()
 
-	slog.Info("starting mlx runner subprocess", "exe", exe, "model", modelName, "port", port)
+	slog.Info("starting mlx runner subprocess", "model", s.modelName, "port", s.port)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start mlx runner: %w", err)
 	}
@@ -154,22 +179,6 @@ func NewServer(modelName string) (*Server, error) {
 		s.done <- err
 	}()
 
-	// Wait for subprocess to be ready
-	if err := s.waitUntilRunning(); err != nil {
-		s.Close()
-		return nil, err
-	}
-
-	return s, nil
-}
-
-// ModelPath returns the path to the model.
-func (s *Server) ModelPath() string {
-	return s.modelName
-}
-
-// Load satisfies the LlamaServer interface. MLX models don't need GPU layer assignment.
-func (s *Server) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
 	return nil, nil
 }
 
@@ -191,9 +200,15 @@ func (s *Server) Ping(ctx context.Context) error {
 	return nil
 }
 
-// waitUntilRunning waits for the subprocess to be ready.
-func (s *Server) waitUntilRunning() error {
-	ctx := context.Background()
+// getLastErr returns the last stderr line.
+func (s *Server) getLastErr() string {
+	s.lastErrLock.Lock()
+	defer s.lastErrLock.Unlock()
+	return s.lastErr
+}
+
+// WaitUntilRunning waits for the subprocess to be ready.
+func (s *Server) WaitUntilRunning(ctx context.Context) error {
 	timeout := time.After(envconfig.LoadTimeout())
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -201,7 +216,6 @@ func (s *Server) waitUntilRunning() error {
 	for {
 		select {
 		case err := <-s.done:
-			// Include recent stderr lines for better error context
 			errMsg := s.getLastErr()
 			if errMsg != "" {
 				return fmt.Errorf("mlx runner failed: %s (exit: %v)", errMsg, err)
@@ -220,18 +234,6 @@ func (s *Server) waitUntilRunning() error {
 			}
 		}
 	}
-}
-
-// getLastErr returns the last stderr line.
-func (s *Server) getLastErr() string {
-	s.lastErrLock.Lock()
-	defer s.lastErrLock.Unlock()
-	return s.lastErr
-}
-
-// WaitUntilRunning satisfies the LlamaServer interface.
-func (s *Server) WaitUntilRunning(ctx context.Context) error {
-	return nil
 }
 
 // Completion handles both text and image generation requests.

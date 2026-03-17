@@ -22,9 +22,12 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/x/imagegen"
+	"github.com/ollama/ollama/x/imagegen/manifest"
 )
 
 // Client wraps an MLX runner subprocess to implement llm.LlamaServer for LLM models.
@@ -41,118 +44,24 @@ type Client struct {
 	cmd           *exec.Cmd
 }
 
-// NewClient spawns a new MLX runner subprocess for LLM models and waits until it's ready.
+// NewClient prepares a new MLX runner client for LLM models.
+// The subprocess is not started until Load() is called.
 func NewClient(modelName string) (*Client, error) {
 	if err := imagegen.CheckPlatformSupport(); err != nil {
 		return nil, err
 	}
 
-	// Find a free port
-	port := 0
-	if a, err := net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {
-		if l, err := net.ListenTCP("tcp", a); err == nil {
-			port = l.Addr().(*net.TCPAddr).Port
-			l.Close()
-		}
-	}
-	if port == 0 {
-		port = rand.Intn(65535-49152) + 49152
-	}
-
-	// Get the current executable path
-	exe, err := os.Executable()
-	if err != nil {
-		return nil, fmt.Errorf("unable to lookup executable path: %w", err)
-	}
-	if eval, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = eval
-	}
-
-	// Spawn subprocess: ollama runner --mlx-engine --model <name> --port <port>
-	cmd := exec.Command(exe, "runner", "--mlx-engine", "--model", modelName, "--port", strconv.Itoa(port))
-	cmd.Env = os.Environ()
-
-	// Set library path environment variable for MLX libraries
-	// Linux: LD_LIBRARY_PATH, Windows: PATH
-	var libPathEnvVar string
-	switch runtime.GOOS {
-	case "linux":
-		libPathEnvVar = "LD_LIBRARY_PATH"
-	case "windows":
-		libPathEnvVar = "PATH"
-	}
-
-	if libPathEnvVar != "" {
-		libraryPaths := []string{ml.LibOllamaPath}
-		if mlxDirs, err := filepath.Glob(filepath.Join(ml.LibOllamaPath, "mlx_*")); err == nil {
-			libraryPaths = append(libraryPaths, mlxDirs...)
-		}
-
-		if existingPath, ok := os.LookupEnv(libPathEnvVar); ok {
-			libraryPaths = append(libraryPaths, filepath.SplitList(existingPath)...)
-		}
-
-		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
-
-		found := false
-		for i := range cmd.Env {
-			envName := cmd.Env[i]
-			if runtime.GOOS == "windows" {
-				envName = strings.ToUpper(envName)
-			}
-			if strings.HasPrefix(envName, libPathEnvVar+"=") {
-				cmd.Env[i] = libPathEnvVar + "=" + pathEnvVal
-				found = true
-				break
-			}
-		}
-		if !found {
-			cmd.Env = append(cmd.Env, libPathEnvVar+"="+pathEnvVal)
-		}
-		slog.Debug("mlx subprocess library path", libPathEnvVar, pathEnvVal)
-	}
-
 	c := &Client{
-		port:      port,
 		modelName: modelName,
 		done:      make(chan error, 1),
 		client:    &http.Client{Timeout: 10 * time.Minute},
-		cmd:       cmd,
 	}
 
-	// Forward subprocess stdout/stderr to server logs
-	stdout, _ := cmd.StdoutPipe()
-	stderr, _ := cmd.StderrPipe()
-	go func() {
-		io.Copy(os.Stderr, stdout) //nolint:errcheck
-	}()
-	go func() {
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			line := scanner.Text()
-			fmt.Fprintln(os.Stderr, line)
-			c.lastErrLock.Lock()
-			c.lastErr = line
-			c.lastErrLock.Unlock()
-		}
-	}()
-
-	slog.Info("starting mlx runner subprocess", "exe", exe, "model", modelName, "port", port)
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("failed to start mlx runner: %w", err)
-	}
-
-	// Reap subprocess when it exits
-	go func() {
-		err := cmd.Wait()
-		c.done <- err
-	}()
-
-	// Wait for subprocess to be ready
-	if err := c.waitUntilRunning(); err != nil {
-		c.Close()
+	modelManifest, err := manifest.LoadManifest(modelName)
+	if err != nil {
 		return nil, err
 	}
+	c.memory.Store(uint64(modelManifest.TotalTensorSize()))
 
 	return c, nil
 }
@@ -163,14 +72,16 @@ func (c *Client) getLastErr() string {
 	return c.lastErr
 }
 
-func (c *Client) waitUntilRunning() error {
-	ctx := context.Background()
+// WaitUntilRunning waits for the subprocess to be ready.
+func (c *Client) WaitUntilRunning(ctx context.Context) error {
 	timeout := time.After(2 * time.Minute)
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
 		select {
+		case <-ctx.Done():
+			return ctx.Err()
 		case err := <-c.done:
 			errMsg := c.getLastErr()
 			if errMsg != "" {
@@ -345,8 +256,123 @@ func (c *Client) HasExited() bool {
 	}
 }
 
-// Load implements llm.LlamaServer.
-func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) ([]ml.DeviceID, error) {
+// Load checks whether the model fits in GPU memory and starts the subprocess.
+func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
+	if len(gpus) > 0 {
+		modelSize := c.memory.Load()
+		// We currently only use the first GPU with MLX
+		available := gpus[0].FreeMemory
+		overhead := gpus[0].MinimumMemory() + envconfig.GpuOverhead()
+		if available > overhead {
+			available -= overhead
+		} else {
+			available = 0
+		}
+
+		if modelSize > available {
+			if requireFull {
+				return nil, llm.ErrLoadRequiredFull
+			}
+			return nil, fmt.Errorf("model requires %s but only %s are available (after %s overhead)", format.HumanBytes2(modelSize), format.HumanBytes2(available), format.HumanBytes2(overhead))
+		}
+	}
+
+	// Find a free port
+	port := 0
+	if a, err := net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {
+		if l, err := net.ListenTCP("tcp", a); err == nil {
+			port = l.Addr().(*net.TCPAddr).Port
+			l.Close()
+		}
+	}
+	if port == 0 {
+		port = rand.Intn(65535-49152) + 49152
+	}
+	c.port = port
+
+	// Get the current executable path
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("unable to lookup executable path: %w", err)
+	}
+	if eval, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = eval
+	}
+
+	// Spawn subprocess: ollama runner --mlx-engine --model <name> --port <port>
+	cmd := exec.Command(exe, "runner", "--mlx-engine", "--model", c.modelName, "--port", strconv.Itoa(port))
+	cmd.Env = os.Environ()
+
+	// Set library path environment variable for MLX libraries
+	// Linux: LD_LIBRARY_PATH, Windows: PATH
+	var libPathEnvVar string
+	switch runtime.GOOS {
+	case "linux":
+		libPathEnvVar = "LD_LIBRARY_PATH"
+	case "windows":
+		libPathEnvVar = "PATH"
+	}
+
+	if libPathEnvVar != "" {
+		libraryPaths := []string{ml.LibOllamaPath}
+		if mlxDirs, err := filepath.Glob(filepath.Join(ml.LibOllamaPath, "mlx_*")); err == nil {
+			libraryPaths = append(libraryPaths, mlxDirs...)
+		}
+
+		if existingPath, ok := os.LookupEnv(libPathEnvVar); ok {
+			libraryPaths = append(libraryPaths, filepath.SplitList(existingPath)...)
+		}
+
+		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
+
+		found := false
+		for i := range cmd.Env {
+			envName := cmd.Env[i]
+			if runtime.GOOS == "windows" {
+				envName = strings.ToUpper(envName)
+			}
+			if strings.HasPrefix(envName, libPathEnvVar+"=") {
+				cmd.Env[i] = libPathEnvVar + "=" + pathEnvVal
+				found = true
+				break
+			}
+		}
+		if !found {
+			cmd.Env = append(cmd.Env, libPathEnvVar+"="+pathEnvVal)
+		}
+		slog.Debug("mlx subprocess library path", libPathEnvVar, pathEnvVal)
+	}
+
+	c.cmd = cmd
+
+	// Forward subprocess stdout/stderr to server logs
+	stdout, _ := cmd.StdoutPipe()
+	stderr, _ := cmd.StderrPipe()
+	go func() {
+		io.Copy(os.Stderr, stdout) //nolint:errcheck
+	}()
+	go func() {
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			line := scanner.Text()
+			fmt.Fprintln(os.Stderr, line)
+			c.lastErrLock.Lock()
+			c.lastErr = line
+			c.lastErrLock.Unlock()
+		}
+	}()
+
+	slog.Info("starting mlx runner subprocess", "model", c.modelName, "port", c.port)
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start mlx runner: %w", err)
+	}
+
+	// Reap subprocess when it exits
+	go func() {
+		err := cmd.Wait()
+		c.done <- err
+	}()
+
 	return nil, nil
 }
 
@@ -425,9 +451,7 @@ func (c *Client) Tokenize(ctx context.Context, content string) ([]int, error) {
 func (c *Client) currentMemory() uint64 {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := c.Ping(ctx); err != nil {
-		slog.Warn("failed to get current memory", "error", err)
-	}
+	c.Ping(ctx) //nolint:errcheck
 	return c.memory.Load()
 }
 
@@ -440,11 +464,6 @@ func (c *Client) MemorySize() (total, vram uint64) {
 // VRAMByGPU implements llm.LlamaServer.
 func (c *Client) VRAMByGPU(id ml.DeviceID) uint64 {
 	return c.currentMemory()
-}
-
-// WaitUntilRunning implements llm.LlamaServer.
-func (c *Client) WaitUntilRunning(ctx context.Context) error {
-	return nil
 }
 
 var _ llm.LlamaServer = (*Client)(nil)

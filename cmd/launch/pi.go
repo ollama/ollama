@@ -1,4 +1,4 @@
-package config
+package launch
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/types/model"
 )
@@ -24,15 +25,6 @@ func (p *Pi) String() string { return "Pi" }
 func (p *Pi) Run(model string, args []string) error {
 	if _, err := exec.LookPath("pi"); err != nil {
 		return fmt.Errorf("pi is not installed, install with: npm install -g @mariozechner/pi-coding-agent")
-	}
-
-	// Call Edit() to ensure config is up-to-date before launch
-	models := []string{model}
-	if config, err := loadIntegration("pi"); err == nil && len(config.Models) > 0 {
-		models = config.Models
-	}
-	if err := p.Edit(models); err != nil {
-		return fmt.Errorf("setup failed: %w", err)
 	}
 
 	cmd := exec.Command("pi", args...)
@@ -149,7 +141,7 @@ func (p *Pi) Edit(models []string) error {
 	if err != nil {
 		return err
 	}
-	if err := writeWithBackup(configPath, configData); err != nil {
+	if err := fileutil.WriteWithBackup(configPath, configData); err != nil {
 		return err
 	}
 
@@ -167,7 +159,7 @@ func (p *Pi) Edit(models []string) error {
 	if err != nil {
 		return err
 	}
-	return writeWithBackup(settingsPath, settingsData)
+	return fileutil.WriteWithBackup(settingsPath, settingsData)
 }
 
 func (p *Pi) Models() []string {
@@ -177,7 +169,7 @@ func (p *Pi) Models() []string {
 	}
 
 	configPath := filepath.Join(home, ".pi", "agent", "models.json")
-	config, err := readJSONFile(configPath)
+	config, err := fileutil.ReadJSON(configPath)
 	if err != nil {
 		return nil
 	}
@@ -229,8 +221,15 @@ func createConfig(ctx context.Context, client *api.Client, modelID string) map[s
 		cfg["contextWindow"] = l.Context
 	}
 
+	applyCloudContextFallback := func() {
+		if l, ok := lookupCloudModelLimit(modelID); ok {
+			cfg["contextWindow"] = l.Context
+		}
+	}
+
 	resp, err := client.Show(ctx, &api.ShowRequest{Model: modelID})
 	if err != nil {
+		applyCloudContextFallback()
 		return cfg
 	}
 
@@ -248,13 +247,18 @@ func createConfig(ctx context.Context, client *api.Client, modelID string) map[s
 
 	// Extract context window from ModelInfo. For known cloud models, the
 	// pre-filled shared limit remains unless the server provides a positive value.
+	hasContextWindow := false
 	for key, val := range resp.ModelInfo {
 		if strings.HasSuffix(key, ".context_length") {
 			if ctxLen, ok := val.(float64); ok && ctxLen > 0 {
 				cfg["contextWindow"] = int(ctxLen)
+				hasContextWindow = true
 			}
 			break
 		}
+	}
+	if !hasContextWindow {
+		applyCloudContextFallback()
 	}
 
 	return cfg

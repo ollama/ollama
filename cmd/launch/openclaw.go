@@ -1,4 +1,4 @@
-package config
+package launch
 
 import (
 	"context"
@@ -14,7 +14,10 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/mod/semver"
+
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/types/model"
 )
@@ -23,6 +26,9 @@ const defaultGatewayPort = 18789
 
 // Bound model capability probing so launch/config cannot hang on slow/unreachable API calls.
 var openclawModelShowTimeout = 5 * time.Second
+
+// openclawFreshInstall is set to true when ensureOpenclawInstalled performs an install
+var openclawFreshInstall bool
 
 type Openclaw struct{}
 
@@ -34,10 +40,7 @@ func (c *Openclaw) Run(model string, args []string) error {
 		return err
 	}
 
-	firstLaunch := true
-	if integrationConfig, err := loadIntegration("openclaw"); err == nil {
-		firstLaunch = !integrationConfig.Onboarded
-	}
+	firstLaunch := !c.onboarded()
 
 	if firstLaunch {
 		fmt.Fprintf(os.Stderr, "\n%sSecurity%s\n\n", ansiBold, ansiReset)
@@ -45,28 +48,40 @@ func (c *Openclaw) Run(model string, args []string) error {
 		fmt.Fprintf(os.Stderr, "  A bad prompt can trick it into doing unsafe things.\n\n")
 		fmt.Fprintf(os.Stderr, "%s  Learn more: https://docs.openclaw.ai/gateway/security%s\n\n", ansiGray, ansiReset)
 
-		ok, err := confirmPrompt("I understand the risks. Continue?")
+		ok, err := ConfirmPrompt("I understand the risks. Continue?")
 		if err != nil {
 			return err
 		}
 		if !ok {
 			return nil
 		}
-	}
 
-	if !c.onboarded() {
+		// Ensure the latest version is installed before onboarding so we get
+		// the newest wizard flags (e.g. --auth-choice ollama).
+		if !openclawFreshInstall {
+			update := exec.Command(bin, "update")
+			update.Stdout = os.Stdout
+			update.Stderr = os.Stderr
+			_ = update.Run() // best-effort; continue even if update fails
+		}
+
 		fmt.Fprintf(os.Stderr, "\n%sSetting up OpenClaw with Ollama...%s\n", ansiGreen, ansiReset)
 		fmt.Fprintf(os.Stderr, "%s  Model: %s%s\n\n", ansiGray, model, ansiReset)
 
-		cmd := exec.Command(bin, "onboard",
+		onboardArgs := []string{
+			"onboard",
 			"--non-interactive",
 			"--accept-risk",
-			"--auth-choice", "skip",
-			"--gateway-token", "ollama",
-			"--install-daemon",
+			"--auth-choice", "ollama",
+			"--custom-base-url", envconfig.Host().String(),
+			"--custom-model-id", model,
 			"--skip-channels",
 			"--skip-skills",
-		)
+		}
+		if canInstallDaemon() {
+			onboardArgs = append(onboardArgs, "--install-daemon")
+		}
+		cmd := exec.Command(bin, onboardArgs...)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -75,25 +90,13 @@ func (c *Openclaw) Run(model string, args []string) error {
 		}
 
 		patchDeviceScopes()
-
-		// Onboarding overwrites openclaw.json, so re-apply the model config
-		// that Edit() wrote before Run() was called.
-		if err := c.Edit([]string{model}); err != nil {
-			fmt.Fprintf(os.Stderr, "%s  Warning: could not re-apply model config: %v%s\n", ansiYellow, err, ansiReset)
-		}
 	}
 
-	if strings.HasSuffix(model, ":cloud") || strings.HasSuffix(model, "-cloud") {
-		if ensureWebSearchPlugin() {
-			registerWebSearchPlugin()
-		}
+	if ensureWebSearchPlugin() {
+		registerWebSearchPlugin()
 	}
 
-	if firstLaunch {
-		fmt.Fprintf(os.Stderr, "\n%sPreparing your assistant — this may take a moment...%s\n\n", ansiGray, ansiReset)
-	} else {
-		fmt.Fprintf(os.Stderr, "\n%sStarting your assistant — this may take a moment...%s\n\n", ansiGray, ansiReset)
-	}
+	fmt.Fprintf(os.Stderr, "\n%sStarting your assistant — this may take a moment...%s\n\n", ansiGray, ansiReset)
 
 	// When extra args are passed through, run exactly what the user asked for
 	// after setup and skip the built-in gateway+TUI convenience flow.
@@ -106,11 +109,6 @@ func (c *Openclaw) Run(model string, args []string) error {
 		if err := cmd.Run(); err != nil {
 			return windowsHint(err)
 		}
-		if firstLaunch {
-			if err := integrationOnboarded("openclaw"); err != nil {
-				return fmt.Errorf("failed to save onboarding state: %w", err)
-			}
-		}
 		return nil
 	}
 
@@ -118,7 +116,7 @@ func (c *Openclaw) Run(model string, args []string) error {
 	addr := fmt.Sprintf("localhost:%d", port)
 
 	// If the gateway is already running (e.g. via the daemon), restart it
-	// so it picks up any config changes from Edit() above (model, provider, etc.).
+	// so it picks up any config changes (model, provider, etc.).
 	if portOpen(addr) {
 		restart := exec.Command(bin, "daemon", "restart")
 		restart.Env = openclawEnv()
@@ -165,11 +163,6 @@ func (c *Openclaw) Run(model string, args []string) error {
 		return windowsHint(err)
 	}
 
-	if firstLaunch {
-		if err := integrationOnboarded("openclaw"); err != nil {
-			return fmt.Errorf("failed to save onboarding state: %w", err)
-		}
-	}
 	return nil
 }
 
@@ -409,6 +402,25 @@ func patchScopes(obj map[string]any, key string, required []string) bool {
 	return added
 }
 
+// canInstallDaemon reports whether the openclaw daemon can be installed as a
+// background service. Returns false on Linux when systemd is absent (e.g.
+// containers) so that --install-daemon is omitted and the gateway is started
+// as a foreground child process instead. Returns true in all other cases.
+func canInstallDaemon() bool {
+	if runtime.GOOS != "linux" {
+		return true
+	}
+	// /run/systemd/system exists as a directory when systemd is the init system.
+	// This is absent in most containers.
+	fi, err := os.Stat("/run/systemd/system")
+	if err != nil || !fi.IsDir() {
+		return false
+	}
+	// Even when systemd is the init system, user services require a user
+	// manager instance. XDG_RUNTIME_DIR being set is a prerequisite.
+	return os.Getenv("XDG_RUNTIME_DIR") != ""
+}
+
 func ensureOpenclawInstalled() (string, error) {
 	if _, err := exec.LookPath("openclaw"); err == nil {
 		return "openclaw", nil
@@ -426,7 +438,7 @@ func ensureOpenclawInstalled() (string, error) {
 			"and select OpenClaw")
 	}
 
-	ok, err := confirmPrompt("OpenClaw is not installed. Install with npm?")
+	ok, err := ConfirmPrompt("OpenClaw is not installed. Install with npm?")
 	if err != nil {
 		return "", err
 	}
@@ -448,6 +460,7 @@ func ensureOpenclawInstalled() (string, error) {
 	}
 
 	fmt.Fprintf(os.Stderr, "%sOpenClaw installed successfully%s\n\n", ansiGreen, ansiReset)
+	openclawFreshInstall = true
 	return "openclaw", nil
 }
 
@@ -561,7 +574,7 @@ func (c *Openclaw) Edit(models []string) error {
 	if err != nil {
 		return err
 	}
-	if err := writeWithBackup(configPath, data); err != nil {
+	if err := fileutil.WriteWithBackup(configPath, data); err != nil {
 		return err
 	}
 
@@ -606,11 +619,15 @@ func clearSessionModelOverride(primary string) {
 	_ = os.WriteFile(path, out, 0o600)
 }
 
-const webSearchNpmPackage = "@ollama/openclaw-web-search"
+const (
+	webSearchNpmPackage = "@ollama/openclaw-web-search"
+	webSearchMinVersion = "0.2.1"
+)
 
 // ensureWebSearchPlugin installs the openclaw-web-search extension into the
 // user-level extensions directory (~/.openclaw/extensions/) if it isn't already
-// present. Returns true if the extension is available.
+// present, or re-installs if the installed version is older than webSearchMinVersion.
+// Returns true if the extension is available.
 func ensureWebSearchPlugin() bool {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -618,8 +635,8 @@ func ensureWebSearchPlugin() bool {
 	}
 
 	pluginDir := filepath.Join(home, ".openclaw", "extensions", "openclaw-web-search")
-	if _, err := os.Stat(filepath.Join(pluginDir, "index.ts")); err == nil {
-		return true // already installed
+	if webSearchPluginUpToDate(pluginDir) {
+		return true
 	}
 
 	npmBin, err := exec.LookPath("npm")
@@ -653,6 +670,34 @@ func ensureWebSearchPlugin() bool {
 	return true
 }
 
+// webSearchPluginUpToDate returns true if the plugin is installed and its
+// package.json version is >= webSearchMinVersion.
+func webSearchPluginUpToDate(pluginDir string) bool {
+	data, err := os.ReadFile(filepath.Join(pluginDir, "package.json"))
+	if err != nil {
+		return false
+	}
+	var pkg struct {
+		Version string `json:"version"`
+	}
+	if json.Unmarshal(data, &pkg) != nil || pkg.Version == "" {
+		return false
+	}
+	return !versionLessThan(pkg.Version, webSearchMinVersion)
+}
+
+// versionLessThan compares two semver version strings (major.minor.patch).
+// Inputs may omit the "v" prefix; it is added automatically for semver.Compare.
+func versionLessThan(a, b string) bool {
+	if !strings.HasPrefix(a, "v") {
+		a = "v" + a
+	}
+	if !strings.HasPrefix(b, "v") {
+		b = "v" + b
+	}
+	return semver.Compare(a, b) < 0
+}
+
 // registerWebSearchPlugin adds plugins.entries.openclaw-web-search to the OpenClaw
 // config so the gateway activates it on next start. Best-effort; silently returns
 // on any error.
@@ -679,23 +724,39 @@ func registerWebSearchPlugin() {
 	if entries == nil {
 		entries = make(map[string]any)
 	}
-	if _, ok := entries["openclaw-web-search"]; ok {
-		return // already registered
-	}
 	entries["openclaw-web-search"] = map[string]any{"enabled": true}
 	plugins["entries"] = entries
 	config["plugins"] = plugins
 
-	// Disable the built-in web search since our plugin replaces it.
+	// Add plugin tools to tools.alsoAllow so they survive the coding profile's
+	// policy pipeline (which has an explicit allow list of core tools only).
 	tools, _ := config["tools"].(map[string]any)
 	if tools == nil {
 		tools = make(map[string]any)
 	}
+
+	alsoAllow, _ := tools["alsoAllow"].([]any)
+	needed := []string{"ollama_web_search", "ollama_web_fetch"}
+	have := make(map[string]bool, len(alsoAllow))
+	for _, v := range alsoAllow {
+		if s, ok := v.(string); ok {
+			have[s] = true
+		}
+	}
+	for _, name := range needed {
+		if !have[name] {
+			alsoAllow = append(alsoAllow, name)
+		}
+	}
+	tools["alsoAllow"] = alsoAllow
+
+	// Disable built-in web search/fetch since our plugin replaces them.
 	web, _ := tools["web"].(map[string]any)
 	if web == nil {
 		web = make(map[string]any)
 	}
 	web["search"] = map[string]any{"enabled": false}
+	web["fetch"] = map[string]any{"enabled": false}
 	tools["web"] = web
 	config["tools"] = tools
 
@@ -776,9 +837,9 @@ func (c *Openclaw) Models() []string {
 		return nil
 	}
 
-	config, err := readJSONFile(filepath.Join(home, ".openclaw", "openclaw.json"))
+	config, err := fileutil.ReadJSON(filepath.Join(home, ".openclaw", "openclaw.json"))
 	if err != nil {
-		config, err = readJSONFile(filepath.Join(home, ".clawdbot", "clawdbot.json"))
+		config, err = fileutil.ReadJSON(filepath.Join(home, ".clawdbot", "clawdbot.json"))
 		if err != nil {
 			return nil
 		}

@@ -17,6 +17,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/readline"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
@@ -537,6 +538,13 @@ func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
 
 	modelName := model.ParseName(parentModel)
 	if !modelName.IsValid() {
+		parentModel = ""
+	}
+
+	// Preserve explicit cloud intent for sessions started with `:cloud`.
+	// Cloud model metadata can return a source-less parent_model (for example
+	// "qwen3.5"), which would otherwise make `/save` create a local derivative.
+	if modelref.HasExplicitCloudSource(opts.Model) && !modelref.HasExplicitCloudSource(parentModel) {
 		parentModel = ""
 	}
 

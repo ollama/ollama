@@ -34,12 +34,13 @@ func (w *AnthropicWriter) writeError(data []byte) (int, error) {
 		Error string `json:"error"`
 	}
 	if err := json.Unmarshal(data, &errData); err != nil {
-		return 0, err
+		// If the error response isn't valid JSON, use the raw bytes as the
+		// error message rather than surfacing a confusing JSON parse error.
+		errData.Error = string(data)
 	}
 
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	err := json.NewEncoder(w.ResponseWriter).Encode(anthropic.NewError(w.Status(), errData.Error))
-	if err != nil {
+	if err := json.NewEncoder(w.ResponseWriter).Encode(anthropic.NewError(w.Status(), errData.Error)); err != nil {
 		return 0, err
 	}
 

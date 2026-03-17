@@ -1,4 +1,6 @@
-package config
+// Package fileutil provides small shared helpers for reading JSON files
+// and writing config files with backup-on-overwrite semantics.
+package fileutil
 
 import (
 	"bytes"
@@ -9,7 +11,8 @@ import (
 	"time"
 )
 
-func readJSONFile(path string) (map[string]any, error) {
+// ReadJSON reads a JSON object file into a generic map.
+func ReadJSON(path string) (map[string]any, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -33,12 +36,13 @@ func copyFile(src, dst string) error {
 	return os.WriteFile(dst, data, info.Mode().Perm())
 }
 
-func backupDir() string {
+// BackupDir returns the shared backup directory used before overwriting files.
+func BackupDir() string {
 	return filepath.Join(os.TempDir(), "ollama-backups")
 }
 
 func backupToTmp(srcPath string) (string, error) {
-	dir := backupDir()
+	dir := BackupDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
@@ -50,8 +54,8 @@ func backupToTmp(srcPath string) (string, error) {
 	return backupPath, nil
 }
 
-// writeWithBackup writes data to path via temp file + rename, backing up any existing file first
-func writeWithBackup(path string, data []byte) error {
+// WriteWithBackup writes data to path via temp file + rename, backing up any existing file first.
+func WriteWithBackup(path string, data []byte) error {
 	var backupPath string
 	// backup must be created before any writes to the target file
 	if existingContent, err := os.ReadFile(path); err == nil {
