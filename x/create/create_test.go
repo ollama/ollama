@@ -7,8 +7,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/d4l3k/go-bfloat16"
+	st "github.com/ollama/ollama/x/imagegen/safetensors"
 )
 
 func TestIsTensorModelDir(t *testing.T) {
@@ -171,6 +175,75 @@ func createMinimalSafetensors(t *testing.T, path string) {
 	if _, err := f.Write(make([]byte, 16)); err != nil {
 		t.Fatalf("failed to write tensor data: %v", err)
 	}
+}
+
+func createTestSafetensors(t *testing.T, path string, tensors []*st.TensorData) {
+	t.Helper()
+
+	data, err := io.ReadAll(st.BuildPackedSafetensorsReader(tensors))
+	if err != nil {
+		t.Fatalf("failed to build packed safetensors: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("failed to write safetensors: %v", err)
+	}
+}
+
+func readSingleTensorHeader(t *testing.T, data []byte) (string, []int32) {
+	t.Helper()
+
+	var headerSize uint64
+	if err := binary.Read(bytes.NewReader(data[:8]), binary.LittleEndian, &headerSize); err != nil {
+		t.Fatalf("failed to read header size: %v", err)
+	}
+
+	var header map[string]struct {
+		Dtype string  `json:"dtype"`
+		Shape []int32 `json:"shape"`
+	}
+	if err := json.Unmarshal(data[8:8+headerSize], &header); err != nil {
+		t.Fatalf("failed to parse header: %v", err)
+	}
+
+	for name, info := range header {
+		if name == "__metadata__" {
+			continue
+		}
+		return info.Dtype, info.Shape
+	}
+
+	t.Fatal("no tensor entry found in header")
+	return "", nil
+}
+
+func readSingleTensorRaw(t *testing.T, data []byte) []byte {
+	t.Helper()
+
+	var headerSize uint64
+	if err := binary.Read(bytes.NewReader(data[:8]), binary.LittleEndian, &headerSize); err != nil {
+		t.Fatalf("failed to read header size: %v", err)
+	}
+
+	var header map[string]struct {
+		Dtype       string  `json:"dtype"`
+		Shape       []int32 `json:"shape"`
+		DataOffsets [2]int  `json:"data_offsets"`
+	}
+	if err := json.Unmarshal(data[8:8+headerSize], &header); err != nil {
+		t.Fatalf("failed to parse header: %v", err)
+	}
+
+	for name, info := range header {
+		if name == "__metadata__" {
+			continue
+		}
+		start := 8 + int(headerSize) + info.DataOffsets[0]
+		end := 8 + int(headerSize) + info.DataOffsets[1]
+		return data[start:end]
+	}
+
+	t.Fatal("no tensor entry found in header")
+	return nil
 }
 
 func TestCreateSafetensorsModel(t *testing.T) {
@@ -371,6 +444,252 @@ func TestCreateSafetensorsModel_SkipsIndexJson(t *testing.T) {
 		if name == "model.safetensors.index.json" {
 			t.Error("model.safetensors.index.json should have been skipped")
 		}
+	}
+}
+
+func TestCreateSafetensorsModel_PacksPrequantizedTensorTriplets(t *testing.T) {
+	dir := t.TempDir()
+
+	configJSON := `{
+		"model_type": "test",
+		"architectures": ["TestModel"],
+		"quantization": {"group_size": 64, "bits": 4, "mode": "affine"}
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(configJSON), 0o644); err != nil {
+		t.Fatalf("failed to write config.json: %v", err)
+	}
+
+	createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
+		st.NewTensorDataFromBytes("linear.weight", "U32", []int32{4, 4}, make([]byte, 16)),
+		st.NewTensorDataFromBytes("linear.scales", "BF16", []int32{4, 1}, make([]byte, 8)),
+		st.NewTensorDataFromBytes("linear.biases", "BF16", []int32{4, 1}, make([]byte, 8)),
+		st.NewTensorDataFromBytes("plain.weight", "F32", []int32{2, 2}, make([]byte, 16)),
+	})
+
+	var packedHeader map[string]json.RawMessage
+	var tensorLayerNames []string
+	var createTensorLayerNames []string
+
+	createLayer := func(r io.Reader, mediaType, name string) (LayerInfo, error) {
+		data, err := io.ReadAll(r)
+		if err != nil {
+			return LayerInfo{}, err
+		}
+		if mediaType == "application/vnd.ollama.image.tensor" && name == "linear.weight" {
+			var headerSize uint64
+			if err := binary.Read(bytes.NewReader(data[:8]), binary.LittleEndian, &headerSize); err != nil {
+				return LayerInfo{}, err
+			}
+			if err := json.Unmarshal(data[8:8+headerSize], &packedHeader); err != nil {
+				return LayerInfo{}, err
+			}
+		}
+		tensorLayerNames = append(tensorLayerNames, name)
+		return LayerInfo{Name: name, Digest: "sha256:" + name, MediaType: mediaType, Size: int64(len(data))}, nil
+	}
+
+	createTensorLayer := func(r io.Reader, name, dtype string, shape []int32, quantize string) ([]LayerInfo, error) {
+		if _, err := io.ReadAll(r); err != nil {
+			return nil, err
+		}
+		createTensorLayerNames = append(createTensorLayerNames, name)
+		return []LayerInfo{{Name: name, Digest: "sha256:tensor_" + name, MediaType: "application/vnd.ollama.image.tensor"}}, nil
+	}
+
+	writeManifest := func(modelName string, config LayerInfo, layers []LayerInfo) error {
+		return nil
+	}
+
+	progressFn := func(status string) {}
+
+	if err := CreateSafetensorsModel("test-model", dir, "", createLayer, createTensorLayer, writeManifest, progressFn); err != nil {
+		t.Fatalf("CreateSafetensorsModel failed: %v", err)
+	}
+
+	if packedHeader == nil {
+		t.Fatal("expected packed quantized header for linear.weight")
+	}
+	if _, ok := packedHeader["linear.weight"]; !ok {
+		t.Fatalf("packed header missing linear.weight: %v", packedHeader)
+	}
+	if _, ok := packedHeader["linear.weight.scale"]; !ok {
+		t.Fatalf("packed header missing linear.weight.scale: %v", packedHeader)
+	}
+	if _, ok := packedHeader["linear.weight.bias"]; !ok {
+		t.Fatalf("packed header missing linear.weight.bias: %v", packedHeader)
+	}
+
+	var metadata map[string]string
+	if metaRaw, ok := packedHeader["__metadata__"]; ok {
+		if err := json.Unmarshal(metaRaw, &metadata); err != nil {
+			t.Fatalf("failed to parse packed metadata: %v", err)
+		}
+	}
+	if metadata["quant_type"] != "int4" {
+		t.Fatalf("quant_type = %q, want %q", metadata["quant_type"], "int4")
+	}
+	if metadata["group_size"] != "64" {
+		t.Fatalf("group_size = %q, want %q", metadata["group_size"], "64")
+	}
+
+	if slices.Contains(createTensorLayerNames, "linear.weight") {
+		t.Fatalf("linear.weight unexpectedly handled by createTensorLayer: %v", createTensorLayerNames)
+	}
+	if slices.Contains(createTensorLayerNames, "linear.scales") || slices.Contains(createTensorLayerNames, "linear.biases") {
+		t.Fatalf("quantized companions unexpectedly handled separately: %v", createTensorLayerNames)
+	}
+	if !slices.Contains(createTensorLayerNames, "plain.weight") {
+		t.Fatalf("plain.weight missing from createTensorLayer calls: %v", createTensorLayerNames)
+	}
+	if slices.Contains(tensorLayerNames, "linear.scales") || slices.Contains(tensorLayerNames, "linear.biases") {
+		t.Fatalf("quantized companions unexpectedly emitted as layers: %v", tensorLayerNames)
+	}
+}
+
+func TestCreateSafetensorsModel_Qwen35Transforms(t *testing.T) {
+	dir := t.TempDir()
+
+	configJSON := `{
+		"model_type": "test",
+		"architectures": ["Qwen3_5MoeForConditionalGeneration"],
+		"text_config": {"dtype": "bfloat16"}
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(configJSON), 0o644); err != nil {
+		t.Fatalf("failed to write config.json: %v", err)
+	}
+
+	gateUpValues := make([]float32, 2*128*64)
+	for expert := range 2 {
+		base := expert * 128 * 64
+		for i := range 64 * 64 {
+			gateUpValues[base+i] = 1
+			gateUpValues[base+64*64+i] = 2
+		}
+	}
+
+	createTestSafetensors(t, filepath.Join(dir, "model.safetensors"), []*st.TensorData{
+		st.NewTensorDataFromBytes("model.language_model.embed_tokens.weight", "BF16", []int32{64, 64}, make([]byte, 64*64*2)),
+		st.NewTensorDataFromBytes("model.language_model.layers.0.input_layernorm.weight", "F32", []int32{64}, make([]byte, 64*4)),
+		st.NewTensorDataFromBytes("model.language_model.layers.0.linear_attn.A_log", "F32", []int32{32}, make([]byte, 32*4)),
+		st.NewTensorDataFromBytes("model.language_model.layers.0.linear_attn.conv1d.weight", "BF16", []int32{64, 1, 4}, make([]byte, 64*1*4*2)),
+		st.NewTensorDataFromBytes("model.language_model.layers.0.mlp.gate.weight", "BF16", []int32{64, 64}, make([]byte, 64*64*2)),
+		st.NewTensorDataFromBytes("model.language_model.layers.0.mlp.experts.gate_up_proj", "BF16", []int32{2, 128, 64}, bfloat16.EncodeFloat32(gateUpValues)),
+		st.NewTensorDataFromBytes("model.language_model.layers.0.mlp.experts.down_proj", "BF16", []int32{2, 64, 64}, bfloat16.EncodeFloat32(make([]float32, 2*64*64))),
+		st.NewTensorDataFromBytes("model.language_model.layers.0.mlp.shared_expert.down_proj.weight", "BF16", []int32{64, 64}, make([]byte, 64*64*2)),
+		st.NewTensorDataFromBytes("model.visual.blocks.0.attn.proj.weight", "BF16", []int32{64, 64}, make([]byte, 64*64*2)),
+		st.NewTensorDataFromBytes("mtp.layers.0.foo.weight", "F32", []int32{64, 64}, make([]byte, 64*64*4)),
+	})
+
+	type tensorCall struct {
+		dtype    string
+		shape    []int32
+		quantize string
+		raw      []byte
+	}
+	calls := make(map[string]tensorCall)
+
+	createLayer := func(r io.Reader, mediaType, name string) (LayerInfo, error) {
+		_, _ = io.ReadAll(r)
+		return LayerInfo{Name: name, Digest: "sha256:" + name, MediaType: mediaType}, nil
+	}
+
+	createTensorLayer := func(r io.Reader, name, dtype string, shape []int32, quantize string) ([]LayerInfo, error) {
+		data, err := io.ReadAll(r)
+		if err != nil {
+			return nil, err
+		}
+		headerDType, headerShape := readSingleTensorHeader(t, data)
+		calls[name] = tensorCall{
+			dtype:    headerDType,
+			shape:    headerShape,
+			quantize: quantize,
+			raw:      readSingleTensorRaw(t, data),
+		}
+		return []LayerInfo{{Name: name, Digest: "sha256:" + name, MediaType: "application/vnd.ollama.image.tensor"}}, nil
+	}
+
+	writeManifest := func(modelName string, config LayerInfo, layers []LayerInfo) error {
+		return nil
+	}
+
+	if err := CreateSafetensorsModel("test-model", dir, "int4", createLayer, createTensorLayer, writeManifest, func(string) {}); err != nil {
+		t.Fatalf("CreateSafetensorsModel failed: %v", err)
+	}
+
+	if _, ok := calls["mtp.layers.0.foo.weight"]; ok {
+		t.Fatal("mtp tensor should have been dropped")
+	}
+
+	layerNorm := calls["language_model.model.layers.0.input_layernorm.weight"]
+	if layerNorm.dtype != "BF16" {
+		t.Fatalf("input_layernorm dtype = %q, want %q", layerNorm.dtype, "BF16")
+	}
+	if layerNorm.quantize != "" {
+		t.Fatalf("input_layernorm quantize = %q, want empty", layerNorm.quantize)
+	}
+	layerNormValues := bfloat16.DecodeFloat32(layerNorm.raw)
+	if len(layerNormValues) == 0 || layerNormValues[0] != 1.0 {
+		t.Fatalf("input_layernorm first value = %v, want 1.0 after +1 shift", layerNormValues[0])
+	}
+
+	alog := calls["language_model.model.layers.0.linear_attn.A_log"]
+	if alog.dtype != "F32" {
+		t.Fatalf("A_log dtype = %q, want %q", alog.dtype, "F32")
+	}
+
+	conv := calls["language_model.model.layers.0.linear_attn.conv1d.weight"]
+	if !slices.Equal(conv.shape, []int32{64, 4, 1}) {
+		t.Fatalf("conv1d shape = %v, want %v", conv.shape, []int32{64, 4, 1})
+	}
+
+	if got := calls["language_model.model.embed_tokens.weight"].quantize; got != "int4" {
+		t.Fatalf("embed_tokens quantize = %q, want %q", got, "int4")
+	}
+	if got := calls["language_model.model.layers.0.mlp.gate.weight"].quantize; got != "int4" {
+		t.Fatalf("mlp.gate quantize = %q, want %q", got, "int4")
+	}
+	if got := calls["language_model.model.layers.0.mlp.shared_expert.down_proj.weight"].quantize; got != "int4" {
+		t.Fatalf("down_proj quantize = %q, want %q", got, "int4")
+	}
+
+	if _, ok := calls["language_model.model.layers.0.mlp.experts.gate_up_proj"]; ok {
+		t.Fatal("combined gate_up_proj tensor should have been rewritten")
+	}
+	if _, ok := calls["language_model.model.layers.0.mlp.experts.down_proj"]; ok {
+		t.Fatal("combined down_proj tensor should have been rewritten")
+	}
+
+	gateProj := calls["language_model.model.layers.0.mlp.switch_mlp.gate_proj.weight"]
+	if !slices.Equal(gateProj.shape, []int32{2, 64, 64}) {
+		t.Fatalf("gate_proj shape = %v, want %v", gateProj.shape, []int32{2, 64, 64})
+	}
+	gateProjValues := bfloat16.DecodeFloat32(gateProj.raw)
+	if len(gateProjValues) == 0 || gateProjValues[0] != 1.0 {
+		t.Fatalf("gate_proj first value = %v, want 1.0", gateProjValues[0])
+	}
+
+	upProj := calls["language_model.model.layers.0.mlp.switch_mlp.up_proj.weight"]
+	if !slices.Equal(upProj.shape, []int32{2, 64, 64}) {
+		t.Fatalf("up_proj shape = %v, want %v", upProj.shape, []int32{2, 64, 64})
+	}
+	upProjValues := bfloat16.DecodeFloat32(upProj.raw)
+	if len(upProjValues) == 0 || upProjValues[0] != 2.0 {
+		t.Fatalf("up_proj first value = %v, want 2.0", upProjValues[0])
+	}
+
+	if got := calls["language_model.model.layers.0.mlp.switch_mlp.down_proj.weight"].quantize; got != "int4" {
+		t.Fatalf("switch_mlp down_proj quantize = %q, want %q", got, "int4")
+	}
+
+	vision := calls["vision_tower.blocks.0.attn.proj.weight"]
+	if vision.dtype != "BF16" {
+		t.Fatalf("vision weight dtype = %q, want %q", vision.dtype, "BF16")
+	}
+	if vision.quantize != "" {
+		t.Fatalf("vision weight quantize = %q, want empty", vision.quantize)
+	}
+	if _, ok := calls["language_model.model.visual.blocks.0.attn.proj.weight"]; ok {
+		t.Fatal("vision tensor should have been rewritten to vision_tower.*")
 	}
 }
 
