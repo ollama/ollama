@@ -726,6 +726,34 @@ func registerWebSearchPlugin() {
 	}
 	entries["openclaw-web-search"] = map[string]any{"enabled": true}
 	plugins["entries"] = entries
+
+	// Pin trust so the gateway doesn't warn about untracked plugins.
+	allow, _ := plugins["allow"].([]any)
+	hasAllow := false
+	for _, v := range allow {
+		if s, ok := v.(string); ok && s == "openclaw-web-search" {
+			hasAllow = true
+			break
+		}
+	}
+	if !hasAllow {
+		allow = append(allow, "openclaw-web-search")
+	}
+	plugins["allow"] = allow
+
+	// Record install provenance so the loader can verify the plugin origin.
+	installs, _ := plugins["installs"].(map[string]any)
+	if installs == nil {
+		installs = make(map[string]any)
+	}
+	pluginDir := filepath.Join(home, ".openclaw", "extensions", "openclaw-web-search")
+	installs["openclaw-web-search"] = map[string]any{
+		"source":      "npm",
+		"spec":        webSearchNpmPackage,
+		"installPath": pluginDir,
+	}
+	plugins["installs"] = installs
+
 	config["plugins"] = plugins
 
 	// Add plugin tools to tools.alsoAllow so they survive the coding profile's
