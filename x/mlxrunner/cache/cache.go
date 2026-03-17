@@ -118,6 +118,24 @@ func (c *RotatingKVCache) concat(keys, values *mlx.Array) (newK *mlx.Array, newV
 	if c.keys == nil {
 		c.keys, c.values = keys.Clone(), values.Clone()
 		mlx.Pin(c.keys, c.values)
+	} else if c.offset > c.maxSize {
+		// The buffer has wrapped: [idx..maxSize) has older entries, [0..idx)
+		// has newer entries. Linearize to [older | newer], then append new keys
+		// and trim to the sliding window.
+		dim2 := c.keys.Dim(2)
+		tail := c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(c.idx, dim2), mlx.Slice())
+		head := c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.idx), mlx.Slice())
+		tailV := c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(c.idx, dim2), mlx.Slice())
+		headV := c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.idx), mlx.Slice())
+
+		c.keys.Set(tail.Concatenate(2, head, keys))
+		c.values.Set(tailV.Concatenate(2, headV, values))
+
+		// Trim from the front to maintain sliding window.
+		if trim := c.keys.Dim(2) - c.maxSize; trim > 0 {
+			c.keys.Set(c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(trim, c.keys.Dim(2)), mlx.Slice()))
+			c.values.Set(c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(trim, c.values.Dim(2)), mlx.Slice()))
+		}
 	} else {
 		if c.idx < c.keys.Dim(2) {
 			c.keys.Set(c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.idx), mlx.Slice()))
@@ -132,7 +150,6 @@ func (c *RotatingKVCache) concat(keys, values *mlx.Array) (newK *mlx.Array, newV
 
 		c.keys.Set(c.keys.Concatenate(2, keys))
 		c.values.Set(c.values.Concatenate(2, values))
-		c.idx = c.keys.Dim(2)
 	}
 
 	c.offset += keys.Dim(2)
@@ -149,6 +166,11 @@ func (c *RotatingKVCache) update(keys, values *mlx.Array) (*mlx.Array, *mlx.Arra
 	// Grow buffer if not yet at max
 	if c.keys == nil || (prev >= c.keys.Dim(2) && c.keys.Dim(2) < c.maxSize) {
 		newSize := min(c.step, c.maxSize-prev)
+		if newSize <= 0 {
+			// Safety: if offset has somehow exceeded maxSize with keys still
+			// smaller than maxSize, clamp growth to step to avoid negative dims.
+			newSize = c.step
+		}
 		newKeys := mlx.Zeros(keys.DType(), B, H, newSize, Dk)
 		newValues := mlx.Zeros(values.DType(), B, H, newSize, Dv)
 		if c.keys != nil {
@@ -188,14 +210,26 @@ func (c *RotatingKVCache) State() (*mlx.Array, *mlx.Array) {
 	if c.keys == nil || c.values == nil {
 		return nil, nil
 	}
-	return c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice()),
-		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice())
+	// Use the smaller of offset and physical array size. After the sliding
+	// window wraps, offset can exceed the physical array dimension.
+	validLen := min(c.offset, c.keys.Dim(2))
+	return c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, validLen), mlx.Slice()),
+		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, validLen), mlx.Slice())
 }
 
 func (c *RotatingKVCache) CanTrim() bool { return true }
 
 func (c *RotatingKVCache) Trim(n int) int {
 	n = min(c.offset, n)
+	// Once the sliding window has filled and wrapped (offset > maxSize), the
+	// physical array is a circular buffer. Trimming from a circular buffer is
+	// unsafe — it would leave offset >> physical array size, causing update()
+	// to compute negative growth sizes. Even trimming to idx=0 breaks concat()
+	// which truncates to [0..idx) then concatenates, losing all cached context.
+	// Return 0 to signal failure; the caller will do a full cache reset.
+	if c.offset > c.maxSize || c.idx < n {
+		return 0
+	}
 	c.offset -= n
 	c.idx -= n
 	return n

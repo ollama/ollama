@@ -68,18 +68,25 @@ func (c *kvCache) cachesCanTrim() bool {
 	return true
 }
 
-func (c *kvCache) trimToPrefix(prefix int) {
+// trimToPrefix trims all caches to the given prefix length.
+// Returns true if all caches were trimmed successfully.
+// Returns false if any cache couldn't trim (e.g., a rotating cache whose
+// sliding window has wrapped past the trim point).
+func (c *kvCache) trimToPrefix(prefix int) bool {
 	for _, kv := range c.caches {
 		if kv == nil || !kv.CanTrim() {
 			continue
 		}
 		if trim := kv.Offset() - prefix; trim > 0 {
-			kv.Trim(trim)
+			if trimmed := kv.Trim(trim); trimmed != trim {
+				return false
+			}
 		}
 	}
 	if prefix < len(c.tokens) {
 		c.tokens = c.tokens[:prefix]
 	}
+	return true
 }
 
 // begin prepares caches for a new request. It finds the nearest
@@ -160,11 +167,11 @@ func (c *kvCache) findRemaining(tokens []int32) []int32 {
 	}
 
 	if prefix < len(c.tokens) {
-		if c.cachesCanTrim() {
-			c.trimToPrefix(prefix)
+		if c.cachesCanTrim() && c.trimToPrefix(prefix) {
+			// All caches trimmed successfully.
 		} else {
 			c.free()
-			slog.Info("Cache miss", "left", len(tokens), "matched", prefix, "reason", "non_trimmable_divergence")
+			slog.Info("Cache miss", "left", len(tokens), "matched", prefix, "reason", "trim_failed")
 			return tokens
 		}
 	}
