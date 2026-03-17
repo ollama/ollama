@@ -29,7 +29,8 @@ type Request struct {
 }
 
 type TextCompletionsRequest struct {
-	Prompt  string `json:"prompt"`
+	Prompt  string      `json:"prompt"`
+	Images  []imageData `json:"images,omitempty"`
 	Options struct {
 		Temperature     float32 `json:"temperature"`
 		TopP            float32 `json:"top_p"`

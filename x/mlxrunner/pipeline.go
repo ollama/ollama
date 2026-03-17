@@ -7,16 +7,21 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/model/base"
 )
 
 func prefillChunkSize() int {
 	return 2 << 10
 }
+
+var imgTagRe = regexp.MustCompile(`\[img-(\d+)\]`)
 
 func (r *Runner) TextGenerationPipeline(request Request) error {
 	if r.Model == nil {
@@ -55,7 +60,25 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		slog.Info("peak memory", "size", mlx.PrettyBytes(mlx.PeakMemory()))
 	}()
 
-	inputs := r.Tokenizer.Encode(request.Prompt, true)
+	// Check for multimodal model with images.
+	mmModel, isMultimodal := r.Model.(base.MultimodalModel)
+	hasImages := isMultimodal && len(request.Images) > 0
+
+	// Tokenize prompt. For multimodal models with images, parse [img-N]
+	// tags and build a token sequence with placeholder tokens.
+	var inputs []int32
+	var mmSegments []base.MultimodalSegment
+
+	if hasImages {
+		var err error
+		inputs, mmSegments, err = r.tokenizeWithImages(request.Prompt, request.Images, mmModel)
+		if err != nil {
+			return err
+		}
+	} else {
+		inputs = r.Tokenizer.Encode(request.Prompt, true)
+	}
+
 	if len(inputs) == 0 {
 		return errors.New("empty prompt")
 	}
@@ -67,7 +90,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		}
 	}
 
-	// Cap generation to stay within the model's context length
+	// Cap generation to stay within the model's context length.
 	maxGenerate := r.contextLength - len(inputs)
 	if request.Options.MaxTokens <= 0 {
 		request.Options.MaxTokens = maxGenerate
@@ -96,6 +119,33 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 
 	now := time.Now()
 	total, processed := len(tokens), 0
+
+	if hasImages && len(mmSegments) > 0 {
+		// Check if remaining tokens contain any multimodal placeholders.
+		// If not, the KV cache already covers them from a prior turn
+		// and we can skip encoding entirely.
+		offset := len(inputs) - len(tokens)
+		adjustedSegments := make([]base.MultimodalSegment, 0, len(mmSegments))
+		for _, seg := range mmSegments {
+			if seg.StartPos >= offset && seg.StartPos+seg.NumTokens <= offset+len(tokens) {
+				adjusted := seg
+				adjusted.StartPos -= offset
+				adjustedSegments = append(adjustedSegments, adjusted)
+			}
+		}
+
+		if len(adjustedSegments) > 0 {
+			n, err := mmModel.Prefill(tokens, adjustedSegments, caches, prefillChunk, materializeCaches)
+			if err != nil {
+				return err
+			}
+			processed = n
+			slog.Info("Multimodal prefill complete", "processed", processed, "total", total, "segments", len(adjustedSegments))
+		} else {
+			slog.Info("Multimodal tokens cached from prior turn, skipping encoding")
+		}
+	}
+
 	for total-processed > 1 {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -177,6 +227,66 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	case request.Responses <- final:
 		return nil
 	}
+}
+
+// tokenizeWithImages parses [img-N] tags from the prompt and builds a token
+// sequence with multimodal placeholder tokens at the right positions.
+// Preprocessing is delegated to the model via EncodeMultimodal.
+func (r *Runner) tokenizeWithImages(prompt string, images []imageData, vm base.MultimodalModel) ([]int32, []base.MultimodalSegment, error) {
+	// Split prompt on [img-N] tags.
+	parts := imgTagRe.Split(prompt, -1)
+	matches := imgTagRe.FindAllStringSubmatch(prompt, -1)
+
+	// Encode each input via the model's EncodeMultimodal. The model
+	// determines the modality from the data and returns the appropriate
+	// placeholder token ID (e.g., image_token_id vs audio_token_id).
+	encoded := make(map[int]base.EncodedMultimodal)
+
+	for _, img := range images {
+		enc, err := vm.EncodeMultimodal(img.Data)
+		if err != nil {
+			return nil, nil, fmt.Errorf("encode multimodal input %d: %w", img.ID, err)
+		}
+		encoded[img.ID] = enc
+		slog.Info("Multimodal input encoded", "id", img.ID, "tokens", enc.NumTokens)
+	}
+
+	// Build token sequence: tokenize text parts, insert placeholder runs.
+	var allTokens []int32
+	var segments []base.MultimodalSegment
+
+	for i, part := range parts {
+		if part != "" {
+			tokens := r.Tokenizer.Encode(part, i == 0)
+			allTokens = append(allTokens, tokens...)
+		} else if i == 0 {
+			tokens := r.Tokenizer.Encode("", true)
+			allTokens = append(allTokens, tokens...)
+		}
+
+		if i < len(matches) {
+			imgID, _ := strconv.Atoi(matches[i][1])
+			enc, ok := encoded[imgID]
+			if !ok {
+				return nil, nil, fmt.Errorf("multimodal input %d referenced in prompt but not provided", imgID)
+			}
+
+			allTokens = append(allTokens, enc.PrefixTokens...)
+			startPos := len(allTokens)
+			for range enc.NumTokens {
+				allTokens = append(allTokens, enc.PlaceholderID)
+			}
+			allTokens = append(allTokens, enc.SuffixTokens...)
+			segments = append(segments, base.MultimodalSegment{
+				Data:      enc.Data,
+				ID:        imgID,
+				StartPos:  startPos,
+				NumTokens: enc.NumTokens,
+			})
+		}
+	}
+
+	return allTokens, segments, nil
 }
 
 func (r Runner) Decode(sample int32, b *bytes.Buffer) string {
