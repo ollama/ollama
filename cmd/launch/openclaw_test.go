@@ -1603,3 +1603,168 @@ func TestWebSearchPluginUpToDate(t *testing.T) {
 		}
 	})
 }
+
+func TestRegisterWebSearchPlugin(t *testing.T) {
+	home := t.TempDir()
+	setTestHome(t, home)
+
+	configDir := filepath.Join(home, ".openclaw")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(configDir, "openclaw.json")
+
+	t.Run("fresh config", func(t *testing.T) {
+		if err := os.WriteFile(configPath, []byte(`{}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		registerWebSearchPlugin()
+
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var config map[string]any
+		if err := json.Unmarshal(data, &config); err != nil {
+			t.Fatal(err)
+		}
+
+		plugins, _ := config["plugins"].(map[string]any)
+		if plugins == nil {
+			t.Fatal("plugins section missing")
+		}
+
+		// Check entries
+		entries, _ := plugins["entries"].(map[string]any)
+		entry, _ := entries["openclaw-web-search"].(map[string]any)
+		if enabled, _ := entry["enabled"].(bool); !enabled {
+			t.Error("expected entries.openclaw-web-search.enabled = true")
+		}
+
+		// Check allow list
+		allow, _ := plugins["allow"].([]any)
+		found := false
+		for _, v := range allow {
+			if s, ok := v.(string); ok && s == "openclaw-web-search" {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("expected plugins.allow to contain openclaw-web-search")
+		}
+
+		// Check install provenance
+		installs, _ := plugins["installs"].(map[string]any)
+		record, _ := installs["openclaw-web-search"].(map[string]any)
+		if record == nil {
+			t.Fatal("expected plugins.installs.openclaw-web-search")
+		}
+		if source, _ := record["source"].(string); source != "npm" {
+			t.Errorf("install source = %q, want %q", source, "npm")
+		}
+		if spec, _ := record["spec"].(string); spec != webSearchNpmPackage {
+			t.Errorf("install spec = %q, want %q", spec, webSearchNpmPackage)
+		}
+		expectedPath := filepath.Join(home, ".openclaw", "extensions", "openclaw-web-search")
+		if installPath, _ := record["installPath"].(string); installPath != expectedPath {
+			t.Errorf("installPath = %q, want %q", installPath, expectedPath)
+		}
+	})
+
+	t.Run("idempotent", func(t *testing.T) {
+		if err := os.WriteFile(configPath, []byte(`{}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		registerWebSearchPlugin()
+		registerWebSearchPlugin()
+
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var config map[string]any
+		if err := json.Unmarshal(data, &config); err != nil {
+			t.Fatal(err)
+		}
+
+		plugins, _ := config["plugins"].(map[string]any)
+		allow, _ := plugins["allow"].([]any)
+		count := 0
+		for _, v := range allow {
+			if s, ok := v.(string); ok && s == "openclaw-web-search" {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Errorf("expected exactly 1 openclaw-web-search in allow, got %d", count)
+		}
+	})
+
+	t.Run("preserves existing config", func(t *testing.T) {
+		initial := map[string]any{
+			"plugins": map[string]any{
+				"allow": []any{"some-other-plugin"},
+				"entries": map[string]any{
+					"some-other-plugin": map[string]any{"enabled": true},
+				},
+				"installs": map[string]any{
+					"some-other-plugin": map[string]any{
+						"source":      "npm",
+						"installPath": "/some/path",
+					},
+				},
+			},
+			"customField": "preserved",
+		}
+		data, _ := json.Marshal(initial)
+		if err := os.WriteFile(configPath, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		registerWebSearchPlugin()
+
+		out, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var config map[string]any
+		if err := json.Unmarshal(out, &config); err != nil {
+			t.Fatal(err)
+		}
+
+		if config["customField"] != "preserved" {
+			t.Error("customField was not preserved")
+		}
+
+		plugins, _ := config["plugins"].(map[string]any)
+		entries, _ := plugins["entries"].(map[string]any)
+		if entries["some-other-plugin"] == nil {
+			t.Error("existing plugin entry was lost")
+		}
+
+		installs, _ := plugins["installs"].(map[string]any)
+		if installs["some-other-plugin"] == nil {
+			t.Error("existing install record was lost")
+		}
+
+		allow, _ := plugins["allow"].([]any)
+		hasOther, hasWebSearch := false, false
+		for _, v := range allow {
+			s, _ := v.(string)
+			if s == "some-other-plugin" {
+				hasOther = true
+			}
+			if s == "openclaw-web-search" {
+				hasWebSearch = true
+			}
+		}
+		if !hasOther {
+			t.Error("existing allow entry was lost")
+		}
+		if !hasWebSearch {
+			t.Error("openclaw-web-search not added to allow")
+		}
+	})
+}
