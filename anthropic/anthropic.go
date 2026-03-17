@@ -852,6 +852,19 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 			continue
 		}
 
+		// Close thinking block if still open (thinking → tool_use without text in between)
+		if c.thinkingStarted && !c.thinkingDone {
+			c.thinkingDone = true
+			events = append(events, StreamEvent{
+				Event: "content_block_stop",
+				Data: ContentBlockStopEvent{
+					Type:  "content_block_stop",
+					Index: c.contentIndex,
+				},
+			})
+			c.contentIndex++
+		}
+
 		if c.textStarted {
 			events = append(events, StreamEvent{
 				Event: "content_block_stop",

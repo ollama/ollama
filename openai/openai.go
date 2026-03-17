@@ -291,8 +291,7 @@ func ToChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 	}
 }
 
-// ToChunk converts an api.ChatResponse to ChatCompletionChunk
-func ToChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
+func toChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
 	toolCalls := ToToolCalls(r.Message.ToolCalls)
 
 	var logprobs *ChoiceLogprobs
@@ -321,6 +320,36 @@ func ToChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChu
 			Logprobs: logprobs,
 		}},
 	}
+}
+
+// ToChunks converts an api.ChatResponse to one or more ChatCompletionChunk values.
+func ToChunks(id string, r api.ChatResponse, toolCallSent bool) []ChatCompletionChunk {
+	hasMixedResponse := r.Message.Thinking != "" && (r.Message.Content != "" || len(r.Message.ToolCalls) > 0)
+	if !hasMixedResponse {
+		return []ChatCompletionChunk{toChunk(id, r, toolCallSent)}
+	}
+
+	reasoningChunk := toChunk(id, r, toolCallSent)
+	// The logprobs here might include tokens not in this chunk because we now split between thinking and content/tool calls.
+	reasoningChunk.Choices[0].Delta.Content = ""
+	reasoningChunk.Choices[0].Delta.ToolCalls = nil
+	reasoningChunk.Choices[0].FinishReason = nil
+
+	contentOrToolCallsChunk := toChunk(id, r, toolCallSent)
+	// Keep both split chunks on the same timestamp since they represent one logical emission.
+	contentOrToolCallsChunk.Created = reasoningChunk.Created
+	contentOrToolCallsChunk.Choices[0].Delta.Reasoning = ""
+	contentOrToolCallsChunk.Choices[0].Logprobs = nil
+
+	return []ChatCompletionChunk{
+		reasoningChunk,
+		contentOrToolCallsChunk,
+	}
+}
+
+// Deprecated: use ToChunks for streaming conversion.
+func ToChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
+	return toChunk(id, r, toolCallSent)
 }
 
 // ToUsageGenerate converts an api.GenerateResponse to Usage
