@@ -272,7 +272,19 @@ func (m *Model) String() string {
 	return modelfile.String()
 }
 
+// GetModel loads a model by name, using a process-wide cache to avoid
+// redundant disk I/O. The cache is validated by stat-ing the manifest
+// file: if the file's ModTime is unchanged since the entry was populated,
+// the cached result is returned (~1μs). Otherwise, a full reload is
+// performed (~60–200μs for JSON decode, SHA256, template parse).
+//
+// This eliminates the duplicate disk I/O in hot paths like ChatHandler
+// where GetModel is called twice per request (validation + scheduleRunner).
 func GetModel(name string) (*Model, error) {
+	if m, ok := globalModelCache.get(name); ok {
+		return m, nil
+	}
+
 	n := model.ParseName(name)
 	mf, err := manifest.ParseNamedManifest(n)
 	if err != nil {
@@ -366,6 +378,15 @@ func GetModel(name string) (*Model, error) {
 				return nil, err
 			}
 			m.License = append(m.License, string(bts))
+		}
+	}
+
+	// Populate cache using the manifest file's path and ModTime for future
+	// staleness detection. manifest.PathForName computes the same path that
+	// ParseNamedManifest opened, and FileInfo() was captured during parsing.
+	if fi := mf.FileInfo(); fi != nil {
+		if manifestPath, err := manifest.PathForName(n); err == nil {
+			globalModelCache.put(name, m, manifestPath, fi.ModTime())
 		}
 	}
 
