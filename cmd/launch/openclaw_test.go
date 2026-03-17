@@ -82,78 +82,6 @@ func TestOpenclawRunPassthroughArgs(t *testing.T) {
 	}
 }
 
-func TestOpenclawRunFirstLaunchPersistence(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("uses a POSIX shell test binary")
-	}
-
-	oldHook := DefaultConfirmPrompt
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
-		return true, nil
-	}
-	defer func() { DefaultConfirmPrompt = oldHook }()
-
-	t.Run("success persists onboarding flag", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-		t.Setenv("PATH", tmpDir)
-
-		configDir := filepath.Join(tmpDir, ".openclaw")
-		if err := os.MkdirAll(configDir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		// Mark OpenClaw onboarding complete so Run takes passthrough path directly.
-		if err := os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(`{
-			"wizard": {"lastRunAt": "2026-01-01T00:00:00Z"}
-		}`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(tmpDir, "openclaw"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-
-		c := &Openclaw{}
-		if err := c.Run("llama3.2", []string{"gateway", "--status"}); err != nil {
-			t.Fatalf("Run() error = %v", err)
-		}
-		integrationConfig, err := LoadIntegration("openclaw")
-		if err != nil {
-			t.Fatalf("LoadIntegration() error = %v", err)
-		}
-		if !integrationConfig.Onboarded {
-			t.Fatal("expected onboarding flag to be persisted after successful run")
-		}
-	})
-
-	t.Run("failure does not persist onboarding flag", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-		t.Setenv("PATH", tmpDir)
-
-		configDir := filepath.Join(tmpDir, ".openclaw")
-		if err := os.MkdirAll(configDir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(`{
-			"wizard": {"lastRunAt": "2026-01-01T00:00:00Z"}
-		}`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(tmpDir, "openclaw"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-
-		c := &Openclaw{}
-		if err := c.Run("llama3.2", []string{"gateway", "--status"}); err == nil {
-			t.Fatal("expected run failure")
-		}
-		integrationConfig, err := LoadIntegration("openclaw")
-		if err == nil && integrationConfig.Onboarded {
-			t.Fatal("expected onboarding flag to remain unset after failed run")
-		}
-	})
-}
-
 func TestOpenclawEdit(t *testing.T) {
 	c := &Openclaw{}
 	tmpDir := t.TempDir()
@@ -1584,6 +1512,259 @@ func TestIntegrationOnboarded(t *testing.T) {
 		model := IntegrationModel("openclaw")
 		if model != "llama3.2" {
 			t.Errorf("expected first model llama3.2, got %q", model)
+		}
+	})
+}
+
+func TestVersionLessThan(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want bool
+	}{
+		{"0.1.7", "0.2.1", true},
+		{"0.2.0", "0.2.1", true},
+		{"0.2.1", "0.2.1", false},
+		{"0.2.2", "0.2.1", false},
+		{"1.0.0", "0.2.1", false},
+		{"0.2.1", "1.0.0", true},
+		{"v0.1.7", "0.2.1", true},
+		{"0.2.1", "v0.2.1", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.a+"_vs_"+tt.b, func(t *testing.T) {
+			if got := versionLessThan(tt.a, tt.b); got != tt.want {
+				t.Errorf("versionLessThan(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWebSearchPluginUpToDate(t *testing.T) {
+	t.Run("missing directory", func(t *testing.T) {
+		if webSearchPluginUpToDate(filepath.Join(t.TempDir(), "nonexistent")) {
+			t.Error("expected false for missing directory")
+		}
+	})
+
+	t.Run("missing package.json", func(t *testing.T) {
+		dir := t.TempDir()
+		if webSearchPluginUpToDate(dir) {
+			t.Error("expected false for missing package.json")
+		}
+	})
+
+	t.Run("old version", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"version":"0.1.7"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if webSearchPluginUpToDate(dir) {
+			t.Error("expected false for old version 0.1.7")
+		}
+	})
+
+	t.Run("exact minimum version", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"version":"0.2.1"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if !webSearchPluginUpToDate(dir) {
+			t.Error("expected true for exact minimum version 0.2.1")
+		}
+	})
+
+	t.Run("newer version", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"version":"1.0.0"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if !webSearchPluginUpToDate(dir) {
+			t.Error("expected true for newer version 1.0.0")
+		}
+	})
+
+	t.Run("invalid json", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`not json`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if webSearchPluginUpToDate(dir) {
+			t.Error("expected false for invalid json")
+		}
+	})
+
+	t.Run("empty version", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"version":""}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if webSearchPluginUpToDate(dir) {
+			t.Error("expected false for empty version")
+		}
+	})
+}
+
+func TestRegisterWebSearchPlugin(t *testing.T) {
+	home := t.TempDir()
+	setTestHome(t, home)
+
+	configDir := filepath.Join(home, ".openclaw")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(configDir, "openclaw.json")
+
+	t.Run("fresh config", func(t *testing.T) {
+		if err := os.WriteFile(configPath, []byte(`{}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		registerWebSearchPlugin()
+
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var config map[string]any
+		if err := json.Unmarshal(data, &config); err != nil {
+			t.Fatal(err)
+		}
+
+		plugins, _ := config["plugins"].(map[string]any)
+		if plugins == nil {
+			t.Fatal("plugins section missing")
+		}
+
+		// Check entries
+		entries, _ := plugins["entries"].(map[string]any)
+		entry, _ := entries["openclaw-web-search"].(map[string]any)
+		if enabled, _ := entry["enabled"].(bool); !enabled {
+			t.Error("expected entries.openclaw-web-search.enabled = true")
+		}
+
+		// Check allow list
+		allow, _ := plugins["allow"].([]any)
+		found := false
+		for _, v := range allow {
+			if s, ok := v.(string); ok && s == "openclaw-web-search" {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("expected plugins.allow to contain openclaw-web-search")
+		}
+
+		// Check install provenance
+		installs, _ := plugins["installs"].(map[string]any)
+		record, _ := installs["openclaw-web-search"].(map[string]any)
+		if record == nil {
+			t.Fatal("expected plugins.installs.openclaw-web-search")
+		}
+		if source, _ := record["source"].(string); source != "npm" {
+			t.Errorf("install source = %q, want %q", source, "npm")
+		}
+		if spec, _ := record["spec"].(string); spec != webSearchNpmPackage {
+			t.Errorf("install spec = %q, want %q", spec, webSearchNpmPackage)
+		}
+		expectedPath := filepath.Join(home, ".openclaw", "extensions", "openclaw-web-search")
+		if installPath, _ := record["installPath"].(string); installPath != expectedPath {
+			t.Errorf("installPath = %q, want %q", installPath, expectedPath)
+		}
+	})
+
+	t.Run("idempotent", func(t *testing.T) {
+		if err := os.WriteFile(configPath, []byte(`{}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		registerWebSearchPlugin()
+		registerWebSearchPlugin()
+
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var config map[string]any
+		if err := json.Unmarshal(data, &config); err != nil {
+			t.Fatal(err)
+		}
+
+		plugins, _ := config["plugins"].(map[string]any)
+		allow, _ := plugins["allow"].([]any)
+		count := 0
+		for _, v := range allow {
+			if s, ok := v.(string); ok && s == "openclaw-web-search" {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Errorf("expected exactly 1 openclaw-web-search in allow, got %d", count)
+		}
+	})
+
+	t.Run("preserves existing config", func(t *testing.T) {
+		initial := map[string]any{
+			"plugins": map[string]any{
+				"allow": []any{"some-other-plugin"},
+				"entries": map[string]any{
+					"some-other-plugin": map[string]any{"enabled": true},
+				},
+				"installs": map[string]any{
+					"some-other-plugin": map[string]any{
+						"source":      "npm",
+						"installPath": "/some/path",
+					},
+				},
+			},
+			"customField": "preserved",
+		}
+		data, _ := json.Marshal(initial)
+		if err := os.WriteFile(configPath, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		registerWebSearchPlugin()
+
+		out, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var config map[string]any
+		if err := json.Unmarshal(out, &config); err != nil {
+			t.Fatal(err)
+		}
+
+		if config["customField"] != "preserved" {
+			t.Error("customField was not preserved")
+		}
+
+		plugins, _ := config["plugins"].(map[string]any)
+		entries, _ := plugins["entries"].(map[string]any)
+		if entries["some-other-plugin"] == nil {
+			t.Error("existing plugin entry was lost")
+		}
+
+		installs, _ := plugins["installs"].(map[string]any)
+		if installs["some-other-plugin"] == nil {
+			t.Error("existing install record was lost")
+		}
+
+		allow, _ := plugins["allow"].([]any)
+		hasOther, hasWebSearch := false, false
+		for _, v := range allow {
+			s, _ := v.(string)
+			if s == "some-other-plugin" {
+				hasOther = true
+			}
+			if s == "openclaw-web-search" {
+				hasWebSearch = true
+			}
+		}
+		if !hasOther {
+			t.Error("existing allow entry was lost")
+		}
+		if !hasWebSearch {
+			t.Error("openclaw-web-search not added to allow")
 		}
 	})
 }

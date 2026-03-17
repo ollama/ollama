@@ -199,7 +199,7 @@ func showOrPullWithPolicy(ctx context.Context, client *api.Client, model string,
 	case missingModelAutoPull:
 		return pullMissingModel(ctx, client, model)
 	case missingModelFail:
-		return fmt.Errorf("model %q not found; run 'ollama pull %s' first", model, model)
+		return fmt.Errorf("model %q not found; run 'ollama pull %s' first, or use --yes to auto-pull", model, model)
 	default:
 		return confirmAndPull(ctx, client, model)
 	}

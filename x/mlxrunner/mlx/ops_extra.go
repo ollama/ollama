@@ -310,6 +310,12 @@ func Log(a *Array) *Array {
 	return out
 }
 
+func Logaddexp(a, b *Array) *Array {
+	out := New("LOGADDEXP")
+	C.mlx_logaddexp(&out.ctx, a.ctx, b.ctx, DefaultStream().ctx)
+	return out
+}
+
 func SoftmaxAxis(a *Array, axis int, precise bool) *Array {
 	out := New("SOFTMAX_AXIS")
 	C.mlx_softmax_axis(&out.ctx, a.ctx, C.int(axis), C.bool(precise), DefaultStream().ctx)
