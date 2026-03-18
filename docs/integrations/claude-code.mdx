@@ -48,6 +48,20 @@ ollama launch claude --model kimi-k2.5:cloud
 
 Cloud models are also available at [ollama.com/search?c=cloud](https://ollama.com/search?c=cloud).
 
+## Non-interactive (headless) mode
+
+Run Claude Code without interaction for use in Docker, CI/CD, or scripts:
+
+```shell
+ollama launch claude --model kimi-k2.5:cloud --yes -- -p "how does this repository work?"
+```
+
+The `--yes` flag auto-pulls the model, skips selectors, and requires `--model` to be specified. Arguments after `--` are passed directly to Claude Code.
+
+## Web search
+
+Claude Code can search the web through Ollama's web search API. See the [web search documentation](/capabilities/web-search) for setup and usage.
+
 ## Scheduled Tasks with `/loop`
 
 The `/loop` command runs a prompt or slash command on a recurring schedule inside Claude Code. This is useful for automating repetitive tasks like checking PRs, running research, or setting reminders.
