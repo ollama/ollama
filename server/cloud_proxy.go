@@ -176,16 +176,10 @@ func proxyCloudRequest(c *gin.Context, body []byte, disabledOperation string) {
 	proxyCloudRequestWithPath(c, body, c.Request.URL.Path, disabledOperation)
 }
 
-func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disabledOperation string) {
-	if disabled, _ := internalcloud.Status(); disabled {
-		c.JSON(http.StatusForbidden, gin.H{"error": internalcloud.DisabledError(disabledOperation)})
-		return
-	}
-
+func buildCloudProxyRequest(c *gin.Context, path string, body []byte) (*http.Request, error) {
 	baseURL, err := url.Parse(cloudProxyBaseURL)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+		return nil, err
 	}
 
 	targetURL := baseURL.ResolveReference(&url.URL{
@@ -195,8 +189,7 @@ func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disable
 
 	outReq, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, targetURL.String(), bytes.NewReader(body))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+		return nil, err
 	}
 
 	copyProxyRequestHeaders(outReq.Header, c.Request.Header)
@@ -207,22 +200,10 @@ func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disable
 		outReq.Header.Set("Content-Type", "application/json")
 	}
 
-	if err := cloudProxySignRequest(outReq.Context(), outReq); err != nil {
-		slog.Warn("cloud proxy signing failed", "error", err)
-		writeCloudUnauthorized(c)
-		return
-	}
+	return outReq, nil
+}
 
-	// TODO(drifkin): Add phase-specific proxy timeouts.
-	// Connect/TLS/TTFB should have bounded timeouts, but once streaming starts
-	// we should not enforce a short total timeout for long-lived responses.
-	resp, err := http.DefaultClient.Do(outReq)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
-		return
-	}
-	defer resp.Body.Close()
-
+func writeCloudProxyResponse(c *gin.Context, path string, resp *http.Response) {
 	copyProxyResponseHeaders(c.Writer.Header(), resp.Header)
 	c.Status(resp.StatusCode)
 
@@ -239,7 +220,7 @@ func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disable
 		bodyWriter = framedWriter
 	}
 
-	err = copyProxyResponseBody(bodyWriter, resp.Body)
+	err := copyProxyResponseBody(bodyWriter, resp.Body)
 	if err == nil && framedWriter != nil {
 		err = framedWriter.FlushPending()
 	}
@@ -263,8 +244,38 @@ func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disable
 			"request_context_err", ctxErr,
 			"error", err,
 		)
+	}
+}
+
+func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disabledOperation string) {
+	if disabled, _ := internalcloud.Status(); disabled {
+		c.JSON(http.StatusForbidden, gin.H{"error": internalcloud.DisabledError(disabledOperation)})
 		return
 	}
+
+	outReq, err := buildCloudProxyRequest(c, path, body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := cloudProxySignRequest(outReq.Context(), outReq); err != nil {
+		slog.Warn("cloud proxy signing failed", "error", err)
+		writeCloudUnauthorized(c)
+		return
+	}
+
+	// TODO(drifkin): Add phase-specific proxy timeouts.
+	// Connect/TLS/TTFB should have bounded timeouts, but once streaming starts
+	// we should not enforce a short total timeout for long-lived responses.
+	resp, err := http.DefaultClient.Do(outReq)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+
+	writeCloudProxyResponse(c, path, resp)
 }
 
 func replaceJSONModelField(body []byte, model string) ([]byte, error) {

@@ -1129,8 +1129,30 @@ func (s *Server) ShowHandler(c *gin.Context) {
 	}
 
 	if modelRef.Source == modelSourceCloud {
-		req.Model = modelRef.Base
-		proxyCloudJSONRequest(c, req, cloudErrRemoteModelDetailsUnavailable)
+		cloudReq := req
+		cloudReq.Model = modelRef.Base
+		cloudShow, cloudResp := s.resolveCloudShow(c, cloudReq)
+
+		// Best-effort compatibility: if cloud alias lookup fails, retry local
+		// lookup using the original verbatim model string (including source
+		// suffix/tag) so legacy/stub manifest names continue to resolve.
+		if cloudResp != nil && cloudResp.StatusCode == http.StatusNotFound {
+			localReq := req
+			localReq.Model = modelRef.Original
+			localReq.Name = ""
+
+			if resp, err := GetModelInfo(localReq); err == nil {
+				c.JSON(http.StatusOK, resp)
+				return
+			}
+		}
+
+		if cloudShow != nil {
+			c.JSON(http.StatusOK, cloudShow)
+			return
+		}
+
+		writeCloudShowResponse(c, cloudResp)
 		return
 	}
 

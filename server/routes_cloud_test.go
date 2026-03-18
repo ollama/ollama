@@ -797,6 +797,86 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 	})
 }
 
+func TestShowExplicitCloudFallsBackToLocalOnCloud404(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+
+	type upstreamCapture struct {
+		path string
+		body string
+	}
+
+	capture := &upstreamCapture{}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		payload, _ := io.ReadAll(r.Body)
+		capture.path = r.URL.Path
+		capture.body = string(payload)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"model not found"}`))
+	}))
+	defer upstream.Close()
+
+	original := cloudProxyBaseURL
+	cloudProxyBaseURL = upstream.URL
+	t.Cleanup(func() { cloudProxyBaseURL = original })
+
+	s := &Server{}
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model: "fallback-alias:cloud",
+		From:  "fallback-upstream:cloud",
+		Info: map[string]any{
+			"capabilities": []string{"completion"},
+		},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected create status 200, got %d (%s)", w.Code, w.Body.String())
+	}
+
+	router, err := s.GenerateRoutes(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := httptest.NewServer(router)
+	defer local.Close()
+
+	reqBody := `{"model":"fallback-alias:cloud"}`
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, local.URL+"/api/show", bytes.NewBufferString(reqBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := local.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d (%s)", resp.StatusCode, string(body))
+	}
+
+	var showResp api.ShowResponse
+	if err := json.Unmarshal(body, &showResp); err != nil {
+		t.Fatalf("failed to decode show response: %v", err)
+	}
+
+	if showResp.RemoteModel != "fallback-upstream" {
+		t.Fatalf("expected remote_model fallback-upstream, got %q", showResp.RemoteModel)
+	}
+
+	if capture.path != "/api/show" {
+		t.Fatalf("expected upstream path /api/show, got %q", capture.path)
+	}
+
+	if !strings.Contains(capture.body, `"model":"fallback-alias"`) {
+		t.Fatalf("expected normalized cloud lookup model in upstream body, got %q", capture.body)
+	}
+}
+
 func TestCloudDisabledBlocksExplicitCloudPassthrough(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())
