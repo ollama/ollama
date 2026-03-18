@@ -37,7 +37,8 @@ type Client struct {
 	modelName     string
 	contextLength atomic.Int64
 	memory        atomic.Uint64
-	done          chan error
+	done          chan struct{}
+	doneErr       error // valid after done is closed
 	client        *http.Client
 	status        *statusWriter
 	mu            sync.Mutex
@@ -108,7 +109,7 @@ func NewClient(modelName string) (*Client, error) {
 
 	c := &Client{
 		modelName: modelName,
-		done:      make(chan error, 1),
+		done:      make(chan struct{}),
 		client:    &http.Client{Timeout: 10 * time.Minute},
 	}
 
@@ -131,11 +132,11 @@ func (c *Client) WaitUntilRunning(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case err := <-c.done:
+		case <-c.done:
 			if msg := c.status.getLastErr(); msg != "" {
-				return fmt.Errorf("mlx runner failed: %s (exit: %v)", msg, err)
+				return fmt.Errorf("mlx runner failed: %s (exit: %v)", msg, c.doneErr)
 			}
-			return fmt.Errorf("mlx runner exited unexpectedly: %w", err)
+			return fmt.Errorf("mlx runner exited unexpectedly: %w", c.doneErr)
 		case <-timeout:
 			if msg := c.status.getLastErr(); msg != "" {
 				return fmt.Errorf("timeout waiting for mlx runner: %s", msg)
@@ -411,8 +412,8 @@ func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 
 	// Reap subprocess when it exits
 	go func() {
-		err := cmd.Wait()
-		c.done <- err
+		c.doneErr = cmd.Wait()
+		close(c.done)
 	}()
 
 	return nil, nil
