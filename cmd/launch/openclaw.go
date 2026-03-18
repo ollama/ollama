@@ -439,11 +439,7 @@ func ensureOpenclawInstalled() (string, error) {
 		if gitErr != nil {
 			missing = append(missing, "git: https://git-scm.com/")
 		}
-		return "", fmt.Errorf("openclaw is not installed and required dependencies are missing\n\n"+
-			"Install the following first:\n  %s\n\n"+
-			"Then rerun:\n"+
-			"  ollama launch\n"+
-			"and select OpenClaw", strings.Join(missing, "\n  "))
+		return "", fmt.Errorf("openclaw is not installed and required dependencies are missing\n\nInstall the following first:\n  %s", strings.Join(missing, "\n  "))
 	}
 
 	ok, err := ConfirmPrompt("OpenClaw is not installed. Install with npm?")
