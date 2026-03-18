@@ -1,38 +1,38 @@
-# Development
+# Desenvolvimento
 
-Install prerequisites:
+Instale os pré-requisitos:
 
 - [Go](https://go.dev/doc/install)
-- C/C++ Compiler e.g. Clang on macOS, [TDM-GCC](https://github.com/jmeubank/tdm-gcc/releases/latest) (Windows amd64) or [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (Windows arm64), GCC/Clang on Linux.
+- Compilador C/C++, por exemplo, Clang no macOS, [TDM-GCC](https://github.com/jmeubank/tdm-gcc/releases/latest) (Windows amd64) ou [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (Windows arm64), GCC/Clang no Linux.
 
-Then build and run Ollama from the root directory of the repository:
+Em seguida, compile e execute o Ollama a partir do diretório raiz do repositório:
 
 ```shell
 go run . serve
 ```
 
 > [!NOTE]
-> Ollama includes native code compiled with CGO.  From time to time these data structures can change and CGO can get out of sync resulting in unexpected crashes.  You can force a full build of the native code by running `go clean -cache` first. 
+> O Ollama inclui código nativo compilado com CGO. De tempos em tempos, essas estruturas de dados podem mudar e o CGO pode ficar fora de sincronia, resultando em falhas inesperadas. Você pode forçar uma compilação completa do código nativo executando `go clean -cache` primeiro.
 
 
 ## macOS (Apple Silicon)
 
-macOS Apple Silicon supports Metal which is built-in to the Ollama binary. No additional steps are required.
+O macOS Apple Silicon oferece suporte ao Metal, que já vem embutido no binário do Ollama. Nenhuma etapa adicional é necessária.
 
 ## macOS (Intel)
 
-Install prerequisites:
+Instale os pré-requisitos:
 
-- [CMake](https://cmake.org/download/) or `brew install cmake`
+- [CMake](https://cmake.org/download/) ou `brew install cmake`
 
-Then, configure and build the project:
+Depois, configure e compile o projeto:
 
 ```shell
 cmake -B build
 cmake --build build
 ```
 
-Lastly, run Ollama:
+Por fim, execute o Ollama:
 
 ```shell
 go run . serve
@@ -40,30 +40,30 @@ go run . serve
 
 ## Windows
 
-Install prerequisites:
+Instale os pré-requisitos:
 
 - [CMake](https://cmake.org/download/)
-- [Visual Studio 2022](https://visualstudio.microsoft.com/downloads/) including the Native Desktop Workload
-- (Optional) AMD GPU support
+- [Visual Studio 2022](https://visualstudio.microsoft.com/downloads/) incluindo o Native Desktop Workload
+- (Opcional) Suporte a GPU AMD
     - [ROCm](https://rocm.docs.amd.com/en/latest/)
     - [Ninja](https://github.com/ninja-build/ninja/releases)
-- (Optional) NVIDIA GPU support
+- (Opcional) Suporte a GPU NVIDIA
     - [CUDA SDK](https://developer.nvidia.com/cuda-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_network)
-- (Optional) VULKAN GPU support
-    - [VULKAN SDK](https://vulkan.lunarg.com/sdk/home) - useful for AMD/Intel GPUs
-- (Optional) MLX engine support
+- (Opcional) Suporte a GPU VULKAN
+    - [VULKAN SDK](https://vulkan.lunarg.com/sdk/home) - útil para GPUs AMD/Intel
+- (Opcional) Suporte ao engine MLX
     - [CUDA 13+ SDK](https://developer.nvidia.com/cuda-downloads)
     - [cuDNN 9+](https://developer.nvidia.com/cudnn)
 
-Then, configure and build the project:
+Depois, configure e compile o projeto:
 
 ```shell
 cmake -B build
 cmake --build build --config Release
 ```
 
-> Building for Vulkan requires VULKAN_SDK environment variable:
-> 
+> Compilar para Vulkan requer a variável de ambiente VULKAN_SDK:
+>
 > PowerShell
 > ```powershell
 > $env:VULKAN_SDK="C:\VulkanSDK\<version>"
@@ -74,7 +74,7 @@ cmake --build build --config Release
 > ```
 
 > [!IMPORTANT]
-> Building for ROCm requires additional flags:
+> Compilar para ROCm requer flags adicionais:
 > ```
 > cmake -B build -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 > cmake --build build --config Release
@@ -82,7 +82,7 @@ cmake --build build --config Release
 
 
 
-Lastly, run Ollama:
+Por fim, execute o Ollama:
 
 ```shell
 go run . serve
@@ -90,60 +90,60 @@ go run . serve
 
 ## Windows (ARM)
 
-Windows ARM does not support additional acceleration libraries at this time.  Do not use cmake, simply `go run` or `go build`.
+O Windows ARM não oferece suporte a bibliotecas de aceleração adicionais no momento. Não use cmake; simplesmente `go run` ou `go build`.
 
 ## Linux
 
-Install prerequisites:
+Instale os pré-requisitos:
 
-- [CMake](https://cmake.org/download/) or `sudo apt install cmake` or `sudo dnf install cmake`
-- (Optional) AMD GPU support
+- [CMake](https://cmake.org/download/) ou `sudo apt install cmake` ou `sudo dnf install cmake`
+- (Opcional) Suporte a GPU AMD
     - [ROCm](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/quick-start.html)
-- (Optional) NVIDIA GPU support
+- (Opcional) Suporte a GPU NVIDIA
     - [CUDA SDK](https://developer.nvidia.com/cuda-downloads)
-- (Optional) VULKAN GPU support
-    - [VULKAN SDK](https://vulkan.lunarg.com/sdk/home) - useful for AMD/Intel GPUs
-    - Or install via package manager: `sudo apt install vulkan-sdk` (Ubuntu/Debian) or `sudo dnf install vulkan-sdk` (Fedora/CentOS)
-- (Optional) MLX engine support
+- (Opcional) Suporte a GPU VULKAN
+    - [VULKAN SDK](https://vulkan.lunarg.com/sdk/home) - útil para GPUs AMD/Intel
+    - Ou instale via gerenciador de pacotes: `sudo apt install vulkan-sdk` (Ubuntu/Debian) ou `sudo dnf install vulkan-sdk` (Fedora/CentOS)
+- (Opcional) Suporte ao engine MLX
     - [CUDA 13+ SDK](https://developer.nvidia.com/cuda-downloads)
     - [cuDNN 9+](https://developer.nvidia.com/cudnn)
     - OpenBLAS/LAPACK: `sudo apt install libopenblas-dev liblapack-dev liblapacke-dev` (Ubuntu/Debian)
 > [!IMPORTANT]
-> Ensure prerequisites are in `PATH` before running CMake.
+> Certifique-se de que os pré-requisitos estejam no `PATH` antes de executar o CMake.
 
 
-Then, configure and build the project:
+Depois, configure e compile o projeto:
 
 ```shell
 cmake -B build
 cmake --build build
 ```
 
-Lastly, run Ollama:
+Por fim, execute o Ollama:
 
 ```shell
 go run . serve
 ```
 
-## MLX Engine (Optional)
+## Engine MLX (Opcional)
 
-The MLX engine enables running safetensor based models. It requires building the [MLX](https://github.com/ml-explore/mlx) and [MLX-C](https://github.com/ml-explore/mlx-c) shared libraries separately via CMake.  On MacOS, MLX leverages the Metal library to run on the GPU, and on Windows and Linux, runs on NVIDIA GPUs via CUDA v13.
+O engine MLX permite executar modelos baseados em safetensor. É necessário compilar as bibliotecas compartilhadas [MLX](https://github.com/ml-explore/mlx) e [MLX-C](https://github.com/ml-explore/mlx-c) separadamente via CMake. No macOS, o MLX utiliza a biblioteca Metal para rodar na GPU; no Windows e no Linux, roda em GPUs NVIDIA via CUDA v13.
 
 ### macOS (Apple Silicon)
 
-Requires the Metal toolchain. Install [Xcode](https://developer.apple.com/xcode/) first, then:
+Requer a toolchain Metal. Instale o [Xcode](https://developer.apple.com/xcode/) primeiro e depois:
 
 ```shell
 xcodebuild -downloadComponent MetalToolchain
 ```
 
-Verify it's installed correctly (should print "no input files"):
+Verifique se está instalado corretamente (deve imprimir "no input files"):
 
 ```shell
 xcrun metal
 ```
 
-Then build:
+Em seguida, compile:
 
 ```shell
 cmake -B build --preset MLX
@@ -152,11 +152,11 @@ cmake --install build --component MLX
 ```
 
 > [!NOTE]
-> Without the Metal toolchain, cmake will silently complete with Metal disabled. Check the cmake output for `Setting MLX_BUILD_METAL=OFF` which indicates the toolchain is missing.
+> Sem a toolchain Metal, o cmake concluirá silenciosamente com o Metal desativado. Verifique a saída do cmake por `Setting MLX_BUILD_METAL=OFF`, o que indica que a toolchain está ausente.
 
 ### Windows / Linux (CUDA)
 
-Requires CUDA 13+ and [cuDNN](https://developer.nvidia.com/cudnn) 9+.
+Requer CUDA 13+ e [cuDNN](https://developer.nvidia.com/cudnn) 9+.
 
 ```shell
 cmake -B build --preset "MLX CUDA 13"
@@ -164,16 +164,16 @@ cmake --build build --target mlx --target mlxc --config Release --parallel
 cmake --install build --component MLX --strip
 ```
 
-### Local MLX source overrides
+### Substituições locais de fonte do MLX
 
-To build against a local checkout of MLX and/or MLX-C (useful for development), set environment variables before running CMake:
+Para compilar usando um checkout local do MLX e/ou MLX-C (útil para desenvolvimento), defina variáveis de ambiente antes de executar o CMake:
 
 ```shell
 export OLLAMA_MLX_SOURCE=/path/to/mlx
 export OLLAMA_MLX_C_SOURCE=/path/to/mlx-c
 ```
 
-For example, using the helper scripts with local mlx and mlx-c repos:
+Por exemplo, usando os scripts auxiliares com repositórios locais de mlx e mlx-c:
 ```shell
 OLLAMA_MLX_SOURCE=../mlx OLLAMA_MLX_C_SOURCE=../mlx-c ./scripts/build_linux.sh
 
@@ -198,46 +198,45 @@ docker build .
 docker build --build-arg FLAVOR=rocm .
 ```
 
-## Running tests
+## Executando testes
 
-To run tests, use `go test`:
+Para rodar os testes, use `go test`:
 
 ```shell
 go test ./...
 ```
 
-> NOTE: In rare circumstances, you may need to change a package using the new
-> "synctest" package in go1.24.
+> NOTE: Em raras circunstâncias, pode ser necessário alterar um pacote usando o novo
+> pacote "synctest" no go1.24.
 >
-> If you do not have the "synctest" package enabled, you will not see build or
-> test failures resulting from your change(s), if any, locally, but CI will
-> break.
+> Se você não tiver o pacote "synctest" habilitado, não verá falhas de build ou
+> teste resultantes das suas alterações (se houver) localmente, mas o CI irá falhar.
 >
-> If you see failures in CI, you can either keep pushing changes to see if the
-> CI build passes, or you can enable the "synctest" package locally to see the
-> failures before pushing.
+> Se vir falhas no CI, você pode continuar enviando alterações para ver se o build
+> do CI passa, ou pode habilitar o pacote "synctest" localmente para ver as falhas
+> antes de enviar.
 >
-> To enable the "synctest" package for testing, run the following command:
+> Para habilitar o pacote "synctest" para testes, execute o seguinte comando:
 >
 > ```shell
 > GOEXPERIMENT=synctest go test ./...
 > ```
 >
-> If you wish to enable synctest for all go commands, you can set the
-> `GOEXPERIMENT` environment variable in your shell profile or by using:
+> Se quiser habilitar o synctest para todos os comandos go, defina a variável de
+> ambiente `GOEXPERIMENT` no seu perfil de shell ou usando:
 >
 > ```shell
 > go env -w GOEXPERIMENT=synctest
 > ```
 >
-> Which will enable the "synctest" package for all go commands without needing
-> to set it for all shell sessions.
+> Isso habilitará o pacote "synctest" para todos os comandos go sem precisar
+> defini-lo para todas as sessões do shell.
 >
-> The synctest package is not required for production builds.
+> O pacote synctest não é necessário para builds de produção.
 
-## Library detection
+## Detecção de bibliotecas
 
-Ollama looks for acceleration libraries in the following paths relative to the `ollama` executable:
+O Ollama procura bibliotecas de aceleração nos seguintes caminhos relativos ao executável `ollama`:
 
 * `./lib/ollama` (Windows)
 * `../lib/ollama` (Linux)
