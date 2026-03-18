@@ -413,9 +413,6 @@ func (c *launcherClient) resolveRunModel(ctx context.Context, req RunModelReques
 			return "", err
 		}
 		fmt.Fprintf(os.Stderr, "Headless mode: auto-selected last used model %q\n", current)
-		if err := config.SetLastModel(current); err != nil {
-			return "", err
-		}
 		return current, nil
 	}
 
@@ -428,9 +425,6 @@ func (c *launcherClient) resolveRunModel(ctx context.Context, req RunModelReques
 			if err := c.ensureModelsReady(ctx, []string{current}); err != nil {
 				return "", err
 			}
-			if err := config.SetLastModel(current); err != nil {
-				return "", err
-			}
 			return current, nil
 		}
 	}
@@ -439,8 +433,10 @@ func (c *launcherClient) resolveRunModel(ctx context.Context, req RunModelReques
 	if err != nil {
 		return "", err
 	}
-	if err := config.SetLastModel(model); err != nil {
-		return "", err
+	if model != current {
+		if err := config.SetLastModel(model); err != nil {
+			return "", err
+		}
 	}
 	return model, nil
 }
@@ -475,8 +471,10 @@ func (c *launcherClient) launchSingleIntegration(ctx context.Context, name strin
 		return nil
 	}
 
-	if err := config.SaveIntegration(name, []string{target}); err != nil {
-		return fmt.Errorf("failed to save: %w", err)
+	if target != current {
+		if err := config.SaveIntegration(name, []string{target}); err != nil {
+			return fmt.Errorf("failed to save: %w", err)
+		}
 	}
 
 	return launchAfterConfiguration(name, runner, target, req)
