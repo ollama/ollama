@@ -331,7 +331,7 @@ func TestToolFunctionParameters_MarshalJSON(t *testing.T) {
 					"name": {Type: PropertyType{"string"}},
 				}),
 			},
-			expected: `{"type":"object","required":["name"],"properties":{"name":{"type":"string"}}}`,
+			expected: `{"type":"object","properties":{"name":{"type":"string"}},"required":["name"]}`,
 		},
 		{
 			name: "no required",
@@ -650,7 +650,7 @@ func TestToolFunctionParameters_String(t *testing.T) {
 					},
 				}),
 			},
-			expected: `{"type":"object","required":["name"],"properties":{"name":{"type":"string","description":"The name of the person"}}}`,
+			expected: `{"type":"object","properties":{"name":{"type":"string","description":"The name of the person"}},"required":["name"]}`,
 		},
 		{
 			name: "marshal failure returns empty string",

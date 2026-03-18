@@ -383,7 +383,7 @@ func TestMarshalWithSpacesToolTypesUseLiteralHTMLChars(t *testing.T) {
 	}
 
 	got := string(result)
-	if diff := cmp.Diff(got, `{"type": "function", "function": {"name": "get_weather", "description": "Returns temperature in <fahrenheit> & <celsius>", "parameters": {"type": "object", "required": ["location"], "properties": {"location": {"type": "string", "description": "City name with <tag> & symbol"}, "filters": {"type": "array", "items": {"description": "Use < and > literally & keep order", "type": "string"}}}}}}`); diff != "" {
+	if diff := cmp.Diff(got, `{"type": "function", "function": {"name": "get_weather", "description": "Returns temperature in <fahrenheit> & <celsius>", "parameters": {"type": "object", "properties": {"location": {"type": "string", "description": "City name with <tag> & symbol"}, "filters": {"type": "array", "items": {"description": "Use < and > literally & keep order", "type": "string"}}}, "required": ["location"]}}}`); diff != "" {
 		t.Fatalf("unexpected serialized tool (-got +want):\n%s", diff)
 	}
 }

@@ -509,7 +509,7 @@ You have access to the following tools:
 ### get_weather
 Description: Get current weather information
 
-Parameters: {"type":"object","required":["location"],"properties":{"location":{"type":"string","description":"City name"}}}
+Parameters: {"type":"object","properties":{"location":{"type":"string","description":"City name"}},"required":["location"]}
 
 IMPORTANT: ALWAYS adhere to this exact format for tool use:
 <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>tool_call_name<｜tool▁sep｜>tool_call_arguments<｜tool▁call▁end｜>{{additional_tool_calls}}<｜tool▁calls▁end｜>
@@ -555,7 +555,7 @@ You have access to the following tools:
 ### get_weather
 Description: Get current weather information
 
-Parameters: {"type":"object","required":["location"],"properties":{"location":{"type":"string","description":"City name"}}}
+Parameters: {"type":"object","properties":{"location":{"type":"string","description":"City name"}},"required":["location"]}
 
 IMPORTANT: ALWAYS adhere to this exact format for tool use:
 <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>tool_call_name<｜tool▁sep｜>tool_call_arguments<｜tool▁call▁end｜>{{additional_tool_calls}}<｜tool▁calls▁end｜>
@@ -614,7 +614,7 @@ You have access to the following tools:
 ### get_weather
 Description: Get current weather information
 
-Parameters: {"type":"object","required":["location"],"properties":{"location":{"type":"string","description":"City name"}}}
+Parameters: {"type":"object","properties":{"location":{"type":"string","description":"City name"}},"required":["location"]}
 
 IMPORTANT: ALWAYS adhere to this exact format for tool use:
 <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>tool_call_name<｜tool▁sep｜>tool_call_arguments<｜tool▁call▁end｜>{{additional_tool_calls}}<｜tool▁calls▁end｜>
@@ -676,7 +676,7 @@ You have access to the following tools:
 ### get_weather
 Description: Get current weather information
 
-Parameters: {"type":"object","required":["location"],"properties":{"location":{"type":"string","description":"City name"}}}
+Parameters: {"type":"object","properties":{"location":{"type":"string","description":"City name"}},"required":["location"]}
 
 IMPORTANT: ALWAYS adhere to this exact format for tool use:
 <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>tool_call_name<｜tool▁sep｜>tool_call_arguments<｜tool▁call▁end｜>{{additional_tool_calls}}<｜tool▁calls▁end｜>
@@ -744,7 +744,7 @@ You have access to the following tools:
 ### get_weather
 Description: Get current weather information
 
-Parameters: {"type":"object","required":["location"],"properties":{"location":{"type":"string","description":"City name"}}}
+Parameters: {"type":"object","properties":{"location":{"type":"string","description":"City name"}},"required":["location"]}
 
 IMPORTANT: ALWAYS adhere to this exact format for tool use:
 <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>tool_call_name<｜tool▁sep｜>tool_call_arguments<｜tool▁call▁end｜>{{additional_tool_calls}}<｜tool▁calls▁end｜>
@@ -807,12 +807,12 @@ You have access to the following tools:
 ### get_weather
 Description: Get current weather information
 
-Parameters: {"type":"object","required":["location"],"properties":{"location":{"type":"string","description":"City name"}}}
+Parameters: {"type":"object","properties":{"location":{"type":"string","description":"City name"}},"required":["location"]}
 
 ### calculate
 Description: Perform mathematical calculations
 
-Parameters: {"type":"object","required":["expression"],"properties":{"expression":{"type":"string","description":"Mathematical expression to evaluate"}}}
+Parameters: {"type":"object","properties":{"expression":{"type":"string","description":"Mathematical expression to evaluate"}},"required":["expression"]}
 
 IMPORTANT: ALWAYS adhere to this exact format for tool use:
 <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>tool_call_name<｜tool▁sep｜>tool_call_arguments<｜tool▁call▁end｜>{{additional_tool_calls}}<｜tool▁calls▁end｜>
@@ -897,12 +897,12 @@ You have access to the following tools:
 ### get_weather
 Description: Get current weather information
 
-Parameters: {"type":"object","required":["location"],"properties":{"location":{"type":"string","description":"City name"}}}
+Parameters: {"type":"object","properties":{"location":{"type":"string","description":"City name"}},"required":["location"]}
 
 ### calculate
 Description: Perform mathematical calculations
 
-Parameters: {"type":"object","required":["expression"],"properties":{"expression":{"type":"string","description":"Mathematical expression to evaluate"}}}
+Parameters: {"type":"object","properties":{"expression":{"type":"string","description":"Mathematical expression to evaluate"}},"required":["expression"]}
 
 IMPORTANT: ALWAYS adhere to this exact format for tool use:
 <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>tool_call_name<｜tool▁sep｜>tool_call_arguments<｜tool▁call▁end｜>{{additional_tool_calls}}<｜tool▁calls▁end｜>
@@ -947,7 +947,7 @@ You have access to the following tools:
 ### get_weather
 Description: Get current weather information
 
-Parameters: {"type":"object","required":["location"],"properties":{"location":{"type":"string","description":"City name"}}}
+Parameters: {"type":"object","properties":{"location":{"type":"string","description":"City name"}},"required":["location"]}
 
 IMPORTANT: ALWAYS adhere to this exact format for tool use:
 <｜tool▁calls▁begin｜><｜tool▁call▁begin｜>tool_call_name<｜tool▁sep｜>tool_call_arguments<｜tool▁call▁end｜>{{additional_tool_calls}}<｜tool▁calls▁end｜>

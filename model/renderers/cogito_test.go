@@ -114,15 +114,15 @@ You have the following functions available:
         "description": "Get current weather",
         "parameters": {
             "type": "object",
-            "required": [
-                "location"
-            ],
             "properties": {
                 "location": {
                     "type": "string",
                     "description": "City name"
                 }
-            }
+            },
+            "required": [
+                "location"
+            ]
         }
     }
 }
@@ -249,15 +249,15 @@ You have the following functions available:
         "description": "Get current weather",
         "parameters": {
             "type": "object",
-            "required": [
-                "location"
-            ],
             "properties": {
                 "location": {
                     "type": "string",
                     "description": "City name"
                 }
-            }
+            },
+            "required": [
+                "location"
+            ]
         }
     }
 }

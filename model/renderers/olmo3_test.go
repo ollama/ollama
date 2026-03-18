@@ -61,7 +61,7 @@ func TestOlmo3Renderer(t *testing.T) {
 				},
 			},
 			expected: "<|im_start|>system\n" +
-				`You are a helpful assistant.<functions>[{"type": "function", "function": {"name": "get_weather", "description": "Get the current weather", "parameters": {"type": "object", "required": ["location"], "properties": {"location": {"type": "string", "description": "The city"}}}}}]</functions><|im_end|>` + "\n" +
+				`You are a helpful assistant.<functions>[{"type": "function", "function": {"name": "get_weather", "description": "Get the current weather", "parameters": {"type": "object", "properties": {"location": {"type": "string", "description": "The city"}}, "required": ["location"]}}}]</functions><|im_end|>` + "\n" +
 				"<|im_start|>user\n" +
 				"What is the weather?<|im_end|>\n" +
 				"<|im_start|>assistant\n",
@@ -90,7 +90,7 @@ func TestOlmo3Renderer(t *testing.T) {
 			expected: "<|im_start|>system\n" +
 				"You are a helpful function-calling AI assistant. " +
 				"You are provided with function signatures within <functions></functions> XML tags. You may call one or more functions to assist with the user query. Output any function calls within <function_calls></function_calls> XML tags. Do not make assumptions about what values to plug into functions." +
-				`<functions>[{"type": "function", "function": {"name": "get_weather", "description": "Get the current weather", "parameters": {"type": "object", "required": ["location"], "properties": {"location": {"type": "string", "description": "The city"}}}}}]</functions><|im_end|>` + "\n" +
+				`<functions>[{"type": "function", "function": {"name": "get_weather", "description": "Get the current weather", "parameters": {"type": "object", "properties": {"location": {"type": "string", "description": "The city"}}, "required": ["location"]}}}]</functions><|im_end|>` + "\n" +
 				"<|im_start|>user\n" +
 				"What is the weather?<|im_end|>\n" +
 				"<|im_start|>assistant\n",
@@ -134,7 +134,7 @@ func TestOlmo3Renderer(t *testing.T) {
 				},
 			},
 			expected: "<|im_start|>system\n" +
-				`You are a helpful assistant.<functions>[{"type": "function", "function": {"name": "get_weather", "description": "Get the current weather", "parameters": {"type": "object", "required": ["location"], "properties": {"location": {"type": "string", "description": "The city"}}}}}]</functions><|im_end|>` + "\n" +
+				`You are a helpful assistant.<functions>[{"type": "function", "function": {"name": "get_weather", "description": "Get the current weather", "parameters": {"type": "object", "properties": {"location": {"type": "string", "description": "The city"}}, "required": ["location"]}}}]</functions><|im_end|>` + "\n" +
 				"<|im_start|>user\n" +
 				"What is the weather in SF?<|im_end|>\n" +
 				"<|im_start|>assistant\n" +
