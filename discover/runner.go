@@ -105,6 +105,9 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 				} else if !envconfig.EnableVulkan() && strings.Contains(filepath.Base(dir), "vulkan") {
 					slog.Info("experimental Vulkan support disabled.  To enable, set OLLAMA_VULKAN=1")
 					continue
+				} else if !envconfig.EnableDirectML() && strings.Contains(filepath.Base(dir), "directml") {
+					slog.Info("experimental DirectML/NPU support disabled.  To enable, set OLLAMA_DIRECTML=1")
+					continue
 				}
 				dirs = []string{ml.LibOllamaPath, dir}
 			} else {

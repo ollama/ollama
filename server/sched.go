@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"reflect"
 	"slices"
 	"sort"
@@ -23,6 +24,7 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/x/imagegen"
 	"github.com/ollama/ollama/x/mlxrunner"
+	"github.com/ollama/ollama/x/ortrunner"
 )
 
 type LlmRequest struct {
@@ -237,6 +239,23 @@ func (s *Scheduler) processPending(ctx context.Context) {
 							}
 							continue
 						}
+					}
+
+					// Check for ONNX models — use ORT GenAI runner for NPU/GPU inference
+					if pending.model.IsONNX() {
+						if s.loadORTGenAI(pending) {
+							break
+						}
+						continue
+					}
+
+					// OLLAMA_ONNX_MODEL env override: route any model to ORT GenAI
+					if onnxDir := os.Getenv("OLLAMA_ONNX_MODEL"); onnxDir != "" {
+						slog.Info("OLLAMA_ONNX_MODEL override, routing to ORT GenAI", "model_dir", onnxDir)
+						if s.loadORTGenAIFromDir(pending, onnxDir) {
+							break
+						}
+						continue
 					}
 
 					// Load model for fitting
@@ -632,6 +651,54 @@ func (s *Scheduler) loadMLX(req *LlmRequest) bool {
 	s.loadedMu.Unlock()
 
 	// Set up expiration timer
+	runner.refMu.Lock()
+	if sessionDuration > 0 {
+		runner.expireTimer = time.AfterFunc(sessionDuration, func() {
+			s.expiredCh <- runner
+		})
+	}
+	runner.refMu.Unlock()
+
+	req.useLoadedRunner(runner, s.finishedReqCh)
+	return true
+}
+
+// loadORTGenAI loads an ONNX model using the ORT GenAI runner.
+// The model directory path comes from the model's ModelPath.
+func (s *Scheduler) loadORTGenAI(req *LlmRequest) bool {
+	return s.loadORTGenAIFromDir(req, req.model.ModelPath)
+}
+
+// loadORTGenAIFromDir loads an ONNX model from the given directory using ORT GenAI.
+func (s *Scheduler) loadORTGenAIFromDir(req *LlmRequest, modelDir string) bool {
+	server, err := ortrunner.NewClient(modelDir)
+	if err != nil {
+		req.errCh <- err
+		return true
+	}
+
+	sessionDuration := envconfig.KeepAlive()
+	if req.sessionDuration != nil {
+		sessionDuration = req.sessionDuration.Duration
+	}
+
+	totalSize, vramSize := server.MemorySize()
+	runner := &runnerRef{
+		model:           req.model,
+		modelPath:       modelDir,
+		modelKey:        schedulerModelKey(req.model),
+		llama:           server,
+		Options:         &req.opts,
+		loading:         false,
+		sessionDuration: sessionDuration,
+		totalSize:       totalSize,
+		vramSize:        vramSize,
+	}
+
+	s.loadedMu.Lock()
+	s.loaded[runner.modelKey] = runner
+	s.loadedMu.Unlock()
+
 	runner.refMu.Lock()
 	if sessionDuration > 0 {
 		runner.expireTimer = time.AfterFunc(sessionDuration, func() {

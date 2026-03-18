@@ -639,6 +639,7 @@ void ggml_backend_load_all_from_path(const char * dir_path) {
     ggml_backend_load_best("vulkan", silent, dir_path);
     ggml_backend_load_best("opencl", silent, dir_path);
     ggml_backend_load_best("hexagon", silent, dir_path);
+    ggml_backend_load_best("directml", silent, dir_path);
     ggml_backend_load_best("musa", silent, dir_path);
     ggml_backend_load_best("cpu", silent, dir_path);
     // check the environment variable GGML_BACKEND_PATH to load an out-of-tree backend

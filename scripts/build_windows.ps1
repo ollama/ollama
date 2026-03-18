@@ -256,6 +256,16 @@ function vulkan {
     }
 }
 
+function directml {
+    Write-Output "Building DirectML backend libraries"
+    & cmake -B build\directml --preset DirectML --install-prefix $script:DIST_DIR
+    if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    & cmake --build build\directml --target ggml-directml --config Release --parallel $script:JOBS
+    if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    & cmake --install build\directml --component DirectML --strip
+    if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+}
+
 function mlxCuda13 {
     mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
     $cudaMajorVer="13"
@@ -528,6 +538,7 @@ try {
         cuda13
         rocm6
         vulkan
+        directml
         mlxCuda13
         ollama
         app

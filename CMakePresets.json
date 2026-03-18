@@ -94,6 +94,15 @@
       }
     },
     {
+      "name": "DirectML",
+      "inherits": [ "Default" ],
+      "cacheVariables": {
+        "GGML_DirectML": "ON",
+        "GGML_CPU": "OFF",
+        "OLLAMA_RUNNER_DIR": "directml"
+      }
+    },
+    {
       "name": "MLX",
       "inherits": [ "Default" ],
       "cacheVariables": {
@@ -177,6 +186,11 @@
       "name": "Vulkan",
       "targets": [ "ggml-vulkan" ],
       "configurePreset": "Vulkan"
+    },
+    {
+      "name": "DirectML",
+      "targets": [ "ggml-directml" ],
+      "configurePreset": "DirectML"
     },
     {
       "name": "MLX",

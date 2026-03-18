@@ -209,6 +209,8 @@ var (
 	UseAuth = Bool("OLLAMA_AUTH")
 	// Enable Vulkan backend
 	EnableVulkan = Bool("OLLAMA_VULKAN")
+	// Enable DirectML backend for NPU/GPU acceleration
+	EnableDirectML = Bool("OLLAMA_DIRECTML")
 	// NoCloudEnv checks the OLLAMA_NO_CLOUD environment variable.
 	NoCloudEnv = Bool("OLLAMA_NO_CLOUD")
 )

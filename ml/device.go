@@ -349,6 +349,10 @@ func (d DeviceInfo) MinimumMemory() uint64 {
 	if d.Library == "Metal" {
 		return 512 * format.MebiByte
 	}
+	if d.Library == "DirectML" {
+		// NPUs share system RAM; use lower overhead reservation
+		return 128 * format.MebiByte
+	}
 	return 457 * format.MebiByte
 }
 
@@ -484,6 +488,7 @@ func FlashAttentionSupported(l []DeviceInfo) bool {
 			(gpu.Library == "CUDA" && gpu.DriverMajor >= 7 && !(gpu.ComputeMajor == 7 && gpu.ComputeMinor == 2)) ||
 			gpu.Library == "ROCm" ||
 			gpu.Library == "Vulkan"
+		// DirectML does not support flash attention yet
 
 		if !supportsFA {
 			return false
@@ -554,6 +559,10 @@ func (d DeviceInfo) PreferredLibrary(other DeviceInfo) bool {
 	// that implementation can live here.
 
 	if d.Library == "CUDA" || d.Library == "ROCm" {
+		return true
+	}
+	// Prefer DirectML over Vulkan for the same device
+	if d.Library == "DirectML" && other.Library == "Vulkan" {
 		return true
 	}
 	return false

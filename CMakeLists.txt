@@ -83,30 +83,36 @@ set(GGML_VERSION_MINOR 0)
 set(GGML_VERSION_PATCH 0)
 set(GGML_VERSION "${GGML_VERSION_MAJOR}.${GGML_VERSION_MINOR}.${GGML_VERSION_PATCH}")
 
-set(GGML_CPU ON)
+if(NOT DEFINED GGML_CPU)
+    set(GGML_CPU ON)
+endif()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src)
 set_property(TARGET ggml PROPERTY EXCLUDE_FROM_ALL TRUE)
 
-get_target_property(CPU_VARIANTS ggml-cpu MANUALLY_ADDED_DEPENDENCIES)
-if(NOT CPU_VARIANTS)
-    set(CPU_VARIANTS "ggml-cpu")
-endif()
-
-# Apply ggml include directories to ggml targets only (not globally)
-target_include_directories(ggml-base PRIVATE ${GGML_INCLUDE_DIRS})
-foreach(variant ${CPU_VARIANTS})
-    if(TARGET ${variant})
-        target_include_directories(${variant} PRIVATE ${GGML_INCLUDE_DIRS})
+if(GGML_CPU)
+    get_target_property(CPU_VARIANTS ggml-cpu MANUALLY_ADDED_DEPENDENCIES)
+    if(NOT CPU_VARIANTS)
+        set(CPU_VARIANTS "ggml-cpu")
     endif()
-endforeach()
 
-install(TARGETS ggml-base ${CPU_VARIANTS}
-    RUNTIME_DEPENDENCIES
-        PRE_EXCLUDE_REGEXES ".*"
-    RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT CPU
-    LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT CPU
-    FRAMEWORK DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT CPU
-)
+    # Apply ggml include directories to ggml targets only (not globally)
+    target_include_directories(ggml-base PRIVATE ${GGML_INCLUDE_DIRS})
+    foreach(variant ${CPU_VARIANTS})
+        if(TARGET ${variant})
+            target_include_directories(${variant} PRIVATE ${GGML_INCLUDE_DIRS})
+        endif()
+    endforeach()
+
+    install(TARGETS ggml-base ${CPU_VARIANTS}
+        RUNTIME_DEPENDENCIES
+            PRE_EXCLUDE_REGEXES ".*"
+        RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT CPU
+        LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT CPU
+        FRAMEWORK DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT CPU
+    )
+else()
+    target_include_directories(ggml-base PRIVATE ${GGML_INCLUDE_DIRS})
+endif()
 
 check_language(CUDA)
 if(CMAKE_CUDA_COMPILER)
@@ -192,6 +198,20 @@ if(NOT APPLE)
             LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT Vulkan
         )
     endif()
+endif()
+
+option(GGML_DirectML "Enable DirectML backend for NPU/GPU acceleration" OFF)
+if(WIN32 AND GGML_DirectML)
+    message(STATUS "Setting up DirectML backend")
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-directml)
+    target_include_directories(ggml-directml PRIVATE ${GGML_INCLUDE_DIRS})
+    install(TARGETS ggml-directml
+        RUNTIME_DEPENDENCIES
+            PRE_INCLUDE_REGEXES directml
+            PRE_EXCLUDE_REGEXES ".*"
+        RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT DirectML
+        LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT DirectML
+    )
 endif()
 
 option(MLX_ENGINE "Enable MLX backend" OFF)

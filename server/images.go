@@ -75,6 +75,10 @@ func (m *Model) IsMLX() bool {
 	return m.Config.ModelFormat == "safetensors"
 }
 
+func (m *Model) IsONNX() bool {
+	return m.Config.ModelFormat == "onnx"
+}
+
 // Capabilities returns the capabilities that the model supports
 func (m *Model) Capabilities() []model.Capability {
 	capabilities := []model.Capability{}
