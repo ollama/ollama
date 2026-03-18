@@ -92,6 +92,10 @@ func OpenBrowser(url string) {
 	case "darwin":
 		_ = exec.Command("open", url).Start()
 	case "linux":
+		// Skip on headless systems where no display server is available
+		if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
+			return
+		}
 		_ = exec.Command("xdg-open", url).Start()
 	case "windows":
 		_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
