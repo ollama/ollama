@@ -36,18 +36,33 @@ type TensorData struct {
 	reader *io.SectionReader
 }
 
+// WithName returns a shallow copy of TensorData with a different logical tensor
+// name but the same underlying raw data reader.
+func (td *TensorData) WithName(name string) *TensorData {
+	if td == nil {
+		return nil
+	}
+	shape := make([]int32, len(td.Shape))
+	copy(shape, td.Shape)
+	return &TensorData{
+		Name:   name,
+		Dtype:  td.Dtype,
+		Shape:  shape,
+		Size:   td.Size,
+		reader: td.reader,
+	}
+}
+
 // Reader returns an io.Reader for the tensor's raw bytes.
 func (td *TensorData) Reader() io.Reader {
 	return td.reader
 }
 
-// SafetensorsReader returns a reader that outputs the tensor wrapped in
-// minimal safetensors format. This allows using mlx_load_safetensors on
-// individual tensor blobs for native zero-copy loading.
-func (td *TensorData) SafetensorsReader() io.Reader {
-	// Build minimal safetensors header with tensor named "data"
-	header := map[string]tensorInfo{
-		"data": {
+// safetensorsHeader builds the JSON header for a minimal safetensors blob
+// containing a single tensor keyed by its name.
+func (td *TensorData) safetensorsHeader() []byte {
+	header := map[string]any{
+		td.Name: tensorInfo{
 			Dtype:       td.Dtype,
 			Shape:       td.Shape,
 			DataOffsets: [2]int{0, int(td.Size)},
@@ -58,6 +73,15 @@ func (td *TensorData) SafetensorsReader() io.Reader {
 	// Pad header to 8-byte alignment
 	padding := (8 - len(headerJSON)%8) % 8
 	headerJSON = append(headerJSON, bytes.Repeat([]byte(" "), padding)...)
+	return headerJSON
+}
+
+// SafetensorsReader returns a reader that outputs the tensor wrapped in
+// minimal safetensors format. This allows using mlx_load_safetensors on
+// individual tensor blobs for native zero-copy loading.
+// The tensor is keyed by its name in the safetensors header.
+func (td *TensorData) SafetensorsReader() io.Reader {
+	headerJSON := td.safetensorsHeader()
 
 	// Build header with size prefix
 	headerBuf := new(bytes.Buffer)
@@ -71,16 +95,87 @@ func (td *TensorData) SafetensorsReader() io.Reader {
 
 // SafetensorsSize returns the total size of the safetensors-wrapped tensor.
 func (td *TensorData) SafetensorsSize() int64 {
-	header := map[string]tensorInfo{
-		"data": {
+	headerJSON := td.safetensorsHeader()
+	return 8 + int64(len(headerJSON)) + td.Size
+}
+
+// NewTensorDataFromBytes creates a TensorData from raw tensor bytes.
+// This is useful for constructing packed blobs from already-extracted data.
+func NewTensorDataFromBytes(name, dtype string, shape []int32, rawData []byte) *TensorData {
+	return &TensorData{
+		Name:   name,
+		Dtype:  dtype,
+		Shape:  shape,
+		Size:   int64(len(rawData)),
+		reader: io.NewSectionReader(bytes.NewReader(rawData), 0, int64(len(rawData))),
+	}
+}
+
+// ExtractRawFromSafetensors reads a safetensors-wrapped reader and extracts
+// the raw tensor data bytes (stripping the header).
+func ExtractRawFromSafetensors(r io.Reader) ([]byte, error) {
+	// Read header size (8 bytes, little endian)
+	var headerSize uint64
+	if err := binary.Read(r, binary.LittleEndian, &headerSize); err != nil {
+		return nil, fmt.Errorf("failed to read header size: %w", err)
+	}
+
+	// Skip header
+	if _, err := io.CopyN(io.Discard, r, int64(headerSize)); err != nil {
+		return nil, fmt.Errorf("failed to skip header: %w", err)
+	}
+
+	// Read remaining bytes (the raw tensor data)
+	return io.ReadAll(r)
+}
+
+// BuildPackedSafetensorsReader builds a streaming io.Reader that outputs a valid
+// safetensors file containing multiple tensors. Used for packing expert tensors
+// into a single blob without loading all data into memory.
+// Each TensorData must have been obtained from GetTensor.
+func BuildPackedSafetensorsReader(tensors []*TensorData) io.Reader {
+	return BuildPackedSafetensorsReaderWithMetadata(tensors, nil)
+}
+
+// BuildPackedSafetensorsReaderWithMetadata builds a streaming io.Reader that
+// outputs a valid safetensors file containing multiple tensors and optional
+// metadata.
+func BuildPackedSafetensorsReaderWithMetadata(tensors []*TensorData, metadata map[string]string) io.Reader {
+	// Build the header with sequential data offsets
+	header := make(map[string]any, len(tensors)+1)
+	var offset int
+	for _, td := range tensors {
+		header[td.Name] = tensorInfo{
 			Dtype:       td.Dtype,
 			Shape:       td.Shape,
-			DataOffsets: [2]int{0, int(td.Size)},
-		},
+			DataOffsets: [2]int{offset, offset + int(td.Size)},
+		}
+		offset += int(td.Size)
 	}
+	if len(metadata) > 0 {
+		header["__metadata__"] = metadata
+	}
+
 	headerJSON, _ := json.Marshal(header)
+
+	// Pad header to 8-byte alignment
 	padding := (8 - len(headerJSON)%8) % 8
-	return 8 + int64(len(headerJSON)) + int64(padding) + td.Size
+	headerJSON = append(headerJSON, bytes.Repeat([]byte(" "), padding)...)
+
+	// Build header with size prefix
+	headerBuf := new(bytes.Buffer)
+	binary.Write(headerBuf, binary.LittleEndian, uint64(len(headerJSON)))
+	headerBuf.Write(headerJSON)
+
+	// Build multi-reader: header + all tensor data readers
+	readers := make([]io.Reader, 0, 1+len(tensors))
+	readers = append(readers, headerBuf)
+	for _, td := range tensors {
+		td.reader.Seek(0, io.SeekStart)
+		readers = append(readers, td.reader)
+	}
+
+	return io.MultiReader(readers...)
 }
 
 // OpenForExtraction opens a safetensors file for tensor extraction.

@@ -149,9 +149,6 @@ type Settings struct {
 	// ContextLength specifies the context length for the ollama server (using OLLAMA_CONTEXT_LENGTH)
 	ContextLength int
 
-	// AirplaneMode when true, turns off Ollama Turbo features and only uses local models
-	AirplaneMode bool
-
 	// TurboEnabled indicates if Ollama Turbo features are enabled
 	TurboEnabled bool
 
@@ -169,6 +166,9 @@ type Settings struct {
 
 	// SidebarOpen indicates if the chat sidebar is open
 	SidebarOpen bool
+
+	// AutoUpdateEnabled indicates if automatic updates should be downloaded
+	AutoUpdateEnabled bool
 }
 
 type Store struct {
@@ -257,6 +257,40 @@ func (s *Store) ensureDB() error {
 		if err := s.migrateFromConfig(database); err != nil {
 			slog.Warn("failed to migrate from config.json", "error", err)
 		}
+	}
+
+	// Run one-time migration from legacy airplane_mode behavior.
+	if err := s.migrateCloudSetting(database); err != nil {
+		return fmt.Errorf("migrate cloud setting: %w", err)
+	}
+
+	return nil
+}
+
+// migrateCloudSetting migrates legacy airplane_mode into server.json exactly once.
+// After this, cloud state is sourced from server.json OR OLLAMA_NO_CLOUD.
+func (s *Store) migrateCloudSetting(database *database) error {
+	migrated, err := database.isCloudSettingMigrated()
+	if err != nil {
+		return err
+	}
+	if migrated {
+		return nil
+	}
+
+	airplaneMode, err := database.getAirplaneMode()
+	if err != nil {
+		return err
+	}
+
+	if airplaneMode {
+		if err := setCloudEnabled(false); err != nil {
+			return fmt.Errorf("migrate airplane_mode to cloud disabled: %w", err)
+		}
+	}
+
+	if err := database.setCloudSettingMigrated(true); err != nil {
+		return err
 	}
 
 	return nil

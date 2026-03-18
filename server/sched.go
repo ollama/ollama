@@ -22,6 +22,7 @@ import (
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/x/imagegen"
+	"github.com/ollama/ollama/x/mlxrunner"
 )
 
 type LlmRequest struct {
@@ -50,7 +51,7 @@ type Scheduler struct {
 	activeLoading llm.LlamaServer
 	loaded        map[string]*runnerRef
 
-	loadFn          func(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool
+	loadFn          func(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool
 	newServerFn     func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error)
 	getGpuFn        func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo
 	getSystemInfoFn func() ml.SystemInfo
@@ -81,6 +82,28 @@ func InitScheduler(ctx context.Context) *Scheduler {
 	return sched
 }
 
+// schedulerModelKey returns the scheduler map key for a model.
+// GGUF-backed models use ModelPath; safetensors/image models without a
+// ModelPath use manifest digest so distinct models don't collide.
+func schedulerModelKey(m *Model) string {
+	if m == nil {
+		return ""
+	}
+	if m.ModelPath != "" {
+		return m.ModelPath
+	}
+	if m.Digest != "" {
+		return "digest:" + m.Digest
+	}
+	if m.Name != "" {
+		return "name:" + m.Name
+	}
+	if m.ShortName != "" {
+		return "short:" + m.ShortName
+	}
+	return ""
+}
+
 // context must be canceled to decrement ref count and release the runner
 func (s *Scheduler) GetRunner(c context.Context, m *Model, opts api.Options, sessionDuration *api.Duration) (chan *runnerRef, chan error) {
 	if opts.NumCtx < 4 {
@@ -101,8 +124,9 @@ func (s *Scheduler) GetRunner(c context.Context, m *Model, opts api.Options, ses
 		errCh:           make(chan error, 1),
 	}
 
+	key := schedulerModelKey(req.model)
 	s.loadedMu.Lock()
-	runner := s.loaded[req.model.ModelPath]
+	runner := s.loaded[key]
 	s.loadedMu.Unlock()
 	if runner != nil && !runner.needsReload(c, req) {
 		req.useLoadedRunner(runner, s.finishedReqCh)
@@ -148,8 +172,9 @@ func (s *Scheduler) processPending(ctx context.Context) {
 
 			for {
 				var runnerToExpire *runnerRef
+				pendingKey := schedulerModelKey(pending.model)
 				s.loadedMu.Lock()
-				runner := s.loaded[pending.model.ModelPath]
+				runner := s.loaded[pendingKey]
 				loadedCount := len(s.loaded)
 				runnersSnapshot := make([]ml.FilteredRunnerDiscovery, 0, len(s.loaded))
 				for _, r := range s.loaded {
@@ -163,7 +188,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						runnerToExpire = runner
 					} else {
 						// Runner is usable, return it
-						logutil.Trace("using existing loaded runner", "model", pending.model.ModelPath)
+						logutil.Trace("using existing loaded runner", "model", pendingKey)
 						pending.useLoadedRunner(runner, s.finishedReqCh)
 						break
 					}
@@ -195,33 +220,6 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						slog.Debug("updating default concurrency", "OLLAMA_MAX_LOADED_MODELS", maxRunners, "gpu_count", len(gpus))
 					}
 
-					// Check for image generation models - all use MLX runner
-					if slices.Contains(pending.model.Config.Capabilities, "image") {
-						if s.loadMLX(pending) {
-							break
-						}
-						continue
-					}
-
-					// Check for experimental safetensors LLM models
-					if pending.model.Config.ModelFormat == "safetensors" {
-						if slices.Contains(pending.model.Config.Capabilities, "completion") {
-							// LLM model with safetensors format - use MLX runner
-							if s.loadMLX(pending) {
-								break
-							}
-							continue
-						}
-					}
-
-					// Load model for fitting
-					logutil.Trace("loading model metadata", "model", pending.model.ModelPath)
-					ggml, err := llm.LoadModel(pending.model.ModelPath, 1024)
-					if err != nil {
-						pending.errCh <- err
-						break
-					}
-
 					// Update free memory from currently loaded models
 					logutil.Trace("updating free space", "gpu_count", len(gpus), "model", pending.model.ModelPath)
 					s.updateFreeSpace(gpus)
@@ -229,14 +227,14 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					if loadedCount == 0 {
 						// No models loaded. Load the model but prefer the best fit.
 						slog.Debug("loading first model", "model", pending.model.ModelPath)
-						s.loadFn(pending, ggml, systemInfo, gpus, false)
+						s.loadFn(pending, systemInfo, gpus, false)
 						break
 					}
 
 					// More than one loaded model, so we have to see if the
 					// new one fits
 					logutil.Trace("loading additional model", "model", pending.model.ModelPath)
-					needEvict := s.loadFn(pending, ggml, systemInfo, gpus, true)
+					needEvict := s.loadFn(pending, systemInfo, gpus, true)
 					if !needEvict {
 						slog.Debug("new model fits with existing models, loading")
 						break
@@ -289,11 +287,12 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 			slog.Debug("shutting down scheduler completed loop")
 			return
 		case finished := <-s.finishedReqCh:
+			finishedKey := schedulerModelKey(finished.model)
 			s.loadedMu.Lock()
-			runner := s.loaded[finished.model.ModelPath]
+			runner := s.loaded[finishedKey]
 			s.loadedMu.Unlock()
 			if runner == nil {
-				slog.Error("finished request signal received after model unloaded", "modelPath", finished.model.ModelPath)
+				slog.Error("finished request signal received after model unloaded", "modelPath", finishedKey)
 				continue
 			}
 			runner.refMu.Lock()
@@ -344,7 +343,7 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 
 			s.loadedMu.Lock()
 			slog.Debug("got lock to unload expired event", "runner", runner)
-			runnerToUnload := s.loaded[runner.modelPath]
+			runnerToUnload := s.loaded[runner.modelKey]
 			if runnerToUnload == nil {
 				// If runnerToUnload is nil, we already processed an event and
 				// unloaded it. This double unload can happen if the initial
@@ -373,7 +372,7 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 				}
 				finished := s.waitForVRAMRecovery(runner, runnersSnapshot)
 				runner.unload()
-				delete(s.loaded, runner.modelPath)
+				delete(s.loaded, runner.modelKey)
 				s.loadedMu.Unlock()
 				slog.Debug("runner terminated and removed from list, blocking for VRAM recovery", "runner", runner)
 				<-finished
@@ -409,7 +408,7 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 
 // load creates a new model based on req and loads it. If requireFull is true then the model must be loaded fully onto GPUs
 // (if any). Returns whether the scheduler needs to evict a model to make this one fit.
-func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool {
+func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool {
 	numParallel := max(int(envconfig.NumParallel()), 1)
 
 	// Embedding models should always be loaded with parallel=1
@@ -419,7 +418,7 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo
 
 	// Some architectures are not safe with num_parallel > 1.
 	// ref: https://github.com/ollama/ollama/issues/4165
-	if slices.Contains([]string{"mllama", "qwen3vl", "qwen3vlmoe", "qwen3next", "lfm2", "lfm2moe"}, req.model.Config.ModelFamily) && numParallel != 1 {
+	if slices.Contains([]string{"mllama", "qwen3vl", "qwen3vlmoe", "qwen35", "qwen35moe", "qwen3next", "lfm2", "lfm2moe", "nemotron_h", "nemotron_h_moe"}, req.model.Config.ModelFamily) && numParallel != 1 {
 		numParallel = 1
 		slog.Warn("model architecture does not currently support parallel requests", "architecture", req.model.Config.ModelFamily)
 	}
@@ -434,15 +433,33 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo
 
 	if llama == nil {
 		var err error
-		llama, err = s.newServerFn(systemInfo, gpus, req.model.ModelPath, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, numParallel)
-		if err != nil {
-			// some older models are not compatible with newer versions of llama.cpp
-			// show a generalized compatibility error until there is a better way to
-			// check for model compatibility
-			if errors.Is(err, ggml.ErrUnsupportedFormat) || strings.Contains(err.Error(), "failed to load model") {
-				err = fmt.Errorf("%v: this model may be incompatible with your version of Ollama. If you previously pulled this model, try updating it by running `ollama pull %s`", err, req.model.ShortName)
+		if !req.model.IsMLX() {
+			f, loadErr := llm.LoadModel(req.model.ModelPath, 1024)
+			if loadErr != nil {
+				slog.Info("failed to load model metadata", "model", req.model.ModelPath, "error", loadErr)
+				req.errCh <- loadErr
+				s.loadedMu.Unlock()
+				return false
 			}
-			slog.Info("NewLlamaServer failed", "model", req.model.ModelPath, "error", err)
+			llama, err = s.newServerFn(systemInfo, gpus, req.model.ModelPath, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, numParallel)
+			if err != nil {
+				// some older models are not compatible with newer versions of llama.cpp
+				// show a generalized compatibility error until there is a better way to
+				// check for model compatibility
+				if errors.Is(err, ggml.ErrUnsupportedFormat) || strings.Contains(err.Error(), "failed to load model") {
+					err = fmt.Errorf("%v: this model may be incompatible with your version of Ollama. If you previously pulled this model, try updating it by running `ollama pull %s`", err, req.model.ShortName)
+				}
+			}
+		} else {
+			modelName := req.model.ShortName
+			if slices.Contains(req.model.Config.Capabilities, "image") {
+				llama, err = imagegen.NewServer(modelName)
+			} else {
+				llama, err = mlxrunner.NewClient(modelName)
+			}
+		}
+		if err != nil {
+			slog.Info("failed to create server", "model", req.model.ShortName, "error", err)
 			req.errCh <- err
 			s.loadedMu.Unlock()
 			return false
@@ -450,8 +467,12 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo
 
 		s.activeLoading = llama
 	} else {
-		if s.activeLoading.ModelPath() != req.model.ModelPath {
-			panic(fmt.Errorf("attempting to load different model after eviction (original %v new %v)", s.activeLoading.ModelPath(), req.model.ModelPath))
+		wantPath := req.model.ModelPath
+		if wantPath == "" {
+			wantPath = req.model.ShortName
+		}
+		if s.activeLoading.ModelPath() != wantPath {
+			panic(fmt.Errorf("attempting to load different model after eviction (original %v new %v)", s.activeLoading.ModelPath(), wantPath))
 		}
 	}
 
@@ -508,16 +529,19 @@ iGPUScan:
 		}
 	}
 
+	totalSize, vramSize := llama.MemorySize()
 	runner := &runnerRef{
 		model:           req.model,
 		modelPath:       req.model.ModelPath,
+		modelKey:        schedulerModelKey(req.model),
 		llama:           llama,
 		Options:         &req.opts,
 		sessionDuration: sessionDuration,
 		gpus:            gpuIDs,
 		discreteGPUs:    discreteGPUs,
-		vramSize:        llama.VRAMSize(),
-		totalSize:       llama.TotalSize(),
+		isImagegen:      slices.Contains(req.model.Config.Capabilities, "image"),
+		totalSize:       totalSize,
+		vramSize:        vramSize,
 		loading:         true,
 		pid:             llama.Pid(),
 	}
@@ -525,7 +549,7 @@ iGPUScan:
 	runner.refMu.Lock() // hold lock until running or aborted
 
 	s.loadedMu.Lock()
-	if oldRunner, ok := s.loaded[req.model.ModelPath]; ok {
+	if oldRunner, ok := s.loaded[runner.modelKey]; ok {
 		// Shouldn't happen, but safeguard against leaking a runner
 		slog.Warn("model was still loaded", "old_runner", oldRunner, "new_runner", runner)
 		oldRunner.refMu.Lock()
@@ -533,7 +557,7 @@ iGPUScan:
 		oldRunner.refMu.Unlock()
 	}
 	s.activeLoading = nil
-	s.loaded[req.model.ModelPath] = runner
+	s.loaded[runner.modelKey] = runner
 	slog.Info("loaded runners", "count", len(s.loaded))
 	s.loadedMu.Unlock()
 
@@ -561,58 +585,6 @@ iGPUScan:
 	}()
 
 	return false
-}
-
-// loadMLX loads an experimental safetensors model using the unified MLX runner.
-// This supports both LLM (completion) and image generation models.
-func (s *Scheduler) loadMLX(req *LlmRequest) bool {
-	// Determine mode based on capabilities
-	var mode imagegen.ModelMode
-	if slices.Contains(req.model.Config.Capabilities, "image") {
-		mode = imagegen.ModeImageGen
-	} else {
-		mode = imagegen.ModeLLM
-	}
-
-	// Use model name for MLX (it resolves manifests by name, not file path)
-	modelName := req.model.ShortName
-	server, err := imagegen.NewServer(modelName, mode)
-	if err != nil {
-		req.errCh <- err
-		return true
-	}
-
-	sessionDuration := envconfig.KeepAlive()
-	if req.sessionDuration != nil {
-		sessionDuration = req.sessionDuration.Duration
-	}
-
-	runner := &runnerRef{
-		model:           req.model,
-		modelPath:       req.model.ModelPath,
-		llama:           server,
-		Options:         &req.opts,
-		loading:         false,
-		sessionDuration: sessionDuration,
-		totalSize:       server.TotalSize(),
-		vramSize:        server.VRAMSize(),
-	}
-
-	s.loadedMu.Lock()
-	s.loaded[req.model.ModelPath] = runner
-	s.loadedMu.Unlock()
-
-	// Set up expiration timer
-	runner.refMu.Lock()
-	if sessionDuration > 0 {
-		runner.expireTimer = time.AfterFunc(sessionDuration, func() {
-			s.expiredCh <- runner
-		})
-	}
-	runner.refMu.Unlock()
-
-	req.useLoadedRunner(runner, s.finishedReqCh)
-	return true
 }
 
 func (s *Scheduler) updateFreeSpace(allGpus []ml.DeviceInfo) {
@@ -667,6 +639,7 @@ type runnerRef struct {
 	loading      bool          // True only during initial load, then false forever
 	gpus         []ml.DeviceID // Recorded at time of provisioning
 	discreteGPUs bool          // True if all devices are discrete GPUs - used to skip VRAM recovery check for iGPUs
+	isImagegen   bool          // True if loaded via imagegen runner (vs mlxrunner)
 	vramSize     uint64
 	totalSize    uint64
 
@@ -676,6 +649,7 @@ type runnerRef struct {
 
 	model       *Model
 	modelPath   string
+	modelKey    string
 	numParallel int
 	*api.Options
 }
@@ -695,9 +669,15 @@ func (runner *runnerRef) unload() {
 }
 
 func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool {
-	slog.Debug("evaluating already loaded", "model", req.model.ModelPath)
+	slog.Debug("evaluating already loaded", "model", schedulerModelKey(req.model))
 	runner.refMu.Lock()
 	defer runner.refMu.Unlock()
+
+	// Check if runner type (imagegen vs mlxrunner) matches what's requested.
+	wantImagegen := slices.Contains(req.model.Config.Capabilities, "image")
+	if runner.isImagegen != wantImagegen {
+		return true
+	}
 
 	timeout := 10 * time.Second
 	if runner.loading {
@@ -720,7 +700,7 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 	defer cancel()
 	if !reflect.DeepEqual(runner.model.AdapterPaths, req.model.AdapterPaths) || // have the adapters changed?
 		!reflect.DeepEqual(runner.model.ProjectorPaths, req.model.ProjectorPaths) || // have the projectors changed?
-		!reflect.DeepEqual(optsExisting, optsNew) || // have the runner options changed?
+		(!runner.model.IsMLX() && !reflect.DeepEqual(optsExisting, optsNew)) || // have the runner options changed?
 		runner.llama.Ping(ctx) != nil {
 		return true
 	}
@@ -800,6 +780,10 @@ func (runner *runnerRef) LogValue() slog.Value {
 	if runner == nil {
 		return slog.StringValue("nil")
 	}
+	modelID := runner.modelPath
+	if modelID == "" {
+		modelID = runner.modelKey
+	}
 	attrs := []slog.Attr{}
 	if runner.model != nil {
 		attrs = append(attrs, slog.String("name", runner.model.Name))
@@ -814,7 +798,7 @@ func (runner *runnerRef) LogValue() slog.Value {
 		slog.String("vram", format.HumanBytes2(runner.vramSize)),
 		slog.Int("parallel", runner.numParallel),
 		slog.Int("pid", runner.pid),
-		slog.String("model", runner.modelPath),
+		slog.String("model", modelID),
 	)
 	if runner.Options != nil {
 		attrs = append(attrs, slog.Int("num_ctx", runner.Options.NumCtx))
@@ -859,8 +843,16 @@ func (a ByDurationAndName) Less(i, j int) bool {
 	if d1 != d2 {
 		return d1 < d2
 	}
-	// Secondary sort by model path lex order
-	return a[i].modelPath < a[j].modelPath
+	// Secondary sort by model key/path lex order
+	n1 := a[i].modelPath
+	if n1 == "" {
+		n1 = a[i].modelKey
+	}
+	n2 := a[j].modelPath
+	if n2 == "" {
+		n2 = a[j].modelKey
+	}
+	return n1 < n2
 }
 
 // TODO - future consideration to pick runners based on size
@@ -920,8 +912,9 @@ func (s *Scheduler) unloadAllRunners() {
 }
 
 func (s *Scheduler) expireRunner(model *Model) {
+	modelKey := schedulerModelKey(model)
 	s.loadedMu.Lock()
-	runner, ok := s.loaded[model.ModelPath]
+	runner, ok := s.loaded[modelKey]
 	s.loadedMu.Unlock()
 	if ok {
 		runner.refMu.Lock()

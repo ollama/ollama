@@ -13,12 +13,16 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/x/create"
+	"github.com/ollama/ollama/x/imagegen/safetensors"
 )
 
 // MinOllamaVersion is the minimum Ollama version required for safetensors models.
@@ -26,17 +30,87 @@ const MinOllamaVersion = "0.14.0"
 
 // ModelfileConfig holds configuration extracted from a Modelfile.
 type ModelfileConfig struct {
-	Template string
-	System   string
-	License  string
+	Template   string
+	System     string
+	License    string
+	Parser     string
+	Renderer   string
+	Parameters map[string]any
+}
+
+var ignoredModelfileParameters = []string{
+	"penalize_newline",
+	"low_vram",
+	"f16_kv",
+	"logits_all",
+	"vocab_only",
+	"use_mlock",
+	"mirostat",
+	"mirostat_tau",
+	"mirostat_eta",
+}
+
+// ConfigFromModelfile extracts the model directory and x/create-specific
+// Modelfile configuration from a parsed Modelfile.
+func ConfigFromModelfile(modelfile *parser.Modelfile) (string, *ModelfileConfig, error) {
+	var modelDir string
+	mfConfig := &ModelfileConfig{}
+
+	for _, cmd := range modelfile.Commands {
+		switch cmd.Name {
+		case "model":
+			modelDir = cmd.Args
+		case "template":
+			mfConfig.Template = cmd.Args
+		case "system":
+			mfConfig.System = cmd.Args
+		case "license":
+			mfConfig.License = cmd.Args
+		case "parser":
+			mfConfig.Parser = cmd.Args
+		case "renderer":
+			mfConfig.Renderer = cmd.Args
+		case "adapter", "message", "requires":
+			continue
+		default:
+			if slices.Contains(ignoredModelfileParameters, cmd.Name) {
+				continue
+			}
+
+			ps, err := api.FormatParams(map[string][]string{cmd.Name: {cmd.Args}})
+			if err != nil {
+				return "", nil, err
+			}
+
+			if mfConfig.Parameters == nil {
+				mfConfig.Parameters = make(map[string]any)
+			}
+
+			for k, v := range ps {
+				if ks, ok := mfConfig.Parameters[k].([]string); ok {
+					mfConfig.Parameters[k] = append(ks, v.([]string)...)
+				} else if vs, ok := v.([]string); ok {
+					mfConfig.Parameters[k] = vs
+				} else {
+					mfConfig.Parameters[k] = v
+				}
+			}
+		}
+	}
+
+	if modelDir == "" {
+		modelDir = "."
+	}
+
+	return modelDir, mfConfig, nil
 }
 
 // CreateOptions holds all options for model creation.
 type CreateOptions struct {
 	ModelName string
 	ModelDir  string
-	Quantize  string           // "q4", "q8", "nvfp4", or "mxfp8" for quantization
-	Modelfile *ModelfileConfig // template/system/license from Modelfile
+	Quantize  string           // "int4", "int8", "nvfp4", or "mxfp8" for quantization
+	Modelfile *ModelfileConfig // template/system/license/parser/renderer/parameters from Modelfile
 }
 
 // CreateModel imports a model from a local directory.
@@ -94,6 +168,7 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 			newLayerCreator(), newTensorLayerCreator(),
 			newManifestWriter(opts, capabilities, parserName, rendererName),
 			progressFn,
+			newPackedTensorLayerCreator(),
 		)
 	} else {
 		err = create.CreateImageGenModel(
@@ -141,60 +216,33 @@ func newTensorLayerCreator() create.QuantizingTensorLayerCreator {
 	}
 }
 
-// createQuantizedLayers quantizes a tensor and returns the resulting layers.
+// createQuantizedLayers quantizes a tensor and returns a single combined layer.
+// The combined blob contains data, scale, and optional bias tensors with metadata.
 func createQuantizedLayers(r io.Reader, name, dtype string, shape []int32, quantize string) ([]create.LayerInfo, error) {
 	if !QuantizeSupported() {
 		return nil, fmt.Errorf("quantization requires MLX support")
 	}
 
-	// Quantize the tensor
-	qweightData, scalesData, qbiasData, _, _, _, err := quantizeTensor(r, name, dtype, shape, quantize)
+	// Quantize the tensor into a single combined blob
+	blobData, err := quantizeTensor(r, name, dtype, shape, quantize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to quantize %s: %w", name, err)
 	}
 
-	// Create layer for quantized weight
-	weightLayer, err := manifest.NewLayer(bytes.NewReader(qweightData), manifest.MediaTypeImageTensor)
+	// Create single layer for the combined blob
+	layer, err := manifest.NewLayer(bytes.NewReader(blobData), manifest.MediaTypeImageTensor)
 	if err != nil {
 		return nil, err
 	}
 
-	// Create layer for scales
-	scalesLayer, err := manifest.NewLayer(bytes.NewReader(scalesData), manifest.MediaTypeImageTensor)
-	if err != nil {
-		return nil, err
-	}
-
-	layers := []create.LayerInfo{
+	return []create.LayerInfo{
 		{
-			Digest:    weightLayer.Digest,
-			Size:      weightLayer.Size,
-			MediaType: weightLayer.MediaType,
+			Digest:    layer.Digest,
+			Size:      layer.Size,
+			MediaType: layer.MediaType,
 			Name:      name,
 		},
-		{
-			Digest:    scalesLayer.Digest,
-			Size:      scalesLayer.Size,
-			MediaType: scalesLayer.MediaType,
-			Name:      name + "_scale",
-		},
-	}
-
-	// Add qbiases layer if present (affine mode)
-	if qbiasData != nil {
-		qbiasLayer, err := manifest.NewLayer(bytes.NewReader(qbiasData), manifest.MediaTypeImageTensor)
-		if err != nil {
-			return nil, err
-		}
-		layers = append(layers, create.LayerInfo{
-			Digest:    qbiasLayer.Digest,
-			Size:      qbiasLayer.Size,
-			MediaType: qbiasLayer.MediaType,
-			Name:      name + "_qbias",
-		})
-	}
-
-	return layers, nil
+	}, nil
 }
 
 // createUnquantizedLayer creates a single tensor layer without quantization.
@@ -212,6 +260,58 @@ func createUnquantizedLayer(r io.Reader, name string) ([]create.LayerInfo, error
 			Name:      name,
 		},
 	}, nil
+}
+
+// newPackedTensorLayerCreator returns a PackedTensorLayerCreator callback for
+// creating packed multi-tensor blob layers (used for expert groups).
+func newPackedTensorLayerCreator() create.PackedTensorLayerCreator {
+	return func(groupName string, tensors []create.PackedTensorInput) (create.LayerInfo, error) {
+		// Check if any tensor in the group needs quantization
+		hasQuantize := false
+		for _, t := range tensors {
+			if t.Quantize != "" {
+				hasQuantize = true
+				break
+			}
+		}
+
+		var blobReader io.Reader
+		if hasQuantize {
+			if !QuantizeSupported() {
+				return create.LayerInfo{}, fmt.Errorf("quantization requires MLX support")
+			}
+			blobData, err := quantizePackedGroup(tensors)
+			if err != nil {
+				return create.LayerInfo{}, fmt.Errorf("failed to quantize packed group %s: %w", groupName, err)
+			}
+			blobReader = bytes.NewReader(blobData)
+		} else {
+			// Build unquantized packed blob using streaming reader
+			// Extract raw tensor data from safetensors-wrapped readers
+			var tds []*safetensors.TensorData
+			for _, t := range tensors {
+				rawData, err := safetensors.ExtractRawFromSafetensors(t.Reader)
+				if err != nil {
+					return create.LayerInfo{}, fmt.Errorf("failed to extract tensor %s: %w", t.Name, err)
+				}
+				td := safetensors.NewTensorDataFromBytes(t.Name, t.Dtype, t.Shape, rawData)
+				tds = append(tds, td)
+			}
+			blobReader = safetensors.BuildPackedSafetensorsReader(tds)
+		}
+
+		layer, err := manifest.NewLayer(blobReader, manifest.MediaTypeImageTensor)
+		if err != nil {
+			return create.LayerInfo{}, err
+		}
+
+		return create.LayerInfo{
+			Digest:    layer.Digest,
+			Size:      layer.Size,
+			MediaType: layer.MediaType,
+			Name:      groupName,
+		}, nil
+	}
 }
 
 // newManifestWriter returns a ManifestWriter callback for writing the model manifest.
@@ -240,8 +340,8 @@ func newManifestWriter(opts CreateOptions, capabilities []string, parserName, re
 			ModelFormat:  "safetensors",
 			Capabilities: caps,
 			Requires:     MinOllamaVersion,
-			Parser:       parserName,
-			Renderer:     rendererName,
+			Parser:       resolveParserName(opts.Modelfile, parserName),
+			Renderer:     resolveRendererName(opts.Modelfile, rendererName),
 		}
 		configJSON, err := json.Marshal(configData)
 		if err != nil {
@@ -278,6 +378,22 @@ func newManifestWriter(opts CreateOptions, capabilities []string, parserName, re
 	}
 }
 
+func resolveParserName(mf *ModelfileConfig, inferred string) string {
+	if mf != nil && mf.Parser != "" {
+		return mf.Parser
+	}
+
+	return inferred
+}
+
+func resolveRendererName(mf *ModelfileConfig, inferred string) string {
+	if mf != nil && mf.Renderer != "" {
+		return mf.Renderer
+	}
+
+	return inferred
+}
+
 // createModelfileLayers creates layers for template, system, and license from Modelfile config.
 func createModelfileLayers(mf *ModelfileConfig) ([]manifest.Layer, error) {
 	var layers []manifest.Layer
@@ -302,6 +418,19 @@ func createModelfileLayers(mf *ModelfileConfig) ([]manifest.Layer, error) {
 		layer, err := manifest.NewLayer(bytes.NewReader([]byte(mf.License)), "application/vnd.ollama.image.license")
 		if err != nil {
 			return nil, fmt.Errorf("failed to create license layer: %w", err)
+		}
+		layers = append(layers, layer)
+	}
+
+	if len(mf.Parameters) > 0 {
+		var b bytes.Buffer
+		if err := json.NewEncoder(&b).Encode(mf.Parameters); err != nil {
+			return nil, fmt.Errorf("failed to encode parameters: %w", err)
+		}
+
+		layer, err := manifest.NewLayer(&b, "application/vnd.ollama.image.params")
+		if err != nil {
+			return nil, fmt.Errorf("failed to create params layer: %w", err)
 		}
 		layers = append(layers, layer)
 	}
@@ -383,7 +512,7 @@ func getParserName(modelDir string) string {
 			return "deepseek3"
 		}
 		if strings.Contains(archLower, "qwen3") {
-			return "qwen3-coder"
+			return "qwen3"
 		}
 	}
 
@@ -397,7 +526,7 @@ func getParserName(modelDir string) string {
 			return "deepseek3"
 		}
 		if strings.Contains(typeLower, "qwen3") {
-			return "qwen3-coder"
+			return "qwen3"
 		}
 	}
 

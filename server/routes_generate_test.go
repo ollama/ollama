@@ -187,7 +187,7 @@ func TestGenerateChat(t *testing.T) {
 			getGpuFn:        getGpuFn,
 			getSystemInfoFn: getSystemInfoFn,
 			waitForRecovery: 250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
@@ -904,7 +904,7 @@ func TestGenerate(t *testing.T) {
 			getGpuFn:        getGpuFn,
 			getSystemInfoFn: getSystemInfoFn,
 			waitForRecovery: 250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
@@ -1388,7 +1388,7 @@ func TestGenerateLogprobs(t *testing.T) {
 				getGpuFn:        getGpuFn,
 				getSystemInfoFn: getSystemInfoFn,
 				waitForRecovery: 250 * time.Millisecond,
-				loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 					req.successCh <- &runnerRef{llama: mock}
 					return false
 				},
@@ -1568,7 +1568,7 @@ func TestChatLogprobs(t *testing.T) {
 				getGpuFn:        getGpuFn,
 				getSystemInfoFn: getSystemInfoFn,
 				waitForRecovery: 250 * time.Millisecond,
-				loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 					req.successCh <- &runnerRef{llama: mock}
 					return false
 				},
@@ -1678,7 +1678,7 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 				getGpuFn:        getGpuFn,
 				getSystemInfoFn: getSystemInfoFn,
 				waitForRecovery: 250 * time.Millisecond,
-				loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 					time.Sleep(time.Millisecond)
 					req.successCh <- &runnerRef{llama: mock}
 					return false
@@ -2123,7 +2123,7 @@ func TestGenerateUnload(t *testing.T) {
 			newServerFn:     newMockServer(&mockRunner{}),
 			getGpuFn:        getGpuFn,
 			getSystemInfoFn: getSystemInfoFn,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				loadFnCalled = true
 				req.successCh <- &runnerRef{llama: &mockRunner{}}
 				return false
@@ -2225,7 +2225,7 @@ func TestGenerateWithImages(t *testing.T) {
 			getGpuFn:        getGpuFn,
 			getSystemInfoFn: getSystemInfoFn,
 			waitForRecovery: 250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
 					llama: &mock,
@@ -2371,29 +2371,6 @@ func TestImageGenerateStreamFalse(t *testing.T) {
 		return nil
 	}
 
-	opts := api.DefaultOptions()
-	s := Server{
-		sched: &Scheduler{
-			pendingReqCh:  make(chan *LlmRequest, 1),
-			finishedReqCh: make(chan *LlmRequest, 1),
-			expiredCh:     make(chan *runnerRef, 1),
-			unloadedCh:    make(chan any, 1),
-			loaded: map[string]*runnerRef{
-				"": {
-					llama:       &mock,
-					Options:     &opts,
-					model:       &Model{Config: model.ConfigV2{Capabilities: []string{"image"}}},
-					numParallel: 1,
-				},
-			},
-			newServerFn:     newMockServer(&mock),
-			getGpuFn:        getGpuFn,
-			getSystemInfoFn: getSystemInfoFn,
-		},
-	}
-
-	go s.sched.Run(t.Context())
-
 	// Create model manifest with image capability
 	n := model.ParseName("test-image")
 	cfg := model.ConfigV2{Capabilities: []string{"image"}}
@@ -2408,6 +2385,35 @@ func TestImageGenerateStreamFalse(t *testing.T) {
 	if err := manifest.WriteManifest(n, configLayer, nil); err != nil {
 		t.Fatal(err)
 	}
+
+	loadedModel, err := GetModel("test-image")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	opts := api.DefaultOptions()
+	s := Server{
+		sched: &Scheduler{
+			pendingReqCh:  make(chan *LlmRequest, 1),
+			finishedReqCh: make(chan *LlmRequest, 1),
+			expiredCh:     make(chan *runnerRef, 1),
+			unloadedCh:    make(chan any, 1),
+			loaded: map[string]*runnerRef{
+				schedulerModelKey(loadedModel): {
+					llama:       &mock,
+					Options:     &opts,
+					model:       loadedModel,
+					isImagegen:  true,
+					numParallel: 1,
+				},
+			},
+			newServerFn:     newMockServer(&mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+		},
+	}
+
+	go s.sched.Run(t.Context())
 
 	streamFalse := false
 	w := createRequest(t, s.GenerateHandler, api.GenerateRequest{

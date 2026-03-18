@@ -2,6 +2,10 @@
 # This script installs Ollama on Linux and macOS.
 # It detects the current operating system architecture and installs the appropriate version of Ollama.
 
+# Wrap script in main function so that a truncated partial download doesn't end
+# up executing half a script.
+main() {
+
 set -eu
 
 red="$( (/usr/bin/tput bold || :; /usr/bin/tput setaf 1 || :) 2>&-)"
@@ -35,6 +39,8 @@ case "$ARCH" in
     *) error "Unsupported architecture: $ARCH" ;;
 esac
 
+VER_PARAM="${OLLAMA_VERSION:+?version=$OLLAMA_VERSION}"
+
 ###########################################
 # macOS
 ###########################################
@@ -49,11 +55,7 @@ if [ "$OS" = "Darwin" ]; then
         exit 1
     fi
 
-    if [ -n "${OLLAMA_VERSION:-}" ]; then
-        DOWNLOAD_URL="https://github.com/ollama/ollama/releases/download/${OLLAMA_VERSION}/Ollama-darwin.zip"
-    else
-        DOWNLOAD_URL="https://github.com/ollama/ollama/releases/latest/download/Ollama-darwin.zip"
-    fi
+    DOWNLOAD_URL="https://ollama.com/download/Ollama-darwin.zip${VER_PARAM}"
 
     if pgrep -x Ollama >/dev/null 2>&1; then
         status "Stopping running Ollama instance..."
@@ -74,10 +76,12 @@ if [ "$OS" = "Darwin" ]; then
     unzip -q "$TEMP_DIR/Ollama-darwin.zip" -d "$TEMP_DIR"
     mv "$TEMP_DIR/Ollama.app" "/Applications/"
 
-    status "Adding 'ollama' command to PATH (may require password)..."
-    mkdir -p "/usr/local/bin" 2>/dev/null || sudo mkdir -p "/usr/local/bin"
-    ln -sf "/Applications/Ollama.app/Contents/Resources/ollama" "/usr/local/bin/ollama" 2>/dev/null || \
-        sudo ln -sf "/Applications/Ollama.app/Contents/Resources/ollama" "/usr/local/bin/ollama"
+    if [ ! -L "/usr/local/bin/ollama" ] || [ "$(readlink "/usr/local/bin/ollama")" != "/Applications/Ollama.app/Contents/Resources/ollama" ]; then
+        status "Adding 'ollama' command to PATH (may require password)..."
+        mkdir -p "/usr/local/bin" 2>/dev/null || sudo mkdir -p "/usr/local/bin"
+        ln -sf "/Applications/Ollama.app/Contents/Resources/ollama" "/usr/local/bin/ollama" 2>/dev/null || \
+            sudo ln -sf "/Applications/Ollama.app/Contents/Resources/ollama" "/usr/local/bin/ollama"
+    fi
 
     if [ -z "${OLLAMA_NO_START:-}" ]; then
         status "Starting Ollama..."
@@ -102,8 +106,6 @@ case "$KERN" in
     *icrosoft) error "Microsoft WSL1 is not currently supported. Please use WSL2 with 'wsl --set-version <distro> 2'" ;;
     *) ;;
 esac
-
-VER_PARAM="${OLLAMA_VERSION:+?version=$OLLAMA_VERSION}"
 
 SUDO=
 if [ "$(id -u)" -ne 0 ]; then
@@ -448,3 +450,6 @@ fi
 
 status "NVIDIA GPU ready."
 install_success
+}
+
+main

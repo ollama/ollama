@@ -1,0 +1,57 @@
+---
+title: Pi
+---
+
+Pi is a minimal AI agent toolkit with plugin support.
+
+## Install
+
+Install [Pi](https://github.com/badlogic/pi-mono):
+
+```bash
+npm install -g @mariozechner/pi-coding-agent
+```
+
+## Usage with Ollama
+
+### Quick setup
+
+```bash
+ollama launch pi
+```
+
+To configure without launching:
+
+```shell
+ollama launch pi --config
+```
+
+### Manual setup
+
+Add a configuration block to `~/.pi/agent/models.json`:
+
+```json
+{
+  "providers": {
+    "ollama": {
+      "baseUrl": "http://localhost:11434/v1",
+      "api": "openai-completions",
+      "apiKey": "ollama",
+      "models": [
+        {
+          "id": "qwen3-coder"
+        }
+      ]
+    }
+  }
+}
+```
+
+Update `~/.pi/agent/settings.json` to set the default provider:
+
+```json
+{
+  "defaultProvider": "ollama",
+  "defaultModel": "qwen3-coder"
+}
+```
