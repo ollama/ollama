@@ -609,6 +609,8 @@ func clearSessionModelOverride(primary string) {
 		if override, _ := sess["modelOverride"].(string); override != "" && override != primary {
 			delete(sess, "modelOverride")
 			delete(sess, "providerOverride")
+		}
+		if model, _ := sess["model"].(string); model != "" && model != primary {
 			sess["model"] = primary
 			changed = true
 		}

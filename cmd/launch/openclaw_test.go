@@ -1768,3 +1768,124 @@ func TestRegisterWebSearchPlugin(t *testing.T) {
 		}
 	})
 }
+
+func TestClearSessionModelOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	sessionsDir := filepath.Join(tmpDir, ".openclaw", "agents", "main", "sessions")
+	sessionsPath := filepath.Join(sessionsDir, "sessions.json")
+
+	writeSessionsFile := func(t *testing.T, sessions map[string]map[string]any) {
+		t.Helper()
+		if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		data, err := json.Marshal(sessions)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(sessionsPath, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	readSessionsFile := func(t *testing.T) map[string]map[string]any {
+		t.Helper()
+		data, err := os.ReadFile(sessionsPath)
+		if err != nil {
+			t.Fatalf("reading sessions file: %v", err)
+		}
+		var sessions map[string]map[string]any
+		if err := json.Unmarshal(data, &sessions); err != nil {
+			t.Fatalf("parsing sessions file: %v", err)
+		}
+		return sessions
+	}
+
+	t.Run("clears modelOverride and updates model", func(t *testing.T) {
+		writeSessionsFile(t, map[string]map[string]any{
+			"sess1": {"model": "ollama/old-model", "modelOverride": "old-model", "providerOverride": "ollama"},
+		})
+		clearSessionModelOverride("new-model")
+		sessions := readSessionsFile(t)
+		sess := sessions["sess1"]
+		if _, ok := sess["modelOverride"]; ok {
+			t.Error("modelOverride should have been deleted")
+		}
+		if _, ok := sess["providerOverride"]; ok {
+			t.Error("providerOverride should have been deleted")
+		}
+		if sess["model"] != "new-model" {
+			t.Errorf("model = %q, want %q", sess["model"], "new-model")
+		}
+	})
+
+	t.Run("updates model field in sessions without modelOverride", func(t *testing.T) {
+		// This is the bug case: session has model pointing to old primary,
+		// but no explicit modelOverride. After changing primary, the session
+		// model field must also be updated.
+		writeSessionsFile(t, map[string]map[string]any{
+			"sess1": {"model": "ollama/old-model"},
+		})
+		clearSessionModelOverride("new-model")
+		sessions := readSessionsFile(t)
+		if sessions["sess1"]["model"] != "new-model" {
+			t.Errorf("model = %q, want %q", sessions["sess1"]["model"], "new-model")
+		}
+	})
+
+	t.Run("does not update session already using primary", func(t *testing.T) {
+		writeSessionsFile(t, map[string]map[string]any{
+			"sess1": {"model": "current-model"},
+		})
+		clearSessionModelOverride("current-model")
+		sessions := readSessionsFile(t)
+		if sessions["sess1"]["model"] != "current-model" {
+			t.Errorf("model = %q, want %q", sessions["sess1"]["model"], "current-model")
+		}
+	})
+
+	t.Run("does not update session with empty model field", func(t *testing.T) {
+		writeSessionsFile(t, map[string]map[string]any{
+			"sess1": {"other": "data"},
+		})
+		clearSessionModelOverride("new-model")
+		sessions := readSessionsFile(t)
+		if _, ok := sessions["sess1"]["model"]; ok {
+			t.Error("model field should not have been added to session with no model")
+		}
+	})
+
+	t.Run("handles multiple sessions mixed", func(t *testing.T) {
+		writeSessionsFile(t, map[string]map[string]any{
+			"with-override":    {"model": "old", "modelOverride": "old", "providerOverride": "ollama"},
+			"without-override": {"model": "old"},
+			"already-current":  {"model": "new-model"},
+			"no-model":         {"other": "data"},
+		})
+		clearSessionModelOverride("new-model")
+		sessions := readSessionsFile(t)
+
+		if sessions["with-override"]["model"] != "new-model" {
+			t.Errorf("with-override model = %q, want %q", sessions["with-override"]["model"], "new-model")
+		}
+		if _, ok := sessions["with-override"]["modelOverride"]; ok {
+			t.Error("with-override: modelOverride should be deleted")
+		}
+		if sessions["without-override"]["model"] != "new-model" {
+			t.Errorf("without-override model = %q, want %q", sessions["without-override"]["model"], "new-model")
+		}
+		if sessions["already-current"]["model"] != "new-model" {
+			t.Errorf("already-current model = %q, want %q", sessions["already-current"]["model"], "new-model")
+		}
+		if _, ok := sessions["no-model"]["model"]; ok {
+			t.Error("no-model: model should not have been added")
+		}
+	})
+
+	t.Run("no-op when sessions file missing", func(t *testing.T) {
+		os.RemoveAll(sessionsDir)
+		clearSessionModelOverride("new-model") // should not panic or error
+	})
+}
