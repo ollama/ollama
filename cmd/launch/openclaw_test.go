@@ -1376,7 +1376,7 @@ func TestOpenclawModelConfig(t *testing.T) {
 		// report it as a remote/cloud model
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/api/show" {
-				fmt.Fprintf(w, `{"capabilities":[],"model_info":{},"remote_model":"minimax-m2.5"}`)
+				fmt.Fprintf(w, `{"capabilities":[],"model_info":{},"remote_model":"minimax-m2.7"}`)
 				return
 			}
 			w.WriteHeader(http.StatusNotFound)
@@ -1386,7 +1386,7 @@ func TestOpenclawModelConfig(t *testing.T) {
 		u, _ := url.Parse(srv.URL)
 		client := api.NewClient(u, srv.Client())
 
-		cfg, isCloud := openclawModelConfig(context.Background(), client, "minimax-m2.5:cloud")
+		cfg, isCloud := openclawModelConfig(context.Background(), client, "minimax-m2.7:cloud")
 
 		if !isCloud {
 			t.Error("expected isCloud = true for cloud model")
