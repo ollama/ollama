@@ -923,7 +923,7 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 
 	// Emit a ping event for empty streaming responses to prevent client timeouts
 	// (e.g., while the model is composing tool call arguments)
-	if r.Message.Thinking == "" && r.Message.Content == "" && !r.Done && len(r.Message.ToolCalls) == 0 {
+	if r.Message.Thinking == "" && r.Message.Content == "" && !r.Done && len(r.Message.ToolCalls) == 0 && len(r.Logprobs) == 0 {
 		events = append(events, StreamEvent{
 			Event: "ping",
 			Data: PingEvent{
