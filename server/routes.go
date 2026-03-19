@@ -2107,7 +2107,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	name, err = getExistingName(name)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
 		return
 	}
 
