@@ -529,6 +529,9 @@ func (c *kvCache) dumpTree() {
 		if nodeBytes > 0 {
 			label += " " + mlx.PrettyBytes(int(nodeBytes)).String()
 		}
+		if !n.lastUsed.IsZero() {
+			label += fmt.Sprintf(" %s ago", time.Since(n.lastUsed).Truncate(time.Millisecond))
+		}
 		var flags []string
 		if n.user {
 			flags = append(flags, "user")
