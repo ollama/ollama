@@ -258,11 +258,11 @@ func (p *VisionImageProcessor) createPatches(pixels []float32, height, width int
 	patchIndex := 0
 	for h := 0; h < int(grid.Height); h += mergeSize {
 		for w := 0; w < int(grid.Width); w += mergeSize {
-			for mh := 0; mh < mergeSize; mh++ {
-				for mw := 0; mw < mergeSize; mw++ {
+			for mh := range mergeSize {
+				for mw := range mergeSize {
 					baseOffset := patchIndex * patchDim
 
-					for c := 0; c < channels; c++ {
+					for c := range channels {
 						channelOffset := baseOffset + c*temporalPatchSize*patchSize*patchSize
 						for py := 0; py < patchSize; py++ {
 							for px := 0; px < patchSize; px++ {

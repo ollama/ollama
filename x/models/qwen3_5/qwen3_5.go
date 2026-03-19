@@ -23,8 +23,10 @@ func init() {
 	base.Register("Qwen3NextForConditionalGeneration", NewModel)
 }
 
-var _ base.MultimodalPromptTokenizerWithState = (*Model)(nil)
-var _ base.ForwardWithStateModel = (*Model)(nil)
+var (
+	_ base.MultimodalPromptTokenizerWithState = (*Model)(nil)
+	_ base.ForwardWithStateModel              = (*Model)(nil)
+)
 
 // RopeParameters carries optional rope metadata embedded under rope_parameters.
 type RopeParameters struct {
