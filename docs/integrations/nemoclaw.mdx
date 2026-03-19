@@ -1,0 +1,55 @@
+---
+title: NemoClaw
+---
+
+NemoClaw is a secure AI agent sandbox. It runs your AI agent inside an isolated container with network policy controls, and can connect to Ollama for inference.
+
+## Quick start
+
+Pull a model:
+
+```bash
+ollama pull nemotron-3-nano:30b
+```
+
+Run the installer:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
+  NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_PROVIDER=ollama \
+  NEMOCLAW_MODEL=nemotron-3-nano:30b \
+  bash
+```
+
+Connect to your sandbox:
+
+```bash
+nemoclaw my-assistant connect
+```
+
+Open the TUI:
+
+```bash
+openclaw tui
+```
+
+<Note>NemoClaw requires WSL2 on Windows. CMD and PowerShell are not supported.</Note>
+
+<Note>Ollama must be installed and running on `localhost:11434` before the installer runs. The non-interactive path does not install or start Ollama automatically.</Note>
+
+## Recommended models
+
+**Cloud models:**
+
+- `nemotron-3-super:cloud` — Default; strong reasoning and coding
+- `kimi-k2.5:cloud` — Multimodal reasoning with subagents
+- `minimax-m2.7:cloud` — Fast, efficient coding and productivity
+- `glm-5:cloud` — Reasoning and code generation
+
+**Local models (via Ollama):**
+
+- `nemotron-3-nano:30b` — Recommended local model (~30B, fits in 24 GB VRAM)
+- `glm-4.5-flash` — Reasoning and code generation locally (~25 GB VRAM)
+
+More models at [ollama.com/search](https://ollama.com/search?c=cloud).
