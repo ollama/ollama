@@ -93,21 +93,8 @@ func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
 		matchPath, matched = findBestMatch(c.root, inputs[:len(inputs)-1])
 	}
 
-	// Check for partial match within a node's edge — truncate path
-	// to the parent boundary. snapshot() will split the node and
-	// create the branch point during prefill when caches are ready.
-	partialMatch := false
-	if len(matchPath) > 1 {
-		lastNode := matchPath[len(matchPath)-1]
-		matchedInEdge := matched - lastNode.startOffset()
-		if matchedInEdge > 0 && matchedInEdge < len(lastNode.tokens) {
-			matchPath = matchPath[:len(matchPath)-1]
-			partialMatch = true
-		}
-	}
-
 	// Switch to the matched path, paging in/out as needed.
-	c.switchToPath(matchPath)
+	c.switchToPath(matchPath, matched)
 
 	// switchToPath aligns caches to a common offset
 	prefix := c.minCacheOffset()
@@ -116,7 +103,7 @@ func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
 	// Schedule a snapshot at the branch point during prefill so future
 	// requests diverging here can restore instead of re-evaluating.
 	var snapshotAt int
-	if partialMatch || (prefix == 0 && matched > 0) {
+	if prefix < matched {
 		snapshotAt = matched
 	}
 
@@ -142,7 +129,7 @@ func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
 
 // switchToPath transitions from the current active path to a new path,
 // paging out diverging segments and paging in the new path.
-func (c *kvCache) switchToPath(newPath []*trieNode) {
+func (c *kvCache) switchToPath(newPath []*trieNode, matched int) {
 	defer c.enforceEvictionPolicy()
 
 	// Find common ancestor index.
@@ -167,7 +154,10 @@ func (c *kvCache) switchToPath(newPath []*trieNode) {
 	// non-leaf nodes here would produce wrong results for non-rewindable
 	// caches (e.g. RecurrentCache) whose state reflects the leaf, not
 	// the intermediate boundary.
-	if leaf := len(c.activePath) - 1; leaf >= commonLen {
+	leaf := len(c.activePath) - 1
+	leafDiverges := leaf >= commonLen
+	leafNeedsRewind := matched < c.activePath[leaf].endOffset
+	if leafDiverges || leafNeedsRewind {
 		node := c.activePath[leaf]
 		if !node.hasAllSnapshots() {
 			fromOffset := node.startOffset()
@@ -184,14 +174,16 @@ func (c *kvCache) switchToPath(newPath []*trieNode) {
 		}
 	}
 
-	// Rewind each cache to the ancestor offset or free it. Freed
-	// caches (e.g. RecurrentCache that can't rewind) will be restored
-	// from snapshots during page-in.
+	// Rewind each cache to the target offset or free it. When matched
+	// falls within the ancestor's range (same-path case), we rewind
+	// directly to the match point. Otherwise we rewind to the ancestor
+	// and let page-in bring us forward to matched.
+	rewindTarget := min(ancestorOffset, matched)
 	for _, kv := range c.caches {
 		if kv == nil {
 			continue
 		}
-		if !kv.Restore(nil, ancestorOffset) {
+		if !kv.Restore(nil, rewindTarget) {
 			kv.Free()
 		}
 	}
@@ -199,10 +191,12 @@ func (c *kvCache) switchToPath(newPath []*trieNode) {
 	// Page in — walk the full new path, restoring from snapshots.
 	// Freed caches naturally pick up the first available snapshot.
 	// Caches already past a node skip it via offset check.
+pageIn:
 	for _, node := range newPath {
-		if len(node.snapshots) == 0 {
+		if !node.hasSnapshots() {
 			continue
 		}
+		nodeTarget := min(node.endOffset, matched)
 		for j, kv := range c.caches {
 			if kv == nil {
 				continue
@@ -210,19 +204,18 @@ func (c *kvCache) switchToPath(newPath []*trieNode) {
 			if j >= len(node.snapshots) || node.snapshots[j] == nil {
 				continue
 			}
-			if kv.Offset() >= node.endOffset {
+			if kv.Offset() >= nodeTarget {
 				continue
 			}
-			if !kv.Restore(node.snapshots[j], node.endOffset) {
-				slog.Warn("cache restore failure during page-in, freeing all caches", "layer", j, "offset", node.startOffset())
-				c.freeAll()
-				c.activePath = []*trieNode{c.root}
-				return
+			if !kv.Restore(node.snapshots[j], nodeTarget) {
+				// Restore failed — stop page-in and let alignment
+				// bring all caches to a consistent offset.
+				break pageIn
 			}
 		}
 		if node.endOffset > ancestorOffset {
 			pageInCount++
-			logutil.Trace(fmt.Sprintf("page in: [%d, %d)", node.startOffset(), node.endOffset))
+			logutil.Trace(fmt.Sprintf("page in: [%d, %d)", node.startOffset(), nodeTarget))
 		}
 	}
 
