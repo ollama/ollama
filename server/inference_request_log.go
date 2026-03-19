@@ -41,7 +41,7 @@ func (s *Server) initRequestLogging() error {
 	}
 
 	s.requestLogger = requestLogger
-	slog.Info(fmt.Sprintf("request debug logging enabled; inference request logs will be stored in %s and include request bodies and replay curl commands", requestLogger.dir))
+	slog.Info("request debug logging enabled; inference request logs will be stored in dir and include request bodies and replay curl commands", "dir", requestLogger.dir)
 
 	return nil
 }
@@ -121,7 +121,7 @@ func (l *inferenceRequestLogger) log(route, method, scheme, host, contentType st
 		return
 	}
 
-	slog.Info(fmt.Sprintf("logged to %s, replay using curl with `sh %s`", bodyPath, curlPath))
+	slog.Info("logged inference request", "body", bodyPath, "replay", curlPath)
 }
 
 func sanitizeRouteForFilename(route string) string {
