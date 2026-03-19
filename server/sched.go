@@ -209,20 +209,60 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					systemInfo := s.getSystemInfoFn()
 					if maxRunners <= 0 {
 						// No user specified MaxRunners, so figure out what automatic setting to use for the next load attempt
+						var gpuListForMax []ml.DeviceInfo
 						if pending.opts.NumGPU == 0 {
 							// Need to get actual GPU list to set the correct default max models
 							logutil.Trace("refreshing GPU list", "model", pending.model.ModelPath)
-							g := s.getGpuFn(ctx, runnersSnapshot)
-							maxRunners = uint(defaultModelsPerGPU * max(len(g), 1))
+							gpuListForMax = s.getGpuFn(ctx, runnersSnapshot)
+							maxRunners = uint(defaultModelsPerGPU * max(len(gpuListForMax), 1))
 						} else {
-							maxRunners = uint(defaultModelsPerGPU * max(len(gpus), 1))
+							gpuListForMax = gpus
+							maxRunners = uint(defaultModelsPerGPU * max(len(gpuListForMax), 1))
 						}
-						slog.Debug("updating default concurrency", "OLLAMA_MAX_LOADED_MODELS", maxRunners, "gpu_count", len(gpus))
+						// On iGPU-only systems, concurrent models compete for the same physical RAM
+						// the CPU also uses. Default to 1 to avoid memory contention.
+						// Override with OLLAMA_IGPU_MAX_MODELS (0 = use standard defaultModelsPerGPU).
+						if igpuMax := envconfig.IGPUMaxModels(); igpuMax > 0 {
+							maxRunners = igpuMax
+							slog.Debug("using OLLAMA_IGPU_MAX_MODELS override", "max", igpuMax)
+						} else if igpuMax == 0 {
+							// Auto-detect: if every GPU is integrated, cap at 1
+							allIntegrated := len(gpuListForMax) > 0
+							for _, g := range gpuListForMax {
+								if !g.Integrated {
+									allIntegrated = false
+									break
+								}
+							}
+							if allIntegrated {
+								maxRunners = 1
+								slog.Debug("iGPU-only system: capping concurrent models at 1 to avoid RAM contention")
+							}
+						}
+						slog.Debug("updating default concurrency", "OLLAMA_MAX_LOADED_MODELS", maxRunners, "gpu_count", len(gpuListForMax))
 					}
 
 					// Update free memory from currently loaded models
 					logutil.Trace("updating free space", "gpu_count", len(gpus), "model", pending.model.ModelPath)
 					s.updateFreeSpace(gpus)
+
+					// For iGPU devices, cap reported free VRAM at 80% of current system
+					// free RAM. iGPU "VRAM" is shared physical memory: over-allocating
+					// starves the OS and causes OOM crashes under CPU load.
+					if systemInfo.FreeMemory > 0 {
+						sysCap := uint64(float64(systemInfo.FreeMemory) * 0.80)
+						for i := range gpus {
+							if gpus[i].Integrated && gpus[i].FreeMemory > sysCap {
+								slog.Debug("capping iGPU free memory to 80% of system free RAM",
+									"gpu", gpus[i].ID,
+									"reported", gpus[i].FreeMemory,
+									"capped", sysCap,
+									"system_free", systemInfo.FreeMemory,
+								)
+								gpus[i].FreeMemory = sysCap
+							}
+						}
+					}
 
 					if loadedCount == 0 {
 						// No models loaded. Load the model but prefer the best fit.

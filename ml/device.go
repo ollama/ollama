@@ -349,6 +349,12 @@ func (d DeviceInfo) MinimumMemory() uint64 {
 	if d.Library == "Metal" {
 		return 512 * format.MebiByte
 	}
+	// iGPU shares physical memory with the CPU, so the GPU driver context
+	// overhead is smaller - discrete GPUs need more reserved for separate
+	// VRAM management structures.
+	if d.Integrated {
+		return 256 * format.MebiByte
+	}
 	return 457 * format.MebiByte
 }
 
