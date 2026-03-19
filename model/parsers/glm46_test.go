@@ -902,6 +902,113 @@ line3</arg_value>`,
 	}
 }
 
+func TestGLM46ParserTruncatedToolCallNoCloseTag(t *testing.T) {
+	parser := GLM46Parser{}
+	parser.Init(nil, nil, nil)
+
+	// Simulate truncated output: tool call open tag and partial content,
+	// but generation ends before closing tag (e.g. hit num_predict limit).
+	content, thinking, calls, err := parser.Add("<think>Let me help</think><tool_call>get-weather\n<arg_key>city</arg_key>\n<arg_value>Par", true)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if thinking != "Let me help" {
+		t.Fatalf("expected thinking %q, got %q", "Let me help", thinking)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls, got %d", len(calls))
+	}
+	if content != "get-weather\n<arg_key>city</arg_key>\n<arg_value>Par" {
+		t.Fatalf("expected truncated content as fallback, got %q", content)
+	}
+}
+
+func TestGLM46ParserTruncatedToolCallNoCloseTagStreaming(t *testing.T) {
+	parser := GLM46Parser{}
+	parser.Init(nil, nil, nil)
+
+	// First chunk: thinking + content before tool call
+	content, thinking, calls, err := parser.Add("<think>thinking</think>Here is the result:<tool_call>", false)
+	if err != nil {
+		t.Fatalf("step 1: unexpected error: %v", err)
+	}
+	if thinking != "thinking" {
+		t.Fatalf("step 1: expected thinking %q, got %q", "thinking", thinking)
+	}
+	if content != "Here is the result:" {
+		t.Fatalf("step 1: expected content %q, got %q", "Here is the result:", content)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("step 1: expected no calls, got %d", len(calls))
+	}
+
+	// Second chunk: partial tool content, generation done (truncated)
+	content, _, calls, err = parser.Add("get-weather\n<arg_key>city</arg_key>\n<arg_value>incomplete...", true)
+	if err != nil {
+		t.Fatalf("step 2: unexpected error: %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("step 2: expected no calls, got %d", len(calls))
+	}
+	if content != "get-weather\n<arg_key>city</arg_key>\n<arg_value>incomplete..." {
+		t.Fatalf("step 2: expected truncated content as fallback, got %q", content)
+	}
+}
+
+func TestGLM46ParserInvalidToolCallXML(t *testing.T) {
+	parser := GLM46Parser{}
+	parser.Init(nil, nil, nil)
+
+	// Tool call with mismatched arg_key/arg_value counts causes a parse error.
+	// The parser should fall back to returning the raw content instead of HTTP 500.
+	content, _, calls, err := parser.Add("<think></think><tool_call>get-weather\n<arg_key>city</arg_key>\n<arg_key>extra</arg_key>\n<arg_value>Paris</arg_value></tool_call>", true)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls, got %d", len(calls))
+	}
+	expectedContent := "get-weather\n<arg_key>city</arg_key>\n<arg_key>extra</arg_key>\n<arg_value>Paris</arg_value>"
+	if content != expectedContent {
+		t.Fatalf("expected raw content as fallback, got %q", content)
+	}
+}
+
+func TestGLM46ParserValidToolCallAfterInvalid(t *testing.T) {
+	parser := GLM46Parser{}
+	parser.Init(nil, nil, nil)
+
+	// Invalid tool call followed by valid one — invalid falls back to content,
+	// valid one is still parsed correctly.
+	input := "<think></think><tool_call></tool_call><tool_call>get-weather\n<arg_key>city</arg_key>\n<arg_value>SF</arg_value></tool_call>"
+	content, _, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	// Empty tool call body falls back to content (empty function name error)
+	_ = content
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+	if calls[0].Function.Name != "get-weather" {
+		t.Fatalf("expected tool name %q, got %q", "get-weather", calls[0].Function.Name)
+	}
+}
+
+func TestGLM46ParserContentDrainOnDone(t *testing.T) {
+	parser := GLM46Parser{}
+	parser.Init(nil, nil, nil)
+
+	// Content with trailing whitespace — on done, should be flushed
+	content, _, _, err := parser.Add("<think></think>Hello world\n", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if content != "Hello world\n" {
+		t.Fatalf("expected %q, got %q", "Hello world\n", content)
+	}
+}
+
 func TestRepairUnclosedArgValues(t *testing.T) {
 	cases := []struct {
 		name  string

@@ -88,8 +88,9 @@ func (p *GLM46Parser) Add(s string, done bool) (content string, thinking string,
 		case glm46EventRawToolCall:
 			toolCall, err := parseGLM46ToolCall(event, p.tools)
 			if err != nil {
-				slog.Warn("glm-4.6 tool call parsing failed", "error", err)
-				return "", "", nil, err
+				slog.Warn("glm-4.6 tool call parsing failed, falling back to content", "error", err)
+				contentSb.WriteString(event.raw)
+				continue
 			}
 			toolCall.Function.Index = p.callIndex
 			p.callIndex++
@@ -100,6 +101,20 @@ func (p *GLM46Parser) Add(s string, done bool) (content string, thinking string,
 			// TODO(drifkin): if the same turn contains multiple interleaved content
 			// events, we naively append them together here.
 			contentSb.WriteString(event.content)
+		}
+	}
+
+	// When generation is complete, drain any remaining buffered content
+	// that was held back by the streaming parser (e.g. trailing whitespace,
+	// partial tags, or incomplete tool call content).
+	if done && p.buffer.Len() > 0 {
+		remaining := p.buffer.String()
+		p.buffer.Reset()
+		switch p.state {
+		case glm46ParserState_CollectingToolContent, glm46ParserState_ToolStartedEatingWhitespace, glm46ParserState_CollectingContent:
+			contentSb.WriteString(remaining)
+		case glm46ParserState_CollectingThinking, glm46ParserState_ThinkingStartedEatingWhitespace:
+			thinkingSb.WriteString(remaining)
 		}
 	}
 
