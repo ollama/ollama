@@ -1419,9 +1419,27 @@ func (s *Server) ListHandler(c *gin.Context) {
 			},
 		}
 
-		if loaded, err := GetModel(n.String()); err == nil {
-			resp.Capabilities = loaded.Capabilities()
+		mdl := &Model{Config: cf}
+		for _, layer := range m.Layers {
+			filename, err := manifest.BlobsPath(layer.Digest)
+			if err != nil {
+				continue
+			}
+			switch layer.MediaType {
+			case "application/vnd.ollama.image.model":
+				mdl.ModelPath = filename
+			case "application/vnd.ollama.image.projector":
+				mdl.ProjectorPaths = append(mdl.ProjectorPaths, filename)
+			case "application/vnd.ollama.image.prompt",
+				"application/vnd.ollama.image.template":
+				if bts, err := os.ReadFile(filename); err == nil {
+					if t, err := template.Parse(string(bts)); err == nil {
+						mdl.Template = t
+					}
+				}
+			}
 		}
+		resp.Capabilities = mdl.Capabilities()
 
 		models = append(models, resp)
 	}

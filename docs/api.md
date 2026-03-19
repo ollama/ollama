@@ -1420,7 +1420,8 @@ A single JSON object will be returned.
         "families": ["qwen2"],
         "parameter_size": "7.6B",
         "quantization_level": "Q4_K_M"
-      }
+      },
+      "capabilities": ["completion", "tools", "thinking"]
     },
     {
       "name": "llama3.2:latest",
@@ -1435,7 +1436,8 @@ A single JSON object will be returned.
         "families": ["llama"],
         "parameter_size": "3.2B",
         "quantization_level": "Q4_K_M"
-      }
+      },
+      "capabilities": ["completion", "tools"]
     }
   ]
 }
