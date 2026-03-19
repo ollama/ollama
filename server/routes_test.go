@@ -30,6 +30,7 @@ import (
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
+	"github.com/stretchr/testify/assert"
 )
 
 func createTestFile(t *testing.T, name string) (string, string) {
@@ -491,6 +492,20 @@ func TestRoutes(t *testing.T) {
 				if resp.StatusCode != 405 {
 					t.Errorf("expected status code 405, got %d", resp.StatusCode)
 				}
+			},
+		},
+		{
+			Name:   "Metrics Handler",
+			Method: http.MethodGet,
+			Path:   "/metrics",
+			Setup: func(t *testing.T, req *http.Request) {
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				contentType := resp.Header.Get("Content-Type")
+				assert.Equal(t, contentType, "text/plain; version=0.0.4; charset=utf-8; escaping=values")
+				body, err := io.ReadAll(resp.Body)
+				assert.Nil(t, err)
+				assert.Contains(t, string(body), "http_requests_total")
 			},
 		},
 	}
@@ -975,6 +990,30 @@ func TestWaitForStream(t *testing.T) {
 			if diff := cmp.Diff(w.Body.String(), tt.expectBody); diff != "" {
 				t.Errorf("body mismatch (-want +got):\n%s", diff)
 			}
+		})
+	}
+}
+
+func TestRouteToAction(t *testing.T) {
+	tests := []struct {
+		name           string
+		route          string
+		expectedAction string
+	}{
+		{"Chat completion v1", "/v1/chat/completions", "chat"},
+		{"Chat API", "/api/chat", "chat"},
+		{"Embed v1", "/v1/embeddings", "embed"},
+		{"Embed API", "/api/embed", "embed"},
+		{"Pull API", "/api/pull", "pull"},
+		{"Push API", "/api/push", "push"},
+		{"Root path", "/", "head"},
+		{"Anyother path", "/api/anyother", "anyother"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			action := routeToAction(tt.route)
+			assert.Equal(t, tt.expectedAction, action)
 		})
 	}
 }
