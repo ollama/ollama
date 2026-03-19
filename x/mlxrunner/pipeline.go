@@ -50,7 +50,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 
 		if slog.Default().Enabled(context.TODO(), logutil.LevelTrace) {
 			mlx.LogArrays()
-			r.cache.log()
+			r.cache.dumpTree()
 		}
 		slog.Info("peak memory", "size", mlx.PrettyBytes(mlx.PeakMemory()))
 	}()
@@ -86,7 +86,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	materializeCaches := func() {
 		state := make([]*mlx.Array, 0, 2*len(caches))
 		for _, c := range caches {
-			state = appendCacheState(state, c)
+			state = append(state, c.State()...)
 		}
 		if len(state) == 0 {
 			return
@@ -102,11 +102,32 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		}
 
 		n := min(prefillChunk, total-processed-1)
+
+		// If there's a pending intermediate snapshot, split the batch
+		// so we can capture it at the exact offset. The cache offset
+		// after this batch will be: baseOffset + processed + n.
+		if session.snapshotOffset > 0 {
+			baseOffset := len(session.inputs) - len(tokens)
+			tokensUntilSnapshot := session.snapshotOffset - (baseOffset + processed)
+			if tokensUntilSnapshot > 0 && tokensUntilSnapshot < n {
+				n = tokensUntilSnapshot
+			}
+		}
+
 		r.Model.Forward(mlx.FromValues(tokens[processed:processed+n], n).ExpandDims(0), caches)
 		mlx.Sweep()
 		materializeCaches()
 		processed += n
 		slog.Info("Prompt processing progress", "processed", processed, "total", total)
+
+		// Create snapshot at branch point for future diverging requests.
+		if session.snapshotOffset > 0 {
+			baseOffset := len(session.inputs) - len(tokens)
+			if baseOffset+processed >= session.snapshotOffset {
+				session.snapshot(false)
+			}
+		}
+
 		mlx.ClearCache()
 	}
 

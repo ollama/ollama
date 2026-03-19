@@ -59,6 +59,29 @@ func Host() *url.URL {
 	}
 }
 
+// ConnectableHost returns Host() with unspecified bind addresses (0.0.0.0, ::)
+// replaced by the corresponding loopback address (127.0.0.1, ::1).
+// Unspecified addresses are valid for binding a server socket but not for
+// connecting as a client, which fails on Windows.
+func ConnectableHost() *url.URL {
+	u := Host()
+	host, port, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		return u
+	}
+
+	if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
+		if ip.To4() != nil {
+			host = "127.0.0.1"
+		} else {
+			host = "::1"
+		}
+		u.Host = net.JoinHostPort(host, port)
+	}
+
+	return u
+}
+
 // AllowedOrigins returns a list of allowed origins. AllowedOrigins can be configured via the OLLAMA_ORIGINS environment variable.
 func AllowedOrigins() (origins []string) {
 	if s := Var("OLLAMA_ORIGINS"); s != "" {
