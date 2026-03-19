@@ -150,10 +150,10 @@ func (c *RecurrentCache) Restore(snapshot Snapshot, target int) bool {
 
 	snap := snapshot.(*recurrentSnapshot)
 
-	// Recurrent state encodes all tokens up to snap.offset. Restoring
-	// to a target before that would leave stale state from tokens
-	// [target, snap.offset) baked in. Only allow restoring forward.
-	if target < snap.offset {
+	// Recurrent snapshots encode cumulative state up to exactly
+	// snap.offset. Target must match — rewinding would leave stale
+	// state, and advancing isn't possible without feeding tokens.
+	if target != snap.offset {
 		return false
 	}
 
