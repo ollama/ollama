@@ -299,6 +299,19 @@ func TestGenerateChat(t *testing.T) {
 		}
 	})
 
+	t.Run("model not found", func(t *testing.T) {
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "nonexistent",
+		})
+		if w.Code != http.StatusNotFound {
+			t.Errorf("expected status 404, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"model 'nonexistent' not found"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
 	t.Run("missing capabilities chat", func(t *testing.T) {
 		_, digest := createBinFile(t, ggml.KV{
 			"general.architecture": "bert",
