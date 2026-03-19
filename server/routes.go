@@ -1402,7 +1402,7 @@ func (s *Server) ListHandler(c *gin.Context) {
 		}
 
 		// tag should never be masked
-		models = append(models, api.ListModelResponse{
+		resp := api.ListModelResponse{
 			Model:       n.DisplayShortest(),
 			Name:        n.DisplayShortest(),
 			RemoteModel: cf.RemoteModel,
@@ -1417,7 +1417,13 @@ func (s *Server) ListHandler(c *gin.Context) {
 				ParameterSize:     cf.ModelType,
 				QuantizationLevel: cf.FileType,
 			},
-		})
+		}
+
+		if loaded, err := GetModel(n.String()); err == nil {
+			resp.Capabilities = loaded.Capabilities()
+		}
+
+		models = append(models, resp)
 	}
 
 	slices.SortStableFunc(models, func(i, j api.ListModelResponse) int {
