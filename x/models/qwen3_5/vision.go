@@ -264,8 +264,8 @@ func (p *VisionImageProcessor) createPatches(pixels []float32, height, width int
 
 					for c := range channels {
 						channelOffset := baseOffset + c*temporalPatchSize*patchSize*patchSize
-						for py := 0; py < patchSize; py++ {
-							for px := 0; px < patchSize; px++ {
+						for py := range patchSize {
+							for px := range patchSize {
 								y := (h+mh)*patchSize + py
 								x := (w+mw)*patchSize + px
 								srcIdx := c*height*width + y*width + x
@@ -278,7 +278,7 @@ func (p *VisionImageProcessor) createPatches(pixels []float32, height, width int
 					}
 
 					if temporalPatchSize > 1 {
-						for c := 0; c < channels; c++ {
+						for c := range channels {
 							channelOffset := baseOffset + c*temporalPatchSize*patchSize*patchSize
 							frameSize := patchSize * patchSize
 							for tp := 1; tp < temporalPatchSize; tp++ {
