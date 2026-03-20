@@ -557,7 +557,7 @@ func (m *VisionModel) rotaryEmbeddings(grid *VisionGrid) (*mlx.Array, *mlx.Array
 			angles[base+j] = float32(float64(c[0]) * freq)
 			angles[base+quarter+j] = float32(float64(c[1]) * freq)
 		}
-		for j := int32(0); j < half; j++ {
+		for j := range half {
 			angles[base+half+j] = angles[base+j]
 		}
 	}
@@ -780,7 +780,7 @@ func loadVisionComponents(
 		cfg:             cfg.Vision,
 	}
 
-	for i := int32(0); i < cfg.Vision.Depth; i++ {
+	for i := range cfg.Vision.Depth {
 		layerPrefix := fmt.Sprintf("%s.blocks.%d", visionPrefix, i)
 		layer := &VisionEncoderLayer{
 			Norm1: loadLayerNorm(tensors, cfg.Vision.LayerNormEpsilon, layerPrefix+".norm1"),
