@@ -189,8 +189,8 @@ func TestBool(t *testing.T) {
 		"1":     true,
 		"0":     false,
 		// invalid values
-		"random":    true,
-		"something": true,
+		"random":    false,
+		"something": false,
 	}
 
 	for k, v := range cases {
@@ -198,6 +198,32 @@ func TestBool(t *testing.T) {
 			t.Setenv("OLLAMA_BOOL", k)
 			if b := Bool("OLLAMA_BOOL")(); b != v {
 				t.Errorf("%s: expected %t, got %t", k, v, b)
+			}
+		})
+	}
+}
+
+func TestBoolWithDefault(t *testing.T) {
+	cases := []struct {
+		name         string
+		envValue     string
+		defaultValue bool
+		want         bool
+	}{
+		{name: "empty with false default", envValue: "", defaultValue: false, want: false},
+		{name: "empty with true default", envValue: "", defaultValue: true, want: true},
+		{name: "valid true", envValue: "true", defaultValue: false, want: true},
+		{name: "valid false", envValue: "false", defaultValue: true, want: false},
+		{name: "invalid with false default", envValue: "yes", defaultValue: false, want: false},
+		{name: "invalid with true default", envValue: "enabled", defaultValue: true, want: true},
+	}
+
+	readBool := BoolWithDefault("OLLAMA_BOOL_WITH_DEFAULT")
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_BOOL_WITH_DEFAULT", tt.envValue)
+			if got := readBool(tt.defaultValue); got != tt.want {
+				t.Fatalf("BoolWithDefault() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -378,6 +404,12 @@ func TestNoCloud(t *testing.T) {
 			envValue:     "1",
 			wantDisabled: true,
 			wantSource:   "env",
+		},
+		{
+			name:         "invalid env value",
+			envValue:     "enabled",
+			wantDisabled: false,
+			wantSource:   "none",
 		},
 		{
 			name:          "config only",
