@@ -110,8 +110,7 @@
                 "group": "Assistants",
                 "expanded": true,
                 "pages": [
-                  "/integrations/openclaw",
-                  "/integrations/nemoclaw"
+                  "/integrations/openclaw"
                 ]
               },
               {
@@ -161,6 +160,12 @@
             "group": "More information",
             "pages": [
               "/cli",
+              {
+                "group": "Assistant Sandboxing",
+                "pages": [
+                  "/integrations/nemoclaw"
+                ]
+              },
               "/modelfile",
               "/context-length",
               "/linux",
