@@ -186,7 +186,10 @@ func signinURL() (string, error) {
 	}
 
 	encKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
-	h, _ := os.Hostname()
+	h, err := os.Hostname()
+	if err != nil {
+		h = "unknown"
+	}
 	return fmt.Sprintf(signinURLStr, url.PathEscape(h), encKey), nil
 }
 
