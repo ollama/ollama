@@ -455,8 +455,8 @@ func mergedPatchCoordinates(grid *VisionGrid, merge int32) [][2]int32 {
 	coords := make([][2]int32, 0, grid.Height*grid.Width)
 	for h := int32(0); h < grid.Height; h += merge {
 		for w := int32(0); w < grid.Width; w += merge {
-			for mh := int32(0); mh < merge; mh++ {
-				for mw := int32(0); mw < merge; mw++ {
+			for mh := range merge {
+				for mw := range merge {
 					coords = append(coords, [2]int32{h + mh, w + mw})
 				}
 			}
@@ -552,7 +552,7 @@ func (m *VisionModel) rotaryEmbeddings(grid *VisionGrid) (*mlx.Array, *mlx.Array
 	angles := make([]float32, L*headDim)
 	for i, c := range coords {
 		base := int32(i) * headDim
-		for j := int32(0); j < quarter; j++ {
+		for j := range quarter {
 			freq := 1.0 / math.Pow(float64(m.cfg.RopeTheta), float64(2*j)/float64(half))
 			angles[base+j] = float32(float64(c[0]) * freq)
 			angles[base+quarter+j] = float32(float64(c[1]) * freq)
