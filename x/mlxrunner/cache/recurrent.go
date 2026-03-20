@@ -22,23 +22,15 @@ func (c *RecurrentCache) setStateRaw(old, v *mlx.Array) *mlx.Array {
 	if v == nil || !v.Valid() {
 		return old
 	}
-	if old == v {
-		return old
-	}
 
 	mlx.Pin(v)
-	if old != nil && old != v {
-		mlx.Unpin(old)
-	}
+	mlx.Unpin(old)
 
 	return v
 }
 
 func (c *RecurrentCache) setStateDetached(old, v *mlx.Array, ensureContiguous bool) *mlx.Array {
 	if v == nil || !v.Valid() {
-		return old
-	}
-	if old == v {
 		return old
 	}
 
@@ -49,9 +41,7 @@ func (c *RecurrentCache) setStateDetached(old, v *mlx.Array, ensureContiguous bo
 	detached := root.Clone()
 
 	mlx.Pin(detached)
-	if old != nil && old != detached {
-		mlx.Unpin(old)
-	}
+	mlx.Unpin(old)
 
 	return detached
 }
