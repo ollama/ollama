@@ -54,6 +54,10 @@ func LogDetails(devices []ml.DeviceInfo) {
 			"available", format.HumanBytes2(dev.FreeMemory),
 		)
 	}
+
+	// NOTE: the for loop above runs only when len(devices) > 0. The block
+	// below handles the CPU-only fallback and returns early so the backend
+	// aggregation at the end of this function is not reached.
 	// CPU inference
 	if len(devices) == 0 {
 		dev, _ := GetCPUMem()

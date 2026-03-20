@@ -63,6 +63,14 @@ type Scheduler struct {
 // on a large GPU can cause stalling
 var defaultModelsPerGPU = 3
 
+// iGPUFreeMemoryRatio is the fraction of current system free RAM that we
+// allow an integrated GPU to use as its effective VRAM budget. iGPU "VRAM"
+// is shared physical memory — allocating 100% would starve the OS and any
+// concurrent CPU workloads. 0.80 leaves a 20% headroom buffer, which was
+// chosen empirically: on Intel Iris Xe and AMD APU systems running typical
+// desktop workloads, ~15-20% of system RAM is in active OS/app use at idle.
+const iGPUFreeMemoryRatio = 0.80
+
 var ErrMaxQueue = errors.New("server busy, please try again.  maximum pending requests exceeded")
 
 func InitScheduler(ctx context.Context) *Scheduler {
@@ -220,13 +228,13 @@ func (s *Scheduler) processPending(ctx context.Context) {
 							maxRunners = uint(defaultModelsPerGPU * max(len(gpuListForMax), 1))
 						}
 						// On iGPU-only systems, concurrent models compete for the same physical RAM
-						// the CPU also uses. Default to 1 to avoid memory contention.
-						// Override with OLLAMA_IGPU_MAX_MODELS (0 = use standard defaultModelsPerGPU).
+						// the CPU uses. Cap at 1 unless the user has explicitly set OLLAMA_IGPU_MAX_MODELS.
 						if igpuMax := envconfig.IGPUMaxModels(); igpuMax > 0 {
+							// User explicitly requested a specific concurrent model count for iGPU.
 							maxRunners = igpuMax
 							slog.Debug("using OLLAMA_IGPU_MAX_MODELS override", "max", igpuMax)
-						} else if igpuMax == 0 {
-							// Auto-detect: if every GPU is integrated, cap at 1
+						} else {
+							// OLLAMA_IGPU_MAX_MODELS unset: auto-detect iGPU-only and cap at 1.
 							allIntegrated := len(gpuListForMax) > 0
 							for _, g := range gpuListForMax {
 								if !g.Integrated {
@@ -236,7 +244,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 							}
 							if allIntegrated {
 								maxRunners = 1
-								slog.Debug("iGPU-only system: capping concurrent models at 1 to avoid RAM contention")
+								slog.Info("iGPU-only system: capping concurrent models at 1 to avoid RAM contention")
 							}
 						}
 						slog.Debug("updating default concurrency", "OLLAMA_MAX_LOADED_MODELS", maxRunners, "gpu_count", len(gpuListForMax))
@@ -250,7 +258,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					// free RAM. iGPU "VRAM" is shared physical memory: over-allocating
 					// starves the OS and causes OOM crashes under CPU load.
 					if systemInfo.FreeMemory > 0 {
-						sysCap := uint64(float64(systemInfo.FreeMemory) * 0.80)
+						sysCap := uint64(float64(systemInfo.FreeMemory) * iGPUFreeMemoryRatio)
 						for i := range gpus {
 							if gpus[i].Integrated && gpus[i].FreeMemory > sysCap {
 								slog.Debug("capping iGPU free memory to 80% of system free RAM",
