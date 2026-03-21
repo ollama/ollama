@@ -489,8 +489,17 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 			return err
 		}
 		models = selected
-	} else if err := c.ensureModelsReady(ctx, models); err != nil {
-		return err
+	} else {
+		readyModels := models
+		if req.ModelOverride != "" && len(models) > 0 {
+			// An explicit --model override moves the launch target to the front.
+			// Preserve any saved secondary models in config, but don't block the
+			// readiness check on them.
+			readyModels = models[:1]
+		}
+		if err := c.ensureModelsReady(ctx, readyModels); err != nil {
+			return err
+		}
 	}
 
 	if len(models) == 0 {
