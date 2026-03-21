@@ -80,6 +80,12 @@ func (c *Openclaw) Run(model string, args []string) error {
 		}
 		if canInstallDaemon() {
 			onboardArgs = append(onboardArgs, "--install-daemon")
+		} else {
+			// When we can't install a daemon (e.g. no systemd, sudo dropped
+			// XDG_RUNTIME_DIR, or container environment), skip the gateway
+			// health check so non-interactive onboarding completes. The
+			// gateway is started as a foreground child process after onboarding.
+			onboardArgs = append(onboardArgs, "--skip-health")
 		}
 		cmd := exec.Command(bin, onboardArgs...)
 		cmd.Stdin = os.Stdin
