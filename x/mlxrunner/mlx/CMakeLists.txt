@@ -15,7 +15,8 @@ set(CMAKE_INSTALL_RPATH "@loader_path")
 
 include(FetchContent)
 
-set(MLX_C_GIT_TAG "v0.5.0" CACHE STRING "")
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../../../MLX_VERSION" MLX_C_GIT_TAG)
+string(STRIP "${MLX_C_GIT_TAG}" MLX_C_GIT_TAG)
 
 FetchContent_Declare(
   mlx-c
