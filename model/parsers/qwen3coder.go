@@ -61,8 +61,16 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 		case qwenEventRawToolCall:
 			toolCall, err := parseToolCall(event, p.tools)
 			if err != nil {
-				slog.Warn("qwen tool call parsing failed", "error", err)
-				return "", "", nil, err
+				// The model emitted something that looks like a tool call but
+				// could not be parsed (e.g. malformed XML, or a user prompt that
+				// contained <tool_call> tags as plain text). Fall back to
+				// treating it as regular content so the server can return a
+				// usable response instead of an HTTP 500 error.
+				slog.Warn("qwen tool call parsing failed, returning as content", "error", err)
+				sb.WriteString(toolOpenTag)
+				sb.WriteString(event.raw)
+				sb.WriteString(toolCloseTag)
+				break
 			}
 			toolCall.Function.Index = p.callIndex
 			p.callIndex++
