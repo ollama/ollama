@@ -457,12 +457,17 @@ func PruneLayers() error {
 
 	for _, blob := range blobs {
 		name := blob.Name()
+
+		if strings.Contains(name, "-partial") {
+			continue
+		}
+
 		name = strings.ReplaceAll(name, "-", ":")
 
 		_, err := manifest.BlobsPath(name)
 		if err != nil {
 			if errors.Is(err, manifest.ErrInvalidDigestFormat) {
-				// remove invalid blobs (e.g. partial downloads)
+				// remove invalid blobs that are not partial downloads
 				if err := os.Remove(filepath.Join(p, blob.Name())); err != nil {
 					slog.Error("couldn't remove blob", "blob", blob.Name(), "error", err)
 				}
