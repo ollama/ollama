@@ -17,7 +17,8 @@ func Quantize(w *Array, groupSize, bits int, mode string) (weights, scales, bias
 	optBits := C.mlx_optional_int{value: C.int(bits), has_value: true}
 	res := C.mlx_vector_array_new()
 	defer C.mlx_vector_array_free(res)
-	C.mlx_quantize(&res, w.ctx, optGroupSize, optBits, cMode, DefaultStream().ctx)
+	var globalScale C.mlx_array
+	C.mlx_quantize(&res, w.ctx, optGroupSize, optBits, cMode, globalScale, DefaultStream().ctx)
 
 	vecSize := int(C.mlx_vector_array_size(res))
 	w0 := New("QUANTIZE_W")
@@ -45,7 +46,8 @@ func Dequantize(w, scales, biases *Array, groupSize, bits int, mode string) *Arr
 	}
 
 	out := New("DEQUANTIZE")
-	C.mlx_dequantize(&out.ctx, w.ctx, scales.ctx, b, optGroupSize, optBits, cMode, optDtype, DefaultStream().ctx)
+	var globalScale C.mlx_array
+	C.mlx_dequantize(&out.ctx, w.ctx, scales.ctx, b, optGroupSize, optBits, cMode, globalScale, optDtype, DefaultStream().ctx)
 	return out
 }
 

@@ -230,6 +230,9 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
+		if errMsg := c.status.getLastErr(); errMsg != "" {
+			return fmt.Errorf("mlx runner failed: %s", errMsg)
+		}
 		return err
 	}
 	defer resp.Body.Close()
@@ -267,7 +270,13 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 		}
 	}
 
-	return scanner.Err()
+	if err := scanner.Err(); err != nil {
+		if errMsg := c.status.getLastErr(); errMsg != "" {
+			return fmt.Errorf("mlx runner failed: %s", errMsg)
+		}
+		return err
+	}
+	return nil
 }
 
 func (c *Client) ContextLength() int {
