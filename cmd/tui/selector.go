@@ -377,13 +377,24 @@ func (m selectorModel) View() string {
 
 // cursorForCurrent returns the item index matching current, or 0 if not found.
 func cursorForCurrent(items []SelectItem, current string) int {
-	if current != "" {
-		for i, item := range items {
-			if item.Name == current || strings.HasPrefix(item.Name, current+":") || strings.HasPrefix(current, item.Name+":") {
-				return i
-			}
+	if current == "" {
+		return 0
+	}
+
+	// Prefer exact name matches before tag-prefix fallback so "qwen3.5" does not
+	// incorrectly select "qwen3.5:cloud" (and vice versa) based on list order.
+	for i, item := range items {
+		if item.Name == current {
+			return i
 		}
 	}
+
+	for i, item := range items {
+		if strings.HasPrefix(item.Name, current+":") || strings.HasPrefix(current, item.Name+":") {
+			return i
+		}
+	}
+
 	return 0
 }
 
@@ -529,11 +540,40 @@ func (m *multiSelectorModel) toggleItem() {
 	origIdx := m.itemIndex[item.Name]
 
 	if m.checked[origIdx] {
+		wasDefault := len(m.checkOrder) > 0 && m.checkOrder[len(m.checkOrder)-1] == origIdx
 		delete(m.checked, origIdx)
 		for i, idx := range m.checkOrder {
 			if idx == origIdx {
 				m.checkOrder = append(m.checkOrder[:i], m.checkOrder[i+1:]...)
 				break
+			}
+		}
+		if wasDefault {
+			// When removing the default, pick the nearest checked model above it
+			// (or below if none above) so default fallback follows list order.
+			newDefault := -1
+			for i := origIdx - 1; i >= 0; i-- {
+				if m.checked[i] {
+					newDefault = i
+					break
+				}
+			}
+			if newDefault == -1 {
+				for i := origIdx + 1; i < len(m.items); i++ {
+					if m.checked[i] {
+						newDefault = i
+						break
+					}
+				}
+			}
+			if newDefault != -1 {
+				for i, idx := range m.checkOrder {
+					if idx == newDefault {
+						m.checkOrder = append(m.checkOrder[:i], m.checkOrder[i+1:]...)
+						break
+					}
+				}
+				m.checkOrder = append(m.checkOrder, newDefault)
 			}
 		}
 	} else {

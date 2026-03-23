@@ -114,6 +114,25 @@ If you are experiencing problems getting Ollama to correctly discover or use you
 - `OLLAMA_DEBUG=1` During GPU discovery additional information will be reported
 - Check dmesg for any errors from amdgpu or kfd drivers `sudo dmesg | grep -i amdgpu` and `sudo dmesg | grep -i kfd`
 
+### AMD Driver Version Mismatch
+
+If your AMD GPU is not detected on Linux and the server logs contain messages like:
+
+```
+msg="failure during GPU discovery" ... error="failed to finish discovery before timeout"
+msg="bootstrap discovery took" duration=30s ...
+```
+
+This typically means the system's AMD GPU driver is too old. Ollama bundles
+ROCm 7 linux libraries which require a compatible ROCm 7 kernel driver. If the
+system is running an older driver (ROCm 6.x or earlier), GPU initialization
+will hang during device discovery and eventually time out, causing Ollama to
+fall back to CPU.
+
+To resolve this, upgrade to the ROCm v7 driver using the `amdgpu-install`
+utility from [AMD's ROCm documentation](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/).
+After upgrading, reboot and restart Ollama.
+
 ## Multiple AMD GPUs
 
 If you experience gibberish responses when models load across multiple AMD GPUs on Linux, see the following guide.

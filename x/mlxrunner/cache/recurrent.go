@@ -56,16 +56,6 @@ func (c *RecurrentCache) setStateDetached(old, v *mlx.Array, ensureContiguous bo
 	return detached
 }
 
-func snapshotPinned(a *mlx.Array) *mlx.Array {
-	if a == nil || !a.Valid() {
-		return nil
-	}
-	snap := mlx.Copy(a)
-	mlx.Eval(snap)
-	mlx.Pin(snap)
-	return snap
-}
-
 func NewRecurrentCache(convTail, convDim, numVHeads, headVDim, headKDim int32) *RecurrentCache {
 	return &RecurrentCache{
 		convTail:  int(convTail),
@@ -123,30 +113,69 @@ func (c *RecurrentCache) Update(keys, values *mlx.Array) (*mlx.Array, *mlx.Array
 	return keys, values
 }
 
-func (c *RecurrentCache) State() (*mlx.Array, *mlx.Array) {
-	return c.convState, c.deltaState
+func (c *RecurrentCache) State() []*mlx.Array {
+	return []*mlx.Array{c.convState, c.deltaState}
 }
 
-func (c *RecurrentCache) CanTrim() bool { return false }
-
-func (c *RecurrentCache) Trim(n int) int {
-	// Recurrent state is not directly trimmable. Divergent prefixes must drop the cache.
-	_ = n
-	return 0
+// recurrentSnapshot holds paged-out recurrent state. Self-contained —
+// does not depend on any parent state.
+type recurrentSnapshot struct {
+	convState, deltaState *mlx.Array
+	offset                int
 }
 
-func (c *RecurrentCache) Clone() Cache {
-	clone := &RecurrentCache{
-		offset:     c.offset,
-		convTail:   c.convTail,
-		convDim:    c.convDim,
-		numVHeads:  c.numVHeads,
-		headVDim:   c.headVDim,
-		headKDim:   c.headKDim,
-		convState:  snapshotPinned(c.convState),
-		deltaState: snapshotPinned(c.deltaState),
+func (s *recurrentSnapshot) Size() int { return s.convState.NumBytes() + s.deltaState.NumBytes() }
+func (s *recurrentSnapshot) Close()    { mlx.Unpin(s.convState, s.deltaState) }
+
+func (c *RecurrentCache) Snapshot(fromOffset int) Snapshot {
+	// Recurrent state is not position-sliceable — always snapshot the full state.
+	if c.convState == nil && c.deltaState == nil {
+		return nil
 	}
-	return clone
+
+	snap := &recurrentSnapshot{offset: c.offset}
+	snap.convState = c.convState.Clone()
+	snap.deltaState = c.deltaState.Clone()
+	mlx.Pin(snap.convState, snap.deltaState)
+
+	return snap
+}
+
+func (c *RecurrentCache) Restore(snapshot Snapshot, target int) bool {
+	if snapshot == nil {
+		// Recurrent state is cumulative and can't rewind. Only succeed
+		// if we're already at the target (no-op).
+		return target == c.offset
+	}
+
+	snap := snapshot.(*recurrentSnapshot)
+
+	// Recurrent state encodes all tokens up to snap.offset. Restoring
+	// to a target before that would leave stale state from tokens
+	// [target, snap.offset) baked in. Only allow restoring forward.
+	if target < snap.offset {
+		return false
+	}
+
+	c.convState = c.setStateRaw(c.convState, snap.convState)
+	c.deltaState = c.setStateRaw(c.deltaState, snap.deltaState)
+	c.offset = snap.offset
+
+	return true
+}
+
+func (c *RecurrentCache) Merge(parent, child Snapshot) Snapshot {
+	// Recurrent snapshots are self-contained — child supersedes parent.
+	if parent != nil {
+		parent.Close()
+	}
+	return child
+}
+
+func (c *RecurrentCache) Split(snapshot Snapshot, at int) (Snapshot, Snapshot) {
+	// Recurrent state is cumulative and not position-sliceable.
+	// Cannot recover intermediate state at the split point.
+	return nil, snapshot
 }
 
 func (c *RecurrentCache) Free() {
@@ -156,4 +185,3 @@ func (c *RecurrentCache) Free() {
 }
 
 func (c *RecurrentCache) Offset() int { return c.offset }
-func (c *RecurrentCache) Len() int    { return c.offset }

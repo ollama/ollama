@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"math"
 	"net"
 	"net/http"
@@ -43,6 +44,7 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/internal/modelref"
+	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/readline"
@@ -60,6 +62,9 @@ import (
 func init() {
 	// Override default selectors to use Bubbletea TUI instead of raw terminal I/O.
 	launch.DefaultSingleSelector = func(title string, items []launch.ModelItem, current string) (string, error) {
+		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+			return "", fmt.Errorf("model selection requires an interactive terminal; use --model to run in headless mode")
+		}
 		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
 		result, err := tui.SelectSingle(title, tuiItems, current)
 		if errors.Is(err, tui.ErrCancelled) {
@@ -69,6 +74,9 @@ func init() {
 	}
 
 	launch.DefaultMultiSelector = func(title string, items []launch.ModelItem, preChecked []string) ([]string, error) {
+		if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+			return nil, fmt.Errorf("model selection requires an interactive terminal; use --model to run in headless mode")
+		}
 		tuiItems := tui.ReorderItems(tui.ConvertItems(items))
 		result, err := tui.SelectMultiple(title, tuiItems, preChecked)
 		if errors.Is(err, tui.ErrCancelled) {
@@ -516,6 +524,50 @@ func handleCloudAuthorizationError(err error) bool {
 	return false
 }
 
+// TEMP(drifkin): To match legacy `ollama run some-model:cloud` behavior, we
+// best-effort pull cloud stub files for any explicit cloud source models.
+// Remove this once `/api/tags` is cloud-aware.
+func ensureCloudStub(ctx context.Context, client *api.Client, modelName string) {
+	if !modelref.HasExplicitCloudSource(modelName) {
+		return
+	}
+
+	normalizedName, _, err := modelref.NormalizePullName(modelName)
+	if err != nil {
+		slog.Warn("failed to normalize pull name", "model", modelName, "error", err, "normalizedName", normalizedName)
+		return
+	}
+
+	listResp, err := client.List(ctx)
+	if err != nil {
+		slog.Warn("failed to list models", "error", err)
+		return
+	}
+
+	if hasListedModelName(listResp.Models, modelName) || hasListedModelName(listResp.Models, normalizedName) {
+		return
+	}
+
+	logutil.Trace("pulling cloud stub", "model", modelName, "normalizedName", normalizedName)
+	err = client.Pull(ctx, &api.PullRequest{
+		Model: normalizedName,
+	}, func(api.ProgressResponse) error {
+		return nil
+	})
+	if err != nil {
+		slog.Warn("failed to pull cloud stub", "model", modelName, "error", err)
+	}
+}
+
+func hasListedModelName(models []api.ListModelResponse, name string) bool {
+	for _, m := range models {
+		if strings.EqualFold(m.Name, name) || strings.EqualFold(m.Model, name) {
+			return true
+		}
+	}
+	return false
+}
+
 func RunHandler(cmd *cobra.Command, args []string) error {
 	interactive := true
 
@@ -635,6 +687,8 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		}
 		return err
 	}
+
+	ensureCloudStub(cmd.Context(), client, name)
 
 	opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, thinkFlag.Changed)
 	if err != nil {

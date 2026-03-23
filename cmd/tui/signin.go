@@ -97,11 +97,8 @@ func renderSignIn(modelName, signInURL string, spinner, width int) string {
 
 	fmt.Fprintf(&s, "To use %s, please sign in.\n\n", selectorSelectedItemStyle.Render(modelName))
 
-	// Wrap in OSC 8 hyperlink so the entire URL is clickable even when wrapped.
-	// Padding is outside the hyperlink so spaces don't get underlined.
-	link := fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", signInURL, urlColor.Render(signInURL))
 	s.WriteString("Navigate to:\n")
-	s.WriteString(urlWrap.Render(link))
+	s.WriteString(urlWrap.Render(urlColor.Render(signInURL)))
 	s.WriteString("\n\n")
 
 	s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}).Render(

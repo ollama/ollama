@@ -98,6 +98,49 @@ func withLauncherHooks(t *testing.T) {
 	})
 }
 
+func TestDefaultLaunchPolicy(t *testing.T) {
+	tests := []struct {
+		name        string
+		interactive bool
+		yes         bool
+		want        LaunchPolicy
+	}{
+		{
+			name:        "interactive default prompts and prompt-pull",
+			interactive: true,
+			yes:         false,
+			want:        LaunchPolicy{Confirm: LaunchConfirmPrompt, MissingModel: LaunchMissingModelPromptToPull},
+		},
+		{
+			name:        "headless without yes requires yes and fail-missing",
+			interactive: false,
+			yes:         false,
+			want:        LaunchPolicy{Confirm: LaunchConfirmRequireYes, MissingModel: LaunchMissingModelFail},
+		},
+		{
+			name:        "interactive yes auto-approves and auto-pulls",
+			interactive: true,
+			yes:         true,
+			want:        LaunchPolicy{Confirm: LaunchConfirmAutoApprove, MissingModel: LaunchMissingModelAutoPull},
+		},
+		{
+			name:        "headless yes auto-approves and auto-pulls",
+			interactive: false,
+			yes:         true,
+			want:        LaunchPolicy{Confirm: LaunchConfirmAutoApprove, MissingModel: LaunchMissingModelAutoPull},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := defaultLaunchPolicy(tt.interactive, tt.yes)
+			if got != tt.want {
+				t.Fatalf("defaultLaunchPolicy(%v, %v) = %+v, want %+v", tt.interactive, tt.yes, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestBuildLauncherState_InstalledAndCloudDisabled(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
@@ -284,6 +327,129 @@ func TestResolveRunModel_UsesSavedModelWithoutSelector(t *testing.T) {
 	}
 }
 
+func TestResolveRunModel_HeadlessYesAutoPicksLastModel(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, false)
+
+	if err := config.SetLastModel("missing-model"); err != nil {
+		t.Fatalf("failed to save last model: %v", err)
+	}
+
+	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+		t.Fatal("selector should not be called in headless --yes mode")
+		return "", nil
+	}
+
+	restoreConfirm := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
+	defer restoreConfirm()
+
+	pullCalled := false
+	modelPulled := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
+		case "/api/show":
+			var req apiShowRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if req.Model == "missing-model" && !modelPulled {
+				w.WriteHeader(http.StatusNotFound)
+				fmt.Fprint(w, `{"error":"model not found"}`)
+				return
+			}
+			fmt.Fprintf(w, `{"model":%q}`, req.Model)
+		case "/api/pull":
+			pullCalled = true
+			modelPulled = true
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, `{"status":"success"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	var model string
+	stderr := captureStderr(t, func() {
+		var err error
+		model, err = ResolveRunModel(context.Background(), RunModelRequest{})
+		if err != nil {
+			t.Fatalf("ResolveRunModel returned error: %v", err)
+		}
+	})
+
+	if model != "missing-model" {
+		t.Fatalf("expected saved last model to be selected, got %q", model)
+	}
+	if !pullCalled {
+		t.Fatal("expected missing saved model to be auto-pulled in headless --yes mode")
+	}
+	if !strings.Contains(stderr, `Headless mode: auto-selected last used model "missing-model"`) {
+		t.Fatalf("expected headless auto-pick message in stderr, got %q", stderr)
+	}
+}
+
+func TestResolveRunModel_UsesRequestPolicy(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, false)
+
+	if err := config.SetLastModel("missing-model"); err != nil {
+		t.Fatalf("failed to save last model: %v", err)
+	}
+
+	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+		t.Fatal("selector should not be called when request policy enables headless auto-pick")
+		return "", nil
+	}
+
+	pullCalled := false
+	modelPulled := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
+		case "/api/show":
+			var req apiShowRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if req.Model == "missing-model" && !modelPulled {
+				w.WriteHeader(http.StatusNotFound)
+				fmt.Fprint(w, `{"error":"model not found"}`)
+				return
+			}
+			fmt.Fprintf(w, `{"model":%q}`, req.Model)
+		case "/api/pull":
+			pullCalled = true
+			modelPulled = true
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, `{"status":"success"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	reqPolicy := LaunchPolicy{
+		Confirm:      LaunchConfirmAutoApprove,
+		MissingModel: LaunchMissingModelAutoPull,
+	}
+	model, err := ResolveRunModel(context.Background(), RunModelRequest{Policy: &reqPolicy})
+	if err != nil {
+		t.Fatalf("ResolveRunModel returned error: %v", err)
+	}
+	if model != "missing-model" {
+		t.Fatalf("expected saved last model to be selected, got %q", model)
+	}
+	if !pullCalled {
+		t.Fatal("expected missing saved model to be auto-pulled when request policy enables auto-pull")
+	}
+}
+
 func TestResolveRunModel_ForcePickerAlwaysUsesSelector(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
@@ -327,6 +493,60 @@ func TestResolveRunModel_ForcePickerAlwaysUsesSelector(t *testing.T) {
 	}
 	if got := config.LastModel(); got != "qwen3:8b" {
 		t.Fatalf("expected last model to be updated, got %q", got)
+	}
+}
+
+func TestResolveRunModel_ForcePicker_DoesNotReorderByLastModel(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+
+	if err := config.SetLastModel("qwen3.5"); err != nil {
+		t.Fatalf("failed to save last model: %v", err)
+	}
+
+	var gotNames []string
+	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+		if current != "qwen3.5" {
+			t.Fatalf("expected current selection to be last model, got %q", current)
+		}
+
+		gotNames = make([]string, 0, len(items))
+		for _, item := range items {
+			gotNames = append(gotNames, item.Name)
+		}
+		return "qwen3.5", nil
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"qwen3.5"},{"name":"glm-4.7-flash"}]}`)
+		case "/api/show":
+			fmt.Fprint(w, `{"model":"qwen3.5"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	_, err := ResolveRunModel(context.Background(), RunModelRequest{ForcePicker: true})
+	if err != nil {
+		t.Fatalf("ResolveRunModel returned error: %v", err)
+	}
+
+	if len(gotNames) == 0 {
+		t.Fatal("expected selector to receive model items")
+	}
+
+	glmIdx := slices.Index(gotNames, "glm-4.7-flash")
+	qwenIdx := slices.Index(gotNames, "qwen3.5")
+	if glmIdx == -1 || qwenIdx == -1 {
+		t.Fatalf("expected recommended local models in selector items, got %v", gotNames)
+	}
+	if qwenIdx < glmIdx {
+		t.Fatalf("expected list order to stay stable and not float last model to top, got %v", gotNames)
 	}
 }
 
@@ -445,6 +665,74 @@ func TestLaunchIntegration_EditorForceConfigure(t *testing.T) {
 	}
 	if diff := compareStrings(saved.Models, []string{"llama3.2", "qwen3:8b"}); diff != "" {
 		t.Fatalf("unexpected saved models (-want +got):\n%s", diff)
+	}
+}
+
+func TestLaunchIntegration_EditorForceConfigure_DoesNotFloatCheckedModelsInPicker(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+
+	binDir := t.TempDir()
+	writeFakeBinary(t, binDir, "droid")
+	t.Setenv("PATH", binDir)
+
+	editor := &launcherEditorRunner{}
+	withIntegrationOverride(t, "droid", editor)
+
+	if err := config.SaveIntegration("droid", []string{"qwen3.5:cloud", "qwen3.5"}); err != nil {
+		t.Fatalf("failed to seed config: %v", err)
+	}
+
+	var gotItems []string
+	var gotPreChecked []string
+	DefaultMultiSelector = func(title string, items []ModelItem, preChecked []string) ([]string, error) {
+		for _, item := range items {
+			gotItems = append(gotItems, item.Name)
+		}
+		gotPreChecked = append([]string(nil), preChecked...)
+		return []string{"qwen3.5:cloud", "qwen3.5"}, nil
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"qwen3.5:cloud","remote_model":"qwen3.5"},{"name":"qwen3.5"}]}`)
+		case "/api/show":
+			var req apiShowRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if req.Model == "qwen3.5:cloud" {
+				fmt.Fprint(w, `{"remote_model":"qwen3.5"}`)
+				return
+			}
+			fmt.Fprintf(w, `{"model":%q}`, req.Model)
+		case "/api/me":
+			fmt.Fprint(w, `{"name":"test-user"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:           "droid",
+		ForceConfigure: true,
+	}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+
+	if len(gotItems) == 0 {
+		t.Fatal("expected multi selector to receive items")
+	}
+	if gotItems[0] != "kimi-k2.5:cloud" {
+		t.Fatalf("expected stable recommendation order with kimi-k2.5:cloud first, got %v", gotItems)
+	}
+	if len(gotPreChecked) < 2 {
+		t.Fatalf("expected prechecked models to be preserved, got %v", gotPreChecked)
+	}
+	if gotPreChecked[0] != "qwen3.5:cloud" {
+		t.Fatalf("expected saved default to remain first in prechecked, got %v", gotPreChecked)
 	}
 }
 
@@ -663,7 +951,7 @@ func TestLaunchIntegration_OpenclawInstallsBeforeConfigSideEffects(t *testing.T)
 	if err == nil {
 		t.Fatal("expected launch to fail before configuration when OpenClaw is missing")
 	}
-	if !strings.Contains(err.Error(), "npm was not found") {
+	if !strings.Contains(err.Error(), "required dependencies are missing") {
 		t.Fatalf("expected install prerequisite error, got %v", err)
 	}
 	if selectorCalled {
