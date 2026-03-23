@@ -20,7 +20,7 @@ endif()
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 option(OLLAMA_FETCH_MOLTENVK "Download MoltenVK for building ggml-vulkan on macOS" OFF)
-set(OLLAMA_MOLTENVK_VERSION "1.4.0" CACHE STRING "MoltenVK release to fetch when OLLAMA_FETCH_MOLTENVK=ON")
+set(OLLAMA_MOLTENVK_VERSION "1.4.1" CACHE STRING "MoltenVK release to fetch when OLLAMA_FETCH_MOLTENVK=ON")
 set(OLLAMA_MOLTENVK_URL "" CACHE STRING "Override MoltenVK archive URL")
 set(OLLAMA_MOLTENVK_SHA256 "" CACHE STRING "Optional SHA256 checksum for the MoltenVK archive")
 
