@@ -265,8 +265,8 @@ func TestFromCompletionToolCallPreservesThoughtSignature(t *testing.T) {
 	sig := []byte("opaque-signature-bytes")
 	input := []ToolCall{
 		{
-			ID:   "call_abc",
-			Type: "function",
+			ID:               "call_abc",
+			Type:             "function",
 			ThoughtSignature: sig,
 			Function: struct {
 				Name      string `json:"name"`
