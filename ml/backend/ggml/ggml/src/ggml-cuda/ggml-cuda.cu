@@ -4956,6 +4956,8 @@ static ggml_backend_event_t ggml_backend_cuda_device_event_new(ggml_backend_dev_
     cudaEvent_t event;
     cudaError_t err = cudaEventCreateWithFlags(&event, cudaEventDisableTiming);
     if (err != cudaSuccess) {
+        // Gracefully handle the error (e.g when pinned memory runs out during GPU offload)
+        // Returning nullptr simply skips cross-device sync, which the scheduler already guards with null checks.
         (void)cudaGetLastError();
         GGML_LOG_WARN("%s: failed to create CUDA event: %s\n", __func__, cudaGetErrorString(err));
         return nullptr;
