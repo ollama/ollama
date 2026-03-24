@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -441,6 +442,67 @@ func cloudStatusDisabled(ctx context.Context, client *api.Client) (disabled bool
 		return false, false
 	}
 	return status.Cloud.Disabled, true
+}
+
+const recommendedContextLength = 64000
+
+func hasLocalModel(models []string) bool {
+	for _, m := range models {
+		if !isCloudModelName(m) {
+			return true
+		}
+	}
+	return false
+}
+
+func confirmLowContextLength(ctx context.Context, client *api.Client, models []string) error {
+	if !hasLocalModel(models) {
+		return nil
+	}
+
+	status, err := client.CloudStatusExperimental(ctx)
+	if err != nil {
+		return nil //nolint:nilerr // best-effort check; ignore if status endpoint is unavailable
+	}
+	serverCtx := status.ContextLength
+
+	for _, m := range models {
+		if isCloudModelName(m) {
+			continue
+		}
+		// A Modelfile can override num_ctx, which takes precedence over the server default.
+		effectiveCtx := serverCtx
+		modelfileOverride := false
+		if info, err := client.Show(ctx, &api.ShowRequest{Model: m}); err == nil {
+			if numCtx := parseNumCtxFromParameters(info.Parameters); numCtx > 0 {
+				effectiveCtx = numCtx
+				modelfileOverride = true
+			}
+		}
+		if effectiveCtx < recommendedContextLength {
+			fmt.Fprintf(os.Stderr, "\nWarning: context window is %d tokens (recommended: %d+)\n", effectiveCtx, recommendedContextLength)
+			if modelfileOverride {
+				fmt.Fprintf(os.Stderr, "Consider using an official model and increase the context length to %d in Ollama App Settings.\n\n", recommendedContextLength)
+			} else {
+				fmt.Fprintf(os.Stderr, "Increase it in Ollama App Settings or with OLLAMA_CONTEXT_LENGTH=%d ollama serve\n\n", recommendedContextLength)
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
+// parseNumCtxFromParameters extracts num_ctx from the Show response Parameters string.
+func parseNumCtxFromParameters(parameters string) int {
+	for _, line := range strings.Split(parameters, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[0] == "num_ctx" {
+			if v, err := strconv.ParseFloat(fields[1], 64); err == nil {
+				return int(v)
+			}
+		}
+	}
+	return 0
 }
 
 // TODO(parthsareen): this duplicates the pull progress UI in cmd.PullHandler.
