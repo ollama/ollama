@@ -455,7 +455,7 @@ func hasLocalModel(models []string) bool {
 	return false
 }
 
-func confirmLowContextLength(ctx context.Context, client *api.Client, models []string) error {
+func lowContextLength(ctx context.Context, client *api.Client, models []string) error {
 	if !hasLocalModel(models) {
 		return nil
 	}
