@@ -1075,6 +1075,12 @@ void styleWindow(uintptr_t wndPtr) {
         w.styleMask = desiredStyleMask;
     }
 
+    // Prevent the window from being assigned to a fullscreen Space automatically.
+    // Without this, closing the window while in a fullscreen Space causes macOS
+    // to remember that affinity, so the next open lands in that Space instead
+    // of the currently active Space.
+    w.collectionBehavior = NSWindowCollectionBehaviorFullScreenAuxiliary | NSWindowCollectionBehaviorTransient;
+
     if (w.toolbar == nil) {
         NSToolbar *tb = [[NSToolbar alloc] initWithIdentifier:@"OllamaToolbar"];
         tb.displayMode            = NSToolbarDisplayModeIconOnly;
