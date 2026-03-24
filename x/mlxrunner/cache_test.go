@@ -377,24 +377,25 @@ func (e *testEnv) assertAllTokens(t *testing.T, label string, expected []int32) 
 //   begin -> prefill with snapshot(false) at branch points -> generate -> close
 
 type requestResult struct {
-	remaining      []int32
-	snapshotOffset int
+	remaining        []int32
+	pendingSnapshots int
 }
 
 // simulateRequest runs a request through the harness. If userSnapshotAt > 0,
-// a user snapshot (snapshot(true)) is created at that offset during prefill.
+// a user snapshot is requested at that offset during prefill.
 func simulateRequest(t *testing.T, kvc *kvCache, inputs, generated []int32, userSnapshotAt ...int) requestResult {
 	t.Helper()
 
-	userSnapAt := 0
-	if len(userSnapshotAt) > 0 {
-		userSnapAt = userSnapshotAt[0]
+	session := kvc.begin(nil, inputs)
+	for _, at := range userSnapshotAt {
+		if at > 0 {
+			session.requestSnapshot(at)
+		}
 	}
 
-	session := kvc.begin(nil, inputs)
 	result := requestResult{
-		remaining:      slices.Clone(session.remaining),
-		snapshotOffset: session.snapshotOffset,
+		remaining:        slices.Clone(session.remaining),
+		pendingSnapshots: len(session.pendingSnapshots),
 	}
 
 	assertCacheOffsetAlignment(t, kvc, "after begin")
@@ -402,22 +403,9 @@ func simulateRequest(t *testing.T, kvc *kvCache, inputs, generated []int32, user
 	baseOffset := kvc.minCacheOffset()
 	remaining := inputs[baseOffset:]
 
-	// Collect snapshot points (offset -> user flag) in ascending order.
-	type snapPoint struct {
-		offset int
-		user   bool
-	}
-	var points []snapPoint
-	if session.snapshotOffset > 0 && session.snapshotOffset > baseOffset {
-		points = append(points, snapPoint{session.snapshotOffset, false})
-	}
-	if userSnapAt > 0 && userSnapAt > baseOffset {
-		points = append(points, snapPoint{userSnapAt, true})
-	}
-	slices.SortFunc(points, func(a, b snapPoint) int { return a.offset - b.offset })
-
-	// Prefill: feed tokens, pausing at each snapshot point.
-	for _, sp := range points {
+	// Prefill: feed tokens, pausing at each pending snapshot.
+	for len(session.pendingSnapshots) > 0 {
+		sp := session.pendingSnapshots[0]
 		count := sp.offset - baseOffset
 		if count > len(remaining) {
 			break
@@ -428,7 +416,7 @@ func simulateRequest(t *testing.T, kvc *kvCache, inputs, generated []int32, user
 			baseOffset = sp.offset
 		}
 		assertCacheOffsetAlignment(t, kvc, "at snapshot point")
-		session.snapshot(sp.user)
+		session.snapshot()
 	}
 
 	// Feed rest of input tokens.
@@ -615,15 +603,15 @@ func TestBranchCreationAndReuse(t *testing.T) {
 		// caches (RecurrentCache), the rewind fails and freeAll fires.
 		resB := simulateRequest(t, kvc, []int32{1, 2, 3, 4, 5, 10, 11, 12}, []int32{30, 31})
 		if env.rewindable {
-			if resB.snapshotOffset != 0 {
-				t.Fatalf("B: snapshotOffset = %d, want 0 (rewind succeeded)", resB.snapshotOffset)
+			if resB.pendingSnapshots != 0 {
+				t.Fatalf("B: pendingSnapshots = %d, want 0 (rewind succeeded)", resB.pendingSnapshots)
 			}
 			if len(resB.remaining) != 3 {
 				t.Fatalf("B: remaining = %d, want 3 (rewind to match point)", len(resB.remaining))
 			}
 		} else {
-			if resB.snapshotOffset != 5 {
-				t.Fatalf("B: snapshotOffset = %d, want 5", resB.snapshotOffset)
+			if resB.pendingSnapshots != 1 {
+				t.Fatalf("B: pendingSnapshots = %d, want 1", resB.pendingSnapshots)
 			}
 			if len(resB.remaining) != 8 {
 				t.Fatalf("B: remaining = %d, want 8 (freeAll fallback)", len(resB.remaining))
@@ -672,15 +660,15 @@ func TestExactMatchSeedBehavior(t *testing.T) {
 			if len(resB.remaining) != 1 {
 				t.Fatalf("B: remaining = %d, want 1 (rewind to holdback point)", len(resB.remaining))
 			}
-			if resB.snapshotOffset != 0 {
-				t.Fatalf("B: snapshotOffset = %d, want 0 (rewind succeeded)", resB.snapshotOffset)
+			if resB.pendingSnapshots != 0 {
+				t.Fatalf("B: pendingSnapshots = %d, want 0 (rewind succeeded)", resB.pendingSnapshots)
 			}
 		} else {
 			if len(resB.remaining) != 5 {
 				t.Fatalf("B: remaining = %d, want 5 (freeAll fallback)", len(resB.remaining))
 			}
-			if resB.snapshotOffset != 4 {
-				t.Fatalf("B: snapshotOffset = %d, want 4", resB.snapshotOffset)
+			if resB.pendingSnapshots != 1 {
+				t.Fatalf("B: pendingSnapshots = %d, want 1", resB.pendingSnapshots)
 			}
 		}
 		env.assertAllTokens(t, "after B", []int32{1, 2, 3, 4, 5, 20, 21})

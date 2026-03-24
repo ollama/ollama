@@ -20,6 +20,7 @@ import (
 	"cmp"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/ollama/ollama/logutil"
@@ -37,6 +38,12 @@ type kvCache struct {
 	pagedOutBytes int64 // total bytes in paged-out snapshots across the trie
 }
 
+// pendingSnapshot is a snapshot scheduled to be taken during prefill.
+type pendingSnapshot struct {
+	offset int
+	user   bool
+}
+
 // cacheSession manages caches for a single pipeline run.
 // Callers should append generated tokens to outputs and
 // defer close to save the cache state.
@@ -48,11 +55,10 @@ type cacheSession struct {
 	caches    []cache.Cache
 	remaining []int32
 
-	// snapshotOffset, if > 0, is a trie node boundary where we need to
-	// capture a snapshot during prefill. This enables future requests
-	// branching at this point to restore non-rewindable caches (e.g.
-	// RecurrentCache) instead of re-evaluating from scratch.
-	snapshotOffset int
+	// pendingSnapshots lists offsets where snapshots should be captured
+	// during prefill, sorted by offset. Entries are consumed as the
+	// cache advances past them.
+	pendingSnapshots []pendingSnapshot
 }
 
 func (c *kvCache) ensureCaches(m base.Model) {
@@ -100,31 +106,26 @@ func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
 	prefix := c.minCacheOffset()
 	remaining := inputs[prefix:]
 
+	session := &cacheSession{
+		cache:     c,
+		inputs:    inputs,
+		caches:    c.caches,
+		remaining: remaining,
+	}
+
 	// Schedule a snapshot at the branch point during prefill so future
 	// requests diverging here can restore instead of re-evaluating.
-	var snapshotAt int
 	if prefix < matched {
-		snapshotAt = matched
+		session.pendingSnapshots = append(session.pendingSnapshots, pendingSnapshot{offset: matched, user: false})
 	}
 
-	args := []any{"total", len(inputs), "matched", originalMatched}
-	args = append(args, "cached", prefix, "left", len(remaining))
-	if snapshotAt > 0 {
-		args = append(args, "pending_snapshot", snapshotAt)
-	}
+	msg := "cache hit"
 	if prefix == 0 {
-		slog.Info("cache miss", args...)
-	} else {
-		slog.Info("cache hit", args...)
+		msg = "cache miss"
 	}
+	slog.Info(msg, "total", len(inputs), "matched", originalMatched, "cached", prefix, "left", len(remaining))
 
-	return &cacheSession{
-		cache:          c,
-		inputs:         inputs,
-		snapshotOffset: snapshotAt,
-		caches:         c.caches,
-		remaining:      remaining,
-	}
+	return session
 }
 
 // switchToPath transitions from the current active path to a new path,
@@ -250,20 +251,54 @@ pageIn:
 	}
 }
 
-// snapshot creates a snapshot at the current cache position. During prefill,
-// it is called at branch points (user=false) to create restore points for
-// future diverging requests and with user=true to mark an explicit reusable
-// restore point.
-func (s *cacheSession) snapshot(user bool) {
+// requestSnapshot schedules a user snapshot at the given absolute token
+// offset. The snapshot will be captured during prefill when the cache
+// reaches this offset.
+func (s *cacheSession) requestSnapshot(offset int) {
+	baseOffset := len(s.inputs) - len(s.remaining)
+	if offset <= baseOffset || offset > len(s.inputs) {
+		return
+	}
+	// Deduplicate: if this offset already exists, upgrade to user.
+	for i := range s.pendingSnapshots {
+		if s.pendingSnapshots[i].offset == offset {
+			s.pendingSnapshots[i].user = true
+			return
+		}
+	}
+	s.pendingSnapshots = append(s.pendingSnapshots, pendingSnapshot{offset: offset, user: true})
+	slices.SortFunc(s.pendingSnapshots, func(a, b pendingSnapshot) int {
+		return a.offset - b.offset
+	})
+}
+
+// nextPendingSnapshot returns the offset of the next pending snapshot,
+// or 0 if there are none.
+func (s *cacheSession) nextPendingSnapshot() int {
+	if len(s.pendingSnapshots) == 0 {
+		return 0
+	}
+	return s.pendingSnapshots[0].offset
+}
+
+// snapshot creates a snapshot at the current cache position. It determines
+// whether this is a user snapshot by consuming pending entries whose offset
+// has been reached.
+func (s *cacheSession) snapshot() {
 	c := s.cache
 	cacheOffset := c.minCacheOffset()
 	if cacheOffset <= 0 {
 		return
 	}
 
-	// Clear pending intermediate snapshot if we've reached or passed it.
-	if s.snapshotOffset > 0 && cacheOffset >= s.snapshotOffset {
-		s.snapshotOffset = 0
+	// Consume pending snapshots up to the current offset and derive
+	// the user flag from them.
+	user := false
+	for len(s.pendingSnapshots) > 0 && cacheOffset >= s.pendingSnapshots[0].offset {
+		if s.pendingSnapshots[0].user {
+			user = true
+		}
+		s.pendingSnapshots = s.pendingSnapshots[1:]
 	}
 
 	// The last node in activePath is the frontier where caches are advancing.
