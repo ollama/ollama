@@ -266,6 +266,124 @@ func TestFromMessagesRequest_WithToolResult(t *testing.T) {
 	}
 }
 
+func TestFromMessagesRequest_WithToolResultContainingImage(t *testing.T) {
+	imgData, _ := base64.StdEncoding.DecodeString(testImage)
+
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 1024,
+		Messages: []MessageParam{
+			{
+				Role: "user",
+				Content: []any{
+					map[string]any{
+						"type":        "tool_result",
+						"tool_use_id": "call_456",
+						"content": []any{
+							map[string]any{"type": "text", "text": "Here is the screenshot:"},
+							map[string]any{
+								"type": "image",
+								"source": map[string]any{
+									"type":       "base64",
+									"media_type": "image/png",
+									"data":       testImage,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(result.Messages))
+	}
+
+	msg := result.Messages[0]
+	if msg.Role != "tool" {
+		t.Errorf("expected role 'tool', got %q", msg.Role)
+	}
+	if msg.ToolCallID != "call_456" {
+		t.Errorf("expected tool_call_id 'call_456', got %q", msg.ToolCallID)
+	}
+	if msg.Content != "Here is the screenshot:" {
+		t.Errorf("expected content 'Here is the screenshot:', got %q", msg.Content)
+	}
+	if len(msg.Images) != 1 {
+		t.Fatalf("expected 1 image in tool result, got %d", len(msg.Images))
+	}
+	if string(msg.Images[0]) != string(imgData) {
+		t.Error("image data mismatch in tool result")
+	}
+}
+
+func TestFromMessagesRequest_WithToolResultContainingMultipleImages(t *testing.T) {
+	imgData, _ := base64.StdEncoding.DecodeString(testImage)
+
+	req := MessagesRequest{
+		Model:     "test-model",
+		MaxTokens: 1024,
+		Messages: []MessageParam{
+			{
+				Role: "user",
+				Content: []any{
+					map[string]any{
+						"type":        "tool_result",
+						"tool_use_id": "call_789",
+						"content": []any{
+							map[string]any{
+								"type": "image",
+								"source": map[string]any{
+									"type":       "base64",
+									"media_type": "image/png",
+									"data":       testImage,
+								},
+							},
+							map[string]any{"type": "text", "text": "First image above, second below:"},
+							map[string]any{
+								"type": "image",
+								"source": map[string]any{
+									"type":       "base64",
+									"media_type": "image/png",
+									"data":       testImage,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := FromMessagesRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(result.Messages))
+	}
+
+	msg := result.Messages[0]
+	if msg.Role != "tool" {
+		t.Errorf("expected role 'tool', got %q", msg.Role)
+	}
+	if len(msg.Images) != 2 {
+		t.Fatalf("expected 2 images in tool result, got %d", len(msg.Images))
+	}
+	for i, img := range msg.Images {
+		if string(img) != string(imgData) {
+			t.Errorf("image %d data mismatch in tool result", i)
+		}
+	}
+}
+
 func TestFromMessagesRequest_WithTools(t *testing.T) {
 	req := MessagesRequest{
 		Model:     "test-model",
