@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"cmp"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"runtime"
 	"slices"
@@ -32,6 +36,9 @@ type flagOptions struct {
 	verbose      *bool
 	warmup       *int
 	promptTokens *int
+	numCtx       *int
+	openaiURL    *string
+	apiKey       *string
 }
 
 type Metrics struct {
@@ -89,6 +96,9 @@ func buildGenerateRequest(model string, fOpt flagOptions, imgData api.ImageData,
 	options["temperature"] = *fOpt.temperature
 	if fOpt.seed != nil && *fOpt.seed > 0 {
 		options["seed"] = *fOpt.seed
+	}
+	if fOpt.numCtx != nil && *fOpt.numCtx > 0 {
+		options["num_ctx"] = *fOpt.numCtx
 	}
 
 	var keepAliveDuration *api.Duration
@@ -224,26 +234,7 @@ func OutputMetrics(w io.Writer, format string, metrics []Metrics, verbose bool) 
 
 func BenchmarkModel(fOpt flagOptions) error {
 	models := strings.Split(*fOpt.models, ",")
-
-	var imgData api.ImageData
-	var err error
-	if *fOpt.imageFile != "" {
-		imgData, err = readImage(*fOpt.imageFile)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: Couldn't read image '%s': %v\n", *fOpt.imageFile, err)
-			return err
-		}
-	}
-
-	if *fOpt.debug && imgData != nil {
-		fmt.Fprintf(os.Stderr, "Read file '%s'\n", *fOpt.imageFile)
-	}
-
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: Couldn't create ollama client: %v\n", err)
-		return err
-	}
+	useOpenAI := fOpt.openaiURL != nil && *fOpt.openaiURL != ""
 
 	var out io.Writer = os.Stdout
 	if fOpt.outputFile != nil && *fOpt.outputFile != "" {
@@ -263,6 +254,30 @@ func BenchmarkModel(fOpt flagOptions) error {
 		prompt := generatePromptForTokenCount(*fOpt.promptTokens, 0)
 		wordCount := len(strings.Fields(prompt))
 		fmt.Fprintf(os.Stderr, "Generated prompt targeting ~%d tokens (%d words, varied per epoch)\n", *fOpt.promptTokens, wordCount)
+	}
+
+	if useOpenAI {
+		return benchmarkOpenAI(fOpt, models, out)
+	}
+
+	var imgData api.ImageData
+	var err error
+	if *fOpt.imageFile != "" {
+		imgData, err = readImage(*fOpt.imageFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: Couldn't read image '%s': %v\n", *fOpt.imageFile, err)
+			return err
+		}
+	}
+
+	if *fOpt.debug && imgData != nil {
+		fmt.Fprintf(os.Stderr, "Read file '%s'\n", *fOpt.imageFile)
+	}
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: Couldn't create ollama client: %v\n", err)
+		return err
 	}
 
 	for _, model := range models {
@@ -447,6 +462,284 @@ func unloadModel(client *api.Client, model string, timeout int) {
 	})
 }
 
+// openaiMetrics holds performance data extracted from an OpenAI-compatible streaming response.
+type openaiMetrics struct {
+	PromptTokens     int
+	CompletionTokens int
+	TTFT             time.Duration
+	TotalDuration    time.Duration
+
+	// Server-reported timings (when available). Zero if not provided.
+	ServerPromptMS    float64
+	ServerPredictedMS float64
+	HasTimings        bool
+}
+
+func openaiGenerate(ctx context.Context, baseURL, apiKey, model string, fOpt flagOptions, epoch int, keepAlive *float64) (*openaiMetrics, error) {
+	prompt := *fOpt.prompt
+	if *fOpt.promptTokens > 0 {
+		prompt = generatePromptForTokenCount(*fOpt.promptTokens, epoch)
+	} else {
+		prompt = fmt.Sprintf("[%d] %s", epoch, prompt)
+	}
+
+	body := map[string]any{
+		"model":      model,
+		"stream":     true,
+		"max_tokens": *fOpt.maxTokens,
+		"messages": []map[string]string{
+			{"role": "user", "content": prompt},
+		},
+	}
+	if *fOpt.temperature > 0 {
+		body["temperature"] = *fOpt.temperature
+	}
+	if fOpt.seed != nil && *fOpt.seed > 0 {
+		body["seed"] = *fOpt.seed
+	}
+	if keepAlive != nil {
+		body["keep_alive"] = *keepAlive
+	}
+	body["stream_options"] = map[string]any{"include_usage": true}
+
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+
+	url := strings.TrimRight(baseURL, "/") + "/chat/completions"
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	start := time.Now()
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	metrics := &openaiMetrics{}
+	var ttftOnce sync.Once
+	chunkTokens := 0
+
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content   string `json:"content"`
+					Reasoning string `json:"reasoning"`
+				} `json:"delta"`
+			} `json:"choices"`
+			Usage *struct {
+				PromptTokens     int `json:"prompt_tokens"`
+				CompletionTokens int `json:"completion_tokens"`
+			} `json:"usage"`
+			Timings *struct {
+				PromptMS    float64 `json:"prompt_ms"`
+				PredictedMS float64 `json:"predicted_ms"`
+			} `json:"timings"`
+		}
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue
+		}
+
+		if len(chunk.Choices) > 0 {
+			text := cmp.Or(chunk.Choices[0].Delta.Content, chunk.Choices[0].Delta.Reasoning)
+			if text != "" {
+				ttftOnce.Do(func() {
+					metrics.TTFT = time.Since(start)
+				})
+				chunkTokens++
+				if *fOpt.debug {
+					fmt.Fprint(os.Stderr, text)
+				}
+			}
+		}
+
+		if chunk.Usage != nil {
+			metrics.PromptTokens = chunk.Usage.PromptTokens
+			metrics.CompletionTokens = chunk.Usage.CompletionTokens
+		}
+
+		if chunk.Timings != nil {
+			metrics.ServerPromptMS = chunk.Timings.PromptMS
+			metrics.ServerPredictedMS = chunk.Timings.PredictedMS
+			metrics.HasTimings = true
+		}
+	}
+
+	metrics.TotalDuration = time.Since(start)
+
+	if *fOpt.debug {
+		fmt.Fprintln(os.Stderr)
+	}
+
+	if metrics.CompletionTokens == 0 {
+		metrics.CompletionTokens = chunkTokens
+	}
+
+	return metrics, nil
+}
+
+func benchmarkOpenAI(fOpt flagOptions, models []string, out io.Writer) error {
+	apiKey := *fOpt.apiKey
+	if apiKey == "" {
+		apiKey = os.Getenv("OPENAI_API_KEY")
+	}
+
+	keepAliveForever := float64(-1)
+	keepAliveUnload := float64(0)
+
+	for _, model := range models {
+		info := ModelInfo{Name: model}
+		outputModelInfo(out, *fOpt.format, info)
+
+		for i := range *fOpt.warmup {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*fOpt.timeout)*time.Second)
+			_, err := openaiGenerate(ctx, *fOpt.openaiURL, apiKey, model, fOpt, -(i + 1), &keepAliveForever)
+			cancel()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "WARNING: Warmup %d/%d for %s failed: %v\n", i+1, *fOpt.warmup, model, err)
+			} else if *fOpt.debug {
+				fmt.Fprintf(os.Stderr, "Warmup %d/%d for %s complete\n", i+1, *fOpt.warmup, model)
+			}
+		}
+
+		hasTimings := false
+		shortCount := 0
+		for epoch := range *fOpt.epochs {
+			var oaiMetrics *openaiMetrics
+			var err error
+			short := false
+
+			isLast := epoch == *fOpt.epochs-1
+			ka := &keepAliveForever
+			if isLast {
+				ka = &keepAliveUnload
+			}
+
+			const maxRetries = 3
+			for attempt := range maxRetries + 1 {
+				ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*fOpt.timeout)*time.Second)
+				oaiMetrics, err = openaiGenerate(ctx, *fOpt.openaiURL, apiKey, model, fOpt, epoch+attempt*1000, ka)
+				cancel()
+
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "ERROR: Couldn't generate with model '%s': %v\n", model, err)
+					break
+				}
+
+				short = *fOpt.maxTokens > 0 && oaiMetrics.CompletionTokens < *fOpt.maxTokens
+				if !short || attempt == maxRetries {
+					break
+				}
+
+				if *fOpt.debug {
+					fmt.Fprintf(os.Stderr, "Short response (%d/%d tokens), retrying with different prompt (attempt %d/%d)\n",
+						oaiMetrics.CompletionTokens, *fOpt.maxTokens, attempt+1, maxRetries)
+				}
+			}
+
+			if err != nil || oaiMetrics == nil {
+				continue
+			}
+
+			if short {
+				shortCount++
+				if *fOpt.debug {
+					fmt.Fprintf(os.Stderr, "WARNING: Short response (%d/%d tokens) after %d retries for epoch %d\n",
+						oaiMetrics.CompletionTokens, *fOpt.maxTokens, maxRetries, epoch+1)
+				}
+			}
+
+			var metrics []Metrics
+
+			if oaiMetrics.HasTimings {
+				hasTimings = true
+				metrics = []Metrics{
+					{
+						Model:    model,
+						Step:     "prefill",
+						Count:    oaiMetrics.PromptTokens,
+						Duration: time.Duration(oaiMetrics.ServerPromptMS * float64(time.Millisecond)),
+					},
+					{
+						Model:    model,
+						Step:     "generate",
+						Count:    oaiMetrics.CompletionTokens,
+						Duration: time.Duration(oaiMetrics.ServerPredictedMS * float64(time.Millisecond)),
+					},
+				}
+			} else {
+				// No server timings — only report generate derived from stream timing
+				generateDuration := oaiMetrics.TotalDuration - oaiMetrics.TTFT
+				metrics = []Metrics{
+					{
+						Model:    model,
+						Step:     "generate",
+						Count:    oaiMetrics.CompletionTokens,
+						Duration: generateDuration,
+					},
+				}
+			}
+
+			metrics = append(metrics,
+				Metrics{
+					Model:    model,
+					Step:     "ttft",
+					Count:    1,
+					Duration: oaiMetrics.TTFT,
+				},
+				Metrics{
+					Model:    model,
+					Step:     "total",
+					Count:    1,
+					Duration: oaiMetrics.TotalDuration,
+				},
+			)
+
+			OutputMetrics(out, *fOpt.format, metrics, *fOpt.verbose)
+
+			if *fOpt.debug && *fOpt.promptTokens > 0 {
+				fmt.Fprintf(os.Stderr, "Generated prompt targeting ~%d tokens (actual prompt_tokens: %d)\n",
+					*fOpt.promptTokens, oaiMetrics.PromptTokens)
+			}
+		}
+
+		if !hasTimings {
+			fmt.Fprintf(os.Stderr, "# NOTE: Server did not report timings; prefill rate not available\n")
+		}
+
+		if shortCount > 0 {
+			fmt.Fprintf(os.Stderr, "WARNING: %d/%d epochs for '%s' had short responses (<%d tokens). Generation metrics may be unreliable.\n",
+				shortCount, *fOpt.epochs, model, *fOpt.maxTokens)
+		}
+	}
+
+	return nil
+}
+
 func readImage(filePath string) (api.ImageData, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -479,6 +772,9 @@ func main() {
 		debug:        flag.Bool("debug", false, "Show debug information"),
 		warmup:       flag.Int("warmup", 1, "Number of warmup requests before timing"),
 		promptTokens: flag.Int("prompt-tokens", 0, "Generate prompt targeting ~N tokens (0 = use -p prompt)"),
+		numCtx:       flag.Int("num-ctx", 0, "Context size (0 = server default)"),
+		openaiURL:    flag.String("openai", "", "OpenAI-compatible API base URL (e.g. http://localhost:11434/v1)"),
+		apiKey:       flag.String("api-key", "", "API key for OpenAI endpoint (default: OPENAI_API_KEY env)"),
 	}
 
 	flag.Usage = func() {
@@ -490,6 +786,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
 		fmt.Fprintf(os.Stderr, "  bench -model gemma3,llama3 -epochs 6\n")
 		fmt.Fprintf(os.Stderr, "  bench -model gemma3 -epochs 6 -prompt-tokens 512 -format csv\n")
+		fmt.Fprintf(os.Stderr, "  bench -model gemma3 -openai http://localhost:11434/v1\n")
 	}
 	flag.Parse()
 
