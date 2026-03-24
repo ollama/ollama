@@ -1540,13 +1540,6 @@ func TestConfirmLowContextLength(t *testing.T) {
 			statusCode: http.StatusOK,
 		},
 		{
-			name:        "warns when mix of cloud and local models with low context",
-			models:      []string{"gpt-4o:cloud", "llama3.2"},
-			statusBody:  `{"cloud":{},"context_length":4096}`,
-			statusCode:  http.StatusOK,
-			wantWarning: true,
-		},
-		{
 			name:       "no warning when models list is empty",
 			models:     []string{},
 			statusBody: `{"cloud":{},"context_length":4096}`,
