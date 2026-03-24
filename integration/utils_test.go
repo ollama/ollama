@@ -295,11 +295,11 @@ var (
 
 	rainbowPrompt    = "how do rainbows form? Be brief but factual in your reply"
 	rainbowFollowups = []string{
-		"Explain the physics involved in them.  Be breif in your reply",
-		"Explain the chemistry involved in them.  Be breif in your reply",
+		"Explain the physics involved in them.  Be brief in your reply",
+		"Explain the chemistry involved in them.  Be brief in your reply",
 		"What are common myths related to them? Be brief in your reply",
-		"Can they form if there is no rain?  Be breif in your reply",
-		"Can they form if there are no clouds?  Be breif in your reply",
+		"Can they form if there is no rain?  Be brief in your reply",
+		"Can they form if there are no clouds?  Be brief in your reply",
 		"Do they happen on other planets? Be brief in your reply",
 	}
 	rainbowExpected = []string{"water", "droplet", "mist", "glow", "refract", "reflect", "scatter", "particles", "wave", "color", "spectrum", "raindrop", "atmosphere", "frequency", "shower", "sky", "shimmer", "light", "storm", "sunny", "sunburst", "phenomenon", "mars", "venus", "jupiter", "rain", "sun", "rainbow", "optical", "gold", "cloud", "planet", "prism", "fog", "ice"}
@@ -334,9 +334,7 @@ func requireCapability(ctx context.Context, t *testing.T, client *api.Client, mo
 	t.Helper()
 	resp, err := client.Show(ctx, &api.ShowRequest{Name: modelName})
 	if err != nil {
-		// If we can't even show the model, let the test proceed and
-		// fail naturally on the actual API call.
-		return
+		t.Fatalf("failed to show model %s: %v", modelName, err)
 	}
 	if len(resp.Capabilities) > 0 && !slices.Contains(resp.Capabilities, cap) {
 		t.Skipf("model %s does not have capability %q (has %v)", modelName, cap, resp.Capabilities)

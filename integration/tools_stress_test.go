@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -343,7 +345,7 @@ func testToolCall(t *testing.T, ctx context.Context, client *api.Client, model, 
 		Tools: tools,
 		Options: map[string]any{
 			"temperature": 0,
-			"num_ctx":     16384,
+			"num_ctx":     contextLength(16384),
 		},
 	}
 
@@ -426,7 +428,7 @@ func testToolCallMultiTurn(t *testing.T, ctx context.Context, client *api.Client
 		Tools: tools,
 		Options: map[string]any{
 			"temperature": 0,
-			"num_ctx":     16384,
+			"num_ctx":     contextLength(16384),
 		},
 	}
 
@@ -502,6 +504,15 @@ func checkNoLeakedTags(t *testing.T, content string) {
 			t.Errorf("leaked special tag %q in content: %q", tag, truncate(content, 300))
 		}
 	}
+}
+
+func contextLength(defaultVal int) int {
+	if s := os.Getenv("OLLAMA_CONTEXT_LENGTH"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil {
+			return n
+		}
+	}
+	return defaultVal
 }
 
 func truncate(s string, n int) string {
