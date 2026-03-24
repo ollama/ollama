@@ -357,6 +357,10 @@ func main() {
 	slog.Info("shutting down ollama server")
 	cancel()
 	<-done
+
+	if err := appStore.Close(); err != nil {
+		slog.Warn("error closing app store", "error", err)
+	}
 }
 
 func startHiddenTasks() {
