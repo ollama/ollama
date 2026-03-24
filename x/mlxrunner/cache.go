@@ -238,6 +238,13 @@ pageIn:
 		}
 	}
 
+	// Update last-used time on only the final used node. For recurrent
+	// caches we don't need the intermediate snapshots and for KV caches
+	// we can reslice the data out of merged edges.
+	if len(c.activePath) > 0 {
+		c.activePath[len(c.activePath)-1].lastUsed = time.Now()
+	}
+
 	if pageOutCount > 0 || pageInCount > 0 {
 		slog.Debug("switching cache path", "page_out", pageOutCount, "page_in", pageInCount)
 	}
@@ -355,6 +362,7 @@ func (s *cacheSession) attachSnapshots(node *trieNode, cacheOffset int) {
 		}
 	}
 	node.setSnapshots(snaps, &c.pagedOutBytes)
+	node.lastUsed = time.Now()
 	slog.Debug("created snapshot", "offset", cacheOffset)
 	c.enforceEvictionPolicy()
 }
@@ -412,10 +420,7 @@ func (s *cacheSession) close() {
 			newTokens := stored[frontier.endOffset:offset]
 			c.advancePath(frontier, newTokens, offset)
 		}
-		now := time.Now()
-		for _, node := range c.activePath {
-			node.lastUsed = now
-		}
+		c.activePath[len(c.activePath)-1].lastUsed = time.Now()
 	}
 }
 
@@ -433,7 +438,7 @@ func (c *kvCache) enforceEvictionPolicy() {
 	for c.pagedOutBytes > maxPagedOutBytes {
 		var best *trieNode
 		walkNodes(c.root, func(n *trieNode) bool {
-			if n == c.root || activeSet[n] || !n.hasSnapshots() {
+			if n == c.root || activeSet[n] || len(n.children) > 1 {
 				return true
 			}
 			// Evict: oldest, then deepest, then largest.
@@ -457,27 +462,16 @@ func (c *kvCache) enforceEvictionPolicy() {
 func (c *kvCache) evictNode(node *trieNode) {
 	if len(node.children) == 0 {
 		// Leaf: remove entirely.
-		parent := node.parent
-		kind := "evicting leaf"
-		if node.user {
-			kind = "evicting user snapshot"
-		}
-		slog.Debug(kind, "offset", node.startOffset(), "tokens", len(node.tokens), "freed", mlx.PrettyBytes(int(node.snapshotBytes())))
+		slog.Debug("evicting leaf", "offset", node.startOffset(), "tokens", len(node.tokens), "freed", mlx.PrettyBytes(int(node.snapshotBytes())))
 		removeNode(node, &c.pagedOutBytes)
-
-		// If parent is a regular (non-user-snapshot) node with one remaining child, auto-merge.
-		if parent != nil && !parent.user && len(parent.children) == 1 && parent != c.root {
-			logutil.Trace(fmt.Sprintf("auto-merging parent at offset %d with single child", parent.endOffset))
-			mergeWithChild(parent, c.caches, &c.pagedOutBytes)
-		}
 	} else if len(node.children) == 1 {
-		// Interior snapshot node with one child: merge with child.
-		slog.Debug("evicting snapshot node", "offset", node.endOffset, "tokens", len(node.tokens), "freed", mlx.PrettyBytes(int(node.snapshotBytes())))
+		// Interior node with one child: merge with child.
+		before := c.pagedOutBytes
+		tokens := len(node.tokens)
 		mergeWithChild(node, c.caches, &c.pagedOutBytes)
+		slog.Debug("evicting interior node", "offset", node.startOffset(), "tokens", tokens, "freed", mlx.PrettyBytes(int(before-c.pagedOutBytes)))
 	} else {
-		// Multi-child branch point: drop snapshots but keep the node.
-		slog.Debug("evicting branch snapshot", "offset", node.endOffset, "tokens", len(node.tokens), "freed", mlx.PrettyBytes(int(node.snapshotBytes())))
-		node.setSnapshots(nil, &c.pagedOutBytes)
+		panic("evictNode called on multi-child branch point")
 	}
 }
 
