@@ -85,6 +85,7 @@ enum mtmd_slice_tmpl {
     MTMD_SLICE_TMPL_MINICPMV_2_6,
     MTMD_SLICE_TMPL_LLAMA4,
     MTMD_SLICE_TMPL_IDEFICS3,
+    MTMD_SLICE_TMPL_LFM2,
 };
 
 mtmd_input_text* mtmd_input_text_init(const char * text, bool add_special, bool parse_special) {
@@ -121,6 +122,8 @@ mtmd_context_params mtmd_context_params_default() {
         /* warmup            */ true,
         /* image_min_tokens  */ -1,
         /* image_max_tokens  */ -1,
+        /* cb_eval           */ nullptr,
+        /* cb_eval_user_data */ nullptr,
     };
     return params;
 }
@@ -156,8 +159,6 @@ struct mtmd_context {
     bool        tok_row_end_trail = false;
     bool        ov_img_first      = false;
 
-    bool use_mrope = false; // for Qwen2VL, we need to use M-RoPE
-
     // string template for slice image delimiters with row/col (idefics3)
     std::string sli_img_start_tmpl;
 
@@ -184,10 +185,12 @@ struct mtmd_context {
 
         clip_context_params ctx_clip_params {
             /* use_gpu           */ ctx_params.use_gpu,
-            /* flash_attn_type   */ CLIP_FLASH_ATTN_TYPE_AUTO,
+            /* flash_attn_type   */ mtmd_get_clip_flash_attn_type(ctx_params.flash_attn_type),
             /* image_min_tokens  */ ctx_params.image_min_tokens,
             /* image_max_tokens  */ ctx_params.image_max_tokens,
             /* warmup            */ ctx_params.warmup,
+            /* cb_eval           */ ctx_params.cb_eval,
+            /* cb_eval_user_data */ ctx_params.cb_eval_user_data,
         };
 
         auto res = clip_init(mmproj_fname, ctx_clip_params);
@@ -227,7 +230,6 @@ struct mtmd_context {
 
     void init_vision() {
         GGML_ASSERT(ctx_v != nullptr);
-        use_mrope = clip_is_mrope(ctx_v);
 
         projector_type proj = clip_get_projector_type(ctx_v);
         int minicpmv_version = clip_is_minicpmv(ctx_v);
@@ -245,7 +247,7 @@ struct mtmd_context {
             tok_row_end_trail = false; // no trailing end-of-row token
             ov_img_first      = true;
 
-        } else if (minicpmv_version == 3 || minicpmv_version == 4 || minicpmv_version == 5 || minicpmv_version == 6) {
+        } else if (minicpmv_version == 3 || minicpmv_version == 4 || minicpmv_version == 5 || minicpmv_version == 6 || minicpmv_version == 100045) {
             // minicpmv 2.6 format:
             // <image> (overview) </image><slice> (slice) </slice><slice> (slice) </slice>\n ...
             slice_tmpl        = MTMD_SLICE_TMPL_MINICPMV_2_6;
@@ -276,7 +278,7 @@ struct mtmd_context {
         }
 
         // set boi/eoi
-        if (proj == PROJECTOR_TYPE_GEMMA3) {
+        if (proj == PROJECTOR_TYPE_GEMMA3 || proj == PROJECTOR_TYPE_GEMMA3NV) {
             // <start_of_image> ... (image embeddings) ... <end_of_image>
             img_beg = "<start_of_image>";
             img_end = "<end_of_image>";
@@ -293,7 +295,7 @@ struct mtmd_context {
             // https://github.com/huggingface/transformers/blob/1cd110c6cb6a6237614130c470e9a902dbc1a4bd/docs/source/en/model_doc/pixtral.md
             img_end = "[IMG_END]";
 
-        } else if (proj == PROJECTOR_TYPE_QWEN2VL || proj == PROJECTOR_TYPE_QWEN25VL || proj == PROJECTOR_TYPE_QWEN3VL) {
+        } else if (proj == PROJECTOR_TYPE_QWEN2VL || proj == PROJECTOR_TYPE_QWEN25VL || proj == PROJECTOR_TYPE_QWEN3VL || proj == PROJECTOR_TYPE_YOUTUVL) {
             // <|vision_start|> ... (image embeddings) ... <|vision_end|>
             img_beg = "<|vision_start|>";
             img_end = "<|vision_end|>";
@@ -316,13 +318,27 @@ struct mtmd_context {
             img_end = "<|im_end|>";
 
         } else if (proj == PROJECTOR_TYPE_LFM2) {
-            img_beg = "<|image_start|>";
-            img_end = "<|image_end|>";
-
+            // multi-tile:
+            //   <|image_start|>
+            //     <|img_row_1_col_1|> (tile) <|img_row_1_col_2|> (tile) ...
+            //     <|img_thumbnail|> (thumbnail)
+            //   <|image_end|>
+            // single-tile:
+            //   <|image_start|> (image) <|image_end|>
+            img_beg            = "<|image_start|>";
+            img_end            = "<|image_end|>";
+            slice_tmpl         = MTMD_SLICE_TMPL_LFM2;
+            sli_img_start_tmpl = "<|img_row_%d_col_%d|>";
+            tok_ov_img_start   = {lookup_token("<|img_thumbnail|>")};
+            ov_img_first       = false;
         } else if (proj == PROJECTOR_TYPE_GLM4V) {
             img_beg = "<|begin_of_image|>";
             img_end = "<|end_of_image|>";
 
+        } else if (proj == PROJECTOR_TYPE_PADDLEOCR) {
+            // <|IMAGE_START|> ... (image embeddings) ... <|IMAGE_END|>
+            img_beg = "<|IMAGE_START|>";
+            img_end = "<|IMAGE_END|>";
         }
     }
 
@@ -339,7 +355,12 @@ struct mtmd_context {
             case PROJECTOR_TYPE_QWEN25O:
             case PROJECTOR_TYPE_ULTRAVOX:
             case PROJECTOR_TYPE_VOXTRAL:
+            case PROJECTOR_TYPE_GLMA:
+            case PROJECTOR_TYPE_MUSIC_FLAMINGO:
                 audio_preproc = std::make_unique<mtmd_audio_preprocessor_whisper>(ctx_a);
+                break;
+            case PROJECTOR_TYPE_LFM2A:
+                audio_preproc = std::make_unique<mtmd_audio_preprocessor_conformer>(ctx_a);
                 break;
             default:
                 GGML_ABORT("unsupported audio projector type");
@@ -358,6 +379,9 @@ struct mtmd_context {
             // [BEGIN_AUDIO] ... (embeddings) ...
             aud_beg = "[BEGIN_AUDIO]";
 
+        } else if (proj == PROJECTOR_TYPE_MUSIC_FLAMINGO) {
+            // <sound> ... (embeddings) ...
+            aud_beg = "<sound>";
         }
     }
 
@@ -563,11 +587,13 @@ struct mtmd_tokenizer {
             }
 
             // handle llava-uhd style preprocessing
+            const bool has_tiling_grid = batch_f32.grid_x > 0 && batch_f32.grid_y > 0;
             if (
                 ctx->slice_tmpl == MTMD_SLICE_TMPL_MINICPMV_2_5
                 || ctx->slice_tmpl == MTMD_SLICE_TMPL_MINICPMV_2_6
                 || ctx->slice_tmpl == MTMD_SLICE_TMPL_LLAMA4
                 || ctx->slice_tmpl == MTMD_SLICE_TMPL_IDEFICS3
+                || (ctx->slice_tmpl == MTMD_SLICE_TMPL_LFM2 && has_tiling_grid)
             ) {
                 const int n_col = batch_f32.grid_x;
                 const int n_row = batch_f32.grid_y;
@@ -629,7 +655,7 @@ struct mtmd_tokenizer {
                 }
 
                 mtmd_image_tokens_ptr image_tokens(new mtmd_image_tokens);
-                if (ctx->use_mrope) {
+                if (mtmd_decode_use_mrope(ctx)) {
                     // for Qwen2VL, we need this information for M-RoPE decoding positions
                     image_tokens->nx = clip_n_output_tokens_x(ctx->ctx_v, batch_f32.entries[0].get());
                     image_tokens->ny = clip_n_output_tokens_y(ctx->ctx_v, batch_f32.entries[0].get());
@@ -864,14 +890,25 @@ float * mtmd_get_output_embd(mtmd_context * ctx) {
 }
 
 bool mtmd_decode_use_non_causal(mtmd_context * ctx) {
-    if (ctx->ctx_v && clip_get_projector_type(ctx->ctx_v) == PROJECTOR_TYPE_GEMMA3) {
-        return true;
+    switch (ctx->proj_type_v()) {
+        case PROJECTOR_TYPE_GEMMA3:
+            return true;
+        default:
+            return false;
     }
-    return false;
 }
 
 bool mtmd_decode_use_mrope(mtmd_context * ctx) {
-    return ctx->use_mrope;
+    switch (ctx->proj_type_v()) {
+        case PROJECTOR_TYPE_QWEN2VL:
+        case PROJECTOR_TYPE_QWEN25VL:
+        case PROJECTOR_TYPE_QWEN3VL:
+        case PROJECTOR_TYPE_GLM4V:
+        case PROJECTOR_TYPE_PADDLEOCR:
+            return true;
+        default:
+            return false;
+    }
 }
 
 bool mtmd_support_vision(mtmd_context * ctx) {

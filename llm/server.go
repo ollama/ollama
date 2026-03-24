@@ -372,6 +372,19 @@ func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.W
 
 	cmd.Env = os.Environ()
 
+	if ollamaEngine {
+		// Enable simplified CUDA graph property checking for the ollamarunner.
+		// GGML has expanded graph validation checks that impact performance
+		// yet always allow reuse for the ollamarunner models.
+		// This is safe because during steady-state decode:
+		//   - Weight tensors remain on their assigned GPU for the session lifetime
+		//   - KV cache buffer pointers are stable between decode steps
+		//   - RoPE/FA/softmax op_params are set once at model construction
+		//   - No conv2d or other ops that change tensor type between steps
+		//   - Graph topology (node count, op sequence) is stable
+		cmd.Env = append(cmd.Env, "GGML_CUDA_GRAPH_NODES_ONLY=1")
+	}
+
 	if out != nil {
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {

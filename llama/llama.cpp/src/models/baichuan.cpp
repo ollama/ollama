@@ -56,6 +56,7 @@ llm_build_baichuan::llm_build_baichuan(const llama_model & model, const llm_grap
                             );
                     break;
                 case LLM_TYPE_13B:
+                case LLM_TYPE_UNKNOWN:
                     break;
                 default:
                     GGML_ABORT("fatal error");

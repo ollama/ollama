@@ -968,7 +968,7 @@ void ggml_vec_dot_q8_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
 
     const int vector_length = ggml_cpu_get_sve_cnt()*8;
 
-    //VLA Implemenation for SVE
+    //VLA Implementation for SVE
     switch (vector_length) {
         case 128:
             {
