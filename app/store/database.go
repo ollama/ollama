@@ -53,6 +53,11 @@ func newDatabase(dbPath string) (*database, error) {
 func (db *database) Close() error {
 	_, _ = db.conn.Exec("PRAGMA wal_checkpoint(TRUNCATE);")
 
+	// Compact the database to reclaim space from deleted rows (e.g. removed chats)
+	// and rebuild indexes for consistent performance.
+	_, _ = db.conn.Exec("VACUUM;")
+	_, _ = db.conn.Exec("REINDEX;")
+
 	return db.conn.Close()
 }
 
