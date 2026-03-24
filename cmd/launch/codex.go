@@ -16,7 +16,8 @@ type Codex struct{}
 func (c *Codex) String() string { return "Codex" }
 
 func (c *Codex) args(model string, extra []string) []string {
-	args := []string{"--oss"}
+	baseURL := envconfig.Host().String() + "/v1/"
+	args := []string{"--oss", "-c", fmt.Sprintf("openai_base_url=%q", baseURL)}
 	if model != "" {
 		args = append(args, "-m", model)
 	}
@@ -34,7 +35,6 @@ func (c *Codex) Run(model string, args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = append(os.Environ(),
-		"OPENAI_BASE_URL="+envconfig.Host().String()+"/v1/",
 		"OPENAI_API_KEY=ollama",
 	)
 	return cmd.Run()
