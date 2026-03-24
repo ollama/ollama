@@ -1938,6 +1938,7 @@ func (s *Server) StatusHandler(c *gin.Context) {
 
 	contextLength := int(envconfig.ContextLength())
 	if contextLength == 0 {
+		slog.Warn("OLLAMA_CONTEXT_LENGTH is not set, using default", "default", s.defaultNumCtx)
 		contextLength = s.defaultNumCtx
 	}
 

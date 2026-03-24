@@ -474,7 +474,7 @@ func lowContextLength(ctx context.Context, client *api.Client, models []string) 
 		effectiveCtx := serverCtx
 		modelfileOverride := false
 		if info, err := client.Show(ctx, &api.ShowRequest{Model: m}); err == nil {
-			if numCtx := parseNumCtxFromParameters(info.Parameters); numCtx > 0 {
+			if numCtx := parseNumCtx(info.Parameters); numCtx > 0 {
 				effectiveCtx = numCtx
 				modelfileOverride = true
 			}

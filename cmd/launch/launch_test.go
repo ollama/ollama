@@ -1609,7 +1609,7 @@ func TestConfirmLowContextLength(t *testing.T) {
 			r, w, _ := os.Pipe()
 			os.Stderr = w
 
-			err = confirmLowContextLength(context.Background(), client, tt.models)
+			err = lowContextLength(context.Background(), client, tt.models)
 
 			w.Close()
 			var buf bytes.Buffer
@@ -1673,9 +1673,9 @@ func TestParseNumCtxFromParameters(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := parseNumCtxFromParameters(tt.parameters)
+			got := parseNumCtx(tt.parameters)
 			if got != tt.want {
-				t.Fatalf("parseNumCtxFromParameters(%q) = %d, want %d", tt.parameters, got, tt.want)
+				t.Fatalf("parseNumCtx(%q) = %d, want %d", tt.parameters, got, tt.want)
 			}
 		})
 	}
