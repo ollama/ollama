@@ -111,6 +111,7 @@ type ChatCompletionRequest struct {
 	Tools            []api.Tool      `json:"tools"`
 	Reasoning        *Reasoning      `json:"reasoning,omitempty"`
 	ReasoningEffort  *string         `json:"reasoning_effort,omitempty"`
+	Think            *bool           `json:"think,omitempty"`
 	Logprobs         *bool           `json:"logprobs"`
 	TopLogprobs      int             `json:"top_logprobs"`
 	DebugRenderOnly  bool            `json:"_debug_render_only"`
@@ -611,21 +612,25 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	var think *api.ThinkValue
 	var effort string
 
-	if r.Reasoning != nil {
-		effort = r.Reasoning.Effort
-	} else if r.ReasoningEffort != nil {
-		effort = *r.ReasoningEffort
-	}
-
-	if effort != "" {
-		if !slices.Contains([]string{"high", "medium", "low", "none"}, effort) {
-			return nil, fmt.Errorf("invalid reasoning value: '%s' (must be \"high\", \"medium\", \"low\", or \"none\")", effort)
+	if r.Think != nil {
+		think = &api.ThinkValue{Value: *r.Think}
+	} else {
+		if r.Reasoning != nil {
+			effort = r.Reasoning.Effort
+		} else if r.ReasoningEffort != nil {
+			effort = *r.ReasoningEffort
 		}
 
-		if effort == "none" {
-			think = &api.ThinkValue{Value: false}
-		} else {
-			think = &api.ThinkValue{Value: effort}
+		if effort != "" {
+			if !slices.Contains([]string{"high", "medium", "low", "none"}, effort) {
+				return nil, fmt.Errorf("invalid reasoning value: '%s' (must be \"high\", \"medium\", \"low\", or \"none\")", effort)
+			}
+
+			if effort == "none" {
+				think = &api.ThinkValue{Value: false}
+			} else {
+				think = &api.ThinkValue{Value: effort}
+			}
 		}
 	}
 
