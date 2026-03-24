@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/ollama/ollama/envconfig"
@@ -15,9 +16,10 @@ type Codex struct{}
 
 func (c *Codex) String() string { return "Codex" }
 
+const codexProfileName = "ollama"
+
 func (c *Codex) args(model string, extra []string) []string {
-	baseURL := envconfig.Host().String() + "/v1/"
-	args := []string{"--oss", "-c", fmt.Sprintf("openai_base_url=%q", baseURL)}
+	args := []string{"--oss", "--profile", codexProfileName}
 	if model != "" {
 		args = append(args, "-m", model)
 	}
@@ -30,6 +32,10 @@ func (c *Codex) Run(model string, args []string) error {
 		return err
 	}
 
+	if err := ensureCodexConfig(); err != nil {
+		return fmt.Errorf("failed to configure codex: %w", err)
+	}
+
 	cmd := exec.Command("codex", c.args(model, args)...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -38,6 +44,62 @@ func (c *Codex) Run(model string, args []string) error {
 		"OPENAI_API_KEY=ollama",
 	)
 	return cmd.Run()
+}
+
+// ensureCodexConfig writes a [profiles.ollama] section to ~/.codex/config.toml
+// with openai_base_url pointing to the local Ollama server.
+func ensureCodexConfig() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	codexDir := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(codexDir, 0o755); err != nil {
+		return err
+	}
+
+	configPath := filepath.Join(codexDir, "config.toml")
+	return writeCodexProfile(configPath)
+}
+
+// writeCodexProfile ensures ~/.codex/config.toml has a [profiles.ollama] section
+// with the correct openai_base_url.
+func writeCodexProfile(configPath string) error {
+	baseURL := envconfig.Host().String() + "/v1/"
+
+	profileLines := []string{
+		"[profiles.ollama]",
+		fmt.Sprintf("openai_base_url = %q", baseURL),
+	}
+	profileBlock := strings.Join(profileLines, "\n") + "\n"
+
+	content, readErr := os.ReadFile(configPath)
+	if readErr != nil {
+		// File doesn't exist; create with just the profile.
+		return os.WriteFile(configPath, []byte(profileBlock), 0o644)
+	}
+
+	text := string(content)
+	header := "[profiles.ollama]"
+
+	if idx := strings.Index(text, header); idx >= 0 {
+		// Replace the existing [profiles.ollama] section up to the next section header.
+		rest := text[idx+len(header):]
+		if endIdx := strings.Index(rest, "\n["); endIdx >= 0 {
+			text = text[:idx] + profileBlock + rest[endIdx+1:]
+		} else {
+			text = text[:idx] + profileBlock
+		}
+	} else {
+		// Append the profile section.
+		if !strings.HasSuffix(text, "\n") {
+			text += "\n"
+		}
+		text += "\n" + profileBlock
+	}
+
+	return os.WriteFile(configPath, []byte(text), 0o644)
 }
 
 func checkCodexVersion() error {
