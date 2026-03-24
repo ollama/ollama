@@ -420,7 +420,16 @@ func tensorByBase(tensors map[string]*mlx.Array, base string) (*mlx.Array, strin
 }
 
 func supportsGatherQMM(mode string, bits int) bool {
-	return mode == "affine" && (bits == 4 || bits == 8)
+	switch mode {
+	case "affine":
+		return bits == 4 || bits == 8
+	case "mxfp8":
+		return bits == 8
+	case "nvfp4", "mxfp4":
+		return bits == 4
+	default:
+		return false
+	}
 }
 
 func freeTensorKeys(tensors map[string]*mlx.Array, keys ...string) {
