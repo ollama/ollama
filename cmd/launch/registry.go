@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"opencode", "droid", "pi", "cline"}
+var launcherIntegrationOrder = []string{"opencode", "droid", "pi", "cline", "octomind"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -95,6 +95,18 @@ var integrationSpecs = []*IntegrationSpec{
 				return err == nil
 			},
 			URL: "https://opencode.ai",
+		},
+	},
+	{
+		Name:        "octomind",
+		Runner:      &Octomind{},
+		Description: "Session-based AI development assistant with MCP support",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := exec.LookPath("octomind")
+				return err == nil
+			},
+			URL: "https://muvon.io",
 		},
 	},
 	{
