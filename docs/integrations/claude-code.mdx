@@ -96,7 +96,7 @@ The `/loop` command runs a prompt or slash command on a recurring schedule insid
 /loop 1h Remind me to review the deploy status
 ```
 
-## Telegram
+## Channels 
 
 Chat with Claude Code from Telegram by connecting a bot to your session. Install the [Telegram plugin](https://github.com/anthropics/claude-plugins-official), create a bot via [@BotFather](https://t.me/BotFather), then launch with the channel flag:
 
@@ -107,6 +107,8 @@ ollama launch claude -- --channels plugin:telegram@claude-plugins-official
 Claude Code will prompt for permission on most actions. To allow the bot to work autonomously, configure [permission rules](https://code.claude.com/docs/en/permissions) or pass `--dangerously-skip-permissions` in isolated environments.
 
 See the [plugin README](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram) for full setup instructions including pairing and access control.
+
+Other channels may also be added by following the [Claude Code docs](https://code.claude.com/docs/en/channels-reference). 
 
 ## Manual setup
 
