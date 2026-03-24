@@ -1575,6 +1575,11 @@ enum NSWindowStyleMask : NSUInteger {
   NSWindowStyleMaskResizable = 8
 };
 
+enum NSWindowCollectionBehavior : NSUInteger {
+  NSWindowCollectionBehaviorDefault = 0,
+  NSWindowCollectionBehaviorCanJoinAllSpaces = 1 << 3,
+};
+
 enum NSApplicationActivationPolicy : NSInteger {
   NSApplicationActivationPolicyRegular = 0
 };
@@ -1959,6 +1964,15 @@ private:
       m_window = objc::msg_send<id>(
           m_window, "initWithContentRect:styleMask:backing:defer:"_sel,
           CGRectMake(0, 0, 0, 0), style, NSBackingStoreBuffered, NO);
+
+      // Allow the window to appear on all Spaces, preventing fullscreen Space
+      // affinity from persisting after the window is closed and reopened.
+      // Without this, macOS ties the window to the Space where it entered
+      // fullscreen, causing it to reopen in the wrong Space.
+      auto collectionBehavior =
+          static_cast<NSWindowCollectionBehavior>(NSWindowCollectionBehaviorCanJoinAllSpaces);
+      objc::msg_send<void>(m_window, "setCollectionBehavior:"_sel,
+                           collectionBehavior);
 
       m_window_delegate = create_window_delegate();
       objc_setAssociatedObject(m_window_delegate, "webview", (id)this,
