@@ -430,7 +430,7 @@ function newZipJob($sourceDir, $destZip) {
     Start-Job -ScriptBlock {
         param($src, $dst, $use7z)
         if ($use7z) {
-            & 7z a -tzip -mx=9 -mmt=on $dst "${src}\*"
+            & 7z a -tzip -mx=7 -mmt=on $dst "${src}\*"
             if ($LASTEXITCODE -ne 0) { throw "7z failed with exit code $LASTEXITCODE" }
         } else {
             Compress-Archive -CompressionLevel Optimal -Path "${src}\*" -DestinationPath $dst -Force
