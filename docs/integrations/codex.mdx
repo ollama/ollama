@@ -29,10 +29,10 @@ ollama launch codex --config
 
 ### Manual setup
 
-To use `codex` with Ollama, use the `--oss` flag:
+To use `codex` with Ollama, use the `--profile` flag:
 
 ```
-codex --oss
+codex --profile ollama-launch
 ```
 
 ### Changing Models
@@ -40,13 +40,13 @@ codex --oss
 By default, codex will use the local `gpt-oss:20b` model. However, you can specify a different model with the `-m` flag:
 
 ```
-codex --oss -m gpt-oss:120b
+codex --profile ollama-launch -m gpt-oss:120b
 ```
 
 ### Cloud Models
 
 ```
-codex --oss -m gpt-oss:120b-cloud
+codex --profile ollama-launch -m gpt-oss:120b-cloud
 ```
 
 
