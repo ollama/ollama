@@ -99,6 +99,7 @@ func (v *VSCode) Quit() {
 		}
 	}
 	// Wait for the process to fully exit and flush its state to disk
+    // TODO(hoyyeva): update spinner to use bubble tea
 	spinnerFrames := []string{"|", "/", "-", "\\"}
 	frame := 0
 	fmt.Fprintf(os.Stderr, "\033[90mRestarting VS Code... %s\033[0m", spinnerFrames[0])
