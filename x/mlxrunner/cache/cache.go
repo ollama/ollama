@@ -109,8 +109,8 @@ func (c *KVCache) Snapshot(fromOffset int) Snapshot {
 
 	kSlice := c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(from, to), mlx.Slice())
 	vSlice := c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(from, to), mlx.Slice())
-	kCopy := mlx.Copy(kSlice)
-	vCopy := mlx.Copy(vSlice)
+	kCopy := mlx.Contiguous(kSlice, false)
+	vCopy := mlx.Contiguous(vSlice, false)
 	mlx.Pin(kCopy, vCopy)
 	mlx.AsyncEval(kCopy, vCopy)
 
@@ -196,10 +196,10 @@ func (c *KVCache) Split(snapshot Snapshot, at int) (Snapshot, Snapshot) {
 		return snapshot, nil
 	}
 
-	pk := mlx.Copy(snap.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, splitIdx), mlx.Slice()))
-	pv := mlx.Copy(snap.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, splitIdx), mlx.Slice()))
-	ck := mlx.Copy(snap.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(splitIdx, seqLen), mlx.Slice()))
-	cv := mlx.Copy(snap.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(splitIdx, seqLen), mlx.Slice()))
+	pk := mlx.Contiguous(snap.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, splitIdx), mlx.Slice()), false)
+	pv := mlx.Contiguous(snap.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, splitIdx), mlx.Slice()), false)
+	ck := mlx.Contiguous(snap.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(splitIdx, seqLen), mlx.Slice()), false)
+	cv := mlx.Contiguous(snap.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(splitIdx, seqLen), mlx.Slice()), false)
 	mlx.Pin(pk, pv, ck, cv)
 	mlx.AsyncEval(pk, pv, ck, cv)
 

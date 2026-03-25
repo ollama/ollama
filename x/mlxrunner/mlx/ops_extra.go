@@ -494,15 +494,6 @@ func Collect(v any) []*Array {
 	return arrays
 }
 
-func Copy(a *Array) *Array {
-	if a == nil || !a.Valid() {
-		return a
-	}
-	out := New("COPY")
-	C.mlx_copy(&out.ctx, a.ctx, DefaultStream().ctx)
-	return out
-}
-
 func collect(v reflect.Value, arrays *[]*Array, seen map[uintptr]bool) {
 	if !v.IsValid() {
 		return
