@@ -24,16 +24,22 @@ include(GNUInstallDirs)
 find_package(Threads REQUIRED)
 
 set(CMAKE_BUILD_TYPE Release)
-set(BUILD_SHARED_LIBS ON)
+
+# These defaults can be overridden by presets (e.g., for static macOS llama-server builds)
+if(NOT DEFINED BUILD_SHARED_LIBS)
+    set(BUILD_SHARED_LIBS ON)
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS ON) # Recent versions of MLX Requires gnu++17 extensions to compile properly
 
 set(GGML_BUILD ON)
-set(GGML_SHARED ON)
+set(GGML_SHARED ${BUILD_SHARED_LIBS})
 set(GGML_CCACHE ON)
-set(GGML_BACKEND_DL ON)
+if(NOT DEFINED GGML_BACKEND_DL)
+    set(GGML_BACKEND_DL ON)
+endif()
 set(GGML_BACKEND_SHARED ON)
 set(GGML_SCHED_MAX_COPIES 4)
 
@@ -43,9 +49,11 @@ set(GGML_CUDA_GRAPHS ON)
 set(GGML_CUDA_FA ON)
 set(GGML_CUDA_COMPRESSION_MODE default)
 
-if((CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
-    OR (NOT CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "arm|aarch64|ARM64|ARMv[0-9]+"))
-    set(GGML_CPU_ALL_VARIANTS ON)
+if(NOT DEFINED GGML_CPU_ALL_VARIANTS)
+    if((CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
+        OR (NOT CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "arm|aarch64|ARM64|ARMv[0-9]+"))
+        set(GGML_CPU_ALL_VARIANTS ON)
+    endif()
 endif()
 
 if(APPLE)
@@ -362,3 +370,167 @@ if(MLX_ENGINE)
         endif()
     endif()
 endif()
+
+#
+# llama-server - upstream llama.cpp server binary
+#
+
+set(LLAMA_SERVER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/llama/llama.cpp)
+
+# Build info
+set(LLAMA_BUILD_INFO_SRC ${CMAKE_CURRENT_SOURCE_DIR}/llama/build-info.cpp)
+
+# libllama (static)
+file(GLOB LLAMA_SRC_FILES
+    ${LLAMA_SERVER_DIR}/src/llama*.cpp
+    ${LLAMA_SERVER_DIR}/src/unicode*.cpp
+    ${LLAMA_SERVER_DIR}/src/models/*.cpp
+)
+add_library(llama-lib STATIC ${LLAMA_SRC_FILES})
+target_include_directories(llama-lib PUBLIC
+    ${LLAMA_SERVER_DIR}/include
+    ${LLAMA_SERVER_DIR}/src
+)
+target_include_directories(llama-lib PRIVATE ${GGML_INCLUDE_DIRS})
+target_link_libraries(llama-lib PUBLIC ggml Threads::Threads)
+target_compile_features(llama-lib PUBLIC cxx_std_17)
+set_target_properties(llama-lib PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_compile_definitions(llama-lib PRIVATE NDEBUG)
+
+# cpp-httplib (static)
+add_library(llama-httplib STATIC
+    ${LLAMA_SERVER_DIR}/vendor/cpp-httplib/httplib.cpp
+    ${LLAMA_SERVER_DIR}/vendor/cpp-httplib/httplib.h
+)
+target_compile_features(llama-httplib PRIVATE cxx_std_17)
+target_link_libraries(llama-httplib PRIVATE Threads::Threads)
+if(WIN32 AND NOT MSVC)
+    target_link_libraries(llama-httplib PUBLIC ws2_32)
+endif()
+target_compile_definitions(llama-httplib PRIVATE
+    CPPHTTPLIB_FORM_URL_ENCODED_PAYLOAD_MAX_LENGTH=1048576
+    CPPHTTPLIB_LISTEN_BACKLOG=512
+    CPPHTTPLIB_REQUEST_URI_MAX_LENGTH=32768
+    CPPHTTPLIB_TCP_NODELAY=1
+)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+    target_compile_options(llama-httplib PRIVATE /w)
+else()
+    target_compile_options(llama-httplib PRIVATE -w)
+endif()
+set_target_properties(llama-httplib PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# libcommon (static)
+set(LLAMA_COMMON_DIR ${LLAMA_SERVER_DIR}/common)
+file(GLOB LLAMA_COMMON_FILES ${LLAMA_COMMON_DIR}/*.cpp)
+# Exclude build-info.cpp.in template — we use our own pre-generated build-info.cpp
+list(FILTER LLAMA_COMMON_FILES EXCLUDE REGEX "build-info\\.cpp")
+
+add_library(llama-common STATIC ${LLAMA_COMMON_FILES} ${LLAMA_BUILD_INFO_SRC})
+target_include_directories(llama-common PUBLIC
+    ${LLAMA_COMMON_DIR}
+    ${LLAMA_SERVER_DIR}/vendor
+    ${LLAMA_SERVER_DIR}/include
+)
+target_include_directories(llama-common PRIVATE ${GGML_INCLUDE_DIRS})
+target_compile_features(llama-common PUBLIC cxx_std_17)
+target_link_libraries(llama-common PUBLIC llama-lib llama-httplib Threads::Threads)
+target_compile_definitions(llama-common PUBLIC LLAMA_USE_HTTPLIB)
+set_target_properties(llama-common PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# mtmd (multimodal) - needed by server-context
+set(LLAMA_MTMD_DIR ${LLAMA_SERVER_DIR}/tools/mtmd)
+file(GLOB LLAMA_MTMD_FILES ${LLAMA_MTMD_DIR}/*.cpp ${LLAMA_MTMD_DIR}/models/*.cpp)
+add_library(llama-mtmd STATIC ${LLAMA_MTMD_FILES})
+target_include_directories(llama-mtmd PUBLIC ${LLAMA_MTMD_DIR} ${LLAMA_MTMD_DIR}/models)
+target_include_directories(llama-mtmd PRIVATE
+    ${LLAMA_SERVER_DIR}/include
+    ${LLAMA_SERVER_DIR}/common
+    ${LLAMA_SERVER_DIR}/vendor
+    ${GGML_INCLUDE_DIRS}
+)
+target_link_libraries(llama-mtmd PUBLIC llama-lib llama-common)
+target_compile_features(llama-mtmd PRIVATE cxx_std_17)
+set_target_properties(llama-mtmd PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# Generate minimal webui stubs at configure time (we use --no-webui at runtime)
+# xxd.cmake requires non-empty files, so write a single byte placeholder
+set(LLAMA_SERVER_PUBLIC_DIR ${CMAKE_CURRENT_BINARY_DIR}/llama-server-public)
+file(MAKE_DIRECTORY ${LLAMA_SERVER_PUBLIC_DIR})
+file(WRITE ${LLAMA_SERVER_PUBLIC_DIR}/loading.html " ")
+file(WRITE ${LLAMA_SERVER_PUBLIC_DIR}/index.html.gz " ")
+
+# Inline xxd script (converts a file to a C byte array header)
+set(LLAMA_XXD_SCRIPT ${CMAKE_CURRENT_BINARY_DIR}/xxd.cmake)
+file(WRITE ${LLAMA_XXD_SCRIPT} [=[
+set(INPUT "" CACHE STRING "Input File")
+set(OUTPUT "" CACHE STRING "Output File")
+get_filename_component(filename "${INPUT}" NAME)
+string(REGEX REPLACE "\\.|-" "_" name "${filename}")
+file(READ "${INPUT}" hex_data HEX)
+string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," hex_sequence "${hex_data}")
+string(LENGTH "${hex_data}" hex_len)
+math(EXPR len "${hex_len} / 2")
+file(WRITE "${OUTPUT}" "unsigned char ${name}[] = {${hex_sequence}};\nunsigned int ${name}_len = ${len};\n")
+]=])
+
+# llama-server executable
+set(LLAMA_SERVER_SRC_DIR ${LLAMA_SERVER_DIR}/tools/server)
+set(LLAMA_SERVER_SRCS
+    ${LLAMA_SERVER_SRC_DIR}/server.cpp
+    ${LLAMA_SERVER_SRC_DIR}/server-http.cpp
+    ${LLAMA_SERVER_SRC_DIR}/server-http.h
+    ${LLAMA_SERVER_SRC_DIR}/server-models.cpp
+    ${LLAMA_SERVER_SRC_DIR}/server-models.h
+    ${LLAMA_SERVER_SRC_DIR}/server-task.cpp
+    ${LLAMA_SERVER_SRC_DIR}/server-task.h
+    ${LLAMA_SERVER_SRC_DIR}/server-queue.cpp
+    ${LLAMA_SERVER_SRC_DIR}/server-queue.h
+    ${LLAMA_SERVER_SRC_DIR}/server-common.cpp
+    ${LLAMA_SERVER_SRC_DIR}/server-common.h
+    ${LLAMA_SERVER_SRC_DIR}/server-context.cpp
+    ${LLAMA_SERVER_SRC_DIR}/server-context.h
+)
+
+# Generate xxd headers from stub assets
+set(LLAMA_SERVER_ASSETS index.html.gz loading.html)
+foreach(asset ${LLAMA_SERVER_ASSETS})
+    set(input "${LLAMA_SERVER_PUBLIC_DIR}/${asset}")
+    set(output "${CMAKE_CURRENT_BINARY_DIR}/llama-server-assets/${asset}.hpp")
+    list(APPEND LLAMA_SERVER_SRCS ${output})
+    add_custom_command(
+        DEPENDS "${input}"
+        OUTPUT "${output}"
+        COMMAND "${CMAKE_COMMAND}" "-DINPUT=${input}" "-DOUTPUT=${output}" -P "${LLAMA_XXD_SCRIPT}"
+    )
+    set_source_files_properties(${output} PROPERTIES GENERATED TRUE)
+endforeach()
+
+add_executable(llama-server ${LLAMA_SERVER_SRCS})
+set_target_properties(llama-server PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${OLLAMA_BUILD_DIR}
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG ${OLLAMA_BUILD_DIR}
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE ${OLLAMA_BUILD_DIR}
+)
+
+target_include_directories(llama-server PRIVATE
+    ${LLAMA_SERVER_SRC_DIR}
+    ${CMAKE_CURRENT_BINARY_DIR}/llama-server-assets
+    ${LLAMA_MTMD_DIR}
+    ${LLAMA_SERVER_DIR}/include
+    ${LLAMA_SERVER_DIR}
+)
+target_link_libraries(llama-server PRIVATE
+    llama-common
+    llama-mtmd
+    Threads::Threads
+)
+if(WIN32)
+    target_link_libraries(llama-server PRIVATE ws2_32)
+endif()
+target_compile_features(llama-server PRIVATE cxx_std_17)
+
+install(TARGETS llama-server
+    RUNTIME DESTINATION lib/ollama COMPONENT llama-server
+)
+

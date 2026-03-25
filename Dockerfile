@@ -42,10 +42,14 @@ RUN dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++
 ENV PATH=/opt/rh/gcc-toolset-11/root/usr/bin:$PATH
 COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+COPY llama/llama.cpp llama/llama.cpp
+COPY llama/build-info.cpp llama/build-info.cpp
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'CPU' \
         && cmake --build --preset 'CPU' -- -l $(nproc) \
-        && cmake --install build --component CPU --strip
+        && cmake --build --preset 'llama-server' -- -l $(nproc) \
+        && cmake --install build --component CPU --strip \
+        && cmake --install build --component llama-server --strip
 
 FROM base AS cuda-11
 ARG CUDA11VERSION=11.8
@@ -53,6 +57,8 @@ RUN dnf install -y cuda-toolkit-${CUDA11VERSION//./-}
 ENV PATH=/usr/local/cuda-11/bin:$PATH
 COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+COPY llama/llama.cpp llama/llama.cpp
+COPY llama/build-info.cpp llama/build-info.cpp
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'CUDA 11' \
         && cmake --build --preset 'CUDA 11' -- -l $(nproc) \
@@ -64,6 +70,8 @@ RUN dnf install -y cuda-toolkit-${CUDA12VERSION//./-}
 ENV PATH=/usr/local/cuda-12/bin:$PATH
 COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+COPY llama/llama.cpp llama/llama.cpp
+COPY llama/build-info.cpp llama/build-info.cpp
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'CUDA 12' \
         && cmake --build --preset 'CUDA 12' -- -l $(nproc) \
@@ -76,6 +84,8 @@ RUN dnf install -y cuda-toolkit-${CUDA13VERSION//./-}
 ENV PATH=/usr/local/cuda-13/bin:$PATH
 COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+COPY llama/llama.cpp llama/llama.cpp
+COPY llama/build-info.cpp llama/build-info.cpp
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'CUDA 13' \
         && cmake --build --preset 'CUDA 13' -- -l $(nproc) \
@@ -86,6 +96,8 @@ FROM base AS rocm-7
 ENV PATH=/opt/rocm/hcc/bin:/opt/rocm/hip/bin:/opt/rocm/bin:/opt/rocm/hcc/bin:$PATH
 COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+COPY llama/llama.cpp llama/llama.cpp
+COPY llama/build-info.cpp llama/build-info.cpp
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'ROCm 7' \
         && cmake --build --preset 'ROCm 7' -- -l $(nproc) \
@@ -103,6 +115,8 @@ RUN apt-get update && apt-get install -y curl ccache unzip \
 ENV CMAKE_GENERATOR=Ninja
 COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+COPY llama/llama.cpp llama/llama.cpp
+COPY llama/build-info.cpp llama/build-info.cpp
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'JetPack 5' \
         && cmake --build --preset 'JetPack 5' -- -l $(nproc) \
@@ -119,6 +133,8 @@ RUN apt-get update && apt-get install -y curl ccache unzip \
 ENV CMAKE_GENERATOR=Ninja
 COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+COPY llama/llama.cpp llama/llama.cpp
+COPY llama/build-info.cpp llama/build-info.cpp
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'JetPack 6' \
         && cmake --build --preset 'JetPack 6' -- -l $(nproc) \
@@ -137,6 +153,8 @@ RUN ln -s /usr/bin/python3 /usr/bin/python \
     && rm -rf /tmp/${VULKANVERSION} /tmp/vulkansdk.tar.xz
 COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+COPY llama/llama.cpp llama/llama.cpp
+COPY llama/build-info.cpp llama/build-info.cpp
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'Vulkan' \
         && cmake --build --preset 'Vulkan' -- -l $(nproc) \

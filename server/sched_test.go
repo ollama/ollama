@@ -834,6 +834,140 @@ func TestSchedAlreadyCanceled(t *testing.T) {
 	require.Empty(t, scenario1a.req.successCh)
 }
 
+// hasLlamaServerRunner is a test helper that checks if any loaded runner is a llama-server runner.
+func hasLlamaServerRunner(s *Scheduler) bool {
+	s.loadedMu.Lock()
+	defer s.loadedMu.Unlock()
+	for _, r := range s.loaded {
+		if r.llama != nil && llm.IsLlamaServerRunner(r.llama) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestSchedHasLlamaServerRunner(t *testing.T) {
+	ctx, done := context.WithCancel(t.Context())
+	defer done()
+	s := InitScheduler(ctx)
+
+	// Empty scheduler — no llama-server runner
+	require.False(t, hasLlamaServerRunner(s))
+
+	// Add a regular (non-llama-server) runner
+	s.loadedMu.Lock()
+	s.loaded["regular-model"] = &runnerRef{
+		llama: &mockLlm{modelPath: "regular"},
+	}
+	s.loadedMu.Unlock()
+	require.False(t, hasLlamaServerRunner(s))
+
+	// Add a llama-server runner
+	s.loadedMu.Lock()
+	s.loaded["llama-server-model"] = &runnerRef{
+		llama: llm.NewStubLlamaServerRunner("/tmp/model.gguf"),
+	}
+	s.loadedMu.Unlock()
+	require.True(t, hasLlamaServerRunner(s))
+}
+
+func TestSchedLlamaServerEvictsWhenVRAMInsufficient(t *testing.T) {
+	// When a llama-server model is predicted to exceed available VRAM,
+	// the scheduler should signal eviction before spawning
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+	// GPU with very little free memory — the model won't fit
+	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
+		g.TotalMemory = 24 * format.GigaByte
+		g.FreeMemory = 0 // no free VRAM — forces eviction
+		return []ml.DeviceInfo{g}
+	}
+	s.getSystemInfoFn = getSystemInfoFn
+
+	// Pre-load a regular model
+	s.loadedMu.Lock()
+	s.loaded["existing-model"] = &runnerRef{
+		llama:    &mockLlm{modelPath: "existing"},
+		modelKey: "existing-model",
+	}
+	s.loadedMu.Unlock()
+
+	// Create a request — the model file + KV cache will exceed 100 MiB
+	scenario := newScenarioRequest(t, ctx, "llama-server-model", 1*format.GigaByte, nil, nil)
+
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+		return llm.NewStubLlamaServerRunner(model), nil
+	}
+
+	systemInfo := getSystemInfoFn()
+	gpus := s.getGpuFn(ctx, nil)
+
+	needEvict := s.load(scenario.req, systemInfo, gpus, true)
+	require.True(t, needEvict, "expected eviction when predicted VRAM exceeds free memory")
+}
+
+func TestSchedLlamaServerFitsAlongside(t *testing.T) {
+	// When a llama-server model is predicted to fit in remaining VRAM,
+	// it should load without evicting existing models
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+	// GPU with plenty of free memory
+	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
+		g.TotalMemory = 24 * format.GigaByte
+		g.FreeMemory = 20 * format.GigaByte
+		return []ml.DeviceInfo{g}
+	}
+	s.getSystemInfoFn = getSystemInfoFn
+
+	// Pre-load a regular model
+	s.loadedMu.Lock()
+	s.loaded["existing-model"] = &runnerRef{
+		llama:    &mockLlm{modelPath: "existing"},
+		modelKey: "existing-model",
+	}
+	s.loadedMu.Unlock()
+
+	// The test model GGUF is tiny (~64 bytes) — should easily fit in 20 GiB
+	scenario := newScenarioRequest(t, ctx, "small-llama-server", 1*format.GigaByte, nil, nil)
+
+	s.newServerFn = scenario.newServer
+
+	systemInfo := getSystemInfoFn()
+	gpus := s.getGpuFn(ctx, nil)
+
+	// Should NOT evict — model fits alongside existing
+	needEvict := s.load(scenario.req, systemInfo, gpus, true)
+	require.False(t, needEvict, "expected no eviction when model fits in available VRAM")
+}
+
+func TestSchedLlamaServerEvictsExistingOnPending(t *testing.T) {
+	// When a llama-server runner is already loaded and a new model is requested,
+	// the scheduler should evict the llama-server runner
+	ctx, done := context.WithCancel(t.Context())
+	defer done()
+	s := InitScheduler(ctx)
+
+	// Load a llama-server runner
+	s.loadedMu.Lock()
+	s.loaded["llama-model"] = &runnerRef{
+		llama:    llm.NewStubLlamaServerRunner("/tmp/model.gguf"),
+		modelKey: "llama-model",
+	}
+	s.loadedMu.Unlock()
+
+	require.True(t, hasLlamaServerRunner(s))
+
+	// The findRunnerToUnload should find and return the llama-server runner
+	runner := s.findRunnerToUnload()
+	require.NotNil(t, runner)
+}
+
 type mockLlm struct {
 	modelPath         string
 	pingResp          error
