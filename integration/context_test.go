@@ -13,15 +13,19 @@ import (
 )
 
 func TestLongInputContext(t *testing.T) {
-	// Setting NUM_PARALLEL to 1 ensures the allocated context is exactly what
-	// we asked for and there is nothing extra that we could spill over into
+	// Verify that llama-server returns a clear error when the prompt exceeds
+	// the context size. The old CGO engine silently truncated oversized
+	// prompts; llama-server correctly rejects them with a 400 so the caller
+	// knows the prompt didn’t fit rather than getting silently degraded output.
 	t.Setenv("OLLAMA_NUM_PARALLEL", "1")
 
-	// Longer needed for small footprint GPUs
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	// Set up the test data
-	req := api.ChatRequest{
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+	pullOrSkip(ctx, t, client, smol)
+
+	err := client.Chat(ctx, &api.ChatRequest{
 		Model: smol,
 		Messages: []api.Message{
 			{
@@ -35,11 +39,14 @@ func TestLongInputContext(t *testing.T) {
 			"seed":        123,
 			"num_ctx":     128,
 		},
+	}, func(resp api.ChatResponse) error {
+		t.Fatal("received tokens despite prompt exceeding context size")
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected error when prompt exceeds context, got nil")
 	}
-	client, _, cleanup := InitServerConnection(ctx, t)
-	defer cleanup()
-	pullOrSkip(ctx, t, client, req.Model)
-	DoChat(ctx, t, client, req, []string{"russia", "german", "france", "england", "austria", "prussia", "europe", "individuals", "coalition", "conflict"}, 120*time.Second, 10*time.Second)
+	slog.Info("correctly rejected oversized prompt", "error", err)
 }
 
 func TestContextExhaustion(t *testing.T) {

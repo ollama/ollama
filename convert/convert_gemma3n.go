@@ -23,7 +23,7 @@ type gemma3nModel struct {
 		HeadDim                   uint32    `json:"head_dim"`
 		HiddenSize                uint32    `json:"hidden_size"`
 		HiddenSizePerLayerInput   uint32    `json:"hidden_size_per_layer_input"`
-		IntermediateSize          uint32    `json:"intermediate_size"`
+		IntermediateSize          any       `json:"intermediate_size"`
 		MaxPositionEmbeddings     uint32    `json:"max_position_embeddings"`
 		NumAttentionHeads         uint32    `json:"num_attention_heads"`
 		NumHiddenLayers           uint32    `json:"num_hidden_layers"`
@@ -36,6 +36,15 @@ type gemma3nModel struct {
 		LayerTypes                []string  `json:"layer_types"`
 	} `json:"text_config"`
 	VisionModel struct{} `json:"vision_config"`
+}
+
+// VocabSize returns the base vocabulary size (262144), excluding the 256
+// image/multimodal tokens that gemma3n's tokenizer.json includes (262400 total).
+// The text model's per_layer_token_embd only covers the base 262144 tokens.
+// The upstream Python converter achieves this by reading from tokenizer.model
+// (SentencePiece, 262144 tokens) instead of tokenizer.json (262400 tokens).
+func (m *gemma3nModel) VocabSize() int {
+	return 262144
 }
 
 func (m *gemma3nModel) KV(t *Tokenizer) KV {
@@ -69,10 +78,46 @@ func (m *gemma3nModel) KV(t *Tokenizer) KV {
 	kv["gemma3n.context_length"] = m.TextModel.MaxPositionEmbeddings
 	kv["gemma3n.embedding_length_per_layer_input"] = m.TextModel.HiddenSizePerLayerInput
 	kv["gemma3n.embedding_length"] = m.TextModel.HiddenSize
-	kv["gemma3n.feed_forward_length"] = m.TextModel.IntermediateSize
+	// IntermediateSize may be a scalar or per-layer array
+	switch v := m.TextModel.IntermediateSize.(type) {
+	case []any:
+		ff := make([]int32, len(v))
+		for i, val := range v {
+			ff[i] = int32(val.(float64))
+		}
+		kv["gemma3n.feed_forward_length"] = ff
+	case float64:
+		kv["gemma3n.feed_forward_length"] = uint32(v)
+	}
 	kv["gemma3n.head_dim"] = m.TextModel.HeadDim
 	kv["gemma3n.rope.freq_base_local"] = m.TextModel.RopeLocalBaseFreq
 	kv["gemma3n.rope.freq_base"] = m.TextModel.RopeTheta
+
+	// Ensure <end_of_turn> (token 106) is always in the EOS list for gemma3n.
+	// Upstream HF configs are inconsistent: e4b/generation_config.json has
+	// eos_token_id=[1, 106] but e2b's has just eos_token_id=1. Without 106 in
+	// the stop-token set, instruction-tuned gemma3n models don't halt after the
+	// assistant turn and produce gibberish (Spring XML, pattern loops). The
+	// gemma3n chat template always uses <end_of_turn> as the turn terminator
+	// regardless of which size, so 106 is always a valid stop for this arch.
+	eosIDs := []int32{1, 106}
+	if existing, ok := kv["tokenizer.ggml.eos_token_ids"]; ok {
+		if arr, ok := existing.([]int32); ok {
+			seen := make(map[int32]bool, len(arr))
+			for _, id := range arr {
+				seen[id] = true
+			}
+			for _, id := range eosIDs {
+				if !seen[id] {
+					arr = append(arr, id)
+				}
+			}
+			kv["tokenizer.ggml.eos_token_ids"] = arr
+		}
+	} else {
+		kv["tokenizer.ggml.eos_token_ids"] = eosIDs
+	}
+
 	return kv
 }
 
@@ -81,6 +126,16 @@ func (m *gemma3nModel) Tensors(ts []Tensor) []*ggml.Tensor {
 		merge{"altup_proj.*.weight", "altup_proj.weight"},
 		merge{"altup_unembd_proj.*.weight", "altup_unembd_proj.weight"},
 	)
+
+	// Find the per_layer_token_embd size to use as the authoritative vocab size.
+	// The token_embd may be padded for GPU alignment and needs truncation to match.
+	var vocabSize uint64
+	for _, t := range ts {
+		if t.Name() == "per_layer_token_embd.weight" && len(t.Shape()) >= 2 {
+			vocabSize = t.Shape()[0]
+			break
+		}
+	}
 
 	for _, t := range ts {
 		switch {
@@ -115,12 +170,25 @@ func (m *gemma3nModel) Tensors(ts []Tensor) []*ggml.Tensor {
 			}
 		}
 
-		out = append(out, &ggml.Tensor{
+		gt := &ggml.Tensor{
 			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),
 			WriterTo: t,
-		})
+		}
+
+		// Truncate token_embd to match per_layer_token_embd vocab size
+		// (removes HF GPU alignment padding)
+		if t.Name() == "token_embd.weight" && vocabSize > 0 && len(gt.Shape) >= 2 && gt.Shape[0] > vocabSize {
+			embdDim := gt.Shape[1]
+			gt.Shape = slices.Clone(gt.Shape)
+			gt.Shape[0] = vocabSize
+			t.SetRepacker(func(_ string, data []float32, _ []uint64) ([]float32, error) {
+				return data[:vocabSize*embdDim], nil
+			})
+		}
+
+		out = append(out, gt)
 	}
 
 	return out
