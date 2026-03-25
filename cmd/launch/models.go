@@ -485,10 +485,10 @@ func lowContextLength(ctx context.Context, client *api.Client, models []string) 
 				fmt.Fprintf(os.Stderr, "Consider using an official model and increase the context length to %d in Ollama App Settings.\n\n", recommendedContextLength)
 			} else {
 				if runtime.GOOS == "windows" {
-				fmt.Fprintf(os.Stderr, "Increase it in Ollama App Settings or with $env:OLLAMA_CONTEXT_LENGTH=%d; ollama serve\n\n", recommendedContextLength)
-			} else {
-				fmt.Fprintf(os.Stderr, "Increase it in Ollama App Settings or with OLLAMA_CONTEXT_LENGTH=%d ollama serve\n\n", recommendedContextLength)
-			}
+					fmt.Fprintf(os.Stderr, "Increase it in Ollama App Settings or with $env:OLLAMA_CONTEXT_LENGTH=%d; ollama serve\n\n", recommendedContextLength)
+				} else {
+					fmt.Fprintf(os.Stderr, "Increase it in Ollama App Settings or with OLLAMA_CONTEXT_LENGTH=%d ollama serve\n\n", recommendedContextLength)
+				}
 			}
 			return nil
 		}
