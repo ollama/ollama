@@ -496,7 +496,7 @@ func lowContextLength(ctx context.Context, client *api.Client, models []string) 
 	return nil
 }
 
-// parseNumCtxFromParameters extracts num_ctx from the Show response Parameters string.
+// parseNumCtx extracts num_ctx from the Show response Parameters string.
 func parseNumCtx(parameters string) int {
 	for _, line := range strings.Split(parameters, "\n") {
 		fields := strings.Fields(line)
