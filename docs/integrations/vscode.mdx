@@ -2,7 +2,12 @@
 title: VS Code
 ---
 
-VS Code includes built-in AI chat through GitHub Copilot Chat. Ollama models can be used directly in the Copilot Chat model picker, enabling you to use models such as `qwen3.5`, `glm-5:cloud`, `kimi-k2.5:cloud`.
+VS Code includes built-in AI chat through GitHub Copilot Chat. Ollama models can be used directly in the Copilot Chat model picker.
+
+
+![VS Code with Ollama](/images/vscode.png)
+
+
 
 ## Install
 
@@ -18,22 +23,14 @@ Install [VS Code](https://code.visualstudio.com/download) (version **1.113** or 
 ollama launch vscode
 ```
 
+Recommended models will be shown after running the command. See the latest models at [ollama.com](https://ollama.com/search?c=tools).
+
 ### Run directly with a model
 
 ```shell
-ollama launch vscode --model qwen3
+ollama launch vscode --model qwen3.5:cloud
 ```
-
-## Recommended Models
-
-- `kimi-k2.5:cloud`
-- `glm-5:cloud`
-- `minimax-m2.7:cloud`
-- `qwen3.5:cloud`
-- `glm-4.7-flash`
-- `qwen3.5`
-
-Cloud models are also available at [ollama.com/search?c=cloud](https://ollama.com/search?c=cloud).
+Cloud models are also available at [ollama.com](https://ollama.com/search?c=cloud).
 
 ## Manual setup
 
@@ -45,6 +42,7 @@ To configure Ollama manually without `ollama launch`:
        src="/images/vscode-sidebar.png"
        alt="VS Code chat Sidebar"
        width="75%"
+       style={{ borderRadius: "4px" }}
      />
    </div>
 2. Click the **settings gear icon** (<Icon icon="gear" />) to bring up the Language Models window
@@ -53,6 +51,7 @@ To configure Ollama manually without `ollama launch`:
        src="/images/vscode-other-models.png"
        alt="VS Code model picker"
        width="75%"
+       style={{ borderRadius: "4px" }}
      />
    </div>
 3. Click **Add Models** and select **Ollama** to load all your Ollama models into VS Code
@@ -61,5 +60,6 @@ To configure Ollama manually without `ollama launch`:
        src="/images/vscode-add-ollama.png"
        alt="VS Code model options dropdown to add ollama models"
        width="75%"
+       style={{ borderRadius: "4px" }}
      />
    </div>
