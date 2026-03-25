@@ -310,7 +310,7 @@ func names(items []ModelItem) []string {
 func TestBuildModelList_NoExistingModels(t *testing.T) {
 	items, _, _, _ := buildModelList(nil, nil, "")
 
-	want := []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5:cloud", "minimax-m2.5:cloud", "glm-4.7-flash", "qwen3.5"}
+	want := []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5:cloud", "minimax-m2.7:cloud", "glm-4.7-flash", "qwen3.5"}
 	if diff := cmp.Diff(want, names(items)); diff != "" {
 		t.Errorf("with no existing models, items should be recommended in order (-want +got):\n%s", diff)
 	}
@@ -338,7 +338,7 @@ func TestBuildModelList_OnlyLocalModels_CloudRecsAtBottom(t *testing.T) {
 	got := names(items)
 
 	// Recommended pinned at top (local recs first, then cloud recs when only-local), then installed non-recs
-	want := []string{"glm-4.7-flash", "qwen3.5", "kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5:cloud", "minimax-m2.5:cloud", "llama3.2", "qwen2.5"}
+	want := []string{"glm-4.7-flash", "qwen3.5", "kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5:cloud", "minimax-m2.7:cloud", "llama3.2", "qwen2.5"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("recs pinned at top, local recs before cloud recs (-want +got):\n%s", diff)
 	}
@@ -354,7 +354,7 @@ func TestBuildModelList_BothCloudAndLocal_RegularSort(t *testing.T) {
 	got := names(items)
 
 	// All recs pinned at top (cloud before local in mixed case), then non-recs
-	want := []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5:cloud", "minimax-m2.5:cloud", "glm-4.7-flash", "qwen3.5", "llama3.2"}
+	want := []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5:cloud", "minimax-m2.7:cloud", "glm-4.7-flash", "qwen3.5", "llama3.2"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("recs pinned at top, cloud recs first in mixed case (-want +got):\n%s", diff)
 	}
@@ -392,7 +392,7 @@ func TestBuildModelList_ExistingRecommendedMarked(t *testing.T) {
 			if !strings.HasSuffix(item.Description, "(not downloaded)") {
 				t.Errorf("non-installed recommended %q should have '(not downloaded)' suffix, got %q", item.Name, item.Description)
 			}
-		case "minimax-m2.5:cloud", "kimi-k2.5:cloud", "qwen3.5:cloud":
+		case "minimax-m2.7:cloud", "kimi-k2.5:cloud", "qwen3.5:cloud":
 			if strings.HasSuffix(item.Description, "(not downloaded)") {
 				t.Errorf("cloud model %q should not have '(not downloaded)' suffix, got %q", item.Name, item.Description)
 			}
@@ -412,7 +412,7 @@ func TestBuildModelList_ExistingCloudModelsNotPushedToBottom(t *testing.T) {
 	// glm-4.7-flash and glm-5:cloud are installed so they sort normally;
 	// kimi-k2.5:cloud, qwen3.5:cloud, and qwen3.5 are not installed so they go to the bottom
 	// All recs: cloud first in mixed case, then local, in rec order within each
-	want := []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5:cloud", "minimax-m2.5:cloud", "glm-4.7-flash", "qwen3.5"}
+	want := []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5:cloud", "minimax-m2.7:cloud", "glm-4.7-flash", "qwen3.5"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("all recs, cloud first in mixed case (-want +got):\n%s", diff)
 	}
@@ -430,7 +430,7 @@ func TestBuildModelList_HasRecommendedCloudModel_OnlyNonInstalledAtBottom(t *tes
 	// kimi-k2.5:cloud is installed so it sorts normally;
 	// the rest of the recommendations are not installed so they go to the bottom
 	// All recs pinned at top (cloud first in mixed case), then non-recs
-	want := []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5:cloud", "minimax-m2.5:cloud", "glm-4.7-flash", "qwen3.5", "llama3.2"}
+	want := []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5:cloud", "minimax-m2.7:cloud", "glm-4.7-flash", "qwen3.5", "llama3.2"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("recs pinned at top, cloud first in mixed case (-want +got):\n%s", diff)
 	}
@@ -583,7 +583,7 @@ func TestBuildModelList_RecsAboveNonRecs(t *testing.T) {
 	lastRecIdx := -1
 	firstNonRecIdx := len(got)
 	for i, name := range got {
-		isRec := name == "glm-4.7-flash" || name == "qwen3.5" || name == "minimax-m2.5:cloud" || name == "glm-5:cloud" || name == "kimi-k2.5:cloud" || name == "qwen3.5:cloud"
+		isRec := name == "glm-4.7-flash" || name == "qwen3.5" || name == "minimax-m2.7:cloud" || name == "glm-5:cloud" || name == "kimi-k2.5:cloud" || name == "qwen3.5:cloud"
 		if isRec && i > lastRecIdx {
 			lastRecIdx = i
 		}

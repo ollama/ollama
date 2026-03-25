@@ -14,6 +14,9 @@ import (
 )
 
 func TestImageGeneration(t *testing.T) {
+	if testModel != "" {
+		t.Skip("uses hardcoded models, not applicable with model override")
+	}
 	skipUnderMinVRAM(t, 8)
 
 	type testCase struct {
@@ -41,12 +44,8 @@ func TestImageGeneration(t *testing.T) {
 			defer cleanup()
 
 			// Pull both models
-			if err := PullIfMissing(ctx, client, tc.imageGenModel); err != nil {
-				t.Fatalf("failed to pull image gen model: %v", err)
-			}
-			if err := PullIfMissing(ctx, client, tc.visionModel); err != nil {
-				t.Fatalf("failed to pull vision model: %v", err)
-			}
+			pullOrSkip(ctx, t, client, tc.imageGenModel)
+			pullOrSkip(ctx, t, client, tc.visionModel)
 
 			// Generate the image
 			t.Logf("Generating image with prompt: %s", tc.prompt)

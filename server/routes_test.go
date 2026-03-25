@@ -721,6 +721,111 @@ func TestShow(t *testing.T) {
 	}
 }
 
+func TestShowCopilotUserAgentOverwritesExistingBasename(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	var s Server
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:      "show-model",
+		From:       "bob",
+		RemoteHost: "https://ollama.com",
+		Info: map[string]any{
+			"model_family": "gptoss",
+			"base_name":    "upstream-base-name",
+		},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200 creating model, actual %d", w.Code)
+	}
+
+	h, err := s.GenerateRoutes(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	makeRequest := func(userAgent string) api.ShowResponse {
+		t.Helper()
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/show", strings.NewReader(`{"model":"show-model"}`))
+		req.Header.Set("Content-Type", "application/json")
+		if userAgent != "" {
+			req.Header.Set("User-Agent", userAgent)
+		}
+		h.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status code 200, actual %d", w.Code)
+		}
+
+		var resp api.ShowResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	withoutCopilot := makeRequest("")
+	if withoutCopilot.ModelInfo["general.basename"] != "upstream-base-name" {
+		t.Fatalf("expected general.basename to be %q, got %v", "upstream-base-name", withoutCopilot.ModelInfo["general.basename"])
+	}
+
+	withCopilot := makeRequest("GitHubCopilotChat/0.41.1")
+	if withCopilot.ModelInfo["general.basename"] != "show-model" {
+		t.Fatalf("expected general.basename to be %q, got %v", "show-model", withCopilot.ModelInfo["general.basename"])
+	}
+
+	if withCopilot.ModelInfo["general.architecture"] != "gptoss" {
+		t.Fatalf("expected general.architecture to be %q, got %v", "gptoss", withCopilot.ModelInfo["general.architecture"])
+	}
+}
+
+func TestShowCopilotUserAgentSetsBasenameWhenModelInfoIsEmpty(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	var s Server
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:      "show-remote",
+		From:       "bob",
+		RemoteHost: "https://ollama.com",
+		Stream:     &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200 creating model, actual %d", w.Code)
+	}
+
+	h, err := s.GenerateRoutes(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/show", strings.NewReader(`{"model":"show-remote"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "GitHubCopilotChat/0.41.1")
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	var resp api.ShowResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.ModelInfo["general.basename"] != "show-remote" {
+		t.Fatalf("expected general.basename to be %q, got %v", "show-remote", resp.ModelInfo["general.basename"])
+	}
+
+	if len(resp.ModelInfo) != 1 {
+		t.Fatalf("expected model_info to contain only general.basename, got %#v", resp.ModelInfo)
+	}
+}
+
 func TestNormalize(t *testing.T) {
 	type testCase struct {
 		input       []float32

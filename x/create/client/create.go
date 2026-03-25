@@ -109,7 +109,7 @@ func ConfigFromModelfile(modelfile *parser.Modelfile) (string, *ModelfileConfig,
 type CreateOptions struct {
 	ModelName string
 	ModelDir  string
-	Quantize  string           // "int4", "int8", "nvfp4", or "mxfp8" for quantization
+	Quantize  string           // "int4", "int8", "nvfp4", "mxfp4", or "mxfp8" for quantization
 	Modelfile *ModelfileConfig // template/system/license/parser/renderer/parameters from Modelfile
 }
 
@@ -280,7 +280,7 @@ func newPackedTensorLayerCreator() create.PackedTensorLayerCreator {
 			if !QuantizeSupported() {
 				return create.LayerInfo{}, fmt.Errorf("quantization requires MLX support")
 			}
-			blobData, err := quantizePackedGroup(tensors)
+			blobData, err := quantizePackedGroup(groupName, tensors)
 			if err != nil {
 				return create.LayerInfo{}, fmt.Errorf("failed to quantize packed group %s: %w", groupName, err)
 			}

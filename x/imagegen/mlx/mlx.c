@@ -165,8 +165,8 @@ int (*mlx_distributed_sum_scatter_ptr)(mlx_array* res, const mlx_array x, const 
 int (*mlx_distributed_group_rank_ptr)(mlx_distributed_group group) = NULL;
 int (*mlx_distributed_group_size_ptr)(mlx_distributed_group group) = NULL;
 mlx_distributed_group (*mlx_distributed_group_split_ptr)(mlx_distributed_group group, int color, int key) = NULL;
-bool (*mlx_distributed_is_available_ptr)(void) = NULL;
-mlx_distributed_group (*mlx_distributed_init_ptr)(bool strict) = NULL;
+bool (*mlx_distributed_is_available_ptr)(const char* bk) = NULL;
+mlx_distributed_group (*mlx_distributed_init_ptr)(bool strict, const char* bk) = NULL;
 void (*mlx_set_error_handler_ptr)(mlx_error_handler_func handler, void* data, void (*dtor)(void*)) = NULL;
 void (*_mlx_error_ptr)(const char* file, const int line, const char* fmt, ...) = NULL;
 int (*mlx_export_function_ptr)(const char* file, const mlx_closure fun, const mlx_vector_array args, bool shapeless) = NULL;
@@ -319,10 +319,12 @@ int (*mlx_astype_ptr)(mlx_array* res, const mlx_array a, mlx_dtype dtype, const 
 int (*mlx_atleast_1d_ptr)(mlx_array* res, const mlx_array a, const mlx_stream s) = NULL;
 int (*mlx_atleast_2d_ptr)(mlx_array* res, const mlx_array a, const mlx_stream s) = NULL;
 int (*mlx_atleast_3d_ptr)(mlx_array* res, const mlx_array a, const mlx_stream s) = NULL;
+int (*mlx_bartlett_ptr)(mlx_array* res, int M, const mlx_stream s) = NULL;
 int (*mlx_bitwise_and_ptr)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s) = NULL;
 int (*mlx_bitwise_invert_ptr)(mlx_array* res, const mlx_array a, const mlx_stream s) = NULL;
 int (*mlx_bitwise_or_ptr)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s) = NULL;
 int (*mlx_bitwise_xor_ptr)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s) = NULL;
+int (*mlx_blackman_ptr)(mlx_array* res, int M, const mlx_stream s) = NULL;
 int (*mlx_block_masked_mm_ptr)(mlx_array* res, const mlx_array a, const mlx_array b, int block_size, const mlx_array mask_out , const mlx_array mask_lhs , const mlx_array mask_rhs , const mlx_stream s) = NULL;
 int (*mlx_broadcast_arrays_ptr)(mlx_vector_array* res, const mlx_vector_array inputs, const mlx_stream s) = NULL;
 int (*mlx_broadcast_to_ptr)(mlx_array* res, const mlx_array a, const int* shape, size_t shape_num, const mlx_stream s) = NULL;
@@ -348,7 +350,7 @@ int (*mlx_cumprod_ptr)(mlx_array* res, const mlx_array a, int axis, bool reverse
 int (*mlx_cumsum_ptr)(mlx_array* res, const mlx_array a, int axis, bool reverse, bool inclusive, const mlx_stream s) = NULL;
 int (*mlx_degrees_ptr)(mlx_array* res, const mlx_array a, const mlx_stream s) = NULL;
 int (*mlx_depends_ptr)(mlx_vector_array* res, const mlx_vector_array inputs, const mlx_vector_array dependencies) = NULL;
-int (*mlx_dequantize_ptr)(mlx_array* res, const mlx_array w, const mlx_array scales, const mlx_array biases , mlx_optional_int group_size, mlx_optional_int bits, const char* mode, mlx_optional_dtype dtype, const mlx_stream s) = NULL;
+int (*mlx_dequantize_ptr)(mlx_array* res, const mlx_array w, const mlx_array scales, const mlx_array biases , mlx_optional_int group_size, mlx_optional_int bits, const char* mode, const mlx_array global_scale , mlx_optional_dtype dtype, const mlx_stream s) = NULL;
 int (*mlx_diag_ptr)(mlx_array* res, const mlx_array a, int k, const mlx_stream s) = NULL;
 int (*mlx_diagonal_ptr)(mlx_array* res, const mlx_array a, int offset, int axis1, int axis2, const mlx_stream s) = NULL;
 int (*mlx_divide_ptr)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s) = NULL;
@@ -375,6 +377,8 @@ int (*mlx_gather_qmm_ptr)(mlx_array* res, const mlx_array x, const mlx_array w, 
 int (*mlx_greater_ptr)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s) = NULL;
 int (*mlx_greater_equal_ptr)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s) = NULL;
 int (*mlx_hadamard_transform_ptr)(mlx_array* res, const mlx_array a, mlx_optional_float scale, const mlx_stream s) = NULL;
+int (*mlx_hamming_ptr)(mlx_array* res, int M, const mlx_stream s) = NULL;
+int (*mlx_hanning_ptr)(mlx_array* res, int M, const mlx_stream s) = NULL;
 int (*mlx_identity_ptr)(mlx_array* res, int n, mlx_dtype dtype, const mlx_stream s) = NULL;
 int (*mlx_imag_ptr)(mlx_array* res, const mlx_array a, const mlx_stream s) = NULL;
 int (*mlx_inner_ptr)(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s) = NULL;
@@ -434,8 +438,8 @@ int (*mlx_prod_axes_ptr)(mlx_array* res, const mlx_array a, const int* axes, siz
 int (*mlx_prod_axis_ptr)(mlx_array* res, const mlx_array a, int axis, bool keepdims, const mlx_stream s) = NULL;
 int (*mlx_prod_ptr)(mlx_array* res, const mlx_array a, bool keepdims, const mlx_stream s) = NULL;
 int (*mlx_put_along_axis_ptr)(mlx_array* res, const mlx_array a, const mlx_array indices, const mlx_array values, int axis, const mlx_stream s) = NULL;
-int (*mlx_qqmm_ptr)(mlx_array* res, const mlx_array x, const mlx_array w, const mlx_array w_scales , mlx_optional_int group_size, mlx_optional_int bits, const char* mode, const mlx_stream s) = NULL;
-int (*mlx_quantize_ptr)(mlx_vector_array* res, const mlx_array w, mlx_optional_int group_size, mlx_optional_int bits, const char* mode, const mlx_stream s) = NULL;
+int (*mlx_qqmm_ptr)(mlx_array* res, const mlx_array x, const mlx_array w, const mlx_array w_scales , mlx_optional_int group_size, mlx_optional_int bits, const char* mode, const mlx_array global_scale_x , const mlx_array global_scale_w , const mlx_stream s) = NULL;
+int (*mlx_quantize_ptr)(mlx_vector_array* res, const mlx_array w, mlx_optional_int group_size, mlx_optional_int bits, const char* mode, const mlx_array global_scale , const mlx_stream s) = NULL;
 int (*mlx_quantized_matmul_ptr)(mlx_array* res, const mlx_array x, const mlx_array w, const mlx_array scales, const mlx_array biases , bool transpose, mlx_optional_int group_size, mlx_optional_int bits, const char* mode, const mlx_stream s) = NULL;
 int (*mlx_radians_ptr)(mlx_array* res, const mlx_array a, const mlx_stream s) = NULL;
 int (*mlx_real_ptr)(mlx_array* res, const mlx_array a, const mlx_stream s) = NULL;
@@ -2101,6 +2105,11 @@ int mlx_load_functions(void* handle) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_atleast_3d\n");
         return -1;
     }
+    mlx_bartlett_ptr = GET_SYM(handle, "mlx_bartlett");
+    if (mlx_bartlett_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_bartlett\n");
+        return -1;
+    }
     mlx_bitwise_and_ptr = GET_SYM(handle, "mlx_bitwise_and");
     if (mlx_bitwise_and_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_bitwise_and\n");
@@ -2119,6 +2128,11 @@ int mlx_load_functions(void* handle) {
     mlx_bitwise_xor_ptr = GET_SYM(handle, "mlx_bitwise_xor");
     if (mlx_bitwise_xor_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_bitwise_xor\n");
+        return -1;
+    }
+    mlx_blackman_ptr = GET_SYM(handle, "mlx_blackman");
+    if (mlx_blackman_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_blackman\n");
         return -1;
     }
     mlx_block_masked_mm_ptr = GET_SYM(handle, "mlx_block_masked_mm");
@@ -2379,6 +2393,16 @@ int mlx_load_functions(void* handle) {
     mlx_hadamard_transform_ptr = GET_SYM(handle, "mlx_hadamard_transform");
     if (mlx_hadamard_transform_ptr == NULL) {
         fprintf(stderr, "MLX: Failed to load symbol: mlx_hadamard_transform\n");
+        return -1;
+    }
+    mlx_hamming_ptr = GET_SYM(handle, "mlx_hamming");
+    if (mlx_hamming_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_hamming\n");
+        return -1;
+    }
+    mlx_hanning_ptr = GET_SYM(handle, "mlx_hanning");
+    if (mlx_hanning_ptr == NULL) {
+        fprintf(stderr, "MLX: Failed to load symbol: mlx_hanning\n");
         return -1;
     }
     mlx_identity_ptr = GET_SYM(handle, "mlx_identity");
@@ -4132,12 +4156,12 @@ mlx_distributed_group mlx_distributed_group_split(mlx_distributed_group group, i
     return mlx_distributed_group_split_ptr(group, color, key);
 }
 
-bool mlx_distributed_is_available(void) {
-    return mlx_distributed_is_available_ptr();
+bool mlx_distributed_is_available(const char* bk) {
+    return mlx_distributed_is_available_ptr(bk);
 }
 
-mlx_distributed_group mlx_distributed_init(bool strict) {
-    return mlx_distributed_init_ptr(strict);
+mlx_distributed_group mlx_distributed_init(bool strict, const char* bk) {
+    return mlx_distributed_init_ptr(strict, bk);
 }
 
 void mlx_set_error_handler(mlx_error_handler_func handler, void* data, void (*dtor)(void*)) {
@@ -4748,6 +4772,10 @@ int mlx_atleast_3d(mlx_array* res, const mlx_array a, const mlx_stream s) {
     return mlx_atleast_3d_ptr(res, a, s);
 }
 
+int mlx_bartlett(mlx_array* res, int M, const mlx_stream s) {
+    return mlx_bartlett_ptr(res, M, s);
+}
+
 int mlx_bitwise_and(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s) {
     return mlx_bitwise_and_ptr(res, a, b, s);
 }
@@ -4762,6 +4790,10 @@ int mlx_bitwise_or(mlx_array* res, const mlx_array a, const mlx_array b, const m
 
 int mlx_bitwise_xor(mlx_array* res, const mlx_array a, const mlx_array b, const mlx_stream s) {
     return mlx_bitwise_xor_ptr(res, a, b, s);
+}
+
+int mlx_blackman(mlx_array* res, int M, const mlx_stream s) {
+    return mlx_blackman_ptr(res, M, s);
 }
 
 int mlx_block_masked_mm(mlx_array* res, const mlx_array a, const mlx_array b, int block_size, const mlx_array mask_out , const mlx_array mask_lhs , const mlx_array mask_rhs , const mlx_stream s) {
@@ -4864,8 +4896,8 @@ int mlx_depends(mlx_vector_array* res, const mlx_vector_array inputs, const mlx_
     return mlx_depends_ptr(res, inputs, dependencies);
 }
 
-int mlx_dequantize(mlx_array* res, const mlx_array w, const mlx_array scales, const mlx_array biases , mlx_optional_int group_size, mlx_optional_int bits, const char* mode, mlx_optional_dtype dtype, const mlx_stream s) {
-    return mlx_dequantize_ptr(res, w, scales, biases, group_size, bits, mode, dtype, s);
+int mlx_dequantize(mlx_array* res, const mlx_array w, const mlx_array scales, const mlx_array biases , mlx_optional_int group_size, mlx_optional_int bits, const char* mode, const mlx_array global_scale , mlx_optional_dtype dtype, const mlx_stream s) {
+    return mlx_dequantize_ptr(res, w, scales, biases, group_size, bits, mode, global_scale, dtype, s);
 }
 
 int mlx_diag(mlx_array* res, const mlx_array a, int k, const mlx_stream s) {
@@ -4970,6 +5002,14 @@ int mlx_greater_equal(mlx_array* res, const mlx_array a, const mlx_array b, cons
 
 int mlx_hadamard_transform(mlx_array* res, const mlx_array a, mlx_optional_float scale, const mlx_stream s) {
     return mlx_hadamard_transform_ptr(res, a, scale, s);
+}
+
+int mlx_hamming(mlx_array* res, int M, const mlx_stream s) {
+    return mlx_hamming_ptr(res, M, s);
+}
+
+int mlx_hanning(mlx_array* res, int M, const mlx_stream s) {
+    return mlx_hanning_ptr(res, M, s);
 }
 
 int mlx_identity(mlx_array* res, int n, mlx_dtype dtype, const mlx_stream s) {
@@ -5208,12 +5248,12 @@ int mlx_put_along_axis(mlx_array* res, const mlx_array a, const mlx_array indice
     return mlx_put_along_axis_ptr(res, a, indices, values, axis, s);
 }
 
-int mlx_qqmm(mlx_array* res, const mlx_array x, const mlx_array w, const mlx_array w_scales , mlx_optional_int group_size, mlx_optional_int bits, const char* mode, const mlx_stream s) {
-    return mlx_qqmm_ptr(res, x, w, w_scales, group_size, bits, mode, s);
+int mlx_qqmm(mlx_array* res, const mlx_array x, const mlx_array w, const mlx_array w_scales , mlx_optional_int group_size, mlx_optional_int bits, const char* mode, const mlx_array global_scale_x , const mlx_array global_scale_w , const mlx_stream s) {
+    return mlx_qqmm_ptr(res, x, w, w_scales, group_size, bits, mode, global_scale_x, global_scale_w, s);
 }
 
-int mlx_quantize(mlx_vector_array* res, const mlx_array w, mlx_optional_int group_size, mlx_optional_int bits, const char* mode, const mlx_stream s) {
-    return mlx_quantize_ptr(res, w, group_size, bits, mode, s);
+int mlx_quantize(mlx_vector_array* res, const mlx_array w, mlx_optional_int group_size, mlx_optional_int bits, const char* mode, const mlx_array global_scale , const mlx_stream s) {
+    return mlx_quantize_ptr(res, w, group_size, bits, mode, global_scale, s);
 }
 
 int mlx_quantized_matmul(mlx_array* res, const mlx_array x, const mlx_array w, const mlx_array scales, const mlx_array biases , bool transpose, mlx_optional_int group_size, mlx_optional_int bits, const char* mode, const mlx_stream s) {

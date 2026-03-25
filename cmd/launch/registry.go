@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"opencode", "droid", "pi", "cline"}
+var launcherIntegrationOrder = []string{"vscode", "opencode", "droid", "pi", "cline"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -129,6 +129,18 @@ var integrationSpecs = []*IntegrationSpec{
 				return err == nil
 			},
 			Command: []string{"npm", "install", "-g", "@mariozechner/pi-coding-agent"},
+		},
+	},
+	{
+		Name:        "vscode",
+		Runner:      &VSCode{},
+		Aliases:     []string{"code"},
+		Description: "Microsoft's open-source AI code editor",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				return (&VSCode{}).findBinary() != ""
+			},
+			URL: "https://code.visualstudio.com",
 		},
 	},
 }

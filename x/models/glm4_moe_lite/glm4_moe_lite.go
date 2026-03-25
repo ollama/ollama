@@ -345,7 +345,7 @@ type Block interface {
 
 // Model represents the complete GLM4-MoE-Lite model
 type Model struct {
-	EmbedTokens *nn.Embedding
+	EmbedTokens nn.EmbeddingLayer
 	Layers      []Block
 	Norm        *nn.RMSNorm
 	LMHead      nn.LinearLayer
@@ -586,9 +586,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	}
 
 	// Load embedding
-	if w := tensors["model.embed_tokens.weight"]; w != nil {
-		m.EmbedTokens = nn.NewEmbedding(w)
-	}
+	m.EmbedTokens = model.MakeEmbeddingLayer(tensors, "model.embed_tokens", cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant)
 
 	// Load final norm
 	if w := tensors["model.norm.weight"]; w != nil {

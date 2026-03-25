@@ -1231,7 +1231,7 @@ func (s *Server) allocModel(
 
 	err = s.reserveWorstCaseGraph(true)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	return s.reserveWorstCaseGraph(false)

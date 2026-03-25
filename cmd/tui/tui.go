@@ -60,6 +60,9 @@ var mainMenuItems = []menuItem{
 	{
 		integration: "openclaw",
 	},
+	{
+		integration: "vscode",
+	},
 }
 
 var othersMenuItem = menuItem{
@@ -139,6 +142,7 @@ func otherIntegrationItems(state *launch.LauncherState) []menuItem {
 		"claude":   true,
 		"codex":    true,
 		"openclaw": true,
+		"vscode":   true,
 	}
 
 	var items []menuItem
