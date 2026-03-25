@@ -45,12 +45,23 @@ function checkEnv {
         Write-Output "No CUDA versions detected"
     }
 
-    # Locate ROCm v6
-    $rocmDir=(get-item "C:\Program Files\AMD\ROCm\6.*" -ea 'silentlycontinue' | sort-object -Descending | select-object -First 1)
-    if ($null -ne $rocmDir) {
-        $script:HIP_PATH=$rocmDir.FullName
+    # Locate ROCm installations
+    $rocm7Dir=(get-item "C:\Program Files\AMD\ROCm\7.*" -ea 'silentlycontinue' | sort-object -Descending | select-object -First 1)
+    if ($null -ne $rocm7Dir) {
+        $script:HIP_PATH_V7=$rocm7Dir.FullName
+    } elseif ($null -ne $env:HIP_PATH -and $env:HIP_PATH -match '[/\\]7\.') {
+        $script:HIP_PATH_V7=$env:HIP_PATH
+    }
+    $rocm6Dir=(get-item "C:\Program Files\AMD\ROCm\6.*" -ea 'silentlycontinue' | sort-object -Descending | select-object -First 1)
+    if ($null -ne $rocm6Dir) {
+        $script:HIP_PATH_V6=$rocm6Dir.FullName
     } elseif ($null -ne $env:HIP_PATH -and $env:HIP_PATH -match '[/\\]6\.') {
-        $script:HIP_PATH=$env:HIP_PATH
+        $script:HIP_PATH_V6=$env:HIP_PATH
+    }
+    # Default to v7
+    $script:HIP_PATH=$script:HIP_PATH_V7
+    if (-not $script:HIP_PATH) {
+        $script:HIP_PATH=$script:HIP_PATH_V6
     }
     
     $inoSetup=(get-item "C:\Program Files*\Inno Setup*\")
@@ -126,46 +137,18 @@ function cpu {
         Remove-Item -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}"
         New-Item "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\" -ItemType Directory -ea 0
 
-        & cmake -B build\cpu --preset CPU --install-prefix $script:DIST_DIR
+        # Build llama-server from upstream source (CPU + base)
+        & cmake -S llama\server --preset cpu --install-prefix $script:DIST_DIR
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        & cmake --build build\cpu --target ggml-cpu --config Release --parallel $script:JOBS
+        & cmake --build build\llama-server-cpu --config Release --parallel $script:JOBS
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        & cmake --install build\cpu --component CPU --strip
+        & cmake --install build\llama-server-cpu --component llama-server --strip
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     }
 }
 
 function cuda11 {
-    # CUDA v11 claims to be compatible with MSVC 2022, but the latest updates are no longer compatible
-    # 19.40 is the last compiler version that works, but recent udpates are 19.43
-    # So this pins to MSVC 2019 for best compatibility
-    mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
-    $cudaMajorVer="11"
-    if ($script:ARCH -ne "arm64") {
-        if ("$script:CUDA_DIRS".Contains("v$cudaMajorVer")) {
-            foreach ($d in $Script:CUDA_DIRS){ 
-                if ($d.FullName.Contains("v$cudaMajorVer")) {
-                    if (test-path -literalpath (join-path -path $d -childpath "nvcc.exe" ) ) {
-                        $cuda=($d.FullName|split-path -parent)
-                        break
-                    }
-                }
-            }
-            Write-Output "Building CUDA v$cudaMajorVer backend libraries $cuda"
-            $env:CUDAToolkit_ROOT=$cuda
-            & cmake -B build\cuda_v$cudaMajorVer --preset "CUDA $cudaMajorVer" -T cuda="$cuda" -DCMAKE_CUDA_COMPILER="$cuda\bin\nvcc.exe" -G "Visual Studio 16 2019" --install-prefix "$script:DIST_DIR"
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --build build\cuda_v$cudaMajorVer --target ggml-cuda --config Release --parallel $script:JOBS
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --install build\cuda_v$cudaMajorVer --component "CUDA" --strip
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        } else {
-            Write-Output "CUDA v$cudaMajorVer not detected, skipping"
-        }
-    } else {
-        Write-Output "not arch we wanted"
-    }
-    Write-Output "done"
+    Write-Output "CUDA v11 is no longer supported"
 }
 
 function cudaCommon {
@@ -175,7 +158,7 @@ function cudaCommon {
     mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
     if ($script:ARCH -ne "arm64") {
         if ("$script:CUDA_DIRS".Contains("v$cudaMajorVer")) {
-            foreach ($d in $Script:CUDA_DIRS){ 
+            foreach ($d in $Script:CUDA_DIRS){
                 if ($d.FullName.Contains("v$cudaMajorVer")) {
                     if (test-path -literalpath (join-path -path $d -childpath "nvcc.exe" ) ) {
                         $cuda=($d.FullName|split-path -parent)
@@ -183,13 +166,18 @@ function cudaCommon {
                     }
                 }
             }
-            Write-Output "Building CUDA v$cudaMajorVer backend libraries $cuda"
+            # Build llama-server CUDA backend from upstream source
+            Write-Output "Building llama-server CUDA v$cudaMajorVer backend"
             $env:CUDAToolkit_ROOT=$cuda
-            & cmake -B build\cuda_v$cudaMajorVer --preset "CUDA $cudaMajorVer" -T cuda="$cuda" --install-prefix "$script:DIST_DIR"
+            # CUDA 13 on Windows needs a reduced architecture set to avoid
+            # MSVC cl.exe template explosion (hangs during compilation)
+            $preset = "cuda-v$cudaMajorVer"
+            if ($cudaMajorVer -eq "13") { $preset = "cuda-v13-windows" }
+            & cmake -S llama\server --preset $preset -T cuda="$cuda" -DCMAKE_CUDA_COMPILER="$cuda\bin\nvcc.exe" --install-prefix "$script:DIST_DIR"
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --build build\cuda_v$cudaMajorVer --target ggml-cuda --config Release --parallel $script:JOBS
+            & cmake --build "build\llama-server-cuda-v$cudaMajorVer" --config Release --parallel $script:JOBS
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --install build\cuda_v$cudaMajorVer --component "CUDA" --strip
+            & cmake --install "build\llama-server-cuda-v$cudaMajorVer" --component llama-server --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         } else {
             Write-Output "CUDA v$cudaMajorVer not detected, skipping"
@@ -206,24 +194,44 @@ function cuda13 {
 }
 
 function rocm6 {
+    # KNOWN ISSUE: ROCm v6 on Windows is currently broken with upstream llama.cpp b8591+.
+    # The vendors/hip.h guard (#if HIP_VERSION >= 60200000) assumes __hip_fp8_e4m3 exists,
+    # but Windows ROCm 6.2 only has the _fnuz variant (__hip_fp8_e4m3_fnuz).
+    # This causes a compile error in ggml-cuda/vendors/hip.h:240.
+    # Use rocm7 instead, or wait for an upstream fix.
     mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
     if ($script:ARCH -ne "arm64") {
-        if ($script:HIP_PATH) {
-            Write-Output "Building ROCm backend libraries $script:HIP_PATH"
+        if ($script:HIP_PATH_V6) {
+            Write-Output "WARNING: ROCm v6 build is currently broken (FP8 type mismatch). Skipping."
+            Write-Output "Use rocm7 instead."
+        } else {
+            Write-Output "ROCm v6 not detected, skipping"
+        }
+    }
+}
+
+function rocm7 {
+    mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
+    if ($script:ARCH -ne "arm64") {
+        if ($script:HIP_PATH_V7) {
+            Write-Output "Building llama-server ROCm v7 backend $script:HIP_PATH_V7"
             if (-Not (get-command -ErrorAction silent ninja)) {
                 $NINJA_DIR=(gci -path (Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation -r -fi ninja.exe).Directory.FullName
                 $env:PATH="$NINJA_DIR;$env:PATH"
             }
-            $env:HIPCXX="${script:HIP_PATH}\bin\clang++.exe"
+            $env:HIPCXX="${script:HIP_PATH_V7}\bin\clang++.exe"
             $env:HIP_PLATFORM="amd"
-            $env:CMAKE_PREFIX_PATH="${script:HIP_PATH}"
-            # Set CC/CXX via environment instead of -D flags to avoid triggering
-            # spurious compiler-change reconfigures that reset CMAKE_INSTALL_PREFIX
-            $env:CC="${script:HIP_PATH}\bin\clang.exe"
-            $env:CXX="${script:HIP_PATH}\bin\clang++.exe"
-            & cmake -B build\rocm --preset "ROCm 6" -G Ninja `
+            $env:CMAKE_PREFIX_PATH="${script:HIP_PATH_V7}"
+            $env:CC="${script:HIP_PATH_V7}\bin\clang.exe"
+            $env:CXX="${script:HIP_PATH_V7}\bin\clang++.exe"
+            # GGML_OPENMP=OFF: ROCm clang on Windows supports OpenMP syntax but
+            # doesn't ship the runtime library (libomp), causing link failures.
+            & cmake -S llama\server --preset rocm -G Ninja `
+                -DGGML_OPENMP=OFF `
+                -DCMAKE_HIP_FLAGS="-parallel-jobs=4" `
                 -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
                 -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
+                -DAMDGPU_TARGETS="gfx942;gfx950;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1200;gfx1201;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-" `
                 --install-prefix $script:DIST_DIR
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             $env:HIPCXX=""
@@ -231,25 +239,26 @@ function rocm6 {
             $env:CMAKE_PREFIX_PATH=""
             $env:CC=""
             $env:CXX=""
-            & cmake --build build\rocm --target ggml-hip --config Release --parallel $script:JOBS
+            & cmake --build build\llama-server-rocm --config Release --parallel $script:JOBS
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --install build\rocm --component "HIP" --strip
+            & cmake --install build\llama-server-rocm --component llama-server --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            Remove-Item -Path $script:DIST_DIR\lib\ollama\rocm\rocblas\library\*gfx906* -ErrorAction SilentlyContinue
         } else {
-            Write-Output "ROCm not detected, skipping"
+            Write-Output "ROCm v7 not detected, skipping"
         }
     }
 }
 
 function vulkan {
     if ($env:VULKAN_SDK) {
-        Write-Output "Building Vulkan backend libraries"
-        & cmake -B build\vulkan --preset Vulkan --install-prefix $script:DIST_DIR
+        Write-Output "Building llama-server Vulkan backend"
+        # Use short build path to avoid Windows MAX_PATH issues — the Vulkan
+        # shader generator uses ExternalProject_Add which creates deep nesting
+        & cmake -S llama\server --preset vulkan -B build\ls-vk --install-prefix $script:DIST_DIR
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        & cmake --build build\vulkan --target ggml-vulkan --config Release --parallel $script:JOBS
+        & cmake --build build\ls-vk --config Release --parallel $script:JOBS
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        & cmake --install build\vulkan  --component Vulkan --strip
+        & cmake --install build\ls-vk --component llama-server --strip
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     } else {
         Write-Output "Vulkan not detected, skipping"
@@ -379,12 +388,10 @@ function app {
 }
 
 function deps {
-    Write-Output "Download MSVC Redistributables"
-    mkdir -Force -path "${script:SRC_DIR}\dist\\windows-arm64" | Out-Null
-    mkdir -Force -path "${script:SRC_DIR}\dist\\windows-amd64" | Out-Null
-    invoke-webrequest -Uri "https://aka.ms/vs/17/release/vc_redist.arm64.exe" -OutFile  "${script:SRC_DIR}\dist\windows-arm64\vc_redist.arm64.exe" -ErrorAction Stop
-    invoke-webrequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile  "${script:SRC_DIR}\dist\windows-amd64\vc_redist.x64.exe" -ErrorAction Stop
-    Write-Output "Done."
+    # MSVC CRT DLLs (vcruntime140.dll, msvcp140.dll, etc.) are now bundled
+    # directly alongside the executables by CMake's RUNTIME_DEPENDENCIES
+    # mechanism during install. No need to download vc_redist.exe.
+    Write-Output "deps: no external dependencies to download (CRT DLLs bundled by CMake install)"
 }
 
 function sign {
@@ -430,7 +437,7 @@ function newZipJob($sourceDir, $destZip) {
     Start-Job -ScriptBlock {
         param($src, $dst, $use7z)
         if ($use7z) {
-            & 7z a -tzip -mx=9 -mmt=on $dst "${src}\*"
+            & 7z a -tzip -mx=7 -mmt=on $dst "${src}\*"
             if ($LASTEXITCODE -ne 0) { throw "7z failed with exit code $LASTEXITCODE" }
         } else {
             Compress-Archive -CompressionLevel Optimal -Path "${src}\*" -DestinationPath $dst -Force
@@ -526,7 +533,7 @@ try {
         cpu
         cuda12
         cuda13
-        rocm6
+        rocm7
         vulkan
         mlxCuda13
         ollama

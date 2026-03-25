@@ -748,7 +748,47 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
+	truncateInput := func(text string) (string, bool, error) {
+		tokens, err := r.Tokenize(ctx, text)
+		if err != nil {
+			return "", false, err
+		}
+
+		// TODO @nicolepardal: avoid reaching into kvData here; pass required tokenizer metadata via model/options instead
+		ctxLen := int(kvData.ContextLength())
+		if opts.NumCtx > 0 {
+			ctxLen = min(opts.NumCtx, ctxLen)
+		}
+		if bos := kvData.Uint("tokenizer.ggml.bos_token_id"); len(tokens) > 0 && tokens[0] != int(bos) && kvData.Bool("add_bos_token", true) {
+			ctxLen--
+		}
+		if eos := kvData.Uint("tokenizer.ggml.eos_token_id"); len(tokens) > 0 && tokens[len(tokens)-1] != int(eos) && kvData.Bool("add_eos_token", true) {
+			ctxLen--
+		}
+
+		if ctxLen <= 0 {
+			return "", false, fmt.Errorf("input after truncation exceeds maximum context length")
+		}
+		if len(tokens) <= ctxLen {
+			return text, false, nil
+		}
+
+		truncated, err := r.Detokenize(ctx, tokens[:ctxLen])
+		if err != nil {
+			return "", false, err
+		}
+		return truncated, true, nil
+	}
+
 	embedWithRetry := func(text string) ([]float32, int, error) {
+		if req.Truncate == nil || *req.Truncate {
+			var err error
+			text, _, err = truncateInput(text)
+			if err != nil {
+				return nil, 0, err
+			}
+		}
+
 		emb, tokCount, err := r.Embedding(ctx, text)
 		if err == nil {
 			return emb, tokCount, nil
@@ -762,32 +802,14 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			return nil, 0, err
 		}
 
-		tokens, err := r.Tokenize(ctx, text)
+		truncated, ok, err := truncateInput(text)
 		if err != nil {
 			return nil, 0, err
 		}
-
-		// TODO @nicolepardal: avoid reaching into kvData here; pass required tokenizer metadata via model/options instead
-		ctxLen := min(opts.NumCtx, int(kvData.ContextLength()))
-		if bos := kvData.Uint("tokenizer.ggml.bos_token_id"); len(tokens) > 0 && tokens[0] != int(bos) && kvData.Bool("add_bos_token", true) {
-			ctxLen--
-		}
-		if eos := kvData.Uint("tokenizer.ggml.eos_token_id"); len(tokens) > 0 && tokens[len(tokens)-1] != int(eos) && kvData.Bool("add_eos_token", true) {
-			ctxLen--
-		}
-
-		if len(tokens) <= ctxLen {
+		if !ok {
 			return nil, 0, fmt.Errorf("input exceeds maximum context length and cannot be truncated further")
 		}
-		if ctxLen <= 0 {
-			return nil, 0, fmt.Errorf("input after truncation exceeds maximum context length")
-		}
 
-		truncatedTokens := tokens[:ctxLen]
-		truncated, err := r.Detokenize(ctx, truncatedTokens)
-		if err != nil {
-			return nil, 0, err
-		}
 		return r.Embedding(ctx, truncated)
 	}
 
@@ -881,6 +903,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	}
 
 	name := modelRef.Name
+	name, _ = applyCompatRedirect(name)
 
 	r, _, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
 	if err != nil {
@@ -1049,6 +1072,10 @@ func getExistingName(n model.Name) (model.Name, error) {
 			n.Tag = e.Tag
 		}
 	}
+
+	// Redirect models that have been republished in a compatible format
+	n, _ = applyCompatRedirect(n)
+
 	return n, nil
 }
 
@@ -1123,6 +1150,7 @@ func (s *Server) ShowHandler(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
 	}
+	requestedModel := req.Model
 
 	modelRef, err := parseAndValidateModelRef(req.Model)
 	if err != nil {
@@ -1136,7 +1164,13 @@ func (s *Server) ShowHandler(c *gin.Context) {
 		return
 	}
 
-	req.Model = modelRef.Base
+	name := modelRef.Name
+	name, err = getExistingName(name)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	req.Model = name.DisplayShortest()
 
 	resp, err := GetModelInfo(req)
 	if err != nil {
@@ -1165,9 +1199,8 @@ func (s *Server) ShowHandler(c *gin.Context) {
 			resp.ModelInfo = map[string]any{}
 		}
 		// Copilot Chat prefers `general.basename`, but this is usually not what
-		// users are familiar with, so let's just echo back what we had returned in
-		// `/api/tags`
-		resp.ModelInfo["general.basename"] = req.Model
+		// users are familiar with, so echo back the requested model name.
+		resp.ModelInfo["general.basename"] = requestedModel
 	}
 
 	c.JSON(http.StatusOK, resp)
@@ -2046,21 +2079,25 @@ func (s *Server) PsHandler(c *gin.Context) {
 	models := []api.ProcessModelResponse{}
 
 	for _, v := range s.sched.loaded {
-		model := v.model
+		m := v.model
+		// Show the user-facing name (pre-redirect) so ps output matches
+		// what the user originally requested.
+		// TODO: consider removing before merging — see reverseCompatRedirect comment
+		displayName := reverseCompatRedirect(model.ParseName(m.ShortName)).DisplayShortest()
 		modelDetails := api.ModelDetails{
-			Format:            model.Config.ModelFormat,
-			Family:            model.Config.ModelFamily,
-			Families:          model.Config.ModelFamilies,
-			ParameterSize:     model.Config.ModelType,
-			QuantizationLevel: model.Config.FileType,
+			Format:            m.Config.ModelFormat,
+			Family:            m.Config.ModelFamily,
+			Families:          m.Config.ModelFamilies,
+			ParameterSize:     m.Config.ModelType,
+			QuantizationLevel: m.Config.FileType,
 		}
 
 		mr := api.ProcessModelResponse{
-			Model:     model.ShortName,
-			Name:      model.ShortName,
+			Model:     displayName,
+			Name:      displayName,
 			Size:      int64(v.totalSize),
 			SizeVRAM:  int64(v.vramSize),
-			Digest:    model.Digest,
+			Digest:    m.Digest,
 			Details:   modelDetails,
 			ExpiresAt: v.expiresAt,
 		}
@@ -2069,6 +2106,14 @@ func (s *Server) PsHandler(c *gin.Context) {
 			total, vram := v.llama.MemorySize()
 			mr.Size = int64(total)
 			mr.SizeVRAM = int64(vram)
+
+			// When all layers are on GPU, report SizeVRAM == Size for the
+			// public API. The small CPU overhead (input/output buffers) is
+			// architectural and doesn't mean layers are on CPU.
+			type fullyOffloaded interface{ FullyOffloaded() bool }
+			if fo, ok := v.llama.(fullyOffloaded); ok && fo.FullyOffloaded() {
+				mr.SizeVRAM = mr.Size
+			}
 		}
 		// The scheduler waits to set expiresAt, so if a model is loading it's
 		// possible that it will be set to the unix epoch. For those cases, just
@@ -2414,15 +2459,24 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 			// sets up new context given parent context per request
 			ctx, cancel := context.WithCancel(c.Request.Context())
+			// If the tool parser is active and its tag is a special token,
+			// tell llama-server to preserve it during detokenization so the
+			// parser can find it in the output stream.
+			var preservedTokens []string
+			if toolParser != nil && toolParser.Tag() != "" && toolParser.Tag() != "{" && toolParser.Tag() != "[" {
+				preservedTokens = []string{toolParser.Tag()}
+			}
+
 			err := r.Completion(ctx, llm.CompletionRequest{
-				Prompt:      prompt,
-				Images:      images,
-				Format:      currentFormat,
-				Options:     opts,
-				Shift:       req.Shift == nil || *req.Shift,
-				Truncate:    truncate,
-				Logprobs:    req.Logprobs,
-				TopLogprobs: req.TopLogprobs,
+				Prompt:          prompt,
+				Images:          images,
+				Format:          currentFormat,
+				Options:         opts,
+				Shift:           req.Shift == nil || *req.Shift,
+				Truncate:        truncate,
+				Logprobs:        req.Logprobs,
+				TopLogprobs:     req.TopLogprobs,
+				PreservedTokens: preservedTokens,
 			}, func(r llm.CompletionResponse) {
 				res := api.ChatResponse{
 					Model:     req.Model,

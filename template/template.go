@@ -403,6 +403,11 @@ func (t templateProperties) String() string {
 	return string(bts)
 }
 
+func (t templateTool) String() string {
+	bts, _ := json.Marshal(t)
+	return string(bts)
+}
+
 // templateTool is a template-compatible representation of api.Tool
 // with Properties as a regular map for template ranging.
 type templateTool struct {

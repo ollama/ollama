@@ -39,23 +39,25 @@ var _ ModelConverter = (*gptossModel)(nil)
 
 func (m *gptossModel) KV(t *Tokenizer) KV {
 	kv := m.ModelParameters.KV(t)
-	kv["general.architecture"] = "gptoss"
+	kv["general.architecture"] = "gpt-oss"
 	kv["general.file_type"] = uint32(4)
-	kv["gptoss.context_length"] = cmp.Or(m.MaxPositionEmbeddings, uint32(m.RopeScalingFactor*float32(m.InitialContextLength)))
-	kv["gptoss.block_count"] = m.HiddenLayers
-	kv["gptoss.embedding_length"] = m.HiddenSize
-	kv["gptoss.feed_forward_length"] = m.IntermediateSize
-	kv["gptoss.expert_count"] = cmp.Or(m.Experts, m.LocalExperts)
-	kv["gptoss.expert_used_count"] = m.ExpertsPerToken
-	kv["gptoss.attention.head_count"] = m.AttentionHeads
-	kv["gptoss.attention.head_count_kv"] = m.KeyValueHeads
-	kv["gptoss.attention.key_length"] = m.HeadDim
-	kv["gptoss.attention.value_length"] = m.HeadDim
-	kv["gptoss.attention.layer_norm_rms_epsilon"] = cmp.Or(m.RMSNormEpsilon, 1e-5)
-	kv["gptoss.attention.sliding_window"] = m.SlidingWindow
-	kv["gptoss.rope.freq_base"] = m.RopeTheta
-	kv["gptoss.rope.scaling.factor"] = cmp.Or(m.RopeScalingFactor, m.RopeScaling.Factor)
-	kv["gptoss.rope.scaling.original_context_length"] = m.InitialContextLength
+	kv["gpt-oss.context_length"] = cmp.Or(m.MaxPositionEmbeddings, uint32(m.RopeScalingFactor*float32(m.InitialContextLength)))
+	kv["gpt-oss.block_count"] = m.HiddenLayers
+	kv["gpt-oss.embedding_length"] = m.HiddenSize
+	kv["gpt-oss.feed_forward_length"] = m.IntermediateSize
+	kv["gpt-oss.expert_feed_forward_length"] = m.IntermediateSize
+	kv["gpt-oss.expert_count"] = cmp.Or(m.Experts, m.LocalExperts)
+	kv["gpt-oss.expert_used_count"] = m.ExpertsPerToken
+	kv["gpt-oss.attention.head_count"] = m.AttentionHeads
+	kv["gpt-oss.attention.head_count_kv"] = m.KeyValueHeads
+	kv["gpt-oss.attention.key_length"] = m.HeadDim
+	kv["gpt-oss.attention.value_length"] = m.HeadDim
+	kv["gpt-oss.attention.layer_norm_rms_epsilon"] = cmp.Or(m.RMSNormEpsilon, 1e-5)
+	kv["gpt-oss.attention.sliding_window"] = m.SlidingWindow
+	kv["gpt-oss.rope.freq_base"] = m.RopeTheta
+	kv["gpt-oss.rope.scaling.type"] = "yarn"
+	kv["gpt-oss.rope.scaling.factor"] = cmp.Or(m.RopeScalingFactor, m.RopeScaling.Factor)
+	kv["gpt-oss.rope.scaling.original_context_length"] = m.InitialContextLength
 	kv["tokenizer.ggml.bos_token_id"] = uint32(199998) // <|startoftext|>
 	kv["tokenizer.ggml.add_bos_token"] = false
 	kv["tokenizer.ggml.eos_token_id"] = uint32(199999) // <|endoftext|>
@@ -99,8 +101,13 @@ func (m *gptossModel) Tensors(ts []Tensor) []*ggml.Tensor {
 				},
 			))...)
 		} else {
+			name := t.Name()
+			// sinks tensor has no .weight suffix in HF but llama.cpp expects it
+			if strings.HasSuffix(name, "attn_sinks") {
+				name += ".weight"
+			}
 			out = append(out, &ggml.Tensor{
-				Name:     t.Name(),
+				Name:     name,
 				Kind:     t.Kind(),
 				Shape:    t.Shape(),
 				WriterTo: t,
@@ -152,9 +159,9 @@ func (m *gptossModel) Replacements() []string {
 			"self_attn.q_proj", "attn_q",
 			"self_attn.k_proj", "attn_k",
 			"self_attn.v_proj", "attn_v",
-			"self_attn.o_proj", "attn_out",
+			"self_attn.o_proj", "attn_output",
 			"self_attn.sinks", "attn_sinks",
-			"post_attention_layernorm", "ffn_norm",
+			"post_attention_layernorm", "post_attention_norm",
 			"mlp.router", "ffn_gate_inp",
 			"mlp.experts.gate_up_proj_", "ffn_gate_up_exps.",
 			"mlp.experts.down_proj_", "ffn_down_exps.",

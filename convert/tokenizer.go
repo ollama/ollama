@@ -103,6 +103,8 @@ func parseTokenizer(fsys fs.FS, specialTokenTypes []string) (*Tokenizer, error) 
 			t.Pre = "qwen2"
 		case "00431aed57e696b747435f734d1e3b9b1bfd931a121fb5cac7129e97c181e9ba":
 			t.Pre = "qwen35"
+		case "2d1b8dc11e89af71459b36004f698ab3693f59fd84f63e8ec2b49564ab857420":
+			t.Pre = "gpt-4o"
 		case "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855":
 			// noop, empty pretokenizer
 		default:
