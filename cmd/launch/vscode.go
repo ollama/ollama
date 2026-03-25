@@ -123,8 +123,10 @@ func (v *VSCode) Quit() {
 	fmt.Fprintf(os.Stderr, "\r\033[K")
 }
 
-const minCopilotChatVersion = "0.41.0"
-const minVSCodeVersion = "1.113"
+const (
+	minCopilotChatVersion = "0.41.0"
+	minVSCodeVersion      = "1.113"
+)
 
 func (v *VSCode) Run(model string, args []string) error {
 	v.checkVSCodeVersion()

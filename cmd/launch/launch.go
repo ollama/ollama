@@ -802,13 +802,6 @@ func cloneAliases(aliases map[string]string) map[string]string {
 	return cloned
 }
 
-func singleModelPrechecked(current string) []string {
-	if current == "" {
-		return nil
-	}
-	return []string{current}
-}
-
 func firstModel(models []string) string {
 	if len(models) == 0 {
 		return ""
