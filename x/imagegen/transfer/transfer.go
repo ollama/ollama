@@ -142,6 +142,7 @@ func (p *progressTracker) add(n int64) {
 		return
 	}
 	completed := p.completed.Add(n)
+	defer func() { recover() }() // callback may send on closed channel
 	p.callback(completed, p.total)
 }
 
