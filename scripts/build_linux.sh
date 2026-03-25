@@ -33,21 +33,6 @@ docker buildx build \
         -f Dockerfile \
         .
 
-if echo $PLATFORM | grep "amd64" > /dev/null; then
-    outDir="./dist"
-    if echo $PLATFORM | grep "," > /dev/null ; then
-       outDir="./dist/linux_amd64"
-    fi
-    docker buildx build \
-        --output type=local,dest=${outDir} \
-        --platform=linux/amd64 \
-        ${OLLAMA_COMMON_BUILD_ARGS} \
-        --build-arg FLAVOR=rocm \
-        --target archive \
-        -f Dockerfile \
-        .
-fi
-
 # Run deduplication for each platform output directory
 if echo $PLATFORM | grep "," > /dev/null ; then
     $(dirname $0)/deduplicate_cuda_libs.sh "./dist/linux_amd64"

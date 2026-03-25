@@ -10,8 +10,8 @@ import (
 // StatusWriter is a writer that captures error messages from the llama runner process
 type StatusWriter struct {
 	out io.Writer
-	// StartRunner wires both Stdout and Stderr to the same StatusWriter, and
-	// os/exec serializes Write calls in that case.
+	// Subprocess wrappers may wire both stdout and stderr to the same
+	// StatusWriter, and os/exec serializes Write calls in that case.
 	lastErrMsg atomic.Value
 }
 

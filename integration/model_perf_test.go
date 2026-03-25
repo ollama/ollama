@@ -40,11 +40,7 @@ var (
 // cat int.log | grep MODEL_PERF_HEADER | head -1| cut -f2- -d: > perf.csv
 // cat int.log | grep MODEL_PERF_DATA | cut -f2- -d: >> perf.csv
 func TestModelsPerf(t *testing.T) {
-	if s := os.Getenv("OLLAMA_NEW_ENGINE"); s != "" {
-		doModelPerfTest(t, ollamaEngineChatModels)
-	} else {
-		doModelPerfTest(t, append(ollamaEngineChatModels, llamaRunnerChatModels...))
-	}
+	doModelPerfTest(t, append(ollamaEngineChatModels, llamaRunnerChatModels...))
 }
 
 func TestLibraryModelsPerf(t *testing.T) {

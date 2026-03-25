@@ -2,6 +2,7 @@ package convert
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -10,6 +11,19 @@ import (
 
 	"github.com/ollama/ollama/fs/ggml"
 )
+
+var _ MultimodalConverter = (*gemma4Model)(nil)
+
+func isGemma4VisionTensor(name string) bool {
+	if strings.HasPrefix(name, "a.") || strings.HasPrefix(name, "mm.a.") {
+		return false
+	}
+	return strings.HasPrefix(name, "v.") || strings.HasPrefix(name, "mm.")
+}
+
+func isGemma4AudioTensor(name string) bool {
+	return strings.HasPrefix(name, "a.") || strings.HasPrefix(name, "mm.a.")
+}
 
 type gemma4Model struct {
 	gemmaModel
@@ -161,49 +175,33 @@ func (p *gemma4Model) KV(t *Tokenizer) KV {
 	}
 	kv["gemma4.embedding_length_per_layer_input"] = pleSize
 
-	// Vision model KV metadata
-	vc := p.VisionModel
-	if vc.NumHiddenLayers > 0 {
-		kv["gemma4.vision.block_count"] = vc.NumHiddenLayers
-		kv["gemma4.vision.embedding_length"] = vc.HiddenSize
-		kv["gemma4.vision.attention.head_count"] = vc.NumAttentionHeads
-		kv["gemma4.vision.feed_forward_length"] = vc.IntermediateSize
-		kv["gemma4.vision.patch_size"] = vc.PatchSize
-		numCh := vc.NumChannels
-		if numCh == 0 {
-			numCh = 3
-		}
-		kv["gemma4.vision.num_channels"] = numCh
-		nMerge := vc.PoolingKernelSize
-		if nMerge == 0 {
-			nMerge = 3
-		}
-		kv["gemma4.vision.projector.scale_factor"] = nMerge
-		eps := vc.LayerNormEps
-		if eps == 0 {
-			eps = 1e-6
-		}
-		kv["gemma4.vision.attention.layer_norm_epsilon"] = eps
-	}
-
-	// Audio model KV metadata
-	if p.AudioModel != nil && p.AudioModel.NumHiddenLayers > 0 {
-		ac := p.AudioModel
-		kv["gemma4.audio.block_count"] = ac.NumHiddenLayers
-		kv["gemma4.audio.embedding_length"] = ac.HiddenSize
-		kv["gemma4.audio.feed_forward_length"] = ac.HiddenSize * 4
-		kv["gemma4.audio.attention.head_count"] = ac.NumAttentionHeads
-		eps := ac.RMSNormEps
-		if eps == 0 {
-			eps = 1e-6
-		}
-		kv["gemma4.audio.attention.layer_norm_epsilon"] = eps
-		if ac.ConvKernelSize > 0 {
-			kv["gemma4.audio.conv_kernel_size"] = ac.ConvKernelSize
-		}
-	}
-
 	return kv
+}
+
+// ProjectorKV returns clip.* metadata for the vision projector GGUF.
+// Audio is intentionally omitted — gemma4 audio is not yet supported upstream.
+func (p *gemma4Model) ProjectorKV(t *Tokenizer) KV {
+	vc := p.VisionModel
+	eps := vc.LayerNormEps
+	if eps == 0 {
+		eps = 1e-6
+	}
+	return KV{
+		"general.architecture":                     "clip",
+		"clip.has_vision_encoder":                  true,
+		"clip.projector_type":                      "gemma4v",
+		"clip.vision.projector_type":               "gemma4v",
+		"clip.vision.block_count":                  vc.NumHiddenLayers,
+		"clip.vision.embedding_length":             vc.HiddenSize,
+		"clip.vision.feed_forward_length":          vc.IntermediateSize,
+		"clip.vision.attention.head_count":         vc.NumAttentionHeads,
+		"clip.vision.attention.layer_norm_epsilon": eps,
+		"clip.vision.patch_size":                   cmp.Or(vc.PatchSize, 16),
+		"clip.vision.image_size":                   uint32(224),
+		"clip.vision.projection_dim":               p.TextModel.HiddenSize,
+		"clip.vision.image_mean":                   []float32{0, 0, 0},
+		"clip.vision.image_std":                    []float32{1, 1, 1},
+	}
 }
 
 func (p *gemma4Model) Tensors(ts []Tensor) []*ggml.Tensor {
@@ -275,13 +273,13 @@ func (p *gemma4Model) Tensors(ts []Tensor) []*ggml.Tensor {
 		// which the framework reverses to GGUF ne=[in, out, experts], matching ggml_mul_mat_id.
 		// (transposeExperts was incorrectly swapping dims — removed)
 
-		// Audio conv weights are forced to F32 via tensorBase.Kind() in reader.go
-		// (im2col doesn't support BF16). No kindOverride needed — the Kind() method
-		// controls both the GGUF header type AND the WriteTo data encoding path.
-		var kindOverride *uint32
-
-		// Vision patch embedding: reshape from [n_embd, ksize_sq_c] to [n_embd, 3, patch_size, patch_size]
-		// Must be stored as F16 (not BF16) because the Conv2D im2col kernel requires F16/F32.
+		// Vision patch embedding: reshape from HF 2D linear [n_embd, ksize_sq_c]
+		// to the 4D conv kernel layout [n_embd, channels, patch_size, patch_size]
+		// that ggml_conv_2d consumes. Stored as F32 (not F16) — the reader's
+		// tensorBase.Kind() forces v.patch_embd.weight to F32 unconditionally,
+		// and that dtype is what WriteTo actually emits; overriding the header
+		// to F16 here would create a header/data size mismatch and corrupt
+		// downstream tensor offsets. ggml_conv_2d supports F32 kernels.
 		if strings.Contains(name, "v.patch_embd.weight") && len(shape) == 2 {
 			nEmbd := shape[0]
 			patchSize := uint64(p.VisionModel.PatchSize)
@@ -294,17 +292,12 @@ func (p *gemma4Model) Tensors(ts []Tensor) []*ggml.Tensor {
 			}
 			t.SetRepacker(p.reshapePatchEmbed)
 			shape = []uint64{nEmbd, numCh, patchSize, patchSize}
-			f16Kind := uint32(1) // tensorKindFP16
-			kindOverride = &f16Kind
 		}
 
 		// Vision position embedding: keep 3D [2, maxPos, nEmbd] — matching published mmproj format.
 		// The framework reverses shape to GGUF ne=[nEmbd, maxPos, 2]. No data repacking needed.
 
 		kind := t.Kind()
-		if kindOverride != nil {
-			kind = *kindOverride
-		}
 		out = append(out, &ggml.Tensor{
 			Name:     name,
 			Kind:     kind,
@@ -393,8 +386,134 @@ func (p *gemma4Model) Tensors(ts []Tensor) []*ggml.Tensor {
 	return out
 }
 
-// reshapePatchEmbed reshapes the vision patch embedding from HF layout [n_embd, ksize*ksize*channels]
-// to GGUF layout [n_embd, channels, patch_size, patch_size].
+// TextTensors returns only text model tensors (no vision, no audio, no projectors).
+// Also emits the global rope_freqs.weight tensor for proportional RoPE.
+func (p *gemma4Model) TextTensors(ts []Tensor, _ *Tokenizer) []*ggml.Tensor {
+	var out []*ggml.Tensor
+	for _, t := range ts {
+		name := t.Name()
+		if isGemma4VisionTensor(name) || isGemma4AudioTensor(name) {
+			continue
+		}
+		if strings.Contains(name, "embedding_post_projection_norm") {
+			continue
+		}
+		out = append(out, &ggml.Tensor{
+			Name:     name,
+			Kind:     t.Kind(),
+			Shape:    t.Shape(),
+			WriterTo: t,
+		})
+	}
+
+	// Generate global rope_freqs.weight for proportional RoPE on global layers.
+	tc := p.TextModel
+	if tc.GlobalHeadDim > 0 {
+		globalFreqsSize := tc.GlobalHeadDim / 2
+		partialRotaryFactor := float32(0.25)
+		if rp, ok := tc.RopeParameters["full_attention"]; ok && rp != nil && rp.PartialRotaryFactor != nil {
+			partialRotaryFactor = *rp.PartialRotaryFactor
+		}
+		nRotFull := int(float32(tc.GlobalHeadDim) * partialRotaryFactor / 2)
+		freqs := make(ropeFactor, globalFreqsSize)
+		for j := range freqs {
+			if j < nRotFull {
+				freqs[j] = 1.0
+			} else {
+				freqs[j] = 1e30
+			}
+		}
+		out = append(out, &ggml.Tensor{
+			Name:     "rope_freqs.weight",
+			Kind:     0,
+			Shape:    []uint64{uint64(len(freqs))},
+			WriterTo: freqs,
+		})
+	}
+	return out
+}
+
+// ProjectorTensors returns only vision tensors with names remapped for
+// llama-server's clip/mtmd gemma4v projector. Audio is dropped — our pinned
+// llama-server build forces skip_audio for PROJECTOR_TYPE_GEMMA4V in
+// clip.cpp, so audio tensors would be dead weight. Clamp scalars are
+// preserved as individual tensors (not packed into v.clamp_data), which
+// matches what the gemma4v loader actually reads via get_scalar().
+func (p *gemma4Model) ProjectorTensors(ts []Tensor) []*ggml.Tensor {
+	var out []*ggml.Tensor
+	for _, t := range ts {
+		name := t.Name()
+		if !isGemma4VisionTensor(name) {
+			continue
+		}
+		// v.std_bias / v.std_scale: image input normalization. The gemma4v
+		// clip graph reads these via get_tensor(TN_STD_BIAS/SCALE, false) and
+		// applies (hidden - std_bias) * std_scale before patch embedding.
+		// Present on 26b/31b HF configs, absent on e2b/e4b. Do NOT drop.
+
+		// Vision tensor renaming to match upstream mmproj names.
+		if strings.HasPrefix(name, "v.blk.") {
+			name = strings.Replace(name, ".attn_norm.", ".ln1.", 1)
+			name = strings.Replace(name, ".ffn_norm.", ".ln2.", 1)
+			name = strings.Replace(name, ".attn_output.", ".attn_out.", 1)
+			name = strings.Replace(name, ".post_attention_norm.", ".attn_post_norm.", 1)
+			name = strings.Replace(name, ".post_ffw_norm.", ".ffn_post_norm.", 1)
+			name = strings.Replace(name, ".layer_output_scale.", ".out_scale.", 1)
+		}
+
+		shape := t.Shape()
+		if len(shape) == 0 {
+			shape = []uint64{1}
+		}
+
+		kind := t.Kind()
+
+		// Reshape patch embedding [n_embd, ksize_sq_c] → [n_embd, channels, patch_size, patch_size].
+		// The output dtype is F32 (not F16) because tensorBase.Kind() hardcodes
+		// v.patch_embd.weight to F32 via the forced-F32 name list in
+		// reader.go, and that's the dtype reader_safetensors.WriteTo actually
+		// emits. Setting Kind to F16 here would create a header/data
+		// size mismatch: the writer produces 4 bytes/element but the GGUF
+		// header would claim 2 bytes/element, silently corrupting all
+		// downstream tensors' offsets. ggml_conv_2d supports F32 kernels.
+		if strings.Contains(name, "v.patch_embd.weight") && len(shape) == 2 {
+			nEmbd := shape[0]
+			patchSize := uint64(p.VisionModel.PatchSize)
+			if patchSize == 0 {
+				patchSize = 16
+			}
+			numCh := uint64(p.VisionModel.NumChannels)
+			if numCh == 0 {
+				numCh = 3
+			}
+			t.SetRepacker(p.reshapePatchEmbed)
+			shape = []uint64{nEmbd, numCh, patchSize, patchSize}
+		}
+
+		out = append(out, &ggml.Tensor{
+			Name:     name,
+			Kind:     kind,
+			Shape:    shape,
+			WriterTo: t,
+		})
+	}
+	return out
+}
+
+// reshapePatchEmbed reshapes the gemma4 vision patch embedder from HF's 2D
+// linear layout to the 4D conv kernel layout ggml_conv_2d consumes.
+//
+// HF stores `vision_tower.patch_embedder.input_proj.weight` as a 2D
+// nn.Linear weight with shape (n_embd, H*W*C) in row-major, where the input
+// features flatten as NHWC (channels-last). Upstream's
+// convert_hf_to_gguf.py:7633 does:
+//
+//	data = data.reshape(n_embd, H, W, C).permute(0, 3, 1, 2).contiguous()
+//
+// giving (n_embd, C, H, W) which GGUF writes as ne = (W, H, C, n_embd) =
+// (kw, kh, ic, oc) — exactly what ggml_conv_2d expects.
+//
+// This repacker performs the same HWC → CHW transpose element-wise.
 func (*gemma4Model) reshapePatchEmbed(_ string, data []float32, shape []uint64) ([]float32, error) {
 	if len(shape) != 2 {
 		return data, nil
@@ -404,22 +523,20 @@ func (*gemma4Model) reshapePatchEmbed(_ string, data []float32, shape []uint64) 
 	nChannels := 3
 	patchSize := int(math.Sqrt(float64(ksqC / nChannels)))
 
-	// HF layout: [n_embd, patch_size * patch_size * channels] (row-major)
-	// Need: [n_embd, channels, patch_size, patch_size]
 	result := make([]float32, len(data))
 	for e := range nEmbd {
 		for c := range nChannels {
 			for h := range patchSize {
 				for w := range patchSize {
+					// HF channels-last: [e][h][w][c]
 					srcIdx := e*ksqC + h*patchSize*nChannels + w*nChannels + c
+					// ggml conv kernel (OC, IC, KH, KW): [e][c][h][w]
 					dstIdx := e*nChannels*patchSize*patchSize + c*patchSize*patchSize + h*patchSize + w
 					result[dstIdx] = data[srcIdx]
 				}
 			}
 		}
 	}
-	shape[0] = uint64(nEmbd)
-	shape[1] = uint64(nChannels * patchSize * patchSize)
 	return result, nil
 }
 

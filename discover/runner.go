@@ -4,9 +4,7 @@ package discover
 
 import (
 	"context"
-	"io"
 	"log/slog"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -27,7 +25,6 @@ var (
 	deviceMu     sync.Mutex
 	devices      []ml.DeviceInfo
 	libDirs      map[string]struct{}
-	exe          string
 	bootstrapped bool
 )
 
@@ -43,15 +40,6 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 	if !bootstrapped {
 		msg = "GPU bootstrap discovery took"
 		libDirs = make(map[string]struct{})
-		var err error
-		exe, err = os.Executable()
-		if err != nil {
-			slog.Error("unable to lookup executable path", "error", err)
-			return nil
-		}
-		if eval, err := filepath.EvalSymlinks(exe); err == nil {
-			exe = eval
-		}
 		files, err := filepath.Glob(filepath.Join(ml.LibOllamaPath, "*", "*ggml-*"))
 		if err != nil {
 			slog.Debug("unable to lookup runner library directories", "error", err)
@@ -66,6 +54,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 
 		slog.Info("discovering available GPUs...")
 		detectIncompatibleLibraries()
+		detectOldAMDDriverWindows()
 
 		// Warn if any user-overrides are set which could lead to incorrect GPU discovery
 		overrideWarnings()
@@ -410,22 +399,6 @@ func filterOverlapByLibrary(supported map[string]map[string]map[string]int, need
 	}
 }
 
-type bootstrapRunner struct {
-	port int
-	cmd  *exec.Cmd
-}
-
-func (r *bootstrapRunner) GetPort() int {
-	return r.port
-}
-
-func (r *bootstrapRunner) HasExited() bool {
-	if r.cmd != nil && r.cmd.ProcessState != nil {
-		return true
-	}
-	return false
-}
-
 func bootstrapDevicesWithMetalRetry(firstAttemptCtx, retryParentCtx context.Context, timeout time.Duration, ollamaLibDirs []string, extraEnvs map[string]string) []ml.DeviceInfo {
 	runDiscovery := func(ctx context.Context, extraEnvs map[string]string) ([]ml.DeviceInfo, *llm.StatusWriter, int, error) {
 		start := time.Now()
@@ -483,41 +456,12 @@ func recordPersistentRunnerEnv(devices []ml.DeviceInfo, extraEnvs map[string]str
 }
 
 func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs map[string]string) []ml.DeviceInfo {
-	devices, _, _, _ := bootstrapDevicesWithStatus(ctx, ollamaLibDirs, extraEnvs)
+	devices, _, _, _ := llamaServerBootstrapDevicesWithStatus(ctx, ollamaLibDirs, extraEnvs)
 	return devices
 }
 
 func bootstrapDevicesWithStatus(ctx context.Context, ollamaLibDirs []string, extraEnvs map[string]string) ([]ml.DeviceInfo, *llm.StatusWriter, int, error) {
-	var baseOut io.Writer = io.Discard
-	if envconfig.LogLevel() == logutil.LevelTrace {
-		baseOut = os.Stderr
-	}
-
-	status := llm.NewStatusWriter(baseOut)
-	cmd, port, err := llm.StartRunner(
-		true, // ollama engine
-		"",   // no model
-		ollamaLibDirs,
-		status,
-		extraEnvs,
-	)
-	if err != nil {
-		slog.Debug("failed to start runner to discovery GPUs", "error", err)
-		return nil, status, -1, err
-	}
-
-	go func() {
-		cmd.Wait() // exit status ignored
-	}()
-
-	defer cmd.Process.Kill()
-
-	devices, err := ml.GetDevicesFromRunner(ctx, &bootstrapRunner{port: port, cmd: cmd})
-	exitCode := -1
-	if cmd.ProcessState != nil {
-		exitCode = cmd.ProcessState.ExitCode()
-	}
-	return devices, status, exitCode, err
+	return llamaServerBootstrapDevicesWithStatus(ctx, ollamaLibDirs, extraEnvs)
 }
 
 func overrideWarnings() {
@@ -551,5 +495,16 @@ func detectIncompatibleLibraries() {
 	}
 	if !strings.HasPrefix(basePath, ml.LibOllamaPath) {
 		slog.Warn("potentially incompatible library detected in PATH", "location", basePath)
+	}
+}
+
+func detectOldAMDDriverWindows() {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	_, errV6 := exec.LookPath("amdhip64_6.dll")
+	_, errV7 := exec.LookPath("amdhip64_7.dll")
+	if errV6 == nil && errV7 != nil {
+		slog.Warn("AMD driver is too old. Update your AMD driver to enable GPU inference.")
 	}
 }

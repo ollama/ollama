@@ -434,11 +434,18 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 	}
 	defer t.Close()
 
+	// Create a second temp file for multimodal projector output
+	projFile, err := os.CreateTemp(tmpDir, "projector")
+	if err != nil {
+		return nil, err
+	}
+	defer projFile.Close()
+
 	var mediaType string
 	if !isAdapter {
 		fn(api.ProgressResponse{Status: "converting model"})
 		mediaType = "application/vnd.ollama.image.model"
-		if err := convert.ConvertModel(os.DirFS(tmpDir), t); err != nil {
+		if err := convert.ConvertModel(os.DirFS(tmpDir), t, projFile); err != nil {
 			return nil, err
 		}
 	} else {
@@ -474,7 +481,27 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 	}
 	layers := []*layerGGML{{layer, f}}
 
+	// Check if the projector file has content (multimodal model)
 	if !isAdapter {
+		if projSize, _ := projFile.Seek(0, io.SeekEnd); projSize > 0 {
+			if _, err := projFile.Seek(0, io.SeekStart); err != nil {
+				return nil, err
+			}
+			projLayer, err := manifest.NewLayer(projFile, "application/vnd.ollama.image.projector")
+			if err != nil {
+				return nil, err
+			}
+			projBin, err := projLayer.Open()
+			if err != nil {
+				return nil, err
+			}
+			defer projBin.Close()
+			projGGML, err := ggml.Decode(projBin, -1)
+			if err != nil {
+				return nil, err
+			}
+			layers = append(layers, &layerGGML{projLayer, projGGML})
+		}
 		return detectChatTemplate(layers)
 	}
 	return layers, nil
@@ -519,9 +546,9 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 			config.FileType = cmp.Or(config.FileType, layer.GGML.KV().FileType().String())
 			config.ModelFamilies = append(config.ModelFamilies, layer.GGML.KV().Architecture())
 
-			// Auto-detect renderer, parser, and stop tokens from GGUF architecture.
+			// Auto-detect renderer and parser from GGUF architecture.
 			// TODO: abstract this into a registry/lookup table when multiple models
-			// need architecture-based renderer/parser/stop defaults.
+			// need architecture-based renderer/parser defaults.
 			if config.Renderer == "" || config.Parser == "" {
 				arch := layer.GGML.KV().Architecture()
 				switch arch {

@@ -30,6 +30,14 @@ func (p *Parser) GetBuffer() []byte {
 	return p.buffer
 }
 
+// Tag returns the tool-call tag string the parser is looking for in the
+// output stream. Callers can pass this to llama-server's preserved_tokens
+// field so the tag is rendered as text instead of being stripped during
+// detokenization.
+func (p *Parser) Tag() string {
+	return p.tag
+}
+
 // NewParser creates a new tool call parser from a model's chat
 // template and a list of provided tools.
 func NewParser(tmpl *template.Template, tools []api.Tool) *Parser {
@@ -54,6 +62,7 @@ func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
 
 	if p.state == toolsState_LookingForTag {
 		i, found := p.findTag()
+
 		if i == -1 {
 			content = string(p.buffer)
 			p.buffer = []byte{}

@@ -834,6 +834,208 @@ func TestSchedAlreadyCanceled(t *testing.T) {
 	require.Empty(t, scenario1a.req.successCh)
 }
 
+// hasLoadedRunner is a test helper that checks if any runner is loaded.
+func hasLoadedRunner(s *Scheduler) bool {
+	s.loadedMu.Lock()
+	defer s.loadedMu.Unlock()
+	for _, r := range s.loaded {
+		if r.llama != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func TestSchedLlamaServerEvictsWhenVRAMInsufficient(t *testing.T) {
+	// When a llama-server model is predicted to exceed available VRAM,
+	// the scheduler should signal eviction before spawning
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+	// GPU with very little free memory — the model won't fit
+	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
+		g.TotalMemory = 24 * format.GigaByte
+		g.FreeMemory = 0 // no free VRAM — forces eviction
+		return []ml.DeviceInfo{g}
+	}
+	s.getSystemInfoFn = getSystemInfoFn
+
+	// Pre-load a regular model
+	s.loadedMu.Lock()
+	s.loaded["existing-model"] = &runnerRef{
+		llama:    &mockLlm{modelPath: "existing"},
+		modelKey: "existing-model",
+	}
+	s.loadedMu.Unlock()
+
+	// Create a request — the model file + KV cache will exceed 100 MiB
+	scenario := newScenarioRequest(t, ctx, "llama-server-model", 1*format.GigaByte, nil, nil)
+
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+		return &mockLlm{modelPath: model}, nil
+	}
+
+	systemInfo := getSystemInfoFn()
+	gpus := s.getGpuFn(ctx, nil)
+
+	needEvict := s.load(scenario.req, systemInfo, gpus, true)
+	require.True(t, needEvict, "expected eviction when predicted VRAM exceeds free memory")
+}
+
+func TestSchedLlamaServerFitsAlongside(t *testing.T) {
+	// When a llama-server model is predicted to fit in remaining VRAM,
+	// it should load without evicting existing models
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+	// GPU with plenty of free memory
+	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
+		g.TotalMemory = 24 * format.GigaByte
+		g.FreeMemory = 20 * format.GigaByte
+		return []ml.DeviceInfo{g}
+	}
+	s.getSystemInfoFn = getSystemInfoFn
+
+	// Pre-load a regular model
+	s.loadedMu.Lock()
+	s.loaded["existing-model"] = &runnerRef{
+		llama:    &mockLlm{modelPath: "existing"},
+		modelKey: "existing-model",
+	}
+	s.loadedMu.Unlock()
+
+	// The test model GGUF is tiny (~64 bytes) — should easily fit in 20 GiB
+	scenario := newScenarioRequest(t, ctx, "small-llama-server", 1*format.GigaByte, nil, nil)
+
+	s.newServerFn = scenario.newServer
+
+	systemInfo := getSystemInfoFn()
+	gpus := s.getGpuFn(ctx, nil)
+
+	// Should NOT evict — model fits alongside existing
+	needEvict := s.load(scenario.req, systemInfo, gpus, true)
+	require.False(t, needEvict, "expected no eviction when model fits in available VRAM")
+}
+
+// TestSchedLoadCrashTriggersEvictAllAndRetry verifies that a post-spawn
+// Load() failure while other models are resident signals evict-all-and-retry
+// on the first attempt, but fails fast on the second attempt.
+func TestSchedLoadCrashTriggersEvictAllAndRetry(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
+		g.TotalMemory = 24 * format.GigaByte
+		g.FreeMemory = 20 * format.GigaByte
+		return []ml.DeviceInfo{g}
+	}
+	s.getSystemInfoFn = getSystemInfoFn
+
+	// Pre-load a different model so evict-all has something to evict.
+	s.loadedMu.Lock()
+	s.loaded["existing-model"] = &runnerRef{
+		llama:    &mockLlm{modelPath: "/fake/existing"},
+		modelKey: "existing-model",
+	}
+	s.loadedMu.Unlock()
+
+	// newServerFn returns a mockLlm that crashes in Load()
+	loadCrash := errors.New("simulated llama-server OOM crash")
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+		return &mockLlm{modelPath: model, loadErr: loadCrash}, nil
+	}
+
+	scenario := newScenarioRequest(t, ctx, "crashing-model", 1*format.GigaByte, nil, nil)
+	systemInfo := getSystemInfoFn()
+	gpus := s.getGpuFn(ctx, nil)
+
+	// First attempt: should signal evict-all by returning true and NOT send
+	// the error to errCh (so the caller will retry).
+	needEvict := s.load(scenario.req, systemInfo, gpus, true)
+	require.True(t, needEvict, "first crash should signal eviction")
+	require.True(t, scenario.req.oomRetryAttempted, "oomRetryAttempted should be set")
+	select {
+	case err := <-scenario.req.errCh:
+		t.Fatalf("errCh should be empty on first crash, got %v", err)
+	default:
+	}
+
+	// Second attempt (simulating the retry after processPending evicted all
+	// other runners): same crash, but this time oomRetryAttempted is set so
+	// load() should fail fast and report the error.
+	needEvict = s.load(scenario.req, systemInfo, gpus, true)
+	require.False(t, needEvict, "second crash should not ask for another eviction")
+	select {
+	case err := <-scenario.req.errCh:
+		require.ErrorIs(t, err, loadCrash)
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected error on errCh after second crash")
+	}
+}
+
+// TestSchedLoadCrashNoOtherModelsFailsFast verifies that a Load() crash with
+// no other resident models reports the error immediately (no retry).
+func TestSchedLoadCrashNoOtherModelsFailsFast(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer done()
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
+		g.TotalMemory = 24 * format.GigaByte
+		g.FreeMemory = 20 * format.GigaByte
+		return []ml.DeviceInfo{g}
+	}
+	s.getSystemInfoFn = getSystemInfoFn
+
+	loadCrash := errors.New("simulated llama-server OOM crash")
+	s.newServerFn = func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+		return &mockLlm{modelPath: model, loadErr: loadCrash}, nil
+	}
+
+	scenario := newScenarioRequest(t, ctx, "crashing-model", 1*format.GigaByte, nil, nil)
+	systemInfo := getSystemInfoFn()
+	gpus := s.getGpuFn(ctx, nil)
+
+	needEvict := s.load(scenario.req, systemInfo, gpus, true)
+	require.False(t, needEvict, "crash with no other runners should not ask for eviction")
+	require.False(t, scenario.req.oomRetryAttempted, "oomRetryAttempted must stay false")
+	select {
+	case err := <-scenario.req.errCh:
+		require.ErrorIs(t, err, loadCrash)
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected error on errCh immediately")
+	}
+}
+
+func TestSchedLlamaServerEvictsExistingOnPending(t *testing.T) {
+	// When a llama-server runner is already loaded and a new model is requested,
+	// the scheduler should evict the llama-server runner
+	ctx, done := context.WithCancel(t.Context())
+	defer done()
+	s := InitScheduler(ctx)
+
+	// Load a llama-server runner
+	s.loadedMu.Lock()
+	s.loaded["llama-model"] = &runnerRef{
+		llama:    &mockLlm{modelPath: "/tmp/model.gguf"},
+		modelKey: "llama-model",
+	}
+	s.loadedMu.Unlock()
+
+	require.True(t, hasLoadedRunner(s))
+
+	// The findRunnerToUnload should find and return the llama-server runner
+	runner := s.findRunnerToUnload()
+	require.NotNil(t, runner)
+}
+
 type mockLlm struct {
 	modelPath         string
 	pingResp          error
@@ -850,6 +1052,10 @@ type mockLlm struct {
 	vramSize          uint64
 	totalSize         uint64
 	vramByGPU         map[ml.DeviceID]uint64
+
+	// loadErr, if non-nil, is returned from Load() to simulate a post-spawn
+	// load failure (e.g. llama-server crashing due to under-predicted VRAM).
+	loadErr error
 }
 
 func (s *mockLlm) ModelPath() string {
@@ -857,6 +1063,9 @@ func (s *mockLlm) ModelPath() string {
 }
 
 func (s *mockLlm) Load(ctx context.Context, sytemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
+	if s.loadErr != nil {
+		return nil, s.loadErr
+	}
 	if requireFull {
 		if len(gpus) == 0 {
 			slog.Info("mockLlm.Load CPU based load")

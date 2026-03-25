@@ -1,0 +1,149 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "default",
+      "binaryDir": "${sourceDir}/../../build/llama-server",
+      "installDir": "${sourceDir}/../../dist",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_SHARED_LIBS": "ON",
+        "GGML_BACKEND_DL": "ON",
+        "GGML_NATIVE": "OFF"
+      }
+    },
+    {
+      "name": "cpu",
+      "inherits": ["default"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-cpu",
+      "cacheVariables": {
+        "GGML_CPU_ALL_VARIANTS": "ON",
+        "OLLAMA_RUNNER_DIR": ""
+      }
+    },
+    {
+      "name": "darwin",
+      "inherits": ["default"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-darwin",
+      "cacheVariables": {
+        "BUILD_SHARED_LIBS": "OFF",
+        "GGML_BACKEND_DL": "OFF",
+        "GGML_METAL": "ON",
+        "GGML_METAL_EMBED_LIBRARY": "ON",
+        "OLLAMA_RUNNER_DIR": ""
+      }
+    },
+    {
+      "name": "cuda-v12",
+      "inherits": ["default"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-cuda-v12",
+      "cacheVariables": {
+        "GGML_CUDA": "ON",
+        "CMAKE_CUDA_ARCHITECTURES": "50;52;60;61;70;75;80;86;89;90;90a;120",
+        "CMAKE_CUDA_FLAGS": "-Wno-deprecated-gpu-targets -t 2",
+        "OLLAMA_RUNNER_DIR": "cuda_v12",
+        "OLLAMA_GPU_BACKEND": "cuda"
+      }
+    },
+    {
+      "name": "cuda-v13",
+      "inherits": ["default"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-cuda-v13",
+      "cacheVariables": {
+        "GGML_CUDA": "ON",
+        "CMAKE_CUDA_ARCHITECTURES": "75-virtual;80-virtual;86-virtual;89-virtual;90-virtual;90a-virtual;100-virtual;103-virtual;110-virtual;120-virtual;121-virtual",
+        "CMAKE_CUDA_FLAGS": "-t 4",
+        "OLLAMA_RUNNER_DIR": "cuda_v13",
+        "OLLAMA_GPU_BACKEND": "cuda"
+      }
+    },
+    {
+      "name": "cuda-v13-windows",
+      "inherits": ["default"],
+      "description": "Reduced architecture set for Windows to avoid MSVC template compilation issues",
+      "binaryDir": "${sourceDir}/../../build/llama-server-cuda-v13",
+      "cacheVariables": {
+        "GGML_CUDA": "ON",
+        "CMAKE_CUDA_ARCHITECTURES": "75-virtual;89-virtual;100-virtual;120-virtual",
+        "CMAKE_CUDA_FLAGS": "-t 4",
+        "OLLAMA_RUNNER_DIR": "cuda_v13",
+        "OLLAMA_GPU_BACKEND": "cuda"
+      }
+    },
+    {
+      "name": "jetpack5",
+      "inherits": ["default"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-jetpack5",
+      "cacheVariables": {
+        "GGML_CUDA": "ON",
+        "CMAKE_CUDA_ARCHITECTURES": "72;87",
+        "OLLAMA_RUNNER_DIR": "cuda_jetpack5",
+        "OLLAMA_GPU_BACKEND": "cuda"
+      }
+    },
+    {
+      "name": "jetpack6",
+      "inherits": ["default"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-jetpack6",
+      "cacheVariables": {
+        "GGML_CUDA": "ON",
+        "CMAKE_CUDA_ARCHITECTURES": "87",
+        "OLLAMA_RUNNER_DIR": "cuda_jetpack6",
+        "OLLAMA_GPU_BACKEND": "cuda"
+      }
+    },
+    {
+      "name": "rocm",
+      "inherits": ["default"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-rocm",
+      "cacheVariables": {
+        "GGML_HIP": "ON",
+        "CMAKE_HIP_PLATFORM": "amd",
+        "OLLAMA_RUNNER_DIR": "rocm",
+        "OLLAMA_GPU_BACKEND": "hip"
+      }
+    },
+    {
+      "name": "vulkan",
+      "inherits": ["default"],
+      "binaryDir": "${sourceDir}/../../build/llama-server-vulkan",
+      "cacheVariables": {
+        "GGML_VULKAN": "ON",
+        "OLLAMA_RUNNER_DIR": "vulkan",
+        "OLLAMA_GPU_BACKEND": "vulkan"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "cpu",
+      "configurePreset": "cpu",
+      "targets": ["llama-server", "llama-quantize", "ggml-cpu"]
+    },
+    {
+      "name": "darwin",
+      "configurePreset": "darwin",
+      "targets": ["llama-server", "llama-quantize"]
+    },
+    {
+      "name": "cuda-v12",
+      "configurePreset": "cuda-v12",
+      "targets": ["ggml-cuda"]
+    },
+    {
+      "name": "cuda-v13",
+      "configurePreset": "cuda-v13",
+      "targets": ["ggml-cuda"]
+    },
+    {
+      "name": "rocm",
+      "configurePreset": "rocm",
+      "targets": ["ggml-hip"]
+    },
+    {
+      "name": "vulkan",
+      "configurePreset": "vulkan",
+      "targets": ["ggml-vulkan"]
+    }
+  ]
+}
