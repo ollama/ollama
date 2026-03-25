@@ -96,11 +96,20 @@ func (m *Model) Capabilities() []model.Capability {
 		} else {
 			slog.Error("couldn't open model file", "error", err)
 		}
-	} else if len(m.Config.Capabilities) > 0 {
+	}
+
+	// Also include capabilities from the model config (e.g. vision capability
+	// set during creation for MLX/safetensors models).
+	if len(m.Config.Capabilities) > 0 {
 		for _, c := range m.Config.Capabilities {
-			capabilities = append(capabilities, model.Capability(c))
+			cap := model.Capability(c)
+			if !slices.Contains(capabilities, cap) {
+				capabilities = append(capabilities, cap)
+			}
 		}
-	} else {
+	}
+
+	if len(capabilities) == 0 {
 		slog.Warn("unknown capabilities for model", "model", m.Name)
 	}
 

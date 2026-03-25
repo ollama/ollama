@@ -139,6 +139,11 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 			capabilities = append(capabilities, "thinking")
 		}
 
+		// Check if model has a vision encoder
+		if supportsVision(opts.ModelDir) {
+			capabilities = append(capabilities, "vision")
+		}
+
 		// Set parser and renderer name based on architecture
 		parserName = getParserName(opts.ModelDir)
 		rendererName = getRendererName(opts.ModelDir)
@@ -483,6 +488,24 @@ func supportsThinking(modelDir string) bool {
 	}
 
 	return false
+}
+
+// supportsVision checks if the model has a vision encoder by looking for
+// vision_config in config.json.
+func supportsVision(modelDir string) bool {
+	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
+	if err != nil {
+		return false
+	}
+
+	var cfg struct {
+		VisionConfig *json.RawMessage `json:"vision_config"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return false
+	}
+
+	return cfg.VisionConfig != nil
 }
 
 // getParserName returns the parser name for a model based on its architecture.
