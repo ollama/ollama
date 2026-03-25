@@ -502,7 +502,6 @@ func TestLogprobsWithStopSequences(t *testing.T) {
 }
 
 func TestCalculateLogprobsPartialUTF8(t *testing.T) {
-	// Token 0 maps to first byte of emoji U+1F60A (😊)
 	decoder := func(id int) (string, []byte) {
 		switch id {
 		case 0:
@@ -520,7 +519,6 @@ func TestCalculateLogprobsPartialUTF8(t *testing.T) {
 	if !bytes.Equal(result[0].Bytes, []byte{0xF0}) {
 		t.Errorf("selected token bytes: got %v, want [0xF0]", result[0].Bytes)
 	}
-	// topK=2 with logits [1.0, 0.5, 0.1] means top 2 are token 0 and token 1
 	if len(result[0].TopLogprobs) != 2 {
 		t.Fatalf("expected 2 top logprobs, got %d", len(result[0].TopLogprobs))
 	}

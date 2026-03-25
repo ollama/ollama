@@ -213,8 +213,6 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 // calculateLogprobs converts raw logits to log probabilities and finds top K tokens
 func calculateLogprobs(logits []float32, selectedToken int32, topK int, tok tokenizer.Tokenizer) []llm.Logprob {
 	decoder := func(tokenID int) (string, []byte) {
-		// Decode returns raw bytes inside a Go string, so []byte(text)
-		// preserves partial UTF-8 sequences.
 		text, _ := tok.Decode([]int32{int32(tokenID)})
 		return text, []byte(text)
 	}

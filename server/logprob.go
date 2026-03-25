@@ -30,8 +30,7 @@ func toAPILogprobs(logprobs []llm.Logprob) []api.Logprob {
 	return result
 }
 
-// logprobBytes converts a TokenLogprob's raw bytes to []int.
-// It prefers Bytes when set; falls back to Token (lossy for partial UTF-8).
+// logprobBytes returns tlp.Bytes as []int, falling back to Token if Bytes is empty.
 func logprobBytes(tlp llm.TokenLogprob) []int {
 	if len(tlp.Bytes) > 0 {
 		ints := make([]int, len(tlp.Bytes))
