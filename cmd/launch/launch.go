@@ -179,6 +179,7 @@ Supported integrations:
   opencode  OpenCode
   openclaw  OpenClaw (aliases: clawdbot, moltbot)
   pi        Pi
+  vscode    VS Code (aliases: code)
 
 Examples:
   ollama launch
@@ -799,13 +800,6 @@ func cloneAliases(aliases map[string]string) map[string]string {
 		cloned[key] = value
 	}
 	return cloned
-}
-
-func singleModelPrechecked(current string) []string {
-	if current == "" {
-		return nil
-	}
-	return []string{current}
 }
 
 func firstModel(models []string) string {
