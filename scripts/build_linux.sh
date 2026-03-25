@@ -33,21 +33,6 @@ docker buildx build \
         -f Dockerfile \
         .
 
-if echo $PLATFORM | grep "amd64" > /dev/null; then
-    outDir="./dist"
-    if echo $PLATFORM | grep "," > /dev/null ; then
-       outDir="./dist/linux_amd64"
-    fi
-    docker buildx build \
-        --output type=local,dest=${outDir} \
-        --platform=linux/amd64 \
-        ${OLLAMA_COMMON_BUILD_ARGS} \
-        --build-arg FLAVOR=rocm \
-        --target archive \
-        -f Dockerfile \
-        .
-fi
-
 # Run deduplication for each platform output directory
 if echo $PLATFORM | grep "," > /dev/null ; then
     $(dirname $0)/deduplicate_cuda_libs.sh "./dist/linux_amd64"
@@ -59,16 +44,16 @@ fi
 # buildx behavior changes for single vs. multiplatform
 echo "Compressing linux tar bundles..."
 if echo $PLATFORM | grep "," > /dev/null ; then
-        tar c -C ./dist/linux_arm64 --exclude cuda_jetpack5 --exclude cuda_jetpack6 . | zstd --ultra -22 -T0 >./dist/ollama-linux-arm64.tar.zst
-        tar c -C ./dist/linux_arm64 ./lib/ollama/cuda_jetpack5  | zstd --ultra -22 -T0 >./dist/ollama-linux-arm64-jetpack5.tar.zst
-        tar c -C ./dist/linux_arm64 ./lib/ollama/cuda_jetpack6  | zstd --ultra -22 -T0 >./dist/ollama-linux-arm64-jetpack6.tar.zst
-        tar c -C ./dist/linux_amd64 --exclude rocm . | zstd --ultra -22 -T0 >./dist/ollama-linux-amd64.tar.zst
-        tar c -C ./dist/linux_amd64 ./lib/ollama/rocm  | zstd --ultra -22 -T0 >./dist/ollama-linux-amd64-rocm.tar.zst
+        tar c -C ./dist/linux_arm64 --exclude cuda_jetpack5 --exclude cuda_jetpack6 . | zstd -9 -T0 >./dist/ollama-linux-arm64.tar.zst
+        tar c -C ./dist/linux_arm64 ./lib/ollama/cuda_jetpack5  | zstd -9 -T0 >./dist/ollama-linux-arm64-jetpack5.tar.zst
+        tar c -C ./dist/linux_arm64 ./lib/ollama/cuda_jetpack6  | zstd -9 -T0 >./dist/ollama-linux-arm64-jetpack6.tar.zst
+        tar c -C ./dist/linux_amd64 --exclude rocm . | zstd -9 -T0 >./dist/ollama-linux-amd64.tar.zst
+        tar c -C ./dist/linux_amd64 ./lib/ollama/rocm | zstd -9 -T0 >./dist/ollama-linux-amd64-rocm.tar.zst
 elif echo $PLATFORM | grep "arm64" > /dev/null ; then
-        tar c -C ./dist/ --exclude cuda_jetpack5 --exclude cuda_jetpack6 bin lib | zstd --ultra -22 -T0 >./dist/ollama-linux-arm64.tar.zst
-        tar c -C ./dist/ ./lib/ollama/cuda_jetpack5  | zstd --ultra -22 -T0 >./dist/ollama-linux-arm64-jetpack5.tar.zst
-        tar c -C ./dist/ ./lib/ollama/cuda_jetpack6  | zstd --ultra -22 -T0 >./dist/ollama-linux-arm64-jetpack6.tar.zst
+        tar c -C ./dist/ --exclude cuda_jetpack5 --exclude cuda_jetpack6 bin lib | zstd -9 -T0 >./dist/ollama-linux-arm64.tar.zst
+        tar c -C ./dist/ ./lib/ollama/cuda_jetpack5  | zstd -9 -T0 >./dist/ollama-linux-arm64-jetpack5.tar.zst
+        tar c -C ./dist/ ./lib/ollama/cuda_jetpack6  | zstd -9 -T0 >./dist/ollama-linux-arm64-jetpack6.tar.zst
 elif echo $PLATFORM | grep "amd64" > /dev/null ; then
-        tar c -C ./dist/ --exclude rocm bin lib | zstd --ultra -22 -T0 >./dist/ollama-linux-amd64.tar.zst
-        tar c -C ./dist/ ./lib/ollama/rocm  | zstd --ultra -22 -T0 >./dist/ollama-linux-amd64-rocm.tar.zst
+        tar c -C ./dist/ --exclude rocm bin lib | zstd -9 -T0 >./dist/ollama-linux-amd64.tar.zst
+        tar c -C ./dist/ ./lib/ollama/rocm | zstd -9 -T0 >./dist/ollama-linux-amd64-rocm.tar.zst
 fi

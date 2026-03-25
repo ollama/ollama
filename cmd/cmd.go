@@ -257,6 +257,22 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	var g errgroup.Group
 	g.SetLimit(max(runtime.GOMAXPROCS(0)-1, 1))
 
+	// Find common directory prefix to compute relative paths for the server.
+	// Files from subdirectories (e.g. 2_Dense/config.json) must keep their
+	// relative path to avoid collisions with root-level files.
+	var modelDir string
+	for f := range req.Files {
+		dir := filepath.Dir(f)
+		if modelDir == "" {
+			modelDir = dir
+		} else {
+			// Find common prefix
+			for !strings.HasPrefix(dir, modelDir) {
+				modelDir = filepath.Dir(modelDir)
+			}
+		}
+	}
+
 	files := syncmap.NewSyncMap[string, string]()
 	for f, digest := range req.Files {
 		g.Go(func() error {
@@ -264,12 +280,25 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				return err
 			}
 
-			// TODO: this is incorrect since the file might be in a subdirectory
-			//       instead this should take the path relative to the model directory
-			//       but the current implementation does not allow this
-			files.Store(filepath.Base(f), digest)
+			rel, err := filepath.Rel(modelDir, f)
+			if err != nil || !filepath.IsLocal(rel) {
+				rel = filepath.Base(f)
+			}
+			files.Store(rel, digest)
 			return nil
 		})
+	}
+
+	var adapterDir string
+	for f := range req.Adapters {
+		dir := filepath.Dir(f)
+		if adapterDir == "" {
+			adapterDir = dir
+		} else {
+			for !strings.HasPrefix(dir, adapterDir) {
+				adapterDir = filepath.Dir(adapterDir)
+			}
+		}
 	}
 
 	adapters := syncmap.NewSyncMap[string, string]()
@@ -279,8 +308,11 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				return err
 			}
 
-			// TODO: same here
-			adapters.Store(filepath.Base(f), digest)
+			rel, err := filepath.Rel(adapterDir, f)
+			if err != nil || !filepath.IsLocal(rel) {
+				rel = filepath.Base(f)
+			}
+			adapters.Store(rel, digest)
 			return nil
 		})
 	}

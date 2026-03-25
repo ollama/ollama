@@ -39,42 +39,51 @@ type glm4MoeLiteModel struct {
 	ExpertWeightsScale     float32 `json:"routed_scaling_factor"`
 
 	LeadingDenseBlockCount uint32 `json:"first_k_dense_replace"`
+
+	ExpertGroupCount     uint32 `json:"n_group"`
+	ExpertGroupUsedCount uint32 `json:"topk_group"`
 }
 
 func (p *glm4MoeLiteModel) KV(t *Tokenizer) KV {
 	kv := p.ModelParameters.KV(t)
-	kv["general.architecture"] = "glm4moelite"
+	kv["general.architecture"] = "deepseek2"
 	kv["general.type"] = "model"
-	kv["glm4moelite.block_count"] = p.HiddenLayers
+	kv["deepseek2.block_count"] = p.HiddenLayers
 
 	numHeads := p.NumAttentionHeads
-	numKVHeads := p.NumKeyValueHeads
 
-	kv["glm4moelite.attention.head_count"] = numHeads
-	kv["glm4moelite.attention.head_count_kv"] = numKVHeads
-	kv["glm4moelite.attention.key_length"] = p.QKNopeHeadDim + p.QKRopeHeadDim
-	kv["glm4moelite.attention.kv_lora_rank"] = p.KVLoraRank
-	kv["glm4moelite.attention.layer_norm_rms_epsilon"] = p.RMSNormEPS
-	kv["glm4moelite.attention.q_lora_rank"] = p.QLoraRank
-	kv["glm4moelite.attention.value_length"] = p.VHeadDim
-	kv["glm4moelite.context_length"] = p.MaxPositionEmbeddings
-	kv["glm4moelite.embedding_length"] = p.HiddenSize
-	kv["glm4moelite.expert_count"] = p.ExpertCount
-	kv["glm4moelite.expert_feed_forward_length"] = p.ExpertIntermediateSize
-	kv["glm4moelite.expert_shared_count"] = p.ExpertSharedCount
+	kv["deepseek2.attention.head_count"] = numHeads
+	// deepseek2 uses MLA which is MQA (1 KV head) — upstream sets this to 1 regardless
+	// of the HF num_key_value_heads. All attention heads share the compressed KV.
+	kv["deepseek2.attention.head_count_kv"] = uint32(1)
+	// MLA key/value lengths: upstream convention is key_length = kv_lora_rank + qk_rope
+	// (the "absorbed" MLA head dim used at runtime) and key_length_mla = qk_nope + qk_rope
+	// (the traditional head dim, used for q_b shape computation).
+	kv["deepseek2.attention.key_length"] = p.KVLoraRank + p.QKRopeHeadDim
+	kv["deepseek2.attention.kv_lora_rank"] = p.KVLoraRank
+	kv["deepseek2.attention.layer_norm_rms_epsilon"] = p.RMSNormEPS
+	kv["deepseek2.attention.q_lora_rank"] = p.QLoraRank
+	kv["deepseek2.attention.value_length"] = p.KVLoraRank
+	kv["deepseek2.context_length"] = p.MaxPositionEmbeddings
+	kv["deepseek2.embedding_length"] = p.HiddenSize
+	kv["deepseek2.expert_count"] = p.ExpertCount
+	kv["deepseek2.expert_feed_forward_length"] = p.ExpertIntermediateSize
+	kv["deepseek2.expert_shared_count"] = p.ExpertSharedCount
 
-	kv["glm4moelite.expert_gating_func"] = uint32(2)
-	kv["glm4moelite.expert_used_count"] = p.ExpertUsedCount
-	kv["glm4moelite.expert_weights_norm"] = p.ExpertWeightsNorm
-	kv["glm4moelite.expert_weights_scale"] = p.ExpertWeightsScale
-	kv["glm4moelite.feed_forward_length"] = p.IntermediateSize
-	kv["glm4moelite.leading_dense_block_count"] = p.LeadingDenseBlockCount
+	kv["deepseek2.expert_group_count"] = cmp.Or(p.ExpertGroupCount, 1)
+	kv["deepseek2.expert_group_used_count"] = cmp.Or(p.ExpertGroupUsedCount, 1)
+	kv["deepseek2.expert_used_count"] = p.ExpertUsedCount
+	kv["deepseek2.vocab_size"] = p.VocabSize
+	kv["deepseek2.expert_weights_norm"] = p.ExpertWeightsNorm
+	kv["deepseek2.expert_weights_scale"] = p.ExpertWeightsScale
+	kv["deepseek2.feed_forward_length"] = p.IntermediateSize
+	kv["deepseek2.leading_dense_block_count"] = p.LeadingDenseBlockCount
 
-	kv["glm4moelite.rope.dimension_count"] = p.QKRopeHeadDim
-	kv["glm4moelite.rope.freq_base"] = cmp.Or(p.RopeTheta, float32(1000000.0))
+	kv["deepseek2.rope.dimension_count"] = p.QKRopeHeadDim
+	kv["deepseek2.rope.freq_base"] = cmp.Or(p.RopeTheta, float32(1000000.0))
 
-	kv["glm4moelite.attention.key_length_mla"] = p.KVLoraRank + p.QKRopeHeadDim
-	kv["glm4moelite.attention.value_length_mla"] = p.KVLoraRank
+	kv["deepseek2.attention.key_length_mla"] = p.QKNopeHeadDim + p.QKRopeHeadDim
+	kv["deepseek2.attention.value_length_mla"] = p.VHeadDim
 
 	kv["tokenizer.ggml.pre"] = "glm4"
 
@@ -229,7 +238,7 @@ func (p *glm4MoeLiteModel) Tensors(s []Tensor) (out []*ggml.Tensor) {
 					}
 					kvFirst = false
 				default:
-					slog.Warn("glm4moelite: unexpected attn_kv_b layout", "name", t.Name(), "shape", t.Shape())
+					slog.Warn("deepseek2: unexpected attn_kv_b layout", "name", t.Name(), "shape", t.Shape())
 				}
 			}
 

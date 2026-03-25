@@ -33,6 +33,10 @@ type LlmRequest struct {
 	successCh       chan *runnerRef
 	errCh           chan error
 	schedAttempts   uint
+
+	// oomRetryAttempted is set after a llama-server load crash triggers an
+	// evict-all-and-retry. Prevents infinite retry on persistent load failures.
+	oomRetryAttempted bool
 }
 
 type Scheduler struct {
@@ -62,6 +66,7 @@ type Scheduler struct {
 // Model will still need to fit in VRAM, but loading many small models
 // on a large GPU can cause stalling
 var defaultModelsPerGPU = 3
+
 
 var ErrMaxQueue = errors.New("server busy, please try again.  maximum pending requests exceeded")
 
@@ -238,6 +243,18 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					if !needEvict {
 						slog.Debug("new model fits with existing models, loading")
 						break
+					}
+
+					// OOM retry path: load() crashed post-spawn and we still
+					// have other models resident. Evict all of them, wait for
+					// every unload, then loop back to retry the load once.
+					// load() has already set oomRetryAttempted so a second
+					// crash falls through to the fail-fast path.
+					if pending.oomRetryAttempted {
+						if !s.evictAllAndWait(ctx, pendingKey) {
+							return
+						}
+						continue
 					}
 
 					runnerToExpire = s.findRunnerToUnload()
@@ -441,6 +458,29 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 				s.loadedMu.Unlock()
 				return false
 			}
+
+			// Pre-flight check: estimate whether the model fits in remaining VRAM.
+			// llama-server auto-detects layers based on available VRAM, so if
+			// we predict it won't fit, evict before spawning.
+			if requireFull && len(s.loaded) > 0 && len(gpus) > 0 {
+				predicted := llm.PredictServerVRAM(req.model.ModelPath, f, req.opts.NumCtx)
+				var freeVRAM uint64
+				for _, g := range gpus {
+					freeVRAM += g.FreeMemory
+				}
+				// Use 80% of free VRAM as threshold to leave headroom
+				if predicted > freeVRAM*80/100 {
+					slog.Info("llama-server model predicted to exceed available VRAM, evicting",
+						"predicted", format.HumanBytes2(predicted),
+						"free", format.HumanBytes2(freeVRAM))
+					s.loadedMu.Unlock()
+					return true
+				}
+				slog.Info("llama-server model fits alongside existing models",
+					"predicted", format.HumanBytes2(predicted),
+					"free", format.HumanBytes2(freeVRAM))
+			}
+
 			llama, err = s.newServerFn(systemInfo, gpus, req.model.ModelPath, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, numParallel)
 			if err != nil {
 				// some older models are not compatible with newer versions of llama.cpp
@@ -511,6 +551,24 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 		slog.Info("Load failed", "model", req.model.ModelPath, "error", err)
 		s.activeLoading.Close()
 		s.activeLoading = nil
+
+		// Any post-spawn Load() failure might be an under-predicted VRAM
+		// allocation. If other models are loaded and we haven't retried yet,
+		// evict everything else and try once more — the caller (processPending)
+		// drives the eviction via the needEvict return path below.
+		//
+		// Future: parse llama-server stderr for "out of memory" / "alloc
+		// failed" to distinguish OOM from other crash causes. Log patterns
+		// vary across backends (CUDA/ROCm/Vulkan) so keeping this generic.
+		s.loadedMu.Lock()
+		otherLoaded := len(s.loaded) > 0
+		s.loadedMu.Unlock()
+		if otherLoaded && !req.oomRetryAttempted {
+			req.oomRetryAttempted = true
+			slog.Warn("llama-server load failed; evicting all other models and retrying once", "model", req.model.ModelPath, "error", err)
+			return true
+		}
+
 		req.errCh <- err
 		return false
 	}
@@ -860,6 +918,52 @@ func (a ByDurationAndName) Less(i, j int) bool {
 // func (a BySize) Len() int           { return len(a) }
 // func (a BySize) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 // func (a BySize) Less(i, j int) bool { return a[i].vramSize < a[j].vramSize }
+
+// evictAllAndWait synchronously expires every currently loaded runner except
+// the one being loaded (matched by modelKey) and waits for all unload events
+// to drain. Returns false if the context was cancelled mid-wait so the caller
+// can exit the scheduling loop. Used by the OOM retry path in processPending.
+func (s *Scheduler) evictAllAndWait(ctx context.Context, keepKey string) bool {
+	s.loadedMu.Lock()
+	runnersToExpire := make([]*runnerRef, 0, len(s.loaded))
+	for key, r := range s.loaded {
+		if key == keepKey {
+			continue
+		}
+		runnersToExpire = append(runnersToExpire, r)
+	}
+	s.loadedMu.Unlock()
+
+	if len(runnersToExpire) == 0 {
+		return true
+	}
+
+	slog.Info("evicting all other loaded models for OOM retry", "count", len(runnersToExpire))
+	for _, runner := range runnersToExpire {
+		runner.refMu.Lock()
+		if runner.expireTimer != nil {
+			runner.expireTimer.Stop()
+			runner.expireTimer = nil
+		}
+		runner.sessionDuration = 0
+		if runner.refCount <= 0 {
+			s.expiredCh <- runner
+		}
+		runner.refMu.Unlock()
+	}
+
+	// Wait for every unload event. Each runner produces exactly one
+	// unloadedCh signal when its cleanup finishes.
+	for range runnersToExpire {
+		select {
+		case <-ctx.Done():
+			slog.Debug("shutting down scheduler during evict-all wait")
+			return false
+		case <-s.unloadedCh:
+		}
+	}
+	return true
+}
 
 // findRunnerToUnload finds a runner to unload to make room for a new model
 func (s *Scheduler) findRunnerToUnload() *runnerRef {
