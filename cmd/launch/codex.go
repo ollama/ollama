@@ -19,7 +19,7 @@ func (c *Codex) String() string { return "Codex" }
 const codexProfileName = "ollama-launch"
 
 func (c *Codex) args(model string, extra []string) []string {
-	args := []string{"--oss", "--profile", codexProfileName}
+	args := []string{"--profile", codexProfileName}
 	if model != "" {
 		args = append(args, "-m", model)
 	}
@@ -63,40 +63,59 @@ func ensureCodexConfig() error {
 	return writeCodexProfile(configPath)
 }
 
-// writeCodexProfile ensures ~/.codex/config.toml has a [profiles.ollama-launch] section
-// with the correct openai_base_url.
+// writeCodexProfile ensures ~/.codex/config.toml has the ollama-launch profile
+// and model provider sections with the correct base URL.
 func writeCodexProfile(configPath string) error {
 	baseURL := envconfig.Host().String() + "/v1/"
 
-	header := fmt.Sprintf("[profiles.%s]", codexProfileName)
-	profileLines := []string{
-		header,
-		fmt.Sprintf("openai_base_url = %q", baseURL),
+	sections := []struct {
+		header string
+		lines  []string
+	}{
+		{
+			header: fmt.Sprintf("[profiles.%s]", codexProfileName),
+			lines: []string{
+				fmt.Sprintf("openai_base_url = %q", baseURL),
+				`forced_login_method = "api"`,
+				fmt.Sprintf("model_provider = %q", codexProfileName),
+			},
+		},
+		{
+			header: fmt.Sprintf("[model_providers.%s]", codexProfileName),
+			lines: []string{
+				`name = "Ollama"`,
+				fmt.Sprintf("base_url = %q", baseURL),
+			},
+		},
 	}
-	profileBlock := strings.Join(profileLines, "\n") + "\n"
 
 	content, readErr := os.ReadFile(configPath)
-	if readErr != nil {
-		// File doesn't exist; create with just the profile.
-		return os.WriteFile(configPath, []byte(profileBlock), 0o644)
+	text := ""
+	if readErr == nil {
+		text = string(content)
 	}
 
-	text := string(content)
+	for _, s := range sections {
+		block := strings.Join(append([]string{s.header}, s.lines...), "\n") + "\n"
 
-	if idx := strings.Index(text, header); idx >= 0 {
-		// Replace the existing profile section up to the next section header.
-		rest := text[idx+len(header):]
-		if endIdx := strings.Index(rest, "\n["); endIdx >= 0 {
-			text = text[:idx] + profileBlock + rest[endIdx+1:]
+		if idx := strings.Index(text, s.header); idx >= 0 {
+			// Replace the existing section up to the next section header.
+			rest := text[idx+len(s.header):]
+			if endIdx := strings.Index(rest, "\n["); endIdx >= 0 {
+				text = text[:idx] + block + rest[endIdx+1:]
+			} else {
+				text = text[:idx] + block
+			}
 		} else {
-			text = text[:idx] + profileBlock
+			// Append the section.
+			if text != "" && !strings.HasSuffix(text, "\n") {
+				text += "\n"
+			}
+			if text != "" {
+				text += "\n"
+			}
+			text += block
 		}
-	} else {
-		// Append the profile section.
-		if !strings.HasSuffix(text, "\n") {
-			text += "\n"
-		}
-		text += "\n" + profileBlock
 	}
 
 	return os.WriteFile(configPath, []byte(text), 0o644)

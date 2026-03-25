@@ -17,10 +17,10 @@ func TestCodexArgs(t *testing.T) {
 		args  []string
 		want  []string
 	}{
-		{"with model", "llama3.2", nil, []string{"--oss", "--profile", "ollama-launch", "-m", "llama3.2"}},
-		{"empty model", "", nil, []string{"--oss", "--profile", "ollama-launch"}},
-		{"with model and extra args", "qwen3.5", []string{"-p", "myprofile"}, []string{"--oss", "--profile", "ollama-launch", "-m", "qwen3.5", "-p", "myprofile"}},
-		{"with sandbox flag", "llama3.2", []string{"--sandbox", "workspace-write"}, []string{"--oss", "--profile", "ollama-launch", "-m", "llama3.2", "--sandbox", "workspace-write"}},
+		{"with model", "llama3.2", nil, []string{"--profile", "ollama-launch", "-m", "llama3.2"}},
+		{"empty model", "", nil, []string{"--profile", "ollama-launch"}},
+		{"with model and extra args", "qwen3.5", []string{"-p", "myprofile"}, []string{"--profile", "ollama-launch", "-m", "qwen3.5", "-p", "myprofile"}},
+		{"with sandbox flag", "llama3.2", []string{"--sandbox", "workspace-write"}, []string{"--profile", "ollama-launch", "-m", "llama3.2", "--sandbox", "workspace-write"}},
 	}
 
 	for _, tt := range tests {
@@ -57,6 +57,18 @@ func TestWriteCodexProfile(t *testing.T) {
 		if !strings.Contains(content, "/v1/") {
 			t.Error("missing /v1/ suffix in base URL")
 		}
+		if !strings.Contains(content, `forced_login_method = "api"`) {
+			t.Error("missing forced_login_method key")
+		}
+		if !strings.Contains(content, `model_provider = "ollama-launch"`) {
+			t.Error("missing model_provider key")
+		}
+		if !strings.Contains(content, "[model_providers.ollama-launch]") {
+			t.Error("missing [model_providers.ollama-launch] section")
+		}
+		if !strings.Contains(content, `name = "Ollama"`) {
+			t.Error("missing model provider name")
+		}
 	})
 
 	t.Run("appends profile to existing file without profile", func(t *testing.T) {
@@ -83,7 +95,7 @@ func TestWriteCodexProfile(t *testing.T) {
 	t.Run("replaces existing profile section", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		configPath := filepath.Join(tmpDir, "config.toml")
-		existing := "[profiles.ollama-launch]\nopenai_base_url = \"http://old:1234/v1/\"\n"
+		existing := "[profiles.ollama-launch]\nopenai_base_url = \"http://old:1234/v1/\"\n\n[model_providers.ollama-launch]\nname = \"Ollama\"\nbase_url = \"http://old:1234/v1/\"\n"
 		os.WriteFile(configPath, []byte(existing), 0o644)
 
 		if err := writeCodexProfile(configPath); err != nil {
@@ -98,6 +110,9 @@ func TestWriteCodexProfile(t *testing.T) {
 		}
 		if strings.Count(content, "[profiles.ollama-launch]") != 1 {
 			t.Errorf("expected exactly one [profiles.ollama-launch] section, got %d", strings.Count(content, "[profiles.ollama-launch]"))
+		}
+		if strings.Count(content, "[model_providers.ollama-launch]") != 1 {
+			t.Errorf("expected exactly one [model_providers.ollama-launch] section, got %d", strings.Count(content, "[model_providers.ollama-launch]"))
 		}
 	})
 
@@ -206,6 +221,9 @@ func TestEnsureCodexConfig(t *testing.T) {
 
 		if strings.Count(content, "[profiles.ollama-launch]") != 1 {
 			t.Errorf("expected exactly one [profiles.ollama-launch] section after two calls, got %d", strings.Count(content, "[profiles.ollama-launch]"))
+		}
+		if strings.Count(content, "[model_providers.ollama-launch]") != 1 {
+			t.Errorf("expected exactly one [model_providers.ollama-launch] section after two calls, got %d", strings.Count(content, "[model_providers.ollama-launch]"))
 		}
 	})
 }
