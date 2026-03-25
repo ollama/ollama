@@ -16,7 +16,7 @@ type Codex struct{}
 
 func (c *Codex) String() string { return "Codex" }
 
-const codexProfileName = "ollama"
+const codexProfileName = "ollama-launch"
 
 func (c *Codex) args(model string, extra []string) []string {
 	args := []string{"--oss", "--profile", codexProfileName}
@@ -46,7 +46,7 @@ func (c *Codex) Run(model string, args []string) error {
 	return cmd.Run()
 }
 
-// ensureCodexConfig writes a [profiles.ollama] section to ~/.codex/config.toml
+// ensureCodexConfig writes a [profiles.ollama-launch] section to ~/.codex/config.toml
 // with openai_base_url pointing to the local Ollama server.
 func ensureCodexConfig() error {
 	home, err := os.UserHomeDir()
@@ -63,13 +63,14 @@ func ensureCodexConfig() error {
 	return writeCodexProfile(configPath)
 }
 
-// writeCodexProfile ensures ~/.codex/config.toml has a [profiles.ollama] section
+// writeCodexProfile ensures ~/.codex/config.toml has a [profiles.ollama-launch] section
 // with the correct openai_base_url.
 func writeCodexProfile(configPath string) error {
 	baseURL := envconfig.Host().String() + "/v1/"
 
+	header := fmt.Sprintf("[profiles.%s]", codexProfileName)
 	profileLines := []string{
-		"[profiles.ollama]",
+		header,
 		fmt.Sprintf("openai_base_url = %q", baseURL),
 	}
 	profileBlock := strings.Join(profileLines, "\n") + "\n"
@@ -81,10 +82,9 @@ func writeCodexProfile(configPath string) error {
 	}
 
 	text := string(content)
-	header := "[profiles.ollama]"
 
 	if idx := strings.Index(text, header); idx >= 0 {
-		// Replace the existing [profiles.ollama] section up to the next section header.
+		// Replace the existing profile section up to the next section header.
 		rest := text[idx+len(header):]
 		if endIdx := strings.Index(rest, "\n["); endIdx >= 0 {
 			text = text[:idx] + profileBlock + rest[endIdx+1:]
