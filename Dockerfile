@@ -143,15 +143,18 @@ RUN --mount=type=cache,target=/root/.ccache \
         && cmake --install build --component Vulkan --strip
 
 FROM base AS mlx
+ARG TARGETARCH
 ARG CUDA13VERSION=13.0
-RUN dnf install -y cuda-toolkit-${CUDA13VERSION//./-} \
+RUN dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++ gcc-toolset-11-binutils \
+    && dnf install -y cuda-toolkit-${CUDA13VERSION//./-} \
+    && yum-config-manager --enable powertools \
     && dnf install -y openblas-devel lapack-devel \
     && dnf install -y libcudnn9-cuda-13 libcudnn9-devel-cuda-13 \
     && dnf install -y libnccl libnccl-devel
-ENV PATH=/usr/local/cuda-13/bin:$PATH
+ENV PATH=/opt/rh/gcc-toolset-11/root/usr/bin:/usr/local/cuda-13/bin:$PATH
+ENV CC=gcc CXX=g++
 ENV BLAS_INCLUDE_DIRS=/usr/include/openblas
 ENV LAPACK_INCLUDE_DIRS=/usr/include/openblas
-ENV CGO_LDFLAGS="-L/usr/local/cuda-13/lib64 -L/usr/local/cuda-13/targets/x86_64-linux/lib/stubs"
 WORKDIR /go/src/github.com/ollama/ollama
 COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
@@ -164,14 +167,17 @@ RUN go mod download
 RUN --mount=type=cache,target=/root/.ccache \
     --mount=type=bind,from=local-mlx,target=/tmp/local-mlx \
     --mount=type=bind,from=local-mlx-c,target=/tmp/local-mlx-c \
-    if [ -f /tmp/local-mlx/CMakeLists.txt ]; then \
+    export CGO_LDFLAGS="-L/usr/local/cuda-13/lib64 -L/usr/local/cuda-13/targets/$(uname -m | sed 's/aarch64/sbsa/')-linux/lib/stubs" \
+    && if [ -f /tmp/local-mlx/CMakeLists.txt ]; then \
         export OLLAMA_MLX_SOURCE=/tmp/local-mlx; \
     fi \
     && if [ -f /tmp/local-mlx-c/CMakeLists.txt ]; then \
         export OLLAMA_MLX_C_SOURCE=/tmp/local-mlx-c; \
     fi \
-    && cmake --preset 'MLX CUDA 13' -DBLAS_INCLUDE_DIRS=/usr/include/openblas -DLAPACK_INCLUDE_DIRS=/usr/include/openblas \
-        && cmake --build --preset 'MLX CUDA 13' -- -l $(nproc) \
+    && MLX_PRESET="MLX CUDA 13" \
+    && if [ "${TARGETARCH}" != "amd64" ]; then MLX_PRESET="MLX CUDA 13 ${TARGETARCH}"; fi \
+    && cmake --preset "${MLX_PRESET}" -DBLAS_INCLUDE_DIRS=/usr/include/openblas -DLAPACK_INCLUDE_DIRS=/usr/include/openblas \
+        && cmake --build --preset "${MLX_PRESET}" -- -l $(nproc) \
         && cmake --install build --component MLX --strip
 
 FROM base AS build
@@ -195,12 +201,13 @@ FROM --platform=linux/amd64 scratch AS amd64
 COPY --from=cuda-12 dist/lib/ollama /lib/ollama/
 COPY --from=cuda-13 dist/lib/ollama /lib/ollama/
 COPY --from=vulkan  dist/lib/ollama  /lib/ollama/
-COPY --from=mlx     /go/src/github.com/ollama/ollama/dist/lib/ollama /lib/ollama/
+COPY --from=mlx     dist/lib/ollama /lib/ollama/
 
 FROM --platform=linux/arm64 scratch AS arm64
 # COPY --from=cuda-11 dist/lib/ollama/ /lib/ollama/
 COPY --from=cuda-12 dist/lib/ollama /lib/ollama/
 COPY --from=cuda-13 dist/lib/ollama/ /lib/ollama/
+COPY --from=mlx     dist/lib/ollama /lib/ollama/
 COPY --from=jetpack-5 dist/lib/ollama/ /lib/ollama/
 COPY --from=jetpack-6 dist/lib/ollama/ /lib/ollama/
 
@@ -209,6 +216,9 @@ COPY --from=rocm-7 dist/lib/ollama /lib/ollama
 
 FROM ${FLAVOR} AS archive
 COPY --from=cpu dist/lib/ollama /lib/ollama
+COPY --from=build /bin/ollama /bin/ollama
+
+FROM scratch AS archive-ollama-only
 COPY --from=build /bin/ollama /bin/ollama
 
 FROM ubuntu:24.04

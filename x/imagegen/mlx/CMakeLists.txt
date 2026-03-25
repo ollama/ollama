@@ -58,6 +58,10 @@ if(DEFINED ENV{CUDNN_LIBRARY_PATH} AND NOT CUDNN_LIBRARY_PATH)
     message(STATUS "Using CUDNN_LIBRARY_PATH from environment: ${CUDNN_LIBRARY_PATH}")
 endif()
 
+# MLX's CUDA backend requires C++20 for CUDA (CCCL/Thrust + template lambdas)
+set(CMAKE_CUDA_STANDARD 20)
+set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+
 # Enable CUDA backend if CUDA architectures are specified and CUDA compiler is available
 if(MLX_CUDA_ARCHITECTURES AND CMAKE_CUDA_COMPILER)
     set(MLX_BUILD_CUDA ON CACHE BOOL "Build CUDA backend for MLX" FORCE)
