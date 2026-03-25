@@ -131,6 +131,18 @@ var integrationSpecs = []*IntegrationSpec{
 			Command: []string{"npm", "install", "-g", "@mariozechner/pi-coding-agent"},
 		},
 	},
+	{
+		Name:        "vscode",
+		Runner:      &VSCode{},
+		Aliases:     []string{"code"},
+		Description: "Microsoft's open-source AI code editor",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				return (&VSCode{}).findBinary() != ""
+			},
+			URL: "https://code.visualstudio.com",
+		},
+	},
 }
 
 var integrationSpecsByName map[string]*IntegrationSpec

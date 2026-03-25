@@ -179,6 +179,7 @@ Supported integrations:
   opencode  OpenCode
   openclaw  OpenClaw (aliases: clawdbot, moltbot)
   pi        Pi
+  vscode    VS Code (aliases: code)
 
 Examples:
   ollama launch
