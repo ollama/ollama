@@ -99,7 +99,7 @@ func (v *VSCode) Quit() {
 		}
 	}
 	// Wait for the process to fully exit and flush its state to disk
-    // TODO(hoyyeva): update spinner to use bubble tea
+	// TODO(hoyyeva): update spinner to use bubble tea
 	spinnerFrames := []string{"|", "/", "-", "\\"}
 	frame := 0
 	fmt.Fprintf(os.Stderr, "\033[90mRestarting VS Code... %s\033[0m", spinnerFrames[0])
@@ -131,7 +131,7 @@ const (
 
 func (v *VSCode) Run(model string, args []string) error {
 	v.checkVSCodeVersion()
-	v.checkCopilotChatExtension()
+	v.checkCopilotChatVersion()
 
 	// Get all configured models (saved by the launcher framework before Run is called)
 	models := []string{model}
@@ -499,9 +499,9 @@ func (v *VSCode) checkVSCodeVersion() {
 	}
 }
 
-// checkCopilotChatExtension warns if the GitHub Copilot Chat extension is
+// checkCopilotChatVersion warns if the GitHub Copilot Chat extension is
 // missing or older than minCopilotChatVersion.
-func (v *VSCode) checkCopilotChatExtension() {
+func (v *VSCode) checkCopilotChatVersion() {
 	codeCLI := v.findCodeCLI()
 	if codeCLI == "" {
 		return
