@@ -2,13 +2,44 @@
 title: VS Code
 ---
 
+VS Code includes built-in AI chat through GitHub Copilot Chat. Ollama models can be used directly in the Copilot Chat model picker, enabling you to use models such as `qwen3.5`, `glm-5:cloud`, `kimi-k2.5:cloud`.
+
 ## Install
 
 Install [VS Code](https://code.visualstudio.com/download).
 
+<Note> Ensure [VS Code](https://code.visualstudio.com/download) version is **1.113** or later and [GitHub Copilot Chat](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot-chat) extension version is **0.41.0** or later </Note>
+
 ## Usage with Ollama
 
-1. Open Copilot side bar found in top right window
+<Note> In the Copilot Chat panel, select **Local** at the bottom to use your Ollama models </Note>
+
+### Quick setup
+
+```shell
+ollama launch vscode
+```
+
+### Run directly with a model
+
+```shell
+ollama launch vscode --model qwen3
+```
+
+## Recommended Models
+
+- `kimi-k2.5:cloud`
+- `glm-5:cloud`
+- `minimax-m2.7:cloud`
+- `qwen3.5:cloud`
+- `glm-4.7-flash`
+- `qwen3.5`
+
+Cloud models are also available at [ollama.com/search?c=cloud](https://ollama.com/search?c=cloud).
+
+## Manual setup
+
+1. Open the Copilot Chat side bar found in the top right window
    <div style={{ display: "flex", justifyContent: "center" }}>
      <img
        src="/images/vscode-sidebar.png"
@@ -16,19 +47,19 @@ Install [VS Code](https://code.visualstudio.com/download).
        width="75%"
      />
    </div>
-2. Select the model dropdown > **Manage models**
+2. Click the **settings gear icon** to bring up the Language Models window
    <div style={{ display: "flex", justifyContent: "center" }}>
      <img
-       src="/images/vscode-models.png"
+       src="/images/vscode-other-models.png"
        alt="VS Code model picker"
        width="75%"
      />
    </div>
-3. Enter **Ollama** under **Provider Dropdown** and select desired models (e.g `qwen3, qwen3-coder:480b-cloud`)
+3. Click **Add models** and select **Ollama** to load all your Ollama models to VS Code
    <div style={{ display: "flex", justifyContent: "center" }}>
      <img
-       src="/images/vscode-model-options.png"
-       alt="VS Code model options dropdown"
+       src="/images/vscode-add-ollama.png"
+       alt="VS Code model options dropdown to add ollama models"
        width="75%"
      />
    </div>
