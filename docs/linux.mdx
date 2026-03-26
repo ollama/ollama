@@ -181,7 +181,7 @@ sudo rm /etc/systemd/system/ollama.service
 Remove ollama libraries from your lib directory (either `/usr/local/lib`, `/usr/lib`, or `/lib`):
 
 ```shell
-sudo rm -r $(dirname $(which ollama) | sed 's/bin$/lib/')
+sudo rm -r $(dirname $(which ollama) | sed 's/bin$/lib/')/ollama
 ```
 
 Remove the ollama binary from your bin directory (either `/usr/local/bin`, `/usr/bin`, or `/bin`):
