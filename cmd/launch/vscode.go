@@ -25,11 +25,8 @@ type VSCode struct{}
 func (v *VSCode) String() string { return "Visual Studio Code" }
 
 // findBinary returns the path/command to launch VS Code, or "" if not found.
-// It checks for the "code" CLI on PATH first, then falls back to platform-specific locations.
+// It checks platform-specific locations only.
 func (v *VSCode) findBinary() string {
-	if _, err := exec.LookPath("code"); err == nil {
-		return "code"
-	}
 	var candidates []string
 	switch runtime.GOOS {
 	case "darwin":
