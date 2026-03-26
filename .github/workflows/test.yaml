@@ -31,7 +31,7 @@ jobs:
         run: |
           changed() {
             local BASE=${{ github.event.pull_request.base.sha }}
-            local HEAD=${{ github.event.pull_request.head.sha }}
+            local HEAD=${PR_HEAD_SHA}
             local MERGE_BASE=$(git merge-base $BASE $HEAD)
             git diff-tree -r --no-commit-id --name-only "$MERGE_BASE" "$HEAD" \
               | xargs python3 -c "import sys; from pathlib import Path; print(any(Path(x).match(glob) for x in sys.argv[1:] for glob in '$*'.split(' ')))"
@@ -40,6 +40,8 @@ jobs:
           echo changed=$(changed 'llama/llama.cpp/**/*' 'ml/backend/ggml/ggml/**/*' '.github/**/*') | tee -a $GITHUB_OUTPUT
           echo vendorsha=$(make -f Makefile.sync print-base) | tee -a $GITHUB_OUTPUT
 
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
   linux:
     needs: [changes]
     if: needs.changes.outputs.changed == 'True'
@@ -284,7 +286,7 @@ jobs:
         if: always()
         run: go test -count=1 -benchtime=1x ./...
 
-      - uses: golangci/golangci-lint-action@v9
+      - uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9
         with:
           only-new-issues: true
 
