@@ -444,6 +444,7 @@ func cloudStatusDisabled(ctx context.Context, client *api.Client) (disabled bool
 	return status.Cloud.Disabled, true
 }
 
+// TODO(ParthSareen): make this controllable on an integration level as well
 const recommendedContextLength = 64000
 
 func hasLocalModel(models []string) bool {
@@ -465,6 +466,9 @@ func lowContextLength(ctx context.Context, client *api.Client, models []string) 
 		return nil //nolint:nilerr // best-effort check; ignore if status endpoint is unavailable
 	}
 	serverCtx := status.ContextLength
+	if serverCtx == 0 {
+		return nil // couldn't determine context length, skip check
+	}
 
 	for _, m := range models {
 		if isCloudModelName(m) {

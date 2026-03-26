@@ -1577,6 +1577,25 @@ func TestConfirmLowContextLength(t *testing.T) {
 			wantWarning:   true,
 			wantModelfile: true,
 		},
+		{
+			name:       "no warning when status returns malformed JSON",
+			models:     []string{"llama3.2"},
+			statusBody: `{invalid json`,
+			statusCode: http.StatusOK,
+		},
+		{
+			name:       "no warning when status returns empty body with 200",
+			models:     []string{"llama3.2"},
+			statusBody: "",
+			statusCode: http.StatusOK,
+		},
+		{
+			name:       "no warning when show endpoint fails",
+			models:     []string{"llama3.2"},
+			statusBody: `{"cloud":{},"context_length":65536}`,
+			statusCode: http.StatusOK,
+			showParams: "SHOW_ERROR", // sentinel to make show return 500
+		},
 	}
 
 	for _, tt := range tests {
@@ -1590,6 +1609,10 @@ func TestConfirmLowContextLength(t *testing.T) {
 					return
 				}
 				if r.URL.Path == "/api/show" {
+					if tt.showParams == "SHOW_ERROR" {
+						w.WriteHeader(http.StatusInternalServerError)
+						return
+					}
 					w.WriteHeader(http.StatusOK)
 					fmt.Fprintf(w, `{"parameters":%q}`, tt.showParams)
 					return
@@ -1668,6 +1691,26 @@ func TestParseNumCtxFromParameters(t *testing.T) {
 			name:       "handles float representation",
 			parameters: "num_ctx                        65536.0",
 			want:       65536,
+		},
+		{
+			name:       "returns zero when num_ctx value is not a number",
+			parameters: "num_ctx                        abc",
+			want:       0,
+		},
+		{
+			name:       "returns zero for completely garbled input",
+			parameters: "!@#$%^&*()_+{}|:<>?",
+			want:       0,
+		},
+		{
+			name:       "returns zero when num_ctx has no value",
+			parameters: "num_ctx",
+			want:       0,
+		},
+		{
+			name:       "returns zero when num_ctx has extra fields",
+			parameters: "num_ctx 65536 extra_stuff",
+			want:       0,
 		},
 	}
 
