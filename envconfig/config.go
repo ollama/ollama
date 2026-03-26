@@ -230,6 +230,9 @@ var (
 	NewEngine = Bool("OLLAMA_NEW_ENGINE")
 	// ContextLength sets the default context length
 	ContextLength = Uint("OLLAMA_CONTEXT_LENGTH", 0)
+	// PerformanceProfile selects an autotune profile (speed, balanced, memory, multiuser, max).
+	// When set, Ollama auto-tunes environment variables on startup based on detected hardware.
+	PerformanceProfile = String("OLLAMA_PERFORMANCE_PROFILE")
 	// Auth enables authentication between the Ollama client and server
 	UseAuth = Bool("OLLAMA_AUTH")
 	// Enable Vulkan backend
@@ -326,6 +329,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_CONTEXT_LENGTH":     {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4k/32k/256k based on VRAM)"},
 		"OLLAMA_EDITOR":             {"OLLAMA_EDITOR", Editor(), "Path to editor for interactive prompt editing (Ctrl+G)"},
 		"OLLAMA_NEW_ENGINE":         {"OLLAMA_NEW_ENGINE", NewEngine(), "Enable the new Ollama engine"},
+		"OLLAMA_PERFORMANCE_PROFILE": {"OLLAMA_PERFORMANCE_PROFILE", PerformanceProfile(), "Autotune profile: speed, balanced, memory, multiuser, max (auto-optimizes settings for your hardware)"},
 		"OLLAMA_REMOTES":            {"OLLAMA_REMOTES", Remotes(), "Allowed hosts for remote models (default \"ollama.com\")"},
 
 		// Informational
