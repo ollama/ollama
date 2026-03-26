@@ -8,16 +8,15 @@ VS Code includes built-in AI chat through GitHub Copilot Chat. Ollama models can
 ![VS Code with Ollama](/images/vscode.png)
 
 
+## Prerequisites
 
-## Install
+- Ollama v0.18.3+
+- [VS Code 1.113+](https://code.visualstudio.com/download)
+- [GitHub Copilot Chat extension 0.41.0+](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot-chat)
 
-Install [VS Code](https://code.visualstudio.com/download) (version **1.113** or later) with the [GitHub Copilot Chat](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot-chat) extension (version **0.41.0** or later).
+<Note> VS Code requires you to be logged in to use its model selector, even for custom models. This doesn't require a paid GitHub Copilot account; GitHub Copilot Free will enable model selection for custom models.</Note>
 
-## Usage with Ollama
-
-<Note> In the Copilot Chat panel, select **Local** at the bottom to use your Ollama models </Note>
-
-### Quick setup
+## Quick setup
 
 ```shell
 ollama launch vscode
@@ -25,7 +24,18 @@ ollama launch vscode
 
 Recommended models will be shown after running the command. See the latest models at [ollama.com](https://ollama.com/search?c=tools).
 
-### Run directly with a model
+Make sure **Local** is selected at the bottom of the Copilot Chat panel to use your Ollama models.
+<div style={{ display: "flex", justifyContent: "center" }}>
+  <img
+    src="/images/local.png"
+    alt="Ollama Local Models"
+    width="60%"
+    style={{ borderRadius: "4px", marginTop: "10px", marginBottom: "10px" }}
+  />
+</div>
+
+
+## Run directly with a model
 
 ```shell
 ollama launch vscode --model qwen3.5:cloud
