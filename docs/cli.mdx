@@ -142,4 +142,30 @@ ollama stop gemma3
 ollama serve
 ```
 
+Start with a performance profile:
+
+```
+ollama serve --profile speed
+```
+
 To view a list of environment variables that can be set run `ollama serve --help`
+
+### Auto-tune performance
+
+Show current autotune status:
+
+```
+ollama autotune
+```
+
+Apply a performance profile (speed, balanced, memory, multiuser, max):
+
+```
+ollama autotune speed
+```
+
+List available profiles:
+
+```
+ollama autotune profiles
+```
