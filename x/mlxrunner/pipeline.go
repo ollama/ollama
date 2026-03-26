@@ -12,10 +12,40 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/model/base"
 )
 
 func prefillChunkSize() int {
 	return 2 << 10
+}
+
+func (r *Runner) tokenizeRequest(request Request) ([]int32, any, error) {
+	if len(request.Images) > 0 {
+		// The shared trie cache keys only on token IDs today, so multimodal
+		// prompts must not reuse snapshots across distinct image inputs.
+		r.cache.clear()
+	}
+
+	if multimodalTokenizer, ok := r.Model.(base.MultimodalPromptTokenizerWithState); ok && len(request.Images) > 0 {
+		images := make([]base.ImageInput, len(request.Images))
+		for i := range request.Images {
+			images[i] = base.ImageInput{
+				ID:   request.Images[i].ID,
+				Data: request.Images[i].Data,
+			}
+		}
+
+		out, err := multimodalTokenizer.TokenizePromptWithImagesState(request.Prompt, images)
+		if err != nil {
+			return nil, nil, err
+		}
+		if out == nil {
+			return nil, nil, errors.New("empty multimodal tokenization result")
+		}
+		return out.Tokens, out.State, nil
+	}
+
+	return r.Tokenizer.Encode(request.Prompt, true), nil, nil
 }
 
 func (r *Runner) TextGenerationPipeline(request Request) error {
@@ -55,7 +85,10 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		slog.Info("peak memory", "size", mlx.PrettyBytes(mlx.PeakMemory()))
 	}()
 
-	inputs := r.Tokenizer.Encode(request.Prompt, true)
+	inputs, promptState, err := r.tokenizeRequest(request)
+	if err != nil {
+		return err
+	}
 	if len(inputs) == 0 {
 		return errors.New("empty prompt")
 	}
@@ -82,6 +115,13 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	caches := session.caches
 	tokens := session.remaining
 	prefillChunk := prefillChunkSize()
+
+	modelForward := func(tokens *mlx.Array) *mlx.Array {
+		if withState, ok := r.Model.(base.ForwardWithStateModel); ok {
+			return withState.ForwardWithState(tokens, caches, promptState)
+		}
+		return r.Model.Forward(tokens, caches)
+	}
 
 	materializeCaches := func() {
 		state := make([]*mlx.Array, 0, 2*len(caches))
@@ -114,7 +154,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 			}
 		}
 
-		r.Model.Forward(mlx.FromValues(tokens[processed:processed+n], n).ExpandDims(0), caches)
+		modelForward(mlx.FromValues(tokens[processed:processed+n], n).ExpandDims(0))
 		mlx.Sweep()
 		materializeCaches()
 		processed += n
@@ -132,7 +172,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	}
 
 	step := func(token *mlx.Array) (*mlx.Array, *mlx.Array) {
-		fwd := r.Model.Forward(token.ExpandDims(0), caches)
+		fwd := modelForward(token.ExpandDims(0))
 		logits := r.Model.Unembed(fwd)
 		logits = logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1)
 

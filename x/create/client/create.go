@@ -134,14 +134,18 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 		spinnerKey = "create"
 		capabilities = []string{"completion"}
 
-		// Check if model supports thinking based on architecture
-		if supportsThinking(opts.ModelDir) {
+		configData, _ := os.ReadFile(filepath.Join(opts.ModelDir, "config.json"))
+		mcfg := parseModelConfig(configData)
+
+		if mcfg.supportsThinking() {
 			capabilities = append(capabilities, "thinking")
 		}
+		if mcfg.supportsVision() {
+			capabilities = append(capabilities, "vision")
+		}
 
-		// Set parser and renderer name based on architecture
-		parserName = getParserName(opts.ModelDir)
-		rendererName = getRendererName(opts.ModelDir)
+		parserName = mcfg.parserName()
+		rendererName = mcfg.rendererName()
 	} else {
 		modelType = "image generation model"
 		spinnerKey = "imagegen"
@@ -438,145 +442,76 @@ func createModelfileLayers(mf *ModelfileConfig) ([]manifest.Layer, error) {
 	return layers, nil
 }
 
-// supportsThinking checks if the model supports thinking mode based on its architecture.
-// This reads the config.json from the model directory and checks the architectures field.
-func supportsThinking(modelDir string) bool {
-	configPath := filepath.Join(modelDir, "config.json")
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return false
-	}
+// modelConfig holds the fields from config.json needed during model creation.
+type visionConfig struct {
+	Depth int32 `json:"depth"`
+}
 
-	var cfg struct {
-		Architectures []string `json:"architectures"`
-		ModelType     string   `json:"model_type"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return false
-	}
+type modelConfig struct {
+	Architectures      []string      `json:"architectures"`
+	ModelType          string        `json:"model_type"`
+	VisionConfig       *visionConfig `json:"vision_config"`
+	ImageTokenID       *int32        `json:"image_token_id"`
+	VisionStartTokenID *int32        `json:"vision_start_token_id"`
+	VisionEndTokenID   *int32        `json:"vision_end_token_id"`
+}
 
-	// Check architectures that support thinking
-	thinkingArchitectures := []string{
-		"glm4moe",  // GLM-4 MoE models
-		"deepseek", // DeepSeek models
-		"qwen3",    // Qwen3 models
-	}
+func parseModelConfig(data []byte) modelConfig {
+	var cfg modelConfig
+	_ = json.Unmarshal(data, &cfg)
+	return cfg
+}
 
-	// Check the architecture list
-	for _, arch := range cfg.Architectures {
+// archOrTypeContains returns true if any architecture or the model_type
+// contains one of the given substrings (case-insensitive).
+func (c *modelConfig) archOrTypeContains(substrs ...string) bool {
+	for _, arch := range c.Architectures {
 		archLower := strings.ToLower(arch)
-		for _, thinkArch := range thinkingArchitectures {
-			if strings.Contains(archLower, thinkArch) {
+		for _, s := range substrs {
+			if strings.Contains(archLower, s) {
 				return true
 			}
 		}
 	}
-
-	// Also check model_type
-	if cfg.ModelType != "" {
-		typeLower := strings.ToLower(cfg.ModelType)
-		for _, thinkArch := range thinkingArchitectures {
-			if strings.Contains(typeLower, thinkArch) {
+	if c.ModelType != "" {
+		typeLower := strings.ToLower(c.ModelType)
+		for _, s := range substrs {
+			if strings.Contains(typeLower, s) {
 				return true
 			}
 		}
 	}
-
 	return false
 }
 
-// getParserName returns the parser name for a model based on its architecture.
-// This reads the config.json from the model directory and determines the appropriate parser.
-func getParserName(modelDir string) string {
-	configPath := filepath.Join(modelDir, "config.json")
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return ""
-	}
+func (c *modelConfig) supportsThinking() bool {
+	return c.archOrTypeContains("glm4moe", "deepseek", "qwen3")
+}
 
-	var cfg struct {
-		Architectures []string `json:"architectures"`
-		ModelType     string   `json:"model_type"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return ""
-	}
+func (c *modelConfig) supportsVision() bool {
+	return c.VisionConfig != nil || c.ImageTokenID != nil || c.VisionStartTokenID != nil || c.VisionEndTokenID != nil
+}
 
-	// Check architectures for known parsers
-	for _, arch := range cfg.Architectures {
-		archLower := strings.ToLower(arch)
-		if strings.Contains(archLower, "glm4") || strings.Contains(archLower, "glm-4") {
-			return "glm-4.7"
-		}
-		if strings.Contains(archLower, "deepseek") {
-			return "deepseek3"
-		}
-		if strings.Contains(archLower, "qwen3") {
-			return "qwen3"
-		}
+func (c *modelConfig) parserName() string {
+	switch {
+	case c.archOrTypeContains("glm4", "glm-4"):
+		return "glm-4.7"
+	case c.archOrTypeContains("deepseek"):
+		return "deepseek3"
+	case c.archOrTypeContains("qwen3"):
+		return "qwen3"
 	}
-
-	// Also check model_type
-	if cfg.ModelType != "" {
-		typeLower := strings.ToLower(cfg.ModelType)
-		if strings.Contains(typeLower, "glm4") || strings.Contains(typeLower, "glm-4") {
-			return "glm-4.7"
-		}
-		if strings.Contains(typeLower, "deepseek") {
-			return "deepseek3"
-		}
-		if strings.Contains(typeLower, "qwen3") {
-			return "qwen3"
-		}
-	}
-
 	return ""
 }
 
-// getRendererName returns the renderer name for a model based on its architecture.
-// This reads the config.json from the model directory and determines the appropriate renderer.
-func getRendererName(modelDir string) string {
-	configPath := filepath.Join(modelDir, "config.json")
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return ""
+func (c *modelConfig) rendererName() string {
+	switch {
+	case c.archOrTypeContains("glm4", "glm-4"):
+		return "glm-4.7"
+	case c.archOrTypeContains("deepseek"):
+		return "deepseek3"
+	case c.archOrTypeContains("qwen3"):
+		return "qwen3-coder"
 	}
-
-	var cfg struct {
-		Architectures []string `json:"architectures"`
-		ModelType     string   `json:"model_type"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return ""
-	}
-
-	// Check architectures for known renderers
-	for _, arch := range cfg.Architectures {
-		archLower := strings.ToLower(arch)
-		if strings.Contains(archLower, "glm4") || strings.Contains(archLower, "glm-4") {
-			return "glm-4.7"
-		}
-		if strings.Contains(archLower, "deepseek") {
-			return "deepseek3"
-		}
-		if strings.Contains(archLower, "qwen3") {
-			return "qwen3-coder"
-		}
-	}
-
-	// Also check model_type
-	if cfg.ModelType != "" {
-		typeLower := strings.ToLower(cfg.ModelType)
-		if strings.Contains(typeLower, "glm4") || strings.Contains(typeLower, "glm-4") {
-			return "glm-4.7"
-		}
-		if strings.Contains(typeLower, "deepseek") {
-			return "deepseek3"
-		}
-		if strings.Contains(typeLower, "qwen3") {
-			return "qwen3-coder"
-		}
-	}
-
 	return ""
 }
