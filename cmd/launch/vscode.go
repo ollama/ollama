@@ -361,9 +361,11 @@ func (v *VSCode) statePath() string {
 }
 
 // ShowInModelPicker ensures the given models are visible in VS Code's Copilot
-// Chat model picker. It sets the configured models to true in the picker
-// preferences so they appear in the dropdown. Models use the VS Code identifier
-// format "ollama/Ollama/<name>".
+// Chat model picker and sets the primary model as the active selection. It sets
+// the configured models to true in the picker preferences so they appear in the
+// dropdown, and writes the first model as the selected model for both the panel
+// and editor chat views. Models use the VS Code identifier format
+// "ollama/Ollama/<name>".
 func (v *VSCode) ShowInModelPicker(models []string) error {
 	if len(models) == 0 {
 		return nil
@@ -438,6 +440,18 @@ func (v *VSCode) ShowInModelPicker(models []string) error {
 	data, _ := json.Marshal(prefs)
 	if _, err = db.Exec("INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('chatModelPickerPreferences', ?)", string(data)); err != nil {
 		return err
+	}
+
+	// Set the primary model as the active selection in Copilot Chat so it
+	// doesn't default to "auto" or whatever the user last picked manually.
+	primaryID := v.modelVSCodeIDs(models[0], nameToID)[0]
+	for _, key := range []string{"chat.currentLanguageModel.panel", "chat.currentLanguageModel.editor"} {
+		if _, err := db.Exec("INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)", key, primaryID); err != nil {
+			return err
+		}
+		if _, err := db.Exec("INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)", key+".isDefault", "false"); err != nil {
+			return err
+		}
 	}
 
 	return nil

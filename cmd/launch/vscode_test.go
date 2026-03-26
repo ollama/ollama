@@ -388,6 +388,71 @@ func TestShowInModelPicker(t *testing.T) {
 		}
 	})
 
+	// helper to read a string value from the state DB
+	readValue := func(t *testing.T, dbPath, key string) string {
+		t.Helper()
+		db, err := sql.Open("sqlite3", dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		var val string
+		if err := db.QueryRow("SELECT value FROM ItemTable WHERE key = ?", key).Scan(&val); err != nil {
+			return ""
+		}
+		return val
+	}
+
+	t.Run("sets primary model as active selection", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("XDG_CONFIG_HOME", "")
+		setupDB(t, testVSCodePath(t, tmpDir, ""), nil, nil)
+
+		err := v.ShowInModelPicker([]string{"llama3.2", "qwen3:8b"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		dbPath := testVSCodePath(t, tmpDir, filepath.Join("globalStorage", "state.vscdb"))
+		panelModel := readValue(t, dbPath, "chat.currentLanguageModel.panel")
+		if panelModel != "ollama/Ollama/llama3.2" {
+			t.Errorf("expected panel model ollama/Ollama/llama3.2, got %q", panelModel)
+		}
+		editorModel := readValue(t, dbPath, "chat.currentLanguageModel.editor")
+		if editorModel != "ollama/Ollama/llama3.2" {
+			t.Errorf("expected editor model ollama/Ollama/llama3.2, got %q", editorModel)
+		}
+		panelDefault := readValue(t, dbPath, "chat.currentLanguageModel.panel.isDefault")
+		if panelDefault != "false" {
+			t.Errorf("expected panel isDefault false, got %q", panelDefault)
+		}
+	})
+
+	t.Run("sets cached numeric ID as active selection", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("XDG_CONFIG_HOME", "")
+		cache := []map[string]any{
+			{
+				"identifier": "ollama/Ollama/4",
+				"metadata":   map[string]any{"vendor": "ollama", "name": "llama3.2"},
+			},
+		}
+		setupDB(t, testVSCodePath(t, tmpDir, ""), nil, cache)
+
+		err := v.ShowInModelPicker([]string{"llama3.2"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		dbPath := testVSCodePath(t, tmpDir, filepath.Join("globalStorage", "state.vscdb"))
+		panelModel := readValue(t, dbPath, "chat.currentLanguageModel.panel")
+		if panelModel != "ollama/Ollama/4" {
+			t.Errorf("expected panel model to use cached numeric ID ollama/Ollama/4, got %q", panelModel)
+		}
+	})
+
 	t.Run("previously hidden model is re-shown when configured", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
