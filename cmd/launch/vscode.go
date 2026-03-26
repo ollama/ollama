@@ -25,7 +25,9 @@ type VSCode struct{}
 func (v *VSCode) String() string { return "Visual Studio Code" }
 
 // findBinary returns the path/command to launch VS Code, or "" if not found.
-// It checks platform-specific locations only.
+// It checks platform-specific locations first, then falls back to "code" on
+// PATH only if it resolves to a known VS Code installation (not Cursor or
+// another fork).
 func (v *VSCode) findBinary() string {
 	var candidates []string
 	switch runtime.GOOS {
@@ -48,7 +50,47 @@ func (v *VSCode) findBinary() string {
 			return c
 		}
 	}
+	if codePath, err := exec.LookPath("code"); err == nil {
+		if v.isVSCodeBinary(codePath) {
+			return codePath
+		}
+	}
 	return ""
+}
+
+// isVSCodeBinary checks whether a "code" binary on PATH actually belongs to
+// Visual Studio Code by resolving symlinks and checking that the real path
+// contains a VS Code-specific component. If the path is a wrapper script
+// rather than a symlink, the script content is also checked.
+func (v *VSCode) isVSCodeBinary(codePath string) bool {
+	vsCodeMarkers := []string{
+		"Visual Studio Code",
+		"Microsoft VS Code",
+		"/share/code/",
+		"/snap/code/",
+	}
+
+	// Check the resolved symlink path
+	if resolved, err := filepath.EvalSymlinks(codePath); err == nil {
+		for _, marker := range vsCodeMarkers {
+			if strings.Contains(resolved, marker) {
+				return true
+			}
+		}
+	}
+
+	// If not a symlink (or symlink didn't match), check if it's a wrapper
+	// script whose content references a VS Code path
+	if content, err := os.ReadFile(codePath); err == nil && len(content) < 4096 {
+		text := string(content)
+		for _, marker := range vsCodeMarkers {
+			if strings.Contains(text, marker) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // IsRunning reports whether VS Code is currently running.
