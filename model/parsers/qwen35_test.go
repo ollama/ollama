@@ -220,6 +220,71 @@ SF
 	}
 }
 
+func TestQwen35ParserFakeoutPartialToolCallThenThinkCloseAcrossChunks(t *testing.T) {
+	parser := ParserForName("qwen3.5")
+	if parser == nil {
+		t.Fatal("expected qwen3.5 parser")
+	}
+
+	tools := []api.Tool{
+		{
+			Function: api.ToolFunction{
+				Name: "get_weather",
+				Parameters: api.ToolFunctionParameters{
+					Properties: func() *api.ToolPropertiesMap {
+						props := api.NewToolPropertiesMap()
+						props.Set("location", api.ToolProperty{Type: api.PropertyType{"string"}})
+						return props
+					}(),
+				},
+			},
+		},
+	}
+
+	parser.Init(tools, nil, &api.ThinkValue{Value: true})
+	content, thinking, calls, err := parser.Add("Need weather lookup<tool_c", false)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if content != "" {
+		t.Fatalf("expected empty content, got %q", content)
+	}
+	if thinking != "Need weather lookup" {
+		t.Fatalf("expected thinking %q, got %q", "Need weather lookup", thinking)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls in first chunk, got %d", len(calls))
+	}
+
+	content, thinking, calls, err = parser.Add("</thi", false)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if content != "" {
+		t.Fatalf("expected empty content, got %q", content)
+	}
+	if thinking != "<tool_c" {
+		t.Fatalf("expected thinking %q, got %q", "<tool_c", thinking)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls in second chunk, got %d", len(calls))
+	}
+
+	content, thinking, calls, err = parser.Add("nk>", true)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if content != "" {
+		t.Fatalf("expected empty content, got %q", content)
+	}
+	if thinking != "" {
+		t.Fatalf("expected no additional thinking in third chunk, got %q", thinking)
+	}
+	if len(calls) != 0 {
+		t.Fatalf("expected no tool calls in third chunk, got %d", len(calls))
+	}
+}
+
 func TestQwen35ParserToolCallAfterThinkingCloseIsParsed(t *testing.T) {
 	parser := ParserForName("qwen3.5")
 	if parser == nil {
