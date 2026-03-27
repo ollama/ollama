@@ -187,7 +187,11 @@ func signinURL() (string, error) {
 	}
 
 	encKey := base64.RawURLEncoding.EncodeToString([]byte(pubKey))
-	h, _ := os.Hostname()
+	h, err := os.Hostname()
+	if err != nil {
+		slog.Warn("os.Hostname() failed, using fallback", "error", err)
+		h = "unknown"
+	}
 	return fmt.Sprintf(signinURLStr, url.PathEscape(h), encKey), nil
 }
 
