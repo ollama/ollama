@@ -284,41 +284,54 @@ if(MLX_ENGINE)
     # The Go mlxrunner sets CUDA_PATH to OLLAMA_INSTALL_DIR so MLX finds them at
     # $CUDA_PATH/include/*.h via NVRTC --include-path.
     if(CUDAToolkit_FOUND)
-        set(_cuda_inc "${CUDAToolkit_INCLUDE_DIRS}")
-        set(_dst "${OLLAMA_INSTALL_DIR}/include")
-        set(_MLX_JIT_CUDA_HEADERS
-            builtin_types.h
-            cooperative_groups.h
-            cuda_bf16.h
-            cuda_bf16.hpp
-            cuda_device_runtime_api.h
-            cuda_fp16.h
-            cuda_fp16.hpp
-            cuda_fp8.h
-            cuda_fp8.hpp
-            cuda_runtime_api.h
-            device_types.h
-            driver_types.h
-            math_constants.h
-            surface_types.h
-            texture_types.h
-            vector_functions.h
-            vector_functions.hpp
-            vector_types.h
-        )
-        foreach(_hdr ${_MLX_JIT_CUDA_HEADERS})
-            install(FILES "${_cuda_inc}/${_hdr}"
-                DESTINATION ${_dst}
-                COMPONENT MLX)
+        # CUDAToolkit_INCLUDE_DIRS may be a semicolon-separated list
+        # (e.g. ".../include;.../include/cccl"). Find the entry that
+        # contains the CUDA runtime headers we need.
+        set(_cuda_inc "")
+        foreach(_dir ${CUDAToolkit_INCLUDE_DIRS})
+            if(EXISTS "${_dir}/cuda_runtime_api.h")
+                set(_cuda_inc "${_dir}")
+                break()
+            endif()
         endforeach()
-        # Subdirectory headers
-        install(DIRECTORY "${_cuda_inc}/cooperative_groups"
-            DESTINATION ${_dst}
-            COMPONENT MLX
-            FILES_MATCHING PATTERN "*.h")
-        install(FILES "${_cuda_inc}/crt/host_defines.h"
-            DESTINATION "${_dst}/crt"
-            COMPONENT MLX)
+        if(NOT _cuda_inc)
+            message(WARNING "Could not find cuda_runtime_api.h in CUDAToolkit_INCLUDE_DIRS: ${CUDAToolkit_INCLUDE_DIRS}")
+        else()
+            set(_dst "${OLLAMA_INSTALL_DIR}/include")
+            set(_MLX_JIT_CUDA_HEADERS
+                builtin_types.h
+                cooperative_groups.h
+                cuda_bf16.h
+                cuda_bf16.hpp
+                cuda_device_runtime_api.h
+                cuda_fp16.h
+                cuda_fp16.hpp
+                cuda_fp8.h
+                cuda_fp8.hpp
+                cuda_runtime_api.h
+                device_types.h
+                driver_types.h
+                math_constants.h
+                surface_types.h
+                texture_types.h
+                vector_functions.h
+                vector_functions.hpp
+                vector_types.h
+            )
+            foreach(_hdr ${_MLX_JIT_CUDA_HEADERS})
+                install(FILES "${_cuda_inc}/${_hdr}"
+                    DESTINATION ${_dst}
+                    COMPONENT MLX)
+            endforeach()
+            # Subdirectory headers
+            install(DIRECTORY "${_cuda_inc}/cooperative_groups"
+                DESTINATION ${_dst}
+                COMPONENT MLX
+                FILES_MATCHING PATTERN "*.h")
+            install(FILES "${_cuda_inc}/crt/host_defines.h"
+                DESTINATION "${_dst}/crt"
+                COMPONENT MLX)
+        endif()
     endif()
 
     # On Windows, explicitly install dl.dll (dlfcn-win32 POSIX dlopen emulation)
