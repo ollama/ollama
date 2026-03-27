@@ -536,6 +536,31 @@ static fs::path backend_filename_extension() {
 #endif
 }
 
+#ifdef _WIN32
+static bool process_is_windows_arm64() {
+    using is_wow64_process2_fn = BOOL (WINAPI *)(HANDLE, USHORT *, USHORT *);
+
+    auto * kernel32 = GetModuleHandleW(L"kernel32.dll");
+    if (kernel32 != nullptr) {
+        auto * is_wow64_process2 =
+            reinterpret_cast<is_wow64_process2_fn>(GetProcAddress(kernel32, "IsWow64Process2"));
+        if (is_wow64_process2 != nullptr) {
+            USHORT process_machine = IMAGE_FILE_MACHINE_UNKNOWN;
+            USHORT native_machine = IMAGE_FILE_MACHINE_UNKNOWN;
+            if (is_wow64_process2(GetCurrentProcess(), &process_machine, &native_machine)) {
+                return process_machine == IMAGE_FILE_MACHINE_ARM64 || native_machine == IMAGE_FILE_MACHINE_ARM64;
+            }
+        }
+    }
+
+#if defined(_M_ARM64)
+    return true;
+#else
+    return false;
+#endif
+}
+#endif
+
 static ggml_backend_reg_t ggml_backend_load_best(const char * name, bool silent, const char * user_search_path) {
     // enumerate all the files that match [lib]ggml-name-*.[so|dll] in the search paths
     const fs::path name_path = fs::u8path(name);
@@ -553,6 +578,23 @@ static ggml_backend_reg_t ggml_backend_load_best(const char * name, bool silent,
     } else {
         search_paths.push_back(fs::u8path(user_search_path));
     }
+
+#ifdef _WIN32
+    // On Windows ARM64, probing x86_64 CPU variant DLLs (e.g. haswell/sse42/x64) produces
+    // noisy "not a valid Win32 application" logs. Load the base CPU backend directly.
+    if (name_path == fs::u8path("cpu") && process_is_windows_arm64()) {
+        for (const auto & search_path : search_paths) {
+            fs::path filename = backend_filename_prefix().native() + name_path.native() + backend_filename_extension().native();
+            fs::path path = search_path / filename;
+            if (std::error_code ec; fs::exists(path, ec)) {
+                return get_reg().load_backend(path, silent);
+            } else if (ec) {
+                GGML_LOG_DEBUG("%s: posix_stat(%s) failure, error-message: %s\n", __func__, path_str(path).c_str(), ec.message().c_str());
+            }
+        }
+        return nullptr;
+    }
+#endif
 
     int best_score = 0;
     fs::path best_path;
