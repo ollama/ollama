@@ -26,11 +26,13 @@ import { DisplayLogin } from "@/components/DisplayLogin";
 import { ErrorEvent, Message } from "@/gotypes";
 import { useSettings } from "@/hooks/useSettings";
 import { useCloudStatus } from "@/hooks/useCloudStatus";
+import { getInferenceCompute } from "@/api";
 import { ThinkButton } from "./ThinkButton";
 import { ErrorMessage } from "./ErrorMessage";
 import { processFiles } from "@/utils/fileValidation";
 import type { ImageData } from "@/types/webview";
 import { PlusIcon } from "@heroicons/react/24/outline";
+import { useQuery } from "@tanstack/react-query";
 
 export type ThinkingLevel = "low" | "medium" | "high";
 
@@ -52,6 +54,7 @@ interface MessageInput {
 
 interface ChatFormProps {
   hasMessages: boolean;
+  messages?: Message[];
   onSubmit?: (
     message: string,
     options: {
@@ -81,8 +84,65 @@ interface ChatFormProps {
   ) => void;
 }
 
+function formatExactTokenCount(count: number): string {
+  return count.toLocaleString();
+}
+
+function getContextUsageTone(ratio: number, isOverLimit = false) {
+  if (isOverLimit) {
+    return {
+      strokeClass: "stroke-red-500 dark:stroke-red-400",
+      badgeClass:
+        "bg-red-500/15 text-red-700 dark:bg-red-500/20 dark:text-red-300",
+      textClass: "text-red-600 dark:text-red-300",
+      label: "Over limit",
+    };
+  }
+
+  if (ratio >= 0.9) {
+    return {
+      strokeClass: "stroke-red-500 dark:stroke-red-400",
+      badgeClass:
+        "bg-red-500/12 text-red-700 dark:bg-red-500/15 dark:text-red-300",
+      textClass: "text-red-600 dark:text-red-300",
+      label: "Near limit",
+    };
+  }
+
+  if (ratio >= 0.75) {
+    return {
+      strokeClass: "stroke-amber-500 dark:stroke-amber-400",
+      badgeClass:
+        "bg-amber-500/15 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300",
+      textClass: "text-amber-600 dark:text-amber-300",
+      label: "Filling up",
+    };
+  }
+
+  return {
+    strokeClass: "stroke-emerald-500 dark:stroke-emerald-400",
+    badgeClass:
+      "bg-emerald-500/12 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300",
+    textClass: "text-emerald-600 dark:text-emerald-300",
+    label: "Comfortable",
+  };
+}
+
+function getContextUsageHint(ratio: number | null, isOverLimit: boolean) {
+  if (isOverLimit) {
+    return "Older messages may already be dropped from the prompt.";
+  }
+
+  if (ratio !== null && ratio >= 0.9) {
+    return "Older messages may start dropping soon.";
+  }
+
+  return null;
+}
+
 function ChatForm({
   hasMessages,
+  messages = [],
   onSubmit,
   autoFocus = false,
   chatId = "new",
@@ -148,9 +208,14 @@ function ChatForm({
       thinkEnabled,
       thinkLevel: settingsThinkLevel,
     },
+    settingsData,
     setSettings,
   } = useSettings();
   const { cloudDisabled } = useCloudStatus();
+  const { data: inferenceComputeResponse } = useQuery({
+    queryKey: ["inferenceCompute"],
+    queryFn: getInferenceCompute,
+  });
 
   const supportsWebSearch = useHasToolsCapability(selectedModel?.model);
   // Use per-chat thinking level instead of global
@@ -257,6 +322,72 @@ function ChatForm({
   };
 
   const activeFeatureForBanner = getActiveFeatureForBanner();
+  let latestContextMessage: Message | null = null;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const candidate = messages[i];
+    if (candidate.role === "assistant" && candidate.promptEvalCount > 0) {
+      latestContextMessage = candidate;
+      break;
+    }
+  }
+
+  const latestPromptTokens = latestContextMessage?.promptEvalCount ?? 0;
+  const latestReplyTokens = latestContextMessage?.evalCount ?? 0;
+  const estimatedConversationTokens = latestPromptTokens + latestReplyTokens;
+  const effectiveContextLength =
+    settingsData?.ContextLength && settingsData.ContextLength > 0
+      ? settingsData.ContextLength
+      : selectedModel?.isCloud()
+        ? undefined
+        : inferenceComputeResponse?.defaultContextLength;
+  const rawContextUsageRatio =
+    effectiveContextLength
+      ? estimatedConversationTokens / effectiveContextLength
+      : null;
+  const contextUsageRatio =
+    rawContextUsageRatio !== null ? Math.min(rawContextUsageRatio, 1) : null;
+  const contextUsagePercent =
+    rawContextUsageRatio !== null ? Math.round(rawContextUsageRatio * 100) : null;
+  const isContextOverLimit =
+    rawContextUsageRatio !== null && rawContextUsageRatio > 1;
+  const shouldShowContextUsage =
+    effectiveContextLength !== undefined || estimatedConversationTokens > 0;
+  const contextUsageTone =
+    contextUsageRatio !== null
+      ? getContextUsageTone(contextUsageRatio, isContextOverLimit)
+      : getContextUsageTone(0);
+  const contextUsageHint = getContextUsageHint(
+    contextUsageRatio,
+    isContextOverLimit,
+  );
+  const visibleContextUsageRatio =
+    contextUsageRatio !== null && estimatedConversationTokens > 0
+      ? Math.max(contextUsageRatio, 0.015)
+      : contextUsageRatio ?? 0;
+  const contextRingRadius = 9;
+  const contextRingCircumference = 2 * Math.PI * contextRingRadius;
+  const contextRingOffset =
+    contextRingCircumference * (1 - visibleContextUsageRatio);
+  const overflowTokens =
+    effectiveContextLength && estimatedConversationTokens > effectiveContextLength
+      ? estimatedConversationTokens - effectiveContextLength
+      : 0;
+  const contextUsageSummary = effectiveContextLength
+    ? `~${formatExactTokenCount(estimatedConversationTokens)} / ${formatExactTokenCount(effectiveContextLength)} tokens${
+        overflowTokens > 0
+          ? ` (+${formatExactTokenCount(overflowTokens)} over)`
+          : ""
+      }`
+    : `~${formatExactTokenCount(estimatedConversationTokens)} tokens`;
+  const latestContextBreakdown =
+    latestContextMessage && latestPromptTokens > 0
+      ? `Latest prompt ${formatExactTokenCount(latestPromptTokens)}${
+          latestReplyTokens > 0
+            ? ` + reply ${formatExactTokenCount(latestReplyTokens)}`
+            : ""
+        }`
+      : "No completed response yet";
+  const contextUsageTooltip = `Conversation context: ${contextUsageSummary}. ${latestContextBreakdown}. ${contextUsageTone.label}.${contextUsageHint ? ` ${contextUsageHint}` : ""}`;
 
   const resetChatForm = () => {
     setMessage({
@@ -933,6 +1064,74 @@ function ChatForm({
 
           {/* Model picker and submit button */}
           <div className="flex items-center gap-2 relative z-20">
+            {shouldShowContextUsage && (
+              <div className="group relative">
+                <button
+                  type="button"
+                  aria-label={contextUsageTooltip}
+                  className="flex h-9 w-9 cursor-help items-center justify-center rounded-full bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-neutral-400/70 dark:bg-neutral-700 dark:focus-visible:ring-neutral-500/70"
+                >
+                  <svg
+                    className="-rotate-90"
+                    width="22"
+                    height="22"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r={contextRingRadius}
+                      fill="none"
+                      strokeWidth="2.5"
+                      className="stroke-neutral-200 dark:stroke-neutral-600"
+                    />
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r={contextRingRadius}
+                      fill="none"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeDasharray={contextRingCircumference}
+                      strokeDashoffset={contextRingOffset}
+                      className={`transition-[stroke-dashoffset] duration-300 ease-out ${contextUsageTone.strokeClass}`}
+                    />
+                  </svg>
+                </button>
+
+                <div className="pointer-events-none absolute bottom-full right-0 z-30 mb-2 w-max min-w-[220px] translate-y-1 rounded-2xl border border-neutral-200/80 bg-white/95 px-3 py-2 opacity-0 shadow-lg transition-all duration-150 group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100 dark:border-neutral-700/80 dark:bg-neutral-900/95">
+                  <div className="flex items-center justify-between gap-3 text-[11px]">
+                    <span className="font-medium text-neutral-700 dark:text-neutral-200">
+                      Conversation context
+                    </span>
+                    {contextUsagePercent !== null && (
+                      <span
+                        className={`rounded-full px-2 py-0.5 font-medium ${contextUsageTone.badgeClass}`}
+                      >
+                        {contextUsagePercent}%
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1 tabular-nums text-[11px] text-neutral-500 dark:text-neutral-400">
+                    {contextUsageSummary}
+                  </div>
+                  <div className="mt-1 text-[11px] text-neutral-500 dark:text-neutral-400">
+                    {latestContextBreakdown}
+                  </div>
+                  <div
+                    className={`mt-1 text-[11px] font-medium ${contextUsageTone.textClass}`}
+                  >
+                    {contextUsageTone.label}
+                  </div>
+                  {contextUsageHint && (
+                    <div className="mt-1 max-w-[240px] text-[11px] text-neutral-500 dark:text-neutral-400">
+                      {contextUsageHint}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
             <ModelPicker
               ref={modelPickerRef}
               chatId={chatId}

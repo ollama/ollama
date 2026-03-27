@@ -14,7 +14,7 @@ import (
 
 // currentSchemaVersion defines the current database schema version.
 // Increment this when making schema changes that require migrations.
-const currentSchemaVersion = 15
+const currentSchemaVersion = 16
 
 // database wraps the SQLite connection.
 // SQLite handles its own locking for concurrent access:
@@ -110,6 +110,8 @@ func (db *database) init() error {
 		model_name TEXT,
 		model_cloud BOOLEAN, -- deprecated
 		model_ollama_host BOOLEAN, -- deprecated
+		prompt_eval_count INTEGER NOT NULL DEFAULT 0,
+		eval_count INTEGER NOT NULL DEFAULT 0,
 		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		thinking_time_start TIMESTAMP,
@@ -264,6 +266,12 @@ func (db *database) migrate() error {
 				return fmt.Errorf("migrate v14 to v15: %w", err)
 			}
 			version = 15
+		case 15:
+			// add token metric columns to messages table
+			if err := db.migrateV15ToV16(); err != nil {
+				return fmt.Errorf("migrate v15 to v16: %w", err)
+			}
+			version = 16
 		default:
 			// If we have a version we don't recognize, just set it to current
 			// This might happen during development
@@ -518,6 +526,26 @@ func (db *database) migrateV14ToV15() error {
 	return nil
 }
 
+// migrateV15ToV16 adds prompt/eval token counters to messages.
+func (db *database) migrateV15ToV16() error {
+	_, err := db.conn.Exec(`ALTER TABLE messages ADD COLUMN prompt_eval_count INTEGER NOT NULL DEFAULT 0`)
+	if err != nil && !duplicateColumnError(err) {
+		return fmt.Errorf("add prompt_eval_count column: %w", err)
+	}
+
+	_, err = db.conn.Exec(`ALTER TABLE messages ADD COLUMN eval_count INTEGER NOT NULL DEFAULT 0`)
+	if err != nil && !duplicateColumnError(err) {
+		return fmt.Errorf("add eval_count column: %w", err)
+	}
+
+	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 16`)
+	if err != nil {
+		return fmt.Errorf("update schema version: %w", err)
+	}
+
+	return nil
+}
+
 // cleanupOrphanedData removes orphaned records that may exist due to the foreign key bug
 func (db *database) cleanupOrphanedData() error {
 	_, err := db.conn.Exec(`
@@ -765,7 +793,7 @@ func (db *database) updateLastMessage(chatID string, msg Message) error {
 
 	query := `
 		UPDATE messages 
-		SET content = ?, thinking = ?, model_name = ?, updated_at = ?, thinking_time_start = ?, thinking_time_end = ?, tool_result = ?
+		SET content = ?, thinking = ?, model_name = ?, prompt_eval_count = ?, eval_count = ?, updated_at = ?, thinking_time_start = ?, thinking_time_end = ?, tool_result = ?
 		WHERE id = ?
 	`
 
@@ -795,6 +823,8 @@ func (db *database) updateLastMessage(chatID string, msg Message) error {
 		msg.Content,
 		msg.Thinking,
 		modelName,
+		msg.PromptEvalCount,
+		msg.EvalCount,
 		msg.UpdatedAt,
 		thinkingTimeStart,
 		thinkingTimeEnd,
@@ -863,7 +893,7 @@ func (db *database) appendMessage(chatID string, msg Message) error {
 
 func (db *database) getMessages(chatID string, loadAttachmentData bool) ([]Message, error) {
 	query := `
-		SELECT id, role, content, thinking, stream, model_name, created_at, updated_at, thinking_time_start, thinking_time_end, tool_result
+		SELECT id, role, content, thinking, stream, model_name, prompt_eval_count, eval_count, created_at, updated_at, thinking_time_start, thinking_time_end, tool_result
 		FROM messages
 		WHERE chat_id = ?
 		ORDER BY id ASC
@@ -890,6 +920,8 @@ func (db *database) getMessages(chatID string, loadAttachmentData bool) ([]Messa
 			&msg.Thinking,
 			&msg.Stream,
 			&modelName,
+			&msg.PromptEvalCount,
+			&msg.EvalCount,
 			&msg.CreatedAt,
 			&msg.UpdatedAt,
 			&thinkingTimeStart,
@@ -945,8 +977,8 @@ func (db *database) getMessages(chatID string, loadAttachmentData bool) ([]Messa
 
 func (db *database) insertMessage(tx *sql.Tx, chatID string, msg Message) (int64, error) {
 	query := `
-		INSERT INTO messages (chat_id, role, content, thinking, stream, model_name, created_at, updated_at, thinking_time_start, thinking_time_end, tool_result)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO messages (chat_id, role, content, thinking, stream, model_name, prompt_eval_count, eval_count, created_at, updated_at, thinking_time_start, thinking_time_end, tool_result)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	var thinkingTimeStart, thinkingTimeEnd sql.NullTime
@@ -978,6 +1010,8 @@ func (db *database) insertMessage(tx *sql.Tx, chatID string, msg Message) (int64
 		msg.Thinking,
 		msg.Stream,
 		modelName,
+		msg.PromptEvalCount,
+		msg.EvalCount,
 		msg.CreatedAt,
 		msg.UpdatedAt,
 		thinkingTimeStart,

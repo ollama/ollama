@@ -60,6 +60,8 @@ type ChatEvent struct {
 	// Chat/Assistant message fields
 	Content           *string    `json:"content,omitempty"`
 	Thinking          *string    `json:"thinking,omitempty"`
+	PromptEvalCount   *int       `json:"promptEvalCount,omitempty" ts_type:"number | undefined"`
+	EvalCount         *int       `json:"evalCount,omitempty" ts_type:"number | undefined"`
 	ThinkingTimeStart *time.Time `json:"thinkingTimeStart,omitempty" ts_type:"Date | undefined" ts_transform:"__VALUE__ && new Date(__VALUE__)"`
 	ThinkingTimeEnd   *time.Time `json:"thinkingTimeEnd,omitempty" ts_type:"Date | undefined" ts_transform:"__VALUE__ && new Date(__VALUE__)"`
 
