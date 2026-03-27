@@ -27,7 +27,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useSelectedModel } from "@/hooks/useSelectedModel";
 import { useUser } from "@/hooks/useUser";
-import { useHasVisionCapability } from "@/hooks/useModelCapabilities";
+import {
+  useHasVisionCapability,
+  useHasImageCapability,
+} from "@/hooks/useModelCapabilities";
+import { useImageGeneration } from "@/hooks/useImageGeneration";
 import { Message } from "@/gotypes";
 
 export default function Chat({ chatId }: { chatId: string }) {
@@ -38,6 +42,8 @@ export default function Chat({ chatId }: { chatId: string }) {
   const { selectedModel } = useSelectedModel(chatId);
   const { user } = useUser();
   const hasVisionCapability = useHasVisionCapability(selectedModel?.model);
+  const hasImageCapability = useHasImageCapability(selectedModel?.model);
+  const imageGen = useImageGeneration();
   const shouldShowStaleDisplay = useShouldShowStaleDisplay(selectedModel);
   const dismissStaleModel = useDismissStaleModel();
   const { isHealthy } = useHealth();
@@ -141,6 +147,14 @@ export default function Chat({ chatId }: { chatId: string }) {
       clearChatError();
     }
 
+    // Route to image generation for image-capable models
+    if (hasImageCapability && selectedModel) {
+      imageGen.reset();
+      imageGen.generate(selectedModel.model, message);
+      handleNewUserMessage();
+      return;
+    }
+
     // Prepare attachments for backend
     const allAttachments = (options.attachments || []).map((att) => ({
       filename: att.filename,
@@ -203,6 +217,49 @@ export default function Chat({ chatId }: { chatId: string }) {
     >
       {chatId === "new" ? (
         <div className="flex flex-col h-screen justify-center relative">
+          {/* Image generation result on new chat screen */}
+          {(imageGen.isGenerating ||
+            imageGen.image ||
+            imageGen.error) && (
+            <div className="px-6 py-4 max-w-3xl mx-auto w-full">
+              {imageGen.isGenerating && (
+                <div className="flex flex-col gap-2">
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-700">
+                    <div
+                      className="h-full rounded-full bg-neutral-800 dark:bg-neutral-200 transition-all"
+                      style={{
+                        width: imageGen.progress
+                          ? `${(imageGen.progress.completed / imageGen.progress.total) * 100}%`
+                          : "100%",
+                        animation: imageGen.progress
+                          ? "none"
+                          : "pulse 1.5s ease-in-out infinite",
+                      }}
+                    />
+                  </div>
+                  <p className="text-xs text-neutral-500">
+                    {imageGen.progress
+                      ? `${imageGen.progress.completed}/${imageGen.progress.total} steps`
+                      : "Generating..."}
+                  </p>
+                </div>
+              )}
+              {imageGen.error && (
+                <div className="rounded-lg bg-red-50 dark:bg-red-900/20 p-3 text-sm text-red-600 dark:text-red-400">
+                  {imageGen.error}
+                </div>
+              )}
+              {imageGen.image && (
+                <div className="flex flex-col items-start gap-2">
+                  <img
+                    src={`data:image/png;base64,${imageGen.image}`}
+                    alt="Generated image"
+                    className="max-w-full rounded-lg"
+                  />
+                </div>
+              )}
+            </div>
+          )}
           <div className="px-6">
             <ChatForm
               hasMessages={false}
@@ -237,6 +294,50 @@ export default function Chat({ chatId }: { chatId: string }) {
               error={chatError}
               browserToolResult={browserToolResult}
             />
+
+            {/* Image generation result */}
+            {(imageGen.isGenerating ||
+              imageGen.image ||
+              imageGen.error) && (
+              <div className="px-6 py-4">
+                {imageGen.isGenerating && (
+                  <div className="flex flex-col gap-2">
+                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-700">
+                      <div
+                        className="h-full rounded-full bg-neutral-800 dark:bg-neutral-200 transition-all"
+                        style={{
+                          width: imageGen.progress
+                            ? `${(imageGen.progress.completed / imageGen.progress.total) * 100}%`
+                            : "100%",
+                          animation: imageGen.progress
+                            ? "none"
+                            : "pulse 1.5s ease-in-out infinite",
+                        }}
+                      />
+                    </div>
+                    <p className="text-xs text-neutral-500">
+                      {imageGen.progress
+                        ? `${imageGen.progress.completed}/${imageGen.progress.total} steps`
+                        : "Generating..."}
+                    </p>
+                  </div>
+                )}
+                {imageGen.error && (
+                  <div className="rounded-lg bg-red-50 dark:bg-red-900/20 p-3 text-sm text-red-600 dark:text-red-400">
+                    {imageGen.error}
+                  </div>
+                )}
+                {imageGen.image && (
+                  <div className="flex flex-col items-start gap-2">
+                    <img
+                      src={`data:image/png;base64,${imageGen.image}`}
+                      alt="Generated image"
+                      className="max-w-full rounded-lg"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
           </section>
 
           <div className="flex-shrink-0 sticky bottom-0 z-20">
