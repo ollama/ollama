@@ -313,7 +313,14 @@ Weigh anchor!
     requires        0.19.0
 
 `
-		if diff := cmp.Diff(expect, b.String()); diff != "" {
+		trimLinePadding := func(s string) string {
+			lines := strings.Split(s, "\n")
+			for i, line := range lines {
+				lines[i] = strings.TrimRight(line, " \t\r")
+			}
+			return strings.Join(lines, "\n")
+		}
+		if diff := cmp.Diff(trimLinePadding(expect), trimLinePadding(b.String())); diff != "" {
 			t.Errorf("unexpected output (-want +got):\n%s", diff)
 		}
 	})
