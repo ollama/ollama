@@ -178,6 +178,7 @@ func (u *uploader) exists(ctx context.Context, blob Blob) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized && u.getToken != nil {
@@ -207,6 +208,7 @@ func (u *uploader) initUpload(ctx context.Context, blob Blob) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized && u.getToken != nil {
@@ -256,7 +258,7 @@ func (u *uploader) put(ctx context.Context, uploadURL string, f *os.File, size i
 	if err != nil {
 		return pr.n, err
 	}
-	defer resp.Body.Close()
+	defer func() { io.Copy(io.Discard, resp.Body); resp.Body.Close() }()
 
 	// Handle auth retry
 	if resp.StatusCode == http.StatusUnauthorized && u.getToken != nil {
@@ -285,7 +287,7 @@ func (u *uploader) put(ctx context.Context, uploadURL string, f *os.File, size i
 		if err != nil {
 			return pr2.n, err
 		}
-		defer resp2.Body.Close()
+		defer func() { io.Copy(io.Discard, resp2.Body); resp2.Body.Close() }()
 
 		if resp2.StatusCode != http.StatusCreated && resp2.StatusCode != http.StatusAccepted {
 			body, _ := io.ReadAll(resp2.Body)
@@ -313,7 +315,7 @@ func (u *uploader) pushManifest(ctx context.Context, repo, ref string, manifest 
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { io.Copy(io.Discard, resp.Body); resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized && u.getToken != nil {
 		ch := parseAuthChallenge(resp.Header.Get("WWW-Authenticate"))
