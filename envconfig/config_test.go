@@ -188,9 +188,9 @@ func TestBool(t *testing.T) {
 		"false": false,
 		"1":     true,
 		"0":     false,
-		// invalid values
-		"random":    true,
-		"something": true,
+		// invalid values fall back to default (false for Bool)
+		"random":    false,
+		"something": false,
 	}
 
 	for k, v := range cases {
@@ -201,6 +201,44 @@ func TestBool(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBoolWithDefault(t *testing.T) {
+	bwd := BoolWithDefault("OLLAMA_BWD")
+
+	t.Run("valid true", func(t *testing.T) {
+		t.Setenv("OLLAMA_BWD", "true")
+		if b := bwd(false); !b {
+			t.Error("expected true")
+		}
+	})
+
+	t.Run("valid false", func(t *testing.T) {
+		t.Setenv("OLLAMA_BWD", "false")
+		if b := bwd(true); b {
+			t.Error("expected false")
+		}
+	})
+
+	t.Run("invalid value with default true", func(t *testing.T) {
+		t.Setenv("OLLAMA_BWD", "yes")
+		if b := bwd(true); !b {
+			t.Error("expected default true for invalid value")
+		}
+	})
+
+	t.Run("invalid value with default false", func(t *testing.T) {
+		t.Setenv("OLLAMA_BWD", "enabled")
+		if b := bwd(false); b {
+			t.Error("expected default false for invalid value")
+		}
+	})
+
+	t.Run("unset uses default", func(t *testing.T) {
+		if b := bwd(true); !b {
+			t.Error("expected default true for unset var")
+		}
+	})
 }
 
 func TestUint(t *testing.T) {
