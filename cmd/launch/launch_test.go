@@ -1648,13 +1648,13 @@ func TestConfirmLowContextLength(t *testing.T) {
 				t.Fatalf("expected warning=%v, got output: %q", tt.wantWarning, output)
 			}
 			if tt.wantWarning && tt.wantModelfile {
-				if !strings.Contains(output, "official model") {
-					t.Fatalf("expected official model hint in output: %q", output)
+				if !strings.Contains(output, "Use the model:") {
+					t.Fatalf("expected parent model hint in output: %q", output)
 				}
 			}
 			if tt.wantWarning && !tt.wantModelfile {
-				if strings.Contains(output, "official model") {
-					t.Fatalf("expected server hint, not official model hint in output: %q", output)
+				if strings.Contains(output, "Use the model:") {
+					t.Fatalf("expected server hint, not parent model hint in output: %q", output)
 				}
 			}
 		})
