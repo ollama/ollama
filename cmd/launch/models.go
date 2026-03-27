@@ -477,7 +477,8 @@ func lowContextLength(ctx context.Context, client *api.Client, models []string) 
 		// A Modelfile can override num_ctx, which takes precedence over the server default.
 		effectiveCtx := serverCtx
 		modelfileOverride := false
-		if info, err := client.Show(ctx, &api.ShowRequest{Model: m}); err == nil {
+		var info *api.ShowResponse
+		if info, err = client.Show(ctx, &api.ShowRequest{Model: m}); err == nil {
 			if numCtx := parseNumCtx(info.Parameters); numCtx > 0 {
 				effectiveCtx = numCtx
 				modelfileOverride = true
@@ -486,7 +487,8 @@ func lowContextLength(ctx context.Context, client *api.Client, models []string) 
 		if effectiveCtx < recommendedContextLength {
 			fmt.Fprintf(os.Stderr, "\n%sWarning: context window is %d tokens (recommended: %d+)%s\n", ansiYellow, effectiveCtx, recommendedContextLength, ansiReset)
 			if modelfileOverride {
-				fmt.Fprintf(os.Stderr, "%sConsider using an official model and increase the context length to %d in Ollama App Settings.%s\n\n", ansiYellow, recommendedContextLength, ansiReset)
+				parentModel := info.Details.ParentModel
+				fmt.Fprintf(os.Stderr, "%sUse the model: %s and increase the context length to at least %d in Ollama App Settings.%s\n\n", ansiYellow, parentModel, recommendedContextLength, ansiReset)
 			} else {
 				if runtime.GOOS == "windows" {
 					fmt.Fprintf(os.Stderr, "%sIncrease it in Ollama App Settings or with $env:OLLAMA_CONTEXT_LENGTH=%d; ollama serve%s\n\n", ansiYellow, recommendedContextLength, ansiReset)
