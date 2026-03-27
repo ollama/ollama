@@ -386,6 +386,7 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 		var images []api.ImageData
 		var toolCalls []api.ToolCall
 		var thinking string
+		var signature string
 		var toolResults []api.Message
 		textBlocks := 0
 		imageBlocks := 0
@@ -489,6 +490,9 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 				if t, ok := blockMap["thinking"].(string); ok {
 					thinking = t
 				}
+				if s, ok := blockMap["signature"].(string); ok {
+					signature = s
+				}
 
 			case "server_tool_use":
 				serverToolUseBlocks++
@@ -525,6 +529,7 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 				Images:    images,
 				ToolCalls: toolCalls,
 				Thinking:  thinking,
+				Signature: signature,
 			}
 			messages = append(messages, m)
 		}
@@ -659,8 +664,9 @@ func ToMessagesResponse(id string, r api.ChatResponse) MessagesResponse {
 
 	if r.Message.Thinking != "" {
 		content = append(content, ContentBlock{
-			Type:     "thinking",
-			Thinking: ptr(r.Message.Thinking),
+			Type:      "thinking",
+			Thinking:  ptr(r.Message.Thinking),
+			Signature: r.Message.Signature,
 		})
 	}
 
@@ -801,6 +807,35 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 				Delta: Delta{
 					Type:     "thinking_delta",
 					Thinking: r.Message.Thinking,
+				},
+			},
+		})
+	}
+
+	if r.Message.Signature != "" && !c.thinkingDone {
+		if !c.thinkingStarted {
+			c.thinkingStarted = true
+			events = append(events, StreamEvent{
+				Event: "content_block_start",
+				Data: ContentBlockStartEvent{
+					Type:  "content_block_start",
+					Index: c.contentIndex,
+					ContentBlock: ContentBlock{
+						Type:     "thinking",
+						Thinking: ptr(""),
+					},
+				},
+			})
+		}
+
+		events = append(events, StreamEvent{
+			Event: "content_block_delta",
+			Data: ContentBlockDeltaEvent{
+				Type:  "content_block_delta",
+				Index: c.contentIndex,
+				Delta: Delta{
+					Type:      "signature_delta",
+					Signature: r.Message.Signature,
 				},
 			},
 		})

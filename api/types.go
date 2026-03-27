@@ -214,6 +214,7 @@ type Message struct {
 	// Thinking contains the text that was inside thinking tags in the
 	// original model output when ChatRequest.Think is enabled.
 	Thinking   string      `json:"thinking,omitempty"`
+	Signature  string      `json:"signature,omitempty"`
 	Images     []ImageData `json:"images,omitempty"`
 	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
 	ToolName   string      `json:"tool_name,omitempty"`
@@ -238,9 +239,10 @@ type ToolCall struct {
 }
 
 type ToolCallFunction struct {
-	Index     int                       `json:"index"`
-	Name      string                    `json:"name"`
-	Arguments ToolCallFunctionArguments `json:"arguments"`
+	Index            int                       `json:"index"`
+	Name             string                    `json:"name"`
+	Arguments        ToolCallFunctionArguments `json:"arguments"`
+	ThoughtSignature string                    `json:"thought_signature,omitempty"`
 }
 
 // ToolCallFunctionArguments holds tool call arguments in insertion order.

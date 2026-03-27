@@ -910,3 +910,30 @@ func TestToolPropertiesMap_NestedProperties(t *testing.T) {
 		assert.Equal(t, expected, string(data))
 	})
 }
+
+func TestMessage_SignaturePreservation(t *testing.T) {
+	input := `{"role":"assistant","content":"hello","thinking":"reasoning","signature":"sig123"}`
+	var msg Message
+	err := json.Unmarshal([]byte(input), &msg)
+	require.NoError(t, err)
+
+	assert.Equal(t, "sig123", msg.Signature)
+	assert.Equal(t, "reasoning", msg.Thinking)
+
+	output, err := json.Marshal(msg)
+	require.NoError(t, err)
+	assert.JSONEq(t, input, string(output))
+}
+
+func TestToolCallFunction_ThoughtSignaturePreservation(t *testing.T) {
+	input := `{"index":1,"name":"test","arguments":{"arg1":"val1"},"thought_signature":"tsig456"}`
+	var fn ToolCallFunction
+	err := json.Unmarshal([]byte(input), &fn)
+	require.NoError(t, err)
+
+	assert.Equal(t, "tsig456", fn.ThoughtSignature)
+
+	output, err := json.Marshal(fn)
+	require.NoError(t, err)
+	assert.JSONEq(t, input, string(output))
+}
