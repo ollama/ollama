@@ -10,6 +10,8 @@ import (
 
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/x/create"
 )
 
 func TestModelfileConfig(t *testing.T) {
@@ -385,5 +387,45 @@ func TestCreateModelfileLayersIncludesParameters(t *testing.T) {
 
 	if got["temperature"] != float64(0.7) {
 		t.Fatalf("temperature = %v, want %v", got["temperature"], float64(0.7))
+	}
+}
+
+func TestNewManifestWriter_PopulatesFileTypeFromQuantize(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	opts := CreateOptions{
+		ModelName: "test-quantized",
+		ModelDir:  t.TempDir(),
+		Quantize:  "MXFP8",
+	}
+
+	writer := newManifestWriter(opts, []string{"completion"}, "qwen3", "qwen3")
+	if err := writer(opts.ModelName, create.LayerInfo{}, nil); err != nil {
+		t.Fatalf("newManifestWriter() error = %v", err)
+	}
+
+	name := model.ParseName(opts.ModelName)
+	mf, err := manifest.ParseNamedManifest(name)
+	if err != nil {
+		t.Fatalf("ParseNamedManifest() error = %v", err)
+	}
+
+	configPath, err := manifest.BlobsPath(mf.Config.Digest)
+	if err != nil {
+		t.Fatalf("BlobsPath() error = %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	var cfg model.ConfigV2
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+
+	if cfg.FileType != "mxfp8" {
+		t.Fatalf("FileType = %q, want %q", cfg.FileType, "mxfp8")
 	}
 }

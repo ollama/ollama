@@ -348,6 +348,7 @@ func newManifestWriter(opts CreateOptions, capabilities []string, parserName, re
 		// Create config blob with version requirement
 		configData := model.ConfigV2{
 			ModelFormat:  "safetensors",
+			FileType:     strings.ToLower(strings.TrimSpace(opts.Quantize)),
 			Capabilities: caps,
 			Requires:     MinOllamaVersion,
 			Parser:       resolveParserName(opts.Modelfile, parserName),
