@@ -545,13 +545,14 @@ func (c *Openclaw) Edit(models []string) error {
 
 	var newModels []any
 	for _, m := range models {
-		entry, _ := openclawModelConfig(context.Background(), client, m)
-		// Merge existing fields (user customizations)
+		entry, _, probed := openclawModelConfigWithProbe(context.Background(), client, m)
 		if existing, ok := existingByID[m]; ok {
-			for k, v := range existing {
-				if _, isNew := entry[k]; !isNew {
-					entry[k] = v
-				}
+			// If capability probing fails for a saved model, preserve the full
+			// existing entry instead of rewriting it with fallback defaults.
+			if !probed {
+				entry = preserveOpenclawModelEntry(existing, m)
+			} else {
+				mergeOpenclawModelEntry(entry, existing)
 			}
 		}
 		newModels = append(newModels, entry)
@@ -588,15 +589,50 @@ func (c *Openclaw) Edit(models []string) error {
 		return err
 	}
 
-	// Clear any per-session model overrides so the new primary takes effect
-	// immediately rather than being shadowed by a cached modelOverride.
-	clearSessionModelOverride(models[0])
+	// Clear any per-session model state so the new primary takes effect
+	// immediately rather than being shadowed by cached session data.
+	clearSessionModelState(models[0])
 	return nil
 }
 
-// clearSessionModelOverride removes per-session model overrides from the main
-// agent session so the global primary model takes effect on the next TUI launch.
-func clearSessionModelOverride(primary string) {
+func mergeOpenclawModelEntry(entry, existing map[string]any) {
+	for k, v := range existing {
+		if _, isNew := entry[k]; !isNew {
+			entry[k] = v
+		}
+	}
+}
+
+func preserveOpenclawModelEntry(existing map[string]any, modelID string) map[string]any {
+	entry := cloneOpenclawModelEntry(existing)
+	defaults := openclawDefaultModelEntry(modelID)
+	if id, _ := entry["id"].(string); id == "" {
+		entry["id"] = defaults["id"]
+	}
+	if name, _ := entry["name"].(string); name == "" {
+		entry["name"] = defaults["name"]
+	}
+	if _, ok := entry["input"]; !ok {
+		entry["input"] = defaults["input"]
+	}
+	if _, ok := entry["cost"]; !ok {
+		entry["cost"] = defaults["cost"]
+	}
+	return entry
+}
+
+func cloneOpenclawModelEntry(src map[string]any) map[string]any {
+	dst := make(map[string]any, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+// clearSessionModelState removes per-session model overrides and normalizes
+// cached runtime model fields on the main agent session so the global primary
+// model takes effect on the next TUI launch.
+func clearSessionModelState(primary string) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return
@@ -611,13 +647,39 @@ func clearSessionModelOverride(primary string) {
 		return
 	}
 	changed := false
+	const ollamaProviderName = "ollama"
 	for _, sess := range sessions {
-		if override, _ := sess["modelOverride"].(string); override != "" && override != primary {
+		if _, ok := sess["modelOverride"]; ok {
 			delete(sess, "modelOverride")
-			delete(sess, "providerOverride")
+			changed = true
 		}
-		if model, _ := sess["model"].(string); model != "" && model != primary {
+		if _, ok := sess["providerOverride"]; ok {
+			delete(sess, "providerOverride")
+			changed = true
+		}
+
+		model, _ := sess["model"].(string)
+		provider, hasProvider := sess["modelProvider"].(string)
+		_, hasProviderField := sess["modelProvider"]
+
+		switch {
+		case model == "":
+			if hasProviderField {
+				delete(sess, "modelProvider")
+				changed = true
+			}
+		case model != primary:
 			sess["model"] = primary
+			changed = true
+			if !hasProviderField || provider != ollamaProviderName {
+				sess["modelProvider"] = ollamaProviderName
+				changed = true
+			}
+		case hasProvider && provider == "":
+			delete(sess, "modelProvider")
+			changed = true
+		case hasProvider && provider != ollamaProviderName:
+			sess["modelProvider"] = ollamaProviderName
 			changed = true
 		}
 	}
@@ -810,7 +872,12 @@ func registerWebSearchPlugin() {
 // openclawModelConfig builds an OpenClaw model config entry with capability detection.
 // The second return value indicates whether the model is a cloud (remote) model.
 func openclawModelConfig(ctx context.Context, client *api.Client, modelID string) (map[string]any, bool) {
-	entry := map[string]any{
+	entry, isCloud, _ := openclawModelConfigWithProbe(ctx, client, modelID)
+	return entry, isCloud
+}
+
+func openclawDefaultModelEntry(modelID string) map[string]any {
+	return map[string]any{
 		"id":    modelID,
 		"name":  modelID,
 		"input": []any{"text"},
@@ -821,9 +888,13 @@ func openclawModelConfig(ctx context.Context, client *api.Client, modelID string
 			"cacheWrite": 0,
 		},
 	}
+}
+
+func openclawModelConfigWithProbe(ctx context.Context, client *api.Client, modelID string) (map[string]any, bool, bool) {
+	entry := openclawDefaultModelEntry(modelID)
 
 	if client == nil {
-		return entry, false
+		return entry, false, false
 	}
 
 	showCtx := ctx
@@ -835,7 +906,7 @@ func openclawModelConfig(ctx context.Context, client *api.Client, modelID string
 
 	resp, err := client.Show(showCtx, &api.ShowRequest{Model: modelID})
 	if err != nil {
-		return entry, false
+		return entry, false, false
 	}
 
 	// Set input types based on vision capability
@@ -855,7 +926,7 @@ func openclawModelConfig(ctx context.Context, client *api.Client, modelID string
 			entry["contextWindow"] = l.Context
 			entry["maxTokens"] = l.Output
 		}
-		return entry, true
+		return entry, true, true
 	}
 
 	// Extract context window from ModelInfo (local models only)
@@ -868,7 +939,7 @@ func openclawModelConfig(ctx context.Context, client *api.Client, modelID string
 		}
 	}
 
-	return entry, false
+	return entry, false, true
 }
 
 func (c *Openclaw) Models() []string {

@@ -933,6 +933,65 @@ func TestLaunchIntegration_OpenclawPreservesExistingModelList(t *testing.T) {
 	}
 }
 
+func TestLaunchIntegration_OpenclawModelOverrideOnlyEnsuresPrimary(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+
+	binDir := t.TempDir()
+	writeFakeBinary(t, binDir, "openclaw")
+	t.Setenv("PATH", binDir)
+
+	editor := &launcherEditorRunner{}
+	withIntegrationOverride(t, "openclaw", editor)
+
+	if err := config.SaveIntegration("openclaw", []string{"qwen3.5:35b"}); err != nil {
+		t.Fatalf("failed to seed config: %v", err)
+	}
+
+	var showRequests []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			var req apiShowRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			showRequests = append(showRequests, req.Model)
+			if req.Model != "kimi-k2.5:cloud" {
+				t.Fatalf("unexpected show request for saved extra model %q", req.Model)
+			}
+			fmt.Fprint(w, `{"remote_model":"kimi-k2.5"}`)
+		case "/api/me":
+			fmt.Fprint(w, `{"name":"test-user"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:          "openclaw",
+		ModelOverride: "kimi-k2.5:cloud",
+	}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+
+	if diff := compareStrings(showRequests, []string{"kimi-k2.5:cloud"}); diff != "" {
+		t.Fatalf("unexpected model readiness checks (-want +got):\n%s", diff)
+	}
+	if editor.ranModel != "kimi-k2.5:cloud" {
+		t.Fatalf("expected launch to use override model, got %q", editor.ranModel)
+	}
+
+	saved, err := config.LoadIntegration("openclaw")
+	if err != nil {
+		t.Fatalf("failed to reload saved config: %v", err)
+	}
+	if diff := compareStrings(saved.Models, []string{"kimi-k2.5:cloud", "qwen3.5:35b"}); diff != "" {
+		t.Fatalf("unexpected saved models (-want +got):\n%s", diff)
+	}
+}
+
 func TestLaunchIntegration_OpenclawInstallsBeforeConfigSideEffects(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)

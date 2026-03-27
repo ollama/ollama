@@ -178,6 +178,102 @@ func TestOpenclawEdit(t *testing.T) {
 		}
 	})
 
+	t.Run("preserve existing saved secondary when capability probe fails", func(t *testing.T) {
+		cleanup()
+		os.MkdirAll(configDir, 0o755)
+		if err := os.WriteFile(configPath, []byte(`{
+			"models": {
+				"providers": {
+					"ollama": {
+						"models": [
+							{
+								"id": "stale-secondary",
+								"name": "stale-secondary",
+								"input": ["text", "image"],
+								"reasoning": true,
+								"contextWindow": 32768,
+								"maxTokens": 8192,
+								"cost": {"input": 12, "output": 34, "cacheRead": 56, "cacheWrite": 78},
+								"customField": "preserved"
+							}
+						]
+					}
+				}
+			},
+			"agents": {"defaults": {"model": {"primary": "ollama/stale-secondary"}}}
+		}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/show" {
+				http.NotFound(w, r)
+				return
+			}
+			var req api.ShowRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode show request: %v", err)
+			}
+			switch req.Model {
+			case "primary-model":
+				fmt.Fprint(w, `{"model_info":{"llama.context_length":4096}}`)
+			case "stale-secondary":
+				http.Error(w, "model not found", http.StatusNotFound)
+			default:
+				t.Fatalf("unexpected model probe for %q", req.Model)
+			}
+		}))
+		defer srv.Close()
+		t.Setenv("OLLAMA_HOST", srv.URL)
+
+		if err := c.Edit([]string{"primary-model", "stale-secondary"}); err != nil {
+			t.Fatal(err)
+		}
+
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cfg map[string]any
+		if err := json.Unmarshal(data, &cfg); err != nil {
+			t.Fatal(err)
+		}
+
+		models := cfg["models"].(map[string]any)
+		providers := models["providers"].(map[string]any)
+		ollama := providers["ollama"].(map[string]any)
+		modelList := ollama["models"].([]any)
+
+		var stale map[string]any
+		for _, model := range modelList {
+			entry, _ := model.(map[string]any)
+			if entry["id"] == "stale-secondary" {
+				stale = entry
+				break
+			}
+		}
+		if stale == nil {
+			t.Fatal("stale-secondary not found after edit")
+		}
+
+		input, ok := stale["input"].([]any)
+		if !ok || len(input) != 2 || input[0] != "text" || input[1] != "image" {
+			t.Fatalf("input = %v, want [text image]", stale["input"])
+		}
+		if stale["reasoning"] != true {
+			t.Fatalf("reasoning = %v, want true", stale["reasoning"])
+		}
+		if stale["contextWindow"] != float64(32768) {
+			t.Fatalf("contextWindow = %v, want 32768", stale["contextWindow"])
+		}
+		if stale["maxTokens"] != float64(8192) {
+			t.Fatalf("maxTokens = %v, want 8192", stale["maxTokens"])
+		}
+		if stale["customField"] != "preserved" {
+			t.Fatalf("customField = %v, want preserved", stale["customField"])
+		}
+	})
+
 	t.Run("edit replaces models list", func(t *testing.T) {
 		cleanup()
 		c.Edit([]string{"llama3.2", "mistral"})
@@ -1769,7 +1865,7 @@ func TestRegisterWebSearchPlugin(t *testing.T) {
 	})
 }
 
-func TestClearSessionModelOverride(t *testing.T) {
+func TestClearSessionModelState(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
@@ -1807,7 +1903,7 @@ func TestClearSessionModelOverride(t *testing.T) {
 		writeSessionsFile(t, map[string]map[string]any{
 			"sess1": {"model": "ollama/old-model", "modelOverride": "old-model", "providerOverride": "ollama"},
 		})
-		clearSessionModelOverride("new-model")
+		clearSessionModelState("new-model")
 		sessions := readSessionsFile(t)
 		sess := sessions["sess1"]
 		if _, ok := sess["modelOverride"]; ok {
@@ -1819,6 +1915,27 @@ func TestClearSessionModelOverride(t *testing.T) {
 		if sess["model"] != "new-model" {
 			t.Errorf("model = %q, want %q", sess["model"], "new-model")
 		}
+		if sess["modelProvider"] != "ollama" {
+			t.Errorf("modelProvider = %q, want %q", sess["modelProvider"], "ollama")
+		}
+	})
+
+	t.Run("clears override-only session even when override matches primary", func(t *testing.T) {
+		writeSessionsFile(t, map[string]map[string]any{
+			"sess1": {"modelOverride": "new-model", "providerOverride": "anthropic"},
+		})
+		clearSessionModelState("new-model")
+		sessions := readSessionsFile(t)
+		sess := sessions["sess1"]
+		if _, ok := sess["modelOverride"]; ok {
+			t.Error("modelOverride should have been deleted")
+		}
+		if _, ok := sess["providerOverride"]; ok {
+			t.Error("providerOverride should have been deleted")
+		}
+		if _, ok := sess["model"]; ok {
+			t.Error("model field should not have been added")
+		}
 	})
 
 	t.Run("updates model field in sessions without modelOverride", func(t *testing.T) {
@@ -1828,10 +1945,13 @@ func TestClearSessionModelOverride(t *testing.T) {
 		writeSessionsFile(t, map[string]map[string]any{
 			"sess1": {"model": "ollama/old-model"},
 		})
-		clearSessionModelOverride("new-model")
+		clearSessionModelState("new-model")
 		sessions := readSessionsFile(t)
 		if sessions["sess1"]["model"] != "new-model" {
 			t.Errorf("model = %q, want %q", sessions["sess1"]["model"], "new-model")
+		}
+		if sessions["sess1"]["modelProvider"] != "ollama" {
+			t.Errorf("modelProvider = %q, want %q", sessions["sess1"]["modelProvider"], "ollama")
 		}
 	})
 
@@ -1839,7 +1959,7 @@ func TestClearSessionModelOverride(t *testing.T) {
 		writeSessionsFile(t, map[string]map[string]any{
 			"sess1": {"model": "current-model"},
 		})
-		clearSessionModelOverride("current-model")
+		clearSessionModelState("current-model")
 		sessions := readSessionsFile(t)
 		if sessions["sess1"]["model"] != "current-model" {
 			t.Errorf("model = %q, want %q", sessions["sess1"]["model"], "current-model")
@@ -1850,10 +1970,35 @@ func TestClearSessionModelOverride(t *testing.T) {
 		writeSessionsFile(t, map[string]map[string]any{
 			"sess1": {"other": "data"},
 		})
-		clearSessionModelOverride("new-model")
+		clearSessionModelState("new-model")
 		sessions := readSessionsFile(t)
 		if _, ok := sessions["sess1"]["model"]; ok {
 			t.Error("model field should not have been added to session with no model")
+		}
+	})
+
+	t.Run("clears orphan runtime provider without model", func(t *testing.T) {
+		writeSessionsFile(t, map[string]map[string]any{
+			"sess1": {"modelProvider": "anthropic"},
+		})
+		clearSessionModelState("new-model")
+		sessions := readSessionsFile(t)
+		if _, ok := sessions["sess1"]["modelProvider"]; ok {
+			t.Error("modelProvider should have been deleted when no model is present")
+		}
+	})
+
+	t.Run("rewrites stale runtime provider when model already matches primary", func(t *testing.T) {
+		writeSessionsFile(t, map[string]map[string]any{
+			"sess1": {"modelProvider": "anthropic", "model": "new-model"},
+		})
+		clearSessionModelState("new-model")
+		sessions := readSessionsFile(t)
+		if sessions["sess1"]["model"] != "new-model" {
+			t.Errorf("model = %q, want %q", sessions["sess1"]["model"], "new-model")
+		}
+		if sessions["sess1"]["modelProvider"] != "ollama" {
+			t.Errorf("modelProvider = %q, want %q", sessions["sess1"]["modelProvider"], "ollama")
 		}
 	})
 
@@ -1864,7 +2009,7 @@ func TestClearSessionModelOverride(t *testing.T) {
 			"already-current":  {"model": "new-model"},
 			"no-model":         {"other": "data"},
 		})
-		clearSessionModelOverride("new-model")
+		clearSessionModelState("new-model")
 		sessions := readSessionsFile(t)
 
 		if sessions["with-override"]["model"] != "new-model" {
@@ -1886,6 +2031,6 @@ func TestClearSessionModelOverride(t *testing.T) {
 
 	t.Run("no-op when sessions file missing", func(t *testing.T) {
 		os.RemoveAll(sessionsDir)
-		clearSessionModelOverride("new-model") // should not panic or error
+		clearSessionModelState("new-model") // should not panic or error
 	})
 }
