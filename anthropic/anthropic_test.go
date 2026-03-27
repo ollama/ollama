@@ -191,7 +191,6 @@ func TestFromMessagesRequest_WithImage(t *testing.T) {
 }
 
 func TestFromMessagesRequest_WithToolUse(t *testing.T) {
-	toolInput := makeArgs("location", "Paris")
 	req := MessagesRequest{
 		Model:     "test-model",
 		MaxTokens: 1024,
@@ -204,7 +203,7 @@ func TestFromMessagesRequest_WithToolUse(t *testing.T) {
 						Type:  "tool_use",
 						ID:    "call_123",
 						Name:  "get_weather",
-						Input: &toolInput,
+						Input: makeArgs("location", "Paris"),
 					},
 				},
 			},
@@ -1221,9 +1220,7 @@ func TestStreamConverter_ContentBlockStartIncludesEmptyFields(t *testing.T) {
 				if start, ok := e.Data.(ContentBlockStartEvent); ok {
 					if start.ContentBlock.Type == "tool_use" {
 						foundToolStart = true
-						if start.ContentBlock.Input == nil {
-							t.Error("content_block_start for tool_use should include 'input' field")
-						} else if start.ContentBlock.Input.Len() != 0 {
+						if start.ContentBlock.Input.Len() != 0 {
 							t.Errorf("expected empty input object, got len=%d", start.ContentBlock.Input.Len())
 						}
 
@@ -1425,7 +1422,6 @@ func TestConvertTool_RegularTool(t *testing.T) {
 }
 
 func TestConvertMessage_ServerToolUse(t *testing.T) {
-	serverToolInput := makeArgs("query", "test query")
 	msg := MessageParam{
 		Role: "assistant",
 		Content: []ContentBlock{
@@ -1433,7 +1429,7 @@ func TestConvertMessage_ServerToolUse(t *testing.T) {
 				Type:  "server_tool_use",
 				ID:    "srvtoolu_123",
 				Name:  "web_search",
-				Input: &serverToolInput,
+				Input: makeArgs("query", "test query"),
 			},
 		},
 	}

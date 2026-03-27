@@ -943,10 +943,10 @@ func writeSSE(w http.ResponseWriter, eventType string, data any) error {
 }
 
 // queryArgs creates a ToolCallFunctionArguments with a single "query" key.
-func queryArgs(query string) *api.ToolCallFunctionArguments {
+func queryArgs(query string) api.ToolCallFunctionArguments {
 	args := api.NewToolCallFunctionArguments()
 	args.Set("query", query)
-	return &args
+	return args
 }
 
 // serverToolUseID derives a server tool use ID from a message ID
