@@ -32,6 +32,7 @@ import (
 	"github.com/ollama/ollama/app/version"
 	ollamaAuth "github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
 	_ "github.com/tkrajina/typescriptify-golang-structs/typescriptify"
 )
@@ -193,7 +194,7 @@ func (s *Server) Handler() http.Handler {
 			if CORS() {
 				w.Header().Set("Access-Control-Allow-Origin", "*")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, User-Agent, Accept, X-Requested-With")
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 				// Handle preflight requests
@@ -318,7 +319,7 @@ func (s *Server) handleError(w http.ResponseWriter, e error) {
 	if CORS() {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, User-Agent, Accept, X-Requested-With")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 	}
 
@@ -1572,9 +1573,18 @@ func (s *Server) modelUpstream(w http.ResponseWriter, r *http.Request) error {
 		return json.NewEncoder(w).Encode(response)
 	}
 
+	n := model.ParseName(req.Model)
+	stale := true
+	if m, err := manifest.ParseNamedManifest(n); err == nil {
+		if m.Digest() == digest {
+			stale = false
+		} else if pushTime > 0 && m.FileInfo().ModTime().Unix() >= pushTime {
+			stale = false
+		}
+	}
+
 	response := responses.ModelUpstreamResponse{
-		Digest:   digest,
-		PushTime: pushTime,
+		Stale: stale,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

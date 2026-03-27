@@ -18,32 +18,20 @@ type RecurrentCache struct {
 	headKDim  int
 }
 
-func (c *RecurrentCache) setStateRaw(old, v *mlx.Array) *mlx.Array {
+func (c *RecurrentCache) setState(old, v *mlx.Array, contiguous bool) *mlx.Array {
 	if v == nil || !v.Valid() {
 		return old
 	}
+
+	if contiguous {
+		v = mlx.Contiguous(v, false)
+	}
+	v = v.Clone()
 
 	mlx.Pin(v)
 	mlx.Unpin(old)
 
 	return v
-}
-
-func (c *RecurrentCache) setStateDetached(old, v *mlx.Array, ensureContiguous bool) *mlx.Array {
-	if v == nil || !v.Valid() {
-		return old
-	}
-
-	root := v
-	if ensureContiguous {
-		root = mlx.Contiguous(v, false)
-	}
-	detached := root.Clone()
-
-	mlx.Pin(detached)
-	mlx.Unpin(old)
-
-	return detached
 }
 
 func NewRecurrentCache(convTail, convDim, numVHeads, headVDim, headKDim int32) *RecurrentCache {
@@ -70,10 +58,10 @@ func (c *RecurrentCache) ensure(batch int, dtype mlx.DType) {
 	}
 
 	if needConv {
-		c.convState = c.setStateRaw(c.convState, mlx.Zeros(dtype, batch, c.convTail, c.convDim))
+		c.convState = c.setState(c.convState, mlx.Zeros(dtype, batch, c.convTail, c.convDim), false)
 	}
 	if needDelta {
-		c.deltaState = c.setStateRaw(c.deltaState, mlx.Zeros(dtype, batch, c.numVHeads, c.headVDim, c.headKDim))
+		c.deltaState = c.setState(c.deltaState, mlx.Zeros(dtype, batch, c.numVHeads, c.headVDim, c.headKDim), false)
 	}
 }
 
@@ -83,7 +71,7 @@ func (c *RecurrentCache) ConvState(batch int, dtype mlx.DType) *mlx.Array {
 }
 
 func (c *RecurrentCache) SetConvState(v *mlx.Array) {
-	c.convState = c.setStateDetached(c.convState, v, true)
+	c.convState = c.setState(c.convState, v, true)
 }
 
 func (c *RecurrentCache) DeltaState(batch int, dtype mlx.DType) *mlx.Array {
@@ -92,7 +80,7 @@ func (c *RecurrentCache) DeltaState(batch int, dtype mlx.DType) *mlx.Array {
 }
 
 func (c *RecurrentCache) SetDeltaState(v *mlx.Array) {
-	c.deltaState = c.setStateDetached(c.deltaState, v, false)
+	c.deltaState = c.setState(c.deltaState, v, false)
 }
 
 func (c *RecurrentCache) Advance(n int) {
@@ -147,8 +135,8 @@ func (c *RecurrentCache) Restore(snapshot Snapshot, target int) bool {
 		return false
 	}
 
-	c.convState = c.setStateRaw(c.convState, snap.convState)
-	c.deltaState = c.setStateRaw(c.deltaState, snap.deltaState)
+	c.convState = c.setState(c.convState, snap.convState, false)
+	c.deltaState = c.setState(c.deltaState, snap.deltaState, false)
 	c.offset = snap.offset
 
 	return true
