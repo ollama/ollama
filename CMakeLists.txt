@@ -204,12 +204,13 @@ if(MLX_ENGINE)
 
     # Build list of directories for runtime dependency resolution
     set(MLX_RUNTIME_DIRS ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_BIN_DIR}/x64 ${CUDAToolkit_LIBRARY_DIR})
-    # Add cuDNN bin paths for DLLs (Windows MLX CUDA builds)
-    # CUDNN_ROOT_DIR is the standard CMake variable for cuDNN location
-    if(DEFINED ENV{CUDNN_ROOT_DIR})
-        # cuDNN 9.x has versioned subdirectories under bin/ (e.g., bin/13.0/)
-        file(GLOB CUDNN_BIN_SUBDIRS "$ENV{CUDNN_ROOT_DIR}/bin/*")
-        list(APPEND MLX_RUNTIME_DIRS ${CUDNN_BIN_SUBDIRS})
+    # Add cuDNN bin paths for DLLs (Windows MLX CUDA builds).
+    # cuDNN 9.x installs DLLs under bin/<cuda_version>/ (e.g., bin/13.0/).
+    if(DEFINED ENV{CUDNN_ROOT_DIR} AND CUDAToolkit_VERSION)
+        set(_cudnn_bindir "$ENV{CUDNN_ROOT_DIR}/bin/${CUDAToolkit_VERSION_MAJOR}.${CUDAToolkit_VERSION_MINOR}")
+        if(IS_DIRECTORY "${_cudnn_bindir}")
+            list(APPEND MLX_RUNTIME_DIRS "${_cudnn_bindir}")
+        endif()
     endif()
     # Add build output directory and MLX dependency build directories
     list(APPEND MLX_RUNTIME_DIRS ${OLLAMA_BUILD_DIR})
@@ -237,6 +238,18 @@ if(MLX_ENGINE)
         LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
         FRAMEWORK DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT MLX
     )
+
+    # cuDNN's stub DLL (cudnn64_9.dll) loads companion DLLs at runtime via
+    # LoadLibrary, so cmake's RUNTIME_DEPENDENCIES can't discover them.
+    # Explicitly install the companion DLLs from the cuDNN bin directory.
+    if(_cudnn_bindir AND IS_DIRECTORY "${_cudnn_bindir}")
+        file(GLOB _cudnn_companion_dlls "${_cudnn_bindir}/cudnn_*.dll")
+        if(_cudnn_companion_dlls)
+            install(FILES ${_cudnn_companion_dlls}
+                DESTINATION ${OLLAMA_INSTALL_DIR}
+                COMPONENT MLX)
+        endif()
+    endif()
 
     # Install the Metal library for macOS arm64 (must be colocated with the binary)
     # Metal backend is only built for arm64, not x86_64
@@ -359,6 +372,19 @@ if(MLX_ENGINE)
             install(FILES ${MLX_CUDA_LIBS}
                 DESTINATION ${OLLAMA_INSTALL_DIR}
                 COMPONENT MLX)
+        endif()
+        # On Windows, nvrtc-builtins is loaded at runtime by nvrtc (not a
+        # link-time dependency) so RUNTIME_DEPENDENCIES doesn't capture it.
+        # Install it explicitly from the CUDA toolkit bin directory.
+        if(WIN32)
+            file(GLOB MLX_NVRTC_BUILTINS
+                "${CUDAToolkit_BIN_DIR}/nvrtc-builtins*.dll"
+                "${CUDAToolkit_BIN_DIR}/x64/nvrtc-builtins*.dll")
+            if(MLX_NVRTC_BUILTINS)
+                install(FILES ${MLX_NVRTC_BUILTINS}
+                    DESTINATION ${OLLAMA_INSTALL_DIR}
+                    COMPONENT MLX)
+            endif()
         endif()
     endif()
 endif()
