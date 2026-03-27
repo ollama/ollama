@@ -121,9 +121,9 @@ type ContentBlock struct {
 	Source *ImageSource `json:"source,omitempty"`
 
 	// For tool_use and server_tool_use blocks
-	ID    string                        `json:"id,omitempty"`
-	Name  string                        `json:"name,omitempty"`
-	Input api.ToolCallFunctionArguments `json:"input,omitempty"`
+	ID    string                         `json:"id,omitempty"`
+	Name  string                         `json:"name,omitempty"`
+	Input *api.ToolCallFunctionArguments `json:"input,omitempty"`
 
 	// For tool_result and web_search_tool_result blocks
 	ToolUseID string `json:"tool_use_id,omitempty"`
@@ -447,11 +447,15 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 				logutil.Trace("anthropic: tool_use block missing name", "role", role)
 				return nil, errors.New("tool_use block missing required 'name' field")
 			}
+			var args api.ToolCallFunctionArguments
+			if block.Input != nil {
+				args = *block.Input
+			}
 			toolCalls = append(toolCalls, api.ToolCall{
 				ID: block.ID,
 				Function: api.ToolCallFunction{
 					Name:      block.Name,
-					Arguments: block.Input,
+					Arguments: args,
 				},
 			})
 
@@ -488,11 +492,15 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 
 		case "server_tool_use":
 			serverToolUseBlocks++
+			var args api.ToolCallFunctionArguments
+			if block.Input != nil {
+				args = *block.Input
+			}
 			toolCalls = append(toolCalls, api.ToolCall{
 				ID: block.ID,
 				Function: api.ToolCallFunction{
 					Name:      block.Name,
-					Arguments: block.Input,
+					Arguments: args,
 				},
 			})
 
@@ -658,11 +666,12 @@ func ToMessagesResponse(id string, r api.ChatResponse) MessagesResponse {
 	}
 
 	for _, tc := range r.Message.ToolCalls {
+		args := tc.Function.Arguments
 		content = append(content, ContentBlock{
 			Type:  "tool_use",
 			ID:    tc.ID,
 			Name:  tc.Function.Name,
-			Input: tc.Function.Arguments,
+			Input: &args,
 		})
 	}
 
@@ -868,6 +877,7 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 			slog.Error("failed to marshal tool arguments", "error", err, "tool_id", tc.ID)
 			continue
 		}
+		emptyInput := api.NewToolCallFunctionArguments()
 
 		events = append(events, StreamEvent{
 			Event: "content_block_start",
@@ -878,7 +888,7 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 					Type:  "tool_use",
 					ID:    tc.ID,
 					Name:  tc.Function.Name,
-					Input: api.ToolCallFunctionArguments{},
+					Input: &emptyInput,
 				},
 			},
 		})
