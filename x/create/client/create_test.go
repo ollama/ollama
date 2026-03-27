@@ -3,6 +3,8 @@ package client
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -120,8 +122,8 @@ func TestMinOllamaVersion(t *testing.T) {
 	if MinOllamaVersion == "" {
 		t.Error("MinOllamaVersion should not be empty")
 	}
-	if MinOllamaVersion != "0.14.0" {
-		t.Errorf("MinOllamaVersion = %q, want %q", MinOllamaVersion, "0.14.0")
+	if MinOllamaVersion != "0.19.0" {
+		t.Errorf("MinOllamaVersion = %q, want %q", MinOllamaVersion, "0.19.0")
 	}
 }
 
@@ -286,6 +288,52 @@ func TestCreateOptions_Defaults(t *testing.T) {
 	// Modelfile should default to nil
 	if opts.Modelfile != nil {
 		t.Error("Modelfile should be nil by default")
+	}
+}
+
+func TestInferSafetensorsCapabilities(t *testing.T) {
+	tests := []struct {
+		name       string
+		configJSON string
+		want       []string
+	}{
+		{
+			name: "qwen3.5 text model",
+			configJSON: `{
+				"architectures": ["Qwen3_5ForCausalLM"],
+				"model_type": "qwen3"
+			}`,
+			want: []string{"completion", "thinking"},
+		},
+		{
+			name: "qwen3.5 multimodal model",
+			configJSON: `{
+				"architectures": ["Qwen3_5ForConditionalGeneration"],
+				"model_type": "qwen3"
+			}`,
+			want: []string{"completion", "vision", "thinking"},
+		},
+		{
+			name: "non-qwen conditional generation model",
+			configJSON: `{
+				"architectures": ["SomeOtherForConditionalGeneration"],
+				"model_type": "other"
+			}`,
+			want: []string{"completion"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			if got := inferSafetensorsCapabilities(dir); !slices.Equal(got, tt.want) {
+				t.Fatalf("inferSafetensorsCapabilities() = %#v, want %#v", got, tt.want)
+			}
+		})
 	}
 }
 
