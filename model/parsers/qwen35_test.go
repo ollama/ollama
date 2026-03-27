@@ -108,7 +108,7 @@ func TestQwen35ParserAssistantPrefillStartsInContent(t *testing.T) {
 	}
 }
 
-func TestQwen35ParserToolCallEmittedInThinkingIsNotParsed(t *testing.T) {
+func TestQwen35ParserToolCallEmittedInThinkingIsParsed(t *testing.T) {
 	parser := ParserForName("qwen3.5")
 	if parser == nil {
 		t.Fatal("expected qwen3.5 parser")
@@ -141,14 +141,20 @@ SF
 	if content != "" {
 		t.Fatalf("expected empty content, got %q", content)
 	}
-	expectedThinking := `Need weather lookup<tool_call><function=get_weather><parameter=location>
-SF
-</parameter></function></tool_call>`
-	if thinking != expectedThinking {
-		t.Fatalf("expected thinking %q, got %q", expectedThinking, thinking)
+	if thinking != "Need weather lookup" {
+		t.Fatalf("expected thinking %q, got %q", "Need weather lookup", thinking)
 	}
-	if len(calls) != 0 {
-		t.Fatalf("expected no tool calls before </think>, got %d", len(calls))
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(calls))
+	}
+
+	if calls[0].Function.Name != "get_weather" {
+		t.Fatalf("expected tool name %q, got %q", "get_weather", calls[0].Function.Name)
+	}
+
+	location, ok := calls[0].Function.Arguments.Get("location")
+	if !ok || location != "SF" {
+		t.Fatalf("expected location %q, got %v", "SF", location)
 	}
 }
 
