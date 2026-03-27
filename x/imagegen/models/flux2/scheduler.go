@@ -87,7 +87,7 @@ func (s *FlowMatchScheduler) timeShift(mu float32, t float32) float32 {
 		return 0
 	}
 	if s.Config.TimeShiftType == "linear" {
-		return mu / (mu + (1.0/t-1.0))
+		return mu / (mu + (1.0/t - 1.0))
 	}
 	// Default: exponential
 	expMu := float32(math.Exp(float64(mu)))

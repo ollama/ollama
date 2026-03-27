@@ -151,8 +151,8 @@ func DecodeTiled(latents *mlx.Array, cfg *TilingConfig, decoder func(*mlx.Array)
 
 				for x := int32(0); x < keepW; x++ {
 					for c := int32(0); c < 3; c++ {
-						srcIdx := (y*tile.width + x) * 3 + c
-						dstIdx := ((dstY + y) * totalW + (dstX + x)) * 3 + c
+						srcIdx := (y*tile.width+x)*3 + c
+						dstIdx := ((dstY+y)*totalW+(dstX+x))*3 + c
 						finalData[dstIdx] = tile.data[srcIdx]
 					}
 				}
@@ -183,8 +183,8 @@ func blendV(above, current *decodedTile, blendExtent int32) {
 		alpha := float32(y) / float32(blend)
 		for x := int32(0); x < w; x++ {
 			for c := int32(0); c < 3; c++ {
-				aboveIdx := ((above.height - blend + y) * above.width + x) * 3 + c
-				currIdx := (y * current.width + x) * 3 + c
+				aboveIdx := ((above.height-blend+y)*above.width+x)*3 + c
+				currIdx := (y*current.width+x)*3 + c
 				current.data[currIdx] = above.data[aboveIdx]*(1-alpha) + current.data[currIdx]*alpha
 			}
 		}
@@ -204,8 +204,8 @@ func blendH(left, current *decodedTile, blendExtent int32) {
 		for x := int32(0); x < blend; x++ {
 			alpha := float32(x) / float32(blend)
 			for c := int32(0); c < 3; c++ {
-				leftIdx := (y * left.width + (left.width - blend + x)) * 3 + c
-				currIdx := (y * current.width + x) * 3 + c
+				leftIdx := (y*left.width+(left.width-blend+x))*3 + c
+				currIdx := (y*current.width+x)*3 + c
 				current.data[currIdx] = left.data[leftIdx]*(1-alpha) + current.data[currIdx]*alpha
 			}
 		}

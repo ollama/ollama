@@ -649,13 +649,25 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(fp), 0o755); err != nil {
-		return err
+		// rollback partial download
+		_ = deleteUnusedLayers(deleteMap)
+
+		return fmt.Errorf(
+			"failed to create manifest directory for %s: %w",
+			n.String(),
+			err,
+		)
 	}
 
-	err = os.WriteFile(fp, manifestJSON, 0o644)
-	if err != nil {
-		slog.Info(fmt.Sprintf("couldn't write to %s", fp))
-		return err
+	if err := os.WriteFile(fp, manifestJSON, 0o644); err != nil {
+		// rollback partial download
+		_ = deleteUnusedLayers(deleteMap)
+
+		return fmt.Errorf(
+			"failed to write manifest for %s: %w",
+			n.String(),
+			err,
+		)
 	}
 
 	if !envconfig.NoPrune() && len(deleteMap) > 0 {

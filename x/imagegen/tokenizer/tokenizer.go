@@ -264,10 +264,10 @@ func LoadFromBytes(data []byte) (*Tokenizer, error) {
 
 // TokenizerConfig holds optional configuration data that can be passed to LoadFromBytesWithConfig.
 type TokenizerConfig struct {
-	TokenizerConfigJSON   []byte // tokenizer_config.json content
-	GenerationConfigJSON  []byte // generation_config.json content
-	SpecialTokensMapJSON  []byte // special_tokens_map.json content
-	ConfigJSON            []byte // config.json content
+	TokenizerConfigJSON  []byte // tokenizer_config.json content
+	GenerationConfigJSON []byte // generation_config.json content
+	SpecialTokensMapJSON []byte // special_tokens_map.json content
+	ConfigJSON           []byte // config.json content
 }
 
 // LoadFromBytesWithConfig loads a tokenizer from tokenizer.json bytes with additional config files.
