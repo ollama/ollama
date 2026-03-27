@@ -108,10 +108,10 @@ func AllowedOrigins() (origins []string) {
 	return origins
 }
 
-// Models returns the path to the models directory. Models directory can be configured via the OLLAMA_MODELS environment variable.
-// Default is $HOME/.ollama/models
-func Models() string {
-	if s := Var("OLLAMA_MODELS"); s != "" {
+// Home returns the path to the Ollama home directory. Home can be configured via the OLLAMA_HOME environment variable.
+// Default is $HOME/.ollama
+func Home() string {
+	if s := Var("OLLAMA_HOME"); s != "" {
 		return s
 	}
 
@@ -120,7 +120,17 @@ func Models() string {
 		panic(err)
 	}
 
-	return filepath.Join(home, ".ollama", "models")
+	return filepath.Join(home, ".ollama")
+}
+
+// Models returns the path to the models directory. Models directory can be configured via the OLLAMA_MODELS environment variable.
+// Default is $OLLAMA_HOME/models
+func Models() string {
+	if s := Var("OLLAMA_MODELS"); s != "" {
+		return s
+	}
+
+	return filepath.Join(Home(), "models")
 }
 
 // KeepAlive returns the duration that models stay loaded in memory. KeepAlive can be configured via the OLLAMA_KEEP_ALIVE environment variable.
@@ -309,6 +319,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_FLASH_ATTENTION":    {"OLLAMA_FLASH_ATTENTION", FlashAttention(false), "Enabled flash attention"},
 		"OLLAMA_KV_CACHE_TYPE":      {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
 		"OLLAMA_GPU_OVERHEAD":       {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
+		"OLLAMA_HOME":               {"OLLAMA_HOME", Home(), "The path to the Ollama home directory (default \"~/.ollama\")"},
 		"OLLAMA_HOST":               {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
 		"OLLAMA_KEEP_ALIVE":         {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
 		"OLLAMA_LLM_LIBRARY":        {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
@@ -387,17 +398,14 @@ func loadServerConfig() {
 	serverCfgMu.RUnlock()
 
 	cfg := serverConfigData{}
-	home, err := os.UserHomeDir()
-	if err == nil {
-		path := filepath.Join(home, ".ollama", "server.json")
-		data, err := os.ReadFile(path)
-		if err != nil {
-			if !errors.Is(err, os.ErrNotExist) {
-				slog.Debug("envconfig: could not read server config", "error", err)
-			}
-		} else if err := json.Unmarshal(data, &cfg); err != nil {
-			slog.Debug("envconfig: could not parse server config", "error", err)
+	path := filepath.Join(Home(), "server.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			slog.Debug("envconfig: could not read server config", "error", err)
 		}
+	} else if err := json.Unmarshal(data, &cfg); err != nil {
+		slog.Debug("envconfig: could not parse server config", "error", err)
 	}
 
 	serverCfgMu.Lock()
