@@ -484,14 +484,14 @@ func lowContextLength(ctx context.Context, client *api.Client, models []string) 
 			}
 		}
 		if effectiveCtx < recommendedContextLength {
-			fmt.Fprintf(os.Stderr, "\nWarning: context window is %d tokens (recommended: %d+)\n", effectiveCtx, recommendedContextLength)
+			fmt.Fprintf(os.Stderr, "\n%sWarning: context window is %d tokens (recommended: %d+)%s\n", ansiYellow, effectiveCtx, recommendedContextLength, ansiReset)
 			if modelfileOverride {
-				fmt.Fprintf(os.Stderr, "Consider using an official model and increase the context length to %d in Ollama App Settings.\n\n", recommendedContextLength)
+				fmt.Fprintf(os.Stderr, "%sConsider using an official model and increase the context length to %d in Ollama App Settings.%s\n\n", ansiYellow, recommendedContextLength, ansiReset)
 			} else {
 				if runtime.GOOS == "windows" {
-					fmt.Fprintf(os.Stderr, "Increase it in Ollama App Settings or with $env:OLLAMA_CONTEXT_LENGTH=%d; ollama serve\n\n", recommendedContextLength)
+					fmt.Fprintf(os.Stderr, "%sIncrease it in Ollama App Settings or with $env:OLLAMA_CONTEXT_LENGTH=%d; ollama serve%s\n\n", ansiYellow, recommendedContextLength, ansiReset)
 				} else {
-					fmt.Fprintf(os.Stderr, "Increase it in Ollama App Settings or with OLLAMA_CONTEXT_LENGTH=%d ollama serve\n\n", recommendedContextLength)
+					fmt.Fprintf(os.Stderr, "%sIncrease it in Ollama App Settings or with OLLAMA_CONTEXT_LENGTH=%d ollama serve%s\n\n", ansiYellow, recommendedContextLength, ansiReset)
 				}
 			}
 			return nil
