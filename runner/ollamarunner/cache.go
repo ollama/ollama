@@ -46,7 +46,13 @@ func NewInputCache(model model.Model, kvCacheType string, kvSize int32, numSlots
 
 	cache := model.Config().Cache
 	if cache != nil {
-		cache.Init(model.Backend(), kvCacheTypeFromStr(kvCacheType), numSlots, int(numCtx), batchSize)
+		dtype := kvCacheTypeFromStr(kvCacheType)
+
+		if dtype == ml.DTypeTQ3 || dtype == ml.DTypeTQ4 {
+			cache = kvcache.NewTurboQuantWrapper(cache, dtype)
+		}
+
+		cache.Init(model.Backend(), dtype, numSlots, int(numCtx), batchSize)
 	}
 
 	return &InputCache{
@@ -64,6 +70,10 @@ func kvCacheTypeFromStr(s string) ml.DType {
 		return ml.DTypeQ80
 	case "q4_0":
 		return ml.DTypeQ40
+	case "tq3":
+		return ml.DTypeTQ3
+	case "tq4":
+		return ml.DTypeTQ4
 	default:
 		return ml.DTypeF16
 	}
