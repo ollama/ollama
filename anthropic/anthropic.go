@@ -123,7 +123,7 @@ type ContentBlock struct {
 	// For tool_use and server_tool_use blocks
 	ID    string                        `json:"id,omitempty"`
 	Name  string                        `json:"name,omitempty"`
-	Input api.ToolCallFunctionArguments `json:"input,omitempty"`
+	Input api.ToolCallFunctionArguments `json:"input,omitzero"`
 
 	// For tool_result and web_search_tool_result blocks
 	ToolUseID string `json:"tool_use_id,omitempty"`
@@ -868,7 +868,6 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 			slog.Error("failed to marshal tool arguments", "error", err, "tool_id", tc.ID)
 			continue
 		}
-
 		events = append(events, StreamEvent{
 			Event: "content_block_start",
 			Data: ContentBlockStartEvent{
@@ -878,7 +877,7 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 					Type:  "tool_use",
 					ID:    tc.ID,
 					Name:  tc.Function.Name,
-					Input: api.ToolCallFunctionArguments{},
+					Input: api.NewToolCallFunctionArguments(),
 				},
 			},
 		})

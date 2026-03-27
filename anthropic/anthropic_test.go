@@ -1072,6 +1072,57 @@ func TestContentBlockJSON_EmptyFieldsPresent(t *testing.T) {
 	}
 }
 
+func TestContentBlockJSON_NonToolBlocksDoNotIncludeInput(t *testing.T) {
+	tests := []struct {
+		name  string
+		block ContentBlock
+	}{
+		{
+			name: "text block",
+			block: ContentBlock{
+				Type: "text",
+				Text: ptr("hello"),
+			},
+		},
+		{
+			name: "thinking block",
+			block: ContentBlock{
+				Type:     "thinking",
+				Thinking: ptr("let me think"),
+			},
+		},
+		{
+			name: "image block",
+			block: ContentBlock{
+				Type: "image",
+				Source: &ImageSource{
+					Type:      "base64",
+					MediaType: "image/png",
+					Data:      testImage,
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := json.Marshal(tt.block)
+			if err != nil {
+				t.Fatalf("failed to marshal: %v", err)
+			}
+
+			var result map[string]any
+			if err := json.Unmarshal(data, &result); err != nil {
+				t.Fatalf("failed to unmarshal: %v", err)
+			}
+
+			if _, ok := result["input"]; ok {
+				t.Fatalf("unexpected input field in non-tool block JSON: %s", string(data))
+			}
+		})
+	}
+}
+
 func TestStreamConverter_ContentBlockStartIncludesEmptyFields(t *testing.T) {
 	t.Run("text block start includes empty text", func(t *testing.T) {
 		conv := NewStreamConverter("msg_123", "test-model", 0)
@@ -1092,7 +1143,9 @@ func TestStreamConverter_ContentBlockStartIncludesEmptyFields(t *testing.T) {
 						// Marshal and verify the text field is present
 						data, _ := json.Marshal(start)
 						var result map[string]any
-						json.Unmarshal(data, &result)
+						if err := json.Unmarshal(data, &result); err != nil {
+							t.Fatalf("failed to unmarshal content_block_start JSON: %v", err)
+						}
 						cb := result["content_block"].(map[string]any)
 						if _, ok := cb["text"]; !ok {
 							t.Error("content_block_start for text should include 'text' field")
@@ -1137,6 +1190,64 @@ func TestStreamConverter_ContentBlockStartIncludesEmptyFields(t *testing.T) {
 
 		if !foundThinkingStart {
 			t.Error("expected thinking content_block_start event")
+		}
+	})
+
+	t.Run("tool_use block start includes empty input object", func(t *testing.T) {
+		conv := NewStreamConverter("msg_123", "test-model", 0)
+
+		resp := api.ChatResponse{
+			Model: "test-model",
+			Message: api.Message{
+				Role: "assistant",
+				ToolCalls: []api.ToolCall{
+					{
+						ID: "call_123",
+						Function: api.ToolCallFunction{
+							Name:      "get_weather",
+							Arguments: makeArgs("location", "Paris"),
+						},
+					},
+				},
+			},
+		}
+
+		events := conv.Process(resp)
+
+		var foundToolStart bool
+		for _, e := range events {
+			if e.Event == "content_block_start" {
+				if start, ok := e.Data.(ContentBlockStartEvent); ok {
+					if start.ContentBlock.Type == "tool_use" {
+						foundToolStart = true
+						if start.ContentBlock.Input.Len() != 0 {
+							t.Errorf("expected empty input object, got len=%d", start.ContentBlock.Input.Len())
+						}
+
+						data, _ := json.Marshal(start)
+						var result map[string]any
+						json.Unmarshal(data, &result)
+						cb := result["content_block"].(map[string]any)
+						input, ok := cb["input"]
+						if !ok {
+							t.Error("content_block_start for tool_use should include 'input' field")
+							continue
+						}
+						inputMap, ok := input.(map[string]any)
+						if !ok {
+							t.Errorf("input field should be an object, got %T", input)
+							continue
+						}
+						if len(inputMap) != 0 {
+							t.Errorf("expected empty input object in content_block_start, got %v", inputMap)
+						}
+					}
+				}
+			}
+		}
+
+		if !foundToolStart {
+			t.Error("expected tool_use content_block_start event")
 		}
 	})
 }
