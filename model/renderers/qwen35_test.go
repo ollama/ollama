@@ -175,9 +175,25 @@ func TestQwen35RendererBackToBackToolCallsAndResponses(t *testing.T) {
 	}
 }
 
+// TestQwen35RendererStructuredToolArgumentsUseSpacedJSON verifies that when a
+// tool call argument is a structured Go type (map or slice), the renderer
+// produces spaced JSON separators (": " after colons, ", " after commas) and
+// preserves literal HTML characters (<, >, &) without escaping them to
+// \u003c, \u003e, \u0026.
+//
+// This test exercises the formatToolCallArgument → marshalQwenToolCallArgument
+// code path in model/renderers/qwen3coder.go, which is shared by both the
+// Qwen35Renderer and the Qwen3CoderRenderer. The spaced separators match the
+// official Qwen 3.5 Jinja2 template's {{ args_value | tojson | safe }} filter
+// for dict/list tool call arguments. Literal HTML characters match HuggingFace
+// Transformers' tojson override with ensure_ascii=False.
+//
+// The byte-exact comparison additionally verifies:
+//   - The <think>\n\n</think>\n\n wrapping for a tool-call-only assistant
+//     message (empty reasoning + empty content) positioned after lastQueryIndex
+//   - The <|im_end|> closing after tool calls (the prefill bug fix)
+//   - The generation prompt suffix (think=true vs think=false)
 func TestQwen35RendererStructuredToolArgumentsUseSpacedJSON(t *testing.T) {
-	renderer := &Qwen35Renderer{isThinking: true}
-
 	msgs := []api.Message{
 		{Role: "user", Content: "call tool"},
 		{
@@ -200,15 +216,104 @@ func TestQwen35RendererStructuredToolArgumentsUseSpacedJSON(t *testing.T) {
 		},
 	}
 
-	got, err := renderer.Render(msgs, nil, nil)
-	if err != nil {
-		t.Fatalf("render failed: %v", err)
-	}
+	t.Run("think=true", func(t *testing.T) {
+		renderer := &Qwen35Renderer{isThinking: true}
+		got, err := renderer.Render(msgs, nil, nil)
+		if err != nil {
+			t.Fatalf("render failed: %v", err)
+		}
 
-	want := "<parameter=payload>\n{\"content\": \"if (x < 5 && y > 3) {}\"}\n</parameter>"
-	if !strings.Contains(got, want) {
-		t.Fatalf("expected spaced, non-escaped JSON tool argument, got:\n%s", got)
-	}
+		// Targeted check: structured JSON arguments must use spaced separators
+		// and preserve literal HTML characters, not HTML-escaped Unicode
+		// sequences. This fires with a specific diagnostic before the byte-exact
+		// comparison below catches any deviation.
+		wantArg := `{"content": "if (x < 5 && y > 3) {}"}`
+		if !strings.Contains(got, wantArg) {
+			t.Errorf(
+				"tool call argument not rendered with spaced, non-escaped JSON.\n\n"+
+					"The official Qwen 3.5 template uses {{ args_value | tojson | safe }} for "+
+					"dict/list arguments, producing spaced JSON (': ' after colons, ', ' "+
+					"after commas) with literal <, >, & characters. Go's json.Marshal "+
+					"HTML-escapes these by default; marshalQwenToolCallArgument must use "+
+					"SetEscapeHTML(false).\n\n"+
+					"expected argument substring: %s\ngot:\n%s", wantArg, got,
+			)
+		}
+
+		want := `<|im_start|>user
+call tool<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+<tool_call>
+<function=echo>
+<parameter=payload>
+{"content": "if (x < 5 && y > 3) {}"}
+</parameter>
+</function>
+</tool_call><|im_end|>
+<|im_start|>assistant
+<think>
+`
+		if got != want {
+			t.Fatalf(
+				"byte-exact output mismatch.\n\n"+
+					"Any byte-level deviation changes the token IDs the model sees, pushing "+
+					"the input out of the training distribution. In multi-turn agentic "+
+					"conversations, deviations also invalidate the KV cache from the "+
+					"divergence point, forcing expensive recomputation of all subsequent "+
+					"tokens.\n\n--- got ---\n%s\n--- want ---\n%s", got, want,
+			)
+		}
+	})
+
+	t.Run("think=false", func(t *testing.T) {
+		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true}
+		got, err := renderer.Render(msgs, nil, &api.ThinkValue{Value: false})
+		if err != nil {
+			t.Fatalf("render failed: %v", err)
+		}
+
+		// The tool call argument formatting is independent of think mode — same
+		// spaced JSON with literal HTML characters. The historical assistant
+		// message retains its <think> wrapping unconditionally (the official
+		// template never checks enable_thinking for history). Only the generation
+		// prompt suffix differs: <think>\n\n</think>\n\n (empty block) for
+		// think=false instead of <think>\n (open block) for think=true.
+		want := `<|im_start|>user
+call tool<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+<tool_call>
+<function=echo>
+<parameter=payload>
+{"content": "if (x < 5 && y > 3) {}"}
+</parameter>
+</function>
+</tool_call><|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+`
+		if got != want {
+			t.Fatalf(
+				"byte-exact output mismatch (think=false).\n\n"+
+					"The historical assistant message must retain its <think> wrapping "+
+					"unconditionally — the official Qwen 3.5 template never checks "+
+					"enable_thinking when rendering history. The tool call argument "+
+					"formatting must be identical regardless of think mode. Only the "+
+					"generation prompt suffix should differ.\n\n"+
+					"--- got ---\n%s\n--- want ---\n%s", got, want,
+			)
+		}
+	})
 }
 
 // TestQwen35RendererToolDefinitionsMatchOfficialTemplate verifies that tool
