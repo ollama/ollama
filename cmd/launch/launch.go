@@ -472,6 +472,10 @@ func (c *launcherClient) launchSingleIntegration(ctx context.Context, name strin
 		return nil
 	}
 
+	if err := lowContextLength(ctx, c.apiClient, []string{target}); err != nil {
+		return err
+	}
+
 	if target != current {
 		if err := config.SaveIntegration(name, []string{target}); err != nil {
 			return fmt.Errorf("failed to save: %w", err)
@@ -496,6 +500,10 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 
 	if len(models) == 0 {
 		return nil
+	}
+
+	if err := lowContextLength(ctx, c.apiClient, models); err != nil {
+		return err
 	}
 
 	if needsConfigure || req.ModelOverride != "" {
