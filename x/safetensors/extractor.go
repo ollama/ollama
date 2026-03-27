@@ -11,7 +11,6 @@ import (
 )
 
 // tensorInfo holds tensor metadata from safetensors headers.
-// This avoids depending on safetensors.go which requires the mlx tag.
 type tensorInfo struct {
 	Dtype       string  `json:"dtype"`
 	Shape       []int32 `json:"shape"`
@@ -250,6 +249,37 @@ func (te *TensorExtractor) TensorCount() int {
 // Close closes the underlying file.
 func (te *TensorExtractor) Close() error {
 	return te.file.Close()
+}
+
+// TensorMeta holds the metadata for a tensor in a safetensors blob.
+type TensorMeta struct {
+	Name  string
+	Dtype string
+	Shape []int32
+}
+
+// ReadBlobMeta reads tensor metadata from a single-tensor safetensors blob file.
+// Returns the tensor name, dtype, and shape without reading the tensor data.
+func ReadBlobMeta(path string) (*TensorMeta, error) {
+	ext, err := OpenForExtraction(path)
+	if err != nil {
+		return nil, err
+	}
+	defer ext.Close()
+
+	names := ext.ListTensors()
+	if len(names) == 0 {
+		return nil, fmt.Errorf("no tensors found in %s", path)
+	}
+
+	// Single-tensor blobs have exactly one tensor.
+	// Packed expert blobs have multiple — return the first for metadata.
+	info := ext.header[names[0]]
+	return &TensorMeta{
+		Name:  names[0],
+		Dtype: info.Dtype,
+		Shape: info.Shape,
+	}, nil
 }
 
 // ExtractAll returns TensorData for all tensors in the file.

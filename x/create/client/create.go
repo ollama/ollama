@@ -22,7 +22,7 @@ import (
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/x/create"
-	"github.com/ollama/ollama/x/imagegen/safetensors"
+	"github.com/ollama/ollama/x/safetensors"
 )
 
 // MinOllamaVersion is the minimum Ollama version required for safetensors models.
@@ -224,7 +224,7 @@ func createQuantizedLayers(r io.Reader, name, dtype string, shape []int32, quant
 	}
 
 	// Quantize the tensor into a single combined blob
-	blobData, err := quantizeTensor(r, name, dtype, shape, quantize)
+	blobData, err := QuantizeTensor(r, name, dtype, shape, quantize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to quantize %s: %w", name, err)
 	}

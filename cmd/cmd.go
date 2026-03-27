@@ -164,11 +164,9 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check for --experimental flag for safetensors model creation
+	// This gates both safetensors LLM and imagegen model creation
 	experimental, _ := cmd.Flags().GetBool("experimental")
 	if experimental {
-		if !isLocalhost() {
-			return errors.New("remote safetensor model creation not yet supported")
-		}
 		// Get Modelfile content - either from -f flag or default to "FROM ."
 		var reader io.Reader
 		filename, err := getModelfileName(cmd)
@@ -203,7 +201,28 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		}
 
 		quantize, _ := cmd.Flags().GetString("quantize")
-		return xcreateclient.CreateModel(xcreateclient.CreateOptions{
+
+		// Imagegen models use local-only path (tensor extraction + model_index.json
+		// normalization not yet ported to the remote pipeline).
+		if create.IsTensorModelDir(modelDir) && !create.IsSafetensorsModelDir(modelDir) {
+			if !isLocalhost() {
+				return fmt.Errorf("image generation model creation requires a local server")
+			}
+			return xcreateclient.CreateModel(xcreateclient.CreateOptions{
+				ModelName: modelName,
+				ModelDir:  modelDir,
+				Quantize:  quantize,
+				Modelfile: mfConfig,
+			}, p)
+		}
+
+		// Safetensors LLM: always use the API path (faster than local due to
+		// parallel pipeline, and provides a single code path for all servers).
+		client, err := api.ClientFromEnvironment()
+		if err != nil {
+			return err
+		}
+		return xcreateclient.CreateModelRemote(cmd.Context(), client, xcreateclient.RemoteCreateOptions{
 			ModelName: modelName,
 			ModelDir:  modelDir,
 			Quantize:  quantize,
@@ -211,23 +230,12 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		}, p)
 	}
 
+	// Standard Modelfile + API path
 	var reader io.Reader
 
 	filename, err := getModelfileName(cmd)
 	if os.IsNotExist(err) {
 		if filename == "" {
-			// No Modelfile found - check if current directory is an image gen model
-			if create.IsTensorModelDir(".") {
-				if !isLocalhost() {
-					return errors.New("remote safetensor model creation not yet supported")
-				}
-				quantize, _ := cmd.Flags().GetString("quantize")
-				return xcreateclient.CreateModel(xcreateclient.CreateOptions{
-					ModelName: modelName,
-					ModelDir:  ".",
-					Quantize:  quantize,
-				}, p)
-			}
 			reader = strings.NewReader("FROM .\n")
 		} else {
 			return errModelfileNotFound

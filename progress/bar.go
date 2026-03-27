@@ -149,6 +149,10 @@ func (b *Bar) String() string {
 	return pre.String() + mid.String() + suf.String()
 }
 
+func (b *Bar) SetTotal(total int64) {
+	b.maxValue = total
+}
+
 func (b *Bar) Set(value int64) {
 	if value >= b.maxValue {
 		value = b.maxValue
