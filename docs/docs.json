@@ -127,6 +127,7 @@
               },
               {
                 "group": "IDEs & Editors",
+                "expanded": true,
                 "pages": [
                   "/integrations/cline",
                   "/integrations/jetbrains",

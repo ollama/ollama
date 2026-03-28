@@ -49,8 +49,13 @@ func TestAPIToolCalling(t *testing.T) {
 	}
 
 	started := time.Now()
-	for _, model := range libraryToolsModels {
+	models := testModels(libraryToolsModels)
+
+	for _, model := range models {
 		t.Run(model, func(t *testing.T) {
+			if testModel != "" {
+				requireCapability(ctx, t, client, model, "tools")
+			}
 			if time.Since(started) > softTimeout {
 				t.Skip("skipping - soft timeout exceeded")
 			}
@@ -58,9 +63,7 @@ func TestAPIToolCalling(t *testing.T) {
 				skipUnderMinVRAM(t, v)
 			}
 
-			if err := PullIfMissing(ctx, client, model); err != nil {
-				t.Fatalf("pull failed %s", err)
-			}
+			pullOrSkip(ctx, t, client, model)
 
 			tools := []api.Tool{
 				{

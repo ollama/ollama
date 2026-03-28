@@ -246,13 +246,21 @@ if(MLX_ENGINE)
             COMPONENT MLX)
     endif()
 
-    # Install CCCL headers for NVRTC JIT compilation at runtime.
+    # Install headers for NVRTC JIT compilation at runtime.
     # MLX's own install rules use the default component so they get skipped by
     # --component MLX. Headers are installed alongside libmlx in OLLAMA_INSTALL_DIR.
+    #
+    # Layout:
+    #   ${OLLAMA_INSTALL_DIR}/include/cccl/{cuda,nv}/  — CCCL headers
+    #   ${OLLAMA_INSTALL_DIR}/include/*.h               — CUDA toolkit headers
+    #
+    # MLX's jit_module.cpp resolves CCCL via
+    #   current_binary_dir()[.parent_path()] / "include" / "cccl"
     # On Linux, MLX's jit_module.cpp resolves CCCL via
-    # current_binary_dir().parent_path() / "include" / "cccl", so we create a
-    # symlink from lib/ollama/include -> ${OLLAMA_RUNNER_DIR}/include
-    # This will need refinement if we add multiple CUDA versions for MLX in the future.
+    #   current_binary_dir().parent_path() / "include" / "cccl", so we create a
+    #   symlink from lib/ollama/include -> ${OLLAMA_RUNNER_DIR}/include
+    #   This will need refinement if we add multiple CUDA versions for MLX in the future.
+    # CUDA runtime headers are found via CUDA_PATH env var (set by mlxrunner).
     if(EXISTS ${CMAKE_BINARY_DIR}/_deps/cccl-src/include/cuda)
         install(DIRECTORY ${CMAKE_BINARY_DIR}/_deps/cccl-src/include/cuda
             DESTINATION ${OLLAMA_INSTALL_DIR}/include/cccl
@@ -268,6 +276,61 @@ if(MLX_ENGINE)
                     execute_process(COMMAND \${CMAKE_COMMAND} -E create_symlink \${_target} \${_link})
                 endif()
             " COMPONENT MLX)
+        endif()
+    endif()
+
+    # Install minimal CUDA toolkit headers needed by MLX JIT kernels.
+    # These are the transitive closure of includes from mlx/backend/cuda/device/*.cuh.
+    # The Go mlxrunner sets CUDA_PATH to OLLAMA_INSTALL_DIR so MLX finds them at
+    # $CUDA_PATH/include/*.h via NVRTC --include-path.
+    if(CUDAToolkit_FOUND)
+        # CUDAToolkit_INCLUDE_DIRS may be a semicolon-separated list
+        # (e.g. ".../include;.../include/cccl"). Find the entry that
+        # contains the CUDA runtime headers we need.
+        set(_cuda_inc "")
+        foreach(_dir ${CUDAToolkit_INCLUDE_DIRS})
+            if(EXISTS "${_dir}/cuda_runtime_api.h")
+                set(_cuda_inc "${_dir}")
+                break()
+            endif()
+        endforeach()
+        if(NOT _cuda_inc)
+            message(WARNING "Could not find cuda_runtime_api.h in CUDAToolkit_INCLUDE_DIRS: ${CUDAToolkit_INCLUDE_DIRS}")
+        else()
+            set(_dst "${OLLAMA_INSTALL_DIR}/include")
+            set(_MLX_JIT_CUDA_HEADERS
+                builtin_types.h
+                cooperative_groups.h
+                cuda_bf16.h
+                cuda_bf16.hpp
+                cuda_device_runtime_api.h
+                cuda_fp16.h
+                cuda_fp16.hpp
+                cuda_fp8.h
+                cuda_fp8.hpp
+                cuda_runtime_api.h
+                device_types.h
+                driver_types.h
+                math_constants.h
+                surface_types.h
+                texture_types.h
+                vector_functions.h
+                vector_functions.hpp
+                vector_types.h
+            )
+            foreach(_hdr ${_MLX_JIT_CUDA_HEADERS})
+                install(FILES "${_cuda_inc}/${_hdr}"
+                    DESTINATION ${_dst}
+                    COMPONENT MLX)
+            endforeach()
+            # Subdirectory headers
+            install(DIRECTORY "${_cuda_inc}/cooperative_groups"
+                DESTINATION ${_dst}
+                COMPONENT MLX
+                FILES_MATCHING PATTERN "*.h")
+            install(FILES "${_cuda_inc}/crt/host_defines.h"
+                DESTINATION "${_dst}/crt"
+                COMPONENT MLX)
         endif()
     endif()
 

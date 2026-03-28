@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
 )
 
@@ -1495,4 +1497,260 @@ func compareStringSlices(got, want [][]string) string {
 		}
 	}
 	return ""
+}
+
+func TestConfirmLowContextLength(t *testing.T) {
+	tests := []struct {
+		name          string
+		models        []string
+		statusBody    string
+		statusCode    int
+		showParams    string // Parameters field returned by /api/show
+		showBody      string // full JSON body for /api/show (overrides showParams when set)
+		wantWarning   bool
+		wantModelfile bool // true if warning should mention Modelfile
+	}{
+		{
+			name:       "no warning when server context meets recommended",
+			models:     []string{"llama3.2"},
+			statusBody: `{"cloud":{},"context_length":65536}`,
+			statusCode: http.StatusOK,
+		},
+		{
+			name:       "no warning when server context exceeds recommended",
+			models:     []string{"llama3.2"},
+			statusBody: `{"cloud":{},"context_length":131072}`,
+			statusCode: http.StatusOK,
+		},
+		{
+			name:        "warns when server context is below recommended",
+			models:      []string{"llama3.2"},
+			statusBody:  `{"cloud":{},"context_length":4096}`,
+			statusCode:  http.StatusOK,
+			wantWarning: true,
+		},
+		{
+			name:       "no warning when status endpoint fails",
+			models:     []string{"llama3.2"},
+			statusCode: http.StatusInternalServerError,
+		},
+		{
+			name:       "no warning for cloud-only models even with low context",
+			models:     []string{"gpt-4o:cloud"},
+			statusBody: `{"cloud":{},"context_length":4096}`,
+			statusCode: http.StatusOK,
+		},
+		{
+			name:       "no warning when models list is empty",
+			models:     []string{},
+			statusBody: `{"cloud":{},"context_length":4096}`,
+			statusCode: http.StatusOK,
+		},
+		{
+			name:       "no warning when modelfile num_ctx meets recommended",
+			models:     []string{"llama3.2"},
+			statusBody: `{"cloud":{},"context_length":4096}`,
+			statusCode: http.StatusOK,
+			showParams: "num_ctx                        65536",
+		},
+		{
+			name:       "no warning when modelfile num_ctx exceeds recommended",
+			models:     []string{"llama3.2"},
+			statusBody: `{"cloud":{},"context_length":4096}`,
+			statusCode: http.StatusOK,
+			showParams: "num_ctx                        131072",
+		},
+		{
+			name:          "warns with modelfile hint when modelfile num_ctx is below recommended",
+			models:        []string{"llama3.2"},
+			statusBody:    `{"cloud":{},"context_length":131072}`,
+			statusCode:    http.StatusOK,
+			showParams:    "num_ctx                        4096",
+			wantWarning:   true,
+			wantModelfile: true,
+		},
+		{
+			name:          "warns with modelfile hint when both server and modelfile are low",
+			models:        []string{"llama3.2"},
+			statusBody:    `{"cloud":{},"context_length":2048}`,
+			statusCode:    http.StatusOK,
+			showParams:    "num_ctx                        4096",
+			wantWarning:   true,
+			wantModelfile: true,
+		},
+		{
+			name:       "no warning when status returns malformed JSON",
+			models:     []string{"llama3.2"},
+			statusBody: `{invalid json`,
+			statusCode: http.StatusOK,
+		},
+		{
+			name:       "no warning when status returns empty body with 200",
+			models:     []string{"llama3.2"},
+			statusBody: "",
+			statusCode: http.StatusOK,
+		},
+		{
+			name:       "no warning when show endpoint fails",
+			models:     []string{"llama3.2"},
+			statusBody: `{"cloud":{},"context_length":65536}`,
+			statusCode: http.StatusOK,
+			showParams: "SHOW_ERROR", // sentinel to make show return 500
+		},
+		{
+			name:       "no warning for safetensors model with high context length",
+			models:     []string{"qwen3.5"},
+			statusBody: `{"cloud":{},"context_length":32768}`,
+			statusCode: http.StatusOK,
+			showBody:   `{"details":{"format":"safetensors"},"model_info":{"qwen3_5_moe.context_length":262144}}`,
+		},
+		{
+			name:        "warns for safetensors model with low context length",
+			models:      []string{"small-model"},
+			statusBody:  `{"cloud":{},"context_length":32768}`,
+			statusCode:  http.StatusOK,
+			showBody:    `{"details":{"format":"safetensors"},"model_info":{"small.context_length":4096}}`,
+			wantWarning: true,
+		},
+		{
+			name:       "no warning for safetensors model even when server context is low",
+			models:     []string{"qwen3.5"},
+			statusBody: `{"cloud":{},"context_length":4096}`,
+			statusCode: http.StatusOK,
+			showBody:   `{"details":{"format":"safetensors"},"model_info":{"qwen3_5_moe.context_length":262144}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/status" {
+					w.WriteHeader(tt.statusCode)
+					if tt.statusBody != "" {
+						fmt.Fprint(w, tt.statusBody)
+					}
+					return
+				}
+				if r.URL.Path == "/api/show" {
+					if tt.showParams == "SHOW_ERROR" {
+						w.WriteHeader(http.StatusInternalServerError)
+						return
+					}
+					w.WriteHeader(http.StatusOK)
+					if tt.showBody != "" {
+						fmt.Fprint(w, tt.showBody)
+					} else {
+						fmt.Fprintf(w, `{"parameters":%q}`, tt.showParams)
+					}
+					return
+				}
+				http.NotFound(w, r)
+			}))
+			defer srv.Close()
+			t.Setenv("OLLAMA_HOST", srv.URL)
+
+			client, err := newTestClient(srv.URL)
+			if err != nil {
+				t.Fatalf("failed to create client: %v", err)
+			}
+
+			// capture stderr
+			oldStderr := os.Stderr
+			r, w, _ := os.Pipe()
+			os.Stderr = w
+
+			err = lowContextLength(context.Background(), client, tt.models)
+
+			w.Close()
+			var buf bytes.Buffer
+			buf.ReadFrom(r)
+			os.Stderr = oldStderr
+			output := buf.String()
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			hasWarning := strings.Contains(output, "Warning:")
+			if hasWarning != tt.wantWarning {
+				t.Fatalf("expected warning=%v, got output: %q", tt.wantWarning, output)
+			}
+			if tt.wantWarning && tt.wantModelfile {
+				if !strings.Contains(output, "Use the base model") {
+					t.Fatalf("expected parent model hint in output: %q", output)
+				}
+			}
+			if tt.wantWarning && !tt.wantModelfile {
+				if strings.Contains(output, "Use the base model") {
+					t.Fatalf("expected server hint, not parent model hint in output: %q", output)
+				}
+			}
+		})
+	}
+}
+
+func TestParseNumCtxFromParameters(t *testing.T) {
+	tests := []struct {
+		name       string
+		parameters string
+		want       int
+	}{
+		{
+			name:       "extracts num_ctx",
+			parameters: "num_ctx                        65536",
+			want:       65536,
+		},
+		{
+			name:       "extracts num_ctx among other parameters",
+			parameters: "temperature                    0.7\nnum_ctx                        131072\nstop                           \"<|end|>\"",
+			want:       131072,
+		},
+		{
+			name:       "returns zero when no num_ctx",
+			parameters: "temperature                    0.7\nstop                           \"<|end|>\"",
+			want:       0,
+		},
+		{
+			name:       "returns zero for empty string",
+			parameters: "",
+			want:       0,
+		},
+		{
+			name:       "handles float representation",
+			parameters: "num_ctx                        65536.0",
+			want:       65536,
+		},
+		{
+			name:       "returns zero when num_ctx value is not a number",
+			parameters: "num_ctx                        abc",
+			want:       0,
+		},
+		{
+			name:       "returns zero for completely garbled input",
+			parameters: "!@#$%^&*()_+{}|:<>?",
+			want:       0,
+		},
+		{
+			name:       "returns zero when num_ctx has no value",
+			parameters: "num_ctx",
+			want:       0,
+		},
+		{
+			name:       "returns zero when num_ctx has extra fields",
+			parameters: "num_ctx 65536 extra_stuff",
+			want:       0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseNumCtx(tt.parameters)
+			if got != tt.want {
+				t.Fatalf("parseNumCtx(%q) = %d, want %d", tt.parameters, got, tt.want)
+			}
+		})
+	}
+}
+
+func newTestClient(url string) (*api.Client, error) {
+	return api.ClientFromEnvironment()
 }

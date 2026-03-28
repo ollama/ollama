@@ -874,7 +874,7 @@ func (f GGML) SupportsFlashAttention() bool {
 		return true
 	}
 
-	if slices.Contains([]string{"gemma2"}, arch) {
+	if slices.Contains([]string{"gemma2", "grok"}, arch) {
 		return false
 	}
 

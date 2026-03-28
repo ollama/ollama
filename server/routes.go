@@ -63,6 +63,7 @@ const (
 	cloudErrRemoteModelDetailsUnavailable = "remote model details are unavailable"
 	cloudErrWebSearchUnavailable          = "web search is unavailable"
 	cloudErrWebFetchUnavailable           = "web fetch is unavailable"
+	copilotChatUserAgentPrefix            = "GitHubCopilotChat/"
 )
 
 func writeModelRefParseError(c *gin.Context, err error, fallbackStatus int, fallbackMessage string) {
@@ -1158,6 +1159,17 @@ func (s *Server) ShowHandler(c *gin.Context) {
 		return
 	}
 
+	userAgent := c.Request.UserAgent()
+	if strings.HasPrefix(userAgent, copilotChatUserAgentPrefix) {
+		if resp.ModelInfo == nil {
+			resp.ModelInfo = map[string]any{}
+		}
+		// Copilot Chat prefers `general.basename`, but this is usually not what
+		// users are familiar with, so let's just echo back what we had returned in
+		// `/api/tags`
+		resp.ModelInfo["general.basename"] = req.Model
+	}
+
 	c.JSON(http.StatusOK, resp)
 }
 
@@ -1213,9 +1225,11 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 				modelDetails.ParameterSize = format.HumanNumber(uint64(paramCount))
 			}
 		}
-		// Get torch_dtype directly from config.json for quantization level
-		if dtype, err := xserver.GetSafetensorsDtype(name); err == nil && dtype != "" {
-			modelDetails.QuantizationLevel = dtype
+		// Older manifests may not have file_type populated for safetensors models.
+		if modelDetails.QuantizationLevel == "" {
+			if dtype, err := xserver.GetSafetensorsDtype(name); err == nil && dtype != "" {
+				modelDetails.QuantizationLevel = dtype
+			}
 		}
 	}
 
@@ -1923,11 +1937,19 @@ func streamResponse(c *gin.Context, ch chan any) {
 
 func (s *Server) StatusHandler(c *gin.Context) {
 	disabled, source := internalcloud.Status()
+
+	contextLength := int(envconfig.ContextLength())
+	if contextLength == 0 {
+		slog.Warn("OLLAMA_CONTEXT_LENGTH is not set, using default", "default", s.defaultNumCtx)
+		contextLength = s.defaultNumCtx
+	}
+
 	c.JSON(http.StatusOK, api.StatusResponse{
 		Cloud: api.CloudStatus{
 			Disabled: disabled,
 			Source:   source,
 		},
+		ContextLength: contextLength,
 	})
 }
 

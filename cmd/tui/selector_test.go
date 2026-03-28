@@ -782,6 +782,9 @@ func TestMulti_MultiModeHelpText(t *testing.T) {
 	if !strings.Contains(content, "tab select single") {
 		t.Error("multi mode should show 'tab select single' in help")
 	}
+	if !strings.Contains(content, "← back") {
+		t.Error("multi mode should show '← back' in help")
+	}
 }
 
 // --- preChecked initialization order ---
@@ -865,6 +868,46 @@ func TestMulti_UncheckingTopDefaultFallsBackToNearestCheckedBelow(t *testing.T) 
 	lastIdx := m.checkOrder[len(m.checkOrder)-1]
 	if m.items[lastIdx].Name != "b" {
 		t.Fatalf("expected default to fall back to 'b', got %q", m.items[lastIdx].Name)
+	}
+}
+
+// --- Left arrow back navigation ---
+
+func TestSelectorLeftArrowCancelsWhenNoFilter(t *testing.T) {
+	m := selectorModelWithCurrent("Pick:", items("a", "b", "c"), "")
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	got := updated.(selectorModel)
+	if !got.cancelled {
+		t.Error("left arrow with empty filter should cancel (go back)")
+	}
+}
+
+func TestSelectorLeftArrowCancelsWhenFiltering(t *testing.T) {
+	m := selectorModelWithCurrent("Pick:", items("a", "b", "c"), "")
+	m.filter = "a"
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	got := updated.(selectorModel)
+	if !got.cancelled {
+		t.Error("left arrow with active filter should still cancel (go back)")
+	}
+}
+
+func TestMultiSelectorLeftArrowCancelsWhenNoFilter(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), nil)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	got := updated.(multiSelectorModel)
+	if !got.cancelled {
+		t.Error("left arrow with empty filter should cancel (go back)")
+	}
+}
+
+func TestMultiSelectorLeftArrowCancelsWhenFiltering(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), nil)
+	m.filter = "a"
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	got := updated.(multiSelectorModel)
+	if !got.cancelled {
+		t.Error("left arrow with active filter should still cancel (go back)")
 	}
 }
 
