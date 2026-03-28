@@ -900,6 +900,11 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
+	if err := llm.ValidateEmbedding(embedding); err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
 	var e []float64
 	for _, v := range embedding {
 		e = append(e, float64(v))
