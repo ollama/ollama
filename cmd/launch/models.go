@@ -255,7 +255,7 @@ func confirmEditorEdit(runner Runner, editor Editor) (bool, error) {
 	}
 	fmt.Fprintf(os.Stderr, "Backups will be saved to %s/\n\n", fileutil.BackupDir())
 
-	return ConfirmPrompt("Proceed?")
+	return true, nil
 }
 
 // buildModelList merges existing models with recommendations for selection UIs.
