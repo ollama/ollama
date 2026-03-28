@@ -8,6 +8,8 @@
 
 Start building with open models.
 
+> Looking for Portuguese, Korean, or Chinese? See the [International README](./README.international.md).
+
 ## Download
 
 ### macOS
