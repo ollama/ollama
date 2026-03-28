@@ -93,8 +93,9 @@ func (p *Qwen35Parser) Add(s string, done bool) (content string, thinking string
 		case qwen35EventContent:
 			parsedContent, _, parsedCalls, err := p.toolParser.Add(event.content, done)
 			if err != nil {
-				slog.Warn("qwen3.5 tool call parsing failed", "error", err)
-				return "", "", nil, err
+				slog.Warn("qwen3.5 tool call parsing failed, treating as content", "error", err)
+				contentSb.WriteString(event.content)
+				continue
 			}
 			contentSb.WriteString(parsedContent)
 			calls = append(calls, parsedCalls...)
