@@ -205,6 +205,7 @@ console.log(response.message.content);
 #### Mobile
 
 - [Ollama Android Chat](https://github.com/sunshine0523/OllamaServer) - One-click Ollama on Android
+- [Cumbersome](https://folding-sky.com/cumbersome) - iOS client for Ollama
 
 > SwiftChat, Enchanted, Maid, Ollama App, Reins, and ConfiChat listed above also support mobile platforms.
 
