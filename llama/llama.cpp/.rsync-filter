@@ -6,6 +6,7 @@ include /common/common.*
 include /common/json-schema-to-grammar.*
 include /common/json.*
 include /common/log.*
+include /common/reasoning-budget.*
 include /common/sampling.*
 include /common/unicode.*
 include /common/peg-parser.*
