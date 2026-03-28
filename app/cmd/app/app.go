@@ -25,6 +25,7 @@ import (
 	"github.com/ollama/ollama/app/auth"
 	"github.com/ollama/ollama/app/logrotate"
 	"github.com/ollama/ollama/app/server"
+	"github.com/ollama/ollama/app/startup"
 	"github.com/ollama/ollama/app/store"
 	"github.com/ollama/ollama/app/tools"
 	"github.com/ollama/ollama/app/ui"
@@ -267,11 +268,12 @@ func main() {
 				done <- osrv.Run(octx)
 			}()
 		},
-		Store:        st,
-		ToolRegistry: toolRegistry,
-		Dev:          devMode,
-		Logger:       slog.Default(),
-		Updater:      upd,
+		Store:            st,
+		ToolRegistry:     toolRegistry,
+		StartupRegistrar: startup.NewRegistrar(),
+		Dev:              devMode,
+		Logger:           slog.Default(),
+		Updater:          upd,
 		UpdateAvailableFunc: func() {
 			UpdateAvailable("")
 		},
