@@ -72,7 +72,10 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	}
 
 	if currMsgIdx > 0 {
-		slog.Debug("truncating input messages which exceed context length", "truncated", len(msgs[currMsgIdx:]))
+		slog.Warn("chat history truncated to fit context window",
+			"messages_dropped", currMsgIdx,
+			"messages_remaining", len(msgs[currMsgIdx:]),
+			"context_length", opts.NumCtx)
 	}
 
 	for cnt, msg := range msgs[currMsgIdx:] {
