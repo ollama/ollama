@@ -4,8 +4,6 @@ package agent
 import (
 	"fmt"
 	"os"
-	"path"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -37,16 +35,18 @@ var optionLabels = []string{
 	"3. Deny",
 }
 
-// toolDisplayNames maps internal tool names to human-readable display names.
-var toolDisplayNames = map[string]string{
-	"bash":       "Bash",
-	"web_search": "Web Search",
-	"web_fetch":  "Web Fetch",
+// ApprovalPromptOptions controls warning text and allowlist context shown in the selector.
+type ApprovalPromptOptions struct {
+	Warnings      []string
+	AllowlistInfo string
 }
 
 // ToolDisplayName returns the human-readable display name for a tool.
 func ToolDisplayName(toolName string) string {
-	if displayName, ok := toolDisplayNames[toolName]; ok {
+	if displayName, ok := bashToolDisplayName(toolName); ok {
+		return displayName
+	}
+	if displayName, ok := browserToolDisplayName(toolName); ok {
 		return displayName
 	}
 	// Default: capitalize first letter and replace underscores with spaces
@@ -55,84 +55,6 @@ func ToolDisplayName(toolName string) string {
 		return strings.ToUpper(name[:1]) + name[1:]
 	}
 	return toolName
-}
-
-// autoAllowCommands are commands that are always allowed without prompting.
-// These are zero-risk, read-only commands.
-var autoAllowCommands = map[string]bool{
-	"pwd":      true,
-	"echo":     true,
-	"date":     true,
-	"whoami":   true,
-	"hostname": true,
-	"uname":    true,
-}
-
-// autoAllowPrefixes are command prefixes that are always allowed.
-// These are read-only or commonly-needed development commands.
-var autoAllowPrefixes = []string{
-	// Git read-only
-	"git status", "git log", "git diff", "git branch", "git show",
-	"git remote -v", "git tag", "git stash list",
-	// Package managers - run scripts
-	"npm run", "npm test", "npm start",
-	"bun run", "bun test",
-	"uv run",
-	"yarn run", "yarn test",
-	"pnpm run", "pnpm test",
-	// Package info
-	"go list", "go version", "go env",
-	"npm list", "npm ls", "npm version",
-	"pip list", "pip show",
-	"cargo tree", "cargo version",
-	// Build commands
-	"go build", "go test", "go fmt", "go vet",
-	"make", "cmake",
-	"cargo build", "cargo test", "cargo check",
-}
-
-// denyPatterns are dangerous command patterns that are always blocked.
-var denyPatterns = []string{
-	// Destructive commands
-	"rm -rf", "rm -fr",
-	"mkfs", "dd if=", "dd of=",
-	"shred",
-	"> /dev/", ">/dev/",
-	// Privilege escalation
-	"sudo ", "su ", "doas ",
-	"chmod 777", "chmod -R 777",
-	"chown ", "chgrp ",
-	// Network exfiltration
-	"curl -d", "curl --data", "curl -X POST", "curl -X PUT",
-	"wget --post",
-	"nc ", "netcat ",
-	"scp ", "rsync ",
-	// History and credentials
-	"history",
-	".bash_history", ".zsh_history",
-	".ssh/id_rsa", ".ssh/id_dsa", ".ssh/id_ecdsa", ".ssh/id_ed25519",
-	".ssh/config",
-	".aws/credentials", ".aws/config",
-	".gnupg/",
-	"/etc/shadow", "/etc/passwd",
-	// Dangerous patterns
-	":(){ :|:& };:", // fork bomb
-	"chmod +s",      // setuid
-	"mkfifo",
-}
-
-// denyPathPatterns are file patterns that should never be accessed.
-// These are checked as exact filename matches or path suffixes.
-var denyPathPatterns = []string{
-	".env",
-	".env.local",
-	".env.production",
-	"credentials.json",
-	"secrets.json",
-	"secrets.yaml",
-	"secrets.yml",
-	".pem",
-	".key",
 }
 
 // ApprovalManager manages tool execution approvals.
@@ -150,234 +72,11 @@ func NewApprovalManager() *ApprovalManager {
 	}
 }
 
-// IsAutoAllowed checks if a bash command is auto-allowed (no prompt needed).
-func IsAutoAllowed(command string) bool {
-	command = strings.TrimSpace(command)
-
-	// Check exact command match (first word)
-	fields := strings.Fields(command)
-	if len(fields) > 0 && autoAllowCommands[fields[0]] {
-		return true
-	}
-
-	// Check prefix match
-	for _, prefix := range autoAllowPrefixes {
-		if strings.HasPrefix(command, prefix) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// IsDenied checks if a bash command matches deny patterns.
-// Returns true and the matched pattern if denied.
-func IsDenied(command string) (bool, string) {
-	commandLower := strings.ToLower(command)
-
-	// Check deny patterns
-	for _, pattern := range denyPatterns {
-		if strings.Contains(commandLower, strings.ToLower(pattern)) {
-			return true, pattern
-		}
-	}
-
-	// Check deny path patterns
-	for _, pattern := range denyPathPatterns {
-		if strings.Contains(commandLower, strings.ToLower(pattern)) {
-			return true, pattern
-		}
-	}
-
-	return false, ""
-}
-
-// FormatDeniedResult returns the tool result message when a command is blocked.
-func FormatDeniedResult(command string, pattern string) string {
-	return fmt.Sprintf("Command blocked: this command matches a dangerous pattern (%s) and cannot be executed. If this command is necessary, please ask the user to run it manually.", pattern)
-}
-
-// extractBashPrefix extracts a prefix pattern from a bash command.
-// For commands like "cat tools/tools_test.go | head -200", returns "cat:tools/"
-// For commands without path args, returns empty string.
-// Paths with ".." traversal that escape the base directory return empty string for security.
-func extractBashPrefix(command string) string {
-	// Split command by pipes and get the first part
-	parts := strings.Split(command, "|")
-	firstCmd := strings.TrimSpace(parts[0])
-
-	// Split into command and args
-	fields := strings.Fields(firstCmd)
-	if len(fields) < 2 {
-		return ""
-	}
-
-	baseCmd := fields[0]
-	// Common commands that benefit from prefix allowlisting
-	// These are typically safe for read operations on specific directories
-	safeCommands := map[string]bool{
-		"cat": true, "ls": true, "head": true, "tail": true,
-		"less": true, "more": true, "file": true, "wc": true,
-		"grep": true, "find": true, "tree": true, "stat": true,
-		"sed": true,
-	}
-
-	if !safeCommands[baseCmd] {
-		return ""
-	}
-
-	// Find the first path-like argument (must contain / or \ or start with .)
-	// First pass: look for clear paths (containing path separators or starting with .)
-	for _, arg := range fields[1:] {
-		// Skip flags
-		if strings.HasPrefix(arg, "-") {
-			continue
-		}
-		// Skip numeric arguments (e.g., "head -n 100")
-		if isNumeric(arg) {
-			continue
-		}
-		// Only process if it looks like a path (contains / or \ or starts with .)
-		if !strings.Contains(arg, "/") && !strings.Contains(arg, "\\") && !strings.HasPrefix(arg, ".") {
-			continue
-		}
-		// Normalize to forward slashes for consistent cross-platform matching
-		arg = strings.ReplaceAll(arg, "\\", "/")
-
-		// Security: reject absolute paths
-		if path.IsAbs(arg) {
-			return "" // Absolute path - don't create prefix
-		}
-
-		// Normalize the path using stdlib path.Clean (resolves . and ..)
-		cleaned := path.Clean(arg)
-
-		// Security: reject if cleaned path escapes to parent directory
-		if strings.HasPrefix(cleaned, "..") {
-			return "" // Path escapes - don't create prefix
-		}
-
-		// Security: if original had "..", verify cleaned path didn't escape to sibling
-		// e.g., "tools/a/b/../../../etc" -> "etc" (escaped tools/ to sibling)
-		if strings.Contains(arg, "..") {
-			origBase := strings.SplitN(arg, "/", 2)[0]
-			cleanedBase := strings.SplitN(cleaned, "/", 2)[0]
-			if origBase != cleanedBase {
-				return "" // Path escaped to sibling directory
-			}
-		}
-
-		// Check if arg ends with / (explicit directory)
-		isDir := strings.HasSuffix(arg, "/")
-
-		// Get the directory part
-		var dir string
-		if isDir {
-			dir = cleaned
-		} else {
-			dir = path.Dir(cleaned)
-		}
-
-		if dir == "." {
-			return fmt.Sprintf("%s:./", baseCmd)
-		}
-		return fmt.Sprintf("%s:%s/", baseCmd, dir)
-	}
-
-	// Second pass: if no clear path found, use the first non-flag argument as a filename
-	for _, arg := range fields[1:] {
-		if strings.HasPrefix(arg, "-") {
-			continue
-		}
-		if isNumeric(arg) {
-			continue
-		}
-		// Treat as filename in current dir
-		return fmt.Sprintf("%s:./", baseCmd)
-	}
-
-	return ""
-}
-
-// isNumeric checks if a string is a numeric value
-func isNumeric(s string) bool {
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return false
-		}
-	}
-	return len(s) > 0
-}
-
-// isCommandOutsideCwd checks if a bash command targets paths outside the current working directory.
-// Returns true if any path argument would access files outside cwd.
-func isCommandOutsideCwd(command string) bool {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return false // Can't determine, assume safe
-	}
-
-	// Split command by pipes and semicolons to check all parts
-	parts := strings.FieldsFunc(command, func(r rune) bool {
-		return r == '|' || r == ';' || r == '&'
-	})
-
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		fields := strings.Fields(part)
-		if len(fields) == 0 {
-			continue
-		}
-
-		// Check each argument that looks like a path
-		for _, arg := range fields[1:] {
-			// Skip flags
-			if strings.HasPrefix(arg, "-") {
-				continue
-			}
-
-			// Treat POSIX-style absolute paths as outside cwd on all platforms.
-			if strings.HasPrefix(arg, "/") || strings.HasPrefix(arg, "\\") {
-				return true
-			}
-
-			// Check for absolute paths outside cwd
-			if filepath.IsAbs(arg) {
-				absPath := filepath.Clean(arg)
-				if !strings.HasPrefix(absPath, cwd) {
-					return true
-				}
-				continue
-			}
-
-			// Check for relative paths that escape cwd (e.g., ../foo, /etc/passwd)
-			if strings.HasPrefix(arg, "..") {
-				// Resolve the path relative to cwd
-				absPath := filepath.Join(cwd, arg)
-				absPath = filepath.Clean(absPath)
-				if !strings.HasPrefix(absPath, cwd) {
-					return true
-				}
-			}
-
-			// Check for home directory expansion
-			if strings.HasPrefix(arg, "~") {
-				home, err := os.UserHomeDir()
-				if err == nil && !strings.HasPrefix(home, cwd) {
-					return true
-				}
-			}
-		}
-	}
-
-	return false
-}
-
 // AllowlistKey generates the key for exact allowlist lookup.
 func AllowlistKey(toolName string, args map[string]any) string {
 	if toolName == "bash" {
-		if cmd, ok := args["command"].(string); ok {
-			return fmt.Sprintf("bash:%s", cmd)
+		if key, ok := bashAllowlistKey(args); ok {
+			return key
 		}
 	}
 	return toolName
@@ -396,64 +95,11 @@ func (a *ApprovalManager) IsAllowed(toolName string, args map[string]any) bool {
 		return true
 	}
 
-	// For bash commands, check prefix matches with hierarchical path support
 	if toolName == "bash" {
-		if cmd, ok := args["command"].(string); ok {
-			prefix := extractBashPrefix(cmd)
-			if prefix != "" {
-				// Check exact prefix match first
-				if a.prefixes[prefix] {
-					return true
-				}
-				// Check hierarchical match: if any stored prefix is a parent of current prefix
-				// e.g., stored "cat:tools/" should match current "cat:tools/subdir/"
-				if a.matchesHierarchicalPrefix(prefix) {
-					return true
-				}
-			}
-		}
+		return a.isAllowedBash(args)
 	}
 
-	// Check if tool itself is allowed (non-bash)
-	if toolName != "bash" && a.allowlist[toolName] {
-		return true
-	}
-
-	return false
-}
-
-// matchesHierarchicalPrefix checks if the given prefix matches any stored prefix hierarchically.
-// For example, if "cat:tools/" is stored, it will match "cat:tools/subdir/" or "cat:tools/a/b/c/".
-func (a *ApprovalManager) matchesHierarchicalPrefix(currentPrefix string) bool {
-	// Split prefix into command and path parts (format: "cmd:path/")
-	colonIdx := strings.Index(currentPrefix, ":")
-	if colonIdx == -1 {
-		return false
-	}
-	currentCmd := currentPrefix[:colonIdx]
-	currentPath := currentPrefix[colonIdx+1:]
-
-	for storedPrefix := range a.prefixes {
-		storedColonIdx := strings.Index(storedPrefix, ":")
-		if storedColonIdx == -1 {
-			continue
-		}
-		storedCmd := storedPrefix[:storedColonIdx]
-		storedPath := storedPrefix[storedColonIdx+1:]
-
-		// Commands must match exactly
-		if currentCmd != storedCmd {
-			continue
-		}
-
-		// Check if current path starts with stored path (hierarchical match)
-		// e.g., "tools/subdir/" starts with "tools/"
-		if strings.HasPrefix(currentPath, storedPath) {
-			return true
-		}
-	}
-
-	return false
+	return a.allowlist[toolName]
 }
 
 // AddToAllowlist adds a tool/command to the session allowlist.
@@ -462,65 +108,66 @@ func (a *ApprovalManager) AddToAllowlist(toolName string, args map[string]any) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if toolName == "bash" {
-		if cmd, ok := args["command"].(string); ok {
-			prefix := extractBashPrefix(cmd)
-			if prefix != "" {
-				a.prefixes[prefix] = true
-				return
-			}
-			// Fall back to exact match if no prefix extracted
-			a.allowlist[fmt.Sprintf("bash:%s", cmd)] = true
-			return
-		}
+	if toolName == "bash" && a.addToAllowlistBash(args) {
+		return
 	}
 	a.allowlist[toolName] = true
 }
 
+func withDefaultBashApprovalOptions(args map[string]any, options ApprovalPromptOptions) ApprovalPromptOptions {
+	cmd, ok := args["command"].(string)
+	if !ok {
+		return options
+	}
+
+	defaults := BuildBashApprovalOptions(cmd)
+	if options.AllowlistInfo == "" {
+		options.AllowlistInfo = defaults.AllowlistInfo
+	}
+	if len(options.Warnings) == 0 {
+		options.Warnings = defaults.Warnings
+		return options
+	}
+
+	for _, warning := range defaults.Warnings {
+		options.Warnings = appendUniqueWarning(options.Warnings, warning)
+	}
+
+	return options
+}
+
+func appendUniqueWarning(warnings []string, warning string) []string {
+	for _, existing := range warnings {
+		if existing == warning {
+			return warnings
+		}
+	}
+	return append(warnings, warning)
+}
+
 // RequestApproval prompts the user for approval to execute a tool.
 // Returns the decision and optional deny reason.
-func (a *ApprovalManager) RequestApproval(toolName string, args map[string]any) (ApprovalResult, error) {
+func (a *ApprovalManager) RequestApproval(toolName string, args map[string]any, options ApprovalPromptOptions) (ApprovalResult, error) {
 	// Format tool info for display
 	toolDisplay := formatToolDisplay(toolName, args)
+	if toolName == "bash" {
+		options = withDefaultBashApprovalOptions(args, options)
+	}
 
 	// Enter raw mode for interactive selection
 	fd := int(os.Stdin.Fd())
 	oldState, err := term.MakeRaw(fd)
 	if err != nil {
 		// Fallback to simple input if terminal control fails
-		return a.fallbackApproval(toolDisplay)
+		return a.fallbackApproval(toolDisplay, options.Warnings)
 	}
 
 	// Flush any pending stdin input before starting selector
 	// This prevents buffered input from causing double-press issues
 	flushStdin(fd)
 
-	isWarning := false
-	var warningMsg string
-	var allowlistInfo string
-	if toolName == "bash" {
-		if cmd, ok := args["command"].(string); ok {
-			if isCommandOutsideCwd(cmd) {
-				isWarning = true
-				warningMsg = "command targets paths outside project"
-			}
-			if prefix := extractBashPrefix(cmd); prefix != "" {
-				colonIdx := strings.Index(prefix, ":")
-				if colonIdx != -1 {
-					cmdName := prefix[:colonIdx]
-					dirPath := prefix[colonIdx+1:]
-					if dirPath != "./" {
-						allowlistInfo = fmt.Sprintf("%s in %s directory (includes subdirs)", cmdName, dirPath)
-					} else {
-						allowlistInfo = fmt.Sprintf("%s in %s directory", cmdName, dirPath)
-					}
-				}
-			}
-		}
-	}
-
 	// Run interactive selector
-	selected, denyReason, err := runSelector(fd, oldState, toolDisplay, isWarning, warningMsg, allowlistInfo)
+	selected, denyReason, err := runSelector(fd, oldState, toolDisplay, options.Warnings, options.AllowlistInfo)
 	if err != nil {
 		term.Restore(fd, oldState)
 		return ApprovalResult{Decision: ApprovalDeny}, err
@@ -544,39 +191,17 @@ func (a *ApprovalManager) RequestApproval(toolName string, args map[string]any) 
 
 // formatToolDisplay creates the display string for a tool call.
 func formatToolDisplay(toolName string, args map[string]any) string {
+	if toolName == "bash" {
+		if display, ok := formatBashToolDisplay(args); ok {
+			return display
+		}
+	}
+	if display, ok := formatBrowserToolDisplay(toolName, args); ok {
+		return display
+	}
+
 	var sb strings.Builder
 	displayName := ToolDisplayName(toolName)
-
-	// For bash, show command directly
-	if toolName == "bash" {
-		if cmd, ok := args["command"].(string); ok {
-			sb.WriteString(fmt.Sprintf("Tool: %s\n", displayName))
-			sb.WriteString(fmt.Sprintf("Command: %s", cmd))
-			return sb.String()
-		}
-	}
-
-	// For web search, show query and internet notice
-	if toolName == "web_search" {
-		if query, ok := args["query"].(string); ok {
-			sb.WriteString(fmt.Sprintf("Tool: %s\n", displayName))
-			sb.WriteString(fmt.Sprintf("Query: %s\n", query))
-			sb.WriteString("Uses internet via ollama.com")
-			return sb.String()
-		}
-	}
-
-	// For web fetch, show URL and internet notice
-	if toolName == "web_fetch" {
-		if url, ok := args["url"].(string); ok {
-			sb.WriteString(fmt.Sprintf("Tool: %s\n", displayName))
-			sb.WriteString(fmt.Sprintf("URL: %s\n", url))
-			sb.WriteString("Uses internet via ollama.com")
-			return sb.String()
-		}
-	}
-
-	// Generic display
 	sb.WriteString(fmt.Sprintf("Tool: %s", displayName))
 	if len(args) > 0 {
 		sb.WriteString("\nArguments: ")
@@ -594,28 +219,32 @@ func formatToolDisplay(toolName string, args map[string]any) string {
 
 // selectorState holds the state for the interactive selector
 type selectorState struct {
-	toolDisplay    string
-	selected       int
-	totalLines     int
-	termWidth      int
-	termHeight     int
-	boxWidth       int
-	innerWidth     int
-	denyReason     string // deny reason (always visible in box)
-	isWarning      bool   // true if command has warning
-	warningMessage string // dynamic warning message to display
-	allowlistInfo  string // show what will be allowlisted (for "Allow for this session" option)
+	toolDisplay   string
+	selected      int
+	totalLines    int
+	termWidth     int
+	termHeight    int
+	boxWidth      int
+	innerWidth    int
+	denyReason    string
+	editingDeny   bool
+	warnings      []string
+	allowlistInfo string // show what will be allowlisted (for "Allow for this session" option)
+}
+
+type selectorOutcome struct {
+	done       bool
+	selected   int
+	denyReason string
 }
 
 // runSelector runs the interactive selector and returns the selected index and optional deny reason.
-// If isWarning is true, the box is rendered in red to indicate the command targets paths outside cwd.
-func runSelector(fd int, oldState *term.State, toolDisplay string, isWarning bool, warningMessage string, allowlistInfo string) (int, string, error) {
+func runSelector(fd int, oldState *term.State, toolDisplay string, warnings []string, allowlistInfo string) (int, string, error) {
 	state := &selectorState{
-		toolDisplay:    toolDisplay,
-		selected:       0,
-		isWarning:      isWarning,
-		warningMessage: warningMessage,
-		allowlistInfo:  allowlistInfo,
+		toolDisplay:   toolDisplay,
+		selected:      0,
+		warnings:      warnings,
+		allowlistInfo: allowlistInfo,
 	}
 
 	// Get terminal size
@@ -648,8 +277,6 @@ func runSelector(fd int, oldState *term.State, toolDisplay string, isWarning boo
 	// Initial render
 	renderSelectorBox(state)
 
-	numOptions := len(optionLabels)
-
 	for {
 		// Read input
 		buf := make([]byte, 8)
@@ -659,85 +286,13 @@ func runSelector(fd int, oldState *term.State, toolDisplay string, isWarning boo
 			return 2, "", err
 		}
 
-		// Process input byte by byte
-		for i := 0; i < n; i++ {
-			ch := buf[i]
-
-			// Check for escape sequences (arrow keys)
-			if ch == 27 && i+2 < n && buf[i+1] == '[' {
-				oldSelected := state.selected
-				switch buf[i+2] {
-				case 'A': // Up arrow
-					if state.selected > 0 {
-						state.selected--
-					}
-				case 'B': // Down arrow
-					if state.selected < numOptions-1 {
-						state.selected++
-					}
-				}
-				if oldSelected != state.selected {
-					updateSelectorOptions(state)
-				}
-				i += 2 // Skip the rest of escape sequence
-				continue
-			}
-
-			switch {
-			// Ctrl+C - cancel
-			case ch == 3:
-				clearSelectorBox(state)
-				return -1, "", nil // -1 indicates cancelled
-
-			// Enter key - confirm selection
-			case ch == 13:
-				clearSelectorBox(state)
-				if state.selected == 2 { // Deny
-					return 2, state.denyReason, nil
-				}
-				return state.selected, "", nil
-
-			// Number keys 1-3 for quick select
-			case ch >= '1' && ch <= '3':
-				selected := int(ch - '1')
-				clearSelectorBox(state)
-				if selected == 2 { // Deny
-					return 2, state.denyReason, nil
-				}
-				return selected, "", nil
-
-			// Backspace - delete from reason (UTF-8 safe)
-			case ch == 127 || ch == 8:
-				if len(state.denyReason) > 0 {
-					runes := []rune(state.denyReason)
-					state.denyReason = string(runes[:len(runes)-1])
-					updateReasonInput(state)
-				}
-
-			// Escape - clear reason
-			case ch == 27:
-				if len(state.denyReason) > 0 {
-					state.denyReason = ""
-					updateReasonInput(state)
-				}
-
-			// Printable ASCII (except 1-3 handled above) - type into reason
-			case ch >= 32 && ch < 127:
-				maxLen := state.innerWidth - 2
-				if maxLen < 10 {
-					maxLen = 10
-				}
-				if len(state.denyReason) < maxLen {
-					state.denyReason += string(ch)
-					// Auto-select Deny option when user starts typing
-					if state.selected != 2 {
-						state.selected = 2
-						updateSelectorOptions(state)
-					} else {
-						updateReasonInput(state)
-					}
-				}
-			}
+		outcome, changed := handleSelectorInput(state, buf[:n])
+		if outcome.done {
+			clearSelectorBox(state)
+			return outcome.selected, outcome.denyReason, nil
+		}
+		if changed {
+			redrawSelector(state)
 		}
 	}
 }
@@ -773,9 +328,87 @@ func wrapText(text string, maxWidth int) []string {
 	return lines
 }
 
+func denyReasonWrapWidth(state *selectorState) int {
+	width := state.innerWidth - len(denyReasonPrefixText(state))
+	if width < 10 {
+		return 10
+	}
+	return width
+}
+
+func denyReasonPrefixText(state *selectorState) string {
+	if state.editingDeny || state.denyReason != "" {
+		return "3. Deny: "
+	}
+	return "3. Deny (tab to edit)"
+}
+
+func denyReasonPrefixDisplay(state *selectorState) string {
+	if state.editingDeny || state.denyReason != "" {
+		return "3. Deny: "
+	}
+	return "3. Deny \033[90m(tab to edit)\033[0m"
+}
+
+func getDenyReasonLines(state *selectorState) []string {
+	if state.denyReason == "" {
+		return nil
+	}
+	return wrapText(state.denyReason, denyReasonWrapWidth(state))
+}
+
+func getHintText(state *selectorState) string {
+	parts := []string{
+		"up/down select",
+		"enter confirm",
+		"1-3 quick select",
+		"ctrl+c cancel",
+	}
+	return strings.Join(parts, ", ")
+}
+
+func displayWrapWidth(state *selectorState) int {
+	if state.termWidth <= 11 {
+		return 10
+	}
+	return state.termWidth - 1
+}
+
+func warningContentWrapWidth(state *selectorState) int {
+	width := displayWrapWidth(state) - len("warning: ")
+	if width < 10 {
+		return 10
+	}
+	return width
+}
+
+func getWrappedToolLines(state *selectorState) []string {
+	var lines []string
+	for _, line := range strings.Split(state.toolDisplay, "\n") {
+		lines = append(lines, wrapText(line, displayWrapWidth(state))...)
+	}
+	return lines
+}
+
+func getWarningContentLines(state *selectorState, warning string) []string {
+	return wrapText(warning, warningContentWrapWidth(state))
+}
+
+func warningLineCount(state *selectorState) int {
+	if len(state.warnings) == 0 {
+		return 0
+	}
+
+	total := 1
+	for _, warning := range state.warnings {
+		total += len(getWarningContentLines(state, warning))
+	}
+	return total
+}
+
 // getHintLines returns the hint text wrapped to terminal width
 func getHintLines(state *selectorState) []string {
-	hint := "up/down select, enter confirm, 1-3 quick select, ctrl+c cancel"
+	hint := getHintText(state)
 	if state.termWidth >= len(hint)+1 {
 		return []string{hint}
 	}
@@ -785,27 +418,28 @@ func getHintLines(state *selectorState) []string {
 
 // calculateTotalLines calculates how many lines the selector will use
 func calculateTotalLines(state *selectorState) int {
-	toolLines := strings.Split(state.toolDisplay, "\n")
+	toolLines := getWrappedToolLines(state)
 	hintLines := getHintLines(state)
-	// warning line (if applicable) + tool lines + blank line + options + blank line + hint lines
-	warningLines := 0
-	if state.isWarning {
-		warningLines = 2 // warning line + blank line after
-	}
-	return warningLines + len(toolLines) + 1 + len(optionLabels) + 1 + len(hintLines)
+	warningLines := warningLineCount(state)
+	optionLines := len(optionLabels) - 1 + max(1, len(getDenyReasonLines(state)))
+	return warningLines + len(toolLines) + 1 + optionLines + 1 + len(hintLines)
 }
 
 // renderSelectorBox renders the selector (minimal, no box)
 func renderSelectorBox(state *selectorState) {
-	toolLines := strings.Split(state.toolDisplay, "\n")
+	toolLines := getWrappedToolLines(state)
 	hintLines := getHintLines(state)
 
-	// Draw warning line if needed
-	if state.isWarning {
-		if state.warningMessage != "" {
-			fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m %s\033[K\r\n", state.warningMessage)
-		} else {
-			fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m command targets paths outside project\033[K\r\n")
+	if len(state.warnings) > 0 {
+		for _, warning := range state.warnings {
+			lines := getWarningContentLines(state, warning)
+			for i, line := range lines {
+				if i == 0 {
+					fmt.Fprintf(os.Stderr, "\033[31;1mwarning:\033[0m %s\033[K\r\n", line)
+					continue
+				}
+				fmt.Fprintf(os.Stderr, "%s%s\033[K\r\n", strings.Repeat(" ", len("warning: ")), line)
+			}
 		}
 		fmt.Fprintf(os.Stderr, "\033[K\r\n") // blank line after warning
 	}
@@ -820,16 +454,7 @@ func renderSelectorBox(state *selectorState) {
 
 	for i, label := range optionLabels {
 		if i == 2 {
-			denyLabel := "3. Deny: "
-			inputDisplay := state.denyReason
-			if inputDisplay == "" {
-				inputDisplay = "\033[90m(optional reason)\033[0m"
-			}
-			if i == state.selected {
-				fmt.Fprintf(os.Stderr, "  \033[1m%s\033[0m%s\033[K\r\n", denyLabel, inputDisplay)
-			} else {
-				fmt.Fprintf(os.Stderr, "  \033[37m%s\033[0m%s\033[K\r\n", denyLabel, inputDisplay)
-			}
+			renderDenyOption(state)
 		} else {
 			displayLabel := label
 			if i == 1 && state.allowlistInfo != "" {
@@ -856,99 +481,201 @@ func renderSelectorBox(state *selectorState) {
 	}
 }
 
-// updateSelectorOptions updates just the options portion of the selector
-func updateSelectorOptions(state *selectorState) {
-	hintLines := getHintLines(state)
+func renderDenyOption(state *selectorState) {
+	labelStyle := "\033[37m"
+	if state.selected == 2 {
+		labelStyle = "\033[1m"
+	}
+	prefixText := denyReasonPrefixText(state)
+	prefixDisplay := denyReasonPrefixDisplay(state)
 
-	// Move up to the first option line
-	// Cursor is at end of last hint line, need to go up:
-	// (hint lines - 1) + 1 (blank line) + numOptions
-	linesToMove := len(hintLines) - 1 + 1 + len(optionLabels)
-	fmt.Fprintf(os.Stderr, "\033[%dA\r", linesToMove)
-
-	for i, label := range optionLabels {
-		if i == 2 {
-			denyLabel := "3. Deny: "
-			inputDisplay := state.denyReason
-			if inputDisplay == "" {
-				inputDisplay = "\033[90m(optional reason)\033[0m"
-			}
-			if i == state.selected {
-				fmt.Fprintf(os.Stderr, "  \033[1m%s\033[0m%s\033[K\r\n", denyLabel, inputDisplay)
-			} else {
-				fmt.Fprintf(os.Stderr, "  \033[37m%s\033[0m%s\033[K\r\n", denyLabel, inputDisplay)
-			}
-		} else {
-			displayLabel := label
-			if i == 1 && state.allowlistInfo != "" {
-				displayLabel = fmt.Sprintf("%s  \033[90m%s\033[0m", label, state.allowlistInfo)
-			}
-			if i == state.selected {
-				fmt.Fprintf(os.Stderr, "  \033[1m%s\033[0m\033[K\r\n", displayLabel)
-			} else {
-				fmt.Fprintf(os.Stderr, "  \033[37m%s\033[0m\033[K\r\n", displayLabel)
-			}
-		}
+	if state.denyReason == "" {
+		fmt.Fprintf(os.Stderr, "  %s%s\033[0m\033[K\r\n", labelStyle, prefixDisplay)
+		return
 	}
 
-	// Blank line + hint
-	fmt.Fprintf(os.Stderr, "\033[K\r\n")
-	for i, line := range hintLines {
-		if i == len(hintLines)-1 {
-			fmt.Fprintf(os.Stderr, "\033[90m%s\033[0m\033[K", line)
-		} else {
-			fmt.Fprintf(os.Stderr, "\033[90m%s\033[0m\033[K\r\n", line)
+	lines := getDenyReasonLines(state)
+	indent := strings.Repeat(" ", len(prefixText))
+	for i, line := range lines {
+		prefix := indent
+		if i == 0 {
+			prefix = prefixDisplay
 		}
+		fmt.Fprintf(os.Stderr, "  %s%s\033[0m%s\033[K\r\n", labelStyle, prefix, line)
 	}
 }
 
-// updateReasonInput updates just the Deny option line (which contains the reason input)
-func updateReasonInput(state *selectorState) {
-	hintLines := getHintLines(state)
+func redrawSelector(state *selectorState) {
+	nextTotalLines := calculateTotalLines(state)
+	clearSelectorLines(selectorClearLineCount(state.totalLines, nextTotalLines))
+	state.totalLines = nextTotalLines
+	renderSelectorBox(state)
+}
 
-	// Move up to the Deny line (3rd option, index 2)
-	// Cursor is at end of last hint line, need to go up:
-	// (hint lines - 1) + 1 (blank line) + 1 (Deny is last option)
-	linesToMove := len(hintLines) - 1 + 1 + 1
-	fmt.Fprintf(os.Stderr, "\033[%dA\r", linesToMove)
+func handleSelectorInput(state *selectorState, input []byte) (selectorOutcome, bool) {
+	changed := false
 
-	// Redraw Deny line with reason
-	denyLabel := "3. Deny: "
-	inputDisplay := state.denyReason
-	if inputDisplay == "" {
-		inputDisplay = "\033[90m(optional reason)\033[0m"
-	}
-	if state.selected == 2 {
-		fmt.Fprintf(os.Stderr, "  \033[1m%s\033[0m%s\033[K\r\n", denyLabel, inputDisplay)
-	} else {
-		fmt.Fprintf(os.Stderr, "  \033[37m%s\033[0m%s\033[K\r\n", denyLabel, inputDisplay)
-	}
+	for i := 0; i < len(input); i++ {
+		ch := input[i]
 
-	// Blank line + hint
-	fmt.Fprintf(os.Stderr, "\033[K\r\n")
-	for i, line := range hintLines {
-		if i == len(hintLines)-1 {
-			fmt.Fprintf(os.Stderr, "\033[90m%s\033[0m\033[K", line)
-		} else {
-			fmt.Fprintf(os.Stderr, "\033[90m%s\033[0m\033[K\r\n", line)
+		if ch == 27 && i+2 < len(input) && input[i+1] == '[' {
+			outcome, didChange := handleSelectorArrow(state, input[i+2])
+			changed = changed || didChange
+			i += 2
+			if outcome.done {
+				return outcome, changed
+			}
+			continue
+		}
+
+		outcome, didChange := handleSelectorByte(state, ch)
+		changed = changed || didChange
+		if outcome.done {
+			return outcome, changed
 		}
 	}
+
+	return selectorOutcome{}, changed
+}
+
+func handleSelectorArrow(state *selectorState, arrow byte) (selectorOutcome, bool) {
+	switch arrow {
+	case 'A':
+		if state.editingDeny {
+			clearDenyEdit(state)
+			if state.selected > 0 {
+				state.selected--
+			}
+			return selectorOutcome{}, true
+		}
+		if state.selected > 0 {
+			state.selected--
+			return selectorOutcome{}, true
+		}
+	case 'B':
+		if state.editingDeny {
+			clearDenyEdit(state)
+			return selectorOutcome{}, true
+		}
+		if state.selected < len(optionLabels)-1 {
+			state.selected++
+			return selectorOutcome{}, true
+		}
+	}
+
+	return selectorOutcome{}, false
+}
+
+func handleSelectorByte(state *selectorState, ch byte) (selectorOutcome, bool) {
+	switch {
+	case ch == 3:
+		return selectorOutcome{done: true, selected: -1}, false
+	case ch == 13:
+		if state.selected == 2 {
+			return selectorOutcome{done: true, selected: 2, denyReason: state.denyReason}, false
+		}
+		return selectorOutcome{done: true, selected: state.selected}, false
+	case ch == '\t':
+		return selectorOutcome{}, enterDenyEdit(state)
+	case ch == 127 || ch == 8:
+		if len(state.denyReason) == 0 {
+			return selectorOutcome{}, false
+		}
+		enterDenyEdit(state)
+		runes := []rune(state.denyReason)
+		state.denyReason = string(runes[:len(runes)-1])
+		return selectorOutcome{}, true
+	case ch == 27:
+		if state.editingDeny || state.denyReason != "" {
+			clearDenyEdit(state)
+			return selectorOutcome{}, true
+		}
+		return selectorOutcome{}, false
+	case state.editingDeny:
+		if isPrintableASCII(ch) {
+			return selectorOutcome{}, appendDenyReason(state, ch)
+		}
+	case ch >= '1' && ch <= '3':
+		selected := int(ch - '1')
+		if selected == 2 {
+			return selectorOutcome{done: true, selected: 2, denyReason: state.denyReason}, false
+		}
+		return selectorOutcome{done: true, selected: selected}, false
+	case isPrintableASCII(ch):
+		enterDenyEdit(state)
+		return selectorOutcome{}, appendDenyReason(state, ch)
+	}
+
+	return selectorOutcome{}, false
+}
+
+func enterDenyEdit(state *selectorState) bool {
+	changed := false
+	if state.selected != 2 {
+		state.selected = 2
+		changed = true
+	}
+	if !state.editingDeny {
+		state.editingDeny = true
+		changed = true
+	}
+	return changed
+}
+
+func clearDenyEdit(state *selectorState) {
+	state.editingDeny = false
+	state.denyReason = ""
+}
+
+func appendDenyReason(state *selectorState, ch byte) bool {
+	if !isPrintableASCII(ch) {
+		return false
+	}
+
+	enterDenyEdit(state)
+	maxLen := max(denyReasonWrapWidth(state)*4, 64)
+	if len([]rune(state.denyReason)) >= maxLen {
+		return false
+	}
+	state.denyReason += string(ch)
+	return true
+}
+
+func isPrintableASCII(ch byte) bool {
+	return ch >= 32 && ch < 127
 }
 
 // clearSelectorBox clears the selector from screen
 func clearSelectorBox(state *selectorState) {
+	clearSelectorLines(state.totalLines)
+}
+
+func selectorClearLineCount(previousTotalLines int, nextTotalLines int) int {
+	return max(previousTotalLines, nextTotalLines)
+}
+
+func clearSelectorLines(totalLines int) {
+	if totalLines <= 0 {
+		return
+	}
 	// Clear the current line (hint line) first
 	fmt.Fprint(os.Stderr, "\r\033[K")
 	// Move up and clear each remaining line
-	for range state.totalLines - 1 {
+	for range totalLines - 1 {
 		fmt.Fprint(os.Stderr, "\033[A\033[K")
 	}
 	fmt.Fprint(os.Stderr, "\r")
 }
 
 // fallbackApproval handles approval when terminal control isn't available.
-func (a *ApprovalManager) fallbackApproval(toolDisplay string) (ApprovalResult, error) {
+func (a *ApprovalManager) fallbackApproval(toolDisplay string, warnings []string) (ApprovalResult, error) {
 	fmt.Fprintln(os.Stderr)
+	for _, warning := range warnings {
+		fmt.Fprintf(os.Stderr, "\033[31;1mwarning:\033[0m %s\n", warning)
+	}
+	if len(warnings) > 0 {
+		fmt.Fprintln(os.Stderr)
+	}
 	fmt.Fprintln(os.Stderr, toolDisplay)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "[1] Execute once  [2] Allow for this session  [3] Deny")
@@ -996,7 +723,6 @@ func (a *ApprovalManager) AllowedTools() []string {
 // FormatApprovalResult returns a formatted string showing the approval result.
 func FormatApprovalResult(toolName string, args map[string]any, result ApprovalResult) string {
 	var label string
-	displayName := ToolDisplayName(toolName)
 
 	switch result.Decision {
 	case ApprovalOnce:
@@ -1007,38 +733,16 @@ func FormatApprovalResult(toolName string, args map[string]any, result ApprovalR
 		label = "Denied"
 	}
 
-	// Format based on tool type
 	if toolName == "bash" {
-		if cmd, ok := args["command"].(string); ok {
-			// Truncate long commands
-			if len(cmd) > 40 {
-				cmd = cmd[:37] + "..."
-			}
-			return fmt.Sprintf("\033[1m%s:\033[0m %s: %s", label, displayName, cmd)
+		if formatted, ok := formatBashApprovalResult(label, args); ok {
+			return formatted
 		}
 	}
-
-	if toolName == "web_search" {
-		if query, ok := args["query"].(string); ok {
-			// Truncate long queries
-			if len(query) > 40 {
-				query = query[:37] + "..."
-			}
-			return fmt.Sprintf("\033[1m%s:\033[0m %s: %s", label, displayName, query)
-		}
+	if formatted, ok := formatBrowserApprovalResult(label, toolName, args); ok {
+		return formatted
 	}
 
-	if toolName == "web_fetch" {
-		if url, ok := args["url"].(string); ok {
-			// Truncate long URLs
-			if len(url) > 50 {
-				url = url[:47] + "..."
-			}
-			return fmt.Sprintf("\033[1m%s:\033[0m %s: %s", label, displayName, url)
-		}
-	}
-
-	return fmt.Sprintf("\033[1m%s:\033[0m %s", label, displayName)
+	return fmt.Sprintf("\033[1m%s:\033[0m %s", label, ToolDisplayName(toolName))
 }
 
 // FormatDenyResult returns the tool result message when a tool is denied.
@@ -1047,6 +751,16 @@ func FormatDenyResult(toolName string, reason string) string {
 		return fmt.Sprintf("User denied execution of %s. Reason: %s", toolName, reason)
 	}
 	return fmt.Sprintf("User denied execution of %s.", toolName)
+}
+
+func truncateDisplayText(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	if limit <= 3 {
+		return value[:limit]
+	}
+	return value[:limit-3] + "..."
 }
 
 // PromptYesNo displays a simple Yes/No prompt and returns the user's choice.
