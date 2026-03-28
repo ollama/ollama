@@ -25,6 +25,27 @@ func (h *tokenHeap) Pop() any {
 	return x
 }
 
+func applyPenalty(logit float32, count int, repeatPenalty float32, presencePenalty float32, frequencyPenalty float32) float32 {
+	if repeatPenalty != 1.0 {
+		// Preserve ordering for negative logits when applying repeat penalty.
+		if logit < 0 {
+			logit *= repeatPenalty
+		} else {
+			logit /= repeatPenalty
+		}
+	}
+
+	if frequencyPenalty != 0 {
+		logit -= float32(count) * frequencyPenalty
+	}
+
+	if presencePenalty != 0 {
+		logit -= presencePenalty
+	}
+
+	return logit
+}
+
 // temperature applies scaling to the logits
 func temperature(ts []token, temp float32) {
 	// Ensure temperature clipping near 0 to avoid numerical instability
