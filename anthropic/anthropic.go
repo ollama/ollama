@@ -68,7 +68,7 @@ type MessagesRequest struct {
 	Model         string          `json:"model"`
 	MaxTokens     int             `json:"max_tokens"`
 	Messages      []MessageParam  `json:"messages"`
-	System        any             `json:"system,omitempty"` // string or []ContentBlock
+	System        any             `json:"system,omitempty"` // string or []map[string]any (JSON-decoded ContentBlock)
 	Stream        bool            `json:"stream,omitempty"`
 	Temperature   *float64        `json:"temperature,omitempty"`
 	TopP          *float64        `json:"top_p,omitempty"`
@@ -82,8 +82,27 @@ type MessagesRequest struct {
 
 // MessageParam represents a message in the request
 type MessageParam struct {
-	Role    string `json:"role"`    // "user" or "assistant"
-	Content any    `json:"content"` // string or []ContentBlock
+	Role    string         `json:"role"`    // "user" or "assistant"
+	Content []ContentBlock `json:"content"` // always []ContentBlock; plain strings are normalized on unmarshal
+}
+
+func (m *MessageParam) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	m.Role = raw.Role
+
+	var s string
+	if err := json.Unmarshal(raw.Content, &s); err == nil {
+		m.Content = []ContentBlock{{Type: "text", Text: &s}}
+		return nil
+	}
+
+	return json.Unmarshal(raw.Content, &m.Content)
 }
 
 // ContentBlock represents a content block in a message.
@@ -102,9 +121,9 @@ type ContentBlock struct {
 	Source *ImageSource `json:"source,omitempty"`
 
 	// For tool_use and server_tool_use blocks
-	ID    string `json:"id,omitempty"`
-	Name  string `json:"name,omitempty"`
-	Input any    `json:"input,omitempty"`
+	ID    string                        `json:"id,omitempty"`
+	Name  string                        `json:"name,omitempty"`
+	Input api.ToolCallFunctionArguments `json:"input,omitzero"`
 
 	// For tool_result and web_search_tool_result blocks
 	ToolUseID string `json:"tool_use_id,omitempty"`
@@ -377,177 +396,144 @@ func convertMessage(msg MessageParam) ([]api.Message, error) {
 	var messages []api.Message
 	role := strings.ToLower(msg.Role)
 
-	switch content := msg.Content.(type) {
-	case string:
-		messages = append(messages, api.Message{Role: role, Content: content})
+	var textContent strings.Builder
+	var images []api.ImageData
+	var toolCalls []api.ToolCall
+	var thinking string
+	var toolResults []api.Message
+	textBlocks := 0
+	imageBlocks := 0
+	toolUseBlocks := 0
+	toolResultBlocks := 0
+	serverToolUseBlocks := 0
+	webSearchToolResultBlocks := 0
+	thinkingBlocks := 0
+	unknownBlocks := 0
 
-	case []any:
-		var textContent strings.Builder
-		var images []api.ImageData
-		var toolCalls []api.ToolCall
-		var thinking string
-		var toolResults []api.Message
-		textBlocks := 0
-		imageBlocks := 0
-		toolUseBlocks := 0
-		toolResultBlocks := 0
-		serverToolUseBlocks := 0
-		webSearchToolResultBlocks := 0
-		thinkingBlocks := 0
-		unknownBlocks := 0
-
-		for _, block := range content {
-			blockMap, ok := block.(map[string]any)
-			if !ok {
-				logutil.Trace("anthropic: invalid content block format", "role", role)
-				return nil, errors.New("invalid content block format")
+	for _, block := range msg.Content {
+		switch block.Type {
+		case "text":
+			textBlocks++
+			if block.Text != nil {
+				textContent.WriteString(*block.Text)
 			}
 
-			blockType, _ := blockMap["type"].(string)
+		case "image":
+			imageBlocks++
+			if block.Source == nil {
+				logutil.Trace("anthropic: invalid image source", "role", role)
+				return nil, errors.New("invalid image source")
+			}
 
-			switch blockType {
-			case "text":
-				textBlocks++
-				if text, ok := blockMap["text"].(string); ok {
-					textContent.WriteString(text)
+			if block.Source.Type == "base64" {
+				decoded, err := base64.StdEncoding.DecodeString(block.Source.Data)
+				if err != nil {
+					logutil.Trace("anthropic: invalid base64 image data", "role", role, "error", err)
+					return nil, fmt.Errorf("invalid base64 image data: %w", err)
 				}
+				images = append(images, decoded)
+			} else {
+				logutil.Trace("anthropic: unsupported image source type", "role", role, "source_type", block.Source.Type)
+				return nil, fmt.Errorf("invalid image source type: %s. Only base64 images are supported.", block.Source.Type)
+			}
 
-			case "image":
-				imageBlocks++
-				source, ok := blockMap["source"].(map[string]any)
-				if !ok {
-					logutil.Trace("anthropic: invalid image source", "role", role)
-					return nil, errors.New("invalid image source")
-				}
+		case "tool_use":
+			toolUseBlocks++
+			if block.ID == "" {
+				logutil.Trace("anthropic: tool_use block missing id", "role", role)
+				return nil, errors.New("tool_use block missing required 'id' field")
+			}
+			if block.Name == "" {
+				logutil.Trace("anthropic: tool_use block missing name", "role", role)
+				return nil, errors.New("tool_use block missing required 'name' field")
+			}
+			toolCalls = append(toolCalls, api.ToolCall{
+				ID: block.ID,
+				Function: api.ToolCallFunction{
+					Name:      block.Name,
+					Arguments: block.Input,
+				},
+			})
 
-				sourceType, _ := source["type"].(string)
-				if sourceType == "base64" {
-					data, _ := source["data"].(string)
-					decoded, err := base64.StdEncoding.DecodeString(data)
-					if err != nil {
-						logutil.Trace("anthropic: invalid base64 image data", "role", role, "error", err)
-						return nil, fmt.Errorf("invalid base64 image data: %w", err)
-					}
-					images = append(images, decoded)
-				} else {
-					logutil.Trace("anthropic: unsupported image source type", "role", role, "source_type", sourceType)
-					return nil, fmt.Errorf("invalid image source type: %s. Only base64 images are supported.", sourceType)
-				}
-				// URL images would need to be fetched - skip for now
+		case "tool_result":
+			toolResultBlocks++
+			var resultContent string
 
-			case "tool_use":
-				toolUseBlocks++
-				id, ok := blockMap["id"].(string)
-				if !ok {
-					logutil.Trace("anthropic: tool_use block missing id", "role", role)
-					return nil, errors.New("tool_use block missing required 'id' field")
-				}
-				name, ok := blockMap["name"].(string)
-				if !ok {
-					logutil.Trace("anthropic: tool_use block missing name", "role", role)
-					return nil, errors.New("tool_use block missing required 'name' field")
-				}
-				tc := api.ToolCall{
-					ID: id,
-					Function: api.ToolCallFunction{
-						Name: name,
-					},
-				}
-				if input, ok := blockMap["input"].(map[string]any); ok {
-					tc.Function.Arguments = mapToArgs(input)
-				}
-				toolCalls = append(toolCalls, tc)
-
-			case "tool_result":
-				toolResultBlocks++
-				toolUseID, _ := blockMap["tool_use_id"].(string)
-				var resultContent string
-
-				switch c := blockMap["content"].(type) {
-				case string:
-					resultContent = c
-				case []any:
-					for _, cb := range c {
-						if cbMap, ok := cb.(map[string]any); ok {
-							if cbMap["type"] == "text" {
-								if text, ok := cbMap["text"].(string); ok {
-									resultContent += text
-								}
+			switch c := block.Content.(type) {
+			case string:
+				resultContent = c
+			case []any:
+				for _, cb := range c {
+					if cbMap, ok := cb.(map[string]any); ok {
+						if cbMap["type"] == "text" {
+							if text, ok := cbMap["text"].(string); ok {
+								resultContent += text
 							}
 						}
 					}
 				}
-
-				toolResults = append(toolResults, api.Message{
-					Role:       "tool",
-					Content:    resultContent,
-					ToolCallID: toolUseID,
-				})
-
-			case "thinking":
-				thinkingBlocks++
-				if t, ok := blockMap["thinking"].(string); ok {
-					thinking = t
-				}
-
-			case "server_tool_use":
-				serverToolUseBlocks++
-				id, _ := blockMap["id"].(string)
-				name, _ := blockMap["name"].(string)
-				tc := api.ToolCall{
-					ID: id,
-					Function: api.ToolCallFunction{
-						Name: name,
-					},
-				}
-				if input, ok := blockMap["input"].(map[string]any); ok {
-					tc.Function.Arguments = mapToArgs(input)
-				}
-				toolCalls = append(toolCalls, tc)
-
-			case "web_search_tool_result":
-				webSearchToolResultBlocks++
-				toolUseID, _ := blockMap["tool_use_id"].(string)
-				toolResults = append(toolResults, api.Message{
-					Role:       "tool",
-					Content:    formatWebSearchToolResultContent(blockMap["content"]),
-					ToolCallID: toolUseID,
-				})
-			default:
-				unknownBlocks++
 			}
-		}
 
-		if textContent.Len() > 0 || len(images) > 0 || len(toolCalls) > 0 || thinking != "" {
-			m := api.Message{
-				Role:      role,
-				Content:   textContent.String(),
-				Images:    images,
-				ToolCalls: toolCalls,
-				Thinking:  thinking,
+			toolResults = append(toolResults, api.Message{
+				Role:       "tool",
+				Content:    resultContent,
+				ToolCallID: block.ToolUseID,
+			})
+
+		case "thinking":
+			thinkingBlocks++
+			if block.Thinking != nil {
+				thinking = *block.Thinking
 			}
-			messages = append(messages, m)
+
+		case "server_tool_use":
+			serverToolUseBlocks++
+			toolCalls = append(toolCalls, api.ToolCall{
+				ID: block.ID,
+				Function: api.ToolCallFunction{
+					Name:      block.Name,
+					Arguments: block.Input,
+				},
+			})
+
+		case "web_search_tool_result":
+			webSearchToolResultBlocks++
+			toolResults = append(toolResults, api.Message{
+				Role:       "tool",
+				Content:    formatWebSearchToolResultContent(block.Content),
+				ToolCallID: block.ToolUseID,
+			})
+		default:
+			unknownBlocks++
 		}
-
-		// Add tool results as separate messages
-		messages = append(messages, toolResults...)
-		logutil.Trace("anthropic: converted block message",
-			"role", role,
-			"blocks", len(content),
-			"text", textBlocks,
-			"image", imageBlocks,
-			"tool_use", toolUseBlocks,
-			"tool_result", toolResultBlocks,
-			"server_tool_use", serverToolUseBlocks,
-			"web_search_result", webSearchToolResultBlocks,
-			"thinking", thinkingBlocks,
-			"unknown", unknownBlocks,
-			"messages", TraceAPIMessages(messages),
-		)
-
-	default:
-		return nil, fmt.Errorf("invalid message content type: %T", content)
 	}
+
+	if textContent.Len() > 0 || len(images) > 0 || len(toolCalls) > 0 || thinking != "" {
+		m := api.Message{
+			Role:      role,
+			Content:   textContent.String(),
+			Images:    images,
+			ToolCalls: toolCalls,
+			Thinking:  thinking,
+		}
+		messages = append(messages, m)
+	}
+
+	// Add tool results as separate messages
+	messages = append(messages, toolResults...)
+	logutil.Trace("anthropic: converted block message",
+		"role", role,
+		"blocks", len(msg.Content),
+		"text", textBlocks,
+		"image", imageBlocks,
+		"tool_use", toolUseBlocks,
+		"tool_result", toolResultBlocks,
+		"server_tool_use", serverToolUseBlocks,
+		"web_search_result", webSearchToolResultBlocks,
+		"thinking", thinkingBlocks,
+		"unknown", unknownBlocks,
+		"messages", TraceAPIMessages(messages),
+	)
 
 	return messages, nil
 }
@@ -882,7 +868,6 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 			slog.Error("failed to marshal tool arguments", "error", err, "tool_id", tc.ID)
 			continue
 		}
-
 		events = append(events, StreamEvent{
 			Event: "content_block_start",
 			Data: ContentBlockStartEvent{
@@ -892,7 +877,7 @@ func (c *StreamConverter) Process(r api.ChatResponse) []StreamEvent {
 					Type:  "tool_use",
 					ID:    tc.ID,
 					Name:  tc.Function.Name,
-					Input: map[string]any{},
+					Input: api.NewToolCallFunctionArguments(),
 				},
 			},
 		})
@@ -989,15 +974,6 @@ func ptr(s string) *string {
 	return &s
 }
 
-// mapToArgs converts a map to ToolCallFunctionArguments
-func mapToArgs(m map[string]any) api.ToolCallFunctionArguments {
-	args := api.NewToolCallFunctionArguments()
-	for k, v := range m {
-		args.Set(k, v)
-	}
-	return args
-}
-
 // CountTokensRequest represents an Anthropic count_tokens request
 type CountTokensRequest struct {
 	Model    string          `json:"model"`
@@ -1030,17 +1006,13 @@ func estimateTokens(req CountTokensRequest) int {
 	var totalLen int
 
 	// Count system prompt
-	if req.System != nil {
-		totalLen += countAnyContent(req.System)
-	}
+	totalLen += countAnyContent(req.System)
 
-	// Count messages
 	for _, msg := range req.Messages {
 		// Count role (always present)
 		totalLen += len(msg.Role)
 		// Count content
-		contentLen := countAnyContent(msg.Content)
-		totalLen += contentLen
+		totalLen += countAnyContent(msg.Content)
 	}
 
 	for _, tool := range req.Tools {
@@ -1063,10 +1035,23 @@ func countAnyContent(content any) int {
 	switch c := content.(type) {
 	case string:
 		return len(c)
-	case []any:
+	case []ContentBlock:
 		total := 0
 		for _, block := range c {
 			total += countContentBlock(block)
+		}
+		return total
+	case []any:
+		total := 0
+		for _, item := range c {
+			data, err := json.Marshal(item)
+			if err != nil {
+				continue
+			}
+			var block ContentBlock
+			if err := json.Unmarshal(data, &block); err == nil {
+				total += countContentBlock(block)
+			}
 		}
 		return total
 	default:
@@ -1077,38 +1062,19 @@ func countAnyContent(content any) int {
 	}
 }
 
-func countContentBlock(block any) int {
-	blockMap, ok := block.(map[string]any)
-	if !ok {
-		if s, ok := block.(string); ok {
-			return len(s)
-		}
-		return 0
-	}
-
+func countContentBlock(block ContentBlock) int {
 	total := 0
-	blockType, _ := blockMap["type"].(string)
-
-	if text, ok := blockMap["text"].(string); ok {
-		total += len(text)
+	if block.Text != nil {
+		total += len(*block.Text)
 	}
-
-	if thinking, ok := blockMap["thinking"].(string); ok {
-		total += len(thinking)
+	if block.Thinking != nil {
+		total += len(*block.Thinking)
 	}
-
-	if blockType == "tool_use" {
-		if data, err := json.Marshal(blockMap); err == nil {
+	if block.Type == "tool_use" || block.Type == "tool_result" {
+		if data, err := json.Marshal(block); err == nil {
 			total += len(data)
 		}
 	}
-
-	if blockType == "tool_result" {
-		if data, err := json.Marshal(blockMap); err == nil {
-			total += len(data)
-		}
-	}
-
 	return total
 }
 

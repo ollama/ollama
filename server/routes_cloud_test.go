@@ -44,6 +44,62 @@ func TestStatusHandler(t *testing.T) {
 	}
 }
 
+func TestStatusHandlerContextLength(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setTestHome(t, t.TempDir())
+
+	tests := []struct {
+		name           string
+		envContextLen  string
+		defaultNumCtx  int
+		wantContextLen int
+	}{
+		{
+			name:           "env var takes precedence over VRAM default",
+			envContextLen:  "8192",
+			defaultNumCtx:  32768,
+			wantContextLen: 8192,
+		},
+		{
+			name:           "falls back to VRAM default when env not set",
+			envContextLen:  "",
+			defaultNumCtx:  32768,
+			wantContextLen: 32768,
+		},
+		{
+			name:           "zero when neither is set",
+			envContextLen:  "",
+			defaultNumCtx:  0,
+			wantContextLen: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.envContextLen != "" {
+				t.Setenv("OLLAMA_CONTEXT_LENGTH", tt.envContextLen)
+			} else {
+				t.Setenv("OLLAMA_CONTEXT_LENGTH", "")
+			}
+
+			s := Server{defaultNumCtx: tt.defaultNumCtx}
+			w := createRequest(t, s.StatusHandler, nil)
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d", w.Code)
+			}
+
+			var resp api.StatusResponse
+			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+				t.Fatal(err)
+			}
+
+			if resp.ContextLength != tt.wantContextLen {
+				t.Fatalf("expected context_length %d, got %d", tt.wantContextLen, resp.ContextLength)
+			}
+		})
+	}
+}
+
 func TestCloudDisabledBlocksRemoteOperations(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setTestHome(t, t.TempDir())

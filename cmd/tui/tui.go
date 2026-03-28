@@ -47,7 +47,7 @@ type menuItem struct {
 
 var mainMenuItems = []menuItem{
 	{
-		title:       "Run a model",
+		title:       "Chat with a model",
 		description: "Start an interactive chat with a model",
 		isRunModel:  true,
 	},
@@ -59,9 +59,6 @@ var mainMenuItems = []menuItem{
 	},
 	{
 		integration: "openclaw",
-	},
-	{
-		integration: "vscode",
 	},
 }
 
@@ -142,7 +139,6 @@ func otherIntegrationItems(state *launch.LauncherState) []menuItem {
 		"claude":   true,
 		"codex":    true,
 		"openclaw": true,
-		"vscode":   true,
 	}
 
 	var items []menuItem

@@ -161,7 +161,7 @@ export async function getModels(query?: string): Promise<Model[]> {
       // Add query if it's in the registry and not already in the list
       if (!exactMatch) {
         const result = await getModelUpstreamInfo(new Model({ model: query }));
-        const existsUpstream = !!result.digest && !result.error;
+        const existsUpstream = result.exists;
         if (existsUpstream) {
           filteredModels.push(new Model({ model: query }));
         }
@@ -339,7 +339,7 @@ export async function deleteChat(chatId: string): Promise<void> {
 // Get upstream information for model staleness checking
 export async function getModelUpstreamInfo(
   model: Model,
-): Promise<{ digest?: string; pushTime: number; error?: string }> {
+): Promise<{ stale: boolean; exists: boolean; error?: string }> {
   try {
     const response = await fetch(`${API_BASE}/api/v1/model/upstream`, {
       method: "POST",
@@ -353,22 +353,22 @@ export async function getModelUpstreamInfo(
 
     if (!response.ok) {
       console.warn(
-        `Failed to check upstream digest for ${model.model}: ${response.status}`,
+        `Failed to check upstream for ${model.model}: ${response.status}`,
       );
-      return { pushTime: 0 };
+      return { stale: false, exists: false };
     }
 
     const data = await response.json();
 
     if (data.error) {
-      console.warn(`Upstream digest check: ${data.error}`);
-      return { error: data.error, pushTime: 0 };
+      console.warn(`Upstream check: ${data.error}`);
+      return { stale: false, exists: false, error: data.error };
     }
 
-    return { digest: data.digest, pushTime: data.pushTime || 0 };
+    return { stale: !!data.stale, exists: true };
   } catch (error) {
     console.warn(`Error checking model staleness:`, error);
-    return { pushTime: 0 };
+    return { stale: false, exists: false };
   }
 }
 
