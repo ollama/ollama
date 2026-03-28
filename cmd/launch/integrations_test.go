@@ -1551,6 +1551,31 @@ func TestIntegration_Editor(t *testing.T) {
 	}
 }
 
+func TestIntegration_AutoInstallable(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{"openclaw", true},
+		{"pi", true},
+		{"claude", false},
+		{"codex", false},
+		{"opencode", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := false
+			integration, err := integrationFor(tt.name)
+			if err == nil {
+				got = integration.autoInstallable
+			}
+			if got != tt.want {
+				t.Errorf("integrationFor(%q).autoInstallable = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIntegrationModels(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)

@@ -967,6 +967,40 @@ func TestLaunchIntegration_OpenclawInstallsBeforeConfigSideEffects(t *testing.T)
 	}
 }
 
+func TestLaunchIntegration_PiInstallsBeforeConfigSideEffects(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+
+	t.Setenv("PATH", t.TempDir())
+
+	editor := &launcherEditorRunner{}
+	withIntegrationOverride(t, "pi", editor)
+
+	selectorCalled := false
+	DefaultMultiSelector = func(title string, items []ModelItem, preChecked []string) ([]string, error) {
+		selectorCalled = true
+		return []string{"llama3.2"}, nil
+	}
+
+	err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "pi"})
+	if err == nil {
+		t.Fatal("expected launch to fail before configuration when Pi is missing")
+	}
+	if !strings.Contains(err.Error(), "required dependencies are missing") {
+		t.Fatalf("expected install prerequisite error, got %v", err)
+	}
+	if selectorCalled {
+		t.Fatal("expected install check to happen before model selection")
+	}
+	if len(editor.edited) != 0 {
+		t.Fatalf("expected no editor writes before install succeeds, got %v", editor.edited)
+	}
+	if _, statErr := os.Stat(filepath.Join(tmpDir, ".pi", "agent", "models.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("expected no Pi config file to be created, stat err = %v", statErr)
+	}
+}
+
 func TestLaunchIntegration_ConfigureOnlyDoesNotRequireInstalledBinary(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)

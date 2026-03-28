@@ -129,7 +129,11 @@ var integrationSpecs = []*IntegrationSpec{
 				_, err := exec.LookPath("pi")
 				return err == nil
 			},
-			Command: []string{"npm", "install", "-g", "@mariozechner/pi-coding-agent"},
+			EnsureInstalled: func() error {
+				_, err := ensurePiInstalled()
+				return err
+			},
+			Command: []string{"npm", "install", "-g", "@mariozechner/pi-coding-agent@latest"},
 		},
 	},
 	{
