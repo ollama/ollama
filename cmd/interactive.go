@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -569,6 +570,16 @@ func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
 }
 
 func normalizeFilePath(fp string) string {
+	// Expand tilde to user's home directory before unescaping,
+	// so that escaped tildes (\~) are not incorrectly expanded.
+	if strings.HasPrefix(fp, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			fp = filepath.Join(home, fp[2:])
+		} else {
+			slog.Debug("failed to expand tilde in file path", "path", fp, "error", err)
+		}
+	}
+
 	return strings.NewReplacer(
 		"\\ ", " ", // Escaped space
 		"\\(", "(", // Escaped left parenthesis
@@ -589,10 +600,10 @@ func normalizeFilePath(fp string) string {
 }
 
 func extractFileNames(input string) []string {
-	// Regex to match file paths starting with optional drive letter, / ./ \ or .\ and include escaped or unescaped spaces (\ or %20)
+	// Regex to match file paths starting with optional drive letter, / ./ ~/ .\ or \ and include escaped or unescaped spaces (\ or %20)
 	// and followed by more characters and a file extension
 	// This will capture non filename strings, but we'll check for file existence to remove mismatches
-	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp)\b`
+	regexPattern := `(?:[a-zA-Z]:)?(?:~/|\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp)\b`
 	re := regexp.MustCompile(regexPattern)
 
 	return re.FindAllString(input, -1)
