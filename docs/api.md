@@ -407,9 +407,7 @@ curl http://localhost:11434/api/generate -d '{
     "repeat_penalty": 1.2,
     "presence_penalty": 1.5,
     "frequency_penalty": 1.0,
-    "penalize_newline": true,
     "stop": ["\n", "user:"],
-    "numa": false,
     "num_ctx": 1024,
     "num_batch": 2,
     "num_gpu": 1,
@@ -419,6 +417,30 @@ curl http://localhost:11434/api/generate -d '{
   }
 }'
 ```
+
+##### Valid Options
+
+| Parameter          | Description                                                                                                       | Type     | Default                    |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------- | -------- | -------------------------- |
+| `num_ctx`          | Size of the context window (total tokens for prompt + response)                                                   | int      | 2048                       |
+| `num_batch`        | Number of tokens to process in parallel                                                                           | int      | 512                        |
+| `num_gpu`          | Number of layers to offload to GPU. 0 = CPU only, -1 = auto                                                      | int      | -1 (auto)                  |
+| `main_gpu`         | Main GPU to use when multiple GPUs are available                                                                  | int      | 0                          |
+| `num_thread`       | Number of threads to use during generation. 0 = auto                                                              | int      | 0 (auto)                   |
+| `use_mmap`         | Use memory-mapped files for loading the model                                                                     | bool     | auto                       |
+| `num_keep`         | Number of tokens to keep from the initial prompt on context shift                                                 | int      | 4                          |
+| `seed`             | Random number seed for generation. -1 = random                                                                    | int      | -1                         |
+| `num_predict`      | Maximum number of tokens to generate. -1 = infinite, -2 = fill context                                           | int      | -1                         |
+| `top_k`            | Limits token selection to the top K most likely tokens                                                            | int      | 40                         |
+| `top_p`            | Limits token selection to a cumulative probability threshold                                                       | float    | 0.9                        |
+| `min_p`            | Minimum probability for a token relative to the most likely token                                                 | float    | 0.0                        |
+| `typical_p`        | Selects tokens based on typical probability distribution                                                          | float    | 1.0                        |
+| `repeat_last_n`    | How many tokens back to consider for repetition penalty. 0 = disabled, -1 = num_ctx                              | int      | 64                         |
+| `temperature`      | Controls randomness of generation. Higher = more creative, lower = more coherent                                  | float    | 0.8                        |
+| `repeat_penalty`   | Penalty for repeating tokens. Higher = less repetition                                                            | float    | 1.1                        |
+| `presence_penalty` | Penalty for tokens already present in the text                                                                    | float    | 0.0                        |
+| `frequency_penalty`| Penalty based on how frequently a token appears in the text                                                       | float    | 0.0                        |
+| `stop`             | Stop sequences. Generation stops when any of these are encountered                                                | string[] | none                       |
 
 ##### Response
 
