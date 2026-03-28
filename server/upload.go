@@ -2,7 +2,7 @@ package server
 
 import (
 	"context"
-	"crypto/md5"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"hash"
@@ -181,15 +181,14 @@ func (b *blobUpload) Run(ctx context.Context, opts *registryOptions) {
 
 	requestURL := <-b.nextURL
 
-	// calculate md5 checksum and add it to the commit request
-	md5sum := md5.New()
+	sha256sum := sha256.New()
 	for _, part := range b.Parts {
-		md5sum.Write(part.Sum(nil))
+		sha256sum.Write(part.Sum(nil))
 	}
 
 	values := requestURL.Query()
 	values.Add("digest", b.Digest)
-	values.Add("etag", fmt.Sprintf("%x-%d", md5sum.Sum(nil), len(b.Parts)))
+	values.Add("etag", fmt.Sprintf("%x-%d", sha256sum.Sum(nil), len(b.Parts)))
 	requestURL.RawQuery = values.Encode()
 
 	headers := make(http.Header)
@@ -227,10 +226,10 @@ func (b *blobUpload) uploadPart(ctx context.Context, method string, requestURL *
 
 	sr := io.NewSectionReader(b.file, part.Offset, part.Size)
 
-	md5sum := md5.New()
+	sha256sum := sha256.New()
 	w := &progressWriter{blobUpload: b}
 
-	resp, err := makeRequest(ctx, method, requestURL, headers, io.TeeReader(sr, io.MultiWriter(w, md5sum)), opts)
+	resp, err := makeRequest(ctx, method, requestURL, headers, io.TeeReader(sr, io.MultiWriter(w, sha256sum)), opts)
 	if err != nil {
 		w.Rollback()
 		return err
@@ -302,7 +301,7 @@ func (b *blobUpload) uploadPart(ctx context.Context, method string, requestURL *
 		b.nextURL <- nextURL
 	}
 
-	part.Hash = md5sum
+	part.Hash = sha256sum
 	return nil
 }
 
