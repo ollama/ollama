@@ -117,6 +117,9 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 			req.Requires = strings.TrimPrefix(requires, "v")
 		case "message":
 			role, msg, _ := strings.Cut(c.Args, ": ")
+			if !isValidMessageRole(role) {
+				return nil, fmt.Errorf("invalid message role %q, must be one of \"system\", \"user\", or \"assistant\"", role)
+			}
 			messages = append(messages, api.Message{Role: role, Content: msg})
 		default:
 			if slices.Contains(deprecatedParameters, c.Name) {
