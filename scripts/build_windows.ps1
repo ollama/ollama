@@ -132,6 +132,11 @@ function cpu {
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         & cmake --install build\cpu --component CPU --strip
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+
+        & cmake --build build\cpu --target llama-server --config Release --parallel $script:JOBS
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        & cmake --install build\cpu --component llama-server --strip
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     }
 }
 

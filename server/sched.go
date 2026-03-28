@@ -441,6 +441,30 @@ func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.De
 				s.loadedMu.Unlock()
 				return false
 			}
+
+			// Pre-flight check: if this model will use llama-server and other
+			// models are loaded, estimate whether it fits in remaining VRAM.
+			// llama-server auto-detects layers based on available VRAM, so if
+			// we predict it won't fit, evict before spawning.
+			if requireFull && llm.WillUseLlamaServer(f) && len(s.loaded) > 0 && len(gpus) > 0 {
+				predicted := llm.PredictServerVRAM(req.model.ModelPath, f, req.opts.NumCtx)
+				var freeVRAM uint64
+				for _, g := range gpus {
+					freeVRAM += g.FreeMemory
+				}
+				// Use 80% of free VRAM as threshold to leave headroom
+				if predicted > freeVRAM*80/100 {
+					slog.Info("llama-server model predicted to exceed available VRAM, evicting",
+						"predicted", format.HumanBytes2(predicted),
+						"free", format.HumanBytes2(freeVRAM))
+					s.loadedMu.Unlock()
+					return true
+				}
+				slog.Info("llama-server model fits alongside existing models",
+					"predicted", format.HumanBytes2(predicted),
+					"free", format.HumanBytes2(freeVRAM))
+			}
+
 			llama, err = s.newServerFn(systemInfo, gpus, req.model.ModelPath, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, numParallel)
 			if err != nil {
 				// some older models are not compatible with newer versions of llama.cpp
