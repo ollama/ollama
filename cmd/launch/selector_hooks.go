@@ -66,8 +66,8 @@ func withLaunchConfirmPolicy(policy launchConfirmPolicy) func() {
 	}
 }
 
-// ConfirmPrompt is the shared confirmation gate for launch flows (integration
-// edits, missing-model pulls, sign-in prompts, OpenClaw install/security, etc).
+// ConfirmPrompt is the shared confirmation gate for launch flows (missing-model
+// pulls, sign-in prompts, OpenClaw install/security, etc).
 // Behavior is controlled by currentLaunchConfirmPolicy, typically scoped by
 // withLaunchConfirmPolicy in LaunchCmd (e.g. auto-approve with --yes).
 func ConfirmPrompt(prompt string) (bool, error) {

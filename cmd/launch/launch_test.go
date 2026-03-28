@@ -617,12 +617,9 @@ func TestLaunchIntegration_EditorForceConfigure(t *testing.T) {
 		return []string{"llama3.2", "qwen3:8b"}, nil
 	}
 
-	var proceedPrompt bool
 	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
-		if prompt == "Proceed?" {
-			proceedPrompt = true
-		}
-		return true, nil
+		t.Fatalf("unexpected confirmation prompt: %q", prompt)
+		return false, nil
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -649,9 +646,6 @@ func TestLaunchIntegration_EditorForceConfigure(t *testing.T) {
 
 	if !multiCalled {
 		t.Fatal("expected multi selector to be used for forced editor configure")
-	}
-	if !proceedPrompt {
-		t.Fatal("expected backup warning confirmation before edit")
 	}
 	if diff := compareStringSlices(editor.edited, [][]string{{"llama3.2", "qwen3:8b"}}); diff != "" {
 		t.Fatalf("unexpected edited models (-want +got):\n%s", diff)
@@ -1444,8 +1438,8 @@ func TestLaunchIntegration_ConfigureOnlyDoesNotRequireInstalledBinary(t *testing
 	if editor.ranModel != "" {
 		t.Fatalf("expected configure-only flow to skip launch, got %q", editor.ranModel)
 	}
-	if !slices.Contains(prompts, "Proceed?") {
-		t.Fatalf("expected editor warning prompt, got %v", prompts)
+	if slices.Contains(prompts, "Proceed?") {
+		t.Fatalf("expected editor write to skip Proceed prompt, got %v", prompts)
 	}
 	if !slices.Contains(prompts, "Launch LauncherEditor now?") {
 		t.Fatalf("expected configure-only launch prompt, got %v", prompts)
