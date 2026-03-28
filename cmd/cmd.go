@@ -2075,6 +2075,16 @@ func runLauncherAction(cmd *cobra.Command, action tui.TUIAction, deps launcherDe
 	}
 }
 
+func requireModelArg(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		return errors.New("missing model name")
+	}
+	if len(args) > 1 {
+		return fmt.Errorf("extra arguments: %v", args[1:])
+	}
+	return nil
+}
+
 func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	cobra.EnableCommandSorting = false
@@ -2108,7 +2118,7 @@ func NewCLI() *cobra.Command {
 	createCmd := &cobra.Command{
 		Use:   "create MODEL",
 		Short: "Create a model",
-		Args:  cobra.ExactArgs(1),
+		Args:  requireModelArg,
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			// Skip server check for experimental mode (writes directly to disk)
 			if experimental, _ := cmd.Flags().GetBool("experimental"); experimental {
@@ -2126,7 +2136,7 @@ func NewCLI() *cobra.Command {
 	showCmd := &cobra.Command{
 		Use:     "show MODEL",
 		Short:   "Show information for a model",
-		Args:    cobra.ExactArgs(1),
+		Args:    requireModelArg,
 		PreRunE: checkServerHeartbeat,
 		RunE:    ShowHandler,
 	}
@@ -2169,7 +2179,7 @@ func NewCLI() *cobra.Command {
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
 		Short:   "Stop a running model",
-		Args:    cobra.ExactArgs(1),
+		Args:    requireModelArg,
 		PreRunE: checkServerHeartbeat,
 		RunE:    StopHandler,
 	}
@@ -2185,7 +2195,7 @@ func NewCLI() *cobra.Command {
 	pullCmd := &cobra.Command{
 		Use:     "pull MODEL",
 		Short:   "Pull a model from a registry",
-		Args:    cobra.ExactArgs(1),
+		Args:    requireModelArg,
 		PreRunE: checkServerHeartbeat,
 		RunE:    PullHandler,
 	}
@@ -2195,7 +2205,7 @@ func NewCLI() *cobra.Command {
 	pushCmd := &cobra.Command{
 		Use:     "push MODEL",
 		Short:   "Push a model to a registry",
-		Args:    cobra.ExactArgs(1),
+		Args:    requireModelArg,
 		PreRunE: checkServerHeartbeat,
 		RunE:    PushHandler,
 	}
@@ -2253,7 +2263,15 @@ func NewCLI() *cobra.Command {
 	copyCmd := &cobra.Command{
 		Use:     "cp SOURCE DESTINATION",
 		Short:   "Copy a model",
-		Args:    cobra.ExactArgs(2),
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) < 2 {
+				return errors.New("missing source and/or destination model name")
+			}
+			if len(args) > 2 {
+				return fmt.Errorf("extra arguments: %v", args[2:])
+			}
+			return nil
+		},
 		PreRunE: checkServerHeartbeat,
 		RunE:    CopyHandler,
 	}
