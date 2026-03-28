@@ -171,6 +171,16 @@ type Settings struct {
 	AutoUpdateEnabled bool
 }
 
+// ModelSettings stores per-model overrides for generation parameters
+type ModelSettings struct {
+	Model         string   `json:"model"`
+	Temperature   *float64 `json:"temperature,omitempty"`
+	ContextLength *int     `json:"context_length,omitempty"`
+	TopK          *int     `json:"top_k,omitempty"`
+	TopP          *float64 `json:"top_p,omitempty"`
+	SystemPrompt  string   `json:"system_prompt,omitempty"`
+}
+
 type Store struct {
 	// DBPath allows overriding the default database path (mainly for testing)
 	DBPath string
@@ -398,6 +408,27 @@ func (s *Store) SetSettings(settings Settings) error {
 	}
 
 	return s.db.setSettings(settings)
+}
+
+func (s *Store) GetModelSettings(model string) (*ModelSettings, error) {
+	if err := s.ensureDB(); err != nil {
+		return nil, fmt.Errorf("load model settings: %w", err)
+	}
+	return s.db.getModelSettings(model)
+}
+
+func (s *Store) SetModelSettings(settings *ModelSettings) error {
+	if err := s.ensureDB(); err != nil {
+		return err
+	}
+	return s.db.setModelSettings(settings)
+}
+
+func (s *Store) DeleteModelSettings(model string) error {
+	if err := s.ensureDB(); err != nil {
+		return err
+	}
+	return s.db.deleteModelSettings(model)
 }
 
 func (s *Store) Chats() ([]Chat, error) {

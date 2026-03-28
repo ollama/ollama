@@ -14,7 +14,7 @@ import (
 
 // currentSchemaVersion defines the current database schema version.
 // Increment this when making schema changes that require migrations.
-const currentSchemaVersion = 15
+const currentSchemaVersion = 16
 
 // database wraps the SQLite connection.
 // SQLite handles its own locking for concurrent access:
@@ -148,6 +148,17 @@ func (db *database) init() error {
 		plan TEXT NOT NULL DEFAULT '',
 		cached_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 	);
+
+	CREATE TABLE IF NOT EXISTS model_settings (
+		model TEXT PRIMARY KEY,
+		temperature REAL,
+		context_length INTEGER,
+		top_k INTEGER,
+		top_p REAL,
+		system_prompt TEXT NOT NULL DEFAULT '',
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	);
 	`, currentSchemaVersion)
 
 	_, err := db.conn.Exec(schema)
@@ -264,6 +275,12 @@ func (db *database) migrate() error {
 				return fmt.Errorf("migrate v14 to v15: %w", err)
 			}
 			version = 15
+		case 15:
+			// add model_settings table for per-model generation parameters
+			if err := db.migrateV15ToV16(); err != nil {
+				return fmt.Errorf("migrate v15 to v16: %w", err)
+			}
+			version = 16
 		default:
 			// If we have a version we don't recognize, just set it to current
 			// This might happen during development
@@ -515,6 +532,92 @@ func (db *database) migrateV14ToV15() error {
 		return fmt.Errorf("update schema version: %w", err)
 	}
 
+	return nil
+}
+
+// migrateV15ToV16 adds the model_settings table for per-model generation parameters
+func (db *database) migrateV15ToV16() error {
+	_, err := db.conn.Exec(`
+		CREATE TABLE IF NOT EXISTS model_settings (
+			model TEXT PRIMARY KEY,
+			temperature REAL,
+			context_length INTEGER,
+			top_k INTEGER,
+			top_p REAL,
+			system_prompt TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("create model_settings table: %w", err)
+	}
+
+	_, err = db.conn.Exec(`UPDATE settings SET schema_version = 16`)
+	if err != nil {
+		return fmt.Errorf("update schema version: %w", err)
+	}
+
+	return nil
+}
+
+func (db *database) getModelSettings(model string) (*ModelSettings, error) {
+	var s ModelSettings
+	var temperature, topP sql.NullFloat64
+	var contextLength, topK sql.NullInt64
+
+	err := db.conn.QueryRow(`
+		SELECT model, temperature, context_length, top_k, top_p, system_prompt
+		FROM model_settings WHERE model = ?
+	`, model).Scan(&s.Model, &temperature, &contextLength, &topK, &topP, &s.SystemPrompt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("get model settings: %w", err)
+	}
+
+	if temperature.Valid {
+		s.Temperature = &temperature.Float64
+	}
+	if contextLength.Valid {
+		v := int(contextLength.Int64)
+		s.ContextLength = &v
+	}
+	if topK.Valid {
+		v := int(topK.Int64)
+		s.TopK = &v
+	}
+	if topP.Valid {
+		s.TopP = &topP.Float64
+	}
+
+	return &s, nil
+}
+
+func (db *database) setModelSettings(s *ModelSettings) error {
+	_, err := db.conn.Exec(`
+		INSERT INTO model_settings (model, temperature, context_length, top_k, top_p, system_prompt, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(model) DO UPDATE SET
+			temperature = excluded.temperature,
+			context_length = excluded.context_length,
+			top_k = excluded.top_k,
+			top_p = excluded.top_p,
+			system_prompt = excluded.system_prompt,
+			updated_at = CURRENT_TIMESTAMP
+	`, s.Model, s.Temperature, s.ContextLength, s.TopK, s.TopP, s.SystemPrompt)
+	if err != nil {
+		return fmt.Errorf("set model settings: %w", err)
+	}
+	return nil
+}
+
+func (db *database) deleteModelSettings(model string) error {
+	_, err := db.conn.Exec(`DELETE FROM model_settings WHERE model = ?`, model)
+	if err != nil {
+		return fmt.Errorf("delete model settings: %w", err)
+	}
 	return nil
 }
 
