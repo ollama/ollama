@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -170,21 +171,144 @@ func IsAutoAllowed(command string) bool {
 	return false
 }
 
+// heredocRe matches heredoc openers like << EOF, << 'EOF', << "EOF", <<-EOF, etc.
+var heredocRe = regexp.MustCompile(`<<-?\s*['"]?(\w+)['"]?`)
+
+// stripHeredocs removes heredoc bodies from a command string so that
+// content inside heredocs does not trigger deny pattern false positives.
+func stripHeredocs(command string) string {
+	matches := heredocRe.FindAllStringSubmatchIndex(command, -1)
+	if len(matches) == 0 {
+		return command
+	}
+
+	var result strings.Builder
+	prev := 0
+	for _, match := range matches {
+		delimiter := command[match[2]:match[3]]
+		// Keep everything up to and including the heredoc operator line
+		lineEnd := strings.Index(command[match[1]:], "\n")
+		if lineEnd == -1 {
+			result.WriteString(command[prev:])
+			return result.String()
+		}
+		endOfOpener := match[1] + lineEnd + 1
+		result.WriteString(command[prev:endOfOpener])
+
+		// Find the closing delimiter on its own line
+		body := command[endOfOpener:]
+		closerIdx := -1
+		offset := 0
+		for offset < len(body) {
+			nlIdx := strings.Index(body[offset:], "\n")
+			var line string
+			if nlIdx == -1 {
+				line = body[offset:]
+			} else {
+				line = body[offset : offset+nlIdx]
+			}
+			if strings.TrimSpace(line) == delimiter {
+				closerIdx = offset
+				if nlIdx != -1 {
+					closerIdx = offset + nlIdx + 1
+				} else {
+					closerIdx = offset + len(line)
+				}
+				break
+			}
+			if nlIdx == -1 {
+				break
+			}
+			offset += nlIdx + 1
+		}
+
+		if closerIdx != -1 {
+			prev = endOfOpener + closerIdx
+		} else {
+			// No closing delimiter found, strip the rest
+			return result.String()
+		}
+	}
+	result.WriteString(command[prev:])
+	return result.String()
+}
+
+// commandPrefixes are shell operators/syntax that can precede a command name.
+// This covers pipelines, logical operators, subshells, and command substitution.
+var commandPrefixes = []string{"|", "&&", "||", ";", "(", "$(", "`", "\n", "\t"}
+
+// matchesAtCommandPosition checks whether a pattern appears at a position
+// where it could be an actual command (start of string or after a shell operator).
+func matchesAtCommandPosition(commandLower, patternLower string) bool {
+	idx := 0
+	for {
+		pos := strings.Index(commandLower[idx:], patternLower)
+		if pos == -1 {
+			return false
+		}
+		absPos := idx + pos
+		if absPos == 0 {
+			return true
+		}
+		// Check what precedes the match
+		before := commandLower[:absPos]
+		trimmed := strings.TrimRight(before, " ")
+		if len(trimmed) == 0 {
+			return true
+		}
+		for _, prefix := range commandPrefixes {
+			if strings.HasSuffix(trimmed, prefix) {
+				return true
+			}
+		}
+		idx = absPos + 1
+	}
+}
+
+// commandPatterns are deny patterns that should only match at command
+// positions to avoid false positives from substrings in code/data.
+// When adding new deny patterns to denyPatterns, consider whether the pattern
+// could appear as a substring in normal code and add it here if so.
+var commandPatterns = map[string]bool{
+	"sudo ":   true,
+	"su ":     true,
+	"doas ":   true,
+	"nc ":     true,
+	"netcat ": true,
+	"scp ":    true,
+	"rsync ":  true,
+	"chown ":  true,
+	"chgrp ":  true,
+	"history": true,
+	"mkfifo":  true,
+	"shred":   true,
+	"mkfs":    true,
+}
+
 // IsDenied checks if a bash command matches deny patterns.
 // Returns true and the matched pattern if denied.
 func IsDenied(command string) (bool, string) {
-	commandLower := strings.ToLower(command)
+	stripped := stripHeredocs(command)
+	commandLower := strings.ToLower(stripped)
 
-	// Check deny patterns
 	for _, pattern := range denyPatterns {
-		if strings.Contains(commandLower, strings.ToLower(pattern)) {
-			return true, pattern
+		patternLower := strings.ToLower(pattern)
+		if commandPatterns[patternLower] {
+			if matchesAtCommandPosition(commandLower, patternLower) {
+				return true, pattern
+			}
+		} else {
+			if strings.Contains(commandLower, patternLower) {
+				return true, pattern
+			}
 		}
 	}
 
-	// Check deny path patterns
+	// Check deny path patterns against the full command (including heredocs)
+	// since path patterns like .env are specific enough
+	fullLower := strings.ToLower(command)
 	for _, pattern := range denyPathPatterns {
-		if strings.Contains(commandLower, strings.ToLower(pattern)) {
+		if strings.Contains(fullLower, strings.ToLower(pattern)) {
 			return true, pattern
 		}
 	}
