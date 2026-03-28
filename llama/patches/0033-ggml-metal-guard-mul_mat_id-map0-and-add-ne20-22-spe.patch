@@ -10,7 +10,7 @@ Subject: [PATCH] ggml-metal: guard mul_mat_id map0 and add ne20=22
  2 files changed, 3 insertions(+), 3 deletions(-)
 
 diff --git a/ggml/src/ggml-metal/ggml-metal-ops.cpp b/ggml/src/ggml-metal/ggml-metal-ops.cpp
-index 306dbcf36..887ece452 100644
+index c0bcad392..53f0bb7f3 100644
 --- a/ggml/src/ggml-metal/ggml-metal-ops.cpp
 +++ b/ggml/src/ggml-metal/ggml-metal-ops.cpp
 @@ -2289,7 +2289,8 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {

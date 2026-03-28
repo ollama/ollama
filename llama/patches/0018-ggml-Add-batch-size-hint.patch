@@ -322,10 +322,10 @@ index a63ee2b9d..672284393 100644
  }
  
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 1a1309853..3e543c095 100644
+index 671f4bb07..b52e4f133 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -14129,10 +14129,12 @@ static int32_t find_first_set(uint32_t x) {
+@@ -14232,10 +14232,12 @@ static int32_t find_first_set(uint32_t x) {
      return ret;
  }
  
