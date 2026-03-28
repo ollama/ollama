@@ -217,7 +217,7 @@ func New(c fs.Config) (model.Model, error) {
 					)),
 				},
 			},
-			false,
+			true,
 		),
 		Layers: layers,
 		Options: Options{
