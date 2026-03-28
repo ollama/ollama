@@ -347,8 +347,22 @@ func (d DeviceInfo) Driver() string {
 // of model allocations)
 func (d DeviceInfo) MinimumMemory() uint64 {
 	if d.Library == "Metal" {
+		// Metal allocates a command queue and other framework structures at
+		// context creation. 512 MiB was determined empirically to cover those
+		// plus typical OS compositor VRAM usage on Apple Silicon.
 		return 512 * format.MebiByte
 	}
+	// iGPU shares physical memory with the CPU. The GPU driver context
+	// overhead is lower because there are no separate VRAM allocator
+	// structures — system RAM is directly addressed. 256 MiB covers the
+	// Vulkan device context and command pool overhead measured on Intel
+	// Iris Xe and AMD integrated graphics.
+	if d.Integrated {
+		return 256 * format.MebiByte
+	}
+	// Discrete GPU overhead: 457 MiB covers the VRAM allocator metadata,
+	// Vulkan/CUDA/ROCm device context, and display engine reservation
+	// observed across NVIDIA and AMD discrete GPUs.
 	return 457 * format.MebiByte
 }
 
