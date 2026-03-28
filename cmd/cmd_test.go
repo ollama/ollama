@@ -2187,7 +2187,7 @@ func TestIsLocalhost(t *testing.T) {
 	}{
 		{"default empty", "", true},
 		{"localhost no port", "localhost", true},
-		{"localhost with port", "localhost:11435", true},
+		{"localhost with port", "localhost:11434", true},
 		{"127.0.0.1 no port", "127.0.0.1", true},
 		{"127.0.0.1 with port", "127.0.0.1:11434", true},
 		{"0.0.0.0 no port", "0.0.0.0", true},
