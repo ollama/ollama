@@ -32,6 +32,7 @@ import {
   useHasImageCapability,
 } from "@/hooks/useModelCapabilities";
 import { useImageGeneration } from "@/hooks/useImageGeneration";
+import { ImageGenerationDisplay } from "./ImageGenerationDisplay";
 import { Message } from "@/gotypes";
 
 export default function Chat({ chatId }: { chatId: string }) {
@@ -217,49 +218,9 @@ export default function Chat({ chatId }: { chatId: string }) {
     >
       {chatId === "new" ? (
         <div className="flex flex-col h-screen justify-center relative">
-          {/* Image generation result on new chat screen */}
-          {(imageGen.isGenerating ||
-            imageGen.image ||
-            imageGen.error) && (
-            <div className="px-6 py-4 max-w-3xl mx-auto w-full">
-              {imageGen.isGenerating && (
-                <div className="flex flex-col gap-2">
-                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-700">
-                    <div
-                      className="h-full rounded-full bg-neutral-800 dark:bg-neutral-200 transition-all"
-                      style={{
-                        width: imageGen.progress
-                          ? `${(imageGen.progress.completed / imageGen.progress.total) * 100}%`
-                          : "100%",
-                        animation: imageGen.progress
-                          ? "none"
-                          : "pulse 1.5s ease-in-out infinite",
-                      }}
-                    />
-                  </div>
-                  <p className="text-xs text-neutral-500">
-                    {imageGen.progress
-                      ? `${imageGen.progress.completed}/${imageGen.progress.total} steps`
-                      : "Generating..."}
-                  </p>
-                </div>
-              )}
-              {imageGen.error && (
-                <div className="rounded-lg bg-red-50 dark:bg-red-900/20 p-3 text-sm text-red-600 dark:text-red-400">
-                  {imageGen.error}
-                </div>
-              )}
-              {imageGen.image && (
-                <div className="flex flex-col items-start gap-2">
-                  <img
-                    src={`data:image/png;base64,${imageGen.image}`}
-                    alt="Generated image"
-                    className="max-w-full rounded-lg"
-                  />
-                </div>
-              )}
-            </div>
-          )}
+          <div className="max-w-3xl mx-auto w-full">
+            <ImageGenerationDisplay {...imageGen} />
+          </div>
           <div className="px-6">
             <ChatForm
               hasMessages={false}
@@ -295,49 +256,7 @@ export default function Chat({ chatId }: { chatId: string }) {
               browserToolResult={browserToolResult}
             />
 
-            {/* Image generation result */}
-            {(imageGen.isGenerating ||
-              imageGen.image ||
-              imageGen.error) && (
-              <div className="px-6 py-4">
-                {imageGen.isGenerating && (
-                  <div className="flex flex-col gap-2">
-                    <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-700">
-                      <div
-                        className="h-full rounded-full bg-neutral-800 dark:bg-neutral-200 transition-all"
-                        style={{
-                          width: imageGen.progress
-                            ? `${(imageGen.progress.completed / imageGen.progress.total) * 100}%`
-                            : "100%",
-                          animation: imageGen.progress
-                            ? "none"
-                            : "pulse 1.5s ease-in-out infinite",
-                        }}
-                      />
-                    </div>
-                    <p className="text-xs text-neutral-500">
-                      {imageGen.progress
-                        ? `${imageGen.progress.completed}/${imageGen.progress.total} steps`
-                        : "Generating..."}
-                    </p>
-                  </div>
-                )}
-                {imageGen.error && (
-                  <div className="rounded-lg bg-red-50 dark:bg-red-900/20 p-3 text-sm text-red-600 dark:text-red-400">
-                    {imageGen.error}
-                  </div>
-                )}
-                {imageGen.image && (
-                  <div className="flex flex-col items-start gap-2">
-                    <img
-                      src={`data:image/png;base64,${imageGen.image}`}
-                      alt="Generated image"
-                      className="max-w-full rounded-lg"
-                    />
-                  </div>
-                )}
-              </div>
-            )}
+            <ImageGenerationDisplay {...imageGen} />
           </section>
 
           <div className="flex-shrink-0 sticky bottom-0 z-20">
