@@ -287,11 +287,17 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					opts.WordWrap = false
 					fmt.Println("Set 'nowordwrap' mode.")
 				case "verbose":
+					if cmd.Flags().Lookup("verbose") == nil {
+						cmd.Flags().Bool("verbose", false, "Show timings for response")
+					}
 					if err := cmd.Flags().Set("verbose", "true"); err != nil {
 						return err
 					}
 					fmt.Println("Set 'verbose' mode.")
 				case "quiet":
+					if cmd.Flags().Lookup("verbose") == nil {
+						cmd.Flags().Bool("verbose", false, "Show timings for response")
+					}
 					if err := cmd.Flags().Set("verbose", "false"); err != nil {
 						return err
 					}
