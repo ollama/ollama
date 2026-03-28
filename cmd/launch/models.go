@@ -229,33 +229,18 @@ func pullMissingModel(ctx context.Context, client *api.Client, model string) err
 
 // prepareEditorIntegration persists models and applies editor-managed config files.
 func prepareEditorIntegration(name string, runner Runner, editor Editor, models []string) error {
-	if ok, err := confirmEditorEdit(runner, editor); err != nil {
-		return err
-	} else if !ok {
-		return errCancelled
-	}
+	showBackupNotice := len(editor.Paths()) > 0
+
 	if err := editor.Edit(models); err != nil {
 		return fmt.Errorf("setup failed: %w", err)
 	}
 	if err := config.SaveIntegration(name, models); err != nil {
 		return fmt.Errorf("failed to save: %w", err)
 	}
+	if showBackupNotice {
+		fmt.Fprintf(os.Stderr, "%s%s configuration has been modified. Backups are saved in %s/%s\n", ansiGray, runner, fileutil.BackupDir(), ansiReset)
+	}
 	return nil
-}
-
-func confirmEditorEdit(runner Runner, editor Editor) (bool, error) {
-	paths := editor.Paths()
-	if len(paths) == 0 {
-		return true, nil
-	}
-
-	fmt.Fprintf(os.Stderr, "This will modify your %s configuration:\n", runner)
-	for _, path := range paths {
-		fmt.Fprintf(os.Stderr, "  %s\n", path)
-	}
-	fmt.Fprintf(os.Stderr, "Backups will be saved to %s/\n\n", fileutil.BackupDir())
-
-	return ConfirmPrompt("Proceed?")
 }
 
 // buildModelList merges existing models with recommendations for selection UIs.
