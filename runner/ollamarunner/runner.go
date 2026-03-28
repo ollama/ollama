@@ -759,7 +759,9 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		logits := outputs[iBatches[i]*vocabSize : (iBatches[i]+1)*vocabSize]
 		token, err := seq.sampler.Sample(logits)
 		if err != nil {
-			panic("failed to sample token")
+			slog.Error("failed to sample token", "seq", seq.cache.Id, "error", err)
+			s.removeSequence(i, llm.DoneReasonError)
+			continue
 		}
 
 		nextBatchTokens[i].Token = token
@@ -776,7 +778,9 @@ func (s *Server) computeBatch(activeBatch batchState) {
 
 		piece, err := s.model.(tokenizer.Tokenizer).Decode([]int32{token})
 		if err != nil {
-			panic("failed to decode token")
+			slog.Error("failed to decode token", "seq", seq.cache.Id, "token", token, "error", err)
+			s.removeSequence(i, llm.DoneReasonError)
+			continue
 		}
 
 		// Calculate logprobs if requested (after EOS check to avoid logprobs for EOS tokens)

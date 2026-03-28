@@ -1487,6 +1487,8 @@ const (
 	DoneReasonLength
 	// DoneReasonConnectionClosed indicates the completion stopped due to the connection being closed
 	DoneReasonConnectionClosed
+	// DoneReasonError indicates the completion stopped due to an internal error
+	DoneReasonError
 )
 
 func (d DoneReason) String() string {
@@ -1495,6 +1497,8 @@ func (d DoneReason) String() string {
 		return "length"
 	case DoneReasonStop:
 		return "stop"
+	case DoneReasonError:
+		return "error"
 	default:
 		return "" // closed
 	}
