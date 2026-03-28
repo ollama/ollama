@@ -149,7 +149,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 							if cfgFile, fErr := os.Open(configPath); fErr == nil {
 								var baseConfig model.ConfigV2
 								if decErr := json.NewDecoder(cfgFile).Decode(&baseConfig); decErr == nil {
-									if config.Renderer == "" {
+									if config.Renderer == "" && r.Template == "" {
 										config.Renderer = baseConfig.Renderer
 									}
 									if config.Parser == "" {
