@@ -1225,9 +1225,11 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 				modelDetails.ParameterSize = format.HumanNumber(uint64(paramCount))
 			}
 		}
-		// Get torch_dtype directly from config.json for quantization level
-		if dtype, err := xserver.GetSafetensorsDtype(name); err == nil && dtype != "" {
-			modelDetails.QuantizationLevel = dtype
+		// Older manifests may not have file_type populated for safetensors models.
+		if modelDetails.QuantizationLevel == "" {
+			if dtype, err := xserver.GetSafetensorsDtype(name); err == nil && dtype != "" {
+				modelDetails.QuantizationLevel = dtype
+			}
 		}
 	}
 
