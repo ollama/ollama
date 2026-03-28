@@ -71,6 +71,11 @@ func (t *Tokenizer) BOS() int32 {
 	return t.vocab.BOS
 }
 
+// AddBOS returns whether a BOS token should be prepended during encoding.
+func (t *Tokenizer) AddBOS() bool {
+	return t.vocab.AddBOS
+}
+
 // EOS returns the first end of sequence token ID (for backwards compatibility)
 func (t *Tokenizer) EOS() int32 {
 	if len(t.vocab.EOS) > 0 {

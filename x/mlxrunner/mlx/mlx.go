@@ -18,6 +18,10 @@ func Version() string {
 }
 
 func doEval(outputs []*Array, async bool) {
+	if len(outputs) == 0 {
+		return
+	}
+
 	vector := C.mlx_vector_array_new()
 	defer C.mlx_vector_array_free(vector)
 

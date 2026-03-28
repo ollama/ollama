@@ -24,7 +24,7 @@ var recommendedModels = []ModelItem{
 	{Name: "kimi-k2.5:cloud", Description: "Multimodal reasoning with subagents", Recommended: true},
 	{Name: "qwen3.5:cloud", Description: "Reasoning, coding, and agentic tool use with vision", Recommended: true},
 	{Name: "glm-5:cloud", Description: "Reasoning and code generation", Recommended: true},
-	{Name: "minimax-m2.5:cloud", Description: "Fast, efficient coding and real-world productivity", Recommended: true},
+	{Name: "minimax-m2.7:cloud", Description: "Fast, efficient coding and real-world productivity", Recommended: true},
 	{Name: "glm-4.7-flash", Description: "Reasoning and code generation locally", Recommended: true},
 	{Name: "qwen3.5", Description: "Reasoning, coding, and visual understanding locally", Recommended: true},
 }
@@ -43,7 +43,7 @@ type cloudModelLimit struct {
 // cloudModelLimits maps cloud model base names to their token limits.
 // TODO(parthsareen): grab context/output limits from model info instead of hardcoding
 var cloudModelLimits = map[string]cloudModelLimit{
-	"minimax-m2.5":        {Context: 204_800, Output: 128_000},
+	"minimax-m2.7":        {Context: 204_800, Output: 128_000},
 	"cogito-2.1:671b":     {Context: 163_840, Output: 65_536},
 	"deepseek-v3.1:671b":  {Context: 163_840, Output: 163_840},
 	"deepseek-v3.2":       {Context: 163_840, Output: 65_536},
@@ -92,6 +92,10 @@ func OpenBrowser(url string) {
 	case "darwin":
 		_ = exec.Command("open", url).Start()
 	case "linux":
+		// Skip on headless systems where no display server is available
+		if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
+			return
+		}
 		_ = exec.Command("xdg-open", url).Start()
 	case "windows":
 		_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()

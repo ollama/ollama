@@ -81,7 +81,7 @@ type Config struct {
 
 // Model is the Qwen 3.5 model.
 type Model struct {
-	EmbedTokens *nn.Embedding
+	EmbedTokens nn.EmbeddingLayer
 	Layers      []*Layer
 	Norm        *nn.RMSNorm
 	LMHead      nn.LinearLayer
@@ -824,12 +824,11 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		freeTensorKeys(tensors, mtpKeys...)
 	}
 
-	embedKey := modelPrefix + "embed_tokens.weight"
-	embedWeight := tensors[embedKey]
-	if embedWeight == nil {
+	embedTokens := model.MakeEmbeddingLayer(tensors, modelPrefix+"embed_tokens", cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant)
+	if embedTokens == nil {
 		return fmt.Errorf("missing embedding weight: %sembed_tokens.weight", modelPrefix)
 	}
-	m.EmbedTokens = nn.NewEmbedding(embedWeight)
+	m.EmbedTokens = embedTokens
 
 	normKey := modelPrefix + "norm.weight"
 	normWeight := maybeShiftNormWeight(normKey, tensors[normKey], shouldShiftNormWeights)
@@ -839,13 +838,13 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	m.Norm = nn.NewRMSNorm(normWeight, cfg.RMSNormEps)
 
 	if cfg.TieWordEmbeddings {
-		m.LMHead = nn.NewLinear(embedWeight, nil)
+		m.LMHead = m.EmbedTokens.AsLinear()
 	} else if lmHead := linears.Make(prefix + "lm_head"); lmHead != nil {
 		m.LMHead = lmHead
 	} else if lmHead := linears.Make("lm_head"); lmHead != nil {
 		m.LMHead = lmHead
 	} else {
-		m.LMHead = nn.NewLinear(embedWeight, nil)
+		m.LMHead = m.EmbedTokens.AsLinear()
 	}
 
 	useQuantizedExperts := supportsGatherQMM(cfg.QuantMode, cfg.QuantBits)
@@ -1065,7 +1064,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 }
 
 func softplus(x *mlx.Array) *mlx.Array {
-	return mlx.Log(mlx.AddScalar(mlx.Exp(x), 1.0))
+	return mlx.Logaddexp(x, mlx.Zeros(x.DType(), x.Dims()...))
 }
 
 func depthwiseCausalConv1d(x, w *mlx.Array, outLen int32) *mlx.Array {
@@ -1150,7 +1149,8 @@ func (a *FullAttention) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Co
 
 	out := mlx.ScaledDotProductAttentionCausal(q, k, v, cfg.Scale, L > 1)
 	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, cfg.NumAttentionHeads*cfg.HeadDim)
-	out = mlx.Mul(out, mlx.Sigmoid(gate))
+	gateSigmoid := mlx.Sigmoid(gate)
+	out = mlx.Mul(out, gateSigmoid)
 	out = a.OProj.Forward(out)
 	return out
 }
@@ -1175,7 +1175,6 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Co
 			mlx.Reshape(v, B, L, cfg.LinearNumValueHeads*cfg.LinearValueHeadDim),
 		}, -1)
 	}
-
 	convTail := cfg.LinearConvKernelDim - 1
 	var convState *mlx.Array
 	var rc *cache.RecurrentCache
@@ -1216,9 +1215,7 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Co
 	q = mlx.MulScalar(mlx.RMSNormFn(q, nil, 1e-6), invScale*invScale)
 	k = mlx.MulScalar(mlx.RMSNormFn(k, nil, 1e-6), invScale)
 
-	aF32 := a.AsType(mlx.DTypeFloat32)
-	dtBiasF32 := g.DtBias.AsType(mlx.DTypeFloat32)
-	gDecay := softplus(mlx.Add(aF32, dtBiasF32))
+	gDecay := softplus(mlx.Add(a, g.DtBias))
 	gDecay = mlx.Mul(gDecay, g.AExp)
 	gDecay = mlx.Exp(mlx.MulScalar(gDecay, -1))
 	gDecay = gDecay.AsType(a.DType())
@@ -1234,8 +1231,9 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Co
 	}
 
 	out, state := mlx.GatedDelta(q, k, v, gDecay, beta, state)
+	outDType := out.DType()
 	out = mlx.RMSNormFn(out, g.NormWeight, cfg.RMSNormEps)
-	out = mlx.Mul(out, mlx.SiLU(z))
+	out = mlx.Mul(out.AsType(mlx.DTypeFloat32), mlx.SiLU(z.AsType(mlx.DTypeFloat32))).AsType(outDType)
 	out = mlx.Reshape(out, B, L, valueDim)
 	out = g.OutProj.Forward(out)
 	if rc != nil {

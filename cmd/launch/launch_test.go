@@ -951,7 +951,7 @@ func TestLaunchIntegration_OpenclawInstallsBeforeConfigSideEffects(t *testing.T)
 	if err == nil {
 		t.Fatal("expected launch to fail before configuration when OpenClaw is missing")
 	}
-	if !strings.Contains(err.Error(), "npm was not found") {
+	if !strings.Contains(err.Error(), "required dependencies are missing") {
 		t.Fatalf("expected install prerequisite error, got %v", err)
 	}
 	if selectorCalled {

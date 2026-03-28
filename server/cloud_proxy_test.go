@@ -248,3 +248,71 @@ func TestBuildCloudSignatureChallengeOverwritesExistingTimestamp(t *testing.T) {
 		t.Fatalf("unexpected signed query: %q", req.URL.RawQuery)
 	}
 }
+
+func TestJSONLFramingResponseWriter_SplitsCoalescedLines(t *testing.T) {
+	rec := &chunkRecorder{header: http.Header{}}
+	w := &jsonlFramingResponseWriter{ResponseWriter: rec}
+
+	payload := []byte("{\"a\":1}\n{\"b\":2}\n")
+	if n, err := w.Write(payload); err != nil {
+		t.Fatalf("write failed: %v", err)
+	} else if n != len(payload) {
+		t.Fatalf("write byte count mismatch: got %d want %d", n, len(payload))
+	}
+
+	if err := w.FlushPending(); err != nil {
+		t.Fatalf("FlushPending failed: %v", err)
+	}
+
+	if len(rec.chunks) != 2 {
+		t.Fatalf("expected 2 framed writes, got %d", len(rec.chunks))
+	}
+	if got := string(rec.chunks[0]); got != `{"a":1}` {
+		t.Fatalf("first chunk mismatch: got %q", got)
+	}
+	if got := string(rec.chunks[1]); got != `{"b":2}` {
+		t.Fatalf("second chunk mismatch: got %q", got)
+	}
+}
+
+func TestJSONLFramingResponseWriter_FlushPendingWritesTrailingLine(t *testing.T) {
+	rec := &chunkRecorder{header: http.Header{}}
+	w := &jsonlFramingResponseWriter{ResponseWriter: rec}
+
+	if _, err := w.Write([]byte("{\"a\":1")); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
+	if len(rec.chunks) != 0 {
+		t.Fatalf("expected no writes before newline/flush, got %d", len(rec.chunks))
+	}
+
+	if err := w.FlushPending(); err != nil {
+		t.Fatalf("FlushPending failed: %v", err)
+	}
+	if len(rec.chunks) != 1 {
+		t.Fatalf("expected 1 write after FlushPending, got %d", len(rec.chunks))
+	}
+	if got := string(rec.chunks[0]); got != `{"a":1` {
+		t.Fatalf("trailing chunk mismatch: got %q", got)
+	}
+}
+
+type chunkRecorder struct {
+	header http.Header
+	status int
+	chunks [][]byte
+}
+
+func (r *chunkRecorder) Header() http.Header {
+	return r.header
+}
+
+func (r *chunkRecorder) WriteHeader(statusCode int) {
+	r.status = statusCode
+}
+
+func (r *chunkRecorder) Write(p []byte) (int, error) {
+	cp := append([]byte(nil), p...)
+	r.chunks = append(r.chunks, cp)
+	return len(p), nil
+}

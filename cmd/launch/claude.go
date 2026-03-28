@@ -59,6 +59,7 @@ func (c *Claude) Run(model string, args []string) error {
 		"ANTHROPIC_BASE_URL="+envconfig.Host().String(),
 		"ANTHROPIC_API_KEY=",
 		"ANTHROPIC_AUTH_TOKEN=ollama",
+		"CLAUDE_CODE_ATTRIBUTION_HEADER=0",
 	)
 
 	env = append(env, c.modelEnvVars(model)...)

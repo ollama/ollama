@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/mod/semver"
+
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
@@ -66,16 +68,26 @@ func (c *Openclaw) Run(model string, args []string) error {
 		fmt.Fprintf(os.Stderr, "\n%sSetting up OpenClaw with Ollama...%s\n", ansiGreen, ansiReset)
 		fmt.Fprintf(os.Stderr, "%s  Model: %s%s\n\n", ansiGray, model, ansiReset)
 
-		cmd := exec.Command(bin, "onboard",
+		onboardArgs := []string{
+			"onboard",
 			"--non-interactive",
 			"--accept-risk",
 			"--auth-choice", "ollama",
 			"--custom-base-url", envconfig.Host().String(),
 			"--custom-model-id", model,
-			"--install-daemon",
 			"--skip-channels",
 			"--skip-skills",
-		)
+		}
+		if canInstallDaemon() {
+			onboardArgs = append(onboardArgs, "--install-daemon")
+		} else {
+			// When we can't install a daemon (e.g. no systemd, sudo dropped
+			// XDG_RUNTIME_DIR, or container environment), skip the gateway
+			// health check so non-interactive onboarding completes. The
+			// gateway is started as a foreground child process after onboarding.
+			onboardArgs = append(onboardArgs, "--skip-health")
+		}
+		cmd := exec.Command(bin, onboardArgs...)
 		cmd.Stdin = os.Stdin
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -86,10 +98,8 @@ func (c *Openclaw) Run(model string, args []string) error {
 		patchDeviceScopes()
 	}
 
-	if strings.HasSuffix(model, ":cloud") || strings.HasSuffix(model, "-cloud") {
-		if ensureWebSearchPlugin() {
-			registerWebSearchPlugin()
-		}
+	if ensureWebSearchPlugin() {
+		registerWebSearchPlugin()
 	}
 
 	fmt.Fprintf(os.Stderr, "\n%sStarting your assistant — this may take a moment...%s\n\n", ansiGray, ansiReset)
@@ -398,6 +408,25 @@ func patchScopes(obj map[string]any, key string, required []string) bool {
 	return added
 }
 
+// canInstallDaemon reports whether the openclaw daemon can be installed as a
+// background service. Returns false on Linux when systemd is absent (e.g.
+// containers) so that --install-daemon is omitted and the gateway is started
+// as a foreground child process instead. Returns true in all other cases.
+func canInstallDaemon() bool {
+	if runtime.GOOS != "linux" {
+		return true
+	}
+	// /run/systemd/system exists as a directory when systemd is the init system.
+	// This is absent in most containers.
+	fi, err := os.Stat("/run/systemd/system")
+	if err != nil || !fi.IsDir() {
+		return false
+	}
+	// Even when systemd is the init system, user services require a user
+	// manager instance. XDG_RUNTIME_DIR being set is a prerequisite.
+	return os.Getenv("XDG_RUNTIME_DIR") != ""
+}
+
 func ensureOpenclawInstalled() (string, error) {
 	if _, err := exec.LookPath("openclaw"); err == nil {
 		return "openclaw", nil
@@ -406,13 +435,17 @@ func ensureOpenclawInstalled() (string, error) {
 		return "clawdbot", nil
 	}
 
-	if _, err := exec.LookPath("npm"); err != nil {
-		return "", fmt.Errorf("openclaw is not installed and npm was not found\n\n" +
-			"Install Node.js first:\n" +
-			"  https://nodejs.org/\n\n" +
-			"Then rerun:\n" +
-			"  ollama launch\n" +
-			"and select OpenClaw")
+	_, npmErr := exec.LookPath("npm")
+	_, gitErr := exec.LookPath("git")
+	if npmErr != nil || gitErr != nil {
+		var missing []string
+		if npmErr != nil {
+			missing = append(missing, "npm (Node.js): https://nodejs.org/")
+		}
+		if gitErr != nil {
+			missing = append(missing, "git: https://git-scm.com/")
+		}
+		return "", fmt.Errorf("openclaw is not installed and required dependencies are missing\n\nInstall the following first:\n  %s", strings.Join(missing, "\n  "))
 	}
 
 	ok, err := ConfirmPrompt("OpenClaw is not installed. Install with npm?")
@@ -582,6 +615,8 @@ func clearSessionModelOverride(primary string) {
 		if override, _ := sess["modelOverride"].(string); override != "" && override != primary {
 			delete(sess, "modelOverride")
 			delete(sess, "providerOverride")
+		}
+		if model, _ := sess["model"].(string); model != "" && model != primary {
 			sess["model"] = primary
 			changed = true
 		}
@@ -596,11 +631,15 @@ func clearSessionModelOverride(primary string) {
 	_ = os.WriteFile(path, out, 0o600)
 }
 
-const webSearchNpmPackage = "@ollama/openclaw-web-search"
+const (
+	webSearchNpmPackage = "@ollama/openclaw-web-search"
+	webSearchMinVersion = "0.2.1"
+)
 
 // ensureWebSearchPlugin installs the openclaw-web-search extension into the
 // user-level extensions directory (~/.openclaw/extensions/) if it isn't already
-// present. Returns true if the extension is available.
+// present, or re-installs if the installed version is older than webSearchMinVersion.
+// Returns true if the extension is available.
 func ensureWebSearchPlugin() bool {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -608,8 +647,8 @@ func ensureWebSearchPlugin() bool {
 	}
 
 	pluginDir := filepath.Join(home, ".openclaw", "extensions", "openclaw-web-search")
-	if _, err := os.Stat(filepath.Join(pluginDir, "index.ts")); err == nil {
-		return true // already installed
+	if webSearchPluginUpToDate(pluginDir) {
+		return true
 	}
 
 	npmBin, err := exec.LookPath("npm")
@@ -643,6 +682,34 @@ func ensureWebSearchPlugin() bool {
 	return true
 }
 
+// webSearchPluginUpToDate returns true if the plugin is installed and its
+// package.json version is >= webSearchMinVersion.
+func webSearchPluginUpToDate(pluginDir string) bool {
+	data, err := os.ReadFile(filepath.Join(pluginDir, "package.json"))
+	if err != nil {
+		return false
+	}
+	var pkg struct {
+		Version string `json:"version"`
+	}
+	if json.Unmarshal(data, &pkg) != nil || pkg.Version == "" {
+		return false
+	}
+	return !versionLessThan(pkg.Version, webSearchMinVersion)
+}
+
+// versionLessThan compares two semver version strings (major.minor.patch).
+// Inputs may omit the "v" prefix; it is added automatically for semver.Compare.
+func versionLessThan(a, b string) bool {
+	if !strings.HasPrefix(a, "v") {
+		a = "v" + a
+	}
+	if !strings.HasPrefix(b, "v") {
+		b = "v" + b
+	}
+	return semver.Compare(a, b) < 0
+}
+
 // registerWebSearchPlugin adds plugins.entries.openclaw-web-search to the OpenClaw
 // config so the gateway activates it on next start. Best-effort; silently returns
 // on any error.
@@ -669,23 +736,67 @@ func registerWebSearchPlugin() {
 	if entries == nil {
 		entries = make(map[string]any)
 	}
-	if _, ok := entries["openclaw-web-search"]; ok {
-		return // already registered
-	}
 	entries["openclaw-web-search"] = map[string]any{"enabled": true}
 	plugins["entries"] = entries
+
+	// Pin trust so the gateway doesn't warn about untracked plugins.
+	allow, _ := plugins["allow"].([]any)
+	hasAllow := false
+	for _, v := range allow {
+		if s, ok := v.(string); ok && s == "openclaw-web-search" {
+			hasAllow = true
+			break
+		}
+	}
+	if !hasAllow {
+		allow = append(allow, "openclaw-web-search")
+	}
+	plugins["allow"] = allow
+
+	// Record install provenance so the loader can verify the plugin origin.
+	installs, _ := plugins["installs"].(map[string]any)
+	if installs == nil {
+		installs = make(map[string]any)
+	}
+	pluginDir := filepath.Join(home, ".openclaw", "extensions", "openclaw-web-search")
+	installs["openclaw-web-search"] = map[string]any{
+		"source":      "npm",
+		"spec":        webSearchNpmPackage,
+		"installPath": pluginDir,
+	}
+	plugins["installs"] = installs
+
 	config["plugins"] = plugins
 
-	// Disable the built-in web search since our plugin replaces it.
+	// Add plugin tools to tools.alsoAllow so they survive the coding profile's
+	// policy pipeline (which has an explicit allow list of core tools only).
 	tools, _ := config["tools"].(map[string]any)
 	if tools == nil {
 		tools = make(map[string]any)
 	}
+
+	alsoAllow, _ := tools["alsoAllow"].([]any)
+	needed := []string{"ollama_web_search", "ollama_web_fetch"}
+	have := make(map[string]bool, len(alsoAllow))
+	for _, v := range alsoAllow {
+		if s, ok := v.(string); ok {
+			have[s] = true
+		}
+	}
+	for _, name := range needed {
+		if !have[name] {
+			alsoAllow = append(alsoAllow, name)
+		}
+	}
+	tools["alsoAllow"] = alsoAllow
+
+	// Disable built-in web search/fetch since our plugin replaces them.
 	web, _ := tools["web"].(map[string]any)
 	if web == nil {
 		web = make(map[string]any)
 	}
 	web["search"] = map[string]any{"enabled": false}
+	web["fetch"] = map[string]any{"enabled": false}
 	tools["web"] = web
 	config["tools"] = tools
 
