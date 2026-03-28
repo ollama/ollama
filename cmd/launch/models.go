@@ -479,24 +479,16 @@ func lowContextLength(ctx context.Context, client *api.Client, models []string) 
 		modelfileOverride := false
 		var info *api.ShowResponse
 		if info, err = client.Show(ctx, &api.ShowRequest{Model: m}); err == nil {
-			// Safetensors (MLX) models always load at their full max context
-			// length, so the server default num_ctx doesn't apply.
-			if info.Details.Format == "safetensors" {
-				// Context length check in case models with low context length are added
-				if modelCtx := modelInfoContextLength(info.ModelInfo); modelCtx >= recommendedContextLength {
-					continue
-				}
-			}
 			if numCtx := parseNumCtx(info.Parameters); numCtx > 0 {
 				effectiveCtx = numCtx
 				modelfileOverride = true
 			}
 		}
 		if effectiveCtx < recommendedContextLength {
-			fmt.Fprintf(os.Stderr, "\n%sWarning: %s has a context length of %d tokens, which is below the recommended %d.%s\n", ansiYellow, m, effectiveCtx, recommendedContextLength, ansiReset)
+			fmt.Fprintf(os.Stderr, "\n%sWarning: context window is %d tokens (recommended: %d+)%s\n", ansiYellow, effectiveCtx, recommendedContextLength, ansiReset)
 			if modelfileOverride {
 				parentModel := info.Details.ParentModel
-				fmt.Fprintf(os.Stderr, "%sUse the base model %s and increase the context length in Ollama App Settings.%s\n\n", ansiYellow, parentModel, ansiReset)
+				fmt.Fprintf(os.Stderr, "%sUse the model: %s and increase the context length to at least %d in Ollama App Settings.%s\n\n", ansiYellow, parentModel, recommendedContextLength, ansiReset)
 			} else {
 				if runtime.GOOS == "windows" {
 					fmt.Fprintf(os.Stderr, "%sIncrease it in Ollama App Settings or with $env:OLLAMA_CONTEXT_LENGTH=%d; ollama serve%s\n\n", ansiYellow, recommendedContextLength, ansiReset)
@@ -517,22 +509,6 @@ func parseNumCtx(parameters string) int {
 		if len(fields) == 2 && fields[0] == "num_ctx" {
 			if v, err := strconv.ParseFloat(fields[1], 64); err == nil {
 				return int(v)
-			}
-		}
-	}
-	return 0
-}
-
-// modelInfoContextLength extracts the model's architectural context length
-// from the ModelInfo map (e.g. "qwen3_5_moe.context_length" → 262144).
-func modelInfoContextLength(modelInfo map[string]any) int {
-	for k, v := range modelInfo {
-		if strings.HasSuffix(k, ".context_length") {
-			switch n := v.(type) {
-			case float64:
-				return int(n)
-			case int:
-				return n
 			}
 		}
 	}

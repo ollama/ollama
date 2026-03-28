@@ -1998,7 +1998,6 @@ func TestConfirmLowContextLength(t *testing.T) {
 		statusBody    string
 		statusCode    int
 		showParams    string // Parameters field returned by /api/show
-		showBody      string // full JSON body for /api/show (overrides showParams when set)
 		wantWarning   bool
 		wantModelfile bool // true if warning should mention Modelfile
 	}{
@@ -2089,28 +2088,6 @@ func TestConfirmLowContextLength(t *testing.T) {
 			statusCode: http.StatusOK,
 			showParams: "SHOW_ERROR", // sentinel to make show return 500
 		},
-		{
-			name:       "no warning for safetensors model with high context length",
-			models:     []string{"qwen3.5"},
-			statusBody: `{"cloud":{},"context_length":32768}`,
-			statusCode: http.StatusOK,
-			showBody:   `{"details":{"format":"safetensors"},"model_info":{"qwen3_5_moe.context_length":262144}}`,
-		},
-		{
-			name:        "warns for safetensors model with low context length",
-			models:      []string{"small-model"},
-			statusBody:  `{"cloud":{},"context_length":32768}`,
-			statusCode:  http.StatusOK,
-			showBody:    `{"details":{"format":"safetensors"},"model_info":{"small.context_length":4096}}`,
-			wantWarning: true,
-		},
-		{
-			name:       "no warning for safetensors model even when server context is low",
-			models:     []string{"qwen3.5"},
-			statusBody: `{"cloud":{},"context_length":4096}`,
-			statusCode: http.StatusOK,
-			showBody:   `{"details":{"format":"safetensors"},"model_info":{"qwen3_5_moe.context_length":262144}}`,
-		},
 	}
 
 	for _, tt := range tests {
@@ -2129,11 +2106,7 @@ func TestConfirmLowContextLength(t *testing.T) {
 						return
 					}
 					w.WriteHeader(http.StatusOK)
-					if tt.showBody != "" {
-						fmt.Fprint(w, tt.showBody)
-					} else {
-						fmt.Fprintf(w, `{"parameters":%q}`, tt.showParams)
-					}
+					fmt.Fprintf(w, `{"parameters":%q}`, tt.showParams)
 					return
 				}
 				http.NotFound(w, r)
@@ -2167,12 +2140,12 @@ func TestConfirmLowContextLength(t *testing.T) {
 				t.Fatalf("expected warning=%v, got output: %q", tt.wantWarning, output)
 			}
 			if tt.wantWarning && tt.wantModelfile {
-				if !strings.Contains(output, "Use the base model") {
+				if !strings.Contains(output, "Use the model:") {
 					t.Fatalf("expected parent model hint in output: %q", output)
 				}
 			}
 			if tt.wantWarning && !tt.wantModelfile {
-				if strings.Contains(output, "Use the base model") {
+				if strings.Contains(output, "Use the model:") {
 					t.Fatalf("expected server hint, not parent model hint in output: %q", output)
 				}
 			}
