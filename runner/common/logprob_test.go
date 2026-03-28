@@ -1,6 +1,7 @@
 package common
 
 import (
+	"bytes"
 	"math"
 	"testing"
 
@@ -14,11 +15,11 @@ func TestCalculateLogprobs(t *testing.T) {
 		2: "hey",
 		3: "world",
 	}
-	decoder := func(tokenID int) string {
+	decoder := func(tokenID int) (string, []byte) {
 		if text, ok := tokens[tokenID]; ok {
-			return text
+			return text, []byte(text)
 		}
-		return ""
+		return "", nil
 	}
 
 	tests := []struct {
@@ -78,11 +79,11 @@ func TestCalculateLogprobsNumericalStability(t *testing.T) {
 		1: "b",
 		2: "c",
 	}
-	decoder := func(tokenID int) string {
+	decoder := func(tokenID int) (string, []byte) {
 		if text, ok := tokens[tokenID]; ok {
-			return text
+			return text, []byte(text)
 		}
-		return ""
+		return "", nil
 	}
 
 	// Test with very large logits to ensure numerical stability
@@ -120,11 +121,11 @@ func TestCalculateLogprobsProbabilityCorrectness(t *testing.T) {
 		2: "foo",
 		3: "bar",
 	}
-	decoder := func(tokenID int) string {
+	decoder := func(tokenID int) (string, []byte) {
 		if text, ok := tokens[tokenID]; ok {
-			return text
+			return text, []byte(text)
 		}
-		return ""
+		return "", nil
 	}
 
 	tests := []struct {
@@ -205,7 +206,7 @@ func TestCalculateLogprobsProbabilityCorrectness(t *testing.T) {
 			}
 
 			// Verify the selected token appears in top logprobs
-			selectedText := decoder(tt.selectedToken)
+			selectedText, _ := decoder(tt.selectedToken)
 			found := false
 			for _, tlp := range result[0].TopLogprobs {
 				if tlp.Token == selectedText {
@@ -227,8 +228,9 @@ func TestCalculateLogprobsProbabilityCorrectness(t *testing.T) {
 
 func TestCalculateLogprobsSoftmaxCorrectness(t *testing.T) {
 	// Test that softmax calculation is correct by verifying probabilities sum to 1
-	decoder := func(tokenID int) string {
-		return string(rune('A' + tokenID))
+	decoder := func(tokenID int) (string, []byte) {
+		text := string(rune('A' + tokenID))
+		return text, []byte(text)
 	}
 
 	tests := []struct {
@@ -284,8 +286,9 @@ func TestCalculateLogprobsSoftmaxCorrectness(t *testing.T) {
 }
 
 func TestCalculateLogprobsSelectedTokenCorrectness(t *testing.T) {
-	decoder := func(tokenID int) string {
-		return string(rune('A' + tokenID))
+	decoder := func(tokenID int) (string, []byte) {
+		text := string(rune('A' + tokenID))
+		return text, []byte(text)
 	}
 
 	logits := []float32{3.0, 1.0, 2.0, 0.5}
@@ -314,7 +317,7 @@ func TestCalculateLogprobsSelectedTokenCorrectness(t *testing.T) {
 		}
 
 		// Verify the token matches
-		expectedToken := decoder(i)
+		expectedToken, _ := decoder(i)
 		if result[0].Token != expectedToken {
 			t.Errorf("Token %d: expected token %q, got %q", i, expectedToken, result[0].Token)
 		}
@@ -335,8 +338,9 @@ func TestCalculateLogprobsTopKOrdering(t *testing.T) {
 		3: "fourth",
 		4: "fifth",
 	}
-	decoder := func(tokenID int) string {
-		return tokens[tokenID]
+	decoder := func(tokenID int) (string, []byte) {
+		text := tokens[tokenID]
+		return text, []byte(text)
 	}
 
 	// Logits in non-sorted order
@@ -494,5 +498,42 @@ func TestLogprobsWithStopSequences(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCalculateLogprobsPartialUTF8(t *testing.T) {
+	decoder := func(id int) (string, []byte) {
+		switch id {
+		case 0:
+			return string([]byte{0xF0}), []byte{0xF0}
+		case 1:
+			return string([]byte{0x9F}), []byte{0x9F}
+		default:
+			return "a", []byte("a")
+		}
+	}
+
+	logits := []float32{1.0, 0.5, 0.1}
+	result := CalculateLogprobs(logits, 0, 2, decoder)
+
+	if !bytes.Equal(result[0].Bytes, []byte{0xF0}) {
+		t.Errorf("selected token bytes: got %v, want [0xF0]", result[0].Bytes)
+	}
+	if len(result[0].TopLogprobs) != 2 {
+		t.Fatalf("expected 2 top logprobs, got %d", len(result[0].TopLogprobs))
+	}
+	for _, tlp := range result[0].TopLogprobs {
+		switch tlp.Token {
+		case string([]byte{0xF0}):
+			if !bytes.Equal(tlp.Bytes, []byte{0xF0}) {
+				t.Errorf("token 0xF0 bytes: got %v, want [0xF0]", tlp.Bytes)
+			}
+		case string([]byte{0x9F}):
+			if !bytes.Equal(tlp.Bytes, []byte{0x9F}) {
+				t.Errorf("token 0x9F bytes: got %v, want [0x9F]", tlp.Bytes)
+			}
+		default:
+			t.Errorf("unexpected token in top logprobs: %q", tlp.Token)
+		}
 	}
 }
