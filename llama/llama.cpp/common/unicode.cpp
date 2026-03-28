@@ -1,8 +1,10 @@
 #include "unicode.h"
+
+#include <algorithm>
 #include <cassert>
 #include <stdexcept>
-#include <vector>
 #include <string>
+#include <vector>
 
 // implementation adopted from src/unicode.cpp
 
@@ -65,6 +67,20 @@ utf8_parse_result common_parse_utf8_codepoint(std::string_view input, size_t off
 
     // Invalid first byte
     return utf8_parse_result(utf8_parse_result::INVALID);
+}
+
+bool common_utf8_is_complete(const std::string & s) {
+    if (s.empty()) {
+        return true;
+    }
+    for (int i = 1; i <= std::min(4, (int)s.size()); i++) {
+        unsigned char c = s[s.size() - i];
+        if ((c & 0xC0) != 0x80) {
+            int expected = (c >= 0xF0) ? 4 : (c >= 0xE0) ? 3 : (c >= 0xC0) ? 2 : 1;
+            return i >= expected;
+        }
+    }
+    return false;
 }
 
 std::string common_unicode_cpts_to_utf8(const std::vector<uint32_t> & cps) {

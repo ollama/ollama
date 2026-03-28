@@ -3,7 +3,7 @@
 llm_build_gemma3n_iswa::llm_build_gemma3n_iswa(const llama_model & model, const llm_graph_params & params) :
     llm_graph_context(params),
     model(model),
-    n_embd_head(model.hparams.n_embd_head_k),
+    n_embd_head(model.hparams.n_embd_head_k()),
     n_embd_altup(model.hparams.n_embd_altup),
     n_altup(model.hparams.n_altup),
     i_altup_act(model.hparams.i_altup_act) {

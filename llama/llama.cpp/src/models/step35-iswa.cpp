@@ -52,7 +52,7 @@ llm_build_step35_iswa::llm_build_step35_iswa(const llama_model & model, const ll
             // RoPE (partial rotary factors per layer)
             const bool is_swa = hparams.is_swa(il);
             ggml_tensor * rope_factors = is_swa ? nullptr : model.get_rope_factors(cparams, il);
-            const int64_t n_rot_l = is_swa ? hparams.n_rot : (hparams.n_rot / 2);
+            const int64_t n_rot_l = hparams.n_rot(il);
             Qcur = ggml_rope_ext(
                 ctx0, Qcur, inp_pos, rope_factors,
                 n_rot_l, rope_type, n_ctx_orig, freq_base_l, freq_scale_l,

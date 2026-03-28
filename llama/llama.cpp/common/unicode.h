@@ -20,6 +20,9 @@ struct utf8_parse_result {
 // Returns 0 for invalid first bytes
 size_t common_utf8_sequence_length(unsigned char first_byte);
 
+// Check if a string ends with a complete UTF-8 sequence.
+bool common_utf8_is_complete(const std::string & s);
+
 // Parse a single UTF-8 codepoint from input
 utf8_parse_result common_parse_utf8_codepoint(std::string_view input, size_t offset);
 

@@ -1,14 +1,14 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Daniel Hiltgen <daniel@ollama.com>
-Date: Mon, 9 Mar 2026 13:57:32 -0700
+From: inforithmics <thomas.stocker@gmail.com>
+Date: Sat, 28 Mar 2026 10:04:42 +0100
 Subject: [PATCH] ggml: metal solve_tri
 
 ---
- ggml/src/ggml-metal/ggml-metal-device.m | 7 ++++++-
- 1 file changed, 6 insertions(+), 1 deletion(-)
+ ggml/src/ggml-metal/ggml-metal-device.m | 6 ++++++
+ 1 file changed, 6 insertions(+)
 
 diff --git a/ggml/src/ggml-metal/ggml-metal-device.m b/ggml/src/ggml-metal/ggml-metal-device.m
-index 4cce414ab..3bd9034d2 100644
+index 05b826a61..fa4319b26 100644
 --- a/ggml/src/ggml-metal/ggml-metal-device.m
 +++ b/ggml/src/ggml-metal/ggml-metal-device.m
 @@ -1088,6 +1088,12 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
@@ -24,11 +24,3 @@ index 4cce414ab..3bd9034d2 100644
          case GGML_OP_COUNT_EQUAL:
              return has_simdgroup_reduction &&
                  op->src[0]->type == GGML_TYPE_I32 &&
-@@ -1155,7 +1161,6 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
-         case GGML_OP_RWKV_WKV6:
-         case GGML_OP_RWKV_WKV7:
-             return true;
--        case GGML_OP_SOLVE_TRI:
-         case GGML_OP_MUL_MAT:
-         case GGML_OP_MUL_MAT_ID:
-             return has_simdgroup_reduction;

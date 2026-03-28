@@ -658,7 +658,7 @@ struct parser_executor {
         return common_peg_parse_result(COMMON_PEG_PARSE_RESULT_SUCCESS, start_pos, pos);
     }
 
-    static common_peg_parse_result handle_escape_sequence(common_peg_parse_context & ctx, size_t start, size_t & pos) {
+    static common_peg_parse_result handle_escape_sequence(common_peg_parse_context & ctx, size_t start, size_t & pos, const char delimiter) {
         ++pos; // consume '\'
         if (pos >= ctx.input.size()) {
             if (!ctx.is_lenient()) {
@@ -667,23 +667,14 @@ struct parser_executor {
             return common_peg_parse_result(COMMON_PEG_PARSE_RESULT_NEED_MORE_INPUT, start, pos);
         }
 
-        switch (ctx.input[pos]) {
-            case '"':
-            case '\'':
-            case '\\':
-            case '/':
-            case 'b':
-            case 'f':
-            case 'n':
-            case 'r':
-            case 't':
-                ++pos;
-                return common_peg_parse_result(COMMON_PEG_PARSE_RESULT_SUCCESS, start, pos);
-            case 'u':
-                return handle_unicode_escape(ctx, start, pos);
-            default:
-                // Invalid escape sequence
-                return common_peg_parse_result(COMMON_PEG_PARSE_RESULT_FAIL, start);
+        char c = ctx.input[pos];
+        if (c == delimiter || c == '\\' || c == '/' || c == 'b' || c == 'f' || c == 'n' || c == 'r' || c == 't') {
+            ++pos;
+            return common_peg_parse_result(COMMON_PEG_PARSE_RESULT_SUCCESS, start, pos);
+        } else if (c == 'u') {
+            return handle_unicode_escape(ctx, start, pos);
+        } else {
+            return common_peg_parse_result(COMMON_PEG_PARSE_RESULT_FAIL, start);
         }
     }
 
@@ -704,62 +695,20 @@ struct parser_executor {
         return common_peg_parse_result(COMMON_PEG_PARSE_RESULT_SUCCESS, start, pos);
     }
 
-    common_peg_parse_result operator()(const common_peg_json_string_parser & /* p */) {
+    common_peg_parse_result operator()(const common_peg_string_parser & p) {
         auto pos = start_pos;
 
         // Parse string content (without quotes)
         while (pos < ctx.input.size()) {
             char c = ctx.input[pos];
 
-            if (c == '"') {
-                // Found closing quote - success (don't consume it)
+            if (c == p.delimiter) {
+                // Found closing delimiter - success (don't consume it)
                 return common_peg_parse_result(COMMON_PEG_PARSE_RESULT_SUCCESS, start_pos, pos);
             }
 
             if (c == '\\') {
-                auto result = handle_escape_sequence(ctx, start_pos, pos);
-                if (!result.success()) {
-                    return result;
-                }
-            } else {
-                auto utf8_result = common_parse_utf8_codepoint(ctx.input, pos);
-
-                if (utf8_result.status == utf8_parse_result::INCOMPLETE) {
-                    if (!ctx.is_lenient()) {
-                        return common_peg_parse_result(COMMON_PEG_PARSE_RESULT_FAIL, start_pos);
-                    }
-                    return common_peg_parse_result(COMMON_PEG_PARSE_RESULT_NEED_MORE_INPUT, start_pos, pos);
-                }
-
-                if (utf8_result.status == utf8_parse_result::INVALID) {
-                    return common_peg_parse_result(COMMON_PEG_PARSE_RESULT_FAIL, start_pos);
-                }
-
-                pos += utf8_result.bytes_consumed;
-            }
-        }
-
-        // Reached end without finding closing quote
-        if (!ctx.is_lenient()) {
-            return common_peg_parse_result(COMMON_PEG_PARSE_RESULT_FAIL, start_pos, pos);
-        }
-        return common_peg_parse_result(COMMON_PEG_PARSE_RESULT_NEED_MORE_INPUT, start_pos, pos);
-    }
-
-    common_peg_parse_result operator()(const common_peg_python_dict_string_parser & /* p */) {
-        auto pos = start_pos;
-
-        // Parse string content (without quotes)
-        while (pos < ctx.input.size()) {
-            char c = ctx.input[pos];
-
-            if (c == '\'') {
-                // Found closing quote - success (don't consume it)
-                return common_peg_parse_result(COMMON_PEG_PARSE_RESULT_SUCCESS, start_pos, pos);
-            }
-
-            if (c == '\\') {
-                auto result = handle_escape_sequence(ctx, start_pos, pos);
+                auto result = handle_escape_sequence(ctx, start_pos, pos, p.delimiter);
                 if (!result.success()) {
                     return result;
                 }
@@ -988,8 +937,7 @@ void common_peg_arena::resolve_refs() {
                                  std::is_same_v<T, common_peg_ref_parser> ||
                                  std::is_same_v<T, common_peg_until_parser> ||
                                  std::is_same_v<T, common_peg_literal_parser> ||
-                                 std::is_same_v<T, common_peg_json_string_parser> ||
-                                 std::is_same_v<T, common_peg_python_dict_string_parser> ||
+                                 std::is_same_v<T, common_peg_string_parser> ||
                                  std::is_same_v<T, common_peg_chars_parser> ||
                                  std::is_same_v<T, common_peg_any_parser> ||
                                  std::is_same_v<T, common_peg_space_parser>) {
@@ -1065,10 +1013,8 @@ std::string common_peg_arena::dump_impl(common_peg_parser_id                    
                 return "CharRepeat(" + p.pattern + ", " + std::to_string(p.min_count) + ", unbounded)";
             }
             return "CharRepeat(" + p.pattern + ", " + std::to_string(p.min_count) + ", " + std::to_string(p.max_count) + ")";
-        } else if constexpr (std::is_same_v<T, common_peg_json_string_parser>) {
-            return "JsonString()";
-        } else if constexpr (std::is_same_v<T, common_peg_python_dict_string_parser>) {
-            return "PythonDictString()";
+        } else if constexpr (std::is_same_v<T, common_peg_string_parser>) {
+            return "String(" + std::string(1, p.delimiter) + ")";
         } else if constexpr (std::is_same_v<T, common_peg_until_parser>) {
             return "Until(" + string_join(p.delimiters, " | ") + ")";
         } else if constexpr (std::is_same_v<T, common_peg_schema_parser>) {
@@ -1281,47 +1227,25 @@ common_peg_arena common_peg_parser_builder::build() {
 
 // String primitives
 
-common_peg_parser common_peg_parser_builder::json_string_content() {
-    return wrap(arena_.add_parser(common_peg_json_string_parser{}));
-}
-
-common_peg_parser common_peg_parser_builder::single_quoted_string_content() {
-    return wrap(arena_.add_parser(common_peg_python_dict_string_parser{}));
+common_peg_parser common_peg_parser_builder::string_content(char delimiter) {
+    return wrap(arena_.add_parser(common_peg_string_parser{delimiter}));
 }
 
 common_peg_parser common_peg_parser_builder::double_quoted_string() {
-    return rule("dq-string",
-                [this]() { return sequence({ literal("\""), json_string_content(), literal("\""), space() }); });
-}
-
-common_peg_parser common_peg_parser_builder::single_quoted_string() {
-    return rule("sq-string",
-                [this]() { return sequence({ literal("'"), single_quoted_string_content(), literal("'"), space() }); });
-}
-
-common_peg_parser common_peg_parser_builder::flexible_string() {
-    return rule("flexible-string", [this]() { return choice({ double_quoted_string(), single_quoted_string() }); });
-}
-
-// Generic helpers for object/array structure
-
-common_peg_parser common_peg_parser_builder::generic_object(const std::string &            name,
-                                                             const common_peg_parser & string_parser,
-                                                             const common_peg_parser & value_parser) {
-    return rule(name, [this, string_parser, value_parser]() {
-        auto ws      = space();
-        auto member  = sequence({ string_parser, ws, literal(":"), ws, value_parser });
-        auto members = sequence({ member, zero_or_more(sequence({ ws, literal(","), ws, member })) });
-        return sequence({ literal("{"), ws, choice({ literal("}"), sequence({ members, ws, literal("}") }) }) });
+    return rule("double-quoted-string", [this]() {
+        return sequence({literal("\""), string_content('"'), literal("\""), space()});
     });
 }
 
-common_peg_parser common_peg_parser_builder::generic_array(const std::string &            name,
-                                                            const common_peg_parser & value_parser) {
-    return rule(name, [this, value_parser]() {
-        auto ws       = space();
-        auto elements = sequence({ value_parser, zero_or_more(sequence({ literal(","), ws, value_parser })) });
-        return sequence({ literal("["), ws, choice({ literal("]"), sequence({ elements, ws, literal("]") }) }) });
+common_peg_parser common_peg_parser_builder::single_quoted_string() {
+    return rule("single-quoted-string", [this]() {
+        return sequence({literal("'"), string_content('\''), literal("'"), space()});
+    });
+}
+
+common_peg_parser common_peg_parser_builder::quoted_string() {
+    return rule("quoted-string", [this]() {
+        return choice({double_quoted_string(), single_quoted_string()});
     });
 }
 
@@ -1344,7 +1268,7 @@ common_peg_parser common_peg_parser_builder::json_number() {
 
 common_peg_parser common_peg_parser_builder::json_string() {
     return rule("json-string", [this]() {
-        return sequence({literal("\""), json_string_content(), literal("\""), space()});
+        return sequence({literal("\""), string_content('"'), literal("\""), space()});
     });
 }
 
@@ -1361,11 +1285,36 @@ common_peg_parser common_peg_parser_builder::json_null() {
 }
 
 common_peg_parser common_peg_parser_builder::json_object() {
-    return generic_object("json-object", json_string(), json());
+    return rule("json-object", [this]() {
+        auto ws = space();
+        auto member = sequence({json_string(), ws, literal(":"), ws, json()});
+        auto members = sequence({member, zero_or_more(sequence({ws, literal(","), ws, member}))});
+        return sequence({
+            literal("{"),
+            ws,
+            choice({
+                literal("}"),
+                sequence({members, ws, literal("}")})
+            }),
+            ws
+        });
+    });
 }
 
 common_peg_parser common_peg_parser_builder::json_array() {
-    return generic_array("json-array", json());
+    return rule("json-array", [this]() {
+        auto ws = space();
+        auto elements = sequence({json(), zero_or_more(sequence({literal(","), ws, json()}))});
+        return sequence({
+            literal("["),
+            ws,
+            choice({
+                literal("]"),
+                sequence({elements, ws, literal("]")})
+            }),
+            ws
+        });
+    });
 }
 
 common_peg_parser common_peg_parser_builder::json() {
@@ -1382,7 +1331,9 @@ common_peg_parser common_peg_parser_builder::json() {
 }
 
 common_peg_parser common_peg_parser_builder::python_string() {
-    return rule("python-string", [this]() { return choice({ double_quoted_string(), single_quoted_string() }); });
+    return rule("python-string", [this]() {
+        return choice({double_quoted_string(), single_quoted_string()});
+    });
 }
 
 common_peg_parser common_peg_parser_builder::python_number() {
@@ -1390,24 +1341,63 @@ common_peg_parser common_peg_parser_builder::python_number() {
 }
 
 common_peg_parser common_peg_parser_builder::python_bool() {
-    return rule("python-bool", [this]() { return sequence({ choice({ literal("True"), literal("False") }), space() }); });
+    return rule("python-bool", [this]() {
+        return sequence({
+            choice({literal("True"), literal("False")}),
+            space()
+        });
+    });
 }
 
 common_peg_parser common_peg_parser_builder::python_null() {
-    return rule("python-none", [this]() { return sequence({ literal("None"), space() }); });
+    return rule("python-none", [this]() {
+        return sequence({literal("None"), space()});
+    });
 }
 
 common_peg_parser common_peg_parser_builder::python_dict() {
-    return generic_object("python-dict", python_string(), python_value());
+    return rule("python-dict", [this]() {
+        auto ws = space();
+        auto member = sequence({python_string(), ws, literal(":"), ws, python_value()});
+        auto members = sequence({member, zero_or_more(sequence({ws, literal(","), ws, member}))});
+        return sequence({
+            literal("{"),
+            ws,
+            choice({
+                literal("}"),
+                sequence({members, ws, literal("}")})
+            }),
+            ws
+        });
+    });
 }
 
 common_peg_parser common_peg_parser_builder::python_array() {
-    return generic_array("python-array", python_value());
+    return rule("python-array", [this]() {
+        auto ws = space();
+        auto elements = sequence({python_value(), zero_or_more(sequence({literal(","), ws, python_value()}))});
+        return sequence({
+            literal("["),
+            ws,
+            choice({
+                literal("]"),
+                sequence({elements, ws, literal("]")})
+            }),
+            ws
+        });
+    });
 }
 
 common_peg_parser common_peg_parser_builder::python_value() {
     return rule("python-value", [this]() {
-        return choice({ python_dict(), python_array(), python_string(), python_number(), python_bool(), python_null() });
+        return choice({
+            python_dict(),
+            python_array(),
+            python_string(),
+            python_number(),
+            python_bool(),
+            python_null()
+        });
     });
 }
 
@@ -1528,8 +1518,7 @@ static std::unordered_set<std::string> collect_reachable_rules(
                           std::is_same_v<T, common_peg_chars_parser> ||
                           std::is_same_v<T, common_peg_space_parser> ||
                           std::is_same_v<T, common_peg_any_parser> ||
-                          std::is_same_v<T, common_peg_json_string_parser> ||
-                          std::is_same_v<T, common_peg_python_dict_string_parser>) {
+                          std::is_same_v<T, common_peg_string_parser>) {
                 // These parsers do not have any children
             } else if constexpr (std::is_same_v<T, common_peg_sequence_parser>) {
                 for (auto child : p.children) {
@@ -1665,10 +1654,9 @@ void common_peg_arena::build_grammar(const common_grammar_builder & builder, boo
                     return result + "{" + std::to_string(p.min_count) + "}";
                 }
                 return result + "{" + std::to_string(p.min_count) + "," + std::to_string(p.max_count) + "}";
-            } else if constexpr (std::is_same_v<T, common_peg_json_string_parser>) {
-                return R"(( [^"\\] | "\\" ( ["\\/ bfnrt] | "u" [0-9a-fA-F]{4} ) )*)";
-            } else if constexpr (std::is_same_v<T, common_peg_python_dict_string_parser>) {
-                return R"(( [^"\\] | "\\" ( ["\\/ bfnrt] | "u" [0-9a-fA-F]{4} ) )*)";
+            } else if constexpr (std::is_same_v<T, common_peg_string_parser>) {
+                const std::string delim(1, p.delimiter);
+                return R"(( [^)" + delim + R"(\\] | "\\" ( [)" + delim + R"(\\/ bfnrt] | "u" [0-9a-fA-F]{4} ) )*)";
             } else if constexpr (std::is_same_v<T, common_peg_until_parser>) {
                 if (p.delimiters.empty()) {
                     return ".*";
@@ -1798,10 +1786,8 @@ static nlohmann::json serialize_parser_variant(const common_peg_parser_variant &
                 {"min_count", p.min_count},
                 {"max_count", p.max_count}
             };
-        } else if constexpr (std::is_same_v<T, common_peg_json_string_parser>) {
-            return json{{"type", "json_string"}};
-        } else if constexpr (std::is_same_v<T, common_peg_python_dict_string_parser>) {
-            return json{{ "type", "python_dict_string" }};
+        } else if constexpr (std::is_same_v<T, common_peg_string_parser>) {
+            return json{{"type", "string"}, {"delimiter", std::string(1, p.delimiter)}};
         } else if constexpr (std::is_same_v<T, common_peg_until_parser>) {
             return json{{"type", "until"}, {"delimiters", p.delimiters}};
         } else if constexpr (std::is_same_v<T, common_peg_schema_parser>) {
@@ -1928,11 +1914,15 @@ static common_peg_parser_variant deserialize_parser_variant(const nlohmann::json
         }
         return parser;
     }
-    if (type == "json_string") {
-        return common_peg_json_string_parser{};
-    }
-    if (type == "python_dict_string") {
-        return common_peg_python_dict_string_parser{};
+    if (type == "string") {
+        if (!j.contains("delimiter")) {
+            throw std::runtime_error("string parser missing delimiter field.");
+        }
+        std::string delimiter = j["delimiter"];
+        if (delimiter.empty()) {
+            throw std::runtime_error("string parser delimiter is empty.");
+        }
+        return common_peg_string_parser{delimiter[0]};
     }
     if (type == "until") {
         if (!j.contains("delimiters") || !j["delimiters"].is_array()) {

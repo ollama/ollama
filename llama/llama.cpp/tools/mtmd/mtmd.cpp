@@ -300,6 +300,9 @@ struct mtmd_context {
             img_beg = "<|vision_start|>";
             img_end = "<|vision_end|>";
 
+        } else if (proj == PROJECTOR_TYPE_PHI4) {
+            // Phi-4 uses media marker insertion only. Keep image boundary text empty.
+
         } else if (proj == PROJECTOR_TYPE_LLAMA4) {
             // (more details in mtmd_context constructor)
             img_beg = "<|image_start|>";

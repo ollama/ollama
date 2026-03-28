@@ -1,6 +1,6 @@
 /*
 Audio playback and capture library. Choice of public domain or MIT-0. See license statements at the end of this file.
-miniaudio - v0.11.24 - 2026-01-17
+miniaudio - v0.11.25 - 2026-03-04
 
 David Reid - mackron@gmail.com
 
@@ -3747,7 +3747,7 @@ extern "C" {
 
 #define MA_VERSION_MAJOR    0
 #define MA_VERSION_MINOR    11
-#define MA_VERSION_REVISION 24
+#define MA_VERSION_REVISION 25
 #define MA_VERSION_STRING   MA_XSTRINGIFY(MA_VERSION_MAJOR) "." MA_XSTRINGIFY(MA_VERSION_MINOR) "." MA_XSTRINGIFY(MA_VERSION_REVISION)
 
 #if defined(_MSC_VER) && !defined(__clang__)
@@ -19358,7 +19358,7 @@ MA_API ma_handle ma_dlopen(ma_log* pLog, const char* filename)
             #else
                 /* *sigh* It appears there is no ANSI version of LoadPackagedLibrary()... */
                 WCHAR filenameW[4096];
-                if (MultiByteToWideChar(CP_UTF8, 0, filename, -1, filenameW, sizeof(filenameW)) == 0) {
+                if (MultiByteToWideChar(CP_UTF8, 0, filename, -1, filenameW, ma_countof(filenameW)) == 0) {
                     handle = NULL;
                 } else {
                     handle = (ma_handle)LoadPackagedLibrary(filenameW, 0);
@@ -41495,18 +41495,37 @@ Web Audio Backend
 #ifdef MA_HAS_WEBAUDIO
 #include <emscripten/emscripten.h>
 
-#if (__EMSCRIPTEN_major__ > 3) || (__EMSCRIPTEN_major__ == 3 && (__EMSCRIPTEN_minor__ > 1 || (__EMSCRIPTEN_minor__ == 1 && __EMSCRIPTEN_tiny__ >= 32)))
+#ifndef MA_EMSCRIPTEN_MAJOR
+    #if defined(__EMSCRIPTEN_MAJOR__)
+        #define MA_EMSCRIPTEN_MAJOR __EMSCRIPTEN_MAJOR__
+    #else
+        #define MA_EMSCRIPTEN_MAJOR __EMSCRIPTEN_major__
+    #endif
+#endif
+#ifndef MA_EMSCRIPTEN_MINOR
+    #if defined(__EMSCRIPTEN_MINOR__)
+        #define MA_EMSCRIPTEN_MINOR __EMSCRIPTEN_MINOR__
+    #else
+        #define MA_EMSCRIPTEN_MINOR __EMSCRIPTEN_minor__
+    #endif
+#endif
+#ifndef MA_EMSCRIPTEN_TINY
+    #if defined(__EMSCRIPTEN_TINY__)
+        #define MA_EMSCRIPTEN_TINY __EMSCRIPTEN_TINY__
+    #else
+        #define MA_EMSCRIPTEN_TINY __EMSCRIPTEN_tiny__
+    #endif
+#endif
+
+#if (MA_EMSCRIPTEN_MAJOR > 3) || (MA_EMSCRIPTEN_MAJOR == 3 && (MA_EMSCRIPTEN_MINOR > 1 || (MA_EMSCRIPTEN_MINOR == 1 && MA_EMSCRIPTEN_TINY >= 32)))
     #include <emscripten/webaudio.h>
     #define MA_SUPPORT_AUDIO_WORKLETS
 
-    #if (__EMSCRIPTEN_major__ > 3) || (__EMSCRIPTEN_major__ == 3 && (__EMSCRIPTEN_minor__ > 1 || (__EMSCRIPTEN_minor__ == 1 && __EMSCRIPTEN_tiny__ >= 70)))
+    #if (MA_EMSCRIPTEN_MAJOR > 3) || (MA_EMSCRIPTEN_MAJOR == 3 && (MA_EMSCRIPTEN_MINOR > 1 || (MA_EMSCRIPTEN_MINOR == 1 && MA_EMSCRIPTEN_TINY >= 70)))
         #define MA_SUPPORT_AUDIO_WORKLETS_VARIABLE_BUFFER_SIZE
     #endif
 #endif
 
-/*
-TODO: Version 0.12: Swap this logic around so that AudioWorklets are used by default. Add MA_NO_AUDIO_WORKLETS.
-*/
 #if defined(MA_ENABLE_AUDIO_WORKLETS) && defined(MA_SUPPORT_AUDIO_WORKLETS)
     #define MA_USE_AUDIO_WORKLETS
 #endif
@@ -59243,6 +59262,10 @@ static ma_result ma_data_source_read_pcm_frames_within_range(ma_data_source* pDa
     ma_uint64 framesRead = 0;
     ma_bool32 loop = ma_data_source_is_looping(pDataSource);
 
+    if (pFramesRead != NULL) {
+        *pFramesRead = 0;
+    }
+
     if (pDataSourceBase == NULL) {
         return MA_AT_END;
     }
@@ -61921,7 +61944,7 @@ extern "C" {
 #define MA_DR_WAV_XSTRINGIFY(x)     MA_DR_WAV_STRINGIFY(x)
 #define MA_DR_WAV_VERSION_MAJOR     0
 #define MA_DR_WAV_VERSION_MINOR     14
-#define MA_DR_WAV_VERSION_REVISION  4
+#define MA_DR_WAV_VERSION_REVISION  5
 #define MA_DR_WAV_VERSION_STRING    MA_DR_WAV_XSTRINGIFY(MA_DR_WAV_VERSION_MAJOR) "." MA_DR_WAV_XSTRINGIFY(MA_DR_WAV_VERSION_MINOR) "." MA_DR_WAV_XSTRINGIFY(MA_DR_WAV_VERSION_REVISION)
 #include <stddef.h>
 #define MA_DR_WAVE_FORMAT_PCM          0x1
@@ -80503,6 +80526,13 @@ MA_PRIVATE ma_uint64 ma_dr_wav__read_smpl_to_metadata_obj(ma_dr_wav__metadata_pa
     MA_DR_WAV_ASSERT(pChunkHeader != NULL);
     if (pMetadata != NULL && bytesJustRead == sizeof(smplHeaderData)) {
         ma_uint32 iSampleLoop;
+        ma_uint32 loopCount;
+        ma_uint32 calculatedLoopCount;
+        loopCount = ma_dr_wav_bytes_to_u32(smplHeaderData + 28);
+        calculatedLoopCount = (pChunkHeader->sizeInBytes - MA_DR_WAV_SMPL_BYTES) / MA_DR_WAV_SMPL_LOOP_BYTES;
+        if (loopCount != calculatedLoopCount) {
+            return totalBytesRead;
+        }
         pMetadata->type                                     = ma_dr_wav_metadata_type_smpl;
         pMetadata->data.smpl.manufacturerId                 = ma_dr_wav_bytes_to_u32(smplHeaderData + 0);
         pMetadata->data.smpl.productId                      = ma_dr_wav_bytes_to_u32(smplHeaderData + 4);
@@ -80513,7 +80543,7 @@ MA_PRIVATE ma_uint64 ma_dr_wav__read_smpl_to_metadata_obj(ma_dr_wav__metadata_pa
         pMetadata->data.smpl.smpteOffset                    = ma_dr_wav_bytes_to_u32(smplHeaderData + 24);
         pMetadata->data.smpl.sampleLoopCount                = ma_dr_wav_bytes_to_u32(smplHeaderData + 28);
         pMetadata->data.smpl.samplerSpecificDataSizeInBytes = ma_dr_wav_bytes_to_u32(smplHeaderData + 32);
-        if (pMetadata->data.smpl.sampleLoopCount == (pChunkHeader->sizeInBytes - MA_DR_WAV_SMPL_BYTES) / MA_DR_WAV_SMPL_LOOP_BYTES) {
+        if (pMetadata->data.smpl.sampleLoopCount == calculatedLoopCount) {
             pMetadata->data.smpl.pLoops = (ma_dr_wav_smpl_loop*)ma_dr_wav__metadata_get_memory(pParser, sizeof(ma_dr_wav_smpl_loop) * pMetadata->data.smpl.sampleLoopCount, MA_DR_WAV_METADATA_ALIGNMENT);
             for (iSampleLoop = 0; iSampleLoop < pMetadata->data.smpl.sampleLoopCount; ++iSampleLoop) {
                 ma_uint8 smplLoopData[MA_DR_WAV_SMPL_LOOP_BYTES];
@@ -80534,6 +80564,8 @@ MA_PRIVATE ma_uint64 ma_dr_wav__read_smpl_to_metadata_obj(ma_dr_wav__metadata_pa
                 MA_DR_WAV_ASSERT(pMetadata->data.smpl.pSamplerSpecificData != NULL);
                 ma_dr_wav__metadata_parser_read(pParser, pMetadata->data.smpl.pSamplerSpecificData, pMetadata->data.smpl.samplerSpecificDataSizeInBytes, &totalBytesRead);
             }
+        } else {
+            MA_DR_WAV_ZERO_OBJECT(&pMetadata->data.smpl);
         }
     }
     return totalBytesRead;
@@ -83149,19 +83181,13 @@ MA_PRIVATE ma_uint64 ma_dr_wav_read_pcm_frames_s16__msadpcm(ma_dr_wav* pWav, ma_
                     newSample0  = ((pWav->msadpcm.prevFrames[0][1] * coeff1Table[pWav->msadpcm.predictor[0]]) + (pWav->msadpcm.prevFrames[0][0] * coeff2Table[pWav->msadpcm.predictor[0]])) >> 8;
                     newSample0 += nibble0 * pWav->msadpcm.delta[0];
                     newSample0  = ma_dr_wav_clamp(newSample0, -32768, 32767);
-                    pWav->msadpcm.delta[0] = (adaptationTable[((nibbles & 0xF0) >> 4)] * pWav->msadpcm.delta[0]) >> 8;
-                    if (pWav->msadpcm.delta[0] < 16) {
-                        pWav->msadpcm.delta[0] = 16;
-                    }
+                    pWav->msadpcm.delta[0] = (ma_int32)ma_dr_wav_clamp(((ma_int64)adaptationTable[((nibbles & 0xF0) >> 4)] * pWav->msadpcm.delta[0]) >> 8, 16, 0x7FFFFFFF);
                     pWav->msadpcm.prevFrames[0][0] = pWav->msadpcm.prevFrames[0][1];
                     pWav->msadpcm.prevFrames[0][1] = newSample0;
                     newSample1  = ((pWav->msadpcm.prevFrames[0][1] * coeff1Table[pWav->msadpcm.predictor[0]]) + (pWav->msadpcm.prevFrames[0][0] * coeff2Table[pWav->msadpcm.predictor[0]])) >> 8;
                     newSample1 += nibble1 * pWav->msadpcm.delta[0];
                     newSample1  = ma_dr_wav_clamp(newSample1, -32768, 32767);
-                    pWav->msadpcm.delta[0] = (adaptationTable[((nibbles & 0x0F) >> 0)] * pWav->msadpcm.delta[0]) >> 8;
-                    if (pWav->msadpcm.delta[0] < 16) {
-                        pWav->msadpcm.delta[0] = 16;
-                    }
+                    pWav->msadpcm.delta[0] = (ma_int32)ma_dr_wav_clamp(((ma_int64)adaptationTable[((nibbles & 0x0F) >> 0)] * pWav->msadpcm.delta[0]) >> 8, 16, 0x7FFFFFFF);
                     pWav->msadpcm.prevFrames[0][0] = pWav->msadpcm.prevFrames[0][1];
                     pWav->msadpcm.prevFrames[0][1] = newSample1;
                     pWav->msadpcm.cachedFrames[2] = newSample0;
@@ -83176,10 +83202,7 @@ MA_PRIVATE ma_uint64 ma_dr_wav_read_pcm_frames_s16__msadpcm(ma_dr_wav* pWav, ma_
                     newSample0  = ((pWav->msadpcm.prevFrames[0][1] * coeff1Table[pWav->msadpcm.predictor[0]]) + (pWav->msadpcm.prevFrames[0][0] * coeff2Table[pWav->msadpcm.predictor[0]])) >> 8;
                     newSample0 += nibble0 * pWav->msadpcm.delta[0];
                     newSample0  = ma_dr_wav_clamp(newSample0, -32768, 32767);
-                    pWav->msadpcm.delta[0] = (adaptationTable[((nibbles & 0xF0) >> 4)] * pWav->msadpcm.delta[0]) >> 8;
-                    if (pWav->msadpcm.delta[0] < 16) {
-                        pWav->msadpcm.delta[0] = 16;
-                    }
+                    pWav->msadpcm.delta[0] = (ma_int32)ma_dr_wav_clamp(((ma_int64)adaptationTable[((nibbles & 0xF0) >> 4)] * pWav->msadpcm.delta[0]) >> 8, 16, 0x7FFFFFFF);
                     pWav->msadpcm.prevFrames[0][0] = pWav->msadpcm.prevFrames[0][1];
                     pWav->msadpcm.prevFrames[0][1] = newSample0;
                     if (pWav->msadpcm.predictor[1] >= ma_dr_wav_countof(coeff1Table) || pWav->msadpcm.predictor[1] >= ma_dr_wav_countof(coeff2Table)) {
@@ -83188,10 +83211,7 @@ MA_PRIVATE ma_uint64 ma_dr_wav_read_pcm_frames_s16__msadpcm(ma_dr_wav* pWav, ma_
                     newSample1  = ((pWav->msadpcm.prevFrames[1][1] * coeff1Table[pWav->msadpcm.predictor[1]]) + (pWav->msadpcm.prevFrames[1][0] * coeff2Table[pWav->msadpcm.predictor[1]])) >> 8;
                     newSample1 += nibble1 * pWav->msadpcm.delta[1];
                     newSample1  = ma_dr_wav_clamp(newSample1, -32768, 32767);
-                    pWav->msadpcm.delta[1] = (adaptationTable[((nibbles & 0x0F) >> 0)] * pWav->msadpcm.delta[1]) >> 8;
-                    if (pWav->msadpcm.delta[1] < 16) {
-                        pWav->msadpcm.delta[1] = 16;
-                    }
+                    pWav->msadpcm.delta[1] = (ma_int32)ma_dr_wav_clamp(((ma_int64)adaptationTable[((nibbles & 0x0F) >> 0)] * pWav->msadpcm.delta[1]) >> 8, 16, 0x7FFFFFFF);
                     pWav->msadpcm.prevFrames[1][0] = pWav->msadpcm.prevFrames[1][1];
                     pWav->msadpcm.prevFrames[1][1] = newSample1;
                     pWav->msadpcm.cachedFrames[2] = newSample0;
@@ -95825,7 +95845,7 @@ For more information, please refer to <http://unlicense.org/>
 ===============================================================================
 ALTERNATIVE 2 - MIT No Attribution
 ===============================================================================
-Copyright 2025 David Reid
+Copyright 2026 David Reid
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of
 this software and associated documentation files (the "Software"), to deal in

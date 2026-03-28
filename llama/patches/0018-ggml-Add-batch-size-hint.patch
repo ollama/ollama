@@ -187,7 +187,7 @@ index ddf1737a3..e947203bb 100644
  
      if (cpu_ctx->work_size < cplan.work_size) {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index d115c3300..82cb3edfa 100644
+index cf9c01abb..ddfca184e 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -3546,7 +3546,7 @@ static bool ggml_cuda_check_fusion_memory_ranges(ggml_cgraph * cgraph,
@@ -254,10 +254,10 @@ index 488517de3..f3241dc4a 100644
  }
  
 diff --git a/ggml/src/ggml-opencl/ggml-opencl.cpp b/ggml/src/ggml-opencl/ggml-opencl.cpp
-index a1e5514ff..21362de2f 100644
+index fe368a1e1..2d00dc7fd 100644
 --- a/ggml/src/ggml-opencl/ggml-opencl.cpp
 +++ b/ggml/src/ggml-opencl/ggml-opencl.cpp
-@@ -3523,9 +3523,11 @@ static void ggml_opencl_op_rms_norm_fused(ggml_backend_t backend, ggml_tensor *
+@@ -3542,9 +3542,11 @@ static void ggml_opencl_op_rms_norm_fused(ggml_backend_t backend, ggml_tensor *
  static void ggml_opencl_op_norm_fused(ggml_backend_t backend, ggml_tensor * norm_tensor, ggml_tensor * mul_tensor, ggml_tensor * add_tensor);
  static void ggml_opencl_op_group_norm_fused(ggml_backend_t backend, ggml_tensor * gn_tensor, ggml_tensor * mul_tensor, ggml_tensor * add_tensor);
  
@@ -288,10 +288,10 @@ index 281fa1bdb..b5f7adf89 100644
      bool reuse = rpc_ctx->gc.is_cached(cgraph);
      if (reuse) {
 diff --git a/ggml/src/ggml-sycl/ggml-sycl.cpp b/ggml/src/ggml-sycl/ggml-sycl.cpp
-index 52183a7f7..8ed483a08 100644
+index f2332a383..989693ed2 100644
 --- a/ggml/src/ggml-sycl/ggml-sycl.cpp
 +++ b/ggml/src/ggml-sycl/ggml-sycl.cpp
-@@ -4405,9 +4405,11 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
+@@ -4408,9 +4408,11 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
  }
  #endif
  
@@ -322,10 +322,10 @@ index a63ee2b9d..672284393 100644
  }
  
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index aa4781b98..6b84d3c4b 100644
+index 1a1309853..3e543c095 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -14102,10 +14102,12 @@ static int32_t find_first_set(uint32_t x) {
+@@ -14129,10 +14129,12 @@ static int32_t find_first_set(uint32_t x) {
      return ret;
  }
  
@@ -340,10 +340,10 @@ index aa4781b98..6b84d3c4b 100644
          vk::DebugUtilsLabelEXT dul = {};
          dul.pLabelName = "ggml_backend_vk_graph_compute";
 diff --git a/ggml/src/ggml-webgpu/ggml-webgpu.cpp b/ggml/src/ggml-webgpu/ggml-webgpu.cpp
-index b2ef2d590..8a1ae1fee 100644
+index 128b7dc3d..c83e33184 100644
 --- a/ggml/src/ggml-webgpu/ggml-webgpu.cpp
 +++ b/ggml/src/ggml-webgpu/ggml-webgpu.cpp
-@@ -2206,10 +2206,12 @@ static std::optional<webgpu_command> ggml_webgpu_encode_node(webgpu_context ctx,
+@@ -2239,10 +2239,12 @@ static std::optional<webgpu_command> ggml_webgpu_encode_node(webgpu_context ctx,
      }
  }
  

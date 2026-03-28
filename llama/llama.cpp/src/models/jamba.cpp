@@ -1,7 +1,7 @@
 #include "models.h"
 
 llm_build_jamba::llm_build_jamba(const llama_model & model, const llm_graph_params & params) : llm_build_mamba_base(params) {
-    const int64_t n_embd_head = hparams.n_embd_head_v;
+    const int64_t n_embd_head = hparams.n_embd_head_v();
 
     ggml_tensor * cur;
     ggml_tensor * inpL;

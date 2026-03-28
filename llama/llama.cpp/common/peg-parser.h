@@ -231,8 +231,9 @@ struct common_peg_chars_parser {
     int max_count;  // -1 for unbounded
 };
 
-struct common_peg_json_string_parser {};
-struct common_peg_python_dict_string_parser {};
+struct common_peg_string_parser {
+    char delimiter;
+};
 
 struct common_peg_until_parser {
     std::vector<std::string> delimiters;
@@ -280,8 +281,7 @@ using common_peg_parser_variant = std::variant<
     common_peg_any_parser,
     common_peg_space_parser,
     common_peg_chars_parser,
-    common_peg_json_string_parser,
-    common_peg_python_dict_string_parser,
+    common_peg_string_parser,
     common_peg_until_parser,
     common_peg_schema_parser,
     common_peg_rule_parser,
@@ -339,10 +339,6 @@ class common_peg_parser_builder {
 
     common_peg_parser wrap(common_peg_parser_id id) { return common_peg_parser(id, *this); }
     common_peg_parser add(const common_peg_parser_variant & p) { return wrap(arena_.add_parser(p)); }
-
-    // Generic helpers for building object/array structures with configurable string/value parsers.
-    common_peg_parser generic_object(const std::string & name, const common_peg_parser & string_parser, const common_peg_parser & value_parser);
-    common_peg_parser generic_array(const std::string & name, const common_peg_parser & value_parser);
 
   public:
     common_peg_parser_builder();
@@ -444,13 +440,10 @@ class common_peg_parser_builder {
     common_peg_parser single_quoted_string();
 
     // Matches a string that accepts both double-quoted and single-quoted styles.
-    common_peg_parser flexible_string();
+    common_peg_parser quoted_string();
 
-    // Matches double-quoted string content without the surrounding quotes.
-    common_peg_parser json_string_content();
-
-    // Matches single-quoted string content without the surrounding quotes.
-    common_peg_parser single_quoted_string_content();
+    // Matches string content without the surrounding delimiter.
+    common_peg_parser string_content(char delimiter);
 
     // Creates a complete JSON parser supporting objects, arrays, strings, numbers, booleans, and null.
     //   value -> object | array | string | number | true | false | null

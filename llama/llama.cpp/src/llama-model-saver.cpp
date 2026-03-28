@@ -186,8 +186,10 @@ void llama_model_saver::add_kv_from_model() {
     add_kv(LLM_KV_ATTENTION_HEAD_COUNT_KV,           hparams.n_head_kv_arr, true);
     add_kv(LLM_KV_ATTENTION_MAX_ALIBI_BIAS,          hparams.f_max_alibi_bias);
     add_kv(LLM_KV_ATTENTION_CLAMP_KQV,               hparams.f_clamp_kqv);
-    add_kv(LLM_KV_ATTENTION_KEY_LENGTH,              hparams.n_embd_head_k);
-    add_kv(LLM_KV_ATTENTION_VALUE_LENGTH,            hparams.n_embd_head_v);
+    add_kv(LLM_KV_ATTENTION_KEY_LENGTH,              hparams.n_embd_head_k_full);
+    add_kv(LLM_KV_ATTENTION_VALUE_LENGTH,            hparams.n_embd_head_v_full);
+    add_kv(LLM_KV_ATTENTION_KEY_LENGTH_SWA,          hparams.n_embd_head_k_swa);
+    add_kv(LLM_KV_ATTENTION_VALUE_LENGTH_SWA,        hparams.n_embd_head_v_swa);
     add_kv(LLM_KV_ATTENTION_LAYERNORM_EPS,           hparams.f_norm_eps);
     add_kv(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS,       hparams.f_norm_rms_eps);
     add_kv(LLM_KV_ATTENTION_CAUSAL,                  hparams.causal_attn);
@@ -199,7 +201,8 @@ void llama_model_saver::add_kv_from_model() {
 
     const float rope_scaling_factor = hparams.rope_freq_scale_train == 1.0f ? 0.0f : 1.0f/hparams.rope_freq_scale_train;
 
-    add_kv(LLM_KV_ROPE_DIMENSION_COUNT,              hparams.n_rot);
+    add_kv(LLM_KV_ROPE_DIMENSION_COUNT,              hparams.n_rot_full);
+    add_kv(LLM_KV_ROPE_DIMENSION_COUNT_SWA,          hparams.n_rot_swa);
     add_kv(LLM_KV_ROPE_FREQ_BASE,                    hparams.rope_freq_base_train);
     // add_kv(LLM_KV_ROPE_SCALE_LINEAR,                 rope_scaling_factor); // old name
     add_kv(LLM_KV_ROPE_SCALING_TYPE,                 llama_rope_scaling_type_name(hparams.rope_scaling_type_train));
