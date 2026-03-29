@@ -36,6 +36,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/server/internal/cache/blob"
 	"github.com/ollama/ollama/server/internal/internal/names"
 
@@ -74,13 +75,7 @@ const (
 )
 
 var defaultCache = sync.OnceValues(func() (*blob.DiskCache, error) {
-	dir := os.Getenv("OLLAMA_MODELS")
-	if dir == "" {
-		home, _ := os.UserHomeDir()
-		home = cmp.Or(home, ".")
-		dir = filepath.Join(home, ".ollama", "models")
-	}
-	return blob.Open(dir)
+	return blob.Open(envconfig.Models())
 })
 
 // DefaultCache returns the default cache used by the registry. It is
@@ -260,16 +255,12 @@ func (r *Registry) parseName(name string) (names.Name, error) {
 }
 
 // DefaultRegistry returns a new Registry configured from the environment. The
-// key is read from $HOME/.ollama/id_ed25519, MaxStreams is set to the
+// key is read from $OLLAMA_HOME/id_ed25519, MaxStreams is set to the
 // value of OLLAMA_REGISTRY_MAXSTREAMS, and ReadTimeout is set to 30 seconds.
 //
 // It returns an error if any configuration in the environment is invalid.
 func DefaultRegistry() (*Registry, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-	keyPEM, err := os.ReadFile(filepath.Join(home, ".ollama/id_ed25519"))
+	keyPEM, err := os.ReadFile(filepath.Join(envconfig.Home(), "id_ed25519"))
 	if err != nil && errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}

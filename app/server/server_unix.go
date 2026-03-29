@@ -13,11 +13,13 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/ollama/ollama/envconfig"
 )
 
 var (
 	pidFile       = filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "Ollama", "ollama.pid")
-	serverLogPath = filepath.Join(os.Getenv("HOME"), ".ollama", "logs", "server.log")
+	serverLogPath = filepath.Join(envconfig.Home(), "logs", "server.log")
 )
 
 func commandContext(ctx context.Context, name string, arg ...string) *exec.Cmd {

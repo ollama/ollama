@@ -107,11 +107,7 @@ func readServerConfigCloudDisabled() (bool, error) {
 }
 
 func serverConfigPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve home directory: %w", err)
-	}
-	return filepath.Join(home, ".ollama", serverConfigFilename), nil
+	return filepath.Join(envconfig.Home(), serverConfigFilename), nil
 }
 
 func cloudStatusSource(envDisabled bool, configDisabled bool) string {

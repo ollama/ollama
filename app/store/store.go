@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ollama/ollama/app/types/not"
+	"github.com/ollama/ollama/envconfig"
 )
 
 type File struct {
@@ -187,7 +188,7 @@ var defaultDBPath = func() string {
 	case "darwin":
 		return filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "Ollama", "db.sqlite")
 	default:
-		return filepath.Join(os.Getenv("HOME"), ".ollama", "db.sqlite")
+		return filepath.Join(envconfig.Home(), "db.sqlite")
 	}
 }()
 
@@ -199,7 +200,7 @@ var legacyConfigPath = func() string {
 	case "darwin":
 		return filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "Ollama", "config.json")
 	default:
-		return filepath.Join(os.Getenv("HOME"), ".ollama", "config.json")
+		return filepath.Join(envconfig.Home(), "config.json")
 	}
 }()
 
@@ -378,15 +379,7 @@ func (s *Store) Settings() (Settings, error) {
 
 	// Set default models directory if not set
 	if settings.Models == "" {
-		dir := os.Getenv("OLLAMA_MODELS")
-		if dir != "" {
-			settings.Models = dir
-		} else {
-			home, err := os.UserHomeDir()
-			if err == nil {
-				settings.Models = filepath.Join(home, ".ollama", "models")
-			}
-		}
+		settings.Models = envconfig.Models()
 	}
 
 	return settings, nil

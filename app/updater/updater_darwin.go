@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	"github.com/ollama/ollama/envconfig"
 	"golang.org/x/sys/unix"
 )
 
@@ -55,10 +56,6 @@ var BundlePath = func() string {
 func init() {
 	VerifyDownload = verifyDownload
 	Installer = "Ollama-darwin.zip"
-	home, err := os.UserHomeDir()
-	if err != nil {
-		panic(err)
-	}
 
 	var uts unix.Utsname
 	if err := unix.Uname(&uts); err == nil {
@@ -74,7 +71,7 @@ func init() {
 
 	// Executable = Ollama.app/Contents/MacOS/Ollama
 
-	UpgradeLogFile = filepath.Join(home, ".ollama", "logs", "upgrade.log")
+	UpgradeLogFile = filepath.Join(envconfig.Home(), "logs", "upgrade.log")
 
 	cacheDir, err := os.UserCacheDir()
 	if err != nil {
