@@ -2587,6 +2587,10 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                 }
             }
 
+            if (tn.tensor == LLM_TENSOR_TOKEN_EMBD || tn.tensor == LLM_TENSOR_OUTPUT) {
+                buft = pimpl->dev_layer.at(0).buft_list->front().second;
+            }
+
             if (!buft) {
                 buft = select_weight_buft(hparams, t_meta, op, *buft_list);
                 if (!buft) {
