@@ -56,7 +56,8 @@ static __global__ void cpy_scalar_transpose(const char * cx, char * cdst, const 
     const int tx = blockIdx.y * CUDA_CPY_TILE_DIM_2D + threadIdx.x;  // transpose block offset
     const int ty = blockIdx.x * CUDA_CPY_TILE_DIM_2D + threadIdx.y;
 
-    __shared__ float tile[CUDA_CPY_TILE_DIM_2D][CUDA_CPY_TILE_DIM_2D+1];
+    __shared__ float tile[2][CUDA_CPY_TILE_DIM_2D][CUDA_CPY_TILE_DIM_2D+1];
+    int cur_tile_buf = 0;
 
 #pragma unroll
     for (int i = 0; i < CUDA_CPY_BLOCK_NM; ++i) {
@@ -70,7 +71,7 @@ static __global__ void cpy_scalar_transpose(const char * cx, char * cdst, const 
             if(x < ne01 && y + j < ne00){
                 const int row = threadIdx.y+j;
                 const int col = threadIdx.x * sizeof(float)/sizeof(T);
-                T *tile2 = reinterpret_cast<T*>(tile[row]);
+                T *tile2 = reinterpret_cast<T*>(tile[cur_tile_buf][row]);
                 tile2[col] = src[imat*n + (y+j)*ne01 + x];
             }
         }
@@ -81,10 +82,12 @@ static __global__ void cpy_scalar_transpose(const char * cx, char * cdst, const 
         for (int j = 0; j < CUDA_CPY_TILE_DIM_2D; j += CUDA_CPY_BLOCK_ROWS) {
             if (ty + j < ne01 && tx < ne00) {
                 const int col = (threadIdx.y+j)*sizeof(float)/sizeof(T);
-                const T *tile2 = reinterpret_cast<const T*>(tile[threadIdx.x]);
+                const T *tile2 = reinterpret_cast<const T*>(tile[cur_tile_buf][threadIdx.x]);
                 dst[imat*n + (ty+j)*ne00 + tx] = tile2[col];
             }
         }
+
+        cur_tile_buf = (cur_tile_buf + 1) % 2;
     }
 
     GGML_UNUSED_VARS(ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11,

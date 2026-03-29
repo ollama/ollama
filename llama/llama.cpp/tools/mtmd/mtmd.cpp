@@ -2,6 +2,7 @@
 #include "clip-impl.h"
 #include "mtmd.h"
 #include "mtmd-audio.h"
+#include "debug/mtmd-debug.h"
 
 #include "llama.h"
 
@@ -922,7 +923,7 @@ bool mtmd_support_audio(mtmd_context * ctx) {
     return ctx->ctx_a != nullptr;
 }
 
-int mtmd_get_audio_bitrate(mtmd_context * ctx) {
+int mtmd_get_audio_sample_rate(mtmd_context * ctx) {
     if (!ctx->ctx_a) {
         return -1;
     }
@@ -1166,4 +1167,105 @@ mtmd_input_chunks * mtmd_test_create_input_chunks() {
 void mtmd_log_set(ggml_log_callback log_callback, void * user_data) {
     g_logger_state.log_callback = log_callback ? log_callback : clip_log_callback_default;
     g_logger_state.log_callback_user_data = user_data;
+}
+
+//
+// Debugging API (NOT intended for public use)
+//
+
+static void mtmd_debug_encode_impl(mtmd_context * ctx, clip_ctx * ctx_clip, clip_image_f32 & image) {
+    clip_set_debug_output_embeddings(ctx_clip, true);
+    int n_mmproj_embd = clip_n_mmproj_embd(ctx_clip);
+    int n_tokens = clip_n_output_tokens(ctx_clip, &image);
+    std::vector<float> embd_output(n_tokens * n_mmproj_embd, 0.0f);
+    bool ok = clip_image_encode(
+        ctx_clip,
+        ctx->n_threads,
+        &image,
+        embd_output.data());
+    if (!ok) {
+        LOG_ERR("%s: failed to encode image\n", __func__);
+    }
+}
+
+void mtmd_debug_encode_image(mtmd_context * ctx, const std::vector<std::vector<float>> & image) {
+    if (!ctx->ctx_v) {
+        LOG_ERR("%s: model does not support vision input\n", __func__);
+        return;
+    }
+    clip_image_f32 inp_image;
+    inp_image.nx = image.size();
+    inp_image.ny = inp_image.nx;
+    inp_image.buf.reserve(inp_image.nx * inp_image.ny);
+    for (const auto & row : image) {
+        inp_image.buf.insert(inp_image.buf.end(), row.begin(), row.end());
+    }
+    LOG_INF("%s: created input image with nx=%d, ny=%d\n", __func__, inp_image.nx, inp_image.ny);
+    mtmd_debug_encode_impl(ctx, ctx->ctx_v, inp_image);
+}
+
+void mtmd_debug_encode_audio(mtmd_context * ctx, const std::vector<float> & input) {
+    if (!ctx->ctx_a) {
+        LOG_ERR("%s: model does not support audio input\n", __func__);
+        return;
+    }
+    int n_mel = clip_get_hparams(ctx->ctx_a)->n_mel_bins;
+    clip_image_f32 inp_audio;
+    inp_audio.nx = input.size();
+    inp_audio.ny = n_mel;
+    inp_audio.buf.resize(input.size() * n_mel);
+    for (size_t i = 0; i < input.size(); i++) {
+        for (int j = 0; j < n_mel; j++) {
+            inp_audio.buf[j * inp_audio.nx + i] = input[i];
+        }
+    }
+    LOG_INF("%s: created input audio with nx=%d, ny=%d\n", __func__, inp_audio.nx, inp_audio.ny);
+    mtmd_debug_encode_impl(ctx, ctx->ctx_a, inp_audio);
+}
+
+void mtmd_debug_preprocess_image(mtmd_context * ctx, const std::vector<uint8_t> & rgb_values, int nx, int ny) {
+    if (!ctx->ctx_v) {
+        LOG_ERR("%s: model does not support vision input\n", __func__);
+        return;
+    }
+    clip_image_u8 img_u8;
+    img_u8.nx = nx;
+    img_u8.ny = ny;
+    img_u8.buf = rgb_values;
+    clip_image_f32_batch batch_f32;
+    bool ok = clip_image_preprocess(ctx->ctx_v, &img_u8, &batch_f32);
+    if (!ok) {
+        LOG_ERR("%s: failed to preprocess image\n", __func__);
+        return;
+    }
+    LOG_INF("%s: preprocessed image to batch_f32 with %d entries\n", __func__, (int)batch_f32.entries.size());
+    for (size_t i = 0; i < batch_f32.entries.size(); i++) {
+        LOG_INF("%s: entry %zu has nx=%d, ny=%d\n", __func__, i, batch_f32.entries[i]->nx, batch_f32.entries[i]->ny);
+        // TODO: better way to dump entry content?
+    }
+}
+
+void mtmd_debug_preprocess_audio(mtmd_context * ctx, const std::vector<float> & samples) {
+    if (!ctx->ctx_a) {
+        LOG_ERR("%s: model does not support audio input\n", __func__);
+        return;
+    }
+    std::vector<mtmd_audio_mel> mel_spec_chunks;
+    bool ok = ctx->audio_preproc->preprocess(samples.data(), samples.size(), mel_spec_chunks);
+    if (!ok) {
+        LOG_ERR("%s: failed to preprocess audio\n", __func__);
+        return;
+    }
+    LOG_INF("%s: preprocessed audio to %zu mel spec chunks\n", __func__, mel_spec_chunks.size());
+    for (size_t i = 0; i < mel_spec_chunks.size(); i++) {
+        LOG_INF("%s: mel spec chunk %zu has n_len=%d, n_mel=%d\n", __func__, i, mel_spec_chunks[i].n_len, mel_spec_chunks[i].n_mel);
+
+        // dump mel entries: data is stored as [n_mel][n_len] (mel-major)
+        const auto & mel = mel_spec_chunks[i];
+        for (int m = 0; m < mel.n_mel; m++) {
+            for (int t = 0; t < mel.n_len; t++) {
+                LOG_INF("mel[%zu][m=%d][t=%d] = %f\n", i, m, t, mel.data[m * mel.n_len + t]);
+            }
+        }
+    }
 }

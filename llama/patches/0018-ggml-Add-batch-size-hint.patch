@@ -59,7 +59,7 @@ index 59190b7c4..ed370041d 100644
          // (optional) event synchronization
          // record an event on this stream
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index c4be126f7..3a4ceff7f 100644
+index c1f4f63ba..0c3c4bf41 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
 @@ -355,14 +355,14 @@ enum ggml_status ggml_backend_graph_plan_compute(ggml_backend_t backend, ggml_ba
@@ -98,7 +98,7 @@ index c4be126f7..3a4ceff7f 100644
                  for (int b = 0; b < src_backend_id; b++) {
                      if (ggml_backend_supports_op(sched->backends[b], tensor) && ggml_backend_offload_op(sched->backends[b], tensor)) {
                          SET_CAUSE(tensor, "1.off");
-@@ -1583,7 +1585,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+@@ -1579,7 +1581,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
          }
  
          if (!sched->callback_eval) {
@@ -107,7 +107,7 @@ index c4be126f7..3a4ceff7f 100644
              if (ec != GGML_STATUS_SUCCESS) {
                  return ec;
              }
-@@ -1605,7 +1607,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+@@ -1601,7 +1603,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
  
                  struct ggml_cgraph gv = ggml_graph_view(&split->graph, j0, j1 + 1);
  
@@ -116,7 +116,7 @@ index c4be126f7..3a4ceff7f 100644
                  if (ec != GGML_STATUS_SUCCESS) {
                      return ec;
                  }
-@@ -1695,6 +1697,7 @@ ggml_backend_sched_t ggml_backend_sched_new(
+@@ -1691,6 +1693,7 @@ ggml_backend_sched_t ggml_backend_sched_new(
  
      sched->galloc = ggml_gallocr_new_n(sched->bufts, n_backends);
      sched->op_offload = op_offload;
@@ -124,7 +124,7 @@ index c4be126f7..3a4ceff7f 100644
  
      ggml_backend_sched_reset(sched);
  
-@@ -1828,6 +1831,11 @@ void ggml_backend_sched_set_eval_callback(ggml_backend_sched_t sched, ggml_backe
+@@ -1824,6 +1827,11 @@ void ggml_backend_sched_set_eval_callback(ggml_backend_sched_t sched, ggml_backe
      sched->callback_eval_user_data = user_data;
  }
  
@@ -137,10 +137,10 @@ index c4be126f7..3a4ceff7f 100644
      GGML_ASSERT(sched);
      return sched->n_splits;
 diff --git a/ggml/src/ggml-blas/ggml-blas.cpp b/ggml/src/ggml-blas/ggml-blas.cpp
-index 5de64b816..56491760b 100644
+index e7a1763b5..bc9fc90c0 100644
 --- a/ggml/src/ggml-blas/ggml-blas.cpp
 +++ b/ggml/src/ggml-blas/ggml-blas.cpp
-@@ -220,9 +220,11 @@ static void ggml_backend_blas_free(ggml_backend_t backend) {
+@@ -222,9 +222,11 @@ static void ggml_backend_blas_free(ggml_backend_t backend) {
      delete backend;
  }
  
@@ -187,10 +187,10 @@ index ddf1737a3..e947203bb 100644
  
      if (cpu_ctx->work_size < cplan.work_size) {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index cf9c01abb..ddfca184e 100644
+index d1ade5558..85c0087b6 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -3546,7 +3546,7 @@ static bool ggml_cuda_check_fusion_memory_ranges(ggml_cgraph * cgraph,
+@@ -3578,7 +3578,7 @@ static bool ggml_cuda_check_fusion_memory_ranges(ggml_cgraph * cgraph,
      return is_ok;
  }
  
@@ -199,7 +199,7 @@ index cf9c01abb..ddfca184e 100644
      bool graph_evaluated_or_captured = false;
  
      // flag used to determine whether it is an integrated_gpu
-@@ -4045,6 +4045,8 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
+@@ -4077,6 +4077,8 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
                  GGML_UNUSED(integrated);
  #endif  // NDEBUG
  
@@ -208,7 +208,7 @@ index cf9c01abb..ddfca184e 100644
                  bool ok = ggml_cuda_compute_forward(*cuda_ctx, node);
                  if (!ok) {
                      GGML_LOG_ERROR("%s: op not supported %s (%s)\n", __func__, node->name, ggml_op_name(node->op));
-@@ -4111,11 +4113,17 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
+@@ -4143,11 +4145,17 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
  }
  #endif // USE_CUDA_GRAPH
  
@@ -227,7 +227,7 @@ index cf9c01abb..ddfca184e 100644
      bool use_cuda_graph             = false;
      bool cuda_graph_update_required = false;
      const void * graph_key = nullptr;
-@@ -4165,7 +4173,7 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
+@@ -4197,7 +4205,7 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
          CUDA_CHECK(cudaStreamBeginCapture(cuda_ctx->stream(), cudaStreamCaptureModeRelaxed));
      }
  
@@ -288,10 +288,10 @@ index 281fa1bdb..b5f7adf89 100644
      bool reuse = rpc_ctx->gc.is_cached(cgraph);
      if (reuse) {
 diff --git a/ggml/src/ggml-sycl/ggml-sycl.cpp b/ggml/src/ggml-sycl/ggml-sycl.cpp
-index f2332a383..989693ed2 100644
+index a155f8687..c83f7c841 100644
 --- a/ggml/src/ggml-sycl/ggml-sycl.cpp
 +++ b/ggml/src/ggml-sycl/ggml-sycl.cpp
-@@ -4408,9 +4408,11 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
+@@ -4414,9 +4414,11 @@ static bool check_graph_compatibility(ggml_cgraph * cgraph) {
  }
  #endif
  
@@ -322,10 +322,10 @@ index a63ee2b9d..672284393 100644
  }
  
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 671f4bb07..b52e4f133 100644
+index c1454d972..3835a71ef 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -14232,10 +14232,12 @@ static int32_t find_first_set(uint32_t x) {
+@@ -14248,10 +14248,12 @@ static int32_t find_first_set(uint32_t x) {
      return ret;
  }
  

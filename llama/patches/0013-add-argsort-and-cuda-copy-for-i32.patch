@@ -12,10 +12,10 @@ Subject: [PATCH] add argsort and cuda copy for i32
  5 files changed, 413 insertions(+), 11 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index fa9d27046..0a8f74996 100644
+index 3f85e531d..aabe61243 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
-@@ -8034,6 +8034,45 @@ static void ggml_compute_forward_argsort_f32(
+@@ -8043,6 +8043,45 @@ static void ggml_compute_forward_argsort_f32(
      }
  }
  
@@ -61,7 +61,7 @@ index fa9d27046..0a8f74996 100644
  void ggml_compute_forward_argsort(
      const ggml_compute_params * params,
      ggml_tensor * dst) {
-@@ -8045,6 +8084,10 @@ void ggml_compute_forward_argsort(
+@@ -8054,6 +8093,10 @@ void ggml_compute_forward_argsort(
              {
                  ggml_compute_forward_argsort_f32(params, dst);
              } break;
@@ -233,10 +233,10 @@ index 7697c292d..00d773dd3 100644
 +    *dst = *src;
 +}
 diff --git a/ggml/src/ggml-cuda/cpy.cu b/ggml/src/ggml-cuda/cpy.cu
-index ee84303ef..178e82d76 100644
+index d208acf2d..4fc1c3580 100644
 --- a/ggml/src/ggml-cuda/cpy.cu
 +++ b/ggml/src/ggml-cuda/cpy.cu
-@@ -369,6 +369,43 @@ static void ggml_cpy_f32_iq4_nl_cuda(
+@@ -372,6 +372,43 @@ static void ggml_cpy_f32_iq4_nl_cuda(
          (cx, cdst, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13);
  }
  
@@ -280,7 +280,7 @@ index ee84303ef..178e82d76 100644
  void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, ggml_tensor * src1) {
      const int64_t ne = ggml_nelements(src0);
      GGML_ASSERT(ne == ggml_nelements(src1));
-@@ -495,6 +532,9 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
+@@ -498,6 +535,9 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
              ggml_cpy_scalar_cuda<half, float>
                  (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream);
          }
@@ -291,10 +291,10 @@ index ee84303ef..178e82d76 100644
          if (can_be_transposed) {
              ggml_cpy_scalar_cuda<nv_bfloat16, nv_bfloat16, true>
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 24a3092af..f04f251ae 100644
+index b2328605d..267e490fc 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -5129,8 +5129,77 @@ kernel void kernel_argsort_f32_i32(
+@@ -5130,8 +5130,77 @@ kernel void kernel_argsort_f32_i32(
      }
  }
  
@@ -372,7 +372,7 @@ index 24a3092af..f04f251ae 100644
  
  typedef void (argsort_merge_t)(
          constant   ggml_metal_kargs_argsort_merge & args,
-@@ -5285,8 +5354,154 @@ kernel void kernel_argsort_merge_f32_i32(
+@@ -5286,8 +5355,154 @@ kernel void kernel_argsort_merge_f32_i32(
      }
  }
  

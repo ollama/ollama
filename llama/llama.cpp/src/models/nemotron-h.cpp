@@ -107,9 +107,9 @@ ggml_tensor * llm_build_nemotron_h::build_attention_layer(ggml_tensor *         
 ggml_tensor * llm_build_nemotron_h::build_ffn_layer(ggml_tensor * cur, const llama_model & model, int il) {
     if (model.layers[il].ffn_gate_inp == nullptr) {
         cur = build_ffn(cur,
-                model.layers[il].ffn_up,   model.layers[il].ffn_up_b,   NULL,
+                model.layers[il].ffn_up,   model.layers[il].ffn_up_b,   model.layers[il].ffn_up_s,
                 NULL,                      NULL,                        NULL,
-                model.layers[il].ffn_down, model.layers[il].ffn_down_b, NULL,
+                model.layers[il].ffn_down, model.layers[il].ffn_down_b, model.layers[il].ffn_down_s,
                 NULL,
                 LLM_FFN_RELU_SQR, LLM_FFN_PAR, il);
         cb(cur, "ffn_out", il);
@@ -136,7 +136,10 @@ ggml_tensor * llm_build_nemotron_h::build_ffn_layer(ggml_tensor * cur, const lla
                     hparams.expert_weights_scale,
                     LLAMA_EXPERT_GATING_FUNC_TYPE_SIGMOID,
                     il,
-                    router_logits);
+                    router_logits, nullptr,
+                    model.layers[il].ffn_up_exps_s,
+                    nullptr, // no gate
+                    model.layers[il].ffn_down_exps_s);
         cb(moe_out, "ffn_moe_out", il);
 
         if (model.layers[il].ffn_latent_up) {
@@ -144,9 +147,9 @@ ggml_tensor * llm_build_nemotron_h::build_ffn_layer(ggml_tensor * cur, const lla
         }
 
         ggml_tensor * ffn_shexp = build_ffn(inp_emb,
-                    model.layers[il].ffn_up_shexp,  NULL, NULL,
-                    NULL /* no gate */           ,  NULL, NULL,
-                    model.layers[il].ffn_down_shexp, NULL, NULL,
+                    model.layers[il].ffn_up_shexp,   NULL, model.layers[il].ffn_up_shexp_s,
+                    NULL /* no gate */           ,   NULL, NULL,
+                    model.layers[il].ffn_down_shexp, NULL, model.layers[il].ffn_down_shexp_s,
                     NULL,
                     LLM_FFN_RELU_SQR, LLM_FFN_PAR, il);
         cb(ffn_shexp, "ffn_shexp", il);

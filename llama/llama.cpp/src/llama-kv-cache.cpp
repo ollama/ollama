@@ -1953,6 +1953,12 @@ bool llama_kv_cache::state_read_meta(llama_io_read_i & io, uint32_t strm, uint32
 
             cells.pos_set(i, pos);
 
+            if (hparams.n_pos_per_embd() > 1) {
+                llama_kv_cell_ext ext;
+                io.read_to(&ext, sizeof(ext));
+                cells.ext_set(i, ext);
+            }
+
             for (uint32_t j = 0; j < n_seq_id; ++j) {
                 llama_seq_id seq_id;
                 io.read_to(&seq_id, sizeof(seq_id));

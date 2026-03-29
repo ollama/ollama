@@ -579,10 +579,9 @@ static void print_tensor_data(ggml_tensor * t, uint8_t * data, int64_t n) {
     }
 }
 
-void clip_debug_encode(clip_ctx * ctx, int h, int w, float fill_value);
-
 //
 // API used internally with mtmd
 //
 
 projector_type clip_get_projector_type(const struct clip_ctx * ctx);
+void clip_set_debug_output_embeddings(struct clip_ctx * ctx, bool debug);

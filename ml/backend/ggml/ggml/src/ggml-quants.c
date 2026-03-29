@@ -4767,7 +4767,7 @@ static void quantize_row_iq4_nl_impl(const int super_block_size, const int block
             sumqx += w*q*xb[j];
             sumq2 += w*q*q;
         }
-        d = sumqx/sumq2;
+        d = sumq2 > 0 ? sumqx/sumq2 : 0.f;
         float best = d*sumqx;
         for (int itry = -ntry; itry <= ntry; ++itry) {
             id = (itry + values[0])/max;

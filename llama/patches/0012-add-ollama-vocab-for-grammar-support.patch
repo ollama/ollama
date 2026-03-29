@@ -10,7 +10,7 @@ Subject: [PATCH] add ollama vocab for grammar support
  3 files changed, 58 insertions(+), 10 deletions(-)
 
 diff --git a/src/llama-grammar.cpp b/src/llama-grammar.cpp
-index 3b7a62523..66cd48560 100644
+index aac0d41f2..62e04b82a 100644
 --- a/src/llama-grammar.cpp
 +++ b/src/llama-grammar.cpp
 @@ -1079,6 +1079,7 @@ llama_grammar_candidates llama_grammar_reject_candidates_for_stack(

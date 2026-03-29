@@ -105,6 +105,7 @@ enum llama_example {
     LLAMA_EXAMPLE_FINETUNE,
     LLAMA_EXAMPLE_FIT_PARAMS,
     LLAMA_EXAMPLE_RESULTS,
+    LLAMA_EXAMPLE_EXPORT_GRAPH_OPS,
 
     LLAMA_EXAMPLE_COUNT,
 };
@@ -543,6 +544,7 @@ struct common_params {
     std::string chat_template = "";                                                                         // NOLINT
     bool use_jinja = true;                                                                                  // NOLINT
     bool enable_chat_template = true;
+    bool force_pure_content_parser = false;
     common_reasoning_format reasoning_format = COMMON_REASONING_FORMAT_DEEPSEEK;
     int enable_reasoning = -1; // -1 = auto, 0 = disable, 1 = enable
     int reasoning_budget = -1;

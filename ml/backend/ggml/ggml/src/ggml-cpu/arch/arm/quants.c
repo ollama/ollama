@@ -666,7 +666,7 @@ void ggml_vec_dot_nvfp4_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
 
     float sumf = 0;
 
-#if defined __ARM_NEON
+#if defined(__ARM_NEON) && defined(__ARM_FEATURE_FMA)
     const int8x16_t values = vld1q_s8(kvalues_mxfp4);
     const uint8x16_t m4b = vdupq_n_u8(0x0f);
     float32x4_t acc = vdupq_n_f32(0.0f);
