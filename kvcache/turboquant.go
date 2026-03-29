@@ -60,11 +60,14 @@ type TurboQuantWrapper struct {
 	inner    Cache
 	bitWidth int
 	backend  ml.Backend
+	layer    int
 
 	mu        sync.Mutex
 	rotations map[int]*rotationPair
 	rotCtxs   map[int]ml.Context
 }
+
+var _ CheckpointCache = (*TurboQuantWrapper)(nil)
 
 type rotationPair struct {
 	// forward stores Pi^T in GGML format.
@@ -108,7 +111,10 @@ func (w *TurboQuantWrapper) Close() {
 	w.inner.Close()
 }
 
-func (w *TurboQuantWrapper) SetLayer(layer int)                { w.inner.SetLayer(layer) }
+func (w *TurboQuantWrapper) SetLayer(layer int) {
+	w.layer = layer
+	w.inner.SetLayer(layer)
+}
 func (w *TurboQuantWrapper) SetConfig(config ml.CacheConfig)   { w.inner.SetConfig(config) }
 func (w *TurboQuantWrapper) CopyPrefix(src, dst int, l int32)  { w.inner.CopyPrefix(src, dst, l) }
 func (w *TurboQuantWrapper) CanResume(seq int, pos int32) bool { return w.inner.CanResume(seq, pos) }
@@ -119,6 +125,20 @@ func (w *TurboQuantWrapper) StartForward(ctx ml.Context, batch input.Batch, rese
 
 func (w *TurboQuantWrapper) Remove(seq int, beginIndex, endIndex int32) error {
 	return w.inner.Remove(seq, beginIndex, endIndex)
+}
+
+func (w *TurboQuantWrapper) PrepareRestore(seq int, targetPos int32) (int32, bool) {
+	if cc, ok := w.inner.(CheckpointCache); ok {
+		return cc.PrepareRestore(seq, targetPos)
+	}
+
+	// Preserve non-checkpoint cache behavior used by ollamarunner:
+	// keep targetPos when the cache can resume, otherwise signal reprocess.
+	if w.inner.CanResume(seq, targetPos) {
+		return targetPos, true
+	}
+
+	return 0, false
 }
 
 func (w *TurboQuantWrapper) Put(ctx ml.Context, key, value ml.Tensor) {
@@ -139,6 +159,11 @@ func (w *TurboQuantWrapper) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor
 	rot := w.getOrCreateRotation(headDim)
 
 	if rot != nil {
+		// Metal does not provide all f32 x q4_0 matmul variants needed for
+		// rotation. Cast cache output to f32 before applying inverse rotation.
+		if key.DType() != ml.DTypeF32 {
+			key = key.Cast(ctx, ml.DTypeF32)
+		}
 		key = rot.inverse.Mulmat(ctx, key)
 	}
 
@@ -165,7 +190,7 @@ func (w *TurboQuantWrapper) getOrCreateRotation(headDim int) *rotationPair {
 	piData := turboquant.GenerateRotation(headDim, seed)
 	piTData := turboquant.GenerateRotationTranspose(headDim, seed)
 
-	rotCtx := w.backend.NewContextSize(2)
+	rotCtx := w.backend.NewContextSize(2).Layer(w.layer)
 	piTensor := rotCtx.FromFloats(piData, headDim, headDim)
 	piTTensor := rotCtx.FromFloats(piTData, headDim, headDim)
 
