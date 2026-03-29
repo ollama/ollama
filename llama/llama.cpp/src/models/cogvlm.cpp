@@ -86,6 +86,10 @@ llm_build_cogvlm::llm_build_cogvlm(const llama_model & model, const llm_graph_pa
         cur = ggml_add(ctx0, cur, ffn_inp);
         cb(cur, "ffn_out", il);
 
+        cur = build_cvec(cur, il);
+        cb(cur, "l_out", il);
+
+        // input for next layer
         inpL = cur;
     }
 

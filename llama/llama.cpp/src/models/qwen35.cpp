@@ -64,6 +64,9 @@ llm_build_qwen35::llm_build_qwen35(const llama_model & model, const llm_graph_pa
         cur = ggml_add(ctx0, cur, ffn_residual);
         cb(cur, "post_ffn", il);
 
+        cur = build_cvec(cur, il);
+        cb(cur, "l_out", il);
+
         // Input for next layer
         inpL = cur;
     }

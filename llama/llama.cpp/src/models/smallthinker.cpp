@@ -101,6 +101,7 @@ llm_build_smallthinker<iswa>::llm_build_smallthinker(const llama_model & model, 
         cur = ffn_out;
 
         cur = ggml_add(ctx0, cur, ffn_inp);
+
         cur = build_cvec(cur, il);
         cb(cur, "l_out", il);
 

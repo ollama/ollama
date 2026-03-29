@@ -56,7 +56,7 @@ ggml_cgraph * clip_graph_conformer::build() {
         cur = ggml_reshape_2d(ctx0, cur, cur->ne[0] * cur->ne[1], cur->ne[2]);
 
         // calculate out
-        cur = ggml_mul_mat(ctx0, model.pre_encode_out_w, cur);
+        cur = build_mm(model.pre_encode_out_w, cur);
         cur = ggml_add(ctx0, cur, model.pre_encode_out_b);
         cb(cur, "conformer.pre_encode.out", -1);
     }
@@ -87,7 +87,7 @@ ggml_cgraph * clip_graph_conformer::build() {
             cur = build_norm(residual, layer.ln_1_w, layer.ln_1_b, NORM_TYPE_NORMAL, 1e-5, il);
             cb(cur, "conformer.layers.{}.norm_self_att", il);
 
-            ggml_tensor * Qcur     = ggml_mul_mat(ctx0, layer.q_w, cur);
+            ggml_tensor * Qcur     = build_mm(layer.q_w, cur);
             Qcur                   = ggml_add(ctx0, Qcur, layer.q_b);
             Qcur                   = ggml_reshape_3d(ctx0, Qcur, d_head, n_head, Qcur->ne[1]);
             ggml_tensor * Q_bias_u = ggml_add(ctx0, Qcur, layer.pos_bias_u);
@@ -96,12 +96,12 @@ ggml_cgraph * clip_graph_conformer::build() {
             Q_bias_v               = ggml_permute(ctx0, Q_bias_v, 0, 2, 1, 3);
 
             // TODO @ngxson : some cont can/should be removed when ggml_mul_mat support these cases
-            ggml_tensor * Kcur = ggml_mul_mat(ctx0, layer.k_w, cur);
+            ggml_tensor * Kcur = build_mm(layer.k_w, cur);
             Kcur               = ggml_add(ctx0, Kcur, layer.k_b);
             Kcur               = ggml_reshape_3d(ctx0, Kcur, d_head, n_head, Kcur->ne[1]);
             Kcur               = ggml_cont(ctx0, ggml_permute(ctx0, Kcur, 0, 2, 1, 3));
 
-            ggml_tensor * Vcur = ggml_mul_mat(ctx0, layer.v_w, cur);
+            ggml_tensor * Vcur = build_mm(layer.v_w, cur);
             Vcur               = ggml_add(ctx0, Vcur, layer.v_b);
             Vcur               = ggml_reshape_3d(ctx0, Vcur, d_head, n_head, Vcur->ne[1]);
             Vcur               = ggml_cont(ctx0, ggml_permute(ctx0, Vcur, 1, 2, 0, 3));
@@ -111,7 +111,7 @@ ggml_cgraph * clip_graph_conformer::build() {
             matrix_ac               = ggml_cont(ctx0, ggml_permute(ctx0, matrix_ac, 1, 0, 2, 3));
             cb(matrix_ac, "conformer.layers.{}.self_attn.id3", il);
 
-            auto * p = ggml_mul_mat(ctx0, layer.linear_pos_w, pos_emb);
+            auto * p = build_mm(layer.linear_pos_w, pos_emb);
             cb(p, "conformer.layers.{}.self_attn.linear_pos", il);
             p = ggml_reshape_3d(ctx0, p, d_head, n_head, p->ne[1]);
             p = ggml_permute(ctx0, p, 0, 2, 1, 3);
@@ -143,7 +143,7 @@ ggml_cgraph * clip_graph_conformer::build() {
             x                  = ggml_permute(ctx0, x, 2, 0, 1, 3);
             x                  = ggml_cont_2d(ctx0, x, x->ne[0] * x->ne[1], x->ne[2]);
 
-            ggml_tensor * out = ggml_mul_mat(ctx0, layer.o_w, x);
+            ggml_tensor * out = build_mm(layer.o_w, x);
             out               = ggml_add(ctx0, out, layer.o_b);
             cb(out, "conformer.layers.{}.self_attn.linear_out", il);
 
@@ -157,7 +157,7 @@ ggml_cgraph * clip_graph_conformer::build() {
         // conv
         {
             auto * x = cur;
-            x = ggml_mul_mat(ctx0, layer.conv_pw1_w, x);
+            x = build_mm(layer.conv_pw1_w, x);
             x = ggml_add(ctx0, x, layer.conv_pw1_b);
             cb(x, "conformer.layers.{}.conv.pointwise_conv1", il);
 
@@ -181,7 +181,7 @@ ggml_cgraph * clip_graph_conformer::build() {
             x = ggml_silu(ctx0, x);
 
             // pointwise_conv2
-            x = ggml_mul_mat(ctx0, layer.conv_pw2_w, x);
+            x = build_mm(layer.conv_pw2_w, x);
             x = ggml_add(ctx0, x, layer.conv_pw2_b);
 
             cur = x;

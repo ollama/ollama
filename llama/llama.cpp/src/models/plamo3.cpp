@@ -109,6 +109,8 @@ llm_build_plamo3<iswa>::llm_build_plamo3(const llama_model & model, const llm_gr
 
         cur = build_cvec(cur, il);
         cb(cur, "l_out", il);
+
+        // input for next layer
         inpL = cur;
     }
 

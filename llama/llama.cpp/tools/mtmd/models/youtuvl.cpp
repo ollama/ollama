@@ -43,7 +43,7 @@ ggml_cgraph * clip_graph_youtuvl::build() {
             ctx0, inp,
             3*patch_size* patch_size,  Hm * Wm * m * m, 1);
     }
-    inp = ggml_mul_mat(ctx0, model.patch_embeddings_0, inp);
+    inp = build_mm(model.patch_embeddings_0, inp);
 
     if (model.patch_bias) {
         inp = ggml_add(ctx0, inp, model.patch_bias);
@@ -97,11 +97,11 @@ ggml_cgraph * clip_graph_youtuvl::build() {
         // self-attention
         {
             ggml_tensor * Qcur = ggml_add(ctx0,
-                ggml_mul_mat(ctx0, layer.q_w, cur), layer.q_b);
+                build_mm(layer.q_w, cur), layer.q_b);
             ggml_tensor * Kcur = ggml_add(ctx0,
-                ggml_mul_mat(ctx0, layer.k_w, cur), layer.k_b);
+                build_mm(layer.k_w, cur), layer.k_b);
             ggml_tensor * Vcur = ggml_add(ctx0,
-                ggml_mul_mat(ctx0, layer.v_w, cur), layer.v_b);
+                build_mm(layer.v_w, cur), layer.v_b);
 
             Qcur = ggml_reshape_3d(ctx0, Qcur, d_head, n_head, n_patches);
             Kcur = ggml_reshape_3d(ctx0, Kcur, d_head, n_head, n_patches);

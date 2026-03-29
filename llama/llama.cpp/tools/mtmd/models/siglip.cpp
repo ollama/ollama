@@ -43,7 +43,7 @@ ggml_cgraph * clip_graph_siglip::build() {
         // https://github.com/huggingface/transformers/blob/0a950e0bbe1ed58d5401a6b547af19f15f0c195e/src/transformers/models/idefics3/modeling_idefics3.py#L578
         const int scale_factor = model.hparams.n_merge;
         cur = build_patch_merge_permute(cur, scale_factor);
-        cur = ggml_mul_mat(ctx0, model.projection, cur);
+        cur = build_mm(model.projection, cur);
 
     } else if (proj_type == PROJECTOR_TYPE_LFM2) {
         // pixel unshuffle block

@@ -24,14 +24,26 @@ enum common_reasoning_budget_state {
 //   DONE:         passthrough forever
 //
 // Parameters:
-//   vocab         - vocabulary (used for UTF-8 boundary detection; can be nullptr)
-//   start_tokens  - token sequence that activates counting
-//   end_tokens    - token sequence for natural deactivation
-//   forced_tokens - token sequence forced when budget expires
-//   budget        - max tokens allowed in the reasoning block
-//   initial_state - initial state of the sampler (e.g. IDLE or COUNTING)
-//                   note: COUNTING with budget <= 0 is promoted to FORCING
+//   vocab          - vocabulary (used for UTF-8 boundary detection; can be nullptr)
+//   start_tokens   - token sequence that activates counting
+//   end_tokens     - token sequence for natural deactivation
+//   forced_tokens  - token sequence forced when budget expires
+//   budget         - max tokens allowed in the reasoning block
+//   prefill_tokens - tokens already present in the prompt (generation prompt);
+//                    used to determine the initial state: COUNTING if they begin
+//                    with start_tokens (but don't also end with end_tokens),
+//                    IDLE otherwise. COUNTING with budget <= 0 is promoted to FORCING.
 //
+struct llama_sampler * common_reasoning_budget_init(
+        const struct llama_vocab       * vocab,
+        const std::vector<llama_token> & start_tokens,
+        const std::vector<llama_token> & end_tokens,
+        const std::vector<llama_token> & forced_tokens,
+        int32_t                          budget,
+        const std::vector<llama_token> & prefill_tokens = {});
+
+// Variant that takes an explicit initial state (used by tests and clone).
+// COUNTING with budget <= 0 is promoted to FORCING.
 struct llama_sampler * common_reasoning_budget_init(
         const struct llama_vocab       * vocab,
         const std::vector<llama_token> & start_tokens,

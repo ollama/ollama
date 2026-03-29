@@ -59,7 +59,7 @@ ggml_cgraph * clip_graph_whisper_enc::build() {
         cur = ggml_mul(ctx0, cur, model.mm_norm_pre_w);
 
         // ffn in
-        cur = ggml_mul_mat(ctx0, model.mm_1_w, cur);
+        cur = build_mm(model.mm_1_w, cur);
 
         // swiglu
         // see SwiGLU in ultravox_model.py, the second half passed through is silu, not the first half
@@ -70,11 +70,11 @@ ggml_cgraph * clip_graph_whisper_enc::build() {
         cur = ggml_mul(ctx0, cur, model.mm_norm_mid_w);
 
         // ffn out
-        cur = ggml_mul_mat(ctx0, model.mm_2_w, cur);
+        cur = build_mm(model.mm_2_w, cur);
 
     } else if (proj_type == PROJECTOR_TYPE_QWEN2A) {
         // projector
-        cur = ggml_mul_mat(ctx0, model.mm_fc_w, cur);
+        cur = build_mm(model.mm_fc_w, cur);
         cur = ggml_add(ctx0, cur, model.mm_fc_b);
 
     } else if (proj_type == PROJECTOR_TYPE_VOXTRAL) {

@@ -11,7 +11,7 @@ regex
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/src/llama-vocab.cpp b/src/llama-vocab.cpp
-index 69cef8b99..696ab60a0 100644
+index f1617d248..c061130b2 100644
 --- a/src/llama-vocab.cpp
 +++ b/src/llama-vocab.cpp
 @@ -308,7 +308,7 @@ struct llm_tokenizer_bpe : llm_tokenizer {

@@ -131,7 +131,7 @@ static cudaError_t ggml_cuda_device_malloc(void ** ptr, size_t size, int device)
         if (err == hipSuccess) {
             // hipMemAdviseSetCoarseGrain is an optional performance hint;
             // ignore errors (e.g. hipErrorInvalidValue on some APU/iGPU configs).
-            cudaMemAdvise(*ptr, size, hipMemAdviseSetCoarseGrain, device);
+            (void)cudaMemAdvise(*ptr, size, hipMemAdviseSetCoarseGrain, device);
             (void)hipGetLastError(); // clear any error
         }
 

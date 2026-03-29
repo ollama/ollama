@@ -268,6 +268,10 @@ clip_graph::clip_graph(clip_ctx * ctx, const clip_image_f32 & img) :
     gf = ggml_new_graph_custom(ctx0, ctx->max_nodes, false);
 }
 
+ggml_tensor * clip_graph::build_mm(ggml_tensor * w, ggml_tensor * x) const {
+    return ggml_mul_mat(ctx0, w, x);
+}
+
 void clip_graph::cb(ggml_tensor * cur, const char * name, int il) const {
     if (il >= 0) {
         ggml_format_name(cur, "%s-%d", name, il);
@@ -339,7 +343,7 @@ ggml_tensor * clip_graph::build_vit(
             ggml_tensor * Vcur = nullptr;
             if (layer.qkv_w != nullptr) {
                 // fused qkv
-                cur = ggml_mul_mat(ctx0, layer.qkv_w, cur);
+                cur = build_mm(layer.qkv_w, cur);
                 if (layer.qkv_b != nullptr) {
                     cur = ggml_add(ctx0, cur, layer.qkv_b);
                 }
@@ -373,17 +377,17 @@ ggml_tensor * clip_graph::build_vit(
 
             } else {
                 // separate q, k, v
-                Qcur = ggml_mul_mat(ctx0, layer.q_w, cur);
+                Qcur = build_mm(layer.q_w, cur);
                 if (layer.q_b) {
                     Qcur = ggml_add(ctx0, Qcur, layer.q_b);
                 }
 
-                Kcur = ggml_mul_mat(ctx0, layer.k_w, cur);
+                Kcur = build_mm(layer.k_w, cur);
                 if (layer.k_b) {
                     Kcur = ggml_add(ctx0, Kcur, layer.k_b);
                 }
 
-                Vcur = ggml_mul_mat(ctx0, layer.v_w, cur);
+                Vcur = build_mm(layer.v_w, cur);
                 if (layer.v_b) {
                     Vcur = ggml_add(ctx0, Vcur, layer.v_b);
                 }
@@ -530,7 +534,7 @@ ggml_tensor * clip_graph::build_ffn(
         ffn_op_type type_op,
         int il) const {
 
-    ggml_tensor * tmp = up ? ggml_mul_mat(ctx0, up, cur) : cur;
+    ggml_tensor * tmp = up ? build_mm(up, cur) : cur;
     cb(tmp, "ffn_up", il);
 
     if (up_b) {
@@ -539,7 +543,7 @@ ggml_tensor * clip_graph::build_ffn(
     }
 
     if (gate) {
-        cur = ggml_mul_mat(ctx0, gate, cur);
+        cur = build_mm(gate, cur);
         cb(cur, "ffn_gate", il);
 
         if (gate_b) {
@@ -593,7 +597,7 @@ ggml_tensor * clip_graph::build_ffn(
     }
 
     if (down) {
-        cur = ggml_mul_mat(ctx0, down, cur);
+        cur = build_mm(down, cur);
     }
 
     if (down_b) {
@@ -659,7 +663,7 @@ ggml_tensor * clip_graph::build_attn(
     cb(cur, "kqv_out", il);
 
     if (wo) {
-        cur = ggml_mul_mat(ctx0, wo, cur);
+        cur = build_mm(wo, cur);
     }
 
     if (wo_b) {

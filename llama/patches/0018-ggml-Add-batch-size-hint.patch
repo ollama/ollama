@@ -154,10 +154,10 @@ index e7a1763b5..bc9fc90c0 100644
          struct ggml_tensor * node = cgraph->nodes[i];
  
 diff --git a/ggml/src/ggml-cann/ggml-cann.cpp b/ggml/src/ggml-cann/ggml-cann.cpp
-index 90a15f217..02a781c31 100644
+index 5fc630367..24938f086 100644
 --- a/ggml/src/ggml-cann/ggml-cann.cpp
 +++ b/ggml/src/ggml-cann/ggml-cann.cpp
-@@ -2187,8 +2187,10 @@ static void evaluate_and_capture_cann_graph(ggml_backend_cann_context * cann_ctx
+@@ -2189,8 +2189,10 @@ static void evaluate_and_capture_cann_graph(ggml_backend_cann_context * cann_ctx
   * @return enum ggml_status Returns GGML_STATUS_SUCCESS if computation
   *         completes successfully, otherwise an appropriate error status.
   */
@@ -187,7 +187,7 @@ index ddf1737a3..e947203bb 100644
  
      if (cpu_ctx->work_size < cplan.work_size) {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 4d1b974c6..5c0245fee 100644
+index 28d52b594..797bbbcc0 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -3583,7 +3583,7 @@ static bool ggml_cuda_check_fusion_memory_ranges(ggml_cgraph * cgraph,
@@ -322,10 +322,10 @@ index a63ee2b9d..672284393 100644
  }
  
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index c1454d972..3835a71ef 100644
+index d1828de71..cbec857c3 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -14248,10 +14248,12 @@ static int32_t find_first_set(uint32_t x) {
+@@ -14278,10 +14278,12 @@ static int32_t find_first_set(uint32_t x) {
      return ret;
  }
  
@@ -340,10 +340,10 @@ index c1454d972..3835a71ef 100644
          vk::DebugUtilsLabelEXT dul = {};
          dul.pLabelName = "ggml_backend_vk_graph_compute";
 diff --git a/ggml/src/ggml-webgpu/ggml-webgpu.cpp b/ggml/src/ggml-webgpu/ggml-webgpu.cpp
-index 128b7dc3d..c83e33184 100644
+index 5e16f84dd..4a012506a 100644
 --- a/ggml/src/ggml-webgpu/ggml-webgpu.cpp
 +++ b/ggml/src/ggml-webgpu/ggml-webgpu.cpp
-@@ -2239,10 +2239,12 @@ static std::optional<webgpu_command> ggml_webgpu_encode_node(webgpu_context ctx,
+@@ -2514,10 +2514,12 @@ static std::optional<webgpu_command> ggml_webgpu_encode_node(webgpu_context ctx,
      }
  }
  

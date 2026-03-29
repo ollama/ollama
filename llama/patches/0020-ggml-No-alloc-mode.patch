@@ -310,7 +310,7 @@ index 36d8a3aaa..6ef8e81c9 100644
  
  struct ggml_cuda_mm_fusion_args_host {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 5c0245fee..ef689a6ff 100644
+index 797bbbcc0..a7815ec5c 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -388,11 +388,15 @@ const ggml_cuda_device_info & ggml_cuda_info() {

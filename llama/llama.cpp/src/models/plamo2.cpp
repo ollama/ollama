@@ -71,6 +71,7 @@ llm_build_plamo2::llm_build_plamo2(const llama_model & model, const llm_graph_pa
         cur = ggml_add(ctx0, cur, residual);
         cb(cur, "ffn_residual", il);
 
+        // input for next layer
         inpL = cur;
     }
 

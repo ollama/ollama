@@ -19,7 +19,7 @@ ggml_cgraph * clip_graph_cogvlm::build() {
         auto & layer = model.layers[il];
         ggml_tensor * cur = inpL;
 
-        cur = ggml_mul_mat(ctx0, layer.qkv_w, cur);
+        cur = build_mm(layer.qkv_w, cur);
 
         cur = ggml_add(ctx0, cur, layer.qkv_b);
 
@@ -67,7 +67,7 @@ ggml_cgraph * clip_graph_cogvlm::build() {
         ggml_row_size(inpL->type, n_embd), 0);
 
     // Multiply with mm_model_proj
-    cur = ggml_mul_mat(ctx0, model.mm_model_proj, cur);
+    cur = build_mm(model.mm_model_proj, cur);
 
     // Apply layernorm, weight, bias
     cur = build_norm(cur, model.mm_post_fc_norm_w, model.mm_post_fc_norm_b, NORM_TYPE_NORMAL, 1e-5, -1);
@@ -76,16 +76,16 @@ ggml_cgraph * clip_graph_cogvlm::build() {
     cur = ggml_gelu_inplace(ctx0, cur);
 
     // Branch 1: multiply with mm_h_to_4h_w
-    ggml_tensor * h_to_4h = ggml_mul_mat(ctx0, model.mm_h_to_4h_w, cur);
+    ggml_tensor * h_to_4h = build_mm(model.mm_h_to_4h_w, cur);
 
     // Branch 2: multiply with mm_gate_w
-    ggml_tensor * gate = ggml_mul_mat(ctx0, model.mm_gate_w, cur);
+    ggml_tensor * gate = build_mm(model.mm_gate_w, cur);
 
     // Apply silu
     gate = ggml_swiglu_split(ctx0, gate, h_to_4h);
 
     // Apply mm_4h_to_h_w
-    cur = ggml_mul_mat(ctx0, model.mm_4h_to_h_w, gate);
+    cur = build_mm(model.mm_4h_to_h_w, gate);
 
     // Concatenate with boi and eoi
     cur = ggml_concat(ctx0, model.mm_boi, cur, 1);

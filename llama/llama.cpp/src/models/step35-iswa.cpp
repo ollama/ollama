@@ -145,9 +145,11 @@ llm_build_step35_iswa::llm_build_step35_iswa(const llama_model & model, const ll
             cb(cur, "ffn_out", il);
         }
         cur = ggml_add(ctx0, cur, ffn_inp);
+
         cur = build_cvec(cur, il);
         cb(cur, "l_out", il);
 
+        // input for next layer
         inpL = cur;
     }
 

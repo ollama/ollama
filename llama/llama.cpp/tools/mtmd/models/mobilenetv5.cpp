@@ -429,7 +429,7 @@ ggml_cgraph * clip_graph_mobilenetv5::build() {
     // PyTorch: embedding_projection = nn.Linear(vision_hidden, text_hidden, bias=False)
     // Weight stored as [out_features, in_features] = [text_hidden_size, vision_hidden_size]
     if (model.mm_input_proj_w) {
-        cur = ggml_mul_mat(ctx0, model.mm_input_proj_w, cur);
+        cur = build_mm(model.mm_input_proj_w, cur);
     }
 
     // 5. POST PROJECTION NORM

@@ -418,7 +418,7 @@ static void llama_adapter_lora_init_impl(llama_model & model, const char * path_
 }
 
 llama_adapter_lora * llama_adapter_lora_init(llama_model * model, const char * path_lora) {
-    llama_adapter_lora * adapter = new llama_adapter_lora();
+    llama_adapter_lora * adapter = new llama_adapter_lora(model);
 
     try {
         llama_adapter_lora_init_impl(*model, path_lora, *adapter);
@@ -471,8 +471,17 @@ int32_t llama_adapter_meta_val_str_by_index(const llama_adapter_lora * adapter, 
     return snprintf(buf, buf_size, "%s", it->second.c_str());
 }
 
-void llama_adapter_lora_free(llama_adapter_lora *) {
-    // deprecated: adapters are freed by llama_model's destructor
+void llama_adapter_lora_free(llama_adapter_lora * adapter) {
+    if (adapter == nullptr) {
+        return;
+    }
+
+    if (adapter->model != nullptr) {
+        adapter->model->loras.erase(adapter);
+        adapter->model = nullptr;
+    }
+
+    delete adapter;
 }
 
 uint64_t llama_adapter_get_alora_n_invocation_tokens(const struct llama_adapter_lora * adapter) {

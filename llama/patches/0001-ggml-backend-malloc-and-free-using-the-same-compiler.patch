@@ -64,7 +64,7 @@ index 22c656996..c522fec01 100644
      /* .init_tensor     = */ NULL, // no initialization required
      /* .memset_tensor   = */ ggml_backend_cpu_buffer_memset_tensor,
 diff --git a/ggml/src/ggml-cann/ggml-cann.cpp b/ggml/src/ggml-cann/ggml-cann.cpp
-index 3f3de9f0b..90a15f217 100644
+index 2f9c35078..5fc630367 100644
 --- a/ggml/src/ggml-cann/ggml-cann.cpp
 +++ b/ggml/src/ggml-cann/ggml-cann.cpp
 @@ -845,6 +845,7 @@ static bool ggml_backend_buft_is_cann(ggml_backend_buffer_type_t buft) {
@@ -75,7 +75,7 @@ index 3f3de9f0b..90a15f217 100644
  }
  
  /**
-@@ -1559,6 +1560,7 @@ static const char * ggml_backend_cann_host_buffer_name(ggml_backend_buffer_t buf
+@@ -1561,6 +1562,7 @@ static const char * ggml_backend_cann_host_buffer_name(ggml_backend_buffer_t buf
   */
  static void ggml_backend_cann_host_buffer_free(ggml_backend_buffer_t buffer) {
      ACL_CHECK(aclrtFreeHost(buffer->context));
@@ -84,7 +84,7 @@ index 3f3de9f0b..90a15f217 100644
  
  /**
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 5a0be4a47..5d9d61ea6 100644
+index a31e843e1..2d2a0517e 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -600,6 +600,7 @@ struct ggml_backend_cuda_buffer_context {
@@ -176,10 +176,10 @@ index 2ec142184..a155f8687 100644
  
  static void * ggml_backend_sycl_split_buffer_get_base(ggml_backend_buffer_t buffer) {
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-index 3e36435d1..c1454d972 100644
+index 566958b3a..d1828de71 100644
 --- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 +++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
-@@ -13375,6 +13375,7 @@ static void ggml_backend_vk_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+@@ -13405,6 +13405,7 @@ static void ggml_backend_vk_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      ggml_backend_vk_buffer_context * ctx = (ggml_backend_vk_buffer_context *)buffer->context;
      ggml_vk_destroy_buffer(ctx->dev_buffer);
      delete ctx;
@@ -187,7 +187,7 @@ index 3e36435d1..c1454d972 100644
  }
  
  static void * ggml_backend_vk_buffer_get_base(ggml_backend_buffer_t buffer) {
-@@ -13534,6 +13535,7 @@ static const char * ggml_backend_vk_host_buffer_name(ggml_backend_buffer_t buffe
+@@ -13564,6 +13565,7 @@ static const char * ggml_backend_vk_host_buffer_name(ggml_backend_buffer_t buffe
  static void ggml_backend_vk_host_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      VK_LOG_MEMORY("ggml_backend_vk_host_buffer_free_buffer()");
      ggml_vk_host_free(vk_instance.devices[0], buffer->context);

@@ -24,7 +24,7 @@ The ollamarunner sets this env var because during steady-state decode:
  1 file changed, 63 insertions(+)
 
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index ba6dfb508..53c6aecf9 100644
+index 83d819282..78d31d7ea 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -3166,7 +3166,54 @@ static const void * ggml_cuda_graph_get_key(ggml_cgraph * cgraph) {
