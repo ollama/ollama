@@ -187,7 +187,7 @@ func TestGenerateChat(t *testing.T) {
 			getGpuFn:        getGpuFn,
 			getSystemInfoFn: getSystemInfoFn,
 			waitForRecovery: 250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
@@ -904,7 +904,7 @@ func TestGenerate(t *testing.T) {
 			getGpuFn:        getGpuFn,
 			getSystemInfoFn: getSystemInfoFn,
 			waitForRecovery: 250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
@@ -1388,7 +1388,7 @@ func TestGenerateLogprobs(t *testing.T) {
 				getGpuFn:        getGpuFn,
 				getSystemInfoFn: getSystemInfoFn,
 				waitForRecovery: 250 * time.Millisecond,
-				loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 					req.successCh <- &runnerRef{llama: mock}
 					return false
 				},
@@ -1568,7 +1568,7 @@ func TestChatLogprobs(t *testing.T) {
 				getGpuFn:        getGpuFn,
 				getSystemInfoFn: getSystemInfoFn,
 				waitForRecovery: 250 * time.Millisecond,
-				loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 					req.successCh <- &runnerRef{llama: mock}
 					return false
 				},
@@ -1678,7 +1678,7 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 				getGpuFn:        getGpuFn,
 				getSystemInfoFn: getSystemInfoFn,
 				waitForRecovery: 250 * time.Millisecond,
-				loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 					time.Sleep(time.Millisecond)
 					req.successCh <- &runnerRef{llama: mock}
 					return false
@@ -2123,7 +2123,7 @@ func TestGenerateUnload(t *testing.T) {
 			newServerFn:     newMockServer(&mockRunner{}),
 			getGpuFn:        getGpuFn,
 			getSystemInfoFn: getSystemInfoFn,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				loadFnCalled = true
 				req.successCh <- &runnerRef{llama: &mockRunner{}}
 				return false
@@ -2225,7 +2225,7 @@ func TestGenerateWithImages(t *testing.T) {
 			getGpuFn:        getGpuFn,
 			getSystemInfoFn: getSystemInfoFn,
 			waitForRecovery: 250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
 					llama: &mock,

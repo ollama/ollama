@@ -40,6 +40,7 @@ type LauncherIntegrationState struct {
 // RunModelRequest controls how the root launcher resolves the chat model.
 type RunModelRequest struct {
 	ForcePicker bool
+	Policy      *LaunchPolicy
 }
 
 // LaunchConfirmMode controls confirmation behavior across launch flows.
@@ -72,12 +73,18 @@ type LaunchPolicy struct {
 	MissingModel LaunchMissingModelMode
 }
 
-func defaultLaunchPolicy(interactive bool) LaunchPolicy {
+func defaultLaunchPolicy(interactive bool, yes bool) LaunchPolicy {
 	policy := LaunchPolicy{
 		Confirm:      LaunchConfirmPrompt,
 		MissingModel: LaunchMissingModelPromptToPull,
 	}
-	if !interactive {
+	switch {
+	case yes:
+		// if yes flag is set, auto approve and auto pull
+		policy.Confirm = LaunchConfirmAutoApprove
+		policy.MissingModel = LaunchMissingModelAutoPull
+	case !interactive:
+		// otherwise make sure to stop when needed
 		policy.Confirm = LaunchConfirmRequireYes
 		policy.MissingModel = LaunchMissingModelFail
 	}
@@ -149,37 +156,6 @@ type ModelItem struct {
 	Recommended bool
 }
 
-// ConfigureIntegrationWithSelectors allows the user to select/change the model for an integration using custom selectors.
-func ConfigureIntegrationWithSelectors(ctx context.Context, name string, single SingleSelector, multi MultiSelector) error {
-	oldSingle := DefaultSingleSelector
-	oldMulti := DefaultMultiSelector
-	if single != nil {
-		DefaultSingleSelector = single
-	}
-	if multi != nil {
-		DefaultMultiSelector = multi
-	}
-	defer func() {
-		DefaultSingleSelector = oldSingle
-		DefaultMultiSelector = oldMulti
-	}()
-
-	return LaunchIntegration(ctx, IntegrationLaunchRequest{
-		Name:           name,
-		ForceConfigure: true,
-		ConfigureOnly:  true,
-	})
-}
-
-// ConfigureIntegration allows the user to select/change the model for an integration.
-func ConfigureIntegration(ctx context.Context, name string) error {
-	return LaunchIntegration(ctx, IntegrationLaunchRequest{
-		Name:           name,
-		ForceConfigure: true,
-		ConfigureOnly:  true,
-	})
-}
-
 // LaunchCmd returns the cobra command for launching integrations.
 // The runTUI callback is called when the root launcher UI should be shown.
 func LaunchCmd(checkServerHeartbeat func(cmd *cobra.Command, args []string) error, runTUI func(cmd *cobra.Command)) *cobra.Command {
@@ -203,6 +179,7 @@ Supported integrations:
   opencode  OpenCode
   openclaw  OpenClaw (aliases: clawdbot, moltbot)
   pi        Pi
+  vscode    VS Code (aliases: code)
 
 Examples:
   ollama launch
@@ -214,13 +191,8 @@ Examples:
 		Args:    cobra.ArbitraryArgs,
 		PreRunE: checkServerHeartbeat,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			policy := defaultLaunchPolicy(isInteractiveSession())
-			if yesFlag {
-				policy.Confirm = LaunchConfirmAutoApprove
-				if policy.MissingModel == LaunchMissingModelFail {
-					policy.MissingModel = LaunchMissingModelAutoPull
-				}
-			}
+			policy := defaultLaunchPolicy(isInteractiveSession(), yesFlag)
+			// reset when done to make sure state doens't leak between launches
 			restoreConfirmPolicy := withLaunchConfirmPolicy(policy.confirmPolicy())
 			defer restoreConfirmPolicy()
 
@@ -246,7 +218,7 @@ Examples:
 			}
 
 			if name == "" {
-				if cmd.Flags().Changed("model") || cmd.Flags().Changed("config") || len(passArgs) > 0 {
+				if cmd.Flags().Changed("model") || cmd.Flags().Changed("config") || cmd.Flags().Changed("yes") || len(passArgs) > 0 {
 					return fmt.Errorf("flags and extra args require an integration name, for example: 'ollama launch claude --model qwen3.5'")
 				}
 				runTUI(cmd)
@@ -262,10 +234,11 @@ Examples:
 				}
 			}
 
+			headlessYes := yesFlag && !isInteractiveSession()
 			err := LaunchIntegration(cmd.Context(), IntegrationLaunchRequest{
 				Name:           name,
 				ModelOverride:  modelFlag,
-				ForceConfigure: configFlag || modelFlag == "",
+				ForceConfigure: configFlag || (modelFlag == "" && !headlessYes),
 				ConfigureOnly:  configFlag,
 				ExtraArgs:      passArgs,
 				Policy:         &policy,
@@ -304,7 +277,7 @@ func newLauncherClient(policy LaunchPolicy) (*launcherClient, error) {
 
 // BuildLauncherState returns the launch-owned root launcher menu snapshot.
 func BuildLauncherState(ctx context.Context) (*LauncherState, error) {
-	launchClient, err := newLauncherClient(defaultLaunchPolicy(isInteractiveSession()))
+	launchClient, err := newLauncherClient(defaultLaunchPolicy(isInteractiveSession(), false))
 	if err != nil {
 		return nil, err
 	}
@@ -313,7 +286,15 @@ func BuildLauncherState(ctx context.Context) (*LauncherState, error) {
 
 // ResolveRunModel returns the model that should be used for interactive chat.
 func ResolveRunModel(ctx context.Context, req RunModelRequest) (string, error) {
-	launchClient, err := newLauncherClient(defaultLaunchPolicy(isInteractiveSession()))
+	// Called by the launcher TUI "Run a model" action (cmd/runLauncherAction),
+	// which resolves models separately from LaunchIntegration. Callers can pass
+	// Policy directly; otherwise we fall back to ambient --yes/session defaults.
+	policy := defaultLaunchPolicy(isInteractiveSession(), currentLaunchConfirmPolicy.yes)
+	if req.Policy != nil {
+		policy = *req.Policy
+	}
+
+	launchClient, err := newLauncherClient(policy)
 	if err != nil {
 		return "", err
 	}
@@ -332,8 +313,11 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 		}
 	}
 
-	policy := defaultLaunchPolicy(isInteractiveSession())
-	if req.Policy != nil {
+	var policy LaunchPolicy
+	// TUI does not set a policy, whereas ollama launch <app> does as it can have flags which change the behavior
+	if req.Policy == nil {
+		policy = defaultLaunchPolicy(isInteractiveSession(), false)
+	} else {
 		policy = *req.Policy
 	}
 
@@ -342,6 +326,10 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 		return err
 	}
 	saved, _ := loadStoredIntegrationConfig(name)
+	// In headless --yes mode we cannot prompt, so require an explicit --model.
+	if policy.Confirm == LaunchConfirmAutoApprove && !isInteractiveSession() && req.ModelOverride == "" {
+		return fmt.Errorf("headless --yes launch for %s requires --model <model>", name)
+	}
 
 	if editor, ok := runner.(Editor); ok {
 		return launchClient.launchEditorIntegration(ctx, name, runner, editor, saved, req)
@@ -421,6 +409,14 @@ func (c *launcherClient) launcherModelState(ctx context.Context, name string, is
 
 func (c *launcherClient) resolveRunModel(ctx context.Context, req RunModelRequest) (string, error) {
 	current := config.LastModel()
+	if !req.ForcePicker && current != "" && c.policy.Confirm == LaunchConfirmAutoApprove && !isInteractiveSession() {
+		if err := c.ensureModelsReady(ctx, []string{current}); err != nil {
+			return "", err
+		}
+		fmt.Fprintf(os.Stderr, "Headless mode: auto-selected last used model %q\n", current)
+		return current, nil
+	}
+
 	if !req.ForcePicker {
 		usable, err := c.savedModelUsable(ctx, current)
 		if err != nil {
@@ -428,9 +424,6 @@ func (c *launcherClient) resolveRunModel(ctx context.Context, req RunModelReques
 		}
 		if usable {
 			if err := c.ensureModelsReady(ctx, []string{current}); err != nil {
-				return "", err
-			}
-			if err := config.SetLastModel(current); err != nil {
 				return "", err
 			}
 			return current, nil
@@ -441,8 +434,10 @@ func (c *launcherClient) resolveRunModel(ctx context.Context, req RunModelReques
 	if err != nil {
 		return "", err
 	}
-	if err := config.SetLastModel(model); err != nil {
-		return "", err
+	if model != current {
+		if err := config.SetLastModel(model); err != nil {
+			return "", err
+		}
 	}
 	return model, nil
 }
@@ -477,8 +472,10 @@ func (c *launcherClient) launchSingleIntegration(ctx context.Context, name strin
 		return nil
 	}
 
-	if err := config.SaveIntegration(name, []string{target}); err != nil {
-		return fmt.Errorf("failed to save: %w", err)
+	if target != current {
+		if err := config.SaveIntegration(name, []string{target}); err != nil {
+			return fmt.Errorf("failed to save: %w", err)
+		}
 	}
 
 	return launchAfterConfiguration(name, runner, target, req)
@@ -493,8 +490,10 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 			return err
 		}
 		models = selected
-	} else if err := c.ensureModelsReady(ctx, models); err != nil {
-		return err
+	} else if len(models) > 0 {
+		if err := c.ensureModelsReady(ctx, models[:1]); err != nil {
+			return err
+		}
 	}
 
 	if len(models) == 0 {
@@ -555,10 +554,14 @@ func (c *launcherClient) selectMultiModelsForIntegration(ctx context.Context, ru
 	if err != nil {
 		return nil, err
 	}
-	if err := c.ensureModelsReady(ctx, selected); err != nil {
+	accepted, skipped, err := c.selectReadyModelsForSave(ctx, selected)
+	if err != nil {
 		return nil, err
 	}
-	return selected, nil
+	for _, skip := range skipped {
+		fmt.Fprintf(os.Stderr, "Skipped %s: %s\n", skip.model, skip.reason)
+	}
+	return accepted, nil
 }
 
 func (c *launcherClient) loadSelectableModels(ctx context.Context, preChecked []string, current, emptyMessage string) ([]ModelItem, []string, error) {
@@ -579,16 +582,7 @@ func (c *launcherClient) loadSelectableModels(ctx context.Context, preChecked []
 }
 
 func (c *launcherClient) ensureModelsReady(ctx context.Context, models []string) error {
-	var deduped []string
-	seen := make(map[string]bool, len(models))
-	for _, model := range models {
-		if model == "" || seen[model] {
-			continue
-		}
-		seen[model] = true
-		deduped = append(deduped, model)
-	}
-	models = deduped
+	models = dedupeModelList(models)
 	if len(models) == 0 {
 		return nil
 	}
@@ -604,6 +598,56 @@ func (c *launcherClient) ensureModelsReady(ctx context.Context, models []string)
 		}
 	}
 	return ensureAuth(ctx, c.apiClient, cloudModels, models)
+}
+
+func dedupeModelList(models []string) []string {
+	deduped := make([]string, 0, len(models))
+	seen := make(map[string]bool, len(models))
+	for _, model := range models {
+		if model == "" || seen[model] {
+			continue
+		}
+		seen[model] = true
+		deduped = append(deduped, model)
+	}
+	return deduped
+}
+
+type skippedModel struct {
+	model  string
+	reason string
+}
+
+func (c *launcherClient) selectReadyModelsForSave(ctx context.Context, selected []string) ([]string, []skippedModel, error) {
+	selected = dedupeModelList(selected)
+	accepted := make([]string, 0, len(selected))
+	skipped := make([]skippedModel, 0, len(selected))
+
+	for _, model := range selected {
+		if err := c.ensureModelsReady(ctx, []string{model}); err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return nil, nil, err
+			}
+			skipped = append(skipped, skippedModel{
+				model:  model,
+				reason: skippedModelReason(model, err),
+			})
+			continue
+		}
+		accepted = append(accepted, model)
+	}
+
+	return accepted, skipped, nil
+}
+
+func skippedModelReason(model string, err error) string {
+	if errors.Is(err, ErrCancelled) {
+		if isCloudModelName(model) {
+			return "sign in was cancelled"
+		}
+		return "download was cancelled"
+	}
+	return err.Error()
 }
 
 func (c *launcherClient) resolveEditorLaunchModels(ctx context.Context, saved *config.IntegrationConfig, req IntegrationLaunchRequest) ([]string, bool) {
@@ -803,13 +847,6 @@ func cloneAliases(aliases map[string]string) map[string]string {
 		cloned[key] = value
 	}
 	return cloned
-}
-
-func singleModelPrechecked(current string) []string {
-	if current == "" {
-		return nil
-	}
-	return []string{current}
 }
 
 func firstModel(models []string) string {

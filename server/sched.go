@@ -51,7 +51,7 @@ type Scheduler struct {
 	activeLoading llm.LlamaServer
 	loaded        map[string]*runnerRef
 
-	loadFn          func(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool
+	loadFn          func(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool
 	newServerFn     func(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error)
 	getGpuFn        func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo
 	getSystemInfoFn func() ml.SystemInfo
@@ -220,33 +220,6 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						slog.Debug("updating default concurrency", "OLLAMA_MAX_LOADED_MODELS", maxRunners, "gpu_count", len(gpus))
 					}
 
-					// Check for image generation models - all use MLX runner
-					if slices.Contains(pending.model.Config.Capabilities, "image") {
-						if s.loadMLX(pending) {
-							break
-						}
-						continue
-					}
-
-					// Check for experimental safetensors LLM models
-					if pending.model.IsMLX() {
-						if slices.Contains(pending.model.Config.Capabilities, "completion") {
-							// LLM model with safetensors format - use MLX runner
-							if s.loadMLX(pending) {
-								break
-							}
-							continue
-						}
-					}
-
-					// Load model for fitting
-					logutil.Trace("loading model metadata", "model", pending.model.ModelPath)
-					ggml, err := llm.LoadModel(pending.model.ModelPath, 1024)
-					if err != nil {
-						pending.errCh <- err
-						break
-					}
-
 					// Update free memory from currently loaded models
 					logutil.Trace("updating free space", "gpu_count", len(gpus), "model", pending.model.ModelPath)
 					s.updateFreeSpace(gpus)
@@ -254,14 +227,14 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					if loadedCount == 0 {
 						// No models loaded. Load the model but prefer the best fit.
 						slog.Debug("loading first model", "model", pending.model.ModelPath)
-						s.loadFn(pending, ggml, systemInfo, gpus, false)
+						s.loadFn(pending, systemInfo, gpus, false)
 						break
 					}
 
 					// More than one loaded model, so we have to see if the
 					// new one fits
 					logutil.Trace("loading additional model", "model", pending.model.ModelPath)
-					needEvict := s.loadFn(pending, ggml, systemInfo, gpus, true)
+					needEvict := s.loadFn(pending, systemInfo, gpus, true)
 					if !needEvict {
 						slog.Debug("new model fits with existing models, loading")
 						break
@@ -435,7 +408,7 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 
 // load creates a new model based on req and loads it. If requireFull is true then the model must be loaded fully onto GPUs
 // (if any). Returns whether the scheduler needs to evict a model to make this one fit.
-func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool {
+func (s *Scheduler) load(req *LlmRequest, systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, requireFull bool) bool {
 	numParallel := max(int(envconfig.NumParallel()), 1)
 
 	// Embedding models should always be loaded with parallel=1
@@ -460,15 +433,33 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo
 
 	if llama == nil {
 		var err error
-		llama, err = s.newServerFn(systemInfo, gpus, req.model.ModelPath, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, numParallel)
-		if err != nil {
-			// some older models are not compatible with newer versions of llama.cpp
-			// show a generalized compatibility error until there is a better way to
-			// check for model compatibility
-			if errors.Is(err, ggml.ErrUnsupportedFormat) || strings.Contains(err.Error(), "failed to load model") {
-				err = fmt.Errorf("%v: this model may be incompatible with your version of Ollama. If you previously pulled this model, try updating it by running `ollama pull %s`", err, req.model.ShortName)
+		if !req.model.IsMLX() {
+			f, loadErr := llm.LoadModel(req.model.ModelPath, 1024)
+			if loadErr != nil {
+				slog.Info("failed to load model metadata", "model", req.model.ModelPath, "error", loadErr)
+				req.errCh <- loadErr
+				s.loadedMu.Unlock()
+				return false
 			}
-			slog.Info("NewLlamaServer failed", "model", req.model.ModelPath, "error", err)
+			llama, err = s.newServerFn(systemInfo, gpus, req.model.ModelPath, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, numParallel)
+			if err != nil {
+				// some older models are not compatible with newer versions of llama.cpp
+				// show a generalized compatibility error until there is a better way to
+				// check for model compatibility
+				if errors.Is(err, ggml.ErrUnsupportedFormat) || strings.Contains(err.Error(), "failed to load model") {
+					err = fmt.Errorf("%v: this model may be incompatible with your version of Ollama. If you previously pulled this model, try updating it by running `ollama pull %s`", err, req.model.ShortName)
+				}
+			}
+		} else {
+			modelName := req.model.ShortName
+			if slices.Contains(req.model.Config.Capabilities, "image") {
+				llama, err = imagegen.NewServer(modelName)
+			} else {
+				llama, err = mlxrunner.NewClient(modelName)
+			}
+		}
+		if err != nil {
+			slog.Info("failed to create server", "model", req.model.ShortName, "error", err)
 			req.errCh <- err
 			s.loadedMu.Unlock()
 			return false
@@ -476,8 +467,12 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, systemInfo ml.SystemInfo
 
 		s.activeLoading = llama
 	} else {
-		if s.activeLoading.ModelPath() != req.model.ModelPath {
-			panic(fmt.Errorf("attempting to load different model after eviction (original %v new %v)", s.activeLoading.ModelPath(), req.model.ModelPath))
+		wantPath := req.model.ModelPath
+		if wantPath == "" {
+			wantPath = req.model.ShortName
+		}
+		if s.activeLoading.ModelPath() != wantPath {
+			panic(fmt.Errorf("attempting to load different model after eviction (original %v new %v)", s.activeLoading.ModelPath(), wantPath))
 		}
 	}
 
@@ -544,6 +539,7 @@ iGPUScan:
 		sessionDuration: sessionDuration,
 		gpus:            gpuIDs,
 		discreteGPUs:    discreteGPUs,
+		isImagegen:      slices.Contains(req.model.Config.Capabilities, "image"),
 		totalSize:       totalSize,
 		vramSize:        vramSize,
 		loading:         true,
@@ -589,59 +585,6 @@ iGPUScan:
 	}()
 
 	return false
-}
-
-// loadMLX loads an experimental safetensors model using MLX runners.
-// Image models use x/imagegen; LLM models use x/mlxrunner.
-func (s *Scheduler) loadMLX(req *LlmRequest) bool {
-	modelName := req.model.ShortName
-	var server llm.LlamaServer
-	var err error
-
-	if slices.Contains(req.model.Config.Capabilities, "image") {
-		server, err = imagegen.NewServer(modelName)
-	} else {
-		server, err = mlxrunner.NewClient(modelName)
-	}
-	if err != nil {
-		req.errCh <- err
-		return true
-	}
-
-	sessionDuration := envconfig.KeepAlive()
-	if req.sessionDuration != nil {
-		sessionDuration = req.sessionDuration.Duration
-	}
-
-	totalSize, vramSize := server.MemorySize()
-	runner := &runnerRef{
-		model:           req.model,
-		modelPath:       req.model.ModelPath,
-		modelKey:        schedulerModelKey(req.model),
-		llama:           server,
-		Options:         &req.opts,
-		loading:         false,
-		isImagegen:      slices.Contains(req.model.Config.Capabilities, "image"),
-		sessionDuration: sessionDuration,
-		totalSize:       totalSize,
-		vramSize:        vramSize,
-	}
-
-	s.loadedMu.Lock()
-	s.loaded[runner.modelKey] = runner
-	s.loadedMu.Unlock()
-
-	// Set up expiration timer
-	runner.refMu.Lock()
-	if sessionDuration > 0 {
-		runner.expireTimer = time.AfterFunc(sessionDuration, func() {
-			s.expiredCh <- runner
-		})
-	}
-	runner.refMu.Unlock()
-
-	req.useLoadedRunner(runner, s.finishedReqCh)
-	return true
 }
 
 func (s *Scheduler) updateFreeSpace(allGpus []ml.DeviceInfo) {

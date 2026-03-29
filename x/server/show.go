@@ -15,6 +15,10 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
+func canonicalQuantType(quantType string) string {
+	return strings.ToLower(strings.TrimSpace(quantType))
+}
+
 // modelConfig represents the HuggingFace config.json structure
 type modelConfig struct {
 	Architectures         []string `json:"architectures"`
@@ -256,7 +260,7 @@ func getTensorInfoFromManifest(mf *manifest.Manifest) ([]api.Tensor, error) {
 			}
 
 			if info.QuantType != "" {
-				quantType := strings.ToUpper(info.QuantType)
+				quantType := canonicalQuantType(info.QuantType)
 
 				shape := make([]uint64, len(info.Shape))
 				for i, s := range info.Shape {
@@ -323,8 +327,8 @@ func GetSafetensorsDtype(name model.Name) (string, error) {
 		if err != nil {
 			continue
 		}
-		if info.QuantType != "" {
-			return strings.ToUpper(info.QuantType), nil
+		if quantType := canonicalQuantType(info.QuantType); quantType != "" {
+			return quantType, nil
 		}
 		// Only check the first tensor blob
 		break

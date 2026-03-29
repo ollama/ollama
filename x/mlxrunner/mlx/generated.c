@@ -326,8 +326,10 @@ int (*mlx_distributed_sum_scatter_)(
 int (*mlx_distributed_group_rank_)(mlx_distributed_group group) = NULL;
 int (*mlx_distributed_group_size_)(mlx_distributed_group group) = NULL;
 mlx_distributed_group (*mlx_distributed_group_split_)(mlx_distributed_group group, int color, int key) = NULL;
-bool (*mlx_distributed_is_available_)(void) = NULL;
-mlx_distributed_group (*mlx_distributed_init_)(bool strict) = NULL;
+bool (*mlx_distributed_is_available_)(const char* bk /* may be null */) = NULL;
+mlx_distributed_group (*mlx_distributed_init_)(
+    bool strict,
+    const char* bk /* may be null */) = NULL;
 void (*mlx_set_error_handler_)(
     mlx_error_handler_func handler,
     void* data,
@@ -924,6 +926,7 @@ int (*mlx_astype_)(
 int (*mlx_atleast_1d_)(mlx_array* res, const mlx_array a, const mlx_stream s) = NULL;
 int (*mlx_atleast_2d_)(mlx_array* res, const mlx_array a, const mlx_stream s) = NULL;
 int (*mlx_atleast_3d_)(mlx_array* res, const mlx_array a, const mlx_stream s) = NULL;
+int (*mlx_bartlett_)(mlx_array* res, int M, const mlx_stream s) = NULL;
 int (*mlx_bitwise_and_)(
     mlx_array* res,
     const mlx_array a,
@@ -940,6 +943,7 @@ int (*mlx_bitwise_xor_)(
     const mlx_array a,
     const mlx_array b,
     const mlx_stream s) = NULL;
+int (*mlx_blackman_)(mlx_array* res, int M, const mlx_stream s) = NULL;
 int (*mlx_block_masked_mm_)(
     mlx_array* res,
     const mlx_array a,
@@ -1120,6 +1124,7 @@ int (*mlx_dequantize_)(
     mlx_optional_int group_size,
     mlx_optional_int bits,
     const char* mode,
+    const mlx_array global_scale /* may be null */,
     mlx_optional_dtype dtype,
     const mlx_stream s) = NULL;
 int (*mlx_diag_)(mlx_array* res, const mlx_array a, int k, const mlx_stream s) = NULL;
@@ -1256,6 +1261,8 @@ int (*mlx_hadamard_transform_)(
     const mlx_array a,
     mlx_optional_float scale,
     const mlx_stream s) = NULL;
+int (*mlx_hamming_)(mlx_array* res, int M, const mlx_stream s) = NULL;
+int (*mlx_hanning_)(mlx_array* res, int M, const mlx_stream s) = NULL;
 int (*mlx_identity_)(mlx_array* res, int n, mlx_dtype dtype, const mlx_stream s) = NULL;
 int (*mlx_imag_)(mlx_array* res, const mlx_array a, const mlx_stream s) = NULL;
 int (*mlx_inner_)(
@@ -1548,6 +1555,8 @@ int (*mlx_qqmm_)(
     mlx_optional_int group_size,
     mlx_optional_int bits,
     const char* mode,
+    const mlx_array global_scale_x /* may be null */,
+    const mlx_array global_scale_w /* may be null */,
     const mlx_stream s) = NULL;
 int (*mlx_quantize_)(
     mlx_vector_array* res,
@@ -1555,6 +1564,7 @@ int (*mlx_quantize_)(
     mlx_optional_int group_size,
     mlx_optional_int bits,
     const char* mode,
+    const mlx_array global_scale /* may be null */,
     const mlx_stream s) = NULL;
 int (*mlx_quantized_matmul_)(
     mlx_array* res,
@@ -2550,10 +2560,12 @@ int mlx_dynamic_load_symbols(mlx_dynamic_handle handle) {
     CHECK_LOAD(handle, mlx_atleast_1d);
     CHECK_LOAD(handle, mlx_atleast_2d);
     CHECK_LOAD(handle, mlx_atleast_3d);
+    CHECK_LOAD(handle, mlx_bartlett);
     CHECK_LOAD(handle, mlx_bitwise_and);
     CHECK_LOAD(handle, mlx_bitwise_invert);
     CHECK_LOAD(handle, mlx_bitwise_or);
     CHECK_LOAD(handle, mlx_bitwise_xor);
+    CHECK_LOAD(handle, mlx_blackman);
     CHECK_LOAD(handle, mlx_block_masked_mm);
     CHECK_LOAD(handle, mlx_broadcast_arrays);
     CHECK_LOAD(handle, mlx_broadcast_to);
@@ -2606,6 +2618,8 @@ int mlx_dynamic_load_symbols(mlx_dynamic_handle handle) {
     CHECK_LOAD(handle, mlx_greater);
     CHECK_LOAD(handle, mlx_greater_equal);
     CHECK_LOAD(handle, mlx_hadamard_transform);
+    CHECK_LOAD(handle, mlx_hamming);
+    CHECK_LOAD(handle, mlx_hanning);
     CHECK_LOAD(handle, mlx_identity);
     CHECK_LOAD(handle, mlx_imag);
     CHECK_LOAD(handle, mlx_inner);

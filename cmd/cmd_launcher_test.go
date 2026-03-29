@@ -209,6 +209,43 @@ func TestRunLauncherAction_RunModelContinuesAfterCancellation(t *testing.T) {
 	}
 }
 
+func TestRunLauncherAction_VSCodeExitsTUILoop(t *testing.T) {
+	setCmdTestHome(t, t.TempDir())
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+
+	// VS Code should exit the TUI loop (return false) after a successful launch.
+	continueLoop, err := runLauncherAction(cmd, tui.TUIAction{Kind: tui.TUIActionLaunchIntegration, Integration: "vscode"}, launcherDeps{
+		resolveRunModel: unexpectedRunModelResolution(t),
+		launchIntegration: func(ctx context.Context, req launch.IntegrationLaunchRequest) error {
+			return nil
+		},
+		runModel: unexpectedModelLaunch(t),
+	})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if continueLoop {
+		t.Fatal("expected vscode launch to exit the TUI loop (return false)")
+	}
+
+	// Other integrations should continue the TUI loop (return true).
+	continueLoop, err = runLauncherAction(cmd, tui.TUIAction{Kind: tui.TUIActionLaunchIntegration, Integration: "claude"}, launcherDeps{
+		resolveRunModel: unexpectedRunModelResolution(t),
+		launchIntegration: func(ctx context.Context, req launch.IntegrationLaunchRequest) error {
+			return nil
+		},
+		runModel: unexpectedModelLaunch(t),
+	})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if !continueLoop {
+		t.Fatal("expected non-vscode integration to continue the TUI loop (return true)")
+	}
+}
+
 func TestRunLauncherAction_IntegrationContinuesAfterCancellation(t *testing.T) {
 	setCmdTestHome(t, t.TempDir())
 

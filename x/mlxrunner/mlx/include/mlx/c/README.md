@@ -1,7 +1,7 @@
 # Vendored MLX-C Headers
 
 These header files are vendored from [mlx-c](https://github.com/ml-explore/mlx-c).
-The pinned version is in `MLX_VERSION` at the repo root.
+The pinned version is in `MLX_C_VERSION` at the repo root.
 
 Headers are automatically refreshed when you run a CMake build:
 

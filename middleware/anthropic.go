@@ -34,12 +34,13 @@ func (w *AnthropicWriter) writeError(data []byte) (int, error) {
 		Error string `json:"error"`
 	}
 	if err := json.Unmarshal(data, &errData); err != nil {
-		return 0, err
+		// If the error response isn't valid JSON, use the raw bytes as the
+		// error message rather than surfacing a confusing JSON parse error.
+		errData.Error = string(data)
 	}
 
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	err := json.NewEncoder(w.ResponseWriter).Encode(anthropic.NewError(w.Status(), errData.Error))
-	if err != nil {
+	if err := json.NewEncoder(w.ResponseWriter).Encode(anthropic.NewError(w.Status(), errData.Error)); err != nil {
 		return 0, err
 	}
 
@@ -282,7 +283,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 				Type:  "server_tool_use",
 				ID:    toolUseID,
 				Name:  "web_search",
-				Input: map[string]any{"query": query},
+				Input: queryArgs(query),
 			},
 			anthropic.ContentBlock{
 				Type:      "web_search_tool_result",
@@ -347,7 +348,7 @@ func (w *WebSearchAnthropicWriter) runWebSearchLoop(ctx context.Context, initial
 			Type:  "server_tool_use",
 			ID:    maxLoopToolUseID,
 			Name:  "web_search",
-			Input: map[string]any{"query": maxLoopQuery},
+			Input: queryArgs(maxLoopQuery),
 		},
 		anthropic.ContentBlock{
 			Type:      "web_search_tool_result",
@@ -785,7 +786,7 @@ func (w *WebSearchAnthropicWriter) webSearchErrorResponse(errorCode, query strin
 				Type:  "server_tool_use",
 				ID:    toolUseID,
 				Name:  "web_search",
-				Input: map[string]any{"query": query},
+				Input: queryArgs(query),
 			},
 			{
 				Type:      "web_search_tool_result",
@@ -939,6 +940,13 @@ func writeSSE(w http.ResponseWriter, eventType string, data any) error {
 		f.Flush()
 	}
 	return nil
+}
+
+// queryArgs creates a ToolCallFunctionArguments with a single "query" key.
+func queryArgs(query string) api.ToolCallFunctionArguments {
+	args := api.NewToolCallFunctionArguments()
+	args.Set("query", query)
+	return args
 }
 
 // serverToolUseID derives a server tool use ID from a message ID

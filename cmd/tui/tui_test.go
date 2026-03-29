@@ -56,7 +56,7 @@ func launcherTestState() *launch.LauncherState {
 
 func TestMenuRendersPinnedItemsAndMore(t *testing.T) {
 	view := newModel(launcherTestState()).View()
-	for _, want := range []string{"Run a model", "Launch Claude Code", "Launch Codex", "Launch OpenClaw", "More..."} {
+	for _, want := range []string{"Chat with a model", "Launch Claude Code", "Launch Codex", "Launch OpenClaw", "More..."} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected menu view to contain %q\n%s", want, view)
 		}

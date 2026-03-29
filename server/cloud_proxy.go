@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/klauspost/compress/zstd"
 
 	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
@@ -29,6 +30,9 @@ const (
 	cloudProxyBaseURLEnv          = "OLLAMA_CLOUD_BASE_URL"
 	legacyCloudAnthropicKey       = "legacy_cloud_anthropic_web_search"
 	cloudProxyClientVersionHeader = "X-Ollama-Client-Version"
+
+	// maxDecompressedBodySize limits the size of a decompressed request body
+	maxDecompressedBodySize = 20 << 20
 )
 
 var (
@@ -71,6 +75,19 @@ func cloudPassthroughMiddleware(disabledOperation string) gin.HandlerFunc {
 		if c.Request.Method != http.MethodPost {
 			c.Next()
 			return
+		}
+
+		// Decompress zstd-encoded request bodies so we can inspect the model
+		if c.GetHeader("Content-Encoding") == "zstd" {
+			reader, err := zstd.NewReader(c.Request.Body, zstd.WithDecoderMaxMemory(8<<20))
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "failed to decompress request body"})
+				c.Abort()
+				return
+			}
+			defer reader.Close()
+			c.Request.Body = http.MaxBytesReader(c.Writer, io.NopCloser(reader), maxDecompressedBodySize)
+			c.Request.Header.Del("Content-Encoding")
 		}
 
 		// TODO(drifkin): Avoid full-body buffering here for model detection.
@@ -209,7 +226,24 @@ func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disable
 	copyProxyResponseHeaders(c.Writer.Header(), resp.Header)
 	c.Status(resp.StatusCode)
 
-	if err := copyProxyResponseBody(c.Writer, resp.Body); err != nil {
+	var bodyWriter http.ResponseWriter = c.Writer
+	var framedWriter *jsonlFramingResponseWriter
+	// TEMP(drifkin): only needed on the cloud-proxied first leg of Anthropic
+	// web_search fallback (which is a path we're removing soon). Local
+	// /v1/messages writes one JSON value per streamResponse callback directly
+	// into WebSearchAnthropicWriter, but this proxy copy loop may coalesce
+	// multiple jsonl records into one Write.  WebSearchAnthropicWriter currently
+	// unmarshals one JSON value per Write.
+	if path == "/api/chat" && resp.StatusCode == http.StatusOK && c.GetBool(legacyCloudAnthropicKey) {
+		framedWriter = &jsonlFramingResponseWriter{ResponseWriter: c.Writer}
+		bodyWriter = framedWriter
+	}
+
+	err = copyProxyResponseBody(bodyWriter, resp.Body)
+	if err == nil && framedWriter != nil {
+		err = framedWriter.FlushPending()
+	}
+	if err != nil {
 		ctxErr := c.Request.Context().Err()
 		if errors.Is(err, context.Canceled) && errors.Is(ctxErr, context.Canceled) {
 			slog.Debug(
@@ -223,6 +257,7 @@ func proxyCloudRequestWithPath(c *gin.Context, body []byte, path string, disable
 		slog.Warn(
 			"cloud proxy response copy failed",
 			"path", c.Request.URL.Path,
+			"upstream_path", path,
 			"status", resp.StatusCode,
 			"request_context_canceled", ctxErr != nil,
 			"request_context_err", ctxErr,
@@ -451,6 +486,55 @@ func copyProxyResponseBody(dst http.ResponseWriter, src io.Reader) error {
 			if err == io.EOF {
 				return nil
 			}
+			return err
+		}
+	}
+}
+
+type jsonlFramingResponseWriter struct {
+	http.ResponseWriter
+	pending []byte
+}
+
+func (w *jsonlFramingResponseWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *jsonlFramingResponseWriter) Write(p []byte) (int, error) {
+	w.pending = append(w.pending, p...)
+	if err := w.flushCompleteLines(); err != nil {
+		return len(p), err
+	}
+	return len(p), nil
+}
+
+func (w *jsonlFramingResponseWriter) FlushPending() error {
+	trailing := bytes.TrimSpace(w.pending)
+	w.pending = nil
+	if len(trailing) == 0 {
+		return nil
+	}
+
+	_, err := w.ResponseWriter.Write(trailing)
+	return err
+}
+
+func (w *jsonlFramingResponseWriter) flushCompleteLines() error {
+	for {
+		newline := bytes.IndexByte(w.pending, '\n')
+		if newline < 0 {
+			return nil
+		}
+
+		line := bytes.TrimSpace(w.pending[:newline])
+		w.pending = w.pending[newline+1:]
+		if len(line) == 0 {
+			continue
+		}
+
+		if _, err := w.ResponseWriter.Write(line); err != nil {
 			return err
 		}
 	}

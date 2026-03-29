@@ -144,3 +144,44 @@ func TestLayerNormDefaultEps(t *testing.T) {
 		}
 	}
 }
+
+func TestQuantizedLinearMXFP4MatchesDequantizedWeight(t *testing.T) {
+	skipIfNoMLX(t)
+
+	weightVals := make([]float32, 3*32)
+	for i := range weightVals {
+		weightVals[i] = float32((i%11)-5) / 7
+	}
+	inputVals := make([]float32, 2*32)
+	for i := range inputVals {
+		inputVals[i] = float32((i%7)-3) / 5
+	}
+
+	weight := mlx.FromValues(weightVals, 3, 32).AsType(mlx.DTypeBFloat16)
+	input := mlx.FromValues(inputVals, 2, 32).AsType(mlx.DTypeBFloat16)
+	mlx.Eval(weight, input)
+
+	ql := NewQuantizedLinear(weight, nil, 32, 4, "mxfp4")
+	if ql.QBiases != nil {
+		t.Fatalf("mxfp4 qbiases = %v, want nil", ql.QBiases)
+	}
+
+	dequantizedWeight := mlx.Dequantize(ql.Weight, ql.Scales, ql.QBiases, 32, 4, "mxfp4")
+	mlx.Eval(dequantizedWeight)
+
+	qOut := ql.Forward(input)
+	dOut := NewLinear(dequantizedWeight, nil).Forward(input)
+	mlx.Eval(qOut, dOut)
+
+	got := qOut.Floats()
+	want := dOut.Floats()
+	if len(got) != len(want) {
+		t.Fatalf("output length = %d, want %d", len(got), len(want))
+	}
+
+	for i := range got {
+		if !approxEqual(got[i], want[i], 1e-3) {
+			t.Fatalf("output[%d] = %.6f, want %.6f", i, got[i], want[i])
+		}
+	}
+}

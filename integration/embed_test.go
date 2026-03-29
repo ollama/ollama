@@ -78,8 +78,11 @@ func TestEmbedCosineDistanceCorrelation(t *testing.T) {
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 
-	for _, model := range libraryEmbedModels {
+	for _, model := range testModels(libraryEmbedModels) {
 		t.Run(model, func(t *testing.T) {
+			if testModel != "" {
+				requireCapability(ctx, t, client, model, "embedding")
+			}
 			testCases := []struct {
 				a string
 				b string
@@ -145,6 +148,9 @@ func TestEmbedCosineDistanceCorrelation(t *testing.T) {
 }
 
 func TestAllMiniLMEmbeddings(t *testing.T) {
+	if testModel != "" {
+		t.Skip("uses hardcoded model, not applicable with model override")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
@@ -175,6 +181,9 @@ func TestAllMiniLMEmbeddings(t *testing.T) {
 }
 
 func TestAllMiniLMEmbed(t *testing.T) {
+	if testModel != "" {
+		t.Skip("uses hardcoded model, not applicable with model override")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
@@ -212,6 +221,9 @@ func TestAllMiniLMEmbed(t *testing.T) {
 }
 
 func TestAllMiniLMBatchEmbed(t *testing.T) {
+	if testModel != "" {
+		t.Skip("uses hardcoded model, not applicable with model override")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
@@ -259,6 +271,9 @@ func TestAllMiniLMBatchEmbed(t *testing.T) {
 }
 
 func TestAllMiniLMEmbedTruncate(t *testing.T) {
+	if testModel != "" {
+		t.Skip("uses hardcoded model, not applicable with model override")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
@@ -397,21 +412,13 @@ func TestAllMiniLMEmbedTruncate(t *testing.T) {
 
 func embeddingTestHelper(ctx context.Context, client *api.Client, t *testing.T, req api.EmbeddingRequest) (*api.EmbeddingResponse, error) {
 	t.Helper()
-
-	if err := PullIfMissing(ctx, client, req.Model); err != nil {
-		t.Fatal(err)
-	}
-
+	pullOrSkip(ctx, t, client, req.Model)
 	return client.Embeddings(ctx, &req)
 }
 
 func embedTestHelper(ctx context.Context, client *api.Client, t *testing.T, req api.EmbedRequest) (*api.EmbedResponse, error) {
 	t.Helper()
-
-	if err := PullIfMissing(ctx, client, req.Model); err != nil {
-		t.Fatal(err)
-	}
-
+	pullOrSkip(ctx, t, client, req.Model)
 	return client.Embed(ctx, &req)
 }
 
@@ -426,9 +433,12 @@ func TestEmbedTruncation(t *testing.T) {
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 
-	for _, model := range libraryEmbedModels {
+	for _, model := range testModels(libraryEmbedModels) {
 		model := model
 		t.Run(model, func(t *testing.T) {
+			if testModel != "" {
+				requireCapability(ctx, t, client, model, "embedding")
+			}
 			// Check if we're running out of time (reserve 20s for current model)
 			if deadline, ok := t.Deadline(); ok && time.Until(deadline) < 20*time.Second {
 				t.Skip("skipping remaining tests to avoid timeout")
@@ -494,9 +504,12 @@ func TestEmbedLargeInput(t *testing.T) {
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 
-	for _, model := range libraryEmbedModels {
+	for _, model := range testModels(libraryEmbedModels) {
 		model := model
 		t.Run(model, func(t *testing.T) {
+			if testModel != "" {
+				requireCapability(ctx, t, client, model, "embedding")
+			}
 			mctx, mcancel := context.WithTimeout(ctx, 2*time.Minute)
 			defer mcancel()
 
@@ -559,9 +572,12 @@ func TestEmbedStatusCode(t *testing.T) {
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 
-	for _, model := range libraryEmbedModels {
+	for _, model := range testModels(libraryEmbedModels) {
 		model := model
 		t.Run(model, func(t *testing.T) {
+			if testModel != "" {
+				requireCapability(ctx, t, client, model, "embedding")
+			}
 			// Check if we're running out of time (reserve 20s for current model)
 			if deadline, ok := t.Deadline(); ok && time.Until(deadline) < 20*time.Second {
 				t.Skip("skipping remaining tests to avoid timeout")
@@ -571,9 +587,7 @@ func TestEmbedStatusCode(t *testing.T) {
 			defer mcancel()
 
 			// Pull the model if needed
-			if err := PullIfMissing(mctx, client, model); err != nil {
-				t.Fatal(err)
-			}
+			pullOrSkip(mctx, t, client, model)
 
 			t.Run("truncation error status code", func(t *testing.T) {
 				truncFalse := false

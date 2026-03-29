@@ -42,12 +42,14 @@ mlx_distributed_group_split(mlx_distributed_group group, int color, int key);
 /**
  * Check if distributed is available.
  */
-bool mlx_distributed_is_available(void);
+bool mlx_distributed_is_available(const char* bk /* may be null */);
 
 /**
  * Initialize distributed.
  */
-mlx_distributed_group mlx_distributed_init(bool strict);
+mlx_distributed_group mlx_distributed_init(
+    bool strict,
+    const char* bk /* may be null */);
 
 /**@}*/
 

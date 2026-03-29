@@ -1208,7 +1208,7 @@ func TestWebSearchStreamResponse(t *testing.T) {
 				Type:  "server_tool_use",
 				ID:    "srvtoolu_test123",
 				Name:  "web_search",
-				Input: map[string]any{"query": "test query"},
+				Input: queryArgs("test query"),
 			},
 			{
 				Type:      "web_search_tool_result",
@@ -1413,12 +1413,8 @@ func TestWebSearchSendError_NonStreaming(t *testing.T) {
 		t.Errorf("expected name 'web_search', got %q", result.Content[0].Name)
 	}
 	// Verify input contains the query
-	inputMap, ok := result.Content[0].Input.(map[string]any)
-	if !ok {
-		t.Fatalf("expected Input to be map, got %T", result.Content[0].Input)
-	}
-	if inputMap["query"] != "test query" {
-		t.Errorf("expected query 'test query', got %v", inputMap["query"])
+	if q, ok := result.Content[0].Input.Get("query"); !ok || q != "test query" {
+		t.Errorf("expected query 'test query', got %v", q)
 	}
 
 	// Block 1: web_search_tool_result with error
@@ -1561,12 +1557,8 @@ func TestWebSearchSendError_EmptyQuery(t *testing.T) {
 	}
 
 	// Verify the input has empty query
-	inputMap, ok := result.Content[0].Input.(map[string]any)
-	if !ok {
-		t.Fatalf("expected Input to be map, got %T", result.Content[0].Input)
-	}
-	if inputMap["query"] != "" {
-		t.Errorf("expected empty query, got %v", inputMap["query"])
+	if q, ok := result.Content[0].Input.Get("query"); !ok || q != "" {
+		t.Errorf("expected empty query, got %v", q)
 	}
 }
 

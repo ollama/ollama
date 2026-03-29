@@ -52,26 +52,18 @@ type launchConfirmPolicy struct {
 
 var currentLaunchConfirmPolicy launchConfirmPolicy
 
-func (p launchConfirmPolicy) chain(next launchConfirmPolicy) launchConfirmPolicy {
-	chained := launchConfirmPolicy{
-		yes:               p.yes || next.yes,
-		requireYesMessage: p.requireYesMessage || next.requireYesMessage,
-	}
-	if chained.yes {
-		chained.requireYesMessage = false
-	}
-	return chained
-}
-
 func withLaunchConfirmPolicy(policy launchConfirmPolicy) func() {
 	old := currentLaunchConfirmPolicy
-	currentLaunchConfirmPolicy = old.chain(policy)
+	currentLaunchConfirmPolicy = policy
 	return func() {
 		currentLaunchConfirmPolicy = old
 	}
 }
 
-// ConfirmPrompt asks the user to confirm an action using the configured prompt hook.
+// ConfirmPrompt is the shared confirmation gate for launch flows (integration
+// edits, missing-model pulls, sign-in prompts, OpenClaw install/security, etc).
+// Behavior is controlled by currentLaunchConfirmPolicy, typically scoped by
+// withLaunchConfirmPolicy in LaunchCmd (e.g. auto-approve with --yes).
 func ConfirmPrompt(prompt string) (bool, error) {
 	if currentLaunchConfirmPolicy.yes {
 		return true, nil

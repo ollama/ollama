@@ -652,6 +652,67 @@ func TestExplicitCloudPassthroughAPIAndV1(t *testing.T) {
 		}
 	})
 
+	t.Run("v1 messages web_search fallback frames coalesced jsonl chunks", func(t *testing.T) {
+		type upstreamCapture struct {
+			path string
+		}
+		capture := &upstreamCapture{}
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			capture.path = r.URL.Path
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			w.WriteHeader(http.StatusOK)
+
+			combined := strings.Join([]string{
+				`{"model":"gpt-oss:120b","created_at":"2024-01-01T00:00:00Z","message":{"role":"assistant","content":"Hel"},"done":false}`,
+				`{"model":"gpt-oss:120b","created_at":"2024-01-01T00:00:00Z","message":{"role":"assistant","content":"lo"},"done":true}`,
+			}, "\n") + "\n"
+			_, _ = w.Write([]byte(combined))
+		}))
+		defer upstream.Close()
+
+		original := cloudProxyBaseURL
+		cloudProxyBaseURL = upstream.URL
+		t.Cleanup(func() { cloudProxyBaseURL = original })
+
+		s := &Server{}
+		router, err := s.GenerateRoutes(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		local := httptest.NewServer(router)
+		defer local.Close()
+
+		reqBody := `{
+					"model":"gpt-oss:120b-cloud",
+					"max_tokens":10,
+					"stream":true,
+					"messages":[{"role":"user","content":"search the web"}],
+					"tools":[{"type":"web_search_20250305","name":"web_search"}]
+				}`
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, local.URL+"/v1/messages?beta=true", bytes.NewBufferString(reqBody))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := local.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected status 200, got %d (%s)", resp.StatusCode, string(body))
+		}
+		if capture.path != "/api/chat" {
+			t.Fatalf("expected upstream path /api/chat for web_search fallback, got %q", capture.path)
+		}
+		if !strings.Contains(string(body), "event: message_stop") {
+			t.Fatalf("expected anthropic streaming message_stop event, got body %q", string(body))
+		}
+	})
+
 	t.Run("v1 model retrieve bypasses conversion", func(t *testing.T) {
 		upstream, capture := newUpstream(t, `{"id":"kimi-k2.5:cloud","object":"model","created":1,"owned_by":"ollama"}`)
 		defer upstream.Close()

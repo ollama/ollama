@@ -550,14 +550,12 @@ export class Error {
     }
 }
 export class ModelUpstreamResponse {
-    digest?: string;
-    pushTime: number;
+    stale: boolean;
     error?: string;
 
     constructor(source: any = {}) {
         if ('string' === typeof source) source = JSON.parse(source);
-        this.digest = source["digest"];
-        this.pushTime = source["pushTime"];
+        this.stale = source["stale"];
         this.error = source["error"];
     }
 }

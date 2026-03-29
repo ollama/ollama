@@ -18,6 +18,9 @@ import (
 	"github.com/ollama/ollama/openai"
 )
 
+// maxDecompressedBodySize limits the size of a decompressed request body
+const maxDecompressedBodySize = 20 << 20
+
 type BaseWriter struct {
 	gin.ResponseWriter
 }
@@ -54,14 +57,14 @@ type EmbedWriter struct {
 
 func (w *BaseWriter) writeError(data []byte) (int, error) {
 	var serr api.StatusError
-	err := json.Unmarshal(data, &serr)
-	if err != nil {
-		return 0, err
+	if err := json.Unmarshal(data, &serr); err != nil {
+		// If the error response isn't valid JSON, use the raw bytes as the
+		// error message rather than surfacing a confusing JSON parse error.
+		serr.ErrorMessage = string(data)
 	}
 
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	err = json.NewEncoder(w.ResponseWriter).Encode(openai.NewError(http.StatusInternalServerError, serr.Error()))
-	if err != nil {
+	if err := json.NewEncoder(w.ResponseWriter).Encode(openai.NewError(w.ResponseWriter.Status(), serr.Error())); err != nil {
 		return 0, err
 	}
 
@@ -512,7 +515,7 @@ func ResponsesMiddleware() gin.HandlerFunc {
 				return
 			}
 			defer reader.Close()
-			c.Request.Body = io.NopCloser(reader)
+			c.Request.Body = http.MaxBytesReader(c.Writer, io.NopCloser(reader), maxDecompressedBodySize)
 			c.Request.Header.Del("Content-Encoding")
 		}
 

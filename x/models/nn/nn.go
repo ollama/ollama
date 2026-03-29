@@ -13,6 +13,13 @@ type LinearLayer interface {
 	OutputDim() int32
 }
 
+// EmbeddingLayer is an interface for embedding layers that can also expose a
+// tied-output projection when the model reuses embedding weights as the LM head.
+type EmbeddingLayer interface {
+	Forward(indices *mlx.Array) *mlx.Array
+	AsLinear() LinearLayer
+}
+
 // Conv1d applies 1D convolution over NLC input.
 type Conv1d struct {
 	Weight   *mlx.Array
@@ -140,6 +147,53 @@ func (e *Embedding) Forward(indices *mlx.Array) *mlx.Array {
 	return e.Weight.TakeAxis(indices, 0)
 }
 
+func (e *Embedding) AsLinear() LinearLayer {
+	return NewLinear(e.Weight, nil)
+}
+
+// QuantizedEmbedding performs row-wise embedding lookup from affine/nvfp4/etc.
+// packed weights and dequantizes only the selected rows.
+type QuantizedEmbedding struct {
+	Weight    *mlx.Array
+	Scales    *mlx.Array
+	QBiases   *mlx.Array
+	GroupSize int
+	Bits      int
+	Mode      string
+}
+
+func NewQuantizedEmbedding(weight, scales, qbiases *mlx.Array, groupSize, bits int, mode string) *QuantizedEmbedding {
+	return &QuantizedEmbedding{
+		Weight:    weight,
+		Scales:    scales,
+		QBiases:   qbiases,
+		GroupSize: groupSize,
+		Bits:      bits,
+		Mode:      mode,
+	}
+}
+
+func (qe *QuantizedEmbedding) Forward(indices *mlx.Array) *mlx.Array {
+	weight := qe.Weight.TakeAxis(indices, 0)
+	scales := qe.Scales.TakeAxis(indices, 0)
+	var qbiases *mlx.Array
+	if qe.QBiases != nil && qe.QBiases.Valid() {
+		qbiases = qe.QBiases.TakeAxis(indices, 0)
+	}
+	return mlx.Dequantize(weight, scales, qbiases, qe.GroupSize, qe.Bits, qe.Mode)
+}
+
+func (qe *QuantizedEmbedding) AsLinear() LinearLayer {
+	return &QuantizedLinear{
+		Weight:    qe.Weight,
+		Scales:    qe.Scales,
+		QBiases:   qe.QBiases,
+		GroupSize: qe.GroupSize,
+		Bits:      qe.Bits,
+		Mode:      qe.Mode,
+	}
+}
+
 // LayerNorm represents a standard layer normalization layer (with bias).
 type LayerNorm struct {
 	Weight *mlx.Array
@@ -174,7 +228,6 @@ func (ml *MultiLinear) Forward(x *mlx.Array) *mlx.Array {
 	wT := ml.Weight.Transpose(0, 2, 1)
 	return x.Matmul(wT)
 }
-
 
 // ApplyCausalMask applies causal (lower triangular) mask to attention scores.
 func ApplyCausalMask(scores *mlx.Array) *mlx.Array {

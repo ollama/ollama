@@ -39,10 +39,25 @@ func TestSchedLoad(t *testing.T) {
 	defer done()
 	s := InitScheduler(ctx)
 	s.waitForRecovery = 10 * time.Millisecond
-	var f *ggml.GGML // value not used in tests
+
+	modelPath, _ := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.context_length":          uint32(32),
+		"llama.embedding_length":        uint32(4096),
+		"llama.block_count":             uint32(1),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(32),
+		"tokenizer.ggml.tokens":         []string{" "},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "blk.0.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
+		{Name: "output.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
+	})
+
 	req := &LlmRequest{
 		ctx:             ctx,
-		model:           &Model{ModelPath: "foo"},
+		model:           &Model{ModelPath: modelPath},
 		opts:            api.DefaultOptions(),
 		successCh:       make(chan *runnerRef, 1),
 		errCh:           make(chan error, 1),
@@ -54,7 +69,7 @@ func TestSchedLoad(t *testing.T) {
 	}
 	gpus := []ml.DeviceInfo{}
 	systemInfo := ml.SystemInfo{}
-	s.load(req, f, systemInfo, gpus, false)
+	s.load(req, systemInfo, gpus, false)
 	require.Empty(t, req.successCh)
 	require.Len(t, req.errCh, 1)
 	s.loadedMu.Lock()
@@ -68,7 +83,7 @@ func TestSchedLoad(t *testing.T) {
 		server.modelPath = model
 		return server, nil
 	}
-	s.load(req, f, systemInfo, gpus, false)
+	s.load(req, systemInfo, gpus, false)
 	select {
 	case err := <-req.errCh:
 		require.NoError(t, err)
@@ -80,9 +95,24 @@ func TestSchedLoad(t *testing.T) {
 		s.loadedMu.Unlock()
 	}
 
-	req.model.ModelPath = "dummy_model_path"
+	modelPath2, _ := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.context_length":          uint32(32),
+		"llama.embedding_length":        uint32(4096),
+		"llama.block_count":             uint32(1),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(32),
+		"tokenizer.ggml.tokens":         []string{" "},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "blk.0.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
+		{Name: "output.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
+	})
+
+	req.model.ModelPath = modelPath2
 	server.waitResp = errors.New("wait failure")
-	s.load(req, f, systemInfo, gpus, false)
+	s.load(req, systemInfo, gpus, false)
 	select {
 	case err := <-req.errCh:
 		require.Contains(t, err.Error(), "wait failure")
@@ -90,7 +120,7 @@ func TestSchedLoad(t *testing.T) {
 		t.Fatalf("unexpected success %v", resp)
 	}
 	s.loadedMu.Lock()
-	runner := s.loaded["dummy_model_path"]
+	runner := s.loaded[modelPath2]
 	s.loadedMu.Unlock()
 	require.NotNil(t, runner)
 	require.Equal(t, uint(0), runner.refCount)
@@ -103,7 +133,6 @@ type reqBundle struct {
 	ctxDone func()
 	srv     *mockLlm
 	req     *LlmRequest
-	f       *ggml.GGML
 }
 
 func (scenario *reqBundle) newServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
@@ -132,11 +161,6 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, vra
 	})
 
 	model := &Model{Name: modelName, ModelPath: p}
-	f, err := llm.LoadModel(model.ModelPath, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b.f = f
 	if duration == nil {
 		duration = &api.Duration{Duration: 5 * time.Millisecond}
 	}
@@ -178,7 +202,6 @@ func TestSchedRequestsSameModelSameRequest(t *testing.T) {
 	a := newScenarioRequest(t, ctx, "ollama-model-1", 10, &api.Duration{Duration: 5 * time.Millisecond}, nil)
 	b := newScenarioRequest(t, ctx, "ollama-model-1", 11, &api.Duration{Duration: 0}, nil)
 	b.req.model = a.req.model
-	b.f = a.f
 
 	s.newServerFn = a.newServer
 	slog.Info("a")
@@ -223,7 +246,6 @@ func TestSchedRequestsSimpleReloadSameModel(t *testing.T) {
 	b := newScenarioRequest(t, ctx, "ollama-model-1", 20, &api.Duration{Duration: 5 * time.Millisecond}, nil)
 	tmpModel := *a.req.model
 	b.req.model = &tmpModel
-	b.f = a.f
 
 	s.newServerFn = a.newServer
 	slog.Info("a")
@@ -518,16 +540,31 @@ func TestSchedExpireRunner(t *testing.T) {
 	defer done()
 	s := InitScheduler(ctx)
 	s.waitForRecovery = 10 * time.Millisecond
+
+	modelPath, _ := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.context_length":          uint32(32),
+		"llama.embedding_length":        uint32(4096),
+		"llama.block_count":             uint32(1),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(32),
+		"tokenizer.ggml.tokens":         []string{" "},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "blk.0.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
+		{Name: "output.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
+	})
+
 	req := &LlmRequest{
 		ctx:             ctx,
-		model:           &Model{ModelPath: "foo"},
+		model:           &Model{ModelPath: modelPath},
 		opts:            api.DefaultOptions(),
 		successCh:       make(chan *runnerRef, 1),
 		errCh:           make(chan error, 1),
 		sessionDuration: &api.Duration{Duration: 2 * time.Minute},
 	}
 
-	var f *ggml.GGML
 	gpus := []ml.DeviceInfo{}
 	systemInfo := ml.SystemInfo{}
 	server := &mockLlm{vramSize: 10, vramByGPU: map[ml.DeviceID]uint64{}}
@@ -535,7 +572,7 @@ func TestSchedExpireRunner(t *testing.T) {
 		server.modelPath = model
 		return server, nil
 	}
-	s.load(req, f, systemInfo, gpus, false)
+	s.load(req, systemInfo, gpus, false)
 
 	select {
 	case err := <-req.errCh:
@@ -550,7 +587,7 @@ func TestSchedExpireRunner(t *testing.T) {
 		s.loadedMu.Unlock()
 	}
 
-	s.expireRunner(&Model{ModelPath: "foo"})
+	s.expireRunner(&Model{ModelPath: modelPath})
 
 	s.finishedReqCh <- req
 	s.processCompleted(ctx)

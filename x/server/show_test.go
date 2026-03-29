@@ -705,8 +705,8 @@ func TestGetTensorInfoFromManifest_Quantized(t *testing.T) {
 	if tensor.Name != "model.layers.0.mlp.up_proj.weight" {
 		t.Errorf("Name = %v, want model.layers.0.mlp.up_proj.weight", tensor.Name)
 	}
-	if tensor.Type != "INT4" {
-		t.Errorf("Type = %v, want INT4", tensor.Type)
+	if tensor.Type != "int4" {
+		t.Errorf("Type = %v, want int4", tensor.Type)
 	}
 	// Shape should be unpacked: 320 * 8 = 2560
 	if len(tensor.Shape) != 2 || tensor.Shape[0] != 2560 || tensor.Shape[1] != 2560 {
@@ -1195,6 +1195,17 @@ func TestGetTensorInfoFromManifest_Packed(t *testing.T) {
 	}
 	if !packedNames["model.layers.0.mlp.experts.0.gate_proj.weight"] {
 		t.Error("missing packed tensor: model.layers.0.mlp.experts.0.gate_proj.weight")
+	}
+
+	packedTypes := make(map[string]string)
+	for _, r := range result[1:] {
+		packedTypes[r.Name] = r.Type
+	}
+	if packedTypes["model.layers.0.mlp.experts.0.down_proj.weight"] != "int8" {
+		t.Errorf("down_proj.Type = %v, want int8", packedTypes["model.layers.0.mlp.experts.0.down_proj.weight"])
+	}
+	if packedTypes["model.layers.0.mlp.experts.0.gate_proj.weight"] != "int4" {
+		t.Errorf("gate_proj.Type = %v, want int4", packedTypes["model.layers.0.mlp.experts.0.gate_proj.weight"])
 	}
 }
 
