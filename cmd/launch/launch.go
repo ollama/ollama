@@ -506,10 +506,8 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 		return err
 	}
 
-	if needsConfigure || req.ModelOverride != "" {
-		if err := prepareEditorIntegration(name, runner, editor, models); err != nil {
-			return err
-		}
+	if err := prepareEditorIntegration(name, runner, editor, models); err != nil {
+		return err
 	}
 
 	return launchAfterConfiguration(name, runner, models[0], req)
@@ -726,7 +724,6 @@ func (c *launcherClient) loadModelInventoryOnce(ctx context.Context) error {
 }
 
 func runIntegration(runner Runner, modelName string, args []string) error {
-	fmt.Fprintf(os.Stderr, "\nLaunching %s with %s...\n", runner, modelName)
 	return runner.Run(modelName, args)
 }
 
