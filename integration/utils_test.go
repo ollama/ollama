@@ -259,7 +259,6 @@ var (
 		"zephyr",
 	}
 	libraryEmbedModels = []string{
-		"qwen3-embedding",
 		"embeddinggemma",
 		"nomic-embed-text",
 		"all-minilm",
@@ -270,6 +269,7 @@ var (
 		"paraphrase-multilingual",
 		"snowflake-arctic-embed",
 		"snowflake-arctic-embed2",
+		"qwen3-embedding",
 	}
 	libraryToolsModels = []string{
 		"lfm2.5-thinking",
