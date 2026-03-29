@@ -187,10 +187,10 @@ index ddf1737a3..e947203bb 100644
  
      if (cpu_ctx->work_size < cplan.work_size) {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index d1ade5558..85c0087b6 100644
+index 4d1b974c6..5c0245fee 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -3578,7 +3578,7 @@ static bool ggml_cuda_check_fusion_memory_ranges(ggml_cgraph * cgraph,
+@@ -3583,7 +3583,7 @@ static bool ggml_cuda_check_fusion_memory_ranges(ggml_cgraph * cgraph,
      return is_ok;
  }
  
@@ -199,7 +199,7 @@ index d1ade5558..85c0087b6 100644
      bool graph_evaluated_or_captured = false;
  
      // flag used to determine whether it is an integrated_gpu
-@@ -4077,6 +4077,8 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
+@@ -4082,6 +4082,8 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
                  GGML_UNUSED(integrated);
  #endif  // NDEBUG
  
@@ -208,7 +208,7 @@ index d1ade5558..85c0087b6 100644
                  bool ok = ggml_cuda_compute_forward(*cuda_ctx, node);
                  if (!ok) {
                      GGML_LOG_ERROR("%s: op not supported %s (%s)\n", __func__, node->name, ggml_op_name(node->op));
-@@ -4143,11 +4145,17 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
+@@ -4148,11 +4150,17 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
  }
  #endif // USE_CUDA_GRAPH
  
@@ -227,7 +227,7 @@ index d1ade5558..85c0087b6 100644
      bool use_cuda_graph             = false;
      bool cuda_graph_update_required = false;
      const void * graph_key = nullptr;
-@@ -4197,7 +4205,7 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
+@@ -4202,7 +4210,7 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
          CUDA_CHECK(cudaStreamBeginCapture(cuda_ctx->stream(), cudaStreamCaptureModeRelaxed));
      }
  

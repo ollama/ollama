@@ -58,7 +58,7 @@ index ccbe38818..2af324904 100644
      GGML_ASSERT(device);
      return device->iface.get_buffer_type(device);
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index ad526a65b..4ab58b369 100644
+index ef689a6ff..160c1b17d 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -117,6 +117,11 @@ int ggml_cuda_get_device() {
@@ -73,7 +73,7 @@ index ad526a65b..4ab58b369 100644
  static cudaError_t ggml_cuda_device_malloc(void ** ptr, size_t size, int device) {
      ggml_cuda_set_device(device);
      cudaError_t err;
-@@ -4794,7 +4799,9 @@ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_back
+@@ -4799,7 +4804,9 @@ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_back
      props->id          = ggml_backend_cuda_device_get_id(dev);
      props->type        = ggml_backend_cuda_device_get_type(dev);
      props->device_id   = ctx->pci_bus_id.empty() ? nullptr : ctx->pci_bus_id.c_str();
@@ -84,7 +84,7 @@ index ad526a65b..4ab58b369 100644
  
      bool host_buffer = getenv("GGML_CUDA_NO_PINNED") == nullptr;
  #ifdef GGML_CUDA_NO_PEER_COPY
-@@ -5266,6 +5273,11 @@ static void ggml_backend_cuda_device_event_synchronize(ggml_backend_dev_t dev, g
+@@ -5271,6 +5278,11 @@ static void ggml_backend_cuda_device_event_synchronize(ggml_backend_dev_t dev, g
      CUDA_CHECK(cudaEventSynchronize((cudaEvent_t)event->context));
  }
  
@@ -96,7 +96,7 @@ index ad526a65b..4ab58b369 100644
  static const ggml_backend_device_i ggml_backend_cuda_device_interface = {
      /* .get_name                = */ ggml_backend_cuda_device_get_name,
      /* .get_description         = */ ggml_backend_cuda_device_get_description,
-@@ -5282,6 +5294,7 @@ static const ggml_backend_device_i ggml_backend_cuda_device_interface = {
+@@ -5287,6 +5299,7 @@ static const ggml_backend_device_i ggml_backend_cuda_device_interface = {
      /* .event_new               = */ ggml_backend_cuda_device_event_new,
      /* .event_free              = */ ggml_backend_cuda_device_event_free,
      /* .event_synchronize       = */ ggml_backend_cuda_device_event_synchronize,

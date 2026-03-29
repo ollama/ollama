@@ -310,10 +310,10 @@ index 36d8a3aaa..6ef8e81c9 100644
  
  struct ggml_cuda_mm_fusion_args_host {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 85c0087b6..ad526a65b 100644
+index 5c0245fee..ef689a6ff 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -383,11 +383,15 @@ const ggml_cuda_device_info & ggml_cuda_info() {
+@@ -388,11 +388,15 @@ const ggml_cuda_device_info & ggml_cuda_info() {
  
  // #define DEBUG_CUDA_MALLOC
  
@@ -329,7 +329,7 @@ index 85c0087b6..ad526a65b 100644
      struct ggml_cuda_buffer {
          void * ptr = nullptr;
          size_t size = 0;
-@@ -396,8 +400,8 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
+@@ -401,8 +405,8 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
      ggml_cuda_buffer buffer_pool[MAX_BUFFERS] = {};
      size_t pool_size = 0;
  
@@ -340,7 +340,7 @@ index 85c0087b6..ad526a65b 100644
      }
  
      ~ggml_cuda_pool_leg() {
-@@ -413,6 +417,12 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
+@@ -418,6 +422,12 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
      }
  
      void * alloc(size_t size, size_t * actual_size) override {
@@ -353,7 +353,7 @@ index 85c0087b6..ad526a65b 100644
  #ifdef DEBUG_CUDA_MALLOC
          int nnz = 0;
          size_t max_size = 0;
-@@ -465,6 +475,9 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
+@@ -470,6 +480,9 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
      }
  
      void free(void * ptr, size_t size) override {
@@ -363,7 +363,7 @@ index 85c0087b6..ad526a65b 100644
          for (int i = 0; i < MAX_BUFFERS; ++i) {
              ggml_cuda_buffer& b = buffer_pool[i];
              if (b.ptr == nullptr) {
-@@ -478,6 +491,14 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
+@@ -483,6 +496,14 @@ struct ggml_cuda_pool_leg : public ggml_cuda_pool {
          CUDA_CHECK(cudaFree(ptr));
          pool_size -= size;
      }
@@ -378,7 +378,7 @@ index 85c0087b6..ad526a65b 100644
  };
  
  // pool with virtual memory
-@@ -486,6 +507,8 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
+@@ -491,6 +512,8 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
      static const size_t CUDA_POOL_VMM_MAX_SIZE = 1ull << 35; // 32 GB
  
      int device;
@@ -387,7 +387,7 @@ index 85c0087b6..ad526a65b 100644
      CUdeviceptr pool_addr = 0;
      size_t pool_used = 0;
      size_t pool_size = 0;
-@@ -494,8 +517,9 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
+@@ -499,8 +522,9 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
      std::vector<std::pair<CUdeviceptr, size_t>> mappings;
  #endif
  
@@ -398,7 +398,7 @@ index 85c0087b6..ad526a65b 100644
          granularity(ggml_cuda_info().devices[device].vmm_granularity) {
      }
  
-@@ -515,9 +539,15 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
+@@ -520,9 +544,15 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
  
      void * alloc(size_t size, size_t * actual_size) override {
          // round up the allocation size to the alignment to ensure that all allocations are aligned for all data types
@@ -415,7 +415,7 @@ index 85c0087b6..ad526a65b 100644
          size_t avail = pool_size - pool_used;
  
          if (size > avail) {
-@@ -579,6 +609,9 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
+@@ -584,6 +614,9 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
      }
  
      void free(void * ptr, size_t size) override {
@@ -425,7 +425,7 @@ index 85c0087b6..ad526a65b 100644
  #ifdef DEBUG_CUDA_MALLOC
          printf("cuda pool[%d]: freed %llu bytes at %llx\n", device, (unsigned long long) size, ptr);
  #endif
-@@ -588,22 +621,33 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
+@@ -593,22 +626,33 @@ struct ggml_cuda_pool_vmm : public ggml_cuda_pool {
          // all deallocations must be in reverse order of the allocations
          GGML_ASSERT(ptr == (void *) ((char *)(pool_addr) + pool_used));
      }
@@ -462,7 +462,7 @@ index 85c0087b6..ad526a65b 100644
  static std::mutex ggml_cuda_lock;
  static std::condition_variable ggml_cuda_lock_cv;
  static std::atomic<int> ggml_cuda_lock_counter;
-@@ -668,6 +712,10 @@ static enum ggml_status ggml_backend_cuda_buffer_init_tensor(ggml_backend_buffer
+@@ -673,6 +717,10 @@ static enum ggml_status ggml_backend_cuda_buffer_init_tensor(ggml_backend_buffer
          return GGML_STATUS_SUCCESS;
      }
  
@@ -473,7 +473,7 @@ index 85c0087b6..ad526a65b 100644
      if (ggml_is_quantized(tensor->type) && tensor->view_src == nullptr && ggml_backend_buffer_get_usage(buffer) != GGML_BACKEND_BUFFER_USAGE_COMPUTE) {
          // initialize padding to 0 to avoid possible NaN values
          const size_t original_size = ggml_nbytes(tensor);
-@@ -782,7 +830,7 @@ static ggml_backend_buffer_t ggml_backend_cuda_buffer_type_alloc_buffer(ggml_bac
+@@ -787,7 +835,7 @@ static ggml_backend_buffer_t ggml_backend_cuda_buffer_type_alloc_buffer(ggml_bac
  }
  
  static size_t ggml_backend_cuda_buffer_type_get_alignment(ggml_backend_buffer_type_t buft) {
@@ -482,7 +482,7 @@ index 85c0087b6..ad526a65b 100644
  
      GGML_UNUSED(buft);
  }
-@@ -803,6 +851,12 @@ static size_t ggml_backend_cuda_buffer_type_get_alloc_size(ggml_backend_buffer_t
+@@ -808,6 +856,12 @@ static size_t ggml_backend_cuda_buffer_type_get_alloc_size(ggml_backend_buffer_t
      GGML_UNUSED(buft);
  }
  
@@ -495,7 +495,7 @@ index 85c0087b6..ad526a65b 100644
  static const ggml_backend_buffer_type_i ggml_backend_cuda_buffer_type_interface = {
      /* .get_name         = */ ggml_backend_cuda_buffer_type_get_name,
      /* .alloc_buffer     = */ ggml_backend_cuda_buffer_type_alloc_buffer,
-@@ -810,6 +864,7 @@ static const ggml_backend_buffer_type_i ggml_backend_cuda_buffer_type_interface
+@@ -815,6 +869,7 @@ static const ggml_backend_buffer_type_i ggml_backend_cuda_buffer_type_interface
      /* .get_max_size     = */ NULL, // defaults to SIZE_MAX
      /* .get_alloc_size   = */ ggml_backend_cuda_buffer_type_get_alloc_size,
      /* .is_host          = */ NULL,
@@ -503,7 +503,7 @@ index 85c0087b6..ad526a65b 100644
  };
  
  ggml_backend_buffer_type_t ggml_backend_cuda_buffer_type(int device) {
-@@ -1128,6 +1183,7 @@ static const ggml_backend_buffer_type_i ggml_backend_cuda_split_buffer_type_inte
+@@ -1133,6 +1188,7 @@ static const ggml_backend_buffer_type_i ggml_backend_cuda_split_buffer_type_inte
      /* .get_max_size     = */ NULL, // defaults to SIZE_MAX
      /* .get_alloc_size   = */ ggml_backend_cuda_split_buffer_type_get_alloc_size,
      /* .is_host          = */ ggml_backend_cuda_split_buffer_type_is_host,
@@ -511,7 +511,7 @@ index 85c0087b6..ad526a65b 100644
  };
  
  ggml_backend_buffer_type_t ggml_backend_cuda_split_buffer_type(int main_device, const float * tensor_split) {
-@@ -2372,6 +2428,9 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
+@@ -2377,6 +2433,9 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
  }
  
  static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
@@ -521,7 +521,7 @@ index 85c0087b6..ad526a65b 100644
      const ggml_tensor * src0 = dst->src[0];
      const ggml_tensor * src1 = dst->src[1];
      const ggml_tensor * ids  = dst->src[2];
-@@ -4148,6 +4207,10 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
+@@ -4153,6 +4212,10 @@ static bool ggml_cuda_graph_set_enabled(ggml_backend_cuda_context * cuda_ctx, co
  static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
      ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) backend->context;
  
@@ -532,7 +532,7 @@ index 85c0087b6..ad526a65b 100644
      ggml_cuda_set_device(cuda_ctx->device);
  
      // adjust number of streams based on batch_size hint
-@@ -4479,6 +4542,32 @@ static void ggml_backend_cuda_graph_optimize(ggml_backend_t backend, ggml_cgraph
+@@ -4484,6 +4547,32 @@ static void ggml_backend_cuda_graph_optimize(ggml_backend_t backend, ggml_cgraph
      }
  }
  
@@ -565,7 +565,7 @@ index 85c0087b6..ad526a65b 100644
  static const ggml_backend_i ggml_backend_cuda_interface = {
      /* .get_name                = */ ggml_backend_cuda_get_name,
      /* .free                    = */ ggml_backend_cuda_free,
-@@ -4494,6 +4583,9 @@ static const ggml_backend_i ggml_backend_cuda_interface = {
+@@ -4499,6 +4588,9 @@ static const ggml_backend_i ggml_backend_cuda_interface = {
      /* .event_record            = */ ggml_backend_cuda_event_record,
      /* .event_wait              = */ ggml_backend_cuda_event_wait,
      /* .graph_optimize          = */ ggml_backend_cuda_graph_optimize,
