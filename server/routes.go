@@ -2458,7 +2458,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						return
 					}
 
-					if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || r.Done || len(res.Logprobs) > 0 {
+					if req.Stream != nil && *req.Stream {
+						slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser output (streaming)", "parser", m.Config.Parser, "content", content, "thinking", thinking, "toolCalls", toolCalls, "done", r.Done)
+						ch <- res
+					} else if res.Message.Content != "" || res.Message.Thinking != "" || len(res.Message.ToolCalls) > 0 || r.Done || len(res.Logprobs) > 0 {
 						slog.Log(context.TODO(), logutil.LevelTrace, "builtin parser output", "parser", m.Config.Parser, "content", content, "thinking", thinking, "toolCalls", toolCalls, "done", r.Done)
 						ch <- res
 					} else {
