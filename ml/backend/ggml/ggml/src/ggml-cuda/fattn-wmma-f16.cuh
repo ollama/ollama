@@ -18,7 +18,7 @@
 #if defined(RDNA4) && ROCWMMA_VERSION_MAJOR > 1
 #define GGML_USE_WMMA_FATTN
 #elif defined(RDNA4)
-#warning "rocwmma fattn is not suported on RDNA4 on rocwmma < v2.0.0, expect degraded performance"
+#warning "rocwmma fattn is not supported on RDNA4 on rocwmma < v2.0.0, expect degraded performance"
 #endif // defined(RDNA4) && ROCWMMA_VERSION_MAJOR > 1
 #endif // defined(GGML_HIP_ROCWMMA_FATTN)
 

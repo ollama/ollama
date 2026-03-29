@@ -80,18 +80,12 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 		// times concurrently leading to memory contention
 		for dir := range libDirs {
 			// Typically bootstrapping takes < 1s, but on some systems, with devices
-			// in low power/idle mode, initialization can take multiple seconds.  We
-			// set a longer timeout just for bootstrap discovery to reduce the chance
-			// of giving up too quickly
-			bootstrapTimeout := 30 * time.Second
-			if runtime.GOOS == "windows" {
-				// On Windows with Defender enabled, AV scanning of the DLLs
-				// takes place sequentially and this can significantly increase
-				// the time it takes too do the initial discovery pass.
-				// Subsequent loads will be faster as the scan results are
-				// cached
-				bootstrapTimeout = 90 * time.Second
-			}
+			// in low power/idle mode, initialization can take multiple seconds.
+			// Metal shader compilation from source can take 30+ seconds on
+			// high-core-count Apple Silicon on first launch before the shader
+			// cache is warm. We set a longer timeout to reduce the chance of
+			// giving up too quickly.
+			bootstrapTimeout := 120 * time.Second
 			var dirs []string
 			if dir != "" {
 				if requested != "" && filepath.Base(dir) != requested {
@@ -122,7 +116,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 		// aren't supported by a given library.  We run this phase in parallel to speed up discovery.
 		// Only devices that need verification are included in this pass
 		slog.Debug("evaluating which, if any, devices to filter out", "initial_count", len(devices))
-		ctx2ndPass, cancel := context.WithTimeout(ctx, 30*time.Second)
+		ctx2ndPass, cancel := context.WithTimeout(ctx, 120*time.Second)
 		defer cancel()
 		var wg sync.WaitGroup
 		needsDelete := make([]bool, len(devices))

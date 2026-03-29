@@ -1,8 +1,10 @@
 #include "models.h"
 
-llm_graph_context_mamba::llm_graph_context_mamba(const llm_graph_params & params) : llm_graph_context(params) {}
+#include "llama-memory-recurrent.h"
 
-ggml_tensor * llm_graph_context_mamba::build_mamba_layer(llm_graph_input_rs * inp,
+llm_build_mamba_base::llm_build_mamba_base(const llm_graph_params & params) : llm_graph_context(params) {}
+
+ggml_tensor * llm_build_mamba_base::build_mamba_layer(llm_graph_input_rs * inp,
                                                          ggml_tensor *        cur,
                                                          const llama_model &  model,
                                                          const llama_ubatch & ubatch,
@@ -28,6 +30,7 @@ ggml_tensor * llm_graph_context_mamba::build_mamba_layer(llm_graph_input_rs * in
     GGML_ASSERT(n_seqs != 0);
     GGML_ASSERT(ubatch.equal_seqs());
     GGML_ASSERT(ubatch.n_tokens == n_seq_tokens * n_seqs);
+    GGML_ASSERT(d_inner % n_head == 0);
 
     ggml_tensor * conv_states_all = mctx_cur->get_r_l(il);
     ggml_tensor * ssm_states_all  = mctx_cur->get_s_l(il);
@@ -39,7 +42,7 @@ ggml_tensor * llm_graph_context_mamba::build_mamba_layer(llm_graph_input_rs * in
     cur = ggml_reshape_3d(ctx0, cur, cur->ne[0], n_seq_tokens, n_seqs);
 
     // {n_embd, 2*d_inner} @ {n_embd, n_seq_tokens, n_seqs} => {2*d_inner, n_seq_tokens, n_seqs}
-    ggml_tensor * xz = build_lora_mm(layer.ssm_in, cur);
+    ggml_tensor * xz = build_lora_mm(layer.ssm_in, cur, layer.ssm_in_s);
     // split the above in two
     // => {d_inner, n_seq_tokens, n_seqs}
     ggml_tensor * x  = ggml_view_3d(ctx0, xz, d_inner, xz->ne[1], xz->ne[2], xz->nb[1], xz->nb[2], 0);
@@ -134,7 +137,7 @@ ggml_tensor * llm_graph_context_mamba::build_mamba_layer(llm_graph_input_rs * in
         y = ggml_swiglu_split(ctx0, ggml_cont(ctx0, z), y);
 
         // {d_inner, n_embd} @ {d_inner, n_seq_tokens, n_seqs} => {n_embd, n_seq_tokens, n_seqs}
-        cur = build_lora_mm(layer.ssm_out, y);
+        cur = build_lora_mm(layer.ssm_out, y, layer.ssm_out_s);
     }
 
     // {n_embd, n_seq_tokens, n_seqs} => {n_embd, n_tokens}
@@ -143,7 +146,7 @@ ggml_tensor * llm_graph_context_mamba::build_mamba_layer(llm_graph_input_rs * in
     return cur;
 }
 
-ggml_tensor * llm_graph_context_mamba::build_mamba2_layer(llm_graph_input_rs * inp,
+ggml_tensor * llm_build_mamba_base::build_mamba2_layer(llm_graph_input_rs * inp,
                                                           ggml_tensor *        cur,
                                                           const llama_model &  model,
                                                           const llama_ubatch & ubatch,
@@ -165,6 +168,9 @@ ggml_tensor * llm_graph_context_mamba::build_mamba2_layer(llm_graph_input_rs * i
     GGML_ASSERT(n_seqs != 0);
     GGML_ASSERT(ubatch.equal_seqs());
     GGML_ASSERT(ubatch.n_tokens == n_seq_tokens * n_seqs);
+    GGML_ASSERT(d_inner % n_head  == 0);
+    GGML_ASSERT(d_inner % d_state == 0);
+    GGML_ASSERT(d_inner % n_group == 0);
 
     ggml_tensor * conv_states_all = mctx_cur->get_r_l(il);
     ggml_tensor * ssm_states_all  = mctx_cur->get_s_l(il);
@@ -178,7 +184,7 @@ ggml_tensor * llm_graph_context_mamba::build_mamba2_layer(llm_graph_input_rs * i
     // d_in_proj = 2 * self.d_inner + 2 * self.ngroups * self.d_state + self.nheads
 
     // {n_embd, d_in_proj} @ {n_embd, n_seq_tokens, n_seqs} => {d_in_proj, n_seq_tokens, n_seqs}
-    ggml_tensor * zxBCdt = build_lora_mm(model.layers[il].ssm_in, cur);
+    ggml_tensor * zxBCdt = build_lora_mm(model.layers[il].ssm_in, cur, model.layers[il].ssm_in_s);
 
     // split the above in three
     ggml_tensor * z   = ggml_view_4d(ctx0, zxBCdt, head_dim, n_head, n_seq_tokens, n_seqs, head_dim * zxBCdt->nb[0],
@@ -272,7 +278,7 @@ ggml_tensor * llm_graph_context_mamba::build_mamba2_layer(llm_graph_input_rs * i
         y = ggml_reshape_3d(ctx0, y, d_inner, n_seq_tokens, n_seqs);
 
         // {d_inner, n_embd} @ {d_inner, n_seq_tokens, n_seqs} => {n_embd, n_seq_tokens, n_seqs}
-        cur = build_lora_mm(model.layers[il].ssm_out, y);
+        cur = build_lora_mm(model.layers[il].ssm_out, y, model.layers[il].ssm_out_s);
     }
 
     // {n_embd, n_seq_tokens, n_seqs} => {n_embd, n_tokens}

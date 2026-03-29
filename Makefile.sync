@@ -1,6 +1,6 @@
 UPSTREAM=https://github.com/ggml-org/llama.cpp.git
 WORKDIR=llama/vendor
-FETCH_HEAD=ec98e2002
+FETCH_HEAD=892e3c333a634f818acc195dc699468c08ff5e80
 
 .PHONY: help
 help:
@@ -9,10 +9,23 @@ help:
 	@echo "    checkout             Checkout upstream repository"
 	@echo "    apply-patches        Apply patches to local repository"
 	@echo "    format-patches       Format patches from local repository"
+	@echo "    rebase-patches       Rebase current patches onto new FETCH_HEAD (for bumps)"
 	@echo "    clean                Clean local repository"
 	@echo
-	@echo "Example:"
-	@echo "    make -f $(lastword $(MAKEFILE_LIST)) clean apply-patches sync"
+	@echo "Example (re-sync after editing a patch):"
+	@echo "    make -f $(lastword $(MAKEFILE_LIST)) clean"
+	@echo "    make -f $(lastword $(MAKEFILE_LIST)) apply-patches"
+	@echo "    make -f $(lastword $(MAKEFILE_LIST)) sync"
+	@echo
+	@echo "Update workflow:"
+	@echo "    1. make -f $(lastword $(MAKEFILE_LIST)) clean                # reset vendor tree"
+	@echo "    2. make -f $(lastword $(MAKEFILE_LIST)) apply-patches        # apply on OLD base"
+	@echo "    3. Update FETCH_HEAD in $(lastword $(MAKEFILE_LIST)) to new upstream commit"
+	@echo "    4. make -f $(lastword $(MAKEFILE_LIST)) rebase-patches       # rebase onto new base"
+	@echo "    5. Resolve conflicts, git -C $(WORKDIR) rebase --continue"
+	@echo "    6. make -f $(lastword $(MAKEFILE_LIST)) format-patches       # save updated patches"
+	@echo "    7. make -f $(lastword $(MAKEFILE_LIST)) sync                 # sync to build dirs (requires patches applied)"
+	@echo "    8. make -f $(lastword $(MAKEFILE_LIST)) clean                # reset vendor tree and remove .patched files"
 
 .PHONY: sync
 sync: llama/build-info.cpp ml/backend/ggml/ggml/src/ggml-metal/ggml-metal-embed.metal
@@ -65,6 +78,28 @@ format-patches: llama/patches
 		--zero-commit \
 		-o $(realpath $<) \
 		$(FETCH_HEAD)
+
+.PHONY: rebase-patches
+rebase-patches: $(WORKDIR)
+	@# Determine the current base (first parent of oldest patch commit)
+	@OLD_BASE=$$(git -C $(WORKDIR) rev-list --reverse HEAD 2>/dev/null | head -1); \
+	if [ -z "$$OLD_BASE" ]; then \
+		echo "Error: no commits found in $(WORKDIR)"; exit 1; \
+	fi; \
+	PATCH_BASE=$$(git -C $(WORKDIR) log --format=%H --reverse HEAD 2>/dev/null | tail -1); \
+	FIRST_PATCH=$$(git -C $(WORKDIR) log --format=%H --reverse --ancestry-path $$OLD_BASE..HEAD 2>/dev/null | head -1); \
+	if [ -z "$$FIRST_PATCH" ]; then \
+		echo "Error: no patch commits found above base"; exit 1; \
+	fi; \
+	CURRENT_BASE=$$(git -C $(WORKDIR) rev-parse $$FIRST_PATCH^); \
+	echo "Rebasing from $$CURRENT_BASE onto $(FETCH_HEAD)..."; \
+	git -C $(WORKDIR) fetch; \
+	git -C $(WORKDIR) rebase --onto $(FETCH_HEAD) $$CURRENT_BASE HEAD || { \
+		echo "Rebase paused. Resolve conflicts then:"; \
+		echo "1. git -C $(WORKDIR) rebase --continue"; \
+		echo "2. make -f $(lastword $(MAKEFILE_LIST)) format-patches"; \
+		exit 1; \
+	}
 
 .PHONY: clean
 clean: checkout

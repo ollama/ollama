@@ -12,7 +12,7 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, 
     const uint nibble_shift = 4 * (itid & 1);
     const uint ib32 = itid / 2; // 0..7
 
-    uint ibi = a_offset / QUANT_K + first_row * num_blocks_per_row + i;
+    uint ibi = a_offset + first_row * num_blocks_per_row + i;
     [[unroll]] for (uint n = 0; n < num_rows; ++n) {
         const float d = float(data_a[ibi].d);
         const uint scale = (data_a[ibi].scales[ib32] >> nibble_shift) & 0xF;

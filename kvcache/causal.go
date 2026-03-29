@@ -578,7 +578,10 @@ func (c *Causal) shift(seq int, beginIndex, offset int32) error {
 
 		offsets = offsets[batchFirst : batchLast+1]
 
-		ctx := c.backend.NewContext()
+		// Use NewContextSize to avoid taking a buffer from the arena pool,
+		// which is reserved for the main inference pipeline's graph caching.
+		// 512 nodes: 1 input + 3 per layer (view + rope + copy) = ~170 layers max.
+		ctx := c.backend.NewContextSize(512)
 		kShift := ctx.Input().FromInts(offsets, len(offsets))
 
 		for i, key := range c.keys {

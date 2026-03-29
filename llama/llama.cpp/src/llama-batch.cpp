@@ -394,11 +394,13 @@ llama_ubatch llama_batch_allocr::ubatch_reserve(uint32_t n_seq_tokens, uint32_t 
     clear();
     split_reset();
 
+    const int64_t n_pos_all = (int64_t) n_tokens*n_pos_per_embd;
+
     auto udata = std::make_shared<llama_ubatch::data_t>();
 
     udata->token     .resize(n_tokens);
     udata->embd      .clear();
-    udata->pos       .resize(n_tokens);
+    udata->pos       .resize(n_pos_all);
     udata->n_seq_id  .resize(n_tokens);
     udata->seq_id    .resize(n_tokens);
     udata->seq_id_unq.resize(0);

@@ -100,18 +100,18 @@ std::string format(const char * fmt, ...) {
 
 std::string llama_format_tensor_shape(const std::vector<int64_t> & ne) {
     char buf[256];
-    snprintf(buf, sizeof(buf), "%5" PRId64, ne.at(0));
+    snprintf(buf, sizeof(buf), "%6" PRId64, ne.at(0));
     for (size_t i = 1; i < ne.size(); i++) {
-        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), ", %5" PRId64, ne.at(i));
+        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), ", %6" PRId64, ne.at(i));
     }
     return buf;
 }
 
 std::string llama_format_tensor_shape(const struct ggml_tensor * t) {
     char buf[256];
-    snprintf(buf, sizeof(buf), "%5" PRId64, t->ne[0]);
+    snprintf(buf, sizeof(buf), "%6" PRId64, t->ne[0]);
     for (int i = 1; i < GGML_MAX_DIMS; i++) {
-        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), ", %5" PRId64, t->ne[i]);
+        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), ", %6" PRId64, t->ne[i]);
     }
     return buf;
 }

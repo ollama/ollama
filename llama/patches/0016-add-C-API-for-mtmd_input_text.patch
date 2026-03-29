@@ -10,11 +10,11 @@ Signed-off-by: Gabe Goodhart <ghart@us.ibm.com>
  2 files changed, 13 insertions(+)
 
 diff --git a/tools/mtmd/mtmd.cpp b/tools/mtmd/mtmd.cpp
-index 2638fe4fc..c4e905a4e 100644
+index f66c07345..a3b973c5f 100644
 --- a/tools/mtmd/mtmd.cpp
 +++ b/tools/mtmd/mtmd.cpp
-@@ -87,6 +87,16 @@ enum mtmd_slice_tmpl {
-     MTMD_SLICE_TMPL_IDEFICS3,
+@@ -89,6 +89,16 @@ enum mtmd_slice_tmpl {
+     MTMD_SLICE_TMPL_LFM2,
  };
  
 +mtmd_input_text* mtmd_input_text_init(const char * text, bool add_special, bool parse_special) {
@@ -31,10 +31,10 @@ index 2638fe4fc..c4e905a4e 100644
      return "<__media__>";
  }
 diff --git a/tools/mtmd/mtmd.h b/tools/mtmd/mtmd.h
-index 9f7e861e9..72cec1937 100644
+index ebb4a18fb..0e403dfa8 100644
 --- a/tools/mtmd/mtmd.h
 +++ b/tools/mtmd/mtmd.h
-@@ -80,6 +80,9 @@ typedef struct mtmd_input_chunk  mtmd_input_chunk;
+@@ -83,6 +83,9 @@ typedef struct mtmd_input_chunk  mtmd_input_chunk;
  typedef struct mtmd_input_chunks mtmd_input_chunks;
  typedef struct mtmd_input_text   mtmd_input_text;
  

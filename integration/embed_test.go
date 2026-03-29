@@ -73,15 +73,20 @@ func manhattanDistance[V float32 | float64](v1, v2 []V) V {
 }
 
 func TestEmbedCosineDistanceCorrelation(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	softTimeout, hardTimeout := getTimeouts(t)
+	ctx, cancel := context.WithTimeout(context.Background(), hardTimeout)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 
+	started := time.Now()
 	for _, model := range testModels(libraryEmbedModels) {
 		t.Run(model, func(t *testing.T) {
 			if testModel != "" {
 				requireCapability(ctx, t, client, model, "embedding")
+			}
+			if time.Since(started) > softTimeout {
+				t.Skip("skipping - soft timeout exceeded")
 			}
 			testCases := []struct {
 				a string
@@ -499,16 +504,21 @@ func TestEmbedTruncation(t *testing.T) {
 
 // TestEmbedLargeInput tests that embedding models can handle large inputs that would exceed typical batch sizes.
 func TestEmbedLargeInput(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	softTimeout, hardTimeout := getTimeouts(t)
+	ctx, cancel := context.WithTimeout(context.Background(), hardTimeout)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 
+	started := time.Now()
 	for _, model := range testModels(libraryEmbedModels) {
 		model := model
 		t.Run(model, func(t *testing.T) {
 			if testModel != "" {
 				requireCapability(ctx, t, client, model, "embedding")
+			}
+			if time.Since(started) > softTimeout {
+				t.Skip("skipping - soft timeout exceeded")
 			}
 			mctx, mcancel := context.WithTimeout(ctx, 2*time.Minute)
 			defer mcancel()

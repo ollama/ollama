@@ -257,8 +257,6 @@ private:
     size_t size_k_bytes() const;
     size_t size_v_bytes() const;
 
-    bool is_masked_swa(llama_pos p0, llama_pos p1) const;
-
     ggml_tensor * build_rope_shift(
             const llama_cparams & cparams,
                    ggml_context * ctx,
@@ -266,7 +264,8 @@ private:
                     ggml_tensor * shift,
                     ggml_tensor * factors,
                           float   freq_base,
-                          float   freq_scale) const;
+                          float   freq_scale,
+                       uint32_t   il) const;
 
     ggml_cgraph * build_graph_shift(
                llm_graph_result * res,
@@ -305,7 +304,7 @@ public:
             bool do_shift,
             stream_copy_info sc_info);
 
-    // used to create a batch procesing context from a batch
+    // used to create a batch processing context from a batch
     llama_kv_cache_context(
             llama_kv_cache * kv,
             slot_info_vec_t sinfos,

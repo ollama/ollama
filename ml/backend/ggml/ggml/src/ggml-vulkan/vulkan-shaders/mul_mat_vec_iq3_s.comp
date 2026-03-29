@@ -10,7 +10,7 @@ FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
 void calc_superblock(const uint a_offset, const uint b_offset, const uint ib32, const uint i, const uint num_blocks_per_row, const uint first_row, const uint num_rows) {
     const uint y_idx = i * QUANT_K + 32 * ib32;
 
-    uint ibi = a_offset / QUANT_K + first_row * num_blocks_per_row + i;
+    uint ibi = a_offset + first_row * num_blocks_per_row + i;
     [[unroll]] for (uint n = 0; n < num_rows; ++n) {
         const float d = float(data_a[ibi].d);
         const uint scale = (data_a[ibi].scales[ib32/2] >> (4 * (ib32 & 1))) & 0xF;

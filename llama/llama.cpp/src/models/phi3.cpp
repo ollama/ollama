@@ -2,10 +2,10 @@
 
 template<bool iswa>
 llm_build_phi3<iswa>::llm_build_phi3(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
-    const int64_t n_embd_head = hparams.n_embd_head_v;
+    const int64_t n_embd_head = hparams.n_embd_head_v();
     const int64_t n_embd_gqa = hparams.n_embd_v_gqa();
 
-    GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
+    GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());
 
     ggml_tensor * cur;
     ggml_tensor * inpL;
@@ -114,7 +114,7 @@ llm_build_phi3<iswa>::llm_build_phi3(const llama_model & model, const llm_graph_
                     nullptr,
                     n_expert, n_expert_used,
                     LLM_FFN_SILU, true,
-                    false, 0.0,
+                    hparams.expert_weights_scale,
                     LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX,
                     il);
             cb(cur, "ffn_moe_out", il);

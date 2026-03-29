@@ -39,30 +39,25 @@
 
 extern bool reserving_graph;
 
-// If we are reserving the graph, pointers might be invalid and will fail if cudaMemcpyAsync tries to validate them.
-// However, since we don't actually expect a result, we don't need to actually do the memcpy.
-static cudaError_t cudaMemcpyAsyncReserve ( void* dst, const void* src, size_t count, cudaMemcpyKind kind, cudaStream_t stream = 0 ) {
+static cudaError_t cudaMemcpyAsyncReserve(void* dst, const void* src, size_t count, cudaMemcpyKind kind, cudaStream_t stream = 0) {
     if (!reserving_graph) {
         return cudaMemcpyAsync(dst, src, count, kind, stream);
-    } else {
-        return cudaSuccess;
     }
+    return cudaSuccess;
 }
 
-static cudaError_t cudaMemcpy2DAsyncReserve ( void* dst, size_t dpitch, const void* src, size_t spitch, size_t width, size_t height, cudaMemcpyKind kind, cudaStream_t stream = 0 ) {
+static cudaError_t cudaMemcpy2DAsyncReserve(void* dst, size_t dpitch, const void* src, size_t spitch, size_t width, size_t height, cudaMemcpyKind kind, cudaStream_t stream = 0) {
     if (!reserving_graph) {
         return cudaMemcpy2DAsync(dst, dpitch, src, spitch, width, height, kind, stream);
-    } else {
-        return cudaSuccess;
     }
+    return cudaSuccess;
 }
 
-static cudaError_t cudaMemsetAsyncReserve ( void* devPtr, int value, size_t count, cudaStream_t stream = 0 ) {
+static cudaError_t cudaMemsetAsyncReserve(void* devPtr, int value, size_t count, cudaStream_t stream = 0) {
     if (!reserving_graph) {
         return cudaMemsetAsync(devPtr, value, count, stream);
-    } else {
-        return cudaSuccess;
     }
+    return cudaSuccess;
 }
 
 #undef cudaMemcpyAsync
@@ -85,6 +80,11 @@ static cudaError_t cudaMemsetAsyncReserve ( void* devPtr, int value, size_t coun
 #define GGML_CUDA_CC_TURING          750
 #define GGML_CUDA_CC_AMPERE          800
 #define GGML_CUDA_CC_ADA_LOVELACE    890
+// While BW spans CC 1000, 1100 & 1200, we are integrating Tensor Core instructions available to 1200 family, see
+// https://docs.nvidia.com/cutlass/media/docs/cpp/blackwell_functionality.html#blackwell-sm120-gemms
+#define GGML_CUDA_CC_BLACKWELL       1200
+#define GGML_CUDA_CC_DGX_SPARK       1210
+#define GGML_CUDA_CC_RUBIN           1300
 #define GGML_CUDA_CC_OFFSET_AMD      0x1000000
 #define GGML_CUDA_CC_OFFSET_MTHREADS 0x0100000
 #define GGML_CUDA_CC_IS_NVIDIA(cc)   (cc < GGML_CUDA_CC_OFFSET_MTHREADS)
@@ -187,6 +187,10 @@ void ggml_cuda_error(const char * stmt, const char * func, const char * file, in
      do {                                                                           \
         auto err_ = (err);                                                          \
         if (err_ != (success)) {                                                    \
+            if (reserving_graph) {                                                  \
+                cudaGetLastError();                                                 \
+                break;                                                              \
+            }                                                                       \
             ggml_cuda_error(#err, __func__, __FILE__, __LINE__, error_fn(err_));    \
         }                                                                           \
     } while (0)
@@ -281,6 +285,10 @@ static const char * cu_get_error_str(CUresult err) {
 #define AMPERE_MMA_AVAILABLE
 #endif // !defined(GGML_USE_HIP) && __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
 
+#if !defined(GGML_USE_HIP) && __CUDA_ARCH__ >= GGML_CUDA_CC_BLACKWELL && __CUDA_ARCH__ < GGML_CUDA_CC_RUBIN
+#    define BLACKWELL_MMA_AVAILABLE
+#endif // !defined(GGML_USE_HIP) && __CUDA_ARCH__ >= GGML_CUDA_CC_BLACKWELL
+
 #if !defined(GGML_USE_HIP) && __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
 #define CP_ASYNC_AVAILABLE
 #endif // !defined(GGML_USE_HIP) && __CUDA_ARCH__ >= GGML_CUDA_CC_AMPERE
@@ -288,6 +296,10 @@ static const char * cu_get_error_str(CUresult err) {
 #if !defined(GGML_CUDA_NO_FA) && !(defined(GGML_USE_MUSA) && __MUSA_ARCH__ < 220)
 #define FLASH_ATTN_AVAILABLE
 #endif // !defined(GGML_CUDA_NO_FA) && !(defined(GGML_USE_MUSA) && __MUSA_ARCH__ < 220)
+
+#if defined(TURING_MMA_AVAILABLE)
+#define LDMATRIX_TRANS_AVAILABLE
+#endif // defined(TURING_MMA_AVAILABLE)
 
 static bool fp16_available(const int cc) {
     return ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_PASCAL ||
@@ -349,6 +361,11 @@ static bool ampere_mma_available(const int cc) {
 
 static bool cp_async_available(const int cc) {
     return GGML_CUDA_CC_IS_NVIDIA(cc) && ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_AMPERE;
+}
+
+static bool blackwell_mma_available(const int cc) {
+    return GGML_CUDA_CC_IS_NVIDIA(cc) && ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_BLACKWELL &&
+           ggml_cuda_highest_compiled_arch(cc) < GGML_CUDA_CC_RUBIN;
 }
 
 static constexpr __device__ int ggml_cuda_get_physical_warp_size() {
@@ -548,6 +565,86 @@ static __device__ __forceinline__ half2 warp_prefix_inclusive_sum(half2 a) {
 #endif // FP16_AVAILABLE
 }
 
+enum class block_reduce_method {
+    MAX,
+    SUM,
+};
+
+template<block_reduce_method method_t, typename T>
+struct block_reduce_policy;
+
+template <typename T, typename... Ts>
+inline constexpr bool is_any = (std::is_same_v<T, Ts> || ...);
+
+template<typename...>
+inline constexpr bool ggml_cuda_dependent_false_v = false;
+
+template <typename T> struct block_reduce_policy<block_reduce_method::SUM, T> {
+    static __device__ T reduce(T val) {
+        if constexpr(is_any<T, float, float2, half2, int>) {
+            return warp_reduce_sum(val);
+        } else {
+            static_assert(ggml_cuda_dependent_false_v<T>, "Unsupported type for block reduce sum");
+        }
+    }
+
+    static __device__ T sentinel() {
+        if constexpr (std::is_same_v<T, float>) {
+            return 0.0f;
+        } else if constexpr (std::is_same_v<T, float2>) {
+            return make_float2(0.0f, 0.0f);
+        } else if constexpr (std::is_same_v<T, half2>) {
+            return make_half2(0.0f, 0.0f);
+        } else if constexpr (std::is_same_v<T, int>) {
+            return 0;
+        } else {
+            static_assert(ggml_cuda_dependent_false_v<T>, "Unsupported type for block reduce sum");
+        }
+    }
+};
+
+template <typename T> struct block_reduce_policy<block_reduce_method::MAX, T> {
+    static __device__ T reduce(T val) {
+        if constexpr (is_any<T, float, half2>) {
+            return warp_reduce_max(val);
+        } else {
+            static_assert(ggml_cuda_dependent_false_v<T>, "Unsupported type for block reduce max");
+        }
+    }
+
+    static __device__ T sentinel() {
+        if constexpr (std::is_same_v<T, float>) {
+            return -INFINITY;
+        } else if constexpr (std::is_same_v<T, half2>) {
+            return make_half2(-INFINITY, -INFINITY);
+        } else {
+            static_assert(ggml_cuda_dependent_false_v<T>, "Unsupported type for block reduce max");
+        }
+    }
+};
+
+template <block_reduce_method reduce_method_t, const unsigned int block_size_template = 0, typename T>
+static __device__ T block_reduce(T val, T * shared_vals) {
+    val                           = block_reduce_policy<reduce_method_t, T>::reduce(val);
+    const unsigned int block_size = block_size_template == 0 ? blockDim.x : block_size_template;
+    if (block_size > WARP_SIZE) {
+        assert((block_size <= 1024) && (block_size % WARP_SIZE) == 0);
+        const int warp_id = threadIdx.x / WARP_SIZE;
+        const int lane_id = threadIdx.x % WARP_SIZE;
+        if (lane_id == 0) {
+            shared_vals[warp_id] = val;
+        }
+        __syncthreads();
+        val = block_reduce_policy<reduce_method_t, T>::sentinel();
+        if (lane_id < (static_cast<int>(block_size) / WARP_SIZE)) {
+            val = shared_vals[lane_id];
+        }
+        return block_reduce_policy<reduce_method_t, T>::reduce(val);
+    }
+
+    return val;
+}
+
 static __device__ __forceinline__ half ggml_cuda_hmax(const half a, const half b) {
 #ifdef FP16_AVAILABLE
 
@@ -734,6 +831,28 @@ static __device__ __forceinline__ float ggml_cuda_e8m0_to_fp32(uint8_t x) {
     memcpy(&result, &bits, sizeof(float));
     return result;
 #endif // CUDART_VERSION >= 12050
+}
+
+__device__ __forceinline__ uint8_t ggml_cuda_float_to_fp4_e2m1(float x, float e) {
+    const uint8_t sign_bit = (x < 0.0f) << 3;
+    float         ax       = fabsf(x) * e;
+
+    // Positive LUT
+    static constexpr float pos_lut[8] = { 0.0f, 0.5f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f };
+
+    int   best_i   = 0;
+    float best_err = fabsf(ax - pos_lut[0]);
+
+#pragma unroll
+    for (int i = 1; i < 8; ++i) {
+        const float err = fabsf(ax - pos_lut[i]);
+        if (err < best_err) {
+            best_err = err;
+            best_i   = i;
+        }
+    }
+
+    return static_cast<uint8_t>(best_i | sign_bit);
 }
 
 // See https://gmplib.org/~tege/divcnst-pldi94.pdf figure 4.1.
@@ -950,15 +1069,16 @@ struct ggml_cuda_device_info {
     int device_count;
 
     struct cuda_device_info {
-        int     cc;                 // compute capability
-        int     nsm;                // number of streaming multiprocessors
-        size_t  smpb;               // max. shared memory per block
-        size_t  smpbo;              // max. shared memory per block (with opt-in)
-        bool    integrated;         // Device is integrated as opposed to discrete
-        bool    vmm;                // virtual memory support
-        size_t  vmm_granularity;    // granularity of virtual memory
+        int     cc;                             // compute capability
+        int     nsm;                            // number of streaming multiprocessors
+        size_t  smpb;                           // max. shared memory per block
+        size_t  smpbo;                          // max. shared memory per block (with opt-in)
+        bool    integrated;                     // Device is integrated as opposed to discrete
+        bool    vmm;                            // virtual memory support
+        size_t  vmm_granularity;                // granularity of virtual memory
         size_t  total_vram;
-        int     warp_size;          // Number of threads in a dispatch
+        int     warp_size;                      // Number of threads in a dispatch
+        bool    supports_cooperative_launch;    // whether cooperative launch is supported
     };
 
     cuda_device_info devices[GGML_CUDA_MAX_DEVICES] = {};
@@ -976,7 +1096,6 @@ struct ggml_cuda_pool {
 
     virtual void * alloc(size_t size, size_t * actual_size) = 0;
     virtual void free(void * ptr, size_t size) = 0;
-
     virtual bool alloc_memory() = 0;
     virtual size_t alloc_size() = 0;
 };
@@ -1038,14 +1157,18 @@ struct ggml_tensor_extra_gpu {
 #define USE_CUDA_GRAPH
 #endif
 
-struct ggml_graph_node_properties {
-    void * node_address;
+struct ggml_cuda_graph_node_properties {
+    void * node_data;
     ggml_op node_op;
+    enum ggml_type node_type;
+    int32_t flags;
     int64_t ne[GGML_MAX_DIMS];
     size_t nb[GGML_MAX_DIMS];
-    void * src_address[GGML_MAX_SRC];
+    void * src_data[GGML_MAX_SRC];
     int32_t op_params[GGML_MAX_OP_PARAMS / sizeof(int32_t)];
 };
+
+static_assert(std::is_trivial<ggml_cuda_graph_node_properties>::value, "ggml_cuda_graph_node_properties must be trivial");
 
 struct ggml_cuda_graph {
 #ifdef USE_CUDA_GRAPH
@@ -1061,12 +1184,20 @@ struct ggml_cuda_graph {
     cudaGraphExec_t instance = nullptr;
     size_t num_nodes = 0;
     std::vector<cudaGraphNode_t> nodes;
-    std::vector<cudaKernelNodeParams> params;
     bool disable_due_to_gpu_arch = false;
-    bool disable_due_to_too_many_updates = false;
-    bool disable_due_to_failed_graph_capture = false;
-    int number_consecutive_updates = 0;
-    std::vector<ggml_graph_node_properties> ggml_graph_properties;
+    bool warmup_complete = false;
+    std::vector<ggml_cuda_graph_node_properties> props;
+
+    // these are extra tensors (inputs) that participate in the ggml graph but are not nodes
+    // they properties also have to match in order to be able to safely reuse a CUDA graph
+    // ref: https://github.com/ggml-org/llama.cpp/pull/18583
+    // ref: https://github.com/ggml-org/llama.cpp/pull/19165
+    std::vector<ggml_cuda_graph_node_properties> extra;
+
+    bool is_enabled() const {
+        static const bool disable_cuda_graphs_due_to_env = (getenv("GGML_CUDA_DISABLE_GRAPHS") != nullptr);
+        return !(disable_due_to_gpu_arch || disable_cuda_graphs_due_to_env);
+    }
 #endif
 };
 
@@ -1229,9 +1360,43 @@ struct ggml_backend_cuda_context {
     cudaStream_t streams[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_STREAMS] = { { nullptr } };
     cublasHandle_t cublas_handles[GGML_CUDA_MAX_DEVICES] = {nullptr};
 
-    std::unique_ptr<ggml_cuda_graph> cuda_graph;
-
     int curr_stream_no = 0;
+
+#ifdef USE_CUDA_GRAPH
+    // Map from first_node_ptr to cuda_graph - allows multiple graphs per context
+    // when the computation is split across CPU/GPU (e.g., with --n-cpu-moe)
+    std::unordered_map<const void *, std::unique_ptr<ggml_cuda_graph>> cuda_graphs;
+
+    ggml_cuda_graph * cuda_graph(const void * first_node_ptr) {
+        auto it = cuda_graphs.find(first_node_ptr);
+        if (it == cuda_graphs.end()) {
+            cuda_graphs[first_node_ptr] = std::make_unique<ggml_cuda_graph>();
+            return cuda_graphs[first_node_ptr].get();
+        }
+        return it->second.get();
+    }
+
+    // Check if any CUDA graph is enabled for this context (used by kernels that need to know
+    // if graphs are in use without having access to the specific graph key)
+    bool any_cuda_graph_enabled() const {
+        for (const auto & [key, graph] : cuda_graphs) {
+            if (graph && graph->is_enabled()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Check if any CUDA graph has an instance for this context
+    bool any_cuda_graph_has_instance() const {
+        for (const auto & [key, graph] : cuda_graphs) {
+            if (graph && graph->instance != nullptr) {
+                return true;
+            }
+        }
+        return false;
+    }
+#endif // USE_CUDA_GRAPH
 
     explicit ggml_backend_cuda_context(int device) :
         device(device),
@@ -1274,11 +1439,10 @@ struct ggml_backend_cuda_context {
 
     ggml_cuda_pool & pool(int device) {
         if (pools[device][curr_stream_no] == nullptr) {
-            bool alloc = true;
-            if (pools[device][0] != nullptr) {
-                alloc = pools[device][0]->alloc_memory();
-            }
-            pools[device][curr_stream_no] = new_pool_for_device(device, curr_stream_no, alloc);
+            pools[device][curr_stream_no] = new_pool_for_device(device, curr_stream_no, true);
+        }
+        if (!pools[device][curr_stream_no]->alloc_memory()) {
+            pools[device][curr_stream_no] = new_pool_for_device(device, curr_stream_no, true);
         }
         return *pools[device][curr_stream_no];
     }
@@ -1288,19 +1452,25 @@ struct ggml_backend_cuda_context {
     }
 
     void pool_set_alloc(bool alloc) {
-        GGML_ASSERT(pools[device][curr_stream_no] == nullptr || pools[device][curr_stream_no]->alloc_memory() == alloc);
-
-        if (pools[device][curr_stream_no] == nullptr) {
-            pools[device][curr_stream_no] = new_pool_for_device(device, curr_stream_no, alloc);
+        for (int d = 0; d < GGML_CUDA_MAX_DEVICES; d++) {
+            for (int s = 0; s < GGML_CUDA_MAX_STREAMS; s++) {
+                if (pools[d][s] != nullptr && !pools[d][s]->alloc_memory() && alloc) {
+                    pools[d][s] = new_pool_for_device(d, s, alloc);
+                }
+            }
         }
     }
 
-    size_t pool_get_alloc_size(int stream_no) {
-        if (pools[device][stream_no] == nullptr) {
-            return 0;
+    size_t pool_get_alloc_size() {
+        size_t total = 0;
+        for (int d = 0; d < GGML_CUDA_MAX_DEVICES; d++) {
+            for (int s = 0; s < GGML_CUDA_MAX_STREAMS; s++) {
+                if (pools[d][s] != nullptr) {
+                    total += pools[d][s]->alloc_size();
+                }
+            }
         }
-
-        return pools[device][stream_no]->alloc_size();
+        return total;
     }
 };
 

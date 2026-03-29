@@ -86,6 +86,15 @@ ggml_cgraph * clip_graph_whisper_enc::build() {
             FFN_GELU_ERF,
             -1);
 
+    } else if (proj_type == PROJECTOR_TYPE_MUSIC_FLAMINGO) {
+        // projector
+        cur = build_ffn(cur,
+            model.mm_1_w, model.mm_1_b,
+            nullptr, nullptr,
+            model.mm_2_w, model.mm_2_b,
+            FFN_GELU_ERF,
+            -1);
+
     } else if (proj_type == PROJECTOR_TYPE_GLMA) {
             cur = ggml_norm(ctx0, cur, hparams.eps);
             cur = ggml_mul(ctx0, cur, model.mm_norm_pre_w);

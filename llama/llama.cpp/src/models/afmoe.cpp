@@ -1,8 +1,8 @@
 #include "models.h"
 
 llm_build_afmoe::llm_build_afmoe(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
-    const int64_t n_embd_head = hparams.n_embd_head_v;
-    GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
+    const int64_t n_embd_head = hparams.n_embd_head_v();
+    GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());
 
     ggml_tensor * cur;
     ggml_tensor * inpL;
@@ -22,7 +22,14 @@ llm_build_afmoe::llm_build_afmoe(const llama_model & model, const llm_graph_para
     const float kq_scale = 1.0f/sqrtf(float(n_embd_head));
 
     for (int il = 0; il < n_layer; ++il) {
+        const float freq_base_l  = model.get_rope_freq_base (cparams, il);
+        const float freq_scale_l = model.get_rope_freq_scale(cparams, il);
+
         ggml_tensor * inpSA = inpL;
+
+        // This overlaps with SWA layers in current models, so get_rope_freq_base/scale may be superfluous
+        const bool use_rope = hparams.n_no_rope_layer_step > 0 &&
+                              (il + 1) % hparams.n_no_rope_layer_step != 0;
 
         // dual attention normalization (pre)
         cur = build_norm(inpL,
@@ -56,19 +63,16 @@ llm_build_afmoe::llm_build_afmoe(const llama_model & model, const llm_graph_para
             cb(Qcur, "Qcur_normed", il);
             cb(Kcur, "Kcur_normed", il);
 
-            // RoPE only for sliding_attention layers
-            const bool use_rope = hparams.n_no_rope_layer_step > 0 &&
-                                ((il + 1) % hparams.n_no_rope_layer_step) != 0;
             if (use_rope) {
                 Qcur = ggml_rope_ext(
                         ctx0, Qcur, inp_pos, nullptr,
-                        n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
+                        n_rot, rope_type, n_ctx_orig, freq_base_l, freq_scale_l,
                         ext_factor, attn_factor, beta_fast, beta_slow);
                 cb(Qcur, "Qcur_rope", il);
 
                 Kcur = ggml_rope_ext(
                         ctx0, Kcur, inp_pos, nullptr,
-                        n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
+                        n_rot, rope_type, n_ctx_orig, freq_base_l, freq_scale_l,
                         ext_factor, attn_factor, beta_fast, beta_slow);
                 cb(Kcur, "Kcur_rope", il);
             }
@@ -123,7 +127,6 @@ llm_build_afmoe::llm_build_afmoe(const llama_model & model, const llm_graph_para
                     n_expert, n_expert_used,
                     LLM_FFN_SILU,
                     hparams.expert_weights_norm,           // norm_w (route_norm=True)
-                    hparams.expert_weights_scale,          // scale_w
                     hparams.expert_weights_scale,          // w_scale (route_scale=2.826)
                     (llama_expert_gating_func_type) hparams.expert_gating_func,
                     il);

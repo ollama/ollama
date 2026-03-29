@@ -350,10 +350,16 @@ func (m *Model) ApplyLoraFromFile(context *Context, loraPath string, scale float
 		return errors.New("unable to load lora")
 	}
 
-	err := -1
-	if loraAdapter != nil {
-		err = int(C.llama_set_adapter_lora(context.c, loraAdapter, C.float(scale)))
-	}
+	adapters := []*C.struct_llama_adapter_lora{loraAdapter}
+	scales := []C.float{C.float(scale)}
+
+	var adaptersPin, scalesPin runtime.Pinner
+	adaptersPin.Pin(&adapters[0])
+	scalesPin.Pin(&scales[0])
+	defer adaptersPin.Unpin()
+	defer scalesPin.Unpin()
+
+	err := int(C.llama_set_adapters_lora(context.c, &adapters[0], C.size_t(1), &scales[0]))
 	if err != 0 {
 		return errors.New("error applying lora from file")
 	}

@@ -32,10 +32,6 @@ struct clip_graph {
     const float kq_scale;
     const clip_flash_attn_type flash_attn_type;
 
-    // for debugging
-    const bool debug_graph;
-    std::vector<ggml_tensor *> & debug_print_tensors;
-
     ggml_context_ptr ctx0_ptr;
     ggml_context * ctx0;
     ggml_cgraph * gf;

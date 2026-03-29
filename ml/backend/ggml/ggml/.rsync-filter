@@ -13,6 +13,7 @@ include /src/ggml-cpu/
 include /src/ggml-cpu/amx/
 include /src/ggml-cpu/arch/
 include /src/ggml-cpu/arch/arm/
+include /src/ggml-cpu/arch/powerpc/
 include /src/ggml-cpu/arch/x86/
 include /src/ggml-cpu/llamafile/
 include /src/ggml-cuda/

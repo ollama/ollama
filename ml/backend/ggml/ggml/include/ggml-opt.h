@@ -138,7 +138,7 @@ extern "C" {
     GGML_API ggml_opt_context_t ggml_opt_init(struct ggml_opt_params params);
     GGML_API void ggml_opt_free(ggml_opt_context_t opt_ctx);
 
-    // set gradients to zero, initilize loss, and optionally reset the optimizer
+    // set gradients to zero, initialize loss, and optionally reset the optimizer
     GGML_API void ggml_opt_reset(ggml_opt_context_t opt_ctx, bool optimizer);
 
     GGML_API bool ggml_opt_static_graphs(ggml_opt_context_t opt_ctx); // whether the graphs are allocated_statically

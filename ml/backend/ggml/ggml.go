@@ -116,6 +116,13 @@ type Backend struct {
 
 	// weightBuffers are the GGML contexts and buffers for allocating weights
 	weightBuffers map[*C.struct_ggml_context]C.ggml_backend_buffer_t
+
+	// ctxBufPool is a pool of pre-allocated arena buffers for ggml contexts.
+	// Reusing the same buffer ensures tensor metadata lands at the same addresses,
+	// which allows CUDA/Metal graph caching to recognise identical graphs across
+	// batches (the cache key is cgraph->nodes[0]).
+	ctxBufPool chan unsafe.Pointer
+	ctxBufSize C.size_t
 }
 
 var once sync.Once
@@ -445,7 +452,22 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		btDeviceMemory: btDeviceMemory,
 		maxGraphNodes:  maxGraphNodes,
 		weightBuffers:  bbs,
+		ctxBufPool:     newCtxBufPool(maxGraphNodes),
+		ctxBufSize:     ctxBufMemSize(maxGraphNodes),
 	}, nil
+}
+
+func ctxBufMemSize(maxGraphNodes int) C.size_t {
+	return C.size_t(maxGraphNodes)*C.ggml_tensor_overhead() +
+		C.ggml_graph_overhead_custom(C.size_t(maxGraphNodes), false)
+}
+
+func newCtxBufPool(maxGraphNodes int) chan unsafe.Pointer {
+	size := ctxBufMemSize(maxGraphNodes)
+	pool := make(chan unsafe.Pointer, 2)
+	pool <- C.malloc(size)
+	pool <- C.malloc(size)
+	return pool
 }
 
 func init() {
@@ -463,6 +485,12 @@ func (b *Backend) Close() {
 	}
 
 	C.ggml_backend_sched_free(b.sched)
+
+	// Drain and free pooled context arena buffers
+	close(b.ctxBufPool)
+	for buf := range b.ctxBufPool {
+		C.free(buf)
+	}
 }
 
 func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
@@ -661,23 +689,48 @@ func (b *Backend) Get(name string) ml.Tensor {
 }
 
 func (b *Backend) NewContext() ml.Context {
-	return b.NewContextSize(b.maxGraphNodes)
+	return b.newContext(b.maxGraphNodes, true)
 }
 
 func (b *Backend) NewContextSize(n int) ml.Context {
+	return b.newContext(n, false)
+}
+
+func (b *Backend) newContext(n int, usePool bool) ml.Context {
 	if n > b.maxGraphNodes {
 		panic(fmt.Errorf("requested number of graph nodes (%v) for new context exceeds maximum (%v)", n, b.maxGraphNodes))
+	}
+
+	memSize := C.size_t(n)*C.ggml_tensor_overhead() + C.ggml_graph_overhead_custom(C.size_t(n), false)
+
+	// Try to reuse a pooled arena buffer so tensor struct pointers are stable
+	// across batches, enabling CUDA/Metal graph cache hits. Only the main
+	// inference loop should use the pool; other callers (KV cache shift/defrag,
+	// multimodal encoding, graph reservation) must not, or they steal pool
+	// buffers from the pipeline causing graph cache thrashing.
+	var poolBuf unsafe.Pointer
+	if usePool {
+		select {
+		case poolBuf = <-b.ctxBufPool:
+		default:
+		}
+	}
+
+	params := C.struct_ggml_init_params{
+		mem_size: memSize,
+		no_alloc: true,
+	}
+	if poolBuf != nil {
+		params.mem_buffer = poolBuf
 	}
 
 	var allocatedBuffers []C.ggml_backend_buffer_t
 
 	return &Context{
-		b:             b,
-		maxGraphNodes: n,
-		ctx: C.ggml_init(C.struct_ggml_init_params{
-			mem_size: C.size_t(n)*C.ggml_tensor_overhead() + C.ggml_graph_overhead_custom(C.size_t(n), false),
-			no_alloc: true,
-		}),
+		b:                b,
+		maxGraphNodes:    n,
+		ctx:              C.ggml_init(params),
+		poolBuf:          poolBuf,
 		allocatedBuffers: &allocatedBuffers,
 		layer:            -1,
 	}
@@ -741,8 +794,9 @@ func (b *Backend) BackendDevices() []ml.DeviceInfo {
 type Context struct {
 	b *Backend
 
-	ctx   *C.struct_ggml_context
-	graph *C.struct_ggml_cgraph
+	ctx     *C.struct_ggml_context
+	graph   *C.struct_ggml_cgraph
+	poolBuf unsafe.Pointer // non-nil if using a pooled arena buffer
 
 	// batchSize is a hint to optimize processing
 	batchSize int
@@ -1013,6 +1067,12 @@ func (c *Context) Close() {
 		*c.allocatedBuffers = nil
 
 		C.ggml_free(c.ctx)
+
+		// Return the pooled arena buffer so the next context can reuse it.
+		if c.poolBuf != nil {
+			c.b.ctxBufPool <- c.poolBuf
+			c.poolBuf = nil
+		}
 	}
 }
 

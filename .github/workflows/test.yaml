@@ -258,6 +258,8 @@ jobs:
       CGO_ENABLED: '1'
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
@@ -286,7 +288,8 @@ jobs:
 
       - uses: golangci/golangci-lint-action@v9
         with:
-          only-new-issues: true
+          only-new-issues: false
+          args: --timeout=10m --new-from-rev=${{ github.event.pull_request.base.sha || github.event.before }}
 
   patches:
     runs-on: ubuntu-latest

@@ -6,7 +6,10 @@ include /common/common.*
 include /common/json-schema-to-grammar.*
 include /common/json.*
 include /common/log.*
+include /common/reasoning-budget.*
 include /common/sampling.*
+include /common/unicode.*
+include /common/peg-parser.*
 include /include/
 include /include/llama.*
 include /include/llama-*.*
@@ -17,6 +20,9 @@ include /tools/mtmd/clip.cpp
 include /tools/mtmd/mtmd.cpp
 include /tools/mtmd/mtmd-audio.cpp
 include /tools/mtmd/mtmd-helper.cpp
+include /tools/mtmd/debug/
+include /tools/mtmd/debug/*.h
+include /tools/mtmd/debug/*.cpp
 include /tools/mtmd/models/
 include /tools/mtmd/models/*.h
 include /tools/mtmd/models/*.cpp

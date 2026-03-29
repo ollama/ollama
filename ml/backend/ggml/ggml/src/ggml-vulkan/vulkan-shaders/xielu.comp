@@ -1,0 +1,35 @@
+#version 450
+
+#include "generic_head.glsl"
+#include "types.glsl"
+
+#extension GL_EXT_control_flow_attributes : enable
+
+layout(local_size_x = 512, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer X {A_TYPE data_a[];};
+layout (binding = 1) writeonly buffer D {D_TYPE data_d[];};
+
+void main() {
+    const uint i = gl_GlobalInvocationID.z * 262144 + gl_GlobalInvocationID.y * 512 + gl_GlobalInvocationID.x;
+
+    if (i >= p.KX) {
+        return;
+    }
+
+    float x = float(data_a[i]);
+
+    float alpha_n = p.param1;
+    float alpha_p = p.param2;
+    float beta = p.param3;
+    float eps = p.param4;
+
+    if (x > 0.0f) {
+        x = alpha_p * x * x + beta * x;
+    } else {
+        const float min_x_eps = min(x, eps);
+        x = (exp(min_x_eps) - 1 - x) * alpha_n + beta * x;
+    }
+
+    data_d[i] = D_TYPE(x);
+}

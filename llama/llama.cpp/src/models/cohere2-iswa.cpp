@@ -1,9 +1,9 @@
 #include "models.h"
 
 llm_build_cohere2_iswa::llm_build_cohere2_iswa(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
-    const int64_t n_embd_head = hparams.n_embd_head_v;
+    const int64_t n_embd_head = hparams.n_embd_head_v();
 
-    GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
+    GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());
 
     const float f_logit_scale = hparams.f_logit_scale;
 
@@ -21,6 +21,9 @@ llm_build_cohere2_iswa::llm_build_cohere2_iswa(const llama_model & model, const 
 
     for (int il = 0; il < n_layer; ++il) {
         const bool is_swa = hparams.is_swa(il);
+        // UNUSED:
+        // const float freq_base_l  = model.get_rope_freq_base (cparams, il);
+        // const float freq_scale_l = model.get_rope_freq_scale(cparams, il);
 
         // norm
         cur = build_norm(inpL, model.layers[il].attn_norm, NULL, LLM_NORM, il);

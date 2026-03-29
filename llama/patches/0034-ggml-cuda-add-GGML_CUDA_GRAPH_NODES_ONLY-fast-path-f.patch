@@ -1,0 +1,107 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Hiltgen <daniel@ollama.com>
+Date: Thu, 12 Mar 2026 16:38:58 -0700
+Subject: [PATCH] ggml-cuda: add GGML_CUDA_GRAPH_NODES_ONLY fast path for graph
+ validation
+
+ggml_cuda_graph_update_required() now performs deeper validation of CUDA graph
+properties, resulting in additional overhead for the ollama engine, yet the
+graph always can be reused.  This patch enables a fast-path matching prior
+validation behavior aligned with the current ollama engine and models.
+
+property checking: data pointers, op type, dimensions, source data
+pointers, and op_params only for SCALE/GLU. This skips the hash set,
+external source tracking, and expanded property comparisons.
+
+The ollamarunner sets this env var because during steady-state decode:
+- Weight tensors stay on their assigned GPU for the session lifetime
+- KV cache buffer pointers don't change between decode steps
+- RoPE/FA/softmax op_params are set once at model construction
+- No conv2d ops that change tensor type between steps
+- Graph topology is stable during steady-state decode
+---
+ ggml/src/ggml-cuda/ggml-cuda.cu | 63 +++++++++++++++++++++++++++++++++
+ 1 file changed, 63 insertions(+)
+
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index ba6dfb508..53c6aecf9 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -3166,7 +3166,54 @@ static const void * ggml_cuda_graph_get_key(ggml_cgraph * cgraph) {
+     return cgraph->nodes[0];
+ }
+ 
++// Simplified node property match used by the GGML_CUDA_GRAPH_NODES_ONLY fast path.
++// Checks: data pointer, op, ne/nb dimensions, source data pointers, and op_params
++// only for SCALE/GLU. This matches the validation scope from before the expanded
++// checks were added in upstream PRs #19165, #19186, #19383.
++static bool ggml_cuda_graph_node_properties_match_simple(ggml_tensor * node, ggml_cuda_graph_node_properties * props) {
++    if (node->data != props->node_data && node->op != GGML_OP_VIEW) {
++        return false;
++    }
++
++    if (node->op != props->node_op) {
++        return false;
++    }
++
++    for (int i = 0; i < GGML_MAX_DIMS; i++) {
++        if (node->ne[i] != props->ne[i]) {
++            return false;
++        }
++        if (node->nb[i] != props->nb[i]) {
++            return false;
++        }
++    }
++
++    if (node->op != GGML_OP_VIEW) {
++        for (int i = 0; i < GGML_MAX_SRC; i++) {
++            if (node->src[i] && node->src[i]->data != props->src_data[i]) {
++                return false;
++            }
++        }
++    }
++
++    if ((node->op == GGML_OP_SCALE || node->op == GGML_OP_GLU) &&
++        memcmp(props->op_params, node->op_params, GGML_MAX_OP_PARAMS) != 0) {
++        return false;
++    }
++
++    return true;
++}
++
+ static bool ggml_cuda_graph_update_required(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph * cgraph) {
++    // GGML_CUDA_GRAPH_NODES_ONLY: use simplified property checking that only
++    // validates graph node properties without tracking external sources or
++    // checking op_params for all ops. See the comment in ggml.go where this
++    // env var is set for the full safety analysis.
++    static int nodes_only = -1;
++    if (nodes_only < 0) {
++        nodes_only = (getenv("GGML_CUDA_GRAPH_NODES_ONLY") != nullptr) ? 1 : 0;
++    }
++
+     bool res = false;
+ 
+     const void * graph_key = ggml_cuda_graph_get_key(cgraph);
+@@ -3178,6 +3225,22 @@ static bool ggml_cuda_graph_update_required(ggml_backend_cuda_context * cuda_ctx
+         graph->props.resize(cgraph->n_nodes);
+     }
+ 
++    if (nodes_only) {
++        // Fast path: only check graph node properties, skip external source
++        // tracking (seen_node hash set + srcs_extra validation).
++        for (int i = 0; i < cgraph->n_nodes; i++) {
++            if (!res) {
++                if (!ggml_cuda_graph_node_properties_match_simple(cgraph->nodes[i], &graph->props[i])) {
++                    res = true;
++                }
++            }
++            ggml_cuda_graph_node_set_properties(&graph->props[i], cgraph->nodes[i]);
++        }
++        return res;
++    }
++
++    // Full validation path: check all node properties including type, flags,
++    // op_params for all ops, and track/validate external source tensors.
+     // Loop over nodes in GGML graph to determine if CUDA graph update is required
+     // and store properties to allow this comparison for the next token
+     std::unordered_set<ggml_tensor *> seen_node;

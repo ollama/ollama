@@ -88,10 +88,10 @@ func (attn *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor
 	// MLA absorption: absorb K projection into query
 	qPass := queryChunks[0].Permute(ctx, 0, 2, 1, 3)
 	qPassAbsorb := attn.KB.Forward(ctx, qPass).Permute(ctx, 0, 2, 1, 3)
-	query = qRot.Concat(ctx, qPassAbsorb, 0)
+	query = qPassAbsorb.Concat(ctx, qRot, 0)
 
 	kPass = kPass.Reshape(ctx, opts.kvLoraRank, 1, seqLength)
-	key := kRot.Concat(ctx, kPass, 0)
+	key := kPass.Concat(ctx, kRot, 0)
 
 	attention := nn.AttentionWithVMLA(ctx, query, key, kPass, nil, attn.VB.Weight, opts.kqScale, cache)
 
@@ -282,7 +282,12 @@ func New(c fs.Config) (model.Model, error) {
 }
 
 func (m Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return m.applyRotaryPositionEmbeddings(ctx, key, shift), nil
+	// K layout: [kv_lora(kvLoraRank) || rope(qkRopeHeadDim)]
+	// RoPE must be applied only to the rope portion at the end
+	kvPart := key.Slice(ctx, 0, 0, m.kvLoraRank, 1)
+	ropePart := key.Slice(ctx, 0, m.kvLoraRank, m.kvLoraRank+m.qkRopeHeadDim, 1)
+	ropePart = m.applyRotaryPositionEmbeddings(ctx, ropePart, shift)
+	return kvPart.Concat(ctx, ropePart, 0), nil
 }
 
 func (m *Model) Validate() error {

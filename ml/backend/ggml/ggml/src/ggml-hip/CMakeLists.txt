@@ -11,6 +11,10 @@ endif()
 list(APPEND CMAKE_PREFIX_PATH  ${ROCM_PATH})
 list(APPEND CMAKE_PREFIX_PATH "${ROCM_PATH}/lib64/cmake")
 
+if (NOT DEFINED CMAKE_HIP_FLAGS_DEBUG)
+    set(CMAKE_HIP_FLAGS_DEBUG "-g -O2")
+endif()
+
 # CMake on Windows doesn't support the HIP language yet
 if (WIN32)
     set(CXX_IS_HIPCC TRUE)
@@ -61,6 +65,8 @@ list(APPEND GGML_SOURCES_ROCM ${SRCS})
 file(GLOB   SRCS "../ggml-cuda/template-instances/fattn-mma*.cu")
 list(APPEND GGML_SOURCES_ROCM ${SRCS})
 file(GLOB   SRCS "../ggml-cuda/template-instances/mmq*.cu")
+list(APPEND GGML_SOURCES_ROCM ${SRCS})
+file(GLOB   SRCS "../ggml-cuda/template-instances/mmf*.cu")
 list(APPEND GGML_SOURCES_ROCM ${SRCS})
 
 if (GGML_CUDA_FA_ALL_QUANTS)

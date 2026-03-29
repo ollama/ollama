@@ -2,10 +2,10 @@
 
 template <bool iswa>
 llm_build_smallthinker<iswa>::llm_build_smallthinker(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params){
-    const int64_t n_embd_head = hparams.n_embd_head_v;
+    const int64_t n_embd_head = hparams.n_embd_head_v();
 
-    GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
-    GGML_ASSERT(n_embd_head == hparams.n_rot);
+    GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());
+    GGML_ASSERT(n_embd_head == n_rot);
 
     ggml_tensor * cur;
     ggml_tensor * inpL;
@@ -26,10 +26,16 @@ llm_build_smallthinker<iswa>::llm_build_smallthinker(const llama_model & model, 
     ggml_tensor * inp_out_ids = build_inp_out_ids();
 
     for (int il = 0; il < n_layer; ++il) {
-        ggml_tensor * inpSA  = inpL;
-        ggml_tensor * probs  = nullptr;
+        const float freq_base_l  = model.get_rope_freq_base (cparams, il);
+        const float freq_scale_l = model.get_rope_freq_scale(cparams, il);
 
-        probs = build_lora_mm(model.layers[il].ffn_gate_inp, inpL);  // [n_expert, n_tokens]
+        ggml_tensor * inpSA  = inpL;
+
+        // This overlaps with SWA layers in current models, so get_rope_freq_base/scale may be superfluous
+        const bool use_rope = hparams.n_no_rope_layer_step == n_layer ||
+                              il % hparams.n_no_rope_layer_step != 0;
+
+        ggml_tensor * probs = build_lora_mm(model.layers[il].ffn_gate_inp, inpL);  // [n_expert, n_tokens]
         cb(probs, "ffn_moe_logits", il);
 
         // norm
@@ -52,11 +58,11 @@ llm_build_smallthinker<iswa>::llm_build_smallthinker(const llama_model & model, 
             Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
             Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
 
-            if (hparams.n_no_rope_layer_step == n_layer || il % hparams.n_no_rope_layer_step != 0) {
-                Qcur = ggml_rope_ext(ctx0, Qcur, inp_pos, nullptr, n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
+            if (use_rope) {
+                Qcur = ggml_rope_ext(ctx0, Qcur, inp_pos, nullptr, n_rot, rope_type, n_ctx_orig, freq_base_l, freq_scale_l,
                                     ext_factor, attn_factor, beta_fast, beta_slow);
 
-                Kcur = ggml_rope_ext(ctx0, Kcur, inp_pos, nullptr, n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
+                Kcur = ggml_rope_ext(ctx0, Kcur, inp_pos, nullptr, n_rot, rope_type, n_ctx_orig, freq_base_l, freq_scale_l,
                                     ext_factor, attn_factor, beta_fast, beta_slow);
             }
             cb(Qcur, "Qcur", il);
@@ -87,7 +93,7 @@ llm_build_smallthinker<iswa>::llm_build_smallthinker(const llama_model & model, 
                     nullptr,
                     n_expert, n_expert_used,
                     LLM_FFN_RELU, true,
-                    false, 0.0,
+                    hparams.expert_weights_scale,
                     static_cast<llama_expert_gating_func_type>(hparams.expert_gating_func),
                     il, probs);
 

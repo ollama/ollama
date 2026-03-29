@@ -4,7 +4,7 @@ ggml_cgraph * clip_graph_siglip::build() {
     ggml_tensor * inp = build_inp();
 
     ggml_tensor * learned_pos_embd = model.position_embeddings;
-    if (proj_type == PROJECTOR_TYPE_LFM2) {
+    if (proj_type == PROJECTOR_TYPE_LFM2 || proj_type == PROJECTOR_TYPE_PHI4) {
         learned_pos_embd = resize_position_embeddings();
     }
 
@@ -50,10 +50,15 @@ ggml_cgraph * clip_graph_siglip::build() {
         const int scale_factor = model.hparams.n_merge;
         cur = build_patch_merge_permute(cur, scale_factor);
 
-        // projection
-        cur = ggml_norm(ctx0, cur, 1e-5); // default nn.LayerNorm
-        cur = ggml_mul(ctx0, cur, model.mm_input_norm_w);
-        cur = ggml_add(ctx0, cur, model.mm_input_norm_b);
+        // projection, in LFM2-VL input norm is optional
+        if (model.mm_input_norm_w) {
+            cur = ggml_norm(ctx0, cur, 1e-5); // default nn.LayerNorm
+            cur = ggml_mul(ctx0, cur, model.mm_input_norm_w);
+        }
+
+        if (model.mm_input_norm_b) {
+            cur = ggml_add(ctx0, cur, model.mm_input_norm_b);
+        }
 
         cur = build_ffn(cur,
             model.mm_1_w, model.mm_1_b,
@@ -68,6 +73,14 @@ ggml_cgraph * clip_graph_siglip::build() {
             nullptr, nullptr,
             model.mm_1_w, model.mm_1_b,
             hparams.ffn_op,
+            -1);
+
+    } else if (proj_type == PROJECTOR_TYPE_PHI4) {
+        cur = build_ffn(cur,
+            model.mm_0_w, model.mm_0_b,
+            nullptr, nullptr,
+            model.mm_2_w, model.mm_2_b,
+            FFN_GELU,
             -1);
 
     } else {

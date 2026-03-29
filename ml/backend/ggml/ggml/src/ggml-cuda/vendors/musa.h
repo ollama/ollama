@@ -61,6 +61,7 @@
 #define cudaHostRegisterPortable musaHostRegisterPortable
 #define cudaHostRegisterReadOnly musaHostRegisterReadOnly
 #define cudaHostUnregister musaHostUnregister
+#define cudaLaunchCooperativeKernel musaLaunchCooperativeKernel
 #define cudaLaunchHostFunc musaLaunchHostFunc
 #define cudaMalloc musaMalloc
 #define cudaMallocHost musaMallocHost

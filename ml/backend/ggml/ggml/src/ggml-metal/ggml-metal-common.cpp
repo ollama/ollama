@@ -264,15 +264,26 @@ static std::vector<int> ggml_metal_graph_optimize_reorder(const std::vector<node
             case GGML_OP_NORM:
             case GGML_OP_RMS_NORM:
             case GGML_OP_GROUP_NORM:
+            case GGML_OP_L2_NORM:
             case GGML_OP_SUM_ROWS:
+            case GGML_OP_SSM_CONV:
+            case GGML_OP_SSM_SCAN:
+            case GGML_OP_CLAMP:
+            case GGML_OP_TRI:
+            case GGML_OP_DIAG:
             case GGML_OP_MUL:
             case GGML_OP_ADD:
+            case GGML_OP_SUB:
             case GGML_OP_DIV:
             case GGML_OP_GLU:
             case GGML_OP_SCALE:
+            case GGML_OP_UNARY:
             case GGML_OP_GET_ROWS:
-            case GGML_OP_CPY:
             case GGML_OP_SET_ROWS:
+            case GGML_OP_SET:
+            case GGML_OP_CPY:
+            case GGML_OP_CONT:
+            case GGML_OP_REPEAT:
                 return true;
             default:
                 return ggml_op_is_empty(op);
@@ -312,7 +323,7 @@ static std::vector<int> ggml_metal_graph_optimize_reorder(const std::vector<node
             h_add(mrs1, node0);
 
             // that many nodes forward to search for a concurrent node
-            constexpr int N_FORWARD = 8;
+            constexpr int N_FORWARD = 64;
 
             for (int i1 = i0 + 1; i1 < i0 + N_FORWARD && i1 < n; i1++) {
                 if (used[i1]) {

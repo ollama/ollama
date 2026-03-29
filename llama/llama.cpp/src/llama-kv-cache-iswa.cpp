@@ -218,7 +218,9 @@ llama_memory_context_ptr llama_kv_cache_iswa::init_update(llama_context * lctx, 
 }
 
 bool llama_kv_cache_iswa::get_can_shift() const {
-    return kv_base->get_size() == kv_swa->get_size();
+    return kv_base->get_can_shift() &&
+           kv_swa->get_can_shift() &&
+           kv_base->get_size() == kv_swa->get_size();
 }
 
 void llama_kv_cache_iswa::state_write(llama_io_write_i & io, llama_seq_id seq_id, llama_state_seq_flags flags) const {

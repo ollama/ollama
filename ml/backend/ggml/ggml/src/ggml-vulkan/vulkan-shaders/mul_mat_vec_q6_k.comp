@@ -15,7 +15,7 @@ void calc_superblock(const uint a_offset, const uint b_offset, const uint itid, 
     const uint y_idx = i * QUANT_K + y_offset;
 
     [[unroll]] for (uint n = 0; n < num_rows; ++n) {
-        const uint ib0 = a_offset / QUANT_K + (first_row+n)*num_blocks_per_row;
+        const uint ib0 = a_offset + (first_row+n)*num_blocks_per_row;
         csel ^= 1;
 
         if (!all_threads) { // when we don't have enough blocks to use all threads
