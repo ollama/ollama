@@ -26,6 +26,17 @@ To configure without launching:
 ollama launch pi --config
 ```
 
+## Web search 
+
+Pi can use web search and fetch tools via the `@ollama/pi-web-search` package.
+
+When launching Pi through Ollama, package install/update is managed automatically. 
+To install manually:
+
+```bash
+pi install npm:@ollama/pi-web-search
+```
+
 ### Manual setup
 
 Add a configuration block to `~/.pi/agent/models.json`:
