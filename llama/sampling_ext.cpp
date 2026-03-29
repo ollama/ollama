@@ -21,7 +21,9 @@ struct common_sampler *common_sampler_cinit(const struct llama_model *model, str
         sparams.penalty_freq = params->penalty_freq;
         sparams.penalty_present = params->penalty_present;
         sparams.seed = params->seed;
-        sparams.grammar = params->grammar;
+        if (params->grammar != nullptr && params->grammar[0] != '\0') {
+            sparams.grammar = {COMMON_GRAMMAR_TYPE_USER, params->grammar};
+        }
         sparams.xtc_probability = 0.0;
         sparams.xtc_threshold = 0.5;
         return common_sampler_init(model, sparams);
