@@ -8,18 +8,23 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/internal/fileutil"
 )
 
 type stubEditorRunner struct {
 	edited   [][]string
 	ranModel string
 	editErr  error
+	paths    []string
+	editFn   func(models []string) error
 }
 
 func (s *stubEditorRunner) Run(model string, args []string) error {
@@ -29,11 +34,16 @@ func (s *stubEditorRunner) Run(model string, args []string) error {
 
 func (s *stubEditorRunner) String() string { return "StubEditor" }
 
-func (s *stubEditorRunner) Paths() []string { return nil }
+func (s *stubEditorRunner) Paths() []string { return append([]string(nil), s.paths...) }
 
 func (s *stubEditorRunner) Edit(models []string) error {
 	if s.editErr != nil {
 		return s.editErr
+	}
+	if s.editFn != nil {
+		if err := s.editFn(models); err != nil {
+			return err
+		}
 	}
 	cloned := append([]string(nil), models...)
 	s.edited = append(s.edited, cloned)
@@ -742,6 +752,62 @@ func TestPrepareEditorIntegration_SavesOnlyAfterSuccessfulEdit(t *testing.T) {
 	}
 	if diff := cmp.Diff([]string{"existing-model"}, saved.Models); diff != "" {
 		t.Fatalf("saved models mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestPrepareEditorIntegration_ShowsBackupWarningWhenConfigChanges(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	configPath := filepath.Join(tmpDir, "settings.json")
+	original := []byte(`{"model":"old"}`)
+	if err := os.WriteFile(configPath, original, 0o644); err != nil {
+		t.Fatalf("failed to seed config file: %v", err)
+	}
+
+	editor := &stubEditorRunner{
+		paths: []string{configPath},
+		editFn: func(models []string) error {
+			return fileutil.WriteWithBackup(configPath, []byte(`{"model":"new"}`))
+		},
+	}
+
+	stderr := captureStderr(t, func() {
+		if err := prepareEditorIntegration("opencode", editor, editor, []string{"llama3.2"}); err != nil {
+			t.Fatalf("prepareEditorIntegration returned error: %v", err)
+		}
+	})
+
+	if !strings.Contains(stderr, "configuration has been modified. Backups are saved in") {
+		t.Fatalf("expected backup warning, got stderr: %q", stderr)
+	}
+}
+
+func TestPrepareEditorIntegration_DoesNotShowBackupWarningWhenConfigUnchanged(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	configPath := filepath.Join(tmpDir, "settings.json")
+	original := []byte(`{"model":"same"}`)
+	if err := os.WriteFile(configPath, original, 0o644); err != nil {
+		t.Fatalf("failed to seed config file: %v", err)
+	}
+
+	editor := &stubEditorRunner{
+		paths: []string{configPath},
+		editFn: func(models []string) error {
+			return fileutil.WriteWithBackup(configPath, original)
+		},
+	}
+
+	stderr := captureStderr(t, func() {
+		if err := prepareEditorIntegration("pi", editor, editor, []string{"llama3.2"}); err != nil {
+			t.Fatalf("prepareEditorIntegration returned error: %v", err)
+		}
+	})
+
+	if strings.Contains(stderr, "configuration has been modified. Backups are saved in") {
+		t.Fatalf("did not expect backup warning when config is unchanged, got stderr: %q", stderr)
 	}
 }
 

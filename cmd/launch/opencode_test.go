@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -286,6 +287,116 @@ func TestOpenCodeEdit(t *testing.T) {
 		assertOpenCodeModelExists(t, configPath, "llama3.2")
 		assertOpenCodeModelExists(t, configPath, "external") // Should be preserved
 	})
+}
+
+func TestOpenCodeEdit_SetsDefaultModelFromFirstSelection(t *testing.T) {
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	configPath := filepath.Join(tmpDir, ".config", "opencode", "opencode.json")
+	if err := o.Edit([]string{"kimi-k2.5:cloud", "llama3.2"}); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := cfg["model"].(string); got != "ollama/kimi-k2.5:cloud" {
+		t.Fatalf("model = %q, want %q", got, "ollama/kimi-k2.5:cloud")
+	}
+}
+
+func TestOpenCodeEdit_OverridesExistingDefaultModel(t *testing.T) {
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	configDir := filepath.Join(tmpDir, ".config", "opencode")
+	configPath := filepath.Join(configDir, "opencode.json")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{
+		"$schema":"https://opencode.ai/config.json",
+		"model":"ollama/old-model",
+		"provider":{"ollama":{"models":{"old-model":{"name":"old-model"}}}}
+	}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := o.Edit([]string{"kimi-k2.5:cloud"}); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := cfg["model"].(string); got != "ollama/kimi-k2.5:cloud" {
+		t.Fatalf("model = %q, want %q", got, "ollama/kimi-k2.5:cloud")
+	}
+}
+
+func TestPrepareEditorIntegration_OpenCodeShowsBackupWarningWhenFilesChange(t *testing.T) {
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	configDir := filepath.Join(tmpDir, ".config", "opencode")
+	configPath := filepath.Join(configDir, "opencode.json")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{"provider":{"ollama":{"models":{"old-model":{"name":"old-model","_launch":true}}}}}`), 0o644); err != nil {
+		t.Fatalf("failed to seed config: %v", err)
+	}
+
+	stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
+	statePath := filepath.Join(stateDir, "model.json")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("failed to create state dir: %v", err)
+	}
+	if err := os.WriteFile(statePath, []byte(`{"recent":[{"providerID":"ollama","modelID":"old-model"}],"favorite":[],"variant":{}}`), 0o644); err != nil {
+		t.Fatalf("failed to seed state: %v", err)
+	}
+
+	stderr := captureStderr(t, func() {
+		if err := prepareEditorIntegration("opencode", o, o, []string{"llama3.2"}); err != nil {
+			t.Fatalf("prepareEditorIntegration returned error: %v", err)
+		}
+	})
+	if !strings.Contains(stderr, "OpenCode configuration has been modified. Backups are saved in") {
+		t.Fatalf("expected OpenCode backup warning, got stderr: %q", stderr)
+	}
+}
+
+func TestPrepareEditorIntegration_OpenCodeSkipsBackupWarningWhenFilesUnchanged(t *testing.T) {
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	if err := o.Edit([]string{"llama3.2"}); err != nil {
+		t.Fatalf("failed to seed opencode config: %v", err)
+	}
+
+	stderr := captureStderr(t, func() {
+		if err := prepareEditorIntegration("opencode", o, o, []string{"llama3.2"}); err != nil {
+			t.Fatalf("prepareEditorIntegration returned error: %v", err)
+		}
+	})
+	if strings.Contains(stderr, "OpenCode configuration has been modified. Backups are saved in") {
+		t.Fatalf("did not expect OpenCode backup warning, got stderr: %q", stderr)
+	}
 }
 
 func assertOpenCodeModelExists(t *testing.T, path, model string) {
