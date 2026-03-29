@@ -314,6 +314,11 @@ static ggml_cuda_device_info ggml_cuda_init() {
         info.devices[id].supports_cooperative_launch = false;
 #endif // !(GGML_USE_MUSA)
 
+        // cudaMemGetInfo returns info for the current device
+        size_t free_mem;
+        CUDA_CHECK(cudaSetDevice(id));
+        CUDA_CHECK(cudaMemGetInfo(&free_mem, NULL));
+
 #if defined(GGML_USE_HIP)
         info.devices[id].smpbo = prop.sharedMemPerBlock;
 
