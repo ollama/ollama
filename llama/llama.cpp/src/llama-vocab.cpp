@@ -323,6 +323,12 @@ struct llm_tokenizer_bpe : llm_tokenizer {
                     "\\p{N}",
                 };
                 break;
+            case LLAMA_VOCAB_PRE_TYPE_YOUTU:
+                regex_exprs = {
+                    "[가-힣ㄱ-ㆎ]+|[！…""''—：；，、-〿︰-﹏]+|[ㄅ-ㄯ]+|[一-龥぀-ゟ゠-ヿ]+",
+                    "[^\r\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]*[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]+(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])?|[^\r\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]+[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]*(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])?|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\r\n/]*|\\s*[\r\n]+|\\s+(?!\\S)|\\s+",
+                };
+                break;
             case LLAMA_VOCAB_PRE_TYPE_FALCON:
                 regex_exprs = {
                     "[\\p{P}\\$\\+<=>\\^~\\|`]+",
@@ -1849,6 +1855,11 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
                     tokenizer_pre == "deepseek-v3") {
                 pre_type = LLAMA_VOCAB_PRE_TYPE_DEEPSEEK3_LLM;
                 clean_spaces = false;
+            } else if (
+                    tokenizer_pre == "youtu") {
+                pre_type = LLAMA_VOCAB_PRE_TYPE_YOUTU;
+                clean_spaces = false;
+                ignore_merges = true;
             } else if (
                     tokenizer_pre == "falcon") {
                 pre_type = LLAMA_VOCAB_PRE_TYPE_FALCON;
