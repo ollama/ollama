@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -79,6 +80,49 @@ func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	}
 
 	input := "before '" + fp + "' after"
+	cleaned, imgs, err := extractFileData(input)
+	assert.NoError(t, err)
+	assert.Len(t, imgs, 1)
+	assert.Equal(t, cleaned, "before  after")
+}
+
+// Ensure that file paths wrapped in double quotes are removed with the quotes.
+func TestExtractFileDataRemovesDoubleQuotedFilepath(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "img.jpg")
+	data := make([]byte, 600)
+	copy(data, []byte{
+		0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 'J', 'F', 'I', 'F',
+		0x00, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xff, 0xd9,
+	})
+	if err := os.WriteFile(fp, data, 0o600); err != nil {
+		t.Fatalf("failed to write test image: %v", err)
+	}
+
+	input := "before \"" + fp + "\" after"
+	cleaned, imgs, err := extractFileData(input)
+	assert.NoError(t, err)
+	assert.Len(t, imgs, 1)
+	assert.Equal(t, cleaned, "before  after")
+}
+
+// Ensure URL-encoded spaces in paths are decoded so drag-and-drop paths resolve.
+func TestExtractFileDataDecodesPercent20Path(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "my image.jpg")
+	data := make([]byte, 600)
+	copy(data, []byte{
+		0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 'J', 'F', 'I', 'F',
+		0x00, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xff, 0xd9,
+	})
+	if err := os.WriteFile(fp, data, 0o600); err != nil {
+		t.Fatalf("failed to write test image: %v", err)
+	}
+
+	encoded := strings.ReplaceAll(fp, " ", "%20")
+	input := "before " + encoded + " after"
 	cleaned, imgs, err := extractFileData(input)
 	assert.NoError(t, err)
 	assert.Len(t, imgs, 1)

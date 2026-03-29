@@ -525,6 +525,27 @@ func extractFileNames(input string) []string {
 	return re.FindAllString(input, -1)
 }
 
+func normalizeFilePath(fp string) string {
+	return strings.NewReplacer(
+		"\\ ", " ", // Escaped space
+		"%20", " ", // URL-encoded space from some terminal drag-and-drop flows
+		"\\(", "(", // Escaped left parenthesis
+		"\\)", ")", // Escaped right parenthesis
+		"\\[", "[", // Escaped left square bracket
+		"\\]", "]", // Escaped right square bracket
+		"\\{", "{", // Escaped left curly brace
+		"\\}", "}", // Escaped right curly brace
+		"\\$", "$", // Escaped dollar sign
+		"\\&", "&", // Escaped ampersand
+		"\\;", ";", // Escaped semicolon
+		"\\'", "'", // Escaped single quote
+		"\\\\", "\\", // Escaped backslash
+		"\\*", "*", // Escaped asterisk
+		"\\?", "?", // Escaped question mark
+		"\\~", "~", // Escaped tilde
+	).Replace(fp)
+}
+
 // extractFileData extracts image data from file paths found in the input.
 // Returns the cleaned prompt (with file paths removed) and the image data.
 func extractFileData(input string) (string, []api.ImageData, error) {
@@ -532,11 +553,7 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 	var imgs []api.ImageData
 
 	for _, fp := range filePaths {
-		// Normalize shell escapes
-		nfp := strings.ReplaceAll(fp, "\\ ", " ")
-		nfp = strings.ReplaceAll(nfp, "\\(", "(")
-		nfp = strings.ReplaceAll(nfp, "\\)", ")")
-		nfp = strings.ReplaceAll(nfp, "%20", " ")
+		nfp := normalizeFilePath(fp)
 
 		data, err := getImageData(nfp)
 		if errors.Is(err, os.ErrNotExist) {
@@ -545,6 +562,10 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 			return "", nil, err
 		}
 		fmt.Fprintf(os.Stderr, "Added image '%s'\n", nfp)
+		input = strings.ReplaceAll(input, "\""+nfp+"\"", "")
+		input = strings.ReplaceAll(input, "\""+fp+"\"", "")
+		input = strings.ReplaceAll(input, "'"+nfp+"'", "")
+		input = strings.ReplaceAll(input, "'"+fp+"'", "")
 		input = strings.ReplaceAll(input, fp, "")
 		imgs = append(imgs, data)
 	}
