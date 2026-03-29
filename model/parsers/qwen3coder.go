@@ -61,8 +61,9 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 		case qwenEventRawToolCall:
 			toolCall, err := parseToolCall(event, p.tools)
 			if err != nil {
-				slog.Warn("qwen tool call parsing failed", "error", err)
-				return "", "", nil, err
+				slog.Warn("qwen tool call parsing failed, falling back to content", "error", err)
+				sb.WriteString(event.raw)
+				continue
 			}
 			toolCall.Function.Index = p.callIndex
 			p.callIndex++
@@ -73,6 +74,15 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 			// `qwenEvent`s for more details
 			sb.WriteString(event.content)
 		}
+	}
+
+	// When generation is complete, drain any remaining buffered content
+	// that was held back by the streaming parser (e.g. trailing whitespace,
+	// partial tags, or incomplete tool call content).
+	if done && p.acc.Len() > 0 {
+		remaining := p.acc.String()
+		p.acc.Reset()
+		sb.WriteString(remaining)
 	}
 
 	return sb.String(), "", toolCalls, nil
