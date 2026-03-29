@@ -318,6 +318,25 @@ func TestPrepareEditorIntegration_OpenCodeShowsBackupWarningWhenFilesChange(t *t
 	}
 }
 
+func TestPrepareEditorIntegration_OpenCodeSkipsBackupWarningWhenFilesUnchanged(t *testing.T) {
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	if err := o.Edit([]string{"llama3.2"}); err != nil {
+		t.Fatalf("failed to seed opencode config: %v", err)
+	}
+
+	stderr := captureStderr(t, func() {
+		if err := prepareEditorIntegration("opencode", o, o, []string{"llama3.2"}); err != nil {
+			t.Fatalf("prepareEditorIntegration returned error: %v", err)
+		}
+	})
+	if strings.Contains(stderr, "OpenCode configuration has been modified. Backups are saved in") {
+		t.Fatalf("did not expect OpenCode backup warning, got stderr: %q", stderr)
+	}
+}
+
 func assertOpenCodeModelExists(t *testing.T, path, model string) {
 	t.Helper()
 	data, err := os.ReadFile(path)

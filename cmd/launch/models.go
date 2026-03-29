@@ -247,10 +247,11 @@ func prepareEditorIntegration(name string, runner Runner, editor Editor, models 
 }
 
 type editorFileSnapshot struct {
-	exists  bool
 	content []byte
 }
 
+// snapshotEditorFiles captures the current bytes for editor-managed files that
+// already exist. Missing files are excluded because they cannot produce backups.
 func snapshotEditorFiles(paths []string) map[string]editorFileSnapshot {
 	if len(paths) == 0 {
 		return nil
@@ -260,23 +261,21 @@ func snapshotEditorFiles(paths []string) map[string]editorFileSnapshot {
 	for _, path := range paths {
 		data, err := os.ReadFile(path)
 		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				snapshot[path] = editorFileSnapshot{}
-			}
 			continue
 		}
 		snapshot[path] = editorFileSnapshot{
-			exists:  true,
 			content: data,
 		}
 	}
 	return snapshot
 }
 
+// editorFilesChanged reports whether any previously existing editor-managed
+// file changed bytes after editing.
 func editorFilesChanged(before map[string]editorFileSnapshot, paths []string) bool {
 	for _, path := range paths {
 		prev, ok := before[path]
-		if !ok || !prev.exists {
+		if !ok {
 			// No existing file means no backup for this path.
 			continue
 		}

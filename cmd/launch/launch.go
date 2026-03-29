@@ -724,6 +724,7 @@ func (c *launcherClient) loadModelInventoryOnce(ctx context.Context) error {
 }
 
 func runIntegration(runner Runner, modelName string, args []string) error {
+	// TODO(parthsareen): let callers invoke runner.Run directly and remove this wrapper.
 	return runner.Run(modelName, args)
 }
 
