@@ -22,8 +22,7 @@ type Model struct {
 	Text   *textModel
 
 	ImageNewline ml.Tensor `gguf:"mm.image_newline"`
-	//nolint:misspell // this misspelling is upstream. fixing it breaks the model
-	ViewSeperator ml.Tensor `gguf:"mm.view_seperator"`
+	ViewSeparator ml.Tensor `gguf:"mm.view_seperator"`
 
 	Projector *nn.Linear `gguf:"mm.layers"`
 }
@@ -67,7 +66,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, bts []byte) ([]input.Multimodal
 	globalOutputs = globalOutputs.Concat(ctx, m.ImageNewline.Repeat(ctx, 2, globalOutputs.Dim(2)), 1)
 	globalOutputs = globalOutputs.Reshape(ctx, globalOutputs.Dim(0), -1)
 
-	outputs = append(outputs, globalOutputs, m.ViewSeperator)
+	outputs = append(outputs, globalOutputs, m.ViewSeparator)
 	return []input.Multimodal{
 		{Tensor: outputs[0].Stack(ctx, 1, outputs[1:]...)},
 	}, nil
