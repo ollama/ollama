@@ -45,6 +45,19 @@ func (r *Runner) tokenizeRequest(request Request) ([]int32, any, error) {
 		return out.Tokens, out.State, nil
 	}
 
+	if multimodalTokenizer, ok := r.Model.(base.MultimodalPromptTokenizer); ok && len(request.Images) > 0 {
+		images := make([]base.ImageInput, len(request.Images))
+		for i := range request.Images {
+			images[i] = base.ImageInput{
+				ID:   request.Images[i].ID,
+				Data: request.Images[i].Data,
+			}
+		}
+
+		toks, err := multimodalTokenizer.TokenizePromptWithImages(request.Prompt, images)
+		return toks, nil, err
+	}
+
 	return r.Tokenizer.Encode(request.Prompt, true), nil, nil
 }
 
@@ -62,6 +75,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	} else {
 		mlx.DisableCompile()
 	}
+	slog.Debug("compile mode", "enabled", enableCompile)
 	mlx.ResetPeakMemory()
 	ctx := request.Ctx
 	var (
@@ -112,16 +126,37 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 
 	session := r.cache.begin(r.Model, inputs)
 	defer session.close()
+
 	caches := session.caches
 	tokens := session.remaining
 	prefillChunk := prefillChunkSize()
 
+	// Request periodic snapshots during prefill and near the end of the
+	// prompt so that long prompts can be partially restored and
+	// thinking/generation can be retried without full reprocessing.
+	const snapshotInterval = 8192
+	for offset := snapshotInterval; offset < len(inputs); offset += snapshotInterval {
+		session.requestSnapshot(offset)
+	}
+
+	const preThinking = 4
+	if end := len(inputs) - preThinking; end > 0 {
+		session.requestSnapshot(end)
+	}
+
+	// During prefill, use ForwardWithState to handle multimodal segments.
+	// During generation, use Forward directly for compile compatibility.
 	modelForward := func(tokens *mlx.Array) *mlx.Array {
-		if withState, ok := r.Model.(base.ForwardWithStateModel); ok {
-			return withState.ForwardWithState(tokens, caches, promptState)
+		if promptState != nil {
+			if withState, ok := r.Model.(base.ForwardWithStateModel); ok {
+				return withState.ForwardWithState(tokens, caches, promptState)
+			}
 		}
 		return r.Model.Forward(tokens, caches)
 	}
+
+	// After prefill, clear promptState so generation uses the fast path.
+	clearPromptState := func() { promptState = nil }
 
 	materializeCaches := func() {
 		state := make([]*mlx.Array, 0, 2*len(caches))
@@ -143,12 +178,11 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 
 		n := min(prefillChunk, total-processed-1)
 
-		// If there's a pending intermediate snapshot, split the batch
-		// so we can capture it at the exact offset. The cache offset
-		// after this batch will be: baseOffset + processed + n.
-		if session.snapshotOffset > 0 {
+		// If there's a pending snapshot, split the batch so we can
+		// capture it at the exact offset.
+		if snapOffset := session.nextPendingSnapshot(); snapOffset > 0 {
 			baseOffset := len(session.inputs) - len(tokens)
-			tokensUntilSnapshot := session.snapshotOffset - (baseOffset + processed)
+			tokensUntilSnapshot := snapOffset - (baseOffset + processed)
 			if tokensUntilSnapshot > 0 && tokensUntilSnapshot < n {
 				n = tokensUntilSnapshot
 			}
@@ -160,16 +194,20 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		processed += n
 		slog.Info("Prompt processing progress", "processed", processed, "total", total)
 
-		// Create snapshot at branch point for future diverging requests.
-		if session.snapshotOffset > 0 {
+		// Create snapshot if we've reached a pending offset.
+		if snapOffset := session.nextPendingSnapshot(); snapOffset > 0 {
 			baseOffset := len(session.inputs) - len(tokens)
-			if baseOffset+processed >= session.snapshotOffset {
-				session.snapshot(false)
+			if baseOffset+processed >= snapOffset {
+				session.snapshot()
 			}
 		}
 
 		mlx.ClearCache()
 	}
+
+	// Multimodal segments are fully consumed during prefill.
+	// Clear state so generation uses the direct Forward path (compile-friendly).
+	clearPromptState()
 
 	step := func(token *mlx.Array) (*mlx.Array, *mlx.Array) {
 		fwd := modelForward(token.ExpandDims(0))
@@ -191,12 +229,14 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	var b bytes.Buffer
 
 	final := CompletionResponse{Done: true, PromptEvalCount: len(inputs), EvalCount: request.Options.MaxTokens, DoneReason: 1}
+
 	for i := range request.Options.MaxTokens {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 
 		request.Sampler.AppendToken(sample)
+
 		nextSample, nextLogprobs = step(sample)
 
 		if i == 0 {
@@ -207,6 +247,19 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 
 		output := int32(sample.Int())
 		session.outputs = append(session.outputs, output)
+
+		// Log generation diagnostics at trace level for first 10 tokens.
+		if i < 10 && slog.Default().Enabled(context.TODO(), logutil.LevelTrace) {
+			lpF32 := logprobs.AsType(mlx.DTypeFloat32)
+			mlx.Eval(lpF32)
+			lf := lpF32.Floats()
+			sampledLP := float32(0)
+			if int(output) < len(lf) {
+				sampledLP = lf[output]
+			}
+			logutil.Trace(fmt.Sprintf("gen step=%d sampled=%d sampled_lp=%.4f lp_at_pad=%.4f lp_at_eos=%.4f vocab=%d",
+				i, output, sampledLP, lf[0], lf[1], len(lf)))
+		}
 
 		if r.Tokenizer.IsEOS(output) {
 			final.DoneReason = 0

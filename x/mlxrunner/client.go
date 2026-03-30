@@ -2,6 +2,7 @@ package mlxrunner
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -36,12 +37,67 @@ type Client struct {
 	modelName     string
 	contextLength atomic.Int64
 	memory        atomic.Uint64
-	done          chan error
+	done          chan struct{}
+	doneErr       error // valid after done is closed
 	client        *http.Client
-	lastErr       string
-	lastErrLock   sync.Mutex
+	status        *statusWriter
 	mu            sync.Mutex
 	cmd           *exec.Cmd
+}
+
+// statusWriter captures the last stderr line from the subprocess while
+// forwarding all output to os.Stderr. Lines longer than maxStatusLen are
+// truncated to the first maxStatusLen bytes.
+type statusWriter struct {
+	lastErrMsg string
+	buf        []byte
+	discarding bool
+	mu         sync.Mutex
+	out        *os.File
+}
+
+const maxStatusLen = 256
+
+func (w *statusWriter) Write(b []byte) (int, error) {
+	n, err := w.out.Write(b)
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.buf = append(w.buf, b...)
+	for {
+		i := bytes.IndexByte(w.buf, '\n')
+		if i < 0 {
+			break
+		}
+		if !w.discarding {
+			line := bytes.TrimSpace(w.buf[:i])
+			if len(line) > 0 {
+				if len(line) > maxStatusLen {
+					line = line[:maxStatusLen]
+				}
+				w.lastErrMsg = string(line)
+			}
+		}
+		w.buf = w.buf[i+1:]
+		w.discarding = false
+	}
+	// if the buffer grows past maxStatusLen without a newline, keep the front
+	if len(w.buf) > maxStatusLen {
+		if !w.discarding {
+			w.lastErrMsg = string(bytes.TrimSpace(w.buf[:maxStatusLen]))
+			w.discarding = true
+		}
+		w.buf = w.buf[:0]
+	}
+
+	return n, err
+}
+
+func (w *statusWriter) getLastErr() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.lastErrMsg
 }
 
 // NewClient prepares a new MLX runner client for LLM models.
@@ -53,7 +109,7 @@ func NewClient(modelName string) (*Client, error) {
 
 	c := &Client{
 		modelName: modelName,
-		done:      make(chan error, 1),
+		done:      make(chan struct{}),
 		client:    &http.Client{Timeout: 10 * time.Minute},
 	}
 
@@ -66,12 +122,6 @@ func NewClient(modelName string) (*Client, error) {
 	return c, nil
 }
 
-func (c *Client) getLastErr() string {
-	c.lastErrLock.Lock()
-	defer c.lastErrLock.Unlock()
-	return c.lastErr
-}
-
 // WaitUntilRunning waits for the subprocess to be ready.
 func (c *Client) WaitUntilRunning(ctx context.Context) error {
 	timeout := time.After(2 * time.Minute)
@@ -82,16 +132,14 @@ func (c *Client) WaitUntilRunning(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case err := <-c.done:
-			errMsg := c.getLastErr()
-			if errMsg != "" {
-				return fmt.Errorf("mlx runner failed: %s (exit: %v)", errMsg, err)
+		case <-c.done:
+			if msg := c.status.getLastErr(); msg != "" {
+				return fmt.Errorf("mlx runner failed: %s (exit: %v)", msg, c.doneErr)
 			}
-			return fmt.Errorf("mlx runner exited unexpectedly: %w", err)
+			return fmt.Errorf("mlx runner exited unexpectedly: %w", c.doneErr)
 		case <-timeout:
-			errMsg := c.getLastErr()
-			if errMsg != "" {
-				return fmt.Errorf("timeout waiting for mlx runner: %s", errMsg)
+			if msg := c.status.getLastErr(); msg != "" {
+				return fmt.Errorf("timeout waiting for mlx runner: %s", msg)
 			}
 			return errors.New("timeout waiting for mlx runner to start")
 		case <-ticker.C:
@@ -184,6 +232,9 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
+		if errMsg := c.status.getLastErr(); errMsg != "" {
+			return fmt.Errorf("mlx runner failed: %s", errMsg)
+		}
 		return err
 	}
 	defer resp.Body.Close()
@@ -221,7 +272,13 @@ func (c *Client) Completion(ctx context.Context, req llm.CompletionRequest, fn f
 		}
 	}
 
-	return scanner.Err()
+	if err := scanner.Err(); err != nil {
+		if errMsg := c.status.getLastErr(); errMsg != "" {
+			return fmt.Errorf("mlx runner failed: %s", errMsg)
+		}
+		return err
+	}
+	return nil
 }
 
 func (c *Client) ContextLength() int {
@@ -345,23 +402,33 @@ func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 		slog.Debug("mlx subprocess library path", libPathEnvVar, pathEnvVal)
 	}
 
+	// Point MLX's JIT compiler at our bundled CUDA runtime headers.
+	// MLX resolves headers via $CUDA_PATH/include/*.h (and checks CUDA_HOME first).
+	// Always use bundled headers to avoid version mismatches with any
+	// system-installed CUDA toolkit.
+	if mlxDirs, err := filepath.Glob(filepath.Join(ml.LibOllamaPath, "mlx_cuda_*")); err == nil {
+		for _, d := range mlxDirs {
+			if _, err := os.Stat(filepath.Join(d, "include")); err == nil {
+				setEnv(cmd, "CUDA_PATH", d)
+				setEnv(cmd, "CUDA_HOME", d)
+				slog.Debug("mlx subprocess CUDA headers", "CUDA_PATH", d)
+				break
+			}
+		}
+	}
+
 	c.cmd = cmd
 
 	// Forward subprocess stdout/stderr to server logs
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
+	status := &statusWriter{out: os.Stderr}
+	c.status = status
 	go func() {
 		io.Copy(os.Stderr, stdout) //nolint:errcheck
 	}()
 	go func() {
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			line := scanner.Text()
-			fmt.Fprintln(os.Stderr, line)
-			c.lastErrLock.Lock()
-			c.lastErr = line
-			c.lastErrLock.Unlock()
-		}
+		io.Copy(status, stderr) //nolint:errcheck
 	}()
 
 	slog.Info("starting mlx runner subprocess", "model", c.modelName, "port", c.port)
@@ -371,8 +438,8 @@ func (c *Client) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 
 	// Reap subprocess when it exits
 	go func() {
-		err := cmd.Wait()
-		c.done <- err
+		c.doneErr = cmd.Wait()
+		close(c.done)
 	}()
 
 	return nil, nil
@@ -469,3 +536,16 @@ func (c *Client) VRAMByGPU(id ml.DeviceID) uint64 {
 }
 
 var _ llm.LlamaServer = (*Client)(nil)
+
+// setEnv sets or replaces an environment variable in cmd.Env.
+func setEnv(cmd *exec.Cmd, key, value string) {
+	entry := key + "=" + value
+	prefix := strings.ToUpper(key + "=")
+	for i, e := range cmd.Env {
+		if strings.HasPrefix(strings.ToUpper(e), prefix) {
+			cmd.Env[i] = entry
+			return
+		}
+	}
+	cmd.Env = append(cmd.Env, entry)
+}
