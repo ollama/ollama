@@ -50,7 +50,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 
 		if slog.Default().Enabled(context.TODO(), logutil.LevelTrace) {
 			mlx.LogArrays()
-			r.cache.log()
+			r.cache.dumpTree()
 		}
 		slog.Info("peak memory", "size", mlx.PrettyBytes(mlx.PeakMemory()))
 	}()
@@ -79,14 +79,28 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 
 	session := r.cache.begin(r.Model, inputs)
 	defer session.close()
+
 	caches := session.caches
 	tokens := session.remaining
 	prefillChunk := prefillChunkSize()
 
+	// Request periodic snapshots during prefill and near the end of the
+	// prompt so that long prompts can be partially restored and
+	// thinking/generation can be retried without full reprocessing.
+	const snapshotInterval = 8192
+	for offset := snapshotInterval; offset < len(inputs); offset += snapshotInterval {
+		session.requestSnapshot(offset)
+	}
+
+	const preThinking = 4
+	if end := len(inputs) - preThinking; end > 0 {
+		session.requestSnapshot(end)
+	}
+
 	materializeCaches := func() {
 		state := make([]*mlx.Array, 0, 2*len(caches))
 		for _, c := range caches {
-			state = appendCacheState(state, c)
+			state = append(state, c.State()...)
 		}
 		if len(state) == 0 {
 			return
@@ -102,11 +116,31 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		}
 
 		n := min(prefillChunk, total-processed-1)
+
+		// If there's a pending snapshot, split the batch so we can
+		// capture it at the exact offset.
+		if snapOffset := session.nextPendingSnapshot(); snapOffset > 0 {
+			baseOffset := len(session.inputs) - len(tokens)
+			tokensUntilSnapshot := snapOffset - (baseOffset + processed)
+			if tokensUntilSnapshot > 0 && tokensUntilSnapshot < n {
+				n = tokensUntilSnapshot
+			}
+		}
+
 		r.Model.Forward(mlx.FromValues(tokens[processed:processed+n], n).ExpandDims(0), caches)
 		mlx.Sweep()
 		materializeCaches()
 		processed += n
 		slog.Info("Prompt processing progress", "processed", processed, "total", total)
+
+		// Create snapshot if we've reached a pending offset.
+		if snapOffset := session.nextPendingSnapshot(); snapOffset > 0 {
+			baseOffset := len(session.inputs) - len(tokens)
+			if baseOffset+processed >= snapOffset {
+				session.snapshot()
+			}
+		}
+
 		mlx.ClearCache()
 	}
 

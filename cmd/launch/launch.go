@@ -179,6 +179,7 @@ Supported integrations:
   opencode  OpenCode
   openclaw  OpenClaw (aliases: clawdbot, moltbot)
   pi        Pi
+  vscode    VS Code (aliases: code)
 
 Examples:
   ollama launch
@@ -413,9 +414,6 @@ func (c *launcherClient) resolveRunModel(ctx context.Context, req RunModelReques
 			return "", err
 		}
 		fmt.Fprintf(os.Stderr, "Headless mode: auto-selected last used model %q\n", current)
-		if err := config.SetLastModel(current); err != nil {
-			return "", err
-		}
 		return current, nil
 	}
 
@@ -428,9 +426,6 @@ func (c *launcherClient) resolveRunModel(ctx context.Context, req RunModelReques
 			if err := c.ensureModelsReady(ctx, []string{current}); err != nil {
 				return "", err
 			}
-			if err := config.SetLastModel(current); err != nil {
-				return "", err
-			}
 			return current, nil
 		}
 	}
@@ -439,8 +434,10 @@ func (c *launcherClient) resolveRunModel(ctx context.Context, req RunModelReques
 	if err != nil {
 		return "", err
 	}
-	if err := config.SetLastModel(model); err != nil {
-		return "", err
+	if model != current {
+		if err := config.SetLastModel(model); err != nil {
+			return "", err
+		}
 	}
 	return model, nil
 }
@@ -475,8 +472,10 @@ func (c *launcherClient) launchSingleIntegration(ctx context.Context, name strin
 		return nil
 	}
 
-	if err := config.SaveIntegration(name, []string{target}); err != nil {
-		return fmt.Errorf("failed to save: %w", err)
+	if target != current {
+		if err := config.SaveIntegration(name, []string{target}); err != nil {
+			return fmt.Errorf("failed to save: %w", err)
+		}
 	}
 
 	return launchAfterConfiguration(name, runner, target, req)
@@ -491,8 +490,10 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 			return err
 		}
 		models = selected
-	} else if err := c.ensureModelsReady(ctx, models); err != nil {
-		return err
+	} else if len(models) > 0 {
+		if err := c.ensureModelsReady(ctx, models[:1]); err != nil {
+			return err
+		}
 	}
 
 	if len(models) == 0 {
@@ -553,10 +554,14 @@ func (c *launcherClient) selectMultiModelsForIntegration(ctx context.Context, ru
 	if err != nil {
 		return nil, err
 	}
-	if err := c.ensureModelsReady(ctx, selected); err != nil {
+	accepted, skipped, err := c.selectReadyModelsForSave(ctx, selected)
+	if err != nil {
 		return nil, err
 	}
-	return selected, nil
+	for _, skip := range skipped {
+		fmt.Fprintf(os.Stderr, "Skipped %s: %s\n", skip.model, skip.reason)
+	}
+	return accepted, nil
 }
 
 func (c *launcherClient) loadSelectableModels(ctx context.Context, preChecked []string, current, emptyMessage string) ([]ModelItem, []string, error) {
@@ -577,16 +582,7 @@ func (c *launcherClient) loadSelectableModels(ctx context.Context, preChecked []
 }
 
 func (c *launcherClient) ensureModelsReady(ctx context.Context, models []string) error {
-	var deduped []string
-	seen := make(map[string]bool, len(models))
-	for _, model := range models {
-		if model == "" || seen[model] {
-			continue
-		}
-		seen[model] = true
-		deduped = append(deduped, model)
-	}
-	models = deduped
+	models = dedupeModelList(models)
 	if len(models) == 0 {
 		return nil
 	}
@@ -602,6 +598,56 @@ func (c *launcherClient) ensureModelsReady(ctx context.Context, models []string)
 		}
 	}
 	return ensureAuth(ctx, c.apiClient, cloudModels, models)
+}
+
+func dedupeModelList(models []string) []string {
+	deduped := make([]string, 0, len(models))
+	seen := make(map[string]bool, len(models))
+	for _, model := range models {
+		if model == "" || seen[model] {
+			continue
+		}
+		seen[model] = true
+		deduped = append(deduped, model)
+	}
+	return deduped
+}
+
+type skippedModel struct {
+	model  string
+	reason string
+}
+
+func (c *launcherClient) selectReadyModelsForSave(ctx context.Context, selected []string) ([]string, []skippedModel, error) {
+	selected = dedupeModelList(selected)
+	accepted := make([]string, 0, len(selected))
+	skipped := make([]skippedModel, 0, len(selected))
+
+	for _, model := range selected {
+		if err := c.ensureModelsReady(ctx, []string{model}); err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return nil, nil, err
+			}
+			skipped = append(skipped, skippedModel{
+				model:  model,
+				reason: skippedModelReason(model, err),
+			})
+			continue
+		}
+		accepted = append(accepted, model)
+	}
+
+	return accepted, skipped, nil
+}
+
+func skippedModelReason(model string, err error) string {
+	if errors.Is(err, ErrCancelled) {
+		if isCloudModelName(model) {
+			return "sign in was cancelled"
+		}
+		return "download was cancelled"
+	}
+	return err.Error()
 }
 
 func (c *launcherClient) resolveEditorLaunchModels(ctx context.Context, saved *config.IntegrationConfig, req IntegrationLaunchRequest) ([]string, bool) {
@@ -801,13 +847,6 @@ func cloneAliases(aliases map[string]string) map[string]string {
 		cloned[key] = value
 	}
 	return cloned
-}
-
-func singleModelPrechecked(current string) []string {
-	if current == "" {
-		return nil
-	}
-	return []string{current}
 }
 
 func firstModel(models []string) string {

@@ -46,14 +46,12 @@ func TestModelsChat(t *testing.T) {
 		chatModels = append(ollamaEngineChatModels, llamaRunnerChatModels...)
 	}
 
-	for _, model := range chatModels {
+	for _, model := range testModels(chatModels) {
 		t.Run(model, func(t *testing.T) {
 			if time.Now().Sub(started) > softTimeout {
 				t.Skip("skipping remaining tests to avoid excessive runtime")
 			}
-			if err := PullIfMissing(ctx, client, model); err != nil {
-				t.Fatalf("pull failed %s", err)
-			}
+			pullOrSkip(ctx, t, client, model)
 			if maxVram > 0 {
 				resp, err := client.List(ctx)
 				if err != nil {
@@ -133,14 +131,15 @@ func TestModelsEmbed(t *testing.T) {
 		t.Fatalf("failed to load test data: %s", err)
 	}
 	for model, expected := range testCase {
+		if testModel != "" && model != testModel {
+			continue
+		}
 
 		t.Run(model, func(t *testing.T) {
 			if time.Now().Sub(started) > softTimeout {
 				t.Skip("skipping remaining tests to avoid excessive runtime")
 			}
-			if err := PullIfMissing(ctx, client, model); err != nil {
-				t.Fatalf("pull failed %s", err)
-			}
+			pullOrSkip(ctx, t, client, model)
 			if maxVram > 0 {
 				resp, err := client.List(ctx)
 				if err != nil {

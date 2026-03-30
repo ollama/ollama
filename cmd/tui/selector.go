@@ -242,6 +242,10 @@ func (m selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancelled = true
 			return m, tea.Quit
 
+		case tea.KeyLeft:
+			m.cancelled = true
+			return m, tea.Quit
+
 		case tea.KeyEnter:
 			filtered := m.filteredItems()
 			if len(filtered) > 0 && m.cursor < len(filtered) {
@@ -354,7 +358,7 @@ func (m selectorModel) renderContent() string {
 	}
 
 	s.WriteString("\n")
-	help := "↑/↓ navigate • enter select • esc cancel"
+	help := "↑/↓ navigate • enter select • ← back"
 	if m.helpText != "" {
 		help = m.helpText
 	}
@@ -608,6 +612,10 @@ func (m multiSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancelled = true
 			return m, tea.Quit
 
+		case tea.KeyLeft:
+			m.cancelled = true
+			return m, tea.Quit
+
 		case tea.KeyTab:
 			m.multi = !m.multi
 
@@ -810,7 +818,7 @@ func (m multiSelectorModel) View() string {
 	s.WriteString("\n")
 
 	if !m.multi {
-		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • enter select • tab add multiple • esc cancel"))
+		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • enter select • tab add multiple • ← back"))
 	} else {
 		count := m.selectedCount()
 		if count == 0 {
@@ -819,7 +827,7 @@ func (m multiSelectorModel) View() string {
 			s.WriteString(selectorDescStyle.Render(fmt.Sprintf("  %d selected - press enter to continue", count)))
 		}
 		s.WriteString("\n\n")
-		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • space toggle • tab select single • enter confirm • esc cancel"))
+		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • space toggle • tab select single • enter confirm • ← back"))
 	}
 
 	result := s.String()

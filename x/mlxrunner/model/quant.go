@@ -11,8 +11,10 @@ func QuantizationParams(quantization string) (groupSize, bits int, mode string) 
 	switch strings.ToUpper(quantization) {
 	case "NVFP4":
 		return 16, 4, "nvfp4"
+	case "MXFP4":
+		return 32, 4, "mxfp4"
 	case "FP4", "Q4", "INT4":
-		return 32, 4, "affine"
+		return 64, 4, "affine"
 	case "MXFP8":
 		return 32, 8, "mxfp8"
 	case "FP8", "Q8", "INT8":
