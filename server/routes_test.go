@@ -26,6 +26,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/types/model"
@@ -544,6 +545,38 @@ func TestRoutes(t *testing.T) {
 				tc.Expected(t, resp)
 			}
 		})
+	}
+}
+
+func TestGetModelInfo_SafetensorsUsesStoredFileType(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	cfgData, err := json.Marshal(model.ConfigV2{
+		ModelFormat:  "safetensors",
+		FileType:     "mxfp8",
+		Capabilities: []string{"completion"},
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal config: %v", err)
+	}
+
+	configLayer, err := manifest.NewLayer(bytes.NewReader(cfgData), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatalf("failed to create config layer: %v", err)
+	}
+
+	name := model.ParseName("show-safetensors")
+	if err := manifest.WriteManifest(name, configLayer, nil); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	resp, err := GetModelInfo(api.ShowRequest{Model: name.String()})
+	if err != nil {
+		t.Fatalf("GetModelInfo() error = %v", err)
+	}
+
+	if resp.Details.QuantizationLevel != "mxfp8" {
+		t.Fatalf("QuantizationLevel = %q, want %q", resp.Details.QuantizationLevel, "mxfp8")
 	}
 }
 

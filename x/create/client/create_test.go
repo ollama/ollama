@@ -3,11 +3,15 @@ package client
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/x/create"
 )
 
 func TestModelfileConfig(t *testing.T) {
@@ -120,8 +124,8 @@ func TestMinOllamaVersion(t *testing.T) {
 	if MinOllamaVersion == "" {
 		t.Error("MinOllamaVersion should not be empty")
 	}
-	if MinOllamaVersion != "0.14.0" {
-		t.Errorf("MinOllamaVersion = %q, want %q", MinOllamaVersion, "0.14.0")
+	if MinOllamaVersion != "0.19.0" {
+		t.Errorf("MinOllamaVersion = %q, want %q", MinOllamaVersion, "0.19.0")
 	}
 }
 
@@ -289,6 +293,52 @@ func TestCreateOptions_Defaults(t *testing.T) {
 	}
 }
 
+func TestInferSafetensorsCapabilities(t *testing.T) {
+	tests := []struct {
+		name       string
+		configJSON string
+		want       []string
+	}{
+		{
+			name: "qwen3.5 text model",
+			configJSON: `{
+				"architectures": ["Qwen3_5ForCausalLM"],
+				"model_type": "qwen3"
+			}`,
+			want: []string{"completion", "thinking"},
+		},
+		{
+			name: "qwen3.5 multimodal model",
+			configJSON: `{
+				"architectures": ["Qwen3_5ForConditionalGeneration"],
+				"model_type": "qwen3"
+			}`,
+			want: []string{"completion", "vision", "thinking"},
+		},
+		{
+			name: "non-qwen conditional generation model",
+			configJSON: `{
+				"architectures": ["SomeOtherForConditionalGeneration"],
+				"model_type": "other"
+			}`,
+			want: []string{"completion"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			if got := inferSafetensorsCapabilities(dir); !slices.Equal(got, tt.want) {
+				t.Fatalf("inferSafetensorsCapabilities() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestQuantizeSupported(t *testing.T) {
 	// This just verifies the function exists and returns a boolean
 	// The actual value depends on build tags (mlx vs non-mlx)
@@ -337,5 +387,45 @@ func TestCreateModelfileLayersIncludesParameters(t *testing.T) {
 
 	if got["temperature"] != float64(0.7) {
 		t.Fatalf("temperature = %v, want %v", got["temperature"], float64(0.7))
+	}
+}
+
+func TestNewManifestWriter_PopulatesFileTypeFromQuantize(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	opts := CreateOptions{
+		ModelName: "test-quantized",
+		ModelDir:  t.TempDir(),
+		Quantize:  "MXFP8",
+	}
+
+	writer := newManifestWriter(opts, []string{"completion"}, "qwen3", "qwen3")
+	if err := writer(opts.ModelName, create.LayerInfo{}, nil); err != nil {
+		t.Fatalf("newManifestWriter() error = %v", err)
+	}
+
+	name := model.ParseName(opts.ModelName)
+	mf, err := manifest.ParseNamedManifest(name)
+	if err != nil {
+		t.Fatalf("ParseNamedManifest() error = %v", err)
+	}
+
+	configPath, err := manifest.BlobsPath(mf.Config.Digest)
+	if err != nil {
+		t.Fatalf("BlobsPath() error = %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	var cfg model.ConfigV2
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+
+	if cfg.FileType != "mxfp8" {
+		t.Fatalf("FileType = %q, want %q", cfg.FileType, "mxfp8")
 	}
 }
