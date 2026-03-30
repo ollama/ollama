@@ -23,6 +23,8 @@ func TestVisionModels(t *testing.T) {
 		"ministral-3",
 	}
 
+	skipIfNoVisionOverride(t)
+
 	for _, model := range testModels(defaultVisionModels) {
 		t.Run(model, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -30,10 +32,7 @@ func TestVisionModels(t *testing.T) {
 			client, _, cleanup := InitServerConnection(ctx, t)
 			defer cleanup()
 
-			if testModel != "" {
-				requireCapability(ctx, t, client, model, "vision")
-			}
-
+			requireCapability(ctx, t, client, model, "vision")
 			pullOrSkip(ctx, t, client, model)
 
 			image, err := base64.StdEncoding.DecodeString(imageEncoding)
