@@ -727,7 +727,10 @@ func runSelector(fd int, oldState *term.State, toolDisplay string, isWarning boo
 				if maxLen < 10 {
 					maxLen = 10
 				}
-				if len(state.denyReason) < maxLen {
+				if maxLen > 500 {
+					maxLen = 500
+				}
+				if len([]rune(state.denyReason)) < maxLen {
 					state.denyReason += string(ch)
 					// Auto-select Deny option when user starts typing
 					if state.selected != 2 {
