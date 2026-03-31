@@ -18,9 +18,14 @@ type PromptTokenization struct {
 	State  any
 }
 
-// MultimodalPromptTokenizerWithState is an optional model interface used by
-// mlxrunner to expand tagged multimodal prompts into token IDs, returning
-// request-scoped state to be attached to the forward pass.
+// MultimodalPromptTokenizer is an optional model interface used by mlxrunner
+// to expand tagged multimodal prompts into token IDs.
+type MultimodalPromptTokenizer interface {
+	TokenizePromptWithImages(prompt string, images []ImageInput) ([]int32, error)
+}
+
+// MultimodalPromptTokenizerWithState is a richer tokenizer variant that can
+// return request-scoped state to be attached to the forward pass.
 type MultimodalPromptTokenizerWithState interface {
 	TokenizePromptWithImagesState(prompt string, images []ImageInput) (*PromptTokenization, error)
 }
