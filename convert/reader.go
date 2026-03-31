@@ -44,6 +44,7 @@ func (t tensorBase) Kind() uint32 {
 		strings.HasSuffix(t.name, ".ssm_conv1d.weight") || // SSM conv kernel must be F32 for Metal
 		t.name == "token_types.weight" ||
 		t.name == "v.positional_embedding_vlm" ||
+		t.name == "v.position_embd.weight" ||
 		t.name == "v.tile_position_embd.weight" ||
 		t.name == "v.pre_tile_position_embd.weight" ||
 		t.name == "v.post_tile_position_embd.weight" ||

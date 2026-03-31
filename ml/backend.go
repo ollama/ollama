@@ -137,6 +137,7 @@ type Tensor interface {
 
 	Bytes() []byte
 	Floats() []float32
+	BackendGet() []float32
 
 	FromBytes([]byte)
 	FromFloats([]float32)
