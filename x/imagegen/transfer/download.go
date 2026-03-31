@@ -194,7 +194,7 @@ func (d *downloader) downloadOnce(ctx context.Context, blob Blob) (int64, error)
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { io.Copy(io.Discard, resp.Body); resp.Body.Close() }()
 
 	switch resp.StatusCode {
 	case http.StatusOK:
@@ -203,7 +203,6 @@ func (d *downloader) downloadOnce(ctx context.Context, blob Blob) (int64, error)
 	case http.StatusPartialContent:
 		// Resume succeeded
 	default:
-		io.Copy(io.Discard, resp.Body)
 		return 0, fmt.Errorf("status %d", resp.StatusCode)
 	}
 

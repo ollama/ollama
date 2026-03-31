@@ -142,7 +142,11 @@ func (p *progressTracker) add(n int64) {
 		return
 	}
 	completed := p.completed.Add(n)
-	defer func() { recover() }() // callback may send on closed channel
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Debug("progress callback panic (likely closed channel)", "recovered", r)
+		}
+	}()
 	p.callback(completed, p.total)
 }
 
