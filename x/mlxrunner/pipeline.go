@@ -55,7 +55,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		slog.Info("peak memory", "size", mlx.PrettyBytes(mlx.PeakMemory()))
 	}()
 
-	inputs := r.Tokenizer.Encode(request.Prompt, true)
+	inputs := r.Tokenizer.Encode(request.Prompt, r.Tokenizer.AddBOS())
 	if len(inputs) == 0 {
 		return errors.New("empty prompt")
 	}
