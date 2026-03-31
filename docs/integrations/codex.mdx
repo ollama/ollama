@@ -71,26 +71,3 @@ Then run:
 codex --profile ollama-launch
 codex --profile ollama-cloud
 ```
-
-## Connecting to ollama.com
-
-Create an [API key](https://ollama.com/settings/keys) from ollama.com and export it as `OLLAMA_API_KEY`:
-
-```
-export OLLAMA_API_KEY=your_key_here
-```
-
-To use ollama.com directly, edit your `~/.codex/config.toml` file to point to ollama.com.
-
-```toml
-[model_providers.ollama-launch-api]
-name = "Ollama API"
-base_url = "https://ollama.com/v1"
-env_key = "OLLAMA_API_KEY"
-
-[profiles.ollama-launch-api]
-model = "gpt-oss:120b"
-model_provider = "ollama-launch-api"
-```
-
-Run `codex --profile ollama-launch-api` in a new terminal to load the new settings.
