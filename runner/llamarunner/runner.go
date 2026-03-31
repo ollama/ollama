@@ -755,6 +755,10 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	if req.Image != nil {
+		http.Error(w, "this model does not support image embeddings", http.StatusNotImplemented)
+		return
+	}
 
 	seq, err := s.NewSequence(req.Content, nil, NewSequenceParams{
 		embedding: true,

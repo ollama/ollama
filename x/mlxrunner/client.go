@@ -289,7 +289,7 @@ func (c *Client) Detokenize(ctx context.Context, tokens []int) (string, error) {
 }
 
 // Embedding implements llm.LlamaServer.
-func (c *Client) Embedding(ctx context.Context, input string) ([]float32, int, error) {
+func (c *Client) Embedding(ctx context.Context, input string, image *llm.ImageData) ([]float32, int, error) {
 	return nil, 0, errors.New("not supported")
 }
 
