@@ -36,14 +36,16 @@ func copyFile(src, dst string) error {
 	return os.WriteFile(dst, data, info.Mode().Perm())
 }
 
-// BackupDir returns the shared backup directory used before overwriting files.
+// BackupDir returns the user-scoped backup directory used before overwriting files.
+// Each user on the system gets a separate directory to avoid permission conflicts
+// in shared temp directories like /tmp.
 func BackupDir() string {
-	return filepath.Join(os.TempDir(), "ollama-backups")
+	return filepath.Join(os.TempDir(), fmt.Sprintf("ollama-backups-%d", os.Getuid()))
 }
 
 func backupToTmp(srcPath string) (string, error) {
 	dir := BackupDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
 
