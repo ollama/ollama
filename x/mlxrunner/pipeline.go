@@ -6,10 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"time"
 
-	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
@@ -18,11 +16,36 @@ func prefillChunkSize() int {
 	return 2 << 10
 }
 
-func (r *Runner) TextGenerationPipeline(request Request) error {
+// Prepare tokenizes the prompt and validates it against the model's
+// context length. It is safe to call from any goroutine. On success it
+// populates request.Tokens and adjusts request.Options.MaxTokens.
+func (r *Runner) Prepare(request *Request) error {
 	if r.Model == nil {
 		return errors.New("model not loaded")
 	}
 
+	tokens := r.Tokenizer.Encode(request.Prompt, r.Tokenizer.AddBOS())
+	if len(tokens) == 0 {
+		return errors.New("empty prompt")
+	}
+
+	if len(tokens) >= r.contextLength {
+		return fmt.Errorf("input length (%d tokens) exceeds the model's maximum context length (%d tokens)", len(tokens), r.contextLength)
+	}
+
+	// Cap generation to stay within the model's context length
+	maxGenerate := r.contextLength - len(tokens)
+	if request.Options.MaxTokens <= 0 {
+		request.Options.MaxTokens = maxGenerate
+	} else {
+		request.Options.MaxTokens = min(request.Options.MaxTokens, maxGenerate)
+	}
+
+	request.Tokens = tokens
+	return nil
+}
+
+func (r *Runner) TextGenerationPipeline(request Request) error {
 	enableCompile := true
 	if modelCompile, ok := r.Model.(interface{ EnableCompile() bool }); ok {
 		enableCompile = modelCompile.EnableCompile()
@@ -55,26 +78,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		slog.Info("peak memory", "size", mlx.PrettyBytes(mlx.PeakMemory()))
 	}()
 
-	inputs := r.Tokenizer.Encode(request.Prompt, r.Tokenizer.AddBOS())
-	if len(inputs) == 0 {
-		return errors.New("empty prompt")
-	}
-
-	if len(inputs) >= r.contextLength {
-		return api.StatusError{
-			StatusCode:   http.StatusBadRequest,
-			ErrorMessage: fmt.Sprintf("input length (%d tokens) exceeds the model's maximum context length (%d tokens)", len(inputs), r.contextLength),
-		}
-	}
-
-	// Cap generation to stay within the model's context length
-	maxGenerate := r.contextLength - len(inputs)
-	if request.Options.MaxTokens <= 0 {
-		request.Options.MaxTokens = maxGenerate
-	} else {
-		request.Options.MaxTokens = min(request.Options.MaxTokens, maxGenerate)
-	}
-
+	inputs := request.Tokens
 	request.Sampler.ResetHistory(inputs)
 
 	session := r.cache.begin(r.Model, inputs)

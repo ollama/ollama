@@ -23,8 +23,8 @@ type Request struct {
 	Responses chan CompletionResponse
 	Pipeline  func(Request) error
 
-	Ctx context.Context
-
+	Ctx     context.Context
+	Tokens  []int32
 	Sampler *sample.Sampler
 }
 
