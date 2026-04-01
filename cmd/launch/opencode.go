@@ -19,12 +19,32 @@ type OpenCode struct{}
 
 func (o *OpenCode) String() string { return "OpenCode" }
 
+// findPath locates the opencode binary, checking PATH first then falling back
+// to the curl install location (~/.opencode/bin/opencode) which may not be on
+// PATH yet (e.g. when the shell profile hasn't been re-sourced or when Ollama
+// is launched as a GUI app).
+func (o *OpenCode) findPath() (string, error) {
+	if p, err := exec.LookPath("opencode"); err == nil {
+		return p, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	fallback := filepath.Join(home, ".opencode", "bin", "opencode")
+	if _, err := os.Stat(fallback); err != nil {
+		return "", err
+	}
+	return fallback, nil
+}
+
 func (o *OpenCode) Run(model string, args []string) error {
-	if _, err := exec.LookPath("opencode"); err != nil {
+	opencodePath, err := o.findPath()
+	if err != nil {
 		return fmt.Errorf("opencode is not installed, install from https://opencode.ai")
 	}
 
-	cmd := exec.Command("opencode", args...)
+	cmd := exec.Command(opencodePath, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
