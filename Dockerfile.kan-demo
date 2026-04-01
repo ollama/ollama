@@ -73,7 +73,7 @@ EXPOSE 11434
 
 # Copy the demo script
 COPY scripts/kan-demo.sh /kan-demo.sh
-RUN chmod +x /kan-demo.sh
+RUN sed -i 's/\r$//' /kan-demo.sh && chmod +x /kan-demo.sh
 
 ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]
