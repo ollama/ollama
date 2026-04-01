@@ -903,3 +903,210 @@ func TestKLDivergenceKnownValues(t *testing.T) {
 		t.Log("KL happened to be symmetric for this case (unlikely for general distributions)")
 	}
 }
+
+func TestEvaluateRaw(t *testing.T) {
+	cfg := DefaultConfig()
+	layer := NewLayer(cfg)
+
+	// EvaluateRaw should return a finite value for any input in the grid range
+	for _, x := range []float32{-5.0, -2.5, 0.0, 2.5, 5.0} {
+		y := layer.EvaluateRaw(x)
+		if math.IsNaN(float64(y)) || math.IsInf(float64(y), 0) {
+			t.Errorf("EvaluateRaw(%f) = %f, expected finite value", x, y)
+		}
+	}
+
+	// The KAN is initialized to approximate identity (Greville abscissae).
+	// So EvaluateRaw(2.0) should be > EvaluateRaw(-2.0) (monotonically increasing).
+	yNeg := layer.EvaluateRaw(-2.0)
+	yPos := layer.EvaluateRaw(2.0)
+	if yPos <= yNeg {
+		t.Errorf("EvaluateRaw not monotonically increasing: f(-2)=%f, f(2)=%f", yNeg, yPos)
+	}
+}
+
+func TestComputeEffectiveScale(t *testing.T) {
+	cfg := DefaultConfig()
+	layer := NewLayer(cfg)
+
+	// The initial KAN approximates identity, so effective scale should be positive
+	scale := computeEffectiveScale(layer)
+	if scale <= 0 {
+		t.Errorf("computeEffectiveScale returned non-positive: %f", scale)
+	}
+	t.Logf("initial effective scale: %f", scale)
+
+	// Verify scale is consistent: calling it twice should give the same result
+	scale2 := computeEffectiveScale(layer)
+	if math.Abs(scale-scale2) > 1e-10 {
+		t.Errorf("computeEffectiveScale not deterministic: %f vs %f", scale, scale2)
+	}
+
+	// Create a layer with hand-crafted steeper coefficients (bypass normalization)
+	// by making coefficients that have a steeper x-mapping
+	steepLayer := NewLayer(cfg)
+	coeffs := steepLayer.GetCoefficients()
+	// Make odd coefficients larger and even smaller to change the slope
+	// without just scaling uniformly (which normalization would undo)
+	for i := range coeffs {
+		if i < len(coeffs)/2 {
+			coeffs[i] *= 0.5
+		} else {
+			coeffs[i] *= 3.0
+		}
+	}
+	steepLayer.UpdateCoefficients(coeffs)
+	steepScale := computeEffectiveScale(steepLayer)
+	t.Logf("modified effective scale: %f (original: %f)", steepScale, scale)
+	// The modified layer should have a different scale than the original
+	if steepScale == scale {
+		t.Error("expected different effective scale after asymmetric coefficient modification")
+	}
+}
+
+func TestGetEffectiveScaleDefaultsToOne(t *testing.T) {
+	cfg := DefaultConfig()
+	trainer := NewShadowTrainer(cfg)
+
+	// Non-existent layer should return 1.0
+	scale := trainer.GetEffectiveScale("layer_999")
+	if scale != 1.0 {
+		t.Errorf("GetEffectiveScale for non-existent layer: got %f, want 1.0", scale)
+	}
+
+	// Newly created (non-converged) layer should return 1.0
+	trainer.GetOrCreateLayer("layer_0")
+	scale = trainer.GetEffectiveScale("layer_0")
+	if scale != 1.0 {
+		t.Errorf("GetEffectiveScale for non-converged layer: got %f, want 1.0", scale)
+	}
+}
+
+func TestEffectiveScaleSetOnConvergence(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.LearningRate = 0.05
+	cfg.ConvergenceThreshold = 10.0 // Very lenient to converge quickly
+	cfg.ConvergenceWindow = 3
+	cfg.Phase2Enabled = false
+
+	trainer := NewShadowTrainer(cfg)
+	key := LayerKey(0)
+
+	logits := f64tof32([]float64{1.0, 2.0, 3.0, 4.0})
+	target := f64tof32(softmax([]float64{1.0, 2.0, 3.0, 4.0}))
+
+	// Train until convergence
+	for i := 0; i < 100; i++ {
+		trainer.TrainStep(key, logits, target, 4, 1)
+		if trainer.IsConverged(key) {
+			break
+		}
+	}
+
+	if !trainer.IsConverged(key) {
+		t.Fatal("failed to converge")
+	}
+
+	// After convergence, effective scale should be set and positive
+	scale := trainer.GetEffectiveScale(key)
+	if scale <= 0 || scale == 1.0 {
+		t.Errorf("expected non-trivial effective scale after convergence, got %f", scale)
+	}
+	t.Logf("effective scale after convergence: %f", scale)
+}
+
+func TestPhase2UpdatesEffectiveScale(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.LearningRate = 0.05
+	cfg.ConvergenceThreshold = 10.0
+	cfg.ConvergenceWindow = 3
+	cfg.Phase2Enabled = true
+	cfg.Phase2LearningRate = 0.01
+	cfg.Phase2EveryN = 1
+	cfg.Phase2MaxDrift = 1.0 // Wide tolerance
+
+	trainer := NewShadowTrainer(cfg)
+	key := LayerKey(0)
+
+	logits := f64tof32([]float64{1.0, 2.0, 3.0, 4.0})
+	target := f64tof32(softmax([]float64{1.0, 2.0, 3.0, 4.0}))
+
+	// Phase 1: converge
+	for i := 0; i < 100; i++ {
+		trainer.TrainStep(key, logits, target, 4, 1)
+		if trainer.IsConverged(key) {
+			break
+		}
+	}
+
+	if !trainer.IsConverged(key) {
+		t.Fatal("failed to converge")
+	}
+
+	scaleAtConvergence := trainer.GetEffectiveScale(key)
+
+	// Phase 2: evolve for several steps
+	for i := 0; i < 50; i++ {
+		trainer.Phase2Step(key, logits, 4, 1)
+	}
+
+	scaleAfterPhase2 := trainer.GetEffectiveScale(key)
+	t.Logf("scale at convergence: %f, after Phase 2: %f", scaleAtConvergence, scaleAfterPhase2)
+
+	// Phase 2 maximizes sharpness, which typically increases the scale
+	// (steeper transform = more peaked attention). Allow for the scale to
+	// have changed in either direction since the exact trajectory depends
+	// on the KAN's state.
+	if scaleAfterPhase2 == scaleAtConvergence {
+		t.Error("expected Phase 2 to modify effective scale, but it stayed the same")
+	}
+}
+
+func TestMultiHeadTraining(t *testing.T) {
+	// Test that flattening heads into batch dimension works correctly.
+	// Simulates a [seqK=4, heads=2, seqQ=1] tensor layout.
+	cfg := DefaultConfig()
+	cfg.LearningRate = 0.01
+
+	trainer := NewShadowTrainer(cfg)
+	key := LayerKey(0)
+
+	// 2 heads, each with seqQ=1, seqK=4
+	// Flat layout: [head0_k0, head0_k1, head0_k2, head0_k3, head1_k0, ...]
+	logits := f64tof32([]float64{
+		1.0, 2.0, 3.0, 4.0, // head 0
+		2.0, 1.0, 3.0, 2.0, // head 1
+	})
+
+	// Ground truth: softmax applied independently to each head's row
+	sm0 := softmax([]float64{1.0, 2.0, 3.0, 4.0})
+	sm1 := softmax([]float64{2.0, 1.0, 3.0, 2.0})
+	expected := make([]float32, 8)
+	for i, v := range sm0 {
+		expected[i] = float32(v)
+	}
+	for i, v := range sm1 {
+		expected[4+i] = float32(v)
+	}
+
+	// Train with effectiveSeqQ = seqQ * heads = 1 * 2 = 2
+	for i := 0; i < 500; i++ {
+		trainer.TrainStep(key, logits, expected, 4, 2) // seqK=4, seqQ=2 (flattened)
+	}
+
+	// The KAN should learn to handle multiple heads
+	kanLayer := trainer.GetOrCreateLayer(key)
+	kanOut := kanLayer.Forward(logits, 4, 2)
+
+	totalErr := 0.0
+	for i := range expected {
+		d := float64(expected[i]) - float64(kanOut[i])
+		totalErr += d * d
+	}
+	mseVal := totalErr / float64(len(expected))
+	t.Logf("multi-head MSE: %f", mseVal)
+
+	if mseVal > 0.01 {
+		t.Errorf("multi-head training MSE too high: %f", mseVal)
+	}
+}

@@ -723,6 +723,11 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		},
 		activeBatch.modelOutput)
 
+	// Process deferred KAN training now that tensor data is materialized.
+	// This reads pre-softmax logits and softmax outputs from the computed
+	// graph and runs shadow training (Phase 1) or self-evolution (Phase 2).
+	nn.FlushKANTraining()
+
 	outputs := activeBatch.modelOutput.Floats()
 	t := time.Now()
 

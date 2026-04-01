@@ -18,6 +18,21 @@ var (
 	kanMu      sync.RWMutex
 )
 
+// kanPendingItem represents deferred training work.
+// Tensor data is read AFTER Compute() materializes the graph.
+type kanPendingItem struct {
+	key       string
+	kq        ml.Tensor // pre-softmax logits (needed for training input)
+	softmax   ml.Tensor // softmax output (ground truth for Phase 1; nil for converged layers)
+	shape     []int
+	converged bool
+}
+
+var (
+	kanPendingMu sync.Mutex
+	kanPending   []kanPendingItem
+)
+
 // SetKANTrainer installs a KAN shadow trainer for all attention operations.
 // Pass nil to disable KAN attention.
 func SetKANTrainer(trainer *kan.ShadowTrainer) {
@@ -36,11 +51,80 @@ func GetKANTrainer() *kan.ShadowTrainer {
 	return kanTrainer
 }
 
+// FlushKANTraining processes all deferred training work.
+//
+// MUST be called after ctx.Compute() so that tensor data is materialized.
+// Reads logits and softmax outputs from the completed graph, then:
+//   - For non-converged layers: shadow-trains the KAN (Phase 1)
+//   - For converged layers with Phase 2: runs self-evolution step
+//
+// The heads dimension is flattened into the batch dimension for CPU-side
+// processing (each head is treated as an independent attention pattern).
+func FlushKANTraining() {
+	kanMu.RLock()
+	trainer := kanTrainer
+	kanMu.RUnlock()
+	if trainer == nil {
+		return
+	}
+
+	kanPendingMu.Lock()
+	work := kanPending
+	kanPending = nil
+	kanPendingMu.Unlock()
+
+	for _, item := range work {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Debug("KAN training recovered from panic", "layer", item.key, "error", r)
+				}
+			}()
+
+			shape := item.shape
+			logits := item.kq.Floats()
+
+			// Extract dimensions: kq shape after permute is [seqK, heads, seqQ]
+			seqK := 1
+			heads := 1
+			seqQ := 1
+			if len(shape) >= 1 {
+				seqK = shape[0]
+			}
+			if len(shape) >= 2 {
+				heads = shape[1]
+			}
+			if len(shape) >= 3 {
+				seqQ = shape[2]
+			}
+
+			// Flatten heads into batch: treat as (seqQ * heads) rows of seqK.
+			// The flat array layout from GGML after permute [seqK, heads, seqQ]
+			// stores seqK as the fastest-varying dimension. So element at
+			// (k, h, q) is at index q*heads*seqK + h*seqK + k.
+			// Each contiguous seqK block is one row, and there are heads*seqQ of them.
+			effectiveSeqQ := seqQ * heads
+
+			if item.converged {
+				// Phase 2: self-evolution on converged layer
+				if trainer.IsPhase2Active(item.key) {
+					trainer.Phase2Step(item.key, logits, seqK, effectiveSeqQ)
+				}
+			} else {
+				// Phase 1: shadow training
+				expected := item.softmax.Floats()
+				trainer.TrainStep(item.key, logits, expected, seqK, effectiveSeqQ)
+			}
+		}()
+	}
+}
+
 // Attention implements scaled dot-product attention for transformer models:
 // Attention(Q, K, V) = softmax(QK^T/√d_k)V
 //
 // When KAN attention is enabled, this also shadow-trains a Geometric KAN
-// to replace softmax. After convergence, the KAN is hot-swapped in.
+// to replace softmax. After convergence, the KAN's effect is expressed as
+// temperature-scaled softmax in the GGML computation graph.
 //
 // Parameters:
 //   - ctx: Context for tensor operations
@@ -120,13 +204,23 @@ func AttentionWithVMLA(ctx ml.Context, query, key, value, sinks ml.Tensor, vmla 
 	return kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 }
 
-// applyAttentionWeights applies either softmax or KAN attention weights.
+// applyAttentionWeights applies either softmax or KAN-enhanced attention weights.
 //
-// When no KAN trainer is active, this is just kq.Softmax(ctx).
+// All operations stay within the GGML computation graph (no tensor data reads).
+// Training work is deferred to FlushKANTraining() which runs after Compute().
 //
-// When KAN is active:
-//   - If the layer's KAN has converged and hot-swap is enabled, use KAN output
-//   - Otherwise, compute softmax (for ground truth) and shadow-train the KAN
+// When no KAN trainer is active: standard softmax.
+//
+// When KAN is active and layer has converged:
+//
+//	Temperature-scaled softmax using the KAN's learned effective scale.
+//	This captures the KAN's sharpening effect without needing custom GPU kernels.
+//	softmax(effectiveScale * logits) ≈ KAN(logits)
+//
+// When KAN is active but not yet converged:
+//
+//	Standard softmax (ground truth), with tensors registered for
+//	deferred shadow training after Compute().
 func applyAttentionWeights(ctx ml.Context, kq ml.Tensor) ml.Tensor {
 	kanMu.RLock()
 	trainer := kanTrainer
@@ -144,80 +238,47 @@ func applyAttentionWeights(ctx ml.Context, kq ml.Tensor) ml.Tensor {
 
 	key := kan.LayerKey(layerIdx)
 
-	// If converged and hot-swap enabled, use KAN directly on GPU tensors
-	// by pulling logits to CPU, running KAN, pushing back.
-	// If Phase 2 is active, the KAN also evolves its weights on this forward pass.
+	// Ensure the layer exists in the trainer
+	trainer.GetOrCreateLayer(key)
+
 	if trainer.IsConverged(key) {
-		return applyKANAttention(ctx, kq, trainer, key)
+		// Hot-swap: express KAN's effect as temperature-scaled softmax.
+		// The effective scale captures the KAN's learned transform slope.
+		// scale > 1.0 = sharper attention (Phase 2 effect).
+		effectiveScale := trainer.GetEffectiveScale(key)
+
+		// Register for deferred Phase 2 evolution (processed after Compute)
+		if trainer.IsPhase2Active(key) {
+			kanPendingMu.Lock()
+			kanPending = append(kanPending, kanPendingItem{
+				key:       key,
+				kq:        kq,
+				shape:     kq.Shape(),
+				converged: true,
+			})
+			kanPendingMu.Unlock()
+		}
+
+		if effectiveScale != 1.0 {
+			kq = kq.Scale(ctx, effectiveScale)
+		}
+		return kq.Softmax(ctx)
 	}
 
-	// Compute softmax as ground truth
+	// Not converged: use standard softmax as output
 	softmaxOut := kq.Softmax(ctx)
 
-	// Shadow-train KAN in the background (CPU-side)
+	// Register for deferred shadow training (processed after Compute)
 	if trainer.ShouldTrain(key) {
-		go shadowTrainKAN(kq, softmaxOut, trainer, key)
+		kanPendingMu.Lock()
+		kanPending = append(kanPending, kanPendingItem{
+			key:     key,
+			kq:      kq,
+			softmax: softmaxOut,
+			shape:   kq.Shape(),
+		})
+		kanPendingMu.Unlock()
 	}
 
 	return softmaxOut
-}
-
-// applyKANAttention runs the converged KAN on attention logits.
-// Pulls logits to CPU, runs KAN forward pass, pushes result back to GPU.
-//
-// If Phase 2 self-evolution is active, this also triggers a background
-// adaptation step that shifts the KAN weights toward sharper attention
-// patterns, bounded by a drift safety rail from the graduation checkpoint.
-func applyKANAttention(ctx ml.Context, kq ml.Tensor, trainer *kan.ShadowTrainer, key string) ml.Tensor {
-	shape := kq.Shape()
-	logits := kq.Floats()
-
-	kanLayer := trainer.GetOrCreateLayer(key)
-
-	// Determine seqK and seqQ from tensor shape
-	// kq shape after permute: [seqK, heads, seqQ] or similar
-	seqK := 1
-	seqQ := 1
-	if len(shape) >= 1 {
-		seqK = shape[0]
-	}
-	if len(shape) >= 3 {
-		seqQ = shape[2]
-	}
-
-	// Phase 2: self-evolution -- adapt weights in the background
-	if trainer.IsPhase2Active(key) {
-		go trainer.Phase2Step(key, logits, seqK, seqQ)
-	}
-
-	// Run KAN forward pass on CPU
-	result := kanLayer.Forward(logits, seqK, seqQ)
-
-	// Push back to GPU
-	return ctx.FromFloats(result, shape...)
-}
-
-// shadowTrainKAN runs one KAN training step on CPU.
-// Called as a goroutine to avoid blocking the GPU pipeline.
-func shadowTrainKAN(kq, softmaxOut ml.Tensor, trainer *kan.ShadowTrainer, key string) {
-	defer func() {
-		if r := recover(); r != nil {
-			slog.Debug("KAN shadow training recovered from panic", "layer", key, "error", r)
-		}
-	}()
-
-	shape := kq.Shape()
-	logits := kq.Floats()
-	expected := softmaxOut.Floats()
-
-	seqK := 1
-	seqQ := 1
-	if len(shape) >= 1 {
-		seqK = shape[0]
-	}
-	if len(shape) >= 3 {
-		seqQ = shape[2]
-	}
-
-	trainer.TrainStep(key, logits, expected, seqK, seqQ)
 }

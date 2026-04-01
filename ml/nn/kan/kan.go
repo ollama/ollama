@@ -124,6 +124,25 @@ func (l *Layer) UpdateCoefficients(newWeights []float32) {
 	l.Coefficients.NormalizeAndRedistribute()
 }
 
+// EvaluateRaw computes the raw B-spline transform for a single input point.
+// Returns sum(c_i * B_i(x)) without any exp or normalization.
+// Used to estimate the effective temperature/scale of the KAN.
+func (l *Layer) EvaluateRaw(x float32) float32 {
+	l.mu.RLock()
+	coeffs := make([]float32, len(l.Coefficients.Weights))
+	copy(coeffs, l.Coefficients.Weights)
+	l.mu.RUnlock()
+
+	basis := l.Grid.Evaluate(x)
+	var val float32
+	for j, b := range basis {
+		if j < len(coeffs) {
+			val += coeffs[j] * b
+		}
+	}
+	return val
+}
+
 // GetCoefficients returns a copy of the current coefficients.
 func (l *Layer) GetCoefficients() []float32 {
 	l.mu.RLock()
