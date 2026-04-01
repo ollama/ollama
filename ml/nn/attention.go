@@ -173,14 +173,24 @@ func AttentionWithVMLA(ctx ml.Context, query, key, value, sinks ml.Tensor, vmla 
 		key, value, mask = cache.Get(ctx)
 	}
 
-	if sdpa, ok := query.(ml.ScaledDotProductAttention); ok {
-		// Flash attention path: softmax is fused in the kernel.
-		// KAN cannot operate here since logits are never materialized.
-		cacheConfigApplied := cache != nil
-		return sdpa.ScaledDotProductAttention(ctx, key, value, mask, sinks, vmla, scale, cacheConfigApplied)
+	// When KAN attention is active, we MUST use the manual attention path
+	// to access pre-softmax logits for training and to apply effectiveScale.
+	// The GGML backend always implements ScaledDotProductAttention (even with
+	// flash attention disabled), so we skip that path entirely when KAN is on.
+	kanMu.RLock()
+	kanActive := kanTrainer != nil
+	kanMu.RUnlock()
+
+	if !kanActive {
+		if sdpa, ok := query.(ml.ScaledDotProductAttention); ok {
+			// Flash/fused attention path: softmax is inside the kernel.
+			// KAN cannot operate here since logits are never materialized.
+			cacheConfigApplied := cache != nil
+			return sdpa.ScaledDotProductAttention(ctx, key, value, mask, sinks, vmla, scale, cacheConfigApplied)
+		}
 	}
 
-	// Non-flash attention path: we have access to pre-softmax logits.
+	// Manual attention path: we have access to pre-softmax logits.
 	// This is where KAN shadow training and hot-swap happens.
 	query = query.Permute(ctx, 0, 2, 1, 3)
 	key = key.Permute(ctx, 0, 2, 1, 3)
