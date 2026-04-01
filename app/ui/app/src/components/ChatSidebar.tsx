@@ -286,13 +286,13 @@ export function ChatSidebar({ currentChatId }: ChatSidebarProps) {
           to="/c/$chatId"
           params={{ chatId: "launch" }}
           className={`flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 dark:text-neutral-100 cursor-pointer ${currentChatId === "launch"
-              ? "bg-neutral-100 dark:bg-neutral-800"
-              : ""
+            ? "bg-neutral-100 dark:bg-neutral-800"
+            : ""
             }`}
           draggable={false}
         >
           <RocketLaunchIcon className="h-5 w-5 stroke-current" />
-          <span className="truncate">Launch an App</span>
+          <span className="truncate">Launch</span>
         </Link>
         {isWindows && (
           <Link
@@ -316,8 +316,8 @@ export function ChatSidebar({ currentChatId }: ChatSidebarProps) {
                 <div
                   key={chat.id}
                   className={`allow-context-menu flex items-center relative text-sm text-neutral-800 dark:text-neutral-400 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 ${chat.id === currentChatId
-                      ? "bg-neutral-100 text-black dark:bg-neutral-800"
-                      : ""
+                    ? "bg-neutral-100 text-black dark:bg-neutral-800"
+                    : ""
                     }`}
                   onMouseEnter={() => handleMouseEnter(chat.id)}
                   onContextMenu={(e) =>
