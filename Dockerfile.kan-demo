@@ -7,19 +7,23 @@
 # Run:
 #   docker run -it --rm -p 11434:11434 ollama-kan
 #
-# Then from another terminal:
-#   curl http://localhost:11434/api/chat -d '{
-#     "model": "tinyllama",
-#     "messages": [{"role": "user", "content": "Tell me a story about a dragon"}]
-#   }'
-#
 # Or use the interactive warm-up + test mode:
 #   docker run -it --rm -p 11434:11434 ollama-kan /kan-demo.sh
 
+ARG CMAKEVERSION=3.31.2
+ARG NINJAVERSION=1.12.1
+
 # === Stage 1: Build GGML CPU backend ===
-FROM --platform=linux/amd64 rockylinux:9-minimal AS ggml-build
-RUN microdnf install -y gcc gcc-c++ make cmake ninja-build curl \
+FROM rockylinux:9-minimal AS ggml-build
+ARG CMAKEVERSION
+ARG NINJAVERSION
+RUN microdnf install -y gcc gcc-c++ make curl unzip tar gzip \
     && microdnf clean all
+RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
+RUN curl -fsSL -o /tmp/ninja.zip https://github.com/ninja-build/ninja/releases/download/v${NINJAVERSION}/ninja-linux.zip \
+    && unzip /tmp/ninja.zip -d /usr/local/bin \
+    && rm /tmp/ninja.zip
+ENV CMAKE_GENERATOR=Ninja
 
 WORKDIR /build
 COPY CMakeLists.txt CMakePresets.json ./
@@ -29,14 +33,14 @@ RUN cmake --preset 'CPU' \
     && cmake --install build --component CPU --strip
 
 # === Stage 2: Build Ollama Go binary ===
-FROM --platform=linux/amd64 rockylinux:9-minimal AS go-build
-RUN microdnf install -y gcc gcc-c++ make curl git ca-certificates \
+FROM rockylinux:9-minimal AS go-build
+RUN microdnf install -y gcc gcc-c++ make curl git ca-certificates tar gzip \
     && microdnf clean all
 
 # Install Go
 WORKDIR /go/src/github.com/ollama/ollama
 COPY go.mod go.sum ./
-RUN curl -fsSL https://golang.org/dl/go1.24.1.linux-amd64.tar.gz \
+RUN curl -fsSL https://golang.org/dl/go1.24.1.linux-$(case $(uname -m) in x86_64) echo amd64 ;; aarch64) echo arm64 ;; esac).tar.gz \
     | tar xz -C /usr/local
 ENV PATH=/usr/local/go/bin:$PATH
 RUN go mod download
