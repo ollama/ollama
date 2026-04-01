@@ -16,6 +16,7 @@ import (
 // Default set of vision models to test. When OLLAMA_TEST_MODEL is set,
 // only that model is tested (with a capability check for vision).
 var defaultVisionModels = []string{
+	"gemma4",
 	"gemma3",
 	"llama3.2-vision",
 	"qwen2.5vl",

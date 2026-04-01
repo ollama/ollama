@@ -24,10 +24,6 @@ func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkV
 	var sb strings.Builder
 	imageOffset := 0
 
-	// BOS token — Gemma 4 models have add_bos_token=false in their tokenizer
-	// config, so the tokenizer does not auto-prepend BOS. We must emit it
-	// explicitly in the rendered prompt, matching the HF chat template.
-	sb.WriteString("<bos>")
 	// Extract system message if present.
 	var systemMessage string
 	var loopMessages []api.Message

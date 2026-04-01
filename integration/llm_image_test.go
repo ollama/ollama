@@ -15,6 +15,7 @@ func TestVisionModels(t *testing.T) {
 	skipUnderMinVRAM(t, 6)
 
 	defaultVisionModels := []string{
+		"gemma4",
 		"qwen2.5vl",
 		"llama3.2-vision",
 		"gemma3",
