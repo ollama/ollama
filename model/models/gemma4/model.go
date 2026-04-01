@@ -2,6 +2,7 @@ package gemma4
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"log/slog"
 	"slices"
@@ -23,13 +24,19 @@ type Model struct {
 
 	*VisionModel `gguf:"v"`
 	*TextModel
+	*AudioModel `gguf:"a"`
 
-	*MultiModalProjector `gguf:"mm"`
+	*MultiModalProjector  `gguf:"mm"`
+	*AudioMultimodalProjector `gguf:"mm.a"`
 
 	ImageProcessor
 
 	imageTokenID    int32
 	imageEndTokenID int32
+	audioTokenID    int32
+	audioEndTokenID int32
+
+	audioOpts *AudioModelOptions
 }
 
 var _ model.MultimodalProcessor = (*Model)(nil)
@@ -69,26 +76,39 @@ func New(c fs.Config) (model.Model, error) {
 	t := tokenizer.NewBytePairEncodingWithOptions(&vocabulary, []string{},
 		tokenizer.WithSentencePieceNormalizer())
 
-	// Look up special token IDs for vision
+	// Look up special token IDs for vision and audio
 	imageTokenID := int32(-1)
 	imageEndTokenID := int32(-1)
+	audioTokenID := int32(-1)
+	audioEndTokenID := int32(-1)
 	for i, tok := range vocabulary.Values {
 		switch tok {
 		case "<|image>":
 			imageTokenID = int32(i)
 		case "<image|>":
 			imageEndTokenID = int32(i)
+		case "<|audio>":
+			audioTokenID = int32(i)
+		case "<audio|>":
+			audioEndTokenID = int32(i)
 		}
 	}
+
+	slog.Info("gemma4: token IDs", "image", imageTokenID, "image_end", imageEndTokenID, "audio", audioTokenID, "audio_end", audioEndTokenID)
 
 	m := Model{
 		Tokenizer:            t,
 		TextModel:            newTextModel(c),
 		VisionModel:          newVisionModel(c),
+		AudioModel:           newAudioModel(c),
 		MultiModalProjector:  &MultiModalProjector{},
+		AudioMultimodalProjector: &AudioMultimodalProjector{},
 		ImageProcessor:       newImageProcessor(c),
 		imageTokenID:         imageTokenID,
 		imageEndTokenID:      imageEndTokenID,
+		audioTokenID:         audioTokenID,
+		audioEndTokenID:      audioEndTokenID,
+		audioOpts:            newAudioModelOptions(c),
 	}
 
 	slidingWindowLen := int32(c.Uint("attention.sliding_window"))
@@ -98,6 +118,11 @@ func New(c fs.Config) (model.Model, error) {
 }
 
 func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input.Multimodal, error) {
+	// Audio input: detect WAV format and route to audio encoder.
+	if isAudioData(multimodalData) {
+		return m.encodeAudioMultimodal(ctx, multimodalData)
+	}
+
 	if len(m.VisionModel.Layers) == 0 {
 		return nil, model.ErrNoVisionModel
 	}
@@ -133,31 +158,78 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 	return []input.Multimodal{{Tensor: visionOutputs}}, nil
 }
 
+func (m *Model) encodeAudioMultimodal(ctx ml.Context, data []byte) ([]input.Multimodal, error) {
+	if m.AudioModel == nil || m.audioOpts == nil {
+		return nil, model.ErrNoVisionModel
+	}
+
+	t0 := time.Now()
+	samples, err := decodeWAV(data)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("audio: decode", "elapsed", time.Since(t0), "samples", len(samples), "duration_s", float64(len(samples))/audioSampleRate)
+
+	// Pad waveform to next multiple of 128.
+	if rem := len(samples) % 128; rem != 0 {
+		samples = append(samples, make([]float32, 128-rem)...)
+	}
+
+	// Compute mel spectrogram.
+	melData, numFrames := computeMelSpectrogram(samples)
+	if numFrames == 0 {
+		return nil, fmt.Errorf("audio too short to encode")
+	}
+	slog.Info("audio: mel", "frames", numFrames, "elapsed", time.Since(t0))
+
+	// Create input tensor [melBins, numFrames] (GGML ne order). FromFloats creates F32.
+	melTensor := ctx.Input().FromFloats(melData, melBins, numFrames)
+
+	// Run audio encoder.
+	audioOutputs := m.AudioModel.ForwardAudio(ctx, melTensor, m.AudioMultimodalProjector, m.audioOpts)
+	slog.Info("audio: encoded", "elapsed", time.Since(t0), "shape", audioOutputs.Shape())
+
+	return []input.Multimodal{{Tensor: audioOutputs, Data: audioTag{}}}, nil
+}
+
+// audioTag marks multimodal data as audio (vs vision) for PostTokenize.
+type audioTag struct{}
+
 func (m *Model) PostTokenize(inputs []*input.Input) ([]*input.Input, error) {
 	var result []*input.Input
 
 	for _, inp := range inputs {
 		if len(inp.Multimodal) == 0 {
 			result = append(result, inp)
+			continue
+		}
+
+		inputMultimodal := inp.Multimodal[0].Tensor
+		numTokens := inputMultimodal.Dim(1)
+
+		// Determine if this is audio or vision based on the tag.
+		_, isAudio := inp.Multimodal[0].Data.(audioTag)
+
+		var beginToken, endToken int32
+		if isAudio {
+			beginToken = m.audioTokenID
+			endToken = m.audioEndTokenID
 		} else {
-			inputMultimodal := inp.Multimodal[0].Tensor
-			numImageTokens := inputMultimodal.Dim(1)
+			beginToken = m.imageTokenID
+			endToken = m.imageEndTokenID
+		}
 
-			// <|image>
-			if m.imageTokenID >= 0 {
-				result = append(result, &input.Input{Token: m.imageTokenID, SameBatch: numImageTokens + 2})
-			}
+		if beginToken >= 0 {
+			result = append(result, &input.Input{Token: beginToken, SameBatch: numTokens + 2})
+		}
 
-			// Image embedding placeholder tokens
-			result = append(result,
-				&input.Input{Multimodal: []input.Multimodal{{Tensor: inputMultimodal}}, MultimodalHash: inp.MultimodalHash},
-			)
-			result = append(result, slices.Repeat([]*input.Input{{Token: 0}}, numImageTokens-1)...)
+		result = append(result,
+			&input.Input{Multimodal: []input.Multimodal{{Tensor: inputMultimodal}}, MultimodalHash: inp.MultimodalHash},
+		)
+		result = append(result, slices.Repeat([]*input.Input{{Token: 0}}, numTokens-1)...)
 
-			// <image|>
-			if m.imageEndTokenID >= 0 {
-				result = append(result, &input.Input{Token: m.imageEndTokenID})
-			}
+		if endToken >= 0 {
+			result = append(result, &input.Input{Token: endToken})
 		}
 	}
 

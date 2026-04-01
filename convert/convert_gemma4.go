@@ -57,6 +57,16 @@ type gemma4Model struct {
 		PoolingKernelSize uint32  `json:"pooling_kernel_size"`
 		LayerNormEps      float32 `json:"layer_norm_eps"`
 	} `json:"vision_config"`
+
+	AudioModel *struct {
+		HiddenSize            uint32  `json:"hidden_size"`
+		InputFeatSize         uint32  `json:"input_feat_size"`
+		OutputProjDims        uint32  `json:"output_proj_dims"`
+		ConfNumHiddenLayers   uint32  `json:"conf_num_hidden_layers"`
+		ConfNumAttentionHeads uint32  `json:"conf_num_attention_heads"`
+		ConfConvKernelSize    uint32  `json:"conf_conv_kernel_size"`
+		RMSNormEps            float32 `json:"rms_norm_eps"`
+	} `json:"audio_config"`
 }
 
 func (p *gemma4Model) KV(t *Tokenizer) KV {
@@ -179,6 +189,24 @@ func (p *gemma4Model) KV(t *Tokenizer) KV {
 		kv["gemma4.vision.attention.layer_norm_epsilon"] = eps
 	}
 
+	// Audio model KV metadata
+	if p.AudioModel != nil && p.AudioModel.ConfNumHiddenLayers > 0 {
+		ac := p.AudioModel
+		kv["gemma4.audio.block_count"] = ac.ConfNumHiddenLayers
+		kv["gemma4.audio.embedding_length"] = ac.HiddenSize
+		kv["gemma4.audio.feed_forward_length"] = ac.HiddenSize * 4
+		kv["gemma4.audio.attention.head_count"] = ac.ConfNumAttentionHeads
+		kv["gemma4.audio.num_mel_bins"] = ac.InputFeatSize
+		eps := ac.RMSNormEps
+		if eps == 0 {
+			eps = 1e-6
+		}
+		kv["gemma4.audio.attention.layer_norm_epsilon"] = eps
+		if ac.ConfConvKernelSize > 0 {
+			kv["gemma4.audio.conv_kernel_size"] = ac.ConfConvKernelSize
+		}
+	}
+
 	return kv
 }
 
@@ -206,19 +234,17 @@ func (p *gemma4Model) Tensors(ts []Tensor) []*ggml.Tensor {
 	for _, t := range ts {
 		name := t.Name()
 
-		// Skip audio tensors (vision is now handled)
-		if strings.Contains(name, "audio_tower") || strings.Contains(name, "embed_audio") {
-			continue
-		}
-
 		// Skip embedding_post_projection_norm — used as weightless RMS norm in inference
 		if strings.Contains(name, "embedding_post_projection_norm") {
 			continue
 		}
 
-		// Skip clippable linear clamp scalars — packed into v.clamp_data below
-		if strings.Contains(name, "input_min") || strings.Contains(name, "input_max") ||
-			strings.Contains(name, "output_min") || strings.Contains(name, "output_max") {
+		// Skip vision clamp scalars — packed into v.clamp_data below.
+		// Audio clamp scalars are kept as individual tensors (matching published GGUF).
+		isVisionClamp := (strings.Contains(name, "input_min") || strings.Contains(name, "input_max") ||
+			strings.Contains(name, "output_min") || strings.Contains(name, "output_max")) &&
+			(strings.Contains(name, "vision_tower") || strings.Contains(name, "embed_vision"))
+		if isVisionClamp {
 			continue
 		}
 
@@ -262,6 +288,14 @@ func (p *gemma4Model) Tensors(ts []Tensor) []*ggml.Tensor {
 			shape = []uint64{1}
 		}
 
+		// Depthwise conv1d shape: safetensors [C, 1, K] → GGUF ne[K, C].
+		// Shape array here maps to GGUF ne[] directly, but safetensors reader
+		// stores shape in PyTorch order [C, 1, K] which the GGUF writer inverts.
+		// Published GGUF has ne[0]=K, ne[1]=C → shape array must be [K, C].
+		if strings.HasPrefix(name, "a.blk.") && strings.Contains(name, "conv_dw") && strings.HasSuffix(name, ".weight") && len(shape) == 3 {
+			shape = []uint64{shape[0], shape[2]}
+		}
+
 		// Fused MoE gate_up_proj: split [experts, 2*intermediate, hidden] into separate gate and up.
 		// No transpose needed — the split shape [experts, intermediate, hidden] already matches
 		// the GGUF layout after the framework's dimension reversal (ne[0]=hidden matches input).
@@ -286,9 +320,13 @@ func (p *gemma4Model) Tensors(ts []Tensor) []*ggml.Tensor {
 		// which the framework reverses to GGUF ne=[in, out, experts], matching ggml_mul_mat_id.
 		// (transposeExperts was incorrectly swapping dims — removed)
 
+		// Audio conv weights are forced to F32 via tensorBase.Kind() in reader.go
+		// (im2col doesn't support BF16). No kindOverride needed — the Kind() method
+		// controls both the GGUF header type AND the WriteTo data encoding path.
+		var kindOverride *uint32
+
 		// Vision patch embedding: reshape from [n_embd, ksize_sq_c] to [n_embd, 3, patch_size, patch_size]
 		// Must be stored as F16 (not BF16) because the Conv2D im2col kernel requires F16/F32.
-		var kindOverride *uint32
 		if strings.Contains(name, "v.patch_embd.weight") && len(shape) == 2 {
 			nEmbd := shape[0]
 			patchSize := uint64(p.VisionModel.PatchSize)
@@ -454,17 +492,76 @@ func (*gemma4Model) sliceExperts(dim1Slice tensor.Slice) Repacker {
 	}
 }
 
+// softplusRepacker applies softplus (ln(1 + exp(x))) to tensor data.
+// Used for per_dim_scale tensors which the published GGUF stores pre-activated.
+func softplusRepacker(_ string, data []float32, shape []uint64) ([]float32, error) {
+	result := make([]float32, len(data))
+	for i, x := range data {
+		result[i] = float32(math.Log(1 + math.Exp(float64(x))))
+	}
+	return result, nil
+}
+
+// squeezeMiddleDim squeezes the middle dimension from [C, 1, K] → [C, K] for depthwise conv1d weights.
+// Data layout stays the same since the middle dim is 1 — just a shape change.
+func squeezeMiddleDim(_ string, data []float32, _ []uint64) ([]float32, error) {
+	return data, nil
+}
+
 func (p *gemma4Model) Replacements() []string {
 	return []string{
-		// Vision ClippableLinear wraps nn.Linear — strip .linear. from weight path
+		// ClippableLinear wraps nn.Linear — strip .linear. from weight path
 		".linear.weight", ".weight",
+		".linear.bias", ".bias",
+
+		// Audio SSCP (Sub-Sample Convolution Projection)
+		"model.audio_tower.subsample_conv_projection.conv_0.conv", "a.conv1d.0",
+		"model.audio_tower.subsample_conv_projection.conv_0.norm", "a.conv1d.0.norm",
+		"model.audio_tower.subsample_conv_projection.conv_1.conv", "a.conv1d.1",
+		"model.audio_tower.subsample_conv_projection.conv_1.norm", "a.conv1d.1.norm",
+		"model.audio_tower.subsample_conv_projection.input_proj_linear", "a.pre_encode.out",
+
+		// Audio conformer blocks
+		"model.audio_tower.conformer", "a.blk",
+
+		// Audio conformer attention (must be before shared attn replacements)
+		"attention.attn.relative_position_embedding.pos_proj", "linear_pos",
+		"attention.attn.per_dim_key_scale", "per_dim_k_scale",
+		"attention.attn.per_dim_scale", "per_dim_scale",
+		"attention.attn.q_proj", "attn_q",
+		"attention.attn.k_proj", "attn_k",
+		"attention.attn.v_proj", "attn_v",
+		"attention.post_norm", "ln2",
+		"attention.pre_attn_norm", "ln1",
+		"attention.post", "attn_out",
+
+		// Audio conformer feedforward
+		"ffw_layer_start.pre_layer_norm", "ffn_norm",
+		"ffw_layer_start.post_layer_norm", "ffn_post_norm",
+		"ffw_layer_start.ffw_layer_1", "ffn_up",
+		"ffw_layer_start.ffw_layer_2", "ffn_down",
+		"ffw_layer_end.pre_layer_norm", "ffn_norm_1",
+		"ffw_layer_end.post_layer_norm", "ffn_post_norm_1",
+		"ffw_layer_end.ffw_layer_1", "ffn_up_1",
+		"ffw_layer_end.ffw_layer_2", "ffn_down_1",
+
+		// Audio conformer lightweight conv1d
+		"lconv1d.depthwise_conv1d", "conv_dw",
+		"lconv1d.pre_layer_norm", "conv_norm",
+		"lconv1d.conv_norm", "norm_conv",
+		"lconv1d.linear_start", "conv_pw1",
+		"lconv1d.linear_end", "conv_pw2",
+
+		// Audio embedder and output projection
+		"model.embed_audio.embedding_projection", "mm.a.input_projection",
+		"model.audio_tower.output_proj", "mm.a.fc",
 
 		// Vision encoder
 		"model.vision_tower.encoder.layers", "v.blk",
 		"model.vision_tower.patch_embedder.input_proj", "v.patch_embd",
 		"model.vision_tower.patch_embedder.position_embedding_table", "v.position_embd.weight",
 
-		// Multimodal projector
+		// Vision multimodal projector
 		"model.embed_vision.embedding_projection", "mm.input_projection",
 
 		// Text model
