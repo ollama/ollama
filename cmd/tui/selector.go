@@ -820,7 +820,7 @@ func (m multiSelectorModel) View() string {
 	count := m.selectedCount()
 	if !m.multi {
 		if count > 0 {
-			s.WriteString(sectionHeaderStyle.Render(fmt.Sprintf("%d selected - press tab to edit", count)))
+			s.WriteString(selectorDescStyle.Render(fmt.Sprintf("  %d selected - press tab to edit", count)))
 			s.WriteString("\n\n")
 		}
 		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • enter select • tab add multiple • ← back"))
