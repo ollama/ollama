@@ -60,6 +60,26 @@ func GetKANTrainer() *kan.ShadowTrainer {
 	return kanTrainer
 }
 
+// GetKANPendingTensors returns all KAN training tensors that need to be
+// included in Compute() for data materialization. Call this after the
+// forward pass but before Compute(), and pass the returned tensors
+// alongside the model output.
+func GetKANPendingTensors() []ml.Tensor {
+	kanPendingMu.Lock()
+	defer kanPendingMu.Unlock()
+
+	var tensors []ml.Tensor
+	for _, item := range kanPending {
+		if item.kq != nil {
+			tensors = append(tensors, item.kq)
+		}
+		if item.softmax != nil {
+			tensors = append(tensors, item.softmax)
+		}
+	}
+	return tensors
+}
+
 // FlushKANTraining processes all deferred training work.
 //
 // MUST be called after ctx.Compute() so that tensor data is materialized.

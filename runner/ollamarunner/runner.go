@@ -716,12 +716,19 @@ func (s *Server) computeBatch(activeBatch batchState) {
 	s.mu.Unlock()
 
 	activeBatch.batch.Inputs.FromInts(batchInputs)
+
+	// Collect KAN training tensors so they get materialized during Compute.
+	kanTensors := nn.GetKANPendingTensors()
+	computeTensors := make([]ml.Tensor, 0, 1+len(kanTensors))
+	computeTensors = append(computeTensors, activeBatch.modelOutput)
+	computeTensors = append(computeTensors, kanTensors...)
+
 	activeBatch.ctx.ComputeWithNotify(
 		func() {
 			logutil.Trace("computeBatch: signaling computeStartedCh", "batchID", activeBatch.id)
 			activeBatch.computeStartedCh <- struct{}{}
 		},
-		activeBatch.modelOutput)
+		computeTensors...)
 
 	// Process deferred KAN training now that tensor data is materialized.
 	// This reads pre-softmax logits and softmax outputs from the computed
