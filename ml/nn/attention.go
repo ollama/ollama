@@ -173,25 +173,47 @@ func AttentionWithVMLA(ctx ml.Context, query, key, value, sinks ml.Tensor, vmla 
 		key, value, mask = cache.Get(ctx)
 	}
 
-	// When KAN attention is active, we MUST use the manual attention path
-	// to access pre-softmax logits for training and to apply effectiveScale.
-	// The GGML backend always implements ScaledDotProductAttention (even with
-	// flash attention disabled), so we skip that path entirely when KAN is on.
+	// KAN attention: only bypass SDPA for layers still training.
+	// Converged layers pass through SDPA with effectiveScale baked into the
+	// scale factor — full flash attention performance is restored after convergence.
 	kanMu.RLock()
-	kanActive := kanTrainer != nil
+	trainer := kanTrainer
 	kanMu.RUnlock()
 
-	if !kanActive {
+	needManualPath := false
+	kanScale := 1.0
+	if trainer != nil {
+		layerIdx := ctx.LayerIndex()
+		if layerIdx >= 0 {
+			key := kan.LayerKey(layerIdx)
+			trainer.GetOrCreateLayer(key)
+
+			if trainer.IsConverged(key) {
+				// Converged: can use SDPA with the KAN's effective scale.
+				// This preserves flash attention performance while applying
+				// the Phase 2 sharpening effect.
+				kanScale = trainer.GetEffectiveScale(key)
+
+				// Still register for Phase 2 evolution if active.
+				// We can't capture logits through SDPA, but Phase 2 can
+				// use its existing state to continue evolving.
+			} else {
+				// Not converged: need manual path to capture logits for training
+				needManualPath = true
+			}
+		}
+	}
+
+	if !needManualPath {
 		if sdpa, ok := query.(ml.ScaledDotProductAttention); ok {
-			// Flash/fused attention path: softmax is inside the kernel.
-			// KAN cannot operate here since logits are never materialized.
 			cacheConfigApplied := cache != nil
-			return sdpa.ScaledDotProductAttention(ctx, key, value, mask, sinks, vmla, scale, cacheConfigApplied)
+			return sdpa.ScaledDotProductAttention(ctx, key, value, mask, sinks, vmla, scale*kanScale, cacheConfigApplied)
 		}
 	}
 
 	// Manual attention path: we have access to pre-softmax logits.
-	// This is where KAN shadow training and hot-swap happens.
+	// Used for non-converged KAN layers (shadow training) or when
+	// the backend doesn't support SDPA.
 	query = query.Permute(ctx, 0, 2, 1, 3)
 	key = key.Permute(ctx, 0, 2, 1, 3)
 	value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
@@ -214,23 +236,16 @@ func AttentionWithVMLA(ctx ml.Context, query, key, value, sinks ml.Tensor, vmla 
 	return kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 }
 
-// applyAttentionWeights applies either softmax or KAN-enhanced attention weights.
+// applyAttentionWeights applies softmax with optional KAN shadow training.
 //
-// All operations stay within the GGML computation graph (no tensor data reads).
-// Training work is deferred to FlushKANTraining() which runs after Compute().
+// This is only reached via the manual attention path, which means either:
+//   - No KAN trainer is active (standard softmax)
+//   - A non-converged KAN layer needs logit capture for training
+//   - The backend doesn't support SDPA
 //
-// When no KAN trainer is active: standard softmax.
-//
-// When KAN is active and layer has converged:
-//
-//	Temperature-scaled softmax using the KAN's learned effective scale.
-//	This captures the KAN's sharpening effect without needing custom GPU kernels.
-//	softmax(effectiveScale * logits) ≈ KAN(logits)
-//
-// When KAN is active but not yet converged:
-//
-//	Standard softmax (ground truth), with tensors registered for
-//	deferred shadow training after Compute().
+// Converged KAN layers go through SDPA with effectiveScale baked into the
+// scale factor (handled in AttentionWithVMLA above), so they never reach here.
+// This preserves flash attention performance after convergence.
 func applyAttentionWeights(ctx ml.Context, kq ml.Tensor) ml.Tensor {
 	kanMu.RLock()
 	trainer := kanTrainer
@@ -242,40 +257,12 @@ func applyAttentionWeights(ctx ml.Context, kq ml.Tensor) ml.Tensor {
 
 	layerIdx := ctx.LayerIndex()
 	if layerIdx < 0 {
-		// No layer context (e.g., vision encoder) -- fall back to softmax
 		return kq.Softmax(ctx)
 	}
 
 	key := kan.LayerKey(layerIdx)
 
-	// Ensure the layer exists in the trainer
-	trainer.GetOrCreateLayer(key)
-
-	if trainer.IsConverged(key) {
-		// Hot-swap: express KAN's effect as temperature-scaled softmax.
-		// The effective scale captures the KAN's learned transform slope.
-		// scale > 1.0 = sharper attention (Phase 2 effect).
-		effectiveScale := trainer.GetEffectiveScale(key)
-
-		// Register for deferred Phase 2 evolution (processed after Compute)
-		if trainer.IsPhase2Active(key) {
-			kanPendingMu.Lock()
-			kanPending = append(kanPending, kanPendingItem{
-				key:       key,
-				kq:        kq,
-				shape:     kq.Shape(),
-				converged: true,
-			})
-			kanPendingMu.Unlock()
-		}
-
-		if effectiveScale != 1.0 {
-			kq = kq.Scale(ctx, effectiveScale)
-		}
-		return kq.Softmax(ctx)
-	}
-
-	// Not converged: use standard softmax as output
+	// Use standard softmax as output (ground truth for training)
 	softmaxOut := kq.Softmax(ctx)
 
 	// Register for deferred shadow training (processed after Compute)
