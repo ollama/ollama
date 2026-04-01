@@ -201,8 +201,8 @@ for i in $(seq 0 7); do
     echo -e "${BOLD}${CYAN}Test $((i+1)): ${TEST_NAMES[$i]}${NC}"
     echo -e "${YELLOW}Expected: ${TEST_EXPECTS[$i]}${NC}"
 
-    baseline=$(sed -n "/=== Test $((i+1)):/,/END_RESPONSE/{/BEGIN_RESPONSE/,/END_RESPONSE/{/BEGIN_RESPONSE/d;/END_RESPONSE/d;p;}}" /tmp/kan-results-BASELINE_\(softmax\).txt)
-    kan=$(sed -n "/=== Test $((i+1)):/,/END_RESPONSE/{/BEGIN_RESPONSE/,/END_RESPONSE/{/BEGIN_RESPONSE/d;/END_RESPONSE/d;p;}}" /tmp/kan-results-KAN_ATTENTION.txt)
+    baseline=$(awk "/=== Test $((i+1)):/{found=1} found && /BEGIN_RESPONSE/{cap=1; next} found && /END_RESPONSE/{exit} cap{print}" "/tmp/kan-results-BASELINE_(softmax).txt")
+    kan=$(awk "/=== Test $((i+1)):/{found=1} found && /BEGIN_RESPONSE/{cap=1; next} found && /END_RESPONSE/{exit} cap{print}" "/tmp/kan-results-KAN_ATTENTION.txt")
 
     echo -e "  ${RED}Baseline:${NC} ${baseline:0:200}"
     echo -e "  ${GREEN}KAN:     ${NC} ${kan:0:200}"
@@ -245,8 +245,8 @@ for i in $(seq 0 7); do
     prompt="${TEST_PROMPTS[$i]}"
     expected="${TEST_EXPECTS[$i]}"
 
-    baseline=$(sed -n "/=== Test $((i+1)):/,/END_RESPONSE/{/BEGIN_RESPONSE/,/END_RESPONSE/{/BEGIN_RESPONSE/d;/END_RESPONSE/d;p;}}" /tmp/kan-results-BASELINE_\(softmax\).txt)
-    kan=$(sed -n "/=== Test $((i+1)):/,/END_RESPONSE/{/BEGIN_RESPONSE/,/END_RESPONSE/{/BEGIN_RESPONSE/d;/END_RESPONSE/d;p;}}" /tmp/kan-results-KAN_ATTENTION.txt)
+    baseline=$(awk "/=== Test $((i+1)):/{found=1} found && /BEGIN_RESPONSE/{cap=1; next} found && /END_RESPONSE/{exit} cap{print}" "/tmp/kan-results-BASELINE_(softmax).txt")
+    kan=$(awk "/=== Test $((i+1)):/{found=1} found && /BEGIN_RESPONSE/{cap=1; next} found && /END_RESPONSE/{exit} cap{print}" "/tmp/kan-results-KAN_ATTENTION.txt")
 
     echo -e "${BOLD}${CYAN}Judging Test $((i+1)): ${name}${NC}"
 
