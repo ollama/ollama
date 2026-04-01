@@ -925,21 +925,21 @@ func TestEvaluateRaw(t *testing.T) {
 	}
 }
 
-func TestComputeEffectiveScale(t *testing.T) {
+func TestRawSlope(t *testing.T) {
 	cfg := DefaultConfig()
 	layer := NewLayer(cfg)
 
 	// The initial KAN approximates identity, so effective scale should be positive
-	scale := computeEffectiveScale(layer)
+	scale := rawSlope(layer)
 	if scale <= 0 {
-		t.Errorf("computeEffectiveScale returned non-positive: %f", scale)
+		t.Errorf("rawSlope returned non-positive: %f", scale)
 	}
 	t.Logf("initial effective scale: %f", scale)
 
 	// Verify scale is consistent: calling it twice should give the same result
-	scale2 := computeEffectiveScale(layer)
+	scale2 := rawSlope(layer)
 	if math.Abs(scale-scale2) > 1e-10 {
-		t.Errorf("computeEffectiveScale not deterministic: %f vs %f", scale, scale2)
+		t.Errorf("rawSlope not deterministic: %f vs %f", scale, scale2)
 	}
 
 	// Create a layer with hand-crafted steeper coefficients (bypass normalization)
@@ -956,7 +956,7 @@ func TestComputeEffectiveScale(t *testing.T) {
 		}
 	}
 	steepLayer.UpdateCoefficients(coeffs)
-	steepScale := computeEffectiveScale(steepLayer)
+	steepScale := rawSlope(steepLayer)
 	t.Logf("modified effective scale: %f (original: %f)", steepScale, scale)
 	// The modified layer should have a different scale than the original
 	if steepScale == scale {
@@ -1007,10 +1007,11 @@ func TestEffectiveScaleSetOnConvergence(t *testing.T) {
 		t.Fatal("failed to converge")
 	}
 
-	// After convergence, effective scale should be set and positive
+	// After convergence, effective scale should be 1.0 because
+	// the KAN now matches softmax, so the graph should too.
 	scale := trainer.GetEffectiveScale(key)
-	if scale <= 0 || scale == 1.0 {
-		t.Errorf("expected non-trivial effective scale after convergence, got %f", scale)
+	if math.Abs(scale-1.0) > 1e-10 {
+		t.Errorf("expected effective scale = 1.0 at convergence, got %f", scale)
 	}
 	t.Logf("effective scale after convergence: %f", scale)
 }
@@ -1044,6 +1045,9 @@ func TestPhase2UpdatesEffectiveScale(t *testing.T) {
 	}
 
 	scaleAtConvergence := trainer.GetEffectiveScale(key)
+	if math.Abs(scaleAtConvergence-1.0) > 1e-10 {
+		t.Fatalf("expected scale=1.0 at convergence, got %f", scaleAtConvergence)
+	}
 
 	// Phase 2: evolve for several steps
 	for i := 0; i < 50; i++ {
@@ -1053,12 +1057,9 @@ func TestPhase2UpdatesEffectiveScale(t *testing.T) {
 	scaleAfterPhase2 := trainer.GetEffectiveScale(key)
 	t.Logf("scale at convergence: %f, after Phase 2: %f", scaleAtConvergence, scaleAfterPhase2)
 
-	// Phase 2 maximizes sharpness, which typically increases the scale
-	// (steeper transform = more peaked attention). Allow for the scale to
-	// have changed in either direction since the exact trajectory depends
-	// on the KAN's state.
-	if scaleAfterPhase2 == scaleAtConvergence {
-		t.Error("expected Phase 2 to modify effective scale, but it stayed the same")
+	// Phase 2 maximizes sharpness → steeper KAN → scale > 1.0
+	if scaleAfterPhase2 <= 1.0 {
+		t.Errorf("expected Phase 2 to increase effective scale above 1.0, got %f", scaleAfterPhase2)
 	}
 }
 

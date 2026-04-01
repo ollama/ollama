@@ -46,10 +46,15 @@ type layerState struct {
 	phase2Steps       int
 	emaSharpness      float64 // EMA of attention sharpness (negative entropy)
 
-	// effectiveScale is the linear slope of the KAN transform (f(x) ≈ scale*x).
-	// Used to express the KAN's effect as a temperature-scaled softmax in the
-	// GGML computation graph: softmax(scale * logits).
-	// 1.0 = identity (standard softmax), >1.0 = sharper attention.
+	// graduationSlope is the raw B-spline slope at the moment of convergence.
+	// Used as the reference point for computing effectiveScale.
+	graduationSlope float64
+
+	// effectiveScale is the RELATIVE slope change from graduation.
+	// effectiveScale = currentSlope / graduationSlope
+	// At convergence: 1.0 (KAN matches softmax, graph should too).
+	// After Phase 2 sharpening: >1.0 (steeper attention).
+	// Used in the GGML graph: softmax(effectiveScale * logits).
 	effectiveScale float64
 }
 
@@ -245,17 +250,18 @@ func (s *ShadowTrainer) TrainStep(key string, logits, softmaxOut []float32, seqK
 		state.convergenceCount++
 		if state.convergenceCount >= s.cfg.ConvergenceWindow {
 			state.converged = true
-			state.effectiveScale = computeEffectiveScale(state.kan)
+			state.graduationSlope = rawSlope(state.kan)
+			state.effectiveScale = 1.0 // At convergence, KAN ≈ softmax
 			// Activate Phase 2 self-evolution if enabled
 			if s.cfg.Phase2Enabled && !state.phase2Active {
 				state.phase2Active = true
 				state.graduationWeights = state.kan.GetCoefficients()
 				state.phase2Adam = newAdamState(len(state.graduationWeights))
 				slog.Info("KAN Phase 2 activated: self-evolution enabled", "layer", key,
-					"effective_scale", state.effectiveScale)
+					"graduation_slope", state.graduationSlope)
 			}
 			slog.Info("KAN attention converged", "layer", key, "ema_loss", state.emaLoss,
-				"steps", state.stepCount, "effective_scale", state.effectiveScale)
+				"steps", state.stepCount)
 		}
 	} else {
 		state.convergenceCount = 0
@@ -280,6 +286,8 @@ func (s *ShadowTrainer) GetLayerWeights(key string) []float32 {
 }
 
 // SetLayerWeights loads pre-trained weights for a layer and marks it converged.
+// Sets the graduation slope from the loaded weights so Phase 2 evolution
+// can compute relative effective scale correctly.
 func (s *ShadowTrainer) SetLayerWeights(key string, weights []float32) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -295,6 +303,15 @@ func (s *ShadowTrainer) SetLayerWeights(key string, weights []float32) {
 		state.kan.UpdateCoefficients(weights)
 	}
 	state.converged = true
+	state.graduationSlope = rawSlope(state.kan)
+	state.effectiveScale = 1.0 // Loaded weights = graduation state
+
+	// Enable Phase 2 if configured
+	if s.cfg.Phase2Enabled && !state.phase2Active {
+		state.phase2Active = true
+		state.graduationWeights = state.kan.GetCoefficients()
+		state.phase2Adam = newAdamState(len(state.graduationWeights))
+	}
 }
 
 // LayerKeys returns all registered layer keys.
@@ -321,11 +338,11 @@ func (s *ShadowTrainer) GetEffectiveScale(key string) float64 {
 	return 1.0
 }
 
-// computeEffectiveScale estimates the linear slope of the KAN transform
-// by evaluating the raw B-spline at sample points and fitting y = α*x.
-// This lets us express the KAN's effect as temperature-scaled softmax
-// in the GGML graph without pulling tensor data to CPU.
-func computeEffectiveScale(layer *Layer) float64 {
+// rawSlope estimates the linear slope of the KAN's B-spline transform
+// by evaluating at symmetric sample points and fitting y = α*x (forced
+// through origin). The symmetric points make the intercept term cancel,
+// so this correctly extracts just the slope even when the KAN has an offset.
+func rawSlope(layer *Layer) float64 {
 	// Sample points spanning the typical logit range
 	points := []float32{-4.0, -2.0, -1.0, 0.0, 1.0, 2.0, 4.0}
 	sumXY := 0.0
@@ -476,6 +493,7 @@ func (s *ShadowTrainer) Phase2Step(key string, logits []float32, seqK, seqQ int)
 			"layer", key, "drift", drift, "max", s.cfg.Phase2MaxDrift)
 		state.kan.UpdateCoefficients(state.graduationWeights)
 		state.phase2Adam = newAdamState(len(state.graduationWeights))
+		state.effectiveScale = 1.0 // Reverted to graduation = back to softmax
 		return state.emaSharpness, true
 	}
 
@@ -487,8 +505,11 @@ func (s *ShadowTrainer) Phase2Step(key string, logits []float32, seqK, seqQ int)
 		state.emaSharpness = 0.95*state.emaSharpness + 0.05*newSharpness
 	}
 
-	// Recompute effective scale so the GGML graph reflects the evolved KAN
-	state.effectiveScale = computeEffectiveScale(state.kan)
+	// Recompute effective scale as ratio of current slope to graduation slope.
+	// This captures just the Phase 2 sharpening delta.
+	if state.graduationSlope > 0 {
+		state.effectiveScale = rawSlope(state.kan) / state.graduationSlope
+	}
 
 	if state.phase2Steps%100 == 0 {
 		slog.Debug("KAN Phase 2 evolution", "layer", key, "step", state.phase2Steps,
