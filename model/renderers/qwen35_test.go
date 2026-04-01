@@ -90,9 +90,62 @@ func TestQwen35RendererNoThinkPrefill(t *testing.T) {
 	}
 }
 
+// TestQwen35RendererBackToBackToolCallsAndResponses verifies byte-exact
+// rendering of a multi-turn agentic conversation with parallel tool calls,
+// grouped tool responses, and a follow-up user query.
+//
+// Ground truth: the expected strings were derived by tracing through the
+// official Qwen/Qwen3.5-27B Jinja2 chat template (from tokenizer_config.json
+// on HuggingFace, verified identical between Qwen3.5-27B and Qwen3.5-35B-A3B)
+// with the same message array. Every byte was cross-checked against the
+// template source (chat_template.jinja lines 45-154) and the Go renderer
+// output (dumped to file and compared with diff).
+//
+// This test exercises five rendering properties simultaneously:
+//
+//  1. Pre-lastQueryIndex thinking omission. The assistant message is at index 2.
+//     The last non-tool-response user message is "Summarize the results." at
+//     index 5, so lastQueryIndex=5. Since 2 <= 5, the official template renders
+//     the assistant message WITHOUT <think> wrapping — reasoning_content is
+//     computed but discarded at line 102-103. This is a position-based rule, NOT
+//     controlled by enable_thinking. The complementary scenario (post-
+//     lastQueryIndex, where thinking IS preserved) is tested by
+//     TestQwen35RendererInterleavedThinkingAndTools.
+//
+//  2. Back-to-back tool calls in one assistant turn. The first tool call is
+//     preceded by \n\n (template line 112: content|trim is truthy), subsequent
+//     tool calls by \n (template line 117). Each tool call follows the XML
+//     format: <tool_call>\n<function=NAME>\n<parameter=NAME>\nVALUE\n
+//     </parameter>\n</function>\n</tool_call>. The </tool_call> of the last
+//     tool call is immediately followed by <|im_end|> with no intervening
+//     whitespace — the template emits <|im_end|>\n unconditionally at line 130.
+//
+//  3. Grouped tool responses. Consecutive tool messages share a single
+//     <|im_start|>user block (template lines 132-142). The <|im_end|> is
+//     emitted only after the last tool message in the group.
+//
+//  4. Tool definition JSON in the system prompt. Two tools (add, multiply) with
+//     integer-only parameters. The JSON uses spaced separators (": " and ", ")
+//     matching HuggingFace's tojson override (json.dumps with default
+//     separators). Field ordering follows Go struct declaration order, which
+//     matches get_json_schema() insertion order for simple types.
+//
+//  5. Generation prompt for both think modes. think=true appends
+//     <|im_start|>assistant\n<think>\n (template line 152). think=false appends
+//     <|im_start|>assistant\n<think>\n\n</think>\n\n (template line 150). The
+//     entire output is identical between modes except these trailing bytes —
+//     historical message rendering is independent of enable_thinking.
+//
+// Tool call argument types: the arguments are Go int values (2, 3, 4, 5).
+// formatToolCallArgument produces "2", "3", "4", "5" via fmt.Sprintf("%v").
+// The official template uses args_value|string for scalar arguments (Python's
+// str()), which also produces "2", "3", "4", "5" for Python ints. In real API
+// use, JSON-deserialized values arrive as float64, but fmt.Sprintf("%v",
+// float64(2)) also produces "2" — identical output for small whole numbers.
+// Known divergences for other types (bool True/False, None/null, large
+// integers like 1e15) are specified in Gap 10 of test_gap_analysis.md and do
+// not affect this test.
 func TestQwen35RendererBackToBackToolCallsAndResponses(t *testing.T) {
-	renderer := &Qwen35Renderer{isThinking: true}
-
 	msgs := []api.Message{
 		{Role: "system", Content: "You are a helpful assistant."},
 		{Role: "user", Content: "Run add and multiply."},
@@ -126,16 +179,69 @@ func TestQwen35RendererBackToBackToolCallsAndResponses(t *testing.T) {
 		{Role: "user", Content: "Summarize the results."},
 	}
 
-	got, err := renderer.Render(msgs, qwen35MathTools(), nil)
-	if err != nil {
-		t.Fatalf("render failed: %v", err)
-	}
+	t.Run("think=true", func(t *testing.T) {
+		renderer := &Qwen35Renderer{isThinking: true}
+		got, err := renderer.Render(msgs, qwen35MathTools(), nil)
+		if err != nil {
+			t.Fatalf("render failed: %v", err)
+		}
 
-	if strings.Contains(got, "Need to call add and multiply.") {
-		t.Fatalf("did not expect historical reasoning block in this sequence, got:\n%s", got)
-	}
+		// Targeted diagnostic: thinking content must NOT appear because the
+		// assistant message is at index 2, before lastQueryIndex=5. The official
+		// template discards reasoning_content for messages at or before
+		// last_query_index (line 102-103). This is independent of enable_thinking.
+		if strings.Contains(got, "Need to call add and multiply.") {
+			t.Errorf(
+				"historical thinking content leaked into pre-lastQueryIndex assistant message.\n\n"+
+					"The assistant message is at index 2, before lastQueryIndex=5 (the "+
+					"'Summarize the results.' user message). The official Qwen 3.5 template "+
+					"(line 102-103) discards reasoning_content for messages at or before "+
+					"last_query_index — this is a position-based rule, NOT controlled by "+
+					"enable_thinking. The thinking content should be silently omitted.\n\n"+
+					"got:\n%s", got,
+			)
+		}
 
-	wantToolCalls := `<tool_call>
+		want := `<|im_start|>system
+# Tools
+
+You have access to the following functions:
+
+<tools>
+{"type": "function", "function": {"name": "add", "description": "Add two numbers", "parameters": {"type": "object", "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}}, "required": ["a", "b"]}}}
+{"type": "function", "function": {"name": "multiply", "description": "Multiply two numbers", "parameters": {"type": "object", "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}}, "required": ["x", "y"]}}}
+</tools>
+
+If you choose to call a function ONLY reply in the following format with NO suffix:
+
+<tool_call>
+<function=example_function_name>
+<parameter=example_parameter_1>
+value_1
+</parameter>
+<parameter=example_parameter_2>
+This is the value for the second parameter
+that can span
+multiple lines
+</parameter>
+</function>
+</tool_call>
+
+<IMPORTANT>
+Reminder:
+- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags
+- Required parameters MUST be specified
+- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after
+- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls
+</IMPORTANT>
+
+You are a helpful assistant.<|im_end|>
+<|im_start|>user
+Run add and multiply.<|im_end|>
+<|im_start|>assistant
+I'll run both now.
+
+<tool_call>
 <function=add>
 <parameter=a>
 2
@@ -154,25 +260,151 @@ func TestQwen35RendererBackToBackToolCallsAndResponses(t *testing.T) {
 5
 </parameter>
 </function>
-</tool_call>`
-	if !strings.Contains(got, wantToolCalls) {
-		t.Fatalf("expected back-to-back tool calls, got:\n%s", got)
-	}
-
-	wantToolResponses := `<|im_start|>user
+</tool_call><|im_end|>
+<|im_start|>user
 <tool_response>
 5
 </tool_response>
 <tool_response>
 20
-</tool_response><|im_end|>`
-	if !strings.Contains(got, wantToolResponses) {
-		t.Fatalf("expected grouped back-to-back tool responses, got:\n%s", got)
-	}
+</tool_response><|im_end|>
+<|im_start|>user
+Summarize the results.<|im_end|>
+<|im_start|>assistant
+<think>
+`
+		if got != want {
+			t.Fatalf(
+				"byte-exact output mismatch.\n\n"+
+					"The expected string was derived by tracing through the official "+
+					"Qwen/Qwen3.5-27B Jinja2 chat template with the same message array. "+
+					"Any byte-level deviation changes the token IDs the model sees, pushing "+
+					"the input out of the training distribution. In multi-turn agentic "+
+					"conversations, deviations also invalidate the KV cache from the "+
+					"divergence point, forcing expensive recomputation of all subsequent "+
+					"tokens.\n\n--- got ---\n%s\n--- want ---\n%s", got, want,
+			)
+		}
+	})
 
-	if !strings.HasSuffix(got, "<|im_start|>assistant\n<think>\n") {
-		t.Fatalf("expected assistant thinking prefill at end, got:\n%s", got)
-	}
+	// think=false: verifies that the ONLY difference from think=true is the
+	// generation prompt suffix. Historical message rendering — including the
+	// pre-lastQueryIndex thinking omission, tool call XML, tool response
+	// grouping, and tool definitions — is identical regardless of think mode.
+	// The official template checks enable_thinking in exactly one place: the
+	// add_generation_prompt block at line 149.
+	t.Run("think=false", func(t *testing.T) {
+		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true}
+		got, err := renderer.Render(msgs, qwen35MathTools(), &api.ThinkValue{Value: false})
+		if err != nil {
+			t.Fatalf("render failed: %v", err)
+		}
+
+		// Same thinking absence check as think=true. The thinking is omitted
+		// because of lastQueryIndex position, NOT because of think=false. If
+		// someone incorrectly tied thinking omission to the think parameter
+		// instead of lastQueryIndex, both subtests would still pass here (the
+		// thinking is omitted either way for this message position), but
+		// TestQwen35RendererInterleavedThinkingAndTools/think=false would catch
+		// the regression for post-lastQueryIndex messages.
+		if strings.Contains(got, "Need to call add and multiply.") {
+			t.Errorf(
+				"historical thinking content leaked into pre-lastQueryIndex assistant message.\n\n"+
+					"The assistant message is before lastQueryIndex, so reasoning is discarded "+
+					"regardless of think mode. This is a position-based rule in the official "+
+					"template (line 102-103), not controlled by enable_thinking.\n\n"+
+					"got:\n%s", got,
+			)
+		}
+
+		want := `<|im_start|>system
+# Tools
+
+You have access to the following functions:
+
+<tools>
+{"type": "function", "function": {"name": "add", "description": "Add two numbers", "parameters": {"type": "object", "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}}, "required": ["a", "b"]}}}
+{"type": "function", "function": {"name": "multiply", "description": "Multiply two numbers", "parameters": {"type": "object", "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}}, "required": ["x", "y"]}}}
+</tools>
+
+If you choose to call a function ONLY reply in the following format with NO suffix:
+
+<tool_call>
+<function=example_function_name>
+<parameter=example_parameter_1>
+value_1
+</parameter>
+<parameter=example_parameter_2>
+This is the value for the second parameter
+that can span
+multiple lines
+</parameter>
+</function>
+</tool_call>
+
+<IMPORTANT>
+Reminder:
+- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags
+- Required parameters MUST be specified
+- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after
+- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls
+</IMPORTANT>
+
+You are a helpful assistant.<|im_end|>
+<|im_start|>user
+Run add and multiply.<|im_end|>
+<|im_start|>assistant
+I'll run both now.
+
+<tool_call>
+<function=add>
+<parameter=a>
+2
+</parameter>
+<parameter=b>
+3
+</parameter>
+</function>
+</tool_call>
+<tool_call>
+<function=multiply>
+<parameter=x>
+4
+</parameter>
+<parameter=y>
+5
+</parameter>
+</function>
+</tool_call><|im_end|>
+<|im_start|>user
+<tool_response>
+5
+</tool_response>
+<tool_response>
+20
+</tool_response><|im_end|>
+<|im_start|>user
+Summarize the results.<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+`
+		if got != want {
+			t.Fatalf(
+				"byte-exact output mismatch (think=false).\n\n"+
+					"The entire output is identical to think=true EXCEPT the generation "+
+					"prompt suffix: <think>\\n\\n</think>\\n\\n (6 tokens matching the "+
+					"official template's add_generation_prompt block at line 149-150 for "+
+					"enable_thinking=false) instead of <think>\\n (2 tokens for "+
+					"enable_thinking=true/undefined). Historical message rendering is "+
+					"unaffected by think mode — the official template checks "+
+					"enable_thinking in exactly one place.\n\n"+
+					"--- got ---\n%s\n--- want ---\n%s", got, want,
+			)
+		}
+	})
 }
 
 // TestQwen35RendererStructuredToolArgumentsUseSpacedJSON verifies that when a
