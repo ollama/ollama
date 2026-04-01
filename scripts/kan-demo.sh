@@ -195,14 +195,19 @@ for i in $(seq 0 7); do
     echo ""
 done
 
-# ─── Step 5: LLM-as-Judge evaluation ───
+# ─── Step 5: LLM-as-Judge evaluation (KAN OFF for impartiality) ───
 JUDGE_MODEL="${KAN_JUDGE:-mistral}"
 
-header "Step 5: LLM-as-Judge Evaluation"
-info "Pulling ${JUDGE_MODEL} as an impartial judge..."
-info "(Judge model is freshly loaded — KAN has NOT converged on it)"
-echo ""
+header "Step 5: Restarting with KAN OFF for Impartial Judging"
+info "Stopping KAN-enabled server..."
+stop_server
 
+export OLLAMA_KAN_ATTENTION=0
+export OLLAMA_FLASH_ATTENTION=true
+info "Starting server with KAN DISABLED — judge must be unbiased."
+start_server
+
+info "Pulling ${JUDGE_MODEL} as an impartial judge..."
 ollama pull "${JUDGE_MODEL}"
 
 judge() {
@@ -296,6 +301,15 @@ else
 fi
 echo ""
 info "Full judge reasoning: ${JUDGE_RESULTS}"
+
+# ─── Step 6: Restart with KAN for interactive chat ───
+header "Step 6: Restarting with KAN for Live Chat"
+stop_server
+
+export OLLAMA_KAN_ATTENTION=1
+export OLLAMA_FLASH_ATTENTION=false
+info "Starting server with KAN ENABLED..."
+start_server
 
 header "Done! Dropping you into live chat."
 info "KAN is trained and active. Go wild."
