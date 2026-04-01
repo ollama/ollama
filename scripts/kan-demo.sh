@@ -263,14 +263,18 @@ ${kan}
 
 STEP 1: Check if Response A contains the correct answer. State yes or no.
 STEP 2: Check if Response B contains the correct answer. State yes or no.
-STEP 3: If one is correct and the other is not, the correct one wins. If both are correct (or both wrong), judge on precision and conciseness.
+STEP 3: If one is correct and the other is not, the correct one wins.
+STEP 4: If both are correct (or both wrong), judge on:
+  - Instruction compliance: Did it follow ALL constraints (format, count, structure)?
+  - Conciseness: Less rambling is better.
+  - Quality of failure: If both wrong, is one wrong in a BETTER way? (e.g. shows understanding of the task, is more decisive, gets closer to the right answer, demonstrates awareness of constraints even if it fails to meet them)
 
 Reply with EXACTLY one of these verdicts on its own line:
 WINNER: A
 WINNER: B
 TIE
 
-Then explain your reasoning in 1-2 sentences, referencing the expected answer."
+Then explain your reasoning in 2-3 sentences, referencing the expected answer."
 
     verdict=$(judge "$judge_prompt")
     echo "$verdict"
