@@ -27,33 +27,51 @@ chat() {
 }
 
 start_server() {
-    ollama serve &
+    # Wait for port to be free before starting
+    for i in $(seq 1 10); do
+        if ! curl -s "${BASE_URL}/api/tags" > /dev/null 2>&1; then
+            break
+        fi
+        warn "Port ${PORT} still in use, waiting... ($i/10)"
+        sleep 2
+    done
+    ollama serve > /tmp/ollama-serve.log 2>&1 &
     SERVER_PID=$!
-    warn "Waiting for server..."
+    warn "Waiting for server (PID $SERVER_PID)..."
     for i in $(seq 1 30); do
+        # Check the process is still alive
+        if ! kill -0 $SERVER_PID 2>/dev/null; then
+            echo -e "${RED}[ERROR] Server process died. Log:${NC}"
+            tail -5 /tmp/ollama-serve.log
+            exit 1
+        fi
         if curl -s "${BASE_URL}/api/tags" > /dev/null 2>&1; then
             info "Server ready! (PID $SERVER_PID)"
             return 0
         fi
         sleep 1
     done
-    echo -e "${RED}[ERROR] Server failed to start${NC}"
+    echo -e "${RED}[ERROR] Server failed to start. Log:${NC}"
+    tail -10 /tmp/ollama-serve.log
     exit 1
 }
 
 stop_server() {
     # Kill any ollama process — covers both script-started and entrypoint-started servers
     killall ollama 2>/dev/null || true
+    sleep 1
+    killall -9 ollama 2>/dev/null || true
     if [ -n "$SERVER_PID" ]; then
         wait $SERVER_PID 2>/dev/null || true
     fi
-    sleep 2
+    sleep 3
     # Verify it's actually dead
     if curl -s "${BASE_URL}/api/tags" > /dev/null 2>&1; then
         warn "Server still running, force killing..."
         killall -9 ollama 2>/dev/null || true
-        sleep 1
+        sleep 3
     fi
+    SERVER_PID=""
 }
 
 # ─── Test prompts ───
