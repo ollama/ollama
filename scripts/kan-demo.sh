@@ -209,7 +209,7 @@ for i in $(seq 0 7); do
 done
 
 # ─── Step 5: LLM-as-Judge evaluation (KAN OFF for impartiality) ───
-JUDGE_MODEL="${KAN_JUDGE:-mistral}"
+JUDGE_MODEL="${KAN_JUDGE:-llama3}"
 
 header "Step 5: Restarting with KAN OFF for Impartial Judging"
 info "Stopping KAN-enabled server..."
@@ -249,29 +249,28 @@ for i in $(seq 0 7); do
 
     echo -e "${BOLD}${CYAN}Judging Test $((i+1)): ${name}${NC}"
 
-    judge_prompt="You are an impartial judge evaluating two AI responses to the same prompt.
+    judge_prompt="You are an impartial judge. You MUST check correctness against the EXPECTED ANSWER before considering anything else. A wrong answer NEVER beats a correct one.
 
 PROMPT: $(echo -e "$prompt")
 
 EXPECTED ANSWER: ${expected}
 
-RESPONSE A (Baseline):
+RESPONSE A:
 ${baseline}
 
-RESPONSE B (Experimental):
+RESPONSE B:
 ${kan}
 
-Evaluate which response better answers the prompt. Consider:
-1. Correctness: Does the response contain the right answer?
-2. Precision: Does it follow the instructions exactly (format, count, etc.)?
-3. Conciseness: Does it avoid unnecessary rambling?
+STEP 1: Check if Response A contains the correct answer. State yes or no.
+STEP 2: Check if Response B contains the correct answer. State yes or no.
+STEP 3: If one is correct and the other is not, the correct one wins. If both are correct (or both wrong), judge on precision and conciseness.
 
-Reply with EXACTLY one of these three verdicts on the first line:
+Reply with EXACTLY one of these verdicts on its own line:
 WINNER: A
 WINNER: B
 TIE
 
-Then briefly explain why in 1-2 sentences."
+Then explain your reasoning in 1-2 sentences, referencing the expected answer."
 
     verdict=$(judge "$judge_prompt")
     echo "$verdict"
