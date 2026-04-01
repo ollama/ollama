@@ -22,15 +22,17 @@ type layerHeader struct {
 	NumBasis   uint32
 	Order      uint32
 	NumWeights uint32
+	NumHeads   uint32 // Number of cooperative KAN heads
 }
 
 // metadata stores convergence state and config alongside the weights.
 type metadata struct {
-	Version   int               `json:"version"`
-	Config    Config            `json:"config"`
-	Converged map[string]bool   `json:"converged"`
-	Steps     map[string]int    `json:"steps"`
+	Version   int                `json:"version"`
+	Config    Config             `json:"config"`
+	Converged map[string]bool    `json:"converged"`
+	Steps     map[string]int     `json:"steps"`
 	EMALoss   map[string]float64 `json:"ema_loss"`
+	NumHeads  map[string]int     `json:"num_heads,omitempty"`
 }
 
 // Save writes all KAN layer parameters to the given directory.
@@ -57,12 +59,14 @@ func (s *ShadowTrainer) Save(dir string) error {
 		Converged: make(map[string]bool),
 		Steps:     make(map[string]int),
 		EMALoss:   make(map[string]float64),
+		NumHeads:  make(map[string]int),
 	}
 
 	for key, state := range s.layers {
 		meta.Converged[key] = state.converged
 		meta.Steps[key] = state.stepCount
 		meta.EMALoss[key] = state.emaLoss
+		meta.NumHeads[key] = state.kan.NumHeads()
 
 		if err := saveLayer(filepath.Join(dir, key+".bin"), state.kan, s.cfg); err != nil {
 			return fmt.Errorf("kan: save layer %s: %w", key, err)
@@ -143,12 +147,14 @@ func saveLayer(path string, kan *Layer, cfg Config) error {
 
 	weights := kan.GetCoefficients()
 
+	numHeads := kan.NumHeads()
 	hdr := layerHeader{
 		Magic:      kanMagic,
 		Version:    kanFileVersion,
 		NumBasis:   uint32(cfg.NumBasis),
 		Order:      uint32(cfg.Order),
 		NumWeights: uint32(len(weights)),
+		NumHeads:   uint32(numHeads),
 	}
 
 	if err := binary.Write(f, binary.LittleEndian, &hdr); err != nil {

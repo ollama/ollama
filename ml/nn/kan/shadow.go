@@ -56,6 +56,11 @@ type layerState struct {
 	// After Phase 2 sharpening: >1.0 (steeper attention).
 	// Used in the GGML graph: softmax(effectiveScale * logits).
 	effectiveScale float64
+
+	// Dynamic head spawning: plateau detection
+	bestLoss      float64 // best EMA loss seen so far
+	plateauCount  int     // steps since best loss improved significantly
+	lastHeadSpawn int     // step at which last head was spawned
 }
 
 // NewShadowTrainer creates a new trainer with the given configuration.
@@ -242,8 +247,43 @@ func (s *ShadowTrainer) TrainStep(key string, logits, softmaxOut []float32, seqK
 
 	if state.emaLoss == 0 || math.IsNaN(state.emaLoss) {
 		state.emaLoss = finalLoss
+		state.bestLoss = finalLoss
 	} else {
 		state.emaLoss = 0.99*state.emaLoss + 0.01*finalLoss
+	}
+
+	// === Dynamic head spawning: plateau detection ===
+	// If loss hasn't improved significantly in PlateauWindow steps,
+	// spawn a new cooperative head to break through the plateau.
+	if state.bestLoss > 0 && state.emaLoss < state.bestLoss*(1.0-s.cfg.PlateauImprovement) {
+		// Significant improvement — reset plateau counter
+		state.bestLoss = state.emaLoss
+		state.plateauCount = 0
+	} else {
+		state.plateauCount++
+	}
+
+	if state.plateauCount >= s.cfg.PlateauWindow &&
+		state.kan.NumHeads() < s.cfg.MaxHeads &&
+		state.stepCount-state.lastHeadSpawn > s.cfg.PlateauWindow {
+		// Spawn a new cooperative head
+		numHeads := state.kan.AddHead(s.cfg.NumBasis)
+
+		// Extend Adam state for the new head's parameters
+		newSize := numHeads * s.cfg.NumBasis
+		newAdam := newAdamState(newSize)
+		copy(newAdam.m, state.adam.m)
+		copy(newAdam.v, state.adam.v)
+		newAdam.t = state.adam.t
+		state.adam = newAdam
+
+		state.plateauCount = 0
+		state.bestLoss = state.emaLoss
+		state.lastHeadSpawn = state.stepCount
+
+		slog.Info("KAN spawned new cooperative head",
+			"layer", key, "heads", numHeads,
+			"ema_loss", state.emaLoss, "step", state.stepCount)
 	}
 
 	if state.emaLoss < float64(s.cfg.ConvergenceThreshold) {

@@ -5,74 +5,119 @@ import (
 	"sync"
 )
 
-// Layer is a single Geometric KAN layer that replaces softmax in attention.
+// Layer is a multi-head Geometric KAN layer that replaces softmax in attention.
 // It operates on pre-softmax attention logits (QK^T / sqrt(d_k) + mask)
 // and produces attention weights that sum to 1 per query position.
 //
-// The KAN applies learnable B-spline basis functions to each logit value,
-// with coefficients managed by the geometric mean normalization scheme.
+// Multiple heads cooperate additively in log-space: each head applies its own
+// B-spline basis functions with independently normalized coefficients, and
+// their outputs are summed before exp-normalize. This allows each head to
+// specialize on a different part of the error surface.
+//
+// New heads are spawned dynamically when loss plateaus (see ShadowTrainer),
+// initialized to zero so they don't disrupt existing heads.
 type Layer struct {
-	Grid         *BSplineGrid
-	Coefficients *Coefficients
-	mu           sync.RWMutex
+	Grid  *BSplineGrid
+	Heads []*Coefficients
+	mu    sync.RWMutex
 }
 
-// NewLayer creates a KAN layer initialized to approximate softmax behavior.
+// NewLayer creates a KAN layer with one head initialized to approximate softmax.
 func NewLayer(cfg Config) *Layer {
 	grid := NewBSplineGrid(cfg.Order, cfg.NumBasis, cfg.GridMin, cfg.GridMax)
 	return &Layer{
-		Grid:         grid,
-		Coefficients: NewCoefficients(grid),
+		Grid:  grid,
+		Heads: []*Coefficients{NewCoefficients(grid)},
 	}
 }
 
 // NewLayerFromWeights creates a KAN layer with pre-trained weights.
+// If len(weights) == numBasis, creates a single head.
+// If len(weights) == N * numBasis, creates N heads.
 func NewLayerFromWeights(cfg Config, weights []float32) *Layer {
 	grid := NewBSplineGrid(cfg.Order, cfg.NumBasis, cfg.GridMin, cfg.GridMax)
+
+	numBasis := cfg.NumBasis
+	numHeads := len(weights) / numBasis
+	if numHeads < 1 {
+		numHeads = 1
+	}
+
+	heads := make([]*Coefficients, numHeads)
+	for h := 0; h < numHeads; h++ {
+		start := h * numBasis
+		end := start + numBasis
+		if end > len(weights) {
+			end = len(weights)
+		}
+		heads[h] = NewCoefficientsFromWeights(weights[start:end])
+	}
+
 	return &Layer{
-		Grid:         grid,
-		Coefficients: NewCoefficientsFromWeights(weights),
+		Grid:  grid,
+		Heads: heads,
 	}
 }
 
-// Forward applies the Geometric KAN to attention logits (CPU-side).
+// NumHeads returns the current number of cooperative heads.
+func (l *Layer) NumHeads() int {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return len(l.Heads)
+}
+
+// AddHead spawns a new cooperative head initialized to zero (no-op).
+// Returns the new head count.
+func (l *Layer) AddHead(numBasis int) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.Heads = append(l.Heads, NewZeroCoefficients(numBasis))
+	return len(l.Heads)
+}
+
+// Forward applies the multi-head Geometric KAN to attention logits (CPU-side).
 //
-// Input: logits as a flat float32 slice (the pre-softmax QK^T scores for one head).
-//        Shape semantics: [seqK * seqQ] flattened, where seqQ is the number of
-//        query positions and seqK is the number of key positions.
-//        seqK is the "row" dimension -- each row of seqK values gets normalized.
+// Input: logits as a flat float32 slice.
+//
+//	Shape semantics: [seqK * seqQ] flattened, where seqQ is the number of
+//	query positions and seqK is the number of key positions.
 //
 // Output: attention weights (same shape), each row sums to 1.
 //
 // The computation for each scalar logit x:
-//   kan(x) = sum_i(c_i * B_i(x))
-// where B_i are cubic B-spline basis functions and c_i are the
-// geometrically-normalized coefficients.
 //
-// After computing KAN values, each row is normalized via L1 normalization
-// (divide by sum of absolute values) to maintain the probabilistic
-// interpretation of attention weights, then clamped to [0, 1].
+//	f(x) = Σ_head Σ_i (c_hi * B_i(x))
+//
+// Each head contributes additively in log-space. After computing the combined
+// KAN values, each row is normalized via stable exp + L1 normalization
+// (same as softmax).
 func (l *Layer) Forward(logits []float32, seqK, seqQ int) []float32 {
 	l.mu.RLock()
-	coeffs := make([]float32, len(l.Coefficients.Weights))
-	copy(coeffs, l.Coefficients.Weights)
+	// Snapshot all heads' coefficients
+	allCoeffs := make([][]float32, len(l.Heads))
+	for h, head := range l.Heads {
+		allCoeffs[h] = make([]float32, len(head.Weights))
+		copy(allCoeffs[h], head.Weights)
+	}
 	l.mu.RUnlock()
 
-	// Phase 1: Evaluate B-spline KAN for each logit (produces raw scores in log-space)
+	// Phase 1: Evaluate multi-head B-spline KAN for each logit
+	// Each head contributes additively in log-space
 	rawScores := make([]float32, len(logits))
 	for i, x := range logits {
 		basis := l.Grid.Evaluate(x)
 		var val float32
-		for j, b := range basis {
-			if j < len(coeffs) {
-				val += coeffs[j] * b
+		for _, coeffs := range allCoeffs {
+			for j, b := range basis {
+				if j < len(coeffs) {
+					val += coeffs[j] * b
+				}
 			}
 		}
 		rawScores[i] = val
 	}
 
 	// Phase 2: Row-wise numerically stable exp + normalization
-	// Same trick as stable softmax: subtract row max before exp to prevent overflow
 	output := make([]float32, len(logits))
 	for q := 0; q < seqQ; q++ {
 		rowStart := q * seqK
@@ -110,45 +155,68 @@ func (l *Layer) Forward(logits []float32, seqK, seqQ int) []float32 {
 }
 
 // ForwardSingleRow applies the KAN to a single row of logits and normalizes.
-// This is the hot path used after graduation (replacing softmax).
 func (l *Layer) ForwardSingleRow(logits []float32) []float32 {
 	return l.Forward(logits, len(logits), 1)
 }
 
-// UpdateCoefficients thread-safely replaces the coefficients after a training step.
-func (l *Layer) UpdateCoefficients(newWeights []float32) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	copy(l.Coefficients.Weights, newWeights)
-	l.Coefficients.NormalizeAndRedistribute()
-}
-
-// EvaluateRaw computes the raw B-spline transform for a single input point.
-// Returns sum(c_i * B_i(x)) without any exp or normalization.
-// Used to estimate the effective temperature/scale of the KAN.
+// EvaluateRaw computes the raw multi-head B-spline transform for a single point.
+// Returns Σ_head Σ_i (c_hi * B_i(x)) without any exp or normalization.
 func (l *Layer) EvaluateRaw(x float32) float32 {
 	l.mu.RLock()
-	coeffs := make([]float32, len(l.Coefficients.Weights))
-	copy(coeffs, l.Coefficients.Weights)
+	allCoeffs := make([][]float32, len(l.Heads))
+	for h, head := range l.Heads {
+		allCoeffs[h] = make([]float32, len(head.Weights))
+		copy(allCoeffs[h], head.Weights)
+	}
 	l.mu.RUnlock()
 
 	basis := l.Grid.Evaluate(x)
 	var val float32
-	for j, b := range basis {
-		if j < len(coeffs) {
-			val += coeffs[j] * b
+	for _, coeffs := range allCoeffs {
+		for j, b := range basis {
+			if j < len(coeffs) {
+				val += coeffs[j] * b
+			}
 		}
 	}
 	return val
 }
 
-// GetCoefficients returns a copy of the current coefficients.
+// UpdateCoefficients thread-safely replaces all heads' coefficients.
+// The flat slice is split into chunks of numBasis, one per head.
+// Each head's coefficients are independently normalized.
+func (l *Layer) UpdateCoefficients(newWeights []float32) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	numBasis := l.Grid.NumBasis
+	for h, head := range l.Heads {
+		start := h * numBasis
+		end := start + numBasis
+		if start >= len(newWeights) {
+			break
+		}
+		if end > len(newWeights) {
+			end = len(newWeights)
+		}
+		copy(head.Weights, newWeights[start:end])
+		head.NormalizeAndRedistribute()
+	}
+}
+
+// GetCoefficients returns a copy of all heads' coefficients concatenated.
 func (l *Layer) GetCoefficients() []float32 {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 
-	w := make([]float32, len(l.Coefficients.Weights))
-	copy(w, l.Coefficients.Weights)
+	total := 0
+	for _, head := range l.Heads {
+		total += len(head.Weights)
+	}
+
+	w := make([]float32, 0, total)
+	for _, head := range l.Heads {
+		w = append(w, head.Weights...)
+	}
 	return w
 }

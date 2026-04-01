@@ -62,6 +62,21 @@ type Config struct {
 	// reverts to the checkpoint. Safety rail. (default: 0.1)
 	Phase2MaxDrift float64
 
+	// MaxHeads is the maximum number of cooperative KAN heads per layer.
+	// Additional heads are spawned dynamically when loss plateaus.
+	// Each head specializes on a different part of the error surface,
+	// and they combine additively in log-space before exp-normalize.
+	// (default: 3)
+	MaxHeads int
+
+	// PlateauWindow is the number of training steps without significant
+	// improvement before a new head is spawned. (default: 200)
+	PlateauWindow int
+
+	// PlateauImprovement is the minimum relative EMA loss improvement
+	// to reset the plateau counter. 0.05 = 5% improvement. (default: 0.05)
+	PlateauImprovement float64
+
 	// SavePath is the directory for serialized KAN parameters (default: ~/.ollama/kan/)
 	SavePath string
 }
@@ -87,5 +102,8 @@ func DefaultConfig() Config {
 		Phase2LearningRate:   0.0001,
 		Phase2EveryN:         10,
 		Phase2MaxDrift:       0.1,
+		MaxHeads:             3,
+		PlateauWindow:        200,
+		PlateauImprovement:   0.05,
 	}
 }

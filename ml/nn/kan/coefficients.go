@@ -190,6 +190,13 @@ func (c *Coefficients) GeometricMean() float64 {
 	return math.Exp(logSum / float64(n))
 }
 
+// NewZeroCoefficients creates a coefficient set initialized to all zeros.
+// Used for new KAN heads — a zero head is a no-op in additive combination,
+// so it doesn't disrupt existing heads when spawned.
+func NewZeroCoefficients(n int) *Coefficients {
+	return &Coefficients{Weights: make([]float32, n)}
+}
+
 // Clone returns a deep copy of the coefficients.
 func (c *Coefficients) Clone() *Coefficients {
 	w := make([]float32, len(c.Weights))

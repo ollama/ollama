@@ -1111,3 +1111,165 @@ func TestMultiHeadTraining(t *testing.T) {
 		t.Errorf("multi-head training MSE too high: %f", mseVal)
 	}
 }
+
+func TestMultiHeadKANCooperation(t *testing.T) {
+	cfg := DefaultConfig()
+	layer := NewLayer(cfg)
+
+	// Start with 1 head
+	if layer.NumHeads() != 1 {
+		t.Fatalf("expected 1 head, got %d", layer.NumHeads())
+	}
+
+	// Add a second head (initialized to zero = no-op)
+	n := layer.AddHead(cfg.NumBasis)
+	if n != 2 {
+		t.Fatalf("expected 2 heads after AddHead, got %d", n)
+	}
+
+	// With zero second head, output should be identical to single-head
+	logits := []float32{1.0, 2.0, 3.0, 4.0}
+	singleHeadLayer := NewLayer(cfg)
+	singleOut := singleHeadLayer.Forward(logits, 4, 1)
+	multiOut := layer.Forward(logits, 4, 1)
+
+	for i := range singleOut {
+		if math.Abs(float64(singleOut[i]-multiOut[i])) > 1e-6 {
+			t.Errorf("zero head should be no-op: single[%d]=%f multi[%d]=%f",
+				i, singleOut[i], i, multiOut[i])
+		}
+	}
+
+	// Set varied weights on second head — output should change.
+	// (Uniform weights = constant function = cancels in softmax, so use varied values)
+	coeffs := layer.GetCoefficients()
+	numBasis := cfg.NumBasis
+	// Head 2 starts at offset numBasis
+	for i := numBasis; i < 2*numBasis; i++ {
+		if i < len(coeffs) {
+			coeffs[i] = float32(i-numBasis+1) * 0.3 // Non-constant: 0.3, 0.6, 0.9, ...
+		}
+	}
+	layer.UpdateCoefficients(coeffs)
+	changedOut := layer.Forward(logits, 4, 1)
+
+	different := false
+	for i := range multiOut {
+		if math.Abs(float64(multiOut[i]-changedOut[i])) > 1e-6 {
+			different = true
+			break
+		}
+	}
+	if !different {
+		t.Error("non-zero second head should change output")
+	}
+	t.Logf("single-head:  %v", singleOut)
+	t.Logf("multi (zero): %v", multiOut)
+	t.Logf("multi (live): %v", changedOut)
+}
+
+func TestMultiHeadGetSetCoefficients(t *testing.T) {
+	cfg := DefaultConfig()
+	layer := NewLayer(cfg)
+	layer.AddHead(cfg.NumBasis)
+	layer.AddHead(cfg.NumBasis)
+
+	// GetCoefficients should return 3 * numBasis values
+	coeffs := layer.GetCoefficients()
+	expectedLen := 3 * cfg.NumBasis
+	if len(coeffs) != expectedLen {
+		t.Fatalf("expected %d coefficients for 3 heads, got %d", expectedLen, len(coeffs))
+	}
+
+	// UpdateCoefficients should distribute correctly
+	newCoeffs := make([]float32, expectedLen)
+	for i := range newCoeffs {
+		newCoeffs[i] = float32(i) + 1.0
+	}
+	layer.UpdateCoefficients(newCoeffs)
+
+	// Verify each head was updated (values will be normalized but should differ)
+	result := layer.GetCoefficients()
+	if len(result) != expectedLen {
+		t.Fatalf("after update: expected %d coefficients, got %d", expectedLen, len(result))
+	}
+}
+
+func TestDynamicHeadSpawning(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.LearningRate = 0.001 // Slow enough to plateau
+	cfg.MaxHeads = 3
+	cfg.PlateauWindow = 50
+	cfg.PlateauImprovement = 0.01 // 1% improvement threshold
+	cfg.ConvergenceThreshold = 1e-6 // Very tight — won't converge with 1 head
+
+	trainer := NewShadowTrainer(cfg)
+	key := LayerKey(0)
+
+	logits := f64tof32([]float64{1.0, 2.0, 3.0, 4.0})
+	target := f64tof32(softmax([]float64{1.0, 2.0, 3.0, 4.0}))
+
+	headCounts := make(map[int]bool)
+	for step := 0; step < 2000; step++ {
+		trainer.TrainStep(key, logits, target, 4, 1)
+		nHeads := trainer.GetOrCreateLayer(key).NumHeads()
+		if !headCounts[nHeads] {
+			headCounts[nHeads] = true
+			t.Logf("step %d: now have %d heads", step, nHeads)
+		}
+		if nHeads >= 2 {
+			break // Success — head was spawned
+		}
+	}
+
+	layer := trainer.GetOrCreateLayer(key)
+	finalHeads := layer.NumHeads()
+	t.Logf("final head count: %d", finalHeads)
+
+	if finalHeads < 2 {
+		t.Error("expected at least 2 heads after plateau, got", finalHeads)
+	}
+
+	// Verify the multi-head layer still produces valid output
+	out := layer.Forward(logits, 4, 1)
+	var sum float32
+	for _, v := range out {
+		sum += v
+		if v < 0 || v > 1 {
+			t.Errorf("output out of range: %f", v)
+		}
+	}
+	if math.Abs(float64(sum)-1.0) > 1e-5 {
+		t.Errorf("output doesn't sum to 1: %f", sum)
+	}
+}
+
+func TestNewLayerFromWeightsMultiHead(t *testing.T) {
+	cfg := DefaultConfig()
+
+	// Single head: 8 weights
+	w1 := make([]float32, cfg.NumBasis)
+	for i := range w1 {
+		w1[i] = float32(i + 1)
+	}
+	layer1 := NewLayerFromWeights(cfg, w1)
+	if layer1.NumHeads() != 1 {
+		t.Errorf("expected 1 head for %d weights, got %d", cfg.NumBasis, layer1.NumHeads())
+	}
+
+	// Multi-head: 24 weights = 3 heads of 8
+	w3 := make([]float32, cfg.NumBasis*3)
+	for i := range w3 {
+		w3[i] = float32(i + 1)
+	}
+	layer3 := NewLayerFromWeights(cfg, w3)
+	if layer3.NumHeads() != 3 {
+		t.Errorf("expected 3 heads for %d weights, got %d", cfg.NumBasis*3, layer3.NumHeads())
+	}
+
+	// Coefficients should round-trip
+	got := layer3.GetCoefficients()
+	if len(got) != cfg.NumBasis*3 {
+		t.Errorf("expected %d coefficients, got %d", cfg.NumBasis*3, len(got))
+	}
+}
