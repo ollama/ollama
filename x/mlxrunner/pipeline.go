@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
@@ -131,7 +132,11 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 			}
 		}
 
-		r.Model.Forward(mlx.FromValues(tokens[processed:processed+n], n).ExpandDims(0), caches)
+		r.Model.Forward(&batch.ForwardBatch{
+			InputIDs: mlx.FromValues(tokens[processed:processed+n], n).ExpandDims(0),
+			SeqIDs:   []int{0},
+			SeqLens:  []int{n},
+		}, caches)
 		mlx.Sweep()
 		materializeCaches()
 		processed += n
@@ -149,7 +154,11 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	}
 
 	step := func(token *mlx.Array) (*mlx.Array, *mlx.Array) {
-		fwd := r.Model.Forward(token.ExpandDims(0), caches)
+		fwd := r.Model.Forward(&batch.ForwardBatch{
+			InputIDs: token.ExpandDims(0),
+			SeqIDs:   []int{0},
+			SeqLens:  []int{1},
+		}, caches)
 		logits := r.Model.Unembed(fwd)
 		logits = logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1)
 
