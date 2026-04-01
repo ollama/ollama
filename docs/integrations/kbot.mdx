@@ -1,0 +1,105 @@
+---
+title: kbot
+---
+
+kbot is an open-source terminal AI agent with 670+ built-in tools, 35 specialist agents, and a learning engine that improves over time.
+
+## Install
+
+Install [kbot](https://github.com/isaacsight/kernel):
+
+```bash
+npm install -g @kernel.chat/kbot
+```
+
+## Usage with Ollama
+
+### Quick setup
+
+```bash
+ollama launch kbot
+```
+
+This installs kbot, configures Ollama as the AI provider, and starts an interactive session with all 670+ tools available.
+
+To configure without launching:
+
+```shell
+ollama launch kbot --config
+```
+
+### Run directly with a model
+
+```shell
+ollama launch kbot --model qwen2.5-coder:32b
+```
+
+Cloud models are also available at [ollama.com](https://ollama.com/search?c=cloud).
+
+## What makes kbot different
+
+kbot ships with 670+ tools out of the box across coding, science, finance, security, music production, and more. It auto-routes requests to 35 specialist agents (coder, researcher, writer, guardian, quant, etc.) and learns your patterns over time.
+
+### Built-in tools (670+)
+
+| Category | Examples |
+|----------|---------|
+| **Files & Code** | read, write, glob, grep, lint, format, type-check |
+| **Shell** | bash, parallel execute, background tasks |
+| **Git & GitHub** | commit, diff, PR, issues, code search |
+| **Web** | search, fetch, browser automation |
+| **Science** | 114 tools — physics, chemistry, biology, neuroscience, math |
+| **Finance** | market data, technical analysis, paper trading, DeFi |
+| **Security** | vulnerability scanning, secret detection, SSL checks |
+| **Research** | arXiv, Semantic Scholar, PubMed, literature review |
+| **Music** | Ableton Live control, Serum 2 presets, DJ set builder |
+
+### 35 specialist agents
+
+kbot auto-routes each request to the right expert: `coder`, `researcher`, `writer`, `analyst`, `guardian`, `quant`, `investigator`, `oracle`, and 27 more. Override with `--agent <name>`.
+
+### Learning engine
+
+kbot extracts patterns and solutions from every session, building a profile that makes it faster and more accurate over time. All learning data stays local.
+
+## Manual setup
+
+Run kbot with Ollama directly:
+
+```bash
+kbot local
+```
+
+This auto-detects Ollama, lists available models, and configures kbot to use local AI at $0 cost.
+
+To specify a model:
+
+```bash
+kbot local --model qwen2.5-coder:32b
+```
+
+Or set the environment variable:
+
+```bash
+export OLLAMA_HOST=http://localhost:11434
+kbot --ollama-launch
+```
+
+### Recommended models
+
+| Model | Best for | Size |
+|-------|----------|------|
+| `qwen2.5-coder:32b` | Coding tasks | 18 GB |
+| `qwen2.5-coder:7b` | Fast coding | 4.7 GB |
+| `deepseek-r1:32b` | Reasoning | 19 GB |
+| `llama3.3:70b` | General | 40 GB |
+| `gemma3:12b` | Balanced | 8 GB |
+
+kbot requires models with at least 8K context. For best results, use 64K+ context models.
+
+## Additional features
+
+- **MCP server** — use kbot as a tool provider in Claude Code, Cursor, VS Code, or any MCP client: `kbot ide mcp`
+- **SDK** — use kbot programmatically: `import { agent } from '@kernel.chat/kbot'`
+- **20 providers** — switch between Ollama, Anthropic, OpenAI, Google, and 16 more with one command
+- **Web companion** — [kernel.chat](https://kernel.chat) provides a visual interface with the same agents

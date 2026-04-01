@@ -122,6 +122,7 @@
                   "/integrations/opencode",
                   "/integrations/droid",
                   "/integrations/goose",
+                  "/integrations/kbot",
                   "/integrations/pi"
                 ]
               },
