@@ -574,6 +574,7 @@ func getMaxAudioSeconds(info *api.ShowResponse) int {
 	if info == nil || info.ModelInfo == nil {
 		return 0
 	}
+	// Look for {arch}.max_audio_seconds in ModelInfo.
 	for k, v := range info.ModelInfo {
 		if strings.HasSuffix(k, ".max_audio_seconds") {
 			switch val := v.(type) {
@@ -585,6 +586,375 @@ func getMaxAudioSeconds(info *api.ShowResponse) int {
 		}
 	}
 	return 0
+}
+
+// ANSI escape helpers for transcription display.
+const (
+)
+
+// TranscribeHandler implements `ollama transcribe MODEL`.
+//
+// Two modes:
+//   - Interactive (tty on stdin): spacebar start/stop with >>> prompt,
+//     slash commands (/set, /show, /load, /bye, /?), word-wrapped output.
+//   - Non-interactive (pipe/redirect): reads audio from stdin or records
+//     until Ctrl+C, transcribes, writes word-wrapped text to stdout.
+func TranscribeHandler(cmd *cobra.Command, args []string) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	modelName := args[0]
+	interactive := term.IsTerminal(int(os.Stdin.Fd()))
+
+	// Pull model if needed and get model info.
+	showReq := &api.ShowRequest{Name: modelName}
+	info, err := client.Show(cmd.Context(), showReq)
+	if err != nil {
+		var se api.StatusError
+		if errors.As(err, &se) && se.StatusCode == http.StatusNotFound {
+			if err := PullHandler(cmd, []string{modelName}); err != nil {
+				return err
+			}
+			info, err = client.Show(cmd.Context(), showReq)
+			if err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	}
+
+	language, _ := cmd.Flags().GetString("language")
+
+	opts := runOptions{
+		Model:    modelName,
+		WordWrap: true,
+		Options:  map[string]any{"temperature": 0},
+		Language: language,
+	}
+
+	transcribeAndDisplay := func(wav []byte) {
+		state := &displayResponseState{}
+		_, err := transcribeAudio(cmd, opts, wav, func(tok string) {
+			displayResponse(tok, opts.WordWrap, state)
+		})
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Transcription error:", err)
+		}
+		fmt.Println()
+	}
+
+	// --- Non-interactive mode ---
+	if !interactive {
+		audioData, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return fmt.Errorf("read stdin: %w", err)
+		}
+
+		if len(audioData) > 44 {
+			// Pipe with data (at least WAV header size): transcribe and output.
+			transcribeAndDisplay(audioData)
+			return nil
+		}
+
+		// Empty stdin (< /dev/null or echo "" |): record until Ctrl+C.
+		recorder, err := NewAudioRecorder()
+		if err != nil {
+			return fmt.Errorf("audio input unavailable: %w", err)
+		}
+		if maxSec := getMaxAudioSeconds(info); maxSec > 0 {
+			recorder.MaxChunkSeconds = maxSec - 2
+		}
+
+		if err := recorder.Start(); err != nil {
+			return fmt.Errorf("start recording: %w", err)
+		}
+		fmt.Fprintln(os.Stderr, "Recording... Press Ctrl+C to stop.")
+
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, os.Interrupt)
+		<-sigCh
+		signal.Stop(sigCh)
+
+		recorder.Stop()
+		fmt.Fprintln(os.Stderr)
+
+		if wav := recorder.FlushWAV(); wav != nil {
+			transcribeAndDisplay(wav)
+		}
+		return nil
+	}
+
+	// --- Interactive mode ---
+	recorder, err := NewAudioRecorder()
+	if err != nil {
+		return fmt.Errorf("audio input unavailable: %w", err)
+	}
+	if maxSec := getMaxAudioSeconds(info); maxSec > 0 {
+		recorder.MaxChunkSeconds = maxSec - 2
+	}
+
+	scanner, err := readline.New(readline.Prompt{
+		Prompt:      ">>> ",
+		Placeholder: "Press Space to record (/? for help)",
+	})
+	if err != nil {
+		return err
+	}
+
+	fmt.Print(readline.StartBracketedPaste)
+	defer fmt.Printf(readline.EndBracketedPaste)
+
+	usage := func() {
+		fmt.Fprintln(os.Stderr, "Available Commands:")
+		fmt.Fprintln(os.Stderr, "  /set            Set session variables")
+		fmt.Fprintln(os.Stderr, "  /show           Show model information")
+		fmt.Fprintln(os.Stderr, "  /load <model>   Load a different model")
+		fmt.Fprintln(os.Stderr, "  /bye            Exit")
+		fmt.Fprintln(os.Stderr, "  /?, /help       Help for a command")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Press Space to start/stop recording.")
+		fmt.Fprintln(os.Stderr, "")
+	}
+
+	usageSet := func() {
+		fmt.Fprintln(os.Stderr, "Available Commands:")
+		fmt.Fprintln(os.Stderr, "  /set parameter ...     Set a parameter")
+		fmt.Fprintln(os.Stderr, "  /set wordwrap          Enable wordwrap")
+		fmt.Fprintln(os.Stderr, "  /set nowordwrap        Disable wordwrap")
+		fmt.Fprintln(os.Stderr, "  /set verbose           Show LLM stats")
+		fmt.Fprintln(os.Stderr, "  /set quiet             Disable LLM stats")
+		fmt.Fprintln(os.Stderr, "")
+	}
+
+	// doTranscribeRecording is like doAudioRecording but polls TakeChunk()
+	// during recording to stream transcription of long recordings.
+	doTranscribeRecording := func() ([]byte, error) {
+		fmt.Print(">>> \033[90m◉ Press Space to record...\033[0m")
+
+		for {
+			r, err := scanner.ReadRaw()
+			if err != nil {
+				return nil, io.EOF
+			}
+			if r == 3 { // Ctrl+C
+				fmt.Print("\r\033[K")
+				fmt.Println("Use Ctrl + d or /bye to exit.")
+				return nil, nil
+			}
+			if r == 4 { // Ctrl+D
+				fmt.Println()
+				return nil, io.EOF
+			}
+			if r == ' ' {
+				fmt.Print("\r\033[K") // clear the prompt line
+				break
+			}
+			if r == '/' || (r >= 32 && r < 127) {
+				fmt.Print("\r\033[K")
+				return nil, errFallbackToText{prefill: string(r)}
+			}
+		}
+
+		if err := recorder.Start(); err != nil {
+			fmt.Println()
+			return nil, fmt.Errorf("start recording: %w", err)
+		}
+
+		// Poll for chunks in a background goroutine while recording.
+		chunkDone := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(500 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-chunkDone:
+					return
+				case <-ticker.C:
+					if wav := recorder.TakeChunk(); wav != nil {
+						transcribeAndDisplay(wav)
+					}
+				}
+			}
+		}()
+
+		// Wait for Space to stop, Ctrl+C to discard, Ctrl+D to exit.
+		for {
+			r, err := scanner.ReadRaw()
+			if err != nil {
+				close(chunkDone)
+				recorder.Stop()
+				return nil, io.EOF
+			}
+			if r == 4 { // Ctrl+D
+				close(chunkDone)
+				recorder.Stop()
+				fmt.Println()
+				return nil, io.EOF
+			}
+			if r == 3 { // Ctrl+C
+				close(chunkDone)
+				recorder.Stop()
+				return nil, nil
+			}
+			if r == ' ' { // Space: stop recording
+				close(chunkDone)
+				recorder.Stop()
+				return recorder.FlushWAV(), nil
+			}
+			// Ignore other keys while recording.
+		}
+	}
+
+	for {
+		wav, err := doTranscribeRecording()
+		if err != nil {
+			var fallback errFallbackToText
+			if errors.As(err, &fallback) {
+				// User typed text instead of pressing Space.
+				line := fallback.prefill
+				if line == "/" {
+					// Need the rest of the command — read via readline.
+					scanner.Prefill = "/"
+					fullLine, err := scanner.Readline()
+					if errors.Is(err, io.EOF) {
+						fmt.Println()
+						return nil
+					}
+					if err != nil {
+						return err
+					}
+					line = fullLine
+				}
+				line = strings.TrimSpace(line)
+
+				switch {
+				case line == "/?" || line == "/help":
+					usage()
+				case strings.HasPrefix(line, "/? "):
+					arg := strings.TrimSpace(line[3:])
+					switch arg {
+					case "set":
+						usageSet()
+					default:
+						usage()
+					}
+				case strings.HasPrefix(line, "/set"):
+					args := strings.Fields(line)
+					if len(args) == 1 {
+						usageSet()
+						continue
+					}
+					switch args[1] {
+					case "wordwrap":
+						opts.WordWrap = true
+						fmt.Println("Set 'wordwrap' mode.")
+					case "nowordwrap":
+						opts.WordWrap = false
+						fmt.Println("Set 'nowordwrap' mode.")
+					case "verbose":
+						cmd.Flags().Set("verbose", "true")
+						fmt.Println("Set 'verbose' mode.")
+					case "quiet":
+						cmd.Flags().Set("verbose", "false")
+						fmt.Println("Set 'quiet' mode.")
+					case "parameter":
+						if len(args) < 4 {
+							fmt.Println("Usage: /set parameter <name> <value>")
+							continue
+						}
+						opts.Options[args[2]] = args[3]
+						fmt.Printf("Set parameter '%s' to '%s'\n", args[2], args[3])
+					default:
+						fmt.Printf("Unknown option: %s\n", args[1])
+						usageSet()
+					}
+				case strings.HasPrefix(line, "/show"):
+					args := strings.Fields(line)
+					if len(args) == 1 {
+						args = append(args, "info")
+					}
+					showReq := &api.ShowRequest{Name: opts.Model}
+					resp, err := client.Show(cmd.Context(), showReq)
+					if err != nil {
+						fmt.Println("Error:", err)
+						continue
+					}
+					switch args[1] {
+					case "info":
+						if err := showInfo(resp, false, os.Stdout); err != nil {
+							fmt.Println("Error:", err)
+						}
+					case "license":
+						fmt.Println(resp.License)
+					case "parameters":
+						fmt.Println(resp.Parameters)
+					case "system":
+						fmt.Println(resp.System)
+					default:
+						fmt.Printf("Unknown show command: %s\n", args[1])
+					}
+				case strings.HasPrefix(line, "/load"):
+					args := strings.Fields(line)
+					if len(args) != 2 {
+						fmt.Println("Usage: /load <modelname>")
+						continue
+					}
+					newModel := args[1]
+					fmt.Printf("Loading model '%s'\n", newModel)
+					showReq := &api.ShowRequest{Name: newModel}
+					newInfo, err := client.Show(cmd.Context(), showReq)
+					if err != nil {
+						var se api.StatusError
+						if errors.As(err, &se) && se.StatusCode == http.StatusNotFound {
+							fmt.Printf("error: model '%s' not found\n", newModel)
+						} else {
+							fmt.Println("Error:", err)
+						}
+						continue
+					}
+					// Verify audio capability.
+					hasAudio := false
+					for _, cap := range newInfo.Capabilities {
+						if cap == "audio" {
+							hasAudio = true
+							break
+						}
+					}
+					if !hasAudio {
+						fmt.Printf("error: model '%s' does not support audio input\n", newModel)
+						continue
+					}
+					opts.Model = newModel
+					if maxSec := getMaxAudioSeconds(newInfo); maxSec > 0 {
+						recorder.MaxChunkSeconds = maxSec - 2
+					}
+				case line == "/exit" || line == "/bye":
+					fmt.Println()
+					return nil
+				case line != "":
+					fmt.Printf("Unknown command: %s (type /? for help)\n", line)
+				}
+				continue
+			}
+			if errors.Is(err, io.EOF) {
+				fmt.Println()
+				return nil
+			}
+			fmt.Fprintf(os.Stderr, "Recording error: %v\n", err)
+			continue
+		}
+
+		if wav == nil {
+			// Ctrl+C during recording — discard and retry.
+			continue
+		}
+
+		// Transcribe the recording.
+		transcribeAndDisplay(wav)
+	}
 }
 
 func RunHandler(cmd *cobra.Command, args []string) error {
@@ -2206,6 +2576,16 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("imagegen", false, "Use the imagegen runner for LLM inference")
 	runCmd.Flags().MarkHidden("imagegen")
 
+	transcribeCmd := &cobra.Command{
+		Use:     "transcribe MODEL",
+		Short:   "Transcribe audio to text using microphone",
+		Long:    "Record audio via microphone and transcribe to text.\nPress Space to start/stop recording. Ctrl+D to exit.",
+		Args:    cobra.ExactArgs(1),
+		PreRunE: checkServerHeartbeat,
+		RunE:    TranscribeHandler,
+	}
+	transcribeCmd.Flags().String("language", "", "Language hint (e.g. en, es, fr)")
+
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
 		Short:   "Stop a running model",
@@ -2326,6 +2706,7 @@ func NewCLI() *cobra.Command {
 		createCmd,
 		showCmd,
 		runCmd,
+		transcribeCmd,
 		stopCmd,
 		pullCmd,
 		pushCmd,
@@ -2369,6 +2750,7 @@ func NewCLI() *cobra.Command {
 		createCmd,
 		showCmd,
 		runCmd,
+		transcribeCmd,
 		stopCmd,
 		pullCmd,
 		pushCmd,

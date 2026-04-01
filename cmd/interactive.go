@@ -147,6 +147,20 @@ func streamChat(cmd *cobra.Command, model string, messages []api.Message, onToke
 	return strings.TrimSpace(result.String()), nil
 }
 
+// transcribeAudio sends audio to the model for transcription.
+// onToken is called for each streamed token (may be nil for silent operation).
+func transcribeAudio(cmd *cobra.Command, opts runOptions, audioData []byte, onToken tokenCallback) (string, error) {
+	systemPrompt := "Transcribe the following audio exactly as spoken. Output only the transcription text, nothing else."
+	if opts.Language != "" {
+		systemPrompt += " The audio is in " + opts.Language + "."
+	}
+
+	return streamChat(cmd, opts.Model, []api.Message{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Content: "Transcribe this audio.", Images: []api.ImageData{audioData}},
+	}, onToken)
+}
+
 type MultilineState int
 
 const (
