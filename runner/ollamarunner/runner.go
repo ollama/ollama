@@ -1219,6 +1219,12 @@ func (s *Server) allocModel(
 		slog.Info("Geometric KAN attention enabled, initializing shadow trainer")
 		kanCfg := kan.DefaultConfig()
 		kanCfg.SavePath = filepath.Join(filepath.Dir(mpath), "kan")
+		if b := envconfig.KANBasis(); b > 0 {
+			kanCfg.NumBasis = int(b)
+		}
+		if h := envconfig.KANMaxHeads(); h > 0 {
+			kanCfg.MaxHeads = int(h)
+		}
 		trainer := kan.NewShadowTrainer(kanCfg)
 
 		// Try to load previously trained KAN parameters

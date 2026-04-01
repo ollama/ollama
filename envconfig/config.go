@@ -222,6 +222,11 @@ var (
 	// When enabled, a B-spline KAN is trained online to replace softmax attention.
 	// Flash attention is automatically disabled when KAN attention is active.
 	KANAttention = Bool("OLLAMA_KAN_ATTENTION")
+	// KANBasis sets the number of B-spline basis functions per KAN head (default: 8).
+	// More basis functions = more expressive but slower convergence.
+	KANBasis = Uint("OLLAMA_KAN_BASIS", 8)
+	// KANMaxHeads sets the maximum number of cooperative KAN heads per layer (default: 3).
+	KANMaxHeads = Uint("OLLAMA_KAN_MAX_HEADS", 3)
 	// NoHistory disables readline history.
 	NoHistory = Bool("OLLAMA_NOHISTORY")
 	// NoPrune disables pruning of model blobs on startup.
@@ -312,6 +317,8 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_DEBUG_LOG_REQUESTS": {"OLLAMA_DEBUG_LOG_REQUESTS", DebugLogRequests(), "Log inference request bodies and replay curl commands to a temp directory"},
 		"OLLAMA_FLASH_ATTENTION":    {"OLLAMA_FLASH_ATTENTION", FlashAttention(false), "Enabled flash attention"},
 		"OLLAMA_KAN_ATTENTION":      {"OLLAMA_KAN_ATTENTION", KANAttention(), "Enable Geometric KAN shadow training attention (experimental)"},
+		"OLLAMA_KAN_BASIS":          {"OLLAMA_KAN_BASIS", KANBasis(), "Number of B-spline basis functions per KAN head (default: 8)"},
+		"OLLAMA_KAN_MAX_HEADS":      {"OLLAMA_KAN_MAX_HEADS", KANMaxHeads(), "Maximum cooperative KAN heads per layer (default: 3)"},
 		"OLLAMA_KV_CACHE_TYPE":      {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
 		"OLLAMA_GPU_OVERHEAD":       {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
 		"OLLAMA_HOST":               {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
