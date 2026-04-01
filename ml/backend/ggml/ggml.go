@@ -791,6 +791,10 @@ func (c *Context) Layer(i int) ml.Context {
 	return c
 }
 
+func (c *Context) LayerIndex() int {
+	return c.layer
+}
+
 func (c *Context) Forward(tensors ...ml.Tensor) ml.Context {
 	if c.graph == nil {
 		c.graph = C.ggml_new_graph_custom(c.ctx, C.size_t(c.maxGraphNodes), false)

@@ -125,6 +125,11 @@ type Context interface {
 
 	// Layer returns a context appropriate for creating intermediate tensors
 	Layer(int) Context
+
+	// LayerIndex returns the layer index set by the most recent Layer() call,
+	// or -1 if no layer has been set. Used by KAN attention to identify
+	// which layer's KAN instance to use.
+	LayerIndex() int
 }
 
 type Tensor interface {

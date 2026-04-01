@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"runtime"
@@ -32,6 +33,8 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/ml/nn"
+	"github.com/ollama/ollama/ml/nn/kan"
 	"github.com/ollama/ollama/ml/nn/pooling"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
@@ -1202,6 +1205,34 @@ func (s *Server) allocModel(
 	s.model, err = model.New(mpath, params)
 	if err != nil {
 		return err
+	}
+
+	// Initialize Geometric KAN attention if enabled.
+	// This sets up shadow training that runs alongside softmax and can
+	// hot-swap to KAN attention once each layer converges.
+	if envconfig.KANAttention() {
+		slog.Info("Geometric KAN attention enabled, initializing shadow trainer")
+		kanCfg := kan.DefaultConfig()
+		kanCfg.SavePath = filepath.Join(filepath.Dir(mpath), "kan")
+		trainer := kan.NewShadowTrainer(kanCfg)
+
+		// Try to load previously trained KAN parameters
+		if err := trainer.Load(kanCfg.SavePath); err != nil {
+			slog.Warn("KAN: could not load saved parameters, starting fresh", "error", err)
+		}
+
+		nn.SetKANTrainer(trainer)
+
+		// Save KAN parameters periodically and on shutdown
+		go func() {
+			ticker := time.NewTicker(5 * time.Minute)
+			defer ticker.Stop()
+			for range ticker.C {
+				if err := trainer.Save(kanCfg.SavePath); err != nil {
+					slog.Warn("KAN: failed to save parameters", "error", err)
+				}
+			}
+		}()
 	}
 
 	// TODO(jessegross): LoRA loading

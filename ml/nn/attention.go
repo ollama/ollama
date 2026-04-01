@@ -2,13 +2,45 @@ package nn
 
 import (
 	"fmt"
+	"log/slog"
+	"sync"
 
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/ml/nn/kan"
 )
+
+// kanTrainer is the global KAN shadow trainer, set via SetKANTrainer.
+// When non-nil, attention operations will shadow-train KAN layers
+// alongside softmax and optionally hot-swap converged layers.
+var (
+	kanTrainer *kan.ShadowTrainer
+	kanMu      sync.RWMutex
+)
+
+// SetKANTrainer installs a KAN shadow trainer for all attention operations.
+// Pass nil to disable KAN attention.
+func SetKANTrainer(trainer *kan.ShadowTrainer) {
+	kanMu.Lock()
+	defer kanMu.Unlock()
+	kanTrainer = trainer
+	if trainer != nil {
+		slog.Info("KAN attention shadow training enabled")
+	}
+}
+
+// GetKANTrainer returns the current KAN trainer, or nil if disabled.
+func GetKANTrainer() *kan.ShadowTrainer {
+	kanMu.RLock()
+	defer kanMu.RUnlock()
+	return kanTrainer
+}
 
 // Attention implements scaled dot-product attention for transformer models:
 // Attention(Q, K, V) = softmax(QK^T/√d_k)V
+//
+// When KAN attention is enabled, this also shadow-trains a Geometric KAN
+// to replace softmax. After convergence, the KAN is hot-swapped in.
 //
 // Parameters:
 //   - ctx: Context for tensor operations
@@ -58,27 +90,124 @@ func AttentionWithVMLA(ctx ml.Context, query, key, value, sinks ml.Tensor, vmla 
 	}
 
 	if sdpa, ok := query.(ml.ScaledDotProductAttention); ok {
+		// Flash attention path: softmax is fused in the kernel.
+		// KAN cannot operate here since logits are never materialized.
 		cacheConfigApplied := cache != nil
 		return sdpa.ScaledDotProductAttention(ctx, key, value, mask, sinks, vmla, scale, cacheConfigApplied)
-	} else {
-		query = query.Permute(ctx, 0, 2, 1, 3)
-		key = key.Permute(ctx, 0, 2, 1, 3)
-		value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
-
-		kq := key.MulmatFullPrec(ctx, query)
-
-		kq = kq.Scale(ctx, scale)
-		if mask != nil {
-			kq = kq.Add(ctx, mask)
-		}
-		kq = kq.Softmax(ctx)
-
-		kqv := value.Mulmat(ctx, kq)
-
-		if vmla != nil {
-			kqv = vmla.Mulmat(ctx, kqv)
-		}
-
-		return kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 	}
+
+	// Non-flash attention path: we have access to pre-softmax logits.
+	// This is where KAN shadow training and hot-swap happens.
+	query = query.Permute(ctx, 0, 2, 1, 3)
+	key = key.Permute(ctx, 0, 2, 1, 3)
+	value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
+
+	kq := key.MulmatFullPrec(ctx, query)
+	kq = kq.Scale(ctx, scale)
+	if mask != nil {
+		kq = kq.Add(ctx, mask)
+	}
+
+	// === KAN Shadow Training / Hot-Swap Point ===
+	kq = applyAttentionWeights(ctx, kq)
+
+	kqv := value.Mulmat(ctx, kq)
+
+	if vmla != nil {
+		kqv = vmla.Mulmat(ctx, kqv)
+	}
+
+	return kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
+}
+
+// applyAttentionWeights applies either softmax or KAN attention weights.
+//
+// When no KAN trainer is active, this is just kq.Softmax(ctx).
+//
+// When KAN is active:
+//   - If the layer's KAN has converged and hot-swap is enabled, use KAN output
+//   - Otherwise, compute softmax (for ground truth) and shadow-train the KAN
+func applyAttentionWeights(ctx ml.Context, kq ml.Tensor) ml.Tensor {
+	kanMu.RLock()
+	trainer := kanTrainer
+	kanMu.RUnlock()
+
+	if trainer == nil {
+		return kq.Softmax(ctx)
+	}
+
+	layerIdx := ctx.LayerIndex()
+	if layerIdx < 0 {
+		// No layer context (e.g., vision encoder) -- fall back to softmax
+		return kq.Softmax(ctx)
+	}
+
+	key := kan.LayerKey(layerIdx)
+
+	// If converged and hot-swap enabled, use KAN directly on GPU tensors
+	// by pulling logits to CPU, running KAN, pushing back
+	if trainer.IsConverged(key) {
+		return applyKANAttention(ctx, kq, trainer, key)
+	}
+
+	// Compute softmax as ground truth
+	softmaxOut := kq.Softmax(ctx)
+
+	// Shadow-train KAN in the background (CPU-side)
+	if trainer.ShouldTrain(key) {
+		go shadowTrainKAN(kq, softmaxOut, trainer, key)
+	}
+
+	return softmaxOut
+}
+
+// applyKANAttention runs the converged KAN on attention logits.
+// Pulls logits to CPU, runs KAN forward pass, pushes result back to GPU.
+func applyKANAttention(ctx ml.Context, kq ml.Tensor, trainer *kan.ShadowTrainer, key string) ml.Tensor {
+	shape := kq.Shape()
+	logits := kq.Floats()
+
+	kanLayer := trainer.GetOrCreateLayer(key)
+
+	// Determine seqK and seqQ from tensor shape
+	// kq shape after permute: [seqK, heads, seqQ] or similar
+	seqK := 1
+	seqQ := 1
+	if len(shape) >= 1 {
+		seqK = shape[0]
+	}
+	if len(shape) >= 3 {
+		seqQ = shape[2]
+	}
+
+	// Run KAN forward pass on CPU
+	result := kanLayer.Forward(logits, seqK, seqQ)
+
+	// Push back to GPU
+	return ctx.FromFloats(result, shape...)
+}
+
+// shadowTrainKAN runs one KAN training step on CPU.
+// Called as a goroutine to avoid blocking the GPU pipeline.
+func shadowTrainKAN(kq, softmaxOut ml.Tensor, trainer *kan.ShadowTrainer, key string) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Debug("KAN shadow training recovered from panic", "layer", key, "error", r)
+		}
+	}()
+
+	shape := kq.Shape()
+	logits := kq.Floats()
+	expected := softmaxOut.Floats()
+
+	seqK := 1
+	seqQ := 1
+	if len(shape) >= 1 {
+		seqK = shape[0]
+	}
+	if len(shape) >= 3 {
+		seqQ = shape[2]
+	}
+
+	trainer.TrainStep(key, logits, expected, seqK, seqQ)
 }
