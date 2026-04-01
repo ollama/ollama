@@ -487,49 +487,135 @@ Paris
 	}
 }
 
-func TestFormatToolCallArgument(t *testing.T) {
+// TestFormatToolCallArgumentMatchesOfficialTemplate verifies that
+// formatToolCallArgument produces the same output as the official Qwen 3.5
+// Jinja2 template's tool call argument rendering block.
+//
+// The official template (from Qwen/Qwen3.5-27B on HuggingFace, also verified
+// identical in Qwen3-Coder) has two code paths for rendering each argument
+// value:
+//
+//	args_value | tojson | safe   — when args_value is mapping, or sequence-and-not-string
+//	args_value | string          — everything else (strings, numbers, booleans, None)
+//
+// The "| string" filter calls Python's str() function. The "| tojson" filter
+// calls json.dumps with HuggingFace Transformers' ensure_ascii=False override.
+//
+// This distinction creates an asymmetry: booleans and null INSIDE collections
+// (lists, dicts) are rendered via tojson as JSON-standard lowercase
+// "true"/"false"/"null", while top-level scalar booleans and None are rendered
+// via str() as Python-standard "True"/"False"/"None". Both forms appear in
+// the model's training data — they are different code paths producing
+// intentionally different output.
+//
+// Go's formatToolCallArgument must match this behavior exactly. Any deviation
+// means the model sees different token IDs when Ollama re-renders conversation
+// history on subsequent turns, causing silent quality degradation (training
+// distribution shift) and KV cache invalidation.
+//
+// Why Go receives float64 for all JSON numbers: Go's json.Unmarshal into any
+// produces float64 for every JSON number — both "42" and "3.14" become
+// float64. Python's json.loads produces int for integer JSON numbers and float
+// for decimal numbers. This type difference means Go must handle float64
+// values that represent integers: float64(42) must produce "42" (matching
+// Python str(42)), and float64(1e10) must produce "10000000000" (matching
+// Python str(10000000000)), not "1e+10" (Go's default %v formatting for large
+// float64 values).
+func TestFormatToolCallArgumentMatchesOfficialTemplate(t *testing.T) {
 	tests := []struct {
-		name     string
-		arg      any
-		expected string
+		name string
+		arg  any
+		want string // What the official template produces
 	}{
-		{
-			name: "string",
-			arg:  "foo",
-			// notice no quotes around the string
-			expected: "foo",
-		},
-		{
-			name:     "map",
-			arg:      map[string]any{"foo": "bar"},
-			expected: "{\"foo\": \"bar\"}",
-		},
-		{
-			name:     "map with html chars",
-			arg:      map[string]any{"content": "if (x < 5 && y > 3) {}"},
-			expected: "{\"content\": \"if (x < 5 && y > 3) {}\"}",
-		},
-		{
-			name:     "array",
-			arg:      []any{"a", true, 1},
-			expected: "[\"a\", true, 1]",
-		},
-		{
-			name:     "number",
-			arg:      1,
-			expected: "1",
-		},
-		{
-			name:     "boolean",
-			arg:      true,
-			expected: "true",
-		},
+		// === Scalar path: args_value | string (Python str()) ===
+
+		// Strings pass through unchanged in both the template and Go.
+		{"string", "hello", "hello"},
+
+		// Integer-valued float64. Go's json.Unmarshal produces float64(42) for
+		// JSON "42". Python's json.loads produces int(42). Both str(42) and
+		// fmt.Sprintf("%v", float64(42)) produce "42". Match.
+		{"int", float64(42), "42"},
+
+		// Non-integer float64. Both Python str(3.14) and Go fmt.Sprintf produce
+		// "3.14". Match.
+		{"float", 3.14, "3.14"},
+
+		// Python str(True) produces "True" (capital T). Go's fmt.Sprintf("%v",
+		// true) produces "true" (lowercase). The model was trained on "True".
+		//
+		// Fix: add case bool: in formatToolCallArgument that returns "True".
+		{"bool_true", true, "True"},
+
+		// Python str(False) produces "False" (capital F). Same divergence.
+		{"bool_false", false, "False"},
+
+		// Python str(None) produces "None". Go's nil branch returns "null".
+		// The model was trained on "None" for scalar None arguments.
+		//
+		// Fix: change the nil branch from return "null" to return "None".
+		{"nil", nil, "None"},
+
+		// Large integer-valued float64. Go's json.Unmarshal produces
+		// float64(1e10) for JSON "10000000000". Python's json.loads produces
+		// int(10000000000). Python str(10000000000) produces "10000000000".
+		// Go's fmt.Sprintf("%v", float64(1e10)) produces "1e+10" — exponential
+		// notation that never appears in training data for integer arguments.
+		//
+		// Fix: detect integer-valued float64 with math.Trunc and format via
+		// strconv.FormatInt.
+		{"large_int", float64(1e10), "10000000000"},
+
+		// Small float64 in exponential range. Both Python str(1e-05) and Go
+		// fmt.Sprintf("%v", 1e-05) produce "1e-05". Match.
+		{"small_float", float64(1e-5), "1e-05"},
+
+		// === Collection path: args_value | tojson | safe (json.dumps) ===
+		//
+		// Inside collections, booleans are JSON-standard lowercase true/false
+		// and null is JSON-standard null. This is the tojson path, NOT str().
+		// The asymmetry is intentional in the template — both forms appear in
+		// training data.
+
+		// List with mixed types. json.dumps([1, "two", True]) produces
+		// [1, "two", true] — note lowercase "true" (JSON standard inside
+		// collections). Go's marshalQwenToolCallArgument with spaced separators
+		// produces the same. Match.
+		{"list", []any{float64(1), "two", true}, `[1, "two", true]`},
+
+		// Dict with boolean and null values. json.dumps({"nested": True,
+		// "value": None}) produces {"nested": true, "value": null} — lowercase
+		// inside the JSON structure. Go's marshalQwenToolCallArgument produces
+		// the same for this dict because "nested" < "value" alphabetically
+		// (Go's map key sort matches the insertion order by coincidence).
+		//
+		// Note: this does NOT test non-alphabetical key ordering (Gap 9.5).
+		// That bug is in the parser (parseValue uses json.Unmarshal into
+		// map[string]any, losing insertion order), not in this function.
+		{"dict_with_bool_and_null", map[string]any{"nested": true, "value": nil},
+			`{"nested": true, "value": null}`},
+
+		// Dict with HTML characters. Verifies SetEscapeHTML(false) — Go's
+		// default json.Marshal would produce \u003c, \u003e, \u0026.
+		{"dict_with_html_chars", map[string]any{"content": "if (x < 5 && y > 3) {}"},
+			`{"content": "if (x < 5 && y > 3) {}"}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := formatToolCallArgument(tt.arg)
-			if got != tt.expected {
-				t.Errorf("formatToolCallArgument(%v) = %v, want %v", tt.arg, got, tt.expected)
+			if got != tt.want {
+				t.Errorf(
+					"formatToolCallArgument(%v) = %q, want %q\n\n"+
+						"The expected value is what the official Qwen 3.5 Jinja2 template "+
+						"produces for this argument type. The template uses Python str() for "+
+						"scalars (| string filter) and json.dumps for collections (| tojson | "+
+						"safe). Python str(True)=\"True\", str(False)=\"False\", "+
+						"str(None)=\"None\", str(10000000000)=\"10000000000\".\n\n"+
+						"Fix: rewrite formatToolCallArgument() in model/renderers/qwen3coder.go "+
+						"to match Python str() for bool (case bool: \"True\"/\"False\"), nil "+
+						"(\"None\"), and integer-valued float64 (strconv.FormatInt).",
+					tt.arg, got, tt.want,
+				)
 			}
 		})
 	}
