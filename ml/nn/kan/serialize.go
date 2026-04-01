@@ -110,12 +110,22 @@ func (s *ShadowTrainer) Load(dir string) error {
 
 		state := &layerState{
 			kan:       NewLayerFromWeights(s.cfg, weights),
+			adam:      newAdamState(len(weights)),
 			converged: converged,
 			stepCount: meta.Steps[key],
 			emaLoss:   meta.EMALoss[key],
 		}
 		if converged {
 			state.convergenceCount = s.cfg.ConvergenceWindow
+			state.graduationSlope = rawSlope(state.kan)
+			state.effectiveScale = 1.0 // Loaded at graduation = standard softmax
+
+			// Enable Phase 2 if configured
+			if s.cfg.Phase2Enabled {
+				state.phase2Active = true
+				state.graduationWeights = state.kan.GetCoefficients()
+				state.phase2Adam = newAdamState(len(weights))
+			}
 		}
 		s.layers[key] = state
 	}
