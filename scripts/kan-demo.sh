@@ -195,6 +195,108 @@ for i in $(seq 0 7); do
     echo ""
 done
 
+# ─── Step 5: LLM-as-Judge evaluation ───
+JUDGE_MODEL="${KAN_JUDGE:-mistral}"
+
+header "Step 5: LLM-as-Judge Evaluation"
+info "Pulling ${JUDGE_MODEL} as an impartial judge..."
+info "(Judge model is freshly loaded — KAN has NOT converged on it)"
+echo ""
+
+ollama pull "${JUDGE_MODEL}"
+
+judge() {
+    local prompt="$1"
+    curl -s "${BASE_URL}/api/chat" -d "{
+        \"model\": \"${JUDGE_MODEL}\",
+        \"messages\": [{\"role\": \"user\", \"content\": $(echo "$prompt" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')}],
+        \"stream\": false
+    }" 2>/dev/null | python3 -c 'import json,sys; print(json.loads(sys.stdin.read()).get("message",{}).get("content","[no response]"))' 2>/dev/null
+}
+
+JUDGE_RESULTS="/tmp/kan-judge-results.txt"
+> "$JUDGE_RESULTS"
+
+kan_wins=0
+baseline_wins=0
+ties=0
+
+for i in $(seq 0 7); do
+    name="${TEST_NAMES[$i]}"
+    prompt="${TEST_PROMPTS[$i]}"
+    expected="${TEST_EXPECTS[$i]}"
+
+    baseline=$(sed -n "/=== Test $((i+1)):/,/^$/{ /Response:/s/Response: //p; }" /tmp/kan-results-BASELINE_\(softmax\).txt)
+    kan=$(sed -n "/=== Test $((i+1)):/,/^$/{ /Response:/s/Response: //p; }" /tmp/kan-results-KAN_ATTENTION.txt)
+
+    echo -e "${BOLD}${CYAN}Judging Test $((i+1)): ${name}${NC}"
+
+    judge_prompt="You are an impartial judge evaluating two AI responses to the same prompt.
+
+PROMPT: $(echo -e "$prompt")
+
+EXPECTED ANSWER: ${expected}
+
+RESPONSE A (Baseline):
+${baseline}
+
+RESPONSE B (Experimental):
+${kan}
+
+Evaluate which response better answers the prompt. Consider:
+1. Correctness: Does the response contain the right answer?
+2. Precision: Does it follow the instructions exactly (format, count, etc.)?
+3. Conciseness: Does it avoid unnecessary rambling?
+
+Reply with EXACTLY one of these three verdicts on the first line:
+WINNER: A
+WINNER: B
+TIE
+
+Then briefly explain why in 1-2 sentences."
+
+    verdict=$(judge "$judge_prompt")
+    echo "$verdict"
+    echo ""
+
+    # Tally scores
+    first_line=$(echo "$verdict" | head -1)
+    if echo "$first_line" | grep -qi "WINNER: B"; then
+        ((kan_wins++)) || true
+        echo -e "  ${GREEN}→ KAN wins${NC}"
+    elif echo "$first_line" | grep -qi "WINNER: A"; then
+        ((baseline_wins++)) || true
+        echo -e "  ${RED}→ Baseline wins${NC}"
+    else
+        ((ties++)) || true
+        echo -e "  ${YELLOW}→ Tie${NC}"
+    fi
+
+    echo "=== Test $((i+1)): ${name} ===" >> "$JUDGE_RESULTS"
+    echo "Verdict: ${first_line}" >> "$JUDGE_RESULTS"
+    echo "Full: ${verdict}" >> "$JUDGE_RESULTS"
+    echo "" >> "$JUDGE_RESULTS"
+
+    echo -e "${BOLD}────────────────────────────────────────${NC}\n"
+done
+
+# ─── Final Scoreboard ───
+header "FINAL SCOREBOARD (judged by ${JUDGE_MODEL})"
+echo -e "  ${GREEN}KAN wins:      ${kan_wins}/8${NC}"
+echo -e "  ${RED}Baseline wins: ${baseline_wins}/8${NC}"
+echo -e "  ${YELLOW}Ties:          ${ties}/8${NC}"
+echo ""
+
+if [ "$kan_wins" -gt "$baseline_wins" ]; then
+    echo -e "  ${BOLD}${GREEN}KAN attention wins ${kan_wins}-${baseline_wins} (${ties} ties)${NC}"
+elif [ "$baseline_wins" -gt "$kan_wins" ]; then
+    echo -e "  ${BOLD}${RED}Baseline wins ${baseline_wins}-${kan_wins} (${ties} ties)${NC}"
+else
+    echo -e "  ${BOLD}${YELLOW}It's a draw ${kan_wins}-${baseline_wins} (${ties} ties)${NC}"
+fi
+echo ""
+info "Full judge reasoning: ${JUDGE_RESULTS}"
+
 header "Done! Dropping you into live chat."
 info "KAN is trained and active. Go wild."
 echo ""
