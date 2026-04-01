@@ -39,6 +39,7 @@ var (
 	errCapabilityTools      = errors.New("tools")
 	errCapabilityInsert     = errors.New("insert")
 	errCapabilityVision     = errors.New("vision")
+	errCapabilityAudio      = errors.New("audio")
 	errCapabilityEmbedding  = errors.New("embedding")
 	errCapabilityThinking   = errors.New("thinking")
 	errCapabilityImage      = errors.New("image generation")
@@ -92,6 +93,9 @@ func (m *Model) Capabilities() []model.Capability {
 			}
 			if f.KeyValue("vision.block_count").Valid() {
 				capabilities = append(capabilities, model.CapabilityVision)
+			}
+			if f.KeyValue("audio.block_count").Valid() {
+				capabilities = append(capabilities, model.CapabilityAudio)
 			}
 		} else {
 			slog.Error("couldn't open model file", "error", err)
@@ -156,6 +160,7 @@ func (m *Model) CheckCapabilities(want ...model.Capability) error {
 		model.CapabilityTools:      errCapabilityTools,
 		model.CapabilityInsert:     errCapabilityInsert,
 		model.CapabilityVision:     errCapabilityVision,
+		model.CapabilityAudio:      errCapabilityAudio,
 		model.CapabilityEmbedding:  errCapabilityEmbedding,
 		model.CapabilityThinking:   errCapabilityThinking,
 		model.CapabilityImage:      errCapabilityImage,
