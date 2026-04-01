@@ -7,8 +7,57 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
+// TestQwen35RendererUsesXMLToolCallingFormat verifies byte-exact rendering of a
+// single-tool-call agentic conversation: system message with one tool definition,
+// a user query, an assistant response with visible content and one tool call, a
+// single tool response, and a follow-up user query.
+//
+// Ground truth: the expected strings were derived by running the official
+// Qwen/Qwen3.5-27B Jinja2 chat template (from tokenizer_config.json on
+// HuggingFace, verified identical between Qwen3.5-27B and Qwen3.5-35B-A3B)
+// with the same message array and tools. HuggingFace Transformers' tojson
+// override (json.dumps with ensure_ascii=False, sort_keys=False, default
+// separators) was applied. The Python output was saved as the expected
+// strings. Tool definition JSON, message structure, and string arguments
+// match Go byte-for-byte. The boolean argument diverges: the template
+// produces "True" (Python str(True)) while Go produces "true"
+// (fmt.Sprintf) — the test enforces the template's output, so it FAILS
+// until formatToolCallArgument is fixed.
+//
+// Unique coverage vs. other byte-exact tests:
+//   - Single tool call (not back-to-back) — only the \n\n content-to-tool
+//     separator fires (template line 112: content|trim truthy), not the \n
+//     inter-tool separator (template line 117)
+//   - Single tool response (not grouped) — one <tool_response> block under one
+//     <|im_start|>user, closed immediately because the next message is not a
+//     tool
+//   - No Thinking field on assistant — splitQwen35ReasoningContent receives
+//     messageThinking="" and content with no </think> tag, so Path 3
+//     (fallthrough) fires: reasoning="" and remaining="I'll check." returned
+//     unchanged
+//   - String argument "Paris" — formatToolCallArgument hits the case string
+//     path, returning the value verbatim; the official template uses
+//     args_value|string (Python str()) which produces the same output for
+//     strings
+//   - Boolean argument true — formatToolCallArgument falls through to
+//     fmt.Sprintf("%v", true) producing "true" (lowercase), but the official
+//     template uses args_value|string which calls Python str(True) producing
+//     "True" (capital T). This is a KNOWN DIVERGENCE (Gap 10) that this test
+//     enforces: the expected string uses "True" (the template's ground truth),
+//     so the test FAILS until formatToolCallArgument is fixed to match
+//   - Tool definition without description — ToolFunction.Description="" with
+//     json:"description,omitempty" correctly omits the field; the official
+//     template's {{ tool | tojson }} passes through whatever the client sends,
+//     so a tool without description produces no "description" key
+//
+// Think mode: the assistant at index 2 is before lastQueryIndex=4 (the "Thanks"
+// user message). The official template's condition is loop.index0 >
+// ns.last_query_index (line 105), which is 2 > 4 = false — no <think> wrapping
+// regardless of enable_thinking. The template checks enable_thinking in exactly
+// one place: the add_generation_prompt block (lines 149-153). The entire output
+// is identical between think=true and think=false except the generation prompt
+// suffix.
 func TestQwen35RendererUsesXMLToolCallingFormat(t *testing.T) {
-	renderer := &Qwen35Renderer{isThinking: true}
 	msgs := []api.Message{
 		{Role: "system", Content: "You are a helpful assistant."},
 		{Role: "user", Content: "What's the weather in Paris?"},
@@ -21,6 +70,7 @@ func TestQwen35RendererUsesXMLToolCallingFormat(t *testing.T) {
 						Name: "get_weather",
 						Arguments: testArgsOrdered([]orderedArg{
 							{Key: "location", Value: "Paris"},
+							{Key: "verbose", Value: true},
 						}),
 					},
 				},
@@ -43,6 +93,12 @@ func TestQwen35RendererUsesXMLToolCallingFormat(t *testing.T) {
 								Type: api.PropertyType{"string"},
 							},
 						},
+						{
+							Key: "verbose",
+							Value: api.ToolProperty{
+								Type: api.PropertyType{"boolean"},
+							},
+						},
 					}),
 					Required: []string{"location"},
 				},
@@ -50,28 +106,328 @@ func TestQwen35RendererUsesXMLToolCallingFormat(t *testing.T) {
 		},
 	}
 
-	got, err := renderer.Render(msgs, tools, nil)
-	if err != nil {
-		t.Fatalf("render failed: %v", err)
-	}
+	// HuggingFace Transformers ground truth for this tool definition, produced
+	// by json.dumps(tool_dict, ensure_ascii=False) with default separators
+	// (', ', ': ') and sort_keys=False. Verified byte-exact against the
+	// official Qwen/Qwen3.5-27B chat template's {{ tool | tojson }} output.
+	//
+	// Key properties of this ground truth:
+	//   - No "description" key (field not present in the input dict)
+	//   - "properties" before "required" (struct field order in
+	//     ToolFunctionParameters matches tojson insertion order; also p < r
+	//     alphabetically, so even stock Jinja2 sort_keys=True would agree)
+	//   - Two properties: "location" (string) and "verbose" (boolean)
+	//   - Only "location" is required (verbose has no default but is not in
+	//     required — matching the test's Required: []string{"location"})
+	wantToolJSON := `{"type": "function", "function": {"name": "get_weather", "parameters": {"type": "object", "properties": {"location": {"type": "string"}, "verbose": {"type": "boolean"}}, "required": ["location"]}}}`
 
-	if !strings.Contains(got, "<tools>") {
-		t.Fatalf("expected tools section in prompt, got:\n%s", got)
-	}
-	if !strings.Contains(got, "<function=example_function_name>") {
-		t.Fatalf("expected xml-style tool call instructions, got:\n%s", got)
-	}
+	t.Run("think=true", func(t *testing.T) {
+		renderer := &Qwen35Renderer{isThinking: true}
+		got, err := renderer.Render(msgs, tools, nil)
+		if err != nil {
+			t.Fatalf("render failed: %v", err)
+		}
 
-	wantToolCall := "<tool_call>\n<function=get_weather>\n<parameter=location>\nParis\n</parameter>\n</function>\n</tool_call>"
-	if !strings.Contains(got, wantToolCall) {
-		t.Fatalf("expected xml tool call payload, got:\n%s", got)
-	}
+		// Targeted diagnostic: tool definition JSON must match HF ground truth.
+		// This fires with a specific error before the byte-exact comparison
+		// catches any deviation in the full output.
+		gotToolJSON := ""
+		for _, line := range strings.Split(got, "\n") {
+			if strings.Contains(line, `"get_weather"`) {
+				gotToolJSON = line
+				break
+			}
+		}
+		if gotToolJSON != wantToolJSON {
+			t.Errorf(
+				"tool definition JSON does not match HuggingFace ground truth.\n\n"+
+					"The model was trained on tool definitions serialized by HuggingFace "+
+					"Transformers' tojson filter (json.dumps with ensure_ascii=False, "+
+					"sort_keys=False). Any byte-level deviation in the tool JSON changes "+
+					"the token IDs in the system prompt, pushing the model out of the "+
+					"training distribution.\n\n"+
+					"Common causes:\n"+
+					"  - HTML-escaped <, >, &: json.Marshal default; marshalWithSpaces in "+
+					"model/renderers/json.go must use SetEscapeHTML(false) via jsonutil\n"+
+					"  - 'required' before 'properties': ToolFunctionParameters struct "+
+					"field order wrong in api/types.go\n"+
+					"  - unexpected 'description' key: ToolFunction.Description omitempty "+
+					"tag may be missing or the zero value changed\n\n"+
+					"want: %s\n got: %s", wantToolJSON, gotToolJSON,
+			)
+		}
 
-	toolsIdx := strings.Index(got, "# Tools")
-	systemIdx := strings.Index(got, "You are a helpful assistant.")
-	if toolsIdx == -1 || systemIdx == -1 || systemIdx < toolsIdx {
-		t.Fatalf("expected system prompt appended after tool instructions, got:\n%s", got)
-	}
+		// Targeted diagnostic: the \n\n separator between assistant content and
+		// the first <tool_call>. The official template (line 112) emits \n\n
+		// before the first tool call when content|trim is truthy. Without this
+		// separator, content and tool call XML merge on the same line — a token
+		// sequence absent from training data.
+		if !strings.Contains(got, "I'll check.\n\n<tool_call>") {
+			t.Errorf(
+				"missing \\n\\n separator between assistant content and first tool call.\n\n"+
+					"The official Qwen 3.5 template (line 112) emits '\\n\\n<tool_call>' when "+
+					"content|trim is truthy (content is non-empty after stripping whitespace). "+
+					"When content is empty, <tool_call> starts immediately with no separator. "+
+					"In Go, this is the j==0 branch: if strings.TrimSpace(content) != \"\" → "+
+					"write \\n\\n. Content here is \"I'll check.\" (truthy), so \\n\\n must "+
+					"precede <tool_call>.\n\ngot:\n%s", got,
+			)
+		}
+
+		// Targeted diagnostic: scalar boolean arguments must use Python str()
+		// capitalization. The official Qwen 3.5 template uses
+		// args_value|string (Jinja2's string filter, which calls Python str())
+		// for all non-mapping, non-sequence values. Python str(True) produces
+		// "True" (capital T), not "true". Go's formatToolCallArgument uses
+		// fmt.Sprintf("%v", true) which produces "true" (lowercase).
+		//
+		// Fix: add a case bool: branch in formatToolCallArgument in
+		// model/renderers/qwen3coder.go that returns "True"/"False".
+		if strings.Contains(got, "<parameter=verbose>\ntrue\n</parameter>") {
+			t.Errorf(
+				"boolean argument rendered as 'true' (Go fmt.Sprintf) instead of "+
+					"'True' (Python str(True)).\n\n"+
+					"The official Qwen 3.5 template uses args_value|string for scalar tool "+
+					"call arguments, which calls Python's str() function. str(True) produces "+
+					"'True' (capital T), str(False) produces 'False' (capital F). Go's "+
+					"formatToolCallArgument falls through to fmt.Sprintf(\"%%v\", true) which "+
+					"produces 'true' (lowercase). The model was trained on 'True', not 'true'.\n\n"+
+					"Fix: add case bool: in formatToolCallArgument() in "+
+					"model/renderers/qwen3coder.go:\n"+
+					"  case bool:\n"+
+					"    if v { return \"True\" }\n"+
+					"    return \"False\"\n\ngot:\n%s", got,
+			)
+		}
+
+		// Targeted diagnostic: <|im_end|> must follow </tool_call> on the
+		// assistant message. The official template emits <|im_end|>\n
+		// unconditionally for every assistant message — it appears outside all
+		// conditional blocks.
+		if !strings.Contains(got, "</tool_call><|im_end|>") {
+			t.Errorf(
+				"missing <|im_end|> after </tool_call> on the assistant message.\n\n"+
+					"The official Qwen 3.5 template emits <|im_end|>\\n unconditionally for "+
+					"every assistant message. Without it, the model sees an unclosed assistant "+
+					"turn — a prompt shape absent from all training data.\n\ngot:\n%s", got,
+			)
+		}
+
+		want := `<|im_start|>system
+# Tools
+
+You have access to the following functions:
+
+<tools>
+{"type": "function", "function": {"name": "get_weather", "parameters": {"type": "object", "properties": {"location": {"type": "string"}, "verbose": {"type": "boolean"}}, "required": ["location"]}}}
+</tools>
+
+If you choose to call a function ONLY reply in the following format with NO suffix:
+
+<tool_call>
+<function=example_function_name>
+<parameter=example_parameter_1>
+value_1
+</parameter>
+<parameter=example_parameter_2>
+This is the value for the second parameter
+that can span
+multiple lines
+</parameter>
+</function>
+</tool_call>
+
+<IMPORTANT>
+Reminder:
+- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags
+- Required parameters MUST be specified
+- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after
+- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls
+</IMPORTANT>
+
+You are a helpful assistant.<|im_end|>
+<|im_start|>user
+What's the weather in Paris?<|im_end|>
+<|im_start|>assistant
+I'll check.
+
+<tool_call>
+<function=get_weather>
+<parameter=location>
+Paris
+</parameter>
+<parameter=verbose>
+True
+</parameter>
+</function>
+</tool_call><|im_end|>
+<|im_start|>user
+<tool_response>
+22C
+</tool_response><|im_end|>
+<|im_start|>user
+Thanks<|im_end|>
+<|im_start|>assistant
+<think>
+`
+		if got != want {
+			t.Fatalf(
+				"byte-exact output mismatch.\n\n"+
+					"The expected string was derived by running the official Qwen/Qwen3.5-27B "+
+					"Jinja2 chat template with the same message array and tools, then verified "+
+					"byte-for-byte against the Go renderer output. Any deviation changes the "+
+					"token IDs the model sees, pushing the input out of the training "+
+					"distribution. In multi-turn agentic conversations, deviations in "+
+					"historical messages also invalidate the KV cache from the divergence "+
+					"point, forcing expensive recomputation of all subsequent tokens.\n\n"+
+					"--- got ---\n%s\n--- want ---\n%s", got, want,
+			)
+		}
+	})
+
+	// think=false: the ONLY difference from think=true is the generation prompt
+	// suffix. All historical message rendering — tool definition JSON, assistant
+	// content, tool call XML, tool response grouping, <|im_end|> closures — is
+	// identical regardless of think mode. The official template checks
+	// enable_thinking in exactly one place: the add_generation_prompt block.
+	t.Run("think=false", func(t *testing.T) {
+		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true}
+		got, err := renderer.Render(msgs, tools, &api.ThinkValue{Value: false})
+		if err != nil {
+			t.Fatalf("render failed: %v", err)
+		}
+
+		// Same tool JSON check as think=true. Tool definitions are in the system
+		// prompt, rendered before any assistant messages — completely independent
+		// of enable_thinking. If this check fails only in think=false, it means
+		// think mode is leaking into system prompt rendering, which the official
+		// template never does.
+		gotToolJSON := ""
+		for _, line := range strings.Split(got, "\n") {
+			if strings.Contains(line, `"get_weather"`) {
+				gotToolJSON = line
+				break
+			}
+		}
+		if gotToolJSON != wantToolJSON {
+			t.Errorf(
+				"tool definition JSON does not match HuggingFace ground truth (think=false).\n\n"+
+					"Tool definitions are in the system prompt and must be identical regardless "+
+					"of think mode. The official template's {{ tool | tojson }} is outside all "+
+					"enable_thinking conditionals. If this fails only in think=false, think mode "+
+					"is leaking into system prompt rendering.\n\n"+
+					"want: %s\n got: %s", wantToolJSON, gotToolJSON,
+			)
+		}
+
+		// Same separator check as think=true — content-to-tool-call formatting
+		// is independent of think mode.
+		if !strings.Contains(got, "I'll check.\n\n<tool_call>") {
+			t.Errorf(
+				"missing \\n\\n separator between assistant content and first tool call (think=false).\n\n"+
+					"Content-to-tool-call formatting is independent of think mode. The \\n\\n "+
+					"separator appears because content|trim is truthy (\"I'll check.\"), not "+
+					"because of enable_thinking.\n\ngot:\n%s", got,
+			)
+		}
+
+		// Same boolean capitalization check as think=true — argument formatting
+		// is independent of think mode.
+		if strings.Contains(got, "<parameter=verbose>\ntrue\n</parameter>") {
+			t.Errorf(
+				"boolean argument rendered as 'true' instead of 'True' (think=false).\n\n"+
+					"Argument formatting is independent of think mode. The official template "+
+					"uses args_value|string (Python str(True) → 'True') for scalar booleans. "+
+					"Go's formatToolCallArgument uses fmt.Sprintf which produces 'true'.\n\n"+
+					"Fix: case bool: in formatToolCallArgument() in "+
+					"model/renderers/qwen3coder.go\n\ngot:\n%s", got,
+			)
+		}
+
+		// Same <|im_end|> check — the official template closes every assistant
+		// message unconditionally regardless of think mode.
+		if !strings.Contains(got, "</tool_call><|im_end|>") {
+			t.Errorf(
+				"missing <|im_end|> after </tool_call> in think=false mode.\n\n"+
+					"The official Qwen 3.5 template closes every assistant message "+
+					"unconditionally, regardless of enable_thinking.\n\ngot:\n%s", got,
+			)
+		}
+
+		want := `<|im_start|>system
+# Tools
+
+You have access to the following functions:
+
+<tools>
+{"type": "function", "function": {"name": "get_weather", "parameters": {"type": "object", "properties": {"location": {"type": "string"}, "verbose": {"type": "boolean"}}, "required": ["location"]}}}
+</tools>
+
+If you choose to call a function ONLY reply in the following format with NO suffix:
+
+<tool_call>
+<function=example_function_name>
+<parameter=example_parameter_1>
+value_1
+</parameter>
+<parameter=example_parameter_2>
+This is the value for the second parameter
+that can span
+multiple lines
+</parameter>
+</function>
+</tool_call>
+
+<IMPORTANT>
+Reminder:
+- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags
+- Required parameters MUST be specified
+- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after
+- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls
+</IMPORTANT>
+
+You are a helpful assistant.<|im_end|>
+<|im_start|>user
+What's the weather in Paris?<|im_end|>
+<|im_start|>assistant
+I'll check.
+
+<tool_call>
+<function=get_weather>
+<parameter=location>
+Paris
+</parameter>
+<parameter=verbose>
+True
+</parameter>
+</function>
+</tool_call><|im_end|>
+<|im_start|>user
+<tool_response>
+22C
+</tool_response><|im_end|>
+<|im_start|>user
+Thanks<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+`
+		if got != want {
+			t.Fatalf(
+				"byte-exact output mismatch (think=false).\n\n"+
+					"The entire output is identical to think=true EXCEPT the generation "+
+					"prompt suffix: <think>\\n\\n</think>\\n\\n (6 tokens matching the "+
+					"official template's add_generation_prompt block at lines 149-153 for "+
+					"enable_thinking=false) instead of <think>\\n (2 tokens for "+
+					"enable_thinking=true/undefined). Historical message rendering is "+
+					"unaffected by think mode — the official template checks "+
+					"enable_thinking in exactly one place.\n\n"+
+					"--- got ---\n%s\n--- want ---\n%s", got, want,
+			)
+		}
+	})
 }
 
 func TestQwen35RendererNoThinkPrefill(t *testing.T) {
