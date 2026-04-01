@@ -187,16 +187,17 @@ func AttentionWithVMLA(ctx ml.Context, query, key, value, sinks ml.Tensor, vmla 
 		key, value, mask = cache.Get(ctx)
 	}
 
-	// KAN attention: only bypass SDPA for layers still training.
-	// Converged layers pass through SDPA with effectiveScale baked into the
-	// scale factor — full flash attention performance is restored after convergence.
+	// KAN attention: always use SDPA for the actual computation.
+	// For training, compute pre-softmax logits separately (just key*query matmul).
+	// The manual attention path is broken for cached tensors (double permutation
+	// of value), so we never use it.
 	kanMu.RLock()
 	trainer := kanTrainer
 	kanMu.RUnlock()
 
-	needManualPath := false
 	kanScale := 1.0
 	kanLayerKey := ""
+	needTrainingData := false
 	if trainer != nil {
 		// Derive layer index from call counter since model architectures
 		// don't set ctx.Layer(i) before calling Attention.
@@ -210,31 +211,58 @@ func AttentionWithVMLA(ctx ml.Context, query, key, value, sinks ml.Tensor, vmla 
 		trainer.GetOrCreateLayer(layerKey)
 
 		if trainer.IsConverged(layerKey) {
-			// Converged: usually use SDPA with the KAN's effective scale.
+			// Converged: use SDPA with the KAN's effective scale.
 			kanScale = trainer.GetEffectiveScale(layerKey)
 
 			// Phase 2 self-evolution needs logit data to sharpen attention.
-			// Route 1-in-N forward passes through the manual path to collect
-			// training data. The rest go through SDPA at full speed.
 			if trainer.IsPhase2Active(layerKey) && trainer.NeedsPhase2Data(layerKey) {
-				needManualPath = true
+				needTrainingData = true
 			}
 		} else {
-			// Not converged: need manual path to capture logits for training
-			needManualPath = true
+			// Not converged: collect training data (respects TrainEveryN)
+			if trainer.ShouldTrain(layerKey) {
+				needTrainingData = true
+			}
 		}
 	}
 
-	if !needManualPath {
-		if sdpa, ok := query.(ml.ScaledDotProductAttention); ok {
-			cacheConfigApplied := cache != nil
-			return sdpa.ScaledDotProductAttention(ctx, key, value, mask, sinks, vmla, scale*kanScale, cacheConfigApplied)
+	// Collect training data by computing kq separately (just key*query matmul).
+	// This is lightweight — no value multiplication needed for training.
+	if needTrainingData && kanLayerKey != "" {
+		qPerm := query.Permute(ctx, 0, 2, 1, 3)
+		kPerm := key.Permute(ctx, 0, 2, 1, 3)
+		kq := kPerm.MulmatFullPrec(ctx, qPerm)
+		kq = kq.Scale(ctx, scale)
+		if mask != nil {
+			kq = kq.Add(ctx, mask)
 		}
+		softmaxOut := kq.Softmax(ctx)
+		ctx.Forward(kq, softmaxOut)
+
+		converged := trainer.IsConverged(kanLayerKey)
+		kanPendingMu.Lock()
+		item := kanPendingItem{
+			key:       kanLayerKey,
+			kq:        kq,
+			shape:     kq.Shape(),
+			converged: converged,
+		}
+		if !converged {
+			item.softmax = softmaxOut
+		}
+		kanPending = append(kanPending, item)
+		kanPendingMu.Unlock()
 	}
 
-	// Manual attention path: we have access to pre-softmax logits.
-	// Used for non-converged KAN layers (shadow training) or when
-	// the backend doesn't support SDPA.
+	// Always use SDPA for the actual attention computation.
+	if sdpa, ok := query.(ml.ScaledDotProductAttention); ok {
+		cacheConfigApplied := cache != nil
+		return sdpa.ScaledDotProductAttention(ctx, key, value, mask, sinks, vmla, scale*kanScale, cacheConfigApplied)
+	}
+
+	// Fallback manual path (should never be reached with GGML backend,
+	// but kept for completeness). Note: this does NOT support KAN training
+	// because the value permutation is incompatible with cached tensors.
 	query = query.Permute(ctx, 0, 2, 1, 3)
 	key = key.Permute(ctx, 0, 2, 1, 3)
 	value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
@@ -244,10 +272,7 @@ func AttentionWithVMLA(ctx ml.Context, query, key, value, sinks ml.Tensor, vmla 
 	if mask != nil {
 		kq = kq.Add(ctx, mask)
 	}
-
-	// === KAN Shadow Training / Hot-Swap Point ===
-	// Pass layerKey from the KAN block above; empty string if KAN is not active.
-	kq = applyAttentionWeights(ctx, kq, kanLayerKey)
+	kq = kq.Softmax(ctx)
 
 	kqv := value.Mulmat(ctx, kq)
 
@@ -258,64 +283,3 @@ func AttentionWithVMLA(ctx ml.Context, query, key, value, sinks ml.Tensor, vmla 
 	return kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 }
 
-// applyAttentionWeights applies softmax with optional KAN shadow training.
-//
-// This is only reached via the manual attention path, which means either:
-//   - No KAN trainer is active (standard softmax)
-//   - A non-converged KAN layer needs logit capture for training
-//   - The backend doesn't support SDPA
-//
-// Converged KAN layers go through SDPA with effectiveScale baked into the
-// scale factor (handled in AttentionWithVMLA above), so they never reach here.
-// This preserves flash attention performance after convergence.
-func applyAttentionWeights(ctx ml.Context, kq ml.Tensor, layerKey string) ml.Tensor {
-	kanMu.RLock()
-	trainer := kanTrainer
-	kanMu.RUnlock()
-
-	if trainer == nil || layerKey == "" {
-		return kq.Softmax(ctx)
-	}
-
-	key := layerKey
-
-	if trainer.IsConverged(key) {
-		// Converged layer on the manual path: here for Phase 2 data collection.
-		// Apply effectiveScale to the logits so the output matches what SDPA
-		// would produce, then register kq for Phase 2 training (no softmax
-		// ground truth needed — Phase 2 uses sharpness, not MSE).
-		effectiveScale := trainer.GetEffectiveScale(key)
-		scaled := kq
-		if effectiveScale != 1.0 {
-			scaled = kq.Scale(ctx, effectiveScale)
-		}
-		softmaxOut := scaled.Softmax(ctx)
-
-		kanPendingMu.Lock()
-		kanPending = append(kanPending, kanPendingItem{
-			key:       key,
-			kq:        kq,
-			shape:     kq.Shape(),
-			converged: true,
-		})
-		kanPendingMu.Unlock()
-
-		return softmaxOut
-	}
-
-	// Not converged: use standard softmax as ground truth for Phase 1 training
-	softmaxOut := kq.Softmax(ctx)
-
-	if trainer.ShouldTrain(key) {
-		kanPendingMu.Lock()
-		kanPending = append(kanPending, kanPendingItem{
-			key:     key,
-			kq:      kq,
-			softmax: softmaxOut,
-			shape:   kq.Shape(),
-		})
-		kanPendingMu.Unlock()
-	}
-
-	return softmaxOut
-}
