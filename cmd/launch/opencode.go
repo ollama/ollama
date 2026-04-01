@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -31,7 +32,11 @@ func (o *OpenCode) findPath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	fallback := filepath.Join(home, ".opencode", "bin", "opencode")
+	name := "opencode"
+	if runtime.GOOS == "windows" {
+		name = "opencode.exe"
+	}
+	fallback := filepath.Join(home, ".opencode", "bin", name)
 	if _, err := os.Stat(fallback); err != nil {
 		return "", err
 	}
