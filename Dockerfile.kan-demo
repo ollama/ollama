@@ -51,7 +51,7 @@ RUN go build -trimpath -o /bin/ollama .
 FROM ubuntu:24.04
 
 RUN apt-get update \
-    && apt-get install -y ca-certificates curl \
+    && apt-get install -y ca-certificates curl python3 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
