@@ -661,3 +661,245 @@ func TestKANMatchesSoftmaxVariousDistributions(t *testing.T) {
 		})
 	}
 }
+
+// =============================================
+// Phase 2: Self-Evolution Tests
+// =============================================
+
+func TestPhase2ActivatesAfterConvergence(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.LearningRate = 0.05
+	cfg.TrainEveryN = 1
+	cfg.ConvergenceWindow = 3
+	cfg.ConvergenceThreshold = 10.0 // Generous to trigger convergence
+	cfg.Phase2Enabled = true
+	cfg.Phase2EveryN = 1
+
+	trainer := NewShadowTrainer(cfg)
+	key := LayerKey(0)
+
+	logits := f64tof32([]float64{1.0, 2.0})
+	target := f64tof32(softmax([]float64{1.0, 2.0}))
+
+	// Phase 2 should not be active before convergence
+	if trainer.IsPhase2Active(key) {
+		t.Error("Phase 2 should not be active before convergence")
+	}
+
+	// Train until convergence
+	for i := 0; i < 100; i++ {
+		trainer.TrainStep(key, logits, target, 2, 1)
+		if trainer.IsConverged(key) {
+			break
+		}
+	}
+
+	if !trainer.IsConverged(key) {
+		t.Fatal("expected convergence")
+	}
+
+	// Phase 2 should now be active
+	if !trainer.IsPhase2Active(key) {
+		t.Error("Phase 2 should be active after convergence")
+	}
+}
+
+func TestPhase2IncreasesSharpness(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.LearningRate = 0.05
+	cfg.TrainEveryN = 1
+	cfg.ConvergenceWindow = 3
+	cfg.ConvergenceThreshold = 10.0
+	cfg.Phase2Enabled = true
+	cfg.Phase2LearningRate = 0.01
+	cfg.Phase2EveryN = 1
+	cfg.Phase2MaxDrift = 1.0 // Generous drift allowance for testing
+
+	trainer := NewShadowTrainer(cfg)
+	key := LayerKey(0)
+
+	logits := f64tof32([]float64{1.0, 2.0, 3.0, 4.0})
+	target := f64tof32(softmax([]float64{1.0, 2.0, 3.0, 4.0}))
+
+	// Phase 1: converge to softmax
+	for i := 0; i < 100; i++ {
+		trainer.TrainStep(key, logits, target, 4, 1)
+		if trainer.IsConverged(key) {
+			break
+		}
+	}
+
+	if !trainer.IsPhase2Active(key) {
+		t.Fatal("Phase 2 should be active")
+	}
+
+	// Record sharpness at graduation
+	kanLayer := trainer.GetOrCreateLayer(key)
+	graduationOut := kanLayer.Forward(logits, 4, 1)
+	initialSharpness := sharpness(graduationOut, 4, 1)
+	t.Logf("graduation sharpness: %f", initialSharpness)
+	t.Logf("graduation output: %v", graduationOut)
+
+	// Phase 2: evolve for several steps
+	var finalSharpness float64
+	for i := 0; i < 100; i++ {
+		s, reverted := trainer.Phase2Step(key, logits, 4, 1)
+		finalSharpness = s
+		if reverted {
+			t.Logf("reverted at step %d", i)
+		}
+	}
+
+	evolvedOut := kanLayer.Forward(logits, 4, 1)
+	t.Logf("evolved sharpness:    %f (initial: %f)", finalSharpness, initialSharpness)
+	t.Logf("evolved output:       %v", evolvedOut)
+
+	// Sharpness should have increased (become less negative / closer to 0)
+	if finalSharpness < initialSharpness-0.001 {
+		t.Errorf("sharpness decreased: %f -> %f (should increase)", initialSharpness, finalSharpness)
+	}
+
+	// Output should still be valid (sums to 1, non-negative)
+	var rowSum float32
+	for _, v := range evolvedOut {
+		if v < 0 {
+			t.Errorf("negative attention weight: %f", v)
+		}
+		rowSum += v
+	}
+	if math.Abs(float64(rowSum-1.0)) > 0.01 {
+		t.Errorf("evolved output sum = %f, expected 1.0", rowSum)
+	}
+}
+
+func TestPhase2DriftSafetyRail(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.LearningRate = 0.05
+	cfg.TrainEveryN = 1
+	cfg.ConvergenceWindow = 3
+	cfg.ConvergenceThreshold = 10.0
+	cfg.Phase2Enabled = true
+	cfg.Phase2LearningRate = 1.0 // Absurdly high to force drift
+	cfg.Phase2EveryN = 1
+	cfg.Phase2MaxDrift = 0.001 // Very tight drift tolerance
+
+	trainer := NewShadowTrainer(cfg)
+	key := LayerKey(0)
+
+	logits := f64tof32([]float64{1.0, 2.0, 3.0, 4.0})
+	target := f64tof32(softmax([]float64{1.0, 2.0, 3.0, 4.0}))
+
+	// Phase 1: converge
+	for i := 0; i < 100; i++ {
+		trainer.TrainStep(key, logits, target, 4, 1)
+		if trainer.IsConverged(key) {
+			break
+		}
+	}
+
+	// Record graduation weights
+	gradWeights := trainer.GetLayerWeights(key)
+
+	// Phase 2 with aggressive LR + tight drift should trigger revert
+	reverted := false
+	for i := 0; i < 50; i++ {
+		_, r := trainer.Phase2Step(key, logits, 4, 1)
+		if r {
+			reverted = true
+			break
+		}
+	}
+
+	if !reverted {
+		t.Error("expected drift revert with aggressive LR and tight tolerance")
+	}
+
+	// After revert, weights should match graduation checkpoint
+	currentWeights := trainer.GetLayerWeights(key)
+	for i := range gradWeights {
+		if math.Abs(float64(currentWeights[i]-gradWeights[i])) > 1e-4 {
+			t.Errorf("weight[%d] not reverted: grad=%f, current=%f",
+				i, gradWeights[i], currentWeights[i])
+		}
+	}
+}
+
+func TestPhase2DisabledByConfig(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.LearningRate = 0.05
+	cfg.TrainEveryN = 1
+	cfg.ConvergenceWindow = 3
+	cfg.ConvergenceThreshold = 10.0
+	cfg.Phase2Enabled = false // Disabled!
+
+	trainer := NewShadowTrainer(cfg)
+	key := LayerKey(0)
+
+	logits := f64tof32([]float64{1.0, 2.0})
+	target := f64tof32(softmax([]float64{1.0, 2.0}))
+
+	for i := 0; i < 100; i++ {
+		trainer.TrainStep(key, logits, target, 2, 1)
+		if trainer.IsConverged(key) {
+			break
+		}
+	}
+
+	if trainer.IsPhase2Active(key) {
+		t.Error("Phase 2 should NOT activate when disabled in config")
+	}
+}
+
+func TestSharpnessKnownValues(t *testing.T) {
+	// Uniform distribution: H = log(n), sharpness = -log(n)
+	uniform := []float32{0.25, 0.25, 0.25, 0.25}
+	s := sharpness(uniform, 4, 1)
+	expected := -math.Log(4.0) // -1.3863
+	if math.Abs(s-expected) > 0.001 {
+		t.Errorf("sharpness(uniform) = %f, expected %f", s, expected)
+	}
+
+	// One-hot: H = 0, sharpness = 0
+	oneHot := []float32{0.0, 0.0, 1.0, 0.0}
+	s = sharpness(oneHot, 4, 1)
+	if math.Abs(s) > 0.001 {
+		t.Errorf("sharpness(one-hot) = %f, expected 0.0", s)
+	}
+
+	// Binary 50/50: H = log(2), sharpness = -log(2)
+	binary := []float32{0.5, 0.5}
+	s = sharpness(binary, 2, 1)
+	expected = -math.Log(2.0) // -0.6931
+	if math.Abs(s-expected) > 0.001 {
+		t.Errorf("sharpness(binary) = %f, expected %f", s, expected)
+	}
+
+	// Peaked: should be between one-hot and uniform
+	peaked := []float32{0.01, 0.01, 0.97, 0.01}
+	s = sharpness(peaked, 4, 1)
+	if s >= 0.0 || s <= -math.Log(4.0) {
+		t.Errorf("sharpness(peaked) = %f, expected between %f and 0.0", s, -math.Log(4.0))
+	}
+}
+
+func TestKLDivergenceKnownValues(t *testing.T) {
+	// KL(P || P) = 0
+	p := []float32{0.25, 0.25, 0.25, 0.25}
+	kl := klDivergence(p, p, 4, 1)
+	if math.Abs(kl) > 1e-10 {
+		t.Errorf("KL(P||P) = %f, expected 0", kl)
+	}
+
+	// KL(P || Q) > 0 for P != Q
+	q := []float32{0.1, 0.2, 0.3, 0.4}
+	kl = klDivergence(p, q, 4, 1)
+	if kl <= 0 {
+		t.Errorf("KL(P||Q) = %f, expected > 0 for P != Q", kl)
+	}
+
+	// KL is asymmetric: KL(P||Q) != KL(Q||P) in general
+	klReverse := klDivergence(q, p, 4, 1)
+	if math.Abs(kl-klReverse) < 1e-6 {
+		t.Log("KL happened to be symmetric for this case (unlikely for general distributions)")
+	}
+}

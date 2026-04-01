@@ -44,6 +44,24 @@ type Config struct {
 	// HotSwapEnabled enables automatic replacement of softmax with KAN after convergence
 	HotSwapEnabled bool
 
+	// Phase2Enabled enables self-evolution after graduation. When true, the KAN
+	// continues to adapt its weights at inference time using a self-supervised
+	// signal (attention sharpness / output confidence) instead of MSE-to-softmax.
+	Phase2Enabled bool
+
+	// Phase2LearningRate is a separate (typically smaller) learning rate for
+	// Phase 2 self-evolution to avoid destabilizing the graduated KAN. (default: 0.0001)
+	Phase2LearningRate float32
+
+	// Phase2EveryN controls how often Phase 2 adaptation runs (default: 10).
+	// Higher = less overhead, slower adaptation.
+	Phase2EveryN int
+
+	// Phase2MaxDrift is the maximum allowed KL divergence between the current
+	// KAN output and the graduated checkpoint. If drift exceeds this, the KAN
+	// reverts to the checkpoint. Safety rail. (default: 0.1)
+	Phase2MaxDrift float64
+
 	// SavePath is the directory for serialized KAN parameters (default: ~/.ollama/kan/)
 	SavePath string
 }
@@ -65,5 +83,9 @@ func DefaultConfig() Config {
 		ConvergenceWindow:    50,
 		TrainEveryN:          1,
 		HotSwapEnabled:       true,
+		Phase2Enabled:        true,
+		Phase2LearningRate:   0.0001,
+		Phase2EveryN:         10,
+		Phase2MaxDrift:       0.1,
 	}
 }

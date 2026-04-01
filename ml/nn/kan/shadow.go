@@ -38,6 +38,13 @@ type layerState struct {
 	emaLoss          float64
 	convergenceCount int
 	converged        bool
+
+	// Phase 2: self-evolution after graduation
+	phase2Active     bool
+	phase2Adam       *adamState
+	graduationWeights []float32  // checkpoint at graduation for drift detection
+	phase2Steps      int
+	emaSharpness     float64    // EMA of attention sharpness (negative entropy)
 }
 
 // NewShadowTrainer creates a new trainer with the given configuration.
@@ -233,6 +240,13 @@ func (s *ShadowTrainer) TrainStep(key string, logits, softmaxOut []float32, seqK
 		state.convergenceCount++
 		if state.convergenceCount >= s.cfg.ConvergenceWindow {
 			state.converged = true
+			// Activate Phase 2 self-evolution if enabled
+			if s.cfg.Phase2Enabled && !state.phase2Active {
+				state.phase2Active = true
+				state.graduationWeights = state.kan.GetCoefficients()
+				state.phase2Adam = newAdamState(len(state.graduationWeights))
+				slog.Info("KAN Phase 2 activated: self-evolution enabled", "layer", key)
+			}
 			slog.Info("KAN attention converged", "layer", key, "ema_loss", state.emaLoss, "steps", state.stepCount)
 		}
 	} else {
@@ -307,6 +321,200 @@ func (s *ShadowTrainer) Stats() map[string]any {
 		"total_steps":     totalSteps,
 		"fully_converged": convergedCount == len(s.layers) && len(s.layers) > 0,
 	}
+}
+
+// Phase2Step performs one self-evolution step for a graduated KAN layer.
+//
+// Unlike Phase 1 (match softmax), Phase 2 optimizes a self-supervised objective:
+// **attention sharpness** -- the negative entropy of the attention weights.
+// Lower entropy = sharper, more confident attention = the model "knows what to
+// look at." This encourages the KAN to learn crisper attention patterns than
+// softmax ever could, while the drift safety rail prevents catastrophic divergence.
+//
+// The signal: minimize H(attention) = -sum(p * log(p))
+// Equivalent to maximizing sharpness = -H = sum(p * log(p))
+//
+// Parameters:
+//   - key: layer identifier
+//   - logits: current attention logits
+//   - seqK, seqQ: dimensions
+//
+// Returns (sharpness, drifted). If drifted=true, the KAN was reverted to its
+// graduation checkpoint because it strayed too far.
+func (s *ShadowTrainer) Phase2Step(key string, logits []float32, seqK, seqQ int) (float64, bool) {
+	s.mu.Lock()
+	state, ok := s.layers[key]
+	if !ok || !state.phase2Active {
+		s.mu.Unlock()
+		return 0, false
+	}
+	state.phase2Steps++
+	s.mu.Unlock()
+
+	// Only evolve every N steps
+	if state.phase2Steps%s.cfg.Phase2EveryN != 0 {
+		return state.emaSharpness, false
+	}
+
+	// Current KAN output
+	kanOut := state.kan.Forward(logits, seqK, seqQ)
+	baseSharpness := sharpness(kanOut, seqK, seqQ)
+
+	// Finite-difference gradient estimation against sharpness
+	coeffs := state.kan.GetCoefficients()
+	grads := make([]float64, len(coeffs))
+	eps := s.cfg.GradEpsilon
+
+	for i := range coeffs {
+		perturbed := make([]float32, len(coeffs))
+		copy(perturbed, coeffs)
+		perturbed[i] += eps
+		state.kan.UpdateCoefficients(perturbed)
+		kanOutPlus := state.kan.Forward(logits, seqK, seqQ)
+		sharpPlus := sharpness(kanOutPlus, seqK, seqQ)
+
+		// We want to MAXIMIZE sharpness, so gradient ascent:
+		// grad = (sharp+ - sharp) / eps
+		g := (sharpPlus - baseSharpness) / float64(eps)
+		if math.IsNaN(g) || math.IsInf(g, 0) {
+			g = 0
+		}
+		grads[i] = g
+	}
+
+	// Adam update for Phase 2 (gradient ASCENT -- add instead of subtract)
+	adam := state.phase2Adam
+	adam.t++
+	beta1 := s.cfg.AdamBeta1
+	beta2 := s.cfg.AdamBeta2
+	epsAdam := s.cfg.AdamEpsilon
+	lr := float64(s.cfg.Phase2LearningRate)
+
+	bc1 := 1.0 - math.Pow(beta1, float64(adam.t))
+	bc2 := 1.0 - math.Pow(beta2, float64(adam.t))
+
+	newCoeffs := make([]float32, len(coeffs))
+	for i := range coeffs {
+		adam.m[i] = beta1*adam.m[i] + (1.0-beta1)*grads[i]
+		adam.v[i] = beta2*adam.v[i] + (1.0-beta2)*grads[i]*grads[i]
+
+		mHat := adam.m[i] / bc1
+		vHat := adam.v[i] / bc2
+
+		// ASCENT: add the update (maximizing sharpness)
+		update := lr * mHat / (math.Sqrt(vHat) + epsAdam)
+		if math.IsNaN(update) || math.IsInf(update, 0) {
+			update = 0
+		}
+		newCoeffs[i] = coeffs[i] + float32(update)
+	}
+
+	// Apply geometric mean normalization + redistribution
+	state.kan.UpdateCoefficients(newCoeffs)
+
+	// Check drift: compute KL divergence from graduation checkpoint
+	newOut := state.kan.Forward(logits, seqK, seqQ)
+
+	// Get graduation output for comparison
+	gradLayer := NewLayerFromWeights(s.cfg, state.graduationWeights)
+	gradOut := gradLayer.Forward(logits, seqK, seqQ)
+
+	drift := klDivergence(gradOut, newOut, seqK, seqQ)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Safety rail: revert if drifted too far
+	if drift > s.cfg.Phase2MaxDrift {
+		slog.Warn("KAN Phase 2 drift exceeded, reverting to graduation checkpoint",
+			"layer", key, "drift", drift, "max", s.cfg.Phase2MaxDrift)
+		state.kan.UpdateCoefficients(state.graduationWeights)
+		state.phase2Adam = newAdamState(len(state.graduationWeights))
+		return state.emaSharpness, true
+	}
+
+	// Update sharpness tracking
+	newSharpness := sharpness(newOut, seqK, seqQ)
+	if state.emaSharpness == 0 {
+		state.emaSharpness = newSharpness
+	} else {
+		state.emaSharpness = 0.95*state.emaSharpness + 0.05*newSharpness
+	}
+
+	if state.phase2Steps%100 == 0 {
+		slog.Debug("KAN Phase 2 evolution", "layer", key, "step", state.phase2Steps,
+			"sharpness", state.emaSharpness, "drift", drift)
+	}
+
+	return state.emaSharpness, false
+}
+
+// IsPhase2Active returns whether a layer is in Phase 2 self-evolution.
+func (s *ShadowTrainer) IsPhase2Active(key string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if state, ok := s.layers[key]; ok {
+		return state.phase2Active
+	}
+	return false
+}
+
+// sharpness computes the negative entropy of attention weights (higher = sharper).
+// sharpness = sum(p * log(p)) for each row, averaged across rows.
+// For a perfect one-hot distribution, sharpness = 0.
+// For uniform distribution, sharpness = -log(n) (most negative).
+func sharpness(weights []float32, seqK, seqQ int) float64 {
+	totalSharpness := 0.0
+	for q := 0; q < seqQ; q++ {
+		rowStart := q * seqK
+		rowEnd := rowStart + seqK
+		if rowEnd > len(weights) {
+			rowEnd = len(weights)
+		}
+
+		rowSharpness := 0.0
+		for i := rowStart; i < rowEnd; i++ {
+			p := float64(weights[i])
+			if p > 1e-10 {
+				rowSharpness += p * math.Log(p)
+			}
+		}
+		totalSharpness += rowSharpness
+	}
+
+	if seqQ > 0 {
+		totalSharpness /= float64(seqQ)
+	}
+	return totalSharpness
+}
+
+// klDivergence computes KL(P || Q) = sum(p * log(p/q)) averaged across rows.
+// Used as a drift metric between graduation checkpoint and current output.
+func klDivergence(p, q []float32, seqK, seqQ int) float64 {
+	totalKL := 0.0
+	for row := 0; row < seqQ; row++ {
+		rowStart := row * seqK
+		rowEnd := rowStart + seqK
+		if rowEnd > len(p) || rowEnd > len(q) {
+			break
+		}
+
+		rowKL := 0.0
+		for i := rowStart; i < rowEnd; i++ {
+			pv := float64(p[i])
+			qv := float64(q[i])
+			if pv > 1e-10 && qv > 1e-10 {
+				rowKL += pv * math.Log(pv/qv)
+			}
+		}
+		totalKL += rowKL
+	}
+
+	if seqQ > 0 {
+		totalKL /= float64(seqQ)
+	}
+	return totalKL
 }
 
 // mse computes mean squared error between two float32 slices.

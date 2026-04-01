@@ -145,7 +145,8 @@ func applyAttentionWeights(ctx ml.Context, kq ml.Tensor) ml.Tensor {
 	key := kan.LayerKey(layerIdx)
 
 	// If converged and hot-swap enabled, use KAN directly on GPU tensors
-	// by pulling logits to CPU, running KAN, pushing back
+	// by pulling logits to CPU, running KAN, pushing back.
+	// If Phase 2 is active, the KAN also evolves its weights on this forward pass.
 	if trainer.IsConverged(key) {
 		return applyKANAttention(ctx, kq, trainer, key)
 	}
@@ -163,6 +164,10 @@ func applyAttentionWeights(ctx ml.Context, kq ml.Tensor) ml.Tensor {
 
 // applyKANAttention runs the converged KAN on attention logits.
 // Pulls logits to CPU, runs KAN forward pass, pushes result back to GPU.
+//
+// If Phase 2 self-evolution is active, this also triggers a background
+// adaptation step that shifts the KAN weights toward sharper attention
+// patterns, bounded by a drift safety rail from the graduation checkpoint.
 func applyKANAttention(ctx ml.Context, kq ml.Tensor, trainer *kan.ShadowTrainer, key string) ml.Tensor {
 	shape := kq.Shape()
 	logits := kq.Floats()
@@ -178,6 +183,11 @@ func applyKANAttention(ctx ml.Context, kq ml.Tensor, trainer *kan.ShadowTrainer,
 	}
 	if len(shape) >= 3 {
 		seqQ = shape[2]
+	}
+
+	// Phase 2: self-evolution -- adapt weights in the background
+	if trainer.IsPhase2Active(key) {
+		go trainer.Phase2Step(key, logits, seqK, seqQ)
 	}
 
 	// Run KAN forward pass on CPU
