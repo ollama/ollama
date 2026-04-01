@@ -18,6 +18,15 @@ var (
 	kanMu      sync.RWMutex
 )
 
+// kanLayerCounter tracks attention call count to derive layer index.
+// Model architectures don't call ctx.Layer(i) before Attention(), so
+// ctx.LayerIndex() is always -1. We use a simple counter that resets
+// each generation step (via FlushKANTraining) to assign layer indices.
+var (
+	kanLayerCounter int
+	kanLayerMu      sync.Mutex
+)
+
 // kanPendingItem represents deferred training work.
 // Tensor data is read AFTER Compute() materializes the graph.
 type kanPendingItem struct {
@@ -61,6 +70,11 @@ func GetKANTrainer() *kan.ShadowTrainer {
 // The heads dimension is flattened into the batch dimension for CPU-side
 // processing (each head is treated as an independent attention pattern).
 func FlushKANTraining() {
+	// Reset layer counter for the next generation step
+	kanLayerMu.Lock()
+	kanLayerCounter = 0
+	kanLayerMu.Unlock()
+
 	kanMu.RLock()
 	trainer := kanTrainer
 	kanMu.RUnlock()
@@ -182,26 +196,32 @@ func AttentionWithVMLA(ctx ml.Context, query, key, value, sinks ml.Tensor, vmla 
 
 	needManualPath := false
 	kanScale := 1.0
+	kanLayerKey := ""
 	if trainer != nil {
-		layerIdx := ctx.LayerIndex()
-		if layerIdx >= 0 {
-			layerKey := kan.LayerKey(layerIdx)
-			trainer.GetOrCreateLayer(layerKey)
+		// Derive layer index from call counter since model architectures
+		// don't set ctx.Layer(i) before calling Attention.
+		kanLayerMu.Lock()
+		layerIdx := kanLayerCounter
+		kanLayerCounter++
+		kanLayerMu.Unlock()
 
-			if trainer.IsConverged(layerKey) {
-				// Converged: usually use SDPA with the KAN's effective scale.
-				kanScale = trainer.GetEffectiveScale(layerKey)
+		layerKey := kan.LayerKey(layerIdx)
+		kanLayerKey = layerKey
+		trainer.GetOrCreateLayer(layerKey)
 
-				// Phase 2 self-evolution needs logit data to sharpen attention.
-				// Route 1-in-N forward passes through the manual path to collect
-				// training data. The rest go through SDPA at full speed.
-				if trainer.IsPhase2Active(layerKey) && trainer.NeedsPhase2Data(layerKey) {
-					needManualPath = true
-				}
-			} else {
-				// Not converged: need manual path to capture logits for training
+		if trainer.IsConverged(layerKey) {
+			// Converged: usually use SDPA with the KAN's effective scale.
+			kanScale = trainer.GetEffectiveScale(layerKey)
+
+			// Phase 2 self-evolution needs logit data to sharpen attention.
+			// Route 1-in-N forward passes through the manual path to collect
+			// training data. The rest go through SDPA at full speed.
+			if trainer.IsPhase2Active(layerKey) && trainer.NeedsPhase2Data(layerKey) {
 				needManualPath = true
 			}
+		} else {
+			// Not converged: need manual path to capture logits for training
+			needManualPath = true
 		}
 	}
 
@@ -226,7 +246,8 @@ func AttentionWithVMLA(ctx ml.Context, query, key, value, sinks ml.Tensor, vmla 
 	}
 
 	// === KAN Shadow Training / Hot-Swap Point ===
-	kq = applyAttentionWeights(ctx, kq)
+	// Pass layerKey from the KAN block above; empty string if KAN is not active.
+	kq = applyAttentionWeights(ctx, kq, kanLayerKey)
 
 	kqv := value.Mulmat(ctx, kq)
 
@@ -247,21 +268,16 @@ func AttentionWithVMLA(ctx ml.Context, query, key, value, sinks ml.Tensor, vmla 
 // Converged KAN layers go through SDPA with effectiveScale baked into the
 // scale factor (handled in AttentionWithVMLA above), so they never reach here.
 // This preserves flash attention performance after convergence.
-func applyAttentionWeights(ctx ml.Context, kq ml.Tensor) ml.Tensor {
+func applyAttentionWeights(ctx ml.Context, kq ml.Tensor, layerKey string) ml.Tensor {
 	kanMu.RLock()
 	trainer := kanTrainer
 	kanMu.RUnlock()
 
-	if trainer == nil {
+	if trainer == nil || layerKey == "" {
 		return kq.Softmax(ctx)
 	}
 
-	layerIdx := ctx.LayerIndex()
-	if layerIdx < 0 {
-		return kq.Softmax(ctx)
-	}
-
-	key := kan.LayerKey(layerIdx)
+	key := layerKey
 
 	if trainer.IsConverged(key) {
 		// Converged layer on the manual path: here for Phase 2 data collection.
