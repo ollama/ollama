@@ -16,52 +16,140 @@ NC='\033[0m'
 header() { echo -e "\n${BOLD}${CYAN}═══════════════════════════════════════════════════${NC}"; echo -e "${BOLD}${CYAN}  $1${NC}"; echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════${NC}\n"; }
 info()   { echo -e "${GREEN}[INFO]${NC} $1"; }
 warn()   { echo -e "${YELLOW}[WAIT]${NC} $1"; }
-result() { echo -e "${BOLD}$1${NC}"; }
 
 chat() {
     local prompt="$1"
-    local response
-    response=$(curl -s "${BASE_URL}/api/chat" -d "{
+    curl -s "${BASE_URL}/api/chat" -d "{
         \"model\": \"${MODEL}\",
         \"messages\": [{\"role\": \"user\", \"content\": $(echo "$prompt" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')}],
         \"stream\": false
-    }" 2>/dev/null | python3 -c 'import json,sys; print(json.loads(sys.stdin.read()).get("message",{}).get("content","[no response]"))' 2>/dev/null)
-    echo "$response"
+    }" 2>/dev/null | python3 -c 'import json,sys; print(json.loads(sys.stdin.read()).get("message",{}).get("content","[no response]"))' 2>/dev/null
 }
 
-# ─── Start Ollama server in background ───
-header "KAN Attention Demo"
-info "Starting Ollama server with KAN attention enabled..."
-info "  OLLAMA_KAN_ATTENTION=$OLLAMA_KAN_ATTENTION"
-info "  OLLAMA_FLASH_ATTENTION=$OLLAMA_FLASH_ATTENTION"
-
-ollama serve &
-SERVER_PID=$!
-
-# Wait for server to be ready
-warn "Waiting for server..."
-for i in $(seq 1 30); do
-    if curl -s "${BASE_URL}/api/tags" > /dev/null 2>&1; then
-        break
-    fi
-    sleep 1
-done
-
-if ! curl -s "${BASE_URL}/api/tags" > /dev/null 2>&1; then
+start_server() {
+    ollama serve &
+    SERVER_PID=$!
+    warn "Waiting for server..."
+    for i in $(seq 1 30); do
+        if curl -s "${BASE_URL}/api/tags" > /dev/null 2>&1; then
+            info "Server ready! (PID $SERVER_PID)"
+            return 0
+        fi
+        sleep 1
+    done
     echo -e "${RED}[ERROR] Server failed to start${NC}"
     exit 1
-fi
-info "Server ready!"
+}
 
-# ─── Pull model ───
-header "Pulling ${MODEL}"
+stop_server() {
+    if [ -n "$SERVER_PID" ]; then
+        kill $SERVER_PID 2>/dev/null || true
+        wait $SERVER_PID 2>/dev/null || true
+        sleep 1
+    fi
+}
+
+# ─── Test prompts ───
+TEST_NAMES=(
+    "Needle in a Haystack"
+    "Instruction Following"
+    "Long-Range Dependency"
+    "Negation Tracking"
+    "Format Compliance (JSON)"
+    "Poetry Structure (Limerick)"
+    "Mathematical Reasoning"
+    "No Repetition"
+)
+
+TEST_PROMPTS=(
+    "Here is a list of facts:\n- The sky is blue\n- Water boils at 100 degrees Celsius\n- The secret code is PURPLE-ELEPHANT-42\n- Grass is green\n- The speed of light is 299,792,458 m/s\n- Dogs are mammals\n- The Earth orbits the Sun\n- Honey never spoils\n\nWhat is the secret code?"
+    "Name exactly 3 countries that start with the letter J. Do not name more than 3. Do not explain anything. Just list them."
+    "Alice gave Bob a red ball. Bob gave Carol a blue ball. Carol gave Dave a green ball. Dave gave Eve the ball he received from Carol.\n\nWhat color ball does Eve have?"
+    "Which of these statements is FALSE?\nA) The sun rises in the east\nB) Water freezes at 0 degrees Celsius\nC) The moon is larger than the Earth\nD) Humans need oxygen to breathe\n\nJust give the letter."
+    "Output ONLY a valid JSON object with these fields: name, age, city. Use the values: John, 30, London. No explanation, no markdown, just JSON."
+    "Write a limerick about a cat. It must follow AABBA rhyme scheme exactly."
+    "If x = 3 and y = x + 2 and z = y * x, what is z? Show your work step by step."
+    "Tell me about the solar system. Mention each planet exactly once. Do not repeat any planet name."
+)
+
+TEST_EXPECTS=(
+    "PURPLE-ELEPHANT-42"
+    "Exactly 3 countries (Japan, Jamaica, Jordan)"
+    "blue"
+    "C"
+    "Valid JSON: {\"name\":\"John\",\"age\":30,\"city\":\"London\"}"
+    "5 lines with AABBA rhyme scheme"
+    "z = 15"
+    "8 planets, each mentioned once"
+)
+
+run_tests() {
+    local label="$1"
+    local results=()
+
+    header "${label}: Running 8 Attention Quality Tests"
+
+    for i in $(seq 0 7); do
+        echo -e "${BOLD}${CYAN}Test $((i+1)): ${TEST_NAMES[$i]}${NC}"
+        echo -e "${YELLOW}Expected: ${TEST_EXPECTS[$i]}${NC}"
+        echo ""
+
+        response=$(chat "$(echo -e "${TEST_PROMPTS[$i]}")")
+        echo -e "${BOLD}Response:${NC}"
+        echo "$response"
+        results+=("$response")
+        echo -e "\n${BOLD}────────────────────────────────────────${NC}\n"
+    done
+
+    # Store results in a temp file for side-by-side comparison
+    local outfile="/tmp/kan-results-${label// /_}.txt"
+    for i in $(seq 0 7); do
+        echo "=== Test $((i+1)): ${TEST_NAMES[$i]} ===" >> "$outfile"
+        echo "Expected: ${TEST_EXPECTS[$i]}" >> "$outfile"
+        echo "Response: ${results[$i]}" >> "$outfile"
+        echo "" >> "$outfile"
+    done
+    info "Results saved to ${outfile}"
+}
+
+# ═══════════════════════════════════════════════════════════
+#  MAIN
+# ═══════════════════════════════════════════════════════════
+
+header "KAN Attention A/B Demo"
+info "This script runs an automated A/B comparison:"
+info "  1. BASELINE: Standard softmax (KAN OFF)"
+info "  2. Warm-up: Train the KAN with 5 prompts"
+info "  3. KAN: Same 8 tests with KAN attention (KAN ON)"
+echo ""
+
+# ─── Step 1: Start server WITHOUT KAN, pull model, run baseline ───
+header "Step 1: Baseline (Standard Softmax)"
+export OLLAMA_KAN_ATTENTION=0
+export OLLAMA_FLASH_ATTENTION=true
+export OLLAMA_DEBUG=1
+info "Starting server with KAN DISABLED..."
+start_server
+
+info "Pulling ${MODEL}..."
 ollama pull "${MODEL}"
 info "Model ready!"
 
-# ─── Phase 1: Warm-up prompts to train the KAN ───
-header "Phase 1: KAN Training (Warm-Up Prompts)"
+run_tests "BASELINE (softmax)"
+
+# ─── Step 2: Restart server WITH KAN ───
+header "Step 2: Restarting with KAN Attention"
+stop_server
+
+export OLLAMA_KAN_ATTENTION=1
+export OLLAMA_FLASH_ATTENTION=false
+info "Starting server with KAN ENABLED..."
+start_server
+
+# ─── Step 3: Warm up the KAN ───
+header "Step 3: KAN Training (Warm-Up)"
 info "Each response generates ~100-200 tokens of KAN training data."
-info "Watch the server logs above for convergence events."
+info "Watch for convergence events in server output."
 echo ""
 
 WARMUP_PROMPTS=(
@@ -80,75 +168,36 @@ for i in "${!WARMUP_PROMPTS[@]}"; do
     echo ""
 done
 
-info "Warm-up complete! KAN should be converging. Check server logs for:"
-info "  - 'KAN attention converged layer=layer_N'"
-info "  - 'KAN Phase 2 activated'"
-
-# ─── Phase 2: Screaming Tests ───
-header "Phase 2: Attention Quality Tests"
-info "These prompts are designed to expose attention quality."
-info "Tiny models with soft/uniform attention struggle with ALL of these."
+info "Warm-up complete!"
+info "Check server logs for: 'KAN attention converged layer=layer_N'"
 echo ""
 
-declare -A TESTS
-TESTS[1,name]="Needle in a Haystack"
-TESTS[1,prompt]="Here is a list of facts:\n- The sky is blue\n- Water boils at 100 degrees Celsius\n- The secret code is PURPLE-ELEPHANT-42\n- Grass is green\n- The speed of light is 299,792,458 m/s\n- Dogs are mammals\n- The Earth orbits the Sun\n- Honey never spoils\n\nWhat is the secret code?"
-TESTS[1,expect]="PURPLE-ELEPHANT-42"
+# ─── Step 4: Run the same tests with KAN ───
+run_tests "KAN ATTENTION"
 
-TESTS[2,name]="Instruction Following"
-TESTS[2,prompt]="Name exactly 3 countries that start with the letter J. Do not name more than 3. Do not explain anything. Just list them."
-TESTS[2,expect]="Exactly 3 countries (Japan, Jamaica, Jordan)"
+# ─── Side-by-side summary ───
+header "A/B Comparison Summary"
+info "Baseline results: /tmp/kan-results-BASELINE_(softmax).txt"
+info "KAN results:      /tmp/kan-results-KAN_ATTENTION.txt"
+echo ""
+echo -e "${BOLD}Side-by-side:${NC}"
+echo ""
 
-TESTS[3,name]="Long-Range Dependency"
-TESTS[3,prompt]="Alice gave Bob a red ball. Bob gave Carol a blue ball. Carol gave Dave a green ball. Dave gave Eve the ball he received from Carol.\n\nWhat color ball does Eve have?"
-TESTS[3,expect]="blue"
+for i in $(seq 0 7); do
+    echo -e "${BOLD}${CYAN}Test $((i+1)): ${TEST_NAMES[$i]}${NC}"
+    echo -e "${YELLOW}Expected: ${TEST_EXPECTS[$i]}${NC}"
 
-TESTS[4,name]="Negation Tracking"
-TESTS[4,prompt]="Which of these statements is FALSE?\nA) The sun rises in the east\nB) Water freezes at 0 degrees Celsius\nC) The moon is larger than the Earth\nD) Humans need oxygen to breathe\n\nJust give the letter."
-TESTS[4,expect]="C"
+    baseline=$(sed -n "/=== Test $((i+1)):/,/^$/{ /Response:/s/Response: //p; }" /tmp/kan-results-BASELINE_\(softmax\).txt)
+    kan=$(sed -n "/=== Test $((i+1)):/,/^$/{ /Response:/s/Response: //p; }" /tmp/kan-results-KAN_ATTENTION.txt)
 
-TESTS[5,name]="Format Compliance (JSON)"
-TESTS[5,prompt]="Output ONLY a valid JSON object with these fields: name, age, city. Use the values: John, 30, London. No explanation, no markdown, just JSON."
-TESTS[5,expect]="Valid JSON: {\"name\":\"John\",\"age\":30,\"city\":\"London\"}"
-
-TESTS[6,name]="Poetry Structure (Limerick)"
-TESTS[6,prompt]="Write a limerick about a cat. It must follow AABBA rhyme scheme exactly."
-TESTS[6,expect]="5 lines with AABBA rhyme scheme"
-
-TESTS[7,name]="Mathematical Reasoning"
-TESTS[7,prompt]="If x = 3 and y = x + 2 and z = y * x, what is z? Show your work step by step."
-TESTS[7,expect]="z = 15"
-
-TESTS[8,name]="No Repetition"
-TESTS[8,prompt]="Tell me about the solar system. Mention each planet exactly once. Do not repeat any planet name."
-TESTS[8,expect]="8 planets, each mentioned once"
-
-echo -e "${BOLD}Running 8 attention quality tests...${NC}\n"
-
-for i in $(seq 1 8); do
-    name="${TESTS[$i,name]}"
-    prompt="${TESTS[$i,prompt]}"
-    expect="${TESTS[$i,expect]}"
-
-    echo -e "${BOLD}${CYAN}Test ${i}: ${name}${NC}"
-    echo -e "${YELLOW}Expected: ${expect}${NC}"
-    echo -e "${YELLOW}Prompt:${NC} ${prompt:0:80}..."
+    echo -e "  ${RED}Baseline:${NC} ${baseline:0:120}"
+    echo -e "  ${GREEN}KAN:     ${NC} ${kan:0:120}"
     echo ""
-
-    response=$(chat "$(echo -e "$prompt")")
-    result "Response:"
-    echo "$response"
-    echo -e "\n${BOLD}────────────────────────────────────────${NC}\n"
 done
 
-# ─── Summary ───
 header "Done!"
-info "Review the responses above and compare with baseline softmax."
-info "To run baseline (no KAN), restart with:"
-info "  docker run -it --rm -e OLLAMA_KAN_ATTENTION=0 -p 11434:11434 ollama-kan /kan-demo.sh"
-echo ""
-info "Server is still running on port ${PORT}."
-info "You can chat interactively: ollama run ${MODEL}"
+info "Server is still running with KAN enabled on port ${PORT}."
+info "Chat interactively: curl ${BASE_URL}/api/chat -d '{\"model\":\"${MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"your prompt\"}]}'"
 echo ""
 
 # Keep server running
