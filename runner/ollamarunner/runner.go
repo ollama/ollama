@@ -1212,9 +1212,46 @@ func (s *Server) allocModel(
 		return err
 	}
 
-	// Initialize Geometric KAN attention if enabled.
-	// This sets up shadow training that runs alongside softmax and can
-	// hot-swap to KAN attention once each layer converges.
+	// TODO(jessegross): LoRA loading
+	if len(loraPath) > 0 {
+		return errors.New("loras are not yet implemented")
+	}
+
+	if s.model.Config().Cache == nil {
+		if parallel > 1 {
+			parallel = 1
+			slog.Warn("model does not support caching, disabling parallel processing")
+		}
+		if s.batchSize < kvSize {
+			s.batchSize = kvSize
+			slog.Warn("model does not support caching, setting batch size to context length", "batch_size", kvSize)
+		}
+	}
+
+	s.cache, err = NewInputCache(s.model, kvCacheType, int32(kvSize), parallel, s.batchSize, multiUserCache)
+	if err != nil {
+		return err
+	}
+
+	s.parallel = parallel
+	s.seqs = make([]*Sequence, s.parallel)
+	s.seqsSem = semaphore.NewWeighted(int64(s.parallel))
+
+	err = s.reserveWorstCaseGraph(true)
+	if err != nil {
+		return err
+	}
+
+	err = s.reserveWorstCaseGraph(false)
+	if err != nil {
+		return err
+	}
+
+	// Initialize Geometric KAN attention AFTER graph reservation.
+	// KAN forces the manual attention path (bypassing SDPA) for shadow
+	// training, which is incompatible with the tensor shapes used during
+	// reserveWorstCaseGraph. Once the model is fully allocated, KAN can
+	// safely intercept attention during actual inference.
 	if envconfig.KANAttention() {
 		slog.Info("Geometric KAN attention enabled, initializing shadow trainer")
 		kanCfg := kan.DefaultConfig()
@@ -1246,37 +1283,7 @@ func (s *Server) allocModel(
 		}()
 	}
 
-	// TODO(jessegross): LoRA loading
-	if len(loraPath) > 0 {
-		return errors.New("loras are not yet implemented")
-	}
-
-	if s.model.Config().Cache == nil {
-		if parallel > 1 {
-			parallel = 1
-			slog.Warn("model does not support caching, disabling parallel processing")
-		}
-		if s.batchSize < kvSize {
-			s.batchSize = kvSize
-			slog.Warn("model does not support caching, setting batch size to context length", "batch_size", kvSize)
-		}
-	}
-
-	s.cache, err = NewInputCache(s.model, kvCacheType, int32(kvSize), parallel, s.batchSize, multiUserCache)
-	if err != nil {
-		return err
-	}
-
-	s.parallel = parallel
-	s.seqs = make([]*Sequence, s.parallel)
-	s.seqsSem = semaphore.NewWeighted(int64(s.parallel))
-
-	err = s.reserveWorstCaseGraph(true)
-	if err != nil {
-		return err
-	}
-
-	return s.reserveWorstCaseGraph(false)
+	return nil
 }
 
 // closeModel frees all memory associated with a model
