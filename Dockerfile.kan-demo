@@ -36,8 +36,10 @@ RUN cmake --preset 'CPU' \
 
 # === Stage 2: Build Ollama Go binary ===
 FROM almalinux:8 AS go-build
-RUN dnf install -y gcc gcc-c++ make curl git ca-certificates tar gzip \
+RUN dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++ gcc-toolset-11-binutils \
+    make curl git ca-certificates tar gzip \
     && dnf clean all
+ENV PATH=/opt/rh/gcc-toolset-11/root/usr/bin:$PATH
 
 # Install Go
 WORKDIR /go/src/github.com/ollama/ollama
