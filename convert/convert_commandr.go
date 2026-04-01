@@ -24,7 +24,7 @@ type commandrModel struct {
 
 var _ ModelConverter = (*commandrModel)(nil)
 
-func (p *commandrModel) KV(t *Tokenizer) ggml.KV {
+func (p *commandrModel) KV(t *Tokenizer) KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "command-r"
 	kv["general.name"] = "command-r"
@@ -43,10 +43,10 @@ func (p *commandrModel) KV(t *Tokenizer) ggml.KV {
 	return kv
 }
 
-func (p *commandrModel) Tensors(ts []Tensor) []ggml.Tensor {
-	var out []ggml.Tensor
+func (p *commandrModel) Tensors(ts []Tensor) []*ggml.Tensor {
+	var out []*ggml.Tensor
 	for _, t := range ts {
-		out = append(out, ggml.Tensor{
+		out = append(out, &ggml.Tensor{
 			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),

@@ -10,15 +10,21 @@ OLLAMA_COMMON_BUILD_ARGS="--build-arg=VERSION \
     --build-arg=GOFLAGS \
     --build-arg=OLLAMA_CUSTOM_CPU_DEFS \
     --build-arg=OLLAMA_SKIP_CUDA_GENERATE \
-    --build-arg=OLLAMA_SKIP_CUDA_11_GENERATE \
     --build-arg=OLLAMA_SKIP_CUDA_12_GENERATE \
-    --build-arg=CUDA_V11_ARCHITECTURES \
     --build-arg=CUDA_V12_ARCHITECTURES \
     --build-arg=OLLAMA_SKIP_ROCM_GENERATE \
     --build-arg=OLLAMA_FAST_BUILD \
     --build-arg=CUSTOM_CPU_FLAGS \
     --build-arg=GPU_RUNNER_CPU_FLAGS \
     --build-arg=AMDGPU_TARGETS"
+
+# Forward local MLX source overrides as Docker build contexts
+if [ -n "${OLLAMA_MLX_SOURCE:-}" ]; then
+    OLLAMA_COMMON_BUILD_ARGS="$OLLAMA_COMMON_BUILD_ARGS --build-context local-mlx=$(cd "$OLLAMA_MLX_SOURCE" && pwd)"
+fi
+if [ -n "${OLLAMA_MLX_C_SOURCE:-}" ]; then
+    OLLAMA_COMMON_BUILD_ARGS="$OLLAMA_COMMON_BUILD_ARGS --build-context local-mlx-c=$(cd "$OLLAMA_MLX_C_SOURCE" && pwd)"
+fi
 
 echo "Building Ollama"
 echo "VERSION=$VERSION"

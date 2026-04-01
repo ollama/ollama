@@ -1,0 +1,16 @@
+body {
+    font-family: ui-sans-serif, system-ui, sans-serif, Apple Color Emoji,Segoe UI Emoji,Segoe UI Symbol,Noto Color Emoji;
+}
+
+pre, code, .font-mono {
+    font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
+}
+
+.nav-logo {
+    height: 44px;
+}
+
+.eyebrow {
+    color: #666;
+    font-weight: 400;
+}

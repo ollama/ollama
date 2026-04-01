@@ -1,0 +1,300 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jesse Gross <jesse@ollama.com>
+Date: Tue, 28 Oct 2025 17:36:54 -0700
+Subject: [PATCH] ggml: Add batch size hint
+
+Some operations use heuristics to determine the batch size, which
+affects offloading decisions. However, these are not always
+accurate when looking at single operations. This provides an
+explicit signal on the batch size from higher layers to ensure
+consistent performance.
+---
+ ggml/include/ggml-backend.h          |  5 ++-
+ ggml/src/ggml-backend-impl.h         |  4 +--
+ ggml/src/ggml-backend.cpp            | 19 +++++++----
+ ggml/src/ggml-blas/ggml-blas.cpp     |  3 +-
+ ggml/src/ggml-cpu/ggml-cpu.cpp       |  4 ++-
+ ggml/src/ggml-cuda/ggml-cuda.cu      | 48 +++++++++++++++++-----------
+ ggml/src/ggml-metal/ggml-metal.cpp   |  4 ++-
+ ggml/src/ggml-vulkan/ggml-vulkan.cpp |  3 +-
+ 8 files changed, 58 insertions(+), 32 deletions(-)
+
+diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
+index 03557bb31..93c95602d 100644
+--- a/ggml/include/ggml-backend.h
++++ b/ggml/include/ggml-backend.h
+@@ -98,7 +98,7 @@ extern "C" {
+ 
+     GGML_API enum ggml_status ggml_backend_graph_plan_compute (ggml_backend_t backend, ggml_backend_graph_plan_t plan);
+     GGML_API enum ggml_status ggml_backend_graph_compute      (ggml_backend_t backend, struct ggml_cgraph * cgraph);
+-    GGML_API enum ggml_status ggml_backend_graph_compute_async(ggml_backend_t backend, struct ggml_cgraph * cgraph);
++    GGML_API enum ggml_status ggml_backend_graph_compute_async(ggml_backend_t backend, struct ggml_cgraph * cgraph, int batch_size);
+ 
+     // NOTE: will be removed, use device version instead
+     GGML_API bool ggml_backend_supports_op(ggml_backend_t backend, const struct ggml_tensor * op);
+@@ -307,6 +307,9 @@ extern "C" {
+     GGML_API ggml_backend_sched_t ggml_backend_sched_new(ggml_backend_t * backends, ggml_backend_buffer_type_t * bufts, int n_backends, size_t graph_size, bool parallel, bool op_offload);
+     GGML_API void                 ggml_backend_sched_free(ggml_backend_sched_t sched);
+ 
++    // Provide a hint on the batch size to optimize processing (uses heuristics if unset)
++    GGML_API void                 ggml_backend_sched_set_batch_size(ggml_backend_sched_t sched, int batch_size);
++
+     // Initialize backend buffers from a measure graph
+     GGML_API void                 ggml_backend_sched_reserve_size(ggml_backend_sched_t sched, struct ggml_cgraph * measure_graph, size_t * sizes);
+     GGML_API bool                 ggml_backend_sched_reserve(ggml_backend_sched_t sched, struct ggml_cgraph * measure_graph); // returns success
+diff --git a/ggml/src/ggml-backend-impl.h b/ggml/src/ggml-backend-impl.h
+index 6792ba986..0f5b03cef 100644
+--- a/ggml/src/ggml-backend-impl.h
++++ b/ggml/src/ggml-backend-impl.h
+@@ -106,8 +106,8 @@ extern "C" {
+         // compute the graph with the plan
+         enum ggml_status          (*graph_plan_compute)(ggml_backend_t backend, ggml_backend_graph_plan_t plan);
+ 
+-        // compute graph (always async if supported by the backend)
+-        enum ggml_status          (*graph_compute)     (ggml_backend_t backend, struct ggml_cgraph * cgraph);
++        // compute graph (always async if supported by the backend). batch_size may be -1 if unknown
++        enum ggml_status          (*graph_compute)     (ggml_backend_t backend, struct ggml_cgraph * cgraph, int batch_size);
+ 
+         // (optional) event synchronization
+         // record an event on this stream
+diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
+index 1459d16dd..498186a7c 100644
+--- a/ggml/src/ggml-backend.cpp
++++ b/ggml/src/ggml-backend.cpp
+@@ -353,14 +353,14 @@ enum ggml_status ggml_backend_graph_plan_compute(ggml_backend_t backend, ggml_ba
+ }
+ 
+ enum ggml_status ggml_backend_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
+-    enum ggml_status err = ggml_backend_graph_compute_async(backend, cgraph);
++    enum ggml_status err = ggml_backend_graph_compute_async(backend, cgraph, -1);
+     ggml_backend_synchronize(backend);
+     return err;
+ }
+ 
+-enum ggml_status ggml_backend_graph_compute_async(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
++enum ggml_status ggml_backend_graph_compute_async(ggml_backend_t backend, struct ggml_cgraph * cgraph, int batch_size) {
+     GGML_ASSERT(backend);
+-    return backend->iface.graph_compute(backend, cgraph);
++    return backend->iface.graph_compute(backend, cgraph, batch_size);
+ }
+ 
+ bool ggml_backend_supports_op(ggml_backend_t backend, const struct ggml_tensor * op) {
+@@ -727,6 +727,8 @@ struct ggml_backend_sched {
+ 
+     bool op_offload;
+ 
++    int batch_size; // a hint on the batch size to optimize processing, -1 to use heuristics
++
+     int debug;
+ 
+     // used for debugging graph reallocations [GGML_SCHED_DEBUG_REALLOC]
+@@ -825,7 +827,7 @@ static int ggml_backend_sched_backend_id_from_cur(ggml_backend_sched_t sched, st
+         if (tensor->op != GGML_OP_ROPE && src->buffer != NULL && src->buffer->usage == GGML_BACKEND_BUFFER_USAGE_WEIGHTS) {
+             int src_backend_id = ggml_backend_sched_backend_from_buffer(sched, src, tensor);
+             // check if a backend with higher prio wants to offload the op
+-            if (sched->op_offload && src_backend_id == sched->n_backends - 1 && ggml_backend_buffer_is_host(src->buffer)) {
++            if (sched->op_offload && (sched->batch_size < 0 || sched->batch_size >= 32) && src_backend_id == sched->n_backends - 1 && ggml_backend_buffer_is_host(src->buffer)) {
+                 for (int b = 0; b < src_backend_id; b++) {
+                     if (ggml_backend_supports_op(sched->backends[b], tensor) && ggml_backend_offload_op(sched->backends[b], tensor)) {
+                         SET_CAUSE(tensor, "1.off");
+@@ -1577,7 +1579,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+         }
+ 
+         if (!sched->callback_eval) {
+-            enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &split->graph);
++            enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &split->graph, sched->batch_size);
+             if (ec != GGML_STATUS_SUCCESS) {
+                 return ec;
+             }
+@@ -1599,7 +1601,7 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
+ 
+                 struct ggml_cgraph gv = ggml_graph_view(&split->graph, j0, j1 + 1);
+ 
+-                enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &gv);
++                enum ggml_status ec = ggml_backend_graph_compute_async(split_backend, &gv, sched->batch_size);
+                 if (ec != GGML_STATUS_SUCCESS) {
+                     return ec;
+                 }
+@@ -1689,6 +1691,7 @@ ggml_backend_sched_t ggml_backend_sched_new(
+ 
+     sched->galloc = ggml_gallocr_new_n(sched->bufts, n_backends);
+     sched->op_offload = op_offload;
++    sched->batch_size = -1;
+ 
+     ggml_backend_sched_reset(sched);
+ 
+@@ -1720,6 +1723,10 @@ void ggml_backend_sched_free(ggml_backend_sched_t sched) {
+     free(sched);
+ }
+ 
++void ggml_backend_sched_set_batch_size(ggml_backend_sched_t sched, int batch_size) {
++    sched->batch_size = batch_size;
++}
++
+ void ggml_backend_sched_reset(ggml_backend_sched_t sched) {
+     GGML_ASSERT(sched);
+     // reset state for the next run
+diff --git a/ggml/src/ggml-blas/ggml-blas.cpp b/ggml/src/ggml-blas/ggml-blas.cpp
+index 5b888cdd8..88d088952 100644
+--- a/ggml/src/ggml-blas/ggml-blas.cpp
++++ b/ggml/src/ggml-blas/ggml-blas.cpp
+@@ -224,7 +224,7 @@ static void ggml_backend_blas_free(ggml_backend_t backend) {
+     delete backend;
+ }
+ 
+-static enum ggml_status ggml_backend_blas_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
++static enum ggml_status ggml_backend_blas_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph, int batch_size) {
+     ggml_backend_blas_context * ctx = (ggml_backend_blas_context *)backend->context;
+ 
+     for (int i = 0; i < cgraph->n_nodes; i++) {
+@@ -254,6 +254,7 @@ static enum ggml_status ggml_backend_blas_graph_compute(ggml_backend_t backend,
+     return GGML_STATUS_SUCCESS;
+ 
+     GGML_UNUSED(backend);
++    GGML_UNUSED(batch_size);
+ }
+ 
+ static struct ggml_backend_i blas_backend_i = {
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.cpp b/ggml/src/ggml-cpu/ggml-cpu.cpp
+index f4713a421..92ba577a5 100644
+--- a/ggml/src/ggml-cpu/ggml-cpu.cpp
++++ b/ggml/src/ggml-cpu/ggml-cpu.cpp
+@@ -164,7 +164,7 @@ static enum ggml_status ggml_backend_cpu_graph_plan_compute(ggml_backend_t backe
+     GGML_UNUSED(backend);
+ }
+ 
+-static enum ggml_status ggml_backend_cpu_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph) {
++static enum ggml_status ggml_backend_cpu_graph_compute(ggml_backend_t backend, struct ggml_cgraph * cgraph, int batch_size) {
+     struct ggml_backend_cpu_context * cpu_ctx = (struct ggml_backend_cpu_context *)backend->context;
+ 
+     struct ggml_cplan cplan = ggml_graph_plan(cgraph, cpu_ctx->n_threads, cpu_ctx->threadpool);
+@@ -184,6 +184,8 @@ static enum ggml_status ggml_backend_cpu_graph_compute(ggml_backend_t backend, s
+     cplan.abort_callback_data = cpu_ctx->abort_callback_data;
+ 
+     return ggml_graph_compute(cgraph, &cplan);
++
++    GGML_UNUSED(batch_size);
+ }
+ 
+ static const struct ggml_backend_i ggml_backend_cpu_i = {
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index c9d3a2b03..25548629d 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -2901,7 +2901,7 @@ static void ggml_backend_cuda_synchronize(ggml_backend_t backend) {
+ 
+ #ifdef USE_CUDA_GRAPH
+ static bool check_node_graph_compatibility(ggml_cgraph * cgraph,
+-    bool use_cuda_graph) {
++    int batch_size, bool use_cuda_graph) {
+ 
+     // Loop over nodes in GGML graph to obtain info needed for CUDA graph
+ 
+@@ -2934,24 +2934,34 @@ static bool check_node_graph_compatibility(ggml_cgraph * cgraph,
+ #endif
+         }
+ 
+-        if (node->op == GGML_OP_ADD &&
+-            node->src[1] && node->src[1]->ne[1] > 1 &&
+-            (node->src[0] ? node->src[0]->name != gemma3n_per_layer_proj_src0_name : true) &&
+-            (node->src[1] ? node->src[1]->name != gemma3n_per_layer_proj_src1_name : true) &&
+-            strncmp(node->name, ffn_moe_gate_bias_prefix.c_str(), ffn_moe_gate_bias_prefix.size()) != 0 &&
+-            strncmp(node->name, ffn_moe_up_bias_prefix.c_str(), ffn_moe_up_bias_prefix.size()) != 0 &&
+-            strncmp(node->name, ffn_moe_down_bias_prefix.c_str(), ffn_moe_down_bias_prefix.size()) != 0 &&
+-            strncmp(node->name, nemotron_h_block_out_prefix.c_str(), nemotron_h_block_out_prefix.size()) != 0 &&
+-            strncmp(node->name, mamba2_y_add_d_prefix.c_str(), mamba2_y_add_d_prefix.size()) != 0) {
+-            // disable CUDA graphs for batch size > 1 for now while excluding the matrix-matrix addition as part of Gemma3n's `project_per_layer_input` operation
+-            // by means of matching node names. See
+-            // https://github.com/ggml-org/llama.cpp/blob/f9a31eea06a859e34cecb88b4d020c7f03d86cc4/src/llama-model.cpp#L10199-L10241 and
+-            // https://github.com/huggingface/transformers/blob/bda75b4011239d065de84aa3e744b67ebfa7b245/src/transformers/models/gemma3n/modeling_gemma3n.py#L1773,
+-            // Generally, changes in batch size or context size can cause changes to the grid size of some kernels.
+-            use_cuda_graph = false;
++        // If we have an explicit batch size hint then we don't need to use the tensor name heuristics
++        if (batch_size >= 0) {
++            if (batch_size > 1) {
++                use_cuda_graph = false;
+ #ifndef NDEBUG
+-            GGML_LOG_DEBUG("%s: disabling CUDA graphs due to batch size > 1 [%s] [%ld %ld %ld %ld]\n", __func__, node->name, node->ne[0], node->ne[1], node->ne[2], node->ne[3]);
++                GGML_LOG_DEBUG("%s: disabling CUDA graphs due to batch size > 1 [%d]\n", __func__, batch_size);
+ #endif
++            }
++        } else {
++            if (node->op == GGML_OP_ADD &&
++                node->src[1] && node->src[1]->ne[1] > 1 &&
++                (node->src[0] ? node->src[0]->name != gemma3n_per_layer_proj_src0_name : true) &&
++                (node->src[1] ? node->src[1]->name != gemma3n_per_layer_proj_src1_name : true) &&
++                strncmp(node->name, ffn_moe_gate_bias_prefix.c_str(), ffn_moe_gate_bias_prefix.size()) != 0 &&
++                strncmp(node->name, ffn_moe_up_bias_prefix.c_str(), ffn_moe_up_bias_prefix.size()) != 0 &&
++                strncmp(node->name, ffn_moe_down_bias_prefix.c_str(), ffn_moe_down_bias_prefix.size()) != 0 &&
++                strncmp(node->name, nemotron_h_block_out_prefix.c_str(), nemotron_h_block_out_prefix.size()) != 0 &&
++                strncmp(node->name, mamba2_y_add_d_prefix.c_str(), mamba2_y_add_d_prefix.size()) != 0) {
++                // disable CUDA graphs for batch size > 1 for now while excluding the matrix-matrix addition as part of Gemma3n's `project_per_layer_input` operation
++                // by means of matching node names. See
++                // https://github.com/ggml-org/llama.cpp/blob/f9a31eea06a859e34cecb88b4d020c7f03d86cc4/src/llama-model.cpp#L10199-L10241 and
++                // https://github.com/huggingface/transformers/blob/bda75b4011239d065de84aa3e744b67ebfa7b245/src/transformers/models/gemma3n/modeling_gemma3n.py#L1773,
++                // Generally, changes in batch size or context size can cause changes to the grid size of some kernels.
++                use_cuda_graph = false;
++#ifndef NDEBUG
++                GGML_LOG_DEBUG("%s: disabling CUDA graphs due to batch size > 1 [%s] [%ld %ld %ld %ld]\n", __func__, node->name, node->ne[0], node->ne[1], node->ne[2], node->ne[3]);
++#endif
++            }
+         }
+ 
+         if (!use_cuda_graph) {
+@@ -3742,7 +3752,7 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
+     }
+ }
+ 
+-static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
++static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
+     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
+ 
+     ggml_cuda_set_device(cuda_ctx->device);
+@@ -3780,7 +3790,7 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend,
+     if (use_cuda_graph) {
+         cuda_graph_update_required = is_cuda_graph_update_required(cuda_ctx, cgraph);
+ 
+-        use_cuda_graph = check_node_graph_compatibility(cgraph, use_cuda_graph);
++        use_cuda_graph = check_node_graph_compatibility(cgraph, batch_size, use_cuda_graph);
+ 
+         // Disable CUDA graphs (from the next token) if the use-case is demanding too many consecutive graph updates.
+         if (use_cuda_graph && cuda_graph_update_required) {
+diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
+index 8fc1c2fb5..ba95b4acc 100644
+--- a/ggml/src/ggml-metal/ggml-metal.cpp
++++ b/ggml/src/ggml-metal/ggml-metal.cpp
+@@ -419,10 +419,12 @@ static bool ggml_backend_metal_cpy_tensor_async(ggml_backend_t backend_src, ggml
+     GGML_UNUSED(dst);
+ }
+ 
+-static enum ggml_status ggml_backend_metal_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
++static enum ggml_status ggml_backend_metal_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
+     ggml_metal_t ctx = (ggml_metal_t)backend->context;
+ 
+     return ggml_metal_graph_compute(ctx, cgraph);
++
++    GGML_UNUSED(batch_size);
+ }
+ 
+ static void ggml_backend_metal_graph_optimize(ggml_backend_t backend, ggml_cgraph * cgraph) {
+diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+index 120191ca0..5349bce24 100644
+--- a/ggml/src/ggml-vulkan/ggml-vulkan.cpp
++++ b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
+@@ -13099,7 +13099,7 @@ static uint32_t ggml_vk_fuse_multi_add(ggml_backend_vk_context * ctx, const stru
+     return num_adds;
+ }
+ 
+-static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
++static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
+     VK_LOG_DEBUG("ggml_backend_vk_graph_compute(" << cgraph->n_nodes << " nodes)");
+     ggml_backend_vk_context * ctx = (ggml_backend_vk_context *)backend->context;
+ 
+@@ -13334,6 +13334,7 @@ static ggml_status ggml_backend_vk_graph_compute(ggml_backend_t backend, ggml_cg
+     return GGML_STATUS_SUCCESS;
+ 
+     UNUSED(backend);
++    UNUSED(batch_size);
+ }
+ 
+ // Sort the graph for improved parallelism.

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"hash/maphash"
 	"log/slog"
-	"slices"
 	"sync"
 	"time"
 
@@ -18,8 +17,7 @@ type ImageContext struct {
 	// mu is required to be held when generating embeddings or accessing the cache
 	mu sync.Mutex
 
-	clip   *llama.ClipContext
-	mllama *llama.MllamaContext
+	mtmd *llama.MtmdContext
 
 	// cache of images to embeddings
 	images    []imageCache
@@ -34,9 +32,7 @@ func NewImageContext(llamaContext *llama.Context, modelPath string) (*ImageConte
 
 	var c ImageContext
 	if arch == "clip" {
-		c.clip, err = llama.NewClipContext(llamaContext, modelPath)
-	} else if arch == "mllama" {
-		c.mllama, err = llama.NewMllamaContext(llamaContext, modelPath)
+		c.mtmd, err = llama.NewMtmdContext(llamaContext, modelPath)
 	} else {
 		return nil, fmt.Errorf("unknown vision model architecture: %s", arch)
 	}
@@ -55,15 +51,12 @@ func (c *ImageContext) Free(modelPath string) {
 		return
 	}
 
-	if c.clip != nil {
-		c.clip.Free()
-	}
-	if c.mllama != nil {
-		c.mllama.Free()
+	if c.mtmd != nil {
+		c.mtmd.Free()
 	}
 }
 
-func (c *ImageContext) NewEmbed(llamaContext *llama.Context, data []byte, aspectRatioId int) ([][]float32, error) {
+func (c *ImageContext) MultimodalTokenize(llamaContext *llama.Context, data []byte) ([]llama.MtmdChunk, error) {
 	if c == nil {
 		return nil, nil
 	}
@@ -77,15 +70,10 @@ func (c *ImageContext) NewEmbed(llamaContext *llama.Context, data []byte, aspect
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	embed, err := c.findImage(hash)
+	chunks, err := c.findImage(hash)
 	if err != nil {
-		if c.mllama != nil {
-			embed, err = c.mllama.NewEmbed(llamaContext, data, aspectRatioId)
-			if err != nil {
-				return nil, err
-			}
-		} else if c.clip != nil {
-			embed, err = c.clip.NewEmbed(llamaContext, data)
+		if c.mtmd != nil {
+			chunks, err = c.mtmd.MultimodalTokenize(llamaContext, data)
 			if err != nil {
 				return nil, err
 			}
@@ -93,10 +81,10 @@ func (c *ImageContext) NewEmbed(llamaContext *llama.Context, data []byte, aspect
 			return nil, errors.New("received image but vision model not loaded")
 		}
 
-		c.addImage(hash, embed)
+		c.addImage(hash, chunks)
 	}
 
-	return embed, nil
+	return chunks, nil
 }
 
 func (c *ImageContext) BatchSize(configuredBatchSize int) int {
@@ -105,38 +93,16 @@ func (c *ImageContext) BatchSize(configuredBatchSize int) int {
 		return 0
 	}
 
-	// Mllama maps an image to 1 embedding token (llava creates many tokens)
-	// and doesn't support more than a single image per request.
-	// The embeddings are large (100 MB), so allocating a big batch can fail
-	// on some systems
-	if c.mllama != nil {
-		return 1
-	}
-
 	return configuredBatchSize
 }
 
 func (c *ImageContext) EmbedSize(llamaContext *llama.Context) int {
-	if c != nil && c.mllama != nil {
-		return c.mllama.EmbedSize(llamaContext)
-	} else {
-		return llamaContext.Model().NEmbd()
-	}
-}
-
-func (c *ImageContext) NeedCrossAttention(inputs ...input) bool {
-	if c == nil || c.mllama == nil {
-		return false
-	}
-
-	return slices.ContainsFunc(inputs, func(input input) bool {
-		return input.embed != nil
-	})
+	return llamaContext.Model().NEmbd()
 }
 
 type imageCache struct {
 	key      uint64
-	val      [][]float32
+	val      []llama.MtmdChunk
 	lastUsed time.Time
 }
 
@@ -148,7 +114,7 @@ func (c *ImageContext) hashImage(image []byte) uint64 {
 
 var errImageNotFound = errors.New("image not found in cache")
 
-func (c *ImageContext) findImage(hash uint64) ([][]float32, error) {
+func (c *ImageContext) findImage(hash uint64) ([]llama.MtmdChunk, error) {
 	for i := range c.images {
 		if c.images[i].key == hash {
 			slog.Debug("loading image embeddings from cache", "entry", i)
@@ -160,7 +126,7 @@ func (c *ImageContext) findImage(hash uint64) ([][]float32, error) {
 	return nil, errImageNotFound
 }
 
-func (c *ImageContext) addImage(hash uint64, embed [][]float32) {
+func (c *ImageContext) addImage(hash uint64, embed []llama.MtmdChunk) {
 	best := time.Now()
 	var bestImage int
 

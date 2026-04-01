@@ -1,0 +1,158 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Hiltgen <daniel@ollama.com>
+Date: Sun, 30 Nov 2025 11:05:56 -0800
+Subject: [PATCH] ggml: Export GPU UUIDs
+
+---
+ ggml/include/ggml-backend.h        |  1 +
+ ggml/src/ggml-cuda/ggml-cuda.cu    | 67 +++++++++++++++++++++++++++---
+ ggml/src/ggml-metal/ggml-metal.cpp |  1 +
+ 3 files changed, 63 insertions(+), 6 deletions(-)
+
+diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
+index a7ebe5dcd..03557bb31 100644
+--- a/ggml/include/ggml-backend.h
++++ b/ggml/include/ggml-backend.h
+@@ -158,6 +158,7 @@ extern "C" {
+         const char * description;
+         // device free memory in bytes
+         size_t memory_free;
++        const char * id;
+         // device total memory in bytes
+         size_t memory_total;
+         // device type
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index 6519af435..c9d3a2b03 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -189,6 +189,51 @@ static int ggml_cuda_parse_id(char devName[]) {
+ }
+ #endif // defined(GGML_USE_HIP)
+ 
++static std::string ggml_cuda_parse_uuid(cudaDeviceProp prop, int device_num) {
++    char id[64];
++
++#if !defined(GGML_USE_HIP)
++    snprintf(id, sizeof(id),
++        "GPU-%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
++        (unsigned char)prop.uuid.bytes[0],
++        (unsigned char)prop.uuid.bytes[1],
++        (unsigned char)prop.uuid.bytes[2],
++        (unsigned char)prop.uuid.bytes[3],
++        (unsigned char)prop.uuid.bytes[4],
++        (unsigned char)prop.uuid.bytes[5],
++        (unsigned char)prop.uuid.bytes[6],
++        (unsigned char)prop.uuid.bytes[7],
++        (unsigned char)prop.uuid.bytes[8],
++        (unsigned char)prop.uuid.bytes[9],
++        (unsigned char)prop.uuid.bytes[10],
++        (unsigned char)prop.uuid.bytes[11],
++        (unsigned char)prop.uuid.bytes[12],
++        (unsigned char)prop.uuid.bytes[13],
++        (unsigned char)prop.uuid.bytes[14],
++        (unsigned char)prop.uuid.bytes[15]
++        );
++#else
++#ifdef _WIN32
++        snprintf(id, sizeof(id), "%d", device_num);
++#else
++    try {
++        std::string uuid = std::string(prop.uuid.bytes, 16);
++
++        size_t pos = 0;
++        unsigned long long v = stoull(uuid, &pos, 16);
++        if (v == 0 || pos != uuid.size() || (!uuid.empty() && uuid[0] == '-'))
++            throw std::invalid_argument("invalid uuid");
++
++        snprintf(id, sizeof(id), "GPU-%016llx", v);
++    } catch (const std::exception &e) {
++        snprintf(id, sizeof(id), "%d", device_num);
++    }
++#endif
++#endif
++
++    return id;
++}
++
+ static ggml_cuda_device_info ggml_cuda_init() {
+     ggml_cuda_device_info info = {};
+ 
+@@ -255,22 +300,24 @@ static ggml_cuda_device_info ggml_cuda_init() {
+                 info.devices[id].cc += prop.minor * 0x10;
+             }
+         }
+-        GGML_LOG_INFO("  Device %d: %s, %s (0x%x), VMM: %s, Wave Size: %d\n",
++        GGML_LOG_INFO("  Device %d: %s, %s (0x%x), VMM: %s, Wave Size: %d, ID: %s\n",
+                       id, prop.name, prop.gcnArchName, info.devices[id].cc & 0xffff,
+-                      device_vmm ? "yes" : "no", prop.warpSize);
++                      device_vmm ? "yes" : "no", prop.warpSize, ggml_cuda_parse_uuid(prop, id).c_str());
+ #elif defined(GGML_USE_MUSA)
+         // FIXME: Ensure compatibility with varying warp sizes across different MUSA archs.
+         info.devices[id].warp_size = 32;
+         info.devices[id].smpbo = prop.sharedMemPerBlockOptin;
+         info.devices[id].cc = GGML_CUDA_CC_OFFSET_MTHREADS + prop.major * 0x100;
+         info.devices[id].cc += prop.minor * 0x10;
+-        GGML_LOG_INFO("  Device %d: %s, compute capability %d.%d, VMM: %s\n",
+-                        id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no");
++        GGML_LOG_INFO("  Device %d: %s, compute capability %d.%d, VMM: %s, ID: %s\n",
++                        id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no",
++                        ggml_cuda_parse_uuid(prop, id).c_str());
+ #else
+         info.devices[id].smpbo = prop.sharedMemPerBlockOptin;
+         info.devices[id].cc = 100*prop.major + 10*prop.minor;
+-        GGML_LOG_INFO("  Device %d: %s, compute capability %d.%d, VMM: %s\n",
+-                        id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no");
++        GGML_LOG_INFO("  Device %d: %s, compute capability %d.%d, VMM: %s, ID: %s\n",
++                        id, prop.name, prop.major, prop.minor, device_vmm ? "yes" : "no",
++                        ggml_cuda_parse_uuid(prop, id).c_str());
+         std::string device_name(prop.name);
+         if (device_name == "NVIDIA GeForce MX450") {
+             turing_devices_without_mma.push_back({ id, device_name });
+@@ -4110,6 +4157,7 @@ struct ggml_backend_cuda_device_context {
+     std::string name;
+     std::string description;
+     std::string pci_bus_id;
++    std::string id;
+ };
+ 
+ static const char * ggml_backend_cuda_device_get_name(ggml_backend_dev_t dev) {
+@@ -4198,6 +4246,11 @@ static bool ggml_backend_cuda_get_available_uma_memory(long * available_memory_k
+ }
+ #endif // defined(__linux__)
+ 
++static const char * ggml_backend_cuda_device_get_id(ggml_backend_dev_t dev) {
++    ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
++    return ctx->id.c_str();
++}
++
+ static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t * free, size_t * total) {
+     ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
+     ggml_cuda_set_device(ctx->device);
+@@ -4238,6 +4291,7 @@ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_back
+ 
+     props->name        = ggml_backend_cuda_device_get_name(dev);
+     props->description = ggml_backend_cuda_device_get_description(dev);
++    props->id          = ggml_backend_cuda_device_get_id(dev);
+     props->type        = ggml_backend_cuda_device_get_type(dev);
+     props->device_id   = ctx->pci_bus_id.empty() ? nullptr : ctx->pci_bus_id.c_str();
+     ggml_backend_cuda_device_get_memory(dev, &props->memory_free, &props->memory_total);
+@@ -4834,6 +4888,7 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
+                 cudaDeviceProp prop;
+                 CUDA_CHECK(cudaGetDeviceProperties(&prop, i));
+                 dev_ctx->description = prop.name;
++                dev_ctx->id = ggml_cuda_parse_uuid(prop, i);
+ 
+                 char pci_bus_id[16] = {};
+                 snprintf(pci_bus_id, sizeof(pci_bus_id), "%04x:%02x:%02x.0", prop.pciDomainID, prop.pciBusID, prop.pciDeviceID);
+diff --git a/ggml/src/ggml-metal/ggml-metal.cpp b/ggml/src/ggml-metal/ggml-metal.cpp
+index f2b7fe692..8fc1c2fb5 100644
+--- a/ggml/src/ggml-metal/ggml-metal.cpp
++++ b/ggml/src/ggml-metal/ggml-metal.cpp
+@@ -547,6 +547,7 @@ static enum ggml_backend_dev_type ggml_backend_metal_device_get_type(ggml_backen
+ static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
+     props->name        = ggml_backend_metal_device_get_name(dev);
+     props->description = ggml_backend_metal_device_get_description(dev);
++    props->id          = "0";
+     props->type        = ggml_backend_metal_device_get_type(dev);
+ 
+     ggml_backend_metal_device_get_memory(dev, &props->memory_free, &props->memory_total);

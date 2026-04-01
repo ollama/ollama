@@ -23,7 +23,7 @@ type gemmaModel struct {
 
 var _ ModelConverter = (*gemmaModel)(nil)
 
-func (p *gemmaModel) KV(t *Tokenizer) ggml.KV {
+func (p *gemmaModel) KV(t *Tokenizer) KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "gemma"
 	kv["gemma.context_length"] = p.MaxPositionEmbeddings
@@ -42,14 +42,14 @@ func (p *gemmaModel) KV(t *Tokenizer) ggml.KV {
 	return kv
 }
 
-func (p *gemmaModel) Tensors(ts []Tensor) []ggml.Tensor {
-	var out []ggml.Tensor
+func (p *gemmaModel) Tensors(ts []Tensor) []*ggml.Tensor {
+	var out []*ggml.Tensor
 	for _, t := range ts {
-		if strings.HasSuffix(t.Name(), "_norm.weight") {
+		if !strings.HasPrefix(t.Name(), "v.") && strings.HasSuffix(t.Name(), "_norm.weight") {
 			t.SetRepacker(p.addOne)
 		}
 
-		out = append(out, ggml.Tensor{
+		out = append(out, &ggml.Tensor{
 			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),

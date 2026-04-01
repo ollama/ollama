@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
-	"reflect"
 	"time"
 
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model"
+	"github.com/ollama/ollama/model/input"
 )
 
 type InputCache struct {
@@ -31,27 +31,26 @@ type InputCache struct {
 	cache kvcache.Cache
 }
 
-func NewInputCache(model model.Model, kvCacheType string, kvSize int32, numSlots int, multiUserCache bool) (*InputCache, error) {
-	if kvSize/int32(numSlots) < 1 {
-		return nil, fmt.Errorf("must have at least one kv cache entry per parallel sequence (kv: %v parallel: %v)", kvSize, numSlots)
+func NewInputCache(model model.Model, kvCacheType string, kvSize int32, numSlots int, batchSize int, multiUserCache bool) (*InputCache, error) {
+	numCtx := kvSize / int32(numSlots)
+
+	if int(numCtx) < batchSize {
+		return nil, fmt.Errorf("kv size must be at least as large as batch size * parallel (kv: %v batch: %v parallel: %v)", kvSize, batchSize, numSlots)
 	}
 
 	slots := make([]InputCacheSlot, numSlots)
 
 	for i := range slots {
-		slots[i] = InputCacheSlot{
-			Id:     i,
-			Inputs: make([]input, 0),
-		}
+		slots[i] = InputCacheSlot{Id: i}
 	}
 
 	cache := model.Config().Cache
 	if cache != nil {
-		cache.Init(model.Backend(), kvCacheTypeFromStr(kvCacheType), kvSize)
+		cache.Init(model.Backend(), kvCacheTypeFromStr(kvCacheType), numSlots, int(numCtx), batchSize)
 	}
 
 	return &InputCache{
-		numCtx:         kvSize / int32(numSlots),
+		numCtx:         numCtx,
 		enabled:        cache != nil,
 		slots:          slots,
 		multiUserCache: multiUserCache,
@@ -62,20 +61,22 @@ func NewInputCache(model model.Model, kvCacheType string, kvSize int32, numSlots
 func kvCacheTypeFromStr(s string) ml.DType {
 	switch s {
 	case "q8_0":
-		panic("kv cache quantization not yet implemented")
+		return ml.DTypeQ80
 	case "q4_0":
-		panic("kv cache quantization not yet implemented")
+		return ml.DTypeQ40
 	default:
 		return ml.DTypeF16
 	}
 }
 
 func (c *InputCache) Close() {
-	c.cache.Close()
+	if c != nil && c.cache != nil {
+		c.cache.Close()
+	}
 }
 
 // Locking: Operations on InputCacheSlot (including finding one
-// through LoadCacheSlot) require a lock to be be held that serializes
+// through LoadCacheSlot) require a lock to be held that serializes
 // these operations with each other and processBatch
 
 type InputCacheSlot struct {
@@ -83,7 +84,7 @@ type InputCacheSlot struct {
 	Id int
 
 	// Inputs that are stored in the KV cache
-	Inputs []input
+	Inputs []*input.Input
 
 	// is this cache actively being processed as part of a sequence?
 	InUse bool
@@ -92,7 +93,7 @@ type InputCacheSlot struct {
 	lastUsed time.Time
 }
 
-func (c *InputCache) LoadCacheSlot(prompt []input, cachePrompt bool) (*InputCacheSlot, []input, error) {
+func (c *InputCache) LoadCacheSlot(prompt []*input.Input, cachePrompt bool) (*InputCacheSlot, []*input.Input, error) {
 	var slot *InputCacheSlot
 	var numPast int32
 	var err error
@@ -123,6 +124,19 @@ func (c *InputCache) LoadCacheSlot(prompt []input, cachePrompt bool) (*InputCach
 	}
 
 	if c.cache != nil {
+		if numPast > 0 {
+			// Recurrent caches use checkpoints to pick a safe resume position.
+			if cc, ok := c.cache.(kvcache.CheckpointCache); ok {
+				if restored, ok := cc.PrepareRestore(slot.Id, numPast); ok {
+					numPast = restored
+				} else {
+					numPast = 0
+				}
+			} else if !c.cache.CanResume(slot.Id, numPast) {
+				numPast = 0
+			}
+		}
+
 		err = c.cache.Remove(slot.Id, numPast, math.MaxInt32)
 		if err != nil {
 			// Some models don't support partial erasure
@@ -137,13 +151,13 @@ func (c *InputCache) LoadCacheSlot(prompt []input, cachePrompt bool) (*InputCach
 	slog.Debug("loading cache slot", "id", slot.Id, "cache", len(slot.Inputs), "prompt", len(prompt),
 		"used", numPast, "remaining", int32(len(prompt))-numPast)
 
+	slot.Inputs = prompt[:numPast]
 	prompt = prompt[numPast:]
-	slot.Inputs = slot.Inputs[:numPast]
 
 	return slot, prompt, nil
 }
 
-func (c *InputCache) findLongestCacheSlot(prompt []input) (*InputCacheSlot, int32, error) {
+func (c *InputCache) findLongestCacheSlot(prompt []*input.Input) (*InputCacheSlot, int32, error) {
 	longest := int32(-1)
 	var longestSlot *InputCacheSlot
 
@@ -166,7 +180,7 @@ func (c *InputCache) findLongestCacheSlot(prompt []input) (*InputCacheSlot, int3
 	return longestSlot, longest, nil
 }
 
-func (c *InputCache) findBestCacheSlot(prompt []input) (*InputCacheSlot, int32, error) {
+func (c *InputCache) findBestCacheSlot(prompt []*input.Input) (*InputCacheSlot, int32, error) {
 	oldest := time.Now()
 	var oldestSlot *InputCacheSlot
 
@@ -202,7 +216,7 @@ func (c *InputCache) findBestCacheSlot(prompt []input) (*InputCacheSlot, int32, 
 	if longest > 0 && longestSlot != oldestSlot {
 		slog.Debug("forking cache slot", "src", longestSlot.Id, "dst", oldestSlot.Id, "inputs", longest, "total",
 			len(longestSlot.Inputs))
-		oldestSlot.Inputs = make([]input, longest)
+		oldestSlot.Inputs = make([]*input.Input, longest)
 		copy(oldestSlot.Inputs, longestSlot.Inputs[:longest])
 		if c.cache != nil {
 			c.cache.CopyPrefix(longestSlot.Id, oldestSlot.Id, longest)
@@ -212,7 +226,7 @@ func (c *InputCache) findBestCacheSlot(prompt []input) (*InputCacheSlot, int32, 
 	return oldestSlot, longest, nil
 }
 
-func countCommonPrefix(a []input, b []input) int32 {
+func countCommonPrefix(a []*input.Input, b []*input.Input) int32 {
 	var count int32
 
 	for i := range a {
@@ -220,7 +234,7 @@ func countCommonPrefix(a []input, b []input) int32 {
 			break
 		}
 
-		if !reflect.DeepEqual(a[i], b[i]) {
+		if a[i].Token != b[i].Token || a[i].MultimodalHash != b[i].MultimodalHash {
 			break
 		}
 
@@ -230,18 +244,36 @@ func countCommonPrefix(a []input, b []input) int32 {
 	return count
 }
 
-func (c *InputCache) ShiftDiscard(inputLen int32, numKeep int32) int32 {
-	targetFree := (c.numCtx - numKeep) / 2
-	targetFree = max(targetFree, 1)
+// ShiftDiscard computes how many inputs can be discarded from the cache. Inputs in the same batch
+// are discarded together.
+func (c *InputCache) ShiftDiscard(inputs []*input.Input, numKeep int32) int32 {
+	targetFree := max((c.numCtx-numKeep)/2, 1)
+	currentFree := c.numCtx - int32(len(inputs))
 
-	currentFree := c.numCtx - inputLen
-	discard := targetFree - currentFree
+	var discard, sameBatch int32
+	for _, input := range inputs[numKeep:] {
+		if sameBatch <= 0 && currentFree >= targetFree {
+			break
+		}
 
-	if discard < 0 {
-		discard = 0
+		sameBatch--
+		currentFree++
+		discard++
+
+		if input.SameBatch > 0 {
+			sameBatch = int32(input.SameBatch)
+		}
 	}
 
 	return discard
+}
+
+type ErrReprocessInputs struct {
+	Inputs []*input.Input
+}
+
+func (e *ErrReprocessInputs) Error() string {
+	return fmt.Sprintf("kv cache shift not supported, inputs need reprocessing (input count: %v)", len(e.Inputs))
 }
 
 // Frees up space in the KV cache by deleting the oldest half of history and shifting
@@ -254,7 +286,7 @@ func (c *InputCache) ShiftCacheSlot(slot *InputCacheSlot, numKeep int32) error {
 	}
 
 	inputLen := int32(len(slot.Inputs))
-	discard := c.ShiftDiscard(inputLen, numKeep)
+	discard := c.ShiftDiscard(slot.Inputs, numKeep)
 
 	if discard <= 0 {
 		return nil
@@ -263,11 +295,23 @@ func (c *InputCache) ShiftCacheSlot(slot *InputCacheSlot, numKeep int32) error {
 	slog.Debug("context limit hit - shifting", "id", slot.Id, "limit", c.numCtx, "input", len(slot.Inputs),
 		"keep", numKeep, "discard", discard)
 
-	// TODO (jessegross): KV cache removal can fail for certain types of models
 	if c.cache != nil {
 		err := c.cache.Remove(slot.Id, numKeep, numKeep+discard)
 		if err != nil {
-			return fmt.Errorf("unable to remove old kv cache entries (id: %v, keep: %v discard: %v): %w", slot.Id, numKeep, discard, err)
+			slog.Debug("kv cache removal unsupported, clearing cache and returning inputs for reprocessing",
+				"id", slot.Id, "error", err)
+
+			// Create new input slice with preserved tokens (numKeep + remaining tokens after discard)
+			newInputs := make([]*input.Input, numKeep+inputLen-(numKeep+discard))
+			copy(newInputs[:numKeep], slot.Inputs[:numKeep])
+			copy(newInputs[numKeep:], slot.Inputs[numKeep+discard:])
+
+			// Reset the cache
+			_ = c.cache.Remove(slot.Id, 0, math.MaxInt32)
+			slot.Inputs = []*input.Input{}
+
+			// Return error with inputs that need to be reprocessed
+			return &ErrReprocessInputs{Inputs: newInputs}
 		}
 	}
 

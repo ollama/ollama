@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -16,8 +17,10 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/readline"
 	"github.com/ollama/ollama/types/errtypes"
+	"github.com/ollama/ollama/types/model"
 )
 
 type MultilineState int
@@ -39,11 +42,12 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /bye            Exit")
 		fmt.Fprintln(os.Stderr, "  /?, /help       Help for a command")
 		fmt.Fprintln(os.Stderr, "  /? shortcuts    Help for keyboard shortcuts")
+
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Use \"\"\" to begin a multi-line message.")
 
 		if opts.MultiModal {
-			fmt.Fprintf(os.Stderr, "Use %s to include .jpg or .png images.\n", filepath.FromSlash("/path/to/file"))
+			fmt.Fprintf(os.Stderr, "Use %s to include .jpg, .png, or .webp images.\n", filepath.FromSlash("/path/to/file"))
 		}
 
 		fmt.Fprintln(os.Stderr, "")
@@ -61,6 +65,8 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /set noformat          Disable formatting")
 		fmt.Fprintln(os.Stderr, "  /set verbose           Show LLM stats")
 		fmt.Fprintln(os.Stderr, "  /set quiet             Disable LLM stats")
+		fmt.Fprintln(os.Stderr, "  /set think             Enable thinking")
+		fmt.Fprintln(os.Stderr, "  /set nothink           Disable thinking")
 		fmt.Fprintln(os.Stderr, "")
 	}
 
@@ -75,6 +81,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  Ctrl + w            Delete the word before the cursor")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "  Ctrl + l            Clear the screen")
+		fmt.Fprintln(os.Stderr, "  Ctrl + g            Open default editor to compose a prompt")
 		fmt.Fprintln(os.Stderr, "  Ctrl + c            Stop the model from responding")
 		fmt.Fprintln(os.Stderr, "  Ctrl + d            Exit ollama (/bye)")
 		fmt.Fprintln(os.Stderr, "")
@@ -112,7 +119,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		Prompt:         ">>> ",
 		AltPrompt:      "... ",
 		Placeholder:    "Send a message (/? for help)",
-		AltPlaceholder: `Use """ to end multi-line input`,
+		AltPlaceholder: "Press Enter to send",
 	})
 	if err != nil {
 		return err
@@ -127,6 +134,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 	var sb strings.Builder
 	var multiline MultilineState
+	var thinkExplicitlySet bool = opts.Think != nil
 
 	for {
 		line, err := scanner.Readline()
@@ -143,6 +151,18 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			sb.Reset()
 
 			continue
+		case errors.Is(err, readline.ErrEditPrompt):
+			sb.Reset()
+			content, err := editInExternalEditor(line)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				continue
+			}
+			if strings.TrimSpace(content) == "" {
+				continue
+			}
+			scanner.Prefill = content
+			continue
 		case err != nil:
 			return err
 		}
@@ -154,6 +174,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			sb.WriteString(before)
 			if !ok {
 				fmt.Fprintln(&sb)
+				scanner.Prompt.UseAlt = true
 				continue
 			}
 
@@ -191,10 +212,30 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				fmt.Println("Usage:\n  /load <modelname>")
 				continue
 			}
+			origOpts := opts.Copy()
+
 			opts.Model = args[1]
 			opts.Messages = []api.Message{}
 			fmt.Printf("Loading model '%s'\n", opts.Model)
+			opts.Think, err = inferThinkingOption(nil, &opts, thinkExplicitlySet)
+			if err != nil {
+				if strings.Contains(err.Error(), "not found") {
+					fmt.Printf("Couldn't find model '%s'\n", opts.Model)
+					opts = origOpts.Copy()
+					continue
+				}
+				return err
+			}
 			if err := loadOrUnloadModel(cmd, &opts); err != nil {
+				if strings.Contains(err.Error(), "not found") {
+					fmt.Printf("Couldn't find model '%s'\n", opts.Model)
+					opts = origOpts.Copy()
+					continue
+				}
+				if strings.Contains(err.Error(), "does not support thinking") {
+					fmt.Printf("error: %v\n", err)
+					continue
+				}
 				return err
 			}
 			continue
@@ -255,6 +296,35 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 						return err
 					}
 					fmt.Println("Set 'quiet' mode.")
+				case "think":
+					thinkValue := api.ThinkValue{Value: true}
+					var maybeLevel string
+					if len(args) > 2 {
+						maybeLevel = args[2]
+					}
+					if maybeLevel != "" {
+						// TODO(drifkin): validate the level, could be model dependent
+						// though... It will also be validated on the server once a call is
+						// made.
+						thinkValue.Value = maybeLevel
+					}
+					opts.Think = &thinkValue
+					thinkExplicitlySet = true
+					if client, err := api.ClientFromEnvironment(); err == nil {
+						ensureThinkingSupport(cmd.Context(), client, opts.Model)
+					}
+					if maybeLevel != "" {
+						fmt.Printf("Set 'think' mode to '%s'.\n", maybeLevel)
+					} else {
+						fmt.Println("Set 'think' mode.")
+					}
+				case "nothink":
+					opts.Think = &api.ThinkValue{Value: false}
+					thinkExplicitlySet = true
+					if client, err := api.ClientFromEnvironment(); err == nil {
+						ensureThinkingSupport(cmd.Context(), client, opts.Model)
+					}
+					fmt.Println("Set 'nothink' mode.")
 				case "format":
 					if len(args) < 3 || args[2] != "json" {
 						fmt.Println("Invalid or missing format. For 'json' mode use '/set format json'")
@@ -343,7 +413,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 				switch args[1] {
 				case "info":
-					_ = showInfo(resp, os.Stderr)
+					_ = showInfo(resp, false, os.Stderr)
 				case "license":
 					if resp.License == "" {
 						fmt.Println("No license was specified for this model.")
@@ -353,18 +423,21 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				case "modelfile":
 					fmt.Println(resp.Modelfile)
 				case "parameters":
+					fmt.Println("Model defined parameters:")
 					if resp.Parameters == "" {
-						fmt.Println("No parameters were specified for this model.")
+						fmt.Println("  No additional parameters were specified for this model.")
 					} else {
-						if len(opts.Options) > 0 {
-							fmt.Println("User defined parameters:")
-							for k, v := range opts.Options {
-								fmt.Printf("%-*s %v\n", 30, k, v)
-							}
-							fmt.Println()
+						for _, l := range strings.Split(resp.Parameters, "\n") {
+							fmt.Printf("  %s\n", l)
 						}
-						fmt.Println("Model defined parameters:")
-						fmt.Println(resp.Parameters)
+					}
+					fmt.Println()
+					if len(opts.Options) > 0 {
+						fmt.Println("User defined parameters:")
+						for k, v := range opts.Options {
+							fmt.Printf("  %-*s %v\n", 30, k, v)
+						}
+						fmt.Println()
 					}
 				case "system":
 					switch {
@@ -443,6 +516,12 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 			assistant, err := chat(cmd, opts)
 			if err != nil {
+				if strings.Contains(err.Error(), "does not support thinking") ||
+					strings.Contains(err.Error(), "invalid think value") {
+					fmt.Printf("error: %v\n", err)
+					sb.Reset()
+					continue
+				}
 				return err
 			}
 			if assistant != nil {
@@ -455,9 +534,23 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 }
 
 func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
+	parentModel := opts.ParentModel
+
+	modelName := model.ParseName(parentModel)
+	if !modelName.IsValid() {
+		parentModel = ""
+	}
+
+	// Preserve explicit cloud intent for sessions started with `:cloud`.
+	// Cloud model metadata can return a source-less parent_model (for example
+	// "qwen3.5"), which would otherwise make `/save` create a local derivative.
+	if modelref.HasExplicitCloudSource(opts.Model) && !modelref.HasExplicitCloudSource(parentModel) {
+		parentModel = ""
+	}
+
 	req := &api.CreateRequest{
-		Name: name,
-		From: cmp.Or(opts.ParentModel, opts.Model),
+		Model: name,
+		From:  cmp.Or(parentModel, opts.Model),
 	}
 
 	if opts.System != "" {
@@ -491,6 +584,7 @@ func normalizeFilePath(fp string) string {
 		"\\\\", "\\", // Escaped backslash
 		"\\*", "*", // Escaped asterisk
 		"\\?", "?", // Escaped question mark
+		"\\~", "~", // Escaped tilde
 	).Replace(fp)
 }
 
@@ -498,7 +592,7 @@ func extractFileNames(input string) []string {
 	// Regex to match file paths starting with optional drive letter, / ./ \ or .\ and include escaped or unescaped spaces (\ or %20)
 	// and followed by more characters and a file extension
 	// This will capture non filename strings, but we'll check for file existence to remove mismatches
-	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png)\b`
+	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp)\b`
 	re := regexp.MustCompile(regexPattern)
 
 	return re.FindAllString(input, -1)
@@ -518,10 +612,63 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 			return "", imgs, err
 		}
 		fmt.Fprintf(os.Stderr, "Added image '%s'\n", nfp)
+		input = strings.ReplaceAll(input, "'"+nfp+"'", "")
+		input = strings.ReplaceAll(input, "'"+fp+"'", "")
 		input = strings.ReplaceAll(input, fp, "")
 		imgs = append(imgs, data)
 	}
 	return strings.TrimSpace(input), imgs, nil
+}
+
+func editInExternalEditor(content string) (string, error) {
+	editor := envconfig.Editor()
+	if editor == "" {
+		editor = os.Getenv("VISUAL")
+	}
+	if editor == "" {
+		editor = os.Getenv("EDITOR")
+	}
+	if editor == "" {
+		editor = defaultEditor
+	}
+
+	// Check that the editor binary exists
+	name := strings.Fields(editor)[0]
+	if _, err := exec.LookPath(name); err != nil {
+		return "", fmt.Errorf("editor %q not found, set OLLAMA_EDITOR to the path of your preferred editor", name)
+	}
+
+	tmpFile, err := os.CreateTemp("", "ollama-prompt-*.txt")
+	if err != nil {
+		return "", fmt.Errorf("creating temp file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if content != "" {
+		if _, err := tmpFile.WriteString(content); err != nil {
+			tmpFile.Close()
+			return "", fmt.Errorf("writing to temp file: %w", err)
+		}
+	}
+	tmpFile.Close()
+
+	args := strings.Fields(editor)
+	args = append(args, tmpFile.Name())
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("editor exited with error: %w", err)
+	}
+
+	data, err := os.ReadFile(tmpFile.Name())
+	if err != nil {
+		return "", fmt.Errorf("reading temp file: %w", err)
+	}
+
+	return strings.TrimRight(string(data), "\n"), nil
 }
 
 func getImageData(filePath string) ([]byte, error) {
@@ -538,7 +685,7 @@ func getImageData(filePath string) ([]byte, error) {
 	}
 
 	contentType := http.DetectContentType(buf)
-	allowedTypes := []string{"image/jpeg", "image/jpg", "image/png"}
+	allowedTypes := []string{"image/jpeg", "image/jpg", "image/png", "image/webp"}
 	if !slices.Contains(allowedTypes, contentType) {
 		return nil, fmt.Errorf("invalid image type: %s", contentType)
 	}

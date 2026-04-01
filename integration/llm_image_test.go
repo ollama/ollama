@@ -9,17 +9,85 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
-	"github.com/stretchr/testify/require"
 )
 
-func TestIntegrationLlava(t *testing.T) {
+func TestVisionModels(t *testing.T) {
+	skipUnderMinVRAM(t, 6)
+
+	defaultVisionModels := []string{
+		"qwen2.5vl",
+		"llama3.2-vision",
+		"gemma3",
+		"qwen3-vl:8b",
+		"qwen3-vl:30b",
+		"ministral-3",
+	}
+
+	for _, model := range testModels(defaultVisionModels) {
+		t.Run(model, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			client, _, cleanup := InitServerConnection(ctx, t)
+			defer cleanup()
+
+			if testModel != "" {
+				requireCapability(ctx, t, client, model, "vision")
+			}
+
+			pullOrSkip(ctx, t, client, model)
+
+			image, err := base64.StdEncoding.DecodeString(imageEncoding)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := api.ChatRequest{
+				Model: model,
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "what does the text in this image say?",
+						Images: []api.ImageData{
+							image,
+						},
+					},
+				},
+				Stream: &stream,
+				Options: map[string]any{
+					"seed":        42,
+					"temperature": 0.0,
+				},
+			}
+
+			// Preload to skip if we're less than 80% on GPU to avoid extremely slow tests
+			err = client.Generate(ctx, &api.GenerateRequest{Model: req.Model}, func(response api.GenerateResponse) error { return nil })
+			if err != nil {
+				t.Fatalf("failed to load model %s: %s", req.Model, err)
+			}
+			skipIfNotGPULoaded(ctx, t, client, req.Model, 80)
+
+			// Note: sometimes it returns "the ollamas" sometimes "the ollams"
+			// llava models on CPU can be quite slow to start
+			DoChat(ctx, t, client, req, []string{"the ollam"}, 240*time.Second, 30*time.Second)
+		})
+	}
+}
+
+func TestIntegrationSplitBatch(t *testing.T) {
+	if testModel != "" {
+		t.Skip("uses hardcoded model, not applicable with model override")
+	}
+	skipUnderMinVRAM(t, 6)
 	image, err := base64.StdEncoding.DecodeString(imageEncoding)
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
 	req := api.GenerateRequest{
-		Model:  "llava:7b",
+		Model: "gemma3:4b",
+		// Fill up a chunk of the batch so the image will partially spill over into the next one
+		System: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed aliquet, justo in malesuada lobortis, odio ligula volutpat quam, quis faucibus ipsum magna quis sapien. Aliquam in venenatis diam, eu viverra magna. Phasellus imperdiet hendrerit volutpat. Vivamus sem ex, facilisis placerat felis non, dictum elementum est. Phasellus aliquam imperdiet lacus, eget placerat ligula sodales vel. Pellentesque nec auctor mi. Curabitur arcu nisi, faucibus eget nunc id, viverra interdum mi. Curabitur ornare ipsum ex, ac euismod ex aliquam in. Vestibulum id magna at purus accumsan fermentum. Proin scelerisque posuere nunc quis interdum. Maecenas sed mollis nisl. Etiam vitae ipsum interdum, placerat est quis, tincidunt velit. Nullam tempor nibh non lorem volutpat efficitur. Cras laoreet diam imperdiet ipsum auctor bibendum. Suspendisse ultrices urna sed metus sagittis suscipit. Quisque ullamcorper aliquam nibh ut mollis. Aenean dapibus mauris pharetra, venenatis elit ac, hendrerit odio. Cras vestibulum erat tempor, lobortis justo eu, lobortis ipsum. Nam laoreet dapibus sem. Proin vel diam ultrices, elementum ante et, ornare lectus. Proin eu accumsan nisl. Praesent ac ex vitae ipsum vulputate tristique facilisis sit amet lacus. Nullam faucibus magna a pellentesque pretium. Nunc lacinia ullamcorper sollicitudin. Donec vitae accumsan turpis, sed porttitor est. Donec porttitor mi vitae augue faucibus, vel mollis diam tincidunt.",
 		Prompt: "what does the text in this image say?",
 		Stream: &stream,
-		Options: map[string]interface{}{
+		Options: map[string]any{
 			"seed":        42,
 			"temperature": 0.0,
 		},
@@ -34,36 +102,9 @@ func TestIntegrationLlava(t *testing.T) {
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
-	require.NoError(t, PullIfMissing(ctx, client, req.Model))
+	pullOrSkip(ctx, t, client, req.Model)
 	// llava models on CPU can be quite slow to start,
 	DoGenerate(ctx, t, client, req, []string{resp}, 120*time.Second, 30*time.Second)
-}
-
-func TestIntegrationMllama(t *testing.T) {
-	image, err := base64.StdEncoding.DecodeString(imageEncoding)
-	require.NoError(t, err)
-	req := api.GenerateRequest{
-		// TODO fix up once we publish the final image
-		Model:  "x/llama3.2-vision",
-		Prompt: "what does the text in this image say?",
-		Stream: &stream,
-		Options: map[string]interface{}{
-			"seed":        42,
-			"temperature": 0.0,
-		},
-		Images: []api.ImageData{
-			image,
-		},
-	}
-
-	resp := "the ollamas"
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-	client, _, cleanup := InitServerConnection(ctx, t)
-	defer cleanup()
-	require.NoError(t, PullIfMissing(ctx, client, req.Model))
-	// mllama models on CPU can be quite slow to start,
-	DoGenerate(ctx, t, client, req, []string{resp}, 240*time.Second, 30*time.Second)
 }
 
 const imageEncoding = `iVBORw0KGgoAAAANSUhEUgAAANIAAAB4CAYAAACHHqzKAAAAAXNSR0IArs4c6QAAAIRlWElmTU0AKgAAAAgABQESAAMAAAABAAEAAAEaAAUAAAABAAAASgEb

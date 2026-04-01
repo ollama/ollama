@@ -4,17 +4,27 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
+	"unsafe"
 
 	"github.com/ollama/ollama/api"
+	"golang.org/x/sys/windows"
+)
+
+const (
+	Installer = "OllamaSetup.exe"
 )
 
 func startApp(ctx context.Context, client *api.Client) error {
-	// log.Printf("XXX Attempting to find and start ollama app")
+	if len(isProcRunning(Installer)) > 0 {
+		return fmt.Errorf("upgrade in progress...")
+	}
 	AppName := "ollama app.exe"
 	exe, err := os.Executable()
 	if err != nil {
@@ -35,14 +45,11 @@ func startApp(ctx context.Context, client *api.Client) error {
 			}
 		}
 	}
-	// log.Printf("XXX attempting to start app %s", appExe)
 
 	cmd_path := "c:\\Windows\\system32\\cmd.exe"
-	cmd := exec.Command(cmd_path, "/c", appExe)
-	// TODO - these hide flags aren't working - still pops up a command window for some reason
+	cmd := exec.Command(cmd_path, "/c", appExe, "--hide", "--fast-startup")
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000, HideWindow: true}
 
-	// TODO this didn't help either...
 	cmd.Stdin = strings.NewReader("")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -55,4 +62,51 @@ func startApp(ctx context.Context, client *api.Client) error {
 		defer cmd.Process.Release() //nolint:errcheck
 	}
 	return waitForServer(ctx, client)
+}
+
+func isProcRunning(procName string) []uint32 {
+	pids := make([]uint32, 2048)
+	var ret uint32
+	if err := windows.EnumProcesses(pids, &ret); err != nil || ret == 0 {
+		slog.Debug("failed to check for running installers", "error", err)
+		return nil
+	}
+	if ret > uint32(len(pids)) {
+		pids = make([]uint32, ret+10)
+		if err := windows.EnumProcesses(pids, &ret); err != nil || ret == 0 {
+			slog.Debug("failed to check for running installers", "error", err)
+			return nil
+		}
+	}
+	if ret < uint32(len(pids)) {
+		pids = pids[:ret]
+	}
+	var matches []uint32
+	for _, pid := range pids {
+		if pid == 0 {
+			continue
+		}
+		hProcess, err := windows.OpenProcess(windows.PROCESS_QUERY_INFORMATION|windows.PROCESS_VM_READ, false, pid)
+		if err != nil {
+			continue
+		}
+		defer windows.CloseHandle(hProcess)
+		var module windows.Handle
+		var cbNeeded uint32
+		cb := (uint32)(unsafe.Sizeof(module))
+		if err := windows.EnumProcessModules(hProcess, &module, cb, &cbNeeded); err != nil {
+			continue
+		}
+		var sz uint32 = 1024 * 8
+		moduleName := make([]uint16, sz)
+		cb = uint32(len(moduleName)) * (uint32)(unsafe.Sizeof(uint16(0)))
+		if err := windows.GetModuleBaseName(hProcess, module, &moduleName[0], cb); err != nil && err != syscall.ERROR_INSUFFICIENT_BUFFER {
+			continue
+		}
+		exeFile := path.Base(strings.ToLower(syscall.UTF16ToString(moduleName)))
+		if strings.EqualFold(exeFile, procName) {
+			matches = append(matches, pid)
+		}
+	}
+	return matches
 }
