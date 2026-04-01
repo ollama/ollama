@@ -17,10 +17,9 @@
 #   docker run -it --rm -p 11434:11434 ollama-kan /kan-demo.sh
 
 # === Stage 1: Build GGML CPU backend ===
-FROM --platform=linux/amd64 ubuntu:24.04 AS ggml-build
-RUN apt-get update && apt-get install -y \
-    build-essential cmake ninja-build curl \
-    && rm -rf /var/lib/apt/lists/*
+FROM --platform=linux/amd64 rockylinux:9-minimal AS ggml-build
+RUN microdnf install -y gcc gcc-c++ make cmake ninja-build curl \
+    && microdnf clean all
 
 WORKDIR /build
 COPY CMakeLists.txt CMakePresets.json ./
@@ -30,10 +29,9 @@ RUN cmake --preset 'CPU' \
     && cmake --install build --component CPU --strip
 
 # === Stage 2: Build Ollama Go binary ===
-FROM --platform=linux/amd64 ubuntu:24.04 AS go-build
-RUN apt-get update && apt-get install -y \
-    build-essential curl git ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+FROM --platform=linux/amd64 rockylinux:9-minimal AS go-build
+RUN microdnf install -y gcc gcc-c++ make curl git ca-certificates \
+    && microdnf clean all
 
 # Install Go
 WORKDIR /go/src/github.com/ollama/ollama
@@ -48,12 +46,10 @@ ENV CGO_ENABLED=1
 RUN go build -trimpath -o /bin/ollama .
 
 # === Stage 3: Runtime ===
-FROM ubuntu:24.04
+FROM rockylinux:9-minimal
 
-RUN apt-get update \
-    && apt-get install -y ca-certificates curl python3 \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+RUN microdnf install -y ca-certificates curl python3 \
+    && microdnf clean all
 
 # Copy binaries
 COPY --from=ggml-build /build/dist/lib/ollama /usr/lib/ollama
