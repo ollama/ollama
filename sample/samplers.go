@@ -5,6 +5,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"slices"
+	"strings"
 
 	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/tokenizer"
@@ -23,6 +24,15 @@ type Sampler struct {
 	minP        float32
 	temperature float32
 	grammar     *GrammarSampler
+
+	// segment-level loop detection
+	tok                 tokenizer.Tokenizer
+	repeatLineWindow    int
+	repeatLineDelims    string
+	repeatLineTempBoost float32
+	currentSegment      strings.Builder
+	pastSegments        []string
+	loopActive          bool
 }
 
 func (s *Sampler) Sample(logits []float32) (int32, error) {
@@ -36,7 +46,13 @@ func (s *Sampler) Sample(logits []float32) (int32, error) {
 		tokens[i].value = logits[i]
 	}
 
-	t, err := s.sample(tokens)
+	// Apply temperature boost when a repetition loop is active.
+	effectiveTemp := s.temperature
+	if s.loopActive && s.repeatLineTempBoost > 0 {
+		effectiveTemp += s.repeatLineTempBoost
+	}
+
+	t, err := s.sample(tokens, effectiveTemp)
 	if err != nil {
 		return -1, err
 	}
@@ -48,6 +64,7 @@ func (s *Sampler) Sample(logits []float32) (int32, error) {
 		s.grammar.Apply(top)
 		if !math.IsInf(float64(top[0].value), -1) {
 			s.grammar.Accept(top[0].id)
+			s.recordToken(top[0].id)
 			return top[0].id, nil
 		}
 
@@ -59,14 +76,59 @@ func (s *Sampler) Sample(logits []float32) (int32, error) {
 			tokens[i].value = logits[i]
 		}
 		s.grammar.Apply(tokens)
-		t, err = s.sample(tokens)
+		t, err = s.sample(tokens, effectiveTemp)
 		if err != nil {
 			return -1, err
 		}
 		s.grammar.Accept(t.id)
 	}
 
+	s.recordToken(t.id)
 	return t.id, nil
+}
+
+// recordToken appends the sampled token to the current segment buffer and,
+// when a delimiter character is encountered, checks the completed segment
+// against the recent segment history to detect repetition loops.
+func (s *Sampler) recordToken(id int32) {
+	if s.tok == nil || s.repeatLineWindow <= 0 {
+		return
+	}
+
+	piece, err := s.tok.Decode([]int32{id})
+	if err != nil || piece == "" {
+		return
+	}
+
+	s.currentSegment.WriteString(piece)
+
+	if !strings.ContainsAny(piece, s.repeatLineDelims) {
+		return
+	}
+
+	// A delimiter was produced — the current segment is complete.
+	seg := strings.TrimSpace(s.currentSegment.String())
+	s.currentSegment.Reset()
+
+	if seg == "" {
+		return
+	}
+
+	// Check whether this segment already appeared in the recent window.
+	found := false
+	for _, past := range s.pastSegments {
+		if past == seg {
+			found = true
+			break
+		}
+	}
+	s.loopActive = found
+
+	// Maintain a sliding window of completed segments.
+	s.pastSegments = append(s.pastSegments, seg)
+	if len(s.pastSegments) > s.repeatLineWindow {
+		s.pastSegments = s.pastSegments[1:]
+	}
 }
 
 // greedy returns the highest probability token from the tokens
@@ -81,10 +143,12 @@ func greedy(tokens []token) token {
 	return max
 }
 
-// sample returns the highest probability token from the tokens
-// given sampler parameters. It also has side effects of modifying the tokens
-func (s *Sampler) sample(tokens []token) (token, error) {
-	if s.temperature == 0 {
+// sample returns the highest probability token from the tokens given sampler
+// parameters. It also has side effects of modifying the tokens.
+// temp is passed explicitly so that the loop-detection boost can be applied
+// without permanently modifying s.temperature.
+func (s *Sampler) sample(tokens []token, temp float32) (token, error) {
+	if temp == 0 {
 		return greedy(tokens), nil
 	}
 
@@ -92,7 +156,7 @@ func (s *Sampler) sample(tokens []token) (token, error) {
 	tokens = topK(tokens, s.topK)
 
 	// scale and normalize the tokens in place
-	temperature(tokens, s.temperature)
+	temperature(tokens, temp)
 	softmax(tokens)
 
 	tokens = topP(tokens, s.topP)
@@ -127,7 +191,7 @@ func (s *Sampler) sample(tokens []token) (token, error) {
 }
 
 // TODO(parthsareen): update sampler interface to use json unmarshal https://github.com/ollama/ollama/issues/9278
-func NewSampler(temperature float32, topK int, topP float32, minP float32, seed int, grammar *GrammarSampler) Sampler {
+func NewSampler(temperature float32, topK int, topP float32, minP float32, seed int, grammar *GrammarSampler, tok tokenizer.Tokenizer, repeatLineWindow int, repeatLineDelimiters string, repeatLineTempBoost float32) Sampler {
 	var rng *rand.Rand
 	if seed != -1 {
 		// PCG requires two parameters: sequence and stream
@@ -154,13 +218,21 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 		minP = 1.0
 	}
 
+	if repeatLineDelimiters == "" {
+		repeatLineDelimiters = "\n.!?"
+	}
+
 	return Sampler{
-		rng:         rng,
-		topK:        topK,
-		topP:        topP,
-		minP:        minP,
-		temperature: temperature,
-		grammar:     grammar,
+		rng:                 rng,
+		topK:                topK,
+		topP:                topP,
+		minP:                minP,
+		temperature:         temperature,
+		grammar:             grammar,
+		tok:                 tok,
+		repeatLineWindow:    repeatLineWindow,
+		repeatLineDelims:    repeatLineDelimiters,
+		repeatLineTempBoost: repeatLineTempBoost,
 	}
 }
 

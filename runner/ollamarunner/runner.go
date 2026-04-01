@@ -894,6 +894,10 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		req.Options.MinP,
 		req.Options.Seed,
 		grammar,
+		s.model.(tokenizer.Tokenizer),
+		req.Options.RepeatLineWindow,
+		req.Options.RepeatLineDelimiters,
+		req.Options.RepeatLineTempBoost,
 	)
 
 	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
