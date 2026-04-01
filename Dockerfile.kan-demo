@@ -56,7 +56,7 @@ RUN go build -trimpath -o /bin/ollama .
 # === Stage 3: Runtime ===
 FROM rockylinux:9-minimal
 
-RUN microdnf install -y ca-certificates curl python3 \
+RUN microdnf install -y ca-certificates curl python3 procps-ng \
     && microdnf clean all
 
 # Copy binaries
@@ -75,5 +75,5 @@ EXPOSE 11434
 COPY scripts/kan-demo.sh /kan-demo.sh
 RUN sed -i 's/\r$//' /kan-demo.sh && chmod +x /kan-demo.sh
 
-ENTRYPOINT ["/bin/ollama"]
-CMD ["serve"]
+ENTRYPOINT []
+CMD ["/bin/ollama", "serve"]

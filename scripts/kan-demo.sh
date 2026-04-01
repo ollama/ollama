@@ -42,9 +42,16 @@ start_server() {
 }
 
 stop_server() {
+    # Kill any ollama process — covers both script-started and entrypoint-started servers
+    killall ollama 2>/dev/null || true
     if [ -n "$SERVER_PID" ]; then
-        kill $SERVER_PID 2>/dev/null || true
         wait $SERVER_PID 2>/dev/null || true
+    fi
+    sleep 2
+    # Verify it's actually dead
+    if curl -s "${BASE_URL}/api/tags" > /dev/null 2>&1; then
+        warn "Server still running, force killing..."
+        killall -9 ollama 2>/dev/null || true
         sleep 1
     fi
 }
@@ -125,6 +132,12 @@ echo ""
 
 # ─── Step 1: Start server WITHOUT KAN, pull model, run baseline ───
 header "Step 1: Baseline (Standard Softmax)"
+
+# Kill any pre-existing server (e.g. from Docker entrypoint)
+killall ollama 2>/dev/null || true
+killall -9 ollama 2>/dev/null || true
+sleep 2
+
 export OLLAMA_KAN_ATTENTION=0
 export OLLAMA_FLASH_ATTENTION=true
 export OLLAMA_DEBUG=1
