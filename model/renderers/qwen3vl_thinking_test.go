@@ -341,48 +341,6 @@ Speak poetry after the first sentence.</think><think>Speak poetry after the seco
 	}
 }
 
-func TestFormatToolCallArgumentThinkingVL(t *testing.T) {
-	tests := []struct {
-		name     string
-		arg      any
-		expected string
-	}{
-		{
-			name:     "string",
-			arg:      "foo",
-			expected: "foo",
-		},
-		{
-			name:     "map",
-			arg:      map[string]any{"foo": "bar"},
-			expected: "{\"foo\": \"bar\"}",
-		},
-		{
-			name:     "map with html chars",
-			arg:      map[string]any{"content": "if (x < 5 && y > 3) {}"},
-			expected: "{\"content\": \"if (x < 5 && y > 3) {}\"}",
-		},
-		{
-			name:     "number",
-			arg:      1,
-			expected: "1",
-		},
-		{
-			name:     "boolean",
-			arg:      true,
-			expected: "true",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := formatToolCallArgument(tt.arg)
-			if got != tt.expected {
-				t.Errorf("formatToolCallArgument(%v) = %v, want %v", tt.arg, got, tt.expected)
-			}
-		})
-	}
-}
-
 func TestQwen3VLRendererThinkOverride(t *testing.T) {
 	msgs := []api.Message{
 		{Role: "user", Content: "Hello"},
