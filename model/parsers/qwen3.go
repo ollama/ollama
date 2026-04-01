@@ -328,8 +328,8 @@ func (p *Qwen3Parser) eat() ([]qwen3Event, bool) {
 
 func parseQwen3ToolCall(raw qwen3EventRawToolCall, tools []api.Tool) (api.ToolCall, error) {
 	var parsed struct {
-		Name      string         `json:"name"`
-		Arguments map[string]any `json:"arguments"`
+		Name      string                        `json:"name"`
+		Arguments api.ToolCallFunctionArguments `json:"arguments"`
 	}
 
 	if err := json.Unmarshal([]byte(raw.raw), &parsed); err != nil {
@@ -345,12 +345,8 @@ func parseQwen3ToolCall(raw qwen3EventRawToolCall, tools []api.Tool) (api.ToolCa
 	toolCall := api.ToolCall{
 		Function: api.ToolCallFunction{
 			Name:      parsed.Name,
-			Arguments: api.NewToolCallFunctionArguments(),
+			Arguments: parsed.Arguments,
 		},
-	}
-
-	for key, value := range parsed.Arguments {
-		toolCall.Function.Arguments.Set(key, value)
 	}
 
 	return toolCall, nil

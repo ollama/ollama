@@ -1,11 +1,11 @@
 include(FetchContent)
 
-# Read MLX version from top-level file (shared with Dockerfile)
-file(READ "${CMAKE_SOURCE_DIR}/MLX_VERSION" MLX_C_GIT_TAG)
+# Read MLX-C version from top-level file (shared with Dockerfile)
+file(READ "${CMAKE_SOURCE_DIR}/MLX_C_VERSION" MLX_C_GIT_TAG)
 string(STRIP "${MLX_C_GIT_TAG}" MLX_C_GIT_TAG)
 
-# Read MLX core version from top-level file
-file(READ "${CMAKE_SOURCE_DIR}/MLX_CORE_VERSION" MLX_GIT_TAG)
+# Read MLX version from top-level file
+file(READ "${CMAKE_SOURCE_DIR}/MLX_VERSION" MLX_GIT_TAG)
 string(STRIP "${MLX_GIT_TAG}" MLX_GIT_TAG)
 
 set(MLX_C_BUILD_EXAMPLES OFF)
@@ -97,6 +97,28 @@ FetchContent_MakeAvailable(mlx-c)
 # Sync vendored headers with fetched version
 file(GLOB _mlx_c_hdrs "${mlx-c_SOURCE_DIR}/mlx/c/*.h")
 file(COPY ${_mlx_c_hdrs} DESTINATION "${CMAKE_SOURCE_DIR}/x/mlxrunner/mlx/include/mlx/c/")
+
+# Regenerate Go/C shim wrappers from the (possibly updated) headers.
+find_program(GO_EXECUTABLE go REQUIRED)
+message(STATUS "Regenerating MLX Go wrappers")
+
+# Go's cgo splits CC on whitespace, so a CC like "C:/Program Files/…/cl.exe"
+# (set by cmake on Windows) breaks with "C:/Program" not found.  Clear CC
+# when it contains spaces so cgo falls back to its default (gcc).
+if(WIN32 AND "$ENV{CC}" MATCHES " ")
+    set(_SAVE_CC "$ENV{CC}")
+    set(ENV{CC} "")
+endif()
+
+execute_process(
+    COMMAND ${GO_EXECUTABLE} generate ./x/...
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    COMMAND_ERROR_IS_FATAL ANY
+)
+
+if(DEFINED _SAVE_CC)
+    set(ENV{CC} "${_SAVE_CC}")
+endif()
 
 # For local dev builds, override MLX_VERSION with git describe output
 if(TARGET mlx_version AND DEFINED FETCHCONTENT_SOURCE_DIR_MLX)

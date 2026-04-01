@@ -17,7 +17,8 @@ func Quantize(w *Array, groupSize, bits int, mode string) (weights, scales, bias
 	optBits := C.mlx_optional_int{value: C.int(bits), has_value: true}
 	res := C.mlx_vector_array_new()
 	defer C.mlx_vector_array_free(res)
-	C.mlx_quantize(&res, w.ctx, optGroupSize, optBits, cMode, DefaultStream().ctx)
+	var globalScale C.mlx_array
+	C.mlx_quantize(&res, w.ctx, optGroupSize, optBits, cMode, globalScale, DefaultStream().ctx)
 
 	vecSize := int(C.mlx_vector_array_size(res))
 	w0 := New("QUANTIZE_W")
@@ -30,6 +31,18 @@ func Quantize(w *Array, groupSize, bits int, mode string) (weights, scales, bias
 		return w0, w1, w2
 	}
 	return w0, w1, nil
+}
+
+func FromFP8(x *Array, dtype DType) *Array {
+	out := New("FROM_FP8")
+	C.mlx_from_fp8(&out.ctx, x.ctx, C.mlx_dtype(dtype), DefaultStream().ctx)
+	return out
+}
+
+func ToFP8(x *Array) *Array {
+	out := New("TO_FP8")
+	C.mlx_to_fp8(&out.ctx, x.ctx, DefaultStream().ctx)
+	return out
 }
 
 func Dequantize(w, scales, biases *Array, groupSize, bits int, mode string) *Array {
@@ -45,7 +58,8 @@ func Dequantize(w, scales, biases *Array, groupSize, bits int, mode string) *Arr
 	}
 
 	out := New("DEQUANTIZE")
-	C.mlx_dequantize(&out.ctx, w.ctx, scales.ctx, b, optGroupSize, optBits, cMode, optDtype, DefaultStream().ctx)
+	var globalScale C.mlx_array
+	C.mlx_dequantize(&out.ctx, w.ctx, scales.ctx, b, optGroupSize, optBits, cMode, globalScale, optDtype, DefaultStream().ctx)
 	return out
 }
 
@@ -132,6 +146,40 @@ func Conv1d(x, weight *Array, bias *Array, stride, padding, dilation, groups int
 func Contiguous(a *Array, allowColMajor bool) *Array {
 	out := New("CONTIGUOUS")
 	C.mlx_contiguous(&out.ctx, a.ctx, C.bool(allowColMajor), DefaultStream().ctx)
+	return out
+}
+
+func Pad(a *Array, paddings []int32) *Array {
+	numAxes := len(paddings) / 2
+	axes := make([]C.int, numAxes)
+	lowPad := make([]C.int, numAxes)
+	highPad := make([]C.int, numAxes)
+	for i := range numAxes {
+		axes[i] = C.int(i)
+		lowPad[i] = C.int(paddings[i*2])
+		highPad[i] = C.int(paddings[i*2+1])
+	}
+
+	padValue := C.mlx_array_new_float(C.float(0))
+	defer C.mlx_array_free(padValue)
+
+	cMode := C.CString("constant")
+	defer C.free(unsafe.Pointer(cMode))
+
+	out := New("PAD")
+	C.mlx_pad(
+		&out.ctx,
+		a.ctx,
+		unsafe.SliceData(axes),
+		C.size_t(len(axes)),
+		unsafe.SliceData(lowPad),
+		C.size_t(len(lowPad)),
+		unsafe.SliceData(highPad),
+		C.size_t(len(highPad)),
+		padValue,
+		cMode,
+		DefaultStream().ctx,
+	)
 	return out
 }
 
@@ -444,15 +492,6 @@ func Collect(v any) []*Array {
 	seen := make(map[uintptr]bool)
 	collect(reflect.ValueOf(v), &arrays, seen)
 	return arrays
-}
-
-func Copy(a *Array) *Array {
-	if a == nil || !a.Valid() {
-		return a
-	}
-	out := New("COPY")
-	C.mlx_copy(&out.ctx, a.ctx, DefaultStream().ctx)
-	return out
 }
 
 func collect(v reflect.Value, arrays *[]*Array, seen map[uintptr]bool) {

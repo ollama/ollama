@@ -157,7 +157,7 @@ COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 COPY x/imagegen/mlx x/imagegen/mlx
 COPY go.mod go.sum .
-COPY MLX_VERSION MLX_CORE_VERSION .
+COPY MLX_VERSION MLX_C_VERSION .
 RUN curl -fsSL https://golang.org/dl/go$(awk '/^go/ { print $2 }' go.mod).linux-$(case $(uname -m) in x86_64) echo amd64 ;; aarch64) echo arm64 ;; esac).tar.gz | tar xz -C /usr/local
 ENV PATH=/usr/local/go/bin:$PATH
 RUN go mod download

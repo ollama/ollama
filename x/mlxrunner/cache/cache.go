@@ -17,7 +17,8 @@ type Cache interface {
 	Snapshot(fromOffset int) Snapshot
 
 	// Restore brings the cache to target. If snapshot is nil, rewinds
-	// using the cache's own live state.
+	// using the cache's own live state. Returns false if the target is
+	// unreachable (e.g. target > current offset, or negative).
 	Restore(snapshot Snapshot, target int) bool
 
 	// Merge combines two sequential snapshots [a,b) and [b,c) into [a,c).
@@ -108,8 +109,8 @@ func (c *KVCache) Snapshot(fromOffset int) Snapshot {
 
 	kSlice := c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(from, to), mlx.Slice())
 	vSlice := c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(from, to), mlx.Slice())
-	kCopy := mlx.Copy(kSlice)
-	vCopy := mlx.Copy(vSlice)
+	kCopy := mlx.Contiguous(kSlice, false)
+	vCopy := mlx.Contiguous(vSlice, false)
 	mlx.Pin(kCopy, vCopy)
 	mlx.AsyncEval(kCopy, vCopy)
 
@@ -122,17 +123,21 @@ func (c *KVCache) Snapshot(fromOffset int) Snapshot {
 }
 
 func (c *KVCache) Restore(snapshot Snapshot, target int) bool {
+	if target < 0 {
+		return false
+	}
+
 	if snapshot == nil {
-		// Rewind using live state — just clamp offset.
-		target = max(0, min(target, c.offset))
+		if target > c.offset {
+			return false
+		}
 		c.offset = target
 		return true
 	}
 
 	snap := snapshot.(*kvSnapshot)
 
-	// Check that the cache has data up to the snapshot's starting point.
-	if c.offset < snap.fromOffset {
+	if target > snap.toOffset || c.offset < snap.fromOffset {
 		return false
 	}
 
@@ -191,10 +196,10 @@ func (c *KVCache) Split(snapshot Snapshot, at int) (Snapshot, Snapshot) {
 		return snapshot, nil
 	}
 
-	pk := mlx.Copy(snap.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, splitIdx), mlx.Slice()))
-	pv := mlx.Copy(snap.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, splitIdx), mlx.Slice()))
-	ck := mlx.Copy(snap.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(splitIdx, seqLen), mlx.Slice()))
-	cv := mlx.Copy(snap.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(splitIdx, seqLen), mlx.Slice()))
+	pk := mlx.Contiguous(snap.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, splitIdx), mlx.Slice()), false)
+	pv := mlx.Contiguous(snap.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, splitIdx), mlx.Slice()), false)
+	ck := mlx.Contiguous(snap.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(splitIdx, seqLen), mlx.Slice()), false)
+	cv := mlx.Contiguous(snap.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(splitIdx, seqLen), mlx.Slice()), false)
 	mlx.Pin(pk, pv, ck, cv)
 	mlx.AsyncEval(pk, pv, ck, cv)
 
@@ -354,7 +359,14 @@ func (c *RotatingKVCache) Snapshot(fromOffset int) Snapshot {
 }
 
 func (c *RotatingKVCache) Restore(snapshot Snapshot, target int) bool {
+	if target < 0 {
+		return false
+	}
+
 	if snapshot == nil {
+		if target >= c.offset {
+			return target == c.offset
+		}
 		// Live rewind is only safe when the buffer hasn't filled yet
 		// (offset <= maxSize). Once the window has shifted, rewinding
 		// leaves fewer than maxSize trailing tokens to attend to —
@@ -362,13 +374,16 @@ func (c *RotatingKVCache) Restore(snapshot Snapshot, target int) bool {
 		if c.offset > c.maxSize {
 			return false
 		}
-		target = max(0, min(target, c.offset))
 		c.offset = target
 		c.idx = target
 		return true
 	}
 
 	snap := snapshot.(*rotatingSnapshot)
+
+	if target > snap.toOffset {
+		return false
+	}
 
 	// Reject if clamping would leave an incomplete window.
 	if target < snap.toOffset && snap.toOffset > c.maxSize {
@@ -388,7 +403,6 @@ func (c *RotatingKVCache) Restore(snapshot Snapshot, target int) bool {
 
 	// Clamp to target if needed.
 	if target < c.offset {
-		target = max(0, target)
 		c.offset = target
 		c.idx = target
 	}

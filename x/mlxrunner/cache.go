@@ -20,6 +20,7 @@ import (
 	"cmp"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/ollama/ollama/logutil"
@@ -37,6 +38,12 @@ type kvCache struct {
 	pagedOutBytes int64 // total bytes in paged-out snapshots across the trie
 }
 
+// pendingSnapshot is a snapshot scheduled to be taken during prefill.
+type pendingSnapshot struct {
+	offset int
+	user   bool
+}
+
 // cacheSession manages caches for a single pipeline run.
 // Callers should append generated tokens to outputs and
 // defer close to save the cache state.
@@ -48,11 +55,10 @@ type cacheSession struct {
 	caches    []cache.Cache
 	remaining []int32
 
-	// snapshotOffset, if > 0, is a trie node boundary where we need to
-	// capture a snapshot during prefill. This enables future requests
-	// branching at this point to restore non-rewindable caches (e.g.
-	// RecurrentCache) instead of re-evaluating from scratch.
-	snapshotOffset int
+	// pendingSnapshots lists offsets where snapshots should be captured
+	// during prefill, sorted by offset. Entries are consumed as the
+	// cache advances past them.
+	pendingSnapshots []pendingSnapshot
 }
 
 func (c *kvCache) ensureCaches(m base.Model) {
@@ -93,56 +99,38 @@ func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
 		matchPath, matched = findBestMatch(c.root, inputs[:len(inputs)-1])
 	}
 
-	// Check for partial match within a node's edge — truncate path
-	// to the parent boundary. snapshot() will split the node and
-	// create the branch point during prefill when caches are ready.
-	partialMatch := false
-	if len(matchPath) > 1 {
-		lastNode := matchPath[len(matchPath)-1]
-		matchedInEdge := matched - lastNode.startOffset()
-		if matchedInEdge > 0 && matchedInEdge < len(lastNode.tokens) {
-			matchPath = matchPath[:len(matchPath)-1]
-			partialMatch = true
-		}
-	}
-
 	// Switch to the matched path, paging in/out as needed.
-	c.switchToPath(matchPath)
+	c.switchToPath(matchPath, matched)
 
 	// switchToPath aligns caches to a common offset
 	prefix := c.minCacheOffset()
 	remaining := inputs[prefix:]
 
+	session := &cacheSession{
+		cache:     c,
+		inputs:    inputs,
+		caches:    c.caches,
+		remaining: remaining,
+	}
+
 	// Schedule a snapshot at the branch point during prefill so future
 	// requests diverging here can restore instead of re-evaluating.
-	var snapshotAt int
-	if partialMatch || (prefix == 0 && matched > 0) {
-		snapshotAt = matched
+	if prefix < matched {
+		session.pendingSnapshots = append(session.pendingSnapshots, pendingSnapshot{offset: matched, user: false})
 	}
 
-	args := []any{"total", len(inputs), "matched", originalMatched}
-	args = append(args, "cached", prefix, "left", len(remaining))
-	if snapshotAt > 0 {
-		args = append(args, "pending_snapshot", snapshotAt)
-	}
+	msg := "cache hit"
 	if prefix == 0 {
-		slog.Info("cache miss", args...)
-	} else {
-		slog.Info("cache hit", args...)
+		msg = "cache miss"
 	}
+	slog.Info(msg, "total", len(inputs), "matched", originalMatched, "cached", prefix, "left", len(remaining))
 
-	return &cacheSession{
-		cache:          c,
-		inputs:         inputs,
-		snapshotOffset: snapshotAt,
-		caches:         c.caches,
-		remaining:      remaining,
-	}
+	return session
 }
 
 // switchToPath transitions from the current active path to a new path,
 // paging out diverging segments and paging in the new path.
-func (c *kvCache) switchToPath(newPath []*trieNode) {
+func (c *kvCache) switchToPath(newPath []*trieNode, matched int) {
 	defer c.enforceEvictionPolicy()
 
 	// Find common ancestor index.
@@ -167,7 +155,10 @@ func (c *kvCache) switchToPath(newPath []*trieNode) {
 	// non-leaf nodes here would produce wrong results for non-rewindable
 	// caches (e.g. RecurrentCache) whose state reflects the leaf, not
 	// the intermediate boundary.
-	if leaf := len(c.activePath) - 1; leaf >= commonLen {
+	leaf := len(c.activePath) - 1
+	leafDiverges := leaf >= commonLen
+	leafNeedsRewind := matched < c.activePath[leaf].endOffset
+	if leafDiverges || leafNeedsRewind {
 		node := c.activePath[leaf]
 		if !node.hasAllSnapshots() {
 			fromOffset := node.startOffset()
@@ -184,14 +175,16 @@ func (c *kvCache) switchToPath(newPath []*trieNode) {
 		}
 	}
 
-	// Rewind each cache to the ancestor offset or free it. Freed
-	// caches (e.g. RecurrentCache that can't rewind) will be restored
-	// from snapshots during page-in.
+	// Rewind each cache to the target offset or free it. When matched
+	// falls within the ancestor's range (same-path case), we rewind
+	// directly to the match point. Otherwise we rewind to the ancestor
+	// and let page-in bring us forward to matched.
+	rewindTarget := min(ancestorOffset, matched)
 	for _, kv := range c.caches {
 		if kv == nil {
 			continue
 		}
-		if !kv.Restore(nil, ancestorOffset) {
+		if !kv.Restore(nil, rewindTarget) {
 			kv.Free()
 		}
 	}
@@ -199,10 +192,12 @@ func (c *kvCache) switchToPath(newPath []*trieNode) {
 	// Page in — walk the full new path, restoring from snapshots.
 	// Freed caches naturally pick up the first available snapshot.
 	// Caches already past a node skip it via offset check.
+pageIn:
 	for _, node := range newPath {
-		if len(node.snapshots) == 0 {
+		if !node.hasSnapshots() {
 			continue
 		}
+		nodeTarget := min(node.endOffset, matched)
 		for j, kv := range c.caches {
 			if kv == nil {
 				continue
@@ -210,19 +205,18 @@ func (c *kvCache) switchToPath(newPath []*trieNode) {
 			if j >= len(node.snapshots) || node.snapshots[j] == nil {
 				continue
 			}
-			if kv.Offset() >= node.endOffset {
+			if kv.Offset() >= nodeTarget {
 				continue
 			}
-			if !kv.Restore(node.snapshots[j], node.endOffset) {
-				slog.Warn("cache restore failure during page-in, freeing all caches", "layer", j, "offset", node.startOffset())
-				c.freeAll()
-				c.activePath = []*trieNode{c.root}
-				return
+			if !kv.Restore(node.snapshots[j], nodeTarget) {
+				// Restore failed — stop page-in and let alignment
+				// bring all caches to a consistent offset.
+				break pageIn
 			}
 		}
 		if node.endOffset > ancestorOffset {
 			pageInCount++
-			logutil.Trace(fmt.Sprintf("page in: [%d, %d)", node.startOffset(), node.endOffset))
+			logutil.Trace(fmt.Sprintf("page in: [%d, %d)", node.startOffset(), nodeTarget))
 		}
 	}
 
@@ -245,25 +239,66 @@ func (c *kvCache) switchToPath(newPath []*trieNode) {
 		}
 	}
 
+	// Update last-used time on only the final used node. For recurrent
+	// caches we don't need the intermediate snapshots and for KV caches
+	// we can reslice the data out of merged edges.
+	if len(c.activePath) > 0 {
+		c.activePath[len(c.activePath)-1].lastUsed = time.Now()
+	}
+
 	if pageOutCount > 0 || pageInCount > 0 {
 		slog.Debug("switching cache path", "page_out", pageOutCount, "page_in", pageInCount)
 	}
 }
 
-// snapshot creates a snapshot at the current cache position. During prefill,
-// it is called at branch points (user=false) to create restore points for
-// future diverging requests and with user=true to mark an explicit reusable
-// restore point.
-func (s *cacheSession) snapshot(user bool) {
+// requestSnapshot schedules a user snapshot at the given absolute token
+// offset. The snapshot will be captured during prefill when the cache
+// reaches this offset.
+func (s *cacheSession) requestSnapshot(offset int) {
+	baseOffset := len(s.inputs) - len(s.remaining)
+	if offset <= baseOffset || offset > len(s.inputs) {
+		return
+	}
+	// Deduplicate: if this offset already exists, upgrade to user.
+	for i := range s.pendingSnapshots {
+		if s.pendingSnapshots[i].offset == offset {
+			s.pendingSnapshots[i].user = true
+			return
+		}
+	}
+	s.pendingSnapshots = append(s.pendingSnapshots, pendingSnapshot{offset: offset, user: true})
+	slices.SortFunc(s.pendingSnapshots, func(a, b pendingSnapshot) int {
+		return a.offset - b.offset
+	})
+}
+
+// nextPendingSnapshot returns the offset of the next pending snapshot,
+// or 0 if there are none.
+func (s *cacheSession) nextPendingSnapshot() int {
+	if len(s.pendingSnapshots) == 0 {
+		return 0
+	}
+	return s.pendingSnapshots[0].offset
+}
+
+// snapshot creates a snapshot at the current cache position. It determines
+// whether this is a user snapshot by consuming pending entries whose offset
+// has been reached.
+func (s *cacheSession) snapshot() {
 	c := s.cache
 	cacheOffset := c.minCacheOffset()
 	if cacheOffset <= 0 {
 		return
 	}
 
-	// Clear pending intermediate snapshot if we've reached or passed it.
-	if s.snapshotOffset > 0 && cacheOffset >= s.snapshotOffset {
-		s.snapshotOffset = 0
+	// Consume pending snapshots up to the current offset and derive
+	// the user flag from them.
+	user := false
+	for len(s.pendingSnapshots) > 0 && cacheOffset >= s.pendingSnapshots[0].offset {
+		if s.pendingSnapshots[0].user {
+			user = true
+		}
+		s.pendingSnapshots = s.pendingSnapshots[1:]
 	}
 
 	// The last node in activePath is the frontier where caches are advancing.
@@ -362,6 +397,7 @@ func (s *cacheSession) attachSnapshots(node *trieNode, cacheOffset int) {
 		}
 	}
 	node.setSnapshots(snaps, &c.pagedOutBytes)
+	node.lastUsed = time.Now()
 	slog.Debug("created snapshot", "offset", cacheOffset)
 	c.enforceEvictionPolicy()
 }
@@ -419,10 +455,7 @@ func (s *cacheSession) close() {
 			newTokens := stored[frontier.endOffset:offset]
 			c.advancePath(frontier, newTokens, offset)
 		}
-		now := time.Now()
-		for _, node := range c.activePath {
-			node.lastUsed = now
-		}
+		c.activePath[len(c.activePath)-1].lastUsed = time.Now()
 	}
 }
 
@@ -440,7 +473,7 @@ func (c *kvCache) enforceEvictionPolicy() {
 	for c.pagedOutBytes > maxPagedOutBytes {
 		var best *trieNode
 		walkNodes(c.root, func(n *trieNode) bool {
-			if n == c.root || activeSet[n] || !n.hasSnapshots() {
+			if n == c.root || activeSet[n] || len(n.children) > 1 {
 				return true
 			}
 			// Evict: oldest, then deepest, then largest.
@@ -464,27 +497,16 @@ func (c *kvCache) enforceEvictionPolicy() {
 func (c *kvCache) evictNode(node *trieNode) {
 	if len(node.children) == 0 {
 		// Leaf: remove entirely.
-		parent := node.parent
-		kind := "evicting leaf"
-		if node.user {
-			kind = "evicting user snapshot"
-		}
-		slog.Debug(kind, "offset", node.startOffset(), "tokens", len(node.tokens), "freed", mlx.PrettyBytes(int(node.snapshotBytes())))
+		slog.Debug("evicting leaf", "offset", node.startOffset(), "tokens", len(node.tokens), "freed", mlx.PrettyBytes(int(node.snapshotBytes())))
 		removeNode(node, &c.pagedOutBytes)
-
-		// If parent is a regular (non-user-snapshot) node with one remaining child, auto-merge.
-		if parent != nil && !parent.user && len(parent.children) == 1 && parent != c.root {
-			logutil.Trace(fmt.Sprintf("auto-merging parent at offset %d with single child", parent.endOffset))
-			mergeWithChild(parent, c.caches, &c.pagedOutBytes)
-		}
 	} else if len(node.children) == 1 {
-		// Interior snapshot node with one child: merge with child.
-		slog.Debug("evicting snapshot node", "offset", node.endOffset, "tokens", len(node.tokens), "freed", mlx.PrettyBytes(int(node.snapshotBytes())))
+		// Interior node with one child: merge with child.
+		before := c.pagedOutBytes
+		tokens := len(node.tokens)
 		mergeWithChild(node, c.caches, &c.pagedOutBytes)
+		slog.Debug("evicting interior node", "offset", node.startOffset(), "tokens", tokens, "freed", mlx.PrettyBytes(int(before-c.pagedOutBytes)))
 	} else {
-		// Multi-child branch point: drop snapshots but keep the node.
-		slog.Debug("evicting branch snapshot", "offset", node.endOffset, "tokens", len(node.tokens), "freed", mlx.PrettyBytes(int(node.snapshotBytes())))
-		node.setSnapshots(nil, &c.pagedOutBytes)
+		panic("evictNode called on multi-child branch point")
 	}
 }
 
@@ -535,6 +557,9 @@ func (c *kvCache) dumpTree() {
 		label := fmt.Sprintf("[%d,%d) %dt", n.startOffset(), n.endOffset, len(n.tokens))
 		if nodeBytes > 0 {
 			label += " " + mlx.PrettyBytes(int(nodeBytes)).String()
+		}
+		if !n.lastUsed.IsZero() {
+			label += fmt.Sprintf(" %s ago", time.Since(n.lastUsed).Truncate(time.Millisecond))
 		}
 		var flags []string
 		if n.user {

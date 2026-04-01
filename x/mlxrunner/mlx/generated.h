@@ -300,10 +300,12 @@
 #define mlx_atleast_1d mlx_atleast_1d_mlx_gen_orig_
 #define mlx_atleast_2d mlx_atleast_2d_mlx_gen_orig_
 #define mlx_atleast_3d mlx_atleast_3d_mlx_gen_orig_
+#define mlx_bartlett mlx_bartlett_mlx_gen_orig_
 #define mlx_bitwise_and mlx_bitwise_and_mlx_gen_orig_
 #define mlx_bitwise_invert mlx_bitwise_invert_mlx_gen_orig_
 #define mlx_bitwise_or mlx_bitwise_or_mlx_gen_orig_
 #define mlx_bitwise_xor mlx_bitwise_xor_mlx_gen_orig_
+#define mlx_blackman mlx_blackman_mlx_gen_orig_
 #define mlx_block_masked_mm mlx_block_masked_mm_mlx_gen_orig_
 #define mlx_broadcast_arrays mlx_broadcast_arrays_mlx_gen_orig_
 #define mlx_broadcast_to mlx_broadcast_to_mlx_gen_orig_
@@ -356,6 +358,8 @@
 #define mlx_greater mlx_greater_mlx_gen_orig_
 #define mlx_greater_equal mlx_greater_equal_mlx_gen_orig_
 #define mlx_hadamard_transform mlx_hadamard_transform_mlx_gen_orig_
+#define mlx_hamming mlx_hamming_mlx_gen_orig_
+#define mlx_hanning mlx_hanning_mlx_gen_orig_
 #define mlx_identity mlx_identity_mlx_gen_orig_
 #define mlx_imag mlx_imag_mlx_gen_orig_
 #define mlx_inner mlx_inner_mlx_gen_orig_
@@ -889,10 +893,12 @@
 #undef mlx_atleast_1d
 #undef mlx_atleast_2d
 #undef mlx_atleast_3d
+#undef mlx_bartlett
 #undef mlx_bitwise_and
 #undef mlx_bitwise_invert
 #undef mlx_bitwise_or
 #undef mlx_bitwise_xor
+#undef mlx_blackman
 #undef mlx_block_masked_mm
 #undef mlx_broadcast_arrays
 #undef mlx_broadcast_to
@@ -945,6 +951,8 @@
 #undef mlx_greater
 #undef mlx_greater_equal
 #undef mlx_hadamard_transform
+#undef mlx_hamming
+#undef mlx_hanning
 #undef mlx_identity
 #undef mlx_imag
 #undef mlx_inner
@@ -1501,8 +1509,10 @@ extern int (*mlx_distributed_sum_scatter_)(
 extern int (*mlx_distributed_group_rank_)(mlx_distributed_group group);
 extern int (*mlx_distributed_group_size_)(mlx_distributed_group group);
 extern mlx_distributed_group (*mlx_distributed_group_split_)(mlx_distributed_group group, int color, int key);
-extern bool (*mlx_distributed_is_available_)(void);
-extern mlx_distributed_group (*mlx_distributed_init_)(bool strict);
+extern bool (*mlx_distributed_is_available_)(const char* bk /* may be null */);
+extern mlx_distributed_group (*mlx_distributed_init_)(
+    bool strict,
+    const char* bk /* may be null */);
 extern void (*mlx_set_error_handler_)(
     mlx_error_handler_func handler,
     void* data,
@@ -2099,6 +2109,7 @@ extern int (*mlx_astype_)(
 extern int (*mlx_atleast_1d_)(mlx_array* res, const mlx_array a, const mlx_stream s);
 extern int (*mlx_atleast_2d_)(mlx_array* res, const mlx_array a, const mlx_stream s);
 extern int (*mlx_atleast_3d_)(mlx_array* res, const mlx_array a, const mlx_stream s);
+extern int (*mlx_bartlett_)(mlx_array* res, int M, const mlx_stream s);
 extern int (*mlx_bitwise_and_)(
     mlx_array* res,
     const mlx_array a,
@@ -2115,6 +2126,7 @@ extern int (*mlx_bitwise_xor_)(
     const mlx_array a,
     const mlx_array b,
     const mlx_stream s);
+extern int (*mlx_blackman_)(mlx_array* res, int M, const mlx_stream s);
 extern int (*mlx_block_masked_mm_)(
     mlx_array* res,
     const mlx_array a,
@@ -2295,6 +2307,7 @@ extern int (*mlx_dequantize_)(
     mlx_optional_int group_size,
     mlx_optional_int bits,
     const char* mode,
+    const mlx_array global_scale /* may be null */,
     mlx_optional_dtype dtype,
     const mlx_stream s);
 extern int (*mlx_diag_)(mlx_array* res, const mlx_array a, int k, const mlx_stream s);
@@ -2431,6 +2444,8 @@ extern int (*mlx_hadamard_transform_)(
     const mlx_array a,
     mlx_optional_float scale,
     const mlx_stream s);
+extern int (*mlx_hamming_)(mlx_array* res, int M, const mlx_stream s);
+extern int (*mlx_hanning_)(mlx_array* res, int M, const mlx_stream s);
 extern int (*mlx_identity_)(mlx_array* res, int n, mlx_dtype dtype, const mlx_stream s);
 extern int (*mlx_imag_)(mlx_array* res, const mlx_array a, const mlx_stream s);
 extern int (*mlx_inner_)(
@@ -2723,6 +2738,8 @@ extern int (*mlx_qqmm_)(
     mlx_optional_int group_size,
     mlx_optional_int bits,
     const char* mode,
+    const mlx_array global_scale_x /* may be null */,
+    const mlx_array global_scale_w /* may be null */,
     const mlx_stream s);
 extern int (*mlx_quantize_)(
     mlx_vector_array* res,
@@ -2730,6 +2747,7 @@ extern int (*mlx_quantize_)(
     mlx_optional_int group_size,
     mlx_optional_int bits,
     const char* mode,
+    const mlx_array global_scale /* may be null */,
     const mlx_stream s);
 extern int (*mlx_quantized_matmul_)(
     mlx_array* res,
@@ -4033,11 +4051,13 @@ static inline int mlx_distributed_group_size(mlx_distributed_group group) {
 static inline mlx_distributed_group mlx_distributed_group_split(mlx_distributed_group group, int color, int key) {
     return mlx_distributed_group_split_(group, color, key);
 }
-static inline bool mlx_distributed_is_available(void) {
-    return mlx_distributed_is_available_();
+static inline bool mlx_distributed_is_available(const char* bk /* may be null */) {
+    return mlx_distributed_is_available_(bk);
 }
-static inline mlx_distributed_group mlx_distributed_init(bool strict) {
-    return mlx_distributed_init_(strict);
+static inline mlx_distributed_group mlx_distributed_init(
+    bool strict,
+    const char* bk /* may be null */) {
+    return mlx_distributed_init_(strict, bk);
 }
 static inline void mlx_set_error_handler(
     mlx_error_handler_func handler,
@@ -4939,6 +4959,9 @@ static inline int mlx_atleast_2d(mlx_array* res, const mlx_array a, const mlx_st
 static inline int mlx_atleast_3d(mlx_array* res, const mlx_array a, const mlx_stream s) {
     return mlx_atleast_3d_(res, a, s);
 }
+static inline int mlx_bartlett(mlx_array* res, int M, const mlx_stream s) {
+    return mlx_bartlett_(res, M, s);
+}
 static inline int mlx_bitwise_and(
     mlx_array* res,
     const mlx_array a,
@@ -4962,6 +4985,9 @@ static inline int mlx_bitwise_xor(
     const mlx_array b,
     const mlx_stream s) {
     return mlx_bitwise_xor_(res, a, b, s);
+}
+static inline int mlx_blackman(mlx_array* res, int M, const mlx_stream s) {
+    return mlx_blackman_(res, M, s);
 }
 static inline int mlx_block_masked_mm(
     mlx_array* res,
@@ -5193,9 +5219,10 @@ static inline int mlx_dequantize(
     mlx_optional_int group_size,
     mlx_optional_int bits,
     const char* mode,
+    const mlx_array global_scale /* may be null */,
     mlx_optional_dtype dtype,
     const mlx_stream s) {
-    return mlx_dequantize_(res, w, scales, biases, group_size, bits, mode, dtype, s);
+    return mlx_dequantize_(res, w, scales, biases, group_size, bits, mode, global_scale, dtype, s);
 }
 static inline int mlx_diag(mlx_array* res, const mlx_array a, int k, const mlx_stream s) {
     return mlx_diag_(res, a, k, s);
@@ -5382,6 +5409,12 @@ static inline int mlx_hadamard_transform(
     mlx_optional_float scale,
     const mlx_stream s) {
     return mlx_hadamard_transform_(res, a, scale, s);
+}
+static inline int mlx_hamming(mlx_array* res, int M, const mlx_stream s) {
+    return mlx_hamming_(res, M, s);
+}
+static inline int mlx_hanning(mlx_array* res, int M, const mlx_stream s) {
+    return mlx_hanning_(res, M, s);
 }
 static inline int mlx_identity(mlx_array* res, int n, mlx_dtype dtype, const mlx_stream s) {
     return mlx_identity_(res, n, dtype, s);
@@ -5793,8 +5826,10 @@ static inline int mlx_qqmm(
     mlx_optional_int group_size,
     mlx_optional_int bits,
     const char* mode,
+    const mlx_array global_scale_x /* may be null */,
+    const mlx_array global_scale_w /* may be null */,
     const mlx_stream s) {
-    return mlx_qqmm_(res, x, w, w_scales, group_size, bits, mode, s);
+    return mlx_qqmm_(res, x, w, w_scales, group_size, bits, mode, global_scale_x, global_scale_w, s);
 }
 static inline int mlx_quantize(
     mlx_vector_array* res,
@@ -5802,8 +5837,9 @@ static inline int mlx_quantize(
     mlx_optional_int group_size,
     mlx_optional_int bits,
     const char* mode,
+    const mlx_array global_scale /* may be null */,
     const mlx_stream s) {
-    return mlx_quantize_(res, w, group_size, bits, mode, s);
+    return mlx_quantize_(res, w, group_size, bits, mode, global_scale, s);
 }
 static inline int mlx_quantized_matmul(
     mlx_array* res,
