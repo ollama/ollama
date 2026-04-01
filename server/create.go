@@ -141,7 +141,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 					ch <- gin.H{"error": err.Error()}
 				}
 
-				if err == nil && !remote && (config.Renderer == "" || config.Parser == "" || config.Requires == "" || len(config.Capabilities) == 0) {
+				if err == nil && !remote {
 					mf, mErr := manifest.ParseNamedManifest(fromName)
 					if mErr == nil && mf.Config.Digest != "" {
 						configPath, pErr := manifest.BlobsPath(mf.Config.Digest)
@@ -157,6 +157,9 @@ func (s *Server) CreateHandler(c *gin.Context) {
 									}
 									if config.Requires == "" {
 										config.Requires = baseConfig.Requires
+									}
+									if config.ModelFormat == "" {
+										config.ModelFormat = baseConfig.ModelFormat
 									}
 									if len(config.Capabilities) == 0 {
 										config.Capabilities = baseConfig.Capabilities
