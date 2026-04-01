@@ -6,7 +6,7 @@ import { getChat } from "@/api";
 import { Link } from "@/components/ui/link";
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { ChatsResponse } from "@/gotypes";
-import { CogIcon } from "@heroicons/react/24/outline";
+import { CogIcon, ChartBarIcon } from "@heroicons/react/24/outline";
 
 // there's a hidden debug feature to copy a chat's data to the clipboard by
 // holding shift and clicking this many times within this many seconds
@@ -284,14 +284,24 @@ export function ChatSidebar({ currentChatId }: ChatSidebarProps) {
           <span className="truncate">New Chat</span>
         </Link>
         {isWindows && (
-          <Link
-            href="/settings"
-            className={`flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 dark:text-neutral-300`}
-            draggable={false}
-          >
-            <CogIcon className="h-5 w-5 stroke-current" />
-            <span className="truncate">Settings</span>
-          </Link>
+          <>
+            <Link
+              href="/dashboard"
+              className={`flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 dark:text-neutral-300`}
+              draggable={false}
+            >
+              <ChartBarIcon className="h-5 w-5 stroke-current" />
+              <span className="truncate">Dashboard</span>
+            </Link>
+            <Link
+              href="/settings"
+              className={`flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 dark:text-neutral-300`}
+              draggable={false}
+            >
+              <CogIcon className="h-5 w-5 stroke-current" />
+              <span className="truncate">Settings</span>
+            </Link>
+          </>
         )}
       </header>
       <div className="flex flex-1 flex-col px-4 py-1 overflow-y-auto overscroll-auto scrollbar-gutter">

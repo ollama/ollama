@@ -33,12 +33,15 @@ type Server struct {
 }
 
 type InferenceCompute struct {
-	Library string
-	Variant string
-	Compute string
-	Driver  string
-	Name    string
-	VRAM    string
+	Library     string
+	Variant     string
+	Compute     string
+	Driver      string
+	Name        string
+	VRAM        string
+	Description string
+	Available   string
+	Type        string
 }
 
 type InferenceInfo struct {
@@ -314,6 +317,18 @@ func GetInferenceInfo(ctx context.Context) (*InferenceInfo, error) {
 			q:  regexp.MustCompile(fmt.Sprintf(q, "total")),
 			nq: regexp.MustCompile(fmt.Sprintf(nq, "total")),
 		},
+		"description": {
+			q:  regexp.MustCompile(fmt.Sprintf(q, "description")),
+			nq: regexp.MustCompile(fmt.Sprintf(nq, "description")),
+		},
+		"available": {
+			q:  regexp.MustCompile(fmt.Sprintf(q, "available")),
+			nq: regexp.MustCompile(fmt.Sprintf(nq, "available")),
+		},
+		"type": {
+			q:  regexp.MustCompile(fmt.Sprintf(q, "type")),
+			nq: regexp.MustCompile(fmt.Sprintf(nq, "type")),
+		},
 	}
 	get := func(field, line string) string {
 		regex, ok := regexes[field]
@@ -351,12 +366,15 @@ func GetInferenceInfo(ctx context.Context) (*InferenceInfo, error) {
 			// Check for inference compute lines
 			if computeMarker.MatchString(line) {
 				ic := InferenceCompute{
-					Library: get("library", line),
-					Variant: get("variant", line),
-					Compute: get("compute", line),
-					Driver:  get("driver", line),
-					Name:    get("name", line),
-					VRAM:    get("total", line),
+					Library:     get("library", line),
+					Variant:     get("variant", line),
+					Compute:     get("compute", line),
+					Driver:      get("driver", line),
+					Name:        get("name", line),
+					VRAM:        get("total", line),
+					Description: get("description", line),
+					Available:   get("available", line),
+					Type:        get("type", line),
 				}
 
 				slog.Info("Matched", "inference compute", ic)

@@ -13,5 +13,6 @@ const (
 	updateMenuTitle          = "Restart to update"
 	diagLogsMenuTitle        = "View logs"
 	openUIMenuTitle          = "Open Ollama"
+	dashboardUIMenuTitle     = "Dashboard..."
 	settingsUIMenuTitle      = "Settings..."
 )

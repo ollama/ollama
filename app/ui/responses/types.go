@@ -36,12 +36,15 @@ type ModelsResponse struct {
 }
 
 type InferenceCompute struct {
-	Library string `json:"library"`
-	Variant string `json:"variant"`
-	Compute string `json:"compute"`
-	Driver  string `json:"driver"`
-	Name    string `json:"name"`
-	VRAM    string `json:"vram"`
+	Library     string `json:"library"`
+	Variant     string `json:"variant"`
+	Compute     string `json:"compute"`
+	Driver      string `json:"driver"`
+	Name        string `json:"name"`
+	VRAM        string `json:"vram"`
+	Description string `json:"description,omitempty"`
+	Available   string `json:"available,omitempty"`
+	Type        string `json:"type,omitempty"`
 }
 
 type InferenceComputeResponse struct {
