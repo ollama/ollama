@@ -568,6 +568,25 @@ func hasListedModelName(models []api.ListModelResponse, name string) bool {
 	return false
 }
 
+// getMaxAudioSeconds extracts the max audio duration from model info metadata.
+// Returns 0 if the model doesn't report audio limits.
+func getMaxAudioSeconds(info *api.ShowResponse) int {
+	if info == nil || info.ModelInfo == nil {
+		return 0
+	}
+	for k, v := range info.ModelInfo {
+		if strings.HasSuffix(k, ".max_audio_seconds") {
+			switch val := v.(type) {
+			case float64:
+				return int(val)
+			case int:
+				return val
+			}
+		}
+	}
+	return 0
+}
+
 func RunHandler(cmd *cobra.Command, args []string) error {
 	interactive := true
 
@@ -711,6 +730,19 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	opts.ParentModel = info.Details.ParentModel
+
+	opts.AudioCapable = slices.Contains(info.Capabilities, model.CapabilityAudio)
+
+	audioin, _ := cmd.Flags().GetBool("audioin")
+	if audioin {
+		if !opts.AudioCapable {
+			fmt.Fprintf(os.Stderr, "Warning: audio input disabled — %s does not support audio\n", opts.Model)
+		} else {
+			opts.AudioInput = true
+			opts.MultiModal = true // audio uses the multimodal pipeline
+			opts.MaxAudioSeconds = getMaxAudioSeconds(info)
+		}
+	}
 
 	// Check if this is an embedding model
 	isEmbeddingModel := slices.Contains(info.Capabilities, model.CapabilityEmbedding)
@@ -1435,8 +1467,12 @@ type runOptions struct {
 	System       string
 	Images       []api.ImageData
 	Options      map[string]any
-	MultiModal   bool
-	KeepAlive    *api.Duration
+	MultiModal      bool
+	AudioInput      bool
+	AudioCapable    bool   // model supports audio input
+	MaxAudioSeconds int    // from model metadata; 0 = use default
+	Language        string // language hint for transcription
+	KeepAlive       *api.Duration
 	Think        *api.ThinkValue
 	HideThinking bool
 	ShowConnect  bool
@@ -1494,6 +1530,9 @@ type displayResponseState struct {
 
 func displayResponse(content string, wordWrap bool, state *displayResponseState) {
 	termWidth, _, _ := term.GetSize(int(os.Stdout.Fd()))
+	if termWidth == 0 {
+		termWidth = 80
+	}
 	if wordWrap && termWidth >= 10 {
 		for _, ch := range content {
 			if state.lineLength+1 > termWidth-5 {
@@ -2159,6 +2198,7 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("experimental", false, "Enable experimental agent loop with tools")
 	runCmd.Flags().Bool("experimental-yolo", false, "Skip all tool approval prompts (use with caution)")
 	runCmd.Flags().Bool("experimental-websearch", false, "Enable web search tool in experimental mode")
+	runCmd.Flags().Bool("audioin", false, "Enable audio input via microphone (press Space to record)")
 
 	// Image generation flags (width, height, steps, seed, etc.)
 	imagegen.RegisterFlags(runCmd)
