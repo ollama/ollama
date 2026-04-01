@@ -195,10 +195,12 @@ for i in $(seq 0 7); do
     echo ""
 done
 
-header "Done!"
-info "Server is still running with KAN enabled on port ${PORT}."
-info "Chat interactively: curl ${BASE_URL}/api/chat -d '{\"model\":\"${MODEL}\",\"messages\":[{\"role\":\"user\",\"content\":\"your prompt\"}]}'"
+header "Done! Dropping you into live chat."
+info "KAN is trained and active. Go wild."
 echo ""
 
-# Keep server running
+# Drop into interactive chat — this IS the interface now
+ollama run "${MODEL}"
+
+# If they exit chat, keep server alive
 wait $SERVER_PID
