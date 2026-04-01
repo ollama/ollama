@@ -59,10 +59,13 @@ func (p *Qwen3CoderParser) Add(s string, done bool) (content string, thinking st
 	for _, event := range events {
 		switch event := event.(type) {
 		case qwenEventRawToolCall:
-			toolCall, err := parseToolCall(event, p.tools)
-			if err != nil {
-				slog.Warn("qwen tool call parsing failed", "error", err)
-				return "", "", nil, err
+			toolCall, parseErr := parseToolCall(event, p.tools)
+			if parseErr != nil {
+				slog.Warn("qwen tool call parsing failed, treating as content", "error", parseErr)
+				sb.WriteString(toolOpenTag)
+				sb.WriteString(event.raw)
+				sb.WriteString(toolCloseTag)
+				continue
 			}
 			toolCall.Function.Index = p.callIndex
 			p.callIndex++
