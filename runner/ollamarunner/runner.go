@@ -1029,6 +1029,7 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+
 	prompt := req.Content
 	var images []llm.ImageData
 	if req.Image != nil {
