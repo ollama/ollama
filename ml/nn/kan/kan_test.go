@@ -1273,3 +1273,49 @@ func TestNewLayerFromWeightsMultiHead(t *testing.T) {
 		t.Errorf("expected %d coefficients, got %d", cfg.NumBasis*3, len(got))
 	}
 }
+
+func TestNeedsPhase2Data(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Phase2Enabled = true
+	cfg.Phase2EveryN = 5
+	cfg.ConvergenceThreshold = 0.03
+	cfg.ConvergenceWindow = 3
+	trainer := NewShadowTrainer(cfg)
+
+	key := "layer_0"
+
+	// Before convergence, NeedsPhase2Data should return false
+	trainer.GetOrCreateLayer(key)
+	if trainer.NeedsPhase2Data(key) {
+		t.Error("NeedsPhase2Data should be false before convergence")
+	}
+
+	// Converge the layer by training enough steps
+	logits := []float32{1, 2, 3, 4}
+	softmax := referenceSoftmax(logits, 4, 1)
+	for i := 0; i < 500; i++ {
+		trainer.TrainStep(key, logits, softmax, 4, 1)
+		if trainer.IsConverged(key) {
+			break
+		}
+	}
+	if !trainer.IsConverged(key) {
+		t.Fatal("layer should have converged")
+	}
+	if !trainer.IsPhase2Active(key) {
+		t.Fatal("Phase 2 should be active")
+	}
+
+	// NeedsPhase2Data should return true every 5th call
+	trueCount := 0
+	for i := 0; i < 20; i++ {
+		if trainer.NeedsPhase2Data(key) {
+			trueCount++
+		}
+	}
+
+	// 20 calls / Phase2EveryN(5) = 4 true results
+	if trueCount != 4 {
+		t.Errorf("expected NeedsPhase2Data true 4 times in 20 calls, got %d", trueCount)
+	}
+}

@@ -61,6 +61,10 @@ type layerState struct {
 	bestLoss      float64 // best EMA loss seen so far
 	plateauCount  int     // steps since best loss improved significantly
 	lastHeadSpawn int     // step at which last head was spawned
+
+	// Phase 2 data collection: counter for routing 1-in-N forward passes
+	// through the manual attention path to capture logits.
+	phase2DataCounter int
 }
 
 // NewShadowTrainer creates a new trainer with the given configuration.
@@ -568,6 +572,23 @@ func (s *ShadowTrainer) IsPhase2Active(key string) bool {
 		return state.phase2Active
 	}
 	return false
+}
+
+// NeedsPhase2Data returns true when a converged layer should be routed through
+// the manual attention path to capture logits for Phase 2 self-evolution.
+// Returns true every Phase2EveryN calls, so the vast majority of forward passes
+// still go through SDPA at full flash attention speed.
+func (s *ShadowTrainer) NeedsPhase2Data(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	state, ok := s.layers[key]
+	if !ok || !state.phase2Active {
+		return false
+	}
+
+	state.phase2DataCounter++
+	return state.phase2DataCounter%s.cfg.Phase2EveryN == 0
 }
 
 // sharpness computes the negative entropy of attention weights (higher = sharper).

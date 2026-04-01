@@ -185,18 +185,19 @@ func AttentionWithVMLA(ctx ml.Context, query, key, value, sinks ml.Tensor, vmla 
 	if trainer != nil {
 		layerIdx := ctx.LayerIndex()
 		if layerIdx >= 0 {
-			key := kan.LayerKey(layerIdx)
-			trainer.GetOrCreateLayer(key)
+			layerKey := kan.LayerKey(layerIdx)
+			trainer.GetOrCreateLayer(layerKey)
 
-			if trainer.IsConverged(key) {
-				// Converged: can use SDPA with the KAN's effective scale.
-				// This preserves flash attention performance while applying
-				// the Phase 2 sharpening effect.
-				kanScale = trainer.GetEffectiveScale(key)
+			if trainer.IsConverged(layerKey) {
+				// Converged: usually use SDPA with the KAN's effective scale.
+				kanScale = trainer.GetEffectiveScale(layerKey)
 
-				// Still register for Phase 2 evolution if active.
-				// We can't capture logits through SDPA, but Phase 2 can
-				// use its existing state to continue evolving.
+				// Phase 2 self-evolution needs logit data to sharpen attention.
+				// Route 1-in-N forward passes through the manual path to collect
+				// training data. The rest go through SDPA at full speed.
+				if trainer.IsPhase2Active(layerKey) && trainer.NeedsPhase2Data(layerKey) {
+					needManualPath = true
+				}
 			} else {
 				// Not converged: need manual path to capture logits for training
 				needManualPath = true
@@ -262,10 +263,33 @@ func applyAttentionWeights(ctx ml.Context, kq ml.Tensor) ml.Tensor {
 
 	key := kan.LayerKey(layerIdx)
 
-	// Use standard softmax as output (ground truth for training)
+	if trainer.IsConverged(key) {
+		// Converged layer on the manual path: here for Phase 2 data collection.
+		// Apply effectiveScale to the logits so the output matches what SDPA
+		// would produce, then register kq for Phase 2 training (no softmax
+		// ground truth needed — Phase 2 uses sharpness, not MSE).
+		effectiveScale := trainer.GetEffectiveScale(key)
+		scaled := kq
+		if effectiveScale != 1.0 {
+			scaled = kq.Scale(ctx, effectiveScale)
+		}
+		softmaxOut := scaled.Softmax(ctx)
+
+		kanPendingMu.Lock()
+		kanPending = append(kanPending, kanPendingItem{
+			key:       key,
+			kq:        kq,
+			shape:     kq.Shape(),
+			converged: true,
+		})
+		kanPendingMu.Unlock()
+
+		return softmaxOut
+	}
+
+	// Not converged: use standard softmax as ground truth for Phase 1 training
 	softmaxOut := kq.Softmax(ctx)
 
-	// Register for deferred shadow training (processed after Compute)
 	if trainer.ShouldTrain(key) {
 		kanPendingMu.Lock()
 		kanPending = append(kanPending, kanPendingItem{
