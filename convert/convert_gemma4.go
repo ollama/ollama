@@ -59,13 +59,12 @@ type gemma4Model struct {
 	} `json:"vision_config"`
 
 	AudioModel *struct {
-		HiddenSize            uint32  `json:"hidden_size"`
-		InputFeatSize         uint32  `json:"input_feat_size"`
-		OutputProjDims        uint32  `json:"output_proj_dims"`
-		ConfNumHiddenLayers   uint32  `json:"conf_num_hidden_layers"`
-		ConfNumAttentionHeads uint32  `json:"conf_num_attention_heads"`
-		ConfConvKernelSize    uint32  `json:"conf_conv_kernel_size"`
-		RMSNormEps            float32 `json:"rms_norm_eps"`
+		HiddenSize        uint32  `json:"hidden_size"`
+		OutputProjDims    uint32  `json:"output_proj_dims"`
+		NumHiddenLayers   uint32  `json:"num_hidden_layers"`
+		NumAttentionHeads uint32  `json:"num_attention_heads"`
+		ConvKernelSize    uint32  `json:"conv_kernel_size"`
+		RMSNormEps        float32 `json:"rms_norm_eps"`
 	} `json:"audio_config"`
 }
 
@@ -190,20 +189,19 @@ func (p *gemma4Model) KV(t *Tokenizer) KV {
 	}
 
 	// Audio model KV metadata
-	if p.AudioModel != nil && p.AudioModel.ConfNumHiddenLayers > 0 {
+	if p.AudioModel != nil && p.AudioModel.NumHiddenLayers > 0 {
 		ac := p.AudioModel
-		kv["gemma4.audio.block_count"] = ac.ConfNumHiddenLayers
+		kv["gemma4.audio.block_count"] = ac.NumHiddenLayers
 		kv["gemma4.audio.embedding_length"] = ac.HiddenSize
 		kv["gemma4.audio.feed_forward_length"] = ac.HiddenSize * 4
-		kv["gemma4.audio.attention.head_count"] = ac.ConfNumAttentionHeads
-		kv["gemma4.audio.num_mel_bins"] = ac.InputFeatSize
+		kv["gemma4.audio.attention.head_count"] = ac.NumAttentionHeads
 		eps := ac.RMSNormEps
 		if eps == 0 {
 			eps = 1e-6
 		}
 		kv["gemma4.audio.attention.layer_norm_epsilon"] = eps
-		if ac.ConfConvKernelSize > 0 {
-			kv["gemma4.audio.conv_kernel_size"] = ac.ConfConvKernelSize
+		if ac.ConvKernelSize > 0 {
+			kv["gemma4.audio.conv_kernel_size"] = ac.ConvKernelSize
 		}
 	}
 
@@ -258,20 +256,8 @@ func (p *gemma4Model) Tensors(ts []Tensor) []*ggml.Tensor {
 			name = strings.Replace(name, ".layer_output_scale.", ".out_scale.", 1)
 		}
 
-		// Audio tensor post-processing: block-level norm rename and per_dim_scale softplus.
-		if strings.HasPrefix(name, "a.blk.") {
-			// Conformer block final norm: a.blk.N.norm.weight → a.blk.N.layer_pre_norm.weight
-			if dotIdx := strings.Index(name[6:], "."); dotIdx >= 0 {
-				rest := name[6+dotIdx+1:]
-				if strings.HasPrefix(rest, "norm.") {
-					name = name[:6+dotIdx+1] + "layer_pre_norm." + rest[5:]
-				}
-			}
-		}
-
-		// per_dim_scale / per_dim_k_scale: apply softplus to weight data and add .weight suffix.
-		if strings.HasPrefix(name, "a.blk.") &&
-			(strings.HasSuffix(name, "per_dim_scale") || strings.HasSuffix(name, "per_dim_k_scale")) {
+		// per_dim_scale: apply softplus to weight data and add .weight suffix.
+		if strings.HasPrefix(name, "a.blk.") && strings.HasSuffix(name, "per_dim_scale") {
 			name = name + ".weight"
 			t.SetRepacker(softplusRepacker)
 		}
@@ -515,35 +501,34 @@ func (p *gemma4Model) Replacements() []string {
 		".linear.bias", ".bias",
 
 		// Audio SSCP (Sub-Sample Convolution Projection)
-		"model.audio_tower.subsample_conv_projection.conv_0.conv", "a.conv1d.0",
-		"model.audio_tower.subsample_conv_projection.conv_0.norm", "a.conv1d.0.norm",
-		"model.audio_tower.subsample_conv_projection.conv_1.conv", "a.conv1d.1",
-		"model.audio_tower.subsample_conv_projection.conv_1.norm", "a.conv1d.1.norm",
+		"model.audio_tower.subsample_conv_projection.layer0.conv", "a.conv1d.0",
+		"model.audio_tower.subsample_conv_projection.layer0.norm", "a.conv1d.0.norm",
+		"model.audio_tower.subsample_conv_projection.layer1.conv", "a.conv1d.1",
+		"model.audio_tower.subsample_conv_projection.layer1.norm", "a.conv1d.1.norm",
 		"model.audio_tower.subsample_conv_projection.input_proj_linear", "a.pre_encode.out",
 
 		// Audio conformer blocks
-		"model.audio_tower.conformer", "a.blk",
+		"model.audio_tower.layers", "a.blk",
 
-		// Audio conformer attention (must be before shared attn replacements)
-		"attention.attn.relative_position_embedding.pos_proj", "linear_pos",
-		"attention.attn.per_dim_key_scale", "per_dim_k_scale",
-		"attention.attn.per_dim_scale", "per_dim_scale",
-		"attention.attn.q_proj", "attn_q",
-		"attention.attn.k_proj", "attn_k",
-		"attention.attn.v_proj", "attn_v",
-		"attention.post_norm", "ln2",
-		"attention.pre_attn_norm", "ln1",
-		"attention.post", "attn_out",
+		// Audio conformer attention
+		"self_attn.relative_k_proj", "linear_pos",
+		"self_attn.per_dim_scale", "per_dim_scale",
+		"self_attn.q_proj", "attn_q",
+		"self_attn.k_proj", "attn_k",
+		"self_attn.v_proj", "attn_v",
+		"norm_post_attn", "ln2",
+		"norm_pre_attn", "ln1",
+		"self_attn.post", "attn_out",
 
 		// Audio conformer feedforward
-		"ffw_layer_start.pre_layer_norm", "ffn_norm",
-		"ffw_layer_start.post_layer_norm", "ffn_post_norm",
-		"ffw_layer_start.ffw_layer_1", "ffn_up",
-		"ffw_layer_start.ffw_layer_2", "ffn_down",
-		"ffw_layer_end.pre_layer_norm", "ffn_norm_1",
-		"ffw_layer_end.post_layer_norm", "ffn_post_norm_1",
-		"ffw_layer_end.ffw_layer_1", "ffn_up_1",
-		"ffw_layer_end.ffw_layer_2", "ffn_down_1",
+		"feed_forward1.pre_layer_norm", "ffn_norm",
+		"feed_forward1.post_layer_norm", "ffn_post_norm",
+		"feed_forward1.ffw_layer_1", "ffn_up",
+		"feed_forward1.ffw_layer_2", "ffn_down",
+		"feed_forward2.pre_layer_norm", "ffn_norm_1",
+		"feed_forward2.post_layer_norm", "ffn_post_norm_1",
+		"feed_forward2.ffw_layer_1", "ffn_up_1",
+		"feed_forward2.ffw_layer_2", "ffn_down_1",
 
 		// Audio conformer lightweight conv1d
 		"lconv1d.depthwise_conv1d", "conv_dw",
@@ -551,6 +536,9 @@ func (p *gemma4Model) Replacements() []string {
 		"lconv1d.conv_norm", "norm_conv",
 		"lconv1d.linear_start", "conv_pw1",
 		"lconv1d.linear_end", "conv_pw2",
+
+		// Audio block final norm
+		"norm_out", "layer_pre_norm",
 
 		// Audio embedder and output projection
 		"model.embed_audio.embedding_projection", "mm.a.input_projection",
