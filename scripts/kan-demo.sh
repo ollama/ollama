@@ -149,19 +149,18 @@ info "  2. Warm-up: Train the KAN with 5 prompts"
 info "  3. KAN: Same 8 tests with KAN attention (KAN ON)"
 echo ""
 
-# ─── Step 1: Start server WITHOUT KAN, pull model, run baseline ───
+# ─── Step 1: Use already-running server for baseline (KAN OFF by default) ───
 header "Step 1: Baseline (Standard Softmax)"
 
-# Kill any pre-existing server (e.g. from Docker entrypoint)
-killall ollama 2>/dev/null || true
-killall -9 ollama 2>/dev/null || true
-sleep 2
-
-export OLLAMA_KAN_ATTENTION=0
-export OLLAMA_FLASH_ATTENTION=true
-export OLLAMA_DEBUG=1
-info "Starting server with KAN DISABLED..."
-start_server
+info "Using already-running server (KAN disabled by default)..."
+# Wait for the server that Docker CMD started
+for i in $(seq 1 30); do
+    if curl -s "${BASE_URL}/api/tags" > /dev/null 2>&1; then
+        info "Server ready!"
+        break
+    fi
+    sleep 1
+done
 
 info "Pulling ${MODEL}..."
 ollama pull "${MODEL}"
