@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-MODEL="${KAN_MODEL:-tinyllama}"
+MODEL="${KAN_MODEL:-qwen3:0.6b}"
 PORT="${OLLAMA_PORT:-11434}"
 BASE_URL="http://localhost:${PORT}"
 
