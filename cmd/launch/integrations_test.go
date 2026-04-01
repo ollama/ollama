@@ -374,6 +374,39 @@ func TestBuildModelList_PreCheckedFirst(t *testing.T) {
 	}
 }
 
+func TestBuildModelList_CurrentDefaultFirstAmongCheckedNonRec(t *testing.T) {
+	existing := []modelInfo{
+		{Name: "alpha", Remote: false},
+		{Name: "zebra", Remote: false},
+		{Name: "middle", Remote: false},
+	}
+
+	// "zebra" is the current/default; all three are checked, none are recommended.
+	// Expected non-rec order: zebra (default), alpha, middle (alphabetical).
+	items, _, _, _ := buildModelList(existing, []string{"zebra", "alpha", "middle"}, "zebra")
+	got := names(items)
+
+	// Skip recommended items to find the non-rec portion.
+	var nonRec []string
+	for _, item := range items {
+		if !item.Recommended {
+			nonRec = append(nonRec, item.Name)
+		}
+	}
+	if len(nonRec) < 3 {
+		t.Fatalf("expected 3 non-rec items, got %v", nonRec)
+	}
+	if nonRec[0] != "zebra" {
+		t.Errorf("current/default model should be first among checked non-rec, got %v (full: %v)", nonRec, got)
+	}
+	if nonRec[1] != "alpha" {
+		t.Errorf("remaining checked should be alphabetical, expected alpha second, got %v", nonRec)
+	}
+	if nonRec[2] != "middle" {
+		t.Errorf("remaining checked should be alphabetical, expected middle third, got %v", nonRec)
+	}
+}
+
 func TestBuildModelList_ExistingRecommendedMarked(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "glm-4.7-flash", Remote: false},

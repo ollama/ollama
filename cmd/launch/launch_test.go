@@ -668,7 +668,7 @@ func TestLaunchIntegration_EditorForceConfigure(t *testing.T) {
 	}
 }
 
-func TestLaunchIntegration_EditorForceConfigure_DoesNotFloatCheckedModelsInPicker(t *testing.T) {
+func TestLaunchIntegration_EditorForceConfigure_FloatsCheckedModelsInPicker(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -725,8 +725,8 @@ func TestLaunchIntegration_EditorForceConfigure_DoesNotFloatCheckedModelsInPicke
 	if len(gotItems) == 0 {
 		t.Fatal("expected multi selector to receive items")
 	}
-	if gotItems[0] != "kimi-k2.5:cloud" {
-		t.Fatalf("expected stable recommendation order with kimi-k2.5:cloud first, got %v", gotItems)
+	if gotItems[0] != "qwen3.5:cloud" {
+		t.Fatalf("expected checked models floated to top with qwen3.5:cloud first, got %v", gotItems)
 	}
 	if len(gotPreChecked) < 2 {
 		t.Fatalf("expected prechecked models to be preserved, got %v", gotPreChecked)

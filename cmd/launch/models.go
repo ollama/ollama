@@ -379,6 +379,17 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 				}
 				return recRank[a.Name] - recRank[b.Name]
 			}
+			// Among checked non-recommended items - put the default first
+			if ac && !aRec && current != "" {
+				aCurrent := a.Name == current
+				bCurrent := b.Name == current
+				if aCurrent != bCurrent {
+					if aCurrent {
+						return -1
+					}
+					return 1
+				}
+			}
 			if aNew != bNew {
 				if aNew {
 					return 1
