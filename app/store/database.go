@@ -1201,6 +1201,7 @@ func (db *database) getSettings() (Settings, error) {
 func (db *database) setSettings(s Settings) error {
 	lastHomeView := strings.ToLower(strings.TrimSpace(s.LastHomeView))
 	validLaunchView := map[string]struct{}{
+		"launch":   {},
 		"openclaw": {},
 		"claude":   {},
 		"codex":    {},
