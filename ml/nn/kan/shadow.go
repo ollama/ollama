@@ -7,9 +7,24 @@ import (
 	"sync"
 )
 
+// adamState holds the per-parameter moment estimates for Adam optimizer.
+type adamState struct {
+	m []float64 // First moment (mean of gradients)
+	v []float64 // Second moment (mean of squared gradients)
+	t int       // Timestep (for bias correction)
+}
+
+func newAdamState(n int) *adamState {
+	return &adamState{
+		m: make([]float64, n),
+		v: make([]float64, n),
+		t: 0,
+	}
+}
+
 // ShadowTrainer manages online training of KAN layers to match softmax output.
 // It runs KAN forward passes in parallel with softmax and uses finite-difference
-// gradient estimation to update the KAN coefficients.
+// gradient estimation with Adam optimizer to update the KAN coefficients.
 type ShadowTrainer struct {
 	cfg    Config
 	layers map[string]*layerState
@@ -18,6 +33,7 @@ type ShadowTrainer struct {
 
 type layerState struct {
 	kan              *Layer
+	adam             *adamState
 	stepCount        int
 	emaLoss          float64
 	convergenceCount int
@@ -45,7 +61,8 @@ func (s *ShadowTrainer) GetOrCreateLayer(key string) *Layer {
 	state, ok := s.layers[key]
 	if !ok {
 		state = &layerState{
-			kan: NewLayer(s.cfg),
+			kan:  NewLayer(s.cfg),
+			adam: newAdamState(s.cfg.NumBasis),
 		}
 		s.layers[key] = state
 	}
@@ -95,10 +112,17 @@ func (s *ShadowTrainer) ShouldTrain(key string) bool {
 	return state.stepCount%s.cfg.TrainEveryN == 0
 }
 
-// TrainStep performs one training step for a layer's KAN.
+// TrainStep performs one training step for a layer's KAN using Adam optimizer.
 //
 // It computes the MSE loss between the softmax output and the KAN output,
-// then uses finite-difference gradient estimation to update coefficients.
+// uses finite-difference gradient estimation, then applies Adam
+// (adaptive moment estimation) for the parameter update.
+//
+// Adam maintains per-parameter running averages of gradients (first moment)
+// and squared gradients (second moment), with bias correction. This gives:
+//   - Adaptive per-parameter learning rates
+//   - Momentum for faster convergence
+//   - Robustness to noisy gradients from finite differences
 //
 // Parameters:
 //   - key: layer identifier (e.g., "layer_0")
@@ -106,13 +130,14 @@ func (s *ShadowTrainer) ShouldTrain(key string) bool {
 //   - softmaxOut: the ground truth softmax output (flat float32 slice)
 //   - seqK, seqQ: dimensions for row-wise normalization
 //
-// Returns the current loss value.
+// Returns the current EMA loss value.
 func (s *ShadowTrainer) TrainStep(key string, logits, softmaxOut []float32, seqK, seqQ int) float64 {
 	s.mu.Lock()
 	state, ok := s.layers[key]
 	if !ok {
 		state = &layerState{
-			kan: NewLayer(s.cfg),
+			kan:  NewLayer(s.cfg),
+			adam: newAdamState(s.cfg.NumBasis),
 		}
 		s.layers[key] = state
 	}
@@ -129,7 +154,7 @@ func (s *ShadowTrainer) TrainStep(key string, logits, softmaxOut []float32, seqK
 
 	// Finite-difference gradient estimation for each coefficient
 	coeffs := state.kan.GetCoefficients()
-	grads := make([]float32, len(coeffs))
+	grads := make([]float64, len(coeffs))
 	eps := s.cfg.GradEpsilon
 
 	for i := range coeffs {
@@ -146,13 +171,41 @@ func (s *ShadowTrainer) TrainStep(key string, logits, softmaxOut []float32, seqK
 		if math.IsNaN(g) || math.IsInf(g, 0) {
 			g = 0
 		}
-		grads[i] = float32(g)
+		grads[i] = g
 	}
 
-	// SGD update
+	// Restore original coefficients before applying Adam update
+	// (the perturbation loop left the last perturbed value in place)
+
+	// Adam optimizer update
+	adam := state.adam
+	adam.t++
+	beta1 := s.cfg.AdamBeta1
+	beta2 := s.cfg.AdamBeta2
+	epsAdam := s.cfg.AdamEpsilon
+	lr := float64(s.cfg.LearningRate)
+
+	// Bias correction factors
+	bc1 := 1.0 - math.Pow(beta1, float64(adam.t))
+	bc2 := 1.0 - math.Pow(beta2, float64(adam.t))
+
 	newCoeffs := make([]float32, len(coeffs))
 	for i := range coeffs {
-		newCoeffs[i] = coeffs[i] - s.cfg.LearningRate*grads[i]
+		// Update biased first moment estimate: m = β1*m + (1-β1)*g
+		adam.m[i] = beta1*adam.m[i] + (1.0-beta1)*grads[i]
+		// Update biased second raw moment estimate: v = β2*v + (1-β2)*g²
+		adam.v[i] = beta2*adam.v[i] + (1.0-beta2)*grads[i]*grads[i]
+
+		// Bias-corrected estimates
+		mHat := adam.m[i] / bc1
+		vHat := adam.v[i] / bc2
+
+		// Parameter update: θ = θ - lr * m̂ / (√v̂ + ε)
+		update := lr * mHat / (math.Sqrt(vHat) + epsAdam)
+		if math.IsNaN(update) || math.IsInf(update, 0) {
+			update = 0
+		}
+		newCoeffs[i] = coeffs[i] - float32(update)
 	}
 
 	// Apply geometric mean normalization + redistribution
@@ -212,7 +265,8 @@ func (s *ShadowTrainer) SetLayerWeights(key string, weights []float32) {
 	state, ok := s.layers[key]
 	if !ok {
 		state = &layerState{
-			kan: NewLayerFromWeights(s.cfg, weights),
+			kan:  NewLayerFromWeights(s.cfg, weights),
+			adam: newAdamState(len(weights)),
 		}
 		s.layers[key] = state
 	} else {

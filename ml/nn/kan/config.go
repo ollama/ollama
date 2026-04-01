@@ -17,11 +17,20 @@ type Config struct {
 	// GridMax is the upper bound of the B-spline grid (default: 5.0)
 	GridMax float32
 
-	// LearningRate for finite-difference SGD updates (default: 0.001)
+	// LearningRate is the step size for Adam optimizer (default: 0.001)
 	LearningRate float32
 
 	// GradEpsilon for finite-difference gradient estimation (default: 1e-5)
 	GradEpsilon float32
+
+	// AdamBeta1 is the exponential decay rate for Adam's first moment (default: 0.9)
+	AdamBeta1 float64
+
+	// AdamBeta2 is the exponential decay rate for Adam's second moment (default: 0.999)
+	AdamBeta2 float64
+
+	// AdamEpsilon is the small constant for numerical stability in Adam (default: 1e-8)
+	AdamEpsilon float64
 
 	// ConvergenceThreshold is the EMA loss below which a layer is considered converged (default: 1e-4)
 	ConvergenceThreshold float32
@@ -49,6 +58,9 @@ func DefaultConfig() Config {
 		GridMax:              5.0,
 		LearningRate:         0.001,
 		GradEpsilon:          1e-5,
+		AdamBeta1:            0.9,
+		AdamBeta2:            0.999,
+		AdamEpsilon:          1e-8,
 		ConvergenceThreshold: 1e-4,
 		ConvergenceWindow:    50,
 		TrainEveryN:          1,
