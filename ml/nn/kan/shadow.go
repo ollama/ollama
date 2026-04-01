@@ -142,7 +142,11 @@ func (s *ShadowTrainer) TrainStep(key string, logits, softmaxOut []float32, seqK
 		lossPlus := mse(softmaxOut, kanOutPlus)
 
 		// Single-sided finite difference: grad = (loss+ - loss) / eps
-		grads[i] = float32((lossPlus - baseLoss) / float64(eps))
+		g := (lossPlus - baseLoss) / float64(eps)
+		if math.IsNaN(g) || math.IsInf(g, 0) {
+			g = 0
+		}
+		grads[i] = float32(g)
 	}
 
 	// SGD update
@@ -162,7 +166,11 @@ func (s *ShadowTrainer) TrainStep(key string, logits, softmaxOut []float32, seqK
 	finalOut := state.kan.Forward(logits, seqK, seqQ)
 	finalLoss := mse(softmaxOut, finalOut)
 
-	if state.emaLoss == 0 {
+	if math.IsNaN(finalLoss) || math.IsInf(finalLoss, 0) {
+		finalLoss = state.emaLoss // Skip this step if numerical issues
+	}
+
+	if state.emaLoss == 0 || math.IsNaN(state.emaLoss) {
 		state.emaLoss = finalLoss
 	} else {
 		state.emaLoss = 0.99*state.emaLoss + 0.01*finalLoss

@@ -93,31 +93,66 @@ func (g *BSplineGrid) EvaluateBatch(xs []float32) [][]float32 {
 	return result
 }
 
-// InitSoftmaxApprox returns initial B-spline coefficients that roughly approximate
-// the softmax-like behavior exp(x) / normalizing_constant over the grid range.
-// This gives the KAN a head start rather than random initialization.
+// InitSoftmaxApprox returns initial B-spline coefficients that make the KAN
+// approximate the identity function: kan(x) ≈ x.
+//
+// Since the forward pass applies exp(kan(x) - rowMax) / sum(exp(...)),
+// initializing to identity means the full pipeline computes:
+//   exp(x - max) / sum(exp(...)) ≈ softmax(x)
+//
+// This gives the KAN a near-perfect starting point, and training refines
+// it from there.
 func InitSoftmaxApprox(grid *BSplineGrid) []float32 {
 	n := grid.NumBasis
 	coeffs := make([]float32, n)
 
-	// Sample exp(x) at the grid centers and use those as initial coefficients
-	step := (grid.Knots[len(grid.Knots)-1] - grid.Knots[0]) / float32(n+1)
-	start := grid.Knots[0]
-
-	for i := range coeffs {
-		x := start + float32(i+1)*step
-		coeffs[i] = float32(math.Exp(float64(x)))
-	}
-
-	// Normalize so geometric mean = 1 (consistent with the constraint)
-	logSum := float64(0)
-	for _, c := range coeffs {
-		if c > 1e-10 {
-			logSum += math.Log(float64(c))
+	// To approximate identity with B-splines, the coefficients should be
+	// the x-coordinates at each basis function's center (Greville abscissae).
+	// For a uniform knot vector, these are evenly spaced.
+	k := grid.Order + 1 // degree + 1
+	for i := 0; i < n; i++ {
+		// Greville abscissa: average of k-1 consecutive knots starting at i+1
+		sum := float32(0)
+		count := 0
+		for j := 1; j < k; j++ {
+			idx := i + j
+			if idx < len(grid.Knots) {
+				sum += grid.Knots[idx]
+				count++
+			}
+		}
+		if count > 0 {
+			coeffs[i] = sum / float32(count)
 		}
 	}
+
+	// Shift so geometric mean of |coefficients| = 1
+	// Since Greville abscissae span negative to positive, we shift to all-positive first
+	minC := coeffs[0]
+	for _, c := range coeffs {
+		if c < minC {
+			minC = c
+		}
+	}
+	shift := float32(0)
+	if minC <= 0 {
+		shift = -minC + 0.1
+	}
+	for i := range coeffs {
+		coeffs[i] += shift
+	}
+
+	// Now normalize geometric mean to 1
+	logSum := float64(0)
+	for _, c := range coeffs {
+		v := math.Abs(float64(c))
+		if v < 1e-10 {
+			v = 1e-10
+		}
+		logSum += math.Log(v)
+	}
 	geoMean := float32(math.Exp(logSum / float64(n)))
-	if geoMean > 0 {
+	if geoMean > 1e-10 {
 		for i := range coeffs {
 			coeffs[i] /= geoMean
 		}

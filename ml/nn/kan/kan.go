@@ -58,9 +58,8 @@ func (l *Layer) Forward(logits []float32, seqK, seqQ int) []float32 {
 	copy(coeffs, l.Coefficients.Weights)
 	l.mu.RUnlock()
 
-	output := make([]float32, len(logits))
-
-	// For each element, evaluate the B-spline KAN
+	// Phase 1: Evaluate B-spline KAN for each logit (produces raw scores in log-space)
+	rawScores := make([]float32, len(logits))
 	for i, x := range logits {
 		basis := l.Grid.Evaluate(x)
 		var val float32
@@ -69,26 +68,38 @@ func (l *Layer) Forward(logits []float32, seqK, seqQ int) []float32 {
 				val += coeffs[j] * b
 			}
 		}
-		// Apply exp to maintain non-negativity (KAN learns in log-space effectively)
-		output[i] = float32(math.Exp(float64(val)))
+		rawScores[i] = val
 	}
 
-	// Row-wise L1 normalization: each row of seqK values sums to 1
-	// This preserves the attention weight semantics
+	// Phase 2: Row-wise numerically stable exp + normalization
+	// Same trick as stable softmax: subtract row max before exp to prevent overflow
+	output := make([]float32, len(logits))
 	for q := 0; q < seqQ; q++ {
 		rowStart := q * seqK
 		rowEnd := rowStart + seqK
-		if rowEnd > len(output) {
-			rowEnd = len(output)
+		if rowEnd > len(rawScores) {
+			rowEnd = len(rawScores)
 		}
 
-		var rowSum float32
+		// Find row max
+		rowMax := rawScores[rowStart]
+		for i := rowStart + 1; i < rowEnd; i++ {
+			if rawScores[i] > rowMax {
+				rowMax = rawScores[i]
+			}
+		}
+
+		// Exp with max subtracted + sum
+		var rowSum float64
 		for i := rowStart; i < rowEnd; i++ {
-			rowSum += output[i]
+			v := math.Exp(float64(rawScores[i] - rowMax))
+			output[i] = float32(v)
+			rowSum += v
 		}
 
+		// Normalize
 		if rowSum > 1e-10 {
-			invSum := 1.0 / rowSum
+			invSum := float32(1.0 / rowSum)
 			for i := rowStart; i < rowEnd; i++ {
 				output[i] *= invSum
 			}
