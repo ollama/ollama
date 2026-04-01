@@ -82,7 +82,7 @@ TEST_PROMPTS=(
 TEST_EXPECTS=(
     "PURPLE-ELEPHANT-42"
     "Exactly 3 countries (Japan, Jamaica, Jordan)"
-    "blue"
+    "green (Carol gave Dave green; Dave passed it to Eve)"
     "C"
     "Valid JSON: {\"name\":\"John\",\"age\":30,\"city\":\"London\"}"
     "5 lines with AABBA rhyme scheme"
@@ -113,8 +113,9 @@ run_tests() {
     for i in $(seq 0 7); do
         echo "=== Test $((i+1)): ${TEST_NAMES[$i]} ===" >> "$outfile"
         echo "Expected: ${TEST_EXPECTS[$i]}" >> "$outfile"
-        echo "Response: ${results[$i]}" >> "$outfile"
-        echo "" >> "$outfile"
+        echo "BEGIN_RESPONSE" >> "$outfile"
+        echo "${results[$i]}" >> "$outfile"
+        echo "END_RESPONSE" >> "$outfile"
     done
     info "Results saved to ${outfile}"
 }
@@ -200,11 +201,11 @@ for i in $(seq 0 7); do
     echo -e "${BOLD}${CYAN}Test $((i+1)): ${TEST_NAMES[$i]}${NC}"
     echo -e "${YELLOW}Expected: ${TEST_EXPECTS[$i]}${NC}"
 
-    baseline=$(sed -n "/=== Test $((i+1)):/,/^$/{ /Response:/s/Response: //p; }" /tmp/kan-results-BASELINE_\(softmax\).txt)
-    kan=$(sed -n "/=== Test $((i+1)):/,/^$/{ /Response:/s/Response: //p; }" /tmp/kan-results-KAN_ATTENTION.txt)
+    baseline=$(sed -n "/=== Test $((i+1)):/,/END_RESPONSE/{/BEGIN_RESPONSE/,/END_RESPONSE/{/BEGIN_RESPONSE/d;/END_RESPONSE/d;p;}}" /tmp/kan-results-BASELINE_\(softmax\).txt)
+    kan=$(sed -n "/=== Test $((i+1)):/,/END_RESPONSE/{/BEGIN_RESPONSE/,/END_RESPONSE/{/BEGIN_RESPONSE/d;/END_RESPONSE/d;p;}}" /tmp/kan-results-KAN_ATTENTION.txt)
 
-    echo -e "  ${RED}Baseline:${NC} ${baseline:0:120}"
-    echo -e "  ${GREEN}KAN:     ${NC} ${kan:0:120}"
+    echo -e "  ${RED}Baseline:${NC} ${baseline:0:200}"
+    echo -e "  ${GREEN}KAN:     ${NC} ${kan:0:200}"
     echo ""
 done
 
@@ -244,8 +245,8 @@ for i in $(seq 0 7); do
     prompt="${TEST_PROMPTS[$i]}"
     expected="${TEST_EXPECTS[$i]}"
 
-    baseline=$(sed -n "/=== Test $((i+1)):/,/^$/{ /Response:/s/Response: //p; }" /tmp/kan-results-BASELINE_\(softmax\).txt)
-    kan=$(sed -n "/=== Test $((i+1)):/,/^$/{ /Response:/s/Response: //p; }" /tmp/kan-results-KAN_ATTENTION.txt)
+    baseline=$(sed -n "/=== Test $((i+1)):/,/END_RESPONSE/{/BEGIN_RESPONSE/,/END_RESPONSE/{/BEGIN_RESPONSE/d;/END_RESPONSE/d;p;}}" /tmp/kan-results-BASELINE_\(softmax\).txt)
+    kan=$(sed -n "/=== Test $((i+1)):/,/END_RESPONSE/{/BEGIN_RESPONSE/,/END_RESPONSE/{/BEGIN_RESPONSE/d;/END_RESPONSE/d;p;}}" /tmp/kan-results-KAN_ATTENTION.txt)
 
     echo -e "${BOLD}${CYAN}Judging Test $((i+1)): ${name}${NC}"
 
