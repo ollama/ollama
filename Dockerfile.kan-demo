@@ -1,0 +1,75 @@
+# KAN Attention Demo Image
+# CPU-only build for testing Geometric KAN attention replacement for softmax.
+#
+# Build:
+#   docker build -f Dockerfile.kan-demo -t ollama-kan .
+#
+# Run:
+#   docker run -it --rm -p 11434:11434 ollama-kan
+#
+# Then from another terminal:
+#   curl http://localhost:11434/api/chat -d '{
+#     "model": "tinyllama",
+#     "messages": [{"role": "user", "content": "Tell me a story about a dragon"}]
+#   }'
+#
+# Or use the interactive warm-up + test mode:
+#   docker run -it --rm -p 11434:11434 ollama-kan /kan-demo.sh
+
+# === Stage 1: Build GGML CPU backend ===
+FROM --platform=linux/amd64 ubuntu:24.04 AS ggml-build
+RUN apt-get update && apt-get install -y \
+    build-essential cmake ninja-build curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY CMakeLists.txt CMakePresets.json ./
+COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+RUN cmake --preset 'CPU' \
+    && cmake --build --preset 'CPU' -- -j$(nproc) \
+    && cmake --install build --component CPU --strip
+
+# === Stage 2: Build Ollama Go binary ===
+FROM --platform=linux/amd64 ubuntu:24.04 AS go-build
+RUN apt-get update && apt-get install -y \
+    build-essential curl git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Go
+WORKDIR /go/src/github.com/ollama/ollama
+COPY go.mod go.sum ./
+RUN curl -fsSL https://golang.org/dl/go1.24.1.linux-amd64.tar.gz \
+    | tar xz -C /usr/local
+ENV PATH=/usr/local/go/bin:$PATH
+RUN go mod download
+
+COPY . .
+ENV CGO_ENABLED=1
+RUN go build -trimpath -o /bin/ollama .
+
+# === Stage 3: Runtime ===
+FROM ubuntu:24.04
+
+RUN apt-get update \
+    && apt-get install -y ca-certificates curl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy binaries
+COPY --from=ggml-build /build/dist/lib/ollama /usr/lib/ollama
+COPY --from=go-build /bin/ollama /usr/bin/ollama
+
+# KAN environment
+ENV OLLAMA_KAN_ATTENTION=1
+ENV OLLAMA_FLASH_ATTENTION=false
+ENV OLLAMA_DEBUG=1
+ENV OLLAMA_HOST=0.0.0.0:11434
+
+EXPOSE 11434
+
+# Copy the demo script
+COPY scripts/kan-demo.sh /kan-demo.sh
+RUN chmod +x /kan-demo.sh
+
+ENTRYPOINT ["/bin/ollama"]
+CMD ["serve"]
