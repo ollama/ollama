@@ -112,7 +112,7 @@ func (a *MLAAttention) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Con
 
 	offset := 0
 	if c != nil {
-		offset = c.Offset()
+		offset = int(c.Offsets()[0])
 	}
 	qPE = mlx.RoPEWithBase(qPE, int(cfg.QKRopeHeadDim), true, cfg.RopeTheta, 1.0, offset)
 	kPE = mlx.RoPEWithBase(kPE, int(cfg.QKRopeHeadDim), true, cfg.RopeTheta, 1.0, offset)
@@ -124,7 +124,7 @@ func (a *MLAAttention) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Con
 	cachedL := L
 	if c != nil {
 		placeholderValues := mlx.ZerosF32([]int32{B, 1, L, 0})
-		keys, _ = c.Update(keys, placeholderValues)
+		keys, _, _ = c.Update(nil, keys, placeholderValues)
 		cachedL = int32(keys.Dim(2))
 	}
 

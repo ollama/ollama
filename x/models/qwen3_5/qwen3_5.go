@@ -1148,13 +1148,13 @@ func (a *FullAttention) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Co
 
 	offset := 0
 	if c != nil {
-		offset = c.Offset()
+		offset = int(c.Offsets()[0])
 	}
 	q = mlx.RoPEWithBase(q, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, offset)
 	k = mlx.RoPEWithBase(k, int(cfg.RopeDim), false, cfg.RopeTheta, 1.0, offset)
 
 	if c != nil {
-		k, v = c.Update(k, v)
+		k, v, _ = c.Update(nil, k, v)
 	}
 
 	out := mlx.ScaledDotProductAttentionCausal(q, k, v, cfg.Scale, L > 1)

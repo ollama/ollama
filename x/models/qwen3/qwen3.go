@@ -317,13 +317,13 @@ func (a *Attention) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Config
 
 	offset := 0
 	if c != nil {
-		offset = c.Offset()
+		offset = int(c.Offsets()[0])
 	}
 	q = mlx.RoPEWithBase(q, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, offset)
 	k = mlx.RoPEWithBase(k, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, offset)
 
 	if c != nil {
-		k, v = c.Update(k, v)
+		k, v, _ = c.Update(nil, k, v)
 	}
 
 	// MLX SDPA supports grouped-query attention directly (Q heads can be a

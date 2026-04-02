@@ -1,6 +1,9 @@
 package cache
 
-import "github.com/ollama/ollama/x/mlxrunner/mlx"
+import (
+	"github.com/ollama/ollama/x/mlxrunner/batch"
+	"github.com/ollama/ollama/x/mlxrunner/mlx"
+)
 
 // RecurrentCache stores state for linear-recurrent layers.
 //
@@ -87,8 +90,8 @@ func (c *RecurrentCache) Advance(n int) {
 	c.offset += n
 }
 
-func (c *RecurrentCache) Update(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
-	return keys, values
+func (c *RecurrentCache) Update(_ *batch.ForwardBatch, keys, values *mlx.Array) (*mlx.Array, *mlx.Array, mlx.KVHistory) {
+	return keys, values, mlx.KVHistory{}
 }
 
 func (c *RecurrentCache) State() []*mlx.Array {
@@ -162,4 +165,4 @@ func (c *RecurrentCache) Free() {
 	c.offset = 0
 }
 
-func (c *RecurrentCache) Offset() int { return c.offset }
+func (c *RecurrentCache) Offsets() []int32 { return []int32{int32(c.offset)} }

@@ -34,7 +34,7 @@ func TestRecurrentCacheRestoreExactOffset(t *testing.T) {
 	if !c.Restore(snap, 10) {
 		t.Fatal("Restore(snap, 10) should succeed — target == snap.offset")
 	}
-	if c.Offset() != 10 {
-		t.Fatalf("offset = %d, want 10", c.Offset())
+	if int(c.Offsets()[0]) != 10 {
+		t.Fatalf("offset = %d, want 10", int(c.Offsets()[0]))
 	}
 }
