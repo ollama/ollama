@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"log/slog"
+	"math"
 	"slices"
 	"time"
 
@@ -112,7 +113,10 @@ func New(c fs.Config) (model.Model, error) {
 	}
 
 	slidingWindowLen := int32(c.Uint("attention.sliding_window"))
-	m.Cache = kvcache.NewWrapperCache(kvcache.NewSWACache(slidingWindowLen, m.Shift), kvcache.NewCausalCache(m.Shift))
+	m.Cache = kvcache.NewWrapperCache(
+		kvcache.NewSWAMemCache(slidingWindowLen, math.MaxInt32, m.Shift),
+		kvcache.NewCausalCache(m.Shift),
+	)
 
 	return &m, nil
 }
