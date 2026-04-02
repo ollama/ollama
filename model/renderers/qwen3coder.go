@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/ollama/ollama/api"
@@ -234,7 +236,7 @@ func (r *Qwen3CoderRenderer) Render(messages []api.Message, tools []api.Tool, th
 
 func formatToolCallArgument(value any) string {
 	if value == nil {
-		return "null"
+		return "None"
 	}
 
 	switch v := value.(type) {
@@ -242,6 +244,16 @@ func formatToolCallArgument(value any) string {
 		return v
 	case []byte:
 		return string(v)
+	case bool:
+		if v {
+			return "True"
+		}
+		return "False"
+	case float64:
+		if v == math.Trunc(v) && !math.IsInf(v, 0) && !math.IsNaN(v) {
+			return strconv.FormatInt(int64(v), 10)
+		}
+		return fmt.Sprintf("%v", v)
 	}
 
 	if reflect.TypeOf(value) != nil {
