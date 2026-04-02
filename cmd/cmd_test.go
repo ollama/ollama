@@ -388,6 +388,59 @@ func TestDeleteHandler(t *testing.T) {
 	}
 }
 
+func TestDeleteHandlerFreedSpace(t *testing.T) {
+	const modelSize = 1_500_000_000 // 1.5 GB
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/tags" && r.Method == http.MethodGet:
+			if err := json.NewEncoder(w).Encode(api.ListResponse{
+				Models: []api.ListModelResponse{
+					{Name: "test-model:latest", Size: modelSize},
+				},
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+		case r.URL.Path == "/api/delete" && r.Method == http.MethodDelete:
+			w.WriteHeader(http.StatusOK)
+		case r.URL.Path == "/api/generate" && r.Method == http.MethodPost:
+			if err := json.NewEncoder(w).Encode(api.GenerateResponse{Done: true}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+		}
+	}))
+	defer mockServer.Close()
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+
+	// Capture stdout to check freed message
+	origStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	deleteErr := DeleteHandler(cmd, []string{"test-model"})
+
+	w.Close()
+	os.Stdout = origStdout
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r) //nolint:errcheck
+	out := buf.String()
+
+	if deleteErr != nil {
+		t.Fatalf("DeleteHandler returned unexpected error: %v", deleteErr)
+	}
+	if !strings.Contains(out, "freed") {
+		t.Errorf("expected output to contain freed size, got: %q", out)
+	}
+}
+
 func TestRunEmbeddingModel(t *testing.T) {
 	reqCh := make(chan api.EmbedRequest, 1)
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
