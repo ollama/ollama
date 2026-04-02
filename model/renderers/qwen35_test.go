@@ -965,19 +965,31 @@ call tool<|im_end|>
 //     any.
 //   Both are fixed by the same 9-field ToolProperty struct rewrite that also
 //   fixes the enum/description ordering.
+// TestQwen35RendererToolDefinitionsMatchOfficialTemplate verifies tool
+// definition JSON in the system prompt against byte-exact HuggingFace
+// Transformers ground truth, for both think=true and think=false.
+//
+// Ground truth: HF Transformers v5.3.0 get_json_schema() rendered through
+// the official Qwen/Qwen3.5-27B tokenizer's apply_chat_template with HF's
+// tojson override (json.dumps with ensure_ascii=False, sort_keys=False).
+// The template was run with enable_thinking=True, enable_thinking=False,
+// and enable_thinking=undefined — all three produce byte-identical system
+// prompts (1566 bytes). enable_thinking is checked in exactly one place
+// (line 149, inside if add_generation_prompt) and has zero effect on the
+// system prompt, which is rendered at lines 45-60 with no reference to
+// enable_thinking. The think=false subtest enforces this invariant.
+//
+// Tool 1: get_weather(location: str, filters: list[str])
+//   Exercises: no HTML escaping, properties before required, single-key
+//   items, items before description at property level, literal <, >, &.
+//   PASSES.
+//
+// Tool 2: choose_color(color: Literal["red", "green", "blue"])
+//   Exercises: enum/description field ordering. HF produces enum before
+//   description. Go's ToolProperty struct produces the opposite. FAILS
+//   by design until the ToolProperty struct rewrite (Gap 4).
 func TestQwen35RendererToolDefinitionsMatchOfficialTemplate(t *testing.T) {
-	renderer := &Qwen35Renderer{isThinking: true}
-
-	// Tool: get_weather(location: str, filters: list[str])
-	//
-	// Exercises: no HTML escaping in descriptions, "properties" before
-	// "required" in parameters, single-key items (list[str] → {"type":
-	// "string"} — one key, no ordering issue), "items" before "description"
-	// at the property level, literal <, >, & characters throughout.
-	//
-	// Both parameters lack default values, so both appear in required —
-	// matching the HF ground truth where get_json_schema() includes all
-	// non-default parameters.
+	// Tool definitions shared across both subtests.
 	tools := []api.Tool{
 		{
 			Type: "function",
@@ -1007,16 +1019,6 @@ func TestQwen35RendererToolDefinitionsMatchOfficialTemplate(t *testing.T) {
 				},
 			},
 		},
-		// Tool 2: choose_color(color: Literal["red", "green", "blue"])
-		//
-		// Exercises: enum/description field ordering at the property level.
-		// HF's get_json_schema() inserts enum before description (the
-		// schema["enum"] assignment precedes schema["description"] in
-		// chat_template_utils.py). HF's tojson uses sort_keys=False, so
-		// insertion order is preserved in the training data. Go's ToolProperty
-		// struct declares Description (field 4) before Enum (field 5),
-		// producing the opposite order. This tool FAILS until the struct is
-		// fixed.
 		{
 			Type: "function",
 			Function: api.ToolFunction{
@@ -1040,79 +1042,134 @@ func TestQwen35RendererToolDefinitionsMatchOfficialTemplate(t *testing.T) {
 		},
 	}
 
-	got, err := renderer.Render([]api.Message{{Role: "user", Content: "call tool"}}, tools, nil)
-	if err != nil {
-		t.Fatalf("render failed: %v", err)
+	msgs := []api.Message{{Role: "user", Content: "call tool"}}
+
+	// HF ground truth for both tool JSON lines.
+	wantTool1 := `{"type": "function", "function": {"name": "get_weather", "description": "Returns temperature in <fahrenheit> & <celsius>", "parameters": {"type": "object", "properties": {"location": {"type": "string", "description": "City name with <tag> & symbol"}, "filters": {"type": "array", "items": {"type": "string"}, "description": "Weather filter names"}}, "required": ["location", "filters"]}}}`
+
+	wantTool2 := `{"type": "function", "function": {"name": "choose_color", "description": "Pick a color", "parameters": {"type": "object", "properties": {"color": {"type": "string", "enum": ["red", "green", "blue"], "description": "The color to use"}}, "required": ["color"]}}}`
+
+	// extractSystemPrompt returns the system prompt portion of the rendered
+	// output: everything from <|im_start|>system to (and including) the
+	// first <|im_end|>.
+	extractSystemPrompt := func(t *testing.T, rendered string) string {
+		t.Helper()
+		start := strings.Index(rendered, "<|im_start|>system")
+		if start == -1 {
+			t.Fatalf("no <|im_start|>system found in rendered output.\n\ngot:\n%s", rendered)
+		}
+		end := strings.Index(rendered[start:], "<|im_end|>")
+		if end == -1 {
+			t.Fatalf("no <|im_end|> after <|im_start|>system.\n\ngot:\n%s", rendered)
+		}
+		return rendered[start : start+end+len("<|im_end|>")]
 	}
 
-	// Targeted diagnostic: no HTML escaping.
-	for _, esc := range []string{"\\u003c", "\\u003e", "\\u0026"} {
-		if strings.Contains(got, esc) {
+	// assertToolDefinitions runs all tool definition assertions on a
+	// rendered output.
+	assertToolDefinitions := func(t *testing.T, got string) {
+		t.Helper()
+
+		// No HTML escaping.
+		for _, esc := range []string{"\\u003c", "\\u003e", "\\u0026"} {
+			if strings.Contains(got, esc) {
+				t.Errorf(
+					"HTML-escaped sequence %q found in tool definition.\n\n"+
+						"HuggingFace Transformers overrides Jinja2's tojson with "+
+						"json.dumps(ensure_ascii=False). Go's default json.Marshal "+
+						"HTML-escapes <, >, &; marshalWithSpaces must use "+
+						"SetEscapeHTML(false) via jsonutil.Marshal.\n\ngot:\n%s", esc, got,
+				)
+			}
+		}
+
+		// Extract tool JSON lines.
+		var gotTool1, gotTool2 string
+		for _, line := range strings.Split(got, "\n") {
+			if strings.Contains(line, `"get_weather"`) {
+				gotTool1 = line
+			}
+			if strings.Contains(line, `"choose_color"`) {
+				gotTool2 = line
+			}
+		}
+
+		if gotTool1 != wantTool1 {
 			t.Errorf(
-				"HTML-escaped sequence %q found in tool definition.\n\n"+
-					"HuggingFace Transformers overrides Jinja2's tojson with "+
-					"json.dumps(ensure_ascii=False). Go's default json.Marshal "+
-					"HTML-escapes <, >, &; marshalWithSpaces must use "+
-					"SetEscapeHTML(false) via jsonutil.Marshal.\n\ngot:\n%s", esc, got,
+				"Tool 1 (get_weather) does not match HuggingFace ground truth.\n\n"+
+					"Common causes:\n"+
+					"  - 'required' before 'properties': ToolFunctionParameters struct "+
+					"field order wrong in api/types.go\n"+
+					"  - 'description' before 'items': ToolProperty struct field order "+
+					"wrong in api/types.go\n"+
+					"  - HTML-escaped <, >, &: need SetEscapeHTML(false)\n\n"+
+					"want: %s\n got: %s", wantTool1, gotTool1,
+			)
+		}
+
+		if gotTool2 != wantTool2 {
+			t.Errorf(
+				"Tool 2 (choose_color) enum/description field ordering mismatch.\n\n"+
+					"HuggingFace Transformers' get_json_schema() inserts 'enum' before "+
+					"'description' at the property level (schema[\"enum\"] assignment "+
+					"precedes schema[\"description\"] in chat_template_utils.py). HF's "+
+					"tojson override uses sort_keys=False, preserving this insertion "+
+					"order in the training data. Stock Jinja2 would alphabetize "+
+					"(d < e → description first), but the model was trained with HF's "+
+					"override, not stock Jinja2.\n\n"+
+					"Go's ToolProperty struct in api/types.go declares Description "+
+					"(field 4) before Enum (field 5), producing the opposite order.\n\n"+
+					"Fix: rewrite the ToolProperty struct in api/types.go to the "+
+					"9-field layout: {AnyOf, Type, Items *ToolProperty, "+
+					"AdditionalProperties *ToolProperty, PrefixItems []ToolProperty, "+
+					"Nullable *bool, Enum, Description, Properties}. This single "+
+					"change fixes enum/description ordering, field loss, AND recursive "+
+					"nested key ordering.\n\n"+
+					"want: %s\n got: %s", wantTool2, gotTool2,
 			)
 		}
 	}
 
-	// Tool 1 ground truth: get_weather(location: str, filters: list[str])
-	// Generated by HF Transformers v5.3.0 get_json_schema() rendered through
-	// the official Qwen/Qwen3.5-27B tokenizer's apply_chat_template.
-	wantTool1 := `{"type": "function", "function": {"name": "get_weather", "description": "Returns temperature in <fahrenheit> & <celsius>", "parameters": {"type": "object", "properties": {"location": {"type": "string", "description": "City name with <tag> & symbol"}, "filters": {"type": "array", "items": {"type": "string"}, "description": "Weather filter names"}}, "required": ["location", "filters"]}}}`
-
-	// Tool 2 ground truth: choose_color(color: Literal["red", "green", "blue"])
-	// Note the key ordering at the property level: "enum" BEFORE "description".
-	// HF's get_json_schema() inserts enum first; HF's tojson preserves insertion
-	// order (sort_keys=False). Stock Jinja2 would alphabetize (description
-	// before enum, since d < e), but the model was trained with HF's override.
-	wantTool2 := `{"type": "function", "function": {"name": "choose_color", "description": "Pick a color", "parameters": {"type": "object", "properties": {"color": {"type": "string", "enum": ["red", "green", "blue"], "description": "The color to use"}}, "required": ["color"]}}}`
-
-	// Extract both tool JSON lines from the rendered output.
-	var gotTool1, gotTool2 string
-	for _, line := range strings.Split(got, "\n") {
-		if strings.Contains(line, `"get_weather"`) {
-			gotTool1 = line
-		}
-		if strings.Contains(line, `"choose_color"`) {
-			gotTool2 = line
-		}
+	// Render with think=true (baseline).
+	gotThinkTrue, err := (&Qwen35Renderer{isThinking: true}).Render(msgs, tools, nil)
+	if err != nil {
+		t.Fatalf("render failed (think=true): %v", err)
 	}
 
-	if gotTool1 != wantTool1 {
+	// Render with think=false.
+	gotThinkFalse, err := (&Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true}).Render(msgs, tools, &api.ThinkValue{Value: false})
+	if err != nil {
+		t.Fatalf("render failed (think=false): %v", err)
+	}
+
+	// Property 1 enforcement: system prompts must be byte-identical
+	// between think modes. The template's system prompt block (lines
+	// 45-60) has zero references to enable_thinking. Verified by running
+	// the template — all three enable_thinking values produce a
+	// byte-identical 1566-byte system prompt.
+	sysThinkTrue := extractSystemPrompt(t, gotThinkTrue)
+	sysThinkFalse := extractSystemPrompt(t, gotThinkFalse)
+	if sysThinkTrue != sysThinkFalse {
 		t.Errorf(
-			"Tool 1 (get_weather) does not match HuggingFace ground truth.\n\n"+
-				"Common causes:\n"+
-				"  - 'required' before 'properties': ToolFunctionParameters struct "+
-				"field order wrong in api/types.go\n"+
-				"  - 'description' before 'items': ToolProperty struct field order "+
-				"wrong in api/types.go\n"+
-				"  - HTML-escaped <, >, &: need SetEscapeHTML(false)\n\n"+
-				"want: %s\n got: %s", wantTool1, gotTool1,
+			"system prompt differs between think=true and think=false.\n\n"+
+				"The official template's system prompt (lines 45-60) has zero "+
+				"references to enable_thinking. Tool definition JSON must be "+
+				"byte-identical regardless of think mode. If the system prompts "+
+				"differ, someone introduced a think-mode dependency into the "+
+				"tool/system rendering path.\n\n"+
+				"think=true system prompt:\n%s\n\n"+
+				"think=false system prompt:\n%s",
+			sysThinkTrue, sysThinkFalse,
 		)
 	}
 
-	if gotTool2 != wantTool2 {
-		t.Errorf(
-			"Tool 2 (choose_color) enum/description field ordering mismatch.\n\n"+
-				"HuggingFace Transformers' get_json_schema() inserts 'enum' before "+
-				"'description' at the property level (schema[\"enum\"] assignment precedes "+
-				"schema[\"description\"] in chat_template_utils.py). HF's tojson override "+
-				"uses sort_keys=False, preserving this insertion order in the training "+
-				"data. Stock Jinja2 would alphabetize (d < e → description first), but "+
-				"the model was trained with HF's override, not stock Jinja2.\n\n"+
-				"Go's ToolProperty struct in api/types.go declares Description (field 4) "+
-				"before Enum (field 5), producing the opposite order.\n\n"+
-				"Fix: rewrite the ToolProperty struct in api/types.go to the 9-field "+
-				"layout: {AnyOf, Type, Items *ToolProperty, AdditionalProperties "+
-				"*ToolProperty, PrefixItems []ToolProperty, Nullable *bool, Enum, "+
-				"Description, Properties}. This single change fixes enum/description "+
-				"ordering, field loss, AND recursive nested key ordering.\n\n"+
-				"want: %s\n got: %s", wantTool2, gotTool2,
-		)
-	}
+	t.Run("think=true", func(t *testing.T) {
+		assertToolDefinitions(t, gotThinkTrue)
+	})
+
+	t.Run("think=false", func(t *testing.T) {
+		assertToolDefinitions(t, gotThinkFalse)
+	})
 }
 
 // TestQwen35RendererInterleavedThinkingAndTools verifies byte-exact rendering
