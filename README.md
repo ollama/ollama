@@ -1,91 +1,104 @@
-<p align="center">
-  <a href="https://ollama.com">
-    <img src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7" alt="ollama" width="200"/>
-  </a>
-</p>
+# Ollama + Bonsai Q1_0 Support
 
-# Ollama
+> Fork of [ollama/ollama](https://github.com/ollama/ollama) with 1-bit quantization support for [Bonsai](https://huggingface.co/PrismML/Bonsai-8B) models.
 
-Start building with open models.
+This fork adds `Q1_0` and `Q1_0_g128` quantization types to Ollama, porting [PrismML's llama.cpp implementation](https://github.com/PrismML-Eng/llama.cpp) of 1-bit inference. This enables running Bonsai-8B and other 1-bit quantized models through Ollama with full GPU acceleration (Metal, CUDA) and optimized CPU paths (NEON, AVX2).
 
-## Download
+## What's Different
 
-### macOS
+| Component | Change |
+|-----------|--------|
+| C/C++ (via patch) | `GGML_TYPE_Q1_0` (ID=40) and `GGML_TYPE_Q1_0_g128` (ID=41) with CPU, Metal, and CUDA backends |
+| Go type system | BlockSize/TypeSize registration, FileType mapping, GGUF parsing |
+| Quantization | Pass-through guard to preserve pre-trained 1-bit tensors |
+| Templates | Qwen3 tool-calling chat template for automatic detection |
 
-```shell
-curl -fsSL https://ollama.com/install.sh | sh
+## Installation
+
+### Prerequisites
+
+- **Go 1.24+** (`brew install go` on macOS)
+- **Xcode Command Line Tools** (macOS: `xcode-select --install`)
+- **Git**
+
+### Build from Source
+
+```bash
+git clone https://github.com/nareshnavinash/ollama.git
+cd ollama
+git checkout feature/bonsai-q1-0-support
+go build -o ./ollama .
 ```
 
-or [download manually](https://ollama.com/download/Ollama.dmg)
+### Use the Built Binary
 
-### Windows
+Run directly:
 
-```shell
-irm https://ollama.com/install.ps1 | iex
+```bash
+./ollama serve         # Start the server
+./ollama run bonsai-8b # Chat with a model
 ```
 
-or [download manually](https://ollama.com/download/OllamaSetup.exe)
+Or install system-wide:
 
-### Linux
-
-```shell
-curl -fsSL https://ollama.com/install.sh | sh
+```bash
+sudo cp ./ollama /usr/local/bin/ollama
 ```
 
-[Manual install instructions](https://docs.ollama.com/linux#manual-install)
+Or add an alias to your shell:
 
-### Docker
-
-The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `ollama/ollama` is available on Docker Hub.
-
-### Libraries
-
-- [ollama-python](https://github.com/ollama/ollama-python)
-- [ollama-js](https://github.com/ollama/ollama-js)
-
-### Community
-
-- [Discord](https://discord.gg/ollama)
-- [𝕏 (Twitter)](https://x.com/ollama)
-- [Reddit](https://reddit.com/r/ollama)
-
-## Get started
-
-```
-ollama
+```bash
+echo 'alias ollama-bonsai="/path/to/ollama"' >> ~/.zshrc
+source ~/.zshrc
 ```
 
-You'll be prompted to run a model or connect Ollama to your existing agents or applications such as `claude`, `codex`, `openclaw` and more.
+## Running Bonsai-8B
 
-### Coding
+### 1. Download the Model
 
-To launch a specific integration:
+Download [Bonsai-8B GGUF](https://huggingface.co/PrismML/Bonsai-8B) from Hugging Face.
 
-```
-ollama launch claude
-```
+### 2. Create a Modelfile
 
-Supported integrations include [Claude Code](https://docs.ollama.com/integrations/claude-code), [Codex](https://docs.ollama.com/integrations/codex), [Droid](https://docs.ollama.com/integrations/droid), and [OpenCode](https://docs.ollama.com/integrations/opencode).
-
-### AI assistant
-
-Use [OpenClaw](https://docs.ollama.com/integrations/openclaw) to turn Ollama into a personal AI assistant across WhatsApp, Telegram, Slack, Discord, and more:
-
-```
-ollama launch openclaw
+```bash
+cat > Modelfile << 'EOF'
+FROM /path/to/Bonsai-8B.gguf
+PARAMETER num_ctx 4096
+EOF
 ```
 
-### Chat with a model
+### 3. Create and Run
 
-Run and chat with [Gemma 3](https://ollama.com/library/gemma3):
+```bash
+./ollama create bonsai-8b -f Modelfile
+./ollama run bonsai-8b
+```
+
+You should see the chat template auto-detected:
 
 ```
-ollama run gemma3
+using autodetected template chatml
 ```
 
-See [ollama.com/library](https://ollama.com/library) for the full list.
+### Performance
 
-See the [quickstart guide](https://docs.ollama.com/quickstart) for more details.
+On Apple Silicon (M-series), all 37 layers are offloaded to Metal GPU:
+
+- Model size: ~1 GB (1-bit quantization)
+- Inference: ~94 tokens/sec
+- Load time: < 1 second
+
+## Links
+
+- **Upstream Ollama**: [ollama/ollama](https://github.com/ollama/ollama)
+- **PrismML llama.cpp Fork**: [PrismML-Eng/llama.cpp](https://github.com/PrismML-Eng/llama.cpp)
+- **Bonsai-8B Model**: [PrismML/Bonsai-8B](https://huggingface.co/PrismML/Bonsai-8B)
+
+---
+
+## Upstream Ollama Documentation
+
+Everything below is from the upstream Ollama project and applies to this fork as well.
 
 ## REST API
 
