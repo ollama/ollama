@@ -131,9 +131,6 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 		return nil, model.ErrNoVisionModel
 	}
 
-	// Initialize clamp values from model tensors (lazy, once, after model is fully loaded)
-	m.VisionModel.InitClamp(m.MultiModalProjector)
-
 	t0 := time.Now()
 	img, _, err := image.Decode(bytes.NewReader(multimodalData))
 	if err != nil {
@@ -160,6 +157,11 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 	slog.Info("vision: encoded", "elapsed", time.Since(t0), "shape", visionOutputs.Shape())
 
 	return []input.Multimodal{{Tensor: visionOutputs}}, nil
+}
+
+func (m *Model) PostLoad() error {
+	m.VisionModel.InitClamp(m.MultiModalProjector)
+	return nil
 }
 
 func (m *Model) encodeAudioMultimodal(ctx ml.Context, data []byte) ([]input.Multimodal, error) {

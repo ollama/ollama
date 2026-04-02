@@ -80,8 +80,6 @@ func (l *ClippableLinear) loadClampFromScalars() {
 }
 
 func (l *ClippableLinear) Forward(ctx ml.Context, x ml.Tensor) ml.Tensor {
-	l.loadClampFromScalars()
-
 	if l.hasClamp {
 		x = x.Clamp(ctx, l.inMin, l.inMax)
 	}
