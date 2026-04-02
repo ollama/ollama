@@ -4,12 +4,15 @@ import Chat from "@/components/Chat";
 import { getChat } from "@/api";
 import { SidebarLayout } from "@/components/layout/layout";
 import { ChatSidebar } from "@/components/ChatSidebar";
+import LaunchCommands from "@/components/LaunchCommands";
+import { useEffect } from "react";
+import { useSettings } from "@/hooks/useSettings";
 
 export const Route = createFileRoute("/c/$chatId")({
   component: RouteComponent,
   loader: async ({ context, params }) => {
-    // Skip loading for "new" chat
-    if (params.chatId !== "new") {
+    // Skip loading for special non-chat views
+    if (params.chatId !== "new" && params.chatId !== "launch") {
       context.queryClient.ensureQueryData({
         queryKey: ["chat", params.chatId],
         queryFn: () => getChat(params.chatId),
@@ -21,19 +24,56 @@ export const Route = createFileRoute("/c/$chatId")({
 
 function RouteComponent() {
   const { chatId } = Route.useParams();
+  const { settingsData, setSettings } = useSettings();
 
-  // Always call hooks at the top level - use a flag to skip data when chatId is "new"
+  // Always call hooks at the top level - use a flag to skip data when chatId is a special view
   const {
     data: chatData,
     isLoading: chatLoading,
     error: chatError,
-  } = useChat(chatId === "new" ? "" : chatId);
+  } = useChat(chatId === "new" || chatId === "launch" ? "" : chatId);
+
+  useEffect(() => {
+    if (!settingsData) {
+      return;
+    }
+
+    if (chatId === "launch") {
+      if (
+        settingsData.LastHomeView !== "chat" &&
+        settingsData.LastHomeView !== "launch"
+      ) {
+        return;
+      }
+
+      setSettings({ LastHomeView: "openclaw" }).catch(() => {
+        // Best effort persistence for home view preference.
+      });
+      return;
+    }
+
+    if (settingsData.LastHomeView === "chat") {
+      return;
+    }
+
+    setSettings({ LastHomeView: "chat" }).catch(() => {
+      // Best effort persistence for home view preference.
+    });
+  }, [chatId, settingsData, setSettings]);
 
   // Handle "new" chat case - just use Chat component which handles everything
   if (chatId === "new") {
     return (
       <SidebarLayout sidebar={<ChatSidebar currentChatId={chatId} />}>
         <Chat chatId={chatId} />
+      </SidebarLayout>
+    );
+  }
+
+  if (chatId === "launch") {
+    return (
+      <SidebarLayout sidebar={<ChatSidebar currentChatId={chatId} />}>
+        <LaunchCommands />
       </SidebarLayout>
     );
   }
