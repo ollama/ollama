@@ -43,7 +43,7 @@ ggml_cgraph * clip_graph_pixtral::build() {
 
         // project to n_embd
         cur = ggml_reshape_2d(ctx0, cur, cur->ne[0], cur->ne[1] * cur->ne[2]);
-        cur = ggml_mul_mat(ctx0, model.mm_patch_merger_w, cur);
+        cur = build_mm(model.mm_patch_merger_w, cur);
     }
 
     // LlavaMultiModalProjector (always using GELU activation)

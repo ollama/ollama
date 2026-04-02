@@ -1,7 +1,7 @@
 #include "models.h"
 
 llm_build_gemma2_iswa::llm_build_gemma2_iswa(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
-    const int64_t n_embd_head = hparams.n_embd_head_k;
+    const int64_t n_embd_head = hparams.n_embd_head_k();
 
     ggml_tensor * cur;
     ggml_tensor * inpL;
@@ -19,6 +19,9 @@ llm_build_gemma2_iswa::llm_build_gemma2_iswa(const llama_model & model, const ll
     ggml_tensor * inp_out_ids = build_inp_out_ids();
 
     for (int il = 0; il < n_layer; ++il) {
+        const float freq_base_l  = model.get_rope_freq_base (cparams, il);
+        const float freq_scale_l = model.get_rope_freq_scale(cparams, il);
+
         // norm
         cur = build_norm(inpL,
                 model.layers[il].attn_norm, NULL,
@@ -43,12 +46,12 @@ llm_build_gemma2_iswa::llm_build_gemma2_iswa(const llama_model & model, const ll
 
             Qcur = ggml_rope_ext(
                     ctx0, Qcur, inp_pos, nullptr,
-                    n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
+                    n_rot, rope_type, n_ctx_orig, freq_base_l, freq_scale_l,
                     ext_factor, attn_factor, beta_fast, beta_slow);
 
             Kcur = ggml_rope_ext(
                     ctx0, Kcur, inp_pos, nullptr,
-                    n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
+                    n_rot, rope_type, n_ctx_orig, freq_base_l, freq_scale_l,
                     ext_factor, attn_factor, beta_fast, beta_slow);
 
             cb(Qcur, "Qcur", il);

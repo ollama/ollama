@@ -1,12 +1,10 @@
 #include "models.h"
 
-
-
 llm_build_bert::llm_build_bert(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
-    const int64_t n_embd_head = hparams.n_embd_head_v;
+    const int64_t n_embd_head = hparams.n_embd_head_v();
     const int64_t n_embd_gqa  = hparams.n_embd_v_gqa();
 
-    GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
+    GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());
 
     ggml_tensor * cur;
     ggml_tensor * inpL;
@@ -129,9 +127,17 @@ llm_build_bert::llm_build_bert(const llama_model & model, const llm_graph_params
         // feed-forward network
         if (hparams.moe_every_n_layers > 0 && il % hparams.moe_every_n_layers == 1) {
             // MoE branch
-            cur = build_moe_ffn(cur, model.layers[il].ffn_gate_inp, model.layers[il].ffn_up_exps, nullptr,
-                                model.layers[il].ffn_down_exps, nullptr, hparams.n_expert, hparams.n_expert_used,
-                                LLM_FFN_GELU, false, false, 0.0f, LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX, il);
+            cur = build_moe_ffn(cur,
+                    model.layers[il].ffn_gate_inp,
+                    model.layers[il].ffn_up_exps,
+                    nullptr,
+                    model.layers[il].ffn_down_exps,
+                    nullptr,
+                    hparams.n_expert, hparams.n_expert_used,
+                    LLM_FFN_GELU, false,
+                    hparams.expert_weights_scale,
+                    LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX,
+                    il);
             cb(cur, "ffn_moe_out", il);
         } else if (model.arch == LLM_ARCH_BERT || model.arch == LLM_ARCH_NOMIC_BERT_MOE ||
                    model.arch == LLM_ARCH_JINA_BERT_V3) {
@@ -142,11 +148,13 @@ llm_build_bert::llm_build_bert(const llama_model & model, const llm_graph_params
                     LLM_FFN_GELU, LLM_FFN_SEQ, il);
             cb(cur, "ffn_out", il);
         } else if (model.arch == LLM_ARCH_JINA_BERT_V2) {
+            const bool up_contains_gate = !model.layers[il].ffn_gate && model.layers[il].ffn_up->ne[1] != hparams.n_ff();
+            auto type_op = up_contains_gate ? LLM_FFN_GEGLU : LLM_FFN_GELU;
             cur = build_ffn(cur,
-                    model.layers[il].ffn_up, NULL, NULL,
+                    model.layers[il].ffn_up, model.layers[il].ffn_up_b, NULL,
                     model.layers[il].ffn_gate, NULL, NULL,
                     model.layers[il].ffn_down, model.layers[il].ffn_down_b, NULL, NULL,
-                    model.layers[il].ffn_gate ? LLM_FFN_GELU : LLM_FFN_GEGLU, LLM_FFN_PAR, il);
+                    type_op, LLM_FFN_PAR, il);
             cb(cur, "ffn_out", il);
         } else {
             cur = build_ffn(cur,

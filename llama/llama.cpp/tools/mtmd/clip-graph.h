@@ -32,10 +32,6 @@ struct clip_graph {
     const float kq_scale;
     const clip_flash_attn_type flash_attn_type;
 
-    // for debugging
-    const bool debug_graph;
-    std::vector<ggml_tensor *> & debug_print_tensors;
-
     ggml_context_ptr ctx0_ptr;
     ggml_context * ctx0;
     ggml_cgraph * gf;
@@ -44,6 +40,11 @@ struct clip_graph {
 
     virtual ~clip_graph() = default;
     virtual ggml_cgraph * build() = 0;
+
+    // wrapper around ggml_mul_mat, allow hooking (e.g. LoRA, clamping) depending on the model
+    // tensor w should be the weight matrix, and tensor x should be the input
+    virtual ggml_tensor * build_mm(ggml_tensor * w, ggml_tensor * x) const;
+    // TODO: build_mm(w, b, x) to support bias
 
     //
     // utility functions

@@ -202,7 +202,31 @@ function cuda12 {
 }
 
 function cuda13 {
-    cudaCommon("13")
+    # Use Windows-specific preset with reduced architectures to avoid MSVC template compilation issues
+    mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
+    $cudaMajorVer = "13"
+    if ($script:ARCH -ne "arm64") {
+        if ("$script:CUDA_DIRS".Contains("v$cudaMajorVer")) {
+            foreach ($d in $Script:CUDA_DIRS){
+                if ($d.FullName.Contains("v$cudaMajorVer")) {
+                    if (test-path -literalpath (join-path -path $d -childpath "nvcc.exe" ) ) {
+                        $cuda=($d.FullName|split-path -parent)
+                        break
+                    }
+                }
+            }
+            write-host "Building CUDA v$cudaMajorVer backend libraries $cuda"
+            $env:CUDAToolkit_ROOT=$cuda
+            & cmake -B build\cuda_v$cudaMajorVer --preset "CUDA 13 Windows" -T cuda="$cuda" --install-prefix "$script:DIST_DIR"
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --build build\cuda_v$cudaMajorVer --target ggml-cuda --config Release --parallel $script:JOBS
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --install build\cuda_v$cudaMajorVer --component "CUDA" --strip
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        } else {
+            write-host "CUDA v$cudaMajorVer not detected, skipping"
+        }
+    }
 }
 
 function rocm6 {

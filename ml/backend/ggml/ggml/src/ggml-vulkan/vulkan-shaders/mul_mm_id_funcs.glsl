@@ -13,6 +13,8 @@ void load_row_ids(uint expert_idx, bool nei0_is_pow2, uint ic) {
     uint ids[16];
     uint iter = 0;
 
+    uint expert_count = data_expert_count[expert_idx];
+
     for (uint j = 0; j < num_elements; j += BLOCK_SIZE) {
         // prefetch up to 16 elements
         if (iter == 0) {
@@ -41,7 +43,9 @@ void load_row_ids(uint expert_idx, bool nei0_is_pow2, uint ic) {
         uint id = ids[iter++];
         uvec4 ballot = subgroupBallot(in_range && id == expert_idx);
 
-        ballots_sh[gl_SubgroupID] = ballot;
+        if (gl_SubgroupInvocationID == 0) {
+            ballots_sh[gl_SubgroupID] = ballot;
+        }
         barrier();
 
         uint subgroup_base = 0;
@@ -60,7 +64,7 @@ void load_row_ids(uint expert_idx, bool nei0_is_pow2, uint ic) {
         }
         _ne1 += total;
         iter &= 15;
-        if (_ne1 >= (ic + 1) * BN) {
+        if (_ne1 >= (ic + 1) * BN || _ne1 == expert_count) {
             break;
         }
     }

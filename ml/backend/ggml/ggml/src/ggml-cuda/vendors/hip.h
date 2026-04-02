@@ -47,9 +47,11 @@
 #define cublasSgemm hipblasSgemm
 #define cublasStatus_t hipblasStatus_t
 #define cublasOperation_t hipblasOperation_t
+#define cudaDevAttrCooperativeLaunch hipDeviceAttributeCooperativeLaunch
 #define cudaDeviceCanAccessPeer hipDeviceCanAccessPeer
 #define cudaDeviceDisablePeerAccess hipDeviceDisablePeerAccess
 #define cudaDeviceEnablePeerAccess hipDeviceEnablePeerAccess
+#define cudaDeviceGetAttribute hipDeviceGetAttribute
 #define cudaDeviceProp hipDeviceProp_t
 #define cudaDeviceReset hipDeviceReset
 #define cudaDeviceSynchronize hipDeviceSynchronize
@@ -74,6 +76,7 @@
 #define cudaHostRegisterPortable hipHostRegisterPortable
 #define cudaHostRegisterReadOnly hipHostRegisterReadOnly
 #define cudaHostUnregister hipHostUnregister
+#define cudaLaunchCooperativeKernel hipLaunchCooperativeKernel
 #define cudaLaunchHostFunc hipLaunchHostFunc
 #define cudaMalloc hipMalloc
 #define cudaMallocHost(ptr, size) hipHostMalloc(ptr, size, hipHostMallocDefault)
@@ -139,6 +142,8 @@
 #define cudaStream_t hipStream_t
 #define cudaSuccess hipSuccess
 #define cudaOccupancyMaxActiveBlocksPerMultiprocessor hipOccupancyMaxActiveBlocksPerMultiprocessor
+#define cudaFuncSetAttribute hipFuncSetAttribute
+#define cudaFuncAttributeMaxDynamicSharedMemorySize hipFuncAttributeMaxDynamicSharedMemorySize
 #define __trap() do { abort(); __builtin_unreachable(); } while(0)
 #define CUBLAS_STATUS_SUCCESS HIPBLAS_STATUS_SUCCESS
 #define CUBLAS_STATUS_NOT_INITIALIZED HIPBLAS_STATUS_NOT_INITIALIZED
@@ -205,6 +210,14 @@
 #if defined(__GFX11__)
 #define RDNA3
 #endif // defined(__GFX11__)
+
+#if defined(__gfx1150__) || defined(__gfx1151__)
+#define RDNA3_5
+#endif // defined(__gfx1150__) || defined(__gfx1151__)
+
+#if defined(RDNA3) && !defined(RDNA3_5)
+#define RDNA3_0
+#endif // defined(RDNA3) && !defined(RDNA3_5)
 
 #if defined(__gfx1030__) || defined(__gfx1031__) || defined(__gfx1032__) || defined(__gfx1033__) || \
     defined(__gfx1034__) || defined(__gfx1035__) || defined(__gfx1036__) || defined(__gfx1037__)

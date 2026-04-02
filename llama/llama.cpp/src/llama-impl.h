@@ -49,6 +49,16 @@ struct time_meas {
     int64_t & t_acc;
 };
 
+template <typename T>
+struct buffer_view {
+    T * data;
+    size_t size = 0;
+
+    bool has_data() const {
+        return data && size > 0;
+    }
+};
+
 void replace_all(std::string & s, const std::string & search, const std::string & replace);
 
 // TODO: rename to llama_format ?
@@ -60,4 +70,6 @@ std::string llama_format_tensor_shape(const struct ggml_tensor * t);
 
 std::string gguf_kv_to_str(const struct gguf_context * ctx_gguf, int i);
 
-#define LLAMA_TENSOR_NAME_FATTN "__fattn__"
+#define LLAMA_TENSOR_NAME_FATTN   "__fattn__"
+#define LLAMA_TENSOR_NAME_FGDN_AR "__fgdn_ar__"
+#define LLAMA_TENSOR_NAME_FGDN_CH "__fgdn_ch__"

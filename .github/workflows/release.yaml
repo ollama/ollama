@@ -92,7 +92,7 @@ jobs:
             flags: ''
           - os: windows
             arch: amd64
-            preset: 'CUDA 13'
+            preset: 'CUDA 13 Windows'
             install: https://developer.download.nvidia.com/compute/cuda/13.0.0/local_installers/cuda_13.0.0_windows.exe
             cuda-components:
               - '"cudart"'

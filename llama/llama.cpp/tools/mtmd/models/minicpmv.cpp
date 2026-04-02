@@ -38,7 +38,7 @@ ggml_cgraph * clip_graph_minicpmv::build() {
     // resampler projector (it is just another transformer)
 
     ggml_tensor * q = model.mm_model_query;
-    ggml_tensor * v = ggml_mul_mat(ctx0, model.mm_model_kv_proj, embeddings);
+    ggml_tensor * v = build_mm(model.mm_model_kv_proj, embeddings);
 
     // norm
     q = build_norm(q, model.mm_model_ln_q_w,  model.mm_model_ln_q_b,  NORM_TYPE_NORMAL, eps, -1);
@@ -77,13 +77,13 @@ ggml_cgraph * clip_graph_minicpmv::build() {
         // Use actual config value if available, otherwise fall back to hardcoded values
         int num_query = hparams.minicpmv_query_num;
         ggml_tensor * Q = ggml_add(ctx0,
-            ggml_mul_mat(ctx0, model.mm_model_attn_q_w, q),
+            build_mm(model.mm_model_attn_q_w, q),
             model.mm_model_attn_q_b);
         ggml_tensor * K = ggml_add(ctx0,
-            ggml_mul_mat(ctx0, model.mm_model_attn_k_w, k),
+            build_mm(model.mm_model_attn_k_w, k),
             model.mm_model_attn_k_b);
         ggml_tensor * V = ggml_add(ctx0,
-            ggml_mul_mat(ctx0, model.mm_model_attn_v_w, v),
+            build_mm(model.mm_model_attn_v_w, v),
             model.mm_model_attn_v_b);
 
         Q = ggml_reshape_3d(ctx0, Q, d_head, n_head, num_query);
@@ -105,7 +105,7 @@ ggml_cgraph * clip_graph_minicpmv::build() {
     embeddings = build_norm(embeddings, model.mm_model_ln_post_w, model.mm_model_ln_post_b, NORM_TYPE_NORMAL, eps, -1);
 
     // projection
-    embeddings = ggml_mul_mat(ctx0, model.mm_model_proj, embeddings);
+    embeddings = build_mm(model.mm_model_proj, embeddings);
 
     // build the graph
     ggml_build_forward_expand(gf, embeddings);

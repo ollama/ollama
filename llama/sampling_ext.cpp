@@ -21,7 +21,9 @@ struct common_sampler *common_sampler_cinit(const struct llama_model *model, str
         sparams.penalty_freq = params->penalty_freq;
         sparams.penalty_present = params->penalty_present;
         sparams.seed = params->seed;
-        sparams.grammar = params->grammar;
+        if (params->grammar != nullptr && params->grammar[0] != '\0') {
+            sparams.grammar = {COMMON_GRAMMAR_TYPE_USER, params->grammar};
+        }
         sparams.xtc_probability = 0.0;
         sparams.xtc_threshold = 0.5;
         return common_sampler_init(model, sparams);
@@ -72,7 +74,7 @@ struct llama_vocab * llama_load_vocab_from_file(const char * fname) {
     try {
         const auto kv = LLM_KV(LLM_ARCH_UNKNOWN);
         std::vector<std::string> splits = {};
-        llama_model_loader ml(std::string(fname), splits, false, false, false, nullptr, nullptr);
+        llama_model_loader ml(nullptr, nullptr, nullptr, std::string(fname), splits, false, false, false, false, nullptr, nullptr);
         vocab->load(ml, kv);
     } catch (const std::exception & err) {
         LLAMA_LOG_ERROR("%s: error loading model: %s\n", __func__, err.what());

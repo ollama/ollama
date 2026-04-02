@@ -2,10 +2,10 @@
 
 
 llm_build_chatglm::llm_build_chatglm(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
-    const int64_t n_embd_head = hparams.n_embd_head_v;
+    const int64_t n_embd_head = hparams.n_embd_head_v();
     const int64_t n_embd_gqa  = hparams.n_embd_v_gqa();
 
-    GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
+    GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());
 
     ggml_tensor * cur;
     ggml_tensor * inpL;
@@ -111,8 +111,13 @@ llm_build_chatglm::llm_build_chatglm(const llama_model & model, const llm_graph_
 
         }
 
-        inpL = ggml_add(ctx0, cur, ffn_inp);
-        cb(inpL, "l_out", il);
+        cur = ggml_add(ctx0, cur, ffn_inp);
+
+        cur = build_cvec(cur, il);
+        cb(cur, "l_out", il);
+
+        // input for next layer
+        inpL = cur;
     }
 
     cur = build_norm(inpL,

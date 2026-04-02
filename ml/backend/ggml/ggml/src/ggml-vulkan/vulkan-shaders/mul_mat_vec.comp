@@ -87,7 +87,6 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
     const uint tid = gl_LocalInvocationID.x;
 
     get_offsets(a_offset, b_offset, d_offset);
-    a_offset /= QUANT_K;
 
     y_offset = QUANT_R == 1 ? 1 : QUANT_K/2;
 

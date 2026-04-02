@@ -1,14 +1,12 @@
 #include "models.h"
 
-
-
 llm_build_grovemoe::llm_build_grovemoe(const llama_model & model, const llm_graph_params & params) :
     llm_graph_context(params) {
-    const int64_t n_embd_head    = hparams.n_embd_head_v;
+    const int64_t n_embd_head    = hparams.n_embd_head_v();
     const int64_t n_chunk_expert = n_expert / hparams.n_group_experts;
 
-    GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
-    GGML_ASSERT(n_embd_head == hparams.n_rot);
+    GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());
+    GGML_ASSERT(n_embd_head == n_rot);
 
     ggml_tensor * cur;
     ggml_tensor * inpL;
@@ -90,7 +88,7 @@ llm_build_grovemoe::llm_build_grovemoe(const llama_model & model, const llm_grap
                 nullptr,
                 n_expert, n_expert_used,
                 LLM_FFN_SILU, true,
-                false, 0.0,
+                hparams.expert_weights_scale,
                 LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX,
                 il,
                 probs);
@@ -106,7 +104,7 @@ llm_build_grovemoe::llm_build_grovemoe(const llama_model & model, const llm_grap
                     nullptr,
                     n_chunk_expert, n_expert_used > n_chunk_expert ? n_chunk_expert : n_expert_used,
                     LLM_FFN_SILU, true,
-                    false, 0.0,
+                    hparams.expert_weights_scale,
                     LLAMA_EXPERT_GATING_FUNC_TYPE_SOFTMAX,
                     il,
                     probs);

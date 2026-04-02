@@ -423,7 +423,7 @@ void ggml_quantize_mat_q8_K_4x8(const float * GGML_RESTRICT x, void * GGML_RESTR
             quants_interleaved[j] = i0;
         }
 
-        // Masks to shuffle the quants of corresonding sub blocks for rearraning quants for vectorized bsums computation
+        // Masks to shuffle the quants of corresponding sub blocks for rearranging quants for vectorized bsums computation
         __m256i shuffle_mask_sb2 = _mm256_castsi128_si256(_mm_setr_epi8(0, 1, 0, 1, 4, 5, 6, 7, 8, 9, 8, 9, 12, 13, 14, 15));
         shuffle_mask_sb2 = _mm256_permute2f128_si256(shuffle_mask_sb2, shuffle_mask_sb2, 0);
         __m256i shuffle_mask_sb3 = _mm256_castsi128_si256(_mm_setr_epi8(0, 1, 2, 3, 0, 1, 6, 7, 8, 9, 10, 11, 8, 9, 14, 15));
@@ -522,7 +522,8 @@ template<typename block_tx8>
 static void gemv_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc, __m256i signextendlut) {
     static_assert(
             std::is_same_v<block_tx8, block_q4_0x8> ||
-            std::is_same_v<block_tx8, block_iq4_nlx8>,
+            std::is_same_v<block_tx8, block_iq4_nlx8> ||
+            std::is_same_v<block_tx8, block_mxfp4x8>,
             "Unsupported block type");
 
     const int qk = QK8_0;
@@ -530,7 +531,6 @@ static void gemv_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
 
     UNUSED(bs);
 
-    __m128i changemask = _mm_set_epi8(15, 14, 7, 6, 13, 12, 5, 4, 11, 10, 3, 2, 9, 8, 1, 0);
     __m256i finalpermutemask = _mm256_set_epi32(7, 5, 3, 1, 6, 4, 2, 0);
 
     // Permute mask used for easier vector processing at later stages
@@ -579,7 +579,20 @@ static void gemv_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
                 if constexpr (
                         std::is_same_v<block_tx8, block_q4_0x8> ||
                         std::is_same_v<block_tx8, block_iq4_nlx8>) {
+                    const __m128i changemask = _mm_set_epi8(15, 14, 7, 6, 13, 12, 5, 4, 11, 10, 3, 2, 9, 8, 1, 0);
                     col_scale_f32 = GGML_F32Cx8_REARRANGE_LOAD(b_ptr[b].d, changemask);
+                } else if constexpr (std::is_same_v<block_tx8, block_mxfp4x8>) {
+                    // Load 8 E8M0 exponents and convert to float via LUT
+                    // Rearranged to match changemask order: 0,4,1,5,2,6,3,7
+                    col_scale_f32 = _mm256_set_ps(
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[7]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[3]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[6]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[2]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[5]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[1]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[4]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[0]));
                 }
 
                 // Load and convert to FP32 scale from block_q8_0
@@ -612,7 +625,7 @@ static void gemv_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
                 iacc = mul_sum_i8_pairs_acc_int32x8(iacc, _mm256_blend_epi32(rhs_vec_0123_3 ,_mm256_shuffle_epi32(rhs_vec_4567_3, 177), 170), _mm256_shuffle_epi32(lhs_vec_1, 170));
                 iacc = mul_sum_i8_pairs_acc_int32x8(iacc, _mm256_blend_epi32(_mm256_shuffle_epi32(rhs_vec_0123_3, 177) ,rhs_vec_4567_3, 170), _mm256_shuffle_epi32(lhs_vec_1, 255));
 
-                // Accumulated values multipled with appropriate scales
+                // Accumulated values multiplied with appropriate scales
                 acc_row = _mm256_fmadd_ps(_mm256_cvtepi32_ps(iacc), _mm256_mul_ps(col_scale_f32, row_scale_f32), acc_row);
             }
 
@@ -628,7 +641,8 @@ template<typename block_tx8>
 static void gemm_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc, __m256i signextendlut) {
     static_assert(
             std::is_same_v<block_tx8, block_q4_0x8> ||
-            std::is_same_v<block_tx8, block_iq4_nlx8>,
+            std::is_same_v<block_tx8, block_iq4_nlx8> ||
+            std::is_same_v<block_tx8, block_mxfp4x8>,
             "Unsupported block type");
 
     const int qk = QK8_0;
@@ -749,6 +763,25 @@ static void gemm_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
                         std::is_same_v<block_tx8, block_q4_0x8> ||
                         std::is_same_v<block_tx8, block_iq4_nlx8>) {
                     col_scale_f32 = GGML_F32Cx8x2_LOAD(b_ptr_0[b].d, b_ptr_1[b].d);
+                } else if constexpr (std::is_same_v<block_tx8, block_mxfp4x8>) {
+                    //TODO: simd-ify
+                    col_scale_f32 = _mm512_set_ps(
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[7]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[6]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[5]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[4]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[3]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[2]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[1]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[0]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[7]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[6]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[5]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[4]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[3]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[2]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[1]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[0]));
                 }
 
                 // Process LHS in pairs of rows
@@ -835,7 +868,7 @@ static void gemm_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
                     const __m128i row_scale_f16 = _mm_shuffle_epi32(_mm_maskload_epi32((int const*)(a_ptrs[rp][b].d), loadMask), 68);
                     const __m512 row_scale_f32 = GGML_F32Cx16_REPEAT_LOAD(row_scale_f16);
 
-                    // Multiply with appropiate scales and accumulate
+                    // Multiply with appropriate scales and accumulate
                     acc_rows[rp * 4]     = _mm512_fmadd_ps(_mm512_cvtepi32_ps(iacc_row_0), _mm512_mul_ps(col_scale_f32, _mm512_shuffle_ps(row_scale_f32, row_scale_f32, 0)),   acc_rows[rp * 4]);
                     acc_rows[rp * 4 + 1] = _mm512_fmadd_ps(_mm512_cvtepi32_ps(iacc_row_1), _mm512_mul_ps(col_scale_f32, _mm512_shuffle_ps(row_scale_f32, row_scale_f32, 85)),  acc_rows[rp * 4 + 1]);
                     acc_rows[rp * 4 + 2] = _mm512_fmadd_ps(_mm512_cvtepi32_ps(iacc_row_2), _mm512_mul_ps(col_scale_f32, _mm512_shuffle_ps(row_scale_f32, row_scale_f32, 170)), acc_rows[rp * 4 + 2]);
@@ -941,6 +974,25 @@ static void gemm_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
                         std::is_same_v<block_tx8, block_q4_0x8> ||
                         std::is_same_v<block_tx8, block_iq4_nlx8>) {
                     col_scale_f32 = GGML_F32Cx8x2_LOAD(b_ptr_0[b].d, b_ptr_1[b].d);
+                } else if constexpr (std::is_same_v<block_tx8, block_mxfp4x8>) {
+                    //TODO: simd-ify
+                    col_scale_f32 = _mm512_set_ps(
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[7]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[6]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[5]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[4]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[3]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[2]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[1]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_1[b].e[0]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[7]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[6]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[5]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[4]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[3]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[2]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[1]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr_0[b].e[0]));
                 }
 
                 // Load the four blocks of quantized values interleaved with each other in chunks of eight - A0,A1,A2,A3
@@ -1024,7 +1076,7 @@ static void gemm_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
                 const __m128i row_scale_f16 = _mm_shuffle_epi32(_mm_maskload_epi32((int const*)(a_ptr[b].d), loadMask), 68);
                 const __m512 row_scale_f32 = GGML_F32Cx16_REPEAT_LOAD(row_scale_f16);
 
-                // Multiply with appropiate scales and accumulate
+                // Multiply with appropriate scales and accumulate
                 acc_rows[0] = _mm512_fmadd_ps(_mm512_cvtepi32_ps(iacc_row_0), _mm512_mul_ps(col_scale_f32, _mm512_shuffle_ps(row_scale_f32, row_scale_f32, 0)),   acc_rows[0]);
                 acc_rows[1] = _mm512_fmadd_ps(_mm512_cvtepi32_ps(iacc_row_1), _mm512_mul_ps(col_scale_f32, _mm512_shuffle_ps(row_scale_f32, row_scale_f32, 85)),  acc_rows[1]);
                 acc_rows[2] = _mm512_fmadd_ps(_mm512_cvtepi32_ps(iacc_row_2), _mm512_mul_ps(col_scale_f32, _mm512_shuffle_ps(row_scale_f32, row_scale_f32, 170)), acc_rows[2]);
@@ -1123,6 +1175,16 @@ static void gemm_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
                         std::is_same_v<block_tx8, block_q4_0x8> ||
                         std::is_same_v<block_tx8, block_iq4_nlx8>) {
                     col_scale_f32 = GGML_F32Cx8_LOAD(b_ptr[b].d);
+                } else if constexpr (std::is_same_v<block_tx8, block_mxfp4x8>) {
+                    col_scale_f32 = _mm256_set_ps(
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[7]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[6]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[5]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[4]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[3]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[2]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[1]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[0]));
                 }
 
                 // Process LHS in groups of four
@@ -1195,7 +1257,7 @@ static void gemm_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
                     // Load the scale(d) values for all the 4 Q8_0 blocks and repeat it across lanes
                     const __m256 row_scale_f32 = GGML_F32Cx8_REPEAT_LOAD(a_ptrs[rp][b].d, loadMask);
 
-                    // Multiply with appropiate scales and accumulate
+                    // Multiply with appropriate scales and accumulate
                     acc_rows[rp * 4] = _mm256_fmadd_ps(_mm256_cvtepi32_ps(iacc_row_0), _mm256_mul_ps(col_scale_f32, _mm256_shuffle_ps(row_scale_f32, row_scale_f32, 0)), acc_rows[rp * 4]);
                     acc_rows[rp * 4 + 1] = _mm256_fmadd_ps(_mm256_cvtepi32_ps(iacc_row_1), _mm256_mul_ps(col_scale_f32, _mm256_shuffle_ps(row_scale_f32, row_scale_f32, 85)), acc_rows[rp * 4 + 1]);
                     acc_rows[rp * 4 + 2] = _mm256_fmadd_ps(_mm256_cvtepi32_ps(iacc_row_2), _mm256_mul_ps(col_scale_f32, _mm256_shuffle_ps(row_scale_f32, row_scale_f32, 170)), acc_rows[rp * 4 + 2]);
@@ -1283,6 +1345,16 @@ static void gemm_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
                         std::is_same_v<block_tx8, block_q4_0x8> ||
                         std::is_same_v<block_tx8, block_iq4_nlx8>) {
                     col_scale_f32 = GGML_F32Cx8_LOAD(b_ptr[b].d);
+                } else if constexpr (std::is_same_v<block_tx8, block_mxfp4x8>) {
+                    col_scale_f32 = _mm256_set_ps(
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[7]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[6]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[5]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[4]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[3]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[2]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[1]),
+                        GGML_CPU_E8M0_TO_FP32_HALF(b_ptr[b].e[0]));
                 }
 
                 // Load the four blocks of quantized values interleaved with each other in chunks of eight - A0,A1,A2,A3
@@ -1356,7 +1428,7 @@ static void gemm_q4_b32_8x8_q8_0_lut_avx(int n, float * GGML_RESTRICT s, size_t 
                 // Load the scale(d) values for all the 4 Q8_0 blocks and repeat it across lanes
                 const __m256 row_scale_f32 = GGML_F32Cx8_REPEAT_LOAD(a_ptr[b].d, loadMask);
 
-                // Multiply with appropiate scales and accumulate
+                // Multiply with appropriate scales and accumulate
                 acc_rows[0] = _mm256_fmadd_ps(_mm256_cvtepi32_ps(iacc_row_0), _mm256_mul_ps(col_scale_f32, _mm256_shuffle_ps(row_scale_f32, row_scale_f32, 0)), acc_rows[0]);
                 acc_rows[1] = _mm256_fmadd_ps(_mm256_cvtepi32_ps(iacc_row_1), _mm256_mul_ps(col_scale_f32, _mm256_shuffle_ps(row_scale_f32, row_scale_f32, 85)), acc_rows[1]);
                 acc_rows[2] = _mm256_fmadd_ps(_mm256_cvtepi32_ps(iacc_row_2), _mm256_mul_ps(col_scale_f32, _mm256_shuffle_ps(row_scale_f32, row_scale_f32, 170)), acc_rows[2]);
@@ -1540,7 +1612,7 @@ void ggml_gemv_q4_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
                     lhs_vec_11 = _mm256_permute2f128_si256(lhs_vec_11, lhs_vec_11, 0);
 
                     // Dot product done within 32 bit lanes and accumulated in the same vector
-                    // First done for first sub block and thenn for second sub block in each sb
+                    // First done for first sub block and then for second sub block in each sb
                     // B0(0-3) B4(0-3) B1(0-3) B5(0-3) B2(0-3) B6(0-3) B3(0-3) B7(0-3) with A0(0-3)
                     // B0(4-7) B4(4-7) B1(4-7) B5(4-7) B2(4-7) B6(4-7) B3(4-7) B7(4-7) with A0(4-7)
                     // ...........................................................................
@@ -1623,6 +1695,19 @@ void ggml_gemv_iq4_nl_8x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const 
 #endif
 
     ggml_gemv_iq4_nl_8x8_q8_0_generic(n, s, bs, vx, vy, nr, nc);
+}
+
+void ggml_gemv_mxfp4_8x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
+#if defined(__AVX2__)
+    __m256i signextendlut = _mm256_castsi128_si256(_mm_loadu_si128((const __m128i*)kvalues_mxfp4));
+    signextendlut = _mm256_permute2f128_si256(signextendlut, signextendlut, 0);
+
+    gemv_q4_b32_8x8_q8_0_lut_avx<block_mxfp4x8>(n, s, bs, vx, vy, nr, nc, signextendlut);
+
+    return;
+#endif
+
+    ggml_gemv_mxfp4_8x8_q8_0_generic(n, s, bs, vx, vy, nr, nc);
 }
 
 void ggml_gemv_q2_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
@@ -2337,7 +2422,7 @@ void ggml_gemm_q4_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
                         const __m256 row_scale_f32_ymm = _mm256_set_m128(row_scale_f32_sse, row_scale_f32_sse);
                         const __m512 row_scale_f32 = _mm512_insertf32x8(_mm512_castps256_ps512(row_scale_f32_ymm), row_scale_f32_ymm, 1);
 
-                        // Multiply with appropiate scales and accumulate (for both d and dmin) below
+                        // Multiply with appropriate scales and accumulate (for both d and dmin) below
                         acc_rows[rp * 4] = _mm512_fmadd_ps(_mm512_cvtepi32_ps(iacc_row_0), _mm512_mul_ps(col_scale_f32, _mm512_shuffle_ps(row_scale_f32, row_scale_f32, 0)), acc_rows[rp * 4]);
                         acc_rows[rp * 4  + 1] = _mm512_fmadd_ps(_mm512_cvtepi32_ps(iacc_row_1), _mm512_mul_ps(col_scale_f32, _mm512_shuffle_ps(row_scale_f32, row_scale_f32, 85)), acc_rows[rp * 4 + 1]);
                         acc_rows[rp * 4 + 2] = _mm512_fmadd_ps(_mm512_cvtepi32_ps(iacc_row_2), _mm512_mul_ps(col_scale_f32, _mm512_shuffle_ps(row_scale_f32, row_scale_f32, 170)), acc_rows[rp * 4 + 2]);
@@ -2700,7 +2785,7 @@ void ggml_gemm_q4_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
                     const __m256 row_scale_f32_ymm = _mm256_set_m128(row_scale_f32_sse, row_scale_f32_sse);
                     const __m512 row_scale_f32 = _mm512_insertf32x8(_mm512_castps256_ps512(row_scale_f32_ymm), row_scale_f32_ymm, 1);
 
-                    // Multiply with appropiate scales and accumulate (for both d and dmin) below
+                    // Multiply with appropriate scales and accumulate (for both d and dmin) below
                     acc_rows[0] = _mm512_fmadd_ps(_mm512_cvtepi32_ps(iacc_row_0), _mm512_mul_ps(col_scale_f32, _mm512_shuffle_ps(row_scale_f32, row_scale_f32, 0)), acc_rows[0]);
                     acc_rows[1] = _mm512_fmadd_ps(_mm512_cvtepi32_ps(iacc_row_1), _mm512_mul_ps(col_scale_f32, _mm512_shuffle_ps(row_scale_f32, row_scale_f32, 85)), acc_rows[1]);
                     acc_rows[2] = _mm512_fmadd_ps(_mm512_cvtepi32_ps(iacc_row_2), _mm512_mul_ps(col_scale_f32, _mm512_shuffle_ps(row_scale_f32, row_scale_f32, 170)), acc_rows[2]);
@@ -2717,7 +2802,7 @@ void ggml_gemm_q4_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
                     acc_min_rows[3] = _mm512_fmadd_ps(_mm512_cvtepi32_ps(iacc_row_min_3), _mm512_mul_ps(col_dmin_f32, _mm512_shuffle_ps(row_scale_f32, row_scale_f32, 255)), acc_min_rows[3]);
                 }
             }
-            // Store accumlated values
+            // Store accumulated values
             for (int i = 0; i < 4; i++) {
                 _mm512_storeu_ps((float * )(s + ((y * 4 + i) * bs + x * 8)), _mm512_sub_ps(acc_rows[i], acc_min_rows[i]));
             }
@@ -3045,7 +3130,7 @@ void ggml_gemm_q4_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
                         const __m128 row_scale_f32_sse = _mm_load_ps(a_ptrs[rp][b].d);
                         const __m256 row_scale_f32 = _mm256_set_m128(row_scale_f32_sse, row_scale_f32_sse);//GGML_F32Cx8_REPEAT_LOAD(a_ptrs[rp][b].d, loadMask);
 
-                        // Multiply with appropiate scales and accumulate (for both d and dmin) below
+                        // Multiply with appropriate scales and accumulate (for both d and dmin) below
                         acc_rows[rp * 4] = _mm256_fmadd_ps(_mm256_cvtepi32_ps(iacc_row_0), _mm256_mul_ps(col_scale_f32, _mm256_shuffle_ps(row_scale_f32, row_scale_f32, 0)), acc_rows[rp * 4]);
                         acc_rows[rp * 4 + 1] = _mm256_fmadd_ps(_mm256_cvtepi32_ps(iacc_row_1), _mm256_mul_ps(col_scale_f32, _mm256_shuffle_ps(row_scale_f32, row_scale_f32, 85)), acc_rows[rp * 4 + 1]);
                         acc_rows[rp * 4 + 2] = _mm256_fmadd_ps(_mm256_cvtepi32_ps(iacc_row_2), _mm256_mul_ps(col_scale_f32, _mm256_shuffle_ps(row_scale_f32, row_scale_f32, 170)), acc_rows[rp * 4 + 2]);
@@ -3375,7 +3460,7 @@ void ggml_gemm_q4_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
                     const __m128 row_scale_f32_sse = _mm_load_ps(a_ptr[b].d);
                     const __m256 row_scale_f32 = _mm256_set_m128(row_scale_f32_sse, row_scale_f32_sse); //GGML_F32Cx8_REPEAT_LOAD(a_ptrs[rp][b].d, loadMask);
 
-                    // Multiply with appropiate scales and accumulate (for both d and dmin) below
+                    // Multiply with appropriate scales and accumulate (for both d and dmin) below
                     acc_rows[0] = _mm256_fmadd_ps(_mm256_cvtepi32_ps(iacc_row_0), _mm256_mul_ps(col_scale_f32, _mm256_shuffle_ps(row_scale_f32, row_scale_f32, 0)), acc_rows[0]);
                     acc_rows[1] = _mm256_fmadd_ps(_mm256_cvtepi32_ps(iacc_row_1), _mm256_mul_ps(col_scale_f32, _mm256_shuffle_ps(row_scale_f32, row_scale_f32, 85)), acc_rows[1]);
                     acc_rows[2] = _mm256_fmadd_ps(_mm256_cvtepi32_ps(iacc_row_2), _mm256_mul_ps(col_scale_f32, _mm256_shuffle_ps(row_scale_f32, row_scale_f32, 170)), acc_rows[2]);
@@ -3421,6 +3506,21 @@ void ggml_gemm_iq4_nl_8x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const 
 #endif // defined(__AVX2__) || defined(__AVX512F__)
 
     ggml_gemm_iq4_nl_4x4_q8_0(n, s, bs, vx, vy, nr, nc);
+}
+
+void ggml_gemm_mxfp4_8x8_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
+#if defined(__AVX2__) || defined(__AVX512F__)
+    {
+        __m256i signextendlut = _mm256_castsi128_si256(_mm_loadu_si128((const __m128i*)kvalues_mxfp4));
+        signextendlut = _mm256_permute2f128_si256(signextendlut, signextendlut, 0);
+
+        gemm_q4_b32_8x8_q8_0_lut_avx<block_mxfp4x8>(n, s, bs, vx, vy, nr, nc, signextendlut);
+
+        return;
+    }
+#endif // defined(__AVX2__) || defined(__AVX512F__)
+
+    ggml_gemm_mxfp4_8x8_q8_0_generic(n, s, bs, vx, vy, nr, nc);
 }
 
 void ggml_gemm_q2_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
@@ -4168,7 +4268,7 @@ void ggml_gemm_q2_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
                         const __m256 row_scale_f32_ymm = _mm256_set_m128(row_scale_f32_sse, row_scale_f32_sse);
                         const __m512 row_scale_f32 = _mm512_insertf32x8(_mm512_castps256_ps512(row_scale_f32_ymm), row_scale_f32_ymm, 1);
 
-                        // Multiply with appropiate scales and accumulate (for both d and dmin) below
+                        // Multiply with appropriate scales and accumulate (for both d and dmin) below
                         acc_rows[rp * 4] = _mm512_fmadd_ps(_mm512_cvtepi32_ps(iacc_row_0), _mm512_mul_ps(col_scale_f32, _mm512_shuffle_ps(row_scale_f32, row_scale_f32, 0)), acc_rows[rp * 4]);
                         acc_rows[rp * 4  + 1] = _mm512_fmadd_ps(_mm512_cvtepi32_ps(iacc_row_1), _mm512_mul_ps(col_scale_f32, _mm512_shuffle_ps(row_scale_f32, row_scale_f32, 85)), acc_rows[rp * 4 + 1]);
                         acc_rows[rp * 4 + 2] = _mm512_fmadd_ps(_mm512_cvtepi32_ps(iacc_row_2), _mm512_mul_ps(col_scale_f32, _mm512_shuffle_ps(row_scale_f32, row_scale_f32, 170)), acc_rows[rp * 4 + 2]);
@@ -4935,7 +5035,7 @@ void ggml_gemm_q2_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
                     acc_min_rows[3] = _mm512_fmadd_ps(_mm512_cvtepi32_ps(iacc_row_min_3), _mm512_mul_ps(col_dmin_f32, _mm512_shuffle_ps(row_scale_f32, row_scale_f32, 255)), acc_min_rows[3]);
                 }
             }
-            // Store accumlated values
+            // Store accumulated values
             for (int i = 0; i < 4; i++) {
                 _mm512_storeu_ps((float * )(s + ((y * 4 + i) * bs + x * 8)), _mm512_sub_ps(acc_rows[i], acc_min_rows[i]));
             }
@@ -5577,7 +5677,7 @@ void ggml_gemm_q2_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
                         const __m128 row_scale_f32_sse = _mm_load_ps(a_ptrs[rp][b].d);
                         const __m256 row_scale_f32 = _mm256_set_m128(row_scale_f32_sse, row_scale_f32_sse);
 
-                        // Multiply with appropiate scales and accumulate (for both d and dmin) below
+                        // Multiply with appropriate scales and accumulate (for both d and dmin) below
                         acc_rows[rp * 4] = _mm256_fmadd_ps(_mm256_cvtepi32_ps(iacc_row_0), _mm256_mul_ps(col_scale_f32, _mm256_shuffle_ps(row_scale_f32, row_scale_f32, 0)), acc_rows[rp * 4]);
                         acc_rows[rp * 4 + 1] = _mm256_fmadd_ps(_mm256_cvtepi32_ps(iacc_row_1), _mm256_mul_ps(col_scale_f32, _mm256_shuffle_ps(row_scale_f32, row_scale_f32, 85)), acc_rows[rp * 4 + 1]);
                         acc_rows[rp * 4 + 2] = _mm256_fmadd_ps(_mm256_cvtepi32_ps(iacc_row_2), _mm256_mul_ps(col_scale_f32, _mm256_shuffle_ps(row_scale_f32, row_scale_f32, 170)), acc_rows[rp * 4 + 2]);
@@ -6249,7 +6349,7 @@ void ggml_gemm_q2_K_8x8_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const vo
                     const __m128 row_scale_f32_sse = _mm_load_ps(a_ptr[b].d);
                     const __m256 row_scale_f32 = _mm256_set_m128(row_scale_f32_sse, row_scale_f32_sse);
 
-                    // Multiply with appropiate scales and accumulate (for both d and dmin) below
+                    // Multiply with appropriate scales and accumulate (for both d and dmin) below
                     acc_rows[0] = _mm256_fmadd_ps(_mm256_cvtepi32_ps(iacc_row_0), _mm256_mul_ps(col_scale_f32, _mm256_shuffle_ps(row_scale_f32, row_scale_f32, 0)), acc_rows[0]);
                     acc_rows[1] = _mm256_fmadd_ps(_mm256_cvtepi32_ps(iacc_row_1), _mm256_mul_ps(col_scale_f32, _mm256_shuffle_ps(row_scale_f32, row_scale_f32, 85)), acc_rows[1]);
                     acc_rows[2] = _mm256_fmadd_ps(_mm256_cvtepi32_ps(iacc_row_2), _mm256_mul_ps(col_scale_f32, _mm256_shuffle_ps(row_scale_f32, row_scale_f32, 170)), acc_rows[2]);

@@ -2,7 +2,7 @@
 
 
 llm_build_gemma::llm_build_gemma(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
-    const int64_t n_embd_head = hparams.n_embd_head_v;
+    const int64_t n_embd_head = hparams.n_embd_head_v();
 
     ggml_tensor * cur;
     ggml_tensor * inpL;

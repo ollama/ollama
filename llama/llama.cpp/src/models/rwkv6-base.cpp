@@ -1,5 +1,7 @@
 #include "models.h"
 
+#include "llama-memory-recurrent.h"
+
 llm_build_rwkv6_base::llm_build_rwkv6_base(const llama_model & model, const llm_graph_params & params) :
     llm_graph_context(params),
     model(model) {}
