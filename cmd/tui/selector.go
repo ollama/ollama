@@ -820,7 +820,7 @@ func (m multiSelectorModel) View() string {
 	count := m.selectedCount()
 	if !m.multi {
 		if count > 0 {
-			s.WriteString(selectorDescStyle.Render(fmt.Sprintf("  %d selected - press tab to edit", count)))
+			s.WriteString(selectorDescStyle.Bold(true).Render(fmt.Sprintf("  %d selected - press tab to edit", count)))
 			s.WriteString("\n\n")
 		}
 		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • enter select • tab add multiple • ← back"))
@@ -828,7 +828,7 @@ func (m multiSelectorModel) View() string {
 		if count == 0 {
 			s.WriteString(selectorDescStyle.Render("  Select at least one model."))
 		} else {
-			s.WriteString(selectorDescStyle.Render(fmt.Sprintf("  %d selected - press enter to continue", count)))
+			s.WriteString(selectorDescStyle.Bold(true).Render(fmt.Sprintf("  %d selected - press enter to continue", count)))
 		}
 		s.WriteString("\n\n")
 		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • space toggle • tab select single • enter confirm • ← back"))
