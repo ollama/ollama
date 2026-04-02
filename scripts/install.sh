@@ -293,12 +293,14 @@ check_gpu() {
 
 if check_gpu nvidia-smi; then
     status "NVIDIA GPU installed."
-    exit 0
+    HAS_CUDA=true
 fi
 
 if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu; then
     install_success
-    warning "No NVIDIA/AMD GPU detected. Ollama will run in CPU-only mode."
+    if [ "$HAS_CUDA" != true ]; then
+        warning "No NVIDIA/AMD GPU detected. Ollama will run in CPU-only mode."
+    fi
     exit 0
 fi
 
@@ -307,6 +309,11 @@ if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
 
     install_success
     status "AMD GPU ready."
+    exit 0
+fi
+
+if [ "$HAS_CUDA" = true ]; then
+    install_success
     exit 0
 fi
 
