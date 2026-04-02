@@ -40,6 +40,16 @@ func TestGemma4AudioReplacements(t *testing.T) {
 			"model.audio_tower.subsample_conv_projection.input_proj_linear.bias",
 			"a.pre_encode.out.bias",
 		},
+		{
+			"sscp layer0 conv weight (new naming)",
+			"model.audio_tower.subsample_conv_projection.layer0.conv.weight",
+			"a.conv1d.0.weight",
+		},
+		{
+			"sscp layer1 norm weight (new naming)",
+			"model.audio_tower.subsample_conv_projection.layer1.norm.weight",
+			"a.conv1d.1.norm.weight",
+		},
 
 		// Conformer attention
 		{
@@ -92,6 +102,31 @@ func TestGemma4AudioReplacements(t *testing.T) {
 			"model.audio_tower.conformer.0.attention.attn.per_dim_key_scale",
 			"a.blk.0.per_dim_k_scale",
 		},
+		{
+			"attn relative k proj (new naming)",
+			"model.audio_tower.layers.0.self_attn.relative_k_proj.weight",
+			"a.blk.0.linear_pos.weight",
+		},
+		{
+			"attn pre norm (new naming)",
+			"model.audio_tower.layers.0.norm_pre_attn.weight",
+			"a.blk.0.ln1.weight",
+		},
+		{
+			"attn post norm (new naming)",
+			"model.audio_tower.layers.0.norm_post_attn.weight",
+			"a.blk.0.ln2.weight",
+		},
+		{
+			"attn out clamp output_max (new naming)",
+			"model.audio_tower.layers.0.self_attn.post.output_max",
+			"a.blk.0.attn_out.output_max",
+		},
+		{
+			"per dim scale (new naming)",
+			"model.audio_tower.layers.0.self_attn.per_dim_scale",
+			"a.blk.0.per_dim_scale",
+		},
 
 		// Conformer feedforward start
 		{
@@ -135,6 +170,26 @@ func TestGemma4AudioReplacements(t *testing.T) {
 			"ffn post norm 1",
 			"model.audio_tower.conformer.0.ffw_layer_end.post_layer_norm.weight",
 			"a.blk.0.ffn_post_norm_1.weight",
+		},
+		{
+			"ffn up output_max (new naming)",
+			"model.audio_tower.layers.10.feed_forward1.ffw_layer_1.output_max",
+			"a.blk.10.ffn_up.output_max",
+		},
+		{
+			"ffn down output_min (new naming)",
+			"model.audio_tower.layers.0.feed_forward1.ffw_layer_2.output_min",
+			"a.blk.0.ffn_down.output_min",
+		},
+		{
+			"ffn up 1 input_max (new naming)",
+			"model.audio_tower.layers.0.feed_forward2.ffw_layer_1.input_max",
+			"a.blk.0.ffn_up_1.input_max",
+		},
+		{
+			"ffn norm 1 (new naming)",
+			"model.audio_tower.layers.0.feed_forward2.pre_layer_norm.weight",
+			"a.blk.0.ffn_norm_1.weight",
 		},
 
 		// Conformer lightweight conv1d
