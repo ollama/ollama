@@ -1,6 +1,8 @@
 package gemma4
 
 import (
+	"math"
+
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
@@ -11,32 +13,118 @@ const batchSize = 1
 
 // ClippableLinear is a linear layer with optional input/output clamping.
 // Required by Gemma4 vision encoder for numerical stability with F16 weights.
-// Clamp values are populated by VisionModel.InitClamp from the packed v.clamp_data tensor.
 type ClippableLinear struct {
 	Weight ml.Tensor `gguf:"weight"`
 
+	InputMin  ml.Tensor `gguf:"input_min"`
+	InputMax  ml.Tensor `gguf:"input_max"`
+	OutputMin ml.Tensor `gguf:"output_min"`
+	OutputMax ml.Tensor `gguf:"output_max"`
+
 	inMin, inMax, outMin, outMax float32
+	hasClamp                     bool
+	clampsLoaded                 bool
+}
+
+func scalarValue(t ml.Tensor) (float32, bool) {
+	if t == nil {
+		return 0, false
+	}
+
+	data := t.BackendGet()
+	if len(data) == 0 {
+		return 0, false
+	}
+
+	return data[0], true
+}
+
+func (l *ClippableLinear) loadClampFromScalars() {
+	if l.clampsLoaded {
+		return
+	}
+	l.clampsLoaded = true
+
+	const (
+		defaultMin = -math.MaxFloat32
+		defaultMax = math.MaxFloat32
+	)
+
+	inMin, hasInMin := scalarValue(l.InputMin)
+	inMax, hasInMax := scalarValue(l.InputMax)
+	outMin, hasOutMin := scalarValue(l.OutputMin)
+	outMax, hasOutMax := scalarValue(l.OutputMax)
+
+	if !(hasInMin || hasInMax || hasOutMin || hasOutMax) {
+		return
+	}
+
+	l.hasClamp = true
+	l.inMin = defaultMin
+	l.inMax = defaultMax
+	l.outMin = defaultMin
+	l.outMax = defaultMax
+
+	if hasInMin {
+		l.inMin = inMin
+	}
+	if hasInMax {
+		l.inMax = inMax
+	}
+	if hasOutMin {
+		l.outMin = outMin
+	}
+	if hasOutMax {
+		l.outMax = outMax
+	}
 }
 
 func (l *ClippableLinear) Forward(ctx ml.Context, x ml.Tensor) ml.Tensor {
-	if l.inMax != 0 {
+	l.loadClampFromScalars()
+
+	if l.hasClamp {
 		x = x.Clamp(ctx, l.inMin, l.inMax)
 	}
 	out := l.Weight.Mulmat(ctx, x)
-	if l.outMax != 0 {
+	if l.hasClamp {
 		out = out.Clamp(ctx, l.outMin, l.outMax)
 	}
 	return out
 }
 
 // InitClamp distributes packed clamp values from v.clamp_data to ClippableLinear structs.
+// If scalar clamp tensors (input_min/max, output_min/max) are present, they are used too.
 // Layout: numLayers × 7 linears (q,k,v,out,gate,up,down) × 4 floats (inMin,inMax,outMin,outMax)
 // then 4 floats for the projector.
 func (m *VisionModel) InitClamp(proj *MultiModalProjector) {
-	if m.clampInitDone || m.ClampData == nil {
+	if m.clampInitDone {
 		return
 	}
 	m.clampInitDone = true
+
+	linears := func(l *VisionEncoderLayer) []*ClippableLinear {
+		return []*ClippableLinear{
+			l.SelfAttention.Query, l.SelfAttention.Key, l.SelfAttention.Value,
+			l.SelfAttention.Output, l.MLP.Gate, l.MLP.Up, l.MLP.Down,
+		}
+	}
+
+	// Load clamp scalars if present (llama.cpp-compatible format).
+	for i := range m.Layers {
+		for _, cl := range linears(&m.Layers[i]) {
+			if cl != nil {
+				cl.loadClampFromScalars()
+			}
+		}
+	}
+	if proj != nil && proj.Projection != nil {
+		proj.Projection.loadClampFromScalars()
+	}
+
+	// Load packed clamp data when present (legacy Ollama format).
+	if m.ClampData == nil {
+		return
+	}
 
 	// Read all clamp values from packed F32 tensor
 	data := m.ClampData.BackendGet()
@@ -45,32 +133,31 @@ func (m *VisionModel) InitClamp(proj *MultiModalProjector) {
 	}
 
 	// Distribute to layer linears: 7 per layer × 4 values each
-	linears := func(l *VisionEncoderLayer) []*ClippableLinear {
-		return []*ClippableLinear{
-			l.SelfAttention.Query, l.SelfAttention.Key, l.SelfAttention.Value,
-			l.SelfAttention.Output, l.MLP.Gate, l.MLP.Up, l.MLP.Down,
-		}
-	}
 	for i := range m.Layers {
 		for li, cl := range linears(&m.Layers[i]) {
+			if cl == nil {
+				continue
+			}
 			idx := (i*7 + li) * 4
 			if idx+3 < len(data) {
 				cl.inMin = data[idx]
 				cl.inMax = data[idx+1]
 				cl.outMin = data[idx+2]
 				cl.outMax = data[idx+3]
+				cl.hasClamp = true
 			}
 		}
 	}
 
 	// Projector clamp values (last 4 floats)
-	if proj != nil {
+	if proj != nil && proj.Projection != nil {
 		projIdx := len(m.Layers) * 7 * 4
 		if projIdx+3 < len(data) {
 			proj.Projection.inMin = data[projIdx]
 			proj.Projection.inMax = data[projIdx+1]
 			proj.Projection.outMin = data[projIdx+2]
 			proj.Projection.outMax = data[projIdx+3]
+			proj.Projection.hasClamp = true
 		}
 	}
 }
@@ -199,6 +286,8 @@ type VisionModel struct {
 	PatchEmbedding    *nn.Conv2D `gguf:"patch_embd"`
 	PositionEmbedding ml.Tensor  `gguf:"position_embd.weight"`
 	ClampData         ml.Tensor  `gguf:"clamp_data"`
+	StdBias           ml.Tensor  `gguf:"std_bias"`
+	StdScale          ml.Tensor  `gguf:"std_scale"`
 
 	Layers []VisionEncoderLayer `gguf:"blk"`
 
@@ -274,7 +363,7 @@ func visionTokenCount(imageWidth, imageHeight, patchSize, nMerge int) int {
 	return mergedX * mergedY
 }
 
-func visionPoolAndProject(ctx ml.Context, hiddenState ml.Tensor, numPatchesX, numPatchesY int, opts *VisionModelOptions, proj *MultiModalProjector) ml.Tensor {
+func visionPoolAndProject(ctx ml.Context, hiddenState ml.Tensor, numPatchesX, numPatchesY int, opts *VisionModelOptions, proj *MultiModalProjector, stdBias, stdScale ml.Tensor) ml.Tensor {
 	hiddenSize := opts.hiddenSize
 
 	// Reshape from [hiddenSize, numPatches] to spatial layout for pooling
@@ -290,12 +379,15 @@ func visionPoolAndProject(ctx ml.Context, hiddenState ml.Tensor, numPatchesX, nu
 	hiddenState = hiddenState.Reshape(ctx, mergedX*mergedY, hiddenSize)
 	hiddenState = hiddenState.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 
-	// Ensure F32 for the projection Mulmat. The Metal mul_mm kernel for F16×F32
-	// casts F32 activations to F16 in shared memory, so values must stay within
-	// F16 range (≤65504). The sqrt(hiddenSize) scaling from the HF reference is
-	// omitted because it's normalized out by the unweighted RMSNorm that follows
-	// the projection: RMSNorm(√d·x) = x/rms(x) = RMSNorm(x).
+	// Match llama.cpp Gemma4V path: scale pooled embeddings by sqrt(hidden size).
 	hiddenState = hiddenState.Cast(ctx, ml.DTypeF32)
+	hiddenState = hiddenState.Scale(ctx, math.Sqrt(float64(hiddenSize)))
+
+	// Optional vision standardization before projection.
+	if stdBias != nil && stdScale != nil {
+		hiddenState = hiddenState.Sub(ctx, stdBias)
+		hiddenState = hiddenState.Mul(ctx, stdScale)
+	}
 
 	// Project to text embedding dimension
 	hiddenState = proj.Forward(ctx, hiddenState, opts.eps)

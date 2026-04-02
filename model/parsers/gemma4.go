@@ -344,49 +344,62 @@ func parseGemma4ToolCall(content string) (api.ToolCall, error) {
 }
 
 // gemma4ArgsToJSON converts Gemma 4's custom argument format to valid JSON.
-// The format uses <|"|> for string delimiters and bare identifier keys.
-// Example: {location:<|"|>Paris<|"|>,count:42} → {"location":"Paris","count":42}
 func gemma4ArgsToJSON(s string) string {
-	// Step 1: Replace <|"|> with "
 	s = strings.ReplaceAll(s, `<|"|>`, `"`)
 
-	// Step 2: Quote bare keys (identifiers followed by : that aren't inside strings)
 	var buf strings.Builder
 	buf.Grow(len(s) + 32)
 	inString := false
+	hex := "0123456789abcdef"
 	i := 0
 	for i < len(s) {
 		ch := s[i]
-		if ch == '"' && !inString {
-			inString = true
-			buf.WriteByte(ch)
+
+		if ch == '"' {
+			inString = !inString
+			buf.WriteByte('"')
 			i++
-			// Write until closing quote
-			for i < len(s) {
-				buf.WriteByte(s[i])
-				if s[i] == '"' {
-					inString = false
-					i++
-					break
-				}
-				i++
-			}
 			continue
 		}
+
+		if inString {
+			switch ch {
+			case '\\':
+				buf.WriteString(`\\`)
+			case '\n':
+				buf.WriteString(`\n`)
+			case '\r':
+				buf.WriteString(`\r`)
+			case '\t':
+				buf.WriteString(`\t`)
+			case '\b':
+				buf.WriteString(`\b`)
+			case '\f':
+				buf.WriteString(`\f`)
+			default:
+				if ch < 0x20 {
+					buf.WriteString(`\u00`)
+					buf.WriteByte(hex[ch>>4])
+					buf.WriteByte(hex[ch&0x0f])
+				} else {
+					buf.WriteByte(ch)
+				}
+			}
+			i++
+			continue
+		}
+
 		if !inString && isIdentStart(ch) {
-			// Read the full identifier
 			j := i + 1
 			for j < len(s) && isIdentPart(s[j]) {
 				j++
 			}
 			word := s[i:j]
 			if j < len(s) && s[j] == ':' {
-				// It's an object key — quote it
 				buf.WriteByte('"')
 				buf.WriteString(word)
 				buf.WriteByte('"')
 			} else {
-				// It's a bare value (true, false, null, etc.)
 				buf.WriteString(word)
 			}
 			i = j

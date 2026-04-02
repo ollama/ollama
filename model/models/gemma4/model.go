@@ -26,7 +26,7 @@ type Model struct {
 	*TextModel
 	*AudioModel `gguf:"a"`
 
-	*MultiModalProjector  `gguf:"mm"`
+	*MultiModalProjector      `gguf:"mm"`
 	*AudioMultimodalProjector `gguf:"mm.a"`
 
 	ImageProcessor
@@ -97,18 +97,18 @@ func New(c fs.Config) (model.Model, error) {
 	slog.Info("gemma4: token IDs", "image", imageTokenID, "image_end", imageEndTokenID, "audio", audioTokenID, "audio_end", audioEndTokenID)
 
 	m := Model{
-		Tokenizer:            t,
-		TextModel:            newTextModel(c),
-		VisionModel:          newVisionModel(c),
-		AudioModel:           newAudioModel(c),
-		MultiModalProjector:  &MultiModalProjector{},
+		Tokenizer:                t,
+		TextModel:                newTextModel(c),
+		VisionModel:              newVisionModel(c),
+		AudioModel:               newAudioModel(c),
+		MultiModalProjector:      &MultiModalProjector{},
 		AudioMultimodalProjector: &AudioMultimodalProjector{},
-		ImageProcessor:       newImageProcessor(c),
-		imageTokenID:         imageTokenID,
-		imageEndTokenID:      imageEndTokenID,
-		audioTokenID:         audioTokenID,
-		audioEndTokenID:      audioEndTokenID,
-		audioOpts:            newAudioModelOptions(c),
+		ImageProcessor:           newImageProcessor(c),
+		imageTokenID:             imageTokenID,
+		imageEndTokenID:          imageEndTokenID,
+		audioTokenID:             audioTokenID,
+		audioEndTokenID:          audioEndTokenID,
+		audioOpts:                newAudioModelOptions(c),
 	}
 
 	slidingWindowLen := int32(c.Uint("attention.sliding_window"))
@@ -152,7 +152,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 	slog.Info("vision: patches", "patchesX", numPatchesX, "patchesY", numPatchesY, "total", numPatchesX*numPatchesY, "patchSize", m.ImageProcessor.patchSize)
 
 	visionOutputs := m.VisionModel.Forward(ctx, pixelValues, numPatchesX, numPatchesY)
-	visionOutputs = visionPoolAndProject(ctx, visionOutputs, numPatchesX, numPatchesY, m.VisionModel.VisionModelOptions, m.MultiModalProjector)
+	visionOutputs = visionPoolAndProject(ctx, visionOutputs, numPatchesX, numPatchesY, m.VisionModel.VisionModelOptions, m.MultiModalProjector, m.VisionModel.StdBias, m.VisionModel.StdScale)
 	slog.Info("vision: encoded", "elapsed", time.Since(t0), "shape", visionOutputs.Shape())
 
 	return []input.Multimodal{{Tensor: visionOutputs}}, nil

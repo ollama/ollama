@@ -134,6 +134,21 @@ func TestGemma4Parser(t *testing.T) {
 			},
 		},
 		{
+			name: "tool_call_with_multiline_string_arg",
+			input: `<|tool_call>call:bash{command:<|"|>date
+<|"|>}<tool_call|>`,
+			expectedToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "bash",
+						Arguments: testArgs(map[string]any{
+							"command": "date\n",
+						}),
+					},
+				},
+			},
+		},
+		{
 			name:  "multiple_tool_calls",
 			input: `<|tool_call>call:get_weather{location:<|"|>Paris<|"|>}<tool_call|><|tool_call>call:get_weather{location:<|"|>London<|"|>}<tool_call|>`,
 			expectedToolCalls: []api.ToolCall{
@@ -409,6 +424,12 @@ func TestGemma4ArgsToJSON(t *testing.T) {
 			name:     "null_value",
 			input:    `{value:null}`,
 			expected: `{"value":null}`,
+		},
+		{
+			name: "multiline_string_value",
+			input: `{command:<|"|>date
+<|"|>}`,
+			expected: `{"command":"date\n"}`,
 		},
 	}
 

@@ -9,8 +9,6 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/fs/ggml"
-	"github.com/pdevine/tensor"
-	"github.com/pdevine/tensor/native"
 )
 
 type gemma4Model struct {
@@ -237,15 +235,6 @@ func (p *gemma4Model) Tensors(ts []Tensor) []*ggml.Tensor {
 			continue
 		}
 
-		// Skip vision clamp scalars — packed into v.clamp_data below.
-		// Audio clamp scalars are kept as individual tensors (matching published GGUF).
-		isVisionClamp := (strings.Contains(name, "input_min") || strings.Contains(name, "input_max") ||
-			strings.Contains(name, "output_min") || strings.Contains(name, "output_max")) &&
-			(strings.Contains(name, "vision_tower") || strings.Contains(name, "embed_vision"))
-		if isVisionClamp {
-			continue
-		}
-
 		// Vision tensor renaming: match published mmproj GGUF names
 		if strings.HasPrefix(name, "v.blk.") {
 			name = strings.Replace(name, ".attn_norm.", ".ln1.", 1)
@@ -280,26 +269,6 @@ func (p *gemma4Model) Tensors(ts []Tensor) []*ggml.Tensor {
 		// Published GGUF has ne[0]=K, ne[1]=C → shape array must be [K, C].
 		if strings.HasPrefix(name, "a.blk.") && strings.Contains(name, "conv_dw") && strings.HasSuffix(name, ".weight") && len(shape) == 3 {
 			shape = []uint64{shape[0], shape[2]}
-		}
-
-		// Fused MoE gate_up_proj: split [experts, 2*intermediate, hidden] into separate gate and up.
-		// No transpose needed — the split shape [experts, intermediate, hidden] already matches
-		// the GGUF layout after the framework's dimension reversal (ne[0]=hidden matches input).
-		if strings.Contains(name, "ffn_gate_exps.weight") && len(shape) == 3 {
-			halfDim := int(shape[1]) / 2
-			newShape := slices.Clone(shape)
-			newShape[1] = newShape[1] / 2
-			for i, ggufName := range []string{"ffn_gate_exps.weight", "ffn_up_exps.weight"} {
-				tt := t.Clone()
-				tt.SetRepacker(p.sliceExperts(tensor.S(i*halfDim, (i+1)*halfDim)))
-				out = append(out, &ggml.Tensor{
-					Name:     strings.ReplaceAll(name, "ffn_gate_exps.weight", ggufName),
-					Kind:     tt.Kind(),
-					Shape:    slices.Clone(newShape),
-					WriterTo: tt,
-				})
-			}
-			continue
 		}
 
 		// MoE expert weights: no transpose needed. Safetensors stores [experts, out, in]
@@ -454,30 +423,6 @@ func (*gemma4Model) reshapePatchEmbed(_ string, data []float32, shape []uint64) 
 	return result, nil
 }
 
-// sliceExperts returns a repacker that slices dim 1 of a 3D expert tensor.
-// Used for splitting fused gate_up_proj into separate gate and up tensors.
-func (*gemma4Model) sliceExperts(dim1Slice tensor.Slice) Repacker {
-	return func(_ string, data []float32, shape []uint64) ([]float32, error) {
-		dims := make([]int, len(shape))
-		for i, d := range shape {
-			dims[i] = int(d)
-		}
-
-		var t tensor.Tensor = tensor.New(tensor.WithShape(dims...), tensor.WithBacking(data))
-		t, err := t.Slice(nil, dim1Slice)
-		if err != nil {
-			return nil, err
-		}
-
-		t = tensor.Materialize(t)
-		if err := t.Reshape(t.Shape().TotalSize()); err != nil {
-			return nil, err
-		}
-
-		return native.VectorF32(t.(*tensor.Dense))
-	}
-}
-
 // softplusRepacker applies softplus (ln(1 + exp(x))) to tensor data.
 // Used for per_dim_scale tensors which the published GGUF stores pre-activated.
 func softplusRepacker(_ string, data []float32, shape []uint64) ([]float32, error) {
@@ -548,6 +493,8 @@ func (p *gemma4Model) Replacements() []string {
 		"model.vision_tower.encoder.layers", "v.blk",
 		"model.vision_tower.patch_embedder.input_proj", "v.patch_embd",
 		"model.vision_tower.patch_embedder.position_embedding_table", "v.position_embd.weight",
+		"model.vision_tower.std_bias", "v.std_bias",
+		"model.vision_tower.std_scale", "v.std_scale",
 
 		// Vision multimodal projector
 		"model.embed_vision.embedding_projection", "mm.input_projection",
@@ -588,9 +535,19 @@ func (p *gemma4Model) Replacements() []string {
 		// MoE
 		"router.proj", "ffn_gate_inp",
 		"router.scale", "ffn_gate_inp.scale",
-		"router.per_expert_scale", "ffn_gate_inp.per_expert_scale",
-		"experts.gate_up_proj", "ffn_gate_exps.weight",
+		"router.per_expert_scale.weight", "ffn_down_exps.scale",
+		"router.per_expert_scale", "ffn_down_exps.scale",
+		"experts.gate_up_proj.weight", "ffn_gate_up_exps.weight",
+		"experts.gate_up_proj", "ffn_gate_up_exps.weight",
+		"experts.down_proj.weight", "ffn_down_exps.weight",
 		"experts.down_proj", "ffn_down_exps.weight",
+		"moe.gate_proj", "ffn_gate_exps.weight",
+		"moe.up_proj", "ffn_up_exps.weight",
+		"moe.gate_up_proj.weight", "ffn_gate_up_exps.weight",
+		"moe.gate_up_proj", "ffn_gate_up_exps.weight",
+		"moe.down_proj", "ffn_down_exps.weight",
+		"moe.per_expert_scale.weight", "ffn_down_exps.scale",
+		"moe.per_expert_scale", "ffn_down_exps.scale",
 
 		// Layer scalar
 		"layer_scalar", "layer_output_scale.weight",
