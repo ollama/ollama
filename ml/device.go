@@ -150,8 +150,14 @@ type DeviceMemory struct {
 	// may not be persistent across instances of the runner.
 	Name string
 
-	// Weights is the per-layer memory needed for the model weights.
+	// Weights is the per-layer memory needed for the model weights,
+	// excluding expert weights which are tracked separately.
 	Weights []uint64
+
+	// ExpertWeights is the per-layer memory needed for MOE expert
+	// weights (ffn_gate_exps, ffn_up_exps, ffn_down_exps). These are
+	// tracked separately to enable selective offloading to CPU.
+	ExpertWeights []uint64
 
 	// Cache is the per-layer memory needed for the KV cache.
 	Cache []uint64
@@ -172,7 +178,7 @@ func sumMemory(mem []uint64) uint64 {
 
 // Size returns the total size of the memory required by this device
 func (m DeviceMemory) Size() uint64 {
-	return sumMemory(m.Weights) + sumMemory(m.Cache) + m.Graph
+	return sumMemory(m.Weights) + sumMemory(m.ExpertWeights) + sumMemory(m.Cache) + m.Graph
 }
 
 func memoryPresent(mem []uint64) bool {
@@ -183,6 +189,10 @@ func (m DeviceMemory) LogValue() slog.Value {
 	var attrs []slog.Attr
 	if memoryPresent(m.Weights) {
 		attrs = append(attrs, slog.Any("Weights", m.Weights))
+	}
+
+	if memoryPresent(m.ExpertWeights) {
+		attrs = append(attrs, slog.Any("ExpertWeights", m.ExpertWeights))
 	}
 
 	if memoryPresent(m.Cache) {
@@ -240,9 +250,17 @@ func (m BackendMemory) Log(level slog.Level) {
 			slog.Log(context.TODO(), level, "model weights", "device", gpu.Name, "size", format.HumanBytes2(sum))
 			total += sum
 		}
+		if sum := sumMemory(gpu.ExpertWeights); sum > 0 {
+			slog.Log(context.TODO(), level, "expert weights", "device", gpu.Name, "size", format.HumanBytes2(sum))
+			total += sum
+		}
 	}
 	if sum := m.InputWeights + sumMemory(m.CPU.Weights); sum > 0 {
 		slog.Log(context.TODO(), level, "model weights", "device", m.CPU.Name, "size", format.HumanBytes2(sum))
+		total += sum
+	}
+	if sum := sumMemory(m.CPU.ExpertWeights); sum > 0 {
+		slog.Log(context.TODO(), level, "expert weights", "device", m.CPU.Name, "size", format.HumanBytes2(sum))
 		total += sum
 	}
 

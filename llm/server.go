@@ -480,6 +480,7 @@ type LoadRequest struct {
 	KvCacheType    string
 	NumThreads     int
 	GPULayers      ml.GPULayersList
+	ExpertOffload  []int
 	MultiUserCache bool
 
 	// Legacy fields - not used with the Ollama engine
@@ -502,15 +503,17 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 
 	// Synthesize memory allocation information based on our estimates
 	s.mem = &ml.BackendMemory{CPU: ml.DeviceMemory{
-		Name:    "CPU",
-		Weights: make([]uint64, s.totalLayers),
-		Cache:   make([]uint64, s.totalLayers),
+		Name:          "CPU",
+		Weights:       make([]uint64, s.totalLayers),
+		ExpertWeights: make([]uint64, s.totalLayers),
+		Cache:         make([]uint64, s.totalLayers),
 	}, GPUs: make([]ml.DeviceMemory, len(gpus))}
 
 	for i := range s.mem.GPUs {
 		s.mem.GPUs[i].Name = gpus[i].Name
 		s.mem.GPUs[i].DeviceID = gpus[i].DeviceID
 		s.mem.GPUs[i].Weights = make([]uint64, s.totalLayers)
+		s.mem.GPUs[i].ExpertWeights = make([]uint64, s.totalLayers)
 		s.mem.GPUs[i].Cache = make([]uint64, s.totalLayers)
 	}
 
@@ -619,7 +622,7 @@ func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, system
 		prevGPULayers := gpuLayers
 
 		var err error
-		gpuLayers, err = s.createLayout(systemInfo, gpus, s.mem, requireFull, 0)
+		gpuLayers, _, err = s.createLayout(systemInfo, gpus, s.mem, requireFull, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -761,7 +764,7 @@ func (s *ollamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus 
 	pastAllocations := make(map[uint64]struct{})
 	var backoff float32
 
-	gpuLayers, err := s.createLayout(systemInfo, gpus, s.mem, requireFull, backoff)
+	gpuLayers, expertOffload, err := s.createLayout(systemInfo, gpus, s.mem, requireFull, backoff)
 	if err != nil {
 		return nil, err
 	}
@@ -775,6 +778,7 @@ nextOperation:
 	nextLoad:
 		for {
 			s.loadRequest.GPULayers = gpuLayers
+			s.loadRequest.ExpertOffload = expertOffload
 			resp, err := s.initModel(ctx, s.loadRequest, operation)
 			if err != nil {
 				return nil, err
@@ -787,12 +791,17 @@ nextOperation:
 			s.mem = &resp.Memory
 
 			for {
-				newGPULayers, err := s.createLayout(systemInfo, gpus, s.mem, requireFull, backoff)
+				newGPULayers, newExpertOffload, err := s.createLayout(systemInfo, gpus, s.mem, requireFull, backoff)
 				if err != nil {
 					return nil, err
 				}
 
-				slog.Debug("new layout created", "layers", newGPULayers)
+				slog.Debug("new layout created", "layers", newGPULayers, "expert_offload", len(newExpertOffload))
+
+				// ExpertOffload is derived from the current memory data and may change
+				// even when GPULayers converges (e.g., first probe has no expert data,
+				// second probe has real expert weights). Always keep it in sync.
+				expertOffload = newExpertOffload
 
 				// We get additional memory information over time, which will reduce the number of
 				// layers that can fit, so fewer layers is actually better. As long as we haven't seen
@@ -820,7 +829,7 @@ nextOperation:
 						slog.Debug("exploring intermediate layers", "layer", i)
 
 						s.options.NumGPU = i
-						newGPULayers, err = s.createLayout(systemInfo, gpus, s.mem, requireFull, backoff)
+						newGPULayers, newExpertOffload, err = s.createLayout(systemInfo, gpus, s.mem, requireFull, backoff)
 						s.options.NumGPU = -1
 						if err != nil {
 							return nil, err
@@ -828,6 +837,7 @@ nextOperation:
 						slog.Debug("new layout created", "layers", newGPULayers)
 
 						s.loadRequest.GPULayers = newGPULayers
+						s.loadRequest.ExpertOffload = newExpertOffload
 						resp, err = s.initModel(ctx, s.loadRequest, operation)
 						if err != nil {
 							return nil, err
@@ -837,7 +847,7 @@ nextOperation:
 						slog.Debug("memory", "success", resp.Success, "required", resp.Memory)
 
 						if resp.Success {
-							verifyGPULayers, err := s.createLayout(systemInfo, gpus, &resp.Memory, requireFull, backoff)
+							verifyGPULayers, verifyExpertOffload, err := s.createLayout(systemInfo, gpus, &resp.Memory, requireFull, backoff)
 							if err != nil {
 								return nil, err
 							}
@@ -846,6 +856,7 @@ nextOperation:
 
 							if newGPULayers.Sum() <= verifyGPULayers.Sum() {
 								gpuLayers = newGPULayers
+								expertOffload = verifyExpertOffload
 
 								// Since we are going backwards (increasing the number of layers), ensure that
 								// we can come back down if needed
@@ -884,6 +895,7 @@ nextOperation:
 	}
 
 	s.loadRequest.GPULayers = gpuLayers
+	s.loadRequest.ExpertOffload = expertOffload
 	resp, err := s.initModel(ctx, s.loadRequest, LoadOperationCommit)
 	if err != nil {
 		return nil, err
@@ -923,61 +935,77 @@ func uniqueDeviceIDs(gpuLayers ml.GPULayersList) []ml.DeviceID {
 // - Calculating how much space each GPU has available for layers, based on free memory and space occupied by the graph
 // - Assigning layers
 // - Ensuring that we don't exceed limits, such as requirements about partial offloading or system memory
-func (s *llmServer) createLayout(systemInfo ml.SystemInfo, systemGPUs []ml.DeviceInfo, memory *ml.BackendMemory, requireFull bool, backoff float32) (ml.GPULayersList, error) {
+func (s *llmServer) createLayout(systemInfo ml.SystemInfo, systemGPUs []ml.DeviceInfo, memory *ml.BackendMemory, requireFull bool, backoff float32) (ml.GPULayersList, []int, error) {
 	if memory == nil {
 		memory = &ml.BackendMemory{CPU: ml.DeviceMemory{
-			Weights: make([]uint64, s.totalLayers),
-			Cache:   make([]uint64, s.totalLayers),
+			Weights:       make([]uint64, s.totalLayers),
+			ExpertWeights: make([]uint64, s.totalLayers),
+			Cache:         make([]uint64, s.totalLayers),
 		}}
 	}
-	gpuLayers, layers := s.buildLayout(systemGPUs, memory, requireFull, backoff)
-	err := s.verifyLayout(systemInfo, systemGPUs, memory, requireFull, gpuLayers, layers)
+	gpuLayers, expertOffload, layers := s.buildLayout(systemGPUs, memory, requireFull, backoff)
+	err := s.verifyLayout(systemInfo, systemGPUs, memory, requireFull, gpuLayers, expertOffload, layers)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return gpuLayers, nil
+	return gpuLayers, expertOffload, nil
 }
 
-func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMemory, requireFull bool, backoff float32) (ml.GPULayersList, []uint64) {
+func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMemory, requireFull bool, backoff float32) (ml.GPULayersList, []int, []uint64) {
 	gpus := append(make([]ml.DeviceInfo, 0, len(systemGPUs)), systemGPUs...)
 	sort.Sort(sort.Reverse(ml.ByFreeMemory(gpus)))
 
+	// Compute full layer sizes (base weights + expert weights + cache)
 	layers := make([]uint64, len(memory.CPU.Weights))
 	for i := range layers {
 		for j := range memory.GPUs {
 			layers[i] += memory.GPUs[j].Weights[i]
+			layers[i] += memory.GPUs[j].ExpertWeights[i]
 			layers[i] += memory.GPUs[j].Cache[i]
 		}
 		layers[i] += memory.CPU.Weights[i]
+		layers[i] += memory.CPU.ExpertWeights[i]
 		layers[i] += memory.CPU.Cache[i]
 		logutil.Trace("layer to assign", "layer", i, "size", format.HumanBytes2(layers[i]))
 	}
 
-	gpuLayers := ml.GPULayersList{}
-	for _, gl := range ml.ByLibrary(gpus) {
-		// If a GPU already has a graph allocated on it, then we should continue to use it.
-		// Otherwise, we lose information that we got from previous allocations, which can
-		// cause cycling. Plus, we get more information about required allocation from each
-		// iteration, so it doesn't make sense that a later iteration would use fewer GPUs.
+	// Compute per-layer expert weight sizes for potential offloading
+	expertSizes := make([]uint64, len(layers))
+	hasExperts := false
+	for i := range expertSizes {
+		for j := range memory.GPUs {
+			expertSizes[i] += memory.GPUs[j].ExpertWeights[i]
+		}
+		expertSizes[i] += memory.CPU.ExpertWeights[i]
+		if expertSizes[i] > 0 {
+			hasExperts = true
+		}
+	}
+
+	// adjustGPUs computes available VRAM per GPU after reserving overhead.
+	// Returns the adjusted GPU list and lastUsedGPU index.
+	adjustGPUs := func(gl []ml.DeviceInfo) ([]ml.DeviceInfo, int) {
+		adjusted := make([]ml.DeviceInfo, len(gl))
+		copy(adjusted, gl)
 		lastUsedGPU := 0
-		for i := range gl {
+		for i := range adjusted {
 			found := false
 			for j := range memory.GPUs {
-				if gl[i].DeviceID == memory.GPUs[j].DeviceID {
+				if adjusted[i].DeviceID == memory.GPUs[j].DeviceID {
 					if memory.GPUs[j].Graph != 0 {
 						lastUsedGPU = i
 					}
 
-					reserved := uint64(float32(gl[i].FreeMemory)*backoff) + gl[i].MinimumMemory() + envconfig.GpuOverhead() + memory.GPUs[j].Graph
-					if gl[i].FreeMemory > reserved {
-						gl[i].FreeMemory -= reserved
+					reserved := uint64(float32(adjusted[i].FreeMemory)*backoff) + adjusted[i].MinimumMemory() + envconfig.GpuOverhead() + memory.GPUs[j].Graph
+					if adjusted[i].FreeMemory > reserved {
+						adjusted[i].FreeMemory -= reserved
 					} else {
-						gl[i].FreeMemory = 0
+						adjusted[i].FreeMemory = 0
 					}
 
-					slog.Debug("available gpu", "id", gl[i].ID, "library", gl[i].Library,
-						"available layer vram", format.HumanBytes2(gl[i].FreeMemory),
-						"backoff", fmt.Sprintf("%.2f", backoff), "minimum", format.HumanBytes2(gl[i].MinimumMemory()),
+					slog.Debug("available gpu", "id", adjusted[i].ID, "library", adjusted[i].Library,
+						"available layer vram", format.HumanBytes2(adjusted[i].FreeMemory),
+						"backoff", fmt.Sprintf("%.2f", backoff), "minimum", format.HumanBytes2(adjusted[i].MinimumMemory()),
 						"overhead", format.HumanBytes2(envconfig.GpuOverhead()),
 						"graph", format.HumanBytes2(memory.GPUs[j].Graph))
 
@@ -986,21 +1014,124 @@ func (s *llmServer) buildLayout(systemGPUs []ml.DeviceInfo, memory *ml.BackendMe
 				}
 			}
 			if !found {
-				// The runner doesn't report seeing this GPU
-				gl[i].FreeMemory = 0
+				adjusted[i].FreeMemory = 0
 			}
 		}
+		return adjusted, lastUsedGPU
+	}
 
-		libraryGpuLayers := assignLayers(layers, gl, requireFull, s.options.NumGPU, lastUsedGPU)
+	// Pass 1: standard assignment with full layer sizes
+	gpuLayers := ml.GPULayersList{}
+	for _, gl := range ml.ByLibrary(gpus) {
+		adjusted, lastUsedGPU := adjustGPUs(gl)
+		libraryGpuLayers := assignLayers(layers, adjusted, requireFull, s.options.NumGPU, lastUsedGPU)
 		if libraryGpuLayers.Sum() > gpuLayers.Sum() {
 			gpuLayers = libraryGpuLayers
 		}
 	}
-	return gpuLayers, layers
+
+	// Pass 2: if not all layers fit and model has expert weights,
+	// use remaining VRAM after pass 1 to fit additional layers at
+	// base-only sizes (expert weights offloaded to CPU).
+	//
+	// We can't run assignLayers independently with base-only sizes
+	// because the pass 1 layers keep their full sizes on GPU. Instead,
+	// compute remaining VRAM per GPU and greedily add base-only layers.
+	var expertOffload []int
+	if gpuLayers.Sum() < len(layers) && hasExperts {
+		// Build set of layers already assigned by pass 1
+		assignedLayers := make(map[int]bool)
+		for _, g := range gpuLayers {
+			for _, l := range g.Layers {
+				assignedLayers[l] = true
+			}
+		}
+
+		// Compute remaining VRAM per GPU after pass 1 assignments
+		type gpuRemaining struct {
+			deviceID  ml.DeviceID
+			remaining uint64
+		}
+		var gpuSpace []gpuRemaining
+		for _, gl := range ml.ByLibrary(gpus) {
+			adjusted, _ := adjustGPUs(gl)
+			for _, g := range adjusted {
+				var used uint64
+				for _, gls := range gpuLayers {
+					if gls.DeviceID == g.DeviceID {
+						for _, l := range gls.Layers {
+							used += layers[l]
+						}
+						break
+					}
+				}
+				if g.FreeMemory > used {
+					gpuSpace = append(gpuSpace, gpuRemaining{
+						deviceID:  g.DeviceID,
+						remaining: g.FreeMemory - used,
+					})
+				}
+			}
+		}
+
+		// Greedily add unassigned layers at base-only size (from end to start,
+		// matching greedyFit's order) using remaining VRAM
+		for i := len(layers) - 1; i >= 0; i-- {
+			if assignedLayers[i] || expertSizes[i] == 0 {
+				continue
+			}
+			baseSize := layers[i] - expertSizes[i]
+			for gi := range gpuSpace {
+				if baseSize <= gpuSpace[gi].remaining {
+					// Add this layer to the GPU's assignment with expert offload
+					found := false
+					for gIdx := range gpuLayers {
+						if gpuLayers[gIdx].DeviceID == gpuSpace[gi].deviceID {
+							gpuLayers[gIdx].Layers = append(gpuLayers[gIdx].Layers, i)
+							found = true
+							break
+						}
+					}
+					if !found {
+						gpuLayers = append(gpuLayers, ml.GPULayers{
+							DeviceID: gpuSpace[gi].deviceID,
+							Layers:   []int{i},
+						})
+					}
+					gpuSpace[gi].remaining -= baseSize
+					expertOffload = append(expertOffload, i)
+					break
+				}
+			}
+		}
+
+		if len(expertOffload) > 0 {
+			slog.Info("moe expert offloading enabled",
+				"layers_with_expert_offload", len(expertOffload),
+				"total_gpu_layers", gpuLayers.Sum(),
+				"without_offload", gpuLayers.Sum()-len(expertOffload))
+		}
+	}
+
+	return gpuLayers, expertOffload, layers
 }
 
 // verifyLayout ensures that we don't exceed limits, such as requirements about partial offloading or system memory
-func (s *llmServer) verifyLayout(systemInfo ml.SystemInfo, systemGPUs []ml.DeviceInfo, memory *ml.BackendMemory, requireFull bool, gpuLayers ml.GPULayersList, layers []uint64) error {
+func (s *llmServer) verifyLayout(systemInfo ml.SystemInfo, systemGPUs []ml.DeviceInfo, memory *ml.BackendMemory, requireFull bool, gpuLayers ml.GPULayersList, expertOffload []int, layers []uint64) error {
+	// Compute per-layer expert sizes for correct accounting
+	expertSizes := make([]uint64, len(layers))
+	for i := range expertSizes {
+		for j := range memory.GPUs {
+			expertSizes[i] += memory.GPUs[j].ExpertWeights[i]
+		}
+		expertSizes[i] += memory.CPU.ExpertWeights[i]
+	}
+
+	expertOffloadSet := make(map[int]bool, len(expertOffload))
+	for _, l := range expertOffload {
+		expertOffloadSet[l] = true
+	}
+
 	// These sizes will only increase as we go through additional iterations and get additional information.
 	cpuSize := memory.InputWeights + memory.CPU.Graph
 	var vramSize uint64
@@ -1018,7 +1149,13 @@ nextLayer:
 		for _, g := range gpuLayers {
 			for _, gl := range g.Layers {
 				if i == gl {
-					vramSize += layers[i]
+					if expertOffloadSet[i] {
+						// Layer is on GPU but expert weights are offloaded to CPU
+						vramSize += layers[i] - expertSizes[i]
+						cpuSize += expertSizes[i]
+					} else {
+						vramSize += layers[i]
+					}
 					continue nextLayer
 				}
 			}
@@ -1865,7 +2002,7 @@ func (s *llmServer) MemorySize() (total, vram uint64) {
 	// on the GPU then include the CPU components as well, to represent complete offloading.
 	noCPULayers := true
 	for i := range s.mem.CPU.Weights {
-		if s.mem.CPU.Weights[i] != 0 || s.mem.CPU.Cache[i] != 0 {
+		if s.mem.CPU.Weights[i] != 0 || s.mem.CPU.ExpertWeights[i] != 0 || s.mem.CPU.Cache[i] != 0 {
 			noCPULayers = false
 			break
 		}

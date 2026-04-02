@@ -195,8 +195,9 @@ func TestLLMServerFitGPU(t *testing.T) {
 			}
 
 			s.mem = &ml.BackendMemory{CPU: ml.DeviceMemory{
-				Weights: make([]uint64, s.totalLayers),
-				Cache:   make([]uint64, s.totalLayers),
+				Weights:       make([]uint64, s.totalLayers),
+				ExpertWeights: make([]uint64, s.totalLayers),
+				Cache:         make([]uint64, s.totalLayers),
 			}, GPUs: make([]ml.DeviceMemory, len(tt.gpus))}
 
 			for i := range tt.layers {
@@ -206,10 +207,11 @@ func TestLLMServerFitGPU(t *testing.T) {
 			for i := range s.mem.GPUs {
 				s.mem.GPUs[i].DeviceID = tt.gpus[i].DeviceID
 				s.mem.GPUs[i].Weights = make([]uint64, s.totalLayers)
+				s.mem.GPUs[i].ExpertWeights = make([]uint64, s.totalLayers)
 				s.mem.GPUs[i].Cache = make([]uint64, s.totalLayers)
 			}
 
-			gpuLayers, err := s.createLayout(systemInfo, tt.gpus, s.mem, tt.requireFull, 0)
+			gpuLayers, _, err := s.createLayout(systemInfo, tt.gpus, s.mem, tt.requireFull, 0)
 			if err != tt.expectedErr {
 				t.Fatalf("fitGPU returned error: %v", err)
 			}

@@ -69,6 +69,12 @@ type BackendParams struct {
 	// GPULayers is the set of layers to offload to GPUs
 	GPULayers GPULayersList
 
+	// ExpertOffload is a set of layer indices whose MOE expert weights
+	// should be placed on CPU even though the layer itself is on GPU.
+	// This enables partial layer offloading where attention/routing stays
+	// on GPU but large expert weights go to CPU to save VRAM.
+	ExpertOffload []int
+
 	// FlashAttention indicates that we should use a fused flash attention kernel
 	FlashAttention FlashAttentionType
 }

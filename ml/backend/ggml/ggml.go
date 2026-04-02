@@ -175,6 +175,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	requiredMemory.CPU.ID = C.GoString(props.id)
 	requiredMemory.CPU.Library = C.GoString(props.library)
 	requiredMemory.CPU.Weights = make([]uint64, blocks+1)
+	requiredMemory.CPU.ExpertWeights = make([]uint64, blocks+1)
 	requiredMemory.CPU.Cache = make([]uint64, blocks+1)
 
 	// create list of buffer types for each gpu
@@ -194,13 +195,29 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		requiredMemory.GPUs[i].ID = C.GoString(props.id)
 		requiredMemory.GPUs[i].Library = C.GoString(props.library)
 		requiredMemory.GPUs[i].Weights = make([]uint64, blocks+1)
+		requiredMemory.GPUs[i].ExpertWeights = make([]uint64, blocks+1)
 		requiredMemory.GPUs[i].Cache = make([]uint64, blocks+1)
 	}
 
 	// inputs always use cpu
 	input := cpuDeviceBufferType
 
-	assignLayer := func(layer int) deviceBufferType {
+	isExpertTensor := func(name string) bool {
+		for _, part := range strings.Split(name, ".") {
+			switch part {
+			case "ffn_gate_exps", "ffn_up_exps", "ffn_down_exps":
+				return true
+			}
+		}
+		return false
+	}
+
+	assignLayer := func(layer int, expert bool) deviceBufferType {
+		// Expert tensors on offloaded layers are forced to CPU
+		if expert && slices.Contains(params.ExpertOffload, layer) {
+			return cpuDeviceBufferType
+		}
+
 		for _, p := range params.GPULayers {
 			for _, l := range p.Layers {
 				if l == layer {
@@ -221,11 +238,11 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	// repeating layers are assigned based on their index in reverse order, e.g. i / (block_count + 1)
 	layers := make([]deviceBufferType, blocks)
 	for i := range layers {
-		layers[i] = assignLayer(i)
+		layers[i] = assignLayer(i, false)
 	}
 
 	// outputs are assigned iff allowed by splits and configured number of gpu layers
-	output := assignLayer(blocks)
+	output := assignLayer(blocks, false)
 
 	maxTensors := len(meta.Tensors().Items())
 	maxTensors += 1
@@ -281,6 +298,8 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			size := pad(C.ggml_backend_buft_get_alloc_size(bt, tt), C.ggml_backend_buft_get_alignment(bt))
 			if layer == -1 {
 				requiredMemory.InputWeights += uint64(size)
+			} else if isExpertTensor(t.source.Name) {
+				btDeviceMemory[bt].ExpertWeights[layer] += uint64(size)
 			} else {
 				btDeviceMemory[bt].Weights[layer] += uint64(size)
 			}
@@ -334,7 +353,11 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			}
 
 			if layerIndex >= 0 {
-				createTensor(tensor{source: t}, layers[layerIndex].bts, layerIndex)
+				lt := layers[layerIndex]
+				if isExpertTensor(t.Name) {
+					lt = assignLayer(layerIndex, true)
+				}
+				createTensor(tensor{source: t}, lt.bts, layerIndex)
 			} else {
 				// load all other tensors on the cpu
 				createTensor(tensor{source: t}, input.bts, -1)
