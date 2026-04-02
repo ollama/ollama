@@ -407,6 +407,7 @@ func (p *Parser) UnmatchedToolNames() []string {
 	seen := make(map[string]bool)
 
 	// scan for complete JSON objects and extract "name" fields
+	// only consider objects with both "name" and ("arguments" or "parameters")
 	var inString, escaped bool
 	var braces int
 	start := -1
@@ -441,7 +442,9 @@ func (p *Parser) UnmatchedToolNames() []string {
 				var obj map[string]any
 				if err := json.Unmarshal(p.buffer[start:i+1], &obj); err == nil {
 					if name, ok := obj["name"].(string); ok && name != "" {
-						if !registered[name] && !seen[name] {
+						// require both name and (arguments or parameters) to be a tool call
+						hasArgs := obj["arguments"] != nil || obj["parameters"] != nil
+						if hasArgs && !registered[name] && !seen[name] {
 							unmatched = append(unmatched, name)
 							seen[name] = true
 						}
