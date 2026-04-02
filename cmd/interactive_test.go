@@ -79,9 +79,10 @@ func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	}
 
 	input := "before '" + fp + "' after"
-	cleaned, imgs, err := extractFileData(input)
+	cleaned, imgs, audios, err := extractFileData(input)
 	assert.NoError(t, err)
 	assert.Len(t, imgs, 1)
+	assert.Len(t, audios, 0)
 	assert.Equal(t, cleaned, "before  after")
 }
 
@@ -109,8 +110,9 @@ func TestExtractFileDataWAV(t *testing.T) {
 	}
 
 	input := "before " + fp + " after"
-	cleaned, imgs, err := extractFileData(input)
+	cleaned, imgs, audios, err := extractFileData(input)
 	assert.NoError(t, err)
-	assert.Len(t, imgs, 1)
+	assert.Len(t, imgs, 0)
+	assert.Len(t, audios, 1)
 	assert.Equal(t, "before  after", cleaned)
 }

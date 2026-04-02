@@ -218,6 +218,32 @@ func TestChatPrompt(t *testing.T) {
 			},
 		},
 		{
+			name:     "message with audios",
+			model:    visionModel,
+			limit:    2048,
+			truncate: true,
+			msgs: []api.Message{
+				{Role: "user", Content: "Transcribe this audio", Audios: []api.ImageData{[]byte("audio-data")}},
+			},
+			expect: expect{
+				prompt: "[img-0]Transcribe this audio ",
+				images: [][]byte{[]byte("audio-data")},
+			},
+		},
+		{
+			name:     "message with images and audios merged",
+			model:    visionModel,
+			limit:    2048,
+			truncate: true,
+			msgs: []api.Message{
+				{Role: "user", Content: "Describe both", Images: []api.ImageData{[]byte("image-data")}, Audios: []api.ImageData{[]byte("audio-data")}},
+			},
+			expect: expect{
+				prompt: "[img-0][img-1]Describe both ",
+				images: [][]byte{[]byte("image-data"), []byte("audio-data")},
+			},
+		},
+		{
 			name:     "no truncate with limit exceeded",
 			model:    visionModel,
 			limit:    10,

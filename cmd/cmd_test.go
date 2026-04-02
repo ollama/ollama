@@ -1821,6 +1821,7 @@ func TestRunOptions_Copy_EmptySlicesAndMaps(t *testing.T) {
 	original := runOptions{
 		Messages: []api.Message{},
 		Images:   []api.ImageData{},
+		Audios:   []api.ImageData{},
 		Options:  map[string]any{},
 	}
 
@@ -1834,6 +1835,10 @@ func TestRunOptions_Copy_EmptySlicesAndMaps(t *testing.T) {
 		t.Error("Empty Images slice should remain empty, not nil")
 	}
 
+	if copied.Audios == nil {
+		t.Error("Empty Audios slice should remain empty, not nil")
+	}
+
 	if copied.Options == nil {
 		t.Error("Empty Options map should remain empty, not nil")
 	}
@@ -1844,6 +1849,10 @@ func TestRunOptions_Copy_EmptySlicesAndMaps(t *testing.T) {
 
 	if len(copied.Images) != 0 {
 		t.Error("Empty Images slice should remain empty")
+	}
+
+	if len(copied.Audios) != 0 {
+		t.Error("Empty Audios slice should remain empty")
 	}
 
 	if len(copied.Options) != 0 {
