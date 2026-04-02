@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -785,7 +786,11 @@ func TestFindOpencode(t *testing.T) {
 		// Create a fake binary at the curl install fallback location
 		binDir := filepath.Join(tmpDir, ".opencode", "bin")
 		os.MkdirAll(binDir, 0o755)
-		fakeBin := filepath.Join(binDir, "opencode")
+		name := "opencode"
+		if runtime.GOOS == "windows" {
+			name = "opencode.exe"
+		}
+		fakeBin := filepath.Join(binDir, name)
 		os.WriteFile(fakeBin, []byte("#!/bin/sh\n"), 0o755)
 
 		// Now findOpencode should succeed via fallback
