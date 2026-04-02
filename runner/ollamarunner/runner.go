@@ -887,6 +887,19 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		defer grammar.Free()
 	}
 
+	repeatLineWindow := req.Options.RepeatLineWindow
+	if repeatLineWindow == 0 {
+		repeatLineWindow = 100
+	}
+	repeatLineTempBoost := req.Options.RepeatLineTempBoost
+	if repeatLineTempBoost == 0 {
+		repeatLineTempBoost = 0.5
+	}
+	repeatLineMinLength := req.Options.RepeatLineMinLength
+	if repeatLineMinLength == 0 {
+		repeatLineMinLength = 20
+	}
+
 	sampler := sample.NewSampler(
 		req.Options.Temperature,
 		req.Options.TopK,
@@ -894,6 +907,11 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		req.Options.MinP,
 		req.Options.Seed,
 		grammar,
+		s.model.(tokenizer.Tokenizer),
+		repeatLineWindow,
+		req.Options.RepeatLineDelimiters,
+		repeatLineTempBoost,
+		repeatLineMinLength,
 	)
 
 	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
