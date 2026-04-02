@@ -56,14 +56,15 @@ func (c *fakeRewindableCache) feed(tokens []int32) {
 func (c *fakeRewindableCache) Update(_ *batch.ForwardBatch, keys, values *mlx.Array) (*mlx.Array, *mlx.Array, mlx.KVHistory) {
 	return nil, nil, mlx.KVHistory{}
 }
-func (c *fakeRewindableCache) State() []*mlx.Array { return nil }
-func (c *fakeRewindableCache) Offsets() []int32 { return []int32{int32(len(c.tokens))} }
+func (c *fakeRewindableCache) State() []*mlx.Array      { return nil }
+func (c *fakeRewindableCache) Offsets(_ ...int) []int32 { return []int32{int32(len(c.tokens))} }
 
 func (c *fakeRewindableCache) Free() {
 	c.tokens = nil
 }
+func (c *fakeRewindableCache) SetSeqs(seqIDs []int) {}
 
-func (c *fakeRewindableCache) Snapshot(fromOffset int) cache.Snapshot {
+func (c *fakeRewindableCache) Snapshot(seqID int, fromOffset int) cache.Snapshot {
 	if fromOffset >= len(c.tokens) {
 		return nil
 	}
@@ -80,7 +81,7 @@ func (c *fakeRewindableCache) Snapshot(fromOffset int) cache.Snapshot {
 	return s
 }
 
-func (c *fakeRewindableCache) Restore(snapshot cache.Snapshot, target int) bool {
+func (c *fakeRewindableCache) Restore(seqID int, snapshot cache.Snapshot, target int) bool {
 	if target < 0 {
 		return false
 	}
@@ -176,14 +177,15 @@ func (c *fakeSlidingWindowCache) feed(tokens []int32) {
 func (c *fakeSlidingWindowCache) Update(_ *batch.ForwardBatch, keys, values *mlx.Array) (*mlx.Array, *mlx.Array, mlx.KVHistory) {
 	return nil, nil, mlx.KVHistory{}
 }
-func (c *fakeSlidingWindowCache) State() []*mlx.Array { return nil }
-func (c *fakeSlidingWindowCache) Offsets() []int32 { return []int32{int32(len(c.tokens))} }
+func (c *fakeSlidingWindowCache) State() []*mlx.Array      { return nil }
+func (c *fakeSlidingWindowCache) Offsets(_ ...int) []int32 { return []int32{int32(len(c.tokens))} }
 
 func (c *fakeSlidingWindowCache) Free() {
 	c.tokens = nil
 }
+func (c *fakeSlidingWindowCache) SetSeqs(seqIDs []int) {}
 
-func (c *fakeSlidingWindowCache) Snapshot(fromOffset int) cache.Snapshot {
+func (c *fakeSlidingWindowCache) Snapshot(seqID int, fromOffset int) cache.Snapshot {
 	if len(c.tokens) == 0 || len(c.tokens) <= fromOffset {
 		return nil
 	}
@@ -197,7 +199,7 @@ func (c *fakeSlidingWindowCache) Snapshot(fromOffset int) cache.Snapshot {
 	return s
 }
 
-func (c *fakeSlidingWindowCache) Restore(snapshot cache.Snapshot, target int) bool {
+func (c *fakeSlidingWindowCache) Restore(seqID int, snapshot cache.Snapshot, target int) bool {
 	if target < 0 {
 		return false
 	}
@@ -256,14 +258,15 @@ func (c *fakeRecurrentCache) feed(tokens []int32) {
 func (c *fakeRecurrentCache) Update(_ *batch.ForwardBatch, keys, values *mlx.Array) (*mlx.Array, *mlx.Array, mlx.KVHistory) {
 	return nil, nil, mlx.KVHistory{}
 }
-func (c *fakeRecurrentCache) State() []*mlx.Array { return nil }
-func (c *fakeRecurrentCache) Offsets() []int32 { return []int32{int32(len(c.tokens))} }
+func (c *fakeRecurrentCache) State() []*mlx.Array      { return nil }
+func (c *fakeRecurrentCache) Offsets(_ ...int) []int32 { return []int32{int32(len(c.tokens))} }
 
 func (c *fakeRecurrentCache) Free() {
 	c.tokens = nil
 }
+func (c *fakeRecurrentCache) SetSeqs(seqIDs []int) {}
 
-func (c *fakeRecurrentCache) Snapshot(fromOffset int) cache.Snapshot {
+func (c *fakeRecurrentCache) Snapshot(seqID int, fromOffset int) cache.Snapshot {
 	// Recurrent state is cumulative; snapshot captures the full state.
 	if len(c.tokens) == 0 {
 		return nil
@@ -277,7 +280,7 @@ func (c *fakeRecurrentCache) Snapshot(fromOffset int) cache.Snapshot {
 	return s
 }
 
-func (c *fakeRecurrentCache) Restore(snapshot cache.Snapshot, target int) bool {
+func (c *fakeRecurrentCache) Restore(seqID int, snapshot cache.Snapshot, target int) bool {
 	if snapshot == nil {
 		return target == len(c.tokens) // can only no-op
 	}
@@ -367,9 +370,9 @@ func (e *testEnv) assertAllTokens(t *testing.T, label string, expected []int32) 
 	for i, c := range e.caches {
 		assertTokens(t, label, c, expected)
 		// Verify all caches report the same offset.
-		if i > 0 && int(c.Offsets()[0]) != int(e.caches[0].Offsets()[0]) {
+		if i > 0 && int(c.Offsets(0)[0]) != int(e.caches[0].Offsets(0)[0]) {
 			t.Errorf("%s: cache %d offset=%d != cache 0 offset=%d",
-				label, i, int(c.Offsets()[0]), int(e.caches[0].Offsets()[0]))
+				label, i, int(c.Offsets(0)[0]), int(e.caches[0].Offsets(0)[0]))
 		}
 	}
 }
@@ -452,9 +455,9 @@ func assertCacheOffsetAlignment(t *testing.T, kvc *kvCache, label string) {
 	if len(kvc.caches) < 2 {
 		return
 	}
-	expected := int(kvc.caches[0].Offsets()[0])
+	expected := int(kvc.caches[0].Offsets(0)[0])
 	for i := 1; i < len(kvc.caches); i++ {
-		if got := int(kvc.caches[i].Offsets()[0]); got != expected {
+		if got := int(kvc.caches[i].Offsets(0)[0]); got != expected {
 			t.Errorf("%s: cache %d offset=%d != cache 0 offset=%d", label, i, got, expected)
 		}
 	}

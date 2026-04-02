@@ -492,7 +492,7 @@ func (a *Attention) Forward(x *mlx.Array, b *batch.ForwardBatch, c cache.Cache, 
 		ropeTheta = cfg.RopeLocalBaseFreq
 	}
 
-	positions := batch.SequentialPositions(b, c.Offsets())
+	positions := batch.SequentialPositions(b, c.Offsets(b.SeqIDs...))
 	q = mlx.RoPEWithBase(q, int(cfg.HeadDim), false, ropeTheta, 1.0, positions)
 	k = mlx.RoPEWithBase(k, int(cfg.HeadDim), false, ropeTheta, 1.0, positions)
 

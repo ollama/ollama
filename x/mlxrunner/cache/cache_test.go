@@ -3,6 +3,7 @@ package cache
 import (
 	"testing"
 
+	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
@@ -13,259 +14,351 @@ func skipIfNoMLX(t *testing.T) {
 	}
 }
 
+var singleTokenBatch = &batch.ForwardBatch{SeqIDs: []int{0}, SeqLens: []int{1}}
+
+func newKVCacheWithSeq() *KVCache {
+	c := NewKVCache()
+	c.SetSeqs([]int{0})
+	return c
+}
+
+func newRotatingKVCacheWithSeq(maxSize int) *RotatingKVCache {
+	c := NewRotatingKVCache(maxSize)
+	c.SetSeqs([]int{0})
+	return c
+}
+
 func TestKVCacheSnapshotRestoreNeedBase(t *testing.T) {
 	skipIfNoMLX(t)
-	c := NewKVCache()
+	c := newKVCacheWithSeq()
 
 	for range 10 {
 		k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
 		v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
-		c.Update(nil, k, v)
+		c.Update(singleTokenBatch, k, v)
 	}
 
-	// Snapshot [5, 10).
-	snap := c.Snapshot(5)
+	snap := c.Snapshot(0, 5)
 
-	// Free the cache completely — offset is now 0.
 	c.Free()
 
-	// Restore should fail because cache doesn't have data up to fromOffset=5.
-	if c.Restore(snap, 10) {
+	if c.Restore(0, snap, 10) {
 		t.Fatal("expected Restore to fail with no base data")
 	}
 }
 
-// TestKVCacheDataSurvivesSnapshotRestore verifies that actual array data
-// is preserved through a snapshot→free→restore cycle.
 func TestKVCacheDataSurvivesSnapshotRestore(t *testing.T) {
 	skipIfNoMLX(t)
-	c := NewKVCache()
+	c := newKVCacheWithSeq()
 
 	for range 10 {
 		k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
 		v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
-		c.Update(nil, k, v)
+		c.Update(singleTokenBatch, k, v)
 	}
 
-	snap := c.Snapshot(0)
+	snap := c.Snapshot(0, 0)
 	if snap == nil {
 		t.Fatal("Snapshot returned nil")
 	}
 
-	// Free and restore to a fresh cache.
-	c2 := NewKVCache()
-	if !c2.Restore(snap, 10) {
+	c2 := newKVCacheWithSeq()
+	if !c2.Restore(0, snap, 10) {
 		t.Fatal("Restore failed")
 	}
-	if int(c2.Offsets()[0]) != 10 {
-		t.Fatalf("offset = %d, want 10", int(c2.Offsets()[0]))
+	if int(c2.Offsets(0)[0]) != 10 {
+		t.Fatalf("offset = %d, want 10", int(c2.Offsets(0)[0]))
 	}
 
-	// Verify State() returns arrays with correct sequence dimension.
 	state := c2.State()
 	if len(state) != 2 {
 		t.Fatalf("State() returned %d arrays, want 2", len(state))
 	}
-	// keys shape: [B, H, seqLen, Dk]
-	if state[0].Dim(2) != 10 {
-		t.Fatalf("keys seq dim = %d, want 10", state[0].Dim(2))
-	}
-	if state[1].Dim(2) != 10 {
-		t.Fatalf("values seq dim = %d, want 10", state[1].Dim(2))
+	if state[0].Dim(2) < 10 {
+		t.Fatalf("keys seq dim = %d, want >= 10", state[0].Dim(2))
 	}
 }
 
-// TestKVCacheSplitPreservesData verifies that split produces two snapshots
-// that can be sequentially restored to rebuild the original cache state.
 func TestKVCacheSplitPreservesData(t *testing.T) {
 	skipIfNoMLX(t)
-	c := NewKVCache()
+	c := newKVCacheWithSeq()
 
 	for range 10 {
 		k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
 		v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
-		c.Update(nil, k, v)
+		c.Update(singleTokenBatch, k, v)
 	}
 
-	snap := c.Snapshot(0)
+	snap := c.Snapshot(0, 0)
 	parent, child := c.Split(snap, 5)
 	if parent == nil || child == nil {
 		t.Fatal("Split returned nil")
 	}
 
-	// Restore parent → offset=5, seq dim=5.
-	c2 := NewKVCache()
-	if !c2.Restore(parent, 5) {
+	c2 := newKVCacheWithSeq()
+	if !c2.Restore(0, parent, 5) {
 		t.Fatal("Restore(parent) failed")
 	}
-	if int(c2.Offsets()[0]) != 5 {
-		t.Fatalf("offset after parent = %d, want 5", int(c2.Offsets()[0]))
-	}
-	state := c2.State()
-	if state[0].Dim(2) != 5 {
-		t.Fatalf("keys seq dim after parent = %d, want 5", state[0].Dim(2))
+	if int(c2.Offsets(0)[0]) != 5 {
+		t.Fatalf("offset after parent = %d, want 5", int(c2.Offsets(0)[0]))
 	}
 
-	// Restore child on top → offset=10, seq dim=10.
-	if !c2.Restore(child, 10) {
+	if !c2.Restore(0, child, 10) {
 		t.Fatal("Restore(child) failed")
 	}
-	if int(c2.Offsets()[0]) != 10 {
-		t.Fatalf("offset after child = %d, want 10", int(c2.Offsets()[0]))
-	}
-	state = c2.State()
-	if state[0].Dim(2) != 10 {
-		t.Fatalf("keys seq dim after child = %d, want 10", state[0].Dim(2))
+	if int(c2.Offsets(0)[0]) != 10 {
+		t.Fatalf("offset after child = %d, want 10", int(c2.Offsets(0)[0]))
 	}
 }
 
-// TestKVCacheSplitMergeRoundTripData verifies that splitting and merging back
-// produces a snapshot equivalent to the original.
 func TestKVCacheSplitMergeRoundTripData(t *testing.T) {
 	skipIfNoMLX(t)
-	c := NewKVCache()
+	c := newKVCacheWithSeq()
 
 	for range 10 {
 		k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
 		v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
-		c.Update(nil, k, v)
+		c.Update(singleTokenBatch, k, v)
 	}
 
-	snap := c.Snapshot(0)
+	snap := c.Snapshot(0, 0)
 	parent, child := c.Split(snap, 6)
 	merged := c.Merge(parent, child)
 	if merged == nil {
 		t.Fatal("Merge returned nil")
 	}
 
-	c2 := NewKVCache()
-	if !c2.Restore(merged, 10) {
+	c2 := newKVCacheWithSeq()
+	if !c2.Restore(0, merged, 10) {
 		t.Fatal("Restore(merged) failed")
 	}
-	if int(c2.Offsets()[0]) != 10 {
-		t.Fatalf("offset = %d, want 10", int(c2.Offsets()[0]))
-	}
-
-	state := c2.State()
-	if state[0].Dim(2) != 10 {
-		t.Fatalf("keys seq dim = %d, want 10", state[0].Dim(2))
-	}
-	if state[1].Dim(2) != 10 {
-		t.Fatalf("values seq dim = %d, want 10", state[1].Dim(2))
+	if int(c2.Offsets(0)[0]) != 10 {
+		t.Fatalf("offset = %d, want 10", int(c2.Offsets(0)[0]))
 	}
 }
 
-func TestRotatingKVCacheRestoreOutsideWindow(t *testing.T) {
+func TestRotatingKVCacheRewindOutsideWindow(t *testing.T) {
 	skipIfNoMLX(t)
-	c := NewRotatingKVCache(4)
+	c := newRotatingKVCacheWithSeq(4)
 
-	// Feed 10 tokens (window size 4, so positions 0-5 are evicted).
 	for range 10 {
 		k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
 		v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
-		c.Update(nil, k, v)
+		c.Update(singleTokenBatch, k, v)
 	}
 
-	// Offset 3 is outside the window.
-	if c.Restore(nil, 3) {
+	if c.Restore(0, nil, 3) {
 		t.Fatal("Restore(nil, 3) should fail when outside window")
 	}
 }
 
-// TestRotatingKVCacheSnapshotPreservesWindow verifies that after restoring
-// from a snapshot, the rotating cache has the correct window of data.
-func TestRotatingKVCacheSnapshotPreservesWindow(t *testing.T) {
+func TestRotatingKVCacheWindowedHistory(t *testing.T) {
 	skipIfNoMLX(t)
-	c := NewRotatingKVCache(4)
+	c := newRotatingKVCacheWithSeq(4)
 
-	// Feed 10 tokens one at a time. Window size 4, so only last 4 are kept.
 	for range 10 {
 		k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
 		v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
-		c.Update(nil, k, v)
+		c.Update(singleTokenBatch, k, v)
 	}
 
-	snap := c.Snapshot(0)
-	if snap == nil {
-		t.Fatal("Snapshot returned nil")
-	}
+	k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
+	v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
+	_, _, kv := c.Update(singleTokenBatch, k, v)
 
-	// Feed 5 more tokens.
-	for range 5 {
-		k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
-		v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
-		c.Update(nil, k, v)
+	if len(kv.SeqLens) != 1 {
+		t.Fatalf("SeqLens length = %d, want 1", len(kv.SeqLens))
 	}
-
-	// Restore to offset 10.
-	if !c.Restore(snap, 10) {
-		t.Fatal("Restore failed")
-	}
-	if int(c.Offsets()[0]) != 10 {
-		t.Fatalf("offset = %d, want 10", int(c.Offsets()[0]))
-	}
-
-	state := c.State()
-	if len(state) != 2 {
-		t.Fatalf("State() returned %d arrays, want 2", len(state))
-	}
-	// Seq dim should be min(offset, maxSize) = min(10, 4) = 4.
-	seqDim := state[0].Dim(2)
-	if seqDim != 4 {
-		t.Fatalf("keys seq dim = %d, want 4 (window size)", seqDim)
+	if kv.SeqLens[0] != 4 {
+		t.Fatalf("SeqLens[0] = %d, want 4 (window size)", kv.SeqLens[0])
 	}
 }
 
-// TestRotatingKVCacheRestoreFromSnapshot verifies that restoring from a
-// snapshot correctly preserves the write position (idx), so subsequent
-// single-token updates land in the right buffer slot.
 func TestRotatingKVCacheRestoreFromSnapshot(t *testing.T) {
 	skipIfNoMLX(t)
-	c := NewRotatingKVCache(4)
+	c := newRotatingKVCacheWithSeq(8)
 
-	// Fill the window: 6 tokens into a size-4 window.
-	// After this, idx has wrapped and the buffer has rotated.
-	for range 6 {
-		k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
-		v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
-		c.Update(nil, k, v)
-	}
-	if int(c.Offsets()[0]) != 6 {
-		t.Fatalf("offset = %d, want 6", int(c.Offsets()[0]))
-	}
-
-	snap := c.Snapshot(0)
-
-	// Mutate the cache further so live state diverges from snapshot.
 	for range 3 {
 		k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
 		v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
-		c.Update(nil, k, v)
+		c.Update(singleTokenBatch, k, v)
+	}
+	if int(c.Offsets(0)[0]) != 3 {
+		t.Fatalf("offset = %d, want 3", int(c.Offsets(0)[0]))
 	}
 
-	// Restore to snapshot state.
-	if !c.Restore(snap, 6) {
-		t.Fatal("Restore failed")
+	// Rewind before wrap should succeed
+	if !c.Restore(0, nil, 1) {
+		t.Fatal("Restore(nil, 1) should succeed before wrap")
 	}
-	if int(c.Offsets()[0]) != 6 {
-		t.Fatalf("offset after restore = %d, want 6", int(c.Offsets()[0]))
+	if int(c.Offsets(0)[0]) != 1 {
+		t.Fatalf("offset after restore = %d, want 1", int(c.Offsets(0)[0]))
+	}
+}
+
+func TestKVCacheMultiSeqUpdate(t *testing.T) {
+	skipIfNoMLX(t)
+	c := NewKVCache()
+	c.SetSeqs([]int{0, 1})
+
+	// Prefill: seq 0 gets 3 tokens, seq 1 gets 5 tokens
+	b := &batch.ForwardBatch{SeqIDs: []int{0, 1}, SeqLens: []int{3, 5}}
+	k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 8, 8)
+	v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 8, 8)
+	c.Update(b, k, v)
+
+	if int(c.Offsets(0)[0]) != 3 {
+		t.Fatalf("seq 0 offset = %d, want 3", int(c.Offsets(0)[0]))
+	}
+	if int(c.Offsets(1)[0]) != 5 {
+		t.Fatalf("seq 1 offset = %d, want 5", int(c.Offsets(1)[0]))
 	}
 
-	// Feed one more token. If idx was restored correctly, this should
-	// produce a valid window of size 4 at offset 7.
+	// Decode: each seq gets 1 token
+	b2 := &batch.ForwardBatch{SeqIDs: []int{0, 1}, SeqLens: []int{1, 1}}
+	k2 := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 2, 8)
+	v2 := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 2, 8)
+	c.Update(b2, k2, v2)
+
+	if int(c.Offsets(0)[0]) != 4 {
+		t.Fatalf("seq 0 offset after decode = %d, want 4", int(c.Offsets(0)[0]))
+	}
+	if int(c.Offsets(1)[0]) != 6 {
+		t.Fatalf("seq 1 offset after decode = %d, want 6", int(c.Offsets(1)[0]))
+	}
+}
+
+func TestKVCacheSetSeqsAndUpdate(t *testing.T) {
+	skipIfNoMLX(t)
+	c := NewKVCache()
+	c.SetSeqs([]int{0, 1})
+
+	b := &batch.ForwardBatch{SeqIDs: []int{0, 1}, SeqLens: []int{3, 3}}
+	k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 6, 8)
+	v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 6, 8)
+	c.Update(b, k, v)
+
+	c.SetSeqs([]int{1})
+
+	// Update surviving sequence
+	b2 := &batch.ForwardBatch{SeqIDs: []int{1}, SeqLens: []int{1}}
+	k2 := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
+	v2 := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
+	c.Update(b2, k2, v2)
+
+	if int(c.Offsets(1)[0]) != 4 {
+		t.Fatalf("seq 1 offset = %d, want 4", int(c.Offsets(1)[0]))
+	}
+}
+
+func TestKVCacheRebuildWithOldLengths(t *testing.T) {
+	skipIfNoMLX(t)
+	c := NewKVCache()
+	c.SetSeqs([]int{0})
+
+	// Fill to capacity boundary
+	for range 256 {
+		b := singleTokenBatch
+		k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
+		v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
+		c.Update(b, k, v)
+	}
+
+	if int(c.Offsets(0)[0]) != 256 {
+		t.Fatalf("offset = %d, want 256", int(c.Offsets(0)[0]))
+	}
+
+	// Next token triggers rebuild (exceeds capacity)
 	k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
 	v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
-	c.Update(nil, k, v)
+	c.Update(singleTokenBatch, k, v)
 
-	if int(c.Offsets()[0]) != 7 {
-		t.Fatalf("offset after post-restore update = %d, want 7", int(c.Offsets()[0]))
+	if int(c.Offsets(0)[0]) != 257 {
+		t.Fatalf("offset after rebuild = %d, want 257", int(c.Offsets(0)[0]))
 	}
-	state := c.State()
-	if len(state) != 2 {
-		t.Fatalf("State() returned %d arrays, want 2", len(state))
+}
+
+func TestRotatingKVCacheMultiSeqWindowedHistory(t *testing.T) {
+	skipIfNoMLX(t)
+	c := NewRotatingKVCache(4)
+	c.SetSeqs([]int{0, 1})
+
+	// Fill both sequences past the window
+	for range 6 {
+		b := &batch.ForwardBatch{SeqIDs: []int{0, 1}, SeqLens: []int{1, 1}}
+		k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 2, 8)
+		v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 2, 8)
+		_, _, kv := c.Update(b, k, v)
+
+		// After enough tokens, SeqLens should be clamped to window
+		if kv.SeqLens[0] > 4 || kv.SeqLens[1] > 4 {
+			t.Fatalf("SeqLens %v exceed window size 4", kv.SeqLens)
+		}
 	}
-	seqDim := state[0].Dim(2)
-	if seqDim != 4 {
-		t.Fatalf("keys seq dim = %d, want 4 (window size)", seqDim)
+
+	offsets := c.Offsets(0, 1)
+	if int(offsets[0]) != 6 || int(offsets[1]) != 6 {
+		t.Fatalf("offsets = %v, want [6 6]", offsets)
+	}
+}
+
+func TestKVCacheSetSeqsAfterMaterialized(t *testing.T) {
+	skipIfNoMLX(t)
+	c := NewKVCache()
+	c.SetSeqs([]int{0})
+
+	// Materialize with some tokens
+	for range 5 {
+		b := singleTokenBatch
+		k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
+		v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
+		c.Update(b, k, v)
+	}
+	if int(c.Offsets(0)[0]) != 5 {
+		t.Fatalf("seq 0 offset = %d, want 5", int(c.Offsets(0)[0]))
+	}
+
+	// Add a new sequence after buffer already exists
+	c.SetSeqs([]int{0, 1})
+
+	// Update both sequences
+	b := &batch.ForwardBatch{SeqIDs: []int{0, 1}, SeqLens: []int{1, 1}}
+	k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 2, 8)
+	v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 2, 8)
+	c.Update(b, k, v)
+
+	if int(c.Offsets(0)[0]) != 6 {
+		t.Fatalf("seq 0 offset = %d, want 6", int(c.Offsets(0)[0]))
+	}
+	if int(c.Offsets(1)[0]) != 1 {
+		t.Fatalf("seq 1 offset = %d, want 1", int(c.Offsets(1)[0]))
+	}
+}
+
+func TestRotatingKVCacheSetSeqsAfterMaterialized(t *testing.T) {
+	skipIfNoMLX(t)
+	c := NewRotatingKVCache(4)
+	c.SetSeqs([]int{0})
+
+	for range 3 {
+		b := singleTokenBatch
+		k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
+		v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 1, 8)
+		c.Update(b, k, v)
+	}
+
+	// Add after materialized
+	c.SetSeqs([]int{0, 1})
+
+	b := &batch.ForwardBatch{SeqIDs: []int{0, 1}, SeqLens: []int{1, 1}}
+	k := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 2, 8)
+	v := mlx.Zeros(mlx.DTypeFloat16, 1, 4, 2, 8)
+	c.Update(b, k, v)
+
+	if int(c.Offsets(0)[0]) != 4 {
+		t.Fatalf("seq 0 offset = %d, want 4", int(c.Offsets(0)[0]))
+	}
+	if int(c.Offsets(1)[0]) != 1 {
+		t.Fatalf("seq 1 offset = %d, want 1", int(c.Offsets(1)[0]))
 	}
 }

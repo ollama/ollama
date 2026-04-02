@@ -137,7 +137,7 @@ func TestSplitNodeWithSnapshots(t *testing.T) {
 	child := root.children[0]
 
 	rc := &fakeRewindableCache{tracker: &snapshotTracker{}, tokens: []int32{1, 2, 3, 4, 5}}
-	child.snapshots = []cache.Snapshot{rc.Snapshot(0)}
+	child.snapshots = []cache.Snapshot{rc.Snapshot(0, 0)}
 	child.user = true
 
 	caches := []cache.Cache{rc}

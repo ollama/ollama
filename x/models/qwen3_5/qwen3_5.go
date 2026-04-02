@@ -1321,7 +1321,7 @@ func (m *Model) Forward(b *batch.ForwardBatch, caches []cache.Cache) *mlx.Array 
 	B, L := int32(dims[0]), int32(dims[1])
 
 	h := m.EmbedTokens.Forward(b.InputIDs)
-	positions := batch.SequentialPositions(b, caches[0].Offsets())
+	positions := batch.SequentialPositions(b, caches[0].Offsets(b.SeqIDs...))
 
 	for i, layer := range m.Layers {
 		var c cache.Cache

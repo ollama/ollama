@@ -1,103 +1,308 @@
 package cache
 
 import (
-	"github.com/ollama/ollama/logutil"
+	"fmt"
+
 	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
 type Cache interface {
 	Update(b *batch.ForwardBatch, keys, values *mlx.Array) (newKeys, newValues *mlx.Array, kv mlx.KVHistory)
-	// State returns the cache-owned state roots that should be kept/evaluated.
 	State() []*mlx.Array
 	Free()
-	Offsets() []int32
+	Offsets(seqIDs ...int) []int32
 
-	// Snapshot copies cache state from fromOffset to current offset into
-	// pinned VRAM arrays. The active cache is unchanged.
-	Snapshot(fromOffset int) Snapshot
-
-	// Restore brings the cache to target. If snapshot is nil, rewinds
-	// using the cache's own live state. Returns false if the target is
-	// unreachable (e.g. target > current offset, or negative).
-	Restore(snapshot Snapshot, target int) bool
-
-	// Merge combines two sequential snapshots [a,b) and [b,c) into [a,c).
-	// Takes ownership of both inputs.
+	Snapshot(seqID int, fromOffset int) Snapshot
+	Restore(seqID int, snapshot Snapshot, target int) bool
 	Merge(parent, child Snapshot) Snapshot
-
-	// Split divides a snapshot [a,c) at offset b into [a,b) and [b,c).
-	// Takes ownership of the input. Cache types that cannot split
-	// (e.g. recurrent) return (nil, snapshot).
 	Split(snapshot Snapshot, at int) (parent, child Snapshot)
+
+	SetSeqs(seqIDs []int)
 }
 
-// Snapshot is paged-out cache state that can be restored later.
 type Snapshot interface {
-	// Size returns the byte size of the paged-out data (in VRAM).
 	Size() int
-	// Close unpins the snapshot's arrays so they can be freed by Sweep.
 	Close()
 }
 
+// KVCache stores key/value pairs in a contiguous buffer with per-sequence
+// regions separated by gaps. All operations go through regions — there is
+// no separate single-sequence mode.
 type KVCache struct {
 	keys, values *mlx.Array
-	offset       int
 	step         int
+
+	seqOrder []int
+	regions  map[int]*seqRegion
+}
+
+type seqRegion struct {
+	start    int
+	length   int
+	capacity int
 }
 
 func NewKVCache() *KVCache {
 	return &KVCache{step: 256}
 }
 
-func (c *KVCache) Update(_ *batch.ForwardBatch, keys, values *mlx.Array) (*mlx.Array, *mlx.Array, mlx.KVHistory) {
-	B, H, L, Dk, Dv := keys.Dim(0), keys.Dim(1), keys.Dim(2), keys.Dim(3), values.Dim(3)
+func (c *KVCache) SetSeqs(seqIDs []int) {
+	if c.regions == nil {
+		c.regions = make(map[int]*seqRegion)
+	}
 
-	prev := c.offset
+	wanted := make(map[int]bool, len(seqIDs))
+	for _, id := range seqIDs {
+		wanted[id] = true
+	}
 
-	// Grow buffer if needed
-	if c.keys == nil || (prev+L) > c.keys.Dim(2) {
-		steps := (c.step + L - 1) / c.step
-		newKeys := mlx.Zeros(keys.DType(), B, H, steps*c.step, Dk)
-		newValues := mlx.Zeros(values.DType(), B, H, steps*c.step, Dv)
-
-		if c.keys != nil {
-			if prev%c.step != 0 {
-				c.keys.Set(c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, prev), mlx.Slice()))
-				c.values.Set(c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, prev), mlx.Slice()))
+	// Skip rebuild if the set hasn't changed.
+	changed := len(seqIDs) != len(c.seqOrder)
+	if !changed {
+		for _, id := range c.seqOrder {
+			if !wanted[id] {
+				changed = true
+				break
 			}
-			c.keys.Set(c.keys.Concatenate(2, newKeys))
-			c.values.Set(c.values.Concatenate(2, newValues))
-		} else {
-			c.keys, c.values = newKeys, newValues
-			mlx.Pin(c.keys, c.values)
+		}
+	}
+	if !changed {
+		return
+	}
+
+	// Remove sequences not in the new set
+	for _, id := range c.seqOrder {
+		if !wanted[id] {
+			delete(c.regions, id)
 		}
 	}
 
-	c.offset += L
-	c.keys.Set(c.keys.SliceUpdate(keys, mlx.Slice(), mlx.Slice(), mlx.Slice(prev, c.offset), mlx.Slice()))
-	c.values.Set(c.values.SliceUpdate(values, mlx.Slice(), mlx.Slice(), mlx.Slice(prev, c.offset), mlx.Slice()))
+	// Build new order preserving existing order, then appending new sequences
+	newOrder := make([]int, 0, len(seqIDs))
+	for _, id := range c.seqOrder {
+		if wanted[id] {
+			newOrder = append(newOrder, id)
+		}
+	}
+	for _, id := range seqIDs {
+		if _, ok := c.regions[id]; !ok {
+			newOrder = append(newOrder, id)
+			c.regions[id] = &seqRegion{}
+		}
+	}
+	c.seqOrder = newOrder
 
-	pt := make([]int32, c.offset)
-	for i := range pt {
-		pt[i] = int32(i)
+	if c.keys != nil {
+		c.rebuild(c.keys.DType(), c.values.DType(), c.keys.Dim(1), c.keys.Dim(3), c.values.Dim(3), nil)
+	}
+}
+
+func (c *KVCache) Update(b *batch.ForwardBatch, keys, values *mlx.Array) (*mlx.Array, *mlx.Array, mlx.KVHistory) {
+	for _, seqID := range b.SeqIDs {
+		if _, ok := c.regions[seqID]; !ok {
+			panic(fmt.Sprintf("KVCache.Update: sequence %d not found in cache", seqID))
+		}
 	}
 
-	return c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice()),
-		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice()),
-		mlx.KVHistory{
-			PageTable: mlx.NewArrayInt32(pt, []int32{1, int32(c.offset)}),
-			SeqLens:   []int{c.offset},
+	// Check if any sequence will exhaust its gap
+	needsRebuild := false
+	for i, seqID := range b.SeqIDs {
+		r := c.regions[seqID]
+		if r.length+b.SeqLens[i] > r.capacity {
+			needsRebuild = true
+			break
 		}
+	}
+
+	if needsRebuild {
+		oldLengths := make(map[int]int, len(b.SeqIDs))
+		for _, seqID := range b.SeqIDs {
+			oldLengths[seqID] = c.regions[seqID].length
+		}
+		for i, seqID := range b.SeqIDs {
+			c.regions[seqID].length += b.SeqLens[i]
+		}
+		c.rebuild(keys.DType(), values.DType(), keys.Dim(1), keys.Dim(3), values.Dim(3), oldLengths)
+	}
+
+	// Write K/V per sequence using contiguous SliceUpdate
+	tokenIdx := 0
+	for i, seqID := range b.SeqIDs {
+		r := c.regions[seqID]
+		writeStart := r.length
+		if needsRebuild {
+			writeStart = r.length - b.SeqLens[i]
+		}
+		start := r.start + writeStart
+		end := start + b.SeqLens[i]
+		kSlice := keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(tokenIdx, tokenIdx+b.SeqLens[i]), mlx.Slice())
+		vSlice := values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(tokenIdx, tokenIdx+b.SeqLens[i]), mlx.Slice())
+		c.keys.Set(c.keys.SliceUpdate(kSlice, mlx.Slice(), mlx.Slice(), mlx.Slice(start, end), mlx.Slice()))
+		c.values.Set(c.values.SliceUpdate(vSlice, mlx.Slice(), mlx.Slice(), mlx.Slice(start, end), mlx.Slice()))
+		tokenIdx += b.SeqLens[i]
+	}
+
+	if !needsRebuild {
+		for i, seqID := range b.SeqIDs {
+			c.regions[seqID].length += b.SeqLens[i]
+		}
+	}
+
+	return c.sliceForBatch(b)
+}
+
+// sliceForBatch returns the smallest contiguous K/V slice covering all batch
+// sequences, with page table indices remapped relative to the slice start.
+func (c *KVCache) sliceForBatch(b *batch.ForwardBatch) (*mlx.Array, *mlx.Array, mlx.KVHistory) {
+	sliceStart, sliceEnd := c.batchExtent(b)
+	kv := c.buildKVHistory(b, sliceStart)
+	return c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(sliceStart, sliceEnd), mlx.Slice()),
+		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(sliceStart, sliceEnd), mlx.Slice()),
+		kv
+}
+
+// batchExtent returns the smallest [start, end) range covering all batch sequences' regions.
+func (c *KVCache) batchExtent(b *batch.ForwardBatch) (int, int) {
+	minStart := -1
+	maxEnd := 0
+	for _, seqID := range b.SeqIDs {
+		r := c.regions[seqID]
+		if minStart < 0 || r.start < minStart {
+			minStart = r.start
+		}
+		if end := r.start + r.length; end > maxEnd {
+			maxEnd = end
+		}
+	}
+	if minStart < 0 {
+		minStart = 0
+	}
+	return minStart, maxEnd
+}
+
+func putAlongDim2(target, indices, values *mlx.Array) *mlx.Array {
+	H := int32(target.Dim(1))
+	D := int32(target.Dim(3))
+	totalSlots := int32(target.Dim(2))
+	N := int32(values.Dim(2))
+
+	t := mlx.Reshape(target, H, totalSlots, D)
+	v := mlx.Reshape(values, H, N, D)
+	result := t.PutAlongAxis(indices, v, 1)
+	return mlx.Reshape(result, 1, H, totalSlots, D)
+}
+
+func (c *KVCache) buildKVHistory(b *batch.ForwardBatch, sliceStart int) mlx.KVHistory {
+	numSeqs := len(b.SeqIDs)
+	if numSeqs == 0 {
+		return mlx.KVHistory{}
+	}
+
+	maxLen := 0
+	seqLens := make([]int, numSeqs)
+	for i, seqID := range b.SeqIDs {
+		seqLens[i] = c.regions[seqID].length
+		if seqLens[i] > maxLen {
+			maxLen = seqLens[i]
+		}
+	}
+
+	pt := make([]int32, numSeqs*maxLen)
+	for i, seqID := range b.SeqIDs {
+		r := c.regions[seqID]
+		for j := range r.length {
+			pt[i*maxLen+j] = int32(r.start + j - sliceStart)
+		}
+	}
+
+	return mlx.KVHistory{
+		PageTable: mlx.NewArrayInt32(pt, []int32{int32(numSeqs), int32(maxLen)}),
+		SeqLens:   seqLens,
+	}
+}
+
+// rebuild reallocates the buffer with new region layout. oldLengths maps
+// seqID to the number of valid tokens in the OLD buffer (before any
+// pre-increment for pending writes). If nil, uses current r.length.
+func (c *KVCache) rebuild(kDType, vDType mlx.DType, H, Dk, Dv int, oldLengths map[int]int) {
+	// Single pass: save old positions, reassign regions.
+	oldStarts := make([]int, len(c.seqOrder))
+	copyLens := make([]int, len(c.seqOrder))
+	totalSlots := 0
+	for i, seqID := range c.seqOrder {
+		r := c.regions[seqID]
+		oldStarts[i] = r.start
+		copyLens[i] = r.length
+		if oldLengths != nil {
+			if ol, ok := oldLengths[seqID]; ok {
+				copyLens[i] = ol
+			}
+		}
+
+		newCap := roundUpStep(r.length, c.step) + c.step
+		r.start = totalSlots
+		r.capacity = newCap
+		totalSlots += newCap
+	}
+
+	if totalSlots == 0 {
+		if c.keys != nil {
+			mlx.Unpin(c.keys, c.values)
+			c.keys, c.values = nil, nil
+		}
+		return
+	}
+
+	newKeys := mlx.Zeros(kDType, 1, H, totalSlots, Dk)
+	newValues := mlx.Zeros(vDType, 1, H, totalSlots, Dv)
+
+	if c.keys != nil {
+		for i, seqID := range c.seqOrder {
+			if copyLens[i] == 0 {
+				continue
+			}
+			oldStart := oldStarts[i]
+			newStart := c.regions[seqID].start
+			kSlice := c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(oldStart, oldStart+copyLens[i]), mlx.Slice())
+			vSlice := c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(oldStart, oldStart+copyLens[i]), mlx.Slice())
+			newKeys.Set(newKeys.SliceUpdate(kSlice, mlx.Slice(), mlx.Slice(), mlx.Slice(newStart, newStart+copyLens[i]), mlx.Slice()))
+			newValues.Set(newValues.SliceUpdate(vSlice, mlx.Slice(), mlx.Slice(), mlx.Slice(newStart, newStart+copyLens[i]), mlx.Slice()))
+		}
+		mlx.Unpin(c.keys, c.values)
+	}
+
+	c.keys, c.values = newKeys, newValues
+	mlx.Pin(c.keys, c.values)
+}
+
+func roundUpStep(n, step int) int {
+	return ((n + step - 1) / step) * step
+}
+
+func (c *KVCache) usedSlots() int {
+	maxUsed := 0
+	for _, seqID := range c.seqOrder {
+		if r, ok := c.regions[seqID]; ok {
+			if used := r.start + r.length; used > maxUsed {
+				maxUsed = used
+			}
+		}
+	}
+	return maxUsed
 }
 
 func (c *KVCache) State() []*mlx.Array {
 	if c.keys == nil || c.values == nil {
 		return nil
 	}
+	end := c.usedSlots()
+	if end == 0 {
+		return nil
+	}
 	return []*mlx.Array{
-		c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice()),
-		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice()),
+		c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, end), mlx.Slice()),
+		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, end), mlx.Slice()),
 	}
 }
 
@@ -110,15 +315,26 @@ type kvSnapshot struct {
 func (s *kvSnapshot) Size() int { return s.keys.NumBytes() + s.values.NumBytes() }
 func (s *kvSnapshot) Close()    { mlx.Unpin(s.keys, s.values) }
 
-func (c *KVCache) Snapshot(fromOffset int) Snapshot {
-	if c.keys == nil || c.offset <= fromOffset {
+func (c *KVCache) Snapshot(seqID int, fromOffset int) Snapshot {
+	if c.keys == nil {
 		return nil
 	}
-	from := max(0, fromOffset)
-	to := c.offset
+	r, ok := c.regions[seqID]
+	if !ok {
+		return nil
+	}
 
-	kSlice := c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(from, to), mlx.Slice())
-	vSlice := c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(from, to), mlx.Slice())
+	from := max(0, fromOffset)
+	to := r.length
+	if to <= from {
+		return nil
+	}
+
+	start := r.start + from
+	end := r.start + to
+
+	kSlice := c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(start, end), mlx.Slice())
+	vSlice := c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(start, end), mlx.Slice())
 	kCopy := mlx.Contiguous(kSlice, false)
 	vCopy := mlx.Contiguous(vSlice, false)
 	mlx.Pin(kCopy, vCopy)
@@ -132,34 +348,45 @@ func (c *KVCache) Snapshot(fromOffset int) Snapshot {
 	}
 }
 
-func (c *KVCache) Restore(snapshot Snapshot, target int) bool {
-	if target < 0 {
+func (c *KVCache) Restore(seqID int, snapshot Snapshot, target int) bool {
+	r, ok := c.regions[seqID]
+	if !ok || target < 0 {
 		return false
 	}
 
 	if snapshot == nil {
-		if target > c.offset {
+		if target > r.length {
 			return false
 		}
-		c.offset = target
+		r.length = target
 		return true
 	}
 
 	snap := snapshot.(*kvSnapshot)
-
-	if target > snap.toOffset || c.offset < snap.fromOffset {
+	if target > snap.toOffset {
+		return false
+	}
+	// Can't bridge a gap — cache must have data up to the snapshot start
+	if snap.fromOffset > r.length {
 		return false
 	}
 
-	// Rewind to snapshot start, then feed snapshot data through Update.
-	c.offset = snap.fromOffset
-	c.Update(nil, snap.keys, snap.values)
-
-	// Clamp to target if needed (target may be less than full snapshot).
-	if target < c.offset {
-		c.offset = target
+	// Check if snapshot fits in the region's capacity
+	if snap.toOffset > r.capacity || c.keys == nil {
+		oldLen := r.length
+		r.length = snap.toOffset
+		oldLengths := map[int]int{seqID: oldLen}
+		c.rebuild(snap.keys.DType(), snap.values.DType(), snap.keys.Dim(1), snap.keys.Dim(3), snap.values.Dim(3), oldLengths)
 	}
 
+	writeStart := r.start + snap.fromOffset
+	writeEnd := r.start + snap.toOffset
+	c.keys.Set(c.keys.SliceUpdate(snap.keys,
+		mlx.Slice(), mlx.Slice(), mlx.Slice(writeStart, writeEnd), mlx.Slice()))
+	c.values.Set(c.values.SliceUpdate(snap.values,
+		mlx.Slice(), mlx.Slice(), mlx.Slice(writeStart, writeEnd), mlx.Slice()))
+
+	r.length = target
 	return true
 }
 
@@ -215,226 +442,456 @@ func (c *KVCache) Split(snapshot Snapshot, at int) (Snapshot, Snapshot) {
 
 	snap.Close()
 
-	p := &kvSnapshot{
-		keys:       pk,
-		values:     pv,
-		fromOffset: snap.fromOffset,
-		toOffset:   at,
-	}
-	ch := &kvSnapshot{
-		keys:       ck,
-		values:     cv,
-		fromOffset: at,
-		toOffset:   snap.toOffset,
-	}
-	return p, ch
+	return &kvSnapshot{
+			keys: pk, values: pv,
+			fromOffset: snap.fromOffset, toOffset: at,
+		}, &kvSnapshot{
+			keys: ck, values: cv,
+			fromOffset: at, toOffset: snap.toOffset,
+		}
 }
 
 func (c *KVCache) Free() {
 	mlx.Unpin(c.keys, c.values)
 	c.keys, c.values = nil, nil
-	c.offset = 0
+	// Preserve sequence registration — callers may Restore after Free.
+	for _, seqID := range c.seqOrder {
+		if r, ok := c.regions[seqID]; ok {
+			r.length = 0
+			r.capacity = 0
+			r.start = 0
+		}
+	}
 }
 
-func (c *KVCache) Offsets() []int32 { return []int32{int32(c.offset)} }
+func (c *KVCache) Offsets(seqIDs ...int) []int32 {
+	offsets := make([]int32, len(seqIDs))
+	for i, seqID := range seqIDs {
+		if r, ok := c.regions[seqID]; ok {
+			offsets[i] = int32(r.length)
+		}
+	}
+	return offsets
+}
 
-// RotatingKVCache implements sliding window attention with bounded memory
+// RotatingKVCache implements sliding-window KV caching with a fixed-size
+// ring buffer per sequence. Each sequence gets maxSize slots. New tokens
+// overwrite the oldest slot when the ring wraps. The page table maps
+// visible positions to the physical (possibly wrapped) buffer slots.
 type RotatingKVCache struct {
-	maxSize int
-	idx     int
+	keys, values *mlx.Array
+	maxSize      int
+	step         int
 
-	*KVCache
+	seqOrder []int
+	regions  map[int]*ringRegion
+}
+
+type ringRegion struct {
+	start  int // offset into shared buffer
+	offset int // total tokens written (wraps for ring position)
 }
 
 func NewRotatingKVCache(maxSize int) *RotatingKVCache {
-	return &RotatingKVCache{maxSize: maxSize, KVCache: NewKVCache()}
+	return &RotatingKVCache{maxSize: maxSize, step: 256}
 }
 
-func (c *RotatingKVCache) Update(_ *batch.ForwardBatch, keys, values *mlx.Array) (*mlx.Array, *mlx.Array, mlx.KVHistory) {
-	var k, v *mlx.Array
-	if keys.Dim(2) > 1 {
-		k, v = c.concat(keys, values)
-	} else {
-		k, v = c.update(keys, values)
+func (c *RotatingKVCache) visible(r *ringRegion) int {
+	return min(r.offset, c.maxSize)
+}
+
+func (c *RotatingKVCache) SetSeqs(seqIDs []int) {
+	if c.regions == nil {
+		c.regions = make(map[int]*ringRegion)
 	}
 
-	visibleLen := min(c.offset, c.maxSize)
-	pt := make([]int32, visibleLen)
-	for i := range visibleLen {
-		pt[i] = int32(i)
+	wanted := make(map[int]bool, len(seqIDs))
+	for _, id := range seqIDs {
+		wanted[id] = true
 	}
 
-	return k, v, mlx.KVHistory{
-		PageTable: mlx.NewArrayInt32(pt, []int32{1, int32(visibleLen)}),
-		SeqLens:   []int{visibleLen},
+	changed := len(seqIDs) != len(c.seqOrder)
+	if !changed {
+		for _, id := range c.seqOrder {
+			if !wanted[id] {
+				changed = true
+				break
+			}
+		}
+	}
+	if !changed {
+		return
+	}
+
+	for _, id := range c.seqOrder {
+		if !wanted[id] {
+			delete(c.regions, id)
+		}
+	}
+
+	newOrder := make([]int, 0, len(seqIDs))
+	for _, id := range c.seqOrder {
+		if wanted[id] {
+			newOrder = append(newOrder, id)
+		}
+	}
+	for _, id := range seqIDs {
+		if _, ok := c.regions[id]; !ok {
+			newOrder = append(newOrder, id)
+			c.regions[id] = &ringRegion{}
+		}
+	}
+	c.seqOrder = newOrder
+
+	if c.keys != nil {
+		c.rebuild(c.keys.DType(), c.values.DType(), c.keys.Dim(1), c.keys.Dim(3), c.values.Dim(3))
 	}
 }
 
-func (c *RotatingKVCache) concat(keys, values *mlx.Array) (newK *mlx.Array, newV *mlx.Array) {
-	logutil.Trace("(*RotatingKVCache).concat", "keys_dim", keys.Dims(), "values_dim", values.Dims(), "offset", c.offset, "idx", c.idx, "max_size", c.maxSize)
+func (c *RotatingKVCache) Update(b *batch.ForwardBatch, keys, values *mlx.Array) (*mlx.Array, *mlx.Array, mlx.KVHistory) {
 	if c.keys == nil {
-		c.keys, c.values = keys.Clone(), values.Clone()
-		mlx.Pin(c.keys, c.values)
-	} else {
-		if c.idx < c.keys.Dim(2) {
-			c.keys.Set(c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.idx), mlx.Slice()))
-			c.values.Set(c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.idx), mlx.Slice()))
-		}
-
-		// Trim to max_size to maintain sliding window
-		if trim := c.idx - c.maxSize + 1; trim > 0 {
-			c.keys.Set(c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(trim, c.keys.Dim(2)), mlx.Slice()))
-			c.values.Set(c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(trim, c.values.Dim(2)), mlx.Slice()))
-		}
-
-		c.keys.Set(c.keys.Concatenate(2, keys))
-		c.values.Set(c.values.Concatenate(2, values))
-		c.idx = c.keys.Dim(2)
+		c.rebuild(keys.DType(), values.DType(), keys.Dim(1), keys.Dim(3), values.Dim(3))
 	}
 
-	c.offset += keys.Dim(2)
-	c.idx = c.keys.Dim(2)
-	return c.keys, c.values
+	for _, seqID := range b.SeqIDs {
+		if _, ok := c.regions[seqID]; !ok {
+			panic(fmt.Sprintf("RotatingKVCache.Update: sequence %d not found in cache", seqID))
+		}
+	}
+
+	// Write K/V into the ring. When n > maxSize, only the last maxSize tokens
+	// matter (the rest would be immediately overwritten). At most one wrap
+	// per sequence, producing at most 2 SliceUpdates.
+	tokenIdx := 0
+	for i, seqID := range b.SeqIDs {
+		r := c.regions[seqID]
+		n := b.SeqLens[i]
+		writeTokenIdx := tokenIdx
+		writeN := n
+
+		// If more tokens than ring capacity, skip the oldest ones
+		if writeN > c.maxSize {
+			skip := writeN - c.maxSize
+			writeTokenIdx += skip
+			writeN = c.maxSize
+		}
+
+		ringPos := (r.offset + (n - writeN)) % c.maxSize
+
+		if ringPos+writeN <= c.maxSize {
+			slot := r.start + ringPos
+			kSlice := keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(writeTokenIdx, writeTokenIdx+writeN), mlx.Slice())
+			vSlice := values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(writeTokenIdx, writeTokenIdx+writeN), mlx.Slice())
+			c.keys.Set(c.keys.SliceUpdate(kSlice, mlx.Slice(), mlx.Slice(), mlx.Slice(slot, slot+writeN), mlx.Slice()))
+			c.values.Set(c.values.SliceUpdate(vSlice, mlx.Slice(), mlx.Slice(), mlx.Slice(slot, slot+writeN), mlx.Slice()))
+		} else {
+			part1 := c.maxSize - ringPos
+			part2 := writeN - part1
+
+			slot1 := r.start + ringPos
+			k1 := keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(writeTokenIdx, writeTokenIdx+part1), mlx.Slice())
+			v1 := values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(writeTokenIdx, writeTokenIdx+part1), mlx.Slice())
+			c.keys.Set(c.keys.SliceUpdate(k1, mlx.Slice(), mlx.Slice(), mlx.Slice(slot1, slot1+part1), mlx.Slice()))
+			c.values.Set(c.values.SliceUpdate(v1, mlx.Slice(), mlx.Slice(), mlx.Slice(slot1, slot1+part1), mlx.Slice()))
+
+			slot2 := r.start
+			k2 := keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(writeTokenIdx+part1, writeTokenIdx+writeN), mlx.Slice())
+			v2 := values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(writeTokenIdx+part1, writeTokenIdx+writeN), mlx.Slice())
+			c.keys.Set(c.keys.SliceUpdate(k2, mlx.Slice(), mlx.Slice(), mlx.Slice(slot2, slot2+part2), mlx.Slice()))
+			c.values.Set(c.values.SliceUpdate(v2, mlx.Slice(), mlx.Slice(), mlx.Slice(slot2, slot2+part2), mlx.Slice()))
+		}
+		tokenIdx += n
+	}
+
+	for i, seqID := range b.SeqIDs {
+		c.regions[seqID].offset += b.SeqLens[i]
+	}
+
+	sliceStart, sliceEnd := c.batchExtent(b)
+	return c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(sliceStart, sliceEnd), mlx.Slice()),
+		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(sliceStart, sliceEnd), mlx.Slice()),
+		c.buildRotatingKVHistory(b, sliceStart)
 }
 
-func (c *RotatingKVCache) update(keys, values *mlx.Array) (*mlx.Array, *mlx.Array) {
-	logutil.Trace("(*RotatingKVCache).update", "keys_dim", keys.Dims(), "values_dim", values.Dims(), "offset", c.offset, "idx", c.idx, "max_size", c.maxSize)
-	B, H, L, Dk, Dv := keys.Dim(0), keys.Dim(1), keys.Dim(2), keys.Dim(3), values.Dim(3)
-
-	prev := c.offset
-
-	// Grow buffer if not yet at max
-	if c.keys == nil || (prev >= c.keys.Dim(2) && c.keys.Dim(2) < c.maxSize) {
-		newSize := min(c.step, c.maxSize-prev)
-		newKeys := mlx.Zeros(keys.DType(), B, H, newSize, Dk)
-		newValues := mlx.Zeros(values.DType(), B, H, newSize, Dv)
-		if c.keys != nil {
-			c.keys.Set(c.keys.Concatenate(2, newKeys))
-			c.values.Set(c.values.Concatenate(2, newValues))
-		} else {
-			c.keys, c.values = newKeys, newValues
-			mlx.Pin(c.keys, c.values)
+// batchExtent returns the smallest [start, end) range covering all batch sequences' rings.
+func (c *RotatingKVCache) batchExtent(b *batch.ForwardBatch) (int, int) {
+	minStart := -1
+	maxEnd := 0
+	for _, seqID := range b.SeqIDs {
+		r := c.regions[seqID]
+		if minStart < 0 || r.start < minStart {
+			minStart = r.start
 		}
-		c.idx = prev
+		if end := r.start + min(r.offset, c.maxSize); end > maxEnd {
+			maxEnd = end
+		}
+	}
+	if minStart < 0 {
+		minStart = 0
+	}
+	return minStart, maxEnd
+}
+
+func (c *RotatingKVCache) buildRotatingKVHistory(b *batch.ForwardBatch, sliceStart int) mlx.KVHistory {
+	numSeqs := len(b.SeqIDs)
+	if numSeqs == 0 {
+		return mlx.KVHistory{}
 	}
 
-	// Trim to max_size to maintain sliding window
-	if trim := c.keys.Dim(2) - c.maxSize; trim > 0 {
-		c.keys.Set(c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(trim, c.keys.Dim(2)), mlx.Slice()))
-		c.values.Set(c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(trim, c.values.Dim(2)), mlx.Slice()))
-		c.idx = c.maxSize
+	maxSeqLen := 0
+	seqLens := make([]int, numSeqs)
+	for i, seqID := range b.SeqIDs {
+		seqLens[i] = c.visible(c.regions[seqID])
+		if seqLens[i] > maxSeqLen {
+			maxSeqLen = seqLens[i]
+		}
 	}
 
-	// Rotate when hitting max
-	if c.idx >= c.maxSize {
-		c.idx = 0
+	pt := make([]int32, numSeqs*maxSeqLen)
+	for i, seqID := range b.SeqIDs {
+		r := c.regions[seqID]
+		vis := seqLens[i]
+		oldestSlot := (r.offset - vis) % c.maxSize
+		if oldestSlot < 0 {
+			oldestSlot += c.maxSize
+		}
+		for j := range vis {
+			pt[i*maxSeqLen+j] = int32(r.start + (oldestSlot+j)%c.maxSize - sliceStart)
+		}
 	}
 
-	c.keys.Set(c.keys.SliceUpdate(keys, mlx.Slice(), mlx.Slice(), mlx.Slice(c.idx, c.idx+L), mlx.Slice()))
-	c.values.Set(c.values.SliceUpdate(values, mlx.Slice(), mlx.Slice(), mlx.Slice(c.idx, c.idx+L), mlx.Slice()))
+	return mlx.KVHistory{
+		PageTable: mlx.NewArrayInt32(pt, []int32{int32(numSeqs), int32(maxSeqLen)}),
+		SeqLens:   seqLens,
+	}
+}
 
-	c.offset += L
-	c.idx += L
+func (c *RotatingKVCache) rebuild(kDType, vDType mlx.DType, H, Dk, Dv int) {
+	// Save old positions before reassigning
+	type saved struct {
+		start  int
+		offset int
+	}
+	savedRegions := make(map[int]saved, len(c.seqOrder))
+	for _, seqID := range c.seqOrder {
+		r := c.regions[seqID]
+		savedRegions[seqID] = saved{start: r.start, offset: r.offset}
+	}
 
-	validLen := min(c.offset, c.maxSize)
-	return c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, validLen), mlx.Slice()),
-		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, validLen), mlx.Slice())
+	totalSlots := len(c.seqOrder) * c.maxSize
+	for i, seqID := range c.seqOrder {
+		c.regions[seqID].start = i * c.maxSize
+	}
+
+	if totalSlots == 0 {
+		if c.keys != nil {
+			mlx.Unpin(c.keys, c.values)
+		}
+		c.keys, c.values = nil, nil
+		return
+	}
+
+	newKeys := mlx.Zeros(kDType, 1, H, totalSlots, Dk)
+	newValues := mlx.Zeros(vDType, 1, H, totalSlots, Dv)
+
+	if c.keys != nil {
+		// Copy each surviving sequence's ring data to its new position.
+		// Offset is unchanged during rebuild, so the ring layout within
+		// maxSize slots is identical — only the base address shifts.
+		copySlice := func(srcStart, dstStart, count int) {
+			kSlice := c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(srcStart, srcStart+count), mlx.Slice())
+			vSlice := c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(srcStart, srcStart+count), mlx.Slice())
+			newKeys.Set(newKeys.SliceUpdate(kSlice, mlx.Slice(), mlx.Slice(), mlx.Slice(dstStart, dstStart+count), mlx.Slice()))
+			newValues.Set(newValues.SliceUpdate(vSlice, mlx.Slice(), mlx.Slice(), mlx.Slice(dstStart, dstStart+count), mlx.Slice()))
+		}
+
+		for _, seqID := range c.seqOrder {
+			s, ok := savedRegions[seqID]
+			if !ok {
+				continue
+			}
+			r := c.regions[seqID]
+			vis := min(s.offset, c.maxSize)
+			if vis == 0 {
+				continue
+			}
+			if s.offset <= c.maxSize {
+				// Ring hasn't wrapped — data is contiguous.
+				copySlice(s.start, r.start, vis)
+			} else {
+				// Ring has wrapped — two contiguous chunks.
+				wrapPoint := s.offset % c.maxSize
+				copySlice(s.start+wrapPoint, r.start+wrapPoint, c.maxSize-wrapPoint)
+				if wrapPoint > 0 {
+					copySlice(s.start, r.start, wrapPoint)
+				}
+			}
+		}
+
+		mlx.Unpin(c.keys, c.values)
+	}
+
+	c.keys, c.values = newKeys, newValues
+	mlx.Pin(c.keys, c.values)
 }
 
 func (c *RotatingKVCache) State() []*mlx.Array {
 	if c.keys == nil || c.values == nil {
 		return nil
 	}
-	return []*mlx.Array{
-		c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice()),
-		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice()),
+	end := 0
+	for _, seqID := range c.seqOrder {
+		r := c.regions[seqID]
+		used := r.start + min(r.offset, c.maxSize)
+		if used > end {
+			end = used
+		}
 	}
-}
-
-// rotatingSnapshot holds paged-out data for a RotatingKVCache.
-type rotatingSnapshot struct {
-	kvSnapshot     // embedded KV data
-	idx        int // buffer write position at snapshot time
-}
-
-func (s *rotatingSnapshot) Size() int { return s.kvSnapshot.Size() }
-func (s *rotatingSnapshot) Close()    { s.kvSnapshot.Close() }
-
-func (c *RotatingKVCache) Snapshot(fromOffset int) Snapshot {
-	if c.keys == nil || c.offset <= fromOffset {
+	if end == 0 {
 		return nil
 	}
-
-	state := c.State()
-	k := state[0].Clone()
-	v := state[1].Clone()
-	mlx.Pin(k, v)
-
-	return &rotatingSnapshot{
-		kvSnapshot: kvSnapshot{
-			keys:       k,
-			values:     v,
-			fromOffset: fromOffset,
-			toOffset:   c.offset,
-		},
-		idx: c.idx,
+	return []*mlx.Array{
+		c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, end), mlx.Slice()),
+		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, end), mlx.Slice()),
 	}
 }
 
-func (c *RotatingKVCache) Restore(snapshot Snapshot, target int) bool {
-	if target < 0 {
+func (c *RotatingKVCache) Offsets(seqIDs ...int) []int32 {
+	offsets := make([]int32, len(seqIDs))
+	for i, seqID := range seqIDs {
+		if r, ok := c.regions[seqID]; ok {
+			offsets[i] = int32(r.offset)
+		}
+	}
+	return offsets
+}
+
+func (c *RotatingKVCache) Free() {
+	mlx.Unpin(c.keys, c.values)
+	c.keys, c.values = nil, nil
+	for _, seqID := range c.seqOrder {
+		if r, ok := c.regions[seqID]; ok {
+			r.offset = 0
+		}
+	}
+}
+
+type rotatingSnapshot struct {
+	keys, values *mlx.Array
+	offset       int
+}
+
+func (s *rotatingSnapshot) Size() int {
+	n := 0
+	if s.keys != nil {
+		n += s.keys.NumBytes()
+	}
+	if s.values != nil {
+		n += s.values.NumBytes()
+	}
+	return n
+}
+func (s *rotatingSnapshot) Close() { mlx.Unpin(s.keys, s.values) }
+
+func (c *RotatingKVCache) Snapshot(seqID int, fromOffset int) Snapshot {
+	r, ok := c.regions[seqID]
+	if !ok || c.keys == nil || r.offset == 0 {
+		return nil
+	}
+	vis := c.visible(r)
+	// Read ring data in logical order (oldest→newest)
+	var kSlices, vSlices []*mlx.Array
+	if r.offset <= c.maxSize {
+		// Ring hasn't wrapped — data is contiguous from start
+		kSlices = []*mlx.Array{c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(r.start, r.start+vis), mlx.Slice())}
+		vSlices = []*mlx.Array{c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(r.start, r.start+vis), mlx.Slice())}
+	} else {
+		// Ring has wrapped — oldest is at (offset % maxSize), read in two chunks
+		wrapPoint := r.offset % c.maxSize
+		kSlices = []*mlx.Array{
+			c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(r.start+wrapPoint, r.start+c.maxSize), mlx.Slice()),
+			c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(r.start, r.start+wrapPoint), mlx.Slice()),
+		}
+		vSlices = []*mlx.Array{
+			c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(r.start+wrapPoint, r.start+c.maxSize), mlx.Slice()),
+			c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(r.start, r.start+wrapPoint), mlx.Slice()),
+		}
+	}
+
+	var kData, vData *mlx.Array
+	if len(kSlices) == 1 {
+		kData = kSlices[0]
+		vData = vSlices[0]
+	} else {
+		kData = kSlices[0].Concatenate(2, kSlices[1])
+		vData = vSlices[0].Concatenate(2, vSlices[1])
+	}
+
+	kCopy := mlx.Contiguous(kData, false)
+	vCopy := mlx.Contiguous(vData, false)
+	mlx.Pin(kCopy, vCopy)
+	mlx.AsyncEval(kCopy, vCopy)
+
+	return &rotatingSnapshot{keys: kCopy, values: vCopy, offset: r.offset}
+}
+
+func (c *RotatingKVCache) Restore(seqID int, snapshot Snapshot, target int) bool {
+	r, ok := c.regions[seqID]
+	if !ok || target < 0 {
 		return false
 	}
 
 	if snapshot == nil {
-		if target >= c.offset {
-			return target == c.offset
-		}
-		// Live rewind is only safe when the buffer hasn't filled yet
-		// (offset <= maxSize). Once the window has shifted, rewinding
-		// leaves fewer than maxSize trailing tokens to attend to —
-		// a snapshot is required to restore the full window.
-		if c.offset > c.maxSize {
+		if target > r.offset {
 			return false
 		}
-		c.offset = target
-		c.idx = target
+		// Can only rewind when ring hasn't wrapped
+		if r.offset > c.maxSize {
+			return false
+		}
+		r.offset = target
 		return true
 	}
 
-	snap := snapshot.(*rotatingSnapshot)
-
-	if target > snap.toOffset {
+	snap, ok2 := snapshot.(*rotatingSnapshot)
+	if !ok2 {
+		return false
+	}
+	if target > snap.offset {
+		return false
+	}
+	// Once the ring has wrapped, only exact restore is valid —
+	// rewinding would leave an inconsistent window.
+	if target < snap.offset && snap.offset > c.maxSize {
 		return false
 	}
 
-	// Reject if clamping would leave an incomplete window.
-	if target < snap.toOffset && snap.toOffset > c.maxSize {
-		return false
+	if c.keys == nil {
+		c.rebuild(snap.keys.DType(), snap.values.DType(), snap.keys.Dim(1), snap.keys.Dim(3), snap.values.Dim(3))
 	}
 
-	// Restore from snapshot: rebuild buffer state.
-	// Free existing state first.
-	if c.keys != nil {
-		mlx.Unpin(c.keys, c.values)
+	// Write snapshot data into the ring at the correct wrapped positions.
+	// Snapshot is oldest→newest. Physical slot for logical position j:
+	// (snap.offset - snapLen + j) % maxSize
+	snapLen := snap.keys.Dim(2)
+	wp := make([]int32, snapLen)
+	base := snap.offset - snapLen
+	for j := range snapLen {
+		slot := (base + j) % c.maxSize
+		if slot < 0 {
+			slot += c.maxSize
+		}
+		wp[j] = int32(r.start + slot)
 	}
-	c.keys = snap.keys.Clone()
-	c.values = snap.values.Clone()
-	mlx.Pin(c.keys, c.values)
-	c.offset = snap.toOffset
-	c.idx = snap.idx
+	wpTensor := mlx.NewArrayInt32(wp, []int32{int32(snapLen)})
+	c.keys.Set(putAlongDim2(c.keys, wpTensor, snap.keys))
+	c.values.Set(putAlongDim2(c.values, wpTensor, snap.values))
 
-	// Clamp to target if needed.
-	if target < c.offset {
-		c.offset = target
-		c.idx = target
-	}
+	r.offset = target
 	return true
 }
 
 func (c *RotatingKVCache) Merge(parent, child Snapshot) Snapshot {
-	// For rotating caches, the child snapshot supersedes the parent
-	// since it contains the full window state.
 	if parent != nil {
 		parent.Close()
 	}
@@ -442,12 +899,5 @@ func (c *RotatingKVCache) Merge(parent, child Snapshot) Snapshot {
 }
 
 func (c *RotatingKVCache) Split(snapshot Snapshot, at int) (Snapshot, Snapshot) {
-	// Rotating cache snapshots contain the full window state.
-	// Cannot cleanly split a ring buffer at an arbitrary point.
 	return nil, snapshot
-}
-
-func (c *RotatingKVCache) Free() {
-	c.KVCache.Free()
-	c.idx = 0
 }

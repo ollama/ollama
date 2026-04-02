@@ -67,11 +67,17 @@ func (c *kvCache) ensureCaches(m base.Model) {
 	}
 	if cacheFactory, ok := m.(interface{ NewCaches() []cache.Cache }); ok {
 		c.caches = cacheFactory.NewCaches()
-		return
+	} else {
+		c.caches = make([]cache.Cache, m.NumLayers())
+		for i := range c.caches {
+			c.caches[i] = cache.NewKVCache()
+		}
 	}
-	c.caches = make([]cache.Cache, m.NumLayers())
-	for i := range c.caches {
-		c.caches[i] = cache.NewKVCache()
+	// Register the default sequence for single-sequence prefill.
+	for _, kv := range c.caches {
+		if kv != nil {
+			kv.SetSeqs([]int{0})
+		}
 	}
 }
 
@@ -167,7 +173,7 @@ func (c *kvCache) switchToPath(newPath []*trieNode, matched int) {
 				if kv == nil {
 					continue
 				}
-				snaps[j] = kv.Snapshot(fromOffset)
+				snaps[j] = kv.Snapshot(0, fromOffset)
 			}
 			node.setSnapshots(snaps, &c.pagedOutBytes)
 			pageOutCount++
@@ -184,7 +190,7 @@ func (c *kvCache) switchToPath(newPath []*trieNode, matched int) {
 		if kv == nil {
 			continue
 		}
-		if !kv.Restore(nil, rewindTarget) {
+		if !kv.Restore(0, nil, rewindTarget) {
 			kv.Free()
 		}
 	}
@@ -205,10 +211,10 @@ pageIn:
 			if j >= len(node.snapshots) || node.snapshots[j] == nil {
 				continue
 			}
-			if int(kv.Offsets()[0]) >= nodeTarget {
+			if int(kv.Offsets(0)[0]) >= nodeTarget {
 				continue
 			}
-			if !kv.Restore(node.snapshots[j], nodeTarget) {
+			if !kv.Restore(0, node.snapshots[j], nodeTarget) {
 				// Restore failed — stop page-in and let alignment
 				// bring all caches to a consistent offset.
 				break pageIn
@@ -224,8 +230,8 @@ pageIn:
 	c.activePath = newPath
 	minOff := c.minCacheOffset()
 	for _, kv := range c.caches {
-		if kv != nil && int(kv.Offsets()[0]) != minOff {
-			if !kv.Restore(nil, minOff) {
+		if kv != nil && int(kv.Offsets(0)[0]) != minOff {
+			if !kv.Restore(0, nil, minOff) {
 				slog.Warn("failed to restore cache, freeing all caches", "offset", minOff)
 				c.freeAll()
 				break
@@ -390,10 +396,10 @@ func (s *cacheSession) attachSnapshots(node *trieNode, cacheOffset int) {
 	snaps := make([]cache.Snapshot, len(c.caches))
 	for i, kv := range c.caches {
 		if kv != nil {
-			if int(kv.Offsets()[0]) != cacheOffset {
-				panic(fmt.Sprintf("attachSnapshots: cache offset mismatch layer %d: expected %d, got %d", i, cacheOffset, int(kv.Offsets()[0])))
+			if int(kv.Offsets(0)[0]) != cacheOffset {
+				panic(fmt.Sprintf("attachSnapshots: cache offset mismatch layer %d: expected %d, got %d", i, cacheOffset, int(kv.Offsets(0)[0])))
 			}
-			snaps[i] = kv.Snapshot(node.startOffset())
+			snaps[i] = kv.Snapshot(0, node.startOffset())
 		}
 	}
 	node.setSnapshots(snaps, &c.pagedOutBytes)
@@ -418,7 +424,7 @@ func (c *kvCache) minCacheOffset() int {
 		if kv == nil {
 			continue
 		}
-		if off := int(kv.Offsets()[0]); !found || off < offset {
+		if off := int(kv.Offsets(0)[0]); !found || off < offset {
 			offset = off
 			found = true
 		}
