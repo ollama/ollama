@@ -107,7 +107,6 @@ func (m *VisionModel) InitClamp(proj *MultiModalProjector) {
 		}
 	}
 
-	// Load clamp scalars if present (llama.cpp-compatible format).
 	for i := range m.Layers {
 		for _, cl := range linears(&m.Layers[i]) {
 			if cl != nil {
@@ -377,7 +376,6 @@ func visionPoolAndProject(ctx ml.Context, hiddenState ml.Tensor, numPatchesX, nu
 	hiddenState = hiddenState.Reshape(ctx, mergedX*mergedY, hiddenSize)
 	hiddenState = hiddenState.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 
-	// Match llama.cpp Gemma4V path: scale pooled embeddings by sqrt(hidden size).
 	hiddenState = hiddenState.Cast(ctx, ml.DTypeF32)
 	hiddenState = hiddenState.Scale(ctx, math.Sqrt(float64(hiddenSize)))
 
