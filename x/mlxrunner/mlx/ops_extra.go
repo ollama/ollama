@@ -322,12 +322,55 @@ func SiLU(a *Array) *Array {
 	return a.Multiply(sig)
 }
 
-func RoPEWithBase(x *Array, dims int, traditional bool, base, scale float32, offset int) *Array {
+// RoPEWithBase applies rotary position embeddings using per-token positions.
+//
+// positions is an int32 tensor of per-token absolute positions. For a single
+// sequence with contiguous positions starting at offset, this dispatches to
+// the scalar mlx_fast_rope (bit-identical to the old offset-based API).
+func RoPEWithBase(x *Array, dims int, traditional bool, base, scale float32, positions *Array) *Array {
+	posData := positions.Ints()
+	if len(posData) == 0 {
+		return x
+	}
+
+	// Fast path: single contiguous run — use scalar mlx_fast_rope
+	offset := posData[0]
+	contiguous := true
+	for i := 1; i < len(posData); i++ {
+		if posData[i] != posData[i-1]+1 {
+			contiguous = false
+			break
+		}
+	}
+	if contiguous {
+		freqs := New("")
+		out := New("FAST_ROPE")
+		C.mlx_fast_rope(
+			&out.ctx,
+			x.ctx,
+			C.int(dims),
+			C.bool(traditional),
+			C.mlx_optional_float{
+				value:     C.float(base),
+				has_value: C.bool(func() bool { return base != 0 }()),
+			},
+			C.float(scale),
+			C.int(offset),
+			freqs.ctx,
+			DefaultStream().ctx,
+		)
+		return out
+	}
+
+	// Multi-sequence path: use mlx_fast_rope_dynamic with per-token offsets.
+	// Transpose [1, H, L, D] → [L, H, 1, D] so L becomes batch dim,
+	// apply dynamic rope with positions [L], transpose back.
+	rotIn := Transpose(x, 2, 1, 0, 3)
 	freqs := New("")
-	out := New("FAST_ROPE")
-	C.mlx_fast_rope(
-		&out.ctx,
-		x.ctx,
+	rotOut := New("FAST_ROPE_DYNAMIC")
+	C.mlx_fast_rope_dynamic(
+		&rotOut.ctx,
+		rotIn.ctx,
 		C.int(dims),
 		C.bool(traditional),
 		C.mlx_optional_float{
@@ -335,11 +378,11 @@ func RoPEWithBase(x *Array, dims int, traditional bool, base, scale float32, off
 			has_value: C.bool(func() bool { return base != 0 }()),
 		},
 		C.float(scale),
-		C.int(offset),
+		positions.ctx,
 		freqs.ctx,
 		DefaultStream().ctx,
 	)
-	return out
+	return Transpose(rotOut, 2, 1, 0, 3)
 }
 
 func Sigmoid(a *Array) *Array {

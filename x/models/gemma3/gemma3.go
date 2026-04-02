@@ -415,7 +415,7 @@ func (m *Model) Forward(b *batch.ForwardBatch, caches []cache.Cache) *mlx.Array 
 		if caches != nil && i < len(caches) {
 			c = caches[i]
 		}
-		h = layer.Forward(h, c, B, L, m.TextConfig)
+		h = layer.Forward(h, b, c, B, L, m.TextConfig)
 	}
 
 	return mlx.RMSNormFn(h, m.NormScaled, m.RMSNormEps)
@@ -455,10 +455,10 @@ func (m *Model) FormatPrompt(prompt string) string {
 	return fmt.Sprintf("<start_of_turn>user\n%s<end_of_turn>\n<start_of_turn>model\n", prompt)
 }
 
-func (l *DecoderLayer) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *TextConfig) *mlx.Array {
+func (l *DecoderLayer) Forward(x *mlx.Array, b *batch.ForwardBatch, c cache.Cache, B, L int32, cfg *TextConfig) *mlx.Array {
 	normed := mlx.RMSNormFn(x, l.InputNormScaled, cfg.RMSNormEps)
 
-	attnOut := l.Attention.Forward(normed, c, B, L, l.IsSliding, cfg)
+	attnOut := l.Attention.Forward(normed, b, c, B, L, l.IsSliding, cfg)
 	attnOut = mlx.RMSNormFn(attnOut, l.PostAttnNormScaled, cfg.RMSNormEps)
 	h := mlx.Add(x, attnOut)
 
@@ -470,7 +470,7 @@ func (l *DecoderLayer) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Tex
 	return mlx.Add(h, mlpOut)
 }
 
-func (a *Attention) Forward(x *mlx.Array, c cache.Cache, B, L int32, isSliding bool, cfg *TextConfig) *mlx.Array {
+func (a *Attention) Forward(x *mlx.Array, b *batch.ForwardBatch, c cache.Cache, B, L int32, isSliding bool, cfg *TextConfig) *mlx.Array {
 	q := a.QProj.Forward(x)
 	k := a.KProj.Forward(x)
 	v := a.VProj.Forward(x)
@@ -492,12 +492,9 @@ func (a *Attention) Forward(x *mlx.Array, c cache.Cache, B, L int32, isSliding b
 		ropeTheta = cfg.RopeLocalBaseFreq
 	}
 
-	offset := 0
-	if c != nil {
-		offset = int(c.Offsets()[0])
-	}
-	q = mlx.RoPEWithBase(q, int(cfg.HeadDim), false, ropeTheta, 1.0, offset)
-	k = mlx.RoPEWithBase(k, int(cfg.HeadDim), false, ropeTheta, 1.0, offset)
+	positions := batch.SequentialPositions(b, c.Offsets())
+	q = mlx.RoPEWithBase(q, int(cfg.HeadDim), false, ropeTheta, 1.0, positions)
+	k = mlx.RoPEWithBase(k, int(cfg.HeadDim), false, ropeTheta, 1.0, positions)
 
 	if c != nil {
 		k, v, _ = c.Update(nil, k, v)
