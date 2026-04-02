@@ -716,26 +716,20 @@ func (s *Server) computeBatch(activeBatch batchState) {
 	s.mu.Unlock()
 
 	activeBatch.batch.Inputs.FromInts(batchInputs)
-
-	// Collect KAN training tensors so they get materialized during Compute.
-	kanTensors := nn.GetKANPendingTensors()
-	computeTensors := make([]ml.Tensor, 0, 1+len(kanTensors))
-	computeTensors = append(computeTensors, activeBatch.modelOutput)
-	computeTensors = append(computeTensors, kanTensors...)
-
 	activeBatch.ctx.ComputeWithNotify(
 		func() {
 			logutil.Trace("computeBatch: signaling computeStartedCh", "batchID", activeBatch.id)
 			activeBatch.computeStartedCh <- struct{}{}
 		},
-		computeTensors...)
-
-	// Process deferred KAN training now that tensor data is materialized.
-	// This reads pre-softmax logits and softmax outputs from the computed
-	// graph and runs shadow training (Phase 1) or self-evolution (Phase 2).
-	nn.FlushKANTraining()
+		activeBatch.modelOutput)
 
 	outputs := activeBatch.modelOutput.Floats()
+
+	// Process deferred KAN training now that tensor data is materialized.
+	// Must be called AFTER modelOutput.Floats() which triggers scheduler
+	// synchronization. Training tensors use ReadFloats() which reads
+	// directly from computed graph memory without needing sync callbacks.
+	nn.FlushKANTraining()
 	t := time.Now()
 
 	logutil.Trace("computeBatch: logits ready", "batchID", activeBatch.id)

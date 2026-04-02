@@ -116,7 +116,7 @@ func FlushKANTraining() {
 			}()
 
 			shape := item.shape
-			logits := item.kq.Floats()
+			logits := item.kq.ReadFloats()
 
 			// Extract dimensions: kq shape after permute is [seqK, heads, seqQ]
 			seqK := 1
@@ -146,7 +146,7 @@ func FlushKANTraining() {
 				}
 			} else {
 				// Phase 1: shadow training
-				expected := item.softmax.Floats()
+				expected := item.softmax.ReadFloats()
 				trainer.TrainStep(item.key, logits, expected, seqK, effectiveSeqQ)
 			}
 		}()
