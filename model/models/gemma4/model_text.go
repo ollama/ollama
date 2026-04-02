@@ -340,11 +340,11 @@ func (r *TextRouter) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *TextOp
 
 // TextMoEBlock implements the Gemma 4 sparse MoE.
 type TextMoEBlock struct {
-	GateUp *nn.LinearBatch `gguf:"ffn_gate_up_exps"`
-	Gate   *nn.LinearBatch `gguf:"ffn_gate_exps"`
-	Up     *nn.LinearBatch `gguf:"ffn_up_exps"`
-	Down   *nn.LinearBatch `gguf:"ffn_down_exps"`
-	DownScale ml.Tensor `gguf:"ffn_down_exps.scale,alt:ffn_gate_inp.per_expert_scale"`
+	GateUp    *nn.LinearBatch `gguf:"ffn_gate_up_exps"`
+	Gate      *nn.LinearBatch `gguf:"ffn_gate_exps"`
+	Up        *nn.LinearBatch `gguf:"ffn_up_exps"`
+	Down      *nn.LinearBatch `gguf:"ffn_down_exps"`
+	DownScale ml.Tensor       `gguf:"ffn_down_exps.scale,alt:ffn_gate_inp.per_expert_scale"`
 }
 
 func (moe *TextMoEBlock) Forward(ctx ml.Context, hiddenState, routingWeights, selectedExperts ml.Tensor, opts *TextOptions) ml.Tensor {
