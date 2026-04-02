@@ -1091,33 +1091,68 @@ func TestQwen35RendererToolDefinitionsMatchOfficialTemplate(t *testing.T) {
 	}
 }
 
-// TestQwen35RendererInterleavedThinkingAndTools verifies that historical
-// assistant messages with thinking content and tool calls are rendered
-// correctly in both think=true and think=false modes.
+// TestQwen35RendererInterleavedThinkingAndTools verifies byte-exact rendering
+// of two interleaved assistant+tool turns where both assistant messages are
+// after lastQueryIndex and have non-empty Thinking fields.
+//
+// Ground truth: the expected strings were derived by running the official
+// Qwen/Qwen3.5-27B Jinja2 chat template (from chat_template.jinja in
+// tokenizer_config.json on HuggingFace, verified identical between
+// Qwen3.5-27B and Qwen3.5-35B-A3B) with the same message array and tools.
+// HuggingFace Transformers' tojson override (json.dumps with
+// ensure_ascii=False, sort_keys=False) was applied. Both the Python template
+// output and Go renderer output were saved to files and verified
+// byte-identical with diff (1981 bytes for think=true, 1992 bytes for
+// think=false).
 //
 // The think=false subtest is the primary regression detector for the fork's
-// unconditional thinking block fix (commit 4044b63f). The official Qwen 3.5
-// Jinja2 template (Qwen/Qwen3.5-27B on HuggingFace) checks enable_thinking
-// in exactly one place — the generation prompt at the end. Historical
-// assistant messages receive <think> block wrapping based solely on their
-// position relative to last_query_index, with no enable_thinking check.
+// unconditional thinking block fix (commit 4044b63f). The official template
+// (line 100) checks loop.index0 > ns.last_query_index for <think> wrapping —
+// no enable_thinking check. enable_thinking is checked in exactly one place:
+// the generation prompt at lines 149-153.
 //
 // The fork's fix has two parts that work together:
-//   - splitQwen35ReasoningContent (line 65): removed the isThinking parameter
-//     so reasoning extraction is unconditional — the upstream version gates on
+//   - splitQwen35ReasoningContent: removed the isThinking parameter so
+//     reasoning extraction is unconditional — the upstream version gates on
 //     isThinking, silently discarding stored reasoning when think=false.
-//   - Rendering condition (line 143): removed the isThinking && prefix so
-//     <think> wrapping is unconditional for messages after lastQueryIndex.
+//   - Rendering condition: removed the isThinking && prefix so <think>
+//     wrapping is unconditional for messages after lastQueryIndex.
 //
 // If either part regresses, the think=false subtest fails:
 //   - Re-adding isThinking to splitQwen35ReasoningContent causes the reasoning
 //     TEXT to vanish from inside the <think> tags (extraction suppressed).
-//   - Re-adding isThinking && to line 143 causes the <think> TAGS THEMSELVES
-//     to vanish (wrapping suppressed).
+//   - Re-adding isThinking && to the rendering condition causes the <think>
+//     TAGS THEMSELVES to vanish (wrapping suppressed).
 //
 // The think=true subtest would pass in both regression scenarios because
 // isThinking is true, satisfying any re-added gate. This is why the pair
 // of subtests is necessary: think=true alone provides zero protection.
+//
+// This test exercises six rendering properties simultaneously:
+//
+//  1. Post-lastQueryIndex thinking wrapping. Both assistant messages (indices
+//     2 and 4) are after lastQueryIndex=1. The official template (line 100)
+//     wraps them with <think>\n{reasoning}\n</think>\n\n{content}
+//     unconditionally, with no enable_thinking check.
+//
+//  2. Single tool call per turn. Each assistant turn has one tool call. The
+//     first tool call is preceded by \n\n (template line 112: content|trim is
+//     truthy). The </tool_call> is immediately followed by <|im_end|>
+//     (template line 130: unconditional).
+//
+//  3. Non-consecutive tool responses. Each tool response is separated by an
+//     assistant message, so each gets its own <|im_start|>user block (template
+//     line 132-133: previtem.role != "tool" fires for both).
+//
+//  4. Tool definition JSON. Two tools (get_weather, get_uv) with simple
+//     string parameters. Spaced separators matching HF's tojson override.
+//
+//  5. System prompt with tools. Tools-first pattern with # Tools header, tool
+//     JSON, instructions, then system content appended (template line 57).
+//
+//  6. Generation prompt for both think modes. think=true: <think>\n (template
+//     line 152). think=false: <think>\n\n</think>\n\n (template line 150).
+//     The entire output is identical between modes except these trailing bytes.
 func TestQwen35RendererInterleavedThinkingAndTools(t *testing.T) {
 	msgs := []api.Message{
 		{Role: "system", Content: "You are a helpful assistant."},
@@ -1158,8 +1193,13 @@ func TestQwen35RendererInterleavedThinkingAndTools(t *testing.T) {
 
 	// Both assistant messages are at indices 2 and 4, both after
 	// lastQueryIndex=1 (the user message "Plan a picnic in Paris.").
-	// Both have non-empty Thinking fields. The official template wraps
-	// both in <think> blocks unconditionally.
+	// Both have non-empty Thinking fields. The official template (line 100)
+	// wraps both in <think> blocks when loop.index0 > ns.last_query_index,
+	// with no enable_thinking check.
+	//
+	// These fragment variables are used by the think=false targeted
+	// diagnostics to detect the most critical regression: thinking blocks
+	// stripped from history when the client switches think mode.
 
 	wantFirstTurn := `<|im_start|>assistant
 <think>
@@ -1198,16 +1238,96 @@ Paris
 			t.Fatalf("render failed: %v", err)
 		}
 
-		if !strings.Contains(got, wantFirstTurn) {
-			t.Fatalf("expected first assistant thinking/tool sequence, got:\n%s", got)
-		}
+		want := `<|im_start|>system
+# Tools
 
-		if !strings.Contains(got, wantSecondTurn) {
-			t.Fatalf("expected second assistant thinking/tool sequence, got:\n%s", got)
-		}
+You have access to the following functions:
 
-		if !strings.HasSuffix(got, "<|im_start|>assistant\n<think>\n") {
-			t.Fatalf("expected assistant thinking prefill at end, got:\n%s", got)
+<tools>
+{"type": "function", "function": {"name": "get_weather", "description": "Get weather for a location", "parameters": {"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]}}}
+{"type": "function", "function": {"name": "get_uv", "description": "Get UV index for a location", "parameters": {"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]}}}
+</tools>
+
+If you choose to call a function ONLY reply in the following format with NO suffix:
+
+<tool_call>
+<function=example_function_name>
+<parameter=example_parameter_1>
+value_1
+</parameter>
+<parameter=example_parameter_2>
+This is the value for the second parameter
+that can span
+multiple lines
+</parameter>
+</function>
+</tool_call>
+
+<IMPORTANT>
+Reminder:
+- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags
+- Required parameters MUST be specified
+- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after
+- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls
+</IMPORTANT>
+
+You are a helpful assistant.<|im_end|>
+<|im_start|>user
+Plan a picnic in Paris.<|im_end|>
+<|im_start|>assistant
+<think>
+Need weather before giving advice.
+</think>
+
+Checking weather first.
+
+<tool_call>
+<function=get_weather>
+<parameter=location>
+Paris
+</parameter>
+</function>
+</tool_call><|im_end|>
+<|im_start|>user
+<tool_response>
+22C
+</tool_response><|im_end|>
+<|im_start|>assistant
+<think>
+Need UV index for sunscreen advice.
+</think>
+
+Checking UV too.
+
+<tool_call>
+<function=get_uv>
+<parameter=location>
+Paris
+</parameter>
+</function>
+</tool_call><|im_end|>
+<|im_start|>user
+<tool_response>
+5
+</tool_response><|im_end|>
+<|im_start|>assistant
+<think>
+`
+		if got != want {
+			t.Fatalf(
+				"byte-exact output mismatch.\n\n"+
+					"The expected string was derived by running the official "+
+					"Qwen/Qwen3.5-27B Jinja2 chat template with the same message "+
+					"array and tools, using HuggingFace Transformers' tojson override "+
+					"(json.dumps with ensure_ascii=False, sort_keys=False). Both "+
+					"outputs were saved to files and verified byte-identical with "+
+					"diff (1981 bytes). Any deviation changes the token IDs the "+
+					"model sees, pushing the input out of the training distribution. "+
+					"In multi-turn agentic conversations, deviations also invalidate "+
+					"the KV cache from the divergence point, forcing expensive "+
+					"recomputation of all subsequent tokens.\n\n"+
+					"--- got ---\n%s\n--- want ---\n%s", got, want,
+			)
 		}
 	})
 
@@ -1218,17 +1338,14 @@ Paris
 	// think: false on a request after previously using think: true.
 	//
 	// The historical assistant messages MUST still contain their <think> blocks
-	// with the full reasoning text. The official Qwen 3.5 template never checks
-	// enable_thinking when rendering historical messages. Stripping <think>
-	// blocks from history when the client switches to think=false produces a
-	// prompt the model was never trained on: every subsequent token ID shifts,
-	// the KV cache is invalidated from the first affected message onward, and
-	// the model's attention patterns break down.
+	// with the full reasoning text. The official template (line 100) wraps
+	// assistant messages in <think> blocks when loop.index0 > ns.last_query_index
+	// — no enable_thinking check. enable_thinking is checked in exactly one
+	// place: the generation prompt (lines 149-153).
 	//
 	// Only the generation prompt at the end should differ: think=false produces
-	// <think>\n\n</think>\n\n (empty thinking block, 6 tokens matching the
-	// official template) instead of think=true's <think>\n (open block for
-	// the model to fill).
+	// <think>\n\n</think>\n\n (template line 150) instead of think=true's
+	// <think>\n (template line 152).
 	t.Run("think=false", func(t *testing.T) {
 		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true}
 		got, err := renderer.Render(msgs, qwen35WeatherUVTools(), &api.ThinkValue{Value: false})
@@ -1236,51 +1353,126 @@ Paris
 			t.Fatalf("render failed: %v", err)
 		}
 
-		// Verify that historical thinking blocks are preserved despite think=false.
-		// This is the core assertion: the official template renders <think> blocks
-		// unconditionally for messages after last_query_index.
+		// Targeted diagnostic: thinking blocks must be preserved in history
+		// despite think=false. This fires before the byte-exact comparison
+		// and gives a specific diagnosis pointing to the two code locations
+		// where the isThinking gate could be re-added.
 		if !strings.Contains(got, wantFirstTurn) {
-			t.Fatalf(
+			t.Errorf(
 				"historical thinking block stripped from first assistant turn when think=false.\n\n"+
-					"The official Qwen 3.5 Jinja2 template renders <think> blocks for historical "+
-					"assistant messages unconditionally — enable_thinking is checked in exactly one "+
-					"place (the generation prompt at the end), never in the message rendering loop. "+
-					"Historical messages after last_query_index always get <think> wrapping, even "+
-					"when enable_thinking is false.\n\n"+
+					"The official Qwen 3.5 Jinja2 template (line 100) wraps assistant "+
+					"messages in <think> blocks when loop.index0 > ns.last_query_index. "+
+					"This condition has no enable_thinking check — it is purely "+
+					"positional. Historical thinking blocks must be preserved "+
+					"regardless of the current turn's think mode.\n\n"+
 					"If this fails, the isThinking gate was likely re-added to either "+
-					"splitQwen35ReasoningContent (line 65, suppresses reasoning extraction) or "+
-					"the rendering condition (line 143, suppresses <think> tag wrapping).\n\n"+
+					"splitQwen35ReasoningContent (suppresses reasoning extraction) or "+
+					"the rendering condition (suppresses <think> tag wrapping).\n\n"+
 					"got:\n%s", got,
 			)
 		}
 
 		if !strings.Contains(got, wantSecondTurn) {
-			t.Fatalf(
+			t.Errorf(
 				"historical thinking block stripped from second assistant turn when think=false.\n\n"+
-					"Same cause as above — the isThinking gate was likely re-added. Both historical "+
-					"assistant messages must retain their <think> blocks regardless of the current "+
-					"turn's thinking mode.\n\n"+
+					"Same cause as above — both assistant messages are after "+
+					"lastQueryIndex and must retain their <think> blocks regardless "+
+					"of think mode.\n\n"+
 					"got:\n%s", got,
 			)
 		}
 
-		// The generation prompt must use the non-thinking form: an empty <think>
-		// block that signals the model to skip reasoning and generate content
-		// directly. This is the ONLY part of the output that should differ between
-		// think=true and think=false.
-		wantSuffix := "<|im_start|>assistant\n<think>\n\n</think>\n\n"
-		if !strings.HasSuffix(got, wantSuffix) {
-			tail := got
-			if len(tail) > 200 {
-				tail = tail[len(tail)-200:]
-			}
+		want := `<|im_start|>system
+# Tools
+
+You have access to the following functions:
+
+<tools>
+{"type": "function", "function": {"name": "get_weather", "description": "Get weather for a location", "parameters": {"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]}}}
+{"type": "function", "function": {"name": "get_uv", "description": "Get UV index for a location", "parameters": {"type": "object", "properties": {"location": {"type": "string"}}, "required": ["location"]}}}
+</tools>
+
+If you choose to call a function ONLY reply in the following format with NO suffix:
+
+<tool_call>
+<function=example_function_name>
+<parameter=example_parameter_1>
+value_1
+</parameter>
+<parameter=example_parameter_2>
+This is the value for the second parameter
+that can span
+multiple lines
+</parameter>
+</function>
+</tool_call>
+
+<IMPORTANT>
+Reminder:
+- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags
+- Required parameters MUST be specified
+- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after
+- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls
+</IMPORTANT>
+
+You are a helpful assistant.<|im_end|>
+<|im_start|>user
+Plan a picnic in Paris.<|im_end|>
+<|im_start|>assistant
+<think>
+Need weather before giving advice.
+</think>
+
+Checking weather first.
+
+<tool_call>
+<function=get_weather>
+<parameter=location>
+Paris
+</parameter>
+</function>
+</tool_call><|im_end|>
+<|im_start|>user
+<tool_response>
+22C
+</tool_response><|im_end|>
+<|im_start|>assistant
+<think>
+Need UV index for sunscreen advice.
+</think>
+
+Checking UV too.
+
+<tool_call>
+<function=get_uv>
+<parameter=location>
+Paris
+</parameter>
+</function>
+</tool_call><|im_end|>
+<|im_start|>user
+<tool_response>
+5
+</tool_response><|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+`
+		if got != want {
 			t.Fatalf(
-				"wrong generation prompt suffix for think=false.\n\n"+
-					"When thinking is disabled, the generation prompt must include an empty thinking "+
-					"block (<think>\\n\\n</think>\\n\\n — 6 tokens matching the official template's "+
-					"add_generation_prompt block for enable_thinking=false). Without this, the model "+
-					"may attempt reasoning when the caller explicitly requested no thinking.\n\n"+
-					"expected suffix: %q\ngot tail: %q", wantSuffix, tail,
+				"byte-exact output mismatch (think=false).\n\n"+
+					"The entire output is identical to think=true EXCEPT the "+
+					"generation prompt suffix: <think>\\n\\n</think>\\n\\n (template "+
+					"line 150 for enable_thinking=false) instead of <think>\\n "+
+					"(template line 152 for enable_thinking=true/undefined). "+
+					"Historical message rendering — including <think> block wrapping "+
+					"for both post-lastQueryIndex assistant messages, tool call XML, "+
+					"tool definition JSON, and tool response grouping — is unaffected "+
+					"by think mode. The official template checks enable_thinking in "+
+					"exactly one place (lines 149-153).\n\n"+
+					"--- got ---\n%s\n--- want ---\n%s", got, want,
 			)
 		}
 	})
