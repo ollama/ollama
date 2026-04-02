@@ -430,6 +430,14 @@ Thanks<|im_end|>
 	})
 }
 
+// TestQwen35RendererNoThinkPrefill verifies that when thinking is disabled via
+// ThinkValue{Value: false}, the renderer emits the official empty thinking
+// block prefill matching the template's add_generation_prompt block (lines
+// 149-150: <think>\n\n</think>\n\n for enable_thinking=false).
+//
+// No tools, no system message, no assistant history — the simplest possible
+// prompt shape. The entire output is one user message plus the generation
+// prompt.
 func TestQwen35RendererNoThinkPrefill(t *testing.T) {
 	renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true}
 	msgs := []api.Message{
@@ -441,8 +449,24 @@ func TestQwen35RendererNoThinkPrefill(t *testing.T) {
 		t.Fatalf("render failed: %v", err)
 	}
 
-	if !strings.HasSuffix(got, "<|im_start|>assistant\n<think>\n\n</think>\n\n") {
-		t.Fatalf("expected explicit no-think prefill, got:\n%s", got)
+	want := `<|im_start|>user
+hello<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+`
+	if got != want {
+		t.Fatalf(
+			"byte-exact output mismatch.\n\n"+
+				"The official Qwen 3.5 template's add_generation_prompt block "+
+				"(lines 149-150) emits <think>\\n\\n</think>\\n\\n when "+
+				"enable_thinking is explicitly false. No tools → no system "+
+				"prompt tools block. No system message in the input → no "+
+				"system turn. One user message → one <|im_start|>user turn.\n\n"+
+				"--- got ---\n%s\n--- want ---\n%s", got, want,
+		)
 	}
 }
 
