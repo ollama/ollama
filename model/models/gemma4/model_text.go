@@ -317,10 +317,10 @@ func (mlp *TextMLP) Forward(ctx ml.Context, hiddenState ml.Tensor) ml.Tensor {
 }
 
 // TextRouter implements the Gemma 4 MoE router.
-// It does: RMSNorm(no weight) → scale(1/sqrt(hidden)) → multiply by scale param → linear → softmax → topk
 type TextRouter struct {
-	Proj  *nn.Linear `gguf:"ffn_gate_inp"`
-	Scale ml.Tensor  `gguf:"ffn_gate_inp.scale"`
+	Proj           *nn.Linear `gguf:"ffn_gate_inp"`
+	Scale          ml.Tensor  `gguf:"ffn_gate_inp.scale"`
+	PerExpertScale ml.Tensor  `gguf:"ffn_gate_inp.per_expert_scale"`
 }
 
 func (r *TextRouter) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *TextOptions) (routingWeights, selectedExperts ml.Tensor) {
@@ -346,12 +346,49 @@ type TextMoEBlock struct {
 	Down *nn.LinearBatch `gguf:"ffn_down_exps"`
 }
 
-func (moe *TextMoEBlock) Forward(ctx ml.Context, hiddenState, routingWeights, selectedExperts ml.Tensor, opts *TextOptions) ml.Tensor {
+func (moe *TextMoEBlock) Forward(ctx ml.Context, hiddenState, routingWeights, selectedExperts ml.Tensor, perExpertScale ml.Tensor, opts *TextOptions) ml.Tensor {
+	batchSize := hiddenState.Dim(1)
+	rw3d := routingWeights.Reshape(ctx, 1, opts.numExperts, batchSize)
+
+	// Gather per-expert scales for the selected experts (before we consume routingWeights).
+	// Multiply scale [numExperts] into the full softmax [numExperts, batchSize],
+	// then use Rows to select — gives us [numExpertsUsed, batchSize] of (softmax*scale).
+	// After we independently renorm the unscaled weights, we divide to recover just the scales.
+	// But that's fragile. Instead: just Mul scale into softmax, Rows both, renorm unscaled,
+	// then Mul the ratio.
+	//
+	// Simpler: Mul per_expert_scale onto the softmax ONCE to create a scaled copy.
+	// Rows both. Renorm the unscaled. Divide scaled/unscaled_pre_renorm to get scale[k].
+	// Mul scale[k] * renormed.
+	//
+	// Actually simplest: just select, renorm, then Mul the scale factors.
+	// To get scale factors for selected experts, Rows on a [1, numExperts, batchSize]
+	// tensor where every column is the same scale. Build it via Mul: softmax * scale
+	// gives us the scaled version; softmax gives unscaled. Their ratio = scale[k].
+	// After Rows, ratio = (softmax[k]*scale[k]) / softmax[k] = scale[k].
+
 	// Select routing weights for chosen experts and renormalize
-	routingWeights = routingWeights.Reshape(ctx, 1, opts.numExperts, hiddenState.Dim(1)).Rows(ctx, selectedExperts)
-	routingWeights = routingWeights.Reshape(ctx, opts.numExpertsUsed, hiddenState.Dim(1))
+	routingWeights = rw3d.Rows(ctx, selectedExperts)
+	routingWeights = routingWeights.Reshape(ctx, opts.numExpertsUsed, batchSize)
 	routingWeights = routingWeights.Div(ctx, routingWeights.SumRows(ctx))
-	routingWeights = routingWeights.Reshape(ctx, 1, opts.numExpertsUsed, hiddenState.Dim(1))
+
+	// Apply per-expert scale after renormalization
+	if perExpertScale != nil {
+		// Build [numExperts, batchSize] with scale broadcast, select with Rows
+		scaledSoftmax := rw3d.Reshape(ctx, opts.numExperts, batchSize).Mul(ctx, perExpertScale)
+		scaledSoftmax = scaledSoftmax.Reshape(ctx, 1, opts.numExperts, batchSize).Rows(ctx, selectedExperts)
+		scaledSoftmax = scaledSoftmax.Reshape(ctx, opts.numExpertsUsed, batchSize)
+
+		// Recover unscaled selected weights (before renorm) for the ratio
+		unscaled := rw3d.Rows(ctx, selectedExperts)
+		unscaled = unscaled.Reshape(ctx, opts.numExpertsUsed, batchSize)
+
+		// scale[k] = scaledSoftmax[k] / unscaled[k]
+		expertScales := scaledSoftmax.Div(ctx, unscaled)
+		routingWeights = routingWeights.Mul(ctx, expertScales)
+	}
+
+	routingWeights = routingWeights.Reshape(ctx, 1, opts.numExpertsUsed, batchSize)
 
 	hiddenState = hiddenState.Reshape(ctx, hiddenState.Dim(0), 1, hiddenState.Dim(1))
 
@@ -421,7 +458,7 @@ func (l *TextLayer) Forward(ctx ml.Context, layer int, hiddenState, positions, p
 
 		routingWeights, selectedExperts := l.Router.Forward(ctx, hiddenState, opts)
 		moeState := l.MoENorm.Forward(ctx, hiddenState, opts.eps)
-		moeState = l.MoE.Forward(ctx, moeState, routingWeights, selectedExperts, opts)
+		moeState = l.MoE.Forward(ctx, moeState, routingWeights, selectedExperts, l.Router.PerExpertScale, opts)
 		moeState = l.PostMoENorm.Forward(ctx, moeState, opts.eps)
 
 		// Combine MLP + MoE, apply outer post-FFN norm, then add residual

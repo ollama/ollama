@@ -34,7 +34,7 @@ type gemma4Model struct {
 		EnableMoeBlock          bool     `json:"enable_moe_block"`
 		NumExperts              *uint32  `json:"num_experts"`
 		TopKExperts             *uint32  `json:"top_k_experts"`
-		ExpertIntermediateSize  *uint32  `json:"expert_intermediate_size"`
+		ExpertIntermediateSize  *uint32  `json:"moe_intermediate_size"`
 		HiddenSizePerLayerInput *uint32  `json:"hidden_size_per_layer_input"`
 		NumKVSharedLayers       uint32   `json:"num_kv_shared_layers"`
 		AttentionKEqV           bool     `json:"attention_k_eq_v"`
@@ -285,7 +285,7 @@ func (p *gemma4Model) Tensors(ts []Tensor) []*ggml.Tensor {
 		// Fused MoE gate_up_proj: split [experts, 2*intermediate, hidden] into separate gate and up.
 		// No transpose needed — the split shape [experts, intermediate, hidden] already matches
 		// the GGUF layout after the framework's dimension reversal (ne[0]=hidden matches input).
-		if strings.Contains(name, "moe.gate_up_proj") && len(shape) == 3 {
+		if strings.Contains(name, "ffn_gate_exps.weight") && len(shape) == 3 {
 			halfDim := int(shape[1]) / 2
 			newShape := slices.Clone(shape)
 			newShape[1] = newShape[1] / 2
@@ -293,7 +293,7 @@ func (p *gemma4Model) Tensors(ts []Tensor) []*ggml.Tensor {
 				tt := t.Clone()
 				tt.SetRepacker(p.sliceExperts(tensor.S(i*halfDim, (i+1)*halfDim)))
 				out = append(out, &ggml.Tensor{
-					Name:     strings.ReplaceAll(name, "moe.gate_up_proj", ggufName),
+					Name:     strings.ReplaceAll(name, "ffn_gate_exps.weight", ggufName),
 					Kind:     tt.Kind(),
 					Shape:    slices.Clone(newShape),
 					WriterTo: tt,
@@ -588,10 +588,9 @@ func (p *gemma4Model) Replacements() []string {
 		// MoE
 		"router.proj", "ffn_gate_inp",
 		"router.scale", "ffn_gate_inp.scale",
-		"moe.gate_proj", "ffn_gate_exps.weight",
-		"moe.up_proj", "ffn_up_exps.weight",
-		"moe.down_proj", "ffn_down_exps.weight",
-		"moe.per_expert_scale", "ffn_down_exps.scale",
+		"router.per_expert_scale", "ffn_gate_inp.per_expert_scale",
+		"experts.gate_up_proj", "ffn_gate_exps.weight",
+		"experts.down_proj", "ffn_down_exps.weight",
 
 		// Layer scalar
 		"layer_scalar", "layer_output_scale.weight",
