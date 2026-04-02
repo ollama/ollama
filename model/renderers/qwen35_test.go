@@ -1502,33 +1502,502 @@ Paris
 	})
 }
 
+// TestQwen35RendererAssistantPrefillWithThinking is the prefill property
+// enforcer. It verifies 6 scenarios that together enforce Properties 1, 2,
+// and 3 from the test gap analysis.
+//
+// "Prefill" is an Ollama-specific concept: when the last message is an
+// assistant message without tool calls, the renderer leaves the turn open
+// (no <|im_end|>, no generation prompt) so the model continues from where
+// the text left off. This corresponds to the official template's
+// add_generation_prompt=False behavior, minus the trailing <|im_end|>\n
+// that the template always emits (line 130, unconditional).
+//
+// Every want string was verified by running the official Qwen/Qwen3.5-27B
+// Jinja2 template (chat_template.jinja from tokenizer_config.json on
+// HuggingFace) with add_generation_prompt=False, then stripping the
+// trailing <|im_end|>\n. The template was run with enable_thinking=True,
+// enable_thinking=False, and enable_thinking=undefined for every scenario —
+// all three produce identical output, proving that enable_thinking has zero
+// effect when add_generation_prompt=False. This is because enable_thinking
+// is checked in exactly one place in the template: line 149, inside the
+// if add_generation_prompt block.
+//
+// The 6 subtests enforce:
+//
+//   - Property 1 (think-independence): subtests 1/2 use the SAME messages
+//     and share the SAME want constant. Subtests 3/4 do the same. If
+//     think mode affects prefill output, the think=false subtest fails
+//     while think=true passes — catching re-introduction of the isThinking
+//     gate that the fork removed.
+//
+//   - Property 2 (positional <think> wrapping): subtests 5 and 6 have
+//     assistant messages on BOTH sides of the lastQueryIndex boundary.
+//     Before the boundary: reasoning is silently discarded, rendered as
+//     plain content with no <think> tags. After the boundary: <think>
+//     wrapping is unconditional, even if reasoning is empty.
+//
+//   - Property 3 (prefill suppresses <|im_end|> and generation prompt):
+//     every subtest verifies the output does not end with <|im_end|> or
+//     a generation prompt. Targeted diagnostics fire before the byte-exact
+//     comparison to give specific error messages for these regressions.
 func TestQwen35RendererAssistantPrefillWithThinking(t *testing.T) {
-	renderer := &Qwen35Renderer{isThinking: true}
-	msgs := []api.Message{
-		{Role: "user", Content: "Write two words."},
-		{
-			Role:     "assistant",
-			Thinking: "Keep it short.",
-			Content:  "Hello world",
-		},
+	// Ground truth for subtests 1 and 2: assistant with reasoning.
+	// Template output (add_generation_prompt=False, any enable_thinking value)
+	// minus trailing <|im_end|>\n.
+	//
+	// The assistant at index 1 is after lastQueryIndex=0 (the user at index 0),
+	// so the template wraps with <think>\n{reasoning}\n</think>\n\n{content}
+	// (line 101). splitQwen35ReasoningContent extracts reasoning="Keep it short."
+	// via Path 1 (explicit Thinking field). Content is unchanged.
+	const wantWithReasoning = "<|im_start|>user\n" +
+		"Write two words.<|im_end|>\n" +
+		"<|im_start|>assistant\n" +
+		"<think>\n" +
+		"Keep it short.\n" +
+		"</think>\n" +
+		"\n" +
+		"Hello world"
+
+	// Ground truth for subtests 3 and 4: assistant without reasoning.
+	// The assistant at index 1 is after lastQueryIndex=0, so the template
+	// still wraps with <think>, but reasoning is empty — producing
+	// <think>\n\n</think>\n\n (empty thinking block). This is correct per
+	// the template: the wrapping condition (line 100) is purely positional,
+	// not gated on whether reasoning_content is non-empty.
+	const wantNoReasoning = "<|im_start|>user\n" +
+		"Write two words.<|im_end|>\n" +
+		"<|im_start|>assistant\n" +
+		"<think>\n" +
+		"\n" +
+		"</think>\n" +
+		"\n" +
+		"Hello world"
+
+	// Ground truth for subtest 5: multi-turn agentic loop with tool history.
+	// The first assistant (index 1) is BEFORE lastQueryIndex=3 (the "Now
+	// summarize." user message at index 3). The template (lines 102-103)
+	// renders it as plain content — reasoning "I should use the weather tool."
+	// is computed by splitQwen35ReasoningContent but silently discarded by the
+	// else branch. The last assistant (index 4) is AFTER lastQueryIndex=3,
+	// so it gets <think> wrapping with reasoning preserved.
+	//
+	// Tool call argument "Paris" is a string — formatToolCallArgument returns
+	// it verbatim (case string path). The template uses args_value|string
+	// (Python str("Paris") = "Paris"). Byte-identical.
+	const wantToolHistory = "<|im_start|>user\n" +
+		"What's the weather?<|im_end|>\n" +
+		"<|im_start|>assistant\n" +
+		"Let me check.\n" +
+		"\n" +
+		"<tool_call>\n" +
+		"<function=get_weather>\n" +
+		"<parameter=location>\n" +
+		"Paris\n" +
+		"</parameter>\n" +
+		"</function>\n" +
+		"</tool_call><|im_end|>\n" +
+		"<|im_start|>user\n" +
+		"<tool_response>\n" +
+		"22C\n" +
+		"</tool_response><|im_end|>\n" +
+		"<|im_start|>user\n" +
+		"Now summarize.<|im_end|>\n" +
+		"<|im_start|>assistant\n" +
+		"<think>\n" +
+		"Simple answer from tool result.\n" +
+		"</think>\n" +
+		"\n" +
+		"It's 22C in Paris."
+
+	// Ground truth for subtest 6: both sides of the lastQueryIndex boundary.
+	// First assistant (index 1, before lastQueryIndex=2): reasoning "Think
+	// first." is discarded, rendered as plain "First answer." with no <think>.
+	// Second assistant (index 3, after lastQueryIndex=2): no reasoning field,
+	// rendered with empty <think> block.
+	const wantBoundary = "<|im_start|>user\n" +
+		"First question.<|im_end|>\n" +
+		"<|im_start|>assistant\n" +
+		"First answer.<|im_end|>\n" +
+		"<|im_start|>user\n" +
+		"Second question.<|im_end|>\n" +
+		"<|im_start|>assistant\n" +
+		"<think>\n" +
+		"\n" +
+		"</think>\n" +
+		"\n" +
+		"Second answer."
+
+	// prefillDiagnostics runs targeted assertions that catch specific
+	// regressions with clear error messages before the byte-exact
+	// comparison. These use t.Errorf (not t.Fatalf) so all diagnostics
+	// fire even if multiple things are wrong.
+	prefillDiagnostics := func(t *testing.T, got string) {
+		t.Helper()
+
+		if strings.HasSuffix(got, "<|im_end|>") || strings.HasSuffix(got, "<|im_end|>\n") {
+			t.Errorf(
+				"prefill output ends with <|im_end|>.\n\n"+
+					"Prefill must leave the assistant turn open for continuation. "+
+					"The official template emits <|im_end|> unconditionally (line 130), "+
+					"but Ollama's prefill deliberately omits it when the last message is "+
+					"an assistant without tool calls. If <|im_end|> appears at the end, "+
+					"the prefill condition at qwen35.go line 142 is broken — check that "+
+					"len(message.ToolCalls) == 0 is still in the guard and that "+
+					"lastMessage is computed correctly.\n\ngot tail: %q",
+				got[max(0, len(got)-60):],
+			)
+		}
+
+		if strings.HasSuffix(got, "<think>\n") {
+			t.Errorf(
+				"prefill output ends with a think=true generation prompt.\n\n"+
+					"Prefill must not append any generation prompt. The generation "+
+					"prompt is gated on lastMessage && !prefill (qwen35.go line 189). "+
+					"If a generation prompt appears, prefill is false when it should "+
+					"be true.\n\ngot tail: %q",
+				got[max(0, len(got)-60):],
+			)
+		}
+
+		if strings.HasSuffix(got, "</think>\n\n") && strings.Contains(got[max(0, len(got)-40):], "<|im_start|>assistant") {
+			t.Errorf(
+				"prefill output ends with a think=false generation prompt.\n\n"+
+					"Prefill must not append any generation prompt, regardless of "+
+					"think mode. The generation prompt is gated on "+
+					"lastMessage && !prefill (qwen35.go line 189). If a generation "+
+					"prompt appears, prefill is false when it should be true.\n\n"+
+					"got tail: %q",
+				got[max(0, len(got)-80):],
+			)
+		}
 	}
 
-	got, err := renderer.Render(msgs, nil, nil)
-	if err != nil {
-		t.Fatalf("render failed: %v", err)
-	}
+	// --- Subtest 1: think=true, assistant with reasoning ---
+	// Baseline prefill scenario. The existing test, restructured.
+	t.Run("think=true", func(t *testing.T) {
+		renderer := &Qwen35Renderer{isThinking: true}
+		msgs := []api.Message{
+			{Role: "user", Content: "Write two words."},
+			{Role: "assistant", Thinking: "Keep it short.", Content: "Hello world"},
+		}
 
-	want := `<|im_start|>user
-Write two words.<|im_end|>
-<|im_start|>assistant
-<think>
-Keep it short.
-</think>
+		got, err := renderer.Render(msgs, nil, nil)
+		if err != nil {
+			t.Fatalf("render failed: %v", err)
+		}
 
-Hello world`
-	if got != want {
-		t.Fatalf("unexpected prefill output\n--- got ---\n%s\n--- want ---\n%s", got, want)
-	}
+		prefillDiagnostics(t, got)
+
+		if got != wantWithReasoning {
+			t.Fatalf(
+				"byte-exact output mismatch.\n\n"+
+					"Ground truth: official Qwen 3.5 template with "+
+					"add_generation_prompt=False, trailing <|im_end|>\\n stripped.\n\n"+
+					"--- got ---\n%s\n--- want ---\n%s", got, wantWithReasoning,
+			)
+		}
+	})
+
+	// --- Subtest 2: think=false, same messages, must be identical ---
+	// Property 1 regression detector: if someone re-adds an isThinking gate
+	// to splitQwen35ReasoningContent or to the <think> wrapping condition,
+	// this subtest fails while subtest 1 passes. Uses the SAME want constant
+	// as subtest 1 — a compile-time guarantee that the test specification
+	// itself does not encode think-mode-dependent behavior.
+	t.Run("think=false_preserves_reasoning", func(t *testing.T) {
+		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true}
+		msgs := []api.Message{
+			{Role: "user", Content: "Write two words."},
+			{Role: "assistant", Thinking: "Keep it short.", Content: "Hello world"},
+		}
+
+		got, err := renderer.Render(msgs, nil, &api.ThinkValue{Value: false})
+		if err != nil {
+			t.Fatalf("render failed: %v", err)
+		}
+
+		prefillDiagnostics(t, got)
+
+		// Targeted diagnostic: reasoning must survive think=false.
+		if !strings.Contains(got, "Keep it short.") {
+			t.Errorf(
+				"reasoning text missing from think=false prefill output.\n\n"+
+					"The official template extracts reasoning_content and wraps it in "+
+					"<think> tags for messages after last_query_index (line 100-101). "+
+					"This wrapping has no enable_thinking check — it is purely "+
+					"positional. If the reasoning vanishes when think=false, the "+
+					"isThinking gate has been re-introduced to either "+
+					"splitQwen35ReasoningContent or the <think> wrapping condition.\n\n"+
+					"got:\n%s", got,
+			)
+		}
+
+		if got != wantWithReasoning {
+			t.Fatalf(
+				"byte-exact output mismatch (think=false).\n\n"+
+					"The prefill output MUST be identical to think=true. The official "+
+					"template was run with enable_thinking=True, False, and undefined "+
+					"for add_generation_prompt=False — all three produce identical "+
+					"output. enable_thinking is checked in exactly one place (line 149, "+
+					"inside the add_generation_prompt block), which does not run for "+
+					"prefill.\n\n"+
+					"--- got ---\n%s\n--- want ---\n%s", got, wantWithReasoning,
+			)
+		}
+	})
+
+	// --- Subtest 3: think=true, no reasoning ---
+	// Verifies that post-lastQueryIndex wrapping produces an empty <think>
+	// block when there is no reasoning, not plain content without <think>.
+	// The template's wrapping condition (line 100) is loop.index0 >
+	// ns.last_query_index — it does not check whether reasoning_content is
+	// non-empty. An empty reasoning_content produces <think>\n\n</think>\n\n.
+	t.Run("no_reasoning_think=true", func(t *testing.T) {
+		renderer := &Qwen35Renderer{isThinking: true}
+		msgs := []api.Message{
+			{Role: "user", Content: "Write two words."},
+			{Role: "assistant", Content: "Hello world"},
+		}
+
+		got, err := renderer.Render(msgs, nil, nil)
+		if err != nil {
+			t.Fatalf("render failed: %v", err)
+		}
+
+		prefillDiagnostics(t, got)
+
+		// Targeted diagnostic: <think> wrapping must be present even with
+		// no reasoning. The wrapping is positional, not content-dependent.
+		if !strings.Contains(got, "<think>") {
+			t.Errorf(
+				"<think> tag missing from post-lastQueryIndex assistant.\n\n"+
+					"The official template wraps every assistant message after "+
+					"last_query_index with <think> tags (line 100-101), regardless "+
+					"of whether reasoning_content is empty. An empty reasoning "+
+					"produces <think>\\n\\n</think>\\n\\n (empty block). If <think> "+
+					"is missing, the wrapping condition may have been changed to "+
+					"check for non-empty reasoning.\n\ngot:\n%s", got,
+			)
+		}
+
+		if got != wantNoReasoning {
+			t.Fatalf(
+				"byte-exact output mismatch.\n\n"+
+					"Ground truth: official Qwen 3.5 template with "+
+					"add_generation_prompt=False, trailing <|im_end|>\\n stripped. "+
+					"Empty reasoning → <think>\\n\\n</think>\\n\\n wrapping.\n\n"+
+					"--- got ---\n%s\n--- want ---\n%s", got, wantNoReasoning,
+			)
+		}
+	})
+
+	// --- Subtest 4: think=false, no reasoning, must be identical ---
+	// Property 1 for the no-reasoning path. Uses the SAME want constant
+	// as subtest 3.
+	t.Run("no_reasoning_think=false", func(t *testing.T) {
+		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true}
+		msgs := []api.Message{
+			{Role: "user", Content: "Write two words."},
+			{Role: "assistant", Content: "Hello world"},
+		}
+
+		got, err := renderer.Render(msgs, nil, &api.ThinkValue{Value: false})
+		if err != nil {
+			t.Fatalf("render failed: %v", err)
+		}
+
+		prefillDiagnostics(t, got)
+
+		if got != wantNoReasoning {
+			t.Fatalf(
+				"byte-exact output mismatch (think=false, no reasoning).\n\n"+
+					"The prefill output MUST be identical to think=true. "+
+					"enable_thinking has zero effect on historical message rendering.\n\n"+
+					"--- got ---\n%s\n--- want ---\n%s", got, wantNoReasoning,
+			)
+		}
+	})
+
+	// --- Subtest 5: think mode switch with full agentic tool history ---
+	// The most realistic prefill scenario: a multi-turn tool-calling
+	// conversation where the client replays history (originally generated
+	// under think=true) and now requests think=false. The last assistant
+	// message is a prefill.
+	//
+	// This subtest enforces Properties 1, 2, 3, 5, and 7 simultaneously:
+	//   - P1: think=false, historical reasoning preserved in last assistant
+	//   - P2: first assistant (index 1) BEFORE lastQueryIndex=3 → reasoning
+	//     "I should use the weather tool." discarded, plain rendering;
+	//     last assistant (index 4) AFTER lastQueryIndex=3 → <think> wrapping
+	//   - P3: last assistant is prefill — no <|im_end|>, no generation prompt
+	//   - P5: tool call argument "Paris" (string, formatToolCallArgument)
+	//   - P7: single tool response with own <|im_start|>user block
+	t.Run("think_switch_with_tool_history", func(t *testing.T) {
+		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true}
+		msgs := []api.Message{
+			{Role: "user", Content: "What's the weather?"},
+			{
+				Role:     "assistant",
+				Content:  "Let me check.",
+				Thinking: "I should use the weather tool.",
+				ToolCalls: []api.ToolCall{
+					{Function: api.ToolCallFunction{
+						Name: "get_weather",
+						Arguments: testArgsOrdered([]orderedArg{
+							{Key: "location", Value: "Paris"},
+						}),
+					}},
+				},
+			},
+			{Role: "tool", Content: "22C"},
+			{Role: "user", Content: "Now summarize."},
+			{
+				Role:     "assistant",
+				Content:  "It's 22C in Paris.",
+				Thinking: "Simple answer from tool result.",
+			},
+		}
+
+		got, err := renderer.Render(msgs, nil, &api.ThinkValue{Value: false})
+		if err != nil {
+			t.Fatalf("render failed: %v", err)
+		}
+
+		prefillDiagnostics(t, got)
+
+		// Targeted diagnostic: pre-lastQueryIndex assistant must NOT have
+		// <think> wrapping. The first assistant's reasoning must be absent
+		// from the output entirely — not just not wrapped, but not present.
+		firstAssistantEnd := strings.Index(got, "</tool_call><|im_end|>")
+		if firstAssistantEnd == -1 {
+			t.Fatalf("cannot find </tool_call><|im_end|> in output — first assistant turn structure is wrong.\n\ngot:\n%s", got)
+		}
+		firstAssistantBlock := got[:firstAssistantEnd]
+
+		if strings.Contains(firstAssistantBlock, "<think>") {
+			t.Errorf(
+				"first assistant (before lastQueryIndex) has <think> wrapping.\n\n"+
+					"The official template (line 100) wraps with <think> only when "+
+					"loop.index0 > ns.last_query_index. The first assistant is at "+
+					"index 1, lastQueryIndex=3 (the 'Now summarize.' user message). "+
+					"1 > 3 is false, so no <think> wrapping. If <think> appears, "+
+					"the lastQueryIndex computation or the wrapping condition is wrong.\n\n"+
+					"first assistant block:\n%s", firstAssistantBlock,
+			)
+		}
+
+		if strings.Contains(firstAssistantBlock, "I should use the weather tool") {
+			t.Errorf(
+				"first assistant's reasoning leaked into pre-lastQueryIndex output.\n\n"+
+					"The official template (lines 102-103) discards reasoning_content "+
+					"for messages at or before last_query_index. The rendered output "+
+					"must be <|im_start|>assistant\\nLet me check. with zero trace of "+
+					"the Thinking field. If reasoning appears, "+
+					"splitQwen35ReasoningContent's output is being used in the wrong "+
+					"branch.\n\nfirst assistant block:\n%s", firstAssistantBlock,
+			)
+		}
+
+		// Targeted diagnostic: post-lastQueryIndex assistant must have
+		// reasoning preserved despite think=false.
+		lastAssistantStart := strings.LastIndex(got, "<|im_start|>assistant")
+		if lastAssistantStart == -1 {
+			t.Fatalf("cannot find last <|im_start|>assistant in output.\n\ngot:\n%s", got)
+		}
+		lastAssistantBlock := got[lastAssistantStart:]
+
+		if !strings.Contains(lastAssistantBlock, "<think>\nSimple answer from tool result.\n</think>") {
+			t.Errorf(
+				"last assistant's reasoning missing from post-lastQueryIndex output "+
+					"under think=false.\n\n"+
+					"The official template wraps reasoning in <think> tags for all "+
+					"messages after last_query_index (line 100-101), with no "+
+					"enable_thinking check. If reasoning vanishes when think=false, "+
+					"the isThinking gate has been re-introduced.\n\n"+
+					"last assistant block:\n%s", lastAssistantBlock,
+			)
+		}
+
+		if got != wantToolHistory {
+			t.Fatalf(
+				"byte-exact output mismatch (think=false, tool history).\n\n"+
+					"Ground truth: official Qwen 3.5 template with "+
+					"add_generation_prompt=False, trailing <|im_end|>\\n stripped. "+
+					"Verified with enable_thinking=True, False, and undefined — all "+
+					"identical.\n\n"+
+					"--- got ---\n%s\n--- want ---\n%s", got, wantToolHistory,
+			)
+		}
+	})
+
+	// --- Subtest 6: lastQueryIndex boundary — both sides in one conversation ---
+	// Two assistant messages: one before lastQueryIndex (reasoning discarded),
+	// one after (empty <think> wrapping). This is the only test that verifies
+	// both sides of the boundary byte-exact in a single render call. A
+	// refactoring that changes the boundary computation while leaving each
+	// side independently correct would be caught here.
+	t.Run("pre_lastQueryIndex_reasoning_discarded", func(t *testing.T) {
+		renderer := &Qwen35Renderer{isThinking: true}
+		msgs := []api.Message{
+			{Role: "user", Content: "First question."},
+			{Role: "assistant", Thinking: "Think first.", Content: "First answer."},
+			{Role: "user", Content: "Second question."},
+			{Role: "assistant", Content: "Second answer."},
+		}
+
+		got, err := renderer.Render(msgs, nil, nil)
+		if err != nil {
+			t.Fatalf("render failed: %v", err)
+		}
+
+		prefillDiagnostics(t, got)
+
+		// Targeted diagnostic: first assistant must NOT have <think> or reasoning.
+		firstEnd := strings.Index(got, "<|im_end|>\n<|im_start|>user\nSecond")
+		if firstEnd == -1 {
+			t.Fatalf("cannot find boundary between first assistant and second user message.\n\ngot:\n%s", got)
+		}
+		firstBlock := got[:firstEnd]
+
+		if strings.Contains(firstBlock, "<think>") {
+			t.Errorf(
+				"first assistant (before lastQueryIndex) has <think> wrapping.\n\n"+
+					"lastQueryIndex=2 (the 'Second question.' user). First assistant "+
+					"is at index 1. 1 > 2 is false → no <think> wrapping.\n\n"+
+					"first block:\n%s", firstBlock,
+			)
+		}
+
+		if strings.Contains(firstBlock, "Think first") {
+			t.Errorf(
+				"first assistant's reasoning 'Think first.' leaked into output.\n\n"+
+					"Messages at or before lastQueryIndex discard reasoning. The "+
+					"template (lines 102-103) uses only content in the else branch.\n\n"+
+					"first block:\n%s", firstBlock,
+			)
+		}
+
+		// Targeted diagnostic: second assistant (after lastQueryIndex) must have
+		// empty <think> wrapping.
+		if !strings.Contains(got, "<think>\n\n</think>\n\nSecond answer.") {
+			t.Errorf(
+				"second assistant (after lastQueryIndex) missing empty <think> wrapping.\n\n"+
+					"The template wraps every post-lastQueryIndex assistant with <think> "+
+					"(line 100-101), even when reasoning is empty. Empty reasoning → "+
+					"<think>\\n\\n</think>\\n\\n.\n\ngot:\n%s", got,
+			)
+		}
+
+		if got != wantBoundary {
+			t.Fatalf(
+				"byte-exact output mismatch (lastQueryIndex boundary).\n\n"+
+					"Ground truth: official Qwen 3.5 template with "+
+					"add_generation_prompt=False, trailing <|im_end|>\\n stripped.\n\n"+
+					"--- got ---\n%s\n--- want ---\n%s", got, wantBoundary,
+			)
+		}
+	})
 }
 
 // TestQwen35RendererAssistantToolCallIsNotPrefill verifies that when the last
