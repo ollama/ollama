@@ -236,7 +236,7 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 	}
 
 	if repeatLineDelimiters == "" {
-		repeatLineDelimiters = "\n.!?"
+		repeatLineDelimiters = "\n.!?:"
 	}
 
 	return Sampler{

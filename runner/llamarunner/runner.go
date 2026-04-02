@@ -196,7 +196,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	}
 	repeatLineDelims := params.repeatLineDelims
 	if repeatLineDelims == "" {
-		repeatLineDelims = "\n.!?"
+		repeatLineDelims = "\n.!?:"
 	}
 	repeatLineMinLength := params.repeatLineMinLength
 	if repeatLineMinLength == 0 {

@@ -166,7 +166,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 
 	// segment-level loop detection
 	const loopWindow = 100
-	const loopDelims = "\n.!?"
+	const loopDelims = "\n.!?:"
 	const loopTempBoost = float32(0.5)
 	const loopMinLength = 20
 	var loopCurSegment strings.Builder

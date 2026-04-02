@@ -1079,7 +1079,7 @@ func DefaultOptions() Options {
 		PresencePenalty:  0.0,
 		FrequencyPenalty: 0.0,
 		RepeatLineWindow:     0,
-		RepeatLineDelimiters: "\n.!?",
+		RepeatLineDelimiters: "\n.!?:",
 		RepeatLineTempBoost:  0.5,
 		RepeatLineMinLength:  20,
 		Seed:             -1,
