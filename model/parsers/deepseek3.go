@@ -44,6 +44,10 @@ func (p *DeepSeek3Parser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
 }
 
+func (p *DeepSeek3Parser) CanDisableThinking() bool {
+	return p.hasThinkingSupport
+}
+
 func (p *DeepSeek3Parser) setInitialState(lastMessage *api.Message, tools []api.Tool, thinkValue *api.ThinkValue) {
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"
 

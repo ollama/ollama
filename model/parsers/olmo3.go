@@ -38,6 +38,10 @@ func (p *Olmo3Parser) HasThinkingSupport() bool {
 	return false
 }
 
+func (p *Olmo3Parser) CanDisableThinking() bool {
+	return false
+}
+
 func (p *Olmo3Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.state = olmo3StateContent
 	return tools

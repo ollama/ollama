@@ -9,6 +9,10 @@ type GLM47Parser struct {
 	GLM46Parser
 }
 
+func (p *GLM47Parser) CanDisableThinking() bool {
+	return true
+}
+
 func (p *GLM47Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
 	p.callIndex = 0

@@ -22,6 +22,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/model/parsers"
@@ -139,6 +140,14 @@ func (m *Model) Capabilities() []model.Capability {
 	isGptoss := slices.Contains([]string{"gptoss", "gpt-oss"}, m.Config.ModelFamily)
 	if hasTags || isGptoss || (builtinParser != nil && builtinParser.HasThinkingSupport()) {
 		capabilities = append(capabilities, model.CapabilityThinking)
+
+		// Determine if thinking can be toggled on/off:
+		// - Template-based thinking (hasTags) and gpt-oss models support toggling
+		// - Parser-based models support toggling only if the parser respects thinkValue
+		canToggle := hasTags || isGptoss || (builtinParser != nil && builtinParser.CanDisableThinking())
+		if canToggle {
+			capabilities = append(capabilities, model.CapabilityThinkingToggle)
+		}
 	}
 
 	return capabilities
@@ -587,6 +596,26 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	layers = append(layers, mf.Layers...)
 	if mf.Config.Digest != "" {
 		layers = append(layers, mf.Config)
+	}
+
+	// Check available disk space before downloading
+	var bytesNeeded int64
+	for _, layer := range layers {
+		fp, err := manifest.BlobsPath(layer.Digest)
+		if err != nil || layer.Size == 0 {
+			continue
+		}
+		if _, err := os.Stat(fp); os.IsNotExist(err) {
+			bytesNeeded += layer.Size
+		}
+	}
+	if bytesNeeded > 0 {
+		if blobsDir, err := manifest.BlobsPath(""); err == nil {
+			if avail, err := availableBytes(blobsDir); err == nil && avail < bytesNeeded {
+				return fmt.Errorf("not enough disk space: need %s, have %s",
+					format.HumanBytes(bytesNeeded), format.HumanBytes(avail))
+			}
+		}
 	}
 
 	// Use fast transfer for models with tensor layers (many small blobs)

@@ -30,3 +30,8 @@ export function useHasThinkingCapability(modelName: string | undefined) {
   const { data: capabilitiesResponse } = useModelCapabilities(modelName);
   return capabilitiesResponse?.capabilities?.includes("thinking") ?? false;
 }
+
+export function useCanToggleThinking(modelName: string | undefined) {
+  const { data: capabilitiesResponse } = useModelCapabilities(modelName);
+  return capabilitiesResponse?.capabilities?.includes("thinking_toggle") ?? false;
+}

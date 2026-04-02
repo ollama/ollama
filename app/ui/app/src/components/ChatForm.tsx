@@ -21,6 +21,7 @@ import {
   useHasVisionCapability,
   useHasToolsCapability,
   useHasThinkingCapability,
+  useCanToggleThinking,
 } from "@/hooks/useModelCapabilities";
 import { useUser } from "@/hooks/useUser";
 import { DisplayLogin } from "@/components/DisplayLogin";
@@ -165,7 +166,7 @@ function ChatForm({
 
   const modelSupportsThinkingLevels =
     selectedModel?.model.toLowerCase().startsWith("gpt-oss") || false;
-  const supportsThinkToggling = useHasThinkingCapability(selectedModel?.model);
+  const supportsThinkToggling = useCanToggleThinking(selectedModel?.model);
 
   useEffect(() => {
     if (supportsThinkToggling && thinkEnabled && webSearchEnabled) {
