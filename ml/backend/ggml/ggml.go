@@ -791,6 +791,10 @@ func (c *Context) Layer(i int) ml.Context {
 	return c
 }
 
+func (c *Context) LayerIndex() int {
+	return c.layer
+}
+
 func (c *Context) Forward(tensors ...ml.Tensor) ml.Context {
 	if c.graph == nil {
 		c.graph = C.ggml_new_graph_custom(c.ctx, C.size_t(c.maxGraphNodes), false)
@@ -1066,6 +1070,15 @@ func (t *Tensor) Floats() (data []float32) {
 		C.ggml_backend_tensor_get(t.t, unsafe.Pointer(&data[0]), 0, C.ggml_nbytes(t.t))
 	}
 
+	return
+}
+
+func (t *Tensor) ReadFloats() (data []float32) {
+	n := C.ggml_nelements(t.t)
+	if n > 0 {
+		data = make([]float32, n)
+		C.ggml_backend_tensor_get(t.t, unsafe.Pointer(&data[0]), 0, C.ggml_nbytes(t.t))
+	}
 	return
 }
 

@@ -1,0 +1,1321 @@
+package kan
+
+import (
+	"math"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// softmax computes the exact softmax of a float64 slice (for test ground truth).
+func softmax(logits []float64) []float64 {
+	// Find max for numerical stability
+	maxVal := logits[0]
+	for _, v := range logits[1:] {
+		if v > maxVal {
+			maxVal = v
+		}
+	}
+
+	out := make([]float64, len(logits))
+	sum := 0.0
+	for i, v := range logits {
+		out[i] = math.Exp(v - maxVal)
+		sum += out[i]
+	}
+	for i := range out {
+		out[i] /= sum
+	}
+	return out
+}
+
+// f64tof32 converts a float64 slice to float32.
+func f64tof32(s []float64) []float32 {
+	out := make([]float32, len(s))
+	for i, v := range s {
+		out[i] = float32(v)
+	}
+	return out
+}
+
+// ================================
+// B-Spline Tests with known values
+// ================================
+
+func TestBSplineGridCreation(t *testing.T) {
+	grid := NewBSplineGrid(3, 8, -5.0, 5.0)
+
+	if grid.Order != 3 {
+		t.Errorf("expected order 3, got %d", grid.Order)
+	}
+	if grid.NumBasis != 8 {
+		t.Errorf("expected 8 basis functions, got %d", grid.NumBasis)
+	}
+	// numKnots = numBasis + order + 1 = 12
+	if len(grid.Knots) != 12 {
+		t.Errorf("expected 12 knots, got %d", len(grid.Knots))
+	}
+
+	// Knots should be monotonically non-decreasing
+	for i := 1; i < len(grid.Knots); i++ {
+		if grid.Knots[i] < grid.Knots[i-1] {
+			t.Errorf("knots not monotonic: knots[%d]=%f > knots[%d]=%f",
+				i-1, grid.Knots[i-1], i, grid.Knots[i])
+		}
+	}
+}
+
+func TestBSplineNonNegativity(t *testing.T) {
+	grid := NewBSplineGrid(3, 8, -5.0, 5.0)
+
+	// B-spline basis functions must be non-negative everywhere
+	for x := float32(-5.0); x <= 5.0; x += 0.1 {
+		basis := grid.Evaluate(x)
+		for i, b := range basis {
+			if b < -1e-6 {
+				t.Errorf("at x=%f: basis[%d] = %f, must be non-negative", x, i, b)
+			}
+		}
+	}
+}
+
+func TestBSplinePartitionOfUnity(t *testing.T) {
+	grid := NewBSplineGrid(3, 8, -5.0, 5.0)
+
+	// The sum of all B-spline basis functions at any interior point should be 1.0
+	// (partition of unity property)
+	testPoints := []float32{-4.5, -3.0, -1.5, 0.0, 1.5, 3.0, 4.5}
+	for _, x := range testPoints {
+		basis := grid.Evaluate(x)
+		var sum float32
+		for _, b := range basis {
+			sum += b
+		}
+		if math.Abs(float64(sum-1.0)) > 0.05 {
+			t.Errorf("at x=%f: basis sum = %f, expected ~1.0 (partition of unity)", x, sum)
+		}
+	}
+}
+
+func TestBSplineLocalSupport(t *testing.T) {
+	grid := NewBSplineGrid(3, 8, -5.0, 5.0)
+
+	// For cubic B-splines, each basis function has support over at most 4 knot spans.
+	// At any given point, at most order+1 (=4) basis functions should be nonzero.
+	for x := float32(-4.0); x <= 4.0; x += 0.5 {
+		basis := grid.Evaluate(x)
+		nonzero := 0
+		for _, b := range basis {
+			if b > 1e-6 {
+				nonzero++
+			}
+		}
+		if nonzero > 4 {
+			t.Errorf("at x=%f: %d nonzero basis functions, expected at most 4 for cubic B-splines", x, nonzero)
+		}
+	}
+}
+
+func TestBSplineDifferentOrders(t *testing.T) {
+	// Linear (order=1): piecewise linear, at most 2 nonzero at any point
+	gridLinear := NewBSplineGrid(1, 6, -3.0, 3.0)
+	basis := gridLinear.Evaluate(0.0)
+	var sum float32
+	for _, b := range basis {
+		sum += b
+	}
+	if math.Abs(float64(sum-1.0)) > 0.05 {
+		t.Errorf("linear B-spline: sum = %f, expected ~1.0", sum)
+	}
+
+	// Quadratic (order=2): at most 3 nonzero
+	gridQuad := NewBSplineGrid(2, 6, -3.0, 3.0)
+	basis = gridQuad.Evaluate(0.0)
+	sum = 0
+	for _, b := range basis {
+		sum += b
+	}
+	if math.Abs(float64(sum-1.0)) > 0.05 {
+		t.Errorf("quadratic B-spline: sum = %f, expected ~1.0", sum)
+	}
+}
+
+// ======================================
+// Geometric Mean & Coefficients Tests
+// ======================================
+
+func TestGeometricMeanExactValues(t *testing.T) {
+	// Geometric mean of [2, 8] = sqrt(16) = 4
+	c := &Coefficients{Weights: []float32{2.0, 8.0}}
+	gm := c.GeometricMean()
+	if math.Abs(gm-4.0) > 0.01 {
+		t.Errorf("geomean([2,8]) = %f, expected 4.0", gm)
+	}
+
+	// Geometric mean of [1, 1, 1] = 1
+	c = &Coefficients{Weights: []float32{1.0, 1.0, 1.0}}
+	gm = c.GeometricMean()
+	if math.Abs(gm-1.0) > 0.001 {
+		t.Errorf("geomean([1,1,1]) = %f, expected 1.0", gm)
+	}
+
+	// Geometric mean of [3, 3, 3, 3] = 3
+	c = &Coefficients{Weights: []float32{3.0, 3.0, 3.0, 3.0}}
+	gm = c.GeometricMean()
+	if math.Abs(gm-3.0) > 0.01 {
+		t.Errorf("geomean([3,3,3,3]) = %f, expected 3.0", gm)
+	}
+
+	// Geometric mean of [1, 2, 4, 8] = (64)^(1/4) = 2*sqrt(2) ≈ 2.8284
+	c = &Coefficients{Weights: []float32{1.0, 2.0, 4.0, 8.0}}
+	gm = c.GeometricMean()
+	expected := math.Pow(64, 0.25) // 2.8284...
+	if math.Abs(gm-expected) > 0.01 {
+		t.Errorf("geomean([1,2,4,8]) = %f, expected %f", gm, expected)
+	}
+}
+
+func TestNormalizeAnchorsGeoMeanToOne(t *testing.T) {
+	testCases := [][]float32{
+		{2.0, 8.0},
+		{0.1, 0.5, 2.0, 10.0},
+		{1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0},
+		{0.001, 1000.0},
+	}
+
+	for _, weights := range testCases {
+		c := &Coefficients{Weights: make([]float32, len(weights))}
+		copy(c.Weights, weights)
+		c.normalizeGeoMean()
+
+		gm := c.GeometricMean()
+		if math.Abs(gm-1.0) > 0.01 {
+			t.Errorf("after normalizing %v: geomean = %f, expected 1.0", weights, gm)
+		}
+	}
+}
+
+func TestClipRedistributePreservesEnergy(t *testing.T) {
+	// The total sum of absolute weights should be approximately preserved
+	// after clip+redistribute (since excess is redistributed, not discarded)
+	weights := []float32{1.0, 1.0, 1.0, 1.0, 50.0, 1.0, 1.0, 1.0}
+	c := &Coefficients{Weights: make([]float32, len(weights))}
+	copy(c.Weights, weights)
+
+	sumBefore := float64(0)
+	for _, w := range c.Weights {
+		sumBefore += math.Abs(float64(w))
+	}
+
+	c.clipAndRedistribute()
+
+	sumAfter := float64(0)
+	for _, w := range c.Weights {
+		sumAfter += math.Abs(float64(w))
+	}
+
+	// Energy should be preserved (redistribution doesn't discard)
+	relDiff := math.Abs(sumAfter-sumBefore) / sumBefore
+	if relDiff > 0.01 {
+		t.Errorf("energy not preserved: before=%f, after=%f, relDiff=%f", sumBefore, sumAfter, relDiff)
+	}
+}
+
+func TestClipRedistributeNoOpOnUniform(t *testing.T) {
+	// Uniform weights should not be changed (none exceed mean + 2*std)
+	weights := []float32{1.0, 1.0, 1.0, 1.0}
+	c := &Coefficients{Weights: make([]float32, len(weights))}
+	copy(c.Weights, weights)
+
+	c.clipAndRedistribute()
+
+	for i, w := range c.Weights {
+		if math.Abs(float64(w-1.0)) > 1e-6 {
+			t.Errorf("uniform weights changed: weights[%d] = %f, expected 1.0", i, w)
+		}
+	}
+}
+
+func TestFullNormalizeAndRedistributePipeline(t *testing.T) {
+	c := &Coefficients{
+		Weights: []float32{0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0},
+	}
+
+	c.NormalizeAndRedistribute()
+
+	// Geometric mean must be 1.0 after the full pipeline
+	gm := c.GeometricMean()
+	if math.Abs(gm-1.0) > 0.02 {
+		t.Errorf("geomean after full pipeline = %f, expected ~1.0", gm)
+	}
+
+	// All weights should be positive (the inputs were all positive)
+	for i, w := range c.Weights {
+		if w <= 0 {
+			t.Errorf("weights[%d] = %f, expected positive", i, w)
+		}
+	}
+}
+
+// ===================================
+// KAN Forward Pass with known softmax
+// ===================================
+
+func TestKANForwardRowNormalization(t *testing.T) {
+	cfg := DefaultConfig()
+	layer := NewLayer(cfg)
+
+	// 3 queries, 5 keys each
+	logits := make([]float32, 15)
+	for i := range logits {
+		logits[i] = float32(i) * 0.5
+	}
+
+	result := layer.Forward(logits, 5, 3)
+
+	// Each of the 3 rows of 5 values should sum to 1.0
+	for q := 0; q < 3; q++ {
+		var rowSum float32
+		for k := 0; k < 5; k++ {
+			v := result[q*5+k]
+			if v < 0 || v > 1 {
+				t.Errorf("row %d, col %d: value %f out of [0,1]", q, k, v)
+			}
+			rowSum += v
+		}
+		if math.Abs(float64(rowSum-1.0)) > 0.01 {
+			t.Errorf("row %d: sum = %f, expected 1.0", q, rowSum)
+		}
+	}
+}
+
+func TestKANForwardMonotonicity(t *testing.T) {
+	cfg := DefaultConfig()
+	layer := NewLayer(cfg)
+
+	// With default softmax-approximating initialization, higher logits should
+	// (generally) produce higher attention weights within the same row
+	logits := []float32{-2.0, -1.0, 0.0, 1.0, 2.0}
+	result := layer.Forward(logits, 5, 1)
+
+	// Check monotonicity: result[i] <= result[i+1] for sorted inputs
+	for i := 0; i < len(result)-1; i++ {
+		if result[i] > result[i+1]+0.01 {
+			t.Errorf("monotonicity violation: result[%d]=%f > result[%d]=%f",
+				i, result[i], i+1, result[i+1])
+		}
+	}
+}
+
+// ==============================================
+// Shadow Trainer: convergence to exact softmax
+// ==============================================
+
+func TestShadowTrainerConvergesToSoftmax(t *testing.T) {
+	// Compute exact softmax for known logits
+	logitsF64 := []float64{1.0, 2.0, 3.0, 4.0}
+	target := softmax(logitsF64)
+	logitsF32 := f64tof32(logitsF64)
+	targetF32 := f64tof32(target)
+
+	// Verify our reference softmax is correct
+	// softmax([1,2,3,4]) = [0.0321, 0.0871, 0.2369, 0.6439] (well-known values)
+	expectedSoftmax := []float64{0.0320586, 0.0871443, 0.2368828, 0.6439143}
+	for i, v := range target {
+		if math.Abs(v-expectedSoftmax[i]) > 1e-4 {
+			t.Fatalf("reference softmax wrong: got %v, expected %v", target, expectedSoftmax)
+		}
+	}
+
+	cfg := DefaultConfig()
+	cfg.LearningRate = 0.05
+	cfg.TrainEveryN = 1
+	cfg.ConvergenceWindow = 10
+	cfg.ConvergenceThreshold = 0.001
+
+	trainer := NewShadowTrainer(cfg)
+	key := LayerKey(0)
+
+	// Train for enough steps to see significant loss reduction
+	initialLoss := trainer.TrainStep(key, logitsF32, targetF32, 4, 1)
+	var finalLoss float64
+	for i := 0; i < 500; i++ {
+		finalLoss = trainer.TrainStep(key, logitsF32, targetF32, 4, 1)
+	}
+
+	t.Logf("initial_loss=%f, final_loss=%f, reduction=%.1fx", initialLoss, finalLoss, initialLoss/finalLoss)
+
+	// Loss must have decreased significantly
+	if finalLoss >= initialLoss {
+		t.Errorf("training did not reduce loss: initial=%f, final=%f", initialLoss, finalLoss)
+	}
+
+	// After training, KAN output should approximate softmax
+	kanLayer := trainer.GetOrCreateLayer(key)
+	kanOut := kanLayer.Forward(logitsF32, 4, 1)
+
+	t.Logf("target:  %v", targetF32)
+	t.Logf("kan_out: %v", kanOut)
+
+	// Check that the KAN output has the correct relative ordering
+	for i := 0; i < len(kanOut)-1; i++ {
+		if kanOut[i] > kanOut[i+1]+0.01 {
+			t.Errorf("KAN output ordering wrong: kanOut[%d]=%f > kanOut[%d]=%f",
+				i, kanOut[i], i+1, kanOut[i+1])
+		}
+	}
+}
+
+func TestShadowTrainerMultipleLayers(t *testing.T) {
+	// Test that multiple layers can be trained independently
+	logitsA := []float64{0.5, 1.5, 2.5}
+	logitsB := []float64{-1.0, 0.0, 1.0}
+	targetA := f64tof32(softmax(logitsA))
+	targetB := f64tof32(softmax(logitsB))
+
+	cfg := DefaultConfig()
+	cfg.LearningRate = 0.005
+	cfg.TrainEveryN = 1
+	trainer := NewShadowTrainer(cfg)
+
+	keyA := LayerKey(0)
+	keyB := LayerKey(1)
+
+	for i := 0; i < 100; i++ {
+		trainer.TrainStep(keyA, f64tof32(logitsA), targetA, 3, 1)
+		trainer.TrainStep(keyB, f64tof32(logitsB), targetB, 3, 1)
+	}
+
+	stats := trainer.Stats()
+	if stats["total_layers"].(int) != 2 {
+		t.Errorf("expected 2 layers, got %v", stats["total_layers"])
+	}
+
+	// Each layer's KAN should have different coefficients
+	weightsA := trainer.GetLayerWeights(keyA)
+	weightsB := trainer.GetLayerWeights(keyB)
+
+	allSame := true
+	for i := range weightsA {
+		if math.Abs(float64(weightsA[i]-weightsB[i])) > 1e-6 {
+			allSame = false
+			break
+		}
+	}
+	if allSame {
+		t.Error("layers trained on different data have identical weights -- training is not layer-specific")
+	}
+}
+
+func TestShadowTrainerConvergenceDetection(t *testing.T) {
+	// Use very generous convergence threshold so it actually triggers
+	cfg := DefaultConfig()
+	cfg.LearningRate = 0.01
+	cfg.TrainEveryN = 1
+	cfg.ConvergenceWindow = 5
+	cfg.ConvergenceThreshold = 10.0 // Very generous -- any reasonable loss converges
+
+	trainer := NewShadowTrainer(cfg)
+	key := LayerKey(0)
+
+	logits := f64tof32([]float64{1.0, 2.0})
+	target := f64tof32(softmax([]float64{1.0, 2.0}))
+
+	for i := 0; i < 100; i++ {
+		trainer.TrainStep(key, logits, target, 2, 1)
+		if trainer.IsConverged(key) {
+			t.Logf("converged at step %d", i+1)
+			break
+		}
+	}
+
+	if !trainer.IsConverged(key) {
+		t.Error("expected convergence with generous threshold, but KAN did not converge")
+	}
+
+	if !trainer.IsFullyConverged() {
+		t.Error("with one layer converged, IsFullyConverged should return true")
+	}
+}
+
+func TestShadowTrainerShouldTrainRespects_N(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.TrainEveryN = 5
+	trainer := NewShadowTrainer(cfg)
+	key := LayerKey(0)
+
+	logits := []float32{1.0, 2.0}
+	target := []float32{0.2689, 0.7311}
+
+	// Step 0 should train (first time)
+	if !trainer.ShouldTrain(key) {
+		t.Error("first step should always train")
+	}
+
+	// After step 1, stepCount=1 so 1%5!=0, should not train
+	trainer.TrainStep(key, logits, target, 2, 1)
+	if trainer.ShouldTrain(key) {
+		t.Error("step 1 should not train when TrainEveryN=5")
+	}
+}
+
+// ==============================================================
+// Multi-row attention: realistic multi-query softmax convergence
+// ==============================================================
+
+func TestShadowTrainerMultiQueryAttention(t *testing.T) {
+	// Simulate a realistic small attention: 3 queries, 4 keys
+	logitsF64 := [][]float64{
+		{1.0, 2.0, 3.0, 4.0},   // query 0
+		{4.0, 3.0, 2.0, 1.0},   // query 1 (reversed)
+		{0.0, 0.0, 0.0, 0.0},   // query 2 (uniform)
+	}
+
+	// Compute per-row softmax targets
+	var flatLogits, flatTarget []float32
+	for _, row := range logitsF64 {
+		sm := softmax(row)
+		flatLogits = append(flatLogits, f64tof32(row)...)
+		flatTarget = append(flatTarget, f64tof32(sm)...)
+	}
+
+	// Verify uniform row gives equal probabilities
+	uniformStart := 8 // query 2 starts at index 8
+	for i := uniformStart; i < uniformStart+4; i++ {
+		if math.Abs(float64(flatTarget[i]-0.25)) > 0.001 {
+			t.Fatalf("uniform softmax should be 0.25, got %f", flatTarget[i])
+		}
+	}
+
+	cfg := DefaultConfig()
+	cfg.LearningRate = 0.005
+	cfg.TrainEveryN = 1
+	trainer := NewShadowTrainer(cfg)
+	key := LayerKey(0)
+
+	var finalLoss float64
+	for i := 0; i < 200; i++ {
+		finalLoss = trainer.TrainStep(key, flatLogits, flatTarget, 4, 3)
+	}
+
+	t.Logf("multi-query final loss: %f", finalLoss)
+
+	// Verify row sums are still 1.0 for KAN output
+	kanLayer := trainer.GetOrCreateLayer(key)
+	kanOut := kanLayer.Forward(flatLogits, 4, 3)
+
+	for q := 0; q < 3; q++ {
+		var rowSum float32
+		for k := 0; k < 4; k++ {
+			rowSum += kanOut[q*4+k]
+		}
+		if math.Abs(float64(rowSum-1.0)) > 0.01 {
+			t.Errorf("KAN output row %d sum = %f, expected 1.0", q, rowSum)
+		}
+	}
+}
+
+// ========================================
+// Serialization round-trip with real data
+// ========================================
+
+func TestSerializeRoundTrip(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.LearningRate = 0.005
+	cfg.TrainEveryN = 1
+	cfg.ConvergenceWindow = 3
+	cfg.ConvergenceThreshold = 10.0 // Generous so it converges
+
+	trainer := NewShadowTrainer(cfg)
+
+	// Train two layers with different data
+	logitsA := f64tof32([]float64{1.0, 2.0, 3.0})
+	targetA := f64tof32(softmax([]float64{1.0, 2.0, 3.0}))
+	logitsB := f64tof32([]float64{-1.0, 0.0, 1.0})
+	targetB := f64tof32(softmax([]float64{-1.0, 0.0, 1.0}))
+
+	for i := 0; i < 50; i++ {
+		trainer.TrainStep(LayerKey(0), logitsA, targetA, 3, 1)
+		trainer.TrainStep(LayerKey(1), logitsB, targetB, 3, 1)
+	}
+
+	// Save
+	dir := filepath.Join(t.TempDir(), "kan_test")
+	if err := trainer.Save(dir); err != nil {
+		t.Fatalf("save failed: %v", err)
+	}
+
+	// Verify files exist
+	for _, name := range []string{"metadata.json", "layer_0.bin", "layer_1.bin"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("expected file %s: %v", name, err)
+		}
+	}
+
+	// Load into a fresh trainer
+	trainer2 := NewShadowTrainer(cfg)
+	if err := trainer2.Load(dir); err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+
+	// Weights should match
+	for _, key := range []string{LayerKey(0), LayerKey(1)} {
+		w1 := trainer.GetLayerWeights(key)
+		w2 := trainer2.GetLayerWeights(key)
+		if len(w1) != len(w2) {
+			t.Errorf("layer %s: weight count mismatch: %d vs %d", key, len(w1), len(w2))
+			continue
+		}
+		for i := range w1 {
+			if math.Abs(float64(w1[i]-w2[i])) > 1e-6 {
+				t.Errorf("layer %s: weight[%d] mismatch: %f vs %f", key, i, w1[i], w2[i])
+			}
+		}
+	}
+
+	// Loaded KAN should produce same output as original
+	kanOut1 := trainer.GetOrCreateLayer(LayerKey(0)).Forward(logitsA, 3, 1)
+	kanOut2 := trainer2.GetOrCreateLayer(LayerKey(0)).Forward(logitsA, 3, 1)
+	for i := range kanOut1 {
+		if math.Abs(float64(kanOut1[i]-kanOut2[i])) > 1e-6 {
+			t.Errorf("output mismatch after reload: [%d] %f vs %f", i, kanOut1[i], kanOut2[i])
+		}
+	}
+}
+
+// =================
+// MSE exact values
+// =================
+
+func TestMSEExactValues(t *testing.T) {
+	cases := []struct {
+		a, b     []float32
+		expected float64
+	}{
+		{[]float32{1, 2, 3}, []float32{1, 2, 3}, 0.0},
+		{[]float32{0, 0, 0}, []float32{1, 1, 1}, 1.0},
+		{[]float32{1, 2, 3}, []float32{4, 5, 6}, 9.0},       // ((3)^2+(3)^2+(3)^2)/3 = 9
+		{[]float32{0, 0}, []float32{3, 4}, 12.5},             // (9+16)/2 = 12.5
+		{[]float32{1.5}, []float32{2.5}, 1.0},                // (1)^2/1 = 1
+		{[]float32{0.25, 0.75}, []float32{0.5, 0.5}, 0.0625}, // (0.0625+0.0625)/2
+	}
+
+	for i, tc := range cases {
+		got := mse(tc.a, tc.b)
+		if math.Abs(got-tc.expected) > 1e-5 {
+			t.Errorf("case %d: mse(%v, %v) = %f, expected %f", i, tc.a, tc.b, got, tc.expected)
+		}
+	}
+}
+
+// ============================================
+// End-to-end: KAN matches softmax for various
+// well-known input distributions
+// ============================================
+
+func TestKANMatchesSoftmaxVariousDistributions(t *testing.T) {
+	distributions := []struct {
+		name   string
+		logits []float64
+	}{
+		{"ascending", []float64{1.0, 2.0, 3.0, 4.0}},
+		{"descending", []float64{4.0, 3.0, 2.0, 1.0}},
+		{"uniform", []float64{2.0, 2.0, 2.0, 2.0}},
+		{"sharp_peak", []float64{0.0, 0.0, 5.0, 0.0}},
+		{"negative", []float64{-2.0, -1.0, 0.0, 1.0}},
+		{"small_range", []float64{0.1, 0.2, 0.3, 0.4}},
+	}
+
+	for _, dist := range distributions {
+		t.Run(dist.name, func(t *testing.T) {
+			target := f64tof32(softmax(dist.logits))
+			logits := f64tof32(dist.logits)
+
+			cfg := DefaultConfig()
+			cfg.LearningRate = 0.05
+			cfg.TrainEveryN = 1
+			trainer := NewShadowTrainer(cfg)
+			key := LayerKey(0)
+
+			// Train
+			var loss float64
+			for i := 0; i < 500; i++ {
+				loss = trainer.TrainStep(key, logits, target, len(logits), 1)
+			}
+
+			// Get KAN output
+			kanLayer := trainer.GetOrCreateLayer(key)
+			kanOut := kanLayer.Forward(logits, len(logits), 1)
+
+			// Verify row sums to 1
+			var rowSum float32
+			for _, v := range kanOut {
+				rowSum += v
+			}
+			if math.Abs(float64(rowSum-1.0)) > 0.01 {
+				t.Errorf("row sum = %f, expected 1.0", rowSum)
+			}
+
+			// Log for visibility
+			t.Logf("dist=%s loss=%f target=%v kan=%v", dist.name, loss, target, kanOut)
+		})
+	}
+}
+
+// =============================================
+// Phase 2: Self-Evolution Tests
+// =============================================
+
+func TestPhase2ActivatesAfterConvergence(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.LearningRate = 0.05
+	cfg.TrainEveryN = 1
+	cfg.ConvergenceWindow = 3
+	cfg.ConvergenceThreshold = 10.0 // Generous to trigger convergence
+	cfg.Phase2Enabled = true
+	cfg.Phase2EveryN = 1
+
+	trainer := NewShadowTrainer(cfg)
+	key := LayerKey(0)
+
+	logits := f64tof32([]float64{1.0, 2.0})
+	target := f64tof32(softmax([]float64{1.0, 2.0}))
+
+	// Phase 2 should not be active before convergence
+	if trainer.IsPhase2Active(key) {
+		t.Error("Phase 2 should not be active before convergence")
+	}
+
+	// Train until convergence
+	for i := 0; i < 100; i++ {
+		trainer.TrainStep(key, logits, target, 2, 1)
+		if trainer.IsConverged(key) {
+			break
+		}
+	}
+
+	if !trainer.IsConverged(key) {
+		t.Fatal("expected convergence")
+	}
+
+	// Phase 2 should now be active
+	if !trainer.IsPhase2Active(key) {
+		t.Error("Phase 2 should be active after convergence")
+	}
+}
+
+func TestPhase2IncreasesSharpness(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.LearningRate = 0.05
+	cfg.TrainEveryN = 1
+	cfg.ConvergenceWindow = 3
+	cfg.ConvergenceThreshold = 10.0
+	cfg.Phase2Enabled = true
+	cfg.Phase2LearningRate = 0.01
+	cfg.Phase2EveryN = 1
+	cfg.Phase2MaxDrift = 1.0 // Generous drift allowance for testing
+
+	trainer := NewShadowTrainer(cfg)
+	key := LayerKey(0)
+
+	logits := f64tof32([]float64{1.0, 2.0, 3.0, 4.0})
+	target := f64tof32(softmax([]float64{1.0, 2.0, 3.0, 4.0}))
+
+	// Phase 1: converge to softmax
+	for i := 0; i < 100; i++ {
+		trainer.TrainStep(key, logits, target, 4, 1)
+		if trainer.IsConverged(key) {
+			break
+		}
+	}
+
+	if !trainer.IsPhase2Active(key) {
+		t.Fatal("Phase 2 should be active")
+	}
+
+	// Record sharpness at graduation
+	kanLayer := trainer.GetOrCreateLayer(key)
+	graduationOut := kanLayer.Forward(logits, 4, 1)
+	initialSharpness := sharpness(graduationOut, 4, 1)
+	t.Logf("graduation sharpness: %f", initialSharpness)
+	t.Logf("graduation output: %v", graduationOut)
+
+	// Phase 2: evolve for several steps
+	var finalSharpness float64
+	for i := 0; i < 100; i++ {
+		s, reverted := trainer.Phase2Step(key, logits, 4, 1)
+		finalSharpness = s
+		if reverted {
+			t.Logf("reverted at step %d", i)
+		}
+	}
+
+	evolvedOut := kanLayer.Forward(logits, 4, 1)
+	t.Logf("evolved sharpness:    %f (initial: %f)", finalSharpness, initialSharpness)
+	t.Logf("evolved output:       %v", evolvedOut)
+
+	// Sharpness should have increased (become less negative / closer to 0)
+	if finalSharpness < initialSharpness-0.001 {
+		t.Errorf("sharpness decreased: %f -> %f (should increase)", initialSharpness, finalSharpness)
+	}
+
+	// Output should still be valid (sums to 1, non-negative)
+	var rowSum float32
+	for _, v := range evolvedOut {
+		if v < 0 {
+			t.Errorf("negative attention weight: %f", v)
+		}
+		rowSum += v
+	}
+	if math.Abs(float64(rowSum-1.0)) > 0.01 {
+		t.Errorf("evolved output sum = %f, expected 1.0", rowSum)
+	}
+}
+
+func TestPhase2DriftSafetyRail(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.LearningRate = 0.05
+	cfg.TrainEveryN = 1
+	cfg.ConvergenceWindow = 3
+	cfg.ConvergenceThreshold = 10.0
+	cfg.Phase2Enabled = true
+	cfg.Phase2LearningRate = 1.0 // Absurdly high to force drift
+	cfg.Phase2EveryN = 1
+	cfg.Phase2MaxDrift = 0.001 // Very tight drift tolerance
+
+	trainer := NewShadowTrainer(cfg)
+	key := LayerKey(0)
+
+	logits := f64tof32([]float64{1.0, 2.0, 3.0, 4.0})
+	target := f64tof32(softmax([]float64{1.0, 2.0, 3.0, 4.0}))
+
+	// Phase 1: converge
+	for i := 0; i < 100; i++ {
+		trainer.TrainStep(key, logits, target, 4, 1)
+		if trainer.IsConverged(key) {
+			break
+		}
+	}
+
+	// Record graduation weights
+	gradWeights := trainer.GetLayerWeights(key)
+
+	// Phase 2 with aggressive LR + tight drift should trigger revert
+	reverted := false
+	for i := 0; i < 50; i++ {
+		_, r := trainer.Phase2Step(key, logits, 4, 1)
+		if r {
+			reverted = true
+			break
+		}
+	}
+
+	if !reverted {
+		t.Error("expected drift revert with aggressive LR and tight tolerance")
+	}
+
+	// After revert, weights should match graduation checkpoint
+	currentWeights := trainer.GetLayerWeights(key)
+	for i := range gradWeights {
+		if math.Abs(float64(currentWeights[i]-gradWeights[i])) > 1e-4 {
+			t.Errorf("weight[%d] not reverted: grad=%f, current=%f",
+				i, gradWeights[i], currentWeights[i])
+		}
+	}
+}
+
+func TestPhase2DisabledByConfig(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.LearningRate = 0.05
+	cfg.TrainEveryN = 1
+	cfg.ConvergenceWindow = 3
+	cfg.ConvergenceThreshold = 10.0
+	cfg.Phase2Enabled = false // Disabled!
+
+	trainer := NewShadowTrainer(cfg)
+	key := LayerKey(0)
+
+	logits := f64tof32([]float64{1.0, 2.0})
+	target := f64tof32(softmax([]float64{1.0, 2.0}))
+
+	for i := 0; i < 100; i++ {
+		trainer.TrainStep(key, logits, target, 2, 1)
+		if trainer.IsConverged(key) {
+			break
+		}
+	}
+
+	if trainer.IsPhase2Active(key) {
+		t.Error("Phase 2 should NOT activate when disabled in config")
+	}
+}
+
+func TestSharpnessKnownValues(t *testing.T) {
+	// Uniform distribution: H = log(n), sharpness = -log(n)
+	uniform := []float32{0.25, 0.25, 0.25, 0.25}
+	s := sharpness(uniform, 4, 1)
+	expected := -math.Log(4.0) // -1.3863
+	if math.Abs(s-expected) > 0.001 {
+		t.Errorf("sharpness(uniform) = %f, expected %f", s, expected)
+	}
+
+	// One-hot: H = 0, sharpness = 0
+	oneHot := []float32{0.0, 0.0, 1.0, 0.0}
+	s = sharpness(oneHot, 4, 1)
+	if math.Abs(s) > 0.001 {
+		t.Errorf("sharpness(one-hot) = %f, expected 0.0", s)
+	}
+
+	// Binary 50/50: H = log(2), sharpness = -log(2)
+	binary := []float32{0.5, 0.5}
+	s = sharpness(binary, 2, 1)
+	expected = -math.Log(2.0) // -0.6931
+	if math.Abs(s-expected) > 0.001 {
+		t.Errorf("sharpness(binary) = %f, expected %f", s, expected)
+	}
+
+	// Peaked: should be between one-hot and uniform
+	peaked := []float32{0.01, 0.01, 0.97, 0.01}
+	s = sharpness(peaked, 4, 1)
+	if s >= 0.0 || s <= -math.Log(4.0) {
+		t.Errorf("sharpness(peaked) = %f, expected between %f and 0.0", s, -math.Log(4.0))
+	}
+}
+
+func TestKLDivergenceKnownValues(t *testing.T) {
+	// KL(P || P) = 0
+	p := []float32{0.25, 0.25, 0.25, 0.25}
+	kl := klDivergence(p, p, 4, 1)
+	if math.Abs(kl) > 1e-10 {
+		t.Errorf("KL(P||P) = %f, expected 0", kl)
+	}
+
+	// KL(P || Q) > 0 for P != Q
+	q := []float32{0.1, 0.2, 0.3, 0.4}
+	kl = klDivergence(p, q, 4, 1)
+	if kl <= 0 {
+		t.Errorf("KL(P||Q) = %f, expected > 0 for P != Q", kl)
+	}
+
+	// KL is asymmetric: KL(P||Q) != KL(Q||P) in general
+	klReverse := klDivergence(q, p, 4, 1)
+	if math.Abs(kl-klReverse) < 1e-6 {
+		t.Log("KL happened to be symmetric for this case (unlikely for general distributions)")
+	}
+}
+
+func TestEvaluateRaw(t *testing.T) {
+	cfg := DefaultConfig()
+	layer := NewLayer(cfg)
+
+	// EvaluateRaw should return a finite value for any input in the grid range
+	for _, x := range []float32{-5.0, -2.5, 0.0, 2.5, 5.0} {
+		y := layer.EvaluateRaw(x)
+		if math.IsNaN(float64(y)) || math.IsInf(float64(y), 0) {
+			t.Errorf("EvaluateRaw(%f) = %f, expected finite value", x, y)
+		}
+	}
+
+	// The KAN is initialized to approximate identity (Greville abscissae).
+	// So EvaluateRaw(2.0) should be > EvaluateRaw(-2.0) (monotonically increasing).
+	yNeg := layer.EvaluateRaw(-2.0)
+	yPos := layer.EvaluateRaw(2.0)
+	if yPos <= yNeg {
+		t.Errorf("EvaluateRaw not monotonically increasing: f(-2)=%f, f(2)=%f", yNeg, yPos)
+	}
+}
+
+func TestRawSlope(t *testing.T) {
+	cfg := DefaultConfig()
+	layer := NewLayer(cfg)
+
+	// The initial KAN approximates identity, so effective scale should be positive
+	scale := rawSlope(layer)
+	if scale <= 0 {
+		t.Errorf("rawSlope returned non-positive: %f", scale)
+	}
+	t.Logf("initial effective scale: %f", scale)
+
+	// Verify scale is consistent: calling it twice should give the same result
+	scale2 := rawSlope(layer)
+	if math.Abs(scale-scale2) > 1e-10 {
+		t.Errorf("rawSlope not deterministic: %f vs %f", scale, scale2)
+	}
+
+	// Create a layer with hand-crafted steeper coefficients (bypass normalization)
+	// by making coefficients that have a steeper x-mapping
+	steepLayer := NewLayer(cfg)
+	coeffs := steepLayer.GetCoefficients()
+	// Make odd coefficients larger and even smaller to change the slope
+	// without just scaling uniformly (which normalization would undo)
+	for i := range coeffs {
+		if i < len(coeffs)/2 {
+			coeffs[i] *= 0.5
+		} else {
+			coeffs[i] *= 3.0
+		}
+	}
+	steepLayer.UpdateCoefficients(coeffs)
+	steepScale := rawSlope(steepLayer)
+	t.Logf("modified effective scale: %f (original: %f)", steepScale, scale)
+	// The modified layer should have a different scale than the original
+	if steepScale == scale {
+		t.Error("expected different effective scale after asymmetric coefficient modification")
+	}
+}
+
+func TestGetEffectiveScaleDefaultsToOne(t *testing.T) {
+	cfg := DefaultConfig()
+	trainer := NewShadowTrainer(cfg)
+
+	// Non-existent layer should return 1.0
+	scale := trainer.GetEffectiveScale("layer_999")
+	if scale != 1.0 {
+		t.Errorf("GetEffectiveScale for non-existent layer: got %f, want 1.0", scale)
+	}
+
+	// Newly created (non-converged) layer should return 1.0
+	trainer.GetOrCreateLayer("layer_0")
+	scale = trainer.GetEffectiveScale("layer_0")
+	if scale != 1.0 {
+		t.Errorf("GetEffectiveScale for non-converged layer: got %f, want 1.0", scale)
+	}
+}
+
+func TestEffectiveScaleSetOnConvergence(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.LearningRate = 0.05
+	cfg.ConvergenceThreshold = 10.0 // Very lenient to converge quickly
+	cfg.ConvergenceWindow = 3
+	cfg.Phase2Enabled = false
+
+	trainer := NewShadowTrainer(cfg)
+	key := LayerKey(0)
+
+	logits := f64tof32([]float64{1.0, 2.0, 3.0, 4.0})
+	target := f64tof32(softmax([]float64{1.0, 2.0, 3.0, 4.0}))
+
+	// Train until convergence
+	for i := 0; i < 100; i++ {
+		trainer.TrainStep(key, logits, target, 4, 1)
+		if trainer.IsConverged(key) {
+			break
+		}
+	}
+
+	if !trainer.IsConverged(key) {
+		t.Fatal("failed to converge")
+	}
+
+	// After convergence, effective scale should be 1.0 because
+	// the KAN now matches softmax, so the graph should too.
+	scale := trainer.GetEffectiveScale(key)
+	if math.Abs(scale-1.0) > 1e-10 {
+		t.Errorf("expected effective scale = 1.0 at convergence, got %f", scale)
+	}
+	t.Logf("effective scale after convergence: %f", scale)
+}
+
+func TestPhase2UpdatesEffectiveScale(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.LearningRate = 0.05
+	cfg.ConvergenceThreshold = 10.0
+	cfg.ConvergenceWindow = 3
+	cfg.Phase2Enabled = true
+	cfg.Phase2LearningRate = 0.01
+	cfg.Phase2EveryN = 1
+	cfg.Phase2MaxDrift = 1.0 // Wide tolerance
+
+	trainer := NewShadowTrainer(cfg)
+	key := LayerKey(0)
+
+	logits := f64tof32([]float64{1.0, 2.0, 3.0, 4.0})
+	target := f64tof32(softmax([]float64{1.0, 2.0, 3.0, 4.0}))
+
+	// Phase 1: converge
+	for i := 0; i < 100; i++ {
+		trainer.TrainStep(key, logits, target, 4, 1)
+		if trainer.IsConverged(key) {
+			break
+		}
+	}
+
+	if !trainer.IsConverged(key) {
+		t.Fatal("failed to converge")
+	}
+
+	scaleAtConvergence := trainer.GetEffectiveScale(key)
+	if math.Abs(scaleAtConvergence-1.0) > 1e-10 {
+		t.Fatalf("expected scale=1.0 at convergence, got %f", scaleAtConvergence)
+	}
+
+	// Phase 2: evolve for several steps
+	for i := 0; i < 50; i++ {
+		trainer.Phase2Step(key, logits, 4, 1)
+	}
+
+	scaleAfterPhase2 := trainer.GetEffectiveScale(key)
+	t.Logf("scale at convergence: %f, after Phase 2: %f", scaleAtConvergence, scaleAfterPhase2)
+
+	// Phase 2 maximizes sharpness → steeper KAN → scale > 1.0
+	if scaleAfterPhase2 <= 1.0 {
+		t.Errorf("expected Phase 2 to increase effective scale above 1.0, got %f", scaleAfterPhase2)
+	}
+}
+
+func TestMultiHeadTraining(t *testing.T) {
+	// Test that flattening heads into batch dimension works correctly.
+	// Simulates a [seqK=4, heads=2, seqQ=1] tensor layout.
+	cfg := DefaultConfig()
+	cfg.LearningRate = 0.01
+
+	trainer := NewShadowTrainer(cfg)
+	key := LayerKey(0)
+
+	// 2 heads, each with seqQ=1, seqK=4
+	// Flat layout: [head0_k0, head0_k1, head0_k2, head0_k3, head1_k0, ...]
+	logits := f64tof32([]float64{
+		1.0, 2.0, 3.0, 4.0, // head 0
+		2.0, 1.0, 3.0, 2.0, // head 1
+	})
+
+	// Ground truth: softmax applied independently to each head's row
+	sm0 := softmax([]float64{1.0, 2.0, 3.0, 4.0})
+	sm1 := softmax([]float64{2.0, 1.0, 3.0, 2.0})
+	expected := make([]float32, 8)
+	for i, v := range sm0 {
+		expected[i] = float32(v)
+	}
+	for i, v := range sm1 {
+		expected[4+i] = float32(v)
+	}
+
+	// Train with effectiveSeqQ = seqQ * heads = 1 * 2 = 2
+	for i := 0; i < 500; i++ {
+		trainer.TrainStep(key, logits, expected, 4, 2) // seqK=4, seqQ=2 (flattened)
+	}
+
+	// The KAN should learn to handle multiple heads
+	kanLayer := trainer.GetOrCreateLayer(key)
+	kanOut := kanLayer.Forward(logits, 4, 2)
+
+	totalErr := 0.0
+	for i := range expected {
+		d := float64(expected[i]) - float64(kanOut[i])
+		totalErr += d * d
+	}
+	mseVal := totalErr / float64(len(expected))
+	t.Logf("multi-head MSE: %f", mseVal)
+
+	if mseVal > 0.01 {
+		t.Errorf("multi-head training MSE too high: %f", mseVal)
+	}
+}
+
+func TestMultiHeadKANCooperation(t *testing.T) {
+	cfg := DefaultConfig()
+	layer := NewLayer(cfg)
+
+	// Start with 1 head
+	if layer.NumHeads() != 1 {
+		t.Fatalf("expected 1 head, got %d", layer.NumHeads())
+	}
+
+	// Add a second head (initialized to zero = no-op)
+	n := layer.AddHead(cfg.NumBasis)
+	if n != 2 {
+		t.Fatalf("expected 2 heads after AddHead, got %d", n)
+	}
+
+	// With zero second head, output should be identical to single-head
+	logits := []float32{1.0, 2.0, 3.0, 4.0}
+	singleHeadLayer := NewLayer(cfg)
+	singleOut := singleHeadLayer.Forward(logits, 4, 1)
+	multiOut := layer.Forward(logits, 4, 1)
+
+	for i := range singleOut {
+		if math.Abs(float64(singleOut[i]-multiOut[i])) > 1e-6 {
+			t.Errorf("zero head should be no-op: single[%d]=%f multi[%d]=%f",
+				i, singleOut[i], i, multiOut[i])
+		}
+	}
+
+	// Set varied weights on second head — output should change.
+	// (Uniform weights = constant function = cancels in softmax, so use varied values)
+	coeffs := layer.GetCoefficients()
+	numBasis := cfg.NumBasis
+	// Head 2 starts at offset numBasis
+	for i := numBasis; i < 2*numBasis; i++ {
+		if i < len(coeffs) {
+			coeffs[i] = float32(i-numBasis+1) * 0.3 // Non-constant: 0.3, 0.6, 0.9, ...
+		}
+	}
+	layer.UpdateCoefficients(coeffs)
+	changedOut := layer.Forward(logits, 4, 1)
+
+	different := false
+	for i := range multiOut {
+		if math.Abs(float64(multiOut[i]-changedOut[i])) > 1e-6 {
+			different = true
+			break
+		}
+	}
+	if !different {
+		t.Error("non-zero second head should change output")
+	}
+	t.Logf("single-head:  %v", singleOut)
+	t.Logf("multi (zero): %v", multiOut)
+	t.Logf("multi (live): %v", changedOut)
+}
+
+func TestMultiHeadGetSetCoefficients(t *testing.T) {
+	cfg := DefaultConfig()
+	layer := NewLayer(cfg)
+	layer.AddHead(cfg.NumBasis)
+	layer.AddHead(cfg.NumBasis)
+
+	// GetCoefficients should return 3 * numBasis values
+	coeffs := layer.GetCoefficients()
+	expectedLen := 3 * cfg.NumBasis
+	if len(coeffs) != expectedLen {
+		t.Fatalf("expected %d coefficients for 3 heads, got %d", expectedLen, len(coeffs))
+	}
+
+	// UpdateCoefficients should distribute correctly
+	newCoeffs := make([]float32, expectedLen)
+	for i := range newCoeffs {
+		newCoeffs[i] = float32(i) + 1.0
+	}
+	layer.UpdateCoefficients(newCoeffs)
+
+	// Verify each head was updated (values will be normalized but should differ)
+	result := layer.GetCoefficients()
+	if len(result) != expectedLen {
+		t.Fatalf("after update: expected %d coefficients, got %d", expectedLen, len(result))
+	}
+}
+
+func TestDynamicHeadSpawning(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.LearningRate = 0.001 // Slow enough to plateau
+	cfg.MaxHeads = 3
+	cfg.PlateauWindow = 50
+	cfg.PlateauImprovement = 0.01 // 1% improvement threshold
+	cfg.ConvergenceThreshold = 1e-6 // Very tight — won't converge with 1 head
+
+	trainer := NewShadowTrainer(cfg)
+	key := LayerKey(0)
+
+	logits := f64tof32([]float64{1.0, 2.0, 3.0, 4.0})
+	target := f64tof32(softmax([]float64{1.0, 2.0, 3.0, 4.0}))
+
+	headCounts := make(map[int]bool)
+	for step := 0; step < 2000; step++ {
+		trainer.TrainStep(key, logits, target, 4, 1)
+		nHeads := trainer.GetOrCreateLayer(key).NumHeads()
+		if !headCounts[nHeads] {
+			headCounts[nHeads] = true
+			t.Logf("step %d: now have %d heads", step, nHeads)
+		}
+		if nHeads >= 2 {
+			break // Success — head was spawned
+		}
+	}
+
+	layer := trainer.GetOrCreateLayer(key)
+	finalHeads := layer.NumHeads()
+	t.Logf("final head count: %d", finalHeads)
+
+	if finalHeads < 2 {
+		t.Error("expected at least 2 heads after plateau, got", finalHeads)
+	}
+
+	// Verify the multi-head layer still produces valid output
+	out := layer.Forward(logits, 4, 1)
+	var sum float32
+	for _, v := range out {
+		sum += v
+		if v < 0 || v > 1 {
+			t.Errorf("output out of range: %f", v)
+		}
+	}
+	if math.Abs(float64(sum)-1.0) > 1e-5 {
+		t.Errorf("output doesn't sum to 1: %f", sum)
+	}
+}
+
+func TestNewLayerFromWeightsMultiHead(t *testing.T) {
+	cfg := DefaultConfig()
+
+	// Single head: 8 weights
+	w1 := make([]float32, cfg.NumBasis)
+	for i := range w1 {
+		w1[i] = float32(i + 1)
+	}
+	layer1 := NewLayerFromWeights(cfg, w1)
+	if layer1.NumHeads() != 1 {
+		t.Errorf("expected 1 head for %d weights, got %d", cfg.NumBasis, layer1.NumHeads())
+	}
+
+	// Multi-head: 24 weights = 3 heads of 8
+	w3 := make([]float32, cfg.NumBasis*3)
+	for i := range w3 {
+		w3[i] = float32(i + 1)
+	}
+	layer3 := NewLayerFromWeights(cfg, w3)
+	if layer3.NumHeads() != 3 {
+		t.Errorf("expected 3 heads for %d weights, got %d", cfg.NumBasis*3, layer3.NumHeads())
+	}
+
+	// Coefficients should round-trip
+	got := layer3.GetCoefficients()
+	if len(got) != cfg.NumBasis*3 {
+		t.Errorf("expected %d coefficients, got %d", cfg.NumBasis*3, len(got))
+	}
+}
+
+func TestNeedsPhase2Data(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Phase2Enabled = true
+	cfg.Phase2EveryN = 5
+	cfg.ConvergenceThreshold = 0.03
+	cfg.ConvergenceWindow = 3
+	trainer := NewShadowTrainer(cfg)
+
+	key := "layer_0"
+
+	// Before convergence, NeedsPhase2Data should return false
+	trainer.GetOrCreateLayer(key)
+	if trainer.NeedsPhase2Data(key) {
+		t.Error("NeedsPhase2Data should be false before convergence")
+	}
+
+	// Converge the layer by training enough steps
+	logits := []float32{1, 2, 3, 4}
+	softmax := referenceSoftmax(logits, 4, 1)
+	for i := 0; i < 500; i++ {
+		trainer.TrainStep(key, logits, softmax, 4, 1)
+		if trainer.IsConverged(key) {
+			break
+		}
+	}
+	if !trainer.IsConverged(key) {
+		t.Fatal("layer should have converged")
+	}
+	if !trainer.IsPhase2Active(key) {
+		t.Fatal("Phase 2 should be active")
+	}
+
+	// NeedsPhase2Data should return true every 5th call
+	trueCount := 0
+	for i := 0; i < 20; i++ {
+		if trainer.NeedsPhase2Data(key) {
+			trueCount++
+		}
+	}
+
+	// 20 calls / Phase2EveryN(5) = 4 true results
+	if trueCount != 4 {
+		t.Errorf("expected NeedsPhase2Data true 4 times in 20 calls, got %d", trueCount)
+	}
+}

@@ -125,6 +125,11 @@ type Context interface {
 
 	// Layer returns a context appropriate for creating intermediate tensors
 	Layer(int) Context
+
+	// LayerIndex returns the layer index set by the most recent Layer() call,
+	// or -1 if no layer has been set. Used by KAN attention to identify
+	// which layer's KAN instance to use.
+	LayerIndex() int
 }
 
 type Tensor interface {
@@ -137,6 +142,11 @@ type Tensor interface {
 
 	Bytes() []byte
 	Floats() []float32
+	// ReadFloats reads tensor data assuming the computation graph has been
+	// fully synchronized. Unlike Floats(), this does not require the sync
+	// callback to be set on the tensor. Use this only for tensors that are
+	// part of a computed graph but were not passed to Compute().
+	ReadFloats() []float32
 
 	FromBytes([]byte)
 	FromFloats([]float32)

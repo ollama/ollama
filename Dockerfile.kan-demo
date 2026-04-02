@@ -1,0 +1,79 @@
+# KAN Attention Demo Image
+# CPU-only build for testing Geometric KAN attention replacement for softmax.
+#
+# Build:
+#   docker build -f Dockerfile.kan-demo -t ollama-kan .
+#
+# Run:
+#   docker run -it --rm -p 11434:11434 ollama-kan
+#
+# Or use the interactive warm-up + test mode:
+#   docker run -it --rm -p 11434:11434 ollama-kan /kan-demo.sh
+
+ARG CMAKEVERSION=3.31.2
+ARG NINJAVERSION=1.12.1
+
+# === Stage 1: Build GGML CPU backend ===
+FROM almalinux:8 AS ggml-build
+ARG CMAKEVERSION
+ARG NINJAVERSION
+RUN dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++ gcc-toolset-11-binutils \
+    make curl unzip tar gzip \
+    && dnf clean all
+ENV PATH=/opt/rh/gcc-toolset-11/root/usr/bin:$PATH
+RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
+RUN curl -fsSL -o /tmp/ninja.zip https://github.com/ninja-build/ninja/releases/download/v${NINJAVERSION}/ninja-linux.zip \
+    && unzip /tmp/ninja.zip -d /usr/local/bin \
+    && rm /tmp/ninja.zip
+ENV CMAKE_GENERATOR=Ninja
+
+WORKDIR /build
+COPY CMakeLists.txt CMakePresets.json ./
+COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+RUN cmake --preset 'CPU' \
+    && cmake --build --preset 'CPU' -- -j$(nproc) \
+    && cmake --install build --component CPU --strip
+
+# === Stage 2: Build Ollama Go binary ===
+FROM almalinux:8 AS go-build
+RUN dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++ gcc-toolset-11-binutils \
+    make curl git ca-certificates tar gzip \
+    && dnf clean all
+ENV PATH=/opt/rh/gcc-toolset-11/root/usr/bin:$PATH
+
+# Install Go
+WORKDIR /go/src/github.com/ollama/ollama
+COPY go.mod go.sum ./
+RUN curl -fsSL https://golang.org/dl/go1.24.1.linux-$(case $(uname -m) in x86_64) echo amd64 ;; aarch64) echo arm64 ;; esac).tar.gz \
+    | tar xz -C /usr/local
+ENV PATH=/usr/local/go/bin:$PATH
+RUN go mod download
+
+COPY . .
+ENV CGO_ENABLED=1
+RUN go build -trimpath -o /bin/ollama .
+
+# === Stage 3: Runtime ===
+FROM rockylinux:9-minimal
+
+RUN microdnf install -y ca-certificates curl python3 procps-ng \
+    && microdnf clean all
+
+# Copy binaries
+COPY --from=ggml-build /build/dist/lib/ollama /usr/lib/ollama
+COPY --from=go-build /bin/ollama /usr/bin/ollama
+
+# KAN environment
+ENV OLLAMA_KAN_ATTENTION=1
+ENV OLLAMA_FLASH_ATTENTION=false
+ENV OLLAMA_DEBUG=1
+ENV OLLAMA_HOST=0.0.0.0:11434
+
+EXPOSE 11434
+
+# Copy the demo script
+COPY scripts/kan-demo.sh /kan-demo.sh
+RUN sed -i 's/\r$//' /kan-demo.sh && chmod +x /kan-demo.sh
+
+ENTRYPOINT []
+CMD ["/bin/ollama", "serve"]

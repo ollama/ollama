@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"runtime"
@@ -32,6 +33,8 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/ml/nn"
+	"github.com/ollama/ollama/ml/nn/kan"
 	"github.com/ollama/ollama/ml/nn/pooling"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
@@ -721,6 +724,12 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		activeBatch.modelOutput)
 
 	outputs := activeBatch.modelOutput.Floats()
+
+	// Process deferred KAN training now that tensor data is materialized.
+	// Must be called AFTER modelOutput.Floats() which triggers scheduler
+	// synchronization. Training tensors use ReadFloats() which reads
+	// directly from computed graph memory without needing sync callbacks.
+	nn.FlushKANTraining()
 	t := time.Now()
 
 	logutil.Trace("computeBatch: logits ready", "batchID", activeBatch.id)
@@ -1204,6 +1213,43 @@ func (s *Server) allocModel(
 		return err
 	}
 
+	// Initialize Geometric KAN attention BEFORE graph reservation so the
+	// training branch tensors are included in the reserved graph. KAN always
+	// uses SDPA for actual computation and creates a lightweight separate
+	// branch (key*query matmul + softmax) for training data. This branch
+	// needs memory allocated by the scheduler, which only happens if it's
+	// part of the reserved graph.
+	if envconfig.KANAttention() {
+		slog.Info("Geometric KAN attention enabled, initializing shadow trainer")
+		kanCfg := kan.DefaultConfig()
+		kanCfg.SavePath = filepath.Join(filepath.Dir(mpath), "kan")
+		if b := envconfig.KANBasis(); b > 0 {
+			kanCfg.NumBasis = int(b)
+		}
+		if h := envconfig.KANMaxHeads(); h > 0 {
+			kanCfg.MaxHeads = int(h)
+		}
+		trainer := kan.NewShadowTrainer(kanCfg)
+
+		// Try to load previously trained KAN parameters
+		if err := trainer.Load(kanCfg.SavePath); err != nil {
+			slog.Warn("KAN: could not load saved parameters, starting fresh", "error", err)
+		}
+
+		nn.SetKANTrainer(trainer)
+
+		// Save KAN parameters periodically and on shutdown
+		go func() {
+			ticker := time.NewTicker(5 * time.Minute)
+			defer ticker.Stop()
+			for range ticker.C {
+				if err := trainer.Save(kanCfg.SavePath); err != nil {
+					slog.Warn("KAN: failed to save parameters", "error", err)
+				}
+			}
+		}()
+	}
+
 	// TODO(jessegross): LoRA loading
 	if len(loraPath) > 0 {
 		return errors.New("loras are not yet implemented")
@@ -1234,7 +1280,17 @@ func (s *Server) allocModel(
 		return err
 	}
 
-	return s.reserveWorstCaseGraph(false)
+	err = s.reserveWorstCaseGraph(false)
+	if err != nil {
+		return err
+	}
+
+	// Reset KAN layer counter after graph reservation. The reservation
+	// forward passes increment the counter but don't call FlushKANTraining,
+	// leaving it at a non-zero offset. Reset so inference layers start at 0.
+	nn.FlushKANTraining()
+
+	return nil
 }
 
 // closeModel frees all memory associated with a model

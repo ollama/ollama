@@ -689,8 +689,9 @@ func (c *testContext) Arange(start, stop, step float32, dtype ml.DType) ml.Tenso
 	return out
 }
 
-func (c *testContext) Input() ml.Context    { return c }
-func (c *testContext) Layer(int) ml.Context { return c }
+func (c *testContext) Input() ml.Context      { return c }
+func (c *testContext) Layer(int) ml.Context   { return c }
+func (c *testContext) LayerIndex() int        { return -1 }
 
 func (c *testContext) Forward(...ml.Tensor) ml.Context { return c }
 

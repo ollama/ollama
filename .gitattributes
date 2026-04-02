@@ -26,3 +26,4 @@ ml/backend/ggml/ggml/src/ggml-metal/ggml-metal-embed.s linguist-generated
 
 * text=auto
 *.go text eol=lf
+*.sh text eol=lf
