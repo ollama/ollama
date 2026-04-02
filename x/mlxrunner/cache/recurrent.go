@@ -68,26 +68,32 @@ func (c *RecurrentCache) ensure(batch int, dtype mlx.DType) {
 	}
 }
 
-func (c *RecurrentCache) ConvState(batch int, dtype mlx.DType) *mlx.Array {
-	c.ensure(batch, dtype)
-	return c.convState
+func (c *RecurrentCache) ConvState(b *batch.ForwardBatch, dtype mlx.DType) (*mlx.Array, mlx.KVHistory) {
+	c.ensure(1, dtype)
+	return c.convState, mlx.KVHistory{
+		PageTable: mlx.NewArrayInt32([]int32{0}, []int32{1, 1}),
+		SeqLens:   []int{c.offset},
+	}
 }
 
-func (c *RecurrentCache) SetConvState(v *mlx.Array) {
+func (c *RecurrentCache) SetConvState(b *batch.ForwardBatch, v *mlx.Array) {
 	c.convState = c.setState(c.convState, v, true)
 }
 
-func (c *RecurrentCache) DeltaState(batch int, dtype mlx.DType) *mlx.Array {
-	c.ensure(batch, dtype)
-	return c.deltaState
+func (c *RecurrentCache) DeltaState(b *batch.ForwardBatch, dtype mlx.DType) (*mlx.Array, mlx.KVHistory) {
+	c.ensure(1, dtype)
+	return c.deltaState, mlx.KVHistory{
+		PageTable: mlx.NewArrayInt32([]int32{0}, []int32{1, 1}),
+		SeqLens:   []int{c.offset},
+	}
 }
 
-func (c *RecurrentCache) SetDeltaState(v *mlx.Array) {
+func (c *RecurrentCache) SetDeltaState(b *batch.ForwardBatch, v *mlx.Array) {
 	c.deltaState = c.setState(c.deltaState, v, false)
 }
 
-func (c *RecurrentCache) Advance(n int) {
-	c.offset += n
+func (c *RecurrentCache) Advance(b *batch.ForwardBatch) {
+	c.offset += b.TotalLen()
 }
 
 func (c *RecurrentCache) Update(_ *batch.ForwardBatch, keys, values *mlx.Array) (*mlx.Array, *mlx.Array, mlx.KVHistory) {

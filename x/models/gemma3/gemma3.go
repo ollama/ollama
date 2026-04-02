@@ -496,13 +496,14 @@ func (a *Attention) Forward(x *mlx.Array, b *batch.ForwardBatch, c cache.Cache, 
 	q = mlx.RoPEWithBase(q, int(cfg.HeadDim), false, ropeTheta, 1.0, positions)
 	k = mlx.RoPEWithBase(k, int(cfg.HeadDim), false, ropeTheta, 1.0, positions)
 
+	var opts []mlx.SDPAOption
 	if c != nil {
-		k, v, _ = c.Update(nil, k, v)
+		var kv mlx.KVHistory
+		k, v, kv = c.Update(b, k, v)
+		opts = append(opts, mlx.WithKVHistory(kv, b.SeqLens))
 	}
 
-	// MLX SDPA supports grouped-query attention directly (Q heads can be a
-	// multiple of K/V heads), so avoid materializing repeated K/V tensors.
-	out := mlx.ScaledDotProductAttentionCausal(q, k, v, cfg.Scale, L > 1)
+	out := mlx.ScaledDotProductAttention(q, k, v, cfg.Scale, opts...)
 	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, cfg.NumAttentionHeads*cfg.HeadDim)
 	return a.OProj.Forward(out)
 }

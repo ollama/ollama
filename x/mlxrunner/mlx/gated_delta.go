@@ -5,6 +5,7 @@ package mlx
 import "C"
 
 import (
+	"fmt"
 	"sync"
 	"unsafe"
 )
@@ -606,11 +607,8 @@ func gatedDeltaCUDAKernelApply(q, k, v, g, beta, state *Array) (y, nextState *Ar
 	return y, nextState, true
 }
 
-// GatedDelta runs the recurrent update operation.
-//
-// It tries the fused CUDA kernel first, then Metal, then falls back to a
-// backend-agnostic MLX implementation with identical inputs/outputs.
-func GatedDelta(q, k, v, g, beta, state *Array) (y, nextState *Array) {
+// gatedDeltaDispatch tries CUDA, Metal, then fallback kernels. Supports B>=1.
+func gatedDeltaDispatch(q, k, v, g, beta, state *Array) (y, nextState *Array) {
 	if y, nextState, ok := gatedDeltaCUDAKernelApply(q, k, v, g, beta, state); ok {
 		return y, nextState
 	}
@@ -619,7 +617,78 @@ func GatedDelta(q, k, v, g, beta, state *Array) (y, nextState *Array) {
 	}
 	y, nextState = gatedDeltaFallback(q, k, v, g, beta, state)
 	if y == nil || nextState == nil {
-		panic("mlx.GatedDelta: fallback failed (invalid inputs or unsupported shapes)")
+		panic(fmt.Sprintf("mlx.GatedDelta: fallback failed — q=%v k=%v v=%v g=%v beta=%v state=%v",
+			q.Dims(), k.Dims(), v.Dims(), g.Dims(), beta.Dims(), state.Dims()))
 	}
 	return y, nextState
+}
+
+// GatedDelta runs the recurrent update operation.
+//
+// Inputs q, k, v, g, beta are packed [1, totalTokens, ...] tensors.
+// state is the pool [poolSize, ...]. history.PageTable maps batch
+// positions to pool rows. history.SeqLens gives per-sequence token
+// counts (sum = totalTokens).
+//
+// For the common aligned case (pool rows == [0..B-1], uniform SeqLens),
+// reshapes to [B, T, ...] and calls the kernel directly for native
+// batched execution. Otherwise splits by SeqLens and dispatches
+// per-sequence.
+func GatedDelta(q, k, v, g, beta, state *Array, history KVHistory, stepSeqLens []int) (y, nextState *Array) {
+	B := len(stepSeqLens)
+	indices := history.PageTable.Ints()
+
+	// Check alignment: pool rows contiguous [0..B-1] and all step SeqLens equal
+	aligned := state.Dim(0) >= B
+	uniformT := 0
+	if aligned && B > 0 {
+		uniformT = stepSeqLens[0]
+		for i := range B {
+			if indices[i] != i || stepSeqLens[i] != uniformT {
+				aligned = false
+				break
+			}
+		}
+	}
+
+	if aligned && B > 0 {
+		// Reshape packed [1, B*T, ...] to [B, T, ...] for native batched kernel
+		batchState := state
+		if state.Dim(0) > B {
+			batchState = SliceStartStop(state,
+				[]int32{0, 0, 0, 0},
+				[]int32{int32(B), int32(state.Dim(1)), int32(state.Dim(2)), int32(state.Dim(3))})
+		}
+		bq := Reshape(q, int32(B), int32(uniformT), int32(q.Dim(2)), int32(q.Dim(3)))
+		bk := Reshape(k, int32(B), int32(uniformT), int32(k.Dim(2)), int32(k.Dim(3)))
+		bv := Reshape(v, int32(B), int32(uniformT), int32(v.Dim(2)), int32(v.Dim(3)))
+		bg := Reshape(g, int32(B), int32(uniformT), int32(g.Dim(2)))
+		bb := Reshape(beta, int32(B), int32(uniformT), int32(beta.Dim(2)))
+		y, ns := gatedDeltaDispatch(bq, bk, bv, bg, bb, batchState)
+		// Reshape output back to packed [1, B*T, Hv, Dv]
+		y = Reshape(y, 1, int32(B*uniformT), int32(y.Dim(2)), int32(y.Dim(3)))
+		return y, ns
+	}
+
+	// TODO: use masked kernel (available in mlx-lm) to pad all sequences to
+	// uniform length and run a single batched kernel launch instead of
+	// splitting per-sequence. The masked kernel skips state updates at
+	// padding positions. Same approach applies to RecurrentConv1d.
+	ys := make([]*Array, B)
+	states := make([]*Array, B)
+	offset := 0
+	for i := range B {
+		seqLen := stepSeqLens[i]
+		idx := int32(indices[i])
+		o := int32(offset)
+		qi := SliceStartStop(q, []int32{0, o, 0, 0}, []int32{1, o + int32(seqLen), int32(q.Dim(2)), int32(q.Dim(3))})
+		ki := SliceStartStop(k, []int32{0, o, 0, 0}, []int32{1, o + int32(seqLen), int32(k.Dim(2)), int32(k.Dim(3))})
+		vi := SliceStartStop(v, []int32{0, o, 0, 0}, []int32{1, o + int32(seqLen), int32(v.Dim(2)), int32(v.Dim(3))})
+		gi := SliceStartStop(g, []int32{0, o, 0}, []int32{1, o + int32(seqLen), int32(g.Dim(2))})
+		bi := SliceStartStop(beta, []int32{0, o, 0}, []int32{1, o + int32(seqLen), int32(beta.Dim(2))})
+		si := SliceStartStop(state, []int32{idx, 0, 0, 0}, []int32{idx + 1, int32(state.Dim(1)), int32(state.Dim(2)), int32(state.Dim(3))})
+		ys[i], states[i] = gatedDeltaDispatch(qi, ki, vi, gi, bi, si)
+		offset += seqLen
+	}
+	return Concatenate(ys, 1), Concatenate(states, 0)
 }

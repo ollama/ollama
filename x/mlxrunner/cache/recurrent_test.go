@@ -3,6 +3,7 @@ package cache
 import (
 	"testing"
 
+	"github.com/ollama/ollama/x/mlxrunner/batch"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
@@ -12,13 +13,14 @@ import (
 func TestRecurrentCacheRestoreExactOffset(t *testing.T) {
 	skipIfNoMLX(t)
 	c := NewRecurrentCache(3, 12, 4, 8, 8)
-	_ = c.ConvState(1, mlx.DTypeFloat16)
-	_ = c.DeltaState(1, mlx.DTypeFloat16)
-	c.Advance(10)
+	b := &batch.ForwardBatch{SeqIDs: []int{0}, SeqLens: []int{1}}
+	_, _ = c.ConvState(b, mlx.DTypeFloat16)
+	_, _ = c.DeltaState(b, mlx.DTypeFloat16)
+	c.Advance(&batch.ForwardBatch{SeqIDs: []int{0}, SeqLens: []int{10}})
 
 	snap := c.Snapshot(0) // snap.offset == 10
 
-	c.Advance(5) // cache now at 15
+	c.Advance(&batch.ForwardBatch{SeqIDs: []int{0}, SeqLens: []int{5}}) // cache now at 15
 
 	// target < snap.offset: fails (can't rewind past snapshot)
 	if c.Restore(snap, 5) {

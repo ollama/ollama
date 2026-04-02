@@ -266,7 +266,7 @@ func (m *Model) Forward(b *batch.ForwardBatch, caches []cache.Cache) *mlx.Array 
 		if caches != nil && i < len(caches) {
 			c = caches[i]
 		}
-		h = layer.Forward(h, positions, c, B, L, m.Config)
+		h = layer.Forward(h, positions, b, c, B, L, m.Config)
 	}
 
 	return m.Norm.Forward(h, m.RMSNormEps)
@@ -296,12 +296,12 @@ func (m *Model) NewCaches() []cache.Cache {
 	return caches
 }
 
-func (l *Layer) Forward(x, positions *mlx.Array, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
-	h := mlx.Add(x, l.Attention.Forward(l.AttentionNorm.Forward(x, cfg.RMSNormEps), positions, c, B, L, cfg))
+func (l *Layer) Forward(x, positions *mlx.Array, b *batch.ForwardBatch, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
+	h := mlx.Add(x, l.Attention.Forward(l.AttentionNorm.Forward(x, cfg.RMSNormEps), positions, b, c, B, L, cfg))
 	return mlx.Add(h, l.MLP.Forward(l.MLPNorm.Forward(h, cfg.RMSNormEps)))
 }
 
-func (a *Attention) Forward(x, positions *mlx.Array, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
+func (a *Attention) Forward(x, positions *mlx.Array, b *batch.ForwardBatch, c cache.Cache, B, L int32, cfg *Config) *mlx.Array {
 	q := a.QProj.Forward(x)
 	k := a.KProj.Forward(x)
 	v := a.VProj.Forward(x)
@@ -320,13 +320,14 @@ func (a *Attention) Forward(x, positions *mlx.Array, c cache.Cache, B, L int32, 
 	q = mlx.RoPEWithBase(q, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions)
 	k = mlx.RoPEWithBase(k, int(cfg.HeadDim), false, cfg.RopeTheta, 1.0, positions)
 
+	var opts []mlx.SDPAOption
 	if c != nil {
-		k, v, _ = c.Update(nil, k, v)
+		var kv mlx.KVHistory
+		k, v, kv = c.Update(b, k, v)
+		opts = append(opts, mlx.WithKVHistory(kv, b.SeqLens))
 	}
 
-	// MLX SDPA supports grouped-query attention directly (Q heads can be a
-	// multiple of K/V heads), so avoid materializing repeated K/V tensors.
-	out := mlx.ScaledDotProductAttentionCausal(q, k, v, cfg.Scale, L > 1)
+	out := mlx.ScaledDotProductAttention(q, k, v, cfg.Scale, opts...)
 	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, cfg.NumAttentionHeads*cfg.HeadDim)
 	return a.OProj.Forward(out)
 }
