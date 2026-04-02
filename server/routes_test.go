@@ -26,6 +26,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/types/model"
@@ -126,10 +127,10 @@ func TestRoutes(t *testing.T) {
 			t.Fatalf("failed to create model: %v", err)
 		}
 
-		config := &ConfigV2{
+		config := &model.ConfigV2{
 			OS:           "linux",
 			Architecture: "amd64",
-			RootFS: RootFS{
+			RootFS: model.RootFS{
 				Type: "layers",
 			},
 		}
@@ -547,6 +548,38 @@ func TestRoutes(t *testing.T) {
 	}
 }
 
+func TestGetModelInfo_SafetensorsUsesStoredFileType(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	cfgData, err := json.Marshal(model.ConfigV2{
+		ModelFormat:  "safetensors",
+		FileType:     "mxfp8",
+		Capabilities: []string{"completion"},
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal config: %v", err)
+	}
+
+	configLayer, err := manifest.NewLayer(bytes.NewReader(cfgData), "application/vnd.docker.container.image.v1+json")
+	if err != nil {
+		t.Fatalf("failed to create config layer: %v", err)
+	}
+
+	name := model.ParseName("show-safetensors")
+	if err := manifest.WriteManifest(name, configLayer, nil); err != nil {
+		t.Fatalf("failed to write manifest: %v", err)
+	}
+
+	resp, err := GetModelInfo(api.ShowRequest{Model: name.String()})
+	if err != nil {
+		t.Fatalf("GetModelInfo() error = %v", err)
+	}
+
+	if resp.Details.QuantizationLevel != "mxfp8" {
+		t.Fatalf("QuantizationLevel = %q, want %q", resp.Details.QuantizationLevel, "mxfp8")
+	}
+}
+
 func casingShuffle(s string) string {
 	rr := []rune(s)
 	for i := range rr {
@@ -721,17 +754,127 @@ func TestShow(t *testing.T) {
 	}
 }
 
+func TestShowCopilotUserAgentOverwritesExistingBasename(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	var s Server
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:      "show-model",
+		From:       "bob",
+		RemoteHost: "https://ollama.com",
+		Info: map[string]any{
+			"model_family": "gptoss",
+			"base_name":    "upstream-base-name",
+		},
+		Stream: &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200 creating model, actual %d", w.Code)
+	}
+
+	h, err := s.GenerateRoutes(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	makeRequest := func(userAgent string) api.ShowResponse {
+		t.Helper()
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/show", strings.NewReader(`{"model":"show-model"}`))
+		req.Header.Set("Content-Type", "application/json")
+		if userAgent != "" {
+			req.Header.Set("User-Agent", userAgent)
+		}
+		h.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status code 200, actual %d", w.Code)
+		}
+
+		var resp api.ShowResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	withoutCopilot := makeRequest("")
+	if withoutCopilot.ModelInfo["general.basename"] != "upstream-base-name" {
+		t.Fatalf("expected general.basename to be %q, got %v", "upstream-base-name", withoutCopilot.ModelInfo["general.basename"])
+	}
+
+	withCopilot := makeRequest("GitHubCopilotChat/0.41.1")
+	if withCopilot.ModelInfo["general.basename"] != "show-model" {
+		t.Fatalf("expected general.basename to be %q, got %v", "show-model", withCopilot.ModelInfo["general.basename"])
+	}
+
+	if withCopilot.ModelInfo["general.architecture"] != "gptoss" {
+		t.Fatalf("expected general.architecture to be %q, got %v", "gptoss", withCopilot.ModelInfo["general.architecture"])
+	}
+}
+
+func TestShowCopilotUserAgentSetsBasenameWhenModelInfoIsEmpty(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	var s Server
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:      "show-remote",
+		From:       "bob",
+		RemoteHost: "https://ollama.com",
+		Stream:     &stream,
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200 creating model, actual %d", w.Code)
+	}
+
+	h, err := s.GenerateRoutes(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/show", strings.NewReader(`{"model":"show-remote"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "GitHubCopilotChat/0.41.1")
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status code 200, actual %d", w.Code)
+	}
+
+	var resp api.ShowResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.ModelInfo["general.basename"] != "show-remote" {
+		t.Fatalf("expected general.basename to be %q, got %v", "show-remote", resp.ModelInfo["general.basename"])
+	}
+
+	if len(resp.ModelInfo) != 1 {
+		t.Fatalf("expected model_info to contain only general.basename, got %#v", resp.ModelInfo)
+	}
+}
+
 func TestNormalize(t *testing.T) {
 	type testCase struct {
-		input []float32
+		input       []float32
+		expectError bool
 	}
 
 	testCases := []testCase{
-		{input: []float32{1}},
-		{input: []float32{0, 1, 2, 3}},
-		{input: []float32{0.1, 0.2, 0.3}},
-		{input: []float32{-0.1, 0.2, 0.3, -0.4}},
-		{input: []float32{0, 0, 0}},
+		{input: []float32{1}, expectError: false},
+		{input: []float32{0, 1, 2, 3}, expectError: false},
+		{input: []float32{0.1, 0.2, 0.3}, expectError: false},
+		{input: []float32{-0.1, 0.2, 0.3, -0.4}, expectError: false},
+		{input: []float32{0, 0, 0}, expectError: false},
+		{input: []float32{float32(math.NaN()), 0.2, 0.3}, expectError: true},
+		{input: []float32{0.1, float32(math.NaN()), 0.3}, expectError: true},
+		{input: []float32{float32(math.Inf(1)), 0.2, 0.3}, expectError: true},
+		{input: []float32{float32(math.Inf(-1)), 0.2, 0.3}, expectError: true},
 	}
 
 	isNormalized := func(vec []float32) (res bool) {
@@ -748,9 +891,18 @@ func TestNormalize(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run("", func(t *testing.T) {
-			normalized := normalize(tc.input)
-			if !isNormalized(normalized) {
-				t.Errorf("Vector %v is not normalized", tc.input)
+			normalized, err := normalize(tc.input)
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("Expected error for input %v, but got none", tc.input)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Unexpected error for input %v: %v", tc.input, err)
+				}
+				if !isNormalized(normalized) {
+					t.Errorf("Vector %v is not normalized", tc.input)
+				}
 			}
 		})
 	}
@@ -775,7 +927,7 @@ func TestFilterThinkTags(t *testing.T) {
 				{Role: "user", Content: "What is the answer?"},
 			},
 			model: &Model{
-				Config: ConfigV2{
+				Config: model.ConfigV2{
 					ModelFamily: "qwen3",
 				},
 			},
@@ -793,7 +945,7 @@ func TestFilterThinkTags(t *testing.T) {
 				{Role: "user", Content: "What is the answer?"},
 			},
 			model: &Model{
-				Config: ConfigV2{
+				Config: model.ConfigV2{
 					ModelFamily: "qwen3",
 				},
 			},
@@ -815,7 +967,7 @@ func TestFilterThinkTags(t *testing.T) {
 				{Role: "assistant", Content: "<think>thinking yet again</think>hjk"},
 			},
 			model: &Model{
-				Config: ConfigV2{
+				Config: model.ConfigV2{
 					ModelFamily: "qwen3",
 				},
 			},
@@ -833,7 +985,7 @@ func TestFilterThinkTags(t *testing.T) {
 				{Role: "user", Content: "What is the answer?"},
 			},
 			model: &Model{
-				Config: ConfigV2{
+				Config: model.ConfigV2{
 					ModelFamily: "llama3",
 				},
 			},
@@ -853,7 +1005,7 @@ func TestFilterThinkTags(t *testing.T) {
 			model: &Model{
 				Name:      "registry.ollama.ai/library/deepseek-r1:latest",
 				ShortName: "deepseek-r1:7b",
-				Config:    ConfigV2{},
+				Config:    model.ConfigV2{},
 			},
 		},
 	}

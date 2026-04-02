@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -288,6 +289,38 @@ Weigh anchor!
 			"\n"
 
 		if diff := cmp.Diff(expect, b.String()); diff != "" {
+			t.Errorf("unexpected output (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("min version", func(t *testing.T) {
+		var b bytes.Buffer
+		if err := showInfo(&api.ShowResponse{
+			Details: api.ModelDetails{
+				Family:            "test",
+				ParameterSize:     "7B",
+				QuantizationLevel: "FP16",
+			},
+			Requires: "0.19.0",
+		}, false, &b); err != nil {
+			t.Fatal(err)
+		}
+
+		expect := `  Model
+    architecture    test      
+    parameters      7B        
+    quantization    FP16      
+    requires        0.19.0
+
+`
+		trimLinePadding := func(s string) string {
+			lines := strings.Split(s, "\n")
+			for i, line := range lines {
+				lines[i] = strings.TrimRight(line, " \t\r")
+			}
+			return strings.Join(lines, "\n")
+		}
+		if diff := cmp.Diff(trimLinePadding(expect), trimLinePadding(b.String())); diff != "" {
 			t.Errorf("unexpected output (-want +got):\n%s", diff)
 		}
 	})
@@ -676,6 +709,347 @@ func TestRunEmbeddingModelNoInput(t *testing.T) {
 	err := RunHandler(cmd, []string{"test-embedding-model"})
 	if err == nil || !strings.Contains(err.Error(), "embedding models require input text") {
 		t.Fatalf("expected error about missing input, got %v", err)
+	}
+}
+
+func TestRunHandler_CloudAuthErrorOnShow_PrintsSigninMessage(t *testing.T) {
+	var generateCalled bool
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/show" && r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusUnauthorized)
+			if err := json.NewEncoder(w).Encode(map[string]string{
+				"error":      "unauthorized",
+				"signin_url": "https://ollama.com/signin",
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		case r.URL.Path == "/api/generate" && r.Method == http.MethodPost:
+			generateCalled = true
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.GenerateResponse{Done: true}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("truncate", false, "")
+	cmd.Flags().Int("dimensions", 0, "")
+	cmd.Flags().Bool("verbose", false, "")
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
+
+	oldStdout := os.Stdout
+	readOut, writeOut, _ := os.Pipe()
+	os.Stdout = writeOut
+	t.Cleanup(func() { os.Stdout = oldStdout })
+
+	err := RunHandler(cmd, []string{"gpt-oss:20b:cloud", "hi"})
+
+	_ = writeOut.Close()
+	var out bytes.Buffer
+	_, _ = io.Copy(&out, readOut)
+
+	if err != nil {
+		t.Fatalf("RunHandler returned error: %v", err)
+	}
+
+	if generateCalled {
+		t.Fatal("expected run to stop before /api/generate after unauthorized /api/show")
+	}
+
+	if !strings.Contains(out.String(), "You need to be signed in to Ollama to run Cloud models.") {
+		t.Fatalf("expected sign-in guidance message, got %q", out.String())
+	}
+
+	if !strings.Contains(out.String(), "https://ollama.com/signin") {
+		t.Fatalf("expected signin_url in output, got %q", out.String())
+	}
+}
+
+func TestRunHandler_CloudAuthErrorOnGenerate_PrintsSigninMessage(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/show" && r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityCompletion},
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		case r.URL.Path == "/api/generate" && r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusUnauthorized)
+			if err := json.NewEncoder(w).Encode(map[string]string{
+				"error":      "unauthorized",
+				"signin_url": "https://ollama.com/signin",
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("truncate", false, "")
+	cmd.Flags().Int("dimensions", 0, "")
+	cmd.Flags().Bool("verbose", false, "")
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
+
+	oldStdout := os.Stdout
+	readOut, writeOut, _ := os.Pipe()
+	os.Stdout = writeOut
+	t.Cleanup(func() { os.Stdout = oldStdout })
+
+	err := RunHandler(cmd, []string{"gpt-oss:20b:cloud", "hi"})
+
+	_ = writeOut.Close()
+	var out bytes.Buffer
+	_, _ = io.Copy(&out, readOut)
+
+	if err != nil {
+		t.Fatalf("RunHandler returned error: %v", err)
+	}
+
+	if !strings.Contains(out.String(), "You need to be signed in to Ollama to run Cloud models.") {
+		t.Fatalf("expected sign-in guidance message, got %q", out.String())
+	}
+
+	if !strings.Contains(out.String(), "https://ollama.com/signin") {
+		t.Fatalf("expected signin_url in output, got %q", out.String())
+	}
+}
+
+func TestRunHandler_ExplicitCloudStubMissing_PullsNormalizedNameTEMP(t *testing.T) {
+	var pulledModel string
+	var generateCalled bool
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/show" && r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityCompletion},
+				RemoteModel:  "gpt-oss:20b",
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		case r.URL.Path == "/api/tags" && r.Method == http.MethodGet:
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.ListResponse{Models: nil}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		case r.URL.Path == "/api/pull" && r.Method == http.MethodPost:
+			var req api.PullRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			pulledModel = req.Model
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.ProgressResponse{Status: "success"}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		case r.URL.Path == "/api/generate" && r.Method == http.MethodPost:
+			generateCalled = true
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.GenerateResponse{Done: true}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("truncate", false, "")
+	cmd.Flags().Int("dimensions", 0, "")
+	cmd.Flags().Bool("verbose", false, "")
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
+
+	err := RunHandler(cmd, []string{"gpt-oss:20b:cloud", "hi"})
+	if err != nil {
+		t.Fatalf("RunHandler returned error: %v", err)
+	}
+
+	if pulledModel != "gpt-oss:20b-cloud" {
+		t.Fatalf("expected normalized pull model %q, got %q", "gpt-oss:20b-cloud", pulledModel)
+	}
+
+	if !generateCalled {
+		t.Fatal("expected /api/generate to be called")
+	}
+}
+
+func TestRunHandler_ExplicitCloudStubPresent_SkipsPullTEMP(t *testing.T) {
+	var pullCalled bool
+	var generateCalled bool
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/show" && r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityCompletion},
+				RemoteModel:  "gpt-oss:20b",
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		case r.URL.Path == "/api/tags" && r.Method == http.MethodGet:
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.ListResponse{
+				Models: []api.ListModelResponse{{Name: "gpt-oss:20b-cloud"}},
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		case r.URL.Path == "/api/pull" && r.Method == http.MethodPost:
+			pullCalled = true
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.ProgressResponse{Status: "success"}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		case r.URL.Path == "/api/generate" && r.Method == http.MethodPost:
+			generateCalled = true
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.GenerateResponse{Done: true}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("truncate", false, "")
+	cmd.Flags().Int("dimensions", 0, "")
+	cmd.Flags().Bool("verbose", false, "")
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
+
+	err := RunHandler(cmd, []string{"gpt-oss:20b:cloud", "hi"})
+	if err != nil {
+		t.Fatalf("RunHandler returned error: %v", err)
+	}
+
+	if pullCalled {
+		t.Fatal("expected /api/pull not to be called when cloud stub already exists")
+	}
+
+	if !generateCalled {
+		t.Fatal("expected /api/generate to be called")
+	}
+}
+
+func TestRunHandler_ExplicitCloudStubPullFailure_IsBestEffortTEMP(t *testing.T) {
+	var generateCalled bool
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/show" && r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.ShowResponse{
+				Capabilities: []model.Capability{model.CapabilityCompletion},
+				RemoteModel:  "gpt-oss:20b",
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		case r.URL.Path == "/api/tags" && r.Method == http.MethodGet:
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.ListResponse{Models: nil}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		case r.URL.Path == "/api/pull" && r.Method == http.MethodPost:
+			w.WriteHeader(http.StatusInternalServerError)
+			if err := json.NewEncoder(w).Encode(map[string]string{"error": "pull failed"}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		case r.URL.Path == "/api/generate" && r.Method == http.MethodPost:
+			generateCalled = true
+			w.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(w).Encode(api.GenerateResponse{Done: true}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			return
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.Flags().String("keepalive", "", "")
+	cmd.Flags().Bool("truncate", false, "")
+	cmd.Flags().Int("dimensions", 0, "")
+	cmd.Flags().Bool("verbose", false, "")
+	cmd.Flags().Bool("insecure", false, "")
+	cmd.Flags().Bool("nowordwrap", false, "")
+	cmd.Flags().String("format", "", "")
+	cmd.Flags().String("think", "", "")
+	cmd.Flags().Bool("hidethinking", false, "")
+
+	err := RunHandler(cmd, []string{"gpt-oss:20b:cloud", "hi"})
+	if err != nil {
+		t.Fatalf("RunHandler returned error: %v", err)
+	}
+
+	if !generateCalled {
+		t.Fatal("expected /api/generate to be called despite pull failure")
 	}
 }
 
@@ -1187,6 +1561,20 @@ func TestNewCreateRequest(t *testing.T) {
 			},
 		},
 		{
+			"explicit cloud model preserves source when parent lacks it",
+			"newmodel",
+			runOptions{
+				Model:       "qwen3.5:cloud",
+				ParentModel: "qwen3.5",
+				Messages:    []api.Message{},
+				WordWrap:    true,
+			},
+			&api.CreateRequest{
+				From:  "qwen3.5:cloud",
+				Model: "newmodel",
+			},
+		},
+		{
 			"parent model as filepath test",
 			"newmodel",
 			runOptions{
@@ -1522,6 +1910,79 @@ func TestRunOptions_Copy_ThinkValueVariants(t *testing.T) {
 	}
 }
 
+func TestShowInfoImageGen(t *testing.T) {
+	var b bytes.Buffer
+	err := showInfo(&api.ShowResponse{
+		Details: api.ModelDetails{
+			Family:            "ZImagePipeline",
+			ParameterSize:     "10.3B",
+			QuantizationLevel: "Q8",
+		},
+		Capabilities: []model.Capability{model.CapabilityImage},
+		Requires:     "0.19.0",
+	}, false, &b)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expect := "  Model\n" +
+		"    architecture    ZImagePipeline    \n" +
+		"    parameters      10.3B             \n" +
+		"    quantization    Q8                \n" +
+		"    requires        0.19.0            \n" +
+		"\n" +
+		"  Capabilities\n" +
+		"    image    \n" +
+		"\n"
+	if diff := cmp.Diff(expect, b.String()); diff != "" {
+		t.Errorf("unexpected output (-want +got):\n%s", diff)
+	}
+}
+
+func TestPushProgressMessage(t *testing.T) {
+	tests := []struct {
+		name    string
+		status  string
+		digest  string
+		wantMsg string
+	}{
+		{
+			name:    "uses status when provided",
+			status:  "uploading model",
+			digest:  "sha256:abc123456789def",
+			wantMsg: "uploading model",
+		},
+		{
+			name:    "falls back to digest when status empty",
+			status:  "",
+			digest:  "sha256:abc123456789def",
+			wantMsg: "pushing abc123456789...",
+		},
+		{
+			name:    "handles short digest gracefully",
+			status:  "",
+			digest:  "sha256:abc",
+			wantMsg: "pushing sha256:abc...",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := tt.status
+			if msg == "" {
+				if len(tt.digest) >= 19 {
+					msg = fmt.Sprintf("pushing %s...", tt.digest[7:19])
+				} else {
+					msg = fmt.Sprintf("pushing %s...", tt.digest)
+				}
+			}
+			if msg != tt.wantMsg {
+				t.Errorf("got %q, want %q", msg, tt.wantMsg)
+			}
+		})
+	}
+}
+
 func TestRunOptions_Copy_Independence(t *testing.T) {
 	// Test that modifications to original don't affect copy
 	originalThink := &api.ThinkValue{Value: "original"}
@@ -1559,5 +2020,196 @@ func TestRunOptions_Copy_Independence(t *testing.T) {
 
 	if copied.Think != nil && copied.Think.Value == "modified" {
 		t.Error("Copy Think should not be affected by original modification")
+	}
+}
+
+func TestLoadOrUnloadModel_CloudModelAuth(t *testing.T) {
+	tests := []struct {
+		name            string
+		model           string
+		showStatus      int
+		remoteHost      string
+		remoteModel     string
+		whoamiStatus    int
+		whoamiResp      any
+		expectWhoami    bool
+		expectedError   string
+		expectAuthError bool
+	}{
+		{
+			name:         "ollama.com cloud model - user signed in",
+			model:        "test-cloud-model",
+			remoteHost:   "https://ollama.com",
+			remoteModel:  "test-model",
+			whoamiStatus: http.StatusOK,
+			whoamiResp:   api.UserResponse{Name: "testuser"},
+			expectWhoami: true,
+		},
+		{
+			name:         "ollama.com cloud model - user not signed in",
+			model:        "test-cloud-model",
+			remoteHost:   "https://ollama.com",
+			remoteModel:  "test-model",
+			whoamiStatus: http.StatusUnauthorized,
+			whoamiResp: map[string]string{
+				"error":      "unauthorized",
+				"signin_url": "https://ollama.com/signin",
+			},
+			expectWhoami:    true,
+			expectedError:   "unauthorized",
+			expectAuthError: true,
+		},
+		{
+			name:         "non-ollama.com remote - no auth check",
+			model:        "test-cloud-model",
+			remoteHost:   "https://other-remote.com",
+			remoteModel:  "test-model",
+			whoamiStatus: http.StatusUnauthorized, // should not be called
+			whoamiResp:   nil,
+		},
+		{
+			name:         "explicit :cloud model - auth check without remote metadata",
+			model:        "kimi-k2.5:cloud",
+			remoteHost:   "",
+			remoteModel:  "",
+			whoamiStatus: http.StatusOK,
+			whoamiResp:   api.UserResponse{Name: "testuser"},
+			expectWhoami: true,
+		},
+		{
+			name:            "explicit :cloud model without local stub returns not found by default",
+			model:           "minimax-m2.7:cloud",
+			showStatus:      http.StatusNotFound,
+			whoamiStatus:    http.StatusOK,
+			whoamiResp:      api.UserResponse{Name: "testuser"},
+			expectedError:   "not found",
+			expectWhoami:    false,
+			expectAuthError: false,
+		},
+		{
+			name:         "explicit -cloud model - auth check without remote metadata",
+			model:        "kimi-k2.5:latest-cloud",
+			remoteHost:   "",
+			remoteModel:  "",
+			whoamiStatus: http.StatusOK,
+			whoamiResp:   api.UserResponse{Name: "testuser"},
+			expectWhoami: true,
+		},
+		{
+			name:         "dash cloud-like name without explicit source does not require auth",
+			model:        "test-cloud-model",
+			remoteHost:   "",
+			remoteModel:  "",
+			whoamiStatus: http.StatusUnauthorized, // should not be called
+			whoamiResp:   nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			whoamiCalled := false
+			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/show":
+					if tt.showStatus != 0 && tt.showStatus != http.StatusOK {
+						w.WriteHeader(tt.showStatus)
+						_ = json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					if err := json.NewEncoder(w).Encode(api.ShowResponse{
+						RemoteHost:  tt.remoteHost,
+						RemoteModel: tt.remoteModel,
+					}); err != nil {
+						http.Error(w, err.Error(), http.StatusInternalServerError)
+					}
+				case "/api/me":
+					whoamiCalled = true
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(tt.whoamiStatus)
+					if tt.whoamiResp != nil {
+						if err := json.NewEncoder(w).Encode(tt.whoamiResp); err != nil {
+							http.Error(w, err.Error(), http.StatusInternalServerError)
+						}
+					}
+				case "/api/generate":
+					w.WriteHeader(http.StatusOK)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer mockServer.Close()
+
+			t.Setenv("OLLAMA_HOST", mockServer.URL)
+
+			cmd := &cobra.Command{}
+			cmd.SetContext(t.Context())
+
+			opts := &runOptions{
+				Model:       tt.model,
+				ShowConnect: false,
+			}
+
+			err := loadOrUnloadModel(cmd, opts)
+
+			if whoamiCalled != tt.expectWhoami {
+				t.Errorf("whoami called = %v, want %v", whoamiCalled, tt.expectWhoami)
+			}
+
+			if tt.expectedError != "" {
+				if err == nil {
+					t.Errorf("expected error containing %q, got nil", tt.expectedError)
+				} else {
+					if !tt.expectAuthError && !strings.Contains(strings.ToLower(err.Error()), strings.ToLower(tt.expectedError)) {
+						t.Errorf("expected error containing %q, got %v", tt.expectedError, err)
+					}
+					if tt.expectAuthError {
+						var authErr api.AuthorizationError
+						if !errors.As(err, &authErr) {
+							t.Errorf("expected AuthorizationError, got %T: %v", err, err)
+						}
+					}
+				}
+			} else {
+				if err != nil {
+					t.Errorf("expected no error, got %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestIsLocalhost(t *testing.T) {
+	tests := []struct {
+		name     string
+		host     string
+		expected bool
+	}{
+		{"default empty", "", true},
+		{"localhost no port", "localhost", true},
+		{"localhost with port", "localhost:11435", true},
+		{"127.0.0.1 no port", "127.0.0.1", true},
+		{"127.0.0.1 with port", "127.0.0.1:11434", true},
+		{"0.0.0.0 no port", "0.0.0.0", true},
+		{"0.0.0.0 with port", "0.0.0.0:11434", true},
+		{"::1 no port", "::1", true},
+		{"[::1] with port", "[::1]:11434", true},
+		{"loopback with scheme", "http://localhost:11434", true},
+		{"remote hostname", "example.com", false},
+		{"remote hostname with port", "example.com:11434", false},
+		{"remote IP", "192.168.1.1", false},
+		{"remote IP with port", "192.168.1.1:11434", false},
+		{"remote with scheme", "http://example.com:11434", false},
+		{"https remote", "https://example.com:443", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_HOST", tt.host)
+			got := isLocalhost()
+			if got != tt.expected {
+				t.Errorf("isLocalhost() with OLLAMA_HOST=%q = %v, want %v", tt.host, got, tt.expected)
+			}
+		})
 	}
 }

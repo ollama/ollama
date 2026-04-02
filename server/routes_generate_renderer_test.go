@@ -20,6 +20,7 @@ import (
 // TestGenerateWithBuiltinRenderer tests that api/generate uses built-in renderers
 // when in chat-like flow (messages present, no suffix, no template)
 func TestGenerateWithBuiltinRenderer(t *testing.T) {
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
 	gin.SetMode(gin.TestMode)
 
 	mock := mockRunner{
@@ -44,7 +45,7 @@ func TestGenerateWithBuiltinRenderer(t *testing.T) {
 			getGpuFn:        getGpuFn,
 			getSystemInfoFn: getSystemInfoFn,
 			waitForRecovery: 250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
 					llama: &mock,
@@ -204,6 +205,7 @@ func TestGenerateWithBuiltinRenderer(t *testing.T) {
 
 // TestGenerateWithDebugRenderOnly tests that debug_render_only works with built-in renderers
 func TestGenerateWithDebugRenderOnly(t *testing.T) {
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
 	gin.SetMode(gin.TestMode)
 
 	mock := mockRunner{
@@ -228,7 +230,7 @@ func TestGenerateWithDebugRenderOnly(t *testing.T) {
 			getGpuFn:        getGpuFn,
 			getSystemInfoFn: getSystemInfoFn,
 			waitForRecovery: 250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
 					llama: &mock,

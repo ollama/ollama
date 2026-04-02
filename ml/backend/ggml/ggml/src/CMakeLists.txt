@@ -127,10 +127,6 @@ if (NOT MSVC)
     endif()
 endif()
 
-if (MINGW)
-    add_compile_definitions(_WIN32_WINNT=${GGML_WIN_VER})
-endif()
-
 #
 # POSIX conformance
 #
@@ -214,14 +210,28 @@ add_library(ggml-base
             mem_dxgi_pdh.cpp
             gguf.cpp)
 
+set_target_properties(ggml-base PROPERTIES
+    VERSION ${GGML_VERSION}
+    SOVERSION ${GGML_VERSION_MAJOR}
+)
+
 target_include_directories(ggml-base PRIVATE .)
 if (GGML_BACKEND_DL)
     target_compile_definitions(ggml-base PUBLIC GGML_BACKEND_DL)
 endif()
 
+if (GGML_SCHED_NO_REALLOC)
+    target_compile_definitions(ggml-base PUBLIC GGML_SCHED_NO_REALLOC)
+endif()
+
 add_library(ggml
             ggml-backend-reg.cpp)
 add_library(ggml::ggml ALIAS ggml)
+
+set_target_properties(ggml PROPERTIES
+    VERSION ${GGML_VERSION}
+    SOVERSION ${GGML_VERSION_MAJOR}
+)
 
 if (GGML_BACKEND_DIR)
     if (NOT GGML_BACKEND_DL)
@@ -260,6 +270,15 @@ function(ggml_add_backend_library backend)
     if (${BUILD_SHARED_LIBS})
         target_compile_definitions(${backend} PRIVATE GGML_BACKEND_BUILD)
         target_compile_definitions(${backend} PUBLIC  GGML_BACKEND_SHARED)
+    endif()
+
+    # Set versioning properties for all backend libraries
+    # Building a MODULE library with a version is not supported on macOS (https://gitlab.kitware.com/cmake/cmake/-/issues/20782)
+    if (NOT (APPLE AND GGML_BACKEND_DL))
+        set_target_properties(${backend} PROPERTIES
+            VERSION ${GGML_VERSION}
+            SOVERSION ${GGML_VERSION_MAJOR}
+        )
     endif()
 
     if(NOT GGML_AVAILABLE_BACKENDS)
@@ -311,6 +330,18 @@ function(ggml_add_cpu_backend_variant tag_name)
             set(GGML_INTERNAL_${feat} ON)
         endforeach()
     elseif (GGML_SYSTEM_ARCH STREQUAL "s390x")
+        foreach (feat VXE2 NNPA)
+            set(GGML_INTERNAL_${feat} OFF)
+        endforeach()
+
+        foreach (feat ${ARGN})
+            set(GGML_INTERNAL_${feat} ON)
+        endforeach()
+    elseif (GGML_SYSTEM_ARCH STREQUAL "riscv64")
+        foreach (feat RVV)
+            set(GGML_INTERNAL_${feat} OFF)
+        endforeach()
+
         foreach (feat ${ARGN})
             set(GGML_INTERNAL_${feat} ON)
         endforeach()
@@ -378,11 +409,17 @@ if (GGML_CPU_ALL_VARIANTS)
         endif()
     elseif (GGML_SYSTEM_ARCH STREQUAL "s390x")
         if (CMAKE_SYSTEM_NAME MATCHES "Linux")
-            ggml_add_cpu_backend_variant(s390x_z15  Z15 VXE)
-            # ggml_add_cpu_backend_variant(s390x_z16  Z16 VXE)
-            # ggml_add_cpu_backend_variant(s390x_z17  Z17 VXE)
+            ggml_add_cpu_backend_variant(z15    Z15 VXE2)
+            ggml_add_cpu_backend_variant(z16    Z16 VXE2 NNPA)
         else()
             message(FATAL_ERROR "Unsupported s390x target OS: ${CMAKE_SYSTEM_NAME}")
+        endif()
+    elseif (GGML_SYSTEM_ARCH STREQUAL "riscv64")
+        if (CMAKE_SYSTEM_NAME MATCHES "Linux")
+            ggml_add_cpu_backend_variant(riscv64_0)
+            ggml_add_cpu_backend_variant(riscv64_v   RVV)
+        else()
+            message(FATAL_ERROR "Unsupported RISC-V target OS: ${CMAKE_SYSTEM_NAME}")
         endif()
     else()
         message(FATAL_ERROR "GGML_CPU_ALL_VARIANTS not yet supported with ${GGML_SYSTEM_ARCH} on ${CMAKE_SYSTEM_NAME}")
@@ -404,6 +441,7 @@ ggml_add_backend(WebGPU)
 ggml_add_backend(zDNN)
 ggml_add_backend(OpenCL)
 ggml_add_backend(Hexagon)
+ggml_add_backend(ZenDNN)
 
 foreach (target ggml-base ggml)
     target_include_directories(${target} PUBLIC    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include> $<INSTALL_INTERFACE:include>)

@@ -1,6 +1,7 @@
 package renderers
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -39,9 +40,9 @@ Hello, how are you?<|im_end|>
 						{
 							Function: api.ToolCallFunction{
 								Name: "get_weather",
-								Arguments: map[string]any{
+								Arguments: testArgs(map[string]any{
 									"unit": "fahrenheit",
-								},
+								}),
 							},
 						},
 					},
@@ -55,7 +56,7 @@ Hello, how are you?<|im_end|>
 					Description: "Get the current weather in a given location",
 					Parameters: api.ToolFunctionParameters{
 						Required: []string{"unit"},
-						Properties: map[string]api.ToolProperty{
+						Properties: testPropsMap(map[string]api.ToolProperty{
 							"unit": {Type: api.PropertyType{"string"}, Enum: []any{"celsius", "fahrenheit"}, Description: "The unit of temperature"},
 							// TODO(drifkin): add multiple params back once we have predictable
 							// order via some sort of ordered map type (see
@@ -63,7 +64,7 @@ Hello, how are you?<|im_end|>
 							/*
 								"location": {Type: api.PropertyType{"string"}, Description: "The city and state, e.g. San Francisco, CA"},
 							*/
-						},
+						}),
 					},
 				}},
 			},
@@ -127,8 +128,7 @@ fahrenheit
 <|im_start|>user
 <tool_response>
 {"location": "San Francisco, CA", "temperature": 68, "condition": "partly cloudy", "humidity": 65, "wind_speed": 12}
-</tool_response>
-<|im_end|>
+</tool_response><|im_end|>
 <|im_start|>user
 That sounds nice! What about New York?<|im_end|>
 <|im_start|>assistant
@@ -140,19 +140,19 @@ That sounds nice! What about New York?<|im_end|>
 				{Role: "system", Content: "You are a helpful assistant with access to tools."},
 				{Role: "user", Content: "call double(1) and triple(2)"},
 				{Role: "assistant", Content: "I'll call double(1) and triple(2) for you.", ToolCalls: []api.ToolCall{
-					{Function: api.ToolCallFunction{Name: "double", Arguments: map[string]any{"number": "1"}}},
-					{Function: api.ToolCallFunction{Name: "triple", Arguments: map[string]any{"number": "2"}}},
+					{Function: api.ToolCallFunction{Name: "double", Arguments: testArgs(map[string]any{"number": "1"})}},
+					{Function: api.ToolCallFunction{Name: "triple", Arguments: testArgs(map[string]any{"number": "2"})}},
 				}},
 				{Role: "tool", Content: "{\"number\": 2}", ToolName: "double"},
 				{Role: "tool", Content: "{\"number\": 6}", ToolName: "triple"},
 			},
 			tools: []api.Tool{
-				{Function: api.ToolFunction{Name: "double", Description: "Double a number", Parameters: api.ToolFunctionParameters{Properties: map[string]api.ToolProperty{
+				{Function: api.ToolFunction{Name: "double", Description: "Double a number", Parameters: api.ToolFunctionParameters{Properties: testPropsMap(map[string]api.ToolProperty{
 					"number": {Type: api.PropertyType{"string"}, Description: "The number to double"},
-				}}}},
-				{Function: api.ToolFunction{Name: "triple", Description: "Triple a number", Parameters: api.ToolFunctionParameters{Properties: map[string]api.ToolProperty{
+				})}}},
+				{Function: api.ToolFunction{Name: "triple", Description: "Triple a number", Parameters: api.ToolFunctionParameters{Properties: testPropsMap(map[string]api.ToolProperty{
 					"number": {Type: api.PropertyType{"string"}, Description: "The number to triple"},
-				}}}},
+				})}}},
 			},
 			expected: `<|im_start|>system
 You are a helpful assistant with access to tools.
@@ -233,8 +233,7 @@ I'll call double(1) and triple(2) for you.
 </tool_response>
 <tool_response>
 {"number": 6}
-</tool_response>
-<|im_end|>
+</tool_response><|im_end|>
 <|im_start|>assistant
 `,
 		},
@@ -259,9 +258,9 @@ I'll tell you something interesting about cats`,
 				{Role: "assistant", ToolCalls: []api.ToolCall{
 					{Function: api.ToolCallFunction{
 						Name: "echo",
-						Arguments: map[string]any{
+						Arguments: testArgs(map[string]any{
 							"payload": map[string]any{"foo": "bar"},
-						},
+						}),
 					}},
 				}},
 				{Role: "tool", Content: "{\"payload\": {\"foo\": \"bar\"}}", ToolName: "echo"},
@@ -280,8 +279,7 @@ call tool<|im_end|>
 <|im_start|>user
 <tool_response>
 {"payload": {"foo": "bar"}}
-</tool_response>
-<|im_end|>
+</tool_response><|im_end|>
 <|im_start|>assistant
 `,
 		},
@@ -334,6 +332,31 @@ func TestFormatToolCallArgument(t *testing.T) {
 				t.Errorf("formatToolCallArgument(%v) = %v, want %v", tt.arg, got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestQwen3CoderRendererToolResponseNoTrailingNewline(t *testing.T) {
+	msgs := []api.Message{
+		{Role: "user", Content: "call tool"},
+		{Role: "assistant", ToolCalls: []api.ToolCall{
+			{Function: api.ToolCallFunction{
+				Name:      "echo",
+				Arguments: testArgs(map[string]any{"payload": "ok"}),
+			}},
+		}},
+		{Role: "tool", Content: "{\"payload\":\"ok\"}", ToolName: "echo"},
+	}
+
+	rendered, err := (&Qwen3CoderRenderer{}).Render(msgs, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(rendered, "</tool_response>\n<|im_end|>") {
+		t.Fatalf("expected no newline after </tool_response>, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "</tool_response><|im_end|>") {
+		t.Fatalf("expected </tool_response> to be immediately followed by <|im_end|>, got:\n%s", rendered)
 	}
 }
 

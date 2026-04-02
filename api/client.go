@@ -165,7 +165,7 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 	return nil
 }
 
-const maxBufferSize = 512 * format.KiloByte
+const maxBufferSize = 8 * format.MegaByte
 
 func (c *Client) stream(ctx context.Context, method, path string, data any, fn func([]byte) error) error {
 	var buf io.Reader
@@ -226,7 +226,14 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 
 		bts := scanner.Bytes()
 		if err := json.Unmarshal(bts, &errorResponse); err != nil {
-			return fmt.Errorf("unmarshal: %w", err)
+			if response.StatusCode >= http.StatusBadRequest {
+				return StatusError{
+					StatusCode:   response.StatusCode,
+					Status:       response.Status,
+					ErrorMessage: string(bts),
+				}
+			}
+			return errors.New(string(bts))
 		}
 
 		if response.StatusCode == http.StatusUnauthorized {
@@ -340,7 +347,7 @@ type CreateProgressFunc func(ProgressResponse) error
 // Create creates a model from a [Modelfile]. fn is a progress function that
 // behaves similarly to other methods (see [Client.Pull]).
 //
-// [Modelfile]: https://github.com/ollama/ollama/blob/main/docs/modelfile.md
+// [Modelfile]: https://github.com/ollama/ollama/blob/main/docs/modelfile.mdx
 func (c *Client) Create(ctx context.Context, req *CreateRequest, fn CreateProgressFunc) error {
 	return c.stream(ctx, http.MethodPost, "/api/create", req, func(bts []byte) error {
 		var resp ProgressResponse
@@ -440,6 +447,16 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 	}
 
 	return version.Version, nil
+}
+
+// CloudStatusExperimental returns whether cloud features are disabled on the server.
+func (c *Client) CloudStatusExperimental(ctx context.Context) (*StatusResponse, error) {
+	var status StatusResponse
+	if err := c.do(ctx, http.MethodGet, "/api/status", nil, &status); err != nil {
+		return nil, err
+	}
+
+	return &status, nil
 }
 
 // Signout will signout a client for a local ollama server.

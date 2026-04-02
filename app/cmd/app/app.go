@@ -35,6 +35,7 @@ import (
 var (
 	wv           = &Webview{}
 	uiServerPort int
+	appStore     *store.Store
 )
 
 var debug = strings.EqualFold(os.Getenv("OLLAMA_DEBUG"), "true") || os.Getenv("OLLAMA_DEBUG") == "1"
@@ -208,6 +209,7 @@ func main() {
 	uiServerPort = port
 
 	st := &store.Store{}
+	appStore = st
 
 	// Enable CORS in development mode
 	if devMode {
@@ -253,6 +255,8 @@ func main() {
 		done <- osrv.Run(octx)
 	}()
 
+	upd := &updater.Updater{Store: st}
+
 	uiServer := ui.Server{
 		Token: token,
 		Restart: func() {
@@ -267,14 +271,14 @@ func main() {
 		ToolRegistry: toolRegistry,
 		Dev:          devMode,
 		Logger:       slog.Default(),
+		Updater:      upd,
+		UpdateAvailableFunc: func() {
+			UpdateAvailable("")
+		},
 	}
 
 	srv := &http.Server{
 		Handler: uiServer.Handler(),
-	}
-
-	if _, err := uiServer.UserData(ctx); err != nil {
-		slog.Warn("failed to load user data", "error", err)
 	}
 
 	// Start the UI server
@@ -288,8 +292,20 @@ func main() {
 		slog.Debug("background desktop server done")
 	}()
 
-	updater := &updater.Updater{Store: st}
-	updater.StartBackgroundUpdaterChecker(ctx, UpdateAvailable)
+	upd.StartBackgroundUpdaterChecker(ctx, UpdateAvailable)
+
+	// Check for pending updates on startup (show tray notification if update is ready)
+	if updater.IsUpdatePending() {
+		// On Windows, the tray is initialized in osRun(). Calling UpdateAvailable
+		// before that would dereference a nil tray callback.
+		// TODO: refactor so the update check runs after platform init on all platforms.
+		if runtime.GOOS == "windows" {
+			slog.Debug("update pending on startup, deferring tray notification until tray initialization")
+		} else {
+			slog.Debug("update pending on startup, showing tray notification")
+			UpdateAvailable("")
+		}
+	}
 
 	hasCompletedFirstRun, err := st.HasCompletedFirstRun()
 	if err != nil {
@@ -320,6 +336,17 @@ func main() {
 		slog.Debug("no URL scheme request to handle")
 	}
 
+	go func() {
+		slog.Debug("waiting for ollama server to be ready")
+		if err := ui.WaitForServer(ctx, 10*time.Second); err != nil {
+			slog.Warn("ollama server not ready, continuing anyway", "error", err)
+		}
+
+		if _, err := uiServer.UserData(ctx); err != nil {
+			slog.Warn("failed to load user data", "error", err)
+		}
+	}()
+
 	osRun(cancel, hasCompletedFirstRun, startHidden)
 
 	slog.Info("shutting down desktop server")
@@ -341,6 +368,17 @@ func startHiddenTasks() {
 			// CLI triggered app startup use-case
 			slog.Info("deferring pending update for fast startup")
 		} else {
+			// Check if auto-update is enabled before automatically upgrading
+			settings, err := appStore.Settings()
+			if err != nil {
+				slog.Warn("failed to load settings for upgrade check", "error", err)
+			} else if !settings.AutoUpdateEnabled {
+				slog.Info("auto-update disabled, skipping automatic upgrade at startup")
+				// Still show tray notification so user knows update is ready
+				UpdateAvailable("")
+				return
+			}
+
 			if err := updater.DoUpgradeAtStartup(); err != nil {
 				slog.Info("unable to perform upgrade at startup", "error", err)
 				// Make sure the restart to upgrade menu shows so we can attempt an interactive upgrade to get authorization
@@ -361,7 +399,7 @@ func checkUserLoggedIn(uiServerPort int) bool {
 		return false
 	}
 
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/api/v1/me", uiServerPort))
+	resp, err := http.Post(fmt.Sprintf("http://127.0.0.1:%d/api/me", uiServerPort), "application/json", nil)
 	if err != nil {
 		slog.Debug("failed to call local auth endpoint", "error", err)
 		return false

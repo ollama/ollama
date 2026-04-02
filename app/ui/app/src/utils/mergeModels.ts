@@ -32,7 +32,7 @@ function alphabeticalSort(a: Model, b: Model): number {
 //Merges models, sorting cloud models first, then other models
 export function mergeModels(
   localModels: Model[],
-  airplaneMode: boolean = false,
+  hideCloudModels: boolean = false,
 ): Model[] {
   const allModels = (localModels || []).map((model) => model);
 
@@ -95,7 +95,7 @@ export function mergeModels(
 
   remainingModels.sort(alphabeticalSort);
 
-  return airplaneMode
+  return hideCloudModels
     ? [...featuredModels, ...remainingModels]
     : [...cloudModels, ...featuredModels, ...remainingModels];
 }

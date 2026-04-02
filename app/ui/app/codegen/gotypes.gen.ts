@@ -289,10 +289,12 @@ export class InferenceCompute {
 }
 export class InferenceComputeResponse {
     inferenceComputes: InferenceCompute[];
+    defaultContextLength: number;
 
     constructor(source: any = {}) {
         if ('string' === typeof source) source = JSON.parse(source);
         this.inferenceComputes = this.convertValues(source["inferenceComputes"], InferenceCompute);
+        this.defaultContextLength = source["defaultContextLength"];
     }
 
 	convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -406,13 +408,13 @@ export class Settings {
     Tools: boolean;
     WorkingDir: string;
     ContextLength: number;
-    AirplaneMode: boolean;
     TurboEnabled: boolean;
     WebSearchEnabled: boolean;
     ThinkEnabled: boolean;
     ThinkLevel: string;
     SelectedModel: string;
     SidebarOpen: boolean;
+    AutoUpdateEnabled: boolean;
 
     constructor(source: any = {}) {
         if ('string' === typeof source) source = JSON.parse(source);
@@ -424,13 +426,13 @@ export class Settings {
         this.Tools = source["Tools"];
         this.WorkingDir = source["WorkingDir"];
         this.ContextLength = source["ContextLength"];
-        this.AirplaneMode = source["AirplaneMode"];
         this.TurboEnabled = source["TurboEnabled"];
         this.WebSearchEnabled = source["WebSearchEnabled"];
         this.ThinkEnabled = source["ThinkEnabled"];
         this.ThinkLevel = source["ThinkLevel"];
         this.SelectedModel = source["SelectedModel"];
         this.SidebarOpen = source["SidebarOpen"];
+        this.AutoUpdateEnabled = source["AutoUpdateEnabled"];
     }
 }
 export class SettingsResponse {
@@ -469,26 +471,24 @@ export class HealthResponse {
 }
 export class User {
     id: string;
-    name: string;
     email: string;
-    avatarURL: string;
-    plan: string;
-    bio: string;
-    firstName: string;
-    lastName: string;
-    overThreshold: boolean;
+    name: string;
+    bio?: string;
+    avatarurl?: string;
+    firstname?: string;
+    lastname?: string;
+    plan?: string;
 
     constructor(source: any = {}) {
         if ('string' === typeof source) source = JSON.parse(source);
         this.id = source["id"];
-        this.name = source["name"];
         this.email = source["email"];
-        this.avatarURL = source["avatarURL"];
-        this.plan = source["plan"];
+        this.name = source["name"];
         this.bio = source["bio"];
-        this.firstName = source["firstName"];
-        this.lastName = source["lastName"];
-        this.overThreshold = source["overThreshold"];
+        this.avatarurl = source["avatarurl"];
+        this.firstname = source["firstname"];
+        this.lastname = source["lastname"];
+        this.plan = source["plan"];
     }
 }
 export class Attachment {
@@ -550,14 +550,12 @@ export class Error {
     }
 }
 export class ModelUpstreamResponse {
-    digest?: string;
-    pushTime: number;
+    stale: boolean;
     error?: string;
 
     constructor(source: any = {}) {
         if ('string' === typeof source) source = JSON.parse(source);
-        this.digest = source["digest"];
-        this.pushTime = source["pushTime"];
+        this.stale = source["stale"];
         this.error = source["error"];
     }
 }

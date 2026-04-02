@@ -37,6 +37,7 @@ import (
 	"github.com/ollama/ollama/model/input"
 	"github.com/ollama/ollama/runner/common"
 	"github.com/ollama/ollama/sample"
+	"github.com/ollama/ollama/tokenizer"
 
 	_ "github.com/ollama/ollama/model/models"
 )
@@ -146,11 +147,11 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	params.numKeep = min(params.numKeep, s.cache.numCtx-1)
 
 	if int32(len(inputs)) > s.cache.numCtx {
-		discard := int32(len(inputs)) - s.cache.numCtx
-
 		if !params.truncate {
 			return nil, errorInputTooLong
 		}
+
+		discard := int32(len(inputs)) - s.cache.numCtx
 
 		promptStart := params.numKeep + discard
 
@@ -210,9 +211,9 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 }
 
 // calculateLogprobs converts raw logits to log probabilities and finds top K tokens
-func calculateLogprobs(logits []float32, selectedToken int32, topK int, textProcessor model.TextProcessor) []llm.Logprob {
+func calculateLogprobs(logits []float32, selectedToken int32, topK int, tok tokenizer.Tokenizer) []llm.Logprob {
 	decoder := func(tokenID int) string {
-		text, _ := textProcessor.Decode([]int32{int32(tokenID)})
+		text, _ := tok.Decode([]int32{int32(tokenID)})
 		return text
 	}
 	return common.CalculateLogprobs(logits, int(selectedToken), topK, decoder)
@@ -242,7 +243,7 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]*input.Input, 
 
 	for i, part := range parts {
 		// text - tokenize
-		tokens, err := s.model.(model.TextProcessor).Encode(part, i == 0)
+		tokens, err := s.model.(tokenizer.Tokenizer).Encode(part, i == 0)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -514,13 +515,6 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 			continue
 		}
 
-		// if past the num predict limit
-		if seq.numPredict > 0 && seq.numPredicted >= seq.numPredict {
-			s.removeSequence(seqIdx, llm.DoneReasonLength)
-			nextBatch.seqs[seqIdx] = nil
-			continue
-		}
-
 		if !s.cache.enabled {
 			seq.inputs = append(seq.cache.Inputs, seq.inputs...)
 			seq.cache.Inputs = []*input.Input{}
@@ -709,7 +703,6 @@ func (s *Server) computeBatch(activeBatch batchState) {
 			continue
 		}
 
-		seq.numPredicted++
 		nextToken := &input.Input{Token: 0} // placeholder we'll fill in after Compute/Floats
 		seq.inputs = []*input.Input{nextToken}
 		nextBatchTokens[i] = nextToken
@@ -740,8 +733,14 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		if seq == nil || nextBatchTokens[i] == nil {
 			continue
 		}
+		// If the sequence was replaced while this batch was computing, discard results.
+		if activeBatch.seqs[i] != seq {
+			logutil.Trace("computeBatch: sequence replaced, discarding its results", "batchID", activeBatch.id, "seqIdx", i)
+			continue
+		}
 
 		seq.lastUpdatedAt = t
+		seq.numPredicted++
 		if seq.numPredicted == 1 {
 			seq.processingDuration = seq.lastUpdatedAt.Sub(seq.startedAt)
 			seq.startedAt = seq.lastUpdatedAt
@@ -766,7 +765,7 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		nextBatchTokens[i].Token = token
 
 		// if it's an end of sequence token, break
-		if s.model.(model.TextProcessor).Is(token, model.SpecialEOS) {
+		if s.model.(tokenizer.Tokenizer).Is(token, tokenizer.SpecialEOS) {
 			// TODO (jmorganca): we should send this back
 			// as it's important for the /api/generate context
 			// seq.responses <- piece
@@ -775,18 +774,25 @@ func (s *Server) computeBatch(activeBatch batchState) {
 			continue
 		}
 
-		piece, err := s.model.(model.TextProcessor).Decode([]int32{token})
+		piece, err := s.model.(tokenizer.Tokenizer).Decode([]int32{token})
 		if err != nil {
 			panic("failed to decode token")
 		}
 
 		// Calculate logprobs if requested (after EOS check to avoid logprobs for EOS tokens)
 		if seq.logprobs {
-			logprobs := calculateLogprobs(logits, token, seq.topLogprobs, s.model.(model.TextProcessor))
+			logprobs := calculateLogprobs(logits, token, seq.topLogprobs, s.model.(tokenizer.Tokenizer))
 			seq.pendingLogprobs = append(seq.pendingLogprobs, logprobs...)
 		}
 
 		seq.pendingResponses = append(seq.pendingResponses, piece)
+
+		// if past the num predict limit
+		if seq.numPredict > 0 && seq.numPredicted >= seq.numPredict {
+			s.removeSequence(i, llm.DoneReasonLength)
+			continue
+		}
+
 		sequence := strings.Join(seq.pendingResponses, "")
 
 		if ok, stop := common.FindStop(sequence, seq.stop); ok {
@@ -873,7 +879,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	var grammar *sample.GrammarSampler
 	var err error
 	if req.Grammar != "" {
-		grammar, err = sample.NewGrammarSampler(s.model.(model.TextProcessor), req.Grammar)
+		grammar, err = sample.NewGrammarSampler(s.model.(tokenizer.Tokenizer), req.Grammar)
 		if err != nil {
 			http.Error(w, "failed to load model vocabulary required for format", http.StatusInternalServerError)
 			return
@@ -996,13 +1002,13 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	seq, err := s.NewSequence(req.Content, nil, NewSequenceParams{
 		embedding: true,
-
-		// TODO (jmorganca): this should be provided by the server via the
-		// request options and truncated here in the runner, instead of relying on
-		// the server's truncate logic
-		truncate: true,
+		truncate:  false,
 	})
 	if err != nil {
+		if errors.Is(err, errorInputTooLong) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		http.Error(w, fmt.Sprintf("failed to create new sequence: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -1043,7 +1049,8 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewEncoder(w).Encode(&llm.EmbeddingResponse{
-		Embedding: <-seq.embedding,
+		Embedding:       <-seq.embedding,
+		PromptEvalCount: seq.numPromptInputs,
 	}); err != nil {
 		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 	}
@@ -1202,14 +1209,20 @@ func (s *Server) allocModel(
 		return errors.New("loras are not yet implemented")
 	}
 
+	if s.model.Config().Cache == nil {
+		if parallel > 1 {
+			parallel = 1
+			slog.Warn("model does not support caching, disabling parallel processing")
+		}
+		if s.batchSize < kvSize {
+			s.batchSize = kvSize
+			slog.Warn("model does not support caching, setting batch size to context length", "batch_size", kvSize)
+		}
+	}
+
 	s.cache, err = NewInputCache(s.model, kvCacheType, int32(kvSize), parallel, s.batchSize, multiUserCache)
 	if err != nil {
 		return err
-	}
-
-	if !s.cache.enabled && parallel > 1 {
-		parallel = 1
-		slog.Warn("model does not support caching, disabling parallel processing")
 	}
 
 	s.parallel = parallel
@@ -1218,7 +1231,7 @@ func (s *Server) allocModel(
 
 	err = s.reserveWorstCaseGraph(true)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	return s.reserveWorstCaseGraph(false)
@@ -1351,7 +1364,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 		// Dummy load to get the backend wired up
 		f, err := os.CreateTemp("", "*.bin")
 		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to initialize baackend: %v", err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("failed to initialize backend: %v", err), http.StatusInternalServerError)
 			return
 		}
 		defer f.Close()
@@ -1361,13 +1374,13 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 			"general.architecture": "llama",
 			"tokenizer.ggml.model": "gpt2",
 		}, nil); err != nil {
-			http.Error(w, fmt.Sprintf("failed to initialize baackend: %v", err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("failed to initialize backend: %v", err), http.StatusInternalServerError)
 			return
 		}
 
 		m, err = model.New(f.Name(), ml.BackendParams{NumThreads: runtime.NumCPU(), AllocMemory: false, GPULayers: ml.GPULayersList{{}}})
 		if err != nil {
-			http.Error(w, fmt.Sprintf("failed to initialize baackend: %v", err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("failed to initialize backend: %v", err), http.StatusInternalServerError)
 			return
 		}
 		slog.Debug("dummy model load took", "duration", time.Since(startLoad))

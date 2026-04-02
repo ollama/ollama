@@ -67,6 +67,9 @@ func TestConcurrentChat(t *testing.T) {
 // Stress the scheduler and attempt to load more models than will fit to cause thrashing
 // This test will always load at least 2 models even on CPU based systems
 func TestMultiModelStress(t *testing.T) {
+	if testModel != "" {
+		t.Skip("uses hardcoded models, not applicable with model override")
+	}
 	s := os.Getenv("OLLAMA_MAX_VRAM")
 	if s == "" {
 		s = "0"
@@ -114,9 +117,7 @@ func TestMultiModelStress(t *testing.T) {
 
 	// Make sure all the models are pulled before we get started
 	for _, model := range chosenModels {
-		if err := PullIfMissing(ctx, client, model); err != nil {
-			t.Fatal(err)
-		}
+		pullOrSkip(ctx, t, client, model)
 	}
 
 	// Determine how many models we can load in parallel before we exceed VRAM

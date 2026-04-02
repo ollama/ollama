@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/readline"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
@@ -40,6 +42,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /bye            Exit")
 		fmt.Fprintln(os.Stderr, "  /?, /help       Help for a command")
 		fmt.Fprintln(os.Stderr, "  /? shortcuts    Help for keyboard shortcuts")
+
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Use \"\"\" to begin a multi-line message.")
 
@@ -78,6 +81,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  Ctrl + w            Delete the word before the cursor")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "  Ctrl + l            Clear the screen")
+		fmt.Fprintln(os.Stderr, "  Ctrl + g            Open default editor to compose a prompt")
 		fmt.Fprintln(os.Stderr, "  Ctrl + c            Stop the model from responding")
 		fmt.Fprintln(os.Stderr, "  Ctrl + d            Exit ollama (/bye)")
 		fmt.Fprintln(os.Stderr, "")
@@ -115,7 +119,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		Prompt:         ">>> ",
 		AltPrompt:      "... ",
 		Placeholder:    "Send a message (/? for help)",
-		AltPlaceholder: `Use """ to end multi-line input`,
+		AltPlaceholder: "Press Enter to send",
 	})
 	if err != nil {
 		return err
@@ -147,6 +151,18 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			sb.Reset()
 
 			continue
+		case errors.Is(err, readline.ErrEditPrompt):
+			sb.Reset()
+			content, err := editInExternalEditor(line)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				continue
+			}
+			if strings.TrimSpace(content) == "" {
+				continue
+			}
+			scanner.Prefill = content
+			continue
 		case err != nil:
 			return err
 		}
@@ -158,6 +174,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			sb.WriteString(before)
 			if !ok {
 				fmt.Fprintln(&sb)
+				scanner.Prompt.UseAlt = true
 				continue
 			}
 
@@ -524,6 +541,13 @@ func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
 		parentModel = ""
 	}
 
+	// Preserve explicit cloud intent for sessions started with `:cloud`.
+	// Cloud model metadata can return a source-less parent_model (for example
+	// "qwen3.5"), which would otherwise make `/save` create a local derivative.
+	if modelref.HasExplicitCloudSource(opts.Model) && !modelref.HasExplicitCloudSource(parentModel) {
+		parentModel = ""
+	}
+
 	req := &api.CreateRequest{
 		Model: name,
 		From:  cmp.Or(parentModel, opts.Model),
@@ -594,6 +618,57 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 		imgs = append(imgs, data)
 	}
 	return strings.TrimSpace(input), imgs, nil
+}
+
+func editInExternalEditor(content string) (string, error) {
+	editor := envconfig.Editor()
+	if editor == "" {
+		editor = os.Getenv("VISUAL")
+	}
+	if editor == "" {
+		editor = os.Getenv("EDITOR")
+	}
+	if editor == "" {
+		editor = defaultEditor
+	}
+
+	// Check that the editor binary exists
+	name := strings.Fields(editor)[0]
+	if _, err := exec.LookPath(name); err != nil {
+		return "", fmt.Errorf("editor %q not found, set OLLAMA_EDITOR to the path of your preferred editor", name)
+	}
+
+	tmpFile, err := os.CreateTemp("", "ollama-prompt-*.txt")
+	if err != nil {
+		return "", fmt.Errorf("creating temp file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if content != "" {
+		if _, err := tmpFile.WriteString(content); err != nil {
+			tmpFile.Close()
+			return "", fmt.Errorf("writing to temp file: %w", err)
+		}
+	}
+	tmpFile.Close()
+
+	args := strings.Fields(editor)
+	args = append(args, tmpFile.Name())
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("editor exited with error: %w", err)
+	}
+
+	data, err := os.ReadFile(tmpFile.Name())
+	if err != nil {
+		return "", fmt.Errorf("reading temp file: %w", err)
+	}
+
+	return strings.TrimRight(string(data), "\n"), nil
 }
 
 func getImageData(filePath string) ([]byte, error) {

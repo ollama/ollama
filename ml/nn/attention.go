@@ -57,10 +57,9 @@ func AttentionWithVMLA(ctx ml.Context, query, key, value, sinks ml.Tensor, vmla 
 		key, value, mask = cache.Get(ctx)
 	}
 
-	// Only use the fast SDPA implementation if we have a cache, since that's what
-	// will do any expected backend-specific transformations for us
-	if sdpa, ok := query.(ml.ScaledDotProductAttention); ok && cache != nil {
-		return sdpa.ScaledDotProductAttention(ctx, key, value, mask, sinks, vmla, scale)
+	if sdpa, ok := query.(ml.ScaledDotProductAttention); ok {
+		cacheConfigApplied := cache != nil
+		return sdpa.ScaledDotProductAttention(ctx, key, value, mask, sinks, vmla, scale, cacheConfigApplied)
 	} else {
 		query = query.Permute(ctx, 0, 2, 1, 3)
 		key = key.Permute(ctx, 0, 2, 1, 3)
