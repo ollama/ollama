@@ -19,8 +19,8 @@ import (
 )
 
 var defaultAudioModels = []string{
-	"gemma4-e2b",
-	"gemma4-e4b",
+	"gemma4:e2b",
+	"gemma4:e4b",
 }
 
 // decodeTestAudio returns the test audio clip ("Why is the sky blue?", 16kHz mono WAV).
