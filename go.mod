@@ -37,6 +37,7 @@ require (
 	github.com/wk8/go-ordered-map/v2 v2.1.8
 	golang.org/x/image v0.22.0
 	golang.org/x/mod v0.30.0
+	golang.org/x/time v0.14.0
 	golang.org/x/tools v0.38.0
 	gonum.org/v1/gonum v0.15.0
 )
