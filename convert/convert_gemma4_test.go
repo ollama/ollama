@@ -195,6 +195,16 @@ func TestGemma4AudioReplacements(t *testing.T) {
 			"v.blk.0.attn_q.weight",
 		},
 		{
+			"vision std bias",
+			"model.vision_tower.std_bias",
+			"v.std_bias",
+		},
+		{
+			"vision std scale",
+			"model.vision_tower.std_scale",
+			"v.std_scale",
+		},
+		{
 			"vision patch embd",
 			"model.vision_tower.patch_embedder.input_proj.weight",
 			"v.patch_embd.weight",
@@ -215,6 +225,31 @@ func TestGemma4AudioReplacements(t *testing.T) {
 			"text token embd",
 			"model.language_model.embed_tokens.weight",
 			"token_embd.weight",
+		},
+		{
+			"text moe gate up fused",
+			"model.language_model.layers.0.experts.gate_up_proj",
+			"blk.0.ffn_gate_up_exps.weight",
+		},
+		{
+			"text moe down",
+			"model.language_model.layers.0.experts.down_proj",
+			"blk.0.ffn_down_exps.weight",
+		},
+		{
+			"text moe down with weight suffix",
+			"model.language_model.layers.0.experts.down_proj.weight",
+			"blk.0.ffn_down_exps.weight",
+		},
+		{
+			"text moe per expert scale",
+			"model.language_model.layers.0.router.per_expert_scale",
+			"blk.0.ffn_down_exps.scale",
+		},
+		{
+			"text moe per expert scale with weight suffix",
+			"model.language_model.layers.0.router.per_expert_scale.weight",
+			"blk.0.ffn_down_exps.scale",
 		},
 	}
 

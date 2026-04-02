@@ -12,7 +12,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -23,143 +22,6 @@ import (
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 )
-
-// errFallbackToText is returned when the user types a non-space key in audio mode,
-// indicating we should fall through to the normal text input.
-type errFallbackToText struct {
-	prefill string
-}
-
-func (e errFallbackToText) Error() string { return "fallback to text" }
-
-// doAudioRecording handles the spacebar-driven recording flow.
-// Returns WAV bytes on success, nil to retry, or an error.
-func doAudioRecording(scanner *readline.Instance, recorder *AudioRecorder) ([]byte, error) {
-	fmt.Print(">>> \033[90m◉ Press Space to record...\033[0m")
-
-	// Wait for spacebar to start.
-	for {
-		r, err := scanner.ReadRaw()
-		if err != nil {
-			return nil, io.EOF
-		}
-		if r == 3 { // Ctrl+C
-			fmt.Print("\r\033[K")
-			fmt.Println("Use Ctrl + d or /bye to exit.")
-			return nil, nil
-		}
-		if r == 4 { // Ctrl+D
-			fmt.Println()
-			return nil, io.EOF
-		}
-		if r == ' ' {
-			break
-		}
-		// User typed a regular character — fall back to text input with this char.
-		if r == '/' || (r >= 32 && r < 127) {
-			fmt.Print("\r\033[K") // clear the "Press Space" line
-			return nil, errFallbackToText{prefill: string(r)}
-		}
-	}
-
-	// Start recording.
-	if err := recorder.Start(); err != nil {
-		fmt.Println()
-		return nil, fmt.Errorf("start recording: %w", err)
-	}
-
-	// Show recording indicator with elapsed time.
-	done := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-ticker.C:
-				d := recorder.Duration()
-				fmt.Printf("\r>>> \033[91m◈ Recording... %.1fs\033[0m  ", d.Seconds())
-			}
-		}
-	}()
-
-	// Wait for spacebar to stop.
-	for {
-		r, err := scanner.ReadRaw()
-		if err != nil {
-			close(done)
-			recorder.Stop()
-			return nil, io.EOF
-		}
-		if r == ' ' || r == 3 { // Space or Ctrl+C
-			break
-		}
-	}
-
-	close(done)
-	dur, _ := recorder.Stop()
-	fmt.Printf("\r>>> \033[90m◇ Recorded %.1fs\033[0m          \n", dur.Seconds())
-
-	// Encode to WAV.
-	wav, err := recorder.WAV()
-	if err != nil {
-		return nil, err
-	}
-	return wav, nil
-}
-
-// tokenCallback is called for each streamed token. Return non-nil error to abort.
-type tokenCallback func(token string)
-
-// streamChat sends a chat request and streams tokens to the callback.
-// Returns the full accumulated text.
-func streamChat(cmd *cobra.Command, model string, messages []api.Message, onToken tokenCallback) (string, error) {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return "", err
-	}
-
-	noThink := &api.ThinkValue{Value: false}
-	stream := true
-	req := &api.ChatRequest{
-		Model:    model,
-		Messages: messages,
-		Stream:   &stream,
-		Think:    noThink,
-		Options:  map[string]any{"temperature": 0},
-	}
-
-	var result strings.Builder
-	fn := func(response api.ChatResponse) error {
-		tok := response.Message.Content
-		result.WriteString(tok)
-		if onToken != nil {
-			onToken(tok)
-		}
-		return nil
-	}
-
-	if err := client.Chat(cmd.Context(), req, fn); err != nil {
-		return "", err
-	}
-
-	return strings.TrimSpace(result.String()), nil
-}
-
-// transcribeAudio sends audio to the model for transcription.
-// onToken is called for each streamed token (may be nil for silent operation).
-func transcribeAudio(cmd *cobra.Command, opts runOptions, audioData []byte, onToken tokenCallback) (string, error) {
-	systemPrompt := "Transcribe the following audio exactly as spoken. Output only the transcription text, nothing else."
-	if opts.Language != "" {
-		systemPrompt += " The audio is in " + opts.Language + "."
-	}
-
-	return streamChat(cmd, opts.Model, []api.Message{
-		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: "Transcribe this audio.", Images: []api.ImageData{audioData}},
-	}, onToken)
-}
 
 type MultilineState int
 
@@ -177,11 +39,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /load <model>   Load a session or model")
 		fmt.Fprintln(os.Stderr, "  /save <model>   Save your current session")
 		fmt.Fprintln(os.Stderr, "  /clear          Clear session context")
-		if opts.AudioCapable {
-			fmt.Fprintln(os.Stderr, "  /audio          Toggle voice input mode")
-		} else {
-			fmt.Fprintln(os.Stderr, "  /audio          (not supported by current model)")
-		}
 		fmt.Fprintln(os.Stderr, "  /bye            Exit")
 		fmt.Fprintln(os.Stderr, "  /?, /help       Help for a command")
 		fmt.Fprintln(os.Stderr, "  /? shortcuts    Help for keyboard shortcuts")
@@ -190,7 +47,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "Use \"\"\" to begin a multi-line message.")
 
 		if opts.MultiModal {
-			fmt.Fprintf(os.Stderr, "Use %s to include .jpg, .png, or .webp images.\n", filepath.FromSlash("/path/to/file"))
+			fmt.Fprintf(os.Stderr, "Use %s to include .jpg, .png, .webp images, or .wav audio files.\n", filepath.FromSlash("/path/to/file"))
 		}
 
 		fmt.Fprintln(os.Stderr, "")
@@ -279,66 +136,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 	var multiline MultilineState
 	var thinkExplicitlySet bool = opts.Think != nil
 
-	audioMode := opts.AudioInput
-	var recorder *AudioRecorder
-	if audioMode {
-		var err error
-		recorder, err = NewAudioRecorder()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Audio input unavailable: %v\n", err)
-			audioMode = false
-		} else {
-			if opts.MaxAudioSeconds > 0 {
-				recorder.MaxChunkSeconds = opts.MaxAudioSeconds - 2 // 2s headroom
-			}
-			fmt.Fprintln(os.Stderr, "Voice input enabled. Press Space to record, Space again to send.")
-		}
-	}
-
 	for {
-		// Audio recording mode: wait for spacebar instead of text input.
-		if audioMode && recorder != nil {
-			audioData, err := doAudioRecording(scanner, recorder)
-			if err != nil {
-				if err == io.EOF {
-					fmt.Println()
-					return nil
-				}
-				// User typed a regular key — fall through to normal readline.
-				if fb, ok := err.(errFallbackToText); ok {
-					scanner.Prefill = fb.prefill
-					goto textInput
-				}
-				fmt.Fprintf(os.Stderr, "Audio error: %v\n", err)
-				continue
-			}
-			if audioData == nil {
-				continue
-			}
-
-			// Send audio as the user's input — the model hears and responds.
-			newMessage := api.Message{
-				Role:   "user",
-				Images: []api.ImageData{audioData},
-			}
-			opts.Messages = append(opts.Messages, newMessage)
-
-			assistant, err := chat(cmd, opts)
-			if err != nil {
-				if strings.Contains(err.Error(), "does not support thinking") ||
-					strings.Contains(err.Error(), "invalid think value") {
-					fmt.Printf("error: %v\n", err)
-					continue
-				}
-				return err
-			}
-			if assistant != nil {
-				opts.Messages = append(opts.Messages, *assistant)
-			}
-			continue
-		}
-
-	textInput:
 		line, err := scanner.Readline()
 		switch {
 		case errors.Is(err, io.EOF):
@@ -676,29 +474,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			} else {
 				usage()
 			}
-		case line == "/audio":
-			if !opts.AudioCapable {
-				fmt.Fprintf(os.Stderr, "Audio input not supported by %s\n", opts.Model)
-				continue
-			}
-			if audioMode {
-				audioMode = false
-				fmt.Fprintln(os.Stderr, "Voice input disabled.")
-			} else {
-				audioMode = true
-				if recorder == nil {
-					var recErr error
-					recorder, recErr = NewAudioRecorder()
-					if recErr != nil {
-						fmt.Fprintf(os.Stderr, "Audio input unavailable: %v\n", recErr)
-						audioMode = false
-						continue
-					}
-				}
-				opts.MultiModal = true
-				fmt.Fprintln(os.Stderr, "Voice input enabled. Press Space to record, Space again to send.")
-			}
-			continue
 		case strings.HasPrefix(line, "/exit"), strings.HasPrefix(line, "/bye"):
 			return nil
 		case strings.HasPrefix(line, "/"):

@@ -26,7 +26,7 @@ type Model struct {
 	*TextModel
 	*AudioModel `gguf:"a"`
 
-	*MultiModalProjector  `gguf:"mm"`
+	*MultiModalProjector      `gguf:"mm"`
 	*AudioMultimodalProjector `gguf:"mm.a"`
 
 	ImageProcessor
@@ -97,22 +97,25 @@ func New(c fs.Config) (model.Model, error) {
 	slog.Info("gemma4: token IDs", "image", imageTokenID, "image_end", imageEndTokenID, "audio", audioTokenID, "audio_end", audioEndTokenID)
 
 	m := Model{
-		Tokenizer:            t,
-		TextModel:            newTextModel(c),
-		VisionModel:          newVisionModel(c),
-		AudioModel:           newAudioModel(c),
-		MultiModalProjector:  &MultiModalProjector{},
+		Tokenizer:                t,
+		TextModel:                newTextModel(c),
+		VisionModel:              newVisionModel(c),
+		AudioModel:               newAudioModel(c),
+		MultiModalProjector:      &MultiModalProjector{},
 		AudioMultimodalProjector: &AudioMultimodalProjector{},
-		ImageProcessor:       newImageProcessor(c),
-		imageTokenID:         imageTokenID,
-		imageEndTokenID:      imageEndTokenID,
-		audioTokenID:         audioTokenID,
-		audioEndTokenID:      audioEndTokenID,
-		audioOpts:            newAudioModelOptions(c),
+		ImageProcessor:           newImageProcessor(c),
+		imageTokenID:             imageTokenID,
+		imageEndTokenID:          imageEndTokenID,
+		audioTokenID:             audioTokenID,
+		audioEndTokenID:          audioEndTokenID,
+		audioOpts:                newAudioModelOptions(c),
 	}
 
 	slidingWindowLen := int32(c.Uint("attention.sliding_window"))
-	m.Cache = kvcache.NewWrapperCache(kvcache.NewSWACache(slidingWindowLen, m.Shift), kvcache.NewCausalCache(m.Shift))
+	m.Cache = kvcache.NewWrapperCache(
+		kvcache.NewSWAMemCache(slidingWindowLen, 4096, m.Shift),
+		kvcache.NewCausalCache(m.Shift),
+	)
 
 	return &m, nil
 }
@@ -126,9 +129,6 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 	if len(m.VisionModel.Layers) == 0 {
 		return nil, model.ErrNoVisionModel
 	}
-
-	// Initialize clamp values from model tensors (lazy, once, after model is fully loaded)
-	m.VisionModel.InitClamp(m.MultiModalProjector)
 
 	t0 := time.Now()
 	img, _, err := image.Decode(bytes.NewReader(multimodalData))
@@ -152,10 +152,15 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 	slog.Info("vision: patches", "patchesX", numPatchesX, "patchesY", numPatchesY, "total", numPatchesX*numPatchesY, "patchSize", m.ImageProcessor.patchSize)
 
 	visionOutputs := m.VisionModel.Forward(ctx, pixelValues, numPatchesX, numPatchesY)
-	visionOutputs = visionPoolAndProject(ctx, visionOutputs, numPatchesX, numPatchesY, m.VisionModel.VisionModelOptions, m.MultiModalProjector)
+	visionOutputs = visionPoolAndProject(ctx, visionOutputs, numPatchesX, numPatchesY, m.VisionModel.VisionModelOptions, m.MultiModalProjector, m.VisionModel.StdBias, m.VisionModel.StdScale)
 	slog.Info("vision: encoded", "elapsed", time.Since(t0), "shape", visionOutputs.Shape())
 
 	return []input.Multimodal{{Tensor: visionOutputs}}, nil
+}
+
+func (m *Model) PostLoad() error {
+	m.VisionModel.InitClamp(m.MultiModalProjector)
+	return nil
 }
 
 func (m *Model) encodeAudioMultimodal(ctx ml.Context, data []byte) ([]input.Multimodal, error) {
