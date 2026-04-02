@@ -97,6 +97,57 @@ static __device__ __forceinline__ int2 get_int_from_table_16(const int & q4, con
 // VDR = vec dot ratio, how many contiguous integers each thread processes when the vec dot kernel is called
 // MMVQ = mul_mat_vec_q, MMQ = mul_mat_q
 
+#define VDR_Q1_0_Q8_1_MMVQ 1
+#define VDR_Q1_0_Q8_1_MMQ  1  // Changed from 2 to 1: Q1_0 has only 32 bits (1 int) per block
+#define VDR_Q1_0_g128_Q8_1_MMVQ 1  // Process one 32-element chunk at a time for parallelism
+#define VDR_Q1_0_g128_Q8_1_MMQ  4  // Q1_0_g128 has 128 bits (4 ints) per block
+
+template <int vdr> static __device__ __forceinline__ float vec_dot_q1_0_q8_1_impl(
+    const int * v, const int * u, const float & d1, const half2 & ds8) {
+
+    int sumi = 0;
+
+#pragma unroll
+    for (int i = 0; i < vdr; ++i) {
+        const int vi = v[i];
+        
+        // Unpack 32 bits into 32 signed values (-1 or +1)
+        // Each bit: 0 -> -1, 1 -> +1
+        // Process all 32 bits, converting each to a signed byte
+        
+        int vi_bytes[8];
+        
+#pragma unroll
+        for (int j = 0; j < 8; ++j) {
+            // Extract 4 bits and convert each to -1 or +1
+            const int shift = j * 4;
+            const int bits4 = (vi >> shift) & 0x0F;
+            
+            // Convert each of the 4 bits to a signed byte, then pack into int
+            // bit=1 -> +1, bit=0 -> -1
+            const int b0 = (bits4 & 0x01) ? 1 : -1;
+            const int b1 = (bits4 & 0x02) ? 1 : -1;
+            const int b2 = (bits4 & 0x04) ? 1 : -1;
+            const int b3 = (bits4 & 0x08) ? 1 : -1;
+            
+            // Pack 4 signed bytes into a single int for dp4a
+            vi_bytes[j] = (b0 & 0xFF) | ((b1 & 0xFF) << 8) | ((b2 & 0xFF) << 16) | ((b3 & 0xFF) << 24);
+        }
+        
+        // Perform dot product using dp4a (4-way int8 dot product)
+#pragma unroll
+        for (int j = 0; j < 8; ++j) {
+            sumi = ggml_cuda_dp4a(vi_bytes[j], u[8*i + j], sumi);
+        }
+    }
+
+    const float2 ds8f = __half22float2(ds8);
+
+    // Q1_0 is symmetric (no offset), so we just multiply by scales
+    // ds8f.x is the scale from Q8_1, ds8f.y is the precomputed sum (not needed for symmetric quant)
+    return d1 * ds8f.x * sumi;
+}
+
 #define VDR_Q4_0_Q8_1_MMVQ 2
 #define VDR_Q4_0_Q8_1_MMQ  4
 
@@ -626,6 +677,72 @@ static __device__ __forceinline__ float vec_dot_q6_K_q8_1_impl_mmq(
     }
 
     return d6 * sumf_d;
+}
+
+static __device__ __forceinline__ float vec_dot_q1_0_q8_1(
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
+
+    const block_q1_0 * bq1_0 = (const block_q1_0 *) vbq + kbx;
+
+    int v[VDR_Q1_0_Q8_1_MMVQ];
+    int u[8*VDR_Q1_0_Q8_1_MMVQ];
+
+    // Q1_0 has 32 bits per block, stored in 4 bytes
+    // Read all 4 bytes and pack into a single int32
+    v[0] = bq1_0->qs[0] | (bq1_0->qs[1] << 8) | (bq1_0->qs[2] << 16) | (bq1_0->qs[3] << 24);
+
+    // Load 8 int32s (each containing 4 int8 values) for all 32 Q8_1 values
+#pragma unroll
+    for (int j = 0; j < 8; ++j) {
+        u[j] = get_int_b4(bq8_1->qs, j);
+    }
+
+    return vec_dot_q1_0_q8_1_impl<VDR_Q1_0_Q8_1_MMVQ>(v, u, bq1_0->d, bq8_1->ds);
+}
+
+static __device__ __forceinline__ float vec_dot_q1_0_g128_q8_1(
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
+
+    const block_q1_0_g128 * bq1_0_g128 = (const block_q1_0_g128 *) vbq + kbx;
+
+    // Q1_0_g128: 128 elements with ONE scale
+    // Q8_1: 32 elements per block with individual scales
+    // iqs selects which of the 4 chunks of 32 elements to process (0-3)
+    
+    const float d1 = bq1_0_g128->d;
+    
+    // Process only the chunk specified by iqs
+    const block_q8_1 * bq8_1_chunk = bq8_1 + iqs;
+    
+    // Load 32 bits (4 bytes) for this chunk from Q1_0_g128
+    const int offset = iqs * 4;
+    const int v = bq1_0_g128->qs[offset + 0] | (bq1_0_g128->qs[offset + 1] << 8) |
+                  (bq1_0_g128->qs[offset + 2] << 16) | (bq1_0_g128->qs[offset + 3] << 24);
+    
+    // Unpack 32 bits into 32 signed values (-1 or +1)
+    int vi_bytes[8];
+#pragma unroll
+    for (int j = 0; j < 8; ++j) {
+        const int shift = j * 4;
+        const int bits4 = (v >> shift) & 0x0F;
+        const int b0 = (bits4 & 0x01) ? 1 : -1;
+        const int b1 = (bits4 & 0x02) ? 1 : -1;
+        const int b2 = (bits4 & 0x04) ? 1 : -1;
+        const int b3 = (bits4 & 0x08) ? 1 : -1;
+        vi_bytes[j] = (b0 & 0xFF) | ((b1 & 0xFF) << 8) | ((b2 & 0xFF) << 16) | ((b3 & 0xFF) << 24);
+    }
+    
+    // Compute dot product for this 32-element chunk
+    int sumi = 0;
+#pragma unroll
+    for (int j = 0; j < 8; ++j) {
+        const int u = get_int_b4(bq8_1_chunk->qs, j);
+        sumi = ggml_cuda_dp4a(vi_bytes[j], u, sumi);
+    }
+    
+    // Apply Q1_0_g128's single scale and this chunk's Q8_1 scale
+    const float2 ds8f = __half22float2(bq8_1_chunk->ds);
+    return d1 * ds8f.x * sumi;
 }
 
 static __device__ __forceinline__ float vec_dot_q4_0_q8_1(

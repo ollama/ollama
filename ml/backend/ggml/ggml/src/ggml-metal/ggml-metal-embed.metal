@@ -97,6 +97,13 @@ typedef sycl::half2 ggml_half2;
 // QR = QK / number of values before dequantization
 // QI = number of 32 bit integers before dequantization
 
+#define QI1_0 (QK1_0 / 32)  // Number of int32s needed for QK1_0 bits (QK1_0/32)
+#define QR1_0 1              // 1 bit per quantized element (matches the 1-bit nature of Q1_0)
+
+#define QI1_0_g128 (QK1_0_g128 / 32)  // Number of int32s needed for QK1_0_g128 bits (QK1_0_g128/32)
+#define QR1_0_g128 1              // 1 bit per quantized element (matches the 1-bit nature of Q1_0_g128)
+
+
 #define QI4_0 (QK4_0 / (4 * QR4_0))
 #define QR4_0 2
 
@@ -170,6 +177,20 @@ typedef sycl::half2 ggml_half2;
 #else // _MSC_VER
 #define GGML_EXTENSION __extension__
 #endif // _MSC_VER
+
+#define QK1_0 32  // MUST match QK8_0 for vec_dot computation! TODO see if we can do larger blocks later
+typedef struct {
+    ggml_half d;           // delta
+    uint8_t qs[QK1_0 / 8]; // bits / quants
+} block_q1_0;
+static_assert(sizeof(block_q1_0) == sizeof(ggml_half) + QK1_0 / 8, "wrong q1_0 block size/padding");
+
+#define QK1_0_g128 128
+typedef struct {
+    ggml_half d;               // delta
+    uint8_t qs[QK1_0_g128 / 8]; // bits / quants
+} block_q1_0_g128;
+static_assert(sizeof(block_q1_0_g128) == sizeof(ggml_half) + QK1_0_g128 / 8, "wrong q1_0_g128 block size/padding");
 
 #define QK4_0 32
 typedef struct {
@@ -1893,6 +1914,12 @@ GGML_TABLE_END()
 //
 // TODO: for optimal performance, become function of the device and work size
 
+#define N_R0_Q1_0 4
+#define N_SG_Q1_0 2
+
+#define N_R0_Q1_0_g128 4
+#define N_SG_Q1_0_g128 2
+
 #define N_R0_Q4_0 4
 #define N_SG_Q4_0 2
 
@@ -2931,6 +2958,112 @@ void dequantize_bf16_t4(device const bfloat4 * src, short il, thread type4 & reg
     reg = (type4)(*(src));
 }
 #endif
+
+template <typename type4x4>
+void dequantize_q1_0(device const block_q1_0 * xb, short il, thread type4x4 & reg) {
+    device const uint8_t * qs = xb->qs;
+    const float d = xb->d;
+
+    float4x4 reg_f;
+    
+    // Process 16 bits (2 bytes) for each call, since we have il=0,1
+    const int offset = il * 16;
+    
+    for (int i = 0; i < 16; i++) {
+        const int bit_idx = offset + i;
+        const int byte_idx = bit_idx / 8;
+        const int bit_offset = bit_idx % 8;
+        
+        const bool bit_val = (qs[byte_idx] >> bit_offset) & 1;
+        const float val = bit_val ? d : -d;
+        
+        reg_f[i/4][i%4] = val;
+    }
+
+    reg = (type4x4) reg_f;
+}
+
+template <typename type4>
+void dequantize_q1_0_t4(device const block_q1_0 * xb, short il, thread type4 & reg) {
+    device const uint8_t * qs = xb->qs;
+    const float d = xb->d;
+
+    float4 reg_f;
+    
+    // Process 4 bits for each call
+    const int offset = il * 4;
+    
+    for (int i = 0; i < 4; i++) {
+        const int bit_idx = offset + i;
+        const int byte_idx = bit_idx / 8;
+        const int bit_offset = bit_idx % 8;
+        
+        const bool bit_val = (qs[byte_idx] >> bit_offset) & 1;
+        reg_f[i] = bit_val ? d : -d;
+    }
+
+    reg = (type4) reg_f;
+}
+
+template <typename type4x4>
+void dequantize_q1_0_g128(device const block_q1_0_g128 * xb, short il, thread type4x4 & reg) {
+    device const uint8_t * qs = xb->qs;
+    const float d = xb->d;
+    const float neg_d = -d;
+
+    // Process 16 bits starting at offset il*16
+    // Optimization: process 2 bytes (16 bits) at once for better memory access
+    const int byte_offset = il * 2;  // il*16 bits = il*2 bytes
+    const uint8_t b0 = qs[byte_offset];
+    const uint8_t b1 = qs[byte_offset + 1];
+
+    float4x4 reg_f;
+
+    // Unroll completely for better ILP
+    // First byte (bits 0-7)
+    reg_f[0][0] = (b0 & 0x01) ? d : neg_d;
+    reg_f[0][1] = (b0 & 0x02) ? d : neg_d;
+    reg_f[0][2] = (b0 & 0x04) ? d : neg_d;
+    reg_f[0][3] = (b0 & 0x08) ? d : neg_d;
+    reg_f[1][0] = (b0 & 0x10) ? d : neg_d;
+    reg_f[1][1] = (b0 & 0x20) ? d : neg_d;
+    reg_f[1][2] = (b0 & 0x40) ? d : neg_d;
+    reg_f[1][3] = (b0 & 0x80) ? d : neg_d;
+
+    // Second byte (bits 8-15)
+    reg_f[2][0] = (b1 & 0x01) ? d : neg_d;
+    reg_f[2][1] = (b1 & 0x02) ? d : neg_d;
+    reg_f[2][2] = (b1 & 0x04) ? d : neg_d;
+    reg_f[2][3] = (b1 & 0x08) ? d : neg_d;
+    reg_f[3][0] = (b1 & 0x10) ? d : neg_d;
+    reg_f[3][1] = (b1 & 0x20) ? d : neg_d;
+    reg_f[3][2] = (b1 & 0x40) ? d : neg_d;
+    reg_f[3][3] = (b1 & 0x80) ? d : neg_d;
+
+    reg = (type4x4) reg_f;
+}
+
+template <typename type4>
+void dequantize_q1_0_g128_t4(device const block_q1_0_g128 * xb, short il, thread type4 & reg) {
+    device const uint8_t * qs = xb->qs;
+    const float d = xb->d;
+
+    float4 reg_f;
+    
+    // Process 4 bits for each call
+    const int offset = il * 4;
+    
+    for (int i = 0; i < 4; i++) {
+        const int bit_idx = offset + i;
+        const int byte_idx = bit_idx / 8;
+        const int bit_offset = bit_idx % 8;
+        
+        const bool bit_val = (qs[byte_idx] >> bit_offset) & 1;
+        reg_f[i] = bit_val ? d : -d;
+    }
+
+    reg = (type4) reg_f;
+}
 
 template <typename type4x4>
 void dequantize_q4_0(device const block_q4_0 * xb, short il, thread type4x4 & reg) {
@@ -5975,6 +6108,54 @@ kernel void kernel_group_norm_f32(
     }
 }
 
+// function for calculate inner product between half a q1_0 block and 16 floats (yl), sumy is SUM(yl[i])
+// il indicates where the q1 quants begin (0 or QK1_0/4)
+// we assume that the yl's have been multiplied with the appropriate scale factor
+inline float block_q_n_dot_y(device const block_q1_0 * qb_curr, float sumy, thread float * yl, int il) {
+    float d = qb_curr->d;
+    
+    float acc = 0.0f;
+    
+    // il represents which half of the block (0 or 16)
+    // 16 weights = 16 bits = 2 bytes
+    // il=0 → bytes 0-1 (bits 0-15), il=16 → bytes 2-3 (bits 16-31)
+    // TODO: if we increase Q1_0 block size this might need to change
+    const int byte_offset = il / 8;  // 0 or 2
+    device const uint8_t * qs = qb_curr->qs + byte_offset;
+    
+    for (int i = 0; i < 16; i++) {
+        const uint8_t byte_idx = i / 8;
+        const uint8_t bit_idx = i % 8;
+        const int8_t qval = ((qs[byte_idx] >> bit_idx) & 1) ? 1 : -1;
+        acc += yl[i] * qval;
+    }
+    
+    return d * acc;
+}
+
+// function for calculate inner product between part of a q1_0_g128 block and 16 floats (yl), sumy is SUM(yl[i])
+// il indicates where the q1 quants begin (0, 16, 32, ..., 112 for 128-element block)
+// we assume that the yl's have been multiplied with the appropriate scale factor
+inline float block_q_n_dot_y(device const block_q1_0_g128 * qb_curr, float sumy, thread float * yl, int il) {
+    float d = qb_curr->d;
+    
+    float acc = 0.0f;
+    
+    // il represents which 16-element chunk of the 128-element block (0, 16, 32, ..., 112)
+    // 16 weights = 16 bits = 2 bytes
+    const int byte_offset = il / 8;
+    device const uint8_t * qs = qb_curr->qs + byte_offset;
+    
+    for (int i = 0; i < 16; i++) {
+        const uint8_t byte_idx = i / 8;
+        const uint8_t bit_idx = i % 8;
+        const int8_t qval = ((qs[byte_idx] >> bit_idx) & 1) ? 1 : -1;
+        acc += yl[i] * qval;
+    }
+    
+    return d * acc;
+}
+
 // function for calculate inner product between half a q4_0 block and 16 floats (yl), sumy is SUM(yl[i])
 // il indicates where the q4 quants begin (0 or QK4_0/4)
 // we assume that the yl's have been multiplied with the appropriate scale factor
@@ -6192,6 +6373,148 @@ void mul_vec_q_n_f32_impl(
 
         if (tiisg == 0 && r0 + row < args.ne01) {
             dst_f32[r0 + row] = tot;
+        }
+    }
+}
+
+kernel void kernel_mul_mv_q1_0_f32(
+        constant ggml_metal_kargs_mul_mv & args,
+        device const char * src0,
+        device const char * src1,
+        device       char * dst,
+        uint3  tgpig[[threadgroup_position_in_grid]],
+        ushort tiisg[[thread_index_in_simdgroup]],
+        ushort sgitg[[simdgroup_index_in_threadgroup]]) {
+    // Q1_0-specific implementation
+    const int nb = args.ne00/QK1_0;
+
+    const int r0 = tgpig.x;
+    const int r1 = tgpig.y;
+    const int im = tgpig.z;
+
+    const int first_row = (r0 * N_SG_Q1_0 + sgitg) * N_R0_Q1_0;
+
+    const uint i12 = im%args.ne12;
+    const uint i13 = im/args.ne12;
+
+    const uint64_t offset1 = r1*args.nb11 + (i12)*args.nb12 + (i13)*args.nb13;
+
+    device const float * y = (device const float *) (src1 + offset1);
+
+    // pointers to src0 rows
+    device const block_q1_0 * ax[N_R0_Q1_0];
+    for (int row = 0; row < N_R0_Q1_0; ++row) {
+        const uint64_t offset0 = (first_row + row)*args.nb01 + (i12/args.r2)*args.nb02 + (i13/args.r3)*args.nb03;
+
+        ax[row] = (device const block_q1_0 *) ((device char *) src0 + offset0);
+    }
+
+    float yl[16]; // src1 vector cache
+    float sumf[N_R0_Q1_0] = {0.f};
+
+    const short ix = (tiisg/2);
+    const short il = (tiisg%2)*16;  // 0 or 16 - which half of the 32-element block
+
+    device const float * yb = y + ix*QK1_0 + il;
+
+    // each thread in a SIMD group deals with half a block.
+    for (int ib = ix; ib < nb; ib += N_SIMDWIDTH/2) {
+        float sumy = 0.f;
+
+        // Q1_0: simple copy, no fancy scaling (unlike Q4_0)
+#pragma unroll
+        for (short i = 0; i < 16; i++) {
+            yl[i] = yb[i];
+            sumy += yb[i];
+        }
+
+#pragma unroll
+        for (short row = 0; row < N_R0_Q1_0; row++) {
+            sumf[row] += block_q_n_dot_y(ax[row] + ib, sumy, yl, il);
+        }
+
+        yb += QK1_0 * 16;
+    }
+
+    device float * dst_f32 = (device float *) dst + (uint64_t)im*args.ne0*args.ne1 + (uint64_t)r1*args.ne0;
+
+    for (int row = 0; row < N_R0_Q1_0; ++row) {
+        const float tot = simd_sum(sumf[row]);
+
+        if (tiisg == 0 && first_row + row < args.ne01) {
+            dst_f32[first_row + row] = tot;
+        }
+    }
+}
+
+kernel void kernel_mul_mv_q1_0_g128_f32(
+        constant ggml_metal_kargs_mul_mv & args,
+        device const char * src0,
+        device const char * src1,
+        device       char * dst,
+        uint3  tgpig[[threadgroup_position_in_grid]],
+        ushort tiisg[[thread_index_in_simdgroup]],
+        ushort sgitg[[simdgroup_index_in_threadgroup]]) {
+    // Q1_0_g128-specific implementation with 128-element blocks
+    const int nb = args.ne00/QK1_0_g128;
+
+    const int r0 = tgpig.x;
+    const int r1 = tgpig.y;
+    const int im = tgpig.z;
+
+    const int first_row = (r0 * N_SG_Q1_0_g128 + sgitg) * N_R0_Q1_0_g128;
+
+    const uint i12 = im%args.ne12;
+    const uint i13 = im/args.ne12;
+
+    const uint64_t offset1 = r1*args.nb11 + (i12)*args.nb12 + (i13)*args.nb13;
+
+    device const float * y = (device const float *) (src1 + offset1);
+
+    // pointers to src0 rows
+    device const block_q1_0_g128 * ax[N_R0_Q1_0_g128];
+    for (int row = 0; row < N_R0_Q1_0_g128; ++row) {
+        const uint64_t offset0 = (first_row + row)*args.nb01 + (i12/args.r2)*args.nb02 + (i13/args.r3)*args.nb03;
+
+        ax[row] = (device const block_q1_0_g128 *) ((device char *) src0 + offset0);
+    }
+
+    float yl[16]; // src1 vector cache
+    float sumf[N_R0_Q1_0_g128] = {0.f};
+
+    // For 128-element blocks, we need 8 passes of 16 elements each
+    // Each thread processes a different 16-element chunk
+    const short ix = (tiisg/8);  // which block (0 to 3 for 32 threads / 8)
+    const short il = (tiisg%8)*16;  // which 16-element chunk within the 128-element block (0, 16, 32, ..., 112)
+
+    device const float * yb = y + ix*QK1_0_g128 + il;
+
+    // each thread in a SIMD group deals with 1/8 of a block (16 elements out of 128)
+    for (int ib = ix; ib < nb; ib += N_SIMDWIDTH/8) {
+        float sumy = 0.f;
+
+        // Q1_0_g128: simple copy
+#pragma unroll
+        for (short i = 0; i < 16; i++) {
+            yl[i] = yb[i];
+            sumy += yb[i];
+        }
+
+#pragma unroll
+        for (short row = 0; row < N_R0_Q1_0_g128; row++) {
+            sumf[row] += block_q_n_dot_y(ax[row] + ib, sumy, yl, il);
+        }
+
+        yb += QK1_0_g128 * (N_SIMDWIDTH/8);
+    }
+
+    device float * dst_f32 = (device float *) dst + (uint64_t)im*args.ne0*args.ne1 + (uint64_t)r1*args.ne0;
+
+    for (int row = 0; row < N_R0_Q1_0_g128; ++row) {
+        const float tot = simd_sum(sumf[row]);
+
+        if (tiisg == 0 && first_row + row < args.ne01) {
+            dst_f32[first_row + row] = tot;
         }
     }
 }
@@ -6580,6 +6903,16 @@ template [[host_name("kernel_mul_mv_ext_f16_f32_r1_2")]]    kernel mul_mv_ext_q4
 template [[host_name("kernel_mul_mv_ext_f16_f32_r1_3")]]    kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<3, half4,        4,  dequantize_f16_t4>;
 template [[host_name("kernel_mul_mv_ext_f16_f32_r1_4")]]    kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<4, half4,        4,  dequantize_f16_t4>;
 template [[host_name("kernel_mul_mv_ext_f16_f32_r1_5")]]    kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<5, half4,        4,  dequantize_f16_t4>;
+
+template [[host_name("kernel_mul_mv_ext_q1_0_f32_r1_2")]]   kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<2, block_q1_0,   32, dequantize_q1_0_t4>;
+template [[host_name("kernel_mul_mv_ext_q1_0_f32_r1_3")]]   kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<3, block_q1_0,   32, dequantize_q1_0_t4>;
+template [[host_name("kernel_mul_mv_ext_q1_0_f32_r1_4")]]   kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<4, block_q1_0,   32, dequantize_q1_0_t4>;
+template [[host_name("kernel_mul_mv_ext_q1_0_f32_r1_5")]]   kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<5, block_q1_0,   32, dequantize_q1_0_t4>;
+
+template [[host_name("kernel_mul_mv_ext_q1_0_g128_f32_r1_2")]]  kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<2, block_q1_0_g128, 128, dequantize_q1_0_g128_t4>;
+template [[host_name("kernel_mul_mv_ext_q1_0_g128_f32_r1_3")]]  kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<3, block_q1_0_g128, 128, dequantize_q1_0_g128_t4>;
+template [[host_name("kernel_mul_mv_ext_q1_0_g128_f32_r1_4")]]  kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<4, block_q1_0_g128, 128, dequantize_q1_0_g128_t4>;
+template [[host_name("kernel_mul_mv_ext_q1_0_g128_f32_r1_5")]]  kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<5, block_q1_0_g128, 128, dequantize_q1_0_g128_t4>;
 
 template [[host_name("kernel_mul_mv_ext_q4_0_f32_r1_2")]]   kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<2, block_q4_0,   32, dequantize_q4_0_t4>;
 template [[host_name("kernel_mul_mv_ext_q4_0_f32_r1_3")]]   kernel mul_mv_ext_q4_f32_t kernel_mul_mv_ext_q4_f32_disp<3, block_q4_0,   32, dequantize_q4_0_t4>;
@@ -12633,6 +12966,8 @@ template [[host_name("kernel_mul_mm_f16_f32")]]     kernel mul_mm_t kernel_mul_m
 #if defined(GGML_METAL_HAS_BF16)
 template [[host_name("kernel_mul_mm_bf16_f32")]]    kernel mul_mm_t kernel_mul_mm<bfloat, bfloat4x4, simdgroup_bfloat8x8, bfloat, bfloat2x4, simdgroup_bfloat8x8, bfloat4x4,     1,     dequantize_bf16,    bfloat, bfloat4x4, float, float2x4>;
 #endif
+template [[host_name("kernel_mul_mm_q1_0_f32")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q1_0,    2,     dequantize_q1_0,    float,  float4x4,  float, float2x4>;
+template [[host_name("kernel_mul_mm_q1_0_g128_f32")]] kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q1_0_g128, 8,   dequantize_q1_0_g128, float, float4x4,  float, float2x4>;
 template [[host_name("kernel_mul_mm_q4_0_f32")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q4_0,    2,     dequantize_q4_0,    float,  float4x4,  float, float2x4>;
 template [[host_name("kernel_mul_mm_q4_1_f32")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q4_1,    2,     dequantize_q4_1,    float,  float4x4,  float, float2x4>;
 template [[host_name("kernel_mul_mm_q5_0_f32")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q5_0,    2,     dequantize_q5_0,    float,  float4x4,  float, float2x4>;

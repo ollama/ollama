@@ -1,5 +1,51 @@
 #include "common.cuh"
 
+static __device__ __forceinline__ void dequantize_q1_0(const void * vx, const int64_t ib, const int iqs, float2 & v){
+    const block_q1_0 * x = (const block_q1_0 *) vx;
+
+    const float d = x[ib].d;
+    const float neg_d = -d;
+
+    const int bit_index_0 = iqs;
+    const int bit_index_1 = iqs + 1;
+
+    const int byte_index_0 = bit_index_0 / 8;
+    const int bit_offset_0 = bit_index_0 % 8;
+
+    const int byte_index_1 = bit_index_1 / 8;
+    const int bit_offset_1 = bit_index_1 % 8;
+
+    // Extract bits: 1 = +d, 0 = -d
+    const uint8_t bit_0 = (x[ib].qs[byte_index_0] >> bit_offset_0) & 1;
+    const uint8_t bit_1 = (x[ib].qs[byte_index_1] >> bit_offset_1) & 1;
+
+    v.x = bit_0 ? d : neg_d;
+    v.y = bit_1 ? d : neg_d;
+}
+
+static __device__ __forceinline__ void dequantize_q1_0_g128(const void * vx, const int64_t ib, const int iqs, float2 & v){
+    const block_q1_0_g128 * x = (const block_q1_0_g128 *) vx;
+
+    const float d = x[ib].d;
+    const float neg_d = -d;
+
+    const int bit_index_0 = iqs;
+    const int bit_index_1 = iqs + 1;
+
+    const int byte_index_0 = bit_index_0 / 8;
+    const int bit_offset_0 = bit_index_0 % 8;
+
+    const int byte_index_1 = bit_index_1 / 8;
+    const int bit_offset_1 = bit_index_1 % 8;
+
+    // Extract bits: 1 = +d, 0 = -d
+    const uint8_t bit_0 = (x[ib].qs[byte_index_0] >> bit_offset_0) & 1;
+    const uint8_t bit_1 = (x[ib].qs[byte_index_1] >> bit_offset_1) & 1;
+
+    v.x = bit_0 ? d : neg_d;
+    v.y = bit_1 ? d : neg_d;
+}
+
 static __device__ __forceinline__ void dequantize_q4_0(const void * vx, const int64_t ib, const int iqs, float2 & v){
     const block_q4_0 * x = (const block_q4_0 *) vx;
 

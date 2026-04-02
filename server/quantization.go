@@ -251,6 +251,11 @@ func quantize(in, out *os.File, orig *fsggml.GGML, newFileType fsggml.FileType, 
 }
 
 func newType(t *fsggml.Tensor, kv fsggml.KV, qs *quantizeState, ftype fsggml.FileType) fsggml.TensorType {
+	// Do not re-quantize 1-bit (Bonsai) tensors — natively trained at this precision
+	if fsggml.TensorType(t.Kind) == fsggml.TensorTypeQ1_0 || fsggml.TensorType(t.Kind) == fsggml.TensorTypeQ1_0_g128 {
+		return fsggml.TensorType(t.Kind)
+	}
+
 	defaultType := ftype.ToTensorType()
 	name := t.Name
 	quantize := strings.HasSuffix(name, "weight")

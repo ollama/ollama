@@ -4,6 +4,13 @@
 
 static void ggml_cuda_mul_mat_q_switch_type(ggml_backend_cuda_context & ctx, const mmq_args & args, cudaStream_t stream) {
     switch (args.type_x) {
+        // TODO: Q1_0/Q1_0_g128 MMQ disabled due to accuracy issues; for now commenting these to use cuBLAS fallback
+        case GGML_TYPE_Q1_0:
+            mul_mat_q_case<GGML_TYPE_Q1_0>(ctx, args, stream);
+            break;
+        case GGML_TYPE_Q1_0_g128:
+            mul_mat_q_case<GGML_TYPE_Q1_0_g128>(ctx, args, stream);
+            break;
         case GGML_TYPE_Q4_0:
             mul_mat_q_case<GGML_TYPE_Q4_0>(ctx, args, stream);
             break;
@@ -244,6 +251,9 @@ bool ggml_cuda_should_use_mmq(enum ggml_type type, int cc, int64_t ne11) {
     bool mmq_supported;
 
     switch (type) {
+        // TODO: Q1_0 and Q1_0_g128 MMQ implementation exists but is currently disabled due to accuracy issues
+        case GGML_TYPE_Q1_0:
+        case GGML_TYPE_Q1_0_g128:
         case GGML_TYPE_Q4_0:
         case GGML_TYPE_Q4_1:
         case GGML_TYPE_Q5_0:
@@ -271,6 +281,10 @@ bool ggml_cuda_should_use_mmq(enum ggml_type type, int cc, int64_t ne11) {
     }
 
     if (!mmq_supported) {
+        return false;
+    }
+
+    if ((type == GGML_TYPE_Q1_0 || type == GGML_TYPE_Q1_0_g128) && !turing_mma_available(cc)) {
         return false;
     }
 

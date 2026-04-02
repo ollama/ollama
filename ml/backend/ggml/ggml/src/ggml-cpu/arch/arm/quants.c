@@ -137,6 +137,146 @@ void quantize_row_q8_K(const float * GGML_RESTRICT x, void * GGML_RESTRICT y, in
 
 //===================================== Dot products =================================
 
+void ggml_vec_dot_q1_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {    
+    // For nrc > 1, call generic multiple times
+    if (nrc == 1) {
+        ggml_vec_dot_q1_0_q8_0_generic(n, s, bs, vx, bx, vy, by, nrc);
+    } else {
+        // Handle multiple rows by calling generic for each
+        const int qk = QK8_0;
+        const int nb = n / qk;
+        const size_t x_size = nb * sizeof(block_q1_0);
+        const size_t y_size = nb * sizeof(block_q8_0);
+        
+        for (int i = 0; i < nrc; i++) {
+            ggml_vec_dot_q1_0_q8_0_generic(
+                n,
+                s + i,
+                bs,
+                (const char *)vx + i * x_size,
+                bx,
+                (const char *)vy + i * y_size,
+                by,
+                1
+            );
+        }
+    }
+}
+
+void ggml_vec_dot_q1_0_g128_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
+    const int qk = QK1_0_g128;  // 128
+    const int nb = n / qk;
+
+    assert(n % qk == 0);
+    assert(nrc == 1);
+    UNUSED(nrc);
+    UNUSED(bx);
+    UNUSED(by);
+    UNUSED(bs);
+
+    const block_q1_0_g128 * GGML_RESTRICT x = vx;
+    const block_q8_0 * GGML_RESTRICT y = vy;
+
+    float sumf = 0.0f;
+
+#if defined(__ARM_NEON)
+    // Process one Q1_0_g128 block at a time
+    // Each block has 128 1-bit values and needs 4 Q8_0 blocks (4 * 32 = 128)
+    //
+    // Strategy: For 1-bit quants, bit=1 means +1, bit=0 means -1
+    // dot_product = sum(xi * yi) where xi is +1 or -1
+    //             = sum_where_bit_1(yi) - sum_where_bit_0(yi)
+    //             = 2 * sum_where_bit_1(yi) - sum_all(yi)
+    //
+    // We use the lookup table approach: expand each byte of bits to 8 bytes
+    // where each byte is either 0x00 (bit=0) or 0x10 (bit=1), then use as mask
+
+    float32x4_t sumv = vdupq_n_f32(0.0f);
+
+    for (int i = 0; i < nb; i++) {
+        const float d0 = GGML_CPU_FP16_TO_FP32(x[i].d);
+
+        // Process 4 Q8_0 blocks (each has 32 elements)
+        for (int k = 0; k < 4; k++) {
+            const block_q8_0 * GGML_RESTRICT yb = &y[i * 4 + k];
+            const float d1 = GGML_CPU_FP16_TO_FP32(yb->d);
+
+            // Get the 4 bytes of bits for this Q8_0 block (32 bits = 4 bytes)
+            // Bits are at offset k*4 bytes in x[i].qs
+            const uint8_t * bits = &x[i].qs[k * 4];
+
+            // Load 32 int8 values from y
+            const int8x16_t y0 = vld1q_s8(yb->qs);
+            const int8x16_t y1 = vld1q_s8(yb->qs + 16);
+
+            // Byte 0-1: bits for y0[0..15]
+            const uint64_t expand0 = table_b2b_0[bits[0]];
+            const uint64_t expand1 = table_b2b_0[bits[1]];
+            // Byte 2-3: bits for y1[0..15]
+            const uint64_t expand2 = table_b2b_0[bits[2]];
+            const uint64_t expand3 = table_b2b_0[bits[3]];
+
+            // Build the sign vectors by reinterpreting the table values
+            uint8x8_t e0 = vcreate_u8(expand0);
+            uint8x8_t e1 = vcreate_u8(expand1);
+            uint8x8_t e2 = vcreate_u8(expand2);
+            uint8x8_t e3 = vcreate_u8(expand3);
+
+            // Shift right by 4 to get 0 or 1
+            int8x8_t s0 = vreinterpret_s8_u8(vshr_n_u8(e0, 4));
+            int8x8_t s1 = vreinterpret_s8_u8(vshr_n_u8(e1, 4));
+            int8x8_t s2 = vreinterpret_s8_u8(vshr_n_u8(e2, 4));
+            int8x8_t s3 = vreinterpret_s8_u8(vshr_n_u8(e3, 4));
+
+            // Convert 0/1 to -1/+1: sign = 2*val - 1
+            int8x8_t one = vdup_n_s8(1);
+            s0 = vsub_s8(vadd_s8(s0, s0), one);  // 2*s0 - 1
+            s1 = vsub_s8(vadd_s8(s1, s1), one);
+            s2 = vsub_s8(vadd_s8(s2, s2), one);
+            s3 = vsub_s8(vadd_s8(s3, s3), one);
+
+            // Combine into 16-element vectors
+            int8x16_t signs0 = vcombine_s8(s0, s1);
+            int8x16_t signs1 = vcombine_s8(s2, s3);
+
+            // Multiply signs with y values and accumulate
+            // dot(signs, y) where signs are +1/-1
+            int32x4_t p0 = ggml_vdotq_s32(vdupq_n_s32(0), signs0, y0);
+            int32x4_t p1 = ggml_vdotq_s32(p0, signs1, y1);
+
+            // Scale by d1 and accumulate
+            sumv = vmlaq_n_f32(sumv, vcvtq_f32_s32(p1), d0 * d1);
+        }
+    }
+
+    sumf = vaddvq_f32(sumv);
+#else
+    // Scalar fallback
+    for (int i = 0; i < nb; i++) {
+        const float d0 = GGML_FP16_TO_FP32(x[i].d);
+
+        // Process 4 Q8_0 blocks
+        for (int k = 0; k < 4; k++) {
+            const float d1 = GGML_FP16_TO_FP32(y[i*4 + k].d);
+
+            int sumi = 0;
+            for (int j = 0; j < QK8_0; j++) {
+                const int bit_index = k * QK8_0 + j;
+                const int byte_index = bit_index / 8;
+                const int bit_offset = bit_index % 8;
+
+                const int xi = ((x[i].qs[byte_index] >> bit_offset) & 1) ? 1 : -1;
+                sumi += xi * y[i*4 + k].qs[j];
+            }
+            sumf += d0 * d1 * sumi;
+        }
+    }
+#endif
+
+    *s = sumf;
+}
+
+
 void ggml_vec_dot_q4_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
     const int qk = QK8_0;
     const int nb = n / qk;

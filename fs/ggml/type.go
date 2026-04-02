@@ -48,6 +48,10 @@ const (
 	fileTypeQ4_0_8_8 // unused by GGML
 	fileTypeTQ1_0
 	fileTypeTQ2_0
+	fileTypeMXFP4_MOE        // 38 — aligns with C LLAMA_FTYPE_MOSTLY_MXFP4_MOE
+	fileTypeQ1_0_placeholder // 39 — PrismML skips this value
+	fileTypeQ1_0             // 40 — matches LLAMA_FTYPE_MOSTLY_Q1_0
+	fileTypeQ1_0_g128        // 41 — matches LLAMA_FTYPE_MOSTLY_Q1_0_g128
 
 	FileTypeUnknown = 1024
 )
@@ -127,6 +131,10 @@ func (t FileType) String() string {
 		return "Q2_K_S"
 	case FileTypeBF16:
 		return "BF16"
+	case fileTypeQ1_0:
+		return "Q1_0"
+	case fileTypeQ1_0_g128:
+		return "Q1_0_g128"
 	default:
 		return "unknown"
 	}
@@ -176,6 +184,10 @@ func (ftype FileType) ToTensorType() TensorType {
 		return TensorTypeBF16
 	case fileTypeMXFP4:
 		return TensorTypeMXFP4
+	case fileTypeQ1_0:
+		return TensorTypeQ1_0
+	case fileTypeQ1_0_g128:
+		return TensorTypeQ1_0_g128
 	default:
 		slog.Warn("unsupported file type", "type", ftype)
 		return 0 // F32
@@ -227,6 +239,8 @@ const (
 	tensorTypeIQ4_NL_4_8 // unused by GGML
 	tensorTypeIQ4_NL_8_8 // unused by GGML
 	TensorTypeMXFP4
+	TensorTypeQ1_0
+	TensorTypeQ1_0_g128
 )
 
 // ParseTensorType parses the provided GGUF tensor type
@@ -267,6 +281,10 @@ func ParseTensorType(s string) (TensorType, error) {
 		return TensorTypeBF16, nil
 	case "MXFP4":
 		return TensorTypeMXFP4, nil
+	case "Q1_0":
+		return TensorTypeQ1_0, nil
+	case "Q1_0_g128":
+		return TensorTypeQ1_0_g128, nil
 	default:
 		return 0, fmt.Errorf("unsupported quantization type %s", s)
 	}
@@ -321,6 +339,10 @@ func (t TensorType) String() string {
 		return "BF16"
 	case 4, TensorTypeMXFP4:
 		return "MXFP4"
+	case TensorTypeQ1_0:
+		return "Q1_0"
+	case TensorTypeQ1_0_g128:
+		return "Q1_0_g128"
 	default:
 		return "unknown"
 	}
