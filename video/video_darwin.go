@@ -67,7 +67,7 @@ func extract(path string, opts Options) (*Result, error) {
 	result := &Result{}
 
 	// Copy frame data to Go slices and free C memory
-	for i := 0; i < int(numFrames); i++ {
+	for i := range int(numFrames) {
 		if frameData[i] != nil && frameSizes[i] > 0 {
 			size := int(frameSizes[i])
 			data := C.GoBytes(unsafe.Pointer(frameData[i]), C.int(size))

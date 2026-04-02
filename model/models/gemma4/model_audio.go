@@ -33,26 +33,26 @@ type AudioOutputProj struct {
 
 // AudioModelOptions holds audio model hyperparameters.
 type AudioModelOptions struct {
-	hiddenSize      int
-	numHeads        int
-	headDim         int
-	ffnSize         int
-	numLayers       int
-	melBins         int
-	chunkSize       int
-	maxPast         int
-	maxFuture       int
-	contextSize     int
-	logitCap        float32
-	residualWeight  float32
-	gradClip        float32
-	convKernelSize  int
-	eps             float32
+	hiddenSize     int
+	numHeads       int
+	headDim        int
+	ffnSize        int
+	numLayers      int
+	melBins        int
+	chunkSize      int
+	maxPast        int
+	maxFuture      int
+	contextSize    int
+	logitCap       float32
+	residualWeight float32
+	gradClip       float32
+	convKernelSize int
+	eps            float32
 }
 
 // AudioConvBlock is a single 2D convolution block for the SSCP.
 type AudioConvBlock struct {
-	Weight ml.Tensor   `gguf:"weight"`
+	Weight ml.Tensor     `gguf:"weight"`
 	Norm   *nn.LayerNorm `gguf:"norm"`
 }
 
@@ -204,7 +204,7 @@ func (m *AudioModel) ForwardAudio(ctx ml.Context, melFeatures ml.Tensor, proj *A
 	x = m.SSCPInputProj.Forward(ctx, x)
 
 	// Build causal-valid mask for conformer attention.
-	causalMask := buildCausalValidMaskF32(int(opts.chunkSize), opts.maxPast, opts.maxFuture)
+	causalMask := buildCausalValidMaskF32(opts.chunkSize, opts.maxPast, opts.maxFuture)
 
 	// Run conformer blocks.
 	for i := range m.Layers {
@@ -254,7 +254,6 @@ func forwardConvBlock(ctx ml.Context, block *AudioConvBlock, x ml.Tensor, opts *
 
 // Forward runs a single conformer block.
 func (cb *AudioConformerBlock) Forward(ctx ml.Context, x ml.Tensor, causalMask []float32, opts *AudioModelOptions, blockIdx int) ml.Tensor {
-
 	// FFW start (half-residual).
 	x = cb.forwardFFW(ctx, cb.FFWNorm, cb.FFWUp, cb.FFWDown, cb.FFWPostNorm, x, opts)
 
@@ -369,7 +368,7 @@ func (cb *AudioConformerBlock) forwardAttention(ctx ml.Context, x ml.Tensor, cau
 		termAC := kP.MulmatFullPrec(ctx, qP) // [contextSize, chunkSize, numHeads]
 
 		// Content-position logits: qBlock^T @ posEmb → [chunkSize, maxSpan] per head.
-		pP := posEmb.Permute(ctx, 0, 2, 1, 3) // [headDim, maxSpan, numHeads]
+		pP := posEmb.Permute(ctx, 0, 2, 1, 3)   // [headDim, maxSpan, numHeads]
 		termBDRaw := pP.MulmatFullPrec(ctx, qP) // [maxSpan, chunkSize, numHeads]
 
 		// Relative shift: [maxSpan, chunkSize, numHeads] → [contextSize, chunkSize, numHeads]
@@ -417,7 +416,7 @@ func (cb *AudioConformerBlock) forwardAttention(ctx ml.Context, x ml.Tensor, cau
 		// = [headDim, chunkSize].
 		// Mulmat(a, b) = a^T @ b. Need a=[contextSize, headDim, numHeads], b=[contextSize, chunkSize, numHeads].
 		vPT := vP.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx) // [contextSize, headDim, numHeads]
-		chunkOut := vPT.Mulmat(ctx, logits) // [headDim, chunkSize, numHeads]
+		chunkOut := vPT.Mulmat(ctx, logits)                // [headDim, chunkSize, numHeads]
 
 		// Permute back to [headDim, numHeads, chunkSize]
 		chunkOut = chunkOut.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
@@ -601,8 +600,8 @@ func buildCausalValidMaskF32(chunkSize, maxPast, maxFuture int) []float32 {
 	result := make([]float32, chunkSize*contextSize)
 	for r := range chunkSize {
 		for c := range contextSize {
-			lower := (r <= c)                // tril(contextSize, chunkSize) transposed
-			upper := (c <= r+int(upperDiag)) // tril(chunkSize, contextSize, diag=upperDiag)
+			lower := (r <= c)           // tril(contextSize, chunkSize) transposed
+			upper := (c <= r+upperDiag) // tril(chunkSize, contextSize, diag=upperDiag)
 			if lower && upper {
 				result[r*contextSize+c] = 1.0
 			}

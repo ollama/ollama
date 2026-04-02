@@ -377,4 +377,3 @@ func (r *Gemma4Renderer) formatArrayValue(arr []any) string {
 	sb.WriteString("]")
 	return sb.String()
 }
-

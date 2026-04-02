@@ -352,14 +352,6 @@ func newVisionModel(c fs.Config) *VisionModel {
 	}
 }
 
-func visionTokenCount(imageWidth, imageHeight, patchSize, nMerge int) int {
-	patchesX := imageWidth / patchSize
-	patchesY := imageHeight / patchSize
-	mergedX := patchesX / nMerge
-	mergedY := patchesY / nMerge
-	return mergedX * mergedY
-}
-
 func visionPoolAndProject(ctx ml.Context, hiddenState ml.Tensor, numPatchesX, numPatchesY int, opts *VisionModelOptions, proj *MultiModalProjector, stdBias, stdScale ml.Tensor) ml.Tensor {
 	hiddenSize := opts.hiddenSize
 

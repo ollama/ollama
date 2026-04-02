@@ -120,8 +120,8 @@ func TestIsVideoWithRealContentType(t *testing.T) {
 
 	// MP4 ftyp box: 4 bytes size + "ftyp" + brand
 	mp4Data := make([]byte, 512)
-	copy(mp4Data[0:], []byte{0x00, 0x00, 0x00, 0x20}) // size=32
-	copy(mp4Data[4:], "ftypisom")                       // ftyp + brand
+	copy(mp4Data[0:], []byte{0x00, 0x00, 0x00, 0x20})  // size=32
+	copy(mp4Data[4:], "ftypisom")                      // ftyp + brand
 	copy(mp4Data[12:], []byte{0x00, 0x00, 0x02, 0x00}) // minor version
 
 	ct := http.DetectContentType(mp4Data)

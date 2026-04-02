@@ -157,7 +157,7 @@ func nestedTool() []api.Tool {
 			Parameters: api.ToolFunctionParameters{
 				Type: "object",
 				Properties: testPropsMap(map[string]api.ToolProperty{
-					"name":   {Type: api.PropertyType{"string"}, Description: "Name"},
+					"name": {Type: api.PropertyType{"string"}, Description: "Name"},
 					"config": {Type: api.PropertyType{"object"}, Description: "Config", Properties: testPropsMap(map[string]api.ToolProperty{
 						"enabled": {Type: api.PropertyType{"boolean"}, Description: "On/off"},
 					})},
@@ -256,12 +256,14 @@ func nestedRequiredTool() []api.Tool {
 			Parameters: api.ToolFunctionParameters{
 				Type: "object",
 				Properties: testPropsMap(map[string]api.ToolProperty{
-					"profile": {Type: api.PropertyType{"object"}, Description: "Profile",
+					"profile": {
+						Type: api.PropertyType{"object"}, Description: "Profile",
 						Required: []string{"name"},
 						Properties: testPropsMap(map[string]api.ToolProperty{
 							"name": {Type: api.PropertyType{"string"}, Description: "Name"},
 							"age":  {Type: api.PropertyType{"number"}, Description: "Age"},
-						})},
+						}),
+					},
 				}),
 			},
 		},
@@ -368,19 +370,19 @@ func searchTool() []api.Tool {
 }
 
 var (
-	bashSmallDeclRef = `<|tool>declaration:bash{description:<|"|>Run<|"|>,parameters:{properties:{command:{description:<|"|>Cmd<|"|>,type:<|"|>STRING<|"|>}},required:[<|"|>command<|"|>],type:<|"|>OBJECT<|"|>}}<tool|>`
-	nestedDeclRef    = `<|tool>declaration:create{description:<|"|>Create item<|"|>,parameters:{properties:{config:{description:<|"|>Config<|"|>,properties:{enabled:{description:<|"|>On/off<|"|>,type:<|"|>BOOLEAN<|"|>}},type:<|"|>OBJECT<|"|>},name:{description:<|"|>Name<|"|>,type:<|"|>STRING<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
-	arrayDeclRef     = `<|tool>declaration:batch{description:<|"|>Run batch<|"|>,parameters:{properties:{commands:{description:<|"|>Commands<|"|>,items:{type:<|"|>STRING<|"|>},type:<|"|>ARRAY<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
-	bashDeclRef      = `<|tool>declaration:bash{description:<|"|>Run a command<|"|>,parameters:{properties:{command:{description:<|"|>The command<|"|>,type:<|"|>STRING<|"|>}},required:[<|"|>command<|"|>],type:<|"|>OBJECT<|"|>}}<tool|>`
-	readDeclRef      = `<|tool>declaration:read{description:<|"|>Read a file<|"|>,parameters:{properties:{path:{description:<|"|>File path<|"|>,type:<|"|>STRING<|"|>}},required:[<|"|>path<|"|>],type:<|"|>OBJECT<|"|>}}<tool|>`
-	weatherDeclRef   = `<|tool>declaration:get_weather{description:<|"|>Get weather<|"|>,parameters:{properties:{city:{description:<|"|>City<|"|>,type:<|"|>STRING<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
-	addDeclRef       = `<|tool>declaration:add{description:<|"|>Add numbers<|"|>,parameters:{properties:{a:{type:<|"|>NUMBER<|"|>},b:{type:<|"|>NUMBER<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
-	flagDeclRef      = `<|tool>declaration:set_flag{description:<|"|>Set a flag<|"|>,parameters:{properties:{enabled:{description:<|"|>Flag value<|"|>,type:<|"|>BOOLEAN<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
-	modeDeclRef      = `<|tool>declaration:set_mode{description:<|"|>Set mode<|"|>,parameters:{properties:{mode:{description:<|"|>The mode<|"|>,enum:[<|"|>fast<|"|>,<|"|>slow<|"|>],type:<|"|>STRING<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
-	configureDeclRef = `<|tool>declaration:configure{description:<|"|>Configure<|"|>,parameters:{properties:{config:{description:<|"|>Config<|"|>,properties:{},type:<|"|>OBJECT<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
-	batchArrayDeclRef = `<|tool>declaration:batch{description:<|"|>Run batch<|"|>,parameters:{properties:{ids:{description:<|"|>IDs<|"|>,type:<|"|>ARRAY<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
-	countDeclRef     = `<|tool>declaration:count{description:<|"|>Count items<|"|>,parameters:{properties:{n:{type:<|"|>NUMBER<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
-	enumNoDescDeclRef = `<|tool>declaration:set_level{description:<|"|>Set level<|"|>,parameters:{properties:{level:{enum:[<|"|>low<|"|>,<|"|>high<|"|>],type:<|"|>STRING<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
+	bashSmallDeclRef      = `<|tool>declaration:bash{description:<|"|>Run<|"|>,parameters:{properties:{command:{description:<|"|>Cmd<|"|>,type:<|"|>STRING<|"|>}},required:[<|"|>command<|"|>],type:<|"|>OBJECT<|"|>}}<tool|>`
+	nestedDeclRef         = `<|tool>declaration:create{description:<|"|>Create item<|"|>,parameters:{properties:{config:{description:<|"|>Config<|"|>,properties:{enabled:{description:<|"|>On/off<|"|>,type:<|"|>BOOLEAN<|"|>}},type:<|"|>OBJECT<|"|>},name:{description:<|"|>Name<|"|>,type:<|"|>STRING<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
+	arrayDeclRef          = `<|tool>declaration:batch{description:<|"|>Run batch<|"|>,parameters:{properties:{commands:{description:<|"|>Commands<|"|>,items:{type:<|"|>STRING<|"|>},type:<|"|>ARRAY<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
+	bashDeclRef           = `<|tool>declaration:bash{description:<|"|>Run a command<|"|>,parameters:{properties:{command:{description:<|"|>The command<|"|>,type:<|"|>STRING<|"|>}},required:[<|"|>command<|"|>],type:<|"|>OBJECT<|"|>}}<tool|>`
+	readDeclRef           = `<|tool>declaration:read{description:<|"|>Read a file<|"|>,parameters:{properties:{path:{description:<|"|>File path<|"|>,type:<|"|>STRING<|"|>}},required:[<|"|>path<|"|>],type:<|"|>OBJECT<|"|>}}<tool|>`
+	weatherDeclRef        = `<|tool>declaration:get_weather{description:<|"|>Get weather<|"|>,parameters:{properties:{city:{description:<|"|>City<|"|>,type:<|"|>STRING<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
+	addDeclRef            = `<|tool>declaration:add{description:<|"|>Add numbers<|"|>,parameters:{properties:{a:{type:<|"|>NUMBER<|"|>},b:{type:<|"|>NUMBER<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
+	flagDeclRef           = `<|tool>declaration:set_flag{description:<|"|>Set a flag<|"|>,parameters:{properties:{enabled:{description:<|"|>Flag value<|"|>,type:<|"|>BOOLEAN<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
+	modeDeclRef           = `<|tool>declaration:set_mode{description:<|"|>Set mode<|"|>,parameters:{properties:{mode:{description:<|"|>The mode<|"|>,enum:[<|"|>fast<|"|>,<|"|>slow<|"|>],type:<|"|>STRING<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
+	configureDeclRef      = `<|tool>declaration:configure{description:<|"|>Configure<|"|>,parameters:{properties:{config:{description:<|"|>Config<|"|>,properties:{},type:<|"|>OBJECT<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
+	batchArrayDeclRef     = `<|tool>declaration:batch{description:<|"|>Run batch<|"|>,parameters:{properties:{ids:{description:<|"|>IDs<|"|>,type:<|"|>ARRAY<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
+	countDeclRef          = `<|tool>declaration:count{description:<|"|>Count items<|"|>,parameters:{properties:{n:{type:<|"|>NUMBER<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
+	enumNoDescDeclRef     = `<|tool>declaration:set_level{description:<|"|>Set level<|"|>,parameters:{properties:{level:{enum:[<|"|>low<|"|>,<|"|>high<|"|>],type:<|"|>STRING<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
 	searchDeclRef         = `<|tool>declaration:search{description:<|"|>Search<|"|>,parameters:{properties:{limit:{type:<|"|>NUMBER<|"|>},offset:{description:<|"|>Start offset<|"|>,type:<|"|>NUMBER<|"|>},query:{description:<|"|>Search query<|"|>,type:<|"|>STRING<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
 	arrayNoItemsDeclRef   = `<|tool>declaration:tag{description:<|"|>Tag items<|"|>,parameters:{properties:{tags:{description:<|"|>Tags<|"|>,type:<|"|>ARRAY<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
 	objectNoDescDeclRef   = `<|tool>declaration:update{description:<|"|>Update settings<|"|>,parameters:{properties:{settings:{,properties:{verbose:{description:<|"|>Verbose mode<|"|>,type:<|"|>BOOLEAN<|"|>}}type:<|"|>OBJECT<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
@@ -620,7 +622,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 		},
 		{
 			// Tool with enum parameter
-			name: "tool_with_enum",
+			name:     "tool_with_enum",
 			messages: []api.Message{{Role: "user", Content: "Test"}},
 			tools:    modeTool(),
 			expected: "<bos><|turn>system\n" + modeDeclRef + "<turn|>\n" +
@@ -784,7 +786,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 		},
 		{
 			// Property with no description — just type
-			name: "property_no_description",
+			name:     "property_no_description",
 			messages: []api.Message{{Role: "user", Content: "Count"}},
 			tools:    countTool(),
 			expected: "<bos><|turn>system\n" + countDeclRef + "<turn|>\n" +
@@ -859,7 +861,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 		},
 		{
 			// Enum property without description
-			name: "enum_no_description",
+			name:     "enum_no_description",
 			messages: []api.Message{{Role: "user", Content: "Set"}},
 			tools:    enumNoDescTool(),
 			expected: "<bos><|turn>system\n" + enumNoDescDeclRef + "<turn|>\n" +
@@ -909,7 +911,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 		},
 		{
 			// Mixed properties: some with description, some without
-			name: "mixed_desc_no_desc",
+			name:     "mixed_desc_no_desc",
 			messages: []api.Message{{Role: "user", Content: "Search"}},
 			tools:    searchTool(),
 			expected: "<bos><|turn>system\n" + searchDeclRef + "<turn|>\n" +
@@ -946,7 +948,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 		},
 		{
 			// Nested OBJECT property with required field
-			name: "nested_object_with_required",
+			name:     "nested_object_with_required",
 			messages: []api.Message{{Role: "user", Content: "Create"}},
 			tools:    nestedRequiredTool(),
 			expected: "<bos><|turn>system\n" + nestedRequiredDeclRef + "<turn|>\n" +
@@ -999,7 +1001,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 		},
 		{
 			// Tool with parameters having only type, no properties
-			name: "tool_params_type_only",
+			name:     "tool_params_type_only",
 			messages: []api.Message{{Role: "user", Content: "Raw"}},
 			tools:    rawTool(),
 			expected: "<bos><|turn>system\n" + rawDeclRef + "<turn|>\n" +
@@ -1007,7 +1009,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 		},
 		{
 			// Multiple required fields at top level
-			name: "multiple_required",
+			name:     "multiple_required",
 			messages: []api.Message{{Role: "user", Content: "Move"}},
 			tools:    moveTool(),
 			expected: "<bos><|turn>system\n" + moveDeclRef + "<turn|>\n" +
@@ -1053,7 +1055,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 		},
 		{
 			// Array property without items specification
-			name: "array_without_items",
+			name:     "array_without_items",
 			messages: []api.Message{{Role: "user", Content: "Tag"}},
 			tools:    arrayNoItemsTool(),
 			expected: "<bos><|turn>system\n" + arrayNoItemsDeclRef + "<turn|>\n" +
@@ -1063,7 +1065,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 			// OBJECT property without description but with nested properties —
 			// template hardcodes leading comma on ,properties: and does NOT
 			// add comma before type: when description is absent
-			name: "object_no_desc_with_properties",
+			name:     "object_no_desc_with_properties",
 			messages: []api.Message{{Role: "user", Content: "Update"}},
 			tools:    objectNoDescTool(),
 			expected: "<bos><|turn>system\n" + objectNoDescDeclRef + "<turn|>\n" +
@@ -1208,7 +1210,7 @@ func renderWithJinja2(t *testing.T, messages []api.Message, tools []api.Tool, th
 	type jinja2Message struct {
 		Role      string           `json:"role"`
 		Content   string           `json:"content,omitempty"`
-		ToolCalls []jinja2ToolCall  `json:"tool_calls,omitempty"`
+		ToolCalls []jinja2ToolCall `json:"tool_calls,omitempty"`
 	}
 
 	var jMsgs []jinja2Message

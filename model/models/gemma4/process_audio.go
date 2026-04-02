@@ -3,7 +3,6 @@ package gemma4
 import (
 	"encoding/binary"
 	"fmt"
-	"log/slog"
 	"math"
 	"math/cmplx"
 )
@@ -18,11 +17,6 @@ const (
 	maxFrequency       = 8000.0
 	melFloor           = 1e-3
 	maxAudioSoftTokens = 750
-
-	// Chunking parameters for long audio.
-	maxChunkSamples    = 28 * audioSampleRate // 28s target (headroom below 30s cap)
-	minChunkSamples    = 20 * audioSampleRate // don't scan for silence before 20s
-	silenceWindowSize  = 800                  // 50ms at 16kHz for RMS window
 )
 
 // Computed from the above constants.
@@ -278,51 +272,6 @@ func fft(x []complex128) {
 			}
 		}
 	}
-}
-
-// splitAudioChunks splits PCM samples into chunks of at most maxChunkSamples,
-// preferring to split at low-energy (silence) regions for natural boundaries.
-func splitAudioChunks(samples []float32) [][]float32 {
-	if len(samples) <= maxChunkSamples {
-		return [][]float32{samples}
-	}
-
-	var chunks [][]float32
-	offset := 0
-	for offset < len(samples) {
-		remaining := len(samples) - offset
-		if remaining <= maxChunkSamples {
-			chunks = append(chunks, samples[offset:])
-			break
-		}
-
-		splitAt := offset + maxChunkSamples
-		bestEnergy := float64(math.MaxFloat64)
-
-		scanStart := offset + maxChunkSamples - silenceWindowSize
-		scanEnd := offset + minChunkSamples
-		for pos := scanStart; pos >= scanEnd; pos -= silenceWindowSize / 2 {
-			end := pos + silenceWindowSize
-			if end > len(samples) {
-				end = len(samples)
-			}
-			var sumSq float64
-			for _, s := range samples[pos:end] {
-				sumSq += float64(s) * float64(s)
-			}
-			rms := math.Sqrt(sumSq / float64(end-pos))
-			if rms < bestEnergy {
-				bestEnergy = rms
-				splitAt = pos + silenceWindowSize/2
-			}
-		}
-
-		chunks = append(chunks, samples[offset:splitAt])
-		offset = splitAt
-	}
-
-	slog.Debug("Audio chunked", "chunks", len(chunks), "total_samples", len(samples))
-	return chunks
 }
 
 // isAudioData checks if the data starts with WAV magic bytes.
