@@ -1,7 +1,6 @@
 package renderers
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -31,22 +30,23 @@ func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkV
 	// Extract system message if present.
 	var systemMessage string
 	var loopMessages []api.Message
-	if len(messages) > 0 && (messages[0].Role == "system" || messages[0].Role == "developer") {
+	hasSystemRole := len(messages) > 0 && (messages[0].Role == "system" || messages[0].Role == "developer")
+	if hasSystemRole {
 		systemMessage = messages[0].Content
 		loopMessages = messages[1:]
 	} else {
 		loopMessages = messages
 	}
 
-	// Emit system turn if there's a system message, tools, or thinking.
+	// Emit system turn if there's a system/developer role, tools, or thinking.
 	hasThink := thinkValue != nil && thinkValue.Bool()
-	if systemMessage != "" || len(tools) > 0 || hasThink {
+	if hasSystemRole || len(tools) > 0 || hasThink {
 		sb.WriteString("<|turn>system\n")
 		if hasThink {
 			sb.WriteString("<|think|>")
 		}
 		if systemMessage != "" {
-			sb.WriteString(systemMessage)
+			sb.WriteString(strings.TrimSpace(systemMessage))
 		}
 		for _, tool := range tools {
 			sb.WriteString(r.renderToolDeclaration(tool))
@@ -54,79 +54,80 @@ func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkV
 		sb.WriteString("<turn|>\n")
 	}
 
-	// inModelTurn tracks whether we're inside an open <|turn>model block.
-	// Tool responses are appended inline (no separate turn), and the model
-	// turn is only closed when we see a non-tool message or reach the end.
-	inModelTurn := false
-
-	for i, message := range loopMessages {
+	// Each message gets its own <|turn>role\n ... <turn|>\n block,
+	// matching the HF chat template exactly.
+	for _, message := range loopMessages {
 		switch message.Role {
 		case "user":
-			if inModelTurn {
-				// Check if the preceding content was a tool response (no <turn|>
-				// between tool response and next user turn per HF reference).
-				prevIsToolResponse := i > 0 && loopMessages[i-1].Role == "tool"
-				if !prevIsToolResponse {
-					sb.WriteString("<turn|>\n")
-				}
-				inModelTurn = false
-			}
 			sb.WriteString("<|turn>user\n")
-			r.renderContent(&sb, message, &imageOffset)
+			r.renderContent(&sb, message, &imageOffset, true)
 			sb.WriteString("<turn|>\n")
 
 		case "assistant":
-			if inModelTurn {
-				sb.WriteString("<turn|>\n")
-			}
 			sb.WriteString("<|turn>model\n")
-			inModelTurn = true
-			if message.Content != "" {
-				sb.WriteString(message.Content)
-			}
+			// Tool calls come before content (matching HF template order)
 			for _, tc := range message.ToolCalls {
 				sb.WriteString(r.formatToolCall(tc))
 			}
+			// Strip thinking from history (matching HF strip_thinking macro)
+			if message.Content != "" {
+				sb.WriteString(stripThinking(message.Content))
+			}
+			sb.WriteString("<turn|>\n")
 
 		case "tool":
-			// Tool responses are rendered inline in the preceding model turn,
-			// matching the reference format from HuggingFace's chat template.
-			// Format: <|tool_response>response:NAME{key:value,...}<tool_response|>
-			toolName := r.findToolName(loopMessages, i)
-			sb.WriteString("<|tool_response>response:" + toolName + "{")
-			r.renderToolResponseContent(&sb, message.Content)
-			sb.WriteString("}<tool_response|>")
-			// Keep the model turn open — it will be closed when we see the
-			// next non-tool message or the assistant adds content after the response.
+			sb.WriteString("<|turn>tool\n")
+			sb.WriteString(strings.TrimSpace(message.Content))
+			sb.WriteString("<turn|>\n")
 
 		default:
-			if inModelTurn {
-				sb.WriteString("<turn|>\n")
-				inModelTurn = false
-			}
 			sb.WriteString("<|turn>" + message.Role + "\n")
-			sb.WriteString(message.Content)
+			sb.WriteString(strings.TrimSpace(message.Content))
 			sb.WriteString("<turn|>\n")
 		}
 	}
 
-	// If the last message is not an open assistant turn, add the generation prompt.
-	if !inModelTurn {
-		sb.WriteString("<|turn>model\n")
-	}
+	// Generation prompt
+	sb.WriteString("<|turn>model\n")
 
 	return sb.String(), nil
 }
 
+// stripThinking removes <|channel>...<channel|> thinking blocks from content,
+// matching the HF chat template's strip_thinking macro.
+func stripThinking(text string) string {
+	var result strings.Builder
+	for {
+		start := strings.Index(text, "<|channel>")
+		if start == -1 {
+			result.WriteString(text)
+			break
+		}
+		result.WriteString(text[:start])
+		end := strings.Index(text[start:], "<channel|>")
+		if end == -1 {
+			break
+		}
+		text = text[start+end+len("<channel|>"):]
+	}
+	return strings.TrimSpace(result.String())
+}
+
 // renderContent writes a message's content, interleaving [img-N] tags for images.
-func (r *Gemma4Renderer) renderContent(sb *strings.Builder, msg api.Message, imageOffset *int) {
+// When trim is true, leading/trailing whitespace is stripped (matching the Jinja2
+// template's | trim filter applied to non-model content).
+func (r *Gemma4Renderer) renderContent(sb *strings.Builder, msg api.Message, imageOffset *int, trim bool) {
 	if len(msg.Images) > 0 && r.useImgTags {
 		for range msg.Images {
 			sb.WriteString(fmt.Sprintf("[img-%d]", *imageOffset))
 			*imageOffset++
 		}
 	}
-	sb.WriteString(msg.Content)
+	content := msg.Content
+	if trim {
+		content = strings.TrimSpace(content)
+	}
+	sb.WriteString(content)
 }
 
 func (r *Gemma4Renderer) renderToolDeclaration(tool api.Tool) string {
@@ -193,29 +194,102 @@ func (r *Gemma4Renderer) writeProperties(sb *strings.Builder, props *api.ToolPro
 		first = false
 
 		sb.WriteString(name + ":{")
+
+		hasContent := false
 		if prop.Description != "" {
 			sb.WriteString("description:" + g4Q + prop.Description + g4Q)
+			hasContent = true
 		}
-		if len(prop.Enum) > 0 {
-			if prop.Description != "" {
-				sb.WriteString(",")
-			}
-			sb.WriteString("enum:[")
-			for j, e := range prop.Enum {
-				if j > 0 {
-					sb.WriteString(",")
-				}
-				sb.WriteString(g4Q + fmt.Sprintf("%v", e) + g4Q)
-			}
-			sb.WriteString("]")
-		}
+
 		if len(prop.Type) > 0 {
-			if prop.Description != "" || len(prop.Enum) > 0 {
+			typeName := strings.ToUpper(prop.Type[0])
+
+			switch typeName {
+			case "STRING":
+				if len(prop.Enum) > 0 {
+					if hasContent {
+						sb.WriteString(",")
+					}
+					sb.WriteString("enum:[")
+					for j, e := range prop.Enum {
+						if j > 0 {
+							sb.WriteString(",")
+						}
+						sb.WriteString(g4Q + fmt.Sprintf("%v", e) + g4Q)
+					}
+					sb.WriteString("]")
+					hasContent = true
+				}
+
+			case "OBJECT":
+				// Render nested properties recursively.
+				// Note: the leading comma is hardcoded (matching the template),
+				// and this does NOT set hasContent — the comma before type:
+				// depends only on whether description was present.
+				sb.WriteString(",properties:{")
+				if prop.Properties != nil && prop.Properties.Len() > 0 {
+					r.writeProperties(sb, prop.Properties)
+				}
+				sb.WriteString("}")
+				if len(prop.Required) > 0 {
+					sb.WriteString(",required:[")
+					for j, req := range prop.Required {
+						if j > 0 {
+							sb.WriteString(",")
+						}
+						sb.WriteString(g4Q + req + g4Q)
+					}
+					sb.WriteString("]")
+				}
+
+			case "ARRAY":
+				// Render items specification.
+				// Same as OBJECT: leading comma is hardcoded, does NOT set hasContent.
+				if items, ok := prop.Items.(map[string]any); ok && len(items) > 0 {
+					sb.WriteString(",items:{")
+					r.writeItemsSpec(sb, items)
+					sb.WriteString("}")
+				}
+			}
+
+			if hasContent {
 				sb.WriteString(",")
 			}
-			sb.WriteString("type:" + g4Q + strings.ToUpper(prop.Type[0]) + g4Q)
+			sb.WriteString("type:" + g4Q + typeName + g4Q)
 		}
+
 		sb.WriteString("}")
+	}
+}
+
+// writeItemsSpec renders the items specification for array-type properties,
+// matching the Jinja2 template's dictsort iteration over items.
+func (r *Gemma4Renderer) writeItemsSpec(sb *strings.Builder, items map[string]any) {
+	keys := make([]string, 0, len(items))
+	for k := range items {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	first := true
+	for _, key := range keys {
+		value := items[key]
+		if value == nil {
+			continue
+		}
+		if !first {
+			sb.WriteString(",")
+		}
+		first = false
+
+		switch key {
+		case "type":
+			if s, ok := value.(string); ok {
+				sb.WriteString("type:" + g4Q + strings.ToUpper(s) + g4Q)
+			}
+		default:
+			sb.WriteString(key + ":" + r.formatArgValue(value))
+		}
 	}
 }
 
@@ -304,50 +378,3 @@ func (r *Gemma4Renderer) formatArrayValue(arr []any) string {
 	return sb.String()
 }
 
-// renderToolResponseContent renders tool response content in Gemma 4 format.
-// If the content is valid JSON, it renders each field as key:value pairs with
-// proper type formatting (strings get <|"|> delimiters, numbers/bools are bare).
-// If not valid JSON, wraps the entire content as a single "value" string.
-func (r *Gemma4Renderer) renderToolResponseContent(sb *strings.Builder, content string) {
-	// Try to parse as JSON object.
-	var obj map[string]any
-	if err := json.Unmarshal([]byte(content), &obj); err == nil {
-		keys := make([]string, 0, len(obj))
-		for k := range obj {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-
-		first := true
-		for _, key := range keys {
-			if !first {
-				sb.WriteString(",")
-			}
-			first = false
-			sb.WriteString(key + ":" + r.formatArgValue(obj[key]))
-		}
-		return
-	}
-
-	// Not JSON — wrap as a single string value.
-	sb.WriteString("value:" + g4Q + content + g4Q)
-}
-
-// findToolName walks backwards from tool message index to find the matching tool call name.
-func (r *Gemma4Renderer) findToolName(messages []api.Message, toolIdx int) string {
-	for j := toolIdx - 1; j >= 0; j-- {
-		if messages[j].Role == "assistant" && len(messages[j].ToolCalls) > 0 {
-			toolOffset := 0
-			for k := j + 1; k < toolIdx; k++ {
-				if messages[k].Role == "tool" {
-					toolOffset++
-				}
-			}
-			if toolOffset < len(messages[j].ToolCalls) {
-				return messages[j].ToolCalls[toolOffset].Function.Name
-			}
-			break
-		}
-	}
-	return ""
-}
