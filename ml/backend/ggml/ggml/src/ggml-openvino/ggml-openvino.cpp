@@ -607,9 +607,10 @@ static const char * ggml_backend_openvino_get_name(ggml_backend_t backend) {
     GGML_UNUSED(backend);
 }
 
-static enum ggml_status ggml_backend_openvino_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
+static enum ggml_status ggml_backend_openvino_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph, int batch_size) {
     return ov_graph_compute(cgraph, backend);
     GGML_UNUSED(backend);
+    GGML_UNUSED(batch_size);
 }
 
 static const ggml_backend_i ggml_backend_openvino_interface = {
@@ -725,6 +726,7 @@ static enum ggml_backend_dev_type ggml_backend_openvino_device_get_type(ggml_bac
 static void ggml_backend_openvino_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
     props->name = ggml_backend_openvino_device_get_name(dev);
     props->description = ggml_backend_openvino_device_get_description(dev);
+    props->id = props->name;
     props->type = ggml_backend_openvino_device_get_type(dev);
     ggml_backend_openvino_device_get_memory(dev, &props->memory_free, &props->memory_total);
 
@@ -734,6 +736,7 @@ static void ggml_backend_openvino_device_get_props(ggml_backend_dev_t dev, ggml_
         /* .buffer_from_host_ptr  = */ false,
         /* .events                = */ false,
     };
+    props->library = GGML_OPENVINO_NAME;
 }
 
 static ggml_backend_t ggml_backend_openvino_device_init(ggml_backend_dev_t dev, const char * params) {
@@ -1110,3 +1113,5 @@ GGML_BACKEND_API ggml_backend_reg_t ggml_backend_openvino_reg(void) {
 
     return &reg;
 }
+
+GGML_BACKEND_DL_IMPL(ggml_backend_openvino_reg)
