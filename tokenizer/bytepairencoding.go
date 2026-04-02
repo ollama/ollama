@@ -42,26 +42,27 @@ func NewBytePairEncodingWithOptions(vocab *Vocabulary, pretokenizer []string, op
 }
 
 func newBytePairEncoding(vocab *Vocabulary, pretokenizer []string, opts ...BPEOption) BytePairEncoding {
-	if len(pretokenizer) == 0 {
-		// set default byte-level pretokenizer if none provided, e.g.
-		// https://github.com/huggingface/tokenizer/blob/main/tokenizer/src/pre_tokenizer/byte_level.rs#L44
-		pretokenizer = []string{`'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+`}
-	}
-
 	bpe := BytePairEncoding{
 		vocab: vocab,
-		regexps: slices.Collect(func(yield func(*regexp2.Regexp) bool) {
-			for _, p := range pretokenizer {
-				if !yield(regexp2.MustCompile(p, regexp2.RE2)) {
-					return
-				}
-			}
-		}),
 	}
 
 	for _, opt := range opts {
 		opt(&bpe)
 	}
+
+	if len(pretokenizer) == 0 && !bpe.spaceToSpmSep {
+		// set default byte-level pretokenizer if none provided, e.g.
+		// https://github.com/huggingface/tokenizer/blob/main/tokenizer/src/pre_tokenizer/byte_level.rs#L44
+		pretokenizer = []string{`'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+`}
+	}
+
+	bpe.regexps = slices.Collect(func(yield func(*regexp2.Regexp) bool) {
+		for _, p := range pretokenizer {
+			if !yield(regexp2.MustCompile(p, regexp2.RE2)) {
+				return
+			}
+		}
+	})
 
 	return bpe
 }
@@ -297,18 +298,39 @@ func (l lazyIdsString) LogValue() slog.Value {
 
 func (bpe BytePairEncoding) Decode(ids []int32) (string, error) {
 	var sb strings.Builder
-	for _, id := range ids {
-		data := bpe.vocab.Decode(id)
 
-		// SentencePiece byte tokens: "<0xHH>" → raw byte
-		if len(data) == 6 && strings.HasPrefix(data, "<0x") && strings.HasSuffix(data, ">") {
-			if b, err := strconv.ParseUint(data[3:5], 16, 8); err == nil {
-				sb.WriteByte(byte(b))
-				continue
+	// SentencePiece-style BPE stores true Unicode codepoints in the vocab
+	// (plus ▁ as a whitespace marker), so decoding should pass runes through
+	// directly instead of applying the GPT-2 byte-level reverse mapping.
+	// Without this, codepoints in the 0x0100-0x0142 range (e.g. ą ę ć ł)
+	// get mangled by the GPT-2 reversal into control characters.
+	if bpe.spaceToSpmSep {
+		for _, id := range ids {
+			data := bpe.vocab.Decode(id)
+
+			// SentencePiece byte tokens: "<0xHH>" → raw byte
+			if len(data) == 6 && strings.HasPrefix(data, "<0x") && strings.HasSuffix(data, ">") {
+				if b, err := strconv.ParseUint(data[3:5], 16, 8); err == nil {
+					sb.WriteByte(byte(b))
+					continue
+				}
+			}
+
+			for _, r := range data {
+				if r == 0x2581 { // ▁ (LOWER ONE EIGHTH BLOCK)
+					sb.WriteByte(' ')
+				} else {
+					sb.WriteRune(r)
+				}
 			}
 		}
 
-		for _, r := range data {
+		logutil.Trace("decoded", "string", sb.String(), "from", lazyIdsString{ids: ids})
+		return sb.String(), nil
+	}
+
+	for _, id := range ids {
+		for _, r := range bpe.vocab.Decode(id) {
 			// GPT-2 byte-level BPE uses Unicode chars in the 0x0100-0x0143
 			// range to represent bytes. Remap them back to actual bytes.
 			switch {
