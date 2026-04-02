@@ -3,6 +3,7 @@ package tokenizer
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -286,6 +287,15 @@ func spmBPE(t testing.TB) BytePairEncoding {
 		// Unicode token for decode passthrough testing (must be > U+0143
 		// to exercise the SPM decode path rather than GPT-2 byte reversal)
 		"▁中文", // 20
+
+		// Byte fallback tokens (SentencePiece BYTE type)
+		"<0x00>", // 21
+		"<0x01>", // 22
+	}
+
+	// Add all 256 byte tokens starting at index 23
+	for b := 2; b < 256; b++ {
+		tokens = append(tokens, fmt.Sprintf("<0x%02X>", b))
 	}
 
 	types := make([]int32, len(tokens))
@@ -298,6 +308,9 @@ func spmBPE(t testing.TB) BytePairEncoding {
 	types[3] = TOKEN_TYPE_USER_DEFINED // <|start>
 	types[4] = TOKEN_TYPE_USER_DEFINED // <end|>
 	types[5] = TOKEN_TYPE_USER_DEFINED // <|q>
+	for i := 21; i < len(types); i++ {
+		types[i] = TOKEN_TYPE_BYTE
+	}
 
 	return NewBytePairEncodingWithOptions(
 		&Vocabulary{
@@ -392,7 +405,54 @@ func TestSentencePieceBPE(t *testing.T) {
 		}
 	})
 
-	// Test 3: Decode handles non-GPT2 Unicode correctly.
+	// Test 3: Byte fallback for characters not in the vocabulary.
+	//
+	// SentencePiece vocabs include <0xHH> byte tokens for every byte value.
+	// When a character (e.g. "ą" = U+0105 = C4 85) isn't in the vocab as a
+	// direct token, the encoder must fall back to its UTF-8 bytes:
+	// <0xC4> <0x85>. Without this fallback, the character is silently dropped.
+	// See: https://github.com/ollama/ollama/issues/15229
+	t.Run("byte fallback for unknown chars", func(t *testing.T) {
+		t.Parallel()
+
+		// "ą" is not in the vocab — should fall back to byte tokens
+		ids, err := tok.Encode("ą", false)
+		if err != nil {
+			t.Fatalf("Encode(ą): %v", err)
+		}
+		if len(ids) == 0 {
+			t.Fatal("Encode(ą) returned empty IDs — character was silently dropped")
+		}
+
+		got, err := tok.Decode(ids)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		if got != "ą" {
+			t.Errorf("roundtrip = %q, want %q", got, "ą")
+		}
+	})
+
+	// Test 4: Byte fallback preserves known tokens around unknown chars.
+	t.Run("byte fallback mixed with known tokens", func(t *testing.T) {
+		t.Parallel()
+
+		// "hello" is in vocab, "é" is not
+		ids, err := tok.Encode("helloé", false)
+		if err != nil {
+			t.Fatalf("Encode: %v", err)
+		}
+
+		got, err := tok.Decode(ids)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		if got != "helloé" {
+			t.Errorf("roundtrip = %q, want %q", got, "helloé")
+		}
+	})
+
+	// Test 5: Decode handles non-GPT2 Unicode correctly.
 	//
 	// GPT-2 BPE decode reverses the byte→codepoint shift for runes in
 	// 0x0100–0x0143. But SentencePiece vocabs store real Unicode (CJK,

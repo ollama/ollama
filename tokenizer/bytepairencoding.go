@@ -6,6 +6,7 @@ import (
 	"iter"
 	"log/slog"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/dlclark/regexp2"
@@ -261,9 +262,17 @@ func (bpe BytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
 
 			for _, merge := range merges {
 				if len(merge.runes) > 0 {
-					// TODO: handle the edge case where the rune isn't in the vocabulary
 					if id := bpe.vocab.Encode(string(merge.runes)); id >= 0 {
 						ids = append(ids, id)
+					} else if bpe.spaceToSpmSep {
+						// SentencePiece byte fallback: encode each UTF-8 byte as <0xHH>
+						for _, b := range []byte(string(merge.runes)) {
+							if id := bpe.vocab.Encode(fmt.Sprintf("<0x%02X>", b)); id >= 0 {
+								ids = append(ids, id)
+							} else {
+								slog.Debug("unknown byte token", "byte", b)
+							}
+						}
 					}
 				}
 			}
@@ -289,7 +298,17 @@ func (l lazyIdsString) LogValue() slog.Value {
 func (bpe BytePairEncoding) Decode(ids []int32) (string, error) {
 	var sb strings.Builder
 	for _, id := range ids {
-		for _, r := range bpe.vocab.Decode(id) {
+		data := bpe.vocab.Decode(id)
+
+		// SentencePiece byte tokens: "<0xHH>" → raw byte
+		if len(data) == 6 && strings.HasPrefix(data, "<0x") && strings.HasSuffix(data, ">") {
+			if b, err := strconv.ParseUint(data[3:5], 16, 8); err == nil {
+				sb.WriteByte(byte(b))
+				continue
+			}
+		}
+
+		for _, r := range data {
 			// GPT-2 byte-level BPE uses Unicode chars in the 0x0100-0x0143
 			// range to represent bytes. Remap them back to actual bytes.
 			switch {
