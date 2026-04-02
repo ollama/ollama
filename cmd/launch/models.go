@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -442,101 +441,6 @@ func cloudStatusDisabled(ctx context.Context, client *api.Client) (disabled bool
 		return false, false
 	}
 	return status.Cloud.Disabled, true
-}
-
-// TODO(ParthSareen): make this controllable on an integration level as well
-const recommendedContextLength = 64000
-
-func hasLocalModel(models []string) bool {
-	for _, m := range models {
-		if !isCloudModelName(m) {
-			return true
-		}
-	}
-	return false
-}
-
-func lowContextLength(ctx context.Context, client *api.Client, models []string) error {
-	if !hasLocalModel(models) {
-		return nil
-	}
-
-	status, err := client.CloudStatusExperimental(ctx)
-	if err != nil {
-		return nil //nolint:nilerr // best-effort check; ignore if status endpoint is unavailable
-	}
-	serverCtx := status.ContextLength
-	if serverCtx == 0 {
-		return nil // couldn't determine context length, skip check
-	}
-
-	for _, m := range models {
-		if isCloudModelName(m) {
-			continue
-		}
-		// A Modelfile can override num_ctx, which takes precedence over the server default.
-		effectiveCtx := serverCtx
-		modelfileOverride := false
-		var info *api.ShowResponse
-		if info, err = client.Show(ctx, &api.ShowRequest{Model: m}); err == nil {
-			// Safetensors (MLX) models always load at their full max context
-			// length, so the server default num_ctx doesn't apply.
-			if info.Details.Format == "safetensors" {
-				// Context length check in case models with low context length are added
-				if modelCtx := modelInfoContextLength(info.ModelInfo); modelCtx >= recommendedContextLength {
-					continue
-				}
-			}
-			if numCtx := parseNumCtx(info.Parameters); numCtx > 0 {
-				effectiveCtx = numCtx
-				modelfileOverride = true
-			}
-		}
-		if effectiveCtx < recommendedContextLength {
-			fmt.Fprintf(os.Stderr, "\n%sWarning: %s has a context length of %d tokens, which is below the recommended %d.%s\n", ansiYellow, m, effectiveCtx, recommendedContextLength, ansiReset)
-			if modelfileOverride {
-				parentModel := info.Details.ParentModel
-				fmt.Fprintf(os.Stderr, "%sUse the base model %s and increase the context length in Ollama App Settings.%s\n\n", ansiYellow, parentModel, ansiReset)
-			} else {
-				if runtime.GOOS == "windows" {
-					fmt.Fprintf(os.Stderr, "%sIncrease it in Ollama App Settings or with $env:OLLAMA_CONTEXT_LENGTH=%d; ollama serve%s\n\n", ansiYellow, recommendedContextLength, ansiReset)
-				} else {
-					fmt.Fprintf(os.Stderr, "%sIncrease it in Ollama App Settings or with OLLAMA_CONTEXT_LENGTH=%d ollama serve%s\n\n", ansiYellow, recommendedContextLength, ansiReset)
-				}
-			}
-			return nil
-		}
-	}
-	return nil
-}
-
-// parseNumCtx extracts num_ctx from the Show response Parameters string.
-func parseNumCtx(parameters string) int {
-	for _, line := range strings.Split(parameters, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) == 2 && fields[0] == "num_ctx" {
-			if v, err := strconv.ParseFloat(fields[1], 64); err == nil {
-				return int(v)
-			}
-		}
-	}
-	return 0
-}
-
-// modelInfoContextLength extracts the model's architectural context length
-// from the ModelInfo map (e.g. "qwen3_5_moe.context_length" → 262144).
-func modelInfoContextLength(modelInfo map[string]any) int {
-	for k, v := range modelInfo {
-		if strings.HasSuffix(k, ".context_length") {
-			switch n := v.(type) {
-			case float64:
-				return int(n)
-			case int:
-				return n
-			}
-		}
-	}
-	return 0
 }
 
 // TODO(parthsareen): this duplicates the pull progress UI in cmd.PullHandler.

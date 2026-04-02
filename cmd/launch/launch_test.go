@@ -1,7 +1,6 @@
 package launch
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,7 +13,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/cmd/config"
 )
 
@@ -834,6 +832,403 @@ func TestLaunchIntegration_EditorCloudDisabledFallsBackToSelector(t *testing.T) 
 	}
 }
 
+func TestLaunchIntegration_EditorConfigureMultiSkipsMissingLocalAndPersistsAccepted(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+
+	binDir := t.TempDir()
+	writeFakeBinary(t, binDir, "droid")
+	t.Setenv("PATH", binDir)
+
+	editor := &launcherEditorRunner{}
+	withIntegrationOverride(t, "droid", editor)
+
+	DefaultMultiSelector = func(title string, items []ModelItem, preChecked []string) ([]string, error) {
+		return []string{"glm-5:cloud", "missing-local"}, nil
+	}
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		if prompt == "Proceed?" {
+			return true, nil
+		}
+		if prompt == "Download missing-local?" {
+			return false, nil
+		}
+		t.Fatalf("unexpected prompt: %q", prompt)
+		return false, nil
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"glm-5:cloud","remote_model":"glm-5"}]}`)
+		case "/api/status":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":"not found"}`)
+		case "/api/show":
+			var req apiShowRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			switch req.Model {
+			case "glm-5:cloud":
+				fmt.Fprint(w, `{"remote_model":"glm-5"}`)
+			case "missing-local":
+				w.WriteHeader(http.StatusNotFound)
+				fmt.Fprint(w, `{"error":"model not found"}`)
+			default:
+				http.NotFound(w, r)
+			}
+		case "/api/me":
+			fmt.Fprint(w, `{"name":"test-user"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	var launchErr error
+	stderr := captureStderr(t, func() {
+		launchErr = LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+			Name:           "droid",
+			ForceConfigure: true,
+		})
+	})
+	if launchErr != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", launchErr)
+	}
+	if editor.ranModel != "glm-5:cloud" {
+		t.Fatalf("expected launch to use cloud primary, got %q", editor.ranModel)
+	}
+	saved, err := config.LoadIntegration("droid")
+	if err != nil {
+		t.Fatalf("failed to reload saved config: %v", err)
+	}
+	if diff := compareStrings(saved.Models, []string{"glm-5:cloud"}); diff != "" {
+		t.Fatalf("unexpected saved models (-want +got):\n%s", diff)
+	}
+	if diff := compareStringSlices(editor.edited, [][]string{{"glm-5:cloud"}}); diff != "" {
+		t.Fatalf("unexpected edited models (-want +got):\n%s", diff)
+	}
+	if !strings.Contains(stderr, "Skipped missing-local:") {
+		t.Fatalf("expected skip reason in stderr, got %q", stderr)
+	}
+}
+
+func TestLaunchIntegration_EditorConfigureMultiSkipsUnauthedCloudAndPersistsAccepted(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+
+	binDir := t.TempDir()
+	writeFakeBinary(t, binDir, "droid")
+	t.Setenv("PATH", binDir)
+
+	editor := &launcherEditorRunner{}
+	withIntegrationOverride(t, "droid", editor)
+
+	DefaultMultiSelector = func(title string, items []ModelItem, preChecked []string) ([]string, error) {
+		return []string{"llama3.2", "glm-5:cloud"}, nil
+	}
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		if prompt == "Proceed?" {
+			return true, nil
+		}
+		t.Fatalf("unexpected prompt: %q", prompt)
+		return false, nil
+	}
+	DefaultSignIn = func(modelName, signInURL string) (string, error) {
+		return "", ErrCancelled
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"llama3.2"},{"name":"glm-5:cloud","remote_model":"glm-5"}]}`)
+		case "/api/status":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":"not found"}`)
+		case "/api/show":
+			var req apiShowRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			switch req.Model {
+			case "llama3.2":
+				fmt.Fprint(w, `{"model":"llama3.2"}`)
+			case "glm-5:cloud":
+				fmt.Fprint(w, `{"remote_model":"glm-5"}`)
+			default:
+				http.NotFound(w, r)
+			}
+		case "/api/me":
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"error":"unauthorized","signin_url":"https://example.com/signin"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	var launchErr error
+	stderr := captureStderr(t, func() {
+		launchErr = LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+			Name:           "droid",
+			ForceConfigure: true,
+		})
+	})
+	if launchErr != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", launchErr)
+	}
+	if editor.ranModel != "llama3.2" {
+		t.Fatalf("expected launch to use local primary, got %q", editor.ranModel)
+	}
+	saved, err := config.LoadIntegration("droid")
+	if err != nil {
+		t.Fatalf("failed to reload saved config: %v", err)
+	}
+	if diff := compareStrings(saved.Models, []string{"llama3.2"}); diff != "" {
+		t.Fatalf("unexpected saved models (-want +got):\n%s", diff)
+	}
+	if diff := compareStringSlices(editor.edited, [][]string{{"llama3.2"}}); diff != "" {
+		t.Fatalf("unexpected edited models (-want +got):\n%s", diff)
+	}
+	if !strings.Contains(stderr, "Skipped glm-5:cloud: sign in was cancelled") {
+		t.Fatalf("expected skip reason in stderr, got %q", stderr)
+	}
+}
+
+func TestLaunchIntegration_EditorConfigureMultiRemovesReselectedFailingModel(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+
+	binDir := t.TempDir()
+	writeFakeBinary(t, binDir, "droid")
+	t.Setenv("PATH", binDir)
+
+	editor := &launcherEditorRunner{}
+	withIntegrationOverride(t, "droid", editor)
+
+	if err := config.SaveIntegration("droid", []string{"glm-5:cloud", "llama3.2"}); err != nil {
+		t.Fatalf("failed to seed config: %v", err)
+	}
+	DefaultMultiSelector = func(title string, items []ModelItem, preChecked []string) ([]string, error) {
+		return append([]string(nil), preChecked...), nil
+	}
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		if prompt == "Proceed?" {
+			return true, nil
+		}
+		t.Fatalf("unexpected prompt: %q", prompt)
+		return false, nil
+	}
+	DefaultSignIn = func(modelName, signInURL string) (string, error) {
+		return "", ErrCancelled
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"glm-5:cloud","remote_model":"glm-5"},{"name":"llama3.2"}]}`)
+		case "/api/status":
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":"not found"}`)
+		case "/api/show":
+			var req apiShowRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if req.Model == "glm-5:cloud" {
+				fmt.Fprint(w, `{"remote_model":"glm-5"}`)
+				return
+			}
+			if req.Model == "llama3.2" {
+				fmt.Fprint(w, `{"model":"llama3.2"}`)
+				return
+			}
+			http.NotFound(w, r)
+		case "/api/me":
+			w.WriteHeader(http.StatusUnauthorized)
+			fmt.Fprint(w, `{"error":"unauthorized","signin_url":"https://example.com/signin"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	var launchErr error
+	stderr := captureStderr(t, func() {
+		launchErr = LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+			Name:           "droid",
+			ForceConfigure: true,
+		})
+	})
+	if launchErr != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", launchErr)
+	}
+	if editor.ranModel != "llama3.2" {
+		t.Fatalf("expected launch to use surviving model, got %q", editor.ranModel)
+	}
+	if diff := compareStringSlices(editor.edited, [][]string{{"llama3.2"}}); diff != "" {
+		t.Fatalf("unexpected edited models (-want +got):\n%s", diff)
+	}
+	saved, loadErr := config.LoadIntegration("droid")
+	if loadErr != nil {
+		t.Fatalf("failed to reload saved config: %v", loadErr)
+	}
+	if diff := compareStrings(saved.Models, []string{"llama3.2"}); diff != "" {
+		t.Fatalf("unexpected saved models (-want +got):\n%s", diff)
+	}
+	if !strings.Contains(stderr, "Skipped glm-5:cloud: sign in was cancelled") {
+		t.Fatalf("expected skip reason in stderr, got %q", stderr)
+	}
+}
+
+func TestLaunchIntegration_EditorConfigureMultiAllFailuresKeepsExistingAndSkipsLaunch(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+
+	binDir := t.TempDir()
+	writeFakeBinary(t, binDir, "droid")
+	t.Setenv("PATH", binDir)
+
+	editor := &launcherEditorRunner{}
+	withIntegrationOverride(t, "droid", editor)
+
+	if err := config.SaveIntegration("droid", []string{"llama3.2"}); err != nil {
+		t.Fatalf("failed to seed config: %v", err)
+	}
+
+	DefaultMultiSelector = func(title string, items []ModelItem, preChecked []string) ([]string, error) {
+		return []string{"missing-local-a", "missing-local-b"}, nil
+	}
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		if prompt == "Download missing-local-a?" || prompt == "Download missing-local-b?" {
+			return false, nil
+		}
+		if prompt == "Proceed?" {
+			t.Fatal("did not expect proceed prompt when no models are accepted")
+		}
+		t.Fatalf("unexpected prompt: %q", prompt)
+		return false, nil
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[]}`)
+		case "/api/show":
+			var req apiShowRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			switch req.Model {
+			case "missing-local-a", "missing-local-b":
+				w.WriteHeader(http.StatusNotFound)
+				fmt.Fprint(w, `{"error":"model not found"}`)
+			default:
+				http.NotFound(w, r)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	var launchErr error
+	stderr := captureStderr(t, func() {
+		launchErr = LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+			Name:           "droid",
+			ForceConfigure: true,
+		})
+	})
+	if launchErr != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", launchErr)
+	}
+	if editor.ranModel != "" {
+		t.Fatalf("expected no launch when all selected models are skipped, got %q", editor.ranModel)
+	}
+	if len(editor.edited) != 0 {
+		t.Fatalf("expected no editor writes when all selections fail, got %v", editor.edited)
+	}
+	saved, err := config.LoadIntegration("droid")
+	if err != nil {
+		t.Fatalf("failed to reload saved config: %v", err)
+	}
+	if diff := compareStrings(saved.Models, []string{"llama3.2"}); diff != "" {
+		t.Fatalf("unexpected saved models (-want +got):\n%s", diff)
+	}
+	if !strings.Contains(stderr, "Skipped missing-local-a:") {
+		t.Fatalf("expected first skip reason in stderr, got %q", stderr)
+	}
+	if !strings.Contains(stderr, "Skipped missing-local-b:") {
+		t.Fatalf("expected second skip reason in stderr, got %q", stderr)
+	}
+}
+
+func TestLaunchIntegration_ConfiguredEditorLaunchValidatesPrimaryOnly(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+
+	binDir := t.TempDir()
+	writeFakeBinary(t, binDir, "droid")
+	t.Setenv("PATH", binDir)
+
+	editor := &launcherEditorRunner{}
+	withIntegrationOverride(t, "droid", editor)
+
+	if err := config.SaveIntegration("droid", []string{"llama3.2", "missing-local"}); err != nil {
+		t.Fatalf("failed to seed config: %v", err)
+	}
+
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		t.Fatalf("did not expect prompt during normal configured launch: %q", prompt)
+		return false, nil
+	}
+
+	var missingShowCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/show" {
+			http.NotFound(w, r)
+			return
+		}
+		var req apiShowRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		switch req.Model {
+		case "llama3.2":
+			fmt.Fprint(w, `{"model":"llama3.2"}`)
+		case "missing-local":
+			missingShowCalled = true
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"error":"model not found"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "droid"}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+	if missingShowCalled {
+		t.Fatal("expected configured launch to validate only the primary model")
+	}
+	if editor.ranModel != "llama3.2" {
+		t.Fatalf("expected launch to use saved primary model, got %q", editor.ranModel)
+	}
+	if len(editor.edited) != 0 {
+		t.Fatalf("expected no editor writes during normal launch, got %v", editor.edited)
+	}
+
+	saved, err := config.LoadIntegration("droid")
+	if err != nil {
+		t.Fatalf("failed to reload saved config: %v", err)
+	}
+	if diff := compareStrings(saved.Models, []string{"llama3.2", "missing-local"}); diff != "" {
+		t.Fatalf("unexpected saved models (-want +got):\n%s", diff)
+	}
+}
+
 func TestLaunchIntegration_ConfiguredEditorLaunchSkipsReconfigure(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
@@ -964,6 +1359,40 @@ func TestLaunchIntegration_OpenclawInstallsBeforeConfigSideEffects(t *testing.T)
 	}
 	if _, statErr := os.Stat(filepath.Join(tmpDir, ".openclaw", "openclaw.json")); !os.IsNotExist(statErr) {
 		t.Fatalf("expected no OpenClaw config file to be created, stat err = %v", statErr)
+	}
+}
+
+func TestLaunchIntegration_PiInstallsBeforeConfigSideEffects(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+
+	t.Setenv("PATH", t.TempDir())
+
+	editor := &launcherEditorRunner{}
+	withIntegrationOverride(t, "pi", editor)
+
+	selectorCalled := false
+	DefaultMultiSelector = func(title string, items []ModelItem, preChecked []string) ([]string, error) {
+		selectorCalled = true
+		return []string{"llama3.2"}, nil
+	}
+
+	err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "pi"})
+	if err == nil {
+		t.Fatal("expected launch to fail before configuration when Pi is missing")
+	}
+	if !strings.Contains(err.Error(), "required dependencies are missing") {
+		t.Fatalf("expected install prerequisite error, got %v", err)
+	}
+	if selectorCalled {
+		t.Fatal("expected install check to happen before model selection")
+	}
+	if len(editor.edited) != 0 {
+		t.Fatalf("expected no editor writes before install succeeds, got %v", editor.edited)
+	}
+	if _, statErr := os.Stat(filepath.Join(tmpDir, ".pi", "agent", "models.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("expected no Pi config file to be created, stat err = %v", statErr)
 	}
 }
 
@@ -1121,6 +1550,67 @@ func TestLaunchIntegration_ClaudeForceConfigureReprompts(t *testing.T) {
 	}
 	if saved.Models[0] != "glm-5:cloud" {
 		t.Fatalf("expected saved primary to be replaced, got %q", saved.Models[0])
+	}
+}
+
+func TestLaunchIntegration_ClaudeForceConfigureMissingSelectionDoesNotSave(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withLauncherHooks(t)
+
+	binDir := t.TempDir()
+	writeFakeBinary(t, binDir, "claude")
+	t.Setenv("PATH", binDir)
+
+	if err := config.SaveIntegration("claude", []string{"llama3.2"}); err != nil {
+		t.Fatalf("failed to seed config: %v", err)
+	}
+
+	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+		return "missing-model", nil
+	}
+	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		if prompt == "Download missing-model?" {
+			return false, nil
+		}
+		t.Fatalf("unexpected prompt: %q", prompt)
+		return false, nil
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"llama3.2"}]}`)
+		case "/api/show":
+			var req apiShowRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if req.Model == "missing-model" {
+				w.WriteHeader(http.StatusNotFound)
+				fmt.Fprint(w, `{"error":"model not found"}`)
+				return
+			}
+			fmt.Fprintf(w, `{"model":%q}`, req.Model)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:           "claude",
+		ForceConfigure: true,
+	})
+	if err == nil {
+		t.Fatal("expected missing selected model to abort launch")
+	}
+
+	saved, loadErr := config.LoadIntegration("claude")
+	if loadErr != nil {
+		t.Fatalf("failed to reload saved config: %v", loadErr)
+	}
+	if diff := compareStrings(saved.Models, []string{"llama3.2"}); diff != "" {
+		t.Fatalf("unexpected saved models (-want +got):\n%s", diff)
 	}
 }
 
@@ -1497,260 +1987,4 @@ func compareStringSlices(got, want [][]string) string {
 		}
 	}
 	return ""
-}
-
-func TestConfirmLowContextLength(t *testing.T) {
-	tests := []struct {
-		name          string
-		models        []string
-		statusBody    string
-		statusCode    int
-		showParams    string // Parameters field returned by /api/show
-		showBody      string // full JSON body for /api/show (overrides showParams when set)
-		wantWarning   bool
-		wantModelfile bool // true if warning should mention Modelfile
-	}{
-		{
-			name:       "no warning when server context meets recommended",
-			models:     []string{"llama3.2"},
-			statusBody: `{"cloud":{},"context_length":65536}`,
-			statusCode: http.StatusOK,
-		},
-		{
-			name:       "no warning when server context exceeds recommended",
-			models:     []string{"llama3.2"},
-			statusBody: `{"cloud":{},"context_length":131072}`,
-			statusCode: http.StatusOK,
-		},
-		{
-			name:        "warns when server context is below recommended",
-			models:      []string{"llama3.2"},
-			statusBody:  `{"cloud":{},"context_length":4096}`,
-			statusCode:  http.StatusOK,
-			wantWarning: true,
-		},
-		{
-			name:       "no warning when status endpoint fails",
-			models:     []string{"llama3.2"},
-			statusCode: http.StatusInternalServerError,
-		},
-		{
-			name:       "no warning for cloud-only models even with low context",
-			models:     []string{"gpt-4o:cloud"},
-			statusBody: `{"cloud":{},"context_length":4096}`,
-			statusCode: http.StatusOK,
-		},
-		{
-			name:       "no warning when models list is empty",
-			models:     []string{},
-			statusBody: `{"cloud":{},"context_length":4096}`,
-			statusCode: http.StatusOK,
-		},
-		{
-			name:       "no warning when modelfile num_ctx meets recommended",
-			models:     []string{"llama3.2"},
-			statusBody: `{"cloud":{},"context_length":4096}`,
-			statusCode: http.StatusOK,
-			showParams: "num_ctx                        65536",
-		},
-		{
-			name:       "no warning when modelfile num_ctx exceeds recommended",
-			models:     []string{"llama3.2"},
-			statusBody: `{"cloud":{},"context_length":4096}`,
-			statusCode: http.StatusOK,
-			showParams: "num_ctx                        131072",
-		},
-		{
-			name:          "warns with modelfile hint when modelfile num_ctx is below recommended",
-			models:        []string{"llama3.2"},
-			statusBody:    `{"cloud":{},"context_length":131072}`,
-			statusCode:    http.StatusOK,
-			showParams:    "num_ctx                        4096",
-			wantWarning:   true,
-			wantModelfile: true,
-		},
-		{
-			name:          "warns with modelfile hint when both server and modelfile are low",
-			models:        []string{"llama3.2"},
-			statusBody:    `{"cloud":{},"context_length":2048}`,
-			statusCode:    http.StatusOK,
-			showParams:    "num_ctx                        4096",
-			wantWarning:   true,
-			wantModelfile: true,
-		},
-		{
-			name:       "no warning when status returns malformed JSON",
-			models:     []string{"llama3.2"},
-			statusBody: `{invalid json`,
-			statusCode: http.StatusOK,
-		},
-		{
-			name:       "no warning when status returns empty body with 200",
-			models:     []string{"llama3.2"},
-			statusBody: "",
-			statusCode: http.StatusOK,
-		},
-		{
-			name:       "no warning when show endpoint fails",
-			models:     []string{"llama3.2"},
-			statusBody: `{"cloud":{},"context_length":65536}`,
-			statusCode: http.StatusOK,
-			showParams: "SHOW_ERROR", // sentinel to make show return 500
-		},
-		{
-			name:       "no warning for safetensors model with high context length",
-			models:     []string{"qwen3.5"},
-			statusBody: `{"cloud":{},"context_length":32768}`,
-			statusCode: http.StatusOK,
-			showBody:   `{"details":{"format":"safetensors"},"model_info":{"qwen3_5_moe.context_length":262144}}`,
-		},
-		{
-			name:        "warns for safetensors model with low context length",
-			models:      []string{"small-model"},
-			statusBody:  `{"cloud":{},"context_length":32768}`,
-			statusCode:  http.StatusOK,
-			showBody:    `{"details":{"format":"safetensors"},"model_info":{"small.context_length":4096}}`,
-			wantWarning: true,
-		},
-		{
-			name:       "no warning for safetensors model even when server context is low",
-			models:     []string{"qwen3.5"},
-			statusBody: `{"cloud":{},"context_length":4096}`,
-			statusCode: http.StatusOK,
-			showBody:   `{"details":{"format":"safetensors"},"model_info":{"qwen3_5_moe.context_length":262144}}`,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/status" {
-					w.WriteHeader(tt.statusCode)
-					if tt.statusBody != "" {
-						fmt.Fprint(w, tt.statusBody)
-					}
-					return
-				}
-				if r.URL.Path == "/api/show" {
-					if tt.showParams == "SHOW_ERROR" {
-						w.WriteHeader(http.StatusInternalServerError)
-						return
-					}
-					w.WriteHeader(http.StatusOK)
-					if tt.showBody != "" {
-						fmt.Fprint(w, tt.showBody)
-					} else {
-						fmt.Fprintf(w, `{"parameters":%q}`, tt.showParams)
-					}
-					return
-				}
-				http.NotFound(w, r)
-			}))
-			defer srv.Close()
-			t.Setenv("OLLAMA_HOST", srv.URL)
-
-			client, err := newTestClient(srv.URL)
-			if err != nil {
-				t.Fatalf("failed to create client: %v", err)
-			}
-
-			// capture stderr
-			oldStderr := os.Stderr
-			r, w, _ := os.Pipe()
-			os.Stderr = w
-
-			err = lowContextLength(context.Background(), client, tt.models)
-
-			w.Close()
-			var buf bytes.Buffer
-			buf.ReadFrom(r)
-			os.Stderr = oldStderr
-			output := buf.String()
-
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			hasWarning := strings.Contains(output, "Warning:")
-			if hasWarning != tt.wantWarning {
-				t.Fatalf("expected warning=%v, got output: %q", tt.wantWarning, output)
-			}
-			if tt.wantWarning && tt.wantModelfile {
-				if !strings.Contains(output, "Use the base model") {
-					t.Fatalf("expected parent model hint in output: %q", output)
-				}
-			}
-			if tt.wantWarning && !tt.wantModelfile {
-				if strings.Contains(output, "Use the base model") {
-					t.Fatalf("expected server hint, not parent model hint in output: %q", output)
-				}
-			}
-		})
-	}
-}
-
-func TestParseNumCtxFromParameters(t *testing.T) {
-	tests := []struct {
-		name       string
-		parameters string
-		want       int
-	}{
-		{
-			name:       "extracts num_ctx",
-			parameters: "num_ctx                        65536",
-			want:       65536,
-		},
-		{
-			name:       "extracts num_ctx among other parameters",
-			parameters: "temperature                    0.7\nnum_ctx                        131072\nstop                           \"<|end|>\"",
-			want:       131072,
-		},
-		{
-			name:       "returns zero when no num_ctx",
-			parameters: "temperature                    0.7\nstop                           \"<|end|>\"",
-			want:       0,
-		},
-		{
-			name:       "returns zero for empty string",
-			parameters: "",
-			want:       0,
-		},
-		{
-			name:       "handles float representation",
-			parameters: "num_ctx                        65536.0",
-			want:       65536,
-		},
-		{
-			name:       "returns zero when num_ctx value is not a number",
-			parameters: "num_ctx                        abc",
-			want:       0,
-		},
-		{
-			name:       "returns zero for completely garbled input",
-			parameters: "!@#$%^&*()_+{}|:<>?",
-			want:       0,
-		},
-		{
-			name:       "returns zero when num_ctx has no value",
-			parameters: "num_ctx",
-			want:       0,
-		},
-		{
-			name:       "returns zero when num_ctx has extra fields",
-			parameters: "num_ctx 65536 extra_stuff",
-			want:       0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := parseNumCtx(tt.parameters)
-			if got != tt.want {
-				t.Fatalf("parseNumCtx(%q) = %d, want %d", tt.parameters, got, tt.want)
-			}
-		})
-	}
-}
-
-func newTestClient(url string) (*api.Client, error) {
-	return api.ClientFromEnvironment()
 }
