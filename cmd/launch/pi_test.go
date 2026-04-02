@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
@@ -30,6 +32,339 @@ func TestPiIntegration(t *testing.T) {
 
 	t.Run("implements Editor", func(t *testing.T) {
 		var _ Editor = pi
+	})
+}
+
+func TestPiRun_InstallAndWebSearchLifecycle(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell test binaries")
+	}
+
+	writeScript := func(t *testing.T, path, content string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	seedPiScript := func(t *testing.T, dir string) {
+		t.Helper()
+		piPath := filepath.Join(dir, "pi")
+		listPath := filepath.Join(dir, "pi-list.txt")
+		piScript := fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+if [ "$1" = "list" ]; then
+  if [ -f %q ]; then
+    /bin/cat %q
+  fi
+  exit 0
+fi
+if [ "$1" = "update" ] && [ "$PI_FAIL_UPDATE" = "1" ]; then
+  echo "update failed" >&2
+  exit 1
+fi
+if [ "$1" = "install" ] && [ "$PI_FAIL_INSTALL" = "1" ]; then
+  echo "install failed" >&2
+  exit 1
+fi
+exit 0
+`, filepath.Join(dir, "pi.log"), listPath, listPath)
+		writeScript(t, piPath, piScript)
+	}
+
+	seedNpmNoop := func(t *testing.T, dir string) {
+		t.Helper()
+		writeScript(t, filepath.Join(dir, "npm"), "#!/bin/sh\nexit 0\n")
+	}
+
+	withConfirm := func(t *testing.T, fn func(prompt string) (bool, error)) {
+		t.Helper()
+		oldConfirm := DefaultConfirmPrompt
+		DefaultConfirmPrompt = fn
+		t.Cleanup(func() { DefaultConfirmPrompt = oldConfirm })
+	}
+
+	setCloudStatus := func(t *testing.T, disabled bool) {
+		t.Helper()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/status" {
+				fmt.Fprintf(w, `{"cloud":{"disabled":%t,"source":"config"}}`, disabled)
+				return
+			}
+			http.NotFound(w, r)
+		}))
+		t.Cleanup(srv.Close)
+		t.Setenv("OLLAMA_HOST", srv.URL)
+	}
+
+	t.Run("pi missing + user accepts install", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, false)
+
+		if err := os.WriteFile(filepath.Join(tmpDir, "pi-list.txt"), []byte("User packages:\n  npm:@ollama/pi-web-search\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		npmScript := fmt.Sprintf(`#!/bin/sh
+echo "$@" >> %q
+if [ "$1" = "install" ] && [ "$2" = "-g" ] && [ "$3" = %q ]; then
+  /bin/cat > %q <<'EOS'
+#!/bin/sh
+echo "$@" >> %q
+if [ "$1" = "list" ]; then
+  if [ -f %q ]; then
+    /bin/cat %q
+  fi
+  exit 0
+fi
+exit 0
+EOS
+  /bin/chmod +x %q
+fi
+exit 0
+`, filepath.Join(tmpDir, "npm.log"), piNpmPackage+"@latest", filepath.Join(tmpDir, "pi"), filepath.Join(tmpDir, "pi.log"), filepath.Join(tmpDir, "pi-list.txt"), filepath.Join(tmpDir, "pi-list.txt"), filepath.Join(tmpDir, "pi"))
+		writeScript(t, filepath.Join(tmpDir, "npm"), npmScript)
+
+		withConfirm(t, func(prompt string) (bool, error) {
+			if strings.Contains(prompt, "Pi is not installed.") {
+				return true, nil
+			}
+			return true, nil
+		})
+
+		p := &Pi{}
+		if err := p.Run("ignored", []string{"--version"}); err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+
+		npmCalls, err := os.ReadFile(filepath.Join(tmpDir, "npm.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(npmCalls), "install -g "+piNpmPackage+"@latest") {
+			t.Fatalf("expected npm install call, got:\n%s", npmCalls)
+		}
+
+		piCalls, err := os.ReadFile(filepath.Join(tmpDir, "pi.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := string(piCalls)
+		if !strings.Contains(got, "list\n") {
+			t.Fatalf("expected pi list call, got:\n%s", got)
+		}
+		if !strings.Contains(got, "update "+piWebSearchSource+"\n") {
+			t.Fatalf("expected pi update call, got:\n%s", got)
+		}
+		if !strings.Contains(got, "--version\n") {
+			t.Fatalf("expected final pi launch call, got:\n%s", got)
+		}
+	})
+
+	t.Run("pi missing + user declines install", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, false)
+		writeScript(t, filepath.Join(tmpDir, "npm"), "#!/bin/sh\nexit 0\n")
+
+		withConfirm(t, func(prompt string) (bool, error) {
+			if strings.Contains(prompt, "Pi is not installed.") {
+				return false, nil
+			}
+			return true, nil
+		})
+
+		p := &Pi{}
+		err := p.Run("ignored", nil)
+		if err == nil || !strings.Contains(err.Error(), "pi installation cancelled") {
+			t.Fatalf("expected install cancellation error, got %v", err)
+		}
+	})
+
+	t.Run("pi installed + web search missing auto-installs", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, false)
+		if err := os.WriteFile(filepath.Join(tmpDir, "pi-list.txt"), []byte("User packages:\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		seedPiScript(t, tmpDir)
+		seedNpmNoop(t, tmpDir)
+		withConfirm(t, func(prompt string) (bool, error) {
+			t.Fatalf("did not expect confirmation prompt, got %q", prompt)
+			return false, nil
+		})
+
+		p := &Pi{}
+		if err := p.Run("ignored", []string{"session"}); err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+
+		piCalls, err := os.ReadFile(filepath.Join(tmpDir, "pi.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := string(piCalls)
+		if !strings.Contains(got, "list\n") {
+			t.Fatalf("expected pi list call, got:\n%s", got)
+		}
+		if !strings.Contains(got, "install "+piWebSearchSource+"\n") {
+			t.Fatalf("expected pi install call, got:\n%s", got)
+		}
+		if strings.Contains(got, "update "+piWebSearchSource+"\n") {
+			t.Fatalf("did not expect pi update call when package missing, got:\n%s", got)
+		}
+		if !strings.Contains(got, "session\n") {
+			t.Fatalf("expected final pi launch call, got:\n%s", got)
+		}
+	})
+
+	t.Run("pi installed + web search present updates every launch", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, false)
+		if err := os.WriteFile(filepath.Join(tmpDir, "pi-list.txt"), []byte("User packages:\n  "+piWebSearchSource+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		seedPiScript(t, tmpDir)
+		seedNpmNoop(t, tmpDir)
+
+		p := &Pi{}
+		if err := p.Run("ignored", []string{"doctor"}); err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+
+		piCalls, err := os.ReadFile(filepath.Join(tmpDir, "pi.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := string(piCalls)
+		if !strings.Contains(got, "update "+piWebSearchSource+"\n") {
+			t.Fatalf("expected pi update call, got:\n%s", got)
+		}
+	})
+
+	t.Run("web search update failure warns and continues", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, false)
+		t.Setenv("PI_FAIL_UPDATE", "1")
+		if err := os.WriteFile(filepath.Join(tmpDir, "pi-list.txt"), []byte("User packages:\n  "+piWebSearchSource+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		seedPiScript(t, tmpDir)
+		seedNpmNoop(t, tmpDir)
+
+		p := &Pi{}
+		stderr := captureStderr(t, func() {
+			if err := p.Run("ignored", []string{"session"}); err != nil {
+				t.Fatalf("Run() should continue after web search update failure, got %v", err)
+			}
+		})
+		if !strings.Contains(stderr, "Warning: could not update "+piWebSearchPkg) {
+			t.Fatalf("expected update warning, got:\n%s", stderr)
+		}
+
+		piCalls, err := os.ReadFile(filepath.Join(tmpDir, "pi.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(piCalls), "session\n") {
+			t.Fatalf("expected final pi launch call, got:\n%s", piCalls)
+		}
+	})
+
+	t.Run("web search install failure warns and continues", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, false)
+		t.Setenv("PI_FAIL_INSTALL", "1")
+		if err := os.WriteFile(filepath.Join(tmpDir, "pi-list.txt"), []byte("User packages:\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		seedPiScript(t, tmpDir)
+		seedNpmNoop(t, tmpDir)
+		withConfirm(t, func(prompt string) (bool, error) {
+			t.Fatalf("did not expect confirmation prompt, got %q", prompt)
+			return false, nil
+		})
+
+		p := &Pi{}
+		stderr := captureStderr(t, func() {
+			if err := p.Run("ignored", []string{"session"}); err != nil {
+				t.Fatalf("Run() should continue after web search install failure, got %v", err)
+			}
+		})
+		if !strings.Contains(stderr, "Warning: could not install "+piWebSearchPkg) {
+			t.Fatalf("expected install warning, got:\n%s", stderr)
+		}
+
+		piCalls, err := os.ReadFile(filepath.Join(tmpDir, "pi.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(piCalls), "session\n") {
+			t.Fatalf("expected final pi launch call, got:\n%s", piCalls)
+		}
+	})
+
+	t.Run("cloud disabled skips web search package management", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, true)
+		if err := os.WriteFile(filepath.Join(tmpDir, "pi-list.txt"), []byte("User packages:\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		seedPiScript(t, tmpDir)
+		seedNpmNoop(t, tmpDir)
+
+		p := &Pi{}
+		stderr := captureStderr(t, func() {
+			if err := p.Run("ignored", []string{"session"}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+		})
+		if !strings.Contains(stderr, "Cloud is disabled; skipping "+piWebSearchPkg+" setup.") {
+			t.Fatalf("expected cloud-disabled skip message, got:\n%s", stderr)
+		}
+
+		piCalls, err := os.ReadFile(filepath.Join(tmpDir, "pi.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := string(piCalls)
+		if strings.Contains(got, "list\n") || strings.Contains(got, "install "+piWebSearchSource+"\n") || strings.Contains(got, "update "+piWebSearchSource+"\n") {
+			t.Fatalf("did not expect web search package management calls, got:\n%s", got)
+		}
+		if !strings.Contains(got, "session\n") {
+			t.Fatalf("expected final pi launch call, got:\n%s", got)
+		}
+	})
+
+	t.Run("missing npm returns error before pi flow", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		setCloudStatus(t, false)
+		seedPiScript(t, tmpDir)
+
+		p := &Pi{}
+		err := p.Run("ignored", []string{"session"})
+		if err == nil || !strings.Contains(err.Error(), "npm (Node.js) is required to launch pi") {
+			t.Fatalf("expected missing npm error, got %v", err)
+		}
+
+		if _, statErr := os.Stat(filepath.Join(tmpDir, "pi.log")); !os.IsNotExist(statErr) {
+			t.Fatalf("expected pi not to run when npm is missing, stat err = %v", statErr)
+		}
 	})
 }
 

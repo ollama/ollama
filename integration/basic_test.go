@@ -35,6 +35,9 @@ func TestBlueSky(t *testing.T) {
 }
 
 func TestUnicode(t *testing.T) {
+	if testModel != "" {
+		t.Skip("uses hardcoded model, not applicable with model override")
+	}
 	skipUnderMinVRAM(t, 6)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -59,9 +62,7 @@ func TestUnicode(t *testing.T) {
 	}
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
-	if err := PullIfMissing(ctx, client, req.Model); err != nil {
-		t.Fatal(err)
-	}
+	pullOrSkip(ctx, t, client, req.Model)
 	slog.Info("loading", "model", req.Model)
 	err := client.Generate(ctx, &api.GenerateRequest{Model: req.Model}, func(response api.GenerateResponse) error { return nil })
 	if err != nil {
@@ -81,6 +82,9 @@ func TestUnicode(t *testing.T) {
 }
 
 func TestExtendedUnicodeOutput(t *testing.T) {
+	if testModel != "" {
+		t.Skip("uses hardcoded model, not applicable with model override")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	// Set up the test data
@@ -100,9 +104,7 @@ func TestExtendedUnicodeOutput(t *testing.T) {
 	}
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
-	if err := PullIfMissing(ctx, client, req.Model); err != nil {
-		t.Fatal(err)
-	}
+	pullOrSkip(ctx, t, client, req.Model)
 	DoChat(ctx, t, client, req, []string{"😀", "😊", "😁", "😂", "😄", "😃"}, 120*time.Second, 120*time.Second)
 }
 
@@ -148,15 +150,16 @@ func TestUnicodeModelDir(t *testing.T) {
 // TestNumPredict verifies that when num_predict is set, the model generates
 // exactly that many tokens. It uses logprobs to count the actual tokens output.
 func TestNumPredict(t *testing.T) {
+	if testModel != "" {
+		t.Skip("uses hardcoded model, not applicable with model override")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 
-	if err := PullIfMissing(ctx, client, "qwen3:0.6b"); err != nil {
-		t.Fatalf("failed to pull model: %v", err)
-	}
+	pullOrSkip(ctx, t, client, "qwen3:0.6b")
 
 	req := api.GenerateRequest{
 		Model:    "qwen3:0.6b",

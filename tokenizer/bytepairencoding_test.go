@@ -239,6 +239,186 @@ func TestLlama(t *testing.T) {
 	})
 }
 
+// spmBPE builds a SentencePiece-style BPE tokenizer for testing.
+//
+// Models that use SentencePiece BPE differ from GPT-2 BPE in how they
+// handle spaces: the vocabulary stores ▁ (U+2581) instead of GPT-2's
+// shifted-byte encoding (0x0100–0x0143). Without WithSentencePieceNormalizer,
+// spaces are mapped through the GPT-2 byte table which produces wrong token
+// IDs for any vocabulary that uses ▁-prefixed tokens. The decode path has
+// the inverse problem: high codepoints like CJK characters and ▁ itself
+// would be mangled by the GPT-2 reverse mapping instead of being passed
+// through (or converted to spaces in the ▁ case).
+func spmBPE(t testing.TB) BytePairEncoding {
+	t.Helper()
+
+	tokens := []string{
+		// Control tokens (low IDs, as in real SentencePiece vocabs)
+		"<pad>",    // 0
+		"<eos>",    // 1
+		"<bos>",    // 2
+		"<|start>", // 3 - asymmetric open/close special tokens
+		"<end|>",   // 4
+		"<|q>",     // 5 - short special token (like <|"|>)
+
+		// ▁-prefixed word tokens (the core of what SPM BPE changes)
+		"▁hello", // 6
+		"▁world", // 7
+		"hello",  // 8
+		"▁Run",   // 9
+		"▁a",     // 10
+
+		// Punctuation and structure
+		",", // 11
+		"!", // 12
+		":", // 13
+		"{", // 14
+		"}", // 15
+
+		// Whitespace separator
+		"▁", // 16
+
+		// Subword tokens used in tool-declaration-like patterns
+		"description", // 17
+		"▁command",    // 18
+		"declaration", // 19
+
+		// Unicode token for decode passthrough testing (must be > U+0143
+		// to exercise the SPM decode path rather than GPT-2 byte reversal)
+		"▁中文", // 20
+	}
+
+	types := make([]int32, len(tokens))
+	for i := range types {
+		types[i] = TOKEN_TYPE_NORMAL
+	}
+	types[0] = TOKEN_TYPE_CONTROL      // <pad>
+	types[1] = TOKEN_TYPE_CONTROL      // <eos>
+	types[2] = TOKEN_TYPE_CONTROL      // <bos>
+	types[3] = TOKEN_TYPE_USER_DEFINED // <|start>
+	types[4] = TOKEN_TYPE_USER_DEFINED // <end|>
+	types[5] = TOKEN_TYPE_USER_DEFINED // <|q>
+
+	return NewBytePairEncodingWithOptions(
+		&Vocabulary{
+			Values: tokens,
+			Types:  types,
+			BOS:    []int32{2},
+			EOS:    []int32{1},
+			AddBOS: false,
+		},
+		// Empty pretokenizer list: falls back to the default pattern.
+		// Real SentencePiece BPE models are configured this way.
+		[]string{},
+		WithSentencePieceNormalizer(),
+	)
+}
+
+func TestSentencePieceBPE(t *testing.T) {
+	tok := spmBPE(t)
+
+	// Test 1: Space-to-▁ normalization and roundtrip.
+	//
+	// This is the core behavior that WithSentencePieceNormalizer enables.
+	// Without it, " hello" would be byte-mapped through the GPT-2 table
+	// (producing Ġhello or similar shifted codepoints) which would never
+	// match the ▁-prefixed vocab entry.
+	t.Run("spm space normalization roundtrip", func(t *testing.T) {
+		t.Parallel()
+
+		cases := map[string][]int32{
+			"hello":         {8},            // no space → no ▁ prefix → "hello"(8)
+			" hello":        {6},            // leading space → "▁hello"(6)
+			"hello, world!": {8, 11, 7, 12}, // pretokenizer splits punctuation;
+			// " world" normalizes to "▁world"
+		}
+
+		for input, wantIDs := range cases {
+			ids, err := tok.Encode(input, false)
+			if err != nil {
+				t.Fatalf("Encode(%q): %v", input, err)
+			}
+			if diff := cmp.Diff(wantIDs, ids); diff != "" {
+				t.Errorf("Encode(%q) mismatch (-want +got):\n%s", input, diff)
+			}
+
+			got, err := tok.Decode(ids)
+			if err != nil {
+				t.Fatalf("Decode(%v): %v", ids, err)
+			}
+			if got != input {
+				t.Errorf("roundtrip %q: Decode(Encode) = %q", input, got)
+			}
+		}
+	})
+
+	// Test 2: Special tokens interleaved with SPM-normalized text.
+	//
+	// This mimics tool declaration patterns like:
+	//   <|tool>declaration:bash{description:<|"|>Run a command<|"|>}<tool|>
+	// where special tokens (<|tool>, <|"|>, <tool|>) must be extracted
+	// first, then the remaining text fragments go through SPM normalization.
+	// Without the SPM normalizer, the text between special tokens would be
+	// encoded with GPT-2 byte mapping, producing entirely wrong IDs.
+	t.Run("special tokens with spm text fragments", func(t *testing.T) {
+		t.Parallel()
+
+		// Pattern: <|start>declaration:description:<|q>Run a command<|q>}<end|>
+		input := "<|start>declaration:description:<|q> Run a command<|q>}<end|>"
+		ids, err := tok.Encode(input, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Special tokens should be extracted as single IDs, and the text
+		// between them should be SPM-normalized (spaces → ▁).
+		want := []int32{
+			3,  // <|start>
+			19, // "declaration" (text fragment, no leading space)
+			13, // ":"
+			17, // "description"
+			13, // ":"
+			5,  // <|q>
+			9,  // "▁Run" (space before "Run" becomes ▁)
+			10, // "▁a"
+			18, // "▁command"
+			5,  // <|q>
+			15, // "}"
+			4,  // <end|>
+		}
+
+		if diff := cmp.Diff(want, ids); diff != "" {
+			t.Errorf("mismatch (-want +got):\n%s", diff)
+		}
+	})
+
+	// Test 3: Decode handles non-GPT2 Unicode correctly.
+	//
+	// GPT-2 BPE decode reverses the byte→codepoint shift for runes in
+	// 0x0100–0x0143. But SentencePiece vocabs store real Unicode (CJK,
+	// accented chars, etc.) which have codepoints well above 0x0143.
+	// Without the > 0x0143 passthrough in Decode, these would be mangled
+	// by the GPT-2 reverse mapping (e.g., written as raw bytes instead
+	// of the original characters).
+	t.Run("decode non-gpt2 unicode passthrough", func(t *testing.T) {
+		t.Parallel()
+
+		cases := map[string][]int32{
+			" 中文": {20}, // ▁→space, then CJK passes through as-is
+		}
+
+		for want, ids := range cases {
+			got, err := tok.Decode(ids)
+			if err != nil {
+				t.Fatalf("Decode(%v): %v", ids, err)
+			}
+			if got != want {
+				t.Errorf("Decode(%v) = %q, want %q", ids, got, want)
+			}
+		}
+	})
+}
+
 func BenchmarkBytePairEncoding(b *testing.B) {
 	tokenizer := llama(b)
 	bts, err := os.ReadFile(filepath.Join("testdata", "war-and-peace.txt"))

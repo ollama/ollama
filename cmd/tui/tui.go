@@ -47,7 +47,7 @@ type menuItem struct {
 
 var mainMenuItems = []menuItem{
 	{
-		title:       "Run a model",
+		title:       "Chat with a model",
 		description: "Start an interactive chat with a model",
 		isRunModel:  true,
 	},

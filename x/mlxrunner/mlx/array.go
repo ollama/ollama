@@ -262,9 +262,11 @@ func LogArrays() {
 		return arrays[i].NumBytes() > arrays[j].NumBytes()
 	})
 
+	var total int
 	for _, t := range arrays {
 		nb := t.NumBytes()
+		total += nb
 		logutil.Trace(fmt.Sprintf("tensor %-60s %5s %5s pinned=%d %v", t.name, t.DType(), PrettyBytes(nb), t.pinned, t.Dims()))
 	}
-	logutil.Trace(fmt.Sprintf("tensors total: %d, size: %s", len(arrays), PrettyBytes(ActiveMemory())))
+	logutil.Trace(fmt.Sprintf("tensors total: %d, size: %s, active: %s", len(arrays), PrettyBytes(total), PrettyBytes(ActiveMemory())))
 }

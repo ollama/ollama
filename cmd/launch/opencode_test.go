@@ -49,6 +49,7 @@ func TestOpenCodeEdit(t *testing.T) {
 			t.Fatal(err)
 		}
 		assertOpenCodeModelExists(t, configPath, "llama3.2")
+		assertOpenCodeDefaultModel(t, configPath, "ollama/llama3.2")
 		assertOpenCodeRecentModel(t, statePath, 0, "ollama", "llama3.2")
 	})
 
@@ -157,11 +158,13 @@ func TestOpenCodeEdit(t *testing.T) {
 		o.Edit([]string{"llama3.2", "mistral"})
 		assertOpenCodeModelExists(t, configPath, "llama3.2")
 		assertOpenCodeModelExists(t, configPath, "mistral")
+		assertOpenCodeDefaultModel(t, configPath, "ollama/llama3.2")
 
 		// Then remove one by only selecting the other
 		o.Edit([]string{"llama3.2"})
 		assertOpenCodeModelExists(t, configPath, "llama3.2")
 		assertOpenCodeModelNotExists(t, configPath, "mistral")
+		assertOpenCodeDefaultModel(t, configPath, "ollama/llama3.2")
 	})
 
 	t.Run("preserve user customizations on managed models", func(t *testing.T) {
@@ -335,6 +338,22 @@ func assertOpenCodeModelNotExists(t *testing.T, path, model string) {
 	}
 	if models[model] != nil {
 		t.Errorf("model %s should not exist but was found", model)
+	}
+}
+
+func assertOpenCodeDefaultModel(t *testing.T, path, want string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := cfg["model"].(string)
+	if got != want {
+		t.Fatalf("default model = %q, want %q", got, want)
 	}
 }
 
