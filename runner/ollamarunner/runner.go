@@ -1213,6 +1213,43 @@ func (s *Server) allocModel(
 		return err
 	}
 
+	// Initialize Geometric KAN attention BEFORE graph reservation so the
+	// training branch tensors are included in the reserved graph. KAN always
+	// uses SDPA for actual computation and creates a lightweight separate
+	// branch (key*query matmul + softmax) for training data. This branch
+	// needs memory allocated by the scheduler, which only happens if it's
+	// part of the reserved graph.
+	if envconfig.KANAttention() {
+		slog.Info("Geometric KAN attention enabled, initializing shadow trainer")
+		kanCfg := kan.DefaultConfig()
+		kanCfg.SavePath = filepath.Join(filepath.Dir(mpath), "kan")
+		if b := envconfig.KANBasis(); b > 0 {
+			kanCfg.NumBasis = int(b)
+		}
+		if h := envconfig.KANMaxHeads(); h > 0 {
+			kanCfg.MaxHeads = int(h)
+		}
+		trainer := kan.NewShadowTrainer(kanCfg)
+
+		// Try to load previously trained KAN parameters
+		if err := trainer.Load(kanCfg.SavePath); err != nil {
+			slog.Warn("KAN: could not load saved parameters, starting fresh", "error", err)
+		}
+
+		nn.SetKANTrainer(trainer)
+
+		// Save KAN parameters periodically and on shutdown
+		go func() {
+			ticker := time.NewTicker(5 * time.Minute)
+			defer ticker.Stop()
+			for range ticker.C {
+				if err := trainer.Save(kanCfg.SavePath); err != nil {
+					slog.Warn("KAN: failed to save parameters", "error", err)
+				}
+			}
+		}()
+	}
+
 	// TODO(jessegross): LoRA loading
 	if len(loraPath) > 0 {
 		return errors.New("loras are not yet implemented")
@@ -1248,41 +1285,10 @@ func (s *Server) allocModel(
 		return err
 	}
 
-	// Initialize Geometric KAN attention AFTER graph reservation.
-	// KAN forces the manual attention path (bypassing SDPA) for shadow
-	// training, which is incompatible with the tensor shapes used during
-	// reserveWorstCaseGraph. Once the model is fully allocated, KAN can
-	// safely intercept attention during actual inference.
-	if envconfig.KANAttention() {
-		slog.Info("Geometric KAN attention enabled, initializing shadow trainer")
-		kanCfg := kan.DefaultConfig()
-		kanCfg.SavePath = filepath.Join(filepath.Dir(mpath), "kan")
-		if b := envconfig.KANBasis(); b > 0 {
-			kanCfg.NumBasis = int(b)
-		}
-		if h := envconfig.KANMaxHeads(); h > 0 {
-			kanCfg.MaxHeads = int(h)
-		}
-		trainer := kan.NewShadowTrainer(kanCfg)
-
-		// Try to load previously trained KAN parameters
-		if err := trainer.Load(kanCfg.SavePath); err != nil {
-			slog.Warn("KAN: could not load saved parameters, starting fresh", "error", err)
-		}
-
-		nn.SetKANTrainer(trainer)
-
-		// Save KAN parameters periodically and on shutdown
-		go func() {
-			ticker := time.NewTicker(5 * time.Minute)
-			defer ticker.Stop()
-			for range ticker.C {
-				if err := trainer.Save(kanCfg.SavePath); err != nil {
-					slog.Warn("KAN: failed to save parameters", "error", err)
-				}
-			}
-		}()
-	}
+	// Reset KAN layer counter after graph reservation. The reservation
+	// forward passes increment the counter but don't call FlushKANTraining,
+	// leaving it at a non-zero offset. Reset so inference layers start at 0.
+	nn.FlushKANTraining()
 
 	return nil
 }
