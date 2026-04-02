@@ -311,7 +311,8 @@ func TestInferSafetensorsCapabilities(t *testing.T) {
 			name: "qwen3.5 multimodal model",
 			configJSON: `{
 				"architectures": ["Qwen3_5ForConditionalGeneration"],
-				"model_type": "qwen3"
+				"model_type": "qwen3",
+				"vision_config": {"hidden_size": 1024}
 			}`,
 			want: []string{"completion", "vision", "thinking"},
 		},

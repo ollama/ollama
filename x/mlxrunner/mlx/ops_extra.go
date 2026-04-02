@@ -689,4 +689,3 @@ func EnableCompile() {
 func DisableCompile() {
 	C.mlx_disable_compile()
 }
-
