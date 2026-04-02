@@ -20,18 +20,149 @@ import (
 // Pi implements Runner and Editor for Pi (Pi Coding Agent) integration
 type Pi struct{}
 
+const (
+	piNpmPackage      = "@mariozechner/pi-coding-agent"
+	piWebSearchSource = "npm:@ollama/pi-web-search"
+	piWebSearchPkg    = "@ollama/pi-web-search"
+)
+
 func (p *Pi) String() string { return "Pi" }
 
 func (p *Pi) Run(model string, args []string) error {
-	if _, err := exec.LookPath("pi"); err != nil {
-		return fmt.Errorf("pi is not installed, install with: npm install -g @mariozechner/pi-coding-agent")
+	fmt.Fprintf(os.Stderr, "\n%sPreparing Pi...%s\n", ansiGray, ansiReset)
+	if err := ensureNpmInstalled(); err != nil {
+		return err
 	}
 
-	cmd := exec.Command("pi", args...)
+	fmt.Fprintf(os.Stderr, "%sChecking Pi installation...%s\n", ansiGray, ansiReset)
+	bin, err := ensurePiInstalled()
+	if err != nil {
+		return err
+	}
+
+	ensurePiWebSearchPackage(bin)
+
+	fmt.Fprintf(os.Stderr, "\n%sLaunching Pi...%s\n\n", ansiGray, ansiReset)
+
+	cmd := exec.Command(bin, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+func ensureNpmInstalled() error {
+	if _, err := exec.LookPath("npm"); err != nil {
+		return fmt.Errorf("npm (Node.js) is required to launch pi\n\nInstall it first:\n  https://nodejs.org/")
+	}
+	return nil
+}
+
+func ensurePiInstalled() (string, error) {
+	if _, err := exec.LookPath("pi"); err == nil {
+		return "pi", nil
+	}
+
+	if _, err := exec.LookPath("npm"); err != nil {
+		return "", fmt.Errorf("pi is not installed and required dependencies are missing\n\nInstall the following first:\n  npm (Node.js): https://nodejs.org/")
+	}
+
+	ok, err := ConfirmPrompt("Pi is not installed. Install with npm?")
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("pi installation cancelled")
+	}
+
+	fmt.Fprintf(os.Stderr, "\nInstalling Pi...\n")
+	cmd := exec.Command("npm", "install", "-g", piNpmPackage+"@latest")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to install pi: %w", err)
+	}
+
+	if _, err := exec.LookPath("pi"); err != nil {
+		return "", fmt.Errorf("pi was installed but the binary was not found on PATH\n\nYou may need to restart your shell")
+	}
+
+	fmt.Fprintf(os.Stderr, "%sPi installed successfully%s\n\n", ansiGreen, ansiReset)
+	return "pi", nil
+}
+
+func ensurePiWebSearchPackage(bin string) {
+	if !shouldManagePiWebSearch() {
+		fmt.Fprintf(os.Stderr, "%sCloud is disabled; skipping %s setup.%s\n", ansiGray, piWebSearchPkg, ansiReset)
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "%sChecking Pi web search package...%s\n", ansiGray, ansiReset)
+
+	installed, err := piPackageInstalled(bin, piWebSearchSource)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s  Warning: could not check %s installation: %v%s\n", ansiYellow, piWebSearchPkg, err, ansiReset)
+		return
+	}
+
+	if !installed {
+		fmt.Fprintf(os.Stderr, "%sInstalling %s...%s\n", ansiGray, piWebSearchPkg, ansiReset)
+		cmd := exec.Command(bin, "install", piWebSearchSource)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "%s  Warning: could not install %s: %v%s\n", ansiYellow, piWebSearchPkg, err, ansiReset)
+			return
+		}
+
+		fmt.Fprintf(os.Stderr, "%s  ✓ Installed %s%s\n", ansiGreen, piWebSearchPkg, ansiReset)
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "%sUpdating %s...%s\n", ansiGray, piWebSearchPkg, ansiReset)
+	cmd := exec.Command(bin, "update", piWebSearchSource)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "%s  Warning: could not update %s: %v%s\n", ansiYellow, piWebSearchPkg, err, ansiReset)
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "%s  ✓ Updated %s%s\n", ansiGreen, piWebSearchPkg, ansiReset)
+}
+
+func shouldManagePiWebSearch() bool {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return true
+	}
+
+	disabled, known := cloudStatusDisabled(context.Background(), client)
+	if known && disabled {
+		return false
+	}
+	return true
+}
+
+func piPackageInstalled(bin, source string) (bool, error) {
+	cmd := exec.Command(bin, "list")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			return false, err
+		}
+		return false, fmt.Errorf("%w: %s", err, msg)
+	}
+
+	for _, line := range strings.Split(string(out), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, source) {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 func (p *Pi) Paths() []string {

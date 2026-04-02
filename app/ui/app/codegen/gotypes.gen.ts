@@ -422,6 +422,7 @@ export class Settings {
     ThinkLevel: string;
     SelectedModel: string;
     SidebarOpen: boolean;
+    LastHomeView: string;
     AutoUpdateEnabled: boolean;
 
     constructor(source: any = {}) {
@@ -440,6 +441,7 @@ export class Settings {
         this.ThinkLevel = source["ThinkLevel"];
         this.SelectedModel = source["SelectedModel"];
         this.SidebarOpen = source["SidebarOpen"];
+        this.LastHomeView = source["LastHomeView"];
         this.AutoUpdateEnabled = source["AutoUpdateEnabled"];
     }
 }
@@ -558,14 +560,12 @@ export class Error {
     }
 }
 export class ModelUpstreamResponse {
-    digest?: string;
-    pushTime: number;
+    stale: boolean;
     error?: string;
 
     constructor(source: any = {}) {
         if ('string' === typeof source) source = JSON.parse(source);
-        this.digest = source["digest"];
-        this.pushTime = source["pushTime"];
+        this.stale = source["stale"];
         this.error = source["error"];
     }
 }

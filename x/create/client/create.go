@@ -26,7 +26,7 @@ import (
 )
 
 // MinOllamaVersion is the minimum Ollama version required for safetensors models.
-const MinOllamaVersion = "0.14.0"
+const MinOllamaVersion = "0.19.0"
 
 // ModelfileConfig holds configuration extracted from a Modelfile.
 type ModelfileConfig struct {
@@ -132,12 +132,7 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 	if isSafetensors {
 		modelType = "safetensors model"
 		spinnerKey = "create"
-		capabilities = []string{"completion"}
-
-		// Check if model supports thinking based on architecture
-		if supportsThinking(opts.ModelDir) {
-			capabilities = append(capabilities, "thinking")
-		}
+		capabilities = inferSafetensorsCapabilities(opts.ModelDir)
 
 		// Set parser and renderer name based on architecture
 		parserName = getParserName(opts.ModelDir)
@@ -186,6 +181,21 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 
 	fmt.Printf("Created %s '%s'\n", modelType, opts.ModelName)
 	return nil
+}
+
+func inferSafetensorsCapabilities(modelDir string) []string {
+	capabilities := []string{"completion"}
+
+	// Qwen3.5 multimodal checkpoints use ConditionalGeneration architectures.
+	if supportsVision(modelDir) {
+		capabilities = append(capabilities, "vision")
+	}
+
+	if supportsThinking(modelDir) {
+		capabilities = append(capabilities, "thinking")
+	}
+
+	return capabilities
 }
 
 // newLayerCreator returns a LayerCreator callback for creating config/JSON layers.
@@ -338,6 +348,7 @@ func newManifestWriter(opts CreateOptions, capabilities []string, parserName, re
 		// Create config blob with version requirement
 		configData := model.ConfigV2{
 			ModelFormat:  "safetensors",
+			FileType:     strings.ToLower(strings.TrimSpace(opts.Quantize)),
 			Capabilities: caps,
 			Requires:     MinOllamaVersion,
 			Parser:       resolveParserName(opts.Modelfile, parserName),
@@ -483,6 +494,34 @@ func supportsThinking(modelDir string) bool {
 	}
 
 	return false
+}
+
+// supportsVision checks if the model supports image input based on its architecture.
+// Qwen3.5 multimodal checkpoints are published as ConditionalGeneration architectures.
+func supportsVision(modelDir string) bool {
+	configPath := filepath.Join(modelDir, "config.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return false
+	}
+
+	var cfg struct {
+		Architectures []string `json:"architectures"`
+		ModelType     string   `json:"model_type"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return false
+	}
+
+	for _, arch := range cfg.Architectures {
+		archLower := strings.ToLower(arch)
+		if strings.Contains(archLower, "qwen3") && strings.Contains(archLower, "conditionalgeneration") {
+			return true
+		}
+	}
+
+	typeLower := strings.ToLower(cfg.ModelType)
+	return strings.Contains(typeLower, "qwen3") && strings.Contains(typeLower, "conditionalgeneration")
 }
 
 // getParserName returns the parser name for a model based on its architecture.

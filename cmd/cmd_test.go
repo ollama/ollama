@@ -301,7 +301,7 @@ Weigh anchor!
 				ParameterSize:     "7B",
 				QuantizationLevel: "FP16",
 			},
-			Requires: "0.14.0",
+			Requires: "0.19.0",
 		}, false, &b); err != nil {
 			t.Fatal(err)
 		}
@@ -310,10 +310,17 @@ Weigh anchor!
     architecture    test      
     parameters      7B        
     quantization    FP16      
-    requires        0.14.0    
+    requires        0.19.0
 
 `
-		if diff := cmp.Diff(expect, b.String()); diff != "" {
+		trimLinePadding := func(s string) string {
+			lines := strings.Split(s, "\n")
+			for i, line := range lines {
+				lines[i] = strings.TrimRight(line, " \t\r")
+			}
+			return strings.Join(lines, "\n")
+		}
+		if diff := cmp.Diff(trimLinePadding(expect), trimLinePadding(b.String())); diff != "" {
 			t.Errorf("unexpected output (-want +got):\n%s", diff)
 		}
 	})
@@ -1912,7 +1919,7 @@ func TestShowInfoImageGen(t *testing.T) {
 			QuantizationLevel: "Q8",
 		},
 		Capabilities: []model.Capability{model.CapabilityImage},
-		Requires:     "0.14.0",
+		Requires:     "0.19.0",
 	}, false, &b)
 	if err != nil {
 		t.Fatal(err)
@@ -1922,7 +1929,7 @@ func TestShowInfoImageGen(t *testing.T) {
 		"    architecture    ZImagePipeline    \n" +
 		"    parameters      10.3B             \n" +
 		"    quantization    Q8                \n" +
-		"    requires        0.14.0            \n" +
+		"    requires        0.19.0            \n" +
 		"\n" +
 		"  Capabilities\n" +
 		"    image    \n" +

@@ -135,7 +135,7 @@ func TestMigrationV13ToV14ContextLength(t *testing.T) {
 	}
 }
 
-func TestMigrationV15ToV16TokenMetrics(t *testing.T) {
+func TestMigrationV16ToV17TokenMetrics(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
@@ -151,9 +151,10 @@ func TestMigrationV15ToV16TokenMetrics(t *testing.T) {
 	_, err = conn.Exec(`
 		CREATE TABLE settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
-			schema_version INTEGER NOT NULL DEFAULT 15
+			last_home_view TEXT NOT NULL DEFAULT 'launch',
+			schema_version INTEGER NOT NULL DEFAULT 16
 		);
-		INSERT INTO settings (id, schema_version) VALUES (1, 15);
+		INSERT INTO settings (id, last_home_view, schema_version) VALUES (1, 'launch', 16);
 
 		CREATE TABLE chats (
 			id TEXT PRIMARY KEY,
@@ -183,14 +184,14 @@ func TestMigrationV15ToV16TokenMetrics(t *testing.T) {
 		INSERT INTO messages (chat_id, role, content) VALUES ('chat-1', 'assistant', 'Hello');
 	`)
 	if err != nil {
-		t.Fatalf("failed to seed v15 schema state: %v", err)
+		t.Fatalf("failed to seed v16 schema state: %v", err)
 	}
 
 	db := &database{conn: conn}
 	defer db.Close()
 
 	if err := db.migrate(); err != nil {
-		t.Fatalf("migration from v15 to v16 failed: %v", err)
+		t.Fatalf("migration from v16 to v17 failed: %v", err)
 	}
 
 	var schemaVersion int

@@ -1225,9 +1225,11 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 				modelDetails.ParameterSize = format.HumanNumber(uint64(paramCount))
 			}
 		}
-		// Get torch_dtype directly from config.json for quantization level
-		if dtype, err := xserver.GetSafetensorsDtype(name); err == nil && dtype != "" {
-			modelDetails.QuantizationLevel = dtype
+		// Older manifests may not have file_type populated for safetensors models.
+		if modelDetails.QuantizationLevel == "" {
+			if dtype, err := xserver.GetSafetensorsDtype(name); err == nil && dtype != "" {
+				modelDetails.QuantizationLevel = dtype
+			}
 		}
 	}
 
@@ -1716,6 +1718,8 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	// OpenAI-compatible image generation endpoints
 	r.POST("/v1/images/generations", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.ImageGenerationsMiddleware(), s.GenerateHandler)
 	r.POST("/v1/images/edits", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.ImageEditsMiddleware(), s.GenerateHandler)
+	// OpenAI-compatible audio endpoint
+	r.POST("/v1/audio/transcriptions", middleware.TranscriptionMiddleware(), s.ChatHandler)
 
 	// Inference (Anthropic compatibility)
 	r.POST("/v1/messages", s.withInferenceRequestLogging("/v1/messages", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.AnthropicMessagesMiddleware(), s.ChatHandler)...)
@@ -1935,19 +1939,11 @@ func streamResponse(c *gin.Context, ch chan any) {
 
 func (s *Server) StatusHandler(c *gin.Context) {
 	disabled, source := internalcloud.Status()
-
-	contextLength := int(envconfig.ContextLength())
-	if contextLength == 0 {
-		slog.Warn("OLLAMA_CONTEXT_LENGTH is not set, using default", "default", s.defaultNumCtx)
-		contextLength = s.defaultNumCtx
-	}
-
 	c.JSON(http.StatusOK, api.StatusResponse{
 		Cloud: api.CloudStatus{
 			Disabled: disabled,
 			Source:   source,
 		},
-		ContextLength: contextLength,
 	})
 }
 

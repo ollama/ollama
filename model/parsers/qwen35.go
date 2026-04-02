@@ -190,7 +190,7 @@ func (p *Qwen35Parser) eat() ([]qwen35Event, bool) {
 				p.state = qwen35ParserStateCollectingContent
 			}
 			return events, true
-		} else if overlapLen := overlap(acc, qwen35ThinkingCloseTag); overlapLen > 0 {
+		} else if overlapLen := max(overlap(acc, qwen35ThinkingCloseTag), overlap(acc, qwen35ToolCallOpenTag)); overlapLen > 0 {
 			beforePartialTag := acc[:len(acc)-overlapLen]
 			trailingWsLen := trailingWhitespaceLen(beforePartialTag)
 			ambiguousStart := len(beforePartialTag) - trailingWsLen
