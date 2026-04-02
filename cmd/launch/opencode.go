@@ -20,28 +20,23 @@ type OpenCode struct{}
 
 func (o *OpenCode) String() string { return "OpenCode" }
 
-// opencodePaths returns candidate paths for the opencode binary.
-// The curl installer places the binary at ~/.opencode/bin/opencode which may
-// not be on PATH yet (e.g. shell profile hasn't been re-sourced, or Ollama is
-// launched as a GUI app).
-func opencodePaths() []string {
+// findOpencode returns the opencode binary path, checking PATH first then the
+// curl installer location (~/.opencode/bin) which may not be on PATH yet.
+func findOpencode() (string, bool) {
+	if p, err := exec.LookPath("opencode"); err == nil {
+		return p, true
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", false
+	}
 	name := "opencode"
 	if runtime.GOOS == "windows" {
 		name = "opencode.exe"
 	}
-	paths := []string{name} // resolved via PATH by exec.LookPath / exec.Command
-	if home, err := os.UserHomeDir(); err == nil {
-		paths = append(paths, filepath.Join(home, ".opencode", "bin", name))
-	}
-	return paths
-}
-
-// findOpencode returns the first opencode binary that exists on disk.
-func findOpencode() (string, bool) {
-	for _, p := range opencodePaths() {
-		if lp, err := exec.LookPath(p); err == nil {
-			return lp, true
-		}
+	fallback := filepath.Join(home, ".opencode", "bin", name)
+	if _, err := os.Stat(fallback); err == nil {
+		return fallback, true
 	}
 	return "", false
 }
