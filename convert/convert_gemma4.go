@@ -446,34 +446,35 @@ func (p *gemma4Model) Replacements() []string {
 		".linear.bias", ".bias",
 
 		// Audio SSCP (Sub-Sample Convolution Projection)
-		"model.audio_tower.subsample_conv_projection.layer0.conv", "a.conv1d.0",
-		"model.audio_tower.subsample_conv_projection.layer0.norm", "a.conv1d.0.norm",
-		"model.audio_tower.subsample_conv_projection.layer1.conv", "a.conv1d.1",
-		"model.audio_tower.subsample_conv_projection.layer1.norm", "a.conv1d.1.norm",
+		"model.audio_tower.subsample_conv_projection.conv_0.conv", "a.conv1d.0",
+		"model.audio_tower.subsample_conv_projection.conv_0.norm", "a.conv1d.0.norm",
+		"model.audio_tower.subsample_conv_projection.conv_1.conv", "a.conv1d.1",
+		"model.audio_tower.subsample_conv_projection.conv_1.norm", "a.conv1d.1.norm",
 		"model.audio_tower.subsample_conv_projection.input_proj_linear", "a.pre_encode.out",
 
 		// Audio conformer blocks
-		"model.audio_tower.layers", "a.blk",
+		"model.audio_tower.conformer", "a.blk",
 
 		// Audio conformer attention
-		"self_attn.relative_k_proj", "linear_pos",
-		"self_attn.per_dim_scale", "per_dim_scale",
-		"self_attn.q_proj", "attn_q",
-		"self_attn.k_proj", "attn_k",
-		"self_attn.v_proj", "attn_v",
-		"norm_post_attn", "ln2",
-		"norm_pre_attn", "ln1",
-		"self_attn.post", "attn_out",
+		"attention.attn.relative_position_embedding.pos_proj", "linear_pos",
+		"attention.attn.per_dim_key_scale", "per_dim_k_scale",
+		"attention.attn.per_dim_scale", "per_dim_scale",
+		"attention.attn.q_proj", "attn_q",
+		"attention.attn.k_proj", "attn_k",
+		"attention.attn.v_proj", "attn_v",
+		"attention.pre_attn_norm", "ln1",
+		"attention.post_norm", "ln2",
+		"attention.post", "attn_out",
 
 		// Audio conformer feedforward
-		"feed_forward1.pre_layer_norm", "ffn_norm",
-		"feed_forward1.post_layer_norm", "ffn_post_norm",
-		"feed_forward1.ffw_layer_1", "ffn_up",
-		"feed_forward1.ffw_layer_2", "ffn_down",
-		"feed_forward2.pre_layer_norm", "ffn_norm_1",
-		"feed_forward2.post_layer_norm", "ffn_post_norm_1",
-		"feed_forward2.ffw_layer_1", "ffn_up_1",
-		"feed_forward2.ffw_layer_2", "ffn_down_1",
+		"ffw_layer_start.pre_layer_norm", "ffn_norm",
+		"ffw_layer_start.post_layer_norm", "ffn_post_norm",
+		"ffw_layer_start.ffw_layer_1", "ffn_up",
+		"ffw_layer_start.ffw_layer_2", "ffn_down",
+		"ffw_layer_end.pre_layer_norm", "ffn_norm_1",
+		"ffw_layer_end.post_layer_norm", "ffn_post_norm_1",
+		"ffw_layer_end.ffw_layer_1", "ffn_up_1",
+		"ffw_layer_end.ffw_layer_2", "ffn_down_1",
 
 		// Audio conformer lightweight conv1d
 		"lconv1d.depthwise_conv1d", "conv_dw",
