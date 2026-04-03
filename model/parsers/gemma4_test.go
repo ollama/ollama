@@ -217,6 +217,21 @@ func TestGemma4Parser(t *testing.T) {
 			},
 			thinkingEnabled: true,
 		},
+		{
+			name:            "tool_call_with_quote",
+			input:           `<|tool_call>call:terminal{command:<|"|>git add task1.yaml && git commit -m "Update task1.yaml to use gemma4:31b model"<|"|>}<tool_call|>`,
+			expectedContent: "",
+			expectedToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "terminal",
+						Arguments: testArgs(map[string]any{
+							"command": `git add task1.yaml && git commit -m "Update task1.yaml to use gemma4:31b model"`,
+						}),
+					},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {

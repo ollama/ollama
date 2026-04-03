@@ -1,6 +1,9 @@
 package parsers
 
 import (
+	"strconv"
+	"regexp"
+
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -343,53 +346,27 @@ func parseGemma4ToolCall(content string) (api.ToolCall, error) {
 	}, nil
 }
 
+var (
+	gemma4Quote = `<|"|>`
+	gemma4QuoteLen = len(gemma4Quote)
+)
+
 // gemma4ArgsToJSON converts Gemma 4's custom argument format to valid JSON.
 func gemma4ArgsToJSON(s string) string {
-	s = strings.ReplaceAll(s, `<|"|>`, `"`)
-
 	var buf strings.Builder
 	buf.Grow(len(s) + 32)
-	inString := false
-	hex := "0123456789abcdef"
 	i := 0
 	for i < len(s) {
 		ch := s[i]
 
-		if ch == '"' {
-			inString = !inString
-			buf.WriteByte('"')
-			i++
+		if matchedString, bytesRead, found := readGemma4String(s[i:]); found {
+			matchedString := strconv.Quote(matchedString)
+			buf.WriteString(matchedString)
+			i += bytesRead
 			continue
 		}
 
-		if inString {
-			switch ch {
-			case '\\':
-				buf.WriteString(`\\`)
-			case '\n':
-				buf.WriteString(`\n`)
-			case '\r':
-				buf.WriteString(`\r`)
-			case '\t':
-				buf.WriteString(`\t`)
-			case '\b':
-				buf.WriteString(`\b`)
-			case '\f':
-				buf.WriteString(`\f`)
-			default:
-				if ch < 0x20 {
-					buf.WriteString(`\u00`)
-					buf.WriteByte(hex[ch>>4])
-					buf.WriteByte(hex[ch&0x0f])
-				} else {
-					buf.WriteByte(ch)
-				}
-			}
-			i++
-			continue
-		}
-
-		if !inString && isIdentStart(ch) {
+		if isIdentStart(ch) {
 			j := i + 1
 			for j < len(s) && isIdentPart(s[j]) {
 				j++
@@ -409,4 +386,18 @@ func gemma4ArgsToJSON(s string) string {
 		}
 	}
 	return buf.String()
+}
+
+var gemma4QuoteRegexp = regexp.MustCompile(`^<\|"\|>([\s\S]*?)<\|"\|>`)
+
+// readGemma4String reads from <|"|> until the next <|"|>
+// It returns the read string, chars read, and
+// whether a closing quote was found
+// The leading and trailing <|"|> symbols are stripped
+func readGemma4String(s string) (string, int, bool) {
+	if !gemma4QuoteRegexp.MatchString(s) {
+		return "", 0, false
+	}
+	matches := gemma4QuoteRegexp.FindStringSubmatch(s)
+	return matches[1], len(matches[0]), true
 }
