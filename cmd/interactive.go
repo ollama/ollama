@@ -503,13 +503,14 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			newMessage := api.Message{Role: "user", Content: sb.String()}
 
 			if opts.MultiModal {
-				msg, images, err := extractFileData(sb.String())
+				msg, images, audios, err := extractFileData(sb.String())
 				if err != nil {
 					return err
 				}
 
 				newMessage.Content = msg
 				newMessage.Images = images
+				newMessage.Audios = audios
 			}
 
 			opts.Messages = append(opts.Messages, newMessage)
@@ -598,9 +599,10 @@ func extractFileNames(input string) []string {
 	return re.FindAllString(input, -1)
 }
 
-func extractFileData(input string) (string, []api.ImageData, error) {
+func extractFileData(input string) (string, []api.ImageData, []api.ImageData, error) {
 	filePaths := extractFileNames(input)
 	var imgs []api.ImageData
+	var audios []api.ImageData
 
 	for _, fp := range filePaths {
 		nfp := normalizeFilePath(fp)
@@ -609,21 +611,22 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 			continue
 		} else if err != nil {
 			fmt.Fprintf(os.Stderr, "Couldn't process file: %q\n", err)
-			return "", imgs, err
+			return "", imgs, audios, err
 		}
 		ext := strings.ToLower(filepath.Ext(nfp))
 		switch ext {
 		case ".wav":
 			fmt.Fprintf(os.Stderr, "Added audio '%s'\n", nfp)
+			audios = append(audios, data)
 		default:
 			fmt.Fprintf(os.Stderr, "Added image '%s'\n", nfp)
+			imgs = append(imgs, data)
 		}
 		input = strings.ReplaceAll(input, "'"+nfp+"'", "")
 		input = strings.ReplaceAll(input, "'"+fp+"'", "")
 		input = strings.ReplaceAll(input, fp, "")
-		imgs = append(imgs, data)
 	}
-	return strings.TrimSpace(input), imgs, nil
+	return strings.TrimSpace(input), imgs, audios, nil
 }
 
 func editInExternalEditor(content string) (string, error) {

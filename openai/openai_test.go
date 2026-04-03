@@ -2,6 +2,7 @@ package openai
 
 import (
 	"encoding/base64"
+	"strings"
 	"testing"
 	"time"
 
@@ -94,6 +95,206 @@ func TestFromChatRequest_WithImage(t *testing.T) {
 	if string(result.Messages[1].Images[0]) != string(imgData) {
 		t.Error("image data mismatch")
 	}
+}
+
+func TestFromChatRequest_WithAudio(t *testing.T) {
+	validB64 := base64.StdEncoding.EncodeToString([]byte("fake-wav-data"))
+
+	t.Run("valid wav audio", func(t *testing.T) {
+		req := ChatCompletionRequest{
+			Model: "test-model",
+			Messages: []Message{
+				{
+					Role: "user",
+					Content: []any{
+						map[string]any{"type": "text", "text": "Transcribe this"},
+						map[string]any{
+							"type":        "input_audio",
+							"input_audio": map[string]any{"data": validB64, "format": "wav"},
+						},
+					},
+				},
+			},
+		}
+
+		result, err := FromChatRequest(req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// text + audio become separate messages
+		if len(result.Messages) != 2 {
+			t.Fatalf("expected 2 messages, got %d", len(result.Messages))
+		}
+
+		if result.Messages[0].Content != "Transcribe this" {
+			t.Errorf("expected text content, got %q", result.Messages[0].Content)
+		}
+
+		if len(result.Messages[1].Audios) != 1 {
+			t.Fatalf("expected 1 audio, got %d", len(result.Messages[1].Audios))
+		}
+
+		if len(result.Messages[1].Audios[0]) == 0 {
+			t.Error("expected non-empty audio data")
+		}
+	})
+
+	t.Run("non-wav format rejected", func(t *testing.T) {
+		req := ChatCompletionRequest{
+			Model: "test-model",
+			Messages: []Message{
+				{
+					Role: "user",
+					Content: []any{
+						map[string]any{
+							"type":        "input_audio",
+							"input_audio": map[string]any{"data": validB64, "format": "mp3"},
+						},
+					},
+				},
+			},
+		}
+
+		_, err := FromChatRequest(req)
+		if err == nil {
+			t.Fatal("expected error for non-wav format, got nil")
+		}
+
+		if !strings.Contains(err.Error(), "unsupported audio format") {
+			t.Errorf("expected unsupported audio format error, got: %v", err)
+		}
+	})
+
+	t.Run("missing data field", func(t *testing.T) {
+		req := ChatCompletionRequest{
+			Model: "test-model",
+			Messages: []Message{
+				{
+					Role: "user",
+					Content: []any{
+						map[string]any{
+							"type":        "input_audio",
+							"input_audio": map[string]any{"format": "wav"},
+						},
+					},
+				},
+			},
+		}
+
+		_, err := FromChatRequest(req)
+		if err == nil {
+			t.Fatal("expected error for missing data, got nil")
+		}
+
+		if !strings.Contains(err.Error(), "missing data") {
+			t.Errorf("expected missing data error, got: %v", err)
+		}
+	})
+
+	t.Run("non-string data field", func(t *testing.T) {
+		req := ChatCompletionRequest{
+			Model: "test-model",
+			Messages: []Message{
+				{
+					Role: "user",
+					Content: []any{
+						map[string]any{
+							"type":        "input_audio",
+							"input_audio": map[string]any{"data": 12345, "format": "wav"},
+						},
+					},
+				},
+			},
+		}
+
+		_, err := FromChatRequest(req)
+		if err == nil {
+			t.Fatal("expected error for non-string data, got nil")
+		}
+
+		if !strings.Contains(err.Error(), "missing data") {
+			t.Errorf("expected missing data error, got: %v", err)
+		}
+	})
+
+	t.Run("invalid base64 data", func(t *testing.T) {
+		req := ChatCompletionRequest{
+			Model: "test-model",
+			Messages: []Message{
+				{
+					Role: "user",
+					Content: []any{
+						map[string]any{
+							"type":        "input_audio",
+							"input_audio": map[string]any{"data": "not-valid-base64!!!", "format": "wav"},
+						},
+					},
+				},
+			},
+		}
+
+		_, err := FromChatRequest(req)
+		if err == nil {
+			t.Fatal("expected error for invalid base64, got nil")
+		}
+
+		if !strings.Contains(err.Error(), "invalid input_audio base64 data") {
+			t.Errorf("expected base64 error, got: %v", err)
+		}
+	})
+
+	t.Run("missing format field still accepted", func(t *testing.T) {
+		req := ChatCompletionRequest{
+			Model: "test-model",
+			Messages: []Message{
+				{
+					Role: "user",
+					Content: []any{
+						map[string]any{
+							"type":        "input_audio",
+							"input_audio": map[string]any{"data": validB64},
+						},
+					},
+				},
+			},
+		}
+
+		result, err := FromChatRequest(req)
+		if err != nil {
+			t.Fatalf("expected no error when format is omitted, got: %v", err)
+		}
+
+		if len(result.Messages) != 1 {
+			t.Fatalf("expected 1 message, got %d", len(result.Messages))
+		}
+
+		if len(result.Messages[0].Audios) != 1 {
+			t.Fatalf("expected 1 audio, got %d", len(result.Messages[0].Audios))
+		}
+	})
+
+	t.Run("invalid input_audio map", func(t *testing.T) {
+		req := ChatCompletionRequest{
+			Model: "test-model",
+			Messages: []Message{
+				{
+					Role: "user",
+					Content: []any{
+						map[string]any{
+							"type":        "input_audio",
+							"input_audio": "not-a-map",
+						},
+					},
+				},
+			},
+		}
+
+		_, err := FromChatRequest(req)
+		if err == nil {
+			t.Fatal("expected error for invalid input_audio map, got nil")
+		}
+	})
 }
 
 func TestFromCompleteRequest_Basic(t *testing.T) {

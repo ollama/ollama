@@ -54,7 +54,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 			ctxLen := len(s)
 			if m.ProjectorPaths != nil {
 				for _, msg := range msgs[i:] {
-					ctxLen += imageNumTokens * len(msg.Images)
+					ctxLen += imageNumTokens * (len(msg.Images) + len(msg.Audios))
 				}
 			}
 
@@ -76,14 +76,20 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	}
 
 	for cnt, msg := range msgs[currMsgIdx:] {
-		if slices.Contains(m.Config.ModelFamilies, "mllama") && len(msg.Images) > 1 {
+		// Merge audios into images so models receive all multimodal data
+		// through the same pipeline. Models detect audio by WAV magic bytes.
+		allMultimodal := make([]api.ImageData, 0, len(msg.Images)+len(msg.Audios))
+		allMultimodal = append(allMultimodal, msg.Images...)
+		allMultimodal = append(allMultimodal, msg.Audios...)
+
+		if slices.Contains(m.Config.ModelFamilies, "mllama") && len(allMultimodal) > 1 {
 			return "", nil, errors.New("this model only supports one image while more than one image requested")
 		}
 
 		var prefix string
 		prompt := msg.Content
 
-		for _, i := range msg.Images {
+		for _, i := range allMultimodal {
 			imgData := llm.ImageData{
 				ID:   len(images),
 				Data: i,

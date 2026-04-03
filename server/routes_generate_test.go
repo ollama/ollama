@@ -2354,6 +2354,163 @@ func TestGenerateWithImages(t *testing.T) {
 	})
 }
 
+func TestGenerateWithAudios(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	mock := mockRunner{
+		CompletionResponse: llm.CompletionResponse{
+			Done:               true,
+			DoneReason:         llm.DoneReasonStop,
+			PromptEvalCount:    1,
+			PromptEvalDuration: 1,
+			EvalCount:          1,
+			EvalDuration:       1,
+		},
+	}
+
+	s := Server{
+		sched: &Scheduler{
+			pendingReqCh:    make(chan *LlmRequest, 1),
+			finishedReqCh:   make(chan *LlmRequest, 1),
+			expiredCh:       make(chan *runnerRef, 1),
+			unloadedCh:      make(chan any, 1),
+			loaded:          make(map[string]*runnerRef),
+			newServerFn:     newMockServer(&mock),
+			getGpuFn:        getGpuFn,
+			getSystemInfoFn: getSystemInfoFn,
+			waitForRecovery: 250 * time.Millisecond,
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+				time.Sleep(time.Millisecond)
+				req.successCh <- &runnerRef{
+					llama: &mock,
+				}
+				return false
+			},
+		},
+	}
+
+	go s.sched.Run(t.Context())
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
+
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model:  "test",
+		Files:  map[string]string{"file.gguf": digest},
+		Stream: &stream,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	t.Run("audios passed to completion request", func(t *testing.T) {
+		testAudio := []byte("test-audio-data")
+
+		mock.CompletionResponse.Content = "Audio processed"
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:  "test",
+			Prompt: "Describe this audio",
+			Audios: []api.ImageData{testAudio},
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		if len(mock.CompletionRequest.Images) != 1 {
+			t.Fatalf("expected 1 entry in completion request images, got %d", len(mock.CompletionRequest.Images))
+		}
+
+		if !bytes.Equal(mock.CompletionRequest.Images[0].Data, testAudio) {
+			t.Errorf("audio data mismatch in completion request")
+		}
+	})
+
+	t.Run("audio-only generate is not treated as load-only", func(t *testing.T) {
+		testAudio := []byte("test-audio-data")
+
+		mock.CompletionResponse.Content = "Audio transcribed"
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:  "test",
+			Prompt: "",
+			Audios: []api.ImageData{testAudio},
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		// Must NOT be a load-only response
+		var resp api.GenerateResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+
+		if resp.DoneReason == "load" {
+			t.Errorf("audio-only request was treated as load-only; expected inference")
+		}
+	})
+
+	t.Run("mixed images and audios passed to completion request", func(t *testing.T) {
+		testImage := []byte("test-image-data")
+		testAudio := []byte("test-audio-data")
+
+		mock.CompletionResponse.Content = "Mixed processed"
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:  "test",
+			Prompt: "Describe both",
+			Images: []api.ImageData{testImage},
+			Audios: []api.ImageData{testAudio},
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		if len(mock.CompletionRequest.Images) != 2 {
+			t.Fatalf("expected 2 entries in completion request images, got %d", len(mock.CompletionRequest.Images))
+		}
+
+		if !bytes.Equal(mock.CompletionRequest.Images[0].Data, testImage) {
+			t.Errorf("first entry should be image data")
+		}
+
+		if !bytes.Equal(mock.CompletionRequest.Images[1].Data, testAudio) {
+			t.Errorf("second entry should be audio data")
+		}
+
+		if mock.CompletionRequest.Images[0].ID != 0 || mock.CompletionRequest.Images[1].ID != 1 {
+			t.Errorf("expected IDs 0 and 1, got %d and %d",
+				mock.CompletionRequest.Images[0].ID, mock.CompletionRequest.Images[1].ID)
+		}
+	})
+}
+
 // TestImageGenerateStreamFalse tests that image generation respects stream=false
 // and returns a single JSON response instead of streaming ndjson.
 func TestImageGenerateStreamFalse(t *testing.T) {
