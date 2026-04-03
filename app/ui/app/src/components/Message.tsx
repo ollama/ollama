@@ -53,7 +53,8 @@ const Message = React.memo(
       prevProps.messageIndex === nextProps.messageIndex &&
       prevProps.isStreaming === nextProps.isStreaming &&
       prevProps.isFaded === nextProps.isFaded &&
-      prevProps.browserToolResult === nextProps.browserToolResult
+      prevProps.browserToolResult === nextProps.browserToolResult &&
+      prevProps.lastToolQuery === nextProps.lastToolQuery
     );
   },
 );
