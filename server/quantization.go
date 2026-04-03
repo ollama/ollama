@@ -153,7 +153,16 @@ func getTensorNewType(kv fsggml.KV, qs *quantizeState, newType fsggml.TensorType
 		// MLA tensors need higher precision to avoid quality degradation
 		newType = fsggml.TensorTypeQ8_0
 	} else if strings.Contains(name, "ffn_down") {
-		iLayer := qs.iFfnDown
+		// For MoE models, ffn_down.weight (dense) and ffn_down_exps.weight (expert) both
+		// exist per layer and should get the same useMoreBits treatment. Dense sorts before
+		// expert alphabetically, so dense increments the counter and expert uses counter-1.
+		var iLayer int
+		if strings.Contains(name, "_exps") {
+			iLayer = max(0, qs.iFfnDown-1)
+		} else {
+			iLayer = qs.iFfnDown
+			qs.iFfnDown++
+		}
 		n_layer := qs.nFfnDown
 		if ftype == fsggml.FileTypeQ4_K_M {
 			if useMoreBits(iLayer, n_layer) {
@@ -162,7 +171,6 @@ func getTensorNewType(kv fsggml.KV, qs *quantizeState, newType fsggml.TensorType
 		} else if ftype == fsggml.FileTypeQ4_K_S && iLayer < n_layer/8 {
 			newType = fsggml.TensorTypeQ5_K
 		}
-		qs.iFfnDown++
 	} else if strings.Contains(name, "attn_output.weight") {
 		if nExperts == 8 {
 			if ftype == fsggml.FileTypeQ4_K_S || ftype == fsggml.FileTypeQ4_K_M {
@@ -255,8 +263,9 @@ func newType(t *fsggml.Tensor, kv fsggml.KV, qs *quantizeState, ftype fsggml.Fil
 	name := t.Name
 	quantize := strings.HasSuffix(name, "weight")
 
-	// don't quantize vision encoder tensors (named with "v." prefix)
+	// don't quantize vision or audio encoder tensors
 	quantize = quantize && !strings.HasPrefix(name, "v.")
+	quantize = quantize && !strings.HasPrefix(name, "a.")
 	quantize = quantize && !strings.Contains(name, "mm.")
 
 	// quantize only 2D and 3D tensors (experts)

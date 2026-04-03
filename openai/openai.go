@@ -522,6 +522,20 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 					}
 
 					messages = append(messages, api.Message{Role: msg.Role, Images: []api.ImageData{img}})
+				case "input_audio":
+					audioMap, ok := data["input_audio"].(map[string]any)
+					if !ok {
+						return nil, errors.New("invalid input_audio format")
+					}
+					b64Data, ok := audioMap["data"].(string)
+					if !ok {
+						return nil, errors.New("invalid input_audio format: missing data")
+					}
+					audioBytes, err := base64.StdEncoding.DecodeString(b64Data)
+					if err != nil {
+						return nil, fmt.Errorf("invalid input_audio base64 data: %w", err)
+					}
+					messages = append(messages, api.Message{Role: msg.Role, Images: []api.ImageData{audioBytes}})
 				default:
 					return nil, errors.New("invalid message format")
 				}
@@ -822,6 +836,45 @@ func ToImageGenerationResponse(resp api.GenerateResponse) ImageGenerationRespons
 		Created: resp.CreatedAt.Unix(),
 		Data:    data,
 	}
+}
+
+// TranscriptionResponse is the response format for /v1/audio/transcriptions.
+type TranscriptionResponse struct {
+	Text string `json:"text"`
+}
+
+// TranscriptionRequest holds parsed fields from the multipart form.
+type TranscriptionRequest struct {
+	Model          string
+	AudioData      []byte
+	ResponseFormat string // "json", "text", "verbose_json"
+	Language       string
+	Prompt         string
+}
+
+// FromTranscriptionRequest converts a transcription request into a ChatRequest
+// by wrapping the audio with a system prompt for transcription.
+func FromTranscriptionRequest(r TranscriptionRequest) (*api.ChatRequest, error) {
+	systemPrompt := "Transcribe the following audio exactly as spoken. Output only the transcription text, nothing else."
+	if r.Language != "" {
+		systemPrompt += " The audio is in " + r.Language + "."
+	}
+	if r.Prompt != "" {
+		systemPrompt += " Context: " + r.Prompt
+	}
+
+	stream := true
+	return &api.ChatRequest{
+		Model: r.Model,
+		Messages: []api.Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: "Transcribe this audio.", Images: []api.ImageData{r.AudioData}},
+		},
+		Stream: &stream,
+		Options: map[string]any{
+			"temperature": 0,
+		},
+	}, nil
 }
 
 // ImageEditRequest is an OpenAI-compatible image edit request.

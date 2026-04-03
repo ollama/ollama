@@ -39,6 +39,7 @@ var (
 	errCapabilityTools      = errors.New("tools")
 	errCapabilityInsert     = errors.New("insert")
 	errCapabilityVision     = errors.New("vision")
+	errCapabilityAudio      = errors.New("audio")
 	errCapabilityEmbedding  = errors.New("embedding")
 	errCapabilityThinking   = errors.New("thinking")
 	errCapabilityImage      = errors.New("image generation")
@@ -93,14 +94,26 @@ func (m *Model) Capabilities() []model.Capability {
 			if f.KeyValue("vision.block_count").Valid() {
 				capabilities = append(capabilities, model.CapabilityVision)
 			}
+			if f.KeyValue("audio.block_count").Valid() {
+				capabilities = append(capabilities, model.CapabilityAudio)
+			}
 		} else {
 			slog.Error("couldn't open model file", "error", err)
 		}
-	} else if len(m.Config.Capabilities) > 0 {
+	}
+
+	// Also include capabilities from the model config (e.g. vision capability
+	// set during creation for MLX/safetensors models).
+	if len(m.Config.Capabilities) > 0 {
 		for _, c := range m.Config.Capabilities {
-			capabilities = append(capabilities, model.Capability(c))
+			cap := model.Capability(c)
+			if !slices.Contains(capabilities, cap) {
+				capabilities = append(capabilities, cap)
+			}
 		}
-	} else {
+	}
+
+	if len(capabilities) == 0 {
 		slog.Warn("unknown capabilities for model", "model", m.Name)
 	}
 
@@ -141,6 +154,14 @@ func (m *Model) Capabilities() []model.Capability {
 		capabilities = append(capabilities, model.CapabilityThinking)
 	}
 
+	// Temporary workaround — suppress vision/audio for gemma4 MLX models
+	// until multimodal runtime pipeline lands. Remove when imageproc.go is wired up.
+	if m.Config.ModelFormat == "safetensors" && m.Config.Renderer == "gemma4" {
+		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
+			return c == model.CapabilityVision || c == "audio"
+		})
+	}
+
 	return capabilities
 }
 
@@ -156,6 +177,7 @@ func (m *Model) CheckCapabilities(want ...model.Capability) error {
 		model.CapabilityTools:      errCapabilityTools,
 		model.CapabilityInsert:     errCapabilityInsert,
 		model.CapabilityVision:     errCapabilityVision,
+		model.CapabilityAudio:      errCapabilityAudio,
 		model.CapabilityEmbedding:  errCapabilityEmbedding,
 		model.CapabilityThinking:   errCapabilityThinking,
 		model.CapabilityImage:      errCapabilityImage,

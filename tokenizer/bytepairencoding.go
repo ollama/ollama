@@ -6,6 +6,7 @@ import (
 	"iter"
 	"log/slog"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/dlclark/regexp2"
@@ -14,29 +15,56 @@ import (
 )
 
 type BytePairEncoding struct {
-	vocab   *Vocabulary
-	regexps []*regexp2.Regexp
+	vocab         *Vocabulary
+	regexps       []*regexp2.Regexp
+	spaceToSpmSep bool // When true, normalize spaces to ▁ instead of GPT-2 byte-level encoding
 }
 
 var _ Tokenizer = (*BytePairEncoding)(nil)
 
+// BPEOption configures BytePairEncoding behavior
+type BPEOption func(*BytePairEncoding)
+
+// WithSentencePieceNormalizer enables ▁ space normalization instead of GPT-2 byte-level encoding.
+func WithSentencePieceNormalizer() BPEOption {
+	return func(bpe *BytePairEncoding) {
+		bpe.spaceToSpmSep = true
+	}
+}
+
 func NewBytePairEncoding(vocab *Vocabulary, pretokenizer ...string) BytePairEncoding {
-	if len(pretokenizer) == 0 {
+	return newBytePairEncoding(vocab, pretokenizer)
+}
+
+func NewBytePairEncodingWithOptions(vocab *Vocabulary, pretokenizer []string, opts ...BPEOption) BytePairEncoding {
+	bpe := newBytePairEncoding(vocab, pretokenizer, opts...)
+	return bpe
+}
+
+func newBytePairEncoding(vocab *Vocabulary, pretokenizer []string, opts ...BPEOption) BytePairEncoding {
+	bpe := BytePairEncoding{
+		vocab: vocab,
+	}
+
+	for _, opt := range opts {
+		opt(&bpe)
+	}
+
+	if len(pretokenizer) == 0 && !bpe.spaceToSpmSep {
 		// set default byte-level pretokenizer if none provided, e.g.
 		// https://github.com/huggingface/tokenizer/blob/main/tokenizer/src/pre_tokenizer/byte_level.rs#L44
 		pretokenizer = []string{`'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+`}
 	}
 
-	return BytePairEncoding{
-		vocab: vocab,
-		regexps: slices.Collect(func(yield func(*regexp2.Regexp) bool) {
-			for _, p := range pretokenizer {
-				if !yield(regexp2.MustCompile(p, regexp2.RE2)) {
-					return
-				}
+	bpe.regexps = slices.Collect(func(yield func(*regexp2.Regexp) bool) {
+		for _, p := range pretokenizer {
+			if !yield(regexp2.MustCompile(p, regexp2.RE2)) {
+				return
 			}
-		}),
-	}
+		}
+	})
+
+	return bpe
 }
 
 func (bpe BytePairEncoding) Vocabulary() *Vocabulary {
@@ -136,28 +164,35 @@ func (bpe BytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
 
 		for split := range bpe.split(frag.value) {
 			// TODO: process splits concurrently
-			var sb strings.Builder
-			for _, b := range []byte(split) {
-				r := rune(b)
-				switch {
-				case r == 0x00ad:
-					r = 0x0143
-				case r <= 0x0020:
-					r = r + 0x0100
-				case r >= 0x007f && r <= 0x00a0:
-					r = r + 0x00a2
+			var normalized string
+			if bpe.spaceToSpmSep {
+				// SentencePiece-style: replace spaces with ▁
+				normalized = strings.ReplaceAll(split, " ", spmWhitespaceSep)
+			} else {
+				// GPT-2 byte-level: map bytes to shifted Unicode codepoints
+				var sb strings.Builder
+				for _, b := range []byte(split) {
+					r := rune(b)
+					switch {
+					case r == 0x00ad:
+						r = 0x0143
+					case r <= 0x0020:
+						r = r + 0x0100
+					case r >= 0x007f && r <= 0x00a0:
+						r = r + 0x00a2
+					}
+					sb.WriteRune(r)
 				}
-
-				sb.WriteRune(r)
+				normalized = sb.String()
 			}
 
 			// short circuit if the fragment is in the vocabulary
-			if id := bpe.vocab.Encode(sb.String()); id >= 0 {
+			if id := bpe.vocab.Encode(normalized); id >= 0 {
 				ids = append(ids, id)
 				continue
 			}
 
-			runes := []rune(sb.String())
+			runes := []rune(normalized)
 			merges := make([]merge, len(runes))
 			for r := range runes {
 				merges[r] = merge{
@@ -228,9 +263,17 @@ func (bpe BytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
 
 			for _, merge := range merges {
 				if len(merge.runes) > 0 {
-					// TODO: handle the edge case where the rune isn't in the vocabulary
 					if id := bpe.vocab.Encode(string(merge.runes)); id >= 0 {
 						ids = append(ids, id)
+					} else if bpe.spaceToSpmSep {
+						// SentencePiece byte fallback: encode each UTF-8 byte as <0xHH>
+						for _, b := range []byte(string(merge.runes)) {
+							if id := bpe.vocab.Encode(fmt.Sprintf("<0x%02X>", b)); id >= 0 {
+								ids = append(ids, id)
+							} else {
+								slog.Debug("unknown byte token", "byte", b)
+							}
+						}
 					}
 				}
 			}
@@ -255,8 +298,41 @@ func (l lazyIdsString) LogValue() slog.Value {
 
 func (bpe BytePairEncoding) Decode(ids []int32) (string, error) {
 	var sb strings.Builder
+
+	// SentencePiece-style BPE stores true Unicode codepoints in the vocab
+	// (plus ▁ as a whitespace marker), so decoding should pass runes through
+	// directly instead of applying the GPT-2 byte-level reverse mapping.
+	// Without this, codepoints in the 0x0100-0x0142 range (e.g. ą ę ć ł)
+	// get mangled by the GPT-2 reversal into control characters.
+	if bpe.spaceToSpmSep {
+		for _, id := range ids {
+			data := bpe.vocab.Decode(id)
+
+			// SentencePiece byte tokens: "<0xHH>" → raw byte
+			if len(data) == 6 && strings.HasPrefix(data, "<0x") && strings.HasSuffix(data, ">") {
+				if b, err := strconv.ParseUint(data[3:5], 16, 8); err == nil {
+					sb.WriteByte(byte(b))
+					continue
+				}
+			}
+
+			for _, r := range data {
+				if r == 0x2581 { // ▁ (LOWER ONE EIGHTH BLOCK)
+					sb.WriteByte(' ')
+				} else {
+					sb.WriteRune(r)
+				}
+			}
+		}
+
+		logutil.Trace("decoded", "string", sb.String(), "from", lazyIdsString{ids: ids})
+		return sb.String(), nil
+	}
+
 	for _, id := range ids {
 		for _, r := range bpe.vocab.Decode(id) {
+			// GPT-2 byte-level BPE uses Unicode chars in the 0x0100-0x0143
+			// range to represent bytes. Remap them back to actual bytes.
 			switch {
 			case r == 0x0100:
 				// this produces 0x00 aka NULL
@@ -267,6 +343,15 @@ func (bpe BytePairEncoding) Decode(ids []int32) (string, error) {
 				r = r - 0x0100
 			case r > 0x0120 && r <= 0x0142:
 				r = r - 0x00a2
+			case r > 0x0143:
+				// Non-GPT2 rune (e.g., SentencePiece-style BPE).
+				// Handle ▁ as word separator, otherwise write the rune as-is.
+				if r == 0x2581 { // ▁ (LOWER ONE EIGHTH BLOCK)
+					sb.WriteByte(' ')
+				} else {
+					sb.WriteRune(r)
+				}
+				continue
 			}
 
 			// NOTE: not using WriteRune here because it writes the UTF-8

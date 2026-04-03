@@ -147,6 +147,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 	ollama["models"] = models
 	provider["ollama"] = ollama
 	config["provider"] = provider
+	config["model"] = "ollama/" + modelList[0]
 
 	configData, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {

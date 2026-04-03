@@ -290,6 +290,8 @@ func LoadModelMetadata(fsys fs.FS) (ModelKV, *Tokenizer, error) {
 		conv = &gemma3Model{Architecture: p.Architectures[0]}
 	case "Gemma3nForConditionalGeneration":
 		conv = &gemma3nModel{}
+	case "Gemma4ForCausalLM", "Gemma4ForConditionalGeneration":
+		conv = &gemma4Model{Architecture: p.Architectures[0]}
 	case "Phi3ForCausalLM":
 		conv = &phi3Model{}
 	case "Qwen2ForCausalLM":

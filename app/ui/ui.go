@@ -342,8 +342,18 @@ func (t *userAgentTransport) RoundTrip(req *http.Request) (*http.Response, error
 
 // httpClient returns an HTTP client that automatically adds the User-Agent header
 func (s *Server) httpClient() *http.Client {
+	return userAgentHTTPClient(10 * time.Second)
+}
+
+// inferenceClient uses almost the same HTTP client, but without a timeout so
+// long requests aren't truncated
+func (s *Server) inferenceClient() *api.Client {
+	return api.NewClient(envconfig.Host(), userAgentHTTPClient(0))
+}
+
+func userAgentHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{
-		Timeout: 10 * time.Second,
+		Timeout: timeout,
 		Transport: &userAgentTransport{
 			base: http.DefaultTransport,
 		},
@@ -721,11 +731,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 	_, cancelLoading := context.WithCancel(ctx)
 	loading := false
 
-	c, err := api.ClientFromEnvironment()
-	if err != nil {
-		cancelLoading()
-		return err
-	}
+	c := s.inferenceClient()
 
 	// Check if the model exists locally by trying to show it
 	// TODO (jmorganca): skip this round trip and instead just act
@@ -1681,7 +1687,6 @@ func ptr[T any](v T) *T { return &v }
 func supportsBrowserTools(model string) bool {
 	return strings.HasPrefix(strings.ToLower(model), "gpt-oss")
 }
-
 
 // buildChatRequest converts store.Chat to api.ChatRequest
 func (s *Server) buildChatRequest(chat *store.Chat, model string, think any, availableTools []map[string]any) (*api.ChatRequest, error) {

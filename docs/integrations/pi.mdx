@@ -2,7 +2,7 @@
 title: Pi
 ---
 
-Pi is a minimal AI agent toolkit with plugin support.
+Pi is a minimal and extensible coding agent.
 
 ## Install
 
@@ -20,24 +20,65 @@ npm install -g @mariozechner/pi-coding-agent
 ollama launch pi
 ```
 
+This installs Pi, configures Ollama as a provider including web tools, and drops you into an interactive session.
+
 To configure without launching:
 
 ```shell
 ollama launch pi --config
 ```
 
-## Web search 
+### Run directly with a model
+
+```shell
+ollama launch pi --model qwen3.5:cloud
+```
+
+Cloud models are also available at [ollama.com](https://ollama.com/search?c=cloud).
+
+## Extensions 
+
+Pi ships with four core tools: `read`, `write`, `edit`, and `bash`. All other capabilities are added through its extension system.
+
+On-demand capability packages invoked via `/skill:name` commands.  
+
+Install from npm or git:
+
+```bash
+pi install npm:@foo/some-tools
+pi install git:github.com/user/repo@v1
+```
+
+See all packages at [pi.dev](https://pi.dev/packages) 
+
+### Web search
 
 Pi can use web search and fetch tools via the `@ollama/pi-web-search` package.
 
-When launching Pi through Ollama, package install/update is managed automatically. 
+When launching Pi through Ollama, package install/update is managed automatically.
 To install manually:
 
 ```bash
 pi install npm:@ollama/pi-web-search
 ```
 
-### Manual setup
+### Autoresearch with `pi-autoresearch`
+
+[pi-autoresearch](https://github.com/davebcn87/pi-autoresearch) brings autonomous experiment loops to Pi. Inspired by Karpathy's autoresearch, it turns any measurable metric into an optimization target: test speed, bundle size, build time, model training loss, Lighthouse scores.
+
+```bash
+pi install https://github.com/davebcn87/pi-autoresearch
+```
+
+Tell Pi what to optimize. It runs experiments, benchmarks each one, keeps improvements, reverts regressions, and repeats — all autonomously. A built-in dashboard tracks every run with confidence scoring to distinguish real gains from benchmark noise.
+
+```bash
+/autoresearch optimize unit test runtime
+```
+
+Each kept experiment is automatically committed. Each failed one is reverted. When you're done, Pi can group improvements into independent branches for clean review and merge.
+
+## Manual setup
 
 Add a configuration block to `~/.pi/agent/models.json`:
 

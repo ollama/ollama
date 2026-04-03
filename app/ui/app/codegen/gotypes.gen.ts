@@ -414,6 +414,7 @@ export class Settings {
     ThinkLevel: string;
     SelectedModel: string;
     SidebarOpen: boolean;
+    LastHomeView: string;
     AutoUpdateEnabled: boolean;
 
     constructor(source: any = {}) {
@@ -432,6 +433,7 @@ export class Settings {
         this.ThinkLevel = source["ThinkLevel"];
         this.SelectedModel = source["SelectedModel"];
         this.SidebarOpen = source["SidebarOpen"];
+        this.LastHomeView = source["LastHomeView"];
         this.AutoUpdateEnabled = source["AutoUpdateEnabled"];
     }
 }

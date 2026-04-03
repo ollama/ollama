@@ -51,6 +51,7 @@ func TestContextExhaustion(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	// Set up the test data
+	thinkOff := api.ThinkValue{Value: false}
 	req := api.ChatRequest{
 		Model: smol,
 		Messages: []api.Message{
@@ -59,6 +60,7 @@ func TestContextExhaustion(t *testing.T) {
 				Content: "Write me a story in english with a lot of emojis",
 			},
 		},
+		Think:  &thinkOff,
 		Stream: &stream,
 		Options: map[string]any{
 			"temperature": 0,
