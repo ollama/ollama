@@ -390,7 +390,7 @@ func gemma4ArgsToJSON(s string) string {
 				if i+1 < len(s) {
 					next := s[i+1]
 					switch next {
-					case '"', '\\', '/', 'b', 'f', 'n', 'r', 't', 'u':
+					case '"', '\\', '/':
 						// Preserve valid JSON escapes that are already in the source string.
 						buf.WriteByte('\\')
 						buf.WriteByte(next)

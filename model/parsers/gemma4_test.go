@@ -219,6 +219,72 @@ func TestGemma4Parser(t *testing.T) {
 			},
 		},
 		{
+			name:  "tool_call_done_flush_without_close_tag_with_unescaped_double_quotes",
+			input: `<|tool_call>call:search{query:<|"|>say "hello" and "bye"<|"|>}`,
+			expectedToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "search",
+						Arguments: testArgs(map[string]any{
+							"query": `say "hello" and "bye"`,
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:  "tool_call_with_mixed_raw_and_gemma_quoted_values",
+			input: `<|tool_call>call:search{query:"raw \"quoted\"",note:<|"|>gemma "quoted"<|"|>}<tool_call|>`,
+			expectedToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "search",
+						Arguments: testArgs(map[string]any{
+							"query": `raw "quoted"`,
+							"note":  `gemma "quoted"`,
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:  "tool_call_with_array_of_objects_and_mixed_quotes",
+			input: `<|tool_call>call:plan{steps:[{title:<|"|>step "one"<|"|>,done:false},{title:<|"|>step \"two\"<|"|>,done:true}]}<tool_call|>`,
+			expectedToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "plan",
+						Arguments: testArgs(map[string]any{
+							"steps": []any{
+								map[string]any{
+									"title": `step "one"`,
+									"done":  false,
+								},
+								map[string]any{
+									"title": `step "two"`,
+									"done":  true,
+								},
+							},
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:  "tool_call_with_windows_path_single_backslashes",
+			input: `<|tool_call>call:open_file{path:<|"|>C:\users\bob\file.txt<|"|>}<tool_call|>`,
+			expectedToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "open_file",
+						Arguments: testArgs(map[string]any{
+							"path": `C:\users\bob\file.txt`,
+						}),
+					},
+				},
+			},
+		},
+		{
 			name:  "multiple_tool_calls",
 			input: `<|tool_call>call:get_weather{location:<|"|>Paris<|"|>}<tool_call|><|tool_call>call:get_weather{location:<|"|>London<|"|>}<tool_call|>`,
 			expectedToolCalls: []api.ToolCall{
@@ -525,6 +591,51 @@ func TestGemma4ArgsToJSON(t *testing.T) {
 			name:     "string_value_with_mixed_escaped_and_unescaped_double_quotes",
 			input:    `{query:<|"|>first \"quoted\" then "raw"<|"|>}`,
 			expected: `{"query":"first \"quoted\" then \"raw\""}`,
+		},
+		{
+			name:     "string_value_with_punctuation_and_structural_chars",
+			input:    `{query:<|"|>a,b:{c}[d]<|"|>}`,
+			expected: `{"query":"a,b:{c}[d]"}`,
+		},
+		{
+			name:     "string_value_with_windows_path_backslashes",
+			input:    `{path:<|"|>C:\\Temp\\file.txt<|"|>}`,
+			expected: `{"path":"C:\\Temp\\file.txt"}`,
+		},
+		{
+			name:     "string_value_with_windows_path_single_backslashes",
+			input:    `{path:<|"|>C:\users\bob<|"|>}`,
+			expected: `{"path":"C:\\users\\bob"}`,
+		},
+		{
+			name:     "string_value_with_escaped_forward_slashes",
+			input:    `{url:<|"|>https:\/\/example.com\/a<|"|>}`,
+			expected: `{"url":"https:\/\/example.com\/a"}`,
+		},
+		{
+			name:     "string_value_with_unicode_escape_sequence",
+			input:    `{s:<|"|>snowman:\u2603<|"|>}`,
+			expected: `{"s":"snowman:\\u2603"}`,
+		},
+		{
+			name:     "string_value_with_unknown_escape_sequence",
+			input:    `{s:<|"|>bad \x escape<|"|>}`,
+			expected: `{"s":"bad \\x escape"}`,
+		},
+		{
+			name:     "string_value_with_invalid_unicode_escape_sequence",
+			input:    `{s:<|"|>bad \uZZZZ escape<|"|>}`,
+			expected: `{"s":"bad \\uZZZZ escape"}`,
+		},
+		{
+			name:     "raw_quoted_string_with_escaped_quotes",
+			input:    `{q:"say \"hi\" and \"bye\""}`,
+			expected: `{"q":"say \"hi\" and \"bye\""}`,
+		},
+		{
+			name:     "nested_mixed_raw_and_gemma_quoted_values",
+			input:    `{meta:{title:<|"|>t "1"<|"|>,note:"n \"2\""},items:[<|"|>x "3"<|"|>,"y \"4\""]}`,
+			expected: `{"meta":{"title":"t \"1\"","note":"n \"2\""},"items":["x \"3\"","y \"4\""]}`,
 		},
 	}
 
