@@ -18,9 +18,13 @@ const (
 	BitWidthTQ4 = 4
 )
 
-// TurboQuantSeed is the deterministic seed for rotation and QJL matrices.
+// TurboQuantSeed is the deterministic seed for key rotation and QJL matrices.
 // Using a fixed seed ensures reproducibility across model reloads.
 const TurboQuantSeed uint64 = 0x5475_7262_6F51_7561 // "TurboQua"
+
+// TurboQuantValueSeed is a separate seed for value rotation.
+// Different from key seed to avoid correlation between key and value rotations.
+const TurboQuantValueSeed uint64 = 0x5651_616E_7456_616C // "VQuantVal"
 
 func isPowerOf2(n int) bool {
 	return n > 0 && (n&(n-1)) == 0

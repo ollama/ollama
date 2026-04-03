@@ -22,6 +22,9 @@
 #include "ggml-cuda/diagmask.cuh"
 #include "ggml-cuda/diag.cuh"
 #include "ggml-cuda/fattn.cuh"
+#include "ggml-cuda/fwht.cuh"
+#include "ggml-cuda/lloyd-max.cuh"
+#include "ggml-cuda/tq-decompress.cuh"
 #include "ggml-cuda/getrows.cuh"
 #include "ggml-cuda/im2col.cuh"
 #include "ggml-cuda/mmf.cuh"
@@ -2701,6 +2704,18 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
                     return false;
             }
             break;
+        case GGML_OP_FWHT:
+            ggml_cuda_op_fwht(ctx, dst);
+            break;
+        case GGML_OP_LLOYD_MAX_Q:
+            ggml_cuda_op_lloyd_max_q(ctx, dst);
+            break;
+        case GGML_OP_LLOYD_MAX_DQ:
+            ggml_cuda_op_lloyd_max_dq(ctx, dst);
+            break;
+        case GGML_OP_TQ_DECOMPRESS:
+            ggml_cuda_op_tq_decompress(ctx, dst);
+            break;
         case GGML_OP_NORM:
             ggml_cuda_op_norm(ctx, dst);
             break;
@@ -4611,6 +4626,14 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                     return false;
             }
             break;
+        case GGML_OP_FWHT:
+            return (op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_F16) && op->src[0]->ne[0] <= 1024;
+        case GGML_OP_LLOYD_MAX_Q:
+            return op->src[0]->type == GGML_TYPE_F32;
+        case GGML_OP_LLOYD_MAX_DQ:
+            return op->src[0]->type == GGML_TYPE_F32 && (op->type == GGML_TYPE_F32 || op->type == GGML_TYPE_F16);
+        case GGML_OP_TQ_DECOMPRESS:
+            return op->src[0]->type == GGML_TYPE_F32 && op->type == GGML_TYPE_F16 && op->ne[0] <= 1024;
         case GGML_OP_MUL_MAT:
         case GGML_OP_MUL_MAT_ID:
             {

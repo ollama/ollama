@@ -912,9 +912,14 @@ func kvCacheBytesPerElement(cacheType string) float64 {
 	case "q4_0":
 		return 0.5 // 1/4 of fp16
 	case "tq3":
-		return 0.5 // TurboQuant 3-bit uses Q4_0 inner storage with rotation
+		// TurboQuant 3-bit: persistent cache ≈ 0.28 bytes/elem.
+		// Inflated to account for F16 decompression graph overhead (TQDecompress ops
+		// create F16 intermediates that don't exist for Q4_0's on-the-fly flash attn).
+		return 0.5
 	case "tq4":
-		return 0.5 // TurboQuant 4-bit uses Q4_0 inner storage with rotation
+		// TurboQuant 4-bit: persistent cache ≈ 0.41 bytes/elem.
+		// Inflated to account for F16 decompression graph overhead.
+		return 0.75
 	case "f32":
 		return 4 // f32 (default for recurrent)
 	default:

@@ -1,214 +1,205 @@
 package kvcache
 
 import (
-	"fmt"
 	"log/slog"
-	"sync"
 
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model/input"
 	"github.com/ollama/ollama/turboquant"
 )
 
-// TurboQuantWrapper applies the data-oblivious random rotation from Google's
-// TurboQuant paper (arxiv 2504.19874, ICLR 2026) to the KV cache.
+// TurboQuantWrapper applies TurboQuant (arxiv 2504.19874, ICLR 2026) to the KV cache.
 //
-// # Paper Algorithm
+// # Paper Algorithm 2 (TurboQuant_prod)
 //
-// The full TurboQuant_prod (Algorithm 2) works as follows:
 //  1. Normalize x to unit sphere, store ||x||_2
-//  2. Rotate: y = Pi * x_normalized (Pi = randomized Hadamard)
+//  2. Rotate: y = Pi * x_normalized (Pi = randomized Hadamard via FWHT)
 //  3. Scalar quantize each coordinate of y with Lloyd-Max codebook (b-1 bits)
 //  4. Compute residual r = x_normalized - DeQuant_mse(indices)
 //  5. QJL: signs = sign(S * r), store (signs, ||r||_2)
-//  6. Dequantize: x_hat = DeQuant_mse(indices) + (sqrt(pi/2)/d)*||r||*S^T*signs
+//  6. Dequant: x_hat = DeQuant_mse(indices) + (sqrt(pi/2)/d)*||r||*S^T*signs
 //
-// # What This Implementation Does
+// # Current Implementation (Phases 1-3 + Value Compression)
 //
-// This wrapper implements the core rotation stage (step 2 above) which is the
-// primary contributor to TurboQuant's quality improvement. After rotation,
-// coordinates follow a concentrated Beta distribution (approx Gaussian N(0,1/d)
-// in high dims), eliminating the outlier channels that cause block quantization
-// to fail. The inner cache stores the rotated data using GGML's Q4_0 format.
+// Both keys and values go through the same pipeline:
 //
-// Specifically, on Put(key, value):
-//   - key_rotated = Pi * key       (rotate key vectors)
-//   - Store key_rotated via inner cache (Q4_0 quantization)
-//   - Store value via inner cache as-is (Q4_0 quantization)
+//	FWHT rotation → L2 norm preservation → Lloyd-Max quantization
+//
+// Single Causal cache (F32):
+//
+//	key slot:   packed Lloyd-Max key indices + L2 norm per head
+//	value slot: packed Lloyd-Max value indices + L2 norm per head
+//
+// On Put(key, value):
+//
+//	Keys:   norm → normalize → FWHT → LloydMaxQuantize → concat(packed, norm) → cache key slot
+//	Values: norm → normalize → FWHT → LloydMaxQuantize → concat(packed, norm) → cache value slot
 //
 // On Get():
-//   - Read key_quantized from inner cache (auto-dequantized by GGML)
-//   - key_restored = Pi^T * key_quantized  (inverse rotation)
-//   - Return key_restored, value, mask
 //
-// # Approximations vs Full Paper
-//
-// The following aspects of the paper are not yet implemented:
-//   - Norm preservation (L2 normalization before rotation). Q4_0's per-block
-//     scale factors partially compensate, making this non-critical.
-//   - Lloyd-Max optimal codebook quantization. GGML's Q4_0 block quantization
-//     (32-element blocks with shared scale) is used instead. After rotation,
-//     Q4_0 works significantly better because information is uniformly spread.
-//   - QJL residual correction (Algorithm 2, steps 4-6). This would provide
-//     unbiased inner product estimates. Attention quality is already good
-//     because the rotation stage dominates the error reduction.
-//   - Value rotation. Only keys are rotated because values stored with
-//     PermutedV layout (required for flash attention) would need extra permute
-//     operations. Key rotation has the largest impact on attention accuracy
-//     since Q*K^T is the inner product that TurboQuant targets.
+//	Keys:   split(packed, norm) → LloydMaxDequantize → inverse FWHT → rescale by norm
+//	Values: split(packed, norm) → LloydMaxDequantize → inverse FWHT → rescale by norm
 type TurboQuantWrapper struct {
-	inner    Cache
+	cache *Causal // single cache: key=compressed_key, value=compressed_value
+
 	bitWidth int
+	mseBits  int // bitWidth - 1: actual quantization bits for Lloyd-Max
 	backend  ml.Backend
 	layer    int
 
-	mu        sync.Mutex
-	rotations map[int]*rotationPair
-	rotCtxs   map[int]ml.Context
+	// Seed split into hi/lo 32-bit halves for the FWHT GGML op
+	keySeedHi uint32
+	keySeedLo uint32
+	valSeedHi uint32
+	valSeedLo uint32
+
+	// Track which head dims we've logged initialization for
+	loggedDims map[int]bool
 }
 
 var _ CheckpointCache = (*TurboQuantWrapper)(nil)
 
-type rotationPair struct {
-	// forward stores Pi^T in GGML format.
-	// GGML Mulmat(A, B) computes A^T @ B.
-	// So forward.Mulmat(X) = (Pi^T)^T @ X = Pi @ X.
-	forward ml.Tensor
-
-	// inverse stores Pi in GGML format.
-	// inverse.Mulmat(X) = Pi^T @ X.
-	inverse ml.Tensor
+func noopShift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
+	return key, nil
 }
 
-func NewTurboQuantWrapper(inner Cache, tqDType ml.DType) *TurboQuantWrapper {
+func NewTurboQuantWrapper(tqDType ml.DType) *TurboQuantWrapper {
 	bitWidth := turboquant.BitWidthTQ4
 	if tqDType == ml.DTypeTQ3 {
 		bitWidth = turboquant.BitWidthTQ3
 	}
 
+	keySeed := turboquant.TurboQuantSeed
+	valSeed := turboquant.TurboQuantValueSeed
 	return &TurboQuantWrapper{
-		inner:     inner,
-		bitWidth:  bitWidth,
-		rotations: make(map[int]*rotationPair),
-		rotCtxs:   make(map[int]ml.Context),
+		cache:      NewCausalCache(noopShift),
+		bitWidth:   bitWidth,
+		mseBits:    bitWidth - 1,
+		keySeedHi:  uint32(keySeed >> 32),
+		keySeedLo:  uint32(keySeed & 0xFFFFFFFF),
+		valSeedHi:  uint32(valSeed >> 32),
+		valSeedLo:  uint32(valSeed & 0xFFFFFFFF),
+		loggedDims: make(map[int]bool),
 	}
 }
 
 func (w *TurboQuantWrapper) Init(backend ml.Backend, dtype ml.DType, maxSequences, capacity, maxBatch int) {
 	w.backend = backend
-
-	// ! The inner cache uses Q4_0 regardless of whether tq3 or tq4 was requested.
-	// Q4_0 provides ~4.5 bits/element effective storage. The rotation transform
-	// makes this dramatically more effective than raw Q4_0 by eliminating outlier
-	// channels that cause block quantization distortion.
-	w.inner.Init(backend, ml.DTypeQ40, maxSequences, capacity, maxBatch)
+	// Cache stores packed I32 bit patterns as F32 (for ggml_set_rows compatibility).
+	w.cache.Init(backend, ml.DTypeF32, maxSequences, capacity, maxBatch)
 }
 
 func (w *TurboQuantWrapper) Close() {
-	for _, ctx := range w.rotCtxs {
-		ctx.Close()
-	}
-	w.inner.Close()
+	w.cache.Close()
 }
 
 func (w *TurboQuantWrapper) SetLayer(layer int) {
 	w.layer = layer
-	w.inner.SetLayer(layer)
+	w.cache.SetLayer(layer)
 }
-func (w *TurboQuantWrapper) SetConfig(config ml.CacheConfig)   { w.inner.SetConfig(config) }
-func (w *TurboQuantWrapper) CopyPrefix(src, dst int, l int32)  { w.inner.CopyPrefix(src, dst, l) }
-func (w *TurboQuantWrapper) CanResume(seq int, pos int32) bool { return w.inner.CanResume(seq, pos) }
+
+func (w *TurboQuantWrapper) SetConfig(config ml.CacheConfig) {
+	// Packed indices — PermutedV doesn't apply.
+	plainConfig := config
+	plainConfig.PermutedV = false
+	w.cache.SetConfig(plainConfig)
+}
+
+func (w *TurboQuantWrapper) CopyPrefix(src, dst int, l int32) {
+	w.cache.CopyPrefix(src, dst, l)
+}
+
+func (w *TurboQuantWrapper) CanResume(seq int, pos int32) bool {
+	return w.cache.CanResume(seq, pos)
+}
 
 func (w *TurboQuantWrapper) StartForward(ctx ml.Context, batch input.Batch, reserve bool) error {
-	return w.inner.StartForward(ctx, batch, reserve)
+	return w.cache.StartForward(ctx, batch, reserve)
 }
 
 func (w *TurboQuantWrapper) Remove(seq int, beginIndex, endIndex int32) error {
-	return w.inner.Remove(seq, beginIndex, endIndex)
+	return w.cache.Remove(seq, beginIndex, endIndex)
 }
 
 func (w *TurboQuantWrapper) PrepareRestore(seq int, targetPos int32) (int32, bool) {
-	if cc, ok := w.inner.(CheckpointCache); ok {
-		return cc.PrepareRestore(seq, targetPos)
-	}
-
-	// Preserve non-checkpoint cache behavior used by ollamarunner:
-	// keep targetPos when the cache can resume, otherwise signal reprocess.
-	if w.inner.CanResume(seq, targetPos) {
+	if w.cache.CanResume(seq, targetPos) {
 		return targetPos, true
 	}
-
 	return 0, false
+}
+
+// compressTensor applies the TurboQuant pipeline: normalize → FWHT → LloydMax → concat norm.
+func (w *TurboQuantWrapper) compressTensor(ctx ml.Context, t ml.Tensor, seedHi, seedLo uint32) ml.Tensor {
+	headDim := t.Dim(0)
+
+	norm := t.Sqr(ctx).SumRows(ctx).Sqrt(ctx)
+	normSafe := norm.Clamp(ctx, 1e-12, 1e30)
+	normalized := t.Div(ctx, normSafe)
+
+	rotated := normalized.FWHT(ctx, seedHi, seedLo, false)
+
+	packed := rotated.LloydMaxQuantize(ctx, w.mseBits, headDim)
+
+	return packed.Concat(ctx, norm, 0)
+}
+
+// decompressTensor reverses the TurboQuant pipeline using a single fused GGML op.
+// TQDecompress combines LloydMaxDQ + inverse FWHT + norm rescale in one kernel,
+// eliminating ALL intermediate tensors from the GGML graph. This is critical because
+// Q4_0's flash attention reads compressed data on-the-fly with zero graph overhead,
+// while separate DQ→FWHT→Mul ops create ~1 GiB of intermediates at 128k context.
+func (w *TurboQuantWrapper) decompressTensor(ctx ml.Context, withNorm ml.Tensor, seedHi, seedLo uint32) ml.Tensor {
+	dim0 := withNorm.Dim(0)
+	packedDim := dim0 - 1
+	origDim := packedDim * 32 / w.mseBits
+
+	return withNorm.TQDecompress(ctx, w.mseBits, origDim, seedHi, seedLo)
 }
 
 func (w *TurboQuantWrapper) Put(ctx ml.Context, key, value ml.Tensor) {
 	headDim := key.Dim(0)
-	rot := w.getOrCreateRotation(headDim)
 
-	if rot != nil {
-		key = rot.forward.Mulmat(ctx, key)
+	// Fall back for non-power-of-2 head dims (FWHT requires power of 2)
+	if !isPowerOf2(headDim) {
+		w.cache.Put(ctx, key, value)
+		return
 	}
 
-	w.inner.Put(ctx, key, value)
+	keyCompressed := w.compressTensor(ctx, key, w.keySeedHi, w.keySeedLo)
+	valCompressed := w.compressTensor(ctx, value, w.valSeedHi, w.valSeedLo)
+	w.cache.Put(ctx, keyCompressed, valCompressed)
+
+	w.logInit(headDim)
 }
 
 func (w *TurboQuantWrapper) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor) {
-	key, value, mask := w.inner.Get(ctx)
+	keyWithNorm, valWithNorm, mask := w.cache.Get(ctx)
 
-	headDim := key.Dim(0)
-	rot := w.getOrCreateRotation(headDim)
-
-	if rot != nil {
-		// Metal does not provide all f32 x q4_0 matmul variants needed for
-		// rotation. Cast cache output to f32 before applying inverse rotation.
-		if key.DType() != ml.DTypeF32 {
-			key = key.Cast(ctx, ml.DTypeF32)
-		}
-		key = rot.inverse.Mulmat(ctx, key)
+	dim0 := keyWithNorm.Dim(0)
+	if dim0 == 0 {
+		return keyWithNorm, valWithNorm, mask
 	}
+
+	key := w.decompressTensor(ctx, keyWithNorm, w.keySeedHi, w.keySeedLo)
+	value := w.decompressTensor(ctx, valWithNorm, w.valSeedHi, w.valSeedLo)
 
 	return key, value, mask
 }
 
-func (w *TurboQuantWrapper) getOrCreateRotation(headDim int) *rotationPair {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	if rot, ok := w.rotations[headDim]; ok {
-		return rot
+func (w *TurboQuantWrapper) logInit(headDim int) {
+	if !w.loggedDims[headDim] {
+		w.loggedDims[headDim] = true
+		packedDim := headDim * w.mseBits / 32
+		storedDim := packedDim + 1 // packed indices + norm
+		bytesPerHead := storedDim * 4 // F32 = 4 bytes each
+		slog.Info("TurboQuant cache initialized",
+			"head_dim", headDim,
+			"bit_width", w.bitWidth,
+			"mse_bits", w.mseBits,
+			"stored_dim", storedDim,
+			"bytes_per_head_key+val", bytesPerHead*2,
+			"compression_ratio", float64(headDim*2)/float64(storedDim*2))
 	}
-
-	if !isPowerOf2(headDim) {
-		slog.Warn("TurboQuant requires power-of-2 head dimension, skipping rotation",
-			"head_dim", headDim)
-		w.rotations[headDim] = nil
-		return nil
-	}
-
-	seed := turboquant.TurboQuantSeed
-
-	piData := turboquant.GenerateRotation(headDim, seed)
-	piTData := turboquant.GenerateRotationTranspose(headDim, seed)
-
-	rotCtx := w.backend.NewContextSize(2).Layer(w.layer)
-	piTensor := rotCtx.FromFloats(piData, headDim, headDim)
-	piTTensor := rotCtx.FromFloats(piTData, headDim, headDim)
-
-	rot := &rotationPair{
-		forward: piTTensor,
-		inverse: piTensor,
-	}
-
-	w.rotations[headDim] = rot
-	w.rotCtxs[headDim] = rotCtx
-
-	slog.Info("TurboQuant: initialized randomized Hadamard rotation",
-		"head_dim", headDim,
-		"bit_width", w.bitWidth,
-		"inner_dtype", "q4_0",
-		"matrix_bytes", fmt.Sprintf("%dKB", headDim*headDim*4/1024))
-
-	return rot
 }
 
 func isPowerOf2(n int) bool {

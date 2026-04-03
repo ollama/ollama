@@ -1048,9 +1048,13 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "OPT_STEP_SGD",
 
     "GLU",
+    "FWHT",
+    "LLOYD_MAX_Q",
+    "LLOYD_MAX_DQ",
+    "TQ_DECOMPRESS",
 };
 
-static_assert(GGML_OP_COUNT == 95, "GGML_OP_COUNT != 95");
+static_assert(GGML_OP_COUNT == 99, "GGML_OP_COUNT != 99");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1157,9 +1161,13 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "sgd(x)",
 
     "glu(x)",
+
+    "fwht(x)",
+    "lloyd_max_q(x)",
+    "lloyd_max_dq(x)",
 };
 
-static_assert(GGML_OP_COUNT == 95, "GGML_OP_COUNT != 95");
+static_assert(GGML_OP_COUNT == 99, "GGML_OP_COUNT != 99");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -3016,6 +3024,136 @@ struct ggml_tensor * ggml_swiglu_oai(
     struct ggml_tensor * result = ggml_glu_impl(ctx, a, b, GGML_GLU_OP_SWIGLU_OAI, false);
     ggml_set_op_params_f32(result, 2, alpha);
     ggml_set_op_params_f32(result, 3, limit);
+
+    return result;
+}
+
+// ggml_fwht
+
+struct ggml_tensor * ggml_fwht(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        uint32_t              seed_hi,
+        uint32_t              seed_lo,
+        int                   inverse) {
+    GGML_ASSERT(a->type == GGML_TYPE_F32 || a->type == GGML_TYPE_F16);
+
+    struct ggml_tensor * result = ggml_dup_tensor(ctx, a);
+
+    // Pack params: [0] = seed_hi, [1] = seed_lo, [2] = inverse
+    ggml_set_op_params_i32(result, 0, (int32_t) seed_hi);
+    ggml_set_op_params_i32(result, 1, (int32_t) seed_lo);
+    ggml_set_op_params_i32(result, 2, inverse);
+
+    result->op     = GGML_OP_FWHT;
+    result->src[0] = a;
+
+    return result;
+}
+
+// ggml_lloyd_max_quantize
+
+struct ggml_tensor * ggml_lloyd_max_quantize(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        int                   mse_bits,
+        int                   dim) {
+    GGML_ASSERT(a->type == GGML_TYPE_F32);
+    GGML_ASSERT(mse_bits == 2 || mse_bits == 3);
+    GGML_ASSERT(dim > 0 && (dim & (dim - 1)) == 0); // power of 2
+
+    // Output shape: replace ne[0]=dim with packed_d = dim * mse_bits / 32
+    int64_t packed_d = (int64_t)dim * mse_bits / 32;
+
+    // Output is F32 (not I32) so packed indices can flow through SetRows.
+    // The packed bit patterns are stored via memcpy/reinterpret_cast.
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, (int64_t[]){
+        packed_d, a->ne[1], a->ne[2], a->ne[3]
+    });
+
+    ggml_set_op_params_i32(result, 0, mse_bits);
+    ggml_set_op_params_i32(result, 1, dim);
+
+    result->op     = GGML_OP_LLOYD_MAX_Q;
+    result->src[0] = a;
+
+    return result;
+}
+
+// ggml_lloyd_max_dequantize
+
+struct ggml_tensor * ggml_lloyd_max_dequantize(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        int                   mse_bits,
+        int                   dim) {
+    // Input is F32 with packed I32 bit patterns (stored via memcpy/reinterpret_cast).
+    GGML_ASSERT(a->type == GGML_TYPE_F32);
+    GGML_ASSERT(mse_bits == 2 || mse_bits == 3);
+    GGML_ASSERT(dim > 0);
+
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, (int64_t[]){
+        dim, a->ne[1], a->ne[2], a->ne[3]
+    });
+
+    ggml_set_op_params_i32(result, 0, mse_bits);
+    ggml_set_op_params_i32(result, 1, dim);
+
+    result->op     = GGML_OP_LLOYD_MAX_DQ;
+    result->src[0] = a;
+
+    return result;
+}
+
+struct ggml_tensor * ggml_lloyd_max_dequantize_f16(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        int                   mse_bits,
+        int                   dim) {
+    GGML_ASSERT(a->type == GGML_TYPE_F32);
+    GGML_ASSERT(mse_bits == 2 || mse_bits == 3);
+    GGML_ASSERT(dim > 0);
+
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F16, GGML_MAX_DIMS, (int64_t[]){
+        dim, a->ne[1], a->ne[2], a->ne[3]
+    });
+
+    ggml_set_op_params_i32(result, 0, mse_bits);
+    ggml_set_op_params_i32(result, 1, dim);
+
+    result->op     = GGML_OP_LLOYD_MAX_DQ;
+    result->src[0] = a;
+
+    return result;
+}
+
+// ggml_tq_decompress
+
+struct ggml_tensor * ggml_tq_decompress(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        int                   mse_bits,
+        int                   dim,
+        uint32_t              seed_hi,
+        uint32_t              seed_lo) {
+    // Input: F32 tensor with shape [packed_d+1, n_heads, seq_len, batch]
+    // packed_d = dim * mse_bits / 32, last element per row is L2 norm
+    GGML_ASSERT(a->type == GGML_TYPE_F32);
+    GGML_ASSERT(mse_bits == 2 || mse_bits == 3);
+    GGML_ASSERT(dim > 0 && (dim & (dim - 1)) == 0); // power of 2
+
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F16, GGML_MAX_DIMS, (int64_t[]){
+        dim, a->ne[1], a->ne[2], a->ne[3]
+    });
+
+    // Pack params: [mse_bits, dim, seed_hi, seed_lo]
+    ggml_set_op_params_i32(result, 0, mse_bits);
+    ggml_set_op_params_i32(result, 1, dim);
+    ggml_set_op_params_i32(result, 2, (int32_t) seed_hi);
+    ggml_set_op_params_i32(result, 3, (int32_t) seed_lo);
+
+    result->op     = GGML_OP_TQ_DECOMPRESS;
+    result->src[0] = a;
 
     return result;
 }

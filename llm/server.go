@@ -761,6 +761,13 @@ func (s *ollamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, gpus 
 	pastAllocations := make(map[uint64]struct{})
 	var backoff float32
 
+	// TurboQuant decompression creates larger compute graph buffers than standard
+	// cache types (F16 K+V intermediates from TQDecompress ops). Start with a
+	// higher initial backoff to prevent the scheduler from over-allocating layers.
+	if strings.HasPrefix(s.loadRequest.KvCacheType, "tq") {
+		backoff = 0.2
+	}
+
 	gpuLayers, err := s.createLayout(systemInfo, gpus, s.mem, requireFull, backoff)
 	if err != nil {
 		return nil, err

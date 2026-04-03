@@ -102,3 +102,55 @@ func TestCodebookNumCentroids(t *testing.T) {
 		}
 	}
 }
+
+func TestCodebookQuantizeDequantizeTQ3(t *testing.T) {
+	dim := 128
+	nElements := dim * 32 // batch=1, heads=32
+	cb := NewCodebook(3, dim)
+
+	original := make([]float32, nElements)
+	// Use centroid values exactly to test exact round trip mapping
+	for i := 0; i < nElements; i++ {
+		idx := i % len(cb.Centroids)
+		original[i] = cb.Centroids[idx]
+	}
+
+	packed := cb.Quantize(original)
+	if len(packed) != nElements/4 {
+		t.Fatalf("TQ3 packed length err: got %d bytes, want %d bytes", len(packed), nElements/4)
+	}
+
+	recovered := cb.Dequantize(packed, nElements)
+
+	for i := 0; i < nElements; i++ {
+		if recovered[i] != original[i] {
+			t.Fatalf("Mismatch at %d: got %f, want %f", i, recovered[i], original[i])
+		}
+	}
+}
+
+func TestCodebookQuantizeDequantizeTQ4(t *testing.T) {
+	dim := 128
+	nElements := dim * 32 // batch=1, heads=32
+	cb := NewCodebook(4, dim)
+
+	original := make([]float32, nElements)
+	// Use centroid values exactly to test exact round trip mapping
+	for i := 0; i < nElements; i++ {
+		idx := i % len(cb.Centroids)
+		original[i] = cb.Centroids[idx]
+	}
+
+	packed := cb.Quantize(original)
+	if len(packed) != (nElements*3)/8 {
+		t.Fatalf("TQ4 packed length err: got %d bytes, want %d bytes", len(packed), (nElements*3)/8)
+	}
+
+	recovered := cb.Dequantize(packed, nElements)
+
+	for i := 0; i < nElements; i++ {
+		if math.Abs(float64(recovered[i]-original[i])) > 1e-6 {
+			t.Fatalf("Mismatch at %d: got %f, want %f", i, recovered[i], original[i])
+		}
+	}
+}

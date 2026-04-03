@@ -40,7 +40,7 @@ var (
 // Conv state shape (per layer, per sequence): [convDim, convChannels]
 // Recurrent state shape (per layer, per sequence): [recurrentStateSize]
 type Recurrent struct {
-	kv *Causal
+	kv Cache
 
 	backend      ml.Backend
 	dtype        ml.DType
@@ -118,6 +118,13 @@ func NewRecurrentCache(config RecurrentConfig) *Recurrent {
 		checkpointRecurCtxs: make(map[int]ml.Context),
 		checkpointReserved:  make(map[int]struct{}),
 	}
+}
+
+// SetKVCache replaces the inner KV cache used for attention layers.
+// This allows wrapping it (e.g., with TurboQuantWrapper) without
+// replacing the outer Recurrent/HybridCache that models type-assert.
+func (c *Recurrent) SetKVCache(kv Cache) {
+	c.kv = kv
 }
 
 func (c *Recurrent) Init(backend ml.Backend, dtype ml.DType, maxSequences, capacity, maxBatch int) {

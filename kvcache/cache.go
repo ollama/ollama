@@ -82,3 +82,11 @@ type Cache interface {
 type CheckpointCache interface {
 	PrepareRestore(seq int, targetPos int32) (int32, bool)
 }
+
+// KVCacheAccessor is implemented by composite caches (like Recurrent) that
+// delegate KV operations to an inner cache. It allows replacing the inner
+// KV cache with a wrapper (e.g., TurboQuantWrapper) without breaking type
+// assertions on the outer cache.
+type KVCacheAccessor interface {
+	SetKVCache(Cache)
+}

@@ -241,6 +241,28 @@ type Tensor interface {
 	SolveTri(ctx Context, b Tensor, lower, left, unitDiag bool) Tensor
 
 	Interpolate(ctx Context, dims [4]int, samplingMode SamplingMode) Tensor
+
+	// FWHT applies a Fast Walsh-Hadamard Transform with random sign-flip diagonal.
+	// Used by TurboQuant for KV cache rotation compression.
+	// seedHi/seedLo are the upper/lower 32 bits of the uint64 seed.
+	// inverse=false for forward rotation, true for inverse.
+	FWHT(ctx Context, seedHi, seedLo uint32, inverse bool) Tensor
+
+	// LloydMaxQuantize quantizes f32 data using Lloyd-Max optimal centroids for
+	// N(0,1/dim). Packs indices as bit-stream into I32. mseBits=2 (TQ3) or 3 (TQ4).
+	LloydMaxQuantize(ctx Context, mseBits, dim int) Tensor
+
+	// LloydMaxDequantize unpacks I32 bit-stream indices and maps to Lloyd-Max centroids.
+	LloydMaxDequantize(ctx Context, mseBits, dim int) Tensor
+
+	// LloydMaxDequantizeF16 is like LloydMaxDequantize but outputs F16 directly,
+	// eliminating a separate Cast and halving the output tensor size.
+	LloydMaxDequantizeF16(ctx Context, mseBits, dim int) Tensor
+
+	// TQDecompress is a fused TurboQuant decompress op: LloydMaxDQ + inverse FWHT + norm multiply.
+	// Input is [packed_d+1, ...] (packed indices + L2 norm). Output is F16 [dim, ...].
+	// Eliminates all intermediate tensors from the GGML graph.
+	TQDecompress(ctx Context, mseBits, dim int, seedHi, seedLo uint32) Tensor
 }
 
 // ScaledDotProductAttention implements a fused attention

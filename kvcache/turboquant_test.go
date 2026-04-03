@@ -4,115 +4,47 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/ml"
-	"github.com/ollama/ollama/model/input"
 )
 
-type turboQuantTestBaseCache struct {
-	canResume        bool
-	canResumeCalls   int
-	canResumeLastSeq int
-	canResumeLastPos int32
-}
+func TestTurboQuantPrepareRestoreUsesCanResume(t *testing.T) {
+	w := NewTurboQuantWrapper(ml.DTypeTQ4)
 
-func (c *turboQuantTestBaseCache) SetLayer(layer int) {}
-
-func (c *turboQuantTestBaseCache) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor) {
-	return nil, nil, nil
-}
-
-func (c *turboQuantTestBaseCache) Put(ctx ml.Context, key, value ml.Tensor) {}
-
-func (c *turboQuantTestBaseCache) SetConfig(config ml.CacheConfig) {}
-
-func (c *turboQuantTestBaseCache) Init(backend ml.Backend, dtype ml.DType, maxSequences, capacity, maxBatch int) {
-}
-
-func (c *turboQuantTestBaseCache) Close() {}
-
-func (c *turboQuantTestBaseCache) StartForward(ctx ml.Context, batch input.Batch, reserve bool) error {
-	return nil
-}
-
-func (c *turboQuantTestBaseCache) CopyPrefix(srcSeq, dstSeq int, len int32) {}
-
-func (c *turboQuantTestBaseCache) CanResume(seq int, pos int32) bool {
-	c.canResumeCalls++
-	c.canResumeLastSeq = seq
-	c.canResumeLastPos = pos
-	return c.canResume
-}
-
-func (c *turboQuantTestBaseCache) Remove(seq int, beginIndex, endIndex int32) error {
-	return nil
-}
-
-type turboQuantTestCheckpointCache struct {
-	turboQuantTestBaseCache
-	restorePos      int32
-	restoreOK       bool
-	prepareCalls    int
-	prepareLastSeq  int
-	prepareLastPos  int32
-}
-
-func (c *turboQuantTestCheckpointCache) PrepareRestore(seq int, targetPos int32) (int32, bool) {
-	c.prepareCalls++
-	c.prepareLastSeq = seq
-	c.prepareLastPos = targetPos
-	return c.restorePos, c.restoreOK
-}
-
-func TestTurboQuantPrepareRestorePassthrough(t *testing.T) {
-	inner := &turboQuantTestCheckpointCache{
-		restorePos: 7,
-		restoreOK:  true,
-	}
-
-	w := NewTurboQuantWrapper(inner, ml.DTypeTQ4)
-
+	// Without Init, CanResume returns false (no sequences loaded)
 	gotPos, gotOK := w.PrepareRestore(2, 11)
-	if !gotOK || gotPos != 7 {
-		t.Fatalf("PrepareRestore() = (%d, %v), want (7, true)", gotPos, gotOK)
-	}
-
-	if inner.prepareCalls != 1 {
-		t.Fatalf("inner PrepareRestore calls = %d, want 1", inner.prepareCalls)
-	}
-
-	if inner.prepareLastSeq != 2 || inner.prepareLastPos != 11 {
-		t.Fatalf("inner PrepareRestore args = (%d, %d), want (2, 11)", inner.prepareLastSeq, inner.prepareLastPos)
+	if gotOK {
+		t.Fatalf("PrepareRestore() = (%d, %v), want (0, false) when no data loaded", gotPos, gotOK)
 	}
 }
 
-func TestTurboQuantPrepareRestoreFallsBackToCanResume(t *testing.T) {
-	inner := &turboQuantTestBaseCache{canResume: true}
-	w := NewTurboQuantWrapper(inner, ml.DTypeTQ3)
-
-	gotPos, gotOK := w.PrepareRestore(3, 9)
-	if !gotOK || gotPos != 9 {
-		t.Fatalf("PrepareRestore() = (%d, %v), want (9, true)", gotPos, gotOK)
+func TestTurboQuantMseBitsFromDType(t *testing.T) {
+	tq3 := NewTurboQuantWrapper(ml.DTypeTQ3)
+	if tq3.mseBits != 2 {
+		t.Errorf("TQ3 mseBits = %d, want 2", tq3.mseBits)
 	}
 
-	if inner.canResumeCalls != 1 {
-		t.Fatalf("inner CanResume calls = %d, want 1", inner.canResumeCalls)
-	}
-
-	if inner.canResumeLastSeq != 3 || inner.canResumeLastPos != 9 {
-		t.Fatalf("inner CanResume args = (%d, %d), want (3, 9)", inner.canResumeLastSeq, inner.canResumeLastPos)
+	tq4 := NewTurboQuantWrapper(ml.DTypeTQ4)
+	if tq4.mseBits != 3 {
+		t.Errorf("TQ4 mseBits = %d, want 3", tq4.mseBits)
 	}
 }
 
-func TestTurboQuantPrepareRestoreFallbackFailure(t *testing.T) {
-	inner := &turboQuantTestBaseCache{canResume: false}
-	w := NewTurboQuantWrapper(inner, ml.DTypeTQ4)
+func TestTurboQuantSeedsSeparate(t *testing.T) {
+	w := NewTurboQuantWrapper(ml.DTypeTQ4)
 
-	gotPos, gotOK := w.PrepareRestore(4, 13)
-	if gotOK || gotPos != 0 {
-		t.Fatalf("PrepareRestore() = (%d, %v), want (0, false)", gotPos, gotOK)
-	}
-
-	if inner.canResumeCalls != 1 {
-		t.Fatalf("inner CanResume calls = %d, want 1", inner.canResumeCalls)
+	if w.keySeedHi == w.valSeedHi || w.keySeedLo == w.valSeedLo {
+		t.Errorf("key and value seeds should differ: key=(%x,%x) val=(%x,%x)",
+			w.keySeedHi, w.keySeedLo, w.valSeedHi, w.valSeedLo)
 	}
 }
 
+func TestTurboQuantSetConfigDisablesPermutedV(t *testing.T) {
+	w := NewTurboQuantWrapper(ml.DTypeTQ4)
+
+	config := ml.CacheConfig{PermutedV: true}
+	w.SetConfig(config)
+
+	// Internal cache should have PermutedV=false since it stores packed indices
+	if w.cache.config != nil && w.cache.config.PermutedV {
+		t.Error("cache should have PermutedV=false")
+	}
+}
