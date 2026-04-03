@@ -15,8 +15,6 @@ const defaultSystemMessage = "You can do function calling with the following fun
 func (r *FunctionGemmaRenderer) Render(messages []api.Message, tools []api.Tool, thinkValue *api.ThinkValue) (string, error) {
 	var sb strings.Builder
 
-	sb.WriteString("<bos>")
-
 	var systemMessage string
 	var loopMessages []api.Message
 	if len(messages) > 0 && (messages[0].Role == "system" || messages[0].Role == "developer") {
