@@ -18,13 +18,17 @@ import (
 	"github.com/ollama/ollama/x/tokenizer"
 )
 
+// Request is a short-lived struct that carries a completion request through
+// a channel from the HTTP handler to the runner goroutine. The ctx field
+// must travel with the request so that cancellation propagates across the
+// channel boundary.
 type Request struct {
 	CompletionRequest
 	Responses chan CompletionResponse
-	Pipeline  func(Request) error
+	Pipeline  func(context.Context, Request) error
 
-	Ctx context.Context
-
+	Ctx     context.Context //nolint:containedctx
+	Tokens  []int32
 	Sampler *sample.Sampler
 }
 
@@ -131,7 +135,7 @@ func (r *Runner) Run(host, port string, mux http.Handler) error {
 			case <-ctx.Done():
 				return nil
 			case request := <-r.Requests:
-				if err := request.Pipeline(request); err != nil {
+				if err := request.Pipeline(request.Ctx, request); err != nil {
 					slog.Info("Request terminated", "error", err)
 					var statusErr api.StatusError
 					if !errors.As(err, &statusErr) {
