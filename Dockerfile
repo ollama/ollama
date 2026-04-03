@@ -155,7 +155,7 @@ ENV PATH=/opt/rh/gcc-toolset-11/root/usr/bin:$PATH
 COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'OpenVINO' -DOpenVINO_DIR="/opt/openvino/runtime/cmake/OpenVINOConfig.cmake" \
+    cmake --preset 'OpenVINO' -DOpenVINO_DIR="/opt/openvino/runtime/cmake" \
         && cmake --build --preset 'OpenVINO' -- -l $(nproc) \
         && cmake --install build --component OpenVINO --strip
 

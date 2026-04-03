@@ -195,6 +195,14 @@ if(NOT APPLE)
     endif()
 endif()
 
+if(GGML_OPENVINO AND TARGET ggml-openvino)
+    target_include_directories(ggml-openvino PRIVATE ${GGML_INCLUDE_DIRS})
+    install(TARGETS ggml-openvino
+        RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT OpenVINO
+        LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT OpenVINO
+    )
+endif()
+
 option(MLX_ENGINE "Enable MLX backend" OFF)
 if(MLX_ENGINE)
     message(STATUS "Setting up MLX (this takes a while...)")

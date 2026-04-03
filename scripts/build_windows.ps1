@@ -11,6 +11,8 @@ $ErrorActionPreference = "Continue"
 
 $script:OPENVINO_WINDOWS_ARCHIVE_URL = "https://storage.openvinotoolkit.org/repositories/openvino/packages/2026.0/windows/openvino_toolkit_windows_2026.0.0.20965.c6d6a13a886_x86_64.zip"
 $script:OPENVINO_WINDOWS_ROOT = Join-Path $PWD "build\deps\openvino-windows"
+$script:OPENCL_WINDOWS_ARCHIVE_URL = "https://github.com/KhronosGroup/OpenCL-SDK/releases/download/v2025.07.23/OpenCL-SDK-v2025.07.23-Win-x64.zip"
+$script:OPENCL_WINDOWS_ROOT = Join-Path $PWD "build\deps\opencl-windows"
 
 mkdir -Force -path .\dist | Out-Null
 
@@ -329,6 +331,57 @@ function installOpenVino {
     throw "OpenVINO runtime extracted, but runtime\\cmake was not found under $downloadRoot"
 }
 
+function resolveOpenClSdk {
+    if ($env:OPENCL_LIBRARY -and $env:OPENCL_INCLUDE_DIR -and (Test-Path $env:OPENCL_LIBRARY) -and (Test-Path (Join-Path $env:OPENCL_INCLUDE_DIR "CL"))) {
+        return @{
+            Library = $env:OPENCL_LIBRARY
+            IncludeDir = $env:OPENCL_INCLUDE_DIR
+        }
+    }
+
+    $downloadRoot = if ($env:OPENCL_WINDOWS_ROOT) { $env:OPENCL_WINDOWS_ROOT } else { $script:OPENCL_WINDOWS_ROOT }
+    $libraryPath = Join-Path $downloadRoot "lib\OpenCL.lib"
+    $includeDir = Join-Path $downloadRoot "include"
+    if ((Test-Path $libraryPath) -and (Test-Path (Join-Path $includeDir "CL"))) {
+        return @{
+            Library = $libraryPath
+            IncludeDir = $includeDir
+        }
+    }
+
+    return $null
+}
+
+function installOpenClSdk {
+    $downloadRoot = if ($env:OPENCL_WINDOWS_ROOT) { $env:OPENCL_WINDOWS_ROOT } else { $script:OPENCL_WINDOWS_ROOT }
+    $archiveUrl = if ($env:OPENCL_WINDOWS_ARCHIVE_URL) { $env:OPENCL_WINDOWS_ARCHIVE_URL } else { $script:OPENCL_WINDOWS_ARCHIVE_URL }
+    $archivePath = Join-Path $env:TEMP "opencl-windows.zip"
+    $libraryPath = Join-Path $downloadRoot "lib\OpenCL.lib"
+    $includeDir = Join-Path $downloadRoot "include"
+
+    if ((Test-Path $libraryPath) -and (Test-Path (Join-Path $includeDir "CL"))) {
+        return @{
+            Library = $libraryPath
+            IncludeDir = $includeDir
+        }
+    }
+
+    New-Item -ItemType Directory -Force -Path $downloadRoot | Out-Null
+    Write-Output "Downloading OpenCL SDK from $archiveUrl"
+    Invoke-WebRequest -Uri $archiveUrl -OutFile $archivePath
+    Expand-ArchiveStripTopLevel -ArchivePath $archivePath -DestinationPath $downloadRoot
+    Remove-Item -Force -ErrorAction SilentlyContinue $archivePath
+
+    if ((Test-Path $libraryPath) -and (Test-Path (Join-Path $includeDir "CL"))) {
+        return @{
+            Library = $libraryPath
+            IncludeDir = $includeDir
+        }
+    }
+
+    throw "OpenCL SDK extracted, but lib\\OpenCL.lib or include\\CL was not found under $downloadRoot"
+}
+
 function openvino {
     mkdir -Force -path "${script:DIST_DIR}\" | Out-Null
     if ($script:ARCH -ne "arm64") {
@@ -336,9 +389,13 @@ function openvino {
         if (-not $openvinoDir) {
             $openvinoDir = installOpenVino
         }
+        $opencl = resolveOpenClSdk
+        if (-not $opencl) {
+            $opencl = installOpenClSdk
+        }
         if ($openvinoDir) {
             Write-Output "Building OpenVINO backend libraries $openvinoDir"
-            & cmake -B build\openvino --preset OpenVINO -DOpenVINO_DIR="$openvinoDir" --install-prefix $script:DIST_DIR
+            & cmake -B build\openvino --preset OpenVINO -DOpenVINO_DIR="$openvinoDir" -DOpenCL_LIBRARY="$($opencl.Library)" -DOpenCL_INCLUDE_DIR="$($opencl.IncludeDir)" --install-prefix $script:DIST_DIR
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             & cmake --build build\openvino --target ggml-openvino --config Release --parallel $script:JOBS
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
