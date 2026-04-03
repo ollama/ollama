@@ -3,12 +3,9 @@
 // per-layer snapshots that can be paged in/out of the live MLX cache arrays.
 //
 // Key properties:
-//   - Only one path through the trie is "active" (backed by live MLX arrays)
-//     at a time. Switching paths pages out the frontier node and pages in the
-//     new path.
-//   - Snapshots are only captured at the frontier (end) of the active path.
-//     Intermediate node snapshots come from split prefill.
-//   - All cache layers must stay at the same token offset.
+//   - Each active sequence has its own path through the trie.
+//   - Snapshots are captured at each sequence's frontier (end of its active path).
+//   - All cache layers for a given sequence must stay at the same token offset.
 //   - Sibling edges must not share a common token prefix (compressed trie
 //     invariant).
 //   - begin() always re-evaluates at least one token so the pipeline can seed
@@ -32,8 +29,8 @@ import (
 const maxPagedOutBytes int64 = 8 << 30 // 8 GiB eviction threshold for paged-out snapshot memory
 
 type kvCache struct {
-	root          *trieNode   // root of the prefix trie
-	activePath    []*trieNode // current root→leaf path with live MLX arrays
+	root          *trieNode           // root of the prefix trie
+	activePaths   map[int][]*trieNode // per-sequence root→leaf trie paths
 	caches        []cache.Cache
 	pagedOutBytes int64 // total bytes in paged-out snapshots across the trie
 }
@@ -44,11 +41,12 @@ type pendingSnapshot struct {
 	user   bool
 }
 
-// cacheSession manages caches for a single pipeline run.
+// cacheSession manages caches for a single sequence's pipeline run.
 // Callers should append generated tokens to outputs and
 // defer close to save the cache state.
 type cacheSession struct {
 	cache   *kvCache
+	seqID   int
 	inputs  []int32
 	outputs []int32
 
@@ -73,12 +71,6 @@ func (c *kvCache) ensureCaches(m base.Model) {
 			c.caches[i] = cache.NewKVCache()
 		}
 	}
-	// Register the default sequence for single-sequence prefill.
-	for _, kv := range c.caches {
-		if kv != nil {
-			kv.SetSeqs([]int{0})
-		}
-	}
 }
 
 func (c *kvCache) ensureRoot() {
@@ -86,15 +78,24 @@ func (c *kvCache) ensureRoot() {
 		c.root = &trieNode{
 			lastUsed: time.Now(),
 		}
-		c.activePath = []*trieNode{c.root}
+	}
+	if c.activePaths == nil {
+		c.activePaths = make(map[int][]*trieNode)
 	}
 }
 
-// begin prepares caches for a new request. It finds the nearest
-// matching cache or creates new caches if none match.
-func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
+// begin prepares caches for a new request on the given sequence. It finds
+// the nearest matching cache or creates new caches if none match.
+func (c *kvCache) begin(seqID int, m base.Model, inputs []int32) *cacheSession {
 	c.ensureCaches(m)
 	c.ensureRoot()
+
+	// Ensure the sequence is registered in all cache layers.
+	for _, kv := range c.caches {
+		if kv != nil {
+			kv.SetSeqs([]int{seqID})
+		}
+	}
 
 	matchPath, matched := findBestMatch(c.root, inputs)
 	originalMatched := matched
@@ -106,14 +107,15 @@ func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
 	}
 
 	// Switch to the matched path, paging in/out as needed.
-	c.switchToPath(matchPath, matched)
+	c.switchToPath(seqID, matchPath, matched)
 
 	// switchToPath aligns caches to a common offset
-	prefix := c.minCacheOffset()
+	prefix := c.seqCacheOffset(seqID)
 	remaining := inputs[prefix:]
 
 	session := &cacheSession{
 		cache:     c,
+		seqID:     seqID,
 		inputs:    inputs,
 		caches:    c.caches,
 		remaining: remaining,
@@ -129,20 +131,25 @@ func (c *kvCache) begin(m base.Model, inputs []int32) *cacheSession {
 	if prefix == 0 {
 		msg = "cache miss"
 	}
-	slog.Info(msg, "total", len(inputs), "matched", originalMatched, "cached", prefix, "left", len(remaining))
+	slog.Info(msg, "seq", seqID, "total", len(inputs), "matched", originalMatched, "cached", prefix, "left", len(remaining))
 
 	return session
 }
 
-// switchToPath transitions from the current active path to a new path,
-// paging out diverging segments and paging in the new path.
-func (c *kvCache) switchToPath(newPath []*trieNode, matched int) {
+// switchToPath transitions a sequence from its current active path to a new
+// path, paging out diverging segments and paging in the new path.
+func (c *kvCache) switchToPath(seqID int, newPath []*trieNode, matched int) {
 	defer c.enforceEvictionPolicy()
+
+	oldPath := c.activePaths[seqID]
+	if oldPath == nil {
+		oldPath = []*trieNode{c.root}
+	}
 
 	// Find common ancestor index.
 	commonLen := 0
-	for commonLen < len(c.activePath) && commonLen < len(newPath) {
-		if c.activePath[commonLen] != newPath[commonLen] {
+	for commonLen < len(oldPath) && commonLen < len(newPath) {
+		if oldPath[commonLen] != newPath[commonLen] {
 			break
 		}
 		commonLen++
@@ -150,7 +157,7 @@ func (c *kvCache) switchToPath(newPath []*trieNode, matched int) {
 
 	ancestorOffset := 0
 	if commonLen > 0 {
-		ancestorOffset = c.activePath[commonLen-1].endOffset
+		ancestorOffset = oldPath[commonLen-1].endOffset
 	}
 
 	var pageOutCount, pageInCount int
@@ -161,11 +168,11 @@ func (c *kvCache) switchToPath(newPath []*trieNode, matched int) {
 	// non-leaf nodes here would produce wrong results for non-rewindable
 	// caches (e.g. RecurrentCache) whose state reflects the leaf, not
 	// the intermediate boundary.
-	leaf := len(c.activePath) - 1
+	leaf := len(oldPath) - 1
 	leafDiverges := leaf >= commonLen
-	leafNeedsRewind := matched < c.activePath[leaf].endOffset
+	leafNeedsRewind := matched < oldPath[leaf].endOffset
 	if leafDiverges || leafNeedsRewind {
-		node := c.activePath[leaf]
+		node := oldPath[leaf]
 		if !node.hasAllSnapshots() {
 			fromOffset := node.startOffset()
 			snaps := make([]cache.Snapshot, len(c.caches))
@@ -173,11 +180,11 @@ func (c *kvCache) switchToPath(newPath []*trieNode, matched int) {
 				if kv == nil {
 					continue
 				}
-				snaps[j] = kv.Snapshot(0, fromOffset)
+				snaps[j] = kv.Snapshot(seqID, fromOffset)
 			}
 			node.setSnapshots(snaps, &c.pagedOutBytes)
 			pageOutCount++
-			logutil.Trace(fmt.Sprintf("page out: [%d, %d)", fromOffset, node.endOffset))
+			logutil.Trace(fmt.Sprintf("page out: seq=%d [%d, %d)", seqID, fromOffset, node.endOffset))
 		}
 	}
 
@@ -190,7 +197,7 @@ func (c *kvCache) switchToPath(newPath []*trieNode, matched int) {
 		if kv == nil {
 			continue
 		}
-		if !kv.Restore(0, nil, rewindTarget) {
+		if !kv.Restore(seqID, nil, rewindTarget) {
 			kv.Free()
 		}
 	}
@@ -211,10 +218,10 @@ pageIn:
 			if j >= len(node.snapshots) || node.snapshots[j] == nil {
 				continue
 			}
-			if int(kv.Offsets(0)[0]) >= nodeTarget {
+			if int(kv.Offsets(seqID)[0]) >= nodeTarget {
 				continue
 			}
-			if !kv.Restore(0, node.snapshots[j], nodeTarget) {
+			if !kv.Restore(seqID, node.snapshots[j], nodeTarget) {
 				// Restore failed — stop page-in and let alignment
 				// bring all caches to a consistent offset.
 				break pageIn
@@ -222,38 +229,38 @@ pageIn:
 		}
 		if node.endOffset > ancestorOffset {
 			pageInCount++
-			logutil.Trace(fmt.Sprintf("page in: [%d, %d)", node.startOffset(), nodeTarget))
+			logutil.Trace(fmt.Sprintf("page in: seq=%d [%d, %d)", seqID, node.startOffset(), nodeTarget))
 		}
 	}
 
-	// Align all caches to the minimum offset.
-	c.activePath = newPath
-	minOff := c.minCacheOffset()
+	// Align all caches to the minimum offset for this sequence.
+	c.activePaths[seqID] = newPath
+	minOff := c.seqCacheOffset(seqID)
 	for _, kv := range c.caches {
-		if kv != nil && int(kv.Offsets(0)[0]) != minOff {
-			if !kv.Restore(0, nil, minOff) {
-				slog.Warn("failed to restore cache, freeing all caches", "offset", minOff)
+		if kv != nil && int(kv.Offsets(seqID)[0]) != minOff {
+			if !kv.Restore(seqID, nil, minOff) {
+				slog.Warn("failed to restore cache, freeing all caches", "seq", seqID, "offset", minOff)
 				c.freeAll()
 				break
 			}
 		}
 	}
-	for i := len(c.activePath) - 1; i >= 0; i-- {
-		if c.activePath[i].endOffset <= minOff {
-			c.activePath = c.activePath[:i+1]
+	path := c.activePaths[seqID]
+	for i := len(path) - 1; i >= 0; i-- {
+		if path[i].endOffset <= minOff {
+			c.activePaths[seqID] = path[:i+1]
 			break
 		}
 	}
 
-	// Update last-used time on only the final used node. For recurrent
-	// caches we don't need the intermediate snapshots and for KV caches
-	// we can reslice the data out of merged edges.
-	if len(c.activePath) > 0 {
-		c.activePath[len(c.activePath)-1].lastUsed = time.Now()
+	// Update last-used time on only the final used node.
+	path = c.activePaths[seqID]
+	if len(path) > 0 {
+		path[len(path)-1].lastUsed = time.Now()
 	}
 
 	if pageOutCount > 0 || pageInCount > 0 {
-		slog.Debug("switching cache path", "page_out", pageOutCount, "page_in", pageInCount)
+		slog.Debug("switching cache path", "seq", seqID, "page_out", pageOutCount, "page_in", pageInCount)
 	}
 }
 
@@ -292,7 +299,7 @@ func (s *cacheSession) nextPendingSnapshot() int {
 // has been reached.
 func (s *cacheSession) snapshot() {
 	c := s.cache
-	cacheOffset := c.minCacheOffset()
+	cacheOffset := c.seqCacheOffset(s.seqID)
 	if cacheOffset <= 0 {
 		return
 	}
@@ -307,10 +314,9 @@ func (s *cacheSession) snapshot() {
 		s.pendingSnapshots = s.pendingSnapshots[1:]
 	}
 
-	// The last node in activePath is the frontier where caches are advancing.
-	// cacheOffset is always >= its endOffset: begin() restores caches to this
-	// boundary and prefill advances monotonically forward.
-	frontier := c.activePath[len(c.activePath)-1]
+	// The last node in the sequence's active path is the frontier.
+	path := c.activePaths[s.seqID]
+	frontier := path[len(path)-1]
 
 	// If the frontier already ends at cacheOffset, just ensure it has snapshots.
 	if frontier.endOffset == cacheOffset {
@@ -324,36 +330,28 @@ func (s *cacheSession) snapshot() {
 	}
 
 	if frontier.endOffset > cacheOffset {
-		slog.Warn("snapshot skipped: cacheOffset is behind frontier", "cacheOffset", cacheOffset, "frontierEndOffset", frontier.endOffset)
+		slog.Warn("snapshot skipped: cacheOffset is behind frontier", "seq", s.seqID, "cacheOffset", cacheOffset, "frontierEndOffset", frontier.endOffset)
 		return
 	}
 
 	// Advance the trie to cacheOffset — find or create a node there.
 	edgeTokens := append(s.inputs, s.outputs...)[frontier.endOffset:cacheOffset]
-	frontier = c.advancePath(frontier, edgeTokens, cacheOffset)
+	frontier = c.advancePath(s.seqID, frontier, edgeTokens, cacheOffset)
 
-	// Attach fresh snapshots from the live caches. Always use fresh
-	// snapshots even if the node already has some (e.g. from splitNode's
-	// Cache.Split which may be incomplete for non-splittable caches
-	// like RecurrentCache).
+	// Attach fresh snapshots from the live caches.
 	if user {
 		frontier.user = true
 	}
 	s.attachSnapshots(frontier, cacheOffset)
 }
 
-// advancePath advances the active path from the current frontier by matching
-// tokens against existing trie children, splitting partial matches, and
-// appending any remaining tokens as new nodes. Returns the new frontier.
-func (c *kvCache) advancePath(frontier *trieNode, tokens []int32, endOffset int) *trieNode {
-	// Check if existing children already cover some or all of tokens.
-	// tokens may span multiple trie nodes when extending a previous run's
-	// leaf and this snapshot now overlaps that same range.
+// advancePath advances the active path for a sequence from the current
+// frontier by matching tokens against existing trie children, splitting
+// partial matches, and appending any remaining tokens as new nodes.
+func (c *kvCache) advancePath(seqID int, frontier *trieNode, tokens []int32, endOffset int) *trieNode {
 	matchPath, matched := findBestMatch(frontier, tokens)
-	// matchPath[0] is frontier itself; the rest are newly traversed nodes.
 	remaining := tokens[matched:]
 
-	// Check for a partial match within the last node's edge — if so, split it.
 	if len(matchPath) > 1 {
 		lastNode := matchPath[len(matchPath)-1]
 		matchedInEdge := frontier.endOffset + matched - lastNode.startOffset()
@@ -362,49 +360,46 @@ func (c *kvCache) advancePath(frontier *trieNode, tokens []int32, endOffset int)
 		}
 	}
 
-	// Append traversed nodes (excluding frontier) to the active path.
-	c.activePath = append(c.activePath, matchPath[1:]...)
+	path := c.activePaths[seqID]
+	path = append(path, matchPath[1:]...)
 	dest := matchPath[len(matchPath)-1]
 
 	if len(remaining) > 0 {
-		// Drop non-user snapshots so appendTokens can extend in-place
-		// rather than creating a new child node.
 		if len(dest.children) == 0 && !dest.user {
 			dest.setSnapshots(nil, &c.pagedOutBytes)
 		}
 		newDest := dest.appendTokens(c.root, remaining, endOffset)
 		if newDest != dest {
-			c.activePath = append(c.activePath, newDest)
+			path = append(path, newDest)
 		}
 		dest = newDest
 	}
+	c.activePaths[seqID] = path
 	return dest
 }
 
 // attachSnapshots attaches cache snapshots to a trie node at the given offset.
-// The node must be on the active path (and thus protected from eviction;
-// lastUsed is updated in close()). All non-nil caches must be at the same
-// offset (cacheOffset); a mismatch indicates a bug in the caller.
 func (s *cacheSession) attachSnapshots(node *trieNode, cacheOffset int) {
 	c := s.cache
+	path := c.activePaths[s.seqID]
 
-	if c.activePath[len(c.activePath)-1] != node {
-		slog.Warn("attachSnapshots skipped: node is not the active frontier", "nodeEndOffset", node.endOffset)
+	if path[len(path)-1] != node {
+		slog.Warn("attachSnapshots skipped: node is not the active frontier", "seq", s.seqID, "nodeEndOffset", node.endOffset)
 		return
 	}
 
 	snaps := make([]cache.Snapshot, len(c.caches))
 	for i, kv := range c.caches {
 		if kv != nil {
-			if int(kv.Offsets(0)[0]) != cacheOffset {
-				panic(fmt.Sprintf("attachSnapshots: cache offset mismatch layer %d: expected %d, got %d", i, cacheOffset, int(kv.Offsets(0)[0])))
+			if int(kv.Offsets(s.seqID)[0]) != cacheOffset {
+				panic(fmt.Sprintf("attachSnapshots: cache offset mismatch layer %d seq %d: expected %d, got %d", i, s.seqID, cacheOffset, int(kv.Offsets(s.seqID)[0])))
 			}
-			snaps[i] = kv.Snapshot(0, node.startOffset())
+			snaps[i] = kv.Snapshot(s.seqID, node.startOffset())
 		}
 	}
 	node.setSnapshots(snaps, &c.pagedOutBytes)
 	node.lastUsed = time.Now()
-	slog.Debug("created snapshot", "offset", cacheOffset)
+	slog.Debug("created snapshot", "seq", s.seqID, "offset", cacheOffset)
 	c.enforceEvictionPolicy()
 }
 
@@ -417,14 +412,15 @@ func (c *kvCache) freeAll() {
 	}
 }
 
-func (c *kvCache) minCacheOffset() int {
+// seqCacheOffset returns the minimum cache offset across all layers for a sequence.
+func (c *kvCache) seqCacheOffset(seqID int) int {
 	offset := 0
 	found := false
 	for _, kv := range c.caches {
 		if kv == nil {
 			continue
 		}
-		if off := int(kv.Offsets(0)[0]); !found || off < offset {
+		if off := int(kv.Offsets(seqID)[0]); !found || off < offset {
 			offset = off
 			found = true
 		}
@@ -434,7 +430,7 @@ func (c *kvCache) minCacheOffset() int {
 
 // close saves the token state if the forward pass ran.
 func (s *cacheSession) close() {
-	offset := s.cache.minCacheOffset()
+	offset := s.cache.seqCacheOffset(s.seqID)
 	if offset <= 0 {
 		return
 	}
@@ -453,16 +449,29 @@ func (s *cacheSession) close() {
 
 	// Advance the trie frontier with any newly generated tokens.
 	c := s.cache
-	if len(c.activePath) > 0 {
-		frontier := c.activePath[len(c.activePath)-1]
+	path := c.activePaths[s.seqID]
+	if len(path) > 0 {
+		frontier := path[len(path)-1]
 		stored := append(s.inputs, s.outputs...)
 
 		if offset > frontier.endOffset {
 			newTokens := stored[frontier.endOffset:offset]
-			c.advancePath(frontier, newTokens, offset)
+			c.advancePath(s.seqID, frontier, newTokens, offset)
 		}
-		c.activePath[len(c.activePath)-1].lastUsed = time.Now()
+		path = c.activePaths[s.seqID]
+		path[len(path)-1].lastUsed = time.Now()
 	}
+}
+
+// activeNodeSet returns the set of all trie nodes referenced by any active path.
+func (c *kvCache) activeNodeSet() map[*trieNode]bool {
+	set := make(map[*trieNode]bool)
+	for _, path := range c.activePaths {
+		for _, n := range path {
+			set[n] = true
+		}
+	}
+	return set
 }
 
 // enforceEvictionPolicy evicts eligible nodes until paged-out memory is within limits.
@@ -471,10 +480,7 @@ func (c *kvCache) enforceEvictionPolicy() {
 		return
 	}
 
-	activeSet := make(map[*trieNode]bool, len(c.activePath))
-	for _, n := range c.activePath {
-		activeSet[n] = true
-	}
+	activeSet := c.activeNodeSet()
 
 	for c.pagedOutBytes > maxPagedOutBytes {
 		var best *trieNode
@@ -531,10 +537,7 @@ func (c *kvCache) dumpTree() {
 	}
 
 	// Build active path set for marking.
-	active := make(map[*trieNode]bool, len(c.activePath))
-	for _, n := range c.activePath {
-		active[n] = true
-	}
+	active := c.activeNodeSet()
 
 	var nodeCount, snapshotCount int
 	var pagedBytes int64
@@ -602,9 +605,8 @@ func (c *kvCache) dumpTree() {
 	}
 	dump(c.root, "", true)
 
-	offset := c.minCacheOffset()
-	logutil.Trace(fmt.Sprintf("kv cache active_tokens: %d, active_size: %s, paged_out: %s, trie: nodes=%d, snapshots=%d",
-		offset, mlx.PrettyBytes(cacheBytes), mlx.PrettyBytes(int(pagedBytes)), nodeCount, snapshotCount))
+	logutil.Trace(fmt.Sprintf("kv cache active_size: %s, paged_out: %s, trie: nodes=%d, snapshots=%d",
+		mlx.PrettyBytes(cacheBytes), mlx.PrettyBytes(int(pagedBytes)), nodeCount, snapshotCount))
 	for i, l := range lines {
 		if i == 0 {
 			logutil.Trace("cache trie: " + l)

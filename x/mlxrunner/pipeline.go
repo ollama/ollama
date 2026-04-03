@@ -82,7 +82,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	inputs := request.Tokens
 	request.Sampler.ResetHistory(inputs)
 
-	session := r.cache.begin(r.Model, inputs)
+	session := r.cache.begin(0, r.Model, inputs)
 	defer session.close()
 
 	caches := session.caches

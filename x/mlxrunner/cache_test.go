@@ -390,7 +390,7 @@ type requestResult struct {
 func simulateRequest(t *testing.T, kvc *kvCache, inputs, generated []int32, userSnapshotAt ...int) requestResult {
 	t.Helper()
 
-	session := kvc.begin(nil, inputs)
+	session := kvc.begin(0, nil, inputs)
 	for _, at := range userSnapshotAt {
 		if at > 0 {
 			session.requestSnapshot(at)
@@ -404,7 +404,7 @@ func simulateRequest(t *testing.T, kvc *kvCache, inputs, generated []int32, user
 
 	assertCacheOffsetAlignment(t, kvc, "after begin")
 
-	baseOffset := kvc.minCacheOffset()
+	baseOffset := kvc.seqCacheOffset(0)
 	remaining := inputs[baseOffset:]
 
 	// Prefill: feed tokens, pausing at each pending snapshot.
@@ -750,8 +750,8 @@ func TestEvictionPreservesActiveConversations(t *testing.T) {
 		}
 
 		// Active path should be untouched.
-		if len(kvc.activePath) < 2 {
-			t.Fatalf("activePath should have >= 2 nodes, got %d", len(kvc.activePath))
+		if len(kvc.activePaths[0]) < 2 {
+			t.Fatalf("activePath should have >= 2 nodes, got %d", len(kvc.activePaths[0]))
 		}
 
 		// System prompt prefix should still be findable (multi-child
@@ -917,12 +917,12 @@ func TestLRUOnlyUpdatesUsedNodes(t *testing.T) {
 		simulateRequest(t, kvc, []int32{1, 2, 3, 6, 7, 20, 21, 30}, nil)
 
 		// The path must have enough depth to exercise intermediate nodes.
-		if len(kvc.activePath) < 3 {
-			t.Fatalf("activePath too short to test intermediate nodes: got %d nodes", len(kvc.activePath))
+		if len(kvc.activePaths[0]) < 3 {
+			t.Fatalf("activePath too short to test intermediate nodes: got %d nodes", len(kvc.activePaths[0]))
 		}
 
 		// The frontier (deepest node on the active path) must be updated.
-		frontier := kvc.activePath[len(kvc.activePath)-1]
+		frontier := kvc.activePaths[0][len(kvc.activePaths[0])-1]
 		if frontier.lastUsed.Before(beforeRequest) {
 			t.Errorf("frontier lastUsed was not updated: got %v, want >= %v",
 				frontier.lastUsed, beforeRequest)
@@ -930,7 +930,7 @@ func TestLRUOnlyUpdatesUsedNodes(t *testing.T) {
 
 		// Every non-frontier node on the active path (including root)
 		// should retain its old lastUsed — only the frontier gets refreshed.
-		for i, node := range kvc.activePath[:len(kvc.activePath)-1] {
+		for i, node := range kvc.activePaths[0][:len(kvc.activePaths[0])-1] {
 			if !node.lastUsed.Before(beforeRequest) {
 				t.Errorf("activePath[%d] (endOffset=%d) lastUsed was refreshed: got %v, want < %v",
 					i, node.endOffset, node.lastUsed, beforeRequest)
