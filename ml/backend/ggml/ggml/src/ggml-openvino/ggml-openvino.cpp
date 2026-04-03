@@ -720,6 +720,15 @@ static void ggml_backend_openvino_device_get_memory(ggml_backend_dev_t dev, size
 
 static enum ggml_backend_dev_type ggml_backend_openvino_device_get_type(ggml_backend_dev_t dev) {
     GGML_UNUSED(dev);
+
+    const auto & device_name = ggml_openvino_get_device_name();
+    if (device_name == "CPU") {
+        return GGML_BACKEND_DEVICE_TYPE_CPU;
+    }
+    if (ggml_openvino_is_integrated_device()) {
+        return GGML_BACKEND_DEVICE_TYPE_IGPU;
+    }
+
     return GGML_BACKEND_DEVICE_TYPE_GPU;
 }
 
@@ -736,6 +745,7 @@ static void ggml_backend_openvino_device_get_props(ggml_backend_dev_t dev, ggml_
         /* .buffer_from_host_ptr  = */ false,
         /* .events                = */ false,
     };
+    props->integrated = ggml_openvino_is_integrated_device();
     props->library = GGML_OPENVINO_NAME;
 }
 

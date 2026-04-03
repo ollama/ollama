@@ -116,6 +116,11 @@ const std::string & ggml_openvino_get_device_name() {
     return ggml_openvino_get_device_config().device_name;
 }
 
+bool ggml_openvino_is_integrated_device() {
+    const auto & device_name = ggml_openvino_get_device_name();
+    return device_name == "NPU";
+}
+
 // Check if running on NPU
 bool ggml_openvino_is_npu() {
     return ggml_openvino_get_device_config().is_npu;

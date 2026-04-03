@@ -79,6 +79,9 @@ void ggml_openvino_init_device_config();
 // Get the device name
 const std::string & ggml_openvino_get_device_name();
 
+// Check if the selected device should be treated as integrated memory
+bool ggml_openvino_is_integrated_device();
+
 // Check if running on NPU
 bool ggml_openvino_is_npu();
 
