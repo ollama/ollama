@@ -1,6 +1,7 @@
 package renderers
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -17,38 +18,15 @@ import (
 // HuggingFace, verified identical between Qwen3.5-27B and Qwen3.5-35B-A3B)
 // with the same message array and tools. HuggingFace Transformers' tojson
 // override (json.dumps with ensure_ascii=False, sort_keys=False, default
-// separators) was applied. The Python output was saved as the expected
-// strings. Tool definition JSON, message structure, and string arguments
-// match Go byte-for-byte. The boolean argument diverges: the template
-// produces "True" (Python str(True)) while Go produces "true"
-// (fmt.Sprintf) — the test enforces the template's output, so it FAILS
-// until formatToolCallArgument is fixed.
+// separators) was applied.
 //
 // Unique coverage vs. other byte-exact tests:
-//   - Single tool call (not back-to-back) — only the \n\n content-to-tool
-//     separator fires (content|trim truthy → \n\n before first tool call),
-//     not the \n inter-tool separator
-//   - Single tool response (not grouped) — one <tool_response> block under one
-//     <|im_start|>user, closed immediately because the next message is not a
-//     tool
-//   - No Thinking field on assistant — splitQwen35ReasoningContent receives
-//     messageThinking="" and content with no </think> tag, so Path 3
-//     (fallthrough) fires: reasoning="" and remaining="I'll check." returned
-//     unchanged
-//   - String argument "Paris" — formatToolCallArgument hits the case string
-//     path, returning the value verbatim; the official template uses
-//     args_value|string (Python str()) which produces the same output for
-//     strings
-//   - Boolean argument true — formatToolCallArgument falls through to
-//     fmt.Sprintf("%v", true) producing "true" (lowercase), but the official
-//     template uses args_value|string which calls Python str(True) producing
-//     "True" (capital T). This is a KNOWN DIVERGENCE (Gap 10) that this test
-//     enforces: the expected string uses "True" (the template's ground truth),
-//     so the test FAILS until formatToolCallArgument is fixed to match
-//   - Tool definition without description — ToolFunction.Description="" with
-//     json:"description,omitempty" correctly omits the field; the official
-//     template's {{ tool | tojson }} passes through whatever the client sends,
-//     so a tool without description produces no "description" key
+//   - Single tool call (not back-to-back) — \n\n content-to-tool separator
+//   - Single tool response (not grouped)
+//   - No Thinking field on assistant (Path 3 fallthrough)
+//   - String argument "Paris" (verbatim passthrough)
+//   - Boolean argument true (Python str(True) → "True")
+//   - Tool definition without description (omitempty omits the field)
 //
 // Think mode: the assistant at index 2 is before lastQueryIndex=4 (the "Thanks"
 // user message). The official template's condition is loop.index0 >
@@ -175,28 +153,14 @@ func TestQwen35RendererUsesXMLToolCallingFormat(t *testing.T) {
 		}
 
 		// Targeted diagnostic: scalar boolean arguments must use Python str()
-		// capitalization. The official Qwen 3.5 template uses
-		// args_value|string (Jinja2's string filter, which calls Python str())
-		// for all non-mapping, non-sequence values. Python str(True) produces
-		// "True" (capital T), not "true". Go's formatToolCallArgument uses
-		// fmt.Sprintf("%v", true) which produces "true" (lowercase).
-		//
-		// Fix: add a case bool: branch in formatToolCallArgument in
-		// model/renderers/qwen3coder.go that returns "True"/"False".
+		// capitalization ("True"/"False"), not Go's fmt.Sprintf ("true"/"false").
+		// Regression detector for formatToolCallArgument's case bool: branch.
 		if strings.Contains(got, "<parameter=verbose>\ntrue\n</parameter>") {
 			t.Errorf(
-				"boolean argument rendered as 'true' (Go fmt.Sprintf) instead of "+
-					"'True' (Python str(True)).\n\n"+
-					"The official Qwen 3.5 template uses args_value|string for scalar tool "+
-					"call arguments, which calls Python's str() function. str(True) produces "+
-					"'True' (capital T), str(False) produces 'False' (capital F). Go's "+
-					"formatToolCallArgument falls through to fmt.Sprintf(\"%%v\", true) which "+
-					"produces 'true' (lowercase). The model was trained on 'True', not 'true'.\n\n"+
-					"Fix: add case bool: in formatToolCallArgument() in "+
-					"model/renderers/qwen3coder.go:\n"+
-					"  case bool:\n"+
-					"    if v { return \"True\" }\n"+
-					"    return \"False\"\n\ngot:\n%s", got,
+				"boolean argument rendered as 'true' instead of 'True'.\n\n"+
+					"formatToolCallArgument must return \"True\"/\"False\" for booleans, "+
+					"matching the official template's args_value|string (Python str()).\n\n"+
+					"got:\n%s", got,
 			)
 		}
 
@@ -331,16 +295,13 @@ Thanks<|im_end|>
 			)
 		}
 
-		// Same boolean capitalization check as think=true — argument formatting
-		// is independent of think mode.
+		// Same boolean capitalization regression detector as think=true.
 		if strings.Contains(got, "<parameter=verbose>\ntrue\n</parameter>") {
 			t.Errorf(
 				"boolean argument rendered as 'true' instead of 'True' (think=false).\n\n"+
-					"Argument formatting is independent of think mode. The official template "+
-					"uses args_value|string (Python str(True) → 'True') for scalar booleans. "+
-					"Go's formatToolCallArgument uses fmt.Sprintf which produces 'true'.\n\n"+
-					"Fix: case bool: in formatToolCallArgument() in "+
-					"model/renderers/qwen3coder.go\n\ngot:\n%s", got,
+					"formatToolCallArgument must return \"True\"/\"False\" for booleans, "+
+					"matching the official template's args_value|string (Python str()).\n\n"+
+					"got:\n%s", got,
 			)
 		}
 
@@ -955,66 +916,31 @@ call tool<|im_end|>
 	})
 }
 
-// TestQwen35RendererToolDefinitionsMatchOfficialTemplate verifies that tool
-// definitions in the system prompt match the training data format produced by
-// HuggingFace Transformers' get_json_schema() function, rendered through the
-// official Qwen/Qwen3.5-27B tokenizer's apply_chat_template method.
-//
-// Ground truth: every wantTool* string below was generated by running
-// get_json_schema() on a Python function with the specified signature, then
-// rendering through apply_chat_template on the official Qwen/Qwen3.5-27B
-// tokenizer with HuggingFace Transformers v5.3.0. HF overrides Jinja2's
-// tojson filter with json.dumps(ensure_ascii=False) — critically, this does
-// NOT pass sort_keys=True, so dict insertion order from get_json_schema() is
-// preserved. Stock Jinja2's tojson uses sort_keys=True (alphabetical), which
-// produces DIFFERENT key ordering. The model was trained with HF's override,
-// so insertion order is the ground truth.
-//
-// Tool 1 (get_weather) exercises: no HTML escaping, properties before
-// required, single-key items, items before description. This tool PASSES —
-// Go's struct field order already matches get_json_schema()'s insertion order
-// for these fields.
-//
-// Tool 2 (choose_color) exercises: enum/description field ordering. This tool
-// FAILS — Go's ToolProperty struct declares Description (field 4) before Enum
-// (field 5), but get_json_schema() inserts enum before description (the
-// schema["enum"] assignment precedes schema["description"] in
-// chat_template_utils.py). The test enforces the training data ordering; it
-// fails until the ToolProperty struct in api/types.go is rewritten to declare
-// Enum before Description.
-//
-// Known open divergences not yet tested (require ToolProperty struct rewrite):
-//   - Field loss: nullable, additionalProperties, prefixItems silently
-//     dropped during json.Unmarshal. Affects Optional[T], dict[K,V],
-//     tuple[T1,T2] parameters.
-//   - Multi-key items ordering: complex element types produce multi-key items
-//     sub-objects that Go alphabetizes. Fix: Items *ToolProperty instead of
-//     any.
-//   Both are fixed by the same 9-field ToolProperty struct rewrite that also
-//   fixes the enum/description ordering.
 // TestQwen35RendererToolDefinitionsMatchOfficialTemplate verifies tool
 // definition JSON in the system prompt against byte-exact HuggingFace
 // Transformers ground truth, for both think=true and think=false.
 //
 // Ground truth: HF Transformers v5.3.0 get_json_schema() rendered through
 // the official Qwen/Qwen3.5-27B tokenizer's apply_chat_template with HF's
-// tojson override (json.dumps with ensure_ascii=False, sort_keys=False).
-// The template was run with enable_thinking=True, enable_thinking=False,
-// and enable_thinking=undefined — all three produce byte-identical system
-// prompts (1566 bytes). enable_thinking is checked in exactly one place
-// (inside if add_generation_prompt) and has zero effect on the system prompt,
-// which is rendered with no reference to enable_thinking. The think=false
-// subtest enforces this invariant.
+// tojson override (json.dumps with ensure_ascii=False, sort_keys=False —
+// insertion order preserved, not alphabetical). enable_thinking has zero
+// effect on the system prompt; the think=false subtest enforces this.
 //
-// Tool 1: get_weather(location: str, filters: list[str])
-//   Exercises: no HTML escaping, properties before required, single-key
-//   items, items before description at property level, literal <, >, &.
-//   PASSES.
+// Three tools exercise distinct serialization properties:
+//   - Tool 1 (get_weather): HTML chars, field ordering, single-key items
+//   - Tool 2 (choose_color): enum/description field ordering in ToolProperty
+//   - Tool 3 (search_records): multi-key items sub-object key ordering
+//     (Items is `any` → map[string]any → json.Marshal alphabetizes)
 //
-// Tool 2: choose_color(color: Literal["red", "green", "blue"])
-//   Exercises: enum/description field ordering. HF produces enum before
-//   description. Go's ToolProperty struct produces the opposite. FAILS
-//   by design until the ToolProperty struct rewrite (Gap 4).
+// Silent field loss subtests construct tools via JSON unmarshal (the real
+// client path) and verify fields survive the round-trip:
+//   - nullable (Optional[T]), additionalProperties (dict[K,V]),
+//     prefixItems (tuple[T1,T2])
+//   Each accepts correct rendering OR an error; fails on silent corruption.
+//
+// All divergences trace to ToolProperty in api/types.go. The fix is a
+// single struct rewrite: Items *ToolProperty, add AdditionalProperties,
+// PrefixItems, Nullable fields, swap Enum before Description.
 func TestQwen35RendererToolDefinitionsMatchOfficialTemplate(t *testing.T) {
 	// Tool definitions shared across both subtests.
 	tools := []api.Tool{
@@ -1067,14 +993,46 @@ func TestQwen35RendererToolDefinitionsMatchOfficialTemplate(t *testing.T) {
 				},
 			},
 		},
+		// Tool 3: search_records(filters: list[dict[str, int]])
+		// Exercises: multi-key items sub-object ordering. HF's
+		// get_json_schema() produces items with keys in insertion order:
+		// {"type": "object", "additionalProperties": {"type": "integer"}}.
+		// Go's Items field is `any`, which becomes map[string]any after
+		// JSON unmarshal. json.Marshal on map[string]any alphabetizes keys:
+		// {"additionalProperties": ..., "type": ...}. FAILS until Items
+		// changes from `any` to `*ToolProperty` (same struct rewrite as
+		// Tool 2).
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "search_records",
+				Description: "Search records by filters",
+				Parameters: api.ToolFunctionParameters{
+					Type: "object",
+					Properties: testPropsOrdered([]orderedProp{
+						{
+							Key: "filters",
+							Value: api.ToolProperty{
+								Type:        api.PropertyType{"array"},
+								Items:       map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "integer"}},
+								Description: "The filter criteria",
+							},
+						},
+					}),
+					Required: []string{"filters"},
+				},
+			},
+		},
 	}
 
 	msgs := []api.Message{{Role: "user", Content: "call tool"}}
 
-	// HF ground truth for both tool JSON lines.
+	// HF ground truth for all tool JSON lines.
 	wantTool1 := `{"type": "function", "function": {"name": "get_weather", "description": "Returns temperature in <fahrenheit> & <celsius>", "parameters": {"type": "object", "properties": {"location": {"type": "string", "description": "City name with <tag> & symbol"}, "filters": {"type": "array", "items": {"type": "string"}, "description": "Weather filter names"}}, "required": ["location", "filters"]}}}`
 
 	wantTool2 := `{"type": "function", "function": {"name": "choose_color", "description": "Pick a color", "parameters": {"type": "object", "properties": {"color": {"type": "string", "enum": ["red", "green", "blue"], "description": "The color to use"}}, "required": ["color"]}}}`
+
+	wantTool3 := `{"type": "function", "function": {"name": "search_records", "description": "Search records by filters", "parameters": {"type": "object", "properties": {"filters": {"type": "array", "items": {"type": "object", "additionalProperties": {"type": "integer"}}, "description": "The filter criteria"}}, "required": ["filters"]}}}`
 
 	// extractSystemPrompt returns the system prompt portion of the rendered
 	// output: everything from <|im_start|>system to (and including) the
@@ -1111,13 +1069,16 @@ func TestQwen35RendererToolDefinitionsMatchOfficialTemplate(t *testing.T) {
 		}
 
 		// Extract tool JSON lines.
-		var gotTool1, gotTool2 string
+		var gotTool1, gotTool2, gotTool3 string
 		for _, line := range strings.Split(got, "\n") {
 			if strings.Contains(line, `"get_weather"`) {
 				gotTool1 = line
 			}
 			if strings.Contains(line, `"choose_color"`) {
 				gotTool2 = line
+			}
+			if strings.Contains(line, `"search_records"`) {
+				gotTool3 = line
 			}
 		}
 
@@ -1153,6 +1114,21 @@ func TestQwen35RendererToolDefinitionsMatchOfficialTemplate(t *testing.T) {
 					"change fixes enum/description ordering, field loss, AND recursive "+
 					"nested key ordering.\n\n"+
 					"want: %s\n got: %s", wantTool2, gotTool2,
+			)
+		}
+
+		if gotTool3 != wantTool3 {
+			t.Errorf(
+				"Tool 3 (search_records) multi-key items sub-object ordering mismatch.\n\n"+
+					"HuggingFace Transformers' get_json_schema() produces items with "+
+					"keys in insertion order: {\"type\": \"object\", "+
+					"\"additionalProperties\": ...}. Go's ToolProperty.Items is `any`, "+
+					"which becomes map[string]any after JSON unmarshal. json.Marshal "+
+					"alphabetizes map keys: {\"additionalProperties\": ..., "+
+					"\"type\": ...}. The model was trained on HF's insertion order.\n\n"+
+					"Fix: change Items from `any` to `*ToolProperty` in api/types.go "+
+					"so it uses struct field ordering instead of map key sorting.\n\n"+
+					"want: %s\n got: %s", wantTool3, gotTool3,
 			)
 		}
 	}
@@ -1197,6 +1173,110 @@ func TestQwen35RendererToolDefinitionsMatchOfficialTemplate(t *testing.T) {
 	t.Run("think=false", func(t *testing.T) {
 		assertToolDefinitions(t, gotThinkFalse)
 	})
+
+	// Silent field loss: tool definitions with fields that Go's ToolProperty
+	// struct silently drops during JSON unmarshal. These fields appear in the
+	// model's training data (produced by HF's get_json_schema() for common
+	// Python type annotations) but vanish from Ollama's rendered prompt. The
+	// model sees a different schema than what it was trained on, causing
+	// silent quality degradation.
+	//
+	// Each subtest constructs a tool via JSON unmarshal (the real client
+	// path) and accepts two outcomes:
+	//   (a) the field is preserved in the rendered output (correct), or
+	//   (b) the renderer returns an error (defensive rejection).
+	// It fails only on silent corruption: field missing AND no error.
+	//
+	// Ground truth: each wantToolJSON was generated by running the tool dict
+	// (without HF-specific "return" field) through the official
+	// Qwen/Qwen3.5-27B Jinja2 template's {{ tool | tojson }} with HF's
+	// tojson override (json.dumps with ensure_ascii=False, sort_keys=False).
+	fieldLossCases := []struct {
+		name         string
+		toolJSON     string // JSON as a client would send (field present)
+		wantToolJSON string // HF ground truth (field present)
+		lostField    string // The field being tested
+		pythonType   string // The Python type that produces this field
+		fix          string // How to fix it
+	}{
+		{
+			name:         "nullable_from_Optional",
+			toolJSON:     `{"type":"function","function":{"name":"greet","description":"Greet someone","parameters":{"type":"object","properties":{"name":{"type":"string","description":"Person's name"},"title":{"type":"string","nullable":true,"description":"Optional title"}},"required":["name"]}}}`,
+			wantToolJSON: `{"type": "function", "function": {"name": "greet", "description": "Greet someone", "parameters": {"type": "object", "properties": {"name": {"type": "string", "description": "Person's name"}, "title": {"type": "string", "nullable": true, "description": "Optional title"}}, "required": ["name"]}}}`,
+			lostField:    "nullable",
+			pythonType:   "Optional[str]",
+			fix:          "add Nullable *bool `json:\"nullable,omitempty\"` to ToolProperty in api/types.go",
+		},
+		{
+			name:         "additionalProperties_from_dict",
+			toolJSON:     `{"type":"function","function":{"name":"store_data","description":"Store key-value data","parameters":{"type":"object","properties":{"data":{"type":"object","additionalProperties":{"type":"integer"},"description":"The key-value pairs"}},"required":["data"]}}}`,
+			wantToolJSON: `{"type": "function", "function": {"name": "store_data", "description": "Store key-value data", "parameters": {"type": "object", "properties": {"data": {"type": "object", "additionalProperties": {"type": "integer"}, "description": "The key-value pairs"}}, "required": ["data"]}}}`,
+			lostField:    "additionalProperties",
+			pythonType:   "dict[str, int]",
+			fix:          "add AdditionalProperties *ToolProperty `json:\"additionalProperties,omitempty\"` to ToolProperty in api/types.go",
+		},
+		{
+			name:         "prefixItems_from_tuple",
+			toolJSON:     `{"type":"function","function":{"name":"get_range","description":"Get a numeric range","parameters":{"type":"object","properties":{"bounds":{"type":"array","prefixItems":[{"type":"integer"},{"type":"integer"}],"description":"Start and end values"}},"required":["bounds"]}}}`,
+			wantToolJSON: `{"type": "function", "function": {"name": "get_range", "description": "Get a numeric range", "parameters": {"type": "object", "properties": {"bounds": {"type": "array", "prefixItems": [{"type": "integer"}, {"type": "integer"}], "description": "Start and end values"}}, "required": ["bounds"]}}}`,
+			lostField:    "prefixItems",
+			pythonType:   "tuple[int, int]",
+			fix:          "add PrefixItems []ToolProperty `json:\"prefixItems,omitempty\"` to ToolProperty in api/types.go",
+		},
+	}
+
+	for _, tc := range fieldLossCases {
+		t.Run("silent_field_loss/"+tc.name, func(t *testing.T) {
+			var tool api.Tool
+			if err := json.Unmarshal([]byte(tc.toolJSON), &tool); err != nil {
+				t.Fatalf("json.Unmarshal failed on valid tool JSON: %v", err)
+			}
+
+			renderer := &Qwen35Renderer{isThinking: true}
+			fieldLossMsgs := []api.Message{{Role: "user", Content: "test"}}
+			got, err := renderer.Render(fieldLossMsgs, []api.Tool{tool}, nil)
+
+			if err != nil {
+				// Renderer correctly rejected the unsupported tool definition.
+				// This is acceptable defensive behavior — better to error than
+				// to silently produce a schema the model was never trained on.
+				return
+			}
+
+			// No error — verify the field survived the unmarshal→render
+			// round-trip. Extract the tool JSON line from the rendered output.
+			var gotToolJSON string
+			funcName := tool.Function.Name
+			for _, line := range strings.Split(got, "\n") {
+				if strings.Contains(line, `"`+funcName+`"`) {
+					gotToolJSON = line
+					break
+				}
+			}
+
+			if gotToolJSON != tc.wantToolJSON {
+				t.Errorf(
+					"field %q silently dropped from tool definition during JSON "+
+						"unmarshal.\n\n"+
+						"Python type %s produces a %q field in the tool schema via "+
+						"HuggingFace Transformers' get_json_schema(). The model was "+
+						"trained on tool definitions that include this field. Go's "+
+						"ToolProperty struct in api/types.go has no %s field, so "+
+						"json.Unmarshal silently discards it. The rendered prompt "+
+						"contains a schema the model was never trained on.\n\n"+
+						"This is silent data corruption — no error is returned, the "+
+						"model just receives a different schema than what it expects. "+
+						"The renderer must either preserve the field (correct "+
+						"rendering) or return an error (defensive rejection), never "+
+						"silently drop it.\n\n"+
+						"Fix: %s\n\n"+
+						"want: %s\n got: %s",
+					tc.lostField, tc.pythonType, tc.lostField, tc.lostField,
+					tc.fix, tc.wantToolJSON, gotToolJSON,
+				)
+			}
+		})
+	}
 }
 
 // TestQwen35RendererInterleavedThinkingAndTools verifies byte-exact rendering
@@ -2096,6 +2176,75 @@ func TestQwen35RendererAssistantPrefillWithThinking(t *testing.T) {
 			)
 		}
 	})
+
+	// --- Subtest 7: path equivalence across reasoning encodings ---
+	// Property 4 enforcement at the renderer level. Three different clients
+	// encode the same assistant turn (reasoning="Keep it short.",
+	// content="Hello world") in three different ways. All three must
+	// produce byte-identical renderer output — the same wantWithReasoning
+	// constant used by subtests 1 and 2.
+	//
+	// The unit-level test (TestSplitQwen35ReasoningContent) already proves
+	// the extraction function returns identical (reasoning, remaining)
+	// tuples for all three encodings. This subtest catches bugs that
+	// the unit test misses: post-extraction renderer logic that treats
+	// content differently when it contains literal <think> tags (e.g.,
+	// if someone adds tag-stripping in the renderer after
+	// splitQwen35ReasoningContent returns).
+	//
+	// Ground truth: the official Qwen 3.5 Jinja2 template was run with
+	// all three encodings using add_generation_prompt=False. All three
+	// produce byte-identical 121-byte output. After stripping the
+	// trailing <|im_end|>\n (Ollama's prefill behavior), all three match
+	// wantWithReasoning (110 bytes).
+	pathEquivEncodings := []struct {
+		name     string
+		thinking string
+		content  string
+	}{
+		// Encoding 1: explicit Thinking field (Path 1 in
+		// splitQwen35ReasoningContent). Same as subtests 1 and 2.
+		{"explicit_thinking_field", "Keep it short.", "Hello world"},
+		// Encoding 2: inline both tags in Content (Path 2a). A
+		// third-party client that stores the full model output including
+		// the prefilled <think> open tag as a single content string.
+		{"inline_both_tags", "", "<think>\nKeep it short.\n</think>\nHello world"},
+		// Encoding 3: inline close-only in Content (Path 2b). A client
+		// that captures only the model's generated tokens after the
+		// renderer's "<think>\n" prefill, not the prefill itself.
+		{"inline_close_only", "", "Keep it short.\n</think>\nHello world"},
+	}
+
+	for _, enc := range pathEquivEncodings {
+		t.Run("path_equivalence/"+enc.name, func(t *testing.T) {
+			renderer := &Qwen35Renderer{isThinking: true}
+			encMsgs := []api.Message{
+				{Role: "user", Content: "Write two words."},
+				{Role: "assistant", Thinking: enc.thinking, Content: enc.content},
+			}
+			got, err := renderer.Render(encMsgs, nil, nil)
+			if err != nil {
+				t.Fatalf("render failed: %v", err)
+			}
+
+			if got != wantWithReasoning {
+				t.Fatalf(
+					"byte-exact output mismatch for %s encoding.\n\n"+
+						"All three reasoning encodings (explicit Thinking field, "+
+						"inline <think>...</think> tags, inline </think> close-only) "+
+						"must produce identical renderer output. The official Qwen 3.5 "+
+						"template was verified to produce byte-identical output for "+
+						"all three encodings (121 bytes before prefill stripping).\n\n"+
+						"If this encoding fails while 'explicit_thinking_field' passes, "+
+						"there is likely post-extraction logic in the renderer that "+
+						"treats content differently when it contains literal <think> "+
+						"tags.\n\n"+
+						"--- got ---\n%s\n--- want ---\n%s",
+					enc.name, got, wantWithReasoning,
+				)
+			}
+		})
+	}
 }
 
 // TestQwen35RendererAssistantToolCallIsNotPrefill verifies that when the last
@@ -2119,102 +2268,86 @@ func TestQwen35RendererAssistantPrefillWithThinking(t *testing.T) {
 // training data, causing undefined model behavior in exactly the agentic
 // tool-calling loops where Qwen 3.5 is most valuable.
 func TestQwen35RendererAssistantToolCallIsNotPrefill(t *testing.T) {
-	weatherToolCall := api.ToolCall{
-		Function: api.ToolCallFunction{
-			Name: "get_weather",
-			Arguments: testArgsOrdered([]orderedArg{
-				{Key: "location", Value: "Paris"},
-			}),
+	// Shared messages for both subtests. The assistant has reasoning,
+	// visible content, AND tool calls. Both subtests use these exact
+	// messages — the only difference is the think parameter passed to
+	// Render(). This enforces P1: the historical portion must be
+	// byte-identical regardless of think mode.
+	msgs := []api.Message{
+		{Role: "user", Content: "What's the weather in Paris?"},
+		{
+			Role:     "assistant",
+			Content:  "Let me check the weather.",
+			Thinking: "I should use the weather tool.",
+			ToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "get_weather",
+						Arguments: testArgsOrdered([]orderedArg{
+							{Key: "location", Value: "Paris"},
+						}),
+					},
+				},
+			},
 		},
+	}
+
+	// Historical portion: everything before the generation prompt suffix.
+	// Verified against the official Qwen/Qwen3.5-27B Jinja2 template
+	// with add_generation_prompt=True — the template produces 293 bytes
+	// of shared prefix that is byte-identical for enable_thinking=True
+	// and enable_thinking=False. enable_thinking is checked in exactly
+	// one place: the generation prompt block.
+	//
+	// The assistant is at index 1, after lastQueryIndex=0. The template
+	// wraps with <think> unconditionally (loop.index0 > last_query_index).
+	// The Thinking field is extracted via Path 1 (reasoning_content is
+	// string). <|im_end|> is emitted unconditionally (line 130).
+	const wantHistory = "<|im_start|>user\n" +
+		"What's the weather in Paris?<|im_end|>\n" +
+		"<|im_start|>assistant\n" +
+		"<think>\n" +
+		"I should use the weather tool.\n" +
+		"</think>\n" +
+		"\n" +
+		"Let me check the weather.\n" +
+		"\n" +
+		"<tool_call>\n" +
+		"<function=get_weather>\n" +
+		"<parameter=location>\n" +
+		"Paris\n" +
+		"</parameter>\n" +
+		"</function>\n" +
+		"</tool_call><|im_end|>\n"
+
+	// Targeted diagnostics shared by both subtests.
+	assertNotPrefill := func(t *testing.T, got string) {
+		t.Helper()
+
+		if !strings.Contains(got, "</tool_call><|im_end|>") {
+			t.Errorf(
+				"missing <|im_end|> after the assistant's tool call.\n\n"+
+					"The official template emits <|im_end|> unconditionally after "+
+					"every assistant message. Without it, the model sees an unclosed "+
+					"turn — the prefill condition is incorrectly treating assistant "+
+					"messages with tool calls as partial continuations.\n\ngot:\n%s", got,
+			)
+		}
 	}
 
 	t.Run("think=true", func(t *testing.T) {
 		renderer := &Qwen35Renderer{isThinking: true}
-		msgs := []api.Message{
-			{Role: "user", Content: "What's the weather in Paris?"},
-			{
-				Role:      "assistant",
-				Content:   "Let me check the weather.",
-				Thinking:  "I should use the weather tool.",
-				ToolCalls: []api.ToolCall{weatherToolCall},
-			},
-		}
-
 		got, err := renderer.Render(msgs, nil, nil)
 		if err != nil {
 			t.Fatalf("render failed: %v", err)
 		}
 
-		// The assistant turn must be closed. The official Qwen 3.5 Jinja2 template
-		// emits <|im_end|> unconditionally after every assistant message. Without it,
-		// the model sees an unclosed turn ending in </tool_call> — a prompt shape
-		// absent from all training data. This typically means the prefill condition
-		// is incorrectly treating assistant messages with tool calls as partial
-		// continuations.
-		//
-		// This scenario triggers when agentic frameworks send conversation history
-		// where the last message is the assistant's tool-calling turn, with tool
-		// results arriving in a separate subsequent request.
-		if !strings.Contains(got, "</tool_call><|im_end|>") {
-			t.Errorf(
-				"missing <|im_end|> after the assistant's tool call.\n\n"+
-					"The official Qwen 3.5 Jinja2 template emits <|im_end|> unconditionally after every "+
-					"assistant message. Without it, the model sees an unclosed assistant turn ending in "+
-					"</tool_call> — a prompt shape absent from all training data. This typically means "+
-					"the prefill condition is incorrectly treating assistant messages with tool calls as "+
-					"partial continuations.\n\n"+
-					"This scenario triggers when agentic frameworks send conversation history where the "+
-					"last message is the assistant's tool-calling turn, with tool results arriving in a "+
-					"separate subsequent request.\n\ngot:\n%s", got,
-			)
-		}
+		assertNotPrefill(t, got)
 
-		// A completed assistant turn with tool calls must be followed by a generation
-		// prompt so the model knows to begin a new response. Without it, the model
-		// has no <|im_start|>assistant token to start generating, and inference
-		// behavior is undefined.
-		wantSuffix := "<|im_start|>assistant\n<think>\n"
-		if !strings.HasSuffix(got, wantSuffix) {
-			tail := got
-			if len(tail) > 120 {
-				tail = tail[len(tail)-120:]
-			}
-			t.Errorf(
-				"missing generation prompt after the closed assistant turn.\n\n"+
-					"When the last message is a completed assistant turn with tool calls, the renderer must "+
-					"append a generation prompt (<|im_start|>assistant\\n<think>\\n) so the model begins a "+
-					"new response. Without it, the model has no signal to start generating and inference "+
-					"behavior is undefined.\n\n"+
-					"expected suffix: %q\ngot tail: %q", wantSuffix, tail,
-			)
-		}
-
-		want := `<|im_start|>user
-What's the weather in Paris?<|im_end|>
-<|im_start|>assistant
-<think>
-I should use the weather tool.
-</think>
-
-Let me check the weather.
-
-<tool_call>
-<function=get_weather>
-<parameter=location>
-Paris
-</parameter>
-</function>
-</tool_call><|im_end|>
-<|im_start|>assistant
-<think>
-`
+		want := wantHistory + "<|im_start|>assistant\n<think>\n"
 		if got != want {
 			t.Fatalf(
 				"byte-exact output mismatch.\n\n"+
-					"Any byte-level deviation changes the token IDs the model sees, pushing the input out "+
-					"of the training distribution. In multi-turn agentic conversations, deviations also "+
-					"invalidate the KV cache from the divergence point, forcing expensive recomputation "+
-					"of all subsequent tokens.\n\n"+
 					"--- got ---\n%s\n--- want ---\n%s", got, want,
 			)
 		}
@@ -2222,80 +2355,22 @@ Paris
 
 	t.Run("think=false", func(t *testing.T) {
 		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true}
-		msgs := []api.Message{
-			{Role: "user", Content: "What's the weather in Paris?"},
-			{
-				Role:      "assistant",
-				Content:   "I'll check the weather.",
-				ToolCalls: []api.ToolCall{weatherToolCall},
-			},
-		}
-
 		got, err := renderer.Render(msgs, nil, &api.ThinkValue{Value: false})
 		if err != nil {
 			t.Fatalf("render failed: %v", err)
 		}
 
-		// Same <|im_end|> check as think=true — the official template closes every
-		// assistant message unconditionally regardless of thinking mode.
-		if !strings.Contains(got, "</tool_call><|im_end|>") {
-			t.Errorf(
-				"missing <|im_end|> after the assistant's tool call in think=false mode.\n\n"+
-					"The official Qwen 3.5 template closes every assistant message unconditionally, "+
-					"regardless of whether thinking is enabled. Without <|im_end|>, the model sees an "+
-					"unclosed turn — a prompt shape it was never trained on.\n\ngot:\n%s", got,
-			)
-		}
+		assertNotPrefill(t, got)
 
-		// When thinking is disabled, the generation prompt includes an empty thinking
-		// block so the model skips reasoning and proceeds directly to content. Without
-		// this prompt, the model may attempt reasoning when the caller explicitly
-		// requested no thinking, or may fail to generate altogether.
-		wantSuffix := "<|im_start|>assistant\n<think>\n\n</think>\n\n"
-		if !strings.HasSuffix(got, wantSuffix) {
-			tail := got
-			if len(tail) > 120 {
-				tail = tail[len(tail)-120:]
-			}
-			t.Errorf(
-				"missing non-thinking generation prompt after the closed assistant turn.\n\n"+
-					"When thinking is disabled, the generation prompt includes an empty thinking block "+
-					"(<think>\\n\\n</think>\\n\\n) so the model skips reasoning and proceeds directly to "+
-					"content generation. Without this prompt, the model may attempt reasoning when the "+
-					"caller explicitly requested no thinking, or may fail to generate altogether.\n\n"+
-					"expected suffix: %q\ngot tail: %q", wantSuffix, tail,
-			)
-		}
-
-		want := `<|im_start|>user
-What's the weather in Paris?<|im_end|>
-<|im_start|>assistant
-<think>
-
-</think>
-
-I'll check the weather.
-
-<tool_call>
-<function=get_weather>
-<parameter=location>
-Paris
-</parameter>
-</function>
-</tool_call><|im_end|>
-<|im_start|>assistant
-<think>
-
-</think>
-
-`
+		// The historical portion must be identical to think=true.
+		// Only the generation prompt suffix differs.
+		want := wantHistory + "<|im_start|>assistant\n<think>\n\n</think>\n\n"
 		if got != want {
 			t.Fatalf(
 				"byte-exact output mismatch (think=false).\n\n"+
-					"Any byte-level deviation changes the token IDs the model sees, pushing the input out "+
-					"of the training distribution. In multi-turn agentic conversations, deviations also "+
-					"invalidate the KV cache from the divergence point, forcing expensive recomputation "+
-					"of all subsequent tokens.\n\n"+
+					"The historical portion must be identical to think=true — "+
+					"enable_thinking has zero effect on historical message rendering. "+
+					"Only the generation prompt suffix should differ.\n\n"+
 					"--- got ---\n%s\n--- want ---\n%s", got, want,
 			)
 		}
