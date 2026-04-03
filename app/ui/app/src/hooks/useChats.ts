@@ -381,7 +381,7 @@ export const useSendMessage = (chatId: string) => {
                     role: "assistant",
                     content: "",
                     thinking: "",
-                    model: effectiveModel,
+                    model: effectiveModel.model,
                   }),
                 );
                 lastMessage = newMessages[newMessages.length - 1];
@@ -433,7 +433,7 @@ export const useSendMessage = (chatId: string) => {
                     role: "assistant",
                     content: "",
                     thinking: "",
-                    model: effectiveModel,
+                    model: effectiveModel.model,
                   }),
                 );
                 lastMessage = newMessages[newMessages.length - 1];
@@ -699,7 +699,7 @@ export const useSendMessage = (chatId: string) => {
             queryClient.setQueryData(["chat", newId], {
               chat: new Chat({
                 id: newId,
-                model: effectiveModel,
+                model: effectiveModel.model,
                 messages: [
                   new Message({
                     role: "user",
