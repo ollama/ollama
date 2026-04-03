@@ -570,6 +570,23 @@ func TestFormatToolCallArgumentMatchesOfficialTemplate(t *testing.T) {
 		// fmt.Sprintf("%v", 1e-05) produce "1e-05". Match.
 		{"small_float", float64(1e-5), "1e-05"},
 
+		// Negative float64. Python str(-42.5) produces "-42.5". Go's
+		// fmt.Sprintf("%v", -42.5) produces "-42.5". Match.
+		{"negative_float", float64(-42.5), "-42.5"},
+
+		// Very large integer-valued float64 that exceeds int64 range.
+		// Go's json.Unmarshal produces float64(1e20) for JSON "1e20".
+		// Python's json.loads produces float(1e20). Python str(1e20)
+		// produces "1e+20". Go's fmt.Sprintf("%v", 1e20) also produces
+		// "1e+20". The current code incorrectly converts to int64 first
+		// (overflow), producing garbage. Fix: add a range check before
+		// int64 conversion (v >= math.MinInt64 && v <= math.MaxInt64).
+		{"very_large_int_float", float64(1e20), "1e+20"},
+
+		// Empty string. Python str("") produces "". Go returns ""
+		// via the case string path. Match.
+		{"empty_string", "", ""},
+
 		// === Collection path: args_value | tojson | safe (json.dumps) ===
 		//
 		// Inside collections, booleans are JSON-standard lowercase true/false

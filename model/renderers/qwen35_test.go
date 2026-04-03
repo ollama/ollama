@@ -439,17 +439,44 @@ Thanks<|im_end|>
 // prompt shape. The entire output is one user message plus the generation
 // prompt.
 func TestQwen35RendererNoThinkPrefill(t *testing.T) {
-	renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true}
 	msgs := []api.Message{
 		{Role: "user", Content: "hello"},
 	}
 
-	got, err := renderer.Render(msgs, nil, &api.ThinkValue{Value: false})
-	if err != nil {
-		t.Fatalf("render failed: %v", err)
-	}
+	// think=true: the generation prompt opens a thinking block for the model
+	// to fill. The official template emits <think>\n when enable_thinking is
+	// true or undefined.
+	t.Run("think=true", func(t *testing.T) {
+		renderer := &Qwen35Renderer{isThinking: true}
+		got, err := renderer.Render(msgs, nil, nil)
+		if err != nil {
+			t.Fatalf("render failed: %v", err)
+		}
 
-	want := `<|im_start|>user
+		want := "<|im_start|>user\nhello<|im_end|>\n<|im_start|>assistant\n<think>\n"
+		if got != want {
+			t.Fatalf(
+				"byte-exact output mismatch (think=true).\n\n"+
+					"The official template's add_generation_prompt block emits "+
+					"<think>\\n when enable_thinking is true or undefined. "+
+					"No tools → no system prompt. No system message → no system "+
+					"turn. One user message → one <|im_start|>user turn.\n\n"+
+					"--- got ---\n%s\n--- want ---\n%s", got, want,
+			)
+		}
+	})
+
+	// think=false: the generation prompt emits a pre-closed empty thinking
+	// block so the model skips reasoning. The official template emits
+	// <think>\n\n</think>\n\n when enable_thinking is explicitly false.
+	t.Run("think=false", func(t *testing.T) {
+		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true}
+		got, err := renderer.Render(msgs, nil, &api.ThinkValue{Value: false})
+		if err != nil {
+			t.Fatalf("render failed: %v", err)
+		}
+
+		want := `<|im_start|>user
 hello<|im_end|>
 <|im_start|>assistant
 <think>
@@ -457,17 +484,17 @@ hello<|im_end|>
 </think>
 
 `
-	if got != want {
-		t.Fatalf(
-			"byte-exact output mismatch.\n\n"+
-				"The official Qwen 3.5 template's add_generation_prompt block "+
-				"(lines 149-150) emits <think>\\n\\n</think>\\n\\n when "+
-				"enable_thinking is explicitly false. No tools → no system "+
-				"prompt tools block. No system message in the input → no "+
-				"system turn. One user message → one <|im_start|>user turn.\n\n"+
-				"--- got ---\n%s\n--- want ---\n%s", got, want,
-		)
-	}
+		if got != want {
+			t.Fatalf(
+				"byte-exact output mismatch (think=false).\n\n"+
+					"The official template's add_generation_prompt block emits "+
+					"<think>\\n\\n</think>\\n\\n when enable_thinking is explicitly "+
+					"false. The entire output is identical to think=true except the "+
+					"generation prompt suffix.\n\n"+
+					"--- got ---\n%s\n--- want ---\n%s", got, want,
+			)
+		}
+	})
 }
 
 // TestQwen35RendererBackToBackToolCallsAndResponses verifies byte-exact
@@ -1631,15 +1658,18 @@ func TestQwen35RendererAssistantPrefillWithThinking(t *testing.T) {
 
 	// Ground truth for subtest 5: multi-turn agentic loop with tool history.
 	// The first assistant (index 1) is BEFORE lastQueryIndex=3 (the "Now
-	// summarize." user message at index 3). The template (lines 102-103)
-	// renders it as plain content — reasoning "I should use the weather tool."
-	// is computed by splitQwen35ReasoningContent but silently discarded by the
-	// else branch. The last assistant (index 4) is AFTER lastQueryIndex=3,
-	// so it gets <think> wrapping with reasoning preserved.
+	// summarize." user message at index 3). The template renders it as plain
+	// content — reasoning "I should use the weather tool." is computed by
+	// splitQwen35ReasoningContent but silently discarded. The last assistant
+	// (index 4) is AFTER lastQueryIndex=3, so it gets <think> wrapping with
+	// reasoning preserved.
 	//
-	// Tool call argument "Paris" is a string — formatToolCallArgument returns
-	// it verbatim (case string path). The template uses args_value|string
-	// (Python str("Paris") = "Paris"). Byte-identical.
+	// Tool call arguments exercise all formatToolCallArgument scalar paths:
+	//   "Paris" (string) → verbatim passthrough
+	//   true (bool) → "True" (Python str(True))
+	//   float64(42) (integer-valued float) → "42" (strconv.FormatInt)
+	//   nil → "None" (Python str(None))
+	// Argument ordering matches dict insertion order in the template.
 	const wantToolHistory = "<|im_start|>user\n" +
 		"What's the weather?<|im_end|>\n" +
 		"<|im_start|>assistant\n" +
@@ -1649,6 +1679,15 @@ func TestQwen35RendererAssistantPrefillWithThinking(t *testing.T) {
 		"<function=get_weather>\n" +
 		"<parameter=location>\n" +
 		"Paris\n" +
+		"</parameter>\n" +
+		"<parameter=verbose>\n" +
+		"True\n" +
+		"</parameter>\n" +
+		"<parameter=count>\n" +
+		"42\n" +
+		"</parameter>\n" +
+		"<parameter=empty>\n" +
+		"None\n" +
 		"</parameter>\n" +
 		"</function>\n" +
 		"</tool_call><|im_end|>\n" +
@@ -1886,7 +1925,8 @@ func TestQwen35RendererAssistantPrefillWithThinking(t *testing.T) {
 	//     "I should use the weather tool." discarded, plain rendering;
 	//     last assistant (index 4) AFTER lastQueryIndex=3 → <think> wrapping
 	//   - P3: last assistant is prefill — no <|im_end|>, no generation prompt
-	//   - P5: tool call argument "Paris" (string, formatToolCallArgument)
+	//   - P5: tool call arguments exercise all formatToolCallArgument scalar
+	//     paths — string ("Paris"), bool (True), int (42), nil (None)
 	//   - P7: single tool response with own <|im_start|>user block
 	t.Run("think_switch_with_tool_history", func(t *testing.T) {
 		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true}
@@ -1901,6 +1941,9 @@ func TestQwen35RendererAssistantPrefillWithThinking(t *testing.T) {
 						Name: "get_weather",
 						Arguments: testArgsOrdered([]orderedArg{
 							{Key: "location", Value: "Paris"},
+							{Key: "verbose", Value: true},
+							{Key: "count", Value: float64(42)},
+							{Key: "empty", Value: nil},
 						}),
 					}},
 				},
