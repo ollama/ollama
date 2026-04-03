@@ -345,27 +345,69 @@ func parseGemma4ToolCall(content string) (api.ToolCall, error) {
 
 // gemma4ArgsToJSON converts Gemma 4's custom argument format to valid JSON.
 func gemma4ArgsToJSON(s string) string {
-	s = strings.ReplaceAll(s, `<|"|>`, `"`)
+	const quoteToken = `<|"|>`
 
 	var buf strings.Builder
 	buf.Grow(len(s) + 32)
-	inString := false
+	const (
+		stringModeNone = iota
+		stringModeGemmaToken
+		stringModeRawQuote
+	)
+
+	stringMode := stringModeNone
 	hex := "0123456789abcdef"
 	i := 0
 	for i < len(s) {
+		if strings.HasPrefix(s[i:], quoteToken) {
+			if stringMode == stringModeGemmaToken {
+				stringMode = stringModeNone
+			} else if stringMode == stringModeNone {
+				stringMode = stringModeGemmaToken
+			} else {
+				// In a raw-quote string, treat the Gemma quote token literally.
+				buf.WriteString(quoteToken)
+				i += len(quoteToken)
+				continue
+			}
+			buf.WriteByte('"')
+			i += len(quoteToken)
+			continue
+		}
+
 		ch := s[i]
 
-		if ch == '"' {
-			inString = !inString
+		if stringMode == stringModeNone && ch == '"' {
+			stringMode = stringModeRawQuote
 			buf.WriteByte('"')
 			i++
 			continue
 		}
 
-		if inString {
+		if stringMode != stringModeNone {
 			switch ch {
 			case '\\':
+				if i+1 < len(s) {
+					next := s[i+1]
+					switch next {
+					case '"', '\\', '/', 'b', 'f', 'n', 'r', 't', 'u':
+						// Preserve valid JSON escapes that are already in the source string.
+						buf.WriteByte('\\')
+						buf.WriteByte(next)
+						i += 2
+						continue
+					}
+				}
+				// Unknown escape sequence: treat backslash as a literal character.
 				buf.WriteString(`\\`)
+			case '"':
+				if stringMode == stringModeRawQuote {
+					stringMode = stringModeNone
+					buf.WriteByte('"')
+				} else {
+					// In Gemma-token strings, raw double quotes are string content.
+					buf.WriteString(`\"`)
+				}
 			case '\n':
 				buf.WriteString(`\n`)
 			case '\r':
@@ -389,7 +431,7 @@ func gemma4ArgsToJSON(s string) string {
 			continue
 		}
 
-		if !inString && isIdentStart(ch) {
+		if isIdentStart(ch) {
 			j := i + 1
 			for j < len(s) && isIdentPart(s[j]) {
 				j++

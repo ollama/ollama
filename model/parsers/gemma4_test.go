@@ -134,6 +134,20 @@ func TestGemma4Parser(t *testing.T) {
 			},
 		},
 		{
+			name:  "tool_call_with_array_of_multiple_gemma_quoted_strings",
+			input: `<|tool_call>call:process{items:[<|"|>a<|"|>,<|"|>b "quoted"<|"|>,<|"|>c<|"|>]}<tool_call|>`,
+			expectedToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "process",
+						Arguments: testArgs(map[string]any{
+							"items": []any{"a", `b "quoted"`, "c"},
+						}),
+					},
+				},
+			},
+		},
+		{
 			name: "tool_call_with_multiline_string_arg",
 			input: `<|tool_call>call:bash{command:<|"|>date
 <|"|>}<tool_call|>`,
@@ -143,6 +157,62 @@ func TestGemma4Parser(t *testing.T) {
 						Name: "bash",
 						Arguments: testArgs(map[string]any{
 							"command": "date\n",
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:  "tool_call_with_escaped_double_quotes_in_string_arg",
+			input: `<|tool_call>call:search{query:<|"|>say \"hello\"<|"|>}<tool_call|>`,
+			expectedToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "search",
+						Arguments: testArgs(map[string]any{
+							"query": `say "hello"`,
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:  "tool_call_with_unescaped_double_quotes_in_string_arg",
+			input: `<|tool_call>call:search{query:<|"|>say "hello"<|"|>}<tool_call|>`,
+			expectedToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "search",
+						Arguments: testArgs(map[string]any{
+							"query": `say "hello"`,
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:  "tool_call_with_multiple_unescaped_double_quote_segments",
+			input: `<|tool_call>call:search{query:<|"|>say "hello", then "goodbye"<|"|>}<tool_call|>`,
+			expectedToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "search",
+						Arguments: testArgs(map[string]any{
+							"query": `say "hello", then "goodbye"`,
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:  "tool_call_with_mixed_escaped_and_unescaped_double_quotes",
+			input: `<|tool_call>call:search{query:<|"|>first \"quoted\" then "raw"<|"|>}<tool_call|>`,
+			expectedToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "search",
+						Arguments: testArgs(map[string]any{
+							"query": `first "quoted" then "raw"`,
 						}),
 					},
 				},
@@ -411,6 +481,11 @@ func TestGemma4ArgsToJSON(t *testing.T) {
 			expected: `{"items":["a","b"]}`,
 		},
 		{
+			name:     "array_value_with_multiple_gemma_quoted_strings",
+			input:    `{items:[<|"|>a<|"|>,<|"|>b "quoted"<|"|>,<|"|>c<|"|>]}`,
+			expected: `{"items":["a","b \"quoted\"","c"]}`,
+		},
+		{
 			name:     "empty_object",
 			input:    `{}`,
 			expected: `{}`,
@@ -430,6 +505,26 @@ func TestGemma4ArgsToJSON(t *testing.T) {
 			input: `{command:<|"|>date
 <|"|>}`,
 			expected: `{"command":"date\n"}`,
+		},
+		{
+			name:     "string_value_with_escaped_double_quotes",
+			input:    `{query:<|"|>say \"hello\"<|"|>}`,
+			expected: `{"query":"say \"hello\""}`,
+		},
+		{
+			name:     "string_value_with_unescaped_double_quotes",
+			input:    `{query:<|"|>say "hello"<|"|>}`,
+			expected: `{"query":"say \"hello\""}`,
+		},
+		{
+			name:     "string_value_with_multiple_unescaped_double_quote_segments",
+			input:    `{query:<|"|>say "hello", then "goodbye"<|"|>}`,
+			expected: `{"query":"say \"hello\", then \"goodbye\""}`,
+		},
+		{
+			name:     "string_value_with_mixed_escaped_and_unescaped_double_quotes",
+			input:    `{query:<|"|>first \"quoted\" then "raw"<|"|>}`,
+			expected: `{"query":"first \"quoted\" then \"raw\""}`,
 		},
 	}
 
