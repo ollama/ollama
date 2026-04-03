@@ -2382,7 +2382,7 @@ func TestSplitQwen35ReasoningContent(t *testing.T) {
 		// Test 4: Explicit Thinking field takes priority over inline tags.
 		// If a client sends both a non-empty Thinking field AND content with
 		// <think> tags (a malformed but possible input), the function must NOT
-		// double-extract. Path 1 fires at line 65 and returns immediately.
+		// double-extract. Path 1 fires (messageThinking != "") and returns immediately.
 		// The content is returned exactly as received — the inline tags become
 		// literal characters in the visible portion of the prompt. The renderer
 		// wraps only the explicit field's reasoning in <think>...</think> tags.
@@ -2458,17 +2458,136 @@ func TestSplitQwen35ReasoningContent(t *testing.T) {
 		// the renderer to include a literal </think> tag in the visible
 		// content portion of the prompt — the model was never trained on
 		// </think> appearing outside the thinking block wrapper.
-		//
-		// The fork currently uses strings.Index (first </think>) at line 69,
-		// which produces remaining="middle\n</think>\nend" — wrong. The fix
-		// is to use strings.LastIndex, matching the official template's [-1]
-		// behavior.
 		{
 			name:            "multiple_close_tags_takes_after_last",
 			content:         "<think>\nfirst\n</think>\nmiddle\n</think>\nend",
 			messageThinking: "",
 			wantReasoning:   "first",
 			wantRemaining:   "end",
+		},
+
+		// Test 10: Nested <think> tags. The content has multiple <think>
+		// open tags before the first </think>. The official template's
+		// split('<think>')[-1] takes text after the LAST <think>, discarding
+		// text between earlier <think> tags. The fork's
+		// strings.LastIndex(before, "<think>") achieves the same: it finds
+		// the last <think> in the text before the first </think>, not the
+		// first <think>. A bug that used strings.Index instead of
+		// strings.LastIndex for the <think> open tag would return
+		// "outer<think>inner" instead of "inner".
+		//
+		// The text between the two </think> tags ("more") is silently
+		// dropped by both the template (split('</think>') loses middle
+		// segments) and the fork (firstClose != lastClose, so the gap is
+		// skipped). This is correct: the model never produces nested tags,
+		// so this is defensive handling of malformed third-party input.
+		{
+			name:            "nested_think_tags_lastindex_finds_innermost",
+			content:         "<think>outer<think>inner</think>more</think>content",
+			messageThinking: "",
+			wantReasoning:   "inner",
+			wantRemaining:   "content",
+		},
+
+		// Test 11: No <think> open tag with multiple </think> close tags.
+		// This combines the else branch (open == -1, reasoning = before)
+		// with lastClose != firstClose (multiple </think> tags).
+		// Test 3 covers close-only with a single </think>. Test 9 covers
+		// multiple </think> with a <think> present. This test covers the
+		// combination: no <think> AND multiple </think>.
+		//
+		// The official template's split('<think>')[-1] on a string without
+		// <think> returns the whole string (Python's "text".split('<think>')
+		// == ["text"]), so reasoning is the full text before the first
+		// </think>. The fork's else branch does the same.
+		{
+			name:            "no_open_tag_multiple_close_tags",
+			content:         "inner</think>more</think>content",
+			messageThinking: "",
+			wantReasoning:   "inner",
+			wantRemaining:   "content",
+		},
+
+		// Test 12: Empty remaining content from Path 2 extraction. The
+		// </think> tag is at the very end of content with nothing after it.
+		// All prior Path 2 tests produce non-empty remaining. This verifies
+		// that TrimLeft("\n") on an empty string returns "" correctly, and
+		// that the renderer can handle a model turn where the assistant
+		// reasoned but produced no visible text (the response is entirely
+		// tool calls rendered separately by the tool call loop).
+		{
+			name:            "close_tag_at_end_empty_remaining",
+			content:         "<think>reasoning</think>",
+			messageThinking: "",
+			wantReasoning:   "reasoning",
+			wantRemaining:   "",
+		},
+
+		// Test 13: <think> open tag present but NO </think> close tag.
+		// Test 5 has no tags at all and reaches Path 3. This test has a
+		// <think> tag but no matching </think>, which must ALSO reach
+		// Path 3: the entry condition checks for </think> via
+		// strings.Index, not <think>. If someone changed the condition to
+		// check for <think> instead, this test would catch it. The content
+		// — including the literal <think> — passes through unchanged.
+		{
+			name:            "open_tag_only_no_close_tag_path3",
+			content:         "content<think>reasoning",
+			messageThinking: "",
+			wantReasoning:   "",
+			wantRemaining:   "content<think>reasoning",
+		},
+
+		// Test 14: </think> at the very start of content with no preceding
+		// text. This reaches Path 2 with empty reasoning via extraction —
+		// NOT Path 3. The difference matters: before = "" (the text before
+		// the first </think>), open = LastIndex("", "<think>") = -1, so the
+		// else branch sets reasoning = before = "". After TrimSpace, reasoning
+		// is "". Tests 5 and 8 also produce empty reasoning, but they reach
+		// it via Path 3 (no </think> in content). This test verifies that
+		// Path 2's else branch also produces empty reasoning correctly.
+		{
+			name:            "close_tag_at_start_empty_reasoning_via_path2",
+			content:         "</think>content",
+			messageThinking: "",
+			wantReasoning:   "",
+			wantRemaining:   "content",
+		},
+
+		// Test 15: Space immediately after </think> — remaining content must
+		// preserve leading spaces. The official template uses .lstrip('\n')
+		// (Python) which strips ONLY newline characters, not spaces or tabs.
+		// The fork uses strings.TrimLeft(content, "\n") which is equivalent.
+		// If someone changes this to strings.TrimSpace or TrimLeft("\n "),
+		// the leading space would be incorrectly stripped.
+		//
+		// All prior Path 2 tests have only \n characters between </think> and
+		// the remaining content (or nothing). This is the sole test that has
+		// non-newline whitespace after </think>, enforcing that the function
+		// strips newlines but preserves spaces — exactly as the model was
+		// trained. The model's output has \n\n between </think> and content,
+		// but third-party clients may store content with other whitespace
+		// patterns, and the function must handle them correctly.
+		{
+			name:            "space_after_close_tag_preserved_in_remaining",
+			content:         "<think>reasoning</think> content with leading space",
+			messageThinking: "",
+			wantReasoning:   "reasoning",
+			wantRemaining:   " content with leading space",
+		},
+
+		// Test 16: Newline then space after </think> — the newline is
+		// stripped but the space is preserved. This enforces the exact
+		// boundary between "strip leading newlines" and "preserve everything
+		// else" in the remaining content. The official template's
+		// .lstrip('\n') on "\n content" produces " content". The fork's
+		// TrimLeft("\n") on "\n content" produces " content".
+		{
+			name:            "newline_then_space_after_close_tag",
+			content:         "<think>reasoning</think>\n content",
+			messageThinking: "",
+			wantReasoning:   "reasoning",
+			wantRemaining:   " content",
 		},
 	}
 
@@ -2480,8 +2599,8 @@ func TestSplitQwen35ReasoningContent(t *testing.T) {
 				t.Errorf(
 					"reasoning mismatch.\n\n"+
 						"The reasoning value is placed inside <think>\\n{reasoning}\\n</think> by the "+
-						"renderer at line 144. A wrong value means the model sees different tokens inside "+
-						"the thinking block than what it was trained on.\n\n"+
+						"renderer's post-lastQueryIndex wrapping. A wrong value means the model sees "+
+						"different tokens inside the thinking block than what it was trained on.\n\n"+
 						"got:  %q\nwant: %q", gotReasoning, tt.wantReasoning,
 				)
 			}
@@ -2489,9 +2608,10 @@ func TestSplitQwen35ReasoningContent(t *testing.T) {
 			if gotRemaining != tt.wantRemaining {
 				t.Errorf(
 					"remaining content mismatch.\n\n"+
-						"The remaining value is placed after </think>\\n\\n by the renderer at line 144. "+
-						"A wrong value means the model sees different tokens in the visible content "+
-						"portion of the assistant message than what it was trained on.\n\n"+
+						"The remaining value is placed after </think>\\n\\n by the renderer's "+
+						"post-lastQueryIndex wrapping. A wrong value means the model sees different "+
+						"tokens in the visible content portion of the assistant message than what "+
+						"it was trained on.\n\n"+
 						"got:  %q\nwant: %q", gotRemaining, tt.wantRemaining,
 				)
 			}
