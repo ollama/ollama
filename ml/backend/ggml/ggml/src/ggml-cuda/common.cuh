@@ -77,8 +77,10 @@ static cublasStatus_t cublasGemmBatchedExReserve(
         cublasComputeType_t computeType, cublasGemmAlgo_t algo) {
     if (!reserving_graph) {
         return cublasGemmBatchedEx(handle, transa, transb, m, n, k,
-            alpha, Aarray, Atype, lda, Barray, Btype, ldb,
-            beta, Carray, Ctype, ldc, batchCount, computeType, algo);
+            alpha, const_cast<const void **>(Aarray), Atype, lda,
+            const_cast<const void **>(Barray), Btype, ldb,
+            beta, const_cast<void **>(Carray), Ctype, ldc,
+            batchCount, computeType, algo);
     } else {
         return CUBLAS_STATUS_SUCCESS;
     }
