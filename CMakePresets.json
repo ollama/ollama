@@ -94,6 +94,14 @@
       }
     },
     {
+      "name": "OpenVINO",
+      "inherits": [ "Default" ],
+      "cacheVariables": {
+        "GGML_OPENVINO": "ON",
+        "OLLAMA_RUNNER_DIR": "openvino"
+      }
+    },
+    {
       "name": "MLX",
       "inherits": [ "Default" ],
       "cacheVariables": {
@@ -177,6 +185,11 @@
       "name": "Vulkan",
       "targets": [ "ggml-vulkan" ],
       "configurePreset": "Vulkan"
+    },
+    {
+      "name": "OpenVINO",
+      "targets": [ "ggml-openvino" ],
+      "configurePreset": "OpenVINO"
     },
     {
       "name": "MLX",
