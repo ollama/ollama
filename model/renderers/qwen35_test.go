@@ -26,8 +26,8 @@ import (
 //
 // Unique coverage vs. other byte-exact tests:
 //   - Single tool call (not back-to-back) — only the \n\n content-to-tool
-//     separator fires (template line 112: content|trim truthy), not the \n
-//     inter-tool separator (template line 117)
+//     separator fires (content|trim truthy → \n\n before first tool call),
+//     not the \n inter-tool separator
 //   - Single tool response (not grouped) — one <tool_response> block under one
 //     <|im_start|>user, closed immediately because the next message is not a
 //     tool
@@ -52,9 +52,9 @@ import (
 //
 // Think mode: the assistant at index 2 is before lastQueryIndex=4 (the "Thanks"
 // user message). The official template's condition is loop.index0 >
-// ns.last_query_index (line 105), which is 2 > 4 = false — no <think> wrapping
+// ns.last_query_index, which is 2 > 4 = false — no <think> wrapping
 // regardless of enable_thinking. The template checks enable_thinking in exactly
-// one place: the add_generation_prompt block (lines 149-153). The entire output
+// one place: the add_generation_prompt block. The entire output
 // is identical between think=true and think=false except the generation prompt
 // suffix.
 func TestQwen35RendererUsesXMLToolCallingFormat(t *testing.T) {
@@ -158,14 +158,14 @@ func TestQwen35RendererUsesXMLToolCallingFormat(t *testing.T) {
 		}
 
 		// Targeted diagnostic: the \n\n separator between assistant content and
-		// the first <tool_call>. The official template (line 112) emits \n\n
-		// before the first tool call when content|trim is truthy. Without this
+		// the first <tool_call>. The official template emits \n\n before the
+		// first tool call when content|trim is truthy. Without this
 		// separator, content and tool call XML merge on the same line — a token
 		// sequence absent from training data.
 		if !strings.Contains(got, "I'll check.\n\n<tool_call>") {
 			t.Errorf(
 				"missing \\n\\n separator between assistant content and first tool call.\n\n"+
-					"The official Qwen 3.5 template (line 112) emits '\\n\\n<tool_call>' when "+
+					"The official Qwen 3.5 template emits '\\n\\n<tool_call>' when "+
 					"content|trim is truthy (content is non-empty after stripping whitespace). "+
 					"When content is empty, <tool_call> starts immediately with no separator. "+
 					"In Go, this is the j==0 branch: if strings.TrimSpace(content) != \"\" → "+
@@ -487,18 +487,18 @@ hello<|im_end|>
 //     The last non-tool-response user message is "Summarize the results." at
 //     index 5, so lastQueryIndex=5. Since 2 <= 5, the official template renders
 //     the assistant message WITHOUT <think> wrapping — reasoning_content is
-//     computed but discarded at line 102-103. This is a position-based rule, NOT
+//     computed but discarded. This is a position-based rule, NOT
 //     controlled by enable_thinking. The complementary scenario (post-
 //     lastQueryIndex, where thinking IS preserved) is tested by
 //     TestQwen35RendererInterleavedThinkingAndTools.
 //
 //  2. Back-to-back tool calls in one assistant turn. The first tool call is
-//     preceded by \n\n (template line 112: content|trim is truthy), subsequent
-//     tool calls by \n (template line 117). Each tool call follows the XML
-//     format: <tool_call>\n<function=NAME>\n<parameter=NAME>\nVALUE\n
+//     preceded by \n\n (content|trim is truthy), subsequent tool calls by \n.
+//     Each tool call follows the XML format:
+//     <tool_call>\n<function=NAME>\n<parameter=NAME>\nVALUE\n
 //     </parameter>\n</function>\n</tool_call>. The </tool_call> of the last
 //     tool call is immediately followed by <|im_end|> with no intervening
-//     whitespace — the template emits <|im_end|>\n unconditionally at line 130.
+//     whitespace — the template emits <|im_end|>\n unconditionally.
 //
 //  3. Grouped tool responses. Consecutive tool messages share a single
 //     <|im_start|>user block (template lines 132-142). The <|im_end|> is
@@ -511,10 +511,10 @@ hello<|im_end|>
 //     matches get_json_schema() insertion order for simple types.
 //
 //  5. Generation prompt for both think modes. think=true appends
-//     <|im_start|>assistant\n<think>\n (template line 152). think=false appends
-//     <|im_start|>assistant\n<think>\n\n</think>\n\n (template line 150). The
-//     entire output is identical between modes except these trailing bytes —
-//     historical message rendering is independent of enable_thinking.
+//     <|im_start|>assistant\n<think>\n. think=false appends
+//     <|im_start|>assistant\n<think>\n\n</think>\n\n. The entire output is
+//     identical between modes except these trailing bytes — historical message
+//     rendering is independent of enable_thinking.
 //
 // Tool call argument types: the arguments are Go int values (2, 3, 4, 5).
 // formatToolCallArgument produces "2", "3", "4", "5" via fmt.Sprintf("%v").
@@ -569,13 +569,13 @@ func TestQwen35RendererBackToBackToolCallsAndResponses(t *testing.T) {
 		// Targeted diagnostic: thinking content must NOT appear because the
 		// assistant message is at index 2, before lastQueryIndex=5. The official
 		// template discards reasoning_content for messages at or before
-		// last_query_index (line 102-103). This is independent of enable_thinking.
+		// last_query_index. This is independent of enable_thinking.
 		if strings.Contains(got, "Need to call add and multiply.") {
 			t.Errorf(
 				"historical thinking content leaked into pre-lastQueryIndex assistant message.\n\n"+
 					"The assistant message is at index 2, before lastQueryIndex=5 (the "+
 					"'Summarize the results.' user message). The official Qwen 3.5 template "+
-					"(line 102-103) discards reasoning_content for messages at or before "+
+					"discards reasoning_content for messages at or before "+
 					"last_query_index — this is a position-based rule, NOT controlled by "+
 					"enable_thinking. The thinking content should be silently omitted.\n\n"+
 					"got:\n%s", got,
@@ -672,7 +672,7 @@ Summarize the results.<|im_end|>
 	// pre-lastQueryIndex thinking omission, tool call XML, tool response
 	// grouping, and tool definitions — is identical regardless of think mode.
 	// The official template checks enable_thinking in exactly one place: the
-	// add_generation_prompt block at line 149.
+	// add_generation_prompt block.
 	t.Run("think=false", func(t *testing.T) {
 		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true}
 		got, err := renderer.Render(msgs, qwen35MathTools(), &api.ThinkValue{Value: false})
@@ -692,7 +692,7 @@ Summarize the results.<|im_end|>
 				"historical thinking content leaked into pre-lastQueryIndex assistant message.\n\n"+
 					"The assistant message is before lastQueryIndex, so reasoning is discarded "+
 					"regardless of think mode. This is a position-based rule in the official "+
-					"template (line 102-103), not controlled by enable_thinking.\n\n"+
+					"template, not controlled by enable_thinking.\n\n"+
 					"got:\n%s", got,
 			)
 		}
@@ -776,7 +776,7 @@ Summarize the results.<|im_end|>
 				"byte-exact output mismatch (think=false).\n\n"+
 					"The entire output is identical to think=true EXCEPT the generation "+
 					"prompt suffix: <think>\\n\\n</think>\\n\\n (6 tokens matching the "+
-					"official template's add_generation_prompt block at line 149-150 for "+
+					"official template's add_generation_prompt block for "+
 					"enable_thinking=false) instead of <think>\\n (2 tokens for "+
 					"enable_thinking=true/undefined). Historical message rendering is "+
 					"unaffected by think mode — the official template checks "+
@@ -975,9 +975,9 @@ call tool<|im_end|>
 // The template was run with enable_thinking=True, enable_thinking=False,
 // and enable_thinking=undefined — all three produce byte-identical system
 // prompts (1566 bytes). enable_thinking is checked in exactly one place
-// (line 149, inside if add_generation_prompt) and has zero effect on the
-// system prompt, which is rendered at lines 45-60 with no reference to
-// enable_thinking. The think=false subtest enforces this invariant.
+// (inside if add_generation_prompt) and has zero effect on the system prompt,
+// which is rendered with no reference to enable_thinking. The think=false
+// subtest enforces this invariant.
 //
 // Tool 1: get_weather(location: str, filters: list[str])
 //   Exercises: no HTML escaping, properties before required, single-key
@@ -1188,9 +1188,9 @@ func TestQwen35RendererToolDefinitionsMatchOfficialTemplate(t *testing.T) {
 //
 // The think=false subtest is the primary regression detector for the fork's
 // unconditional thinking block fix (commit 4044b63f). The official template
-// (line 100) checks loop.index0 > ns.last_query_index for <think> wrapping —
-// no enable_thinking check. enable_thinking is checked in exactly one place:
-// the generation prompt at lines 149-153.
+// checks loop.index0 > ns.last_query_index for <think> wrapping — no
+// enable_thinking check. enable_thinking is checked in exactly one place:
+// the generation prompt (inside if add_generation_prompt).
 //
 // The fork's fix has two parts that work together:
 //   - splitQwen35ReasoningContent: removed the isThinking parameter so
@@ -1212,28 +1212,27 @@ func TestQwen35RendererToolDefinitionsMatchOfficialTemplate(t *testing.T) {
 // This test exercises six rendering properties simultaneously:
 //
 //  1. Post-lastQueryIndex thinking wrapping. Both assistant messages (indices
-//     2 and 4) are after lastQueryIndex=1. The official template (line 100)
-//     wraps them with <think>\n{reasoning}\n</think>\n\n{content}
-//     unconditionally, with no enable_thinking check.
+//     2 and 4) are after lastQueryIndex=1. The official template wraps them
+//     with <think>\n{reasoning}\n</think>\n\n{content} unconditionally when
+//     loop.index0 > ns.last_query_index, with no enable_thinking check.
 //
 //  2. Single tool call per turn. Each assistant turn has one tool call. The
-//     first tool call is preceded by \n\n (template line 112: content|trim is
-//     truthy). The </tool_call> is immediately followed by <|im_end|>
-//     (template line 130: unconditional).
+//     first tool call is preceded by \n\n (content|trim is truthy). The
+//     </tool_call> is immediately followed by <|im_end|> (unconditional).
 //
 //  3. Non-consecutive tool responses. Each tool response is separated by an
-//     assistant message, so each gets its own <|im_start|>user block (template
-//     line 132-133: previtem.role != "tool" fires for both).
+//     assistant message, so each gets its own <|im_start|>user block
+//     (previtem.role != "tool" fires for both).
 //
 //  4. Tool definition JSON. Two tools (get_weather, get_uv) with simple
 //     string parameters. Spaced separators matching HF's tojson override.
 //
 //  5. System prompt with tools. Tools-first pattern with # Tools header, tool
-//     JSON, instructions, then system content appended (template line 57).
+//     JSON, instructions, then system content appended.
 //
-//  6. Generation prompt for both think modes. think=true: <think>\n (template
-//     line 152). think=false: <think>\n\n</think>\n\n (template line 150).
-//     The entire output is identical between modes except these trailing bytes.
+//  6. Generation prompt for both think modes. think=true: <think>\n.
+//     think=false: <think>\n\n</think>\n\n. The entire output is identical
+//     between modes except these trailing bytes.
 func TestQwen35RendererInterleavedThinkingAndTools(t *testing.T) {
 	msgs := []api.Message{
 		{Role: "system", Content: "You are a helpful assistant."},
@@ -1274,9 +1273,9 @@ func TestQwen35RendererInterleavedThinkingAndTools(t *testing.T) {
 
 	// Both assistant messages are at indices 2 and 4, both after
 	// lastQueryIndex=1 (the user message "Plan a picnic in Paris.").
-	// Both have non-empty Thinking fields. The official template (line 100)
-	// wraps both in <think> blocks when loop.index0 > ns.last_query_index,
-	// with no enable_thinking check.
+	// Both have non-empty Thinking fields. The official template wraps both
+	// in <think> blocks when loop.index0 > ns.last_query_index, with no
+	// enable_thinking check.
 	//
 	// These fragment variables are used by the think=false targeted
 	// diagnostics to detect the most critical regression: thinking blocks
@@ -1419,14 +1418,13 @@ Paris
 	// think: false on a request after previously using think: true.
 	//
 	// The historical assistant messages MUST still contain their <think> blocks
-	// with the full reasoning text. The official template (line 100) wraps
-	// assistant messages in <think> blocks when loop.index0 > ns.last_query_index
-	// — no enable_thinking check. enable_thinking is checked in exactly one
-	// place: the generation prompt (lines 149-153).
+	// with the full reasoning text. The official template wraps assistant
+	// messages in <think> blocks when loop.index0 > ns.last_query_index — no
+	// enable_thinking check. enable_thinking is checked in exactly one place:
+	// the generation prompt (inside if add_generation_prompt).
 	//
 	// Only the generation prompt at the end should differ: think=false produces
-	// <think>\n\n</think>\n\n (template line 150) instead of think=true's
-	// <think>\n (template line 152).
+	// <think>\n\n</think>\n\n instead of think=true's <think>\n.
 	t.Run("think=false", func(t *testing.T) {
 		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true}
 		got, err := renderer.Render(msgs, qwen35WeatherUVTools(), &api.ThinkValue{Value: false})
@@ -1441,7 +1439,7 @@ Paris
 		if !strings.Contains(got, wantFirstTurn) {
 			t.Errorf(
 				"historical thinking block stripped from first assistant turn when think=false.\n\n"+
-					"The official Qwen 3.5 Jinja2 template (line 100) wraps assistant "+
+					"The official Qwen 3.5 Jinja2 template wraps assistant "+
 					"messages in <think> blocks when loop.index0 > ns.last_query_index. "+
 					"This condition has no enable_thinking check — it is purely "+
 					"positional. Historical thinking blocks must be preserved "+
@@ -1545,14 +1543,14 @@ Paris
 			t.Fatalf(
 				"byte-exact output mismatch (think=false).\n\n"+
 					"The entire output is identical to think=true EXCEPT the "+
-					"generation prompt suffix: <think>\\n\\n</think>\\n\\n (template "+
-					"line 150 for enable_thinking=false) instead of <think>\\n "+
-					"(template line 152 for enable_thinking=true/undefined). "+
+					"generation prompt suffix: <think>\\n\\n</think>\\n\\n "+
+					"(enable_thinking=false) instead of <think>\\n "+
+					"(enable_thinking=true/undefined). "+
 					"Historical message rendering — including <think> block wrapping "+
 					"for both post-lastQueryIndex assistant messages, tool call XML, "+
 					"tool definition JSON, and tool response grouping — is unaffected "+
 					"by think mode. The official template checks enable_thinking in "+
-					"exactly one place (lines 149-153).\n\n"+
+					"exactly one place (the add_generation_prompt block).\n\n"+
 					"--- got ---\n%s\n--- want ---\n%s", got, want,
 			)
 		}
@@ -1568,7 +1566,7 @@ Paris
 // (no <|im_end|>, no generation prompt) so the model continues from where
 // the text left off. This corresponds to the official template's
 // add_generation_prompt=False behavior, minus the trailing <|im_end|>\n
-// that the template always emits (line 130, unconditional).
+// that the template always emits unconditionally.
 //
 // Every want string was verified by running the official Qwen/Qwen3.5-27B
 // Jinja2 template (chat_template.jinja from tokenizer_config.json on
@@ -1577,7 +1575,7 @@ Paris
 // enable_thinking=False, and enable_thinking=undefined for every scenario —
 // all three produce identical output, proving that enable_thinking has zero
 // effect when add_generation_prompt=False. This is because enable_thinking
-// is checked in exactly one place in the template: line 149, inside the
+// is checked in exactly one place in the template: inside the
 // if add_generation_prompt block.
 //
 // The 6 subtests enforce:
@@ -1605,7 +1603,7 @@ func TestQwen35RendererAssistantPrefillWithThinking(t *testing.T) {
 	//
 	// The assistant at index 1 is after lastQueryIndex=0 (the user at index 0),
 	// so the template wraps with <think>\n{reasoning}\n</think>\n\n{content}
-	// (line 101). splitQwen35ReasoningContent extracts reasoning="Keep it short."
+	// splitQwen35ReasoningContent extracts reasoning="Keep it short."
 	// via Path 1 (explicit Thinking field). Content is unchanged.
 	const wantWithReasoning = "<|im_start|>user\n" +
 		"Write two words.<|im_end|>\n" +
@@ -1620,7 +1618,7 @@ func TestQwen35RendererAssistantPrefillWithThinking(t *testing.T) {
 	// The assistant at index 1 is after lastQueryIndex=0, so the template
 	// still wraps with <think>, but reasoning is empty — producing
 	// <think>\n\n</think>\n\n (empty thinking block). This is correct per
-	// the template: the wrapping condition (line 100) is purely positional,
+	// the template: the wrapping condition is purely positional,
 	// not gated on whether reasoning_content is non-empty.
 	const wantNoReasoning = "<|im_start|>user\n" +
 		"Write two words.<|im_end|>\n" +
@@ -1696,10 +1694,10 @@ func TestQwen35RendererAssistantPrefillWithThinking(t *testing.T) {
 			t.Errorf(
 				"prefill output ends with <|im_end|>.\n\n"+
 					"Prefill must leave the assistant turn open for continuation. "+
-					"The official template emits <|im_end|> unconditionally (line 130), "+
+					"The official template emits <|im_end|> unconditionally, "+
 					"but Ollama's prefill deliberately omits it when the last message is "+
 					"an assistant without tool calls. If <|im_end|> appears at the end, "+
-					"the prefill condition at qwen35.go line 142 is broken — check that "+
+					"the prefill condition is broken — check that "+
 					"len(message.ToolCalls) == 0 is still in the guard and that "+
 					"lastMessage is computed correctly.\n\ngot tail: %q",
 				got[max(0, len(got)-60):],
@@ -1710,7 +1708,7 @@ func TestQwen35RendererAssistantPrefillWithThinking(t *testing.T) {
 			t.Errorf(
 				"prefill output ends with a think=true generation prompt.\n\n"+
 					"Prefill must not append any generation prompt. The generation "+
-					"prompt is gated on lastMessage && !prefill (qwen35.go line 189). "+
+					"prompt is gated on lastMessage && !prefill. "+
 					"If a generation prompt appears, prefill is false when it should "+
 					"be true.\n\ngot tail: %q",
 				got[max(0, len(got)-60):],
@@ -1722,7 +1720,7 @@ func TestQwen35RendererAssistantPrefillWithThinking(t *testing.T) {
 				"prefill output ends with a think=false generation prompt.\n\n"+
 					"Prefill must not append any generation prompt, regardless of "+
 					"think mode. The generation prompt is gated on "+
-					"lastMessage && !prefill (qwen35.go line 189). If a generation "+
+					"lastMessage && !prefill. If a generation "+
 					"prompt appears, prefill is false when it should be true.\n\n"+
 					"got tail: %q",
 				got[max(0, len(got)-80):],
@@ -1781,7 +1779,7 @@ func TestQwen35RendererAssistantPrefillWithThinking(t *testing.T) {
 			t.Errorf(
 				"reasoning text missing from think=false prefill output.\n\n"+
 					"The official template extracts reasoning_content and wraps it in "+
-					"<think> tags for messages after last_query_index (line 100-101). "+
+					"<think> tags for messages after last_query_index. "+
 					"This wrapping has no enable_thinking check — it is purely "+
 					"positional. If the reasoning vanishes when think=false, the "+
 					"isThinking gate has been re-introduced to either "+
@@ -1796,7 +1794,7 @@ func TestQwen35RendererAssistantPrefillWithThinking(t *testing.T) {
 					"The prefill output MUST be identical to think=true. The official "+
 					"template was run with enable_thinking=True, False, and undefined "+
 					"for add_generation_prompt=False — all three produce identical "+
-					"output. enable_thinking is checked in exactly one place (line 149, "+
+					"output. enable_thinking is checked in exactly one place ("+
 					"inside the add_generation_prompt block), which does not run for "+
 					"prefill.\n\n"+
 					"--- got ---\n%s\n--- want ---\n%s", got, wantWithReasoning,
@@ -1807,7 +1805,7 @@ func TestQwen35RendererAssistantPrefillWithThinking(t *testing.T) {
 	// --- Subtest 3: think=true, no reasoning ---
 	// Verifies that post-lastQueryIndex wrapping produces an empty <think>
 	// block when there is no reasoning, not plain content without <think>.
-	// The template's wrapping condition (line 100) is loop.index0 >
+	// The template's wrapping condition is loop.index0 >
 	// ns.last_query_index — it does not check whether reasoning_content is
 	// non-empty. An empty reasoning_content produces <think>\n\n</think>\n\n.
 	t.Run("no_reasoning_think=true", func(t *testing.T) {
@@ -1830,7 +1828,7 @@ func TestQwen35RendererAssistantPrefillWithThinking(t *testing.T) {
 			t.Errorf(
 				"<think> tag missing from post-lastQueryIndex assistant.\n\n"+
 					"The official template wraps every assistant message after "+
-					"last_query_index with <think> tags (line 100-101), regardless "+
+					"last_query_index with <think> tags, regardless "+
 					"of whether reasoning_content is empty. An empty reasoning "+
 					"produces <think>\\n\\n</think>\\n\\n (empty block). If <think> "+
 					"is missing, the wrapping condition may have been changed to "+
@@ -1935,7 +1933,7 @@ func TestQwen35RendererAssistantPrefillWithThinking(t *testing.T) {
 		if strings.Contains(firstAssistantBlock, "<think>") {
 			t.Errorf(
 				"first assistant (before lastQueryIndex) has <think> wrapping.\n\n"+
-					"The official template (line 100) wraps with <think> only when "+
+					"The official template wraps with <think> only when "+
 					"loop.index0 > ns.last_query_index. The first assistant is at "+
 					"index 1, lastQueryIndex=3 (the 'Now summarize.' user message). "+
 					"1 > 3 is false, so no <think> wrapping. If <think> appears, "+
@@ -1969,7 +1967,7 @@ func TestQwen35RendererAssistantPrefillWithThinking(t *testing.T) {
 				"last assistant's reasoning missing from post-lastQueryIndex output "+
 					"under think=false.\n\n"+
 					"The official template wraps reasoning in <think> tags for all "+
-					"messages after last_query_index (line 100-101), with no "+
+					"messages after last_query_index, with no "+
 					"enable_thinking check. If reasoning vanishes when think=false, "+
 					"the isThinking gate has been re-introduced.\n\n"+
 					"last assistant block:\n%s", lastAssistantBlock,
@@ -2041,7 +2039,7 @@ func TestQwen35RendererAssistantPrefillWithThinking(t *testing.T) {
 			t.Errorf(
 				"second assistant (after lastQueryIndex) missing empty <think> wrapping.\n\n"+
 					"The template wraps every post-lastQueryIndex assistant with <think> "+
-					"(line 100-101), even when reasoning is empty. Empty reasoning → "+
+					"even when reasoning is empty. Empty reasoning → "+
 					"<think>\\n\\n</think>\\n\\n.\n\ngot:\n%s", got,
 			)
 		}
