@@ -95,7 +95,6 @@ func Execute(args []string) error {
 
 		request.Options.MaxTokens = cmp.Or(request.Options.MaxTokens, request.Options.NumPredict)
 
-		request.Pipeline = runner.TextGenerationPipeline
 		request.Sampler = sample.New(
 			request.Options.Temperature,
 			request.Options.TopP,

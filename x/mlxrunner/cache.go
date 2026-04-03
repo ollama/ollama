@@ -90,13 +90,6 @@ func (c *kvCache) begin(seqID int, m base.Model, inputs []int32) *cacheSession {
 	c.ensureCaches(m)
 	c.ensureRoot()
 
-	// Ensure the sequence is registered in all cache layers.
-	for _, kv := range c.caches {
-		if kv != nil {
-			kv.SetSeqs([]int{seqID})
-		}
-	}
-
 	matchPath, matched := findBestMatch(c.root, inputs)
 	originalMatched := matched
 

@@ -2,7 +2,6 @@ package mlxrunner
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -10,7 +9,6 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 	"github.com/ollama/ollama/x/mlxrunner/model"
 	"github.com/ollama/ollama/x/mlxrunner/model/base"
@@ -21,7 +19,6 @@ import (
 type Request struct {
 	TextCompletionsRequest
 	Responses chan CompletionResponse
-	Pipeline  func(Request) error
 
 	Ctx     context.Context
 	Tokens  []int32
@@ -139,30 +136,9 @@ func loadTensorsFromManifest(root *model.Root) (map[string]*mlx.Array, error) {
 func (r *Runner) Run(host, port string, mux http.Handler) error {
 	g, ctx := errgroup.WithContext(context.Background())
 
+	sched := r.newScheduler()
 	g.Go(func() error {
-		for {
-			select {
-			case <-ctx.Done():
-				return nil
-			case request := <-r.Requests:
-				if err := request.Pipeline(request); err != nil {
-					slog.Info("Request terminated", "error", err)
-					var statusErr api.StatusError
-					if !errors.As(err, &statusErr) {
-						statusErr = api.StatusError{
-							StatusCode:   http.StatusInternalServerError,
-							ErrorMessage: err.Error(),
-						}
-					}
-					select {
-					case request.Responses <- CompletionResponse{Error: &statusErr}:
-					case <-request.Ctx.Done():
-					}
-				}
-
-				close(request.Responses)
-			}
-		}
+		return sched.run(ctx)
 	})
 
 	g.Go(func() error {
