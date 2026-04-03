@@ -141,7 +141,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 					ch <- gin.H{"error": err.Error()}
 				}
 
-				if err == nil && !remote && (config.Renderer == "" || config.Parser == "" || config.Requires == "") {
+				if err == nil && !remote && (config.Renderer == "" || config.Parser == "" || config.Requires == "" || len(config.Capabilities) == 0) {
 					mf, mErr := manifest.ParseNamedManifest(fromName)
 					if mErr == nil && mf.Config.Digest != "" {
 						configPath, pErr := manifest.BlobsPath(mf.Config.Digest)
@@ -157,6 +157,9 @@ func (s *Server) CreateHandler(c *gin.Context) {
 									}
 									if config.Requires == "" {
 										config.Requires = baseConfig.Requires
+									}
+									if len(config.Capabilities) == 0 {
+										config.Capabilities = baseConfig.Capabilities
 									}
 								}
 								cfgFile.Close()
@@ -509,6 +512,24 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 			config.ModelType = cmp.Or(config.ModelType, format.HumanNumber(layer.GGML.KV().ParameterCount()))
 			config.FileType = cmp.Or(config.FileType, layer.GGML.KV().FileType().String())
 			config.ModelFamilies = append(config.ModelFamilies, layer.GGML.KV().Architecture())
+
+			// Auto-detect renderer, parser, and stop tokens from GGUF architecture.
+			// TODO: abstract this into a registry/lookup table when multiple models
+			// need architecture-based renderer/parser/stop defaults.
+			if config.Renderer == "" || config.Parser == "" {
+				arch := layer.GGML.KV().Architecture()
+				switch arch {
+				case "gemma4":
+					config.Renderer = cmp.Or(config.Renderer, "gemma4")
+					config.Parser = cmp.Or(config.Parser, "gemma4")
+					if _, ok := r.Parameters["stop"]; !ok {
+						if r.Parameters == nil {
+							r.Parameters = make(map[string]any)
+						}
+						r.Parameters["stop"] = []string{"<turn|>"}
+					}
+				}
+			}
 		}
 		layers = append(layers, layer.Layer)
 	}
