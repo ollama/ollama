@@ -535,6 +535,11 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm(ggml_meta
 
     const ggml_type tsrc0 = op->src[0]->type;
     const ggml_type tsrc1 = op->src[1]->type;
+    if (tsrc0 == GGML_TYPE_BF16 && tsrc1 == GGML_TYPE_F16) {
+        GGML_LOG_ERROR("%s: error: BF16 x F16 matrix multiplication is not supported\n", __func__);
+        struct ggml_metal_pipeline_with_params res = { nullptr, 0, 0, 0, 0 };
+        return res;
+    }
 
     const bool bc_inp = op->src[0]->ne[0] % 32 != 0;
     const bool bc_out = op->ne[0] % 64 != 0 || op->ne[1] % 32 != 0;
@@ -757,6 +762,13 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mm_id(ggml_m
 
     const ggml_type tsrc0 = op->src[0]->type;
     const ggml_type tsrc1 = op->src[1]->type;
+
+    // BF16 x F16 matrix multiplication is not supported on Metal (kernel removed for M5 compatibility)
+    if (tsrc0 == GGML_TYPE_BF16 && tsrc1 == GGML_TYPE_F16) {
+        GGML_LOG_ERROR("%s: error: BF16 x F16 matrix multiplication is not supported\n", __func__);
+        struct ggml_metal_pipeline_with_params res = { nullptr, 0, 0, 0, 0 };
+        return res;
+    }
 
     const bool bc_inp = op->src[0]->ne[0] % 32 != 0;
 
