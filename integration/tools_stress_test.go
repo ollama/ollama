@@ -60,8 +60,14 @@ func TestAPIToolCallingStress(t *testing.T) {
 
 	models := testModels(libraryToolsModels)
 
+	softTimeout, _ := getTimeouts(t)
+
 	for _, model := range models {
 		t.Run(model, func(t *testing.T) {
+			if time.Since(started) > softTimeout {
+				t.Skip("skipping remaining tests to avoid excessive runtime")
+				return
+			}
 			// Skip known-bad models unless explicitly requested via env var
 			if reason, ok := skipModels[model]; ok && testModel == "" {
 				t.Skipf("skipping: %s", reason)
@@ -74,6 +80,13 @@ func TestAPIToolCallingStress(t *testing.T) {
 			}
 
 			pullOrSkip(ctx, t, client, model)
+
+			// Preload and skip if not sufficiently GPU-loaded to avoid timeouts
+			err := client.Generate(ctx, &api.GenerateRequest{Model: model}, func(response api.GenerateResponse) error { return nil })
+			if err != nil {
+				t.Fatalf("failed to load model %s: %s", model, err)
+			}
+			skipIfNotGPULoaded(ctx, t, client, model, 80)
 
 			tools := stressTestTools()
 
@@ -342,7 +355,8 @@ func testToolCall(t *testing.T, ctx context.Context, client *api.Client, model, 
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userMessage},
 		},
-		Tools: tools,
+		Tools:     tools,
+		KeepAlive: &api.Duration{Duration: 10 * time.Second},
 		Options: map[string]any{
 			"temperature": 0,
 			"num_ctx":     contextLength(16384),
@@ -425,7 +439,8 @@ func testToolCallMultiTurn(t *testing.T, ctx context.Context, client *api.Client
 			{Role: "tool", Content: "go.mod\ngo.sum\nmain.go\nREADME.md\n"},
 			// The model should now respond with content or another tool call
 		},
-		Tools: tools,
+		Tools:     tools,
+		KeepAlive: &api.Duration{Duration: 10 * time.Second},
 		Options: map[string]any{
 			"temperature": 0,
 			"num_ctx":     contextLength(16384),
