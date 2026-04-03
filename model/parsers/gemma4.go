@@ -389,13 +389,29 @@ func gemma4ArgsToJSON(s string) string {
 			case '\\':
 				if i+1 < len(s) {
 					next := s[i+1]
-					switch next {
-					case '"', '\\', '/':
-						// Preserve valid JSON escapes that are already in the source string.
-						buf.WriteByte('\\')
-						buf.WriteByte(next)
-						i += 2
-						continue
+					if stringMode == stringModeGemmaToken {
+						switch next {
+						case '"':
+							// In Gemma-token strings, preserve \" as two literal characters.
+							buf.WriteString(`\\\"`)
+							i += 2
+							continue
+						case '\\', '/':
+							// Keep existing behavior for \\ and \/ in Gemma-token strings.
+							buf.WriteByte('\\')
+							buf.WriteByte(next)
+							i += 2
+							continue
+						}
+					} else {
+						switch next {
+						case '"', '\\', '/':
+							// Preserve valid JSON escapes that are already in raw-quoted strings.
+							buf.WriteByte('\\')
+							buf.WriteByte(next)
+							i += 2
+							continue
+						}
 					}
 				}
 				// Unknown escape sequence: treat backslash as a literal character.

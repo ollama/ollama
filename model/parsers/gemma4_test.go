@@ -170,7 +170,7 @@ func TestGemma4Parser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Name: "search",
 						Arguments: testArgs(map[string]any{
-							"query": `say "hello"`,
+							"query": `say \"hello\"`,
 						}),
 					},
 				},
@@ -212,7 +212,7 @@ func TestGemma4Parser(t *testing.T) {
 					Function: api.ToolCallFunction{
 						Name: "search",
 						Arguments: testArgs(map[string]any{
-							"query": `first "quoted" then "raw"`,
+							"query": `first \"quoted\" then "raw"`,
 						}),
 					},
 				},
@@ -261,7 +261,7 @@ func TestGemma4Parser(t *testing.T) {
 									"done":  false,
 								},
 								map[string]any{
-									"title": `step "two"`,
+									"title": `step \"two\"`,
 									"done":  true,
 								},
 							},
@@ -575,7 +575,7 @@ func TestGemma4ArgsToJSON(t *testing.T) {
 		{
 			name:     "string_value_with_escaped_double_quotes",
 			input:    `{query:<|"|>say \"hello\"<|"|>}`,
-			expected: `{"query":"say \"hello\""}`,
+			expected: `{"query":"say \\\"hello\\\""}`,
 		},
 		{
 			name:     "string_value_with_unescaped_double_quotes",
@@ -590,7 +590,7 @@ func TestGemma4ArgsToJSON(t *testing.T) {
 		{
 			name:     "string_value_with_mixed_escaped_and_unescaped_double_quotes",
 			input:    `{query:<|"|>first \"quoted\" then "raw"<|"|>}`,
-			expected: `{"query":"first \"quoted\" then \"raw\""}`,
+			expected: `{"query":"first \\\"quoted\\\" then \"raw\""}`,
 		},
 		{
 			name:     "string_value_with_punctuation_and_structural_chars",
