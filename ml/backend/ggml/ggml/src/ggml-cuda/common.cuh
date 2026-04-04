@@ -65,12 +65,35 @@ static cudaError_t cudaMemsetAsyncReserve ( void* devPtr, int value, size_t coun
     }
 }
 
+static cublasStatus_t cublasGemmBatchedExReserve(
+        cublasHandle_t handle, cublasOperation_t transa, cublasOperation_t transb,
+        int m, int n, int k,
+        const void *alpha,
+        const void *const Aarray[], cudaDataType_t Atype, int lda,
+        const void *const Barray[], cudaDataType_t Btype, int ldb,
+        const void *beta,
+        void *const Carray[], cudaDataType_t Ctype, int ldc,
+        int batchCount,
+        cublasComputeType_t computeType, cublasGemmAlgo_t algo) {
+    if (!reserving_graph) {
+        return cublasGemmBatchedEx(handle, transa, transb, m, n, k,
+            alpha, const_cast<const void **>(Aarray), Atype, lda,
+            const_cast<const void **>(Barray), Btype, ldb,
+            beta, const_cast<void **>(Carray), Ctype, ldc,
+            batchCount, computeType, algo);
+    } else {
+        return CUBLAS_STATUS_SUCCESS;
+    }
+}
+
 #undef cudaMemcpyAsync
 #define cudaMemcpyAsync cudaMemcpyAsyncReserve
 #undef cudaMemcpy2DAsync
 #define cudaMemcpy2DAsync cudaMemcpy2DAsyncReserve
 #undef cudaMemsetAsync
 #define cudaMemsetAsync cudaMemsetAsyncReserve
+#undef cublasGemmBatchedEx
+#define cublasGemmBatchedEx cublasGemmBatchedExReserve
 
 #define STRINGIZE_IMPL(...) #__VA_ARGS__
 #define STRINGIZE(...) STRINGIZE_IMPL(__VA_ARGS__)

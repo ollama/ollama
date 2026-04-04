@@ -1258,6 +1258,12 @@ func (s *Server) loadModel() {
 		panic(fmt.Errorf("failed to load model: %v", err))
 	}
 
+	if postLoader, ok := s.model.(model.PostLoader); ok {
+		if err := postLoader.PostLoad(); err != nil {
+			panic(fmt.Errorf("failed to finalize model initialization: %v", err))
+		}
+	}
+
 	s.status = llm.ServerStatusReady
 	s.ready.Done()
 }
