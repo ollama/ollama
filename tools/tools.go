@@ -125,7 +125,7 @@ func (p *Parser) parseToolCall() *api.ToolCall {
 	}
 
 	var argsMap map[string]any
-	if found, i := findArguments(tool, p.buffer); found == nil {
+	if found, i, ok := findArguments(tool, p.buffer); !ok {
 		return nil
 	} else {
 		argsMap = found
@@ -218,15 +218,13 @@ func findTool(tools []api.Tool, buf []byte) (*api.Tool, int) {
 }
 
 // findArguments returns the first object that appears to be
-// arguments for the provided tool in the provided buffer,
-// returning nil if no arguments are found and the end position
-// TODO (jmorganca): this does not support parsing omitted arguments
-// objects for functions that have all-optional parameters
-// e.g. `{"name": "get_conditions", "arguments": {}}` will work but
-// `{"name": "get_conditions"}` will not currently work
-func findArguments(tool *api.Tool, buffer []byte) (map[string]any, int) {
+// arguments for the provided tool in the provided buffer.
+// It returns the arguments map, the end position, and whether
+// a tool call was found. A tool call with omitted arguments
+// (e.g. `{"name": "get_conditions"}`) returns (nil, pos, true).
+func findArguments(tool *api.Tool, buffer []byte) (map[string]any, int, bool) {
 	if len(buffer) == 0 {
-		return nil, 0
+		return nil, 0, false
 	}
 
 	start := -1
@@ -320,10 +318,10 @@ func findArguments(tool *api.Tool, buffer []byte) (map[string]any, int) {
 				}
 
 				if args, found := findObject(data); found {
-					return args, i
+					return args, i, true
 				}
 
-				return data, i
+				return data, i, true
 			}
 
 			if braces < 0 {
@@ -332,7 +330,7 @@ func findArguments(tool *api.Tool, buffer []byte) (map[string]any, int) {
 		}
 	}
 
-	return nil, 0
+	return nil, 0, false
 }
 
 // done checks if the parser is done parsing by looking
