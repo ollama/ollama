@@ -107,6 +107,8 @@ export class Message {
     thinking: string;
     stream: boolean;
     model?: string;
+    promptEvalCount: number;
+    evalCount: number;
     attachments?: File[];
     tool_calls?: ToolCall[];
     tool_call?: ToolCall;
@@ -124,6 +126,8 @@ export class Message {
         this.thinking = source["thinking"];
         this.stream = source["stream"];
         this.model = source["model"];
+        this.promptEvalCount = source["promptEvalCount"];
+        this.evalCount = source["evalCount"];
         this.attachments = this.convertValues(source["attachments"], File);
         this.tool_calls = this.convertValues(source["tool_calls"], ToolCall);
         this.tool_call = this.convertValues(source["tool_call"], ToolCall);
@@ -327,6 +331,8 @@ export class ChatEvent {
     eventName: "chat" | "thinking" | "assistant_with_tools" | "tool_call" | "tool" | "tool_result" | "done" | "chat_created";
     content?: string;
     thinking?: string;
+    promptEvalCount?: number | undefined;
+    evalCount?: number | undefined;
     thinkingTimeStart?: Date | undefined;
     thinkingTimeEnd?: Date | undefined;
     toolCalls?: ToolCall[];
@@ -342,6 +348,8 @@ export class ChatEvent {
         this.eventName = source["eventName"];
         this.content = source["content"];
         this.thinking = source["thinking"];
+        this.promptEvalCount = source["promptEvalCount"];
+        this.evalCount = source["evalCount"];
         this.thinkingTimeStart = source["thinkingTimeStart"] && new Date(source["thinkingTimeStart"]);
         this.thinkingTimeEnd = source["thinkingTimeEnd"] && new Date(source["thinkingTimeEnd"]);
         this.toolCalls = this.convertValues(source["toolCalls"], ToolCall);

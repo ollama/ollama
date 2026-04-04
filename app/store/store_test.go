@@ -101,7 +101,9 @@ func TestStore(t *testing.T) {
 
 		chat.Messages = append(chat.Messages, NewMessage("user", "Hello", nil))
 		chat.Messages = append(chat.Messages, NewMessage("assistant", "Hi there!", &MessageOptions{
-			Model: "llama4",
+			Model:           "llama4",
+			PromptEvalCount: 1024,
+			EvalCount:       128,
 		}))
 
 		if err := s.SetChat(*chat); err != nil {
@@ -127,6 +129,12 @@ func TestStore(t *testing.T) {
 		}
 		if retrieved.Messages[1].Content != "Hi there!" {
 			t.Errorf("expected second message 'Hi there!', got %s", retrieved.Messages[1].Content)
+		}
+		if retrieved.Messages[1].PromptEvalCount != 1024 {
+			t.Errorf("expected prompt_eval_count 1024, got %d", retrieved.Messages[1].PromptEvalCount)
+		}
+		if retrieved.Messages[1].EvalCount != 128 {
+			t.Errorf("expected eval_count 128, got %d", retrieved.Messages[1].EvalCount)
 		}
 	})
 

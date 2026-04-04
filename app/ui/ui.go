@@ -866,6 +866,30 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 	// if tool_calls arrive before any assistant text, we keep them here,
 	// inject them into the next request, and attach on first assistant content/thinking.
 	var pendingAssistantToolCalls []store.ToolCall
+	lastPromptEvalCount := 0
+	lastEvalCount := 0
+	persistResponseMetrics := func(res api.ChatResponse) error {
+		if !res.Done || (res.PromptEvalCount == 0 && res.EvalCount == 0) {
+			return nil
+		}
+
+		lastPromptEvalCount = res.PromptEvalCount
+		lastEvalCount = res.EvalCount
+
+		if len(chat.Messages) == 0 || chat.Messages[len(chat.Messages)-1].Role != "assistant" {
+			return nil
+		}
+
+		lastMsg := &chat.Messages[len(chat.Messages)-1]
+		if lastMsg.PromptEvalCount == res.PromptEvalCount && lastMsg.EvalCount == res.EvalCount {
+			return nil
+		}
+
+		lastMsg.PromptEvalCount = res.PromptEvalCount
+		lastMsg.EvalCount = res.EvalCount
+		lastMsg.UpdatedAt = time.Now()
+		return s.Store.UpdateLastMessage(chat.ID, *lastMsg)
+	}
 
 	passNum := 1
 
@@ -918,7 +942,11 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 				thinkingTimeEnd = nil
 			}
 
+			hasMetrics := res.Done && (res.PromptEvalCount > 0 || res.EvalCount > 0)
 			if res.Message.Content == "" && res.Message.Thinking == "" && len(res.Message.ToolCalls) == 0 {
+				if hasMetrics {
+					return persistResponseMetrics(res)
+				}
 				return nil
 			}
 
@@ -1187,6 +1215,12 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 					}
 				}
 			}
+
+			if hasMetrics {
+				if err := persistResponseMetrics(res); err != nil {
+					return err
+				}
+			}
 			return nil
 		})
 		if err != nil {
@@ -1219,7 +1253,14 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 
-	json.NewEncoder(w).Encode(responses.ChatEvent{EventName: "done"})
+	doneEvent := responses.ChatEvent{EventName: "done"}
+	if lastPromptEvalCount > 0 {
+		doneEvent.PromptEvalCount = ptr(lastPromptEvalCount)
+	}
+	if lastEvalCount > 0 {
+		doneEvent.EvalCount = ptr(lastEvalCount)
+	}
+	json.NewEncoder(w).Encode(doneEvent)
 	flusher.Flush()
 
 	if len(chat.Messages) > 0 {
