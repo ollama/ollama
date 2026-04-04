@@ -76,7 +76,17 @@ type Sequence struct {
 	// number of tokens to predict
 	numPredict int
 
-	samplingCtx *llama.SamplingContext
+	samplingCtx     *llama.SamplingContext
+	baseSamplingParams llama.SamplingParams // original params for context recreation
+
+	// segment-level loop detection
+	repeatLineWindow    int
+	repeatLineDelims    string
+	repeatLineTempBoost float32
+	repeatLineMinLength int
+	currentSegment      strings.Builder
+	pastSegments        []string
+	loopActive          bool
 
 	// channel to send back the embedding if embedding only
 	embedding chan []float32
@@ -107,15 +117,19 @@ type Sequence struct {
 }
 
 type NewSequenceParams struct {
-	numPredict     int
-	stop           []string
-	numKeep        int
-	samplingParams *llama.SamplingParams
-	embedding      bool
-	shift          bool
-	truncate       bool
-	logprobs       bool
-	topLogprobs    int
+	numPredict          int
+	stop                []string
+	numKeep             int
+	samplingParams      *llama.SamplingParams
+	embedding           bool
+	shift               bool
+	truncate            bool
+	logprobs            bool
+	topLogprobs         int
+	repeatLineWindow    int
+	repeatLineDelims    string
+	repeatLineTempBoost float32
+	repeatLineMinLength int
 }
 
 var errorInputTooLong = errors.New("the input length exceeds the context length")
@@ -167,21 +181,48 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 		}
 	}
 
+	var baseSamplingParams llama.SamplingParams
+	if params.samplingParams != nil {
+		baseSamplingParams = *params.samplingParams
+	}
+
+	repeatLineWindow := params.repeatLineWindow
+	if repeatLineWindow == 0 {
+		repeatLineWindow = 100
+	}
+	repeatLineTempBoost := params.repeatLineTempBoost
+	if repeatLineTempBoost == 0 {
+		repeatLineTempBoost = 0.5
+	}
+	repeatLineDelims := params.repeatLineDelims
+	if repeatLineDelims == "" {
+		repeatLineDelims = "\n.!?:"
+	}
+	repeatLineMinLength := params.repeatLineMinLength
+	if repeatLineMinLength == 0 {
+		repeatLineMinLength = 20
+	}
+
 	return &Sequence{
-		inputs:           inputs,
-		numPromptInputs:  len(inputs),
-		numPredict:       params.numPredict,
-		pendingResponses: make([]string, 0),
-		responses:        make(chan response, 100),
-		quit:             make(chan bool, 1),
-		embedding:        make(chan []float32, 1),
-		samplingCtx:      sc,
-		embeddingOnly:    params.embedding,
-		stop:             params.stop,
-		numKeep:          params.numKeep,
-		shift:            params.shift,
-		logprobs:         params.logprobs,
-		topLogprobs:      params.topLogprobs,
+		inputs:              inputs,
+		numPromptInputs:     len(inputs),
+		numPredict:          params.numPredict,
+		pendingResponses:    make([]string, 0),
+		responses:           make(chan response, 100),
+		quit:                make(chan bool, 1),
+		embedding:           make(chan []float32, 1),
+		samplingCtx:         sc,
+		baseSamplingParams:  baseSamplingParams,
+		embeddingOnly:       params.embedding,
+		stop:                params.stop,
+		numKeep:             params.numKeep,
+		shift:               params.shift,
+		logprobs:            params.logprobs,
+		topLogprobs:         params.topLogprobs,
+		repeatLineWindow:    repeatLineWindow,
+		repeatLineDelims:    repeatLineDelims,
+		repeatLineTempBoost: repeatLineTempBoost,
+		repeatLineMinLength: repeatLineMinLength,
 	}, nil
 }
 
@@ -540,6 +581,51 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		seq.samplingCtx.Accept(token, true)
 		piece := s.model.TokenToPiece(token)
 
+		// segment-level loop detection: check for repeating phrases and boost
+		// temperature to break out of deterministic repetition cycles.
+		if seq.repeatLineWindow > 0 {
+			seq.currentSegment.WriteString(piece)
+			if strings.ContainsAny(piece, seq.repeatLineDelims) {
+				seg := strings.TrimSpace(seq.currentSegment.String())
+				seq.currentSegment.Reset()
+				if seg != "" && (seq.repeatLineMinLength <= 0 || len(seg) >= seq.repeatLineMinLength) {
+					wasActive := seq.loopActive
+					found := false
+					for _, past := range seq.pastSegments {
+						if past == seg {
+							found = true
+							break
+						}
+					}
+					seq.loopActive = found
+					if found && !wasActive {
+						slog.Debug("repeat-line loop DETECTED", "seg", seg, "history_size", len(seq.pastSegments))
+						boostedParams := seq.baseSamplingParams
+						boostedParams.Temp += seq.repeatLineTempBoost
+						if minTemp := seq.repeatLineTempBoost * 2; boostedParams.Temp < minTemp {
+							boostedParams.Temp = minTemp
+						}
+						newCtx, err := llama.NewSamplingContext(s.model, boostedParams)
+						if err == nil {
+							seq.samplingCtx.Reset()
+							seq.samplingCtx = newCtx
+						}
+					} else if !found && wasActive {
+						slog.Debug("repeat-line loop RESOLVED")
+						restoredCtx, err := llama.NewSamplingContext(s.model, seq.baseSamplingParams)
+						if err == nil {
+							seq.samplingCtx.Reset()
+							seq.samplingCtx = restoredCtx
+						}
+					}
+					seq.pastSegments = append(seq.pastSegments, seg)
+					if len(seq.pastSegments) > seq.repeatLineWindow {
+						seq.pastSegments = seq.pastSegments[1:]
+					}
+				}
+			}
+		}
+
 		seq.numPredicted++
 
 		// if it's an end of sequence token, break
@@ -630,7 +716,6 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		opts := api.DefaultOptions()
 		req.Options = &opts
 	}
-
 	// Set the headers to indicate streaming
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Transfer-Encoding", "chunked")
@@ -657,15 +742,19 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
-		numPredict:     req.Options.NumPredict,
-		stop:           req.Options.Stop,
-		numKeep:        req.Options.NumKeep,
-		samplingParams: &samplingParams,
-		embedding:      false,
-		shift:          req.Shift,
-		truncate:       req.Truncate,
-		logprobs:       req.Logprobs,
-		topLogprobs:    req.TopLogprobs,
+		numPredict:          req.Options.NumPredict,
+		stop:                req.Options.Stop,
+		numKeep:             req.Options.NumKeep,
+		samplingParams:      &samplingParams,
+		embedding:           false,
+		shift:               req.Shift,
+		truncate:            req.Truncate,
+		logprobs:            req.Logprobs,
+		topLogprobs:         req.TopLogprobs,
+		repeatLineWindow:    req.Options.RepeatLineWindow,
+		repeatLineDelims:    req.Options.RepeatLineDelimiters,
+		repeatLineTempBoost: req.Options.RepeatLineTempBoost,
+		repeatLineMinLength: req.Options.RepeatLineMinLength,
 	})
 	if err != nil {
 		if errors.Is(err, errorInputTooLong) {

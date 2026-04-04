@@ -596,6 +596,18 @@ type Options struct {
 	PresencePenalty  float32  `json:"presence_penalty,omitempty"`
 	FrequencyPenalty float32  `json:"frequency_penalty,omitempty"`
 	Stop             []string `json:"stop,omitempty"`
+
+	// RepeatLineWindow enables segment-level loop detection. When > 0, the
+	// sampler tracks recently completed text segments (delimited by
+	// RepeatLineDelimiters) and boosts the temperature by RepeatLineTempBoost
+	// whenever the current segment matches any of the last RepeatLineWindow
+	// segments. This breaks deterministic thinking loops that repeat_penalty
+	// cannot catch because it only operates on token-level n-gram recency.
+	// Set to 0 (default) to disable.
+	RepeatLineWindow     int     `json:"repeat_line_window,omitempty"`
+	RepeatLineDelimiters string  `json:"repeat_line_delimiters,omitempty"`
+	RepeatLineTempBoost  float32 `json:"repeat_line_temp_boost,omitempty"`
+	RepeatLineMinLength  int     `json:"repeat_line_min_length,omitempty"`
 }
 
 // Runner options which must be set when the model is loaded into memory
@@ -1067,6 +1079,10 @@ func DefaultOptions() Options {
 		RepeatPenalty:    1.1,
 		PresencePenalty:  0.0,
 		FrequencyPenalty: 0.0,
+		RepeatLineWindow:     0,
+		RepeatLineDelimiters: "\n.!?:",
+		RepeatLineTempBoost:  0.5,
+		RepeatLineMinLength:  20,
 		Seed:             -1,
 
 		Runner: Runner{
