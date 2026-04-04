@@ -622,12 +622,21 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 
 	skipVerify := make(map[string]bool)
 	for _, layer := range layers {
-		cacheHit, err := downloadBlob(ctx, downloadOpts{
+		opts := downloadOpts{
 			n:       n,
 			digest:  layer.Digest,
 			regOpts: regOpts,
 			fn:      fn,
-		})
+		}
+		cacheHit, err := downloadBlob(ctx, opts)
+		if errors.Is(err, errDigestMismatch) {
+			// Digest mismatch detected during download verification.
+			// The corrupted partial file has already been cleaned up by
+			// run(), so retry the download once from scratch.
+			slog.Info(fmt.Sprintf("digest mismatch for %s, retrying download", layer.Digest[7:19]))
+			fn(api.ProgressResponse{Status: fmt.Sprintf("retrying %s", layer.Digest[7:19])})
+			cacheHit, err = downloadBlob(ctx, opts)
+		}
 		if err != nil {
 			return err
 		}
