@@ -102,7 +102,7 @@ func parseFloat(s string) (float64, error) {
 // rateLimitedReader wraps an io.Reader and enforces a global rate limit.
 type rateLimitedReader struct {
 	r       io.Reader
-	ctx     context.Context
+	ctx     context.Context //nolint:containedctx // ctx required for rate.Limiter.WaitN in io.Reader.Read
 	limiter *rate.Limiter
 }
 
