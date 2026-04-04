@@ -11,5 +11,6 @@ func availableBytes(path string) (int64, error) {
 	if err := syscall.Statfs(path, &stat); err != nil {
 		return 0, err
 	}
+	//nolint:unconvert // Bsize type varies by platform (int32 on darwin, int64 on linux)
 	return int64(stat.Bavail) * int64(stat.Bsize), nil
 }
