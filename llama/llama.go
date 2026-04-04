@@ -153,6 +153,9 @@ func kvCacheTypeFromStr(s string) C.enum_ggml_type {
 		return C.GGML_TYPE_Q8_0
 	case "q4_0":
 		return C.GGML_TYPE_Q4_0
+	case "tq3", "tq4":
+		slog.Info("TurboQuant mapped to q4_0 for llamarunner (full TurboQuant requires new engine)", "type", s)
+		return C.GGML_TYPE_Q4_0
 	default:
 		return C.GGML_TYPE_F16
 	}

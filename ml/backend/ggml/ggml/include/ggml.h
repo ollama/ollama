@@ -567,6 +567,11 @@ extern "C" {
 
         GGML_OP_GLU,
 
+        GGML_OP_FWHT, // Fast Walsh-Hadamard Transform (TurboQuant rotation)
+        GGML_OP_LLOYD_MAX_Q,  // Lloyd-Max quantize: f32 -> packed I32 (TurboQuant)
+        GGML_OP_LLOYD_MAX_DQ, // Lloyd-Max dequantize: packed I32 -> f32/f16 (TurboQuant)
+        GGML_OP_TQ_DECOMPRESS, // Fused TurboQuant decompress: packed+norm -> F16 (DQ+FWHT+Mul)
+
         GGML_OP_COUNT,
     };
 
@@ -2571,6 +2576,57 @@ extern "C" {
         struct ggml_tensor *  a,
         struct ggml_tensor *  grad,
         struct ggml_tensor *  sgd_params); // alpha, weight decay
+
+    // Fast Walsh-Hadamard Transform (TurboQuant)
+    // Applies randomized Hadamard rotation: y = (1/sqrt(d)) * H_d * D * x (forward)
+    // or y = (1/sqrt(d)) * D * H_d * x (inverse), where D is a random sign-flip
+    // diagonal determined by seed. Operates along dimension 0.
+    // seed_hi/seed_lo: upper/lower 32 bits of uint64 seed
+    // inverse: 0 = forward rotation, 1 = inverse rotation
+    GGML_API struct ggml_tensor * ggml_fwht(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            uint32_t              seed_hi,
+            uint32_t              seed_lo,
+            int                   inverse);
+
+    // Lloyd-Max optimal scalar quantization (TurboQuant)
+    // Quantize: f32 [d, ...] -> I32 [packed_d, ...] where packed_d = d*mse_bits/32
+    // Centroids are hardcoded for N(0,1) scaled by 1/sqrt(dim).
+    // mse_bits: 2 (TQ3) or 3 (TQ4)
+    GGML_API struct ggml_tensor * ggml_lloyd_max_quantize(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            int                   mse_bits,
+            int                   dim);
+
+    // Dequantize: I32 [packed_d, ...] -> f32 [dim, ...]
+    GGML_API struct ggml_tensor * ggml_lloyd_max_dequantize(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            int                   mse_bits,
+            int                   dim);
+
+    // Dequantize: I32 [packed_d, ...] -> f16 [dim, ...]
+    // Same as ggml_lloyd_max_dequantize but outputs F16 directly,
+    // eliminating a separate F32->F16 cast and halving the output tensor size.
+    GGML_API struct ggml_tensor * ggml_lloyd_max_dequantize_f16(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            int                   mse_bits,
+            int                   dim);
+
+    // Fused TurboQuant decompress: [packed_d+1, ...] -> f16 [dim, ...]
+    // Combines Lloyd-Max dequantize + inverse FWHT + norm rescale in one op.
+    // Input tensor has packed_d I32 bit patterns + 1 F32 norm element (concatenated on dim 0).
+    // Eliminates all intermediate tensors from the GGML graph.
+    GGML_API struct ggml_tensor * ggml_tq_decompress(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            int                   mse_bits,
+            int                   dim,
+            uint32_t              seed_hi,
+            uint32_t              seed_lo);
 
     //
     // automatic differentiation

@@ -9294,6 +9294,526 @@ void ggml_compute_forward_glu(
     }
 }
 
+// ggml_compute_forward_fwht
+//
+// Fast Walsh-Hadamard Transform for TurboQuant rotation.
+// Applies: y = (1/sqrt(d)) * H_d * D * x  (forward, inverse=0)
+//      or: y = (1/sqrt(d)) * D * H_d * x  (inverse, inverse=1)
+// where D is a random ±1 diagonal from seed, H_d is the Hadamard matrix
+// applied via in-place butterfly operations.
+
+static void ggml_compute_forward_fwht_f32(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+
+    const ggml_tensor * src0 = dst->src[0];
+
+    GGML_ASSERT(src0->type == GGML_TYPE_F32);
+    GGML_ASSERT(dst->type  == GGML_TYPE_F32);
+
+    const int64_t d  = src0->ne[0]; // head dimension (must be power of 2)
+    const int64_t nr = ggml_nrows(src0); // total number of vectors
+
+    GGML_ASSERT(d > 0 && (d & (d - 1)) == 0); // power of 2
+
+    // Read op params: seed_hi, seed_lo, inverse
+    const uint32_t seed_hi = (uint32_t) dst->op_params[0];
+    const uint32_t seed_lo = (uint32_t) dst->op_params[1];
+    const int inverse      = dst->op_params[2];
+    const uint64_t seed    = ((uint64_t) seed_hi << 32) | (uint64_t) seed_lo;
+
+    // Generate random sign-flip diagonal D from seed
+    // Using a simple xorshift64 PRNG for deterministic ±1 signs
+    uint64_t rng = seed;
+    float * signs = (float *) malloc(d * sizeof(float));
+    GGML_ASSERT(signs != NULL);
+    for (int64_t i = 0; i < d; i++) {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        signs[i] = (rng & 1) ? 1.0f : -1.0f;
+    }
+
+    const float scale = 1.0f / sqrtf((float) d);
+
+    // Thread work distribution: each thread handles a subset of rows
+    const int ith = params->ith;
+    const int nth = params->nth;
+    const int64_t dr  = (nr + nth - 1) / nth;
+    const int64_t ir0 = dr * ith;
+    const int64_t ir1 = ir0 + dr < nr ? ir0 + dr : nr;
+
+    for (int64_t ir = ir0; ir < ir1; ir++) {
+        const float * src = (const float *)((const char *) src0->data + ir * src0->nb[1]);
+        float *       out = (float *)((char *) dst->data + ir * dst->nb[1]);
+
+        // Copy source to output (we modify in-place in the output buffer)
+        if (src != out) {
+            memcpy(out, src, d * sizeof(float));
+        }
+
+        if (!inverse) {
+            // Forward: y = (1/sqrt(d)) * H * D * x
+            // Step 1: Apply diagonal D (element-wise sign flip)
+            for (int64_t i = 0; i < d; i++) {
+                out[i] *= signs[i];
+            }
+
+            // Step 2: In-place Walsh-Hadamard butterfly
+            for (int64_t len = 1; len < d; len <<= 1) {
+                for (int64_t j = 0; j < d; j += len << 1) {
+                    for (int64_t k = 0; k < len; k++) {
+                        const float a = out[j + k];
+                        const float b = out[j + k + len];
+                        out[j + k]       = a + b;
+                        out[j + k + len] = a - b;
+                    }
+                }
+            }
+        } else {
+            // Inverse: y = (1/sqrt(d)) * D * H * x
+            // Step 1: In-place Walsh-Hadamard butterfly
+            for (int64_t len = 1; len < d; len <<= 1) {
+                for (int64_t j = 0; j < d; j += len << 1) {
+                    for (int64_t k = 0; k < len; k++) {
+                        const float a = out[j + k];
+                        const float b = out[j + k + len];
+                        out[j + k]       = a + b;
+                        out[j + k + len] = a - b;
+                    }
+                }
+            }
+
+            // Step 2: Apply diagonal D (element-wise sign flip)
+            for (int64_t i = 0; i < d; i++) {
+                out[i] *= signs[i];
+            }
+        }
+
+        // Step 3: Scale by 1/sqrt(d)
+        for (int64_t i = 0; i < d; i++) {
+            out[i] *= scale;
+        }
+    }
+
+    free(signs);
+}
+
+static void ggml_compute_forward_fwht_f16(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+
+    const ggml_tensor * src0 = dst->src[0];
+
+    GGML_ASSERT(src0->type == GGML_TYPE_F16);
+    GGML_ASSERT(dst->type  == GGML_TYPE_F16);
+
+    const int64_t d  = src0->ne[0];
+    const int64_t nr = ggml_nrows(src0);
+
+    GGML_ASSERT(d > 0 && (d & (d - 1)) == 0);
+
+    const uint32_t seed_hi = (uint32_t) dst->op_params[0];
+    const uint32_t seed_lo = (uint32_t) dst->op_params[1];
+    const int inverse      = dst->op_params[2];
+    const uint64_t seed    = ((uint64_t) seed_hi << 32) | (uint64_t) seed_lo;
+
+    uint64_t rng = seed;
+    float * signs = (float *) malloc(d * sizeof(float));
+    GGML_ASSERT(signs != NULL);
+    for (int64_t i = 0; i < d; i++) {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        signs[i] = (rng & 1) ? 1.0f : -1.0f;
+    }
+
+    const float scale = 1.0f / sqrtf((float) d);
+
+    // Temporary F32 buffer for computation
+    float * buf = (float *) malloc(d * sizeof(float));
+    GGML_ASSERT(buf != NULL);
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+    const int64_t dr  = (nr + nth - 1) / nth;
+    const int64_t ir0 = dr * ith;
+    const int64_t ir1 = ir0 + dr < nr ? ir0 + dr : nr;
+
+    for (int64_t ir = ir0; ir < ir1; ir++) {
+        const ggml_fp16_t * src = (const ggml_fp16_t *)((const char *) src0->data + ir * src0->nb[1]);
+        ggml_fp16_t *       out = (ggml_fp16_t *)((char *) dst->data + ir * dst->nb[1]);
+
+        // Load F16 → F32
+        for (int64_t i = 0; i < d; i++) {
+            buf[i] = GGML_FP16_TO_FP32(src[i]);
+        }
+
+        if (!inverse) {
+            for (int64_t i = 0; i < d; i++) {
+                buf[i] *= signs[i];
+            }
+            for (int64_t len = 1; len < d; len <<= 1) {
+                for (int64_t j = 0; j < d; j += len << 1) {
+                    for (int64_t k = 0; k < len; k++) {
+                        const float a = buf[j + k];
+                        const float b = buf[j + k + len];
+                        buf[j + k]       = a + b;
+                        buf[j + k + len] = a - b;
+                    }
+                }
+            }
+        } else {
+            for (int64_t len = 1; len < d; len <<= 1) {
+                for (int64_t j = 0; j < d; j += len << 1) {
+                    for (int64_t k = 0; k < len; k++) {
+                        const float a = buf[j + k];
+                        const float b = buf[j + k + len];
+                        buf[j + k]       = a + b;
+                        buf[j + k + len] = a - b;
+                    }
+                }
+            }
+            for (int64_t i = 0; i < d; i++) {
+                buf[i] *= signs[i];
+            }
+        }
+
+        // Scale and store F32 → F16
+        for (int64_t i = 0; i < d; i++) {
+            out[i] = GGML_FP32_TO_FP16(buf[i] * scale);
+        }
+    }
+
+    free(buf);
+    free(signs);
+}
+
+void ggml_compute_forward_fwht(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+
+    const ggml_tensor * src0 = dst->src[0];
+
+    switch (src0->type) {
+        case GGML_TYPE_F32:
+            {
+                ggml_compute_forward_fwht_f32(params, dst);
+            } break;
+        case GGML_TYPE_F16:
+            {
+                ggml_compute_forward_fwht_f16(params, dst);
+            } break;
+        default:
+            {
+                GGML_ABORT("ggml_compute_forward_fwht: unsupported type");
+            }
+    }
+}
+
+// ggml_compute_forward_lloyd_max_q
+//
+// Lloyd-Max optimal scalar quantization for TurboQuant.
+// Hardcoded centroids for N(0,1) distribution, scaled by 1/sqrt(dim).
+// mse_bits=2: 4 centroids (TQ3), mse_bits=3: 8 centroids (TQ4).
+// Packs indices as bit-stream into I32 output.
+
+// N(0,1) Lloyd-Max centroids (same as turboquant/codebook.go)
+static const float lloyd_max_centroids_2[] = {
+    -1.5104176088f, -0.4527800398f, 0.4527800398f, 1.5104176088f
+};
+static const float lloyd_max_boundaries_2[] = {
+    -0.9815988243f, 0.0f, 0.9815988243f
+};
+static const float lloyd_max_centroids_3[] = {
+    -2.1519481310f, -1.3439092613f, -0.7560052489f, -0.2451209526f,
+     0.2451209526f,  0.7560052489f,  1.3439092613f,  2.1519481310f
+};
+static const float lloyd_max_boundaries_3[] = {
+    -1.7479286962f, -1.0499572551f, -0.5005631008f, 0.0f,
+     0.5005631008f,  1.0499572551f,  1.7479286962f
+};
+
+static inline int lloyd_max_find_index(float val, const float * boundaries, int n_boundaries, float scale) {
+    // Binary search on scaled boundaries
+    int left = 0, right = n_boundaries;
+    while (left < right) {
+        int mid = left + (right - left) / 2;
+        if (val <= boundaries[mid] * scale) {
+            right = mid;
+        } else {
+            left = mid + 1;
+        }
+    }
+    return left;
+}
+
+static void ggml_compute_forward_lloyd_max_q_impl(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+
+    const ggml_tensor * src0 = dst->src[0];
+    const int mse_bits  = ggml_get_op_params_i32(dst, 0);
+    const int dim       = ggml_get_op_params_i32(dst, 1);
+    const float scale   = 1.0f / sqrtf((float)dim);
+
+    const float * boundaries;
+    int n_boundaries;
+    if (mse_bits == 2) {
+        boundaries   = lloyd_max_boundaries_2;
+        n_boundaries = 3;
+    } else {
+        boundaries   = lloyd_max_boundaries_3;
+        n_boundaries = 7;
+    }
+
+    const int64_t d        = src0->ne[0]; // should equal dim
+    const int64_t n_rows   = ggml_nrows(src0); // total rows across all higher dims
+    const int64_t packed_d = dst->ne[0];
+
+    GGML_ASSERT(d == dim);
+
+    // Thread partitioning across rows
+    const int ith = params->ith;
+    const int nth = params->nth;
+    const int64_t rows_per_thread = (n_rows + nth - 1) / nth;
+    const int64_t row_start = ith * rows_per_thread;
+    const int64_t row_end   = std::min(row_start + rows_per_thread, n_rows);
+
+    for (int64_t row = row_start; row < row_end; row++) {
+        const float * src_row = (const float *)((const char *)src0->data + row * src0->nb[1]);
+        // Output is F32 tensor but we store I32 bit patterns via reinterpret_cast.
+        // F32 and I32 are both 4 bytes, so the memory layout is identical.
+        int32_t *     dst_row = reinterpret_cast<int32_t *>((char *)dst->data + row * dst->nb[1]);
+
+        // Zero output
+        for (int64_t j = 0; j < packed_d; j++) {
+            dst_row[j] = 0;
+        }
+
+        // Quantize and pack into bit-stream
+        for (int64_t i = 0; i < d; i++) {
+            int idx = lloyd_max_find_index(src_row[i], boundaries, n_boundaries, scale);
+
+            // Pack: element i uses bits [i*mse_bits, (i+1)*mse_bits) in the I32 stream
+            int64_t bit_offset = i * mse_bits;
+            int64_t word_idx   = bit_offset / 32;
+            int     bit_pos    = (int)(bit_offset % 32);
+
+            dst_row[word_idx] |= (idx << bit_pos);
+
+            // Handle case where bits span two I32 words
+            if (bit_pos + mse_bits > 32) {
+                int overflow = bit_pos + mse_bits - 32;
+                dst_row[word_idx + 1] |= (idx >> (mse_bits - overflow));
+            }
+        }
+    }
+}
+
+void ggml_compute_forward_lloyd_max_q(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+
+    const ggml_tensor * src0 = dst->src[0];
+
+    switch (src0->type) {
+        case GGML_TYPE_F32:
+            {
+                ggml_compute_forward_lloyd_max_q_impl(params, dst);
+            } break;
+        default:
+            {
+                GGML_ABORT("ggml_compute_forward_lloyd_max_q: unsupported type");
+            }
+    }
+}
+
+// ggml_compute_forward_lloyd_max_dq
+
+// Shared dequantize logic: unpacks Lloyd-Max indices and writes centroids to F32 or F16 output.
+template <typename T>
+static void ggml_compute_forward_lloyd_max_dq_typed(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+
+    const ggml_tensor * src0 = dst->src[0];
+    const int mse_bits  = ggml_get_op_params_i32(dst, 0);
+    const int dim       = ggml_get_op_params_i32(dst, 1);
+    const float scale   = 1.0f / sqrtf((float)dim);
+
+    const float * centroids;
+    int n_centroids;
+    if (mse_bits == 2) {
+        centroids   = lloyd_max_centroids_2;
+        n_centroids = 4;
+    } else {
+        centroids   = lloyd_max_centroids_3;
+        n_centroids = 8;
+    }
+
+    const int mask = (1 << mse_bits) - 1;
+
+    const int64_t d      = dst->ne[0]; // should equal dim
+    const int64_t n_rows = ggml_nrows(dst);
+
+    GGML_ASSERT(d == dim);
+    GGML_UNUSED(n_centroids);
+
+    // Thread partitioning across rows
+    const int ith = params->ith;
+    const int nth = params->nth;
+    const int64_t rows_per_thread = (n_rows + nth - 1) / nth;
+    const int64_t row_start = ith * rows_per_thread;
+    const int64_t row_end   = std::min(row_start + rows_per_thread, n_rows);
+
+    for (int64_t row = row_start; row < row_end; row++) {
+        const int32_t * src_row = reinterpret_cast<const int32_t *>((const char *)src0->data + row * src0->nb[1]);
+        T *             dst_row = (T *)((char *)dst->data + row * dst->nb[1]);
+
+        for (int64_t i = 0; i < d; i++) {
+            int64_t bit_offset = i * mse_bits;
+            int64_t word_idx   = bit_offset / 32;
+            int     bit_pos    = (int)(bit_offset % 32);
+
+            int idx = (src_row[word_idx] >> bit_pos) & mask;
+
+            if (bit_pos + mse_bits > 32) {
+                int overflow = bit_pos + mse_bits - 32;
+                idx |= ((src_row[word_idx + 1] & ((1 << overflow) - 1)) << (mse_bits - overflow));
+            }
+
+            float val = centroids[idx] * scale;
+            if constexpr (std::is_same_v<T, ggml_fp16_t>) {
+                dst_row[i] = GGML_FP32_TO_FP16(val);
+            } else {
+                dst_row[i] = val;
+            }
+        }
+    }
+}
+
+void ggml_compute_forward_lloyd_max_dq(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+
+    GGML_ASSERT(dst->src[0]->type == GGML_TYPE_F32);
+
+    switch (dst->type) {
+        case GGML_TYPE_F32:
+            ggml_compute_forward_lloyd_max_dq_typed<float>(params, dst);
+            break;
+        case GGML_TYPE_F16:
+            ggml_compute_forward_lloyd_max_dq_typed<ggml_fp16_t>(params, dst);
+            break;
+        default:
+            GGML_ABORT("ggml_compute_forward_lloyd_max_dq: unsupported output type");
+    }
+}
+
+// ggml_compute_forward_tq_decompress
+//
+// Fused TurboQuant decompress: LloydMaxDQ + inverse FWHT + norm multiply.
+// Input: F32 [packed_d+1, ...] (packed I32 indices + L2 norm)
+// Output: F16 [dim, ...]
+// Eliminates all intermediate tensors from the computation graph.
+
+void ggml_compute_forward_tq_decompress(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+
+    const ggml_tensor * src0 = dst->src[0];
+
+    GGML_ASSERT(src0->type == GGML_TYPE_F32);
+    GGML_ASSERT(dst->type  == GGML_TYPE_F16);
+
+    const int mse_bits   = ggml_get_op_params_i32(dst, 0);
+    const int dim        = ggml_get_op_params_i32(dst, 1);
+    const uint32_t seed_hi = (uint32_t) ggml_get_op_params_i32(dst, 2);
+    const uint32_t seed_lo = (uint32_t) ggml_get_op_params_i32(dst, 3);
+    const uint64_t seed    = ((uint64_t)seed_hi << 32) | (uint64_t)seed_lo;
+
+    const int packed_dim = dim * mse_bits / 32;
+    const float dq_scale   = 1.0f / sqrtf((float)dim);
+    const float fwht_scale = 1.0f / sqrtf((float)dim);
+    const int mask = (1 << mse_bits) - 1;
+
+    // Select centroids
+    const float * centroids;
+    if (mse_bits == 2) {
+        centroids = lloyd_max_centroids_2;
+    } else {
+        centroids = lloyd_max_centroids_3;
+    }
+
+    // Generate sign-flip diagonal
+    uint64_t rng = seed;
+    float * signs = (float *) malloc(dim * sizeof(float));
+    GGML_ASSERT(signs != NULL);
+    for (int i = 0; i < dim; i++) {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        signs[i] = (rng & 1) ? 1.0f : -1.0f;
+    }
+
+    // Temporary buffer for one vector (in-place butterfly)
+    float * buf = (float *) malloc(dim * sizeof(float));
+    GGML_ASSERT(buf != NULL);
+
+    const int64_t n_rows = ggml_nrows(dst);
+    GGML_ASSERT(dst->ne[0] == dim);
+
+    // Thread partitioning
+    const int ith = params->ith;
+    const int nth = params->nth;
+    const int64_t rows_per_thread = (n_rows + nth - 1) / nth;
+    const int64_t row_start = ith * rows_per_thread;
+    const int64_t row_end   = std::min(row_start + rows_per_thread, n_rows);
+
+    for (int64_t row = row_start; row < row_end; row++) {
+        const int32_t * src_row = reinterpret_cast<const int32_t *>((const char *)src0->data + row * src0->nb[1]);
+        // Norm is the last F32 in the source row
+        const float norm_val = *(const float *)((const char *)src0->data + row * src0->nb[1] + packed_dim * sizeof(float));
+        ggml_fp16_t * dst_row = (ggml_fp16_t *)((char *)dst->data + row * dst->nb[1]);
+
+        // Phase 1: Lloyd-Max dequantize into buf
+        for (int i = 0; i < dim; i++) {
+            int64_t bit_offset = (int64_t)i * mse_bits;
+            int64_t word_idx   = bit_offset / 32;
+            int     bit_pos    = (int)(bit_offset % 32);
+
+            int idx = (src_row[word_idx] >> bit_pos) & mask;
+            if (bit_pos + mse_bits > 32) {
+                int overflow = bit_pos + mse_bits - 32;
+                idx |= ((src_row[word_idx + 1] & ((1 << overflow) - 1)) << (mse_bits - overflow));
+            }
+            buf[i] = centroids[idx] * dq_scale;
+        }
+
+        // Phase 2: Inverse FWHT (butterfly then sign flip)
+        for (int64_t len = 1; len < dim; len <<= 1) {
+            for (int64_t j = 0; j < dim; j += len << 1) {
+                for (int64_t k = 0; k < len; k++) {
+                    const float a = buf[j + k];
+                    const float b = buf[j + k + len];
+                    buf[j + k]       = a + b;
+                    buf[j + k + len] = a - b;
+                }
+            }
+        }
+
+        // Phase 3: Sign flip + scale + norm multiply + write F16
+        const float combined_scale = fwht_scale * norm_val;
+        for (int i = 0; i < dim; i++) {
+            dst_row[i] = GGML_FP32_TO_FP16(buf[i] * signs[i] * combined_scale);
+        }
+    }
+
+    free(buf);
+    free(signs);
+}
+
 // ggml_compute_forward_get_rel_pos
 
 static void ggml_compute_forward_get_rel_pos_f16(
