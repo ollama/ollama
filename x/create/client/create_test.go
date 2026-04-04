@@ -429,3 +429,88 @@ func TestNewManifestWriter_PopulatesFileTypeFromQuantize(t *testing.T) {
 		t.Fatalf("FileType = %q, want %q", cfg.FileType, "mxfp8")
 	}
 }
+
+func TestGetParserName(t *testing.T) {
+	tests := []struct {
+		name          string
+		architectures []string
+		modelType     string
+		wantParser    string
+	}{
+		{"plain qwen3", []string{"Qwen3ForCausalLM"}, "", "qwen3"},
+		{"qwen3 moe", []string{"Qwen3MoeForCausalLM"}, "", "qwen3"},
+		{"qwen3.5", []string{"Qwen3_5ForConditionalGeneration"}, "", "qwen3.5"},
+		{"qwen3.5 moe", []string{"Qwen3_5MoeForConditionalGeneration"}, "", "qwen3.5"},
+		{"qwen3-coder", []string{"Qwen3NextForCausalLM"}, "", "qwen3-coder"},
+		{"qwen3 vl", []string{"Qwen3VLForConditionalGeneration"}, "", "qwen3-vl-instruct"},
+		{"qwen3 model_type fallback", nil, "qwen3", "qwen3"},
+		{"qwen3_5 model_type fallback", nil, "qwen3_5", "qwen3.5"},
+		{"unknown arch", []string{"LlamaForCausalLM"}, "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := struct {
+				Architectures []string `json:"architectures,omitempty"`
+				ModelType     string   `json:"model_type,omitempty"`
+			}{
+				Architectures: tt.architectures,
+				ModelType:     tt.modelType,
+			}
+			data, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			got := getParserName(dir)
+			if got != tt.wantParser {
+				t.Errorf("getParserName() = %q, want %q", got, tt.wantParser)
+			}
+		})
+	}
+}
+
+func TestGetRendererName(t *testing.T) {
+	tests := []struct {
+		name          string
+		architectures []string
+		modelType     string
+		wantRenderer  string
+	}{
+		{"plain qwen3", []string{"Qwen3ForCausalLM"}, "", "qwen3-coder"},
+		{"qwen3.5", []string{"Qwen3_5ForConditionalGeneration"}, "", "qwen3.5"},
+		{"qwen3.5 moe", []string{"Qwen3_5MoeForConditionalGeneration"}, "", "qwen3.5"},
+		{"qwen3-coder (qwen3next)", []string{"Qwen3NextForCausalLM"}, "", "qwen3-coder"},
+		{"qwen3 vl", []string{"Qwen3VLForConditionalGeneration"}, "", "qwen3-vl-instruct"},
+		{"unknown arch", []string{"LlamaForCausalLM"}, "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfg := struct {
+				Architectures []string `json:"architectures,omitempty"`
+				ModelType     string   `json:"model_type,omitempty"`
+			}{
+				Architectures: tt.architectures,
+				ModelType:     tt.modelType,
+			}
+			data, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			got := getRendererName(dir)
+			if got != tt.wantRenderer {
+				t.Errorf("getRendererName() = %q, want %q", got, tt.wantRenderer)
+			}
+		})
+	}
+}
