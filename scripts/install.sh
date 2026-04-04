@@ -291,6 +291,7 @@ check_gpu() {
     esac
 }
 
+HAS_CUDA=false
 if check_gpu nvidia-smi; then
     status "NVIDIA GPU installed."
     HAS_CUDA=true
