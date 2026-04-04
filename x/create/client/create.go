@@ -134,6 +134,16 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 		spinnerKey = "create"
 		capabilities = inferSafetensorsCapabilities(opts.ModelDir)
 
+		// Check if model has a vision encoder
+		if supportsVision(opts.ModelDir) {
+			capabilities = append(capabilities, "vision")
+		}
+
+		// Check if model has an audio encoder
+		if supportsAudio(opts.ModelDir) {
+			capabilities = append(capabilities, "audio")
+		}
+
 		// Set parser and renderer name based on architecture
 		parserName = getParserName(opts.ModelDir)
 		rendererName = getRendererName(opts.ModelDir)
@@ -496,32 +506,38 @@ func supportsThinking(modelDir string) bool {
 	return false
 }
 
-// supportsVision checks if the model supports image input based on its architecture.
-// Qwen3.5 multimodal checkpoints are published as ConditionalGeneration architectures.
+// supportsVision checks if the model has a vision encoder by looking for
+// vision_config in config.json.
 func supportsVision(modelDir string) bool {
-	configPath := filepath.Join(modelDir, "config.json")
-	data, err := os.ReadFile(configPath)
+	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
 	if err != nil {
 		return false
 	}
 
 	var cfg struct {
-		Architectures []string `json:"architectures"`
-		ModelType     string   `json:"model_type"`
+		VisionConfig *map[string]any `json:"vision_config"`
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return false
 	}
 
-	for _, arch := range cfg.Architectures {
-		archLower := strings.ToLower(arch)
-		if strings.Contains(archLower, "qwen3") && strings.Contains(archLower, "conditionalgeneration") {
-			return true
-		}
+	return cfg.VisionConfig != nil
+}
+
+func supportsAudio(modelDir string) bool {
+	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
+	if err != nil {
+		return false
 	}
 
-	typeLower := strings.ToLower(cfg.ModelType)
-	return strings.Contains(typeLower, "qwen3") && strings.Contains(typeLower, "conditionalgeneration")
+	var cfg struct {
+		AudioConfig *map[string]any `json:"audio_config"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return false
+	}
+
+	return cfg.AudioConfig != nil
 }
 
 // getParserName returns the parser name for a model based on its architecture.
