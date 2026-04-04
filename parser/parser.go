@@ -124,6 +124,21 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 				break
 			}
 
+			// Handle "think" parameter specially since it's not part of Options
+			if c.Name == "think" {
+				switch strings.ToLower(strings.TrimSpace(c.Args)) {
+				case "false", "off", "no", "0":
+					params["think"] = false
+				case "true", "on", "yes", "1":
+					params["think"] = true
+				case "high", "medium", "low":
+					params["think"] = strings.ToLower(strings.TrimSpace(c.Args))
+				default:
+					return nil, fmt.Errorf("invalid think value: %q (must be true, false, high, medium, or low)", c.Args)
+				}
+				break
+			}
+
 			ps, err := api.FormatParams(map[string][]string{c.Name: {c.Args}})
 			if err != nil {
 				return nil, err
