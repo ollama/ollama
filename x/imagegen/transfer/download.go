@@ -117,13 +117,24 @@ func (d *downloader) download(ctx context.Context, blob Blob) error {
 		start := time.Now()
 		n, err := d.downloadOnce(ctx, blob)
 		if err == nil {
-			if s := time.Since(start).Seconds(); s > 0 {
-				d.speeds.record(float64(blob.Size) / s)
+			// Skip speed recording for tiny blobs — their transfer time is
+			// dominated by HTTP overhead, not throughput, and would pollute
+			// the median used for stall detection.
+			if blob.Size >= smallBlobSpeedThreshold {
+				if s := time.Since(start).Seconds(); s > 0 {
+					d.speeds.record(float64(blob.Size) / s)
+				}
 			}
 			return nil
 		}
 
 		d.progress.add(-n) // rollback
+
+		// Preserve partial .tmp files for large blobs to enable resume
+		if blob.Size < resumeThreshold {
+			dest := filepath.Join(d.destDir, digestToPath(blob.Digest))
+			os.Remove(dest + ".tmp")
+		}
 
 		switch {
 		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
@@ -153,55 +164,106 @@ func (d *downloader) downloadOnce(ctx context.Context, blob Blob) (int64, error)
 		return 0, err
 	}
 
+	// Check for existing partial .tmp file for resume
+	dest := filepath.Join(d.destDir, digestToPath(blob.Digest))
+	tmp := dest + ".tmp"
+	var existingSize int64
+	if blob.Size >= resumeThreshold {
+		if fi, statErr := os.Stat(tmp); statErr == nil {
+			if fi.Size() < blob.Size {
+				existingSize = fi.Size()
+			} else if fi.Size() > blob.Size {
+				// .tmp larger than expected — discard
+				os.Remove(tmp)
+			}
+			// fi.Size() == blob.Size handled in save (hash check + rename)
+		}
+	}
+
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	req.Header.Set("User-Agent", d.userAgent)
 	// Add auth only for same-host (not CDN)
 	if u.Host == baseURL.Host && *d.token != "" {
 		req.Header.Set("Authorization", "Bearer "+*d.token)
 	}
+	if existingSize > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", existingSize))
+	}
 
 	resp, err := d.client.Do(req)
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { io.Copy(io.Discard, resp.Body); resp.Body.Close() }()
 
-	if resp.StatusCode != http.StatusOK {
+	switch resp.StatusCode {
+	case http.StatusOK:
+		// Full response — reset any partial state
+		existingSize = 0
+	case http.StatusPartialContent:
+		// Resume succeeded
+	default:
 		return 0, fmt.Errorf("status %d", resp.StatusCode)
 	}
 
-	return d.save(ctx, blob, resp.Body)
+	return d.save(ctx, blob, resp.Body, existingSize)
 }
 
-func (d *downloader) save(ctx context.Context, blob Blob, r io.Reader) (int64, error) {
+func (d *downloader) save(ctx context.Context, blob Blob, r io.Reader, existingSize int64) (int64, error) {
 	dest := filepath.Join(d.destDir, digestToPath(blob.Digest))
 	tmp := dest + ".tmp"
 	os.MkdirAll(filepath.Dir(dest), 0o755)
 
-	f, err := os.Create(tmp)
-	if err != nil {
-		return 0, err
+	h := sha256.New()
+
+	var f *os.File
+	var err error
+
+	if existingSize > 0 {
+		// Resume — re-hash existing partial data, then append
+		f, err = os.OpenFile(tmp, os.O_RDWR, 0o644)
+		if err != nil {
+			// Can't open partial file, start fresh
+			existingSize = 0
+		} else {
+			// Hash the existing data
+			if _, hashErr := io.CopyN(h, f, existingSize); hashErr != nil {
+				f.Close()
+				os.Remove(tmp)
+				existingSize = 0
+			} else {
+				// Report resumed bytes as progress
+				d.progress.add(existingSize)
+			}
+		}
+	}
+
+	if existingSize == 0 {
+		f, err = os.Create(tmp)
+		if err != nil {
+			return 0, err
+		}
+		setSparse(f)
 	}
 	defer f.Close()
-	setSparse(f)
 
-	h := sha256.New()
 	n, err := d.copy(ctx, f, r, h)
 	if err != nil {
-		os.Remove(tmp)
-		return n, err
+		// Don't remove .tmp here — download() handles cleanup based on blob size
+		return existingSize + n, err
 	}
 	f.Close()
 
 	if got := fmt.Sprintf("sha256:%x", h.Sum(nil)); got != blob.Digest {
 		os.Remove(tmp)
-		return n, fmt.Errorf("digest mismatch")
+		return existingSize + n, fmt.Errorf("digest mismatch")
 	}
-	if n != blob.Size {
+	totalWritten := existingSize + n
+	if totalWritten != blob.Size {
 		os.Remove(tmp)
-		return n, fmt.Errorf("size mismatch")
+		return totalWritten, fmt.Errorf("size mismatch")
 	}
-	return n, os.Rename(tmp, dest)
+	return totalWritten, os.Rename(tmp, dest)
 }
 
 func (d *downloader) copy(ctx context.Context, dst io.Writer, src io.Reader, h io.Writer) (int64, error) {
@@ -261,6 +323,9 @@ func (d *downloader) copy(ctx context.Context, dst io.Writer, src io.Reader, h i
 	}
 }
 
+// resolve follows redirects to find the final download URL.
+// Uses GET (not HEAD) because registries may return 200 for HEAD without
+// redirecting to CDN, while GET triggers the actual CDN redirect.
 func (d *downloader) resolve(ctx context.Context, rawURL string) (*url.URL, error) {
 	u, _ := url.Parse(rawURL)
 	for range 10 {
@@ -274,6 +339,8 @@ func (d *downloader) resolve(ctx context.Context, rawURL string) (*url.URL, erro
 		if err != nil {
 			return nil, err
 		}
+		// Drain body before close to enable HTTP connection reuse
+		io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
 
 		switch resp.StatusCode {

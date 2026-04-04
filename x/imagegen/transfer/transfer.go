@@ -99,6 +99,14 @@ const (
 	DefaultUploadConcurrency   = 32
 	maxRetries                 = 6
 	defaultUserAgent           = "ollama-transfer/1.0"
+
+	// resumeThreshold is the minimum blob size for resume support.
+	// Only blobs above this size keep partial .tmp files on failure.
+	resumeThreshold = 64 << 20 // 64 MB
+
+	// smallBlobSpeedThreshold is the size below which speed samples are skipped,
+	// since their transfer time is dominated by HTTP overhead, not throughput.
+	smallBlobSpeedThreshold = 100 << 10 // 100 KB
 )
 
 var errMaxRetriesExceeded = errors.New("max retries exceeded")
@@ -134,6 +142,11 @@ func (p *progressTracker) add(n int64) {
 		return
 	}
 	completed := p.completed.Add(n)
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Debug("progress callback panic (likely closed channel)", "recovered", r)
+		}
+	}()
 	p.callback(completed, p.total)
 }
 
