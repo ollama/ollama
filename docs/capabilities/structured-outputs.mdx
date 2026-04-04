@@ -96,12 +96,11 @@ Provide a JSON schema to the `format` field.
     ```
   </Tab>
   <Tab title="JavaScript">
-    Serialize a Zod schema with `zodToJsonSchema()` and parse the structured response:
+    Serialize a Zod schema with `z.toJSONSchema()` and parse the structured response:
 
     ```javascript
     import ollama from 'ollama'
-    import { z } from 'zod'
-    import { zodToJsonSchema } from 'zod-to-json-schema'
+    import * as z from 'zod'
 
     const Country = z.object({
       name: z.string(),
@@ -112,7 +111,7 @@ Provide a JSON schema to the `format` field.
     const response = await ollama.chat({
       model: 'gpt-oss',
       messages: [{ role: 'user', content: 'Tell me about Canada.' }],
-      format: zodToJsonSchema(Country),
+      format: z.toJSONSchema(Country),
     })
 
     const country = Country.parse(JSON.parse(response.message.content))
