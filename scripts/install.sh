@@ -287,7 +287,7 @@ check_gpu() {
                 nvidia) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[10DE\]' || return 1 ;;
                 amdgpu) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[1002\]' || return 1 ;;
             esac ;;
-        nvidia-smi) available nvidia-smi || return 1 ;;
+        nvidia-smi) nvidia-smi > /dev/null 2>&1 || return 1 ;;
     esac
 }
 
