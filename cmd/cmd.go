@@ -1822,7 +1822,11 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 	return nil
 }
 
-func RunServer(_ *cobra.Command, _ []string) error {
+func RunServer(cmd *cobra.Command, _ []string) error {
+	if profile, _ := cmd.Flags().GetString("profile"); profile != "" {
+		os.Setenv("OLLAMA_PERFORMANCE_PROFILE", profile)
+	}
+
 	if err := initializeKeypair(); err != nil {
 		return err
 	}
@@ -2079,6 +2083,110 @@ func runLauncherAction(cmd *cobra.Command, action tui.TUIAction, deps launcherDe
 	}
 }
 
+// AutotuneHandler handles the "ollama autotune" CLI command.
+// Subcommands: status (default), profiles, or a profile name to apply.
+func AutotuneHandler(cmd *cobra.Command, args []string) error {
+	host := envconfig.Host()
+
+	subcommand := "status"
+	if len(args) > 0 {
+		subcommand = strings.ToLower(args[0])
+	}
+
+	switch subcommand {
+	case "status":
+		resp, err := http.Get(host.String() + "/api/autotune")
+		if err != nil {
+			return fmt.Errorf("failed to connect to ollama server: %w", err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+
+		var status map[string]any
+		if err := json.Unmarshal(body, &status); err != nil {
+			return fmt.Errorf("invalid response: %w", err)
+		}
+
+		enabled, _ := status["enabled"].(bool)
+		if !enabled {
+			fmt.Println("Autotune: disabled (no profile active)")
+			fmt.Println("  Use 'ollama autotune <profile>' to enable.")
+			fmt.Println("  Use 'ollama autotune profiles' to see available profiles.")
+			return nil
+		}
+
+		fmt.Printf("Autotune: enabled\n")
+		fmt.Printf("  Profile: %v\n", status["profile"])
+		if hw, ok := status["hardware"].(map[string]any); ok {
+			fmt.Printf("  Hardware: %v\n", hw["summary"])
+		}
+		if applied, ok := status["applied"].([]any); ok && len(applied) > 0 {
+			fmt.Println("  Applied settings:")
+			for _, a := range applied {
+				if rec, ok := a.(map[string]any); ok {
+					fmt.Printf("    %v = %v (%v)\n", rec["key"], rec["value"], rec["reason"])
+				}
+			}
+		}
+		return nil
+
+	case "profiles":
+		resp, err := http.Get(host.String() + "/api/autotune/profiles")
+		if err != nil {
+			return fmt.Errorf("failed to connect to ollama server: %w", err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+
+		var result map[string]any
+		if err := json.Unmarshal(body, &result); err != nil {
+			return fmt.Errorf("invalid response: %w", err)
+		}
+
+		profiles, _ := result["profiles"].([]any)
+		fmt.Println("Available performance profiles:")
+		for _, p := range profiles {
+			if pm, ok := p.(map[string]any); ok {
+				fmt.Printf("  %-12s  %s\n", pm["name"], pm["description"])
+			}
+		}
+		return nil
+
+	default:
+		// Treat subcommand as a profile name to apply
+		reqBody := fmt.Sprintf(`{"profile":"%s"}`, subcommand)
+		resp, err := http.Post(host.String()+"/api/autotune", "application/json", strings.NewReader(reqBody))
+		if err != nil {
+			return fmt.Errorf("failed to connect to ollama server: %w", err)
+		}
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("server error: %s", string(body))
+		}
+
+		var status map[string]any
+		if err := json.Unmarshal(body, &status); err != nil {
+			return fmt.Errorf("invalid response: %w", err)
+		}
+
+		fmt.Printf("Autotune applied: profile=%v\n", status["profile"])
+		if hw, ok := status["hardware"].(map[string]any); ok {
+			fmt.Printf("  Hardware: %v\n", hw["summary"])
+		}
+		if applied, ok := status["applied"].([]any); ok && len(applied) > 0 {
+			fmt.Println("  Applied settings:")
+			for _, a := range applied {
+				if rec, ok := a.(map[string]any); ok {
+					fmt.Printf("    %v = %v (%v)\n", rec["key"], rec["value"], rec["reason"])
+				}
+			}
+		}
+		return nil
+	}
+}
+
 func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	cobra.EnableCommandSorting = false
@@ -2184,6 +2292,24 @@ func NewCLI() *cobra.Command {
 		Short:   "Start Ollama",
 		Args:    cobra.ExactArgs(0),
 		RunE:    RunServer,
+	}
+	serveCmd.Flags().String("profile", "", "Performance profile: speed, balanced, memory, multiuser, max")
+
+	autotuneCmd := &cobra.Command{
+		Use:   "autotune [status|profiles|PROFILE]",
+		Short: "Auto-tune Ollama performance for your hardware",
+		Long: `Auto-tune adjusts Ollama server settings based on your hardware.
+
+Commands:
+  ollama autotune              Show current autotune status
+  ollama autotune status       Show current autotune status
+  ollama autotune profiles     List available performance profiles
+  ollama autotune <profile>    Apply a performance profile (speed, balanced, memory, multiuser, max)
+
+You can also set OLLAMA_PERFORMANCE_PROFILE environment variable before starting the server.`,
+		Args:    cobra.MaximumNArgs(1),
+		PreRunE: checkServerHeartbeat,
+		RunE:    AutotuneHandler,
 	}
 
 	pullCmd := &cobra.Command{
@@ -2298,6 +2424,7 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		serveCmd,
+		autotuneCmd,
 	} {
 		switch cmd {
 		case runCmd:
@@ -2322,7 +2449,10 @@ func NewCLI() *cobra.Command {
 				envVars["OLLAMA_LLM_LIBRARY"],
 				envVars["OLLAMA_GPU_OVERHEAD"],
 				envVars["OLLAMA_LOAD_TIMEOUT"],
+				envVars["OLLAMA_PERFORMANCE_PROFILE"],
 			})
+		case autotuneCmd:
+			appendEnvDocs(cmd, []envconfig.EnvVar{envVars["OLLAMA_HOST"], envVars["OLLAMA_PERFORMANCE_PROFILE"]})
 		default:
 			appendEnvDocs(cmd, envs)
 		}
@@ -2344,6 +2474,7 @@ func NewCLI() *cobra.Command {
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		autotuneCmd,
 		runnerCmd,
 		launch.LaunchCmd(checkServerHeartbeat, runInteractiveTUI),
 	)
