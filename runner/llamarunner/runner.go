@@ -756,7 +756,16 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	seq, err := s.NewSequence(req.Content, nil, NewSequenceParams{
+	prompt := req.Content
+	var images []llm.ImageData
+	if req.Image != nil {
+		images = []llm.ImageData{*req.Image}
+		if prompt != "" {
+			prompt += " [img-0]"
+		}
+	}
+
+	seq, err := s.NewSequence(req.Content, images, NewSequenceParams{
 		embedding: true,
 		truncate:  false,
 	})
