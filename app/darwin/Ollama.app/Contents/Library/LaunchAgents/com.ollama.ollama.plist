@@ -12,7 +12,7 @@
         <string>background</string>
     </array>
     <key>RunAtLoad</key>
-    <true/>
+    <false/>
     <key>LimitLoadToSessionType</key>
 	<string>Aqua</string>
 	<key>POSIXSpawnType</key>
