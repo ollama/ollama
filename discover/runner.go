@@ -305,7 +305,9 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 
 			// Typical refresh on existing runner is ~500ms but allow longer if the system
 			// is under stress before giving up and using stale data.
-			ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			// iGPUs with large shared memory (e.g. ROCm on AMD Strix Halo) can take
+			// 5-10s+ for device enumeration, especially under memory pressure.
+			ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			defer cancel()
 			start := time.Now()
 			updatedDevices := runner.GetDeviceInfos(ctx)
@@ -327,9 +329,8 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 		if !allDone() {
 			slog.Debug("unable to refresh all GPUs with existing runners, performing bootstrap discovery")
 
-			// Bootstrapping may take longer in some cases (AMD windows), but we
-			// would rather use stale free data to get the model running sooner
-			ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			// Bootstrapping may take longer in some cases (AMD windows / ROCm iGPUs)
+			ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			defer cancel()
 
 			// Apply any dev filters to avoid re-discovering unsupported devices, and get IDs correct
