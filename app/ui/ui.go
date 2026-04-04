@@ -297,6 +297,7 @@ func (s *Server) Handler() http.Handler {
 	ollamaProxy := s.ollamaProxy()
 	mux.Handle("GET /api/tags", ollamaProxy)
 	mux.Handle("POST /api/show", ollamaProxy)
+	mux.Handle("POST /api/generate", ollamaProxy)
 	mux.Handle("GET /api/version", ollamaProxy)
 	mux.Handle("GET /api/status", ollamaProxy)
 	mux.Handle("HEAD /api/version", ollamaProxy)
