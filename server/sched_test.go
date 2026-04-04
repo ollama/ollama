@@ -996,3 +996,118 @@ func TestImageGenSchedulerCoexistence(t *testing.T) {
 	expectedFree := uint64(24*format.GigaByte) - uint64(8*format.GigaByte) - uint64(4*format.GigaByte)
 	require.Equal(t, expectedFree, gpus[0].FreeMemory)
 }
+
+// TestSchedNoHeadOfLineBlocking verifies that requests for already-loaded
+// models are dispatched while the scheduler is waiting for an eviction to
+// complete, preventing head-of-line blocking.
+// Regression test for https://github.com/ollama/ollama/issues/14578
+//
+// Scenario:
+//   - Model A is loaded and actively processing (refCount > 0, can't be evicted)
+//   - Model B is loaded and actively processing (refCount > 0)
+//   - Request for model D arrives (needs space → scheduler picks B to evict)
+//   - B has refCount > 0, so eviction blocks waiting for B's request to finish
+//   - While blocked, a request for model A arrives in the pending queue
+//   - With the fix: A's request is dispatched immediately using the loaded runner
+//   - Without the fix: A's request waits behind B's eviction (head-of-line blocking)
+func TestSchedNoHeadOfLineBlocking(t *testing.T) {
+	ctx, done := context.WithTimeout(t.Context(), 5000*time.Millisecond)
+	defer done()
+	s := InitScheduler(ctx)
+	s.waitForRecovery = 10 * time.Millisecond
+	s.getGpuFn = getGpuFn
+	s.getSystemInfoFn = getSystemInfoFn
+
+	// Load model A (small, keep-alive long)
+	a := newScenarioRequest(t, ctx, "model-resident", 1*format.GigaByte, &api.Duration{Duration: 30 * time.Second}, map[ml.DeviceID]uint64{{Library: "Metal"}: 1 * format.GigaByte})
+	s.newServerFn = a.newServer
+	slog.Info("Loading resident model A")
+	s.pendingReqCh <- a.req
+	s.Run(ctx)
+	select {
+	case resp := <-a.req.successCh:
+		require.Equal(t, resp.llama, a.srv)
+	case err := <-a.req.errCh:
+		t.Fatal(err.Error())
+	case <-ctx.Done():
+		t.Fatal("timeout loading A")
+	}
+	// DO NOT call a.ctxDone — keep A's refCount > 0 so it can't be evicted
+
+	// Load model B (also with active request)
+	t.Setenv("OLLAMA_MAX_LOADED_MODELS", "0")
+	b := newScenarioRequest(t, ctx, "model-to-evict", 10*format.GigaByte, &api.Duration{Duration: 5 * time.Millisecond}, map[ml.DeviceID]uint64{{Library: "Metal"}: 10 * format.GigaByte})
+	s.newServerFn = b.newServer
+	slog.Info("Loading model B")
+	s.pendingReqCh <- b.req
+	select {
+	case resp := <-b.req.successCh:
+		require.Equal(t, resp.llama, b.srv)
+	case err := <-b.req.errCh:
+		t.Fatal(err.Error())
+	case <-ctx.Done():
+		t.Fatal("timeout loading B")
+	}
+	// DO NOT call b.ctxDone — B has refCount > 0, eviction will block
+
+	s.loadedMu.Lock()
+	require.Len(t, s.loaded, 2)
+	s.loadedMu.Unlock()
+
+	// Request model D that won't fit — triggers eviction.
+	// Scheduler picks B (shorter duration) to evict, but B has refCount > 0
+	// so processPending blocks on <-s.unloadedCh.
+	d := newScenarioRequest(t, ctx, "model-new-big", 8*format.GigaByte, nil, map[ml.DeviceID]uint64{{Library: "Metal"}: 8 * format.GigaByte})
+	s.newServerFn = d.newServer
+
+	// Prepare a second request for model A (already loaded)
+	a2 := newScenarioRequest(t, ctx, "model-resident", 1*format.GigaByte, nil, map[ml.DeviceID]uint64{{Library: "Metal"}: 1 * format.GigaByte})
+	a2.req.model = a.req.model // Same model, so it's already loaded
+	a2.srv = a.srv
+
+	slog.Info("Submitting D (triggers eviction of B, which will block)")
+	s.pendingReqCh <- d.req
+	time.Sleep(5 * time.Millisecond) // Let processPending pick up D and enter the eviction wait
+
+	slog.Info("Submitting A2 (for already-loaded model A)")
+	s.pendingReqCh <- a2.req
+
+	// A2 should be dispatched quickly by our fix (which drains pending while
+	// waiting for unload). Without the fix, A2 is stuck until B's eviction
+	// completes — which won't happen until we call b.ctxDone below.
+	a2Timer := time.NewTimer(500 * time.Millisecond)
+	select {
+	case resp := <-a2.req.successCh:
+		a2Timer.Stop()
+		require.Equal(t, resp.llama, a.srv)
+		slog.Info("SUCCESS: request for loaded model A dispatched while eviction blocked")
+	case err := <-a2.req.errCh:
+		a2Timer.Stop()
+		t.Fatalf("unexpected error for A2: %v", err)
+	case <-a2Timer.C:
+		t.Fatal("FAIL: request for already-loaded model A was blocked by eviction (head-of-line blocking)")
+	}
+
+	// Now unblock B's eviction so D can load
+	b.ctxDone()
+	time.Sleep(2 * time.Millisecond)
+	s.getGpuFn = func(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.DeviceInfo {
+		g := ml.DeviceInfo{DeviceID: ml.DeviceID{Library: "Metal"}}
+		g.TotalMemory = 24 * format.GigaByte
+		g.FreeMemory = 24 * format.GigaByte
+		return []ml.DeviceInfo{g}
+	}
+	select {
+	case resp := <-d.req.successCh:
+		require.Equal(t, resp.llama, d.srv)
+	case err := <-d.req.errCh:
+		t.Fatal(err.Error())
+	case <-ctx.Done():
+		t.Fatal("timeout loading D")
+	}
+
+	// Cleanup
+	a.ctxDone()
+	a2.ctxDone()
+	d.ctxDone()
+}
