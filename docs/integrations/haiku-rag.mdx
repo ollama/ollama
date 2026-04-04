@@ -1,0 +1,115 @@
+---
+title: haiku.rag
+---
+
+## Overview
+
+[haiku.rag](https://github.com/ggozad/haiku.rag) is an agentic RAG system built on [LanceDB](https://lancedb.com/), [Pydantic AI](https://ai.pydantic.dev/), and [Docling](https://docling-project.github.io/docling/). It uses Ollama as its default provider for both LLM inference and embeddings. Features include:
+
+- Hybrid search (vector + full-text) with Reciprocal Rank Fusion
+- Question answering with citations (page numbers, section headings)
+- Multi-agent research workflows (plan, search, evaluate, synthesize)
+- Analytical tasks via sandboxed Python code execution
+- Visual grounding — view chunks highlighted on original page images
+- Structure-aware context expansion using DoclingDocument
+- CLI, Python API, MCP server, Chat TUI, and web application
+
+## Install haiku.rag
+
+<Info>
+Requires Python 3.12 or newer.
+</Info>
+
+```bash
+uv pip install haiku.rag
+```
+
+## Usage with Ollama
+
+Ollama is the default provider — no configuration needed if Ollama is running locally.
+
+1. Add a document:
+
+```bash
+haiku-rag add-src paper.pdf
+```
+
+2. Search:
+
+```bash
+haiku-rag search "attention mechanism"
+```
+
+3. Ask questions with citations:
+
+```bash
+haiku-rag ask "What datasets were used for evaluation?" --cite
+```
+
+4. Launch the chat interface:
+
+```bash
+haiku-rag chat
+```
+
+<div style={{ display: 'flex', justifyContent: 'center' }}>
+  <img
+    src="/images/haiku-rag-chat.png"
+    alt="haiku.rag Chat Interface"
+    width="75%"
+  />
+</div>
+
+5. View visual grounding for search results:
+
+```bash
+haiku-rag visualize <chunk-id>
+```
+
+<div style={{ display: 'flex', justifyContent: 'center' }}>
+  <img
+    src="/images/haiku-rag-visual-grounding.png"
+    alt="haiku.rag Visual Grounding"
+    width="75%"
+  />
+</div>
+
+## Configuration
+
+Configure Ollama models in `haiku.rag.yaml`:
+
+```yaml
+qa:
+  model:
+    provider: ollama
+    name: qwen3
+
+embeddings:
+  model:
+    provider: ollama
+    name: qwen3-embedding:4b
+    vector_dim: 2560
+
+providers:
+  ollama:
+    base_url: http://localhost:11434
+```
+
+See the [configuration documentation](https://ggozad.github.io/haiku.rag/configuration/) for all options.
+
+### Connecting to ollama.com
+
+1. Create an [API key](https://ollama.com/settings/keys) on ollama.com.
+2. Set the Ollama base URL in `haiku.rag.yaml`:
+
+```yaml
+providers:
+  ollama:
+    base_url: https://ollama.com
+```
+
+3. Export the API key:
+
+```bash
+export OLLAMA_API_KEY=<your-api-key>
+```
