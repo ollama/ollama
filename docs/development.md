@@ -51,6 +51,8 @@ Install prerequisites:
     - [CUDA SDK](https://developer.nvidia.com/cuda-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_network)
 - (Optional) VULKAN GPU support
     - [VULKAN SDK](https://vulkan.lunarg.com/sdk/home) - useful for AMD/Intel GPUs
+- (Optional) OpenVINO backend support
+    - [OpenVINO Runtime](https://docs.openvino.ai/)
 - (Optional) MLX engine support
     - [CUDA 13+ SDK](https://developer.nvidia.com/cuda-downloads)
     - [cuDNN 9+](https://developer.nvidia.com/cudnn)
@@ -59,6 +61,13 @@ Then, configure and build the project:
 
 ```shell
 cmake -B build
+cmake --build build --config Release
+```
+
+To enable the OpenVINO backend, point CMake at the OpenVINO runtime package during configure:
+
+```powershell
+cmake -B build -DGGML_OPENVINO=ON -DOpenVINO_DIR="$HOME/.local/openvino/runtime/cmake"
 cmake --build build --config Release
 ```
 
@@ -104,6 +113,8 @@ Install prerequisites:
 - (Optional) VULKAN GPU support
     - [VULKAN SDK](https://vulkan.lunarg.com/sdk/home) - useful for AMD/Intel GPUs
     - Or install via package manager: `sudo apt install vulkan-sdk` (Ubuntu/Debian) or `sudo dnf install vulkan-sdk` (Fedora/CentOS)
+- (Optional) OpenVINO backend support
+    - [OpenVINO Runtime](https://docs.openvino.ai/)
 - (Optional) MLX engine support
     - [CUDA 13+ SDK](https://developer.nvidia.com/cuda-downloads)
     - [cuDNN 9+](https://developer.nvidia.com/cudnn)
@@ -118,6 +129,15 @@ Then, configure and build the project:
 cmake -B build
 cmake --build build
 ```
+
+To enable the OpenVINO backend, configure with `GGML_OPENVINO=ON` and pass the OpenVINO package directory:
+
+```shell
+cmake -B build -DGGML_OPENVINO=ON -DOpenVINO_DIR=/home/joseph/.local/openvino/runtime/cmake
+cmake --build build
+```
+
+At runtime, select the target device with `GGML_OPENVINO_DEVICE`, for example `CPU`, `GPU`, or `NPU`.
 
 Lastly, run Ollama:
 

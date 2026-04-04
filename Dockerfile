@@ -3,6 +3,8 @@
 ARG FLAVOR=${TARGETARCH}
 
 ARG ROCMVERSION=7.2
+ARG OPENVINOVERSION=2026.0.0
+ARG OPENVINOARCHIVEURL=https://storage.openvinotoolkit.org/repositories/openvino/packages/2026.0/linux/openvino_toolkit_rhel8_2026.0.0.20965.c6d6a13a886_x86_64.tgz
 ARG JETPACK5VERSION=r35.4.1
 ARG JETPACK6VERSION=r36.4.0
 ARG CMAKEVERSION=3.31.2
@@ -142,6 +144,21 @@ RUN --mount=type=cache,target=/root/.ccache \
         && cmake --build --preset 'Vulkan' -- -l $(nproc) \
         && cmake --install build --component Vulkan --strip
 
+FROM base AS openvino-build
+ARG OPENVINOARCHIVEURL
+RUN dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++ \
+    && mkdir -p /opt/openvino \
+    && curl -fsSL "${OPENVINOARCHIVEURL}" -o /tmp/openvino.tgz \
+    && tar --strip-components=1 -xzf /tmp/openvino.tgz -C /opt/openvino \
+    && rm -f /tmp/openvino.tgz
+ENV PATH=/opt/rh/gcc-toolset-11/root/usr/bin:$PATH
+COPY CMakeLists.txt CMakePresets.json .
+COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake --preset 'OpenVINO' -DOpenVINO_DIR="/opt/openvino/runtime/cmake" \
+        && cmake --build --preset 'OpenVINO' -- -l $(nproc) \
+        && cmake --install build --component OpenVINO --strip
+
 FROM base AS mlx
 ARG CUDA13VERSION=13.0
 RUN dnf install -y cuda-toolkit-${CUDA13VERSION//./-} \
@@ -206,6 +223,9 @@ COPY --from=jetpack-6 dist/lib/ollama/ /lib/ollama/
 
 FROM scratch AS rocm
 COPY --from=rocm-7 dist/lib/ollama /lib/ollama
+
+FROM scratch AS openvino
+COPY --from=openvino-build dist/lib/ollama /lib/ollama
 
 FROM ${FLAVOR} AS archive
 COPY --from=cpu dist/lib/ollama /lib/ollama

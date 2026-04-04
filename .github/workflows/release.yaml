@@ -8,6 +8,7 @@ on:
 env:
   CGO_CFLAGS: '-O3'
   CGO_CXXFLAGS: '-O3'
+  OPENVINO_VERSION: '2026.0.0'
 
 jobs:
   setup-environment:
@@ -119,6 +120,11 @@ jobs:
             runner_dir: 'vulkan'
           - os: windows
             arch: amd64
+            preset: OpenVINO
+            flags: ''
+            runner_dir: 'openvino'
+          - os: windows
+            arch: amd64
             preset: 'MLX CUDA 13'
             install: https://developer.download.nvidia.com/compute/cuda/13.0.0/local_installers/cuda_13.0.0_windows.exe
             cudnn-install: https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/windows-x86_64/cudnn-windows-x86_64-9.18.1.3_cuda13-archive.zip
@@ -157,6 +163,41 @@ jobs:
             C:\VulkanSDK
             C:\Program Files\NVIDIA\CUDNN
           key: ${{ matrix.install }}-${{ matrix.cudnn-install }}
+      - if: matrix.preset == 'OpenVINO'
+        name: Install OpenVINO Runtime
+        run: |
+          function Expand-ArchiveStripTopLevel {
+            param([string]$ArchivePath, [string]$DestinationPath, [string]$StagingPath)
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $DestinationPath, $StagingPath
+            New-Item -ItemType Directory -Force -Path $DestinationPath, $StagingPath | Out-Null
+            Expand-Archive -Path $ArchivePath -DestinationPath $StagingPath -Force
+            $topEntries = @(Get-ChildItem -Path $StagingPath -Force)
+            if ($topEntries.Count -eq 1 -and $topEntries[0].PSIsContainer) {
+              Move-Item -Path (Join-Path $topEntries[0].FullName '*') -Destination $DestinationPath -Force
+            } else {
+              Move-Item -Path (Join-Path $StagingPath '*') -Destination $DestinationPath -Force
+            }
+          }
+
+          $openvinoArchiveUrl = "https://storage.openvinotoolkit.org/repositories/openvino/packages/2026.0/windows/openvino_toolkit_windows_2026.0.0.20965.c6d6a13a886_x86_64.zip"
+          $openvinoArchivePath = Join-Path $env:RUNNER_TEMP "openvino-windows.zip"
+          $openvinoExtractRoot = Join-Path $env:RUNNER_TEMP "openvino-windows"
+          $openvinoStagingRoot = Join-Path $env:RUNNER_TEMP "openvino-windows-staging"
+          Invoke-WebRequest -Uri $openvinoArchiveUrl -OutFile $openvinoArchivePath
+          Expand-ArchiveStripTopLevel -ArchivePath $openvinoArchivePath -DestinationPath $openvinoExtractRoot -StagingPath $openvinoStagingRoot
+          $openvinoDir = Join-Path $openvinoExtractRoot "runtime\cmake"
+          echo "OpenVINO_DIR=$openvinoDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+          $openclArchiveUrl = "https://github.com/KhronosGroup/OpenCL-SDK/releases/download/v2025.07.23/OpenCL-SDK-v2025.07.23-Win-x64.zip"
+          $openclArchivePath = Join-Path $env:RUNNER_TEMP "opencl-windows.zip"
+          $openclExtractRoot = Join-Path $env:RUNNER_TEMP "opencl-windows"
+          $openclStagingRoot = Join-Path $env:RUNNER_TEMP "opencl-windows-staging"
+          Invoke-WebRequest -Uri $openclArchiveUrl -OutFile $openclArchivePath
+          Expand-ArchiveStripTopLevel -ArchivePath $openclArchivePath -DestinationPath $openclExtractRoot -StagingPath $openclStagingRoot
+          echo "INTELOCLSDKROOT=$openclExtractRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+          Remove-Item -Force -ErrorAction SilentlyContinue $openvinoArchivePath, $openclArchivePath
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $openvinoStagingRoot, $openclStagingRoot
       - if: startsWith(matrix.preset, 'CUDA ') || startsWith(matrix.preset, 'MLX ')
         name: Install CUDA ${{ matrix.cuda-version }}
         run: |
@@ -238,7 +279,7 @@ jobs:
           Enter-VsDevShell -VsInstallPath 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
           cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }} --install-prefix "$((pwd).Path)\dist\${{ matrix.os }}-${{ matrix.arch }}"
           cmake --build --parallel ([Environment]::ProcessorCount) --preset "${{ matrix.preset }}"
-          cmake --install build --component "${{ startsWith(matrix.preset, 'MLX ') && 'MLX' || startsWith(matrix.preset, 'CUDA ') && 'CUDA' || startsWith(matrix.preset, 'ROCm ') && 'HIP' || startsWith(matrix.preset, 'Vulkan') && 'Vulkan' || 'CPU' }}" --strip
+          cmake --install build --component "${{ startsWith(matrix.preset, 'MLX ') && 'MLX' || startsWith(matrix.preset, 'CUDA ') && 'CUDA' || startsWith(matrix.preset, 'ROCm ') && 'HIP' || startsWith(matrix.preset, 'Vulkan') && 'Vulkan' || startsWith(matrix.preset, 'OpenVINO') && 'OpenVINO' || 'CPU' }}" --strip
           Remove-Item -Path dist\lib\ollama\rocm\rocblas\library\*gfx906* -ErrorAction SilentlyContinue
         env:
           CMAKE_GENERATOR: Ninja
@@ -391,6 +432,9 @@ jobs:
             arch: amd64
             target: rocm
           - os: linux
+            arch: amd64
+            target: openvino
+          - os: linux
             arch: arm64
             target: archive
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
@@ -428,6 +472,7 @@ jobs:
               lib/ollama/cuda_jetpack5)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack5.tar.in ;;
               lib/ollama/cuda_jetpack6)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack6.tar.in ;;
               lib/ollama/rocm)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm.tar.in ;;
+              lib/ollama/openvino)       echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-openvino.tar.in ;;
             esac
           done
         working-directory: dist/${{ matrix.os }}-${{ matrix.arch }}
