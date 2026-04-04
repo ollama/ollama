@@ -432,10 +432,10 @@ func TestNewManifestWriter_PopulatesFileTypeFromQuantize(t *testing.T) {
 
 func TestGetParserName(t *testing.T) {
 	tests := []struct {
-		name           string
-		architectures  []string
-		modelType      string
-		wantParser     string
+		name          string
+		architectures []string
+		modelType     string
+		wantParser    string
 	}{
 		{"plain qwen3", []string{"Qwen3ForCausalLM"}, "", "qwen3"},
 		{"qwen3 moe", []string{"Qwen3MoeForCausalLM"}, "", "qwen3"},
@@ -476,10 +476,10 @@ func TestGetParserName(t *testing.T) {
 
 func TestGetRendererName(t *testing.T) {
 	tests := []struct {
-		name         string
+		name          string
 		architectures []string
-		modelType    string
-		wantRenderer string
+		modelType     string
+		wantRenderer  string
 	}{
 		{"plain qwen3", []string{"Qwen3ForCausalLM"}, "", "qwen3-coder"},
 		{"qwen3.5", []string{"Qwen3_5ForConditionalGeneration"}, "", "qwen3.5"},
