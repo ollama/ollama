@@ -68,6 +68,7 @@ type Model struct {
 	Digest         string
 	Options        map[string]any
 	Messages       []api.Message
+	Reranking      bool
 
 	Template *template.Template
 }

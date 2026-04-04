@@ -268,7 +268,23 @@ void ggml_cuda_op_topk_moe(ggml_backend_cuda_context & ctx,
     }
 }
 
-bool ggml_cuda_should_use_topk_moe(const ggml_tensor * softmax, const ggml_tensor * weights, const ggml_tensor * clamp) {
+bool ggml_cuda_should_use_topk_moe(const ggml_tensor * softmax,
+                                   const ggml_tensor * weights,
+                                   const ggml_tensor * get_rows,
+                                   const ggml_tensor * argsort,
+                                   const ggml_tensor * clamp,
+                                   int n_expert) {
+    ggml_tensor * probs = get_rows->src[0];
+    if (probs->op != GGML_OP_RESHAPE) {
+        return false;
+    }
+    probs = probs->src[0];
+    ggml_tensor * selection_probs = argsort->src[0];
+
+    if (probs != selection_probs) {
+        return false;
+    }
+
     float scale    = 1.0f;
     float max_bias = 0.0f;
 
@@ -288,7 +304,6 @@ bool ggml_cuda_should_use_topk_moe(const ggml_tensor * softmax, const ggml_tenso
         return false;
     }
 
-    const int n_expert = softmax->ne[0];
     // n_expert must be a power of 2
     if ((n_expert & (n_expert - 1)) != 0 || n_expert > 512) {
         return false;

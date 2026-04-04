@@ -32,11 +32,13 @@ static __global__ void mul_mat_f(
 #if (!defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)) || defined(AMD_WMMA_AVAILABLE)
 #if defined(AMD_WMMA_AVAILABLE)
     // Special case for tf32, just dummy mma layout as wmma doesn't support it.
-    constexpr int tile_B_I = std::is_same_v<T, float> ? 8 : 16;
-    constexpr int tile_C_J = std::is_same_v<T, float> ? 8 : 16;
-    typedef tile<16,       8, T>     tile_A;
-    typedef tile<tile_B_I, 8, T>     tile_B;
-    typedef tile<16,       tile_C_J, float> tile_C;
+    constexpr bool is_tf32 = std::is_same_v<T, float>;
+    constexpr int tile_B_I = is_tf32 ? 8 : 16;
+    constexpr int tile_C_J = is_tf32 ? 8 : 16;
+    constexpr data_layout ab_layout = is_tf32 ? DATA_LAYOUT_I_MAJOR : get_input_data_layout();
+    typedef tile<16,       8,        T,     ab_layout>           tile_A;
+    typedef tile<tile_B_I, 8,        T,     ab_layout>           tile_B;
+    typedef tile<16,       tile_C_J, float, DATA_LAYOUT_J_MAJOR> tile_C;
 #else
 #ifdef VOLTA_MMA_AVAILABLE
     if constexpr (!std::is_same_v<T, half2>) {NO_DEVICE_CODE;} else {
@@ -272,11 +274,13 @@ static __global__ void mul_mat_f_ids(
 #if (!defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)) || defined(AMD_WMMA_AVAILABLE)
 #if defined(AMD_WMMA_AVAILABLE)
     // Special case for tf32, just dummy mma layout as wmma doesn't support it.
-    constexpr int tile_B_I = std::is_same_v<T, float> ? 8 : 16;
-    constexpr int tile_C_J = std::is_same_v<T, float> ? 8 : 16;
-    typedef tile<16,       8, T>     tile_A;
-    typedef tile<tile_B_I, 8, T>     tile_B;
-    typedef tile<16,       tile_C_J, float> tile_C;
+    constexpr bool is_tf32 = std::is_same_v<T, float>;
+    constexpr int tile_B_I = is_tf32 ? 8 : 16;
+    constexpr int tile_C_J = is_tf32 ? 8 : 16;
+    constexpr data_layout ab_layout = is_tf32 ? DATA_LAYOUT_I_MAJOR : get_input_data_layout();
+    typedef tile<16,       8,        T,     ab_layout>           tile_A;
+    typedef tile<tile_B_I, 8,        T,     ab_layout>           tile_B;
+    typedef tile<16,       tile_C_J, float, DATA_LAYOUT_J_MAJOR> tile_C;
 #else
 #ifdef VOLTA_MMA_AVAILABLE
     if constexpr (!std::is_same_v<T, half2>) {NO_DEVICE_CODE;} else {

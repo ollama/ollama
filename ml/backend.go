@@ -71,6 +71,8 @@ type BackendParams struct {
 
 	// FlashAttention indicates that we should use a fused flash attention kernel
 	FlashAttention FlashAttentionType
+
+	Reranking bool
 }
 
 var backends = make(map[string]func(string, BackendParams) (Backend, error))
