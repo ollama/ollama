@@ -498,11 +498,16 @@ hello<|im_end|>
 //     separators). Field ordering follows Go struct declaration order, which
 //     matches get_json_schema() insertion order for simple types.
 //
-//  5. Generation prompt for both think modes. think=true appends
-//     <|im_start|>assistant\n<think>\n. think=false appends
-//     <|im_start|>assistant\n<think>\n\n</think>\n\n. The entire output is
-//     identical between modes except these trailing bytes — historical message
-//     rendering is independent of enable_thinking.
+//  5. Generation prompt for both think modes and structural P1 enforcement.
+//     think=true appends <|im_start|>assistant\n<think>\n. think=false appends
+//     <|im_start|>assistant\n<think>\n\n</think>\n\n. Both subtests compose
+//     their expected output from a shared wantHistory constant plus the
+//     mode-specific suffix, making P1 (think-independence of the historical
+//     portion) a structural guarantee. A direct cross-mode assertion verifies
+//     the actual renderer output's historical portion is byte-identical
+//     between think modes — the same pattern used by
+//     TestQwen35RendererToolDefinitionsMatchOfficialTemplate for the system
+//     prompt, extended to the full conversation history.
 //
 // Tool call argument types: the arguments are Go int values (2, 3, 4, 5).
 // formatToolCallArgument produces "2", "3", "4", "5" via fmt.Sprintf("%v").
@@ -547,30 +552,74 @@ func TestQwen35RendererBackToBackToolCallsAndResponses(t *testing.T) {
 		{Role: "user", Content: "Summarize the results."},
 	}
 
-	t.Run("think=true", func(t *testing.T) {
-		renderer := &Qwen35Renderer{isThinking: true}
-		got, err := renderer.Render(msgs, qwen35MathTools(), nil)
-		if err != nil {
-			t.Fatalf("render failed: %v", err)
-		}
+	tools := qwen35MathTools()
 
-		// Targeted diagnostic: thinking content must NOT appear because the
-		// assistant message is at index 2, before lastQueryIndex=5. The official
-		// template discards reasoning_content for messages at or before
-		// last_query_index. This is independent of enable_thinking.
-		if strings.Contains(got, "Need to call add and multiply.") {
-			t.Errorf(
-				"historical thinking content leaked into pre-lastQueryIndex assistant message.\n\n"+
-					"The assistant message is at index 2, before lastQueryIndex=5 (the "+
-					"'Summarize the results.' user message). The official Qwen 3.5 template "+
-					"discards reasoning_content for messages at or before "+
-					"last_query_index — this is a position-based rule, NOT controlled by "+
-					"enable_thinking. The thinking content should be silently omitted.\n\n"+
-					"got:\n%s", got,
-			)
-		}
+	// Render both modes at the function level for cross-mode P1 assertion.
+	gotTrue, err := (&Qwen35Renderer{isThinking: true}).Render(msgs, tools, nil)
+	if err != nil {
+		t.Fatalf("render failed (think=true): %v", err)
+	}
+	gotFalse, err := (&Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true}).Render(msgs, tools, &api.ThinkValue{Value: false})
+	if err != nil {
+		t.Fatalf("render failed (think=false): %v", err)
+	}
 
-		want := `<|im_start|>system
+	// Property 1 enforcement: the historical portion of the output
+	// (everything before the generation prompt) must be byte-identical
+	// between think modes. The official template checks enable_thinking
+	// in exactly one place — the add_generation_prompt block (line 149).
+	// Historical message rendering (lines 60-142) has zero references
+	// to enable_thinking.
+	//
+	// Scope of this assertion: it catches P1 violations in the system
+	// prompt (tool definitions, instructions), user messages, tool
+	// responses, and the pre-lastQueryIndex assistant message. It does
+	// NOT catch re-adding "isThinking &&" to the <think> wrapping
+	// condition in qwen35.go, because this test's assistant is at
+	// index 2 (before lastQueryIndex=5), so the wrapping condition
+	// "i > lastQueryIndex" is already false — adding "&& isThinking"
+	// doesn't change the result. That specific regression is caught by
+	// TestQwen35RendererInterleavedThinkingAndTools/think=false, which
+	// has post-lastQueryIndex assistants where the wrapping condition
+	// IS true and the isThinking gate would suppress it.
+	//
+	// The generation prompt starts at the last <|im_start|>assistant in
+	// the output. Everything before it is the conversation history.
+	extractHistory := func(t *testing.T, got string) string {
+		t.Helper()
+		idx := strings.LastIndex(got, "<|im_start|>assistant")
+		if idx == -1 {
+			t.Fatalf("no generation prompt found (missing final <|im_start|>assistant).\n\ngot:\n%s", got)
+		}
+		return got[:idx]
+	}
+	histTrue := extractHistory(t, gotTrue)
+	histFalse := extractHistory(t, gotFalse)
+	if histTrue != histFalse {
+		t.Fatalf(
+			"P1 violation: historical portion differs between think=true and think=false.\n\n"+
+				"The official Qwen 3.5 template checks enable_thinking in exactly one "+
+				"place: the add_generation_prompt block. Historical message rendering "+
+				"has zero references to enable_thinking. The entire output before the "+
+				"final <|im_start|>assistant must be byte-identical regardless of think "+
+				"mode.\n\n"+
+				"think=true history (%d bytes):\n%s\n\nthink=false history (%d bytes):\n%s",
+			len(histTrue), histTrue, len(histFalse), histFalse,
+		)
+	}
+
+	// Historical portion: everything before the generation prompt suffix.
+	// Verified against the official Qwen/Qwen3.5-27B Jinja2 chat template
+	// with the same message array. Every byte was cross-checked against
+	// the template source and against Go renderer output via diff.
+	// The template was run with enable_thinking=True, False, and
+	// undefined — all three produce byte-identical historical portions.
+	//
+	// Both subtests compose their expected output as wantHistory + suffix.
+	// The shared constant makes P1 a structural guarantee: if the
+	// historical expectation is changed for one mode, both subtests are
+	// affected.
+	const wantHistory = `<|im_start|>system
 # Tools
 
 You have access to the following functions:
@@ -638,138 +687,67 @@ I'll run both now.
 </tool_response><|im_end|>
 <|im_start|>user
 Summarize the results.<|im_end|>
-<|im_start|>assistant
-<think>
 `
-		if got != want {
+
+	// Targeted diagnostic shared by both subtests: thinking content must
+	// NOT appear in the rendered output. The assistant message is at
+	// index 2, before lastQueryIndex=5 (the "Summarize the results."
+	// user message). The official template (lines 102-103) discards
+	// reasoning_content for messages at or before last_query_index. This
+	// is a position-based rule, NOT controlled by enable_thinking.
+	assertThinkingAbsent := func(t *testing.T, got string) {
+		t.Helper()
+		if strings.Contains(got, "Need to call add and multiply.") {
+			t.Errorf(
+				"historical thinking content leaked into pre-lastQueryIndex "+
+					"assistant message.\n\n"+
+					"The assistant message is at index 2, before lastQueryIndex=5 "+
+					"(the 'Summarize the results.' user message). The official Qwen "+
+					"3.5 template discards reasoning_content for messages at or "+
+					"before last_query_index — this is a position-based rule, NOT "+
+					"controlled by enable_thinking.\n\ngot:\n%s", got,
+			)
+		}
+	}
+
+	t.Run("think=true", func(t *testing.T) {
+		assertThinkingAbsent(t, gotTrue)
+
+		want := wantHistory + "<|im_start|>assistant\n<think>\n"
+		if gotTrue != want {
 			t.Fatalf(
 				"byte-exact output mismatch.\n\n"+
 					"The expected string was derived by tracing through the official "+
-					"Qwen/Qwen3.5-27B Jinja2 chat template with the same message array. "+
-					"Any byte-level deviation changes the token IDs the model sees, pushing "+
-					"the input out of the training distribution. In multi-turn agentic "+
-					"conversations, deviations also invalidate the KV cache from the "+
-					"divergence point, forcing expensive recomputation of all subsequent "+
-					"tokens.\n\n--- got ---\n%s\n--- want ---\n%s", got, want,
+					"Qwen/Qwen3.5-27B Jinja2 chat template with the same message "+
+					"array. Any byte-level deviation changes the token IDs the model "+
+					"sees, pushing the input out of the training distribution. In "+
+					"multi-turn agentic conversations, deviations also invalidate the "+
+					"KV cache from the divergence point, forcing expensive "+
+					"recomputation of all subsequent tokens.\n\n"+
+					"--- got ---\n%s\n--- want ---\n%s", gotTrue, want,
 			)
 		}
 	})
 
-	// think=false: verifies that the ONLY difference from think=true is the
-	// generation prompt suffix. Historical message rendering — including the
-	// pre-lastQueryIndex thinking omission, tool call XML, tool response
-	// grouping, and tool definitions — is identical regardless of think mode.
-	// The official template checks enable_thinking in exactly one place: the
-	// add_generation_prompt block.
+	// think=false: historical message rendering must be byte-identical to
+	// think=true. Only the generation prompt suffix differs. This is
+	// enforced both structurally (shared wantHistory constant) and
+	// dynamically (cross-mode history assertion above).
 	t.Run("think=false", func(t *testing.T) {
-		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true}
-		got, err := renderer.Render(msgs, qwen35MathTools(), &api.ThinkValue{Value: false})
-		if err != nil {
-			t.Fatalf("render failed: %v", err)
-		}
+		assertThinkingAbsent(t, gotFalse)
 
-		// Same thinking absence check as think=true. The thinking is omitted
-		// because of lastQueryIndex position, NOT because of think=false. If
-		// someone incorrectly tied thinking omission to the think parameter
-		// instead of lastQueryIndex, both subtests would still pass here (the
-		// thinking is omitted either way for this message position), but
-		// TestQwen35RendererInterleavedThinkingAndTools/think=false would catch
-		// the regression for post-lastQueryIndex messages.
-		if strings.Contains(got, "Need to call add and multiply.") {
-			t.Errorf(
-				"historical thinking content leaked into pre-lastQueryIndex assistant message.\n\n"+
-					"The assistant message is before lastQueryIndex, so reasoning is discarded "+
-					"regardless of think mode. This is a position-based rule in the official "+
-					"template, not controlled by enable_thinking.\n\n"+
-					"got:\n%s", got,
-			)
-		}
-
-		want := `<|im_start|>system
-# Tools
-
-You have access to the following functions:
-
-<tools>
-{"type": "function", "function": {"name": "add", "description": "Add two numbers", "parameters": {"type": "object", "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}}, "required": ["a", "b"]}}}
-{"type": "function", "function": {"name": "multiply", "description": "Multiply two numbers", "parameters": {"type": "object", "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}}, "required": ["x", "y"]}}}
-</tools>
-
-If you choose to call a function ONLY reply in the following format with NO suffix:
-
-<tool_call>
-<function=example_function_name>
-<parameter=example_parameter_1>
-value_1
-</parameter>
-<parameter=example_parameter_2>
-This is the value for the second parameter
-that can span
-multiple lines
-</parameter>
-</function>
-</tool_call>
-
-<IMPORTANT>
-Reminder:
-- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags
-- Required parameters MUST be specified
-- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after
-- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls
-</IMPORTANT>
-
-You are a helpful assistant.<|im_end|>
-<|im_start|>user
-Run add and multiply.<|im_end|>
-<|im_start|>assistant
-I'll run both now.
-
-<tool_call>
-<function=add>
-<parameter=a>
-2
-</parameter>
-<parameter=b>
-3
-</parameter>
-</function>
-</tool_call>
-<tool_call>
-<function=multiply>
-<parameter=x>
-4
-</parameter>
-<parameter=y>
-5
-</parameter>
-</function>
-</tool_call><|im_end|>
-<|im_start|>user
-<tool_response>
-5
-</tool_response>
-<tool_response>
-20
-</tool_response><|im_end|>
-<|im_start|>user
-Summarize the results.<|im_end|>
-<|im_start|>assistant
-<think>
-
-</think>
-
-`
-		if got != want {
+		want := wantHistory + "<|im_start|>assistant\n<think>\n\n</think>\n\n"
+		if gotFalse != want {
 			t.Fatalf(
 				"byte-exact output mismatch (think=false).\n\n"+
-					"The entire output is identical to think=true EXCEPT the generation "+
-					"prompt suffix: <think>\\n\\n</think>\\n\\n (6 tokens matching the "+
-					"official template's add_generation_prompt block for "+
+					"The entire output is identical to think=true EXCEPT the "+
+					"generation prompt suffix: <think>\\n\\n</think>\\n\\n (6 tokens "+
+					"matching the official template's add_generation_prompt block for "+
 					"enable_thinking=false) instead of <think>\\n (2 tokens for "+
 					"enable_thinking=true/undefined). Historical message rendering is "+
 					"unaffected by think mode — the official template checks "+
 					"enable_thinking in exactly one place.\n\n"+
-					"--- got ---\n%s\n--- want ---\n%s", got, want,
+					"--- got ---\n%s\n--- want ---\n%s", gotFalse, want,
 			)
 		}
 	})
