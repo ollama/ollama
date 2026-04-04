@@ -28,7 +28,7 @@ type Nemotron3NanoParser struct {
 
 func (p *Nemotron3NanoParser) HasToolSupport() bool     { return true }
 func (p *Nemotron3NanoParser) HasThinkingSupport() bool { return true }
-func (p *Nemotron3NanoParser) CanDisableThinking() bool  { return true }
+func (p *Nemotron3NanoParser) CanDisableThinking() bool { return true }
 
 func (p *Nemotron3NanoParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.toolParser = &Qwen3CoderParser{}
