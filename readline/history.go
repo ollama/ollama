@@ -38,9 +38,9 @@ func NewHistory() (*History, error) {
 }
 
 func (h *History) Init() error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
+	home := getHomeDir()
+	if home == "" {
+		return errors.New("could not determine home directory")
 	}
 
 	path := filepath.Join(home, ".ollama", "history")
@@ -148,4 +148,23 @@ func (h *History) Save() error {
 	}
 
 	return nil
+}
+
+// getHomeDir returns the home directory by checking environment variables
+// first (for portability on Windows), then falling back to os.UserHomeDir().
+func getHomeDir() string {
+	// Check HOME first (Unix/Linux/Mac)
+	if home := os.Getenv("HOME"); home != "" {
+		return home
+	}
+	// Check USERPROFILE on Windows
+	if home := os.Getenv("USERPROFILE"); home != "" {
+		return home
+	}
+	// Fall back to os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return home
 }
