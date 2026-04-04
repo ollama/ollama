@@ -78,6 +78,7 @@ type MessagesRequest struct {
 	ToolChoice    *ToolChoice     `json:"tool_choice,omitempty"`
 	Thinking      *ThinkingConfig `json:"thinking,omitempty"`
 	Metadata      *Metadata       `json:"metadata,omitempty"`
+	NumCtx        int             `json:"num_ctx,omitempty"`
 }
 
 // MessageParam represents a message in the request
@@ -330,6 +331,10 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 	options := make(map[string]any)
 
 	options["num_predict"] = r.MaxTokens
+
+	if r.NumCtx > 0 {
+		options["num_ctx"] = r.NumCtx
+	}
 
 	if r.Temperature != nil {
 		options["temperature"] = *r.Temperature
