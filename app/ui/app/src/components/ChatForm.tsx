@@ -20,7 +20,6 @@ import { useSelectedModel } from "@/hooks/useSelectedModel";
 import {
   useHasVisionCapability,
   useHasToolsCapability,
-  useHasThinkingCapability,
   useCanToggleThinking,
 } from "@/hooks/useModelCapabilities";
 import { useUser } from "@/hooks/useUser";
