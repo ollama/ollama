@@ -127,7 +127,7 @@ func TestModelCapabilities(t *testing.T) {
 					Parser: "qwen3-thinking",
 				},
 			},
-			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking, model.CapabilityThinkingToggle},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityTools, model.CapabilityThinking, model.CapabilityThinkingToggle},
 		},
 		{
 			name: "parser-based thinking without toggle support",
@@ -138,7 +138,7 @@ func TestModelCapabilities(t *testing.T) {
 					Parser: "qwen3-vl-thinking",
 				},
 			},
-			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityThinking},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityTools, model.CapabilityThinking},
 		},
 	}
 
