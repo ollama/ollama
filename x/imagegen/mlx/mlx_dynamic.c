@@ -28,8 +28,9 @@ static char mlx_error_buffer[512] = {0};
 
 #ifdef _WIN32
 // Windows: Load library from a path with dependency resolution.
-// Temporarily adds the library's directory to the DLL search path
-// so that dependencies (like mlx.dll) in the same directory are found.
+// Adds the library's directory to the DLL search path so that
+// dependencies (like mlx.dll, nvrtc-builtins) in the same directory
+// are found both at load time and later at runtime (e.g. NVRTC JIT).
 static int try_load_win(const char* path) {
     if (!path) return 0;
 
@@ -45,7 +46,6 @@ static int try_load_win(const char* path) {
     }
 
     mlx_handle = LoadLibraryA(path);
-    SetDllDirectoryA(NULL);
     return mlx_handle != NULL;
 }
 #endif

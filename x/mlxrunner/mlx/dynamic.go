@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"unsafe"
+
+	"github.com/ollama/ollama/ml"
 )
 
 var initError error
@@ -120,8 +122,12 @@ func init() {
 		return
 	}
 
-	// Build search paths: executable directory, then build directories
+	// Build search paths: LibOllamaPath (distribution layout), executable
+	// directory, then build directories for development
 	var searchDirs []string
+	if libPath := ml.LibOllamaPath; libPath != "" {
+		searchDirs = append(searchDirs, libPath)
+	}
 	if exe, err := os.Executable(); err == nil {
 		if eval, err := filepath.EvalSymlinks(exe); err == nil {
 			exe = eval
