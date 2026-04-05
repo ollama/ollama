@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"regexp"
 	"strings"
 	"unicode"
 
@@ -23,6 +24,11 @@ const (
 	gemma4ThinkingCloseTag = "<channel|>"
 	gemma4ToolCallOpenTag  = "<|tool_call>"
 	gemma4ToolCallCloseTag = "<tool_call|>"
+)
+
+var (
+	gemma4QuotedStringRe = regexp.MustCompile(`(?s)<\|"\|>(.*?)<\|"\|>`)
+	gemma4BareKeyRe      = regexp.MustCompile(`([,{])(\w+):`)
 )
 
 type Gemma4Parser struct {
@@ -345,68 +351,19 @@ func parseGemma4ToolCall(content string) (api.ToolCall, error) {
 
 // gemma4ArgsToJSON converts Gemma 4's custom argument format to valid JSON.
 func gemma4ArgsToJSON(s string) string {
-	s = strings.ReplaceAll(s, `<|"|>`, `"`)
+	var quotedStrings []string
+	text := gemma4QuotedStringRe.ReplaceAllStringFunc(s, func(match string) string {
+		submatches := gemma4QuotedStringRe.FindStringSubmatch(match)
+		quotedStrings = append(quotedStrings, submatches[1])
+		return "\x00" + string(rune(len(quotedStrings)-1)) + "\x00"
+	})
 
-	var buf strings.Builder
-	buf.Grow(len(s) + 32)
-	inString := false
-	hex := "0123456789abcdef"
-	i := 0
-	for i < len(s) {
-		ch := s[i]
+	text = gemma4BareKeyRe.ReplaceAllString(text, `$1"$2":`)
 
-		if ch == '"' {
-			inString = !inString
-			buf.WriteByte('"')
-			i++
-			continue
-		}
-
-		if inString {
-			switch ch {
-			case '\\':
-				buf.WriteString(`\\`)
-			case '\n':
-				buf.WriteString(`\n`)
-			case '\r':
-				buf.WriteString(`\r`)
-			case '\t':
-				buf.WriteString(`\t`)
-			case '\b':
-				buf.WriteString(`\b`)
-			case '\f':
-				buf.WriteString(`\f`)
-			default:
-				if ch < 0x20 {
-					buf.WriteString(`\u00`)
-					buf.WriteByte(hex[ch>>4])
-					buf.WriteByte(hex[ch&0x0f])
-				} else {
-					buf.WriteByte(ch)
-				}
-			}
-			i++
-			continue
-		}
-
-		if !inString && isIdentStart(ch) {
-			j := i + 1
-			for j < len(s) && isIdentPart(s[j]) {
-				j++
-			}
-			word := s[i:j]
-			if j < len(s) && s[j] == ':' {
-				buf.WriteByte('"')
-				buf.WriteString(word)
-				buf.WriteByte('"')
-			} else {
-				buf.WriteString(word)
-			}
-			i = j
-		} else {
-			buf.WriteByte(ch)
-			i++
-		}
+	for i, value := range quotedStrings {
+		escaped, _ := json.Marshal(value)
+		text = strings.ReplaceAll(text, "\x00"+string(rune(i))+"\x00", string(escaped))
 	}
-	return buf.String()
+
+	return text
 }

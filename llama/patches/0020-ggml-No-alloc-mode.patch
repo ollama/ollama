@@ -11,9 +11,9 @@ must be recreated with no-alloc set to false before loading data.
  ggml/include/ggml-backend.h     |   1 +
  ggml/src/ggml-backend-impl.h    |  16 +++
  ggml/src/ggml-backend.cpp       |  75 ++++++++++-
- ggml/src/ggml-cuda/common.cuh   |  62 ++++++++-
+ ggml/src/ggml-cuda/common.cuh   |  83 +++++++++++-
  ggml/src/ggml-cuda/ggml-cuda.cu | 224 ++++++++++++++++++++++++++------
- 5 files changed, 333 insertions(+), 45 deletions(-)
+ 5 files changed, 354 insertions(+), 45 deletions(-)
 
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
 index 93c95602d..dbbb61d9c 100644
@@ -229,7 +229,7 @@ diff --git a/ggml/src/ggml-cuda/common.cuh b/ggml/src/ggml-cuda/common.cuh
 index 9fcb2f9fd..e800ee8f6 100644
 --- a/ggml/src/ggml-cuda/common.cuh
 +++ b/ggml/src/ggml-cuda/common.cuh
-@@ -37,6 +37,41 @@
+@@ -37,6 +37,64 @@
  #include "vendors/cuda.h"
  #endif // defined(GGML_USE_HIP)
  
@@ -261,12 +261,35 @@ index 9fcb2f9fd..e800ee8f6 100644
 +    }
 +}
 +
++static cublasStatus_t cublasGemmBatchedExReserve(
++        cublasHandle_t handle, cublasOperation_t transa, cublasOperation_t transb,
++        int m, int n, int k,
++        const void *alpha,
++        const void *const Aarray[], cudaDataType_t Atype, int lda,
++        const void *const Barray[], cudaDataType_t Btype, int ldb,
++        const void *beta,
++        void *const Carray[], cudaDataType_t Ctype, int ldc,
++        int batchCount,
++        cublasComputeType_t computeType, cublasGemmAlgo_t algo) {
++    if (!reserving_graph) {
++        return cublasGemmBatchedEx(handle, transa, transb, m, n, k,
++            alpha, const_cast<const void **>(Aarray), Atype, lda,
++            const_cast<const void **>(Barray), Btype, ldb,
++            beta, const_cast<void **>(Carray), Ctype, ldc,
++            batchCount, computeType, algo);
++    } else {
++        return CUBLAS_STATUS_SUCCESS;
++    }
++}
++
 +#undef cudaMemcpyAsync
 +#define cudaMemcpyAsync cudaMemcpyAsyncReserve
 +#undef cudaMemcpy2DAsync
 +#define cudaMemcpy2DAsync cudaMemcpy2DAsyncReserve
 +#undef cudaMemsetAsync
 +#define cudaMemsetAsync cudaMemsetAsyncReserve
++#undef cublasGemmBatchedEx
++#define cublasGemmBatchedEx cublasGemmBatchedExReserve
 +
  #define STRINGIZE_IMPL(...) #__VA_ARGS__
  #define STRINGIZE(...) STRINGIZE_IMPL(__VA_ARGS__)
@@ -322,6 +345,18 @@ index 9fcb2f9fd..e800ee8f6 100644
  };
  
  struct ggml_cuda_mm_fusion_args_host {
+diff --git a/ggml/src/ggml-cuda/vendors/hip.h b/ggml/src/ggml-cuda/vendors/hip.h
+index d89e35a8e..fe4b5349f 100644
+--- a/ggml/src/ggml-cuda/vendors/hip.h
++++ b/ggml/src/ggml-cuda/vendors/hip.h
+@@ -39,6 +39,7 @@
+ #define cublasCreate hipblasCreate
+ #define cublasDestroy hipblasDestroy
+ #define cublasGemmEx hipblasGemmEx
++#define cublasGemmAlgo_t hipblasGemmAlgo_t
+ #define cublasGemmBatchedEx hipblasGemmBatchedEx
+ #define cublasGemmStridedBatchedEx hipblasGemmStridedBatchedEx
+ #define cublasHandle_t hipblasHandle_t
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
 index 25548629d..eeaae3fe4 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
