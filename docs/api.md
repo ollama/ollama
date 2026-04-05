@@ -876,6 +876,10 @@ Final response:
 {
   "model": "llama3.2",
   "created_at": "2023-08-04T19:22:45.499127Z",
+  "message": {
+    "role": "assistant",
+    "content": ""
+  },
   "done": true,
   "total_duration": 8113331500,
   "load_duration": 6396458,
