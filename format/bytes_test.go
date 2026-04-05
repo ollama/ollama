@@ -40,6 +40,11 @@ func TestHumanBytes(t *testing.T) {
 		{1234, "1.2 KB"},
 		{1234567, "1.2 MB"},
 		{1234567890, "1.2 GB"},
+
+		// Test fractional values >= 10 (regression test for decimal truncation bug)
+		{10500, "10.5 KB"},
+		{10500000, "10.5 MB"},
+		{10500000000, "10.5 GB"},
 	}
 
 	for _, tc := range tests {
