@@ -908,6 +908,7 @@ type ModelDetails struct {
 	Family            string   `json:"family"`
 	Families          []string `json:"families"`
 	ParameterSize     string   `json:"parameter_size"`
+	ParameterCount    int64    `json:"parameter_count,omitempty"`
 	QuantizationLevel string   `json:"quantization_level"`
 }
 
