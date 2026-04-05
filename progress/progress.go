@@ -29,10 +29,14 @@ type Progress struct {
 
 	ticker *time.Ticker
 	states []State
+	isTerm bool
 }
 
 func NewProgress(w io.Writer) *Progress {
 	p := &Progress{w: bufio.NewWriter(w)}
+	if f, ok := w.(interface{ Fd() uintptr }); ok {
+		p.isTerm = term.IsTerminal(int(f.Fd()))
+	}
 	go p.start()
 	return p
 }
@@ -56,7 +60,7 @@ func (p *Progress) stop() bool {
 
 func (p *Progress) Stop() bool {
 	stopped := p.stop()
-	if stopped {
+	if stopped && p.isTerm {
 		fmt.Fprint(p.w, "\n")
 		p.w.Flush()
 	}
@@ -64,6 +68,10 @@ func (p *Progress) Stop() bool {
 }
 
 func (p *Progress) StopAndClear() bool {
+	if !p.isTerm {
+		return p.stop()
+	}
+
 	defer p.w.Flush()
 
 	fmt.Fprint(p.w, "\033[?25l")
@@ -91,6 +99,10 @@ func (p *Progress) Add(key string, state State) {
 }
 
 func (p *Progress) render() {
+	if !p.isTerm {
+		return
+	}
+
 	_, termHeight, err := term.GetSize(int(os.Stderr.Fd()))
 	if err != nil {
 		termHeight = defaultTermHeight
