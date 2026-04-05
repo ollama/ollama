@@ -284,7 +284,7 @@ jobs:
         if: always()
         run: go test -count=1 -benchtime=1x ./...
 
-      - uses: golangci/golangci-lint-action@v9
+      - uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9
         with:
           only-new-issues: true
 
