@@ -1,0 +1,205 @@
+---
+title: Image Generation
+---
+
+<Warning>
+Image generation is experimental and currently only available on macOS. This feature may change in future versions.
+</Warning>
+
+Image generation models create images from text prompts. Ollama supports diffusion-based image generation models through both Ollama's API and OpenAI-compatible endpoints.
+
+## Usage
+
+<Tabs>
+  <Tab title="CLI">
+    ```shell
+    ollama run x/z-image-turbo "a sunset over mountains"
+    ```
+    The generated image will be saved to the current directory.
+  </Tab>
+  <Tab title="cURL">
+    ```shell
+    curl http://localhost:11434/api/generate -d '{
+      "model": "x/z-image-turbo",
+      "prompt": "a sunset over mountains",
+      "stream": false
+    }'
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    import ollama
+    import base64
+
+    response = ollama.generate(
+        model='x/z-image-turbo',
+        prompt='a sunset over mountains',
+    )
+
+    # Save the generated image
+    with open('output.png', 'wb') as f:
+        f.write(base64.b64decode(response['image']))
+
+    print('Image saved to output.png')
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```javascript
+    import ollama from 'ollama'
+    import { writeFileSync } from 'fs'
+
+    const response = await ollama.generate({
+      model: 'x/z-image-turbo',
+      prompt: 'a sunset over mountains',
+    })
+
+    // Save the generated image
+    const imageBuffer = Buffer.from(response.image, 'base64')
+    writeFileSync('output.png', imageBuffer)
+
+    console.log('Image saved to output.png')
+    ```
+  </Tab>
+</Tabs>
+
+### Response
+
+The response includes an `image` field containing the base64-encoded image data:
+
+```json
+{
+  "model": "x/z-image-turbo",
+  "created_at": "2024-01-15T10:30:15.000000Z",
+  "image": "iVBORw0KGgoAAAANSUhEUg...",
+  "done": true,
+  "done_reason": "stop",
+  "total_duration": 15000000000,
+  "load_duration": 2000000000
+}
+```
+
+## Image dimensions
+
+Customize the output image size using the `width` and `height` parameters:
+
+<Tabs>
+  <Tab title="cURL">
+    ```shell
+    curl http://localhost:11434/api/generate -d '{
+      "model": "x/z-image-turbo",
+      "prompt": "a portrait of a robot artist",
+      "width": 768,
+      "height": 1024,
+      "stream": false
+    }'
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    import ollama
+
+    response = ollama.generate(
+        model='x/z-image-turbo',
+        prompt='a portrait of a robot artist',
+        width=768,
+        height=1024,
+    )
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```javascript
+    import ollama from 'ollama'
+
+    const response = await ollama.generate({
+      model: 'x/z-image-turbo',
+      prompt: 'a portrait of a robot artist',
+      width: 768,
+      height: 1024,
+    })
+    ```
+  </Tab>
+</Tabs>
+
+## Streaming progress
+
+When streaming is enabled (the default), progress updates are sent during image generation:
+
+```json
+{
+  "model": "x/z-image-turbo",
+  "created_at": "2024-01-15T10:30:00.000000Z",
+  "completed": 5,
+  "total": 20,
+  "done": false
+}
+```
+
+The `completed` and `total` fields indicate the current progress through the diffusion steps.
+
+## Parameters
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `prompt` | Text description of the image to generate | Required |
+| `width` | Width of the generated image in pixels | Model default |
+| `height` | Height of the generated image in pixels | Model default |
+| `steps` | Number of diffusion steps | Model default |
+
+## OpenAI compatibility
+
+Image generation is also available through the OpenAI-compatible `/v1/images/generations` endpoint:
+
+<Tabs>
+  <Tab title="cURL">
+    ```shell
+    curl http://localhost:11434/v1/images/generations \
+      -H "Content-Type: application/json" \
+      -d '{
+        "model": "x/z-image-turbo",
+        "prompt": "a sunset over mountains",
+        "size": "1024x1024",
+        "response_format": "b64_json"
+      }'
+    ```
+  </Tab>
+  <Tab title="Python">
+    ```python
+    from openai import OpenAI
+
+    client = OpenAI(
+        base_url='http://localhost:11434/v1/',
+        api_key='ollama',  # required but ignored
+    )
+
+    response = client.images.generate(
+        model='x/z-image-turbo',
+        prompt='a sunset over mountains',
+        size='1024x1024',
+        response_format='b64_json',
+    )
+
+    print(response.data[0].b64_json[:50] + '...')
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```javascript
+    import OpenAI from 'openai'
+
+    const openai = new OpenAI({
+      baseURL: 'http://localhost:11434/v1/',
+      apiKey: 'ollama', // required but ignored
+    })
+
+    const response = await openai.images.generate({
+      model: 'x/z-image-turbo',
+      prompt: 'a sunset over mountains',
+      size: '1024x1024',
+      response_format: 'b64_json',
+    })
+
+    console.log(response.data[0].b64_json.slice(0, 50) + '...')
+    ```
+  </Tab>
+</Tabs>
+
+See [OpenAI compatibility](/api/openai-compatibility#v1imagesgenerations-experimental) for more details.
