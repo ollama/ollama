@@ -108,12 +108,6 @@ type llmServer struct {
 	sem *semaphore.Weighted
 }
 
-type llamaServer struct {
-	llmServer
-
-	ggml *ggml.GGML
-}
-
 type ollamaServer struct {
 	llmServer
 
@@ -145,23 +139,37 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	var llamaModel *llama.Model
 	var tok tokenizer.Tokenizer
 	var err error
-	if envconfig.NewEngine() || f.KV().OllamaEngineRequired() {
+	// When OLLAMA_NEW_ENGINE is explicitly set to false/0, skip the ollama engine entirely
+	// so all non-MLX models go through the llama-server path (useful for testing)
+	forceNewEngineOff := os.Getenv("OLLAMA_NEW_ENGINE") == "0" || os.Getenv("OLLAMA_NEW_ENGINE") == "false"
+	if !forceNewEngineOff && (envconfig.NewEngine() || f.KV().OllamaEngineRequired()) {
 		if len(projectors) == 0 {
 			tok, err = model.NewTextProcessor(modelPath)
 		} else {
 			err = errors.New("split vision models aren't supported")
 		}
 		if err != nil {
-			// To prepare for opt-out mode, instead of treating this as an error, we fallback to the old runner
-			slog.Debug("model not yet supported by Ollama engine, switching to compatibility mode", "model", modelPath, "error", err)
+			// To prepare for opt-out mode, instead of treating this as an error, we fallback to the llama-server runner
+			slog.Debug("model not yet supported by Ollama engine, switching to llama-server", "model", modelPath, "error", err)
 		}
 	}
 	if tok == nil {
-		llamaModel, err = llama.LoadModelFromFile(modelPath, llama.ModelParams{VocabOnly: true})
-		if err != nil {
-			return nil, err
+		// Use upstream llama-server for models not handled by the ollama engine.
+		// llama-server auto-detects GPU layers, threads, and flash attention.
+		slog.Info("using llama-server for model", "model", modelPath)
+
+		// Verify the requested context size is <= the model training size
+		trainCtx := f.KV().ContextLength()
+		if opts.NumCtx > int(trainCtx) && trainCtx > 0 {
+			slog.Warn("requested context size too large for model", "num_ctx", opts.NumCtx, "n_ctx_train", trainCtx)
+			opts.NumCtx = int(trainCtx)
 		}
+
+		kvct := strings.ToLower(envconfig.KvCacheType())
+		return NewLlamaServerRunner(gpus, modelPath, f, adapters, projectors, opts, numParallel, kvct)
 	}
+
+	// --- Ollama engine path (tok != nil) ---
 
 	// Verify the requested context size is <= the model training size
 	trainCtx := f.KV().ContextLength()
@@ -181,30 +189,15 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		loadRequest.NumThreads = defaultThreads
 	}
 
-	// TODO - NUMA support currently doesn't work properly
-
 	if opts.MainGPU > 0 {
 		loadRequest.MainGPU = opts.MainGPU
 	}
 
-	if len(projectors) > 0 && llamaModel != nil {
-		loadRequest.ProjectorPath = projectors[0]
-	}
-	// Determine if the user has forced FA on or off
-	faUserSet := false
-	if envconfig.FlashAttention(true) == envconfig.FlashAttention(false) {
-		faUserSet = true
-	}
-
 	fa := envconfig.FlashAttention(f.FlashAttention())
-
-	// This will disable flash attention unless all GPUs on the system support it, even if we end up selecting a subset
-	// that can handle it.
 	if fa && !ml.FlashAttentionSupported(gpus) {
 		slog.Warn("flash attention enabled but not supported by gpu")
 		fa = false
 	}
-
 	if fa && !f.SupportsFlashAttention() {
 		slog.Warn("flash attention enabled but not supported by model")
 		fa = false
@@ -212,57 +205,24 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 
 	kvct := strings.ToLower(envconfig.KvCacheType())
 
-	if tok == nil {
-		flashAttention := ml.FlashAttentionAuto
-		if faUserSet {
-			if fa {
-				flashAttention = ml.FlashAttentionEnabled
-			} else {
-				flashAttention = ml.FlashAttentionDisabled
-			}
-		}
+	// For Ollama engine, use our SupportsFlashAttention logic
+	if fa {
+		slog.Info("enabling flash attention")
+		loadRequest.FlashAttention = ml.FlashAttentionEnabled
 
-		if kvct != "" {
-			if f.KVCacheTypeIsQuantized(kvct) {
-				if flashAttention != ml.FlashAttentionEnabled {
-					slog.Warn("OLLAMA_FLASH_ATTENTION must be enabled to use a quantized OLLAMA_KV_CACHE_TYPE", "type", kvct)
-					loadRequest.KvCacheType = ""
-				} else if f.SupportsKVCacheType(kvct) {
-					loadRequest.KvCacheType = kvct
-				} else {
-					slog.Warn("unsupported OLLAMA_KV_CACHE_TYPE", "type", kvct)
-				}
-			} else {
-				if f.SupportsKVCacheType(kvct) {
-					loadRequest.KvCacheType = kvct
-				} else {
-					slog.Warn("unsupported OLLAMA_KV_CACHE_TYPE", "type", kvct)
-				}
-			}
+		if f.SupportsKVCacheType(kvct) {
+			loadRequest.KvCacheType = kvct
+		} else {
+			slog.Warn("kv cache type not supported by model", "type", kvct)
 		}
-		loadRequest.FlashAttention = flashAttention
-	} else {
-		// For Ollama engine, use our SupportsFlashAttention logic
-		if fa {
-			slog.Info("enabling flash attention")
-			loadRequest.FlashAttention = ml.FlashAttentionEnabled
-
-			// Flash Attention also supports kv cache quantization
-			// Enable if the requested and kv cache type is supported by the model
-			if f.SupportsKVCacheType(kvct) {
-				loadRequest.KvCacheType = kvct
-			} else {
-				slog.Warn("kv cache type not supported by model", "type", kvct)
-			}
-		} else if kvct != "" && kvct != "f16" {
-			slog.Warn("quantized kv cache requested but flash attention disabled", "type", kvct)
-		}
+	} else if kvct != "" && kvct != "f16" {
+		slog.Warn("quantized kv cache requested but flash attention disabled", "type", kvct)
 	}
 
 	gpuLibs := ml.LibraryPaths(gpus)
 	status := NewStatusWriter(os.Stderr)
 	cmd, port, err := StartRunner(
-		tok != nil,
+		true, // ollama engine
 		modelPath,
 		gpuLibs,
 		status,
@@ -289,17 +249,12 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		if s.status != nil && s.status.LastErrMsg != "" {
 			msg = s.status.LastErrMsg
 		}
-		err := fmt.Errorf("error starting runner: %v %s", err, msg)
-		if llamaModel != nil {
-			llama.FreeModel(llamaModel)
-		}
-		return nil, err
+		return nil, fmt.Errorf("error starting runner: %v %s", err, msg)
 	}
 
 	// reap subprocess when it exits
 	go func() {
 		err := s.cmd.Wait()
-		// Favor a more detailed message over the process exit status
 		if err != nil && s.status != nil && s.status.LastErrMsg != "" {
 			slog.Error("llama runner terminated", "error", err)
 			if strings.Contains(s.status.LastErrMsg, "unknown model") {
@@ -312,11 +267,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		close(s.done)
 	}()
 
-	if tok != nil {
-		return &ollamaServer{llmServer: s, tokenizer: tok}, nil
-	} else {
-		return &llamaServer{llmServer: s, ggml: f}, nil
-	}
+	return &ollamaServer{llmServer: s, tokenizer: tok}, nil
 }
 
 func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.Writer, extraEnvs map[string]string) (cmd *exec.Cmd, port int, err error) {
@@ -494,245 +445,6 @@ type LoadResponse struct {
 }
 
 var ErrLoadRequiredFull = errors.New("unable to load full model on GPU")
-
-func (s *llamaServer) Load(ctx context.Context, systemInfo ml.SystemInfo, systemGPUs []ml.DeviceInfo, requireFull bool) ([]ml.DeviceID, error) {
-	slog.Info("loading model", "model layers", s.totalLayers, "requested", s.options.NumGPU)
-
-	gpus := append(make([]ml.DeviceInfo, 0, len(systemGPUs)), systemGPUs...)
-
-	// Synthesize memory allocation information based on our estimates
-	s.mem = &ml.BackendMemory{CPU: ml.DeviceMemory{
-		Name:    "CPU",
-		Weights: make([]uint64, s.totalLayers),
-		Cache:   make([]uint64, s.totalLayers),
-	}, GPUs: make([]ml.DeviceMemory, len(gpus))}
-
-	for i := range s.mem.GPUs {
-		s.mem.GPUs[i].Name = gpus[i].Name
-		s.mem.GPUs[i].DeviceID = gpus[i].DeviceID
-		s.mem.GPUs[i].Weights = make([]uint64, s.totalLayers)
-		s.mem.GPUs[i].Cache = make([]uint64, s.totalLayers)
-	}
-
-	// Check if embedding model and adjust batch size accordingly
-	_, isEmbedding := s.ggml.KV()[fmt.Sprintf("%s.pooling_type", s.ggml.KV().Architecture())]
-	if isEmbedding && s.loadRequest.BatchSize < s.options.NumCtx {
-		s.loadRequest.BatchSize = s.options.NumCtx
-		slog.Info("embedding model detected, setting batch size to context length", "batch_size", s.loadRequest.BatchSize)
-	}
-
-	kv, graphPartialOffload, graphFullOffload := s.ggml.GraphSize(uint64(s.options.NumCtx), uint64(s.loadRequest.BatchSize),
-		s.loadRequest.Parallel, s.loadRequest.KvCacheType, s.loadRequest.FlashAttention)
-
-	// Use the size of one layer as a buffer
-	layers := s.ggml.Tensors().GroupLayers()
-	if blk0, ok := layers["blk.0"]; ok {
-		buffer := blk0.Size() + kv[0]
-		for i := range gpus {
-			if gpus[i].FreeMemory > buffer {
-				gpus[i].FreeMemory -= buffer
-			} else {
-				gpus[i].FreeMemory = 0
-			}
-		}
-	} else {
-		slog.Warn("model missing blk.0 layer size")
-	}
-
-	// Assign all the layers to the CPU for now, they will get reassigned later
-	for i := range s.ggml.KV().BlockCount() {
-		if blk, ok := layers[fmt.Sprintf("blk.%d", i)]; ok {
-			s.mem.CPU.Weights[i] = blk.Size()
-			s.mem.CPU.Cache[i] += kv[i]
-		}
-	}
-
-	// We historically haven't included InputWeights in the model size
-	var outputWeights uint64
-	if layer, ok := layers["output_norm"]; ok {
-		outputWeights += layer.Size()
-	}
-	if layer, ok := layers["output"]; ok {
-		outputWeights += layer.Size()
-	} else if layer, ok := layers["token_embd"]; ok {
-		outputWeights += layer.Size()
-	}
-	s.mem.CPU.Weights[s.totalLayers-1] = outputWeights
-
-	// The vision projector is always loaded on the first GPU if available.
-	// This can't be assigned by us, so just subtract it from free space
-	projectorGPU := -1
-	var projectorWeights uint64
-	if len(gpus) > 0 {
-		for _, projector := range s.loadRequest.LoraPath {
-			projectorWeights += projectorMemoryRequirements(projector)
-		}
-
-		// llama.cpp uses the first discrete GPU if available, otherwise the first iGPU
-		firstIntegrated := -1
-		for i := range gpus {
-			if !gpus[i].Integrated {
-				projectorGPU = i
-				break
-			}
-			if firstIntegrated == -1 {
-				firstIntegrated = i
-			}
-		}
-		if projectorGPU == -1 {
-			projectorGPU = firstIntegrated
-		}
-
-		if gpus[projectorGPU].FreeMemory > projectorWeights {
-			gpus[projectorGPU].FreeMemory -= projectorWeights
-		} else {
-			gpus[projectorGPU].FreeMemory = 0
-		}
-	}
-
-	var kvTotal uint64
-	for _, kvLayer := range kv {
-		kvTotal += kvLayer
-	}
-
-	if graphPartialOffload == 0 {
-		headsKV := s.ggml.KV().HeadCountKVMin()
-		if headsKV == 0 {
-			headsKV = 1
-		}
-		gqa := s.ggml.KV().HeadCountMax() / headsKV
-		graphPartialOffload = gqa * kvTotal / 6
-	}
-	if graphFullOffload == 0 {
-		graphFullOffload = graphPartialOffload
-	}
-
-	// On Metal there's no partial offload overhead
-	if len(gpus) > 0 && gpus[0].Library == "Metal" {
-		graphPartialOffload = graphFullOffload
-	}
-
-	// Create a layout based on the memory data that we've built. The compute graph
-	// for GPUs is iteratively assigned based on the number of GPUs that are required.
-	var gpuLayers ml.GPULayersList
-	for {
-		prevGPULayers := gpuLayers
-
-		var err error
-		gpuLayers, err = s.createLayout(systemInfo, gpus, s.mem, requireFull, 0)
-		if err != nil {
-			return nil, err
-		}
-
-		if len(gpuLayers) > len(prevGPULayers) {
-			for _, gl := range gpuLayers {
-				for i := range s.mem.GPUs {
-					if gl.DeviceID == s.mem.GPUs[i].DeviceID {
-						s.mem.GPUs[i].Graph = max(graphPartialOffload, graphFullOffload)
-						break
-					}
-				}
-			}
-		} else {
-			break
-		}
-	}
-
-	// This maintains the historical assignment of graph sizes, though it isn't fully accurate
-	graphSize := graphFullOffload
-	if gpuLayers.Sum() < int(s.totalLayers) {
-		graphSize = graphPartialOffload
-	}
-
-	// For all layers that we have assigned to GPUs, move them in the memory data so
-	// that it is reported accurately
-	for _, gl := range gpuLayers {
-		for i := range s.mem.GPUs {
-			if gl.DeviceID == s.mem.GPUs[i].DeviceID {
-				for _, l := range gl.Layers {
-					s.mem.GPUs[i].Weights[l] = s.mem.CPU.Weights[l]
-					s.mem.GPUs[i].Cache[l] = s.mem.CPU.Cache[l]
-
-					s.mem.CPU.Weights[l] = 0
-					s.mem.CPU.Cache[l] = 0
-				}
-
-				s.mem.GPUs[i].Graph = graphSize
-				break
-			}
-		}
-	}
-
-	if projectorGPU > 0 && len(s.mem.GPUs[projectorGPU].Weights) > 0 {
-		s.mem.GPUs[projectorGPU].Weights[s.totalLayers-1] += projectorWeights
-	}
-
-	slog.Debug("memory", "estimate", s.mem)
-	s.mem.Log(slog.LevelInfo)
-
-	// The llama engine uses mmap by default
-	s.loadRequest.UseMmap = true
-
-	// mmap has issues with partial offloading on metal
-	for _, g := range gpus {
-		if g.Library == "Metal" &&
-			uint64(s.options.NumGPU) > 0 &&
-			uint64(s.options.NumGPU) < s.totalLayers {
-			s.options.UseMMap = new(bool)
-			*s.options.UseMMap = false
-		}
-	}
-
-	// Windows CUDA should not use mmap for best performance
-	// Linux  with a model larger than free space, mmap leads to thrashing
-	// For CPU loads we want the memory to be allocated, not FS cache
-	totalSize, _ := s.MemorySize()
-	if (runtime.GOOS == "windows" && len(gpus) > 0 && gpus[0].Library == "CUDA" && s.options.UseMMap == nil) ||
-		(runtime.GOOS == "linux" && systemInfo.FreeMemory < totalSize && s.options.UseMMap == nil) ||
-		(len(gpus) == 0 && s.options.UseMMap == nil) ||
-		(len(gpus) > 0 && gpus[0].Library == "Vulkan" && s.options.UseMMap == nil) ||
-		(s.options.UseMMap != nil && !*s.options.UseMMap) {
-		s.loadRequest.UseMmap = false
-	}
-
-	if err := s.waitUntilRunnerLaunched(ctx); err != nil {
-		return nil, err
-	}
-
-	s.loadRequest.GPULayers = gpuLayers
-	resp, err := s.initModel(ctx, s.loadRequest, LoadOperationCommit)
-	if err != nil {
-		return nil, err
-	}
-
-	if !resp.Success {
-		return nil, errors.New("failed to allocate memory for model")
-	}
-
-	// The llama engine does its memory allocations together with model loading, so we
-	// need to wait until it is done to ensure that we have accurate memory data before
-	// loading the next model
-	return uniqueDeviceIDs(s.loadRequest.GPULayers), s.WaitUntilRunning(ctx)
-}
-
-func projectorMemoryRequirements(filename string) (weights uint64) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return 0
-	}
-	defer file.Close()
-
-	ggml, err := ggml.Decode(file, 1024)
-	if err != nil {
-		return 0
-	}
-
-	for _, layer := range ggml.Tensors().GroupLayers() {
-		weights += layer.Size()
-	}
-
-	return weights
-}
 
 // Load finds the optimal layout of layers to offload on GPUs based on no initial information about the size of the model
 // It does this by:
@@ -1765,17 +1477,6 @@ func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, int
 	return e.Embedding, e.PromptEvalCount, nil
 }
 
-func (s *llamaServer) Tokenize(ctx context.Context, content string) ([]int, error) {
-	s.llamaModelLock.Lock()
-	defer s.llamaModelLock.Unlock()
-
-	if s.llamaModel == nil {
-		return nil, fmt.Errorf("no tokenizer configured")
-	}
-
-	return s.llamaModel.Tokenize(content, false, true)
-}
-
 func (s *ollamaServer) Tokenize(ctx context.Context, content string) ([]int, error) {
 	tokens, err := s.tokenizer.Encode(content, false)
 	if err != nil {
@@ -1788,22 +1489,6 @@ func (s *ollamaServer) Tokenize(ctx context.Context, content string) ([]int, err
 	}
 
 	return toks, nil
-}
-
-func (s *llamaServer) Detokenize(ctx context.Context, tokens []int) (string, error) {
-	s.llamaModelLock.Lock()
-	defer s.llamaModelLock.Unlock()
-
-	if s.llamaModel == nil {
-		return "", fmt.Errorf("no tokenizer configured")
-	}
-
-	var resp string
-	for _, token := range tokens {
-		resp += s.llamaModel.TokenToPiece(token)
-	}
-
-	return resp, nil
 }
 
 func (s *ollamaServer) Detokenize(ctx context.Context, tokens []int) (string, error) {
@@ -1842,11 +1527,6 @@ func (s *llmServer) Close() error {
 		slog.Debug("llama server stopped", "pid", s.Pid())
 	}
 
-	return nil
-}
-
-func (s *llamaServer) GetDeviceInfos(ctx context.Context) []ml.DeviceInfo {
-	slog.Debug("llamarunner free vram reporting not supported")
 	return nil
 }
 

@@ -15,6 +15,18 @@
       "inherits": [ "Default" ]
     },
     {
+      "name": "llama-server-darwin",
+      "binaryDir": "${sourceDir}/build/llama-server-darwin",
+      "installDir": "${sourceDir}/dist",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_SHARED_LIBS": "OFF",
+        "GGML_BACKEND_DL": "OFF",
+        "GGML_METAL": "ON",
+        "GGML_METAL_EMBED_LIBRARY": "ON"
+      }
+    },
+    {
       "name": "CUDA",
       "inherits": [ "Default" ]
     },
@@ -127,6 +139,16 @@
       "name": "CPU",
       "configurePreset": "Default",
       "targets": [ "ggml-cpu" ]
+    },
+    {
+      "name": "llama-server",
+      "configurePreset": "Default",
+      "targets": [ "llama-server" ]
+    },
+    {
+      "name": "llama-server-darwin",
+      "configurePreset": "llama-server-darwin",
+      "targets": [ "llama-server" ]
     },
     {
       "name": "CUDA",

@@ -58,6 +58,18 @@ _build_darwin() {
             cmake --build $BUILD_DIR --target mlx mlxc -j
             cmake --install $BUILD_DIR --component CPU
             cmake --install $BUILD_DIR --component MLX
+            # Build llama-server statically (no Metal on x86, CPU-only)
+            status "Building darwin $ARCH llama-server (static)"
+            cmake -B build/llama-server-$ARCH \
+                -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+                -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
+                -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX \
+                -DBUILD_SHARED_LIBS=OFF \
+                -DGGML_SHARED=OFF \
+                -DGGML_BACKEND_DL=OFF \
+                -DGGML_CPU_ALL_VARIANTS=OFF
+            cmake --build build/llama-server-$ARCH --target llama-server -j
+            cmake --install build/llama-server-$ARCH --component llama-server
             # Override CGO flags to point to the amd64 build directory
             MLX_CGO_CFLAGS="-O3 -mmacosx-version-min=14.0"
             MLX_CGO_LDFLAGS="-ldl -lc++ -framework Accelerate -mmacosx-version-min=14.0"
@@ -68,7 +80,16 @@ _build_darwin() {
                 -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
                 -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX
             cmake --build --preset MLX --parallel
+            cmake --build $BUILD_DIR --target ggml-cpu -j
+            cmake --install $BUILD_DIR --component CPU
             cmake --install $BUILD_DIR --component MLX
+            # Build llama-server statically (Metal + CPU linked in)
+            status "Building darwin $ARCH llama-server (static)"
+            cmake --preset llama-server-darwin \
+                -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
+                -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX
+            cmake --build --preset llama-server-darwin --parallel
+            cmake --install build/llama-server-darwin --component llama-server
             # Use default CGO flags from mlx.go for arm64
             MLX_CGO_CFLAGS="-O3 -mmacosx-version-min=14.0"
             MLX_CGO_LDFLAGS="-lc++ -framework Metal -framework Foundation -framework Accelerate -mmacosx-version-min=14.0"
@@ -85,6 +106,8 @@ _sign_darwin() {
     mkdir -p dist/darwin
     lipo -create -output dist/darwin/ollama dist/darwin-*/ollama
     chmod +x dist/darwin/ollama
+    lipo -create -output dist/darwin/llama-server dist/darwin-*/lib/ollama/llama-server
+    chmod +x dist/darwin/llama-server
 
     if [ -n "$APPLE_IDENTITY" ]; then
         for F in dist/darwin/ollama dist/darwin-*/lib/ollama/*; do
@@ -99,7 +122,7 @@ _sign_darwin() {
     fi
 
     status "Creating universal tarball..."
-    tar -cf dist/ollama-darwin.tar --strip-components 2 dist/darwin/ollama
+    tar -cf dist/ollama-darwin.tar --strip-components 2 dist/darwin/ollama dist/darwin/llama-server
     tar -rf dist/ollama-darwin.tar --strip-components 4 dist/darwin-amd64/lib/
     gzip -9vc <dist/ollama-darwin.tar >dist/ollama-darwin.tgz
 }
@@ -158,18 +181,21 @@ _build_macapp() {
             lipo -create -output dist/darwin/$(basename $F) $F dist/darwin-arm64/lib/ollama/$(basename $F)
         done
         cp dist/darwin-*/lib/ollama/*.so dist/darwin-*/lib/ollama/*.dylib dist/Ollama.app/Contents/Resources/
+        cp dist/darwin/llama-server dist/Ollama.app/Contents/Resources/
         cp dist/darwin/*.dylib dist/Ollama.app/Contents/Resources/
         # Copy MLX metallib (architecture-independent, just use arm64 version)
         cp dist/darwin-arm64/lib/ollama/*.metallib dist/Ollama.app/Contents/Resources/ 2>/dev/null || true
     else
         cp -a dist/darwin/ollama dist/Ollama.app/Contents/Resources/ollama
         cp dist/darwin/*.so dist/darwin/*.dylib dist/Ollama.app/Contents/Resources/
+        cp dist/darwin/llama-server dist/Ollama.app/Contents/Resources/
     fi
     chmod a+x dist/Ollama.app/Contents/Resources/ollama
 
     # Sign
     if [ -n "$APPLE_IDENTITY" ]; then
         codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime dist/Ollama.app/Contents/Resources/ollama
+        codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime dist/Ollama.app/Contents/Resources/llama-server
         for lib in dist/Ollama.app/Contents/Resources/*.so dist/Ollama.app/Contents/Resources/*.dylib dist/Ollama.app/Contents/Resources/*.metallib ; do
             codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime ${lib}
         done
@@ -178,7 +204,7 @@ _build_macapp() {
 
     rm -f dist/Ollama-darwin.zip
     ditto -c -k --norsrc --keepParent dist/Ollama.app dist/Ollama-darwin.zip
-    (cd dist/Ollama.app/Contents/Resources/; tar -cf - ollama *.so *.dylib *.metallib 2>/dev/null) | gzip -9vc > dist/ollama-darwin.tgz
+    (cd dist/Ollama.app/Contents/Resources/; tar -cf - ollama llama-server *.so *.dylib *.metallib 2>/dev/null) | gzip -9vc > dist/ollama-darwin.tgz
 
     # Notarize and Staple
     if [ -n "$APPLE_IDENTITY" ]; then
