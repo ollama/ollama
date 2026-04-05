@@ -763,6 +763,10 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
+		if err := printActiveSkills(os.Stderr, false); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: couldn't load active skills: %v\n", err)
+		}
+
 		for _, msg := range info.Messages {
 			switch msg.Role {
 			case "user":
@@ -2270,6 +2274,141 @@ func NewCLI() *cobra.Command {
 		RunE:    DeleteHandler,
 	}
 
+	skillsCmd := &cobra.Command{
+		Use:   "skills",
+		Short: "Manage local skills",
+	}
+
+	skillsListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List installed skills",
+		Args:  cobra.ExactArgs(0),
+		RunE:  SkillsListHandler,
+	}
+
+	skillsSearchCmd := &cobra.Command{
+		Use:   "search [QUERY]",
+		Short: "Search installed and catalog skills",
+		Args:  cobra.ArbitraryArgs,
+		RunE:  SkillsSearchHandler,
+	}
+	skillsSearchCmd.Flags().Bool("installed", true, "Include installed skills in results")
+	skillsSearchCmd.Flags().Bool("catalog", true, "Include catalog skills in results")
+	skillsSearchCmd.Flags().StringSlice("tag", nil, "Filter by one or more tags")
+	skillsSearchCmd.Flags().StringSlice("permission", nil, "Filter by required permissions")
+	skillsSearchCmd.Flags().Bool("verified", false, "Only show verified skills")
+
+	skillsInfoCmd := &cobra.Command{
+		Use:   "info NAME",
+		Short: "Show details for one skill",
+		Args:  cobra.ExactArgs(1),
+		RunE:  SkillsInfoHandler,
+	}
+
+	skillsInstallCmd := &cobra.Command{
+		Use:   "install SOURCE",
+		Short: "Install a skill from a local directory or pinned Git/GitHub source",
+		Args:  cobra.ExactArgs(1),
+		RunE:  SkillsInstallHandler,
+	}
+	skillsInstallCmd.Flags().Bool("enable", false, "Enable the skill after installing")
+
+	skillsUpdateCmd := &cobra.Command{
+		Use:   "update NAME",
+		Short: "Update a skill from its recorded source or an explicit source",
+		Args:  cobra.ExactArgs(1),
+		RunE:  SkillsUpdateHandler,
+	}
+	skillsUpdateCmd.Flags().String("source", "", "Override update source (path or pinned git/GitHub ref)")
+	skillsUpdateCmd.Flags().String("to", "", "Override pinned ref for git/GitHub sources")
+
+	skillsVerifyCmd := &cobra.Command{
+		Use:   "verify NAME",
+		Short: "Verify installed skill provenance",
+		Args:  cobra.ExactArgs(1),
+		RunE:  SkillsVerifyHandler,
+	}
+
+	skillsEnableCmd := &cobra.Command{
+		Use:   "enable NAME",
+		Short: "Enable a skill",
+		Args:  cobra.ExactArgs(1),
+		RunE:  SkillsEnableHandler,
+	}
+
+	skillsDisableCmd := &cobra.Command{
+		Use:   "disable NAME",
+		Short: "Disable a skill",
+		Args:  cobra.ExactArgs(1),
+		RunE:  SkillsDisableHandler,
+	}
+
+	skillsUninstallCmd := &cobra.Command{
+		Use:   "uninstall NAME",
+		Short: "Uninstall a skill and keep a rollback backup",
+		Args:  cobra.ExactArgs(1),
+		RunE:  SkillsUninstallHandler,
+	}
+
+	skillsRollbackCmd := &cobra.Command{
+		Use:   "rollback NAME",
+		Short: "Restore the most recent backup of a skill",
+		Args:  cobra.ExactArgs(1),
+		RunE:  SkillsRollbackHandler,
+	}
+
+	skillsAllowCmd := &cobra.Command{
+		Use:   "allow NAME PERMISSION [PERMISSION...]",
+		Short: "Persistently grant permissions to a skill",
+		Args:  cobra.MinimumNArgs(2),
+		RunE:  SkillsAllowHandler,
+	}
+
+	skillsRevokeCmd := &cobra.Command{
+		Use:   "revoke NAME [PERMISSION...]",
+		Short: "Revoke one or all persisted permissions for a skill",
+		Args:  cobra.MinimumNArgs(1),
+		RunE:  SkillsRevokeHandler,
+	}
+
+	skillsLogsCmd := &cobra.Command{
+		Use:   "logs NAME",
+		Short: "Show recent skill run logs",
+		Args:  cobra.ExactArgs(1),
+		RunE:  SkillsLogsHandler,
+	}
+	skillsLogsCmd.Flags().Int("last", 50, "Show the last N log lines (0 = all)")
+
+	skillsRunCmd := &cobra.Command{
+		Use:   "run NAME [ARGS...]",
+		Short: "Run an enabled skill",
+		Args:  cobra.MinimumNArgs(1),
+		RunE:  SkillsRunHandler,
+	}
+	skillsRunCmd.Flags().StringSlice("allow", nil, "Grant permissions for this run (repeatable or comma-separated)")
+	skillsRunCmd.Flags().Bool("dry-run", false, "Print the execution plan without running the skill")
+	skillsRunCmd.Flags().String("scope", "once", "Scope for --allow grants: once, chat, always")
+	skillsRunCmd.Flags().Int("timeout", 0, "Override sandbox timeout in seconds (0 uses skill default)")
+	skillsRunCmd.Flags().Int64("max-output-bytes", 0, "Override output byte limit (0 uses skill default)")
+	skillsRunCmd.Flags().Bool("yes", false, "Auto-approve missing permission prompts with always scope")
+
+	skillsCmd.AddCommand(
+		skillsListCmd,
+		skillsSearchCmd,
+		skillsInfoCmd,
+		skillsInstallCmd,
+		skillsUpdateCmd,
+		skillsVerifyCmd,
+		skillsEnableCmd,
+		skillsDisableCmd,
+		skillsUninstallCmd,
+		skillsRollbackCmd,
+		skillsAllowCmd,
+		skillsRevokeCmd,
+		skillsLogsCmd,
+		skillsRunCmd,
+	)
+
 	runnerCmd := &cobra.Command{
 		Use:    "runner",
 		Hidden: true,
@@ -2344,6 +2483,7 @@ func NewCLI() *cobra.Command {
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		skillsCmd,
 		runnerCmd,
 		launch.LaunchCmd(checkServerHeartbeat, runInteractiveTUI),
 	)
