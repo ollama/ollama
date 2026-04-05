@@ -46,6 +46,10 @@ func (p *GLM46Parser) HasThinkingSupport() bool {
 	return true
 }
 
+func (p *GLM46Parser) CanDisableThinking() bool {
+	return false
+}
+
 // func (p *GLM46Parser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
 func (p *GLM46Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools

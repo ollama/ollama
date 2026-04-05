@@ -152,6 +152,14 @@ func (m *Model) Capabilities() []model.Capability {
 	isGptoss := slices.Contains([]string{"gptoss", "gpt-oss"}, m.Config.ModelFamily)
 	if hasTags || isGptoss || (builtinParser != nil && builtinParser.HasThinkingSupport()) {
 		capabilities = append(capabilities, model.CapabilityThinking)
+
+		// Determine if thinking can be toggled on/off:
+		// - Template-based thinking (hasTags) and gpt-oss models support toggling
+		// - Parser-based models support toggling only if the parser respects thinkValue
+		canToggle := hasTags || isGptoss || (builtinParser != nil && builtinParser.CanDisableThinking())
+		if canToggle {
+			capabilities = append(capabilities, model.CapabilityThinkingToggle)
+		}
 	}
 
 	// Temporary workaround — suppress vision/audio for gemma4 MLX models

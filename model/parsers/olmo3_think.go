@@ -34,6 +34,10 @@ func (p *Olmo3ThinkParser) HasThinkingSupport() bool {
 	return true
 }
 
+func (p *Olmo3ThinkParser) CanDisableThinking() bool {
+	return false
+}
+
 func (p *Olmo3ThinkParser) setInitialState(lastMessage *api.Message) {
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"
 

@@ -47,6 +47,10 @@ func (p *Gemma4Parser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
 }
 
+func (p *Gemma4Parser) CanDisableThinking() bool {
+	return p.hasThinkingSupport
+}
+
 func (p *Gemma4Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"
 

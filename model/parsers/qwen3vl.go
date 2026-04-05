@@ -39,6 +39,10 @@ func (p *Qwen3VLParser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
 }
 
+func (p *Qwen3VLParser) CanDisableThinking() bool {
+	return false
+}
+
 func (p *Qwen3VLParser) setInitialState(lastMessage *api.Message) {
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"
 	if !p.HasThinkingSupport() {

@@ -56,6 +56,10 @@ func (p *MinistralParser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
 }
 
+func (p *MinistralParser) CanDisableThinking() bool {
+	return false
+}
+
 func (p *MinistralParser) setInitialState(lastMessage *api.Message) {
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"
 	if !p.HasThinkingSupport() {
