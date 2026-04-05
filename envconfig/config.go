@@ -232,8 +232,17 @@ var (
 	ContextLength = Uint("OLLAMA_CONTEXT_LENGTH", 0)
 	// Auth enables authentication between the Ollama client and server
 	UseAuth = Bool("OLLAMA_AUTH")
-	// Enable Vulkan backend
+	// EnableVulkan forces the Vulkan backend even when a higher-priority backend
+	// (CUDA, ROCm) is available. Vulkan is auto-detected on iGPU systems when no
+	// other backend is present — this flag is not required in that case.
+	// Set OLLAMA_VULKAN=0 to disable Vulkan discovery entirely.
 	EnableVulkan = Bool("OLLAMA_VULKAN")
+
+	// IGPUMaxModels limits the number of models that can be loaded concurrently
+	// on integrated GPU systems. Defaults to 1 when only iGPUs are present
+	// (iGPU shares system RAM with CPU; loading many models causes contention).
+	// Set to 0 to use the standard defaultModelsPerGPU logic.
+	IGPUMaxModels = Uint("OLLAMA_IGPU_MAX_MODELS", 0)
 	// NoCloudEnv checks the OLLAMA_NO_CLOUD environment variable.
 	NoCloudEnv = Bool("OLLAMA_NO_CLOUD")
 )
@@ -327,7 +336,6 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_EDITOR":             {"OLLAMA_EDITOR", Editor(), "Path to editor for interactive prompt editing (Ctrl+G)"},
 		"OLLAMA_NEW_ENGINE":         {"OLLAMA_NEW_ENGINE", NewEngine(), "Enable the new Ollama engine"},
 		"OLLAMA_REMOTES":            {"OLLAMA_REMOTES", Remotes(), "Allowed hosts for remote models (default \"ollama.com\")"},
-
 		// Informational
 		"HTTP_PROXY":  {"HTTP_PROXY", String("HTTP_PROXY")(), "HTTP proxy"},
 		"HTTPS_PROXY": {"HTTPS_PROXY", String("HTTPS_PROXY")(), "HTTPS proxy"},
@@ -348,7 +356,8 @@ func AsMap() map[string]EnvVar {
 		ret["GGML_VK_VISIBLE_DEVICES"] = EnvVar{"GGML_VK_VISIBLE_DEVICES", VkVisibleDevices(), "Set which Vulkan devices are visible by numeric ID"}
 		ret["GPU_DEVICE_ORDINAL"] = EnvVar{"GPU_DEVICE_ORDINAL", GpuDeviceOrdinal(), "Set which AMD devices are visible by numeric ID"}
 		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion(), "Override the gfx used for all detected AMD GPUs"}
-		ret["OLLAMA_VULKAN"] = EnvVar{"OLLAMA_VULKAN", EnableVulkan(), "Enable experimental Vulkan support"}
+		ret["OLLAMA_VULKAN"] = EnvVar{"OLLAMA_VULKAN", EnableVulkan(), "Force Vulkan backend (auto-selected on iGPU when no CUDA/ROCm present). Set =0 to disable Vulkan entirely"}
+		ret["OLLAMA_IGPU_MAX_MODELS"] = EnvVar{"OLLAMA_IGPU_MAX_MODELS", IGPUMaxModels(), "Max concurrently loaded models on iGPU-only systems (default 1; set >0 to override)"}
 	}
 
 	return ret

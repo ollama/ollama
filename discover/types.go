@@ -54,6 +54,10 @@ func LogDetails(devices []ml.DeviceInfo) {
 			"available", format.HumanBytes2(dev.FreeMemory),
 		)
 	}
+
+	// NOTE: the for loop above runs only when len(devices) > 0. The block
+	// below handles the CPU-only fallback and returns early so the backend
+	// aggregation at the end of this function is not reached.
 	// CPU inference
 	if len(devices) == 0 {
 		dev, _ := GetCPUMem()
@@ -70,5 +74,21 @@ func LogDetails(devices []ml.DeviceInfo) {
 			"total", format.HumanBytes2(dev.TotalMemory),
 			"available", format.HumanBytes2(dev.FreeMemory),
 		)
+		slog.Info("selected backend: CPU (no GPU detected)")
+		return
 	}
+
+	// Log the selected backend clearly so users can confirm which GPU path is active.
+	// This is especially useful on iGPU systems where OLLAMA_VULKAN shows false in
+	// the server config dump even though Vulkan was auto-selected.
+	backends := map[string]struct{}{}
+	for _, dev := range devices {
+		backends[dev.Library] = struct{}{}
+	}
+	backendList := make([]string, 0, len(backends))
+	for b := range backends {
+		backendList = append(backendList, b)
+	}
+	sort.Strings(backendList)
+	slog.Info("selected backend", "backends", strings.Join(backendList, ","))
 }
