@@ -446,7 +446,7 @@ func bootstrapDevices(ctx context.Context, ollamaLibDirs []string, extraEnvs map
 		extraEnvs,
 	)
 	if err != nil {
-		slog.Debug("failed to start runner to discovery GPUs", "error", err)
+		slog.Warn("failed to start runner to discover GPUs", "error", err)
 		return nil
 	}
 
