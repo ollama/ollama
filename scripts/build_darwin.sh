@@ -62,21 +62,56 @@ _build_darwin() {
             MLX_CGO_CFLAGS="-O3 -mmacosx-version-min=14.0"
             MLX_CGO_LDFLAGS="-ldl -lc++ -framework Accelerate -mmacosx-version-min=14.0"
         else
-            BUILD_DIR=build
-            cmake --preset MLX \
-                -DOLLAMA_RUNNER_DIR=./ \
+            # Build MLX twice for arm64: Metal 3.x (macOS 14+) and Metal 4.x (macOS 26+, NAX)
+            # The runtime discovery in dynamic.go tries mlx_metal_v4 first, falls back to v3.
+            # Both builds share downloaded source code. The v3 build downloads
+            # sources normally, then v4 reuses them via FETCHCONTENT_SOURCE_DIR_*.
+
+            # Metal 3.x build (backward compatible, macOS 14+)
+            BUILD_DIR=build/metal-v3
+            status "Building MLX Metal v3 (macOS 14+)"
+            cmake -S . -B $BUILD_DIR \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DMLX_ENGINE=ON \
+                -DOLLAMA_RUNNER_DIR=mlx_metal_v3 \
                 -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
                 -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX
-            cmake --build --preset MLX --parallel
+            cmake --build $BUILD_DIR --target ggml-cpu mlx mlxc --parallel
+            cmake --install $BUILD_DIR --component CPU
             cmake --install $BUILD_DIR --component MLX
-            # Use default CGO flags from mlx.go for arm64
+
+            # Metal 4.x build (NAX-enabled, macOS 26+)
+            # Only possible with Xcode 26+ SDK; skip on older toolchains.
+            SDK_MAJOR=$(xcrun --show-sdk-version 2>/dev/null | cut -d. -f1)
+            if [ "${SDK_MAJOR:-0}" -ge 26 ]; then
+                V3_DEPS=$BUILD_DIR/_deps
+                BUILD_DIR_V4=build/metal-v4
+                status "Building MLX Metal v4 (macOS 26+, NAX)"
+                cmake -S . -B $BUILD_DIR_V4 \
+                    -DCMAKE_BUILD_TYPE=Release \
+                    -DMLX_ENGINE=ON \
+                    -DOLLAMA_RUNNER_DIR=mlx_metal_v4 \
+                    -DCMAKE_OSX_DEPLOYMENT_TARGET=26.0 \
+                    -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX \
+                    -DFETCHCONTENT_SOURCE_DIR_MLX=$V3_DEPS/mlx-src \
+                    -DFETCHCONTENT_SOURCE_DIR_MLX-C=$V3_DEPS/mlx-c-src \
+                    -DFETCHCONTENT_SOURCE_DIR_JSON=$V3_DEPS/json-src \
+                    -DFETCHCONTENT_SOURCE_DIR_FMT=$V3_DEPS/fmt-src \
+                    -DFETCHCONTENT_SOURCE_DIR_METAL_CPP=$V3_DEPS/metal_cpp-src
+                cmake --build $BUILD_DIR_V4 --target mlx mlxc --parallel
+                cmake --install $BUILD_DIR_V4 --component MLX
+            else
+                status "Skipping MLX Metal v4 (SDK $SDK_MAJOR < 26, need Xcode 26+)"
+            fi
+
+            # Use the v3 build for CGO linking (compatible with both)
             MLX_CGO_CFLAGS="-O3 -mmacosx-version-min=14.0"
             MLX_CGO_LDFLAGS="-lc++ -framework Metal -framework Foundation -framework Accelerate -mmacosx-version-min=14.0"
         fi
         GOOS=darwin GOARCH=$ARCH CGO_ENABLED=1 CGO_CFLAGS="$MLX_CGO_CFLAGS" CGO_LDFLAGS="$MLX_CGO_LDFLAGS" go build -o $INSTALL_PREFIX .
-        # Copy MLX libraries to same directory as executable for dlopen
-        cp $INSTALL_PREFIX/lib/ollama/libmlxc.dylib $INSTALL_PREFIX/
-        cp $INSTALL_PREFIX/lib/ollama/libmlx.dylib $INSTALL_PREFIX/
+        # MLX libraries stay in lib/ollama/ (flat or variant subdirs).
+        # The runtime discovery in dynamic.go searches lib/ollama/ relative
+        # to the executable, including mlx_* subdirectories.
     done
 }
 
@@ -87,8 +122,9 @@ _sign_darwin() {
     chmod +x dist/darwin/ollama
 
     if [ -n "$APPLE_IDENTITY" ]; then
-        for F in dist/darwin/ollama dist/darwin-*/lib/ollama/*; do
-            codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime $F
+        for F in dist/darwin/ollama dist/darwin-*/lib/ollama/* dist/darwin-*/lib/ollama/mlx_metal_v*/*; do
+            [ -f "$F" ] && [ ! -L "$F" ] || continue
+            codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime "$F"
         done
 
         # create a temporary zip for notarization
@@ -101,6 +137,7 @@ _sign_darwin() {
     status "Creating universal tarball..."
     tar -cf dist/ollama-darwin.tar --strip-components 2 dist/darwin/ollama
     tar -rf dist/ollama-darwin.tar --strip-components 4 dist/darwin-amd64/lib/
+    tar -rf dist/ollama-darwin.tar --strip-components 4 dist/darwin-arm64/lib/
     gzip -9vc <dist/ollama-darwin.tar >dist/ollama-darwin.tgz
 }
 
@@ -154,31 +191,87 @@ _build_macapp() {
     mkdir -p dist/Ollama.app/Contents/Resources
     if [ -d dist/darwin-amd64 ]; then
         lipo -create -output dist/Ollama.app/Contents/Resources/ollama dist/darwin-amd64/ollama dist/darwin-arm64/ollama
-        for F in dist/darwin-amd64/lib/ollama/*mlx*.dylib ; do
-            lipo -create -output dist/darwin/$(basename $F) $F dist/darwin-arm64/lib/ollama/$(basename $F)
+
+        # Copy amd64 flat .so files (x86 CPU backends) and flat dylibs (ggml-base)
+        cp dist/darwin-amd64/lib/ollama/*.so dist/Ollama.app/Contents/Resources/ 2>/dev/null || true
+        for F in dist/darwin-amd64/lib/ollama/*.dylib; do
+            [ -f "$F" ] && [ ! -L "$F" ] || continue
+            cp "$F" dist/Ollama.app/Contents/Resources/
         done
-        cp dist/darwin-*/lib/ollama/*.so dist/darwin-*/lib/ollama/*.dylib dist/Ollama.app/Contents/Resources/
-        cp dist/darwin/*.dylib dist/Ollama.app/Contents/Resources/
-        # Copy MLX metallib (architecture-independent, just use arm64 version)
-        cp dist/darwin-arm64/lib/ollama/*.metallib dist/Ollama.app/Contents/Resources/ 2>/dev/null || true
+        # Recreate ggml-base symlinks for flat (x86) libs
+        (cd dist/Ollama.app/Contents/Resources && ln -sf libggml-base.0.0.0.dylib libggml-base.0.dylib && ln -sf libggml-base.0.dylib libggml-base.dylib) 2>/dev/null || true
+
+        # MLX Metal variant subdirs from arm64
+        for VARIANT in dist/darwin-arm64/lib/ollama/mlx_metal_v*/; do
+            [ -d "$VARIANT" ] || continue
+            VNAME=$(basename "$VARIANT")
+            DEST=dist/Ollama.app/Contents/Resources/$VNAME
+            mkdir -p "$DEST"
+            if [ "$VNAME" = "mlx_metal_v3" ]; then
+                # v3: lipo amd64 flat + arm64 v3 into universal dylibs
+                for LIB in libmlx.dylib libmlxc.dylib libggml-base.0.0.0.dylib; do
+                    if [ -f "dist/darwin-amd64/lib/ollama/$LIB" ] && [ -f "$VARIANT$LIB" ]; then
+                        lipo -create -output "$DEST/$LIB" "dist/darwin-amd64/lib/ollama/$LIB" "$VARIANT$LIB"
+                    elif [ -f "$VARIANT$LIB" ]; then
+                        cp "$VARIANT$LIB" "$DEST/"
+                    fi
+                done
+                (cd "$DEST" && ln -sf libggml-base.0.0.0.dylib libggml-base.0.dylib && ln -sf libggml-base.0.dylib libggml-base.dylib) 2>/dev/null || true
+                # Copy remaining files (metallib, .so) from arm64 v3
+                for F in "$VARIANT"*; do
+                    case "$(basename "$F")" in *.dylib) continue ;; esac
+                    [ -f "$F" ] && [ ! -L "$F" ] || continue
+                    cp "$F" "$DEST/"
+                done
+            else
+                # v4+: arm64-only, copy all non-symlink files
+                for F in "$VARIANT"*; do
+                    [ -f "$F" ] && [ ! -L "$F" ] || continue
+                    cp "$F" "$DEST/"
+                done
+            fi
+        done
+
+        # Fallback: flat layout if no variant dirs (pre-dual-Metal builds)
+        if [ ! -d dist/Ollama.app/Contents/Resources/mlx_metal_v3 ]; then
+            for F in dist/darwin-amd64/lib/ollama/*mlx*.dylib; do
+                if [ -f "$F" ] && [ -f "dist/darwin-arm64/lib/ollama/$(basename "$F")" ]; then
+                    lipo -create -output "dist/Ollama.app/Contents/Resources/$(basename "$F")" "$F" "dist/darwin-arm64/lib/ollama/$(basename "$F")"
+                elif [ -f "$F" ]; then
+                    cp "$F" dist/Ollama.app/Contents/Resources/
+                fi
+            done
+            cp dist/darwin-arm64/lib/ollama/*.metallib dist/Ollama.app/Contents/Resources/ 2>/dev/null || true
+        fi
     else
         cp -a dist/darwin/ollama dist/Ollama.app/Contents/Resources/ollama
-        cp dist/darwin/*.so dist/darwin/*.dylib dist/Ollama.app/Contents/Resources/
+        # arm64-only build: copy variant subdirs directly
+        for VARIANT in dist/darwin-arm64/lib/ollama/mlx_metal_v*/; do
+            [ -d "$VARIANT" ] || continue
+            VNAME=$(basename "$VARIANT")
+            mkdir -p dist/Ollama.app/Contents/Resources/$VNAME
+            cp "$VARIANT"* dist/Ollama.app/Contents/Resources/$VNAME/ 2>/dev/null || true
+        done
+        # Flat fallback for non-variant builds
+        cp dist/darwin-arm64/lib/ollama/*.so dist/Ollama.app/Contents/Resources/ 2>/dev/null || true
+        cp dist/darwin-arm64/lib/ollama/*.dylib dist/Ollama.app/Contents/Resources/ 2>/dev/null || true
+        cp dist/darwin-arm64/lib/ollama/*.metallib dist/Ollama.app/Contents/Resources/ 2>/dev/null || true
     fi
     chmod a+x dist/Ollama.app/Contents/Resources/ollama
 
     # Sign
     if [ -n "$APPLE_IDENTITY" ]; then
         codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime dist/Ollama.app/Contents/Resources/ollama
-        for lib in dist/Ollama.app/Contents/Resources/*.so dist/Ollama.app/Contents/Resources/*.dylib dist/Ollama.app/Contents/Resources/*.metallib ; do
-            codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime ${lib}
+        for lib in dist/Ollama.app/Contents/Resources/*.so dist/Ollama.app/Contents/Resources/*.dylib dist/Ollama.app/Contents/Resources/*.metallib dist/Ollama.app/Contents/Resources/mlx_metal_v*/*.dylib dist/Ollama.app/Contents/Resources/mlx_metal_v*/*.metallib dist/Ollama.app/Contents/Resources/mlx_metal_v*/*.so; do
+            [ -f "$lib" ] || continue
+            codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime "$lib"
         done
         codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier com.electron.ollama --deep --options=runtime dist/Ollama.app
     fi
 
     rm -f dist/Ollama-darwin.zip
     ditto -c -k --norsrc --keepParent dist/Ollama.app dist/Ollama-darwin.zip
-    (cd dist/Ollama.app/Contents/Resources/; tar -cf - ollama *.so *.dylib *.metallib 2>/dev/null) | gzip -9vc > dist/ollama-darwin.tgz
+    (cd dist/Ollama.app/Contents/Resources/; tar -cf - ollama *.so *.dylib *.metallib mlx_metal_v*/ 2>/dev/null) | gzip -9vc > dist/ollama-darwin.tgz
 
     # Notarize and Staple
     if [ -n "$APPLE_IDENTITY" ]; then

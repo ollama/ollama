@@ -99,25 +99,35 @@ file(GLOB _mlx_c_hdrs "${mlx-c_SOURCE_DIR}/mlx/c/*.h")
 file(COPY ${_mlx_c_hdrs} DESTINATION "${CMAKE_SOURCE_DIR}/x/mlxrunner/mlx/include/mlx/c/")
 
 # Regenerate Go/C shim wrappers from the (possibly updated) headers.
-find_program(GO_EXECUTABLE go REQUIRED)
-message(STATUS "Regenerating MLX Go wrappers")
+# Skip during cross-compilation — the generated files are arch-independent.
+if(CMAKE_SYSTEM_PROCESSOR STREQUAL CMAKE_HOST_SYSTEM_PROCESSOR OR NOT APPLE)
+    find_program(GO_EXECUTABLE go REQUIRED)
+    message(STATUS "Regenerating MLX Go wrappers")
 
-# Go's cgo splits CC on whitespace, so a CC like "C:/Program Files/…/cl.exe"
-# (set by cmake on Windows) breaks with "C:/Program" not found.  Clear CC
-# when it contains spaces so cgo falls back to its default (gcc).
-if(WIN32 AND "$ENV{CC}" MATCHES " ")
+    # CGo's probe compilation is sensitive to CGO_CFLAGS/CGO_CXXFLAGS and CC.
+    # Clear them so go generate uses default compiler settings:
+    # - On Windows, CC may contain spaces (e.g., "C:/Program Files/.../cl.exe")
+    #   which breaks CGo's CC parsing.
+    # - On macOS, CGO_CFLAGS with -mmacosx-version-min breaks header search
+    #   when cmake also sets CMAKE_OSX_DEPLOYMENT_TARGET.
     set(_SAVE_CC "$ENV{CC}")
+    set(_SAVE_CGO_CFLAGS "$ENV{CGO_CFLAGS}")
+    set(_SAVE_CGO_CXXFLAGS "$ENV{CGO_CXXFLAGS}")
     set(ENV{CC} "")
-endif()
+    set(ENV{CGO_CFLAGS} "")
+    set(ENV{CGO_CXXFLAGS} "")
 
-execute_process(
-    COMMAND ${GO_EXECUTABLE} generate ./x/...
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    COMMAND_ERROR_IS_FATAL ANY
-)
+    execute_process(
+        COMMAND ${GO_EXECUTABLE} generate ./x/...
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMAND_ERROR_IS_FATAL ANY
+    )
 
-if(DEFINED _SAVE_CC)
     set(ENV{CC} "${_SAVE_CC}")
+    set(ENV{CGO_CFLAGS} "${_SAVE_CGO_CFLAGS}")
+    set(ENV{CGO_CXXFLAGS} "${_SAVE_CGO_CXXFLAGS}")
+else()
+    message(STATUS "Skipping MLX Go wrapper generation (cross-compiling)")
 endif()
 
 # For local dev builds, override MLX_VERSION with git describe output
