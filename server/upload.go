@@ -207,7 +207,7 @@ func (b *blobUpload) Run(ctx context.Context, opts *registryOptions) {
 			time.Sleep(sleep)
 			continue
 		}
-		defer resp.Body.Close()
+		resp.Body.Close()
 		break
 	}
 
