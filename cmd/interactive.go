@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -307,6 +308,9 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 						// though... It will also be validated on the server once a call is
 						// made.
 						thinkValue.Value = maybeLevel
+						if b, err := strconv.ParseBool(maybeLevel); err == nil {
+							thinkValue.Value = b
+						}
 					}
 					opts.Think = &thinkValue
 					thinkExplicitlySet = true
@@ -517,7 +521,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			assistant, err := chat(cmd, opts)
 			if err != nil {
 				if strings.Contains(err.Error(), "does not support thinking") ||
-					strings.Contains(err.Error(), "invalid think value") {
+					strings.Contains(err.Error(), "think value") {
 					fmt.Printf("error: %v\n", err)
 					sb.Reset()
 					continue
