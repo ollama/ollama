@@ -64,6 +64,9 @@ components:
         num_predict:
           type: integer
           description: Maximum number of tokens to generate
+        token_repeat_limit:
+          type: integer
+          description: Maximum consecutive repeated tokens before stopping (0 = disabled)
       additionalProperties: true
     GenerateRequest:
       type: object
