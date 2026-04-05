@@ -725,9 +725,6 @@ func setTemplate(layers []manifest.Layer, t string) ([]manifest.Layer, error) {
 	if _, err := template.Parse(t); err != nil {
 		return nil, fmt.Errorf("%w: %s", errBadTemplate, err)
 	}
-	if _, err := template.Parse(t); err != nil {
-		return nil, fmt.Errorf("%w: %s", errBadTemplate, err)
-	}
 
 	blob := strings.NewReader(t)
 	layer, err := manifest.NewLayer(blob, "application/vnd.ollama.image.template")
@@ -820,7 +817,6 @@ func setMessages(layers []manifest.Layer, m []api.Message) ([]manifest.Layer, er
 		return layers, nil
 	}
 
-	fmt.Printf("removing old messages\n")
 	layers = removeLayer(layers, "application/vnd.ollama.image.messages")
 	var b bytes.Buffer
 	if err := json.NewEncoder(&b).Encode(m); err != nil {
