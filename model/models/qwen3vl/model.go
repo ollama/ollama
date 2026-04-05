@@ -26,7 +26,7 @@ type Model struct {
 }
 
 func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input.Multimodal, error) {
-	if len(m.VisionModel.Layers) == 0 {
+	if len(m.VisionModel.Layers) == 0 || m.VisionModel.PatchEmbedding == nil {
 		return nil, model.ErrNoVisionModel
 	}
 
