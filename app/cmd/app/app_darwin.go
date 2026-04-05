@@ -20,6 +20,7 @@ import (
 
 	"github.com/ollama/ollama/app/updater"
 	"github.com/ollama/ollama/app/version"
+	"github.com/ollama/ollama/envconfig"
 )
 
 var ollamaPath = func() string {
@@ -37,7 +38,7 @@ var ollamaPath = func() string {
 
 var (
 	isApp           = updater.BundlePath != ""
-	appLogPath      = filepath.Join(os.Getenv("HOME"), ".ollama", "logs", "app.log")
+	appLogPath      = filepath.Join(envconfig.Home(), "logs", "app.log")
 	launchAgentPath = filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", "com.ollama.ollama.plist")
 )
 
