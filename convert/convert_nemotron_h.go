@@ -54,6 +54,7 @@ type nemotronHModel struct {
 	NGroups               uint32        `json:"n_groups"`
 	IntermediateSize      uint32        `json:"intermediate_size"`
 	HybridOverridePattern hybridPattern `json:"hybrid_override_pattern"`
+	LayersBlockType       []string      `json:"layers_block_type"`
 
 	// MoE
 	NumExperts                  uint32  `json:"num_experts"`
@@ -162,8 +163,27 @@ func (n *nemotronHModel) denseIntermediateSize() uint32 {
 
 func (n *nemotronHModel) layerArrays() (headCountKV []uint32, ffnLengths []uint32, err error) {
 	pattern := strings.TrimSpace(string(n.HybridOverridePattern))
+
+	// Convert layers_block_type array to pattern string if hybrid_override_pattern is not set
+	if pattern == "" && len(n.LayersBlockType) > 0 {
+		var sb strings.Builder
+		for _, blockType := range n.LayersBlockType {
+			switch strings.ToLower(blockType) {
+			case "mamba":
+				sb.WriteRune('M')
+			case "moe":
+				sb.WriteRune('E')
+			case "attention":
+				sb.WriteRune('A')
+			default:
+				return nil, nil, fmt.Errorf("nemotron_h: unsupported block type %q in layers_block_type", blockType)
+			}
+		}
+		pattern = sb.String()
+	}
+
 	if pattern == "" {
-		return nil, nil, fmt.Errorf("nemotron_h: hybrid_override_pattern must be set")
+		return nil, nil, fmt.Errorf("nemotron_h: hybrid_override_pattern or layers_block_type must be set")
 	}
 
 	runes := []rune(pattern)
