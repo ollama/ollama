@@ -26,6 +26,7 @@ extern void llamaLog(int level, char* text, void* user_data);
 import "C"
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"errors"
@@ -451,7 +452,9 @@ type Model struct {
 	c *C.struct_llama_model
 }
 
-func (m *Model) TokenToPiece(token int) string {
+// TokenToPieceBytes returns the token text as a byte slice.
+// The result may contain bytes that are not valid UTF-8.
+func (m *Model) TokenToPieceBytes(token int) []byte {
 	tokenLen := 12
 	buf := make([]byte, tokenLen)
 	tokenLen = int(C.llama_token_to_piece(
@@ -475,7 +478,12 @@ func (m *Model) TokenToPiece(token int) string {
 			C.bool(true),
 		)
 	}
-	return strings.TrimRight(string(buf), "\x00")
+	return bytes.TrimRight(buf[:tokenLen], "\x00")
+}
+
+// TokenToPiece returns the token text as a string.
+func (m *Model) TokenToPiece(token int) string {
+	return string(m.TokenToPieceBytes(token))
 }
 
 func (m *Model) Tokenize(text string, addSpecial bool, parseSpecial bool) ([]int, error) {
