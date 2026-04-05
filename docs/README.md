@@ -1,23 +1,23 @@
-# Documentation
+# Documentação
 
-### Getting Started
-* [Quickstart](https://docs.ollama.com/quickstart)
-* [Examples](./examples.md)
-* [Importing models](https://docs.ollama.com/import)
-* [MacOS Documentation](https://docs.ollama.com/macos)
-* [Linux Documentation](https://docs.ollama.com/linux)
-* [Windows Documentation](https://docs.ollama.com/windows)
-* [Docker Documentation](https://docs.ollama.com/docker)
+### Primeiros Passos
+* [Início rápido](https://docs.ollama.com/quickstart)
+* [Exemplos](./examples.md)
+* [Importando modelos](https://docs.ollama.com/import)
+* [Documentação do macOS](https://docs.ollama.com/macos)
+* [Documentação do Linux](https://docs.ollama.com/linux)
+* [Documentação do Windows](https://docs.ollama.com/windows)
+* [Documentação do Docker](https://docs.ollama.com/docker)
 
-### Reference
+### Referência
 
-* [API Reference](https://docs.ollama.com/api)
-* [Modelfile Reference](https://docs.ollama.com/modelfile)
-* [OpenAI Compatibility](https://docs.ollama.com/api/openai-compatibility)
-* [Anthropic Compatibility](./api/anthropic-compatibility.mdx)
+* [Referência da API](https://docs.ollama.com/api)
+* [Referência do Modelfile](https://docs.ollama.com/modelfile)
+* [Compatibilidade com OpenAI](https://docs.ollama.com/api/openai-compatibility)
+* [Compatibilidade com Anthropic](./api/anthropic-compatibility.mdx)
 
-### Resources
+### Recursos
 
-* [Troubleshooting Guide](https://docs.ollama.com/troubleshooting)
+* [Guia de solução de problemas](https://docs.ollama.com/troubleshooting)
 * [FAQ](https://docs.ollama.com/faq#faq)
-* [Development guide](./development.md)
+* [Guia de desenvolvimento](./development.md)
