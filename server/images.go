@@ -963,13 +963,18 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 		req.ContentLength = contentLength
 	}
 
+	// Create transport with proxy support
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.Proxy = http.ProxyFromEnvironment
+
+	// For testing: override DialContext if needed
+	if testMakeRequestDialContext != nil {
+		tr.DialContext = testMakeRequestDialContext
+	}
+
 	c := &http.Client{
 		CheckRedirect: regOpts.CheckRedirect,
-	}
-	if testMakeRequestDialContext != nil {
-		tr := http.DefaultTransport.(*http.Transport).Clone()
-		tr.DialContext = testMakeRequestDialContext
-		c.Transport = tr
+		Transport:     tr,
 	}
 	return c.Do(req)
 }
