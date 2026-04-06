@@ -19,6 +19,10 @@ func DTypeSize(dtype string) (int, error) {
 		return 4, nil
 	case "F64":
 		return 8, nil
+	case "U8", "I8":
+		return 1, nil
+	case "F8_E4M3", "F8_E5M2", "F8_E4M3FN", "F8_E5M2FNUZ":
+		return 1, nil
 	default:
 		return 0, fmt.Errorf("unsupported dtype %q", dtype)
 	}
