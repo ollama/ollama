@@ -1851,6 +1851,13 @@ func (t *Tensor) Neg(ctx ml.Context) ml.Tensor {
 	}
 }
 
+func (t *Tensor) Sign(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_sgn(ctx.(*Context).ctx, t.t),
+	}
+}
+
 func (t *Tensor) Clamp(ctx ml.Context, min, max float32) ml.Tensor {
 	return &Tensor{
 		b: t.b,
@@ -1921,6 +1928,51 @@ func (t *Tensor) Interpolate(ctx ml.Context, dims [4]int, samplingMode ml.Sampli
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_interpolate(ctx.(*Context).ctx, t.t, C.int64_t(dims[0]), C.int64_t(dims[1]), C.int64_t(dims[2]), C.int64_t(dims[3]), mode),
+	}
+}
+
+func (t *Tensor) FWHT(ctx ml.Context, seedHi, seedLo uint32, inverse bool) ml.Tensor {
+	inv := C.int(0)
+	if inverse {
+		inv = C.int(1)
+	}
+
+	dequant := t.t
+	if C.ggml_is_quantized(t.t._type) {
+		dequant = C.ggml_cast(ctx.(*Context).ctx, t.t, C.GGML_TYPE_F32)
+	}
+
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_fwht(ctx.(*Context).ctx, dequant, C.uint32_t(seedHi), C.uint32_t(seedLo), inv),
+	}
+}
+
+func (t *Tensor) LloydMaxQuantize(ctx ml.Context, mseBits, dim int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_lloyd_max_quantize(ctx.(*Context).ctx, t.t, C.int(mseBits), C.int(dim)),
+	}
+}
+
+func (t *Tensor) LloydMaxDequantize(ctx ml.Context, mseBits, dim int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_lloyd_max_dequantize(ctx.(*Context).ctx, t.t, C.int(mseBits), C.int(dim)),
+	}
+}
+
+func (t *Tensor) LloydMaxDequantizeF16(ctx ml.Context, mseBits, dim int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_lloyd_max_dequantize_f16(ctx.(*Context).ctx, t.t, C.int(mseBits), C.int(dim)),
+	}
+}
+
+func (t *Tensor) TQDecompress(ctx ml.Context, mseBits, dim int, seedHi, seedLo uint32) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_tq_decompress(ctx.(*Context).ctx, t.t, C.int(mseBits), C.int(dim), C.uint32_t(seedHi), C.uint32_t(seedLo)),
 	}
 }
 
