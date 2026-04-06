@@ -725,7 +725,7 @@ static enum ggml_backend_dev_type ggml_backend_openvino_device_get_type(ggml_bac
     if (device_name == "CPU") {
         return GGML_BACKEND_DEVICE_TYPE_CPU;
     }
-    if (ggml_openvino_is_integrated_device()) {
+    if (ggml_openvino_is_npu()) {
         return GGML_BACKEND_DEVICE_TYPE_IGPU;
     }
 
@@ -745,7 +745,7 @@ static void ggml_backend_openvino_device_get_props(ggml_backend_dev_t dev, ggml_
         /* .buffer_from_host_ptr  = */ false,
         /* .events                = */ false,
     };
-    props->integrated = ggml_openvino_is_integrated_device();
+    props->integrated = ggml_openvino_is_npu();
     props->library = GGML_OPENVINO_NAME;
 }
 
