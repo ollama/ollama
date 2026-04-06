@@ -173,6 +173,48 @@ func signinURL() (string, error) {
 	return fmt.Sprintf(signinURLStr, url.PathEscape(h), encKey), nil
 }
 
+func (s *Server) processImageURLs(ctx context.Context, req *api.GenerateRequest) error {
+	if len(req.ImageURLs) == 0 {
+		return nil
+	}
+	if !envconfig.ImageURLEnabled() {
+		return fmt.Errorf("image URL feature is disabled")
+	}
+
+	downloader := NewImageDownloader()
+	for _, imageURL := range req.ImageURLs {
+		data, err := downloader.DownloadImage(ctx, imageURL)
+		if err != nil {
+			return fmt.Errorf("failed to download image from %q: %w", imageURL.URL, err)
+		}
+		req.Images = append(req.Images, data)
+	}
+	return nil
+}
+
+func (s *Server) processMessageImageURLs(ctx context.Context, msgs []api.Message) error {
+	if !envconfig.ImageURLEnabled() {
+		return nil
+	}
+
+	downloader := NewImageDownloader()
+	for i := range msgs {
+		if len(msgs[i].ImageURLs) == 0 {
+			continue
+		}
+		for _, imageURL := range msgs[i].ImageURLs {
+			data, err := downloader.DownloadImage(ctx, imageURL)
+			if err != nil {
+				return fmt.Errorf("failed to download image from %q: %w", imageURL.URL, err)
+			}
+			msgs[i].Images = append(msgs[i].Images, data)
+		}
+		// Clear ImageURLs after downloading
+		msgs[i].ImageURLs = nil
+	}
+	return nil
+}
+
 func (s *Server) GenerateHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 	var req api.GenerateRequest
@@ -186,6 +228,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
+		return
+	}
+
+	// Process external image URLs
+	if err := s.processImageURLs(c.Request.Context(), &req); err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -1871,6 +1919,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
+	if err := s.processMessageImageURLs(c.Request.Context(), req.Messages); err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	name := model.ParseName(req.Model)
 	if !name.IsValid() {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
@@ -2397,4 +2450,3 @@ func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
 	}
 	return msgs
 }
-

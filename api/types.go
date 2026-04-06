@@ -54,6 +54,14 @@ func (e AuthorizationError) Error() string {
 // ImageData represents the raw binary data of an image file.
 type ImageData []byte
 
+// ImageURL represents an external image URL with optional configuration.
+type ImageURL struct {
+	// URL is the external image URL (must be http or https).
+	URL string `json:"url"`
+	// AllowHTTP allows non-HTTPS URLs (default: false for security).
+	AllowHTTP bool `json:"allow_http,omitempty"`
+}
+
 // GenerateRequest describes a request sent by [Client.Generate]. While you
 // have to specify the Model and Prompt fields, all the other fields have
 // reasonable defaults for basic uses.
@@ -94,6 +102,9 @@ type GenerateRequest struct {
 	// Images is an optional list of raw image bytes accompanying this
 	// request, for multimodal models.
 	Images []ImageData `json:"images,omitempty"`
+	// ImageURLs is an optional list of external image URLs to download
+	// and include in the request for multimodal models.
+	ImageURLs []ImageURL `json:"image_urls,omitempty"`
 
 	// Options lists model-specific options. For example, temperature can be
 	// set through this field, if the model supports it.
@@ -199,6 +210,7 @@ type Message struct {
 	// original model output when ChatRequest.Think is enabled.
 	Thinking   string      `json:"thinking,omitempty"`
 	Images     []ImageData `json:"images,omitempty"`
+	ImageURLs  []ImageURL  `json:"image_urls,omitempty"`
 	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
 	ToolName   string      `json:"tool_name,omitempty"`
 	ToolCallID string      `json:"tool_call_id,omitempty"`
@@ -673,16 +685,16 @@ type ListModelResponse struct {
 
 // ProcessModelResponse is a single model description in [ProcessResponse].
 type ProcessModelResponse struct {
-	Name            string       `json:"name"`
-	Model           string       `json:"model"`
-	Size            int64        `json:"size"`
-	Digest          string       `json:"digest"`
-	Details         ModelDetails `json:"details,omitempty"`
-	ExpiresAt       time.Time    `json:"expires_at"`
-	SizeVRAM        int64        `json:"size_vram"`
-	ContextLength   int          `json:"context_length"`
-	GPULayers       int          `json:"gpu_layers"`
-	TotalLayers     int          `json:"total_layers"`
+	Name          string       `json:"name"`
+	Model         string       `json:"model"`
+	Size          int64        `json:"size"`
+	Digest        string       `json:"digest"`
+	Details       ModelDetails `json:"details,omitempty"`
+	ExpiresAt     time.Time    `json:"expires_at"`
+	SizeVRAM      int64        `json:"size_vram"`
+	ContextLength int          `json:"context_length"`
+	GPULayers     int          `json:"gpu_layers"`
+	TotalLayers   int          `json:"total_layers"`
 }
 
 type TokenResponse struct {

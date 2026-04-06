@@ -273,26 +273,31 @@ type EnvVar struct {
 
 func AsMap() map[string]EnvVar {
 	ret := map[string]EnvVar{
-		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", LogLevel(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
-		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention(false), "Enabled flash attention"},
-		"OLLAMA_KV_CACHE_TYPE":     {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
-		"OLLAMA_GPU_OVERHEAD":      {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
-		"OLLAMA_HOST":              {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
-		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
-		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
-		"OLLAMA_LOAD_TIMEOUT":      {"OLLAMA_LOAD_TIMEOUT", LoadTimeout(), "How long to allow model loads to stall before giving up (default \"5m\")"},
-		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners(), "Maximum number of loaded models per GPU"},
-		"OLLAMA_MAX_QUEUE":         {"OLLAMA_MAX_QUEUE", MaxQueue(), "Maximum number of queued requests"},
-		"OLLAMA_MODELS":            {"OLLAMA_MODELS", Models(), "The path to the models directory"},
-		"OLLAMA_NOHISTORY":         {"OLLAMA_NOHISTORY", NoHistory(), "Do not preserve readline history"},
-		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune(), "Do not prune model blobs on startup"},
-		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel(), "Maximum number of parallel requests"},
-		"OLLAMA_ORIGINS":           {"OLLAMA_ORIGINS", AllowedOrigins(), "A comma separated list of allowed origins"},
-		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
-		"OLLAMA_MULTIUSER_CACHE":   {"OLLAMA_MULTIUSER_CACHE", MultiUserCache(), "Optimize prompt caching for multi-user scenarios"},
-		"OLLAMA_CONTEXT_LENGTH":    {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4096)"},
-		"OLLAMA_NEW_ENGINE":        {"OLLAMA_NEW_ENGINE", NewEngine(), "Enable the new Ollama engine"},
-		"OLLAMA_REMOTES":           {"OLLAMA_REMOTES", Remotes(), "Allowed hosts for remote models (default \"ollama.com\")"},
+		"OLLAMA_DEBUG":                   {"OLLAMA_DEBUG", LogLevel(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
+		"OLLAMA_FLASH_ATTENTION":         {"OLLAMA_FLASH_ATTENTION", FlashAttention(false), "Enabled flash attention"},
+		"OLLAMA_KV_CACHE_TYPE":           {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
+		"OLLAMA_GPU_OVERHEAD":            {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
+		"OLLAMA_HOST":                    {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
+		"OLLAMA_KEEP_ALIVE":              {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
+		"OLLAMA_LLM_LIBRARY":             {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
+		"OLLAMA_LOAD_TIMEOUT":            {"OLLAMA_LOAD_TIMEOUT", LoadTimeout(), "How long to allow model loads to stall before giving up (default \"5m\")"},
+		"OLLAMA_MAX_LOADED_MODELS":       {"OLLAMA_MAX_LOADED_MODELS", MaxRunners(), "Maximum number of loaded models per GPU"},
+		"OLLAMA_MAX_QUEUE":               {"OLLAMA_MAX_QUEUE", MaxQueue(), "Maximum number of queued requests"},
+		"OLLAMA_MODELS":                  {"OLLAMA_MODELS", Models(), "The path to the models directory"},
+		"OLLAMA_NOHISTORY":               {"OLLAMA_NOHISTORY", NoHistory(), "Do not preserve readline history"},
+		"OLLAMA_NOPRUNE":                 {"OLLAMA_NOPRUNE", NoPrune(), "Do not prune model blobs on startup"},
+		"OLLAMA_NUM_PARALLEL":            {"OLLAMA_NUM_PARALLEL", NumParallel(), "Maximum number of parallel requests"},
+		"OLLAMA_ORIGINS":                 {"OLLAMA_ORIGINS", AllowedOrigins(), "A comma separated list of allowed origins"},
+		"OLLAMA_SCHED_SPREAD":            {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
+		"OLLAMA_MULTIUSER_CACHE":         {"OLLAMA_MULTIUSER_CACHE", MultiUserCache(), "Optimize prompt caching for multi-user scenarios"},
+		"OLLAMA_CONTEXT_LENGTH":          {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4096)"},
+		"OLLAMA_NEW_ENGINE":              {"OLLAMA_NEW_ENGINE", NewEngine(), "Enable the new Ollama engine"},
+		"OLLAMA_REMOTES":                 {"OLLAMA_REMOTES", Remotes(), "Allowed hosts for remote models (default \"ollama.com\")"},
+		"OLLAMA_IMAGE_URL_ENABLED":       {"OLLAMA_IMAGE_URL_ENABLED", ImageURLEnabled(), "Enable downloading images from URLs (default: true)"},
+		"OLLAMA_IMAGE_URL_MAX_SIZE":      {"OLLAMA_IMAGE_URL_MAX_SIZE", ImageURLMaxSize(), "Maximum size for downloaded images in bytes (default: 52428800)"},
+		"OLLAMA_IMAGE_URL_TIMEOUT":       {"OLLAMA_IMAGE_URL_TIMEOUT", ImageURLTimeout(), "Timeout for downloading images in seconds (default: 30)"},
+		"OLLAMA_IMAGE_URL_ALLOWED_HOSTS": {"OLLAMA_IMAGE_URL_ALLOWED_HOSTS", ImageURLAllowedHosts(), "Comma-separated list of allowed hosts for image URLs"},
+		"OLLAMA_IMAGE_URL_CACHE_DIR":     {"OLLAMA_IMAGE_URL_CACHE_DIR", ImageURLCacheDir(), "Directory for caching downloaded images"},
 
 		// Informational
 		"HTTP_PROXY":  {"HTTP_PROXY", String("HTTP_PROXY")(), "HTTP proxy"},
@@ -326,6 +331,72 @@ func Values() map[string]string {
 		vals[k] = fmt.Sprintf("%v", v.Value)
 	}
 	return vals
+}
+
+// ImageURLEnabled returns whether image URL downloading is enabled.
+// Default is true (enabled). Set OLLAMA_IMAGE_URL_ENABLED=false to disable.
+func ImageURLEnabled() bool {
+	if s := Var("OLLAMA_IMAGE_URL_ENABLED"); s != "" {
+		b, err := strconv.ParseBool(s)
+		if err == nil {
+			return b
+		}
+	}
+	return true
+}
+
+// ImageURLMaxSize returns the maximum allowed size for downloaded images.
+// Default is 50MB (52428800 bytes). Set OLLAMA_IMAGE_URL_MAX_SIZE to override.
+func ImageURLMaxSize() int64 {
+	const defaultMaxSize = 50 * 1024 * 1024 // 50MB
+	if s := Var("OLLAMA_IMAGE_URL_MAX_SIZE"); s != "" {
+		n, err := strconv.ParseInt(s, 10, 64)
+		if err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultMaxSize
+}
+
+// ImageURLTimeout returns the timeout for downloading images in seconds.
+// Default is 30 seconds. Set OLLAMA_IMAGE_URL_TIMEOUT to override.
+func ImageURLTimeout() int {
+	const defaultTimeout = 30
+	if s := Var("OLLAMA_IMAGE_URL_TIMEOUT"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultTimeout
+}
+
+// ImageURLAllowedHosts returns a list of allowed hosts for image URLs.
+// Default is empty (allow all). Set OLLAMA_IMAGE_URL_ALLOWED_HOSTS to a comma-separated list to restrict.
+func ImageURLAllowedHosts() []string {
+	if s := Var("OLLAMA_IMAGE_URL_ALLOWED_HOSTS"); s != "" {
+		hosts := strings.Split(s, ",")
+		for i, h := range hosts {
+			hosts[i] = strings.TrimSpace(h)
+		}
+		return hosts
+	}
+	return nil // nil means allow all
+}
+
+// ImageURLCacheDir returns the directory for caching downloaded images.
+// Default is $HOME/.ollama/cache/images. Set OLLAMA_IMAGE_URL_CACHE_DIR to override.
+func ImageURLCacheDir() string {
+	if s := Var("OLLAMA_IMAGE_URL_CACHE_DIR"); s != "" {
+		return s
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		panic(err)
+	}
+
+	return filepath.Join(home, ".ollama", "cache", "images")
 }
 
 // Var returns an environment variable stripped of leading and trailing quotes or spaces
