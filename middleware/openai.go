@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"math/rand"
 	"net/http"
 	"strings"
@@ -26,10 +25,11 @@ type BaseWriter struct {
 }
 
 type ChatWriter struct {
-	stream        bool
-	streamOptions *openai.StreamOptions
-	id            string
-	toolCallSent  bool
+	stream         bool
+	streamOptions  *openai.StreamOptions
+	id             string
+	toolCallSent   bool
+	firstChunkSent bool
 	BaseWriter
 }
 
@@ -80,34 +80,55 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 
 	// chat chunk
 	if w.stream {
-		chunks := openai.ToChunks(w.id, chatResponse, w.toolCallSent)
 		w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
-		for _, c := range chunks {
-			d, err := json.Marshal(c)
+
+		// A Done response with an empty message is the metrics-only trailer.
+		// OpenAI goes straight from the last content chunk to the finish chunk,
+		// so don't emit an empty content chunk for it. If this is the stream's
+		// first response, fall through so a wholly empty completion still opens
+		// with a role chunk.
+		isEmptyTrailer := chatResponse.Done && w.firstChunkSent &&
+			chatResponse.Message.Content == "" &&
+			chatResponse.Message.Thinking == "" &&
+			len(chatResponse.Message.ToolCalls) == 0
+
+		if !isEmptyTrailer {
+			includeRole := !w.firstChunkSent
+			chunks := openai.ToChunks(w.id, chatResponse, includeRole)
+			for _, c := range chunks {
+				d, err := json.Marshal(c)
+				if err != nil {
+					return 0, err
+				}
+				if !w.toolCallSent && len(c.Choices) > 0 && len(c.Choices[0].Delta.ToolCalls) > 0 {
+					w.toolCallSent = true
+				}
+				_, err = w.ResponseWriter.Write([]byte(fmt.Sprintf("data: %s\n\n", d)))
+				if err != nil {
+					return 0, err
+				}
+			}
+
+			// ToChunks always emits at least one chunk.
+			w.firstChunkSent = true
+		}
+
+		if chatResponse.Done {
+			finishChunk := openai.FinishChunk(w.id, chatResponse, w.toolCallSent)
+			d, err := json.Marshal(finishChunk)
 			if err != nil {
 				return 0, err
-			}
-			if !w.toolCallSent && len(c.Choices) > 0 && len(c.Choices[0].Delta.ToolCalls) > 0 {
-				w.toolCallSent = true
 			}
 			_, err = w.ResponseWriter.Write([]byte(fmt.Sprintf("data: %s\n\n", d)))
 			if err != nil {
 				return 0, err
 			}
-		}
 
-		if chatResponse.Done {
-			c := openai.ToChunk(w.id, chatResponse, w.toolCallSent)
-			if len(chunks) > 0 {
-				c = chunks[len(chunks)-1]
-			} else {
-				slog.Warn("ToChunks returned no chunks; falling back to ToChunk for usage chunk", "id", w.id, "model", chatResponse.Model)
-			}
 			if w.streamOptions != nil && w.streamOptions.IncludeUsage {
 				u := openai.ToUsage(chatResponse)
-				c.Usage = &u
-				c.Choices = []openai.ChunkChoice{}
-				d, err := json.Marshal(c)
+				finishChunk.Usage = &u
+				finishChunk.Choices = []openai.ChunkChoice{}
+				d, err := json.Marshal(finishChunk)
 				if err != nil {
 					return 0, err
 				}
