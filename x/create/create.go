@@ -516,6 +516,7 @@ const (
 	sourceQuantizedKindNone         sourceQuantizedKind = ""
 	sourceQuantizedKindPrequantized sourceQuantizedKind = "prequantized"
 	sourceQuantizedKindHFFP8        sourceQuantizedKind = "hf_fp8"
+	sourceQuantizedKindModelOptFP4  sourceQuantizedKind = "modelopt_fp4"
 )
 
 func (cfg sourceModelConfig) quantizationConfigs() []sourceQuantization {
@@ -538,6 +539,11 @@ func (cfg sourceModelConfig) HFFP8WeightBlockSize() (rows, cols int32, ok bool) 
 }
 
 func inspectSourceQuantization(modelDir string, cfg sourceModelConfig) (sourceQuantizedKind, error) {
+	// Check for NVIDIA ModelOpt hf_quant_config.json (NVFP4)
+	if kind, ok := detectModelOptQuantization(modelDir); ok {
+		return kind, nil
+	}
+
 	entries, err := os.ReadDir(modelDir)
 	if err != nil {
 		return sourceQuantizedKindNone, err
@@ -576,6 +582,35 @@ func inspectSourceQuantization(modelDir string, cfg sourceModelConfig) (sourceQu
 	return sourceQuantizedKindNone, nil
 }
 
+// modelOptQuantConfig represents the hf_quant_config.json format from
+// NVIDIA ModelOpt (TensorRT Model Optimizer).
+type modelOptQuantConfig struct {
+	Producer struct {
+		Name    string `json:"name"`
+		Version string `json:"version"`
+	} `json:"producer"`
+	Quantization struct {
+		QuantAlgo      string   `json:"quant_algo"`
+		GroupSize      int      `json:"group_size"`
+		ExcludeModules []string `json:"exclude_modules"`
+	} `json:"quantization"`
+}
+
+func detectModelOptQuantization(modelDir string) (sourceQuantizedKind, bool) {
+	data, err := os.ReadFile(filepath.Join(modelDir, "hf_quant_config.json"))
+	if err != nil {
+		return sourceQuantizedKindNone, false
+	}
+	var cfg modelOptQuantConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return sourceQuantizedKindNone, false
+	}
+	if strings.ToUpper(cfg.Quantization.QuantAlgo) == "NVFP4" {
+		return sourceQuantizedKindModelOptFP4, true
+	}
+	return sourceQuantizedKindNone, false
+}
+
 func resolveEffectiveQuantization(cfg sourceModelConfig, sourceKind sourceQuantizedKind, requested string) (string, error) {
 	switch sourceKind {
 	case sourceQuantizedKindNone:
@@ -597,6 +632,13 @@ func resolveEffectiveQuantization(cfg sourceModelConfig, sourceKind sourceQuanti
 			return "", fmt.Errorf("unsupported fp8 source block size %dx%d", rows, cols)
 		}
 		return "mxfp8", nil
+	case sourceQuantizedKindModelOptFP4:
+		if requested != "" {
+			return "", fmt.Errorf("cannot requantize already-quantized ModelOpt NVFP4 source model with --quantize %q", requested)
+		}
+		// Return "" so bf16 attention/embedding tensors pass through as-is.
+		// The pre-quantized MLP tensors are handled by createModelOptFP4Layer.
+		return "", nil
 	default:
 		return "", fmt.Errorf("unsupported source quantization kind %q", sourceKind)
 	}
@@ -744,6 +786,17 @@ func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer La
 
 			if effectiveQuantize == "" {
 				layer, ok, err := createPrequantizedLayer(extractor, td, tensorName, tensorSet, sourceQuantMetadata, createLayer)
+				if err != nil {
+					extractor.Close()
+					closeExtractors()
+					return err
+				}
+				if ok {
+					layers = append(layers, layer)
+					continue
+				}
+				// Try ModelOpt NVFP4 format (weight_scale + weight_scale_2)
+				layer, ok, err = createModelOptFP4Layer(extractor, td, tensorName, tensorSet, sourceQuantMetadata, createLayer)
 				if err != nil {
 					extractor.Close()
 					closeExtractors()
@@ -915,6 +968,18 @@ func shouldSkipSourceCompanion(name string, tensorSet map[string]struct{}) bool 
 	case strings.HasSuffix(name, ".weight_scale_inv"):
 		_, ok := tensorSet[strings.TrimSuffix(name, "_scale_inv")]
 		return ok
+	// ModelOpt NVFP4 companion tensors
+	case strings.HasSuffix(name, ".weight_scale"):
+		_, ok := tensorSet[strings.TrimSuffix(name, "_scale")]
+		return ok
+	case strings.HasSuffix(name, ".weight_scale_2"):
+		_, ok := tensorSet[strings.TrimSuffix(name, "_scale_2")]
+		return ok
+	case strings.HasSuffix(name, ".input_scale"):
+		// Activation scale for ModelOpt — not needed for weight-only inference
+		base := strings.TrimSuffix(name, ".input_scale")
+		_, ok := tensorSet[base+".weight"]
+		return ok
 	default:
 		return false
 	}
@@ -990,4 +1055,91 @@ func prequantizedCompanions(weightName string, tensorSet map[string]struct{}) (s
 		biasName = ""
 	}
 	return scaleName, biasName, true
+}
+
+// createModelOptFP4Layer creates a pre-quantized layer from NVIDIA ModelOpt
+// NVFP4 tensors. The weight (U8) and scale (F8_E4M3 stored as uint8) are
+// packed with the per-tensor global scale (weight_scale_2) into a single
+// safetensors blob. The tensor names are mapped to our standard format:
+//   - source.weight → tensorName (weight data, kept as-is)
+//   - source.weight_scale → tensorName.scale (FP8 E4M3 bytes as uint8)
+//   - source.weight_scale_2 → tensorName.global_scale (F32 scalar)
+func createModelOptFP4Layer(
+	extractor *safetensors.TensorExtractor,
+	td *safetensors.TensorData,
+	tensorName string,
+	tensorSet map[string]struct{},
+	metadata map[string]string,
+	createLayer LayerCreator,
+) (LayerInfo, bool, error) {
+	scaleName, globalScaleName, ok := modelOptFP4Companions(tensorName, tensorSet)
+	if !ok {
+		return LayerInfo{}, false, nil
+	}
+
+	// NVIDIA packs FP4 as U8 (2 values/byte), MLX expects U32 (8 values/uint32).
+	// Repack: view the U8 data as U32 (4 consecutive bytes → 1 uint32) and
+	// adjust the shape from [out, in/2] to [out, in/8].
+	weightTD := td.WithName(tensorName)
+	if strings.ToUpper(weightTD.Dtype) == "U8" && len(weightTD.Shape) == 2 {
+		weightTD.Dtype = "U32"
+		weightTD.Shape = []int32{weightTD.Shape[0], weightTD.Shape[1] / 4}
+	}
+	tensors := []*safetensors.TensorData{weightTD}
+
+	scaleTD, err := extractor.GetTensor(scaleName)
+	if err != nil {
+		return LayerInfo{}, false, fmt.Errorf("failed to get tensor %s: %w", scaleName, err)
+	}
+	// F8_E4M3 scales stored as uint8 — fix the dtype for our loader
+	scaleRenamed := scaleTD.WithName(tensorName + ".scale")
+	if strings.ToUpper(scaleRenamed.Dtype) == "F8_E4M3" {
+		scaleRenamed.Dtype = "U8"
+	}
+	tensors = append(tensors, scaleRenamed)
+
+	if globalScaleName != "" {
+		gsTD, err := extractor.GetTensor(globalScaleName)
+		if err != nil {
+			return LayerInfo{}, false, fmt.Errorf("failed to get tensor %s: %w", globalScaleName, err)
+		}
+		tensors = append(tensors, gsTD.WithName(tensorName+".global_scale"))
+	}
+
+	// Add nvfp4 quant metadata
+	md := make(map[string]string)
+	for k, v := range metadata {
+		md[k] = v
+	}
+	md["quant_type"] = "nvfp4"
+
+	layer, err := createLayer(
+		safetensors.BuildPackedSafetensorsReaderWithMetadata(tensors, md),
+		"application/vnd.ollama.image.tensor",
+		tensorName,
+	)
+	if err != nil {
+		return LayerInfo{}, false, fmt.Errorf("failed to create ModelOpt FP4 layer for %s: %w", tensorName, err)
+	}
+	return layer, true, nil
+}
+
+// modelOptFP4Companions finds the companion tensors for a ModelOpt NVFP4
+// quantized weight: weight_scale (per-group FP8 E4M3 scales) and optional
+// weight_scale_2 (per-tensor global scale).
+func modelOptFP4Companions(weightName string, tensorSet map[string]struct{}) (scaleName, globalScaleName string, ok bool) {
+	if !strings.HasSuffix(weightName, ".weight") {
+		return "", "", false
+	}
+
+	scaleName = weightName + "_scale"
+	if _, ok := tensorSet[scaleName]; !ok {
+		return "", "", false
+	}
+
+	globalScaleName = weightName + "_scale_2"
+	if _, ok := tensorSet[globalScaleName]; !ok {
+		globalScaleName = ""
+	}
+	return scaleName, globalScaleName, true
 }

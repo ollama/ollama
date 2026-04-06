@@ -79,6 +79,33 @@ func QuantizedMatmul(x, w, scales, biases *Array, transpose bool, groupSize, bit
 	return out
 }
 
+// QQMM performs quantized matmul with optional global scales for double-scale
+// quantization (e.g., NVIDIA nvfp4). Pass globalScaleX=nil and globalScaleW=nil
+// for standard single-scale quantization. For NVIDIA nvfp4, pass globalScaleX
+// as a scalar 1.0 (unquantized activations) and globalScaleW as the per-tensor
+// weight_scale_2 value.
+func QQMM(x, w, scales *Array, groupSize, bits int, mode string, globalScaleX, globalScaleW *Array) *Array {
+	cMode := C.CString(mode)
+	defer C.free(unsafe.Pointer(cMode))
+	optGroupSize := C.mlx_optional_int{value: C.int(groupSize), has_value: true}
+	optBits := C.mlx_optional_int{value: C.int(bits), has_value: true}
+
+	var s, gsx, gsw C.mlx_array
+	if scales != nil {
+		s = scales.ctx
+	}
+	if globalScaleX != nil {
+		gsx = globalScaleX.ctx
+	}
+	if globalScaleW != nil {
+		gsw = globalScaleW.ctx
+	}
+
+	out := New("QQMM")
+	C.mlx_qqmm(&out.ctx, x.ctx, w.ctx, s, optGroupSize, optBits, cMode, gsx, gsw, DefaultStream().ctx)
+	return out
+}
+
 func GatherQMM(x, w, scales *Array, biases, lhsIndices, rhsIndices *Array, transpose bool, groupSize, bits int, mode string, sortedIndices bool) *Array {
 	cMode := C.CString(mode)
 	defer C.free(unsafe.Pointer(cMode))
