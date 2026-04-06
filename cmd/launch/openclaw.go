@@ -118,6 +118,10 @@ func (c *Openclaw) Run(model string, args []string) error {
 		return nil
 	}
 
+	if err := c.runChannelSetupPreflight(bin); err != nil {
+		return err
+	}
+
 	token, port := c.gatewayInfo()
 	addr := fmt.Sprintf("localhost:%d", port)
 
@@ -170,6 +174,81 @@ func (c *Openclaw) Run(model string, args []string) error {
 	}
 
 	return nil
+}
+
+func (c *Openclaw) runChannelSetupPreflight(bin string) error {
+	if !isInteractiveSession() {
+		return nil
+	}
+
+	for {
+		if c.channelsConfigured() {
+			return nil
+		}
+
+		fmt.Fprintf(os.Stderr, "\nYour assistant can message you on WhatsApp, Telegram, Discord, and more.\n\n")
+		ok, err := ConfirmPrompt("Connect a messaging app now?  [Yes / Set up later]")
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+
+		cmd := exec.Command(bin, "channels", "add")
+		cmd.Env = openclawEnv()
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return windowsHint(fmt.Errorf("openclaw channel setup failed: %w\n\nTry running: %s channels add", err, bin))
+		}
+	}
+}
+
+func (c *Openclaw) channelsConfigured() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+
+	for _, path := range []string{
+		filepath.Join(home, ".openclaw", "openclaw.json"),
+		filepath.Join(home, ".clawdbot", "clawdbot.json"),
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+
+		var cfg map[string]any
+		if json.Unmarshal(data, &cfg) != nil {
+			continue
+		}
+
+		channels, _ := cfg["channels"].(map[string]any)
+		if channels == nil {
+			return false
+		}
+
+		for key, value := range channels {
+			if key == "defaults" || key == "modelByChannel" {
+				continue
+			}
+			entry, ok := value.(map[string]any)
+			if !ok {
+				continue
+			}
+			for entryKey := range entry {
+				if entryKey != "enabled" {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	return false
 }
 
 // gatewayInfo reads the gateway auth token and port from the OpenClaw config.
