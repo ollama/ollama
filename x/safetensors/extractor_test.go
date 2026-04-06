@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -22,7 +23,16 @@ func createTestSafetensors(t *testing.T, path string, tensors map[string]struct 
 	header := make(map[string]tensorInfo)
 	var offset int
 	var allData []byte
-	for name, info := range tensors {
+
+	// Sort names for deterministic file layout
+	names := make([]string, 0, len(tensors))
+	for name := range tensors {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+
+	for _, name := range names {
+		info := tensors[name]
 		header[name] = tensorInfo{
 			Dtype:       info.dtype,
 			Shape:       info.shape,
@@ -284,7 +294,6 @@ func TestBuildPackedSafetensorsReader(t *testing.T) {
 	// Verify data region contains both tensors
 	dataStart := 8 + int(headerSize)
 	dataRegion := packedBytes[dataStart:]
-	expectedData := append(data1, data2...)
 	if infoA.DataOffsets[0] == 0 {
 		// a comes first
 		if !bytes.Equal(dataRegion[:4], data1) {
@@ -299,7 +308,6 @@ func TestBuildPackedSafetensorsReader(t *testing.T) {
 			t.Error("tensor 'b' data mismatch")
 		}
 	}
-	_ = expectedData
 }
 
 func TestExtractAll(t *testing.T) {
