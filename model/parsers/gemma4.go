@@ -17,6 +17,7 @@ const (
 	Gemma4CollectingContent Gemma4ParserState = iota
 	Gemma4CollectingThinking
 	Gemma4CollectingToolCall
+	Gemma4IgnoringPostToolCallNoise
 )
 
 const (
@@ -285,7 +286,7 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 
 			p.buffer.Reset()
 			p.buffer.WriteString(remaining)
-			p.state = Gemma4CollectingContent
+			p.state = Gemma4IgnoringPostToolCallNoise
 
 			if toolCall, err := parseGemma4ToolCall(toolCallContent); err == nil {
 				events = append(events, gemma4EventToolCall{toolCall: toolCall})
@@ -310,6 +311,38 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 
 		// Wait for closing tag
 		return events, false
+
+	case Gemma4IgnoringPostToolCallNoise:
+		// We've observed Gemma 4 occasionally emitting extra <tool_call|> tags
+		// after a valid tool call. We suppress leading close tags in this immediate
+		// post-tool-call state so the extra close tags do not leak into assistant
+		// content.  The tradeoff is that if the model intentionally begins its next
+		// content span with the literal string "<tool_call|>", we will erroneously
+		// treat it as noise and drop it.
+		bufStr = strings.TrimLeftFunc(bufStr, unicode.IsSpace)
+		p.buffer.Reset()
+		p.buffer.WriteString(bufStr)
+
+		for strings.HasPrefix(bufStr, gemma4ToolCallCloseTag) {
+			bufStr = strings.TrimLeftFunc(bufStr[len(gemma4ToolCallCloseTag):], unicode.IsSpace)
+			p.buffer.Reset()
+			p.buffer.WriteString(bufStr)
+		}
+
+		if bufStr == "" {
+			return events, false
+		}
+
+		if strings.HasPrefix(gemma4ToolCallCloseTag, bufStr) {
+			if done {
+				p.buffer.Reset()
+				p.state = Gemma4CollectingContent
+			}
+			return events, false
+		}
+
+		p.state = Gemma4CollectingContent
+		return events, true
 	}
 
 	return events, false
