@@ -67,10 +67,10 @@ d:\path with\spaces\thirteen.WEBP some ending
 }
 
 func TestExtractFileURLs(t *testing.T) {
-	input := `before https://example.com/cat.png middle http://localhost:8080/dog.webp after`
+	input := `before https://example.com/cat.png?size=large middle http://localhost:8080/dog.webp and https://example.com/readme.txt after`
 	res := extractFileURLs(input)
 	assert.Len(t, res, 2)
-	assert.Equal(t, "https://example.com/cat.png", res[0])
+	assert.Equal(t, "https://example.com/cat.png?size=large", res[0])
 	assert.Equal(t, "http://localhost:8080/dog.webp", res[1])
 }
 
@@ -95,6 +95,14 @@ func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	assert.Equal(t, cleaned, "before  after")
 }
 
+func TestExtractFileDataIgnoresNonImageURL(t *testing.T) {
+	input := "before https://example.com/docs after"
+	cleaned, imgs, err := extractFileData(input)
+	assert.NoError(t, err)
+	assert.Empty(t, imgs)
+	assert.Equal(t, input, cleaned)
+}
+
 func TestExtractFileDataWithURL(t *testing.T) {
 	img := make([]byte, 600)
 	copy(img, []byte{
@@ -108,8 +116,7 @@ func TestExtractFileDataWithURL(t *testing.T) {
 		_, _ = w.Write(img)
 	}))
 	t.Cleanup(srv.Close)
-
-	input := "before '" + srv.URL + "/image.jpg' after"
+	input := "before '" + srv.URL + "/image.jpg?download=1' after"
 	cleaned, imgs, err := extractFileData(input)
 	assert.NoError(t, err)
 	assert.Len(t, imgs, 1)
