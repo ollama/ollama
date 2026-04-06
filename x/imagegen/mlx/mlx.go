@@ -1705,6 +1705,7 @@ var (
 var (
 	mlxInitialized bool
 	mlxInitError   error
+	mlxInitOnce    sync.Once
 )
 
 // mlxLibName returns the platform-specific shared library filename.
@@ -1783,39 +1784,78 @@ func findMLXLibrary() string {
 	return ""
 }
 
-// InitMLX initializes the MLX library by dynamically loading libmlxc.
+// InitMLX initializes the MLX library by dynamically loading libmlxc,
+// checking GPU backend availability, and seeding the random state.
 // This must be called before using any MLX functions.
-// Returns an error if the library cannot be loaded.
+// Returns an error if MLX cannot be used on this system.
 func InitMLX() error {
-	if mlxInitialized {
-		return mlxInitError
-	}
+	mlxInitOnce.Do(func() {
+		// Search for the library using Go path discovery
+		libPath := findMLXLibrary()
+		if libPath == "" {
+			mlxInitError = fmt.Errorf("failed to initialize MLX: %s not found", mlxLibName())
+			return
+		}
 
-	// Search for the library using Go path discovery
-	libPath := findMLXLibrary()
-	if libPath == "" {
-		mlxInitError = fmt.Errorf("failed to initialize MLX: %s not found", mlxLibName())
-		return mlxInitError
-	}
+		cPath := C.CString(libPath)
+		defer C.free(unsafe.Pointer(cPath))
+		if C.mlx_dynamic_init_path(cPath) != 0 {
+			errMsg := C.GoString(C.mlx_dynamic_error())
+			mlxInitError = fmt.Errorf("failed to initialize MLX: %s", errMsg)
+			return
+		}
 
-	cPath := C.CString(libPath)
-	defer C.free(unsafe.Pointer(cPath))
-	if C.mlx_dynamic_init_path(cPath) != 0 {
-		errMsg := C.GoString(C.mlx_dynamic_error())
-		mlxInitError = fmt.Errorf("failed to initialize MLX: %s", errMsg)
-		return mlxInitError
-	}
+		// Initialize all function pointers via dlsym
+		handle := C.mlx_get_handle()
+		if C.mlx_load_functions(handle) != 0 {
+			mlxInitError = fmt.Errorf("failed to load MLX function symbols")
+			return
+		}
 
-	// Initialize all function pointers via dlsym
-	handle := C.mlx_get_handle()
-	if C.mlx_load_functions(handle) != 0 {
-		mlxInitError = fmt.Errorf("failed to load MLX function symbols")
-		return mlxInitError
-	}
+		// Enter safe mode: replace the default exit(-1) error handler with one
+		// that logs and stores errors. This prevents a GPU init failure from
+		// killing the entire process during startup.
+		C.mlx_set_safe_init_mode()
 
-	mlxInitialized = true
-	mlxInitError = nil
-	return nil
+		// Check if a GPU backend is actually available before attempting GPU
+		// operations. On Windows/Linux this requires CUDA; on macOS, Metal.
+		// Without this check, mlx_random_key may crash with an access violation
+		// (0xc0000005 on Windows) when no compatible GPU backend exists, because
+		// the OS-level exception bypasses the MLX error handler. See #14952.
+		var gpuAvail C.bool
+		if runtime.GOOS == "darwin" {
+			C.mlx_metal_is_available(&gpuAvail)
+		} else {
+			C.mlx_cuda_is_available(&gpuAvail)
+		}
+		if C.mlx_had_init_error() != 0 {
+			msg := C.GoString(C.mlx_get_init_error())
+			mlxInitError = fmt.Errorf("MLX GPU init failed: %s", msg)
+			return
+		}
+		if !gpuAvail {
+			mlxInitError = fmt.Errorf("MLX: no compatible GPU backend available")
+			return
+		}
+
+		// Lock main goroutine to OS thread for CUDA context stability.
+		// CUDA contexts are bound to threads; Go can migrate goroutines between threads.
+		runtime.LockOSThread()
+		RandomState[0] = RandomKey(uint64(time.Now().UnixMilli()))
+		Keep(RandomState[0]) // Global state should persist
+
+		// Check if the RandomKey call silently failed under safe mode
+		if C.mlx_had_init_error() != 0 {
+			msg := C.GoString(C.mlx_get_init_error())
+			mlxInitError = fmt.Errorf("MLX GPU init failed: %s", msg)
+			return
+		}
+
+		mlxInitialized = true
+		mlxInitError = nil
+	})
+
+	return mlxInitError
 }
 
 // IsMLXAvailable returns whether MLX was successfully initialized
@@ -1826,35 +1866,6 @@ func IsMLXAvailable() bool {
 // GetMLXInitError returns any error that occurred during MLX initialization
 func GetMLXInitError() error {
 	return mlxInitError
-}
-
-func init() {
-	// Initialize MLX dynamic library first
-	if err := InitMLX(); err != nil {
-		// Don't panic in init - let the caller handle the error
-		// Store the error for later retrieval
-		mlxInitError = err
-		return
-	}
-
-	// Enter safe mode: replace the default exit(-1) error handler with one
-	// that logs and stores errors. This prevents a GPU init failure from
-	// killing the entire process during startup.
-	C.mlx_set_safe_init_mode()
-
-	// Lock main goroutine to OS thread for CUDA context stability.
-	// CUDA contexts are bound to threads; Go can migrate goroutines between threads.
-	runtime.LockOSThread()
-	RandomState[0] = RandomKey(uint64(time.Now().UnixMilli()))
-	Keep(RandomState[0]) // Global state should persist
-
-	// Check if the RandomKey call silently failed under safe mode
-	if C.mlx_had_init_error() != 0 {
-		msg := C.GoString(C.mlx_get_init_error())
-		mlxInitError = fmt.Errorf("MLX GPU init failed: %s", msg)
-		mlxInitialized = false
-		return
-	}
 }
 
 // RestoreDefaultErrorHandler restores the default MLX error handler (exit on error).
