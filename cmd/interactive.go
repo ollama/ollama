@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -29,6 +30,8 @@ const (
 	MultilineSystem
 )
 
+const maxImageSize int64 = 100 * 1024 * 1024 // 100MB in bytes
+
 func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 	usage := func() {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
@@ -44,7 +47,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "Use \"\"\" to begin a multi-line message.")
 
 		if opts.MultiModal {
-			fmt.Fprintf(os.Stderr, "Use %s to include .jpg, .png, or .webp images.\n", filepath.FromSlash("/path/to/file"))
+			fmt.Fprintf(os.Stderr, "Use %s or an https:// URL to include .jpg, .png, or .webp images.\n", filepath.FromSlash("/path/to/file"))
 		}
 
 		fmt.Fprintln(os.Stderr, "")
@@ -573,9 +576,15 @@ func extractFileNames(input string) []string {
 
 	return re.FindAllString(input, -1)
 }
+func extractFileURLs(input string) []string {
+	// Match HTTP/HTTPS URLs and stop at whitespace or quotes.
+	re := regexp.MustCompile(`https?://[^\s'"]+`)
+	return re.FindAllString(input, -1)
+}
 
 func extractFileData(input string) (string, []api.ImageData, error) {
 	filePaths := extractFileNames(input)
+	fileURLs := extractFileURLs(input)
 	var imgs []api.ImageData
 
 	for _, fp := range filePaths {
@@ -591,6 +600,19 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 		input = strings.ReplaceAll(input, "'"+nfp+"'", "")
 		input = strings.ReplaceAll(input, "'"+fp+"'", "")
 		input = strings.ReplaceAll(input, fp, "")
+		imgs = append(imgs, data)
+	}
+
+	for _, imageURL := range fileURLs {
+		data, err := getImageDataFromURL(imageURL)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Couldn't process image URL: %q\n", err)
+			return "", imgs, err
+		}
+		fmt.Fprintf(os.Stderr, "Added image '%s'\n", imageURL)
+		input = strings.ReplaceAll(input, "'"+imageURL+"'", "")
+		input = strings.ReplaceAll(input, `"`+imageURL+`"`, "")
+		input = strings.ReplaceAll(input, imageURL, "")
 		imgs = append(imgs, data)
 	}
 	return strings.TrimSpace(input), imgs, nil
@@ -620,9 +642,7 @@ func getImageData(filePath string) ([]byte, error) {
 		return nil, err
 	}
 
-	// Check if the file size exceeds 100MB
-	var maxSize int64 = 100 * 1024 * 1024 // 100MB in bytes
-	if info.Size() > maxSize {
+	if info.Size() > maxImageSize {
 		return nil, errors.New("file size exceeds maximum limit (100MB)")
 	}
 
@@ -638,4 +658,37 @@ func getImageData(filePath string) ([]byte, error) {
 	}
 
 	return buf, nil
+}
+
+func getImageDataFromURL(imageURL string) ([]byte, error) {
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Get(imageURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	limited := &io.LimitedReader{R: resp.Body, N: maxImageSize + 1}
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxImageSize {
+		return nil, errors.New("file size exceeds maximum limit (100MB)")
+	}
+	if len(data) == 0 {
+		return nil, errors.New("empty response body")
+	}
+
+	contentType := http.DetectContentType(data[:min(len(data), 512)])
+	allowedTypes := []string{"image/jpeg", "image/jpg", "image/png", "image/webp"}
+	if !slices.Contains(allowedTypes, contentType) {
+		return nil, fmt.Errorf("invalid image type: %s", contentType)
+	}
+
+	return data, nil
 }

@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -64,6 +66,14 @@ d:\path with\spaces\thirteen.WEBP some ending
 	assert.Contains(t, res[12], "d:")
 }
 
+func TestExtractFileURLs(t *testing.T) {
+	input := `before https://example.com/cat.png middle http://localhost:8080/dog.webp after`
+	res := extractFileURLs(input)
+	assert.Len(t, res, 2)
+	assert.Equal(t, "https://example.com/cat.png", res[0])
+	assert.Equal(t, "http://localhost:8080/dog.webp", res[1])
+}
+
 // Ensure that file paths wrapped in single quotes are removed with the quotes.
 func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	dir := t.TempDir()
@@ -79,6 +89,27 @@ func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
 	}
 
 	input := "before '" + fp + "' after"
+	cleaned, imgs, err := extractFileData(input)
+	assert.NoError(t, err)
+	assert.Len(t, imgs, 1)
+	assert.Equal(t, cleaned, "before  after")
+}
+
+func TestExtractFileDataWithURL(t *testing.T) {
+	img := make([]byte, 600)
+	copy(img, []byte{
+		0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 'J', 'F', 'I', 'F',
+		0x00, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xff, 0xd9,
+	})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/jpeg")
+		_, _ = w.Write(img)
+	}))
+	t.Cleanup(srv.Close)
+
+	input := "before '" + srv.URL + "/image.jpg' after"
 	cleaned, imgs, err := extractFileData(input)
 	assert.NoError(t, err)
 	assert.Len(t, imgs, 1)
