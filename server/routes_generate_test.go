@@ -1777,6 +1777,91 @@ func TestChatWithPromptEndingInThinkTag(t *testing.T) {
 				t.Errorf("expected content %q, got %q", expectedContent, resp.Message.Content)
 			}
 		})
+
+		t.Run("structured outputs with think=false", func(t *testing.T) {
+			var (
+				requestsMu sync.Mutex
+				requests   []llm.CompletionRequest
+				wg         sync.WaitGroup
+			)
+
+			wg.Add(1)
+
+			format := json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}}}`)
+
+			mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(r llm.CompletionResponse)) error {
+				defer wg.Done()
+
+				requestsMu.Lock()
+				requests = append(requests, r)
+				callNum := len(requests)
+				requestsMu.Unlock()
+
+				if callNum == 1 {
+
+					if r.Format == nil {
+						t.Errorf("expected format to be applied in first request with think=false, got nil")
+					} else if !bytes.Equal([]byte(format), []byte(r.Format)) {
+						t.Errorf("expected format to match original format, got %q", r.Format)
+					}
+
+					fn(llm.CompletionResponse{
+						Content:            `{"answer":"42"}`,
+						Done:               true,
+						DoneReason:         llm.DoneReasonStop,
+						PromptEvalCount:    1,
+						PromptEvalDuration: 1,
+						EvalCount:          1,
+						EvalDuration:       1,
+					})
+					return nil
+				}
+
+				t.Fatalf("unexpected number of completion calls: %d", callNum)
+				return nil
+			}
+
+			think := false
+			streamRequest := false
+			w := createRequest(t, s.ChatHandler, api.ChatRequest{
+				Model:    "test-thinking",
+				Messages: []api.Message{{Role: "user", Content: "Please respond in JSON."}},
+				Think:    &api.ThinkValue{Value: think},
+				Stream:   &streamRequest,
+				Format:   format,
+			})
+
+			wg.Wait()
+			mock.CompletionFn = nil
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected status 200, got %d", w.Code)
+			}
+
+			if len(requests) != 1 {
+
+				t.Fatalf("expected one completion call, got %d", len(requests))
+			}
+
+			var resp api.ChatResponse
+
+			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+				t.Fatal(err)
+			}
+
+			expectedContent := `{"answer":"42"}`
+			if resp.Message.Content != expectedContent {
+				t.Errorf("expected content %q, got %q", expectedContent, resp.Message.Content)
+			}
+
+			if !resp.Done {
+				t.Errorf("expected response to be done")
+			}
+
+			if resp.DoneReason != "stop" {
+				t.Errorf("expected done reason stop, got %s", resp.DoneReason)
+			}
+		})
 	}
 
 	// Test cases - Note: Template adds <think> at the end, and leading whitespace after <think> is eaten by the parser
