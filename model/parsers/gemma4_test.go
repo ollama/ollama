@@ -457,6 +457,77 @@ func TestGemma4Parser_StreamingToolCall(t *testing.T) {
 	}
 }
 
+func TestGemma4Parser_IgnoresExtraToolCallCloseTags(t *testing.T) {
+	tests := []struct {
+		name            string
+		chunks          []string
+		expectedContent string
+	}{
+		{
+			name: "same_chunk_without_trailing_content",
+			chunks: []string{
+				`<|tool_call>call:get_weather{location:<|"|>Paris<|"|>}<tool_call|><tool_call|>`,
+			},
+			expectedContent: "",
+		},
+		{
+			name: "same_chunk_before_real_content",
+			chunks: []string{
+				`<|tool_call>call:get_weather{location:<|"|>Paris<|"|>}<tool_call|><tool_call|>Done.`,
+			},
+			expectedContent: "Done.",
+		},
+		{
+			name: "split_across_chunks_before_real_content",
+			chunks: []string{
+				`<|tool_call>call:get_weather{location:<|"|>Paris<|"|>}<tool_call|><tool_`,
+				`call|>Done.`,
+			},
+			expectedContent: "Done.",
+		},
+	}
+
+	expectedToolCalls := []api.ToolCall{
+		{
+			Function: api.ToolCallFunction{
+				Name: "get_weather",
+				Arguments: testArgs(map[string]any{
+					"location": "Paris",
+				}),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := &Gemma4Parser{hasThinkingSupport: false}
+			parser.Init(nil, nil, nil)
+
+			var finalContent strings.Builder
+			var finalToolCalls []api.ToolCall
+
+			for i, chunk := range tt.chunks {
+				done := i == len(tt.chunks)-1
+				content, _, toolCalls, err := parser.Add(chunk, done)
+				if err != nil {
+					t.Fatalf("Add() error on chunk %d: %v", i, err)
+				}
+
+				finalContent.WriteString(content)
+				finalToolCalls = append(finalToolCalls, toolCalls...)
+			}
+
+			if diff := cmp.Diff(tt.expectedContent, finalContent.String()); diff != "" {
+				t.Errorf("content mismatch (-want +got):\n%s", diff)
+			}
+
+			if diff := cmp.Diff(expectedToolCalls, finalToolCalls, argsComparer); diff != "" {
+				t.Errorf("tool calls mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestGemma4Parser_StreamingSplitThinkingTag(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -649,6 +720,292 @@ func TestGemma4ArgsToJSON(t *testing.T) {
 	}
 }
 
+func TestRepairGemma4MissingStringDelimiter(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "closes_before_object_close",
+			input:    `{command:<|"|>ls}`,
+			expected: `{command:<|"|>ls<|"|>}`,
+		},
+		{
+			name:     "closes_terminal_value_after_previous_property",
+			input:    `{path:<|"|>/tmp<|"|>,command:<|"|>ls}`,
+			expected: `{path:<|"|>/tmp<|"|>,command:<|"|>ls<|"|>}`,
+		},
+		{
+			name:     "closes_at_end",
+			input:    `{command:<|"|>ls`,
+			expected: `{command:<|"|>ls<|"|>`,
+		},
+		{
+			name:     "preserves_valid_gemma_quoted_string",
+			input:    `{command:<|"|>ls<|"|>}`,
+			expected: `{command:<|"|>ls<|"|>}`,
+		},
+		{
+			name:     "preserves_input_without_gemma_delimiter",
+			input:    `{command:ls}`,
+			expected: `{command:ls}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := repairGemma4MissingStringDelimiter(tt.input)
+			if got != tt.expected {
+				t.Fatalf("repairGemma4MissingStringDelimiter(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestRepairGemma4MissingObjectClose(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "adds_object_close",
+			input:    `{content:<|"|>hello<|"|>`,
+			expected: `{content:<|"|>hello<|"|>}`,
+		},
+		{
+			name:     "adds_object_close_before_trailing_space",
+			input:    "{content:<|\"|>hello<|\"|>  ",
+			expected: "{content:<|\"|>hello<|\"|>}  ",
+		},
+		{
+			name:     "preserves_existing_object_close",
+			input:    `{content:<|"|>hello<|"|>}`,
+			expected: `{content:<|"|>hello<|"|>}`,
+		},
+		{
+			name:     "preserves_non_object_input",
+			input:    `content:<|"|>hello<|"|>`,
+			expected: `content:<|"|>hello<|"|>`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := repairGemma4MissingObjectClose(tt.input)
+			if got != tt.expected {
+				t.Fatalf("repairGemma4MissingObjectClose(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestRepairGemma4SingleQuotedValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "converts_single_quoted_value",
+			input:    `{pattern:':\s*\w+'}`,
+			expected: `{pattern:<|"|>:\s*\w+<|"|>}`,
+		},
+		{
+			name:     "converts_middle_single_quoted_value",
+			input:    `{include:<|"|>*.py<|"|>,pattern:'abc',path:<|"|>/tmp<|"|>}`,
+			expected: `{include:<|"|>*.py<|"|>,pattern:<|"|>abc<|"|>,path:<|"|>/tmp<|"|>}`,
+		},
+		{
+			name:     "drops_dangling_gemma_delimiter_after_single_quoted_value",
+			input:    `{pattern:'abc'<|"|>}`,
+			expected: `{pattern:<|"|>abc<|"|>}`,
+		},
+		{
+			name:     "preserves_gemma_quoted_value",
+			input:    `{pattern:<|"|>abc<|"|>}`,
+			expected: `{pattern:<|"|>abc<|"|>}`,
+		},
+		{
+			name:     "preserves_json_quoted_value",
+			input:    `{pattern:"abc"}`,
+			expected: `{pattern:"abc"}`,
+		},
+		{
+			name:     "preserves_unterminated_single_quote",
+			input:    `{pattern:'abc}`,
+			expected: `{pattern:'abc}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := repairGemma4SingleQuotedValues(tt.input)
+			if got != tt.expected {
+				t.Fatalf("repairGemma4SingleQuotedValues(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestRepairGemma4RawTerminalStringValue(t *testing.T) {
+	numberProps := api.NewToolPropertiesMap()
+	numberProps.Set("content", api.ToolProperty{Type: api.PropertyType{"number"}})
+	numberTool := api.Tool{
+		Type: "function",
+		Function: api.ToolFunction{
+			Name: "write",
+			Parameters: api.ToolFunctionParameters{
+				Type:       "object",
+				Properties: numberProps,
+			},
+		},
+	}
+
+	tests := []struct {
+		name       string
+		input      string
+		toolName   string
+		tools      []api.Tool
+		expected   string
+		expectedOK bool
+	}{
+		{
+			name:       "wraps_known_string_property_terminal_value",
+			input:      "{content:\n\n# Title",
+			toolName:   "write",
+			tools:      []api.Tool{gemma4TestStringTool("write", "content")},
+			expected:   "{content:<|\"|>\n\n# Title<|\"|>",
+			expectedOK: true,
+		},
+		{
+			name:       "stops_before_next_known_property",
+			input:      `{content:hello,mode:<|"|>fast<|"|>}`,
+			toolName:   "write",
+			tools:      []api.Tool{gemma4TestStringTool("write", "content", "mode")},
+			expected:   `{content:<|"|>hello<|"|>,mode:<|"|>fast<|"|>}`,
+			expectedOK: true,
+		},
+		{
+			name:       "does_not_repair_without_schema",
+			input:      `{content:hello`,
+			toolName:   "write",
+			tools:      nil,
+			expectedOK: false,
+		},
+		{
+			name:       "does_not_repair_non_string_property",
+			input:      `{content:hello`,
+			toolName:   "write",
+			tools:      []api.Tool{numberTool},
+			expectedOK: false,
+		},
+		{
+			name:       "does_not_repair_already_structured_value",
+			input:      `{content:<|"|>hello<|"|>}`,
+			toolName:   "write",
+			tools:      []api.Tool{gemma4TestStringTool("write", "content")},
+			expectedOK: false,
+		},
+		{
+			name:       "does_not_repair_json_literal_start",
+			input:      `{content:123}`,
+			toolName:   "write",
+			tools:      []api.Tool{gemma4TestStringTool("write", "content")},
+			expectedOK: false,
+		},
+		{
+			name:       "does_not_repair_unknown_tool",
+			input:      `{content:hello`,
+			toolName:   "missing",
+			tools:      []api.Tool{gemma4TestStringTool("write", "content")},
+			expectedOK: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := repairGemma4RawTerminalStringValue(tt.input, tt.toolName, tt.tools)
+			if ok != tt.expectedOK {
+				t.Fatalf("repairGemma4RawTerminalStringValue ok = %t, want %t", ok, tt.expectedOK)
+			}
+			if got != tt.expected {
+				t.Fatalf("repairGemma4RawTerminalStringValue got %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGemma4RepairCandidates(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		toolName string
+		tools    []api.Tool
+		expected []string
+	}{
+		{
+			name:     "missing_string_delimiter_candidate",
+			input:    `{command:<|"|>ls}`,
+			toolName: "bash",
+			tools:    []api.Tool{gemma4TestStringTool("bash", "command")},
+			expected: []string{`{command:<|"|>ls<|"|>}`},
+		},
+		{
+			name:     "single_quoted_value_candidate",
+			input:    `{pattern:'abc'<|"|>}`,
+			toolName: "grep",
+			tools:    []api.Tool{gemma4TestStringTool("grep", "pattern")},
+			expected: []string{`{pattern:<|"|>abc<|"|>}`},
+		},
+		{
+			name:     "raw_string_candidate_also_gets_missing_object_close",
+			input:    `{content:hello`,
+			toolName: "write",
+			tools:    []api.Tool{gemma4TestStringTool("write", "content")},
+			expected: []string{
+				`{content:hello`,
+				`{content:<|"|>hello<|"|>}`,
+			},
+		},
+		{
+			name:     "does_not_add_missing_object_close_without_another_repair",
+			input:    `{n:1`,
+			toolName: "count",
+			tools:    []api.Tool{gemma4TestStringTool("count", "name")},
+			expected: []string{`{n:1`},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := gemma4RepairCandidates(tt.input, tt.toolName, tt.tools)
+			if diff := cmp.Diff(tt.expected, got); diff != "" {
+				t.Fatalf("gemma4RepairCandidates mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func gemma4TestStringTool(name string, argNames ...string) api.Tool {
+	props := api.NewToolPropertiesMap()
+	for _, argName := range argNames {
+		props.Set(argName, api.ToolProperty{Type: api.PropertyType{"string"}})
+	}
+
+	return api.Tool{
+		Type: "function",
+		Function: api.ToolFunction{
+			Name: name,
+			Parameters: api.ToolFunctionParameters{
+				Type:       "object",
+				Properties: props,
+			},
+		},
+	}
+}
+
 func TestGemma4Parser_HasToolSupport(t *testing.T) {
 	parser := &Gemma4Parser{}
 	if !parser.HasToolSupport() {
@@ -669,14 +1026,14 @@ func TestGemma4Parser_HasThinkingSupport(t *testing.T) {
 }
 
 func TestParseGemma4ToolCall_InvalidRawQuotedEscape(t *testing.T) {
-	_, err := parseGemma4ToolCall(`call:open_file{path:"C:\users\bob\file.txt"}`)
+	_, err := parseGemma4ToolCall(`call:open_file{path:"C:\users\bob\file.txt"}`, nil)
 	if err == nil {
 		t.Fatal("expected parseGemma4ToolCall to reject malformed raw-quoted JSON escapes")
 	}
 }
 
 func TestParseGemma4ToolCall_QuotedScalarsStayStrings(t *testing.T) {
-	toolCall, err := parseGemma4ToolCall(`call:foo{n:<|"|>1<|"|>,b:<|"|>true<|"|>,z:<|"|>null<|"|>}`)
+	toolCall, err := parseGemma4ToolCall(`call:foo{n:<|"|>1<|"|>,b:<|"|>true<|"|>,z:<|"|>null<|"|>}`, nil)
 	if err != nil {
 		t.Fatalf("parseGemma4ToolCall returned error: %v", err)
 	}
@@ -698,7 +1055,7 @@ func TestParseGemma4ToolCall_QuotedScalarsStayStrings(t *testing.T) {
 }
 
 func TestParseGemma4ToolCall_UnquotedScalarsKeepStructuredTypes(t *testing.T) {
-	toolCall, err := parseGemma4ToolCall(`call:foo{n:1,b:true,z:null}`)
+	toolCall, err := parseGemma4ToolCall(`call:foo{n:1,b:true,z:null}`, nil)
 	if err != nil {
 		t.Fatalf("parseGemma4ToolCall returned error: %v", err)
 	}
@@ -720,7 +1077,7 @@ func TestParseGemma4ToolCall_UnquotedScalarsKeepStructuredTypes(t *testing.T) {
 }
 
 func TestParseGemma4ToolCall_ReferenceImplementationExample(t *testing.T) {
-	toolCall, err := parseGemma4ToolCall(`call:get_current_temperature{detail_level:0,location:<|"|>Paris, France<|"|>,unit:<|"|>celsius<|"|>}`)
+	toolCall, err := parseGemma4ToolCall(`call:get_current_temperature{detail_level:0,location:<|"|>Paris, France<|"|>,unit:<|"|>celsius<|"|>}`, nil)
 	if err != nil {
 		t.Fatalf("parseGemma4ToolCall returned error: %v", err)
 	}
@@ -741,8 +1098,158 @@ func TestParseGemma4ToolCall_ReferenceImplementationExample(t *testing.T) {
 	}
 }
 
+func TestParseGemma4ToolCall_RepairsIssue15315Examples(t *testing.T) {
+	writeContent := "\n\n# Project Style Guide for Autonomous Agents' Code Generation (AGENTS.md)\n\n" +
+		"This document captures the *de facto* coding standards observed across the `src/` and `components/` source code, designed to ensure consistency for all generated code and modules consumed by the agent system."
+
+	tests := []struct {
+		name    string
+		content string
+		tools   []api.Tool
+		want    api.ToolCall
+	}{
+		{
+			name: "raw multiline string",
+			// Source: https://github.com/ollama/ollama/issues/15315#issue-4203625511
+			content: "call:write{content:" + writeContent,
+			tools:   []api.Tool{gemma4TestStringTool("write", "content")},
+			want: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "write",
+					Arguments: testArgs(map[string]any{
+						"content": writeContent,
+					}),
+				},
+			},
+		},
+		{
+			name:    "single quoted value with dangling gemma string delimiter",
+			content: `call:grep{include:<|"|>*.py<|"|>,output_mode:<|"|>content<|"|>,path:<|"|>/data/robotics/experiment1<|"|>,pattern:':\s*\w+'<|"|>}`,
+			tools:   []api.Tool{gemma4TestStringTool("grep", "include", "output_mode", "path", "pattern")},
+			// Source: https://github.com/ollama/ollama/issues/15315#issue-4203625511
+			want: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "grep",
+					Arguments: testArgs(map[string]any{
+						"include":     "*.py",
+						"output_mode": "content",
+						"path":        "/data/robotics/experiment1",
+						"pattern":     `:\s*\w+`,
+					}),
+				},
+			},
+		},
+		{
+			name:    "unclosed gemma string before object close",
+			content: `call:bash{command:<|"|>ls}`,
+			tools:   []api.Tool{gemma4TestStringTool("bash", "command")},
+			// Source: https://github.com/ollama/ollama/issues/15315#issuecomment-4194547092
+			want: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "bash",
+					Arguments: testArgs(map[string]any{
+						"command": "ls",
+					}),
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseGemma4ToolCall(tt.content, tt.tools)
+			if err != nil {
+				t.Fatalf("parseGemma4ToolCall returned error: %v", err)
+			}
+
+			if diff := cmp.Diff(tt.want, got, argsComparer); diff != "" {
+				t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestParseGemma4ToolCall_RepairsMultipleProperties(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		tools   []api.Tool
+		want    api.ToolCall
+	}{
+		{
+			name:    "single_quoted_middle_property",
+			content: `call:grep{include:<|"|>*.py<|"|>,pattern:'abc',path:<|"|>/tmp<|"|>}`,
+			tools:   []api.Tool{gemma4TestStringTool("grep", "include", "pattern", "path")},
+			want: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "grep",
+					Arguments: testArgs(map[string]any{
+						"include": "*.py",
+						"pattern": "abc",
+						"path":    "/tmp",
+					}),
+				},
+			},
+		},
+		{
+			name:    "unclosed_gemma_string_terminal_property",
+			content: `call:bash{path:<|"|>/tmp<|"|>,command:<|"|>ls}`,
+			tools:   []api.Tool{gemma4TestStringTool("bash", "path", "command")},
+			want: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "bash",
+					Arguments: testArgs(map[string]any{
+						"path":    "/tmp",
+						"command": "ls",
+					}),
+				},
+			},
+		},
+		{
+			name:    "raw_string_before_next_property",
+			content: `call:write{content:hello,mode:<|"|>fast<|"|>}`,
+			tools:   []api.Tool{gemma4TestStringTool("write", "content", "mode")},
+			want: api.ToolCall{
+				Function: api.ToolCallFunction{
+					Name: "write",
+					Arguments: testArgs(map[string]any{
+						"content": "hello",
+						"mode":    "fast",
+					}),
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseGemma4ToolCall(tt.content, tt.tools)
+			if err != nil {
+				t.Fatalf("parseGemma4ToolCall returned error: %v", err)
+			}
+
+			if diff := cmp.Diff(tt.want, got, argsComparer); diff != "" {
+				t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestParseGemma4ToolCall_DoesNotRepairNonTerminalUnclosedGemmaString(t *testing.T) {
+	// TODO(drifkin): our current examples show unclosed gemma strings as the last
+	// values, but if we find examples where there's an unclosed non-last value,
+	// we should consider repairing it. This test shows that we don't yet repair
+	// this type (the heuristics of where to close are much more complicated)
+	_, err := parseGemma4ToolCall(`call:example{first:<|"|>one,second:<|"|>two<|"|>}`, []api.Tool{
+		gemma4TestStringTool("example", "first", "second"),
+	})
+	if err == nil {
+		t.Fatal("expected non-terminal unclosed Gemma string to remain unsupported")
+	}
+}
+
 func TestParseGemma4ToolCall_InvalidRawQuotedStructuralString(t *testing.T) {
-	_, err := parseGemma4ToolCall(`call:foo{q:"a,b:c"}`)
+	_, err := parseGemma4ToolCall(`call:foo{q:"a,b:c"}`, nil)
 	if err == nil {
 		t.Fatal("expected parseGemma4ToolCall to reject raw-quoted strings with structural text that the reference implementation does not support")
 	}
