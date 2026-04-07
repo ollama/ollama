@@ -143,7 +143,7 @@ fi
 	oldConfirmPrompt := DefaultConfirmPrompt
 	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		promptCount++
-		if prompt != "Connect a messaging app now?  [Yes / Set up later]" {
+		if prompt != "Connect a messaging app now?" {
 			t.Fatalf("unexpected prompt: %q", prompt)
 		}
 		return true, nil

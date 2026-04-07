@@ -193,7 +193,7 @@ func (c *Openclaw) runChannelSetupPreflight(bin string) error {
 		}
 
 		fmt.Fprintf(os.Stderr, "\nYour assistant can message you on WhatsApp, Telegram, Discord, and more.\n\n")
-		ok, err := ConfirmPromptWithOptions("Connect a messaging app now?  [Yes / Set up later]", ConfirmOptions{
+		ok, err := ConfirmPromptWithOptions("Connect a messaging app now?", ConfirmOptions{
 			YesLabel: "Yes",
 			NoLabel:  "Set up later",
 		})
@@ -780,7 +780,7 @@ func ensureWebSearchPlugin() bool {
 		return false
 	}
 
-	fmt.Fprintf(os.Stderr, "%s  ✓ Installed web search plugin%s\n", ansiGreen, ansiReset)
+	fmt.Fprintf(os.Stderr, "%s  ✓ Installed Ollama web search %s\n", ansiGreen, ansiReset)
 	return true
 }
 
