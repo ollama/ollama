@@ -2404,7 +2404,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 			if req.Format != nil && structuredOutputsState == structuredOutputsState_None && ((builtinParser != nil || thinkingState != nil) && slices.Contains(m.Capabilities(), model.CapabilityThinking)) {
 				currentFormat = nil
-				currentGrammar = nil
 			}
 
 			// sets up new context given parent context per request
