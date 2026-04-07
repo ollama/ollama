@@ -90,3 +90,10 @@ func AsyncEval(outputs ...*Array) {
 func Eval(outputs ...*Array) {
 	doEval(outputs, false)
 }
+
+// MetalIsAvailable returns true if a Metal GPU is available.
+func MetalIsAvailable() bool {
+	var available C._Bool
+	C.mlx_metal_is_available(&available)
+	return bool(available)
+}

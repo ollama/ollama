@@ -1169,6 +1169,11 @@ func TestShouldQuantize(t *testing.T) {
 		{"ln prefix", "ln_1.weight", "", false},
 		{"layernorm in name", "input_layernorm.weight", "", false},
 
+		// Audio encoder tensors should not be quantized
+		{"audio tower weight", "model.audio_tower.layers.0.weight", "", false},
+		{"audio tower norm", "model.audio_tower.norm.weight", "", false},
+		{"embed audio weight", "embed_audio.weight", "", false},
+
 		// Biases should not be quantized
 		{"bias tensor", "attention.bias", "", false},
 		{"proj bias", "o_proj.bias", "", false},
@@ -1261,6 +1266,11 @@ func TestExpertGroupPrefix(t *testing.T) {
 		{"model.layers.1.mlp.experts.0.down_proj.weight", "model.layers.1.mlp.experts"},
 		{"model.layers.1.mlp.experts.63.gate_proj.weight", "model.layers.1.mlp.experts"},
 		{"model.layers.0.mlp.experts.0.up_proj.weight", "model.layers.0.mlp.experts"},
+
+		// MoE expert tensors (Gemma-style .moe.experts.)
+		{"model.layers.0.moe.experts.0.gate_proj.weight", "model.layers.0.moe.experts"},
+		{"model.layers.1.moe.experts.42.down_proj.weight", "model.layers.1.moe.experts"},
+		{"language_model.model.layers.2.moe.experts.127.up_proj.weight", "language_model.model.layers.2.moe.experts"},
 
 		// Expert tensors with language_model prefix should also match
 		{"language_model.model.layers.0.mlp.experts.0.gate_proj.weight", "language_model.model.layers.0.mlp.experts"},
@@ -1366,6 +1376,94 @@ func TestGetTensorQuantization_StackedExpert3D(t *testing.T) {
 	)
 	if mxfp4Down != "mxfp4" {
 		t.Fatalf("mxfp4 down_proj quantization = %q, want %q", mxfp4Down, "mxfp4")
+	}
+}
+
+func TestIsAligned(t *testing.T) {
+	tests := []struct {
+		name      string
+		shape     []int32
+		quantType string
+		want      bool
+	}{
+		// int4/int8: group_size=64
+		{"int4 aligned", []int32{1024, 4096}, "int4", true},
+		{"int4 unaligned", []int32{1024, 48}, "int4", false},
+		{"int8 aligned", []int32{1024, 128}, "int8", true},
+		{"int8 unaligned", []int32{1024, 32}, "int8", false},
+
+		// nvfp4: group_size=16
+		{"nvfp4 aligned", []int32{1024, 48}, "nvfp4", true},
+		{"nvfp4 unaligned", []int32{1024, 24}, "nvfp4", false},
+		{"nvfp4 aligned 16", []int32{1024, 16}, "nvfp4", true},
+
+		// mxfp4/mxfp8: group_size=32
+		{"mxfp4 aligned", []int32{1024, 64}, "mxfp4", true},
+		{"mxfp4 unaligned", []int32{1024, 48}, "mxfp4", false},
+		{"mxfp8 aligned", []int32{1024, 32}, "mxfp8", true},
+		{"mxfp8 unaligned", []int32{1024, 24}, "mxfp8", false},
+
+		// Edge cases
+		{"empty shape", []int32{}, "int4", false},
+		{"1D tensor", []int32{4096}, "int4", true},
+		{"3D stacked expert", []int32{128, 4096, 2816}, "int4", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isAligned(tt.shape, tt.quantType)
+			if got != tt.want {
+				t.Errorf("isAligned(%v, %q) = %v, want %v", tt.shape, tt.quantType, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetTensorQuantization_MixedPrecisionPromotion(t *testing.T) {
+	aligned := []int32{4096, 4096} // divisible by 64
+
+	tests := []struct {
+		name     string
+		tensor   string
+		shape    []int32
+		quantize string
+		want     string
+	}{
+		// int4 → int8 promotion for sensitive tensors
+		{"v_proj int4 promoted", "model.layers.0.self_attn.v_proj.weight", aligned, "int4", "int8"},
+		{"k_proj int4 promoted", "model.layers.0.self_attn.k_proj.weight", aligned, "int4", "int8"},
+		{"down_proj int4 promoted", "model.layers.0.mlp.down_proj.weight", aligned, "int4", "int8"},
+
+		// Non-sensitive int4 tensors stay int4
+		{"q_proj int4 stays", "model.layers.0.self_attn.q_proj.weight", aligned, "int4", "int4"},
+		{"o_proj int4 stays", "model.layers.0.self_attn.o_proj.weight", aligned, "int4", "int4"},
+		{"gate_proj int4 stays", "model.layers.0.mlp.gate_proj.weight", aligned, "int4", "int4"},
+		{"up_proj int4 stays", "model.layers.0.mlp.up_proj.weight", aligned, "int4", "int4"},
+
+		// nvfp4/mxfp4/mxfp8: no promotion (uniform quantization)
+		{"v_proj nvfp4 uniform", "model.layers.0.self_attn.v_proj.weight", aligned, "nvfp4", "nvfp4"},
+		{"down_proj mxfp4 uniform", "model.layers.0.mlp.down_proj.weight", aligned, "mxfp4", "mxfp4"},
+		{"v_proj mxfp8 uniform", "model.layers.0.self_attn.v_proj.weight", aligned, "mxfp8", "mxfp8"},
+
+		// int8: already 8-bit, no promotion
+		{"v_proj int8 stays", "model.layers.0.self_attn.v_proj.weight", aligned, "int8", "int8"},
+
+		// Expert tensors: down_proj also promoted for int4
+		{"expert down_proj int4", "model.layers.0.mlp.experts.down_proj.weight", []int32{128, 4096, 2816}, "int4", "int8"},
+		{"moe expert down_proj int4", "model.layers.0.moe.experts.down_proj.weight", []int32{128, 4096, 2816}, "int4", "int8"},
+
+		// Unaligned: falls back to bf16 (empty string)
+		{"v_proj int4 unaligned", "model.layers.0.self_attn.v_proj.weight", []int32{1024, 48}, "int4", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := GetTensorQuantization(tt.tensor, tt.shape, tt.quantize)
+			if got != tt.want {
+				t.Errorf("GetTensorQuantization(%q, %v, %q) = %q, want %q",
+					tt.tensor, tt.shape, tt.quantize, got, tt.want)
+			}
+		})
 	}
 }
 

@@ -246,6 +246,11 @@ func ShouldQuantize(name, component string) bool {
 		return false
 	}
 
+	// Skip audio encoder tensors (highly sensitive to quantization)
+	if strings.Contains(name, "audio_tower") || strings.Contains(name, "embed_audio") {
+		return false
+	}
+
 	// Skip embeddings
 	if strings.Contains(name, "embed") {
 		return false
@@ -291,6 +296,22 @@ func normalizeQuantType(quantize string) string {
 	}
 }
 
+// isAligned checks if a tensor's last dimension is divisible by the
+// group size required for the given quantization type.
+func isAligned(shape []int32, quantType string) bool {
+	if len(shape) == 0 {
+		return false
+	}
+	groupSize := int32(32)
+	switch normalizeQuantType(quantType) {
+	case "nvfp4":
+		groupSize = 16
+	case "int4", "int8":
+		groupSize = 64
+	}
+	return shape[len(shape)-1]%groupSize == 0
+}
+
 func isStackedExpertWeight(name string) bool {
 	// Combined/stacked expert tensors may be emitted either as "...proj.weight" (per-expert)
 	// or "...proj" (pre-stacked packed tensor).
@@ -300,16 +321,16 @@ func isStackedExpertWeight(name string) bool {
 
 	return strings.Contains(name, ".mlp.switch_mlp.") ||
 		strings.Contains(name, ".mlp.experts.") ||
-		strings.Contains(name, ".mlp.shared_experts.")
+		strings.Contains(name, ".mlp.shared_experts.") ||
+		strings.Contains(name, ".moe.experts.")
 }
 
 // GetTensorQuantization returns the appropriate quantization type for a tensor.
 // Returns "" if the tensor should not be quantized.
 // This implements mixed-precision quantization:
-//   - Attention MLA weights (q_a, q_b, kv_a, kv_b): unquantized (most sensitive)
-//   - Output projection, gate/up weights: int4 (less sensitive)
-//   - Down projection weights: int8 (more sensitive, would be Q6 in GGML but no MLX kernel)
+//   - v_proj, k_proj, down_proj: promoted to INT8 when base is INT4
 //   - Norms, embeddings, biases, routing gates: no quantization
+//   - All other eligible weights: use requested quantization type
 func GetTensorQuantization(name string, shape []int32, quantize string) string {
 	stackedExpert := isStackedExpertWeight(name)
 
@@ -336,22 +357,14 @@ func GetTensorQuantization(name string, shape []int32, quantize string) string {
 	// Normalize quantization type to canonical form
 	quantNorm := normalizeQuantType(quantize)
 
-	// MLX quantization requires last dimension to be divisible by group size
-	// nvfp4: 16, mxfp4/mxfp8: 32, int4/int8: 64
-	groupSize := int32(32)
-	switch quantNorm {
-	case "nvfp4":
-		groupSize = 16
-	case "int4", "int8":
-		groupSize = 64
-	}
-	if shape[len(shape)-1]%groupSize != 0 {
-		return ""
-	}
-
 	// Skip routing gate weights (should stay high precision)
 	// In safetensors these are: mlp.gate.weight (not mlp.gate_proj.weight)
 	if strings.Contains(name, "mlp.gate.weight") && !strings.Contains(name, "_proj") {
+		return ""
+	}
+
+	// MLX quantization requires last dimension to be divisible by group size.
+	if !isAligned(shape, quantNorm) {
 		return ""
 	}
 
@@ -360,36 +373,19 @@ func GetTensorQuantization(name string, shape []int32, quantize string) string {
 		return quantNorm
 	}
 
-	// Attention MLA weights - keep unquantized (bf16)
-	// These are highly sensitive: errors accumulate in the KV cache over time
-	// q_a_proj, q_b_proj, kv_a_proj_with_mqa, kv_b_proj
-	if strings.Contains(name, "q_a_proj") ||
-		strings.Contains(name, "q_b_proj") ||
-		strings.Contains(name, "kv_a_proj") ||
-		strings.Contains(name, "kv_b_proj") {
-		return "" // No quantization - keep bf16
+	// Value projection weights directly determine attention output quality.
+	// Down projection weights feed directly into the residual stream where
+	// errors accumulate across layers. Both benefit from higher precision.
+	// Promote to INT8 when base is INT4 (same affine mode, compatible with
+	// GatherQMM for MoE expert tensors).
+	if quantNorm == "int4" {
+		if strings.Contains(name, ".v_proj") || strings.Contains(name, ".k_proj") || strings.Contains(name, "down_proj") {
+			if isAligned(shape, "int8") {
+				return "int8"
+			}
+		}
 	}
 
-	// Down projection weights - use INT8 (would be Q6_K in GGML, but MLX has no Q6 kernel)
-	// mlp.down_proj, mlp.experts.X.down_proj, mlp.shared_experts.down_proj
-	if strings.Contains(name, "down_proj") {
-		return "int8"
-	}
-
-	// Output projection, gate/up weights - use requested quantization (INT4)
-	// o_proj, gate_proj, up_proj
-	if strings.Contains(name, "o_proj") ||
-		strings.Contains(name, "gate_proj") ||
-		strings.Contains(name, "up_proj") {
-		return quantNorm
-	}
-
-	// LM head - use requested quantization
-	if strings.Contains(name, "lm_head") {
-		return quantNorm
-	}
-
-	// Default to requested quantization for other weights
 	return quantNorm
 }
 
@@ -411,6 +407,7 @@ func ExpertGroupPrefix(tensorName string) string {
 		".mlp.experts.",
 		".mlp.shared_experts.",
 		".mlp.switch_mlp.",
+		".moe.experts.",
 	} {
 		idx := strings.Index(tensorName, marker)
 		if idx == -1 {
