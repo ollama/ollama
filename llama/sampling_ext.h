@@ -37,6 +37,7 @@ extern "C"
     void grammar_free(struct llama_grammar *g);
     void grammar_apply(struct llama_grammar *g, struct llama_token_data_array *tokens);
     void grammar_accept(struct llama_grammar *g, llama_token id);
+    const char* grammar_token_to_piece(const struct llama_grammar* g, uint32_t token);
 
 
 #ifdef __cplusplus
