@@ -828,7 +828,7 @@ func (m multiSelectorModel) View() string {
 		if count == 0 {
 			s.WriteString(sectionHeaderStyle.Render("Select at least one model."))
 		} else {
-			s.WriteString(sectionHeaderStyle.Render(fmt.Sprintf("%d selected - press enter to continue", count)))
+			s.WriteString(sectionHeaderStyle.Render(fmt.Sprintf("%d models selected - press enter to continue", count)))
 		}
 		s.WriteString("\n\n")
 		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • space toggle • tab select single • enter confirm • ← back"))
