@@ -1786,7 +1786,7 @@ func Serve(ln net.Listener) error {
 
 	s := &Server{
 		addr:          ln.Addr(),
-		responseStore: NewResponseStore(DefaultMaxResponses, DefaultResponseTTL),
+		responseStore: NewResponseStore(envconfig.ResponseStoreMaxResponses(), envconfig.ResponseStoreTTL()),
 	}
 	if err := s.initRequestLogging(); err != nil {
 		return err
