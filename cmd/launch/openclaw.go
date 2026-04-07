@@ -102,8 +102,6 @@ func (c *Openclaw) Run(model string, args []string) error {
 		registerWebSearchPlugin()
 	}
 
-	fmt.Fprintf(os.Stderr, "\n%sStarting your assistant — this may take a moment...%s\n\n", ansiGray, ansiReset)
-
 	// When extra args are passed through, run exactly what the user asked for
 	// after setup and skip the built-in gateway+TUI convenience flow.
 	if len(args) > 0 {
@@ -121,6 +119,11 @@ func (c *Openclaw) Run(model string, args []string) error {
 	if err := c.runChannelSetupPreflight(bin); err != nil {
 		return err
 	}
+	// Keep local pairing scopes up to date before the gateway lifecycle
+	// (restart/start) regardless of channel preflight branch behavior.
+	patchDeviceScopes()
+
+	fmt.Fprintf(os.Stderr, "\n%sStarting your assistant — this may take a moment...%s\n\n", ansiGray, ansiReset)
 
 	token, port := c.gatewayInfo()
 	addr := fmt.Sprintf("localhost:%d", port)
@@ -176,6 +179,9 @@ func (c *Openclaw) Run(model string, args []string) error {
 	return nil
 }
 
+// runChannelSetupPreflight prompts users to connect a messaging channel before
+// starting the built-in gateway+TUI flow. In interactive sessions, it loops
+// until a channel is configured, unless the user chooses "Set up later".
 func (c *Openclaw) runChannelSetupPreflight(bin string) error {
 	if !isInteractiveSession() {
 		return nil
@@ -187,7 +193,10 @@ func (c *Openclaw) runChannelSetupPreflight(bin string) error {
 		}
 
 		fmt.Fprintf(os.Stderr, "\nYour assistant can message you on WhatsApp, Telegram, Discord, and more.\n\n")
-		ok, err := ConfirmPrompt("Connect a messaging app now?  [Yes / Set up later]")
+		ok, err := ConfirmPromptWithOptions("Connect a messaging app now?  [Yes / Set up later]", ConfirmOptions{
+			YesLabel: "Yes",
+			NoLabel:  "Set up later",
+		})
 		if err != nil {
 			return err
 		}
@@ -206,6 +215,8 @@ func (c *Openclaw) runChannelSetupPreflight(bin string) error {
 	}
 }
 
+// channelsConfigured reports whether local OpenClaw config contains at least
+// one meaningfully configured channel entry.
 func (c *Openclaw) channelsConfigured() bool {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -297,12 +308,9 @@ func printOpenclawReady(bin, token string, port int, firstLaunch bool) {
 	if firstLaunch {
 		fmt.Fprintf(os.Stderr, "%s  Quick start:%s\n", ansiBold, ansiReset)
 		fmt.Fprintf(os.Stderr, "%s    /help             see all commands%s\n", ansiGray, ansiReset)
-		fmt.Fprintf(os.Stderr, "%s    %s configure --section channels   connect WhatsApp, Telegram, etc.%s\n", ansiGray, bin, ansiReset)
 		fmt.Fprintf(os.Stderr, "%s    %s skills                         browse and install skills%s\n\n", ansiGray, bin, ansiReset)
 		fmt.Fprintf(os.Stderr, "%s  The OpenClaw gateway is running in the background.%s\n", ansiYellow, ansiReset)
 		fmt.Fprintf(os.Stderr, "%s  Stop it with: %s gateway stop%s\n\n", ansiYellow, bin, ansiReset)
-	} else {
-		fmt.Fprintf(os.Stderr, "%sTip: connect WhatsApp, Telegram, and more with: %s configure --section channels%s\n", ansiGray, bin, ansiReset)
 	}
 }
 

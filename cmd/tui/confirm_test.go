@@ -33,6 +33,22 @@ func TestConfirmModel_View_ContainsButtons(t *testing.T) {
 	}
 }
 
+func TestConfirmModel_View_ContainsCustomButtons(t *testing.T) {
+	m := confirmModel{
+		prompt:   "Connect a messaging app now?",
+		yesLabel: "Yes",
+		noLabel:  "Set up later",
+		yes:      true,
+	}
+	got := m.View()
+	if !strings.Contains(got, "Yes") {
+		t.Error("should contain custom yes button")
+	}
+	if !strings.Contains(got, "Set up later") {
+		t.Error("should contain custom no button")
+	}
+}
+
 func TestConfirmModel_View_ContainsHelp(t *testing.T) {
 	m := confirmModel{prompt: "Download?", yes: true}
 	got := m.View()

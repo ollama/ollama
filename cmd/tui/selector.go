@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
@@ -56,7 +55,7 @@ var (
 const maxSelectorItems = 10
 
 // ErrCancelled is returned when the user cancels the selection.
-var ErrCancelled = errors.New("cancelled")
+var ErrCancelled = launch.ErrCancelled
 
 type SelectItem struct {
 	Name        string

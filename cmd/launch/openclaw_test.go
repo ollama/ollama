@@ -70,7 +70,7 @@ func TestOpenclawRunPassthroughArgs(t *testing.T) {
 	defer func() { isInteractiveSession = oldInteractive }()
 
 	oldConfirmPrompt := DefaultConfirmPrompt
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		t.Fatalf("did not expect confirmation prompt during passthrough launch: %s", prompt)
 		return false, nil
 	}
@@ -141,7 +141,7 @@ fi
 
 	promptCount := 0
 	oldConfirmPrompt := DefaultConfirmPrompt
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		promptCount++
 		if prompt != "Connect a messaging app now?  [Yes / Set up later]" {
 			t.Fatalf("unexpected prompt: %q", prompt)
@@ -175,6 +175,79 @@ fi
 	}
 	if lines[2] != "tui" {
 		t.Fatalf("expected third invocation to be tui, got %q", lines[2])
+	}
+}
+
+func TestOpenclawRun_SetupLaterContinuesToGatewayAndTUI(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("PATH", tmpDir)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	configDir := filepath.Join(tmpDir, ".openclaw")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(fmt.Sprintf(`{
+		"wizard": {"lastRunAt": "2026-01-01T00:00:00Z"},
+		"gateway": {"port": %d}
+	}`, port)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bin := filepath.Join(tmpDir, "openclaw")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/invocations.log\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldInteractive := isInteractiveSession
+	isInteractiveSession = func() bool { return true }
+	defer func() { isInteractiveSession = oldInteractive }()
+
+	promptCount := 0
+	oldConfirmPrompt := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		promptCount++
+		return false, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
+
+	c := &Openclaw{}
+	if err := c.Run("llama3.2", nil); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if promptCount != 1 {
+		t.Fatalf("expected one channel setup prompt, got %d", promptCount)
+	}
+	data, err := os.ReadFile(filepath.Join(tmpDir, "invocations.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected at least 2 invocations (daemon restart, tui), got %v", lines)
+	}
+	if lines[0] != "daemon restart" {
+		t.Fatalf("expected first invocation to be daemon restart, got %q", lines[0])
+	}
+	if lines[1] != "tui" {
+		t.Fatalf("expected second invocation to be tui, got %q", lines[1])
+	}
+	for _, line := range lines {
+		if line == "channels add" {
+			t.Fatalf("did not expect channels add invocation after choosing set up later, got %v", lines)
+		}
 	}
 }
 
@@ -1182,7 +1255,7 @@ func TestOpenclawChannelSetupPreflight(t *testing.T) {
 		defer func() { isInteractiveSession = oldInteractive }()
 
 		oldConfirmPrompt := DefaultConfirmPrompt
-		DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 			t.Fatalf("did not expect prompt in non-interactive mode: %s", prompt)
 			return false, nil
 		}
@@ -1217,7 +1290,7 @@ func TestOpenclawChannelSetupPreflight(t *testing.T) {
 		defer func() { isInteractiveSession = oldInteractive }()
 
 		oldConfirmPrompt := DefaultConfirmPrompt
-		DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 			t.Fatalf("did not expect prompt when already configured: %s", prompt)
 			return false, nil
 		}
@@ -1253,7 +1326,7 @@ func TestOpenclawChannelSetupPreflight(t *testing.T) {
 
 		promptCount := 0
 		oldConfirmPrompt := DefaultConfirmPrompt
-		DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 			promptCount++
 			return false, nil
 		}
@@ -1301,7 +1374,7 @@ fi
 
 		promptCount := 0
 		oldConfirmPrompt := DefaultConfirmPrompt
-		DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 			promptCount++
 			return true, nil
 		}
@@ -1346,7 +1419,7 @@ fi
 
 		promptCount := 0
 		oldConfirmPrompt := DefaultConfirmPrompt
-		DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 			promptCount++
 			return promptCount == 1, nil
 		}
@@ -1395,7 +1468,7 @@ fi
 		defer func() { isInteractiveSession = oldInteractive }()
 
 		oldConfirmPrompt := DefaultConfirmPrompt
-		DefaultConfirmPrompt = func(prompt string) (bool, error) {
+		DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 			return true, nil
 		}
 		defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
@@ -1733,14 +1806,17 @@ func TestPrintOpenclawReady(t *testing.T) {
 		buf.ReadFrom(r)
 
 		output := buf.String()
-		for _, want := range []string{"/help", "channels", "skills", "gateway"} {
+		for _, want := range []string{"/help", "skills", "gateway"} {
 			if !strings.Contains(output, want) {
 				t.Errorf("expected %q in first-launch output, got:\n%s", want, output)
 			}
 		}
+		if strings.Contains(output, "configure --section channels") {
+			t.Errorf("did not expect channels configure tip in first-launch output, got:\n%s", output)
+		}
 	})
 
-	t.Run("subsequent launch shows single tip", func(t *testing.T) {
+	t.Run("subsequent launch omits quick start tips", func(t *testing.T) {
 		var buf bytes.Buffer
 		old := os.Stderr
 		r, w, _ := os.Pipe()
@@ -1753,11 +1829,14 @@ func TestPrintOpenclawReady(t *testing.T) {
 		buf.ReadFrom(r)
 
 		output := buf.String()
-		if !strings.Contains(output, "Tip:") {
-			t.Errorf("expected single tip line, got:\n%s", output)
-		}
 		if strings.Contains(output, "Quick start") {
 			t.Errorf("should not show quick start on subsequent launch")
+		}
+		if strings.Contains(output, "browse skills with") {
+			t.Errorf("should not show repeated skills tip on subsequent launch")
+		}
+		if strings.Contains(output, "configure --section channels") {
+			t.Errorf("did not expect channels configure tip on subsequent launch, got:\n%s", output)
 		}
 	})
 }

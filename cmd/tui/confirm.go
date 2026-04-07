@@ -5,6 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/ollama/ollama/cmd/launch"
 )
 
 var (
@@ -18,11 +19,15 @@ var (
 
 type confirmModel struct {
 	prompt    string
+	yesLabel  string
+	noLabel   string
 	yes       bool
 	confirmed bool
 	cancelled bool
 	width     int
 }
+
+type ConfirmOptions = launch.ConfirmOptions
 
 func (m confirmModel) Init() tea.Cmd {
 	return nil
@@ -68,12 +73,20 @@ func (m confirmModel) View() string {
 	}
 
 	var yesBtn, noBtn string
+	yesLabel := m.yesLabel
+	if yesLabel == "" {
+		yesLabel = "Yes"
+	}
+	noLabel := m.noLabel
+	if noLabel == "" {
+		noLabel = "No"
+	}
 	if m.yes {
-		yesBtn = confirmActiveStyle.Render(" Yes ")
-		noBtn = confirmInactiveStyle.Render(" No ")
+		yesBtn = confirmActiveStyle.Render(" " + yesLabel + " ")
+		noBtn = confirmInactiveStyle.Render(" " + noLabel + " ")
 	} else {
-		yesBtn = confirmInactiveStyle.Render(" Yes ")
-		noBtn = confirmActiveStyle.Render(" No ")
+		yesBtn = confirmInactiveStyle.Render(" " + yesLabel + " ")
+		noBtn = confirmActiveStyle.Render(" " + noLabel + " ")
 	}
 
 	s := selectorTitleStyle.Render(m.prompt) + "\n\n"
@@ -89,9 +102,26 @@ func (m confirmModel) View() string {
 // RunConfirm shows a bubbletea yes/no confirmation prompt.
 // Returns true if the user confirmed, false if cancelled.
 func RunConfirm(prompt string) (bool, error) {
+	return RunConfirmWithOptions(prompt, ConfirmOptions{})
+}
+
+// RunConfirmWithOptions shows a bubbletea yes/no confirmation prompt with
+// optional custom button labels.
+func RunConfirmWithOptions(prompt string, options ConfirmOptions) (bool, error) {
+	yesLabel := options.YesLabel
+	if yesLabel == "" {
+		yesLabel = "Yes"
+	}
+	noLabel := options.NoLabel
+	if noLabel == "" {
+		noLabel = "No"
+	}
+
 	m := confirmModel{
-		prompt: prompt,
-		yes:    true, // default to yes
+		prompt:   prompt,
+		yesLabel: yesLabel,
+		noLabel:  noLabel,
+		yes:      true, // default to yes
 	}
 
 	p := tea.NewProgram(m)

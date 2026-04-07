@@ -29,7 +29,7 @@ func TestWithLaunchConfirmPolicy_ScopesAndRestores(t *testing.T) {
 
 	currentLaunchConfirmPolicy = launchConfirmPolicy{}
 	var hookCalls int
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		hookCalls++
 		return true, nil
 	}
@@ -72,5 +72,41 @@ func TestWithLaunchConfirmPolicy_ScopesAndRestores(t *testing.T) {
 	}
 	if hookCalls != 1 {
 		t.Fatalf("expected one hook call after restore, got %d", hookCalls)
+	}
+}
+
+func TestConfirmPromptWithOptions_DelegatesToOptionsHook(t *testing.T) {
+	oldPolicy := currentLaunchConfirmPolicy
+	oldHook := DefaultConfirmPrompt
+	t.Cleanup(func() {
+		currentLaunchConfirmPolicy = oldPolicy
+		DefaultConfirmPrompt = oldHook
+	})
+
+	currentLaunchConfirmPolicy = launchConfirmPolicy{}
+	called := false
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		called = true
+		if prompt != "Connect now?" {
+			t.Fatalf("unexpected prompt: %q", prompt)
+		}
+		if options.YesLabel != "Yes" || options.NoLabel != "Set up later" {
+			t.Fatalf("unexpected options: %+v", options)
+		}
+		return true, nil
+	}
+
+	ok, err := ConfirmPromptWithOptions("Connect now?", ConfirmOptions{
+		YesLabel: "Yes",
+		NoLabel:  "Set up later",
+	})
+	if err != nil {
+		t.Fatalf("ConfirmPromptWithOptions() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("expected confirm to return true")
+	}
+	if !called {
+		t.Fatal("expected options hook to be called")
 	}
 }

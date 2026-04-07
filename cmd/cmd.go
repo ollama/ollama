@@ -92,13 +92,7 @@ func init() {
 		return userName, err
 	}
 
-	launch.DefaultConfirmPrompt = func(prompt string) (bool, error) {
-		ok, err := tui.RunConfirm(prompt)
-		if errors.Is(err, tui.ErrCancelled) {
-			return false, launch.ErrCancelled
-		}
-		return ok, err
-	}
+	launch.DefaultConfirmPrompt = tui.RunConfirmWithOptions
 }
 
 const ConnectInstructions = "If your browser did not open, navigate to:\n    %s\n\n"
