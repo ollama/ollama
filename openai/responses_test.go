@@ -226,6 +226,28 @@ func TestUnmarshalResponsesInputItem(t *testing.T) {
 		}
 	})
 
+	t.Run("function_call_output item with content array", func(t *testing.T) {
+		got, err := unmarshalResponsesInputItem([]byte(`{"type": "function_call_output", "call_id": "call_abc123", "output": [{"type": "input_text", "text": "the result"}]}`))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		output, ok := got.(ResponsesFunctionCallOutput)
+		if !ok {
+			t.Fatalf("got type %T, want ResponsesFunctionCallOutput", got)
+		}
+
+		if output.Type != "function_call_output" {
+			t.Errorf("Type = %q, want %q", output.Type, "function_call_output")
+		}
+		if output.CallID != "call_abc123" {
+			t.Errorf("CallID = %q, want %q", output.CallID, "call_abc123")
+		}
+		if output.Output != "the result" {
+			t.Errorf("Output = %q, want %q", output.Output, "the result")
+		}
+	})
+
 	t.Run("unknown item type", func(t *testing.T) {
 		_, err := unmarshalResponsesInputItem([]byte(`{"type": "unknown_type"}`))
 		if err == nil {
@@ -450,6 +472,90 @@ func TestFromResponsesRequest_FunctionCallOutput(t *testing.T) {
 	}
 	if toolMsg.Content != "sunny, 72F" {
 		t.Errorf("expected content 'sunny, 72F', got %q", toolMsg.Content)
+	}
+	if toolMsg.ToolCallID != "call_abc123" {
+		t.Errorf("expected ToolCallID 'call_abc123', got %q", toolMsg.ToolCallID)
+	}
+}
+
+func TestFromResponsesRequest_FunctionCallOutputContentArray(t *testing.T) {
+	reqJSON := `{
+		"model": "gpt-oss:20b",
+		"input": [
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "what is the weather?"}]},
+			{"type": "function_call", "call_id": "call_abc123", "name": "get_weather", "arguments": "{\"city\":\"Paris\"}"},
+			{"type": "function_call_output", "call_id": "call_abc123", "output": [{"type": "input_text", "text": "sunny"}, {"type": "input_text", "text": ", 72F"}]}
+		]
+	}`
+
+	var req ResponsesRequest
+	if err := json.Unmarshal([]byte(reqJSON), &req); err != nil {
+		t.Fatalf("failed to unmarshal request: %v", err)
+	}
+
+	chatReq, err := FromResponsesRequest(req)
+	if err != nil {
+		t.Fatalf("failed to convert request: %v", err)
+	}
+
+	if len(chatReq.Messages) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(chatReq.Messages))
+	}
+
+	toolMsg := chatReq.Messages[2]
+	if toolMsg.Role != "tool" {
+		t.Errorf("expected role 'tool', got %q", toolMsg.Role)
+	}
+	if toolMsg.Content != "sunny, 72F" {
+		t.Errorf("expected content 'sunny, 72F', got %q", toolMsg.Content)
+	}
+	if toolMsg.ToolCallID != "call_abc123" {
+		t.Errorf("expected ToolCallID 'call_abc123', got %q", toolMsg.ToolCallID)
+	}
+}
+
+func TestFromResponsesRequest_FunctionCallOutputContentArrayWithImage(t *testing.T) {
+	// 1x1 red PNG pixel
+	pngBase64 := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="
+
+	reqJSON := `{
+		"model": "gpt-oss:20b",
+		"input": [
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "inspect the image"}]},
+			{"type": "function_call", "call_id": "call_abc123", "name": "inspect_image", "arguments": "{}"},
+			{"type": "function_call_output", "call_id": "call_abc123", "output": [
+				{"type": "input_text", "text": "attached image"},
+				{"type": "input_image", "detail": "auto", "image_url": "data:image/png;base64,` + pngBase64 + `"}
+			]}
+		]
+	}`
+
+	var req ResponsesRequest
+	if err := json.Unmarshal([]byte(reqJSON), &req); err != nil {
+		t.Fatalf("failed to unmarshal request: %v", err)
+	}
+
+	chatReq, err := FromResponsesRequest(req)
+	if err != nil {
+		t.Fatalf("failed to convert request: %v", err)
+	}
+
+	if len(chatReq.Messages) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(chatReq.Messages))
+	}
+
+	toolMsg := chatReq.Messages[2]
+	if toolMsg.Role != "tool" {
+		t.Errorf("expected role 'tool', got %q", toolMsg.Role)
+	}
+	if toolMsg.Content != "attached image" {
+		t.Errorf("expected content 'attached image', got %q", toolMsg.Content)
+	}
+	if len(toolMsg.Images) != 1 {
+		t.Fatalf("expected 1 image, got %d", len(toolMsg.Images))
+	}
+	if len(toolMsg.Images[0]) == 0 {
+		t.Error("expected non-empty image data")
 	}
 	if toolMsg.ToolCallID != "call_abc123" {
 		t.Errorf("expected ToolCallID 'call_abc123', got %q", toolMsg.ToolCallID)
