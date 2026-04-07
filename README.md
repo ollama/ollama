@@ -1,9 +1,3 @@
-<p align="center">
-  <a href="https://ollama.com">
-    <img src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7" alt="ollama" width="200"/>
-  </a>
-</p>
-
 # Ollama
 
 Start building with open models.
@@ -12,25 +6,19 @@ Start building with open models.
 
 ### macOS
 
-```shell
 curl -fsSL https://ollama.com/install.sh | sh
-```
 
 or [download manually](https://ollama.com/download/Ollama.dmg)
 
 ### Windows
 
-```shell
 irm https://ollama.com/install.ps1 | iex
-```
 
 or [download manually](https://ollama.com/download/OllamaSetup.exe)
 
 ### Linux
 
-```shell
 curl -fsSL https://ollama.com/install.sh | sh
-```
 
 [Manual install instructions](https://docs.ollama.com/linux#manual-install)
 
@@ -48,6 +36,10 @@ The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `olla
 - [Discord](https://discord.gg/ollama)
 - [𝕏 (Twitter)](https://x.com/ollama)
 - [Reddit](https://reddit.com/r/ollama)
+
+## Uninstall
+
+See [Uninstall Guide](docs/uninstall.md) for instructions on removing Ollama from your system.
 
 ## Get started
 
@@ -110,7 +102,6 @@ See the [API documentation](https://docs.ollama.com/api) for all endpoints.
 pip install ollama
 ```
 
-```python
 from ollama import chat
 
 response = chat(model='gemma3', messages=[
@@ -120,7 +111,6 @@ response = chat(model='gemma3', messages=[
   },
 ])
 print(response.message.content)
-```
 
 ### JavaScript
 
@@ -128,7 +118,6 @@ print(response.message.content)
 npm i ollama
 ```
 
-```javascript
 import ollama from "ollama";
 
 const response = await ollama.chat({
@@ -136,7 +125,6 @@ const response = await ollama.chat({
   messages: [{ role: "user", content: "Why is the sky blue?" }],
 });
 console.log(response.message.content);
-```
 
 ## Supported backends
 
@@ -283,7 +271,7 @@ console.log(response.message.content);
 
 ### Bots & Messaging
 
-- [LangBot](https://github.com/RockChinQ/LangBot) - Multi-platform messaging bots with agents and RAG
+- [LangBot](https://github.com/RockChinQ/LangBot) - Multi-platform messaging bot with agents and RAG
 - [AstrBot](https://github.com/Soulter/AstrBot/) - Multi-platform chatbot with RAG and plugins
 - [Discord-Ollama Chat Bot](https://github.com/kevinthedang/discord-ollama) - TypeScript Discord bot
 - [Ollama Telegram Bot](https://github.com/ruecat/ollama-telegram) - Telegram bot
@@ -307,7 +295,7 @@ console.log(response.message.content);
 
 - [AppFlowy](https://github.com/AppFlowy-IO/AppFlowy) - AI collaborative workspace, self-hostable Notion alternative
 - [Screenpipe](https://github.com/mediar-ai/screenpipe) - 24/7 screen and mic recording with AI-powered search
-- [Vibe](https://github.com/thewh1teagle/vibe) - Transcribe and analyze meetings
+- [Vibe](https://github.com/thewh1teagle/vibe) - Transcribe and analyze meeting notes
 - [Page Assist](https://github.com/n4ze3m/page-assist) - Chrome extension for AI-powered browsing
 - [NativeMind](https://github.com/NativeMindBrowser/NativeMindExtension) - Private, on-device browser AI assistant
 - [Ollama Fortress](https://github.com/ParisNeo/ollama_proxy_server) - Security proxy for Ollama
