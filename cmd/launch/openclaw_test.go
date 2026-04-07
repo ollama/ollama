@@ -1036,6 +1036,133 @@ func TestOpenclawGatewayInfo(t *testing.T) {
 	})
 }
 
+func TestPatchDeviceScopes(t *testing.T) {
+	t.Run("patches device approved scopes and operator token only", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		identityDir := filepath.Join(tmpDir, ".openclaw", "identity")
+		if err := os.MkdirAll(identityDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(identityDir, "device-auth.json"), []byte(`{"deviceId":"dev-1"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		devicesDir := filepath.Join(tmpDir, ".openclaw", "devices")
+		if err := os.MkdirAll(devicesDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(devicesDir, "paired.json"), []byte(`{
+			"dev-1": {
+				"deviceId": "dev-1",
+				"scopes": ["operator.read"],
+				"approvedScopes": ["operator.read"],
+				"tokens": {
+					"operator": {"role":"operator","scopes":["operator.read"]},
+					"node": {"role":"node","scopes":["node.exec"]}
+				}
+			}
+		}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		patchDeviceScopes()
+
+		data, err := os.ReadFile(filepath.Join(devicesDir, "paired.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var devices map[string]map[string]any
+		if err := json.Unmarshal(data, &devices); err != nil {
+			t.Fatal(err)
+		}
+
+		required := []string{
+			"operator.read",
+			"operator.admin",
+			"operator.approvals",
+			"operator.pairing",
+		}
+
+		toSet := func(v any) map[string]bool {
+			out := map[string]bool{}
+			items, _ := v.([]any)
+			for _, item := range items {
+				if s, ok := item.(string); ok {
+					out[s] = true
+				}
+			}
+			return out
+		}
+		assertContainsAll := func(name string, got any, want []string) {
+			t.Helper()
+			set := toSet(got)
+			for _, scope := range want {
+				if !set[scope] {
+					t.Fatalf("%s missing required scope %q (got=%v)", name, scope, set)
+				}
+			}
+		}
+
+		dev := devices["dev-1"]
+		assertContainsAll("device.scopes", dev["scopes"], required)
+		assertContainsAll("device.approvedScopes", dev["approvedScopes"], required)
+
+		tokens, _ := dev["tokens"].(map[string]any)
+		operator, _ := tokens["operator"].(map[string]any)
+		assertContainsAll("tokens.operator.scopes", operator["scopes"], required)
+
+		node, _ := tokens["node"].(map[string]any)
+		nodeScopes := toSet(node["scopes"])
+		if len(nodeScopes) != 1 || !nodeScopes["node.exec"] {
+			t.Fatalf("expected non-operator token scopes unchanged, got=%v", nodeScopes)
+		}
+	})
+
+	t.Run("creates approvedScopes when missing", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		identityDir := filepath.Join(tmpDir, ".openclaw", "identity")
+		if err := os.MkdirAll(identityDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(identityDir, "device-auth.json"), []byte(`{"deviceId":"dev-2"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		devicesDir := filepath.Join(tmpDir, ".openclaw", "devices")
+		if err := os.MkdirAll(devicesDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(devicesDir, "paired.json"), []byte(`{
+			"dev-2": {
+				"deviceId": "dev-2",
+				"scopes": ["operator.read"],
+				"tokens": {"operator":{"role":"operator","scopes":["operator.read"]}}
+			}
+		}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		patchDeviceScopes()
+
+		data, err := os.ReadFile(filepath.Join(devicesDir, "paired.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var devices map[string]map[string]any
+		if err := json.Unmarshal(data, &devices); err != nil {
+			t.Fatal(err)
+		}
+		dev := devices["dev-2"]
+		if _, ok := dev["approvedScopes"]; !ok {
+			t.Fatal("expected approvedScopes to be created")
+		}
+	})
+}
+
 func TestPrintOpenclawReady(t *testing.T) {
 	t.Run("includes port in URL", func(t *testing.T) {
 		var buf bytes.Buffer
