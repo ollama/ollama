@@ -310,7 +310,7 @@ func names(items []ModelItem) []string {
 func TestBuildModelList_NoExistingModels(t *testing.T) {
 	items, _, _, _ := buildModelList(nil, nil, "")
 
-	want := []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5:cloud", "minimax-m2.7:cloud", "glm-4.7-flash", "qwen3.5"}
+	want := []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5:cloud", "minimax-m2.7:cloud", "gemma4", "qwen3.5"}
 	if diff := cmp.Diff(want, names(items)); diff != "" {
 		t.Errorf("with no existing models, items should be recommended in order (-want +got):\n%s", diff)
 	}
@@ -338,7 +338,7 @@ func TestBuildModelList_OnlyLocalModels_CloudRecsAtBottom(t *testing.T) {
 	got := names(items)
 
 	// Recommended pinned at top (local recs first, then cloud recs when only-local), then installed non-recs
-	want := []string{"glm-4.7-flash", "qwen3.5", "kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5:cloud", "minimax-m2.7:cloud", "llama3.2", "qwen2.5"}
+	want := []string{"gemma4", "qwen3.5", "kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5:cloud", "minimax-m2.7:cloud", "llama3.2", "qwen2.5"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("recs pinned at top, local recs before cloud recs (-want +got):\n%s", diff)
 	}
@@ -354,7 +354,7 @@ func TestBuildModelList_BothCloudAndLocal_RegularSort(t *testing.T) {
 	got := names(items)
 
 	// All recs pinned at top (cloud before local in mixed case), then non-recs
-	want := []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5:cloud", "minimax-m2.7:cloud", "glm-4.7-flash", "qwen3.5", "llama3.2"}
+	want := []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5:cloud", "minimax-m2.7:cloud", "gemma4", "qwen3.5", "llama3.2"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("recs pinned at top, cloud recs first in mixed case (-want +got):\n%s", diff)
 	}
@@ -376,7 +376,7 @@ func TestBuildModelList_PreCheckedFirst(t *testing.T) {
 
 func TestBuildModelList_ExistingRecommendedMarked(t *testing.T) {
 	existing := []modelInfo{
-		{Name: "glm-4.7-flash", Remote: false},
+		{Name: "gemma4", Remote: false},
 		{Name: "glm-5:cloud", Remote: true},
 	}
 
@@ -384,7 +384,7 @@ func TestBuildModelList_ExistingRecommendedMarked(t *testing.T) {
 
 	for _, item := range items {
 		switch item.Name {
-		case "glm-4.7-flash", "glm-5:cloud":
+		case "gemma4", "glm-5:cloud":
 			if strings.HasSuffix(item.Description, "(not downloaded)") {
 				t.Errorf("installed recommended %q should not have '(not downloaded)' suffix, got %q", item.Name, item.Description)
 			}
@@ -402,17 +402,17 @@ func TestBuildModelList_ExistingRecommendedMarked(t *testing.T) {
 
 func TestBuildModelList_ExistingCloudModelsNotPushedToBottom(t *testing.T) {
 	existing := []modelInfo{
-		{Name: "glm-4.7-flash", Remote: false},
+		{Name: "gemma4", Remote: false},
 		{Name: "glm-5:cloud", Remote: true},
 	}
 
 	items, _, _, _ := buildModelList(existing, nil, "")
 	got := names(items)
 
-	// glm-4.7-flash and glm-5:cloud are installed so they sort normally;
+	// gemma4 and glm-5:cloud are installed so they sort normally;
 	// kimi-k2.5:cloud, qwen3.5:cloud, and qwen3.5 are not installed so they go to the bottom
 	// All recs: cloud first in mixed case, then local, in rec order within each
-	want := []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5:cloud", "minimax-m2.7:cloud", "glm-4.7-flash", "qwen3.5"}
+	want := []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5:cloud", "minimax-m2.7:cloud", "gemma4", "qwen3.5"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("all recs, cloud first in mixed case (-want +got):\n%s", diff)
 	}
@@ -430,7 +430,7 @@ func TestBuildModelList_HasRecommendedCloudModel_OnlyNonInstalledAtBottom(t *tes
 	// kimi-k2.5:cloud is installed so it sorts normally;
 	// the rest of the recommendations are not installed so they go to the bottom
 	// All recs pinned at top (cloud first in mixed case), then non-recs
-	want := []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5:cloud", "minimax-m2.7:cloud", "glm-4.7-flash", "qwen3.5", "llama3.2"}
+	want := []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5:cloud", "minimax-m2.7:cloud", "gemma4", "qwen3.5", "llama3.2"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("recs pinned at top, cloud first in mixed case (-want +got):\n%s", diff)
 	}
@@ -452,7 +452,7 @@ func TestBuildModelList_HasRecommendedCloudModel_OnlyNonInstalledAtBottom(t *tes
 
 func TestBuildModelList_LatestTagStripped(t *testing.T) {
 	existing := []modelInfo{
-		{Name: "glm-4.7-flash:latest", Remote: false},
+		{Name: "gemma4:latest", Remote: false},
 		{Name: "llama3.2:latest", Remote: false},
 	}
 
@@ -466,20 +466,20 @@ func TestBuildModelList_LatestTagStripped(t *testing.T) {
 		}
 	}
 
-	// glm-4.7-flash should not be duplicated (existing :latest matches the recommendation)
+	// gemma4 should not be duplicated (existing :latest matches the recommendation)
 	count := 0
 	for _, name := range got {
-		if name == "glm-4.7-flash" {
+		if name == "gemma4" {
 			count++
 		}
 	}
 	if count != 1 {
-		t.Errorf("glm-4.7-flash should appear exactly once, got %d in %v", count, got)
+		t.Errorf("gemma4 should appear exactly once, got %d in %v", count, got)
 	}
 
 	// Stripped name should be in existingModels so it won't be pulled
-	if !existingModels["glm-4.7-flash"] {
-		t.Error("glm-4.7-flash should be in existingModels")
+	if !existingModels["gemma4"] {
+		t.Error("gemma4 should be in existingModels")
 	}
 }
 
@@ -497,8 +497,8 @@ func TestBuildModelList_ReturnsExistingAndCloudMaps(t *testing.T) {
 	if !existingModels["glm-5:cloud"] {
 		t.Error("glm-5:cloud should be in existingModels")
 	}
-	if existingModels["glm-4.7-flash"] {
-		t.Error("glm-4.7-flash should not be in existingModels (it's a recommendation)")
+	if existingModels["gemma4"] {
+		t.Error("gemma4 should not be in existingModels (it's a recommendation)")
 	}
 
 	if !cloudModels["glm-5:cloud"] {
@@ -517,7 +517,7 @@ func TestBuildModelList_ReturnsExistingAndCloudMaps(t *testing.T) {
 
 func TestBuildModelList_RecommendedFieldSet(t *testing.T) {
 	existing := []modelInfo{
-		{Name: "glm-4.7-flash", Remote: false},
+		{Name: "gemma4", Remote: false},
 		{Name: "llama3.2:latest", Remote: false},
 	}
 
@@ -525,7 +525,7 @@ func TestBuildModelList_RecommendedFieldSet(t *testing.T) {
 
 	for _, item := range items {
 		switch item.Name {
-		case "glm-4.7-flash", "qwen3.5", "glm-5:cloud", "kimi-k2.5:cloud", "qwen3.5:cloud":
+		case "gemma4", "qwen3.5", "glm-5:cloud", "kimi-k2.5:cloud", "qwen3.5:cloud":
 			if !item.Recommended {
 				t.Errorf("%q should have Recommended=true", item.Name)
 			}
@@ -548,7 +548,7 @@ func TestBuildModelList_MixedCase_CloudRecsFirst(t *testing.T) {
 
 	// Cloud recs should sort before local recs in mixed case
 	cloudIdx := slices.Index(got, "glm-5:cloud")
-	localIdx := slices.Index(got, "glm-4.7-flash")
+	localIdx := slices.Index(got, "gemma4")
 	if cloudIdx > localIdx {
 		t.Errorf("cloud recs should be before local recs in mixed case, got %v", got)
 	}
@@ -563,7 +563,7 @@ func TestBuildModelList_OnlyLocal_LocalRecsFirst(t *testing.T) {
 	got := names(items)
 
 	// Local recs should sort before cloud recs in only-local case
-	localIdx := slices.Index(got, "glm-4.7-flash")
+	localIdx := slices.Index(got, "gemma4")
 	cloudIdx := slices.Index(got, "glm-5:cloud")
 	if localIdx > cloudIdx {
 		t.Errorf("local recs should be before cloud recs in only-local case, got %v", got)
@@ -583,7 +583,7 @@ func TestBuildModelList_RecsAboveNonRecs(t *testing.T) {
 	lastRecIdx := -1
 	firstNonRecIdx := len(got)
 	for i, name := range got {
-		isRec := name == "glm-4.7-flash" || name == "qwen3.5" || name == "minimax-m2.7:cloud" || name == "glm-5:cloud" || name == "kimi-k2.5:cloud" || name == "qwen3.5:cloud"
+		isRec := name == "gemma4" || name == "qwen3.5" || name == "minimax-m2.7:cloud" || name == "glm-5:cloud" || name == "kimi-k2.5:cloud" || name == "qwen3.5:cloud"
 		if isRec && i > lastRecIdx {
 			lastRecIdx = i
 		}

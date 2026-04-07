@@ -393,7 +393,7 @@ func (s *Store) Settings() (Settings, error) {
 	}
 
 	if settings.LastHomeView == "" {
-		settings.LastHomeView = "launch"
+		settings.LastHomeView = "chat"
 	}
 
 	return settings, nil

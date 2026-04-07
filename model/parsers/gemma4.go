@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"regexp"
 	"strings"
 	"unicode"
 
@@ -16,6 +17,7 @@ const (
 	Gemma4CollectingContent Gemma4ParserState = iota
 	Gemma4CollectingThinking
 	Gemma4CollectingToolCall
+	Gemma4IgnoringPostToolCallNoise
 )
 
 const (
@@ -23,6 +25,11 @@ const (
 	gemma4ThinkingCloseTag = "<channel|>"
 	gemma4ToolCallOpenTag  = "<|tool_call>"
 	gemma4ToolCallCloseTag = "<tool_call|>"
+)
+
+var (
+	gemma4QuotedStringRe = regexp.MustCompile(`(?s)<\|"\|>(.*?)<\|"\|>`)
+	gemma4BareKeyRe      = regexp.MustCompile(`([,{])(\w+):`)
 )
 
 type Gemma4Parser struct {
@@ -279,7 +286,7 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 
 			p.buffer.Reset()
 			p.buffer.WriteString(remaining)
-			p.state = Gemma4CollectingContent
+			p.state = Gemma4IgnoringPostToolCallNoise
 
 			if toolCall, err := parseGemma4ToolCall(toolCallContent); err == nil {
 				events = append(events, gemma4EventToolCall{toolCall: toolCall})
@@ -304,6 +311,38 @@ func (p *Gemma4Parser) eat(done bool) ([]gemma4Event, bool) {
 
 		// Wait for closing tag
 		return events, false
+
+	case Gemma4IgnoringPostToolCallNoise:
+		// We've observed Gemma 4 occasionally emitting extra <tool_call|> tags
+		// after a valid tool call. We suppress leading close tags in this immediate
+		// post-tool-call state so the extra close tags do not leak into assistant
+		// content.  The tradeoff is that if the model intentionally begins its next
+		// content span with the literal string "<tool_call|>", we will erroneously
+		// treat it as noise and drop it.
+		bufStr = strings.TrimLeftFunc(bufStr, unicode.IsSpace)
+		p.buffer.Reset()
+		p.buffer.WriteString(bufStr)
+
+		for strings.HasPrefix(bufStr, gemma4ToolCallCloseTag) {
+			bufStr = strings.TrimLeftFunc(bufStr[len(gemma4ToolCallCloseTag):], unicode.IsSpace)
+			p.buffer.Reset()
+			p.buffer.WriteString(bufStr)
+		}
+
+		if bufStr == "" {
+			return events, false
+		}
+
+		if strings.HasPrefix(gemma4ToolCallCloseTag, bufStr) {
+			if done {
+				p.buffer.Reset()
+				p.state = Gemma4CollectingContent
+			}
+			return events, false
+		}
+
+		p.state = Gemma4CollectingContent
+		return events, true
 	}
 
 	return events, false
@@ -345,126 +384,19 @@ func parseGemma4ToolCall(content string) (api.ToolCall, error) {
 
 // gemma4ArgsToJSON converts Gemma 4's custom argument format to valid JSON.
 func gemma4ArgsToJSON(s string) string {
-	const quoteToken = `<|"|>`
+	var quotedStrings []string
+	text := gemma4QuotedStringRe.ReplaceAllStringFunc(s, func(match string) string {
+		submatches := gemma4QuotedStringRe.FindStringSubmatch(match)
+		quotedStrings = append(quotedStrings, submatches[1])
+		return "\x00" + string(rune(len(quotedStrings)-1)) + "\x00"
+	})
 
-	var buf strings.Builder
-	buf.Grow(len(s) + 32)
-	const (
-		stringModeNone = iota
-		stringModeGemmaToken
-		stringModeRawQuote
-	)
+	text = gemma4BareKeyRe.ReplaceAllString(text, `$1"$2":`)
 
-	stringMode := stringModeNone
-	hex := "0123456789abcdef"
-	i := 0
-	for i < len(s) {
-		if strings.HasPrefix(s[i:], quoteToken) {
-			if stringMode == stringModeGemmaToken {
-				stringMode = stringModeNone
-			} else if stringMode == stringModeNone {
-				stringMode = stringModeGemmaToken
-			} else {
-				// In a raw-quote string, treat the Gemma quote token literally.
-				buf.WriteString(quoteToken)
-				i += len(quoteToken)
-				continue
-			}
-			buf.WriteByte('"')
-			i += len(quoteToken)
-			continue
-		}
-
-		ch := s[i]
-
-		if stringMode == stringModeNone && ch == '"' {
-			stringMode = stringModeRawQuote
-			buf.WriteByte('"')
-			i++
-			continue
-		}
-
-		if stringMode != stringModeNone {
-			switch ch {
-			case '\\':
-				if i+1 < len(s) {
-					next := s[i+1]
-					if stringMode == stringModeGemmaToken {
-						switch next {
-						case '"':
-							// In Gemma-token strings, preserve \" as two literal characters.
-							buf.WriteString(`\\\"`)
-							i += 2
-							continue
-						case '\\', '/':
-							// Keep existing behavior for \\ and \/ in Gemma-token strings.
-							buf.WriteByte('\\')
-							buf.WriteByte(next)
-							i += 2
-							continue
-						}
-					} else {
-						switch next {
-						case '"', '\\', '/':
-							// Preserve valid JSON escapes that are already in raw-quoted strings.
-							buf.WriteByte('\\')
-							buf.WriteByte(next)
-							i += 2
-							continue
-						}
-					}
-				}
-				// Unknown escape sequence: treat backslash as a literal character.
-				buf.WriteString(`\\`)
-			case '"':
-				if stringMode == stringModeRawQuote {
-					stringMode = stringModeNone
-					buf.WriteByte('"')
-				} else {
-					// In Gemma-token strings, raw double quotes are string content.
-					buf.WriteString(`\"`)
-				}
-			case '\n':
-				buf.WriteString(`\n`)
-			case '\r':
-				buf.WriteString(`\r`)
-			case '\t':
-				buf.WriteString(`\t`)
-			case '\b':
-				buf.WriteString(`\b`)
-			case '\f':
-				buf.WriteString(`\f`)
-			default:
-				if ch < 0x20 {
-					buf.WriteString(`\u00`)
-					buf.WriteByte(hex[ch>>4])
-					buf.WriteByte(hex[ch&0x0f])
-				} else {
-					buf.WriteByte(ch)
-				}
-			}
-			i++
-			continue
-		}
-
-		if isIdentStart(ch) {
-			j := i + 1
-			for j < len(s) && isIdentPart(s[j]) {
-				j++
-			}
-			word := s[i:j]
-			if j < len(s) && s[j] == ':' {
-				buf.WriteByte('"')
-				buf.WriteString(word)
-				buf.WriteByte('"')
-			} else {
-				buf.WriteString(word)
-			}
-			i = j
-		} else {
-			buf.WriteByte(ch)
-			i++
-		}
+	for i, value := range quotedStrings {
+		escaped, _ := json.Marshal(value)
+		text = strings.ReplaceAll(text, "\x00"+string(rune(i))+"\x00", string(escaped))
 	}
-	return buf.String()
+
+	return text
 }

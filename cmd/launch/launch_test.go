@@ -521,7 +521,7 @@ func TestResolveRunModel_ForcePicker_DoesNotReorderByLastModel(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"qwen3.5"},{"name":"glm-4.7-flash"}]}`)
+			fmt.Fprint(w, `{"models":[{"name":"qwen3.5"},{"name":"gemma4"}]}`)
 		case "/api/show":
 			fmt.Fprint(w, `{"model":"qwen3.5"}`)
 		default:
@@ -540,7 +540,7 @@ func TestResolveRunModel_ForcePicker_DoesNotReorderByLastModel(t *testing.T) {
 		t.Fatal("expected selector to receive model items")
 	}
 
-	glmIdx := slices.Index(gotNames, "glm-4.7-flash")
+	glmIdx := slices.Index(gotNames, "gemma4")
 	qwenIdx := slices.Index(gotNames, "qwen3.5")
 	if glmIdx == -1 || qwenIdx == -1 {
 		t.Fatalf("expected recommended local models in selector items, got %v", gotNames)

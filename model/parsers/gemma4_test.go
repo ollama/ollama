@@ -457,6 +457,77 @@ func TestGemma4Parser_StreamingToolCall(t *testing.T) {
 	}
 }
 
+func TestGemma4Parser_IgnoresExtraToolCallCloseTags(t *testing.T) {
+	tests := []struct {
+		name            string
+		chunks          []string
+		expectedContent string
+	}{
+		{
+			name: "same_chunk_without_trailing_content",
+			chunks: []string{
+				`<|tool_call>call:get_weather{location:<|"|>Paris<|"|>}<tool_call|><tool_call|>`,
+			},
+			expectedContent: "",
+		},
+		{
+			name: "same_chunk_before_real_content",
+			chunks: []string{
+				`<|tool_call>call:get_weather{location:<|"|>Paris<|"|>}<tool_call|><tool_call|>Done.`,
+			},
+			expectedContent: "Done.",
+		},
+		{
+			name: "split_across_chunks_before_real_content",
+			chunks: []string{
+				`<|tool_call>call:get_weather{location:<|"|>Paris<|"|>}<tool_call|><tool_`,
+				`call|>Done.`,
+			},
+			expectedContent: "Done.",
+		},
+	}
+
+	expectedToolCalls := []api.ToolCall{
+		{
+			Function: api.ToolCallFunction{
+				Name: "get_weather",
+				Arguments: testArgs(map[string]any{
+					"location": "Paris",
+				}),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := &Gemma4Parser{hasThinkingSupport: false}
+			parser.Init(nil, nil, nil)
+
+			var finalContent strings.Builder
+			var finalToolCalls []api.ToolCall
+
+			for i, chunk := range tt.chunks {
+				done := i == len(tt.chunks)-1
+				content, _, toolCalls, err := parser.Add(chunk, done)
+				if err != nil {
+					t.Fatalf("Add() error on chunk %d: %v", i, err)
+				}
+
+				finalContent.WriteString(content)
+				finalToolCalls = append(finalToolCalls, toolCalls...)
+			}
+
+			if diff := cmp.Diff(tt.expectedContent, finalContent.String()); diff != "" {
+				t.Errorf("content mismatch (-want +got):\n%s", diff)
+			}
+
+			if diff := cmp.Diff(expectedToolCalls, finalToolCalls, argsComparer); diff != "" {
+				t.Errorf("tool calls mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestGemma4Parser_StreamingSplitThinkingTag(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -600,7 +671,7 @@ func TestGemma4ArgsToJSON(t *testing.T) {
 		{
 			name:     "string_value_with_windows_path_backslashes",
 			input:    `{path:<|"|>C:\\Temp\\file.txt<|"|>}`,
-			expected: `{"path":"C:\\Temp\\file.txt"}`,
+			expected: `{"path":"C:\\\\Temp\\\\file.txt"}`,
 		},
 		{
 			name:     "string_value_with_windows_path_single_backslashes",
@@ -610,7 +681,7 @@ func TestGemma4ArgsToJSON(t *testing.T) {
 		{
 			name:     "string_value_with_escaped_forward_slashes",
 			input:    `{url:<|"|>https:\/\/example.com\/a<|"|>}`,
-			expected: `{"url":"https:\/\/example.com\/a"}`,
+			expected: `{"url":"https:\\/\\/example.com\\/a"}`,
 		},
 		{
 			name:     "string_value_with_unicode_escape_sequence",
@@ -665,5 +736,85 @@ func TestGemma4Parser_HasThinkingSupport(t *testing.T) {
 	parser2 := &Gemma4Parser{hasThinkingSupport: false}
 	if parser2.HasThinkingSupport() {
 		t.Error("Gemma4Parser without thinking support should not report it")
+	}
+}
+
+func TestParseGemma4ToolCall_InvalidRawQuotedEscape(t *testing.T) {
+	_, err := parseGemma4ToolCall(`call:open_file{path:"C:\users\bob\file.txt"}`)
+	if err == nil {
+		t.Fatal("expected parseGemma4ToolCall to reject malformed raw-quoted JSON escapes")
+	}
+}
+
+func TestParseGemma4ToolCall_QuotedScalarsStayStrings(t *testing.T) {
+	toolCall, err := parseGemma4ToolCall(`call:foo{n:<|"|>1<|"|>,b:<|"|>true<|"|>,z:<|"|>null<|"|>}`)
+	if err != nil {
+		t.Fatalf("parseGemma4ToolCall returned error: %v", err)
+	}
+
+	want := api.ToolCall{
+		Function: api.ToolCallFunction{
+			Name: "foo",
+			Arguments: testArgs(map[string]any{
+				"n": "1",
+				"b": "true",
+				"z": "null",
+			}),
+		},
+	}
+
+	if diff := cmp.Diff(want, toolCall, argsComparer); diff != "" {
+		t.Fatalf("quoted scalar handling differed from the reference implementation (-want +got):\n%s", diff)
+	}
+}
+
+func TestParseGemma4ToolCall_UnquotedScalarsKeepStructuredTypes(t *testing.T) {
+	toolCall, err := parseGemma4ToolCall(`call:foo{n:1,b:true,z:null}`)
+	if err != nil {
+		t.Fatalf("parseGemma4ToolCall returned error: %v", err)
+	}
+
+	want := api.ToolCall{
+		Function: api.ToolCallFunction{
+			Name: "foo",
+			Arguments: testArgs(map[string]any{
+				"n": 1.0,
+				"b": true,
+				"z": nil,
+			}),
+		},
+	}
+
+	if diff := cmp.Diff(want, toolCall, argsComparer); diff != "" {
+		t.Fatalf("unquoted scalar handling differed from the reference implementation (-want +got):\n%s", diff)
+	}
+}
+
+func TestParseGemma4ToolCall_ReferenceImplementationExample(t *testing.T) {
+	toolCall, err := parseGemma4ToolCall(`call:get_current_temperature{detail_level:0,location:<|"|>Paris, France<|"|>,unit:<|"|>celsius<|"|>}`)
+	if err != nil {
+		t.Fatalf("parseGemma4ToolCall returned error: %v", err)
+	}
+
+	want := api.ToolCall{
+		Function: api.ToolCallFunction{
+			Name: "get_current_temperature",
+			Arguments: testArgs(map[string]any{
+				"detail_level": 0.0,
+				"location":     "Paris, France",
+				"unit":         "celsius",
+			}),
+		},
+	}
+
+	if diff := cmp.Diff(want, toolCall, argsComparer); diff != "" {
+		t.Fatalf("tool call handling differed from the reference implementation (-want +got):\n%s", diff)
+	}
+}
+
+func TestParseGemma4ToolCall_InvalidRawQuotedStructuralString(t *testing.T) {
+	_, err := parseGemma4ToolCall(`call:foo{q:"a,b:c"}`)
+	if err == nil {
+		t.Fatal("expected parseGemma4ToolCall to reject raw-quoted strings with structural text that the reference implementation does not support")
 	}
 }

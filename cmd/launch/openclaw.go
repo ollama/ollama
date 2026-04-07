@@ -312,9 +312,10 @@ func (c *Openclaw) onboarded() bool {
 	return lastRunAt != ""
 }
 
-// patchDeviceScopes upgrades the local CLI device's paired scopes to include
-// operator.admin. Only patches the local device, not remote ones.
-// Best-effort: silently returns on any error.
+// patchDeviceScopes upgrades the local CLI device's paired operator scopes so
+// newer gateway auth baselines (approvedScopes) allow launch+TUI reconnects
+// without forcing an interactive re-pair. Only patches the local device,
+// not remote ones. Best-effort: silently returns on any error.
 func patchDeviceScopes() {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -350,9 +351,15 @@ func patchDeviceScopes() {
 	}
 
 	changed := patchScopes(dev, "scopes", required)
+	if patchScopes(dev, "approvedScopes", required) {
+		changed = true
+	}
 	if tokens, ok := dev["tokens"].(map[string]any); ok {
-		for _, tok := range tokens {
+		for role, tok := range tokens {
 			if tokenMap, ok := tok.(map[string]any); ok {
+				if !isOperatorToken(role, tokenMap) {
+					continue
+				}
 				if patchScopes(tokenMap, "scopes", required) {
 					changed = true
 				}
@@ -406,6 +413,14 @@ func patchScopes(obj map[string]any, key string, required []string) bool {
 		obj[key] = existing
 	}
 	return added
+}
+
+func isOperatorToken(tokenRole string, token map[string]any) bool {
+	if strings.EqualFold(strings.TrimSpace(tokenRole), "operator") {
+		return true
+	}
+	role, _ := token["role"].(string)
+	return strings.EqualFold(strings.TrimSpace(role), "operator")
 }
 
 // canInstallDaemon reports whether the openclaw daemon can be installed as a

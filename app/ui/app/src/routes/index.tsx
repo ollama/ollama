@@ -7,7 +7,8 @@ export const Route = createFileRoute("/")({
       queryKey: ["settings"],
       queryFn: getSettings,
     });
-    const chatId = settingsData?.settings?.LastHomeView === "chat" ? "new" : "launch";
+    const lastHomeView = settingsData?.settings?.LastHomeView ?? "chat";
+    const chatId = lastHomeView === "chat" ? "new" : "launch";
 
     throw redirect({
       to: "/c/$chatId",
