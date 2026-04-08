@@ -36,6 +36,13 @@ func launcherTestState() *launch.LauncherState {
 				Changeable:      true,
 				AutoInstallable: true,
 			},
+			"opencode": {
+				Name:        "opencode",
+				DisplayName: "OpenCode",
+				Description: "Anomaly's open-source coding agent",
+				Selectable:  true,
+				Changeable:  true,
+			},
 			"droid": {
 				Name:        "droid",
 				DisplayName: "Droid",
@@ -54,12 +61,24 @@ func launcherTestState() *launch.LauncherState {
 	}
 }
 
+func findMenuCursorByIntegration(items []menuItem, name string) int {
+	for i, item := range items {
+		if item.integration == name {
+			return i
+		}
+	}
+	return -1
+}
+
 func TestMenuRendersPinnedItemsAndMore(t *testing.T) {
 	view := newModel(launcherTestState()).View()
-	for _, want := range []string{"Chat with a model", "Launch Claude Code", "Launch Codex", "Launch OpenClaw", "More..."} {
+	for _, want := range []string{"Chat with a model", "Launch OpenClaw", "Launch Claude Code", "Launch OpenCode", "More..."} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected menu view to contain %q\n%s", want, view)
 		}
+	}
+	if strings.Contains(view, "Launch Codex") {
+		t.Fatalf("expected Codex to be under More, not pinned\n%s", view)
 	}
 }
 
@@ -102,7 +121,10 @@ func TestMenuRightOnRunSelectsChangeRun(t *testing.T) {
 
 func TestMenuEnterOnIntegrationSelectsLaunch(t *testing.T) {
 	menu := newModel(launcherTestState())
-	menu.cursor = 1
+	menu.cursor = findMenuCursorByIntegration(menu.items, "claude")
+	if menu.cursor == -1 {
+		t.Fatal("expected claude menu item")
+	}
 	updated, _ := menu.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	got := updated.(model)
 	want := TUIAction{Kind: TUIActionLaunchIntegration, Integration: "claude"}
@@ -113,7 +135,10 @@ func TestMenuEnterOnIntegrationSelectsLaunch(t *testing.T) {
 
 func TestMenuRightOnIntegrationSelectsConfigure(t *testing.T) {
 	menu := newModel(launcherTestState())
-	menu.cursor = 1
+	menu.cursor = findMenuCursorByIntegration(menu.items, "claude")
+	if menu.cursor == -1 {
+		t.Fatal("expected claude menu item")
+	}
 	updated, _ := menu.Update(tea.KeyMsg{Type: tea.KeyRight})
 	got := updated.(model)
 	want := TUIAction{Kind: TUIActionLaunchIntegration, Integration: "claude", ForceConfigure: true}
@@ -130,7 +155,10 @@ func TestMenuIgnoresDisabledActions(t *testing.T) {
 	state.Integrations["claude"] = claude
 
 	menu := newModel(state)
-	menu.cursor = 1
+	menu.cursor = findMenuCursorByIntegration(menu.items, "claude")
+	if menu.cursor == -1 {
+		t.Fatal("expected claude menu item")
+	}
 
 	updatedEnter, _ := menu.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if updatedEnter.(model).selected {
@@ -150,7 +178,10 @@ func TestMenuShowsCurrentModelSuffixes(t *testing.T) {
 		t.Fatalf("expected run row to show current model suffix\n%s", runView)
 	}
 
-	menu.cursor = 1
+	menu.cursor = findMenuCursorByIntegration(menu.items, "claude")
+	if menu.cursor == -1 {
+		t.Fatal("expected claude menu item")
+	}
 	integrationView := menu.View()
 	if !strings.Contains(integrationView, "(glm-5:cloud)") {
 		t.Fatalf("expected integration row to show current model suffix\n%s", integrationView)
@@ -166,8 +197,12 @@ func TestMenuShowsInstallStatusAndHint(t *testing.T) {
 	codex.InstallHint = "Install from https://example.com/codex"
 	state.Integrations["codex"] = codex
 
+	state.LastSelection = "codex"
 	menu := newModel(state)
-	menu.cursor = 2
+	menu.cursor = findMenuCursorByIntegration(menu.items, "codex")
+	if menu.cursor == -1 {
+		t.Fatal("expected codex menu item in overflow section")
+	}
 	view := menu.View()
 	if !strings.Contains(view, "(not installed)") {
 		t.Fatalf("expected not-installed marker\n%s", view)

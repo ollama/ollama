@@ -787,7 +787,7 @@ func TestShowOrPullWithPolicy_ModelExists(t *testing.T) {
 
 func TestShowOrPullWithPolicy_ModelNotFound_FailDoesNotPromptOrPull(t *testing.T) {
 	oldHook := DefaultConfirmPrompt
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		t.Fatal("confirm prompt should not be called with fail policy")
 		return false, nil
 	}
@@ -826,7 +826,7 @@ func TestShowOrPullWithPolicy_ModelNotFound_FailDoesNotPromptOrPull(t *testing.T
 
 func TestShowOrPullWithPolicy_ModelNotFound_PromptPolicyPulls(t *testing.T) {
 	oldHook := DefaultConfirmPrompt
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		if !strings.Contains(prompt, "missing-model") {
 			t.Fatalf("expected prompt to mention missing model, got %q", prompt)
 		}
@@ -864,7 +864,7 @@ func TestShowOrPullWithPolicy_ModelNotFound_PromptPolicyPulls(t *testing.T) {
 
 func TestShowOrPullWithPolicy_ModelNotFound_AutoPullPolicyPullsWithoutPrompt(t *testing.T) {
 	oldHook := DefaultConfirmPrompt
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		t.Fatalf("confirm prompt should not be called with auto-pull policy: %q", prompt)
 		return false, nil
 	}
@@ -900,7 +900,7 @@ func TestShowOrPullWithPolicy_ModelNotFound_AutoPullPolicyPullsWithoutPrompt(t *
 
 func TestShowOrPullWithPolicy_CloudModelNotFound_FailsEarlyForAllPolicies(t *testing.T) {
 	oldHook := DefaultConfirmPrompt
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		t.Fatal("confirm prompt should not be called for explicit cloud models")
 		return false, nil
 	}
@@ -946,7 +946,7 @@ func TestShowOrPullWithPolicy_CloudModelNotFound_FailsEarlyForAllPolicies(t *tes
 
 func TestShowOrPullWithPolicy_CloudModelDisabled_FailsWithCloudDisabledError(t *testing.T) {
 	oldHook := DefaultConfirmPrompt
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		t.Fatal("confirm prompt should not be called for explicit cloud models")
 		return false, nil
 	}
@@ -1035,7 +1035,7 @@ func TestShowOrPull_ShowCalledWithCorrectModel(t *testing.T) {
 func TestShowOrPull_ModelNotFound_ConfirmYes_Pulls(t *testing.T) {
 	// Set up hook so confirmPrompt doesn't need a terminal
 	oldHook := DefaultConfirmPrompt
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		if !strings.Contains(prompt, "missing-model") {
 			t.Errorf("expected prompt to contain model name, got %q", prompt)
 		}
@@ -1073,7 +1073,7 @@ func TestShowOrPull_ModelNotFound_ConfirmYes_Pulls(t *testing.T) {
 
 func TestShowOrPull_ModelNotFound_ConfirmNo_Cancelled(t *testing.T) {
 	oldHook := DefaultConfirmPrompt
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		return false, ErrCancelled
 	}
 	defer func() { DefaultConfirmPrompt = oldHook }()
@@ -1103,7 +1103,7 @@ func TestShowOrPull_ModelNotFound_ConfirmNo_Cancelled(t *testing.T) {
 func TestShowOrPull_CloudModel_NotFoundDoesNotPull(t *testing.T) {
 	// Confirm prompt should NOT be called for explicit cloud models
 	oldHook := DefaultConfirmPrompt
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		t.Error("confirm prompt should not be called for cloud models")
 		return false, nil
 	}
@@ -1143,7 +1143,7 @@ func TestShowOrPull_CloudModel_NotFoundDoesNotPull(t *testing.T) {
 func TestShowOrPull_CloudLegacySuffix_NotFoundDoesNotPull(t *testing.T) {
 	// Confirm prompt should NOT be called for explicit cloud models
 	oldHook := DefaultConfirmPrompt
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		t.Error("confirm prompt should not be called for cloud models")
 		return false, nil
 	}
@@ -1183,7 +1183,7 @@ func TestShowOrPull_CloudLegacySuffix_NotFoundDoesNotPull(t *testing.T) {
 func TestConfirmPrompt_DelegatesToHook(t *testing.T) {
 	oldHook := DefaultConfirmPrompt
 	var hookCalled bool
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		hookCalled = true
 		if prompt != "test prompt?" {
 			t.Errorf("expected prompt %q, got %q", "test prompt?", prompt)
@@ -1307,7 +1307,7 @@ func TestEnsureAuth_PreservesCancelledSignInHook(t *testing.T) {
 
 func TestEnsureAuth_DeclinedFallbackReturnsCancelled(t *testing.T) {
 	oldConfirm := DefaultConfirmPrompt
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		return false, nil
 	}
 	defer func() { DefaultConfirmPrompt = oldConfirm }()

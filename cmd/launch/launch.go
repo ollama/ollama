@@ -756,7 +756,6 @@ func (c *launcherClient) loadModelInventoryOnce(ctx context.Context) error {
 }
 
 func runIntegration(runner Runner, modelName string, args []string) error {
-	fmt.Fprintf(os.Stderr, "\nLaunching %s with %s...\n", runner, modelName)
 	return runner.Run(modelName, args)
 }
 
