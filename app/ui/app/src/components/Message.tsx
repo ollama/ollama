@@ -65,6 +65,9 @@ type BrowserToolResult = {
   page_stack: string[];
 };
 
+// tool_result is a JSON object at runtime, not number[] as in generated types
+type ToolMessage = MessageType & { tool_result?: Record<string, unknown>; toolName?: string };
+
 type BrowserToolContent = {
   cursor: number;
   title: string;
@@ -262,9 +265,10 @@ function ToolRoleContent({
   browserToolResult?: BrowserToolResult;
   lastToolQuery?: string;
 }) {
-  const content = message.content;
-  const rawToolResult = (message as any).tool_result;
-  const toolName = (message as any).tool_name || (message as any).toolName;
+  const toolMsg = message as ToolMessage;
+  const content = toolMsg.content;
+  const rawToolResult = toolMsg.tool_result;
+  const toolName = toolMsg.tool_name || toolMsg.toolName;
   const [isCollapsed, setIsCollapsed] = useState(true);
 
   if (browserToolResult && typeof browserToolResult === "object") {
@@ -321,8 +325,8 @@ function ToolRoleContent({
                         (lastToolQuery && lastToolQuery.trim()) ||
                         (rawToolResult &&
                         typeof rawToolResult === "object" &&
-                        typeof (rawToolResult as any).query === "string"
-                          ? (rawToolResult as any).query.trim()
+                        typeof rawToolResult.query === "string"
+                          ? String(rawToolResult.query).trim()
                           : "");
                       return q ? (
                         <>
@@ -338,8 +342,8 @@ function ToolRoleContent({
                           (lastToolQuery && lastToolQuery.trim()) ||
                           (rawToolResult &&
                           typeof rawToolResult === "object" &&
-                          typeof (rawToolResult as any).url === "string"
-                            ? (rawToolResult as any).url
+                          typeof rawToolResult.url === "string"
+                            ? String(rawToolResult.url)
                             : "");
                         return u ? (
                           <>
@@ -600,8 +604,8 @@ function ToolCallDisplay({
         "file",
         "path",
       ].find((k) => Object.prototype.hasOwnProperty.call(argsObj, k));
-      if (preferredKey && typeof (argsObj as any)[preferredKey] === "string") {
-        preview = String((argsObj as any)[preferredKey]);
+      if (preferredKey && typeof argsObj[preferredKey] === "string") {
+        preview = String(argsObj[preferredKey]);
       }
     } catch (err) {
       console.error(
