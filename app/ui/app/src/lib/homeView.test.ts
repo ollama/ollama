@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   getLaunchRouteSettingsUpdates,
   requestLaunchSidebarOpen,
+  resetLaunchSidebarState,
   resolveHomeChatId,
   shouldAutoOpenLaunchSidebarOnVisit,
 } from "./homeView";
@@ -43,7 +44,7 @@ describe("home view routing helpers", () => {
   });
 
   it("only auto-opens launch once per session unless explicitly requested", () => {
-    sessionStorage.clear();
+    resetLaunchSidebarState();
 
     expect(shouldAutoOpenLaunchSidebarOnVisit()).toBe(true);
     expect(shouldAutoOpenLaunchSidebarOnVisit()).toBe(false);
