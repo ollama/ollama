@@ -7,7 +7,7 @@ import (
 	"slices"
 
 	"github.com/ollama/ollama/llama"
-	"github.com/ollama/ollama/model"
+	"github.com/ollama/ollama/tokenizer"
 )
 
 // token represents information about a single token during sampling
@@ -168,15 +168,15 @@ type GrammarSampler struct {
 	grammar *llama.Grammar
 }
 
-func NewGrammarSampler(model model.TextProcessor, grammarStr string) (*GrammarSampler, error) {
-	vocabIds := make([]uint32, len(model.Vocabulary().Values))
-	pieces := make([]string, len(model.Vocabulary().Values))
-	for i := range model.Vocabulary().Values {
-		pieces[i], _ = model.Decode([]int32{int32(i)})
+func NewGrammarSampler(tok tokenizer.Tokenizer, grammarStr string) (*GrammarSampler, error) {
+	vocabIds := make([]uint32, len(tok.Vocabulary().Values))
+	pieces := make([]string, len(tok.Vocabulary().Values))
+	for i := range tok.Vocabulary().Values {
+		pieces[i], _ = tok.Decode([]int32{int32(i)})
 		vocabIds[i] = uint32(i)
 	}
 
-	grammar := llama.NewGrammar(grammarStr, vocabIds, pieces, model.Vocabulary().EOS)
+	grammar := llama.NewGrammar(grammarStr, vocabIds, pieces, tok.Vocabulary().EOS)
 	if grammar == nil {
 		return nil, errors.New("sample: failed to initialize grammar")
 	}

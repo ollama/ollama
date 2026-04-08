@@ -4,7 +4,6 @@ import {
   ChatEvent,
   DownloadEvent,
   ErrorEvent,
-  InferenceCompute,
   InferenceComputeResponse,
   ModelCapabilitiesResponse,
   Model,
@@ -15,7 +14,7 @@ import {
 import { parseJsonlFromResponse } from "./util/jsonl-parsing";
 import { ollamaClient as ollama } from "./lib/ollama-client";
 import type { ModelResponse } from "ollama/browser";
-import { API_BASE } from "./lib/config";
+import { API_BASE, OLLAMA_DOT_COM } from "./lib/config";
 
 // Extend Model class with utility methods
 declare module "@/gotypes" {
@@ -28,6 +27,11 @@ Model.prototype.isCloud = function (): boolean {
   return this.model.endsWith("cloud");
 };
 
+export type CloudStatusSource = "env" | "config" | "both" | "none";
+export interface CloudStatusResponse {
+  disabled: boolean;
+  source: CloudStatusSource;
+}
 // Helper function to convert Uint8Array to base64
 function uint8ArrayToBase64(uint8Array: Uint8Array): string {
   const chunkSize = 0x8000; // 32KB chunks to avoid stack overflow
@@ -42,44 +46,50 @@ function uint8ArrayToBase64(uint8Array: Uint8Array): string {
 }
 
 export async function fetchUser(): Promise<User | null> {
-  try {
-    const response = await fetch(`${API_BASE}/api/v1/me`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-      },
-    });
-
-    if (response.ok) {
-      const userData: User = await response.json();
-      return userData;
-    }
-
-    return null;
-  } catch (error) {
-    console.error("Error fetching user:", error);
-    return null;
-  }
-}
-
-export async function fetchConnectUrl(): Promise<string> {
-  const response = await fetch(`${API_BASE}/api/v1/connect`, {
-    method: "GET",
+  const response = await fetch(`${API_BASE}/api/me`, {
+    method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
   });
 
-  if (!response.ok) {
-    throw new Error("Failed to fetch connect URL");
+  if (response.ok) {
+    const userData: User = await response.json();
+
+    if (userData.avatarurl && !userData.avatarurl.startsWith("http")) {
+      userData.avatarurl = `${OLLAMA_DOT_COM}${userData.avatarurl}`;
+    }
+
+    return userData;
   }
 
-  const data = await response.json();
-  return data.connect_url;
+  if (response.status === 401 || response.status === 403) {
+    return null;
+  }
+
+  throw new Error(`Failed to fetch user: ${response.status}`);
+}
+
+export async function fetchConnectUrl(): Promise<string> {
+  const response = await fetch(`${API_BASE}/api/me`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (response.status === 401) {
+    const data = await response.json();
+    if (data.signin_url) {
+      return data.signin_url;
+    }
+  }
+
+  throw new Error("Failed to fetch connect URL");
 }
 
 export async function disconnectUser(): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/v1/disconnect`, {
+  const response = await fetch(`${API_BASE}/api/signout`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -151,7 +161,7 @@ export async function getModels(query?: string): Promise<Model[]> {
       // Add query if it's in the registry and not already in the list
       if (!exactMatch) {
         const result = await getModelUpstreamInfo(new Model({ model: query }));
-        const existsUpstream = !!result.digest && !result.error;
+        const existsUpstream = result.exists;
         if (existsUpstream) {
           filteredModels.push(new Model({ model: query }));
         }
@@ -280,6 +290,28 @@ export async function updateSettings(settings: Settings): Promise<{
   };
 }
 
+export async function updateCloudSetting(
+  enabled: boolean,
+): Promise<CloudStatusResponse> {
+  const response = await fetch(`${API_BASE}/api/v1/cloud`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ enabled }),
+  });
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(error || "Failed to update cloud setting");
+  }
+
+  const data = await response.json();
+  return {
+    disabled: Boolean(data.disabled),
+    source: (data.source as CloudStatusSource) || "none",
+  };
+}
+
 export async function renameChat(chatId: string, title: string): Promise<void> {
   const response = await fetch(`${API_BASE}/api/v1/chat/${chatId}/rename`, {
     method: "PUT",
@@ -307,7 +339,7 @@ export async function deleteChat(chatId: string): Promise<void> {
 // Get upstream information for model staleness checking
 export async function getModelUpstreamInfo(
   model: Model,
-): Promise<{ digest?: string; pushTime: number; error?: string }> {
+): Promise<{ stale: boolean; exists: boolean; error?: string }> {
   try {
     const response = await fetch(`${API_BASE}/api/v1/model/upstream`, {
       method: "POST",
@@ -321,22 +353,22 @@ export async function getModelUpstreamInfo(
 
     if (!response.ok) {
       console.warn(
-        `Failed to check upstream digest for ${model.model}: ${response.status}`,
+        `Failed to check upstream for ${model.model}: ${response.status}`,
       );
-      return { pushTime: 0 };
+      return { stale: false, exists: false };
     }
 
     const data = await response.json();
 
     if (data.error) {
-      console.warn(`Upstream digest check: ${data.error}`);
-      return { error: data.error, pushTime: 0 };
+      console.warn(`Upstream check: ${data.error}`);
+      return { stale: false, exists: false, error: data.error };
     }
 
-    return { digest: data.digest, pushTime: data.pushTime || 0 };
+    return { stale: !!data.stale, exists: true };
   } catch (error) {
     console.warn(`Error checking model staleness:`, error);
-    return { pushTime: 0 };
+    return { stale: false, exists: false };
   }
 }
 
@@ -374,7 +406,7 @@ export async function* pullModel(
   }
 }
 
-export async function getInferenceCompute(): Promise<InferenceCompute[]> {
+export async function getInferenceCompute(): Promise<InferenceComputeResponse> {
   const response = await fetch(`${API_BASE}/api/v1/inference-compute`);
   if (!response.ok) {
     throw new Error(
@@ -383,13 +415,13 @@ export async function getInferenceCompute(): Promise<InferenceCompute[]> {
   }
 
   const data = await response.json();
-  const inferenceComputeResponse = new InferenceComputeResponse(data);
-  return inferenceComputeResponse.inferenceComputes || [];
+  return new InferenceComputeResponse(data);
 }
 
 export async function fetchHealth(): Promise<boolean> {
   try {
-    const response = await fetch(`${API_BASE}/api/v1/health`, {
+    // Use the /api/version endpoint as a health check
+    const response = await fetch(`${API_BASE}/api/version`, {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
@@ -398,7 +430,8 @@ export async function fetchHealth(): Promise<boolean> {
 
     if (response.ok) {
       const data = await response.json();
-      return data.healthy || false;
+      // If we get a version back, the server is healthy
+      return !!data.version;
     }
 
     return false;
@@ -406,4 +439,17 @@ export async function fetchHealth(): Promise<boolean> {
     console.error("Error checking health:", error);
     return false;
   }
+}
+
+export async function getCloudStatus(): Promise<CloudStatusResponse | null> {
+  const response = await fetch(`${API_BASE}/api/v1/cloud`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch cloud status: ${response.status}`);
+  }
+
+  const data = await response.json();
+  return {
+    disabled: Boolean(data.disabled),
+    source: (data.source as CloudStatusSource) || "none",
+  };
 }

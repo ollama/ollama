@@ -38,9 +38,7 @@ func TestLongInputContext(t *testing.T) {
 	}
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
-	if err := PullIfMissing(ctx, client, req.Model); err != nil {
-		t.Fatalf("PullIfMissing failed: %v", err)
-	}
+	pullOrSkip(ctx, t, client, req.Model)
 	DoChat(ctx, t, client, req, []string{"russia", "german", "france", "england", "austria", "prussia", "europe", "individuals", "coalition", "conflict"}, 120*time.Second, 10*time.Second)
 }
 
@@ -53,6 +51,7 @@ func TestContextExhaustion(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	// Set up the test data
+	thinkOff := api.ThinkValue{Value: false}
 	req := api.ChatRequest{
 		Model: smol,
 		Messages: []api.Message{
@@ -61,6 +60,7 @@ func TestContextExhaustion(t *testing.T) {
 				Content: "Write me a story in english with a lot of emojis",
 			},
 		},
+		Think:  &thinkOff,
 		Stream: &stream,
 		Options: map[string]any{
 			"temperature": 0,
@@ -70,14 +70,15 @@ func TestContextExhaustion(t *testing.T) {
 	}
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
-	if err := PullIfMissing(ctx, client, req.Model); err != nil {
-		t.Fatalf("PullIfMissing failed: %v", err)
-	}
+	pullOrSkip(ctx, t, client, req.Model)
 	DoChat(ctx, t, client, req, []string{"once", "upon", "lived", "sunny", "cloudy", "clear", "water", "time", "travel", "world"}, 120*time.Second, 10*time.Second)
 }
 
 // Send multiple generate requests with prior context and ensure the response is coherant and expected
 func TestParallelGenerateWithHistory(t *testing.T) {
+	if testModel != "" {
+		t.Skip("uses hardcoded model, not applicable with model override")
+	}
 	modelName := "gpt-oss:20b"
 	req, resp := GenerateRequests()
 	numParallel := 2
@@ -133,6 +134,12 @@ func TestParallelGenerateWithHistory(t *testing.T) {
 
 // Send generate requests with prior context and ensure the response is coherant and expected
 func TestGenerateWithHistory(t *testing.T) {
+	if testModel != "" {
+		// The Generate API's Context field (token array continuation) is not
+		// supported by all runners (e.g. MLX). Chat history works; this is
+		// the only generate-specific continuation path.
+		t.Skip("generate context continuation not supported by all runners")
+	}
 	req := api.GenerateRequest{
 		Model:     smol,
 		Prompt:    rainbowPrompt,
@@ -173,6 +180,9 @@ func TestGenerateWithHistory(t *testing.T) {
 
 // Send multiple chat requests with prior context and ensure the response is coherant and expected
 func TestParallelChatWithHistory(t *testing.T) {
+	if testModel != "" {
+		t.Skip("uses hardcoded model, not applicable with model override")
+	}
 	modelName := "gpt-oss:20b"
 	req, resp := ChatRequests()
 	numParallel := 2

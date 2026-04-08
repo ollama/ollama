@@ -6,13 +6,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"log/slog"
+	"maps"
 	"math"
 	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/util/bufioutil"
+	"github.com/ollama/ollama/ml"
 )
 
 type GGML struct {
@@ -157,6 +160,27 @@ func (kv KV) SSMGroupCount() uint64 {
 	return uint64(kv.Uint("ssm.group_count"))
 }
 
+func (kv KV) FFNLength() []uint64 {
+	ffnLengthDefault := uint32(0)
+	ffnLength := kv.UintOrArrayValueAsArray("feed_forward_length", ffnLengthDefault)
+	if len(ffnLength) == 1 {
+		ffnLengthDefault = ffnLength[0]
+	}
+	nLayers := int(kv.BlockCount())
+	if len(ffnLength) > nLayers {
+		slog.Warn("got more elements of feed_forward_length than layers", "len(ffnLength)", len(ffnLength), "layers", nLayers)
+	}
+	out := make([]uint64, nLayers)
+	for i := range nLayers {
+		if i >= len(ffnLength) {
+			out[i] = uint64(ffnLengthDefault)
+		} else {
+			out[i] = uint64(ffnLength[i])
+		}
+	}
+	return out
+}
+
 // general types
 
 func (kv KV) String(key string, defaultValue ...string) string {
@@ -238,20 +262,42 @@ func (kv KV) Bools(key string, defaultValue ...[]bool) []bool {
 	return val.values
 }
 
+func (kv KV) Len() int {
+	return len(kv)
+}
+
+func (kv KV) Keys() iter.Seq[string] {
+	return maps.Keys(kv)
+}
+
+func (kv KV) Value(key string) any {
+	return kv[key]
+}
+
 func (kv KV) OllamaEngineRequired() bool {
 	return slices.Contains([]string{
+		"bert",
+		"deepseek2",
+		"deepseekocr",
 		"gemma3",
 		"gemma3n",
+		"gemma4",
 		"gptoss", "gpt-oss",
 		"llama4",
 		"mistral3",
 		"mllama",
+		"nemotron_h", "nemotron_h_moe",
+		"nomic-bert",
+		"olmo3",
 		"qwen25vl",
 		"qwen3", "qwen3moe",
+		"qwen35", "qwen35moe",
+		"qwen3next",
 		"qwen3vl", "qwen3vlmoe",
-		"deepseekocr",
-		"deepseek2",
-		"nomic-bert",
+		"glm4moelite",
+		"glmocr",
+		"lfm2",
+		"lfm2moe",
 	}, kv.Architecture())
 }
 
@@ -550,7 +596,7 @@ func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, error) {
 	}, nil
 }
 
-func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType string, useFlashAttention bool) (kv []uint64, partialOffload, fullOffload uint64) {
+func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType string, useFlashAttention ml.FlashAttentionType) (kv []uint64, partialOffload, fullOffload uint64) {
 	context *= uint64(numParallel)
 
 	embedding := f.KV().EmbeddingLength()
@@ -791,7 +837,7 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 		}
 
 		partialOffload = 2 * f.KV().HeadCountMax() / cmp.Or(f.KV().HeadCountKVMin(), 1) * kvTotal / 6
-		if useFlashAttention {
+		if useFlashAttention == ml.FlashAttentionEnabled {
 			// rough estimate of graph size with flash attention on
 			partialOffload = (4*uint64(numParallel) + context>>10 + 110) * format.MebiByte
 		}
@@ -809,6 +855,14 @@ func (f GGML) SupportsKVCacheType(cacheType string) bool {
 	return slices.Contains([]string{"q8_0", "q4_0"}, cacheType)
 }
 
+// KVCacheTypeIsQuantized checks if the requested cache type is a quantized type
+func (f GGML) KVCacheTypeIsQuantized(cacheType string) bool {
+	if cacheType == "" || cacheType == "f16" || cacheType == "f32" || cacheType == "bf16" {
+		return false
+	}
+	return true
+}
+
 // SupportsFlashAttention checks if the model supports flash attention
 func (f GGML) SupportsFlashAttention() bool {
 	_, isEmbedding := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]
@@ -816,7 +870,12 @@ func (f GGML) SupportsFlashAttention() bool {
 		return false
 	}
 
-	if arch := f.KV().Architecture(); slices.Contains([]string{"gemma2"}, arch) {
+	arch := f.KV().Architecture()
+	if slices.Contains([]string{"qwen35", "qwen35moe", "qwen3next"}, arch) {
+		return true
+	}
+
+	if slices.Contains([]string{"gemma2", "grok"}, arch) {
 		return false
 	}
 
@@ -829,10 +888,20 @@ func (f GGML) SupportsFlashAttention() bool {
 // FlashAttention checks if the model should enable flash attention
 func (f GGML) FlashAttention() bool {
 	return slices.Contains([]string{
+		"bert",
 		"gemma3",
+		"gemma4",
+		"glm4moelite",
+		"glmocr",
 		"gptoss", "gpt-oss",
+		"lfm2",
+		"lfm2moe",
 		"mistral3",
+		"nemotron_h", "nemotron_h_moe",
+		"olmo3",
 		"qwen3", "qwen3moe",
+		"qwen35", "qwen35moe",
+		"qwen3next",
 		"qwen3vl", "qwen3vlmoe",
 	}, f.KV().String("general.architecture"))
 }

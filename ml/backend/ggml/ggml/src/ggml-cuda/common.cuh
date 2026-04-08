@@ -65,12 +65,35 @@ static cudaError_t cudaMemsetAsyncReserve ( void* devPtr, int value, size_t coun
     }
 }
 
+static cublasStatus_t cublasGemmBatchedExReserve(
+        cublasHandle_t handle, cublasOperation_t transa, cublasOperation_t transb,
+        int m, int n, int k,
+        const void *alpha,
+        const void *const Aarray[], cudaDataType_t Atype, int lda,
+        const void *const Barray[], cudaDataType_t Btype, int ldb,
+        const void *beta,
+        void *const Carray[], cudaDataType_t Ctype, int ldc,
+        int batchCount,
+        cublasComputeType_t computeType, cublasGemmAlgo_t algo) {
+    if (!reserving_graph) {
+        return cublasGemmBatchedEx(handle, transa, transb, m, n, k,
+            alpha, const_cast<const void **>(Aarray), Atype, lda,
+            const_cast<const void **>(Barray), Btype, ldb,
+            beta, const_cast<void **>(Carray), Ctype, ldc,
+            batchCount, computeType, algo);
+    } else {
+        return CUBLAS_STATUS_SUCCESS;
+    }
+}
+
 #undef cudaMemcpyAsync
 #define cudaMemcpyAsync cudaMemcpyAsyncReserve
 #undef cudaMemcpy2DAsync
 #define cudaMemcpy2DAsync cudaMemcpy2DAsyncReserve
 #undef cudaMemsetAsync
 #define cudaMemsetAsync cudaMemsetAsyncReserve
+#undef cublasGemmBatchedEx
+#define cublasGemmBatchedEx cublasGemmBatchedExReserve
 
 #define STRINGIZE_IMPL(...) #__VA_ARGS__
 #define STRINGIZE(...) STRINGIZE_IMPL(__VA_ARGS__)
@@ -102,19 +125,22 @@ static cudaError_t cudaMemsetAsyncReserve ( void* devPtr, int value, size_t coun
 #define GGML_CUDA_CC_RDNA1      (GGML_CUDA_CC_OFFSET_AMD + 0x1010) // RX 5000
 #define GGML_CUDA_CC_RDNA2      (GGML_CUDA_CC_OFFSET_AMD + 0x1030) // RX 6000, minimum for dp4a
 #define GGML_CUDA_CC_RDNA3      (GGML_CUDA_CC_OFFSET_AMD + 0x1100) // RX 7000, minimum for WMMA
+#define GGML_CUDA_CC_RDNA3_5    (GGML_CUDA_CC_OFFSET_AMD + 0x1150) // AI 370, AI Max 395 laptops.
 #define GGML_CUDA_CC_RDNA4      (GGML_CUDA_CC_OFFSET_AMD + 0x1200) // RX 9000
 
-#define GGML_CUDA_CC_IS_AMD(cc)   (cc >= GGML_CUDA_CC_OFFSET_AMD)
-#define GGML_CUDA_CC_IS_RDNA(cc)  (cc >= GGML_CUDA_CC_RDNA1)
-#define GGML_CUDA_CC_IS_RDNA1(cc) (cc >= GGML_CUDA_CC_RDNA1 && cc < GGML_CUDA_CC_RDNA2)
-#define GGML_CUDA_CC_IS_RDNA2(cc) (cc >= GGML_CUDA_CC_RDNA2 && cc < GGML_CUDA_CC_RDNA3)
-#define GGML_CUDA_CC_IS_RDNA3(cc) (cc >= GGML_CUDA_CC_RDNA3 && cc < GGML_CUDA_CC_RDNA4)
-#define GGML_CUDA_CC_IS_RDNA4(cc) (cc >= GGML_CUDA_CC_RDNA4)
-#define GGML_CUDA_CC_IS_GCN(cc)   (cc > GGML_CUDA_CC_OFFSET_AMD && cc < GGML_CUDA_CC_CDNA1)
-#define GGML_CUDA_CC_IS_CDNA(cc)  (cc >= GGML_CUDA_CC_CDNA1 && cc < GGML_CUDA_CC_RDNA1)
-#define GGML_CUDA_CC_IS_CDNA1(cc) (cc >= GGML_CUDA_CC_CDNA1 && cc < GGML_CUDA_CC_CDNA2)
-#define GGML_CUDA_CC_IS_CDNA2(cc) (cc >= GGML_CUDA_CC_CDNA2 && cc < GGML_CUDA_CC_CDNA3)
-#define GGML_CUDA_CC_IS_CDNA3(cc) (cc >= GGML_CUDA_CC_CDNA3 && cc < GGML_CUDA_CC_RDNA1)
+#define GGML_CUDA_CC_IS_AMD(cc)     (cc >= GGML_CUDA_CC_OFFSET_AMD)
+#define GGML_CUDA_CC_IS_RDNA(cc)    (cc >= GGML_CUDA_CC_RDNA1)
+#define GGML_CUDA_CC_IS_RDNA1(cc)   (cc >= GGML_CUDA_CC_RDNA1 && cc < GGML_CUDA_CC_RDNA2)
+#define GGML_CUDA_CC_IS_RDNA2(cc)   (cc >= GGML_CUDA_CC_RDNA2 && cc < GGML_CUDA_CC_RDNA3)
+#define GGML_CUDA_CC_IS_RDNA3_0(cc) (cc >= GGML_CUDA_CC_RDNA3 && cc < GGML_CUDA_CC_RDNA3_5)
+#define GGML_CUDA_CC_IS_RDNA3_5(cc) (cc >= GGML_CUDA_CC_RDNA3_5 && cc < GGML_CUDA_CC_RDNA4)
+#define GGML_CUDA_CC_IS_RDNA3(cc)   (GGML_CUDA_CC_IS_RDNA3_0(cc) || GGML_CUDA_CC_IS_RDNA3_5(cc))
+#define GGML_CUDA_CC_IS_RDNA4(cc)   (cc >= GGML_CUDA_CC_RDNA4)
+#define GGML_CUDA_CC_IS_GCN(cc)     (cc > GGML_CUDA_CC_OFFSET_AMD && cc < GGML_CUDA_CC_CDNA1)
+#define GGML_CUDA_CC_IS_CDNA(cc)    (cc >= GGML_CUDA_CC_CDNA1 && cc < GGML_CUDA_CC_RDNA1)
+#define GGML_CUDA_CC_IS_CDNA1(cc)   (cc >= GGML_CUDA_CC_CDNA1 && cc < GGML_CUDA_CC_CDNA2)
+#define GGML_CUDA_CC_IS_CDNA2(cc)   (cc >= GGML_CUDA_CC_CDNA2 && cc < GGML_CUDA_CC_CDNA3)
+#define GGML_CUDA_CC_IS_CDNA3(cc)   (cc >= GGML_CUDA_CC_CDNA3 && cc < GGML_CUDA_CC_RDNA1)
 
 // Moore Threads
 #define MUSART_HMASK 40300 // MUSA rc4.3, min. ver. for half2 -> uint mask comparisons
@@ -261,7 +287,7 @@ static const char * cu_get_error_str(CUresult err) {
 #define AMD_MFMA_AVAILABLE
 #endif // defined(GGML_USE_HIP) && defined(CDNA) && !defined(GGML_HIP_NO_MMQ_MFMA)
 
-#if defined(GGML_USE_HIP) && defined(RDNA4)
+#if defined(GGML_USE_HIP) && (defined(RDNA4) || defined(RDNA3))
 #define AMD_WMMA_AVAILABLE
 #endif // defined(GGML_USE_HIP) && defined(RDNA4)
 
@@ -329,7 +355,7 @@ static bool amd_mfma_available(const int cc) {
 }
 
 static bool amd_wmma_available(const int cc) {
-    return GGML_CUDA_CC_IS_RDNA4(cc);
+    return (GGML_CUDA_CC_IS_RDNA4(cc) || GGML_CUDA_CC_IS_RDNA3(cc));
 }
 
 static bool volta_mma_available(const int cc) {
@@ -496,6 +522,53 @@ static __device__ __forceinline__ float warp_reduce_max(float x) {
         x = fmaxf(x, __shfl_xor_sync(0xffffffff, x, offset, width));
     }
     return x;
+}
+
+template<typename T, int width = WARP_SIZE>
+static __device__ __forceinline__ T warp_prefix_inclusive_sum(T x) {
+    const int lane_id = threadIdx.x % width;
+#pragma unroll
+    for (int offset = 1; offset < width; offset <<= 1) {
+        const T t = __shfl_up_sync(0xffffffff, x, offset, width);
+        if (lane_id >= offset) {
+            x += t;
+        }
+    }
+    return x;
+}
+
+template<int width = WARP_SIZE>
+static __device__ __forceinline__ float2 warp_prefix_inclusive_sum(float2 a) {
+    const int lane_id = threadIdx.x % width;
+#pragma unroll
+    for (int offset = 1; offset < width; offset <<= 1) {
+        const float t_x = __shfl_up_sync(0xffffffff, a.x, offset, width);
+        const float t_y = __shfl_up_sync(0xffffffff, a.y, offset, width);
+        if (lane_id >= offset) {
+            a.x += t_x;
+            a.y += t_y;
+        }
+    }
+    return a;
+}
+
+template<int width = WARP_SIZE>
+static __device__ __forceinline__ half2 warp_prefix_inclusive_sum(half2 a) {
+#ifdef FP16_AVAILABLE
+    const int lane_id = threadIdx.x % width;
+#pragma unroll
+    for (int offset = 1; offset < width; offset <<= 1) {
+        const half2 t = __shfl_up_sync(0xffffffff, a, offset, width);
+        if (lane_id >= offset) {
+            a = __hadd2(a, t);
+        }
+    }
+    return a;
+
+#else
+    NO_DEVICE_CODE;
+    return a;
+#endif // FP16_AVAILABLE
 }
 
 static __device__ __forceinline__ half ggml_cuda_hmax(const half a, const half b) {
@@ -1027,6 +1100,10 @@ struct ggml_cuda_concurrent_event {
     int                                          n_streams = 0;
     std::unordered_map<const ggml_tensor *, int> stream_mapping;
 
+    // Original order of nodes in this concurrent region (before interleaving)
+    // Used to restore grouping for fusion within streams
+    std::vector<const ggml_tensor *> original_order;
+
     const ggml_tensor * join_node;
 
     ggml_cuda_concurrent_event() = default;
@@ -1049,6 +1126,7 @@ struct ggml_cuda_concurrent_event {
     , fork_event(other.fork_event)
     , n_streams(other.n_streams)
     , stream_mapping(std::move(other.stream_mapping))
+    , original_order(std::move(other.original_order))
     , join_node(other.join_node) {
         other.fork_event = nullptr;
     }
@@ -1159,11 +1237,9 @@ struct ggml_cuda_concurrent_event {
 };
 
 struct ggml_cuda_stream_context {
-    std::vector<const ggml_tensor *>                                    original_nodes;
     std::unordered_map<const ggml_tensor *, ggml_cuda_concurrent_event> concurrent_events;
 
     void reset() {
-        original_nodes.clear();
         concurrent_events.clear();
     }
 };
@@ -1221,7 +1297,11 @@ struct ggml_backend_cuda_context {
 
     ggml_cuda_pool & pool(int device) {
         if (pools[device][curr_stream_no] == nullptr) {
-            pools[device][curr_stream_no] = new_pool_for_device(device, curr_stream_no, true);
+            bool alloc = true;
+            if (pools[device][0] != nullptr) {
+                alloc = pools[device][0]->alloc_memory();
+            }
+            pools[device][curr_stream_no] = new_pool_for_device(device, curr_stream_no, alloc);
         }
         return *pools[device][curr_stream_no];
     }
@@ -1238,12 +1318,12 @@ struct ggml_backend_cuda_context {
         }
     }
 
-    size_t pool_get_alloc_size() {
-        if (pools[device][curr_stream_no] == nullptr) {
+    size_t pool_get_alloc_size(int stream_no) {
+        if (pools[device][stream_no] == nullptr) {
             return 0;
         }
 
-        return pools[device][curr_stream_no]->alloc_size();
+        return pools[device][stream_no]->alloc_size();
     }
 };
 

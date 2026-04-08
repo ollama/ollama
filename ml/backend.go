@@ -54,10 +54,6 @@ type CacheConfig struct {
 	// MaskDType specifies the data type for generating the mask. If unset it will
 	// default to DTypeF32.
 	MaskDType DType
-
-	// MaskBatchPadding specifies the multiple for the batch size dimension in the mask.
-	// Any position that does not correspond to an actual token will be filled with -Inf.
-	MaskBatchPadding int
 }
 
 // BackendParams controls how the backend loads and executes models
@@ -74,7 +70,7 @@ type BackendParams struct {
 	GPULayers GPULayersList
 
 	// FlashAttention indicates that we should use a fused flash attention kernel
-	FlashAttention bool
+	FlashAttention FlashAttentionType
 }
 
 var backends = make(map[string]func(string, BackendParams) (Backend, error))
@@ -141,6 +137,7 @@ type Tensor interface {
 
 	Bytes() []byte
 	Floats() []float32
+	BackendGet() []float32
 
 	FromBytes([]byte)
 	FromFloats([]float32)
@@ -166,6 +163,9 @@ type Tensor interface {
 	AvgPool2D(ctx Context, k, s int, p float32) Tensor
 	Conv2D(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 	Conv3D(ctx Context, weight Tensor, c, s0, s1, s2, p0, p1, p2, d0, d1, d2 int) Tensor
+	Conv1DDW(ctx Context, weight Tensor, s, p, d int) Tensor
+	SSMConv(ctx Context, kernel Tensor) Tensor
+	SSMScan(ctx Context, x, dt, A, B, C, ids Tensor) Tensor
 
 	IM2Col(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
@@ -173,10 +173,12 @@ type Tensor interface {
 	Cos(ctx Context) Tensor
 	Tanh(ctx Context) Tensor
 	GELU(ctx Context, up ...Tensor) Tensor
+	GELU_ERF(ctx Context) Tensor
 	QuickGELU(ctx Context, up ...Tensor) Tensor
 	SILU(ctx Context, up ...Tensor) Tensor
 	RELU(ctx Context, up ...Tensor) Tensor
 	Sigmoid(ctx Context) Tensor
+	SigmoidOut(ctx Context) Tensor
 
 	// AlphaLimitSILU is a variant of SILU that clamps the input to the range [-limit, limit]
 	SILUAlphaLimit(ctx Context, up Tensor, alpha, limit float32) Tensor
@@ -187,6 +189,9 @@ type Tensor interface {
 	Contiguous(ctx Context, shape ...int) Tensor
 
 	Pad(ctx Context, shape ...int) Tensor
+	// PadExt pads with independent left/right amounts per dimension.
+	// Arguments: lp0, rp0, lp1, rp1, lp2, rp2, lp3, rp3 for dims 0-3.
+	PadExt(ctx Context, lp0, rp0, lp1, rp1, lp2, rp2, lp3, rp3 int) Tensor
 
 	Stack(ctx Context, dim int, s ...Tensor) Tensor
 
@@ -195,6 +200,7 @@ type Tensor interface {
 	Concat(ctx Context, t2 Tensor, dim int) Tensor
 	Rows(ctx Context, t2 Tensor) Tensor
 	SetRows(ctx Context, src Tensor, idxs Tensor) Tensor
+	SetInplace(ctx Context, src Tensor, nb1, nb2, nb3, offset int) Tensor
 	Copy(ctx Context, t2 Tensor) Tensor
 	Duplicate(ctx Context) Tensor
 
@@ -209,6 +215,32 @@ type Tensor interface {
 	Stddev(ctx Context) Tensor
 	Sqr(ctx Context) Tensor
 	Sqrt(ctx Context) Tensor
+	Exp(ctx Context) Tensor
+	Neg(ctx Context) Tensor
+
+	// Clamp clamps values to [min, max] range
+	Clamp(ctx Context, min, max float32) Tensor
+
+	// Softplus computes ln(1 + exp(x))
+	Softplus(ctx Context) Tensor
+
+	// CumSum computes cumulative sum along dimension 0
+	CumSum(ctx Context) Tensor
+
+	// Diag creates a diagonal matrix from a 1D tensor
+	Diag(ctx Context) Tensor
+
+	// Tri converts a matrix to triangular form (0=upper+diag, 1=upper, 2=lower+diag, 3=lower)
+	Tri(ctx Context, triType int) Tensor
+
+	// Fill fills a tensor with a constant value (in-place)
+	Fill(ctx Context, value float32) Tensor
+
+	// Repeat4D repeats tensor to match target shape
+	Repeat4D(ctx Context, dim0, dim1, dim2, dim3 int) Tensor
+
+	// SolveTri solves a triangular system Ax = B
+	SolveTri(ctx Context, b Tensor, lower, left, unitDiag bool) Tensor
 
 	Interpolate(ctx Context, dims [4]int, samplingMode SamplingMode) Tensor
 }

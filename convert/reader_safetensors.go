@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -53,9 +52,10 @@ func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]T
 
 		for _, key := range keys {
 			if value := headers[key]; value.Type != "" {
-				// bitsandbytes quantized models are unsupported
+				// Scalar tensors (e.g. clipped linear min/max) are 0-dim in safetensors.
+				// Promote them to 1-dim so they can be stored in GGUF.
 				if len(value.Shape) == 0 {
-					return nil, errors.New("unsupported safetensors model")
+					value.Shape = []uint64{1}
 				}
 				ggufName := replacer.Replace(key)
 				if _, ok := names[ggufName]; ok {
@@ -99,6 +99,8 @@ func (st safetensor) Kind() uint32 {
 	if st.dtype == "BF16" &&
 		!strings.HasPrefix(st.name, "v.") &&
 		!strings.HasPrefix(st.name, "s.") &&
+		!strings.HasPrefix(st.name, "mm.") &&
+		!strings.Contains(st.name, "ffn_gate_inp_shexp.weight") &&
 		kind != tensorKindFP32 {
 		kind = tensorKindBF16
 	}

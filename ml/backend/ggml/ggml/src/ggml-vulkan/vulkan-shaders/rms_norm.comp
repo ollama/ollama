@@ -131,8 +131,12 @@ void main() {
         rms_norm(num_blocks);
     } else if (num_blocks > 16) {
         rms_norm(32);
-    } else if (num_blocks > 8) {
+    } else if (num_blocks > 12) {
         rms_norm(16);
+    } else if (num_blocks > 10) {
+        rms_norm(12);
+    } else if (num_blocks > 8) {
+        rms_norm(10);
     } else if (num_blocks > 4) {
         rms_norm(8);
     } else if (num_blocks == 4) {

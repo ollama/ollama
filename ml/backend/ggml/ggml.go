@@ -109,7 +109,7 @@ type Backend struct {
 	// btDeviceMemory maps from a buffer type to the memory allocations associated with that device
 	btDeviceMemory map[C.ggml_backend_buffer_type_t]*ml.DeviceMemory
 
-	flashAttention bool
+	flashAttention ml.FlashAttentionType
 
 	// maxGraphNodes is the maximum allowed number of graph nodes in this scheduler
 	maxGraphNodes int
@@ -378,7 +378,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		}
 	}
 
-	maxGraphNodes := max(1024, len(meta.Tensors().Items())*8)
+	maxGraphNodes := max(1024, len(meta.Tensors().Items())*32)
 
 	sched := C.ggml_backend_sched_new_ext(
 		(*C.ggml_backend_t)(unsafe.Pointer(&schedBackends[0])),
@@ -684,8 +684,8 @@ func (b *Backend) NewContextSize(n int) ml.Context {
 }
 
 func (b *Backend) CacheConfig() ml.CacheConfig {
-	if b.flashAttention {
-		return ml.CacheConfig{CachePadding: 256, MaskDType: ml.DTypeF16, MaskBatchPadding: C.GGML_KQ_MASK_PAD}
+	if b.flashAttention == ml.FlashAttentionEnabled {
+		return ml.CacheConfig{CachePadding: 256, MaskDType: ml.DTypeF16}
 	} else {
 		return ml.CacheConfig{CachePadding: 256, PermutedV: true}
 	}
@@ -1069,6 +1069,21 @@ func (t *Tensor) Floats() (data []float32) {
 	return
 }
 
+func (t *Tensor) BackendGet() []float32 {
+	n := int(C.ggml_nelements(t.t))
+	if n == 0 {
+		return nil
+	}
+
+	if t.sync != nil {
+		t.sync()
+	}
+
+	data := make([]float32, n)
+	C.ggml_backend_tensor_get(t.t, unsafe.Pointer(&data[0]), 0, C.ggml_nbytes(t.t))
+	return data
+}
+
 func tensorSet[S ~[]E, E byte | float32 | int32](t *Tensor, s S) {
 	if len(s) == 0 {
 		return
@@ -1313,6 +1328,13 @@ func (t *Tensor) Pad(ctx ml.Context, shape ...int) ml.Tensor {
 	}
 }
 
+func (t *Tensor) PadExt(ctx ml.Context, lp0, rp0, lp1, rp1, lp2, rp2, lp3, rp3 int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_pad_ext(ctx.(*Context).ctx, t.t, C.int(lp0), C.int(rp0), C.int(lp1), C.int(rp1), C.int(lp2), C.int(rp2), C.int(lp3), C.int(rp3)),
+	}
+}
+
 // Permute permutes t according to order. Permute panics if the number of dimensions
 // in order does not match the number of dimensions in t.
 func (t *Tensor) Permute(ctx ml.Context, order ...int) ml.Tensor {
@@ -1342,6 +1364,21 @@ func (t *Tensor) SetRows(ctx ml.Context, src ml.Tensor, idxs ml.Tensor) ml.Tenso
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_set_rows(ctx.(*Context).ctx, t.t, src.(*Tensor).t, idxs.(*Tensor).t),
+	}
+}
+
+func (t *Tensor) SetInplace(ctx ml.Context, src ml.Tensor, nb1, nb2, nb3, offset int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_set_inplace(
+			ctx.(*Context).ctx,
+			t.t,
+			src.(*Tensor).t,
+			C.size_t(nb1),
+			C.size_t(nb2),
+			C.size_t(nb3),
+			C.size_t(offset),
+		),
 	}
 }
 
@@ -1468,6 +1505,13 @@ func (t *Tensor) Sigmoid(ctx ml.Context) ml.Tensor {
 	}
 }
 
+func (t *Tensor) SigmoidOut(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_sigmoid(ctx.(*Context).ctx, t.t),
+	}
+}
+
 func (t *Tensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 	switch len(shape) {
 	case 1:
@@ -1534,7 +1578,8 @@ func (t *Tensor) RoPE(ctx ml.Context, positions ml.Tensor, ropeDim int, ropeBase
 			unsafe.SliceData(mropeSections),
 			C.int(opts.Type),
 			cmp.Or(C.int(opts.YaRN.OriginalContextLength), 128<<10),
-			C.float(ropeBase), C.float(ropeScale),
+			C.float(ropeBase),
+			C.float(ropeScale),
 			C.float(opts.YaRN.ExtrapolationFactor),
 			cmp.Or(C.float(opts.YaRN.AttentionFactor), 1),
 			cmp.Or(C.float(opts.YaRN.BetaFast), 32),
@@ -1546,9 +1591,11 @@ func (t *Tensor) RoPE(ctx ml.Context, positions ml.Tensor, ropeDim int, ropeBase
 			dequant,
 			positions.(*Tensor).t,
 			opts.Factors.(*Tensor).t,
-			C.int(ropeDim), C.int(opts.Type),
+			C.int(ropeDim),
+			C.int(opts.Type),
 			cmp.Or(C.int(opts.YaRN.OriginalContextLength), 128<<10),
-			C.float(ropeBase), C.float(ropeScale),
+			C.float(ropeBase),
+			C.float(ropeScale),
 			C.float(opts.YaRN.ExtrapolationFactor),
 			cmp.Or(C.float(opts.YaRN.AttentionFactor), 1),
 			cmp.Or(C.float(opts.YaRN.BetaFast), 32),
@@ -1575,6 +1622,13 @@ func (t *Tensor) GELU(ctx ml.Context, t2 ...ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_gelu_inplace(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) GELU_ERF(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_gelu_erf_inplace(ctx.(*Context).ctx, t.t),
 	}
 }
 
@@ -1628,6 +1682,13 @@ func (t *Tensor) Conv2D(ctx ml.Context, t2 ml.Tensor, s0, s1, p0, p1, d0, d1 int
 	}
 }
 
+func (t *Tensor) Conv1DDW(ctx ml.Context, weight ml.Tensor, s, p, d int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_conv_1d_dw(ctx.(*Context).ctx, weight.(*Tensor).t, t.t, C.int(s), C.int(p), C.int(d)),
+	}
+}
+
 func (t *Tensor) Conv3D(ctx ml.Context, t2 ml.Tensor, c, s0, s1, s2, p0, p1, p2, d0, d1, d2 int) ml.Tensor {
 	var tt ml.Tensor = &Tensor{
 		b: t.b,
@@ -1636,6 +1697,20 @@ func (t *Tensor) Conv3D(ctx ml.Context, t2 ml.Tensor, c, s0, s1, s2, p0, p1, p2,
 
 	tt = tt.Reshape(ctx, t.Dim(3)/c, t2.Dim(3)/c)
 	return tt
+}
+
+func (t *Tensor) SSMConv(ctx ml.Context, kernel ml.Tensor) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_ssm_conv(ctx.(*Context).ctx, t.t, kernel.(*Tensor).t),
+	}
+}
+
+func (t *Tensor) SSMScan(ctx ml.Context, x, dt, A, B, C, ids ml.Tensor) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_ssm_scan(ctx.(*Context).ctx, t.t, x.(*Tensor).t, dt.(*Tensor).t, A.(*Tensor).t, B.(*Tensor).t, C.(*Tensor).t, ids.(*Tensor).t),
+	}
 }
 
 func (t *Tensor) AvgPool2D(ctx ml.Context, k, s int, p float32) ml.Tensor {
@@ -1657,11 +1732,6 @@ func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sin
 		}
 
 		if mask != nil {
-			padSize := int(pad(C.size_t(mask.Dim(1)), C.size_t(cacheConfig.MaskBatchPadding))) - mask.Dim(1)
-			if padSize > 0 {
-				mask = mask.Pad(ctx, 0, padSize, 0, 0)
-			}
-
 			if mask.DType() != cacheConfig.MaskDType {
 				mask = mask.Cast(ctx, cacheConfig.MaskDType)
 			}
@@ -1676,7 +1746,7 @@ func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask, sin
 	query := t.Permute(ctx, 0, 2, 1, 3)
 	key = key.Permute(ctx, 0, 2, 1, 3)
 
-	if t.b.flashAttention {
+	if t.b.flashAttention == ml.FlashAttentionEnabled {
 		value = value.Permute(ctx, 0, 2, 1, 3)
 
 		kqv := C.ggml_flash_attn_ext(ctx.(*Context).ctx, query.(*Tensor).t, key.(*Tensor).t, value.(*Tensor).t, kqMask, C.float(scale), 0, 0)
@@ -1764,6 +1834,76 @@ func (t *Tensor) Sqrt(ctx ml.Context) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_sqrt(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Exp(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_exp(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Neg(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_neg(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Clamp(ctx ml.Context, min, max float32) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_clamp(ctx.(*Context).ctx, t.t, C.float(min), C.float(max)),
+	}
+}
+
+func (t *Tensor) Softplus(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_softplus(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) CumSum(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_cumsum(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Diag(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_diag(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Tri(ctx ml.Context, triType int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_tri(ctx.(*Context).ctx, t.t, C.enum_ggml_tri_type(triType)),
+	}
+}
+
+func (t *Tensor) Fill(ctx ml.Context, value float32) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_fill_inplace(ctx.(*Context).ctx, t.t, C.float(value)),
+	}
+}
+
+func (t *Tensor) Repeat4D(ctx ml.Context, dim0, dim1, dim2, dim3 int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_repeat_4d(ctx.(*Context).ctx, t.t, C.int64_t(dim0), C.int64_t(dim1), C.int64_t(dim2), C.int64_t(dim3)),
+	}
+}
+
+func (t *Tensor) SolveTri(ctx ml.Context, b ml.Tensor, lower, left, unitDiag bool) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_solve_tri(ctx.(*Context).ctx, t.t, b.(*Tensor).t, C._Bool(lower), C._Bool(left), C._Bool(unitDiag)),
 	}
 }
 

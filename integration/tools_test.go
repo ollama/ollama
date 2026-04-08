@@ -11,6 +11,15 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
+// testPropsMap creates a ToolPropertiesMap from a map (convenience function for tests)
+func testPropsMap(m map[string]api.ToolProperty) *api.ToolPropertiesMap {
+	props := api.NewToolPropertiesMap()
+	for k, v := range m {
+		props.Set(k, v)
+	}
+	return props
+}
+
 func TestAPIToolCalling(t *testing.T) {
 	initialTimeout := 60 * time.Second
 	streamTimeout := 60 * time.Second
@@ -21,6 +30,7 @@ func TestAPIToolCalling(t *testing.T) {
 	defer cleanup()
 
 	minVRAM := map[string]uint64{
+		"gemma4":        8,
 		"qwen3-vl":      16,
 		"gpt-oss:20b":   16,
 		"gpt-oss:120b":  70,
@@ -38,15 +48,18 @@ func TestAPIToolCalling(t *testing.T) {
 		"granite3.3":    7,
 	}
 
-	for _, model := range libraryToolsModels {
+	models := testModels(libraryToolsModels)
+
+	for _, model := range models {
 		t.Run(model, func(t *testing.T) {
+			if testModel != "" {
+				requireCapability(ctx, t, client, model, "tools")
+			}
 			if v, ok := minVRAM[model]; ok {
 				skipUnderMinVRAM(t, v)
 			}
 
-			if err := PullIfMissing(ctx, client, model); err != nil {
-				t.Fatalf("pull failed %s", err)
-			}
+			pullOrSkip(ctx, t, client, model)
 
 			tools := []api.Tool{
 				{
@@ -57,12 +70,12 @@ func TestAPIToolCalling(t *testing.T) {
 						Parameters: api.ToolFunctionParameters{
 							Type:     "object",
 							Required: []string{"location"},
-							Properties: map[string]api.ToolProperty{
+							Properties: testPropsMap(map[string]api.ToolProperty{
 								"location": {
 									Type:        api.PropertyType{"string"},
 									Description: "The city and state, e.g. San Francisco, CA",
 								},
-							},
+							}),
 						},
 					},
 				},
@@ -122,7 +135,7 @@ func TestAPIToolCalling(t *testing.T) {
 					t.Errorf("unexpected tool called: got %q want %q", lastToolCall.Function.Name, "get_weather")
 				}
 
-				if _, ok := lastToolCall.Function.Arguments["location"]; !ok {
+				if _, ok := lastToolCall.Function.Arguments.Get("location"); !ok {
 					t.Errorf("expected tool arguments to include 'location', got: %s", lastToolCall.Function.Arguments.String())
 				}
 			case <-ctx.Done():

@@ -1,6 +1,10 @@
 package server
 
 import (
+	"crypto/sha256"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -47,6 +51,24 @@ func TestModelCapabilities(t *testing.T) {
 		model        Model
 		expectedCaps []model.Capability
 	}{
+		{
+			name: "model with image generation capability via config",
+			model: Model{
+				Config: model.ConfigV2{
+					Capabilities: []string{"image"},
+				},
+			},
+			expectedCaps: []model.Capability{model.CapabilityImage},
+		},
+		{
+			name: "model with image and vision capability (image editing)",
+			model: Model{
+				Config: model.ConfigV2{
+					Capabilities: []string{"image", "vision"},
+				},
+			},
+			expectedCaps: []model.Capability{model.CapabilityImage, model.CapabilityVision},
+		},
 		{
 			name: "model with completion capability",
 			model: Model{
@@ -233,6 +255,24 @@ func TestModelCheckCapabilities(t *testing.T) {
 			checkCaps:      []model.Capability{"unknown"},
 			expectedErrMsg: "unknown capability",
 		},
+		{
+			name: "model missing image generation capability",
+			model: Model{
+				ModelPath: completionModelPath,
+				Template:  chatTemplate,
+			},
+			checkCaps:      []model.Capability{model.CapabilityImage},
+			expectedErrMsg: "does not support image generation",
+		},
+		{
+			name: "model with image generation capability",
+			model: Model{
+				Config: model.ConfigV2{
+					Capabilities: []string{"image"},
+				},
+			},
+			checkCaps: []model.Capability{model.CapabilityImage},
+		},
 	}
 
 	for _, tt := range tests {
@@ -249,6 +289,66 @@ func TestModelCheckCapabilities(t *testing.T) {
 				} else if !strings.Contains(err.Error(), tt.expectedErrMsg) {
 					t.Errorf("Expected error containing %q, got: %v", tt.expectedErrMsg, err)
 				}
+			}
+		})
+	}
+}
+
+func TestPullModelManifest(t *testing.T) {
+	cases := []struct {
+		name     string
+		manifest string
+	}{
+		{
+			name: "pretty printed",
+			manifest: `{  "schemaVersion": 2,  "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+  "config": { "digest": "sha256:abc", "mediaType": "application/vnd.docker.container.image.v1+json", "size": 50 },
+  "layers": [{ "digest": "sha256:t1", "mediaType": "application/vnd.ollama.image.tensor", "size": 1024, "name": "model.weight" }]
+}`,
+		},
+		{
+			name:     "non-standard field order",
+			manifest: `{"layers":[{"size":999,"digest":"sha256:def","mediaType":"application/vnd.ollama.image.model"}],"schemaVersion":2,"config":{"size":50,"digest":"sha256:abc","mediaType":"application/vnd.docker.container.image.v1+json"},"mediaType":"application/vnd.docker.distribution.manifest.v2+json"}`,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(tt.manifest))
+			}))
+			defer ts.Close()
+
+			n := model.ParseName("test/model:latest")
+			n.ProtocolScheme = "http"
+			n.Host = strings.TrimPrefix(ts.URL, "http://")
+
+			mf, data, err := pullModelManifest(t.Context(), n, &registryOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// Raw bytes must be byte-for-byte identical to what the server sent
+			if string(data) != tt.manifest {
+				t.Fatalf("raw bytes differ from server response")
+			}
+
+			// SHA256 of returned data must match the expected registry digest
+			expectedDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(tt.manifest)))
+			gotDigest := fmt.Sprintf("%x", sha256.Sum256(data))
+			if gotDigest != expectedDigest {
+				t.Fatalf("digest mismatch\ngot:  %s\nwant: %s", gotDigest, expectedDigest)
+			}
+
+			// Parsed manifest must still be usable
+			if mf.SchemaVersion != 2 {
+				t.Fatalf("schemaVersion = %d, want 2", mf.SchemaVersion)
+			}
+			if mf.Config.Digest == "" {
+				t.Fatal("config digest is empty")
+			}
+			if len(mf.Layers) == 0 {
+				t.Fatal("expected at least one layer")
 			}
 		})
 	}

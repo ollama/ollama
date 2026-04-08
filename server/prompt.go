@@ -27,47 +27,53 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	// Clip images are represented as 768 tokens, each an embedding
 	imageNumTokens := 768
 
-	n := len(msgs) - 1
-	// in reverse, find all messages that fit into context window
-	for i := n; i >= 0; i-- {
-		// always include the last message
-		if i == n {
-			continue
-		}
+	lastMsgIdx := len(msgs) - 1
+	currMsgIdx := 0
 
-		system = make([]api.Message, 0)
-		for j := range i {
-			if msgs[j].Role == "system" {
-				system = append(system, msgs[j])
+	if truncate {
+		// Start with all messages and remove from the front until it fits in context
+		for i := 0; i <= lastMsgIdx; i++ {
+			// Collect system messages from the portion we're about to skip
+			system = make([]api.Message, 0)
+			for j := range i {
+				if msgs[j].Role == "system" {
+					system = append(system, msgs[j])
+				}
 			}
-		}
 
-		p, err := renderPrompt(m, append(system, msgs[i:]...), tools, think)
-		if err != nil {
-			return "", nil, err
-		}
-
-		s, err := tokenize(ctx, p)
-		if err != nil {
-			return "", nil, err
-		}
-
-		ctxLen := len(s)
-		if m.ProjectorPaths != nil {
-			for _, m := range msgs[i:] {
-				ctxLen += imageNumTokens * len(m.Images)
+			p, err := renderPrompt(m, append(system, msgs[i:]...), tools, think)
+			if err != nil {
+				return "", nil, err
 			}
-		}
 
-		if truncate && ctxLen > opts.NumCtx {
-			slog.Debug("truncating input messages which exceed context length", "truncated", len(msgs[i:]))
-			break
-		} else {
-			n = i
+			s, err := tokenize(ctx, p)
+			if err != nil {
+				return "", nil, err
+			}
+
+			ctxLen := len(s)
+			if m.ProjectorPaths != nil {
+				for _, msg := range msgs[i:] {
+					ctxLen += imageNumTokens * len(msg.Images)
+				}
+			}
+
+			if ctxLen <= opts.NumCtx {
+				currMsgIdx = i
+				break
+			}
+
+			// Must always include at least the last message
+			if i == lastMsgIdx {
+				currMsgIdx = lastMsgIdx
+				break
+			}
 		}
 	}
 
-	currMsgIdx := n
+	if currMsgIdx > 0 {
+		slog.Debug("truncating input messages which exceed context length", "truncated", len(msgs[currMsgIdx:]))
+	}
 
 	for cnt, msg := range msgs[currMsgIdx:] {
 		if slices.Contains(m.Config.ModelFamilies, "mllama") && len(msg.Images) > 1 {
@@ -82,6 +88,11 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 				ID:   len(images),
 				Data: i,
 			}
+			images = append(images, imgData)
+
+			if m.Config.Renderer != "" {
+				continue
+			}
 
 			imgTag := fmt.Sprintf("[img-%d]", imgData.ID)
 			if !strings.Contains(prompt, "[img]") {
@@ -89,8 +100,6 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 			} else {
 				prompt = strings.Replace(prompt, "[img]", imgTag, 1)
 			}
-
-			images = append(images, imgData)
 		}
 		msgs[currMsgIdx+cnt].Content = prefix + prompt
 	}

@@ -15,7 +15,7 @@ const multiFileBufferSize = w32.MAX_PATH * 10
 type WinDlgError int
 
 func (e WinDlgError) Error() string {
-	return fmt.Sprintf("CommDlgExtendedError: %#x", e)
+	return fmt.Sprintf("CommDlgExtendedError: %#x", int(e))
 }
 
 func err() error {

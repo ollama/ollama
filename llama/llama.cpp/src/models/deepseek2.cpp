@@ -1,7 +1,5 @@
 #include "models.h"
 
-
-
 llm_build_deepseek2::llm_build_deepseek2(const llama_model & model, const llm_graph_params & params) :
     llm_graph_context(params) {
     // lite variants include DeepSeek-V2-Lite, GigaChat3-10B-A1.8B
@@ -20,15 +18,27 @@ llm_build_deepseek2::llm_build_deepseek2(const llama_model & model, const llm_gr
 
     // We have to pre-scale kq_scale and attn_factor to make the YaRN RoPE work correctly.
     // See https://github.com/ggerganov/llama.cpp/discussions/7416 for detailed explanation.
-    const float mscale      = attn_factor * (1.0f + hparams.rope_yarn_log_mul * logf(1.0f / freq_scale));
-    const float kq_scale    = 1.0f * mscale * mscale / sqrtf(float(n_embd_head_k));
-    const float attn_factor = 1.0f / (1.0f + 0.1f * logf(1.0f / freq_scale));
+    // And also: https://github.com/ggml-org/llama.cpp/pull/17945 [TAG_DEEPSEEK2_YARN_LOG_MUL_FIX]
+
+    // first cancel the adjustment from llama_hparams::yarn_attn_factor_adjust to get the original attn_factor
+    GGML_ASSERT(ext_factor >= 0.0f);
+    const float attn_factor_org = attn_factor * (1.0f + 0.1f * logf(1.0f / freq_scale));
+
+    // use the original attn_factor to pre-scale the kq_scale
+    const float mscale   = attn_factor_org * (1.0f + 0.1f * hparams.rope_yarn_log_mul * logf(1.0f / freq_scale));
+    const float kq_scale = 1.0f * mscale * mscale / sqrtf(float(n_embd_head_k));
 
     ggml_tensor * cur;
     ggml_tensor * inpL;
 
     // {n_embd, n_tokens}
     inpL = build_inp_embd(model.tok_embd);
+
+    // (optional) temperature tuning - used by mistral-large
+    ggml_tensor * inp_attn_scale = nullptr;
+    if (hparams.f_attn_temp_scale != 0.0f) {
+        inp_attn_scale = build_inp_attn_scale();
+    }
 
     // inp_pos - contains the positions
     ggml_tensor * inp_pos = build_inp_pos();
@@ -128,6 +138,12 @@ llm_build_deepseek2::llm_build_deepseek2(const llama_model & model, const llm_gr
                 ggml_tensor * Vcur = kv_cmpr;
                 cb(Vcur, "Vcur", il);
 
+                if (inp_attn_scale) {
+                    // apply llama 4 temperature scaling
+                    Qcur = ggml_mul(ctx0, Qcur, inp_attn_scale);
+                    cb(Qcur, "Qcur_attn_temp_scaled", il);
+                }
+
                 // note: MLA with the absorption optimzation converts into MQA (ie: GQA with 1 group)
                 cur = build_attn(inp_attn,
                         model.layers[il].wo, NULL,
@@ -159,6 +175,12 @@ llm_build_deepseek2::llm_build_deepseek2(const llama_model & model, const llm_gr
 
                 ggml_tensor * Kcur = ggml_concat(ctx0, ggml_repeat(ctx0, k_pe, q_pe), k_nope, 0);
                 cb(Kcur, "Kcur", il);
+
+                if (inp_attn_scale) {
+                    // apply llama 4 temperature scaling
+                    Qcur = ggml_mul(ctx0, Qcur, inp_attn_scale);
+                    cb(Qcur, "Qcur_attn_temp_scaled", il);
+                }
 
                 // note: MLA without the absorption optimization converts into MHA (ie: GQA with full n_head groups)
                 cur = build_attn(inp_attn,

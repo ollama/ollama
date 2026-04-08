@@ -87,7 +87,7 @@ When Ollama starts up, it takes inventory of the GPUs present in the system to d
 
 ### Linux NVIDIA Troubleshooting
 
-If you are using a container to run Ollama, make sure you've set up the container runtime first as described in [docker.md](./docker.md)
+If you are using a container to run Ollama, make sure you've set up the container runtime first as described in [docker](./docker)
 
 Sometimes the Ollama can have difficulties initializing the GPU. When you check the server logs, this can show up as various error codes, such as "3" (not initialized), "46" (device unavailable), "100" (no device), "999" (unknown), or others. The following troubleshooting techniques may help resolve the problem
 
@@ -113,6 +113,25 @@ If you are experiencing problems getting Ollama to correctly discover or use you
 - `AMD_LOG_LEVEL=3` Enable info log levels in the AMD HIP/ROCm libraries. This can help show more detailed error codes that can help troubleshoot problems
 - `OLLAMA_DEBUG=1` During GPU discovery additional information will be reported
 - Check dmesg for any errors from amdgpu or kfd drivers `sudo dmesg | grep -i amdgpu` and `sudo dmesg | grep -i kfd`
+
+### AMD Driver Version Mismatch
+
+If your AMD GPU is not detected on Linux and the server logs contain messages like:
+
+```
+msg="failure during GPU discovery" ... error="failed to finish discovery before timeout"
+msg="bootstrap discovery took" duration=30s ...
+```
+
+This typically means the system's AMD GPU driver is too old. Ollama bundles
+ROCm 7 linux libraries which require a compatible ROCm 7 kernel driver. If the
+system is running an older driver (ROCm 6.x or earlier), GPU initialization
+will hang during device discovery and eventually time out, causing Ollama to
+fall back to CPU.
+
+To resolve this, upgrade to the ROCm v7 driver using the `amdgpu-install`
+utility from [AMD's ROCm documentation](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/).
+After upgrading, reboot and restart Ollama.
 
 ## Multiple AMD GPUs
 

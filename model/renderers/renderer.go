@@ -56,9 +56,43 @@ func rendererForName(name string) Renderer {
 	case "qwen3-vl-thinking":
 		renderer := &Qwen3VLRenderer{isThinking: true, useImgTags: RenderImgTags}
 		return renderer
+	case "qwen3.5":
+		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true, useImgTags: RenderImgTags}
+		return renderer
 	case "cogito":
 		renderer := &CogitoRenderer{isThinking: true}
 		return renderer
+	case "deepseek3.1":
+		renderer := &DeepSeek3Renderer{IsThinking: true, Variant: Deepseek31}
+		return renderer
+	case "olmo3":
+		renderer := &Olmo3Renderer{UseExtendedSystemMessage: false}
+		return renderer
+	case "olmo3.1":
+		renderer := &Olmo3Renderer{UseExtendedSystemMessage: true}
+		return renderer
+	case "olmo3-think":
+		// Used for Olmo-3-7B-Think and Olmo-3.1-32B-Think (same template)
+		renderer := &Olmo3ThinkRenderer{Variant: Olmo31Think}
+		return renderer
+	case "olmo3-32b-think":
+		// Used for Olmo-3-32B-Think
+		renderer := &Olmo3ThinkRenderer{Variant: Olmo3Think32B}
+		return renderer
+	case "nemotron-3-nano":
+		return &Nemotron3NanoRenderer{}
+	case "gemma4":
+		return &Gemma4Renderer{useImgTags: RenderImgTags}
+	case "functiongemma":
+		return &FunctionGemmaRenderer{}
+	case "glm-4.7":
+		return &GLM47Renderer{}
+	case "glm-ocr":
+		return &GlmOcrRenderer{useImgTags: RenderImgTags}
+	case "lfm2":
+		return &LFM2Renderer{IsThinking: false, useImgTags: RenderImgTags}
+	case "lfm2-thinking":
+		return &LFM2Renderer{IsThinking: true, useImgTags: RenderImgTags}
 	default:
 		return nil
 	}

@@ -22,7 +22,7 @@ type qwen2Model struct {
 
 var _ ModelConverter = (*qwen2Model)(nil)
 
-func (q *qwen2Model) KV(t *Tokenizer) ggml.KV {
+func (q *qwen2Model) KV(t *Tokenizer) KV {
 	kv := q.ModelParameters.KV(t)
 	kv["general.architecture"] = "qwen2"
 	kv["qwen2.block_count"] = q.HiddenLayers

@@ -40,8 +40,13 @@ const (
 func (t tensorBase) Kind() uint32 {
 	if strings.HasSuffix(t.name, ".ffn_gate_inp.weight") ||
 		strings.HasSuffix(t.name, ".bias") ||
+		strings.HasSuffix(t.name, ".shortconv.conv.weight") ||
+		strings.HasSuffix(t.name, ".ssm_conv1d.weight") || // SSM conv kernel must be F32 for Metal
+		strings.HasPrefix(t.name, "a.conv1d.") || // audio SSCP conv weights must be F32 for im2col
+		strings.Contains(t.name, ".conv_dw.") || // audio depthwise conv weights must be F32
 		t.name == "token_types.weight" ||
 		t.name == "v.positional_embedding_vlm" ||
+		t.name == "v.position_embd.weight" ||
 		t.name == "v.tile_position_embd.weight" ||
 		t.name == "v.pre_tile_position_embd.weight" ||
 		t.name == "v.post_tile_position_embd.weight" ||

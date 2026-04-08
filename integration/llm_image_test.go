@@ -13,39 +13,35 @@ import (
 
 func TestVisionModels(t *testing.T) {
 	skipUnderMinVRAM(t, 6)
-	type testCase struct {
-		model string
-	}
-	testCases := []testCase{
-		{
-			model: "qwen2.5vl",
-		},
-		{
-			model: "llama3.2-vision",
-		},
-		{
-			model: "gemma3",
-		},
-		{
-			model: "qwen3-vl:8b",
-		},
-		{
-			// Qwen 3 VL mixture of experts
-			model: "qwen3-vl:30b",
-		},
-		{
-			model: "ministral-3",
-		},
+
+	defaultVisionModels := []string{
+		"gemma4",
+		"qwen2.5vl",
+		"llama3.2-vision",
+		"gemma3",
+		"qwen3-vl:8b",
+		"qwen3-vl:30b",
+		"ministral-3",
 	}
 
-	for _, v := range testCases {
-		t.Run(v.model, func(t *testing.T) {
+	skipIfNoVisionOverride(t)
+
+	for _, model := range testModels(defaultVisionModels) {
+		t.Run(model, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			client, _, cleanup := InitServerConnection(ctx, t)
+			defer cleanup()
+
+			requireCapability(ctx, t, client, model, "vision")
+			pullOrSkip(ctx, t, client, model)
+
 			image, err := base64.StdEncoding.DecodeString(imageEncoding)
 			if err != nil {
 				t.Fatal(err)
 			}
 			req := api.ChatRequest{
-				Model: v.model,
+				Model: model,
 				Messages: []api.Message{
 					{
 						Role:    "user",
@@ -61,16 +57,7 @@ func TestVisionModels(t *testing.T) {
 					"temperature": 0.0,
 				},
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			defer cancel()
-			client, _, cleanup := InitServerConnection(ctx, t)
 
-			// Note: sometimes it returns "the ollamas" sometimes "the ollams"
-			resp := "the ollam"
-			defer cleanup()
-			if err := PullIfMissing(ctx, client, req.Model); err != nil {
-				t.Fatal(err)
-			}
 			// Preload to skip if we're less than 80% on GPU to avoid extremely slow tests
 			err = client.Generate(ctx, &api.GenerateRequest{Model: req.Model}, func(response api.GenerateResponse) error { return nil })
 			if err != nil {
@@ -78,13 +65,17 @@ func TestVisionModels(t *testing.T) {
 			}
 			skipIfNotGPULoaded(ctx, t, client, req.Model, 80)
 
+			// Note: sometimes it returns "the ollamas" sometimes "the ollams"
 			// llava models on CPU can be quite slow to start
-			DoChat(ctx, t, client, req, []string{resp}, 240*time.Second, 30*time.Second)
+			DoChat(ctx, t, client, req, []string{"the ollam"}, 240*time.Second, 30*time.Second)
 		})
 	}
 }
 
 func TestIntegrationSplitBatch(t *testing.T) {
+	if testModel != "" {
+		t.Skip("uses hardcoded model, not applicable with model override")
+	}
 	skipUnderMinVRAM(t, 6)
 	image, err := base64.StdEncoding.DecodeString(imageEncoding)
 	if err != nil {
@@ -111,9 +102,7 @@ func TestIntegrationSplitBatch(t *testing.T) {
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
-	if err := PullIfMissing(ctx, client, req.Model); err != nil {
-		t.Fatal(err)
-	}
+	pullOrSkip(ctx, t, client, req.Model)
 	// llava models on CPU can be quite slow to start,
 	DoGenerate(ctx, t, client, req, []string{resp}, 120*time.Second, 30*time.Second)
 }
