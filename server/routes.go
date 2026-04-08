@@ -2394,13 +2394,16 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			// structured outputs via double request is enabled when:
 			// 1. the model supports the thinking capability and
 			// 2. it uses a built-in parser or our generic thinking parser
+			// 3. thinking is actually enabled (req.Think.Bool() is true)
 
 			// Note that the current approach does not work for (potential future)
 			// non-thinking models that emit anything before actual content. This
 			// current approach uses the transition from parsed thinking content to
 			// parsed non-thinking content as the signal to turn constraining on
 
-			if req.Format != nil && structuredOutputsState == structuredOutputsState_None && ((builtinParser != nil || thinkingState != nil) && slices.Contains(m.Capabilities(), model.CapabilityThinking)) {
+			if req.Format != nil && structuredOutputsState == structuredOutputsState_None &&
+				((builtinParser != nil || thinkingState != nil) && slices.Contains(m.Capabilities(), model.CapabilityThinking)) &&
+				req.Think != nil && req.Think.Bool() {
 				currentFormat = nil
 			}
 

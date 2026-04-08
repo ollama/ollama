@@ -2,6 +2,7 @@ package openai
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -164,6 +165,76 @@ func TestNewError(t *testing.T) {
 			t.Errorf("NewError(%d) message = %q, want %q", tt.code, result.Error.Message, "test message")
 		}
 	}
+}
+
+func TestFromChatRequest_ReasoningEffortNone(t *testing.T) {
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{Role: "user", Content: "Hello"},
+		},
+		ReasoningEffort: stringPtr("none"),
+		ResponseFormat: &ResponseFormat{
+			Type: "json_schema",
+			JsonSchema: &JsonSchema{
+				Schema: json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}}}`),
+			},
+		},
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Think == nil {
+		t.Fatalf("expected Think to be set, got nil")
+	}
+
+	if result.Think.Bool() {
+		t.Errorf("expected Think to be false when reasoning_effort is 'none', got true")
+	}
+
+	if result.Format == nil {
+		t.Errorf("expected Format to be set, got nil")
+	}
+}
+
+func TestFromChatRequest_ReasoningEffortLow(t *testing.T) {
+	req := ChatCompletionRequest{
+		Model: "test-model",
+		Messages: []Message{
+			{Role: "user", Content: "Hello"},
+		},
+		ReasoningEffort: stringPtr("low"),
+		ResponseFormat: &ResponseFormat{
+			Type: "json_schema",
+			JsonSchema: &JsonSchema{
+				Schema: json.RawMessage(`{"type":"object","properties":{"answer":{"type":"string"}}}`),
+			},
+		},
+	}
+
+	result, err := FromChatRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Think == nil {
+		t.Fatalf("expected Think to be set, got nil")
+	}
+
+	if !result.Think.Bool() {
+		t.Errorf("expected Think to be true when reasoning_effort is 'low', got false")
+	}
+
+	if result.Format == nil {
+		t.Errorf("expected Format to be set, got nil")
+	}
+}
+
+func stringPtr(s string) *string {
+	return &s
 }
 
 func TestToToolCallsPreservesIDs(t *testing.T) {
