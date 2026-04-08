@@ -521,7 +521,7 @@ func TestResolveRunModel_ForcePicker_DoesNotReorderByLastModel(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"qwen3.5"},{"name":"glm-4.7-flash"}]}`)
+			fmt.Fprint(w, `{"models":[{"name":"qwen3.5"},{"name":"gemma4"}]}`)
 		case "/api/show":
 			fmt.Fprint(w, `{"model":"qwen3.5"}`)
 		default:
@@ -540,7 +540,7 @@ func TestResolveRunModel_ForcePicker_DoesNotReorderByLastModel(t *testing.T) {
 		t.Fatal("expected selector to receive model items")
 	}
 
-	glmIdx := slices.Index(gotNames, "glm-4.7-flash")
+	glmIdx := slices.Index(gotNames, "gemma4")
 	qwenIdx := slices.Index(gotNames, "qwen3.5")
 	if glmIdx == -1 || qwenIdx == -1 {
 		t.Fatalf("expected recommended local models in selector items, got %v", gotNames)
@@ -668,7 +668,7 @@ func TestLaunchIntegration_EditorForceConfigure(t *testing.T) {
 	}
 }
 
-func TestLaunchIntegration_EditorForceConfigure_DoesNotFloatCheckedModelsInPicker(t *testing.T) {
+func TestLaunchIntegration_EditorForceConfigure_FloatsCheckedModelsInPicker(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -725,8 +725,8 @@ func TestLaunchIntegration_EditorForceConfigure_DoesNotFloatCheckedModelsInPicke
 	if len(gotItems) == 0 {
 		t.Fatal("expected multi selector to receive items")
 	}
-	if gotItems[0] != "kimi-k2.5:cloud" {
-		t.Fatalf("expected stable recommendation order with kimi-k2.5:cloud first, got %v", gotItems)
+	if gotItems[0] != "qwen3.5:cloud" {
+		t.Fatalf("expected checked models floated to top with qwen3.5:cloud first, got %v", gotItems)
 	}
 	if len(gotPreChecked) < 2 {
 		t.Fatalf("expected prechecked models to be preserved, got %v", gotPreChecked)

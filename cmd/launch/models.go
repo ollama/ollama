@@ -25,13 +25,13 @@ var recommendedModels = []ModelItem{
 	{Name: "qwen3.5:cloud", Description: "Reasoning, coding, and agentic tool use with vision", Recommended: true},
 	{Name: "glm-5:cloud", Description: "Reasoning and code generation", Recommended: true},
 	{Name: "minimax-m2.7:cloud", Description: "Fast, efficient coding and real-world productivity", Recommended: true},
-	{Name: "glm-4.7-flash", Description: "Reasoning and code generation locally", Recommended: true},
+	{Name: "gemma4", Description: "Reasoning and code generation locally", Recommended: true},
 	{Name: "qwen3.5", Description: "Reasoning, coding, and visual understanding locally", Recommended: true},
 }
 
 var recommendedVRAM = map[string]string{
-	"glm-4.7-flash": "~25GB",
-	"qwen3.5":       "~11GB",
+	"gemma4":  "~16GB",
+	"qwen3.5": "~11GB",
 }
 
 // cloudModelLimit holds context and output token limits for a cloud model.
@@ -378,6 +378,17 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 					return 1
 				}
 				return recRank[a.Name] - recRank[b.Name]
+			}
+			// Among checked non-recommended items - put the default first
+			if ac && !aRec && current != "" {
+				aCurrent := a.Name == current
+				bCurrent := b.Name == current
+				if aCurrent != bCurrent {
+					if aCurrent {
+						return -1
+					}
+					return 1
+				}
 			}
 			if aNew != bNew {
 				if aNew {

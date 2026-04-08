@@ -205,8 +205,8 @@ func TestConvertInvalidDatatype(t *testing.T) {
 	generateSafetensorTestData(t, tempDir, td)
 
 	err = ConvertModel(os.DirFS(tempDir), f)
-	if err == nil || err.Error() != "unsupported safetensors model" {
-		t.Errorf("expected error but didn't get one")
+	if err == nil || !strings.Contains(err.Error(), "unknown data type") {
+		t.Errorf("expected 'unknown data type' error but got: %v", err)
 	}
 }
 
