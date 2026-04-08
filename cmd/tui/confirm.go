@@ -45,22 +45,16 @@ func (m confirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "esc", "n":
+		case "ctrl+c", "esc":
 			m.cancelled = true
-			return m, tea.Quit
-		case "y":
-			m.yes = true
-			m.confirmed = true
 			return m, tea.Quit
 		case "enter":
 			m.confirmed = true
 			return m, tea.Quit
-		case "left", "h":
+		case "left":
 			m.yes = true
-		case "right", "l":
+		case "right":
 			m.yes = false
-		case "tab":
-			m.yes = !m.yes
 		}
 	}
 
