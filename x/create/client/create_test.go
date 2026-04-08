@@ -429,3 +429,159 @@ func TestNewManifestWriter_PopulatesFileTypeFromQuantize(t *testing.T) {
 		t.Fatalf("FileType = %q, want %q", cfg.FileType, "mxfp8")
 	}
 }
+
+func TestSupportsThinking(t *testing.T) {
+	tests := []struct {
+		name       string
+		configJSON string
+		want       bool
+	}{
+		{
+			name:       "qwen3 architecture",
+			configJSON: `{"architectures": ["Qwen3ForCausalLM"], "model_type": "qwen3"}`,
+			want:       true,
+		},
+		{
+			name:       "deepseek architecture",
+			configJSON: `{"architectures": ["DeepseekV3ForCausalLM"]}`,
+			want:       true,
+		},
+		{
+			name:       "glm4moe architecture",
+			configJSON: `{"architectures": ["GLM4MoeForCausalLM"]}`,
+			want:       true,
+		},
+		{
+			name:       "llama architecture (no thinking)",
+			configJSON: `{"architectures": ["LlamaForCausalLM"], "model_type": "llama"}`,
+			want:       false,
+		},
+		{
+			name:       "gemma architecture (no thinking)",
+			configJSON: `{"architectures": ["Gemma3ForCausalLM"], "model_type": "gemma3"}`,
+			want:       false,
+		},
+		{
+			name:       "model_type only",
+			configJSON: `{"model_type": "deepseek"}`,
+			want:       true,
+		},
+		{
+			name:       "empty config",
+			configJSON: `{}`,
+			want:       false,
+		},
+		{
+			name:       "invalid json",
+			configJSON: `not json`,
+			want:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644)
+
+			if got := supportsThinking(dir); got != tt.want {
+				t.Errorf("supportsThinking() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSupportsThinking_NoConfig(t *testing.T) {
+	if supportsThinking(t.TempDir()) {
+		t.Error("supportsThinking should return false for missing config.json")
+	}
+}
+
+func TestGetParserName(t *testing.T) {
+	tests := []struct {
+		name       string
+		configJSON string
+		want       string
+	}{
+		{
+			name:       "qwen3 model",
+			configJSON: `{"architectures": ["Qwen3ForCausalLM"]}`,
+			want:       "qwen3",
+		},
+		{
+			name:       "deepseek model",
+			configJSON: `{"architectures": ["DeepseekV3ForCausalLM"]}`,
+			want:       "deepseek3",
+		},
+		{
+			name:       "glm4 model",
+			configJSON: `{"architectures": ["GLM4ForCausalLM"]}`,
+			want:       "glm-4.7",
+		},
+		{
+			name:       "llama model (no parser)",
+			configJSON: `{"architectures": ["LlamaForCausalLM"]}`,
+			want:       "",
+		},
+		{
+			name:       "qwen3 via model_type",
+			configJSON: `{"model_type": "qwen3"}`,
+			want:       "qwen3",
+		},
+		{
+			name:       "no config",
+			configJSON: `{}`,
+			want:       "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644)
+
+			if got := getParserName(dir); got != tt.want {
+				t.Errorf("getParserName() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetRendererName(t *testing.T) {
+	tests := []struct {
+		name       string
+		configJSON string
+		want       string
+	}{
+		{
+			name:       "qwen3 model",
+			configJSON: `{"architectures": ["Qwen3ForCausalLM"]}`,
+			want:       "qwen3-coder",
+		},
+		{
+			name:       "deepseek model",
+			configJSON: `{"architectures": ["DeepseekV3ForCausalLM"]}`,
+			want:       "deepseek3",
+		},
+		{
+			name:       "glm4 model",
+			configJSON: `{"architectures": ["GLM4ForCausalLM"]}`,
+			want:       "glm-4.7",
+		},
+		{
+			name:       "llama model (no renderer)",
+			configJSON: `{"architectures": ["LlamaForCausalLM"]}`,
+			want:       "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644)
+
+			if got := getRendererName(dir); got != tt.want {
+				t.Errorf("getRendererName() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

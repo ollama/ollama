@@ -436,6 +436,7 @@ type ToolProperty struct {
 	Description string             `json:"description,omitempty"`
 	Enum        []any              `json:"enum,omitempty"`
 	Properties  *ToolPropertiesMap `json:"properties,omitempty"`
+	Required    []string           `json:"required,omitempty"`
 }
 
 // ToTypeScriptType converts a ToolProperty to a TypeScript type string

@@ -12,23 +12,28 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strconv"
+	"strings"
 	"unsafe"
 )
 
 var initError error
 var initLoadError string
+var initLoadedPath string
 
 // CheckInit returns any error that occurred during MLX dynamic library initialization.
-// When initialization failed, detailed load errors are logged to help diagnose the issue.
 func CheckInit() error {
+	if initLoadedPath != "" {
+		slog.Debug("MLX dynamic library loaded", "path", initLoadedPath)
+	}
 	if initError != nil && initLoadError != "" {
 		slog.Error(initLoadError)
 	}
 	return initError
 }
 
-// tryLoadFromDir searches a directory for the mlxc shared library and tries to load it.
-// Returns true if the library was successfully loaded.
+// tryLoadFromDir searches a directory for the mlxc shared library and loads it.
 func tryLoadFromDir(dir string) bool {
 	// On Windows, MSVC produces mlxc.dll (no lib prefix)
 	// On Unix, it's libmlxc.so or libmlxc.dylib
@@ -40,10 +45,8 @@ func tryLoadFromDir(dir string) bool {
 	if err != nil || len(matches) == 0 {
 		return false
 	}
-
 	for _, match := range matches {
 		path := filepath.Join(dir, match)
-
 		cPath := C.CString(path)
 		defer C.free(unsafe.Pointer(cPath))
 
@@ -52,92 +55,73 @@ func tryLoadFromDir(dir string) bool {
 			initLoadError = fmt.Sprintf("failed to load MLX dynamic library: path=%s", path)
 			continue
 		}
-
 		if C.mlx_dynamic_load_symbols(handle) != 0 {
 			initLoadError = fmt.Sprintf("failed to load MLX dynamic library symbols: path=%s", path)
 			C.mlx_dynamic_unload(&handle)
 			continue
 		}
 
+		initLoadedPath = path
 		return true
 	}
 	return false
 }
 
-// tryLoadByName attempts to load the library using just its name,
-// allowing the system to use rpath, LD_LIBRARY_PATH, or standard search paths.
-// Returns true if the library was successfully loaded.
-func tryLoadByName() bool {
-	libraryName := "libmlxc.dylib"
-	switch runtime.GOOS {
-	case "windows":
-		libraryName = "mlxc.dll"
-	case "linux":
-		libraryName = "libmlxc.so"
+// libOllamaRoots returns candidate directories for MLX dynamic libraries.
+// Production: exe_dir/lib/ollama (dist tarball) and exe_dir (app bundle).
+// Development: build/lib/ollama and build/*/lib/ollama.
+func libOllamaRoots() []string {
+	var roots []string
+
+	// Production paths relative to executable
+	if exe, err := os.Executable(); err == nil {
+		if eval, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = eval
+		}
+		exeDir := filepath.Dir(exe)
+		switch runtime.GOOS {
+		case "darwin":
+			roots = append(roots, filepath.Join(exeDir, "lib", "ollama"))
+			roots = append(roots, exeDir) // app bundle: Contents/Resources/
+		case "linux":
+			roots = append(roots, filepath.Join(exeDir, "..", "lib", "ollama"))
+		case "windows":
+			roots = append(roots, filepath.Join(exeDir, "lib", "ollama"))
+		}
 	}
 
-	cPath := C.CString(libraryName)
-	defer C.free(unsafe.Pointer(cPath))
-
-	var handle C.mlx_dynamic_handle
-	if C.mlx_dynamic_load(&handle, cPath) != 0 {
-		return false
-	}
-	if C.mlx_dynamic_load_symbols(handle) != 0 {
-		C.mlx_dynamic_unload(&handle)
-		return false
-	}
-
-	return true
-}
-
-func init() {
-	switch runtime.GOOS {
-	case "darwin", "linux", "windows":
-
-	default:
-		return
-	}
-
-	// Try OLLAMA_LIBRARY_PATH first, including mlx_* subdirectories
-	if paths, ok := os.LookupEnv("OLLAMA_LIBRARY_PATH"); ok {
-		for _, dir := range filepath.SplitList(paths) {
-			if tryLoadFromDir(dir) {
-				return
-			}
-			if mlxDirs, err := filepath.Glob(filepath.Join(dir, "mlx_*")); err == nil {
-				for _, mlxDir := range mlxDirs {
-					if tryLoadFromDir(mlxDir) {
-						return
-					}
+	// Development paths: build/lib/ollama and build/*/lib/ollama.
+	// Reverse-sort and filter the glob results so higher-versioned Metal
+	// builds (e.g., metal-v4) are tried before lower ones (metal-v3),
+	// and incompatible variants are skipped. Without this, alphabetical
+	// order would always pick v3 over v4 in dev builds.
+	for _, base := range repoBuildDirs() {
+		roots = append(roots, filepath.Join(base, "lib", "ollama"))
+		if matches, err := filepath.Glob(filepath.Join(base, "*", "lib", "ollama")); err == nil {
+			sort.Sort(sort.Reverse(sort.StringSlice(matches)))
+			for _, m := range matches {
+				// Extract the build dir name (e.g., "metal-v4" from "build/metal-v4/lib/ollama")
+				rel, _ := filepath.Rel(base, m)
+				variant := strings.SplitN(rel, string(filepath.Separator), 2)[0]
+				if isCompatibleMLXVariant(variant) {
+					roots = append(roots, m)
 				}
 			}
 		}
 	}
 
-	// Try loading via rpath/standard library search
-	if tryLoadByName() {
-		return
-	}
+	return roots
+}
 
-	// Build search paths: executable directory, then build directories
-	var searchDirs []string
-	if exe, err := os.Executable(); err == nil {
-		if eval, err := filepath.EvalSymlinks(exe); err == nil {
-			exe = eval
-		}
-		searchDirs = append(searchDirs, filepath.Dir(exe))
-	}
-
+// repoBuildDirs returns candidate build/ directories relative to cwd and repo root.
+func repoBuildDirs() []string {
+	var dirs []string
 	if cwd, err := os.Getwd(); err == nil {
-		searchDirs = append(searchDirs, filepath.Join(cwd, "build", "lib", "ollama"))
-
-		// Walk up from cwd to find the repo root (containing go.mod) so that
-		// tests running from a package subdirectory can find the build output.
+		dirs = append(dirs, filepath.Join(cwd, "build"))
 		for dir := cwd; ; {
 			if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
 				if dir != cwd {
-					searchDirs = append(searchDirs, filepath.Join(dir, "build", "lib", "ollama"))
+					dirs = append(dirs, filepath.Join(dir, "build"))
 				}
 				break
 			}
@@ -148,22 +132,122 @@ func init() {
 			dir = parent
 		}
 	}
+	return dirs
+}
 
-	// Also scan mlx_* subdirectories within each search dir
-	var expanded []string
-	for _, dir := range searchDirs {
-		expanded = append(expanded, dir)
-		if mlxDirs, err := filepath.Glob(filepath.Join(dir, "mlx_*")); err == nil {
-			expanded = append(expanded, mlxDirs...)
-		}
+// prependLibraryPath prepends dir to the platform's dynamic library search
+// path so the linker finds colocated libmlx before any stale copies.
+// Called once after successful library load.
+func prependLibraryPath(dir string) {
+	var envVar string
+	switch runtime.GOOS {
+	case "darwin":
+		envVar = "DYLD_LIBRARY_PATH"
+	case "linux":
+		envVar = "LD_LIBRARY_PATH"
+	default:
+		return
+	}
+	if existing := os.Getenv(envVar); existing != "" {
+		os.Setenv(envVar, dir+string(filepath.ListSeparator)+existing)
+	} else {
+		os.Setenv(envVar, dir)
+	}
+}
+
+func init() {
+	switch runtime.GOOS {
+	case "darwin", "linux", "windows":
+	default:
+		return
 	}
 
-	for _, dir := range expanded {
-		if tryLoadFromDir(dir) {
-			return
-		}
+	// OLLAMA_LLM_LIBRARY overrides variant selection (e.g., "mlx_metal_v3").
+	// When set to an mlx_* value, only that specific subdir is tried.
+	// The GGML runner ignores mlx_* values (see discover/runner.go).
+	forcedVariant, _ := os.LookupEnv("OLLAMA_LLM_LIBRARY")
+	if forcedVariant != "" && !strings.HasPrefix(forcedVariant, "mlx_") {
+		forcedVariant = "" // not an MLX variant, ignore
 	}
 
-	initError = fmt.Errorf("failed to load MLX dynamic library (searched: %v)", searchDirs)
-	slog.Debug("MLX dynamic library not available", "error", initError)
+	found := findMLXLibrary(forcedVariant)
+	if !found {
+		initError = fmt.Errorf("failed to load MLX dynamic library (searched: %v)", libOllamaRoots())
+		return
+	}
+
+	prependLibraryPath(filepath.Dir(initLoadedPath))
+}
+
+func findMLXLibrary(forcedVariant string) bool {
+	for _, root := range libOllamaRoots() {
+		if forcedVariant != "" {
+			if tryLoadFromDir(filepath.Join(root, forcedVariant)) {
+				return true
+			}
+		} else {
+			if tryLoadFromMLXSubdirs(root) {
+				return true
+			}
+			if tryLoadFromDir(root) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// tryLoadFromMLXSubdirs globs for mlx_* subdirs within dir, filters out
+// incompatible variants, tries the remainder in reverse sorted order (so
+// higher-versioned variants are preferred), and returns true on first
+// successful load.
+func tryLoadFromMLXSubdirs(dir string) bool {
+	mlxDirs, err := filepath.Glob(filepath.Join(dir, "mlx_*"))
+	if err != nil || len(mlxDirs) == 0 {
+		return false
+	}
+	// Reverse sort: mlx_metal_v4 before mlx_metal_v3, mlx_cuda_v13 before v12
+	sort.Sort(sort.Reverse(sort.StringSlice(mlxDirs)))
+	for _, mlxDir := range mlxDirs {
+		if !isCompatibleMLXVariant(filepath.Base(mlxDir)) {
+			slog.Debug("skipping incompatible MLX variant", "dir", mlxDir)
+			continue
+		}
+		if tryLoadFromDir(mlxDir) {
+			return true
+		}
+	}
+	return false
+}
+
+// isCompatibleMLXVariant checks whether an MLX variant directory is
+// compatible with the current OS. On macOS, dlopen does NOT enforce
+// the deployment target for dynamically loaded libraries, so we must
+// check compatibility ourselves to avoid loading Metal 4.x shaders
+// on a Metal 3.x driver.
+func isCompatibleMLXVariant(name string) bool {
+	if runtime.GOOS != "darwin" {
+		return true // non-macOS variants use dlopen failure for filtering
+	}
+	// Metal variant naming:
+	//   Production: mlx_metal_v3, mlx_metal_v4
+	//   Dev build:  metal-v3, metal-v4
+	var verStr string
+	switch {
+	case strings.HasPrefix(name, "mlx_metal_v"):
+		verStr = strings.TrimPrefix(name, "mlx_metal_v")
+	case strings.HasPrefix(name, "metal-v"):
+		verStr = strings.TrimPrefix(name, "metal-v")
+	}
+	if verStr != "" {
+		metalVer, err := strconv.Atoi(verStr)
+		if err != nil {
+			return true // unknown format, try it
+		}
+		// Metal 4.x requires macOS 26+
+		if metalVer >= 4 && macOSMajorVersion() < 26 {
+			return false
+		}
+	}
+	return true
 }

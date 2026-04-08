@@ -54,7 +54,6 @@ import (
 	"github.com/ollama/ollama/types/syncmap"
 	"github.com/ollama/ollama/version"
 	xcmd "github.com/ollama/ollama/x/cmd"
-	"github.com/ollama/ollama/x/create"
 	xcreateclient "github.com/ollama/ollama/x/create/client"
 	"github.com/ollama/ollama/x/imagegen"
 )
@@ -164,11 +163,13 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check for --experimental flag for safetensors model creation
+	// This gates both safetensors LLM and imagegen model creation
 	experimental, _ := cmd.Flags().GetBool("experimental")
 	if experimental {
 		if !isLocalhost() {
 			return errors.New("remote safetensor model creation not yet supported")
 		}
+
 		// Get Modelfile content - either from -f flag or default to "FROM ."
 		var reader io.Reader
 		filename, err := getModelfileName(cmd)
@@ -211,23 +212,12 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		}, p)
 	}
 
+	// Standard Modelfile + API path
 	var reader io.Reader
 
 	filename, err := getModelfileName(cmd)
 	if os.IsNotExist(err) {
 		if filename == "" {
-			// No Modelfile found - check if current directory is an image gen model
-			if create.IsTensorModelDir(".") {
-				if !isLocalhost() {
-					return errors.New("remote safetensor model creation not yet supported")
-				}
-				quantize, _ := cmd.Flags().GetString("quantize")
-				return xcreateclient.CreateModel(xcreateclient.CreateOptions{
-					ModelName: modelName,
-					ModelDir:  ".",
-					Quantize:  quantize,
-				}, p)
-			}
 			reader = strings.NewReader("FROM .\n")
 		} else {
 			return errModelfileNotFound
@@ -695,7 +685,8 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	opts.MultiModal = slices.Contains(info.Capabilities, model.CapabilityVision)
+	audioCapable := slices.Contains(info.Capabilities, model.CapabilityAudio)
+	opts.MultiModal = slices.Contains(info.Capabilities, model.CapabilityVision) || audioCapable
 
 	// TODO: remove the projector info and vision info checks below,
 	// these are left in for backwards compatibility with older servers
@@ -1494,6 +1485,9 @@ type displayResponseState struct {
 
 func displayResponse(content string, wordWrap bool, state *displayResponseState) {
 	termWidth, _, _ := term.GetSize(int(os.Stdout.Fd()))
+	if termWidth == 0 {
+		termWidth = 80
+	}
 	if wordWrap && termWidth >= 10 {
 		for _, ch := range content {
 			if state.lineLength+1 > termWidth-5 {
