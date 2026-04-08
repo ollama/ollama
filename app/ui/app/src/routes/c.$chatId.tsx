@@ -7,10 +7,28 @@ import { ChatSidebar } from "@/components/ChatSidebar";
 import LaunchCommands from "@/components/LaunchCommands";
 import { useEffect, useRef } from "react";
 import { useSettings } from "@/hooks/useSettings";
-import {
-  getLaunchRouteSettingsUpdates,
-  shouldAutoOpenLaunchSidebarOnVisit,
-} from "@/lib/homeView";
+
+const launchSidebarRequestedKey = "ollama.launchSidebarRequested";
+const launchSidebarSeenKey = "ollama.launchSidebarSeen";
+const fallbackSessionState = new Map<string, string>();
+
+function getSessionState() {
+  if (typeof sessionStorage !== "undefined") {
+    return sessionStorage;
+  }
+
+  return {
+    getItem(key: string) {
+      return fallbackSessionState.get(key) ?? null;
+    },
+    setItem(key: string, value: string) {
+      fallbackSessionState.set(key, value);
+    },
+    removeItem(key: string) {
+      fallbackSessionState.delete(key);
+    },
+  };
+}
 
 export const Route = createFileRoute("/c/$chatId")({
   component: RouteComponent,
@@ -47,13 +65,32 @@ function RouteComponent() {
     previousChatIdRef.current = chatId;
 
     if (chatId === "launch") {
+      const sessionState = getSessionState();
       const shouldOpenSidebar =
         previousChatId !== "launch" &&
-        shouldAutoOpenLaunchSidebarOnVisit();
-      const updates = getLaunchRouteSettingsUpdates(
-        settingsData,
-        shouldOpenSidebar,
-      );
+        (() => {
+          if (sessionState.getItem(launchSidebarRequestedKey) === "1") {
+            sessionState.removeItem(launchSidebarRequestedKey);
+            sessionState.setItem(launchSidebarSeenKey, "1");
+            return true;
+          }
+
+          if (sessionState.getItem(launchSidebarSeenKey) !== "1") {
+            sessionState.setItem(launchSidebarSeenKey, "1");
+            return true;
+          }
+
+          return false;
+        })();
+      const updates: { LastHomeView?: string; SidebarOpen?: boolean } = {};
+
+      if (settingsData.LastHomeView !== "launch") {
+        updates.LastHomeView = "launch";
+      }
+
+      if (shouldOpenSidebar && !settingsData.SidebarOpen) {
+        updates.SidebarOpen = true;
+      }
 
       if (Object.keys(updates).length === 0) {
         return;
