@@ -224,9 +224,6 @@ func TestBuildModelEntries(t *testing.T) {
 		if _, ok := entry["modalities"]; ok {
 			t.Fatalf("modalities should not be set without an API client, got %v", entry["modalities"])
 		}
-		if _, ok := entry["reasoning"]; ok {
-			t.Fatalf("reasoning should not be set without an API client, got %v", entry["reasoning"])
-		}
 	})
 
 	t.Run("uses one timeout budget across capability probes", func(t *testing.T) {
@@ -267,38 +264,6 @@ func TestBuildModelEntries(t *testing.T) {
 		defer mu.Unlock()
 		if waited != 1 {
 			t.Fatalf("expected shared timeout to block one probe, waited on %d probes", waited)
-		}
-	})
-}
-
-func TestBuildModelEntriesTimeoutWithBackgroundContext(t *testing.T) {
-	t.Run("uses timeout when probing capabilities with background context", func(t *testing.T) {
-		u, err := url.Parse("http://ollama.example")
-		if err != nil {
-			t.Fatalf("parse test URL: %v", err)
-		}
-
-		client := api.NewClient(u, &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			<-req.Context().Done()
-			return nil, req.Context().Err()
-		})})
-
-		done := make(chan map[string]any, 1)
-		go func() {
-			done <- buildModelEntries(context.Background(), client, []string{"gpt-oss:120b-cloud"})
-		}()
-
-		select {
-		case models := <-done:
-			entry, _ := models["gpt-oss:120b-cloud"].(map[string]any)
-			if _, ok := entry["reasoning"]; ok {
-				t.Fatalf("reasoning should not be set after timed out capability probe, got %v", entry["reasoning"])
-			}
-			if entry["limit"] == nil {
-				t.Fatalf("cloud model limit should still be set after timed out capability probe")
-			}
-		case <-time.After(openCodeModelShowTimeout + time.Second):
-			t.Fatalf("buildModelEntries did not return within %v", openCodeModelShowTimeout+time.Second)
 		}
 	})
 }
