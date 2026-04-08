@@ -92,7 +92,7 @@ var integrationSpecs = []*IntegrationSpec{
 		Description: "Anomaly's open-source coding agent",
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
-				_, ok := findOpencode()
+				_, ok := findOpenCode()
 				return ok
 			},
 			URL: "https://opencode.ai",

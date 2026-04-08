@@ -770,7 +770,7 @@ func TestLookupCloudModelLimit(t *testing.T) {
 	}
 }
 
-func TestFindOpencode(t *testing.T) {
+func TestFindOpenCode(t *testing.T) {
 	t.Run("fallback to ~/.opencode/bin", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)
@@ -778,9 +778,9 @@ func TestFindOpencode(t *testing.T) {
 		// Ensure opencode is not on PATH
 		t.Setenv("PATH", tmpDir)
 
-		// Without the fallback binary, findOpencode should fail
-		if _, ok := findOpencode(); ok {
-			t.Fatal("findOpencode should fail when binary is not on PATH or in fallback location")
+		// Without the fallback binary, findOpenCode should fail
+		if _, ok := findOpenCode(); ok {
+			t.Fatal("findOpenCode should fail when binary is not on PATH or in fallback location")
 		}
 
 		// Create a fake binary at the curl install fallback location
@@ -793,13 +793,13 @@ func TestFindOpencode(t *testing.T) {
 		fakeBin := filepath.Join(binDir, name)
 		os.WriteFile(fakeBin, []byte("#!/bin/sh\n"), 0o755)
 
-		// Now findOpencode should succeed via fallback
-		path, ok := findOpencode()
+		// Now findOpenCode should succeed via fallback
+		path, ok := findOpenCode()
 		if !ok {
-			t.Fatal("findOpencode should succeed with fallback binary")
+			t.Fatal("findOpenCode should succeed with fallback binary")
 		}
 		if path != fakeBin {
-			t.Errorf("findOpencode = %q, want %q", path, fakeBin)
+			t.Errorf("findOpenCode = %q, want %q", path, fakeBin)
 		}
 	})
 }
