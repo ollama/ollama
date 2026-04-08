@@ -241,6 +241,215 @@ func TestLookupCloudModelLimit(t *testing.T) {
 	}
 }
 
+func TestOpenCodeEdit_ReasoningOnThinkingModel(t *testing.T) {
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" {
+			fmt.Fprintf(w, `{"capabilities":["thinking"],"model_info":{}}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	configPath := filepath.Join(tmpDir, ".config", "opencode", "opencode.json")
+
+	if err := o.Edit([]string{"qwq"}); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := readOpenCodeModel(t, configPath, "qwq")
+	if entry["reasoning"] != true {
+		t.Error("expected reasoning = true for thinking model")
+	}
+	variants, ok := entry["variants"].(map[string]any)
+	if !ok {
+		t.Fatal("expected variants to be set")
+	}
+	none, ok := variants["none"].(map[string]any)
+	if !ok {
+		t.Fatal("expected none variant to be set")
+	}
+	if none["reasoningEffort"] != "none" {
+		t.Errorf("none variant reasoningEffort = %v, want none", none["reasoningEffort"])
+	}
+	// Built-in low/medium/high should be disabled
+	for _, level := range []string{"low", "medium", "high"} {
+		v, ok := variants[level].(map[string]any)
+		if !ok {
+			t.Errorf("expected %s variant to exist", level)
+			continue
+		}
+		if v["disabled"] != true {
+			t.Errorf("expected %s variant to be disabled", level)
+		}
+	}
+}
+
+func TestOpenCodeEdit_ReasoningLevelsOnGptOss(t *testing.T) {
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" {
+			fmt.Fprintf(w, `{"capabilities":["thinking"],"model_info":{}}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	configPath := filepath.Join(tmpDir, ".config", "opencode", "opencode.json")
+
+	if err := o.Edit([]string{"gpt-oss:120b-cloud"}); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := readOpenCodeModel(t, configPath, "gpt-oss:120b-cloud")
+	if entry["reasoning"] != true {
+		t.Error("expected reasoning = true")
+	}
+	// GPT-OSS cannot turn thinking off and supports levels,
+	// so no custom variants should be written.
+	if entry["variants"] != nil {
+		t.Errorf("expected no variants for gpt-oss, got %v", entry["variants"])
+	}
+	// Should default to medium reasoning effort
+	opts, ok := entry["options"].(map[string]any)
+	if !ok {
+		t.Fatal("expected options to be set for gpt-oss")
+	}
+	if opts["reasoningEffort"] != "medium" {
+		t.Errorf("reasoningEffort = %v, want medium", opts["reasoningEffort"])
+	}
+}
+
+func TestOpenCodeEdit_NoReasoningOnNonThinkingModel(t *testing.T) {
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" {
+			fmt.Fprintf(w, `{"capabilities":[],"model_info":{}}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	configPath := filepath.Join(tmpDir, ".config", "opencode", "opencode.json")
+
+	if err := o.Edit([]string{"llama3.2"}); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := readOpenCodeModel(t, configPath, "llama3.2")
+	if entry["reasoning"] != nil {
+		t.Errorf("expected no reasoning for non-thinking model, got %v", entry["reasoning"])
+	}
+	if entry["variants"] != nil {
+		t.Errorf("expected no variants for non-thinking model, got %v", entry["variants"])
+	}
+}
+
+func TestOpenCodeEdit_BackfillsReasoningOnExistingModel(t *testing.T) {
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" {
+			fmt.Fprintf(w, `{"capabilities":["thinking"],"model_info":{}}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	configDir := filepath.Join(tmpDir, ".config", "opencode")
+	configPath := filepath.Join(configDir, "opencode.json")
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(configPath, []byte(`{
+		"provider": {
+			"ollama": {
+				"models": {
+					"qwq": {
+						"name": "qwq",
+						"_launch": true
+					}
+				}
+			}
+		}
+	}`), 0o644)
+
+	if err := o.Edit([]string{"qwq"}); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := readOpenCodeModel(t, configPath, "qwq")
+	if entry["reasoning"] != true {
+		t.Error("expected reasoning = true after backfill")
+	}
+	if entry["variants"] == nil {
+		t.Error("expected variants to be set after backfill")
+	}
+}
+
+func TestOpenCodeEdit_RemovesStaleReasoning(t *testing.T) {
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" {
+			fmt.Fprintf(w, `{"capabilities":[],"model_info":{}}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	configDir := filepath.Join(tmpDir, ".config", "opencode")
+	configPath := filepath.Join(configDir, "opencode.json")
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(configPath, []byte(`{
+		"provider": {
+			"ollama": {
+				"models": {
+					"llama3.2": {
+						"name": "llama3.2",
+						"_launch": true,
+						"reasoning": true,
+						"variants": {"none": {"reasoningEffort": "none"}}
+					}
+				}
+			}
+		}
+	}`), 0o644)
+
+	if err := o.Edit([]string{"llama3.2"}); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := readOpenCodeModel(t, configPath, "llama3.2")
+	if entry["reasoning"] != nil {
+		t.Errorf("expected reasoning removed, got %v", entry["reasoning"])
+	}
+	if entry["variants"] != nil {
+		t.Errorf("expected variants removed, got %v", entry["variants"])
+	}
+}
+
 func TestFindOpenCode(t *testing.T) {
 	t.Run("fallback to ~/.opencode/bin", func(t *testing.T) {
 		tmpDir := t.TempDir()
