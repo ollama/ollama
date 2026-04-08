@@ -52,7 +52,7 @@ export function useSettings() {
       thinkLevel: settingsData?.settings?.ThinkLevel ?? "none",
       selectedModel: settingsData?.settings?.SelectedModel ?? "",
       sidebarOpen: settingsData?.settings?.SidebarOpen ?? false,
-      lastHomeView: settingsData?.settings?.LastHomeView ?? "chat",
+      lastHomeView: settingsData?.settings?.LastHomeView ?? "launch",
     }),
     [settingsData?.settings],
   );

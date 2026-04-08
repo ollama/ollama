@@ -4,6 +4,7 @@ import { useDeleteChat } from "@/hooks/useDeleteChat";
 import { useQueryClient } from "@tanstack/react-query";
 import { getChat } from "@/api";
 import { Link } from "@/components/ui/link";
+import { requestLaunchSidebarOpen } from "@/lib/homeView";
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { ChatsResponse } from "@/gotypes";
 import { CogIcon, RocketLaunchIcon } from "@heroicons/react/24/outline";
@@ -285,6 +286,11 @@ export function ChatSidebar({ currentChatId }: ChatSidebarProps) {
         <Link
           to="/c/$chatId"
           params={{ chatId: "launch" }}
+          onClick={() => {
+            if (currentChatId !== "launch") {
+              requestLaunchSidebarOpen();
+            }
+          }}
           className={`flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm text-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 dark:text-neutral-100 cursor-pointer ${currentChatId === "launch"
             ? "bg-neutral-100 dark:bg-neutral-800"
             : ""

@@ -1,5 +1,6 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { getSettings } from "@/api";
+import { resolveHomeChatId } from "@/lib/homeView";
 
 export const Route = createFileRoute("/")({
   beforeLoad: async ({ context }) => {
@@ -7,8 +8,7 @@ export const Route = createFileRoute("/")({
       queryKey: ["settings"],
       queryFn: getSettings,
     });
-    const lastHomeView = settingsData?.settings?.LastHomeView ?? "chat";
-    const chatId = lastHomeView === "chat" ? "new" : "launch";
+    const chatId = resolveHomeChatId(settingsData?.settings?.LastHomeView);
 
     throw redirect({
       to: "/c/$chatId",
