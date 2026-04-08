@@ -11,7 +11,8 @@
 // Key simplifications for many-small-blob workloads:
 //
 //   - Whole-blob transfers: No part-based chunking. Each blob downloads/uploads as one unit.
-//   - No resume: If a transfer fails, it restarts from scratch (fine for small blobs).
+//   - Resume for large blobs: Blobs >= 64MB preserve partial .tmp files on failure
+//     and use HTTP Range requests on retry. Small blobs restart from scratch.
 //   - Inline hashing: SHA256 computed during streaming, not asynchronously after parts complete.
 //   - Stall and speed detection: Cancels on no data (stall) or speed below 10% of median.
 //
