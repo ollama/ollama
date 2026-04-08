@@ -1,14 +1,23 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/ollama/ollama/cmd/config"
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/launch"
 )
+
+type signInTickMsg struct{}
+
+type signInCheckMsg struct {
+	signedIn bool
+	userName string
+}
 
 type signInModel struct {
 	modelName string
@@ -88,11 +97,8 @@ func renderSignIn(modelName, signInURL string, spinner, width int) string {
 
 	fmt.Fprintf(&s, "To use %s, please sign in.\n\n", selectorSelectedItemStyle.Render(modelName))
 
-	// Wrap in OSC 8 hyperlink so the entire URL is clickable even when wrapped.
-	// Padding is outside the hyperlink so spaces don't get underlined.
-	link := fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", signInURL, urlColor.Render(signInURL))
 	s.WriteString("Navigate to:\n")
-	s.WriteString(urlWrap.Render(link))
+	s.WriteString(urlWrap.Render(urlColor.Render(signInURL)))
 	s.WriteString("\n\n")
 
 	s.WriteString(lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}).Render(
@@ -104,9 +110,21 @@ func renderSignIn(modelName, signInURL string, spinner, width int) string {
 	return lipgloss.NewStyle().PaddingLeft(2).Render(s.String())
 }
 
+func checkSignIn() tea.Msg {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return signInCheckMsg{signedIn: false}
+	}
+	user, err := client.Whoami(context.Background())
+	if err == nil && user != nil && user.Name != "" {
+		return signInCheckMsg{signedIn: true, userName: user.Name}
+	}
+	return signInCheckMsg{signedIn: false}
+}
+
 // RunSignIn shows a bubbletea sign-in dialog and polls until the user signs in or cancels.
 func RunSignIn(modelName, signInURL string) (string, error) {
-	config.OpenBrowser(signInURL)
+	launch.OpenBrowser(signInURL)
 
 	m := signInModel{
 		modelName: modelName,

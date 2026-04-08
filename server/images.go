@@ -39,6 +39,7 @@ var (
 	errCapabilityTools      = errors.New("tools")
 	errCapabilityInsert     = errors.New("insert")
 	errCapabilityVision     = errors.New("vision")
+	errCapabilityAudio      = errors.New("audio")
 	errCapabilityEmbedding  = errors.New("embedding")
 	errCapabilityThinking   = errors.New("thinking")
 	errCapabilityImage      = errors.New("image generation")
@@ -93,14 +94,26 @@ func (m *Model) Capabilities() []model.Capability {
 			if f.KeyValue("vision.block_count").Valid() {
 				capabilities = append(capabilities, model.CapabilityVision)
 			}
+			if f.KeyValue("audio.block_count").Valid() {
+				capabilities = append(capabilities, model.CapabilityAudio)
+			}
 		} else {
 			slog.Error("couldn't open model file", "error", err)
 		}
-	} else if len(m.Config.Capabilities) > 0 {
+	}
+
+	// Also include capabilities from the model config (e.g. vision capability
+	// set during creation for MLX/safetensors models).
+	if len(m.Config.Capabilities) > 0 {
 		for _, c := range m.Config.Capabilities {
-			capabilities = append(capabilities, model.Capability(c))
+			cap := model.Capability(c)
+			if !slices.Contains(capabilities, cap) {
+				capabilities = append(capabilities, cap)
+			}
 		}
-	} else {
+	}
+
+	if len(capabilities) == 0 {
 		slog.Warn("unknown capabilities for model", "model", m.Name)
 	}
 
@@ -141,6 +154,14 @@ func (m *Model) Capabilities() []model.Capability {
 		capabilities = append(capabilities, model.CapabilityThinking)
 	}
 
+	// Temporary workaround — suppress vision/audio for gemma4 MLX models
+	// until multimodal runtime pipeline lands. Remove when imageproc.go is wired up.
+	if m.Config.ModelFormat == "safetensors" && m.Config.Renderer == "gemma4" {
+		capabilities = slices.DeleteFunc(capabilities, func(c model.Capability) bool {
+			return c == model.CapabilityVision || c == "audio"
+		})
+	}
+
 	return capabilities
 }
 
@@ -156,6 +177,7 @@ func (m *Model) CheckCapabilities(want ...model.Capability) error {
 		model.CapabilityTools:      errCapabilityTools,
 		model.CapabilityInsert:     errCapabilityInsert,
 		model.CapabilityVision:     errCapabilityVision,
+		model.CapabilityAudio:      errCapabilityAudio,
 		model.CapabilityEmbedding:  errCapabilityEmbedding,
 		model.CapabilityThinking:   errCapabilityThinking,
 		model.CapabilityImage:      errCapabilityImage,
@@ -578,7 +600,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 
 	fn(api.ProgressResponse{Status: "pulling manifest"})
 
-	mf, err := pullModelManifest(ctx, n, regOpts)
+	mf, manifestData, err := pullModelManifest(ctx, n, regOpts)
 	if err != nil {
 		return fmt.Errorf("pull model manifest: %s", err)
 	}
@@ -591,7 +613,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 
 	// Use fast transfer for models with tensor layers (many small blobs)
 	if hasTensorLayers(layers) {
-		if err := pullWithTransfer(ctx, n, layers, mf, regOpts, fn); err != nil {
+		if err := pullWithTransfer(ctx, n, layers, manifestData, regOpts, fn); err != nil {
 			return err
 		}
 		fn(api.ProgressResponse{Status: "success"})
@@ -639,11 +661,6 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 
 	fn(api.ProgressResponse{Status: "writing manifest"})
 
-	manifestJSON, err := json.Marshal(mf)
-	if err != nil {
-		return err
-	}
-
 	fp, err := manifest.PathForName(n)
 	if err != nil {
 		return err
@@ -652,11 +669,13 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		return err
 	}
 
-	err = os.WriteFile(fp, manifestJSON, 0o644)
+	err = os.WriteFile(fp, manifestData, 0o644)
 	if err != nil {
 		slog.Info(fmt.Sprintf("couldn't write to %s", fp))
 		return err
 	}
+
+	slog.Debug("manifest written", "path", fp, "sha256", fmt.Sprintf("%x", sha256.Sum256(manifestData)), "size", len(manifestData))
 
 	if !envconfig.NoPrune() && len(deleteMap) > 0 {
 		fn(api.ProgressResponse{Status: "removing unused layers"})
@@ -681,7 +700,7 @@ func hasTensorLayers(layers []manifest.Layer) bool {
 }
 
 // pullWithTransfer uses the simplified x/transfer package for downloading blobs.
-func pullWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer, mf *manifest.Manifest, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
+func pullWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer, manifestData []byte, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
 	blobs := make([]transfer.Blob, len(layers))
 	for i, layer := range layers {
 		blobs[i] = transfer.Blob{
@@ -738,10 +757,6 @@ func pullWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer
 
 	// Write manifest
 	fn(api.ProgressResponse{Status: "writing manifest"})
-	manifestJSON, err := json.Marshal(mf)
-	if err != nil {
-		return err
-	}
 
 	fp, err := manifest.PathForName(n)
 	if err != nil {
@@ -751,7 +766,12 @@ func pullWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer
 		return err
 	}
 
-	return os.WriteFile(fp, manifestJSON, 0o644)
+	if err := os.WriteFile(fp, manifestData, 0o644); err != nil {
+		return err
+	}
+
+	slog.Debug("manifest written", "path", fp, "sha256", fmt.Sprintf("%x", sha256.Sum256(manifestData)), "size", len(manifestData))
+	return nil
 }
 
 // pushWithTransfer uses the simplified x/transfer package for uploading blobs and manifest.
@@ -812,23 +832,28 @@ func pushWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer
 	})
 }
 
-func pullModelManifest(ctx context.Context, n model.Name, regOpts *registryOptions) (*manifest.Manifest, error) {
+func pullModelManifest(ctx context.Context, n model.Name, regOpts *registryOptions) (*manifest.Manifest, []byte, error) {
 	requestURL := n.BaseURL().JoinPath("v2", n.DisplayNamespaceModel(), "manifests", n.Tag)
 
 	headers := make(http.Header)
 	headers.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json")
 	resp, err := makeRequestWithRetry(ctx, http.MethodGet, requestURL, headers, nil, regOpts)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer resp.Body.Close()
 
-	var m manifest.Manifest
-	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
-		return nil, err
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	return &m, err
+	var m manifest.Manifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, nil, err
+	}
+
+	return &m, data, err
 }
 
 // GetSHA256Digest returns the SHA256 hash of a given buffer and returns it, and the size of buffer

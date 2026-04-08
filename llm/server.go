@@ -87,7 +87,8 @@ type LlamaServer interface {
 type llmServer struct {
 	port      int
 	cmd       *exec.Cmd
-	done      chan error // Channel to signal when the process exits
+	done      chan struct{} // closed when the process exits
+	doneErr   error         // valid after done is closed
 	status    *StatusWriter
 	options   api.Options
 	modelPath string
@@ -209,6 +210,18 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		fa = false
 	}
 
+	// Gemma 4's 512-dim attention heads require MMA FA kernels (Turing+, compute >= 7.5).
+	// Older CUDA GPUs only have tile/vec FA kernels which abort on dk512 non-GQA attention.
+	if fa && f.KV().Architecture() == "gemma4" {
+		for _, gpu := range gpus {
+			if gpu.Library == "CUDA" && (gpu.ComputeMajor < 7 || (gpu.ComputeMajor == 7 && gpu.ComputeMinor < 5)) {
+				slog.Debug("disabling flash attention for gemma4 on pre-Turing GPU", "compute", fmt.Sprintf("%d.%d", gpu.ComputeMajor, gpu.ComputeMinor))
+				fa = false
+				break
+			}
+		}
+	}
+
 	kvct := strings.ToLower(envconfig.KvCacheType())
 
 	if tok == nil {
@@ -280,7 +293,7 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		sem:            semaphore.NewWeighted(int64(numParallel)),
 		totalLayers:    f.KV().BlockCount() + 1,
 		loadStart:      time.Now(),
-		done:           make(chan error, 1),
+		done:           make(chan struct{}),
 	}
 
 	if err != nil {
@@ -304,10 +317,11 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 			if strings.Contains(s.status.LastErrMsg, "unknown model") {
 				s.status.LastErrMsg = "this model is not supported by your version of Ollama. You may need to upgrade"
 			}
-			s.done <- errors.New(s.status.LastErrMsg)
+			s.doneErr = errors.New(s.status.LastErrMsg)
 		} else {
-			s.done <- err
+			s.doneErr = err
 		}
+		close(s.done)
 	}()
 
 	if tok != nil {
@@ -1356,8 +1370,8 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 		case <-ctx.Done():
 			slog.Warn("client connection closed before server finished loading, aborting load")
 			return fmt.Errorf("timed out waiting for llama runner to start: %w", ctx.Err())
-		case err := <-s.done:
-			return fmt.Errorf("llama runner process has terminated: %w", err)
+		case <-s.done:
+			return fmt.Errorf("llama runner process has terminated: %w", s.doneErr)
 		default:
 		}
 		if time.Now().After(stallTimer) {

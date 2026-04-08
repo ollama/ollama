@@ -1,5 +1,3 @@
-//go:build mlx
-
 package mlx
 
 // #include "generated.h"
@@ -19,7 +17,8 @@ func Quantize(w *Array, groupSize, bits int, mode string) (weights, scales, bias
 	optBits := C.mlx_optional_int{value: C.int(bits), has_value: true}
 	res := C.mlx_vector_array_new()
 	defer C.mlx_vector_array_free(res)
-	C.mlx_quantize(&res, w.ctx, optGroupSize, optBits, cMode, DefaultStream().ctx)
+	var globalScale C.mlx_array
+	C.mlx_quantize(&res, w.ctx, optGroupSize, optBits, cMode, globalScale, DefaultStream().ctx)
 
 	vecSize := int(C.mlx_vector_array_size(res))
 	w0 := New("QUANTIZE_W")
@@ -32,6 +31,18 @@ func Quantize(w *Array, groupSize, bits int, mode string) (weights, scales, bias
 		return w0, w1, w2
 	}
 	return w0, w1, nil
+}
+
+func FromFP8(x *Array, dtype DType) *Array {
+	out := New("FROM_FP8")
+	C.mlx_from_fp8(&out.ctx, x.ctx, C.mlx_dtype(dtype), DefaultStream().ctx)
+	return out
+}
+
+func ToFP8(x *Array) *Array {
+	out := New("TO_FP8")
+	C.mlx_to_fp8(&out.ctx, x.ctx, DefaultStream().ctx)
+	return out
 }
 
 func Dequantize(w, scales, biases *Array, groupSize, bits int, mode string) *Array {
@@ -47,7 +58,8 @@ func Dequantize(w, scales, biases *Array, groupSize, bits int, mode string) *Arr
 	}
 
 	out := New("DEQUANTIZE")
-	C.mlx_dequantize(&out.ctx, w.ctx, scales.ctx, b, optGroupSize, optBits, cMode, optDtype, DefaultStream().ctx)
+	var globalScale C.mlx_array
+	C.mlx_dequantize(&out.ctx, w.ctx, scales.ctx, b, optGroupSize, optBits, cMode, globalScale, optDtype, DefaultStream().ctx)
 	return out
 }
 
@@ -111,6 +123,69 @@ func Where(condition, a, b *Array) *Array {
 	out := New("WHERE")
 	C.mlx_where(&out.ctx, condition.ctx, a.ctx, b.ctx, DefaultStream().ctx)
 	return out
+}
+
+func Conv1d(x, weight *Array, bias *Array, stride, padding, dilation, groups int32) *Array {
+	out := New("CONV1D")
+	C.mlx_conv1d(
+		&out.ctx,
+		x.ctx,
+		weight.ctx,
+		C.int(stride),
+		C.int(padding),
+		C.int(dilation),
+		C.int(groups),
+		DefaultStream().ctx,
+	)
+	if bias != nil && bias.Valid() {
+		out = Add(out, bias)
+	}
+	return out
+}
+
+func Contiguous(a *Array, allowColMajor bool) *Array {
+	out := New("CONTIGUOUS")
+	C.mlx_contiguous(&out.ctx, a.ctx, C.bool(allowColMajor), DefaultStream().ctx)
+	return out
+}
+
+func Pad(a *Array, paddings []int32) *Array {
+	numAxes := len(paddings) / 2
+	axes := make([]C.int, numAxes)
+	lowPad := make([]C.int, numAxes)
+	highPad := make([]C.int, numAxes)
+	for i := range numAxes {
+		axes[i] = C.int(i)
+		lowPad[i] = C.int(paddings[i*2])
+		highPad[i] = C.int(paddings[i*2+1])
+	}
+
+	padValue := C.mlx_array_new_float(C.float(0))
+	defer C.mlx_array_free(padValue)
+
+	cMode := C.CString("constant")
+	defer C.free(unsafe.Pointer(cMode))
+
+	out := New("PAD")
+	C.mlx_pad(
+		&out.ctx,
+		a.ctx,
+		unsafe.SliceData(axes),
+		C.size_t(len(axes)),
+		unsafe.SliceData(lowPad),
+		C.size_t(len(lowPad)),
+		unsafe.SliceData(highPad),
+		C.size_t(len(highPad)),
+		padValue,
+		cMode,
+		DefaultStream().ctx,
+	)
+	return out
+}
+
+func DepthwiseConv1d(x, weight *Array, bias *Array) *Array {
+	groups := int32(x.Dim(x.NumDims() - 1))
+	return Conv1d(x, weight, bias, 1, 0, 1, groups)
 }
 
 // Convenience wrappers (function-style for the model code)
@@ -271,6 +346,30 @@ func Sigmoid(a *Array) *Array {
 	return a.Sigmoid()
 }
 
+func Exp(a *Array) *Array {
+	out := New("EXP")
+	C.mlx_exp(&out.ctx, a.ctx, DefaultStream().ctx)
+	return out
+}
+
+func Log(a *Array) *Array {
+	out := New("LOG")
+	C.mlx_log(&out.ctx, a.ctx, DefaultStream().ctx)
+	return out
+}
+
+func Logaddexp(a, b *Array) *Array {
+	out := New("LOGADDEXP")
+	C.mlx_logaddexp(&out.ctx, a.ctx, b.ctx, DefaultStream().ctx)
+	return out
+}
+
+func SoftmaxAxis(a *Array, axis int, precise bool) *Array {
+	out := New("SOFTMAX_AXIS")
+	C.mlx_softmax_axis(&out.ctx, a.ctx, C.int(axis), C.bool(precise), DefaultStream().ctx)
+	return out
+}
+
 func ScaledDotProductAttentionCausal(q, k, v *Array, scale float32, causalMask bool) *Array {
 	mask := New("")
 	sinks := New("")
@@ -286,9 +385,26 @@ func ScaledDotProductAttentionCausal(q, k, v *Array, scale float32, causalMask b
 	return out
 }
 
+func LayerNormFn(x, weight, bias *Array, eps float32) *Array {
+	out := New("FAST_LAYERNORM")
+	var w, b C.mlx_array
+	if weight != nil {
+		w = weight.ctx
+	}
+	if bias != nil {
+		b = bias.ctx
+	}
+	C.mlx_fast_layer_norm(&out.ctx, x.ctx, w, b, C.float(eps), DefaultStream().ctx)
+	return out
+}
+
 func RMSNormFn(x, weight *Array, eps float32) *Array {
 	out := New("FAST_RMSNORM")
-	C.mlx_fast_rms_norm(&out.ctx, x.ctx, weight.ctx, C.float(eps), DefaultStream().ctx)
+	var w C.mlx_array
+	if weight != nil {
+		w = weight.ctx
+	}
+	C.mlx_fast_rms_norm(&out.ctx, x.ctx, w, C.float(eps), DefaultStream().ctx)
 	return out
 }
 

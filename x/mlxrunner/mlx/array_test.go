@@ -1,10 +1,16 @@
-//go:build mlx
-
 package mlx
 
 import "testing"
 
+func skipIfNoMLX(t *testing.T) {
+	t.Helper()
+	if err := CheckInit(); err != nil {
+		t.Skipf("MLX not available: %v", err)
+	}
+}
+
 func TestFromValue(t *testing.T) {
+	skipIfNoMLX(t)
 	for got, want := range map[*Array]DType{
 		FromValue(true):              DTypeBool,
 		FromValue(false):             DTypeBool,
@@ -22,6 +28,7 @@ func TestFromValue(t *testing.T) {
 }
 
 func TestFromValues(t *testing.T) {
+	skipIfNoMLX(t)
 	for got, want := range map[*Array]DType{
 		FromValues([]bool{true, false, true}, 3):           DTypeBool,
 		FromValues([]uint8{1, 2, 3}, 3):                    DTypeUint8,

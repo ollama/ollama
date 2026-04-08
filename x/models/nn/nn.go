@@ -1,5 +1,3 @@
-//go:build mlx
-
 package nn
 
 import "github.com/ollama/ollama/x/mlxrunner/mlx"
@@ -13,6 +11,47 @@ type Layer interface {
 type LinearLayer interface {
 	Forward(x *mlx.Array) *mlx.Array
 	OutputDim() int32
+}
+
+// EmbeddingLayer is an interface for embedding layers that can also expose a
+// tied-output projection when the model reuses embedding weights as the LM head.
+type EmbeddingLayer interface {
+	Forward(indices *mlx.Array) *mlx.Array
+	AsLinear() LinearLayer
+}
+
+// Conv1d applies 1D convolution over NLC input.
+type Conv1d struct {
+	Weight   *mlx.Array
+	Bias     *mlx.Array
+	Stride   int32
+	Padding  int32
+	Dilation int32
+	Groups   int32
+}
+
+func NewConv1d(weight, bias *mlx.Array, stride, padding, dilation, groups int32) *Conv1d {
+	if stride <= 0 {
+		stride = 1
+	}
+	if dilation <= 0 {
+		dilation = 1
+	}
+	if groups <= 0 {
+		groups = 1
+	}
+	return &Conv1d{
+		Weight:   weight,
+		Bias:     bias,
+		Stride:   stride,
+		Padding:  padding,
+		Dilation: dilation,
+		Groups:   groups,
+	}
+}
+
+func (c *Conv1d) Forward(x *mlx.Array) *mlx.Array {
+	return mlx.Conv1d(x, c.Weight, c.Bias, c.Stride, c.Padding, c.Dilation, c.Groups)
 }
 
 // Linear applies an affine transformation: y = x @ W.T + b
@@ -108,6 +147,53 @@ func (e *Embedding) Forward(indices *mlx.Array) *mlx.Array {
 	return e.Weight.TakeAxis(indices, 0)
 }
 
+func (e *Embedding) AsLinear() LinearLayer {
+	return NewLinear(e.Weight, nil)
+}
+
+// QuantizedEmbedding performs row-wise embedding lookup from affine/nvfp4/etc.
+// packed weights and dequantizes only the selected rows.
+type QuantizedEmbedding struct {
+	Weight    *mlx.Array
+	Scales    *mlx.Array
+	QBiases   *mlx.Array
+	GroupSize int
+	Bits      int
+	Mode      string
+}
+
+func NewQuantizedEmbedding(weight, scales, qbiases *mlx.Array, groupSize, bits int, mode string) *QuantizedEmbedding {
+	return &QuantizedEmbedding{
+		Weight:    weight,
+		Scales:    scales,
+		QBiases:   qbiases,
+		GroupSize: groupSize,
+		Bits:      bits,
+		Mode:      mode,
+	}
+}
+
+func (qe *QuantizedEmbedding) Forward(indices *mlx.Array) *mlx.Array {
+	weight := qe.Weight.TakeAxis(indices, 0)
+	scales := qe.Scales.TakeAxis(indices, 0)
+	var qbiases *mlx.Array
+	if qe.QBiases != nil && qe.QBiases.Valid() {
+		qbiases = qe.QBiases.TakeAxis(indices, 0)
+	}
+	return mlx.Dequantize(weight, scales, qbiases, qe.GroupSize, qe.Bits, qe.Mode)
+}
+
+func (qe *QuantizedEmbedding) AsLinear() LinearLayer {
+	return &QuantizedLinear{
+		Weight:    qe.Weight,
+		Scales:    qe.Scales,
+		QBiases:   qe.QBiases,
+		GroupSize: qe.GroupSize,
+		Bits:      qe.Bits,
+		Mode:      qe.Mode,
+	}
+}
+
 // LayerNorm represents a standard layer normalization layer (with bias).
 type LayerNorm struct {
 	Weight *mlx.Array
@@ -120,15 +206,7 @@ func (ln *LayerNorm) Forward(x *mlx.Array) *mlx.Array {
 	if eps == 0 {
 		eps = 1e-5
 	}
-	mean := mlx.Mean(x, -1, true)
-	centered := x.Subtract(mean)
-	variance := mlx.Mean(centered.Multiply(centered), -1, true)
-	normalized := centered.Multiply(mlx.RSqrt(mlx.AddScalar(variance, eps)))
-	out := normalized.Multiply(ln.Weight)
-	if ln.Bias != nil && ln.Bias.Valid() {
-		out = out.Add(ln.Bias)
-	}
-	return out
+	return mlx.LayerNormFn(x, ln.Weight, ln.Bias, eps)
 }
 
 // MultiLinearLayer is an interface for per-head linear layers.
@@ -149,18 +227,6 @@ func NewMultiLinear(weight *mlx.Array) *MultiLinear {
 func (ml *MultiLinear) Forward(x *mlx.Array) *mlx.Array {
 	wT := ml.Weight.Transpose(0, 2, 1)
 	return x.Matmul(wT)
-}
-
-// RepeatKV repeats K/V tensors for grouped query attention.
-func RepeatKV(x *mlx.Array, repeatFactor int32) *mlx.Array {
-	if repeatFactor == 1 {
-		return x
-	}
-	shape := x.Dims()
-	x = x.ExpandDims(2)
-	reps := []int32{1, 1, repeatFactor, 1, 1}
-	x = mlx.Tile(x, reps)
-	return mlx.Reshape(x, int32(shape[0]), int32(shape[1])*repeatFactor, int32(shape[2]), int32(shape[3]))
 }
 
 // ApplyCausalMask applies causal (lower triangular) mask to attention scores.

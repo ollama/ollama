@@ -562,7 +562,6 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 					if errors.As(err, &reprocess) {
 						// Prepend these inputs to the sequence's inputs queue for reprocessing
 						seq.inputs = append(reprocess.Inputs, seq.inputs...)
-						seq.sampler.Reset()
 						// Skip this sequence but continue processing the rest
 						nextBatch.seqs[seqIdx] = nil // clear this sequence for this batch
 						err = nil
@@ -693,12 +692,6 @@ func (s *Server) computeBatch(activeBatch batchState) {
 		// (unless we take down the whole runner).
 		if len(seq.pendingInputs) > 0 {
 			seq.cache.Inputs = append(seq.cache.Inputs, seq.pendingInputs...)
-			for _, inp := range seq.pendingInputs {
-				if len(inp.Multimodal) != 0 {
-					continue
-				}
-				seq.sampler.Accept(inp.Token)
-			}
 			seq.pendingInputs = []*input.Input{}
 		}
 
@@ -899,9 +892,6 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		req.Options.TopK,
 		req.Options.TopP,
 		req.Options.MinP,
-		req.Options.RepeatPenalty,
-		req.Options.PresencePenalty,
-		req.Options.FrequencyPenalty,
 		req.Options.Seed,
 		grammar,
 	)
@@ -946,14 +936,6 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 				s.seqsSem.Release(1)
 				http.Error(w, fmt.Sprintf("Failed to load cache: %v", err), http.StatusInternalServerError)
 				return
-			}
-
-			seq.sampler.Reset()
-			for _, inp := range seq.cache.Inputs {
-				if len(inp.Multimodal) != 0 {
-					continue
-				}
-				seq.sampler.Accept(inp.Token)
 			}
 
 			s.seqs[i] = seq
@@ -1249,7 +1231,7 @@ func (s *Server) allocModel(
 
 	err = s.reserveWorstCaseGraph(true)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	return s.reserveWorstCaseGraph(false)
@@ -1274,6 +1256,12 @@ func (s *Server) loadModel() {
 		})
 	if err != nil {
 		panic(fmt.Errorf("failed to load model: %v", err))
+	}
+
+	if postLoader, ok := s.model.(model.PostLoader); ok {
+		if err := postLoader.PostLoad(); err != nil {
+			panic(fmt.Errorf("failed to finalize model initialization: %v", err))
+		}
 	}
 
 	s.status = llm.ServerStatusReady

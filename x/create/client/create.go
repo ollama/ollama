@@ -13,33 +13,104 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/manifest"
+	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/x/create"
-	"github.com/ollama/ollama/x/imagegen/safetensors"
+	"github.com/ollama/ollama/x/safetensors"
 )
 
 // MinOllamaVersion is the minimum Ollama version required for safetensors models.
-const MinOllamaVersion = "0.14.0"
+const MinOllamaVersion = "0.19.0"
 
 // ModelfileConfig holds configuration extracted from a Modelfile.
 type ModelfileConfig struct {
-	Template string
-	System   string
-	License  string
-	Parser   string
-	Renderer string
+	Template   string
+	System     string
+	License    string
+	Parser     string
+	Renderer   string
+	Parameters map[string]any
+}
+
+var ignoredModelfileParameters = []string{
+	"penalize_newline",
+	"low_vram",
+	"f16_kv",
+	"logits_all",
+	"vocab_only",
+	"use_mlock",
+	"mirostat",
+	"mirostat_tau",
+	"mirostat_eta",
+}
+
+// ConfigFromModelfile extracts the model directory and x/create-specific
+// Modelfile configuration from a parsed Modelfile.
+func ConfigFromModelfile(modelfile *parser.Modelfile) (string, *ModelfileConfig, error) {
+	var modelDir string
+	mfConfig := &ModelfileConfig{}
+
+	for _, cmd := range modelfile.Commands {
+		switch cmd.Name {
+		case "model":
+			modelDir = cmd.Args
+		case "template":
+			mfConfig.Template = cmd.Args
+		case "system":
+			mfConfig.System = cmd.Args
+		case "license":
+			mfConfig.License = cmd.Args
+		case "parser":
+			mfConfig.Parser = cmd.Args
+		case "renderer":
+			mfConfig.Renderer = cmd.Args
+		case "adapter", "message", "requires":
+			continue
+		default:
+			if slices.Contains(ignoredModelfileParameters, cmd.Name) {
+				continue
+			}
+
+			ps, err := api.FormatParams(map[string][]string{cmd.Name: {cmd.Args}})
+			if err != nil {
+				return "", nil, err
+			}
+
+			if mfConfig.Parameters == nil {
+				mfConfig.Parameters = make(map[string]any)
+			}
+
+			for k, v := range ps {
+				if ks, ok := mfConfig.Parameters[k].([]string); ok {
+					mfConfig.Parameters[k] = append(ks, v.([]string)...)
+				} else if vs, ok := v.([]string); ok {
+					mfConfig.Parameters[k] = vs
+				} else {
+					mfConfig.Parameters[k] = v
+				}
+			}
+		}
+	}
+
+	if modelDir == "" {
+		modelDir = "."
+	}
+
+	return modelDir, mfConfig, nil
 }
 
 // CreateOptions holds all options for model creation.
 type CreateOptions struct {
 	ModelName string
 	ModelDir  string
-	Quantize  string           // "int4", "int8", "nvfp4", or "mxfp8" for quantization
-	Modelfile *ModelfileConfig // template/system/license/parser/renderer from Modelfile
+	Quantize  string           // "int4", "int8", "nvfp4", "mxfp4", or "mxfp8" for quantization
+	Modelfile *ModelfileConfig // template/system/license/parser/renderer/parameters from Modelfile
 }
 
 // CreateModel imports a model from a local directory.
@@ -61,12 +132,7 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 	if isSafetensors {
 		modelType = "safetensors model"
 		spinnerKey = "create"
-		capabilities = []string{"completion"}
-
-		// Check if model supports thinking based on architecture
-		if supportsThinking(opts.ModelDir) {
-			capabilities = append(capabilities, "thinking")
-		}
+		capabilities = inferSafetensorsCapabilities(opts.ModelDir)
 
 		// Set parser and renderer name based on architecture
 		parserName = getParserName(opts.ModelDir)
@@ -115,6 +181,21 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 
 	fmt.Printf("Created %s '%s'\n", modelType, opts.ModelName)
 	return nil
+}
+
+func inferSafetensorsCapabilities(modelDir string) []string {
+	capabilities := []string{"completion"}
+
+	// Qwen3.5 multimodal checkpoints use ConditionalGeneration architectures.
+	if supportsVision(modelDir) {
+		capabilities = append(capabilities, "vision")
+	}
+
+	if supportsThinking(modelDir) {
+		capabilities = append(capabilities, "thinking")
+	}
+
+	return capabilities
 }
 
 // newLayerCreator returns a LayerCreator callback for creating config/JSON layers.
@@ -209,7 +290,7 @@ func newPackedTensorLayerCreator() create.PackedTensorLayerCreator {
 			if !QuantizeSupported() {
 				return create.LayerInfo{}, fmt.Errorf("quantization requires MLX support")
 			}
-			blobData, err := quantizePackedGroup(tensors)
+			blobData, err := quantizePackedGroup(groupName, tensors)
 			if err != nil {
 				return create.LayerInfo{}, fmt.Errorf("failed to quantize packed group %s: %w", groupName, err)
 			}
@@ -267,6 +348,7 @@ func newManifestWriter(opts CreateOptions, capabilities []string, parserName, re
 		// Create config blob with version requirement
 		configData := model.ConfigV2{
 			ModelFormat:  "safetensors",
+			FileType:     strings.ToLower(strings.TrimSpace(opts.Quantize)),
 			Capabilities: caps,
 			Requires:     MinOllamaVersion,
 			Parser:       resolveParserName(opts.Modelfile, parserName),
@@ -351,6 +433,19 @@ func createModelfileLayers(mf *ModelfileConfig) ([]manifest.Layer, error) {
 		layers = append(layers, layer)
 	}
 
+	if len(mf.Parameters) > 0 {
+		var b bytes.Buffer
+		if err := json.NewEncoder(&b).Encode(mf.Parameters); err != nil {
+			return nil, fmt.Errorf("failed to encode parameters: %w", err)
+		}
+
+		layer, err := manifest.NewLayer(&b, "application/vnd.ollama.image.params")
+		if err != nil {
+			return nil, fmt.Errorf("failed to create params layer: %w", err)
+		}
+		layers = append(layers, layer)
+	}
+
 	return layers, nil
 }
 
@@ -399,6 +494,34 @@ func supportsThinking(modelDir string) bool {
 	}
 
 	return false
+}
+
+// supportsVision checks if the model supports image input based on its architecture.
+// Qwen3.5 multimodal checkpoints are published as ConditionalGeneration architectures.
+func supportsVision(modelDir string) bool {
+	configPath := filepath.Join(modelDir, "config.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return false
+	}
+
+	var cfg struct {
+		Architectures []string `json:"architectures"`
+		ModelType     string   `json:"model_type"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return false
+	}
+
+	for _, arch := range cfg.Architectures {
+		archLower := strings.ToLower(arch)
+		if strings.Contains(archLower, "qwen3") && strings.Contains(archLower, "conditionalgeneration") {
+			return true
+		}
+	}
+
+	typeLower := strings.ToLower(cfg.ModelType)
+	return strings.Contains(typeLower, "qwen3") && strings.Contains(typeLower, "conditionalgeneration")
 }
 
 // getParserName returns the parser name for a model based on its architecture.

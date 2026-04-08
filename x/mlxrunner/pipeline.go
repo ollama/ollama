@@ -1,5 +1,3 @@
-//go:build mlx
-
 package mlxrunner
 
 import (
@@ -16,6 +14,10 @@ import (
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
+func prefillChunkSize() int {
+	return 2 << 10
+}
+
 func (r *Runner) TextGenerationPipeline(request Request) error {
 	if r.Model == nil {
 		return errors.New("model not loaded")
@@ -31,13 +33,16 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		mlx.DisableCompile()
 	}
 	mlx.ResetPeakMemory()
-
+	ctx := request.Ctx
 	var (
 		sample, logprobs         *mlx.Array
 		nextSample, nextLogprobs *mlx.Array
 	)
 
 	defer func() {
+		if request.Sampler != nil {
+			request.Sampler.Free()
+		}
 		mlx.Unpin(sample, logprobs)
 		mlx.Unpin(nextSample, nextLogprobs)
 		mlx.Sweep()
@@ -45,12 +50,12 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 
 		if slog.Default().Enabled(context.TODO(), logutil.LevelTrace) {
 			mlx.LogArrays()
-			r.cache.log()
+			r.cache.dumpTree()
 		}
 		slog.Info("peak memory", "size", mlx.PrettyBytes(mlx.PeakMemory()))
 	}()
 
-	inputs := r.Tokenizer.Encode(request.Prompt, true)
+	inputs := r.Tokenizer.Encode(request.Prompt, r.Tokenizer.AddBOS())
 	if len(inputs) == 0 {
 		return errors.New("empty prompt")
 	}
@@ -70,30 +75,72 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		request.Options.MaxTokens = min(request.Options.MaxTokens, maxGenerate)
 	}
 
+	request.Sampler.ResetHistory(inputs)
+
 	session := r.cache.begin(r.Model, inputs)
 	defer session.close()
+
 	caches := session.caches
 	tokens := session.remaining
+	prefillChunk := prefillChunkSize()
+
+	// Request periodic snapshots during prefill and near the end of the
+	// prompt so that long prompts can be partially restored and
+	// thinking/generation can be retried without full reprocessing.
+	const snapshotInterval = 8192
+	for offset := snapshotInterval; offset < len(inputs); offset += snapshotInterval {
+		session.requestSnapshot(offset)
+	}
+
+	const preThinking = 4
+	if end := len(inputs) - preThinking; end > 0 {
+		session.requestSnapshot(end)
+	}
+
+	materializeCaches := func() {
+		state := make([]*mlx.Array, 0, 2*len(caches))
+		for _, c := range caches {
+			state = append(state, c.State()...)
+		}
+		if len(state) == 0 {
+			return
+		}
+		mlx.Eval(state...)
+	}
 
 	now := time.Now()
 	total, processed := len(tokens), 0
 	for total-processed > 1 {
-		if err := request.Ctx.Err(); err != nil {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 
-		n := min(2<<10, total-processed-1)
+		n := min(prefillChunk, total-processed-1)
+
+		// If there's a pending snapshot, split the batch so we can
+		// capture it at the exact offset.
+		if snapOffset := session.nextPendingSnapshot(); snapOffset > 0 {
+			baseOffset := len(session.inputs) - len(tokens)
+			tokensUntilSnapshot := snapOffset - (baseOffset + processed)
+			if tokensUntilSnapshot > 0 && tokensUntilSnapshot < n {
+				n = tokensUntilSnapshot
+			}
+		}
+
 		r.Model.Forward(mlx.FromValues(tokens[processed:processed+n], n).ExpandDims(0), caches)
 		mlx.Sweep()
-		mlx.Eval(func() []*mlx.Array {
-			s := make([]*mlx.Array, 2*len(caches))
-			for i, c := range caches {
-				s[2*i], s[2*i+1] = c.State()
-			}
-			return s
-		}()...)
+		materializeCaches()
 		processed += n
 		slog.Info("Prompt processing progress", "processed", processed, "total", total)
+
+		// Create snapshot if we've reached a pending offset.
+		if snapOffset := session.nextPendingSnapshot(); snapOffset > 0 {
+			baseOffset := len(session.inputs) - len(tokens)
+			if baseOffset+processed >= snapOffset {
+				session.snapshot()
+			}
+		}
+
 		mlx.ClearCache()
 	}
 
@@ -103,7 +150,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		logits = logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1)
 
 		logprobs := logits.Subtract(logits.Logsumexp(true))
-		sample := request.Sample(logprobs)
+		sample := request.Sampler.Sample(logprobs)
 
 		mlx.Pin(sample, logprobs)
 		mlx.Sweep()
@@ -118,10 +165,11 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 
 	final := CompletionResponse{Done: true, PromptEvalCount: len(inputs), EvalCount: request.Options.MaxTokens, DoneReason: 1}
 	for i := range request.Options.MaxTokens {
-		if err := request.Ctx.Err(); err != nil {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 
+		request.Sampler.AppendToken(sample)
 		nextSample, nextLogprobs = step(sample)
 
 		if i == 0 {
@@ -140,8 +188,8 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		}
 
 		select {
-		case <-request.Ctx.Done():
-			return request.Ctx.Err()
+		case <-ctx.Done():
+			return ctx.Err()
 		case request.Responses <- CompletionResponse{
 			Content: r.Decode(output, &b),
 		}:
@@ -158,8 +206,8 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 
 	final.EvalDuration = time.Since(now)
 	select {
-	case <-request.Ctx.Done():
-		return request.Ctx.Err()
+	case <-ctx.Done():
+		return ctx.Err()
 	case request.Responses <- final:
 		return nil
 	}

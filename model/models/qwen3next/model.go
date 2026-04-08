@@ -454,7 +454,7 @@ func (m *Model) Validate() error {
 		if !ok || gdn == nil {
 			return fmt.Errorf("qwen3next: layer %d expected recurrent operator", i)
 		}
-		if gdn.SSMQKV == nil || gdn.SSMQKVGate == nil {
+		if gdn.SSMIn == nil && (gdn.SSMQKV == nil || gdn.SSMQKVGate == nil) {
 			return fmt.Errorf("qwen3next: layer %d missing attn_qkv/attn_gate projections", i)
 		}
 		if gdn.SSMBetaAlpha == nil && (gdn.SSMBeta == nil || gdn.SSMAlpha == nil) {

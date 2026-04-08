@@ -1,5 +1,3 @@
-//go:build mlx
-
 // Package gemma3 provides the Gemma 3 text model implementation for MLX.
 package gemma3
 
@@ -93,7 +91,7 @@ type DecoderLayer struct {
 
 // Model is the Gemma 3 text-only model.
 type Model struct {
-	EmbedTokens *nn.Embedding
+	EmbedTokens nn.EmbeddingLayer
 	Layers      []*DecoderLayer
 	Norm        *nn.RMSNorm
 	LMHead      nn.LinearLayer
@@ -312,11 +310,11 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 	prefix := m.weightPrefix
 	linears := model.NewLinearFactory(tensors, m.QuantGroupSize, m.QuantBits, m.QuantMode, m.TensorQuant)
 
-	embedWeight := tensors[prefix+"model.embed_tokens.weight"]
-	if embedWeight == nil {
+	embedTokens := model.MakeEmbeddingLayer(tensors, prefix+"model.embed_tokens", m.QuantGroupSize, m.QuantBits, m.QuantMode, m.TensorQuant)
+	if embedTokens == nil {
 		return fmt.Errorf("missing embedding weight: %smodel.embed_tokens.weight", prefix)
 	}
-	m.EmbedTokens = nn.NewEmbedding(embedWeight)
+	m.EmbedTokens = embedTokens
 
 	normWeight := tensors[prefix+"model.norm.weight"]
 	if normWeight == nil {
@@ -330,7 +328,7 @@ func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
 		m.LMHead = lmHead
 	} else {
 		// Gemma usually ties output projection to embeddings.
-		m.LMHead = nn.NewLinear(embedWeight, nil)
+		m.LMHead = m.EmbedTokens.AsLinear()
 	}
 
 	for i := int32(0); i < m.NumHiddenLayers; i++ {
@@ -504,12 +502,8 @@ func (a *Attention) Forward(x *mlx.Array, c cache.Cache, B, L int32, isSliding b
 		k, v = c.Update(k, v)
 	}
 
-	repeatFactor := cfg.NumAttentionHeads / cfg.NumKeyValueHeads
-	if repeatFactor > 1 {
-		k = nn.RepeatKV(k, repeatFactor)
-		v = nn.RepeatKV(v, repeatFactor)
-	}
-
+	// MLX SDPA supports grouped-query attention directly (Q heads can be a
+	// multiple of K/V heads), so avoid materializing repeated K/V tensors.
 	out := mlx.ScaledDotProductAttentionCausal(q, k, v, cfg.Scale, L > 1)
 	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, cfg.NumAttentionHeads*cfg.HeadDim)
 	return a.OProj.Forward(out)
