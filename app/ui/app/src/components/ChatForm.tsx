@@ -102,9 +102,9 @@ function ChatForm({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const thinkButtonRef = useRef<HTMLButtonElement>(null);
-  const thinkingLevelButtonRef = useRef<HTMLButtonElement>(null);
+  const thinkingLevelButtonRef = useRef<HTMLButtonElement & { closeDropdown?: () => void }>(null);
   const webSearchButtonRef = useRef<HTMLButtonElement>(null);
-  const modelPickerRef = useRef<HTMLButtonElement>(null);
+  const modelPickerRef = useRef<HTMLButtonElement & { closeDropdown?: () => void }>(null);
   const submitButtonRef = useRef<HTMLButtonElement>(null);
 
   const { mutate: sendMessageMutation } = useSendMessage(chatId);
@@ -126,9 +126,9 @@ function ChatForm({
     if (
       isOpen &&
       modelPickerRef.current &&
-      (modelPickerRef.current as any).closeDropdown
+      modelPickerRef.current.closeDropdown
     ) {
-      (modelPickerRef.current as any).closeDropdown();
+      modelPickerRef.current.closeDropdown();
     }
   };
 
@@ -136,9 +136,9 @@ function ChatForm({
     if (
       isOpen &&
       thinkingLevelButtonRef.current &&
-      (thinkingLevelButtonRef.current as any).closeDropdown
+      thinkingLevelButtonRef.current.closeDropdown
     ) {
-      (thinkingLevelButtonRef.current as any).closeDropdown();
+      thinkingLevelButtonRef.current.closeDropdown();
     }
   };
 
