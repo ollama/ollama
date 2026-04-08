@@ -218,10 +218,9 @@ func Minimum(a, b *Array) *Array {
 	return out
 }
 
-// Softplus computes log(1 + exp(x)).
+// Softplus computes log(1 + exp(x)) using logaddexp for numerical stability.
 func Softplus(a *Array) *Array {
-	one := NewScalarArray(float32(1))
-	return Log(Exp(a).Add(one))
+	return Logaddexp(a, Zeros(a.DType(), a.Dims()...))
 }
 
 // ReLU computes max(0, x).
