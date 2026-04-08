@@ -3,10 +3,12 @@ package llm
 import (
 	"bytes"
 	"os"
+	"sync"
 )
 
 // StatusWriter is a writer that captures error messages from the llama runner process
 type StatusWriter struct {
+	mu         sync.Mutex
 	LastErrMsg string
 	out        *os.File
 }
@@ -15,6 +17,20 @@ func NewStatusWriter(out *os.File) *StatusWriter {
 	return &StatusWriter{
 		out: out,
 	}
+}
+
+// Err returns the last captured error message in a concurrency-safe manner.
+func (w *StatusWriter) Err() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.LastErrMsg
+}
+
+// SetErr overwrites the last error message in a concurrency-safe manner.
+func (w *StatusWriter) SetErr(msg string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.LastErrMsg = msg
 }
 
 // TODO - regex matching to detect errors like
@@ -39,7 +55,9 @@ func (w *StatusWriter) Write(b []byte) (int, error) {
 		}
 	}
 	if errMsg != "" {
+		w.mu.Lock()
 		w.LastErrMsg = errMsg
+		w.mu.Unlock()
 	}
 
 	return w.out.Write(b)
