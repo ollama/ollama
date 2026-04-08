@@ -97,7 +97,7 @@ type AuthChallenge struct {
 // Default concurrency limits and settings
 const (
 	DefaultDownloadConcurrency = 64
-	DefaultUploadConcurrency   = 32
+	DefaultUploadConcurrency   = 64
 	maxRetries                 = 6
 	defaultUserAgent           = "ollama-transfer/1.0"
 
