@@ -20,9 +20,9 @@ type OpenCode struct{}
 
 func (o *OpenCode) String() string { return "OpenCode" }
 
-// findOpencode returns the opencode binary path, checking PATH first then the
+// findOpenCode returns the opencode binary path, checking PATH first then the
 // curl installer location (~/.opencode/bin) which may not be on PATH yet.
-func findOpencode() (string, bool) {
+func findOpenCode() (string, bool) {
 	if p, err := exec.LookPath("opencode"); err == nil {
 		return p, true
 	}
@@ -42,7 +42,7 @@ func findOpencode() (string, bool) {
 }
 
 func (o *OpenCode) Run(model string, args []string) error {
-	opencodePath, ok := findOpencode()
+	opencodePath, ok := findOpenCode()
 	if !ok {
 		return fmt.Errorf("opencode is not installed, install from https://opencode.ai")
 	}
