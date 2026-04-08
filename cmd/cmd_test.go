@@ -1655,6 +1655,24 @@ func TestNewCreateRequest(t *testing.T) {
 				},
 			},
 		},
+		{
+			"loaded messages are preserved when saving",
+			"newmodel",
+			runOptions{
+				Model:          "mymodel",
+				ParentModel:    "parentmodel",
+				LoadedMessages: []api.Message{{Role: "assistant", Content: "loaded"}},
+				Messages:       []api.Message{{Role: "user", Content: "new"}},
+			},
+			&api.CreateRequest{
+				From:  "parentmodel",
+				Model: "newmodel",
+				Messages: []api.Message{
+					{Role: "assistant", Content: "loaded"},
+					{Role: "user", Content: "new"},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1667,15 +1685,43 @@ func TestNewCreateRequest(t *testing.T) {
 	}
 }
 
+func TestApplyShowResponseToRunOptions(t *testing.T) {
+	opts := runOptions{}
+	info := &api.ShowResponse{
+		Details: api.ModelDetails{
+			ParentModel: "parentmodel",
+		},
+		Messages: []api.Message{
+			{Role: "assistant", Content: "loaded"},
+		},
+	}
+
+	applyShowResponseToRunOptions(&opts, info)
+
+	if opts.ParentModel != "parentmodel" {
+		t.Fatalf("ParentModel = %q, want %q", opts.ParentModel, "parentmodel")
+	}
+
+	if !cmp.Equal(opts.LoadedMessages, info.Messages) {
+		t.Fatalf("LoadedMessages = %#v, want %#v", opts.LoadedMessages, info.Messages)
+	}
+
+	info.Messages[0].Content = "modified"
+	if opts.LoadedMessages[0].Content == "modified" {
+		t.Fatal("LoadedMessages should be copied independently from ShowResponse")
+	}
+}
+
 func TestRunOptions_Copy(t *testing.T) {
 	// Setup test data
 	originalKeepAlive := &api.Duration{Duration: 5 * time.Minute}
 	originalThink := &api.ThinkValue{Value: "test reasoning"}
 
 	original := runOptions{
-		Model:       "test-model",
-		ParentModel: "parent-model",
-		Prompt:      "test prompt",
+		Model:          "test-model",
+		ParentModel:    "parent-model",
+		LoadedMessages: []api.Message{{Role: "assistant", Content: "loaded hello"}},
+		Prompt:         "test prompt",
 		Messages: []api.Message{
 			{Role: "user", Content: "hello"},
 			{Role: "assistant", Content: "hi there"},
@@ -1715,6 +1761,7 @@ func TestRunOptions_Copy(t *testing.T) {
 	}{
 		{"Model", copied.Model, original.Model},
 		{"ParentModel", copied.ParentModel, original.ParentModel},
+		{"LoadedMessages", copied.LoadedMessages, original.LoadedMessages},
 		{"Prompt", copied.Prompt, original.Prompt},
 		{"WordWrap", copied.WordWrap, original.WordWrap},
 		{"Format", copied.Format, original.Format},
@@ -1819,12 +1866,17 @@ func TestRunOptions_Copy(t *testing.T) {
 func TestRunOptions_Copy_EmptySlicesAndMaps(t *testing.T) {
 	// Test with empty slices and maps
 	original := runOptions{
-		Messages: []api.Message{},
-		Images:   []api.ImageData{},
-		Options:  map[string]any{},
+		LoadedMessages: []api.Message{},
+		Messages:       []api.Message{},
+		Images:         []api.ImageData{},
+		Options:        map[string]any{},
 	}
 
 	copied := original.Copy()
+
+	if copied.LoadedMessages == nil {
+		t.Error("Empty LoadedMessages slice should remain empty, not nil")
+	}
 
 	if copied.Messages == nil {
 		t.Error("Empty Messages slice should remain empty, not nil")
@@ -1840,6 +1892,10 @@ func TestRunOptions_Copy_EmptySlicesAndMaps(t *testing.T) {
 
 	if len(copied.Messages) != 0 {
 		t.Error("Empty Messages slice should remain empty")
+	}
+
+	if len(copied.LoadedMessages) != 0 {
+		t.Error("Empty LoadedMessages slice should remain empty")
 	}
 
 	if len(copied.Images) != 0 {
@@ -1987,16 +2043,20 @@ func TestRunOptions_Copy_Independence(t *testing.T) {
 	// Test that modifications to original don't affect copy
 	originalThink := &api.ThinkValue{Value: "original"}
 	original := runOptions{
-		Model:    "original-model",
-		Messages: []api.Message{{Role: "user", Content: "original"}},
-		Options:  map[string]any{"key": "value"},
-		Think:    originalThink,
+		Model:          "original-model",
+		LoadedMessages: []api.Message{{Role: "assistant", Content: "loaded"}},
+		Messages:       []api.Message{{Role: "user", Content: "original"}},
+		Options:        map[string]any{"key": "value"},
+		Think:          originalThink,
 	}
 
 	copied := original.Copy()
 
 	// Modify original
 	original.Model = "modified-model"
+	if len(original.LoadedMessages) > 0 {
+		original.LoadedMessages[0].Content = "modified loaded"
+	}
 	if len(original.Messages) > 0 {
 		original.Messages[0].Content = "modified"
 	}
@@ -2008,6 +2068,10 @@ func TestRunOptions_Copy_Independence(t *testing.T) {
 	// Verify copy is unchanged
 	if copied.Model == "modified-model" {
 		t.Error("Copy Model should not be affected by original modification")
+	}
+
+	if len(copied.LoadedMessages) > 0 && copied.LoadedMessages[0].Content == "modified loaded" {
+		t.Error("Copy LoadedMessages should not be affected by original modification")
 	}
 
 	if len(copied.Messages) > 0 && copied.Messages[0].Content == "modified" {
