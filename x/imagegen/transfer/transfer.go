@@ -108,6 +108,12 @@ const (
 	// smallBlobSpeedThreshold is the size below which speed samples are skipped,
 	// since their transfer time is dominated by HTTP overhead, not throughput.
 	smallBlobSpeedThreshold = 100 << 10 // 100 KB
+
+	// Chunked upload constants — blobs above resumeThreshold are uploaded
+	// in parallel parts using PATCH with Content-Range headers.
+	numUploadParts          = 16
+	minUploadPartSize int64 = 100 << 20  // 100 MB
+	maxUploadPartSize int64 = 1000 << 20 // ~1 GB
 )
 
 var errMaxRetriesExceeded = errors.New("max retries exceeded")
