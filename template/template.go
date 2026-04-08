@@ -494,11 +494,16 @@ func convertMessagesForTemplate(messages []*api.Message) []*templateMessage {
 				},
 			})
 		}
+		// Merge images and audios for template rendering so templates
+		// that iterate over Images see all multimodal data.
+		allImages := make([]api.ImageData, 0, len(msg.Images)+len(msg.Audios))
+		allImages = append(allImages, msg.Images...)
+		allImages = append(allImages, msg.Audios...)
 		result[i] = &templateMessage{
 			Role:       msg.Role,
 			Content:    msg.Content,
 			Thinking:   msg.Thinking,
-			Images:     msg.Images,
+			Images:     allImages,
 			ToolCalls:  toolCalls,
 			ToolName:   msg.ToolName,
 			ToolCallID: msg.ToolCallID,

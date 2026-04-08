@@ -416,8 +416,8 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	checkpointLoaded := time.Now()
 
-	// load the model
-	if req.Prompt == "" {
+	// load the model (only if there's no prompt AND no multimodal data)
+	if req.Prompt == "" && len(req.Images) == 0 && len(req.Audios) == 0 {
 		c.JSON(http.StatusOK, api.GenerateResponse{
 			Model:      req.Model,
 			CreatedAt:  time.Now().UTC(),
@@ -427,14 +427,20 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	if slices.Contains(m.Config.ModelFamilies, "mllama") && len(req.Images) > 1 {
+	// Merge audios into images so models receive all multimodal data
+	// through the same pipeline. Models detect audio by WAV magic bytes.
+	allMultimodal := make([]api.ImageData, 0, len(req.Images)+len(req.Audios))
+	allMultimodal = append(allMultimodal, req.Images...)
+	allMultimodal = append(allMultimodal, req.Audios...)
+
+	if slices.Contains(m.Config.ModelFamilies, "mllama") && len(allMultimodal) > 1 {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "this model only supports one image while more than one image requested"})
 		return
 	}
 
-	images := make([]llm.ImageData, len(req.Images))
-	for i := range req.Images {
-		images[i] = llm.ImageData{ID: i, Data: req.Images[i]}
+	images := make([]llm.ImageData, len(allMultimodal))
+	for i := range allMultimodal {
+		images[i] = llm.ImageData{ID: i, Data: allMultimodal[i]}
 	}
 
 	prompt := req.Prompt

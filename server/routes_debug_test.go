@@ -347,6 +347,41 @@ func TestChatDebugRenderOnly(t *testing.T) {
 			expectNumImages: 1,
 		},
 		{
+			name: "chat debug with audios",
+			request: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "Transcribe this audio",
+						Audios:  []api.ImageData{[]byte("fake-audio-data")},
+					},
+				},
+				DebugRenderOnly: true,
+			},
+			expectDebug:     true,
+			expectTemplate:  "user: [img-0]Transcribe this audio\n",
+			expectNumImages: 1,
+		},
+		{
+			name: "chat debug with images and audios",
+			request: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "Describe both",
+						Images:  []api.ImageData{[]byte("fake-image-data")},
+						Audios:  []api.ImageData{[]byte("fake-audio-data")},
+					},
+				},
+				DebugRenderOnly: true,
+			},
+			expectDebug:     true,
+			expectTemplate:  "user: [img-0][img-1]Describe both\n",
+			expectNumImages: 2,
+		},
+		{
 			name: "chat debug with tools",
 			request: api.ChatRequest{
 				Model: "test-model",

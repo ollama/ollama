@@ -97,6 +97,10 @@ type GenerateRequest struct {
 	// request, for multimodal models.
 	Images []ImageData `json:"images,omitempty"`
 
+	// Audios is an optional list of raw audio bytes (WAV format) accompanying
+	// this request, for multimodal models that support audio input.
+	Audios []ImageData `json:"audios,omitempty"`
+
 	// Options lists model-specific options. For example, temperature can be
 	// set through this field, if the model supports it.
 	Options map[string]any `json:"options"`
@@ -207,7 +211,7 @@ func (t Tool) String() string {
 
 // Message is a single message in a chat sequence. The message contains the
 // role ("system", "user", or "assistant"), the content and an optional list
-// of images.
+// of images or audio.
 type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
@@ -215,6 +219,7 @@ type Message struct {
 	// original model output when ChatRequest.Think is enabled.
 	Thinking   string      `json:"thinking,omitempty"`
 	Images     []ImageData `json:"images,omitempty"`
+	Audios     []ImageData `json:"audios,omitempty"`
 	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
 	ToolName   string      `json:"tool_name,omitempty"`
 	ToolCallID string      `json:"tool_call_id,omitempty"`

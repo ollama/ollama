@@ -68,7 +68,7 @@ func TestAudioTranscription(t *testing.T) {
 					{
 						Role:    "user",
 						Content: "Transcribe this audio.",
-						Images:  []api.ImageData{audio},
+						Audios:  []api.ImageData{audio},
 					},
 				},
 				Stream: &stream,
@@ -105,7 +105,7 @@ func TestAudioResponse(t *testing.T) {
 					{
 						Role:    "user",
 						Content: "",
-						Images:  []api.ImageData{audio},
+						Audios:  []api.ImageData{audio},
 					},
 				},
 				Stream: &stream,

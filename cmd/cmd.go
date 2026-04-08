@@ -1425,6 +1425,7 @@ type runOptions struct {
 	Format       string
 	System       string
 	Images       []api.ImageData
+	Audios       []api.ImageData
 	Options      map[string]any
 	MultiModal   bool
 	KeepAlive    *api.Duration
@@ -1444,6 +1445,12 @@ func (r runOptions) Copy() runOptions {
 	if r.Images != nil {
 		images = make([]api.ImageData, len(r.Images))
 		copy(images, r.Images)
+	}
+
+	var audios []api.ImageData
+	if r.Audios != nil {
+		audios = make([]api.ImageData, len(r.Audios))
+		copy(audios, r.Audios)
 	}
 
 	var opts map[string]any
@@ -1469,6 +1476,7 @@ func (r runOptions) Copy() runOptions {
 		Format:       r.Format,
 		System:       r.System,
 		Images:       images,
+		Audios:       audios,
 		Options:      opts,
 		MultiModal:   r.MultiModal,
 		KeepAlive:    r.KeepAlive,
@@ -1759,7 +1767,7 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 	}
 
 	if opts.MultiModal {
-		opts.Prompt, opts.Images, err = extractFileData(opts.Prompt)
+		opts.Prompt, opts.Images, opts.Audios, err = extractFileData(opts.Prompt)
 		if err != nil {
 			return err
 		}
@@ -1774,6 +1782,7 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		Prompt:    opts.Prompt,
 		Context:   generateContext,
 		Images:    opts.Images,
+		Audios:    opts.Audios,
 		Format:    json.RawMessage(opts.Format),
 		System:    opts.System,
 		Options:   opts.Options,

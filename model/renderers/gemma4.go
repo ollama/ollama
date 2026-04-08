@@ -113,12 +113,13 @@ func stripThinking(text string) string {
 	return strings.TrimSpace(result.String())
 }
 
-// renderContent writes a message's content, interleaving [img-N] tags for images.
+// renderContent writes a message's content, interleaving [img-N] tags for multimodal data.
 // When trim is true, leading/trailing whitespace is stripped (matching the Jinja2
 // template's | trim filter applied to non-model content).
 func (r *Gemma4Renderer) renderContent(sb *strings.Builder, msg api.Message, imageOffset *int, trim bool) {
-	if len(msg.Images) > 0 && r.useImgTags {
-		for range msg.Images {
+	multimodalCount := len(msg.Images) + len(msg.Audios)
+	if multimodalCount > 0 && r.useImgTags {
+		for range multimodalCount {
 			sb.WriteString(fmt.Sprintf("[img-%d]", *imageOffset))
 			*imageOffset++
 		}

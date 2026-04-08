@@ -527,6 +527,9 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 					if !ok {
 						return nil, errors.New("invalid input_audio format")
 					}
+					if format, ok := audioMap["format"].(string); ok && format != "wav" {
+						return nil, fmt.Errorf("unsupported audio format %q: only \"wav\" is supported", format)
+					}
 					b64Data, ok := audioMap["data"].(string)
 					if !ok {
 						return nil, errors.New("invalid input_audio format: missing data")
@@ -535,7 +538,7 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 					if err != nil {
 						return nil, fmt.Errorf("invalid input_audio base64 data: %w", err)
 					}
-					messages = append(messages, api.Message{Role: msg.Role, Images: []api.ImageData{audioBytes}})
+					messages = append(messages, api.Message{Role: msg.Role, Audios: []api.ImageData{audioBytes}})
 				default:
 					return nil, errors.New("invalid message format")
 				}
@@ -868,7 +871,7 @@ func FromTranscriptionRequest(r TranscriptionRequest) (*api.ChatRequest, error) 
 		Model: r.Model,
 		Messages: []api.Message{
 			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: "Transcribe this audio.", Images: []api.ImageData{r.AudioData}},
+			{Role: "user", Content: "Transcribe this audio.", Audios: []api.ImageData{r.AudioData}},
 		},
 		Stream: &stream,
 		Options: map[string]any{
