@@ -102,8 +102,6 @@ func (c *Openclaw) Run(model string, args []string) error {
 		registerWebSearchPlugin()
 	}
 
-	fmt.Fprintf(os.Stderr, "\n%sStarting your assistant — this may take a moment...%s\n\n", ansiGray, ansiReset)
-
 	// When extra args are passed through, run exactly what the user asked for
 	// after setup and skip the built-in gateway+TUI convenience flow.
 	if len(args) > 0 {
@@ -117,6 +115,15 @@ func (c *Openclaw) Run(model string, args []string) error {
 		}
 		return nil
 	}
+
+	if err := c.runChannelSetupPreflight(bin); err != nil {
+		return err
+	}
+	// Keep local pairing scopes up to date before the gateway lifecycle
+	// (restart/start) regardless of channel preflight branch behavior.
+	patchDeviceScopes()
+
+	fmt.Fprintf(os.Stderr, "\n%sStarting your assistant — this may take a moment...%s\n\n", ansiGray, ansiReset)
 
 	token, port := c.gatewayInfo()
 	addr := fmt.Sprintf("localhost:%d", port)
@@ -172,6 +179,89 @@ func (c *Openclaw) Run(model string, args []string) error {
 	return nil
 }
 
+// runChannelSetupPreflight prompts users to connect a messaging channel before
+// starting the built-in gateway+TUI flow. In interactive sessions, it loops
+// until a channel is configured, unless the user chooses "Set up later".
+func (c *Openclaw) runChannelSetupPreflight(bin string) error {
+	if !isInteractiveSession() {
+		return nil
+	}
+
+	for {
+		if c.channelsConfigured() {
+			return nil
+		}
+
+		fmt.Fprintf(os.Stderr, "\nYour assistant can message you on WhatsApp, Telegram, Discord, and more.\n\n")
+		ok, err := ConfirmPromptWithOptions("Connect a messaging app now?", ConfirmOptions{
+			YesLabel: "Yes",
+			NoLabel:  "Set up later",
+		})
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+
+		cmd := exec.Command(bin, "channels", "add")
+		cmd.Env = openclawEnv()
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			return windowsHint(fmt.Errorf("openclaw channel setup failed: %w\n\nTry running: %s channels add", err, bin))
+		}
+	}
+}
+
+// channelsConfigured reports whether local OpenClaw config contains at least
+// one meaningfully configured channel entry.
+func (c *Openclaw) channelsConfigured() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+
+	for _, path := range []string{
+		filepath.Join(home, ".openclaw", "openclaw.json"),
+		filepath.Join(home, ".clawdbot", "clawdbot.json"),
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+
+		var cfg map[string]any
+		if json.Unmarshal(data, &cfg) != nil {
+			continue
+		}
+
+		channels, _ := cfg["channels"].(map[string]any)
+		if channels == nil {
+			return false
+		}
+
+		for key, value := range channels {
+			if key == "defaults" || key == "modelByChannel" {
+				continue
+			}
+			entry, ok := value.(map[string]any)
+			if !ok {
+				continue
+			}
+			for entryKey := range entry {
+				if entryKey != "enabled" {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	return false
+}
+
 // gatewayInfo reads the gateway auth token and port from the OpenClaw config.
 func (c *Openclaw) gatewayInfo() (token string, port int) {
 	port = defaultGatewayPort
@@ -218,12 +308,9 @@ func printOpenclawReady(bin, token string, port int, firstLaunch bool) {
 	if firstLaunch {
 		fmt.Fprintf(os.Stderr, "%s  Quick start:%s\n", ansiBold, ansiReset)
 		fmt.Fprintf(os.Stderr, "%s    /help             see all commands%s\n", ansiGray, ansiReset)
-		fmt.Fprintf(os.Stderr, "%s    %s configure --section channels   connect WhatsApp, Telegram, etc.%s\n", ansiGray, bin, ansiReset)
 		fmt.Fprintf(os.Stderr, "%s    %s skills                         browse and install skills%s\n\n", ansiGray, bin, ansiReset)
 		fmt.Fprintf(os.Stderr, "%s  The OpenClaw gateway is running in the background.%s\n", ansiYellow, ansiReset)
 		fmt.Fprintf(os.Stderr, "%s  Stop it with: %s gateway stop%s\n\n", ansiYellow, bin, ansiReset)
-	} else {
-		fmt.Fprintf(os.Stderr, "%sTip: connect WhatsApp, Telegram, and more with: %s configure --section channels%s\n", ansiGray, bin, ansiReset)
 	}
 }
 
@@ -312,9 +399,10 @@ func (c *Openclaw) onboarded() bool {
 	return lastRunAt != ""
 }
 
-// patchDeviceScopes upgrades the local CLI device's paired scopes to include
-// operator.admin. Only patches the local device, not remote ones.
-// Best-effort: silently returns on any error.
+// patchDeviceScopes upgrades the local CLI device's paired operator scopes so
+// newer gateway auth baselines (approvedScopes) allow launch+TUI reconnects
+// without forcing an interactive re-pair. Only patches the local device,
+// not remote ones. Best-effort: silently returns on any error.
 func patchDeviceScopes() {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -350,9 +438,15 @@ func patchDeviceScopes() {
 	}
 
 	changed := patchScopes(dev, "scopes", required)
+	if patchScopes(dev, "approvedScopes", required) {
+		changed = true
+	}
 	if tokens, ok := dev["tokens"].(map[string]any); ok {
-		for _, tok := range tokens {
+		for role, tok := range tokens {
 			if tokenMap, ok := tok.(map[string]any); ok {
+				if !isOperatorToken(role, tokenMap) {
+					continue
+				}
 				if patchScopes(tokenMap, "scopes", required) {
 					changed = true
 				}
@@ -406,6 +500,14 @@ func patchScopes(obj map[string]any, key string, required []string) bool {
 		obj[key] = existing
 	}
 	return added
+}
+
+func isOperatorToken(tokenRole string, token map[string]any) bool {
+	if strings.EqualFold(strings.TrimSpace(tokenRole), "operator") {
+		return true
+	}
+	role, _ := token["role"].(string)
+	return strings.EqualFold(strings.TrimSpace(role), "operator")
 }
 
 // canInstallDaemon reports whether the openclaw daemon can be installed as a
@@ -678,7 +780,7 @@ func ensureWebSearchPlugin() bool {
 		return false
 	}
 
-	fmt.Fprintf(os.Stderr, "%s  ✓ Installed web search plugin%s\n", ansiGreen, ansiReset)
+	fmt.Fprintf(os.Stderr, "%s  ✓ Installed Ollama web search %s\n", ansiGreen, ansiReset)
 	return true
 }
 

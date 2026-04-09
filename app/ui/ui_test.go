@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/store"
 	"github.com/ollama/ollama/app/updater"
 )
@@ -524,6 +525,33 @@ func TestUserAgentTransport(t *testing.T) {
 	}
 
 	t.Logf("User-Agent transport successfully set: %s", receivedUA)
+}
+
+func TestInferenceClientUsesUserAgent(t *testing.T) {
+	var gotUserAgent atomic.Value
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUserAgent.Store(r.Header.Get("User-Agent"))
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{}`))
+	}))
+	defer ts.Close()
+
+	t.Setenv("OLLAMA_HOST", ts.URL)
+
+	server := &Server{}
+	client := server.inferenceClient()
+
+	_, err := client.Show(context.Background(), &api.ShowRequest{Model: "test"})
+	if err != nil {
+		t.Fatalf("show request failed: %v", err)
+	}
+
+	receivedUA, _ := gotUserAgent.Load().(string)
+	expectedUA := userAgent()
+
+	if receivedUA != expectedUA {
+		t.Errorf("User-Agent mismatch\nExpected: %s\nReceived: %s", expectedUA, receivedUA)
+	}
 }
 
 func TestSupportsBrowserTools(t *testing.T) {

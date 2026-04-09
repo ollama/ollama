@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -64,6 +65,17 @@ func TestOpenclawRunPassthroughArgs(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	oldInteractive := isInteractiveSession
+	isInteractiveSession = func() bool { return true }
+	defer func() { isInteractiveSession = oldInteractive }()
+
+	oldConfirmPrompt := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		t.Fatalf("did not expect confirmation prompt during passthrough launch: %s", prompt)
+		return false, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
+
 	c := &Openclaw{}
 	if err := c.Run("llama3.2", []string{"gateway", "--someflag"}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -79,6 +91,163 @@ func TestOpenclawRunPassthroughArgs(t *testing.T) {
 	}
 	if lines[0] != "gateway --someflag" {
 		t.Fatalf("invocation = %q, want %q", lines[0], "gateway --someflag")
+	}
+}
+
+func TestOpenclawRun_ChannelSetupHappensBeforeGatewayRestart(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("PATH", tmpDir)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	configDir := filepath.Join(tmpDir, ".openclaw")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(fmt.Sprintf(`{
+		"wizard": {"lastRunAt": "2026-01-01T00:00:00Z"},
+		"gateway": {"port": %d}
+	}`, port)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bin := filepath.Join(tmpDir, "openclaw")
+	script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$*" >> "$HOME/invocations.log"
+if [ "$1" = "channels" ] && [ "$2" = "add" ]; then
+  /bin/mkdir -p "$HOME/.openclaw"
+  /bin/cat > "$HOME/.openclaw/openclaw.json" <<'EOF'
+{"wizard":{"lastRunAt":"2026-01-01T00:00:00Z"},"gateway":{"port":%d},"channels":{"telegram":{"botToken":"configured"}}}
+EOF
+fi
+`, port)
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldInteractive := isInteractiveSession
+	isInteractiveSession = func() bool { return true }
+	defer func() { isInteractiveSession = oldInteractive }()
+
+	promptCount := 0
+	oldConfirmPrompt := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		promptCount++
+		if prompt != "Connect a messaging app now?" {
+			t.Fatalf("unexpected prompt: %q", prompt)
+		}
+		return true, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
+
+	c := &Openclaw{}
+	if err := c.Run("llama3.2", nil); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if promptCount != 1 {
+		t.Fatalf("expected one channel setup prompt, got %d", promptCount)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "invocations.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("expected at least 3 invocations (channels add, daemon restart, tui), got %v", lines)
+	}
+	if lines[0] != "channels add" {
+		t.Fatalf("expected first invocation to be channels setup, got %q", lines[0])
+	}
+	if lines[1] != "daemon restart" {
+		t.Fatalf("expected second invocation to be daemon restart, got %q", lines[1])
+	}
+	if lines[2] != "tui" {
+		t.Fatalf("expected third invocation to be tui, got %q", lines[2])
+	}
+}
+
+func TestOpenclawRun_SetupLaterContinuesToGatewayAndTUI(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	t.Setenv("PATH", tmpDir)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	configDir := filepath.Join(tmpDir, ".openclaw")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(fmt.Sprintf(`{
+		"wizard": {"lastRunAt": "2026-01-01T00:00:00Z"},
+		"gateway": {"port": %d}
+	}`, port)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bin := filepath.Join(tmpDir, "openclaw")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/invocations.log\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldInteractive := isInteractiveSession
+	isInteractiveSession = func() bool { return true }
+	defer func() { isInteractiveSession = oldInteractive }()
+
+	promptCount := 0
+	oldConfirmPrompt := DefaultConfirmPrompt
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		promptCount++
+		return false, nil
+	}
+	defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
+
+	c := &Openclaw{}
+	if err := c.Run("llama3.2", nil); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if promptCount != 1 {
+		t.Fatalf("expected one channel setup prompt, got %d", promptCount)
+	}
+	data, err := os.ReadFile(filepath.Join(tmpDir, "invocations.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected at least 2 invocations (daemon restart, tui), got %v", lines)
+	}
+	if lines[0] != "daemon restart" {
+		t.Fatalf("expected first invocation to be daemon restart, got %q", lines[0])
+	}
+	if lines[1] != "tui" {
+		t.Fatalf("expected second invocation to be tui, got %q", lines[1])
+	}
+	for _, line := range lines {
+		if line == "channels add" {
+			t.Fatalf("did not expect channels add invocation after choosing set up later, got %v", lines)
+		}
 	}
 }
 
@@ -930,6 +1099,390 @@ func TestOpenclawOnboarded(t *testing.T) {
 	})
 }
 
+func TestOpenclawChannelsConfigured(t *testing.T) {
+	c := &Openclaw{}
+
+	t.Run("returns false when no config exists", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		if c.channelsConfigured() {
+			t.Error("expected false when no config exists")
+		}
+	})
+
+	t.Run("returns false for corrupted json", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		configDir := filepath.Join(tmpDir, ".openclaw")
+		if err := os.MkdirAll(configDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(`{bad`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if c.channelsConfigured() {
+			t.Error("expected false for corrupted config")
+		}
+	})
+
+	t.Run("returns false when channels section is missing", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		configDir := filepath.Join(tmpDir, ".openclaw")
+		if err := os.MkdirAll(configDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(`{"theme":"dark"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if c.channelsConfigured() {
+			t.Error("expected false when channels section is missing")
+		}
+	})
+
+	t.Run("returns false for channels defaults and modelByChannel only", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		configDir := filepath.Join(tmpDir, ".openclaw")
+		if err := os.MkdirAll(configDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(`{
+			"channels": {
+				"defaults": {"dmPolicy": "pairing"},
+				"modelByChannel": {"telegram": "ollama/llama3.2"}
+			}
+		}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if c.channelsConfigured() {
+			t.Error("expected false for channels metadata only")
+		}
+	})
+
+	t.Run("returns false when channel entry only has enabled", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		configDir := filepath.Join(tmpDir, ".openclaw")
+		if err := os.MkdirAll(configDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(`{
+			"channels": {
+				"telegram": {"enabled": true}
+			}
+		}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if c.channelsConfigured() {
+			t.Error("expected false when channel config only has enabled")
+		}
+	})
+
+	t.Run("returns true when a channel has meaningful configuration", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		configDir := filepath.Join(tmpDir, ".openclaw")
+		if err := os.MkdirAll(configDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(`{
+			"channels": {
+				"telegram": {"botToken": "secret"}
+			}
+		}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if !c.channelsConfigured() {
+			t.Error("expected true when channel has meaningful config")
+		}
+	})
+
+	t.Run("prefers new path over legacy", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		newDir := filepath.Join(tmpDir, ".openclaw")
+		legacyDir := filepath.Join(tmpDir, ".clawdbot")
+		if err := os.MkdirAll(newDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(legacyDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(newDir, "openclaw.json"), []byte(`{"channels":{"telegram":{"enabled":true}}}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(legacyDir, "clawdbot.json"), []byte(`{"channels":{"telegram":{"botToken":"configured"}}}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if c.channelsConfigured() {
+			t.Error("expected false because new config should take precedence")
+		}
+	})
+}
+
+func TestOpenclawChannelSetupPreflight(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	c := &Openclaw{}
+
+	t.Run("skips in non-interactive sessions", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		configDir := filepath.Join(tmpDir, ".openclaw")
+		if err := os.MkdirAll(configDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(`{}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		bin := filepath.Join(tmpDir, "openclaw")
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/invocations.log\"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		oldInteractive := isInteractiveSession
+		isInteractiveSession = func() bool { return false }
+		defer func() { isInteractiveSession = oldInteractive }()
+
+		oldConfirmPrompt := DefaultConfirmPrompt
+		DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+			t.Fatalf("did not expect prompt in non-interactive mode: %s", prompt)
+			return false, nil
+		}
+		defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
+
+		if err := c.runChannelSetupPreflight("openclaw"); err != nil {
+			t.Fatalf("runChannelSetupPreflight() error = %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(tmpDir, "invocations.log")); !os.IsNotExist(err) {
+			t.Fatalf("expected no command invocation in non-interactive mode, got err=%v", err)
+		}
+	})
+
+	t.Run("already configured does not prompt or run channels add", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		configDir := filepath.Join(tmpDir, ".openclaw")
+		if err := os.MkdirAll(configDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(`{"channels":{"telegram":{"botToken":"set"}}}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		bin := filepath.Join(tmpDir, "openclaw")
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/invocations.log\"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		oldInteractive := isInteractiveSession
+		isInteractiveSession = func() bool { return true }
+		defer func() { isInteractiveSession = oldInteractive }()
+
+		oldConfirmPrompt := DefaultConfirmPrompt
+		DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+			t.Fatalf("did not expect prompt when already configured: %s", prompt)
+			return false, nil
+		}
+		defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
+
+		if err := c.runChannelSetupPreflight("openclaw"); err != nil {
+			t.Fatalf("runChannelSetupPreflight() error = %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(tmpDir, "invocations.log")); !os.IsNotExist(err) {
+			t.Fatalf("expected no channels add invocation, got err=%v", err)
+		}
+	})
+
+	t.Run("set up later prompts once and exits", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		configDir := filepath.Join(tmpDir, ".openclaw")
+		if err := os.MkdirAll(configDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(`{}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		bin := filepath.Join(tmpDir, "openclaw")
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/invocations.log\"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		oldInteractive := isInteractiveSession
+		isInteractiveSession = func() bool { return true }
+		defer func() { isInteractiveSession = oldInteractive }()
+
+		promptCount := 0
+		oldConfirmPrompt := DefaultConfirmPrompt
+		DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+			promptCount++
+			return false, nil
+		}
+		defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
+
+		if err := c.runChannelSetupPreflight("openclaw"); err != nil {
+			t.Fatalf("runChannelSetupPreflight() error = %v", err)
+		}
+		if promptCount != 1 {
+			t.Fatalf("expected 1 prompt, got %d", promptCount)
+		}
+		if _, err := os.Stat(filepath.Join(tmpDir, "invocations.log")); !os.IsNotExist(err) {
+			t.Fatalf("expected no channels add invocation, got err=%v", err)
+		}
+	})
+
+	t.Run("yes runs channels add and exits after configuration", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		configDir := filepath.Join(tmpDir, ".openclaw")
+		if err := os.MkdirAll(configDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(`{}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		bin := filepath.Join(tmpDir, "openclaw")
+		script := `#!/bin/sh
+printf '%s\n' "$*" >> "$HOME/invocations.log"
+if [ "$1" = "channels" ] && [ "$2" = "add" ]; then
+  /bin/mkdir -p "$HOME/.openclaw"
+  /bin/cat > "$HOME/.openclaw/openclaw.json" <<'EOF'
+{"channels":{"telegram":{"botToken":"configured"}}}
+EOF
+fi
+`
+		if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		oldInteractive := isInteractiveSession
+		isInteractiveSession = func() bool { return true }
+		defer func() { isInteractiveSession = oldInteractive }()
+
+		promptCount := 0
+		oldConfirmPrompt := DefaultConfirmPrompt
+		DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+			promptCount++
+			return true, nil
+		}
+		defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
+
+		if err := c.runChannelSetupPreflight("openclaw"); err != nil {
+			t.Fatalf("runChannelSetupPreflight() error = %v", err)
+		}
+		if promptCount != 1 {
+			t.Fatalf("expected 1 prompt, got %d", promptCount)
+		}
+
+		data, err := os.ReadFile(filepath.Join(tmpDir, "invocations.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+		if len(lines) != 1 || lines[0] != "channels add" {
+			t.Fatalf("expected one 'channels add' invocation, got %v", lines)
+		}
+	})
+
+	t.Run("re-prompts when channels add does not configure anything", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		configDir := filepath.Join(tmpDir, ".openclaw")
+		if err := os.MkdirAll(configDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(`{}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		bin := filepath.Join(tmpDir, "openclaw")
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/invocations.log\"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		oldInteractive := isInteractiveSession
+		isInteractiveSession = func() bool { return true }
+		defer func() { isInteractiveSession = oldInteractive }()
+
+		promptCount := 0
+		oldConfirmPrompt := DefaultConfirmPrompt
+		DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+			promptCount++
+			return promptCount == 1, nil
+		}
+		defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
+
+		if err := c.runChannelSetupPreflight("openclaw"); err != nil {
+			t.Fatalf("runChannelSetupPreflight() error = %v", err)
+		}
+		if promptCount != 2 {
+			t.Fatalf("expected 2 prompts, got %d", promptCount)
+		}
+
+		data, err := os.ReadFile(filepath.Join(tmpDir, "invocations.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+		if len(lines) != 1 || lines[0] != "channels add" {
+			t.Fatalf("expected one 'channels add' invocation, got %v", lines)
+		}
+	})
+
+	t.Run("returns actionable error when channels add fails", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		configDir := filepath.Join(tmpDir, ".openclaw")
+		if err := os.MkdirAll(configDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(`{}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		bin := filepath.Join(tmpDir, "openclaw")
+		script := `#!/bin/sh
+if [ "$1" = "channels" ] && [ "$2" = "add" ]; then
+  exit 42
+fi
+`
+		if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		oldInteractive := isInteractiveSession
+		isInteractiveSession = func() bool { return true }
+		defer func() { isInteractiveSession = oldInteractive }()
+
+		oldConfirmPrompt := DefaultConfirmPrompt
+		DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+			return true, nil
+		}
+		defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
+
+		err := c.runChannelSetupPreflight("openclaw")
+		if err == nil {
+			t.Fatal("expected error when channels add fails")
+		}
+		if !strings.Contains(err.Error(), "Try running: openclaw channels add") {
+			t.Fatalf("expected actionable remediation hint, got: %v", err)
+		}
+	})
+}
+
 func TestOpenclawGatewayInfo(t *testing.T) {
 	c := &Openclaw{}
 
@@ -1036,6 +1589,133 @@ func TestOpenclawGatewayInfo(t *testing.T) {
 	})
 }
 
+func TestPatchDeviceScopes(t *testing.T) {
+	t.Run("patches device approved scopes and operator token only", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		identityDir := filepath.Join(tmpDir, ".openclaw", "identity")
+		if err := os.MkdirAll(identityDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(identityDir, "device-auth.json"), []byte(`{"deviceId":"dev-1"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		devicesDir := filepath.Join(tmpDir, ".openclaw", "devices")
+		if err := os.MkdirAll(devicesDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(devicesDir, "paired.json"), []byte(`{
+			"dev-1": {
+				"deviceId": "dev-1",
+				"scopes": ["operator.read"],
+				"approvedScopes": ["operator.read"],
+				"tokens": {
+					"operator": {"role":"operator","scopes":["operator.read"]},
+					"node": {"role":"node","scopes":["node.exec"]}
+				}
+			}
+		}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		patchDeviceScopes()
+
+		data, err := os.ReadFile(filepath.Join(devicesDir, "paired.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var devices map[string]map[string]any
+		if err := json.Unmarshal(data, &devices); err != nil {
+			t.Fatal(err)
+		}
+
+		required := []string{
+			"operator.read",
+			"operator.admin",
+			"operator.approvals",
+			"operator.pairing",
+		}
+
+		toSet := func(v any) map[string]bool {
+			out := map[string]bool{}
+			items, _ := v.([]any)
+			for _, item := range items {
+				if s, ok := item.(string); ok {
+					out[s] = true
+				}
+			}
+			return out
+		}
+		assertContainsAll := func(name string, got any, want []string) {
+			t.Helper()
+			set := toSet(got)
+			for _, scope := range want {
+				if !set[scope] {
+					t.Fatalf("%s missing required scope %q (got=%v)", name, scope, set)
+				}
+			}
+		}
+
+		dev := devices["dev-1"]
+		assertContainsAll("device.scopes", dev["scopes"], required)
+		assertContainsAll("device.approvedScopes", dev["approvedScopes"], required)
+
+		tokens, _ := dev["tokens"].(map[string]any)
+		operator, _ := tokens["operator"].(map[string]any)
+		assertContainsAll("tokens.operator.scopes", operator["scopes"], required)
+
+		node, _ := tokens["node"].(map[string]any)
+		nodeScopes := toSet(node["scopes"])
+		if len(nodeScopes) != 1 || !nodeScopes["node.exec"] {
+			t.Fatalf("expected non-operator token scopes unchanged, got=%v", nodeScopes)
+		}
+	})
+
+	t.Run("creates approvedScopes when missing", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		identityDir := filepath.Join(tmpDir, ".openclaw", "identity")
+		if err := os.MkdirAll(identityDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(identityDir, "device-auth.json"), []byte(`{"deviceId":"dev-2"}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		devicesDir := filepath.Join(tmpDir, ".openclaw", "devices")
+		if err := os.MkdirAll(devicesDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(devicesDir, "paired.json"), []byte(`{
+			"dev-2": {
+				"deviceId": "dev-2",
+				"scopes": ["operator.read"],
+				"tokens": {"operator":{"role":"operator","scopes":["operator.read"]}}
+			}
+		}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		patchDeviceScopes()
+
+		data, err := os.ReadFile(filepath.Join(devicesDir, "paired.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var devices map[string]map[string]any
+		if err := json.Unmarshal(data, &devices); err != nil {
+			t.Fatal(err)
+		}
+		dev := devices["dev-2"]
+		if _, ok := dev["approvedScopes"]; !ok {
+			t.Fatal("expected approvedScopes to be created")
+		}
+	})
+}
+
 func TestPrintOpenclawReady(t *testing.T) {
 	t.Run("includes port in URL", func(t *testing.T) {
 		var buf bytes.Buffer
@@ -1126,14 +1806,17 @@ func TestPrintOpenclawReady(t *testing.T) {
 		buf.ReadFrom(r)
 
 		output := buf.String()
-		for _, want := range []string{"/help", "channels", "skills", "gateway"} {
+		for _, want := range []string{"/help", "skills", "gateway"} {
 			if !strings.Contains(output, want) {
 				t.Errorf("expected %q in first-launch output, got:\n%s", want, output)
 			}
 		}
+		if strings.Contains(output, "configure --section channels") {
+			t.Errorf("did not expect channels configure tip in first-launch output, got:\n%s", output)
+		}
 	})
 
-	t.Run("subsequent launch shows single tip", func(t *testing.T) {
+	t.Run("subsequent launch omits quick start tips", func(t *testing.T) {
 		var buf bytes.Buffer
 		old := os.Stderr
 		r, w, _ := os.Pipe()
@@ -1146,11 +1829,14 @@ func TestPrintOpenclawReady(t *testing.T) {
 		buf.ReadFrom(r)
 
 		output := buf.String()
-		if !strings.Contains(output, "Tip:") {
-			t.Errorf("expected single tip line, got:\n%s", output)
-		}
 		if strings.Contains(output, "Quick start") {
 			t.Errorf("should not show quick start on subsequent launch")
+		}
+		if strings.Contains(output, "browse skills with") {
+			t.Errorf("should not show repeated skills tip on subsequent launch")
+		}
+		if strings.Contains(output, "configure --section channels") {
+			t.Errorf("did not expect channels configure tip on subsequent launch, got:\n%s", output)
 		}
 	})
 }

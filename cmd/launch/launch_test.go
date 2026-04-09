@@ -521,7 +521,7 @@ func TestResolveRunModel_ForcePicker_DoesNotReorderByLastModel(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"qwen3.5"},{"name":"glm-4.7-flash"}]}`)
+			fmt.Fprint(w, `{"models":[{"name":"qwen3.5"},{"name":"gemma4"}]}`)
 		case "/api/show":
 			fmt.Fprint(w, `{"model":"qwen3.5"}`)
 		default:
@@ -540,7 +540,7 @@ func TestResolveRunModel_ForcePicker_DoesNotReorderByLastModel(t *testing.T) {
 		t.Fatal("expected selector to receive model items")
 	}
 
-	glmIdx := slices.Index(gotNames, "glm-4.7-flash")
+	glmIdx := slices.Index(gotNames, "gemma4")
 	qwenIdx := slices.Index(gotNames, "qwen3.5")
 	if glmIdx == -1 || qwenIdx == -1 {
 		t.Fatalf("expected recommended local models in selector items, got %v", gotNames)
@@ -618,7 +618,7 @@ func TestLaunchIntegration_EditorForceConfigure(t *testing.T) {
 	}
 
 	var proceedPrompt bool
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		if prompt == "Proceed?" {
 			proceedPrompt = true
 		}
@@ -668,7 +668,7 @@ func TestLaunchIntegration_EditorForceConfigure(t *testing.T) {
 	}
 }
 
-func TestLaunchIntegration_EditorForceConfigure_DoesNotFloatCheckedModelsInPicker(t *testing.T) {
+func TestLaunchIntegration_EditorForceConfigure_FloatsCheckedModelsInPicker(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -725,8 +725,8 @@ func TestLaunchIntegration_EditorForceConfigure_DoesNotFloatCheckedModelsInPicke
 	if len(gotItems) == 0 {
 		t.Fatal("expected multi selector to receive items")
 	}
-	if gotItems[0] != "kimi-k2.5:cloud" {
-		t.Fatalf("expected stable recommendation order with kimi-k2.5:cloud first, got %v", gotItems)
+	if gotItems[0] != "qwen3.5:cloud" {
+		t.Fatalf("expected checked models floated to top with qwen3.5:cloud first, got %v", gotItems)
 	}
 	if len(gotPreChecked) < 2 {
 		t.Fatalf("expected prechecked models to be preserved, got %v", gotPreChecked)
@@ -847,7 +847,7 @@ func TestLaunchIntegration_EditorConfigureMultiSkipsMissingLocalAndPersistsAccep
 	DefaultMultiSelector = func(title string, items []ModelItem, preChecked []string) ([]string, error) {
 		return []string{"glm-5:cloud", "missing-local"}, nil
 	}
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		if prompt == "Proceed?" {
 			return true, nil
 		}
@@ -929,7 +929,7 @@ func TestLaunchIntegration_EditorConfigureMultiSkipsUnauthedCloudAndPersistsAcce
 	DefaultMultiSelector = func(title string, items []ModelItem, preChecked []string) ([]string, error) {
 		return []string{"llama3.2", "glm-5:cloud"}, nil
 	}
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		if prompt == "Proceed?" {
 			return true, nil
 		}
@@ -1014,7 +1014,7 @@ func TestLaunchIntegration_EditorConfigureMultiRemovesReselectedFailingModel(t *
 	DefaultMultiSelector = func(title string, items []ModelItem, preChecked []string) ([]string, error) {
 		return append([]string(nil), preChecked...), nil
 	}
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		if prompt == "Proceed?" {
 			return true, nil
 		}
@@ -1101,7 +1101,7 @@ func TestLaunchIntegration_EditorConfigureMultiAllFailuresKeepsExistingAndSkipsL
 	DefaultMultiSelector = func(title string, items []ModelItem, preChecked []string) ([]string, error) {
 		return []string{"missing-local-a", "missing-local-b"}, nil
 	}
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		if prompt == "Download missing-local-a?" || prompt == "Download missing-local-b?" {
 			return false, nil
 		}
@@ -1180,7 +1180,7 @@ func TestLaunchIntegration_ConfiguredEditorLaunchValidatesPrimaryOnly(t *testing
 		t.Fatalf("failed to seed config: %v", err)
 	}
 
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		t.Fatalf("did not expect prompt during normal configured launch: %q", prompt)
 		return false, nil
 	}
@@ -1245,7 +1245,7 @@ func TestLaunchIntegration_ConfiguredEditorLaunchSkipsReconfigure(t *testing.T) 
 		t.Fatalf("failed to seed config: %v", err)
 	}
 
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		t.Fatalf("did not expect prompt during a normal editor launch: %s", prompt)
 		return false, nil
 	}
@@ -1410,7 +1410,7 @@ func TestLaunchIntegration_ConfigureOnlyDoesNotRequireInstalledBinary(t *testing
 	}
 
 	var prompts []string
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		prompts = append(prompts, prompt)
 		if strings.Contains(prompt, "Launch LauncherEditor now?") {
 			return false, nil
@@ -1569,7 +1569,7 @@ func TestLaunchIntegration_ClaudeForceConfigureMissingSelectionDoesNotSave(t *te
 	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
 		return "missing-model", nil
 	}
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		if prompt == "Download missing-model?" {
 			return false, nil
 		}
@@ -1631,7 +1631,7 @@ func TestLaunchIntegration_ClaudeModelOverrideSkipsSelector(t *testing.T) {
 	}
 
 	var confirmCalls int
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		confirmCalls++
 		if !strings.Contains(prompt, "glm-4") {
 			t.Fatalf("expected download prompt for override model, got %q", prompt)
@@ -1695,7 +1695,7 @@ func TestLaunchIntegration_ConfigureOnlyPrompt(t *testing.T) {
 	}
 
 	var prompts []string
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		prompts = append(prompts, prompt)
 		if strings.Contains(prompt, "Launch StubSingle now?") {
 			return false, nil
@@ -1745,7 +1745,7 @@ func TestLaunchIntegration_ModelOverrideHeadlessMissingFailsWithoutPrompt(t *tes
 	withIntegrationOverride(t, "droid", runner)
 
 	confirmCalled := false
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		confirmCalled = true
 		return true, nil
 	}
@@ -1802,7 +1802,7 @@ func TestLaunchIntegration_ModelOverrideHeadlessCanOverrideMissingModelPolicy(t 
 	withIntegrationOverride(t, "droid", runner)
 
 	confirmCalled := false
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		confirmCalled = true
 		if !strings.Contains(prompt, "missing-model") {
 			t.Fatalf("expected prompt to mention missing model, got %q", prompt)
@@ -1860,7 +1860,7 @@ func TestLaunchIntegration_ModelOverrideInteractiveMissingPromptsAndPulls(t *tes
 	withIntegrationOverride(t, "droid", runner)
 
 	confirmCalled := false
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		confirmCalled = true
 		if !strings.Contains(prompt, "missing-model") {
 			t.Fatalf("expected prompt to mention missing model, got %q", prompt)
@@ -1921,7 +1921,7 @@ func TestLaunchIntegration_HeadlessSelectorFlowFailsWithoutPrompt(t *testing.T) 
 	}
 
 	confirmCalled := false
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		confirmCalled = true
 		return true, nil
 	}

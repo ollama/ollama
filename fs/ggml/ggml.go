@@ -281,6 +281,7 @@ func (kv KV) OllamaEngineRequired() bool {
 		"deepseekocr",
 		"gemma3",
 		"gemma3n",
+		"gemma4",
 		"gptoss", "gpt-oss",
 		"llama4",
 		"mistral3",
@@ -889,6 +890,7 @@ func (f GGML) FlashAttention() bool {
 	return slices.Contains([]string{
 		"bert",
 		"gemma3",
+		"gemma4",
 		"glm4moelite",
 		"glmocr",
 		"gptoss", "gpt-oss",

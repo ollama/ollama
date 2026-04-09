@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -736,6 +737,8 @@ func TestLookupCloudModelLimit(t *testing.T) {
 		{"glm-4.7", false, 0, 0},
 		{"glm-4.7:cloud", true, 202_752, 131_072},
 		{"glm-5:cloud", true, 202_752, 131_072},
+		{"glm-5.1:cloud", true, 202_752, 131_072},
+		{"gemma4:31b-cloud", true, 262_144, 131_072},
 		{"gpt-oss:120b-cloud", true, 131_072, 131_072},
 		{"gpt-oss:20b-cloud", true, 131_072, 131_072},
 		{"kimi-k2.5", false, 0, 0},
@@ -767,6 +770,40 @@ func TestLookupCloudModelLimit(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFindOpenCode(t *testing.T) {
+	t.Run("fallback to ~/.opencode/bin", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		// Ensure opencode is not on PATH
+		t.Setenv("PATH", tmpDir)
+
+		// Without the fallback binary, findOpenCode should fail
+		if _, ok := findOpenCode(); ok {
+			t.Fatal("findOpenCode should fail when binary is not on PATH or in fallback location")
+		}
+
+		// Create a fake binary at the curl install fallback location
+		binDir := filepath.Join(tmpDir, ".opencode", "bin")
+		os.MkdirAll(binDir, 0o755)
+		name := "opencode"
+		if runtime.GOOS == "windows" {
+			name = "opencode.exe"
+		}
+		fakeBin := filepath.Join(binDir, name)
+		os.WriteFile(fakeBin, []byte("#!/bin/sh\n"), 0o755)
+
+		// Now findOpenCode should succeed via fallback
+		path, ok := findOpenCode()
+		if !ok {
+			t.Fatal("findOpenCode should succeed with fallback binary")
+		}
+		if path != fakeBin {
+			t.Errorf("findOpenCode = %q, want %q", path, fakeBin)
+		}
+	})
 }
 
 func TestOpenCodeModels_NoConfig(t *testing.T) {

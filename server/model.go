@@ -41,11 +41,12 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 		return nil, err
 	}
 
-	for _, layer := range m.Layers {
-		layer, err := manifest.NewLayerFromLayer(layer.Digest, layer.MediaType, name.DisplayShortest())
+	for _, srcLayer := range m.Layers {
+		layer, err := manifest.NewLayerFromLayer(srcLayer.Digest, srcLayer.MediaType, name.DisplayShortest())
 		if err != nil {
 			return nil, err
 		}
+		layer.Name = srcLayer.Name
 
 		switch layer.MediaType {
 		case "application/vnd.ollama.image.model",
