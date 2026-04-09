@@ -1259,8 +1259,8 @@ func TestLaunchIntegration_ConfiguredEditorLaunchSkipsReconfigure(t *testing.T) 
 	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "droid"}); err != nil {
 		t.Fatalf("LaunchIntegration returned error: %v", err)
 	}
-	if diff := compareStringSlices(editor.edited, [][]string{{"llama3.2", "qwen3:8b"}}); diff != "" {
-		t.Fatalf("expected normal launch to keep editor models synced (-want +got):\n%s", diff)
+	if diff := compareStringSlices(editor.edited, nil); diff != "" {
+		t.Fatalf("expected normal launch to reuse saved editor config without rewriting it (-want +got):\n%s", diff)
 	}
 	if editor.ranModel != "llama3.2" {
 		t.Fatalf("expected launch to use saved primary model, got %q", editor.ranModel)
@@ -1275,7 +1275,7 @@ func TestLaunchIntegration_ConfiguredEditorLaunchSkipsReconfigure(t *testing.T) 
 	}
 }
 
-func TestLaunchIntegration_ConfiguredPiLaunchResyncsEditorConfig(t *testing.T) {
+func TestLaunchIntegration_ConfiguredPiLaunchSkipsReconfigure(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -1291,7 +1291,7 @@ func TestLaunchIntegration_ConfiguredPiLaunchResyncsEditorConfig(t *testing.T) {
 		t.Fatalf("failed to seed config: %v", err)
 	}
 
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		t.Fatalf("did not expect prompt during a normal editor launch: %s", prompt)
 		return false, nil
 	}
@@ -1311,15 +1311,15 @@ func TestLaunchIntegration_ConfiguredPiLaunchResyncsEditorConfig(t *testing.T) {
 	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "pi"}); err != nil {
 		t.Fatalf("LaunchIntegration returned error: %v", err)
 	}
-	if diff := compareStringSlices(editor.edited, [][]string{{"llama3.2", "qwen3:8b"}}); diff != "" {
-		t.Fatalf("expected configured Pi launch to sync editor models (-want +got):\n%s", diff)
+	if diff := compareStringSlices(editor.edited, nil); diff != "" {
+		t.Fatalf("expected configured Pi launch to reuse saved editor config without rewriting it (-want +got):\n%s", diff)
 	}
 	if editor.ranModel != "llama3.2" {
 		t.Fatalf("expected launch to use saved primary model, got %q", editor.ranModel)
 	}
 }
 
-func TestLaunchIntegration_OpenclawPreservesExistingModelList(t *testing.T) {
+func TestLaunchIntegration_OpenclawPreservesExistingModelListWithoutReconfigure(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -1350,8 +1350,8 @@ func TestLaunchIntegration_OpenclawPreservesExistingModelList(t *testing.T) {
 	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "openclaw"}); err != nil {
 		t.Fatalf("LaunchIntegration returned error: %v", err)
 	}
-	if diff := compareStringSlices(editor.edited, [][]string{{"llama3.2", "mistral"}}); diff != "" {
-		t.Fatalf("expected launch to keep OpenClaw config synced (-want +got):\n%s", diff)
+	if diff := compareStringSlices(editor.edited, nil); diff != "" {
+		t.Fatalf("expected launch to preserve existing OpenClaw config without rewriting it (-want +got):\n%s", diff)
 	}
 	if editor.ranModel != "llama3.2" {
 		t.Fatalf("expected launch to use first saved model, got %q", editor.ranModel)
