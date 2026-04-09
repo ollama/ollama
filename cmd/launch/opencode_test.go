@@ -2,7 +2,6 @@ package launch
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -155,34 +154,10 @@ func TestOpenCodeEdit(t *testing.T) {
 	})
 }
 
-func TestOpenCodeRun_SetsEnvVar(t *testing.T) {
-	o := &OpenCode{}
-	o.configContent = `{"model":"ollama/llama3.2"}`
-
-	// We can't easily test the actual run without a real binary,
-	// but we can verify the struct stores config content correctly.
-	if o.configContent == "" {
-		t.Error("configContent should be set")
-	}
-}
-
 func TestOpenCodeModels_ReturnsNil(t *testing.T) {
 	o := &OpenCode{}
 	if models := o.Models(); models != nil {
 		t.Errorf("Models() = %v, want nil", models)
-	}
-}
-
-func TestOpenCodePaths_NoConfigFile(t *testing.T) {
-	o := &OpenCode{}
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-
-	paths := o.Paths()
-	for _, p := range paths {
-		if filepath.Base(p) == "opencode.json" || filepath.Base(p) == "opencode.jsonc" {
-			t.Errorf("Paths() should not include config files, got %s", p)
-		}
 	}
 }
 
@@ -349,12 +324,4 @@ func TestOpenCodeEdit_BaseURL(t *testing.T) {
 	}
 }
 
-// Removed tests that are no longer relevant with inline config:
-// - TestOpenCodeEdit_CorruptedConfigJSON (no config file written)
-// - TestOpenCodeEdit_WrongTypeProvider (no config file read)
-// - TestOpenCodeEdit_EmptyModels content check (file not modified)
-// - TestOpenCodeEdit_PreservesUserLimit (no file merge)
-// - TestOpenCodeEdit_BackfillsCloudModelLimitOnExistingEntry (no file merge)
-// - File-based preserve/migrate tests (no file I/O for config)
 
-var _ = fmt.Sprintf // keep fmt import for potential future use

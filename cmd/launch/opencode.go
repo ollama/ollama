@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"slices"
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
@@ -111,31 +110,14 @@ func (o *OpenCode) Edit(modelList []string) error {
 		_ = json.Unmarshal(data, &state)
 	}
 
-	recent, _ := state["recent"].([]any)
-
-	modelSet := make(map[string]bool)
-	for _, m := range modelList {
-		modelSet[m] = true
-	}
-
-	newRecent := slices.DeleteFunc(slices.Clone(recent), func(entry any) bool {
-		e, ok := entry.(map[string]any)
-		if !ok || e["providerID"] != "ollama" {
-			return false
-		}
-		modelID, _ := e["modelID"].(string)
-		return modelSet[modelID]
-	})
-
-	for _, model := range slices.Backward(modelList) {
-		newRecent = slices.Insert(newRecent, 0, any(map[string]any{
+	// Build recent list with only ollama models.
+	newRecent := make([]any, 0, len(modelList))
+	for _, model := range modelList {
+		newRecent = append(newRecent, map[string]any{
 			"providerID": "ollama",
 			"modelID":    model,
-		}))
+		})
 	}
-
-	const maxRecentModels = 10
-	newRecent = newRecent[:min(len(newRecent), maxRecentModels)]
 	state["recent"] = newRecent
 
 	stateData, err := json.MarshalIndent(state, "", "  ")
