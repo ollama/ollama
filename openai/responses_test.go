@@ -253,6 +253,29 @@ func TestUnmarshalResponsesInputItem(t *testing.T) {
 		if err == nil {
 			t.Error("expected error, got nil")
 		}
+		if err != nil && err.Error() != `unknown input item type: "unknown_type"` {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("missing type field", func(t *testing.T) {
+		_, err := unmarshalResponsesInputItem([]byte(`{"content": "hello"}`))
+		if err == nil {
+			t.Error("expected error for missing type, got nil")
+		}
+		if err != nil && err.Error() != "input item missing required 'type' field" {
+			t.Errorf("unexpected error message: %v", err)
+		}
+	})
+
+	t.Run("empty type field", func(t *testing.T) {
+		_, err := unmarshalResponsesInputItem([]byte(`{"type": ""}`))
+		if err == nil {
+			t.Error("expected error for empty type, got nil")
+		}
+		if err != nil && err.Error() != "input item missing required 'type' field" {
+			t.Errorf("unexpected error message: %v", err)
+		}
 	})
 }
 

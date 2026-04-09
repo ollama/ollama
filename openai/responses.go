@@ -281,7 +281,10 @@ func unmarshalResponsesInputItem(data []byte) (ResponsesInputItem, error) {
 		}
 		return reasoning, nil
 	default:
-		return nil, fmt.Errorf("unknown input item type: %s", typeField.Type)
+		if itemType == "" {
+			return nil, fmt.Errorf("input item missing required 'type' field")
+		}
+		return nil, fmt.Errorf("unknown input item type: %q", itemType)
 	}
 }
 
