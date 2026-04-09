@@ -26,7 +26,7 @@ func TestEditorRunsDoNotRewriteConfig(t *testing.T) {
 			binary: "opencode",
 			runner: &OpenCode{},
 			checkPath: func(home string) string {
-				return filepath.Join(home, ".config", "opencode", "opencode.json")
+				return filepath.Join(home, ".local", "state", "opencode", "model.json")
 			},
 		},
 		{
