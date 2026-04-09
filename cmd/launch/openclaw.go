@@ -193,7 +193,7 @@ func (c *Openclaw) runChannelSetupPreflight(bin string) error {
 		}
 
 		fmt.Fprintf(os.Stderr, "\nYour assistant can message you on WhatsApp, Telegram, Discord, and more.\n\n")
-		ok, err := ConfirmPromptWithOptions("Connect a messaging app now?", ConfirmOptions{
+		ok, err := ConfirmPromptWithOptions("Connect a channel (messaging app) now?", ConfirmOptions{
 			YesLabel: "Yes",
 			NoLabel:  "Set up later",
 		})
