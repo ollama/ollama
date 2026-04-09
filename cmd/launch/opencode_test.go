@@ -323,5 +323,3 @@ func TestOpenCodeEdit_BaseURL(t *testing.T) {
 		t.Error("baseURL should be set")
 	}
 }
-
-
