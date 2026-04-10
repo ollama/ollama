@@ -48,6 +48,15 @@ func (o *OpenCode) Run(model string, args []string) error {
 		return fmt.Errorf("opencode is not installed, install from https://opencode.ai")
 	}
 
+	// When Edit was not called (e.g. re-launch with saved config),
+	// build inline config from model.json
+	if o.configContent == "" {
+		models := readModelJSONModels()
+		if len(models) > 0 {
+			o.configContent = buildInlineConfig(models)
+		}
+	}
+
 	cmd := exec.Command(opencodePath, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -76,27 +85,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 		return nil
 	}
 
-	// Build the inline config for OPENCODE_CONFIG_CONTENT
-	config := map[string]any{
-		"$schema": "https://opencode.ai/config.json",
-		"provider": map[string]any{
-			"ollama": map[string]any{
-				"npm":  "@ai-sdk/openai-compatible",
-				"name": "Ollama",
-				"options": map[string]any{
-					"baseURL": envconfig.Host().String() + "/v1",
-				},
-				"models": buildModelEntries(modelList),
-			},
-		},
-		"model": "ollama/" + modelList[0],
-	}
-
-	inlineData, err := json.Marshal(config)
-	if err != nil {
-		return err
-	}
-	o.configContent = string(inlineData)
+	o.configContent = buildInlineConfig(modelList)
 
 	// Write model state file so models appear in OpenCode's model picker
 	home, err := os.UserHomeDir()
@@ -136,6 +125,60 @@ func (o *OpenCode) Edit(modelList []string) error {
 
 func (o *OpenCode) Models() []string {
 	return nil
+}
+
+// buildInlineConfig produces the JSON string for OPENCODE_CONFIG_CONTENT
+func buildInlineConfig(modelList []string) string {
+	config := map[string]any{
+		"$schema": "https://opencode.ai/config.json",
+		"provider": map[string]any{
+			"ollama": map[string]any{
+				"npm":  "@ai-sdk/openai-compatible",
+				"name": "Ollama",
+				"options": map[string]any{
+					"baseURL": envconfig.Host().String() + "/v1",
+				},
+				"models": buildModelEntries(modelList),
+			},
+		},
+		"model": "ollama/" + modelList[0],
+	}
+	data, err := json.Marshal(config)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// readModelJSONModels reads ollama model IDs from the opencode model.json state file
+func readModelJSONModels() []string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".local", "state", "opencode", "model.json"))
+	if err != nil {
+		return nil
+	}
+	var state map[string]any
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil
+	}
+	recent, _ := state["recent"].([]any)
+	var models []string
+	for _, entry := range recent {
+		e, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if e["providerID"] != "ollama" {
+			continue
+		}
+		if id, ok := e["modelID"].(string); ok && id != "" {
+			models = append(models, id)
+		}
+	}
+	return models
 }
 
 func buildModelEntries(modelList []string) map[string]any {
