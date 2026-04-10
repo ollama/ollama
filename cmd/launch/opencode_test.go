@@ -730,7 +730,7 @@ func TestOpenCodeEdit_PreservesRecentEntries(t *testing.T) {
 
 		// Pre-populate with 9 distinct ollama models
 		recentEntries := make([]any, 0, 9)
-		for i := 0; i < 9; i++ {
+		for i := range 9 {
 			recentEntries = append(recentEntries, map[string]any{
 				"providerID": "ollama",
 				"modelID":    fmt.Sprintf("old-%d", i),
