@@ -222,6 +222,13 @@ var (
 	NoHistory = Bool("OLLAMA_NOHISTORY")
 	// NoPrune disables pruning of model blobs on startup.
 	NoPrune = Bool("OLLAMA_NOPRUNE")
+	// VerifyInlineHash switches blob downloads to a single-stream path
+	// that computes the sha256 while bytes flow in from the network,
+	// instead of re-reading the file from disk to verify after download.
+	// Enable this on systems where the Linux page-cache read path
+	// returns corrupt bytes for very large files and causes
+	// "digest mismatch, file must be downloaded again" on every pull.
+	VerifyInlineHash = Bool("OLLAMA_VERIFY_INLINE_HASH")
 	// SchedSpread allows scheduling models across all GPUs.
 	SchedSpread = Bool("OLLAMA_SCHED_SPREAD")
 	// MultiUserCache optimizes prompt caching for multi-user scenarios
@@ -319,6 +326,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_NO_CLOUD":           {"OLLAMA_NO_CLOUD", NoCloud(), "Disable Ollama cloud features (remote inference and web search)"},
 		"OLLAMA_NOHISTORY":          {"OLLAMA_NOHISTORY", NoHistory(), "Do not preserve readline history"},
 		"OLLAMA_NOPRUNE":            {"OLLAMA_NOPRUNE", NoPrune(), "Do not prune model blobs on startup"},
+		"OLLAMA_VERIFY_INLINE_HASH": {"OLLAMA_VERIFY_INLINE_HASH", VerifyInlineHash(), "Verify blob downloads with an inline sha256 hasher instead of re-reading from disk (workaround for kernel read-path bugs on large files)"},
 		"OLLAMA_NUM_PARALLEL":       {"OLLAMA_NUM_PARALLEL", NumParallel(), "Maximum number of parallel requests"},
 		"OLLAMA_ORIGINS":            {"OLLAMA_ORIGINS", AllowedOrigins(), "A comma separated list of allowed origins"},
 		"OLLAMA_SCHED_SPREAD":       {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},

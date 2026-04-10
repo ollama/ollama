@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"log/slog"
 	"math"
@@ -23,6 +25,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
@@ -52,6 +55,14 @@ type blobDownload struct {
 	done       chan struct{}
 	err        error
 	references atomic.Int32
+
+	// inlineHash computes the SHA256 of the blob bytes as they flow in
+	// from the network. Used instead of re-reading the file after download
+	// to avoid a Linux kernel read-path bug that intermittently returns
+	// corrupted bytes when reading very large files. Only safe because we
+	// force single-part sequential downloads (no concurrent writers) in
+	// Prepare below.
+	inlineHash hash.Hash
 }
 
 type blobDownloadPart struct {
@@ -126,6 +137,10 @@ func (p *blobDownloadPart) Write(b []byte) (n int, err error) {
 }
 
 func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *registryOptions) error {
+	if envconfig.VerifyInlineHash() {
+		return b.prepareInline(ctx, requestURL, opts)
+	}
+
 	partFilePaths, err := filepath.Glob(b.Name + "-partial-*")
 	if err != nil {
 		return err
@@ -179,6 +194,46 @@ func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *r
 		slog.Info(fmt.Sprintf("downloading %s in %d %s part(s)", b.Digest[7:19], len(b.Parts), format.HumanBytes(b.Parts[0].Size)))
 	}
 
+	return nil
+}
+
+// prepareInline sets up an opt-in single-part download with an inline
+// sha256 hasher. This avoids re-reading the file from disk to verify the
+// digest after download, which is necessary on Linux kernels where the
+// read path returns corrupted bytes for sequential reads larger than a
+// few GiB even though the bytes on disk are correct. Enabled by setting
+// OLLAMA_VERIFY_INLINE_HASH=1. Trades multi-part parallelism and
+// cross-invocation resume for correctness on affected systems.
+func (b *blobDownload) prepareInline(ctx context.Context, requestURL *url.URL, opts *registryOptions) error {
+	// Fresh start every invocation. Existing partial bytes can't be
+	// incorporated into the inline hasher after the fact, so resume is
+	// not supported in this mode.
+	_ = os.Remove(b.Name + "-partial")
+	if oldParts, _ := filepath.Glob(b.Name + "-partial-*"); len(oldParts) > 0 {
+		for _, p := range oldParts {
+			_ = os.Remove(p)
+		}
+	}
+
+	b.done = make(chan struct{})
+
+	resp, err := makeRequestWithRetry(ctx, http.MethodHead, requestURL, nil, nil, opts)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	b.Total, _ = strconv.ParseInt(resp.Header.Get("Content-Length"), 10, 64)
+	b.inlineHash = sha256.New()
+
+	// Single part covering the entire blob. Only one goroutine writes to
+	// b.inlineHash, sequentially, so the final digest is authoritative
+	// without ever re-reading the file.
+	if err := b.newPart(0, b.Total); err != nil {
+		return err
+	}
+
+	slog.Info(fmt.Sprintf("downloading %s (%s, inline-hash single stream)", b.Digest[7:19], format.HumanBytes(b.Total)))
 	return nil
 }
 
@@ -280,19 +335,32 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 			continue
 		}
 
+		// In inline-hash mode a mid-stream error leaves the hasher with
+		// partial state that can't be cleanly resumed, so we fail fast
+		// and let the next pull invocation start over from scratch.
+		maxTries := maxRetries
+		if b.inlineHash != nil {
+			maxTries = 1
+		}
+
 		g.Go(func() error {
 			var err error
-			for try := 0; try < maxRetries; try++ {
+			for try := 0; try < maxTries; try++ {
 				w := io.NewOffsetWriter(file, part.StartsAt())
 				err = b.downloadChunk(inner, directURL, w, part)
 				switch {
 				case errors.Is(err, context.Canceled), errors.Is(err, syscall.ENOSPC):
-					// return immediately if the context is canceled or the device is out of space
 					return err
 				case errors.Is(err, errPartStalled):
+					if b.inlineHash != nil {
+						return err
+					}
 					try--
 					continue
 				case err != nil:
+					if b.inlineHash != nil {
+						return err
+					}
 					sleep := time.Second * time.Duration(math.Pow(2, float64(try)))
 					slog.Info(fmt.Sprintf("%s part %d attempt %d failed: %v, retrying in %s", b.Digest[7:19], part.N, try, err, sleep))
 					time.Sleep(sleep)
@@ -306,8 +374,32 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 		})
 	}
 
+	cleanupPartials := func() {
+		_ = os.Remove(file.Name())
+		for i := range b.Parts {
+			_ = os.Remove(file.Name() + "-" + strconv.Itoa(i))
+		}
+	}
+
 	if err := g.Wait(); err != nil {
+		if b.inlineHash != nil {
+			_ = file.Close()
+			cleanupPartials()
+		}
 		return err
+	}
+
+	// Verify the inline hash before promoting the partial file to its
+	// final blob path. This replaces the previous re-read-from-disk check
+	// in verifyBlob() which is unreliable on kernels where the page cache
+	// returns inconsistent bytes for large files.
+	if b.inlineHash != nil {
+		got := fmt.Sprintf("sha256:%x", b.inlineHash.Sum(nil))
+		if got != b.Digest {
+			_ = file.Close()
+			cleanupPartials()
+			return fmt.Errorf("%w: want %s, got %s (inline)", errDigestMismatch, b.Digest, got)
+		}
 	}
 
 	// explicitly close the file so we can rename it
@@ -342,7 +434,25 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 		}
 		defer resp.Body.Close()
 
-		n, err := io.CopyN(w, io.TeeReader(resp.Body, part), part.Size-part.Completed.Load())
+		// Reject anything that isn't a real body response. Catches cases
+		// where an expired CDN signed URL returns 403, a gateway returns
+		// an error page, or a proxy injects a redirect - any of which
+		// would otherwise be silently written into the blob file.
+		if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("unexpected status code %d for range request", resp.StatusCode)
+		}
+
+		// Bytes flow: HTTP body -> inline hasher -> progress writer -> file.
+		// Nested TeeReaders guarantee each byte is seen by every sink in
+		// the same order, so the inline hash represents exactly what was
+		// written to disk.
+		src := io.Reader(resp.Body)
+		if b.inlineHash != nil {
+			src = io.TeeReader(src, b.inlineHash)
+		}
+		src = io.TeeReader(src, part)
+
+		n, err := io.CopyN(w, src, part.Size-part.Completed.Load())
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrUnexpectedEOF) {
 			// rollback progress
 			b.Completed.Add(-n)
@@ -464,22 +574,26 @@ type downloadOpts struct {
 	fn      func(api.ProgressResponse)
 }
 
-// downloadBlob downloads a blob from the registry and stores it in the blobs directory
-func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ error) {
+// downloadBlob downloads a blob from the registry and stores it in the
+// blobs directory. It returns cacheHit=true if the blob was already
+// present on disk, and inlineVerified=true if the blob's sha256 was
+// verified by an inline hasher during download (so the caller can skip
+// the separate verifyBlob() pass).
+func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, inlineVerified bool, _ error) {
 	if opts.digest == "" {
-		return false, fmt.Errorf(("%s: %s"), opts.n.DisplayNamespaceModel(), "digest is empty")
+		return false, false, fmt.Errorf(("%s: %s"), opts.n.DisplayNamespaceModel(), "digest is empty")
 	}
 
 	fp, err := manifest.BlobsPath(opts.digest)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 
 	fi, err := os.Stat(fp)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 	case err != nil:
-		return false, err
+		return false, false, err
 	default:
 		opts.fn(api.ProgressResponse{
 			Status:    fmt.Sprintf("pulling %s", opts.digest[7:19]),
@@ -488,7 +602,7 @@ func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ erro
 			Completed: fi.Size(),
 		})
 
-		return true, nil
+		return true, false, nil
 	}
 
 	data, ok := blobDownloadManager.LoadOrStore(opts.digest, &blobDownload{Name: fp, Digest: opts.digest})
@@ -498,12 +612,15 @@ func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ erro
 		requestURL = requestURL.JoinPath("v2", opts.n.DisplayNamespaceModel(), "blobs", opts.digest)
 		if err := download.Prepare(ctx, requestURL, opts.regOpts); err != nil {
 			blobDownloadManager.Delete(opts.digest)
-			return false, err
+			return false, false, err
 		}
 
 		//nolint:contextcheck
 		go download.Run(context.Background(), requestURL, opts.regOpts)
 	}
 
-	return false, download.Wait(ctx, opts.fn)
+	if err := download.Wait(ctx, opts.fn); err != nil {
+		return false, false, err
+	}
+	return false, download.inlineHash != nil, nil
 }

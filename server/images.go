@@ -622,7 +622,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 
 	skipVerify := make(map[string]bool)
 	for _, layer := range layers {
-		cacheHit, err := downloadBlob(ctx, downloadOpts{
+		cacheHit, inlineVerified, err := downloadBlob(ctx, downloadOpts{
 			n:       n,
 			digest:  layer.Digest,
 			regOpts: regOpts,
@@ -631,7 +631,12 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		if err != nil {
 			return err
 		}
-		skipVerify[layer.Digest] = cacheHit
+		// Skip the post-download re-read verification for:
+		//   - blobs that were already on disk (previously verified)
+		//   - blobs that downloadBlob verified inline while the bytes
+		//     were streaming in from the network, which bypasses the
+		//     unreliable read-back path on affected kernels
+		skipVerify[layer.Digest] = cacheHit || inlineVerified
 		delete(deleteMap, layer.Digest)
 	}
 
