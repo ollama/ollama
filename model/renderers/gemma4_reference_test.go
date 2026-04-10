@@ -654,11 +654,12 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 	q := `<|"|>`
 
 	tests := []struct {
-		name     string
-		messages []api.Message
-		tools    []api.Tool
-		think    *api.ThinkValue
-		expected string
+		name       string
+		messages   []api.Message
+		tools      []api.Tool
+		think      *api.ThinkValue
+		expected   string
+		skipJinja2 bool
 	}{
 		// === Header block paths ===
 		{
@@ -825,8 +826,9 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				"<|turn>user\nList and read<turn|>\n" +
 				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|>" +
 				"<|tool_call>call:read{path:" + q + "go.mod" + q + "}<tool_call|>" +
-				"<|tool_response>response:read{value:" + q + "file1.txt\nfile2.txt" + q + "}<tool_response|>" +
+				"<|tool_response>response:bash{value:" + q + "file1.txt\nfile2.txt" + q + "}<tool_response|>" +
 				"<|tool_response>response:read{value:" + q + "module example.com/foo" + q + "}<tool_response|>",
+			skipJinja2: true,
 		},
 		{
 			// Thinking content in assistant history should be stripped
@@ -1444,7 +1446,7 @@ Hi<turn|>
 
 			// When VERIFY_JINJA2=1, also verify the expected value against
 			// the real Jinja2 template rendered by Python.
-			if verifyJinja2 {
+			if verifyJinja2 && !tt.skipJinja2 {
 				jinja2Output := renderWithJinja2(t, tt.messages, tt.tools, tt.think)
 				if jinja2Output != tt.expected || jinja2Output != got {
 					fmt.Fprintf(os.Stderr, "\nJINJA2 OUTPUT for %s (copy-paste as expected):\n%q\n\n", tt.name, jinja2Output)
@@ -1522,17 +1524,6 @@ func TestGemma4RendererMatchesJinja2ExpandedParity(t *testing.T) {
 				{Role: "tool", ToolCallID: "call_bash", Content: "file1.txt\nfile2.txt"},
 			},
 			tools: bashAndReadRefTools(),
-		},
-		{
-			name: "tool_response_unknown_without_name_or_id",
-			messages: []api.Message{
-				{Role: "user", Content: "Go"},
-				{Role: "assistant", ToolCalls: []api.ToolCall{{
-					Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "ls"})},
-				}}},
-				{Role: "tool", Content: "file1.txt"},
-			},
-			tools: bashSmallTool(),
 		},
 		{
 			name: "adjacent_assistants_after_tool_response_continue_same_model_turn",
@@ -1649,6 +1640,42 @@ func TestGemma4RendererKnownJinja2Differences(t *testing.T) {
 			wantJinjaFrag:  `value:{description:<|"|>Value<|"|>,type:<|"|><|"|>}`,
 			wantRenderFrag: `value:{description:<|"|>Value<|"|>,type:<|"|>['STRING', 'NUMBER']<|"|>}`,
 		},
+		{
+			name: "tool_response_name_not_overridden_without_tool_call_id",
+			messages: []api.Message{
+				{Role: "user", Content: "List and read"},
+				{Role: "assistant", ToolCalls: []api.ToolCall{
+					{
+						Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "ls"})},
+					},
+					{
+						Function: api.ToolCallFunction{Name: "read", Arguments: testArgs(map[string]any{"path": "go.mod"})},
+					},
+				}},
+				{Role: "tool", ToolName: "bash", Content: "payload"},
+			},
+			tools:          bashAndReadRefTools(),
+			wantJinjaFrag:  `response:read{value:<|"|>payload<|"|>}`,
+			wantRenderFrag: `response:bash{value:<|"|>payload<|"|>}`,
+		},
+		{
+			name: "tool_response_without_name_or_id_uses_unknown",
+			messages: []api.Message{
+				{Role: "user", Content: "List and read"},
+				{Role: "assistant", ToolCalls: []api.ToolCall{
+					{
+						Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "ls"})},
+					},
+					{
+						Function: api.ToolCallFunction{Name: "read", Arguments: testArgs(map[string]any{"path": "go.mod"})},
+					},
+				}},
+				{Role: "tool", Content: "payload"},
+			},
+			tools:          bashAndReadRefTools(),
+			wantJinjaFrag:  `response:read{value:<|"|>payload<|"|>}`,
+			wantRenderFrag: `response:unknown{value:<|"|>payload<|"|>}`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1671,6 +1698,26 @@ func TestGemma4RendererNormalizesSimpleAnyOfToTypedUnion(t *testing.T) {
 	got, err := renderer.Render([]api.Message{{Role: "user", Content: "Pick"}}, anyOfTool(), nil)
 	assert.NoError(t, err)
 	assert.Contains(t, got, `value:{description:<|"|>Value<|"|>,type:<|"|>['STRING', 'NUMBER']<|"|>}`)
+}
+
+func TestGemma4RendererToolResponseWithoutNameOrIDUsesUnknown(t *testing.T) {
+	renderer := &Gemma4Renderer{useImgTags: RenderImgTags}
+
+	got, err := renderer.Render([]api.Message{
+		{Role: "user", Content: "List and read"},
+		{Role: "assistant", ToolCalls: []api.ToolCall{
+			{
+				Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "ls"})},
+			},
+			{
+				Function: api.ToolCallFunction{Name: "read", Arguments: testArgs(map[string]any{"path": "go.mod"})},
+			},
+		}},
+		{Role: "tool", Content: "payload"},
+	}, bashAndReadRefTools(), nil)
+	assert.NoError(t, err)
+	assert.Contains(t, got, `response:unknown{value:<|"|>payload<|"|>}`)
+	assert.NotContains(t, got, `response:read{value:<|"|>payload<|"|>}`)
 }
 
 // renderWithJinja2 shells out to uv + Python to render messages through the

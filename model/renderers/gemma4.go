@@ -187,9 +187,12 @@ func (r *Gemma4Renderer) toolResponseName(message api.Message, toolCalls []api.T
 	if name == "" {
 		name = "unknown"
 	}
-	for _, tc := range toolCalls {
-		if tc.ID == message.ToolCallID {
-			name = tc.Function.Name
+	if message.ToolCallID != "" {
+		for _, tc := range toolCalls {
+			if tc.ID == message.ToolCallID {
+				name = tc.Function.Name
+				break
+			}
 		}
 	}
 
