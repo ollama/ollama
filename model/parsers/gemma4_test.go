@@ -290,7 +290,8 @@ func TestGemma4Parser(t *testing.T) {
 			expectedToolCalls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
-						Name: "get_weather",
+						Index: 0,
+						Name:  "get_weather",
 						Arguments: testArgs(map[string]any{
 							"location": "Paris",
 						}),
@@ -298,7 +299,8 @@ func TestGemma4Parser(t *testing.T) {
 				},
 				{
 					Function: api.ToolCallFunction{
-						Name: "get_weather",
+						Index: 1,
+						Name:  "get_weather",
 						Arguments: testArgs(map[string]any{
 							"location": "London",
 						}),
