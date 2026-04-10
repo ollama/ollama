@@ -22,9 +22,10 @@ const (
 
 // This format uses <start_function_call>call:name{args}<end_function_call> for tool calls.
 type FunctionGemmaParser struct {
-	state  FunctionGemmaParserState
-	buffer strings.Builder
-	tools  []api.Tool
+	state     FunctionGemmaParserState
+	buffer    strings.Builder
+	tools     []api.Tool
+	callIndex int
 }
 
 func (p *FunctionGemmaParser) HasToolSupport() bool     { return true }
@@ -33,6 +34,7 @@ func (p *FunctionGemmaParser) HasThinkingSupport() bool { return false }
 func (p *FunctionGemmaParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
 	p.state = FunctionGemmaCollectingContent
+	p.callIndex = 0
 	return tools
 }
 
@@ -64,6 +66,11 @@ func (p *FunctionGemmaParser) Add(s string, done bool) (content string, thinking
 		case FunctionGemmaEventContent:
 			contentSb.WriteString(event.content)
 		}
+	}
+
+	for i := range toolCalls {
+		toolCalls[i].Function.Index = p.callIndex
+		p.callIndex++
 	}
 
 	return contentSb.String(), "", toolCalls, nil

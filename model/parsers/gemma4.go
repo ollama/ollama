@@ -38,6 +38,7 @@ type Gemma4Parser struct {
 	state                 Gemma4ParserState
 	buffer                strings.Builder
 	tools                 []api.Tool
+	callIndex             int
 	hasThinkingSupport    bool
 	thinkingEnabled       bool // true when both model supports and user requested thinking
 	needsChannelNameStrip bool // true when we just entered thinking and need to strip "thought\n"
@@ -53,6 +54,7 @@ func (p *Gemma4Parser) HasThinkingSupport() bool {
 
 func (p *Gemma4Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
+	p.callIndex = 0
 
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"
 
@@ -114,6 +116,11 @@ func (p *Gemma4Parser) Add(s string, done bool) (content string, thinking string
 		case gemma4EventContent:
 			contentSb.WriteString(event.content)
 		}
+	}
+
+	for i := range toolCalls {
+		toolCalls[i].Function.Index = p.callIndex
+		p.callIndex++
 	}
 
 	return contentSb.String(), thinkingSb.String(), toolCalls, nil

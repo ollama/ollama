@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
 )
 
@@ -214,6 +215,51 @@ func TestQwen3VLNonThinkingParserStreaming(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestQwen3VLNonThinkingAssignsSequentialToolCallIndices(t *testing.T) {
+	parser := Qwen3VLParser{hasThinkingSupport: false}
+	parser.Init([]api.Tool{}, nil, nil)
+
+	content, thinking, calls, err := parser.Add(
+		`<tool_call>{"name":"first","arguments":{"a":"1"}}</tool_call><tool_call>{"name":"second","arguments":{"b":"2"}}</tool_call>`,
+		true,
+	)
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	if content != "" {
+		t.Fatalf("expected no content, got %q", content)
+	}
+	if thinking != "" {
+		t.Fatalf("expected no thinking, got %q", thinking)
+	}
+
+	expected := []api.ToolCall{
+		{
+			Function: api.ToolCallFunction{
+				Index: 0,
+				Name:  "first",
+				Arguments: testArgs(map[string]any{
+					"a": "1",
+				}),
+			},
+		},
+		{
+			Function: api.ToolCallFunction{
+				Index: 1,
+				Name:  "second",
+				Arguments: testArgs(map[string]any{
+					"b": "2",
+				}),
+			},
+		},
+	}
+
+	if diff := cmp.Diff(expected, calls, argsComparer); diff != "" {
+		t.Fatalf("tool calls mismatch (-want +got):\n%s", diff)
 	}
 }
 
