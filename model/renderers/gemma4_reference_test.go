@@ -1365,9 +1365,9 @@ Hi<turn|>
 			expected: "<bos><|turn>system\n" + bashSmallDeclRef + "<turn|>\n" +
 				"<|turn>user\nSet up the project<turn|>\n" +
 				"<|turn>model\n<|tool_call>call:bash{command:" + q + "mkdir src" + q + "}<tool_call|>" +
-				"<|tool_response>response:bash{value:None}<tool_response|>" +
+				"<|tool_response>response:bash{value:" + q + q + "}<tool_response|>" +
 				"<|tool_call>call:bash{command:" + q + "touch src/main.go" + q + "}<tool_call|>" +
-				"<|tool_response>response:bash{value:None}<tool_response|>" +
+				"<|tool_response>response:bash{value:" + q + q + "}<tool_response|>" +
 				"Done.<turn|>\n" +
 				"<|turn>user\nThanks<turn|>\n" +
 				"<|turn>model\n<|channel>thought\n<channel|>",
@@ -1694,7 +1694,7 @@ func renderWithJinja2(t *testing.T, messages []api.Message, tools []api.Tool, th
 	}
 	type jinja2Message struct {
 		Role       string           `json:"role"`
-		Content    string           `json:"content,omitempty"`
+		Content    string           `json:"content"`
 		Reasoning  string           `json:"reasoning,omitempty"`
 		ToolCalls  []jinja2ToolCall `json:"tool_calls,omitempty"`
 		Name       string           `json:"name,omitempty"`

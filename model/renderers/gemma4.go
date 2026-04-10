@@ -679,9 +679,6 @@ func (r *Gemma4Renderer) formatToolCall(tc api.ToolCall) string {
 }
 
 func (r *Gemma4Renderer) formatToolResponseBlock(toolName, response string) string {
-	if response == "" {
-		return "<|tool_response>response:" + toolName + "{value:None}<tool_response|>"
-	}
 	return "<|tool_response>response:" + toolName + "{value:" + r.formatArgValue(response) + "}<tool_response|>"
 }
 
