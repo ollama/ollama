@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/d4l3k/go-bfloat16"
-	st "github.com/ollama/ollama/x/imagegen/safetensors"
+	st "github.com/ollama/ollama/x/safetensors"
 )
 
 func TestIsTensorModelDir(t *testing.T) {

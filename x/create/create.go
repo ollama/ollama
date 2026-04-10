@@ -13,7 +13,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/x/imagegen/safetensors"
+	"github.com/ollama/ollama/x/safetensors"
 )
 
 // ModelConfig represents the config blob stored with a model.
