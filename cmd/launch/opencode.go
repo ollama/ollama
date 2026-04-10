@@ -92,11 +92,11 @@ func (o *OpenCode) Edit(modelList []string) error {
 		"model": "ollama/" + modelList[0],
 	}
 
-	configData, err := json.Marshal(config)
+	inlineData, err := json.Marshal(config)
 	if err != nil {
 		return err
 	}
-	o.configContent = string(configData)
+	o.configContent = string(inlineData)
 
 	// Write model state file so models appear in OpenCode's model picker
 	home, err := os.UserHomeDir()
