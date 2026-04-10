@@ -60,6 +60,14 @@ func (o *OpenCode) Run(model string, args []string) error {
 }
 
 func (o *OpenCode) Paths() []string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	sp := filepath.Join(home, ".local", "state", "opencode", "model.json")
+	if _, err := os.Stat(sp); err == nil {
+		return []string{sp}
+	}
 	return nil
 }
 
@@ -68,7 +76,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 		return nil
 	}
 
-	// Build the inline config for OPENCODE_CONFIG_CONTENT.
+	// Build the inline config for OPENCODE_CONFIG_CONTENT
 	config := map[string]any{
 		"$schema": "https://opencode.ai/config.json",
 		"provider": map[string]any{
@@ -90,7 +98,7 @@ func (o *OpenCode) Edit(modelList []string) error {
 	}
 	o.configContent = string(configData)
 
-	// Write model state file so models appear in OpenCode's model picker.
+	// Write model state file so models appear in OpenCode's model picker
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
@@ -107,10 +115,9 @@ func (o *OpenCode) Edit(modelList []string) error {
 		"variant":  map[string]any{},
 	}
 	if data, err := os.ReadFile(statePath); err == nil {
-		_ = json.Unmarshal(data, &state)
+		_ = json.Unmarshal(data, &state) // Ignore parse errors; use defaults
 	}
 
-	// Build recent list with only ollama models.
 	newRecent := make([]any, 0, len(modelList))
 	for _, model := range modelList {
 		newRecent = append(newRecent, map[string]any{
