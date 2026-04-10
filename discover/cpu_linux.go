@@ -67,15 +67,75 @@ func getCPUMem() (memInfo, error) {
 }
 
 func getCPUMemByCgroups(mem memInfo) memInfo {
-	total, err := getUint64ValueFromFile("/sys/fs/cgroup/memory.max")
-	if err == nil {
-		mem.TotalMemory = total
+	maxBytes, err := os.ReadFile("/sys/fs/cgroup/memory.max")
+	if err != nil {
+		slog.Debug("Couldn't read cgroup max memory, keeping values from /proc/meminfo")
+		return mem
 	}
-	used, err := getUint64ValueFromFile("/sys/fs/cgroup/memory.current")
-	if err == nil {
-		mem.FreeMemory = mem.TotalMemory - used
+
+	maxStr := strings.TrimSpace(string(maxBytes))
+	if maxStr == "max" {
+		slog.Debug("No cgroup memory limit set, keeping values from /proc/meminfo")
+		return mem
 	}
+
+	total, err := strconv.ParseUint(maxStr, 10, 64)
+	if err != nil {
+		return mem
+	}
+	mem.TotalMemory = total
+
+	current, err := getUint64ValueFromFile("/sys/fs/cgroup/memory.current")
+	if err != nil {
+		slog.Debug("Couldn't use cgroups to detect currently used memory")
+		return mem
+	}
+
+	// Get reclaimable memory from memory.stat
+	inactiveFile, slabReclaimable := getReclaimableMemoryFromCgroup()
+
+	// Calculate available memory:
+	// Available = limit - current + reclaimable_cache
+	// This accounts for file cache and slab that can be reclaimed under pressure
+	available := int64(total) - int64(current) + int64(inactiveFile) + int64(slabReclaimable)
+	if available < 0 {
+		available = 0
+	}
+	if uint64(available) > total {
+		available = int64(total)
+	}
+	mem.FreeMemory = uint64(available)
+	slog.Debug("Available memory calculated from cgroups")
 	return mem
+}
+
+// getReclaimableMemoryFromCgroup reads memory.stat and returns reclaimable memory counters
+func getReclaimableMemoryFromCgroup() (inactiveFile, slabReclaimable uint64) {
+	f, err := os.Open("/sys/fs/cgroup/memory.stat")
+	if err != nil {
+		return 0, 0
+	}
+	defer f.Close()
+
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		line := s.Text()
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		value, err := strconv.ParseUint(fields[1], 10, 64)
+		if err != nil {
+			continue
+		}
+		switch fields[0] {
+		case "inactive_file":
+			inactiveFile = value
+		case "slab_reclaimable":
+			slabReclaimable = value
+		}
+	}
+	return
 }
 
 func getUint64ValueFromFile(path string) (uint64, error) {
