@@ -530,6 +530,77 @@ func TestGemma4Parser_IgnoresExtraToolCallCloseTags(t *testing.T) {
 	}
 }
 
+func TestGemma4Parser_IgnoresToolResponseBoundaryAfterToolCall(t *testing.T) {
+	tests := []struct {
+		name            string
+		chunks          []string
+		expectedContent string
+	}{
+		{
+			name: "same_chunk_without_trailing_content",
+			chunks: []string{
+				`<|tool_call>call:get_weather{location:<|"|>Paris<|"|>}<tool_call|><|tool_response>`,
+			},
+			expectedContent: "",
+		},
+		{
+			name: "same_chunk_before_real_content",
+			chunks: []string{
+				`<|tool_call>call:get_weather{location:<|"|>Paris<|"|>}<tool_call|><|tool_response>Done.`,
+			},
+			expectedContent: "Done.",
+		},
+		{
+			name: "split_across_chunks_before_real_content",
+			chunks: []string{
+				`<|tool_call>call:get_weather{location:<|"|>Paris<|"|>}<tool_call|><|tool_res`,
+				`ponse>Done.`,
+			},
+			expectedContent: "Done.",
+		},
+	}
+
+	expectedToolCalls := []api.ToolCall{
+		{
+			Function: api.ToolCallFunction{
+				Name: "get_weather",
+				Arguments: testArgs(map[string]any{
+					"location": "Paris",
+				}),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := &Gemma4Parser{hasThinkingSupport: false}
+			parser.Init(nil, nil, nil)
+
+			var finalContent strings.Builder
+			var finalToolCalls []api.ToolCall
+
+			for i, chunk := range tt.chunks {
+				done := i == len(tt.chunks)-1
+				content, _, toolCalls, err := parser.Add(chunk, done)
+				if err != nil {
+					t.Fatalf("Add() error on chunk %d: %v", i, err)
+				}
+
+				finalContent.WriteString(content)
+				finalToolCalls = append(finalToolCalls, toolCalls...)
+			}
+
+			if diff := cmp.Diff(tt.expectedContent, finalContent.String()); diff != "" {
+				t.Errorf("content mismatch (-want +got):\n%s", diff)
+			}
+
+			if diff := cmp.Diff(expectedToolCalls, finalToolCalls, argsComparer); diff != "" {
+				t.Errorf("tool calls mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestGemma4Parser_StreamingSplitThinkingTag(t *testing.T) {
 	tests := []struct {
 		name             string
