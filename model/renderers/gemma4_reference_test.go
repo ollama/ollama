@@ -1647,7 +1647,7 @@ func TestGemma4RendererKnownJinja2Differences(t *testing.T) {
 			},
 			tools:          anyOfTool(),
 			wantJinjaFrag:  `value:{description:<|"|>Value<|"|>,type:<|"|><|"|>}`,
-			wantRenderFrag: `value:{description:<|"|>Value<|"|>}`,
+			wantRenderFrag: `value:{description:<|"|>Value<|"|>,type:<|"|>['STRING', 'NUMBER']<|"|>}`,
 		},
 	}
 
@@ -1663,6 +1663,14 @@ func TestGemma4RendererKnownJinja2Differences(t *testing.T) {
 			assert.Contains(t, got, tt.wantRenderFrag)
 		})
 	}
+}
+
+func TestGemma4RendererNormalizesSimpleAnyOfToTypedUnion(t *testing.T) {
+	renderer := &Gemma4Renderer{useImgTags: RenderImgTags}
+
+	got, err := renderer.Render([]api.Message{{Role: "user", Content: "Pick"}}, anyOfTool(), nil)
+	assert.NoError(t, err)
+	assert.Contains(t, got, `value:{description:<|"|>Value<|"|>,type:<|"|>['STRING', 'NUMBER']<|"|>}`)
 }
 
 // renderWithJinja2 shells out to uv + Python to render messages through the

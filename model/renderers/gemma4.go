@@ -481,6 +481,12 @@ func schemaValueFromToolProperty(prop api.ToolProperty) map[string]any {
 		} else {
 			out["type"] = []string(prop.Type)
 		}
+	} else if unionTypes, ok := simpleAnyOfTypes(prop); ok {
+		if len(unionTypes) == 1 {
+			out["type"] = unionTypes[0]
+		} else {
+			out["type"] = []string(unionTypes)
+		}
 	}
 	if prop.Description != "" {
 		out["description"] = prop.Description
@@ -510,6 +516,11 @@ func topLevelTypedSchemaValueFromToolProperty(prop api.ToolProperty) map[string]
 		// template stringifies the uppercase list rather than emitting a structured
 		// type array. That is odd, but we match upstream here.
 		out["type"] = upstreamTypedPropertyTypeValue(prop.Type)
+	} else if unionTypes, ok := simpleAnyOfTypes(prop); ok {
+		// Gemma's declaration format does not have a dedicated anyOf construct, so
+		// we lower simple unions of bare type branches into the same typed union
+		// form used for api.PropertyType.
+		out["type"] = upstreamTypedPropertyTypeValue(unionTypes)
 	}
 	if prop.Description != "" {
 		out["description"] = prop.Description
@@ -544,6 +555,39 @@ func upstreamTypedPropertyTypeValue(types api.PropertyType) string {
 	}
 	sb.WriteString("]")
 	return sb.String()
+}
+
+func simpleAnyOfTypes(prop api.ToolProperty) (api.PropertyType, bool) {
+	if len(prop.AnyOf) == 0 {
+		return nil, false
+	}
+
+	var out api.PropertyType
+	seen := make(map[string]struct{})
+	for _, branch := range prop.AnyOf {
+		if !isBareTypeOnlyToolProperty(branch) || len(branch.Type) == 0 {
+			return nil, false
+		}
+		for _, typ := range branch.Type {
+			if _, ok := seen[typ]; ok {
+				continue
+			}
+			seen[typ] = struct{}{}
+			out = append(out, typ)
+		}
+	}
+
+	return out, len(out) > 0
+}
+
+func isBareTypeOnlyToolProperty(prop api.ToolProperty) bool {
+	return len(prop.AnyOf) == 0 &&
+		len(prop.Type) > 0 &&
+		prop.Items == nil &&
+		prop.Description == "" &&
+		len(prop.Enum) == 0 &&
+		prop.Properties == nil &&
+		len(prop.Required) == 0
 }
 
 func isSchemaStandardKey(key string) bool {
