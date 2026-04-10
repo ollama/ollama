@@ -2,13 +2,17 @@ package server
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/model"
 )
@@ -351,5 +355,27 @@ func TestPullModelManifest(t *testing.T) {
 				t.Fatal("expected at least one layer")
 			}
 		})
+	}
+}
+
+func TestVerifyBlobRejectsMismatch(t *testing.T) {
+	fakeDigest := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	fp, err := manifest.BlobsPath(fakeDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(fp), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(fp, []byte("this content does not match the digest"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(fp)
+
+	err = verifyBlob(fakeDigest)
+	if !errors.Is(err, errDigestMismatch) {
+		t.Fatalf("expected errDigestMismatch, got: %v", err)
 	}
 }
