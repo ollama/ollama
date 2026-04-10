@@ -110,7 +110,8 @@
                 "group": "Assistants",
                 "expanded": true,
                 "pages": [
-                  "/integrations/openclaw"
+                  "/integrations/openclaw",
+                  "/integrations/hermes"
                 ]
               },
               {
