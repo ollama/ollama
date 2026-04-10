@@ -432,8 +432,6 @@ func (r *Gemma4Renderer) writeSchemaProperties(sb *strings.Builder, props map[st
 		if len(typeNames) > 0 {
 			if addComma {
 				sb.WriteString(",")
-			} else {
-				addComma = true
 			}
 			if len(typeNames) == 1 {
 				sb.WriteString("type:" + g4Q + typeNames[0] + g4Q)
