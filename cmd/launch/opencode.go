@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
@@ -48,36 +49,55 @@ func (o *OpenCode) Run(model string, args []string) error {
 		return fmt.Errorf("opencode is not installed, install from https://opencode.ai")
 	}
 
-	// When Edit was not called (e.g. re-launch with saved config),
-	// build inline config from model.json
-	if o.configContent == "" {
-		models := readModelJSONModels()
-		if len(models) > 0 {
-			o.configContent = buildInlineConfig(models)
-		}
-	}
-
 	cmd := exec.Command(opencodePath, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Env = os.Environ()
-	if o.configContent != "" {
-		cmd.Env = append(cmd.Env, "OPENCODE_CONFIG_CONTENT="+o.configContent)
+	if content := o.resolveContent(model); content != "" {
+		cmd.Env = append(cmd.Env, "OPENCODE_CONFIG_CONTENT="+content)
 	}
 	return cmd.Run()
 }
 
+// resolveContent returns the inline config to send via OPENCODE_CONFIG_CONTENT.
+// Returns content built by Edit if available, otherwise builds from model.json
+// with the requested model as primary (e.g. re-launch with saved config).
+func (o *OpenCode) resolveContent(model string) string {
+	if o.configContent != "" {
+		return o.configContent
+	}
+	models := readModelJSONModels()
+	if !slices.Contains(models, model) {
+		models = append([]string{model}, models...)
+	}
+	content, err := buildInlineConfig(model, models)
+	if err != nil {
+		return ""
+	}
+	return content
+}
+
 func (o *OpenCode) Paths() []string {
-	home, err := os.UserHomeDir()
+	sp, err := openCodeStatePath()
 	if err != nil {
 		return nil
 	}
-	sp := filepath.Join(home, ".local", "state", "opencode", "model.json")
 	if _, err := os.Stat(sp); err == nil {
 		return []string{sp}
 	}
 	return nil
+}
+
+// openCodeStatePath returns the path to opencode's model state file.
+// TODO: this hardcodes the Linux/macOS XDG path. On Windows, opencode stores
+// state under %LOCALAPPDATA% (or similar) — verify and branch on runtime.GOOS.
+func openCodeStatePath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".local", "state", "opencode", "model.json"), nil
 }
 
 func (o *OpenCode) Edit(modelList []string) error {
@@ -85,15 +105,17 @@ func (o *OpenCode) Edit(modelList []string) error {
 		return nil
 	}
 
-	o.configContent = buildInlineConfig(modelList)
-
-	// Write model state file so models appear in OpenCode's model picker
-	home, err := os.UserHomeDir()
+	content, err := buildInlineConfig(modelList[0], modelList)
 	if err != nil {
 		return err
 	}
+	o.configContent = content
 
-	statePath := filepath.Join(home, ".local", "state", "opencode", "model.json")
+	// Write model state file so models appear in OpenCode's model picker
+	statePath, err := openCodeStatePath()
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
 		return err
 	}
@@ -107,13 +129,34 @@ func (o *OpenCode) Edit(modelList []string) error {
 		_ = json.Unmarshal(data, &state) // Ignore parse errors; use defaults
 	}
 
-	newRecent := make([]any, 0, len(modelList))
-	for _, model := range modelList {
-		newRecent = append(newRecent, map[string]any{
+	recent, _ := state["recent"].([]any)
+
+	modelSet := make(map[string]bool)
+	for _, m := range modelList {
+		modelSet[m] = true
+	}
+
+	// Filter out existing Ollama models we're about to re-add
+	newRecent := slices.DeleteFunc(slices.Clone(recent), func(entry any) bool {
+		e, ok := entry.(map[string]any)
+		if !ok || e["providerID"] != "ollama" {
+			return false
+		}
+		modelID, _ := e["modelID"].(string)
+		return modelSet[modelID]
+	})
+
+	// Prepend models in reverse order so first model ends up first
+	for _, model := range slices.Backward(modelList) {
+		newRecent = slices.Insert(newRecent, 0, any(map[string]any{
 			"providerID": "ollama",
 			"modelID":    model,
-		})
+		}))
 	}
+
+	const maxRecentModels = 10
+	newRecent = newRecent[:min(len(newRecent), maxRecentModels)]
+
 	state["recent"] = newRecent
 
 	stateData, err := json.MarshalIndent(state, "", "  ")
@@ -127,8 +170,12 @@ func (o *OpenCode) Models() []string {
 	return nil
 }
 
-// buildInlineConfig produces the JSON string for OPENCODE_CONFIG_CONTENT
-func buildInlineConfig(modelList []string) string {
+// buildInlineConfig produces the JSON string for OPENCODE_CONFIG_CONTENT.
+// primary is the model to launch with, models is the full list of available models.
+func buildInlineConfig(primary string, models []string) (string, error) {
+	if primary == "" || len(models) == 0 {
+		return "", fmt.Errorf("buildInlineConfig: primary and models are required")
+	}
 	config := map[string]any{
 		"$schema": "https://opencode.ai/config.json",
 		"provider": map[string]any{
@@ -138,25 +185,25 @@ func buildInlineConfig(modelList []string) string {
 				"options": map[string]any{
 					"baseURL": envconfig.Host().String() + "/v1",
 				},
-				"models": buildModelEntries(modelList),
+				"models": buildModelEntries(models),
 			},
 		},
-		"model": "ollama/" + modelList[0],
+		"model": "ollama/" + primary,
 	}
 	data, err := json.Marshal(config)
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return string(data)
+	return string(data), nil
 }
 
 // readModelJSONModels reads ollama model IDs from the opencode model.json state file
 func readModelJSONModels() []string {
-	home, err := os.UserHomeDir()
+	statePath, err := openCodeStatePath()
 	if err != nil {
 		return nil
 	}
-	data, err := os.ReadFile(filepath.Join(home, ".local", "state", "opencode", "model.json"))
+	data, err := os.ReadFile(statePath)
 	if err != nil {
 		return nil
 	}

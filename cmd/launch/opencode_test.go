@@ -2,6 +2,7 @@ package launch
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -27,10 +28,8 @@ func TestOpenCodeIntegration(t *testing.T) {
 }
 
 func TestOpenCodeEdit(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-
 	t.Run("builds config content with provider", func(t *testing.T) {
+		setTestHome(t, t.TempDir())
 		o := &OpenCode{}
 		if err := o.Edit([]string{"llama3.2"}); err != nil {
 			t.Fatal(err)
@@ -64,6 +63,7 @@ func TestOpenCodeEdit(t *testing.T) {
 	})
 
 	t.Run("multiple models", func(t *testing.T) {
+		setTestHome(t, t.TempDir())
 		o := &OpenCode{}
 		if err := o.Edit([]string{"llama3.2", "qwen3:32b"}); err != nil {
 			t.Fatal(err)
@@ -88,6 +88,7 @@ func TestOpenCodeEdit(t *testing.T) {
 	})
 
 	t.Run("empty models is no-op", func(t *testing.T) {
+		setTestHome(t, t.TempDir())
 		o := &OpenCode{}
 		if err := o.Edit([]string{}); err != nil {
 			t.Fatal(err)
@@ -98,6 +99,8 @@ func TestOpenCodeEdit(t *testing.T) {
 	})
 
 	t.Run("does not write config files", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
 		o := &OpenCode{}
 		o.Edit([]string{"llama3.2"})
 
@@ -112,6 +115,7 @@ func TestOpenCodeEdit(t *testing.T) {
 	})
 
 	t.Run("cloud model has limits", func(t *testing.T) {
+		setTestHome(t, t.TempDir())
 		o := &OpenCode{}
 		if err := o.Edit([]string{"glm-4.7:cloud"}); err != nil {
 			t.Fatal(err)
@@ -138,6 +142,7 @@ func TestOpenCodeEdit(t *testing.T) {
 	})
 
 	t.Run("local model has no limits", func(t *testing.T) {
+		setTestHome(t, t.TempDir())
 		o := &OpenCode{}
 		o.Edit([]string{"llama3.2"})
 
@@ -396,78 +401,360 @@ func TestReadModelJSONModels(t *testing.T) {
 	})
 }
 
-func TestOpenCodeRun_FallbackBuildsConfigFromModelJSON(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
+func TestOpenCodeResolveContent(t *testing.T) {
+	t.Run("returns Edit's content when set", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
 
-	// Write a model.json with saved models
-	stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
-	os.MkdirAll(stateDir, 0o755)
-	state := map[string]any{
-		"recent": []any{
-			map[string]any{"providerID": "ollama", "modelID": "llama3.2"},
-			map[string]any{"providerID": "ollama", "modelID": "qwen3:32b"},
-		},
-	}
-	data, _ := json.MarshalIndent(state, "", "  ")
-	os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
+		o := &OpenCode{}
+		if err := o.Edit([]string{"gemma4"}); err != nil {
+			t.Fatal(err)
+		}
+		editContent := o.configContent
 
-	// Simulate what Run does when configContent is empty:
-	// read model.json and build inline config
-	o := &OpenCode{}
-	models := readModelJSONModels()
-	if len(models) == 0 {
-		t.Fatal("readModelJSONModels returned no models")
-	}
-	o.configContent = buildInlineConfig(models)
+		// Write a different model.json — should be ignored
+		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
+		state := map[string]any{
+			"recent": []any{
+				map[string]any{"providerID": "ollama", "modelID": "different-model"},
+			},
+		}
+		data, _ := json.MarshalIndent(state, "", "  ")
+		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
 
-	var cfg map[string]any
-	if err := json.Unmarshal([]byte(o.configContent), &cfg); err != nil {
-		t.Fatalf("configContent is not valid JSON: %v", err)
-	}
+		got := o.resolveContent("gemma4")
+		if got != editContent {
+			t.Errorf("resolveContent returned different content than Edit set\ngot:  %s\nwant: %s", got, editContent)
+		}
+	})
 
-	provider, _ := cfg["provider"].(map[string]any)
-	ollama, _ := provider["ollama"].(map[string]any)
-	cfgModels, _ := ollama["models"].(map[string]any)
+	t.Run("falls back to model.json when Edit was not called", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
 
-	if cfgModels["llama3.2"] == nil {
-		t.Error("llama3.2 not found in config built from model.json")
-	}
-	if cfgModels["qwen3:32b"] == nil {
-		t.Error("qwen3:32b not found in config built from model.json")
-	}
-	if cfg["model"] != "ollama/llama3.2" {
-		t.Errorf("default model = %v, want ollama/llama3.2", cfg["model"])
-	}
+		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
+		os.MkdirAll(stateDir, 0o755)
+		state := map[string]any{
+			"recent": []any{
+				map[string]any{"providerID": "ollama", "modelID": "llama3.2"},
+				map[string]any{"providerID": "ollama", "modelID": "qwen3:32b"},
+			},
+		}
+		data, _ := json.MarshalIndent(state, "", "  ")
+		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
+
+		o := &OpenCode{}
+		content := o.resolveContent("llama3.2")
+		if content == "" {
+			t.Fatal("resolveContent returned empty")
+		}
+
+		var cfg map[string]any
+		json.Unmarshal([]byte(content), &cfg)
+		if cfg["model"] != "ollama/llama3.2" {
+			t.Errorf("primary = %v, want ollama/llama3.2", cfg["model"])
+		}
+		provider, _ := cfg["provider"].(map[string]any)
+		ollama, _ := provider["ollama"].(map[string]any)
+		cfgModels, _ := ollama["models"].(map[string]any)
+		if cfgModels["llama3.2"] == nil || cfgModels["qwen3:32b"] == nil {
+			t.Errorf("expected both models in config, got %v", cfgModels)
+		}
+	})
+
+	t.Run("uses requested model as primary even when not first in model.json", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
+		os.MkdirAll(stateDir, 0o755)
+		state := map[string]any{
+			"recent": []any{
+				map[string]any{"providerID": "ollama", "modelID": "llama3.2"},
+				map[string]any{"providerID": "ollama", "modelID": "qwen3:32b"},
+			},
+		}
+		data, _ := json.MarshalIndent(state, "", "  ")
+		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
+
+		o := &OpenCode{}
+		content := o.resolveContent("qwen3:32b")
+
+		var cfg map[string]any
+		json.Unmarshal([]byte(content), &cfg)
+		if cfg["model"] != "ollama/qwen3:32b" {
+			t.Errorf("primary = %v, want ollama/qwen3:32b", cfg["model"])
+		}
+	})
+
+	t.Run("injects requested model when missing from model.json", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
+		os.MkdirAll(stateDir, 0o755)
+		state := map[string]any{
+			"recent": []any{
+				map[string]any{"providerID": "ollama", "modelID": "llama3.2"},
+			},
+		}
+		data, _ := json.MarshalIndent(state, "", "  ")
+		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
+
+		o := &OpenCode{}
+		content := o.resolveContent("gemma4")
+
+		var cfg map[string]any
+		json.Unmarshal([]byte(content), &cfg)
+		provider, _ := cfg["provider"].(map[string]any)
+		ollama, _ := provider["ollama"].(map[string]any)
+		cfgModels, _ := ollama["models"].(map[string]any)
+		if cfgModels["gemma4"] == nil {
+			t.Error("requested model gemma4 not injected into config")
+		}
+		if cfg["model"] != "ollama/gemma4" {
+			t.Errorf("primary = %v, want ollama/gemma4", cfg["model"])
+		}
+	})
+
+	t.Run("returns empty when no model.json and no model param", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		o := &OpenCode{}
+		if got := o.resolveContent(""); got != "" {
+			t.Errorf("resolveContent(\"\") = %q, want empty", got)
+		}
+	})
+
+	t.Run("does not mutate configContent on fallback", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
+		os.MkdirAll(stateDir, 0o755)
+		state := map[string]any{
+			"recent": []any{
+				map[string]any{"providerID": "ollama", "modelID": "llama3.2"},
+			},
+		}
+		data, _ := json.MarshalIndent(state, "", "  ")
+		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
+
+		o := &OpenCode{}
+		_ = o.resolveContent("llama3.2")
+		if o.configContent != "" {
+			t.Errorf("resolveContent should not mutate configContent, got %q", o.configContent)
+		}
+	})
 }
 
-func TestOpenCodeRun_SkipsFallbackWhenEditWasCalled(t *testing.T) {
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
+func TestBuildInlineConfig(t *testing.T) {
+	t.Run("returns error for empty primary", func(t *testing.T) {
+		if _, err := buildInlineConfig("", []string{"llama3.2"}); err == nil {
+			t.Error("expected error for empty primary")
+		}
+	})
 
-	o := &OpenCode{}
-	o.Edit([]string{"gemma4"})
-	originalConfig := o.configContent
+	t.Run("returns error for empty models", func(t *testing.T) {
+		if _, err := buildInlineConfig("llama3.2", nil); err == nil {
+			t.Error("expected error for empty models")
+		}
+	})
 
-	// Write a different model.json
-	stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
-	state := map[string]any{
-		"recent": []any{
-			map[string]any{"providerID": "ollama", "modelID": "different-model"},
-		},
-	}
-	data, _ := json.MarshalIndent(state, "", "  ")
-	os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
+	t.Run("primary differs from first model in list", func(t *testing.T) {
+		content, err := buildInlineConfig("qwen3:32b", []string{"llama3.2", "qwen3:32b"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cfg map[string]any
+		json.Unmarshal([]byte(content), &cfg)
+		if cfg["model"] != "ollama/qwen3:32b" {
+			t.Errorf("primary = %v, want ollama/qwen3:32b", cfg["model"])
+		}
+	})
+}
 
-	// When configContent is already set, the fallback should not trigger
-	if o.configContent == "" {
-		t.Fatal("configContent should be set after Edit")
-	}
+func TestOpenCodeEdit_PreservesRecentEntries(t *testing.T) {
+	t.Run("prepends new models to existing recent", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
 
-	// Verify configContent is unchanged (Run's fallback only fires when empty)
-	if o.configContent != originalConfig {
-		t.Error("configContent should not change when Edit was already called")
-	}
+		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
+		os.MkdirAll(stateDir, 0o755)
+		initial := map[string]any{
+			"recent": []any{
+				map[string]any{"providerID": "ollama", "modelID": "old-A"},
+				map[string]any{"providerID": "ollama", "modelID": "old-B"},
+			},
+		}
+		data, _ := json.MarshalIndent(initial, "", "  ")
+		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
+
+		o := &OpenCode{}
+		if err := o.Edit([]string{"new-X"}); err != nil {
+			t.Fatal(err)
+		}
+
+		stored, _ := os.ReadFile(filepath.Join(stateDir, "model.json"))
+		var state map[string]any
+		json.Unmarshal(stored, &state)
+		recent, _ := state["recent"].([]any)
+
+		if len(recent) != 3 {
+			t.Fatalf("expected 3 entries, got %d", len(recent))
+		}
+		first, _ := recent[0].(map[string]any)
+		if first["modelID"] != "new-X" {
+			t.Errorf("first entry = %v, want new-X", first["modelID"])
+		}
+	})
+
+	t.Run("prepends multiple new models in order", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
+		os.MkdirAll(stateDir, 0o755)
+		initial := map[string]any{
+			"recent": []any{
+				map[string]any{"providerID": "ollama", "modelID": "old-A"},
+				map[string]any{"providerID": "ollama", "modelID": "old-B"},
+			},
+		}
+		data, _ := json.MarshalIndent(initial, "", "  ")
+		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
+
+		o := &OpenCode{}
+		if err := o.Edit([]string{"X", "Y", "Z"}); err != nil {
+			t.Fatal(err)
+		}
+
+		stored, _ := os.ReadFile(filepath.Join(stateDir, "model.json"))
+		var state map[string]any
+		json.Unmarshal(stored, &state)
+		recent, _ := state["recent"].([]any)
+
+		want := []string{"X", "Y", "Z", "old-A", "old-B"}
+		if len(recent) != len(want) {
+			t.Fatalf("expected %d entries, got %d", len(want), len(recent))
+		}
+		for i, w := range want {
+			e, _ := recent[i].(map[string]any)
+			if e["modelID"] != w {
+				t.Errorf("recent[%d] = %v, want %v", i, e["modelID"], w)
+			}
+		}
+	})
+
+	t.Run("preserves non-ollama entries", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
+		os.MkdirAll(stateDir, 0o755)
+		initial := map[string]any{
+			"recent": []any{
+				map[string]any{"providerID": "openai", "modelID": "gpt-4"},
+				map[string]any{"providerID": "ollama", "modelID": "llama3.2"},
+			},
+		}
+		data, _ := json.MarshalIndent(initial, "", "  ")
+		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
+
+		o := &OpenCode{}
+		if err := o.Edit([]string{"qwen3:32b"}); err != nil {
+			t.Fatal(err)
+		}
+
+		stored, _ := os.ReadFile(filepath.Join(stateDir, "model.json"))
+		var state map[string]any
+		json.Unmarshal(stored, &state)
+		recent, _ := state["recent"].([]any)
+
+		// Should have: qwen3:32b (new), gpt-4 (preserved openai), llama3.2 (preserved ollama)
+		var foundOpenAI bool
+		for _, entry := range recent {
+			e, _ := entry.(map[string]any)
+			if e["providerID"] == "openai" && e["modelID"] == "gpt-4" {
+				foundOpenAI = true
+			}
+		}
+		if !foundOpenAI {
+			t.Errorf("non-ollama gpt-4 entry was not preserved, got %v", recent)
+		}
+	})
+
+	t.Run("deduplicates ollama models being re-added", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
+		os.MkdirAll(stateDir, 0o755)
+		initial := map[string]any{
+			"recent": []any{
+				map[string]any{"providerID": "ollama", "modelID": "llama3.2"},
+			},
+		}
+		data, _ := json.MarshalIndent(initial, "", "  ")
+		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
+
+		o := &OpenCode{}
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
+			t.Fatal(err)
+		}
+
+		stored, _ := os.ReadFile(filepath.Join(stateDir, "model.json"))
+		var state map[string]any
+		json.Unmarshal(stored, &state)
+		recent, _ := state["recent"].([]any)
+
+		count := 0
+		for _, entry := range recent {
+			e, _ := entry.(map[string]any)
+			if e["modelID"] == "llama3.2" {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Errorf("expected 1 llama3.2 entry, got %d", count)
+		}
+	})
+
+	t.Run("caps recent list at 10", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
+		os.MkdirAll(stateDir, 0o755)
+
+		// Pre-populate with 9 distinct ollama models
+		recentEntries := make([]any, 0, 9)
+		for i := 0; i < 9; i++ {
+			recentEntries = append(recentEntries, map[string]any{
+				"providerID": "ollama",
+				"modelID":    fmt.Sprintf("old-%d", i),
+			})
+		}
+		initial := map[string]any{"recent": recentEntries}
+		data, _ := json.MarshalIndent(initial, "", "  ")
+		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
+
+		// Add 5 new models — should cap at 10 total
+		o := &OpenCode{}
+		if err := o.Edit([]string{"new-0", "new-1", "new-2", "new-3", "new-4"}); err != nil {
+			t.Fatal(err)
+		}
+
+		stored, _ := os.ReadFile(filepath.Join(stateDir, "model.json"))
+		var state map[string]any
+		json.Unmarshal(stored, &state)
+		recent, _ := state["recent"].([]any)
+
+		if len(recent) != 10 {
+			t.Errorf("expected 10 entries (capped), got %d", len(recent))
+		}
+	})
 }
 
 func TestOpenCodeEdit_BaseURL(t *testing.T) {
