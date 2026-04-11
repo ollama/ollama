@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 	"unicode"
+	"log/slog"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/go-cmp/cmp"
@@ -515,7 +516,7 @@ func TestRoutes(t *testing.T) {
 	}
 
 	s := &Server{}
-	router, err := s.GenerateRoutes(rc)
+	router, err := s.GenerateRoutes(slog.Default(), rc)
 	if err != nil {
 		t.Fatalf("failed to generate routes: %v", err)
 	}
@@ -808,7 +809,7 @@ func TestShowCopilotUserAgentOverwritesExistingBasename(t *testing.T) {
 		t.Fatalf("expected status code 200 creating model, actual %d", w.Code)
 	}
 
-	h, err := s.GenerateRoutes(nil)
+	h, err := s.GenerateRoutes(slog.Default(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -865,7 +866,7 @@ func TestShowCopilotUserAgentSetsBasenameWhenModelInfoIsEmpty(t *testing.T) {
 		t.Fatalf("expected status code 200 creating model, actual %d", w.Code)
 	}
 
-	h, err := s.GenerateRoutes(nil)
+	h, err := s.GenerateRoutes(slog.Default(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
