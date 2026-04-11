@@ -11,7 +11,7 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-const pullMenuTimeout = 5 * time.Second
+var pullMenuTimeout = 5 * time.Second
 
 type pullMenuState int
 
