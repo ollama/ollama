@@ -355,24 +355,21 @@ function ToolRoleContent({
             </div>
           </div>
 
-          <div
-            className="text-xs text-neutral-500 dark:text-neutral-500 rounded-md overflow-y-auto transition-[max-height,opacity] duration-300 ease-in-out ml-6 mt-2"
-            style={{
-              maxHeight: isCollapsed ? "0px" : "20rem",
-              opacity: isCollapsed ? 0 : 1,
-            }}
-          >
-            <pre
-              id="raw-json-tool-result"
-              className="text-xs overflow-x-auto bg-neutral-50 dark:bg-neutral-900 text-neutral-800 dark:text-neutral-200 p-2 rounded-md border border-neutral-200 dark:border-neutral-700"
+          {!isCollapsed && (
+            <div
+              className="text-xs text-neutral-500 dark:text-neutral-500 rounded-md overflow-y-auto max-h-80 ml-6 mt-2"
             >
-              <code>
-                {typeof rawToolResult === "string"
-                  ? rawToolResult
-                  : JSON.stringify(rawToolResult, null, 2)}
-              </code>
-            </pre>
-          </div>
+              <pre
+                className="text-xs overflow-x-auto bg-neutral-50 dark:bg-neutral-900 text-neutral-800 dark:text-neutral-200 p-2 rounded-md border border-neutral-200 dark:border-neutral-700"
+              >
+                <code>
+                  {typeof rawToolResult === "string"
+                    ? rawToolResult
+                    : JSON.stringify(rawToolResult, null, 2)}
+                </code>
+              </pre>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -431,7 +428,7 @@ function BrowserToolCallDisplay({
   toolCall: ToolCall;
   browserToolResult?: BrowserToolResult;
 }) {
-  const args = JSON.parse(toolCall.function.arguments);
+  const args = useMemo(() => JSON.parse(toolCall.function.arguments), [toolCall.function.arguments]);
   if (toolCall.function.name === "browser.search") {
     const query = args.query;
     return (
