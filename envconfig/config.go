@@ -236,6 +236,11 @@ var (
 	EnableVulkan = Bool("OLLAMA_VULKAN")
 	// NoCloudEnv checks the OLLAMA_NO_CLOUD environment variable.
 	NoCloudEnv = Bool("OLLAMA_NO_CLOUD")
+	// SkipGPUValidation bypasses the rocblas_initialize() check during GPU discovery.
+	// Useful for AMD GPUs (like Strix Halo gfx1151) where rocblas validation crashes
+	// even though the GPU is actually supported. The user takes responsibility for
+	// ensuring the GPU is compatible.
+	SkipGPUValidation = Bool("OLLAMA_SKIP_GPU_VALIDATION")
 )
 
 func String(s string) func() string {
@@ -349,6 +354,7 @@ func AsMap() map[string]EnvVar {
 		ret["GPU_DEVICE_ORDINAL"] = EnvVar{"GPU_DEVICE_ORDINAL", GpuDeviceOrdinal(), "Set which AMD devices are visible by numeric ID"}
 		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion(), "Override the gfx used for all detected AMD GPUs"}
 		ret["OLLAMA_VULKAN"] = EnvVar{"OLLAMA_VULKAN", EnableVulkan(), "Enable experimental Vulkan support"}
+		ret["OLLAMA_SKIP_GPU_VALIDATION"] = EnvVar{"OLLAMA_SKIP_GPU_VALIDATION", SkipGPUValidation(), "Bypass GPU init validation (for AMD GPUs that crash during validation but actually work, e.g. Strix Halo gfx1151)"}
 	}
 
 	return ret

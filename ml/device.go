@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/logutil"
 )
@@ -536,6 +537,11 @@ func GetVisibleDevicesEnv(l []DeviceInfo, mustFilter bool) map[string]string {
 // to crash at inference time and requires deeper validation before we include
 // it in the supported devices list.
 func (d DeviceInfo) NeedsInitValidation() bool {
+	// Allow users to bypass validation for known-good GPUs that crash during validation
+	// (e.g. AMD Strix Halo gfx1151 where rocblas_initialize() fails even though the GPU works).
+	if envconfig.SkipGPUValidation() {
+		return false
+	}
 	// ROCm: rocblas will crash on unsupported devices.
 	// CUDA: verify CC is supported by the version of the library
 	return d.Library == "ROCm" || d.Library == "CUDA"

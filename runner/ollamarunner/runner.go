@@ -1229,6 +1229,15 @@ func (s *Server) allocModel(
 	s.seqs = make([]*Sequence, s.parallel)
 	s.seqsSem = semaphore.NewWeighted(int64(s.parallel))
 
+	// Allow skipping worst-case graph reservation. Some GPUs (e.g. AMD Strix Halo gfx1151)
+	// crash during ggml_backend_sched_reserve due to bugs in the HIP runtime memory allocator.
+	// Skipping this means memory is allocated lazily during inference, which works fine
+	// in practice for most workloads.
+	if envconfig.SkipGPUValidation() {
+		slog.Info("skipping worst-case graph reservation (OLLAMA_SKIP_GPU_VALIDATION=1)")
+		return nil
+	}
+
 	err = s.reserveWorstCaseGraph(true)
 	if err != nil {
 		return err
