@@ -692,7 +692,12 @@ static bool ggml_is_view_op(enum ggml_op op) {
 #endif
 
 #ifndef GGML_SCHED_MAX_SPLIT_INPUTS
-#define GGML_SCHED_MAX_SPLIT_INPUTS 30
+// Increased from 30 to 128 to support TurboQuant K+V compression on large MoE
+// models (e.g. qwen3-coder:30b/48-layer) where per-layer TQ encode ops and
+// MoE expert routing create more cross-backend split inputs than the original
+// limit allows. Upstream GGML has a FIXME here: the check only fires when the
+// split is exactly full, so multi-input ops can overshoot the limit.
+#define GGML_SCHED_MAX_SPLIT_INPUTS 128
 #endif
 
 #ifndef GGML_SCHED_MAX_COPIES

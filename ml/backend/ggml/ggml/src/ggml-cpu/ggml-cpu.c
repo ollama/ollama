@@ -2080,6 +2080,20 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             {
                 // nop
             } break;
+        case GGML_OP_TQ_ENCODE:
+        case GGML_OP_TQ_DEQUANT:
+        case GGML_OP_TQ_DEQUANT_KV:
+        case GGML_OP_TQ_FLASH_ATTN_EXT:
+        case GGML_OP_TQ_ENCODE_V:
+        case GGML_OP_TQ_ENCODE_KV:
+            {
+                // CUDA-only ops. If these reach CPU, it means the scheduler
+                // incorrectly assigned them to CPU — abort to diagnose.
+                fprintf(stderr, "[FATAL] TQ op %s reached CPU backend! This is a scheduler bug.\n",
+                        ggml_op_name(tensor->op));
+                fflush(stderr);
+                GGML_ABORT("TQ op reached CPU backend");
+            } break;
         case GGML_OP_COUNT:
             {
                 GGML_ABORT("fatal error");
@@ -2400,6 +2414,15 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
         case GGML_OP_NONE:
             {
                 n_tasks = 1;
+            } break;
+        case GGML_OP_TQ_ENCODE:
+        case GGML_OP_TQ_DEQUANT:
+        case GGML_OP_TQ_DEQUANT_KV:
+        case GGML_OP_TQ_FLASH_ATTN_EXT:
+        case GGML_OP_TQ_ENCODE_V:
+        case GGML_OP_TQ_ENCODE_KV:
+            {
+                n_tasks = 1; // CUDA-only; handled as no-op in compute_forward
             } break;
         case GGML_OP_COUNT:
             {
