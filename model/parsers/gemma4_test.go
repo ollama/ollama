@@ -219,6 +219,34 @@ func TestGemma4Parser(t *testing.T) {
 			},
 		},
 		{
+			name:  "tool_call_exec_with_embedded_quoted_path",
+			input: `<|tool_call>call:exec{command:<|"|>ls -F "vault/"<|"|>}<tool_call|>`,
+			expectedToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "exec",
+						Arguments: testArgs(map[string]any{
+							"command": `ls -F "vault/"`,
+						}),
+					},
+				},
+			},
+		},
+		{
+			name:  "tool_call_exec_with_embedded_quoted_url",
+			input: `<|tool_call>call:exec{command:<|"|>fetch "https://ollama.com/library/gemma4" --extract<|"|>}<tool_call|>`,
+			expectedToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "exec",
+						Arguments: testArgs(map[string]any{
+							"command": `fetch "https://ollama.com/library/gemma4" --extract`,
+						}),
+					},
+				},
+			},
+		},
+		{
 			name:  "tool_call_done_flush_without_close_tag_with_unescaped_double_quotes",
 			input: `<|tool_call>call:search{query:<|"|>say "hello" and "bye"<|"|>}`,
 			expectedToolCalls: []api.ToolCall{
@@ -263,6 +291,71 @@ func TestGemma4Parser(t *testing.T) {
 								map[string]any{
 									"title": `step \"two\"`,
 									"done":  true,
+								},
+							},
+						}),
+					},
+				},
+			},
+		},
+		{
+			name: "tool_call_edit_with_array_of_objects_multiline_markdown_and_quotes",
+			input: `<|tool_call>call:edit{edits:[
+  {newText:<|"|># Gemma4 + openclaude speed optimization guide
+
+Use "nvfp4" only after validating tool calls.
+<|"|>,oldText:<|"|># Gemma4 + openclaude speed optimization guide
+
+Use the default quantization.
+<|"|>},
+  {newText:<|"|>## 14. Methods tried but not adopted
+
+### 1. Model quantization
+Do not enable "mxfp8" by default.
+<|"|>,oldText:<|"|>## 14. Methods tried but not adopted
+<|"|>}
+]}<tool_call|>`,
+			expectedToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "edit",
+						Arguments: testArgs(map[string]any{
+							"edits": []any{
+								map[string]any{
+									"newText": "# Gemma4 + openclaude speed optimization guide\n\nUse \"nvfp4\" only after validating tool calls.\n",
+									"oldText": "# Gemma4 + openclaude speed optimization guide\n\nUse the default quantization.\n",
+								},
+								map[string]any{
+									"newText": "## 14. Methods tried but not adopted\n\n### 1. Model quantization\nDo not enable \"mxfp8\" by default.\n",
+									"oldText": "## 14. Methods tried but not adopted\n",
+								},
+							},
+						}),
+					},
+				},
+			},
+		},
+		{
+			name: "tool_call_edit_with_array_of_objects_issue_comment_spacing",
+			input: `<|tool_call>call:edit{edits:[
+  {newText:<|"|># Gemma4 + openclaude speed optimization guide...<|"|>,
+   oldText:<|"|># Gemma4 + openclaude speed optimization guide...<|"|>},
+  {newText:<|"|>## 14. Methods tried but not adopted\n\n### 1. Model quantization...<|"|>,
+   oldText:<|"|>## 14. Methods tried but not adopted\n<|"|>}
+]}<tool_call|>`,
+			expectedToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "edit",
+						Arguments: testArgs(map[string]any{
+							"edits": []any{
+								map[string]any{
+									"newText": "# Gemma4 + openclaude speed optimization guide...",
+									"oldText": "# Gemma4 + openclaude speed optimization guide...",
+								},
+								map[string]any{
+									"newText": "## 14. Methods tried but not adopted\\n\\n### 1. Model quantization...",
+									"oldText": "## 14. Methods tried but not adopted\\n",
 								},
 							},
 						}),
@@ -686,6 +779,27 @@ func TestGemma4ArgsToJSON(t *testing.T) {
 			expected: `{"config":{"enabled":true,"name":"test"}}`,
 		},
 		{
+			name:     "nested_object_with_space_after_object_open_and_before_bare_key",
+			input:    `{edits:[{ newText:<|"|>a<|"|>, oldText:<|"|>b<|"|>} ]}`,
+			expected: `{"edits":[{ "newText":"a", "oldText":"b"} ]}`,
+		},
+		{
+			name:     "nested_object_with_space_before_bare_key",
+			input:    `{edits:[{newText:<|"|>a<|"|>, oldText:<|"|>b<|"|>} ]}`,
+			expected: `{"edits":[{"newText":"a", "oldText":"b"} ]}`,
+		},
+		{
+			name: "nested_object_with_newline_before_bare_key",
+			input: `{edits:[
+  {newText:<|"|>a<|"|>,
+   oldText:<|"|>b<|"|>}
+]}`,
+			expected: `{"edits":[
+  {"newText":"a",
+   "oldText":"b"}
+]}`,
+		},
+		{
 			name:     "array_value",
 			input:    `{items:[<|"|>a<|"|>,<|"|>b<|"|>]}`,
 			expected: `{"items":["a","b"]}`,
@@ -775,6 +889,16 @@ func TestGemma4ArgsToJSON(t *testing.T) {
 			name:     "raw_quoted_string_with_escaped_quotes",
 			input:    `{q:"say \"hi\" and \"bye\""}`,
 			expected: `{"q":"say \"hi\" and \"bye\""}`,
+		},
+		{
+			name:     "raw_quoted_string_containing_key_like_text",
+			input:    `{q:"keep , oldText: literal",note:<|"|>ok<|"|>}`,
+			expected: `{"q":"keep , oldText: literal","note":"ok"}`,
+		},
+		{
+			name:     "raw_quoted_string_with_escaped_quotes_and_key_like_text",
+			input:    `{q:"keep , oldText: and \"quoted\" text",note:<|"|>ok<|"|>}`,
+			expected: `{"q":"keep , oldText: and \"quoted\" text","note":"ok"}`,
 		},
 		{
 			name:     "nested_mixed_raw_and_gemma_quoted_values",
@@ -1321,9 +1445,22 @@ func TestParseGemma4ToolCall_DoesNotRepairNonTerminalUnclosedGemmaString(t *test
 	}
 }
 
-func TestParseGemma4ToolCall_InvalidRawQuotedStructuralString(t *testing.T) {
-	_, err := parseGemma4ToolCall(`call:foo{q:"a,b:c"}`, nil)
-	if err == nil {
-		t.Fatal("expected parseGemma4ToolCall to reject raw-quoted strings with structural text that the reference implementation does not support")
+func TestParseGemma4ToolCall_RawQuotedStructuralString(t *testing.T) {
+	got, err := parseGemma4ToolCall(`call:foo{q:"a,b:c"}`, nil)
+	if err != nil {
+		t.Fatalf("parseGemma4ToolCall returned error: %v", err)
+	}
+
+	want := api.ToolCall{
+		Function: api.ToolCallFunction{
+			Name: "foo",
+			Arguments: testArgs(map[string]any{
+				"q": "a,b:c",
+			}),
+		},
+	}
+
+	if diff := cmp.Diff(want, got, argsComparer); diff != "" {
+		t.Fatalf("tool call mismatch (-want +got):\n%s", diff)
 	}
 }
