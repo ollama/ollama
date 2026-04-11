@@ -835,6 +835,21 @@ type TokenResponse struct {
 	Token string `json:"token"`
 }
 
+// RemoteModel is a single model entry returned by the ollama.com /v1/models API.
+type RemoteModel struct {
+	ID      string `json:"id"`
+	Object  string `json:"object"`
+	Created int64  `json:"created"`
+	OwnedBy string `json:"owned_by"`
+}
+
+// RemoteListResponse is the OpenAI-compatible response from the ollama.com /v1/models endpoint,
+// used by ListRemote to surface a curated list of models for the pull menu.
+type RemoteListResponse struct {
+	Object string        `json:"object"`
+	Data   []RemoteModel `json:"data"`
+}
+
 type CloudStatus struct {
 	Disabled bool   `json:"disabled"`
 	Source   string `json:"source"`
