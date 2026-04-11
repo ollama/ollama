@@ -852,7 +852,7 @@ func (f GGML) SupportsKVCacheType(cacheType string) bool {
 		return true
 	}
 
-	return slices.Contains([]string{"q8_0", "q4_0"}, cacheType)
+	return slices.Contains([]string{"q8_0", "q4_0", "tq2", "tq3", "tq3k", "tq2k"}, cacheType)
 }
 
 // KVCacheTypeIsQuantized checks if the requested cache type is a quantized type
@@ -861,6 +861,20 @@ func (f GGML) KVCacheTypeIsQuantized(cacheType string) bool {
 		return false
 	}
 	return true
+}
+
+// KVCacheTypeRequiresFlashAttention reports whether a KV cache type can only be
+// used when flash attention is enabled. Ggml-native quantized types (q8_0,
+// q4_0) store K/V as quantized tensors that the non-FA softmax+matmul attention
+// path cannot consume directly. TurboQuant K-only presets (tq2k, tq3k) dequant
+// the packed K buffer to f16 before the attention op runs, so they work with
+// either FA or the standard attention path.
+func (f GGML) KVCacheTypeRequiresFlashAttention(cacheType string) bool {
+	switch cacheType {
+	case "tq2k", "tq3k":
+		return false
+	}
+	return f.KVCacheTypeIsQuantized(cacheType)
 }
 
 // SupportsFlashAttention checks if the model supports flash attention
@@ -913,6 +927,18 @@ func kvCacheBytesPerElement(cacheType string) float64 {
 		return 1 // 1/2 of fp16
 	case "q4_0":
 		return 0.5 // 1/4 of fp16
+	case "tq3":
+		// 3-bit TQ K (~0.41 B/elem) + 3-bit TQ V (~0.41 B/elem), averaged over K+V
+		return 0.41
+	case "tq3k":
+		// 3-bit TQ K (~0.41 B/elem) + f16 V (2 B/elem), averaged over K+V
+		return 1.205
+	case "tq2":
+		// 2-bit TQ K (~0.28 B/elem) + 2-bit TQ V (~0.28 B/elem), averaged over K+V
+		return 0.28
+	case "tq2k":
+		// 2-bit TQ K (~0.28 B/elem) + f16 V (2 B/elem), averaged over K+V
+		return 1.14
 	case "f32":
 		return 4 // f32 (default for recurrent)
 	default:

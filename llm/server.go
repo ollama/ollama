@@ -258,16 +258,20 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		if fa {
 			slog.Info("enabling flash attention")
 			loadRequest.FlashAttention = ml.FlashAttentionEnabled
+		}
 
-			// Flash Attention also supports kv cache quantization
-			// Enable if the requested and kv cache type is supported by the model
-			if f.SupportsKVCacheType(kvct) {
-				loadRequest.KvCacheType = kvct
-			} else {
+		// Most quantized KV cache types require flash attention, but TurboQuant
+		// K-only presets (tq2k/tq3k) dequant to f16 before attention and work
+		// with either FA or the standard softmax+matmul attention path.
+		if kvct != "" {
+			switch {
+			case f.KVCacheTypeRequiresFlashAttention(kvct) && !fa:
+				slog.Warn("quantized kv cache requested but flash attention disabled", "type", kvct)
+			case !f.SupportsKVCacheType(kvct):
 				slog.Warn("kv cache type not supported by model", "type", kvct)
+			default:
+				loadRequest.KvCacheType = kvct
 			}
-		} else if kvct != "" && kvct != "f16" {
-			slog.Warn("quantized kv cache requested but flash attention disabled", "type", kvct)
 		}
 	}
 

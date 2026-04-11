@@ -363,6 +363,16 @@ The currently available K/V cache quantization types are:
 - `f16` - high precision and memory usage (default).
 - `q8_0` - 8-bit quantization, uses approximately 1/2 the memory of `f16` with a very small loss in precision, this usually has no noticeable impact on the model's quality (recommended if not using f16).
 - `q4_0` - 4-bit quantization, uses approximately 1/4 the memory of `f16` with a small-medium loss in precision that may be more noticeable at higher context sizes.
+- `tq3k` - TurboQuant 3-bit K-only quantization, uses approximately 2/5 the memory of `f16` with a negligible quality impact, and unlike `q4_0`/`q8_0` does not require Flash Attention to be enabled.
+- `tq2k` - TurboQuant 2-bit K-only quantization, uses approximately 1/3 the memory of `f16` with a small quality impact, and unlike `q4_0`/`q8_0` does not require Flash Attention to be enabled.
+- `tq3` - TurboQuant 3-bit K and V quantization, uses approximately 1/5 the memory of `f16` with a negligible quality impact. Requires Flash Attention.
+- `tq2` - TurboQuant 2-bit K and V quantization, uses approximately 1/7 the memory of `f16` with a small quality impact. Requires Flash Attention.
+
+<Note>
+  The `tq*` (TurboQuant) cache types require an NVIDIA GPU with compute capability 6.0 or newer (Pascal or later) and run only through Ollama's native engine. TurboQuant applies to full-context attention layers; sliding-window layers (e.g. in Gemma) continue to use `f16` storage.
+
+  TurboQuant has been validated on Llama and Gemma 3 architectures. Models in the Qwen 2 family (including Qwen 2.5) are a known weak spot: their learned K bias gives them a per-channel asymmetric distribution that the paper-grounded rotation does not model well, so output quality under `tq3k`/`tq2k` is currently noticeably worse than `q8_0` or `q4_0`. For stable long-context use on Qwen 2, prefer `q8_0` or `q4_0`.
+</Note>
 
 How much the cache quantization impacts the model's response quality will depend on the model and the task. Models that have a high GQA count (e.g. Qwen2) may see a larger impact on precision from quantization than models with a low GQA count.
 

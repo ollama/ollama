@@ -198,8 +198,8 @@ func (m *TextModel) Forward(ctx ml.Context, batch input.Batch, cache kvcache.Cac
 			wc := cache.(*kvcache.WrapperCache)
 			wc.SetLayerType(cacheType)
 
-			if causal, ok := wc.UnderlyingCache().(*kvcache.Causal); ok {
-				causal.SetCausal(ctx, kvcache.CausalOptions{Except: except})
+			if cc, ok := wc.UnderlyingCache().(kvcache.CausalConfigurable); ok {
+				cc.SetCausal(ctx, kvcache.CausalOptions{Except: except})
 			}
 		}
 
