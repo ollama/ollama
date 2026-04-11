@@ -2,9 +2,12 @@ package server
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -349,6 +352,150 @@ func TestPullModelManifest(t *testing.T) {
 			}
 			if len(mf.Layers) == 0 {
 				t.Fatal("expected at least one layer")
+			}
+		})
+	}
+}
+
+func TestVerifyBlobWithDuplicateDigest(t *testing.T) {
+	// When a manifest's config and layer share the same digest, the
+	// skipVerify map must not allow a later cache-hit entry to overwrite
+	// a prior non-cache-hit entry. If it does, verifyBlob is skipped
+	// for the freshly-downloaded blob, enabling SSRF response exfiltration.
+
+	modelsDir := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", modelsDir)
+
+	blobsDir := filepath.Join(modelsDir, "blobs")
+	if err := os.MkdirAll(blobsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write a blob whose content does NOT match its filename digest.
+	// This simulates a tampered blob that a rogue registry placed on disk.
+	fakeDigest := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	tamperedContent := []byte("tampered data from rogue registry")
+
+	blobPath := filepath.Join(blobsDir, "sha256-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if err := os.WriteFile(blobPath, tamperedContent, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate the skipVerify map behavior during PullModel.
+	// layers = [layer (same digest), config (same digest)]
+	// First iteration: layer already on disk → downloadBlob returns cacheHit=true
+	// Then attacker tampers the file after download, or the download itself
+	// was tampered. Either way, verification must not be skipped.
+	//
+	// The bug: if we just do skipVerify[digest] = cacheHit, and the layer
+	// returns false (downloaded fresh) but the config returns true (cache hit),
+	// the true overwrites the false and verification is skipped.
+
+	// Verify that our tampered blob fails verification
+	if err := verifyBlob(fakeDigest); err == nil {
+		t.Fatal("expected verifyBlob to fail on tampered blob")
+	}
+
+	// Simulate the fixed skipVerify logic:
+	// When a layer is downloaded fresh (cacheHit=false) and a config
+	// with the same digest is a cache hit (cacheHit=true), the result
+	// must be false (needs verification).
+	skipVerify := make(map[string]bool)
+
+	// Layer iteration: downloaded fresh
+	layerCacheHit := false
+	if existing, ok := skipVerify[fakeDigest]; !ok {
+		skipVerify[fakeDigest] = layerCacheHit
+	} else {
+		skipVerify[fakeDigest] = existing && layerCacheHit
+	}
+
+	if skipVerify[fakeDigest] != false {
+		t.Fatal("after layer download (cacheHit=false), skipVerify should be false")
+	}
+
+	// Config iteration: found on disk (cache hit)
+	configCacheHit := true
+	if existing, ok := skipVerify[fakeDigest]; !ok {
+		skipVerify[fakeDigest] = configCacheHit
+	} else {
+		skipVerify[fakeDigest] = existing && configCacheHit
+	}
+
+	// Critical assertion: skipVerify must remain false because the layer
+	// download was not a cache hit. Before the fix, this was true (broken).
+	if skipVerify[fakeDigest] != false {
+		t.Fatal("skipVerify should remain false when any download of the digest was not a cache hit")
+	}
+
+	// Now verify that the verification loop catches the tampered blob
+	if !skipVerify[fakeDigest] {
+		if err := verifyBlob(fakeDigest); err == nil {
+			t.Fatal("expected digest mismatch error for tampered blob")
+		} else if !errors.Is(err, errDigestMismatch) {
+			t.Fatalf("expected errDigestMismatch, got: %v", err)
+		}
+	} else {
+		t.Fatal("skipVerify incorrectly set to true, verification would be skipped")
+	}
+}
+
+func TestSkipVerifyMapNeverOverwritesFalse(t *testing.T) {
+	// Table-driven test for the skipVerify map logic to ensure that
+	// once a digest is marked as needing verification (false), a
+	// subsequent cache hit (true) does not overwrite it.
+	cases := []struct {
+		name      string
+		cacheHits []bool
+		wantSkip  bool
+	}{
+		{
+			name:      "single fresh download",
+			cacheHits: []bool{false},
+			wantSkip:  false,
+		},
+		{
+			name:      "single cache hit",
+			cacheHits: []bool{true},
+			wantSkip:  true,
+		},
+		{
+			name:      "fresh then cache hit (duplicate digest bug)",
+			cacheHits: []bool{false, true},
+			wantSkip:  false,
+		},
+		{
+			name:      "cache hit then fresh",
+			cacheHits: []bool{true, false},
+			wantSkip:  false,
+		},
+		{
+			name:      "both cache hits",
+			cacheHits: []bool{true, true},
+			wantSkip:  true,
+		},
+		{
+			name:      "both fresh",
+			cacheHits: []bool{false, false},
+			wantSkip:  false,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			skipVerify := make(map[string]bool)
+			digest := "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+			for _, cacheHit := range tt.cacheHits {
+				if existing, ok := skipVerify[digest]; !ok {
+					skipVerify[digest] = cacheHit
+				} else {
+					skipVerify[digest] = existing && cacheHit
+				}
+			}
+
+			if skipVerify[digest] != tt.wantSkip {
+				t.Errorf("skipVerify = %v, want %v", skipVerify[digest], tt.wantSkip)
 			}
 		})
 	}

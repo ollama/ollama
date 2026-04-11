@@ -631,7 +631,16 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		if err != nil {
 			return err
 		}
-		skipVerify[layer.Digest] = cacheHit
+		// If any download of a given digest was not a cache hit,
+		// always verify it. Without this guard, a config entry
+		// sharing a digest with a layer can overwrite the layer's
+		// false (needs verification) with true (cache hit), since
+		// the blob now exists on disk from the first download.
+		if existing, ok := skipVerify[layer.Digest]; !ok {
+			skipVerify[layer.Digest] = cacheHit
+		} else {
+			skipVerify[layer.Digest] = existing && cacheHit
+		}
 		delete(deleteMap, layer.Digest)
 	}
 
