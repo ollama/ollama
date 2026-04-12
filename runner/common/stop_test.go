@@ -47,6 +47,19 @@ func TestFindStopAfterAppend(t *testing.T) {
 			stops: []string{""},
 			want:  true,
 		},
+		{
+			name:  "preserves stop list priority across boundary",
+			piece: []string{"ab", "cd zz"},
+			stops: []string{"abcd", "zz"},
+			want:  true,
+			stop:  "abcd",
+		},
+		{
+			name:  "ignores previous only shorter stop",
+			piece: []string{"abc", "d"},
+			stops: []string{"bc", "unmatched-long-stop"},
+			want:  false,
+		},
 	}
 
 	for _, tt := range tests {

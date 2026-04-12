@@ -22,23 +22,11 @@ func FindStopAfterAppend(pieces []string, stops []string) (bool, string) {
 	}
 
 	last := pieces[len(pieces)-1]
-	maxStop := 0
 	for _, stop := range stops {
 		if stop == "" || strings.Contains(last, stop) {
 			return true, stop
 		}
-		if len(stop) > maxStop {
-			maxStop = len(stop)
-		}
-	}
-
-	if maxStop <= 1 || len(pieces) == 1 {
-		return false, ""
-	}
-
-	tail := joinPreviousSuffixAndLast(pieces, maxStop-1)
-	for _, stop := range stops {
-		if strings.Contains(tail, stop) {
+		if len(stop) > 1 && strings.Contains(joinPreviousSuffixAndLast(pieces, len(stop)-1), stop) {
 			return true, stop
 		}
 	}
