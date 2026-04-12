@@ -14,6 +14,38 @@ func FindStop(sequence string, stops []string) (bool, string) {
 	return false, ""
 }
 
+// FindStopAfterAppend finds stop sequences that could have become visible after
+// appending the last piece to a previously checked sequence.
+func FindStopAfterAppend(pieces []string, stops []string) (bool, string) {
+	if len(pieces) == 0 {
+		return false, ""
+	}
+
+	last := pieces[len(pieces)-1]
+	maxStop := 0
+	for _, stop := range stops {
+		if stop == "" || strings.Contains(last, stop) {
+			return true, stop
+		}
+		if len(stop) > maxStop {
+			maxStop = len(stop)
+		}
+	}
+
+	if maxStop <= 1 || len(pieces) == 1 {
+		return false, ""
+	}
+
+	tail := joinPreviousSuffixAndLast(pieces, maxStop-1)
+	for _, stop := range stops {
+		if strings.Contains(tail, stop) {
+			return true, stop
+		}
+	}
+
+	return false, ""
+}
+
 func ContainsStopSuffix(sequence string, stops []string) bool {
 	for _, stop := range stops {
 		for i := 1; i <= len(stop); i++ {
@@ -24,6 +56,17 @@ func ContainsStopSuffix(sequence string, stops []string) bool {
 	}
 
 	return false
+}
+
+func ContainsStopSuffixInPieces(pieces []string, stops []string) bool {
+	maxStop := 0
+	for _, stop := range stops {
+		if len(stop) > maxStop {
+			maxStop = len(stop)
+		}
+	}
+
+	return ContainsStopSuffix(suffixString(pieces, maxStop), stops)
 }
 
 // TruncateStop removes the provided stop string from pieces,
@@ -65,6 +108,10 @@ func TruncateStop(pieces []string, stop string) ([]string, bool) {
 	return result, tokenTruncated
 }
 
+func IncompleteUnicodeInPieces(pieces []string) bool {
+	return IncompleteUnicode(suffixString(pieces, 4))
+}
+
 func IncompleteUnicode(token string) bool {
 	incomplete := false
 
@@ -93,4 +140,58 @@ func IncompleteUnicode(token string) bool {
 	}
 
 	return incomplete
+}
+
+func joinPreviousSuffixAndLast(pieces []string, n int) string {
+	if len(pieces) == 0 {
+		return ""
+	}
+
+	last := pieces[len(pieces)-1]
+	prefix := suffixString(pieces[:len(pieces)-1], n)
+	if prefix == "" {
+		return last
+	}
+
+	var b strings.Builder
+	b.Grow(len(prefix) + len(last))
+	b.WriteString(prefix)
+	b.WriteString(last)
+	return b.String()
+}
+
+func suffixString(pieces []string, n int) string {
+	if n <= 0 || len(pieces) == 0 {
+		return ""
+	}
+
+	total := 0
+	start := len(pieces)
+	for start > 0 && total < n {
+		start--
+		total += len(pieces[start])
+	}
+	if total == 0 {
+		return ""
+	}
+
+	skip := total - n
+	if skip < 0 {
+		skip = 0
+	}
+
+	var b strings.Builder
+	b.Grow(total - skip)
+	for _, piece := range pieces[start:] {
+		if skip >= len(piece) {
+			skip -= len(piece)
+			continue
+		}
+		if skip > 0 {
+			piece = piece[skip:]
+			skip = 0
+		}
+		b.WriteString(piece)
+	}
+	return b.String()
 }

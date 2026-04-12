@@ -2,8 +2,121 @@ package common
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
+
+func TestFindStopAfterAppend(t *testing.T) {
+	tests := []struct {
+		name  string
+		piece []string
+		stops []string
+		want  bool
+		stop  string
+	}{
+		{
+			name:  "within last piece",
+			piece: []string{"hello ", "stop and more"},
+			stops: []string{"stop"},
+			want:  true,
+			stop:  "stop",
+		},
+		{
+			name:  "spans previous suffix",
+			piece: []string{"hello st", "op"},
+			stops: []string{"stop"},
+			want:  true,
+			stop:  "stop",
+		},
+		{
+			name:  "spans multiple previous pieces",
+			piece: []string{"hello ", "s", "t", "op"},
+			stops: []string{"stop"},
+			want:  true,
+			stop:  "stop",
+		},
+		{
+			name:  "already checked prefix is ignored",
+			piece: []string{"stop", " and more"},
+			stops: []string{"stop"},
+			want:  false,
+		},
+		{
+			name:  "empty stop",
+			piece: []string{"anything"},
+			stops: []string{""},
+			want:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, stop := FindStopAfterAppend(tt.piece, tt.stops)
+			if got != tt.want || stop != tt.stop {
+				t.Fatalf("FindStopAfterAppend(%q, %q) = %v, %q; want %v, %q", tt.piece, tt.stops, got, stop, tt.want, tt.stop)
+			}
+		})
+	}
+}
+
+func TestPieceStopChecksMatchJoinedSuffixChecks(t *testing.T) {
+	tests := []struct {
+		name   string
+		pieces []string
+		stops  []string
+	}{
+		{
+			name:   "simple suffix",
+			pieces: []string{"hello ", "st"},
+			stops:  []string{"stop"},
+		},
+		{
+			name:   "full stop across pieces",
+			pieces: []string{"hello ", "st", "op"},
+			stops:  []string{"stop"},
+		},
+		{
+			name:   "stop inside newest piece",
+			pieces: []string{"hello ", "stop and more"},
+			stops:  []string{"stop"},
+		},
+		{
+			name:   "unicode suffix",
+			pieces: []string{"hello", string([]byte{0xe0, 0xa0})},
+			stops:  []string{"world"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for i := range tt.pieces {
+				pieces := tt.pieces[:i+1]
+				joined := strings.Join(pieces, "")
+
+				if got, want := ContainsStopSuffixInPieces(pieces, tt.stops), ContainsStopSuffix(joined, tt.stops); got != want {
+					t.Fatalf("ContainsStopSuffixInPieces(%q, %q) = %v; want %v", pieces, tt.stops, got, want)
+				}
+				if got, want := IncompleteUnicodeInPieces(pieces), IncompleteUnicode(joined); got != want {
+					t.Fatalf("IncompleteUnicodeInPieces(%q) = %v; want %v", pieces, got, want)
+				}
+
+				previousStop := false
+				if i > 0 {
+					previousStop, _ = FindStop(strings.Join(tt.pieces[:i], ""), tt.stops)
+				}
+				if previousStop {
+					continue
+				}
+
+				got, gotStop := FindStopAfterAppend(pieces, tt.stops)
+				want, wantStop := FindStop(joined, tt.stops)
+				if got != want || gotStop != wantStop {
+					t.Fatalf("FindStopAfterAppend(%q, %q) = %v, %q; want %v, %q", pieces, tt.stops, got, gotStop, want, wantStop)
+				}
+			}
+		})
+	}
+}
 
 func TestTruncateStop(t *testing.T) {
 	tests := []struct {
@@ -58,6 +171,32 @@ func TestTruncateStop(t *testing.T) {
 			}
 		})
 	}
+}
+
+func BenchmarkPendingStopChecks(b *testing.B) {
+	pieces := make([]string, 256)
+	for i := range pieces {
+		pieces[i] = "partial "
+	}
+	pieces[len(pieces)-1] = "sto"
+	stops := []string{"stop sequence", "another stop"}
+
+	b.Run("join", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			joined := strings.Join(pieces, "")
+			FindStop(joined, stops)
+			ContainsStopSuffix(joined, stops)
+			IncompleteUnicode(joined)
+		}
+	})
+
+	b.Run("pieces", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			FindStopAfterAppend(pieces, stops)
+			ContainsStopSuffixInPieces(pieces, stops)
+			IncompleteUnicodeInPieces(pieces)
+		}
+	})
 }
 
 func TestIncompleteUnicode(t *testing.T) {
