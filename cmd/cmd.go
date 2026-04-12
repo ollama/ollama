@@ -92,13 +92,7 @@ func init() {
 		return userName, err
 	}
 
-	launch.DefaultConfirmPrompt = func(prompt string) (bool, error) {
-		ok, err := tui.RunConfirm(prompt)
-		if errors.Is(err, tui.ErrCancelled) {
-			return false, launch.ErrCancelled
-		}
-		return ok, err
-	}
+	launch.DefaultConfirmPrompt = tui.RunConfirmWithOptions
 }
 
 const ConnectInstructions = "If your browser did not open, navigate to:\n    %s\n\n"
@@ -701,7 +695,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	opts.ParentModel = info.Details.ParentModel
+	applyShowResponseToRunOptions(&opts, info)
 
 	// Check if this is an embedding model
 	isEmbeddingModel := slices.Contains(info.Capabilities, model.CapabilityEmbedding)
@@ -1417,23 +1411,30 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 type generateContextKey string
 
 type runOptions struct {
-	Model        string
-	ParentModel  string
-	Prompt       string
-	Messages     []api.Message
-	WordWrap     bool
-	Format       string
-	System       string
-	Images       []api.ImageData
-	Options      map[string]any
-	MultiModal   bool
-	KeepAlive    *api.Duration
-	Think        *api.ThinkValue
-	HideThinking bool
-	ShowConnect  bool
+	Model          string
+	ParentModel    string
+	LoadedMessages []api.Message
+	Prompt         string
+	Messages       []api.Message
+	WordWrap       bool
+	Format         string
+	System         string
+	Images         []api.ImageData
+	Options        map[string]any
+	MultiModal     bool
+	KeepAlive      *api.Duration
+	Think          *api.ThinkValue
+	HideThinking   bool
+	ShowConnect    bool
 }
 
 func (r runOptions) Copy() runOptions {
+	var loadedMessages []api.Message
+	if r.LoadedMessages != nil {
+		loadedMessages = make([]api.Message, len(r.LoadedMessages))
+		copy(loadedMessages, r.LoadedMessages)
+	}
+
 	var messages []api.Message
 	if r.Messages != nil {
 		messages = make([]api.Message, len(r.Messages))
@@ -1461,21 +1462,27 @@ func (r runOptions) Copy() runOptions {
 	}
 
 	return runOptions{
-		Model:        r.Model,
-		ParentModel:  r.ParentModel,
-		Prompt:       r.Prompt,
-		Messages:     messages,
-		WordWrap:     r.WordWrap,
-		Format:       r.Format,
-		System:       r.System,
-		Images:       images,
-		Options:      opts,
-		MultiModal:   r.MultiModal,
-		KeepAlive:    r.KeepAlive,
-		Think:        think,
-		HideThinking: r.HideThinking,
-		ShowConnect:  r.ShowConnect,
+		Model:          r.Model,
+		ParentModel:    r.ParentModel,
+		LoadedMessages: loadedMessages,
+		Prompt:         r.Prompt,
+		Messages:       messages,
+		WordWrap:       r.WordWrap,
+		Format:         r.Format,
+		System:         r.System,
+		Images:         images,
+		Options:        opts,
+		MultiModal:     r.MultiModal,
+		KeepAlive:      r.KeepAlive,
+		Think:          think,
+		HideThinking:   r.HideThinking,
+		ShowConnect:    r.ShowConnect,
 	}
+}
+
+func applyShowResponseToRunOptions(opts *runOptions, info *api.ShowResponse) {
+	opts.ParentModel = info.Details.ParentModel
+	opts.LoadedMessages = slices.Clone(info.Messages)
 }
 
 type displayResponseState struct {

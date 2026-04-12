@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
@@ -19,12 +20,34 @@ type OpenCode struct{}
 
 func (o *OpenCode) String() string { return "OpenCode" }
 
+// findOpenCode returns the opencode binary path, checking PATH first then the
+// curl installer location (~/.opencode/bin) which may not be on PATH yet.
+func findOpenCode() (string, bool) {
+	if p, err := exec.LookPath("opencode"); err == nil {
+		return p, true
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", false
+	}
+	name := "opencode"
+	if runtime.GOOS == "windows" {
+		name = "opencode.exe"
+	}
+	fallback := filepath.Join(home, ".opencode", "bin", name)
+	if _, err := os.Stat(fallback); err == nil {
+		return fallback, true
+	}
+	return "", false
+}
+
 func (o *OpenCode) Run(model string, args []string) error {
-	if _, err := exec.LookPath("opencode"); err != nil {
+	opencodePath, ok := findOpenCode()
+	if !ok {
 		return fmt.Errorf("opencode is not installed, install from https://opencode.ai")
 	}
 
-	cmd := exec.Command("opencode", args...)
+	cmd := exec.Command(opencodePath, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

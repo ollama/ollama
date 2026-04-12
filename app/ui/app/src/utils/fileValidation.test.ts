@@ -29,13 +29,15 @@ describe("fileValidation", () => {
       expect(result.valid).toBe(true);
     });
 
-    it("should reject WebP images when vision capability is disabled", () => {
+    it("should accept images regardless of vision capability", () => {
+      // Vision capability check is handled at the UI layer (ChatForm),
+      // not at validation time, so users can switch models without
+      // needing to re-upload files.
       const file = createMockFile("test.webp", 1024, "image/webp");
       const result = validateFile(file, {
         hasVisionCapability: false,
       });
-      expect(result.valid).toBe(false);
-      expect(result.error).toBe("This model does not support images");
+      expect(result.valid).toBe(true);
     });
 
     it("should accept PNG images when vision capability is enabled", () => {
