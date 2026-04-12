@@ -382,6 +382,8 @@ func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.W
 
 	cmd = exec.Command(exe, params...)
 
+	extraEnvs = ensureRocmTensileEnv(gpuLibs, extraEnvs)
+
 	cmd.Env = os.Environ()
 
 	if out != nil {
@@ -449,6 +451,55 @@ func StartRunner(ollamaEngine bool, modelPath string, gpuLibs []string, out io.W
 	}
 	err = nil
 	return
+}
+
+func ensureRocmTensileEnv(gpuLibs []string, extraEnvs map[string]string) map[string]string {
+	tensilePath := findRocmTensileLibraryPath(gpuLibs)
+	if tensilePath == "" {
+		return extraEnvs
+	}
+
+	for _, key := range []string{"ROCBLAS_TENSILE_LIBPATH", "ROCBLASLT_TENSILE_LIBPATH", "HIPBLASLT_TENSILE_LIBPATH"} {
+		if _, ok := os.LookupEnv(key); ok {
+			return extraEnvs
+		}
+		if extraEnvs != nil {
+			if _, ok := extraEnvs[key]; ok {
+				return extraEnvs
+			}
+		}
+	}
+
+	if extraEnvs == nil {
+		extraEnvs = map[string]string{}
+	}
+
+	extraEnvs["ROCBLAS_TENSILE_LIBPATH"] = tensilePath
+	extraEnvs["ROCBLASLT_TENSILE_LIBPATH"] = tensilePath
+	extraEnvs["HIPBLASLT_TENSILE_LIBPATH"] = tensilePath
+
+	return extraEnvs
+}
+
+func findRocmTensileLibraryPath(gpuLibs []string) string {
+	seen := map[string]struct{}{}
+	for _, lib := range gpuLibs {
+		for _, candidate := range []string{
+			filepath.Join(lib, "rocblas", "library"),
+			filepath.Join(lib, "rocm", "rocblas", "library"),
+		} {
+			if _, ok := seen[candidate]; ok {
+				continue
+			}
+			seen[candidate] = struct{}{}
+
+			if fi, err := os.Stat(candidate); err == nil && fi.IsDir() {
+				return candidate
+			}
+		}
+	}
+
+	return ""
 }
 
 func (s *llmServer) ModelPath() string {
