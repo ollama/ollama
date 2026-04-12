@@ -57,8 +57,12 @@ func TestEnsureRocmTensileEnv(t *testing.T) {
 	if err := os.MkdirAll(tensile, 0o755); err != nil {
 		t.Fatalf("failed to create test directory: %v", err)
 	}
+	keys := []string{"ROCBLAS_TENSILE_LIBPATH", "ROCBLASLT_TENSILE_LIBPATH", "HIPBLASLT_TENSILE_LIBPATH"}
 
 	t.Run("inject when unset", func(t *testing.T) {
+		for _, key := range keys {
+			t.Setenv(key, "")
+		}
 		envs := ensureRocmTensileEnv([]string{root}, nil)
 		if envs["ROCBLAS_TENSILE_LIBPATH"] != tensile {
 			t.Fatalf("ROCBLAS_TENSILE_LIBPATH = %q, want %q", envs["ROCBLAS_TENSILE_LIBPATH"], tensile)
@@ -72,6 +76,9 @@ func TestEnsureRocmTensileEnv(t *testing.T) {
 	})
 
 	t.Run("do not override explicit extra env", func(t *testing.T) {
+		for _, key := range keys {
+			t.Setenv(key, "")
+		}
 		in := map[string]string{"ROCBLASLT_TENSILE_LIBPATH": "/custom/path"}
 		envs := ensureRocmTensileEnv([]string{root}, in)
 		if envs["ROCBLASLT_TENSILE_LIBPATH"] != "/custom/path" {
@@ -86,6 +93,8 @@ func TestEnsureRocmTensileEnv(t *testing.T) {
 	})
 
 	t.Run("do not override process env and fill missing keys", func(t *testing.T) {
+		t.Setenv("ROCBLASLT_TENSILE_LIBPATH", "")
+		t.Setenv("HIPBLASLT_TENSILE_LIBPATH", "")
 		t.Setenv("ROCBLAS_TENSILE_LIBPATH", "/from/process")
 		envs := ensureRocmTensileEnv([]string{root}, nil)
 		if envs["ROCBLASLT_TENSILE_LIBPATH"] != tensile {
@@ -96,6 +105,17 @@ func TestEnsureRocmTensileEnv(t *testing.T) {
 		}
 		if _, ok := envs["ROCBLAS_TENSILE_LIBPATH"]; ok {
 			t.Fatalf("ROCBLAS_TENSILE_LIBPATH should not be overridden by helper")
+		}
+	})
+
+	t.Run("treat empty explicit extra env as unset", func(t *testing.T) {
+		for _, key := range keys {
+			t.Setenv(key, "")
+		}
+		in := map[string]string{"ROCBLASLT_TENSILE_LIBPATH": ""}
+		envs := ensureRocmTensileEnv([]string{root}, in)
+		if envs["ROCBLASLT_TENSILE_LIBPATH"] != tensile {
+			t.Fatalf("ROCBLASLT_TENSILE_LIBPATH = %q, want %q", envs["ROCBLASLT_TENSILE_LIBPATH"], tensile)
 		}
 	})
 }
