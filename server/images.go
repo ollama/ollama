@@ -22,6 +22,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/model/parsers"
@@ -610,6 +611,8 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	if mf.Config.Digest != "" {
 		layers = append(layers, mf.Config)
 	}
+
+	fn(api.ProgressResponse{Status: fmt.Sprintf("pulling %s with %d files (%s total)", name, len(layers), format.HumanBytes(mf.Size()))})
 
 	// Use fast transfer for models with tensor layers (many small blobs)
 	if hasTensorLayers(layers) {
