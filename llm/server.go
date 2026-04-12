@@ -461,22 +461,18 @@ func ensureRocmTensileEnv(gpuLibs []string, extraEnvs map[string]string) map[str
 
 	for _, key := range []string{"ROCBLAS_TENSILE_LIBPATH", "ROCBLASLT_TENSILE_LIBPATH", "HIPBLASLT_TENSILE_LIBPATH"} {
 		if _, ok := os.LookupEnv(key); ok {
-			return extraEnvs
+			continue
 		}
 		if extraEnvs != nil {
 			if _, ok := extraEnvs[key]; ok {
-				return extraEnvs
+				continue
 			}
 		}
+		if extraEnvs == nil {
+			extraEnvs = map[string]string{}
+		}
+		extraEnvs[key] = tensilePath
 	}
-
-	if extraEnvs == nil {
-		extraEnvs = map[string]string{}
-	}
-
-	extraEnvs["ROCBLAS_TENSILE_LIBPATH"] = tensilePath
-	extraEnvs["ROCBLASLT_TENSILE_LIBPATH"] = tensilePath
-	extraEnvs["HIPBLASLT_TENSILE_LIBPATH"] = tensilePath
 
 	return extraEnvs
 }

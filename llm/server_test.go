@@ -77,16 +77,25 @@ func TestEnsureRocmTensileEnv(t *testing.T) {
 		if envs["ROCBLASLT_TENSILE_LIBPATH"] != "/custom/path" {
 			t.Fatalf("ROCBLASLT_TENSILE_LIBPATH = %q, want /custom/path", envs["ROCBLASLT_TENSILE_LIBPATH"])
 		}
-		if _, ok := envs["ROCBLAS_TENSILE_LIBPATH"]; ok {
-			t.Fatalf("ROCBLAS_TENSILE_LIBPATH should not be injected when explicit env is set")
+		if envs["ROCBLAS_TENSILE_LIBPATH"] != tensile {
+			t.Fatalf("ROCBLAS_TENSILE_LIBPATH = %q, want %q", envs["ROCBLAS_TENSILE_LIBPATH"], tensile)
+		}
+		if envs["HIPBLASLT_TENSILE_LIBPATH"] != tensile {
+			t.Fatalf("HIPBLASLT_TENSILE_LIBPATH = %q, want %q", envs["HIPBLASLT_TENSILE_LIBPATH"], tensile)
 		}
 	})
 
-	t.Run("do not override process env", func(t *testing.T) {
+	t.Run("do not override process env and fill missing keys", func(t *testing.T) {
 		t.Setenv("ROCBLAS_TENSILE_LIBPATH", "/from/process")
 		envs := ensureRocmTensileEnv([]string{root}, nil)
-		if envs != nil {
-			t.Fatalf("expected nil env map when process env is already set, got %v", envs)
+		if envs["ROCBLASLT_TENSILE_LIBPATH"] != tensile {
+			t.Fatalf("ROCBLASLT_TENSILE_LIBPATH = %q, want %q", envs["ROCBLASLT_TENSILE_LIBPATH"], tensile)
+		}
+		if envs["HIPBLASLT_TENSILE_LIBPATH"] != tensile {
+			t.Fatalf("HIPBLASLT_TENSILE_LIBPATH = %q, want %q", envs["HIPBLASLT_TENSILE_LIBPATH"], tensile)
+		}
+		if _, ok := envs["ROCBLAS_TENSILE_LIBPATH"]; ok {
+			t.Fatalf("ROCBLAS_TENSILE_LIBPATH should not be overridden by helper")
 		}
 	})
 }
