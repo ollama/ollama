@@ -2045,6 +2045,7 @@ func (s *Server) SignoutHandler(c *gin.Context) {
 func (s *Server) PsHandler(c *gin.Context) {
 	models := []api.ProcessModelResponse{}
 
+	s.sched.loadedMu.Lock()
 	for _, v := range s.sched.loaded {
 		model := v.model
 		modelDetails := api.ModelDetails{
@@ -2080,6 +2081,7 @@ func (s *Server) PsHandler(c *gin.Context) {
 
 		models = append(models, mr)
 	}
+	s.sched.loadedMu.Unlock()
 
 	slices.SortStableFunc(models, func(i, j api.ProcessModelResponse) int {
 		// longest duration remaining listed first
