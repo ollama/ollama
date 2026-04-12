@@ -17,6 +17,9 @@ on:
       - '!docs/**'
       - '!README.md'
 
+env:
+  OPENVINO_VERSION: '2026.0.0'
+
 jobs:
   changes:
     runs-on: ubuntu-latest
@@ -60,6 +63,9 @@ jobs:
               mesa-vulkan-drivers vulkan-tools
               libvulkan1 libvulkan-dev
               vulkan-sdk cmake ccache g++ make
+          - preset: OpenVINO
+            container: ubuntu:22.04
+            extra-packages: python3 python3-pip
           - preset: 'MLX CUDA 13'
             container: nvidia/cuda:13.0.0-devel-ubuntu22.04
             extra-packages: libcudnn9-dev-cuda-13 libopenblas-dev liblapack-dev liblapacke-dev git curl
@@ -88,6 +94,12 @@ jobs:
           # Export VULKAN_SDK if provided by LunarG package (defensive)
           if [ -d "/usr/lib/x86_64-linux-gnu/vulkan" ] && [ "${{ matrix.preset }}" = "Vulkan" ]; then
             echo "VULKAN_SDK=/usr" >> $GITHUB_ENV
+          fi
+          if [ "${{ matrix.preset }}" = "OpenVINO" ]; then
+            python3 -m pip install --break-system-packages --upgrade pip
+            python3 -m pip install --break-system-packages "openvino==${{ env.OPENVINO_VERSION }}"
+            OPENVINO_DIR=$(python3 -c "import importlib.util, pathlib; spec = importlib.util.find_spec('openvino'); print(pathlib.Path(spec.origin).resolve().parent / 'cmake')")
+            echo "OpenVINO_DIR=${OPENVINO_DIR}" >> $GITHUB_ENV
           fi
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -129,6 +141,7 @@ jobs:
             flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma"'
           - preset: Vulkan
             install: https://sdk.lunarg.com/sdk/download/1.4.321.1/windows/vulkansdk-windows-X64-1.4.321.1.exe
+          - preset: OpenVINO
           - preset: 'MLX CUDA 13'
             install: https://developer.download.nvidia.com/compute/cuda/13.0.0/local_installers/cuda_13.0.0_windows.exe
             cudnn-install: https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/windows-x86_64/cudnn-windows-x86_64-9.18.1.3_cuda13-archive.zip
@@ -163,6 +176,41 @@ jobs:
             C:\VulkanSDK
             C:\Program Files\NVIDIA\CUDNN
           key: ${{ matrix.install }}-${{ matrix.cudnn-install }}
+      - if: matrix.preset == 'OpenVINO'
+        name: Install OpenVINO Runtime
+        run: |
+          function Expand-ArchiveStripTopLevel {
+            param([string]$ArchivePath, [string]$DestinationPath, [string]$StagingPath)
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $DestinationPath, $StagingPath
+            New-Item -ItemType Directory -Force -Path $DestinationPath, $StagingPath | Out-Null
+            Expand-Archive -Path $ArchivePath -DestinationPath $StagingPath -Force
+            $topEntries = @(Get-ChildItem -Path $StagingPath -Force)
+            if ($topEntries.Count -eq 1 -and $topEntries[0].PSIsContainer) {
+              Move-Item -Path (Join-Path $topEntries[0].FullName '*') -Destination $DestinationPath -Force
+            } else {
+              Move-Item -Path (Join-Path $StagingPath '*') -Destination $DestinationPath -Force
+            }
+          }
+
+          $openvinoArchiveUrl = "https://storage.openvinotoolkit.org/repositories/openvino/packages/2026.0/windows/openvino_toolkit_windows_2026.0.0.20965.c6d6a13a886_x86_64.zip"
+          $openvinoArchivePath = Join-Path $env:RUNNER_TEMP "openvino-windows.zip"
+          $openvinoExtractRoot = Join-Path $env:RUNNER_TEMP "openvino-windows"
+          $openvinoStagingRoot = Join-Path $env:RUNNER_TEMP "openvino-windows-staging"
+          Invoke-WebRequest -Uri $openvinoArchiveUrl -OutFile $openvinoArchivePath
+          Expand-ArchiveStripTopLevel -ArchivePath $openvinoArchivePath -DestinationPath $openvinoExtractRoot -StagingPath $openvinoStagingRoot
+          $openvinoDir = Join-Path $openvinoExtractRoot "runtime\cmake"
+          echo "OpenVINO_DIR=$openvinoDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+          $openclArchiveUrl = "https://github.com/KhronosGroup/OpenCL-SDK/releases/download/v2025.07.23/OpenCL-SDK-v2025.07.23-Win-x64.zip"
+          $openclArchivePath = Join-Path $env:RUNNER_TEMP "opencl-windows.zip"
+          $openclExtractRoot = Join-Path $env:RUNNER_TEMP "opencl-windows"
+          $openclStagingRoot = Join-Path $env:RUNNER_TEMP "opencl-windows-staging"
+          Invoke-WebRequest -Uri $openclArchiveUrl -OutFile $openclArchivePath
+          Expand-ArchiveStripTopLevel -ArchivePath $openclArchivePath -DestinationPath $openclExtractRoot -StagingPath $openclStagingRoot
+          echo "INTELOCLSDKROOT=$openclExtractRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+          Remove-Item -Force -ErrorAction SilentlyContinue $openvinoArchivePath, $openclArchivePath
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $openvinoStagingRoot, $openclStagingRoot
       - if: matrix.preset == 'CUDA' || matrix.preset == 'MLX CUDA 13'
         name: Install CUDA ${{ matrix.cuda-version }}
         run: |
