@@ -234,6 +234,47 @@ func TestToToolCallsPreservesIDs(t *testing.T) {
 	}
 }
 
+func TestToToolCallsNormalizesCollidingIndices(t *testing.T) {
+	// Regression test: the legacy parser resets its counter on each Add() call,
+	// causing all tool calls that arrive in separate chunks to have Index=0.
+	// Normalization reassigns them to sequential indices.
+	original := []api.ToolCall{
+		{
+			ID: "call_1",
+			Function: api.ToolCallFunction{
+				Index: 0,
+				Name:  "file_write",
+				Arguments: testArgs(map[string]any{
+					"filePath": "hello.py",
+					"content":  `print("hello")`,
+				}),
+			},
+		},
+		{
+			ID: "call_2",
+			Function: api.ToolCallFunction{
+				Index: 0, // same as first — collision from legacy parser across chunks
+				Name:  "file_write",
+				Arguments: testArgs(map[string]any{
+					"filePath": "world.py",
+					"content":  `print("world")`,
+				}),
+			},
+		},
+	}
+
+	got := ToToolCalls(original)
+
+	// Original indices were both 0; they should now be 0, 1
+	if got[0].Index != 0 || got[1].Index != 1 {
+		t.Errorf("expected indices [0, 1], got [%d, %d]", got[0].Index, got[1].Index)
+	}
+	// IDs must be preserved
+	if got[0].ID != "call_1" || got[1].ID != "call_2" {
+		t.Errorf("IDs were mutated: got [%s, %s]", got[0].ID, got[1].ID)
+	}
+}
+
 func TestFromChatRequest_WithLogprobs(t *testing.T) {
 	trueVal := true
 

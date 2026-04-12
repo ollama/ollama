@@ -240,6 +240,25 @@ func ToUsage(r api.ChatResponse) Usage {
 
 // ToToolCalls converts api.ToolCall to OpenAI ToolCall format
 func ToToolCalls(tc []api.ToolCall) []ToolCall {
+	// Normalize indices when all tool calls have the same index (e.g., all 0),
+	// which happens with the legacy parser when tool calls span multiple chunks.
+	// Built-in parsers maintain a persistent callIndex across chunks; the legacy
+	// parser resets its counter on each Add() call, causing all to collide at 0.
+	if len(tc) > 1 {
+		allSame := true
+		for i := 1; i < len(tc); i++ {
+			if tc[i].Function.Index != tc[0].Function.Index {
+				allSame = false
+				break
+			}
+		}
+		if allSame {
+			for i := range tc {
+				tc[i].Function.Index = i
+			}
+		}
+	}
+
 	toolCalls := make([]ToolCall, len(tc))
 	for i, tc := range tc {
 		toolCalls[i].ID = tc.ID
