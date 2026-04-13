@@ -481,6 +481,13 @@ func Logaddexp(a, b *Array) *Array {
 	return out
 }
 
+// LogSumexpAxis computes log(sum(exp(a))) along the given axis.
+func LogSumexpAxis(a *Array, axis int, keepDims bool) *Array {
+	out := New("LOGSUMEXP_AXIS")
+	C.mlx_logsumexp_axis(&out.ctx, a.ctx, C.int(axis), C.bool(keepDims), DefaultStream().ctx)
+	return out
+}
+
 func SoftmaxAxis(a *Array, axis int, precise bool) *Array {
 	out := New("SOFTMAX_AXIS")
 	C.mlx_softmax_axis(&out.ctx, a.ctx, C.int(axis), C.bool(precise), DefaultStream().ctx)
