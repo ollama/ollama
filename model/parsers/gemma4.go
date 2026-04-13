@@ -32,7 +32,6 @@ const (
 
 var (
 	gemma4QuotedStringRe = regexp.MustCompile(`(?s)<\|"\|>(.*?)<\|"\|>`)
-	gemma4BareKeyRe      = regexp.MustCompile(`([,{])(\w+):`)
 )
 
 type Gemma4Parser struct {
@@ -421,7 +420,7 @@ func gemma4ArgsToJSON(s string) string {
 		return "\x00" + string(rune(len(quotedStrings)-1)) + "\x00"
 	})
 
-	text = gemma4BareKeyRe.ReplaceAllString(text, `$1"$2":`)
+	text = quoteGemma4BareKeys(text)
 
 	for i, value := range quotedStrings {
 		escaped, _ := json.Marshal(value)
@@ -429,6 +428,58 @@ func gemma4ArgsToJSON(s string) string {
 	}
 
 	return text
+}
+
+func quoteGemma4BareKeys(s string) string {
+	var sb strings.Builder
+	sb.Grow(len(s) + 16)
+
+	for i := 0; i < len(s); {
+		if s[i] == '"' {
+			if end := gemma4JSONQuotedStringEnd(s, i); end != -1 {
+				sb.WriteString(s[i:end])
+				i = end
+				continue
+			}
+		}
+
+		if s[i] != '{' && s[i] != ',' {
+			sb.WriteByte(s[i])
+			i++
+			continue
+		}
+
+		sb.WriteByte(s[i])
+		i++
+
+		spaceStart := i
+		i = gemma4SkipSpace(s, i)
+		sb.WriteString(s[spaceStart:i])
+
+		keyEnd := gemma4BareKeyEnd(s, i)
+		if keyEnd > i && keyEnd < len(s) && s[keyEnd] == ':' {
+			sb.WriteByte('"')
+			sb.WriteString(s[i:keyEnd])
+			sb.WriteByte('"')
+			sb.WriteByte(':')
+			i = keyEnd + 1
+			continue
+		}
+	}
+
+	return sb.String()
+}
+
+func gemma4BareKeyEnd(s string, start int) int {
+	i := start
+	for i < len(s) {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if !(r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)) {
+			break
+		}
+		i += size
+	}
+	return i
 }
 
 // repairGemma4ToolCallArgs is a best-effort repair after strict parsing fails.
