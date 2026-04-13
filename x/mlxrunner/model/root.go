@@ -131,6 +131,12 @@ func readBlobTensorQuantInfo(path string) (map[string]*TensorQuantInfo, string, 
 	globalQuantType, globalGroupSize := parseGlobalQuantMetadata(header)
 	globalQuantType = strings.ToUpper(globalQuantType)
 
+	// Parse full metadata for per-tensor quant info
+	var metaMap map[string]string
+	if metaRaw, ok := header["__metadata__"]; ok {
+		json.Unmarshal(metaRaw, &metaMap)
+	}
+
 	mainNames := mainTensorNames(header)
 	infos := make(map[string]*TensorQuantInfo)
 	for _, name := range mainNames {
@@ -140,6 +146,18 @@ func readBlobTensorQuantInfo(path string) (map[string]*TensorQuantInfo, string, 
 
 		quantType := globalQuantType
 		groupSize := globalGroupSize
+
+		// Check per-tensor metadata (e.g. from packed expert blobs with mixed precision)
+		if metaMap != nil {
+			if qt, ok := metaMap[name+".quant_type"]; ok && qt != "" {
+				quantType = strings.ToUpper(qt)
+			}
+			if gs, ok := metaMap[name+".group_size"]; ok && gs != "" {
+				if v, err := strconv.Atoi(gs); err == nil {
+					groupSize = v
+				}
+			}
+		}
 
 		inferredType, inferredGroup := inferQuantTypeFromShapes(header, name, quantType)
 		if quantType == "" {
