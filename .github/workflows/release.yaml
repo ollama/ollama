@@ -493,7 +493,7 @@ jobs:
             ${{ matrix.build-args }}
             VERSION=${{ needs.setup-environment.outputs.VERSION }}
             REVISION=${{ github.sha }}
-            CREATED=${{ github.event.created_at }}
+            CREATED=${{ github.run_started_at }}
           outputs: type=image,name=${{ vars.DOCKER_REPO }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=registry,ref=${{ vars.DOCKER_REPO }}:latest
           cache-to: type=inline
