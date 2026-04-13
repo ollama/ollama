@@ -592,7 +592,7 @@ func decodeSourceFP8Tensor(weight, scaleInv *mlx.Array) (*mlx.Array, error) {
 	padBottom := blockRows*scaleShape[0] - rows
 	padSide := blockCols*scaleShape[1] - cols
 	if padBottom > 0 || padSide > 0 {
-		decoded = mlx.Pad(decoded, []int32{0, int32(padBottom), 0, int32(padSide)})
+		decoded = mlx.PadConstant(decoded, []int{0, 1}, []int{0, 0}, []int{padBottom, padSide})
 	}
 
 	decoded = mlx.Reshape(decoded, int32(scaleShape[0]), int32(blockRows), int32(scaleShape[1]), int32(blockCols))
