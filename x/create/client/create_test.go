@@ -616,6 +616,36 @@ func TestGetParserName(t *testing.T) {
 			want:       "qwen3",
 		},
 		{
+			name:       "qwen3 moe",
+			configJSON: `{"architectures": ["Qwen3MoeForCausalLM"]}`,
+			want:       "qwen3",
+		},
+		{
+			name:       "qwen3.5",
+			configJSON: `{"architectures": ["Qwen3_5ForConditionalGeneration"]}`,
+			want:       "qwen3.5",
+		},
+		{
+			name:       "qwen3.5 moe",
+			configJSON: `{"architectures": ["Qwen3_5MoeForConditionalGeneration"]}`,
+			want:       "qwen3.5",
+		},
+		{
+			name:       "qwen3-coder",
+			configJSON: `{"architectures": ["Qwen3NextForCausalLM"]}`,
+			want:       "qwen3-coder",
+		},
+		{
+			name:       "qwen3 vl",
+			configJSON: `{"architectures": ["Qwen3VLForConditionalGeneration"]}`,
+			want:       "qwen3-vl-instruct",
+		},
+		{
+			name:       "qwen3_5 model_type fallback",
+			configJSON: `{"model_type": "qwen3_5"}`,
+			want:       "qwen3.5",
+		},
+		{
 			name:       "no config",
 			configJSON: `{}`,
 			want:       "",
@@ -659,6 +689,26 @@ func TestGetRendererName(t *testing.T) {
 			name:       "llama model (no renderer)",
 			configJSON: `{"architectures": ["LlamaForCausalLM"]}`,
 			want:       "",
+		},
+		{
+			name:       "qwen3.5",
+			configJSON: `{"architectures": ["Qwen3_5ForConditionalGeneration"]}`,
+			want:       "qwen3.5",
+		},
+		{
+			name:       "qwen3.5 moe",
+			configJSON: `{"architectures": ["Qwen3_5MoeForConditionalGeneration"]}`,
+			want:       "qwen3.5",
+		},
+		{
+			name:       "qwen3-coder (qwen3next)",
+			configJSON: `{"architectures": ["Qwen3NextForCausalLM"]}`,
+			want:       "qwen3-coder",
+		},
+		{
+			name:       "qwen3 vl",
+			configJSON: `{"architectures": ["Qwen3VLForConditionalGeneration"]}`,
+			want:       "qwen3-vl-instruct",
 		},
 	}
 

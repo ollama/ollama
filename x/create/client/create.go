@@ -560,6 +560,16 @@ func getParserName(modelDir string) string {
 		if strings.Contains(archLower, "deepseek") {
 			return "deepseek3"
 		}
+		// Check specific qwen3 variants before generic qwen3
+		if strings.Contains(archLower, "qwen3_5") {
+			return "qwen3.5"
+		}
+		if strings.Contains(archLower, "qwen3next") {
+			return "qwen3-coder"
+		}
+		if strings.Contains(archLower, "qwen3vl") {
+			return "qwen3-vl-instruct"
+		}
 		if strings.Contains(archLower, "qwen3") {
 			return "qwen3"
 		}
@@ -573,6 +583,15 @@ func getParserName(modelDir string) string {
 		}
 		if strings.Contains(typeLower, "deepseek") {
 			return "deepseek3"
+		}
+		if strings.Contains(typeLower, "qwen3_5") {
+			return "qwen3.5"
+		}
+		if strings.Contains(typeLower, "qwen3next") {
+			return "qwen3-coder"
+		}
+		if strings.Contains(typeLower, "qwen3vl") {
+			return "qwen3-vl-instruct"
 		}
 		if strings.Contains(typeLower, "qwen3") {
 			return "qwen3"
@@ -608,6 +627,13 @@ func getRendererName(modelDir string) string {
 		if strings.Contains(archLower, "deepseek") {
 			return "deepseek3"
 		}
+		// Check specific qwen3 variants before generic qwen3
+		if strings.Contains(archLower, "qwen3_5") {
+			return "qwen3.5"
+		}
+		if strings.Contains(archLower, "qwen3vl") {
+			return "qwen3-vl-instruct"
+		}
 		if strings.Contains(archLower, "qwen3") {
 			return "qwen3-coder"
 		}
@@ -621,6 +647,12 @@ func getRendererName(modelDir string) string {
 		}
 		if strings.Contains(typeLower, "deepseek") {
 			return "deepseek3"
+		}
+		if strings.Contains(typeLower, "qwen3_5") {
+			return "qwen3.5"
+		}
+		if strings.Contains(typeLower, "qwen3vl") {
+			return "qwen3-vl-instruct"
 		}
 		if strings.Contains(typeLower, "qwen3") {
 			return "qwen3-coder"
