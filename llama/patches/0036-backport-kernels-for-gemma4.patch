@@ -342,7 +342,7 @@ index 4e5acfbe5..11457f2b1 100644
                  return false;
              }
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 4f338aa13..8be0c1f0c 100644
+index b14a0000c..398c80717 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
 @@ -6276,6 +6276,7 @@ template [[host_name("kernel_flash_attn_ext_f32_dk128_dv128")]]  kernel flash_at

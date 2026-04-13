@@ -204,7 +204,7 @@ index 902b54452..a475183d3 100644
  int ggml_metal_op_norm              (ggml_metal_op_t ctx, int idx);
  int ggml_metal_op_rope              (ggml_metal_op_t ctx, int idx);
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index d33c16079..c37447a10 100644
+index 114767785..876a9eecc 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
 @@ -3012,6 +3012,66 @@ kernel void kernel_l2_norm_f32(
