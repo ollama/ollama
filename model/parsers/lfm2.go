@@ -29,6 +29,7 @@ const (
 type LFM2Parser struct {
 	state                    LFM2ParserState
 	buffer                   strings.Builder
+	callIndex                int
 	hasThinkingSupport       bool
 	needsThinkingLeadingTrim bool // trim leading whitespace after <think> tag
 	needsContentLeadingTrim  bool // trim leading whitespace after </think> tag
@@ -66,6 +67,7 @@ func (p *LFM2Parser) setInitialState(lastMessage *api.Message, thinkValue *api.T
 
 func (p *LFM2Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.toolNames = make(map[string]struct{}, len(tools))
+	p.callIndex = 0
 	p.hasTools = len(tools) > 0
 	for _, tool := range tools {
 		if tool.Function.Name != "" {
@@ -121,6 +123,11 @@ func (p *LFM2Parser) Add(s string, done bool) (content string, thinking string, 
 			contentSb.Reset()
 			toolCalls = append(toolCalls, fallbackCalls...)
 		}
+	}
+
+	for i := range toolCalls {
+		toolCalls[i].Function.Index = p.callIndex
+		p.callIndex++
 	}
 
 	return contentSb.String(), thinkingSb.String(), toolCalls, nil
