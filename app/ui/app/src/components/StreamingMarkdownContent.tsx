@@ -3,13 +3,15 @@ import { Streamdown, defaultRemarkPlugins } from "streamdown";
 import remarkCitationParser from "@/utils/remarkCitationParser";
 import CopyButton from "./CopyButton";
 import type { BundledLanguage } from "shiki";
-import { highlighter } from "@/lib/highlighter";
+import type { ThemeRegistrationAny, ThemedToken } from "@shikijs/types";
+import { highlighter, THEME_LIGHT, THEME_DARK } from "@/lib/highlighter";
+import { useTheme } from "@/hooks/useTheme";
 
 interface StreamingMarkdownContentProps {
   content: string;
   isStreaming?: boolean;
   size?: "sm" | "md" | "lg";
-  browserToolResult?: any; // TODO: proper type
+  browserToolResult?: { page_stack: string[] };
 }
 
 // Helper to extract text from React nodes
@@ -18,9 +20,9 @@ const extractText = (node: React.ReactNode): string => {
   if (typeof node === "number") return String(node);
   if (!node) return "";
   if (React.isValidElement(node)) {
-    const props = node.props as any;
-    if (props?.children) {
-      return extractText(props.children as React.ReactNode);
+    const props = node.props as { children?: React.ReactNode };
+    if (props.children) {
+      return extractText(props.children);
     }
   }
   if (Array.isArray(node)) {
@@ -31,6 +33,8 @@ const extractText = (node: React.ReactNode): string => {
 
 const CodeBlock = React.memo(
   ({ children }: React.HTMLAttributes<HTMLPreElement>) => {
+    const theme = useTheme();
+
     // Extract code and language from children
     const codeElement = children as React.ReactElement<{
       className?: string;
@@ -40,26 +44,38 @@ const CodeBlock = React.memo(
       codeElement.props.className?.replace(/language-/, "") || "";
     const codeText = extractText(codeElement.props.children);
 
-    // Synchronously highlight code using the pre-loaded highlighter
+    // Lazy per-theme token cache: tokenize active theme only, cache both for instant theme switches
+    const cacheRef = React.useRef<{
+      key: string;
+      light: ThemedToken[][] | null;
+      dark: ThemedToken[][] | null;
+    }>({ key: "", light: null, dark: null });
+
     const tokens = React.useMemo(() => {
       if (!highlighter) return null;
+      // Skip tokenization for unregistered languages to avoid Shiki throwing per code block
+      if (language && !highlighter.getLoadedLanguages().includes(language)) return null;
+
+      const cacheKey = `${codeText}:${language}`;
+      if (cacheRef.current.key !== cacheKey) {
+        cacheRef.current = { key: cacheKey, light: null, dark: null };
+      }
+
+      const cache = cacheRef.current;
+      if (cache[theme]) return cache[theme];
 
       try {
-        return {
-          light: highlighter.codeToTokensBase(codeText, {
-            lang: language as BundledLanguage,
-            theme: "one-light" as any,
-          }),
-          dark: highlighter.codeToTokensBase(codeText, {
-            lang: language as BundledLanguage,
-            theme: "one-dark" as any,
-          }),
-        };
+        const shikiTheme = theme === "dark" ? THEME_DARK : THEME_LIGHT;
+        cache[theme] = highlighter.codeToTokensBase(codeText, {
+          lang: language as BundledLanguage,
+          theme: shikiTheme as ThemeRegistrationAny,
+        });
+        return cache[theme];
       } catch (error) {
         console.error("Failed to highlight code:", error);
         return null;
       }
-    }, [codeText, language]);
+    }, [codeText, language, theme]);
 
     return (
       <div className="relative bg-neutral-100 dark:bg-neutral-800 rounded-2xl overflow-hidden my-6">
@@ -75,13 +91,12 @@ const CodeBlock = React.memo(
             className="copy-button text-neutral-500 dark:text-neutral-400 bg-neutral-100 dark:bg-neutral-800 ml-auto"
           />
         </div>
-        {/* Light mode */}
-        <pre className="dark:hidden m-0 bg-neutral-100 text-sm overflow-x-auto p-4">
+        <pre className={`m-0 text-sm overflow-x-auto p-4 ${theme === "dark" ? "bg-neutral-800" : "bg-neutral-100"}`}>
           <code className="font-mono text-sm">
-            {tokens?.light
-              ? tokens.light.map((line: any, i: number) => (
+            {tokens
+              ? tokens.map((line: ThemedToken[], i: number) => (
                   <React.Fragment key={i}>
-                    {line.map((token: any, j: number) => (
+                    {line.map((token: ThemedToken, j: number) => (
                       <span
                         key={j}
                         style={{
@@ -91,29 +106,7 @@ const CodeBlock = React.memo(
                         {token.content}
                       </span>
                     ))}
-                    {i < tokens.light.length - 1 && "\n"}
-                  </React.Fragment>
-                ))
-              : codeText}
-          </code>
-        </pre>
-        {/* Dark mode */}
-        <pre className="hidden dark:block m-0 bg-neutral-800 text-sm overflow-x-auto p-4">
-          <code className="font-mono text-sm">
-            {tokens?.dark
-              ? tokens.dark.map((line: any, i: number) => (
-                  <React.Fragment key={i}>
-                    {line.map((token: any, j: number) => (
-                      <span
-                        key={j}
-                        style={{
-                          color: token.color,
-                        }}
-                      >
-                        {token.content}
-                      </span>
-                    ))}
-                    {i < tokens.dark.length - 1 && "\n"}
+                    {i < tokens.length - 1 && "\n"}
                   </React.Fragment>
                 ))
               : codeText}
