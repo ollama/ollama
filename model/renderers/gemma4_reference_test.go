@@ -705,6 +705,13 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 			expected: "<bos><|turn>system\n<|think|>\n<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\n",
 		},
 		{
+			name:       "nothink_no_system",
+			messages:   []api.Message{{Role: "user", Content: "Hi"}},
+			think:      thinkFalse(),
+			expected:   "<bos><|turn>user\nHi<turn|>\n<|turn>model\n",
+			skipJinja2: true,
+		},
+		{
 			name: "thinking_system",
 			messages: []api.Message{
 				{Role: "system", Content: "You are helpful."},
@@ -1628,6 +1635,7 @@ func TestGemma4RendererKnownJinja2Differences(t *testing.T) {
 		name           string
 		messages       []api.Message
 		tools          []api.Tool
+		think          *api.ThinkValue
 		wantJinjaFrag  string
 		wantRenderFrag string
 	}{
@@ -1676,15 +1684,22 @@ func TestGemma4RendererKnownJinja2Differences(t *testing.T) {
 			wantJinjaFrag:  `response:read{value:<|"|>payload<|"|>}`,
 			wantRenderFrag: `response:unknown{value:<|"|>payload<|"|>}`,
 		},
+		{
+			name:           "explicit_nothink_skips_empty_thought_channel",
+			messages:       []api.Message{{Role: "user", Content: "Hi"}},
+			think:          thinkFalse(),
+			wantJinjaFrag:  "<|turn>model\n<|channel>thought\n<channel|>",
+			wantRenderFrag: "<|turn>model\n",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			renderer := &Gemma4Renderer{useImgTags: RenderImgTags}
-			got, err := renderer.Render(tt.messages, tt.tools, nil)
+			got, err := renderer.Render(tt.messages, tt.tools, tt.think)
 			assert.NoError(t, err)
 
-			jinja2Output := renderWithJinja2(t, tt.messages, tt.tools, nil)
+			jinja2Output := renderWithJinja2(t, tt.messages, tt.tools, tt.think)
 			assert.NotEqual(t, jinja2Output, got, "case no longer differs from Jinja2 output")
 			assert.Contains(t, jinja2Output, tt.wantJinjaFrag)
 			assert.Contains(t, got, tt.wantRenderFrag)
@@ -1813,4 +1828,8 @@ print(tmpl.render(**kwargs), end="")
 
 func thinkTrue() *api.ThinkValue {
 	return &api.ThinkValue{Value: true}
+}
+
+func thinkFalse() *api.ThinkValue {
+	return &api.ThinkValue{Value: false}
 }
