@@ -507,9 +507,13 @@ func ScaledDotProductAttentionCausal(q, k, v *Array, scale float32, causalMask b
 	return out
 }
 
+// ScaledDotProductAttentionMasked runs the fast SDPA kernel with an explicit
+// additive mask. The mask is broadcast to [B, H, Q, K] and added to scores
+// before softmax. Pass mode="array" so MLX actually consults mask_arr; the
+// empty string is "no mask" and silently ignores the array argument.
 func ScaledDotProductAttentionMasked(q, k, v *Array, scale float32, mask *Array) *Array {
 	sinks := New("")
-	cMode := C.CString("")
+	cMode := C.CString("array")
 	defer C.free(unsafe.Pointer(cMode))
 
 	out := New("FAST_SDPA")
