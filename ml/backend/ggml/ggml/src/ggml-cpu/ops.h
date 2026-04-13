@@ -100,6 +100,7 @@ void ggml_compute_forward_fwht(const struct ggml_compute_params * params, struct
 void ggml_compute_forward_lloyd_max_q(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_lloyd_max_dq(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_tq_decompress(const struct ggml_compute_params * params, struct ggml_tensor * dst);
+void ggml_compute_forward_tq_compress(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_get_rel_pos(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_add_rel_pos(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 void ggml_compute_forward_rwkv_wkv6(const struct ggml_compute_params * params, struct ggml_tensor * dst);

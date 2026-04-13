@@ -5,12 +5,17 @@
 // The butterfly stages are synchronized via __syncthreads().
 // Supports both F32 and F16 input/output (computation in F32 shared memory).
 
-// Xorshift64 matching the CPU implementation
-static __device__ __forceinline__ uint64_t xorshift64(uint64_t x) {
-    x ^= x << 13;
-    x ^= x >> 7;
-    x ^= x << 17;
-    return x;
+// Position-independent sign hash: O(1) per element, fully parallel.
+// Replaces sequential xorshift which required O(i) iterations for element i.
+// Uses splitmix64 finalizer for high-quality random bits.
+static __device__ __forceinline__ float tq_sign(uint64_t seed, int pos) {
+    uint64_t x = seed + (uint64_t)pos * 0x9E3779B97F4A7C15ULL;
+    x ^= x >> 30;
+    x *= 0xBF58476D1CE4E5B9ULL;
+    x ^= x >> 27;
+    x *= 0x94D049BB133111EBULL;
+    x ^= x >> 31;
+    return (x & 1) ? 1.0f : -1.0f;
 }
 
 // Templated kernel supporting F32 and F16 I/O with F32 shared memory computation
@@ -43,27 +48,17 @@ static __global__ void fwht_kernel(
 
     if (!inverse) {
         // Forward: apply D first (sign flip), then Hadamard butterfly
-        // Step 1: Apply diagonal D
         for (int i = tid; i < d; i += blockDim.x) {
-            uint64_t rng = seed;
-            // Advance PRNG to position i (same sequence as CPU)
-            for (int j = 0; j <= i; j++) {
-                rng = rng ^ (rng << 13);
-                rng = rng ^ (rng >> 7);
-                rng = rng ^ (rng << 17);
-            }
-            float sign = (rng & 1) ? 1.0f : -1.0f;
-            smem[i] *= sign;
+            smem[i] *= tq_sign(seed, i);
         }
         __syncthreads();
 
-        // Step 2: Hadamard butterfly stages
+        // Hadamard butterfly stages
         for (int64_t len = 1; len < d; len <<= 1) {
             for (int64_t j = tid; j < d / 2; j += blockDim.x) {
-                // Map linear thread index to butterfly pair
-                int64_t block = j / len;
+                int64_t block_idx = j / len;
                 int64_t k = j % len;
-                int64_t idx0 = block * (len << 1) + k;
+                int64_t idx0 = block_idx * (len << 1) + k;
                 int64_t idx1 = idx0 + len;
 
                 float a = smem[idx0];
@@ -75,13 +70,11 @@ static __global__ void fwht_kernel(
         }
     } else {
         // Inverse: Hadamard butterfly first, then apply D
-
-        // Step 1: Hadamard butterfly stages
         for (int64_t len = 1; len < d; len <<= 1) {
             for (int64_t j = tid; j < d / 2; j += blockDim.x) {
-                int64_t block = j / len;
+                int64_t block_idx = j / len;
                 int64_t k = j % len;
-                int64_t idx0 = block * (len << 1) + k;
+                int64_t idx0 = block_idx * (len << 1) + k;
                 int64_t idx1 = idx0 + len;
 
                 float a = smem[idx0];
@@ -92,21 +85,13 @@ static __global__ void fwht_kernel(
             __syncthreads();
         }
 
-        // Step 2: Apply diagonal D
         for (int i = tid; i < d; i += blockDim.x) {
-            uint64_t rng = seed;
-            for (int j = 0; j <= i; j++) {
-                rng = rng ^ (rng << 13);
-                rng = rng ^ (rng >> 7);
-                rng = rng ^ (rng << 17);
-            }
-            float sign = (rng & 1) ? 1.0f : -1.0f;
-            smem[i] *= sign;
+            smem[i] *= tq_sign(seed, i);
         }
         __syncthreads();
     }
 
-    // Step 3: Scale by 1/sqrt(d) and write to output (converting back to T)
+    // Scale by 1/sqrt(d) and write to output (converting back to T)
     for (int i = tid; i < d; i += blockDim.x) {
         dst_vec[i] = (T)(smem[i] * scale);
     }
@@ -136,7 +121,7 @@ void ggml_cuda_op_fwht(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     // One block per vector, threads per block = min(d/2, 256)
     const int threads_per_block = (int) (d / 2 < CUDA_FWHT_BLOCK_SIZE ? d / 2 : CUDA_FWHT_BLOCK_SIZE);
     const int num_blocks = (int) nr;
-    const size_t shared_mem = d * sizeof(float); // always F32 for computation
+    const size_t shared_mem = d * sizeof(float); // single buffer for FWHT data
 
     if (src0->type == GGML_TYPE_F16) {
         const ggml_fp16_t * src0_d = (const ggml_fp16_t *) src0->data;

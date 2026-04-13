@@ -263,6 +263,11 @@ type Tensor interface {
 	// Input is [packed_d+1, ...] (packed indices + L2 norm). Output is F16 [dim, ...].
 	// Eliminates all intermediate tensors from the GGML graph.
 	TQDecompress(ctx Context, mseBits, dim int, seedHi, seedLo uint32) Tensor
+
+	// TQCompress is a fused TurboQuant compress op: L2 norm + normalize + FWHT + LloydMaxQ + concat norm.
+	// Input is F32/F16 [dim, ...]. Output is F32 [packed_d+1, ...] (packed I32 indices + L2 norm).
+	// Replaces 8 separate graph ops with one fused kernel for minimal launch overhead.
+	TQCompress(ctx Context, mseBits, dim int, seedHi, seedLo uint32) Tensor
 }
 
 // ScaledDotProductAttention implements a fused attention
@@ -429,6 +434,7 @@ const (
 	DTypeQ40
 	DTypeI32
 	DTypeMXFP4
+	DTypeTQ2
 	DTypeTQ3
 	DTypeTQ4
 )

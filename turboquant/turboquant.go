@@ -14,6 +14,7 @@
 package turboquant
 
 const (
+	BitWidthTQ2 = 2
 	BitWidthTQ3 = 3
 	BitWidthTQ4 = 4
 )

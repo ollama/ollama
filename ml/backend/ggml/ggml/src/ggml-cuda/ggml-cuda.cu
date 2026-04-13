@@ -25,6 +25,7 @@
 #include "ggml-cuda/fwht.cuh"
 #include "ggml-cuda/lloyd-max.cuh"
 #include "ggml-cuda/tq-decompress.cuh"
+#include "ggml-cuda/tq-compress.cuh"
 #include "ggml-cuda/getrows.cuh"
 #include "ggml-cuda/im2col.cuh"
 #include "ggml-cuda/mmf.cuh"
@@ -2716,6 +2717,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
         case GGML_OP_TQ_DECOMPRESS:
             ggml_cuda_op_tq_decompress(ctx, dst);
             break;
+        case GGML_OP_TQ_COMPRESS:
+            ggml_cuda_op_tq_compress(ctx, dst);
+            break;
         case GGML_OP_NORM:
             ggml_cuda_op_norm(ctx, dst);
             break;
@@ -4633,7 +4637,9 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
         case GGML_OP_LLOYD_MAX_DQ:
             return op->src[0]->type == GGML_TYPE_F32 && (op->type == GGML_TYPE_F32 || op->type == GGML_TYPE_F16);
         case GGML_OP_TQ_DECOMPRESS:
-            return op->src[0]->type == GGML_TYPE_F32 && op->type == GGML_TYPE_F16 && op->ne[0] <= 1024;
+            return op->src[0]->type == GGML_TYPE_F32 && op->type == GGML_TYPE_Q8_0 && op->ne[0] <= 1024;
+        case GGML_OP_TQ_COMPRESS:
+            return (op->src[0]->type == GGML_TYPE_F32 || op->src[0]->type == GGML_TYPE_F16) && op->type == GGML_TYPE_F32 && op->src[0]->ne[0] <= 1024;
         case GGML_OP_MUL_MAT:
         case GGML_OP_MUL_MAT_ID:
             {

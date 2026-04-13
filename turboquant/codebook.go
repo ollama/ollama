@@ -51,13 +51,14 @@ type Codebook struct {
 	Boundaries []float32
 }
 
-// NewCodebook creates a codebook for the given total TurboQuant bit-width and vector
-// dimension. The MSE stage uses (bitWidth - 1) bits for the scalar quantizer; the
-// remaining 1 bit is reserved for the QJL residual.
+// NewCodebook creates a codebook for the given TurboQuant bit-width and vector
+// dimension. All bits are used for the Lloyd-Max scalar quantizer (Algorithm 1,
+// MSE-optimized). QJL residual (Algorithm 2) is not implemented as community
+// benchmarks show no benefit for KV cache inference.
 func NewCodebook(bitWidth, dim int) *Codebook {
-	mseBits := bitWidth - 1
+	mseBits := bitWidth
 	if mseBits < 1 || mseBits > 4 {
-		mseBits = 2
+		mseBits = 3
 	}
 
 	stdC := stdGaussianCentroids[mseBits]
@@ -84,90 +85,57 @@ func NewCodebook(bitWidth, dim int) *Codebook {
 	}
 }
 
-// NumCentroids returns 2^(bitWidth-1), the number of MSE quantization levels.
+// NumCentroids returns 2^bitWidth, the number of MSE quantization levels.
 func (cb *Codebook) NumCentroids() int {
 	return len(cb.Centroids)
 }
 
 // Quantize packs float32 coordinates into bytes using Lloyd-Max boundaries.
+// Uses a generic bit-stream packing that works for any bit width.
 func (cb *Codebook) Quantize(data []float32) []byte {
 	n := len(data)
-	var packed []byte
+	mseBits := cb.BitWidth
+	totalBits := n * mseBits
+	packed := make([]byte, (totalBits+7)/8)
 
-	mseBits := cb.BitWidth - 1
-	if mseBits == 2 { // TQ3 (2 bit per element -> 4 per byte)
-		packed = make([]byte, (n+3)/4)
-		for i := 0; i < n; i += 4 {
-			var b byte
-			for j := 0; j < 4 && i+j < n; j++ {
-				idx := cb.findIndex(data[i+j])
-				b |= (idx & 3) << (j * 2)
-			}
-			packed[i/4] = b
-		}
-	} else if mseBits == 3 { // TQ4 (3 bit per element -> 8 per 3 bytes)
-		packed = make([]byte, (n*3+7)/8)
-		for i := 0; i < n; i += 8 {
-			var idx [8]byte
-			for j := 0; j < 8 && i+j < n; j++ {
-				idx[j] = cb.findIndex(data[i+j])
-			}
-			j := (i / 8) * 3
-			if j < len(packed) {
-				packed[j] = (idx[0] & 7) | ((idx[1] & 7) << 3) | ((idx[2] & 3) << 6)
-			}
-			if j+1 < len(packed) {
-				packed[j+1] = ((idx[2] >> 2) & 1) | ((idx[3] & 7) << 1) | ((idx[4] & 7) << 4) | ((idx[5] & 1) << 7)
-			}
-			if j+2 < len(packed) {
-				packed[j+2] = ((idx[5] >> 1) & 3) | ((idx[6] & 7) << 2) | ((idx[7] & 7) << 5)
+	for i := 0; i < n; i++ {
+		idx := int(cb.findIndex(data[i]))
+		bitOffset := i * mseBits
+		byteIdx := bitOffset / 8
+		bitPos := bitOffset % 8
+
+		// Write mseBits bits starting at bitPos within byte byteIdx
+		for b := 0; b < mseBits; b++ {
+			if idx&(1<<b) != 0 {
+				packed[(bitOffset+b)/8] |= 1 << ((bitOffset + b) % 8)
 			}
 		}
-	} else { // 1 bit or 4 bit
-		panic("unsupported bit width")
+		_ = byteIdx
+		_ = bitPos
 	}
 
 	return packed
 }
 
 // Dequantize unpacks bytes into float32 coordinates using Lloyd-Max centroids.
+// Uses generic bit-stream unpacking that works for any bit width.
 func (cb *Codebook) Dequantize(packed []byte, n int) []float32 {
 	data := make([]float32, n)
-	mseBits := cb.BitWidth - 1
+	mseBits := cb.BitWidth
+	mask := (1 << mseBits) - 1
 
-	if mseBits == 2 {
-		for i := 0; i < n; i += 4 {
-			b := packed[i/4]
-			for j := 0; j < 4 && i+j < n; j++ {
-				idx := (b >> (j * 2)) & 3
-				data[i+j] = cb.Centroids[idx]
+	for i := 0; i < n; i++ {
+		bitOffset := i * mseBits
+		idx := 0
+		for b := 0; b < mseBits; b++ {
+			byteIdx := (bitOffset + b) / 8
+			bitPos := (bitOffset + b) % 8
+			if byteIdx < len(packed) && packed[byteIdx]&(1<<bitPos) != 0 {
+				idx |= 1 << b
 			}
 		}
-	} else if mseBits == 3 {
-		for i := 0; i < n; i += 8 {
-			j := (i / 8) * 3
-			b0, b1, b2 := byte(0), byte(0), byte(0)
-			if j < len(packed) { b0 = packed[j] }
-			if j+1 < len(packed) { b1 = packed[j+1] }
-			if j+2 < len(packed) { b2 = packed[j+2] }
-
-			idx := [8]byte{
-				b0 & 7,
-				(b0 >> 3) & 7,
-				((b0 >> 6) & 3) | ((b1 & 1) << 2),
-				(b1 >> 1) & 7,
-				(b1 >> 4) & 7,
-				((b1 >> 7) & 1) | ((b2 & 3) << 1),
-				(b2 >> 2) & 7,
-				(b2 >> 5) & 7,
-			}
-
-			for k := 0; k < 8 && i+k < n; k++ {
-				data[i+k] = cb.Centroids[idx[k]]
-			}
-		}
-	} else {
-		panic("unsupported bit width")
+		idx &= mask
+		data[i] = cb.Centroids[idx]
 	}
 
 	return data

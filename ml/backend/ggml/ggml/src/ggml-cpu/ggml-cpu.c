@@ -2012,6 +2012,10 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             {
                 ggml_compute_forward_tq_decompress(params, tensor);
             } break;
+        case GGML_OP_TQ_COMPRESS:
+            {
+                ggml_compute_forward_tq_compress(params, tensor);
+            } break;
         case GGML_OP_GET_REL_POS:
             {
                 ggml_compute_forward_get_rel_pos(params, tensor);
@@ -2278,6 +2282,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
         case GGML_OP_LLOYD_MAX_Q:
         case GGML_OP_LLOYD_MAX_DQ:
         case GGML_OP_TQ_DECOMPRESS:
+        case GGML_OP_TQ_COMPRESS:
         case GGML_OP_SILU_BACK:
         case GGML_OP_MUL:
         case GGML_OP_DIV:

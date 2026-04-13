@@ -9,7 +9,7 @@ import (
 func TestCodebookCentroidsAreSymmetric(t *testing.T) {
 	for bits := 1; bits <= 4; bits++ {
 		t.Run(fmt.Sprintf("mse_bits=%d", bits), func(t *testing.T) {
-			cb := NewCodebook(bits+1, 128)
+			cb := NewCodebook(bits, 128)
 			centroids := cb.Centroids
 			n := len(centroids)
 
@@ -31,7 +31,7 @@ func TestCodebookCentroidsAreSymmetric(t *testing.T) {
 func TestCodebookCentroidsAreStrictlyIncreasing(t *testing.T) {
 	for bits := 1; bits <= 4; bits++ {
 		t.Run(fmt.Sprintf("mse_bits=%d", bits), func(t *testing.T) {
-			cb := NewCodebook(bits+1, 128)
+			cb := NewCodebook(bits, 128)
 			for i := 1; i < len(cb.Centroids); i++ {
 				if cb.Centroids[i] <= cb.Centroids[i-1] {
 					t.Errorf("not sorted at index %d: %f <= %f",
@@ -64,7 +64,7 @@ func TestCodebookMatchesPaperValues(t *testing.T) {
 	// The paper states that for N(0, 1/d), the b=2 centroids are
 	// {+/-0.453/sqrt(d), +/-1.51/sqrt(d)}.
 	// Verify our codebook matches this for dim=128.
-	cb := NewCodebook(3, 128) // TQ3 uses MSE bits = 2
+	cb := NewCodebook(2, 128) // 2-bit Lloyd-Max: 4 centroids
 	d := 128.0
 	sqrtD := math.Sqrt(d)
 
@@ -89,16 +89,41 @@ func TestCodebookNumCentroids(t *testing.T) {
 		bitWidth int
 		expected int
 	}{
-		{3, 4},  // TQ3: MSE uses 2 bits -> 4 centroids
-		{4, 8},  // TQ4: MSE uses 3 bits -> 8 centroids
-		{5, 16}, // hypothetical TQ5: MSE uses 4 bits -> 16 centroids
+		{2, 4},  // 2-bit: 4 centroids
+		{3, 8},  // TQ3: 3-bit Lloyd-Max -> 8 centroids
+		{4, 16}, // TQ4: 4-bit Lloyd-Max -> 16 centroids
 	}
 
 	for _, tc := range tests {
 		cb := NewCodebook(tc.bitWidth, 128)
 		if cb.NumCentroids() != tc.expected {
 			t.Errorf("bitWidth=%d: got %d centroids, want %d",
-				tc.bitWidth, tc.expected, cb.NumCentroids())
+				tc.bitWidth, cb.NumCentroids(), tc.expected)
+		}
+	}
+}
+
+func TestCodebookQuantizeDequantizeTQ2(t *testing.T) {
+	dim := 128
+	nElements := dim * 32
+	cb := NewCodebook(2, dim)
+
+	original := make([]float32, nElements)
+	for i := 0; i < nElements; i++ {
+		idx := i % len(cb.Centroids)
+		original[i] = cb.Centroids[idx]
+	}
+
+	packed := cb.Quantize(original)
+	expectedLen := nElements / 4 // 2-bit per element: nElements * 2 / 8
+	if len(packed) != expectedLen {
+		t.Fatalf("TQ2 packed length err: got %d bytes, want %d bytes", len(packed), expectedLen)
+	}
+
+	recovered := cb.Dequantize(packed, nElements)
+	for i := 0; i < nElements; i++ {
+		if math.Abs(float64(recovered[i]-original[i])) > 1e-6 {
+			t.Fatalf("Mismatch at %d: got %f, want %f", i, recovered[i], original[i])
 		}
 	}
 }
@@ -116,14 +141,16 @@ func TestCodebookQuantizeDequantizeTQ3(t *testing.T) {
 	}
 
 	packed := cb.Quantize(original)
-	if len(packed) != nElements/4 {
-		t.Fatalf("TQ3 packed length err: got %d bytes, want %d bytes", len(packed), nElements/4)
+	// 3-bit per element: nElements * 3 bits / 8 bits per byte
+	expectedLen := (nElements*3 + 7) / 8
+	if len(packed) != expectedLen {
+		t.Fatalf("TQ3 packed length err: got %d bytes, want %d bytes", len(packed), expectedLen)
 	}
 
 	recovered := cb.Dequantize(packed, nElements)
 
 	for i := 0; i < nElements; i++ {
-		if recovered[i] != original[i] {
+		if math.Abs(float64(recovered[i]-original[i])) > 1e-6 {
 			t.Fatalf("Mismatch at %d: got %f, want %f", i, recovered[i], original[i])
 		}
 	}
@@ -142,8 +169,10 @@ func TestCodebookQuantizeDequantizeTQ4(t *testing.T) {
 	}
 
 	packed := cb.Quantize(original)
-	if len(packed) != (nElements*3)/8 {
-		t.Fatalf("TQ4 packed length err: got %d bytes, want %d bytes", len(packed), (nElements*3)/8)
+	// 4-bit per element: nElements * 4 bits / 8 bits per byte = nElements / 2
+	expectedLen := nElements / 2
+	if len(packed) != expectedLen {
+		t.Fatalf("TQ4 packed length err: got %d bytes, want %d bytes", len(packed), expectedLen)
 	}
 
 	recovered := cb.Dequantize(packed, nElements)

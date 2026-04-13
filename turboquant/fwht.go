@@ -4,7 +4,7 @@ import "math"
 
 // ApplyFWHT applies the Fast Walsh-Hadamard Transform rotation in-place.
 // This is a Go reference implementation matching the GGML FWHT op exactly
-// (same xorshift64 PRNG, same butterfly structure).
+// (same splitmix64 PRNG, same butterfly structure).
 //
 // Forward (inverse=false): y = (1/√d) * H * D * x
 // Inverse (inverse=true):  y = (1/√d) * D * H * x
@@ -17,20 +17,19 @@ func ApplyFWHT(data []float32, seed uint64, inverse bool) {
 		return
 	}
 
-	signs := generateSigns(d, seed)
 	scale := float32(1.0 / math.Sqrt(float64(d)))
 
 	if !inverse {
 		// Forward: D first, then H
 		for i := 0; i < d; i++ {
-			data[i] *= signs[i]
+			data[i] *= splitmixSign(seed, i)
 		}
 		butterflyHadamard(data)
 	} else {
 		// Inverse: H first, then D
 		butterflyHadamard(data)
 		for i := 0; i < d; i++ {
-			data[i] *= signs[i]
+			data[i] *= splitmixSign(seed, i)
 		}
 	}
 
@@ -54,20 +53,17 @@ func butterflyHadamard(data []float32) {
 	}
 }
 
-// generateSigns generates the random ±1 diagonal using xorshift64,
-// matching the GGML FWHT kernel exactly.
-func generateSigns(d int, seed uint64) []float32 {
-	rng := seed
-	signs := make([]float32, d)
-	for i := 0; i < d; i++ {
-		rng ^= rng << 13
-		rng ^= rng >> 7
-		rng ^= rng << 17
-		if rng&1 != 0 {
-			signs[i] = 1.0
-		} else {
-			signs[i] = -1.0
-		}
+// splitmixSign returns +1 or -1 for position pos using splitmix64 finalizer.
+// Matches the GGML FWHT/TQ kernels exactly (position-independent, O(1) per element).
+func splitmixSign(seed uint64, pos int) float32 {
+	x := seed + uint64(pos)*0x9E3779B97F4A7C15
+	x ^= x >> 30
+	x *= 0xBF58476D1CE4E5B9
+	x ^= x >> 27
+	x *= 0x94D049BB133111EB
+	x ^= x >> 31
+	if x&1 != 0 {
+		return 1.0
 	}
-	return signs
+	return -1.0
 }

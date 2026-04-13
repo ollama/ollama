@@ -1052,9 +1052,10 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "LLOYD_MAX_Q",
     "LLOYD_MAX_DQ",
     "TQ_DECOMPRESS",
+    "TQ_COMPRESS",
 };
 
-static_assert(GGML_OP_COUNT == 99, "GGML_OP_COUNT != 99");
+static_assert(GGML_OP_COUNT == 100, "GGML_OP_COUNT != 100");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1165,9 +1166,11 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "fwht(x)",
     "lloyd_max_q(x)",
     "lloyd_max_dq(x)",
+    "tq_decompress(x)",
+    "tq_compress(x)",
 };
 
-static_assert(GGML_OP_COUNT == 99, "GGML_OP_COUNT != 99");
+static_assert(GGML_OP_COUNT == 100, "GGML_OP_COUNT != 100");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -3059,7 +3062,7 @@ struct ggml_tensor * ggml_lloyd_max_quantize(
         int                   mse_bits,
         int                   dim) {
     GGML_ASSERT(a->type == GGML_TYPE_F32);
-    GGML_ASSERT(mse_bits == 2 || mse_bits == 3);
+    GGML_ASSERT(mse_bits >= 2 && mse_bits <= 4);
     GGML_ASSERT(dim > 0 && (dim & (dim - 1)) == 0); // power of 2
 
     // Output shape: replace ne[0]=dim with packed_d = dim * mse_bits / 32
@@ -3089,7 +3092,7 @@ struct ggml_tensor * ggml_lloyd_max_dequantize(
         int                   dim) {
     // Input is F32 with packed I32 bit patterns (stored via memcpy/reinterpret_cast).
     GGML_ASSERT(a->type == GGML_TYPE_F32);
-    GGML_ASSERT(mse_bits == 2 || mse_bits == 3);
+    GGML_ASSERT(mse_bits >= 2 && mse_bits <= 4);
     GGML_ASSERT(dim > 0);
 
     struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, (int64_t[]){
@@ -3111,7 +3114,7 @@ struct ggml_tensor * ggml_lloyd_max_dequantize_f16(
         int                   mse_bits,
         int                   dim) {
     GGML_ASSERT(a->type == GGML_TYPE_F32);
-    GGML_ASSERT(mse_bits == 2 || mse_bits == 3);
+    GGML_ASSERT(mse_bits >= 2 && mse_bits <= 4);
     GGML_ASSERT(dim > 0);
 
     struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F16, GGML_MAX_DIMS, (int64_t[]){
@@ -3139,10 +3142,10 @@ struct ggml_tensor * ggml_tq_decompress(
     // Input: F32 tensor with shape [packed_d+1, n_heads, seq_len, batch]
     // packed_d = dim * mse_bits / 32, last element per row is L2 norm
     GGML_ASSERT(a->type == GGML_TYPE_F32);
-    GGML_ASSERT(mse_bits == 2 || mse_bits == 3);
+    GGML_ASSERT(mse_bits >= 2 && mse_bits <= 4);
     GGML_ASSERT(dim > 0 && (dim & (dim - 1)) == 0); // power of 2
 
-    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F16, GGML_MAX_DIMS, (int64_t[]){
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_Q8_0, GGML_MAX_DIMS, (int64_t[]){
         dim, a->ne[1], a->ne[2], a->ne[3]
     });
 
@@ -3153,6 +3156,41 @@ struct ggml_tensor * ggml_tq_decompress(
     ggml_set_op_params_i32(result, 3, (int32_t) seed_lo);
 
     result->op     = GGML_OP_TQ_DECOMPRESS;
+    result->src[0] = a;
+
+    return result;
+}
+
+// ggml_tq_compress
+
+struct ggml_tensor * ggml_tq_compress(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        int                   mse_bits,
+        int                   dim,
+        uint32_t              seed_hi,
+        uint32_t              seed_lo) {
+    // Input: F32 or F16 tensor with shape [dim, n_heads, seq_len, batch]
+    GGML_ASSERT(a->type == GGML_TYPE_F32 || a->type == GGML_TYPE_F16);
+    GGML_ASSERT(mse_bits >= 2 && mse_bits <= 4);
+    GGML_ASSERT(dim > 0 && (dim & (dim - 1)) == 0); // power of 2
+    GGML_ASSERT(a->ne[0] == dim);
+
+    int packed_dim = dim * mse_bits / 32;
+
+    // Output: F32 [packed_dim+1, n_heads, seq_len, batch]
+    // packed_dim I32 bitpatterns stored as F32 + 1 F32 norm
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, (int64_t[]){
+        packed_dim + 1, a->ne[1], a->ne[2], a->ne[3]
+    });
+
+    // Pack params: [mse_bits, dim, seed_hi, seed_lo]
+    ggml_set_op_params_i32(result, 0, mse_bits);
+    ggml_set_op_params_i32(result, 1, dim);
+    ggml_set_op_params_i32(result, 2, (int32_t) seed_hi);
+    ggml_set_op_params_i32(result, 3, (int32_t) seed_lo);
+
+    result->op     = GGML_OP_TQ_COMPRESS;
     result->src[0] = a;
 
     return result;

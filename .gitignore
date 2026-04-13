@@ -18,3 +18,5 @@ llama/vendor
 /ollama-dev*
 /work-plan.md
 /test-turboquant/
+/benchmarks/results/
+/benchmarks

@@ -21,6 +21,20 @@ __device__ static const float d_boundaries_3[] = {
      0.5005631008f,  1.0499572551f,  1.7479286962f
 };
 
+// mse_bits=4: 16 centroids, 15 boundaries
+__device__ static const float d_centroids_4[] = {
+    -2.7326368500f, -2.0690790327f, -1.6180234170f, -1.2562091030f,
+    -0.9423520268f, -0.6567903640f, -0.3880823390f, -0.1284185740f,
+     0.1284185740f,  0.3880823390f,  0.6567903640f,  0.9423520268f,
+     1.2562091030f,  1.6180234170f,  2.0690790327f,  2.7326368500f
+};
+__device__ static const float d_boundaries_4[] = {
+    -2.4008579413f, -1.8435512249f, -1.4371162600f, -1.0992995649f,
+    -0.7995711954f, -0.5224363515f, -0.2582504565f, 0.0f,
+     0.2582504565f,  0.5224363515f,  0.7995711954f,  1.0992995649f,
+     1.4371162600f,  1.8435512249f,  2.4008579413f
+};
+
 // Quantize kernel: one thread per element, one block per row
 // Output is F32 tensor but we store I32 bit patterns via reinterpret_cast.
 template <int MSE_BITS>
@@ -45,9 +59,12 @@ __global__ void lloyd_max_quantize_kernel(
     if constexpr (MSE_BITS == 2) {
         boundaries   = d_boundaries_2;
         n_boundaries = 3;
-    } else {
+    } else if constexpr (MSE_BITS == 3) {
         boundaries   = d_boundaries_3;
         n_boundaries = 7;
+    } else {
+        boundaries   = d_boundaries_4;
+        n_boundaries = 15;
     }
 
     // Zero output (collaborative across threads)
@@ -110,8 +127,10 @@ __global__ void lloyd_max_dequantize_kernel(
     const float * centroids;
     if constexpr (MSE_BITS == 2) {
         centroids = d_centroids_2;
-    } else {
+    } else if constexpr (MSE_BITS == 3) {
         centroids = d_centroids_3;
+    } else {
+        centroids = d_centroids_4;
     }
 
     for (int i = threadIdx.x; i < dim; i += blockDim.x) {
@@ -154,8 +173,11 @@ void ggml_cuda_op_lloyd_max_q(ggml_backend_cuda_context & ctx, ggml_tensor * dst
     if (mse_bits == 2) {
         lloyd_max_quantize_kernel<2><<<n_rows, threads, 0, stream>>>(
             src_d, dst_d, dim, scale, src_stride, dst_stride, n_rows);
-    } else {
+    } else if (mse_bits == 3) {
         lloyd_max_quantize_kernel<3><<<n_rows, threads, 0, stream>>>(
+            src_d, dst_d, dim, scale, src_stride, dst_stride, n_rows);
+    } else {
+        lloyd_max_quantize_kernel<4><<<n_rows, threads, 0, stream>>>(
             src_d, dst_d, dim, scale, src_stride, dst_stride, n_rows);
     }
 }
@@ -182,8 +204,11 @@ void ggml_cuda_op_lloyd_max_dq(ggml_backend_cuda_context & ctx, ggml_tensor * ds
         if (mse_bits == 2) {
             lloyd_max_dequantize_kernel<2, half><<<n_rows, threads, 0, stream>>>(
                 src_d, dst_d, dim, scale, src_stride, dst_stride, n_rows);
-        } else {
+        } else if (mse_bits == 3) {
             lloyd_max_dequantize_kernel<3, half><<<n_rows, threads, 0, stream>>>(
+                src_d, dst_d, dim, scale, src_stride, dst_stride, n_rows);
+        } else {
+            lloyd_max_dequantize_kernel<4, half><<<n_rows, threads, 0, stream>>>(
                 src_d, dst_d, dim, scale, src_stride, dst_stride, n_rows);
         }
     } else {
@@ -192,8 +217,11 @@ void ggml_cuda_op_lloyd_max_dq(ggml_backend_cuda_context & ctx, ggml_tensor * ds
         if (mse_bits == 2) {
             lloyd_max_dequantize_kernel<2, float><<<n_rows, threads, 0, stream>>>(
                 src_d, dst_d, dim, scale, src_stride, dst_stride, n_rows);
-        } else {
+        } else if (mse_bits == 3) {
             lloyd_max_dequantize_kernel<3, float><<<n_rows, threads, 0, stream>>>(
+                src_d, dst_d, dim, scale, src_stride, dst_stride, n_rows);
+        } else {
+            lloyd_max_dequantize_kernel<4, float><<<n_rows, threads, 0, stream>>>(
                 src_d, dst_d, dim, scale, src_stride, dst_stride, n_rows);
         }
     }

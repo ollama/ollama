@@ -571,6 +571,7 @@ extern "C" {
         GGML_OP_LLOYD_MAX_Q,  // Lloyd-Max quantize: f32 -> packed I32 (TurboQuant)
         GGML_OP_LLOYD_MAX_DQ, // Lloyd-Max dequantize: packed I32 -> f32/f16 (TurboQuant)
         GGML_OP_TQ_DECOMPRESS, // Fused TurboQuant decompress: packed+norm -> F16 (DQ+FWHT+Mul)
+        GGML_OP_TQ_COMPRESS,   // Fused TurboQuant compress: F32/F16 -> packed+norm F32 (Norm+FWHT+LloydMaxQ+Concat)
 
         GGML_OP_COUNT,
     };
@@ -2621,6 +2622,17 @@ extern "C" {
     // Input tensor has packed_d I32 bit patterns + 1 F32 norm element (concatenated on dim 0).
     // Eliminates all intermediate tensors from the GGML graph.
     GGML_API struct ggml_tensor * ggml_tq_decompress(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            int                   mse_bits,
+            int                   dim,
+            uint32_t              seed_hi,
+            uint32_t              seed_lo);
+
+    // Fused TurboQuant compress: f32/f16 [dim, ...] -> f32 [packed_d+1, ...]
+    // Combines L2 norm + normalize + sign flip + FWHT butterfly + Lloyd-Max quantize + concat norm.
+    // Output shape: [dim*mse_bits/32+1, n_heads, seq_len, batch] as F32 (I32 bitpatterns + norm).
+    GGML_API struct ggml_tensor * ggml_tq_compress(
             struct ggml_context * ctx,
             struct ggml_tensor  * a,
             int                   mse_bits,

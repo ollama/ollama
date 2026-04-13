@@ -52,7 +52,7 @@ func NewInputCache(model model.Model, kvCacheType string, kvSize int32, numSlots
 	if cache != nil {
 		dtype := kvCacheTypeFromStr(kvCacheType)
 
-		if dtype == ml.DTypeTQ3 || dtype == ml.DTypeTQ4 {
+		if dtype == ml.DTypeTQ2 || dtype == ml.DTypeTQ3 || dtype == ml.DTypeTQ4 {
 			if accessor, ok := cache.(kvcache.KVCacheAccessor); ok {
 				// Hybrid/recurrent models: wrap only the inner KV cache so the
 				// outer cache type (e.g., HybridCache) is preserved for model
@@ -89,6 +89,8 @@ func kvCacheTypeFromStr(s string) ml.DType {
 		return ml.DTypeQ80
 	case "q4_0":
 		return ml.DTypeQ40
+	case "tq2":
+		return ml.DTypeTQ2
 	case "tq3":
 		return ml.DTypeTQ3
 	case "tq4":

@@ -851,7 +851,7 @@ func (f GGML) SupportsKVCacheType(cacheType string) bool {
 		return true
 	}
 
-	return slices.Contains([]string{"q8_0", "q4_0", "tq3", "tq4"}, cacheType)
+	return slices.Contains([]string{"q8_0", "q4_0", "tq2", "tq3", "tq4"}, cacheType)
 }
 
 // KVCacheTypeIsQuantized checks if the requested cache type is a quantized type
@@ -911,15 +911,19 @@ func kvCacheBytesPerElement(cacheType string) float64 {
 		return 1 // 1/2 of fp16
 	case "q4_0":
 		return 0.5 // 1/4 of fp16
+	case "tq2":
+		// TurboQuant 2-bit: persistent cache ≈ 0.28 bytes/elem (2-bit Lloyd-Max MSE).
+		// Inflated to account for F16 decompression graph overhead.
+		return 0.5
 	case "tq3":
-		// TurboQuant 3-bit: persistent cache ≈ 0.28 bytes/elem.
+		// TurboQuant 3-bit: persistent cache ≈ 0.41 bytes/elem (3-bit Lloyd-Max MSE).
 		// Inflated to account for F16 decompression graph overhead (TQDecompress ops
 		// create F16 intermediates that don't exist for Q4_0's on-the-fly flash attn).
-		return 0.5
-	case "tq4":
-		// TurboQuant 4-bit: persistent cache ≈ 0.41 bytes/elem.
-		// Inflated to account for F16 decompression graph overhead.
 		return 0.75
+	case "tq4":
+		// TurboQuant 4-bit: persistent cache ≈ 0.53 bytes/elem (4-bit Lloyd-Max MSE).
+		// Inflated to account for F16 decompression graph overhead.
+		return 1.0
 	case "f32":
 		return 4 // f32 (default for recurrent)
 	default:

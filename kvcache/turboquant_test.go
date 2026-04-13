@@ -17,14 +17,19 @@ func TestTurboQuantPrepareRestoreUsesCanResume(t *testing.T) {
 }
 
 func TestTurboQuantMseBitsFromDType(t *testing.T) {
+	tq2 := NewTurboQuantWrapper(ml.DTypeTQ2)
+	if tq2.mseBits != 2 {
+		t.Errorf("TQ2 mseBits = %d, want 2", tq2.mseBits)
+	}
+
 	tq3 := NewTurboQuantWrapper(ml.DTypeTQ3)
-	if tq3.mseBits != 2 {
-		t.Errorf("TQ3 mseBits = %d, want 2", tq3.mseBits)
+	if tq3.mseBits != 3 {
+		t.Errorf("TQ3 mseBits = %d, want 3", tq3.mseBits)
 	}
 
 	tq4 := NewTurboQuantWrapper(ml.DTypeTQ4)
-	if tq4.mseBits != 3 {
-		t.Errorf("TQ4 mseBits = %d, want 3", tq4.mseBits)
+	if tq4.mseBits != 4 {
+		t.Errorf("TQ4 mseBits = %d, want 4", tq4.mseBits)
 	}
 }
 

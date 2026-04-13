@@ -10,16 +10,15 @@ import (
 
 // TurboQuantWrapper applies TurboQuant (arxiv 2504.19874, ICLR 2026) to the KV cache.
 //
-// # Paper Algorithm 2 (TurboQuant_prod)
+// # Algorithm (TurboQuant_mse — MSE-optimized, Algorithm 1 from paper)
 //
 //  1. Normalize x to unit sphere, store ||x||_2
 //  2. Rotate: y = Pi * x_normalized (Pi = randomized Hadamard via FWHT)
-//  3. Scalar quantize each coordinate of y with Lloyd-Max codebook (b-1 bits)
-//  4. Compute residual r = x_normalized - DeQuant_mse(indices)
-//  5. QJL: signs = sign(S * r), store (signs, ||r||_2)
-//  6. Dequant: x_hat = DeQuant_mse(indices) + (sqrt(pi/2)/d)*||r||*S^T*signs
+//  3. Scalar quantize each coordinate of y with Lloyd-Max codebook (b bits)
+//  4. Dequant: y_hat[i] = centroid[idx[i]], x_hat = Pi^T * y_hat * ||x||
 //
-// # Current Implementation (Phases 1-3 + Value Compression)
+// All bits are used for Lloyd-Max (no QJL residual). Community benchmarks
+// (llama.cpp #20969) show QJL adds no benefit for KV cache inference.
 //
 // Both keys and values go through the same pipeline:
 //
@@ -43,7 +42,7 @@ type TurboQuantWrapper struct {
 	cache *Causal // single cache: key=compressed_key, value=compressed_value
 
 	bitWidth int
-	mseBits  int // bitWidth - 1: actual quantization bits for Lloyd-Max
+	mseBits  int // quantization bits for Lloyd-Max (= bitWidth when QJL is not used)
 	backend  ml.Backend
 	layer    int
 
@@ -65,7 +64,10 @@ func noopShift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, erro
 
 func NewTurboQuantWrapper(tqDType ml.DType) *TurboQuantWrapper {
 	bitWidth := turboquant.BitWidthTQ4
-	if tqDType == ml.DTypeTQ3 {
+	switch tqDType {
+	case ml.DTypeTQ2:
+		bitWidth = turboquant.BitWidthTQ2
+	case ml.DTypeTQ3:
 		bitWidth = turboquant.BitWidthTQ3
 	}
 
@@ -74,7 +76,7 @@ func NewTurboQuantWrapper(tqDType ml.DType) *TurboQuantWrapper {
 	return &TurboQuantWrapper{
 		cache:      NewCausalCache(noopShift),
 		bitWidth:   bitWidth,
-		mseBits:    bitWidth - 1,
+		mseBits:    bitWidth,
 		keySeedHi:  uint32(keySeed >> 32),
 		keySeedLo:  uint32(keySeed & 0xFFFFFFFF),
 		valSeedHi:  uint32(valSeed >> 32),
@@ -128,19 +130,13 @@ func (w *TurboQuantWrapper) PrepareRestore(seq int, targetPos int32) (int32, boo
 	return 0, false
 }
 
-// compressTensor applies the TurboQuant pipeline: normalize → FWHT → LloydMax → concat norm.
+// compressTensor applies the TurboQuant pipeline using a single fused GGML op.
+// TQCompress combines L2 norm + normalize + FWHT + LloydMaxQ + concat norm in one kernel,
+// replacing 8 separate graph ops (Sqr, SumRows, Sqrt, Clamp, Div, FWHT, LloydMaxQ, Concat)
+// and eliminating ~500 kernel launches per generated token.
 func (w *TurboQuantWrapper) compressTensor(ctx ml.Context, t ml.Tensor, seedHi, seedLo uint32) ml.Tensor {
 	headDim := t.Dim(0)
-
-	norm := t.Sqr(ctx).SumRows(ctx).Sqrt(ctx)
-	normSafe := norm.Clamp(ctx, 1e-12, 1e30)
-	normalized := t.Div(ctx, normSafe)
-
-	rotated := normalized.FWHT(ctx, seedHi, seedLo, false)
-
-	packed := rotated.LloydMaxQuantize(ctx, w.mseBits, headDim)
-
-	return packed.Concat(ctx, norm, 0)
+	return t.TQCompress(ctx, w.mseBits, headDim, seedHi, seedLo)
 }
 
 // decompressTensor reverses the TurboQuant pipeline using a single fused GGML op.

@@ -2,6 +2,7 @@
 
 #include "ggml-cpu.h"
 #include "ggml-impl.h"
+#include "ggml-quants.h"
 #include "binary-ops.h"
 #include "ggml.h"
 #include "unary-ops.h"
@@ -9322,17 +9323,17 @@ static void ggml_compute_forward_fwht_f32(
     const int inverse      = dst->op_params[2];
     const uint64_t seed    = ((uint64_t) seed_hi << 32) | (uint64_t) seed_lo;
 
-    // Generate random sign-flip diagonal D from seed
-    // Using a simple xorshift64 PRNG for deterministic ±1 signs
-    uint64_t rng = seed;
-    float * signs = (float *) malloc(d * sizeof(float));
-    GGML_ASSERT(signs != NULL);
-    for (int64_t i = 0; i < d; i++) {
-        rng ^= rng << 13;
-        rng ^= rng >> 7;
-        rng ^= rng << 17;
-        signs[i] = (rng & 1) ? 1.0f : -1.0f;
-    }
+    // Position-independent sign hash: splitmix64 finalizer.
+    // Must match CUDA fwht.cu and tq-decompress.cu.
+    auto tq_sign = [](uint64_t s, int64_t pos) -> float {
+        uint64_t x = s + (uint64_t)pos * 0x9E3779B97F4A7C15ULL;
+        x ^= x >> 30;
+        x *= 0xBF58476D1CE4E5B9ULL;
+        x ^= x >> 27;
+        x *= 0x94D049BB133111EBULL;
+        x ^= x >> 31;
+        return (x & 1) ? 1.0f : -1.0f;
+    };
 
     const float scale = 1.0f / sqrtf((float) d);
 
@@ -9356,7 +9357,7 @@ static void ggml_compute_forward_fwht_f32(
             // Forward: y = (1/sqrt(d)) * H * D * x
             // Step 1: Apply diagonal D (element-wise sign flip)
             for (int64_t i = 0; i < d; i++) {
-                out[i] *= signs[i];
+                out[i] *= tq_sign(seed, i);
             }
 
             // Step 2: In-place Walsh-Hadamard butterfly
@@ -9386,7 +9387,7 @@ static void ggml_compute_forward_fwht_f32(
 
             // Step 2: Apply diagonal D (element-wise sign flip)
             for (int64_t i = 0; i < d; i++) {
-                out[i] *= signs[i];
+                out[i] *= tq_sign(seed, i);
             }
         }
 
@@ -9395,8 +9396,6 @@ static void ggml_compute_forward_fwht_f32(
             out[i] *= scale;
         }
     }
-
-    free(signs);
 }
 
 static void ggml_compute_forward_fwht_f16(
@@ -9418,15 +9417,15 @@ static void ggml_compute_forward_fwht_f16(
     const int inverse      = dst->op_params[2];
     const uint64_t seed    = ((uint64_t) seed_hi << 32) | (uint64_t) seed_lo;
 
-    uint64_t rng = seed;
-    float * signs = (float *) malloc(d * sizeof(float));
-    GGML_ASSERT(signs != NULL);
-    for (int64_t i = 0; i < d; i++) {
-        rng ^= rng << 13;
-        rng ^= rng >> 7;
-        rng ^= rng << 17;
-        signs[i] = (rng & 1) ? 1.0f : -1.0f;
-    }
+    auto tq_sign = [](uint64_t s, int64_t pos) -> float {
+        uint64_t x = s + (uint64_t)pos * 0x9E3779B97F4A7C15ULL;
+        x ^= x >> 30;
+        x *= 0xBF58476D1CE4E5B9ULL;
+        x ^= x >> 27;
+        x *= 0x94D049BB133111EBULL;
+        x ^= x >> 31;
+        return (x & 1) ? 1.0f : -1.0f;
+    };
 
     const float scale = 1.0f / sqrtf((float) d);
 
@@ -9451,7 +9450,7 @@ static void ggml_compute_forward_fwht_f16(
 
         if (!inverse) {
             for (int64_t i = 0; i < d; i++) {
-                buf[i] *= signs[i];
+                buf[i] *= tq_sign(seed, i);
             }
             for (int64_t len = 1; len < d; len <<= 1) {
                 for (int64_t j = 0; j < d; j += len << 1) {
@@ -9475,7 +9474,7 @@ static void ggml_compute_forward_fwht_f16(
                 }
             }
             for (int64_t i = 0; i < d; i++) {
-                buf[i] *= signs[i];
+                buf[i] *= tq_sign(seed, i);
             }
         }
 
@@ -9486,7 +9485,6 @@ static void ggml_compute_forward_fwht_f16(
     }
 
     free(buf);
-    free(signs);
 }
 
 void ggml_compute_forward_fwht(
@@ -9533,6 +9531,18 @@ static const float lloyd_max_boundaries_3[] = {
     -1.7479286962f, -1.0499572551f, -0.5005631008f, 0.0f,
      0.5005631008f,  1.0499572551f,  1.7479286962f
 };
+static const float lloyd_max_centroids_4[] = {
+    -2.7326368500f, -2.0690790327f, -1.6180234170f, -1.2562091030f,
+    -0.9423520268f, -0.6567903640f, -0.3880823390f, -0.1284185740f,
+     0.1284185740f,  0.3880823390f,  0.6567903640f,  0.9423520268f,
+     1.2562091030f,  1.6180234170f,  2.0690790327f,  2.7326368500f
+};
+static const float lloyd_max_boundaries_4[] = {
+    -2.4008579413f, -1.8435512249f, -1.4371162600f, -1.0992995649f,
+    -0.7995711954f, -0.5224363515f, -0.2582504565f, 0.0f,
+     0.2582504565f,  0.5224363515f,  0.7995711954f,  1.0992995649f,
+     1.4371162600f,  1.8435512249f,  2.4008579413f
+};
 
 static inline int lloyd_max_find_index(float val, const float * boundaries, int n_boundaries, float scale) {
     // Binary search on scaled boundaries
@@ -9562,9 +9572,12 @@ static void ggml_compute_forward_lloyd_max_q_impl(
     if (mse_bits == 2) {
         boundaries   = lloyd_max_boundaries_2;
         n_boundaries = 3;
-    } else {
+    } else if (mse_bits == 3) {
         boundaries   = lloyd_max_boundaries_3;
         n_boundaries = 7;
+    } else {
+        boundaries   = lloyd_max_boundaries_4;
+        n_boundaries = 15;
     }
 
     const int64_t d        = src0->ne[0]; // should equal dim
@@ -9600,12 +9613,12 @@ static void ggml_compute_forward_lloyd_max_q_impl(
             int64_t word_idx   = bit_offset / 32;
             int     bit_pos    = (int)(bit_offset % 32);
 
-            dst_row[word_idx] |= (idx << bit_pos);
+            dst_row[word_idx] |= (int32_t)((uint32_t)idx << bit_pos);
 
             // Handle case where bits span two I32 words
             if (bit_pos + mse_bits > 32) {
                 int overflow = bit_pos + mse_bits - 32;
-                dst_row[word_idx + 1] |= (idx >> (mse_bits - overflow));
+                dst_row[word_idx + 1] |= (int32_t)((uint32_t)idx >> (mse_bits - overflow));
             }
         }
     }
@@ -9647,9 +9660,12 @@ static void ggml_compute_forward_lloyd_max_dq_typed(
     if (mse_bits == 2) {
         centroids   = lloyd_max_centroids_2;
         n_centroids = 4;
-    } else {
+    } else if (mse_bits == 3) {
         centroids   = lloyd_max_centroids_3;
         n_centroids = 8;
+    } else {
+        centroids   = lloyd_max_centroids_4;
+        n_centroids = 16;
     }
 
     const int mask = (1 << mse_bits) - 1;
@@ -9713,10 +9729,11 @@ void ggml_compute_forward_lloyd_max_dq(
 
 // ggml_compute_forward_tq_decompress
 //
-// Fused TurboQuant decompress: LloydMaxDQ + inverse FWHT + norm multiply.
+// Fused TurboQuant decompress: LloydMaxDQ + inverse FWHT + norm multiply + Q8_0 quantize.
 // Input: F32 [packed_d+1, ...] (packed I32 indices + L2 norm)
-// Output: F16 [dim, ...]
+// Output: Q8_0 [dim, ...]
 // Eliminates all intermediate tensors from the computation graph.
+// FA reads Q8_0 directly — no F16 intermediate buffer.
 
 void ggml_compute_forward_tq_decompress(
         const ggml_compute_params * params,
@@ -9725,7 +9742,7 @@ void ggml_compute_forward_tq_decompress(
     const ggml_tensor * src0 = dst->src[0];
 
     GGML_ASSERT(src0->type == GGML_TYPE_F32);
-    GGML_ASSERT(dst->type  == GGML_TYPE_F16);
+    GGML_ASSERT(dst->type  == GGML_TYPE_Q8_0);
 
     const int mse_bits   = ggml_get_op_params_i32(dst, 0);
     const int dim        = ggml_get_op_params_i32(dst, 1);
@@ -9742,20 +9759,22 @@ void ggml_compute_forward_tq_decompress(
     const float * centroids;
     if (mse_bits == 2) {
         centroids = lloyd_max_centroids_2;
-    } else {
+    } else if (mse_bits == 3) {
         centroids = lloyd_max_centroids_3;
+    } else {
+        centroids = lloyd_max_centroids_4;
     }
 
-    // Generate sign-flip diagonal
-    uint64_t rng = seed;
-    float * signs = (float *) malloc(dim * sizeof(float));
-    GGML_ASSERT(signs != NULL);
-    for (int i = 0; i < dim; i++) {
-        rng ^= rng << 13;
-        rng ^= rng >> 7;
-        rng ^= rng << 17;
-        signs[i] = (rng & 1) ? 1.0f : -1.0f;
-    }
+    // Position-independent sign hash — must match CUDA kernels
+    auto tq_sign = [](uint64_t s, int pos) -> float {
+        uint64_t x = s + (uint64_t)pos * 0x9E3779B97F4A7C15ULL;
+        x ^= x >> 30;
+        x *= 0xBF58476D1CE4E5B9ULL;
+        x ^= x >> 27;
+        x *= 0x94D049BB133111EBULL;
+        x ^= x >> 31;
+        return (x & 1) ? 1.0f : -1.0f;
+    };
 
     // Temporary buffer for one vector (in-place butterfly)
     float * buf = (float *) malloc(dim * sizeof(float));
@@ -9763,6 +9782,7 @@ void ggml_compute_forward_tq_decompress(
 
     const int64_t n_rows = ggml_nrows(dst);
     GGML_ASSERT(dst->ne[0] == dim);
+    GGML_ASSERT(dim % QK8_0 == 0);
 
     // Thread partitioning
     const int ith = params->ith;
@@ -9771,11 +9791,12 @@ void ggml_compute_forward_tq_decompress(
     const int64_t row_start = ith * rows_per_thread;
     const int64_t row_end   = std::min(row_start + rows_per_thread, n_rows);
 
+    const int n_blocks = dim / QK8_0;
+
     for (int64_t row = row_start; row < row_end; row++) {
         const int32_t * src_row = reinterpret_cast<const int32_t *>((const char *)src0->data + row * src0->nb[1]);
         // Norm is the last F32 in the source row
         const float norm_val = *(const float *)((const char *)src0->data + row * src0->nb[1] + packed_dim * sizeof(float));
-        ggml_fp16_t * dst_row = (ggml_fp16_t *)((char *)dst->data + row * dst->nb[1]);
 
         // Phase 1: Lloyd-Max dequantize into buf
         for (int i = 0; i < dim; i++) {
@@ -9803,15 +9824,169 @@ void ggml_compute_forward_tq_decompress(
             }
         }
 
-        // Phase 3: Sign flip + scale + norm multiply + write F16
+        // Phase 3: Sign flip + scale + norm multiply
         const float combined_scale = fwht_scale * norm_val;
         for (int i = 0; i < dim; i++) {
-            dst_row[i] = GGML_FP32_TO_FP16(buf[i] * signs[i] * combined_scale);
+            buf[i] = buf[i] * tq_sign(seed, i) * combined_scale;
+        }
+
+        // Phase 4: Quantize to Q8_0 blocks
+        char * dst_row_bytes = (char *)dst->data + row * dst->nb[1];
+        for (int b = 0; b < n_blocks; b++) {
+            block_q8_0 * blk = (block_q8_0 *)(dst_row_bytes + b * sizeof(block_q8_0));
+            const float * blk_data = buf + b * QK8_0;
+
+            float amax = 0.0f;
+            for (int j = 0; j < QK8_0; j++) {
+                amax = std::max(amax, std::abs(blk_data[j]));
+            }
+
+            const float d = amax / 127.0f;
+            const float id = d > 0.0f ? 1.0f / d : 0.0f;
+
+            blk->d = GGML_FP32_TO_FP16(d);
+            for (int j = 0; j < QK8_0; j++) {
+                blk->qs[j] = (int8_t)roundf(blk_data[j] * id);
+            }
         }
     }
 
     free(buf);
-    free(signs);
+}
+
+// ggml_compute_forward_tq_compress
+//
+// Fused TurboQuant compress: L2 norm + normalize + FWHT + Lloyd-Max quantize + concat norm.
+// Input: F32 [dim, ...]
+// Output: F32 [packed_d+1, ...] (packed I32 indices + L2 norm)
+// Replaces 8 separate GGML ops with a single fused operation.
+
+void ggml_compute_forward_tq_compress(
+        const ggml_compute_params * params,
+        ggml_tensor * dst) {
+
+    const ggml_tensor * src0 = dst->src[0];
+
+    GGML_ASSERT(src0->type == GGML_TYPE_F32 || src0->type == GGML_TYPE_F16);
+    GGML_ASSERT(dst->type  == GGML_TYPE_F32);
+
+    const int mse_bits   = ggml_get_op_params_i32(dst, 0);
+    const int dim        = ggml_get_op_params_i32(dst, 1);
+    const uint32_t seed_hi = (uint32_t) ggml_get_op_params_i32(dst, 2);
+    const uint32_t seed_lo = (uint32_t) ggml_get_op_params_i32(dst, 3);
+    const uint64_t seed    = ((uint64_t)seed_hi << 32) | (uint64_t)seed_lo;
+
+    const int packed_dim = dim * mse_bits / 32;
+    const float scale    = 1.0f / sqrtf((float)dim);
+
+    // Select boundaries for Lloyd-Max quantization
+    const float * boundaries;
+    int n_boundaries;
+    if (mse_bits == 2) {
+        boundaries   = lloyd_max_boundaries_2;
+        n_boundaries = 3;
+    } else if (mse_bits == 3) {
+        boundaries   = lloyd_max_boundaries_3;
+        n_boundaries = 7;
+    } else {
+        boundaries   = lloyd_max_boundaries_4;
+        n_boundaries = 15;
+    }
+
+    // Position-independent sign hash — must match CUDA kernels
+    auto tq_sign = [](uint64_t s, int64_t pos) -> float {
+        uint64_t x = s + (uint64_t)pos * 0x9E3779B97F4A7C15ULL;
+        x ^= x >> 30;
+        x *= 0xBF58476D1CE4E5B9ULL;
+        x ^= x >> 27;
+        x *= 0x94D049BB133111EBULL;
+        x ^= x >> 31;
+        return (x & 1) ? 1.0f : -1.0f;
+    };
+
+    // Temporary buffer for one vector (in-place butterfly)
+    float * buf = (float *) malloc(dim * sizeof(float));
+    GGML_ASSERT(buf != NULL);
+
+    const int64_t n_rows = ggml_nrows(src0);
+
+    // Thread partitioning
+    const int ith = params->ith;
+    const int nth = params->nth;
+    const int64_t rows_per_thread = (n_rows + nth - 1) / nth;
+    const int64_t row_start = ith * rows_per_thread;
+    const int64_t row_end   = std::min(row_start + rows_per_thread, n_rows);
+
+    for (int64_t row = row_start; row < row_end; row++) {
+        int32_t * dst_row = reinterpret_cast<int32_t *>((char *)dst->data + row * dst->nb[1]);
+        float   * dst_row_f = (float *)((char *)dst->data + row * dst->nb[1]);
+
+        // Phase 1: Load input into buf (F32 or F16 → F32)
+        if (src0->type == GGML_TYPE_F16) {
+            const ggml_fp16_t * src_row = (const ggml_fp16_t *)((const char *)src0->data + row * src0->nb[1]);
+            for (int i = 0; i < dim; i++) {
+                buf[i] = GGML_FP16_TO_FP32(src_row[i]);
+            }
+        } else {
+            const float * src_row = (const float *)((const char *)src0->data + row * src0->nb[1]);
+            memcpy(buf, src_row, dim * sizeof(float));
+        }
+
+        // Phase 2: Compute L2 norm
+        float norm_sq = 0.0f;
+        for (int i = 0; i < dim; i++) {
+            norm_sq += buf[i] * buf[i];
+        }
+        float norm_val = sqrtf(norm_sq);
+        float norm_inv = (norm_val > 1e-12f) ? (1.0f / norm_val) : 0.0f;
+
+        // Phase 3: Normalize to unit sphere
+        for (int i = 0; i < dim; i++) {
+            buf[i] *= norm_inv;
+        }
+
+        // Phase 4: Forward FWHT — sign flip then butterfly
+        for (int i = 0; i < dim; i++) {
+            buf[i] *= tq_sign(seed, i);
+        }
+        for (int64_t len = 1; len < dim; len <<= 1) {
+            for (int64_t j = 0; j < dim; j += len << 1) {
+                for (int64_t k = 0; k < len; k++) {
+                    const float a = buf[j + k];
+                    const float b = buf[j + k + len];
+                    buf[j + k]       = a + b;
+                    buf[j + k + len] = a - b;
+                }
+            }
+        }
+        // Scale by 1/sqrt(d) — now buf[i] ~ N(0, 1/d)
+        for (int i = 0; i < dim; i++) {
+            buf[i] *= scale;
+        }
+
+        // Phase 5: Lloyd-Max quantize and pack into I32 bitstream
+        for (int i = 0; i < packed_dim; i++) {
+            dst_row[i] = 0;
+        }
+        for (int i = 0; i < dim; i++) {
+            int idx = lloyd_max_find_index(buf[i], boundaries, n_boundaries, scale);
+
+            int64_t bit_offset = (int64_t)i * mse_bits;
+            int64_t word_idx   = bit_offset / 32;
+            int     bit_pos    = (int)(bit_offset % 32);
+
+            dst_row[word_idx] |= (int32_t)((uint32_t)idx << bit_pos);
+            if (bit_pos + mse_bits > 32) {
+                int overflow = bit_pos + mse_bits - 32;
+                dst_row[word_idx + 1] |= (int32_t)((uint32_t)idx >> (mse_bits - overflow));
+            }
+        }
+
+        // Phase 6: Write L2 norm as last element
+        dst_row_f[packed_dim] = norm_val;
+    }
+
+    free(buf);
 }
 
 // ggml_compute_forward_get_rel_pos
