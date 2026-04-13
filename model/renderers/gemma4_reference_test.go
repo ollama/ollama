@@ -1,14 +1,18 @@
 package renderers
 
-// TestGemma4RendererMatchesReference verifies our renderer matches the HF
-// Jinja2 chat template exactly.
+// TestGemma4RendererMatchesReference verifies our renderer matches the checked-in
+// Gemma 4 reference template.
 //
-// To regenerate expected values, save gemma4Jinja2Template (below) to
-// gemma4_chat_template.jinja2 and run:
+// Current upstream Gemma 4 chat templates differ by model size, so the checked-in
+// reference intentionally uses the shared baseline without an empty generation-time
+// thought channel until renderer selection is split by size.
+//
+// To regenerate expected values, save the E2B template to
+// gemma4_e2b_chat_template.jinja2 and run:
 //
 //   python3 -c "
 //   from jinja2 import Environment; import json
-//   tmpl = Environment().from_string(open('gemma4_chat_template.jinja2').read())
+//   tmpl = Environment().from_string(open('gemma4_e2b_chat_template.jinja2').read())
 //   msgs = [{'role':'user','content':'Hello'}]
 //   print(repr(tmpl.render(messages=msgs, bos_token='<bos>', add_generation_prompt=True)))
 //   "
@@ -26,8 +30,13 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// The full Jinja2 template is committed as testdata/gemma4_chat_template.jinja2.
-// Run with VERIFY_JINJA2=1 to verify expected values against the template using uv + Python.
+const (
+	gemma4E2BTemplate = "testdata/gemma4_e2b_chat_template.jinja2"
+	gemma431BTemplate = "testdata/gemma4_31b_chat_template.jinja2"
+)
+
+// The upstream Gemma 4 chat templates are committed by size under testdata/.
+// Run with VERIFY_JINJA2=1 to verify expected values against the E2B template using uv + Python.
 
 func bashRefTool() []api.Tool {
 	return []api.Tool{{
@@ -665,7 +674,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 		{
 			name:     "user_only",
 			messages: []api.Message{{Role: "user", Content: "Hello"}},
-			expected: "<bos><|turn>user\nHello<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+			expected: "<bos><|turn>user\nHello<turn|>\n<|turn>model\n",
 		},
 		{
 			name: "system_user",
@@ -673,7 +682,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				{Role: "system", Content: "You are helpful."},
 				{Role: "user", Content: "Hi"},
 			},
-			expected: "<bos><|turn>system\nYou are helpful.<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+			expected: "<bos><|turn>system\nYou are helpful.<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\n",
 		},
 		{
 			name: "developer_user",
@@ -681,13 +690,13 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				{Role: "developer", Content: "You are helpful."},
 				{Role: "user", Content: "Hi"},
 			},
-			expected: "<bos><|turn>system\nYou are helpful.<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+			expected: "<bos><|turn>system\nYou are helpful.<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\n",
 		},
 		{
 			name:     "tools_no_system",
 			messages: []api.Message{{Role: "user", Content: "Hi"}},
 			tools:    bashRefTool(),
-			expected: "<bos><|turn>system\n" + bashDeclRef + "<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+			expected: "<bos><|turn>system\n" + bashDeclRef + "<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\n",
 		},
 		{
 			name: "system_tools",
@@ -696,7 +705,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				{Role: "user", Content: "Hi"},
 			},
 			tools:    bashRefTool(),
-			expected: "<bos><|turn>system\nYou are helpful." + bashDeclRef + "<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+			expected: "<bos><|turn>system\nYou are helpful." + bashDeclRef + "<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\n",
 		},
 		{
 			name:     "thinking_no_system",
@@ -730,6 +739,12 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 			think:    thinkTrue(),
 			expected: "<bos><|turn>system\n<|think|>\nYou are helpful." + bashDeclRef + "<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\n",
 		},
+		{
+			name:     "thinking_explicitly_disabled",
+			messages: []api.Message{{Role: "user", Content: "Hi"}},
+			think:    thinkFalse(),
+			expected: "<bos><|turn>user\nHi<turn|>\n<|turn>model\n",
+		},
 
 		// === Message loop paths ===
 		{
@@ -744,7 +759,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				"<|turn>user\nHi<turn|>\n" +
 				"<|turn>model\nHello!<turn|>\n" +
 				"<|turn>user\nMore<turn|>\n" +
-				"<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>model\n",
 		},
 		{
 			// Tool call with structured args → tool response as separate <|turn>tool turn
@@ -806,7 +821,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				"<|tool_response>response:bash{value:" + q + "file1.txt\nfile2.txt" + q + "}<tool_response|>" +
 				"Here are the files.<turn|>\n" +
 				"<|turn>user\nRead file1.txt<turn|>\n" +
-				"<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>model\n",
 		},
 		{
 			// Multiple tool calls + multiple tool responses
@@ -841,7 +856,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 			expected: "<bos><|turn>user\nWhat is 2+2?<turn|>\n" +
 				"<|turn>model\n4<turn|>\n" +
 				"<|turn>user\nAnd 3+3?<turn|>\n" +
-				"<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>model\n",
 		},
 		// === Additional edge cases ported from original tests ===
 		{
@@ -899,17 +914,17 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 			messages: []api.Message{{Role: "user", Content: "Test"}},
 			tools:    modeTool(),
 			expected: "<bos><|turn>system\n" + modeDeclRef + "<turn|>\n" +
-				"<|turn>user\nTest<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>user\nTest<turn|>\n<|turn>model\n",
 		},
 		{
 			name:     "unicode_content",
 			messages: []api.Message{{Role: "user", Content: "こんにちは"}},
-			expected: "<bos><|turn>user\nこんにちは<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+			expected: "<bos><|turn>user\nこんにちは<turn|>\n<|turn>model\n",
 		},
 		{
 			name:     "newlines_in_content",
 			messages: []api.Message{{Role: "user", Content: "Line 1\nLine 2\nLine 3"}},
-			expected: "<bos><|turn>user\nLine 1\nLine 2\nLine 3<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+			expected: "<bos><|turn>user\nLine 1\nLine 2\nLine 3<turn|>\n<|turn>model\n",
 		},
 		{
 			// Tool response (raw JSON) followed by user message
@@ -928,7 +943,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				"<|turn>model\n<|tool_call>call:get_weather{city:" + q + "Tokyo" + q + "}<tool_call|>" +
 				"<|tool_response>response:get_weather{value:" + q + `{"temperature": 15, "weather": "sunny"}` + q + "}<tool_response|>" +
 				"<|turn>user\nThanks!<turn|>\n" +
-				"<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>model\n",
 		},
 		// === Ordering and whitespace edge cases ===
 		{
@@ -951,7 +966,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 			// User content with whitespace is trimmed
 			name:     "user_content_trimmed",
 			messages: []api.Message{{Role: "user", Content: "  hello  "}},
-			expected: "<bos><|turn>user\nhello<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+			expected: "<bos><|turn>user\nhello<turn|>\n<|turn>model\n",
 		},
 		{
 			// Empty tool call arguments
@@ -975,7 +990,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 			messages: []api.Message{{Role: "user", Content: "Create"}},
 			tools:    nestedTool(),
 			expected: "<bos><|turn>system\n" + nestedDeclRef + "<turn|>\n" +
-				"<|turn>user\nCreate<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>user\nCreate<turn|>\n<|turn>model\n",
 		},
 		{
 			// Array type in tool declaration
@@ -983,7 +998,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 			messages: []api.Message{{Role: "user", Content: "Batch"}},
 			tools:    arrayTool(),
 			expected: "<bos><|turn>system\n" + arrayDeclRef + "<turn|>\n" +
-				"<|turn>user\nBatch<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>user\nBatch<turn|>\n<|turn>model\n",
 		},
 		{
 			// Top-level typed union follows the template's odd stringified-list form.
@@ -995,8 +1010,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 <|turn>user
 Hi<turn|>
 <|turn>model
-<|channel>thought
-<channel|>`,
+`,
 		},
 		{
 			// Assistant whitespace is trimmed (strip_thinking includes | trim)
@@ -1009,7 +1023,7 @@ Hi<turn|>
 			expected: "<bos><|turn>user\nHi<turn|>\n" +
 				"<|turn>model\nspaced<turn|>\n" +
 				"<|turn>user\nMore<turn|>\n" +
-				"<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>model\n",
 		},
 		{
 			// Three sequential tool responses
@@ -1064,7 +1078,7 @@ Hi<turn|>
 			expected: "<bos><|turn>user\nHi<turn|>\n" +
 				"<|turn>model\nMiddleDone<turn|>\n" +
 				"<|turn>user\nMore<turn|>\n" +
-				"<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>model\n",
 		},
 		{
 			// Property with no description — just type
@@ -1072,7 +1086,7 @@ Hi<turn|>
 			messages: []api.Message{{Role: "user", Content: "Count"}},
 			tools:    countTool(),
 			expected: "<bos><|turn>system\n" + countDeclRef + "<turn|>\n" +
-				"<|turn>user\nCount<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>user\nCount<turn|>\n<|turn>model\n",
 		},
 		{
 			// System message with leading/trailing whitespace is trimmed
@@ -1082,7 +1096,7 @@ Hi<turn|>
 				{Role: "user", Content: "Hi"},
 			},
 			expected: "<bos><|turn>system\nYou are helpful.<turn|>\n" +
-				"<|turn>user\nHi<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>user\nHi<turn|>\n<|turn>model\n",
 		},
 		{
 			// Deeply nested map in tool call arguments (3 levels)
@@ -1144,7 +1158,7 @@ Hi<turn|>
 			messages: []api.Message{{Role: "user", Content: "Set"}},
 			tools:    enumNoDescTool(),
 			expected: "<bos><|turn>system\n" + enumNoDescDeclRef + "<turn|>\n" +
-				"<|turn>user\nSet<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>user\nSet<turn|>\n<|turn>model\n",
 		},
 		{
 			// System message that is only whitespace (trims to empty)
@@ -1154,7 +1168,7 @@ Hi<turn|>
 				{Role: "user", Content: "Hi"},
 			},
 			expected: "<bos><|turn>system\n<turn|>\n" +
-				"<|turn>user\nHi<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>user\nHi<turn|>\n<|turn>model\n",
 		},
 		{
 			// Empty assistant content (empty string, not nil)
@@ -1167,7 +1181,7 @@ Hi<turn|>
 			expected: "<bos><|turn>user\nHi<turn|>\n" +
 				"<|turn>model\n<turn|>\n" +
 				"<|turn>user\nMore<turn|>\n" +
-				"<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>model\n",
 		},
 		{
 			// Map argument with string keys (keys NOT escaped with <|"|>)
@@ -1193,7 +1207,7 @@ Hi<turn|>
 			messages: []api.Message{{Role: "user", Content: "Search"}},
 			tools:    searchTool(),
 			expected: "<bos><|turn>system\n" + searchDeclRef + "<turn|>\n" +
-				"<|turn>user\nSearch<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>user\nSearch<turn|>\n<|turn>model\n",
 		},
 
 		// === Round 3 coverage gaps ===
@@ -1221,7 +1235,7 @@ Hi<turn|>
 				{Role: "user", Content: "Hi"},
 			},
 			expected: "<bos><|turn>system\n<turn|>\n" +
-				"<|turn>user\nHi<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>user\nHi<turn|>\n<|turn>model\n",
 		},
 		{
 			// Nested OBJECT property with required field
@@ -1229,7 +1243,7 @@ Hi<turn|>
 			messages: []api.Message{{Role: "user", Content: "Create"}},
 			tools:    nestedRequiredTool(),
 			expected: "<bos><|turn>system\n" + nestedRequiredDeclRef + "<turn|>\n" +
-				"<|turn>user\nCreate<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>user\nCreate<turn|>\n<|turn>model\n",
 		},
 		{
 			// Non-integer float in tool call argument
@@ -1256,7 +1270,7 @@ Hi<turn|>
 			},
 			expected: "<bos><|turn>user\nHi<turn|>\n" +
 				"<|turn>model\nResult<turn|>\n" +
-				"<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>model\n",
 		},
 		{
 			// Tool content with newlines and leading/trailing whitespace trimmed
@@ -1280,7 +1294,7 @@ Hi<turn|>
 			messages: []api.Message{{Role: "user", Content: "Raw"}},
 			tools:    rawTool(),
 			expected: "<bos><|turn>system\n" + rawDeclRef + "<turn|>\n" +
-				"<|turn>user\nRaw<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>user\nRaw<turn|>\n<|turn>model\n",
 		},
 		{
 			// Multiple required fields at top level
@@ -1288,7 +1302,7 @@ Hi<turn|>
 			messages: []api.Message{{Role: "user", Content: "Move"}},
 			tools:    moveTool(),
 			expected: "<bos><|turn>system\n" + moveDeclRef + "<turn|>\n" +
-				"<|turn>user\nMove<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>user\nMove<turn|>\n<|turn>model\n",
 		},
 		{
 			// Assistant content that is ONLY thinking (strips to empty)
@@ -1301,7 +1315,7 @@ Hi<turn|>
 			expected: "<bos><|turn>user\nHi<turn|>\n" +
 				"<|turn>model\n<turn|>\n" +
 				"<|turn>user\nMore<turn|>\n" +
-				"<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>model\n",
 		},
 
 		// === Round 4: final coverage gaps ===
@@ -1334,7 +1348,7 @@ Hi<turn|>
 			messages: []api.Message{{Role: "user", Content: "Tag"}},
 			tools:    arrayNoItemsTool(),
 			expected: "<bos><|turn>system\n" + arrayNoItemsDeclRef + "<turn|>\n" +
-				"<|turn>user\nTag<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>user\nTag<turn|>\n<|turn>model\n",
 		},
 		{
 			// OBJECT property without description but with nested properties
@@ -1342,7 +1356,7 @@ Hi<turn|>
 			messages: []api.Message{{Role: "user", Content: "Update"}},
 			tools:    objectNoDescTool(),
 			expected: "<bos><|turn>system\n" + objectNoDescDeclRef + "<turn|>\n" +
-				"<|turn>user\nUpdate<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>user\nUpdate<turn|>\n<|turn>model\n",
 		},
 
 		// === Round 5: coding agent patterns ===
@@ -1372,7 +1386,7 @@ Hi<turn|>
 				"<|tool_response>response:bash{value:" + q + q + "}<tool_response|>" +
 				"Done.<turn|>\n" +
 				"<|turn>user\nThanks<turn|>\n" +
-				"<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>model\n",
 		},
 		{
 			// Tool call with thinking that strips to real remaining content
@@ -1392,7 +1406,7 @@ Hi<turn|>
 				"<|tool_response>response:bash{value:" + q + "main.go\ngo.mod" + q + "}<tool_response|>" +
 				"Let me list the files.<turn|>\n" +
 				"<|turn>user\nOK<turn|>\n" +
-				"<|turn>model\n<|channel>thought\n<channel|>",
+				"<|turn>model\n",
 		},
 		{
 			// Argument value containing newlines (multi-line script)
@@ -1720,12 +1734,35 @@ func TestGemma4RendererToolResponseWithoutNameOrIDUsesUnknown(t *testing.T) {
 	assert.NotContains(t, got, `response:read{value:<|"|>payload<|"|>}`)
 }
 
+func TestGemma4SizeTemplateFixturesDifferAtGenerationPrompt(t *testing.T) {
+	e2b, err := os.ReadFile(gemma4E2BTemplate)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", gemma4E2BTemplate, err)
+	}
+
+	thirtyOneB, err := os.ReadFile(gemma431BTemplate)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", gemma431BTemplate, err)
+	}
+
+	assert.Contains(t, string(e2b), "{{- '<|turn>model\\n' -}}")
+	assert.NotContains(t, string(e2b), "{{- '<|channel>thought\\n<channel|>' -}}")
+	assert.Contains(t, string(thirtyOneB), "{{- '<|turn>model\\n' -}}")
+	assert.Contains(t, string(thirtyOneB), "{{- '<|channel>thought\\n<channel|>' -}}")
+}
+
 // renderWithJinja2 shells out to uv + Python to render messages through the
-// Jinja2 chat template. Returns the rendered string.
+// E2B Jinja2 chat template. Returns the rendered string.
 func renderWithJinja2(t *testing.T, messages []api.Message, tools []api.Tool, think *api.ThinkValue) string {
+	return renderWithJinja2Template(t, gemma4E2BTemplate, messages, tools, think)
+}
+
+// renderWithJinja2Template shells out to uv + Python to render messages through
+// the named Jinja2 chat template. Returns the rendered string.
+func renderWithJinja2Template(t *testing.T, templateRelPath string, messages []api.Message, tools []api.Tool, think *api.ThinkValue) string {
 	t.Helper()
 
-	templatePath, err := filepath.Abs("testdata/gemma4_chat_template.jinja2")
+	templatePath, err := filepath.Abs(templateRelPath)
 	if err != nil {
 		t.Fatalf("failed to get template path: %v", err)
 	}
@@ -1813,4 +1850,8 @@ print(tmpl.render(**kwargs), end="")
 
 func thinkTrue() *api.ThinkValue {
 	return &api.ThinkValue{Value: true}
+}
+
+func thinkFalse() *api.ThinkValue {
+	return &api.ThinkValue{Value: false}
 }
