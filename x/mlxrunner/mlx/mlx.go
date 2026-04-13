@@ -53,6 +53,19 @@ func Version() string {
 	return C.GoString(C.mlx_string_data(str))
 }
 
+// clearLastError resets the captured MLX error state before a call that may fail.
+func clearLastError() {
+	C.mlx_clear_last_error()
+}
+
+// lastError returns the last captured MLX error message, or "" if none.
+func lastError() string {
+	if C.mlx_had_last_error() == 0 {
+		return ""
+	}
+	return C.GoString(C.mlx_get_last_error())
+}
+
 func doEval(outputs []*Array, async bool) {
 	if len(outputs) == 0 {
 		return

@@ -23,11 +23,23 @@ type Array struct {
 
 var arrays []*Array
 
+// tracing is true while a compile callback is running on this goroutine. While
+// tracing, New routes new arrays into traceScratch so they can be freed as a
+// group at the end of the callback instead of polluting the tracked list.
+var (
+	tracing      bool
+	traceScratch []*Array
+)
+
 // constructor utilities
 
 func New(name string) *Array {
 	t := &Array{name: name}
-	arrays = append(arrays, t)
+	if tracing {
+		traceScratch = append(traceScratch, t)
+	} else {
+		arrays = append(arrays, t)
+	}
 	return t
 }
 

@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 
 	"golang.org/x/sync/errgroup"
@@ -79,6 +81,18 @@ func (r *Runner) Load(modelName string) error {
 	r.Model = m
 	r.Tokenizer = m.Tokenizer()
 	r.contextLength = m.MaxContextLength()
+
+	enableCompile := true
+	if s := os.Getenv("OLLAMA_MLX_COMPILE"); s != "" {
+		if b, err := strconv.ParseBool(s); err == nil {
+			enableCompile = b
+		}
+	}
+	if enableCompile {
+		mlx.EnableCompile()
+	} else {
+		mlx.DisableCompile()
+	}
 	return nil
 }
 
