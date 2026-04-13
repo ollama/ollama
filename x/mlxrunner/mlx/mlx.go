@@ -9,8 +9,8 @@ package mlx
 // #include "generated.h"
 // #include <string.h>
 //
-// static char _mlx_last_error_msg[1024] = {0};
-// static int  _mlx_last_error_flag = 0;
+// static __thread char _mlx_last_error_msg[1024] = {0};
+// static __thread int  _mlx_last_error_flag = 0;
 //
 // static void _mlx_capture_error_handler(const char* msg, void* data) {
 //     (void)data;
@@ -30,14 +30,12 @@ package mlx
 //     _mlx_last_error_msg[0] = '\0';
 // }
 //
-// static int mlx_had_last_error(void) {
-//     return _mlx_last_error_flag;
-// }
-//
 // static const char* mlx_get_last_error(void) {
-//     return _mlx_last_error_flag ? _mlx_last_error_msg : NULL;
+//     return _mlx_last_error_flag ? _mlx_last_error_msg : "";
 // }
 import "C"
+
+import "runtime"
 
 func init() {
 	// Replace the default exit(-1) error handler with one that captures
@@ -51,6 +49,24 @@ func Version() string {
 	defer C.mlx_string_free(str)
 	C.mlx_version(&str)
 	return C.GoString(C.mlx_string_data(str))
+}
+
+// mlxCheck locks the goroutine to its OS thread, clears the captured error
+// state, calls fn, and panics with the captured message if fn returns non-zero.
+// The thread lock ensures the thread-local error state is read from the same
+// thread that executed the call.
+func mlxCheck(fallback string, fn func() C.int) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	C.mlx_clear_last_error()
+	if fn() != 0 {
+		msg := C.GoString(C.mlx_get_last_error())
+		if msg == "" {
+			msg = fallback
+		}
+		panic("mlx: " + msg)
+	}
 }
 
 func doEval(outputs []*Array, async bool) {
@@ -67,20 +83,12 @@ func doEval(outputs []*Array, async bool) {
 		}
 	}
 
-	C.mlx_clear_last_error()
-	var rc C.int
-	if async {
-		rc = C.mlx_async_eval(vector)
-	} else {
-		rc = C.mlx_eval(vector)
-	}
-	if rc != 0 {
-		msg := "mlx eval failed"
-		if C.mlx_had_last_error() != 0 {
-			msg = C.GoString(C.mlx_get_last_error())
+	mlxCheck("eval failed", func() C.int {
+		if async {
+			return C.mlx_async_eval(vector)
 		}
-		panic("mlx: " + msg)
-	}
+		return C.mlx_eval(vector)
+	})
 }
 
 func AsyncEval(outputs ...*Array) {
