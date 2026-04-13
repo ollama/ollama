@@ -27,7 +27,11 @@ var arrays []*Array
 
 func New(name string) *Array {
 	t := &Array{name: name}
-	arrays = append(arrays, t)
+	if tracing {
+		traceScratch = append(traceScratch, t)
+	} else {
+		arrays = append(arrays, t)
+	}
 	return t
 }
 
