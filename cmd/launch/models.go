@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -230,33 +231,69 @@ func pullMissingModel(ctx context.Context, client *api.Client, model string) err
 
 // prepareEditorIntegration persists models and applies editor-managed config files.
 func prepareEditorIntegration(name string, runner Runner, editor Editor, models []string) error {
-	if ok, err := confirmEditorEdit(runner, editor); err != nil {
-		return err
-	} else if !ok {
-		return errCancelled
-	}
+	paths := editor.Paths()
+	before := snapshotEditorFiles(paths)
+
 	if err := editor.Edit(models); err != nil {
 		return fmt.Errorf("setup failed: %w", err)
 	}
+	showBackupNotice := editorFilesChanged(before, paths)
 	if err := config.SaveIntegration(name, models); err != nil {
 		return fmt.Errorf("failed to save: %w", err)
+	}
+	if showBackupNotice {
+		fmt.Fprintf(os.Stderr, "%s%s configuration has been modified. Backups are saved in %s/%s\n", ansiGray, runner, fileutil.BackupDir(), ansiReset)
 	}
 	return nil
 }
 
-func confirmEditorEdit(runner Runner, editor Editor) (bool, error) {
-	paths := editor.Paths()
+type editorFileSnapshot struct {
+	content []byte
+}
+
+// snapshotEditorFiles captures the current bytes for editor-managed files that
+// already exist. Missing files are excluded because they cannot produce backups.
+func snapshotEditorFiles(paths []string) map[string]editorFileSnapshot {
 	if len(paths) == 0 {
-		return true, nil
+		return nil
 	}
 
-	fmt.Fprintf(os.Stderr, "This will modify your %s configuration:\n", runner)
+	snapshot := make(map[string]editorFileSnapshot, len(paths))
 	for _, path := range paths {
-		fmt.Fprintf(os.Stderr, "  %s\n", path)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		snapshot[path] = editorFileSnapshot{
+			content: data,
+		}
 	}
-	fmt.Fprintf(os.Stderr, "Backups will be saved to %s/\n\n", fileutil.BackupDir())
+	return snapshot
+}
 
-	return ConfirmPrompt("Proceed?")
+// editorFilesChanged reports whether any previously existing editor-managed
+// file changed bytes after editing.
+func editorFilesChanged(before map[string]editorFileSnapshot, paths []string) bool {
+	for _, path := range paths {
+		prev, ok := before[path]
+		if !ok {
+			// No existing file means no backup for this path.
+			continue
+		}
+
+		after, err := os.ReadFile(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return true
+			}
+			continue
+		}
+
+		if !bytes.Equal(prev.content, after) {
+			return true
+		}
+	}
+	return false
 }
 
 // buildModelList merges existing models with recommendations for selection UIs.

@@ -504,6 +504,8 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 		if err := prepareEditorIntegration(name, runner, editor, models); err != nil {
 			return err
 		}
+
+		return launchAfterConfiguration(name, runner, models[0], req)
 	}
 
 	return launchAfterConfiguration(name, runner, models[0], req)
@@ -756,6 +758,7 @@ func (c *launcherClient) loadModelInventoryOnce(ctx context.Context) error {
 }
 
 func runIntegration(runner Runner, modelName string, args []string) error {
+	// TODO(parthsareen): let callers invoke runner.Run directly and remove this wrapper.
 	return runner.Run(modelName, args)
 }
 
