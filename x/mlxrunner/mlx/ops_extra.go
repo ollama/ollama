@@ -404,11 +404,6 @@ func GatherMM(a, b *Array, lhsIndices, rhsIndices *Array, sortedIndices bool) *A
 	return a.GatherMM(b, lhsIndices, rhsIndices, sortedIndices)
 }
 
-func SiLU(a *Array) *Array {
-	sig := a.Sigmoid()
-	return a.Multiply(sig)
-}
-
 func RoPEWithBase(x *Array, dims int, traditional bool, base, scale float32, offset int) *Array {
 	return RoPEWithFreqs(x, dims, traditional, base, scale, offset, nil)
 }
