@@ -434,6 +434,39 @@ func TestLayerTypeDetection(t *testing.T) {
 	}
 }
 
+func TestNewCachesOmitsSharedKVLayers(t *testing.T) {
+	m := &Model{
+		Layers: []*DecoderLayer{
+			{IsSliding: true, KVShareDonor: -1},
+			{IsSliding: false, KVShareDonor: -1},
+			{IsSliding: true, KVShareDonor: 0},
+			{IsSliding: false, KVShareDonor: 1},
+		},
+		TextConfig: &TextConfig{SlidingWindow: 512},
+	}
+
+	caches := m.NewCaches()
+	if got, want := len(caches), 2; got != want {
+		t.Fatalf("len(NewCaches()) = %d, want %d", got, want)
+	}
+}
+
+func TestNewCachesIncludesAllNonSharedLayers(t *testing.T) {
+	m := &Model{
+		Layers: []*DecoderLayer{
+			{IsSliding: true, KVShareDonor: -1},
+			{IsSliding: false, KVShareDonor: -1},
+			{IsSliding: true, KVShareDonor: -1},
+		},
+		TextConfig: &TextConfig{SlidingWindow: 512},
+	}
+
+	caches := m.NewCaches()
+	if got, want := len(caches), len(m.Layers); got != want {
+		t.Fatalf("len(NewCaches()) = %d, want %d", got, want)
+	}
+}
+
 func TestResolveWeightPrefix(t *testing.T) {
 	if err := mlx.CheckInit(); err != nil {
 		t.Skipf("MLX not available: %v", err)

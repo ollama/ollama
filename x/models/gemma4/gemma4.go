@@ -1034,6 +1034,17 @@ func (m *Model) Forward(tokens *mlx.Array, caches []cache.Cache) *mlx.Array {
 		sharedKV = make(map[int32]sharedKVEntry)
 	}
 
+	// Per-forward-pass sliding-window mask cache. The first sliding layer
+	// populates it; every subsequent sliding layer reuses the cached mask.
+	// Before this, Attention.Forward rebuilt a ~L×kLen mask from scratch on
+	// the CPU for every sliding layer (~25 rebuilds on a 26B MoE prefill),
+	// which was the bulk of a ~28% prefill regression vs the pre-SWA-fix
+	// baseline.
+	var smc *slidingMaskCache
+	if L > 1 && m.SlidingWindow > 0 {
+		smc = &slidingMaskCache{}
+	}
+
 	for i, layer := range m.Layers {
 		var c cache.Cache
 		if caches != nil && i < len(caches) {
@@ -1054,7 +1065,7 @@ func (m *Model) Forward(tokens *mlx.Array, caches []cache.Cache) *mlx.Array {
 			}
 		}
 
-		h = layer.Forward(h, c, B, L, m.TextConfig, pleInput, donorEntry)
+		h = layer.Forward(h, c, B, L, m.TextConfig, pleInput, donorEntry, smc)
 
 		// If this layer is a donor, store its cached KV for later shared layers.
 		if layer.IsDonor && c != nil {
@@ -1066,6 +1077,37 @@ func (m *Model) Forward(tokens *mlx.Array, caches []cache.Cache) *mlx.Array {
 	}
 
 	return mlx.RMSNormFn(h, m.NormScaled, m.RMSNormEps)
+}
+
+// slidingMaskCache is a per-forward-pass cache for the sliding-window
+// additive mask used by Attention.Forward. All sliding-attention layers in
+// a single forward pass see the same (L, kLen, window, dtype) tuple, so
+// we can build the mask once on the first sliding layer's call and let
+// every subsequent layer reuse it. The cache is instantiated fresh at the
+// top of Model.Forward and passed through DecoderLayer → Attention; it is
+// nil on paths where no caching is wanted (e.g. L == 1 decode).
+type slidingMaskCache struct {
+	mask   *mlx.Array
+	L      int32
+	kLen   int32
+	window int32
+}
+
+// get returns a cached mask matching (L, kLen, window, dtype), or builds
+// and caches a new one. Safe to call with a nil receiver (falls through to
+// a direct build without caching).
+func (c *slidingMaskCache) get(L, kLen, window int32, dtype mlx.DType) *mlx.Array {
+	if c == nil {
+		return buildCausalMaskWindow(L, kLen, window).AsType(dtype)
+	}
+	if c.mask != nil && c.L == L && c.kLen == kLen && c.window == window {
+		return c.mask
+	}
+	c.mask = buildCausalMaskWindow(L, kLen, window).AsType(dtype)
+	c.L = L
+	c.kLen = kLen
+	c.window = window
+	return c.mask
 }
 
 // EmbedAndScale embeds token IDs and scales by sqrt(hidden_size).
@@ -1099,6 +1141,11 @@ func (m *Model) ForwardEmbeddings(h *mlx.Array, caches []cache.Cache, maskedToke
 		sharedKV = make(map[int32]sharedKVEntry)
 	}
 
+	var smc *slidingMaskCache
+	if L > 1 && m.SlidingWindow > 0 {
+		smc = &slidingMaskCache{}
+	}
+
 	for i, layer := range m.Layers {
 		var c cache.Cache
 		if caches != nil && i < len(caches) {
@@ -1117,7 +1164,7 @@ func (m *Model) ForwardEmbeddings(h *mlx.Array, caches []cache.Cache, maskedToke
 			}
 		}
 
-		h = layer.Forward(h, c, B, L, m.TextConfig, pleInput, donorEntry)
+		h = layer.Forward(h, c, B, L, m.TextConfig, pleInput, donorEntry, smc)
 
 		if layer.IsDonor && c != nil {
 			state := c.State()
@@ -1154,17 +1201,18 @@ func (m *Model) Tokenizer() *tokenizer.Tokenizer {
 	return m.tok
 }
 
-// NewCaches creates cache objects for all layers.
+// NewCaches creates cache objects for layers that own KV state.
 func (m *Model) NewCaches() []cache.Cache {
-	caches := make([]cache.Cache, len(m.Layers))
+	cacheLayers := len(m.Layers)
 	for i, layer := range m.Layers {
-		// Shared layers don't maintain their own cache; they use donor KV.
-		// Still create a real cache slot (the trie-based cache system calls
-		// State()/Snapshot()/Restore() on all entries and doesn't expect nil).
 		if layer.KVShareDonor >= 0 {
-			caches[i] = cache.NewKVCache()
-			continue
+			cacheLayers = i
+			break
 		}
+	}
+
+	caches := make([]cache.Cache, cacheLayers)
+	for i, layer := range m.Layers[:cacheLayers] {
 		if m.SlidingWindow > 0 && layer.IsSliding {
 			caches[i] = cache.NewRotatingKVCache(int(m.SlidingWindow))
 		} else {
@@ -1219,9 +1267,9 @@ func sliceLayerDim(combined *mlx.Array, layerIdx, B, L, pleDim int32) *mlx.Array
 	return mlx.Squeeze(sliced, 2)
 }
 
-func (l *DecoderLayer) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *TextConfig, pleInput *mlx.Array, donorEntry *sharedKVEntry) *mlx.Array {
+func (l *DecoderLayer) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *TextConfig, pleInput *mlx.Array, donorEntry *sharedKVEntry, slidingMaskCache *slidingMaskCache) *mlx.Array {
 	normed := mlx.RMSNormFn(x, l.InputNormScaled, cfg.RMSNormEps)
-	attnOut := l.Attention.Forward(normed, c, B, L, l.IsSliding, cfg, donorEntry)
+	attnOut := l.Attention.Forward(normed, c, B, L, l.IsSliding, cfg, donorEntry, slidingMaskCache)
 	attnOut = mlx.RMSNormFn(attnOut, l.PostAttnNormScaled, cfg.RMSNormEps)
 	h := mlx.Add(x, attnOut)
 
@@ -1270,7 +1318,7 @@ func (l *DecoderLayer) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Tex
 	return h
 }
 
-func (a *Attention) Forward(x *mlx.Array, c cache.Cache, B, L int32, isSliding bool, cfg *TextConfig, donorEntry *sharedKVEntry) *mlx.Array {
+func (a *Attention) Forward(x *mlx.Array, c cache.Cache, B, L int32, isSliding bool, cfg *TextConfig, donorEntry *sharedKVEntry, slidingMaskCache *slidingMaskCache) *mlx.Array {
 	// Determine head dim and scale based on layer type.
 	headDim := cfg.HeadDim
 	scale := cfg.SlidingScale
@@ -1378,16 +1426,13 @@ func (a *Attention) Forward(x *mlx.Array, c cache.Cache, B, L int32, isSliding b
 		out = mlx.Matmul(scores, v)
 		out = mlx.Reshape(out, B, cfg.NumAttentionHeads, L, headDim)
 	case window > 0:
-		// Sliding-window prefill: the fast SDPA "causal" mode doesn't take a
-		// window, so supply an explicit additive mask. This stays on the fast
-		// kernel (Metal or CUDA) — same cost as causal mode plus a tiny
-		// [1,1,L,L] mask build and add.
-		//
-		// The mask must match q's dtype; the fast SDPA kernel produces an
-		// empty-shaped output (rather than erroring) when the mask dtype
-		// doesn't match, which then poisons every downstream layer.
+		// Sliding-window prefill: fast SDPA "causal" mode doesn't take a
+		// window, so supply an explicit additive mask. All sliding layers
+		// in one forward pass see the same (L, kLen, window, dtype) tuple,
+		// so we memoize the mask on the first call and reuse it for every
+		// subsequent sliding layer via slidingMaskCache.
 		kLen := int32(k.Dim(2))
-		mask := buildCausalMaskWindow(L, kLen, window).AsType(q.DType())
+		mask := slidingMaskCache.get(L, kLen, window, q.DType())
 		out = mlx.ScaledDotProductAttentionMasked(q, k, v, scale, mask)
 	default:
 		out = mlx.ScaledDotProductAttentionCausal(q, k, v, scale, L > 1)
@@ -1424,9 +1469,6 @@ func (r *Router) Forward(x *mlx.Array, cfg *TextConfig) (*mlx.Array, *mlx.Array)
 	// Project to expert scores: [B*L, num_experts].
 	expertScores := r.Proj.Forward(normed)
 
-	// Softmax to get probabilities.
-	probs := mlx.SoftmaxAxis(expertScores, -1, true)
-
 	// Top-k selection via argpartition on negated scores.
 	neg := mlx.Neg(expertScores)
 	inds := mlx.Argpartition(neg, int(cfg.TopKExperts)-1, -1)
@@ -1435,12 +1477,10 @@ func (r *Router) Forward(x *mlx.Array, cfg *TextConfig) (*mlx.Array, *mlx.Array)
 		[]int32{BL, cfg.TopKExperts},
 	)
 
-	// Gather softmax probabilities at selected expert indices.
-	scores := mlx.TakeAlongAxis(probs, inds, -1) // [B*L, topK]
-
-	// Renormalize scores to sum to 1.
-	sumScores := mlx.Sum(scores, -1, true) // [B*L, 1]
-	scores = mlx.Div(scores, sumScores)
+	// Softmax only over selected logits. This is equivalent to full softmax +
+	// gather + renormalize, but avoids normalizing over every expert.
+	scores := mlx.TakeAlongAxis(expertScores, inds, -1)
+	scores = mlx.SoftmaxAxis(scores, -1, true) // [B*L, topK]
 
 	return scores, inds
 }

@@ -31,11 +31,11 @@ type gemma4Config struct {
 func newGemma4ImportTransform(modelDir string, _ sourceModelConfig) (tensorImportTransform, error) {
 	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
 	if err != nil {
-		return gemma4ImportTransform{}, nil // fallback to no heuristic
+		return gemma4ImportTransform{}, nil //nolint:nilerr // fallback to no heuristic
 	}
 	var cfg gemma4Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return gemma4ImportTransform{}, nil
+		return gemma4ImportTransform{}, nil //nolint:nilerr // fallback to no heuristic
 	}
 
 	numLayers := cfg.NumHiddenLayers
