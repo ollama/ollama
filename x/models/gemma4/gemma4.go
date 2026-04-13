@@ -1110,73 +1110,6 @@ func (c *slidingMaskCache) get(L, kLen, window int32, dtype mlx.DType) *mlx.Arra
 	return c.mask
 }
 
-// EmbedAndScale embeds token IDs and scales by sqrt(hidden_size).
-// Used by the pipeline to get raw embeddings before vision token replacement.
-func (m *Model) EmbedAndScale(tokens *mlx.Array) *mlx.Array {
-	h := m.EmbedTokens.Forward(tokens)
-	return mlx.MulScalar(h, m.EmbedScale)
-}
-
-// ForwardEmbeddings runs the text model from pre-computed embeddings.
-// Used during prefill when vision tokens have been merged into text embeddings.
-//
-// maskedTokens should contain the original token IDs with vision/audio positions
-// zeroed out (matching the Python reference behavior for PLE computation).
-// If maskedTokens is nil, PLE is skipped entirely.
-func (m *Model) ForwardEmbeddings(h *mlx.Array, caches []cache.Cache, maskedTokens *mlx.Array) *mlx.Array {
-	dims := h.Dims()
-	B, L := int32(dims[0]), int32(dims[1])
-
-	// Compute PLE from masked tokens + merged embeddings.
-	// The Python reference zeros out vision positions in the token-based embedding
-	// but still computes the projection from the full hidden state (including
-	// vision soft tokens).
-	var perLayerInputs *mlx.Array
-	if m.HiddenSizePerLayer > 0 && m.EmbedTokensPerLayer != nil && maskedTokens != nil {
-		perLayerInputs = m.computePLEInputs(maskedTokens, h)
-	}
-
-	var sharedKV map[int32]sharedKVEntry
-	if len(m.KVShareMap) > 0 {
-		sharedKV = make(map[int32]sharedKVEntry)
-	}
-
-	var smc *slidingMaskCache
-	if L > 1 && m.SlidingWindow > 0 {
-		smc = &slidingMaskCache{}
-	}
-
-	for i, layer := range m.Layers {
-		var c cache.Cache
-		if caches != nil && i < len(caches) {
-			c = caches[i]
-		}
-
-		var pleInput *mlx.Array
-		if perLayerInputs != nil {
-			pleInput = sliceLayerDim(perLayerInputs, int32(i), B, L, m.HiddenSizePerLayer)
-		}
-
-		var donorEntry *sharedKVEntry
-		if layer.KVShareDonor >= 0 {
-			if entry, ok := sharedKV[layer.KVShareDonor]; ok {
-				donorEntry = &entry
-			}
-		}
-
-		h = layer.Forward(h, c, B, L, m.TextConfig, pleInput, donorEntry, smc)
-
-		if layer.IsDonor && c != nil {
-			state := c.State()
-			if len(state) >= 2 && state[0] != nil && state[1] != nil {
-				sharedKV[layer.LayerIdx] = sharedKVEntry{K: state[0], V: state[1], Offset: c.Offset()}
-			}
-		}
-	}
-
-	return mlx.RMSNormFn(h, m.NormScaled, m.RMSNormEps)
-}
-
 func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 	logits := m.LMHead.Forward(x)
 
@@ -1220,11 +1153,6 @@ func (m *Model) NewCaches() []cache.Cache {
 		}
 	}
 	return caches
-}
-
-// FormatPrompt applies the Gemma 4 chat template.
-func (m *Model) FormatPrompt(prompt string) string {
-	return fmt.Sprintf("<start_of_turn>user\n%s<end_of_turn>\n<start_of_turn>model\n", prompt)
 }
 
 // computePLEInputs computes per-layer embeddings and projections.
