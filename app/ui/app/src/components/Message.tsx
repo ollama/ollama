@@ -15,6 +15,7 @@ const Message = React.memo(
     isFaded,
     browserToolResult,
     lastToolQuery,
+    deferMarkdown,
   }: {
     message: MessageType;
     onEditMessage?: (content: string, index: number) => void;
@@ -24,6 +25,7 @@ const Message = React.memo(
     // TODO(drifkin): this type isn't right
     browserToolResult?: BrowserToolResult;
     lastToolQuery?: string;
+    deferMarkdown?: boolean;
   }) => {
     if (message.role === "user") {
       return (
@@ -42,6 +44,7 @@ const Message = React.memo(
           isFaded={isFaded}
           browserToolResult={browserToolResult}
           lastToolQuery={lastToolQuery}
+          deferMarkdown={deferMarkdown}
         />
       );
     }
@@ -54,7 +57,8 @@ const Message = React.memo(
       prevProps.isStreaming === nextProps.isStreaming &&
       prevProps.isFaded === nextProps.isFaded &&
       prevProps.browserToolResult === nextProps.browserToolResult &&
-      prevProps.lastToolQuery === nextProps.lastToolQuery
+      prevProps.lastToolQuery === nextProps.lastToolQuery &&
+      prevProps.deferMarkdown === nextProps.deferMarkdown
     );
   },
 );
@@ -734,6 +738,7 @@ function OtherRoleMessage({
   isFaded,
   browserToolResult,
   lastToolQuery,
+  deferMarkdown,
 }: {
   message: MessageType;
   previousMessage?: MessageType;
@@ -742,6 +747,7 @@ function OtherRoleMessage({
   // TODO(drifkin): this type isn't right
   browserToolResult?: BrowserToolResult;
   lastToolQuery?: string;
+  deferMarkdown?: boolean;
 }) {
   const messageRef = useRef<HTMLDivElement>(null);
 
@@ -795,6 +801,7 @@ function OtherRoleMessage({
                   content={message.content}
                   isStreaming={isStreaming}
                   browserToolResult={browserToolResult as BrowserToolResult}
+                  deferRendering={deferMarkdown}
                 />
               )}
             </div>

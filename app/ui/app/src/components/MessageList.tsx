@@ -4,6 +4,8 @@ import Message from "./Message";
 import Downloading from "./Downloading";
 import { ErrorMessage } from "./ErrorMessage";
 
+const EAGER_RENDER_COUNT = 10;
+
 export default function MessageList({
   messages,
   spacerHeight,
@@ -102,6 +104,7 @@ export default function MessageList({
               }
               browserToolResult={browserToolResult}
               lastToolQuery={lastToolQuery}
+              deferMarkdown={idx < messages.length - EAGER_RENDER_COUNT}
             />
           </div>
         );

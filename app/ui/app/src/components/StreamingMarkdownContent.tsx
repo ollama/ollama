@@ -12,6 +12,7 @@ interface StreamingMarkdownContentProps {
   isStreaming?: boolean;
   size?: "sm" | "md" | "lg";
   browserToolResult?: { page_stack: string[] };
+  deferRendering?: boolean;
 }
 
 // Helper to extract text from React nodes
@@ -150,9 +151,39 @@ const remarkPlugins = [
 ];
 
 const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
-  React.memo(({ content, isStreaming = false, size, browserToolResult }) => {
+  React.memo(({ content, isStreaming = false, size, browserToolResult, deferRendering = false }) => {
+    const [, forceRender] = React.useReducer((x: number) => x + 1, 0);
+    const readyRef = React.useRef(!deferRendering);
+    const observerRef = React.useRef<IntersectionObserver | null>(null);
+
+    const setDeferRef = React.useCallback(
+      (node: HTMLDivElement | null) => {
+        if (observerRef.current) {
+          observerRef.current.disconnect();
+          observerRef.current = null;
+        }
+        if (!node || readyRef.current) return;
+        observerRef.current = new IntersectionObserver(
+          ([entry]) => {
+            if (entry.isIntersecting) {
+              readyRef.current = true;
+              observerRef.current?.disconnect();
+              observerRef.current = null;
+              forceRender();
+            }
+          },
+          { rootMargin: "200px" },
+        );
+        observerRef.current.observe(node);
+      },
+      [forceRender],
+    );
+
+    const showStreamdown = readyRef.current;
+
     return (
       <div
+        ref={deferRendering && !showStreamdown ? setDeferRef : undefined}
         className={`
           max-w-full
           ${size === "sm" ? "prose-sm" : size === "lg" ? "prose-lg" : ""}
@@ -219,82 +250,94 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
           break-words
         `}
       >
-        <StreamingMarkdownErrorBoundary
-          content={content}
-          isStreaming={isStreaming}
-        >
-          <Streamdown
-            parseIncompleteMarkdown={isStreaming}
-            isAnimating={isStreaming}
-            remarkPlugins={remarkPlugins}
-            controls={false}
-            components={{
-              pre: CodeBlock,
-              table: ({
-                children,
-                ...props
-              }: React.HTMLAttributes<HTMLTableElement>) => (
-                <div className="overflow-x-auto max-w-full">
-                  <table
-                    {...props}
-                    className="border-collapse w-full border border-neutral-200 dark:border-neutral-700 rounded-lg overflow-hidden"
-                  >
-                    {children}
-                  </table>
-                </div>
-              ),
-              // @ts-expect-error: custom citation type
-              "ol-citation": ({
-                cursor,
-              }: {
-                cursor: number;
-                start: number;
-                end: number;
-              }) => {
-                const pageStack = browserToolResult?.page_stack;
-                const hasValidPage = pageStack && cursor < pageStack.length;
-                const pageUrl = hasValidPage ? pageStack[cursor] : null;
-
-                const getPageTitle = (url: string) => {
-                  if (url.startsWith("search_results_")) {
-                    const searchTerm = url.substring("search_results_".length);
-                    return `Search: ${searchTerm}`;
-                  }
-                  try {
-                    const urlObj = new URL(url);
-                    return urlObj.hostname;
-                  } catch {
-                    return url;
-                  }
-                };
-
-                const citationElement = (
-                  <span className="text-xs text-neutral-500 dark:text-neutral-400 bg-neutral-100 dark:bg-neutral-800 rounded-full px-2 py-1 ml-1">
-                    [{cursor}]
-                  </span>
-                );
-
-                if (pageUrl && pageUrl.startsWith("http")) {
-                  return (
-                    <a
-                      href={pageUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center hover:opacity-80 transition-opacity no-underline"
-                      title={getPageTitle(pageUrl)}
-                    >
-                      {citationElement}
-                    </a>
-                  );
-                }
-
-                return citationElement;
-              },
-            }}
+        {showStreamdown ? (
+          <StreamingMarkdownErrorBoundary
+            content={content}
+            isStreaming={isStreaming}
           >
+            <Streamdown
+              parseIncompleteMarkdown={isStreaming}
+              isAnimating={isStreaming}
+              remarkPlugins={remarkPlugins}
+              controls={false}
+              components={{
+                pre: CodeBlock,
+                code: ({
+                  children,
+                  className,
+                }: React.HTMLAttributes<HTMLElement>) => (
+                  <code className={className}>{children}</code>
+                ),
+                table: ({
+                  children,
+                  ...props
+                }: React.HTMLAttributes<HTMLTableElement>) => (
+                  <div className="overflow-x-auto max-w-full">
+                    <table
+                      {...props}
+                      className="border-collapse w-full border border-neutral-200 dark:border-neutral-700 rounded-lg overflow-hidden"
+                    >
+                      {children}
+                    </table>
+                  </div>
+                ),
+                // @ts-expect-error: custom citation type
+                "ol-citation": ({
+                  cursor,
+                }: {
+                  cursor: number;
+                  start: number;
+                  end: number;
+                }) => {
+                  const pageStack = browserToolResult?.page_stack;
+                  const hasValidPage = pageStack && cursor < pageStack.length;
+                  const pageUrl = hasValidPage ? pageStack[cursor] : null;
+
+                  const getPageTitle = (url: string) => {
+                    if (url.startsWith("search_results_")) {
+                      const searchTerm = url.substring("search_results_".length);
+                      return `Search: ${searchTerm}`;
+                    }
+                    try {
+                      const urlObj = new URL(url);
+                      return urlObj.hostname;
+                    } catch {
+                      return url;
+                    }
+                  };
+
+                  const citationElement = (
+                    <span className="text-xs text-neutral-500 dark:text-neutral-400 bg-neutral-100 dark:bg-neutral-800 rounded-full px-2 py-1 ml-1">
+                      [{cursor}]
+                    </span>
+                  );
+
+                  if (pageUrl && pageUrl.startsWith("http")) {
+                    return (
+                      <a
+                        href={pageUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center hover:opacity-80 transition-opacity no-underline"
+                        title={getPageTitle(pageUrl)}
+                      >
+                        {citationElement}
+                      </a>
+                    );
+                  }
+
+                  return citationElement;
+                },
+              }}
+            >
+              {content}
+            </Streamdown>
+          </StreamingMarkdownErrorBoundary>
+        ) : (
+          <div className="whitespace-pre-wrap text-sm text-neutral-800 dark:text-neutral-200">
             {content}
-          </Streamdown>
-        </StreamingMarkdownErrorBoundary>
+          </div>
+        )}
       </div>
     );
   });
