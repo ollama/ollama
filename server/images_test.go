@@ -118,6 +118,28 @@ func TestModelCapabilities(t *testing.T) {
 			},
 			expectedCaps: []model.Capability{model.CapabilityEmbedding},
 		},
+		{
+			name: "parser-based thinking with toggle support",
+			model: Model{
+				ModelPath: completionModelPath,
+				Template:  chatTemplate,
+				Config: model.ConfigV2{
+					Parser: "qwen3-thinking",
+				},
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityTools, model.CapabilityThinking, model.CapabilityThinkingToggle},
+		},
+		{
+			name: "parser-based thinking without toggle support",
+			model: Model{
+				ModelPath: completionModelPath,
+				Template:  chatTemplate,
+				Config: model.ConfigV2{
+					Parser: "qwen3-vl-thinking",
+				},
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityTools, model.CapabilityThinking},
+		},
 	}
 
 	// compare two slices of model.Capability regardless of order

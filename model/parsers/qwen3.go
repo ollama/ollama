@@ -52,6 +52,10 @@ func (p *Qwen3Parser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
 }
 
+func (p *Qwen3Parser) CanDisableThinking() bool {
+	return p.hasThinkingSupport
+}
+
 func (p *Qwen3Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
 	p.buffer.Reset()

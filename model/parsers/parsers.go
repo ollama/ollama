@@ -18,6 +18,7 @@ type Parser interface {
 	Add(s string, done bool) (content string, thinking string, calls []api.ToolCall, err error)
 	HasToolSupport() bool
 	HasThinkingSupport() bool
+	CanDisableThinking() bool
 }
 
 type ParserConstructor func() Parser
@@ -108,6 +109,10 @@ func (p *PassthroughParser) HasToolSupport() bool {
 }
 
 func (p *PassthroughParser) HasThinkingSupport() bool {
+	return false
+}
+
+func (p *PassthroughParser) CanDisableThinking() bool {
 	return false
 }
 

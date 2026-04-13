@@ -45,6 +45,10 @@ func (p *LFM2Parser) HasThinkingSupport() bool {
 	return p.hasThinkingSupport
 }
 
+func (p *LFM2Parser) CanDisableThinking() bool {
+	return p.hasThinkingSupport
+}
+
 func (p *LFM2Parser) setInitialState(lastMessage *api.Message, thinkValue *api.ThinkValue) {
 	prefill := lastMessage != nil && lastMessage.Role == "assistant"
 

@@ -27,6 +27,10 @@ func (m *mockParser) HasThinkingSupport() bool {
 	return false
 }
 
+func (m *mockParser) CanDisableThinking() bool {
+	return false
+}
+
 func TestRegisterCustomParser(t *testing.T) {
 	// Register a custom parser
 	Register("custom-parser", func() Parser {
@@ -99,6 +103,44 @@ func TestUnknownParserReturnsNil(t *testing.T) {
 	parser := ParserForName("nonexistent-parser")
 	if parser != nil {
 		t.Error("expected nil for unknown parser")
+	}
+}
+
+func TestCanDisableThinking(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected bool
+	}{
+		{"qwen3-thinking", true},
+		{"qwen3.5", true},
+		{"deepseek3", true},
+		{"cogito", true},
+		{"lfm2-thinking", true},
+		{"nemotron-3-nano", true},
+		{"glm-4.7", true},
+		{"qwen3-vl-thinking", false},
+		{"olmo3-think", false},
+		{"ministral", false},
+		{"passthrough", false},
+		{"qwen3", false},
+		{"qwen3-coder", false},
+		{"olmo3", false},
+		{"functiongemma", false},
+		{"glm-ocr", false},
+		{"lfm2", false},
+		{"harmony", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := ParserForName(tt.name)
+			if parser == nil {
+				t.Fatalf("parser %q not found", tt.name)
+			}
+			if got := parser.CanDisableThinking(); got != tt.expected {
+				t.Errorf("CanDisableThinking() = %v, want %v", got, tt.expected)
+			}
+		})
 	}
 }
 

@@ -43,6 +43,10 @@ func (p *Qwen3CoderParser) HasThinkingSupport() bool {
 	return false
 }
 
+func (p *Qwen3CoderParser) CanDisableThinking() bool {
+	return false
+}
+
 func (p *Qwen3CoderParser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
 	p.callIndex = 0
