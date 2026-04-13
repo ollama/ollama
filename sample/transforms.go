@@ -67,16 +67,10 @@ func topK(ts []token, k int) []token {
 		}
 	}
 
-	slices.SortFunc(h, func(a, b token) int {
-		switch {
-		case a.value < b.value:
-			return 1
-		case a.value > b.value:
-			return -1
-		default:
-			return 0
-		}
-	})
+	for i := len(h) - 1; i > 0; i-- {
+		h[0], h[i] = h[i], h[0]
+		siftDownMin(h[:i], 0)
+	}
 
 	return h
 }
@@ -90,7 +84,7 @@ func siftDownMin(ts []token, i int) {
 		if right := child + 1; right < len(ts) && ts[right].value < ts[child].value {
 			child = right
 		}
-		if ts[i].value <= ts[child].value {
+		if !(ts[child].value < ts[i].value) {
 			return
 		}
 		ts[i], ts[child] = ts[child], ts[i]
