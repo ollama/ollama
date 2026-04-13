@@ -53,7 +53,8 @@ const Message = React.memo(
       prevProps.messageIndex === nextProps.messageIndex &&
       prevProps.isStreaming === nextProps.isStreaming &&
       prevProps.isFaded === nextProps.isFaded &&
-      prevProps.browserToolResult === nextProps.browserToolResult
+      prevProps.browserToolResult === nextProps.browserToolResult &&
+      prevProps.lastToolQuery === nextProps.lastToolQuery
     );
   },
 );
@@ -526,17 +527,17 @@ function ToolCallDisplay({
   toolCall: ToolCall;
   browserToolResult?: BrowserToolResult;
 }) {
-  const [isCollapsed, setIsCollapsed] = React.useState(true);
+  const parsedArgs = useMemo(() => {
+    try {
+      return JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }, [toolCall.function.arguments]);
 
   // frontend tool call display for web_search
   if (toolCall.function.name === "web_search") {
-    let args: Record<string, unknown> | null = null;
-    try {
-      args = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
-    } catch {
-      args = null;
-    }
-    const query = args && typeof args.query === "string" ? args.query : "";
+    const query = parsedArgs && typeof parsedArgs.query === "string" ? parsedArgs.query : "";
     return (
       <div className="text-neutral-600 dark:text-neutral-400 relative select-text">
         {/*  Magnifying Glass Icon */}
@@ -556,13 +557,7 @@ function ToolCallDisplay({
   }
 
   if (toolCall.function.name === "web_fetch") {
-    let args: Record<string, unknown> | null = null;
-    try {
-      args = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
-    } catch {
-      args = null;
-    }
-    const url = args && typeof args.url === "string" ? args.url : "";
+    const url = parsedArgs && typeof parsedArgs.url === "string" ? parsedArgs.url : "";
     return (
       <div className="text-neutral-600 dark:text-neutral-400 relative select-text">
         {/* Magnifying Glass Icon */}
@@ -583,12 +578,7 @@ function ToolCallDisplay({
 
   if (!toolCall.function.name.startsWith("browser.")) {
     let preview = "";
-    // preview from the tool's JSON arguments.
-    try {
-      const argsObj = JSON.parse(toolCall.function.arguments) as Record<
-        string,
-        unknown
-      >;
+    if (parsedArgs) {
       const preferredKey = [
         "query",
         "url",
@@ -596,15 +586,10 @@ function ToolCallDisplay({
         "id",
         "file",
         "path",
-      ].find((k) => Object.prototype.hasOwnProperty.call(argsObj, k));
-      if (preferredKey && typeof (argsObj as any)[preferredKey] === "string") {
-        preview = String((argsObj as any)[preferredKey]);
+      ].find((k) => Object.prototype.hasOwnProperty.call(parsedArgs, k));
+      if (preferredKey && typeof parsedArgs[preferredKey] === "string") {
+        preview = String(parsedArgs[preferredKey]);
       }
-    } catch (err) {
-      console.error(
-        "Failed to parse toolCall.function.arguments in Message.tsx:",
-        err,
-      );
     }
 
     return (
@@ -633,139 +618,11 @@ function ToolCallDisplay({
     );
   }
 
-  if (toolCall.function.name.startsWith("browser.")) {
-    return (
-      <BrowserToolCallDisplay
-        toolCall={toolCall}
-        browserToolResult={browserToolResult}
-      />
-    );
-  }
-
-  let parsedArgs = null;
-  try {
-    parsedArgs = JSON.parse(toolCall.function.arguments);
-  } catch {
-    parsedArgs = toolCall.function.arguments;
-  }
-
-  // Create a compact preview of arguments as a string
-  const getArgsPreview = () => {
-    if (!parsedArgs || typeof parsedArgs !== "object") {
-      return parsedArgs ? String(parsedArgs) : "";
-    }
-
-    const argPairs = Object.entries(parsedArgs)
-      .map(([key, value]) => {
-        let displayValue;
-        if (typeof value === "string") {
-          displayValue = `"${value}"`;
-        } else if (typeof value === "object") {
-          displayValue = JSON.stringify(value);
-        } else {
-          displayValue = String(value);
-        }
-        return `${key}=${displayValue}`;
-      })
-      .join(", ");
-
-    return argPairs;
-  };
-
   return (
-    <div
-      className={`flex flex-col w-full ${!isCollapsed ? "text-neutral-800 dark:text-neutral-200" : "text-neutral-600 dark:text-neutral-400"}
-         hover:text-neutral-800
-        dark:hover:text-neutral-200 transition-colors`}
-    >
-      <div
-        className="flex items-center cursor-pointer group/tool self-start relative"
-        onClick={() => setIsCollapsed(!isCollapsed)}
-      >
-        {/* Tool icon */}
-        <svg
-          className={`w-3 absolute left-0 top-1/2 -translate-y-1/2 transition-opacity ${
-            isCollapsed ? "opacity-100" : "opacity-0"
-          } group-hover/tool:opacity-0 fill-current will-change-opacity`}
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-        </svg>
-        {/* Arrow */}
-        <svg
-          className={`h-4 w-4 absolute transition-all ${
-            isCollapsed
-              ? "-rotate-90 opacity-0 group-hover/tool:opacity-100"
-              : "rotate-0 opacity-100"
-          } will-change-[opacity,transform]`}
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <polyline points="6 9 12 15 18 9"></polyline>
-        </svg>
-
-        <h3 className="ml-6 font-mono text-sm">
-          <span className="font-semibold">{toolCall.function.name}</span>
-          {isCollapsed && parsedArgs && (
-            <span className="text-neutral-500 dark:text-neutral-500 ml-1">
-              ({getArgsPreview()})
-            </span>
-          )}
-          <span className="text-neutral-500 dark:text-neutral-500 ml-2 text-xs">
-            {toolCall.type}
-          </span>
-        </h3>
-      </div>
-      <div
-        className={`text-xs text-neutral-500 dark:text-neutral-500 rounded-md
-          transition-[max-height,opacity] duration-300 ease-in-out ml-6 mt-2`}
-        style={{
-          maxHeight: isCollapsed ? "0px" : "40rem",
-          opacity: isCollapsed ? 0 : 1,
-        }}
-      >
-        <div className="transition-transform duration-300 opacity-75">
-          {parsedArgs && (
-            <div className="mb-4">
-              <div className="text-xs font-semibold text-neutral-600 dark:text-neutral-400 mb-1">
-                Arguments:
-              </div>
-              <pre className="text-xs bg-neutral-100 dark:bg-neutral-800 p-2 rounded overflow-x-auto">
-                <code className="text-neutral-800 dark:text-neutral-200">
-                  {typeof parsedArgs === "object"
-                    ? JSON.stringify(parsedArgs, null, 2)
-                    : parsedArgs}
-                </code>
-              </pre>
-            </div>
-          )}
-
-          {toolCall.function.result && (
-            <div>
-              <div className="text-xs font-semibold text-neutral-600 dark:text-neutral-400 mb-1">
-                Result:
-              </div>
-              <pre className="text-xs bg-neutral-100 dark:bg-neutral-800 p-2 rounded overflow-x-auto max-h-40">
-                <code className="text-neutral-800 dark:text-neutral-200">
-                  {typeof toolCall.function.result === "object"
-                    ? JSON.stringify(toolCall.function.result, null, 2)
-                    : toolCall.function.result}
-                </code>
-              </pre>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+    <BrowserToolCallDisplay
+      toolCall={toolCall}
+      browserToolResult={browserToolResult}
+    />
   );
 }
 

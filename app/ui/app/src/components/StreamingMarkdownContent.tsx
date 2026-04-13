@@ -117,17 +117,14 @@ const CodeBlock = React.memo(
   },
 );
 
+const remarkPlugins = [
+  defaultRemarkPlugins.gfm,
+  defaultRemarkPlugins.math,
+  remarkCitationParser,
+];
+
 const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
   React.memo(({ content, isStreaming = false, size, browserToolResult }) => {
-    // Build the remark plugins array - keep default GFM and Math, add citations
-    const remarkPlugins = React.useMemo(() => {
-      return [
-        defaultRemarkPlugins.gfm,
-        defaultRemarkPlugins.math,
-        remarkCitationParser,
-      ];
-    }, []);
-
     return (
       <div
         className={`
