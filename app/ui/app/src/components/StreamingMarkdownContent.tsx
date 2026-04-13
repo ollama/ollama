@@ -34,6 +34,31 @@ const extractText = (node: React.ReactNode): string => {
 const CodeBlock = React.memo(
   ({ children }: React.HTMLAttributes<HTMLPreElement>) => {
     const theme = useTheme();
+    const [, forceRender] = React.useReducer((x: number) => x + 1, 0);
+    const visibleRef = React.useRef(false);
+
+    // Callback ref: set up IntersectionObserver once when the DOM node mounts
+    const observerRef = React.useRef<IntersectionObserver | null>(null);
+    const setBlockRef = React.useCallback((node: HTMLDivElement | null) => {
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+        observerRef.current = null;
+      }
+      if (!node || visibleRef.current) return;
+
+      observerRef.current = new IntersectionObserver(
+        ([entry]) => {
+          if (entry.isIntersecting) {
+            visibleRef.current = true;
+            observerRef.current?.disconnect();
+            observerRef.current = null;
+            forceRender();
+          }
+        },
+        { rootMargin: "200px" },
+      );
+      observerRef.current.observe(node);
+    }, [forceRender]);
 
     // Extract code and language from children
     const codeElement = children as React.ReactElement<{
@@ -52,7 +77,7 @@ const CodeBlock = React.memo(
     }>({ key: "", light: null, dark: null });
 
     const tokens = React.useMemo(() => {
-      if (!highlighter) return null;
+      if (!visibleRef.current || !highlighter) return null;
       // Skip tokenization for unregistered languages to avoid Shiki throwing per code block
       if (language && !highlighter.getLoadedLanguages().includes(language)) return null;
 
@@ -75,10 +100,11 @@ const CodeBlock = React.memo(
         console.error("Failed to highlight code:", error);
         return null;
       }
-    }, [codeText, language, theme]);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [visibleRef.current, codeText, language, theme]);
 
     return (
-      <div className="relative bg-neutral-100 dark:bg-neutral-800 rounded-2xl overflow-hidden my-6">
+      <div ref={setBlockRef} className="relative bg-neutral-100 dark:bg-neutral-800 rounded-2xl overflow-hidden my-6">
         <div className="flex select-none">
           {language && (
             <div className="text-[13px] text-neutral-500 dark:text-neutral-400 font-mono px-4 py-2">
