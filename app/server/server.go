@@ -224,6 +224,7 @@ func (s *Server) cmd(ctx context.Context) (*exec.Cmd, error) {
 		s := strings.SplitN(kv, "=", 2)
 		env[s[0]] = s[1]
 	}
+	mergeDarwinLaunchctlEnv(env)
 	if settings.Expose {
 		env["OLLAMA_HOST"] = "0.0.0.0"
 	}
