@@ -755,6 +755,12 @@ func TestSavedMatchesModels(t *testing.T) {
 			want:   false,
 		},
 		{
+			name:   "nil models in saved with non-nil models",
+			saved:  &config.IntegrationConfig{Models: nil},
+			models: []string{"llama3.2"},
+			want:   false,
+		},
+		{
 			name:   "empty both",
 			saved:  &config.IntegrationConfig{Models: nil},
 			models: nil,
