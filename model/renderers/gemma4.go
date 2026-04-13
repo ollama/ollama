@@ -124,9 +124,6 @@ func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkV
 	// Generation prompt.
 	if prevMessageType != "tool_response" && prevMessageType != "tool_call" {
 		sb.WriteString("<|turn>model\n")
-		if !hasThink {
-			sb.WriteString("<|channel>thought\n<channel|>")
-		}
 	}
 
 	return sb.String(), nil
