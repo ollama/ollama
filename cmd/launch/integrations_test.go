@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/config"
 )
 
 type stubEditorRunner struct {
@@ -719,6 +720,59 @@ func TestLauncherClientFilterDisabledCloudModels_ChecksStatusOncePerInvocation(t
 	}
 	if statusCalls != 1 {
 		t.Fatalf("expected one cloud status lookup, got %d", statusCalls)
+	}
+}
+
+func TestSavedMatchesModels(t *testing.T) {
+	tests := []struct {
+		name   string
+		saved  *config.IntegrationConfig
+		models []string
+		want   bool
+	}{
+		{
+			name:   "nil saved",
+			saved:  nil,
+			models: []string{"llama3.2"},
+			want:   false,
+		},
+		{
+			name:   "identical order",
+			saved:  &config.IntegrationConfig{Models: []string{"llama3.2", "qwen3:8b"}},
+			models: []string{"llama3.2", "qwen3:8b"},
+			want:   true,
+		},
+		{
+			name:   "different order",
+			saved:  &config.IntegrationConfig{Models: []string{"llama3.2", "qwen3:8b"}},
+			models: []string{"qwen3:8b", "llama3.2"},
+			want:   false,
+		},
+		{
+			name:   "subset",
+			saved:  &config.IntegrationConfig{Models: []string{"llama3.2", "qwen3:8b"}},
+			models: []string{"llama3.2"},
+			want:   false,
+		},
+		{
+			name:   "nil models in saved with non-nil models",
+			saved:  &config.IntegrationConfig{Models: nil},
+			models: []string{"llama3.2"},
+			want:   false,
+		},
+		{
+			name:   "empty both",
+			saved:  &config.IntegrationConfig{Models: nil},
+			models: nil,
+			want:   true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := savedMatchesModels(tt.saved, tt.models); got != tt.want {
+				t.Fatalf("savedMatchesModels = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

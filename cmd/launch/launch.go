@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/api"
@@ -500,7 +501,7 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 		return nil
 	}
 
-	if needsConfigure || req.ModelOverride != "" {
+	if (needsConfigure || req.ModelOverride != "") && !savedMatchesModels(saved, models) {
 		if err := prepareEditorIntegration(name, runner, editor, models); err != nil {
 			return err
 		}
@@ -844,6 +845,13 @@ func firstModel(models []string) string {
 		return ""
 	}
 	return models[0]
+}
+
+func savedMatchesModels(saved *config.IntegrationConfig, models []string) bool {
+	if saved == nil {
+		return false
+	}
+	return slices.Equal(saved.Models, models)
 }
 
 func editorPreCheckedModels(saved *config.IntegrationConfig, override string) []string {
