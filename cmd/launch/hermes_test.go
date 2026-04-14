@@ -49,6 +49,42 @@ func withHermesUserHome(t *testing.T, dir string) {
 	})
 }
 
+func withHermesLookPath(t *testing.T, fn func(string) (string, error)) {
+	t.Helper()
+	old := hermesLookPath
+	hermesLookPath = fn
+	t.Cleanup(func() {
+		hermesLookPath = old
+	})
+}
+
+func clearHermesMessagingEnvVars(t *testing.T) {
+	t.Helper()
+	restores := make([]func(), 0)
+	for _, group := range hermesMessagingEnvGroups {
+		for _, key := range group {
+			key := key
+			value, ok := os.LookupEnv(key)
+			if ok {
+				value := value
+				restores = append(restores, func() {
+					_ = os.Setenv(key, value)
+				})
+			} else {
+				restores = append(restores, func() {
+					_ = os.Unsetenv(key)
+				})
+			}
+			_ = os.Unsetenv(key)
+		}
+	}
+	t.Cleanup(func() {
+		for i := len(restores) - 1; i >= 0; i-- {
+			restores[i]()
+		}
+	})
+}
+
 func TestHermesIntegration(t *testing.T) {
 	h := &Hermes{}
 
@@ -530,12 +566,20 @@ func TestHermesRunPassthroughArgs(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, true)
 	withHermesPlatform(t, runtime.GOOS)
+	clearHermesMessagingEnvVars(t)
 	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	bin := filepath.Join(tmpDir, "hermes")
 	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '[%s]\\n' \"$*\" >> \"$HOME/hermes-invocations.log\"\n"), 0o755); err != nil {
 		t.Fatal(err)
+	}
+
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		t.Fatalf("did not expect messaging prompt during passthrough launch: %s", prompt)
+		return false, nil
 	}
 
 	h := &Hermes{}
@@ -549,6 +593,382 @@ func TestHermesRunPassthroughArgs(t *testing.T) {
 	}
 	if got := strings.TrimSpace(string(data)); got != "[--continue]" {
 		t.Fatalf("expected passthrough args to reach hermes, got %q", got)
+	}
+}
+
+func TestHermesRun_PromptsForMessagingSetupBeforeDefaultLaunch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, true)
+	withHermesPlatform(t, runtime.GOOS)
+	clearHermesMessagingEnvVars(t)
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	bin := filepath.Join(tmpDir, "hermes")
+	script := `#!/bin/sh
+printf '[%s]\n' "$*" >> "$HOME/hermes-invocations.log"
+if [ "$1" = "gateway" ] && [ "$2" = "setup" ]; then
+  /bin/mkdir -p "$HOME/.hermes"
+  printf 'TELEGRAM_BOT_TOKEN=configured\n' > "$HOME/.hermes/.env"
+fi
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	promptCount := 0
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		promptCount++
+		if prompt != hermesGatewaySetupTitle {
+			t.Fatalf("unexpected prompt %q", prompt)
+		}
+		if options.YesLabel != "Yes" || options.NoLabel != "Set up later" {
+			t.Fatalf("unexpected prompt labels: %+v", options)
+		}
+		return true, nil
+	}
+
+	h := &Hermes{}
+	if err := h.Run("", nil); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if promptCount != 1 {
+		t.Fatalf("expected one messaging prompt, got %d", promptCount)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "hermes-invocations.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected setup then launch invocations, got %v", lines)
+	}
+	if lines[0] != "[gateway setup]" {
+		t.Fatalf("expected gateway setup first, got %q", lines[0])
+	}
+	if lines[1] != "[]" {
+		t.Fatalf("expected default hermes launch after setup, got %q", lines[1])
+	}
+}
+
+func TestHermesRun_SetUpLaterRepromptsOnLaterLaunches(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, true)
+	withHermesPlatform(t, runtime.GOOS)
+	clearHermesMessagingEnvVars(t)
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	bin := filepath.Join(tmpDir, "hermes")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '[%s]\\n' \"$*\" >> \"$HOME/hermes-invocations.log\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	promptCount := 0
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		promptCount++
+		if prompt != hermesGatewaySetupTitle {
+			t.Fatalf("unexpected prompt %q", prompt)
+		}
+		return false, nil
+	}
+
+	h := &Hermes{}
+	if err := h.Run("", nil); err != nil {
+		t.Fatalf("first Run returned error: %v", err)
+	}
+	if err := h.Run("", nil); err != nil {
+		t.Fatalf("second Run returned error: %v", err)
+	}
+
+	if promptCount != 2 {
+		t.Fatalf("expected two prompts across two launches, got %d", promptCount)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "hermes-invocations.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected one default launch per run, got %v", lines)
+	}
+	for _, line := range lines {
+		if line != "[]" {
+			t.Fatalf("expected only default launches after choosing later, got %v", lines)
+		}
+	}
+}
+
+func TestHermesRun_SkipsMessagingPromptWhenConfigured(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, true)
+	withHermesPlatform(t, runtime.GOOS)
+	clearHermesMessagingEnvVars(t)
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	envPath := filepath.Join(tmpDir, ".hermes", ".env")
+	if err := os.MkdirAll(filepath.Dir(envPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(envPath, []byte("DISCORD_BOT_TOKEN=configured\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	bin := filepath.Join(tmpDir, "hermes")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '[%s]\\n' \"$*\" >> \"$HOME/hermes-invocations.log\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		t.Fatalf("did not expect messaging prompt when Hermes gateway is configured: %s", prompt)
+		return false, nil
+	}
+
+	h := &Hermes{}
+	if err := h.Run("", nil); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "hermes-invocations.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "[]" {
+		t.Fatalf("expected only default launch invocation, got %q", got)
+	}
+}
+
+func TestHermesRun_SkipsMessagingPromptWithYesPolicy(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, true)
+	withHermesPlatform(t, runtime.GOOS)
+	clearHermesMessagingEnvVars(t)
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	bin := filepath.Join(tmpDir, "hermes")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '[%s]\\n' \"$*\" >> \"$HOME/hermes-invocations.log\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	restoreConfirm := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
+	defer restoreConfirm()
+
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		t.Fatalf("did not expect messaging prompt in --yes mode: %s", prompt)
+		return false, nil
+	}
+
+	h := &Hermes{}
+	if err := h.Run("", nil); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "hermes-invocations.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "[]" {
+		t.Fatalf("expected only default launch invocation, got %q", got)
+	}
+}
+
+func TestHermesRun_MessagingSetupFailureStopsLaunch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, true)
+	withHermesPlatform(t, runtime.GOOS)
+	clearHermesMessagingEnvVars(t)
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	bin := filepath.Join(tmpDir, "hermes")
+	script := `#!/bin/sh
+printf '[%s]\n' "$*" >> "$HOME/hermes-invocations.log"
+if [ "$1" = "gateway" ] && [ "$2" = "setup" ]; then
+  exit 23
+fi
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		if prompt != hermesGatewaySetupTitle {
+			t.Fatalf("unexpected prompt %q", prompt)
+		}
+		return true, nil
+	}
+
+	h := &Hermes{}
+	err := h.Run("", nil)
+	if err == nil {
+		t.Fatal("expected messaging setup failure")
+	}
+	if !strings.Contains(err.Error(), "hermes messaging setup failed") {
+		t.Fatalf("expected helpful messaging setup error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), hermesGatewaySetupHint) {
+		t.Fatalf("expected recovery hint, got %v", err)
+	}
+
+	data, readErr := os.ReadFile(filepath.Join(tmpDir, "hermes-invocations.log"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if got := strings.TrimSpace(string(data)); got != "[gateway setup]" {
+		t.Fatalf("expected launch to stop after failed setup, got %q", got)
+	}
+}
+
+func TestHermesMessagingConfiguredRecognizesSupportedGatewayVars(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withHermesPlatform(t, "darwin")
+	clearHermesMessagingEnvVars(t)
+
+	envPath := filepath.Join(tmpDir, ".hermes", ".env")
+	if err := os.MkdirAll(filepath.Dir(envPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		env  string
+		want bool
+	}{
+		{name: "none", env: "", want: false},
+		{name: "telegram", env: "TELEGRAM_BOT_TOKEN=token\n", want: true},
+		{name: "discord", env: "DISCORD_BOT_TOKEN=token\n", want: true},
+		{name: "slack", env: "SLACK_BOT_TOKEN=token\n", want: true},
+		{name: "signal", env: "SIGNAL_ACCOUNT=account\n", want: true},
+		{name: "email", env: "EMAIL_ADDRESS=user@example.com\n", want: true},
+		{name: "sms", env: "TWILIO_ACCOUNT_SID=sid\n", want: true},
+		{name: "matrix token", env: "MATRIX_ACCESS_TOKEN=token\n", want: true},
+		{name: "matrix password", env: "MATRIX_PASSWORD=secret\n", want: true},
+		{name: "mattermost", env: "MATTERMOST_TOKEN=token\n", want: true},
+		{name: "whatsapp", env: "WHATSAPP_PHONE_NUMBER_ID=phone\n", want: true},
+		{name: "dingtalk", env: "DINGTALK_CLIENT_ID=client\n", want: true},
+		{name: "feishu", env: "FEISHU_APP_ID=app\n", want: true},
+		{name: "wecom", env: "WECOM_BOT_ID=bot\n", want: true},
+		{name: "weixin", env: "WEIXIN_ACCOUNT_ID=account\n", want: true},
+		{name: "bluebubbles", env: "BLUEBUBBLES_SERVER_URL=https://example.invalid\n", want: true},
+		{name: "webhooks", env: "WEBHOOK_ENABLED=true\n", want: true},
+	}
+
+	h := &Hermes{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := os.WriteFile(envPath, []byte(tt.env), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if got := h.messagingConfigured(); got != tt.want {
+				t.Fatalf("messagingConfigured() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHermesRunWindowsWSL_UsesGatewaySetupPreflight(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell test binaries to simulate WSL")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withLauncherHooks(t)
+	withInteractiveSession(t, true)
+	withHermesPlatform(t, "windows")
+	clearHermesMessagingEnvVars(t)
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	wslPath := filepath.Join(tmpDir, "wsl.exe")
+	wslScript := `#!/bin/sh
+printf '[%s]\n' "$*" >> "$HOME/wsl-invocations.log"
+exec /bin/sh -lc "$3"
+`
+	if err := os.WriteFile(wslPath, []byte(wslScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	hermesBin := filepath.Join(tmpDir, "hermes")
+	hermesScript := `#!/bin/sh
+printf '[%s]\n' "$*" >> "$HOME/hermes-invocations.log"
+if [ "$1" = "gateway" ] && [ "$2" = "setup" ]; then
+  /bin/mkdir -p "$HOME/.hermes"
+  printf 'TELEGRAM_BOT_TOKEN=configured\n' > "$HOME/.hermes/.env"
+fi
+`
+	if err := os.WriteFile(hermesBin, []byte(hermesScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	withHermesLookPath(t, func(file string) (string, error) {
+		if file == "wsl.exe" {
+			return wslPath, nil
+		}
+		return "", os.ErrNotExist
+	})
+
+	promptCount := 0
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		promptCount++
+		if prompt != hermesGatewaySetupTitle {
+			t.Fatalf("unexpected prompt %q", prompt)
+		}
+		return true, nil
+	}
+
+	h := &Hermes{}
+	if err := h.Run("", nil); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if promptCount != 1 {
+		t.Fatalf("expected one messaging prompt, got %d", promptCount)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "hermes-invocations.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected WSL hermes to run setup then launch, got %v", lines)
+	}
+	if lines[0] != "[gateway setup]" {
+		t.Fatalf("expected WSL gateway setup first, got %q", lines[0])
+	}
+	if lines[1] != "[]" {
+		t.Fatalf("expected WSL default hermes launch second, got %q", lines[1])
 	}
 }
 
@@ -613,6 +1033,9 @@ exit 0
 	data, err := os.ReadFile(filepath.Join(tmpDir, "bash.log"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "--skip-setup") {
+		t.Fatalf("expected install script to skip upstream setup, got logs:\n%s", data)
 	}
 	if !strings.Contains(string(data), "-lc "+hermesInstallScript) {
 		t.Fatalf("expected official install script invocation, got logs:\n%s", data)

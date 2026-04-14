@@ -1,6 +1,7 @@
 package launch
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,11 +26,13 @@ import (
 )
 
 const (
-	hermesInstallScript  = "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash"
-	hermesProviderName   = "Ollama"
-	hermesProviderKey    = "ollama-launch"
-	hermesLegacyKey      = "ollama"
-	hermesPlaceholderKey = "ollama"
+	hermesInstallScript     = "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash -s -- --skip-setup"
+	hermesProviderName      = "Ollama"
+	hermesProviderKey       = "ollama-launch"
+	hermesLegacyKey         = "ollama"
+	hermesPlaceholderKey    = "ollama"
+	hermesGatewaySetupHint  = "hermes gateway setup"
+	hermesGatewaySetupTitle = "Connect a messaging app now?"
 )
 
 var (
@@ -38,6 +42,24 @@ var (
 	hermesUserHome  = os.UserHomeDir
 	hermesOllamaURL = envconfig.ConnectableHost
 )
+
+var hermesMessagingEnvGroups = [][]string{
+	{"TELEGRAM_BOT_TOKEN"},
+	{"DISCORD_BOT_TOKEN"},
+	{"SLACK_BOT_TOKEN"},
+	{"SIGNAL_ACCOUNT"},
+	{"EMAIL_ADDRESS"},
+	{"TWILIO_ACCOUNT_SID"},
+	{"MATRIX_ACCESS_TOKEN", "MATRIX_PASSWORD"},
+	{"MATTERMOST_TOKEN"},
+	{"WHATSAPP_PHONE_NUMBER_ID"},
+	{"DINGTALK_CLIENT_ID"},
+	{"FEISHU_APP_ID"},
+	{"WECOM_BOT_ID"},
+	{"WEIXIN_ACCOUNT_ID"},
+	{"BLUEBUBBLES_SERVER_URL"},
+	{"WEBHOOK_ENABLED"},
+}
 
 // Hermes is intentionally not an Editor integration: launch owns one primary
 // model and the local Ollama endpoint, while Hermes keeps its own discovery and
@@ -62,6 +84,11 @@ func (h *Hermes) Run(_ string, args []string) error {
 
 	bin, err := h.findUnixBinary()
 	if err != nil {
+		return err
+	}
+	if err := h.runGatewaySetupPreflight(args, func() error {
+		return hermesAttachedCommand(bin, "gateway", "setup").Run()
+	}); err != nil {
 		return err
 	}
 	return hermesAttachedCommand(bin, args...).Run()
@@ -283,12 +310,25 @@ func (h *Hermes) findUnixBinary() (string, error) {
 
 func (h *Hermes) runWindows(args []string) error {
 	if path, err := hermesLookPath("hermes"); err == nil {
+		if err := h.runGatewaySetupPreflight(args, func() error {
+			return hermesAttachedCommand(path, "gateway", "setup").Run()
+		}); err != nil {
+			return err
+		}
 		return hermesAttachedCommand(path, args...).Run()
 	}
 	if !h.wslAvailable() {
 		return hermesWindowsHint(fmt.Errorf("hermes is not installed"))
 	}
-	return hermesWindowsHint(h.runWSL(append([]string{"hermes"}, args...)...))
+	if err := h.runGatewaySetupPreflight(args, func() error {
+		return h.runWSL("hermes", "gateway", "setup")
+	}); err != nil {
+		return err
+	}
+	if err := h.runWSL(append([]string{"hermes"}, args...)...); err != nil {
+		return hermesWindowsHint(err)
+	}
+	return nil
 }
 
 func (h *Hermes) runWSL(args ...string) error {
@@ -438,6 +478,154 @@ func hermesBackupData(path string, data []byte) error {
 
 func hermesBaseURL() string {
 	return strings.TrimRight(hermesOllamaURL().String(), "/") + "/v1"
+}
+
+func hermesEnvPath() (string, error) {
+	home, err := hermesUserHome()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".hermes", ".env"), nil
+}
+
+func (h *Hermes) runGatewaySetupPreflight(args []string, runSetup func() error) error {
+	if len(args) > 0 || !isInteractiveSession() || currentLaunchConfirmPolicy.yes || currentLaunchConfirmPolicy.requireYesMessage {
+		return nil
+	}
+	if h.messagingConfigured() {
+		return nil
+	}
+
+	fmt.Fprintf(os.Stderr, "\nHermes can message you on Telegram, Discord, Slack, and more.\n\n")
+	ok, err := ConfirmPromptWithOptions(hermesGatewaySetupTitle, ConfirmOptions{
+		YesLabel: "Yes",
+		NoLabel:  "Set up later",
+	})
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	if err := runSetup(); err != nil {
+		return fmt.Errorf("hermes messaging setup failed: %w\n\nTry running: %s", err, hermesGatewaySetupHint)
+	}
+	return nil
+}
+
+func (h *Hermes) messagingConfigured() bool {
+	envVars, err := h.gatewayEnvVars()
+	if err != nil {
+		return false
+	}
+	for _, group := range hermesMessagingEnvGroups {
+		for _, key := range group {
+			if strings.TrimSpace(envVars[key]) != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (h *Hermes) gatewayEnvVars() (map[string]string, error) {
+	envVars := make(map[string]string)
+
+	data, err := h.readGatewayEnvFile()
+	switch {
+	case err == nil:
+		for key, value := range hermesParseEnvFile(data) {
+			envVars[key] = value
+		}
+	case os.IsNotExist(err):
+		// nothing persisted yet
+	default:
+		return nil, err
+	}
+
+	if h.usesLocalRuntimeEnv() {
+		for _, group := range hermesMessagingEnvGroups {
+			for _, key := range group {
+				if value, ok := os.LookupEnv(key); ok {
+					envVars[key] = value
+				}
+			}
+		}
+	}
+
+	return envVars, nil
+}
+
+func (h *Hermes) readGatewayEnvFile() ([]byte, error) {
+	if hermesGOOS == "windows" {
+		if _, err := hermesLookPath("hermes"); err == nil {
+			path, err := hermesEnvPath()
+			if err != nil {
+				return nil, err
+			}
+			return os.ReadFile(path)
+		}
+		if h.wslAvailable() {
+			home, err := h.wslHome()
+			if err != nil {
+				return nil, err
+			}
+			return h.readWSLFile(pathpkg.Join(home, ".hermes", ".env"))
+		}
+	}
+
+	path, err := hermesEnvPath()
+	if err != nil {
+		return nil, err
+	}
+	return os.ReadFile(path)
+}
+
+func (h *Hermes) usesLocalRuntimeEnv() bool {
+	if hermesGOOS != "windows" {
+		return true
+	}
+	_, err := hermesLookPath("hermes")
+	return err == nil
+}
+
+func hermesParseEnvFile(data []byte) map[string]string {
+	out := make(map[string]string)
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	for scanner.Scan() {
+		line := strings.TrimSpace(strings.TrimPrefix(scanner.Text(), "\ufeff"))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "export ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+
+		value = strings.TrimSpace(value)
+		if len(value) >= 2 {
+			switch {
+			case value[0] == '"' && value[len(value)-1] == '"':
+				if unquoted, err := strconv.Unquote(value); err == nil {
+					value = unquoted
+				}
+			case value[0] == '\'' && value[len(value)-1] == '\'':
+				value = value[1 : len(value)-1]
+			}
+		}
+
+		out[key] = value
+	}
+	return out
 }
 
 func hermesOllamaClient() *api.Client {
