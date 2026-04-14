@@ -3,6 +3,8 @@ package launch
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -28,172 +30,701 @@ func TestOpenCodeIntegration(t *testing.T) {
 }
 
 func TestOpenCodeEdit(t *testing.T) {
-	t.Run("builds config content with provider", func(t *testing.T) {
-		setTestHome(t, t.TempDir())
-		o := &OpenCode{}
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	configDir := filepath.Join(tmpDir, ".config", "opencode")
+	configPath := filepath.Join(configDir, "opencode.json")
+	stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
+	statePath := filepath.Join(stateDir, "model.json")
+
+	cleanup := func() {
+		os.RemoveAll(configDir)
+		os.RemoveAll(stateDir)
+	}
+
+	t.Run("fresh install", func(t *testing.T) {
+		cleanup()
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
+			t.Fatal(err)
+		}
+		assertOpenCodeModelExists(t, configPath, "llama3.2")
+		assertOpenCodeDefaultModel(t, configPath, "ollama/llama3.2")
+		assertOpenCodeRecentModel(t, statePath, 0, "ollama", "llama3.2")
+	})
+
+	t.Run("preserve other providers", func(t *testing.T) {
+		cleanup()
+		os.MkdirAll(configDir, 0o755)
+		os.WriteFile(configPath, []byte(`{"provider":{"anthropic":{"apiKey":"xxx"}}}`), 0o644)
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(configPath)
+		var cfg map[string]any
+		json.Unmarshal(data, &cfg)
+		provider := cfg["provider"].(map[string]any)
+		if provider["anthropic"] == nil {
+			t.Error("anthropic provider was removed")
+		}
+		assertOpenCodeModelExists(t, configPath, "llama3.2")
+	})
+
+	t.Run("preserve other models", func(t *testing.T) {
+		cleanup()
+		os.MkdirAll(configDir, 0o755)
+		os.WriteFile(configPath, []byte(`{"provider":{"ollama":{"models":{"mistral":{"name":"Mistral"}}}}}`), 0o644)
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
+			t.Fatal(err)
+		}
+		assertOpenCodeModelExists(t, configPath, "mistral")
+		assertOpenCodeModelExists(t, configPath, "llama3.2")
+	})
+
+	t.Run("update existing model", func(t *testing.T) {
+		cleanup()
+		o.Edit([]string{"llama3.2"})
+		o.Edit([]string{"llama3.2"})
+		assertOpenCodeModelExists(t, configPath, "llama3.2")
+	})
+
+	t.Run("preserve top-level keys", func(t *testing.T) {
+		cleanup()
+		os.MkdirAll(configDir, 0o755)
+		os.WriteFile(configPath, []byte(`{"theme":"dark","keybindings":{}}`), 0o644)
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(configPath)
+		var cfg map[string]any
+		json.Unmarshal(data, &cfg)
+		if cfg["theme"] != "dark" {
+			t.Error("theme was removed")
+		}
+		if cfg["keybindings"] == nil {
+			t.Error("keybindings was removed")
+		}
+	})
+
+	t.Run("model state - insert at index 0", func(t *testing.T) {
+		cleanup()
+		os.MkdirAll(stateDir, 0o755)
+		os.WriteFile(statePath, []byte(`{"recent":[{"providerID":"anthropic","modelID":"claude"}],"favorite":[],"variant":{}}`), 0o644)
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
+			t.Fatal(err)
+		}
+		assertOpenCodeRecentModel(t, statePath, 0, "ollama", "llama3.2")
+		assertOpenCodeRecentModel(t, statePath, 1, "anthropic", "claude")
+	})
+
+	t.Run("model state - preserve favorites and variants", func(t *testing.T) {
+		cleanup()
+		os.MkdirAll(stateDir, 0o755)
+		os.WriteFile(statePath, []byte(`{"recent":[],"favorite":[{"providerID":"x","modelID":"y"}],"variant":{"a":"b"}}`), 0o644)
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(statePath)
+		var state map[string]any
+		json.Unmarshal(data, &state)
+		if len(state["favorite"].([]any)) != 1 {
+			t.Error("favorite was modified")
+		}
+		if state["variant"].(map[string]any)["a"] != "b" {
+			t.Error("variant was modified")
+		}
+	})
+
+	t.Run("model state - deduplicate on re-add", func(t *testing.T) {
+		cleanup()
+		os.MkdirAll(stateDir, 0o755)
+		os.WriteFile(statePath, []byte(`{"recent":[{"providerID":"ollama","modelID":"llama3.2"},{"providerID":"anthropic","modelID":"claude"}],"favorite":[],"variant":{}}`), 0o644)
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(statePath)
+		var state map[string]any
+		json.Unmarshal(data, &state)
+		recent := state["recent"].([]any)
+		if len(recent) != 2 {
+			t.Errorf("expected 2 recent entries, got %d", len(recent))
+		}
+		assertOpenCodeRecentModel(t, statePath, 0, "ollama", "llama3.2")
+	})
+
+	t.Run("remove model", func(t *testing.T) {
+		cleanup()
+		// First add two models
+		o.Edit([]string{"llama3.2", "mistral"})
+		assertOpenCodeModelExists(t, configPath, "llama3.2")
+		assertOpenCodeModelExists(t, configPath, "mistral")
+		assertOpenCodeDefaultModel(t, configPath, "ollama/llama3.2")
+
+		// Then remove one by only selecting the other
+		o.Edit([]string{"llama3.2"})
+		assertOpenCodeModelExists(t, configPath, "llama3.2")
+		assertOpenCodeModelNotExists(t, configPath, "mistral")
+		assertOpenCodeDefaultModel(t, configPath, "ollama/llama3.2")
+	})
+
+	t.Run("preserve user customizations on managed models", func(t *testing.T) {
+		cleanup()
 		if err := o.Edit([]string{"llama3.2"}); err != nil {
 			t.Fatal(err)
 		}
 
+		// Add custom fields to the model entry (simulating user edits)
+		data, _ := os.ReadFile(configPath)
 		var cfg map[string]any
-		if err := json.Unmarshal([]byte(o.configContent), &cfg); err != nil {
-			t.Fatalf("configContent is not valid JSON: %v", err)
+		json.Unmarshal(data, &cfg)
+		provider := cfg["provider"].(map[string]any)
+		ollama := provider["ollama"].(map[string]any)
+		models := ollama["models"].(map[string]any)
+		entry := models["llama3.2"].(map[string]any)
+		entry["_myPref"] = "custom-value"
+		entry["_myNum"] = 42
+		configData, _ := json.MarshalIndent(cfg, "", "  ")
+		os.WriteFile(configPath, configData, 0o644)
+
+		// Re-run Edit — should preserve custom fields
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
+			t.Fatal(err)
 		}
 
-		// Verify provider structure
-		provider, _ := cfg["provider"].(map[string]any)
-		ollama, _ := provider["ollama"].(map[string]any)
+		data, _ = os.ReadFile(configPath)
+		json.Unmarshal(data, &cfg)
+		provider = cfg["provider"].(map[string]any)
+		ollama = provider["ollama"].(map[string]any)
+		models = ollama["models"].(map[string]any)
+		entry = models["llama3.2"].(map[string]any)
+
+		if entry["_myPref"] != "custom-value" {
+			t.Errorf("_myPref was lost: got %v", entry["_myPref"])
+		}
+		if entry["_myNum"] != float64(42) {
+			t.Errorf("_myNum was lost: got %v", entry["_myNum"])
+		}
+		if v, ok := entry["_launch"].(bool); !ok || !v {
+			t.Errorf("_launch marker missing or false: got %v", entry["_launch"])
+		}
+	})
+
+	t.Run("migrate legacy [Ollama] suffix entries", func(t *testing.T) {
+		cleanup()
+		// Write a config with a legacy entry (has [Ollama] suffix but no _launch marker)
+		os.MkdirAll(configDir, 0o755)
+		os.WriteFile(configPath, []byte(`{"provider":{"ollama":{"models":{"llama3.2":{"name":"llama3.2 [Ollama]"}}}}}`), 0o644)
+
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
+			t.Fatal(err)
+		}
+
+		data, _ := os.ReadFile(configPath)
+		var cfg map[string]any
+		json.Unmarshal(data, &cfg)
+		provider := cfg["provider"].(map[string]any)
+		ollama := provider["ollama"].(map[string]any)
+		models := ollama["models"].(map[string]any)
+		entry := models["llama3.2"].(map[string]any)
+
+		// _launch marker should be added
+		if v, ok := entry["_launch"].(bool); !ok || !v {
+			t.Errorf("_launch marker not added during migration: got %v", entry["_launch"])
+		}
+		// [Ollama] suffix should be stripped
+		if name, ok := entry["name"].(string); !ok || name != "llama3.2" {
+			t.Errorf("name suffix not stripped: got %q", entry["name"])
+		}
+	})
+
+	t.Run("migrate Ollama (local) provider name", func(t *testing.T) {
+		cleanup()
+		os.MkdirAll(configDir, 0o755)
+		os.WriteFile(configPath, []byte(`{"provider":{"ollama":{"name":"Ollama (local)","npm":"@ai-sdk/openai-compatible","options":{"baseURL":"http://localhost:11434/v1"}}}}`), 0o644)
+
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
+			t.Fatal(err)
+		}
+
+		data, _ := os.ReadFile(configPath)
+		var cfg map[string]any
+		json.Unmarshal(data, &cfg)
+		provider := cfg["provider"].(map[string]any)
+		ollama := provider["ollama"].(map[string]any)
 		if ollama["name"] != "Ollama" {
-			t.Errorf("provider name = %v, want Ollama", ollama["name"])
-		}
-		if ollama["npm"] != "@ai-sdk/openai-compatible" {
-			t.Errorf("npm = %v, want @ai-sdk/openai-compatible", ollama["npm"])
-		}
-
-		// Verify model exists
-		models, _ := ollama["models"].(map[string]any)
-		if models["llama3.2"] == nil {
-			t.Error("model llama3.2 not found in config content")
-		}
-
-		// Verify default model
-		if cfg["model"] != "ollama/llama3.2" {
-			t.Errorf("model = %v, want ollama/llama3.2", cfg["model"])
+			t.Errorf("provider name not migrated: got %q, want %q", ollama["name"], "Ollama")
 		}
 	})
 
-	t.Run("multiple models", func(t *testing.T) {
-		setTestHome(t, t.TempDir())
-		o := &OpenCode{}
-		if err := o.Edit([]string{"llama3.2", "qwen3:32b"}); err != nil {
+	t.Run("preserve custom provider name", func(t *testing.T) {
+		cleanup()
+		os.MkdirAll(configDir, 0o755)
+		os.WriteFile(configPath, []byte(`{"provider":{"ollama":{"name":"My Custom Ollama","npm":"@ai-sdk/openai-compatible","options":{"baseURL":"http://localhost:11434/v1"}}}}`), 0o644)
+
+		if err := o.Edit([]string{"llama3.2"}); err != nil {
 			t.Fatal(err)
 		}
 
+		data, _ := os.ReadFile(configPath)
 		var cfg map[string]any
-		json.Unmarshal([]byte(o.configContent), &cfg)
-		provider, _ := cfg["provider"].(map[string]any)
-		ollama, _ := provider["ollama"].(map[string]any)
-		models, _ := ollama["models"].(map[string]any)
-
-		if models["llama3.2"] == nil {
-			t.Error("model llama3.2 not found")
-		}
-		if models["qwen3:32b"] == nil {
-			t.Error("model qwen3:32b not found")
-		}
-		// First model should be the default
-		if cfg["model"] != "ollama/llama3.2" {
-			t.Errorf("default model = %v, want ollama/llama3.2", cfg["model"])
+		json.Unmarshal(data, &cfg)
+		provider := cfg["provider"].(map[string]any)
+		ollama := provider["ollama"].(map[string]any)
+		if ollama["name"] != "My Custom Ollama" {
+			t.Errorf("custom provider name was changed: got %q, want %q", ollama["name"], "My Custom Ollama")
 		}
 	})
 
-	t.Run("empty models is no-op", func(t *testing.T) {
-		setTestHome(t, t.TempDir())
-		o := &OpenCode{}
-		if err := o.Edit([]string{}); err != nil {
-			t.Fatal(err)
-		}
-		if o.configContent != "" {
-			t.Errorf("expected empty configContent for no models, got %s", o.configContent)
-		}
-	})
+	t.Run("remove model preserves non-ollama models", func(t *testing.T) {
+		cleanup()
+		os.MkdirAll(configDir, 0o755)
+		// Add a non-Ollama model manually
+		os.WriteFile(configPath, []byte(`{"provider":{"ollama":{"models":{"external":{"name":"External Model"}}}}}`), 0o644)
 
-	t.Run("does not write config files", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-		o := &OpenCode{}
 		o.Edit([]string{"llama3.2"})
-
-		configDir := filepath.Join(tmpDir, ".config", "opencode")
-
-		if _, err := os.Stat(filepath.Join(configDir, "opencode.json")); !os.IsNotExist(err) {
-			t.Error("opencode.json should not be created")
-		}
-		if _, err := os.Stat(filepath.Join(configDir, "opencode.jsonc")); !os.IsNotExist(err) {
-			t.Error("opencode.jsonc should not be created")
-		}
-	})
-
-	t.Run("cloud model has limits", func(t *testing.T) {
-		setTestHome(t, t.TempDir())
-		o := &OpenCode{}
-		if err := o.Edit([]string{"glm-4.7:cloud"}); err != nil {
-			t.Fatal(err)
-		}
-
-		var cfg map[string]any
-		json.Unmarshal([]byte(o.configContent), &cfg)
-		provider, _ := cfg["provider"].(map[string]any)
-		ollama, _ := provider["ollama"].(map[string]any)
-		models, _ := ollama["models"].(map[string]any)
-		entry, _ := models["glm-4.7:cloud"].(map[string]any)
-
-		limit, ok := entry["limit"].(map[string]any)
-		if !ok {
-			t.Fatal("cloud model should have limit set")
-		}
-		expected := cloudModelLimits["glm-4.7"]
-		if limit["context"] != float64(expected.Context) {
-			t.Errorf("context = %v, want %d", limit["context"], expected.Context)
-		}
-		if limit["output"] != float64(expected.Output) {
-			t.Errorf("output = %v, want %d", limit["output"], expected.Output)
-		}
-	})
-
-	t.Run("local model has no limits", func(t *testing.T) {
-		setTestHome(t, t.TempDir())
-		o := &OpenCode{}
-		o.Edit([]string{"llama3.2"})
-
-		var cfg map[string]any
-		json.Unmarshal([]byte(o.configContent), &cfg)
-		provider, _ := cfg["provider"].(map[string]any)
-		ollama, _ := provider["ollama"].(map[string]any)
-		models, _ := ollama["models"].(map[string]any)
-		entry, _ := models["llama3.2"].(map[string]any)
-
-		if entry["limit"] != nil {
-			t.Errorf("local model should not have limit, got %v", entry["limit"])
-		}
+		assertOpenCodeModelExists(t, configPath, "llama3.2")
+		assertOpenCodeModelExists(t, configPath, "external") // Should be preserved
 	})
 }
 
-func TestOpenCodeModels_ReturnsNil(t *testing.T) {
-	o := &OpenCode{}
-	if models := o.Models(); models != nil {
-		t.Errorf("Models() = %v, want nil", models)
+func assertOpenCodeModelExists(t *testing.T, path, model string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	provider, ok := cfg["provider"].(map[string]any)
+	if !ok {
+		t.Fatal("provider not found")
+	}
+	ollama, ok := provider["ollama"].(map[string]any)
+	if !ok {
+		t.Fatal("ollama provider not found")
+	}
+	models, ok := ollama["models"].(map[string]any)
+	if !ok {
+		t.Fatal("models not found")
+	}
+	if models[model] == nil {
+		t.Errorf("model %s not found", model)
 	}
 }
 
-func TestOpenCodePaths(t *testing.T) {
-	t.Run("returns nil when model.json does not exist", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
+func assertOpenCodeModelNotExists(t *testing.T, path, model string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	provider, ok := cfg["provider"].(map[string]any)
+	if !ok {
+		return // No provider means no model
+	}
+	ollama, ok := provider["ollama"].(map[string]any)
+	if !ok {
+		return // No ollama means no model
+	}
+	models, ok := ollama["models"].(map[string]any)
+	if !ok {
+		return // No models means no model
+	}
+	if models[model] != nil {
+		t.Errorf("model %s should not exist but was found", model)
+	}
+}
 
-		o := &OpenCode{}
-		if paths := o.Paths(); paths != nil {
-			t.Errorf("Paths() = %v, want nil", paths)
+func assertOpenCodeDefaultModel(t *testing.T, path, want string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := cfg["model"].(string)
+	if got != want {
+		t.Fatalf("default model = %q, want %q", got, want)
+	}
+}
+
+func assertOpenCodeRecentModel(t *testing.T, path string, index int, providerID, modelID string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state map[string]any
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatal(err)
+	}
+	recent, ok := state["recent"].([]any)
+	if !ok {
+		t.Fatal("recent not found")
+	}
+	if index >= len(recent) {
+		t.Fatalf("index %d out of range (len=%d)", index, len(recent))
+	}
+	entry, ok := recent[index].(map[string]any)
+	if !ok {
+		t.Fatal("entry is not a map")
+	}
+	if entry["providerID"] != providerID {
+		t.Errorf("expected providerID %s, got %s", providerID, entry["providerID"])
+	}
+	if entry["modelID"] != modelID {
+		t.Errorf("expected modelID %s, got %s", modelID, entry["modelID"])
+	}
+}
+
+// Edge case tests for opencode.go
+
+func TestOpenCodeEdit_CorruptedConfigJSON(t *testing.T) {
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	configDir := filepath.Join(tmpDir, ".config", "opencode")
+	configPath := filepath.Join(configDir, "opencode.json")
+
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(configPath, []byte(`{corrupted json content`), 0o644)
+
+	// Should not panic - corrupted JSON should be treated as empty
+	err := o.Edit([]string{"llama3.2"})
+	if err != nil {
+		t.Fatalf("Edit failed with corrupted config: %v", err)
+	}
+
+	// Verify valid JSON was created
+	data, _ := os.ReadFile(configPath)
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Errorf("resulting config is not valid JSON: %v", err)
+	}
+}
+
+func TestOpenCodeEdit_CorruptedStateJSON(t *testing.T) {
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
+	statePath := filepath.Join(stateDir, "model.json")
+
+	os.MkdirAll(stateDir, 0o755)
+	os.WriteFile(statePath, []byte(`{corrupted state`), 0o644)
+
+	err := o.Edit([]string{"llama3.2"})
+	if err != nil {
+		t.Fatalf("Edit failed with corrupted state: %v", err)
+	}
+
+	// Verify valid state was created
+	data, _ := os.ReadFile(statePath)
+	var state map[string]any
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Errorf("resulting state is not valid JSON: %v", err)
+	}
+}
+
+func TestOpenCodeEdit_WrongTypeProvider(t *testing.T) {
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	configDir := filepath.Join(tmpDir, ".config", "opencode")
+	configPath := filepath.Join(configDir, "opencode.json")
+
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(configPath, []byte(`{"provider": "not a map"}`), 0o644)
+
+	err := o.Edit([]string{"llama3.2"})
+	if err != nil {
+		t.Fatalf("Edit with wrong type provider failed: %v", err)
+	}
+
+	// Verify provider is now correct type
+	data, _ := os.ReadFile(configPath)
+	var cfg map[string]any
+	json.Unmarshal(data, &cfg)
+
+	provider, ok := cfg["provider"].(map[string]any)
+	if !ok {
+		t.Fatalf("provider should be map after setup, got %T", cfg["provider"])
+	}
+	if provider["ollama"] == nil {
+		t.Error("ollama provider should be created")
+	}
+}
+
+func TestOpenCodeEdit_WrongTypeRecent(t *testing.T) {
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
+	statePath := filepath.Join(stateDir, "model.json")
+
+	os.MkdirAll(stateDir, 0o755)
+	os.WriteFile(statePath, []byte(`{"recent": "not an array", "favorite": [], "variant": {}}`), 0o644)
+
+	err := o.Edit([]string{"llama3.2"})
+	if err != nil {
+		t.Fatalf("Edit with wrong type recent failed: %v", err)
+	}
+
+	// The function should handle this gracefully
+	data, _ := os.ReadFile(statePath)
+	var state map[string]any
+	json.Unmarshal(data, &state)
+
+	// recent should be properly set after setup
+	recent, ok := state["recent"].([]any)
+	if !ok {
+		t.Logf("Note: recent type after setup is %T (documenting behavior)", state["recent"])
+	} else if len(recent) == 0 {
+		t.Logf("Note: recent is empty (documenting behavior)")
+	}
+}
+
+func TestOpenCodeEdit_EmptyModels(t *testing.T) {
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	configDir := filepath.Join(tmpDir, ".config", "opencode")
+	configPath := filepath.Join(configDir, "opencode.json")
+
+	os.MkdirAll(configDir, 0o755)
+	originalContent := `{"provider":{"ollama":{"models":{"existing":{}}}}}`
+	os.WriteFile(configPath, []byte(originalContent), 0o644)
+
+	// Empty models should be no-op
+	err := o.Edit([]string{})
+	if err != nil {
+		t.Fatalf("Edit with empty models failed: %v", err)
+	}
+
+	// Original content should be preserved (file not modified)
+	data, _ := os.ReadFile(configPath)
+	if string(data) != originalContent {
+		t.Errorf("empty models should not modify file, but content changed")
+	}
+}
+
+func TestOpenCodeEdit_SpecialCharsInModelName(t *testing.T) {
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	// Model name with special characters (though unusual)
+	specialModel := `model-with-"quotes"`
+
+	err := o.Edit([]string{specialModel})
+	if err != nil {
+		t.Fatalf("Edit with special chars failed: %v", err)
+	}
+
+	// Verify it was stored correctly
+	configDir := filepath.Join(tmpDir, ".config", "opencode")
+	configPath := filepath.Join(configDir, "opencode.json")
+	data, _ := os.ReadFile(configPath)
+
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("resulting config is invalid JSON: %v", err)
+	}
+
+	// Model should be accessible
+	provider, _ := cfg["provider"].(map[string]any)
+	ollama, _ := provider["ollama"].(map[string]any)
+	models, _ := ollama["models"].(map[string]any)
+
+	if models[specialModel] == nil {
+		t.Errorf("model with special chars not found in config")
+	}
+}
+
+func readOpenCodeModel(t *testing.T, configPath, model string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	json.Unmarshal(data, &cfg)
+	provider := cfg["provider"].(map[string]any)
+	ollama := provider["ollama"].(map[string]any)
+	models := ollama["models"].(map[string]any)
+	entry, ok := models[model].(map[string]any)
+	if !ok {
+		t.Fatalf("model %s not found in config", model)
+	}
+	return entry
+}
+
+func TestOpenCodeEdit_LocalModelNoLimit(t *testing.T) {
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	configPath := filepath.Join(tmpDir, ".config", "opencode", "opencode.json")
+
+	if err := o.Edit([]string{"llama3.2"}); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := readOpenCodeModel(t, configPath, "llama3.2")
+	if entry["limit"] != nil {
+		t.Errorf("local model should not have limit set, got %v", entry["limit"])
+	}
+}
+
+func TestOpenCodeEdit_PreservesUserLimit(t *testing.T) {
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	configDir := filepath.Join(tmpDir, ".config", "opencode")
+	configPath := filepath.Join(configDir, "opencode.json")
+
+	// Set up a model with a user-configured limit
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(configPath, []byte(`{
+		"provider": {
+			"ollama": {
+				"models": {
+					"llama3.2": {
+						"name": "llama3.2",
+						"_launch": true,
+						"limit": {"context": 8192, "output": 4096}
+					}
+				}
+			}
 		}
-	})
+	}`), 0o644)
 
-	t.Run("returns model.json path when it exists", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
+	// Re-edit should preserve the user's limit (not delete it)
+	if err := o.Edit([]string{"llama3.2"}); err != nil {
+		t.Fatal(err)
+	}
 
-		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
-		os.MkdirAll(stateDir, 0o755)
-		os.WriteFile(filepath.Join(stateDir, "model.json"), []byte(`{}`), 0o644)
+	entry := readOpenCodeModel(t, configPath, "llama3.2")
+	limit, ok := entry["limit"].(map[string]any)
+	if !ok {
+		t.Fatal("user-configured limit was removed")
+	}
+	if limit["context"] != float64(8192) {
+		t.Errorf("context limit changed: got %v, want 8192", limit["context"])
+	}
+	if limit["output"] != float64(4096) {
+		t.Errorf("output limit changed: got %v, want 4096", limit["output"])
+	}
+}
 
-		o := &OpenCode{}
-		paths := o.Paths()
-		if len(paths) != 1 {
-			t.Fatalf("Paths() returned %d paths, want 1", len(paths))
+func TestOpenCodeEdit_CloudModelLimitStructure(t *testing.T) {
+	// Verify that when a cloud model entry has limits set (as Edit would do),
+	// the structure matches what opencode expects and re-edit preserves them.
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	configDir := filepath.Join(tmpDir, ".config", "opencode")
+	configPath := filepath.Join(configDir, "opencode.json")
+
+	expected := cloudModelLimits["glm-4.7"]
+
+	// Simulate a cloud model that already has the limit set by a previous Edit
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(configPath, []byte(fmt.Sprintf(`{
+		"provider": {
+			"ollama": {
+				"models": {
+					"glm-4.7:cloud": {
+						"name": "glm-4.7:cloud",
+						"_launch": true,
+						"limit": {"context": %d, "output": %d}
+					}
+				}
+			}
 		}
-		if paths[0] != filepath.Join(stateDir, "model.json") {
-			t.Errorf("Paths() = %v, want %v", paths[0], filepath.Join(stateDir, "model.json"))
+	}`, expected.Context, expected.Output)), 0o644)
+
+	// Re-edit should preserve the cloud model limit
+	if err := o.Edit([]string{"glm-4.7:cloud"}); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := readOpenCodeModel(t, configPath, "glm-4.7:cloud")
+	limit, ok := entry["limit"].(map[string]any)
+	if !ok {
+		t.Fatal("cloud model limit was removed on re-edit")
+	}
+	if limit["context"] != float64(expected.Context) {
+		t.Errorf("context = %v, want %d", limit["context"], expected.Context)
+	}
+	if limit["output"] != float64(expected.Output) {
+		t.Errorf("output = %v, want %d", limit["output"], expected.Output)
+	}
+}
+
+func TestOpenCodeEdit_BackfillsCloudModelLimitOnExistingEntry(t *testing.T) {
+	o := &OpenCode{}
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" {
+			fmt.Fprintf(w, `{"capabilities":[],"model_info":{},"remote_model":"glm-5"}`)
+			return
 		}
-	})
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	configDir := filepath.Join(tmpDir, ".config", "opencode")
+	configPath := filepath.Join(configDir, "opencode.json")
+	os.MkdirAll(configDir, 0o755)
+	os.WriteFile(configPath, []byte(`{
+		"provider": {
+			"ollama": {
+				"models": {
+					"glm-5:cloud": {
+						"name": "glm-5:cloud",
+						"_launch": true
+					}
+				}
+			}
+		}
+	}`), 0o644)
+
+	if err := o.Edit([]string{"glm-5:cloud"}); err != nil {
+		t.Fatal(err)
+	}
+
+	entry := readOpenCodeModel(t, configPath, "glm-5:cloud")
+	limit, ok := entry["limit"].(map[string]any)
+	if !ok {
+		t.Fatal("cloud model limit was not added on re-edit")
+	}
+	if limit["context"] != float64(202_752) {
+		t.Errorf("context = %v, want 202752", limit["context"])
+	}
+	if limit["output"] != float64(131_072) {
+		t.Errorf("output = %v, want 131072", limit["output"])
+	}
 }
 
 func TestLookupCloudModelLimit(t *testing.T) {
@@ -275,504 +806,13 @@ func TestFindOpenCode(t *testing.T) {
 	})
 }
 
-// Verify that the BackfillsCloudModelLimitOnExistingEntry test from the old
-// file-based approach is covered by the new inline config approach.
-func TestOpenCodeEdit_CloudModelLimitStructure(t *testing.T) {
+func TestOpenCodeModels_NoConfig(t *testing.T) {
 	o := &OpenCode{}
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 
-	expected := cloudModelLimits["glm-4.7"]
-
-	if err := o.Edit([]string{"glm-4.7:cloud"}); err != nil {
-		t.Fatal(err)
-	}
-
-	var cfg map[string]any
-	json.Unmarshal([]byte(o.configContent), &cfg)
-	provider, _ := cfg["provider"].(map[string]any)
-	ollama, _ := provider["ollama"].(map[string]any)
-	models, _ := ollama["models"].(map[string]any)
-	entry, _ := models["glm-4.7:cloud"].(map[string]any)
-
-	limit, ok := entry["limit"].(map[string]any)
-	if !ok {
-		t.Fatal("cloud model limit was not set")
-	}
-	if limit["context"] != float64(expected.Context) {
-		t.Errorf("context = %v, want %d", limit["context"], expected.Context)
-	}
-	if limit["output"] != float64(expected.Output) {
-		t.Errorf("output = %v, want %d", limit["output"], expected.Output)
-	}
-}
-
-func TestOpenCodeEdit_SpecialCharsInModelName(t *testing.T) {
-	o := &OpenCode{}
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-
-	specialModel := `model-with-"quotes"`
-
-	err := o.Edit([]string{specialModel})
-	if err != nil {
-		t.Fatalf("Edit with special chars failed: %v", err)
-	}
-
-	var cfg map[string]any
-	if err := json.Unmarshal([]byte(o.configContent), &cfg); err != nil {
-		t.Fatalf("resulting config is invalid JSON: %v", err)
-	}
-
-	provider, _ := cfg["provider"].(map[string]any)
-	ollama, _ := provider["ollama"].(map[string]any)
-	models, _ := ollama["models"].(map[string]any)
-	if models[specialModel] == nil {
-		t.Errorf("model with special chars not found in config")
-	}
-}
-
-func TestReadModelJSONModels(t *testing.T) {
-	t.Run("reads ollama models from model.json", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-
-		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
-		os.MkdirAll(stateDir, 0o755)
-		state := map[string]any{
-			"recent": []any{
-				map[string]any{"providerID": "ollama", "modelID": "llama3.2"},
-				map[string]any{"providerID": "ollama", "modelID": "qwen3:32b"},
-			},
-		}
-		data, _ := json.MarshalIndent(state, "", "  ")
-		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
-
-		models := readModelJSONModels()
-		if len(models) != 2 {
-			t.Fatalf("got %d models, want 2", len(models))
-		}
-		if models[0] != "llama3.2" || models[1] != "qwen3:32b" {
-			t.Errorf("got %v, want [llama3.2 qwen3:32b]", models)
-		}
-	})
-
-	t.Run("skips non-ollama providers", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-
-		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
-		os.MkdirAll(stateDir, 0o755)
-		state := map[string]any{
-			"recent": []any{
-				map[string]any{"providerID": "openai", "modelID": "gpt-4"},
-				map[string]any{"providerID": "ollama", "modelID": "llama3.2"},
-			},
-		}
-		data, _ := json.MarshalIndent(state, "", "  ")
-		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
-
-		models := readModelJSONModels()
-		if len(models) != 1 || models[0] != "llama3.2" {
-			t.Errorf("got %v, want [llama3.2]", models)
-		}
-	})
-
-	t.Run("returns nil when file does not exist", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-
-		if models := readModelJSONModels(); models != nil {
-			t.Errorf("got %v, want nil", models)
-		}
-	})
-
-	t.Run("returns nil for corrupt JSON", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-
-		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
-		os.MkdirAll(stateDir, 0o755)
-		os.WriteFile(filepath.Join(stateDir, "model.json"), []byte(`{corrupt`), 0o644)
-
-		if models := readModelJSONModels(); models != nil {
-			t.Errorf("got %v, want nil", models)
-		}
-	})
-}
-
-func TestOpenCodeResolveContent(t *testing.T) {
-	t.Run("returns Edit's content when set", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-
-		o := &OpenCode{}
-		if err := o.Edit([]string{"gemma4"}); err != nil {
-			t.Fatal(err)
-		}
-		editContent := o.configContent
-
-		// Write a different model.json — should be ignored
-		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
-		state := map[string]any{
-			"recent": []any{
-				map[string]any{"providerID": "ollama", "modelID": "different-model"},
-			},
-		}
-		data, _ := json.MarshalIndent(state, "", "  ")
-		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
-
-		got := o.resolveContent("gemma4")
-		if got != editContent {
-			t.Errorf("resolveContent returned different content than Edit set\ngot:  %s\nwant: %s", got, editContent)
-		}
-	})
-
-	t.Run("falls back to model.json when Edit was not called", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-
-		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
-		os.MkdirAll(stateDir, 0o755)
-		state := map[string]any{
-			"recent": []any{
-				map[string]any{"providerID": "ollama", "modelID": "llama3.2"},
-				map[string]any{"providerID": "ollama", "modelID": "qwen3:32b"},
-			},
-		}
-		data, _ := json.MarshalIndent(state, "", "  ")
-		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
-
-		o := &OpenCode{}
-		content := o.resolveContent("llama3.2")
-		if content == "" {
-			t.Fatal("resolveContent returned empty")
-		}
-
-		var cfg map[string]any
-		json.Unmarshal([]byte(content), &cfg)
-		if cfg["model"] != "ollama/llama3.2" {
-			t.Errorf("primary = %v, want ollama/llama3.2", cfg["model"])
-		}
-		provider, _ := cfg["provider"].(map[string]any)
-		ollama, _ := provider["ollama"].(map[string]any)
-		cfgModels, _ := ollama["models"].(map[string]any)
-		if cfgModels["llama3.2"] == nil || cfgModels["qwen3:32b"] == nil {
-			t.Errorf("expected both models in config, got %v", cfgModels)
-		}
-	})
-
-	t.Run("uses requested model as primary even when not first in model.json", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-
-		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
-		os.MkdirAll(stateDir, 0o755)
-		state := map[string]any{
-			"recent": []any{
-				map[string]any{"providerID": "ollama", "modelID": "llama3.2"},
-				map[string]any{"providerID": "ollama", "modelID": "qwen3:32b"},
-			},
-		}
-		data, _ := json.MarshalIndent(state, "", "  ")
-		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
-
-		o := &OpenCode{}
-		content := o.resolveContent("qwen3:32b")
-
-		var cfg map[string]any
-		json.Unmarshal([]byte(content), &cfg)
-		if cfg["model"] != "ollama/qwen3:32b" {
-			t.Errorf("primary = %v, want ollama/qwen3:32b", cfg["model"])
-		}
-	})
-
-	t.Run("injects requested model when missing from model.json", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-
-		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
-		os.MkdirAll(stateDir, 0o755)
-		state := map[string]any{
-			"recent": []any{
-				map[string]any{"providerID": "ollama", "modelID": "llama3.2"},
-			},
-		}
-		data, _ := json.MarshalIndent(state, "", "  ")
-		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
-
-		o := &OpenCode{}
-		content := o.resolveContent("gemma4")
-
-		var cfg map[string]any
-		json.Unmarshal([]byte(content), &cfg)
-		provider, _ := cfg["provider"].(map[string]any)
-		ollama, _ := provider["ollama"].(map[string]any)
-		cfgModels, _ := ollama["models"].(map[string]any)
-		if cfgModels["gemma4"] == nil {
-			t.Error("requested model gemma4 not injected into config")
-		}
-		if cfg["model"] != "ollama/gemma4" {
-			t.Errorf("primary = %v, want ollama/gemma4", cfg["model"])
-		}
-	})
-
-	t.Run("returns empty when no model.json and no model param", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-
-		o := &OpenCode{}
-		if got := o.resolveContent(""); got != "" {
-			t.Errorf("resolveContent(\"\") = %q, want empty", got)
-		}
-	})
-
-	t.Run("does not mutate configContent on fallback", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-
-		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
-		os.MkdirAll(stateDir, 0o755)
-		state := map[string]any{
-			"recent": []any{
-				map[string]any{"providerID": "ollama", "modelID": "llama3.2"},
-			},
-		}
-		data, _ := json.MarshalIndent(state, "", "  ")
-		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
-
-		o := &OpenCode{}
-		_ = o.resolveContent("llama3.2")
-		if o.configContent != "" {
-			t.Errorf("resolveContent should not mutate configContent, got %q", o.configContent)
-		}
-	})
-}
-
-func TestBuildInlineConfig(t *testing.T) {
-	t.Run("returns error for empty primary", func(t *testing.T) {
-		if _, err := buildInlineConfig("", []string{"llama3.2"}); err == nil {
-			t.Error("expected error for empty primary")
-		}
-	})
-
-	t.Run("returns error for empty models", func(t *testing.T) {
-		if _, err := buildInlineConfig("llama3.2", nil); err == nil {
-			t.Error("expected error for empty models")
-		}
-	})
-
-	t.Run("primary differs from first model in list", func(t *testing.T) {
-		content, err := buildInlineConfig("qwen3:32b", []string{"llama3.2", "qwen3:32b"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		var cfg map[string]any
-		json.Unmarshal([]byte(content), &cfg)
-		if cfg["model"] != "ollama/qwen3:32b" {
-			t.Errorf("primary = %v, want ollama/qwen3:32b", cfg["model"])
-		}
-	})
-}
-
-func TestOpenCodeEdit_PreservesRecentEntries(t *testing.T) {
-	t.Run("prepends new models to existing recent", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-
-		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
-		os.MkdirAll(stateDir, 0o755)
-		initial := map[string]any{
-			"recent": []any{
-				map[string]any{"providerID": "ollama", "modelID": "old-A"},
-				map[string]any{"providerID": "ollama", "modelID": "old-B"},
-			},
-		}
-		data, _ := json.MarshalIndent(initial, "", "  ")
-		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
-
-		o := &OpenCode{}
-		if err := o.Edit([]string{"new-X"}); err != nil {
-			t.Fatal(err)
-		}
-
-		stored, _ := os.ReadFile(filepath.Join(stateDir, "model.json"))
-		var state map[string]any
-		json.Unmarshal(stored, &state)
-		recent, _ := state["recent"].([]any)
-
-		if len(recent) != 3 {
-			t.Fatalf("expected 3 entries, got %d", len(recent))
-		}
-		first, _ := recent[0].(map[string]any)
-		if first["modelID"] != "new-X" {
-			t.Errorf("first entry = %v, want new-X", first["modelID"])
-		}
-	})
-
-	t.Run("prepends multiple new models in order", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-
-		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
-		os.MkdirAll(stateDir, 0o755)
-		initial := map[string]any{
-			"recent": []any{
-				map[string]any{"providerID": "ollama", "modelID": "old-A"},
-				map[string]any{"providerID": "ollama", "modelID": "old-B"},
-			},
-		}
-		data, _ := json.MarshalIndent(initial, "", "  ")
-		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
-
-		o := &OpenCode{}
-		if err := o.Edit([]string{"X", "Y", "Z"}); err != nil {
-			t.Fatal(err)
-		}
-
-		stored, _ := os.ReadFile(filepath.Join(stateDir, "model.json"))
-		var state map[string]any
-		json.Unmarshal(stored, &state)
-		recent, _ := state["recent"].([]any)
-
-		want := []string{"X", "Y", "Z", "old-A", "old-B"}
-		if len(recent) != len(want) {
-			t.Fatalf("expected %d entries, got %d", len(want), len(recent))
-		}
-		for i, w := range want {
-			e, _ := recent[i].(map[string]any)
-			if e["modelID"] != w {
-				t.Errorf("recent[%d] = %v, want %v", i, e["modelID"], w)
-			}
-		}
-	})
-
-	t.Run("preserves non-ollama entries", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-
-		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
-		os.MkdirAll(stateDir, 0o755)
-		initial := map[string]any{
-			"recent": []any{
-				map[string]any{"providerID": "openai", "modelID": "gpt-4"},
-				map[string]any{"providerID": "ollama", "modelID": "llama3.2"},
-			},
-		}
-		data, _ := json.MarshalIndent(initial, "", "  ")
-		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
-
-		o := &OpenCode{}
-		if err := o.Edit([]string{"qwen3:32b"}); err != nil {
-			t.Fatal(err)
-		}
-
-		stored, _ := os.ReadFile(filepath.Join(stateDir, "model.json"))
-		var state map[string]any
-		json.Unmarshal(stored, &state)
-		recent, _ := state["recent"].([]any)
-
-		// Should have: qwen3:32b (new), gpt-4 (preserved openai), llama3.2 (preserved ollama)
-		var foundOpenAI bool
-		for _, entry := range recent {
-			e, _ := entry.(map[string]any)
-			if e["providerID"] == "openai" && e["modelID"] == "gpt-4" {
-				foundOpenAI = true
-			}
-		}
-		if !foundOpenAI {
-			t.Errorf("non-ollama gpt-4 entry was not preserved, got %v", recent)
-		}
-	})
-
-	t.Run("deduplicates ollama models being re-added", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-
-		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
-		os.MkdirAll(stateDir, 0o755)
-		initial := map[string]any{
-			"recent": []any{
-				map[string]any{"providerID": "ollama", "modelID": "llama3.2"},
-			},
-		}
-		data, _ := json.MarshalIndent(initial, "", "  ")
-		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
-
-		o := &OpenCode{}
-		if err := o.Edit([]string{"llama3.2"}); err != nil {
-			t.Fatal(err)
-		}
-
-		stored, _ := os.ReadFile(filepath.Join(stateDir, "model.json"))
-		var state map[string]any
-		json.Unmarshal(stored, &state)
-		recent, _ := state["recent"].([]any)
-
-		count := 0
-		for _, entry := range recent {
-			e, _ := entry.(map[string]any)
-			if e["modelID"] == "llama3.2" {
-				count++
-			}
-		}
-		if count != 1 {
-			t.Errorf("expected 1 llama3.2 entry, got %d", count)
-		}
-	})
-
-	t.Run("caps recent list at 10", func(t *testing.T) {
-		tmpDir := t.TempDir()
-		setTestHome(t, tmpDir)
-
-		stateDir := filepath.Join(tmpDir, ".local", "state", "opencode")
-		os.MkdirAll(stateDir, 0o755)
-
-		// Pre-populate with 9 distinct ollama models
-		recentEntries := make([]any, 0, 9)
-		for i := range 9 {
-			recentEntries = append(recentEntries, map[string]any{
-				"providerID": "ollama",
-				"modelID":    fmt.Sprintf("old-%d", i),
-			})
-		}
-		initial := map[string]any{"recent": recentEntries}
-		data, _ := json.MarshalIndent(initial, "", "  ")
-		os.WriteFile(filepath.Join(stateDir, "model.json"), data, 0o644)
-
-		// Add 5 new models — should cap at 10 total
-		o := &OpenCode{}
-		if err := o.Edit([]string{"new-0", "new-1", "new-2", "new-3", "new-4"}); err != nil {
-			t.Fatal(err)
-		}
-
-		stored, _ := os.ReadFile(filepath.Join(stateDir, "model.json"))
-		var state map[string]any
-		json.Unmarshal(stored, &state)
-		recent, _ := state["recent"].([]any)
-
-		if len(recent) != 10 {
-			t.Errorf("expected 10 entries (capped), got %d", len(recent))
-		}
-	})
-}
-
-func TestOpenCodeEdit_BaseURL(t *testing.T) {
-	o := &OpenCode{}
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-
-	// Default OLLAMA_HOST
-	o.Edit([]string{"llama3.2"})
-
-	var cfg map[string]any
-	json.Unmarshal([]byte(o.configContent), &cfg)
-	provider, _ := cfg["provider"].(map[string]any)
-	ollama, _ := provider["ollama"].(map[string]any)
-	options, _ := ollama["options"].(map[string]any)
-
-	baseURL, _ := options["baseURL"].(string)
-	if baseURL == "" {
-		t.Error("baseURL should be set")
+	models := o.Models()
+	if len(models) > 0 {
+		t.Errorf("expected nil/empty for missing config, got %v", models)
 	}
 }

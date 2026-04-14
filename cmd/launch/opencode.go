@@ -3,22 +3,20 @@ package launch
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 
 	"github.com/ollama/ollama/cmd/internal/fileutil"
 	"github.com/ollama/ollama/envconfig"
 )
 
-// OpenCode implements Runner and Editor for OpenCode integration.
-// Config is passed via OPENCODE_CONFIG_CONTENT env var at launch time
-// instead of writing to opencode's config files.
-type OpenCode struct {
-	configContent string // JSON config built by Edit, passed to Run via env var
-}
+// OpenCode implements Runner and Editor for OpenCode integration
+type OpenCode struct{}
 
 func (o *OpenCode) String() string { return "OpenCode" }
 
@@ -53,51 +51,25 @@ func (o *OpenCode) Run(model string, args []string) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = os.Environ()
-	if content := o.resolveContent(model); content != "" {
-		cmd.Env = append(cmd.Env, "OPENCODE_CONFIG_CONTENT="+content)
-	}
 	return cmd.Run()
 }
 
-// resolveContent returns the inline config to send via OPENCODE_CONFIG_CONTENT.
-// Returns content built by Edit if available, otherwise builds from model.json
-// with the requested model as primary (e.g. re-launch with saved config).
-func (o *OpenCode) resolveContent(model string) string {
-	if o.configContent != "" {
-		return o.configContent
-	}
-	models := readModelJSONModels()
-	if !slices.Contains(models, model) {
-		models = append([]string{model}, models...)
-	}
-	content, err := buildInlineConfig(model, models)
-	if err != nil {
-		return ""
-	}
-	return content
-}
-
 func (o *OpenCode) Paths() []string {
-	sp, err := openCodeStatePath()
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil
 	}
-	if _, err := os.Stat(sp); err == nil {
-		return []string{sp}
-	}
-	return nil
-}
 
-// openCodeStatePath returns the path to opencode's model state file.
-// TODO: this hardcodes the Linux/macOS XDG path. On Windows, opencode stores
-// state under %LOCALAPPDATA% (or similar) — verify and branch on runtime.GOOS.
-func openCodeStatePath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
+	var paths []string
+	p := filepath.Join(home, ".config", "opencode", "opencode.json")
+	if _, err := os.Stat(p); err == nil {
+		paths = append(paths, p)
 	}
-	return filepath.Join(home, ".local", "state", "opencode", "model.json"), nil
+	sp := filepath.Join(home, ".local", "state", "opencode", "model.json")
+	if _, err := os.Stat(sp); err == nil {
+		paths = append(paths, sp)
+	}
+	return paths
 }
 
 func (o *OpenCode) Edit(modelList []string) error {
@@ -105,17 +77,110 @@ func (o *OpenCode) Edit(modelList []string) error {
 		return nil
 	}
 
-	content, err := buildInlineConfig(modelList[0], modelList)
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
-	o.configContent = content
 
-	// Write model state file so models appear in OpenCode's model picker
-	statePath, err := openCodeStatePath()
+	configPath := filepath.Join(home, ".config", "opencode", "opencode.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		return err
+	}
+
+	config := make(map[string]any)
+	if data, err := os.ReadFile(configPath); err == nil {
+		_ = json.Unmarshal(data, &config) // Ignore parse errors; treat missing/corrupt files as empty
+	}
+
+	config["$schema"] = "https://opencode.ai/config.json"
+
+	provider, ok := config["provider"].(map[string]any)
+	if !ok {
+		provider = make(map[string]any)
+	}
+
+	ollama, ok := provider["ollama"].(map[string]any)
+	if !ok {
+		ollama = map[string]any{
+			"npm":  "@ai-sdk/openai-compatible",
+			"name": "Ollama",
+			"options": map[string]any{
+				"baseURL": envconfig.Host().String() + "/v1",
+			},
+		}
+	}
+
+	// Migrate legacy provider name
+	if name, _ := ollama["name"].(string); name == "Ollama (local)" {
+		ollama["name"] = "Ollama"
+	}
+
+	models, ok := ollama["models"].(map[string]any)
+	if !ok {
+		models = make(map[string]any)
+	}
+
+	selectedSet := make(map[string]bool)
+	for _, m := range modelList {
+		selectedSet[m] = true
+	}
+
+	for name, cfg := range models {
+		if cfgMap, ok := cfg.(map[string]any); ok {
+			if isOllamaModel(cfgMap) && !selectedSet[name] {
+				delete(models, name)
+			}
+		}
+	}
+
+	for _, model := range modelList {
+		if existing, ok := models[model].(map[string]any); ok {
+			// migrate existing models without _launch marker
+			if isOllamaModel(existing) {
+				existing["_launch"] = true
+				if name, ok := existing["name"].(string); ok {
+					existing["name"] = strings.TrimSuffix(name, " [Ollama]")
+				}
+			}
+			if isCloudModelName(model) {
+				if l, ok := lookupCloudModelLimit(model); ok {
+					existing["limit"] = map[string]any{
+						"context": l.Context,
+						"output":  l.Output,
+					}
+				}
+			}
+			continue
+		}
+		entry := map[string]any{
+			"name":    model,
+			"_launch": true,
+		}
+		if isCloudModelName(model) {
+			if l, ok := lookupCloudModelLimit(model); ok {
+				entry["limit"] = map[string]any{
+					"context": l.Context,
+					"output":  l.Output,
+				}
+			}
+		}
+		models[model] = entry
+	}
+
+	ollama["models"] = models
+	provider["ollama"] = ollama
+	config["provider"] = provider
+	config["model"] = "ollama/" + modelList[0]
+
+	configData, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
 		return err
 	}
+	if err := fileutil.WriteWithBackup(configPath, configData); err != nil {
+		return err
+	}
+
+	statePath := filepath.Join(home, ".local", "state", "opencode", "model.json")
 	if err := os.MkdirAll(filepath.Dir(statePath), 0o755); err != nil {
 		return err
 	}
@@ -167,82 +232,33 @@ func (o *OpenCode) Edit(modelList []string) error {
 }
 
 func (o *OpenCode) Models() []string {
-	return nil
-}
-
-// buildInlineConfig produces the JSON string for OPENCODE_CONFIG_CONTENT.
-// primary is the model to launch with, models is the full list of available models.
-func buildInlineConfig(primary string, models []string) (string, error) {
-	if primary == "" || len(models) == 0 {
-		return "", fmt.Errorf("buildInlineConfig: primary and models are required")
-	}
-	config := map[string]any{
-		"$schema": "https://opencode.ai/config.json",
-		"provider": map[string]any{
-			"ollama": map[string]any{
-				"npm":  "@ai-sdk/openai-compatible",
-				"name": "Ollama",
-				"options": map[string]any{
-					"baseURL": envconfig.Host().String() + "/v1",
-				},
-				"models": buildModelEntries(models),
-			},
-		},
-		"model": "ollama/" + primary,
-	}
-	data, err := json.Marshal(config)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
-}
-
-// readModelJSONModels reads ollama model IDs from the opencode model.json state file
-func readModelJSONModels() []string {
-	statePath, err := openCodeStatePath()
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil
 	}
-	data, err := os.ReadFile(statePath)
+	config, err := fileutil.ReadJSON(filepath.Join(home, ".config", "opencode", "opencode.json"))
 	if err != nil {
 		return nil
 	}
-	var state map[string]any
-	if err := json.Unmarshal(data, &state); err != nil {
+	provider, _ := config["provider"].(map[string]any)
+	ollama, _ := provider["ollama"].(map[string]any)
+	models, _ := ollama["models"].(map[string]any)
+	if len(models) == 0 {
 		return nil
 	}
-	recent, _ := state["recent"].([]any)
-	var models []string
-	for _, entry := range recent {
-		e, ok := entry.(map[string]any)
-		if !ok {
-			continue
-		}
-		if e["providerID"] != "ollama" {
-			continue
-		}
-		if id, ok := e["modelID"].(string); ok && id != "" {
-			models = append(models, id)
-		}
-	}
-	return models
+	keys := slices.Collect(maps.Keys(models))
+	slices.Sort(keys)
+	return keys
 }
 
-func buildModelEntries(modelList []string) map[string]any {
-	models := make(map[string]any)
-	for _, model := range modelList {
-		entry := map[string]any{
-			"name": model,
-		}
-		if isCloudModelName(model) {
-			if l, ok := lookupCloudModelLimit(model); ok {
-				entry["limit"] = map[string]any{
-					"context": l.Context,
-					"output":  l.Output,
-				}
-			}
-		}
-		models[model] = entry
+// isOllamaModel reports whether a model config entry is managed by us
+func isOllamaModel(cfg map[string]any) bool {
+	if v, ok := cfg["_launch"].(bool); ok && v {
+		return true
 	}
-	return models
+	// previously used [Ollama] as a suffix for the model managed by ollama launch
+	if name, ok := cfg["name"].(string); ok {
+		return strings.HasSuffix(name, "[Ollama]")
+	}
+	return false
 }
