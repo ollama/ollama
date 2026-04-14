@@ -152,29 +152,8 @@ func TestHermesConfigurePreservesExistingConfigAndEnablesWeb(t *testing.T) {
 	if memoryCfg, _ := cfg["memory"].(map[string]any); memoryCfg == nil {
 		t.Fatal("expected unrelated config to be preserved")
 	}
-	customProviders, _ := cfg["custom_providers"].([]any)
-	if len(customProviders) != 1 {
-		t.Fatalf("expected one managed custom provider entry, got %d", len(customProviders))
-	}
-	customProvider, _ := customProviders[0].(map[string]any)
-	if got, _ := customProvider["name"].(string); got != "Ollama" {
-		t.Fatalf("expected managed provider name Ollama, got %q", got)
-	}
-	if got, _ := customProvider["base_url"].(string); got != srv.URL+"/v1" {
-		t.Fatalf("expected managed provider base_url %q, got %q", srv.URL+"/v1", got)
-	}
-	if got, _ := customProvider["model"].(string); got != "gemma4" {
-		t.Fatalf("expected managed provider model gemma4, got %q", got)
-	}
-	if got, _ := customProvider["api_key"].(string); got != "ollama" {
-		t.Fatalf("expected managed provider api_key ollama, got %q", got)
-	}
-	if got, _ := customProvider["api_mode"].(string); got != "chat_completions" {
-		t.Fatalf("expected managed provider api_mode chat_completions, got %q", got)
-	}
-	customModels, _ := customProvider["models"].(map[string]any)
-	if len(customModels) != 3 {
-		t.Fatalf("expected managed custom provider to expose 3 models, got %v", customModels)
+	if _, ok := cfg["custom_providers"]; ok {
+		t.Fatal("expected launcher-managed config to avoid custom_providers duplicates")
 	}
 	providersCfg, _ := cfg["providers"].(map[string]any)
 	ollamaProvider, _ := providersCfg["ollama-launch"].(map[string]any)
@@ -275,29 +254,8 @@ func TestHermesConfigureUpdatesMatchingCustomProviderWithoutDroppingFields(t *te
 	}
 
 	customProviders, _ := cfg["custom_providers"].([]any)
-	if len(customProviders) != 2 {
-		t.Fatalf("expected both custom providers to remain, got %d", len(customProviders))
-	}
-
-	first, _ := customProviders[0].(map[string]any)
-	if got, _ := first["name"].(string); got != "Ollama" {
-		t.Fatalf("expected managed provider name to stay Ollama, got %q", got)
-	}
-	if got, _ := first["base_url"].(string); got != srv.URL+"/v1" {
-		t.Fatalf("expected matching provider base_url to update to %q, got %q", srv.URL+"/v1", got)
-	}
-	if got, _ := first["model"].(string); got != "gemma4" {
-		t.Fatalf("expected matching provider model gemma4, got %q", got)
-	}
-	if got, _ := first["api_mode"].(string); got != "chat_completions" {
-		t.Fatalf("expected matching provider api_mode chat_completions, got %q", got)
-	}
-	modelsCfg, _ := first["models"].(map[string]any)
-	if modelsCfg == nil {
-		t.Fatal("expected matching provider model metadata to be preserved")
-	}
-	if len(modelsCfg) != 3 {
-		t.Fatalf("expected managed provider models map to refresh full catalog, got %v", modelsCfg)
+	if len(customProviders) != 1 {
+		t.Fatalf("expected only unrelated custom providers to remain, got %d", len(customProviders))
 	}
 
 	providersCfg, _ := cfg["providers"].(map[string]any)
@@ -322,8 +280,8 @@ func TestHermesConfigureUpdatesMatchingCustomProviderWithoutDroppingFields(t *te
 		t.Fatalf("expected providers entry to refresh full model catalog, got %v", providerModels)
 	}
 
-	second, _ := customProviders[1].(map[string]any)
-	if got, _ := second["name"].(string); got != "Other Endpoint" {
+	remaining, _ := customProviders[0].(map[string]any)
+	if got, _ := remaining["name"].(string); got != "Other Endpoint" {
 		t.Fatalf("expected unrelated custom provider to be preserved, got %q", got)
 	}
 }
@@ -443,6 +401,9 @@ func TestHermesConfigureMigratesLegacyManagedAliases(t *testing.T) {
 	if _, ok := providersCfg["ollama-launch"]; !ok {
 		t.Fatal("expected providers.ollama-launch entry")
 	}
+	if _, ok := cfg["custom_providers"]; ok {
+		t.Fatal("expected managed custom_providers entry to be removed during migration")
+	}
 }
 
 func TestHermesPathsUsesLocalConfigPathForNativeWindowsHermes(t *testing.T) {
@@ -527,6 +488,22 @@ func TestHermesCurrentModelRequiresHealthyManagedConfig(t *testing.T) {
 				"  ollama:\n" +
 				"    api: http://127.0.0.1:11434/v1\n" +
 				"    default_model: gemma4\n",
+		},
+		{
+			name: "duplicate managed custom provider",
+			cfg: "" +
+				"model:\n" +
+				"  provider: ollama-launch\n" +
+				"  default: gemma4\n" +
+				"  base_url: http://127.0.0.1:11434/v1\n" +
+				"providers:\n" +
+				"  ollama-launch:\n" +
+				"    api: http://127.0.0.1:11434/v1\n" +
+				"    default_model: gemma4\n" +
+				"custom_providers:\n" +
+				"  - name: Ollama\n" +
+				"    base_url: http://127.0.0.1:11434/v1\n" +
+				"    model: gemma4\n",
 		},
 	}
 

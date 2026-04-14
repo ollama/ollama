@@ -124,11 +124,10 @@ func (h *Hermes) Configure(model string) error {
 	models := h.listModels(model)
 	applyHermesManagedProviders(cfg, hermesBaseURL(), model, models)
 
-	// launch intentionally writes only the minimum provider/default-model
-	// settings needed to bootstrap Hermes against Ollama. We mirror Ollama's
-	// catalog into both providers: and custom_providers:, but keep the active
-	// provider on a launch-owned key so Hermes' built-in ollama aliases do not
-	// hijack /model.
+	// launch writes the minimum provider/default-model settings needed to
+	// bootstrap Hermes against Ollama. The active provider stays on a
+	// launch-owned key so /model stays aligned with the launcher-managed entry,
+	// and the Ollama endpoint lives in providers: so the picker shows one row.
 	modelSection["provider"] = hermesProviderKey
 	modelSection["default"] = model
 	modelSection["base_url"] = hermesBaseURL()
@@ -241,9 +240,8 @@ func (h *Hermes) ensureInstalled() error {
 }
 
 func (h *Hermes) ensureInstalledWindows() error {
-	// Hermes upstream support is WSL-oriented, so native Windows launch uses a
-	// hybrid WSL handoff instead of trying to maintain a separate native
-	// installation path in Ollama launch.
+	// Hermes upstream support is WSL-oriented, so Windows launch uses a hybrid
+	// WSL handoff that stays on the same install path as upstream Hermes.
 	if _, err := hermesLookPath("hermes"); err == nil {
 		return nil
 	}
@@ -724,9 +722,8 @@ func hermesParseEnvFile(data []byte) map[string]string {
 }
 
 func hermesOllamaClient() *api.Client {
-	// Hermes should query the same launch-resolved Ollama host that launch
-	// writes into config, rather than depending on a potentially different
-	// OLLAMA_HOST in the user's shell.
+	// Hermes queries the same launch-resolved Ollama host that launch writes
+	// into config, so model discovery follows the configured endpoint.
 	return api.NewClient(hermesOllamaURL(), http.DefaultClient)
 }
 
@@ -744,12 +741,11 @@ func applyHermesManagedProviders(cfg map[string]any, baseURL string, model strin
 	delete(providers, hermesLegacyKey)
 	cfg["providers"] = providers
 
-	customProviders, customEntry := hermesManagedCustomProviders(cfg["custom_providers"], baseURL)
-	customEntry["base_url"] = baseURL
-	customEntry["model"] = model
-	customEntry["api_key"] = hermesPlaceholderKey
-	customEntry["api_mode"] = "chat_completions"
-	customEntry["models"] = hermesCustomProviderModels(customEntry["models"], models)
+	customProviders := hermesWithoutManagedCustomProviders(cfg["custom_providers"])
+	if len(customProviders) == 0 {
+		delete(cfg, "custom_providers")
+		return
+	}
 	cfg["custom_providers"] = customProviders
 }
 
@@ -778,6 +774,9 @@ func hermesManagedCurrentModel(cfg map[string]any, baseURL string) string {
 	providers := hermesUserProviders(cfg["providers"])
 	entry, _ := providers[hermesProviderKey].(map[string]any)
 	if entry == nil {
+		return ""
+	}
+	if hermesHasManagedCustomProvider(cfg["custom_providers"]) {
 		return ""
 	}
 
@@ -839,11 +838,9 @@ func hermesManagedProviderEntry(providers map[string]any) map[string]any {
 	return nil
 }
 
-func hermesManagedCustomProviders(current any, baseURL string) ([]any, map[string]any) {
+func hermesWithoutManagedCustomProviders(current any) []any {
 	customProviders := hermesCustomProviders(current)
-	normalizedURL := hermesNormalizeURL(baseURL)
-	preserved := make([]any, 0, len(customProviders)+1)
-	var managed map[string]any
+	preserved := make([]any, 0, len(customProviders))
 
 	for _, item := range customProviders {
 		entry, _ := item.(map[string]any)
@@ -851,61 +848,41 @@ func hermesManagedCustomProviders(current any, baseURL string) ([]any, map[strin
 			preserved = append(preserved, item)
 			continue
 		}
-		if hermesManagedCustomProvider(entry, normalizedURL) {
-			if managed == nil {
-				managed = entry
-			}
+		if hermesManagedCustomProvider(entry) {
 			continue
 		}
 		preserved = append(preserved, entry)
 	}
 
-	if managed == nil {
-		managed = make(map[string]any)
-	}
-	managed["name"] = hermesProviderName
-	preserved = append([]any{managed}, preserved...)
-	return preserved, managed
+	return preserved
 }
 
-func hermesManagedCustomProvider(entry map[string]any, baseURL string) bool {
-	name, _ := entry["name"].(string)
-	if strings.EqualFold(strings.TrimSpace(name), hermesProviderName) {
-		return true
-	}
-	for _, key := range []string{"base_url", "url", "api"} {
-		if value, _ := entry[key].(string); baseURL != "" && hermesNormalizeURL(value) == baseURL {
+func hermesHasManagedCustomProvider(current any) bool {
+	for _, item := range hermesCustomProviders(current) {
+		entry, _ := item.(map[string]any)
+		if entry != nil && hermesManagedCustomProvider(entry) {
 			return true
 		}
 	}
 	return false
 }
 
-func hermesNormalizeURL(raw string) string {
-	return strings.TrimRight(strings.TrimSpace(raw), "/")
+func hermesManagedCustomProvider(entry map[string]any) bool {
+	providerKey, _ := entry["provider_key"].(string)
+	if strings.EqualFold(strings.TrimSpace(providerKey), hermesProviderKey) {
+		return true
+	}
+
+	name, _ := entry["name"].(string)
+	if !strings.EqualFold(strings.TrimSpace(name), hermesProviderName) {
+		return false
+	}
+
+	return true
 }
 
-func hermesCustomProviderModels(current any, models []string) map[string]any {
-	existing := make(map[string]any)
-	if currentMap, _ := current.(map[string]any); currentMap != nil {
-		for key, value := range currentMap {
-			existing[key] = value
-		}
-	}
-
-	out := make(map[string]any)
-	for _, model := range dedupeModelList(models) {
-		model = strings.TrimSpace(model)
-		if model == "" {
-			continue
-		}
-		if cfg, _ := existing[model].(map[string]any); cfg != nil {
-			out[model] = cfg
-			continue
-		}
-		out[model] = map[string]any{}
-	}
-	return out
+func hermesNormalizeURL(raw string) string {
+	return strings.TrimRight(strings.TrimSpace(raw), "/")
 }
 
 func hermesStringListAny(models []string) []any {

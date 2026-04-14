@@ -145,8 +145,7 @@ type Editor interface {
 // like Hermes that have one primary model selected by launcher, need launcher
 // to persist minimal config, and still keep their own model discovery and
 // onboarding UX. This stays separate from Runner-only integrations and the
-// multi-model Editor flow so we do not spread Hermes-specific branching
-// throughout launch.
+// multi-model Editor flow so Hermes-specific behavior stays scoped to one path.
 type ManagedSingleModel interface {
 	Paths() []string
 	Configure(model string) error
@@ -160,8 +159,8 @@ type ManagedRuntimeRefresher interface {
 	RefreshRuntimeAfterConfigure() error
 }
 
-// ManagedOnboardingValidator lets managed integrations reject stale saved
-// onboarding state when launcher needs a stronger live readiness check.
+// ManagedOnboardingValidator lets managed integrations re-check saved
+// onboarding state when launcher needs a stronger live readiness signal.
 type ManagedOnboardingValidator interface {
 	OnboardingComplete() bool
 }
