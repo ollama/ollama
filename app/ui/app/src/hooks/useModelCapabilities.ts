@@ -20,3 +20,8 @@ export function useHasVisionCapability(modelName: string | undefined) {
   const { data: capabilitiesResponse } = useModelCapabilities(modelName);
   return capabilitiesResponse?.capabilities?.includes("vision") ?? false;
 }
+
+export function useHasToolsCapability(modelName: string | undefined) {
+  const { data: capabilitiesResponse } = useModelCapabilities(modelName);
+  return capabilitiesResponse?.capabilities?.includes("tools") ?? false;
+}

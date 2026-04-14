@@ -1,5 +1,3 @@
-//go:build mlx
-
 package flux2
 
 import (

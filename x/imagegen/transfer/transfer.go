@@ -11,7 +11,8 @@
 // Key simplifications for many-small-blob workloads:
 //
 //   - Whole-blob transfers: No part-based chunking. Each blob downloads/uploads as one unit.
-//   - No resume: If a transfer fails, it restarts from scratch (fine for small blobs).
+//   - Resume for large blobs: Blobs >= 64MB preserve partial .tmp files on failure
+//     and use HTTP Range requests on retry. Small blobs restart from scratch.
 //   - Inline hashing: SHA256 computed during streaming, not asynchronously after parts complete.
 //   - Stall and speed detection: Cancels on no data (stall) or speed below 10% of median.
 //
@@ -99,6 +100,14 @@ const (
 	DefaultUploadConcurrency   = 32
 	maxRetries                 = 6
 	defaultUserAgent           = "ollama-transfer/1.0"
+
+	// resumeThreshold is the minimum blob size for resume support.
+	// Only blobs above this size keep partial .tmp files on failure.
+	resumeThreshold = 64 << 20 // 64 MB
+
+	// smallBlobSpeedThreshold is the size below which speed samples are skipped,
+	// since their transfer time is dominated by HTTP overhead, not throughput.
+	smallBlobSpeedThreshold = 100 << 10 // 100 KB
 )
 
 var errMaxRetriesExceeded = errors.New("max retries exceeded")
@@ -134,6 +143,11 @@ func (p *progressTracker) add(n int64) {
 		return
 	}
 	completed := p.completed.Add(n)
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Debug("progress callback panic (likely closed channel)", "recovered", r)
+		}
+	}()
 	p.callback(completed, p.total)
 }
 

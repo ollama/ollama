@@ -32,9 +32,10 @@ const (
 )
 
 type GLM46Parser struct {
-	state  glm46ParserState
-	buffer strings.Builder
-	tools  []api.Tool
+	state     glm46ParserState
+	buffer    strings.Builder
+	tools     []api.Tool
+	callIndex int
 }
 
 func (p *GLM46Parser) HasToolSupport() bool {
@@ -48,6 +49,7 @@ func (p *GLM46Parser) HasThinkingSupport() bool {
 // func (p *GLM46Parser) Init(tools []api.Tool, lastMessage *api.Message) []api.Tool {
 func (p *GLM46Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.tools = tools
+	p.callIndex = 0
 	return tools
 }
 
@@ -89,6 +91,8 @@ func (p *GLM46Parser) Add(s string, done bool) (content string, thinking string,
 				slog.Warn("glm-4.6 tool call parsing failed", "error", err)
 				return "", "", nil, err
 			}
+			toolCall.Function.Index = p.callIndex
+			p.callIndex++
 			toolCalls = append(toolCalls, toolCall)
 		case glm46EventThinkingContent:
 			thinkingSb.WriteString(event.content)
@@ -341,6 +345,166 @@ func escapeGLM46Content(s string) string {
 	return result.String()
 }
 
+// repairPhase represents the expected next tag in the repair cycle.
+type repairPhase int
+
+const (
+	phaseArgKeyOpen  repairPhase = iota // expecting <arg_key>
+	phaseArgKeyClose                    // expecting </arg_key>
+	phaseArgValOpen                     // expecting <arg_value>
+	phaseArgValClose                    // expecting </arg_value>
+	phaseCount                          // number of phases
+)
+
+// repairGLM46XML reconstructs well-formed XML from GLM model output that may
+// have missing or mismatched tags. The expected structure is:
+//
+//	func_name
+//	<arg_key>key</arg_key>
+//	<arg_value>value</arg_value>
+//	...
+//
+// GLM models frequently omit opening or closing tags. This function follows
+// the expected tag cycle, scanning forward for each expected tag in sequence.
+// When a tag is missing, it inserts the tag and consumes any text in between.
+func repairGLM46XML(s string) string {
+	// tagCycle is the repeating sequence of tags after the function name.
+	tagCycle := [phaseCount]string{"<arg_key>", "</arg_key>", "<arg_value>", "</arg_value>"}
+
+	// findNextTag returns the index and identity of the earliest known tag in s.
+	findNextTag := func(s string) (int, string) {
+		bestIdx := -1
+		bestTag := ""
+		for _, tag := range tagCycle {
+			if idx := strings.Index(s, tag); idx != -1 && (bestIdx == -1 || idx < bestIdx) {
+				bestIdx = idx
+				bestTag = tag
+			}
+		}
+		return bestIdx, bestTag
+	}
+
+	// tagIndex returns the phase corresponding to the given tag.
+	tagIndex := func(tag string) repairPhase {
+		for i, t := range tagCycle {
+			if t == tag {
+				return repairPhase(i)
+			}
+		}
+		return -1
+	}
+
+	var result strings.Builder
+
+	idx, firstTag := findNextTag(s)
+	if idx == -1 {
+		return s
+	}
+	prefix := s[:idx]
+	s = s[idx:]
+
+	// If the first tag is not <arg_key>, the text before it may contain both
+	// the function name and key content (e.g. "weather city</arg_key>").
+	// Function names cannot contain space, so split at the first space.
+	phase := phaseArgKeyOpen
+	if firstTag != "<arg_key>" {
+		if spIdx := strings.IndexFunc(prefix, unicode.IsSpace); spIdx != -1 {
+			result.WriteString(prefix[:spIdx])
+			keyContent := strings.TrimLeftFunc(prefix[spIdx:], unicode.IsSpace)
+			result.WriteString("<arg_key>")
+			result.WriteString(keyContent)
+			phase = phaseArgKeyClose
+		} else {
+			result.WriteString(prefix)
+		}
+	} else {
+		result.WriteString(prefix)
+	}
+
+	// Walk through the expected tag cycle. At each step, look for the
+	// expected tag. If a different tag appears first, emit the missing
+	// tags to catch up, then continue.
+	for len(s) > 0 {
+		idx, found := findNextTag(s)
+		expected := tagCycle[phase]
+		isOpen := phase%2 == 0 // even phases are opening tags
+
+		if idx == -1 {
+			// No more tags — emit remaining text with fixups
+			if isOpen {
+				// Expecting an opening tag but nothing left — we're done
+				break
+			}
+			// Expecting a closing tag — emit text then close
+			result.WriteString(s)
+			result.WriteString(expected)
+			phase = (phase + 1) % phaseCount
+			break
+		}
+
+		if found == expected {
+			// Found the expected tag — emit any text before it, then the tag
+			result.WriteString(s[:idx])
+			result.WriteString(expected)
+			s = s[idx+len(expected):]
+			phase = (phase + 1) % phaseCount
+			continue
+		}
+
+		// Found a different tag. Insert missing tags to catch up.
+		foundIdx := tagIndex(found)
+
+		if isOpen && idx > 0 {
+			// Text before the found tag while expecting an opening tag —
+			// the opening tag was omitted. Emit it before the text.
+			result.WriteString(expected)
+			// Advance to the next phase (text content) and then look
+			// for the closing tag — but the found tag might be that
+			// closing tag or something further ahead. Emit text up to
+			// the found tag and insert any missing tags between.
+			result.WriteString(s[:idx])
+			phase = (phase + 1) % phaseCount // now expecting closing
+			s = s[idx:]
+			// Fall through to re-evaluate with the closing tag expected
+			continue
+		}
+
+		// Emit missing tags to advance from current phase to the found tag's phase
+		for phase != foundIdx {
+			tag := tagCycle[phase]
+			if phase%2 == 0 {
+				result.WriteString(tag)
+			} else {
+				// Closing tag — emit any text before the found tag first,
+				// but only if we're one step before the found tag
+				if (phase+1)%phaseCount == foundIdx && idx > 0 {
+					result.WriteString(s[:idx])
+					s = s[idx:]
+					idx = 0
+				}
+				result.WriteString(tag)
+			}
+			phase = (phase + 1) % phaseCount
+		}
+		// Now phase == foundIdx, re-process without advancing s
+	}
+
+	// If we stopped mid-pair (after an opening tag), close it
+	switch phase {
+	case phaseArgKeyClose: // after <arg_key>, expecting text/</arg_key>
+		result.WriteString("</arg_key>")
+		result.WriteString("<arg_value>")
+		result.WriteString("</arg_value>")
+	case phaseArgValOpen: // after </arg_key>, expecting <arg_value>
+		result.WriteString("<arg_value>")
+		result.WriteString("</arg_value>")
+	case phaseArgValClose: // after <arg_value>, expecting text/</arg_value>
+		result.WriteString("</arg_value>")
+	}
+
+	return result.String()
+}
+
 func parseGLM46ToolCall(raw glm46EventRawToolCall, tools []api.Tool) (api.ToolCall, error) {
 	// Escape any unescaped entities in text content
 	// We need to escape text between tags, but not the tags themselves
@@ -349,10 +513,14 @@ func parseGLM46ToolCall(raw glm46EventRawToolCall, tools []api.Tool) (api.ToolCa
 	// Wrap the content in a root element to make it valid XML
 	xmlString := "<tool_call>" + escaped + "</tool_call>"
 
-	// Parse XML into struct
+	// Parse XML into struct, retrying once with repaired XML if it fails
 	var parsed GLMToolCallXML
 	if err := xml.Unmarshal([]byte(xmlString), &parsed); err != nil {
-		return api.ToolCall{}, fmt.Errorf("failed to parse XML: %w", err)
+		parsed = GLMToolCallXML{}
+		repaired := "<tool_call>" + repairGLM46XML(escaped) + "</tool_call>"
+		if err2 := xml.Unmarshal([]byte(repaired), &parsed); err2 != nil {
+			return api.ToolCall{}, fmt.Errorf("failed to parse XML: %w", err)
+		}
 	}
 
 	// Extract and trim function name

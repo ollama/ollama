@@ -216,6 +216,41 @@ func TestUpdateScroll(t *testing.T) {
 	}
 }
 
+func TestSelectorModelWithCurrent_ScrollsToCurrentInMoreSection(t *testing.T) {
+	m := selectorModelWithCurrent("Pick:", mixedItems(), "other-10")
+
+	if m.cursor != 11 {
+		t.Fatalf("cursor = %d, want 11", m.cursor)
+	}
+	if m.scrollOffset == 0 {
+		t.Fatal("scrollOffset should move to reveal current item in More section")
+	}
+
+	content := m.renderContent()
+	if !strings.Contains(content, "▸ other-10") {
+		t.Fatalf("expected current item to be visible and highlighted\n%s", content)
+	}
+}
+
+func TestSelectorModelWithCurrent_HighlightsExactLocalWhenCloudVariantExists(t *testing.T) {
+	m := selectorModelWithCurrent("Pick:", []SelectItem{
+		{Name: "qwen3.5:cloud", Recommended: true},
+		{Name: "qwen3.5", Recommended: true},
+	}, "qwen3.5")
+
+	if m.cursor != 1 {
+		t.Fatalf("cursor = %d, want 1", m.cursor)
+	}
+
+	content := m.renderContent()
+	if !strings.Contains(content, "▸ qwen3.5") {
+		t.Fatalf("expected local qwen3.5 to be highlighted\n%s", content)
+	}
+	if strings.Contains(content, "▸ qwen3.5:cloud") {
+		t.Fatalf("did not expect cloud qwen3.5:cloud to be highlighted\n%s", content)
+	}
+}
+
 func TestRenderContent_SectionHeaders(t *testing.T) {
 	m := selectorModel{
 		title: "Pick:",
@@ -379,6 +414,500 @@ func TestUpdateNavigation_Backspace(t *testing.T) {
 	}
 	if m.cursor != 0 {
 		t.Errorf("cursor should reset to 0 on backspace, got %d", m.cursor)
+	}
+}
+
+// --- cursorForCurrent ---
+
+func TestCursorForCurrent(t *testing.T) {
+	testItems := []SelectItem{
+		{Name: "llama3.2", Recommended: true},
+		{Name: "qwen3:8b", Recommended: true},
+		{Name: "gemma3:latest"},
+		{Name: "deepseek-r1"},
+		{Name: "glm-5:cloud"},
+	}
+
+	tests := []struct {
+		name    string
+		current string
+		want    int
+	}{
+		{"empty current", "", 0},
+		{"exact match", "qwen3:8b", 1},
+		{"no match returns 0", "nonexistent", 0},
+		{"bare name matches with :latest suffix", "gemma3", 2},
+		{"full tag matches bare item", "llama3.2:latest", 0},
+		{"cloud model exact match", "glm-5:cloud", 4},
+		{"cloud model bare name", "glm-5", 4},
+		{"recommended item exact match", "llama3.2", 0},
+		{"recommended item with tag", "qwen3", 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := cursorForCurrent(testItems, tt.current); got != tt.want {
+				t.Errorf("cursorForCurrent(%q) = %d, want %d", tt.current, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCursorForCurrent_PrefersExactLocalOverCloudPrefix(t *testing.T) {
+	testItems := []SelectItem{
+		{Name: "qwen3.5:cloud", Recommended: true},
+		{Name: "qwen3.5", Recommended: true},
+	}
+
+	if got := cursorForCurrent(testItems, "qwen3.5"); got != 1 {
+		t.Errorf("cursorForCurrent(%q) = %d, want %d", "qwen3.5", got, 1)
+	}
+}
+
+func TestCursorForCurrent_PrefersExactCloudOverLocalPrefix(t *testing.T) {
+	testItems := []SelectItem{
+		{Name: "qwen3.5", Recommended: true},
+		{Name: "qwen3.5:cloud", Recommended: true},
+	}
+
+	if got := cursorForCurrent(testItems, "qwen3.5:cloud"); got != 1 {
+		t.Errorf("cursorForCurrent(%q) = %d, want %d", "qwen3.5:cloud", got, 1)
+	}
+}
+
+// --- ReorderItems ---
+
+func TestReorderItems(t *testing.T) {
+	input := []SelectItem{
+		{Name: "local-1"},
+		{Name: "rec-a", Recommended: true},
+		{Name: "local-2"},
+		{Name: "rec-b", Recommended: true},
+	}
+	got := ReorderItems(input)
+	want := []string{"rec-a", "rec-b", "local-1", "local-2"}
+	for i, item := range got {
+		if item.Name != want[i] {
+			t.Errorf("index %d: got %q, want %q", i, item.Name, want[i])
+		}
+	}
+}
+
+func TestReorderItems_AllRecommended(t *testing.T) {
+	input := recItems("a", "b", "c")
+	got := ReorderItems(input)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(got))
+	}
+	for i, item := range got {
+		if item.Name != input[i].Name {
+			t.Errorf("order should be preserved, index %d: got %q, want %q", i, item.Name, input[i].Name)
+		}
+	}
+}
+
+func TestReorderItems_NoneRecommended(t *testing.T) {
+	input := items("x", "y")
+	got := ReorderItems(input)
+	if len(got) != 2 || got[0].Name != "x" || got[1].Name != "y" {
+		t.Errorf("order should be preserved, got %v", got)
+	}
+}
+
+// --- Multi-select otherStart ---
+
+func TestMultiOtherStart(t *testing.T) {
+	tests := []struct {
+		name   string
+		items  []SelectItem
+		filter string
+		want   int
+	}{
+		{"all recommended", recItems("a", "b"), "", 2},
+		{"none recommended", items("a", "b"), "", 0},
+		{"mixed", mixedItems(), "", 2},
+		{"with filter returns 0", mixedItems(), "other", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newMultiSelectorModel("test", tt.items, nil)
+			m.filter = tt.filter
+			if got := m.otherStart(); got != tt.want {
+				t.Errorf("otherStart() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+// --- Multi-select updateScroll ---
+
+func TestMultiUpdateScroll(t *testing.T) {
+	tests := []struct {
+		name       string
+		cursor     int
+		offset     int
+		otherStart int
+		wantOffset int
+	}{
+		{"cursor in recommended resets scroll", 1, 5, 3, 0},
+		{"cursor at start of others", 2, 0, 2, 0},
+		{"cursor scrolls down in others", 12, 0, 2, 3},
+		{"cursor scrolls up in others", 4, 5, 2, 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newMultiSelectorModel("test", nil, nil)
+			m.cursor = tt.cursor
+			m.scrollOffset = tt.offset
+			m.updateScroll(tt.otherStart)
+			if m.scrollOffset != tt.wantOffset {
+				t.Errorf("scrollOffset = %d, want %d", m.scrollOffset, tt.wantOffset)
+			}
+		})
+	}
+}
+
+// --- Multi-select View section headers ---
+
+func TestMultiView_SectionHeaders(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", []SelectItem{
+		{Name: "rec-a", Recommended: true},
+		{Name: "other-1"},
+	}, nil)
+	content := m.View()
+
+	if !strings.Contains(content, "Recommended") {
+		t.Error("should contain 'Recommended' header")
+	}
+	if !strings.Contains(content, "More") {
+		t.Error("should contain 'More' header")
+	}
+}
+
+func TestMultiView_CursorIndicator(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b"), nil)
+	m.cursor = 0
+	content := m.View()
+
+	if !strings.Contains(content, "▸") {
+		t.Error("should show ▸ cursor indicator")
+	}
+}
+
+func TestMultiView_CheckedItemShowsX(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b"), []string{"a"})
+	m.multi = true
+	content := m.View()
+
+	if !strings.Contains(content, "[x]") {
+		t.Error("checked item should show [x]")
+	}
+	if !strings.Contains(content, "[ ]") {
+		t.Error("unchecked item should show [ ]")
+	}
+}
+
+func TestMultiView_DefaultTag(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), []string{"a", "b"})
+	m.multi = true
+	content := m.View()
+
+	if !strings.Contains(content, "(default)") {
+		t.Error("should have (default) tag")
+	}
+	// preChecked[0] ("a") should be the default (last in checkOrder)
+	aIdx := strings.Index(content, "a")
+	defaultIdx := strings.Index(content, "(default)")
+	if defaultIdx < aIdx {
+		t.Error("(default) tag should appear after 'a' (the current default)")
+	}
+}
+
+func TestMultiView_PinnedRecommended(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", mixedItems(), nil)
+	m.cursor = 8
+	m.scrollOffset = 3
+	content := m.View()
+
+	if !strings.Contains(content, "rec-a") {
+		t.Error("recommended items should always be visible (pinned)")
+	}
+	if !strings.Contains(content, "rec-b") {
+		t.Error("recommended items should always be visible (pinned)")
+	}
+}
+
+func TestMultiView_OverflowIndicator(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", mixedItems(), nil)
+	content := m.View()
+
+	if !strings.Contains(content, "... and") {
+		t.Error("should show overflow indicator when more items than visible")
+	}
+}
+
+// --- Multi-select space toggle (including KeyRunes fallback for Windows PowerShell) ---
+
+func TestMultiUpdate_SpaceTogglesItem(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), nil)
+	m.multi = true
+	m.cursor = 1
+
+	// Simulate space delivered as tea.KeySpace
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = updated.(multiSelectorModel)
+
+	if !m.checked[1] {
+		t.Error("space (KeySpace) should toggle the item at cursor")
+	}
+	if m.filter != "" {
+		t.Error("space should not modify filter")
+	}
+}
+
+func TestMultiUpdate_SpaceRuneTogglesItem(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), nil)
+	m.multi = true
+	m.cursor = 1
+
+	// Simulate space delivered as tea.KeyRunes (Windows PowerShell behavior)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m = updated.(multiSelectorModel)
+
+	if !m.checked[1] {
+		t.Error("space (KeyRunes) should toggle the item at cursor")
+	}
+	if m.filter != "" {
+		t.Error("space rune should not be added to filter")
+	}
+	if m.cursor != 1 {
+		t.Errorf("cursor should stay at 1, got %d", m.cursor)
+	}
+}
+
+// --- Single-add mode ---
+
+func TestMulti_StartsInSingleMode(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b"), nil)
+	if m.multi {
+		t.Error("should start in single mode (multi=false)")
+	}
+}
+
+func TestMulti_SingleModeNoCheckboxes(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b"), nil)
+	content := m.View()
+	if strings.Contains(content, "[x]") || strings.Contains(content, "[ ]") {
+		t.Error("single mode should not show checkboxes")
+	}
+	if !strings.Contains(content, "▸") {
+		t.Error("single mode should show cursor indicator")
+	}
+}
+
+func TestMulti_SingleModeEnterPicksItem(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), nil)
+	m.cursor = 1
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(multiSelectorModel)
+
+	if m.singleAdd != "b" {
+		t.Errorf("enter in single mode should pick cursor item, got %q", m.singleAdd)
+	}
+	if !m.confirmed {
+		t.Error("should set confirmed")
+	}
+}
+
+func TestMulti_SingleModeSpaceIsNoop(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b"), nil)
+	m.cursor = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = updated.(multiSelectorModel)
+
+	if len(m.checked) != 0 {
+		t.Error("space in single mode should not toggle items")
+	}
+}
+
+func TestMulti_SingleModeSpaceRuneIsNoop(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b"), nil)
+	m.cursor = 0
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m = updated.(multiSelectorModel)
+
+	if len(m.checked) != 0 {
+		t.Error("space rune in single mode should not toggle items")
+	}
+	if m.filter != "" {
+		t.Error("space rune in single mode should not add to filter")
+	}
+}
+
+func TestMulti_TabTogglesMode(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b"), nil)
+
+	if m.multi {
+		t.Fatal("should start in single mode")
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(multiSelectorModel)
+	if !m.multi {
+		t.Error("tab should switch to multi mode")
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m = updated.(multiSelectorModel)
+	if m.multi {
+		t.Error("tab should switch back to single mode")
+	}
+}
+
+func TestMulti_SingleModeHelpText(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a"), nil)
+	content := m.View()
+	if !strings.Contains(content, "tab add multiple") {
+		t.Error("single mode should show 'tab add multiple' in help")
+	}
+}
+
+func TestMulti_MultiModeHelpText(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a"), nil)
+	m.multi = true
+	content := m.View()
+	if !strings.Contains(content, "tab select single") {
+		t.Error("multi mode should show 'tab select single' in help")
+	}
+	if !strings.Contains(content, "← back") {
+		t.Error("multi mode should show '← back' in help")
+	}
+}
+
+// --- preChecked initialization order ---
+
+func TestMulti_PreCheckedDefaultIsLast(t *testing.T) {
+	// preChecked[0] ("a") is the current default and should end up
+	// last in checkOrder so it gets the (default) tag.
+	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), []string{"a", "b", "c"})
+
+	if len(m.checkOrder) != 3 {
+		t.Fatalf("expected 3 in checkOrder, got %d", len(m.checkOrder))
+	}
+	lastIdx := m.checkOrder[len(m.checkOrder)-1]
+	if m.items[lastIdx].Name != "a" {
+		t.Errorf("preChecked[0] should be last in checkOrder, got %q", m.items[lastIdx].Name)
+	}
+}
+
+func TestMulti_CursorOnDefaultModel(t *testing.T) {
+	// preChecked[0] ("b") is the default; cursor should start on it
+	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), []string{"b", "c"})
+
+	if m.cursor != 1 {
+		t.Errorf("cursor should be on preChecked[0] ('b') at index 1, got %d", m.cursor)
+	}
+}
+
+// --- Multi-mode last-checked is default ---
+
+func TestMulti_LastCheckedIsDefault(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("alpha", "beta", "gamma"), nil)
+	m.multi = true
+
+	// Check "alpha" then "gamma"
+	m.cursor = 0
+	m.toggleItem()
+	m.cursor = 2
+	m.toggleItem()
+
+	// Last checked ("gamma") should be at the end of checkOrder
+	lastIdx := m.checkOrder[len(m.checkOrder)-1]
+	if m.items[lastIdx].Name != "gamma" {
+		t.Errorf("last checked should be 'gamma', got %q", m.items[lastIdx].Name)
+	}
+
+	// The (default) tag renders based on checkOrder[len-1]
+	content := m.View()
+	if !strings.Contains(content, "(default)") {
+		t.Fatal("should show (default) tag")
+	}
+	// "alpha" line should NOT have the default tag
+	for _, line := range strings.Split(content, "\n") {
+		if strings.Contains(line, "alpha") && strings.Contains(line, "(default)") {
+			t.Error("'alpha' (first checked) should not have (default) tag")
+		}
+	}
+}
+
+func TestMulti_UncheckingDefaultFallsBackToNearestCheckedAbove(t *testing.T) {
+	// Default is "b", and checked models are "a", "b", "c".
+	// Unticking default should make "a" (the nearest checked item above) default.
+	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), []string{"b", "c", "a"})
+	m.multi = true
+	m.cursor = 1 // "b"
+	m.toggleItem()
+
+	lastIdx := m.checkOrder[len(m.checkOrder)-1]
+	if m.items[lastIdx].Name != "a" {
+		t.Fatalf("expected default to fall back to 'a', got %q", m.items[lastIdx].Name)
+	}
+}
+
+func TestMulti_UncheckingTopDefaultFallsBackToNearestCheckedBelow(t *testing.T) {
+	// Default is top item "a". With no checked item above, fallback should pick
+	// the nearest checked item below ("b").
+	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), []string{"a", "c", "b"})
+	m.multi = true
+	m.cursor = 0 // "a"
+	m.toggleItem()
+
+	lastIdx := m.checkOrder[len(m.checkOrder)-1]
+	if m.items[lastIdx].Name != "b" {
+		t.Fatalf("expected default to fall back to 'b', got %q", m.items[lastIdx].Name)
+	}
+}
+
+// --- Left arrow back navigation ---
+
+func TestSelectorLeftArrowCancelsWhenNoFilter(t *testing.T) {
+	m := selectorModelWithCurrent("Pick:", items("a", "b", "c"), "")
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	got := updated.(selectorModel)
+	if !got.cancelled {
+		t.Error("left arrow with empty filter should cancel (go back)")
+	}
+}
+
+func TestSelectorLeftArrowCancelsWhenFiltering(t *testing.T) {
+	m := selectorModelWithCurrent("Pick:", items("a", "b", "c"), "")
+	m.filter = "a"
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	got := updated.(selectorModel)
+	if !got.cancelled {
+		t.Error("left arrow with active filter should still cancel (go back)")
+	}
+}
+
+func TestMultiSelectorLeftArrowCancelsWhenNoFilter(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), nil)
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	got := updated.(multiSelectorModel)
+	if !got.cancelled {
+		t.Error("left arrow with empty filter should cancel (go back)")
+	}
+}
+
+func TestMultiSelectorLeftArrowCancelsWhenFiltering(t *testing.T) {
+	m := newMultiSelectorModel("Pick:", items("a", "b", "c"), nil)
+	m.filter = "a"
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	got := updated.(multiSelectorModel)
+	if !got.cancelled {
+		t.Error("left arrow with active filter should still cancel (go back)")
 	}
 }
 

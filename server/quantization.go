@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"slices"
 	"strings"
 	"unsafe"
 
@@ -33,6 +34,9 @@ func (q quantizer) WriteTo(w io.Writer) (int64, error) {
 		slog.Warn("file read error", "tensor", q.from.Name, "file", q.Name(), "error", err)
 		return 0, fmt.Errorf("unable to read tensor %s from %s: %s", q.from.Name, q.Name(), err)
 	}
+	if uint64(len(data)) < q.from.Size() {
+		return 0, fmt.Errorf("tensor %s data size %d is less than expected %d from shape %v", q.from.Name, len(data), q.from.Size(), q.from.Shape)
+	}
 	var f32s []float32
 	newType := fsggml.TensorType(q.to.Kind)
 	if fsggml.TensorType(q.from.Kind) == fsggml.TensorTypeF32 {
@@ -58,7 +62,7 @@ func useMoreBits(iLayer, nLayers int) bool {
 	return iLayer < (nLayers/8) || iLayer >= 7*nLayers/8 || (iLayer-nLayers/8)%3 == 2
 }
 
-func qwen3nextQuantType(name string) (fsggml.TensorType, bool) {
+func qwen3LinearAttnQuantType(name string) (fsggml.TensorType, bool) {
 	switch {
 	// Full attention
 	case strings.HasSuffix(name, ".attn_q.weight"):
@@ -78,6 +82,10 @@ func qwen3nextQuantType(name string) (fsggml.TensorType, bool) {
 
 	// SSM
 	case strings.HasSuffix(name, ".ssm_ba.weight"):
+		return fsggml.TensorTypeQ4_K, true
+	case strings.HasSuffix(name, ".ssm_beta.weight"):
+		return fsggml.TensorTypeQ4_K, true
+	case strings.HasSuffix(name, ".ssm_alpha.weight"):
 		return fsggml.TensorTypeQ4_K, true
 	case strings.HasSuffix(name, ".ssm_out.weight"):
 		return fsggml.TensorTypeQ4_K, true
@@ -145,7 +153,16 @@ func getTensorNewType(kv fsggml.KV, qs *quantizeState, newType fsggml.TensorType
 		// MLA tensors need higher precision to avoid quality degradation
 		newType = fsggml.TensorTypeQ8_0
 	} else if strings.Contains(name, "ffn_down") {
-		iLayer := qs.iFfnDown
+		// For MoE models, ffn_down.weight (dense) and ffn_down_exps.weight (expert) both
+		// exist per layer and should get the same useMoreBits treatment. Dense sorts before
+		// expert alphabetically, so dense increments the counter and expert uses counter-1.
+		var iLayer int
+		if strings.Contains(name, "_exps") {
+			iLayer = max(0, qs.iFfnDown-1)
+		} else {
+			iLayer = qs.iFfnDown
+			qs.iFfnDown++
+		}
 		n_layer := qs.nFfnDown
 		if ftype == fsggml.FileTypeQ4_K_M {
 			if useMoreBits(iLayer, n_layer) {
@@ -154,7 +171,6 @@ func getTensorNewType(kv fsggml.KV, qs *quantizeState, newType fsggml.TensorType
 		} else if ftype == fsggml.FileTypeQ4_K_S && iLayer < n_layer/8 {
 			newType = fsggml.TensorTypeQ5_K
 		}
-		qs.iFfnDown++
 	} else if strings.Contains(name, "attn_output.weight") {
 		if nExperts == 8 {
 			if ftype == fsggml.FileTypeQ4_K_S || ftype == fsggml.FileTypeQ4_K_M {
@@ -247,8 +263,9 @@ func newType(t *fsggml.Tensor, kv fsggml.KV, qs *quantizeState, ftype fsggml.Fil
 	name := t.Name
 	quantize := strings.HasSuffix(name, "weight")
 
-	// don't quantize vision encoder tensors (named with "v." prefix)
+	// don't quantize vision or audio encoder tensors
 	quantize = quantize && !strings.HasPrefix(name, "v.")
+	quantize = quantize && !strings.HasPrefix(name, "a.")
 	quantize = quantize && !strings.Contains(name, "mm.")
 
 	// quantize only 2D and 3D tensors (experts)
@@ -287,8 +304,8 @@ func newType(t *fsggml.Tensor, kv fsggml.KV, qs *quantizeState, ftype fsggml.Fil
 
 	newType := fsggml.TensorType(t.Kind)
 	if quantize {
-		if kv.Architecture() == "qwen3next" && (ftype == fsggml.FileTypeQ4_K_M || ftype == fsggml.FileTypeQ4_K_S) {
-			if qt, ok := qwen3nextQuantType(name); ok {
+		if slices.Contains([]string{"qwen3next", "qwen35", "qwen35moe"}, kv.Architecture()) && (ftype == fsggml.FileTypeQ4_K_M || ftype == fsggml.FileTypeQ4_K_S) {
+			if qt, ok := qwen3LinearAttnQuantType(name); ok {
 				return qt
 			}
 		}

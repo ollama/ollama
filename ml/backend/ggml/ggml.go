@@ -1069,6 +1069,21 @@ func (t *Tensor) Floats() (data []float32) {
 	return
 }
 
+func (t *Tensor) BackendGet() []float32 {
+	n := int(C.ggml_nelements(t.t))
+	if n == 0 {
+		return nil
+	}
+
+	if t.sync != nil {
+		t.sync()
+	}
+
+	data := make([]float32, n)
+	C.ggml_backend_tensor_get(t.t, unsafe.Pointer(&data[0]), 0, C.ggml_nbytes(t.t))
+	return data
+}
+
 func tensorSet[S ~[]E, E byte | float32 | int32](t *Tensor, s S) {
 	if len(s) == 0 {
 		return
@@ -1313,6 +1328,13 @@ func (t *Tensor) Pad(ctx ml.Context, shape ...int) ml.Tensor {
 	}
 }
 
+func (t *Tensor) PadExt(ctx ml.Context, lp0, rp0, lp1, rp1, lp2, rp2, lp3, rp3 int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_pad_ext(ctx.(*Context).ctx, t.t, C.int(lp0), C.int(rp0), C.int(lp1), C.int(rp1), C.int(lp2), C.int(rp2), C.int(lp3), C.int(rp3)),
+	}
+}
+
 // Permute permutes t according to order. Permute panics if the number of dimensions
 // in order does not match the number of dimensions in t.
 func (t *Tensor) Permute(ctx ml.Context, order ...int) ml.Tensor {
@@ -1342,6 +1364,21 @@ func (t *Tensor) SetRows(ctx ml.Context, src ml.Tensor, idxs ml.Tensor) ml.Tenso
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_set_rows(ctx.(*Context).ctx, t.t, src.(*Tensor).t, idxs.(*Tensor).t),
+	}
+}
+
+func (t *Tensor) SetInplace(ctx ml.Context, src ml.Tensor, nb1, nb2, nb3, offset int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_set_inplace(
+			ctx.(*Context).ctx,
+			t.t,
+			src.(*Tensor).t,
+			C.size_t(nb1),
+			C.size_t(nb2),
+			C.size_t(nb3),
+			C.size_t(offset),
+		),
 	}
 }
 
@@ -1645,6 +1682,13 @@ func (t *Tensor) Conv2D(ctx ml.Context, t2 ml.Tensor, s0, s1, p0, p1, d0, d1 int
 	}
 }
 
+func (t *Tensor) Conv1DDW(ctx ml.Context, weight ml.Tensor, s, p, d int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_conv_1d_dw(ctx.(*Context).ctx, weight.(*Tensor).t, t.t, C.int(s), C.int(p), C.int(d)),
+	}
+}
+
 func (t *Tensor) Conv3D(ctx ml.Context, t2 ml.Tensor, c, s0, s1, s2, p0, p1, p2, d0, d1, d2 int) ml.Tensor {
 	var tt ml.Tensor = &Tensor{
 		b: t.b,
@@ -1659,6 +1703,13 @@ func (t *Tensor) SSMConv(ctx ml.Context, kernel ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_ssm_conv(ctx.(*Context).ctx, t.t, kernel.(*Tensor).t),
+	}
+}
+
+func (t *Tensor) SSMScan(ctx ml.Context, x, dt, A, B, C, ids ml.Tensor) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_ssm_scan(ctx.(*Context).ctx, t.t, x.(*Tensor).t, dt.(*Tensor).t, A.(*Tensor).t, B.(*Tensor).t, C.(*Tensor).t, ids.(*Tensor).t),
 	}
 }
 

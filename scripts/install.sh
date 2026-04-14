@@ -2,6 +2,10 @@
 # This script installs Ollama on Linux and macOS.
 # It detects the current operating system architecture and installs the appropriate version of Ollama.
 
+# Wrap script in main function so that a truncated partial download doesn't end
+# up executing half a script.
+main() {
+
 set -eu
 
 red="$( (/usr/bin/tput bold || :; /usr/bin/tput setaf 1 || :) 2>&-)"
@@ -72,10 +76,12 @@ if [ "$OS" = "Darwin" ]; then
     unzip -q "$TEMP_DIR/Ollama-darwin.zip" -d "$TEMP_DIR"
     mv "$TEMP_DIR/Ollama.app" "/Applications/"
 
-    status "Adding 'ollama' command to PATH (may require password)..."
-    mkdir -p "/usr/local/bin" 2>/dev/null || sudo mkdir -p "/usr/local/bin"
-    ln -sf "/Applications/Ollama.app/Contents/Resources/ollama" "/usr/local/bin/ollama" 2>/dev/null || \
-        sudo ln -sf "/Applications/Ollama.app/Contents/Resources/ollama" "/usr/local/bin/ollama"
+    if [ ! -L "/usr/local/bin/ollama" ] || [ "$(readlink "/usr/local/bin/ollama")" != "/Applications/Ollama.app/Contents/Resources/ollama" ]; then
+        status "Adding 'ollama' command to PATH (may require password)..."
+        mkdir -p "/usr/local/bin" 2>/dev/null || sudo mkdir -p "/usr/local/bin"
+        ln -sf "/Applications/Ollama.app/Contents/Resources/ollama" "/usr/local/bin/ollama" 2>/dev/null || \
+            sudo ln -sf "/Applications/Ollama.app/Contents/Resources/ollama" "/usr/local/bin/ollama"
+    fi
 
     if [ -z "${OLLAMA_NO_START:-}" ]; then
         status "Starting Ollama..."
@@ -444,3 +450,6 @@ fi
 
 status "NVIDIA GPU ready."
 install_success
+}
+
+main

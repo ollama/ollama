@@ -28,9 +28,11 @@ import (
 	"github.com/ollama/ollama/app/tools"
 	"github.com/ollama/ollama/app/types/not"
 	"github.com/ollama/ollama/app/ui/responses"
+	"github.com/ollama/ollama/app/updater"
 	"github.com/ollama/ollama/app/version"
 	ollamaAuth "github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/types/model"
 	_ "github.com/tkrajina/typescriptify-golang-structs/typescriptify"
 )
@@ -106,6 +108,10 @@ type Server struct {
 
 	// Dev is true if the server is running in development mode
 	Dev bool
+
+	// Updater for checking and downloading updates
+	Updater             *updater.Updater
+	UpdateAvailableFunc func()
 }
 
 func (s *Server) log() *slog.Logger {
@@ -150,7 +156,7 @@ func (s *Server) ollamaProxy() http.Handler {
 					return
 				}
 
-				target := envconfig.Host()
+				target := envconfig.ConnectableHost()
 				s.log().Info("configuring ollama proxy", "target", target.String())
 
 				newProxy := httputil.NewSingleHostReverseProxy(target)
@@ -188,7 +194,7 @@ func (s *Server) Handler() http.Handler {
 			if CORS() {
 				w.Header().Set("Access-Control-Allow-Origin", "*")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, User-Agent, Accept, X-Requested-With")
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 				// Handle preflight requests
@@ -284,12 +290,15 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/model/upstream", handle(s.modelUpstream))
 	mux.Handle("GET /api/v1/settings", handle(s.getSettings))
 	mux.Handle("POST /api/v1/settings", handle(s.settings))
+	mux.Handle("GET /api/v1/cloud", handle(s.getCloudSetting))
+	mux.Handle("POST /api/v1/cloud", handle(s.cloudSetting))
 
 	// Ollama proxy endpoints
 	ollamaProxy := s.ollamaProxy()
 	mux.Handle("GET /api/tags", ollamaProxy)
 	mux.Handle("POST /api/show", ollamaProxy)
 	mux.Handle("GET /api/version", ollamaProxy)
+	mux.Handle("GET /api/status", ollamaProxy)
 	mux.Handle("HEAD /api/version", ollamaProxy)
 	mux.Handle("POST /api/me", ollamaProxy)
 	mux.Handle("POST /api/signout", ollamaProxy)
@@ -310,7 +319,7 @@ func (s *Server) handleError(w http.ResponseWriter, e error) {
 	if CORS() {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, User-Agent, Accept, X-Requested-With")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 	}
 
@@ -333,8 +342,18 @@ func (t *userAgentTransport) RoundTrip(req *http.Request) (*http.Response, error
 
 // httpClient returns an HTTP client that automatically adds the User-Agent header
 func (s *Server) httpClient() *http.Client {
+	return userAgentHTTPClient(10 * time.Second)
+}
+
+// inferenceClient uses almost the same HTTP client, but without a timeout so
+// long requests aren't truncated
+func (s *Server) inferenceClient() *api.Client {
+	return api.NewClient(envconfig.Host(), userAgentHTTPClient(0))
+}
+
+func userAgentHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{
-		Timeout: 10 * time.Second,
+		Timeout: timeout,
 		Transport: &userAgentTransport{
 			base: http.DefaultTransport,
 		},
@@ -712,11 +731,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 	_, cancelLoading := context.WithCancel(ctx)
 	loading := false
 
-	c, err := api.ClientFromEnvironment()
-	if err != nil {
-		cancelLoading()
-		return err
-	}
+	c := s.inferenceClient()
 
 	// Check if the model exists locally by trying to show it
 	// TODO (jmorganca): skip this round trip and instead just act
@@ -826,8 +841,9 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 
 	if !hasAttachments {
 		WebSearchEnabled := req.WebSearch != nil && *req.WebSearch
+		hasToolsCapability := slices.Contains(details.Capabilities, model.CapabilityTools)
 
-		if WebSearchEnabled {
+		if WebSearchEnabled && hasToolsCapability {
 			if supportsBrowserTools(req.Model) {
 				browserState, ok := s.browserState(chat)
 				if !ok {
@@ -837,7 +853,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 				registry.Register(tools.NewBrowserSearch(browser))
 				registry.Register(tools.NewBrowserOpen(browser))
 				registry.Register(tools.NewBrowserFind(browser))
-			} else if supportsWebSearchTools(req.Model) {
+			} else {
 				registry.Register(&tools.WebSearch{})
 				registry.Register(&tools.WebFetch{})
 			}
@@ -1417,11 +1433,6 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) error {
 		settings.Models = envconfig.Models()
 	}
 
-	// set default context length if not set
-	if settings.ContextLength == 0 {
-		settings.ContextLength = 4096
-	}
-
 	// Include current runtime settings
 	settings.Agent = s.Agent
 	settings.Tools = s.Tools
@@ -1448,6 +1459,24 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 		return fmt.Errorf("failed to save settings: %w", err)
 	}
 
+	// Handle auto-update toggle changes
+	if old.AutoUpdateEnabled != settings.AutoUpdateEnabled {
+		if !settings.AutoUpdateEnabled {
+			// Auto-update disabled: cancel any ongoing download
+			if s.Updater != nil {
+				s.Updater.CancelOngoingDownload()
+			}
+		} else {
+			// Auto-update re-enabled: show notification if update is already staged, or trigger immediate check
+			if (updater.IsUpdatePending() || updater.UpdateDownloaded) && s.UpdateAvailableFunc != nil {
+				s.UpdateAvailableFunc()
+			} else if s.Updater != nil {
+				// Trigger the background checker to run immediately
+				s.Updater.TriggerImmediateCheck()
+			}
+		}
+	}
+
 	if old.ContextLength != settings.ContextLength ||
 		old.Models != settings.Models ||
 		old.Expose != settings.Expose {
@@ -1460,17 +1489,51 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 	})
 }
 
+func (s *Server) cloudSetting(w http.ResponseWriter, r *http.Request) error {
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return fmt.Errorf("invalid request body: %w", err)
+	}
+
+	if err := s.Store.SetCloudEnabled(req.Enabled); err != nil {
+		return fmt.Errorf("failed to persist cloud setting: %w", err)
+	}
+
+	s.Restart()
+
+	return s.writeCloudStatus(w)
+}
+
+func (s *Server) getCloudSetting(w http.ResponseWriter, r *http.Request) error {
+	return s.writeCloudStatus(w)
+}
+
+func (s *Server) writeCloudStatus(w http.ResponseWriter) error {
+	disabled, source, err := s.Store.CloudStatus()
+	if err != nil {
+		return fmt.Errorf("failed to load cloud status: %w", err)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	return json.NewEncoder(w).Encode(map[string]any{
+		"disabled": disabled,
+		"source":   source,
+	})
+}
+
 func (s *Server) getInferenceCompute(w http.ResponseWriter, r *http.Request) error {
 	ctx, cancel := context.WithTimeout(r.Context(), 500*time.Millisecond)
 	defer cancel()
-	serverInferenceComputes, err := server.GetInferenceComputer(ctx)
+	info, err := server.GetInferenceInfo(ctx)
 	if err != nil {
-		s.log().Error("failed to get inference compute", "error", err)
-		return fmt.Errorf("failed to get inference compute: %w", err)
+		s.log().Error("failed to get inference info", "error", err)
+		return fmt.Errorf("failed to get inference info: %w", err)
 	}
 
-	inferenceComputes := make([]responses.InferenceCompute, len(serverInferenceComputes))
-	for i, ic := range serverInferenceComputes {
+	inferenceComputes := make([]responses.InferenceCompute, len(info.Computes))
+	for i, ic := range info.Computes {
 		inferenceComputes[i] = responses.InferenceCompute{
 			Library: ic.Library,
 			Variant: ic.Variant,
@@ -1482,7 +1545,8 @@ func (s *Server) getInferenceCompute(w http.ResponseWriter, r *http.Request) err
 	}
 
 	response := responses.InferenceComputeResponse{
-		InferenceComputes: inferenceComputes,
+		InferenceComputes:    inferenceComputes,
+		DefaultContextLength: info.DefaultContextLength,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1515,9 +1579,18 @@ func (s *Server) modelUpstream(w http.ResponseWriter, r *http.Request) error {
 		return json.NewEncoder(w).Encode(response)
 	}
 
+	n := model.ParseName(req.Model)
+	stale := true
+	if m, err := manifest.ParseNamedManifest(n); err == nil {
+		if m.Digest() == digest {
+			stale = false
+		} else if pushTime > 0 && m.FileInfo().ModTime().Unix() >= pushTime {
+			stale = false
+		}
+	}
+
 	response := responses.ModelUpstreamResponse{
-		Digest:   digest,
-		PushTime: pushTime,
+		Stale: stale,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1621,18 +1694,6 @@ func ptr[T any](v T) *T { return &v }
 // Browser tools simulate a full browser environment, allowing for actions like searching, opening, and interacting with web pages (e.g., "browser_search", "browser_open", "browser_find"). Currently only gpt-oss models support browser tools.
 func supportsBrowserTools(model string) bool {
 	return strings.HasPrefix(strings.ToLower(model), "gpt-oss")
-}
-
-// Web search tools are simpler, providing only basic web search and fetch capabilities (e.g., "web_search", "web_fetch") without simulating a browser. Currently only qwen3 and deepseek-v3 support web search tools.
-func supportsWebSearchTools(model string) bool {
-	model = strings.ToLower(model)
-	prefixes := []string{"qwen3", "deepseek-v3"}
-	for _, p := range prefixes {
-		if strings.HasPrefix(model, p) {
-			return true
-		}
-	}
-	return false
 }
 
 // buildChatRequest converts store.Chat to api.ChatRequest

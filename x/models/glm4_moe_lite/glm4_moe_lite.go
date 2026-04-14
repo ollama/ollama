@@ -1,24 +1,24 @@
-//go:build mlx
-
 // Package glm4_moe_lite provides the GLM4-MoE-Lite implementation for MLX.
 // This model uses Multi-head Latent Attention (MLA) and Mixture of Experts (MoE).
 package glm4_moe_lite
 
 import (
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math"
-	"os"
-	"strings"
 
-	"github.com/ollama/ollama/x/imagegen/manifest"
-	"github.com/ollama/ollama/x/imagegen/tokenizer"
 	"github.com/ollama/ollama/x/mlxrunner/cache"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	"github.com/ollama/ollama/x/mlxrunner/model"
+	"github.com/ollama/ollama/x/mlxrunner/model/base"
 	"github.com/ollama/ollama/x/models/nn"
+	"github.com/ollama/ollama/x/tokenizer"
 )
+
+func init() {
+	base.Register("Glm4MoeLiteForCausalLM", newModel)
+	base.Register("GLM4MoeLite", newModel)
+}
 
 // RopeScaling holds RoPE scaling configuration
 type RopeScaling struct {
@@ -61,9 +61,10 @@ type Config struct {
 	RopeScaling *RopeScaling `json:"rope_scaling"`
 
 	// Quantization parameters (set during load based on model quantization)
-	QuantGroupSize int    `json:"-"` // Group size for quantization (default 64)
-	QuantBits      int    `json:"-"` // Bits per weight (4 or 8)
-	QuantMode      string `json:"-"` // Quantization mode ("affine", etc.)
+	QuantGroupSize int                               `json:"-"` // Group size for quantization (default 64)
+	QuantBits      int                               `json:"-"` // Bits per weight (4 or 8)
+	QuantMode      string                            `json:"-"` // Quantization mode ("affine", etc.)
+	TensorQuant    map[string]*model.TensorQuantInfo `json:"-"`
 
 	// Computed fields
 	QHeadDim int32   `json:"-"` // qk_nope_head_dim + qk_rope_head_dim
@@ -131,7 +132,6 @@ func (a *MLAAttention) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Con
 	queries := mlx.Concatenate([]*mlx.Array{qLatent, qPE}, 3)
 
 	out := mlx.ScaledDotProductAttentionCausal(queries, keys, values, cfg.Scale, L > 1)
-
 	out = a.UnembedOut.Forward(out)
 
 	out = mlx.Reshape(mlx.Transpose(out, 0, 2, 1, 3), B, L, cfg.NumAttentionHeads*cfg.VHeadDim)
@@ -345,7 +345,7 @@ type Block interface {
 
 // Model represents the complete GLM4-MoE-Lite model
 type Model struct {
-	EmbedTokens *nn.Embedding
+	EmbedTokens nn.EmbeddingLayer
 	Layers      []Block
 	Norm        *nn.RMSNorm
 	LMHead      nn.LinearLayer
@@ -370,60 +370,6 @@ func supportsGatherQMM(mode string, bits int) bool {
 	return mode == "affine" && (bits == 4 || bits == 8)
 }
 
-// quantizationParams returns groupSize, bits, mode for a quantization type string.
-func quantizationParams(quantization string) (groupSize, bits int, mode string) {
-	switch strings.ToUpper(quantization) {
-	case "NVFP4":
-		return 16, 4, "nvfp4"
-	case "FP4", "Q4", "INT4":
-		return 32, 4, "affine"
-	case "MXFP8":
-		return 32, 8, "mxfp8"
-	case "FP8", "Q8", "INT8", "":
-		return 64, 8, "affine"
-	default:
-		return 32, 8, "affine"
-	}
-}
-
-// readBlobMetadata reads the __metadata__ from a safetensors blob header.
-func readBlobMetadata(path string) (map[string]string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	var headerSize uint64
-	if err := binary.Read(f, binary.LittleEndian, &headerSize); err != nil {
-		return nil, err
-	}
-	if headerSize > 1024*1024 {
-		return nil, fmt.Errorf("header too large: %d", headerSize)
-	}
-
-	data := make([]byte, headerSize)
-	if _, err := io.ReadFull(f, data); err != nil {
-		return nil, err
-	}
-
-	var header map[string]json.RawMessage
-	if err := json.Unmarshal(data, &header); err != nil {
-		return nil, err
-	}
-
-	metaRaw, ok := header["__metadata__"]
-	if !ok {
-		return nil, nil
-	}
-
-	var meta map[string]string
-	if err := json.Unmarshal(metaRaw, &meta); err != nil {
-		return nil, err
-	}
-	return meta, nil
-}
-
 // ExpertWeight holds a single expert's weight with optional quantization components.
 type ExpertWeight struct {
 	Weight    *mlx.Array
@@ -444,7 +390,15 @@ func loadExpertWeight(tensors map[string]*mlx.Array, path string, useQuantized b
 	if scales != nil {
 		qbiases := tensors[path+".weight_qbias"]
 
-		groupSize, bits, mode := cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode
+		groupSize, bits, mode := model.ResolveLinearQuantParams(
+			cfg.QuantGroupSize,
+			cfg.QuantBits,
+			cfg.QuantMode,
+			cfg.TensorQuant,
+			path+".weight",
+			w,
+			scales,
+		)
 
 		if useQuantized && supportsGatherQMM(mode, bits) {
 			return &ExpertWeight{Weight: w, Scales: scales, Biases: qbiases, Bits: bits, GroupSize: groupSize}
@@ -528,7 +482,16 @@ func sanitizeMLAWeights(tensors map[string]*mlx.Array, prefix string, cfg *Confi
 	// Check if quantized and dequantize
 	if scales := tensors[path+".weight_scale"]; scales != nil {
 		qbiases := tensors[path+".weight_qbias"]
-		w = mlx.Dequantize(w, scales, qbiases, cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode)
+		groupSize, bits, mode := model.ResolveLinearQuantParams(
+			cfg.QuantGroupSize,
+			cfg.QuantBits,
+			cfg.QuantMode,
+			cfg.TensorQuant,
+			path+".weight",
+			w,
+			scales,
+		)
+		w = mlx.Dequantize(w, scales, qbiases, groupSize, bits, mode)
 	}
 
 	headDim := cfg.QKNopeHeadDim + cfg.VHeadDim
@@ -543,35 +506,10 @@ func sanitizeMLAWeights(tensors map[string]*mlx.Array, prefix string, cfg *Confi
 	return embedQ, unembedOut
 }
 
-// makeLinear creates a Linear or QuantizedLinear layer from the tensor map.
-func makeLinear(tensors map[string]*mlx.Array, path string, cfg *Config) nn.LinearLayer {
-	w := tensors[path+".weight"]
-	if w == nil {
-		return nil
-	}
-
-	scales := tensors[path+".weight_scale"]
-	if scales != nil {
-		qbiases := tensors[path+".weight_qbias"]
-		bias := tensors[path+".bias"]
-		return &nn.QuantizedLinear{
-			Weight:    w,
-			Scales:    scales,
-			QBiases:   qbiases,
-			Bias:      bias,
-			GroupSize: cfg.QuantGroupSize,
-			Bits:      cfg.QuantBits,
-			Mode:      cfg.QuantMode,
-		}
-	}
-
-	bias := tensors[path+".bias"]
-	return nn.NewLinear(w, bias)
-}
-
-// LoadFromManifest loads a GLM4-MoE-Lite model from a manifest (Ollama blob storage).
-func LoadFromManifest(modelManifest *manifest.ModelManifest) (*Model, error) {
-	configData, err := modelManifest.ReadConfig("config.json")
+// newModel creates a new GLM4-MoE-Lite model from a Root (config + tokenizer,
+// no weights loaded yet). Called by the registry via base.New().
+func newModel(root *model.Root) (base.Model, error) {
+	configData, err := root.Manifest.ReadConfig("config.json")
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
@@ -584,66 +522,19 @@ func LoadFromManifest(modelManifest *manifest.ModelManifest) (*Model, error) {
 	cfg.QHeadDim = cfg.QKNopeHeadDim + cfg.QKRopeHeadDim
 	cfg.Scale = computeScale(&cfg)
 
-	// Load all tensors from manifest blobs into a flat map
-	allTensors := make(map[string]*mlx.Array)
-	seen := make(map[string]bool) // dedupe by digest
-	var quantType string
-	var quantGroupSize int
-
-	for _, layer := range modelManifest.GetTensorLayers("") {
-		if seen[layer.Digest] {
-			continue
+	// Set up quantization parameters from pre-scanned metadata
+	if qt := root.QuantType(); qt != "" {
+		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams(qt)
+		if gs := root.GroupSize(); gs > 0 {
+			cfg.QuantGroupSize = gs
 		}
-		seen[layer.Digest] = true
-		blobPath := modelManifest.BlobPath(layer.Digest)
-
-		// Read quantization metadata from first blob
-		if quantType == "" {
-			if meta, err := readBlobMetadata(blobPath); err == nil && meta != nil {
-				if qt := meta["quant_type"]; qt != "" {
-					quantType = strings.ToUpper(qt)
-				}
-				if gs := meta["group_size"]; gs != "" {
-					fmt.Sscanf(gs, "%d", &quantGroupSize)
-				}
-			}
-		}
-
-		for name, arr := range mlx.Load(blobPath) {
-			// Map safetensors key naming to our naming convention
-			// Combined blobs use ".scale" and ".bias" suffixes
-			if strings.HasSuffix(name, ".scale") {
-				baseName := strings.TrimSuffix(name, ".scale")
-				allTensors[baseName+"_scale"] = arr
-			} else if strings.HasSuffix(name, ".bias") && !strings.HasSuffix(name, ".weight_qbias") {
-				// Check if this is a quantization bias or a regular bias
-				// by checking if there's a corresponding weight
-				baseName := strings.TrimSuffix(name, ".bias")
-				if _, hasScale := allTensors[baseName+"_scale"]; hasScale {
-					allTensors[baseName+"_qbias"] = arr
-				} else {
-					allTensors[name] = arr
-				}
-			} else {
-				allTensors[name] = arr
-			}
-		}
+	} else {
+		cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode = model.QuantizationParams("")
 	}
-
-	// Set up quantization parameters
-	useQuantized := false
-	if quantType != "" {
-		_, cfg.QuantBits, cfg.QuantMode = quantizationParams(quantType)
-		if quantGroupSize > 0 {
-			cfg.QuantGroupSize = quantGroupSize
-		} else {
-			cfg.QuantGroupSize, _, _ = quantizationParams(quantType)
-		}
-		useQuantized = supportsGatherQMM(cfg.QuantMode, cfg.QuantBits)
-	}
+	cfg.TensorQuant = root.AllTensorQuant()
 
 	// Load tokenizer
-	tokData, err := modelManifest.ReadConfig("tokenizer.json")
+	tokData, err := root.Manifest.ReadConfig("tokenizer.json")
 	if err != nil {
 		return nil, fmt.Errorf("load tokenizer config: %w", err)
 	}
@@ -652,11 +543,11 @@ func LoadFromManifest(modelManifest *manifest.ModelManifest) (*Model, error) {
 		ConfigJSON: configData,
 	}
 
-	if genConfigData, err := modelManifest.ReadConfig("generation_config.json"); err == nil {
+	if genConfigData, err := root.Manifest.ReadConfig("generation_config.json"); err == nil {
 		tokConfig.GenerationConfigJSON = genConfigData
 	}
 
-	if tokConfigData, err := modelManifest.ReadConfig("tokenizer_config.json"); err == nil {
+	if tokConfigData, err := root.Manifest.ReadConfig("tokenizer_config.json"); err == nil {
 		tokConfig.TokenizerConfigJSON = tokConfigData
 	}
 
@@ -671,18 +562,39 @@ func LoadFromManifest(modelManifest *manifest.ModelManifest) (*Model, error) {
 		tok:    tok,
 	}
 
-	// Load embedding
-	if w := allTensors["model.embed_tokens.weight"]; w != nil {
-		m.EmbedTokens = nn.NewEmbedding(w)
+	return m, nil
+}
+
+// LoadWeights receives all tensors loaded from the manifest and assigns them
+// to model fields. Handles MLA absorption, expert stacking, and quantized
+// layer creation.
+func (m *Model) LoadWeights(tensors map[string]*mlx.Array) error {
+	cfg := m.Config
+	linears := model.NewLinearFactory(tensors, cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant)
+	useQuantized := supportsGatherQMM(cfg.QuantMode, cfg.QuantBits)
+	if !useQuantized && cfg.TensorQuant != nil {
+		for _, tq := range cfg.TensorQuant {
+			if tq == nil {
+				continue
+			}
+			_, bits, mode := model.QuantizationParams(tq.QuantType)
+			if supportsGatherQMM(mode, bits) {
+				useQuantized = true
+				break
+			}
+		}
 	}
 
+	// Load embedding
+	m.EmbedTokens = model.MakeEmbeddingLayer(tensors, "model.embed_tokens", cfg.QuantGroupSize, cfg.QuantBits, cfg.QuantMode, cfg.TensorQuant)
+
 	// Load final norm
-	if w := allTensors["model.norm.weight"]; w != nil {
+	if w := tensors["model.norm.weight"]; w != nil {
 		m.Norm = nn.NewRMSNorm(w, cfg.RMSNormEps)
 	}
 
 	// Load LM head
-	m.LMHead = makeLinear(allTensors, "lm_head", &cfg)
+	m.LMHead = linears.Make("lm_head")
 
 	// Load layers
 	for i := int32(0); i < cfg.NumHiddenLayers; i++ {
@@ -690,24 +602,24 @@ func LoadFromManifest(modelManifest *manifest.ModelManifest) (*Model, error) {
 
 		// Load attention (same for both block types)
 		attn := &MLAAttention{}
-		attn.QAProj = makeLinear(allTensors, prefix+".self_attn.q_a_proj", &cfg)
-		if w := allTensors[prefix+".self_attn.q_a_layernorm.weight"]; w != nil {
+		attn.QAProj = linears.Make(prefix + ".self_attn.q_a_proj")
+		if w := tensors[prefix+".self_attn.q_a_layernorm.weight"]; w != nil {
 			attn.QALayerNorm = nn.NewRMSNorm(w, cfg.RMSNormEps)
 		}
-		attn.QBProj = makeLinear(allTensors, prefix+".self_attn.q_b_proj", &cfg)
-		attn.KVAProjWithMQA = makeLinear(allTensors, prefix+".self_attn.kv_a_proj_with_mqa", &cfg)
-		if w := allTensors[prefix+".self_attn.kv_a_layernorm.weight"]; w != nil {
+		attn.QBProj = linears.Make(prefix + ".self_attn.q_b_proj")
+		attn.KVAProjWithMQA = linears.Make(prefix + ".self_attn.kv_a_proj_with_mqa")
+		if w := tensors[prefix+".self_attn.kv_a_layernorm.weight"]; w != nil {
 			attn.KVALayerNorm = nn.NewRMSNorm(w, cfg.RMSNormEps)
 		}
-		attn.OProj = makeLinear(allTensors, prefix+".self_attn.o_proj", &cfg)
+		attn.OProj = linears.Make(prefix + ".self_attn.o_proj")
 
 		// Sanitize MLA weights for absorbed attention
-		embedQ, unembedOut := sanitizeMLAWeights(allTensors, prefix, &cfg)
+		embedQ, unembedOut := sanitizeMLAWeights(tensors, prefix, cfg)
 		attn.EmbedQ = nn.NewMultiLinear(embedQ)
 		attn.UnembedOut = nn.NewMultiLinear(unembedOut)
 
-		inputLN := allTensors[prefix+".input_layernorm.weight"]
-		postAttnLN := allTensors[prefix+".post_attention_layernorm.weight"]
+		inputLN := tensors[prefix+".input_layernorm.weight"]
+		postAttnLN := tensors[prefix+".post_attention_layernorm.weight"]
 
 		if i < cfg.FirstKDenseReplace {
 			// Dense block
@@ -720,9 +632,9 @@ func LoadFromManifest(modelManifest *manifest.ModelManifest) (*Model, error) {
 			}
 
 			block.MLP = &DenseMLP{
-				GateProj: makeLinear(allTensors, prefix+".mlp.gate_proj", &cfg),
-				UpProj:   makeLinear(allTensors, prefix+".mlp.up_proj", &cfg),
-				DownProj: makeLinear(allTensors, prefix+".mlp.down_proj", &cfg),
+				GateProj: linears.Make(prefix + ".mlp.gate_proj"),
+				UpProj:   linears.Make(prefix + ".mlp.up_proj"),
+				DownProj: linears.Make(prefix + ".mlp.down_proj"),
 			}
 
 			m.Layers[i] = block
@@ -737,7 +649,7 @@ func LoadFromManifest(modelManifest *manifest.ModelManifest) (*Model, error) {
 			}
 
 			// Stack expert weights
-			gate, up, down := sanitizeExpertWeights(allTensors, prefix, cfg.NRoutedExperts, useQuantized, &cfg)
+			gate, up, down := sanitizeExpertWeights(tensors, prefix, cfg.NRoutedExperts, useQuantized, cfg)
 
 			switchMLP := &SwitchMLP{UseQuantized: useQuantized}
 			if useQuantized {
@@ -763,8 +675,8 @@ func LoadFromManifest(modelManifest *manifest.ModelManifest) (*Model, error) {
 			}
 
 			moeGate := &MoEGate{}
-			moeGate.Gate = makeLinear(allTensors, prefix+".mlp.gate", &cfg)
-			if bias := allTensors[prefix+".mlp.gate.e_score_correction_bias"]; bias != nil {
+			moeGate.Gate = linears.Make(prefix + ".mlp.gate")
+			if bias := tensors[prefix+".mlp.gate.e_score_correction_bias"]; bias != nil {
 				moeGate.EScoreCorrectionBias = bias
 			}
 
@@ -776,9 +688,9 @@ func LoadFromManifest(modelManifest *manifest.ModelManifest) (*Model, error) {
 			// Load shared experts if present
 			if cfg.NSharedExperts > 0 {
 				block.MoE.SharedExperts = &SharedExperts{
-					GateProj: makeLinear(allTensors, prefix+".mlp.shared_experts.gate_proj", &cfg),
-					UpProj:   makeLinear(allTensors, prefix+".mlp.shared_experts.up_proj", &cfg),
-					DownProj: makeLinear(allTensors, prefix+".mlp.shared_experts.down_proj", &cfg),
+					GateProj: linears.Make(prefix + ".mlp.shared_experts.gate_proj"),
+					UpProj:   linears.Make(prefix + ".mlp.shared_experts.up_proj"),
+					DownProj: linears.Make(prefix + ".mlp.shared_experts.down_proj"),
 				}
 			}
 
@@ -786,9 +698,7 @@ func LoadFromManifest(modelManifest *manifest.ModelManifest) (*Model, error) {
 		}
 	}
 
-	mlx.Eval(mlx.Collect(m)...)
-
-	return m, nil
+	return nil
 }
 
 // Forward computes the forward pass of the model
@@ -819,7 +729,7 @@ func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 func (m *Model) NumLayers() int { return len(m.Layers) }
 
 // MaxContextLength returns the maximum context length
-func (m *Model) MaxContextLength() int32 { return m.MaxPositionEmbeddings }
+func (m *Model) MaxContextLength() int { return int(m.MaxPositionEmbeddings) }
 
 // VocabSize returns the vocabulary size
 func (m *Model) VocabSize() int32 { return m.Config.VocabSize }

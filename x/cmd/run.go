@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
@@ -18,6 +19,8 @@ import (
 	"golang.org/x/term"
 
 	"github.com/ollama/ollama/api"
+	internalcloud "github.com/ollama/ollama/internal/cloud"
+	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/readline"
 	"github.com/ollama/ollama/types/model"
@@ -41,7 +44,7 @@ const (
 // isLocalModel checks if the model is running locally (not a cloud model).
 // TODO: Improve local/cloud model identification - could check model metadata
 func isLocalModel(modelName string) bool {
-	return !strings.HasSuffix(modelName, "-cloud")
+	return !modelref.HasExplicitCloudSource(modelName)
 }
 
 // isLocalServer checks if connecting to a local Ollama server.
@@ -60,6 +63,18 @@ func isLocalServer() bool {
 
 	hostname := parsed.Hostname()
 	return hostname == "localhost" || hostname == "127.0.0.1" || strings.Contains(parsed.Host, ":11434")
+}
+
+func cloudStatusDisabled(ctx context.Context, client *api.Client) (disabled bool, known bool) {
+	status, err := client.CloudStatusExperimental(ctx)
+	if err != nil {
+		var statusErr api.StatusError
+		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound {
+			return false, false
+		}
+		return false, false
+	}
+	return status.Cloud.Disabled, true
 }
 
 // truncateToolOutput truncates tool output to prevent context overflow.
@@ -84,6 +99,10 @@ func waitForOllamaSignin(ctx context.Context) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
+	}
+
+	if disabled, known := cloudStatusDisabled(ctx, client); known && disabled {
+		return errors.New(internalcloud.DisabledError("cloud account endpoints are unavailable"))
 	}
 
 	// Get signin URL from initial Whoami call
@@ -662,6 +681,15 @@ func GenerateInteractive(cmd *cobra.Command, modelName string, wordWrap bool, op
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\033[1mwarning:\033[0m could not check model capabilities: %v\n", err)
 		supportsTools = false
+	}
+
+	if enableWebsearch {
+		if client, err := api.ClientFromEnvironment(); err == nil {
+			if disabled, known := cloudStatusDisabled(cmd.Context(), client); known && disabled {
+				fmt.Fprintf(os.Stderr, "%s\n", internalcloud.DisabledError("web search is unavailable"))
+				enableWebsearch = false
+			}
+		}
 	}
 
 	// Create tool registry only if model supports tools

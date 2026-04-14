@@ -41,6 +41,7 @@ type Instance struct {
 	Terminal    *Terminal
 	History     *History
 	Pasting     bool
+	Prefill     string
 	pastedLines []string
 }
 
@@ -88,6 +89,27 @@ func (i *Instance) Readline() (string, error) {
 	}()
 
 	buf, _ := NewBuffer(i.Prompt)
+
+	// Prefill the buffer with any text that we received from an external editor
+	if i.Prefill != "" {
+		lines := strings.Split(i.Prefill, "\n")
+		i.Prefill = ""
+		for idx, l := range lines {
+			for _, r := range l {
+				buf.Add(r)
+			}
+			if idx < len(lines)-1 {
+				i.pastedLines = append(i.pastedLines, buf.String())
+				buf.Buf.Clear()
+				buf.Pos = 0
+				buf.DisplayPos = 0
+				buf.LineHasSpace.Clear()
+				fmt.Println()
+				fmt.Print(i.Prompt.AltPrompt)
+				i.Prompt.UseAlt = true
+			}
+		}
+	}
 
 	var esc bool
 	var escex bool
@@ -251,6 +273,29 @@ func (i *Instance) Readline() (string, error) {
 			buf.ClearScreen()
 		case CharCtrlW:
 			buf.DeleteWord()
+		case CharBell:
+			output := buf.String()
+			numPastedLines := len(i.pastedLines)
+			if numPastedLines > 0 {
+				output = strings.Join(i.pastedLines, "\n") + "\n" + output
+				i.pastedLines = nil
+			}
+
+			// Move cursor to the last display line of the current buffer
+			currLine := buf.DisplayPos / buf.LineWidth
+			lastLine := buf.DisplaySize() / buf.LineWidth
+			if lastLine > currLine {
+				fmt.Print(CursorDownN(lastLine - currLine))
+			}
+
+			// Clear all lines from bottom to top: buffer wrapped lines + pasted lines
+			for range lastLine + numPastedLines {
+				fmt.Print(CursorBOL + ClearToEOL + CursorUp)
+			}
+			fmt.Print(CursorBOL + ClearToEOL)
+
+			i.Prompt.UseAlt = false
+			return output, ErrEditPrompt
 		case CharCtrlZ:
 			fd := os.Stdin.Fd()
 			return handleCharCtrlZ(fd, i.Terminal.termios)
@@ -344,4 +389,49 @@ func (t *Terminal) Read() (rune, error) {
 		return 0, err
 	}
 	return r, nil
+}
+
+// SetRawModeOn enables raw terminal mode and keeps it on.
+// Call SetRawModeOff to restore when done.
+func (i *Instance) SetRawModeOn() error {
+	if i.Terminal.rawmode {
+		return nil
+	}
+	fd := os.Stdin.Fd()
+	termios, err := SetRawMode(fd)
+	if err != nil {
+		return err
+	}
+	i.Terminal.rawmode = true
+	i.Terminal.termios = termios
+	return nil
+}
+
+// SetRawModeOff restores the terminal to its previous mode.
+func (i *Instance) SetRawModeOff() {
+	if !i.Terminal.rawmode {
+		return
+	}
+	fd := os.Stdin.Fd()
+	//nolint:errcheck
+	UnsetRawMode(fd, i.Terminal.termios)
+	i.Terminal.rawmode = false
+}
+
+// ReadRaw reads a single rune. If the terminal is already in raw mode
+// (via SetRawModeOn), it reads directly. Otherwise it temporarily enters
+// raw mode for the read.
+func (i *Instance) ReadRaw() (rune, error) {
+	if !i.Terminal.rawmode {
+		fd := os.Stdin.Fd()
+		termios, err := SetRawMode(fd)
+		if err != nil {
+			return 0, err
+		}
+		defer func() {
+			//nolint:errcheck
+			UnsetRawMode(fd, termios)
+		}()
+	}
+	return i.Terminal.Read()
 }

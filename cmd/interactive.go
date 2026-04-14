@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/internal/modelref"
 	"github.com/ollama/ollama/readline"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
@@ -45,7 +47,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "Use \"\"\" to begin a multi-line message.")
 
 		if opts.MultiModal {
-			fmt.Fprintf(os.Stderr, "Use %s to include .jpg, .png, or .webp images.\n", filepath.FromSlash("/path/to/file"))
+			fmt.Fprintf(os.Stderr, "Use %s to include .jpg, .png, .webp images, or .wav audio files.\n", filepath.FromSlash("/path/to/file"))
 		}
 
 		fmt.Fprintln(os.Stderr, "")
@@ -79,6 +81,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  Ctrl + w            Delete the word before the cursor")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "  Ctrl + l            Clear the screen")
+		fmt.Fprintln(os.Stderr, "  Ctrl + g            Open default editor to compose a prompt")
 		fmt.Fprintln(os.Stderr, "  Ctrl + c            Stop the model from responding")
 		fmt.Fprintln(os.Stderr, "  Ctrl + d            Exit ollama (/bye)")
 		fmt.Fprintln(os.Stderr, "")
@@ -148,6 +151,18 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			sb.Reset()
 
 			continue
+		case errors.Is(err, readline.ErrEditPrompt):
+			sb.Reset()
+			content, err := editInExternalEditor(line)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				continue
+			}
+			if strings.TrimSpace(content) == "" {
+				continue
+			}
+			scanner.Prefill = content
+			continue
 		case err != nil:
 			return err
 		}
@@ -199,16 +214,28 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			}
 			origOpts := opts.Copy()
 
+			client, err := api.ClientFromEnvironment()
+			if err != nil {
+				fmt.Println("error: couldn't connect to ollama server")
+				return err
+			}
+
 			opts.Model = args[1]
 			opts.Messages = []api.Message{}
+			opts.LoadedMessages = nil
 			fmt.Printf("Loading model '%s'\n", opts.Model)
-			opts.Think, err = inferThinkingOption(nil, &opts, thinkExplicitlySet)
+			info, err := client.Show(cmd.Context(), &api.ShowRequest{Model: opts.Model})
 			if err != nil {
 				if strings.Contains(err.Error(), "not found") {
 					fmt.Printf("Couldn't find model '%s'\n", opts.Model)
 					opts = origOpts.Copy()
 					continue
 				}
+				return err
+			}
+			applyShowResponseToRunOptions(&opts, info)
+			opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, thinkExplicitlySet)
+			if err != nil {
 				return err
 			}
 			if err := loadOrUnloadModel(cmd, &opts); err != nil {
@@ -526,6 +553,13 @@ func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
 		parentModel = ""
 	}
 
+	// Preserve explicit cloud intent for sessions started with `:cloud`.
+	// Cloud model metadata can return a source-less parent_model (for example
+	// "qwen3.5"), which would otherwise make `/save` create a local derivative.
+	if modelref.HasExplicitCloudSource(opts.Model) && !modelref.HasExplicitCloudSource(parentModel) {
+		parentModel = ""
+	}
+
 	req := &api.CreateRequest{
 		Model: name,
 		From:  cmp.Or(parentModel, opts.Model),
@@ -539,8 +573,10 @@ func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
 		req.Parameters = opts.Options
 	}
 
-	if len(opts.Messages) > 0 {
-		req.Messages = opts.Messages
+	messages := slices.Clone(opts.LoadedMessages)
+	messages = append(messages, opts.Messages...)
+	if len(messages) > 0 {
+		req.Messages = messages
 	}
 
 	return req
@@ -589,13 +625,70 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 			fmt.Fprintf(os.Stderr, "Couldn't process file: %q\n", err)
 			return "", imgs, err
 		}
-		fmt.Fprintf(os.Stderr, "Added file '%s'\n", nfp)
+		ext := strings.ToLower(filepath.Ext(nfp))
+		switch ext {
+		case ".wav":
+			fmt.Fprintf(os.Stderr, "Added audio '%s'\n", nfp)
+		default:
+			fmt.Fprintf(os.Stderr, "Added image/video '%s'\n", nfp)
+		}
 		input = strings.ReplaceAll(input, "'"+nfp+"'", "")
 		input = strings.ReplaceAll(input, "'"+fp+"'", "")
 		input = strings.ReplaceAll(input, fp, "")
 		imgs = append(imgs, data)
 	}
 	return strings.TrimSpace(input), imgs, nil
+}
+
+func editInExternalEditor(content string) (string, error) {
+	editor := envconfig.Editor()
+	if editor == "" {
+		editor = os.Getenv("VISUAL")
+	}
+	if editor == "" {
+		editor = os.Getenv("EDITOR")
+	}
+	if editor == "" {
+		editor = defaultEditor
+	}
+
+	// Check that the editor binary exists
+	name := strings.Fields(editor)[0]
+	if _, err := exec.LookPath(name); err != nil {
+		return "", fmt.Errorf("editor %q not found, set OLLAMA_EDITOR to the path of your preferred editor", name)
+	}
+
+	tmpFile, err := os.CreateTemp("", "ollama-prompt-*.txt")
+	if err != nil {
+		return "", fmt.Errorf("creating temp file: %w", err)
+	}
+	defer os.Remove(tmpFile.Name())
+
+	if content != "" {
+		if _, err := tmpFile.WriteString(content); err != nil {
+			tmpFile.Close()
+			return "", fmt.Errorf("writing to temp file: %w", err)
+		}
+	}
+	tmpFile.Close()
+
+	args := strings.Fields(editor)
+	args = append(args, tmpFile.Name())
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("editor exited with error: %w", err)
+	}
+
+	data, err := os.ReadFile(tmpFile.Name())
+	if err != nil {
+		return "", fmt.Errorf("reading temp file: %w", err)
+	}
+
+	return strings.TrimRight(string(data), "\n"), nil
 }
 
 func getImageData(filePath string) ([]byte, error) {
@@ -613,11 +706,11 @@ func getImageData(filePath string) ([]byte, error) {
 
 	contentType := http.DetectContentType(buf)
 	allowedTypes := []string{
-		"image/jpeg", "image/jpg", "image/png", "image/webp",
+		"image/jpeg", "image/jpg", "image/png", "image/webp", "audio/wave"
 		"video/mp4", "video/webm", "video/x-matroska", "video/avi", "video/x-msvideo",
 	}
 	if !slices.Contains(allowedTypes, contentType) {
-		return nil, fmt.Errorf("invalid file type: %s (expected image or video)", contentType)
+		return nil, fmt.Errorf("invalid file type: %s (expected image, audio or video)", contentType)
 	}
 
 	info, err := file.Stat()
@@ -625,8 +718,7 @@ func getImageData(filePath string) ([]byte, error) {
 		return nil, err
 	}
 
-	// Check if the file size exceeds 100MB
-	var maxSize int64 = 100 * 1024 * 1024 // 100MB in bytes
+	var maxSize int64 = 100 * 1024 * 1024 // 100MB
 	if info.Size() > maxSize {
 		return nil, errors.New("file size exceeds maximum limit (100MB)")
 	}

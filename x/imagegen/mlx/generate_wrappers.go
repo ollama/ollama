@@ -16,10 +16,10 @@ import (
 )
 
 type Function struct {
-	Name          string
-	ReturnType    string
-	Params        string
-	ParamNames    []string
+	Name            string
+	ReturnType      string
+	Params          string
+	ParamNames      []string
 	NeedsARM64Guard bool
 }
 
@@ -28,6 +28,11 @@ func findHeaders(directory string) ([]string, error) {
 	err := filepath.WalkDir(directory, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		// Private headers contain C++ implementation helpers and are not part of
+		// the C API surface; parsing them can produce invalid wrapper signatures.
+		if d.IsDir() && d.Name() == "private" {
+			return fs.SkipDir
 		}
 		if !d.IsDir() && strings.HasSuffix(path, ".h") {
 			headers = append(headers, path)
@@ -194,10 +199,10 @@ func parseFunctions(content string) []Function {
 		needsGuard := needsARM64Guard(funcName, returnType, params)
 
 		functions = append(functions, Function{
-			Name:           funcName,
-			ReturnType:     returnType,
-			Params:         params,
-			ParamNames:     paramNames,
+			Name:            funcName,
+			ReturnType:      returnType,
+			Params:          params,
+			ParamNames:      paramNames,
 			NeedsARM64Guard: needsGuard,
 		})
 	}
@@ -286,8 +291,15 @@ func generateWrapperFiles(functions []Function, headerPath, implPath string) err
 
 	implBuf.WriteString("#include \"mlx/c/mlx.h\"\n")
 	implBuf.WriteString("#include \"mlx_dynamic.h\"\n")
-	implBuf.WriteString("#include <stdio.h>\n")
-	implBuf.WriteString("#include <dlfcn.h>\n\n")
+	implBuf.WriteString("#include <stdio.h>\n\n")
+	implBuf.WriteString("// Platform-specific dynamic loading\n")
+	implBuf.WriteString("#ifdef _WIN32\n")
+	implBuf.WriteString("#include <windows.h>\n")
+	implBuf.WriteString("#define GET_SYM(handle, name) (void*)GetProcAddress((HMODULE)(handle), name)\n")
+	implBuf.WriteString("#else\n")
+	implBuf.WriteString("#include <dlfcn.h>\n")
+	implBuf.WriteString("#define GET_SYM(handle, name) dlsym(handle, name)\n")
+	implBuf.WriteString("#endif\n\n")
 
 	// Function pointer definitions
 	implBuf.WriteString("// Function pointer definitions\n")
@@ -303,7 +315,7 @@ func generateWrapperFiles(functions []Function, headerPath, implPath string) err
 	implBuf.WriteString("\n")
 
 	// Initialization function
-	implBuf.WriteString("// Initialize all function pointers via dlsym\n")
+	implBuf.WriteString("// Initialize all function pointers\n")
 	implBuf.WriteString("int mlx_load_functions(void* handle) {\n")
 	implBuf.WriteString("    if (handle == NULL) {\n")
 	implBuf.WriteString("        fprintf(stderr, \"MLX: Invalid library handle\\n\");\n")
@@ -314,7 +326,7 @@ func generateWrapperFiles(functions []Function, headerPath, implPath string) err
 		if fn.NeedsARM64Guard {
 			implBuf.WriteString("#if defined(__aarch64__) || defined(_M_ARM64)\n")
 		}
-		implBuf.WriteString(fmt.Sprintf("    %s_ptr = dlsym(handle, \"%s\");\n", fn.Name, fn.Name))
+		implBuf.WriteString(fmt.Sprintf("    %s_ptr = GET_SYM(handle, \"%s\");\n", fn.Name, fn.Name))
 		implBuf.WriteString(fmt.Sprintf("    if (%s_ptr == NULL) {\n", fn.Name))
 		implBuf.WriteString(fmt.Sprintf("        fprintf(stderr, \"MLX: Failed to load symbol: %s\\n\");\n", fn.Name))
 		implBuf.WriteString("        return -1;\n")

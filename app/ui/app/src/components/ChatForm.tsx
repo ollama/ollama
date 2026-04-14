@@ -17,11 +17,15 @@ import {
 } from "@/hooks/useChats";
 import { useNavigate } from "@tanstack/react-router";
 import { useSelectedModel } from "@/hooks/useSelectedModel";
-import { useHasVisionCapability } from "@/hooks/useModelCapabilities";
+import {
+  useHasVisionCapability,
+  useHasToolsCapability,
+} from "@/hooks/useModelCapabilities";
 import { useUser } from "@/hooks/useUser";
 import { DisplayLogin } from "@/components/DisplayLogin";
 import { ErrorEvent, Message } from "@/gotypes";
 import { useSettings } from "@/hooks/useSettings";
+import { useCloudStatus } from "@/hooks/useCloudStatus";
 import { ThinkButton } from "./ThinkButton";
 import { ErrorMessage } from "./ErrorMessage";
 import { processFiles } from "@/utils/fileValidation";
@@ -141,19 +145,14 @@ function ChatForm({
   const {
     settings: {
       webSearchEnabled,
-      airplaneMode,
       thinkEnabled,
       thinkLevel: settingsThinkLevel,
     },
     setSettings,
   } = useSettings();
+  const { cloudDisabled } = useCloudStatus();
 
-  // current supported models for web search
-  const modelLower = selectedModel?.model.toLowerCase() || "";
-  const supportsWebSearch =
-    modelLower.startsWith("gpt-oss") ||
-    modelLower.startsWith("qwen3") ||
-    modelLower.startsWith("deepseek-v3");
+  const supportsWebSearch = useHasToolsCapability(selectedModel?.model);
   // Use per-chat thinking level instead of global
   const thinkLevel: ThinkingLevel =
     settingsThinkLevel === "none" || !settingsThinkLevel
@@ -179,6 +178,12 @@ function ChatForm({
     webSearchEnabled,
     setSettings,
   ]);
+
+  useEffect(() => {
+    if (cloudDisabled && webSearchEnabled) {
+      setSettings({ WebSearchEnabled: false });
+    }
+  }, [cloudDisabled, webSearchEnabled, setSettings]);
 
   const removeFile = (index: number) => {
     setMessage((prev) => ({
@@ -234,19 +239,19 @@ function ChatForm({
 
   // Determine if login banner should be shown
   const shouldShowLoginBanner =
+    !cloudDisabled &&
     !isLoadingUser &&
     !isAuthenticated &&
-    ((webSearchEnabled && supportsWebSearch) ||
-      (selectedModel?.isCloud() && !airplaneMode));
+    ((webSearchEnabled && supportsWebSearch) || selectedModel?.isCloud());
 
   // Determine which feature to highlight in the banner
   const getActiveFeatureForBanner = () => {
+    if (cloudDisabled) return null;
     if (!isAuthenticated) {
       if (loginPromptFeature) return loginPromptFeature;
-      if (webSearchEnabled && selectedModel?.isCloud() && !airplaneMode)
-        return "webSearch";
+      if (webSearchEnabled && selectedModel?.isCloud()) return "webSearch";
       if (webSearchEnabled) return "webSearch";
-      if (selectedModel?.isCloud() && !airplaneMode) return "turbo";
+      if (selectedModel?.isCloud()) return "turbo";
     }
     return null;
   };
@@ -269,11 +274,12 @@ function ChatForm({
   useEffect(() => {
     if (
       isAuthenticated ||
-      (!webSearchEnabled && !!selectedModel?.isCloud() && !airplaneMode)
+      cloudDisabled ||
+      (!webSearchEnabled && !!selectedModel?.isCloud())
     ) {
       setLoginPromptFeature(null);
     }
-  }, [isAuthenticated, webSearchEnabled, selectedModel, airplaneMode]);
+  }, [isAuthenticated, webSearchEnabled, selectedModel, cloudDisabled]);
 
   // When entering edit mode, populate the composition with existing data
   useEffect(() => {
@@ -465,20 +471,27 @@ function ChatForm({
   const handleSubmit = async () => {
     if (!message.content.trim() || isStreaming || isDownloading) return;
 
+    if (cloudDisabled && selectedModel?.isCloud()) {
+      return;
+    }
+
     // Check if cloud mode is enabled but user is not authenticated
     if (shouldShowLoginBanner) {
       return;
     }
 
-    // Prepare attachments for submission
-    const attachmentsToSend: FileAttachment[] = message.attachments.map(
-      (att) => ({
+    // Prepare attachments for submission, excluding unsupported images
+    const attachmentsToSend: FileAttachment[] = message.attachments
+      .filter(
+        (att) => hasVisionCapability || !isImageFile(att.filename),
+      )
+      .map((att) => ({
         filename: att.filename,
         data: att.data || new Uint8Array(0), // Empty data for existing files
-      }),
-    );
+      }));
 
-    const useWebSearch = supportsWebSearch && webSearchEnabled && !airplaneMode;
+    const useWebSearch =
+      supportsWebSearch && webSearchEnabled && !cloudDisabled;
     const useThink = modelSupportsThinkingLevels
       ? thinkLevel
       : supportsThinkToggling
@@ -725,10 +738,17 @@ function ChatForm({
         )}
         {(message.attachments.length > 0 || message.fileErrors.length > 0) && (
           <div className="flex gap-2 overflow-x-auto px-3 pt pb-3 w-full scrollbar-hide">
-            {message.attachments.map((attachment, index) => (
+            {message.attachments.map((attachment, index) => {
+              const isUnsupportedImage =
+                !hasVisionCapability && isImageFile(attachment.filename);
+              return (
               <div
                 key={attachment.id}
-                className="group flex items-center gap-2 py-2 px-3 rounded-lg bg-neutral-50 dark:bg-neutral-700/50 hover:bg-neutral-100 dark:hover:bg-neutral-700 transition-colors flex-shrink-0"
+                className={`group flex items-center gap-2 py-2 px-3 rounded-lg transition-colors flex-shrink-0 ${
+                  isUnsupportedImage
+                    ? "bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800"
+                    : "bg-neutral-50 dark:bg-neutral-700/50 hover:bg-neutral-100 dark:hover:bg-neutral-700"
+                }`}
               >
                 {isImageFile(attachment.filename) ? (
                   <ImageThumbnail
@@ -753,9 +773,16 @@ function ChatForm({
                     />
                   </svg>
                 )}
-                <span className="text-sm text-neutral-700 dark:text-neutral-300 max-w-[150px] truncate">
-                  {attachment.filename}
-                </span>
+                <div className="flex flex-col min-w-0">
+                  <span className={`text-sm max-w-36 truncate ${isUnsupportedImage ? "text-red-700 dark:text-red-300" : "text-neutral-700 dark:text-neutral-300"}`}>
+                    {attachment.filename}
+                  </span>
+                  {isUnsupportedImage && (
+                    <span className="text-xs text-red-600 dark:text-red-400 opacity-75">
+                      This model does not support images
+                    </span>
+                  )}
+                </div>
                 <button
                   type="button"
                   onClick={() => removeFile(index)}
@@ -777,7 +804,8 @@ function ChatForm({
                   </svg>
                 </button>
               </div>
-            ))}
+              );
+            })}
             {message.fileErrors.map((fileError, index) => (
               <div
                 key={`error-${index}`}
@@ -899,7 +927,7 @@ function ChatForm({
                 )}
                 <WebSearchButton
                   ref={webSearchButtonRef}
-                  isVisible={supportsWebSearch && airplaneMode === false}
+                  isVisible={supportsWebSearch && cloudDisabled === false}
                   isActive={webSearchEnabled}
                   onToggle={() => {
                     if (!webSearchEnabled && !isAuthenticated) {
@@ -940,6 +968,7 @@ function ChatForm({
                 !isDownloading &&
                 (!message.content.trim() ||
                   shouldShowLoginBanner ||
+                  (cloudDisabled && selectedModel?.isCloud()) ||
                   message.fileErrors.length > 0)
               }
               className={`flex items-center justify-center h-9 w-9 rounded-full disabled:cursor-default cursor-pointer bg-black text-white dark:bg-white dark:text-black disabled:opacity-10 focus:outline-none focus:ring-2 focus:ring-blue-500`}

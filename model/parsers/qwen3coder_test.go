@@ -1035,6 +1035,92 @@ func TestQwenToolCallValueParsing(t *testing.T) {
 	}
 }
 
+func TestQwen3CoderParserToolCallIndexing(t *testing.T) {
+	parser := Qwen3CoderParser{}
+	parser.Init(nil, nil, nil)
+
+	input := `<tool_call><function=first><parameter=a>1</parameter></function></tool_call>
+<tool_call><function=second><parameter=b>2</parameter></function></tool_call>
+<tool_call><function=third><parameter=c>3</parameter></function></tool_call>`
+	_, _, calls, err := parser.Add(input, true)
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+
+	want := []api.ToolCall{
+		{Function: api.ToolCallFunction{Name: "first", Arguments: testArgs(map[string]any{"a": "1"}), Index: 0}},
+		{Function: api.ToolCallFunction{Name: "second", Arguments: testArgs(map[string]any{"b": "2"}), Index: 1}},
+		{Function: api.ToolCallFunction{Name: "third", Arguments: testArgs(map[string]any{"c": "3"}), Index: 2}},
+	}
+	if len(calls) != len(want) {
+		t.Fatalf("expected %d calls, got %d", len(want), len(calls))
+	}
+	for i := range want {
+		if !toolCallEqual(calls[i], want[i]) {
+			t.Fatalf("call %d mismatch: got %#v, want %#v", i, calls[i], want[i])
+		}
+	}
+}
+
+func TestQwen3CoderParserToolCallIndexingStreaming(t *testing.T) {
+	parser := Qwen3CoderParser{}
+	parser.Init(nil, nil, nil)
+
+	var all []api.ToolCall
+
+	_, _, calls, err := parser.Add("<tool_call><function=first><parameter=a>1</parameter></function></tool_call><tool_call><function=second>", false)
+	if err != nil {
+		t.Fatalf("step 1 parse failed: %v", err)
+	}
+	all = append(all, calls...)
+
+	_, _, calls, err = parser.Add("<parameter=b>2</parameter></function></tool_call><tool_call><function=third><parameter=c>3</parameter></function></tool_call>", true)
+	if err != nil {
+		t.Fatalf("step 2 parse failed: %v", err)
+	}
+	all = append(all, calls...)
+
+	want := []api.ToolCall{
+		{Function: api.ToolCallFunction{Name: "first", Arguments: testArgs(map[string]any{"a": "1"}), Index: 0}},
+		{Function: api.ToolCallFunction{Name: "second", Arguments: testArgs(map[string]any{"b": "2"}), Index: 1}},
+		{Function: api.ToolCallFunction{Name: "third", Arguments: testArgs(map[string]any{"c": "3"}), Index: 2}},
+	}
+	if len(all) != len(want) {
+		t.Fatalf("expected %d calls, got %d", len(want), len(all))
+	}
+	for i := range want {
+		if !toolCallEqual(all[i], want[i]) {
+			t.Fatalf("call %d mismatch: got %#v, want %#v", i, all[i], want[i])
+		}
+	}
+}
+
+func TestQwen3CoderParserToolCallIndexResetOnInit(t *testing.T) {
+	parser := Qwen3CoderParser{}
+	parser.Init(nil, nil, nil)
+
+	_, _, _, err := parser.Add("<tool_call><function=first><parameter=a>1</parameter></function></tool_call>", true)
+	if err != nil {
+		t.Fatalf("first parse failed: %v", err)
+	}
+
+	parser.Init(nil, nil, nil)
+	_, _, calls, err := parser.Add("<tool_call><function=second><parameter=b>2</parameter></function></tool_call>", true)
+	if err != nil {
+		t.Fatalf("second parse failed: %v", err)
+	}
+
+	want := api.ToolCall{
+		Function: api.ToolCallFunction{Name: "second", Arguments: testArgs(map[string]any{"b": "2"}), Index: 0},
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(calls))
+	}
+	if !toolCallEqual(calls[0], want) {
+		t.Fatalf("got %#v, want %#v", calls[0], want)
+	}
+}
+
 func TestQwenXMLTransform(t *testing.T) {
 	cases := []struct {
 		desc string

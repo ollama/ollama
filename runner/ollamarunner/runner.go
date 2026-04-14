@@ -1231,7 +1231,7 @@ func (s *Server) allocModel(
 
 	err = s.reserveWorstCaseGraph(true)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	return s.reserveWorstCaseGraph(false)
@@ -1256,6 +1256,12 @@ func (s *Server) loadModel() {
 		})
 	if err != nil {
 		panic(fmt.Errorf("failed to load model: %v", err))
+	}
+
+	if postLoader, ok := s.model.(model.PostLoader); ok {
+		if err := postLoader.PostLoad(); err != nil {
+			panic(fmt.Errorf("failed to finalize model initialization: %v", err))
+		}
 	}
 
 	s.status = llm.ServerStatusReady

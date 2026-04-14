@@ -45,9 +45,7 @@ func TestMaxQueue(t *testing.T) {
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
 
-	if err := PullIfMissing(ctx, client, req.Model); err != nil {
-		t.Fatal(err)
-	}
+	pullOrSkip(ctx, t, client, req.Model)
 
 	// Context for the worker threads so we can shut them down
 	// embedCtx, embedCancel := context.WithCancel(ctx)

@@ -1,5 +1,3 @@
-//go:build mlx
-
 package mlx
 
 // #include "generated.h"
@@ -62,6 +60,10 @@ func PeakMemory() int {
 	var peak C.size_t
 	C.mlx_get_peak_memory(&peak)
 	return int(peak)
+}
+
+func ResetPeakMemory() {
+	C.mlx_reset_peak_memory()
 }
 
 type Memory struct{}

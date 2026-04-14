@@ -22,3 +22,4 @@ llama/vendor
 # FFmpeg build artifacts
 third_party/ffmpeg/build/
 third_party/ffmpeg/install/
+integration/testdata/models/

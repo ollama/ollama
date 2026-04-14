@@ -107,23 +107,28 @@
             "pages": [
               "/integrations/index",
               {
+                "group": "Assistants",
+                "expanded": true,
+                "pages": [
+                  "/integrations/openclaw",
+                  "/integrations/hermes"
+                ]
+              },
+              {
                 "group": "Coding",
+                "expanded": true,
                 "pages": [
                   "/integrations/claude-code",
                   "/integrations/codex",
                   "/integrations/opencode",
                   "/integrations/droid",
-                  "/integrations/goose"
-                ]
-              },
-              {
-                "group": "Assistants",
-                "pages": [
-                  "/integrations/openclaw"
+                  "/integrations/goose",
+                  "/integrations/pi"
                 ]
               },
               {
                 "group": "IDEs & Editors",
+                "expanded": true,
                 "pages": [
                   "/integrations/cline",
                   "/integrations/jetbrains",
@@ -157,6 +162,12 @@
             "group": "More information",
             "pages": [
               "/cli",
+              {
+                "group": "Assistant Sandboxing",
+                "pages": [
+                  "/integrations/nemoclaw"
+                ]
+              },
               "/modelfile",
               "/context-length",
               "/linux",

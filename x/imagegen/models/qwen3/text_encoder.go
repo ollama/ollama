@@ -1,5 +1,3 @@
-//go:build mlx
-
 // Package qwen3 provides a shared Qwen3 text encoder used by multiple image generation models.
 package qwen3
 

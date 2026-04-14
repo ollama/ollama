@@ -56,6 +56,9 @@ func rendererForName(name string) Renderer {
 	case "qwen3-vl-thinking":
 		renderer := &Qwen3VLRenderer{isThinking: true, useImgTags: RenderImgTags}
 		return renderer
+	case "qwen3.5":
+		renderer := &Qwen35Renderer{isThinking: true, emitEmptyThinkOnNoThink: true, useImgTags: RenderImgTags}
+		return renderer
 	case "cogito":
 		renderer := &CogitoRenderer{isThinking: true}
 		return renderer
@@ -78,16 +81,18 @@ func rendererForName(name string) Renderer {
 		return renderer
 	case "nemotron-3-nano":
 		return &Nemotron3NanoRenderer{}
+	case "gemma4":
+		return &Gemma4Renderer{useImgTags: RenderImgTags}
 	case "functiongemma":
 		return &FunctionGemmaRenderer{}
 	case "glm-4.7":
 		return &GLM47Renderer{}
 	case "glm-ocr":
-		return &GlmOcrRenderer{}
+		return &GlmOcrRenderer{useImgTags: RenderImgTags}
 	case "lfm2":
-		return &LFM2Renderer{IsThinking: false}
+		return &LFM2Renderer{IsThinking: false, useImgTags: RenderImgTags}
 	case "lfm2-thinking":
-		return &LFM2Renderer{IsThinking: true}
+		return &LFM2Renderer{IsThinking: true, useImgTags: RenderImgTags}
 	default:
 		return nil
 	}

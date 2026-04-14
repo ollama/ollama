@@ -437,6 +437,7 @@ type ToolProperty struct {
 	Description string             `json:"description,omitempty"`
 	Enum        []any              `json:"enum,omitempty"`
 	Properties  *ToolPropertiesMap `json:"properties,omitempty"`
+	Required    []string           `json:"required,omitempty"`
 }
 
 // ToTypeScriptType converts a ToolProperty to a TypeScript type string
@@ -833,6 +834,16 @@ type ProcessModelResponse struct {
 
 type TokenResponse struct {
 	Token string `json:"token"`
+}
+
+type CloudStatus struct {
+	Disabled bool   `json:"disabled"`
+	Source   string `json:"source"`
+}
+
+// StatusResponse is the response from [Client.CloudStatusExperimental].
+type StatusResponse struct {
+	Cloud CloudStatus `json:"cloud"`
 }
 
 // GenerateResponse is the response passed into [GenerateResponseFunc].

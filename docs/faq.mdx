@@ -160,6 +160,26 @@ docker run -d -e HTTPS_PROXY=https://my.proxy.example.com -p 11434:11434 ollama-
 
 Ollama runs locally. We don't see your prompts or data when you run locally. When using cloud-hosted models, we process your prompts and responses to provide the service but do not store or log that content and never train on it. We collect basic account info and limited usage metadata to provide the service that does not include prompt or response content. We don't sell your data. You can delete your account anytime.
 
+## How do I disable Ollama's cloud features?
+
+Ollama can run in local only mode by disabling Ollama's cloud features. By turning off Ollama's cloud features, you will lose the ability to use Ollama's cloud models and web search. 
+
+Set `disable_ollama_cloud` in `~/.ollama/server.json`:
+
+```json
+{
+  "disable_ollama_cloud": true
+}
+```
+
+You can also set the environment variable:
+
+```shell
+OLLAMA_NO_CLOUD=1
+```
+
+Restart Ollama after changing configuration. Once disabled, Ollama's logs will show `Ollama cloud disabled: true`. 
+
 ## How can I expose Ollama on my network?
 
 Ollama binds 127.0.0.1 port 11434 by default. Change the bind address with the `OLLAMA_HOST` environment variable.

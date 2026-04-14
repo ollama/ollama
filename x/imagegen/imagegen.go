@@ -1,5 +1,3 @@
-//go:build mlx
-
 package imagegen
 
 import (

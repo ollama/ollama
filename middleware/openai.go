@@ -5,16 +5,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/rand"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/klauspost/compress/zstd"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/openai"
 )
+
+// maxDecompressedBodySize limits the size of a decompressed request body
+const maxDecompressedBodySize = 20 << 20
 
 type BaseWriter struct {
 	gin.ResponseWriter
@@ -52,14 +57,14 @@ type EmbedWriter struct {
 
 func (w *BaseWriter) writeError(data []byte) (int, error) {
 	var serr api.StatusError
-	err := json.Unmarshal(data, &serr)
-	if err != nil {
-		return 0, err
+	if err := json.Unmarshal(data, &serr); err != nil {
+		// If the error response isn't valid JSON, use the raw bytes as the
+		// error message rather than surfacing a confusing JSON parse error.
+		serr.ErrorMessage = string(data)
 	}
 
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	err = json.NewEncoder(w.ResponseWriter).Encode(openai.NewError(http.StatusInternalServerError, serr.Error()))
-	if err != nil {
+	if err := json.NewEncoder(w.ResponseWriter).Encode(openai.NewError(w.ResponseWriter.Status(), serr.Error())); err != nil {
 		return 0, err
 	}
 
@@ -75,22 +80,29 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 
 	// chat chunk
 	if w.stream {
-		c := openai.ToChunk(w.id, chatResponse, w.toolCallSent)
-		d, err := json.Marshal(c)
-		if err != nil {
-			return 0, err
-		}
-		if !w.toolCallSent && len(c.Choices) > 0 && len(c.Choices[0].Delta.ToolCalls) > 0 {
-			w.toolCallSent = true
-		}
-
+		chunks := openai.ToChunks(w.id, chatResponse, w.toolCallSent)
 		w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
-		_, err = w.ResponseWriter.Write([]byte(fmt.Sprintf("data: %s\n\n", d)))
-		if err != nil {
-			return 0, err
+		for _, c := range chunks {
+			d, err := json.Marshal(c)
+			if err != nil {
+				return 0, err
+			}
+			if !w.toolCallSent && len(c.Choices) > 0 && len(c.Choices[0].Delta.ToolCalls) > 0 {
+				w.toolCallSent = true
+			}
+			_, err = w.ResponseWriter.Write([]byte(fmt.Sprintf("data: %s\n\n", d)))
+			if err != nil {
+				return 0, err
+			}
 		}
 
 		if chatResponse.Done {
+			c := openai.ToChunk(w.id, chatResponse, w.toolCallSent)
+			if len(chunks) > 0 {
+				c = chunks[len(chunks)-1]
+			} else {
+				slog.Warn("ToChunks returned no chunks; falling back to ToChunk for usage chunk", "id", w.id, "model", chatResponse.Model)
+			}
 			if w.streamOptions != nil && w.streamOptions.IncludeUsage {
 				u := openai.ToUsage(chatResponse)
 				c.Usage = &u
@@ -496,6 +508,17 @@ func (w *ResponsesWriter) Write(data []byte) (int, error) {
 
 func ResponsesMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if c.GetHeader("Content-Encoding") == "zstd" {
+			reader, err := zstd.NewReader(c.Request.Body, zstd.WithDecoderMaxMemory(8<<20))
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, "failed to decompress zstd body"))
+				return
+			}
+			defer reader.Close()
+			c.Request.Body = http.MaxBytesReader(c.Writer, io.NopCloser(reader), maxDecompressedBodySize)
+			c.Request.Header.Del("Content-Encoding")
+		}
+
 		var req openai.ResponsesRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
@@ -649,6 +672,116 @@ func ImageEditsMiddleware() gin.HandlerFunc {
 
 		w := &ImageWriter{
 			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
+		}
+
+		c.Writer = w
+		c.Next()
+	}
+}
+
+// TranscriptionWriter collects streamed chat responses and outputs a transcription response.
+type TranscriptionWriter struct {
+	BaseWriter
+	responseFormat string
+	text           strings.Builder
+}
+
+func (w *TranscriptionWriter) Write(data []byte) (int, error) {
+	code := w.ResponseWriter.Status()
+	if code != http.StatusOK {
+		return w.writeError(data)
+	}
+
+	var chatResponse api.ChatResponse
+	if err := json.Unmarshal(data, &chatResponse); err != nil {
+		return 0, err
+	}
+
+	w.text.WriteString(chatResponse.Message.Content)
+
+	if chatResponse.Done {
+		text := strings.TrimSpace(w.text.String())
+
+		if w.responseFormat == "text" {
+			w.ResponseWriter.Header().Set("Content-Type", "text/plain")
+			_, err := w.ResponseWriter.Write([]byte(text))
+			if err != nil {
+				return 0, err
+			}
+			return len(data), nil
+		}
+
+		w.ResponseWriter.Header().Set("Content-Type", "application/json")
+		resp := openai.TranscriptionResponse{Text: text}
+		if err := json.NewEncoder(w.ResponseWriter).Encode(resp); err != nil {
+			return 0, err
+		}
+	}
+
+	return len(data), nil
+}
+
+// TranscriptionMiddleware handles /v1/audio/transcriptions requests.
+// It accepts multipart/form-data with an audio file and converts it to a chat request.
+func TranscriptionMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Parse multipart form (limit 25MB).
+		if err := c.Request.ParseMultipartForm(25 << 20); err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, "failed to parse multipart form: "+err.Error()))
+			return
+		}
+
+		model := c.Request.FormValue("model")
+		if model == "" {
+			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, "model is required"))
+			return
+		}
+
+		file, _, err := c.Request.FormFile("file")
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, "file is required: "+err.Error()))
+			return
+		}
+		defer file.Close()
+
+		audioData, err := io.ReadAll(file)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, openai.NewError(http.StatusInternalServerError, "failed to read audio file"))
+			return
+		}
+
+		if len(audioData) == 0 {
+			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, "audio file is empty"))
+			return
+		}
+
+		req := openai.TranscriptionRequest{
+			Model:          model,
+			AudioData:      audioData,
+			ResponseFormat: c.Request.FormValue("response_format"),
+			Language:       c.Request.FormValue("language"),
+			Prompt:         c.Request.FormValue("prompt"),
+		}
+
+		chatReq, err := openai.FromTranscriptionRequest(req)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, openai.NewError(http.StatusBadRequest, err.Error()))
+			return
+		}
+
+		var b bytes.Buffer
+		if err := json.NewEncoder(&b).Encode(chatReq); err != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, openai.NewError(http.StatusInternalServerError, err.Error()))
+			return
+		}
+
+		c.Request.Body = io.NopCloser(&b)
+		c.Request.ContentLength = int64(b.Len())
+		c.Request.Header.Set("Content-Type", "application/json")
+
+		w := &TranscriptionWriter{
+			BaseWriter:     BaseWriter{ResponseWriter: c.Writer},
+			responseFormat: req.ResponseFormat,
 		}
 
 		c.Writer = w

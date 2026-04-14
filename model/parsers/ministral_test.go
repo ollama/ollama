@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
 )
 
@@ -392,6 +393,54 @@ func TestMinistralParserStreaming(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestMinistralParserAssignsSequentialToolCallIndices(t *testing.T) {
+	parser := &MinistralParser{}
+	parser.Init([]api.Tool{
+		{Function: api.ToolFunction{Name: "get_weather"}},
+		{Function: api.ToolFunction{Name: "get_time"}},
+	}, nil, nil)
+
+	content, thinking, calls, err := parser.Add(
+		`[TOOL_CALLS]get_weather[ARGS]{"location":"NYC"}[TOOL_CALLS]get_time[ARGS]{"timezone":"EST"}`,
+		true,
+	)
+	if err != nil {
+		t.Fatalf("Add() error = %v", err)
+	}
+
+	if content != "" {
+		t.Fatalf("expected no content, got %q", content)
+	}
+	if thinking != "" {
+		t.Fatalf("expected no thinking, got %q", thinking)
+	}
+
+	expected := []api.ToolCall{
+		{
+			Function: api.ToolCallFunction{
+				Index: 0,
+				Name:  "get_weather",
+				Arguments: testArgs(map[string]any{
+					"location": "NYC",
+				}),
+			},
+		},
+		{
+			Function: api.ToolCallFunction{
+				Index: 1,
+				Name:  "get_time",
+				Arguments: testArgs(map[string]any{
+					"timezone": "EST",
+				}),
+			},
+		},
+	}
+
+	if diff := cmp.Diff(expected, calls, argsComparer); diff != "" {
+		t.Fatalf("tool calls mismatch (-want +got):\n%s", diff)
 	}
 }
 

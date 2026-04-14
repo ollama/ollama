@@ -51,6 +51,9 @@ Install prerequisites:
     - [CUDA SDK](https://developer.nvidia.com/cuda-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_network)
 - (Optional) VULKAN GPU support
     - [VULKAN SDK](https://vulkan.lunarg.com/sdk/home) - useful for AMD/Intel GPUs
+- (Optional) MLX engine support
+    - [CUDA 13+ SDK](https://developer.nvidia.com/cuda-downloads)
+    - [cuDNN 9+](https://developer.nvidia.com/cudnn)
 
 Then, configure and build the project:
 
@@ -101,6 +104,10 @@ Install prerequisites:
 - (Optional) VULKAN GPU support
     - [VULKAN SDK](https://vulkan.lunarg.com/sdk/home) - useful for AMD/Intel GPUs
     - Or install via package manager: `sudo apt install vulkan-sdk` (Ubuntu/Debian) or `sudo dnf install vulkan-sdk` (Fedora/CentOS)
+- (Optional) MLX engine support
+    - [CUDA 13+ SDK](https://developer.nvidia.com/cuda-downloads)
+    - [cuDNN 9+](https://developer.nvidia.com/cudnn)
+    - OpenBLAS/LAPACK: `sudo apt install libopenblas-dev liblapack-dev liblapacke-dev` (Ubuntu/Debian)
 > [!IMPORTANT]
 > Ensure prerequisites are in `PATH` before running CMake.
 
@@ -116,6 +123,67 @@ Lastly, run Ollama:
 
 ```shell
 go run . serve
+```
+
+## MLX Engine (Optional)
+
+The MLX engine enables running safetensor based models. It requires building the [MLX](https://github.com/ml-explore/mlx) and [MLX-C](https://github.com/ml-explore/mlx-c) shared libraries separately via CMake.  On MacOS, MLX leverages the Metal library to run on the GPU, and on Windows and Linux, runs on NVIDIA GPUs via CUDA v13.
+
+### macOS (Apple Silicon)
+
+Requires the Metal toolchain. Install [Xcode](https://developer.apple.com/xcode/) first, then:
+
+```shell
+xcodebuild -downloadComponent MetalToolchain
+```
+
+Verify it's installed correctly (should print "no input files"):
+
+```shell
+xcrun metal
+```
+
+Then build:
+
+```shell
+cmake -B build --preset MLX
+cmake --build build --preset MLX --parallel
+cmake --install build --component MLX
+```
+
+> [!NOTE]
+> Without the Metal toolchain, cmake will silently complete with Metal disabled. Check the cmake output for `Setting MLX_BUILD_METAL=OFF` which indicates the toolchain is missing.
+
+### Windows / Linux (CUDA)
+
+Requires CUDA 13+ and [cuDNN](https://developer.nvidia.com/cudnn) 9+.
+
+```shell
+cmake -B build --preset "MLX CUDA 13"
+cmake --build build --target mlx --target mlxc --config Release --parallel
+cmake --install build --component MLX --strip
+```
+
+### Local MLX source overrides
+
+To build against a local checkout of MLX and/or MLX-C (useful for development), set environment variables before running CMake:
+
+```shell
+export OLLAMA_MLX_SOURCE=/path/to/mlx
+export OLLAMA_MLX_C_SOURCE=/path/to/mlx-c
+```
+
+For example, using the helper scripts with local mlx and mlx-c repos:
+```shell
+OLLAMA_MLX_SOURCE=../mlx OLLAMA_MLX_C_SOURCE=../mlx-c ./scripts/build_linux.sh
+
+OLLAMA_MLX_SOURCE=../mlx OLLAMA_MLX_C_SOURCE=../mlx-c ./scripts/build_darwin.sh
+```
+
+```powershell
+$env:OLLAMA_MLX_SOURCE="../mlx"
+$env:OLLAMA_MLX_C_SOURCE="../mlx-c"
+./scripts/build_darwin.ps1
 ```
 
 ## Docker

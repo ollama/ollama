@@ -1,12 +1,12 @@
 package tui
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/ollama/ollama/cmd/launch"
 )
 
 var (
@@ -34,12 +34,6 @@ var (
 	selectorInputStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.AdaptiveColor{Light: "235", Dark: "252"})
 
-	selectorCheckboxStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"})
-
-	selectorCheckboxCheckedStyle = lipgloss.NewStyle().
-					Bold(true)
-
 	selectorDefaultTagStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}).
 				Italic(true)
@@ -61,12 +55,36 @@ var (
 const maxSelectorItems = 10
 
 // ErrCancelled is returned when the user cancels the selection.
-var ErrCancelled = errors.New("cancelled")
+var ErrCancelled = launch.ErrCancelled
 
 type SelectItem struct {
 	Name        string
 	Description string
 	Recommended bool
+}
+
+// ConvertItems converts launch.ModelItem slice to SelectItem slice.
+func ConvertItems(items []launch.ModelItem) []SelectItem {
+	out := make([]SelectItem, len(items))
+	for i, item := range items {
+		out[i] = SelectItem{Name: item.Name, Description: item.Description, Recommended: item.Recommended}
+	}
+	return out
+}
+
+// ReorderItems returns a copy with recommended items first, then non-recommended,
+// preserving relative order within each group. This ensures the data order matches
+// the visual section layout (Recommended / More).
+func ReorderItems(items []SelectItem) []SelectItem {
+	var rec, other []SelectItem
+	for _, item := range items {
+		if item.Recommended {
+			rec = append(rec, item)
+		} else {
+			other = append(other, item)
+		}
+	}
+	return append(rec, other...)
 }
 
 // selectorModel is the bubbletea model for single selection.
@@ -80,6 +98,16 @@ type selectorModel struct {
 	cancelled    bool
 	helpText     string
 	width        int
+}
+
+func selectorModelWithCurrent(title string, items []SelectItem, current string) selectorModel {
+	m := selectorModel{
+		title:  title,
+		items:  items,
+		cursor: cursorForCurrent(items, current),
+	}
+	m.updateScroll(m.otherStart())
+	return m
 }
 
 func (m selectorModel) filteredItems() []SelectItem {
@@ -213,6 +241,10 @@ func (m selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancelled = true
 			return m, tea.Quit
 
+		case tea.KeyLeft:
+			m.cancelled = true
+			return m, tea.Quit
+
 		case tea.KeyEnter:
 			filtered := m.filteredItems()
 			if len(filtered) > 0 && m.cursor < len(filtered) {
@@ -325,7 +357,7 @@ func (m selectorModel) renderContent() string {
 	}
 
 	s.WriteString("\n")
-	help := "↑/↓ navigate • enter select • esc cancel"
+	help := "↑/↓ navigate • enter select • ← back"
 	if m.helpText != "" {
 		help = m.helpText
 	}
@@ -346,15 +378,35 @@ func (m selectorModel) View() string {
 	return s
 }
 
-func SelectSingle(title string, items []SelectItem) (string, error) {
+// cursorForCurrent returns the item index matching current, or 0 if not found.
+func cursorForCurrent(items []SelectItem, current string) int {
+	if current == "" {
+		return 0
+	}
+
+	// Prefer exact name matches before tag-prefix fallback so "qwen3.5" does not
+	// incorrectly select "qwen3.5:cloud" (and vice versa) based on list order.
+	for i, item := range items {
+		if item.Name == current {
+			return i
+		}
+	}
+
+	for i, item := range items {
+		if strings.HasPrefix(item.Name, current+":") || strings.HasPrefix(current, item.Name+":") {
+			return i
+		}
+	}
+
+	return 0
+}
+
+func SelectSingle(title string, items []SelectItem, current string) (string, error) {
 	if len(items) == 0 {
 		return "", fmt.Errorf("no items to select from")
 	}
 
-	m := selectorModel{
-		title: title,
-		items: items,
-	}
+	m := selectorModelWithCurrent(title, items, current)
 
 	p := tea.NewProgram(m)
 	finalModel, err := p.Run()
@@ -383,6 +435,12 @@ type multiSelectorModel struct {
 	cancelled    bool
 	confirmed    bool
 	width        int
+
+	// multi enables full multi-select editing mode. The zero value (false)
+	// shows a single-select picker where Enter adds the chosen model to
+	// the existing list. Tab toggles between modes.
+	multi     bool
+	singleAdd string // model picked in single mode
 }
 
 func newMultiSelectorModel(title string, items []SelectItem, preChecked []string) multiSelectorModel {
@@ -397,10 +455,20 @@ func newMultiSelectorModel(title string, items []SelectItem, preChecked []string
 		m.itemIndex[item.Name] = i
 	}
 
-	for _, name := range preChecked {
-		if idx, ok := m.itemIndex[name]; ok {
+	// Reverse order so preChecked[0] (the current default) ends up last
+	// in checkOrder, matching the "last checked = default" convention.
+	for i := len(preChecked) - 1; i >= 0; i-- {
+		if idx, ok := m.itemIndex[preChecked[i]]; ok {
 			m.checked[idx] = true
 			m.checkOrder = append(m.checkOrder, idx)
+		}
+	}
+
+	// Position cursor on the current default model
+	if len(preChecked) > 0 {
+		if idx, ok := m.itemIndex[preChecked[0]]; ok {
+			m.cursor = idx
+			m.updateScroll(m.otherStart())
 		}
 	}
 
@@ -421,6 +489,50 @@ func (m multiSelectorModel) filteredItems() []SelectItem {
 	return result
 }
 
+// otherStart returns the index of the first non-recommended item in the filtered list.
+func (m multiSelectorModel) otherStart() int {
+	if m.filter != "" {
+		return 0
+	}
+	filtered := m.filteredItems()
+	for i, item := range filtered {
+		if !item.Recommended {
+			return i
+		}
+	}
+	return len(filtered)
+}
+
+// updateScroll adjusts scrollOffset for section-based scrolling (matches single-select).
+func (m *multiSelectorModel) updateScroll(otherStart int) {
+	if m.filter != "" {
+		if m.cursor < m.scrollOffset {
+			m.scrollOffset = m.cursor
+		}
+		if m.cursor >= m.scrollOffset+maxSelectorItems {
+			m.scrollOffset = m.cursor - maxSelectorItems + 1
+		}
+		return
+	}
+
+	if m.cursor < otherStart {
+		m.scrollOffset = 0
+		return
+	}
+
+	posInOthers := m.cursor - otherStart
+	maxOthers := maxSelectorItems - otherStart
+	if maxOthers < 3 {
+		maxOthers = 3
+	}
+	if posInOthers < m.scrollOffset {
+		m.scrollOffset = posInOthers
+	}
+	if posInOthers >= m.scrollOffset+maxOthers {
+		m.scrollOffset = posInOthers - maxOthers + 1
+	}
+}
+
 func (m *multiSelectorModel) toggleItem() {
 	filtered := m.filteredItems()
 	if len(filtered) == 0 || m.cursor >= len(filtered) {
@@ -431,11 +543,40 @@ func (m *multiSelectorModel) toggleItem() {
 	origIdx := m.itemIndex[item.Name]
 
 	if m.checked[origIdx] {
+		wasDefault := len(m.checkOrder) > 0 && m.checkOrder[len(m.checkOrder)-1] == origIdx
 		delete(m.checked, origIdx)
 		for i, idx := range m.checkOrder {
 			if idx == origIdx {
 				m.checkOrder = append(m.checkOrder[:i], m.checkOrder[i+1:]...)
 				break
+			}
+		}
+		if wasDefault {
+			// When removing the default, pick the nearest checked model above it
+			// (or below if none above) so default fallback follows list order.
+			newDefault := -1
+			for i := origIdx - 1; i >= 0; i-- {
+				if m.checked[i] {
+					newDefault = i
+					break
+				}
+			}
+			if newDefault == -1 {
+				for i := origIdx + 1; i < len(m.items); i++ {
+					if m.checked[i] {
+						newDefault = i
+						break
+					}
+				}
+			}
+			if newDefault != -1 {
+				for i, idx := range m.checkOrder {
+					if idx == newDefault {
+						m.checkOrder = append(m.checkOrder[:i], m.checkOrder[i+1:]...)
+						break
+					}
+				}
+				m.checkOrder = append(m.checkOrder, newDefault)
 			}
 		}
 	} else {
@@ -470,29 +611,40 @@ func (m multiSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancelled = true
 			return m, tea.Quit
 
+		case tea.KeyLeft:
+			m.cancelled = true
+			return m, tea.Quit
+
+		case tea.KeyTab:
+			m.multi = !m.multi
+
 		case tea.KeyEnter:
-			if len(m.checkOrder) > 0 {
+			if !m.multi {
+				if len(filtered) > 0 && m.cursor < len(filtered) {
+					m.singleAdd = filtered[m.cursor].Name
+					m.confirmed = true
+					return m, tea.Quit
+				}
+			} else if len(m.checkOrder) > 0 {
 				m.confirmed = true
 				return m, tea.Quit
 			}
 
 		case tea.KeySpace:
-			m.toggleItem()
+			if m.multi {
+				m.toggleItem()
+			}
 
 		case tea.KeyUp:
 			if m.cursor > 0 {
 				m.cursor--
-				if m.cursor < m.scrollOffset {
-					m.scrollOffset = m.cursor
-				}
+				m.updateScroll(m.otherStart())
 			}
 
 		case tea.KeyDown:
 			if m.cursor < len(filtered)-1 {
 				m.cursor++
-				if m.cursor >= m.scrollOffset+maxSelectorItems {
-					m.scrollOffset = m.cursor - maxSelectorItems + 1
-				}
+				m.updateScroll(m.otherStart())
 			}
 
 		case tea.KeyPgUp:
@@ -500,19 +652,14 @@ func (m multiSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor < 0 {
 				m.cursor = 0
 			}
-			m.scrollOffset -= maxSelectorItems
-			if m.scrollOffset < 0 {
-				m.scrollOffset = 0
-			}
+			m.updateScroll(m.otherStart())
 
 		case tea.KeyPgDown:
 			m.cursor += maxSelectorItems
 			if m.cursor >= len(filtered) {
 				m.cursor = len(filtered) - 1
 			}
-			if m.cursor >= m.scrollOffset+maxSelectorItems {
-				m.scrollOffset = m.cursor - maxSelectorItems + 1
-			}
+			m.updateScroll(m.otherStart())
 
 		case tea.KeyBackspace:
 			if len(m.filter) > 0 {
@@ -522,18 +669,72 @@ func (m multiSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case tea.KeyRunes:
-			m.filter += string(msg.Runes)
-			m.cursor = 0
-			m.scrollOffset = 0
+			// On some terminals (e.g. Windows PowerShell), space arrives as
+			// KeyRunes instead of KeySpace. Intercept it so toggle still works.
+			if len(msg.Runes) == 1 && msg.Runes[0] == ' ' {
+				if m.multi {
+					m.toggleItem()
+				}
+			} else {
+				m.filter += string(msg.Runes)
+				m.cursor = 0
+				m.scrollOffset = 0
+			}
 		}
 	}
 
 	return m, nil
 }
 
+func (m multiSelectorModel) renderSingleItem(s *strings.Builder, item SelectItem, idx int) {
+	if idx == m.cursor {
+		s.WriteString(selectorSelectedItemStyle.Render("▸ " + item.Name))
+	} else {
+		s.WriteString(selectorItemStyle.Render(item.Name))
+	}
+	s.WriteString("\n")
+	if item.Description != "" {
+		s.WriteString(selectorDescLineStyle.Render(item.Description))
+		s.WriteString("\n")
+	}
+}
+
+func (m multiSelectorModel) renderMultiItem(s *strings.Builder, item SelectItem, idx int) {
+	origIdx := m.itemIndex[item.Name]
+
+	var check string
+	if m.checked[origIdx] {
+		check = "[x] "
+	} else {
+		check = "[ ] "
+	}
+
+	suffix := ""
+	if len(m.checkOrder) > 0 && m.checkOrder[len(m.checkOrder)-1] == origIdx {
+		suffix = " " + selectorDefaultTagStyle.Render("(default)")
+	}
+
+	if idx == m.cursor {
+		s.WriteString(selectorSelectedItemStyle.Render("▸ " + check + item.Name))
+	} else {
+		s.WriteString(selectorItemStyle.Render(check + item.Name))
+	}
+	s.WriteString(suffix)
+	s.WriteString("\n")
+	if item.Description != "" {
+		s.WriteString(selectorDescLineStyle.Render(item.Description))
+		s.WriteString("\n")
+	}
+}
+
 func (m multiSelectorModel) View() string {
 	if m.cancelled || m.confirmed {
 		return ""
+	}
+
+	renderItem := m.renderSingleItem
+	if m.multi {
+		renderItem = m.renderMultiItem
 	}
 
 	var s strings.Builder
@@ -552,69 +753,85 @@ func (m multiSelectorModel) View() string {
 	if len(filtered) == 0 {
 		s.WriteString(selectorItemStyle.Render(selectorDescStyle.Render("(no matches)")))
 		s.WriteString("\n")
-	} else {
+	} else if m.filter != "" {
+		// Filtering: flat scroll through all matches
 		displayCount := min(len(filtered), maxSelectorItems)
-		shownRecHeader := false
-		prevWasRec := false
-
 		for i := range displayCount {
 			idx := m.scrollOffset + i
 			if idx >= len(filtered) {
 				break
 			}
-			item := filtered[idx]
-			origIdx := m.itemIndex[item.Name]
-
-			if m.filter == "" {
-				if item.Recommended && !shownRecHeader {
-					s.WriteString(sectionHeaderStyle.Render("Recommended"))
-					s.WriteString("\n")
-					shownRecHeader = true
-				} else if !item.Recommended && prevWasRec {
-					s.WriteString("\n")
-				}
-				prevWasRec = item.Recommended
-			}
-
-			var checkbox string
-			if m.checked[origIdx] {
-				checkbox = selectorCheckboxCheckedStyle.Render("[x]")
-			} else {
-				checkbox = selectorCheckboxStyle.Render("[ ]")
-			}
-
-			var line string
-			if idx == m.cursor {
-				line = selectorSelectedItemStyle.Render("▸ ") + checkbox + " " + selectorSelectedItemStyle.Render(item.Name)
-			} else {
-				line = "  " + checkbox + " " + item.Name
-			}
-
-			if len(m.checkOrder) > 0 && m.checkOrder[0] == origIdx {
-				line += " " + selectorDefaultTagStyle.Render("(default)")
-			}
-
-			s.WriteString(line)
-			s.WriteString("\n")
+			renderItem(&s, filtered[idx], idx)
 		}
 
 		if remaining := len(filtered) - m.scrollOffset - displayCount; remaining > 0 {
 			s.WriteString(selectorMoreStyle.Render(fmt.Sprintf("... and %d more", remaining)))
 			s.WriteString("\n")
 		}
+	} else {
+		// Split into pinned recommended and scrollable others (matches single-select layout)
+		var recItems, otherItems []int
+		for i, item := range filtered {
+			if item.Recommended {
+				recItems = append(recItems, i)
+			} else {
+				otherItems = append(otherItems, i)
+			}
+		}
+
+		// Always render all recommended items (pinned)
+		if len(recItems) > 0 {
+			s.WriteString(sectionHeaderStyle.Render("Recommended"))
+			s.WriteString("\n")
+			for _, idx := range recItems {
+				renderItem(&s, filtered[idx], idx)
+			}
+		}
+
+		if len(otherItems) > 0 {
+			s.WriteString("\n")
+			s.WriteString(sectionHeaderStyle.Render("More"))
+			s.WriteString("\n")
+
+			maxOthers := maxSelectorItems - len(recItems)
+			if maxOthers < 3 {
+				maxOthers = 3
+			}
+			displayCount := min(len(otherItems), maxOthers)
+
+			for i := range displayCount {
+				idx := m.scrollOffset + i
+				if idx >= len(otherItems) {
+					break
+				}
+				renderItem(&s, filtered[otherItems[idx]], otherItems[idx])
+			}
+
+			if remaining := len(otherItems) - m.scrollOffset - displayCount; remaining > 0 {
+				s.WriteString(selectorMoreStyle.Render(fmt.Sprintf("... and %d more", remaining)))
+				s.WriteString("\n")
+			}
+		}
 	}
 
 	s.WriteString("\n")
 
 	count := m.selectedCount()
-	if count == 0 {
-		s.WriteString(selectorDescStyle.Render("  Select at least one model."))
+	if !m.multi {
+		if count > 0 {
+			s.WriteString(sectionHeaderStyle.Render(fmt.Sprintf("%d models selected - press tab to edit", count)))
+			s.WriteString("\n\n")
+		}
+		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • enter select • tab add multiple • ← back"))
 	} else {
-		s.WriteString(selectorDescStyle.Render(fmt.Sprintf("  %d selected - press enter to continue", count)))
+		if count == 0 {
+			s.WriteString(sectionHeaderStyle.Render("Select at least one model."))
+		} else {
+			s.WriteString(sectionHeaderStyle.Render(fmt.Sprintf("%d models selected - press enter to continue", count)))
+		}
+		s.WriteString("\n\n")
+		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • space toggle • tab select single • enter confirm • ← back"))
 	}
-	s.WriteString("\n\n")
-
-	s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • space toggle • enter confirm • esc cancel"))
 
 	result := s.String()
 	if m.width > 0 {
@@ -637,18 +854,28 @@ func SelectMultiple(title string, items []SelectItem, preChecked []string) ([]st
 	}
 
 	fm := finalModel.(multiSelectorModel)
-	if fm.cancelled {
+	if fm.cancelled || !fm.confirmed {
 		return nil, ErrCancelled
 	}
 
-	if !fm.confirmed {
-		return nil, ErrCancelled
+	// Single-add mode: prepend the picked model, keep existing models deduped
+	if fm.singleAdd != "" {
+		result := []string{fm.singleAdd}
+		for _, name := range preChecked {
+			if name != fm.singleAdd {
+				result = append(result, name)
+			}
+		}
+		return result, nil
 	}
 
-	var result []string
+	// Multi-edit mode: last checked is default (first in result)
+	last := fm.checkOrder[len(fm.checkOrder)-1]
+	result := []string{fm.items[last].Name}
 	for _, idx := range fm.checkOrder {
-		result = append(result, fm.items[idx].Name)
+		if idx != last {
+			result = append(result, fm.items[idx].Name)
+		}
 	}
-
 	return result, nil
 }

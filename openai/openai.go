@@ -295,8 +295,7 @@ func ToChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 	}
 }
 
-// ToChunk converts an api.ChatResponse to ChatCompletionChunk
-func ToChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
+func toChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
 	toolCalls := ToToolCalls(r.Message.ToolCalls)
 
 	var logprobs *ChoiceLogprobs
@@ -325,6 +324,36 @@ func ToChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChu
 			Logprobs: logprobs,
 		}},
 	}
+}
+
+// ToChunks converts an api.ChatResponse to one or more ChatCompletionChunk values.
+func ToChunks(id string, r api.ChatResponse, toolCallSent bool) []ChatCompletionChunk {
+	hasMixedResponse := r.Message.Thinking != "" && (r.Message.Content != "" || len(r.Message.ToolCalls) > 0)
+	if !hasMixedResponse {
+		return []ChatCompletionChunk{toChunk(id, r, toolCallSent)}
+	}
+
+	reasoningChunk := toChunk(id, r, toolCallSent)
+	// The logprobs here might include tokens not in this chunk because we now split between thinking and content/tool calls.
+	reasoningChunk.Choices[0].Delta.Content = ""
+	reasoningChunk.Choices[0].Delta.ToolCalls = nil
+	reasoningChunk.Choices[0].FinishReason = nil
+
+	contentOrToolCallsChunk := toChunk(id, r, toolCallSent)
+	// Keep both split chunks on the same timestamp since they represent one logical emission.
+	contentOrToolCallsChunk.Created = reasoningChunk.Created
+	contentOrToolCallsChunk.Choices[0].Delta.Reasoning = ""
+	contentOrToolCallsChunk.Choices[0].Logprobs = nil
+
+	return []ChatCompletionChunk{
+		reasoningChunk,
+		contentOrToolCallsChunk,
+	}
+}
+
+// Deprecated: use ToChunks for streaming conversion.
+func ToChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
+	return toChunk(id, r, toolCallSent)
 }
 
 // ToUsageGenerate converts an api.GenerateResponse to Usage
@@ -583,6 +612,20 @@ func FromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 					// Store raw video data in Videos field
 					// The model backend will extract frames and process with temporal awareness
 					messages = append(messages, api.Message{Role: msg.Role, Videos: []api.ImageData{vid}})
+				case "input_audio":
+					audioMap, ok := data["input_audio"].(map[string]any)
+					if !ok {
+						return nil, errors.New("invalid input_audio format")
+					}
+					b64Data, ok := audioMap["data"].(string)
+					if !ok {
+						return nil, errors.New("invalid input_audio format: missing data")
+					}
+					audioBytes, err := base64.StdEncoding.DecodeString(b64Data)
+					if err != nil {
+						return nil, fmt.Errorf("invalid input_audio base64 data: %w", err)
+					}
+					messages = append(messages, api.Message{Role: msg.Role, Images: []api.ImageData{audioBytes}})
 				default:
 					return nil, errors.New("invalid message format")
 				}
@@ -883,6 +926,45 @@ func ToImageGenerationResponse(resp api.GenerateResponse) ImageGenerationRespons
 		Created: resp.CreatedAt.Unix(),
 		Data:    data,
 	}
+}
+
+// TranscriptionResponse is the response format for /v1/audio/transcriptions.
+type TranscriptionResponse struct {
+	Text string `json:"text"`
+}
+
+// TranscriptionRequest holds parsed fields from the multipart form.
+type TranscriptionRequest struct {
+	Model          string
+	AudioData      []byte
+	ResponseFormat string // "json", "text", "verbose_json"
+	Language       string
+	Prompt         string
+}
+
+// FromTranscriptionRequest converts a transcription request into a ChatRequest
+// by wrapping the audio with a system prompt for transcription.
+func FromTranscriptionRequest(r TranscriptionRequest) (*api.ChatRequest, error) {
+	systemPrompt := "Transcribe the following audio exactly as spoken. Output only the transcription text, nothing else."
+	if r.Language != "" {
+		systemPrompt += " The audio is in " + r.Language + "."
+	}
+	if r.Prompt != "" {
+		systemPrompt += " Context: " + r.Prompt
+	}
+
+	stream := true
+	return &api.ChatRequest{
+		Model: r.Model,
+		Messages: []api.Message{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: "Transcribe this audio.", Images: []api.ImageData{r.AudioData}},
+		},
+		Stream: &stream,
+		Options: map[string]any{
+			"temperature": 0,
+		},
+	}, nil
 }
 
 // ImageEditRequest is an OpenAI-compatible image edit request.

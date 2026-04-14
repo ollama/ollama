@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS settings (
     agent BOOLEAN NOT NULL DEFAULT 0,
     tools BOOLEAN NOT NULL DEFAULT 0,
     working_dir TEXT NOT NULL DEFAULT '',
-    context_length INTEGER NOT NULL DEFAULT 4096,
+    context_length INTEGER NOT NULL DEFAULT 0,
     window_width INTEGER NOT NULL DEFAULT 0,
     window_height INTEGER NOT NULL DEFAULT 0,
     config_migrated BOOLEAN NOT NULL DEFAULT 0,

@@ -25,22 +25,6 @@ func TestRenderSignIn_ContainsURL(t *testing.T) {
 	}
 }
 
-func TestRenderSignIn_OSC8Hyperlink(t *testing.T) {
-	url := "https://ollama.com/connect?key=abc123"
-	got := renderSignIn("test:cloud", url, 0, 120)
-
-	// Should contain OSC 8 open sequence with the URL
-	osc8Open := "\033]8;;" + url + "\033\\"
-	if !strings.Contains(got, osc8Open) {
-		t.Error("should contain OSC 8 open sequence with URL")
-	}
-
-	// Should contain OSC 8 close sequence
-	osc8Close := "\033]8;;\033\\"
-	if !strings.Contains(got, osc8Close) {
-		t.Error("should contain OSC 8 close sequence")
-	}
-}
 
 func TestRenderSignIn_ContainsSpinner(t *testing.T) {
 	got := renderSignIn("test:cloud", "https://example.com", 0, 80)

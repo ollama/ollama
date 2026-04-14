@@ -1,5 +1,3 @@
-//go:build mlx
-
 package glm4_moe_lite
 
 import (
@@ -369,6 +367,45 @@ func escapeContent(s string) string {
 	return result.String()
 }
 
+// repairUnclosedArgValues inserts missing </arg_value> closing tags.
+// GLM models sometimes omit the closing tag, producing XML like:
+//
+//	<arg_value>value</tool_call>
+//
+// instead of:
+//
+//	<arg_value>value</arg_value></tool_call>
+func repairUnclosedArgValues(s string) string {
+	var result strings.Builder
+	for {
+		openIdx := strings.Index(s, "<arg_value>")
+		if openIdx == -1 {
+			result.WriteString(s)
+			break
+		}
+		afterOpen := openIdx + len("<arg_value>")
+		closeIdx := strings.Index(s[afterOpen:], "</arg_value>")
+		nextKeyIdx := strings.Index(s[afterOpen:], "<arg_key>")
+		if closeIdx != -1 && (nextKeyIdx == -1 || closeIdx < nextKeyIdx) {
+			end := afterOpen + closeIdx + len("</arg_value>")
+			result.WriteString(s[:end])
+			s = s[end:]
+			continue
+		}
+		if nextKeyIdx != -1 {
+			insertAt := afterOpen + nextKeyIdx
+			result.WriteString(s[:insertAt])
+			result.WriteString("</arg_value>")
+			s = s[insertAt:]
+		} else {
+			result.WriteString(s)
+			result.WriteString("</arg_value>")
+			break
+		}
+	}
+	return result.String()
+}
+
 func parseToolCall(raw eventRawToolCall, tools []api.Tool) (api.ToolCall, error) {
 	// Escape any unescaped entities in text content
 	escaped := escapeContent(raw.raw)
@@ -376,10 +413,14 @@ func parseToolCall(raw eventRawToolCall, tools []api.Tool) (api.ToolCall, error)
 	// Wrap the content in a root element to make it valid XML
 	xmlString := "<tool_call>" + escaped + "</tool_call>"
 
-	// Parse XML into struct
+	// Parse XML into struct, retrying once with repaired XML if it fails
 	var parsed ToolCallXML
 	if err := xml.Unmarshal([]byte(xmlString), &parsed); err != nil {
-		return api.ToolCall{}, fmt.Errorf("failed to parse XML: %w", err)
+		parsed = ToolCallXML{}
+		repaired := "<tool_call>" + repairUnclosedArgValues(escaped) + "</tool_call>"
+		if err2 := xml.Unmarshal([]byte(repaired), &parsed); err2 != nil {
+			return api.ToolCall{}, fmt.Errorf("failed to parse XML: %w", err)
+		}
 	}
 
 	// Extract and trim function name

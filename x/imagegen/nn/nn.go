@@ -1,5 +1,3 @@
-//go:build mlx
-
 // Package nn provides neural network layer types.
 package nn
 

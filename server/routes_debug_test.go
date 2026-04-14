@@ -40,7 +40,7 @@ func TestGenerateDebugRenderOnly(t *testing.T) {
 			getGpuFn:        getGpuFn,
 			getSystemInfoFn: getSystemInfoFn,
 			waitForRecovery: 250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
@@ -234,7 +234,7 @@ func TestChatDebugRenderOnly(t *testing.T) {
 			getGpuFn:        getGpuFn,
 			getSystemInfoFn: getSystemInfoFn,
 			waitForRecovery: 250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
+			loadFn: func(req *LlmRequest, _ ml.SystemInfo, _ []ml.DeviceInfo, _ bool) bool {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{

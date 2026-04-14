@@ -15,7 +15,9 @@ set(CMAKE_INSTALL_RPATH "@loader_path")
 
 include(FetchContent)
 
-set(MLX_C_GIT_TAG "v0.4.1" CACHE STRING "")
+# Read MLX-C version from top-level file (shared with imagegen CMakeLists)
+file(READ "${CMAKE_SOURCE_DIR}/MLX_C_VERSION" MLX_C_GIT_TAG)
+string(STRIP "${MLX_C_GIT_TAG}" MLX_C_GIT_TAG)
 
 FetchContent_Declare(
   mlx-c
@@ -24,3 +26,7 @@ FetchContent_Declare(
 )
 
 FetchContent_MakeAvailable(mlx-c)
+
+# Sync vendored headers with fetched version
+file(GLOB _mlx_c_hdrs "${mlx-c_SOURCE_DIR}/mlx/c/*.h")
+file(COPY ${_mlx_c_hdrs} DESTINATION "${CMAKE_CURRENT_SOURCE_DIR}/include/mlx/c/")
