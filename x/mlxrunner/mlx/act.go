@@ -42,3 +42,23 @@ var SwiGLU = Compile2(
 	},
 	Shapeless(),
 )
+
+// GeGLU returns gelu_approx(gate) * up as a fused kernel. Matches mlx_lm's
+// geglu, used by Gemma-family MLP and MoE paths.
+var GeGLU = Compile2(
+	"GeGLU",
+	func(gate, up *Array) *Array {
+		return GELUApprox(gate).Multiply(up)
+	},
+	Shapeless(),
+)
+
+// LogitSoftcap returns tanh(x / cap) * cap as a fused kernel. Matches
+// mlx_lm's logit_softcap. cap must have the same dtype as x.
+var LogitSoftcap = Compile2(
+	"LogitSoftcap",
+	func(x, cap *Array) *Array {
+		return x.Divide(cap).Tanh().Multiply(cap)
+	},
+	Shapeless(),
+)

@@ -1114,9 +1114,8 @@ func (m *Model) Unembed(x *mlx.Array) *mlx.Array {
 	logits := m.LMHead.Forward(x)
 
 	if m.FinalLogitSoftcapping > 0 {
-		logits = mlx.MulScalar(logits, m.SoftcapInv)
-		logits = logits.Tanh()
-		logits = mlx.MulScalar(logits, m.FinalLogitSoftcapping)
+		cap := mlx.FromValue(m.FinalLogitSoftcapping).AsType(logits.DType())
+		logits = mlx.LogitSoftcap(logits, cap)
 	}
 
 	return logits
@@ -1231,8 +1230,7 @@ func (l *DecoderLayer) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Tex
 	// PLE injection (after MLP residual).
 	if l.PLE != nil && pleInput != nil {
 		residual := h
-		gate := mlx.GELUApprox(l.PLE.InputGate.Forward(h))
-		gated := mlx.Mul(gate, pleInput)
+		gated := mlx.GeGLU(l.PLE.InputGate.Forward(h), pleInput)
 		projected := l.PLE.Projection.Forward(gated)
 		projected = mlx.RMSNormFn(projected, l.PLE.PostNormScaled, cfg.RMSNormEps)
 		h = mlx.Add(residual, projected)
@@ -1375,9 +1373,9 @@ func (a *Attention) Forward(x *mlx.Array, c cache.Cache, B, L int32, isSliding b
 }
 
 func (m *MLP) Forward(x *mlx.Array) *mlx.Array {
-	gate := mlx.GELUApprox(m.GateProj.Forward(x))
+	gate := m.GateProj.Forward(x)
 	up := m.UpProj.Forward(x)
-	return m.DownProj.Forward(mlx.Mul(gate, up))
+	return m.DownProj.Forward(mlx.GeGLU(gate, up))
 }
 
 // Forward runs the router to select top-k experts per token.
@@ -1457,13 +1455,13 @@ func (m *MoEBlock) Forward(x *mlx.Array, scores, inds *mlx.Array, cfg *TextConfi
 			up := mlx.SliceStartStop(gateUp,
 				[]int32{0, 0, 0, mid},
 				[]int32{int32(guDims[0]), int32(guDims[1]), int32(guDims[2]), int32(guDims[len(guDims)-1])})
-			hidden = mlx.Mul(mlx.GELUApprox(gate), up)
+			hidden = mlx.GeGLU(gate, up)
 		} else {
 			gate := mlx.GatherQMM(xFlat, m.GateWeightQ, m.GateScales, m.GateBiases,
 				nil, idxFlat, true, m.GateGroupSize, m.GateBits, m.QuantMode, doSort)
 			up := mlx.GatherQMM(xFlat, m.UpWeightQ, m.UpScales, m.UpBiases,
 				nil, idxFlat, true, m.UpGroupSize, m.UpBits, m.QuantMode, doSort)
-			hidden = mlx.Mul(mlx.GELUApprox(gate), up)
+			hidden = mlx.GeGLU(gate, up)
 		}
 		downMode := m.DownQuantMode
 		if downMode == "" {
@@ -1482,11 +1480,11 @@ func (m *MoEBlock) Forward(x *mlx.Array, scores, inds *mlx.Array, cfg *TextConfi
 			up := mlx.SliceStartStop(gateUp,
 				[]int32{0, 0, 0, mid},
 				[]int32{int32(guDims[0]), int32(guDims[1]), int32(guDims[2]), int32(guDims[len(guDims)-1])})
-			hidden = mlx.Mul(mlx.GELUApprox(gate), up)
+			hidden = mlx.GeGLU(gate, up)
 		} else {
 			gate := mlx.GatherMM(xFlat, m.GateWeight, nil, idxFlat, doSort)
 			up := mlx.GatherMM(xFlat, m.UpWeight, nil, idxFlat, doSort)
-			hidden = mlx.Mul(mlx.GELUApprox(gate), up)
+			hidden = mlx.GeGLU(gate, up)
 		}
 		down = mlx.GatherMM(hidden, m.DownWeight, nil, idxFlat, doSort)
 	}
