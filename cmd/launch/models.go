@@ -345,8 +345,6 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 		recRank[rec.Name] = i + 1
 	}
 
-	onlyLocal := hasLocalModel && !hasCloudModel
-
 	if hasLocalModel || hasCloudModel {
 		slices.SortStableFunc(items, func(a, b ModelItem) int {
 			ac, bc := checked[a.Name], checked[b.Name]
@@ -368,12 +366,6 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 			}
 			if aRec && bRec {
 				if aCloud != bCloud {
-					if onlyLocal {
-						if aCloud {
-							return 1
-						}
-						return -1
-					}
 					if aCloud {
 						return -1
 					}

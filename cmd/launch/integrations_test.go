@@ -329,7 +329,7 @@ func TestBuildModelList_NoExistingModels(t *testing.T) {
 	}
 }
 
-func TestBuildModelList_OnlyLocalModels_CloudRecsAtBottom(t *testing.T) {
+func TestBuildModelList_OnlyLocalModels_CloudRecsStillFirst(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "llama3.2:latest", Remote: false},
 		{Name: "qwen2.5:latest", Remote: false},
@@ -338,10 +338,11 @@ func TestBuildModelList_OnlyLocalModels_CloudRecsAtBottom(t *testing.T) {
 	items, _, _, _ := buildModelList(existing, nil, "")
 	got := names(items)
 
-	// Recommended pinned at top (local recs first, then cloud recs when only-local), then installed non-recs
-	want := []string{"gemma4", "qwen3.5", "kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m2.7:cloud", "llama3.2", "qwen2.5"}
+	// Cloud recs always come first among recommended, regardless of installed inventory.
+	// Cloud disablement is handled upstream in loadSelectableModels via filterCloudItems.
+	want := []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m2.7:cloud", "gemma4", "qwen3.5", "llama3.2", "qwen2.5"}
 	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("recs pinned at top, local recs before cloud recs (-want +got):\n%s", diff)
+		t.Errorf("cloud recs pinned first even when no cloud models installed (-want +got):\n%s", diff)
 	}
 }
 
@@ -588,7 +589,7 @@ func TestBuildModelList_MixedCase_CloudRecsFirst(t *testing.T) {
 	}
 }
 
-func TestBuildModelList_OnlyLocal_LocalRecsFirst(t *testing.T) {
+func TestBuildModelList_OnlyLocal_CloudRecsStillFirst(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "llama3.2:latest", Remote: false},
 	}
@@ -596,11 +597,11 @@ func TestBuildModelList_OnlyLocal_LocalRecsFirst(t *testing.T) {
 	items, _, _, _ := buildModelList(existing, nil, "")
 	got := names(items)
 
-	// Local recs should sort before cloud recs in only-local case
+	// Cloud recs sort before local recs regardless of installed inventory.
 	localIdx := slices.Index(got, "gemma4")
 	cloudIdx := slices.Index(got, "glm-5.1:cloud")
-	if localIdx > cloudIdx {
-		t.Errorf("local recs should be before cloud recs in only-local case, got %v", got)
+	if cloudIdx > localIdx {
+		t.Errorf("cloud recs should be before local recs even when only local models installed, got %v", got)
 	}
 }
 
