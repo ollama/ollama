@@ -154,6 +154,12 @@ type ManagedSingleModel interface {
 	Onboard() error
 }
 
+// ManagedRuntimeRefresher lets managed integrations refresh any long-lived
+// background runtime after launch rewrites their config.
+type ManagedRuntimeRefresher interface {
+	RefreshRuntimeAfterConfigure() error
+}
+
 // ManagedOnboardingValidator lets managed integrations reject stale saved
 // onboarding state when launcher needs a stronger live readiness check.
 type ManagedOnboardingValidator interface {
@@ -584,6 +590,11 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 	if current == "" || needsConfigure || req.ModelOverride != "" || target != current {
 		if err := prepareManagedSingleIntegration(name, runner, managed, target); err != nil {
 			return err
+		}
+		if refresher, ok := managed.(ManagedRuntimeRefresher); ok {
+			if err := refresher.RefreshRuntimeAfterConfigure(); err != nil {
+				return err
+			}
 		}
 	}
 

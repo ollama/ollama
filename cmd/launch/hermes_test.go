@@ -84,6 +84,10 @@ func TestHermesIntegration(t *testing.T) {
 	t.Run("implements managed single model", func(t *testing.T) {
 		var _ ManagedSingleModel = h
 	})
+
+	t.Run("implements managed runtime refresher", func(t *testing.T) {
+		var _ ManagedRuntimeRefresher = h
+	})
 }
 
 func TestHermesConfigurePreservesExistingConfigAndEnablesWeb(t *testing.T) {
@@ -838,6 +842,141 @@ fi
 	}
 }
 
+func TestHermesRefreshRuntimeAfterConfigure_RestartsRunningGateway(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withHermesPlatform(t, runtime.GOOS)
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	bin := filepath.Join(tmpDir, "hermes")
+	script := `#!/bin/sh
+printf '[%s]\n' "$*" >> "$HOME/hermes-invocations.log"
+if [ "$1" = "gateway" ] && [ "$2" = "status" ]; then
+  printf '✓ Gateway is running (PID: 123)\n'
+fi
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &Hermes{}
+	if err := h.RefreshRuntimeAfterConfigure(); err != nil {
+		t.Fatalf("RefreshRuntimeAfterConfigure returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "hermes-invocations.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected status then restart invocations, got %v", lines)
+	}
+	if lines[0] != "[gateway status]" {
+		t.Fatalf("expected gateway status first, got %q", lines[0])
+	}
+	if lines[1] != "[gateway restart]" {
+		t.Fatalf("expected gateway restart second, got %q", lines[1])
+	}
+}
+
+func TestHermesRefreshRuntimeAfterConfigure_SkipsRestartWhenGatewayStopped(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell test binary")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withHermesPlatform(t, runtime.GOOS)
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	bin := filepath.Join(tmpDir, "hermes")
+	script := `#!/bin/sh
+printf '[%s]\n' "$*" >> "$HOME/hermes-invocations.log"
+if [ "$1" = "gateway" ] && [ "$2" = "status" ]; then
+  printf '✗ Gateway is not running\n'
+fi
+`
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &Hermes{}
+	if err := h.RefreshRuntimeAfterConfigure(); err != nil {
+		t.Fatalf("RefreshRuntimeAfterConfigure returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "hermes-invocations.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "[gateway status]" {
+		t.Fatalf("expected only gateway status invocation, got %q", got)
+	}
+}
+
+func TestHermesRefreshRuntimeAfterConfigure_WindowsWSLRestartsRunningGateway(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell test binaries to simulate WSL")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withHermesPlatform(t, "windows")
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	wslPath := filepath.Join(tmpDir, "wsl.exe")
+	wslScript := `#!/bin/sh
+printf '[%s]\n' "$*" >> "$HOME/wsl-invocations.log"
+exec /bin/sh -lc "$3"
+`
+	if err := os.WriteFile(wslPath, []byte(wslScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	hermesBin := filepath.Join(tmpDir, "hermes")
+	hermesScript := `#!/bin/sh
+printf '[%s]\n' "$*" >> "$HOME/hermes-invocations.log"
+if [ "$1" = "gateway" ] && [ "$2" = "status" ]; then
+  printf '✓ Gateway is running (PID: 321)\n'
+fi
+`
+	if err := os.WriteFile(hermesBin, []byte(hermesScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	withHermesLookPath(t, func(file string) (string, error) {
+		if file == "wsl.exe" {
+			return wslPath, nil
+		}
+		return "", os.ErrNotExist
+	})
+
+	h := &Hermes{}
+	if err := h.RefreshRuntimeAfterConfigure(); err != nil {
+		t.Fatalf("RefreshRuntimeAfterConfigure returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "hermes-invocations.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected WSL status then restart invocations, got %v", lines)
+	}
+	if lines[0] != "[gateway status]" {
+		t.Fatalf("expected WSL gateway status first, got %q", lines[0])
+	}
+	if lines[1] != "[gateway restart]" {
+		t.Fatalf("expected WSL gateway restart second, got %q", lines[1])
+	}
+}
+
 func TestHermesMessagingConfiguredRecognizesSupportedGatewayVars(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -1093,5 +1232,28 @@ func TestHermesOnboardMarksLaunchConfig(t *testing.T) {
 	}
 	if !saved.Onboarded {
 		t.Fatal("expected Hermes to be marked onboarded")
+	}
+}
+
+func TestHermesGatewayStatusRunningRecognizesRunningStates(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{name: "manual", output: "✓ Gateway is running (PID: 123)", want: true},
+		{name: "systemd", output: "✓ User gateway service is running", want: true},
+		{name: "launchd", output: "✓ Gateway service is loaded", want: true},
+		{name: "manual stopped", output: "✗ Gateway is not running", want: false},
+		{name: "systemd stopped", output: "✗ User gateway service is stopped", want: false},
+		{name: "launchd unloaded", output: "✗ Gateway service is not loaded", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hermesGatewayStatusRunning(tt.output); got != tt.want {
+				t.Fatalf("hermesGatewayStatusRunning(%q) = %v, want %v", tt.output, got, tt.want)
+			}
+		})
 	}
 }

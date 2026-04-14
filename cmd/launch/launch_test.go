@@ -57,6 +57,8 @@ type launcherManagedRunner struct {
 	onboarded          bool
 	onboardCalls       int
 	onboardingComplete bool
+	refreshCalls       int
+	refreshErr         error
 }
 
 func (r *launcherManagedRunner) Run(model string, args []string) error {
@@ -84,6 +86,11 @@ func (r *launcherManagedRunner) Onboard() error {
 }
 
 func (r *launcherManagedRunner) OnboardingComplete() bool { return r.onboardingComplete }
+
+func (r *launcherManagedRunner) RefreshRuntimeAfterConfigure() error {
+	r.refreshCalls++
+	return r.refreshErr
+}
 
 type launcherHeadlessManagedRunner struct {
 	launcherManagedRunner
@@ -291,6 +298,9 @@ func TestLaunchIntegration_ManagedSingleIntegrationConfiguresOnboardsAndRuns(t *
 	if diff := compareStrings(runner.configured, []string{"gemma4"}); diff != "" {
 		t.Fatalf("configured models mismatch: %s", diff)
 	}
+	if runner.refreshCalls != 1 {
+		t.Fatalf("expected runtime refresh once after configure, got %d", runner.refreshCalls)
+	}
 	if runner.onboardCalls != 1 {
 		t.Fatalf("expected onboarding to run once, got %d", runner.onboardCalls)
 	}
@@ -346,6 +356,9 @@ func TestLaunchIntegration_ManagedSingleIntegrationReOnboardsWhenSavedFlagIsStal
 	if runner.onboardCalls != 1 {
 		t.Fatalf("expected stale onboarded flag to trigger onboarding, got %d calls", runner.onboardCalls)
 	}
+	if runner.refreshCalls != 0 {
+		t.Fatalf("expected no runtime refresh when config is unchanged, got %d", runner.refreshCalls)
+	}
 	if runner.ranModel != "gemma4" {
 		t.Fatalf("expected launch to run saved model after onboarding repair, got %q", runner.ranModel)
 	}
@@ -387,6 +400,9 @@ func TestLaunchIntegration_ManagedSingleIntegrationConfigOnlySkipsFinalRun(t *te
 
 	if runner.ranModel != "" {
 		t.Fatalf("expected configure-only flow to skip final launch, got %q", runner.ranModel)
+	}
+	if runner.refreshCalls != 1 {
+		t.Fatalf("expected configure-only flow to refresh runtime once, got %d", runner.refreshCalls)
 	}
 	if runner.onboardCalls != 1 {
 		t.Fatalf("expected configure-only flow to onboard once, got %d", runner.onboardCalls)
@@ -433,6 +449,9 @@ func TestLaunchIntegration_ManagedSingleIntegrationRepairsMissingLiveConfigUsing
 
 	if diff := compareStrings(runner.configured, []string{"gemma4"}); diff != "" {
 		t.Fatalf("expected missing live config to be rewritten from saved model: %s", diff)
+	}
+	if runner.refreshCalls != 1 {
+		t.Fatalf("expected repaired config to refresh runtime once, got %d", runner.refreshCalls)
 	}
 	if runner.ranModel != "gemma4" {
 		t.Fatalf("expected launch to use repaired saved model, got %q", runner.ranModel)
@@ -481,8 +500,55 @@ func TestLaunchIntegration_ManagedSingleIntegrationConfigureOnlyRepairsMissingLi
 	if diff := compareStrings(runner.configured, []string{"gemma4"}); diff != "" {
 		t.Fatalf("expected configure-only flow to rewrite missing live config: %s", diff)
 	}
+	if runner.refreshCalls != 1 {
+		t.Fatalf("expected configure-only repair to refresh runtime once, got %d", runner.refreshCalls)
+	}
 	if runner.ranModel != "" {
 		t.Fatalf("expected configure-only flow to skip final launch, got %q", runner.ranModel)
+	}
+}
+
+func TestLaunchIntegration_ManagedSingleIntegrationStopsWhenRuntimeRefreshFails(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	runner := &launcherManagedRunner{
+		refreshErr: fmt.Errorf("boom"),
+	}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		return true, nil
+	}
+
+	err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:          "stubmanaged",
+		ModelOverride: "gemma4",
+	})
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("expected runtime refresh error, got %v", err)
+	}
+	if runner.ranModel != "" {
+		t.Fatalf("expected final launch to stop on runtime refresh failure, got %q", runner.ranModel)
+	}
+	if runner.refreshCalls != 1 {
+		t.Fatalf("expected one runtime refresh attempt, got %d", runner.refreshCalls)
+	}
+	if runner.onboardCalls != 0 {
+		t.Fatalf("expected onboarding to stop after refresh failure, got %d", runner.onboardCalls)
 	}
 }
 

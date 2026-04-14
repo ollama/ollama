@@ -171,6 +171,23 @@ func (h *Hermes) RequiresInteractiveOnboarding() bool {
 	return false
 }
 
+func (h *Hermes) RefreshRuntimeAfterConfigure() error {
+	running, err := h.gatewayRunning()
+	if err != nil {
+		return fmt.Errorf("check Hermes gateway status: %w", err)
+	}
+	if !running {
+		return nil
+	}
+
+	fmt.Fprintf(os.Stderr, "%sRefreshing Hermes messaging gateway...%s\n", ansiGray, ansiReset)
+	if err := h.restartGateway(); err != nil {
+		return fmt.Errorf("restart Hermes gateway: %w", err)
+	}
+	fmt.Fprintln(os.Stderr)
+	return nil
+}
+
 func (h *Hermes) installed() bool {
 	if hermesGOOS == "windows" {
 		if _, err := hermesLookPath("hermes"); err == nil {
@@ -337,6 +354,14 @@ func (h *Hermes) runWSL(args ...string) error {
 	}
 
 	return hermesAttachedCommand("wsl.exe", "bash", "-lc", shellQuoteArgs(args)).Run()
+}
+
+func (h *Hermes) runWSLCombinedOutput(args ...string) ([]byte, error) {
+	if !h.wslAvailable() {
+		return nil, fmt.Errorf("wsl.exe is not available")
+	}
+
+	return hermesCommand("wsl.exe", "bash", "-lc", shellQuoteArgs(args)).CombinedOutput()
 }
 
 func (h *Hermes) wslAvailable() bool {
@@ -587,6 +612,76 @@ func (h *Hermes) usesLocalRuntimeEnv() bool {
 	}
 	_, err := hermesLookPath("hermes")
 	return err == nil
+}
+
+func (h *Hermes) gatewayRunning() (bool, error) {
+	status, err := h.gatewayStatusOutput()
+	if err != nil {
+		return false, err
+	}
+	return hermesGatewayStatusRunning(status), nil
+}
+
+func (h *Hermes) gatewayStatusOutput() (string, error) {
+	if hermesGOOS == "windows" {
+		if path, err := hermesLookPath("hermes"); err == nil {
+			out, err := hermesCommand(path, "gateway", "status").CombinedOutput()
+			return string(out), err
+		}
+		if !h.wslAvailable() {
+			return "", hermesWindowsHint(fmt.Errorf("hermes is not installed"))
+		}
+		out, err := h.runWSLCombinedOutput("hermes", "gateway", "status")
+		return string(out), err
+	}
+
+	bin, err := h.findUnixBinary()
+	if err != nil {
+		return "", err
+	}
+	out, err := hermesCommand(bin, "gateway", "status").CombinedOutput()
+	return string(out), err
+}
+
+func (h *Hermes) restartGateway() error {
+	if hermesGOOS == "windows" {
+		if path, err := hermesLookPath("hermes"); err == nil {
+			return hermesAttachedCommand(path, "gateway", "restart").Run()
+		}
+		if !h.wslAvailable() {
+			return hermesWindowsHint(fmt.Errorf("hermes is not installed"))
+		}
+		if err := h.runWSL("hermes", "gateway", "restart"); err != nil {
+			return hermesWindowsHint(err)
+		}
+		return nil
+	}
+
+	bin, err := h.findUnixBinary()
+	if err != nil {
+		return err
+	}
+	return hermesAttachedCommand(bin, "gateway", "restart").Run()
+}
+
+func hermesGatewayStatusRunning(output string) bool {
+	status := strings.ToLower(output)
+	switch {
+	case strings.Contains(status, "gateway is not running"):
+		return false
+	case strings.Contains(status, "gateway service is stopped"):
+		return false
+	case strings.Contains(status, "gateway service is not loaded"):
+		return false
+	case strings.Contains(status, "gateway is running"):
+		return true
+	case strings.Contains(status, "gateway service is running"):
+		return true
+	case strings.Contains(status, "gateway service is loaded"):
+		return true
+	default:
+		return false
+	}
 }
 
 func hermesParseEnvFile(data []byte) map[string]string {
