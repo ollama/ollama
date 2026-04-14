@@ -74,7 +74,7 @@ func TestIntegrationLookup(t *testing.T) {
 }
 
 func TestIntegrationRegistry(t *testing.T) {
-	expectedIntegrations := []string{"claude", "codex", "droid", "opencode"}
+	expectedIntegrations := []string{"claude", "codex", "droid", "opencode", "hermes"}
 
 	for _, name := range expectedIntegrations {
 		t.Run(name, func(t *testing.T) {
@@ -1557,6 +1557,27 @@ func TestListIntegrationInfos(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("excludes hidden integrations", func(t *testing.T) {
+		for _, info := range infos {
+			if info.Name == "hermes" {
+				t.Fatal("expected hidden integration hermes to be excluded from ListIntegrationInfos")
+			}
+		}
+	})
+
+	t.Run("hidden integrations still resolve explicitly", func(t *testing.T) {
+		name, runner, err := LookupIntegration("hermes")
+		if err != nil {
+			t.Fatalf("expected explicit hidden integration lookup to work, got %v", err)
+		}
+		if name != "hermes" {
+			t.Fatalf("expected canonical name hermes, got %q", name)
+		}
+		if runner.String() == "" {
+			t.Fatal("expected hidden integration runner to be present")
+		}
+	})
 }
 
 func TestBuildModelList_Descriptions(t *testing.T) {
@@ -1645,6 +1666,7 @@ func TestIntegration_AutoInstallable(t *testing.T) {
 	}{
 		{"openclaw", true},
 		{"pi", true},
+		{"hermes", true},
 		{"claude", false},
 		{"codex", false},
 		{"opencode", false},

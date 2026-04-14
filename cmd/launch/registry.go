@@ -137,6 +137,21 @@ var integrationSpecs = []*IntegrationSpec{
 		},
 	},
 	{
+		Name:        "hermes",
+		Runner:      &Hermes{},
+		Description: "Self-improving AI agent built by Nous Research",
+		Hidden:      true,
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				return (&Hermes{}).installed()
+			},
+			EnsureInstalled: func() error {
+				return (&Hermes{}).ensureInstalled()
+			},
+			URL: "https://hermes-agent.nousresearch.com/docs/getting-started/installation/",
+		},
+	},
+	{
 		Name:        "vscode",
 		Runner:      &VSCode{},
 		Aliases:     []string{"code"},
