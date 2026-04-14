@@ -2,7 +2,6 @@ package launch
 
 import (
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,7 +10,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -42,19 +40,33 @@ func withHermesOllamaURL(t *testing.T, rawURL string) {
 	})
 }
 
-func withHermesGatewayAddr(t *testing.T, addr string) {
+func withHermesUserHome(t *testing.T, dir string) {
 	t.Helper()
-	oldAddr := hermesGatewayAddr
-	oldStartWait := hermesGatewayStartWait
-	oldServiceWait := hermesGatewayServiceWait
-	hermesGatewayAddr = addr
-	hermesGatewayStartWait = 3 * time.Second
-	hermesGatewayServiceWait = 250 * time.Millisecond
+	old := hermesUserHome
+	hermesUserHome = func() (string, error) { return dir, nil }
 	t.Cleanup(func() {
-		hermesGatewayAddr = oldAddr
-		hermesGatewayStartWait = oldStartWait
-		hermesGatewayServiceWait = oldServiceWait
+		hermesUserHome = old
 	})
+}
+
+func writeFakeWSLExe(t *testing.T, dir string) {
+	t.Helper()
+	script := `#!/bin/sh
+if [ "$1" != "bash" ] || [ "$2" != "-lc" ]; then
+  exit 2
+fi
+case "$3" in
+  'printf %s "$HOME"')
+    printf "%s" "$HOME"
+    ;;
+  *)
+    exec /bin/sh -lc "$3"
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(dir, "wsl.exe"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestHermesIntegration(t *testing.T) {
@@ -424,6 +436,192 @@ func TestHermesConfigureMigratesLegacyManagedAliases(t *testing.T) {
 	}
 }
 
+func TestHermesPathsUsesWSLConfigPathOnWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("simulates WSL through POSIX shell scripts")
+	}
+
+	tmpDir := t.TempDir()
+	winHome := filepath.Join(tmpDir, "winhome")
+	wslHome := filepath.Join(tmpDir, "wslhome")
+	setTestHome(t, winHome)
+	withHermesPlatform(t, "windows")
+	withHermesUserHome(t, winHome)
+	t.Setenv("HOME", wslHome)
+	t.Setenv("PATH", tmpDir)
+	writeFakeWSLExe(t, tmpDir)
+
+	got := (&Hermes{}).Paths()
+	want := filepath.Join(wslHome, ".hermes", "config.yaml")
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("expected WSL config path %q, got %v", want, got)
+	}
+}
+
+func TestHermesPathsUsesLocalConfigPathForNativeWindowsHermes(t *testing.T) {
+	tmpDir := t.TempDir()
+	winHome := filepath.Join(tmpDir, "winhome")
+	setTestHome(t, winHome)
+	withHermesPlatform(t, "windows")
+	withHermesUserHome(t, winHome)
+	t.Setenv("PATH", tmpDir)
+	if err := os.WriteFile(filepath.Join(tmpDir, "hermes"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeWSLExe(t, tmpDir)
+
+	got := (&Hermes{}).Paths()
+	want := filepath.Join(winHome, ".hermes", "config.yaml")
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("expected local config path %q, got %v", want, got)
+	}
+}
+
+func TestHermesConfigureAndCurrentModelUseWSLConfigOnWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("simulates WSL through POSIX shell scripts")
+	}
+
+	tmpDir := t.TempDir()
+	winHome := filepath.Join(tmpDir, "winhome")
+	wslHome := filepath.Join(tmpDir, "wslhome")
+	setTestHome(t, winHome)
+	withHermesPlatform(t, "windows")
+	withHermesUserHome(t, winHome)
+	t.Setenv("HOME", wslHome)
+	t.Setenv("PATH", tmpDir)
+	writeFakeWSLExe(t, tmpDir)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"gemma4"},{"name":"qwen3.5"}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	h := &Hermes{}
+	if err := h.Configure("gemma4"); err != nil {
+		t.Fatalf("Configure returned error: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(winHome, ".hermes", "config.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("expected Windows-side config to remain untouched, got err=%v", err)
+	}
+
+	wslConfigPath := filepath.Join(wslHome, ".hermes", "config.yaml")
+	data, err := os.ReadFile(wslConfigPath)
+	if err != nil {
+		t.Fatalf("expected WSL-side config to be written: %v", err)
+	}
+
+	var cfg map[string]any
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("failed to parse WSL config: %v", err)
+	}
+	modelCfg, _ := cfg["model"].(map[string]any)
+	if got, _ := modelCfg["provider"].(string); got != "ollama-launch" {
+		t.Fatalf("expected WSL config provider ollama-launch, got %q", got)
+	}
+	if got := h.CurrentModel(); got != "gemma4" {
+		t.Fatalf("expected CurrentModel to read WSL config, got %q", got)
+	}
+}
+
+func TestHermesCurrentModelRequiresHealthyManagedConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withHermesPlatform(t, runtime.GOOS)
+	withHermesOllamaURL(t, "http://127.0.0.1:11434")
+
+	configPath := filepath.Join(tmpDir, ".hermes", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		cfg  string
+	}{
+		{
+			name: "wrong provider",
+			cfg: "" +
+				"model:\n" +
+				"  provider: openrouter\n" +
+				"  default: gemma4\n" +
+				"  base_url: http://127.0.0.1:11434/v1\n",
+		},
+		{
+			name: "wrong base url",
+			cfg: "" +
+				"model:\n" +
+				"  provider: ollama-launch\n" +
+				"  default: gemma4\n" +
+				"  base_url: http://127.0.0.1:9999/v1\n" +
+				"providers:\n" +
+				"  ollama-launch:\n" +
+				"    api: http://127.0.0.1:9999/v1\n" +
+				"    default_model: gemma4\n",
+		},
+		{
+			name: "missing managed provider entry",
+			cfg: "" +
+				"model:\n" +
+				"  provider: ollama-launch\n" +
+				"  default: gemma4\n" +
+				"  base_url: http://127.0.0.1:11434/v1\n",
+		},
+		{
+			name: "inconsistent managed provider entry",
+			cfg: "" +
+				"model:\n" +
+				"  provider: ollama-launch\n" +
+				"  default: gemma4\n" +
+				"  base_url: http://127.0.0.1:11434/v1\n" +
+				"providers:\n" +
+				"  ollama-launch:\n" +
+				"    api: http://127.0.0.1:11434/v1\n" +
+				"    default_model: qwen3.5\n",
+		},
+		{
+			name: "legacy launch managed config",
+			cfg: "" +
+				"model:\n" +
+				"  provider: custom:ollama\n" +
+				"  default: gemma4\n" +
+				"  base_url: http://127.0.0.1:11434/v1\n" +
+				"providers:\n" +
+				"  ollama:\n" +
+				"    api: http://127.0.0.1:11434/v1\n" +
+				"    default_model: gemma4\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := os.WriteFile(configPath, []byte(tt.cfg), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if got := (&Hermes{}).CurrentModel(); got != "" {
+				t.Fatalf("expected stale config to return empty current model, got %q", got)
+			}
+		})
+	}
+}
+
+func TestHermesCurrentModelReturnsEmptyWhenConfigMissing(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withHermesPlatform(t, runtime.GOOS)
+
+	if got := (&Hermes{}).CurrentModel(); got != "" {
+		t.Fatalf("expected missing config to return empty current model, got %q", got)
+	}
+}
+
 func TestHermesRunPassthroughArgs(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses a POSIX shell test binary")
@@ -450,91 +648,6 @@ func TestHermesRunPassthroughArgs(t *testing.T) {
 	}
 	if got := strings.TrimSpace(string(data)); got != "[--continue]" {
 		t.Fatalf("expected passthrough args to reach hermes, got %q", got)
-	}
-}
-
-func TestHermesRunStartsGatewayWhenPortClosed(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("uses a POSIX shell test binary")
-	}
-
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-	withHermesPlatform(t, runtime.GOOS)
-	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := l.Addr().String()
-	l.Close()
-	withHermesGatewayAddr(t, addr)
-	port := strings.TrimPrefix(addr, "127.0.0.1:")
-
-	bin := filepath.Join(tmpDir, "hermes")
-	script := "#!/bin/sh\n" +
-		"printf '[%s]\\n' \"$*\" >> \"$HOME/hermes-invocations.log\"\n" +
-		"if [ \"$1 $2\" = \"gateway start\" ]; then\n" +
-		"  exit 1\n" +
-		"fi\n" +
-		fmt.Sprintf("if [ \"$1 $2\" = \"gateway run\" ]; then\n  exec python3 -c 'import socket,time; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind((\"127.0.0.1\", %s)); s.listen(); time.sleep(5)'\n", port) +
-		"fi\n"
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	h := &Hermes{}
-	stderr := captureStderr(t, func() {
-		if err := h.Run("", nil); err != nil {
-			t.Fatalf("Run returned error: %v", err)
-		}
-	})
-
-	if !strings.Contains(stderr, "Starting Hermes gateway") || !strings.Contains(stderr, "Hermes gateway is running") {
-		t.Fatalf("expected gateway startup messaging, got %q", stderr)
-	}
-
-	data, err := os.ReadFile(filepath.Join(tmpDir, "hermes-invocations.log"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(got) != 3 || got[0] != "[gateway start]" || got[1] != "[gateway run]" || got[2] != "[]" {
-		t.Fatalf("expected service-start attempt, manual gateway run, then hermes launch, got %q", got)
-	}
-}
-
-func TestHermesRunGatewayFailureIncludesManualGuidance(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("uses a POSIX shell test binary")
-	}
-
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-	withHermesPlatform(t, runtime.GOOS)
-	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := l.Addr().String()
-	l.Close()
-	withHermesGatewayAddr(t, addr)
-
-	bin := filepath.Join(tmpDir, "hermes")
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	h := &Hermes{}
-	err = h.Run("", nil)
-	if err == nil {
-		t.Fatal("expected gateway startup failure")
-	}
-	if !strings.Contains(err.Error(), "hermes setup gateway") {
-		t.Fatalf("expected manual gateway guidance, got %v", err)
 	}
 }
 
@@ -615,5 +728,24 @@ func TestHermesOnboardSkipsWhenLaunchConfigAlreadyMarked(t *testing.T) {
 	h := &Hermes{}
 	if err := h.Onboard(); err != nil {
 		t.Fatalf("expected Onboard to no-op when already marked, got %v", err)
+	}
+}
+
+func TestHermesOnboardMarksLaunchConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withHermesPlatform(t, runtime.GOOS)
+
+	h := &Hermes{}
+	if err := h.Onboard(); err != nil {
+		t.Fatalf("Onboard returned error: %v", err)
+	}
+
+	saved, err := config.LoadIntegration("hermes")
+	if err != nil {
+		t.Fatalf("failed to load Hermes integration config: %v", err)
+	}
+	if !saved.Onboarded {
+		t.Fatal("expected Hermes to be marked onboarded")
 	}
 }

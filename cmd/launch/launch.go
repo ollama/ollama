@@ -154,6 +154,18 @@ type ManagedSingleModel interface {
 	Onboard() error
 }
 
+// ManagedOnboardingValidator lets managed integrations reject stale saved
+// onboarding state when launcher needs a stronger live readiness check.
+type ManagedOnboardingValidator interface {
+	OnboardingComplete() bool
+}
+
+// ManagedInteractiveOnboarding lets a managed integration declare whether its
+// onboarding step really requires an interactive terminal. Hermes does not.
+type ManagedInteractiveOnboarding interface {
+	RequiresInteractiveOnboarding() bool
+}
+
 type modelInfo struct {
 	Name        string
 	Remote      bool
@@ -457,6 +469,9 @@ func (c *launcherClient) launcherManagedModelState(ctx context.Context, name str
 		if loadErr == nil {
 			current = primaryModelFromConfig(cfg)
 		}
+		if current != "" {
+			return current, false, nil
+		}
 	}
 	if current == "" {
 		return "", false, nil
@@ -553,11 +568,12 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 
 func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, name string, runner Runner, managed ManagedSingleModel, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
 	current := managed.CurrentModel()
-	if current == "" {
-		current = primaryModelFromConfig(saved)
+	selectionCurrent := current
+	if selectionCurrent == "" {
+		selectionCurrent = primaryModelFromConfig(saved)
 	}
 
-	target, needsConfigure, err := c.resolveSingleIntegrationTarget(ctx, runner, current, req)
+	target, needsConfigure, err := c.resolveSingleIntegrationTarget(ctx, runner, selectionCurrent, req)
 	if err != nil {
 		return err
 	}
@@ -565,14 +581,14 @@ func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, nam
 		return nil
 	}
 
-	if needsConfigure || req.ModelOverride != "" || target != current {
+	if current == "" || needsConfigure || req.ModelOverride != "" || target != current {
 		if err := prepareManagedSingleIntegration(name, runner, managed, target); err != nil {
 			return err
 		}
 	}
 
-	if !savedIntegrationOnboarded(saved) {
-		if !isInteractiveSession() {
+	if !managedIntegrationOnboarded(saved, managed) {
+		if !isInteractiveSession() && managedRequiresInteractiveOnboarding(managed) {
 			return fmt.Errorf("%s still needs interactive gateway setup; run 'ollama launch %s' in a terminal to finish onboarding", runner, name)
 		}
 		if err := managed.Onboard(); err != nil {
@@ -617,6 +633,28 @@ func (c *launcherClient) resolveSingleIntegrationTarget(ctx context.Context, run
 
 func savedIntegrationOnboarded(saved *config.IntegrationConfig) bool {
 	return saved != nil && saved.Onboarded
+}
+
+func managedIntegrationOnboarded(saved *config.IntegrationConfig, managed ManagedSingleModel) bool {
+	if !savedIntegrationOnboarded(saved) {
+		return false
+	}
+	validator, ok := managed.(ManagedOnboardingValidator)
+	if !ok {
+		return true
+	}
+	return validator.OnboardingComplete()
+}
+
+// Most managed integrations treat onboarding as an interactive terminal step.
+// Hermes opts out because its launch-owned onboarding is just bookkeeping, so
+// headless launches should not be blocked once config is already prepared.
+func managedRequiresInteractiveOnboarding(managed ManagedSingleModel) bool {
+	onboarding, ok := managed.(ManagedInteractiveOnboarding)
+	if !ok {
+		return true
+	}
+	return onboarding.RequiresInteractiveOnboarding()
 }
 
 func (c *launcherClient) selectSingleModelWithSelector(ctx context.Context, title, current string, selector SingleSelector) (string, error) {

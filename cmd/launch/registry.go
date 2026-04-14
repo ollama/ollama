@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"opencode", "droid", "pi"}
+var launcherIntegrationOrder = []string{"hermes", "opencode", "droid", "pi"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -140,7 +140,6 @@ var integrationSpecs = []*IntegrationSpec{
 		Name:        "hermes",
 		Runner:      &Hermes{},
 		Description: "Self-improving AI agent built by Nous Research",
-		Hidden:      true,
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
 				return (&Hermes{}).installed()

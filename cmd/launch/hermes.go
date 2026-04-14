@@ -1,12 +1,14 @@
 package launch
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
+	pathpkg "path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -30,20 +32,23 @@ const (
 )
 
 var (
-	hermesGOOS               = runtime.GOOS
-	hermesLookPath           = exec.LookPath
-	hermesCommand            = exec.Command
-	hermesUserHome           = os.UserHomeDir
-	hermesOllamaURL          = envconfig.ConnectableHost
-	hermesGatewayAddr        = "127.0.0.1:18789"
-	hermesGatewayStartWait   = 15 * time.Second
-	hermesGatewayServiceWait = 5 * time.Second
+	hermesGOOS      = runtime.GOOS
+	hermesLookPath  = exec.LookPath
+	hermesCommand   = exec.Command
+	hermesUserHome  = os.UserHomeDir
+	hermesOllamaURL = envconfig.ConnectableHost
 )
 
 // Hermes is intentionally not an Editor integration: launch owns one primary
 // model and the local Ollama endpoint, while Hermes keeps its own discovery and
 // switching UX after startup.
 type Hermes struct{}
+
+type hermesConfigBackend struct {
+	displayPath string
+	read        func() ([]byte, error)
+	write       func([]byte) error
+}
 
 func (h *Hermes) String() string { return "Hermes Agent" }
 
@@ -59,31 +64,25 @@ func (h *Hermes) Run(_ string, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := h.ensureGatewayRunning(bin, args); err != nil {
-		return err
-	}
 	return hermesAttachedCommand(bin, args...).Run()
 }
 
 func (h *Hermes) Paths() []string {
-	path, err := hermesConfigPath()
+	backend, err := h.configBackend()
 	if err != nil {
 		return nil
 	}
-	return []string{path}
+	return []string{backend.displayPath}
 }
 
 func (h *Hermes) Configure(model string) error {
-	configPath, err := hermesConfigPath()
+	backend, err := h.configBackend()
 	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		return err
 	}
 
 	cfg := map[string]any{}
-	if data, err := os.ReadFile(configPath); err == nil {
+	if data, err := backend.read(); err == nil {
 		if err := yaml.Unmarshal(data, &cfg); err != nil {
 			return fmt.Errorf("parse hermes config: %w", err)
 		}
@@ -109,23 +108,23 @@ func (h *Hermes) Configure(model string) error {
 	modelSection["api_key"] = hermesPlaceholderKey
 	cfg["model"] = modelSection
 
-	// v1 uses Hermes' built-in web toolset intentionally. Matching Ollama's
-	// OpenClaw-style web-search plugin flow is a separate enhancement.
+	// use Hermes' built-in web toolset for now.
+	// TODO(parthsareen): move this to using Ollama web search
 	cfg["toolsets"] = mergeHermesToolsets(cfg["toolsets"])
 
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return err
 	}
-	return fileutil.WriteWithBackup(configPath, data)
+	return backend.write(data)
 }
 
 func (h *Hermes) CurrentModel() string {
-	configPath, err := hermesConfigPath()
+	backend, err := h.configBackend()
 	if err != nil {
 		return ""
 	}
-	data, err := os.ReadFile(configPath)
+	data, err := backend.read()
 	if err != nil {
 		return ""
 	}
@@ -134,52 +133,15 @@ func (h *Hermes) CurrentModel() string {
 	if yaml.Unmarshal(data, &cfg) != nil {
 		return ""
 	}
-
-	switch modelCfg := cfg["model"].(type) {
-	case string:
-		return strings.TrimSpace(modelCfg)
-	case map[string]any:
-		if current, _ := modelCfg["default"].(string); strings.TrimSpace(current) != "" {
-			return strings.TrimSpace(current)
-		}
-		if current, _ := modelCfg["model"].(string); strings.TrimSpace(current) != "" {
-			return strings.TrimSpace(current)
-		}
-		if provider, _ := modelCfg["provider"].(string); strings.TrimSpace(provider) != "" {
-			if current := hermesNamedProviderModel(cfg, provider); current != "" {
-				return current
-			}
-		}
-	}
-
-	return ""
+	return hermesManagedCurrentModel(cfg, hermesBaseURL())
 }
 
 func (h *Hermes) Onboard() error {
-	cfg, err := loadStoredIntegrationConfig("hermes")
-	if err == nil && cfg.Onboarded {
-		return nil
-	}
-
-	if hermesGOOS == "windows" {
-		if _, err := hermesLookPath("hermes"); err == nil {
-			if err := hermesAttachedCommand("hermes", "setup", "gateway").Run(); err != nil {
-				return hermesWindowsHint(fmt.Errorf("hermes gateway setup failed: %w", err))
-			}
-		} else if err := h.runWSL("hermes", "setup", "gateway"); err != nil {
-			return hermesWindowsHint(fmt.Errorf("hermes gateway setup failed: %w", err))
-		}
-	} else {
-		bin, err := h.findUnixBinary()
-		if err != nil {
-			return err
-		}
-		if err := hermesAttachedCommand(bin, "setup", "gateway").Run(); err != nil {
-			return fmt.Errorf("hermes gateway setup failed: %w", err)
-		}
-	}
-
 	return config.MarkIntegrationOnboarded("hermes")
+}
+
+func (h *Hermes) RequiresInteractiveOnboarding() bool {
+	return false
 }
 
 func (h *Hermes) installed() bool {
@@ -313,16 +275,10 @@ func (h *Hermes) findUnixBinary() (string, error) {
 
 func (h *Hermes) runWindows(args []string) error {
 	if path, err := hermesLookPath("hermes"); err == nil {
-		if err := h.ensureGatewayRunning(path, args); err != nil {
-			return err
-		}
 		return hermesAttachedCommand(path, args...).Run()
 	}
 	if !h.wslAvailable() {
 		return hermesWindowsHint(fmt.Errorf("hermes is not installed"))
-	}
-	if err := h.ensureGatewayRunning("hermes", args); err != nil {
-		return hermesWindowsHint(err)
 	}
 	return hermesWindowsHint(h.runWSL(append([]string{"hermes"}, args...)...))
 }
@@ -348,12 +304,128 @@ func (h *Hermes) wslHasHermes() bool {
 	return cmd.Run() == nil
 }
 
+func (h *Hermes) configBackend() (*hermesConfigBackend, error) {
+	if hermesGOOS == "windows" {
+		if _, err := hermesLookPath("hermes"); err == nil {
+			return hermesLocalConfigBackend()
+		}
+		if h.wslAvailable() {
+			return h.wslConfigBackend()
+		}
+	}
+	return hermesLocalConfigBackend()
+}
+
 func hermesConfigPath() (string, error) {
 	home, err := hermesUserHome()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(home, ".hermes", "config.yaml"), nil
+}
+
+func hermesLocalConfigBackend() (*hermesConfigBackend, error) {
+	configPath, err := hermesConfigPath()
+	if err != nil {
+		return nil, err
+	}
+	return &hermesConfigBackend{
+		displayPath: configPath,
+		read: func() ([]byte, error) {
+			return os.ReadFile(configPath)
+		},
+		write: func(data []byte) error {
+			if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+				return err
+			}
+			return fileutil.WriteWithBackup(configPath, data)
+		},
+	}, nil
+}
+
+func (h *Hermes) wslConfigBackend() (*hermesConfigBackend, error) {
+	home, err := h.wslHome()
+	if err != nil {
+		return nil, err
+	}
+	configPath := pathpkg.Join(home, ".hermes", "config.yaml")
+	return &hermesConfigBackend{
+		displayPath: configPath,
+		read: func() ([]byte, error) {
+			return h.readWSLFile(configPath)
+		},
+		write: func(data []byte) error {
+			return h.writeWSLConfig(configPath, data)
+		},
+	}, nil
+}
+
+func (h *Hermes) wslHome() (string, error) {
+	if !h.wslAvailable() {
+		return "", fmt.Errorf("wsl.exe is not available")
+	}
+	cmd := hermesCommand("wsl.exe", "bash", "-lc", `printf %s "$HOME"`)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	home := strings.TrimSpace(string(out))
+	if home == "" {
+		return "", fmt.Errorf("could not resolve WSL home directory")
+	}
+	return home, nil
+}
+
+func (h *Hermes) readWSLFile(path string) ([]byte, error) {
+	pathArg := shellQuoteArgs([]string{path})
+	cmd := hermesCommand("wsl.exe", "bash", "-lc", fmt.Sprintf("if [ -f %s ]; then cat %s; else exit 42; fi", pathArg, pathArg))
+	out, err := cmd.Output()
+	if err == nil {
+		return out, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 42 {
+		return nil, os.ErrNotExist
+	}
+	return nil, err
+}
+
+func (h *Hermes) writeWSLConfig(path string, data []byte) error {
+	if existing, err := h.readWSLFile(path); err == nil {
+		if !bytes.Equal(existing, data) {
+			if err := hermesBackupData(path, existing); err != nil {
+				return fmt.Errorf("backup failed: %w", err)
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("read existing file: %w", err)
+	}
+
+	dir := pathpkg.Dir(path)
+	dirArg := shellQuoteArgs([]string{dir})
+	pathArg := shellQuoteArgs([]string{path})
+	script := fmt.Sprintf(
+		"dir=%s; path=%s; mkdir -p \"$dir\" && tmp=$(mktemp \"$dir/.tmp-XXXXXX\") && cat > \"$tmp\" && mv \"$tmp\" \"$path\"",
+		dirArg,
+		pathArg,
+	)
+	cmd := hermesCommand("wsl.exe", "bash", "-lc", script)
+	cmd.Stdin = bytes.NewReader(data)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		if msg := strings.TrimSpace(string(out)); msg != "" {
+			return fmt.Errorf("%w: %s", err, msg)
+		}
+		return err
+	}
+	return nil
+}
+
+func hermesBackupData(path string, data []byte) error {
+	if err := os.MkdirAll(fileutil.BackupDir(), 0o755); err != nil {
+		return err
+	}
+	backupPath := filepath.Join(fileutil.BackupDir(), fmt.Sprintf("%s.%d", filepath.Base(path), time.Now().Unix()))
+	return os.WriteFile(backupPath, data, 0o644)
 }
 
 func hermesBaseURL() string {
@@ -365,14 +437,6 @@ func hermesOllamaClient() *api.Client {
 	// writes into config, rather than depending on a potentially different
 	// OLLAMA_HOST in the user's shell.
 	return api.NewClient(hermesOllamaURL(), http.DefaultClient)
-}
-
-func hermesCustomProviderSlug(name string) string {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		name = hermesProviderName
-	}
-	return "custom:" + strings.ToLower(strings.ReplaceAll(name, " ", "-"))
 }
 
 func applyHermesManagedProviders(cfg map[string]any, baseURL string, model string, models []string) {
@@ -398,35 +462,45 @@ func applyHermesManagedProviders(cfg map[string]any, baseURL string, model strin
 	cfg["custom_providers"] = customProviders
 }
 
-func hermesNamedProviderModel(cfg map[string]any, provider string) string {
-	provider = strings.TrimSpace(strings.ToLower(provider))
-	if provider == hermesProviderKey || provider == hermesLegacyKey || provider == hermesCustomProviderSlug(hermesProviderName) {
-		providers := hermesUserProviders(cfg["providers"])
-		for _, key := range []string{hermesProviderKey, hermesLegacyKey} {
-			if entry, _ := providers[key].(map[string]any); entry != nil {
-				current, _ := entry["default_model"].(string)
-				if current = strings.TrimSpace(current); current != "" {
-					return current
-				}
-			}
-		}
-	}
-	if !strings.HasPrefix(provider, "custom:") {
+func hermesManagedCurrentModel(cfg map[string]any, baseURL string) string {
+	modelCfg, _ := cfg["model"].(map[string]any)
+	if modelCfg == nil {
 		return ""
 	}
-	for _, item := range hermesCustomProviders(cfg["custom_providers"]) {
-		entry, _ := item.(map[string]any)
-		if entry == nil {
-			continue
-		}
-		name, _ := entry["name"].(string)
-		if hermesCustomProviderSlug(name) != provider {
-			continue
-		}
-		current, _ := entry["model"].(string)
-		return strings.TrimSpace(current)
+
+	provider, _ := modelCfg["provider"].(string)
+	if strings.TrimSpace(strings.ToLower(provider)) != hermesProviderKey {
+		return ""
 	}
-	return ""
+
+	configBaseURL, _ := modelCfg["base_url"].(string)
+	if hermesNormalizeURL(configBaseURL) != hermesNormalizeURL(baseURL) {
+		return ""
+	}
+
+	current, _ := modelCfg["default"].(string)
+	current = strings.TrimSpace(current)
+	if current == "" {
+		return ""
+	}
+
+	providers := hermesUserProviders(cfg["providers"])
+	entry, _ := providers[hermesProviderKey].(map[string]any)
+	if entry == nil {
+		return ""
+	}
+
+	apiURL, _ := entry["api"].(string)
+	if hermesNormalizeURL(apiURL) != hermesNormalizeURL(baseURL) {
+		return ""
+	}
+
+	defaultModel, _ := entry["default_model"].(string)
+	if strings.TrimSpace(defaultModel) != current {
+		return ""
+	}
+
+	return current
 }
 
 func hermesUserProviders(current any) map[string]any {
@@ -626,93 +700,4 @@ func hermesWindowsHint(err error) error {
 		return err
 	}
 	return fmt.Errorf("%w\n\nHermes runs on Windows through WSL2.\nQuick setup: wsl --install\nInstaller docs: https://hermes-agent.nousresearch.com/docs/getting-started/installation/", err)
-}
-
-func hermesGatewaySetupHint(err error) error {
-	return fmt.Errorf("%w\n\nIf Hermes gateway prerequisites are missing, run 'hermes setup gateway' and retry.\nInstall docs: https://hermes-agent.nousresearch.com/docs/getting-started/installation/", err)
-}
-
-func (h *Hermes) ensureGatewayRunning(bin string, args []string) error {
-	if len(args) > 0 {
-		return nil
-	}
-	if portOpen(hermesGatewayAddr) {
-		return nil
-	}
-
-	fmt.Fprintf(os.Stderr, "\n%sStarting Hermes gateway...%s\n", ansiGray, ansiReset)
-	if err := h.startGateway(bin); err != nil {
-		return hermesGatewaySetupHint(fmt.Errorf("failed to start hermes gateway: %w", err))
-	}
-	if !waitForPort(hermesGatewayAddr, hermesGatewayStartWait) {
-		return hermesGatewaySetupHint(fmt.Errorf("hermes gateway did not start on %s", hermesGatewayAddr))
-	}
-	fmt.Fprintf(os.Stderr, "%sHermes gateway is running%s\n\n", ansiGreen, ansiReset)
-	return nil
-}
-
-func (h *Hermes) startGateway(bin string) error {
-	if h.tryStartGatewayService(bin) {
-		return nil
-	}
-	return h.spawnGatewayRun(bin)
-}
-
-func (h *Hermes) tryStartGatewayService(bin string) bool {
-	cmd, closeFiles, err := h.gatewayCommand(bin, []string{"gateway", "start"}, false)
-	if err != nil {
-		return false
-	}
-	defer closeFiles()
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	if cmd.Run() != nil {
-		return false
-	}
-	return waitForPort(hermesGatewayAddr, hermesGatewayServiceWait)
-}
-
-func (h *Hermes) spawnGatewayRun(bin string) error {
-	cmd, closeFiles, err := h.gatewayCommand(bin, []string{"gateway", "run"}, true)
-	if err != nil {
-		return err
-	}
-	if err := cmd.Start(); err != nil {
-		closeFiles()
-		return err
-	}
-	closeFiles()
-	return nil
-}
-
-func (h *Hermes) gatewayCommand(bin string, args []string, background bool) (*exec.Cmd, func(), error) {
-	if hermesGOOS == "windows" {
-		if _, err := hermesLookPath("hermes"); err == nil {
-			cmd := hermesCommand(bin, args...)
-			return cmd, func() {}, nil
-		}
-		if !h.wslAvailable() {
-			return nil, nil, fmt.Errorf("wsl.exe is not available")
-		}
-		if background {
-			cmd := hermesCommand("wsl.exe", "bash", "-lc", shellQuoteArgs(append([]string{"nohup", "hermes"}, args...))+" >/dev/null 2>&1 </dev/null &")
-			return cmd, func() {}, nil
-		}
-		cmd := hermesCommand("wsl.exe", "bash", "-lc", shellQuoteArgs(append([]string{"hermes"}, args...)))
-		return cmd, func() {}, nil
-	}
-
-	cmd := hermesCommand(bin, args...)
-	if !background {
-		return cmd, func() {}, nil
-	}
-
-	devnull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
-	if err != nil {
-		return nil, nil, err
-	}
-	cmd.Stdin = devnull
-	cmd.Stdout = devnull
-	cmd.Stderr = devnull
-	return cmd, func() { _ = devnull.Close() }, nil
 }

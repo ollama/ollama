@@ -1558,24 +1558,25 @@ func TestListIntegrationInfos(t *testing.T) {
 		}
 	})
 
-	t.Run("excludes hidden integrations", func(t *testing.T) {
+	t.Run("includes hermes", func(t *testing.T) {
 		for _, info := range infos {
 			if info.Name == "hermes" {
-				t.Fatal("expected hidden integration hermes to be excluded from ListIntegrationInfos")
+				return
 			}
 		}
+		t.Fatal("expected hermes to be included in ListIntegrationInfos")
 	})
 
-	t.Run("hidden integrations still resolve explicitly", func(t *testing.T) {
+	t.Run("hermes still resolves explicitly", func(t *testing.T) {
 		name, runner, err := LookupIntegration("hermes")
 		if err != nil {
-			t.Fatalf("expected explicit hidden integration lookup to work, got %v", err)
+			t.Fatalf("expected explicit hermes integration lookup to work, got %v", err)
 		}
 		if name != "hermes" {
 			t.Fatalf("expected canonical name hermes, got %q", name)
 		}
 		if runner.String() == "" {
-			t.Fatal("expected hidden integration runner to be present")
+			t.Fatal("expected hermes integration runner to be present")
 		}
 	})
 }
