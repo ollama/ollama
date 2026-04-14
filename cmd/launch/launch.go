@@ -206,6 +206,7 @@ Supported integrations:
   claude    Claude Code
   cline     Cline
   codex     Codex
+  copilot   Copilot CLI (aliases: copilot-cli)
   droid     Droid
   hermes    Hermes Agent
   opencode  OpenCode
