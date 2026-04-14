@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"hermes", "opencode", "droid", "pi"}
+var launcherIntegrationOrder = []string{"openclaw", "claude", "opencode", "hermes", "codex", "droid", "pi"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -269,10 +269,10 @@ func ListVisibleIntegrationSpecs() []IntegrationSpec {
 			return aRank - bRank
 		}
 		if aRank > 0 {
-			return 1
+			return -1
 		}
 		if bRank > 0 {
-			return -1
+			return 1
 		}
 		return strings.Compare(a.Name, b.Name)
 	})

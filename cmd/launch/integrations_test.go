@@ -1509,27 +1509,13 @@ func TestListIntegrationInfos(t *testing.T) {
 		}
 	})
 
-	t.Run("sorted with custom order at end", func(t *testing.T) {
-		// integrationOrder entries (cline, opencode) should appear last, in that order.
-		// All other entries should be sorted alphabetically before them.
-		orderRank := make(map[string]int)
-		for i, name := range integrationOrder {
-			orderRank[name] = i + 1
+	t.Run("follows launcher order", func(t *testing.T) {
+		got := make([]string, 0, len(infos))
+		for _, info := range infos {
+			got = append(got, info.Name)
 		}
-		for i := 1; i < len(infos); i++ {
-			aRank, bRank := orderRank[infos[i-1].Name], orderRank[infos[i].Name]
-			switch {
-			case aRank == 0 && bRank == 0:
-				if infos[i-1].Name >= infos[i].Name {
-					t.Errorf("non-ordered items not sorted: %q >= %q", infos[i-1].Name, infos[i].Name)
-				}
-			case aRank > 0 && bRank == 0:
-				t.Errorf("ordered item %q should come after non-ordered %q", infos[i-1].Name, infos[i].Name)
-			case aRank > 0 && bRank > 0:
-				if aRank >= bRank {
-					t.Errorf("ordered items wrong: %q (rank %d) before %q (rank %d)", infos[i-1].Name, aRank, infos[i].Name, bRank)
-				}
-			}
+		if diff := compareStrings(got, integrationOrder); diff != "" {
+			t.Fatalf("launcher integration order mismatch: %s", diff)
 		}
 	})
 

@@ -60,29 +60,18 @@ func withHermesLookPath(t *testing.T, fn func(string) (string, error)) {
 
 func clearHermesMessagingEnvVars(t *testing.T) {
 	t.Helper()
-	restores := make([]func(), 0)
 	for _, group := range hermesMessagingEnvGroups {
 		for _, key := range group {
-			key := key
-			value, ok := os.LookupEnv(key)
-			if ok {
-				value := value
-				restores = append(restores, func() {
-					_ = os.Setenv(key, value)
-				})
+			if value, ok := os.LookupEnv(key); ok {
+				t.Setenv(key, value)
 			} else {
-				restores = append(restores, func() {
-					_ = os.Unsetenv(key)
-				})
+				t.Setenv(key, "")
 			}
-			_ = os.Unsetenv(key)
+			if err := os.Unsetenv(key); err != nil {
+				t.Fatalf("unset %s: %v", key, err)
+			}
 		}
 	}
-	t.Cleanup(func() {
-		for i := len(restores) - 1; i >= 0; i-- {
-			restores[i]()
-		}
-	})
 }
 
 func TestHermesIntegration(t *testing.T) {
