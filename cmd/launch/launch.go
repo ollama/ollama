@@ -401,8 +401,8 @@ func (c *launcherClient) buildLauncherIntegrationState(ctx context.Context, info
 	if err != nil {
 		return LauncherIntegrationState{}, err
 	}
-	currentModel := ""
-	usable := false
+	var currentModel string
+	var usable bool
 	if managed, ok := integration.spec.Runner.(ManagedSingleModel); ok {
 		currentModel, usable, err = c.launcherManagedModelState(ctx, info.Name, managed)
 		if err != nil {
