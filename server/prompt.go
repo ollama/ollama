@@ -55,7 +55,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 			if m.ProjectorPaths != nil {
 				for _, msg := range msgs[i:] {
 					ctxLen += imageNumTokens * len(msg.Images)
-          ctxLen += imageNumTokens * len(m.Videos)
+					ctxLen += imageNumTokens * len(msg.Videos)
 				}
 			}
 

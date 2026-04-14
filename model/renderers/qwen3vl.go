@@ -19,7 +19,7 @@ func getVideos(msg api.Message) []api.ImageData {
 	return msg.Videos
 }
 
-func (r *Qwen3VLRenderer) renderContent(content api.Message) imageOffset int) (string, int) {
+func (r *Qwen3VLRenderer) renderContent(content api.Message, imageOffset int) (string, int) {
 	// This assumes all images are at the front of the message - same assumption as ollama/ollama/runner.go
 	var subSb strings.Builder
 	for range content.Images {
