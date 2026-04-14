@@ -1304,6 +1304,46 @@ func TestOpenclawChannelSetupPreflight(t *testing.T) {
 		}
 	})
 
+	t.Run("--yes skips preflight without channels configured", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+		t.Setenv("PATH", tmpDir)
+		configDir := filepath.Join(tmpDir, ".openclaw")
+		if err := os.MkdirAll(configDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// Empty config = no channels configured. Without the --yes skip, the
+		// preflight would prompt and (on confirm) spawn `openclaw channels add`.
+		if err := os.WriteFile(filepath.Join(configDir, "openclaw.json"), []byte(`{}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		bin := filepath.Join(tmpDir, "openclaw")
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/invocations.log\"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		oldInteractive := isInteractiveSession
+		isInteractiveSession = func() bool { return true }
+		defer func() { isInteractiveSession = oldInteractive }()
+
+		restore := withLaunchConfirmPolicy(launchConfirmPolicy{yes: true})
+		defer restore()
+
+		oldConfirmPrompt := DefaultConfirmPrompt
+		DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+			t.Fatalf("did not expect prompt in --yes mode: %s", prompt)
+			return false, nil
+		}
+		defer func() { DefaultConfirmPrompt = oldConfirmPrompt }()
+
+		if err := c.runChannelSetupPreflight("openclaw"); err != nil {
+			t.Fatalf("runChannelSetupPreflight() error = %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(tmpDir, "invocations.log")); !os.IsNotExist(err) {
+			t.Fatalf("expected no channels add invocation in --yes mode, got err=%v", err)
+		}
+	})
+
 	t.Run("set up later prompts once and exits", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		setTestHome(t, tmpDir)

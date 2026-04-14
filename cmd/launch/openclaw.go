@@ -186,6 +186,11 @@ func (c *Openclaw) runChannelSetupPreflight(bin string) error {
 	if !isInteractiveSession() {
 		return nil
 	}
+	// --yes is headless; channel setup spawns an interactive picker we can't
+	// auto-answer, so skip it. Users can run `openclaw channels add` later.
+	if currentLaunchConfirmPolicy.yes {
+		return nil
+	}
 
 	for {
 		if c.channelsConfigured() {
