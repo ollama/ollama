@@ -254,8 +254,23 @@ func (c *RotatingKVCache) concat(keys, values *mlx.Array) (newK *mlx.Array, newV
 		mlx.Pin(c.keys, c.values)
 	} else {
 		if c.idx < c.keys.Dim(2) {
-			c.keys.Set(c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.idx), mlx.Slice()))
-			c.values.Set(c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.idx), mlx.Slice()))
+			if c.offset <= c.maxSize {
+				// Not yet wrapped: slots [c.idx, Dim) are grow padding
+				// or stale post-rewind data, not live window content.
+				c.keys.Set(c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.idx), mlx.Slice()))
+				c.values.Set(c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.idx), mlx.Slice()))
+			} else {
+				// Wrapped: logical order is slots[idx..Dim) then slots[0..idx).
+				// Linearize so the trim + concat below operate on contiguous
+				// positions and preserve the last (maxSize - 1) old tokens.
+				tailK := c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(c.idx, c.keys.Dim(2)), mlx.Slice())
+				tailV := c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(c.idx, c.values.Dim(2)), mlx.Slice())
+				headK := c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.idx), mlx.Slice())
+				headV := c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.idx), mlx.Slice())
+				c.keys.Set(tailK.Concatenate(2, headK))
+				c.values.Set(tailV.Concatenate(2, headV))
+				c.idx = c.keys.Dim(2)
+			}
 		}
 
 		// Trim to max_size to maintain sliding window
