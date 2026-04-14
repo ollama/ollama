@@ -580,6 +580,8 @@ func TestResolveRunModel_UsesSignInHookForCloudModel(t *testing.T) {
 		case "/api/me":
 			w.WriteHeader(http.StatusUnauthorized)
 			fmt.Fprint(w, `{"error":"unauthorized","signin_url":"https://example.com/signin"}`)
+		case "/api/x/launch-models":
+			fmt.Fprint(w, testLaunchModelsJSON)
 		default:
 			http.NotFound(w, r)
 		}
@@ -708,6 +710,8 @@ func TestLaunchIntegration_EditorForceConfigure_FloatsCheckedModelsInPicker(t *t
 			fmt.Fprintf(w, `{"model":%q}`, req.Model)
 		case "/api/me":
 			fmt.Fprint(w, `{"name":"test-user"}`)
+		case "/api/x/launch-models":
+			fmt.Fprint(w, testLaunchModelsJSON)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1126,6 +1130,8 @@ func TestLaunchIntegration_EditorConfigureMultiAllFailuresKeepsExistingAndSkipsL
 			default:
 				http.NotFound(w, r)
 			}
+		case "/api/x/launch-models":
+			fmt.Fprint(w, testLaunchModelsJSON)
 		default:
 			http.NotFound(w, r)
 		}

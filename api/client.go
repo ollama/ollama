@@ -469,6 +469,15 @@ func (c *Client) Disconnect(ctx context.Context, encodedKey string) error {
 	return c.do(ctx, http.MethodDelete, fmt.Sprintf("/api/user/keys/%s", encodedKey), nil, nil)
 }
 
+// LaunchModels returns the recommended models for ollama launch.
+func (c *Client) LaunchModels(ctx context.Context) (*LaunchModelsResponse, error) {
+	var resp LaunchModelsResponse
+	if err := c.do(ctx, http.MethodGet, "/api/x/launch-models", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *Client) Whoami(ctx context.Context) (*UserResponse, error) {
 	var resp UserResponse
 	if err := c.do(ctx, http.MethodPost, "/api/me", nil, &resp); err != nil {
