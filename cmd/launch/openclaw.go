@@ -186,10 +186,8 @@ func (c *Openclaw) runChannelSetupPreflight(bin string) error {
 	if !isInteractiveSession() {
 		return nil
 	}
-	// --yes is meant for headless/quick setup; channel config spawns an
-	// interactive subprocess (`openclaw channels add`), so auto-approving the
-	// prompt would block the user on a picker they cannot skip. Skip the whole
-	// preflight in --yes mode; users can run `openclaw channels add` later.
+	// --yes is headless; channel setup spawns an interactive picker we can't
+	// auto-answer, so skip it. Users can run `openclaw channels add` later.
 	if currentLaunchConfirmPolicy.yes {
 		return nil
 	}
