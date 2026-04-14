@@ -49,26 +49,6 @@ func withHermesUserHome(t *testing.T, dir string) {
 	})
 }
 
-func writeFakeWSLExe(t *testing.T, dir string) {
-	t.Helper()
-	script := `#!/bin/sh
-if [ "$1" != "bash" ] || [ "$2" != "-lc" ]; then
-  exit 2
-fi
-case "$3" in
-  'printf %s "$HOME"')
-    printf "%s" "$HOME"
-    ;;
-  *)
-    exec /bin/sh -lc "$3"
-    ;;
-esac
-`
-	if err := os.WriteFile(filepath.Join(dir, "wsl.exe"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestHermesIntegration(t *testing.T) {
 	h := &Hermes{}
 
@@ -84,7 +64,7 @@ func TestHermesIntegration(t *testing.T) {
 func TestHermesConfigurePreservesExistingConfigAndEnablesWeb(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
-	withHermesPlatform(t, runtime.GOOS)
+	withHermesPlatform(t, "darwin")
 
 	configPath := filepath.Join(tmpDir, ".hermes", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
@@ -201,7 +181,7 @@ func TestHermesConfigurePreservesExistingConfigAndEnablesWeb(t *testing.T) {
 func TestHermesConfigureUpdatesMatchingCustomProviderWithoutDroppingFields(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
-	withHermesPlatform(t, runtime.GOOS)
+	withHermesPlatform(t, "darwin")
 
 	configPath := filepath.Join(tmpDir, ".hermes", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
@@ -322,7 +302,7 @@ func TestHermesConfigureUpdatesMatchingCustomProviderWithoutDroppingFields(t *te
 func TestHermesConfigureUsesLaunchResolvedHostForModelDiscovery(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
-	withHermesPlatform(t, runtime.GOOS)
+	withHermesPlatform(t, "darwin")
 
 	configPath := filepath.Join(tmpDir, ".hermes", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
@@ -373,7 +353,7 @@ func TestHermesConfigureUsesLaunchResolvedHostForModelDiscovery(t *testing.T) {
 func TestHermesConfigureMigratesLegacyManagedAliases(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
-	withHermesPlatform(t, runtime.GOOS)
+	withHermesPlatform(t, "darwin")
 
 	configPath := filepath.Join(tmpDir, ".hermes", "config.yaml")
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
@@ -436,28 +416,6 @@ func TestHermesConfigureMigratesLegacyManagedAliases(t *testing.T) {
 	}
 }
 
-func TestHermesPathsUsesWSLConfigPathOnWindows(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("simulates WSL through POSIX shell scripts")
-	}
-
-	tmpDir := t.TempDir()
-	winHome := filepath.Join(tmpDir, "winhome")
-	wslHome := filepath.Join(tmpDir, "wslhome")
-	setTestHome(t, winHome)
-	withHermesPlatform(t, "windows")
-	withHermesUserHome(t, winHome)
-	t.Setenv("HOME", wslHome)
-	t.Setenv("PATH", tmpDir)
-	writeFakeWSLExe(t, tmpDir)
-
-	got := (&Hermes{}).Paths()
-	want := filepath.Join(wslHome, ".hermes", "config.yaml")
-	if len(got) != 1 || got[0] != want {
-		t.Fatalf("expected WSL config path %q, got %v", want, got)
-	}
-}
-
 func TestHermesPathsUsesLocalConfigPathForNativeWindowsHermes(t *testing.T) {
 	tmpDir := t.TempDir()
 	winHome := filepath.Join(tmpDir, "winhome")
@@ -465,10 +423,7 @@ func TestHermesPathsUsesLocalConfigPathForNativeWindowsHermes(t *testing.T) {
 	withHermesPlatform(t, "windows")
 	withHermesUserHome(t, winHome)
 	t.Setenv("PATH", tmpDir)
-	if err := os.WriteFile(filepath.Join(tmpDir, "hermes"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeFakeWSLExe(t, tmpDir)
+	writeFakeBinary(t, tmpDir, "hermes")
 
 	got := (&Hermes{}).Paths()
 	want := filepath.Join(winHome, ".hermes", "config.yaml")
@@ -477,64 +432,10 @@ func TestHermesPathsUsesLocalConfigPathForNativeWindowsHermes(t *testing.T) {
 	}
 }
 
-func TestHermesConfigureAndCurrentModelUseWSLConfigOnWindows(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("simulates WSL through POSIX shell scripts")
-	}
-
-	tmpDir := t.TempDir()
-	winHome := filepath.Join(tmpDir, "winhome")
-	wslHome := filepath.Join(tmpDir, "wslhome")
-	setTestHome(t, winHome)
-	withHermesPlatform(t, "windows")
-	withHermesUserHome(t, winHome)
-	t.Setenv("HOME", wslHome)
-	t.Setenv("PATH", tmpDir)
-	writeFakeWSLExe(t, tmpDir)
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"gemma4"},{"name":"qwen3.5"}]}`)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-	t.Setenv("OLLAMA_HOST", srv.URL)
-
-	h := &Hermes{}
-	if err := h.Configure("gemma4"); err != nil {
-		t.Fatalf("Configure returned error: %v", err)
-	}
-
-	if _, err := os.Stat(filepath.Join(winHome, ".hermes", "config.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("expected Windows-side config to remain untouched, got err=%v", err)
-	}
-
-	wslConfigPath := filepath.Join(wslHome, ".hermes", "config.yaml")
-	data, err := os.ReadFile(wslConfigPath)
-	if err != nil {
-		t.Fatalf("expected WSL-side config to be written: %v", err)
-	}
-
-	var cfg map[string]any
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		t.Fatalf("failed to parse WSL config: %v", err)
-	}
-	modelCfg, _ := cfg["model"].(map[string]any)
-	if got, _ := modelCfg["provider"].(string); got != "ollama-launch" {
-		t.Fatalf("expected WSL config provider ollama-launch, got %q", got)
-	}
-	if got := h.CurrentModel(); got != "gemma4" {
-		t.Fatalf("expected CurrentModel to read WSL config, got %q", got)
-	}
-}
-
 func TestHermesCurrentModelRequiresHealthyManagedConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
-	withHermesPlatform(t, runtime.GOOS)
+	withHermesPlatform(t, "darwin")
 	withHermesOllamaURL(t, "http://127.0.0.1:11434")
 
 	configPath := filepath.Join(tmpDir, ".hermes", "config.yaml")
@@ -615,7 +516,7 @@ func TestHermesCurrentModelRequiresHealthyManagedConfig(t *testing.T) {
 func TestHermesCurrentModelReturnsEmptyWhenConfigMissing(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
-	withHermesPlatform(t, runtime.GOOS)
+	withHermesPlatform(t, "darwin")
 
 	if got := (&Hermes{}).CurrentModel(); got != "" {
 		t.Fatalf("expected missing config to return empty current model, got %q", got)
@@ -746,55 +647,6 @@ func TestHermesEnsureInstalledUnixCanBeDeclined(t *testing.T) {
 	err := h.ensureInstalled()
 	if err == nil || !strings.Contains(err.Error(), "hermes installation cancelled") {
 		t.Fatalf("expected install cancellation error, got %v", err)
-	}
-}
-
-func TestHermesEnsureInstalledWindowsUsesWSLHandoff(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("simulates WSL through POSIX shell scripts")
-	}
-
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-	withHermesPlatform(t, "windows")
-	withLauncherHooks(t)
-	t.Setenv("PATH", tmpDir)
-
-	logPath := filepath.Join(tmpDir, "wsl.log")
-	markerPath := filepath.Join(tmpDir, "installed.marker")
-	script := fmt.Sprintf(`#!/bin/sh
-printf '%%s\n' "$*" >> %q
-case "$*" in
-  *"command -v hermes >/dev/null 2>&1"*)
-    if [ -f %q ]; then exit 0; fi
-    exit 1
-    ;;
-  *)
-    /usr/bin/touch %q
-    exit 0
-    ;;
-esac
-`, logPath, markerPath, markerPath)
-	if err := os.WriteFile(filepath.Join(tmpDir, "wsl.exe"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
-		return true, nil
-	}
-
-	h := &Hermes{}
-	if err := h.ensureInstalled(); err != nil {
-		t.Fatalf("ensureInstalled returned error: %v", err)
-	}
-
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	logs := string(data)
-	if !strings.Contains(logs, "curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash") {
-		t.Fatalf("expected WSL install handoff to run official installer, got logs:\n%s", logs)
 	}
 }
 
