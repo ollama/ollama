@@ -1,6 +1,7 @@
 package transfer
 
 import (
+	"bufio"
 	"bytes"
 	"cmp"
 	"context"
@@ -13,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/ollama/ollama/logutil"
 
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
@@ -76,15 +79,23 @@ func upload(ctx context.Context, opts UploadOptions) error {
 			}
 		}
 
-		// Filter to only blobs that need uploading
+		// Filter to only blobs that need uploading, but track total across all blobs
 		var toUpload []Blob
-		var total int64
+		var totalSize, alreadyExists int64
 		for i, blob := range opts.Blobs {
+			totalSize += blob.Size
 			if needsUpload[i] {
 				toUpload = append(toUpload, blob)
-				total += blob.Size
+			} else {
+				alreadyExists += blob.Size
 			}
 		}
+
+		// Progress includes all blobs — already-existing ones start as completed
+		u.progress = newProgressTracker(totalSize, opts.Progress)
+		u.progress.add(alreadyExists)
+
+		logutil.Trace("upload plan", "total_blobs", len(opts.Blobs), "need_upload", len(toUpload), "already_exist", len(opts.Blobs)-len(toUpload), "total_bytes", totalSize, "existing_bytes", alreadyExists)
 
 		if len(toUpload) == 0 {
 			if u.logger != nil {
@@ -92,7 +103,6 @@ func upload(ctx context.Context, opts UploadOptions) error {
 			}
 		} else {
 			// Phase 2: Upload blobs that don't exist
-			u.progress = newProgressTracker(total, opts.Progress)
 			concurrency := cmp.Or(opts.Concurrency, DefaultUploadConcurrency)
 			sem := semaphore.NewWeighted(int64(concurrency))
 
@@ -113,7 +123,12 @@ func upload(ctx context.Context, opts UploadOptions) error {
 	}
 
 	if len(opts.Manifest) > 0 && opts.ManifestRef != "" && opts.Repository != "" {
-		return u.pushManifest(ctx, opts.Repository, opts.ManifestRef, opts.Manifest)
+		logutil.Trace("pushing manifest", "repo", opts.Repository, "ref", opts.ManifestRef, "size", len(opts.Manifest))
+		if err := u.pushManifest(ctx, opts.Repository, opts.ManifestRef, opts.Manifest); err != nil {
+			logutil.Trace("manifest push failed", "error", err)
+			return err
+		}
+		logutil.Trace("manifest push succeeded", "repo", opts.Repository, "ref", opts.ManifestRef)
 	}
 	return nil
 }
@@ -124,7 +139,10 @@ func (u *uploader) upload(ctx context.Context, blob Blob) error {
 
 	for attempt := range maxRetries {
 		if attempt > 0 {
-			if err := backoff(ctx, attempt, time.Second<<uint(attempt-1)); err != nil {
+			// Use longer backoff for uploads — server-side rate limiting
+			// and S3 upload session creation need real breathing room.
+			// attempt 1: up to 2s, attempt 2: up to 4s, attempt 3: up to 8s, etc.
+			if err := backoff(ctx, attempt, 2*time.Second<<uint(attempt-1)); err != nil {
 				return err
 			}
 		}
@@ -132,13 +150,16 @@ func (u *uploader) upload(ctx context.Context, blob Blob) error {
 		var err error
 		n, err = u.uploadOnce(ctx, blob)
 		if err == nil {
+			logutil.Trace("blob upload complete", "digest", blob.Digest, "bytes", n, "attempt", attempt+1)
 			return nil
 		}
 
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			logutil.Trace("blob upload cancelled", "digest", blob.Digest, "error", err)
 			return err
 		}
 
+		logutil.Trace("blob upload failed, retrying", "digest", blob.Digest, "attempt", attempt+1, "bytes", n, "error", err)
 		u.progress.add(-n)
 		lastErr = err
 	}
@@ -178,6 +199,7 @@ func (u *uploader) exists(ctx context.Context, blob Blob) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized && u.getToken != nil {
@@ -191,58 +213,91 @@ func (u *uploader) exists(ctx context.Context, blob Blob) (bool, error) {
 	return resp.StatusCode == http.StatusOK, nil
 }
 
+const maxInitRetries = 12
+
 func (u *uploader) initUpload(ctx context.Context, blob Blob) (string, error) {
 	endpoint, _ := url.Parse(fmt.Sprintf("%s/v2/%s/blobs/uploads/", u.baseURL, u.repository))
 	q := endpoint.Query()
 	q.Set("digest", blob.Digest)
 	endpoint.RawQuery = q.Encode()
 
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), nil)
-	req.Header.Set("User-Agent", u.userAgent)
-	if *u.token != "" {
-		req.Header.Set("Authorization", "Bearer "+*u.token)
-	}
-
-	resp, err := u.client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	resp.Body.Close()
-
-	if resp.StatusCode == http.StatusUnauthorized && u.getToken != nil {
-		ch := parseAuthChallenge(resp.Header.Get("WWW-Authenticate"))
-		if *u.token, err = u.getToken(ctx, ch); err != nil {
-			return "", err
+	var lastErr error
+	for attempt := range maxInitRetries {
+		if attempt > 0 {
+			// Start at 5s and cap at 30s — the server needs real breathing
+			// room when it's dropping Location headers under load.
+			if err := backoff(ctx, attempt, min(5*time.Second<<uint(attempt-1), 30*time.Second)); err != nil {
+				return "", err
+			}
+			logutil.Trace("retrying init upload", "digest", blob.Digest, "attempt", attempt+1, "error", lastErr)
 		}
-		return u.initUpload(ctx, blob)
-	}
 
-	if resp.StatusCode != http.StatusAccepted {
-		return "", fmt.Errorf("init: status %d", resp.StatusCode)
-	}
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), nil)
+		req.Header.Set("User-Agent", u.userAgent)
+		if *u.token != "" {
+			req.Header.Set("Authorization", "Bearer "+*u.token)
+		}
 
-	loc := resp.Header.Get("Docker-Upload-Location")
-	if loc == "" {
-		loc = resp.Header.Get("Location")
-	}
-	if loc == "" {
-		return "", fmt.Errorf("no upload location")
-	}
+		resp, err := u.client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
 
-	locURL, _ := url.Parse(loc)
-	if !locURL.IsAbs() {
-		base, _ := url.Parse(u.baseURL)
-		locURL = base.ResolveReference(locURL)
-	}
-	q = locURL.Query()
-	q.Set("digest", blob.Digest)
-	locURL.RawQuery = q.Encode()
+		if resp.StatusCode == http.StatusUnauthorized && u.getToken != nil {
+			ch := parseAuthChallenge(resp.Header.Get("WWW-Authenticate"))
+			if *u.token, err = u.getToken(ctx, ch); err != nil {
+				return "", err
+			}
+			continue
+		}
 
-	return locURL.String(), nil
+		if resp.StatusCode == http.StatusCreated {
+			// Blob was mounted or already exists — no upload needed
+			return "", nil
+		}
+
+		if resp.StatusCode != http.StatusAccepted {
+			lastErr = fmt.Errorf("init upload: status %d", resp.StatusCode)
+			continue
+		}
+
+		loc := resp.Header.Get("Docker-Upload-Location")
+		if loc == "" {
+			loc = resp.Header.Get("Location")
+		}
+		if loc == "" {
+			// Server returned 202 but no Location — retry, the server may
+			// be under load and dropping headers.
+			lastErr = fmt.Errorf("no upload location (server returned 202 without Location header)")
+			continue
+		}
+
+		locURL, _ := url.Parse(loc)
+		if !locURL.IsAbs() {
+			base, _ := url.Parse(u.baseURL)
+			locURL = base.ResolveReference(locURL)
+		}
+		q = locURL.Query()
+		q.Set("digest", blob.Digest)
+		locURL.RawQuery = q.Encode()
+
+		return locURL.String(), nil
+	}
+	return "", lastErr
 }
 
 func (u *uploader) put(ctx context.Context, uploadURL string, f *os.File, size int64) (int64, error) {
-	pr := &progressReader{reader: f, tracker: u.progress}
+	// uploadURL is empty when initUpload determined the blob already exists (201 Created)
+	if uploadURL == "" {
+		return 0, nil
+	}
+
+	// Buffer reads for better throughput — 256KB reads instead of default 4KB
+	br := bufio.NewReaderSize(f, 256*1024)
+	pr := &progressReader{reader: br, tracker: u.progress}
 
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, pr)
 	req.ContentLength = size
@@ -254,9 +309,9 @@ func (u *uploader) put(ctx context.Context, uploadURL string, f *os.File, size i
 
 	resp, err := u.client.Do(req)
 	if err != nil {
-		return pr.n, err
+		return pr.n, fmt.Errorf("put request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { io.Copy(io.Discard, resp.Body); resp.Body.Close() }()
 
 	// Handle auth retry
 	if resp.StatusCode == http.StatusUnauthorized && u.getToken != nil {
@@ -274,7 +329,9 @@ func (u *uploader) put(ctx context.Context, uploadURL string, f *os.File, size i
 		loc, _ := resp.Location()
 		f.Seek(0, 0)
 		u.progress.add(-pr.n)
-		pr2 := &progressReader{reader: f, tracker: u.progress}
+
+		br2 := bufio.NewReaderSize(f, 256*1024)
+		pr2 := &progressReader{reader: br2, tracker: u.progress}
 
 		req2, _ := http.NewRequestWithContext(ctx, http.MethodPut, loc.String(), pr2)
 		req2.ContentLength = size
@@ -283,9 +340,9 @@ func (u *uploader) put(ctx context.Context, uploadURL string, f *os.File, size i
 
 		resp2, err := u.client.Do(req2)
 		if err != nil {
-			return pr2.n, err
+			return pr2.n, fmt.Errorf("cdn put request: %w", err)
 		}
-		defer resp2.Body.Close()
+		defer func() { io.Copy(io.Discard, resp2.Body); resp2.Body.Close() }()
 
 		if resp2.StatusCode != http.StatusCreated && resp2.StatusCode != http.StatusAccepted {
 			body, _ := io.ReadAll(resp2.Body)
@@ -313,7 +370,7 @@ func (u *uploader) pushManifest(ctx context.Context, repo, ref string, manifest 
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { io.Copy(io.Discard, resp.Body); resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusUnauthorized && u.getToken != nil {
 		ch := parseAuthChallenge(resp.Header.Get("WWW-Authenticate"))

@@ -110,7 +110,8 @@
                 "group": "Assistants",
                 "expanded": true,
                 "pages": [
-                  "/integrations/openclaw"
+                  "/integrations/openclaw",
+                  "/integrations/hermes"
                 ]
               },
               {
@@ -127,6 +128,7 @@
               },
               {
                 "group": "IDEs & Editors",
+                "expanded": true,
                 "pages": [
                   "/integrations/cline",
                   "/integrations/jetbrains",
@@ -160,6 +162,12 @@
             "group": "More information",
             "pages": [
               "/cli",
+              {
+                "group": "Assistant Sandboxing",
+                "pages": [
+                  "/integrations/nemoclaw"
+                ]
+              },
               "/modelfile",
               "/context-length",
               "/linux",

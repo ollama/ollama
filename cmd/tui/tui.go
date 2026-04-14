@@ -47,18 +47,18 @@ type menuItem struct {
 
 var mainMenuItems = []menuItem{
 	{
-		title:       "Run a model",
+		title:       "Chat with a model",
 		description: "Start an interactive chat with a model",
 		isRunModel:  true,
+	},
+	{
+		integration: "openclaw",
 	},
 	{
 		integration: "claude",
 	},
 	{
-		integration: "codex",
-	},
-	{
-		integration: "openclaw",
+		integration: "opencode",
 	},
 }
 
@@ -136,9 +136,9 @@ func integrationMenuItem(state launch.LauncherIntegrationState) menuItem {
 
 func otherIntegrationItems(state *launch.LauncherState) []menuItem {
 	pinned := map[string]bool{
-		"claude":   true,
-		"codex":    true,
 		"openclaw": true,
+		"claude":   true,
+		"opencode": true,
 	}
 
 	var items []menuItem

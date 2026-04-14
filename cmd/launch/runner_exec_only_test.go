@@ -54,6 +54,9 @@ func TestEditorRunsDoNotRewriteConfig(t *testing.T) {
 
 			binDir := t.TempDir()
 			writeFakeBinary(t, binDir, tt.binary)
+			if tt.name == "pi" {
+				writeFakeBinary(t, binDir, "npm")
+			}
 			t.Setenv("PATH", binDir)
 
 			configPath := tt.checkPath(home)

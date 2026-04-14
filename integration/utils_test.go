@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -26,11 +27,17 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/types/model"
 )
 
 var (
 	smol   = "llama3.2:1b"
 	stream = false
+
+	// testModel is set via OLLAMA_TEST_MODEL env var. When set, all tests
+	// that loop over model lists will test only this model, and smol is
+	// also overridden to use it.
+	testModel string
 )
 
 var (
@@ -38,6 +45,7 @@ var (
 
 	// Note: add newer models at the top of the list to test them first
 	ollamaEngineChatModels = []string{
+		"gemma4",
 		"lfm2.5-thinking",
 		"ministral-3",
 		"qwen3-coder:30b",
@@ -130,6 +138,7 @@ var (
 		"gemma2",
 		"gemma3",
 		"gemma3n",
+		"gemma4",
 		"glm4",
 		"goliath",
 		"gpt-oss:20b",
@@ -265,6 +274,7 @@ var (
 		"snowflake-arctic-embed2",
 	}
 	libraryToolsModels = []string{
+		"gemma4",
 		"lfm2.5-thinking",
 		"qwen3-vl",
 		"gpt-oss:20b",
@@ -288,23 +298,60 @@ var (
 
 	rainbowPrompt    = "how do rainbows form? Be brief but factual in your reply"
 	rainbowFollowups = []string{
-		"Explain the physics involved in them.  Be breif in your reply",
-		"Explain the chemistry involved in them.  Be breif in your reply",
+		"Explain the physics involved in them.  Be brief in your reply",
+		"Explain the chemistry involved in them.  Be brief in your reply",
 		"What are common myths related to them? Be brief in your reply",
-		"Can they form if there is no rain?  Be breif in your reply",
-		"Can they form if there are no clouds?  Be breif in your reply",
+		"Can they form if there is no rain?  Be brief in your reply",
+		"Can they form if there are no clouds?  Be brief in your reply",
 		"Do they happen on other planets? Be brief in your reply",
 	}
-	rainbowExpected = []string{"water", "droplet", "mist", "glow", "refract", "reflect", "scatter", "particles", "wave", "color", "spectrum", "raindrop", "atmosphere", "frequency", "shower", "sky", "shimmer", "light", "storm", "sunny", "sunburst", "phenomenon", "mars", "venus", "jupiter"}
+	rainbowExpected = []string{"water", "droplet", "mist", "glow", "refract", "reflect", "scatter", "particles", "wave", "color", "spectrum", "raindrop", "atmosphere", "frequency", "shower", "sky", "shimmer", "light", "storm", "sunny", "sunburst", "phenomenon", "mars", "venus", "jupiter", "rain", "sun", "rainbow", "optical", "gold", "cloud", "planet", "prism", "fog", "ice"}
 )
 
 func init() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	slog.SetDefault(logger)
-	custom := os.Getenv("OLLAMA_TEST_DEFAULT_MODEL")
-	if custom != "" {
-		slog.Info("setting default test model to " + custom)
-		smol = custom
+
+	testModel = os.Getenv("OLLAMA_TEST_MODEL")
+	if testModel != "" {
+		slog.Info("test model override", "model", testModel)
+		smol = testModel
+	}
+}
+
+// testModels returns the override model as a single-element slice when
+// OLLAMA_TEST_MODEL is set, otherwise returns the provided default list.
+func testModels(defaults []string) []string {
+	if testModel != "" {
+		return []string{testModel}
+	}
+	return defaults
+}
+
+// requireCapability skips the test if the model does not advertise the
+// given capability. It queries the server via Show and caches nothing —
+// call it once per subtest. For local-only models where Show may not
+// return capabilities (e.g. models created via ollama create), this is
+// a best-effort check.
+func requireCapability(ctx context.Context, t *testing.T, client *api.Client, modelName string, cap model.Capability) {
+	t.Helper()
+	resp, err := client.Show(ctx, &api.ShowRequest{Name: modelName})
+	if err != nil {
+		t.Fatalf("failed to show model %s: %v", modelName, err)
+	}
+	if len(resp.Capabilities) > 0 && !slices.Contains(resp.Capabilities, cap) {
+		t.Skipf("model %s does not have capability %q (has %v)", modelName, cap, resp.Capabilities)
+	}
+}
+
+// pullOrSkip pulls a model if it isn't already present locally. If the
+// pull fails (e.g. model not in registry), the test is skipped instead
+// of failed. PullIfMissing already checks Show first, so local-only
+// models that exist will return immediately without hitting the registry.
+func pullOrSkip(ctx context.Context, t *testing.T, client *api.Client, modelName string) {
+	t.Helper()
+	if err := PullIfMissing(ctx, client, modelName); err != nil {
+		t.Skipf("model %s not available: %v", modelName, err)
 	}
 }
 
@@ -540,9 +587,7 @@ func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, strin
 func ChatTestHelper(ctx context.Context, t *testing.T, req api.ChatRequest, anyResp []string) {
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()
-	if err := PullIfMissing(ctx, client, req.Model); err != nil {
-		t.Fatal(err)
-	}
+	pullOrSkip(ctx, t, client, req.Model)
 	DoChat(ctx, t, client, req, anyResp, 30*time.Second, 10*time.Second)
 }
 

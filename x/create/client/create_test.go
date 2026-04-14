@@ -3,11 +3,15 @@ package client
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/x/create"
 )
 
 func TestModelfileConfig(t *testing.T) {
@@ -120,8 +124,8 @@ func TestMinOllamaVersion(t *testing.T) {
 	if MinOllamaVersion == "" {
 		t.Error("MinOllamaVersion should not be empty")
 	}
-	if MinOllamaVersion != "0.14.0" {
-		t.Errorf("MinOllamaVersion = %q, want %q", MinOllamaVersion, "0.14.0")
+	if MinOllamaVersion != "0.19.0" {
+		t.Errorf("MinOllamaVersion = %q, want %q", MinOllamaVersion, "0.19.0")
 	}
 }
 
@@ -289,6 +293,140 @@ func TestCreateOptions_Defaults(t *testing.T) {
 	}
 }
 
+func TestInferSafetensorsCapabilities(t *testing.T) {
+	tests := []struct {
+		name       string
+		configJSON string
+		want       []string
+	}{
+		{
+			name: "qwen3.5 text model",
+			configJSON: `{
+				"architectures": ["Qwen3_5ForCausalLM"],
+				"model_type": "qwen3"
+			}`,
+			want: []string{"completion", "thinking"},
+		},
+		{
+			name: "qwen3.5 multimodal model",
+			configJSON: `{
+				"architectures": ["Qwen3_5ForConditionalGeneration"],
+				"model_type": "qwen3",
+				"vision_config": {"hidden_size": 1024}
+			}`,
+			want: []string{"completion", "vision", "thinking"},
+		},
+		{
+			name: "model with audio config",
+			configJSON: `{
+				"architectures": ["Gemma4ForConditionalGeneration"],
+				"model_type": "gemma4",
+				"vision_config": {"hidden_size": 1024},
+				"audio_config": {"num_mel_bins": 128}
+			}`,
+			want: []string{"completion", "vision", "audio"},
+		},
+		{
+			name: "model with audio but no vision",
+			configJSON: `{
+				"architectures": ["SomeAudioModel"],
+				"model_type": "other",
+				"audio_config": {"num_mel_bins": 128}
+			}`,
+			want: []string{"completion", "audio"},
+		},
+		{
+			name: "non-qwen conditional generation model",
+			configJSON: `{
+				"architectures": ["SomeOtherForConditionalGeneration"],
+				"model_type": "other"
+			}`,
+			want: []string{"completion"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			if got := inferSafetensorsCapabilities(dir); !slices.Equal(got, tt.want) {
+				t.Fatalf("inferSafetensorsCapabilities() = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParsePerExpertInputs(t *testing.T) {
+	makeInput := func(name, quantize string) create.PackedTensorInput {
+		return create.PackedTensorInput{Name: name, Quantize: quantize}
+	}
+
+	t.Run("uniform quant across projections", func(t *testing.T) {
+		inputs := []create.PackedTensorInput{
+			makeInput("layer.moe.experts.0.gate_proj.weight", "int4"),
+			makeInput("layer.moe.experts.1.gate_proj.weight", "int4"),
+			makeInput("layer.moe.experts.0.down_proj.weight", "int4"),
+			makeInput("layer.moe.experts.1.down_proj.weight", "int4"),
+		}
+		groups, projQ := parsePerExpertInputs("layer.moe.experts", inputs)
+		if groups == nil {
+			t.Fatal("expected non-nil groups")
+		}
+		if len(groups) != 2 {
+			t.Fatalf("expected 2 projection groups, got %d", len(groups))
+		}
+		if projQ["gate_proj.weight"] != "int4" {
+			t.Errorf("gate_proj quant = %q, want int4", projQ["gate_proj.weight"])
+		}
+		if projQ["down_proj.weight"] != "int4" {
+			t.Errorf("down_proj quant = %q, want int4", projQ["down_proj.weight"])
+		}
+	})
+
+	t.Run("mixed quant across projections", func(t *testing.T) {
+		inputs := []create.PackedTensorInput{
+			makeInput("layer.moe.experts.0.gate_proj.weight", "int4"),
+			makeInput("layer.moe.experts.1.gate_proj.weight", "int4"),
+			makeInput("layer.moe.experts.0.down_proj.weight", "int8"),
+			makeInput("layer.moe.experts.1.down_proj.weight", "int8"),
+		}
+		groups, projQ := parsePerExpertInputs("layer.moe.experts", inputs)
+		if groups == nil {
+			t.Fatal("expected non-nil groups for mixed cross-projection quant")
+		}
+		if projQ["gate_proj.weight"] != "int4" {
+			t.Errorf("gate_proj quant = %q, want int4", projQ["gate_proj.weight"])
+		}
+		if projQ["down_proj.weight"] != "int8" {
+			t.Errorf("down_proj quant = %q, want int8", projQ["down_proj.weight"])
+		}
+	})
+
+	t.Run("mixed quant within same projection rejected", func(t *testing.T) {
+		inputs := []create.PackedTensorInput{
+			makeInput("layer.moe.experts.0.down_proj.weight", "int4"),
+			makeInput("layer.moe.experts.1.down_proj.weight", "int8"),
+		}
+		groups, _ := parsePerExpertInputs("layer.moe.experts", inputs)
+		if groups != nil {
+			t.Fatal("expected nil for mixed quant within same projection")
+		}
+	})
+
+	t.Run("non-experts group rejected", func(t *testing.T) {
+		inputs := []create.PackedTensorInput{
+			makeInput("layer.mlp.gate_proj.weight", "int4"),
+		}
+		groups, _ := parsePerExpertInputs("layer.mlp", inputs)
+		if groups != nil {
+			t.Fatal("expected nil for non-experts group")
+		}
+	})
+}
+
 func TestQuantizeSupported(t *testing.T) {
 	// This just verifies the function exists and returns a boolean
 	// The actual value depends on build tags (mlx vs non-mlx)
@@ -337,5 +475,201 @@ func TestCreateModelfileLayersIncludesParameters(t *testing.T) {
 
 	if got["temperature"] != float64(0.7) {
 		t.Fatalf("temperature = %v, want %v", got["temperature"], float64(0.7))
+	}
+}
+
+func TestNewManifestWriter_PopulatesFileTypeFromQuantize(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	opts := CreateOptions{
+		ModelName: "test-quantized",
+		ModelDir:  t.TempDir(),
+		Quantize:  "MXFP8",
+	}
+
+	writer := newManifestWriter(opts, []string{"completion"}, "qwen3", "qwen3")
+	if err := writer(opts.ModelName, create.LayerInfo{}, nil); err != nil {
+		t.Fatalf("newManifestWriter() error = %v", err)
+	}
+
+	name := model.ParseName(opts.ModelName)
+	mf, err := manifest.ParseNamedManifest(name)
+	if err != nil {
+		t.Fatalf("ParseNamedManifest() error = %v", err)
+	}
+
+	configPath, err := manifest.BlobsPath(mf.Config.Digest)
+	if err != nil {
+		t.Fatalf("BlobsPath() error = %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+
+	var cfg model.ConfigV2
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+
+	if cfg.FileType != "mxfp8" {
+		t.Fatalf("FileType = %q, want %q", cfg.FileType, "mxfp8")
+	}
+}
+
+func TestSupportsThinking(t *testing.T) {
+	tests := []struct {
+		name       string
+		configJSON string
+		want       bool
+	}{
+		{
+			name:       "qwen3 architecture",
+			configJSON: `{"architectures": ["Qwen3ForCausalLM"], "model_type": "qwen3"}`,
+			want:       true,
+		},
+		{
+			name:       "deepseek architecture",
+			configJSON: `{"architectures": ["DeepseekV3ForCausalLM"]}`,
+			want:       true,
+		},
+		{
+			name:       "glm4moe architecture",
+			configJSON: `{"architectures": ["GLM4MoeForCausalLM"]}`,
+			want:       true,
+		},
+		{
+			name:       "llama architecture (no thinking)",
+			configJSON: `{"architectures": ["LlamaForCausalLM"], "model_type": "llama"}`,
+			want:       false,
+		},
+		{
+			name:       "gemma architecture (no thinking)",
+			configJSON: `{"architectures": ["Gemma3ForCausalLM"], "model_type": "gemma3"}`,
+			want:       false,
+		},
+		{
+			name:       "model_type only",
+			configJSON: `{"model_type": "deepseek"}`,
+			want:       true,
+		},
+		{
+			name:       "empty config",
+			configJSON: `{}`,
+			want:       false,
+		},
+		{
+			name:       "invalid json",
+			configJSON: `not json`,
+			want:       false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644)
+
+			if got := supportsThinking(dir); got != tt.want {
+				t.Errorf("supportsThinking() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSupportsThinking_NoConfig(t *testing.T) {
+	if supportsThinking(t.TempDir()) {
+		t.Error("supportsThinking should return false for missing config.json")
+	}
+}
+
+func TestGetParserName(t *testing.T) {
+	tests := []struct {
+		name       string
+		configJSON string
+		want       string
+	}{
+		{
+			name:       "qwen3 model",
+			configJSON: `{"architectures": ["Qwen3ForCausalLM"]}`,
+			want:       "qwen3",
+		},
+		{
+			name:       "deepseek model",
+			configJSON: `{"architectures": ["DeepseekV3ForCausalLM"]}`,
+			want:       "deepseek3",
+		},
+		{
+			name:       "glm4 model",
+			configJSON: `{"architectures": ["GLM4ForCausalLM"]}`,
+			want:       "glm-4.7",
+		},
+		{
+			name:       "llama model (no parser)",
+			configJSON: `{"architectures": ["LlamaForCausalLM"]}`,
+			want:       "",
+		},
+		{
+			name:       "qwen3 via model_type",
+			configJSON: `{"model_type": "qwen3"}`,
+			want:       "qwen3",
+		},
+		{
+			name:       "no config",
+			configJSON: `{}`,
+			want:       "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644)
+
+			if got := getParserName(dir); got != tt.want {
+				t.Errorf("getParserName() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetRendererName(t *testing.T) {
+	tests := []struct {
+		name       string
+		configJSON string
+		want       string
+	}{
+		{
+			name:       "qwen3 model",
+			configJSON: `{"architectures": ["Qwen3ForCausalLM"]}`,
+			want:       "qwen3-coder",
+		},
+		{
+			name:       "deepseek model",
+			configJSON: `{"architectures": ["DeepseekV3ForCausalLM"]}`,
+			want:       "deepseek3",
+		},
+		{
+			name:       "glm4 model",
+			configJSON: `{"architectures": ["GLM4ForCausalLM"]}`,
+			want:       "glm-4.7",
+		},
+		{
+			name:       "llama model (no renderer)",
+			configJSON: `{"architectures": ["LlamaForCausalLM"]}`,
+			want:       "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			os.WriteFile(filepath.Join(dir, "config.json"), []byte(tt.configJSON), 0o644)
+
+			if got := getRendererName(dir); got != tt.want {
+				t.Errorf("getRendererName() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

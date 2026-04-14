@@ -30,6 +30,7 @@ func TestAPIToolCalling(t *testing.T) {
 	defer cleanup()
 
 	minVRAM := map[string]uint64{
+		"gemma4":        8,
 		"qwen3-vl":      16,
 		"gpt-oss:20b":   16,
 		"gpt-oss:120b":  70,
@@ -47,15 +48,18 @@ func TestAPIToolCalling(t *testing.T) {
 		"granite3.3":    7,
 	}
 
-	for _, model := range libraryToolsModels {
+	models := testModels(libraryToolsModels)
+
+	for _, model := range models {
 		t.Run(model, func(t *testing.T) {
+			if testModel != "" {
+				requireCapability(ctx, t, client, model, "tools")
+			}
 			if v, ok := minVRAM[model]; ok {
 				skipUnderMinVRAM(t, v)
 			}
 
-			if err := PullIfMissing(ctx, client, model); err != nil {
-				t.Fatalf("pull failed %s", err)
-			}
+			pullOrSkip(ctx, t, client, model)
 
 			tools := []api.Tool{
 				{

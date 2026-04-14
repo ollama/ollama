@@ -51,7 +51,7 @@ jobs:
             container: nvidia/cuda:13.0.0-devel-ubuntu22.04
             flags: '-DCMAKE_CUDA_ARCHITECTURES=87'
           - preset: ROCm
-            container: rocm/dev-ubuntu-22.04:7.2
+            container: rocm/dev-ubuntu-22.04:7.2.1
             extra-packages: rocm-libs
             flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_PREFIX_PATH=/opt/rocm'
           - preset: Vulkan
@@ -64,6 +64,7 @@ jobs:
             container: nvidia/cuda:13.0.0-devel-ubuntu22.04
             extra-packages: libcudnn9-dev-cuda-13 libopenblas-dev liblapack-dev liblapacke-dev git curl
             flags: '-DCMAKE_CUDA_ARCHITECTURES=87 -DBLAS_INCLUDE_DIRS=/usr/include/x86_64-linux-gnu -DLAPACK_INCLUDE_DIRS=/usr/include/x86_64-linux-gnu'
+            install-go: true
     runs-on: linux
     container: ${{ matrix.container }}
     steps:
@@ -90,6 +91,12 @@ jobs:
           fi
         env:
           DEBIAN_FRONTEND: noninteractive
+      - if: matrix.install-go
+        name: Install Go
+        run: |
+          GO_VERSION=$(awk '/^go / { print $2 }' go.mod)
+          curl -fsSL "https://golang.org/dl/go${GO_VERSION}.linux-$(dpkg --print-architecture).tar.gz" | tar xz -C /usr/local
+          echo "/usr/local/go/bin" >> $GITHUB_PATH
       - uses: actions/cache@v4
         with:
           path: /github/home/.cache/ccache

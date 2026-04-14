@@ -183,7 +183,7 @@ index 6852d2e20..334a30135 100644
                      /* .iface   = */ ggml_backend_cuda_device_interface,
                      /* .reg     = */ &reg,
 diff --git a/ggml/src/ggml-cuda/vendors/hip.h b/ggml/src/ggml-cuda/vendors/hip.h
-index 4e162258d..d89e35a8e 100644
+index e3310bdf3..fe4b5349f 100644
 --- a/ggml/src/ggml-cuda/vendors/hip.h
 +++ b/ggml/src/ggml-cuda/vendors/hip.h
 @@ -5,6 +5,8 @@
@@ -195,7 +195,7 @@ index 4e162258d..d89e35a8e 100644
  
  #if defined(GGML_HIP_ROCWMMA_FATTN)
  #include <rocwmma/rocwmma-version.hpp>
-@@ -51,6 +53,7 @@
+@@ -52,6 +54,7 @@
  #define cudaDeviceProp hipDeviceProp_t
  #define cudaDeviceReset hipDeviceReset
  #define cudaDeviceSynchronize hipDeviceSynchronize

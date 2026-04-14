@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -49,6 +50,7 @@ func TestOpenCodeEdit(t *testing.T) {
 			t.Fatal(err)
 		}
 		assertOpenCodeModelExists(t, configPath, "llama3.2")
+		assertOpenCodeDefaultModel(t, configPath, "ollama/llama3.2")
 		assertOpenCodeRecentModel(t, statePath, 0, "ollama", "llama3.2")
 	})
 
@@ -157,11 +159,13 @@ func TestOpenCodeEdit(t *testing.T) {
 		o.Edit([]string{"llama3.2", "mistral"})
 		assertOpenCodeModelExists(t, configPath, "llama3.2")
 		assertOpenCodeModelExists(t, configPath, "mistral")
+		assertOpenCodeDefaultModel(t, configPath, "ollama/llama3.2")
 
 		// Then remove one by only selecting the other
 		o.Edit([]string{"llama3.2"})
 		assertOpenCodeModelExists(t, configPath, "llama3.2")
 		assertOpenCodeModelNotExists(t, configPath, "mistral")
+		assertOpenCodeDefaultModel(t, configPath, "ollama/llama3.2")
 	})
 
 	t.Run("preserve user customizations on managed models", func(t *testing.T) {
@@ -335,6 +339,22 @@ func assertOpenCodeModelNotExists(t *testing.T, path, model string) {
 	}
 	if models[model] != nil {
 		t.Errorf("model %s should not exist but was found", model)
+	}
+}
+
+func assertOpenCodeDefaultModel(t *testing.T, path, want string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := cfg["model"].(string)
+	if got != want {
+		t.Fatalf("default model = %q, want %q", got, want)
 	}
 }
 
@@ -717,6 +737,8 @@ func TestLookupCloudModelLimit(t *testing.T) {
 		{"glm-4.7", false, 0, 0},
 		{"glm-4.7:cloud", true, 202_752, 131_072},
 		{"glm-5:cloud", true, 202_752, 131_072},
+		{"glm-5.1:cloud", true, 202_752, 131_072},
+		{"gemma4:31b-cloud", true, 262_144, 131_072},
 		{"gpt-oss:120b-cloud", true, 131_072, 131_072},
 		{"gpt-oss:20b-cloud", true, 131_072, 131_072},
 		{"kimi-k2.5", false, 0, 0},
@@ -748,6 +770,40 @@ func TestLookupCloudModelLimit(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFindOpenCode(t *testing.T) {
+	t.Run("fallback to ~/.opencode/bin", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		setTestHome(t, tmpDir)
+
+		// Ensure opencode is not on PATH
+		t.Setenv("PATH", tmpDir)
+
+		// Without the fallback binary, findOpenCode should fail
+		if _, ok := findOpenCode(); ok {
+			t.Fatal("findOpenCode should fail when binary is not on PATH or in fallback location")
+		}
+
+		// Create a fake binary at the curl install fallback location
+		binDir := filepath.Join(tmpDir, ".opencode", "bin")
+		os.MkdirAll(binDir, 0o755)
+		name := "opencode"
+		if runtime.GOOS == "windows" {
+			name = "opencode.exe"
+		}
+		fakeBin := filepath.Join(binDir, name)
+		os.WriteFile(fakeBin, []byte("#!/bin/sh\n"), 0o755)
+
+		// Now findOpenCode should succeed via fallback
+		path, ok := findOpenCode()
+		if !ok {
+			t.Fatal("findOpenCode should succeed with fallback binary")
+		}
+		if path != fakeBin {
+			t.Errorf("findOpenCode = %q, want %q", path, fakeBin)
+		}
+	})
 }
 
 func TestOpenCodeModels_NoConfig(t *testing.T) {

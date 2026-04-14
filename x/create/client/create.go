@@ -22,11 +22,11 @@ import (
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/x/create"
-	"github.com/ollama/ollama/x/imagegen/safetensors"
+	"github.com/ollama/ollama/x/safetensors"
 )
 
 // MinOllamaVersion is the minimum Ollama version required for safetensors models.
-const MinOllamaVersion = "0.14.0"
+const MinOllamaVersion = "0.19.0"
 
 // ModelfileConfig holds configuration extracted from a Modelfile.
 type ModelfileConfig struct {
@@ -109,7 +109,7 @@ func ConfigFromModelfile(modelfile *parser.Modelfile) (string, *ModelfileConfig,
 type CreateOptions struct {
 	ModelName string
 	ModelDir  string
-	Quantize  string           // "int4", "int8", "nvfp4", or "mxfp8" for quantization
+	Quantize  string           // "int4", "int8", "nvfp4", "mxfp4", or "mxfp8" for quantization
 	Modelfile *ModelfileConfig // template/system/license/parser/renderer/parameters from Modelfile
 }
 
@@ -132,12 +132,7 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 	if isSafetensors {
 		modelType = "safetensors model"
 		spinnerKey = "create"
-		capabilities = []string{"completion"}
-
-		// Check if model supports thinking based on architecture
-		if supportsThinking(opts.ModelDir) {
-			capabilities = append(capabilities, "thinking")
-		}
+		capabilities = inferSafetensorsCapabilities(opts.ModelDir)
 
 		// Set parser and renderer name based on architecture
 		parserName = getParserName(opts.ModelDir)
@@ -186,6 +181,25 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 
 	fmt.Printf("Created %s '%s'\n", modelType, opts.ModelName)
 	return nil
+}
+
+func inferSafetensorsCapabilities(modelDir string) []string {
+	capabilities := []string{"completion"}
+
+	// Qwen3.5 multimodal checkpoints use ConditionalGeneration architectures.
+	if supportsVision(modelDir) {
+		capabilities = append(capabilities, "vision")
+	}
+
+	if supportsAudio(modelDir) {
+		capabilities = append(capabilities, "audio")
+	}
+
+	if supportsThinking(modelDir) {
+		capabilities = append(capabilities, "thinking")
+	}
+
+	return capabilities
 }
 
 // newLayerCreator returns a LayerCreator callback for creating config/JSON layers.
@@ -280,7 +294,7 @@ func newPackedTensorLayerCreator() create.PackedTensorLayerCreator {
 			if !QuantizeSupported() {
 				return create.LayerInfo{}, fmt.Errorf("quantization requires MLX support")
 			}
-			blobData, err := quantizePackedGroup(tensors)
+			blobData, err := quantizePackedGroup(groupName, tensors)
 			if err != nil {
 				return create.LayerInfo{}, fmt.Errorf("failed to quantize packed group %s: %w", groupName, err)
 			}
@@ -338,6 +352,7 @@ func newManifestWriter(opts CreateOptions, capabilities []string, parserName, re
 		// Create config blob with version requirement
 		configData := model.ConfigV2{
 			ModelFormat:  "safetensors",
+			FileType:     strings.ToLower(strings.TrimSpace(opts.Quantize)),
 			Capabilities: caps,
 			Requires:     MinOllamaVersion,
 			Parser:       resolveParserName(opts.Modelfile, parserName),
@@ -485,6 +500,40 @@ func supportsThinking(modelDir string) bool {
 	return false
 }
 
+// supportsVision checks if the model has a vision encoder by looking for
+// vision_config in config.json.
+func supportsVision(modelDir string) bool {
+	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
+	if err != nil {
+		return false
+	}
+
+	var cfg struct {
+		VisionConfig *map[string]any `json:"vision_config"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return false
+	}
+
+	return cfg.VisionConfig != nil
+}
+
+func supportsAudio(modelDir string) bool {
+	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
+	if err != nil {
+		return false
+	}
+
+	var cfg struct {
+		AudioConfig *map[string]any `json:"audio_config"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return false
+	}
+
+	return cfg.AudioConfig != nil
+}
+
 // getParserName returns the parser name for a model based on its architecture.
 // This reads the config.json from the model directory and determines the appropriate parser.
 func getParserName(modelDir string) string {
@@ -511,6 +560,9 @@ func getParserName(modelDir string) string {
 		if strings.Contains(archLower, "deepseek") {
 			return "deepseek3"
 		}
+		if strings.Contains(archLower, "gemma4") {
+			return "gemma4"
+		}
 		if strings.Contains(archLower, "qwen3") {
 			return "qwen3"
 		}
@@ -524,6 +576,9 @@ func getParserName(modelDir string) string {
 		}
 		if strings.Contains(typeLower, "deepseek") {
 			return "deepseek3"
+		}
+		if strings.Contains(typeLower, "gemma4") {
+			return "gemma4"
 		}
 		if strings.Contains(typeLower, "qwen3") {
 			return "qwen3"
@@ -553,6 +608,9 @@ func getRendererName(modelDir string) string {
 	// Check architectures for known renderers
 	for _, arch := range cfg.Architectures {
 		archLower := strings.ToLower(arch)
+		if strings.Contains(archLower, "gemma4") {
+			return "gemma4"
+		}
 		if strings.Contains(archLower, "glm4") || strings.Contains(archLower, "glm-4") {
 			return "glm-4.7"
 		}
@@ -567,6 +625,9 @@ func getRendererName(modelDir string) string {
 	// Also check model_type
 	if cfg.ModelType != "" {
 		typeLower := strings.ToLower(cfg.ModelType)
+		if strings.Contains(typeLower, "gemma4") {
+			return "gemma4"
+		}
 		if strings.Contains(typeLower, "glm4") || strings.Contains(typeLower, "glm-4") {
 			return "glm-4.7"
 		}

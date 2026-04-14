@@ -13,7 +13,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/x/imagegen/safetensors"
+	"github.com/ollama/ollama/x/safetensors"
 )
 
 // ModelConfig represents the config blob stored with a model.
@@ -246,6 +246,11 @@ func ShouldQuantize(name, component string) bool {
 		return false
 	}
 
+	// Skip audio encoder tensors (highly sensitive to quantization)
+	if strings.Contains(name, "audio_tower") || strings.Contains(name, "embed_audio") {
+		return false
+	}
+
 	// Skip embeddings
 	if strings.Contains(name, "embed") {
 		return false
@@ -267,13 +272,13 @@ func ShouldQuantize(name, component string) bool {
 
 // ShouldQuantizeTensor returns true if a tensor should be quantized based on name, shape, and quantize type.
 // This is a more detailed check that also considers tensor dimensions.
-// The quantize parameter specifies the quantization type (e.g., "int4", "nvfp4", "int8", "mxfp8").
+// The quantize parameter specifies the quantization type (e.g., "int4", "nvfp4", "mxfp4", "int8", "mxfp8").
 func ShouldQuantizeTensor(name string, shape []int32, quantize string) bool {
 	return GetTensorQuantization(name, shape, quantize) != ""
 }
 
 // normalizeQuantType converts various quantization type aliases to canonical forms.
-// Supports: q4/Q4/int4/INT4/fp4/FP4 -> int4, q8/Q8/int8/INT8/fp8/FP8 -> int8, nvfp4/NVFP4, mxfp8/MXFP8
+// Supports: q4/Q4/int4/INT4/fp4/FP4 -> int4, q8/Q8/int8/INT8/fp8/FP8 -> int8, nvfp4/NVFP4, mxfp4/MXFP4, mxfp8/MXFP8
 func normalizeQuantType(quantize string) string {
 	switch strings.ToUpper(quantize) {
 	case "Q4", "INT4", "FP4":
@@ -282,11 +287,29 @@ func normalizeQuantType(quantize string) string {
 		return "int8"
 	case "NVFP4":
 		return "nvfp4"
+	case "MXFP4":
+		return "mxfp4"
 	case "MXFP8":
 		return "mxfp8"
 	default:
 		return quantize
 	}
+}
+
+// isAligned checks if a tensor's last dimension is divisible by the
+// group size required for the given quantization type.
+func isAligned(shape []int32, quantType string) bool {
+	if len(shape) == 0 {
+		return false
+	}
+	groupSize := int32(32)
+	switch normalizeQuantType(quantType) {
+	case "nvfp4":
+		groupSize = 16
+	case "int4", "int8":
+		groupSize = 64
+	}
+	return shape[len(shape)-1]%groupSize == 0
 }
 
 func isStackedExpertWeight(name string) bool {
@@ -298,16 +321,16 @@ func isStackedExpertWeight(name string) bool {
 
 	return strings.Contains(name, ".mlp.switch_mlp.") ||
 		strings.Contains(name, ".mlp.experts.") ||
-		strings.Contains(name, ".mlp.shared_experts.")
+		strings.Contains(name, ".mlp.shared_experts.") ||
+		strings.Contains(name, ".moe.experts.")
 }
 
 // GetTensorQuantization returns the appropriate quantization type for a tensor.
 // Returns "" if the tensor should not be quantized.
 // This implements mixed-precision quantization:
-//   - Attention MLA weights (q_a, q_b, kv_a, kv_b): unquantized (most sensitive)
-//   - Output projection, gate/up weights: int4 (less sensitive)
-//   - Down projection weights: int8 (more sensitive, would be Q6 in GGML but no MLX kernel)
+//   - v_proj, k_proj, down_proj: promoted to INT8 when base is INT4
 //   - Norms, embeddings, biases, routing gates: no quantization
+//   - All other eligible weights: use requested quantization type
 func GetTensorQuantization(name string, shape []int32, quantize string) string {
 	stackedExpert := isStackedExpertWeight(name)
 
@@ -334,80 +357,72 @@ func GetTensorQuantization(name string, shape []int32, quantize string) string {
 	// Normalize quantization type to canonical form
 	quantNorm := normalizeQuantType(quantize)
 
-	// MLX quantization requires last dimension to be divisible by group size
-	// nvfp4: 16, mxfp8: 32, int4/int8: 64
-	groupSize := int32(32)
-	switch quantNorm {
-	case "nvfp4":
-		groupSize = 16
-	case "int4", "int8":
-		groupSize = 64
-	}
-	if shape[len(shape)-1]%groupSize != 0 {
-		return ""
-	}
-
 	// Skip routing gate weights (should stay high precision)
 	// In safetensors these are: mlp.gate.weight (not mlp.gate_proj.weight)
 	if strings.Contains(name, "mlp.gate.weight") && !strings.Contains(name, "_proj") {
 		return ""
 	}
 
-	// For NVFP4 or MXFP8, use the same quantization for all (no mixed precision)
-	if quantNorm == "nvfp4" || quantNorm == "mxfp8" {
+	// MLX quantization requires last dimension to be divisible by group size.
+	if !isAligned(shape, quantNorm) {
+		return ""
+	}
+
+	// For non-affine modes, use the same quantization for all eligible tensors.
+	if quantNorm == "nvfp4" || quantNorm == "mxfp4" || quantNorm == "mxfp8" {
 		return quantNorm
 	}
 
-	// Attention MLA weights - keep unquantized (bf16)
-	// These are highly sensitive: errors accumulate in the KV cache over time
-	// q_a_proj, q_b_proj, kv_a_proj_with_mqa, kv_b_proj
-	if strings.Contains(name, "q_a_proj") ||
-		strings.Contains(name, "q_b_proj") ||
-		strings.Contains(name, "kv_a_proj") ||
-		strings.Contains(name, "kv_b_proj") {
-		return "" // No quantization - keep bf16
+	// Value projection weights directly determine attention output quality.
+	// Down projection weights feed directly into the residual stream where
+	// errors accumulate across layers. Both benefit from higher precision.
+	// Promote to INT8 when base is INT4 (same affine mode, compatible with
+	// GatherQMM for MoE expert tensors).
+	if quantNorm == "int4" {
+		if strings.Contains(name, ".v_proj") || strings.Contains(name, ".k_proj") || strings.Contains(name, "down_proj") {
+			if isAligned(shape, "int8") {
+				return "int8"
+			}
+		}
 	}
 
-	// Down projection weights - use INT8 (would be Q6_K in GGML, but MLX has no Q6 kernel)
-	// mlp.down_proj, mlp.experts.X.down_proj, mlp.shared_experts.down_proj
-	if strings.Contains(name, "down_proj") {
-		return "int8"
-	}
-
-	// Output projection, gate/up weights - use requested quantization (INT4)
-	// o_proj, gate_proj, up_proj
-	if strings.Contains(name, "o_proj") ||
-		strings.Contains(name, "gate_proj") ||
-		strings.Contains(name, "up_proj") {
-		return quantNorm
-	}
-
-	// LM head - use requested quantization
-	if strings.Contains(name, "lm_head") {
-		return quantNorm
-	}
-
-	// Default to requested quantization for other weights
 	return quantNorm
 }
 
-// expertGroupRegexp matches expert tensor names and captures the group prefix.
-// Matches: model.layers.{L}.mlp.experts.{E}.{proj}.weight (and .scale, .bias suffixes)
-// Captures: model.layers.{L}.mlp.experts
-var expertGroupRegexp = regexp.MustCompile(`^(model\.layers\.\d+\.mlp\.(?:shared_)?experts)\..*\.weight`)
+var expertLayerPrefixRegexp = regexp.MustCompile(`^(?:model\.language_model\.|language_model(?:\.model)?\.|model\.)?layers\.\d+$`)
 
 // ExpertGroupPrefix returns the group prefix for expert tensors that should be packed together.
 // For example:
 //   - "model.layers.1.mlp.experts.0.down_proj.weight" -> "model.layers.1.mlp.experts"
 //   - "model.layers.1.mlp.shared_experts.down_proj.weight" -> "model.layers.1.mlp.shared_experts"
+//   - "language_model.model.layers.1.mlp.switch_mlp.down_proj.weight" -> "language_model.model.layers.1.mlp.switch_mlp"
 //   - "model.layers.0.mlp.down_proj.weight" -> "" (dense layer, no experts)
 //   - "model.layers.1.mlp.gate.weight" -> "" (routing gate, not an expert)
 func ExpertGroupPrefix(tensorName string) string {
-	m := expertGroupRegexp.FindStringSubmatch(tensorName)
-	if m == nil {
+	if !strings.HasSuffix(tensorName, ".weight") {
 		return ""
 	}
-	return m[1]
+
+	for _, marker := range []string{
+		".mlp.experts.",
+		".mlp.shared_experts.",
+		".mlp.switch_mlp.",
+		".moe.experts.",
+	} {
+		idx := strings.Index(tensorName, marker)
+		if idx == -1 {
+			continue
+		}
+
+		layerPrefix := tensorName[:idx]
+		if !expertLayerPrefixRegexp.MatchString(layerPrefix) {
+			continue
+		}
+
+		return layerPrefix + strings.TrimSuffix(marker, ".")
+	}
+
+	return ""
 }
 
 // PackedTensorInput holds metadata for a tensor that will be packed into a multi-tensor blob.
@@ -424,9 +439,11 @@ type PackedTensorInput struct {
 type PackedTensorLayerCreator func(groupName string, tensors []PackedTensorInput) (LayerInfo, error)
 
 type sourceQuantization struct {
-	Bits      int    `json:"bits"`
-	GroupSize int    `json:"group_size"`
-	Mode      string `json:"mode"`
+	Bits            int     `json:"bits"`
+	GroupSize       int     `json:"group_size"`
+	Mode            string  `json:"mode"`
+	QuantMethod     string  `json:"quant_method"`
+	WeightBlockSize []int32 `json:"weight_block_size"`
 }
 
 type sourceModelConfig struct {
@@ -493,6 +510,98 @@ func (cfg sourceModelConfig) QuantMetadata() map[string]string {
 	return metadata
 }
 
+type sourceQuantizedKind string
+
+const (
+	sourceQuantizedKindNone         sourceQuantizedKind = ""
+	sourceQuantizedKindPrequantized sourceQuantizedKind = "prequantized"
+	sourceQuantizedKindHFFP8        sourceQuantizedKind = "hf_fp8"
+)
+
+func (cfg sourceModelConfig) quantizationConfigs() []sourceQuantization {
+	return []sourceQuantization{
+		cfg.Quantization,
+		cfg.QuantizationConfig,
+		cfg.TextConfig.Quantization,
+		cfg.TextConfig.QuantizationConfig,
+	}
+}
+
+func (cfg sourceModelConfig) HFFP8WeightBlockSize() (rows, cols int32, ok bool) {
+	for _, q := range cfg.quantizationConfigs() {
+		if !strings.EqualFold(q.QuantMethod, "fp8") || len(q.WeightBlockSize) != 2 {
+			continue
+		}
+		return q.WeightBlockSize[0], q.WeightBlockSize[1], true
+	}
+	return 0, 0, false
+}
+
+func inspectSourceQuantization(modelDir string, cfg sourceModelConfig) (sourceQuantizedKind, error) {
+	entries, err := os.ReadDir(modelDir)
+	if err != nil {
+		return sourceQuantizedKindNone, err
+	}
+
+	hasScaleInv := false
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".safetensors") {
+			continue
+		}
+
+		extractor, err := safetensors.OpenForExtraction(filepath.Join(modelDir, entry.Name()))
+		if err != nil {
+			return sourceQuantizedKindNone, err
+		}
+
+		for _, name := range extractor.ListTensors() {
+			switch {
+			case strings.HasSuffix(name, ".scales"):
+				extractor.Close()
+				return sourceQuantizedKindPrequantized, nil
+			case strings.HasSuffix(name, ".weight_scale_inv"):
+				hasScaleInv = true
+			}
+		}
+
+		extractor.Close()
+	}
+
+	if hasScaleInv {
+		if _, _, ok := cfg.HFFP8WeightBlockSize(); ok {
+			return sourceQuantizedKindHFFP8, nil
+		}
+	}
+
+	return sourceQuantizedKindNone, nil
+}
+
+func resolveEffectiveQuantization(cfg sourceModelConfig, sourceKind sourceQuantizedKind, requested string) (string, error) {
+	switch sourceKind {
+	case sourceQuantizedKindNone:
+		return requested, nil
+	case sourceQuantizedKindPrequantized:
+		if requested != "" {
+			return "", fmt.Errorf("cannot requantize already-quantized source model with --quantize %q", requested)
+		}
+		return "", nil
+	case sourceQuantizedKindHFFP8:
+		if requested != "" {
+			return "", fmt.Errorf("cannot requantize already-quantized fp8 source model with --quantize %q", requested)
+		}
+		rows, cols, ok := cfg.HFFP8WeightBlockSize()
+		if !ok {
+			return "", fmt.Errorf("fp8 source model missing weight_block_size metadata")
+		}
+		if rows != 128 || cols != 128 {
+			return "", fmt.Errorf("unsupported fp8 source block size %dx%d", rows, cols)
+		}
+		return "mxfp8", nil
+	default:
+		return "", fmt.Errorf("unsupported source quantization kind %q", sourceKind)
+	}
+}
+
 type tensorImportTransform interface {
 	skipTensor(name string) bool
 	transformTensor(td *safetensors.TensorData) ([]*safetensors.TensorData, error)
@@ -525,6 +634,8 @@ var tensorImportTransformRegistry = map[string]tensorImportTransformFactory{
 	"Qwen3_5MoeForConditionalGeneration":   newQwen35ImportTransform,
 	"Qwen3NextMoeForCausalLM":              newQwen35ImportTransform,
 	"Qwen3NextMoeForConditionalGeneration": newQwen35ImportTransform,
+	"Gemma4ForCausalLM":                    newGemma4ImportTransform,
+	"Gemma4ForConditionalGeneration":       newGemma4ImportTransform,
 }
 
 func newTensorImportTransform(modelDir string, cfg sourceModelConfig) (tensorImportTransform, error) {
@@ -546,6 +657,14 @@ func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer La
 	if err != nil {
 		return fmt.Errorf("failed to read source config.json: %w", err)
 	}
+	sourceQuantKind, err := inspectSourceQuantization(modelDir, sourceConfig)
+	if err != nil {
+		return fmt.Errorf("failed to inspect source quantization: %w", err)
+	}
+	effectiveQuantize, err := resolveEffectiveQuantization(sourceConfig, sourceQuantKind, quantize)
+	if err != nil {
+		return err
+	}
 	sourceQuantMetadata := sourceConfig.QuantMetadata()
 	importTransform, err := newTensorImportTransform(modelDir, sourceConfig)
 	if err != nil {
@@ -557,7 +676,6 @@ func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer La
 	if len(createPackedLayer) > 0 {
 		packedCreator = createPackedLayer[0]
 	}
-
 	// Accumulate expert tensors by group prefix for packing.
 	// Readers reference file-backed SectionReaders, so we keep extractors
 	// open until each group is flushed to avoid buffering tensor data in memory.
@@ -600,8 +718,8 @@ func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer La
 			tensorSet[name] = struct{}{}
 		}
 		quantizeMsg := ""
-		if quantize != "" {
-			quantizeMsg = fmt.Sprintf(", quantizing to %s", quantize)
+		if effectiveQuantize != "" {
+			quantizeMsg = fmt.Sprintf(", quantizing to %s", effectiveQuantize)
 		}
 		fn(fmt.Sprintf("importing %s (%d tensors%s)", entry.Name(), len(tensorNames), quantizeMsg))
 
@@ -612,9 +730,10 @@ func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer La
 			if importTransform.skipTensor(tensorName) {
 				continue
 			}
-			if shouldSkipPrequantizedCompanion(tensorName, tensorSet) {
+			if shouldSkipSourceCompanion(tensorName, tensorSet) {
 				continue
 			}
+			sourceFP8ScaleName, hasSourceFP8Scale := sourceFP8Companion(tensorName, tensorSet)
 
 			td, err := extractor.GetTensor(tensorName)
 			if err != nil {
@@ -623,7 +742,7 @@ func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer La
 				return fmt.Errorf("failed to get tensor %s: %w", tensorName, err)
 			}
 
-			if quantize == "" {
+			if effectiveQuantize == "" {
 				layer, ok, err := createPrequantizedLayer(extractor, td, tensorName, tensorSet, sourceQuantMetadata, createLayer)
 				if err != nil {
 					extractor.Close()
@@ -647,8 +766,33 @@ func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer La
 				// Determine quantization type for this tensor (empty string if not quantizing)
 				// GetTensorQuantization handles mixed-precision (e.g., Q8 for attention, Q4 for FFN)
 				quantizeType := ""
-				if quantize != "" {
-					quantizeType = importTransform.quantizationType(outTD.Name, outTD.Shape, quantize)
+				switch {
+				case sourceQuantKind == sourceQuantizedKindHFFP8 && hasSourceFP8Scale:
+					quantizeType = "mxfp8"
+				case sourceQuantKind == sourceQuantizedKindHFFP8:
+					quantizeType = ""
+				case effectiveQuantize != "":
+					quantizeType = importTransform.quantizationType(outTD.Name, outTD.Shape, effectiveQuantize)
+				}
+				reader := outTD.SafetensorsReader()
+				if hasSourceFP8Scale {
+					if len(outputTensors) != 1 {
+						extractor.Close()
+						closeExtractors()
+						return fmt.Errorf("source fp8 tensor %s rewrote into %d tensors; only 1:1 rewrites are supported", tensorName, len(outputTensors))
+					}
+					if quantizeType == "" {
+						extractor.Close()
+						closeExtractors()
+						return fmt.Errorf("source fp8 tensor %s was not scheduled for mxfp8 conversion", tensorName)
+					}
+					scaleTD, err := extractor.GetTensor(sourceFP8ScaleName)
+					if err != nil {
+						extractor.Close()
+						closeExtractors()
+						return fmt.Errorf("failed to get fp8 scale tensor %s: %w", sourceFP8ScaleName, err)
+					}
+					reader = buildSourceFP8Reader(outTD, scaleTD.WithName(outTD.Name+".scale_inv"))
 				}
 
 				// Check if this tensor belongs to an expert group for packing
@@ -670,13 +814,13 @@ func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer La
 						Dtype:    outTD.Dtype,
 						Shape:    outTD.Shape,
 						Quantize: quantizeType,
-						Reader:   outTD.SafetensorsReader(),
+						Reader:   reader,
 					})
 				} else {
 					// Store as minimal safetensors format (88 bytes header overhead)
 					// This enables native mmap loading via mlx_load_safetensors
 					// createTensorLayer returns multiple layers if quantizing (weight + scales)
-					newLayers, err := createTensorLayer(outTD.SafetensorsReader(), outTD.Name, outTD.Dtype, outTD.Shape, quantizeType)
+					newLayers, err := createTensorLayer(reader, outTD.Name, outTD.Dtype, outTD.Shape, quantizeType)
 					if err != nil {
 						extractor.Close()
 						closeExtractors()
@@ -760,7 +904,7 @@ func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer La
 	return nil
 }
 
-func shouldSkipPrequantizedCompanion(name string, tensorSet map[string]struct{}) bool {
+func shouldSkipSourceCompanion(name string, tensorSet map[string]struct{}) bool {
 	switch {
 	case strings.HasSuffix(name, ".scales"):
 		_, ok := tensorSet[strings.TrimSuffix(name, ".scales")+".weight"]
@@ -768,9 +912,26 @@ func shouldSkipPrequantizedCompanion(name string, tensorSet map[string]struct{})
 	case strings.HasSuffix(name, ".biases"):
 		_, ok := tensorSet[strings.TrimSuffix(name, ".biases")+".weight"]
 		return ok
+	case strings.HasSuffix(name, ".weight_scale_inv"):
+		_, ok := tensorSet[strings.TrimSuffix(name, "_scale_inv")]
+		return ok
 	default:
 		return false
 	}
+}
+
+func sourceFP8Companion(weightName string, tensorSet map[string]struct{}) (scaleName string, ok bool) {
+	if !strings.HasSuffix(weightName, ".weight") {
+		return "", false
+	}
+
+	scaleName = weightName + "_scale_inv"
+	_, ok = tensorSet[scaleName]
+	return scaleName, ok
+}
+
+func buildSourceFP8Reader(weightTD, scaleTD *safetensors.TensorData) io.Reader {
+	return safetensors.BuildPackedSafetensorsReader([]*safetensors.TensorData{weightTD, scaleTD})
 }
 
 func createPrequantizedLayer(

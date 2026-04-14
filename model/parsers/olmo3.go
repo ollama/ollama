@@ -26,8 +26,9 @@ const (
 )
 
 type Olmo3Parser struct {
-	state  olmo3ParserState
-	buffer strings.Builder
+	state     olmo3ParserState
+	buffer    strings.Builder
+	callIndex int
 }
 
 func (p *Olmo3Parser) HasToolSupport() bool {
@@ -40,6 +41,7 @@ func (p *Olmo3Parser) HasThinkingSupport() bool {
 
 func (p *Olmo3Parser) Init(tools []api.Tool, lastMessage *api.Message, thinkValue *api.ThinkValue) []api.Tool {
 	p.state = olmo3StateContent
+	p.callIndex = 0
 	return tools
 }
 
@@ -82,6 +84,11 @@ func (p *Olmo3Parser) Add(s string, done bool) (content string, thinking string,
 		case olmo3ParserEventToolCalls:
 			allCalls = append(allCalls, event.calls...)
 		}
+	}
+
+	for i := range allCalls {
+		allCalls[i].Function.Index = p.callIndex
+		p.callIndex++
 	}
 
 	return contentSb.String(), "", allCalls, nil

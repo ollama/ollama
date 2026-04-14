@@ -31,6 +31,31 @@ func TestValidateRecurrentLayerRequiresSSMDT(t *testing.T) {
 	}
 }
 
+func TestValidateRecurrentSSMInAccepted(t *testing.T) {
+	// When SSMIn is set, Validate must not reject the layer for missing
+	// attn_qkv/attn_gate. It should fail later on missing ssm_dt.
+	m := &Model{
+		Layers: []Layer{{
+			Operator: &GatedDeltaNet{
+				SSMIn:    &nn.Linear{},
+				SSMBeta:  &nn.Linear{},
+				SSMAlpha: &nn.Linear{},
+			},
+		}},
+		Options: &Options{
+			isRecurrent: []bool{true},
+		},
+	}
+
+	err := m.Validate()
+	if err == nil {
+		t.Fatal("Validate() expected error, got nil")
+	}
+	if strings.Contains(err.Error(), "missing attn_qkv/attn_gate") {
+		t.Fatalf("Validate() should not fail on attn_qkv/attn_gate when SSMIn is set, got: %v", err)
+	}
+}
+
 func TestValidateNonRecurrentSkipsLinearChecks(t *testing.T) {
 	m := &Model{
 		Layers: []Layer{{Operator: &FullAttention{}}},

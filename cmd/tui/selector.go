@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
@@ -56,7 +55,7 @@ var (
 const maxSelectorItems = 10
 
 // ErrCancelled is returned when the user cancels the selection.
-var ErrCancelled = errors.New("cancelled")
+var ErrCancelled = launch.ErrCancelled
 
 type SelectItem struct {
 	Name        string
@@ -242,6 +241,10 @@ func (m selectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancelled = true
 			return m, tea.Quit
 
+		case tea.KeyLeft:
+			m.cancelled = true
+			return m, tea.Quit
+
 		case tea.KeyEnter:
 			filtered := m.filteredItems()
 			if len(filtered) > 0 && m.cursor < len(filtered) {
@@ -354,7 +357,7 @@ func (m selectorModel) renderContent() string {
 	}
 
 	s.WriteString("\n")
-	help := "↑/↓ navigate • enter select • esc cancel"
+	help := "↑/↓ navigate • enter select • ← back"
 	if m.helpText != "" {
 		help = m.helpText
 	}
@@ -608,6 +611,10 @@ func (m multiSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancelled = true
 			return m, tea.Quit
 
+		case tea.KeyLeft:
+			m.cancelled = true
+			return m, tea.Quit
+
 		case tea.KeyTab:
 			m.multi = !m.multi
 
@@ -809,17 +816,21 @@ func (m multiSelectorModel) View() string {
 
 	s.WriteString("\n")
 
+	count := m.selectedCount()
 	if !m.multi {
-		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • enter select • tab add multiple • esc cancel"))
+		if count > 0 {
+			s.WriteString(sectionHeaderStyle.Render(fmt.Sprintf("%d models selected - press tab to edit", count)))
+			s.WriteString("\n\n")
+		}
+		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • enter select • tab add multiple • ← back"))
 	} else {
-		count := m.selectedCount()
 		if count == 0 {
-			s.WriteString(selectorDescStyle.Render("  Select at least one model."))
+			s.WriteString(sectionHeaderStyle.Render("Select at least one model."))
 		} else {
-			s.WriteString(selectorDescStyle.Render(fmt.Sprintf("  %d selected - press enter to continue", count)))
+			s.WriteString(sectionHeaderStyle.Render(fmt.Sprintf("%d models selected - press enter to continue", count)))
 		}
 		s.WriteString("\n\n")
-		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • space toggle • tab select single • enter confirm • esc cancel"))
+		s.WriteString(selectorHelpStyle.Render("↑/↓ navigate • space toggle • tab select single • enter confirm • ← back"))
 	}
 
 	result := s.String()

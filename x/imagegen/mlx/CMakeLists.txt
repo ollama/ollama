@@ -1,11 +1,11 @@
 include(FetchContent)
 
-# Read MLX version from top-level file (shared with Dockerfile)
-file(READ "${CMAKE_SOURCE_DIR}/MLX_VERSION" MLX_C_GIT_TAG)
+# Read MLX-C version from top-level file (shared with Dockerfile)
+file(READ "${CMAKE_SOURCE_DIR}/MLX_C_VERSION" MLX_C_GIT_TAG)
 string(STRIP "${MLX_C_GIT_TAG}" MLX_C_GIT_TAG)
 
-# Read MLX core version from top-level file
-file(READ "${CMAKE_SOURCE_DIR}/MLX_CORE_VERSION" MLX_GIT_TAG)
+# Read MLX version from top-level file
+file(READ "${CMAKE_SOURCE_DIR}/MLX_VERSION" MLX_GIT_TAG)
 string(STRIP "${MLX_GIT_TAG}" MLX_GIT_TAG)
 
 set(MLX_C_BUILD_EXAMPLES OFF)
@@ -97,6 +97,38 @@ FetchContent_MakeAvailable(mlx-c)
 # Sync vendored headers with fetched version
 file(GLOB _mlx_c_hdrs "${mlx-c_SOURCE_DIR}/mlx/c/*.h")
 file(COPY ${_mlx_c_hdrs} DESTINATION "${CMAKE_SOURCE_DIR}/x/mlxrunner/mlx/include/mlx/c/")
+
+# Regenerate Go/C shim wrappers from the (possibly updated) headers.
+# Skip during cross-compilation — the generated files are arch-independent.
+if(CMAKE_SYSTEM_PROCESSOR STREQUAL CMAKE_HOST_SYSTEM_PROCESSOR OR NOT APPLE)
+    find_program(GO_EXECUTABLE go REQUIRED)
+    message(STATUS "Regenerating MLX Go wrappers")
+
+    # CGo's probe compilation is sensitive to CGO_CFLAGS/CGO_CXXFLAGS and CC.
+    # Clear them so go generate uses default compiler settings:
+    # - On Windows, CC may contain spaces (e.g., "C:/Program Files/.../cl.exe")
+    #   which breaks CGo's CC parsing.
+    # - On macOS, CGO_CFLAGS with -mmacosx-version-min breaks header search
+    #   when cmake also sets CMAKE_OSX_DEPLOYMENT_TARGET.
+    set(_SAVE_CC "$ENV{CC}")
+    set(_SAVE_CGO_CFLAGS "$ENV{CGO_CFLAGS}")
+    set(_SAVE_CGO_CXXFLAGS "$ENV{CGO_CXXFLAGS}")
+    set(ENV{CC} "")
+    set(ENV{CGO_CFLAGS} "")
+    set(ENV{CGO_CXXFLAGS} "")
+
+    execute_process(
+        COMMAND ${GO_EXECUTABLE} generate ./x/...
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMAND_ERROR_IS_FATAL ANY
+    )
+
+    set(ENV{CC} "${_SAVE_CC}")
+    set(ENV{CGO_CFLAGS} "${_SAVE_CGO_CFLAGS}")
+    set(ENV{CGO_CXXFLAGS} "${_SAVE_CGO_CXXFLAGS}")
+else()
+    message(STATUS "Skipping MLX Go wrapper generation (cross-compiling)")
+endif()
 
 # For local dev builds, override MLX_VERSION with git describe output
 if(TARGET mlx_version AND DEFINED FETCHCONTENT_SOURCE_DIR_MLX)

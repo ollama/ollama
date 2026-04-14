@@ -23,15 +23,15 @@ import (
 var recommendedModels = []ModelItem{
 	{Name: "kimi-k2.5:cloud", Description: "Multimodal reasoning with subagents", Recommended: true},
 	{Name: "qwen3.5:cloud", Description: "Reasoning, coding, and agentic tool use with vision", Recommended: true},
-	{Name: "glm-5:cloud", Description: "Reasoning and code generation", Recommended: true},
+	{Name: "glm-5.1:cloud", Description: "Reasoning and code generation", Recommended: true},
 	{Name: "minimax-m2.7:cloud", Description: "Fast, efficient coding and real-world productivity", Recommended: true},
-	{Name: "glm-4.7-flash", Description: "Reasoning and code generation locally", Recommended: true},
+	{Name: "gemma4", Description: "Reasoning and code generation locally", Recommended: true},
 	{Name: "qwen3.5", Description: "Reasoning, coding, and visual understanding locally", Recommended: true},
 }
 
 var recommendedVRAM = map[string]string{
-	"glm-4.7-flash": "~25GB",
-	"qwen3.5":       "~11GB",
+	"gemma4":  "~16GB",
+	"qwen3.5": "~11GB",
 }
 
 // cloudModelLimit holds context and output token limits for a cloud model.
@@ -47,9 +47,11 @@ var cloudModelLimits = map[string]cloudModelLimit{
 	"cogito-2.1:671b":     {Context: 163_840, Output: 65_536},
 	"deepseek-v3.1:671b":  {Context: 163_840, Output: 163_840},
 	"deepseek-v3.2":       {Context: 163_840, Output: 65_536},
+	"gemma4:31b":          {Context: 262_144, Output: 131_072},
 	"glm-4.6":             {Context: 202_752, Output: 131_072},
 	"glm-4.7":             {Context: 202_752, Output: 131_072},
 	"glm-5":               {Context: 202_752, Output: 131_072},
+	"glm-5.1":             {Context: 202_752, Output: 131_072},
 	"gpt-oss:120b":        {Context: 131_072, Output: 131_072},
 	"gpt-oss:20b":         {Context: 131_072, Output: 131_072},
 	"kimi-k2:1t":          {Context: 262_144, Output: 262_144},
@@ -378,6 +380,17 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 					return 1
 				}
 				return recRank[a.Name] - recRank[b.Name]
+			}
+			// Among checked non-recommended items - put the default first
+			if ac && !aRec && current != "" {
+				aCurrent := a.Name == current
+				bCurrent := b.Name == current
+				if aCurrent != bCurrent {
+					if aCurrent {
+						return -1
+					}
+					return 1
+				}
 			}
 			if aNew != bNew {
 				if aNew {

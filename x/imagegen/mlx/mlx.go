@@ -2125,7 +2125,8 @@ func Quantize(w *Array, groupSize, bits int, mode string) (weights, scales, bias
 	optGroupSize := C.mlx_optional_int{value: C.int(groupSize), has_value: true}
 	optBits := C.mlx_optional_int{value: C.int(bits), has_value: true}
 	res := C.mlx_vector_array_new()
-	C.mlx_quantize(&res, w.c, optGroupSize, optBits, cMode, C.default_stream())
+	var globalScale C.mlx_array
+	C.mlx_quantize(&res, w.c, optGroupSize, optBits, cMode, globalScale, C.default_stream())
 
 	// Result is a vector of arrays: [weights, scales, biases?]
 	// mxfp8 mode returns only 2 elements (no biases)
@@ -2161,7 +2162,8 @@ func Dequantize(w, scales, biases *Array, groupSize, bits int, mode string) *Arr
 	}
 
 	res := C.mlx_array_new()
-	C.mlx_dequantize(&res, w.c, scales.c, b, optGroupSize, optBits, cMode, optDtype, C.default_stream())
+	var globalScale C.mlx_array
+	C.mlx_dequantize(&res, w.c, scales.c, b, optGroupSize, optBits, cMode, globalScale, optDtype, C.default_stream())
 	return newArray(res)
 }
 

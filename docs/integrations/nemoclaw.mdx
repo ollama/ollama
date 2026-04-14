@@ -1,0 +1,67 @@
+---
+title: NemoClaw
+---
+
+NemoClaw is NVIDIA's open source security stack for [OpenClaw](/integrations/openclaw). It wraps OpenClaw with the NVIDIA OpenShell runtime to provide kernel-level sandboxing, network policy controls, and audit trails for AI agents. 
+
+## Quick start
+
+Pull a model:
+
+```bash
+ollama pull nemotron-3-nano:30b
+```
+
+Run the installer:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
+  NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_PROVIDER=ollama \
+  NEMOCLAW_MODEL=nemotron-3-nano:30b \
+  bash
+```
+
+Connect to your sandbox:
+
+```bash
+nemoclaw my-assistant connect
+```
+
+Open the TUI:
+
+```bash
+openclaw tui
+```
+
+<Note>Ollama support in NemoClaw is still experimental.</Note>
+
+## Platform support
+
+| Platform | Runtime | Status |
+|----------|---------|--------|
+| Linux (Ubuntu 22.04+) | Docker | Primary |
+| macOS (Apple Silicon) | Colima or Docker Desktop | Supported |
+| Windows | WSL2 with Docker Desktop | Supported |
+
+CMD and PowerShell are not supported on Windows — WSL2 is required.
+
+<Note>Ollama must be installed and running before the installer runs. When running inside WSL2 or a container, ensure Ollama is reachable from the sandbox (e.g. `OLLAMA_HOST=0.0.0.0`).</Note>
+
+## System requirements
+
+- CPU: 4 vCPU minimum
+- RAM: 8 GB minimum (16 GB recommended)
+- Disk: 20 GB free (40 GB recommended for local models)
+- Node.js 20+ and npm 10+
+- Container runtime (Docker preferred)
+
+## Recommended models
+
+- `nemotron-3-super:cloud` — Strong reasoning and coding
+- `qwen3.5:cloud` — 397B; reasoning and code generation
+- `nemotron-3-nano:30b` — Recommended local model; fits in 24 GB VRAM
+- `qwen3.5:27b` — Fast local reasoning (~18 GB VRAM)
+- `glm-4.7-flash` — Reasoning and code generation (~25 GB VRAM)
+
+More models at [ollama.com/search](https://ollama.com/search).

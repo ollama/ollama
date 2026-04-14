@@ -55,7 +55,7 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		slog.Info("peak memory", "size", mlx.PrettyBytes(mlx.PeakMemory()))
 	}()
 
-	inputs := r.Tokenizer.Encode(request.Prompt, true)
+	inputs := r.Tokenizer.Encode(request.Prompt, r.Tokenizer.AddBOS())
 	if len(inputs) == 0 {
 		return errors.New("empty prompt")
 	}
@@ -79,9 +79,23 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 
 	session := r.cache.begin(r.Model, inputs)
 	defer session.close()
+
 	caches := session.caches
 	tokens := session.remaining
 	prefillChunk := prefillChunkSize()
+
+	// Request periodic snapshots during prefill and near the end of the
+	// prompt so that long prompts can be partially restored and
+	// thinking/generation can be retried without full reprocessing.
+	const snapshotInterval = 8192
+	for offset := snapshotInterval; offset < len(inputs); offset += snapshotInterval {
+		session.requestSnapshot(offset)
+	}
+
+	const preThinking = 4
+	if end := len(inputs) - preThinking; end > 0 {
+		session.requestSnapshot(end)
+	}
 
 	materializeCaches := func() {
 		state := make([]*mlx.Array, 0, 2*len(caches))
@@ -103,12 +117,11 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 
 		n := min(prefillChunk, total-processed-1)
 
-		// If there's a pending intermediate snapshot, split the batch
-		// so we can capture it at the exact offset. The cache offset
-		// after this batch will be: baseOffset + processed + n.
-		if session.snapshotOffset > 0 {
+		// If there's a pending snapshot, split the batch so we can
+		// capture it at the exact offset.
+		if snapOffset := session.nextPendingSnapshot(); snapOffset > 0 {
 			baseOffset := len(session.inputs) - len(tokens)
-			tokensUntilSnapshot := session.snapshotOffset - (baseOffset + processed)
+			tokensUntilSnapshot := snapOffset - (baseOffset + processed)
 			if tokensUntilSnapshot > 0 && tokensUntilSnapshot < n {
 				n = tokensUntilSnapshot
 			}
@@ -120,11 +133,11 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		processed += n
 		slog.Info("Prompt processing progress", "processed", processed, "total", total)
 
-		// Create snapshot at branch point for future diverging requests.
-		if session.snapshotOffset > 0 {
+		// Create snapshot if we've reached a pending offset.
+		if snapOffset := session.nextPendingSnapshot(); snapOffset > 0 {
 			baseOffset := len(session.inputs) - len(tokens)
-			if baseOffset+processed >= session.snapshotOffset {
-				session.snapshot(false)
+			if baseOffset+processed >= snapOffset {
+				session.snapshot()
 			}
 		}
 
