@@ -667,6 +667,88 @@ func TestHermesEnsureInstalledWindowsWithoutWSLGivesGuidance(t *testing.T) {
 	}
 }
 
+func TestHermesEnsureInstalledUnixPromptsBeforeInstall(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell test binaries")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withHermesPlatform(t, "darwin")
+	withLauncherHooks(t)
+	t.Setenv("PATH", tmpDir)
+
+	writeScript := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	writeScript("curl", "#!/bin/sh\nexit 0\n")
+	writeScript("git", "#!/bin/sh\nexit 0\n")
+	writeScript("bash", fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$*" >> %q
+/bin/cat > %q <<'EOS'
+#!/bin/sh
+exit 0
+EOS
+/bin/chmod +x %q
+exit 0
+`, filepath.Join(tmpDir, "bash.log"), filepath.Join(tmpDir, "hermes"), filepath.Join(tmpDir, "hermes")))
+
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		if prompt != "Hermes is not installed. Install now?" {
+			t.Fatalf("unexpected install prompt %q", prompt)
+		}
+		return true, nil
+	}
+
+	h := &Hermes{}
+	if err := h.ensureInstalled(); err != nil {
+		t.Fatalf("ensureInstalled returned error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "bash.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "-lc "+hermesInstallScript) {
+		t.Fatalf("expected official install script invocation, got logs:\n%s", data)
+	}
+}
+
+func TestHermesEnsureInstalledUnixCanBeDeclined(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX shell test binaries")
+	}
+
+	tmpDir := t.TempDir()
+	setTestHome(t, tmpDir)
+	withHermesPlatform(t, "darwin")
+	withLauncherHooks(t)
+	t.Setenv("PATH", tmpDir)
+
+	for _, name := range []string{"bash", "curl", "git"} {
+		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		if prompt != "Hermes is not installed. Install now?" {
+			t.Fatalf("unexpected install prompt %q", prompt)
+		}
+		return false, nil
+	}
+
+	h := &Hermes{}
+	err := h.ensureInstalled()
+	if err == nil || !strings.Contains(err.Error(), "hermes installation cancelled") {
+		t.Fatalf("expected install cancellation error, got %v", err)
+	}
+}
+
 func TestHermesEnsureInstalledWindowsUsesWSLHandoff(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("simulates WSL through POSIX shell scripts")

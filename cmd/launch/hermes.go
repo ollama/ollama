@@ -175,6 +175,14 @@ func (h *Hermes) ensureInstalled() error {
 		return fmt.Errorf("Hermes is not installed and required dependencies are missing\n\nInstall the following first:\n  %s\n\nThen re-run:\n  ollama launch hermes", strings.Join(missing, "\n  "))
 	}
 
+	ok, err := ConfirmPrompt("Hermes is not installed. Install now?")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("hermes installation cancelled")
+	}
+
 	fmt.Fprintf(os.Stderr, "\nInstalling Hermes...\n")
 	if err := hermesAttachedCommand("bash", "-lc", hermesInstallScript).Run(); err != nil {
 		return fmt.Errorf("failed to install hermes: %w", err)
