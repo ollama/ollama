@@ -115,7 +115,7 @@ func (s *Server) Load(ctx context.Context, _ ml.SystemInfo, gpus []ml.DeviceInfo
 	// Spawn subprocess: ollama runner --imagegen-engine --model <path> --port <port>
 	cmd := exec.Command(exe, "runner", "--imagegen-engine", "--model", s.modelName, "--port", strconv.Itoa(port))
 	cmd.Env = os.Environ()
-	configureMLXSubprocessEnv(cmd)
+	configureMLXSubprocessEnv(cmd, ml.LibraryPaths(gpus))
 
 	s.cmd = cmd
 
@@ -182,24 +182,15 @@ func mlxLibraryPathEnv() string {
 	}
 }
 
-func mlxLibraryPaths() []string {
-	if ml.LibOllamaPath == "" {
-		return nil
-	}
-
-	libraryPaths := []string{ml.LibOllamaPath}
-	if mlxDirs, err := filepath.Glob(filepath.Join(ml.LibOllamaPath, "mlx*")); err == nil {
-		libraryPaths = append(libraryPaths, mlxDirs...)
-	}
-	return libraryPaths
-}
-
-func configureMLXSubprocessEnv(cmd *exec.Cmd) {
-	libraryPaths := mlxLibraryPaths()
+func configureMLXSubprocessEnv(cmd *exec.Cmd, libraryPaths []string) {
 	if len(libraryPaths) == 0 {
 		return
 	}
 
+	// Search order for the imagegen runner is:
+	//   1. bundled lib/ollama root
+	//   2. backend-specific library dirs selected during GPU discovery
+	//   3. any existing caller-provided library path values
 	pathEnv := mlxLibraryPathEnv()
 	pathEnvPaths := append([]string{}, libraryPaths...)
 	if existingPath, ok := os.LookupEnv(pathEnv); ok {
