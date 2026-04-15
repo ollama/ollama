@@ -55,7 +55,7 @@ The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `olla
 ollama
 ```
 
-You'll be prompted to run a model or connect Ollama to your existing agents or applications such as `claude`, `codex`, `copilot`, `openclaw` and more.
+You'll be prompted to run a model or connect Ollama to your existing agents or applications such as `Claude Code`, `OpenClaw`, `OpenCode` , `Codex`, `Copilot`,  and more.
 
 ### Coding
 

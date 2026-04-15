@@ -4,7 +4,7 @@ title: Copilot CLI
 
 GitHub Copilot CLI is GitHub's AI coding agent for the terminal. It can understand your codebase, make edits, run commands, and help you build software faster.
 
-Open models can be used with Copilot CLI through Ollama's OpenAI-compatible API, enabling you to use models such as `qwen3.5`, `glm-5:cloud`, `kimi-k2.5:cloud`.
+Open models can be used with Copilot CLI through Ollama, enabling you to use models such as `qwen3.5`, `glm-5.1:cloud`, `kimi-k2.5:cloud`.
 
 ## Install
 
@@ -90,4 +90,4 @@ Or run with environment variables inline:
 COPILOT_PROVIDER_BASE_URL=http://localhost:11434/v1 COPILOT_PROVIDER_API_KEY= COPILOT_PROVIDER_WIRE_API=responses COPILOT_MODEL=glm-5:cloud copilot
 ```
 
-**Note:** For best results, we recommend models with at least 64k context tokens. See the [context length documentation](/context-length) for how to adjust context length in Ollama.
+**Note:** Copilot requires a large context window. We recommend at least 64k tokens. See the [context length documentation](/context-length) for how to adjust context length in Ollama.
