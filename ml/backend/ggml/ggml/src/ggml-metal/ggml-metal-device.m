@@ -790,7 +790,7 @@ ggml_metal_device_t ggml_metal_device_init(void) {
 
             dev->library = ggml_metal_library_init(dev);
             if (!dev->library) {
-                GGML_LOG_ERROR("%s: error: failed to create library\n", __func__);
+                GGML_LOG_ERROR("%s: error: failed to create Metal library (Metal shader compilation failure)\n", __func__);
             }
 
             if (dev->props.use_residency_sets) {
