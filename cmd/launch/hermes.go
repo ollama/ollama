@@ -868,11 +868,6 @@ func hermesHasManagedCustomProvider(current any) bool {
 }
 
 func hermesManagedCustomProvider(entry map[string]any) bool {
-	providerKey, _ := entry["provider_key"].(string)
-	if strings.EqualFold(strings.TrimSpace(providerKey), hermesProviderKey) {
-		return true
-	}
-
 	name, _ := entry["name"].(string)
 	if !strings.EqualFold(strings.TrimSpace(name), hermesProviderName) {
 		return false
