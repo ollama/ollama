@@ -869,11 +869,7 @@ func hermesHasManagedCustomProvider(current any) bool {
 
 func hermesManagedCustomProvider(entry map[string]any) bool {
 	name, _ := entry["name"].(string)
-	if !strings.EqualFold(strings.TrimSpace(name), hermesProviderName) {
-		return false
-	}
-
-	return true
+	return strings.EqualFold(strings.TrimSpace(name), hermesProviderName)
 }
 
 func hermesNormalizeURL(raw string) string {
