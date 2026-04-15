@@ -350,13 +350,16 @@ func newManifestWriter(opts CreateOptions, capabilities []string, parserName, re
 		}
 
 		// Create config blob with version requirement
+		hfConfig, _ := readHFConfig(opts.ModelDir)
 		configData := model.ConfigV2{
-			ModelFormat:  "safetensors",
-			FileType:     strings.ToLower(strings.TrimSpace(opts.Quantize)),
-			Capabilities: caps,
-			Requires:     MinOllamaVersion,
-			Parser:       resolveParserName(opts.Modelfile, parserName),
-			Renderer:     resolveRendererName(opts.Modelfile, rendererName),
+			ModelFormat:    "safetensors",
+			FileType:       strings.ToLower(strings.TrimSpace(opts.Quantize)),
+			Capabilities:   caps,
+			Requires:       MinOllamaVersion,
+			Parser:         resolveParserName(opts.Modelfile, parserName),
+			Renderer:       resolveRendererName(opts.Modelfile, rendererName),
+			KVSharedLayers: hfConfig.TextConfig.NumKVSharedLayers,
+			SlidingWindow:  hfConfig.TextConfig.SlidingWindow,
 		}
 		configJSON, err := json.Marshal(configData)
 		if err != nil {
@@ -591,17 +594,8 @@ func getParserName(modelDir string) string {
 // getRendererName returns the renderer name for a model based on its architecture.
 // This reads the config.json from the model directory and determines the appropriate renderer.
 func getRendererName(modelDir string) string {
-	configPath := filepath.Join(modelDir, "config.json")
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return ""
-	}
-
-	var cfg struct {
-		Architectures []string `json:"architectures"`
-		ModelType     string   `json:"model_type"`
-	}
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	cfg, ok := readHFConfig(modelDir)
+	if !ok {
 		return ""
 	}
 
@@ -640,4 +634,27 @@ func getRendererName(modelDir string) string {
 	}
 
 	return ""
+}
+
+type hfConfig struct {
+	Architectures []string `json:"architectures"`
+	ModelType     string   `json:"model_type"`
+	TextConfig    struct {
+		NumKVSharedLayers int `json:"num_kv_shared_layers"`
+		SlidingWindow     int `json:"sliding_window"`
+	} `json:"text_config"`
+}
+
+func readHFConfig(modelDir string) (hfConfig, bool) {
+	configPath := filepath.Join(modelDir, "config.json")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return hfConfig{}, false
+	}
+
+	var cfg hfConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return hfConfig{}, false
+	}
+	return cfg, true
 }

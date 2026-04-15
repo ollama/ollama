@@ -368,6 +368,65 @@ func TestChatPromptRendererDoesNotRewriteMessageContent(t *testing.T) {
 	}
 }
 
+func TestRenderPromptGemma4LargeDisablesThinkingByDefault(t *testing.T) {
+	m := Model{
+		Config: model.ConfigV2{
+			Renderer:       "gemma4",
+			KVSharedLayers: 0,
+			SlidingWindow:  1024,
+		},
+	}
+
+	prompt, err := renderPrompt(&m, []api.Message{{Role: "user", Content: "Hi"}}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.HasSuffix(prompt, "<|turn>model\n<|channel>thought\n<channel|>") {
+		t.Fatalf("prompt missing empty thought prefill: %q", prompt)
+	}
+}
+
+func TestRenderPromptGemma4SmallKeepsDefaultGenerationPrompt(t *testing.T) {
+	m := Model{
+		Config: model.ConfigV2{
+			Renderer:       "gemma4",
+			KVSharedLayers: 18,
+			SlidingWindow:  512,
+		},
+	}
+
+	prompt, err := renderPrompt(&m, []api.Message{{Role: "user", Content: "Hi"}}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.HasSuffix(prompt, "<|turn>model\n") {
+		t.Fatalf("prompt has unexpected generation prompt: %q", prompt)
+	}
+	if strings.Contains(prompt, "<|channel>thought\n<channel|>") {
+		t.Fatalf("small Gemma4 prompt should not include empty thought prefill: %q", prompt)
+	}
+}
+
+func TestRenderPromptGemma4LargeNameFallback(t *testing.T) {
+	m := Model{
+		Name: "gemma4:26b-nvfp4",
+		Config: model.ConfigV2{
+			Renderer: "gemma4",
+		},
+	}
+
+	prompt, err := renderPrompt(&m, []api.Message{{Role: "user", Content: "Hi"}}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.HasSuffix(prompt, "<|turn>model\n<|channel>thought\n<channel|>") {
+		t.Fatalf("prompt missing empty thought prefill: %q", prompt)
+	}
+}
+
 func TestChatPromptGLMOcrRendererAddsImageTags(t *testing.T) {
 	msgs := []api.Message{
 		{

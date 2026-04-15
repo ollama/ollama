@@ -2,14 +2,16 @@ package model
 
 // ConfigV2 represents the configuration metadata for a model.
 type ConfigV2 struct {
-	ModelFormat   string   `json:"model_format"`
-	ModelFamily   string   `json:"model_family"`
-	ModelFamilies []string `json:"model_families"`
-	ModelType     string   `json:"model_type"` // shown as Parameter Size
-	FileType      string   `json:"file_type"`  // shown as Quantization Level
-	Renderer      string   `json:"renderer,omitempty"`
-	Parser        string   `json:"parser,omitempty"`
-	Requires      string   `json:"requires,omitempty"`
+	ModelFormat    string   `json:"model_format"`
+	ModelFamily    string   `json:"model_family"`
+	ModelFamilies  []string `json:"model_families"`
+	ModelType      string   `json:"model_type"` // shown as Parameter Size
+	FileType       string   `json:"file_type"`  // shown as Quantization Level
+	Renderer       string   `json:"renderer,omitempty"`
+	Parser         string   `json:"parser,omitempty"`
+	Requires       string   `json:"requires,omitempty"`
+	SlidingWindow  int      `json:"sliding_window,omitempty"`
+	KVSharedLayers int      `json:"kv_shared_layers,omitempty"`
 
 	RemoteHost  string `json:"remote_host,omitempty"`
 	RemoteModel string `json:"remote_model,omitempty"`

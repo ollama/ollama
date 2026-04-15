@@ -10,6 +10,10 @@ type Renderer interface {
 	Render(messages []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error)
 }
 
+type RenderOptions struct {
+	Gemma4DisableThinkingByDefault bool
+}
+
 type (
 	RendererConstructor func() Renderer
 	RendererRegistry    struct {
@@ -35,9 +39,16 @@ func Register(name string, renderer RendererConstructor) {
 }
 
 func RenderWithRenderer(name string, msgs []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error) {
+	return RenderWithRendererOptions(name, msgs, tools, think, RenderOptions{})
+}
+
+func RenderWithRendererOptions(name string, msgs []api.Message, tools []api.Tool, think *api.ThinkValue, opts RenderOptions) (string, error) {
 	renderer := rendererForName(name)
 	if renderer == nil {
 		return "", fmt.Errorf("unknown renderer %q", name)
+	}
+	if r, ok := renderer.(*Gemma4Renderer); ok {
+		r.disableThinkingByDefault = opts.Gemma4DisableThinkingByDefault
 	}
 	return renderer.Render(msgs, tools, think)
 }

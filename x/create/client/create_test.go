@@ -656,6 +656,24 @@ func TestGetRendererName(t *testing.T) {
 			want:       "glm-4.7",
 		},
 		{
+			name: "gemma4 e4b model",
+			configJSON: `{
+				"architectures": ["Gemma4ForConditionalGeneration"],
+				"model_type": "gemma4",
+				"text_config": {"num_kv_shared_layers": 18, "sliding_window": 512}
+			}`,
+			want: "gemma4",
+		},
+		{
+			name: "gemma4 26b model",
+			configJSON: `{
+				"architectures": ["Gemma4ForConditionalGeneration"],
+				"model_type": "gemma4",
+				"text_config": {"num_kv_shared_layers": 0, "sliding_window": 1024}
+			}`,
+			want: "gemma4",
+		},
+		{
 			name:       "llama model (no renderer)",
 			configJSON: `{"architectures": ["LlamaForCausalLM"]}`,
 			want:       "",

@@ -1751,6 +1751,23 @@ func TestGemma4SizeTemplateFixturesDifferAtGenerationPrompt(t *testing.T) {
 	assert.Contains(t, string(thirtyOneB), "{{- '<|channel>thought\\n<channel|>' -}}")
 }
 
+func TestGemma4LargeRendererDisablesThinkingByDefault(t *testing.T) {
+	messages := []api.Message{{Role: "user", Content: "Hi"}}
+
+	got, err := RenderWithRendererOptions("gemma4", messages, nil, nil, RenderOptions{Gemma4DisableThinkingByDefault: true})
+	assert.NoError(t, err)
+	assert.Equal(t, "<bos><|turn>user\nHi<turn|>\n<|turn>model\n<|channel>thought\n<channel|>", got)
+}
+
+func TestGemma4LargeRendererThinkingEnabled(t *testing.T) {
+	messages := []api.Message{{Role: "user", Content: "Hi"}}
+
+	got, err := RenderWithRendererOptions("gemma4", messages, nil, thinkTrue(), RenderOptions{Gemma4DisableThinkingByDefault: true})
+	assert.NoError(t, err)
+	assert.Contains(t, got, "<|turn>system\n<|think|>\n<turn|>\n")
+	assert.Equal(t, "<bos><|turn>system\n<|think|>\n<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\n", got)
+}
+
 // renderWithJinja2 shells out to uv + Python to render messages through the
 // E2B Jinja2 chat template. Returns the rendered string.
 func renderWithJinja2(t *testing.T, messages []api.Message, tools []api.Tool, think *api.ThinkValue) string {

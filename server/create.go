@@ -523,6 +523,8 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 				arch := layer.GGML.KV().Architecture()
 				switch arch {
 				case "gemma4":
+					config.KVSharedLayers = cmp.Or(config.KVSharedLayers, int(layer.GGML.KV().Uint("attention.shared_kv_layers", 0)))
+					config.SlidingWindow = cmp.Or(config.SlidingWindow, int(layer.GGML.KV().Uint("attention.sliding_window", 0)))
 					config.Renderer = cmp.Or(config.Renderer, "gemma4")
 					config.Parser = cmp.Or(config.Parser, "gemma4")
 					if _, ok := r.Parameters["stop"]; !ok {

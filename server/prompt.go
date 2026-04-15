@@ -115,7 +115,12 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 func renderPrompt(m *Model, msgs []api.Message, tools []api.Tool, think *api.ThinkValue) (string, error) {
 	if m.Config.Renderer != "" {
-		rendered, err := renderers.RenderWithRenderer(m.Config.Renderer, msgs, tools, think)
+		opts := renderers.RenderOptions{}
+		if m.Config.Renderer == "gemma4" {
+			opts.Gemma4DisableThinkingByDefault = isLargeGemma4(m)
+		}
+
+		rendered, err := renderers.RenderWithRendererOptions(m.Config.Renderer, msgs, tools, think, opts)
 		if err != nil {
 			return "", err
 		}
@@ -133,4 +138,13 @@ func renderPrompt(m *Model, msgs []api.Message, tools []api.Tool, think *api.Thi
 		return "", err
 	}
 	return b.String(), nil
+}
+
+func isLargeGemma4(m *Model) bool {
+	if m.Config.KVSharedLayers == 0 && m.Config.SlidingWindow == 1024 {
+		return true
+	}
+
+	sizeHint := strings.ToLower(m.Config.ModelType + " " + m.Name + " " + m.ShortName)
+	return strings.Contains(sizeHint, "26b") || strings.Contains(sizeHint, "31b")
 }
