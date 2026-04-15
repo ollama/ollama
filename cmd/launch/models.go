@@ -230,7 +230,7 @@ func pullMissingModel(ctx context.Context, client *api.Client, model string) err
 
 // prepareEditorIntegration persists models and applies editor-managed config files.
 func prepareEditorIntegration(name string, runner Runner, editor Editor, models []string) error {
-	if ok, err := confirmEditorEdit(runner, editor); err != nil {
+	if ok, err := confirmConfigEdit(runner, editor.Paths()); err != nil {
 		return err
 	} else if !ok {
 		return errCancelled
@@ -244,8 +244,22 @@ func prepareEditorIntegration(name string, runner Runner, editor Editor, models 
 	return nil
 }
 
-func confirmEditorEdit(runner Runner, editor Editor) (bool, error) {
-	paths := editor.Paths()
+func prepareManagedSingleIntegration(name string, runner Runner, managed ManagedSingleModel, model string) error {
+	if ok, err := confirmConfigEdit(runner, managed.Paths()); err != nil {
+		return err
+	} else if !ok {
+		return errCancelled
+	}
+	if err := managed.Configure(model); err != nil {
+		return fmt.Errorf("setup failed: %w", err)
+	}
+	if err := config.SaveIntegration(name, []string{model}); err != nil {
+		return fmt.Errorf("failed to save: %w", err)
+	}
+	return nil
+}
+
+func confirmConfigEdit(runner Runner, paths []string) (bool, error) {
 	if len(paths) == 0 {
 		return true, nil
 	}

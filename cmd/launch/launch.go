@@ -141,6 +141,36 @@ type Editor interface {
 	Models() []string
 }
 
+// ManagedSingleModel is the narrow launch-owned config path for integrations
+// like Hermes that have one primary model selected by launcher, need launcher
+// to persist minimal config, and still keep their own model discovery and
+// onboarding UX. This stays separate from Runner-only integrations and the
+// multi-model Editor flow so Hermes-specific behavior stays scoped to one path.
+type ManagedSingleModel interface {
+	Paths() []string
+	Configure(model string) error
+	CurrentModel() string
+	Onboard() error
+}
+
+// ManagedRuntimeRefresher lets managed integrations refresh any long-lived
+// background runtime after launch rewrites their config.
+type ManagedRuntimeRefresher interface {
+	RefreshRuntimeAfterConfigure() error
+}
+
+// ManagedOnboardingValidator lets managed integrations re-check saved
+// onboarding state when launcher needs a stronger live readiness signal.
+type ManagedOnboardingValidator interface {
+	OnboardingComplete() bool
+}
+
+// ManagedInteractiveOnboarding lets a managed integration declare whether its
+// onboarding step really requires an interactive terminal. Hermes does not.
+type ManagedInteractiveOnboarding interface {
+	RequiresInteractiveOnboarding() bool
+}
+
 type modelInfo struct {
 	Name        string
 	Remote      bool
@@ -177,6 +207,7 @@ Supported integrations:
   cline     Cline
   codex     Codex
   droid     Droid
+  hermes    Hermes Agent
   opencode  OpenCode
   openclaw  OpenClaw (aliases: clawdbot, moltbot)
   pi        Pi
@@ -186,6 +217,7 @@ Examples:
   ollama launch
   ollama launch claude
   ollama launch claude --model <model>
+  ollama launch hermes
   ollama launch droid --config (does not auto-launch)
   ollama launch codex -- -p myprofile (pass extra args to integration)
   ollama launch codex -- --sandbox workspace-write`,
@@ -308,34 +340,52 @@ func LaunchIntegration(ctx context.Context, req IntegrationLaunchRequest) error 
 	if err != nil {
 		return err
 	}
+
+	policy := launchIntegrationPolicy(req)
+	if policy.Confirm == LaunchConfirmAutoApprove && !isInteractiveSession() && req.ModelOverride == "" {
+		return fmt.Errorf("headless --yes launch for %s requires --model <model>", name)
+	}
+
+	launchClient, saved, err := prepareIntegrationLaunch(name, policy)
+	if err != nil {
+		return err
+	}
+
+	if managed, ok := runner.(ManagedSingleModel); ok {
+		if err := EnsureIntegrationInstalled(name, runner); err != nil {
+			return err
+		}
+		return launchClient.launchManagedSingleIntegration(ctx, name, runner, managed, saved, req)
+	}
+
 	if !req.ConfigureOnly {
 		if err := EnsureIntegrationInstalled(name, runner); err != nil {
 			return err
 		}
 	}
 
-	var policy LaunchPolicy
-	// TUI does not set a policy, whereas ollama launch <app> does as it can have flags which change the behavior
-	if req.Policy == nil {
-		policy = defaultLaunchPolicy(isInteractiveSession(), false)
-	} else {
-		policy = *req.Policy
-	}
-
-	launchClient, err := newLauncherClient(policy)
-	if err != nil {
-		return err
-	}
-	saved, _ := loadStoredIntegrationConfig(name)
-	// In headless --yes mode we cannot prompt, so require an explicit --model.
-	if policy.Confirm == LaunchConfirmAutoApprove && !isInteractiveSession() && req.ModelOverride == "" {
-		return fmt.Errorf("headless --yes launch for %s requires --model <model>", name)
-	}
-
 	if editor, ok := runner.(Editor); ok {
 		return launchClient.launchEditorIntegration(ctx, name, runner, editor, saved, req)
 	}
 	return launchClient.launchSingleIntegration(ctx, name, runner, saved, req)
+}
+
+func launchIntegrationPolicy(req IntegrationLaunchRequest) LaunchPolicy {
+	// TUI does not set a policy, whereas ollama launch <app> does as it can
+	// have flags which change the behavior.
+	if req.Policy != nil {
+		return *req.Policy
+	}
+	return defaultLaunchPolicy(isInteractiveSession(), false)
+}
+
+func prepareIntegrationLaunch(name string, policy LaunchPolicy) (*launcherClient, *config.IntegrationConfig, error) {
+	launchClient, err := newLauncherClient(policy)
+	if err != nil {
+		return nil, nil, err
+	}
+	saved, _ := loadStoredIntegrationConfig(name)
+	return launchClient, saved, nil
 }
 
 func (c *launcherClient) buildLauncherState(ctx context.Context) (*LauncherState, error) {
@@ -368,9 +418,18 @@ func (c *launcherClient) buildLauncherIntegrationState(ctx context.Context, info
 	if err != nil {
 		return LauncherIntegrationState{}, err
 	}
-	currentModel, usable, err := c.launcherModelState(ctx, info.Name, integration.editor)
-	if err != nil {
-		return LauncherIntegrationState{}, err
+	var currentModel string
+	var usable bool
+	if managed, ok := integration.spec.Runner.(ManagedSingleModel); ok {
+		currentModel, usable, err = c.launcherManagedModelState(ctx, info.Name, managed)
+		if err != nil {
+			return LauncherIntegrationState{}, err
+		}
+	} else {
+		currentModel, usable, err = c.launcherModelState(ctx, info.Name, integration.editor)
+		if err != nil {
+			return LauncherIntegrationState{}, err
+		}
 	}
 
 	return LauncherIntegrationState{
@@ -406,6 +465,28 @@ func (c *launcherClient) launcherModelState(ctx context.Context, name string, is
 	model := cfg.Models[0]
 	usable, usableErr := c.savedModelUsable(ctx, model)
 	return model, usableErr == nil && usable, nil
+}
+
+func (c *launcherClient) launcherManagedModelState(ctx context.Context, name string, managed ManagedSingleModel) (string, bool, error) {
+	current := managed.CurrentModel()
+	if current == "" {
+		cfg, loadErr := loadStoredIntegrationConfig(name)
+		if loadErr == nil {
+			current = primaryModelFromConfig(cfg)
+		}
+		if current != "" {
+			return current, false, nil
+		}
+	}
+	if current == "" {
+		return "", false, nil
+	}
+
+	usable, err := c.savedModelUsable(ctx, current)
+	if err != nil {
+		return current, false, err
+	}
+	return current, usable, nil
 }
 
 func (c *launcherClient) resolveRunModel(ctx context.Context, req RunModelRequest) (string, error) {
@@ -444,35 +525,15 @@ func (c *launcherClient) resolveRunModel(ctx context.Context, req RunModelReques
 }
 
 func (c *launcherClient) launchSingleIntegration(ctx context.Context, name string, runner Runner, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
-	current := primaryModelFromConfig(saved)
-	target := req.ModelOverride
-	needsConfigure := req.ForceConfigure
-
-	if target == "" {
-		target = current
-		usable, err := c.savedModelUsable(ctx, target)
-		if err != nil {
-			return err
-		}
-		if !usable {
-			needsConfigure = true
-		}
-	}
-
-	if needsConfigure {
-		selected, err := c.selectSingleModelWithSelector(ctx, fmt.Sprintf("Select model for %s:", runner), target, DefaultSingleSelector)
-		if err != nil {
-			return err
-		}
-		target = selected
-	} else if err := c.ensureModelsReady(ctx, []string{target}); err != nil {
+	target, _, err := c.resolveSingleIntegrationTarget(ctx, runner, primaryModelFromConfig(saved), req)
+	if err != nil {
 		return err
 	}
-
 	if target == "" {
 		return nil
 	}
 
+	current := primaryModelFromConfig(saved)
 	if target != current {
 		if err := config.SaveIntegration(name, []string{target}); err != nil {
 			return fmt.Errorf("failed to save: %w", err)
@@ -508,6 +569,102 @@ func (c *launcherClient) launchEditorIntegration(ctx context.Context, name strin
 	}
 
 	return launchAfterConfiguration(name, runner, models[0], req)
+}
+
+func (c *launcherClient) launchManagedSingleIntegration(ctx context.Context, name string, runner Runner, managed ManagedSingleModel, saved *config.IntegrationConfig, req IntegrationLaunchRequest) error {
+	current := managed.CurrentModel()
+	selectionCurrent := current
+	if selectionCurrent == "" {
+		selectionCurrent = primaryModelFromConfig(saved)
+	}
+
+	target, needsConfigure, err := c.resolveSingleIntegrationTarget(ctx, runner, selectionCurrent, req)
+	if err != nil {
+		return err
+	}
+	if target == "" {
+		return nil
+	}
+
+	if current == "" || needsConfigure || req.ModelOverride != "" || target != current {
+		if err := prepareManagedSingleIntegration(name, runner, managed, target); err != nil {
+			return err
+		}
+		if refresher, ok := managed.(ManagedRuntimeRefresher); ok {
+			if err := refresher.RefreshRuntimeAfterConfigure(); err != nil {
+				return err
+			}
+		}
+	}
+
+	if !managedIntegrationOnboarded(saved, managed) {
+		if !isInteractiveSession() && managedRequiresInteractiveOnboarding(managed) {
+			return fmt.Errorf("%s still needs interactive gateway setup; run 'ollama launch %s' in a terminal to finish onboarding", runner, name)
+		}
+		if err := managed.Onboard(); err != nil {
+			return err
+		}
+	}
+
+	if req.ConfigureOnly {
+		return nil
+	}
+
+	return runIntegration(runner, target, req.ExtraArgs)
+}
+
+func (c *launcherClient) resolveSingleIntegrationTarget(ctx context.Context, runner Runner, current string, req IntegrationLaunchRequest) (string, bool, error) {
+	target := req.ModelOverride
+	needsConfigure := req.ForceConfigure
+
+	if target == "" {
+		target = current
+		usable, err := c.savedModelUsable(ctx, target)
+		if err != nil {
+			return "", false, err
+		}
+		if !usable {
+			needsConfigure = true
+		}
+	}
+
+	if needsConfigure {
+		selected, err := c.selectSingleModelWithSelector(ctx, fmt.Sprintf("Select model for %s:", runner), target, DefaultSingleSelector)
+		if err != nil {
+			return "", false, err
+		}
+		target = selected
+	} else if err := c.ensureModelsReady(ctx, []string{target}); err != nil {
+		return "", false, err
+	}
+
+	return target, needsConfigure, nil
+}
+
+func savedIntegrationOnboarded(saved *config.IntegrationConfig) bool {
+	return saved != nil && saved.Onboarded
+}
+
+func managedIntegrationOnboarded(saved *config.IntegrationConfig, managed ManagedSingleModel) bool {
+	if !savedIntegrationOnboarded(saved) {
+		return false
+	}
+	validator, ok := managed.(ManagedOnboardingValidator)
+	if !ok {
+		return true
+	}
+	return validator.OnboardingComplete()
+}
+
+// Most managed integrations treat onboarding as an interactive terminal step.
+// Hermes opts out because its launch-owned onboarding is just bookkeeping, so
+// headless launches should not be blocked once config is already prepared.
+func managedRequiresInteractiveOnboarding(managed ManagedSingleModel) bool {
+	onboarding, ok := managed.(ManagedInteractiveOnboarding)
+	if !ok {
+		return true
+	}
+	return onboarding.RequiresInteractiveOnboarding()
 }
 
 func (c *launcherClient) selectSingleModelWithSelector(ctx context.Context, title, current string, selector SingleSelector) (string, error) {
