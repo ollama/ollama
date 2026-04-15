@@ -1508,6 +1508,13 @@ func TestGemma4RendererVariantsMatchExpectedGenerationPrompt(t *testing.T) {
 	}
 }
 
+func TestGemma4LargeRendererOmitsEmptyThoughtBlockWhenThinkingEnabled(t *testing.T) {
+	got, err := RenderWithRenderer("gemma4-large", []api.Message{{Role: "user", Content: "Hello"}}, nil, thinkTrue())
+	assert.NoError(t, err)
+	assert.Equal(t, "<bos><|turn>system\n<|think|>\n<turn|>\n<|turn>user\nHello<turn|>\n<|turn>model\n", got)
+	assert.NotContains(t, got, "<|channel>thought\n<channel|>")
+}
+
 func TestGemma4RendererMatchesJinja2ExpandedParity(t *testing.T) {
 	if os.Getenv("VERIFY_JINJA2") == "" {
 		t.Skip("set VERIFY_JINJA2=1 to run expanded Jinja2 parity checks")
