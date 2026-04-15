@@ -337,9 +337,10 @@ func (c *RotatingKVCache) State() []*mlx.Array {
 	if c.keys == nil || c.values == nil {
 		return nil
 	}
+	liveLen := min(c.offset, c.keys.Dim(2))
 	return []*mlx.Array{
-		c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice()),
-		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, c.offset), mlx.Slice()),
+		c.keys.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, liveLen), mlx.Slice()),
+		c.values.Slice(mlx.Slice(), mlx.Slice(), mlx.Slice(0, liveLen), mlx.Slice()),
 	}
 }
 
