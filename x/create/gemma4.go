@@ -93,6 +93,13 @@ func (t gemma4ImportTransform) quantizationType(name string, shape []int32, quan
 		return ""
 	}
 
+	// MoE router logits choose the top-k expert set. Quantization noise here
+	// can flip expert selection, after which downstream activations diverge
+	// sharply. The tensor is small, so leave it in source precision.
+	if isGemma4RouterProjection(name) {
+		return ""
+	}
+
 	// Mixed-precision quantization: sensitive tensors get higher precision.
 	//
 	// Value projections (v_proj) directly determine attention output quality.
@@ -168,6 +175,12 @@ func (t gemma4ImportTransform) quantizationType(name string, shape []int32, quan
 func isEmbedTokensWeight(name string) bool {
 	return strings.HasSuffix(name, "embed_tokens.weight") &&
 		!strings.Contains(name, "per_layer")
+}
+
+func isGemma4RouterProjection(name string) bool {
+	return strings.HasSuffix(name, ".router.proj.weight") &&
+		!strings.Contains(name, "audio_tower") &&
+		!strings.Contains(name, "vision_tower")
 }
 
 func (t gemma4ImportTransform) transformTensor(td *safetensors.TensorData) ([]*safetensors.TensorData, error) {

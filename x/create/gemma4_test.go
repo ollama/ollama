@@ -68,6 +68,11 @@ func TestGemma4QuantizationType(t *testing.T) {
 		{"expert gate_up nvfp4", transform26B, "model.layers.0.moe.experts.42.gate_up_proj.weight", aligned, "nvfp4", "nvfp4"},
 		{"expert gate_up mxfp4", transform26B, "model.layers.0.moe.experts.42.gate_up_proj.weight", aligned, "mxfp4", "mxfp4"},
 
+		// === Router projection: expert selection is sensitive; keep source precision ===
+		{"router proj int4", transform26B, "model.layers.0.router.proj.weight", aligned, "int4", ""},
+		{"router proj nvfp4", transform26B, "model.layers.0.router.proj.weight", aligned, "nvfp4", ""},
+		{"router proj mxfp4", transform26B, "model.layers.0.router.proj.weight", aligned, "mxfp4", ""},
+
 		// === k_proj: promoted only for 8-expert models ===
 		{"k_proj 128 experts int4", transform26B, "model.layers.0.self_attn.k_proj.weight", aligned, "int4", "int4"},
 		{"k_proj 8 experts int4", transform8E, "model.layers.0.self_attn.k_proj.weight", aligned, "int4", "int8"},
