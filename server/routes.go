@@ -1935,11 +1935,30 @@ func streamResponse(c *gin.Context, ch chan any) {
 
 func (s *Server) StatusHandler(c *gin.Context) {
 	disabled, source := internalcloud.Status()
+	gpuDevices := discover.GPUDevices(c.Request.Context(), nil)
+	gpus := make([]api.GpuInfo, 0, len(gpuDevices))
+	for _, d := range gpuDevices {
+		gpus = append(gpus, api.GpuInfo{
+			ID:           d.ID,
+			Backend:      d.Library,
+			Name:         d.Name,
+			Description:  d.Description,
+			Integrated:   d.Integrated,
+			PCIID:        d.PCIID,
+			TotalMemory:  d.TotalMemory,
+			FreeMemory:   d.FreeMemory,
+			ComputeMajor: d.ComputeMajor,
+			ComputeMinor: d.ComputeMinor,
+			DriverMajor:  d.DriverMajor,
+			DriverMinor:  d.DriverMinor,
+		})
+	}
 	c.JSON(http.StatusOK, api.StatusResponse{
 		Cloud: api.CloudStatus{
 			Disabled: disabled,
 			Source:   source,
 		},
+		Gpus: gpus,
 	})
 }
 
