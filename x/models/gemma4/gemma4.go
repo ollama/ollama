@@ -80,7 +80,6 @@ type TextConfig struct {
 	PLEProjScale    float32 `json:"-"` // 1/sqrt(hidden_size)
 	PLECombineScale float32 `json:"-"` // 2^(-0.5) = 0.7071...
 	RouterScale     float32 `json:"-"` // 1/sqrt(hidden_size)
-	SoftcapInv      float32 `json:"-"` // 1/final_logit_softcapping
 
 	// KV sharing: maps shared layer index -> donor layer index.
 	KVShareMap map[int32]int32 `json:"-"`
@@ -455,9 +454,6 @@ func parseTextConfig(configData []byte) (TextConfig, error) {
 		cfg.PLECombineScale = float32(math.Pow(2.0, -0.5))
 	}
 	cfg.RouterScale = float32(1.0 / math.Sqrt(float64(cfg.HiddenSize)))
-	if cfg.FinalLogitSoftcapping > 0 {
-		cfg.SoftcapInv = 1.0 / cfg.FinalLogitSoftcapping
-	}
 
 	// Compute KV sharing map.
 	cfg.KVShareMap = make(map[int32]int32)
