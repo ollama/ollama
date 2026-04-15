@@ -149,7 +149,12 @@ jobs:
     runs-on: windows
     steps:
       - run: |
-          choco install -y --no-progress ccache ninja
+          choco install -y --no-progress ninja
+          choco install -y --no-progress ccache
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "ccache install failed; continuing without ccache"
+            $global:LASTEXITCODE = 0
+          }
           if (Get-Command ccache -ErrorAction SilentlyContinue) {
             ccache -o cache_dir=${{ github.workspace }}\.ccache
           }
