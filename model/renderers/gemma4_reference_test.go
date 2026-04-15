@@ -799,6 +799,28 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|>Let me check.<|tool_response>",
 		},
 		{
+			name: "tool_call_response_with_prefill_content_needs_generation_prompt",
+			messages: []api.Message{
+				{Role: "system", Content: "You are helpful."},
+				{Role: "user", Content: "List files"},
+				{Role: "assistant", Content: "thought\n<channel|>", ToolCalls: []api.ToolCall{{
+					Function: api.ToolCallFunction{
+						Name:      "bash",
+						Arguments: testArgs(map[string]any{"command": "ls"}),
+					},
+				}}},
+				{Role: "tool", ToolName: "bash", Content: "file1.txt\nfile2.txt"},
+			},
+			tools:      bashRefTool(),
+			skipJinja2: true,
+			expected: "<bos><|turn>system\nYou are helpful." + bashDeclRef + "<turn|>\n" +
+				"<|turn>user\nList files<turn|>\n" +
+				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|>" +
+				"<|tool_response>response:bash{value:" + q + "file1.txt\nfile2.txt" + q + "}<tool_response|>" +
+				"thought\n<channel|><turn|>\n" +
+				"<|turn>model\n",
+		},
+		{
 			// Full round trip: call → response → assistant reply → user follow-up
 			name: "full_round_trip",
 			messages: []api.Message{
@@ -874,7 +896,9 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				"<|turn>user\nWeather?<turn|>\n" +
 				"<|turn>model\n<|tool_call>call:get_weather{city:" + q + "Paris" + q + "}<tool_call|>" +
 				"<|tool_response>response:get_weather{value:" + q + "Sunny" + q + "}<tool_response|>" +
-				"Let me check.<turn|>\n",
+				"Let me check.<turn|>\n" +
+				"<|turn>model\n",
+			skipJinja2: true,
 		},
 		{
 			// Numeric tool call arguments

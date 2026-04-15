@@ -62,6 +62,7 @@ func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkV
 	}
 
 	var prevMessageType string
+	lastTurnClosed := true
 
 	// Consecutive tool messages are folded into the preceding assistant turn,
 	// and adjacent assistant messages continue in the same model turn.
@@ -116,13 +117,17 @@ func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkV
 
 		if prevMessageType == "tool_call" && !toolResponsesEmitted {
 			sb.WriteString("<|tool_response>")
+			lastTurnClosed = false
 		} else if !(toolResponsesEmitted && !messageHadContent) {
 			sb.WriteString("<turn|>\n")
+			lastTurnClosed = true
+		} else {
+			lastTurnClosed = false
 		}
 	}
 
 	// Generation prompt.
-	if prevMessageType != "tool_response" && prevMessageType != "tool_call" {
+	if lastTurnClosed {
 		sb.WriteString("<|turn>model\n")
 	}
 
