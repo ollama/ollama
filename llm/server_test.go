@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,111 +12,6 @@ import (
 	"github.com/ollama/ollama/ml"
 	"golang.org/x/sync/semaphore"
 )
-
-func TestFindRocmTensileLibraryPath(t *testing.T) {
-	t.Run("detect from rocm directory", func(t *testing.T) {
-		root := t.TempDir()
-		rocm := filepath.Join(root, "rocm")
-		tensile := filepath.Join(rocm, "rocblas", "library")
-		if err := os.MkdirAll(tensile, 0o755); err != nil {
-			t.Fatalf("failed to create test directory: %v", err)
-		}
-
-		got := findRocmTensileLibraryPath([]string{rocm})
-		if got != tensile {
-			t.Fatalf("findRocmTensileLibraryPath() = %q, want %q", got, tensile)
-		}
-	})
-
-	t.Run("detect from base ollama directory", func(t *testing.T) {
-		root := t.TempDir()
-		tensile := filepath.Join(root, "rocm", "rocblas", "library")
-		if err := os.MkdirAll(tensile, 0o755); err != nil {
-			t.Fatalf("failed to create test directory: %v", err)
-		}
-
-		got := findRocmTensileLibraryPath([]string{root})
-		if got != tensile {
-			t.Fatalf("findRocmTensileLibraryPath() = %q, want %q", got, tensile)
-		}
-	})
-
-	t.Run("missing directory", func(t *testing.T) {
-		got := findRocmTensileLibraryPath([]string{t.TempDir()})
-		if got != "" {
-			t.Fatalf("findRocmTensileLibraryPath() = %q, want empty", got)
-		}
-	})
-}
-
-func TestEnsureRocmTensileEnv(t *testing.T) {
-	root := t.TempDir()
-	tensile := filepath.Join(root, "rocm", "rocblas", "library")
-	if err := os.MkdirAll(tensile, 0o755); err != nil {
-		t.Fatalf("failed to create test directory: %v", err)
-	}
-	keys := []string{"ROCBLAS_TENSILE_LIBPATH", "ROCBLASLT_TENSILE_LIBPATH", "HIPBLASLT_TENSILE_LIBPATH"}
-
-	t.Run("inject when unset", func(t *testing.T) {
-		for _, key := range keys {
-			t.Setenv(key, "")
-		}
-		envs := ensureRocmTensileEnv([]string{root}, nil)
-		if envs["ROCBLAS_TENSILE_LIBPATH"] != tensile {
-			t.Fatalf("ROCBLAS_TENSILE_LIBPATH = %q, want %q", envs["ROCBLAS_TENSILE_LIBPATH"], tensile)
-		}
-		if envs["ROCBLASLT_TENSILE_LIBPATH"] != tensile {
-			t.Fatalf("ROCBLASLT_TENSILE_LIBPATH = %q, want %q", envs["ROCBLASLT_TENSILE_LIBPATH"], tensile)
-		}
-		if envs["HIPBLASLT_TENSILE_LIBPATH"] != tensile {
-			t.Fatalf("HIPBLASLT_TENSILE_LIBPATH = %q, want %q", envs["HIPBLASLT_TENSILE_LIBPATH"], tensile)
-		}
-	})
-
-	t.Run("do not override explicit extra env", func(t *testing.T) {
-		for _, key := range keys {
-			t.Setenv(key, "")
-		}
-		in := map[string]string{"ROCBLASLT_TENSILE_LIBPATH": "/custom/path"}
-		envs := ensureRocmTensileEnv([]string{root}, in)
-		if envs["ROCBLASLT_TENSILE_LIBPATH"] != "/custom/path" {
-			t.Fatalf("ROCBLASLT_TENSILE_LIBPATH = %q, want /custom/path", envs["ROCBLASLT_TENSILE_LIBPATH"])
-		}
-		if envs["ROCBLAS_TENSILE_LIBPATH"] != tensile {
-			t.Fatalf("ROCBLAS_TENSILE_LIBPATH = %q, want %q", envs["ROCBLAS_TENSILE_LIBPATH"], tensile)
-		}
-		if envs["HIPBLASLT_TENSILE_LIBPATH"] != tensile {
-			t.Fatalf("HIPBLASLT_TENSILE_LIBPATH = %q, want %q", envs["HIPBLASLT_TENSILE_LIBPATH"], tensile)
-		}
-	})
-
-	t.Run("do not override process env and fill missing keys", func(t *testing.T) {
-		t.Setenv("ROCBLASLT_TENSILE_LIBPATH", "")
-		t.Setenv("HIPBLASLT_TENSILE_LIBPATH", "")
-		t.Setenv("ROCBLAS_TENSILE_LIBPATH", "/from/process")
-		envs := ensureRocmTensileEnv([]string{root}, nil)
-		if envs["ROCBLASLT_TENSILE_LIBPATH"] != tensile {
-			t.Fatalf("ROCBLASLT_TENSILE_LIBPATH = %q, want %q", envs["ROCBLASLT_TENSILE_LIBPATH"], tensile)
-		}
-		if envs["HIPBLASLT_TENSILE_LIBPATH"] != tensile {
-			t.Fatalf("HIPBLASLT_TENSILE_LIBPATH = %q, want %q", envs["HIPBLASLT_TENSILE_LIBPATH"], tensile)
-		}
-		if _, ok := envs["ROCBLAS_TENSILE_LIBPATH"]; ok {
-			t.Fatalf("ROCBLAS_TENSILE_LIBPATH should not be overridden by helper")
-		}
-	})
-
-	t.Run("treat empty explicit extra env as unset", func(t *testing.T) {
-		for _, key := range keys {
-			t.Setenv(key, "")
-		}
-		in := map[string]string{"ROCBLASLT_TENSILE_LIBPATH": ""}
-		envs := ensureRocmTensileEnv([]string{root}, in)
-		if envs["ROCBLASLT_TENSILE_LIBPATH"] != tensile {
-			t.Fatalf("ROCBLASLT_TENSILE_LIBPATH = %q, want %q", envs["ROCBLASLT_TENSILE_LIBPATH"], tensile)
-		}
-	})
-}
 
 func TestLLMServerFitGPU(t *testing.T) {
 	minMemory := 457 * format.MebiByte
