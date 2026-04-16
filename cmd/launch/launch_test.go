@@ -409,7 +409,7 @@ func TestLaunchIntegration_ManagedSingleIntegrationConfigOnlySkipsFinalRun(t *te
 	}
 }
 
-func TestLaunchIntegration_ManagedSingleIntegrationRepairsMissingLiveConfigUsingSavedModel(t *testing.T) {
+func TestLaunchIntegration_ManagedSingleIntegrationSkipsRewriteWhenSavedMatches(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withInteractiveSession(t, true)
@@ -436,29 +436,30 @@ func TestLaunchIntegration_ManagedSingleIntegrationRepairsMissingLiveConfigUsing
 	withIntegrationOverride(t, "stubmanaged", runner)
 
 	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
-		t.Fatal("selector should not be called when saved model is reused for repair")
+		t.Fatal("selector should not be called when saved model matches target")
 		return "", nil
 	}
 	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
-		return true, nil
+		t.Fatal("confirm prompt should not run when saved model matches target")
+		return false, nil
 	}
 
 	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "stubmanaged"}); err != nil {
 		t.Fatalf("LaunchIntegration returned error: %v", err)
 	}
 
-	if diff := compareStrings(runner.configured, []string{"gemma4"}); diff != "" {
-		t.Fatalf("expected missing live config to be rewritten from saved model: %s", diff)
+	if len(runner.configured) != 0 {
+		t.Fatalf("expected Configure to be skipped when saved matches, got %v", runner.configured)
 	}
-	if runner.refreshCalls != 1 {
-		t.Fatalf("expected repaired config to refresh runtime once, got %d", runner.refreshCalls)
+	if runner.refreshCalls != 0 {
+		t.Fatalf("expected no runtime refresh when config is unchanged, got %d", runner.refreshCalls)
 	}
 	if runner.ranModel != "gemma4" {
-		t.Fatalf("expected launch to use repaired saved model, got %q", runner.ranModel)
+		t.Fatalf("expected launch to run saved model, got %q", runner.ranModel)
 	}
 }
 
-func TestLaunchIntegration_ManagedSingleIntegrationConfigureOnlyRepairsMissingLiveConfig(t *testing.T) {
+func TestLaunchIntegration_ManagedSingleIntegrationRewritesWhenSavedDiffers(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withInteractiveSession(t, true)
@@ -466,6 +467,8 @@ func TestLaunchIntegration_ManagedSingleIntegrationConfigureOnlyRepairsMissingLi
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"gemma4"}]}`)
 		case "/api/show":
 			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
 		default:
@@ -475,7 +478,7 @@ func TestLaunchIntegration_ManagedSingleIntegrationConfigureOnlyRepairsMissingLi
 	defer srv.Close()
 	t.Setenv("OLLAMA_HOST", srv.URL)
 
-	if err := config.SaveIntegration("stubmanaged", []string{"gemma4"}); err != nil {
+	if err := config.SaveIntegration("stubmanaged", []string{"old-model"}); err != nil {
 		t.Fatalf("failed to save managed integration config: %v", err)
 	}
 
@@ -483,7 +486,7 @@ func TestLaunchIntegration_ManagedSingleIntegrationConfigureOnlyRepairsMissingLi
 	withIntegrationOverride(t, "stubmanaged", runner)
 
 	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
-		t.Fatal("selector should not be called when saved model is reused for repair")
+		t.Fatal("selector should not be called when model override is provided")
 		return "", nil
 	}
 	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
@@ -492,19 +495,19 @@ func TestLaunchIntegration_ManagedSingleIntegrationConfigureOnlyRepairsMissingLi
 
 	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
 		Name:          "stubmanaged",
-		ConfigureOnly: true,
+		ModelOverride: "gemma4",
 	}); err != nil {
 		t.Fatalf("LaunchIntegration returned error: %v", err)
 	}
 
 	if diff := compareStrings(runner.configured, []string{"gemma4"}); diff != "" {
-		t.Fatalf("expected configure-only flow to rewrite missing live config: %s", diff)
+		t.Fatalf("expected Configure to run when saved differs from target: %s", diff)
 	}
 	if runner.refreshCalls != 1 {
-		t.Fatalf("expected configure-only repair to refresh runtime once, got %d", runner.refreshCalls)
+		t.Fatalf("expected runtime refresh once after configure, got %d", runner.refreshCalls)
 	}
-	if runner.ranModel != "" {
-		t.Fatalf("expected configure-only flow to skip final launch, got %q", runner.ranModel)
+	if runner.ranModel != "gemma4" {
+		t.Fatalf("expected launch to run configured model, got %q", runner.ranModel)
 	}
 }
 
