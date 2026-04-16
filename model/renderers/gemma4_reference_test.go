@@ -3,9 +3,9 @@ package renderers
 // TestGemma4RendererMatchesReference verifies our renderer matches the checked-in
 // Gemma 4 reference template.
 //
-// Current upstream Gemma 4 chat templates differ by model size, so the checked-in
-// reference intentionally uses the shared baseline without an empty generation-time
-// thought channel until renderer selection is split by size.
+// Current upstream Gemma 4 chat templates differ by model size. The checked-in
+// reference cases below use the small (e2b/e4b-style) baseline, with large
+// (26b/31b-style) checks covered separately in this file.
 //
 // To regenerate expected values, save the E2B template to
 // gemma4_e2b_chat_template.jinja2 and run:
@@ -1474,6 +1474,47 @@ Hi<turn|>
 	}
 }
 
+func TestGemma4RendererVariantsMatchExpectedGenerationPrompt(t *testing.T) {
+	messages := []api.Message{{Role: "user", Content: "Hello"}}
+
+	tests := []struct {
+		name         string
+		rendererName string
+		expected     string
+	}{
+		{
+			name:         "legacy_alias",
+			rendererName: "gemma4",
+			expected:     "<bos><|turn>user\nHello<turn|>\n<|turn>model\n",
+		},
+		{
+			name:         "small",
+			rendererName: "gemma4-small",
+			expected:     "<bos><|turn>user\nHello<turn|>\n<|turn>model\n",
+		},
+		{
+			name:         "large",
+			rendererName: "gemma4-large",
+			expected:     "<bos><|turn>user\nHello<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := RenderWithRenderer(tt.rendererName, messages, nil, nil)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}
+
+func TestGemma4LargeRendererOmitsEmptyThoughtBlockWhenThinkingEnabled(t *testing.T) {
+	got, err := RenderWithRenderer("gemma4-large", []api.Message{{Role: "user", Content: "Hello"}}, nil, thinkTrue())
+	assert.NoError(t, err)
+	assert.Equal(t, "<bos><|turn>system\n<|think|>\n<turn|>\n<|turn>user\nHello<turn|>\n<|turn>model\n", got)
+	assert.NotContains(t, got, "<|channel>thought\n<channel|>")
+}
+
 func TestGemma4RendererMatchesJinja2ExpandedParity(t *testing.T) {
 	if os.Getenv("VERIFY_JINJA2") == "" {
 		t.Skip("set VERIFY_JINJA2=1 to run expanded Jinja2 parity checks")
@@ -1616,15 +1657,35 @@ func TestGemma4RendererMatchesJinja2ExpandedParity(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			renderer := &Gemma4Renderer{useImgTags: RenderImgTags}
-			got, err := renderer.Render(tt.messages, tt.tools, tt.think)
-			assert.NoError(t, err)
+	variants := []struct {
+		name        string
+		renderer    *Gemma4Renderer
+		templateRel string
+	}{
+		{
+			name:        "small",
+			renderer:    &Gemma4Renderer{useImgTags: RenderImgTags},
+			templateRel: gemma4E2BTemplate,
+		},
+		{
+			name:        "large",
+			renderer:    &Gemma4Renderer{useImgTags: RenderImgTags, emptyBlockOnNothink: true},
+			templateRel: gemma431BTemplate,
+		},
+	}
 
-			jinja2Output := renderWithJinja2(t, tt.messages, tt.tools, tt.think)
-			assert.Equal(t, jinja2Output, got,
-				"renderer output doesn't match Jinja2 template output")
+	for _, variant := range variants {
+		t.Run(variant.name, func(t *testing.T) {
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					got, err := variant.renderer.Render(tt.messages, tt.tools, tt.think)
+					assert.NoError(t, err)
+
+					jinja2Output := renderWithJinja2Template(t, variant.templateRel, tt.messages, tt.tools, tt.think)
+					assert.Equal(t, jinja2Output, got,
+						"renderer output doesn't match Jinja2 template output")
+				})
+			}
 		})
 	}
 }

@@ -12,7 +12,8 @@ import (
 // <|turn>/<turn|> markers, <|"|> string delimiters, and <|tool>/
 // <|tool_call>/<|tool_response> tags for function calling.
 type Gemma4Renderer struct {
-	useImgTags bool
+	useImgTags          bool
+	emptyBlockOnNothink bool
 }
 
 const (
@@ -124,6 +125,9 @@ func (r *Gemma4Renderer) Render(messages []api.Message, tools []api.Tool, thinkV
 	// Generation prompt.
 	if prevMessageType != "tool_response" && prevMessageType != "tool_call" {
 		sb.WriteString("<|turn>model\n")
+		if r.emptyBlockOnNothink && !hasThink {
+			sb.WriteString("<|channel>thought\n<channel|>")
+		}
 	}
 
 	return sb.String(), nil

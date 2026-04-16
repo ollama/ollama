@@ -118,6 +118,39 @@ func TestModelCapabilities(t *testing.T) {
 			},
 			expectedCaps: []model.Capability{model.CapabilityEmbedding},
 		},
+		{
+			name: "gemma4 small safetensors suppresses vision and audio",
+			model: Model{
+				Config: model.ConfigV2{
+					ModelFormat:  "safetensors",
+					Renderer:     gemma4RendererSmall,
+					Capabilities: []string{"vision", "audio"},
+				},
+				Template: chatTemplate,
+			},
+		},
+		{
+			name: "gemma4 large safetensors suppresses vision and audio",
+			model: Model{
+				Config: model.ConfigV2{
+					ModelFormat:  "safetensors",
+					Renderer:     gemma4RendererLarge,
+					Capabilities: []string{"vision", "audio"},
+				},
+				Template: chatTemplate,
+			},
+		},
+		{
+			name: "legacy gemma4 safetensors suppresses vision and audio",
+			model: Model{
+				Config: model.ConfigV2{
+					ModelFormat:  "safetensors",
+					Renderer:     gemma4RendererLegacy,
+					Capabilities: []string{"vision", "audio"},
+				},
+				Template: chatTemplate,
+			},
+		},
 	}
 
 	// compare two slices of model.Capability regardless of order
