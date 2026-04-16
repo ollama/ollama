@@ -536,7 +536,7 @@ func TestSchedGetRunnerReusesSameDigestWhenModelPathEmpty(t *testing.T) {
 }
 
 func TestSchedExpireRunner(t *testing.T) {
-	ctx, done := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	ctx, done := context.WithTimeout(t.Context(), 500*time.Millisecond)
 	defer done()
 	s := InitScheduler(ctx)
 	s.waitForRecovery = 10 * time.Millisecond
@@ -589,14 +589,37 @@ func TestSchedExpireRunner(t *testing.T) {
 
 	s.expireRunner(&Model{ModelPath: modelPath})
 
-	s.finishedReqCh <- req
-	s.processCompleted(ctx)
+	// Run processCompleted in a goroutine with its own generous context.
+	// The original 20ms context was shared between initialization and
+	// processCompleted. Since processCompleted is a blocking loop that
+	// returns only when its context expires, AND it must process two
+	// channel events (finishedReqCh → expiredCh) before the unload
+	// happens, 20ms was insufficient on slow Windows CI — ctx.Done()
+	// won the select race before the expiredCh case could run.
+	processCtx, processDone := context.WithTimeout(t.Context(), 500*time.Millisecond)
+	defer processDone()
 
-	s.loadedMu.Lock()
-	if len(s.loaded) != 0 {
-		t.Fatalf("expected model to be unloaded")
+	s.finishedReqCh <- req
+	go s.processCompleted(processCtx)
+
+	// Wait for the model to be unloaded
+	deadline := time.After(500 * time.Millisecond)
+	for {
+		s.loadedMu.Lock()
+		n := len(s.loaded)
+		s.loadedMu.Unlock()
+		if n == 0 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("expected model to be unloaded")
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
 	}
-	s.loadedMu.Unlock()
+
+	processDone()
 }
 
 // TODO - add one scenario that triggers the bogus finished event with positive ref count
