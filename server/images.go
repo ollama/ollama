@@ -620,9 +620,8 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		return nil
 	}
 
-	skipVerify := make(map[string]bool)
 	for _, layer := range layers {
-		cacheHit, err := downloadBlob(ctx, downloadOpts{
+		_, err := downloadBlob(ctx, downloadOpts{
 			n:       n,
 			digest:  layer.Digest,
 			regOpts: regOpts,
@@ -631,15 +630,12 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		if err != nil {
 			return err
 		}
-		skipVerify[layer.Digest] = cacheHit
 		delete(deleteMap, layer.Digest)
 	}
 
+	// verify every blob sha256 to prevent arbitrary data being stored
 	fn(api.ProgressResponse{Status: "verifying sha256 digest"})
 	for _, layer := range layers {
-		if skipVerify[layer.Digest] {
-			continue
-		}
 		if err := verifyBlob(layer.Digest); err != nil {
 			if errors.Is(err, errDigestMismatch) {
 				fp, err := manifest.BlobsPath(layer.Digest)
