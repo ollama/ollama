@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
@@ -32,6 +33,10 @@ import (
 	"github.com/ollama/ollama/version"
 	"github.com/ollama/ollama/x/imagegen/transfer"
 )
+
+// Blobs newer than this may belong to another process that has not written its
+// manifest yet. They become eligible for the normal mark-and-sweep pass later.
+const layerPruneGracePeriod = time.Hour
 
 var (
 	errCapabilities         = errors.New("does not support")
@@ -478,10 +483,23 @@ func PruneLayers() error {
 	}
 
 	for _, blob := range blobs {
+		if blob.IsDir() {
+			continue
+		}
+
+		info, err := blob.Info()
+		if err != nil {
+			slog.Error("couldn't stat blob", "blob", blob.Name(), "error", err)
+			continue
+		}
+		if time.Since(info.ModTime()) < layerPruneGracePeriod {
+			continue
+		}
+
 		name := blob.Name()
 		name = strings.ReplaceAll(name, "-", ":")
 
-		_, err := manifest.BlobsPath(name)
+		_, err = manifest.BlobsPath(name)
 		if err != nil {
 			if errors.Is(err, manifest.ErrInvalidDigestFormat) {
 				// remove invalid blobs (e.g. partial downloads)
