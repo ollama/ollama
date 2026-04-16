@@ -29,8 +29,9 @@ type Tokenizer struct {
 	SpecialVocabulary []*SpecialVocabulary
 	Merges            []string
 
-	Pre      string
-	Template string
+	Pre          string
+	Template     string
+	StripAccents bool
 }
 
 func parseTokenizer(fsys fs.FS, specialTokenTypes []string) (*Tokenizer, error) {
@@ -138,6 +139,14 @@ func parseTokenizer(fsys fs.FS, specialTokenTypes []string) (*Tokenizer, error) 
 				}
 			} else {
 				return nil, fmt.Errorf("invalid chat_template: %w", err)
+			}
+		}
+
+		// Read strip_accents for BERT-style tokenizers
+		if bts, ok := p["strip_accents"]; ok {
+			if err := json.Unmarshal(bts, &t.StripAccents); err != nil {
+				// Ignore errors - default is false
+				slog.Debug("tokenizer", "strip_accents parse error", err)
 			}
 		}
 

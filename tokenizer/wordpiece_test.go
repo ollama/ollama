@@ -16,7 +16,8 @@ func TestWordPiece(t *testing.T) {
 			BOS:    []int32{1},
 			EOS:    []int32{2},
 		},
-		true, // lowercase
+		true,  // lowercase
+		false, // stripAccents
 	)
 
 	ids, err := wpm.Encode("Hello world!", true)
