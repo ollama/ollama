@@ -198,7 +198,7 @@ func minP(s *Sampler, scores *mlx.Array) *mlx.Array {
 		return scores
 	}
 
-	maxScore := scores.TakeAlongAxis(scores.Argmax(-1, true), -1)
+	maxScore := scores.MaxAxis(-1, true)
 	threshold := mlx.AddScalar(maxScore, float32(math.Log(float64(s.MinP))))
 
 	return mlx.Where(
