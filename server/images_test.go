@@ -13,6 +13,44 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
+func TestRegistryMaxStreams(t *testing.T) {
+	t.Setenv("OLLAMA_REGISTRY_MAXSTREAMS", "")
+	n, err := registryMaxStreams()
+	if err != nil {
+		t.Fatalf("registryMaxStreams() error = %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("registryMaxStreams() = %d, want 0", n)
+	}
+
+	t.Setenv("OLLAMA_REGISTRY_MAXSTREAMS", "4")
+	n, err = registryMaxStreams()
+	if err != nil {
+		t.Fatalf("registryMaxStreams() error = %v", err)
+	}
+	if n != 4 {
+		t.Fatalf("registryMaxStreams() = %d, want 4", n)
+	}
+
+	t.Setenv("OLLAMA_REGISTRY_MAXSTREAMS", "-1")
+	n, err = registryMaxStreams()
+	if err != nil {
+		t.Fatalf("registryMaxStreams() error = %v", err)
+	}
+	if n != -1 {
+		t.Fatalf("registryMaxStreams() = %d, want -1", n)
+	}
+
+	t.Setenv("OLLAMA_REGISTRY_MAXSTREAMS", "nope")
+	_, err = registryMaxStreams()
+	if err == nil {
+		t.Fatal("registryMaxStreams() error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "invalid OLLAMA_REGISTRY_MAXSTREAMS") {
+		t.Fatalf("registryMaxStreams() error = %q, want env var context", err)
+	}
+}
+
 func TestModelCapabilities(t *testing.T) {
 	// Create completion model (llama architecture without vision)
 	completionModelPath, _ := createBinFile(t, ggml.KV{

@@ -54,7 +54,7 @@ func upload(ctx context.Context, opts UploadOptions) error {
 		// Phase 1: Fast parallel HEAD checks to find which blobs need uploading
 		needsUpload := make([]bool, len(opts.Blobs))
 		{
-			sem := semaphore.NewWeighted(128) // High concurrency for HEAD checks
+			sem := semaphore.NewWeighted(int64(uploadHeadConcurrency(opts)))
 			g, gctx := errgroup.WithContext(ctx)
 			for i, blob := range opts.Blobs {
 				g.Go(func() error {
@@ -103,7 +103,7 @@ func upload(ctx context.Context, opts UploadOptions) error {
 			}
 		} else {
 			// Phase 2: Upload blobs that don't exist
-			concurrency := cmp.Or(opts.Concurrency, DefaultUploadConcurrency)
+			concurrency := uploadConcurrency(opts, len(toUpload))
 			sem := semaphore.NewWeighted(int64(concurrency))
 
 			g, gctx := errgroup.WithContext(ctx)
@@ -131,6 +131,23 @@ func upload(ctx context.Context, opts UploadOptions) error {
 		logutil.Trace("manifest push succeeded", "repo", opts.Repository, "ref", opts.ManifestRef)
 	}
 	return nil
+}
+
+func uploadHeadConcurrency(opts UploadOptions) int {
+	if opts.Concurrency < 0 {
+		return len(opts.Blobs)
+	}
+	if opts.Concurrency > 0 {
+		return opts.Concurrency
+	}
+	return 128
+}
+
+func uploadConcurrency(opts UploadOptions, blobs int) int {
+	if opts.Concurrency < 0 {
+		return blobs
+	}
+	return cmp.Or(opts.Concurrency, DefaultUploadConcurrency)
 }
 
 func (u *uploader) upload(ctx context.Context, blob Blob) error {
