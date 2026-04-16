@@ -81,8 +81,10 @@ export const useMessageAutoscroll = ({
 
   const applySpacer = useCallback(() => {
     const h = computeSpacer();
-    spacerInDOM.current = h;
-    setSpacerHeight(h);
+    if (h !== spacerInDOM.current) {
+      spacerInDOM.current = h;
+      setSpacerHeight(h);
+    }
   }, [computeSpacer]);
 
   const handleNewUserMessage = useCallback(() => {
@@ -122,19 +124,47 @@ export const useMessageAutoscroll = ({
     container.scrollTop = container.scrollHeight;
   }, [messages, isStreaming]);
 
-  // Track scroll position (chatId dep: key={chatId} recreates DOM)
+  // Track nearBottom via wheel/touch only (scroll events fire on programmatic scrolls too)
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
-    const onScroll = () => {
+    const isNearBottom = () => {
       const { scrollTop, scrollHeight, clientHeight } = container;
-      nearBottom.current =
-        scrollTop + clientHeight >= scrollHeight - BOTTOM_THRESHOLD;
+      return scrollTop + clientHeight >= scrollHeight - BOTTOM_THRESHOLD;
     };
 
-    container.addEventListener("scroll", onScroll, { passive: true });
-    return () => container.removeEventListener("scroll", onScroll);
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) {
+        nearBottom.current = false;
+      } else if (e.deltaY > 0) {
+        nearBottom.current = isNearBottom();
+      }
+    };
+
+    let lastTouchY = 0;
+    const onTouchStart = (e: TouchEvent) => {
+      lastTouchY = e.touches[0].clientY;
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      const y = e.touches[0].clientY;
+      if (y > lastTouchY) {
+        // finger moves down = content scrolls up
+        nearBottom.current = false;
+      } else if (y < lastTouchY) {
+        nearBottom.current = isNearBottom();
+      }
+      lastTouchY = y;
+    };
+
+    container.addEventListener("wheel", onWheel, { passive: true });
+    container.addEventListener("touchstart", onTouchStart, { passive: true });
+    container.addEventListener("touchmove", onTouchMove, { passive: true });
+    return () => {
+      container.removeEventListener("wheel", onWheel);
+      container.removeEventListener("touchstart", onTouchStart);
+      container.removeEventListener("touchmove", onTouchMove);
+    };
   }, [chatId]);
 
   // Observe layout changes (images loading, expand/collapse)
