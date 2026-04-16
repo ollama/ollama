@@ -24,7 +24,9 @@ func (m *embedModel) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, erro
 	hiddenStates := m.TextModel.Forward(ctx, batch, m.Cache)
 	hiddenStates = m.poolingType.Forward(ctx, hiddenStates)
 	for _, dense := range m.Dense {
-		hiddenStates = dense.Forward(ctx, hiddenStates)
+		if dense != nil {
+			hiddenStates = dense.Forward(ctx, hiddenStates)
+		}
 	}
 	hiddenStates = hiddenStates.L2Norm(ctx, 1e-12)
 	return hiddenStates, nil

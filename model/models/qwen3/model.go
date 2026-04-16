@@ -69,8 +69,12 @@ func (sa *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, 
 	key = key.Reshape(ctx, opts.headDim(), opts.numKVHeads, batchSize)
 	value = value.Reshape(ctx, opts.headDim(), opts.numKVHeads, batchSize)
 
-	query = sa.QueryNorm.Forward(ctx, query, opts.eps)
-	key = sa.KeyNorm.Forward(ctx, key, opts.eps)
+	if sa.QueryNorm != nil {
+		query = sa.QueryNorm.Forward(ctx, query, opts.eps)
+	}
+	if sa.KeyNorm != nil {
+		key = sa.KeyNorm.Forward(ctx, key, opts.eps)
+	}
 
 	query = opts.applyRotaryPositionEmbeddings(ctx, query, positions)
 	key = opts.applyRotaryPositionEmbeddings(ctx, key, positions)
