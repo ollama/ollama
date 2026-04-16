@@ -5,13 +5,57 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/model"
 )
+
+func TestPruneLayersSkipsRecentOrphans(t *testing.T) {
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
+
+	recentDigest := "sha256:0000000000000000000000000000000000000000000000000000000000000001"
+	oldDigest := "sha256:0000000000000000000000000000000000000000000000000000000000000002"
+
+	for _, digest := range []string{recentDigest, oldDigest} {
+		p, err := manifest.BlobsPath(digest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	oldPath, err := manifest.BlobsPath(oldDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldTime := time.Now().Add(-layerPruneGracePeriod - time.Hour)
+	if err := os.Chtimes(oldPath, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := PruneLayers(); err != nil {
+		t.Fatal(err)
+	}
+
+	recentPath, err := manifest.BlobsPath(recentDigest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(recentPath); err != nil {
+		t.Fatalf("recent orphan was pruned: %v", err)
+	}
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Fatalf("old orphan still exists: %v", err)
+	}
+}
 
 func TestModelCapabilities(t *testing.T) {
 	// Create completion model (llama architecture without vision)
