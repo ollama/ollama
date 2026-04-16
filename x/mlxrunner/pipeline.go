@@ -7,11 +7,15 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
+	sampler "github.com/ollama/ollama/x/mlxrunner/sample"
+	"github.com/ollama/ollama/x/tokenizer"
 )
 
 func prefillChunkSize() int {
@@ -25,17 +29,14 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 
 	mlx.ResetPeakMemory()
 	ctx := request.Ctx
-	var (
-		sample     *mlx.Array
-		nextSample *mlx.Array
-	)
+	var sample, nextSample sampler.Result
 
 	defer func() {
 		if request.Sampler != nil {
 			request.Sampler.Free()
 		}
-		mlx.Unpin(sample)
-		mlx.Unpin(nextSample)
+		mlx.Unpin(sample.Arrays()...)
+		mlx.Unpin(nextSample.Arrays()...)
 		mlx.Sweep()
 		mlx.ClearCache()
 
@@ -60,10 +61,10 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 
 	// Cap generation to stay within the model's context length
 	maxGenerate := r.contextLength - len(inputs)
-	if request.Options.MaxTokens <= 0 {
-		request.Options.MaxTokens = maxGenerate
+	if request.Options.NumPredict <= 0 {
+		request.Options.NumPredict = maxGenerate
 	} else {
-		request.Options.MaxTokens = min(request.Options.MaxTokens, maxGenerate)
+		request.Options.NumPredict = min(request.Options.NumPredict, maxGenerate)
 	}
 
 	request.Sampler.ResetHistory(inputs)
@@ -135,40 +136,38 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		mlx.ClearCache()
 	}
 
-	step := func(token *mlx.Array) *mlx.Array {
+	step := func(token *mlx.Array) sampler.Result {
 		fwd := r.Model.Forward(token.ExpandDims(0), caches)
 		logits := r.Model.Unembed(fwd)
 		logits = logits.Slice(mlx.Slice(), mlx.Slice(logits.Dim(1)-1), mlx.Slice()).Squeeze(1)
 
 		sample := request.Sampler.Sample(logits)
-
-		mlx.Pin(sample)
+		mlx.Pin(sample.Arrays()...)
 		mlx.Sweep()
-		mlx.AsyncEval(sample)
-
+		mlx.AsyncEval(sample.Arrays()...)
 		return sample
 	}
 
 	sample = step(mlx.FromValues(tokens[processed:], total-processed))
 
-	var b bytes.Buffer
+	dec := decoder{tokenizer: r.Tokenizer}
 
-	final := CompletionResponse{Done: true, PromptEvalCount: len(inputs), EvalCount: request.Options.MaxTokens, DoneReason: 1}
-	for i := range request.Options.MaxTokens {
+	final := CompletionResponse{Done: true, PromptEvalCount: len(inputs), EvalCount: request.Options.NumPredict, DoneReason: 1}
+	for i := range request.Options.NumPredict {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 
-		request.Sampler.AppendToken(sample)
-		nextSample = step(sample)
+		request.Sampler.AppendToken(sample.Token)
+		nextSample = step(sample.Token)
 
 		if i == 0 {
-			mlx.Eval(sample)
+			mlx.Eval(sample.Arrays()...)
 			final.PromptEvalDuration = time.Since(now)
 			now = time.Now()
 		}
 
-		output := int32(sample.Int())
+		output := int32(sample.Token.Int())
 		session.outputs = append(session.outputs, output)
 
 		if r.Tokenizer.IsEOS(output) {
@@ -177,17 +176,16 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 			break
 		}
 
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case request.Responses <- CompletionResponse{
-			Content: r.Decode(output, &b),
-		}:
+		if resp, ok := dec.decode(sample); ok {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case request.Responses <- resp:
+			}
 		}
 
-		mlx.Unpin(sample)
-		sample = nextSample
-		nextSample = nil
+		mlx.Unpin(sample.Arrays()...)
+		sample, nextSample = nextSample, sampler.Result{}
 
 		if i%256 == 0 {
 			mlx.ClearCache()
@@ -203,13 +201,57 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 	}
 }
 
-func (r Runner) Decode(sample int32, b *bytes.Buffer) string {
-	token := r.Tokenizer.Decode([]int32{sample})
+// decoder serializes sampled tokens into response chunks, holding bytes
+// whose UTF-8 sequence hasn't completed yet and the logprobs that belong
+// with those bytes so Content and Logprobs stay aligned when a chunk does
+// flush.
+type decoder struct {
+	tokenizer *tokenizer.Tokenizer
+	buf       bytes.Buffer
+	logprobs  []llm.Logprob
+}
 
-	if _, err := b.WriteString(token); err != nil {
-		slog.Error("Failed to write token to buffer", "error", err)
-		return ""
+func (d *decoder) decode(res sampler.Result) (CompletionResponse, bool) {
+	output := int32(res.Token.Int())
+	d.buf.WriteString(d.tokenizer.Decode([]int32{output}))
+	d.logprobs = append(d.logprobs, buildLogprob(res, d.tokenizer.Decode)...)
+
+	content := flushValidUTF8Prefix(&d.buf)
+	if content == "" {
+		return CompletionResponse{}, false
+	}
+	resp := CompletionResponse{Content: content, Logprobs: d.logprobs}
+	d.logprobs = nil
+	return resp, true
+}
+
+func buildLogprob(sample sampler.Result, decode func([]int32) string) []llm.Logprob {
+	if sample.Logprob == nil {
+		return nil
+	}
+	tok := func(id int32) string { return decode([]int32{id}) }
+
+	out := llm.Logprob{
+		TokenLogprob: llm.TokenLogprob{
+			Token:   tok(int32(sample.Token.Int())),
+			Logprob: float64(sample.Logprob.Floats()[0]),
+		},
 	}
 
-	return flushValidUTF8Prefix(b)
+	if sample.TopTokens != nil {
+		ids := sample.TopTokens.Ints()
+		vals := sample.TopLogprobs.Floats()
+		pairs := make([]llm.TokenLogprob, len(ids))
+		for i, id := range ids {
+			pairs[i] = llm.TokenLogprob{
+				Token:   tok(int32(id)),
+				Logprob: float64(vals[i]),
+			}
+		}
+		sort.Slice(pairs, func(i, j int) bool {
+			return pairs[i].Logprob > pairs[j].Logprob
+		})
+		out.TopLogprobs = pairs
+	}
+	return []llm.Logprob{out}
 }
