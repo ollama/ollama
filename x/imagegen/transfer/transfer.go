@@ -73,7 +73,7 @@ type UploadOptions struct {
 	Blobs       []Blob                                                             // Blobs to upload
 	BaseURL     string                                                             // Registry base URL
 	SrcDir      string                                                             // Source directory containing blobs
-	Concurrency int                                                                // Max parallel uploads (default 32)
+	Concurrency int                                                                // Max parallel upload requests and preflight checks (default 32 uploads, 128 checks)
 	Progress    func(completed, total int64)                                       // Progress callback (optional)
 	Client      *http.Client                                                       // HTTP client (optional, uses default)
 	Token       string                                                             // Auth token (optional)

@@ -950,6 +950,66 @@ func TestUploadParallelism(t *testing.T) {
 	t.Logf("Uploaded %d blobs in %v with max %d concurrent requests", numBlobs, elapsed, maxConcurrent.Load())
 }
 
+func TestUploadConcurrencyCapsRequests(t *testing.T) {
+	clientDir := t.TempDir()
+	const numBlobs = 8
+	const concurrency = 2
+
+	blobs := make([]Blob, numBlobs)
+	for i := range numBlobs {
+		blobs[i], _ = createTestBlob(t, clientDir, 1024+i*100)
+	}
+
+	var activeRequests atomic.Int32
+	var maxConcurrent atomic.Int32
+	var uploadID atomic.Int32
+
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := activeRequests.Add(1)
+		defer activeRequests.Add(-1)
+
+		for {
+			old := maxConcurrent.Load()
+			if current <= old || maxConcurrent.CompareAndSwap(old, current) {
+				break
+			}
+		}
+
+		time.Sleep(10 * time.Millisecond)
+
+		switch r.Method {
+		case http.MethodHead:
+			http.NotFound(w, r)
+		case http.MethodPost:
+			id := uploadID.Add(1)
+			w.Header().Set("Location", fmt.Sprintf("%s/v2/library/_/blobs/uploads/%d", serverURL, id))
+			w.WriteHeader(http.StatusAccepted)
+		case http.MethodPut:
+			io.Copy(io.Discard, r.Body)
+			w.WriteHeader(http.StatusCreated)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	serverURL = server.URL
+
+	err := Upload(context.Background(), UploadOptions{
+		Blobs:       blobs,
+		BaseURL:     server.URL,
+		SrcDir:      clientDir,
+		Concurrency: concurrency,
+	})
+	if err != nil {
+		t.Fatalf("Upload failed: %v", err)
+	}
+
+	if maxConcurrent.Load() > concurrency {
+		t.Fatalf("max concurrent requests = %d, want <= %d", maxConcurrent.Load(), concurrency)
+	}
+}
+
 // ==================== Stall Detection Test ====================
 
 func TestDownloadStallDetection(t *testing.T) {

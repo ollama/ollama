@@ -785,6 +785,11 @@ func pushWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer
 		}
 	}
 
+	maxStreams, err := registryMaxStreams()
+	if err != nil {
+		return err
+	}
+
 	srcDir, err := manifest.BlobsPath("")
 	if err != nil {
 		return err
@@ -825,11 +830,26 @@ func pushWithTransfer(ctx context.Context, n model.Name, layers []manifest.Layer
 		Progress:    progress,
 		Token:       regOpts.Token,
 		GetToken:    getToken,
+		Concurrency: maxStreams,
 		Logger:      slog.Default(),
 		Manifest:    manifestJSON,
 		ManifestRef: n.Tag,
 		Repository:  n.DisplayNamespaceModel(),
 	})
+}
+
+func registryMaxStreams() (int, error) {
+	maxStreams := os.Getenv("OLLAMA_REGISTRY_MAXSTREAMS")
+	if maxStreams == "" {
+		return 0, nil
+	}
+
+	n, err := strconv.Atoi(maxStreams)
+	if err != nil {
+		return 0, fmt.Errorf("invalid OLLAMA_REGISTRY_MAXSTREAMS: %w", err)
+	}
+
+	return n, nil
 }
 
 func pullModelManifest(ctx context.Context, n model.Name, regOpts *registryOptions) (*manifest.Manifest, []byte, error) {
