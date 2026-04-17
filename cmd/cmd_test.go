@@ -2277,3 +2277,76 @@ func TestIsLocalhost(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateModelNameArg(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr bool
+		errMsg  string
+	}{
+		{"no args", []string{}, true, "missing model name"},
+		{"one arg", []string{"model"}, false, ""},
+		{"extra arg", []string{"model", "extra"}, true, "extra arguments"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := &cobra.Command{}
+			err := validateModelNameArg(cmd, tt.args)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateModelNameArg() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil && tt.errMsg != "" && !strings.Contains(err.Error(), tt.errMsg) {
+				t.Errorf("validateModelNameArg() error = %v, want containing %v", err, tt.errMsg)
+			}
+		})
+	}
+}
+
+func TestValidateModelNameArgs(t *testing.T) {
+	t.Run("two args - missing both", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		fn := validateModelNameArgs(2)
+		err := fn(cmd, []string{})
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "missing source and/or destination model name") {
+			t.Errorf("expected 'missing source and/or destination model name', got %v", err)
+		}
+	})
+
+	t.Run("two args - one provided", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		fn := validateModelNameArgs(2)
+		err := fn(cmd, []string{"model"})
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "missing source and/or destination model name") {
+			t.Errorf("expected 'missing source and/or destination model name', got %v", err)
+		}
+	})
+
+	t.Run("two args - valid", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		fn := validateModelNameArgs(2)
+		err := fn(cmd, []string{"source", "dest"})
+		if err != nil {
+			t.Errorf("expected no error, got %v", err)
+		}
+	})
+
+	t.Run("two args - extra", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		fn := validateModelNameArgs(2)
+		err := fn(cmd, []string{"a", "b", "c"})
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "extra arguments") {
+			t.Errorf("expected 'extra arguments', got %v", err)
+		}
+	})
+}
