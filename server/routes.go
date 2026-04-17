@@ -101,6 +101,7 @@ type Server struct {
 	defaultNumCtx int
 	requestLogger *inferenceRequestLogger
 	modelCaches   *modelCaches
+	inferenceHook *inferenceHook
 }
 
 func init() {
@@ -784,10 +785,22 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		r.Response = sbContent.String()
 		r.Logprobs = allLogprobs
 
+		text, thinking, calls, done := s.applyPostInference(c, "/api/generate", r.Model, r.Response, r.Thinking, r.ToolCalls)
+		if done {
+			return
+		}
+		r.Response = text
+		r.Thinking = thinking
+		r.ToolCalls = calls
+
 		c.JSON(http.StatusOK, r)
 		return
 	}
 
+	// TODO: streaming post-inference — fires once at stream end; content
+	// is already flushed so only "modify the Done chunk with
+	// content_filter" is viable. Wire via streamResponse when scoped.
+	s.WarnStreamingPostHookSkipped("/api/generate")
 	streamResponse(c, ch)
 }
 
@@ -1898,28 +1911,32 @@ func (s *Server) GenerateRoutes() (http.Handler, error) {
 
 	// Inference
 	r.GET("/api/ps", s.PsHandler)
-	r.POST("/api/generate", s.withInferenceRequestLogging("/api/generate", s.GenerateHandler)...)
-	r.POST("/api/chat", s.withInferenceRequestLogging("/api/chat", s.ChatHandler)...)
+	r.POST("/api/generate", s.hookedChain("/api/generate", nil, s.GenerateHandler)...)
+	r.POST("/api/chat", s.hookedChain("/api/chat", nil, s.ChatHandler)...)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
 
 	// Inference (OpenAI compatibility)
 	// TODO(cloud-stage-a): apply Modelfile overlay deltas for local models with cloud
 	// parents on v1 request families while preserving this explicit :cloud passthrough.
-	r.POST("/v1/chat/completions", s.withInferenceRequestLogging("/v1/chat/completions", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.ChatMiddleware(), s.ChatHandler)...)
-	r.POST("/v1/completions", s.withInferenceRequestLogging("/v1/completions", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.CompletionsMiddleware(), s.GenerateHandler)...)
-	r.POST("/v1/embeddings", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.EmbeddingsMiddleware(), s.EmbedHandler)
+	//
+	// Hook middleware runs AFTER format-conversion (ChatMiddleware etc.) so it
+	// sees the normalized api.ChatRequest / api.GenerateRequest body.
+	cloudFallback := cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable)
+	r.POST("/v1/chat/completions", s.hookedChain("/v1/chat/completions", []gin.HandlerFunc{cloudFallback, middleware.ChatMiddleware()}, s.ChatHandler)...)
+	r.POST("/v1/completions", s.hookedChain("/v1/completions", []gin.HandlerFunc{cloudFallback, middleware.CompletionsMiddleware()}, s.GenerateHandler)...)
+	r.POST("/v1/embeddings", cloudFallback, middleware.EmbeddingsMiddleware(), s.EmbedHandler)
 	r.GET("/v1/models", middleware.ListMiddleware(), s.ListHandler)
 	r.GET("/v1/models/:model", cloudModelPathPassthroughMiddleware(cloudErrRemoteModelDetailsUnavailable), middleware.RetrieveMiddleware(), s.ShowHandler)
-	r.POST("/v1/responses", s.withInferenceRequestLogging("/v1/responses", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.ResponsesMiddleware(), s.ChatHandler)...)
+	r.POST("/v1/responses", s.hookedChain("/v1/responses", []gin.HandlerFunc{cloudFallback, middleware.ResponsesMiddleware()}, s.ChatHandler)...)
 	// OpenAI-compatible image generation endpoints
-	r.POST("/v1/images/generations", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.ImageGenerationsMiddleware(), s.GenerateHandler)
-	r.POST("/v1/images/edits", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.ImageEditsMiddleware(), s.GenerateHandler)
+	r.POST("/v1/images/generations", cloudFallback, middleware.ImageGenerationsMiddleware(), s.GenerateHandler)
+	r.POST("/v1/images/edits", cloudFallback, middleware.ImageEditsMiddleware(), s.GenerateHandler)
 	// OpenAI-compatible audio endpoint
 	r.POST("/v1/audio/transcriptions", middleware.TranscriptionMiddleware(), s.ChatHandler)
 
 	// Inference (Anthropic compatibility)
-	r.POST("/v1/messages", s.withInferenceRequestLogging("/v1/messages", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.AnthropicMessagesMiddleware(), s.ChatHandler)...)
+	r.POST("/v1/messages", s.hookedChain("/v1/messages", []gin.HandlerFunc{cloudFallback, middleware.AnthropicMessagesMiddleware()}, s.ChatHandler)...)
 
 	return r, nil
 }
@@ -1981,6 +1998,9 @@ func Serve(ln net.Listener) error {
 		modelCaches: newModelCaches(),
 	}
 	if err := s.initRequestLogging(); err != nil {
+		return err
+	}
+	if err := s.initInferenceHook(); err != nil {
 		return err
 	}
 
@@ -2389,7 +2409,7 @@ func shouldUseGoTemplate(m *Model) bool {
 	return !m.PreferChatTemplate && envconfig.GoTemplate(true)
 }
 
-func writeChatResponse(c *gin.Context, req api.ChatRequest, ch chan any) {
+func (s *Server) writeChatResponse(c *gin.Context, req api.ChatRequest, ch chan any) {
 	if req.Stream != nil && !*req.Stream {
 		var resp api.ChatResponse
 		var toolCalls []api.ToolCall
@@ -2435,10 +2455,20 @@ func writeChatResponse(c *gin.Context, req api.ChatRequest, ch chan any) {
 			resp.Message.ToolCalls = toolCalls
 		}
 
+		text, thinking, calls, done := s.applyPostInference(c, "/api/chat", resp.Model, resp.Message.Content, resp.Message.Thinking, resp.Message.ToolCalls)
+		if done {
+			return
+		}
+		resp.Message.Content = text
+		resp.Message.Thinking = thinking
+		resp.Message.ToolCalls = calls
+
 		c.JSON(http.StatusOK, resp)
 		return
 	}
 
+	// TODO: streaming post-inference — see note in GenerateHandler.
+	s.WarnStreamingPostHookSkipped("/api/chat")
 	streamResponse(c, ch)
 }
 
@@ -2935,7 +2965,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	}()
 
-	writeChatResponse(c, req, ch)
+	s.writeChatResponse(c, req, ch)
 }
 
 func prepareNativeChatRequest(ctx context.Context, m *Model, r llm.LlamaServer, opts *api.Options, nativeReq llm.ChatRequest, truncate bool) (llm.ChatRequest, error) {
@@ -3032,7 +3062,7 @@ func (s *Server) handleNativeChat(c *gin.Context, req api.ChatRequest, m *Model,
 		}
 	}()
 
-	writeChatResponse(c, req, ch)
+	s.writeChatResponse(c, req, ch)
 }
 
 func truncateNativeChatMessages(ctx context.Context, m *Model, r llm.LlamaServer, opts *api.Options, req llm.ChatRequest, truncate bool) ([]api.Message, error) {

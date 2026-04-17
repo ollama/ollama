@@ -1,0 +1,532 @@
+---
+title: Inference Webhooks
+---
+
+Ollama can POST each inference request and response to an external HTTP
+endpoint for inspection, modification, or blocking. This is a generic
+extension point — use it for guardrails (prompt-injection detection),
+audit logging, content-policy enforcement, prompt rewriting, or any other
+in-line processing.
+
+When no webhook URL is configured, no middleware is registered and there
+is **zero overhead**.
+
+## Quick start
+
+Point Ollama at a webhook endpoint with two environment variables:
+
+```shell
+export OLLAMA_HOOK_PRE_INFERENCE_URL=http://localhost:9101/pre
+export OLLAMA_HOOK_POST_INFERENCE_URL=http://localhost:9101/post
+ollama serve
+```
+
+Each inference request to `/api/chat`, `/api/generate`,
+`/v1/chat/completions`, `/v1/completions`, `/v1/responses`, or
+`/v1/messages` will now trigger:
+
+1. A `POST` to the pre-inference URL **before** the model is invoked.
+2. A `POST` to the post-inference URL **after** the response has been
+   assembled (once per request, not per token).
+
+The webhook response controls whether Ollama proceeds, rewrites the
+content, or returns an error to the client.
+
+## Configuration
+
+All configuration is via environment variables.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `OLLAMA_HOOK_PRE_INFERENCE_URL` | *(unset)* | Webhook called before inference. Unset disables pre-inference hooks. |
+| `OLLAMA_HOOK_POST_INFERENCE_URL` | *(unset)* | Webhook called after the response is assembled. Unset disables post-inference hooks. |
+| `OLLAMA_HOOK_TIMEOUT` | `5s` | Per-request HTTP timeout for the webhook call. |
+| `OLLAMA_HOOK_ON_ERROR` | `deny` | What to do when the webhook errors or times out. `deny` fails-closed (returns 503). `allow` fails-open. |
+| `OLLAMA_HOOK_HEADERS` | *(unset)* | Comma-separated list of `"Name:Value"` headers to attach to every webhook request — useful for API keys. |
+
+Bad URLs are rejected at startup (`ollama serve` fails to start) rather
+than per-request — only `http://` and `https://` schemes are accepted.
+
+Example with auth:
+
+```shell
+OLLAMA_HOOK_PRE_INFERENCE_URL=https://guardrails.example/pre \
+OLLAMA_HOOK_POST_INFERENCE_URL=https://guardrails.example/post \
+OLLAMA_HOOK_HEADERS='Authorization: Bearer sk-xxxx, X-App: my-app' \
+OLLAMA_HOOK_TIMEOUT=10s \
+ollama serve
+```
+
+## Wire protocol
+
+The wire format aligns with [Cursor's hooks contract][cursor-hooks] for
+the `permission` / `user_message` / `agent_message` fields, so existing
+Cursor-style hook scripts remain portable. The `modify` permission and
+the `messages` / `output_text` / `output_thinking` / `tool_calls`
+mutation fields are Ollama-specific extensions.
+
+[cursor-hooks]: https://cursor.com/docs/hooks
+
+### Headers
+
+Every outbound hook call carries:
+
+| Header | Value |
+|---|---|
+| `Content-Type` | `application/json` |
+| `User-Agent` | `ollama-hooks/<schema_version>` (today: `ollama-hooks/1`) |
+| `X-Ollama-Hook-Event` | `pre_inference` or `post_inference` |
+| `X-Ollama-Request-Id` | A per-request UUID, also reflected on the response Ollama returns to the client so audit logs can correlate the two ends. |
+
+Use `OLLAMA_HOOK_HEADERS` to add authentication or any other
+operator-defined headers.
+
+### Request: Ollama → webhook
+
+```json
+POST <configured-url>
+
+{
+  "schema_version": 1,
+  "event": "pre_inference",
+  "request_id": "f1b2...",
+  "route": "/api/chat",
+  "model": "llama3",
+  "messages": [
+    {"role": "system", "content": "..."},
+    {"role": "user", "content": "..."},
+    {"role": "assistant", "content": "...", "thinking": "...prior chain-of-thought..."},
+    {"role": "tool", "content": "...", "tool_call_id": "call_123"}
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "...",
+        "parameters": { "type": "object", "properties": { ... } }
+      }
+    }
+  ],
+  "options": { "temperature": 0.7 }
+}
+```
+
+For `event: "post_inference"` the body also carries the model output:
+
+```json
+{
+  "schema_version": 1,
+  "event": "post_inference",
+  "request_id": "f1b2...",
+  "route": "/api/chat",
+  "model": "llama3",
+  "output_text": "the assistant's generated text",
+  "output_thinking": "the assistant's chain-of-thought",
+  "tool_calls": [
+    {
+      "id": "call_123",
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "arguments": "{\"city\":\"SF\"}"
+      }
+    }
+  ]
+}
+```
+
+Messages are normalized to **OpenAI chat format** regardless of whether
+the caller hit `/api/chat`, `/v1/chat/completions`, `/v1/messages`, or
+`/api/generate`. Webhook services can parse one shape.
+
+`schema_version` is bumped on any backwards-incompatible change. Hook
+servers should branch on it and ignore unknown top-level fields so
+forward additions don't break them.
+
+Multimodal `images` on `api.Message` are **not** propagated through the
+hook in v1 to keep payloads bounded; routing image-bearing requests
+through a `modify` will lose the images. `thinking` is propagated in
+both directions.
+
+### Response: webhook → Ollama
+
+```json
+200 OK
+Content-Type: application/json
+
+{
+  "permission": "allow" | "deny" | "ask" | "modify",
+  "user_message": "shown to the end user when present",
+  "agent_message": "fed back to upstream agent loops when present",
+
+  "messages": [...],            // required when permission=modify on pre_inference
+  "output_text": "...",         // optional replacement on post_inference
+  "output_thinking": "...",     // optional replacement on post_inference
+  "tool_calls": [...]           // optional replacement on post_inference
+}
+```
+
+The four permission verbs:
+
+- **`allow`** — proceed unchanged
+- **`deny`** — hard refuse; return HTTP 400 with a structured error body
+- **`ask`** — human-in-the-loop signal; return HTTP 403 with a structured
+  body. The model content is NOT revealed to the caller. The client is
+  expected to surface `user_message` as a confirmation prompt and, if the
+  user agrees, re-submit with an out-of-band approval signal the webhook
+  recognizes (see "HITL pattern" below).
+- **`modify`** — rewrite fields (`messages` on pre, `output_text` /
+  `output_thinking` / `tool_calls` on post) and continue. Ollama-specific.
+
+`user_message` and `agent_message` are both optional. Convention follows
+Cursor: `user_message` is for the human the request is on behalf of,
+`agent_message` is for an upstream agent loop's context. Ollama echoes
+both verbatim into the HTTP error body so the calling application can
+route them appropriately.
+
+## Semantics
+
+All hook-decision responses share a common envelope so existing Ollama
+clients (which read only the top-level `error` string) keep working,
+while hook-aware clients can consume the structured `hook` object:
+
+```json
+{
+  "error": "<human-readable summary, always present>",
+  "hook": {
+    "permission": "allow" | "deny" | "ask" | "modify" | "unavailable",
+    "user_message": "<optional, present when the hook supplied one>",
+    "agent_message": "<optional, present when the hook supplied one>"
+  }
+}
+```
+
+| Condition | Ollama behavior |
+|---|---|
+| `permission: "allow"` | Proceed with the original content. |
+| `permission: "deny"` | Return `400 Bad Request` with the envelope above; `hook.permission = "deny"`. |
+| `permission: "ask"` | Return `403 Forbidden` with the envelope above; `hook.permission = "ask"`. Content is not released. |
+| `permission: "modify"` (pre, chat endpoints) | Replace the request `messages` with the returned `messages`, then proceed. Tool-call and `thinking` fields round-trip; `images` are lost. |
+| `permission: "modify"` (pre, `/api/generate`) | Allowed only when the returned messages are at most one `system` plus exactly one `user` (or empty role, treated as user). Anything richer (multi-turn, `assistant`/`tool` roles, multiple users) is refused with `502 Bad Gateway` rather than silently truncated; use a chat endpoint for richer rewrites. |
+| `permission: "modify"` (post, non-streaming) | Overwrite the assistant `output_text`, `output_thinking`, and/or `tool_calls` before returning the JSON. |
+| Unknown `permission` value | Treated as `deny` (returns 400). The safe default for a misbehaving hook is to refuse, not silently allow. |
+| HTTP 2xx but malformed JSON | Treated per `OLLAMA_HOOK_ON_ERROR`. |
+| HTTP non-2xx, timeout, connection failure | Treated per `OLLAMA_HOOK_ON_ERROR` — `deny` returns HTTP 503 with `hook.permission = "unavailable"`, `allow` passes through. |
+| Inbound request body > 32 MiB | Returns 413 before the hook is called. The body is `{"error": "..."}` (no `hook` envelope; this is an Ollama-side limit, not a hook decision). |
+| Hook response body > 4 MiB | Treated as a hook error per `OLLAMA_HOOK_ON_ERROR`. |
+
+## Human-in-the-loop (`ask`) patterns
+
+Ollama does not hold or resume paused requests — once a request is
+answered with `permission: "ask"`, the request is finished and Ollama
+returns HTTP 403. Any approval loop has to live **outside** Ollama,
+driven by the client, the webhook, or both.
+
+Two patterns work. Pick the one that matches where the user actually
+sits.
+
+| | Pattern 1: client-owned | Pattern 2: webhook-owned |
+|---|---|---|
+| Who surfaces the confirmation UI | Client (the caller of Ollama) | Webhook (via Slack / PagerDuty / an admin console) |
+| Who stores state | Nobody — the client retries with an approval signal in the body | The webhook holds a short-lived pending record |
+| Best when | Interactive user is in front of the client already | Interactive user is an operator on a separate system |
+| Ollama changes needed | None — `options` is passed through to the hook | None |
+
+### Pattern 1 — client-owned retry
+
+The client catches the 403, presents the reason to the user, and
+re-submits the same request with an extra signal in the `options` map
+that the webhook recognizes. The `options` field is part of the
+request body and is forwarded verbatim to the hook (see "Wire
+protocol" above).
+
+**Client**:
+
+```python
+# client.py
+import requests
+
+OLLAMA = "http://localhost:11434/api/chat"
+
+def chat(messages, approval=None):
+    body = {"model": "llama3", "messages": messages, "stream": False}
+    if approval is not None:
+        body["options"] = {"hook_approval": approval}
+    r = requests.post(OLLAMA, json=body)
+    if r.status_code == 403:
+        hook = r.json().get("hook", {})
+        if hook.get("permission") == "ask":
+            print(f"Approval required: {hook.get('user_message', '')}")
+            if input("Approve? [y/N] ").strip().lower() != "y":
+                raise RuntimeError("user declined")
+            # re-submit with the approval signal the webhook expects
+            return chat(messages, approval="user-confirmed")
+    r.raise_for_status()
+    return r.json()
+```
+
+**Webhook**:
+
+```python
+# ask_webhook.py
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import json, re
+
+SENSITIVE = re.compile(r"\b(delete|drop|wipe|rm\s+-rf)\b", re.I)
+
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers.get("content-length", 0))))
+        text = " ".join(m.get("content", "") for m in body.get("messages", []))
+        is_sensitive = bool(SENSITIVE.search(text))
+        approved = body.get("options", {}).get("hook_approval") == "user-confirmed"
+
+        if is_sensitive and not approved:
+            reply = {
+                "permission": "ask",
+                "user_message": "Confirm: this prompt touches destructive commands.",
+                "agent_message": "Request flagged by sensitive-keyword guard.",
+            }
+        else:
+            reply = {"permission": "allow"}
+
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(reply).encode())
+
+HTTPServer(("", 9101), H).serve_forever()
+```
+
+Production-grade variants should sign the approval token (e.g., HMAC a
+fingerprint of the request + a per-request nonce returned in the 403
+body) so the webhook can verify the user actually saw the same request
+they're now approving. The trivial `"user-confirmed"` string above is
+for illustration only.
+
+### Pattern 2 — webhook-owned fingerprint store
+
+The webhook itself tracks pending approvals, keyed on a fingerprint of
+the request. First call: record the fingerprint, fire a notification
+to an operator, return `ask`. Second call with the same fingerprint:
+look up the record and, if approved, return `allow`. The client just
+retries blindly (or polls) — it doesn't need to carry an approval
+token.
+
+**Webhook**:
+
+```python
+# operator_webhook.py
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from datetime import datetime, timedelta
+import hashlib, json, threading
+
+TTL = timedelta(minutes=10)
+STORE: dict[str, dict] = {}      # fingerprint -> {"approved": bool, "expires": dt}
+LOCK = threading.Lock()
+
+def fingerprint(body: dict) -> str:
+    # Hash the parts that uniquely identify this request.
+    # Exclude transport-level fields (request_id, options) that vary
+    # between retries so the same semantic request hashes the same.
+    relevant = {
+        "model":    body.get("model"),
+        "messages": body.get("messages"),
+        "tools":    body.get("tools"),
+    }
+    return hashlib.sha256(json.dumps(relevant, sort_keys=True).encode()).hexdigest()
+
+def notify_operator(fp: str, body: dict) -> None:
+    # In real life: Slack webhook, PagerDuty, an admin UI, ...
+    print(f"[approval needed] fp={fp[:12]} model={body.get('model')}")
+    print(f"  click to approve: http://ops.example/approve/{fp}")
+
+def approve(fp: str) -> None:
+    """Called by your operator tooling when a human approves."""
+    with LOCK:
+        if fp in STORE:
+            STORE[fp]["approved"] = True
+
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers.get("content-length", 0))))
+        fp = fingerprint(body)
+
+        with LOCK:
+            rec = STORE.get(fp)
+            now = datetime.utcnow()
+            if rec and rec["expires"] < now:
+                STORE.pop(fp, None)
+                rec = None
+
+            if rec and rec["approved"]:
+                STORE.pop(fp, None)          # single-use
+                reply = {"permission": "allow"}
+            elif rec:
+                reply = {"permission": "ask", "user_message": "awaiting operator approval"}
+            else:
+                STORE[fp] = {"approved": False, "expires": now + TTL}
+                notify_operator(fp, body)
+                reply = {"permission": "ask", "user_message": "operator notified; retry in a bit"}
+
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(reply).encode())
+
+HTTPServer(("", 9101), H).serve_forever()
+```
+
+**Client** is trivial here — on 403, wait and retry (or back off). No
+body changes between attempts.
+
+Production considerations for Pattern 2:
+
+- Use a real store (Redis, Postgres) instead of an in-memory dict;
+  `ollama serve` can be scaled horizontally and each replica would
+  otherwise hold its own ghost state.
+- Persist approvals audit-style: who approved, when, fingerprint,
+  truncated request preview.
+- Cap pending records and shed excess with 429 / `permission: "deny"`.
+- Bind the fingerprint to a user ID if you have one — otherwise anyone
+  submitting the same request benefits from someone else's approval.
+
+### Choosing between patterns
+
+- **User sits at the client** (chat UI, IDE, CLI) → Pattern 1.
+- **User is an operator on a separate system** (ops console, Slack
+  channel, PagerDuty) → Pattern 2.
+- **Both** — run Pattern 2 and let Pattern 1 short-circuit by checking
+  `options.hook_approval` first, so interactive users don't wait on an
+  operator while the operator review still happens for non-interactive
+  callers.
+
+### What Ollama does NOT do
+
+Ollama does not provide `/api/pending`, `/api/approve`, request
+parking, or resume-by-id. That would make Ollama stateful, add a
+persistence dependency, and duplicate capabilities that belong in a
+purpose-built approval service. Both patterns above keep that
+statefulness where it belongs — in the webhook or the client.
+
+## Streaming behavior
+
+The post-inference webhook only fires for non-streaming responses
+(`stream: false`) today. For streaming responses the hook is skipped —
+tokens are flushed to the client as they're produced, so there is no
+assembly point at which the hook could meaningfully intervene. Support for
+firing at stream end (and signaling via `done_reason: "content_filter"`)
+is planned; track it in the webhook source.
+
+**If the post-hook is configured for policy enforcement and a client
+requests `stream: true`, the hook is silently skipped for that request.**
+Ollama emits a one-shot `Warn` log on the first streamed request with a
+post-hook configured, so operators can detect the misconfiguration. For
+hard enforcement, gate `stream: true` at your ingress or set `stream:
+false` on clients that must be subject to post-inference policy.
+
+Use `stream: false` if you need post-inference guardrails.
+
+## Cost of a denied response
+
+The pre-hook runs **before** inference, so a `deny` or `ask` verdict on
+a pre-hook cancels the request before any model work. The post-hook
+runs **after** the model has finished generating, so a `deny` or `ask`
+verdict on a post-hook still consumes the full generation cost (GPU
+time, and any cloud-inference billing); only the delivery to the client
+is suppressed. Treat post-inference as an egress filter, not an
+inference-cost control.
+
+If the threat model is "prevent the model from ever seeing a bad
+prompt," only the pre-hook satisfies it.
+
+## Example: a minimal webhook that always allows
+
+```python
+# always_allow.py
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import json
+
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        self.rfile.read(int(self.headers.get("content-length", 0)))
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps({"permission": "allow"}).encode())
+
+HTTPServer(("", 9101), H).serve_forever()
+```
+
+```shell
+python3 always_allow.py &
+OLLAMA_HOOK_PRE_INFERENCE_URL=http://localhost:9101/pre \
+OLLAMA_HOOK_POST_INFERENCE_URL=http://localhost:9101/post \
+  ollama serve
+```
+
+## Example: deny a known jailbreak
+
+```python
+# deny_jailbreaks.py
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import json, re
+
+BAD = re.compile(r"ignore\s+(all\s+)?previous\s+instructions", re.I)
+
+class H(BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers.get("content-length", 0))))
+        text = " ".join(m.get("content", "") for m in body.get("messages", []))
+        if BAD.search(text):
+            reply = {
+                "permission": "deny",
+                "user_message": "Your prompt was blocked by policy.",
+                "agent_message": "Detected prompt-injection pattern.",
+            }
+        else:
+            reply = {"permission": "allow"}
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(reply).encode())
+
+HTTPServer(("", 9101), H).serve_forever()
+```
+
+## Performance
+
+- When both `OLLAMA_HOOK_*_URL` are unset, no middleware is registered —
+  zero added latency.
+- When configured, each request makes one HTTP round trip before
+  inference starts and one after the response is assembled. Budget your
+  `OLLAMA_HOOK_TIMEOUT` accordingly (5s default).
+- Non-streaming responses add the post-inference call latency to
+  total-response time. Streaming responses stream tokens as usual; the
+  post-inference call is skipped for streaming responses today (see
+  "Streaming behavior" above).
+
+## Security considerations
+
+- Treat the webhook as an in-path dependency. A compromised webhook can
+  see and modify every prompt and response.
+- Prefer `OLLAMA_HOOK_ON_ERROR=deny` (default) when the webhook is
+  security-critical. Use `allow` (fail-open) only when availability
+  matters more than enforcement. Ollama emits a one-shot `Warn` log
+  the first time a fail-open occurs on each channel (pre / post) so
+  operators can detect silent bypasses.
+- Use `OLLAMA_HOOK_HEADERS` to authenticate the Ollama → webhook call
+  (mutual auth, API keys, signed headers).
+- `user_message` and `agent_message` returned by the hook are reflected
+  into the HTTP response body Ollama sends to the client. Ollama strips
+  control characters and truncates at 256 chars to prevent
+  response-splitting and log-injection, but the strings are still
+  attacker-controllable from Ollama's perspective; do not embed
+  confidential data in them.
+- Webhooks should treat payloads as untrusted — attacker-controlled
+  content may be embedded in messages and tool output.
+- URLs configured via `OLLAMA_HOOK_*_URL` accept only `http://` and
+  `https://` schemes. The `userinfo` portion is redacted in startup
+  logs, but operators should still prefer `OLLAMA_HOOK_HEADERS` over
+  inline credentials.
