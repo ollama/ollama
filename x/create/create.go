@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/manifest"
 	"github.com/ollama/ollama/x/safetensors"
 )
 
@@ -653,6 +654,21 @@ func newTensorImportTransform(modelDir string, cfg sourceModelConfig) (tensorImp
 func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer LayerCreator, createTensorLayer QuantizingTensorLayerCreator, writeManifest ManifestWriter, fn func(status string), createPackedLayer ...PackedTensorLayerCreator) error {
 	var layers []LayerInfo
 	var configLayer LayerInfo
+	keepAlive := manifest.StartLayerKeepAlive()
+	defer keepAlive.Close()
+
+	appendLayer := func(layer LayerInfo) {
+		keepAlive.Track(layer.Digest)
+		layers = append(layers, layer)
+	}
+
+	appendLayers := func(created []LayerInfo) {
+		for _, layer := range created {
+			keepAlive.Track(layer.Digest)
+		}
+		layers = append(layers, created...)
+	}
+
 	sourceConfig, err := readSourceModelConfig(modelDir)
 	if err != nil {
 		return fmt.Errorf("failed to read source config.json: %w", err)
@@ -750,7 +766,7 @@ func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer La
 					return err
 				}
 				if ok {
-					layers = append(layers, layer)
+					appendLayer(layer)
 					continue
 				}
 			}
@@ -826,7 +842,7 @@ func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer La
 						closeExtractors()
 						return fmt.Errorf("failed to create layer for %s: %w", outTD.Name, err)
 					}
-					layers = append(layers, newLayers...)
+					appendLayers(newLayers)
 				}
 			}
 		}
@@ -850,7 +866,7 @@ func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer La
 				closeExtractors()
 				return fmt.Errorf("failed to create packed layer for %s: %w", groupName, err)
 			}
-			layers = append(layers, layer)
+			appendLayer(layer)
 		}
 	}
 	closeExtractors()
@@ -887,7 +903,7 @@ func CreateSafetensorsModel(modelName, modelDir, quantize string, createLayer La
 			configLayer = layer
 		}
 
-		layers = append(layers, layer)
+		appendLayer(layer)
 	}
 
 	if configLayer.Digest == "" {
