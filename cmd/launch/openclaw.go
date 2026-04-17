@@ -126,7 +126,7 @@ func (c *Openclaw) Run(model string, args []string) error {
 	fmt.Fprintf(os.Stderr, "\n%sStarting your assistant — this may take a moment...%s\n\n", ansiGray, ansiReset)
 
 	token, port := c.gatewayInfo()
-	addr := fmt.Sprintf("localhost:%d", port)
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
 
 	// If the gateway is already running (e.g. via the daemon), restart it
 	// so it picks up any config changes (model, provider, etc.).
@@ -301,7 +301,7 @@ func (c *Openclaw) gatewayInfo() (token string, port int) {
 }
 
 func printOpenclawReady(bin, token string, port int, firstLaunch bool) {
-	u := fmt.Sprintf("http://localhost:%d", port)
+	u := fmt.Sprintf("http://127.0.0.1:%d", port)
 	if token != "" {
 		u += "/#token=" + url.QueryEscape(token)
 	}
