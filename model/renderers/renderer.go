@@ -81,8 +81,10 @@ func rendererForName(name string) Renderer {
 		return renderer
 	case "nemotron-3-nano":
 		return &Nemotron3NanoRenderer{}
-	case "gemma4":
+	case "gemma4", "gemma4-small":
 		return &Gemma4Renderer{useImgTags: RenderImgTags}
+	case "gemma4-large":
+		return &Gemma4Renderer{useImgTags: RenderImgTags, emptyBlockOnNothink: true}
 	case "functiongemma":
 		return &FunctionGemmaRenderer{}
 	case "glm-4.7":

@@ -1253,7 +1253,7 @@ func (g *GatedDeltaNet) Forward(x *mlx.Array, c cache.Cache, B, L int32, cfg *Co
 }
 
 func (m *DenseMLP) Forward(x *mlx.Array, _ *Config) *mlx.Array {
-	return m.DownProj.Forward(mlx.Mul(mlx.SiLU(m.GateProj.Forward(x)), m.UpProj.Forward(x)))
+	return m.DownProj.Forward(mlx.SwiGLU(m.GateProj.Forward(x), m.UpProj.Forward(x)))
 }
 
 func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.Array {
@@ -1283,13 +1283,13 @@ func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.
 			nil, idxFlat, true, s.GateGroupSize, s.GateBits, cfg.QuantMode, doSort)
 		up = mlx.GatherQMM(xFlat, s.UpWeightQ, s.UpScales, s.UpBiases,
 			nil, idxFlat, true, s.UpGroupSize, s.UpBits, cfg.QuantMode, doSort)
-		hidden = mlx.Mul(mlx.SiLU(gate), up)
+		hidden = mlx.SwiGLU(gate, up)
 		down = mlx.GatherQMM(hidden, s.DownWeightQ, s.DownScales, s.DownBiases,
 			nil, idxFlat, true, s.DownGroupSize, s.DownBits, cfg.QuantMode, doSort)
 	} else {
 		gate = mlx.GatherMM(xFlat, s.GateWeight, nil, idxFlat, doSort)
 		up = mlx.GatherMM(xFlat, s.UpWeight, nil, idxFlat, doSort)
-		hidden = mlx.Mul(mlx.SiLU(gate), up)
+		hidden = mlx.SwiGLU(gate, up)
 		down = mlx.GatherMM(hidden, s.DownWeight, nil, idxFlat, doSort)
 	}
 

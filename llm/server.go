@@ -210,6 +210,18 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		fa = false
 	}
 
+	// Gemma 4's 512-dim attention heads require MMA FA kernels (Turing+, compute >= 7.5).
+	// Older CUDA GPUs only have tile/vec FA kernels which abort on dk512 non-GQA attention.
+	if fa && f.KV().Architecture() == "gemma4" {
+		for _, gpu := range gpus {
+			if gpu.Library == "CUDA" && (gpu.ComputeMajor < 7 || (gpu.ComputeMajor == 7 && gpu.ComputeMinor < 5)) {
+				slog.Debug("disabling flash attention for gemma4 on pre-Turing GPU", "compute", fmt.Sprintf("%d.%d", gpu.ComputeMajor, gpu.ComputeMinor))
+				fa = false
+				break
+			}
+		}
+	}
+
 	kvct := strings.ToLower(envconfig.KvCacheType())
 
 	if tok == nil {

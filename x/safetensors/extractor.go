@@ -11,7 +11,6 @@ import (
 )
 
 // tensorInfo holds tensor metadata from safetensors headers.
-// This avoids depending on safetensors.go which requires the mlx tag.
 type tensorInfo struct {
 	Dtype       string  `json:"dtype"`
 	Shape       []int32 `json:"shape"`

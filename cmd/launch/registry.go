@@ -33,7 +33,7 @@ type IntegrationInfo struct {
 	Description string
 }
 
-var launcherIntegrationOrder = []string{"opencode", "droid", "pi"}
+var launcherIntegrationOrder = []string{"openclaw", "claude", "opencode", "hermes", "codex", "copilot", "droid", "pi"}
 
 var integrationSpecs = []*IntegrationSpec{
 	{
@@ -75,6 +75,19 @@ var integrationSpecs = []*IntegrationSpec{
 		},
 	},
 	{
+		Name:        "copilot",
+		Runner:      &Copilot{},
+		Aliases:     []string{"copilot-cli"},
+		Description: "GitHub's AI coding agent for the terminal",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				_, err := (&Copilot{}).findPath()
+				return err == nil
+			},
+			URL: "https://github.com/features/copilot/cli/",
+		},
+	},
+	{
 		Name:        "droid",
 		Runner:      &Droid{},
 		Description: "Factory's coding agent across terminal and IDEs",
@@ -92,8 +105,8 @@ var integrationSpecs = []*IntegrationSpec{
 		Description: "Anomaly's open-source coding agent",
 		Install: IntegrationInstallSpec{
 			CheckInstalled: func() bool {
-				_, err := exec.LookPath("opencode")
-				return err == nil
+				_, ok := findOpenCode()
+				return ok
 			},
 			URL: "https://opencode.ai",
 		},
@@ -134,6 +147,20 @@ var integrationSpecs = []*IntegrationSpec{
 				return err
 			},
 			Command: []string{"npm", "install", "-g", "@mariozechner/pi-coding-agent@latest"},
+		},
+	},
+	{
+		Name:        "hermes",
+		Runner:      &Hermes{},
+		Description: "Self-improving AI agent built by Nous Research",
+		Install: IntegrationInstallSpec{
+			CheckInstalled: func() bool {
+				return (&Hermes{}).installed()
+			},
+			EnsureInstalled: func() error {
+				return (&Hermes{}).ensureInstalled()
+			},
+			URL: "https://hermes-agent.nousresearch.com/docs/getting-started/installation/",
 		},
 	},
 	{
@@ -255,10 +282,10 @@ func ListVisibleIntegrationSpecs() []IntegrationSpec {
 			return aRank - bRank
 		}
 		if aRank > 0 {
-			return 1
+			return -1
 		}
 		if bRank > 0 {
-			return -1
+			return 1
 		}
 		return strings.Compare(a.Name, b.Name)
 	})

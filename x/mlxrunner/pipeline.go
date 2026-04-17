@@ -23,15 +23,6 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		return errors.New("model not loaded")
 	}
 
-	enableCompile := true
-	if modelCompile, ok := r.Model.(interface{ EnableCompile() bool }); ok {
-		enableCompile = modelCompile.EnableCompile()
-	}
-	if enableCompile {
-		mlx.EnableCompile()
-	} else {
-		mlx.DisableCompile()
-	}
 	mlx.ResetPeakMemory()
 	ctx := request.Ctx
 	var (

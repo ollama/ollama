@@ -82,7 +82,7 @@ func (db *database) init() error {
 		websearch_enabled BOOLEAN NOT NULL DEFAULT 0,
 		selected_model TEXT NOT NULL DEFAULT '',
 		sidebar_open BOOLEAN NOT NULL DEFAULT 0,
-		last_home_view TEXT NOT NULL DEFAULT 'chat',
+		last_home_view TEXT NOT NULL DEFAULT 'launch',
 		think_enabled BOOLEAN NOT NULL DEFAULT 0,
 		think_level TEXT NOT NULL DEFAULT '',
 		cloud_setting_migrated BOOLEAN NOT NULL DEFAULT 0,
@@ -527,7 +527,7 @@ func (db *database) migrateV14ToV15() error {
 
 // migrateV15ToV16 adds the last_home_view column to the settings table
 func (db *database) migrateV15ToV16() error {
-	_, err := db.conn.Exec(`ALTER TABLE settings ADD COLUMN last_home_view TEXT NOT NULL DEFAULT 'chat'`)
+	_, err := db.conn.Exec(`ALTER TABLE settings ADD COLUMN last_home_view TEXT NOT NULL DEFAULT 'launch'`)
 	if err != nil && !duplicateColumnError(err) {
 		return fmt.Errorf("add last_home_view column: %w", err)
 	}
@@ -1211,7 +1211,7 @@ func (db *database) setSettings(s Settings) error {
 	}
 	if lastHomeView != "chat" {
 		if _, ok := validLaunchView[lastHomeView]; !ok {
-			lastHomeView = "chat"
+			lastHomeView = "launch"
 		}
 	}
 

@@ -148,9 +148,7 @@ type DenseMLP struct {
 
 // Forward applies the SwiGLU MLP
 func (m *DenseMLP) Forward(x *mlx.Array) *mlx.Array {
-	gate := mlx.SiLU(m.GateProj.Forward(x))
-	up := m.UpProj.Forward(x)
-	return m.DownProj.Forward(mlx.Mul(gate, up))
+	return m.DownProj.Forward(mlx.SwiGLU(m.GateProj.Forward(x), m.UpProj.Forward(x)))
 }
 
 // MoEGate implements the expert gating mechanism
@@ -242,7 +240,7 @@ func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.
 		up = mlx.GatherQMM(xFlat, s.UpWeightQ, s.UpScales, s.UpBiases,
 			nil, idxFlat, true, s.UpGroupSize, s.UpBits, cfg.QuantMode, doSort)
 
-		hidden = mlx.Mul(mlx.SiLU(gate), up)
+		hidden = mlx.SwiGLU(gate, up)
 
 		down = mlx.GatherQMM(hidden, s.DownWeightQ, s.DownScales, s.DownBiases,
 			nil, idxFlat, true, s.DownGroupSize, s.DownBits, cfg.QuantMode, doSort)
@@ -250,7 +248,7 @@ func (s *SwitchMLP) Forward(x *mlx.Array, indices *mlx.Array, cfg *Config) *mlx.
 		gate = mlx.GatherMM(xFlat, mlx.Transpose(s.GateWeight, 0, 2, 1), nil, idxFlat, doSort)
 		up = mlx.GatherMM(xFlat, mlx.Transpose(s.UpWeight, 0, 2, 1), nil, idxFlat, doSort)
 
-		hidden = mlx.Mul(mlx.SiLU(gate), up)
+		hidden = mlx.SwiGLU(gate, up)
 
 		down = mlx.GatherMM(hidden, mlx.Transpose(s.DownWeight, 0, 2, 1), nil, idxFlat, doSort)
 	}
@@ -273,9 +271,7 @@ type SharedExperts struct {
 
 // Forward applies the shared expert MLP
 func (s *SharedExperts) Forward(x *mlx.Array) *mlx.Array {
-	gate := mlx.SiLU(s.GateProj.Forward(x))
-	up := s.UpProj.Forward(x)
-	return s.DownProj.Forward(mlx.Mul(gate, up))
+	return s.DownProj.Forward(mlx.SwiGLU(s.GateProj.Forward(x), s.UpProj.Forward(x)))
 }
 
 // MoE implements the full Mixture of Experts layer

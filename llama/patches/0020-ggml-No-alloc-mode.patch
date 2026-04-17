@@ -8,12 +8,13 @@ it does not allocate memory for tensors or operations. This can
 be used for calculating memory requirements. Tensors and graphs
 must be recreated with no-alloc set to false before loading data.
 ---
- ggml/include/ggml-backend.h     |   1 +
- ggml/src/ggml-backend-impl.h    |  16 +++
- ggml/src/ggml-backend.cpp       |  75 ++++++++++-
- ggml/src/ggml-cuda/common.cuh   |  83 +++++++++++-
- ggml/src/ggml-cuda/ggml-cuda.cu | 224 ++++++++++++++++++++++++++------
- 5 files changed, 354 insertions(+), 45 deletions(-)
+ ggml/include/ggml-backend.h      |   1 +
+ ggml/src/ggml-backend-impl.h     |  16 +++
+ ggml/src/ggml-backend.cpp        |  75 ++++++++++-
+ ggml/src/ggml-cuda/common.cuh    |  85 +++++++++++-
+ ggml/src/ggml-cuda/ggml-cuda.cu  | 224 +++++++++++++++++++++++++------
+ ggml/src/ggml-cuda/vendors/hip.h |   1 +
+ 6 files changed, 357 insertions(+), 45 deletions(-)
 
 diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
 index 93c95602d..dbbb61d9c 100644
@@ -226,7 +227,7 @@ index 498186a7c..7746e8b92 100644
  
  void ggml_backend_sched_set_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node, ggml_backend_t backend) {
 diff --git a/ggml/src/ggml-cuda/common.cuh b/ggml/src/ggml-cuda/common.cuh
-index 9fcb2f9fd..e800ee8f6 100644
+index 9fcb2f9fd..79673ac2e 100644
 --- a/ggml/src/ggml-cuda/common.cuh
 +++ b/ggml/src/ggml-cuda/common.cuh
 @@ -37,6 +37,64 @@
@@ -294,7 +295,7 @@ index 9fcb2f9fd..e800ee8f6 100644
  #define STRINGIZE_IMPL(...) #__VA_ARGS__
  #define STRINGIZE(...) STRINGIZE_IMPL(__VA_ARGS__)
  
-@@ -941,6 +976,9 @@ struct ggml_cuda_pool {
+@@ -941,6 +999,9 @@ struct ggml_cuda_pool {
  
      virtual void * alloc(size_t size, size_t * actual_size) = 0;
      virtual void free(void * ptr, size_t size) = 0;
@@ -304,7 +305,7 @@ index 9fcb2f9fd..e800ee8f6 100644
  };
  
  template<typename T>
-@@ -1232,11 +1270,15 @@ struct ggml_backend_cuda_context {
+@@ -1232,11 +1293,15 @@ struct ggml_backend_cuda_context {
      // pool
      std::unique_ptr<ggml_cuda_pool> pools[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_STREAMS];
  
@@ -322,7 +323,7 @@ index 9fcb2f9fd..e800ee8f6 100644
          }
          return *pools[device][curr_stream_no];
      }
-@@ -1244,6 +1286,22 @@ struct ggml_backend_cuda_context {
+@@ -1244,6 +1309,22 @@ struct ggml_backend_cuda_context {
      ggml_cuda_pool & pool() {
          return pool(device);
      }
@@ -345,18 +346,6 @@ index 9fcb2f9fd..e800ee8f6 100644
  };
  
  struct ggml_cuda_mm_fusion_args_host {
-diff --git a/ggml/src/ggml-cuda/vendors/hip.h b/ggml/src/ggml-cuda/vendors/hip.h
-index d89e35a8e..fe4b5349f 100644
---- a/ggml/src/ggml-cuda/vendors/hip.h
-+++ b/ggml/src/ggml-cuda/vendors/hip.h
-@@ -39,6 +39,7 @@
- #define cublasCreate hipblasCreate
- #define cublasDestroy hipblasDestroy
- #define cublasGemmEx hipblasGemmEx
-+#define cublasGemmAlgo_t hipblasGemmAlgo_t
- #define cublasGemmBatchedEx hipblasGemmBatchedEx
- #define cublasGemmStridedBatchedEx hipblasGemmStridedBatchedEx
- #define cublasHandle_t hipblasHandle_t
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
 index 25548629d..eeaae3fe4 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
@@ -717,3 +706,15 @@ index 25548629d..eeaae3fe4 100644
  };
  
  static ggml_guid_t ggml_backend_cuda_guid() {
+diff --git a/ggml/src/ggml-cuda/vendors/hip.h b/ggml/src/ggml-cuda/vendors/hip.h
+index 951a88d56..b9627eb8b 100644
+--- a/ggml/src/ggml-cuda/vendors/hip.h
++++ b/ggml/src/ggml-cuda/vendors/hip.h
+@@ -37,6 +37,7 @@
+ #define cublasCreate hipblasCreate
+ #define cublasDestroy hipblasDestroy
+ #define cublasGemmEx hipblasGemmEx
++#define cublasGemmAlgo_t hipblasGemmAlgo_t
+ #define cublasGemmBatchedEx hipblasGemmBatchedEx
+ #define cublasGemmStridedBatchedEx hipblasGemmStridedBatchedEx
+ #define cublasHandle_t hipblasHandle_t

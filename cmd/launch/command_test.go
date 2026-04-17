@@ -58,6 +58,9 @@ func TestLaunchCmd(t *testing.T) {
 		if cmd.Long == "" {
 			t.Error("Long description should not be empty")
 		}
+		if !strings.Contains(cmd.Long, "hermes") {
+			t.Error("Long description should mention hermes")
+		}
 	})
 
 	t.Run("flags exist", func(t *testing.T) {
@@ -347,7 +350,7 @@ func TestLaunchCmdYes_AutoConfirmsLaunchPromptPath(t *testing.T) {
 	restore := OverrideIntegration("stubeditor", stub)
 	defer restore()
 
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		t.Fatalf("unexpected prompt with --yes: %q", prompt)
 		return false, nil
 	}
@@ -393,7 +396,7 @@ func TestLaunchCmdHeadlessWithYes_AutoPullsMissingLocalModel(t *testing.T) {
 	restore := OverrideIntegration("stubapp", stub)
 	defer restore()
 
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		t.Fatalf("unexpected prompt with --yes in headless autopull path: %q", prompt)
 		return false, nil
 	}
@@ -436,7 +439,7 @@ func TestLaunchCmdHeadlessWithoutYes_ReturnsActionableConfirmError(t *testing.T)
 	restore := OverrideIntegration("stubeditor", stub)
 	defer restore()
 
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		t.Fatalf("unexpected prompt in headless non-yes mode: %q", prompt)
 		return false, nil
 	}

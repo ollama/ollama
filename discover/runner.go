@@ -94,7 +94,7 @@ func GPUDevices(ctx context.Context, runners []ml.FilteredRunnerDiscovery) []ml.
 			}
 			var dirs []string
 			if dir != "" {
-				if requested != "" && filepath.Base(dir) != requested {
+				if requested != "" && !strings.HasPrefix(requested, "mlx_") && filepath.Base(dir) != requested {
 					slog.Debug("skipping available library at user's request", "requested", requested, "libDir", dir)
 					continue
 				} else if jetpack != "" && filepath.Base(dir) != "cuda_"+jetpack {

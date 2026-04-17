@@ -110,7 +110,8 @@
                 "group": "Assistants",
                 "expanded": true,
                 "pages": [
-                  "/integrations/openclaw"
+                  "/integrations/openclaw",
+                  "/integrations/hermes"
                 ]
               },
               {
@@ -119,6 +120,7 @@
                 "pages": [
                   "/integrations/claude-code",
                   "/integrations/codex",
+                  "/integrations/copilot-cli",
                   "/integrations/opencode",
                   "/integrations/droid",
                   "/integrations/goose",
