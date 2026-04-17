@@ -1060,6 +1060,12 @@ nextLayer:
 		slog.Warn("insufficient VRAM to load any model layers, model will run entirely on CPU")
 	}
 
+	if len(systemGPUs) > 0 && gpuLayers.Sum() > 0 && gpuLayers.Sum() < len(layers) {
+		slog.Warn("partial GPU offload, performance may be degraded",
+			"gpu_layers", gpuLayers.Sum(),
+			"total_layers", len(layers))
+	}
+
 	return nil
 }
 
