@@ -261,15 +261,49 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					s.expiredCh <- runnerToExpire
 				}
 				runnerToExpire.refMu.Unlock()
-				// Wait for the unload to happen
+				// Wait for the unload to happen, but keep dispatching
+				// requests for models that are already loaded. This prevents
+				// head-of-line blocking where a request for an idle, loaded
+				// model waits behind a slow eviction/load cycle.
+				// See: https://github.com/ollama/ollama/issues/14578
 				slog.Debug("waiting for pending requests to complete and unload to occur", "runner", runnerToExpire)
-				select {
-				case <-ctx.Done():
-					slog.Debug("shutting down scheduler pending loop")
-					return
-				case <-s.unloadedCh:
-					slog.Debug("unload completed", "runner", runnerToExpire)
-					continue
+				var deferred []*LlmRequest
+			waitForUnload:
+				for {
+					select {
+					case <-ctx.Done():
+						slog.Debug("shutting down scheduler pending loop")
+						return
+					case <-s.unloadedCh:
+						slog.Debug("unload completed", "runner", runnerToExpire)
+						break waitForUnload
+					case otherReq := <-s.pendingReqCh:
+						// While waiting for unload, service requests that can
+						// be fulfilled by runners that are already loaded.
+						if otherReq.ctx.Err() != nil {
+							slog.Debug("dequeued pending request already cancelled, skipping")
+							continue
+						}
+						otherKey := schedulerModelKey(otherReq.model)
+						s.loadedMu.Lock()
+						otherRunner := s.loaded[otherKey]
+						s.loadedMu.Unlock()
+						if otherRunner != nil && !otherRunner.needsReload(ctx, otherReq) {
+							logutil.Trace("dispatching ready request while waiting for unload", "model", otherKey)
+							otherReq.useLoadedRunner(otherRunner, s.finishedReqCh)
+						} else {
+							// Can't dispatch yet \u2014 buffer for re-enqueue
+							deferred = append(deferred, otherReq)
+						}
+					}
+				}
+				// Re-enqueue any requests that couldn't be dispatched immediately
+				for _, d := range deferred {
+					select {
+					case s.pendingReqCh <- d:
+					default:
+						d.errCh <- ErrMaxQueue
+					}
 				}
 			}
 		case <-s.unloadedCh:
