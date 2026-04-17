@@ -191,6 +191,10 @@ func inferSafetensorsCapabilities(modelDir string) []string {
 		capabilities = append(capabilities, "vision")
 	}
 
+	if supportsAudio(modelDir) {
+		capabilities = append(capabilities, "audio")
+	}
+
 	if supportsThinking(modelDir) {
 		capabilities = append(capabilities, "thinking")
 	}
@@ -496,32 +500,38 @@ func supportsThinking(modelDir string) bool {
 	return false
 }
 
-// supportsVision checks if the model supports image input based on its architecture.
-// Qwen3.5 multimodal checkpoints are published as ConditionalGeneration architectures.
+// supportsVision checks if the model has a vision encoder by looking for
+// vision_config in config.json.
 func supportsVision(modelDir string) bool {
-	configPath := filepath.Join(modelDir, "config.json")
-	data, err := os.ReadFile(configPath)
+	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
 	if err != nil {
 		return false
 	}
 
 	var cfg struct {
-		Architectures []string `json:"architectures"`
-		ModelType     string   `json:"model_type"`
+		VisionConfig *map[string]any `json:"vision_config"`
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return false
 	}
 
-	for _, arch := range cfg.Architectures {
-		archLower := strings.ToLower(arch)
-		if strings.Contains(archLower, "qwen3") && strings.Contains(archLower, "conditionalgeneration") {
-			return true
-		}
+	return cfg.VisionConfig != nil
+}
+
+func supportsAudio(modelDir string) bool {
+	data, err := os.ReadFile(filepath.Join(modelDir, "config.json"))
+	if err != nil {
+		return false
 	}
 
-	typeLower := strings.ToLower(cfg.ModelType)
-	return strings.Contains(typeLower, "qwen3") && strings.Contains(typeLower, "conditionalgeneration")
+	var cfg struct {
+		AudioConfig *map[string]any `json:"audio_config"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return false
+	}
+
+	return cfg.AudioConfig != nil
 }
 
 // getParserName returns the parser name for a model based on its architecture.
@@ -550,6 +560,9 @@ func getParserName(modelDir string) string {
 		if strings.Contains(archLower, "deepseek") {
 			return "deepseek3"
 		}
+		if strings.Contains(archLower, "gemma4") {
+			return "gemma4"
+		}
 		if strings.Contains(archLower, "qwen3") {
 			return "qwen3"
 		}
@@ -563,6 +576,9 @@ func getParserName(modelDir string) string {
 		}
 		if strings.Contains(typeLower, "deepseek") {
 			return "deepseek3"
+		}
+		if strings.Contains(typeLower, "gemma4") {
+			return "gemma4"
 		}
 		if strings.Contains(typeLower, "qwen3") {
 			return "qwen3"
@@ -592,6 +608,9 @@ func getRendererName(modelDir string) string {
 	// Check architectures for known renderers
 	for _, arch := range cfg.Architectures {
 		archLower := strings.ToLower(arch)
+		if strings.Contains(archLower, "gemma4") {
+			return "gemma4"
+		}
 		if strings.Contains(archLower, "glm4") || strings.Contains(archLower, "glm-4") {
 			return "glm-4.7"
 		}
@@ -606,6 +625,9 @@ func getRendererName(modelDir string) string {
 	// Also check model_type
 	if cfg.ModelType != "" {
 		typeLower := strings.ToLower(cfg.ModelType)
+		if strings.Contains(typeLower, "gemma4") {
+			return "gemma4"
+		}
 		if strings.Contains(typeLower, "glm4") || strings.Contains(typeLower, "glm-4") {
 			return "glm-4.7"
 		}

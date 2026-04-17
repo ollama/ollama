@@ -523,7 +523,7 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 				arch := layer.GGML.KV().Architecture()
 				switch arch {
 				case "gemma4":
-					config.Renderer = cmp.Or(config.Renderer, "gemma4")
+					config.Renderer = cmp.Or(config.Renderer, gemma4RendererLegacy)
 					config.Parser = cmp.Or(config.Parser, "gemma4")
 					if _, ok := r.Parameters["stop"]; !ok {
 						if r.Parameters == nil {

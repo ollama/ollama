@@ -296,7 +296,7 @@ index e99c1763f..80864f303 100644
          const size_t smem = FATTN_SMEM(nsg);
  
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index c98d269d1..d33c16079 100644
+index 18b8bb1b1..114767785 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
 @@ -6166,6 +6166,7 @@ kernel void kernel_flash_attn_ext(
