@@ -110,7 +110,7 @@ func NewClient(modelName string) (*Client, error) {
 	c := &Client{
 		modelName: modelName,
 		done:      make(chan struct{}),
-		client:    &http.Client{Timeout: 10 * time.Minute},
+		client:    http.DefaultClient,
 	}
 
 	modelManifest, err := manifest.LoadManifest(modelName)

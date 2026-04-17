@@ -1,14 +1,18 @@
 package renderers
 
-// TestGemma4RendererMatchesReference verifies our renderer matches the HF
-// Jinja2 chat template exactly.
+// TestGemma4RendererMatchesReference verifies our renderer matches the checked-in
+// Gemma 4 reference template.
 //
-// To regenerate expected values, save gemma4Jinja2Template (below) to
-// gemma4_chat_template.jinja2 and run:
+// Current upstream Gemma 4 chat templates differ by model size. The checked-in
+// reference cases below use the small (e2b/e4b-style) baseline, with large
+// (26b/31b-style) checks covered separately in this file.
+//
+// To regenerate expected values, save the E2B template to
+// gemma4_e2b_chat_template.jinja2 and run:
 //
 //   python3 -c "
 //   from jinja2 import Environment; import json
-//   tmpl = Environment().from_string(open('gemma4_chat_template.jinja2').read())
+//   tmpl = Environment().from_string(open('gemma4_e2b_chat_template.jinja2').read())
 //   msgs = [{'role':'user','content':'Hello'}]
 //   print(repr(tmpl.render(messages=msgs, bos_token='<bos>', add_generation_prompt=True)))
 //   "
@@ -26,8 +30,13 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// The full Jinja2 template is committed as testdata/gemma4_chat_template.jinja2.
-// Run with VERIFY_JINJA2=1 to verify expected values against the template using Python.
+const (
+	gemma4E2BTemplate = "testdata/gemma4_e2b_chat_template.jinja2"
+	gemma431BTemplate = "testdata/gemma4_31b_chat_template.jinja2"
+)
+
+// The upstream Gemma 4 chat templates are committed by size under testdata/.
+// Run with VERIFY_JINJA2=1 to verify expected values against the E2B template using uv + Python.
 
 func bashRefTool() []api.Tool {
 	return []api.Tool{{
@@ -177,6 +186,264 @@ func arrayTool() []api.Tool {
 				Type: "object",
 				Properties: testPropsMap(map[string]api.ToolProperty{
 					"commands": {Type: api.PropertyType{"array"}, Description: "Commands", Items: map[string]any{"type": "string"}},
+				}),
+			},
+		},
+	}}
+}
+
+func unionTopLevelTypeTool() []api.Tool {
+	return []api.Tool{{
+		Type: "function",
+		Function: api.ToolFunction{
+			Name:        "maybe_name",
+			Description: "Test nullable union",
+			Parameters: api.ToolFunctionParameters{
+				Type: "object",
+				Properties: testPropsMap(map[string]api.ToolProperty{
+					"name": {Type: api.PropertyType{"string", "null"}, Description: "Name"},
+				}),
+			},
+		},
+	}}
+}
+
+func anyOfTool() []api.Tool {
+	return []api.Tool{{
+		Type: "function",
+		Function: api.ToolFunction{
+			Name:        "pick_value",
+			Description: "Pick a value",
+			Parameters: api.ToolFunctionParameters{
+				Type: "object",
+				Properties: testPropsMap(map[string]api.ToolProperty{
+					"value": {
+						AnyOf: []api.ToolProperty{
+							{Type: api.PropertyType{"string"}},
+							{Type: api.PropertyType{"number"}},
+						},
+						Description: "Value",
+					},
+				}),
+			},
+		},
+	}}
+}
+
+func arrayObjectItemsTool() []api.Tool {
+	return []api.Tool{{
+		Type: "function",
+		Function: api.ToolFunction{
+			Name:        "upsert_batch",
+			Description: "Upsert batch",
+			Parameters: api.ToolFunctionParameters{
+				Type: "object",
+				Properties: testPropsMap(map[string]api.ToolProperty{
+					"entries": {
+						Type:        api.PropertyType{"array"},
+						Description: "Entries",
+						Items: map[string]any{
+							"type":     "object",
+							"required": []string{"id"},
+							"properties": map[string]any{
+								"id": map[string]any{
+									"type":        "string",
+									"description": "ID",
+								},
+								"count": map[string]any{
+									"type":        "number",
+									"description": "Count",
+								},
+							},
+						},
+					},
+				}),
+			},
+		},
+	}}
+}
+
+func arrayUnionItemsTool() []api.Tool {
+	return []api.Tool{{
+		Type: "function",
+		Function: api.ToolFunction{
+			Name:        "maybe_batch",
+			Description: "Maybe batch",
+			Parameters: api.ToolFunctionParameters{
+				Type: "object",
+				Properties: testPropsMap(map[string]api.ToolProperty{
+					"values": {
+						Type:        api.PropertyType{"array"},
+						Description: "Values",
+						Items: map[string]any{
+							"type": []string{"string", "null"},
+						},
+					},
+				}),
+			},
+		},
+	}}
+}
+
+func arrayNestedItemsTool() []api.Tool {
+	return []api.Tool{{
+		Type: "function",
+		Function: api.ToolFunction{
+			Name:        "plan_batch",
+			Description: "Plan batch",
+			Parameters: api.ToolFunctionParameters{
+				Type: "object",
+				Properties: testPropsMap(map[string]api.ToolProperty{
+					"steps": {
+						Type:        api.PropertyType{"array"},
+						Description: "Steps",
+						Items: map[string]any{
+							"type":     "object",
+							"required": []string{"name"},
+							"properties": map[string]any{
+								"name": map[string]any{
+									"type":        "string",
+									"description": "Name",
+								},
+								"config": map[string]any{
+									"type":        "object",
+									"description": "Config",
+									"required":    []string{"enabled"},
+									"properties": map[string]any{
+										"enabled": map[string]any{
+											"type":        "boolean",
+											"description": "Enabled",
+										},
+									},
+								},
+								"tags": map[string]any{
+									"type":        "array",
+									"description": "Tags",
+									"items": map[string]any{
+										"type": "string",
+									},
+								},
+							},
+						},
+					},
+				}),
+			},
+		},
+	}}
+}
+
+func arrayNullableNestedItemsTool() []api.Tool {
+	return []api.Tool{{
+		Type: "function",
+		Function: api.ToolFunction{
+			Name:        "annotate_batch",
+			Description: "Annotate batch",
+			Parameters: api.ToolFunctionParameters{
+				Type: "object",
+				Properties: testPropsMap(map[string]api.ToolProperty{
+					"entries": {
+						Type:        api.PropertyType{"array"},
+						Description: "Entries",
+						Items: map[string]any{
+							"type":     "object",
+							"required": []string{"note"},
+							"properties": map[string]any{
+								"note": map[string]any{
+									"type":        "string",
+									"description": "Note",
+									"nullable":    true,
+								},
+								"metadata": map[string]any{
+									"type":        "object",
+									"description": "Metadata",
+									"nullable":    true,
+									"properties": map[string]any{
+										"tag": map[string]any{
+											"type":        "string",
+											"description": "Tag",
+										},
+									},
+								},
+							},
+						},
+					},
+				}),
+			},
+		},
+	}}
+}
+
+func nestedArrayObjectItemsTool() []api.Tool {
+	return []api.Tool{{
+		Type: "function",
+		Function: api.ToolFunction{
+			Name:        "schedule_jobs",
+			Description: "Schedule jobs",
+			Parameters: api.ToolFunctionParameters{
+				Type: "object",
+				Properties: testPropsMap(map[string]api.ToolProperty{
+					"jobs": {
+						Type:        api.PropertyType{"array"},
+						Description: "Jobs",
+						Items: map[string]any{
+							"type":     "object",
+							"required": []string{"tasks"},
+							"properties": map[string]any{
+								"tasks": map[string]any{
+									"type":        "array",
+									"description": "Tasks",
+									"items": map[string]any{
+										"type":     "object",
+										"required": []string{"command"},
+										"properties": map[string]any{
+											"command": map[string]any{
+												"type":        "string",
+												"description": "Command",
+											},
+											"timeout": map[string]any{
+												"type":        "number",
+												"description": "Timeout",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				}),
+			},
+		},
+	}}
+}
+
+func arrayItemsExtraKeysTool() []api.Tool {
+	return []api.Tool{{
+		Type: "function",
+		Function: api.ToolFunction{
+			Name:        "configure_batch",
+			Description: "Configure batch",
+			Parameters: api.ToolFunctionParameters{
+				Type: "object",
+				Properties: testPropsMap(map[string]api.ToolProperty{
+					"settings": {
+						Type:        api.PropertyType{"array"},
+						Description: "Settings",
+						Items: map[string]any{
+							"type":                 "object",
+							"additionalProperties": false,
+							"default": map[string]any{
+								"mode": "auto",
+							},
+							"nullable": true,
+							"required": []string{"mode"},
+							"properties": map[string]any{
+								"mode": map[string]any{
+									"type":        "string",
+									"description": "Mode",
+								},
+							},
+						},
+					},
 				}),
 			},
 		},
@@ -385,7 +652,7 @@ var (
 	enumNoDescDeclRef     = `<|tool>declaration:set_level{description:<|"|>Set level<|"|>,parameters:{properties:{level:{enum:[<|"|>low<|"|>,<|"|>high<|"|>],type:<|"|>STRING<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
 	searchDeclRef         = `<|tool>declaration:search{description:<|"|>Search<|"|>,parameters:{properties:{limit:{type:<|"|>NUMBER<|"|>},offset:{description:<|"|>Start offset<|"|>,type:<|"|>NUMBER<|"|>},query:{description:<|"|>Search query<|"|>,type:<|"|>STRING<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
 	arrayNoItemsDeclRef   = `<|tool>declaration:tag{description:<|"|>Tag items<|"|>,parameters:{properties:{tags:{description:<|"|>Tags<|"|>,type:<|"|>ARRAY<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
-	objectNoDescDeclRef   = `<|tool>declaration:update{description:<|"|>Update settings<|"|>,parameters:{properties:{settings:{,properties:{verbose:{description:<|"|>Verbose mode<|"|>,type:<|"|>BOOLEAN<|"|>}}type:<|"|>OBJECT<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
+	objectNoDescDeclRef   = `<|tool>declaration:update{description:<|"|>Update settings<|"|>,parameters:{properties:{settings:{properties:{verbose:{description:<|"|>Verbose mode<|"|>,type:<|"|>BOOLEAN<|"|>}},type:<|"|>OBJECT<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
 	nestedRequiredDeclRef = `<|tool>declaration:create_user{description:<|"|>Create user<|"|>,parameters:{properties:{profile:{description:<|"|>Profile<|"|>,properties:{age:{description:<|"|>Age<|"|>,type:<|"|>NUMBER<|"|>},name:{description:<|"|>Name<|"|>,type:<|"|>STRING<|"|>}},required:[<|"|>name<|"|>],type:<|"|>OBJECT<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
 	calcDeclRef           = `<|tool>declaration:calc{description:<|"|>Calculate<|"|>,parameters:{properties:{value:{description:<|"|>Value<|"|>,type:<|"|>NUMBER<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|>`
 	rawDeclRef            = `<|tool>declaration:raw{description:<|"|>Raw input<|"|>,parameters:{type:<|"|>OBJECT<|"|>}}<tool|>`
@@ -396,11 +663,12 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 	q := `<|"|>`
 
 	tests := []struct {
-		name     string
-		messages []api.Message
-		tools    []api.Tool
-		think    *api.ThinkValue
-		expected string
+		name       string
+		messages   []api.Message
+		tools      []api.Tool
+		think      *api.ThinkValue
+		expected   string
+		skipJinja2 bool
 	}{
 		// === Header block paths ===
 		{
@@ -443,7 +711,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 			name:     "thinking_no_system",
 			messages: []api.Message{{Role: "user", Content: "Hi"}},
 			think:    thinkTrue(),
-			expected: "<bos><|turn>system\n<|think|><turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\n",
+			expected: "<bos><|turn>system\n<|think|>\n<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\n",
 		},
 		{
 			name: "thinking_system",
@@ -452,14 +720,14 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				{Role: "user", Content: "Hi"},
 			},
 			think:    thinkTrue(),
-			expected: "<bos><|turn>system\n<|think|>You are helpful.<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\n",
+			expected: "<bos><|turn>system\n<|think|>\nYou are helpful.<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\n",
 		},
 		{
 			name:     "thinking_tools",
 			messages: []api.Message{{Role: "user", Content: "Hi"}},
 			tools:    bashRefTool(),
 			think:    thinkTrue(),
-			expected: "<bos><|turn>system\n<|think|>" + bashDeclRef + "<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\n",
+			expected: "<bos><|turn>system\n<|think|>\n" + bashDeclRef + "<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\n",
 		},
 		{
 			name: "thinking_system_tools",
@@ -469,7 +737,13 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 			},
 			tools:    bashRefTool(),
 			think:    thinkTrue(),
-			expected: "<bos><|turn>system\n<|think|>You are helpful." + bashDeclRef + "<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\n",
+			expected: "<bos><|turn>system\n<|think|>\nYou are helpful." + bashDeclRef + "<turn|>\n<|turn>user\nHi<turn|>\n<|turn>model\n",
+		},
+		{
+			name:     "thinking_explicitly_disabled",
+			messages: []api.Message{{Role: "user", Content: "Hi"}},
+			think:    thinkFalse(),
+			expected: "<bos><|turn>user\nHi<turn|>\n<|turn>model\n",
 		},
 
 		// === Message loop paths ===
@@ -499,14 +773,30 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 						Arguments: testArgs(map[string]any{"command": "ls"}),
 					},
 				}}},
-				{Role: "tool", Content: "file1.txt\nfile2.txt"},
+				{Role: "tool", ToolName: "bash", Content: "file1.txt\nfile2.txt"},
 			},
 			tools: bashRefTool(),
 			expected: "<bos><|turn>system\nYou are helpful." + bashDeclRef + "<turn|>\n" +
 				"<|turn>user\nList files<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|><turn|>\n" +
-				"<|turn>tool\nfile1.txt\nfile2.txt<turn|>\n" +
-				"<|turn>model\n",
+				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|>" +
+				"<|tool_response>response:bash{value:" + q + "file1.txt\nfile2.txt" + q + "}<tool_response|>",
+		},
+		{
+			name: "tool_call_pending_response",
+			messages: []api.Message{
+				{Role: "system", Content: "You are helpful."},
+				{Role: "user", Content: "List files"},
+				{Role: "assistant", Content: "Let me check.", ToolCalls: []api.ToolCall{{
+					Function: api.ToolCallFunction{
+						Name:      "bash",
+						Arguments: testArgs(map[string]any{"command": "ls"}),
+					},
+				}}},
+			},
+			tools: bashRefTool(),
+			expected: "<bos><|turn>system\nYou are helpful." + bashDeclRef + "<turn|>\n" +
+				"<|turn>user\nList files<turn|>\n" +
+				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|>Let me check.<|tool_response>",
 		},
 		{
 			// Full round trip: call → response → assistant reply → user follow-up
@@ -520,16 +810,16 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 						Arguments: testArgs(map[string]any{"command": "ls"}),
 					},
 				}}},
-				{Role: "tool", Content: "file1.txt\nfile2.txt"},
+				{Role: "tool", ToolName: "bash", Content: "file1.txt\nfile2.txt"},
 				{Role: "assistant", Content: "Here are the files."},
 				{Role: "user", Content: "Read file1.txt"},
 			},
 			tools: bashAndReadRefTools(),
 			expected: "<bos><|turn>system\nYou are helpful." + bashDeclRef + readDeclRef + "<turn|>\n" +
 				"<|turn>user\nList files<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|><turn|>\n" +
-				"<|turn>tool\nfile1.txt\nfile2.txt<turn|>\n" +
-				"<|turn>model\nHere are the files.<turn|>\n" +
+				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|>" +
+				"<|tool_response>response:bash{value:" + q + "file1.txt\nfile2.txt" + q + "}<tool_response|>" +
+				"Here are the files.<turn|>\n" +
 				"<|turn>user\nRead file1.txt<turn|>\n" +
 				"<|turn>model\n",
 		},
@@ -543,17 +833,17 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 					{Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "ls"})}},
 					{Function: api.ToolCallFunction{Name: "read", Arguments: testArgs(map[string]any{"path": "go.mod"})}},
 				}},
-				{Role: "tool", Content: "file1.txt\nfile2.txt"},
-				{Role: "tool", Content: "module example.com/foo"},
+				{Role: "tool", ToolName: "bash", Content: "file1.txt\nfile2.txt"},
+				{Role: "tool", ToolName: "read", Content: "module example.com/foo"},
 			},
 			tools: bashAndReadRefTools(),
 			expected: "<bos><|turn>system\nYou are helpful." + bashDeclRef + readDeclRef + "<turn|>\n" +
 				"<|turn>user\nList and read<turn|>\n" +
 				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|>" +
-				"<|tool_call>call:read{path:" + q + "go.mod" + q + "}<tool_call|><turn|>\n" +
-				"<|turn>tool\nfile1.txt\nfile2.txt<turn|>\n" +
-				"<|turn>tool\nmodule example.com/foo<turn|>\n" +
-				"<|turn>model\n",
+				"<|tool_call>call:read{path:" + q + "go.mod" + q + "}<tool_call|>" +
+				"<|tool_response>response:bash{value:" + q + "file1.txt\nfile2.txt" + q + "}<tool_response|>" +
+				"<|tool_response>response:read{value:" + q + "module example.com/foo" + q + "}<tool_response|>",
+			skipJinja2: true,
 		},
 		{
 			// Thinking content in assistant history should be stripped
@@ -577,14 +867,14 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				{Role: "assistant", Content: "Let me check.", ToolCalls: []api.ToolCall{{
 					Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "Paris"})},
 				}}},
-				{Role: "tool", Content: "Sunny"},
+				{Role: "tool", ToolName: "get_weather", Content: "Sunny"},
 			},
 			tools: weatherTool(),
 			expected: "<bos><|turn>system\n" + weatherDeclRef + "<turn|>\n" +
 				"<|turn>user\nWeather?<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:get_weather{city:" + q + "Paris" + q + "}<tool_call|>Let me check.<turn|>\n" +
-				"<|turn>tool\nSunny<turn|>\n" +
-				"<|turn>model\n",
+				"<|turn>model\n<|tool_call>call:get_weather{city:" + q + "Paris" + q + "}<tool_call|>" +
+				"<|tool_response>response:get_weather{value:" + q + "Sunny" + q + "}<tool_response|>" +
+				"Let me check.<turn|>\n",
 		},
 		{
 			// Numeric tool call arguments
@@ -594,14 +884,13 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				{Role: "assistant", ToolCalls: []api.ToolCall{{
 					Function: api.ToolCallFunction{Name: "add", Arguments: testArgs(map[string]any{"a": float64(1), "b": float64(2)})},
 				}}},
-				{Role: "tool", Content: `{"result": 3}`},
+				{Role: "tool", ToolName: "add", Content: `{"result": 3}`},
 			},
 			tools: addTool(),
 			expected: "<bos><|turn>system\n" + addDeclRef + "<turn|>\n" +
 				"<|turn>user\nAdd<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:add{a:1,b:2}<tool_call|><turn|>\n" +
-				"<|turn>tool\n{\"result\": 3}<turn|>\n" +
-				"<|turn>model\n",
+				"<|turn>model\n<|tool_call>call:add{a:1,b:2}<tool_call|>" +
+				"<|tool_response>response:add{value:" + q + `{"result": 3}` + q + "}<tool_response|>",
 		},
 		{
 			// Boolean tool call argument
@@ -611,14 +900,13 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				{Role: "assistant", ToolCalls: []api.ToolCall{{
 					Function: api.ToolCallFunction{Name: "set_flag", Arguments: testArgs(map[string]any{"enabled": true})},
 				}}},
-				{Role: "tool", Content: "done"},
+				{Role: "tool", ToolName: "set_flag", Content: "done"},
 			},
 			tools: flagTool(),
 			expected: "<bos><|turn>system\n" + flagDeclRef + "<turn|>\n" +
 				"<|turn>user\nSet flag<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:set_flag{enabled:true}<tool_call|><turn|>\n" +
-				"<|turn>tool\ndone<turn|>\n" +
-				"<|turn>model\n",
+				"<|turn>model\n<|tool_call>call:set_flag{enabled:true}<tool_call|>" +
+				"<|tool_response>response:set_flag{value:" + q + "done" + q + "}<tool_response|>",
 		},
 		{
 			// Tool with enum parameter
@@ -646,14 +934,14 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				{Role: "assistant", ToolCalls: []api.ToolCall{{
 					Function: api.ToolCallFunction{Name: "get_weather", Arguments: testArgs(map[string]any{"city": "Tokyo"})},
 				}}},
-				{Role: "tool", Content: `{"temperature": 15, "weather": "sunny"}`},
+				{Role: "tool", ToolName: "get_weather", Content: `{"temperature": 15, "weather": "sunny"}`},
 				{Role: "user", Content: "Thanks!"},
 			},
 			tools: weatherTool(),
 			expected: "<bos><|turn>system\n" + weatherDeclRef + "<turn|>\n" +
 				"<|turn>user\nWeather?<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:get_weather{city:" + q + "Tokyo" + q + "}<tool_call|><turn|>\n" +
-				"<|turn>tool\n{\"temperature\": 15, \"weather\": \"sunny\"}<turn|>\n" +
+				"<|turn>model\n<|tool_call>call:get_weather{city:" + q + "Tokyo" + q + "}<tool_call|>" +
+				"<|tool_response>response:get_weather{value:" + q + `{"temperature": 15, "weather": "sunny"}` + q + "}<tool_response|>" +
 				"<|turn>user\nThanks!<turn|>\n" +
 				"<|turn>model\n",
 		},
@@ -666,14 +954,13 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				{Role: "assistant", ToolCalls: []api.ToolCall{{
 					Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"zzz": "last", "aaa": "first", "mmm": "middle"})},
 				}}},
-				{Role: "tool", Content: "ok"},
+				{Role: "tool", ToolName: "bash", Content: "ok"},
 			},
 			tools: bashSmallTool(),
 			expected: "<bos><|turn>system\n" + bashSmallDeclRef + "<turn|>\n" +
 				"<|turn>user\nGo<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:bash{aaa:" + q + "first" + q + ",mmm:" + q + "middle" + q + ",zzz:" + q + "last" + q + "}<tool_call|><turn|>\n" +
-				"<|turn>tool\nok<turn|>\n" +
-				"<|turn>model\n",
+				"<|turn>model\n<|tool_call>call:bash{aaa:" + q + "first" + q + ",mmm:" + q + "middle" + q + ",zzz:" + q + "last" + q + "}<tool_call|>" +
+				"<|tool_response>response:bash{value:" + q + "ok" + q + "}<tool_response|>",
 		},
 		{
 			// User content with whitespace is trimmed
@@ -689,14 +976,13 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				{Role: "assistant", ToolCalls: []api.ToolCall{{
 					Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{})},
 				}}},
-				{Role: "tool", Content: "ok"},
+				{Role: "tool", ToolName: "bash", Content: "ok"},
 			},
 			tools: bashSmallTool(),
 			expected: "<bos><|turn>system\n" + bashSmallDeclRef + "<turn|>\n" +
 				"<|turn>user\nGo<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:bash{}<tool_call|><turn|>\n" +
-				"<|turn>tool\nok<turn|>\n" +
-				"<|turn>model\n",
+				"<|turn>model\n<|tool_call>call:bash{}<tool_call|>" +
+				"<|tool_response>response:bash{value:" + q + "ok" + q + "}<tool_response|>",
 		},
 		{
 			// Nested object properties in tool declaration
@@ -713,6 +999,18 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 			tools:    arrayTool(),
 			expected: "<bos><|turn>system\n" + arrayDeclRef + "<turn|>\n" +
 				"<|turn>user\nBatch<turn|>\n<|turn>model\n",
+		},
+		{
+			// Top-level typed union follows the template's odd stringified-list form.
+			name:     "typed_property_union_type",
+			messages: []api.Message{{Role: "user", Content: "Hi"}},
+			tools:    unionTopLevelTypeTool(),
+			expected: `<bos><|turn>system
+<|tool>declaration:maybe_name{description:<|"|>Test nullable union<|"|>,parameters:{properties:{name:{description:<|"|>Name<|"|>,type:<|"|>['STRING', 'NULL']<|"|>}},type:<|"|>OBJECT<|"|>}}<tool|><turn|>
+<|turn>user
+Hi<turn|>
+<|turn>model
+`,
 		},
 		{
 			// Assistant whitespace is trimmed (strip_thinking includes | trim)
@@ -737,20 +1035,19 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 					{Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "b"})}},
 					{Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "c"})}},
 				}},
-				{Role: "tool", Content: "result-a"},
-				{Role: "tool", Content: "result-b"},
-				{Role: "tool", Content: "result-c"},
+				{Role: "tool", ToolName: "bash", Content: "result-a"},
+				{Role: "tool", ToolName: "bash", Content: "result-b"},
+				{Role: "tool", ToolName: "bash", Content: "result-c"},
 			},
 			tools: bashSmallTool(),
 			expected: "<bos><|turn>system\n" + bashSmallDeclRef + "<turn|>\n" +
 				"<|turn>user\nDo three things<turn|>\n" +
 				"<|turn>model\n<|tool_call>call:bash{command:" + q + "a" + q + "}<tool_call|>" +
 				"<|tool_call>call:bash{command:" + q + "b" + q + "}<tool_call|>" +
-				"<|tool_call>call:bash{command:" + q + "c" + q + "}<tool_call|><turn|>\n" +
-				"<|turn>tool\nresult-a<turn|>\n" +
-				"<|turn>tool\nresult-b<turn|>\n" +
-				"<|turn>tool\nresult-c<turn|>\n" +
-				"<|turn>model\n",
+				"<|tool_call>call:bash{command:" + q + "c" + q + "}<tool_call|>" +
+				"<|tool_response>response:bash{value:" + q + "result-a" + q + "}<tool_response|>" +
+				"<|tool_response>response:bash{value:" + q + "result-b" + q + "}<tool_response|>" +
+				"<|tool_response>response:bash{value:" + q + "result-c" + q + "}<tool_response|>",
 		},
 		{
 			// Assistant with only tool calls, no content field
@@ -760,14 +1057,13 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				{Role: "assistant", ToolCalls: []api.ToolCall{{
 					Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "ls"})},
 				}}},
-				{Role: "tool", Content: "files"},
+				{Role: "tool", ToolName: "bash", Content: "files"},
 			},
 			tools: bashSmallTool(),
 			expected: "<bos><|turn>system\n" + bashSmallDeclRef + "<turn|>\n" +
 				"<|turn>user\nGo<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|><turn|>\n" +
-				"<|turn>tool\nfiles<turn|>\n" +
-				"<|turn>model\n",
+				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|>" +
+				"<|tool_response>response:bash{value:" + q + "files" + q + "}<tool_response|>",
 		},
 
 		// === Coverage gap cases ===
@@ -812,14 +1108,13 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 						"config": map[string]any{"db": map[string]any{"host": "localhost", "port": float64(5432)}},
 					})},
 				}}},
-				{Role: "tool", Content: "ok"},
+				{Role: "tool", ToolName: "configure", Content: "ok"},
 			},
 			tools: configureTool(),
 			expected: "<bos><|turn>system\n" + configureDeclRef + "<turn|>\n" +
 				"<|turn>user\nGo<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:configure{config:{db:{host:" + q + "localhost" + q + ",port:5432}}}<tool_call|><turn|>\n" +
-				"<|turn>tool\nok<turn|>\n" +
-				"<|turn>model\n",
+				"<|turn>model\n<|tool_call>call:configure{config:{db:{host:" + q + "localhost" + q + ",port:5432}}}<tool_call|>" +
+				"<|tool_response>response:configure{value:" + q + "ok" + q + "}<tool_response|>",
 		},
 		{
 			// Array values in tool call arguments
@@ -831,14 +1126,13 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 						"ids": []any{float64(1), float64(2), float64(3)},
 					})},
 				}}},
-				{Role: "tool", Content: "done"},
+				{Role: "tool", ToolName: "batch", Content: "done"},
 			},
 			tools: batchArrayTool(),
 			expected: "<bos><|turn>system\n" + batchArrayDeclRef + "<turn|>\n" +
 				"<|turn>user\nGo<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:batch{ids:[1,2,3]}<tool_call|><turn|>\n" +
-				"<|turn>tool\ndone<turn|>\n" +
-				"<|turn>model\n",
+				"<|turn>model\n<|tool_call>call:batch{ids:[1,2,3]}<tool_call|>" +
+				"<|tool_response>response:batch{value:" + q + "done" + q + "}<tool_response|>",
 		},
 		{
 			// Mixed types in array argument (string, number, bool)
@@ -850,14 +1144,13 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 						"ids": []any{"a", float64(1), true},
 					})},
 				}}},
-				{Role: "tool", Content: "done"},
+				{Role: "tool", ToolName: "batch", Content: "done"},
 			},
 			tools: batchArrayTool(),
 			expected: "<bos><|turn>system\n" + batchArrayDeclRef + "<turn|>\n" +
 				"<|turn>user\nGo<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:batch{ids:[" + q + "a" + q + ",1,true]}<tool_call|><turn|>\n" +
-				"<|turn>tool\ndone<turn|>\n" +
-				"<|turn>model\n",
+				"<|turn>model\n<|tool_call>call:batch{ids:[" + q + "a" + q + ",1,true]}<tool_call|>" +
+				"<|tool_response>response:batch{value:" + q + "done" + q + "}<tool_response|>",
 		},
 		{
 			// Enum property without description
@@ -900,14 +1193,13 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 						"config": map[string]any{"key": "value"},
 					})},
 				}}},
-				{Role: "tool", Content: "ok"},
+				{Role: "tool", ToolName: "configure", Content: "ok"},
 			},
 			tools: configureTool(),
 			expected: "<bos><|turn>system\n" + configureDeclRef + "<turn|>\n" +
 				"<|turn>user\nGo<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:configure{config:{key:" + q + "value" + q + "}}<tool_call|><turn|>\n" +
-				"<|turn>tool\nok<turn|>\n" +
-				"<|turn>model\n",
+				"<|turn>model\n<|tool_call>call:configure{config:{key:" + q + "value" + q + "}}<tool_call|>" +
+				"<|tool_response>response:configure{value:" + q + "ok" + q + "}<tool_response|>",
 		},
 		{
 			// Mixed properties: some with description, some without
@@ -927,14 +1219,13 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				{Role: "assistant", ToolCalls: []api.ToolCall{{
 					Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "ls"})},
 				}}},
-				{Role: "tool", Content: "  result  "},
+				{Role: "tool", ToolName: "bash", Content: "  result  "},
 			},
 			tools: bashSmallTool(),
 			expected: "<bos><|turn>system\n" + bashSmallDeclRef + "<turn|>\n" +
 				"<|turn>user\nGo<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|><turn|>\n" +
-				"<|turn>tool\nresult<turn|>\n" +
-				"<|turn>model\n",
+				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|>" +
+				"<|tool_response>response:bash{value:" + q + "  result  " + q + "}<tool_response|>",
 		},
 		{
 			// Empty system message still emits system turn
@@ -962,14 +1253,13 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				{Role: "assistant", ToolCalls: []api.ToolCall{{
 					Function: api.ToolCallFunction{Name: "calc", Arguments: testArgs(map[string]any{"value": 3.14})},
 				}}},
-				{Role: "tool", Content: "ok"},
+				{Role: "tool", ToolName: "calc", Content: "ok"},
 			},
 			tools: calcTool(),
 			expected: "<bos><|turn>system\n" + calcDeclRef + "<turn|>\n" +
 				"<|turn>user\nCalc<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:calc{value:3.14}<tool_call|><turn|>\n" +
-				"<|turn>tool\nok<turn|>\n" +
-				"<|turn>model\n",
+				"<|turn>model\n<|tool_call>call:calc{value:3.14}<tool_call|>" +
+				"<|tool_response>response:calc{value:" + q + "ok" + q + "}<tool_response|>",
 		},
 		{
 			// Thinking in the last assistant message (stripped before generation prompt)
@@ -990,14 +1280,13 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				{Role: "assistant", ToolCalls: []api.ToolCall{{
 					Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "ls"})},
 				}}},
-				{Role: "tool", Content: "\n  file1\n  file2\n"},
+				{Role: "tool", ToolName: "bash", Content: "\n  file1\n  file2\n"},
 			},
 			tools: bashSmallTool(),
 			expected: "<bos><|turn>system\n" + bashSmallDeclRef + "<turn|>\n" +
 				"<|turn>user\nGo<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|><turn|>\n" +
-				"<|turn>tool\nfile1\n  file2<turn|>\n" +
-				"<|turn>model\n",
+				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|>" +
+				"<|tool_response>response:bash{value:" + q + "\n  file1\n  file2\n" + q + "}<tool_response|>",
 		},
 		{
 			// Tool with parameters having only type, no properties
@@ -1039,17 +1328,17 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				{Role: "assistant", Content: "<|channel>I should use bash<channel|>", ToolCalls: []api.ToolCall{{
 					Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "ls"})},
 				}}},
-				{Role: "tool", Content: "file1.txt"},
+				{Role: "tool", ToolName: "bash", Content: "file1.txt"},
 				{Role: "assistant", Content: "Here are the files."},
 				{Role: "user", Content: "Thanks"},
 			},
 			tools: bashSmallTool(),
 			think: thinkTrue(),
-			expected: "<bos><|turn>system\n<|think|>You are helpful." + bashSmallDeclRef + "<turn|>\n" +
+			expected: "<bos><|turn>system\n<|think|>\nYou are helpful." + bashSmallDeclRef + "<turn|>\n" +
 				"<|turn>user\nList files<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|><turn|>\n" +
-				"<|turn>tool\nfile1.txt<turn|>\n" +
-				"<|turn>model\nHere are the files.<turn|>\n" +
+				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|>" +
+				"<|tool_response>response:bash{value:" + q + "file1.txt" + q + "}<tool_response|>" +
+				"<turn|>\nHere are the files.<turn|>\n" +
 				"<|turn>user\nThanks<turn|>\n" +
 				"<|turn>model\n",
 		},
@@ -1062,9 +1351,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				"<|turn>user\nTag<turn|>\n<|turn>model\n",
 		},
 		{
-			// OBJECT property without description but with nested properties —
-			// template hardcodes leading comma on ,properties: and does NOT
-			// add comma before type: when description is absent
+			// OBJECT property without description but with nested properties
 			name:     "object_no_desc_with_properties",
 			messages: []api.Message{{Role: "user", Content: "Update"}},
 			tools:    objectNoDescTool(),
@@ -1082,22 +1369,22 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				{Role: "assistant", ToolCalls: []api.ToolCall{{
 					Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "mkdir src"})},
 				}}},
-				{Role: "tool", Content: ""},
+				{Role: "tool", ToolName: "bash", Content: ""},
 				{Role: "assistant", ToolCalls: []api.ToolCall{{
 					Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "touch src/main.go"})},
 				}}},
-				{Role: "tool", Content: ""},
+				{Role: "tool", ToolName: "bash", Content: ""},
 				{Role: "assistant", Content: "Done."},
 				{Role: "user", Content: "Thanks"},
 			},
 			tools: bashSmallTool(),
 			expected: "<bos><|turn>system\n" + bashSmallDeclRef + "<turn|>\n" +
 				"<|turn>user\nSet up the project<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:bash{command:" + q + "mkdir src" + q + "}<tool_call|><turn|>\n" +
-				"<|turn>tool\n<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:bash{command:" + q + "touch src/main.go" + q + "}<tool_call|><turn|>\n" +
-				"<|turn>tool\n<turn|>\n" +
-				"<|turn>model\nDone.<turn|>\n" +
+				"<|turn>model\n<|tool_call>call:bash{command:" + q + "mkdir src" + q + "}<tool_call|>" +
+				"<|tool_response>response:bash{value:" + q + q + "}<tool_response|>" +
+				"<|tool_call>call:bash{command:" + q + "touch src/main.go" + q + "}<tool_call|>" +
+				"<|tool_response>response:bash{value:" + q + q + "}<tool_response|>" +
+				"Done.<turn|>\n" +
 				"<|turn>user\nThanks<turn|>\n" +
 				"<|turn>model\n",
 		},
@@ -1109,14 +1396,15 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				{Role: "assistant", Content: "<|channel>I need to check the directory<channel|>Let me list the files.", ToolCalls: []api.ToolCall{{
 					Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "ls"})},
 				}}},
-				{Role: "tool", Content: "main.go\ngo.mod"},
+				{Role: "tool", ToolName: "bash", Content: "main.go\ngo.mod"},
 				{Role: "user", Content: "OK"},
 			},
 			tools: bashSmallTool(),
 			expected: "<bos><|turn>system\n" + bashSmallDeclRef + "<turn|>\n" +
 				"<|turn>user\nList files<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|>Let me list the files.<turn|>\n" +
-				"<|turn>tool\nmain.go\ngo.mod<turn|>\n" +
+				"<|turn>model\n<|tool_call>call:bash{command:" + q + "ls" + q + "}<tool_call|>" +
+				"<|tool_response>response:bash{value:" + q + "main.go\ngo.mod" + q + "}<tool_response|>" +
+				"Let me list the files.<turn|>\n" +
 				"<|turn>user\nOK<turn|>\n" +
 				"<|turn>model\n",
 		},
@@ -1128,14 +1416,13 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				{Role: "assistant", ToolCalls: []api.ToolCall{{
 					Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "echo hello\necho world"})},
 				}}},
-				{Role: "tool", Content: "hello\nworld"},
+				{Role: "tool", ToolName: "bash", Content: "hello\nworld"},
 			},
 			tools: bashSmallTool(),
 			expected: "<bos><|turn>system\n" + bashSmallDeclRef + "<turn|>\n" +
 				"<|turn>user\nRun it<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:bash{command:" + q + "echo hello\necho world" + q + "}<tool_call|><turn|>\n" +
-				"<|turn>tool\nhello\nworld<turn|>\n" +
-				"<|turn>model\n",
+				"<|turn>model\n<|tool_call>call:bash{command:" + q + "echo hello\necho world" + q + "}<tool_call|>" +
+				"<|tool_response>response:bash{value:" + q + "hello\nworld" + q + "}<tool_response|>",
 		},
 		{
 			// Empty string argument value
@@ -1145,22 +1432,20 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 				{Role: "assistant", ToolCalls: []api.ToolCall{{
 					Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": ""})},
 				}}},
-				{Role: "tool", Content: "error"},
+				{Role: "tool", ToolName: "bash", Content: "error"},
 			},
 			tools: bashSmallTool(),
 			expected: "<bos><|turn>system\n" + bashSmallDeclRef + "<turn|>\n" +
 				"<|turn>user\nGo<turn|>\n" +
-				"<|turn>model\n<|tool_call>call:bash{command:" + q + q + "}<tool_call|><turn|>\n" +
-				"<|turn>tool\nerror<turn|>\n" +
-				"<|turn>model\n",
+				"<|turn>model\n<|tool_call>call:bash{command:" + q + q + "}<tool_call|>" +
+				"<|tool_response>response:bash{value:" + q + "error" + q + "}<tool_response|>",
 		},
 	}
 
 	verifyJinja2 := os.Getenv("VERIFY_JINJA2") != ""
 	if verifyJinja2 {
-		// Verify python3 and jinja2 are available
-		if err := exec.Command("python3", "-c", "import jinja2").Run(); err != nil {
-			t.Fatal("VERIFY_JINJA2=1 requires python3 with jinja2: pip install jinja2")
+		if err := exec.Command("uv", "run", "--with", "jinja2", "python", "-c", "import jinja2").Run(); err != nil {
+			t.Fatal("VERIFY_JINJA2=1 requires uv and the ability to run uv with jinja2")
 		}
 		t.Log("VERIFY_JINJA2=1: verifying expected values against Jinja2 template")
 	}
@@ -1175,7 +1460,7 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 
 			// When VERIFY_JINJA2=1, also verify the expected value against
 			// the real Jinja2 template rendered by Python.
-			if verifyJinja2 {
+			if verifyJinja2 && !tt.skipJinja2 {
 				jinja2Output := renderWithJinja2(t, tt.messages, tt.tools, tt.think)
 				if jinja2Output != tt.expected || jinja2Output != got {
 					fmt.Fprintf(os.Stderr, "\nJINJA2 OUTPUT for %s (copy-paste as expected):\n%q\n\n", tt.name, jinja2Output)
@@ -1189,12 +1474,356 @@ func TestGemma4RendererMatchesReference(t *testing.T) {
 	}
 }
 
-// renderWithJinja2 shells out to python3 to render messages through the
-// Jinja2 chat template. Returns the rendered string.
+func TestGemma4RendererVariantsMatchExpectedGenerationPrompt(t *testing.T) {
+	messages := []api.Message{{Role: "user", Content: "Hello"}}
+
+	tests := []struct {
+		name         string
+		rendererName string
+		expected     string
+	}{
+		{
+			name:         "legacy_alias",
+			rendererName: "gemma4",
+			expected:     "<bos><|turn>user\nHello<turn|>\n<|turn>model\n",
+		},
+		{
+			name:         "small",
+			rendererName: "gemma4-small",
+			expected:     "<bos><|turn>user\nHello<turn|>\n<|turn>model\n",
+		},
+		{
+			name:         "large",
+			rendererName: "gemma4-large",
+			expected:     "<bos><|turn>user\nHello<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := RenderWithRenderer(tt.rendererName, messages, nil, nil)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}
+
+func TestGemma4LargeRendererOmitsEmptyThoughtBlockWhenThinkingEnabled(t *testing.T) {
+	got, err := RenderWithRenderer("gemma4-large", []api.Message{{Role: "user", Content: "Hello"}}, nil, thinkTrue())
+	assert.NoError(t, err)
+	assert.Equal(t, "<bos><|turn>system\n<|think|>\n<turn|>\n<|turn>user\nHello<turn|>\n<|turn>model\n", got)
+	assert.NotContains(t, got, "<|channel>thought\n<channel|>")
+}
+
+func TestGemma4RendererMatchesJinja2ExpandedParity(t *testing.T) {
+	if os.Getenv("VERIFY_JINJA2") == "" {
+		t.Skip("set VERIFY_JINJA2=1 to run expanded Jinja2 parity checks")
+	}
+
+	if err := exec.Command("uv", "run", "--with", "jinja2", "python", "-c", "import jinja2").Run(); err != nil {
+		t.Fatal("VERIFY_JINJA2=1 requires uv and the ability to run uv with jinja2")
+	}
+
+	tests := []struct {
+		name     string
+		messages []api.Message
+		tools    []api.Tool
+		think    *api.ThinkValue
+	}{
+		{
+			name: "adjacent_assistants_continue_same_model_turn",
+			messages: []api.Message{
+				{Role: "user", Content: "Start"},
+				{Role: "assistant", Content: "One."},
+				{Role: "assistant", Content: "Two."},
+				{Role: "user", Content: "More"},
+			},
+		},
+		{
+			name: "thinking_field_on_pending_tool_call",
+			messages: []api.Message{
+				{Role: "user", Content: "List files"},
+				{Role: "assistant", Content: "Let me check.", Thinking: "I should use bash", ToolCalls: []api.ToolCall{{
+					Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "ls"})},
+				}}},
+			},
+			tools: bashRefTool(),
+		},
+		{
+			name: "thinking_field_ignored_before_later_user",
+			messages: []api.Message{
+				{Role: "user", Content: "List files"},
+				{Role: "assistant", Content: "Let me check.", Thinking: "I should use bash", ToolCalls: []api.ToolCall{{
+					Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "ls"})},
+				}}},
+				{Role: "tool", ToolName: "bash", Content: "file1.txt"},
+				{Role: "user", Content: "Thanks"},
+			},
+			tools: bashRefTool(),
+		},
+		{
+			name: "tool_response_name_resolved_from_tool_call_id",
+			messages: []api.Message{
+				{Role: "user", Content: "List and read"},
+				{Role: "assistant", ToolCalls: []api.ToolCall{
+					{
+						ID:       "call_bash",
+						Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "ls"})},
+					},
+					{
+						ID:       "call_read",
+						Function: api.ToolCallFunction{Name: "read", Arguments: testArgs(map[string]any{"path": "go.mod"})},
+					},
+				}},
+				{Role: "tool", ToolCallID: "call_read", Content: "module example.com/foo"},
+				{Role: "tool", ToolCallID: "call_bash", Content: "file1.txt\nfile2.txt"},
+			},
+			tools: bashAndReadRefTools(),
+		},
+		{
+			name: "adjacent_assistants_after_tool_response_continue_same_model_turn",
+			messages: []api.Message{
+				{Role: "user", Content: "Go"},
+				{Role: "assistant", ToolCalls: []api.ToolCall{{
+					Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "ls"})},
+				}}},
+				{Role: "tool", ToolName: "bash", Content: "file1.txt"},
+				{Role: "assistant", Content: "First."},
+				{Role: "assistant", Content: "Second."},
+				{Role: "user", Content: "Next"},
+			},
+			tools: bashSmallTool(),
+		},
+		{
+			name: "thinking_enabled_with_pending_tool_call",
+			messages: []api.Message{
+				{Role: "system", Content: "You are helpful."},
+				{Role: "user", Content: "List files"},
+				{Role: "assistant", Thinking: "Use bash", ToolCalls: []api.ToolCall{{
+					Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "ls"})},
+				}}},
+			},
+			tools: bashSmallTool(),
+			think: thinkTrue(),
+		},
+		{
+			name: "array_items_object_with_required",
+			messages: []api.Message{
+				{Role: "user", Content: "Upsert entries"},
+			},
+			tools: arrayObjectItemsTool(),
+		},
+		{
+			name: "array_items_object_with_nested_object_and_array_properties",
+			messages: []api.Message{
+				{Role: "user", Content: "Plan steps"},
+			},
+			tools: arrayNestedItemsTool(),
+		},
+		{
+			name: "array_items_nested_array_of_objects",
+			messages: []api.Message{
+				{Role: "user", Content: "Schedule jobs"},
+			},
+			tools: nestedArrayObjectItemsTool(),
+		},
+		{
+			name: "array_items_union_type",
+			messages: []api.Message{
+				{Role: "user", Content: "Maybe batch"},
+			},
+			tools: arrayUnionItemsTool(),
+		},
+		{
+			name: "array_items_nested_nullable_properties",
+			messages: []api.Message{
+				{Role: "user", Content: "Annotate batch"},
+			},
+			tools: arrayNullableNestedItemsTool(),
+		},
+		{
+			name: "array_items_extra_keys",
+			messages: []api.Message{
+				{Role: "user", Content: "Configure batch"},
+			},
+			tools: arrayItemsExtraKeysTool(),
+		},
+		{
+			name: "typed_property_union_type",
+			messages: []api.Message{
+				{Role: "user", Content: "Hi"},
+			},
+			tools: unionTopLevelTypeTool(),
+		},
+	}
+
+	variants := []struct {
+		name        string
+		renderer    *Gemma4Renderer
+		templateRel string
+	}{
+		{
+			name:        "small",
+			renderer:    &Gemma4Renderer{useImgTags: RenderImgTags},
+			templateRel: gemma4E2BTemplate,
+		},
+		{
+			name:        "large",
+			renderer:    &Gemma4Renderer{useImgTags: RenderImgTags, emptyBlockOnNothink: true},
+			templateRel: gemma431BTemplate,
+		},
+	}
+
+	for _, variant := range variants {
+		t.Run(variant.name, func(t *testing.T) {
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					got, err := variant.renderer.Render(tt.messages, tt.tools, tt.think)
+					assert.NoError(t, err)
+
+					jinja2Output := renderWithJinja2Template(t, variant.templateRel, tt.messages, tt.tools, tt.think)
+					assert.Equal(t, jinja2Output, got,
+						"renderer output doesn't match Jinja2 template output")
+				})
+			}
+		})
+	}
+}
+
+func TestGemma4RendererKnownJinja2Differences(t *testing.T) {
+	if os.Getenv("VERIFY_JINJA2") == "" {
+		t.Skip("set VERIFY_JINJA2=1 to run Jinja2 difference checks")
+	}
+
+	if err := exec.Command("uv", "run", "--with", "jinja2", "python", "-c", "import jinja2").Run(); err != nil {
+		t.Fatal("VERIFY_JINJA2=1 requires uv and the ability to run uv with jinja2")
+	}
+
+	tests := []struct {
+		name           string
+		messages       []api.Message
+		tools          []api.Tool
+		wantJinjaFrag  string
+		wantRenderFrag string
+	}{
+		{
+			name: "typed_property_anyof",
+			messages: []api.Message{
+				{Role: "user", Content: "Pick"},
+			},
+			tools:          anyOfTool(),
+			wantJinjaFrag:  `value:{description:<|"|>Value<|"|>,type:<|"|><|"|>}`,
+			wantRenderFrag: `value:{description:<|"|>Value<|"|>,type:<|"|>['STRING', 'NUMBER']<|"|>}`,
+		},
+		{
+			name: "tool_response_name_not_overridden_without_tool_call_id",
+			messages: []api.Message{
+				{Role: "user", Content: "List and read"},
+				{Role: "assistant", ToolCalls: []api.ToolCall{
+					{
+						Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "ls"})},
+					},
+					{
+						Function: api.ToolCallFunction{Name: "read", Arguments: testArgs(map[string]any{"path": "go.mod"})},
+					},
+				}},
+				{Role: "tool", ToolName: "bash", Content: "payload"},
+			},
+			tools:          bashAndReadRefTools(),
+			wantJinjaFrag:  `response:read{value:<|"|>payload<|"|>}`,
+			wantRenderFrag: `response:bash{value:<|"|>payload<|"|>}`,
+		},
+		{
+			name: "tool_response_without_name_or_id_uses_unknown",
+			messages: []api.Message{
+				{Role: "user", Content: "List and read"},
+				{Role: "assistant", ToolCalls: []api.ToolCall{
+					{
+						Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "ls"})},
+					},
+					{
+						Function: api.ToolCallFunction{Name: "read", Arguments: testArgs(map[string]any{"path": "go.mod"})},
+					},
+				}},
+				{Role: "tool", Content: "payload"},
+			},
+			tools:          bashAndReadRefTools(),
+			wantJinjaFrag:  `response:read{value:<|"|>payload<|"|>}`,
+			wantRenderFrag: `response:unknown{value:<|"|>payload<|"|>}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			renderer := &Gemma4Renderer{useImgTags: RenderImgTags}
+			got, err := renderer.Render(tt.messages, tt.tools, nil)
+			assert.NoError(t, err)
+
+			jinja2Output := renderWithJinja2(t, tt.messages, tt.tools, nil)
+			assert.NotEqual(t, jinja2Output, got, "case no longer differs from Jinja2 output")
+			assert.Contains(t, jinja2Output, tt.wantJinjaFrag)
+			assert.Contains(t, got, tt.wantRenderFrag)
+		})
+	}
+}
+
+func TestGemma4RendererNormalizesSimpleAnyOfToTypedUnion(t *testing.T) {
+	renderer := &Gemma4Renderer{useImgTags: RenderImgTags}
+
+	got, err := renderer.Render([]api.Message{{Role: "user", Content: "Pick"}}, anyOfTool(), nil)
+	assert.NoError(t, err)
+	assert.Contains(t, got, `value:{description:<|"|>Value<|"|>,type:<|"|>['STRING', 'NUMBER']<|"|>}`)
+}
+
+func TestGemma4RendererToolResponseWithoutNameOrIDUsesUnknown(t *testing.T) {
+	renderer := &Gemma4Renderer{useImgTags: RenderImgTags}
+
+	got, err := renderer.Render([]api.Message{
+		{Role: "user", Content: "List and read"},
+		{Role: "assistant", ToolCalls: []api.ToolCall{
+			{
+				Function: api.ToolCallFunction{Name: "bash", Arguments: testArgs(map[string]any{"command": "ls"})},
+			},
+			{
+				Function: api.ToolCallFunction{Name: "read", Arguments: testArgs(map[string]any{"path": "go.mod"})},
+			},
+		}},
+		{Role: "tool", Content: "payload"},
+	}, bashAndReadRefTools(), nil)
+	assert.NoError(t, err)
+	assert.Contains(t, got, `response:unknown{value:<|"|>payload<|"|>}`)
+	assert.NotContains(t, got, `response:read{value:<|"|>payload<|"|>}`)
+}
+
+func TestGemma4SizeTemplateFixturesDifferAtGenerationPrompt(t *testing.T) {
+	e2b, err := os.ReadFile(gemma4E2BTemplate)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", gemma4E2BTemplate, err)
+	}
+
+	thirtyOneB, err := os.ReadFile(gemma431BTemplate)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", gemma431BTemplate, err)
+	}
+
+	assert.Contains(t, string(e2b), "{{- '<|turn>model\\n' -}}")
+	assert.NotContains(t, string(e2b), "{{- '<|channel>thought\\n<channel|>' -}}")
+	assert.Contains(t, string(thirtyOneB), "{{- '<|turn>model\\n' -}}")
+	assert.Contains(t, string(thirtyOneB), "{{- '<|channel>thought\\n<channel|>' -}}")
+}
+
+// renderWithJinja2 shells out to uv + Python to render messages through the
+// E2B Jinja2 chat template. Returns the rendered string.
 func renderWithJinja2(t *testing.T, messages []api.Message, tools []api.Tool, think *api.ThinkValue) string {
+	return renderWithJinja2Template(t, gemma4E2BTemplate, messages, tools, think)
+}
+
+// renderWithJinja2Template shells out to uv + Python to render messages through
+// the named Jinja2 chat template. Returns the rendered string.
+func renderWithJinja2Template(t *testing.T, templateRelPath string, messages []api.Message, tools []api.Tool, think *api.ThinkValue) string {
 	t.Helper()
 
-	templatePath, err := filepath.Abs("testdata/gemma4_chat_template.jinja2")
+	templatePath, err := filepath.Abs(templateRelPath)
 	if err != nil {
 		t.Fatalf("failed to get template path: %v", err)
 	}
@@ -1202,22 +1831,33 @@ func renderWithJinja2(t *testing.T, messages []api.Message, tools []api.Tool, th
 	// Convert messages to the format the Jinja2 template expects.
 	// The template uses message['tool_calls'] with function.arguments as a dict.
 	type jinja2ToolCall struct {
+		ID       string `json:"id,omitempty"`
 		Function struct {
 			Name      string `json:"name"`
 			Arguments any    `json:"arguments"`
 		} `json:"function"`
 	}
 	type jinja2Message struct {
-		Role      string           `json:"role"`
-		Content   string           `json:"content,omitempty"`
-		ToolCalls []jinja2ToolCall `json:"tool_calls,omitempty"`
+		Role       string           `json:"role"`
+		Content    string           `json:"content"`
+		Reasoning  string           `json:"reasoning,omitempty"`
+		ToolCalls  []jinja2ToolCall `json:"tool_calls,omitempty"`
+		Name       string           `json:"name,omitempty"`
+		ToolCallID string           `json:"tool_call_id,omitempty"`
 	}
 
 	var jMsgs []jinja2Message
 	for _, m := range messages {
-		jm := jinja2Message{Role: m.Role, Content: m.Content}
+		jm := jinja2Message{
+			Role:       m.Role,
+			Content:    m.Content,
+			Reasoning:  m.Thinking,
+			Name:       m.ToolName,
+			ToolCallID: m.ToolCallID,
+		}
 		for _, tc := range m.ToolCalls {
 			jtc := jinja2ToolCall{}
+			jtc.ID = tc.ID
 			jtc.Function.Name = tc.Function.Name
 			// Convert ToolCallFunctionArguments to a map
 			var args map[string]any
@@ -1259,16 +1899,20 @@ if %s:
 print(tmpl.render(**kwargs), end="")
 `, templatePath, string(msgsJSON), toolsJSON, toolsJSON, thinking)
 
-	cmd := exec.Command("python3", "-c", script)
+	cmd := exec.Command("uv", "run", "--with", "jinja2", "python", "-c", script)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("python3 failed: %v\nstderr: %s", err, stderr.String())
+		t.Fatalf("uv run failed: %v\nstderr: %s", err, stderr.String())
 	}
 	return stdout.String()
 }
 
 func thinkTrue() *api.ThinkValue {
 	return &api.ThinkValue{Value: true}
+}
+
+func thinkFalse() *api.ThinkValue {
+	return &api.ThinkValue{Value: false}
 }

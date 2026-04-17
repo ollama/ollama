@@ -49,6 +49,55 @@ func (r *launcherSingleRunner) Run(model string, args []string) error {
 
 func (r *launcherSingleRunner) String() string { return "StubSingle" }
 
+type launcherManagedRunner struct {
+	paths              []string
+	currentModel       string
+	configured         []string
+	ranModel           string
+	onboarded          bool
+	onboardCalls       int
+	onboardingComplete bool
+	refreshCalls       int
+	refreshErr         error
+}
+
+func (r *launcherManagedRunner) Run(model string, args []string) error {
+	r.ranModel = model
+	return nil
+}
+
+func (r *launcherManagedRunner) String() string { return "StubManaged" }
+
+func (r *launcherManagedRunner) Paths() []string { return r.paths }
+
+func (r *launcherManagedRunner) Configure(model string) error {
+	r.configured = append(r.configured, model)
+	r.currentModel = model
+	return nil
+}
+
+func (r *launcherManagedRunner) CurrentModel() string { return r.currentModel }
+
+func (r *launcherManagedRunner) Onboard() error {
+	r.onboardCalls++
+	r.onboarded = true
+	r.onboardingComplete = true
+	return nil
+}
+
+func (r *launcherManagedRunner) OnboardingComplete() bool { return r.onboardingComplete }
+
+func (r *launcherManagedRunner) RefreshRuntimeAfterConfigure() error {
+	r.refreshCalls++
+	return r.refreshErr
+}
+
+type launcherHeadlessManagedRunner struct {
+	launcherManagedRunner
+}
+
+func (r *launcherHeadlessManagedRunner) RequiresInteractiveOnboarding() bool { return false }
+
 func setLaunchTestHome(t *testing.T, dir string) {
 	t.Helper()
 	t.Setenv("HOME", dir)
@@ -138,6 +187,451 @@ func TestDefaultLaunchPolicy(t *testing.T) {
 				t.Fatalf("defaultLaunchPolicy(%v, %v) = %+v, want %+v", tt.interactive, tt.yes, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestBuildLauncherState_ManagedSingleIntegrationUsesCurrentModel(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"gemma4"}]}`)
+		case "/api/show":
+			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	runner := &launcherManagedRunner{currentModel: "gemma4"}
+	withIntegrationOverride(t, "pi", runner)
+
+	state, err := BuildLauncherState(context.Background())
+	if err != nil {
+		t.Fatalf("BuildLauncherState returned error: %v", err)
+	}
+
+	if state.Integrations["pi"].CurrentModel != "gemma4" {
+		t.Fatalf("expected managed current model from integration config, got %q", state.Integrations["pi"].CurrentModel)
+	}
+	if !state.Integrations["pi"].ModelUsable {
+		t.Fatal("expected managed current model to be usable")
+	}
+}
+
+func TestBuildLauncherState_ManagedSingleIntegrationShowsSavedModelWhenLiveConfigMissing(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"gemma4"}]}`)
+		case "/api/show":
+			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	if err := config.SaveIntegration("pi", []string{"gemma4"}); err != nil {
+		t.Fatalf("failed to save managed integration config: %v", err)
+	}
+
+	runner := &launcherManagedRunner{}
+	withIntegrationOverride(t, "pi", runner)
+
+	state, err := BuildLauncherState(context.Background())
+	if err != nil {
+		t.Fatalf("BuildLauncherState returned error: %v", err)
+	}
+
+	if state.Integrations["pi"].CurrentModel != "gemma4" {
+		t.Fatalf("expected saved model to remain visible, got %q", state.Integrations["pi"].CurrentModel)
+	}
+	if state.Integrations["pi"].ModelUsable {
+		t.Fatal("expected missing live config to mark managed model unusable")
+	}
+}
+
+func TestLaunchIntegration_ManagedSingleIntegrationConfiguresOnboardsAndRuns(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"gemma4"}]}`)
+		case "/api/show":
+			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	runner := &launcherManagedRunner{
+		paths: nil,
+	}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+		return "gemma4", nil
+	}
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		return true, nil
+	}
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "stubmanaged"}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+
+	if diff := compareStrings(runner.configured, []string{"gemma4"}); diff != "" {
+		t.Fatalf("configured models mismatch: %s", diff)
+	}
+	if runner.refreshCalls != 1 {
+		t.Fatalf("expected runtime refresh once after configure, got %d", runner.refreshCalls)
+	}
+	if runner.onboardCalls != 1 {
+		t.Fatalf("expected onboarding to run once, got %d", runner.onboardCalls)
+	}
+	if runner.ranModel != "gemma4" {
+		t.Fatalf("expected launch to run configured model, got %q", runner.ranModel)
+	}
+
+	saved, err := config.LoadIntegration("stubmanaged")
+	if err != nil {
+		t.Fatalf("failed to reload managed integration config: %v", err)
+	}
+	if diff := compareStrings(saved.Models, []string{"gemma4"}); diff != "" {
+		t.Fatalf("saved models mismatch: %s", diff)
+	}
+}
+
+func TestLaunchIntegration_ManagedSingleIntegrationReOnboardsWhenSavedFlagIsStale(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"gemma4"}]}`)
+		case "/api/show":
+			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	runner := &launcherManagedRunner{
+		currentModel:       "gemma4",
+		onboardingComplete: false,
+	}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	if err := config.SaveIntegration("stubmanaged", []string{"gemma4"}); err != nil {
+		t.Fatalf("failed to save managed integration config: %v", err)
+	}
+	if err := config.MarkIntegrationOnboarded("stubmanaged"); err != nil {
+		t.Fatalf("failed to mark managed integration onboarded: %v", err)
+	}
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "stubmanaged"}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+
+	if runner.onboardCalls != 1 {
+		t.Fatalf("expected stale onboarded flag to trigger onboarding, got %d calls", runner.onboardCalls)
+	}
+	if runner.refreshCalls != 0 {
+		t.Fatalf("expected no runtime refresh when config is unchanged, got %d", runner.refreshCalls)
+	}
+	if runner.ranModel != "gemma4" {
+		t.Fatalf("expected launch to run saved model after onboarding repair, got %q", runner.ranModel)
+	}
+}
+
+func TestLaunchIntegration_ManagedSingleIntegrationConfigOnlySkipsFinalRun(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	runner := &launcherManagedRunner{
+		paths: nil,
+	}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		return true, nil
+	}
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:          "stubmanaged",
+		ModelOverride: "gemma4",
+		ConfigureOnly: true,
+	}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+
+	if runner.ranModel != "" {
+		t.Fatalf("expected configure-only flow to skip final launch, got %q", runner.ranModel)
+	}
+	if runner.refreshCalls != 1 {
+		t.Fatalf("expected configure-only flow to refresh runtime once, got %d", runner.refreshCalls)
+	}
+	if runner.onboardCalls != 1 {
+		t.Fatalf("expected configure-only flow to onboard once, got %d", runner.onboardCalls)
+	}
+}
+
+func TestLaunchIntegration_ManagedSingleIntegrationSkipsRewriteWhenSavedMatches(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"gemma4"}]}`)
+		case "/api/show":
+			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	if err := config.SaveIntegration("stubmanaged", []string{"gemma4"}); err != nil {
+		t.Fatalf("failed to save managed integration config: %v", err)
+	}
+
+	runner := &launcherManagedRunner{}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+		t.Fatal("selector should not be called when saved model matches target")
+		return "", nil
+	}
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		t.Fatal("confirm prompt should not run when saved model matches target")
+		return false, nil
+	}
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{Name: "stubmanaged"}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+
+	if len(runner.configured) != 0 {
+		t.Fatalf("expected Configure to be skipped when saved matches, got %v", runner.configured)
+	}
+	if runner.refreshCalls != 0 {
+		t.Fatalf("expected no runtime refresh when config is unchanged, got %d", runner.refreshCalls)
+	}
+	if runner.ranModel != "gemma4" {
+		t.Fatalf("expected launch to run saved model, got %q", runner.ranModel)
+	}
+}
+
+func TestLaunchIntegration_ManagedSingleIntegrationRewritesWhenSavedDiffers(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			fmt.Fprint(w, `{"models":[{"name":"gemma4"}]}`)
+		case "/api/show":
+			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	if err := config.SaveIntegration("stubmanaged", []string{"old-model"}); err != nil {
+		t.Fatalf("failed to save managed integration config: %v", err)
+	}
+
+	runner := &launcherManagedRunner{}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
+		t.Fatal("selector should not be called when model override is provided")
+		return "", nil
+	}
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		return true, nil
+	}
+
+	if err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:          "stubmanaged",
+		ModelOverride: "gemma4",
+	}); err != nil {
+		t.Fatalf("LaunchIntegration returned error: %v", err)
+	}
+
+	if diff := compareStrings(runner.configured, []string{"gemma4"}); diff != "" {
+		t.Fatalf("expected Configure to run when saved differs from target: %s", diff)
+	}
+	if runner.refreshCalls != 1 {
+		t.Fatalf("expected runtime refresh once after configure, got %d", runner.refreshCalls)
+	}
+	if runner.ranModel != "gemma4" {
+		t.Fatalf("expected launch to run configured model, got %q", runner.ranModel)
+	}
+}
+
+func TestLaunchIntegration_ManagedSingleIntegrationStopsWhenRuntimeRefreshFails(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, true)
+	withLauncherHooks(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	runner := &launcherManagedRunner{
+		refreshErr: fmt.Errorf("boom"),
+	}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+		return true, nil
+	}
+
+	err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:          "stubmanaged",
+		ModelOverride: "gemma4",
+	})
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("expected runtime refresh error, got %v", err)
+	}
+	if runner.ranModel != "" {
+		t.Fatalf("expected final launch to stop on runtime refresh failure, got %q", runner.ranModel)
+	}
+	if runner.refreshCalls != 1 {
+		t.Fatalf("expected one runtime refresh attempt, got %d", runner.refreshCalls)
+	}
+	if runner.onboardCalls != 0 {
+		t.Fatalf("expected onboarding to stop after refresh failure, got %d", runner.onboardCalls)
+	}
+}
+
+func TestLaunchIntegration_ManagedSingleIntegrationHeadlessNeedsInteractiveOnboarding(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, false)
+	withLauncherHooks(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	runner := &launcherManagedRunner{
+		paths: nil,
+	}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:          "stubmanaged",
+		ModelOverride: "gemma4",
+		Policy:        &LaunchPolicy{Confirm: LaunchConfirmAutoApprove, MissingModel: LaunchMissingModelAutoPull},
+	})
+	if err == nil {
+		t.Fatal("expected headless onboarding requirement to fail")
+	}
+	if !strings.Contains(err.Error(), "interactive gateway setup") {
+		t.Fatalf("expected interactive onboarding guidance, got %v", err)
+	}
+	if runner.ranModel != "" {
+		t.Fatalf("expected no final launch when onboarding is still required, got %q", runner.ranModel)
+	}
+	if runner.onboardCalls != 0 {
+		t.Fatalf("expected no onboarding attempts in headless mode, got %d", runner.onboardCalls)
+	}
+}
+
+func TestLaunchIntegration_ManagedSingleIntegrationHeadlessAllowsNonInteractiveOnboarding(t *testing.T) {
+	tmpDir := t.TempDir()
+	setLaunchTestHome(t, tmpDir)
+	withInteractiveSession(t, false)
+	withLauncherHooks(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			fmt.Fprint(w, `{"model_info":{"general.context_length":131072}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("OLLAMA_HOST", srv.URL)
+
+	runner := &launcherHeadlessManagedRunner{}
+	withIntegrationOverride(t, "stubmanaged", runner)
+
+	err := LaunchIntegration(context.Background(), IntegrationLaunchRequest{
+		Name:          "stubmanaged",
+		ModelOverride: "gemma4",
+		Policy:        &LaunchPolicy{Confirm: LaunchConfirmAutoApprove, MissingModel: LaunchMissingModelAutoPull},
+	})
+	if err != nil {
+		t.Fatalf("expected non-interactive onboarding to succeed headlessly, got %v", err)
+	}
+	if diff := compareStrings(runner.configured, []string{"gemma4"}); diff != "" {
+		t.Fatalf("configured models mismatch: %s", diff)
+	}
+	if runner.onboardCalls != 1 {
+		t.Fatalf("expected onboarding to run once, got %d", runner.onboardCalls)
+	}
+	if runner.ranModel != "gemma4" {
+		t.Fatalf("expected launch to run configured model, got %q", runner.ranModel)
 	}
 }
 
@@ -521,7 +1015,7 @@ func TestResolveRunModel_ForcePicker_DoesNotReorderByLastModel(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/tags":
-			fmt.Fprint(w, `{"models":[{"name":"qwen3.5"},{"name":"glm-4.7-flash"}]}`)
+			fmt.Fprint(w, `{"models":[{"name":"qwen3.5"},{"name":"gemma4"}]}`)
 		case "/api/show":
 			fmt.Fprint(w, `{"model":"qwen3.5"}`)
 		default:
@@ -540,7 +1034,7 @@ func TestResolveRunModel_ForcePicker_DoesNotReorderByLastModel(t *testing.T) {
 		t.Fatal("expected selector to receive model items")
 	}
 
-	glmIdx := slices.Index(gotNames, "glm-4.7-flash")
+	glmIdx := slices.Index(gotNames, "gemma4")
 	qwenIdx := slices.Index(gotNames, "qwen3.5")
 	if glmIdx == -1 || qwenIdx == -1 {
 		t.Fatalf("expected recommended local models in selector items, got %v", gotNames)
@@ -618,7 +1112,7 @@ func TestLaunchIntegration_EditorForceConfigure(t *testing.T) {
 	}
 
 	var proceedPrompt bool
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		if prompt == "Proceed?" {
 			proceedPrompt = true
 		}
@@ -668,7 +1162,7 @@ func TestLaunchIntegration_EditorForceConfigure(t *testing.T) {
 	}
 }
 
-func TestLaunchIntegration_EditorForceConfigure_DoesNotFloatCheckedModelsInPicker(t *testing.T) {
+func TestLaunchIntegration_EditorForceConfigure_FloatsCheckedModelsInPicker(t *testing.T) {
 	tmpDir := t.TempDir()
 	setLaunchTestHome(t, tmpDir)
 	withLauncherHooks(t)
@@ -725,8 +1219,8 @@ func TestLaunchIntegration_EditorForceConfigure_DoesNotFloatCheckedModelsInPicke
 	if len(gotItems) == 0 {
 		t.Fatal("expected multi selector to receive items")
 	}
-	if gotItems[0] != "kimi-k2.5:cloud" {
-		t.Fatalf("expected stable recommendation order with kimi-k2.5:cloud first, got %v", gotItems)
+	if gotItems[0] != "qwen3.5:cloud" {
+		t.Fatalf("expected checked models floated to top with qwen3.5:cloud first, got %v", gotItems)
 	}
 	if len(gotPreChecked) < 2 {
 		t.Fatalf("expected prechecked models to be preserved, got %v", gotPreChecked)
@@ -847,7 +1341,7 @@ func TestLaunchIntegration_EditorConfigureMultiSkipsMissingLocalAndPersistsAccep
 	DefaultMultiSelector = func(title string, items []ModelItem, preChecked []string) ([]string, error) {
 		return []string{"glm-5:cloud", "missing-local"}, nil
 	}
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		if prompt == "Proceed?" {
 			return true, nil
 		}
@@ -929,7 +1423,7 @@ func TestLaunchIntegration_EditorConfigureMultiSkipsUnauthedCloudAndPersistsAcce
 	DefaultMultiSelector = func(title string, items []ModelItem, preChecked []string) ([]string, error) {
 		return []string{"llama3.2", "glm-5:cloud"}, nil
 	}
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		if prompt == "Proceed?" {
 			return true, nil
 		}
@@ -1014,7 +1508,7 @@ func TestLaunchIntegration_EditorConfigureMultiRemovesReselectedFailingModel(t *
 	DefaultMultiSelector = func(title string, items []ModelItem, preChecked []string) ([]string, error) {
 		return append([]string(nil), preChecked...), nil
 	}
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		if prompt == "Proceed?" {
 			return true, nil
 		}
@@ -1101,7 +1595,7 @@ func TestLaunchIntegration_EditorConfigureMultiAllFailuresKeepsExistingAndSkipsL
 	DefaultMultiSelector = func(title string, items []ModelItem, preChecked []string) ([]string, error) {
 		return []string{"missing-local-a", "missing-local-b"}, nil
 	}
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		if prompt == "Download missing-local-a?" || prompt == "Download missing-local-b?" {
 			return false, nil
 		}
@@ -1180,7 +1674,7 @@ func TestLaunchIntegration_ConfiguredEditorLaunchValidatesPrimaryOnly(t *testing
 		t.Fatalf("failed to seed config: %v", err)
 	}
 
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		t.Fatalf("did not expect prompt during normal configured launch: %q", prompt)
 		return false, nil
 	}
@@ -1245,7 +1739,7 @@ func TestLaunchIntegration_ConfiguredEditorLaunchSkipsReconfigure(t *testing.T) 
 		t.Fatalf("failed to seed config: %v", err)
 	}
 
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		t.Fatalf("did not expect prompt during a normal editor launch: %s", prompt)
 		return false, nil
 	}
@@ -1410,7 +1904,7 @@ func TestLaunchIntegration_ConfigureOnlyDoesNotRequireInstalledBinary(t *testing
 	}
 
 	var prompts []string
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		prompts = append(prompts, prompt)
 		if strings.Contains(prompt, "Launch LauncherEditor now?") {
 			return false, nil
@@ -1569,7 +2063,7 @@ func TestLaunchIntegration_ClaudeForceConfigureMissingSelectionDoesNotSave(t *te
 	DefaultSingleSelector = func(title string, items []ModelItem, current string) (string, error) {
 		return "missing-model", nil
 	}
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		if prompt == "Download missing-model?" {
 			return false, nil
 		}
@@ -1631,7 +2125,7 @@ func TestLaunchIntegration_ClaudeModelOverrideSkipsSelector(t *testing.T) {
 	}
 
 	var confirmCalls int
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		confirmCalls++
 		if !strings.Contains(prompt, "glm-4") {
 			t.Fatalf("expected download prompt for override model, got %q", prompt)
@@ -1695,7 +2189,7 @@ func TestLaunchIntegration_ConfigureOnlyPrompt(t *testing.T) {
 	}
 
 	var prompts []string
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		prompts = append(prompts, prompt)
 		if strings.Contains(prompt, "Launch StubSingle now?") {
 			return false, nil
@@ -1745,7 +2239,7 @@ func TestLaunchIntegration_ModelOverrideHeadlessMissingFailsWithoutPrompt(t *tes
 	withIntegrationOverride(t, "droid", runner)
 
 	confirmCalled := false
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		confirmCalled = true
 		return true, nil
 	}
@@ -1802,7 +2296,7 @@ func TestLaunchIntegration_ModelOverrideHeadlessCanOverrideMissingModelPolicy(t 
 	withIntegrationOverride(t, "droid", runner)
 
 	confirmCalled := false
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		confirmCalled = true
 		if !strings.Contains(prompt, "missing-model") {
 			t.Fatalf("expected prompt to mention missing model, got %q", prompt)
@@ -1860,7 +2354,7 @@ func TestLaunchIntegration_ModelOverrideInteractiveMissingPromptsAndPulls(t *tes
 	withIntegrationOverride(t, "droid", runner)
 
 	confirmCalled := false
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		confirmCalled = true
 		if !strings.Contains(prompt, "missing-model") {
 			t.Fatalf("expected prompt to mention missing model, got %q", prompt)
@@ -1921,7 +2415,7 @@ func TestLaunchIntegration_HeadlessSelectorFlowFailsWithoutPrompt(t *testing.T) 
 	}
 
 	confirmCalled := false
-	DefaultConfirmPrompt = func(prompt string) (bool, error) {
+	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
 		confirmCalled = true
 		return true, nil
 	}

@@ -80,7 +80,9 @@ exit 0
 	withConfirm := func(t *testing.T, fn func(prompt string) (bool, error)) {
 		t.Helper()
 		oldConfirm := DefaultConfirmPrompt
-		DefaultConfirmPrompt = fn
+		DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
+			return fn(prompt)
+		}
 		t.Cleanup(func() { DefaultConfirmPrompt = oldConfirm })
 	}
 

@@ -214,16 +214,28 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			}
 			origOpts := opts.Copy()
 
+			client, err := api.ClientFromEnvironment()
+			if err != nil {
+				fmt.Println("error: couldn't connect to ollama server")
+				return err
+			}
+
 			opts.Model = args[1]
 			opts.Messages = []api.Message{}
+			opts.LoadedMessages = nil
 			fmt.Printf("Loading model '%s'\n", opts.Model)
-			opts.Think, err = inferThinkingOption(nil, &opts, thinkExplicitlySet)
+			info, err := client.Show(cmd.Context(), &api.ShowRequest{Model: opts.Model})
 			if err != nil {
 				if strings.Contains(err.Error(), "not found") {
 					fmt.Printf("Couldn't find model '%s'\n", opts.Model)
 					opts = origOpts.Copy()
 					continue
 				}
+				return err
+			}
+			applyShowResponseToRunOptions(&opts, info)
+			opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, thinkExplicitlySet)
+			if err != nil {
 				return err
 			}
 			if err := loadOrUnloadModel(cmd, &opts); err != nil {
@@ -561,8 +573,10 @@ func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
 		req.Parameters = opts.Options
 	}
 
-	if len(opts.Messages) > 0 {
-		req.Messages = opts.Messages
+	messages := slices.Clone(opts.LoadedMessages)
+	messages = append(messages, opts.Messages...)
+	if len(messages) > 0 {
+		req.Messages = messages
 	}
 
 	return req

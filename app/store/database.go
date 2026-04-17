@@ -1245,7 +1245,7 @@ func (db *database) setSettings(s Settings) error {
 	}
 	if lastHomeView != "chat" {
 		if _, ok := validLaunchView[lastHomeView]; !ok {
-			lastHomeView = "chat"
+			lastHomeView = "launch"
 		}
 	}
 

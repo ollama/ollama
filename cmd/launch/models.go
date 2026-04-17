@@ -23,15 +23,15 @@ import (
 var recommendedModels = []ModelItem{
 	{Name: "kimi-k2.5:cloud", Description: "Multimodal reasoning with subagents", Recommended: true},
 	{Name: "qwen3.5:cloud", Description: "Reasoning, coding, and agentic tool use with vision", Recommended: true},
-	{Name: "glm-5:cloud", Description: "Reasoning and code generation", Recommended: true},
+	{Name: "glm-5.1:cloud", Description: "Reasoning and code generation", Recommended: true},
 	{Name: "minimax-m2.7:cloud", Description: "Fast, efficient coding and real-world productivity", Recommended: true},
-	{Name: "glm-4.7-flash", Description: "Reasoning and code generation locally", Recommended: true},
+	{Name: "gemma4", Description: "Reasoning and code generation locally", Recommended: true},
 	{Name: "qwen3.5", Description: "Reasoning, coding, and visual understanding locally", Recommended: true},
 }
 
 var recommendedVRAM = map[string]string{
-	"glm-4.7-flash": "~25GB",
-	"qwen3.5":       "~11GB",
+	"gemma4":  "~16GB",
+	"qwen3.5": "~11GB",
 }
 
 // cloudModelLimit holds context and output token limits for a cloud model.
@@ -47,9 +47,11 @@ var cloudModelLimits = map[string]cloudModelLimit{
 	"cogito-2.1:671b":     {Context: 163_840, Output: 65_536},
 	"deepseek-v3.1:671b":  {Context: 163_840, Output: 163_840},
 	"deepseek-v3.2":       {Context: 163_840, Output: 65_536},
+	"gemma4:31b":          {Context: 262_144, Output: 131_072},
 	"glm-4.6":             {Context: 202_752, Output: 131_072},
 	"glm-4.7":             {Context: 202_752, Output: 131_072},
 	"glm-5":               {Context: 202_752, Output: 131_072},
+	"glm-5.1":             {Context: 202_752, Output: 131_072},
 	"gpt-oss:120b":        {Context: 131_072, Output: 131_072},
 	"gpt-oss:20b":         {Context: 131_072, Output: 131_072},
 	"kimi-k2:1t":          {Context: 262_144, Output: 262_144},
@@ -228,7 +230,7 @@ func pullMissingModel(ctx context.Context, client *api.Client, model string) err
 
 // prepareEditorIntegration persists models and applies editor-managed config files.
 func prepareEditorIntegration(name string, runner Runner, editor Editor, models []string) error {
-	if ok, err := confirmEditorEdit(runner, editor); err != nil {
+	if ok, err := confirmConfigEdit(runner, editor.Paths()); err != nil {
 		return err
 	} else if !ok {
 		return errCancelled
@@ -242,8 +244,22 @@ func prepareEditorIntegration(name string, runner Runner, editor Editor, models 
 	return nil
 }
 
-func confirmEditorEdit(runner Runner, editor Editor) (bool, error) {
-	paths := editor.Paths()
+func prepareManagedSingleIntegration(name string, runner Runner, managed ManagedSingleModel, model string) error {
+	if ok, err := confirmConfigEdit(runner, managed.Paths()); err != nil {
+		return err
+	} else if !ok {
+		return errCancelled
+	}
+	if err := managed.Configure(model); err != nil {
+		return fmt.Errorf("setup failed: %w", err)
+	}
+	if err := config.SaveIntegration(name, []string{model}); err != nil {
+		return fmt.Errorf("failed to save: %w", err)
+	}
+	return nil
+}
+
+func confirmConfigEdit(runner Runner, paths []string) (bool, error) {
 	if len(paths) == 0 {
 		return true, nil
 	}
@@ -343,8 +359,6 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 		recRank[rec.Name] = i + 1
 	}
 
-	onlyLocal := hasLocalModel && !hasCloudModel
-
 	if hasLocalModel || hasCloudModel {
 		slices.SortStableFunc(items, func(a, b ModelItem) int {
 			ac, bc := checked[a.Name], checked[b.Name]
@@ -366,18 +380,23 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 			}
 			if aRec && bRec {
 				if aCloud != bCloud {
-					if onlyLocal {
-						if aCloud {
-							return 1
-						}
-						return -1
-					}
 					if aCloud {
 						return -1
 					}
 					return 1
 				}
 				return recRank[a.Name] - recRank[b.Name]
+			}
+			// Among checked non-recommended items - put the default first
+			if ac && !aRec && current != "" {
+				aCurrent := a.Name == current
+				bCurrent := b.Name == current
+				if aCurrent != bCurrent {
+					if aCurrent {
+						return -1
+					}
+					return 1
+				}
 			}
 			if aNew != bNew {
 				if aNew {

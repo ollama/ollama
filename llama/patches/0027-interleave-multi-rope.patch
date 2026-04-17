@@ -6,11 +6,11 @@ Subject: [PATCH] interleave multi rope
 since ollama doesn't use mrope for anything else, change it to mean the
 interleaved version used for qwen3vl
 ---
- ggml/src/ggml-cpu/ops.cpp                           | 8 ++++----
- ggml/src/ggml-cuda/rope.cu                          | 8 ++++----
- ggml/src/ggml-metal/ggml-metal.metal                | 8 ++++----
- ggml/src/ggml-vulkan/vulkan-shaders/rope_funcs.glsl | 8 ++++----
- 4 files changed, 16 insertions(+), 16 deletions(-)
+ ggml/src/ggml-cpu/ops.cpp                           |  8 ++++----
+ ggml/src/ggml-cuda/rope.cu                          |  8 ++++----
+ ggml/src/ggml-metal/ggml-metal.metal                | 10 +++++-----
+ ggml/src/ggml-vulkan/vulkan-shaders/rope_funcs.glsl |  8 ++++----
+ 4 files changed, 17 insertions(+), 17 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
 index 7d1733adb..f4aae5332 100644
@@ -59,12 +59,15 @@ index 88ed79111..71ca60214 100644
      } else {
          if (sector < sections.v[0]) {
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 236838e9e..c98d269d1 100644
+index 236838e9e..18b8bb1b1 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -4242,14 +4242,14 @@ kernel void kernel_rope_multi(
+@@ -4240,16 +4240,16 @@ kernel void kernel_rope_multi(
+             const int sec_w012  = args.sect_0 + args.sect_1 + args.sect_2; // end of section 2
+             const int sector    = ic % sect_dims;
  
-             float theta_base;
+-            float theta_base;
++            float theta_base = 0.0;
              if (FC_rope_is_imrope) {
 -                if (sector % 3 == 1 && sector < 3 * args.sect_1) { // h
 +                if (sector % 3 == 1 && sector < 1 + 3 * args.sect_1) { // h

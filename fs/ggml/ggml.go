@@ -890,6 +890,7 @@ func (f GGML) FlashAttention() bool {
 	return slices.Contains([]string{
 		"bert",
 		"gemma3",
+		"gemma4",
 		"glm4moelite",
 		"glmocr",
 		"gptoss", "gpt-oss",

@@ -60,7 +60,8 @@ func TestLFM2Parser(t *testing.T) {
 			expectedCalls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
-						Name: "get_weather",
+						Index: 0,
+						Name:  "get_weather",
 						Arguments: testArgs(map[string]any{
 							"location": "Paris",
 						}),
@@ -68,7 +69,8 @@ func TestLFM2Parser(t *testing.T) {
 				},
 				{
 					Function: api.ToolCallFunction{
-						Name: "get_weather",
+						Index: 1,
+						Name:  "get_weather",
 						Arguments: testArgs(map[string]any{
 							"location": "London",
 						}),
@@ -205,7 +207,8 @@ func TestLFM2Parser(t *testing.T) {
 			expectedCalls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
-						Name: "bash",
+						Index: 0,
+						Name:  "bash",
 						Arguments: testArgs(map[string]any{
 							"command": "ls",
 						}),
@@ -213,7 +216,8 @@ func TestLFM2Parser(t *testing.T) {
 				},
 				{
 					Function: api.ToolCallFunction{
-						Name: "bash",
+						Index: 1,
+						Name:  "bash",
 						Arguments: testArgs(map[string]any{
 							"command": "pwd",
 						}),
