@@ -490,6 +490,15 @@ func kvFromLayers(baseLayers []*layerGGML) (ofs.Config, error) {
 }
 
 func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, config *model.ConfigV2, fn func(resp api.ProgressResponse)) (err error) {
+	keepAlive := manifest.StartLayerKeepAlive()
+	defer keepAlive.Close()
+
+	trackLayers := func(layers []manifest.Layer) {
+		for _, layer := range layers {
+			keepAlive.Track(layer.Digest)
+		}
+	}
+
 	var layers []manifest.Layer
 	for _, layer := range baseLayers {
 		if layer.GGML != nil {
@@ -536,12 +545,14 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 		}
 		layers = append(layers, layer.Layer)
 	}
+	trackLayers(layers)
 
 	if r.Template != "" {
 		layers, err = setTemplate(layers, r.Template)
 		if err != nil {
 			return err
 		}
+		trackLayers(layers)
 	}
 
 	if r.System != "" {
@@ -549,6 +560,7 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 		if err != nil {
 			return err
 		}
+		trackLayers(layers)
 	}
 
 	if r.License != nil {
@@ -559,6 +571,7 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 				if err != nil {
 					return err
 				}
+				trackLayers(layers)
 			}
 		case any:
 			var licenses []string
@@ -571,6 +584,7 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 				if err != nil {
 					return err
 				}
+				trackLayers(layers)
 			}
 		default:
 			return fmt.Errorf("unknown license type: %T", l)
@@ -581,16 +595,19 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 	if err != nil {
 		return err
 	}
+	trackLayers(layers)
 
 	layers, err = setMessages(layers, r.Messages)
 	if err != nil {
 		return err
 	}
+	trackLayers(layers)
 
 	configLayer, err := createConfigLayer(layers, *config)
 	if err != nil {
 		return err
 	}
+	keepAlive.Track(configLayer.Digest)
 
 	for _, layer := range layers {
 		if layer.Status != "" {
