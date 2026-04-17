@@ -107,8 +107,8 @@ export class Message {
     thinking: string;
     stream: boolean;
     model?: string;
-    promptEvalCount: number;
-    evalCount: number;
+    promptEvalCount?: number | undefined;
+    evalCount?: number | undefined;
     attachments?: File[];
     tool_calls?: ToolCall[];
     tool_call?: ToolCall;

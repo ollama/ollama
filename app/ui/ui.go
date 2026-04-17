@@ -894,6 +894,8 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) error {
 	passNum := 1
 
 	for {
+		lastPromptEvalCount = 0
+		lastEvalCount = 0
 		var toolsExecuted bool
 
 		availableTools := registry.AvailableTools()

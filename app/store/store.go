@@ -37,8 +37,8 @@ type Message struct {
 	Thinking          string           `json:"thinking"`
 	Stream            bool             `json:"stream"`
 	Model             string           `json:"model,omitempty"`
-	PromptEvalCount   int              `json:"promptEvalCount,omitempty"`
-	EvalCount         int              `json:"evalCount,omitempty"`
+	PromptEvalCount   int              `json:"promptEvalCount,omitempty" ts_type:"number | undefined"`
+	EvalCount         int              `json:"evalCount,omitempty" ts_type:"number | undefined"`
 	Attachments       []File           `json:"attachments,omitempty"`
 	ToolCalls         []ToolCall       `json:"tool_calls,omitempty"`
 	ToolCall          *ToolCall        `json:"tool_call,omitempty"`
