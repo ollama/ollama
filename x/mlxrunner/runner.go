@@ -79,6 +79,8 @@ func (r *Runner) Load(modelName string) error {
 	r.Model = m
 	r.Tokenizer = m.Tokenizer()
 	r.contextLength = m.MaxContextLength()
+
+	mlx.EnableCompile()
 	return nil
 }
 
