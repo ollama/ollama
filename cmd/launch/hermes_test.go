@@ -896,64 +896,6 @@ fi
 	}
 }
 
-func TestHermesRefreshRuntimeAfterConfigure_WindowsWSLRestartsRunningGateway(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("uses POSIX shell test binaries to simulate WSL")
-	}
-
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-	withHermesPlatform(t, "windows")
-	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	wslPath := filepath.Join(tmpDir, "wsl.exe")
-	wslScript := `#!/bin/sh
-printf '[%s]\n' "$*" >> "$HOME/wsl-invocations.log"
-exec /bin/sh -lc "$3"
-`
-	if err := os.WriteFile(wslPath, []byte(wslScript), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	hermesBin := filepath.Join(tmpDir, "hermes")
-	hermesScript := `#!/bin/sh
-printf '[%s]\n' "$*" >> "$HOME/hermes-invocations.log"
-if [ "$1" = "gateway" ] && [ "$2" = "status" ]; then
-  printf '✓ Gateway is running (PID: 321)\n'
-fi
-`
-	if err := os.WriteFile(hermesBin, []byte(hermesScript), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	withHermesLookPath(t, func(file string) (string, error) {
-		if file == "wsl.exe" {
-			return wslPath, nil
-		}
-		return "", os.ErrNotExist
-	})
-
-	h := &Hermes{}
-	if err := h.RefreshRuntimeAfterConfigure(); err != nil {
-		t.Fatalf("RefreshRuntimeAfterConfigure returned error: %v", err)
-	}
-
-	data, err := os.ReadFile(filepath.Join(tmpDir, "hermes-invocations.log"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("expected WSL status then restart invocations, got %v", lines)
-	}
-	if lines[0] != "[gateway status]" {
-		t.Fatalf("expected WSL gateway status first, got %q", lines[0])
-	}
-	if lines[1] != "[gateway restart]" {
-		t.Fatalf("expected WSL gateway restart second, got %q", lines[1])
-	}
-}
-
 func TestHermesMessagingConfiguredRecognizesSupportedGatewayVars(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
@@ -1002,82 +944,7 @@ func TestHermesMessagingConfiguredRecognizesSupportedGatewayVars(t *testing.T) {
 	}
 }
 
-func TestHermesRunWindowsWSL_UsesGatewaySetupPreflight(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("uses POSIX shell test binaries to simulate WSL")
-	}
-
-	tmpDir := t.TempDir()
-	setTestHome(t, tmpDir)
-	withLauncherHooks(t)
-	withInteractiveSession(t, true)
-	withHermesPlatform(t, "windows")
-	clearHermesMessagingEnvVars(t)
-	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	wslPath := filepath.Join(tmpDir, "wsl.exe")
-	wslScript := `#!/bin/sh
-printf '[%s]\n' "$*" >> "$HOME/wsl-invocations.log"
-exec /bin/sh -lc "$3"
-`
-	if err := os.WriteFile(wslPath, []byte(wslScript), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	hermesBin := filepath.Join(tmpDir, "hermes")
-	hermesScript := `#!/bin/sh
-printf '[%s]\n' "$*" >> "$HOME/hermes-invocations.log"
-if [ "$1" = "gateway" ] && [ "$2" = "setup" ]; then
-  /bin/mkdir -p "$HOME/.hermes"
-  printf 'TELEGRAM_BOT_TOKEN=configured\n' > "$HOME/.hermes/.env"
-fi
-`
-	if err := os.WriteFile(hermesBin, []byte(hermesScript), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	withHermesLookPath(t, func(file string) (string, error) {
-		if file == "wsl.exe" {
-			return wslPath, nil
-		}
-		return "", os.ErrNotExist
-	})
-
-	promptCount := 0
-	DefaultConfirmPrompt = func(prompt string, options ConfirmOptions) (bool, error) {
-		promptCount++
-		if prompt != hermesGatewaySetupTitle {
-			t.Fatalf("unexpected prompt %q", prompt)
-		}
-		return true, nil
-	}
-
-	h := &Hermes{}
-	if err := h.Run("", nil); err != nil {
-		t.Fatalf("Run returned error: %v", err)
-	}
-
-	if promptCount != 1 {
-		t.Fatalf("expected one messaging prompt, got %d", promptCount)
-	}
-
-	data, err := os.ReadFile(filepath.Join(tmpDir, "hermes-invocations.log"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("expected WSL hermes to run setup then launch, got %v", lines)
-	}
-	if lines[0] != "[gateway setup]" {
-		t.Fatalf("expected WSL gateway setup first, got %q", lines[0])
-	}
-	if lines[1] != "[]" {
-		t.Fatalf("expected WSL default hermes launch second, got %q", lines[1])
-	}
-}
-
-func TestHermesEnsureInstalledWindowsWithoutWSLGivesGuidance(t *testing.T) {
+func TestHermesEnsureInstalledWindowsShowsWSLGuidance(t *testing.T) {
 	tmpDir := t.TempDir()
 	setTestHome(t, tmpDir)
 	withHermesPlatform(t, "windows")
@@ -1086,10 +953,17 @@ func TestHermesEnsureInstalledWindowsWithoutWSLGivesGuidance(t *testing.T) {
 	h := &Hermes{}
 	err := h.ensureInstalled()
 	if err == nil {
-		t.Fatal("expected missing WSL guidance error")
+		t.Fatal("expected WSL guidance error")
 	}
-	if !strings.Contains(err.Error(), "wsl --install") {
-		t.Fatalf("expected WSL guidance, got %v", err)
+	msg := err.Error()
+	if !strings.Contains(msg, "wsl --install") {
+		t.Fatalf("expected install command in guidance, got %v", err)
+	}
+	if !strings.Contains(msg, "hermes-agent.nousresearch.com") {
+		t.Fatalf("expected docs link in guidance, got %v", err)
+	}
+	if strings.Contains(msg, "hermes is not installed") {
+		t.Fatalf("guidance should not lead with 'hermes is not installed', got %v", err)
 	}
 }
 
