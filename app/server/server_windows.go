@@ -101,7 +101,34 @@ func terminated(pid int) (bool, error) {
 	return true, nil
 }
 
-// reapServers kills all ollama processes except our own
+func ollamaServeProcess(pid int) bool {
+	cmd := exec.Command("wmic", "process", "where", fmt.Sprintf("ProcessId=%d", pid), "get", "CommandLine", "/value")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	output, err := cmd.Output()
+	if err != nil {
+		slog.Debug("failed to inspect ollama process", "pid", pid, "err", err)
+		return false
+	}
+
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		commandLine, ok := strings.CutPrefix(line, "CommandLine=")
+		if !ok {
+			continue
+		}
+
+		fields := strings.Fields(strings.ToLower(commandLine))
+		for i, field := range fields {
+			if strings.Trim(field, `"`) == "serve" && i > 0 {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// reapServers kills external ollama serve processes except our own.
 func reapServers() error {
 	// Get current process ID to avoid killing ourselves
 	currentPID := os.Getpid()
@@ -136,6 +163,10 @@ func reapServers() error {
 		}
 
 		if pid == currentPID {
+			continue
+		}
+		if !ollamaServeProcess(pid) {
+			slog.Debug("skipping non-server ollama process", "pid", pid)
 			continue
 		}
 

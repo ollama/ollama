@@ -18,11 +18,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/logrotate"
 	"github.com/ollama/ollama/app/store"
 )
 
 const restartDelay = time.Second
+const externalServerHeartbeatTimeout = 2 * time.Second
+const externalServerHeartbeatInterval = time.Second
+const externalServerStartupWait = 5 * time.Second
 
 // Server is a managed ollama server process
 type Server struct {
@@ -152,6 +156,49 @@ func stop(proc *os.Process) error {
 	}
 }
 
+func externalServerAvailable(ctx context.Context) bool {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		slog.Debug("failed to create ollama client", "err", err)
+		return false
+	}
+
+	heartbeatCtx, cancel := context.WithTimeout(ctx, externalServerHeartbeatTimeout)
+	defer cancel()
+
+	if err := client.Heartbeat(heartbeatCtx); err != nil {
+		slog.Debug("external ollama server heartbeat failed", "err", err)
+		return false
+	}
+
+	return true
+}
+
+func waitForExternalServerAvailable(ctx context.Context, timeout time.Duration) bool {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+
+	ticker := time.NewTicker(externalServerHeartbeatInterval)
+	defer ticker.Stop()
+
+	if externalServerAvailable(ctx) {
+		return true
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-deadline.C:
+			return false
+		case <-ticker.C:
+			if externalServerAvailable(ctx) {
+				return true
+			}
+		}
+	}
+}
+
 func (s *Server) Run(ctx context.Context) error {
 	l, err := openRotatingLog()
 	if err != nil {
@@ -189,6 +236,12 @@ func (s *Server) Run(ctx context.Context) error {
 		if err = cmd.Wait(); err != nil && !errors.Is(err, context.Canceled) {
 			var exitErr *exec.ExitError
 			if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && !s.dev && !reaped {
+				if waitForExternalServerAvailable(ctx, externalServerStartupWait) {
+					slog.Info("using existing ollama server")
+					<-ctx.Done()
+					return ctx.Err()
+				}
+
 				reaped = true
 				// This could be a port conflict, try to kill any existing ollama processes
 				if err := reapServers(); err != nil {
