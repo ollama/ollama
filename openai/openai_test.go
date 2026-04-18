@@ -25,8 +25,9 @@ var argsComparer = cmp.Comparer(func(a, b api.ToolCallFunctionArguments) bool {
 })
 
 const (
-	prefix = `data:image/jpeg;base64,`
-	image  = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
+	prefix    = `data:image/jpeg;base64,`
+	testImage = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
+	image     = testImage
 )
 
 func TestFromChatRequest_Basic(t *testing.T) {
@@ -56,7 +57,7 @@ func TestFromChatRequest_Basic(t *testing.T) {
 }
 
 func TestFromChatRequest_WithImage(t *testing.T) {
-	imgData, _ := base64.StdEncoding.DecodeString(image)
+	imgData, _ := base64.StdEncoding.DecodeString(testImage)
 
 	req := ChatCompletionRequest{
 		Model: "test-model",
@@ -67,7 +68,7 @@ func TestFromChatRequest_WithImage(t *testing.T) {
 					map[string]any{"type": "text", "text": "Hello"},
 					map[string]any{
 						"type":      "image_url",
-						"image_url": map[string]any{"url": prefix + image},
+						"image_url": map[string]any{"url": prefix + testImage},
 					},
 				},
 			},
