@@ -139,6 +139,9 @@ func (wpm WordPiece) Encode(s string, addSpecial bool) ([]int32, error) {
 		if len(pieces) > 0 {
 			ids = append(ids, pieces...)
 		} else {
+			if unk < 0 {
+				return nil, fmt.Errorf("token %q not in vocabulary and no [UNK] fallback available", word)
+			}
 			ids = append(ids, unk)
 		}
 	}
