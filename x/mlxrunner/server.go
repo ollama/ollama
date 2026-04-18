@@ -107,6 +107,11 @@ func Execute(args []string) error {
 			request.Options.FrequencyPenalty,
 		)
 
+		if err := runner.Prepare(&request); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
 		var cancel context.CancelFunc
 		request.Ctx, cancel = context.WithCancel(r.Context())
 		defer cancel()
