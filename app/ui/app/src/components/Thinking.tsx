@@ -34,18 +34,18 @@ export default function Thinking({
     }
   }, [activelyThinking]);
 
-  // Measure content height for animations
+  // Measure content height for animations — ResizeObserver detects changes automatically
   useEffect(() => {
-    if (contentRef.current) {
-      const resizeObserver = new ResizeObserver(() => {
-        if (contentRef.current) {
-          setContentHeight(contentRef.current.scrollHeight);
-        }
-      });
-      resizeObserver.observe(contentRef.current);
-      return () => resizeObserver.disconnect();
-    }
-  }, [thinking]);
+    if (!contentRef.current) return;
+    const resizeObserver = new ResizeObserver(() => {
+      if (contentRef.current) {
+        setContentHeight(contentRef.current.scrollHeight);
+      }
+    });
+    resizeObserver.observe(contentRef.current);
+    return () => resizeObserver.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Position content to show bottom when collapsed
   useEffect(() => {
@@ -156,11 +156,13 @@ export default function Thinking({
           ref={contentRef}
           className="transition-transform duration-300 opacity-75 select-text"
         >
-          <StreamingMarkdownContent
-            content={thinking}
-            isStreaming={activelyThinking}
-            size="sm"
-          />
+          {!(isCollapsed && finishedThinking) && (
+            <StreamingMarkdownContent
+              content={thinking}
+              isStreaming={activelyThinking}
+              size="sm"
+            />
+          )}
         </div>
 
         {/* Gradient overlay for fade effect when collapsed and scrolled */}
