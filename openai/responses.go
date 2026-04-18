@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"slices"
 	"strings"
 	"time"
 
@@ -546,12 +547,25 @@ func FromResponsesRequest(r ResponsesRequest) (*api.ChatRequest, error) {
 		}
 	}
 
+	var think *api.ThinkValue
+	if effort := r.Reasoning.Effort; effort != "" {
+		if !slices.Contains([]string{"high", "medium", "low", "none"}, effort) {
+			return nil, fmt.Errorf("invalid reasoning value: '%s' (must be \"high\", \"medium\", \"low\", or \"none\")", effort)
+		}
+		if effort == "none" {
+			think = &api.ThinkValue{Value: false}
+		} else {
+			think = &api.ThinkValue{Value: effort}
+		}
+	}
+
 	return &api.ChatRequest{
 		Model:    r.Model,
 		Messages: messages,
 		Options:  options,
 		Tools:    tools,
 		Format:   format,
+		Think:    think,
 	}, nil
 }
 
