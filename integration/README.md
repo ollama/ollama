@@ -16,13 +16,44 @@ The integration tests have 2 modes of operating.
 
 ## Testing a New Model
 
-When implementing new model architecture, use `OLLAMA_TEST_MODEL` to run the
-integration suite against your model.
+When implementing a new model architecture, use `OLLAMA_TEST_MODEL` to run the
+integration suite against the created Ollama model tag. This should be final
+validation after the model-specific unit tests, reference activation tests, cache
+tests, and quality checks pass. Integration tests are much slower and should not
+be used as a substitute for focused coverage.
 
 ```bash
 # Build the binary first
 go build .
 
 # Run integration tests against it
-OLLAMA_TEST_MODEL=mymodel go test -tags integration -v -count 1 -timeout 15m ./integration/
+OLLAMA_TEST_MODEL=mymodel:base-mlx-bf16 \
+  go test -tags=integration -v -count=1 -timeout 30m ./integration
 ```
+
+To run against an existing server instead of letting the test harness start and
+stop one:
+
+```bash
+OLLAMA_TEST_EXISTING=1 \
+OLLAMA_HOST=http://127.0.0.1:11434 \
+OLLAMA_TEST_MODEL=mymodel:base-mlx-bf16 \
+  go test -tags=integration -v -count=1 -timeout 30m ./integration
+```
+
+The override relies on model capabilities. Tests for audio, vision, embeddings,
+tool calling, and thinking call `/api/show` and skip when the model does not
+advertise the required capability. Make sure the model manifest/config exposes
+only the capabilities the model actually supports:
+
+- `completion` for normal text generation
+- `vision` for image input
+- `audio` for audio input
+- `tools` for tool calling
+- `thinking` for thinking output
+- `embedding` for embedding models
+
+If a completion-only model runs audio, vision, or tool tests, fix the model's
+advertised capabilities. If a model supports one of those features but the
+related tests skip, fix the capability metadata before treating the integration
+run as complete.
