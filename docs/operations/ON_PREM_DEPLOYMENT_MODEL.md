@@ -41,6 +41,7 @@ Use [On-Prem Execution Index](ON_PREM_EXECUTION_INDEX.md) as the shared navigati
 ## Related Documentation
 
 - [On-Prem Execution Index](ON_PREM_EXECUTION_INDEX.md)
+- [On-Prem Redeploy Runbook](ON_PREM_REDEPLOY_RUNBOOK.md)
 - [Shared Documentation Navigation](../shared/README.md)
 - [Documentation SSOT](../meta/README.md)
 - [Repository Rules](../repo-rules/README.md)

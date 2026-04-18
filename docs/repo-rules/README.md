@@ -16,6 +16,7 @@ This document is the canonical rule set for working in this repository.
 - [docs/meta/README.md](../meta/README.md) defines ownership and canonical documents.
 - [docs/shared/README.md](../shared/README.md) is the shared documentation navigation layer.
 - [docs/operations/ON_PREM_DEPLOYMENT_MODEL.md](../operations/ON_PREM_DEPLOYMENT_MODEL.md) is the canonical target-server-local execution model and host-profile contract.
+- [docs/operations/ON_PREM_REDEPLOY_RUNBOOK.md](../operations/ON_PREM_REDEPLOY_RUNBOOK.md) is the canonical redeploy and rollback procedure.
 - [docs/deep/README.md](../deep/README.md) is the canonical long-form evidence and deep-scan index.
 - [docs/roadmaps/README.md](../roadmaps/README.md) is the canonical planning and enhancement roadmap index.
 - [docs/indexed/README.md](../indexed/README.md) is the legacy compatibility index hub.

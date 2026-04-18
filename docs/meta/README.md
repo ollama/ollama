@@ -7,6 +7,7 @@ This file defines the canonical documentation map for the repository.
 - [README.md](../README.md) - project overview and primary entry point
 - [docs/operations/ON_PREM_EXECUTION_INDEX.md](../operations/ON_PREM_EXECUTION_INDEX.md) - shared target-server-local operational navigation
 - [docs/operations/ON_PREM_DEPLOYMENT_MODEL.md](../operations/ON_PREM_DEPLOYMENT_MODEL.md) - target-server-local execution model
+- [docs/operations/ON_PREM_REDEPLOY_RUNBOOK.md](../operations/ON_PREM_REDEPLOY_RUNBOOK.md) - canonical redeploy and rollback procedure
 - [docs/shared/README.md](../shared/README.md) - shared navigation layer
 - [docs/DEPLOYMENT.md](../DEPLOYMENT.md) - canonical deployment procedures
 - [docs/indexed/README.md](../indexed/README.md) - legacy compatibility index hub
@@ -25,6 +26,7 @@ This file defines the canonical documentation map for the repository.
 - Keep command examples in one canonical guide and link to them from the other docs.
 - Keep target-host values in host inventories, not in deployment scripts.
 - Keep target-server-local workflow details in the on-prem deployment model, not repeated in every quick reference.
+- Keep redeploy and rollback steps in the on-prem redeploy runbook and link to it from indexes.
 - Treat compatibility snapshots as references only; do not expand them with new procedures.
 
 ## Navigation Model

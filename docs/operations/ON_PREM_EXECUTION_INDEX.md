@@ -7,6 +7,7 @@ Use this page to select the correct host profile, then defer to the deployment m
 ## Start Here
 
 - [On-Prem Deployment Model](ON_PREM_DEPLOYMENT_MODEL.md) - canonical SSOT for host inventories, immutable configuration, and deterministic reruns
+- [On-Prem Redeploy Runbook](ON_PREM_REDEPLOY_RUNBOOK.md) - canonical step-by-step redeploy and validation flow
 - [Host Profile Idempotency Matrix](../reports/HOST_PROFILE_IDEMPOTENCY.md) - evidence layout and rerun validation
 - [Local Development Setup](LOCAL_DEVELOPMENT_SETUP.md) - compatibility snapshot for the local topology
 - [Deployment Guide](../DEPLOYMENT.md) - deployment procedures and compose references
