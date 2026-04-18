@@ -647,6 +647,44 @@ export const useSendMessage = (chatId: string) => {
             break;
           }
           case "done":
+            if (
+              event.promptEvalCount !== undefined ||
+              event.evalCount !== undefined
+            ) {
+              queryClient.setQueryData(
+                ["chat", currentChatId],
+                (old: { chat: Chat } | undefined) => {
+                  if (!old) return old;
+
+                  const existingMessages = old.chat.messages || [];
+                  if (existingMessages.length === 0) return old;
+
+                  const newMessages = [...existingMessages];
+                  const lastMessage = newMessages[newMessages.length - 1];
+                  if (!lastMessage || lastMessage.role !== "assistant") {
+                    return old;
+                  }
+
+                  newMessages[newMessages.length - 1] = new Message({
+                    ...lastMessage,
+                    ...(event.promptEvalCount !== undefined
+                      ? { promptEvalCount: event.promptEvalCount }
+                      : {}),
+                    ...(event.evalCount !== undefined
+                      ? { evalCount: event.evalCount }
+                      : {}),
+                  });
+
+                  return {
+                    ...old,
+                    chat: new Chat({
+                      ...old.chat,
+                      messages: newMessages,
+                    }),
+                  };
+                },
+              );
+            }
             // TODO(drifkin): update the chat with the thinking time for cases
             // where there is thinking content, but no other content (which
             // should be very rare)
