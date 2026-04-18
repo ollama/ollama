@@ -218,6 +218,7 @@ func New(c fs.Config) (model.Model, error) {
 				},
 			},
 			false,
+			c.Bool("tokenizer.ggml.strip_accents", false),
 		),
 		Layers: layers,
 		Options: Options{
