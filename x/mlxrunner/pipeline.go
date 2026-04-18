@@ -14,8 +14,9 @@ import (
 	"github.com/ollama/ollama/x/mlxrunner/mlx"
 )
 
+// Line 17-19 — FIXED
 func prefillChunkSize() int {
-	return 2 << 10
+	return 512
 }
 
 func (r *Runner) TextGenerationPipeline(request Request) error {
@@ -189,7 +190,8 @@ func (r *Runner) TextGenerationPipeline(request Request) error {
 		sample = nextSample
 		nextSample = nil
 
-		if i%256 == 0 {
+		if i%64 == 0 {
+			mlx.Eval(sample)
 			mlx.ClearCache()
 		}
 	}
