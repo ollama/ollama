@@ -2,6 +2,11 @@
 
 #include "../clip-graph.h"
 
+/*
+ * IMPORTANT: The mtmd module does NOT accept pull requests that are fully or predominantly AI-generated.
+ * We encourage human contributors to ensure the quality and reliability of the codebase.
+ */
+
 struct clip_graph_siglip : clip_graph {
     clip_graph_siglip(clip_ctx * ctx, const clip_image_f32 & img) : clip_graph(ctx, img) {}
     ggml_cgraph * build() override;
@@ -54,6 +59,11 @@ struct clip_graph_llava : clip_graph {
 
 struct clip_graph_whisper_enc : clip_graph {
     clip_graph_whisper_enc(clip_ctx * ctx, const clip_image_f32 & img) : clip_graph(ctx, img) {}
+    ggml_cgraph * build() override;
+};
+
+struct clip_graph_conformer : clip_graph {
+    clip_graph_conformer(clip_ctx * ctx, const clip_image_f32 & img) : clip_graph(ctx, img) {}
     ggml_cgraph * build() override;
 };
 

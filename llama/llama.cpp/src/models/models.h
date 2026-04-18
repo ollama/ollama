@@ -303,6 +303,7 @@ struct llm_build_llada_moe : public llm_graph_context {
     llm_build_llada_moe(const llama_model & model, const llm_graph_params & params);
 };
 
+template <bool embed>
 struct llm_build_llama : public llm_graph_context {
     llm_build_llama(const llama_model & model, const llm_graph_params & params);
 };
@@ -315,6 +316,10 @@ struct llm_build_mamba : public llm_graph_context_mamba {
     llm_build_mamba(const llama_model & model, const llm_graph_params & params);
 };
 
+struct llm_build_mimo2_iswa : public llm_graph_context {
+    llm_build_mimo2_iswa(const llama_model & model, const llm_graph_params & params);
+};
+
 struct llm_build_minicpm3 : public llm_graph_context {
     llm_build_minicpm3(const llama_model & model, const llm_graph_params & params);
 };
@@ -325,6 +330,11 @@ struct llm_build_minimax_m2 : public llm_graph_context {
 
 struct llm_build_mistral3 : public llm_graph_context {
     llm_build_mistral3(const llama_model & model, const llm_graph_params & params);
+};
+
+template <bool iswa>
+struct llm_build_modern_bert : public llm_graph_context {
+    llm_build_modern_bert(const llama_model & model, const llm_graph_params & params);
 };
 
 struct llm_build_mpt : public llm_graph_context {
@@ -394,6 +404,11 @@ struct llm_build_plamo2 : public llm_graph_context_mamba {
 
 struct llm_build_plamo : public llm_graph_context {
     llm_build_plamo(const llama_model & model, const llm_graph_params & params);
+};
+
+template <bool iswa>
+struct llm_build_plamo3 : public llm_graph_context {
+    llm_build_plamo3(const llama_model & model, const llm_graph_params & params);
 };
 
 struct llm_build_plm : public llm_graph_context {
