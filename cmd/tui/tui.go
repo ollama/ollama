@@ -45,21 +45,12 @@ type menuItem struct {
 	isOthers    bool
 }
 
-var mainMenuItems = []menuItem{
-	{
-		title:       "Chat with a model",
-		description: "Start an interactive chat with a model",
-		isRunModel:  true,
-	},
-	{
-		integration: "openclaw",
-	},
-	{
-		integration: "claude",
-	},
-	{
-		integration: "opencode",
-	},
+const pinnedIntegrationCount = 3
+
+var runModelMenuItem = menuItem{
+	title:       "Chat with a model",
+	description: "Start an interactive chat with a model",
+	isRunModel:  true,
 }
 
 var othersMenuItem = menuItem{
@@ -102,20 +93,14 @@ func shouldExpandOthers(state *launch.LauncherState) bool {
 }
 
 func buildMenuItems(state *launch.LauncherState, showOthers bool) []menuItem {
-	items := make([]menuItem, 0, len(mainMenuItems)+1)
-	for _, item := range mainMenuItems {
-		if item.integration == "" {
-			items = append(items, item)
-			continue
-		}
-		if integrationState, ok := state.Integrations[item.integration]; ok {
-			items = append(items, integrationMenuItem(integrationState))
-		}
-	}
+	items := []menuItem{runModelMenuItem}
+	items = append(items, pinnedIntegrationItems(state)...)
 
-	if showOthers {
-		items = append(items, otherIntegrationItems(state)...)
-	} else {
+	otherItems := otherIntegrationItems(state)
+	switch {
+	case showOthers:
+		items = append(items, otherItems...)
+	case len(otherItems) > 0:
 		items = append(items, othersMenuItem)
 	}
 
@@ -135,17 +120,28 @@ func integrationMenuItem(state launch.LauncherIntegrationState) menuItem {
 }
 
 func otherIntegrationItems(state *launch.LauncherState) []menuItem {
-	pinned := map[string]bool{
-		"openclaw": true,
-		"claude":   true,
-		"opencode": true,
+	ordered := orderedIntegrationItems(state)
+	if len(ordered) <= pinnedIntegrationCount {
+		return nil
+	}
+	return ordered[pinnedIntegrationCount:]
+}
+
+func pinnedIntegrationItems(state *launch.LauncherState) []menuItem {
+	ordered := orderedIntegrationItems(state)
+	if len(ordered) <= pinnedIntegrationCount {
+		return ordered
+	}
+	return ordered[:pinnedIntegrationCount]
+}
+
+func orderedIntegrationItems(state *launch.LauncherState) []menuItem {
+	if state == nil {
+		return nil
 	}
 
-	var items []menuItem
+	items := make([]menuItem, 0, len(state.Integrations))
 	for _, info := range launch.ListIntegrationInfos() {
-		if pinned[info.Name] {
-			continue
-		}
 		integrationState, ok := state.Integrations[info.Name]
 		if !ok {
 			continue
@@ -153,6 +149,10 @@ func otherIntegrationItems(state *launch.LauncherState) []menuItem {
 		items = append(items, integrationMenuItem(integrationState))
 	}
 	return items
+}
+
+func primaryMenuItemCount(state *launch.LauncherState) int {
+	return 1 + len(pinnedIntegrationItems(state))
 }
 
 func initialCursor(state *launch.LauncherState, items []menuItem) int {
@@ -190,7 +190,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor > 0 {
 				m.cursor--
 			}
-			if m.showOthers && m.cursor < len(mainMenuItems) {
+			if m.showOthers && m.cursor < primaryMenuItemCount(m.state) {
 				m.showOthers = false
 				m.items = buildMenuItems(m.state, false)
 				m.cursor = min(m.cursor, len(m.items)-1)

@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/cmd/config"
 )
 
 type stubEditorRunner struct {
@@ -73,7 +74,7 @@ func TestIntegrationLookup(t *testing.T) {
 }
 
 func TestIntegrationRegistry(t *testing.T) {
-	expectedIntegrations := []string{"claude", "codex", "droid", "opencode"}
+	expectedIntegrations := []string{"claude", "codex", "droid", "opencode", "hermes"}
 
 	for _, name := range expectedIntegrations {
 		t.Run(name, func(t *testing.T) {
@@ -328,7 +329,7 @@ func TestBuildModelList_NoExistingModels(t *testing.T) {
 	}
 }
 
-func TestBuildModelList_OnlyLocalModels_CloudRecsAtBottom(t *testing.T) {
+func TestBuildModelList_OnlyLocalModels_CloudRecsStillFirst(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "llama3.2:latest", Remote: false},
 		{Name: "qwen2.5:latest", Remote: false},
@@ -337,10 +338,11 @@ func TestBuildModelList_OnlyLocalModels_CloudRecsAtBottom(t *testing.T) {
 	items, _, _, _ := buildModelList(existing, nil, "")
 	got := names(items)
 
-	// Recommended pinned at top (local recs first, then cloud recs when only-local), then installed non-recs
-	want := []string{"gemma4", "qwen3.5", "kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m2.7:cloud", "llama3.2", "qwen2.5"}
+	// Cloud recs always come first among recommended, regardless of installed inventory.
+	// Cloud disablement is handled upstream in loadSelectableModels via filterCloudItems.
+	want := []string{"kimi-k2.5:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m2.7:cloud", "gemma4", "qwen3.5", "llama3.2", "qwen2.5"}
 	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("recs pinned at top, local recs before cloud recs (-want +got):\n%s", diff)
+		t.Errorf("cloud recs pinned first even when no cloud models installed (-want +got):\n%s", diff)
 	}
 }
 
@@ -587,7 +589,7 @@ func TestBuildModelList_MixedCase_CloudRecsFirst(t *testing.T) {
 	}
 }
 
-func TestBuildModelList_OnlyLocal_LocalRecsFirst(t *testing.T) {
+func TestBuildModelList_OnlyLocal_CloudRecsStillFirst(t *testing.T) {
 	existing := []modelInfo{
 		{Name: "llama3.2:latest", Remote: false},
 	}
@@ -595,11 +597,11 @@ func TestBuildModelList_OnlyLocal_LocalRecsFirst(t *testing.T) {
 	items, _, _, _ := buildModelList(existing, nil, "")
 	got := names(items)
 
-	// Local recs should sort before cloud recs in only-local case
+	// Cloud recs sort before local recs regardless of installed inventory.
 	localIdx := slices.Index(got, "gemma4")
 	cloudIdx := slices.Index(got, "glm-5.1:cloud")
-	if localIdx > cloudIdx {
-		t.Errorf("local recs should be before cloud recs in only-local case, got %v", got)
+	if cloudIdx > localIdx {
+		t.Errorf("cloud recs should be before local recs even when only local models installed, got %v", got)
 	}
 }
 
@@ -719,6 +721,59 @@ func TestLauncherClientFilterDisabledCloudModels_ChecksStatusOncePerInvocation(t
 	}
 	if statusCalls != 1 {
 		t.Fatalf("expected one cloud status lookup, got %d", statusCalls)
+	}
+}
+
+func TestSavedMatchesModels(t *testing.T) {
+	tests := []struct {
+		name   string
+		saved  *config.IntegrationConfig
+		models []string
+		want   bool
+	}{
+		{
+			name:   "nil saved",
+			saved:  nil,
+			models: []string{"llama3.2"},
+			want:   false,
+		},
+		{
+			name:   "identical order",
+			saved:  &config.IntegrationConfig{Models: []string{"llama3.2", "qwen3:8b"}},
+			models: []string{"llama3.2", "qwen3:8b"},
+			want:   true,
+		},
+		{
+			name:   "different order",
+			saved:  &config.IntegrationConfig{Models: []string{"llama3.2", "qwen3:8b"}},
+			models: []string{"qwen3:8b", "llama3.2"},
+			want:   false,
+		},
+		{
+			name:   "subset",
+			saved:  &config.IntegrationConfig{Models: []string{"llama3.2", "qwen3:8b"}},
+			models: []string{"llama3.2"},
+			want:   false,
+		},
+		{
+			name:   "nil models in saved with non-nil models",
+			saved:  &config.IntegrationConfig{Models: nil},
+			models: []string{"llama3.2"},
+			want:   false,
+		},
+		{
+			name:   "empty both",
+			saved:  &config.IntegrationConfig{Models: nil},
+			models: nil,
+			want:   true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := savedMatchesModels(tt.saved, tt.models); got != tt.want {
+				t.Fatalf("savedMatchesModels = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -1455,27 +1510,13 @@ func TestListIntegrationInfos(t *testing.T) {
 		}
 	})
 
-	t.Run("sorted with custom order at end", func(t *testing.T) {
-		// integrationOrder entries (cline, opencode) should appear last, in that order.
-		// All other entries should be sorted alphabetically before them.
-		orderRank := make(map[string]int)
-		for i, name := range integrationOrder {
-			orderRank[name] = i + 1
+	t.Run("follows launcher order", func(t *testing.T) {
+		got := make([]string, 0, len(infos))
+		for _, info := range infos {
+			got = append(got, info.Name)
 		}
-		for i := 1; i < len(infos); i++ {
-			aRank, bRank := orderRank[infos[i-1].Name], orderRank[infos[i].Name]
-			switch {
-			case aRank == 0 && bRank == 0:
-				if infos[i-1].Name >= infos[i].Name {
-					t.Errorf("non-ordered items not sorted: %q >= %q", infos[i-1].Name, infos[i].Name)
-				}
-			case aRank > 0 && bRank == 0:
-				t.Errorf("ordered item %q should come after non-ordered %q", infos[i-1].Name, infos[i].Name)
-			case aRank > 0 && bRank > 0:
-				if aRank >= bRank {
-					t.Errorf("ordered items wrong: %q (rank %d) before %q (rank %d)", infos[i-1].Name, aRank, infos[i].Name, bRank)
-				}
-			}
+		if diff := compareStrings(got, integrationOrder); diff != "" {
+			t.Fatalf("launcher integration order mismatch: %s", diff)
 		}
 	})
 
@@ -1501,6 +1542,28 @@ func TestListIntegrationInfos(t *testing.T) {
 			if !found {
 				t.Errorf("expected %q in ListIntegrationInfos", name)
 			}
+		}
+	})
+
+	t.Run("includes hermes", func(t *testing.T) {
+		for _, info := range infos {
+			if info.Name == "hermes" {
+				return
+			}
+		}
+		t.Fatal("expected hermes to be included in ListIntegrationInfos")
+	})
+
+	t.Run("hermes still resolves explicitly", func(t *testing.T) {
+		name, runner, err := LookupIntegration("hermes")
+		if err != nil {
+			t.Fatalf("expected explicit hermes integration lookup to work, got %v", err)
+		}
+		if name != "hermes" {
+			t.Fatalf("expected canonical name hermes, got %q", name)
+		}
+		if runner.String() == "" {
+			t.Fatal("expected hermes integration runner to be present")
 		}
 	})
 }
@@ -1591,6 +1654,7 @@ func TestIntegration_AutoInstallable(t *testing.T) {
 	}{
 		{"openclaw", true},
 		{"pi", true},
+		{"hermes", true},
 		{"claude", false},
 		{"codex", false},
 		{"opencode", false},

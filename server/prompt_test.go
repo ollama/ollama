@@ -13,6 +13,14 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
+func testConfigWithRenderer(renderer string) model.ConfigV2 {
+	return model.ConfigV2{Renderer: renderer}
+}
+
+func testConfigWithRendererAndType(renderer, modelType string) model.ConfigV2 {
+	return model.ConfigV2{Renderer: renderer, ModelType: modelType}
+}
+
 func TestChatPrompt(t *testing.T) {
 	type expect struct {
 		prompt string
@@ -395,5 +403,45 @@ func TestChatPromptGLMOcrRendererAddsImageTags(t *testing.T) {
 
 	if !strings.Contains(prompt, "<|user|>\n[img-0][img-1]extract text") {
 		t.Fatalf("prompt missing glm-ocr image tags, got: %q", prompt)
+	}
+}
+
+func TestRenderPromptResolvesDynamicGemma4Renderer(t *testing.T) {
+	msgs := []api.Message{{Role: "user", Content: "Hello"}}
+
+	tests := []struct {
+		name  string
+		model Model
+		want  string
+	}{
+		{
+			name: "small from name",
+			model: Model{
+				Name:      "gemma4:e4b",
+				ShortName: "gemma4:e4b",
+				Config:    testConfigWithRenderer(gemma4RendererLegacy),
+			},
+			want: "<bos><|turn>user\nHello<turn|>\n<|turn>model\n",
+		},
+		{
+			name: "large from model type",
+			model: Model{
+				Config: testConfigWithRendererAndType(gemma4RendererLegacy, "25.2B"),
+			},
+			want: "<bos><|turn>user\nHello<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := renderPrompt(&tt.model, msgs, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if diff := cmp.Diff(got, tt.want); diff != "" {
+				t.Fatalf("rendered prompt mismatch (-got +want):\n%s", diff)
+			}
+		})
 	}
 }
