@@ -1851,6 +1851,13 @@ func (t *Tensor) Neg(ctx ml.Context) ml.Tensor {
 	}
 }
 
+func (t *Tensor) Sign(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_sgn(ctx.(*Context).ctx, t.t),
+	}
+}
+
 func (t *Tensor) Clamp(ctx ml.Context, min, max float32) ml.Tensor {
 	return &Tensor{
 		b: t.b,
