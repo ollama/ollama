@@ -74,14 +74,23 @@ func MakeLinearLayer(
 			scales,
 		)
 
+		// Check for per-tensor global scale (NVIDIA double-scale nvfp4).
+		// NVIDIA ModelOpt stores this as "weight_scale_2"; our import
+		// pipeline maps it to "weight.global_scale".
+		globalScale := tensors[path+".weight.global_scale"]
+		if globalScale == nil {
+			globalScale = tensors[path+".weight_scale_2"]
+		}
+
 		return &nn.QuantizedLinear{
-			Weight:    w,
-			Scales:    scales,
-			QBiases:   qbiases,
-			Bias:      bias,
-			GroupSize: groupSize,
-			Bits:      bits,
-			Mode:      mode,
+			Weight:      w,
+			Scales:      scales,
+			QBiases:     qbiases,
+			Bias:        bias,
+			GlobalScale: globalScale,
+			GroupSize:   groupSize,
+			Bits:        bits,
+			Mode:        mode,
 		}
 	}
 

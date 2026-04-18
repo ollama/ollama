@@ -64,6 +64,8 @@ func dtypeFromString(s string) mlx.Dtype {
 		return mlx.DtypeInt64
 	case "U8", "UINT8":
 		return mlx.DtypeUint8
+	case "F8_E4M3", "F8_E5M2", "F8_E4M3FN", "F8_E5M2FNUZ":
+		return mlx.DtypeUint8 // FP8 types stored as raw uint8 bytes
 	default:
 		return mlx.DtypeFloat32
 	}
