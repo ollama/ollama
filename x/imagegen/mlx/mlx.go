@@ -1837,6 +1837,11 @@ func init() {
 		return
 	}
 
+	// Only proceed with C function calls if MLX was successfully initialized
+	if !mlxInitialized {
+		return
+	}
+
 	// Enter safe mode: replace the default exit(-1) error handler with one
 	// that logs and stores errors. This prevents a GPU init failure from
 	// killing the entire process during startup.
