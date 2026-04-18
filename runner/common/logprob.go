@@ -3,9 +3,32 @@ package common
 import (
 	"math"
 	"sort"
+	"sync"
 
 	"github.com/ollama/ollama/llm"
 )
+
+// tokenLogprobPair represents a token ID and its log probability.
+type tokenLogprobPair struct {
+	tokenID int
+	logprob float32
+}
+
+// logprobBuffers holds reusable buffers for logprob calculations.
+type logprobBuffers struct {
+	logProbs []float32
+	pairs    []tokenLogprobPair
+}
+
+// logprobPool maintains a pool of reusable buffers to avoid allocations.
+var logprobPool = sync.Pool{
+	New: func() any {
+		return &logprobBuffers{
+			logProbs: make([]float32, 0, 200000), // Pre-size for common vocab sizes
+			pairs:    make([]tokenLogprobPair, 0, 200000),
+		}
+	},
+}
 
 // TokenDecoderFunc is a function that converts token IDs to text.
 type TokenDecoderFunc func(tokenID int) string
@@ -16,6 +39,16 @@ func CalculateLogprobs(logits []float32, selectedToken int, topK int, decoder To
 	if len(logits) == 0 {
 		return nil
 	}
+
+	// Get reusable buffers from pool
+	bufs := logprobPool.Get().(*logprobBuffers)
+	defer logprobPool.Put(bufs)
+
+	// Grow buffers if needed
+	if cap(bufs.logProbs) < len(logits) {
+		bufs.logProbs = make([]float32, len(logits))
+	}
+	logProbs := bufs.logProbs[:len(logits)]
 
 	// Step 1: Convert logits to log probabilities using numerically stable softmax
 	maxLogit := logits[0]
@@ -31,7 +64,6 @@ func CalculateLogprobs(logits []float32, selectedToken int, topK int, decoder To
 	}
 	logSumExp := float32(math.Log(sumExp))
 
-	logProbs := make([]float32, len(logits))
 	for i, logit := range logits {
 		logProbs[i] = (logit - maxLogit) - logSumExp
 	}
@@ -49,12 +81,12 @@ func CalculateLogprobs(logits []float32, selectedToken int, topK int, decoder To
 
 	// Step 3: If topK requested, find the top K tokens
 	if topK > 0 {
-		type tokenLogprobPair struct {
-			tokenID int
-			logprob float32
+		// Reuse pairs buffer
+		if cap(bufs.pairs) < len(logProbs) {
+			bufs.pairs = make([]tokenLogprobPair, len(logProbs))
 		}
+		pairs := bufs.pairs[:len(logProbs)]
 
-		pairs := make([]tokenLogprobPair, len(logProbs))
 		for i, lp := range logProbs {
 			pairs[i] = tokenLogprobPair{tokenID: i, logprob: lp}
 		}
