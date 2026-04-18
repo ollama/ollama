@@ -24,7 +24,7 @@ jobs:
         run: |
           echo GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${GITHUB_REF_NAME#v}\" \"-X=github.com/ollama/ollama/server.mode=release\"'" | tee -a $GITHUB_OUTPUT
           echo VERSION="${GITHUB_REF_NAME#v}" | tee -a $GITHUB_OUTPUT
-          echo vendorsha=$(make -f Makefile.sync print-base) | tee -a $GITHUB_OUTPUT
+          echo vendorsha=$(cat LLAMA_CPP_VERSION) | tee -a $GITHUB_OUTPUT
 
   darwin-build:
     runs-on: macos-26-xlarge
@@ -57,7 +57,7 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: |
             go.sum
-            Makefile.sync
+            LLAMA_CPP_VERSION
       - run: |
           ./scripts/build_darwin.sh
       - name: Log build results
@@ -106,10 +106,10 @@ jobs:
             flags: ''
           - os: windows
             arch: amd64
-            preset: 'ROCm 6'
-            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
-            rocm-version: '6.2'
-            flags: '-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma"'
+            preset: 'ROCm 7'
+            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-26.Q1-Win11-For-HIP.exe
+            rocm-version: '7.1'
+            flags: '-DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma"'
             runner_dir: 'rocm'
           - os: windows
             arch: amd64
@@ -232,14 +232,66 @@ jobs:
         with:
           path: ${{ github.workspace }}\.ccache
           key: ccache-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.preset }}-${{ needs.setup-environment.outputs.vendorsha }}
-      - name: Build target "${{ matrix.preset }}"
+      - name: Build MLX
+        if: startsWith(matrix.preset, 'MLX ')
         run: |
           Import-Module 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
           Enter-VsDevShell -VsInstallPath 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
           cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }} --install-prefix "$((pwd).Path)\dist\${{ matrix.os }}-${{ matrix.arch }}"
-          cmake --build --parallel ([Environment]::ProcessorCount) --preset "${{ matrix.preset }}"
-          cmake --install build --component "${{ startsWith(matrix.preset, 'MLX ') && 'MLX' || startsWith(matrix.preset, 'CUDA ') && 'CUDA' || startsWith(matrix.preset, 'ROCm ') && 'HIP' || startsWith(matrix.preset, 'Vulkan') && 'Vulkan' || 'CPU' }}" --strip
-          Remove-Item -Path dist\lib\ollama\rocm\rocblas\library\*gfx906* -ErrorAction SilentlyContinue
+          cmake --build --preset "${{ matrix.preset }}" -- -l $([Environment]::ProcessorCount)
+          cmake --install build --component MLX --strip
+      - name: Build llama-server
+        if: matrix.preset == 'CPU'
+        run: |
+          Import-Module 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -VsInstallPath 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
+          cmake -S llama\server --preset cpu --install-prefix "$((pwd).Path)\dist\${{ matrix.os }}-${{ matrix.arch }}"
+          cmake --build build\llama-server-cpu -- -l $([Environment]::ProcessorCount)
+          cmake --install build\llama-server-cpu --component llama-server --strip
+        env:
+          CMAKE_GENERATOR: Ninja
+      - name: Build llama-server (CUDA)
+        if: startsWith(matrix.preset, 'CUDA ')
+        run: |
+          Import-Module 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -VsInstallPath 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
+          $cudaVer = "${{ matrix.preset }}".Replace('CUDA ', '').Replace(' ', '')
+          $preset = "cuda-v$cudaVer"
+          if ($cudaVer -eq "13") { $preset = "cuda-v13-windows" }
+          cmake -S llama\server --preset $preset ${{ matrix.flags }} --install-prefix "$((pwd).Path)\dist\${{ matrix.os }}-${{ matrix.arch }}"
+          cmake --build "build\llama-server-$preset" -- -l $([Environment]::ProcessorCount)
+          cmake --install "build\llama-server-$preset" --component llama-server --strip
+        env:
+          CMAKE_GENERATOR: Ninja
+      - name: Build llama-server (ROCm)
+        if: startsWith(matrix.preset, 'ROCm ')
+        run: |
+          Import-Module 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -VsInstallPath 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
+          $hipPath = "${{ env.HIP_PATH }}"
+          $env:HIPCXX = "$hipPath\bin\clang++.exe"
+          $env:HIP_PLATFORM = "amd"
+          $env:CMAKE_PREFIX_PATH = "$hipPath"
+          $env:CC = "$hipPath\bin\clang.exe"
+          $env:CXX = "$hipPath\bin\clang++.exe"
+          cmake -S llama\server --preset rocm -G Ninja `
+              -DCMAKE_HIP_FLAGS="-parallel-jobs=4" `
+              -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
+              -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
+              -DAMDGPU_TARGETS="gfx942;gfx950;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1200;gfx1201;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-" `
+              --install-prefix "$((pwd).Path)\dist\${{ matrix.os }}-${{ matrix.arch }}"
+          cmake --build build\llama-server-rocm -- -l $([Environment]::ProcessorCount)
+          cmake --install build\llama-server-rocm --component llama-server --strip
+        env:
+          CMAKE_GENERATOR: Ninja
+      - name: Build llama-server (Vulkan)
+        if: matrix.preset == 'Vulkan'
+        run: |
+          Import-Module 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -VsInstallPath 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
+          cmake -S llama\server --preset vulkan --install-prefix "$((pwd).Path)\dist\${{ matrix.os }}-${{ matrix.arch }}"
+          cmake --build build\llama-server-vulkan -- -l $([Environment]::ProcessorCount)
+          cmake --install build\llama-server-vulkan --component llama-server --strip
         env:
           CMAKE_GENERATOR: Ninja
       - name: Log build results
@@ -297,7 +349,7 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: |
             go.sum
-            Makefile.sync
+            LLAMA_CPP_VERSION
       - name: Verify gcc is actually clang
         run: |
           $ErrorActionPreference='Continue'
@@ -353,7 +405,7 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: |
             go.sum
-            Makefile.sync
+            LLAMA_CPP_VERSION
       - uses: actions/download-artifact@v4
         with:
           pattern: depends-windows*
@@ -421,6 +473,7 @@ jobs:
             case "$COMPONENT" in
               bin/ollama*)               echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
               lib/ollama/*.so*)          echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/llama-server*|lib/ollama/llama-quantize*)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
               lib/ollama/cuda_v*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
               lib/ollama/vulkan*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
               lib/ollama/mlx*)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
@@ -439,7 +492,7 @@ jobs:
           done
       - run: |
           for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in; do
-            tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE --owner 0 --group 0 | zstd --ultra -22 -T0 >$(basename ${ARCHIVE//.*/}.tar.zst);
+            tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE --owner 0 --group 0 | zstd -9 -T0 >$(basename ${ARCHIVE//.*/}.tar.zst);
           done
       - uses: actions/upload-artifact@v4
         with:
