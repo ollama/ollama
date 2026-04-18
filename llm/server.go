@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"math"
 	"math/rand"
 	"net"
 	"net/http"
@@ -1716,6 +1717,17 @@ type EmbeddingRequest struct {
 type EmbeddingResponse struct {
 	Embedding       []float32 `json:"embedding"`
 	PromptEvalCount int       `json:"prompt_eval_count"`
+}
+
+// ValidateEmbedding checks that an embedding does not contain NaN or Inf values,
+// which would cause json.Marshal to fail with "unsupported value".
+func ValidateEmbedding(embedding []float32) error {
+	for _, v := range embedding {
+		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
+			return errors.New("model produced invalid embedding values (NaN or Inf)")
+		}
+	}
+	return nil
 }
 
 func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, int, error) {
