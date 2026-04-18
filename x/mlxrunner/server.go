@@ -102,7 +102,9 @@ func Execute(args []string) error {
 			request.Options.MinP,
 			request.Options.TopK,
 			request.Options.RepeatLastN,
+			request.Options.RepeatPenalty,
 			request.Options.PresencePenalty,
+			request.Options.FrequencyPenalty,
 		)
 
 		var cancel context.CancelFunc
