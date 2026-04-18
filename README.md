@@ -1,3 +1,8 @@
+[![CI](https://github.com/c6zks4gssn-droid/ollama-improved/actions/workflows/ci.yml/badge.svg)](https://github.com/c6zks4gssn-droid/ollama-improved/actions/workflows/ci.yml)
+[![Security](https://github.com/c6zks4gssn-droid/ollama-improved/actions/workflows/codeql.yml/badge.svg)](https://github.com/c6zks4gssn-droid/ollama-improved/actions/workflows/codeql.yml)
+[![License](https://img.shields.io/github/license/c6zks4gssn-droid/ollama-improved)](https://github.com/c6zks4gssn-droid/ollama-improved/blob/main/LICENSE)
+[![Release](https://img.shields.io/github/v/release/c6zks4gssn-droid/ollama-improved)](https://github.com/c6zks4gssn-droid/ollama-improved/releases)
+
 <p align="center">
   <a href="https://ollama.com">
     <img src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7" alt="ollama" width="200"/>
