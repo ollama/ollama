@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
 	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ollama/ollama/api"
@@ -20,25 +22,14 @@ import (
 	"github.com/ollama/ollama/progress"
 )
 
-var recommendedModels = []ModelItem{
-	{Name: "kimi-k2.5:cloud", Description: "Multimodal reasoning with subagents", Recommended: true},
-	{Name: "qwen3.5:cloud", Description: "Reasoning, coding, and agentic tool use with vision", Recommended: true},
-	{Name: "glm-5.1:cloud", Description: "Reasoning and code generation", Recommended: true},
-	{Name: "minimax-m2.7:cloud", Description: "Fast, efficient coding and real-world productivity", Recommended: true},
-	{Name: "gemma4", Description: "Reasoning and code generation locally", Recommended: true},
-	{Name: "qwen3.5", Description: "Reasoning, coding, and visual understanding locally", Recommended: true},
-}
-
-var recommendedVRAM = map[string]string{
-	"gemma4":  "~16GB",
-	"qwen3.5": "~11GB",
-}
-
 // cloudModelLimit holds context and output token limits for a cloud model.
 type cloudModelLimit struct {
 	Context int
 	Output  int
 }
+
+// cloudModelLimitsMu guards concurrent access to cloudModelLimits.
+var cloudModelLimitsMu sync.RWMutex
 
 // cloudModelLimits maps cloud model base names to their token limits.
 // TODO(parthsareen): grab context/output limits from model info instead of hardcoding
@@ -69,11 +60,51 @@ var cloudModelLimits = map[string]cloudModelLimit{
 func lookupCloudModelLimit(name string) (cloudModelLimit, bool) {
 	base, stripped := modelref.StripCloudSourceTag(name)
 	if stripped {
-		if l, ok := cloudModelLimits[base]; ok {
+		cloudModelLimitsMu.RLock()
+		l, ok := cloudModelLimits[base]
+		cloudModelLimitsMu.RUnlock()
+		if ok {
 			return l, true
 		}
 	}
 	return cloudModelLimit{}, false
+}
+
+// defaultRecommendedModels is the client-side fallback used when the server
+// endpoint is unreachable (e.g. older server, network error).
+var defaultRecommendedModels = []ModelItem{
+	{Name: "gemma4", Description: "Reasoning and code generation locally", Recommended: true, VRAM: "~16GB"},
+	{Name: "qwen3.5", Description: "Reasoning, coding, and visual understanding locally", Recommended: true, VRAM: "~11GB"},
+}
+
+// fetchRecommendedModels fetches the recommended models from the local Ollama
+// server's launch-models endpoint. The server caches models from the remote
+// registry and merges them with built-in local defaults, so this call is fast.
+// Falls back to a built-in default list if the server is unavailable.
+func fetchRecommendedModels(ctx context.Context, client *api.Client) []ModelItem {
+	resp, err := client.LaunchModels(ctx)
+	if err != nil {
+		slog.Warn("failed to load launch models from server, using defaults", "error", err)
+		return defaultRecommendedModels
+	}
+	var items []ModelItem
+	cloudModelLimitsMu.Lock()
+	for _, m := range resp.Models {
+		if m.ContextLength > 0 || m.MaxOutputTokens > 0 {
+			cloudModelLimits[m.Model] = cloudModelLimit{
+				Context: m.ContextLength,
+				Output:  m.MaxOutputTokens,
+			}
+		}
+		items = append(items, ModelItem{
+			Name:        m.Model,
+			Description: m.Description,
+			Recommended: true,
+			VRAM:        m.VRAM,
+		})
+	}
+	cloudModelLimitsMu.Unlock()
+	return items
 }
 
 // missingModelPolicy controls how model-not-found errors should be handled.
@@ -274,16 +305,19 @@ func confirmConfigEdit(runner Runner, paths []string) (bool, error) {
 }
 
 // buildModelList merges existing models with recommendations for selection UIs.
-func buildModelList(existing []modelInfo, preChecked []string, current string) (items []ModelItem, orderedChecked []string, existingModels, cloudModels map[string]bool) {
+func buildModelList(existing []modelInfo, recs []ModelItem, preChecked []string, current string) (items []ModelItem, orderedChecked []string, existingModels, cloudModels map[string]bool) {
 	existingModels = make(map[string]bool)
 	cloudModels = make(map[string]bool)
 	recommended := make(map[string]bool)
 	var hasLocalModel, hasCloudModel bool
-
 	recDesc := make(map[string]string)
-	for _, rec := range recommendedModels {
+	recVRAM := make(map[string]string)
+	for _, rec := range recs {
 		recommended[rec.Name] = true
 		recDesc[rec.Name] = rec.Description
+		if rec.VRAM != "" {
+			recVRAM[rec.Name] = rec.VRAM
+		}
 	}
 
 	for _, m := range existing {
@@ -296,11 +330,11 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 		}
 		displayName := strings.TrimSuffix(m.Name, ":latest")
 		existingModels[displayName] = true
-		item := ModelItem{Name: displayName, Recommended: recommended[displayName], Description: recDesc[displayName]}
+		item := ModelItem{Name: displayName, Recommended: recommended[displayName], Description: recDesc[displayName], VRAM: recVRAM[displayName]}
 		items = append(items, item)
 	}
 
-	for _, rec := range recommendedModels {
+	for _, rec := range recs {
 		if existingModels[rec.Name] || existingModels[rec.Name+":latest"] {
 			continue
 		}
@@ -346,8 +380,8 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 			if items[i].Description != "" {
 				parts = append(parts, items[i].Description)
 			}
-			if vram := recommendedVRAM[items[i].Name]; vram != "" {
-				parts = append(parts, vram)
+			if items[i].VRAM != "" {
+				parts = append(parts, items[i].VRAM)
 			}
 			parts = append(parts, "(not downloaded)")
 			items[i].Description = strings.Join(parts, ", ")
@@ -355,7 +389,7 @@ func buildModelList(existing []modelInfo, preChecked []string, current string) (
 	}
 
 	recRank := make(map[string]int)
-	for i, rec := range recommendedModels {
+	for i, rec := range recs {
 		recRank[rec.Name] = i + 1
 	}
 

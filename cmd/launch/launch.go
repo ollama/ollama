@@ -185,6 +185,7 @@ type ModelItem struct {
 	Name        string
 	Description string
 	Recommended bool
+	VRAM        string
 }
 
 // LaunchCmd returns the cobra command for launching integrations.
@@ -719,8 +720,9 @@ func (c *launcherClient) loadSelectableModels(ctx context.Context, preChecked []
 		return nil, nil, err
 	}
 
+	recs := fetchRecommendedModels(ctx, c.apiClient)
 	cloudDisabled, _ := cloudStatusDisabled(ctx, c.apiClient)
-	items, orderedChecked, _, _ := buildModelList(c.modelInventory, preChecked, current)
+	items, orderedChecked, _, _ := buildModelList(c.modelInventory, recs, preChecked, current)
 	if cloudDisabled {
 		items = filterCloudItems(items)
 		orderedChecked = c.filterDisabledCloudModels(ctx, orderedChecked)
