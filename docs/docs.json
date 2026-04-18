@@ -176,6 +176,7 @@
               "/windows",
               "/docker",
               "/import",
+              "/inference-webhooks",
               "/faq",
               "/gpu",
               "/troubleshooting"
