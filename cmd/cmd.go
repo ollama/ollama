@@ -1676,10 +1676,7 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		fmt.Println()
 	}
 
-	verbose, err := cmd.Flags().GetBool("verbose")
-	if err != nil {
-		return nil, err
-	}
+	verbose, _ := cmd.Flags().GetBool("verbose")
 
 	if verbose {
 		latest.Summary()
@@ -1804,10 +1801,7 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		return nil
 	}
 
-	verbose, err := cmd.Flags().GetBool("verbose")
-	if err != nil {
-		return err
-	}
+	verbose, _ := cmd.Flags().GetBool("verbose")
 
 	if verbose {
 		latest.Summary()
