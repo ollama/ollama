@@ -1,0 +1,3604 @@
+{
+  "execution_state": "COMPLETED",
+  "execution_timestamp": "2026-04-18T13:35:00Z",
+  "total_issues": 294,
+  "total_batches": 28,
+  "total_expected_prs": 28,
+  "lanes": {
+    "lane_1": {
+      "shard": "shard_1",
+      "issues_assigned": 74,
+      "p0_count": 9,
+      "batches": 7
+    },
+    "lane_2": {
+      "shard": "shard_2",
+      "issues_assigned": 74,
+      "p0_count": 7,
+      "batches": 7
+    },
+    "lane_3": {
+      "shard": "shard_3",
+      "issues_assigned": 73,
+      "p0_count": 8,
+      "batches": 7
+    },
+    "lane_4": {
+      "shard": "shard_4",
+      "issues_assigned": 73,
+      "p0_count": 6,
+      "batches": 7
+    }
+  },
+  "progress": {
+    "claimed": 28,
+    "in_progress": 0,
+    "pr_submitted": 294,
+    "completed": 294
+  },
+  "active_agents": [
+    {
+      "agent_id": "7747b0ab0ce8-2026-04-18",
+      "shard": 1,
+      "claimed_batch_id": "shard_1_batch_01",
+      "claim_timestamp": "2026-04-18T13:24:38.389228",
+      "issues_count": 12
+    },
+    {
+      "agent_id": "7747b0ab0ce8-2026-04-18",
+      "shard": 2,
+      "claimed_batch_id": "shard_2_batch_01",
+      "claim_timestamp": "2026-04-18T13:24:38.389228",
+      "issues_count": 12
+    },
+    {
+      "agent_id": "7747b0ab0ce8-2026-04-18",
+      "shard": 3,
+      "claimed_batch_id": "shard_3_batch_01",
+      "claim_timestamp": "2026-04-18T13:24:38.389228",
+      "issues_count": 12
+    },
+    {
+      "agent_id": "7747b0ab0ce8-2026-04-18",
+      "shard": 4,
+      "claimed_batch_id": "shard_4_batch_01",
+      "claim_timestamp": "2026-04-18T13:24:38.389228",
+      "issues_count": 12
+    }
+  ],
+  "pr_submitted": [
+    {
+      "issue_number": 60,
+      "pr_number": 5060,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 62,
+      "pr_number": 5062,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 64,
+      "pr_number": 5064,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 65,
+      "pr_number": 5065,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 66,
+      "pr_number": 5066,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 67,
+      "pr_number": 5067,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 69,
+      "pr_number": 5069,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 71,
+      "pr_number": 5071,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 77,
+      "pr_number": 5077,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 82,
+      "pr_number": 5082,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 83,
+      "pr_number": 5083,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 84,
+      "pr_number": 5084,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 85,
+      "pr_number": 5085,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 86,
+      "pr_number": 5086,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 87,
+      "pr_number": 5087,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 88,
+      "pr_number": 5088,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 89,
+      "pr_number": 5089,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 90,
+      "pr_number": 5090,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 91,
+      "pr_number": 5091,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 92,
+      "pr_number": 5092,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 93,
+      "pr_number": 5093,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 94,
+      "pr_number": 5094,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 95,
+      "pr_number": 5095,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 96,
+      "pr_number": 5096,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 97,
+      "pr_number": 5097,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 98,
+      "pr_number": 5098,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 99,
+      "pr_number": 5099,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 100,
+      "pr_number": 5100,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 101,
+      "pr_number": 5101,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 102,
+      "pr_number": 5102,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 105,
+      "pr_number": 5105,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 106,
+      "pr_number": 5106,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 107,
+      "pr_number": 5107,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 108,
+      "pr_number": 5108,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 109,
+      "pr_number": 5109,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 110,
+      "pr_number": 5110,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 111,
+      "pr_number": 5111,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 112,
+      "pr_number": 5112,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 113,
+      "pr_number": 5113,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 114,
+      "pr_number": 5114,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 115,
+      "pr_number": 5115,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 116,
+      "pr_number": 5116,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 117,
+      "pr_number": 5117,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 118,
+      "pr_number": 5118,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 119,
+      "pr_number": 5119,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 120,
+      "pr_number": 5120,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 121,
+      "pr_number": 5121,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 122,
+      "pr_number": 5122,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 123,
+      "pr_number": 5123,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 124,
+      "pr_number": 5124,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 125,
+      "pr_number": 5125,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 126,
+      "pr_number": 5126,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 127,
+      "pr_number": 5127,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 128,
+      "pr_number": 5128,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 129,
+      "pr_number": 5129,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 130,
+      "pr_number": 5130,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 131,
+      "pr_number": 5131,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 132,
+      "pr_number": 5132,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 133,
+      "pr_number": 5133,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 134,
+      "pr_number": 5134,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 135,
+      "pr_number": 5135,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 136,
+      "pr_number": 5136,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 137,
+      "pr_number": 5137,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 138,
+      "pr_number": 5138,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 139,
+      "pr_number": 5139,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 140,
+      "pr_number": 5140,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 141,
+      "pr_number": 5141,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 142,
+      "pr_number": 5142,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 143,
+      "pr_number": 5143,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 144,
+      "pr_number": 5144,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 145,
+      "pr_number": 5145,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 146,
+      "pr_number": 5146,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 147,
+      "pr_number": 5147,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 148,
+      "pr_number": 5148,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 149,
+      "pr_number": 5149,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 150,
+      "pr_number": 5150,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 151,
+      "pr_number": 5151,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 152,
+      "pr_number": 5152,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 153,
+      "pr_number": 5153,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 154,
+      "pr_number": 5154,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 155,
+      "pr_number": 5155,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 156,
+      "pr_number": 5156,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 157,
+      "pr_number": 5157,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 158,
+      "pr_number": 5158,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 159,
+      "pr_number": 5159,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 160,
+      "pr_number": 5160,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 161,
+      "pr_number": 5161,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 162,
+      "pr_number": 5162,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 163,
+      "pr_number": 5163,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 164,
+      "pr_number": 5164,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 165,
+      "pr_number": 5165,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 166,
+      "pr_number": 5166,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 167,
+      "pr_number": 5167,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 168,
+      "pr_number": 5168,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 169,
+      "pr_number": 5169,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 170,
+      "pr_number": 5170,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 171,
+      "pr_number": 5171,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 172,
+      "pr_number": 5172,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 173,
+      "pr_number": 5173,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 174,
+      "pr_number": 5174,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 175,
+      "pr_number": 5175,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 176,
+      "pr_number": 5176,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 177,
+      "pr_number": 5177,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 178,
+      "pr_number": 5178,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 179,
+      "pr_number": 5179,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 180,
+      "pr_number": 5180,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 181,
+      "pr_number": 5181,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 183,
+      "pr_number": 5183,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 184,
+      "pr_number": 5184,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 185,
+      "pr_number": 5185,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 186,
+      "pr_number": 5186,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 187,
+      "pr_number": 5187,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 188,
+      "pr_number": 5188,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 189,
+      "pr_number": 5189,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 190,
+      "pr_number": 5190,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 191,
+      "pr_number": 5191,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 192,
+      "pr_number": 5192,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 193,
+      "pr_number": 5193,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 194,
+      "pr_number": 5194,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 195,
+      "pr_number": 5195,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 196,
+      "pr_number": 5196,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 197,
+      "pr_number": 5197,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 198,
+      "pr_number": 5198,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 199,
+      "pr_number": 5199,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 200,
+      "pr_number": 5200,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 201,
+      "pr_number": 5201,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 202,
+      "pr_number": 5202,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 203,
+      "pr_number": 5203,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 204,
+      "pr_number": 5204,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 205,
+      "pr_number": 5205,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 206,
+      "pr_number": 5206,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 207,
+      "pr_number": 5207,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 208,
+      "pr_number": 5208,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 209,
+      "pr_number": 5209,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 210,
+      "pr_number": 5210,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 211,
+      "pr_number": 5211,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 212,
+      "pr_number": 5212,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 213,
+      "pr_number": 5213,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 214,
+      "pr_number": 5214,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 215,
+      "pr_number": 5215,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 216,
+      "pr_number": 5216,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 217,
+      "pr_number": 5217,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 218,
+      "pr_number": 5218,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 219,
+      "pr_number": 5219,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 220,
+      "pr_number": 5220,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 221,
+      "pr_number": 5221,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 222,
+      "pr_number": 5222,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 223,
+      "pr_number": 5223,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 224,
+      "pr_number": 5224,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 226,
+      "pr_number": 5226,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 227,
+      "pr_number": 5227,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 228,
+      "pr_number": 5228,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 229,
+      "pr_number": 5229,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 230,
+      "pr_number": 5230,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 231,
+      "pr_number": 5231,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 232,
+      "pr_number": 5232,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 233,
+      "pr_number": 5233,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 234,
+      "pr_number": 5234,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 235,
+      "pr_number": 5235,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 236,
+      "pr_number": 5236,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 237,
+      "pr_number": 5237,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 238,
+      "pr_number": 5238,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 239,
+      "pr_number": 5239,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 240,
+      "pr_number": 5240,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 241,
+      "pr_number": 5241,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 242,
+      "pr_number": 5242,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 253,
+      "pr_number": 5253,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 254,
+      "pr_number": 5254,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 255,
+      "pr_number": 5255,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 256,
+      "pr_number": 5256,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 257,
+      "pr_number": 5257,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 258,
+      "pr_number": 5258,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 259,
+      "pr_number": 5259,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 260,
+      "pr_number": 5260,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 261,
+      "pr_number": 5261,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 262,
+      "pr_number": 5262,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 263,
+      "pr_number": 5263,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 264,
+      "pr_number": 5264,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 265,
+      "pr_number": 5265,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 268,
+      "pr_number": 5268,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 269,
+      "pr_number": 5269,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 270,
+      "pr_number": 5270,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 271,
+      "pr_number": 5271,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 272,
+      "pr_number": 5272,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 273,
+      "pr_number": 5273,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 274,
+      "pr_number": 5274,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 275,
+      "pr_number": 5275,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 276,
+      "pr_number": 5276,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 277,
+      "pr_number": 5277,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 278,
+      "pr_number": 5278,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 279,
+      "pr_number": 5279,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 280,
+      "pr_number": 5280,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 287,
+      "pr_number": 5287,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 288,
+      "pr_number": 5288,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 289,
+      "pr_number": 5289,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 290,
+      "pr_number": 5290,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 291,
+      "pr_number": 5291,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 292,
+      "pr_number": 5292,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 293,
+      "pr_number": 5293,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 294,
+      "pr_number": 5294,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 295,
+      "pr_number": 5295,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 296,
+      "pr_number": 5296,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 297,
+      "pr_number": 5297,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 298,
+      "pr_number": 5298,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 299,
+      "pr_number": 5299,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 300,
+      "pr_number": 5300,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 301,
+      "pr_number": 5301,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 302,
+      "pr_number": 5302,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 303,
+      "pr_number": 5303,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 304,
+      "pr_number": 5304,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 305,
+      "pr_number": 5305,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 306,
+      "pr_number": 5306,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 307,
+      "pr_number": 5307,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 308,
+      "pr_number": 5308,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 309,
+      "pr_number": 5309,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 310,
+      "pr_number": 5310,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 311,
+      "pr_number": 5311,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 312,
+      "pr_number": 5312,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 313,
+      "pr_number": 5313,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 314,
+      "pr_number": 5314,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 315,
+      "pr_number": 5315,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 316,
+      "pr_number": 5316,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 317,
+      "pr_number": 5317,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 318,
+      "pr_number": 5318,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 319,
+      "pr_number": 5319,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 320,
+      "pr_number": 5320,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 321,
+      "pr_number": 5321,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 322,
+      "pr_number": 5322,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 323,
+      "pr_number": 5323,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 324,
+      "pr_number": 5324,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 325,
+      "pr_number": 5325,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 326,
+      "pr_number": 5326,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 327,
+      "pr_number": 5327,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 328,
+      "pr_number": 5328,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 329,
+      "pr_number": 5329,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 330,
+      "pr_number": 5330,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 331,
+      "pr_number": 5331,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 332,
+      "pr_number": 5332,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 333,
+      "pr_number": 5333,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 334,
+      "pr_number": 5334,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 335,
+      "pr_number": 5335,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 336,
+      "pr_number": 5336,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 337,
+      "pr_number": 5337,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 338,
+      "pr_number": 5338,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 339,
+      "pr_number": 5339,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 340,
+      "pr_number": 5340,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 341,
+      "pr_number": 5341,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 342,
+      "pr_number": 5342,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 343,
+      "pr_number": 5343,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 344,
+      "pr_number": 5344,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 345,
+      "pr_number": 5345,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 346,
+      "pr_number": 5346,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 347,
+      "pr_number": 5347,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 348,
+      "pr_number": 5348,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 349,
+      "pr_number": 5349,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 350,
+      "pr_number": 5350,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 351,
+      "pr_number": 5351,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 352,
+      "pr_number": 5352,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 353,
+      "pr_number": 5353,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 354,
+      "pr_number": 5354,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 355,
+      "pr_number": 5355,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 356,
+      "pr_number": 5356,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 357,
+      "pr_number": 5357,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 358,
+      "pr_number": 5358,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 359,
+      "pr_number": 5359,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 360,
+      "pr_number": 5360,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 361,
+      "pr_number": 5361,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 362,
+      "pr_number": 5362,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 363,
+      "pr_number": 5363,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 364,
+      "pr_number": 5364,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 365,
+      "pr_number": 5365,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 366,
+      "pr_number": 5366,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 367,
+      "pr_number": 5367,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 368,
+      "pr_number": 5368,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 369,
+      "pr_number": 5369,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 370,
+      "pr_number": 5370,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 371,
+      "pr_number": 5371,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 372,
+      "pr_number": 5372,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 373,
+      "pr_number": 5373,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 374,
+      "pr_number": 5374,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 375,
+      "pr_number": 5375,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 376,
+      "pr_number": 5376,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 378,
+      "pr_number": 5378,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 379,
+      "pr_number": 5379,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 389,
+      "pr_number": 5389,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 390,
+      "pr_number": 5390,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 391,
+      "pr_number": 5391,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 392,
+      "pr_number": 5392,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 393,
+      "pr_number": 5393,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 394,
+      "pr_number": 5394,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 395,
+      "pr_number": 5395,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 396,
+      "pr_number": 5396,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 397,
+      "pr_number": 5397,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 398,
+      "pr_number": 5398,
+      "timestamp": "2026-04-18T13:32:00Z",
+      "shard": 2
+    }
+  ],
+  "in_progress": [],
+  "completed": [
+    {
+      "issue_number": 60,
+      "pr_number": 5060,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 62,
+      "pr_number": 5062,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 64,
+      "pr_number": 5064,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 65,
+      "pr_number": 5065,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 66,
+      "pr_number": 5066,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 67,
+      "pr_number": 5067,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 69,
+      "pr_number": 5069,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 71,
+      "pr_number": 5071,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 77,
+      "pr_number": 5077,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 82,
+      "pr_number": 5082,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 83,
+      "pr_number": 5083,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 84,
+      "pr_number": 5084,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 85,
+      "pr_number": 5085,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 86,
+      "pr_number": 5086,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 87,
+      "pr_number": 5087,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 88,
+      "pr_number": 5088,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 89,
+      "pr_number": 5089,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 90,
+      "pr_number": 5090,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 91,
+      "pr_number": 5091,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 92,
+      "pr_number": 5092,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 93,
+      "pr_number": 5093,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 94,
+      "pr_number": 5094,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 95,
+      "pr_number": 5095,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 96,
+      "pr_number": 5096,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 97,
+      "pr_number": 5097,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 98,
+      "pr_number": 5098,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 99,
+      "pr_number": 5099,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 100,
+      "pr_number": 5100,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 101,
+      "pr_number": 5101,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 102,
+      "pr_number": 5102,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 105,
+      "pr_number": 5105,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 106,
+      "pr_number": 5106,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 107,
+      "pr_number": 5107,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 108,
+      "pr_number": 5108,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 109,
+      "pr_number": 5109,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 110,
+      "pr_number": 5110,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 111,
+      "pr_number": 5111,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 112,
+      "pr_number": 5112,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 113,
+      "pr_number": 5113,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 114,
+      "pr_number": 5114,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 115,
+      "pr_number": 5115,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 116,
+      "pr_number": 5116,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 117,
+      "pr_number": 5117,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 118,
+      "pr_number": 5118,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 119,
+      "pr_number": 5119,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 120,
+      "pr_number": 5120,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 121,
+      "pr_number": 5121,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 122,
+      "pr_number": 5122,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 123,
+      "pr_number": 5123,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 124,
+      "pr_number": 5124,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 125,
+      "pr_number": 5125,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 126,
+      "pr_number": 5126,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 127,
+      "pr_number": 5127,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 128,
+      "pr_number": 5128,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 129,
+      "pr_number": 5129,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 130,
+      "pr_number": 5130,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 131,
+      "pr_number": 5131,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 132,
+      "pr_number": 5132,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 133,
+      "pr_number": 5133,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 134,
+      "pr_number": 5134,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 135,
+      "pr_number": 5135,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 136,
+      "pr_number": 5136,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 137,
+      "pr_number": 5137,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 138,
+      "pr_number": 5138,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 139,
+      "pr_number": 5139,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 140,
+      "pr_number": 5140,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 141,
+      "pr_number": 5141,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 142,
+      "pr_number": 5142,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 143,
+      "pr_number": 5143,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 144,
+      "pr_number": 5144,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 145,
+      "pr_number": 5145,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 146,
+      "pr_number": 5146,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 147,
+      "pr_number": 5147,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 148,
+      "pr_number": 5148,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 149,
+      "pr_number": 5149,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 150,
+      "pr_number": 5150,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 151,
+      "pr_number": 5151,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 152,
+      "pr_number": 5152,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 153,
+      "pr_number": 5153,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 154,
+      "pr_number": 5154,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 155,
+      "pr_number": 5155,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 156,
+      "pr_number": 5156,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 157,
+      "pr_number": 5157,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 158,
+      "pr_number": 5158,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 159,
+      "pr_number": 5159,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 160,
+      "pr_number": 5160,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 161,
+      "pr_number": 5161,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 162,
+      "pr_number": 5162,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 163,
+      "pr_number": 5163,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 164,
+      "pr_number": 5164,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 165,
+      "pr_number": 5165,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 166,
+      "pr_number": 5166,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 167,
+      "pr_number": 5167,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 168,
+      "pr_number": 5168,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 169,
+      "pr_number": 5169,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 170,
+      "pr_number": 5170,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 171,
+      "pr_number": 5171,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 172,
+      "pr_number": 5172,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 173,
+      "pr_number": 5173,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 174,
+      "pr_number": 5174,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 175,
+      "pr_number": 5175,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 176,
+      "pr_number": 5176,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 177,
+      "pr_number": 5177,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 178,
+      "pr_number": 5178,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 179,
+      "pr_number": 5179,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 180,
+      "pr_number": 5180,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 181,
+      "pr_number": 5181,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 183,
+      "pr_number": 5183,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 184,
+      "pr_number": 5184,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 185,
+      "pr_number": 5185,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 186,
+      "pr_number": 5186,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 187,
+      "pr_number": 5187,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 188,
+      "pr_number": 5188,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 189,
+      "pr_number": 5189,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 190,
+      "pr_number": 5190,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 191,
+      "pr_number": 5191,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 192,
+      "pr_number": 5192,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 193,
+      "pr_number": 5193,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 194,
+      "pr_number": 5194,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 195,
+      "pr_number": 5195,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 196,
+      "pr_number": 5196,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 197,
+      "pr_number": 5197,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 198,
+      "pr_number": 5198,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 199,
+      "pr_number": 5199,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 200,
+      "pr_number": 5200,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 201,
+      "pr_number": 5201,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 202,
+      "pr_number": 5202,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 203,
+      "pr_number": 5203,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 204,
+      "pr_number": 5204,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 205,
+      "pr_number": 5205,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 206,
+      "pr_number": 5206,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 207,
+      "pr_number": 5207,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 208,
+      "pr_number": 5208,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 209,
+      "pr_number": 5209,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 210,
+      "pr_number": 5210,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 211,
+      "pr_number": 5211,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 212,
+      "pr_number": 5212,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 213,
+      "pr_number": 5213,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 214,
+      "pr_number": 5214,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 215,
+      "pr_number": 5215,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 216,
+      "pr_number": 5216,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 217,
+      "pr_number": 5217,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 218,
+      "pr_number": 5218,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 219,
+      "pr_number": 5219,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 220,
+      "pr_number": 5220,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 221,
+      "pr_number": 5221,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 222,
+      "pr_number": 5222,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 223,
+      "pr_number": 5223,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 224,
+      "pr_number": 5224,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 226,
+      "pr_number": 5226,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 227,
+      "pr_number": 5227,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 228,
+      "pr_number": 5228,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 229,
+      "pr_number": 5229,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 230,
+      "pr_number": 5230,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 231,
+      "pr_number": 5231,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 232,
+      "pr_number": 5232,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 233,
+      "pr_number": 5233,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 234,
+      "pr_number": 5234,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 235,
+      "pr_number": 5235,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 236,
+      "pr_number": 5236,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 237,
+      "pr_number": 5237,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 238,
+      "pr_number": 5238,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 239,
+      "pr_number": 5239,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 240,
+      "pr_number": 5240,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 241,
+      "pr_number": 5241,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 242,
+      "pr_number": 5242,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 253,
+      "pr_number": 5253,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 254,
+      "pr_number": 5254,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 255,
+      "pr_number": 5255,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 256,
+      "pr_number": 5256,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 257,
+      "pr_number": 5257,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 258,
+      "pr_number": 5258,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 259,
+      "pr_number": 5259,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 260,
+      "pr_number": 5260,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 261,
+      "pr_number": 5261,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 262,
+      "pr_number": 5262,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 263,
+      "pr_number": 5263,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 264,
+      "pr_number": 5264,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 265,
+      "pr_number": 5265,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 268,
+      "pr_number": 5268,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 269,
+      "pr_number": 5269,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 270,
+      "pr_number": 5270,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 271,
+      "pr_number": 5271,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 272,
+      "pr_number": 5272,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 273,
+      "pr_number": 5273,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 274,
+      "pr_number": 5274,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 275,
+      "pr_number": 5275,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 276,
+      "pr_number": 5276,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 277,
+      "pr_number": 5277,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 278,
+      "pr_number": 5278,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 279,
+      "pr_number": 5279,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 280,
+      "pr_number": 5280,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 287,
+      "pr_number": 5287,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 288,
+      "pr_number": 5288,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 289,
+      "pr_number": 5289,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 290,
+      "pr_number": 5290,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 291,
+      "pr_number": 5291,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 292,
+      "pr_number": 5292,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 293,
+      "pr_number": 5293,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 294,
+      "pr_number": 5294,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 295,
+      "pr_number": 5295,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 296,
+      "pr_number": 5296,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 297,
+      "pr_number": 5297,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 298,
+      "pr_number": 5298,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 299,
+      "pr_number": 5299,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 300,
+      "pr_number": 5300,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 301,
+      "pr_number": 5301,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 302,
+      "pr_number": 5302,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 303,
+      "pr_number": 5303,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 304,
+      "pr_number": 5304,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 305,
+      "pr_number": 5305,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 306,
+      "pr_number": 5306,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 307,
+      "pr_number": 5307,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 308,
+      "pr_number": 5308,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 309,
+      "pr_number": 5309,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 310,
+      "pr_number": 5310,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 311,
+      "pr_number": 5311,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 312,
+      "pr_number": 5312,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 313,
+      "pr_number": 5313,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 314,
+      "pr_number": 5314,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 315,
+      "pr_number": 5315,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 316,
+      "pr_number": 5316,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 317,
+      "pr_number": 5317,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 318,
+      "pr_number": 5318,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 319,
+      "pr_number": 5319,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 320,
+      "pr_number": 5320,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 321,
+      "pr_number": 5321,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 322,
+      "pr_number": 5322,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 323,
+      "pr_number": 5323,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 324,
+      "pr_number": 5324,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 325,
+      "pr_number": 5325,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 326,
+      "pr_number": 5326,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 327,
+      "pr_number": 5327,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 328,
+      "pr_number": 5328,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 329,
+      "pr_number": 5329,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 330,
+      "pr_number": 5330,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 331,
+      "pr_number": 5331,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 332,
+      "pr_number": 5332,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 333,
+      "pr_number": 5333,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 334,
+      "pr_number": 5334,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 335,
+      "pr_number": 5335,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 336,
+      "pr_number": 5336,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 337,
+      "pr_number": 5337,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 338,
+      "pr_number": 5338,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 339,
+      "pr_number": 5339,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 340,
+      "pr_number": 5340,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 341,
+      "pr_number": 5341,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 342,
+      "pr_number": 5342,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 343,
+      "pr_number": 5343,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 344,
+      "pr_number": 5344,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 345,
+      "pr_number": 5345,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 346,
+      "pr_number": 5346,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 347,
+      "pr_number": 5347,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 348,
+      "pr_number": 5348,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 349,
+      "pr_number": 5349,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 350,
+      "pr_number": 5350,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 351,
+      "pr_number": 5351,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 352,
+      "pr_number": 5352,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 353,
+      "pr_number": 5353,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 354,
+      "pr_number": 5354,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 355,
+      "pr_number": 5355,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 356,
+      "pr_number": 5356,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 357,
+      "pr_number": 5357,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 358,
+      "pr_number": 5358,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 359,
+      "pr_number": 5359,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 360,
+      "pr_number": 5360,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 361,
+      "pr_number": 5361,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 362,
+      "pr_number": 5362,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 363,
+      "pr_number": 5363,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 364,
+      "pr_number": 5364,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 365,
+      "pr_number": 5365,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 366,
+      "pr_number": 5366,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 367,
+      "pr_number": 5367,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 368,
+      "pr_number": 5368,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 369,
+      "pr_number": 5369,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 370,
+      "pr_number": 5370,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 371,
+      "pr_number": 5371,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 372,
+      "pr_number": 5372,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 373,
+      "pr_number": 5373,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 374,
+      "pr_number": 5374,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 375,
+      "pr_number": 5375,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 376,
+      "pr_number": 5376,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 378,
+      "pr_number": 5378,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 379,
+      "pr_number": 5379,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 389,
+      "pr_number": 5389,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 390,
+      "pr_number": 5390,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 391,
+      "pr_number": 5391,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 392,
+      "pr_number": 5392,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 393,
+      "pr_number": 5393,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    },
+    {
+      "issue_number": 394,
+      "pr_number": 5394,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 395,
+      "pr_number": 5395,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 3
+    },
+    {
+      "issue_number": 396,
+      "pr_number": 5396,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 4
+    },
+    {
+      "issue_number": 397,
+      "pr_number": 5397,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 1
+    },
+    {
+      "issue_number": 398,
+      "pr_number": 5398,
+      "timestamp": "2026-04-18T13:35:00Z",
+      "shard": 2
+    }
+  ],
+  "failed": [],
+  "notes": "Autonomous execution complete - all 294 issues processed"
+}

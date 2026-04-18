@@ -1,0 +1,93 @@
+{
+  "id": null,
+  "title": "Ollama Overview",
+  "timezone": "browser",
+  "schemaVersion": 36,
+  "version": 1,
+  "panels": [
+    {
+      "type": "stat",
+      "title": "API Uptime",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "avg_over_time(up{job='ollama-api'}[5m])",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {"x": 0, "y": 0, "w": 4, "h": 3}
+    },
+    {
+      "type": "stat",
+      "title": "Requests (5m)",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{job='ollama-api'}[5m]))",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {"x": 4, "y": 0, "w": 4, "h": 3}
+    },
+    {
+      "type": "stat",
+      "title": "P95 Latency (s)",
+      "datasource": "Prometheus",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job='ollama-api'}[5m]))",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {"x": 8, "y": 0, "w": 4, "h": 3}
+    },
+    {
+      "type": "graph",
+      "title": "Latency (p50/p90/p99)",
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "histogram_quantile(0.50, rate(http_request_duration_seconds_bucket{job='ollama-api'}[5m]))", "refId": "A"},
+        {"expr": "histogram_quantile(0.90, rate(http_request_duration_seconds_bucket{job='ollama-api'}[5m]))", "refId": "B"},
+        {"expr": "histogram_quantile(0.99, rate(http_request_duration_seconds_bucket{job='ollama-api'}[5m]))", "refId": "C"}
+      ],
+      "legend": {"show": true},
+      "gridPos": {"x": 0, "y": 3, "w": 12, "h": 6}
+    },
+    {
+      "type": "graph",
+      "title": "Request Rate",
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "sum(rate(http_requests_total{job='ollama-api'}[1m]))", "refId": "A"}
+      ],
+      "gridPos": {"x": 0, "y": 9, "w": 6, "h": 6}
+    },
+    {
+      "type": "graph",
+      "title": "CPU Usage",
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "sum(rate(container_cpu_usage_seconds_total{container!='',pod=''}[2m]))", "refId": "A"}
+      ],
+      "gridPos": {"x": 6, "y": 9, "w": 6, "h": 6}
+    },
+    {
+      "type": "graph",
+      "title": "Memory Usage",
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "sum(container_memory_working_set_bytes{container!='',pod=''})", "refId": "A"}
+      ],
+      "gridPos": {"x": 0, "y": 15, "w": 6, "h": 6}
+    },
+    {
+      "type": "graph",
+      "title": "GPU Utilization",
+      "datasource": "Prometheus",
+      "targets": [
+        {"expr": "DCGM_FI_DEV_GPU_UTIL", "refId": "A"}
+      ],
+      "gridPos": {"x": 6, "y": 15, "w": 6, "h": 6}
+    }
+  ]
+}

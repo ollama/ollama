@@ -1,0 +1,2570 @@
+[
+  {
+    "number": 82,
+    "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACV-poHw",
+        "name": "security",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhA",
+        "name": "automated",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhw",
+        "name": "type-bug",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt7g",
+        "name": "wave/01",
+        "description": "Autonomous execution wave 1",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WUQ",
+        "name": "wave/1",
+        "description": "Autonomous execution batch 1",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBD3w",
+        "name": "shard/1",
+        "description": "Deterministic autonomous execution shard 1",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/82",
+    "updatedAt": "2026-04-18T03:57:01Z"
+  },
+  {
+    "number": 84,
+    "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACV-poHw",
+        "name": "security",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhA",
+        "name": "automated",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhw",
+        "name": "type-bug",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt7g",
+        "name": "wave/01",
+        "description": "Autonomous execution wave 1",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WUQ",
+        "name": "wave/1",
+        "description": "Autonomous execution batch 1",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBD8g",
+        "name": "shard/2",
+        "description": "Deterministic autonomous execution shard 2",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/84",
+    "updatedAt": "2026-04-18T03:57:02Z"
+  },
+  {
+    "number": 86,
+    "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACV-poHw",
+        "name": "security",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhA",
+        "name": "automated",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhw",
+        "name": "type-bug",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt7g",
+        "name": "wave/01",
+        "description": "Autonomous execution wave 1",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WUQ",
+        "name": "wave/1",
+        "description": "Autonomous execution batch 1",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBEAw",
+        "name": "shard/3",
+        "description": "Deterministic autonomous execution shard 3",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/86",
+    "updatedAt": "2026-04-18T03:57:03Z"
+  },
+  {
+    "number": 87,
+    "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACV-poHw",
+        "name": "security",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhA",
+        "name": "automated",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhw",
+        "name": "type-bug",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt7g",
+        "name": "wave/01",
+        "description": "Autonomous execution wave 1",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WUQ",
+        "name": "wave/1",
+        "description": "Autonomous execution batch 1",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBEEw",
+        "name": "shard/4",
+        "description": "Deterministic autonomous execution shard 4",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/87",
+    "updatedAt": "2026-04-18T03:57:04Z"
+  },
+  {
+    "number": 88,
+    "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACV-poHw",
+        "name": "security",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhA",
+        "name": "automated",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhw",
+        "name": "type-bug",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt7g",
+        "name": "wave/01",
+        "description": "Autonomous execution wave 1",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WUQ",
+        "name": "wave/1",
+        "description": "Autonomous execution batch 1",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBD3w",
+        "name": "shard/1",
+        "description": "Deterministic autonomous execution shard 1",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/88",
+    "updatedAt": "2026-04-18T03:57:04Z"
+  },
+  {
+    "number": 90,
+    "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACV-poHw",
+        "name": "security",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhA",
+        "name": "automated",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhw",
+        "name": "type-bug",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt7g",
+        "name": "wave/01",
+        "description": "Autonomous execution wave 1",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WUQ",
+        "name": "wave/1",
+        "description": "Autonomous execution batch 1",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBD8g",
+        "name": "shard/2",
+        "description": "Deterministic autonomous execution shard 2",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/90",
+    "updatedAt": "2026-04-18T03:57:05Z"
+  },
+  {
+    "number": 92,
+    "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACV-poHw",
+        "name": "security",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhA",
+        "name": "automated",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhw",
+        "name": "type-bug",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt7g",
+        "name": "wave/01",
+        "description": "Autonomous execution wave 1",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WUQ",
+        "name": "wave/1",
+        "description": "Autonomous execution batch 1",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBEAw",
+        "name": "shard/3",
+        "description": "Deterministic autonomous execution shard 3",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/92",
+    "updatedAt": "2026-04-18T03:57:07Z"
+  },
+  {
+    "number": 93,
+    "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACV-poHw",
+        "name": "security",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhA",
+        "name": "automated",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhw",
+        "name": "type-bug",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt7g",
+        "name": "wave/01",
+        "description": "Autonomous execution wave 1",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WUQ",
+        "name": "wave/1",
+        "description": "Autonomous execution batch 1",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBEEw",
+        "name": "shard/4",
+        "description": "Deterministic autonomous execution shard 4",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/93",
+    "updatedAt": "2026-04-18T03:57:07Z"
+  },
+  {
+    "number": 95,
+    "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACV-poHw",
+        "name": "security",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhA",
+        "name": "automated",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhw",
+        "name": "type-bug",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt7g",
+        "name": "wave/01",
+        "description": "Autonomous execution wave 1",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WUQ",
+        "name": "wave/1",
+        "description": "Autonomous execution batch 1",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBD3w",
+        "name": "shard/1",
+        "description": "Deterministic autonomous execution shard 1",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/95",
+    "updatedAt": "2026-04-18T03:57:08Z"
+  },
+  {
+    "number": 96,
+    "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACV-poHw",
+        "name": "security",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhA",
+        "name": "automated",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhw",
+        "name": "type-bug",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt7g",
+        "name": "wave/01",
+        "description": "Autonomous execution wave 1",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WUQ",
+        "name": "wave/1",
+        "description": "Autonomous execution batch 1",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBD8g",
+        "name": "shard/2",
+        "description": "Deterministic autonomous execution shard 2",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/96",
+    "updatedAt": "2026-04-18T03:57:09Z"
+  },
+  {
+    "number": 97,
+    "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACV-poHw",
+        "name": "security",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhA",
+        "name": "automated",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhw",
+        "name": "type-bug",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt7g",
+        "name": "wave/01",
+        "description": "Autonomous execution wave 1",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WUQ",
+        "name": "wave/1",
+        "description": "Autonomous execution batch 1",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBEAw",
+        "name": "shard/3",
+        "description": "Deterministic autonomous execution shard 3",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/97",
+    "updatedAt": "2026-04-18T03:57:09Z"
+  },
+  {
+    "number": 98,
+    "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACV-poHw",
+        "name": "security",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhA",
+        "name": "automated",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhw",
+        "name": "type-bug",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt7g",
+        "name": "wave/01",
+        "description": "Autonomous execution wave 1",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WUQ",
+        "name": "wave/1",
+        "description": "Autonomous execution batch 1",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBEEw",
+        "name": "shard/4",
+        "description": "Deterministic autonomous execution shard 4",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/98",
+    "updatedAt": "2026-04-18T03:57:10Z"
+  },
+  {
+    "number": 99,
+    "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACV-poHw",
+        "name": "security",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhA",
+        "name": "automated",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhw",
+        "name": "type-bug",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt7g",
+        "name": "wave/01",
+        "description": "Autonomous execution wave 1",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WUQ",
+        "name": "wave/1",
+        "description": "Autonomous execution batch 1",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBD3w",
+        "name": "shard/1",
+        "description": "Deterministic autonomous execution shard 1",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/99",
+    "updatedAt": "2026-04-18T03:57:10Z"
+  },
+  {
+    "number": 100,
+    "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACV-poHw",
+        "name": "security",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhA",
+        "name": "automated",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhw",
+        "name": "type-bug",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt7g",
+        "name": "wave/01",
+        "description": "Autonomous execution wave 1",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WUQ",
+        "name": "wave/1",
+        "description": "Autonomous execution batch 1",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBD8g",
+        "name": "shard/2",
+        "description": "Deterministic autonomous execution shard 2",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/100",
+    "updatedAt": "2026-04-18T03:57:11Z"
+  },
+  {
+    "number": 101,
+    "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACV-poHw",
+        "name": "security",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhA",
+        "name": "automated",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhw",
+        "name": "type-bug",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt7g",
+        "name": "wave/01",
+        "description": "Autonomous execution wave 1",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WUQ",
+        "name": "wave/1",
+        "description": "Autonomous execution batch 1",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBEAw",
+        "name": "shard/3",
+        "description": "Deterministic autonomous execution shard 3",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/101",
+    "updatedAt": "2026-04-18T03:57:11Z"
+  },
+  {
+    "number": 102,
+    "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACV-poHw",
+        "name": "security",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhA",
+        "name": "automated",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWqAZhw",
+        "name": "type-bug",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt7g",
+        "name": "wave/01",
+        "description": "Autonomous execution wave 1",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WUQ",
+        "name": "wave/1",
+        "description": "Autonomous execution batch 1",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBEEw",
+        "name": "shard/4",
+        "description": "Deterministic autonomous execution shard 4",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/102",
+    "updatedAt": "2026-04-18T03:57:39Z"
+  },
+  {
+    "number": 227,
+    "title": "[P0][ONPREM-FAANG] Intelligent Model Router (Task-Aware + SLA-Aware Dispatch)",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACUuNGtQ",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sEA",
+        "name": "priority/high",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyw_1g",
+        "name": "wave/03",
+        "description": "Autonomous execution wave 3",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WgQ",
+        "name": "wave/3",
+        "description": "Autonomous execution batch 3",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBD3w",
+        "name": "shard/1",
+        "description": "Deterministic autonomous execution shard 1",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/227",
+    "updatedAt": "2026-04-18T03:53:07Z"
+  },
+  {
+    "number": 228,
+    "title": "[P0][ONPREM-FAANG] Retrieval 2.0 (Hybrid Search + Reranker + Grounding)",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACUuNGtQ",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sEA",
+        "name": "priority/high",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyw_1g",
+        "name": "wave/03",
+        "description": "Autonomous execution wave 3",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WgQ",
+        "name": "wave/3",
+        "description": "Autonomous execution batch 3",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBD8g",
+        "name": "shard/2",
+        "description": "Deterministic autonomous execution shard 2",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/228",
+    "updatedAt": "2026-04-18T03:53:07Z"
+  },
+  {
+    "number": 229,
+    "title": "[P0][ONPREM-FAANG] Structured Output Reliability (Schema-Constrained Generation)",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACUuNGtQ",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sEA",
+        "name": "priority/high",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyw_1g",
+        "name": "wave/03",
+        "description": "Autonomous execution wave 3",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WgQ",
+        "name": "wave/3",
+        "description": "Autonomous execution batch 3",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBEAw",
+        "name": "shard/3",
+        "description": "Deterministic autonomous execution shard 3",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/229",
+    "updatedAt": "2026-04-18T03:53:08Z"
+  },
+  {
+    "number": 230,
+    "title": "[P0][ONPREM-FAANG] LLM Observability Baseline (Tracing, Cost, Quality Signals)",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACUuNGtQ",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sEA",
+        "name": "priority/high",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyw_1g",
+        "name": "wave/03",
+        "description": "Autonomous execution wave 3",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WgQ",
+        "name": "wave/3",
+        "description": "Autonomous execution batch 3",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBEEw",
+        "name": "shard/4",
+        "description": "Deterministic autonomous execution shard 4",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/230",
+    "updatedAt": "2026-04-18T03:53:09Z"
+  },
+  {
+    "number": 240,
+    "title": "[P0][ONPREM-FAANG] Intelligent Model Router (Task-Aware + SLA-Aware Dispatch)",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACUuNGtQ",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sEA",
+        "name": "priority/high",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyw_1g",
+        "name": "wave/03",
+        "description": "Autonomous execution wave 3",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WgQ",
+        "name": "wave/3",
+        "description": "Autonomous execution batch 3",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBD3w",
+        "name": "shard/1",
+        "description": "Deterministic autonomous execution shard 1",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/240",
+    "updatedAt": "2026-04-18T03:53:09Z"
+  },
+  {
+    "number": 241,
+    "title": "[P0][ONPREM-FAANG] Retrieval 2.0 (Hybrid Search + Reranker + Grounding)",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACUuNGtQ",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sEA",
+        "name": "priority/high",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyw_1g",
+        "name": "wave/03",
+        "description": "Autonomous execution wave 3",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WgQ",
+        "name": "wave/3",
+        "description": "Autonomous execution batch 3",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBD8g",
+        "name": "shard/2",
+        "description": "Deterministic autonomous execution shard 2",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/241",
+    "updatedAt": "2026-04-18T03:53:10Z"
+  },
+  {
+    "number": 242,
+    "title": "[P0][ONPREM-FAANG] Structured Output Reliability (Schema-Constrained Generation)",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACUuNGtQ",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sEA",
+        "name": "priority/high",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyw_1g",
+        "name": "wave/03",
+        "description": "Autonomous execution wave 3",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WgQ",
+        "name": "wave/3",
+        "description": "Autonomous execution batch 3",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBEAw",
+        "name": "shard/3",
+        "description": "Deterministic autonomous execution shard 3",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/242",
+    "updatedAt": "2026-04-18T03:53:11Z"
+  },
+  {
+    "number": 253,
+    "title": "[P0][ONPREM-FAANG][IAC] Immutable Infrastructure Baseline Enforcement",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACUuNGtQ",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfwcHyA",
+        "name": "iac-immutable",
+        "description": "Immutable infrastructure requirements",
+        "color": "1f6feb"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sEA",
+        "name": "priority/high",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyw_1g",
+        "name": "wave/03",
+        "description": "Autonomous execution wave 3",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WgQ",
+        "name": "wave/3",
+        "description": "Autonomous execution batch 3",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBEEw",
+        "name": "shard/4",
+        "description": "Deterministic autonomous execution shard 4",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/253",
+    "updatedAt": "2026-04-18T03:53:11Z"
+  },
+  {
+    "number": 254,
+    "title": "[P0][ONPREM-FAANG][IAC] Idempotency Validation Harness + CI Gate",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACUuNGtQ",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfwcIWw",
+        "name": "idempotency",
+        "description": "Idempotent execution and rerun safety",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sEA",
+        "name": "priority/high",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyw_1g",
+        "name": "wave/03",
+        "description": "Autonomous execution wave 3",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WgQ",
+        "name": "wave/3",
+        "description": "Autonomous execution batch 3",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBD3w",
+        "name": "shard/1",
+        "description": "Deterministic autonomous execution shard 1",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/254",
+    "updatedAt": "2026-04-18T03:53:12Z"
+  },
+  {
+    "number": 256,
+    "title": "[P0][IAC-IMMUTABLE] CI Policy Check: Block Mutable Image Tags and Floating Versions",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACUuNGtQ",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sEA",
+        "name": "priority/high",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyw_1g",
+        "name": "wave/03",
+        "description": "Autonomous execution wave 3",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WgQ",
+        "name": "wave/3",
+        "description": "Autonomous execution batch 3",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBD8g",
+        "name": "shard/2",
+        "description": "Deterministic autonomous execution shard 2",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/256",
+    "updatedAt": "2026-04-18T03:53:13Z"
+  },
+  {
+    "number": 257,
+    "title": "[P0][IAC-IMMUTABLE] Terraform Lockdown: Provider/Module Pinning and Lockfile Governance",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACUuNGtQ",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sEA",
+        "name": "priority/high",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyw_1g",
+        "name": "wave/03",
+        "description": "Autonomous execution wave 3",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WgQ",
+        "name": "wave/3",
+        "description": "Autonomous execution batch 3",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBEAw",
+        "name": "shard/3",
+        "description": "Deterministic autonomous execution shard 3",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/257",
+    "updatedAt": "2026-04-18T03:53:14Z"
+  },
+  {
+    "number": 258,
+    "title": "[P0][IDEMPOTENT] Script Idempotency Standard + Shared Guard Library",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACUuNGtQ",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sEA",
+        "name": "priority/high",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyw_1g",
+        "name": "wave/03",
+        "description": "Autonomous execution wave 3",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WgQ",
+        "name": "wave/3",
+        "description": "Autonomous execution batch 3",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBEEw",
+        "name": "shard/4",
+        "description": "Deterministic autonomous execution shard 4",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/258",
+    "updatedAt": "2026-04-18T03:53:14Z"
+  },
+  {
+    "number": 259,
+    "title": "[P0][IDEMPOTENT] Double-Run CI Matrix on Primary/Secondary Hosts (.42/.31)",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACUuNGtQ",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sEA",
+        "name": "priority/high",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyw_1g",
+        "name": "wave/03",
+        "description": "Autonomous execution wave 3",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WgQ",
+        "name": "wave/3",
+        "description": "Autonomous execution batch 3",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBD3w",
+        "name": "shard/1",
+        "description": "Deterministic autonomous execution shard 1",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/259",
+    "updatedAt": "2026-04-18T03:53:15Z"
+  },
+  {
+    "number": 262,
+    "title": "[P0][IAC-IMMUTABLE] CI Policy Check: Block Mutable Image Tags and Floating Versions",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACUuNGtQ",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfwcHyA",
+        "name": "iac-immutable",
+        "description": "Immutable infrastructure requirements",
+        "color": "1f6feb"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sEA",
+        "name": "priority/high",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyw_1g",
+        "name": "wave/03",
+        "description": "Autonomous execution wave 3",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WgQ",
+        "name": "wave/3",
+        "description": "Autonomous execution batch 3",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBD8g",
+        "name": "shard/2",
+        "description": "Deterministic autonomous execution shard 2",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/262",
+    "updatedAt": "2026-04-18T03:53:16Z"
+  },
+  {
+    "number": 263,
+    "title": "[P0][IAC-IMMUTABLE] Terraform Lockdown: Provider/Module Pinning and Lockfile Governance",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACUuNGtQ",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfwcHyA",
+        "name": "iac-immutable",
+        "description": "Immutable infrastructure requirements",
+        "color": "1f6feb"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sEA",
+        "name": "priority/high",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyw_1g",
+        "name": "wave/03",
+        "description": "Autonomous execution wave 3",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WgQ",
+        "name": "wave/3",
+        "description": "Autonomous execution batch 3",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBEAw",
+        "name": "shard/3",
+        "description": "Deterministic autonomous execution shard 3",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/263",
+    "updatedAt": "2026-04-18T03:53:16Z"
+  },
+  {
+    "number": 264,
+    "title": "[P0][IDEMPOTENT] Script Idempotency Standard + Shared Guard Library",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACUuNGtQ",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfwcIWw",
+        "name": "idempotency",
+        "description": "Idempotent execution and rerun safety",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sEA",
+        "name": "priority/high",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyw_1g",
+        "name": "wave/03",
+        "description": "Autonomous execution wave 3",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WgQ",
+        "name": "wave/3",
+        "description": "Autonomous execution batch 3",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBEEw",
+        "name": "shard/4",
+        "description": "Deterministic autonomous execution shard 4",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/264",
+    "updatedAt": "2026-04-18T03:53:17Z"
+  },
+  {
+    "number": 265,
+    "title": "[P0][IDEMPOTENT] Double-Run CI Matrix on Primary/Secondary Hosts (.42/.31)",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACUuNGtQ",
+        "name": "enhancement",
+        "description": "New feature or request",
+        "color": "a2eeef"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfwcIWw",
+        "name": "idempotency",
+        "description": "Idempotent execution and rerun safety",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sEA",
+        "name": "priority/high",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyw_1g",
+        "name": "wave/03",
+        "description": "Autonomous execution wave 3",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WgQ",
+        "name": "wave/3",
+        "description": "Autonomous execution batch 3",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBD3w",
+        "name": "shard/1",
+        "description": "Deterministic autonomous execution shard 1",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/265",
+    "updatedAt": "2026-04-18T03:53:18Z"
+  },
+  {
+    "number": 369,
+    "title": "[P0][IAC-IMMUTABLE] Add missing Terraform lockfiles and governance gate",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sEA",
+        "name": "priority/high",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyxJkQ",
+        "name": "wave/04",
+        "description": "Autonomous execution wave 4",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WmQ",
+        "name": "wave/4",
+        "description": "Autonomous execution batch 4",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBD8g",
+        "name": "shard/2",
+        "description": "Deterministic autonomous execution shard 2",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/369",
+    "updatedAt": "2026-04-18T03:53:36Z"
+  },
+  {
+    "number": 370,
+    "title": "[P0][IAC-IMMUTABLE] Enforce exact Terraform and provider version pins",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sEA",
+        "name": "priority/high",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyxJkQ",
+        "name": "wave/04",
+        "description": "Autonomous execution wave 4",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WmQ",
+        "name": "wave/4",
+        "description": "Autonomous execution batch 4",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBEAw",
+        "name": "shard/3",
+        "description": "Deterministic autonomous execution shard 3",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/370",
+    "updatedAt": "2026-04-18T03:53:37Z"
+  },
+  {
+    "number": 371,
+    "title": "[P0][STRUCTURE] Resolve strict folder-structure validation failures",
+    "labels": [
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACUuNGqg",
+        "name": "documentation",
+        "description": "Improvements or additions to documentation",
+        "color": "0075ca"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACWB_nbQ",
+        "name": "priority-p0",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sEA",
+        "name": "priority/high",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfx2sFw",
+        "name": "status/triaged",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyN75A",
+        "name": "needs-evidence",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfywt5w",
+        "name": "status/planned-wave",
+        "description": "Assigned to a deterministic autonomous execution wave",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfyxJkQ",
+        "name": "wave/04",
+        "description": "Autonomous execution wave 4",
+        "color": "0e8a16"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy2WmQ",
+        "name": "wave/4",
+        "description": "Autonomous execution batch 4",
+        "color": "5319e7"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfy6lxw",
+        "name": "agent-ready",
+        "description": "",
+        "color": "ededed"
+      },
+      {
+        "id": "LA_kwDOQ4ec1M8AAAACfzBEEw",
+        "name": "shard/4",
+        "description": "Deterministic autonomous execution shard 4",
+        "color": "0e8a16"
+      }
+    ],
+    "url": "https://github.com/kushin77/ollama/issues/371",
+    "updatedAt": "2026-04-18T03:53:38Z"
+  }
+]

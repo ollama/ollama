@@ -1,0 +1,27 @@
+# PMO Agent Requirements
+# Install with: pip install -r requirements-pmo.txt
+
+# Core dependencies
+pyyaml>=6.0.1
+
+# GitHub API integration
+PyGithub>=2.1.1
+
+# Google Cloud Platform integration
+google-cloud-build>=3.22.0
+google-cloud-secret-manager>=2.16.4
+
+# CLI framework
+click>=8.1.7
+
+# Testing
+pytest>=7.4.3
+pytest-cov>=4.1.0
+pytest-mock>=3.12.0
+
+# Type checking
+mypy>=1.7.0
+types-PyYAML>=6.0.12
+
+# Parsing (for analyzer)
+tomli>=2.0.1  # pyproject.toml parsing (Python <3.11)

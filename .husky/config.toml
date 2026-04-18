@@ -1,0 +1,65 @@
+# Ollama Git Hooks Configuration
+# This file configures the behavior of git hooks in the .husky directory
+
+# Pre-commit Hook Configuration
+[pre-commit]
+# Enable/disable specific checks
+check_formatting = true
+check_linting = true
+check_typing = true
+check_tests = true
+check_security = true
+
+# File patterns to check
+python_patterns = ["*.py"]
+exclude_patterns = ["migrations", "generated", "vendor"]
+
+# Commit-msg Hook Configuration
+[commit-msg]
+# Enforce strict message format
+enforce_format = true
+enforce_body_blank_line = true
+enforce_body_line_length = true
+
+# Valid types for commits
+valid_types = [
+    "feat",
+    "fix",
+    "refactor",
+    "perf",
+    "test",
+    "docs",
+    "infra",
+    "security",
+    "chore",
+    "style",
+    "ci"
+]
+
+# Max lengths
+subject_length = 50
+body_line_length = 72
+scope_length = 15
+
+# Push Hook Configuration
+[push]
+# Require all checks to pass
+require_tests = true
+require_linting = true
+require_typing = true
+require_security = true
+
+# Test configuration
+[tests]
+min_coverage = 90
+coverage_paths = ["ollama"]
+
+# Type checking configuration
+[typing]
+strict_mode = true
+ignore_missing_imports = false
+
+# Linting configuration
+[linting]
+line_length = 100
+target_version = "py311"

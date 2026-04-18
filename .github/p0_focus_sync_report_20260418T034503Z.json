@@ -1,0 +1,732 @@
+{
+  "generated_at": "2026-04-18T03:44:39.092130+00:00",
+  "repo": "kushin77/ollama",
+  "open_issue_total": 310,
+  "p0_issue_count": 36,
+  "actions": [
+    {
+      "issue": 82,
+      "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+      "url": "https://github.com/kushin77/ollama/issues/82",
+      "labels_before": [
+        "security",
+        "priority-p0",
+        "automated",
+        "type-bug",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/01",
+        "wave/1",
+        "agent-ready"
+      ],
+      "labels_added": [],
+      "updated": false,
+      "error": ""
+    },
+    {
+      "issue": 84,
+      "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+      "url": "https://github.com/kushin77/ollama/issues/84",
+      "labels_before": [
+        "security",
+        "priority-p0",
+        "automated",
+        "type-bug",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/01",
+        "wave/1",
+        "agent-ready"
+      ],
+      "labels_added": [],
+      "updated": false,
+      "error": ""
+    },
+    {
+      "issue": 86,
+      "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+      "url": "https://github.com/kushin77/ollama/issues/86",
+      "labels_before": [
+        "security",
+        "priority-p0",
+        "automated",
+        "type-bug",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/01",
+        "wave/1",
+        "agent-ready"
+      ],
+      "labels_added": [],
+      "updated": false,
+      "error": ""
+    },
+    {
+      "issue": 87,
+      "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+      "url": "https://github.com/kushin77/ollama/issues/87",
+      "labels_before": [
+        "security",
+        "priority-p0",
+        "automated",
+        "type-bug",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/01",
+        "wave/1",
+        "agent-ready"
+      ],
+      "labels_added": [],
+      "updated": false,
+      "error": ""
+    },
+    {
+      "issue": 88,
+      "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+      "url": "https://github.com/kushin77/ollama/issues/88",
+      "labels_before": [
+        "security",
+        "priority-p0",
+        "automated",
+        "type-bug",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/01",
+        "wave/1",
+        "agent-ready"
+      ],
+      "labels_added": [],
+      "updated": false,
+      "error": ""
+    },
+    {
+      "issue": 90,
+      "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+      "url": "https://github.com/kushin77/ollama/issues/90",
+      "labels_before": [
+        "security",
+        "priority-p0",
+        "automated",
+        "type-bug",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/01",
+        "wave/1",
+        "agent-ready"
+      ],
+      "labels_added": [],
+      "updated": false,
+      "error": ""
+    },
+    {
+      "issue": 92,
+      "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+      "url": "https://github.com/kushin77/ollama/issues/92",
+      "labels_before": [
+        "security",
+        "priority-p0",
+        "automated",
+        "type-bug",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/01",
+        "wave/1",
+        "agent-ready"
+      ],
+      "labels_added": [],
+      "updated": false,
+      "error": ""
+    },
+    {
+      "issue": 93,
+      "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+      "url": "https://github.com/kushin77/ollama/issues/93",
+      "labels_before": [
+        "security",
+        "priority-p0",
+        "automated",
+        "type-bug",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/01",
+        "wave/1",
+        "agent-ready"
+      ],
+      "labels_added": [],
+      "updated": false,
+      "error": ""
+    },
+    {
+      "issue": 95,
+      "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+      "url": "https://github.com/kushin77/ollama/issues/95",
+      "labels_before": [
+        "security",
+        "priority-p0",
+        "automated",
+        "type-bug",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/01",
+        "wave/1",
+        "agent-ready"
+      ],
+      "labels_added": [],
+      "updated": false,
+      "error": ""
+    },
+    {
+      "issue": 96,
+      "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+      "url": "https://github.com/kushin77/ollama/issues/96",
+      "labels_before": [
+        "security",
+        "priority-p0",
+        "automated",
+        "type-bug",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/01",
+        "wave/1",
+        "agent-ready"
+      ],
+      "labels_added": [],
+      "updated": false,
+      "error": ""
+    },
+    {
+      "issue": 97,
+      "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+      "url": "https://github.com/kushin77/ollama/issues/97",
+      "labels_before": [
+        "security",
+        "priority-p0",
+        "automated",
+        "type-bug",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/01",
+        "wave/1",
+        "agent-ready"
+      ],
+      "labels_added": [],
+      "updated": false,
+      "error": ""
+    },
+    {
+      "issue": 98,
+      "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+      "url": "https://github.com/kushin77/ollama/issues/98",
+      "labels_before": [
+        "security",
+        "priority-p0",
+        "automated",
+        "type-bug",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/01",
+        "wave/1",
+        "agent-ready"
+      ],
+      "labels_added": [],
+      "updated": false,
+      "error": ""
+    },
+    {
+      "issue": 99,
+      "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+      "url": "https://github.com/kushin77/ollama/issues/99",
+      "labels_before": [
+        "security",
+        "priority-p0",
+        "automated",
+        "type-bug",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/01",
+        "wave/1",
+        "agent-ready"
+      ],
+      "labels_added": [],
+      "updated": false,
+      "error": ""
+    },
+    {
+      "issue": 100,
+      "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+      "url": "https://github.com/kushin77/ollama/issues/100",
+      "labels_before": [
+        "security",
+        "priority-p0",
+        "automated",
+        "type-bug",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/01",
+        "wave/1",
+        "agent-ready"
+      ],
+      "labels_added": [],
+      "updated": false,
+      "error": ""
+    },
+    {
+      "issue": 101,
+      "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+      "url": "https://github.com/kushin77/ollama/issues/101",
+      "labels_before": [
+        "security",
+        "priority-p0",
+        "automated",
+        "type-bug",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/01",
+        "wave/1",
+        "agent-ready"
+      ],
+      "labels_added": [],
+      "updated": false,
+      "error": ""
+    },
+    {
+      "issue": 102,
+      "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+      "url": "https://github.com/kushin77/ollama/issues/102",
+      "labels_before": [
+        "security",
+        "priority-p0",
+        "automated",
+        "type-bug",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/01",
+        "wave/1",
+        "agent-ready"
+      ],
+      "labels_added": [],
+      "updated": false,
+      "error": ""
+    },
+    {
+      "issue": 227,
+      "title": "[P0][ONPREM-FAANG] Intelligent Model Router (Task-Aware + SLA-Aware Dispatch)",
+      "url": "https://github.com/kushin77/ollama/issues/227",
+      "labels_before": [
+        "enhancement",
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/03",
+        "wave/3",
+        "agent-ready"
+      ],
+      "labels_added": [
+        "priority-p0"
+      ],
+      "updated": true,
+      "error": ""
+    },
+    {
+      "issue": 228,
+      "title": "[P0][ONPREM-FAANG] Retrieval 2.0 (Hybrid Search + Reranker + Grounding)",
+      "url": "https://github.com/kushin77/ollama/issues/228",
+      "labels_before": [
+        "enhancement",
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/03",
+        "wave/3",
+        "agent-ready"
+      ],
+      "labels_added": [
+        "priority-p0"
+      ],
+      "updated": true,
+      "error": ""
+    },
+    {
+      "issue": 229,
+      "title": "[P0][ONPREM-FAANG] Structured Output Reliability (Schema-Constrained Generation)",
+      "url": "https://github.com/kushin77/ollama/issues/229",
+      "labels_before": [
+        "enhancement",
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/03",
+        "wave/3",
+        "agent-ready"
+      ],
+      "labels_added": [
+        "priority-p0"
+      ],
+      "updated": true,
+      "error": ""
+    },
+    {
+      "issue": 230,
+      "title": "[P0][ONPREM-FAANG] LLM Observability Baseline (Tracing, Cost, Quality Signals)",
+      "url": "https://github.com/kushin77/ollama/issues/230",
+      "labels_before": [
+        "enhancement",
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/03",
+        "wave/3",
+        "agent-ready"
+      ],
+      "labels_added": [
+        "priority-p0"
+      ],
+      "updated": true,
+      "error": ""
+    },
+    {
+      "issue": 240,
+      "title": "[P0][ONPREM-FAANG] Intelligent Model Router (Task-Aware + SLA-Aware Dispatch)",
+      "url": "https://github.com/kushin77/ollama/issues/240",
+      "labels_before": [
+        "enhancement",
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/03",
+        "wave/3",
+        "agent-ready"
+      ],
+      "labels_added": [
+        "priority-p0"
+      ],
+      "updated": true,
+      "error": ""
+    },
+    {
+      "issue": 241,
+      "title": "[P0][ONPREM-FAANG] Retrieval 2.0 (Hybrid Search + Reranker + Grounding)",
+      "url": "https://github.com/kushin77/ollama/issues/241",
+      "labels_before": [
+        "enhancement",
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/03",
+        "wave/3",
+        "agent-ready"
+      ],
+      "labels_added": [
+        "priority-p0"
+      ],
+      "updated": true,
+      "error": ""
+    },
+    {
+      "issue": 242,
+      "title": "[P0][ONPREM-FAANG] Structured Output Reliability (Schema-Constrained Generation)",
+      "url": "https://github.com/kushin77/ollama/issues/242",
+      "labels_before": [
+        "enhancement",
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/03",
+        "wave/3",
+        "agent-ready"
+      ],
+      "labels_added": [
+        "priority-p0"
+      ],
+      "updated": true,
+      "error": ""
+    },
+    {
+      "issue": 253,
+      "title": "[P0][ONPREM-FAANG][IAC] Immutable Infrastructure Baseline Enforcement",
+      "url": "https://github.com/kushin77/ollama/issues/253",
+      "labels_before": [
+        "enhancement",
+        "iac-immutable",
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/03",
+        "wave/3",
+        "agent-ready"
+      ],
+      "labels_added": [
+        "priority-p0"
+      ],
+      "updated": true,
+      "error": ""
+    },
+    {
+      "issue": 254,
+      "title": "[P0][ONPREM-FAANG][IAC] Idempotency Validation Harness + CI Gate",
+      "url": "https://github.com/kushin77/ollama/issues/254",
+      "labels_before": [
+        "enhancement",
+        "idempotency",
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/03",
+        "wave/3",
+        "agent-ready"
+      ],
+      "labels_added": [
+        "priority-p0"
+      ],
+      "updated": true,
+      "error": ""
+    },
+    {
+      "issue": 256,
+      "title": "[P0][IAC-IMMUTABLE] CI Policy Check: Block Mutable Image Tags and Floating Versions",
+      "url": "https://github.com/kushin77/ollama/issues/256",
+      "labels_before": [
+        "enhancement",
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/03",
+        "wave/3",
+        "agent-ready"
+      ],
+      "labels_added": [
+        "priority-p0"
+      ],
+      "updated": true,
+      "error": ""
+    },
+    {
+      "issue": 257,
+      "title": "[P0][IAC-IMMUTABLE] Terraform Lockdown: Provider/Module Pinning and Lockfile Governance",
+      "url": "https://github.com/kushin77/ollama/issues/257",
+      "labels_before": [
+        "enhancement",
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/03",
+        "wave/3",
+        "agent-ready"
+      ],
+      "labels_added": [
+        "priority-p0"
+      ],
+      "updated": true,
+      "error": ""
+    },
+    {
+      "issue": 258,
+      "title": "[P0][IDEMPOTENT] Script Idempotency Standard + Shared Guard Library",
+      "url": "https://github.com/kushin77/ollama/issues/258",
+      "labels_before": [
+        "enhancement",
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/03",
+        "wave/3",
+        "agent-ready"
+      ],
+      "labels_added": [
+        "priority-p0"
+      ],
+      "updated": true,
+      "error": ""
+    },
+    {
+      "issue": 259,
+      "title": "[P0][IDEMPOTENT] Double-Run CI Matrix on Primary/Secondary Hosts (.42/.31)",
+      "url": "https://github.com/kushin77/ollama/issues/259",
+      "labels_before": [
+        "enhancement",
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/03",
+        "wave/3",
+        "agent-ready"
+      ],
+      "labels_added": [
+        "priority-p0"
+      ],
+      "updated": true,
+      "error": ""
+    },
+    {
+      "issue": 262,
+      "title": "[P0][IAC-IMMUTABLE] CI Policy Check: Block Mutable Image Tags and Floating Versions",
+      "url": "https://github.com/kushin77/ollama/issues/262",
+      "labels_before": [
+        "enhancement",
+        "iac-immutable",
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/03",
+        "wave/3",
+        "agent-ready"
+      ],
+      "labels_added": [
+        "priority-p0"
+      ],
+      "updated": true,
+      "error": ""
+    },
+    {
+      "issue": 263,
+      "title": "[P0][IAC-IMMUTABLE] Terraform Lockdown: Provider/Module Pinning and Lockfile Governance",
+      "url": "https://github.com/kushin77/ollama/issues/263",
+      "labels_before": [
+        "enhancement",
+        "iac-immutable",
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/03",
+        "wave/3"
+      ],
+      "labels_added": [
+        "priority-p0",
+        "agent-ready"
+      ],
+      "updated": true,
+      "error": ""
+    },
+    {
+      "issue": 264,
+      "title": "[P0][IDEMPOTENT] Script Idempotency Standard + Shared Guard Library",
+      "url": "https://github.com/kushin77/ollama/issues/264",
+      "labels_before": [
+        "enhancement",
+        "idempotency",
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/03",
+        "wave/3"
+      ],
+      "labels_added": [
+        "priority-p0",
+        "agent-ready"
+      ],
+      "updated": true,
+      "error": ""
+    },
+    {
+      "issue": 265,
+      "title": "[P0][IDEMPOTENT] Double-Run CI Matrix on Primary/Secondary Hosts (.42/.31)",
+      "url": "https://github.com/kushin77/ollama/issues/265",
+      "labels_before": [
+        "enhancement",
+        "idempotency",
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/03",
+        "wave/3"
+      ],
+      "labels_added": [
+        "priority-p0",
+        "agent-ready"
+      ],
+      "updated": true,
+      "error": ""
+    },
+    {
+      "issue": 369,
+      "title": "[P0][IAC-IMMUTABLE] Add missing Terraform lockfiles and governance gate",
+      "url": "https://github.com/kushin77/ollama/issues/369",
+      "labels_before": [
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "labels_added": [
+        "priority-p0",
+        "agent-ready"
+      ],
+      "updated": true,
+      "error": ""
+    },
+    {
+      "issue": 370,
+      "title": "[P0][IAC-IMMUTABLE] Enforce exact Terraform and provider version pins",
+      "url": "https://github.com/kushin77/ollama/issues/370",
+      "labels_before": [
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "labels_added": [
+        "priority-p0",
+        "agent-ready"
+      ],
+      "updated": true,
+      "error": ""
+    },
+    {
+      "issue": 371,
+      "title": "[P0][STRUCTURE] Resolve strict folder-structure validation failures",
+      "url": "https://github.com/kushin77/ollama/issues/371",
+      "labels_before": [
+        "documentation",
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "labels_added": [
+        "priority-p0",
+        "agent-ready"
+      ],
+      "updated": true,
+      "error": ""
+    }
+  ]
+}

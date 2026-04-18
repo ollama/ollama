@@ -1,0 +1,66 @@
+#!/bin/bash
+# Commit-msg hook to enforce commit message standards
+# Validates commit message format according to Elite Standards
+
+set -e
+
+COMMIT_MSG_FILE=$1
+COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
+
+# Remove merge commit messages from validation
+if echo "$COMMIT_MSG" | grep -q "^Merge\|^merge"; then
+    exit 0
+fi
+
+echo "🔍 Validating commit message format..."
+
+# Check commit message format: type(scope): description
+if ! echo "$COMMIT_MSG" | grep -qE '^(feat|fix|refactor|perf|test|docs|infra|security|chore|style|ci)\([a-z0-9_-]{1,15}\): .{1,50}'; then
+    echo ""
+    echo "❌ Commit message format is invalid!"
+    echo ""
+    echo "Required format: type(scope): description"
+    echo ""
+    echo "Valid types: feat, fix, refactor, perf, test, docs, infra, security, chore, style, ci"
+    echo "Scope: lowercase, max 15 characters"
+    echo "Description: max 50 characters, starts with lowercase"
+    echo ""
+    echo "Examples:"
+    echo "  feat(api): add streaming response support"
+    echo "  fix(auth): resolve token expiration race condition"
+    echo "  refactor(services): split inference into dedicated modules"
+    echo ""
+    exit 1
+fi
+
+# Check first line is not too long
+FIRST_LINE=$(echo "$COMMIT_MSG" | head -n 1)
+FIRST_LINE_LEN=${#FIRST_LINE}
+if [ $FIRST_LINE_LEN -gt 60 ]; then
+    echo ""
+    echo "⚠️  Warning: First line is $FIRST_LINE_LEN characters (recommended: ≤60)"
+    echo ""
+fi
+
+# Check for blank line between subject and body
+if [ $(echo "$COMMIT_MSG" | wc -l) -gt 1 ]; then
+    SECOND_LINE=$(echo "$COMMIT_MSG" | sed -n '2p')
+    if [ -n "$SECOND_LINE" ]; then
+        echo ""
+        echo "❌ Second line must be blank (separate subject and body with blank line)"
+        echo ""
+        exit 1
+    fi
+fi
+
+# Check body line length (max 72 characters)
+LONG_LINES=$(echo "$COMMIT_MSG" | tail -n +3 | awk 'length > 72 {print NR+2 ": " $0}' || true)
+if [ -n "$LONG_LINES" ]; then
+    echo ""
+    echo "⚠️  Warning: Body lines should be ≤72 characters"
+    echo "$LONG_LINES"
+    echo ""
+fi
+
+echo "✅ Commit message format is valid!"
+echo ""

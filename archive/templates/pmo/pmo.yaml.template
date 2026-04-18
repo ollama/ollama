@@ -1,0 +1,120 @@
+# pmo.yaml - PMO Metadata Template
+#
+# This file contains 24 mandatory labels across 6 categories.
+# Fill in all fields to achieve 100% PMO compliance.
+#
+# Generation: Use `./scripts/pmo/generate-pmo-yaml.sh` for auto-generation
+# Validation: Run `./scripts/pmo/validate-pmo-metadata.sh` to verify
+
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 1. ORGANIZATIONAL LABELS (4 required)
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+organizational:
+  # Project name (lowercase-with-hyphens)
+  project: "your-project-name"
+
+  # Owning team
+  team: "your-team-name"
+
+  # Primary owner email
+  owner: "owner.email@company.com"
+
+  # Department
+  department: "Engineering"
+
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 2. LIFECYCLE LABELS (5 required)
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+lifecycle:
+  # Current lifecycle status
+  # Values: active, maintenance, sunset, deprecated
+  lifecycle_status: "active"
+
+  # Deployment environment
+  # Values: production, staging, development, sandbox
+  environment: "production"
+
+  # Service tier
+  # Values: tier-1 (critical), tier-2 (important), tier-3 (standard)
+  tier: "tier-2"
+
+  # Business criticality
+  # Values: critical, high, medium, low
+  criticality: "medium"
+
+  # Support level
+  # Values: 24x7, business-hours, best-effort
+  support_level: "business-hours"
+
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 3. BUSINESS LABELS (4 required)
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+business:
+  # Business unit
+  business_unit: "Product"
+
+  # Product name
+  product: "Your Product Name"
+
+  # Service category
+  # Values: Application, Infrastructure, Platform, Data
+  service_category: "Application"
+
+  # SLA tier
+  # Values: gold (99.99%), silver (99.9%), bronze (99%)
+  sla_tier: "silver"
+
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 4. TECHNICAL LABELS (4 required)
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+technical:
+  # Technology stack (primary language/framework)
+  # Examples: python, nodejs, go, java, rust, typescript
+  stack: "python"
+
+  # Architecture pattern
+  # Values: monolith, microservices, serverless, hybrid
+  architecture: "monolith"
+
+  # Data classification
+  # Values: public, internal, confidential, restricted
+  data_classification: "internal"
+
+  # Compliance frameworks (comma-separated)
+  # Values: soc2, hipaa, gdpr, pci-dss, none
+  compliance_frameworks: "soc2"
+
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 5. FINANCIAL LABELS (4 required)
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+financial:
+  # Cost center code (format: CC-XXXXX)
+  cost_center: "CC-00000"
+
+  # Budget code (format: DEPT-YYYY-QX)
+  budget_code: "ENG-2026-Q1"
+
+  # Charge code (project-specific)
+  charge_code: "PROJ-001"
+
+  # Approved budget (USD, integer)
+  approved_budget: 10000
+
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 6. GIT LABELS (3 required)
+#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+git:
+  # Repository URL (full GitHub URL)
+  git_repo: "https://github.com/kushin77/your-repo-name"
+
+  # Default branch
+  git_branch: "main"
+
+  # Creator email (from first commit)
+  created_by: "creator.email@company.com"

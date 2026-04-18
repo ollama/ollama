@@ -1,0 +1,179 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    # Run daily at 2am PT (10am UTC)
+    - cron: "0 10 * * *"
+  workflow_dispatch:
+
+jobs:
+  dependency-scan:
+    name: Dependency Vulnerability Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit safety
+
+      - name: Run pip-audit
+        run: |
+          pip-audit --desc --format json --output pip-audit-report.json || true
+
+      - name: Run safety check
+        run: |
+          safety check --json --output safety-report.json || true
+
+      - name: Upload vulnerability reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: vulnerability-reports-${{ github.run_id }}
+          path: |
+            pip-audit-report.json
+            safety-report.json
+          retention-days: 30
+
+  secrets-scan:
+    name: Secrets Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Full history for secret scanning
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE}}
+
+  code-scan:
+    name: Code Security Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+  docker-scan:
+    name: Docker Image Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t ollama:latest -f docker/Dockerfile .
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ollama:latest
+          format: "sarif"
+          output: "trivy-results.sarif"
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: "trivy-results.sarif"
+
+  generate-security-report:
+    name: Generate Security Report
+    runs-on: ubuntu-latest
+    needs: [dependency-scan, secrets-scan, code-scan, docker-scan]
+    if: always()
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: vulnerability-reports-*
+          merge-multiple: true
+
+      - name: Generate security summary
+        run: |
+          echo "# 🔒 Security Scan Report - $(date +'%Y-%m-%d')" > security-report.md
+          echo "" >> security-report.md
+          echo "## Scan Results" >> security-report.md
+          echo "" >> security-report.md
+          echo "| Scan Type | Status |" >> security-report.md
+          echo "|-----------|--------|" >> security-report.md
+          echo "| Dependency Vulnerabilities | ${{ needs.dependency-scan.result }} |" >> security-report.md
+          echo "| Secret Detection | ${{ needs.secrets-scan.result }} |" >> security-report.md
+          echo "| Code Analysis | ${{ needs.code-scan.result }} |" >> security-report.md
+          echo "| Docker Image Scan | ${{ needs.docker-scan.result }} |" >> security-report.md
+          echo "" >> security-report.md
+          echo "## Next Steps" >> security-report.md
+          echo "" >> security-report.md
+          echo "- Review detailed results in the Security tab" >> security-report.md
+          echo "- Address any high/critical vulnerabilities immediately" >> security-report.md
+          echo "- Update dependencies with known vulnerabilities" >> security-report.md
+          echo "" >> security-report.md
+          echo "---" >> security-report.md
+          echo "<sub>🤖 Automated Security Scan</sub>" >> security-report.md
+
+          cat security-report.md
+
+      - name: Create issue on security failures
+        if: |
+          needs.dependency-scan.result == 'failure' ||
+          needs.secrets-scan.result == 'failure' ||
+          needs.code-scan.result == 'failure' ||
+          needs.docker-scan.result == 'failure'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('security-report.md', 'utf8');
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🚨 Security Vulnerabilities Detected',
+              body: report,
+              labels: ['security', 'priority-p0', 'automated', 'type-bug']
+            });

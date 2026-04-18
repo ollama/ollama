@@ -1,0 +1,7 @@
+#!/home/akushnir/ollama/.venv-dev/bin/python
+import sys
+from mypy.dmypy.client import console_entry
+if __name__ == '__main__':
+    if sys.argv[0].endswith('.exe'):
+        sys.argv[0] = sys.argv[0][:-4]
+    sys.exit(console_entry())

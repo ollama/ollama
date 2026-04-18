@@ -1,0 +1,38 @@
+# Project Management Office Metadata
+# All 24 labels MUST be present for deployment compliance with GCP Landing Zone
+
+# Category 1: Organizational (4)
+environment: "development" # production|staging|development|sandbox
+cost_center: "AI-ENG-001" # Finance code
+team: "ai-infrastructure" # Team name
+managed_by: "terraform" # terraform (mandatory)
+
+# Category 2: Lifecycle & Retention (5)
+created_by: "akushnir@elevatediq.ai" # Email
+created_date: "2026-01-14" # YYYY-MM-DD
+lifecycle_state: "active" # active|maintenance|sunset
+teardown_date: "none" # none or YYYY-MM-DD
+retention_days: "365" # 0-3650
+
+# Category 3: Business & Risk (4)
+product: "ollama" # Application name
+component: "inference-engine" # Component type
+tier: "high" # critical|high|medium|low
+compliance: "none" # pci-dss|hipaa|sox|fedramp|none
+
+# Category 4: Technical (4)
+version: "0.1.0" # Application version
+stack: "python-3.11-fastapi" # Tech stack
+backup_strategy: "daily" # continuous|hourly|daily|weekly|none
+monitoring_enabled: "true" # true|false
+
+# Category 5: Financial (4)
+budget_owner: "akushnir@elevatediq.ai" # Email
+project_code: "OLLAMA-2026-001" # Finance ID
+monthly_budget_usd: "500" # Expected monthly cost USD
+chargeback_unit: "ai-division" # Department
+
+# Category 6: Git Attribution & Mapping (3)
+git_repository: "github.com/kushin77/ollama" # Repo URL
+git_branch: "main" # Deployment branch
+auto_delete: "false" # true|false

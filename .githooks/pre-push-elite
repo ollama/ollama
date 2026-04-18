@@ -1,0 +1,80 @@
+#!/bin/bash
+# Pre-push hook for elite standards enforcement
+# Validates branch naming and runs full test suite before push
+# Install: cp .githooks/pre-push-elite .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+
+set -e
+
+echo "🚀 Pre-push validation starting..."
+echo ""
+
+# Get current branch name
+current_branch=$(git rev-parse --abbrev-ref HEAD)
+
+# Valid branch name patterns
+# Format: {type}/{descriptive-name}
+# Types: feature, bugfix, refactor, infra, security, docs
+valid_pattern="^(feature|bugfix|refactor|infra|security|docs)\/[a-z0-9\-]+$"
+
+# Don't validate main/develop branches
+if [[ "$current_branch" == "main" || "$current_branch" == "develop" || "$current_branch" == "master" ]]; then
+    echo "✅ Pushing to protected branch: $current_branch"
+    echo ""
+else
+    # Validate branch name
+    if ! [[ $current_branch =~ $valid_pattern ]]; then
+        echo "❌ ERROR: Invalid branch name: $current_branch"
+        echo ""
+        echo "Branch naming convention (required):"
+        echo "  Format: {type}/{descriptive-name}"
+        echo ""
+        echo "Valid types:"
+        echo "  feature/ - New feature (increases minor version)"
+        echo "  bugfix/  - Bug fix (increases patch version)"
+        echo "  refactor/ - Code refactoring"
+        echo "  infra/   - Infrastructure, CI/CD"
+        echo "  security/ - Security-related changes"
+        echo "  docs/    - Documentation updates"
+        echo ""
+        echo "Examples:"
+        echo "  feature/add-conversation-api"
+        echo "  bugfix/fix-token-refresh"
+        echo "  refactor/simplify-model-loading"
+        echo ""
+        echo "To fix, rename your branch:"
+        echo "  git branch -m $current_branch feature/new-name"
+        exit 1
+    fi
+    echo "✅ Branch name valid: $current_branch"
+    echo ""
+fi
+
+# Run tests
+echo "🧪 Running test suite before push..."
+if python3 -m pytest tests/ -v --tb=short 2>&1 | tail -20; then
+    echo "✅ Tests passed"
+else
+    echo "❌ Tests failed - push aborted"
+    exit 1
+fi
+
+# Run all checks
+echo ""
+echo "📋 Running all quality checks..."
+if python3 -m mypy ollama/ --strict --show-error-codes >/dev/null 2>&1; then
+    echo "✅ Type checking passed"
+else
+    echo "⚠️  Type checking has issues"
+fi
+
+if python3 -m ruff check ollama/ >/dev/null 2>&1; then
+    echo "✅ Linting passed"
+else
+    echo "⚠️  Linting has issues"
+fi
+
+echo ""
+echo "════════════════════════════════════════════════════════════"
+echo "✅ All pre-push checks passed - ready to push!"
+echo "════════════════════════════════════════════════════════════"
+echo ""

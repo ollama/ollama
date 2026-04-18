@@ -1,0 +1,123 @@
+site_name: Ollama Elite AI Platform
+site_description: Production-grade local AI infrastructure with enterprise-grade reliability, security, and performance
+site_author: kushin77/ollama
+repo_url: https://github.com/kushin77/ollama
+repo_name: kushin77/ollama
+copyright: Copyright &copy; 2026 Ollama Project
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: blue
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Roboto
+    code: Roboto Mono
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - content.code.annotate
+    - content.code.copy
+    - content.tabs.link
+    - toc.follow
+
+plugins:
+  - search:
+      lang: en
+  - awesome-pages
+  - mermaid2
+
+markdown_extensions:
+  - pymdownx.highlight:
+      use_pygments: true
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - attr_list
+  - md_in_html
+  - def_list
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - admonition
+  - pymdownx.details
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Quickstart: getting-started/quickstart.md
+      - Installation: getting-started/installation.md
+      - Configuration: getting-started/configuration.md
+  - Architecture:
+      - System Design: architecture/system-design.md
+      - Data Flow: architecture/data-flow.md
+      - Component Interactions: architecture/component-interactions.md
+      - Infrastructure: architecture/infrastructure.md
+  - API Reference:
+      - Endpoints: api/endpoints.md
+      - Authentication: api/authentication.md
+      - Response Formats: api/response-formats.md
+      - Examples: api/examples.md
+  - Deployment:
+      - Overview: deployment/overview.md
+      - Local Development: deployment/local-development.md
+      - GCP Deployment: deployment/gcp-deployment.md
+      - Kubernetes: deployment/kubernetes.md
+      - Load Balancer Setup: deployment/load-balancer-setup.md
+  - Operations:
+      - Monitoring: operations/monitoring.md
+      - Alerting: operations/alerting.md
+      - Troubleshooting: operations/troubleshooting.md
+      - Runbooks: operations/runbooks.md
+      - Scaling: operations/scaling.md
+  - Features:
+      - Feature Flags: features/feature-flags.md
+      - CDN Integration: features/cdn-integration.md
+      - Chaos Engineering: features/chaos-engineering.md
+      - Automated Failover: features/automated-failover.md
+  - Security:
+      - Overview: security/overview.md
+      - Authentication: security/authentication.md
+      - Zero Trust Architecture: security/zero-trust.md
+      - Compliance: security/compliance.md
+      - Security Audit: security/security-audit.md
+  - Contributing:
+      - Contribution Guidelines: contributing/guidelines.md
+      - Code Standards: contributing/code-standards.md
+      - Testing: contributing/testing.md
+      - Git Workflow: contributing/git-workflow.md
+  - Resources:
+      - FAQ: resources/faq.md
+      - Glossary: resources/glossary.md
+      - References: resources/references.md
+
+extra:
+  analytics:
+    provider: google
+    property: G-XXXXXXXXXX
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/kushin77/ollama
+    - icon: fontawesome/brands/docker
+      link: https://hub.docker.com/r/ollama/ollama

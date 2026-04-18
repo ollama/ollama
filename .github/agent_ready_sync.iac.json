@@ -1,0 +1,12 @@
+{
+  "version": "1.0",
+  "description": "Idempotent sync of agent-ready labels from committed next-wave queue",
+  "repository": "kushin77/ollama",
+  "queue": ".github/next_wave_execution_queue.json",
+  "output_prefix": ".github/agent_ready_sync_report_",
+  "governance": {
+    "idempotent": true,
+    "immutable": true,
+    "commit_required": true
+  }
+}

@@ -1,0 +1,404 @@
+{
+  "generated_at_utc": "2026-04-18T03:44:30.238381+00:00",
+  "repository": "kushin77/ollama",
+  "selection": "open issues with labels in {priority/high, priority-p1, p1}",
+  "p1_count": 25,
+  "next_wave_size": 50,
+  "next_wave_issues": [
+    {
+      "number": 296,
+      "title": "[BROWSER-CHAT][KNOWLEDGE] Stale/broken source detection",
+      "labels": [
+        "bug",
+        "priority/high",
+        "status/triaged",
+        "priority/low",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/296",
+      "updated_at": "2026-04-18T03:11:35Z"
+    },
+    {
+      "number": 297,
+      "title": "[BROWSER-CHAT][KNOWLEDGE] Knowledge packs for agent suites",
+      "labels": [
+        "bug",
+        "priority/high",
+        "status/triaged",
+        "priority/low",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/297",
+      "updated_at": "2026-04-18T03:11:36Z"
+    },
+    {
+      "number": 298,
+      "title": "[BROWSER-CHAT][KNOWLEDGE] Review workflow and trust scoring",
+      "labels": [
+        "bug",
+        "priority/high",
+        "status/triaged",
+        "priority/low",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/298",
+      "updated_at": "2026-04-18T03:11:37Z"
+    },
+    {
+      "number": 299,
+      "title": "[BROWSER-CHAT][COPILOT] Goal-to-plan decomposition mode",
+      "labels": [
+        "bug",
+        "priority/high",
+        "status/triaged",
+        "priority/low",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/299",
+      "updated_at": "2026-04-18T03:11:37Z"
+    },
+    {
+      "number": 300,
+      "title": "[BROWSER-CHAT][COPILOT] Live task execution checkpoints",
+      "labels": [
+        "bug",
+        "priority/high",
+        "status/triaged",
+        "priority/low",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/300",
+      "updated_at": "2026-04-18T03:11:38Z"
+    },
+    {
+      "number": 301,
+      "title": "[BROWSER-CHAT][COPILOT] Host connector permission gates",
+      "labels": [
+        "bug",
+        "priority/high",
+        "status/triaged",
+        "priority/medium",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/301",
+      "updated_at": "2026-04-18T03:11:39Z"
+    },
+    {
+      "number": 302,
+      "title": "[BROWSER-CHAT][COPILOT] Action evidence and verification ledger",
+      "labels": [
+        "bug",
+        "priority/high",
+        "status/triaged",
+        "priority/medium",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/302",
+      "updated_at": "2026-04-18T03:11:39Z"
+    },
+    {
+      "number": 303,
+      "title": "[BROWSER-CHAT][COPILOT] Risky action simulation and dry-run",
+      "labels": [
+        "bug",
+        "priority/high",
+        "status/triaged",
+        "priority/low",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/303",
+      "updated_at": "2026-04-18T03:11:40Z"
+    },
+    {
+      "number": 304,
+      "title": "[BROWSER-CHAT][COPILOT] Task replay and postmortem export",
+      "labels": [
+        "bug",
+        "priority/high",
+        "status/triaged",
+        "priority/medium",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/304",
+      "updated_at": "2026-04-18T03:11:41Z"
+    },
+    {
+      "number": 306,
+      "title": "[BROWSER-CHAT][ASSIMILATION] Reuse scoring and fit analysis",
+      "labels": [
+        "bug",
+        "priority/high",
+        "status/triaged",
+        "priority/low",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/306",
+      "updated_at": "2026-04-18T03:11:42Z"
+    },
+    {
+      "number": 307,
+      "title": "[BROWSER-CHAT][ASSIMILATION] Duplicate capability reconciliation",
+      "labels": [
+        "bug",
+        "priority/high",
+        "status/triaged",
+        "priority/medium",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/307",
+      "updated_at": "2026-04-18T03:11:42Z"
+    },
+    {
+      "number": 308,
+      "title": "[BROWSER-CHAT][ASSIMILATION] Assimilation PR template and governance",
+      "labels": [
+        "bug",
+        "priority/high",
+        "status/triaged",
+        "priority/medium",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/308",
+      "updated_at": "2026-04-18T03:11:43Z"
+    },
+    {
+      "number": 309,
+      "title": "[BROWSER-CHAT][ASSIMILATION] Quarterly re-scan automation",
+      "labels": [
+        "bug",
+        "priority/high",
+        "status/triaged",
+        "priority/low",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/309",
+      "updated_at": "2026-04-18T03:11:44Z"
+    },
+    {
+      "number": 310,
+      "title": "[BROWSER-CHAT][HARDWARE] Capability detection matrix (CPU/GPU/NPU)",
+      "labels": [
+        "bug",
+        "priority/high",
+        "status/triaged",
+        "priority/medium",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/310",
+      "updated_at": "2026-04-18T03:11:44Z"
+    },
+    {
+      "number": 311,
+      "title": "[BROWSER-CHAT][HARDWARE] Quantization profile strategy",
+      "labels": [
+        "bug",
+        "priority/high",
+        "status/triaged",
+        "priority/low",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/311",
+      "updated_at": "2026-04-18T03:11:45Z"
+    },
+    {
+      "number": 312,
+      "title": "[BROWSER-CHAT][HARDWARE] Runtime backend selector",
+      "labels": [
+        "bug",
+        "priority/high",
+        "status/triaged",
+        "priority/medium",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/312",
+      "updated_at": "2026-04-18T03:11:46Z"
+    },
+    {
+      "number": 314,
+      "title": "[BROWSER-CHAT][HARDWARE] Thermal and stability guardrails",
+      "labels": [
+        "bug",
+        "priority/high",
+        "status/triaged",
+        "priority/medium",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/314",
+      "updated_at": "2026-04-18T03:11:47Z"
+    },
+    {
+      "number": 315,
+      "title": "[BROWSER-CHAT][HARDWARE] User-facing tuning controls",
+      "labels": [
+        "bug",
+        "priority/high",
+        "status/triaged",
+        "priority/medium",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/315",
+      "updated_at": "2026-04-18T03:11:48Z"
+    },
+    {
+      "number": 369,
+      "title": "[P0][IAC-IMMUTABLE] Add missing Terraform lockfiles and governance gate",
+      "labels": [
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/369",
+      "updated_at": "2026-04-18T03:12:15Z"
+    },
+    {
+      "number": 370,
+      "title": "[P0][IAC-IMMUTABLE] Enforce exact Terraform and provider version pins",
+      "labels": [
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/370",
+      "updated_at": "2026-04-18T03:12:16Z"
+    },
+    {
+      "number": 371,
+      "title": "[P0][STRUCTURE] Resolve strict folder-structure validation failures",
+      "labels": [
+        "documentation",
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/371",
+      "updated_at": "2026-04-18T03:12:17Z"
+    },
+    {
+      "number": 373,
+      "title": "feat(secrets): GSMClient lazy-init is not thread-safe \u2014 add mutex guard",
+      "labels": [
+        "bug",
+        "security",
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/373",
+      "updated_at": "2026-04-18T03:12:18Z"
+    },
+    {
+      "number": 374,
+      "title": "bug(secrets): GSMClient lazy-init is not thread-safe \u2014 add sync.Once guard",
+      "labels": [
+        "bug",
+        "security",
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/04",
+        "wave/4"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/374",
+      "updated_at": "2026-04-18T03:12:18Z"
+    },
+    {
+      "number": 376,
+      "title": "bug(github): http.Client has no timeout \u2014 fix potential goroutine leak",
+      "labels": [
+        "bug",
+        "security",
+        "priority/high",
+        "status/triaged",
+        "needs-evidence",
+        "status/planned-wave",
+        "wave/05"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/376",
+      "updated_at": "2026-04-18T02:48:04Z"
+    },
+    {
+      "number": 393,
+      "title": "[Monorepo] Bootstrap pnpm workspace for active JS packages (conditional gate)",
+      "labels": [
+        "priority/high",
+        "status/triaged",
+        "monorepo",
+        "developer-experience",
+        "frontend",
+        "decision-record",
+        "status/planned-wave",
+        "wave/05",
+        "agent-ready"
+      ],
+      "url": "https://github.com/kushin77/ollama/issues/393",
+      "updated_at": "2026-04-18T03:26:43Z"
+    }
+  ]
+}

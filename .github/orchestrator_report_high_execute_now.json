@@ -1,0 +1,157 @@
+{
+  "timestamp": "2026-04-17T20:06:27.397183",
+  "repository": "offline",
+  "total_issues_processed": 4,
+  "pipeline_stages": [
+    "fetch",
+    "triage",
+    "analysis",
+    "github_updates"
+  ],
+  "pipeline": {
+    "fetch": {
+      "status": "success",
+      "issues_fetched": 5
+    },
+    "triage": {
+      "status": "success",
+      "total_triaged": 5,
+      "target_severity": "high",
+      "target_count": 4
+    },
+    "analysis": {
+      "status": "success",
+      "analyzed_count": 4
+    },
+    "execution": {
+      "status": "success",
+      "dry_run": true,
+      "attempted": 4,
+      "succeeded": 4,
+      "failed": 0
+    }
+  },
+  "execution_results": [
+    {
+      "issue": 15649,
+      "timestamp": "2026-04-17T20:06:27.388665",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15648,
+      "timestamp": "2026-04-17T20:06:27.391232",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15646,
+      "timestamp": "2026-04-17T20:06:27.393875",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15645,
+      "timestamp": "2026-04-17T20:06:27.396207",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    }
+  ],
+  "state_transitions": {
+    "15649": [
+      {
+        "issue_num": 15649,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:06:27.389221",
+        "metadata": {}
+      }
+    ],
+    "15648": [
+      {
+        "issue_num": 15648,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:06:27.391696",
+        "metadata": {}
+      }
+    ],
+    "15646": [
+      {
+        "issue_num": 15646,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:06:27.394317",
+        "metadata": {}
+      }
+    ],
+    "15645": [
+      {
+        "issue_num": 15645,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:06:27.396662",
+        "metadata": {}
+      }
+    ]
+  },
+  "orchestration": {
+    "timestamp": "2026-04-17T20:06:27.384855",
+    "repository": "offline",
+    "run_id": "dbd759fc7a21",
+    "ops_ledger_file": ".github/issue_ops_ledger.jsonl",
+    "pipeline": {
+      "fetch": {
+        "status": "success",
+        "issues_fetched": 5
+      },
+      "triage": {
+        "status": "success",
+        "total_triaged": 5,
+        "target_severity": "high",
+        "target_count": 4
+      },
+      "analysis": {
+        "status": "success",
+        "analyzed_count": 4
+      },
+      "execution": {
+        "status": "success",
+        "dry_run": true,
+        "attempted": 4,
+        "succeeded": 4,
+        "failed": 0
+      }
+    },
+    "issues_processed": [
+      {
+        "number": 15649,
+        "severity": "high",
+        "type": "bug",
+        "title": "Ollama startup issue on macOS",
+        "status": "analyzed"
+      },
+      {
+        "number": 15648,
+        "severity": "high",
+        "type": "bug",
+        "title": "MLX models fail to load",
+        "status": "analyzed"
+      },
+      {
+        "number": 15646,
+        "severity": "high",
+        "type": "bug",
+        "title": "Docker build failing",
+        "status": "analyzed"
+      },
+      {
+        "number": 15645,
+        "severity": "high",
+        "type": "bug",
+        "title": "Memory leak in model inference",
+        "status": "analyzed"
+      }
+    ]
+  }
+}

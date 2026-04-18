@@ -1,18 +1,166 @@
-.DS_Store
-.vscode
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Environment
 .env
-.venv
-.swp
-dist
-build
-.cache
-.gocache
-*.exe
-.idea
-test_data
+.env.local
+.env.*.local
+*.pem
+*.key
 *.crt
-__debug_bin*
-llama/build
-llama/vendor
-/ollama
-integration/testdata/models/
+*.pub
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+# Allow .vscode/ directory for shared workspace settings
+# But ignore user-specific settings
+.vscode-server/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+.project
+.pydevproject
+.settings/
+
+# Testing
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+htmlcov/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+
+# Linting
+.ruff_cache/
+
+# Logs
+logs/
+*.log
+log.txt
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+*.backup
+postgres_data/
+redis_data/
+
+# Docker
+.docker/
+docker-compose.override.yml
+docker-compose.local.yml
+
+# Models and data
+models/
+data/
+*.ckpt
+*.bin
+*.safetensors
+ollama_models/
+.ollama/
+
+# Secrets and credentials
+secrets/
+.secrets/
+credentials.json
+gcloud-key.json
+ssh_key
+ssh_key.pub
+
+# OS specific
+Thumbs.db
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Generated files
+*.generated.py
+.openapi.json
+
+# Backup files
+*.bak
+*.backup
+*.tmp
+
+# Performance profiling
+profile.out
+profile.svg
+*.prof
+
+# Kubernetes
+k8s/*/secrets/
+k8s/*/configs/local/
+
+# GCP/Cloud
+*.json.encrypted
+service-account-key.json
+
+# Editor backups
+*.orig
+
+# Snyk Security Extension - AI Rules (auto-generated)
+.github/instructions/snyk_rules.instructions.md
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+tfplan
+crash.log
+crash.*.log
+.terraformrc
+terraform.rc
+.terraform/providers/
+
+.gocache
+.gomodcache

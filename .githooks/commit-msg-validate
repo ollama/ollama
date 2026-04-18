@@ -1,0 +1,107 @@
+#!/bin/bash
+# Commit message validation hook
+# Enforces Ollama elite standards for commit messages
+# Usage: git commit -m "type(scope): description"
+
+set -e
+
+commit_msg_file="$1"
+commit_msg=$(cat "$commit_msg_file")
+
+# Extract first line
+first_line=$(echo "$commit_msg" | head -n 1)
+
+# Valid commit types
+valid_types=(
+    "feat"       # New feature
+    "fix"        # Bug fix
+    "refactor"   # Code refactoring
+    "perf"       # Performance improvement
+    "test"       # Test changes
+    "docs"       # Documentation
+    "infra"      # Infrastructure
+    "security"   # Security changes
+    "chore"      # Maintenance
+)
+
+# Validate commit message format: type(scope): description
+if ! [[ $first_line =~ ^([a-z]+)(\([a-z-]+\))?:\ [A-Z].*$ ]]; then
+    echo "❌ ERROR: Invalid commit message format"
+    echo "Format: type(scope): description"
+    echo ""
+    echo "Your commit message:"
+    echo "  $first_line"
+    echo ""
+    echo "Example of valid format:"
+    echo "  feat(api): add streaming response support"
+    echo "  fix(auth): resolve token expiration race condition"
+    echo "  refactor(services): split inference into dedicated modules"
+    echo ""
+    echo "Valid types: ${valid_types[@]}"
+    exit 1
+fi
+
+# Extract type
+type=$(echo "$first_line" | sed -E 's/^([a-z]+).*/\1/')
+
+# Validate type is in allowed list
+if [[ ! " ${valid_types[@]} " =~ " ${type} " ]]; then
+    echo "❌ ERROR: Invalid commit type '$type'"
+    echo "Valid types: ${valid_types[@]}"
+    exit 1
+fi
+
+# Check subject line length (max 50 characters)
+if [ ${#first_line} -gt 50 ]; then
+    echo "⚠️  WARNING: First line exceeds 50 characters (${#first_line})"
+    echo "  Consider shortening: $first_line"
+fi
+
+# Check that there's a blank line after subject (if body exists)
+if [ $(wc -l < "$commit_msg_file") -gt 1 ]; then
+    second_line=$(sed -n '2p' "$commit_msg_file")
+    if [ -n "$second_line" ]; then
+        echo "❌ ERROR: Missing blank line between subject and body"
+        echo "Add a blank line after the subject line"
+        exit 1
+    fi
+fi
+
+# Check that description starts with capital letter (already validated by regex)
+echo "✅ Commit message format valid"
+# ============================================================
+# GPG SIGNING VERIFICATION (MANDATORY for main/develop)
+# ============================================================
+# Get current branch
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+
+# For main and develop branches, enforce GPG signing
+if [[ "$CURRENT_BRANCH" == "main" ]] || [[ "$CURRENT_BRANCH" == "develop" ]]; then
+    # Check if GPG is configured
+    GPG_SIGNING=$(git config --get commit.gpgsign 2>/dev/null || echo "false")
+
+    if [[ "$GPG_SIGNING" != "true" ]]; then
+        echo ""
+        echo -e "\033[0;31m❌ ERROR: GPG signing required for branch '$CURRENT_BRANCH'\033[0m"
+        echo ""
+        echo "GPG signing is mandatory for commits to main/develop branches."
+        echo ""
+        echo "Setup GPG signing:"
+        echo "  1. Install GPG: brew install gpg (macOS) or apt-get install gnupg (Linux)"
+        echo "  2. Create or import GPG key: gpg --gen-key"
+        echo "  3. Get your key ID: gpg --list-keys"
+        echo "  4. Configure git:"
+        echo "     git config --global commit.gpgsign true"
+        echo "     git config --global user.signingkey YOUR_GPG_KEY_ID"
+        echo ""
+        echo "Then retry your commit:"
+        echo "  git commit -S -m \"type(scope): description\""
+        echo ""
+        exit 1
+    fi
+fi
+
+# ============================================================
+# SUCCESS
+# ============================================================
+echo "✅ All commit message validations passed"

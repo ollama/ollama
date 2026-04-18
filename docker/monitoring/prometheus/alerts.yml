@@ -1,0 +1,74 @@
+groups:
+  - name: ollama.alerts
+    rules:
+      - alert: OllamaApiDown
+        expr: up{job="ollama-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Ollama API is down"
+          description: "No heartbeat from ollama-api for 2 minutes"
+
+      - alert: OllamaHighLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="ollama-api"}[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High latency on Ollama API"
+          description: "95th percentile latency > 2s"
+
+      - alert: PostgresDown
+        expr: up{job="postgres"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Postgres is down"
+          description: "No heartbeat from postgres"
+
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis is down"
+          description: "No heartbeat from redis"
+
+      - alert: QdrantDown
+        expr: up{job="qdrant"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Qdrant is down"
+          description: "No heartbeat from qdrant"
+
+      - alert: HighCPU
+        expr: avg(rate(container_cpu_usage_seconds_total[5m])) by (instance) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage"
+          description: "Container CPU > 80% for 10m"
+
+      - alert: HighMemory
+        expr: avg(container_memory_working_set_bytes) by (instance) > 0.85 * avg(container_spec_memory_limit_bytes) by (instance)
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Memory > 85% of limit for 10m"
+
+      - alert: LowDiskSpace
+        expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"}) < 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low disk space"
+          description: "Free disk < 10%"

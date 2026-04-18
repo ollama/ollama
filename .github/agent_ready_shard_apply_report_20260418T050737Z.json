@@ -1,0 +1,10 @@
+{
+  "generated_at_utc": "2026-04-18T05:07:19.374618+00:00",
+  "repository": "kushin77/ollama",
+  "manifest": ".github/agent_ready_shards.json",
+  "processed": 100,
+  "updated": 0,
+  "already_correct": 100,
+  "failed": 0,
+  "failures": []
+}

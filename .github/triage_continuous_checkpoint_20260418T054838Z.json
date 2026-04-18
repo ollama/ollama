@@ -1,0 +1,21 @@
+{
+  "open_items": 297,
+  "real_issues": 294,
+  "open_prs": [
+    388,
+    399,
+    400
+  ],
+  "missing_agent_ready": [],
+  "missing_shard": [],
+  "shard_counts": {
+    "shard/1": 74,
+    "shard/2": 74,
+    "shard/3": 73,
+    "shard/4": 73
+  },
+  "generated_at_utc": "20260418T054838Z",
+  "source": "github_live_api",
+  "commit": "f09767e10",
+  "status": "STABLE"
+}

@@ -1,0 +1,806 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-04-17T19:45:28.479248",
+  "total_issues_analyzed": 37,
+  "triaged_count": 10,
+  "triage_results": [
+    {
+      "issue": {
+        "content_hash": "23c0d5c5f6a0",
+        "issue_num": 15651,
+        "title": "create: blobs can still be GC-pruned during long-running create operations after the 1h grace window",
+        "labels": [],
+        "author": "shaun0927",
+        "created": "2026-04-17T17:22:43Z",
+        "comments": 1,
+        "severity": "medium",
+        "type": "bug",
+        "timestamp": "2026-04-17T19:45:28.476319",
+        "status": "triaged"
+      },
+      "triage": {
+        "issue_num": 15651,
+        "severity": "medium",
+        "type": "bug",
+        "content_hash": "23c0d5c5f6a0",
+        "recommended_actions": [
+          "label:gpu-related",
+          "label:backend"
+        ],
+        "triaged_at": "2026-04-17T19:45:28.476462"
+      },
+      "plan": {
+        "issue_num": 15651,
+        "title": "create: blobs can still be GC-pruned during long-running create operations after the 1h grace window",
+        "content_hash": "23c0d5c5f6a0",
+        "model": "claude",
+        "plan": {
+          "phase_1_analysis": {
+            "description": "Analyze root cause",
+            "tools": [
+              "grep",
+              "git log",
+              "static analysis"
+            ],
+            "expected_output": "Root cause analysis document"
+          },
+          "phase_2_implementation": {
+            "description": "Implement solution",
+            "iac_template": ".github/templates/fix_15651.yml",
+            "testing": [
+              "unit",
+              "integration",
+              "e2e"
+            ],
+            "expected_output": "PR with tests"
+          },
+          "phase_3_validation": {
+            "description": "Validate fix",
+            "validation_steps": [
+              "test suite",
+              "regression",
+              "performance"
+            ],
+            "expected_output": "Validation report"
+          }
+        },
+        "generated_at": "2026-04-17T19:45:28.476480"
+      }
+    },
+    {
+      "issue": {
+        "content_hash": "a2c192a94e46",
+        "issue_num": 15650,
+        "title": "Incorrectly calculates available system memory for qwen3.6:35b-a3b",
+        "labels": [],
+        "author": "fullheart",
+        "created": "2026-04-17T17:08:03Z",
+        "comments": 1,
+        "severity": "medium",
+        "type": "bug",
+        "timestamp": "2026-04-17T19:45:28.476524",
+        "status": "triaged"
+      },
+      "triage": {
+        "issue_num": 15650,
+        "severity": "medium",
+        "type": "bug",
+        "content_hash": "a2c192a94e46",
+        "recommended_actions": [
+          "label:gpu-related",
+          "label:backend",
+          "label:performance",
+          "label:needs-investigation"
+        ],
+        "triaged_at": "2026-04-17T19:45:28.476615"
+      },
+      "plan": {
+        "issue_num": 15650,
+        "title": "Incorrectly calculates available system memory for qwen3.6:35b-a3b",
+        "content_hash": "a2c192a94e46",
+        "model": "claude",
+        "plan": {
+          "phase_1_analysis": {
+            "description": "Analyze root cause",
+            "tools": [
+              "grep",
+              "git log",
+              "static analysis"
+            ],
+            "expected_output": "Root cause analysis document"
+          },
+          "phase_2_implementation": {
+            "description": "Implement solution",
+            "iac_template": ".github/templates/fix_15650.yml",
+            "testing": [
+              "unit",
+              "integration",
+              "e2e"
+            ],
+            "expected_output": "PR with tests"
+          },
+          "phase_3_validation": {
+            "description": "Validate fix",
+            "validation_steps": [
+              "test suite",
+              "regression",
+              "performance"
+            ],
+            "expected_output": "Validation report"
+          }
+        },
+        "generated_at": "2026-04-17T19:45:28.476629"
+      }
+    },
+    {
+      "issue": {
+        "content_hash": "69e29aaa80e9",
+        "issue_num": 15649,
+        "title": "Ollama startu-up issue",
+        "labels": [
+          "bug"
+        ],
+        "author": "mdziczkowski",
+        "created": "2026-04-17T14:30:56Z",
+        "comments": 1,
+        "severity": "high",
+        "type": "bug",
+        "timestamp": "2026-04-17T19:45:28.476658",
+        "status": "triaged"
+      },
+      "triage": {
+        "issue_num": 15649,
+        "severity": "high",
+        "type": "bug",
+        "content_hash": "69e29aaa80e9",
+        "recommended_actions": [
+          "label:critical",
+          "assign:core-team",
+          "label:gpu-related",
+          "label:backend"
+        ],
+        "triaged_at": "2026-04-17T19:45:28.476704"
+      },
+      "plan": {
+        "issue_num": 15649,
+        "title": "Ollama startu-up issue",
+        "content_hash": "69e29aaa80e9",
+        "model": "claude",
+        "plan": {
+          "phase_1_analysis": {
+            "description": "Analyze root cause",
+            "tools": [
+              "grep",
+              "git log",
+              "static analysis"
+            ],
+            "expected_output": "Root cause analysis document"
+          },
+          "phase_2_implementation": {
+            "description": "Implement solution",
+            "iac_template": ".github/templates/fix_15649.yml",
+            "testing": [
+              "unit",
+              "integration",
+              "e2e"
+            ],
+            "expected_output": "PR with tests"
+          },
+          "phase_3_validation": {
+            "description": "Validate fix",
+            "validation_steps": [
+              "test suite",
+              "regression",
+              "performance"
+            ],
+            "expected_output": "Validation report"
+          }
+        },
+        "generated_at": "2026-04-17T19:45:28.476714"
+      }
+    },
+    {
+      "issue": {
+        "content_hash": "0c5464ef8405",
+        "issue_num": 15648,
+        "title": "MLX models fail to load in v0.21.0 due to missing libmlxc.dylib (Apple Silicon)",
+        "labels": [
+          "bug"
+        ],
+        "author": "charlesdrakon-cmyk",
+        "created": "2026-04-17T13:54:03Z",
+        "comments": 2,
+        "severity": "high",
+        "type": "bug",
+        "timestamp": "2026-04-17T19:45:28.476736",
+        "status": "triaged"
+      },
+      "triage": {
+        "issue_num": 15648,
+        "severity": "high",
+        "type": "bug",
+        "content_hash": "0c5464ef8405",
+        "recommended_actions": [
+          "label:gpu-related",
+          "label:backend",
+          "label:model-loading",
+          "label:regression",
+          "label:critical"
+        ],
+        "triaged_at": "2026-04-17T19:45:28.476999"
+      },
+      "plan": {
+        "issue_num": 15648,
+        "title": "MLX models fail to load in v0.21.0 due to missing libmlxc.dylib (Apple Silicon)",
+        "content_hash": "0c5464ef8405",
+        "model": "claude",
+        "plan": {
+          "phase_1_analysis": {
+            "description": "Analyze root cause",
+            "tools": [
+              "grep",
+              "git log",
+              "static analysis"
+            ],
+            "expected_output": "Root cause analysis document"
+          },
+          "phase_2_implementation": {
+            "description": "Implement solution",
+            "iac_template": ".github/templates/fix_15648.yml",
+            "testing": [
+              "unit",
+              "integration",
+              "e2e"
+            ],
+            "expected_output": "PR with tests"
+          },
+          "phase_3_validation": {
+            "description": "Validate fix",
+            "validation_steps": [
+              "test suite",
+              "regression",
+              "performance"
+            ],
+            "expected_output": "Validation report"
+          }
+        },
+        "generated_at": "2026-04-17T19:45:28.477015"
+      }
+    },
+    {
+      "issue": {
+        "content_hash": "26eba72ac14e",
+        "issue_num": 15647,
+        "title": "tool_call.arguments truncated to exactly 214 chars on Ollama   Cloud API",
+        "labels": [
+          "cloud"
+        ],
+        "author": "ruhtraxjj",
+        "created": "2026-04-17T12:06:01Z",
+        "comments": 0,
+        "severity": "medium",
+        "type": "bug",
+        "timestamp": "2026-04-17T19:45:28.477044",
+        "status": "triaged"
+      },
+      "triage": {
+        "issue_num": 15647,
+        "severity": "medium",
+        "type": "bug",
+        "content_hash": "26eba72ac14e",
+        "recommended_actions": [
+          "label:api",
+          "label:openai-compat"
+        ],
+        "triaged_at": "2026-04-17T19:45:28.477253"
+      },
+      "plan": {
+        "issue_num": 15647,
+        "title": "tool_call.arguments truncated to exactly 214 chars on Ollama   Cloud API",
+        "content_hash": "26eba72ac14e",
+        "model": "claude",
+        "plan": {
+          "phase_1_analysis": {
+            "description": "Analyze root cause",
+            "tools": [
+              "grep",
+              "git log",
+              "static analysis"
+            ],
+            "expected_output": "Root cause analysis document"
+          },
+          "phase_2_implementation": {
+            "description": "Implement solution",
+            "iac_template": ".github/templates/fix_15647.yml",
+            "testing": [
+              "unit",
+              "integration",
+              "e2e"
+            ],
+            "expected_output": "PR with tests"
+          },
+          "phase_3_validation": {
+            "description": "Validate fix",
+            "validation_steps": [
+              "test suite",
+              "regression",
+              "performance"
+            ],
+            "expected_output": "Validation report"
+          }
+        },
+        "generated_at": "2026-04-17T19:45:28.477267"
+      }
+    },
+    {
+      "issue": {
+        "content_hash": "e01b412daf56",
+        "issue_num": 15646,
+        "title": "Please add client only for releases",
+        "labels": [
+          "feature request"
+        ],
+        "author": "kaala",
+        "created": "2026-04-17T11:39:44Z",
+        "comments": 0,
+        "severity": "low",
+        "type": "feature",
+        "timestamp": "2026-04-17T19:45:28.477293",
+        "status": "triaged"
+      },
+      "triage": {
+        "issue_num": 15646,
+        "severity": "low",
+        "type": "feature",
+        "content_hash": "e01b412daf56",
+        "recommended_actions": [
+          "label:needs-discussion",
+          "label:rfc"
+        ],
+        "triaged_at": "2026-04-17T19:45:28.477330"
+      },
+      "plan": {
+        "issue_num": 15646,
+        "title": "Please add client only for releases",
+        "content_hash": "e01b412daf56",
+        "model": "claude",
+        "plan": {
+          "phase_1_analysis": {
+            "description": "Analyze root cause",
+            "tools": [
+              "grep",
+              "git log",
+              "static analysis"
+            ],
+            "expected_output": "Root cause analysis document"
+          },
+          "phase_2_implementation": {
+            "description": "Implement solution",
+            "iac_template": ".github/templates/fix_15646.yml",
+            "testing": [
+              "unit",
+              "integration",
+              "e2e"
+            ],
+            "expected_output": "PR with tests"
+          },
+          "phase_3_validation": {
+            "description": "Validate fix",
+            "validation_steps": [
+              "test suite",
+              "regression",
+              "performance"
+            ],
+            "expected_output": "Validation report"
+          }
+        },
+        "generated_at": "2026-04-17T19:45:28.477337"
+      }
+    },
+    {
+      "issue": {
+        "content_hash": "b7d75dd805f0",
+        "issue_num": 15645,
+        "title": "v1/messages :cloud \u2014 Kimi K2.5 native tokens leak, nested objects stringified on Qwen/GLM",
+        "labels": [
+          "cloud"
+        ],
+        "author": "john-savepoint",
+        "created": "2026-04-17T09:34:40Z",
+        "comments": 0,
+        "severity": "medium",
+        "type": "bug",
+        "timestamp": "2026-04-17T19:45:28.477356",
+        "status": "triaged"
+      },
+      "triage": {
+        "issue_num": 15645,
+        "severity": "medium",
+        "type": "bug",
+        "content_hash": "b7d75dd805f0",
+        "recommended_actions": [
+          "label:critical",
+          "assign:core-team",
+          "label:gpu-related",
+          "label:backend",
+          "label:api",
+          "label:openai-compat"
+        ],
+        "triaged_at": "2026-04-17T19:45:28.478131"
+      },
+      "plan": {
+        "issue_num": 15645,
+        "title": "v1/messages :cloud \u2014 Kimi K2.5 native tokens leak, nested objects stringified on Qwen/GLM",
+        "content_hash": "b7d75dd805f0",
+        "model": "claude",
+        "plan": {
+          "phase_1_analysis": {
+            "description": "Analyze root cause",
+            "tools": [
+              "grep",
+              "git log",
+              "static analysis"
+            ],
+            "expected_output": "Root cause analysis document"
+          },
+          "phase_2_implementation": {
+            "description": "Implement solution",
+            "iac_template": ".github/templates/fix_15645.yml",
+            "testing": [
+              "unit",
+              "integration",
+              "e2e"
+            ],
+            "expected_output": "PR with tests"
+          },
+          "phase_3_validation": {
+            "description": "Validate fix",
+            "validation_steps": [
+              "test suite",
+              "regression",
+              "performance"
+            ],
+            "expected_output": "Validation report"
+          }
+        },
+        "generated_at": "2026-04-17T19:45:28.478170"
+      }
+    },
+    {
+      "issue": {
+        "content_hash": "76e698b8b343",
+        "issue_num": 15644,
+        "title": "Integration: PaperClaw (autonomous peer-reviewed paper generator for Ollama)",
+        "labels": [],
+        "author": "Agnuxo1",
+        "created": "2026-04-17T07:47:50Z",
+        "comments": 0,
+        "severity": "medium",
+        "type": "bug",
+        "timestamp": "2026-04-17T19:45:28.478224",
+        "status": "triaged"
+      },
+      "triage": {
+        "issue_num": 15644,
+        "severity": "medium",
+        "type": "bug",
+        "content_hash": "76e698b8b343",
+        "recommended_actions": [
+          "label:api",
+          "label:openai-compat",
+          "label:integration"
+        ],
+        "triaged_at": "2026-04-17T19:45:28.478433"
+      },
+      "plan": {
+        "issue_num": 15644,
+        "title": "Integration: PaperClaw (autonomous peer-reviewed paper generator for Ollama)",
+        "content_hash": "76e698b8b343",
+        "model": "claude",
+        "plan": {
+          "phase_1_analysis": {
+            "description": "Analyze root cause",
+            "tools": [
+              "grep",
+              "git log",
+              "static analysis"
+            ],
+            "expected_output": "Root cause analysis document"
+          },
+          "phase_2_implementation": {
+            "description": "Implement solution",
+            "iac_template": ".github/templates/fix_15644.yml",
+            "testing": [
+              "unit",
+              "integration",
+              "e2e"
+            ],
+            "expected_output": "PR with tests"
+          },
+          "phase_3_validation": {
+            "description": "Validate fix",
+            "validation_steps": [
+              "test suite",
+              "regression",
+              "performance"
+            ],
+            "expected_output": "Validation report"
+          }
+        },
+        "generated_at": "2026-04-17T19:45:28.478446"
+      }
+    },
+    {
+      "issue": {
+        "content_hash": "859ac63f7cca",
+        "issue_num": 15643,
+        "title": "Apple M5 backend/runtime compatibility issue in Ollama",
+        "labels": [],
+        "author": "yengda",
+        "created": "2026-04-17T07:37:25Z",
+        "comments": 0,
+        "severity": "medium",
+        "type": "bug",
+        "timestamp": "2026-04-17T19:45:28.478477",
+        "status": "triaged"
+      },
+      "triage": {
+        "issue_num": 15643,
+        "severity": "medium",
+        "type": "bug",
+        "content_hash": "859ac63f7cca",
+        "recommended_actions": [
+          "label:critical",
+          "assign:core-team",
+          "label:gpu-related",
+          "label:backend",
+          "label:api",
+          "label:openai-compat",
+          "label:regression",
+          "label:critical"
+        ],
+        "triaged_at": "2026-04-17T19:45:28.478552"
+      },
+      "plan": {
+        "issue_num": 15643,
+        "title": "Apple M5 backend/runtime compatibility issue in Ollama",
+        "content_hash": "859ac63f7cca",
+        "model": "claude",
+        "plan": {
+          "phase_1_analysis": {
+            "description": "Analyze root cause",
+            "tools": [
+              "grep",
+              "git log",
+              "static analysis"
+            ],
+            "expected_output": "Root cause analysis document"
+          },
+          "phase_2_implementation": {
+            "description": "Implement solution",
+            "iac_template": ".github/templates/fix_15643.yml",
+            "testing": [
+              "unit",
+              "integration",
+              "e2e"
+            ],
+            "expected_output": "PR with tests"
+          },
+          "phase_3_validation": {
+            "description": "Validate fix",
+            "validation_steps": [
+              "test suite",
+              "regression",
+              "performance"
+            ],
+            "expected_output": "Validation report"
+          }
+        },
+        "generated_at": "2026-04-17T19:45:28.478569"
+      }
+    },
+    {
+      "issue": {
+        "content_hash": "a44a3cfa8504",
+        "issue_num": 15642,
+        "title": "MLX runner fails on Apple M5 Max \u2014 empty libdirs in Metal GPU detection",
+        "labels": [
+          "bug"
+        ],
+        "author": "jmvanbuskirk",
+        "created": "2026-04-17T06:14:18Z",
+        "comments": 0,
+        "severity": "high",
+        "type": "bug",
+        "timestamp": "2026-04-17T19:45:28.478595",
+        "status": "triaged"
+      },
+      "triage": {
+        "issue_num": 15642,
+        "severity": "high",
+        "type": "bug",
+        "content_hash": "a44a3cfa8504",
+        "recommended_actions": [
+          "label:critical",
+          "assign:core-team",
+          "label:gpu-related",
+          "label:backend",
+          "label:performance",
+          "label:needs-investigation"
+        ],
+        "triaged_at": "2026-04-17T19:45:28.479171"
+      },
+      "plan": {
+        "issue_num": 15642,
+        "title": "MLX runner fails on Apple M5 Max \u2014 empty libdirs in Metal GPU detection",
+        "content_hash": "a44a3cfa8504",
+        "model": "claude",
+        "plan": {
+          "phase_1_analysis": {
+            "description": "Analyze root cause",
+            "tools": [
+              "grep",
+              "git log",
+              "static analysis"
+            ],
+            "expected_output": "Root cause analysis document"
+          },
+          "phase_2_implementation": {
+            "description": "Implement solution",
+            "iac_template": ".github/templates/fix_15642.yml",
+            "testing": [
+              "unit",
+              "integration",
+              "e2e"
+            ],
+            "expected_output": "PR with tests"
+          },
+          "phase_3_validation": {
+            "description": "Validate fix",
+            "validation_steps": [
+              "test suite",
+              "regression",
+              "performance"
+            ],
+            "expected_output": "Validation report"
+          }
+        },
+        "generated_at": "2026-04-17T19:45:28.479200"
+      }
+    }
+  ],
+  "audit_log": [
+    {
+      "issue_num": 15651,
+      "severity": "medium",
+      "type": "bug",
+      "content_hash": "23c0d5c5f6a0",
+      "recommended_actions": [
+        "label:gpu-related",
+        "label:backend"
+      ],
+      "triaged_at": "2026-04-17T19:45:28.476462"
+    },
+    {
+      "issue_num": 15650,
+      "severity": "medium",
+      "type": "bug",
+      "content_hash": "a2c192a94e46",
+      "recommended_actions": [
+        "label:gpu-related",
+        "label:backend",
+        "label:performance",
+        "label:needs-investigation"
+      ],
+      "triaged_at": "2026-04-17T19:45:28.476615"
+    },
+    {
+      "issue_num": 15649,
+      "severity": "high",
+      "type": "bug",
+      "content_hash": "69e29aaa80e9",
+      "recommended_actions": [
+        "label:critical",
+        "assign:core-team",
+        "label:gpu-related",
+        "label:backend"
+      ],
+      "triaged_at": "2026-04-17T19:45:28.476704"
+    },
+    {
+      "issue_num": 15648,
+      "severity": "high",
+      "type": "bug",
+      "content_hash": "0c5464ef8405",
+      "recommended_actions": [
+        "label:gpu-related",
+        "label:backend",
+        "label:model-loading",
+        "label:regression",
+        "label:critical"
+      ],
+      "triaged_at": "2026-04-17T19:45:28.476999"
+    },
+    {
+      "issue_num": 15647,
+      "severity": "medium",
+      "type": "bug",
+      "content_hash": "26eba72ac14e",
+      "recommended_actions": [
+        "label:api",
+        "label:openai-compat"
+      ],
+      "triaged_at": "2026-04-17T19:45:28.477253"
+    },
+    {
+      "issue_num": 15646,
+      "severity": "low",
+      "type": "feature",
+      "content_hash": "e01b412daf56",
+      "recommended_actions": [
+        "label:needs-discussion",
+        "label:rfc"
+      ],
+      "triaged_at": "2026-04-17T19:45:28.477330"
+    },
+    {
+      "issue_num": 15645,
+      "severity": "medium",
+      "type": "bug",
+      "content_hash": "b7d75dd805f0",
+      "recommended_actions": [
+        "label:critical",
+        "assign:core-team",
+        "label:gpu-related",
+        "label:backend",
+        "label:api",
+        "label:openai-compat"
+      ],
+      "triaged_at": "2026-04-17T19:45:28.478131"
+    },
+    {
+      "issue_num": 15644,
+      "severity": "medium",
+      "type": "bug",
+      "content_hash": "76e698b8b343",
+      "recommended_actions": [
+        "label:api",
+        "label:openai-compat",
+        "label:integration"
+      ],
+      "triaged_at": "2026-04-17T19:45:28.478433"
+    },
+    {
+      "issue_num": 15643,
+      "severity": "medium",
+      "type": "bug",
+      "content_hash": "859ac63f7cca",
+      "recommended_actions": [
+        "label:critical",
+        "assign:core-team",
+        "label:gpu-related",
+        "label:backend",
+        "label:api",
+        "label:openai-compat",
+        "label:regression",
+        "label:critical"
+      ],
+      "triaged_at": "2026-04-17T19:45:28.478552"
+    },
+    {
+      "issue_num": 15642,
+      "severity": "high",
+      "type": "bug",
+      "content_hash": "a44a3cfa8504",
+      "recommended_actions": [
+        "label:critical",
+        "assign:core-team",
+        "label:gpu-related",
+        "label:backend",
+        "label:performance",
+        "label:needs-investigation"
+      ],
+      "triaged_at": "2026-04-17T19:45:28.479171"
+    }
+  ]
+}

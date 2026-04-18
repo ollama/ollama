@@ -1,0 +1,76 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ollama-staging
+
+# Reference the base configuration
+bases:
+  - ../
+
+# Staging-specific patches
+patches:
+  - target:
+      kind: Deployment
+      labelSelector: "app=ollama-api"
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 256Mi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 512Mi
+
+  - target:
+      kind: HorizontalPodAutoscaler
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 2
+      - op: replace
+        path: /spec/maxReplicas
+        value: 5
+
+  - target:
+      kind: Deployment
+      labelSelector: "app=postgres"
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 512Mi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 1Gi
+
+# Staging ConfigMap
+configMapGenerator:
+  - name: ollama-config
+    behavior: merge
+    literals:
+      - ENVIRONMENT=staging
+      - LOG_LEVEL=info
+      - DATABASE_POOL_SIZE=20
+      - CACHE_TTL=1800
+
+# Staging Secrets
+secretGenerator:
+  - name: ollama-secrets
+    behavior: merge
+    envs:
+      - secrets.env
+
+# Common labels for staging
+commonLabels:
+  environment: staging
+  tier: staging
+
+# Staging namespace
+namespace: ollama-staging
+
+# Annotations
+commonAnnotations:
+  deployed-by: ci-cd
+  cluster: staging
+  on-call: devops-team

@@ -1,0 +1,1 @@
+Generic single-database configuration.

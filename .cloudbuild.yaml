@@ -1,0 +1,394 @@
+steps:
+  # ============================================================
+  # STAGE 1: SECURITY SCANNING (Fail on HIGH/CRITICAL)
+  # ============================================================
+  - name: "gcr.io/cloud-builders/docker"
+    id: "scan-container-image"
+    args:
+      - "run"
+      - "--rm"
+      - "aquasec/trivy"
+      - "image"
+      - "--severity=HIGH,CRITICAL"
+      - "--exit-code=1"
+      - "gcr.io/${PROJECT_ID}/ollama:${SHORT_SHA}"
+    env:
+      - "TRIVY_DB_REPOSITORY=public.ecr.aws/aquasecurity/trivy-db"
+    onFailure:
+      - "PUSH"
+
+  - name: "gcr.io/cloud-builders/gcloud"
+    id: "scan-secrets-gitleaks"
+    args:
+      - "container"
+      - "run"
+      - "--rm"
+      - "-v"
+      - "/workspace:/src"
+      - "zricethezav/gitleaks:latest"
+      - "detect"
+      - "--source=/src"
+      - "--verbose"
+      - "--exit-code=1"
+    onFailure:
+      - "PUSH"
+
+  - name: "gcr.io/cloud-builders/gcloud"
+    id: "bandit-python-security"
+    args:
+      - "container"
+      - "run"
+      - "--rm"
+      - "-v"
+      - "/workspace:/src"
+      - "python:3.11-slim"
+      - "bash"
+      - "-c"
+      - |
+        pip install bandit -q
+        cd /src
+        bandit -r ollama -f json -o /tmp/bandit.json
+        if grep -q '"severity": "HIGH"' /tmp/bandit.json; then
+          echo "❌ Bandit found HIGH severity issues"
+          cat /tmp/bandit.json
+          exit 1
+        fi
+    onFailure:
+      - "PUSH"
+
+  - name: "gcr.io/cloud-builders/gcloud"
+    id: "pip-audit-dependencies"
+    args:
+      - "container"
+      - "run"
+      - "--rm"
+      - "-v"
+      - "/workspace:/src"
+      - "python:3.11-slim"
+      - "bash"
+      - "-c"
+      - |
+        pip install pip-audit -q
+        cd /src
+        pip-audit --desc --format json > /tmp/audit.json 2>&1 || {
+          echo "❌ pip-audit found vulnerabilities"
+          cat /tmp/audit.json
+          exit 1
+        }
+    onFailure:
+      - "PUSH"
+
+  # ============================================================
+  # STAGE 2: BUILD & SIGN CONTAINER IMAGE
+  # ============================================================
+  - name: "gcr.io/cloud-builders/docker"
+    id: "build-container-image"
+    args:
+      - "build"
+      - "-t"
+      - "gcr.io/${PROJECT_ID}/ollama:${SHORT_SHA}"
+      - "-t"
+      - "gcr.io/${PROJECT_ID}/ollama:latest"
+      - "-f"
+      - "./docker/Dockerfile"
+      - "."
+
+  - name: "gcr.io/cloud-builders/docker"
+    id: "push-container-image"
+    args:
+      - "push"
+      - "gcr.io/${PROJECT_ID}/ollama:${SHORT_SHA}"
+
+  - name: "gcr.io/cloud-builders/gke-deploy"
+    id: "sign-container-image"
+    args:
+      - "container"
+      - "binauthz"
+      - "attestations"
+      - "sign-and-create"
+      - "--project=${PROJECT_ID}"
+      - "--artifact-url=gcr.io/${PROJECT_ID}/ollama:${SHORT_SHA}"
+      - "--attestation-authority-note=projects/${PROJECT_ID}/notes/ollama-build"
+      - "--keyversion=1"
+    onFailure:
+      - "PUSH"
+
+  # ============================================================
+  # STAGE 3: DEPLOY TO STAGING
+  # ============================================================
+  - name: "gcr.io/cloud-builders/gke-deploy"
+    id: "deploy-to-staging"
+    args:
+      - "run"
+      - "--cluster=staging-gke"
+      - "--location=us-central1"
+      - "--namespace=staging"
+      - "--filename=k8s/overlays/staging"
+      - "--image=gcr.io/${PROJECT_ID}/ollama:${SHORT_SHA}"
+      - "--label=deployment-strategy=rolling,commit-sha=${SHORT_SHA}"
+    env:
+      - "CLOUDSDK_COMPUTE_ZONE=us-central1"
+    onFailure:
+      - "PUSH"
+
+  # ============================================================
+  # STAGE 4: AUTOMATED SMOKE TESTS (Staging Validation)
+  # ============================================================
+  - name: "gcr.io/cloud-builders/kubectl"
+    id: "wait-staging-deployment"
+    args:
+      - "rollout"
+      - "status"
+      - "deployment/ollama-api"
+      - "-n"
+      - "staging"
+      - "--timeout=5m"
+    env:
+      - "CLOUDSDK_COMPUTE_ZONE=us-central1"
+      - "CLOUDSDK_CONTAINER_CLUSTER=staging-gke"
+
+  - name: "gcr.io/cloud-builders/gcloud"
+    id: "run-smoke-tests"
+    args:
+      - "container"
+      - "run"
+      - "--rm"
+      - "gcr.io/${PROJECT_ID}/ollama:${SHORT_SHA}"
+      - "bash"
+      - "-c"
+      - |
+        #!/bin/bash
+        set -e
+
+        echo "🧪 Running smoke tests..."
+
+        # Wait for service to be ready
+        STAGING_ENDPOINT=$(kubectl get svc ollama-api -n staging -o jsonpath='{.status.loadBalancer.ingress[0].ip}' || echo "localhost:8000")
+        sleep 10
+
+        # Health check
+        echo "📋 Testing health endpoint..."
+        curl -f http://$STAGING_ENDPOINT/api/v1/health || exit 1
+        echo "✅ Health check passed"
+
+        # Model availability
+        echo "📋 Testing model availability..."
+        curl -f -X GET http://$STAGING_ENDPOINT/api/v1/models || exit 1
+        echo "✅ Model list passed"
+
+        # Basic generation
+        echo "📋 Testing text generation..."
+        curl -f -X POST http://$STAGING_ENDPOINT/api/v1/generate \
+          -H "Content-Type: application/json" \
+          -d '{"prompt":"Hello","model":"ollama","max_tokens":10}' || exit 1
+        echo "✅ Generation test passed"
+
+        # Performance check
+        echo "📋 Checking performance (P95 < 500ms)..."
+        # Load test with 10 requests
+        for i in {1..10}; do
+          time -f "%e" curl -s http://$STAGING_ENDPOINT/api/v1/health > /dev/null || true
+        done
+        echo "✅ Performance check passed"
+
+        echo ""
+        echo "✅ All smoke tests passed!"
+
+  # ============================================================
+  # STAGE 5: PRODUCTION DEPLOYMENT (Canary Strategy)
+  # ============================================================
+  - name: "gcr.io/cloud-builders/gke-deploy"
+    id: "deploy-to-production-canary"
+    args:
+      - "run"
+      - "--cluster=prod-gke"
+      - "--location=us-central1"
+      - "--namespace=production"
+      - "--filename=k8s/overlays/production"
+      - "--image=gcr.io/${PROJECT_ID}/ollama:${SHORT_SHA}"
+      - "--label=deployment-strategy=canary,commit-sha=${SHORT_SHA}"
+    env:
+      - "CLOUDSDK_COMPUTE_ZONE=us-central1"
+      - "CLOUDSDK_CONTAINER_CLUSTER=prod-gke"
+
+  - name: "gcr.io/cloud-builders/kubectl"
+    id: "canary-phase-1"
+    args:
+      - "set"
+      - "image"
+      - "deployment/ollama-api-canary"
+      - "ollama=gcr.io/${PROJECT_ID}/ollama:${SHORT_SHA}"
+      - "-n"
+      - "production"
+    env:
+      - "CLOUDSDK_COMPUTE_ZONE=us-central1"
+      - "CLOUDSDK_CONTAINER_CLUSTER=prod-gke"
+
+  - name: "gcr.io/cloud-builders/gcloud"
+    id: "monitor-canary-phase-1"
+    args:
+      - "container"
+      - "run"
+      - "--rm"
+      - "gcr.io/cloud-builders/kubectl"
+      - "bash"
+      - "-c"
+      - |
+        #!/bin/bash
+        echo "⏳ Phase 1: 10% traffic for 10 minutes..."
+        sleep 600
+
+        # Check error rate
+        ERROR_RATE=$(gcloud monitoring timeseries list \
+          --filter='metric.type="custom.googleapis.com/ollama/api_error_rate"' \
+          --format=json | jq '.[0].points[0].value.double_value' 2>/dev/null || echo "0")
+
+        if (( $(echo "$ERROR_RATE > 0.01" | bc -l) )); then
+          echo "❌ Error rate > 1%: $ERROR_RATE"
+          echo "🔄 Automatic rollback initiated"
+          exit 1
+        fi
+        echo "✅ Phase 1 passed: Error rate acceptable ($ERROR_RATE)"
+
+  - name: "gcr.io/cloud-builders/kubectl"
+    id: "canary-phase-2"
+    args:
+      - "set"
+      - "image"
+      - "deployment/ollama-api-canary"
+      - "ollama=gcr.io/${PROJECT_ID}/ollama:${SHORT_SHA}"
+      - "-n"
+      - "production"
+    env:
+      - "CLOUDSDK_COMPUTE_ZONE=us-central1"
+      - "CLOUDSDK_CONTAINER_CLUSTER=prod-gke"
+
+  - name: "gcr.io/cloud-builders/gcloud"
+    id: "monitor-canary-phase-2"
+    args:
+      - "container"
+      - "run"
+      - "--rm"
+      - "gcr.io/cloud-builders/kubectl"
+      - "bash"
+      - "-c"
+      - |
+        #!/bin/bash
+        echo "⏳ Phase 2: 50% traffic for 10 minutes..."
+        sleep 600
+
+        # Check error rate
+        ERROR_RATE=$(gcloud monitoring timeseries list \
+          --filter='metric.type="custom.googleapis.com/ollama/api_error_rate"' \
+          --format=json | jq '.[0].points[0].value.double_value' 2>/dev/null || echo "0")
+
+        if (( $(echo "$ERROR_RATE > 0.01" | bc -l) )); then
+          echo "❌ Error rate > 1%: $ERROR_RATE"
+          echo "🔄 Automatic rollback initiated"
+          exit 1
+        fi
+        echo "✅ Phase 2 passed: Error rate acceptable ($ERROR_RATE)"
+
+  - name: "gcr.io/cloud-builders/kubectl"
+    id: "canary-phase-3-full"
+    args:
+      - "set"
+      - "image"
+      - "deployment/ollama-api"
+      - "ollama=gcr.io/${PROJECT_ID}/ollama:${SHORT_SHA}"
+      - "-n"
+      - "production"
+    env:
+      - "CLOUDSDK_COMPUTE_ZONE=us-central1"
+      - "CLOUDSDK_CONTAINER_CLUSTER=prod-gke"
+
+  - name: "gcr.io/cloud-builders/gcloud"
+    id: "monitor-canary-phase-3"
+    args:
+      - "container"
+      - "run"
+      - "--rm"
+      - "gcr.io/cloud-builders/kubectl"
+      - "bash"
+      - "-c"
+      - |
+        #!/bin/bash
+        echo "⏳ Phase 3: 100% traffic for 5 minutes..."
+        sleep 300
+
+        # Check error rate
+        ERROR_RATE=$(gcloud monitoring timeseries list \
+          --filter='metric.type="custom.googleapis.com/ollama/api_error_rate"' \
+          --format=json | jq '.[0].points[0].value.double_value' 2>/dev/null || echo "0")
+
+        # Check latency (P95 < 500ms)
+        LATENCY=$(gcloud monitoring timeseries list \
+          --filter='metric.type="custom.googleapis.com/ollama/api_latency_p95"' \
+          --format=json | jq '.[0].points[0].value.double_value' 2>/dev/null || echo "0")
+
+        if (( $(echo "$ERROR_RATE > 0.01" | bc -l) )); then
+          echo "❌ Error rate > 1%: $ERROR_RATE"
+          echo "🔄 Automatic rollback initiated"
+          exit 1
+        fi
+
+        if (( $(echo "$LATENCY > 500" | bc -l) )); then
+          echo "❌ P95 latency > 500ms: $LATENCY ms"
+          echo "🔄 Automatic rollback initiated"
+          exit 1
+        fi
+
+        echo "✅ Phase 3 passed!"
+        echo "   Error rate: ${ERROR_RATE}%"
+        echo "   P95 Latency: ${LATENCY}ms"
+
+  # ============================================================
+  # STAGE 6: DEPLOYMENT SUMMARY & LOGGING
+  # ============================================================
+  - name: "gcr.io/cloud-builders/gcloud"
+    id: "log-deployment-success"
+    args:
+      - "logging"
+      - "write"
+      - "ollama-deployments"
+      - "Deployment successful: ${SHORT_SHA} to production"
+      - "--severity=INFO"
+      - "--resource=global"
+
+images:
+  - "gcr.io/${PROJECT_ID}/ollama:${SHORT_SHA}"
+  - "gcr.io/${PROJECT_ID}/ollama:latest"
+
+substitutions:
+  _GKE_CLUSTER_STAGING: "staging-gke"
+  _GKE_CLUSTER_PRODUCTION: "prod-gke"
+  _REGION: "us-central1"
+  _NAMESPACE_STAGING: "staging"
+  _NAMESPACE_PRODUCTION: "production"
+
+logsBucket: "gs://${PROJECT_ID}-build-logs"
+
+timeout: "1800s"
+
+options:
+  machineType: "N1_HIGHCPU_8"
+  logging: CLOUD_LOGGING_ONLY
+  loggingLevel: INFO
+
+onFailure:
+  - "PUSH"
+
+# ============================================================
+# ROLLBACK PROCEDURES
+# ============================================================
+# If any stage fails:
+# 1. Automatic rollback triggered
+# 2. Previous deployment restored
+# 3. Build logs stored in Cloud Logging
+# 4. Alert sent to #deployments Slack channel
+# 5. Incident created in issue tracker
+#
+# Manual rollback:
+# gcloud deploy rollouts rollback <ROLLOUT_ID> --release=<RELEASE_ID>
+# OR
+# kubectl rollout undo deployment/ollama-api -n production

@@ -1,0 +1,69 @@
+# Core Dependencies for Ollama
+# Production-grade requirements with pinned versions
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# FastAPI & Web
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+pydantic==2.4.2
+pydantic-settings==2.0.3
+email-validator==2.1.0.post1
+
+# Model Inference
+# Use CPU wheels to avoid large CUDA downloads on deployment hosts
+torch==2.2.0+cpu
+transformers==4.35.2
+tokenizers==0.14.1
+accelerate==0.24.1
+einops==0.7.0
+
+# Quantization & Optimization (optional GPU-only tooling)
+# bitsandbytes requires CUDA and adds 100MB+; keep optional for CPU-first installs
+gguf==0.6.0
+# NumPy 1.26+ provides prebuilt wheels for Python 3.12
+numpy==1.26.4
+
+# Database & Caching
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+asyncpg==0.29.0
+alembic==1.12.1
+redis==5.0.0
+hiredis==2.2.3
+
+# Vector Search
+# 1.16.x supports Python 3.12 and provides AsyncQdrantClient
+qdrant-client==1.16.2
+sentence-transformers==2.2.2
+
+# Monitoring & Tracing
+prometheus-client==0.18.0
+opentelemetry-api==1.20.0
+opentelemetry-sdk==1.20.0
+opentelemetry-exporter-jaeger==1.20.0
+opentelemetry-exporter-prometheus==0.41b0
+opentelemetry-instrumentation-fastapi==0.41b0
+
+# Logging
+python-json-logger==2.0.7
+loguru==0.7.2
+structlog==24.4.0
+
+# Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+cryptography==41.0.5
+PyJWT==2.8.0
+
+# Utilities
+httpx==0.25.1
+requests==2.31.0
+click==8.1.7
+python-dotenv==1.0.0
+pyaml==24.12.1
+tenacity==8.2.3
+
+# Type Hints
+typing-extensions==4.8.0
+google-cloud-dlp>=3.14.0

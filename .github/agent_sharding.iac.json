@@ -1,0 +1,13 @@
+{
+  "version": "1.0",
+  "description": "Deterministic sharding for open agent-ready issue queue",
+  "input": ".github/agent_ready_queue.json",
+  "output": ".github/agent_ready_shards.json",
+  "shard_count": 4,
+  "assignment_policy": "severity_then_issue_number_round_robin",
+  "governance": {
+    "idempotent": true,
+    "immutable": true,
+    "commit_required": true
+  }
+}

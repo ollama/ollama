@@ -1,0 +1,689 @@
+name: Full CI/CD - Complete Automation
+
+on:
+  push:
+    branches: [main, develop, staging]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".github/**"
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Environment to deploy (dev/staging/prod)"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      action:
+        description: "Action to perform (deploy/teardown/restore)"
+        required: true
+        default: "deploy"
+        type: choice
+        options:
+          - deploy
+          - teardown
+          - restore
+          - full-cycle
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.environment || 'default' }}
+  cancel-in-progress: false
+
+env:
+  ENVIRONMENT: ${{ inputs.environment || 'dev' }}
+  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  GCP_REGION: us-central1
+  REGISTRY: gcr.io
+  IMAGE_NAME: ollama
+  CACHE_DIR: /tmp/cache
+
+jobs:
+  # ============================================================================
+  # PHASE 1: VALIDATION & SECURITY CHECKS
+  # ============================================================================
+
+  validate-and-scan:
+    name: Validate Configuration & Security Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r config/requirements/base.txt
+          pip install -r config/requirements/dev.txt
+
+      - name: Validate folder structure
+        run: |
+          echo "📋 Validating folder structure..."
+          python scripts/validate_folder_structure.py --strict --verbose
+          echo "✅ Folder structure validated"
+
+      - name: Validate Landing Zone compliance
+        run: |
+          echo "🔍 Validating Landing Zone compliance..."
+          python scripts/validate_landing_zone_compliance.py --report text
+          echo "✅ Landing Zone compliance validated"
+
+      - name: Run linting
+        run: |
+          echo "🔨 Running linting checks..."
+          ruff check ollama/ tests/ --config pyproject.toml
+          echo "✅ Linting passed"
+
+      - name: Run type checking
+        run: |
+          echo "📝 Running type checking..."
+          mypy ollama/ --strict --no-incremental
+          echo "✅ Type checking passed"
+
+      - name: Run unit tests
+        run: |
+          echo "🧪 Running unit tests..."
+          pytest tests/unit -v --cov=ollama --cov-report=xml --tb=short
+          echo "✅ Unit tests passed"
+
+      - name: Run security audit
+        continue-on-error: true
+        run: |
+          echo "🔐 Running security audit..."
+          pip-audit --desc
+          echo "✅ Security audit completed"
+
+      - name: Snyk Code Scan
+        uses: snyk/actions/python@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high
+        continue-on-error: true
+
+      - name: Validate Terraform
+        run: |
+          echo "🏗️ Validating Terraform configuration..."
+          cd docker/terraform
+          terraform init -backend=false
+          terraform validate
+          terraform fmt -check -recursive
+          echo "✅ Terraform validated"
+
+      - name: TFSEC - Terraform Security Scan
+        uses: aquasecurity/tfsec-action@v1
+        with:
+          working_directory: docker/terraform
+          format: json
+          out: tfsec-results.json
+        continue-on-error: true
+
+      - name: Generate metadata
+        id: meta
+        run: |
+          echo "timestamp=$(date -u +'%Y%m%d%H%M%S')" >> $GITHUB_OUTPUT
+          echo "git-sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "git-branch=$(git rev-parse --abbrev-ref HEAD)" >> $GITHUB_OUTPUT
+          echo "version=$(cat pyproject.toml | grep '^version' | cut -d'\"' -f2)" >> $GITHUB_OUTPUT
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results-${{ job.status }}
+          path: |
+            .coverage
+            coverage.xml
+            htmlcov/
+          retention-days: 30
+
+  # ============================================================================
+  # PHASE 2: BUILD ARTIFACTS
+  # ============================================================================
+
+  build-artifacts:
+    name: Build Docker & Artifacts
+    runs-on: ubuntu-latest
+    needs: validate-and-scan
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Cache Docker layers
+        uses: actions/cache@v3
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Configure Docker authentication
+        run: |
+          gcloud auth configure-docker ${{ env.REGISTRY }}
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./docker/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.GCP_PROJECT_ID }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.GCP_PROJECT_ID }}/${{ env.IMAGE_NAME }}:${{ needs.validate-and-scan.outputs.image-tag }}
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new
+          build-args: |
+            ENVIRONMENT=${{ env.ENVIRONMENT }}
+            BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+            VCS_REF=${{ github.sha }}
+
+      - name: Move cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+      - name: Output image reference
+        id: image
+        run: |
+          echo "image=${{ env.REGISTRY }}/${{ env.GCP_PROJECT_ID }}/${{ env.IMAGE_NAME }}:${{ needs.validate-and-scan.outputs.image-tag }}" >> $GITHUB_OUTPUT
+
+  # ============================================================================
+  # PHASE 3: DEPLOY/TEARDOWN DECISION
+  # ============================================================================
+
+  deployment-decision:
+    name: Deployment Decision Engine
+    runs-on: ubuntu-latest
+    needs: [validate-and-scan, build-artifacts]
+    outputs:
+      action: ${{ steps.decision.outputs.action }}
+      environment: ${{ steps.decision.outputs.environment }}
+      should-deploy: ${{ steps.decision.outputs.should-deploy }}
+      should-teardown: ${{ steps.decision.outputs.should-teardown }}
+      should-restore: ${{ steps.decision.outputs.should-restore }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Determine deployment action
+        id: decision
+        run: |
+          ACTION="${{ inputs.action || 'deploy' }}"
+          ENVIRONMENT="${{ inputs.environment || 'dev' }}"
+          BRANCH="${{ github.ref_name }}"
+
+          # Determine automatic action based on branch
+          if [[ "$BRANCH" == "main" && "$ACTION" == "deploy" ]]; then
+            ACTION="deploy"
+            ENVIRONMENT="prod"
+          elif [[ "$BRANCH" == "staging" && "$ACTION" == "deploy" ]]; then
+            ACTION="deploy"
+            ENVIRONMENT="staging"
+          else
+            ACTION="${{ inputs.action || 'deploy' }}"
+            ENVIRONMENT="${{ inputs.environment || 'dev' }}"
+          fi
+
+          echo "action=$ACTION" >> $GITHUB_OUTPUT
+          echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+          echo "should-deploy=$([ "$ACTION" = "deploy" ] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
+          echo "should-teardown=$([ "$ACTION" = "teardown" ] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
+          echo "should-restore=$([ "$ACTION" = "restore" ] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
+
+          echo "🎯 Deployment Decision: ACTION=$ACTION, ENVIRONMENT=$ENVIRONMENT"
+
+  # ============================================================================
+  # PHASE 4A: DEPLOY
+  # ============================================================================
+
+  deploy-infrastructure:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    needs: [deployment-decision, build-artifacts]
+    if: needs.deployment-decision.outputs.should-deploy == 'true'
+    permissions:
+      contents: read
+      id-token: write
+    environment:
+      name: ${{ needs.deployment-decision.outputs.environment }}
+      url: https://elevatediq.ai/ollama
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          token_format: "access_token"
+          access_token_lifetime: "1200s"
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+          terraform_wrapper: true
+
+      - name: Initialize Terraform
+        run: |
+          cd docker/terraform
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="prefix=${{ needs.deployment-decision.outputs.environment }}" \
+            -upgrade
+
+      - name: Plan Terraform
+        id: tf-plan
+        run: |
+          cd docker/terraform
+          terraform plan \
+            -var="environment=${{ needs.deployment-decision.outputs.environment }}" \
+            -var="gcp_project_id=${{ env.GCP_PROJECT_ID }}" \
+            -var="gcp_region=${{ env.GCP_REGION }}" \
+            -var="image=${{ needs.build-artifacts.outputs.image }}" \
+            -out=tfplan
+
+      - name: Apply Terraform
+        run: |
+          cd docker/terraform
+          terraform apply -auto-approve tfplan
+
+      - name: Capture Terraform outputs
+        id: tf-output
+        run: |
+          cd docker/terraform
+          terraform output -json > /tmp/tf-outputs.json
+          cat /tmp/tf-outputs.json
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ollama-api \
+            --image=${{ needs.build-artifacts.outputs.image }} \
+            --platform=managed \
+            --region=${{ env.GCP_REGION }} \
+            --allow-unauthenticated \
+            --set-env-vars=ENVIRONMENT=${{ needs.deployment-decision.outputs.environment }} \
+            --memory=4Gi \
+            --cpu=2 \
+            --timeout=3600s \
+            --max-instances=10
+
+      - name: Configure Cloud Load Balancer
+        run: |
+          bash scripts/setup-gcp-ext-lb.sh \
+            --project=${{ env.GCP_PROJECT_ID }} \
+            --region=${{ env.GCP_REGION }} \
+            --environment=${{ needs.deployment-decision.outputs.environment }}
+
+      - name: Setup monitoring and logging
+        run: |
+          bash scripts/setup-monitoring.sh \
+            --project=${{ env.GCP_PROJECT_ID }} \
+            --environment=${{ needs.deployment-decision.outputs.environment }}
+
+      - name: Backup database (pre-deployment safety)
+        continue-on-error: true
+        run: |
+          bash scripts/backup-postgres.sh \
+            --environment=${{ needs.deployment-decision.outputs.environment }}
+
+      - name: Health check deployment
+        run: |
+          bash scripts/verify-production-health.sh \
+            --environment=${{ needs.deployment-decision.outputs.environment }} \
+            --timeout=300
+
+      - name: Deploy notification
+        if: success()
+        run: |
+          echo "✅ Deployment successful to ${{ needs.deployment-decision.outputs.environment }}"
+          echo "Service: https://elevatediq.ai/ollama"
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "❌ Deployment failed for ${{ needs.deployment-decision.outputs.environment }}"
+          exit 1
+
+  # ============================================================================
+  # PHASE 4B: TEARDOWN
+  # ============================================================================
+
+  teardown-infrastructure:
+    name: Teardown Infrastructure
+    runs-on: ubuntu-latest
+    needs: [deployment-decision]
+    if: needs.deployment-decision.outputs.should-teardown == 'true'
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+
+      - name: Initialize Terraform
+        run: |
+          cd docker/terraform
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="prefix=${{ needs.deployment-decision.outputs.environment }}"
+
+      - name: Backup all data before teardown
+        run: |
+          bash scripts/backup-postgres.sh \
+            --environment=${{ needs.deployment-decision.outputs.environment }}
+          bash scripts/backup-qdrant.sh \
+            --environment=${{ needs.deployment-decision.outputs.environment }}
+          bash scripts/gcs-sync.sh \
+            --backup \
+            --environment=${{ needs.deployment-decision.outputs.environment }}
+
+      - name: Destroy Terraform resources
+        run: |
+          cd docker/terraform
+          terraform destroy -auto-approve \
+            -var="environment=${{ needs.deployment-decision.outputs.environment }}" \
+            -var="gcp_project_id=${{ env.GCP_PROJECT_ID }}" \
+            -var="gcp_region=${{ env.GCP_REGION }}" \
+            -var="image=gcr.io/placeholder/placeholder:latest"
+
+      - name: Cleanup Cloud Run services
+        run: |
+          gcloud run services delete ollama-api \
+            --platform=managed \
+            --region=${{ env.GCP_REGION }} \
+            --quiet || true
+
+      - name: Remove Cloud Load Balancer
+        run: |
+          gcloud compute forwarding-rules delete ollama-https-lb \
+            --global \
+            --quiet || true
+
+      - name: Cleanup Cloud Storage
+        run: |
+          gsutil -m rm -r gs://${{ env.GCP_PROJECT_ID }}-ollama-${{ needs.deployment-decision.outputs.environment }}-* || true
+
+      - name: Remove DNS entries
+        run: |
+          gcloud dns record-sets delete elevatediq.ai. \
+            --rrdatas=ollama.${{ needs.deployment-decision.outputs.environment }}.elevatediq.ai \
+            --ttl=300 \
+            --type=CNAME \
+            --zone=elevatediq || true
+
+      - name: Cleanup notification
+        run: |
+          echo "✅ Teardown complete for ${{ needs.deployment-decision.outputs.environment }}"
+
+  # ============================================================================
+  # PHASE 4C: RESTORE FROM BACKUP
+  # ============================================================================
+
+  restore-infrastructure:
+    name: Restore Infrastructure from Backup
+    runs-on: ubuntu-latest
+    needs: [deployment-decision, build-artifacts]
+    if: needs.deployment-decision.outputs.should-restore == 'true'
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.5.0
+
+      - name: Initialize Terraform
+        run: |
+          cd docker/terraform
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="prefix=${{ needs.deployment-decision.outputs.environment }}"
+
+      - name: Deploy infrastructure from IaC
+        run: |
+          cd docker/terraform
+          terraform apply -auto-approve \
+            -var="environment=${{ needs.deployment-decision.outputs.environment }}" \
+            -var="gcp_project_id=${{ env.GCP_PROJECT_ID }}" \
+            -var="gcp_region=${{ env.GCP_REGION }}" \
+            -var="image=${{ needs.build-artifacts.outputs.image }}"
+
+      - name: Deploy application
+        run: |
+          gcloud run deploy ollama-api \
+            --image=${{ needs.build-artifacts.outputs.image }} \
+            --platform=managed \
+            --region=${{ env.GCP_REGION }} \
+            --allow-unauthenticated
+
+      - name: Restore PostgreSQL database
+        run: |
+          bash scripts/restore-postgres.sh \
+            --environment=${{ needs.deployment-decision.outputs.environment }}
+
+      - name: Restore Qdrant vectors
+        run: |
+          bash scripts/restore-qdrant.sh \
+            --environment=${{ needs.deployment-decision.outputs.environment }}
+
+      - name: Restore Cloud Storage
+        run: |
+          bash scripts/gcs-sync.sh \
+            --restore \
+            --environment=${{ needs.deployment-decision.outputs.environment }}
+
+      - name: Verify restoration
+        run: |
+          bash scripts/verify-production-health.sh \
+            --environment=${{ needs.deployment-decision.outputs.environment }} \
+            --timeout=300
+
+      - name: Restoration complete notification
+        run: |
+          echo "✅ Restoration complete for ${{ needs.deployment-decision.outputs.environment }}"
+
+  # ============================================================================
+  # PHASE 5: SMOKE TESTS & VALIDATION
+  # ============================================================================
+
+  post-deployment-tests:
+    name: Post-Deployment Tests
+    runs-on: ubuntu-latest
+    needs: [deployment-decision]
+    if: |
+      always() &&
+      (needs.deployment-decision.outputs.should-deploy == 'true' ||
+       needs.deployment-decision.outputs.should-restore == 'true')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: |
+          pip install requests pytest pytest-asyncio httpx k6
+
+      - name: Run smoke tests
+        run: |
+          echo "🧪 Running smoke tests..."
+          pytest tests/integration/test_smoke.py -v
+
+      - name: Health check API endpoints
+        run: |
+          bash scripts/verify-production-health.sh \
+            --environment=${{ needs.deployment-decision.outputs.environment }}
+
+      - name: Load testing (k6)
+        continue-on-error: true
+        run: |
+          if command -v k6 &> /dev/null; then
+            k6 run load-tests/k6-load-test.js \
+              --vus=10 \
+              --duration=60s \
+              --summary-export=/tmp/load-test-summary.json
+          fi
+
+      - name: Database connectivity check
+        run: |
+          python scripts/test_server.py
+
+  # ============================================================================
+  # PHASE 6: FINAL NOTIFICATIONS & CLEANUP
+  # ============================================================================
+
+  deployment-complete:
+    name: Deployment Complete
+    runs-on: ubuntu-latest
+    needs: [deployment-decision, deploy-infrastructure, post-deployment-tests]
+    if: always()
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create deployment summary
+        run: |
+          cat > /tmp/deployment-summary.md << EOF
+          # 🚀 Deployment Summary
+
+          **Action**: ${{ needs.deployment-decision.outputs.action }}
+          **Environment**: ${{ needs.deployment-decision.outputs.environment }}
+          **Status**: ${{ job.status }}
+          **Timestamp**: $(date -u +'%Y-%m-%dT%H:%M:%SZ')
+
+          ## Details
+          - Commit: ${{ github.sha }}
+          - Branch: ${{ github.ref_name }}
+          - Workflow: ${{ github.workflow }}
+          - Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EOF
+          cat /tmp/deployment-summary.md
+
+      - name: Notify Slack
+        if: failure()
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "❌ Deployment Failed",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*❌ Deployment Failed*\nEnvironment: ${{ needs.deployment-decision.outputs.environment }}\nAction: ${{ needs.deployment-decision.outputs.action }}\n<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Details>"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Notify success
+        if: success()
+        run: |
+          echo "✅ Deployment workflow completed successfully!"
+          echo "Environment: ${{ needs.deployment-decision.outputs.environment }}"
+          echo "Action: ${{ needs.deployment-decision.outputs.action }}"
+
+      - name: Create GitHub deployment
+        if: success()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const deployment = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.ref,
+              environment: '${{ needs.deployment-decision.outputs.environment }}',
+              auto_merge: false,
+              required_contexts: []
+            });
+
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: deployment.data.id,
+              state: 'success',
+              environment_url: 'https://elevatediq.ai/ollama',
+              description: '${{ needs.deployment-decision.outputs.action }} completed successfully'
+            });

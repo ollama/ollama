@@ -1,0 +1,61 @@
+{
+  "generated_at_utc": "2026-04-18T05:48:55.898367+00:00",
+  "source": ".github/agent_execution_lanes.json",
+  "open_issue_count": 294,
+  "lane_count": 4,
+  "batch_size": 12,
+  "ollama_host": "http://127.0.0.1:11434",
+  "available_models": [
+    "phi3-fast:latest",
+    "llama3:8b",
+    "phi3:mini",
+    "mistral:7b"
+  ],
+  "recommended_start_order": [
+    "shard/1",
+    "shard/2",
+    "shard/3",
+    "shard/4"
+  ],
+  "dispatch_lanes": [
+    {
+      "lane": "shard/1",
+      "worker_profile": "claudeclaw-critical",
+      "selected_model": "llama3:8b",
+      "issue_count": 74,
+      "batch_count": 7,
+      "workpack": ".github/lane_workpacks/shard_1_workpack.json"
+    },
+    {
+      "lane": "shard/2",
+      "worker_profile": "claudeclaw-critical",
+      "selected_model": "llama3:8b",
+      "issue_count": 74,
+      "batch_count": 7,
+      "workpack": ".github/lane_workpacks/shard_2_workpack.json"
+    },
+    {
+      "lane": "shard/3",
+      "worker_profile": "claudeclaw-critical",
+      "selected_model": "llama3:8b",
+      "issue_count": 73,
+      "batch_count": 7,
+      "workpack": ".github/lane_workpacks/shard_3_workpack.json"
+    },
+    {
+      "lane": "shard/4",
+      "worker_profile": "claudeclaw-critical",
+      "selected_model": "llama3:8b",
+      "issue_count": 73,
+      "batch_count": 7,
+      "workpack": ".github/lane_workpacks/shard_4_workpack.json"
+    }
+  ],
+  "global_rules": {
+    "real_issues_only": true,
+    "pull_requests_excluded": true,
+    "idempotent": true,
+    "requires_commit_evidence": true,
+    "close_only_after_verification": true
+  }
+}

@@ -1,0 +1,140 @@
+name: ✨ FAANG Enhancement
+description: Create a FAANG-level feature with full standards compliance
+title: "✨ [Feature]: "
+labels: ["faang/new-feature", "type/enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # FAANG Elite Feature Template
+
+        This template ensures your feature meets Top 0.01% development standards.
+
+        **Required**: Answer all sections. Incomplete submissions will be rejected.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: "🎯 What (Business Impact)"
+      description: "What problem does this solve? How does it benefit users/product?"
+      placeholder: "This feature enables [benefit] for [users], improving [metric] by [%]"
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: "❓ Why (Technical Rationale)"
+      description: "Why this approach? What alternatives were considered?"
+      placeholder: |
+        Chosen approach: [approach]
+        Alternatives considered:
+        - [alt1]: Pros/Cons
+        - [alt2]: Pros/Cons
+        Decision: [approach] because [reason]
+    validations:
+      required: true
+
+  - type: textarea
+    id: how
+    attributes:
+      label: "⚙️ How (Implementation Summary)"
+      description: "High-level technical approach (not detailed code walkthrough)"
+      placeholder: |
+        1. Added [Component A] for [purpose]
+        2. Modified [Component B] to [reason]
+        3. Created [interface] for [contract]
+    validations:
+      required: true
+
+  - type: textarea
+    id: testing
+    attributes:
+      label: "✅ Testing Strategy"
+      description: "How was this tested? Coverage achieved?"
+      placeholder: |
+        - Unit tests: [coverage]% for [modules]
+        - Integration tests: [test names]
+        - Manual testing: [scenarios]
+        - Coverage: [X]% (required ≥95%)
+    validations:
+      required: true
+
+  - type: textarea
+    id: performance
+    attributes:
+      label: "⚡ Performance Impact"
+      description: "Latency, memory, throughput changes?"
+      placeholder: |
+        - Latency: [before] → [after] (Δ [%])
+        - Memory: [before] → [after] (Δ [%])
+        - Throughput: [before] → [after] (Δ [%])
+    validations:
+      required: true
+
+  - type: textarea
+    id: breaking
+    attributes:
+      label: "⚠️ Breaking Changes"
+      description: "Any backwards-incompatible changes?"
+      placeholder: |
+        - [change]: Migration path [details]
+        - [change]: Deprecation timeline [details]
+    validations:
+      required: false
+
+  - type: textarea
+    id: docs
+    attributes:
+      label: "📚 Documentation Updates"
+      description: "What documentation was added/updated?"
+      placeholder: |
+        - README.md: [sections updated]
+        - docs/[page].md: [new page or sections]
+        - Docstrings: [methods documented]
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: "✓ Pre-Submission Checklist"
+      description: "All items must be checked before submission"
+      options:
+        - label: "✅ All tests passing (`pytest --cov-fail-under=95`)"
+          required: true
+        - label: "✅ Type checking passing (`mypy --strict`)"
+          required: true
+        - label: "✅ Linting passing (`ruff check`)"
+          required: true
+        - label: "✅ Security audit clean (`pip-audit`, `bandit`)"
+          required: true
+        - label: "✅ Code review checklist satisfied"
+          required: true
+        - label: "✅ Commits GPG signed (all commits)"
+          required: true
+        - label: "✅ Documentation updated"
+          required: true
+        - label: "✅ No hardcoded credentials or secrets"
+          required: true
+
+  - type: textarea
+    id: related
+    attributes:
+      label: "🔗 Related Issues/PRs"
+      description: "Link related work"
+      placeholder: |
+        Fixes #[issue]
+        Related to #[issue]
+        Implements RFC-[number]
+    validations:
+      required: false
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: "📝 Additional Notes"
+      description: "Anything else reviewers should know?"
+      placeholder: "Deployment notes, known limitations, etc."
+    validations:
+      required: false

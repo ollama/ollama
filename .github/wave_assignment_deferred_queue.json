@@ -1,0 +1,13 @@
+{
+  "generated_at_utc": "2026-04-18T05:35:01.698623+00:00",
+  "repository": "kushin77/ollama",
+  "source_report": ".github/wave_assignment_report_20260418T053453Z.json",
+  "rate_limit_blocked": false,
+  "deferred_count": 0,
+  "deferred_issues": [],
+  "retry_instructions": [
+    "rerun scripts/run_autonomous_issue_cycle.py --config .github/autonomous_cycle.iac.json",
+    "commit the updated wave_assignment_report_*.json and deferred queue after each pass",
+    "keep bounded budgets to respect GitHub secondary rate limits"
+  ]
+}

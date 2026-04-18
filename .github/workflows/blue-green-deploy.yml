@@ -1,0 +1,260 @@
+name: Blue-Green Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        description: "Target environment"
+        options:
+          - staging
+          - production
+        required: true
+      image_tag:
+        type: string
+        description: "Docker image tag to deploy"
+        required: true
+
+concurrency:
+  group: blue-green-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: gcr.io
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  SERVICE_NAME: ollama
+
+jobs:
+  prepare:
+    name: Prepare Deployment
+    runs-on: ubuntu-latest
+    outputs:
+      blue_service: ${{ steps.determine.outputs.blue_service }}
+      green_service: ${{ steps.determine.outputs.green_service }}
+      active_service: ${{ steps.determine.outputs.active_service }}
+    steps:
+      - name: Determine Blue/Green Services
+        id: determine
+        run: |
+          # Query GCP to determine current active service
+          gcloud run list --filter="labels.blue-green-group=ollama-${{ github.event.inputs.environment }}" \
+            --format="value(name,labels.blue_green_slot)" > services.txt
+
+          # Parse which slot is active
+          ACTIVE_SLOT=$(grep "active" services.txt | cut -f2 || echo "blue")
+
+          if [ "$ACTIVE_SLOT" = "blue" ]; then
+            echo "blue_service=${{ env.SERVICE_NAME }}-blue-${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+            echo "green_service=${{ env.SERVICE_NAME }}-green-${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+            echo "active_service=${{ env.SERVICE_NAME }}-blue-${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          else
+            echo "blue_service=${{ env.SERVICE_NAME }}-green-${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+            echo "green_service=${{ env.SERVICE_NAME }}-blue-${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+            echo "active_service=${{ env.SERVICE_NAME }}-green-${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+  deploy-inactive:
+    name: Deploy to Inactive Slot
+    runs-on: ubuntu-latest
+    needs: prepare
+    environment:
+      name: ${{ github.event.inputs.environment }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Configure Docker
+        run: |
+          gcloud auth configure-docker ${{ env.REGISTRY }}
+
+      - name: Deploy to Inactive Service
+        run: |
+          echo "Deploying ${{ github.event.inputs.image_tag }} to ${{ needs.prepare.outputs.blue_service }}"
+
+          gcloud run deploy ${{ needs.prepare.outputs.blue_service }} \
+            --image="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}:${{ github.event.inputs.image_tag }}" \
+            --region="${{ secrets.GCP_REGION }}" \
+            --platform="managed" \
+            --allow-unauthenticated \
+            --set-env-vars="ENVIRONMENT=${{ github.event.inputs.environment }},VERSION=${{ github.event.inputs.image_tag }}" \
+            --labels="environment=${{ github.event.inputs.environment }},version=${{ github.event.inputs.image_tag }},deployment=blue-green,blue_green_slot=inactive" \
+            --min-instances=1 \
+            --max-instances=10
+
+      - name: Wait for Deployment
+        run: |
+          # Wait for service to be ready
+          timeout 300 bash -c 'until curl -f -s \
+            "https://$(gcloud run services list --filter="name=${{ needs.prepare.outputs.blue_service }}" --format="value(status.url)")"/health > /dev/null 2>&1; do
+            echo "Waiting for service to be ready..."
+            sleep 10
+          done'
+
+      - name: Run Health Checks
+        run: |
+          INACTIVE_URL=$(gcloud run services list --filter="name=${{ needs.prepare.outputs.blue_service }}" --format="value(status.url)")
+
+          echo "Running health checks on $INACTIVE_URL"
+
+          # Basic health check
+          curl -f "$INACTIVE_URL"/health || exit 1
+
+          # API endpoint check
+          curl -f "$INACTIVE_URL"/api/v1/models || exit 1
+
+          # Inference test
+          curl -f -X POST "$INACTIVE_URL"/api/v1/generate \
+            -H "Content-Type: application/json" \
+            -d '{"model":"test","prompt":"hello"}' || exit 1
+
+          echo "✅ All health checks passed"
+
+  smoke-tests:
+    name: Run Smoke Tests
+    runs-on: ubuntu-latest
+    needs: [prepare, deploy-inactive]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: |
+          pip install pytest httpx
+
+      - name: Get Inactive Service URL
+        id: url
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Run Smoke Tests
+        run: |
+          INACTIVE_URL=$(gcloud run services list --filter="name=${{ needs.prepare.outputs.blue_service }}" --format="value(status.url)")
+          pytest tests/smoke/ -v --base-url="$INACTIVE_URL"
+
+  traffic-switch:
+    name: Switch Traffic to Inactive
+    runs-on: ubuntu-latest
+    needs: [prepare, smoke-tests]
+    environment:
+      name: ${{ github.event.inputs.environment }}-traffic-switch
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Switch Load Balancer Traffic
+        run: |
+          echo "Switching traffic from ${{ needs.prepare.outputs.active_service }} to ${{ needs.prepare.outputs.blue_service }}"
+
+          # Update load balancer to route 100% to new service
+          gcloud compute backend-services update "ollama-backend-${{ github.event.inputs.environment }}" \
+            --global \
+            --timeout=30s \
+            --session-affinity=CLIENT_IP
+
+      - name: Update Service Labels
+        run: |
+          # Mark new service as active
+          gcloud run services update ${{ needs.prepare.outputs.blue_service }} \
+            --update-labels="blue_green_slot=active" \
+            --region="${{ secrets.GCP_REGION }}"
+
+          # Mark old service as inactive
+          gcloud run services update ${{ needs.prepare.outputs.active_service }} \
+            --update-labels="blue_green_slot=inactive" \
+            --region="${{ secrets.GCP_REGION }}"
+
+      - name: Post-Deployment Health Check
+        run: |
+          sleep 30
+          ACTIVE_URL=$(gcloud run services list --filter="name=${{ needs.prepare.outputs.blue_service }}" --format="value(status.url)")
+
+          echo "Verifying traffic on new active service: $ACTIVE_URL"
+
+          # Verify new service is receiving traffic
+          for i in {1..5}; do
+            curl -f "$ACTIVE_URL"/health || exit 1
+            echo "✅ Request $i successful"
+            sleep 5
+          done
+
+  rollback:
+    name: Rollback on Failure
+    runs-on: ubuntu-latest
+    needs: [prepare, traffic-switch]
+    if: failure()
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Revert Traffic to Previous Service
+        run: |
+          echo "⚠️ Deployment failed! Rolling back to ${{ needs.prepare.outputs.active_service }}"
+
+          # Switch traffic back to previous active service
+          gcloud run services update ${{ needs.prepare.outputs.active_service }} \
+            --update-labels="blue_green_slot=active" \
+            --region="${{ secrets.GCP_REGION }}"
+
+          gcloud run services update ${{ needs.prepare.outputs.blue_service }} \
+            --update-labels="blue_green_slot=inactive" \
+            --region="${{ secrets.GCP_REGION }}"
+
+          echo "✅ Rollback completed"
+
+      - name: Notify Rollback
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '⚠️ Blue-Green deployment failed and was rolled back to previous version'
+            })
+
+  summary:
+    name: Deployment Summary
+    runs-on: ubuntu-latest
+    needs: [prepare, traffic-switch]
+    if: success()
+    steps:
+      - name: Report Success
+        run: |
+          echo "✅ Blue-Green Deployment Completed Successfully"
+          echo "- Environment: ${{ github.event.inputs.environment }}"
+          echo "- Image Tag: ${{ github.event.inputs.image_tag }}"
+          echo "- Previous Active: ${{ needs.prepare.outputs.active_service }}"
+          echo "- New Active: ${{ needs.prepare.outputs.blue_service }}"
+          echo "- Inactive (Ready for Rollback): ${{ needs.prepare.outputs.green_service }}"

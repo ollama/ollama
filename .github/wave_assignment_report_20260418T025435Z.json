@@ -1,0 +1,1205 @@
+{
+  "generated_at_utc": "2026-04-18T02:54:35.971800+00:00",
+  "repository": "kushin77/ollama",
+  "manifest": ".github/autonomous_execution_batches.json",
+  "wave_count": 13,
+  "processed": 319,
+  "labels_added": 0,
+  "comments_added": 0,
+  "already_marked": 81,
+  "comment_deferred": 238,
+  "rate_limit_blocked": true,
+  "failures": [],
+  "deferred_comment_issues": [
+    {
+      "issue": 300,
+      "wave": 4,
+      "reason": "secondary_rate_limit"
+    },
+    {
+      "issue": 301,
+      "wave": 4,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 302,
+      "wave": 4,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 303,
+      "wave": 4,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 304,
+      "wave": 4,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 306,
+      "wave": 4,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 307,
+      "wave": 4,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 308,
+      "wave": 4,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 309,
+      "wave": 4,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 310,
+      "wave": 4,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 311,
+      "wave": 4,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 312,
+      "wave": 4,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 314,
+      "wave": 4,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 315,
+      "wave": 4,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 369,
+      "wave": 4,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 370,
+      "wave": 4,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 371,
+      "wave": 4,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 373,
+      "wave": 4,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 374,
+      "wave": 4,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 376,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 393,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 394,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 396,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 55,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 56,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 63,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 65,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 69,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 77,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 85,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 122,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 124,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 231,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 232,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 233,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 234,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 244,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 245,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 246,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 247,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 255,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 260,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 261,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 294,
+      "wave": 5,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 313,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 375,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 397,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 57,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 58,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 60,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 61,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 62,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 64,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 66,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 71,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 123,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 125,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 126,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 127,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 128,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 129,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 130,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 131,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 132,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 133,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 134,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 135,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 136,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 137,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 138,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 139,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 140,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 141,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 142,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 143,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 144,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 145,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 146,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 147,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 148,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 149,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 150,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 151,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 152,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 153,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 154,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 155,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 156,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 157,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 158,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 159,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 160,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 168,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 169,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 170,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 171,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 172,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 173,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 174,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 175,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 176,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 177,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 178,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 179,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 180,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 181,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 182,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 183,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 184,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 185,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 186,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 187,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 188,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 189,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 190,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 191,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 192,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 193,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 194,
+      "wave": 8,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 196,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 197,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 199,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 201,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 202,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 204,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 205,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 206,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 207,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 208,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 209,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 210,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 211,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 212,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 213,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 214,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 215,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 216,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 217,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 218,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 219,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 220,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 221,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 222,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 223,
+      "wave": 9,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 224,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 226,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 235,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 236,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 237,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 238,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 239,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 248,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 249,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 250,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 251,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 252,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 268,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 269,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 270,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 271,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 272,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 273,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 274,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 275,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 276,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 277,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 278,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 279,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 280,
+      "wave": 10,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 281,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 282,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 283,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 284,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 285,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 286,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 305,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 316,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 317,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 318,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 319,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 320,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 321,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 322,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 323,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 324,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 325,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 326,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 327,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 328,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 329,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 330,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 331,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 332,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 333,
+      "wave": 11,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 334,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 335,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 336,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 337,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 338,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 339,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 340,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 341,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 342,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 343,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 344,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 345,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 346,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 347,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 348,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 349,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 350,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 351,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 352,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 353,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 354,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 355,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 356,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 357,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 358,
+      "wave": 12,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 359,
+      "wave": 13,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 360,
+      "wave": 13,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 361,
+      "wave": 13,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 362,
+      "wave": 13,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 363,
+      "wave": 13,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 364,
+      "wave": 13,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 365,
+      "wave": 13,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 366,
+      "wave": 13,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 367,
+      "wave": 13,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 368,
+      "wave": 13,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 372,
+      "wave": 13,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 378,
+      "wave": 13,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 379,
+      "wave": 13,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 383,
+      "wave": 13,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 384,
+      "wave": 13,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 385,
+      "wave": 13,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 390,
+      "wave": 13,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 392,
+      "wave": 13,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 398,
+      "wave": 13,
+      "reason": "budget_or_rate_limit"
+    }
+  ]
+}

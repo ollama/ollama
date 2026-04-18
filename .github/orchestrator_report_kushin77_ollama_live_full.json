@@ -1,0 +1,3369 @@
+{
+  "timestamp": "2026-04-17T23:20:12.213661",
+  "repository": "kushin77/ollama",
+  "requested_repository": "kushin77/ollama",
+  "auth_source": "git_credentials",
+  "total_issues_processed": 100,
+  "pipeline_stages": [
+    "fetch",
+    "triage",
+    "analysis",
+    "github_updates"
+  ],
+  "pipeline": {
+    "fetch": {
+      "status": "success",
+      "issues_fetched": 100,
+      "passes": 3
+    },
+    "triage": {
+      "status": "success",
+      "total_triaged": 100,
+      "target_counts": {
+        "high": 4,
+        "medium": 16,
+        "low": 80
+      }
+    },
+    "analysis": {
+      "status": "success",
+      "analyzed_count": 100
+    },
+    "execution": {
+      "status": "success",
+      "dry_run": false,
+      "attempted": 100,
+      "succeeded": 100,
+      "failed": 0
+    }
+  },
+  "execution_results": [
+    {
+      "issue": 371,
+      "timestamp": "2026-04-17T23:18:14.549134",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/high, documentation, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2139\ufe0f Comment marker already exists: <!-- ollama-issue-orchestrator:v1 issue:371 -->"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 370,
+      "timestamp": "2026-04-17T23:18:15.049298",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/high, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2139\ufe0f Comment marker already exists: <!-- ollama-issue-orchestrator:v1 issue:370 -->"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 369,
+      "timestamp": "2026-04-17T23:18:15.604932",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/high, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2139\ufe0f Comment marker already exists: <!-- ollama-issue-orchestrator:v1 issue:369 -->"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 263,
+      "timestamp": "2026-04-17T23:18:16.110043",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/high, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271882106)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 315,
+      "timestamp": "2026-04-17T23:18:17.857569",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/medium, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271882229)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 314,
+      "timestamp": "2026-04-17T23:18:19.201745",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/medium, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271882294)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 313,
+      "timestamp": "2026-04-17T23:18:20.530383",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/medium, performance, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271882416)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 312,
+      "timestamp": "2026-04-17T23:18:21.854090",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/medium, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271882547)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 310,
+      "timestamp": "2026-04-17T23:18:23.210641",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/medium, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271882625)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 308,
+      "timestamp": "2026-04-17T23:18:24.496353",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/medium, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271882728)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 307,
+      "timestamp": "2026-04-17T23:18:25.885248",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/medium, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271882906)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 304,
+      "timestamp": "2026-04-17T23:18:27.797455",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/medium, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271882983)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 302,
+      "timestamp": "2026-04-17T23:18:29.034200",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/medium, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271883198)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 301,
+      "timestamp": "2026-04-17T23:18:30.353500",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/medium, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271883342)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 295,
+      "timestamp": "2026-04-17T23:18:31.857793",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/medium, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271883446)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 294,
+      "timestamp": "2026-04-17T23:18:33.075299",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/medium, documentation, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271883515)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 292,
+      "timestamp": "2026-04-17T23:18:34.286451",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/medium, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271883618)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 291,
+      "timestamp": "2026-04-17T23:18:35.618886",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/medium, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271883749)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 290,
+      "timestamp": "2026-04-17T23:18:36.935425",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/medium, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271883882)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 289,
+      "timestamp": "2026-04-17T23:18:38.296516",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/medium, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271883956)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 372,
+      "timestamp": "2026-04-17T23:18:40.044370",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2139\ufe0f Comment marker already exists: <!-- ollama-issue-orchestrator:v1 issue:372 -->"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 368,
+      "timestamp": "2026-04-17T23:18:40.665811",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2139\ufe0f Comment marker already exists: <!-- ollama-issue-orchestrator:v1 issue:368 -->"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 367,
+      "timestamp": "2026-04-17T23:18:41.199273",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2139\ufe0f Comment marker already exists: <!-- ollama-issue-orchestrator:v1 issue:367 -->"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 366,
+      "timestamp": "2026-04-17T23:18:41.698058",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2139\ufe0f Comment marker already exists: <!-- ollama-issue-orchestrator:v1 issue:366 -->"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 365,
+      "timestamp": "2026-04-17T23:18:42.222114",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2139\ufe0f Comment marker already exists: <!-- ollama-issue-orchestrator:v1 issue:365 -->"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 364,
+      "timestamp": "2026-04-17T23:18:42.803805",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2139\ufe0f Comment marker already exists: <!-- ollama-issue-orchestrator:v1 issue:364 -->"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 363,
+      "timestamp": "2026-04-17T23:18:43.371268",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2139\ufe0f Comment marker already exists: <!-- ollama-issue-orchestrator:v1 issue:363 -->"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 362,
+      "timestamp": "2026-04-17T23:18:43.915191",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2139\ufe0f Comment marker already exists: <!-- ollama-issue-orchestrator:v1 issue:362 -->"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 361,
+      "timestamp": "2026-04-17T23:18:44.440835",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2139\ufe0f Comment marker already exists: <!-- ollama-issue-orchestrator:v1 issue:361 -->"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 360,
+      "timestamp": "2026-04-17T23:18:44.949926",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2139\ufe0f Comment marker already exists: <!-- ollama-issue-orchestrator:v1 issue:360 -->"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 359,
+      "timestamp": "2026-04-17T23:18:45.449975",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2139\ufe0f Comment marker already exists: <!-- ollama-issue-orchestrator:v1 issue:359 -->"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 358,
+      "timestamp": "2026-04-17T23:18:45.968057",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2139\ufe0f Comment marker already exists: <!-- ollama-issue-orchestrator:v1 issue:358 -->"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 357,
+      "timestamp": "2026-04-17T23:18:46.454363",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2139\ufe0f Comment marker already exists: <!-- ollama-issue-orchestrator:v1 issue:357 -->"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 356,
+      "timestamp": "2026-04-17T23:18:46.975752",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2139\ufe0f Comment marker already exists: <!-- ollama-issue-orchestrator:v1 issue:356 -->"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 355,
+      "timestamp": "2026-04-17T23:18:47.469032",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2139\ufe0f Comment marker already exists: <!-- ollama-issue-orchestrator:v1 issue:355 -->"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 354,
+      "timestamp": "2026-04-17T23:18:47.965259",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2139\ufe0f Comment marker already exists: <!-- ollama-issue-orchestrator:v1 issue:354 -->"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 353,
+      "timestamp": "2026-04-17T23:18:48.458230",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2139\ufe0f Comment marker already exists: <!-- ollama-issue-orchestrator:v1 issue:353 -->"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 352,
+      "timestamp": "2026-04-17T23:18:48.968083",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271884804)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 351,
+      "timestamp": "2026-04-17T23:18:50.189162",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271884958)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 350,
+      "timestamp": "2026-04-17T23:18:51.391514",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271885041)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 349,
+      "timestamp": "2026-04-17T23:18:52.702327",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271885111)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 348,
+      "timestamp": "2026-04-17T23:18:53.867039",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271885206)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 347,
+      "timestamp": "2026-04-17T23:18:55.441360",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271885353)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 346,
+      "timestamp": "2026-04-17T23:18:56.672628",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271885439)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 345,
+      "timestamp": "2026-04-17T23:18:57.906909",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271885510)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 344,
+      "timestamp": "2026-04-17T23:18:59.378277",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271885654)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 343,
+      "timestamp": "2026-04-17T23:19:00.623177",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271885761)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 342,
+      "timestamp": "2026-04-17T23:19:02.046195",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271885841)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 341,
+      "timestamp": "2026-04-17T23:19:03.445950",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271885911)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 340,
+      "timestamp": "2026-04-17T23:19:04.776428",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271885976)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 339,
+      "timestamp": "2026-04-17T23:19:06.295926",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271886077)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 338,
+      "timestamp": "2026-04-17T23:19:07.598283",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271886236)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 337,
+      "timestamp": "2026-04-17T23:19:08.882096",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271886372)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 336,
+      "timestamp": "2026-04-17T23:19:10.258347",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271886475)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 335,
+      "timestamp": "2026-04-17T23:19:11.590234",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271886548)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 334,
+      "timestamp": "2026-04-17T23:19:12.992164",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271886633)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 333,
+      "timestamp": "2026-04-17T23:19:14.266408",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271886776)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 332,
+      "timestamp": "2026-04-17T23:19:15.532834",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271886925)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 331,
+      "timestamp": "2026-04-17T23:19:16.948387",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271887038)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 330,
+      "timestamp": "2026-04-17T23:19:18.441920",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271887114)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 329,
+      "timestamp": "2026-04-17T23:19:19.842681",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271887246)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 328,
+      "timestamp": "2026-04-17T23:19:21.366659",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271887303)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 327,
+      "timestamp": "2026-04-17T23:19:22.570828",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271887385)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 326,
+      "timestamp": "2026-04-17T23:19:23.845218",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271887527)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 325,
+      "timestamp": "2026-04-17T23:19:25.229323",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271887694)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 324,
+      "timestamp": "2026-04-17T23:19:27.243856",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271887818)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 323,
+      "timestamp": "2026-04-17T23:19:28.558833",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271887921)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 322,
+      "timestamp": "2026-04-17T23:19:29.873003",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271888033)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 321,
+      "timestamp": "2026-04-17T23:19:31.183423",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271888152)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 320,
+      "timestamp": "2026-04-17T23:19:32.457512",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271888306)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 319,
+      "timestamp": "2026-04-17T23:19:33.833988",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271888451)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 318,
+      "timestamp": "2026-04-17T23:19:35.026136",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271888565)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 317,
+      "timestamp": "2026-04-17T23:19:36.492940",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271888650)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 316,
+      "timestamp": "2026-04-17T23:19:37.728684",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271888741)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 311,
+      "timestamp": "2026-04-17T23:19:38.969670",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271888842)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 309,
+      "timestamp": "2026-04-17T23:19:40.356295",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271888916)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 306,
+      "timestamp": "2026-04-17T23:19:41.672719",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271888991)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 305,
+      "timestamp": "2026-04-17T23:19:42.997121",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, documentation, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271889111)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 303,
+      "timestamp": "2026-04-17T23:19:44.193600",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271889227)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 300,
+      "timestamp": "2026-04-17T23:19:45.589704",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271889322)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 299,
+      "timestamp": "2026-04-17T23:19:46.968320",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271889467)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 298,
+      "timestamp": "2026-04-17T23:19:48.263443",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271889591)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 297,
+      "timestamp": "2026-04-17T23:19:49.516196",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271889670)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 296,
+      "timestamp": "2026-04-17T23:19:50.773631",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271889788)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 293,
+      "timestamp": "2026-04-17T23:19:52.066492",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271889896)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 288,
+      "timestamp": "2026-04-17T23:19:53.374208",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271890006)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 287,
+      "timestamp": "2026-04-17T23:19:54.738215",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, bug, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271890107)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 286,
+      "timestamp": "2026-04-17T23:19:56.047903",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271890208)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 285,
+      "timestamp": "2026-04-17T23:19:57.253396",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271890297)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 284,
+      "timestamp": "2026-04-17T23:19:58.552584",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271890423)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 283,
+      "timestamp": "2026-04-17T23:19:59.838477",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271890499)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 282,
+      "timestamp": "2026-04-17T23:20:01.046162",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271890584)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 281,
+      "timestamp": "2026-04-17T23:20:02.225916",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271890736)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 280,
+      "timestamp": "2026-04-17T23:20:03.636054",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271890846)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 279,
+      "timestamp": "2026-04-17T23:20:04.702493",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271890885)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 278,
+      "timestamp": "2026-04-17T23:20:05.833062",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271891002)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 277,
+      "timestamp": "2026-04-17T23:20:07.053094",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271891184)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 276,
+      "timestamp": "2026-04-17T23:20:08.298118",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271891290)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 275,
+      "timestamp": "2026-04-17T23:20:09.555865",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271891388)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 274,
+      "timestamp": "2026-04-17T23:20:10.717950",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271891551)"
+        }
+      ],
+      "success": true
+    }
+  ],
+  "state_transitions": {
+    "371": [
+      {
+        "issue_num": 371,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:15.046270",
+        "metadata": {}
+      }
+    ],
+    "370": [
+      {
+        "issue_num": 370,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:15.601872",
+        "metadata": {}
+      }
+    ],
+    "369": [
+      {
+        "issue_num": 369,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:16.107035",
+        "metadata": {}
+      }
+    ],
+    "263": [
+      {
+        "issue_num": 263,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:17.324949",
+        "metadata": {}
+      }
+    ],
+    "315": [
+      {
+        "issue_num": 315,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:19.199018",
+        "metadata": {}
+      }
+    ],
+    "314": [
+      {
+        "issue_num": 314,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:20.527523",
+        "metadata": {}
+      }
+    ],
+    "313": [
+      {
+        "issue_num": 313,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:21.850724",
+        "metadata": {}
+      }
+    ],
+    "312": [
+      {
+        "issue_num": 312,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:23.207819",
+        "metadata": {}
+      }
+    ],
+    "310": [
+      {
+        "issue_num": 310,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:24.493322",
+        "metadata": {}
+      }
+    ],
+    "308": [
+      {
+        "issue_num": 308,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:25.882373",
+        "metadata": {}
+      }
+    ],
+    "307": [
+      {
+        "issue_num": 307,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:27.794721",
+        "metadata": {}
+      }
+    ],
+    "304": [
+      {
+        "issue_num": 304,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:29.031413",
+        "metadata": {}
+      }
+    ],
+    "302": [
+      {
+        "issue_num": 302,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:30.351182",
+        "metadata": {}
+      }
+    ],
+    "301": [
+      {
+        "issue_num": 301,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:31.854972",
+        "metadata": {}
+      }
+    ],
+    "295": [
+      {
+        "issue_num": 295,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:33.072465",
+        "metadata": {}
+      }
+    ],
+    "294": [
+      {
+        "issue_num": 294,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:34.283723",
+        "metadata": {}
+      }
+    ],
+    "292": [
+      {
+        "issue_num": 292,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:35.616165",
+        "metadata": {}
+      }
+    ],
+    "291": [
+      {
+        "issue_num": 291,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:36.932640",
+        "metadata": {}
+      }
+    ],
+    "290": [
+      {
+        "issue_num": 290,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:38.293743",
+        "metadata": {}
+      }
+    ],
+    "289": [
+      {
+        "issue_num": 289,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:39.568896",
+        "metadata": {}
+      }
+    ],
+    "372": [
+      {
+        "issue_num": 372,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:40.662981",
+        "metadata": {}
+      }
+    ],
+    "368": [
+      {
+        "issue_num": 368,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:41.196493",
+        "metadata": {}
+      }
+    ],
+    "367": [
+      {
+        "issue_num": 367,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:41.695258",
+        "metadata": {}
+      }
+    ],
+    "366": [
+      {
+        "issue_num": 366,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:42.220254",
+        "metadata": {}
+      }
+    ],
+    "365": [
+      {
+        "issue_num": 365,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:42.800662",
+        "metadata": {}
+      }
+    ],
+    "364": [
+      {
+        "issue_num": 364,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:43.367612",
+        "metadata": {}
+      }
+    ],
+    "363": [
+      {
+        "issue_num": 363,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:43.912359",
+        "metadata": {}
+      }
+    ],
+    "362": [
+      {
+        "issue_num": 362,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:44.438088",
+        "metadata": {}
+      }
+    ],
+    "361": [
+      {
+        "issue_num": 361,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:44.946937",
+        "metadata": {}
+      }
+    ],
+    "360": [
+      {
+        "issue_num": 360,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:45.445684",
+        "metadata": {}
+      }
+    ],
+    "359": [
+      {
+        "issue_num": 359,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:45.965340",
+        "metadata": {}
+      }
+    ],
+    "358": [
+      {
+        "issue_num": 358,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:46.451493",
+        "metadata": {}
+      }
+    ],
+    "357": [
+      {
+        "issue_num": 357,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:46.972881",
+        "metadata": {}
+      }
+    ],
+    "356": [
+      {
+        "issue_num": 356,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:47.467742",
+        "metadata": {}
+      }
+    ],
+    "355": [
+      {
+        "issue_num": 355,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:47.962414",
+        "metadata": {}
+      }
+    ],
+    "354": [
+      {
+        "issue_num": 354,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:48.455369",
+        "metadata": {}
+      }
+    ],
+    "353": [
+      {
+        "issue_num": 353,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:48.966956",
+        "metadata": {}
+      }
+    ],
+    "352": [
+      {
+        "issue_num": 352,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:50.187761",
+        "metadata": {}
+      }
+    ],
+    "351": [
+      {
+        "issue_num": 351,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:51.389903",
+        "metadata": {}
+      }
+    ],
+    "350": [
+      {
+        "issue_num": 350,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:52.699385",
+        "metadata": {}
+      }
+    ],
+    "349": [
+      {
+        "issue_num": 349,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:53.864229",
+        "metadata": {}
+      }
+    ],
+    "348": [
+      {
+        "issue_num": 348,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:55.438610",
+        "metadata": {}
+      }
+    ],
+    "347": [
+      {
+        "issue_num": 347,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:56.668809",
+        "metadata": {}
+      }
+    ],
+    "346": [
+      {
+        "issue_num": 346,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:57.904135",
+        "metadata": {}
+      }
+    ],
+    "345": [
+      {
+        "issue_num": 345,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:18:59.374458",
+        "metadata": {}
+      }
+    ],
+    "344": [
+      {
+        "issue_num": 344,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:00.620427",
+        "metadata": {}
+      }
+    ],
+    "343": [
+      {
+        "issue_num": 343,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:02.043405",
+        "metadata": {}
+      }
+    ],
+    "342": [
+      {
+        "issue_num": 342,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:03.442967",
+        "metadata": {}
+      }
+    ],
+    "341": [
+      {
+        "issue_num": 341,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:04.773601",
+        "metadata": {}
+      }
+    ],
+    "340": [
+      {
+        "issue_num": 340,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:06.293153",
+        "metadata": {}
+      }
+    ],
+    "339": [
+      {
+        "issue_num": 339,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:07.595556",
+        "metadata": {}
+      }
+    ],
+    "338": [
+      {
+        "issue_num": 338,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:08.879317",
+        "metadata": {}
+      }
+    ],
+    "337": [
+      {
+        "issue_num": 337,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:10.257201",
+        "metadata": {}
+      }
+    ],
+    "336": [
+      {
+        "issue_num": 336,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:11.586557",
+        "metadata": {}
+      }
+    ],
+    "335": [
+      {
+        "issue_num": 335,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:12.989178",
+        "metadata": {}
+      }
+    ],
+    "334": [
+      {
+        "issue_num": 334,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:14.263569",
+        "metadata": {}
+      }
+    ],
+    "333": [
+      {
+        "issue_num": 333,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:15.529072",
+        "metadata": {}
+      }
+    ],
+    "332": [
+      {
+        "issue_num": 332,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:16.945636",
+        "metadata": {}
+      }
+    ],
+    "331": [
+      {
+        "issue_num": 331,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:18.439000",
+        "metadata": {}
+      }
+    ],
+    "330": [
+      {
+        "issue_num": 330,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:19.839943",
+        "metadata": {}
+      }
+    ],
+    "329": [
+      {
+        "issue_num": 329,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:21.363913",
+        "metadata": {}
+      }
+    ],
+    "328": [
+      {
+        "issue_num": 328,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:22.568063",
+        "metadata": {}
+      }
+    ],
+    "327": [
+      {
+        "issue_num": 327,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:23.842403",
+        "metadata": {}
+      }
+    ],
+    "326": [
+      {
+        "issue_num": 326,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:25.226499",
+        "metadata": {}
+      }
+    ],
+    "325": [
+      {
+        "issue_num": 325,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:27.241121",
+        "metadata": {}
+      }
+    ],
+    "324": [
+      {
+        "issue_num": 324,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:28.556067",
+        "metadata": {}
+      }
+    ],
+    "323": [
+      {
+        "issue_num": 323,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:29.868375",
+        "metadata": {}
+      }
+    ],
+    "322": [
+      {
+        "issue_num": 322,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:31.180541",
+        "metadata": {}
+      }
+    ],
+    "321": [
+      {
+        "issue_num": 321,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:32.454638",
+        "metadata": {}
+      }
+    ],
+    "320": [
+      {
+        "issue_num": 320,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:33.831105",
+        "metadata": {}
+      }
+    ],
+    "319": [
+      {
+        "issue_num": 319,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:35.023060",
+        "metadata": {}
+      }
+    ],
+    "318": [
+      {
+        "issue_num": 318,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:36.490042",
+        "metadata": {}
+      }
+    ],
+    "317": [
+      {
+        "issue_num": 317,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:37.725803",
+        "metadata": {}
+      }
+    ],
+    "316": [
+      {
+        "issue_num": 316,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:38.966820",
+        "metadata": {}
+      }
+    ],
+    "311": [
+      {
+        "issue_num": 311,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:40.354992",
+        "metadata": {}
+      }
+    ],
+    "309": [
+      {
+        "issue_num": 309,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:41.669852",
+        "metadata": {}
+      }
+    ],
+    "306": [
+      {
+        "issue_num": 306,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:42.994226",
+        "metadata": {}
+      }
+    ],
+    "305": [
+      {
+        "issue_num": 305,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:44.190708",
+        "metadata": {}
+      }
+    ],
+    "303": [
+      {
+        "issue_num": 303,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:45.586842",
+        "metadata": {}
+      }
+    ],
+    "300": [
+      {
+        "issue_num": 300,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:46.964504",
+        "metadata": {}
+      }
+    ],
+    "299": [
+      {
+        "issue_num": 299,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:48.260511",
+        "metadata": {}
+      }
+    ],
+    "298": [
+      {
+        "issue_num": 298,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:49.512528",
+        "metadata": {}
+      }
+    ],
+    "297": [
+      {
+        "issue_num": 297,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:50.770293",
+        "metadata": {}
+      }
+    ],
+    "296": [
+      {
+        "issue_num": 296,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:52.063643",
+        "metadata": {}
+      }
+    ],
+    "293": [
+      {
+        "issue_num": 293,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:53.371315",
+        "metadata": {}
+      }
+    ],
+    "288": [
+      {
+        "issue_num": 288,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:54.734468",
+        "metadata": {}
+      }
+    ],
+    "287": [
+      {
+        "issue_num": 287,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:56.044850",
+        "metadata": {}
+      }
+    ],
+    "286": [
+      {
+        "issue_num": 286,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:57.250339",
+        "metadata": {}
+      }
+    ],
+    "285": [
+      {
+        "issue_num": 285,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:58.549582",
+        "metadata": {}
+      }
+    ],
+    "284": [
+      {
+        "issue_num": 284,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:19:59.834795",
+        "metadata": {}
+      }
+    ],
+    "283": [
+      {
+        "issue_num": 283,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:20:01.043174",
+        "metadata": {}
+      }
+    ],
+    "282": [
+      {
+        "issue_num": 282,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:20:02.222928",
+        "metadata": {}
+      }
+    ],
+    "281": [
+      {
+        "issue_num": 281,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:20:03.632954",
+        "metadata": {}
+      }
+    ],
+    "280": [
+      {
+        "issue_num": 280,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:20:04.699503",
+        "metadata": {}
+      }
+    ],
+    "279": [
+      {
+        "issue_num": 279,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:20:05.830109",
+        "metadata": {}
+      }
+    ],
+    "278": [
+      {
+        "issue_num": 278,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:20:07.050103",
+        "metadata": {}
+      }
+    ],
+    "277": [
+      {
+        "issue_num": 277,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:20:08.294399",
+        "metadata": {}
+      }
+    ],
+    "276": [
+      {
+        "issue_num": 276,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:20:09.554234",
+        "metadata": {}
+      }
+    ],
+    "275": [
+      {
+        "issue_num": 275,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:20:10.714928",
+        "metadata": {}
+      }
+    ],
+    "274": [
+      {
+        "issue_num": 274,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T23:20:12.209350",
+        "metadata": {}
+      }
+    ]
+  },
+  "run_config": {
+    "run_id": "9708eb9657b2",
+    "requested_repository": "kushin77/ollama",
+    "selected_repository": "kushin77/ollama",
+    "fallback_repository": "ollama/ollama",
+    "allow_fallback": false,
+    "all_severities": true,
+    "severity": "high",
+    "max_issues": 100,
+    "execute": true,
+    "auto_close_labels": [
+      "duplicate",
+      "invalid",
+      "wontfix"
+    ],
+    "auth_source": "git_credentials",
+    "token_present": true,
+    "config_hash": "6dab5c691628e980"
+  },
+  "orchestration": {
+    "run_id": "9708eb9657b2",
+    "mode": "all-severities",
+    "summaries": [
+      {
+        "timestamp": "2026-04-17T23:18:13.943421",
+        "repository": "kushin77/ollama",
+        "requested_repository": "kushin77/ollama",
+        "run_id": "9708eb9657b2",
+        "auth_source": "git_credentials",
+        "ops_ledger_file": ".github/issue_ops_ledger.jsonl",
+        "pipeline": {
+          "fetch": {
+            "status": "success",
+            "issues_fetched": 100
+          },
+          "triage": {
+            "status": "success",
+            "total_triaged": 100,
+            "target_severity": "high",
+            "target_count": 4
+          },
+          "analysis": {
+            "status": "success",
+            "analyzed_count": 4
+          },
+          "execution": {
+            "status": "success",
+            "dry_run": false,
+            "attempted": 4,
+            "succeeded": 4,
+            "failed": 0
+          }
+        },
+        "issues_processed": [
+          {
+            "number": 371,
+            "severity": "high",
+            "type": "documentation",
+            "title": "[P0][STRUCTURE] Resolve strict folder-structure validation failures",
+            "status": "analyzed"
+          },
+          {
+            "number": 370,
+            "severity": "high",
+            "type": "dependency",
+            "title": "[P0][IAC-IMMUTABLE] Enforce exact Terraform and provider version pins",
+            "status": "analyzed"
+          },
+          {
+            "number": 369,
+            "severity": "high",
+            "type": "dependency",
+            "title": "[P0][IAC-IMMUTABLE] Add missing Terraform lockfiles and governance gate",
+            "status": "analyzed"
+          },
+          {
+            "number": 263,
+            "severity": "high",
+            "type": "feature",
+            "title": "[P0][IAC-IMMUTABLE] Terraform Lockdown: Provider/Module Pinning and Lockfile Governance",
+            "status": "analyzed"
+          }
+        ]
+      },
+      {
+        "timestamp": "2026-04-17T23:18:17.325561",
+        "repository": "kushin77/ollama",
+        "requested_repository": "kushin77/ollama",
+        "run_id": "9708eb9657b2",
+        "auth_source": "git_credentials",
+        "ops_ledger_file": ".github/issue_ops_ledger.jsonl",
+        "pipeline": {
+          "fetch": {
+            "status": "success",
+            "issues_fetched": 100
+          },
+          "triage": {
+            "status": "success",
+            "total_triaged": 100,
+            "target_severity": "medium",
+            "target_count": 16
+          },
+          "analysis": {
+            "status": "success",
+            "analyzed_count": 16
+          },
+          "execution": {
+            "status": "success",
+            "dry_run": false,
+            "attempted": 16,
+            "succeeded": 16,
+            "failed": 0
+          }
+        },
+        "issues_processed": [
+          {
+            "number": 315,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][HARDWARE] User-facing tuning controls",
+            "status": "analyzed"
+          },
+          {
+            "number": 314,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][HARDWARE] Thermal and stability guardrails",
+            "status": "analyzed"
+          },
+          {
+            "number": 313,
+            "severity": "medium",
+            "type": "performance",
+            "title": "[BROWSER-CHAT][HARDWARE] Benchmark harness and publish pipeline",
+            "status": "analyzed"
+          },
+          {
+            "number": 312,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][HARDWARE] Runtime backend selector",
+            "status": "analyzed"
+          },
+          {
+            "number": 310,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][HARDWARE] Capability detection matrix (CPU/GPU/NPU)",
+            "status": "analyzed"
+          },
+          {
+            "number": 308,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][ASSIMILATION] Assimilation PR template and governance",
+            "status": "analyzed"
+          },
+          {
+            "number": 307,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][ASSIMILATION] Duplicate capability reconciliation",
+            "status": "analyzed"
+          },
+          {
+            "number": 304,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][COPILOT] Task replay and postmortem export",
+            "status": "analyzed"
+          },
+          {
+            "number": 302,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][COPILOT] Action evidence and verification ledger",
+            "status": "analyzed"
+          },
+          {
+            "number": 301,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][COPILOT] Host connector permission gates",
+            "status": "analyzed"
+          },
+          {
+            "number": 295,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][KNOWLEDGE] YouTube channel/page ingestion metadata",
+            "status": "analyzed"
+          },
+          {
+            "number": 294,
+            "severity": "medium",
+            "type": "documentation",
+            "title": "[BROWSER-CHAT][KNOWLEDGE] Curated source registry schema",
+            "status": "analyzed"
+          },
+          {
+            "number": 292,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][AGENT-FLEET] Fleet lifecycle operations UX",
+            "status": "analyzed"
+          },
+          {
+            "number": 291,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][AGENT-FLEET] Cross-agent handoff protocol",
+            "status": "analyzed"
+          },
+          {
+            "number": 290,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][AGENT-FLEET] Fleet dashboard and health panel",
+            "status": "analyzed"
+          },
+          {
+            "number": 289,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][AGENT-FLEET] Agent capability policy matrix",
+            "status": "analyzed"
+          }
+        ]
+      },
+      {
+        "timestamp": "2026-04-17T23:18:39.570550",
+        "repository": "kushin77/ollama",
+        "requested_repository": "kushin77/ollama",
+        "run_id": "9708eb9657b2",
+        "auth_source": "git_credentials",
+        "ops_ledger_file": ".github/issue_ops_ledger.jsonl",
+        "pipeline": {
+          "fetch": {
+            "status": "success",
+            "issues_fetched": 100
+          },
+          "triage": {
+            "status": "success",
+            "total_triaged": 100,
+            "target_severity": "low",
+            "target_count": 80
+          },
+          "analysis": {
+            "status": "success",
+            "analyzed_count": 80
+          },
+          "execution": {
+            "status": "success",
+            "dry_run": false,
+            "attempted": 80,
+            "succeeded": 80,
+            "failed": 0
+          }
+        },
+        "issues_processed": [
+          {
+            "number": 372,
+            "severity": "low",
+            "type": "feature",
+            "title": "[Cross-Repo] Publish Enterprise Integration Bundle for code-server (Contract, GPU Profile, Eval Artifacts)",
+            "status": "analyzed"
+          },
+          {
+            "number": 368,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-60] Launch readiness checklist synthesizer",
+            "status": "analyzed"
+          },
+          {
+            "number": 367,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-59] Dependency map generation for plans",
+            "status": "analyzed"
+          },
+          {
+            "number": 366,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-58] Risk register generation from thread",
+            "status": "analyzed"
+          },
+          {
+            "number": 365,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-57] Task effort estimation assistant",
+            "status": "analyzed"
+          },
+          {
+            "number": 364,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-56] Experiment logbook integration",
+            "status": "analyzed"
+          },
+          {
+            "number": 363,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-55] Hypothesis test planning assistant",
+            "status": "analyzed"
+          },
+          {
+            "number": 362,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-54] Debate mode with pros/cons framing",
+            "status": "analyzed"
+          },
+          {
+            "number": 361,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-53] Socratic tutor interaction mode",
+            "status": "analyzed"
+          },
+          {
+            "number": 360,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-52] Learner coaching progression mode",
+            "status": "analyzed"
+          },
+          {
+            "number": 359,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-51] Engineer deep-dive response mode",
+            "status": "analyzed"
+          },
+          {
+            "number": 358,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-50] Executive brief response mode",
+            "status": "analyzed"
+          },
+          {
+            "number": 357,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-49] Stakeholder summary generator",
+            "status": "analyzed"
+          },
+          {
+            "number": 356,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-48] Compliance evidence pack generator",
+            "status": "analyzed"
+          },
+          {
+            "number": 355,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-47] Incident response copiloting mode",
+            "status": "analyzed"
+          },
+          {
+            "number": 354,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-46] Plan rollback assistant",
+            "status": "analyzed"
+          },
+          {
+            "number": 353,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-45] Sandboxed what-if scenario simulator",
+            "status": "analyzed"
+          },
+          {
+            "number": 352,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-44] Guardrail override request workflow",
+            "status": "analyzed"
+          },
+          {
+            "number": 351,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-43] Policy explanation cards",
+            "status": "analyzed"
+          },
+          {
+            "number": 350,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-42] Claim-to-evidence trace map",
+            "status": "analyzed"
+          },
+          {
+            "number": 349,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-41] Quote exactness verifier",
+            "status": "analyzed"
+          },
+          {
+            "number": 348,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-40] Outdated-claim warning system",
+            "status": "analyzed"
+          },
+          {
+            "number": 347,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-39] Source trust badges and provenance tags",
+            "status": "analyzed"
+          },
+          {
+            "number": 346,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-38] Conversation branch and merge workflow",
+            "status": "analyzed"
+          },
+          {
+            "number": 345,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-37] Conflict-free response edit history",
+            "status": "analyzed"
+          },
+          {
+            "number": 344,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-36] Offline drafting and deferred send mode",
+            "status": "analyzed"
+          },
+          {
+            "number": 343,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-35] Keyboard-first command palette",
+            "status": "analyzed"
+          },
+          {
+            "number": 342,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-34] Accessibility readability mode",
+            "status": "analyzed"
+          },
+          {
+            "number": 341,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-33] Localization and cultural tone profiles",
+            "status": "analyzed"
+          },
+          {
+            "number": 340,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-32] Acronym expansion toggle",
+            "status": "analyzed"
+          },
+          {
+            "number": 339,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-31] Inline glossary for domain jargon",
+            "status": "analyzed"
+          },
+          {
+            "number": 338,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-30] Conversation export bundles (MD/JSON/PDF)",
+            "status": "analyzed"
+          },
+          {
+            "number": 337,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-29] Pinned artifact board in chat",
+            "status": "analyzed"
+          },
+          {
+            "number": 336,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-28] Timeline view for conversation milestones",
+            "status": "analyzed"
+          },
+          {
+            "number": 335,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-27] Checklist synthesis from conversation",
+            "status": "analyzed"
+          },
+          {
+            "number": 334,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-26] Action item extraction with owner/date",
+            "status": "analyzed"
+          },
+          {
+            "number": 333,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-25] Meeting notes to structured output templates",
+            "status": "analyzed"
+          },
+          {
+            "number": 332,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-24] Requirements capture form-to-chat bridge",
+            "status": "analyzed"
+          },
+          {
+            "number": 331,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-23] Missing-information detector",
+            "status": "analyzed"
+          },
+          {
+            "number": 330,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-22] Contradiction checker across thread",
+            "status": "analyzed"
+          },
+          {
+            "number": 329,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-21] Assumption extraction panel",
+            "status": "analyzed"
+          },
+          {
+            "number": 328,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-20] Safe guidance mode for novice users",
+            "status": "analyzed"
+          },
+          {
+            "number": 327,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-19] Side-by-side response compare workspace",
+            "status": "analyzed"
+          },
+          {
+            "number": 326,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-18] Response rubric scoring view",
+            "status": "analyzed"
+          },
+          {
+            "number": 325,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-17] Reusable prompt blocks library",
+            "status": "analyzed"
+          },
+          {
+            "number": 324,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-16] Prompt linting and anti-pattern detector",
+            "status": "analyzed"
+          },
+          {
+            "number": 323,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-15] Decision log capture from chat",
+            "status": "analyzed"
+          },
+          {
+            "number": 322,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-14] Conversation objective summary card",
+            "status": "analyzed"
+          },
+          {
+            "number": 321,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-13] Model behavior changelog panel",
+            "status": "analyzed"
+          },
+          {
+            "number": 320,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-12] Persona and tone presets",
+            "status": "analyzed"
+          },
+          {
+            "number": 319,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-11] Configurable verbosity profiles",
+            "status": "analyzed"
+          },
+          {
+            "number": 318,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-10] Follow-up question suggestion engine",
+            "status": "analyzed"
+          },
+          {
+            "number": 317,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-09] Uncertainty expression modes",
+            "status": "analyzed"
+          },
+          {
+            "number": 316,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-08] Citation confidence heatmap",
+            "status": "analyzed"
+          },
+          {
+            "number": 311,
+            "severity": "low",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][HARDWARE] Quantization profile strategy",
+            "status": "analyzed"
+          },
+          {
+            "number": 309,
+            "severity": "low",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][ASSIMILATION] Quarterly re-scan automation",
+            "status": "analyzed"
+          },
+          {
+            "number": 306,
+            "severity": "low",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][ASSIMILATION] Reuse scoring and fit analysis",
+            "status": "analyzed"
+          },
+          {
+            "number": 305,
+            "severity": "low",
+            "type": "documentation",
+            "title": "[BROWSER-CHAT][ASSIMILATION] Repo inventory crawler for kushin77 user+org",
+            "status": "analyzed"
+          },
+          {
+            "number": 303,
+            "severity": "low",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][COPILOT] Risky action simulation and dry-run",
+            "status": "analyzed"
+          },
+          {
+            "number": 300,
+            "severity": "low",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][COPILOT] Live task execution checkpoints",
+            "status": "analyzed"
+          },
+          {
+            "number": 299,
+            "severity": "low",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][COPILOT] Goal-to-plan decomposition mode",
+            "status": "analyzed"
+          },
+          {
+            "number": 298,
+            "severity": "low",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][KNOWLEDGE] Review workflow and trust scoring",
+            "status": "analyzed"
+          },
+          {
+            "number": 297,
+            "severity": "low",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][KNOWLEDGE] Knowledge packs for agent suites",
+            "status": "analyzed"
+          },
+          {
+            "number": 296,
+            "severity": "low",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][KNOWLEDGE] Stale/broken source detection",
+            "status": "analyzed"
+          },
+          {
+            "number": 293,
+            "severity": "low",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][AGENT-FLEET] Fleet audit trail and forensics",
+            "status": "analyzed"
+          },
+          {
+            "number": 288,
+            "severity": "low",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][AGENT-FLEET] Suite and farm hierarchy model",
+            "status": "analyzed"
+          },
+          {
+            "number": 287,
+            "severity": "low",
+            "type": "bug",
+            "title": "[BROWSER-CHAT][MASTER] Browser Chat Enhancement Program Tracker",
+            "status": "analyzed"
+          },
+          {
+            "number": 286,
+            "severity": "low",
+            "type": "feature",
+            "title": "[BROWSER-CHAT][EPIC] Local Hardware Acceleration Strategy for Faster Chat",
+            "status": "analyzed"
+          },
+          {
+            "number": 285,
+            "severity": "low",
+            "type": "feature",
+            "title": "[BROWSER-CHAT][EPIC] Sentiment Intelligence Program (Love/Hate Signal to Backlog)",
+            "status": "analyzed"
+          },
+          {
+            "number": 284,
+            "severity": "low",
+            "type": "feature",
+            "title": "[BROWSER-CHAT][EPIC] Cross-Repo Assimilation from kushin77 AI/Ollama Repositories",
+            "status": "analyzed"
+          },
+          {
+            "number": 283,
+            "severity": "low",
+            "type": "feature",
+            "title": "[BROWSER-CHAT][EPIC] Claude-Like Browser Copilot with Live Host Task Assistance",
+            "status": "analyzed"
+          },
+          {
+            "number": 282,
+            "severity": "low",
+            "type": "feature",
+            "title": "[BROWSER-CHAT][EPIC] Knowledge Hub for Curated Links and YouTube Learning Sources",
+            "status": "analyzed"
+          },
+          {
+            "number": 281,
+            "severity": "low",
+            "type": "feature",
+            "title": "[BROWSER-CHAT][EPIC] Agent Fleet Management for Multi-Agent Suites and Farms",
+            "status": "analyzed"
+          },
+          {
+            "number": 280,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-07] Hallucination risk indicator",
+            "status": "analyzed"
+          },
+          {
+            "number": 279,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-06] Evidence-backed answers with source cards",
+            "status": "analyzed"
+          },
+          {
+            "number": 278,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-05] One-click response style presets",
+            "status": "analyzed"
+          },
+          {
+            "number": 277,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-04] Task board view for chat commitments",
+            "status": "analyzed"
+          },
+          {
+            "number": 276,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-03] Prompt templates with parameter forms",
+            "status": "analyzed"
+          },
+          {
+            "number": 275,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-02] Conversation branching and compare mode",
+            "status": "analyzed"
+          },
+          {
+            "number": 274,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-01] Persistent project workspaces with pinned goals",
+            "status": "analyzed"
+          }
+        ]
+      }
+    ],
+    "timestamp": "2026-04-17T23:20:12.213537"
+  }
+}

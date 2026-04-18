@@ -1,0 +1,13 @@
+{
+  "generated_at_utc": "2026-04-18T04:42:06.389832+00:00",
+  "repository": "kushin77/ollama",
+  "manifest": ".github/autonomous_execution_batches.json",
+  "processed": 44,
+  "labels_added": 0,
+  "comments_added": 0,
+  "already_marked": 44,
+  "comment_deferred": 0,
+  "rate_limit_blocked": false,
+  "failures": [],
+  "deferred_comment_issues": []
+}

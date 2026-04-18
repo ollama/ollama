@@ -1,0 +1,59 @@
+name: Validate Landing Zone
+
+on:
+  pull_request:
+    paths: ['**']
+  push:
+    branches: [ main, 'feature/**' ]
+
+jobs:
+  validate-landing-zone:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyyaml detect-secrets
+
+      - name: Validate PMO metadata
+        run: bash scripts/pmo/validate-pmo-metadata.sh
+
+      - name: Validate folder structure
+        run: python3 scripts/validate_folder_structure.py --strict
+
+      - name: Secret scanning (detect-secrets)
+        run: |
+          detect-secrets scan --all-files || true
+
+      - name: Install test dependencies
+        run: |
+          pip install ruff mypy pytest pytest-cov pip-audit
+
+      - name: Run type checking (mypy)
+        run: mypy ollama/ --strict --exclude "ollama/_legacy"
+
+      - name: Run linting (ruff)
+        run: ruff check ollama/ --extend-exclude ollama/_legacy
+
+      - name: Run tests with coverage
+        run: pytest tests/ -v --cov=ollama --cov-report=term-missing --cov-report=xml --cov-fail-under=80
+
+      - name: Run security audit (pip-audit)
+        run: pip-audit
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false

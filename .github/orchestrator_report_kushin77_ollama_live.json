@@ -1,0 +1,808 @@
+{
+  "timestamp": "2026-04-17T22:39:13.997472",
+  "repository": "kushin77/ollama",
+  "requested_repository": "kushin77/ollama",
+  "auth_source": "git_credentials",
+  "total_issues_processed": 20,
+  "pipeline_stages": [
+    "fetch",
+    "triage",
+    "analysis",
+    "github_updates"
+  ],
+  "pipeline": {
+    "fetch": {
+      "status": "success",
+      "issues_fetched": 20,
+      "passes": 3
+    },
+    "triage": {
+      "status": "success",
+      "total_triaged": 20,
+      "target_counts": {
+        "high": 3,
+        "medium": 0,
+        "low": 17
+      }
+    },
+    "analysis": {
+      "status": "success",
+      "analyzed_count": 20
+    },
+    "execution": {
+      "status": "success",
+      "dry_run": false,
+      "attempted": 20,
+      "succeeded": 20,
+      "failed": 0
+    }
+  },
+  "execution_results": [
+    {
+      "issue": 371,
+      "timestamp": "2026-04-17T22:38:46.548960",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/high, documentation, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271728315)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 370,
+      "timestamp": "2026-04-17T22:38:47.960618",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/high, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271728384)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 369,
+      "timestamp": "2026-04-17T22:38:49.320983",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/high, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271728456)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 372,
+      "timestamp": "2026-04-17T22:38:51.470205",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271728559)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 368,
+      "timestamp": "2026-04-17T22:38:52.796687",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271728711)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 367,
+      "timestamp": "2026-04-17T22:38:54.222287",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271728869)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 366,
+      "timestamp": "2026-04-17T22:38:55.509451",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271728982)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 365,
+      "timestamp": "2026-04-17T22:38:57.020260",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271729071)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 364,
+      "timestamp": "2026-04-17T22:38:58.581962",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271729157)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 363,
+      "timestamp": "2026-04-17T22:38:59.943485",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271729238)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 362,
+      "timestamp": "2026-04-17T22:39:01.282097",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271729321)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 361,
+      "timestamp": "2026-04-17T22:39:02.502158",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271729395)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 360,
+      "timestamp": "2026-04-17T22:39:03.773437",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271729465)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 359,
+      "timestamp": "2026-04-17T22:39:05.065156",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271729533)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 358,
+      "timestamp": "2026-04-17T22:39:06.277699",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271729601)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 357,
+      "timestamp": "2026-04-17T22:39:07.571470",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271729673)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 356,
+      "timestamp": "2026-04-17T22:39:08.809714",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271729736)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 355,
+      "timestamp": "2026-04-17T22:39:10.068092",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271729871)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 354,
+      "timestamp": "2026-04-17T22:39:11.510424",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271730028)"
+        }
+      ],
+      "success": true
+    },
+    {
+      "issue": 353,
+      "timestamp": "2026-04-17T22:39:12.806201",
+      "actions": [
+        {
+          "action": "add_labels",
+          "success": true,
+          "message": "\u2705 Added labels: priority/low, enhancement, status/triaged"
+        },
+        {
+          "action": "add_summary_comment",
+          "success": true,
+          "message": "\u2705 Comment added (ID: 4271730113)"
+        }
+      ],
+      "success": true
+    }
+  ],
+  "state_transitions": {
+    "371": [
+      {
+        "issue_num": 371,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T22:38:47.957847",
+        "metadata": {}
+      }
+    ],
+    "370": [
+      {
+        "issue_num": 370,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T22:38:49.318166",
+        "metadata": {}
+      }
+    ],
+    "369": [
+      {
+        "issue_num": 369,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T22:38:50.716289",
+        "metadata": {}
+      }
+    ],
+    "372": [
+      {
+        "issue_num": 372,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T22:38:52.792879",
+        "metadata": {}
+      }
+    ],
+    "368": [
+      {
+        "issue_num": 368,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T22:38:54.219618",
+        "metadata": {}
+      }
+    ],
+    "367": [
+      {
+        "issue_num": 367,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T22:38:55.506596",
+        "metadata": {}
+      }
+    ],
+    "366": [
+      {
+        "issue_num": 366,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T22:38:57.017544",
+        "metadata": {}
+      }
+    ],
+    "365": [
+      {
+        "issue_num": 365,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T22:38:58.579229",
+        "metadata": {}
+      }
+    ],
+    "364": [
+      {
+        "issue_num": 364,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T22:38:59.940719",
+        "metadata": {}
+      }
+    ],
+    "363": [
+      {
+        "issue_num": 363,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T22:39:01.279306",
+        "metadata": {}
+      }
+    ],
+    "362": [
+      {
+        "issue_num": 362,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T22:39:02.499223",
+        "metadata": {}
+      }
+    ],
+    "361": [
+      {
+        "issue_num": 361,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T22:39:03.770734",
+        "metadata": {}
+      }
+    ],
+    "360": [
+      {
+        "issue_num": 360,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T22:39:05.062373",
+        "metadata": {}
+      }
+    ],
+    "359": [
+      {
+        "issue_num": 359,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T22:39:06.274090",
+        "metadata": {}
+      }
+    ],
+    "358": [
+      {
+        "issue_num": 358,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T22:39:07.567545",
+        "metadata": {}
+      }
+    ],
+    "357": [
+      {
+        "issue_num": 357,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T22:39:08.806754",
+        "metadata": {}
+      }
+    ],
+    "356": [
+      {
+        "issue_num": 356,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T22:39:10.065146",
+        "metadata": {}
+      }
+    ],
+    "355": [
+      {
+        "issue_num": 355,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T22:39:11.507569",
+        "metadata": {}
+      }
+    ],
+    "354": [
+      {
+        "issue_num": 354,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T22:39:12.804549",
+        "metadata": {}
+      }
+    ],
+    "353": [
+      {
+        "issue_num": 353,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T22:39:13.996631",
+        "metadata": {}
+      }
+    ]
+  },
+  "run_config": {
+    "run_id": "60f0f50941cc",
+    "requested_repository": "kushin77/ollama",
+    "selected_repository": "kushin77/ollama",
+    "fallback_repository": "ollama/ollama",
+    "allow_fallback": false,
+    "all_severities": true,
+    "severity": "high",
+    "max_issues": 20,
+    "execute": true,
+    "auto_close_labels": [
+      "duplicate",
+      "invalid",
+      "wontfix"
+    ],
+    "auth_source": "git_credentials",
+    "token_present": true,
+    "config_hash": "83833df0395ae54e"
+  },
+  "orchestration": {
+    "run_id": "60f0f50941cc",
+    "mode": "all-severities",
+    "summaries": [
+      {
+        "timestamp": "2026-04-17T22:38:46.096858",
+        "repository": "kushin77/ollama",
+        "requested_repository": "kushin77/ollama",
+        "run_id": "60f0f50941cc",
+        "auth_source": "git_credentials",
+        "ops_ledger_file": ".github/issue_ops_ledger.jsonl",
+        "pipeline": {
+          "fetch": {
+            "status": "success",
+            "issues_fetched": 20
+          },
+          "triage": {
+            "status": "success",
+            "total_triaged": 20,
+            "target_severity": "high",
+            "target_count": 3
+          },
+          "analysis": {
+            "status": "success",
+            "analyzed_count": 3
+          },
+          "execution": {
+            "status": "success",
+            "dry_run": false,
+            "attempted": 3,
+            "succeeded": 3,
+            "failed": 0
+          }
+        },
+        "issues_processed": [
+          {
+            "number": 371,
+            "severity": "high",
+            "type": "documentation",
+            "title": "[P0][STRUCTURE] Resolve strict folder-structure validation failures",
+            "status": "analyzed"
+          },
+          {
+            "number": 370,
+            "severity": "high",
+            "type": "dependency",
+            "title": "[P0][IAC-IMMUTABLE] Enforce exact Terraform and provider version pins",
+            "status": "analyzed"
+          },
+          {
+            "number": 369,
+            "severity": "high",
+            "type": "dependency",
+            "title": "[P0][IAC-IMMUTABLE] Add missing Terraform lockfiles and governance gate",
+            "status": "analyzed"
+          }
+        ]
+      },
+      {
+        "timestamp": "2026-04-17T22:38:50.717333",
+        "repository": "kushin77/ollama",
+        "requested_repository": "kushin77/ollama",
+        "run_id": "60f0f50941cc",
+        "auth_source": "git_credentials",
+        "ops_ledger_file": ".github/issue_ops_ledger.jsonl",
+        "pipeline": {
+          "fetch": {
+            "status": "success",
+            "issues_fetched": 20
+          },
+          "triage": {
+            "status": "success",
+            "total_triaged": 20,
+            "target_severity": "medium",
+            "target_count": 0
+          },
+          "analysis": {
+            "status": "success",
+            "analyzed_count": 0
+          },
+          "execution": {
+            "status": "success",
+            "dry_run": false,
+            "attempted": 0,
+            "succeeded": 0,
+            "failed": 0
+          }
+        },
+        "issues_processed": []
+      },
+      {
+        "timestamp": "2026-04-17T22:38:51.095888",
+        "repository": "kushin77/ollama",
+        "requested_repository": "kushin77/ollama",
+        "run_id": "60f0f50941cc",
+        "auth_source": "git_credentials",
+        "ops_ledger_file": ".github/issue_ops_ledger.jsonl",
+        "pipeline": {
+          "fetch": {
+            "status": "success",
+            "issues_fetched": 20
+          },
+          "triage": {
+            "status": "success",
+            "total_triaged": 20,
+            "target_severity": "low",
+            "target_count": 17
+          },
+          "analysis": {
+            "status": "success",
+            "analyzed_count": 17
+          },
+          "execution": {
+            "status": "success",
+            "dry_run": false,
+            "attempted": 17,
+            "succeeded": 17,
+            "failed": 0
+          }
+        },
+        "issues_processed": [
+          {
+            "number": 372,
+            "severity": "low",
+            "type": "feature",
+            "title": "[Cross-Repo] Publish Enterprise Integration Bundle for code-server (Contract, GPU Profile, Eval Artifacts)",
+            "status": "analyzed"
+          },
+          {
+            "number": 368,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-60] Launch readiness checklist synthesizer",
+            "status": "analyzed"
+          },
+          {
+            "number": 367,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-59] Dependency map generation for plans",
+            "status": "analyzed"
+          },
+          {
+            "number": 366,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-58] Risk register generation from thread",
+            "status": "analyzed"
+          },
+          {
+            "number": 365,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-57] Task effort estimation assistant",
+            "status": "analyzed"
+          },
+          {
+            "number": 364,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-56] Experiment logbook integration",
+            "status": "analyzed"
+          },
+          {
+            "number": 363,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-55] Hypothesis test planning assistant",
+            "status": "analyzed"
+          },
+          {
+            "number": 362,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-54] Debate mode with pros/cons framing",
+            "status": "analyzed"
+          },
+          {
+            "number": 361,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-53] Socratic tutor interaction mode",
+            "status": "analyzed"
+          },
+          {
+            "number": 360,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-52] Learner coaching progression mode",
+            "status": "analyzed"
+          },
+          {
+            "number": 359,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-51] Engineer deep-dive response mode",
+            "status": "analyzed"
+          },
+          {
+            "number": 358,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-50] Executive brief response mode",
+            "status": "analyzed"
+          },
+          {
+            "number": 357,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-49] Stakeholder summary generator",
+            "status": "analyzed"
+          },
+          {
+            "number": 356,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-48] Compliance evidence pack generator",
+            "status": "analyzed"
+          },
+          {
+            "number": 355,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-47] Incident response copiloting mode",
+            "status": "analyzed"
+          },
+          {
+            "number": 354,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-46] Plan rollback assistant",
+            "status": "analyzed"
+          },
+          {
+            "number": 353,
+            "severity": "low",
+            "type": "feature",
+            "title": "[SENTIMENT][ENHANCEMENT-45] Sandboxed what-if scenario simulator",
+            "status": "analyzed"
+          }
+        ]
+      }
+    ],
+    "timestamp": "2026-04-17T22:39:13.997424"
+  }
+}

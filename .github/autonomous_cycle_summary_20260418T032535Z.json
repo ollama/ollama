@@ -1,0 +1,12 @@
+{
+  "generated_at_utc": "2026-04-18T03:25:54.867291+00:00",
+  "repository": "kushin77/ollama",
+  "open_issue_count": 315,
+  "wave_manifest": ".github/autonomous_execution_batches.json",
+  "latest_wave_report": ".github/wave_assignment_report_20260418T032535Z.json",
+  "deferred_queue": ".github/wave_assignment_deferred_queue.json",
+  "rate_limit_blocked": false,
+  "processed": 49,
+  "comments_added": 20,
+  "comment_deferred": 29
+}

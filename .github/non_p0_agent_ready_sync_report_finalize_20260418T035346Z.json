@@ -1,0 +1,768 @@
+{
+  "generated_at": "2026-04-18T03:52:00.047382+00:00",
+  "repo": "kushin77/ollama",
+  "scope": "non-p0-agent-ready-sync-finalize",
+  "missing_before": 95,
+  "actions": [
+    {
+      "issue": 236,
+      "title": "[P2][ONPREM-FAANG] Domain Adapters (LoRA) + Safe Rollout Controls",
+      "url": "https://github.com/kushin77/ollama/issues/236",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 237,
+      "title": "[P2][ONPREM-FAANG] Agentic Tool Execution Layer (Controlled On-Prem Actions)",
+      "url": "https://github.com/kushin77/ollama/issues/237",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 238,
+      "title": "[P2][ONPREM-FAANG] Multimodal Document Pipeline (Vision + PDF/DOCX + Unified Retrieval)",
+      "url": "https://github.com/kushin77/ollama/issues/238",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 239,
+      "title": "[P2][ONPREM-FAANG] Developer Experience Acceleration (Slash Commands + Prompt Packs + Task Automation)",
+      "url": "https://github.com/kushin77/ollama/issues/239",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 244,
+      "title": "[P1][ONPREM-FAANG] Ensemble + Judge Pipeline for High-Stakes Responses",
+      "url": "https://github.com/kushin77/ollama/issues/244",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 245,
+      "title": "[P1][ONPREM-FAANG] Safety and Policy Enforcement Engine",
+      "url": "https://github.com/kushin77/ollama/issues/245",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 246,
+      "title": "[P1][ONPREM-FAANG] Continuous Evaluation Harness (Regression + Release Gates)",
+      "url": "https://github.com/kushin77/ollama/issues/246",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 247,
+      "title": "[P1][ONPREM-FAANG] Reliability Hardening (Backpressure, Circuit Breakers, Graceful Degradation)",
+      "url": "https://github.com/kushin77/ollama/issues/247",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 248,
+      "title": "[P2][ONPREM-FAANG] Multi-Turn Memory Architecture (Session + Semantic + Summarization)",
+      "url": "https://github.com/kushin77/ollama/issues/248",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 249,
+      "title": "[P2][ONPREM-FAANG] Domain Adapters (LoRA) + Safe Rollout Controls",
+      "url": "https://github.com/kushin77/ollama/issues/249",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 250,
+      "title": "[P2][ONPREM-FAANG] Agentic Tool Execution Layer (Controlled On-Prem Actions)",
+      "url": "https://github.com/kushin77/ollama/issues/250",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 251,
+      "title": "[P2][ONPREM-FAANG] Multimodal Document Pipeline (Vision + PDF/DOCX + Unified Retrieval)",
+      "url": "https://github.com/kushin77/ollama/issues/251",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 252,
+      "title": "[P2][ONPREM-FAANG] Developer Experience Acceleration (Slash Commands + Prompt Packs + Task Automation)",
+      "url": "https://github.com/kushin77/ollama/issues/252",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 255,
+      "title": "[P1][ONPREM-FAANG][IAC] Drift Detection, Policy-as-Code, and Auto-Remediation Controls",
+      "url": "https://github.com/kushin77/ollama/issues/255",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 260,
+      "title": "[P1][DRIFT] Scheduled Drift Detection Job + Alert Routing",
+      "url": "https://github.com/kushin77/ollama/issues/260",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 261,
+      "title": "[P1][DRIFT] Policy-as-Code Ruleset (Conftest/OPA) for IaC Invariants",
+      "url": "https://github.com/kushin77/ollama/issues/261",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 268,
+      "title": "[BROWSER-CHAT][EPIC] Agent Fleet Management for Multi-Agent Suites and Farms",
+      "url": "https://github.com/kushin77/ollama/issues/268",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 269,
+      "title": "[BROWSER-CHAT][EPIC] Knowledge Hub for Curated Links and YouTube Learning Sources",
+      "url": "https://github.com/kushin77/ollama/issues/269",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 270,
+      "title": "[BROWSER-CHAT][EPIC] Claude-Like Browser Copilot with Live Host Task Assistance",
+      "url": "https://github.com/kushin77/ollama/issues/270",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 271,
+      "title": "[BROWSER-CHAT][EPIC] Cross-Repo Assimilation from kushin77 AI/Ollama Repositories",
+      "url": "https://github.com/kushin77/ollama/issues/271",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 272,
+      "title": "[BROWSER-CHAT][EPIC] Sentiment Intelligence Program (Love/Hate Signal to Backlog)",
+      "url": "https://github.com/kushin77/ollama/issues/272",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 273,
+      "title": "[BROWSER-CHAT][EPIC] Local Hardware Acceleration Strategy for Faster Chat",
+      "url": "https://github.com/kushin77/ollama/issues/273",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 274,
+      "title": "[SENTIMENT][ENHANCEMENT-01] Persistent project workspaces with pinned goals",
+      "url": "https://github.com/kushin77/ollama/issues/274",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 275,
+      "title": "[SENTIMENT][ENHANCEMENT-02] Conversation branching and compare mode",
+      "url": "https://github.com/kushin77/ollama/issues/275",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 276,
+      "title": "[SENTIMENT][ENHANCEMENT-03] Prompt templates with parameter forms",
+      "url": "https://github.com/kushin77/ollama/issues/276",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 277,
+      "title": "[SENTIMENT][ENHANCEMENT-04] Task board view for chat commitments",
+      "url": "https://github.com/kushin77/ollama/issues/277",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 278,
+      "title": "[SENTIMENT][ENHANCEMENT-05] One-click response style presets",
+      "url": "https://github.com/kushin77/ollama/issues/278",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 279,
+      "title": "[SENTIMENT][ENHANCEMENT-06] Evidence-backed answers with source cards",
+      "url": "https://github.com/kushin77/ollama/issues/279",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 280,
+      "title": "[SENTIMENT][ENHANCEMENT-07] Hallucination risk indicator",
+      "url": "https://github.com/kushin77/ollama/issues/280",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 281,
+      "title": "[BROWSER-CHAT][EPIC] Agent Fleet Management for Multi-Agent Suites and Farms",
+      "url": "https://github.com/kushin77/ollama/issues/281",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 282,
+      "title": "[BROWSER-CHAT][EPIC] Knowledge Hub for Curated Links and YouTube Learning Sources",
+      "url": "https://github.com/kushin77/ollama/issues/282",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 283,
+      "title": "[BROWSER-CHAT][EPIC] Claude-Like Browser Copilot with Live Host Task Assistance",
+      "url": "https://github.com/kushin77/ollama/issues/283",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 284,
+      "title": "[BROWSER-CHAT][EPIC] Cross-Repo Assimilation from kushin77 AI/Ollama Repositories",
+      "url": "https://github.com/kushin77/ollama/issues/284",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 285,
+      "title": "[BROWSER-CHAT][EPIC] Sentiment Intelligence Program (Love/Hate Signal to Backlog)",
+      "url": "https://github.com/kushin77/ollama/issues/285",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 286,
+      "title": "[BROWSER-CHAT][EPIC] Local Hardware Acceleration Strategy for Faster Chat",
+      "url": "https://github.com/kushin77/ollama/issues/286",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 294,
+      "title": "[BROWSER-CHAT][KNOWLEDGE] Curated source registry schema",
+      "url": "https://github.com/kushin77/ollama/issues/294",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 305,
+      "title": "[BROWSER-CHAT][ASSIMILATION] Repo inventory crawler for kushin77 user+org",
+      "url": "https://github.com/kushin77/ollama/issues/305",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 313,
+      "title": "[BROWSER-CHAT][HARDWARE] Benchmark harness and publish pipeline",
+      "url": "https://github.com/kushin77/ollama/issues/313",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 316,
+      "title": "[SENTIMENT][ENHANCEMENT-08] Citation confidence heatmap",
+      "url": "https://github.com/kushin77/ollama/issues/316",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 317,
+      "title": "[SENTIMENT][ENHANCEMENT-09] Uncertainty expression modes",
+      "url": "https://github.com/kushin77/ollama/issues/317",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 318,
+      "title": "[SENTIMENT][ENHANCEMENT-10] Follow-up question suggestion engine",
+      "url": "https://github.com/kushin77/ollama/issues/318",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 319,
+      "title": "[SENTIMENT][ENHANCEMENT-11] Configurable verbosity profiles",
+      "url": "https://github.com/kushin77/ollama/issues/319",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 320,
+      "title": "[SENTIMENT][ENHANCEMENT-12] Persona and tone presets",
+      "url": "https://github.com/kushin77/ollama/issues/320",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 321,
+      "title": "[SENTIMENT][ENHANCEMENT-13] Model behavior changelog panel",
+      "url": "https://github.com/kushin77/ollama/issues/321",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 322,
+      "title": "[SENTIMENT][ENHANCEMENT-14] Conversation objective summary card",
+      "url": "https://github.com/kushin77/ollama/issues/322",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 323,
+      "title": "[SENTIMENT][ENHANCEMENT-15] Decision log capture from chat",
+      "url": "https://github.com/kushin77/ollama/issues/323",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 324,
+      "title": "[SENTIMENT][ENHANCEMENT-16] Prompt linting and anti-pattern detector",
+      "url": "https://github.com/kushin77/ollama/issues/324",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 325,
+      "title": "[SENTIMENT][ENHANCEMENT-17] Reusable prompt blocks library",
+      "url": "https://github.com/kushin77/ollama/issues/325",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 326,
+      "title": "[SENTIMENT][ENHANCEMENT-18] Response rubric scoring view",
+      "url": "https://github.com/kushin77/ollama/issues/326",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 327,
+      "title": "[SENTIMENT][ENHANCEMENT-19] Side-by-side response compare workspace",
+      "url": "https://github.com/kushin77/ollama/issues/327",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 328,
+      "title": "[SENTIMENT][ENHANCEMENT-20] Safe guidance mode for novice users",
+      "url": "https://github.com/kushin77/ollama/issues/328",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 329,
+      "title": "[SENTIMENT][ENHANCEMENT-21] Assumption extraction panel",
+      "url": "https://github.com/kushin77/ollama/issues/329",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 330,
+      "title": "[SENTIMENT][ENHANCEMENT-22] Contradiction checker across thread",
+      "url": "https://github.com/kushin77/ollama/issues/330",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 331,
+      "title": "[SENTIMENT][ENHANCEMENT-23] Missing-information detector",
+      "url": "https://github.com/kushin77/ollama/issues/331",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 332,
+      "title": "[SENTIMENT][ENHANCEMENT-24] Requirements capture form-to-chat bridge",
+      "url": "https://github.com/kushin77/ollama/issues/332",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 333,
+      "title": "[SENTIMENT][ENHANCEMENT-25] Meeting notes to structured output templates",
+      "url": "https://github.com/kushin77/ollama/issues/333",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 334,
+      "title": "[SENTIMENT][ENHANCEMENT-26] Action item extraction with owner/date",
+      "url": "https://github.com/kushin77/ollama/issues/334",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 335,
+      "title": "[SENTIMENT][ENHANCEMENT-27] Checklist synthesis from conversation",
+      "url": "https://github.com/kushin77/ollama/issues/335",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 336,
+      "title": "[SENTIMENT][ENHANCEMENT-28] Timeline view for conversation milestones",
+      "url": "https://github.com/kushin77/ollama/issues/336",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 337,
+      "title": "[SENTIMENT][ENHANCEMENT-29] Pinned artifact board in chat",
+      "url": "https://github.com/kushin77/ollama/issues/337",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 338,
+      "title": "[SENTIMENT][ENHANCEMENT-30] Conversation export bundles (MD/JSON/PDF)",
+      "url": "https://github.com/kushin77/ollama/issues/338",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 339,
+      "title": "[SENTIMENT][ENHANCEMENT-31] Inline glossary for domain jargon",
+      "url": "https://github.com/kushin77/ollama/issues/339",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 340,
+      "title": "[SENTIMENT][ENHANCEMENT-32] Acronym expansion toggle",
+      "url": "https://github.com/kushin77/ollama/issues/340",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 341,
+      "title": "[SENTIMENT][ENHANCEMENT-33] Localization and cultural tone profiles",
+      "url": "https://github.com/kushin77/ollama/issues/341",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 342,
+      "title": "[SENTIMENT][ENHANCEMENT-34] Accessibility readability mode",
+      "url": "https://github.com/kushin77/ollama/issues/342",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 343,
+      "title": "[SENTIMENT][ENHANCEMENT-35] Keyboard-first command palette",
+      "url": "https://github.com/kushin77/ollama/issues/343",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 344,
+      "title": "[SENTIMENT][ENHANCEMENT-36] Offline drafting and deferred send mode",
+      "url": "https://github.com/kushin77/ollama/issues/344",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 345,
+      "title": "[SENTIMENT][ENHANCEMENT-37] Conflict-free response edit history",
+      "url": "https://github.com/kushin77/ollama/issues/345",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 346,
+      "title": "[SENTIMENT][ENHANCEMENT-38] Conversation branch and merge workflow",
+      "url": "https://github.com/kushin77/ollama/issues/346",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 347,
+      "title": "[SENTIMENT][ENHANCEMENT-39] Source trust badges and provenance tags",
+      "url": "https://github.com/kushin77/ollama/issues/347",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 348,
+      "title": "[SENTIMENT][ENHANCEMENT-40] Outdated-claim warning system",
+      "url": "https://github.com/kushin77/ollama/issues/348",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 349,
+      "title": "[SENTIMENT][ENHANCEMENT-41] Quote exactness verifier",
+      "url": "https://github.com/kushin77/ollama/issues/349",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 350,
+      "title": "[SENTIMENT][ENHANCEMENT-42] Claim-to-evidence trace map",
+      "url": "https://github.com/kushin77/ollama/issues/350",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 351,
+      "title": "[SENTIMENT][ENHANCEMENT-43] Policy explanation cards",
+      "url": "https://github.com/kushin77/ollama/issues/351",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 352,
+      "title": "[SENTIMENT][ENHANCEMENT-44] Guardrail override request workflow",
+      "url": "https://github.com/kushin77/ollama/issues/352",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 353,
+      "title": "[SENTIMENT][ENHANCEMENT-45] Sandboxed what-if scenario simulator",
+      "url": "https://github.com/kushin77/ollama/issues/353",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 354,
+      "title": "[SENTIMENT][ENHANCEMENT-46] Plan rollback assistant",
+      "url": "https://github.com/kushin77/ollama/issues/354",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 355,
+      "title": "[SENTIMENT][ENHANCEMENT-47] Incident response copiloting mode",
+      "url": "https://github.com/kushin77/ollama/issues/355",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 356,
+      "title": "[SENTIMENT][ENHANCEMENT-48] Compliance evidence pack generator",
+      "url": "https://github.com/kushin77/ollama/issues/356",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 357,
+      "title": "[SENTIMENT][ENHANCEMENT-49] Stakeholder summary generator",
+      "url": "https://github.com/kushin77/ollama/issues/357",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 358,
+      "title": "[SENTIMENT][ENHANCEMENT-50] Executive brief response mode",
+      "url": "https://github.com/kushin77/ollama/issues/358",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 359,
+      "title": "[SENTIMENT][ENHANCEMENT-51] Engineer deep-dive response mode",
+      "url": "https://github.com/kushin77/ollama/issues/359",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 360,
+      "title": "[SENTIMENT][ENHANCEMENT-52] Learner coaching progression mode",
+      "url": "https://github.com/kushin77/ollama/issues/360",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 361,
+      "title": "[SENTIMENT][ENHANCEMENT-53] Socratic tutor interaction mode",
+      "url": "https://github.com/kushin77/ollama/issues/361",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 362,
+      "title": "[SENTIMENT][ENHANCEMENT-54] Debate mode with pros/cons framing",
+      "url": "https://github.com/kushin77/ollama/issues/362",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 363,
+      "title": "[SENTIMENT][ENHANCEMENT-55] Hypothesis test planning assistant",
+      "url": "https://github.com/kushin77/ollama/issues/363",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 364,
+      "title": "[SENTIMENT][ENHANCEMENT-56] Experiment logbook integration",
+      "url": "https://github.com/kushin77/ollama/issues/364",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 365,
+      "title": "[SENTIMENT][ENHANCEMENT-57] Task effort estimation assistant",
+      "url": "https://github.com/kushin77/ollama/issues/365",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 366,
+      "title": "[SENTIMENT][ENHANCEMENT-58] Risk register generation from thread",
+      "url": "https://github.com/kushin77/ollama/issues/366",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 367,
+      "title": "[SENTIMENT][ENHANCEMENT-59] Dependency map generation for plans",
+      "url": "https://github.com/kushin77/ollama/issues/367",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 368,
+      "title": "[SENTIMENT][ENHANCEMENT-60] Launch readiness checklist synthesizer",
+      "url": "https://github.com/kushin77/ollama/issues/368",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 372,
+      "title": "[Cross-Repo] Publish Enterprise Integration Bundle for code-server (Contract, GPU Profile, Eval Artifacts)",
+      "url": "https://github.com/kushin77/ollama/issues/372",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 375,
+      "title": "feat(secrets): Add in-process secret cache with TTL and cache-miss metrics",
+      "url": "https://github.com/kushin77/ollama/issues/375",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 378,
+      "title": "feat(observability): Replace hand-rolled Prometheus text with prometheus/client_golang",
+      "url": "https://github.com/kushin77/ollama/issues/378",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    },
+    {
+      "issue": 379,
+      "title": "feat(observability): Add W3C TraceContext propagation (traceparent/tracestate headers)",
+      "url": "https://github.com/kushin77/ollama/issues/379",
+      "updated": true,
+      "attempts": 1,
+      "error": ""
+    }
+  ]
+}

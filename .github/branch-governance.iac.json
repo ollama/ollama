@@ -1,0 +1,170 @@
+{
+  "governance": {
+    "enabled": true,
+    "enforcement_level": "strict",
+    "last_updated": "2026-04-18T01:50:00Z",
+    "version": "1.0",
+    "description": "Branch lifecycle governance and automated cleanup policies"
+  },
+  "auto_cleanup": {
+    "enabled": true,
+    "schedule": "0 2 * * 0",
+    "schedule_description": "Weekly, Sundays 2 AM UTC",
+    "dry_run_by_default": true,
+    "require_manual_approval": false,
+    "audit_trail_enabled": true,
+    "audit_trail_path": ".github/branch_cleanup_audit.jsonl"
+  },
+  "branch_rules": {
+    "main": {
+      "max_age_days": null,
+      "delete_after_merge": false,
+      "protected": true,
+      "description": "Primary release branch"
+    },
+    "release/*": {
+      "max_age_days": 365,
+      "delete_after_merge": false,
+      "protected": true,
+      "description": "Release branches (vX.Y.Z)"
+    },
+    "feature/*": {
+      "max_age_days": 180,
+      "delete_after_merge": true,
+      "protected": false,
+      "warn_at_days": 90,
+      "require_upstream_before_delete": true,
+      "description": "Feature development branches"
+    },
+    "fix/*": {
+      "max_age_days": 90,
+      "delete_after_merge": true,
+      "protected": false,
+      "warn_at_days": 60,
+      "description": "Bug fix branches"
+    },
+    "chore/*": {
+      "max_age_days": 60,
+      "delete_after_merge": true,
+      "protected": false,
+      "description": "Maintenance and refactoring"
+    },
+    "automation/*": {
+      "max_age_days": 90,
+      "delete_after_merge": false,
+      "protected": true,
+      "description": "Automated workflow branches"
+    },
+    "docs/*": {
+      "max_age_days": 60,
+      "delete_after_merge": true,
+      "protected": false,
+      "description": "Documentation updates"
+    },
+    "dependabot/*": {
+      "max_age_days": 21,
+      "delete_after_merge": true,
+      "protected": false,
+      "auto_merge_enabled": false,
+      "description": "Dependency updates (auto)"
+    },
+    "experiment/*": {
+      "max_age_days": 30,
+      "delete_after_merge": true,
+      "protected": false,
+      "warn_at_days": 14,
+      "description": "Experimental work (disposable)"
+    },
+    "wip/*": {
+      "max_age_days": 14,
+      "delete_after_merge": true,
+      "protected": false,
+      "description": "Work in progress (disposable)"
+    },
+    "poc/*": {
+      "max_age_days": 30,
+      "delete_after_merge": true,
+      "protected": false,
+      "description": "Proof of concept (disposable)"
+    }
+  },
+  "stale_branch_definition": {
+    "criteria": [
+      "No commits for 180 days",
+      "Not merged to main or any release branch",
+      "No linked open PRs",
+      "No 'keep-branch' label"
+    ],
+    "warning_threshold_days": 90
+  },
+  "exceptions": {
+    "keep_branch_label": {
+      "name": "keep-branch",
+      "effect": "Exempts branch from auto-cleanup",
+      "usage": "Add to PR description: [keep-branch]"
+    },
+    "stale_warning_label": {
+      "name": "stale-warning",
+      "effect": "Applied at 90 days old, requires activity",
+      "action": "Auto-added by system"
+    }
+  },
+  "monitoring": {
+    "enabled": true,
+    "metrics_file": ".github/branch_stats.json",
+    "update_frequency": "weekly",
+    "tracked_metrics": [
+      "total_branch_count",
+      "stale_branch_percentage",
+      "avg_branch_lifetime",
+      "cleanup_success_rate",
+      "merged_branches_not_deleted"
+    ],
+    "target_metrics": {
+      "max_total_branches": 50,
+      "max_stale_percentage": 5,
+      "min_cleanup_success_rate": 95
+    }
+  },
+  "notifications": {
+    "enabled": true,
+    "on_deletion": true,
+    "on_warnings": true,
+    "on_errors": true,
+    "channels": [
+      "github_workflow_summary",
+      "audit_trail"
+    ]
+  },
+  "recovery": {
+    "retention_days": 90,
+    "audit_trail_immutable": true,
+    "deleted_branch_recoverable": true,
+    "recovery_instructions": "Use commit hash from audit trail with: git checkout <hash> && git checkout -b <branch>"
+  },
+  "naming_conventions": {
+    "required": true,
+    "pattern": "^(feature|fix|chore|docs|automation|experiment|wip|poc|release)/[a-z0-9][a-z0-9-]*$",
+    "examples": [
+      "feature/ai-inference-optimization",
+      "fix/race-condition-in-cache",
+      "chore/update-dependencies",
+      "experiment/new-tokenizer"
+    ],
+    "enforcement": {
+      "pre_push_hook": true,
+      "ci_check": true,
+      "pr_requirement": true
+    }
+  },
+  "rollout": {
+    "phase": 3,
+    "started": "2026-04-18",
+    "status": "full_automation",
+    "timeline": {
+      "phase_1_awareness": "Week 1 - Documentation and announcement",
+      "phase_2_soft_enforcement": "Week 2 - Dry-run with notifications",
+      "phase_3_full_automation": "Week 3+ - Automatic deletion enabled"
+    }
+  }
+}

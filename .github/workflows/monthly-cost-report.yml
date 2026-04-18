@@ -1,0 +1,88 @@
+name: Monthly Cost Report
+
+on:
+  schedule:
+    # Run on the 1st of every month at 9am PT (5pm UTC)
+    - cron: "0 17 1 * *"
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  generate-cost-report:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyyaml tabulate
+
+      - name: Generate cost attribution report
+        id: cost-report
+        run: |
+          # Extract cost center and team from pmo.yaml
+          COST_CENTER=$(yq eval '.financial.cost_center' pmo.yaml)
+          TEAM=$(yq eval '.organizational.team' pmo.yaml)
+          PROJECT=$(yq eval '.organizational.project' pmo.yaml)
+
+          # Generate report (placeholder - replace with actual GCP cost API)
+          echo "# 💰 Monthly Cost Report - $(date +'%B %Y')" > cost-report.md
+          echo "" >> cost-report.md
+          echo "## Project: $PROJECT" >> cost-report.md
+          echo "**Team**: $TEAM" >> cost-report.md
+          echo "**Cost Center**: $COST_CENTER" >> cost-report.md
+          echo "" >> cost-report.md
+          echo "## Summary" >> cost-report.md
+          echo "" >> cost-report.md
+          echo "| Resource | Cost (USD) | Change (%) |" >> cost-report.md
+          echo "|----------|-----------|-----------|" >> cost-report.md
+          echo "| Compute Engine | $0.00 | - |" >> cost-report.md
+          echo "| Cloud Storage | $0.00 | - |" >> cost-report.md
+          echo "| Cloud Build | $0.00 | - |" >> cost-report.md
+          echo "| Load Balancer | $0.00 | - |" >> cost-report.md
+          echo "| **Total** | **$0.00** | **-** |" >> cost-report.md
+          echo "" >> cost-report.md
+          echo "## Recommendations" >> cost-report.md
+          echo "" >> cost-report.md
+          echo "- ℹ️ Connect GCP Billing API to enable real-time cost tracking" >> cost-report.md
+          echo "- 📊 Configure cost alerts for budget thresholds" >> cost-report.md
+          echo "- 🏷️ Ensure all resources have proper cost attribution labels" >> cost-report.md
+
+          # Save report
+          cat cost-report.md
+
+      - name: Create GitHub issue with cost report
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const report = fs.readFileSync('cost-report.md', 'utf8');
+
+            const month = new Date().toLocaleString('default', { month: 'long' });
+            const year = new Date().getFullYear();
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `💰 Monthly Cost Report - ${month} ${year}`,
+              body: report,
+              labels: ['pmo', 'cost-tracking', 'monthly-report', 'automated']
+            });
+
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: monthly-cost-report-${{ github.run_id }}
+          path: cost-report.md
+          retention-days: 90

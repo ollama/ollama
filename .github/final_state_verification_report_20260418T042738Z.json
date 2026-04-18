@@ -1,0 +1,32 @@
+{
+  "generated_at_utc": "2026-04-18T04:27:38.518356+00:00",
+  "repository": "kushin77/ollama",
+  "verification_scope": "final-state",
+  "git": {
+    "branch": "feature/42-kubernetes-hub",
+    "head_short": "27ba60d26",
+    "working_tree_changes": [
+      " M cmd/github-issues/main_test.go",
+      " M tests/unit/test_execute_local_triage.py"
+    ],
+    "local_branches": [
+      "* feature/42-kubernetes-hub 27ba60d26 [origin/feature/42-kubernetes-hub] triage: refresh live manifest and shard apply checkpoint",
+      "  main                      f817b84a6 [origin/main] docs: final verification of work completion - all deliverables complete and committed"
+    ],
+    "remote_prune_dry_run_output": [],
+    "stale_remote_branches_detected": false
+  },
+  "issues": {
+    "open_total": 294,
+    "agent_ready_total": 294,
+    "agent_ready_coverage_pct": 100.0,
+    "p0_total": 36,
+    "p0_shard_labelled_total": 36,
+    "p0_shard_coverage_pct": 100.0
+  },
+  "checks": {
+    "all_open_agent_ready": true,
+    "all_p0_sharded": true,
+    "remote_prune_clean": true
+  }
+}

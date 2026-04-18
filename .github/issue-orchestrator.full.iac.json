@@ -1,0 +1,33 @@
+{
+  "version": "1.1",
+  "description": "Full autonomous issue orchestration config (IaC, idempotent)",
+  "repository": {
+    "primary": "kushin77/ollama",
+    "fallback": "ollama/ollama",
+    "allow_fallback": false
+  },
+  "execution": {
+    "all_severities": true,
+    "max_issues": 1000,
+    "execute": true,
+    "auto_close_labels": [],
+    "close_policy": {
+      "enabled": false,
+      "requires_linked_implementation": true,
+      "requires_verification_evidence": true
+    },
+    "output": ".github/orchestrator_report_autonomous_full.json"
+  },
+  "auth": {
+    "mode": "git-credential-gsm",
+    "ollama_gsm_enabled": true,
+    "gsm_project": "gcp-eiq",
+    "gsm_secret_name": "prod-github-token"
+  },
+  "governance": {
+    "immutable_ledger": ".github/issue_ops_ledger.jsonl",
+    "immutable_state_dir": ".github/state",
+    "require_commit_for_existence": true,
+    "idempotent_lock_file": ".github/state/.issue_orchestrator.lock"
+  }
+}

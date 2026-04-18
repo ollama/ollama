@@ -1,0 +1,228 @@
+{
+  "generated_at_utc": "2026-04-18T04:45:14.956095+00:00",
+  "repository": "kushin77/ollama",
+  "manifest": ".github/agent_ready_shards.json",
+  "processed": 294,
+  "updated": 0,
+  "already_correct": 263,
+  "failed": 31,
+  "failures": [
+    {
+      "issue": 358,
+      "step": "add",
+      "label": "shard/2",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID C54A:185909:244A8F9:9267C7B:69E30C8A and timestamp 2026-04-18 04:46:03 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 359,
+      "step": "add",
+      "label": "shard/3",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID C584:35A26:2448804:92AE0C6:69E30C8B and timestamp 2026-04-18 04:46:03 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 360,
+      "step": "add",
+      "label": "shard/4",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID C5B0:178650:249CF30:945D889:69E30C8B and timestamp 2026-04-18 04:46:03 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 361,
+      "step": "add",
+      "label": "shard/1",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID C5E4:12561:22ED623:8D32D5A:69E30C8B and timestamp 2026-04-18 04:46:03 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 362,
+      "step": "add",
+      "label": "shard/2",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID AB24:3FEA5:26E10AD:9D3D6E7:69E30C8B and timestamp 2026-04-18 04:46:03 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 363,
+      "step": "add",
+      "label": "shard/3",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID AB68:1E9C:1D26D2D:76CA1DE:69E30C8B and timestamp 2026-04-18 04:46:03 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 364,
+      "step": "add",
+      "label": "shard/4",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID AB8E:174F04:24EE8DE:95DF9FF:69E30C8B and timestamp 2026-04-18 04:46:03 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 365,
+      "step": "add",
+      "label": "shard/1",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID ABBA:308293:2436E30:927F81D:69E30C8B and timestamp 2026-04-18 04:46:03 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 366,
+      "step": "add",
+      "label": "shard/2",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID ABCE:2EA0CE:2385959:8FD67C0:69E30C8B and timestamp 2026-04-18 04:46:03 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 367,
+      "step": "add",
+      "label": "shard/3",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID AC1A:28E2B9:25DF0D4:9918D86:69E30C8B and timestamp 2026-04-18 04:46:03 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 368,
+      "step": "add",
+      "label": "shard/4",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID AC3A:168EDF:26A7CCE:9E3B4C0:69E30C8C and timestamp 2026-04-18 04:46:04 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 369,
+      "step": "add",
+      "label": "shard/2",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID AC74:1E2C9E:24EE8C0:94C51A5:69E30C8C and timestamp 2026-04-18 04:46:04 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 370,
+      "step": "add",
+      "label": "shard/3",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID ACB2:391532:250FE53:9608F65:69E30C8C and timestamp 2026-04-18 04:46:04 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 371,
+      "step": "add",
+      "label": "shard/4",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID ACEC:1C0583:23DA958:90D0043:69E30C8C and timestamp 2026-04-18 04:46:04 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 372,
+      "step": "add",
+      "label": "shard/1",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID AD10:185909:244AFEB:9269822:69E30C8C and timestamp 2026-04-18 04:46:04 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 373,
+      "step": "add",
+      "label": "shard/3",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID AD4A:13A62F:2492607:953664C:69E30C8C and timestamp 2026-04-18 04:46:04 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 374,
+      "step": "add",
+      "label": "shard/4",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID ADAA:1E75:130A4E8:4D21904:69E30C8C and timestamp 2026-04-18 04:46:04 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 375,
+      "step": "add",
+      "label": "shard/4",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID ADEE:1C0583:23DABA6:90D08DA:69E30C8C and timestamp 2026-04-18 04:46:04 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 376,
+      "step": "add",
+      "label": "shard/1",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID AE1A:1E2C9E:24EEC62:94C6029:69E30C8D and timestamp 2026-04-18 04:46:05 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 378,
+      "step": "add",
+      "label": "shard/2",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID AE56:168EDF:26A82DC:9E3CEB4:69E30C8D and timestamp 2026-04-18 04:46:05 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 379,
+      "step": "add",
+      "label": "shard/3",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID AE86:28E2B9:25DF6A2:991A4F3:69E30C8D and timestamp 2026-04-18 04:46:05 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 389,
+      "step": "add",
+      "label": "shard/1",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID AEB2:B35F:24FD500:95F7663:69E30C8D and timestamp 2026-04-18 04:46:05 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 390,
+      "step": "add",
+      "label": "shard/4",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID AEDE:391532:2510423:960A712:69E30C8D and timestamp 2026-04-18 04:46:05 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 391,
+      "step": "add",
+      "label": "shard/2",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID AF34:185909:244B44A:926A99E:69E30C8D and timestamp 2026-04-18 04:46:05 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 392,
+      "step": "add",
+      "label": "shard/1",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID AF6C:3FEA5:26E1BF5:9D40453:69E30C8D and timestamp 2026-04-18 04:46:05 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 393,
+      "step": "add",
+      "label": "shard/2",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID AFB0:9D145:241D1F6:921C709:69E30C8D and timestamp 2026-04-18 04:46:05 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 394,
+      "step": "add",
+      "label": "shard/3",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID AFEC:308293:24377A6:9281E0D:69E30C8D and timestamp 2026-04-18 04:46:05 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 395,
+      "step": "add",
+      "label": "shard/3",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID B01A:35A26:24495C2:92B18B6:69E30C8E and timestamp 2026-04-18 04:46:06 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 396,
+      "step": "add",
+      "label": "shard/4",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID B050:6A1B0:24564E9:931C79C:69E30C8E and timestamp 2026-04-18 04:46:06 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 397,
+      "step": "add",
+      "label": "shard/1",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID B07C:178650:249DE44:946169C:69E30C8E and timestamp 2026-04-18 04:46:06 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    },
+    {
+      "issue": 398,
+      "step": "add",
+      "label": "shard/2",
+      "status": 403,
+      "message": "API rate limit exceeded for user ID 18682900. If you reach out to GitHub Support for help, please include the request ID B0D0:35A26:244975B:92B1F66:69E30C8E and timestamp 2026-04-18 04:46:06 UTC. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)"
+    }
+  ]
+}

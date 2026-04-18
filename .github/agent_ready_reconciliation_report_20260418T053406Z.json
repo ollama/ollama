@@ -1,0 +1,58 @@
+{
+  "generated_at_utc": "2026-04-18T05:34:06.097314+00:00",
+  "repository": "kushin77/ollama",
+  "real_open_issue_count": 294,
+  "open_pull_request_count": 3,
+  "pull_request_label_cleanup": {
+    "processed_pull_requests": 3,
+    "updated_pull_requests": 3,
+    "removed_labels": [
+      {
+        "number": 400,
+        "labels": [
+          "shard/1"
+        ]
+      },
+      {
+        "number": 399,
+        "labels": [
+          "agent-ready",
+          "shard/4"
+        ]
+      },
+      {
+        "number": 388,
+        "labels": [
+          "agent-ready",
+          "shard/4"
+        ]
+      }
+    ],
+    "failures": []
+  },
+  "queue_result": {
+    "generated_at_utc": "2026-04-18T05:33:12.685004+00:00",
+    "repository": "kushin77/ollama",
+    "open_issue_count": 294,
+    "agent_ready_count": 294,
+    "output": ".github/agent_ready_queue.json"
+  },
+  "shard_result": {
+    "output": ".github/agent_ready_shards.json",
+    "open_agent_ready_count": 294,
+    "shard_count": 4,
+    "shard_sizes": [
+      74,
+      74,
+      73,
+      73
+    ]
+  },
+  "apply_result": {
+    "report": ".github/agent_ready_shard_apply_report_20260418T053406Z.json",
+    "processed": 294,
+    "updated": 0,
+    "already_correct": 294,
+    "failed": 0
+  }
+}

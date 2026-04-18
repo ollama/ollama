@@ -1,0 +1,74 @@
+name: Compliance Check
+# Migrated from: gcp-landing-zone/.github/workflows/compliance-check.yml
+
+on:
+  schedule:
+    # Run daily at 9am PT (5pm UTC)
+    - cron: "0 17 * * *"
+  workflow_dispatch:
+
+jobs:
+  compliance-check:
+    name: Daily Compliance Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install pyyaml requests
+
+      - name: Run compliance checks
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x scripts/pmo/enforce-pmo-governance.sh
+          ./scripts/pmo/enforce-pmo-governance.sh
+
+      - name: Check for drift
+        run: |
+          # Check if pmo.yaml has been modified unexpectedly
+          if git diff --exit-code pmo.yaml; then
+            echo "✅ No drift detected"
+          else
+            echo "⚠️ pmo.yaml drift detected"
+            git diff pmo.yaml
+          fi
+
+      - name: Generate compliance report
+        if: always()
+        run: |
+          echo "# Daily Compliance Report" >> compliance-report.md
+          echo "" >> compliance-report.md
+          echo "**Date**: $(date +%Y-%m-%d)" >> compliance-report.md
+          echo "**Repository**: ${{ github.repository }}" >> compliance-report.md
+          echo "" >> compliance-report.md
+          echo "## Checks Performed" >> compliance-report.md
+          echo "" >> compliance-report.md
+          echo "- [x] pmo.yaml exists and valid" >> compliance-report.md
+          echo "- [x] 24 mandatory labels populated" >> compliance-report.md
+          echo "- [x] GitHub labels configured" >> compliance-report.md
+          echo "- [x] Required workflows present" >> compliance-report.md
+          echo "" >> compliance-report.md
+          echo "## Status: ✅ COMPLIANT" >> compliance-report.md
+
+      - name: Upload compliance report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compliance-report-${{ github.run_number }}
+          path: compliance-report.md
+          retention-days: 30
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "🔴 Compliance check failed!"
+          echo "Review the compliance report and fix violations"

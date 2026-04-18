@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+#
+# Pre-commit hook for PMO governance enforcement
+# Installed at: .git/hooks/pre-commit
+#
+# This hook enforces:
+# - GPG commit signing
+# - pmo.yaml validation
+# - No credentials in commits
+# - Code quality checks (optional)
+
+set -euo pipefail
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo -e "${GREEN}🔍 Running pre-commit checks...${NC}"
+
+# Check 1: Ensure GPG signing is enabled
+if [ "$(git config commit.gpgsign)" != "true" ]; then
+    echo -e "${RED}❌ GPG signing not enabled${NC}"
+    echo -e "${YELLOW}Enable with: git config commit.gpgsign true${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}✅ GPG signing enabled${NC}"
+
+# Check 2: Validate pmo.yaml if it exists
+if [ -f "pmo.yaml" ]; then
+    if command -v yq &> /dev/null; then
+        if ! yq eval '.' pmo.yaml > /dev/null 2>&1; then
+            echo -e "${RED}❌ pmo.yaml has syntax errors${NC}"
+            exit 1
+        fi
+
+        # Check mandatory labels (min 20/24)
+        LABELS_COUNT=$(yq eval '[.organizational, .lifecycle, .business, .technical, .financial, .git] | flatten | length' pmo.yaml)
+        if [ "$LABELS_COUNT" -lt 20 ]; then
+            echo -e "${RED}❌ pmo.yaml has insufficient labels ($LABELS_COUNT/24)${NC}"
+            echo -e "${YELLOW}Run: ./scripts/pmo/validate-pmo-metadata.sh${NC}"
+            exit 1
+        fi
+
+        echo -e "${GREEN}✅ pmo.yaml valid ($LABELS_COUNT/24 labels)${NC}"
+    fi
+fi
+
+# Check 3: Scan for credentials
+if command -v gitleaks &> /dev/null; then
+    if ! gitleaks protect --staged --verbose 2>/dev/null; then
+        echo -e "${RED}❌ Potential credentials detected in commit${NC}"
+        echo -e "${YELLOW}Review and remove sensitive data${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}✅ No credentials detected${NC}"
+fi
+
+# Check 4: Run tests if test directory exists (optional, can disable)
+if [ -d "tests" ] && [ "${SKIP_TESTS:-false}" != "true" ]; then
+    if command -v pytest &> /dev/null; then
+        echo -e "${YELLOW}⚠️  Running tests (disable with SKIP_TESTS=true)...${NC}"
+        if ! pytest tests/ -x -q 2>/dev/null; then
+            echo -e "${RED}❌ Tests failing${NC}"
+            echo -e "${YELLOW}Fix tests or skip with: SKIP_TESTS=true git commit${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}✅ Tests passing${NC}"
+    fi
+fi
+
+echo -e "${GREEN}✅ All pre-commit checks passed${NC}"
+exit 0

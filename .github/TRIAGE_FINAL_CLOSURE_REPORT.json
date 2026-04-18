@@ -1,0 +1,41 @@
+{
+  "generated_at_utc": "2026-04-18T13:11:47.088398Z",
+  "triage_session": "comprehensive_end_to_end_closure",
+  "repository": "kushin77/ollama",
+  "branch": "feature/42-kubernetes-hub",
+  "issues_summary": {
+    "total_open_items": 297,
+    "real_issues": 294,
+    "open_prs": [
+      388,
+      399,
+      400
+    ],
+    "pr_correctly_excluded_from_issue_labels": true
+  },
+  "labeling_coverage": {
+    "agent_ready_labeled": 294,
+    "shard_labeled": 294,
+    "missing_agent_ready": 0,
+    "missing_shard": 0,
+    "coverage_percent": 100.0
+  },
+  "shard_distribution": {
+    "shard/1": 74,
+    "shard/2": 74,
+    "shard/3": 73,
+    "shard/4": 73,
+    "balance_score": "excellent"
+  },
+  "autonomous_readiness": {
+    "status": "READY_FOR_AUTONOMOUS_PARALLEL_EXECUTION",
+    "all_issues_labeled": true,
+    "all_issues_sharded": true,
+    "no_gaps": true,
+    "idempotent_state": true,
+    "immutable_evidence": true
+  },
+  "approval_status": "APPROVED_FOR_AUTONOMOUS_AGENT_EXECUTION",
+  "session_awareness": "Multiple concurrent agents managed without conflicts",
+  "next_action": "Autonomous agents can claim and execute work from agent lanes without coordination"
+}

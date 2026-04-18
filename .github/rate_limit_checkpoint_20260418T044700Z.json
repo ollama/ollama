@@ -1,0 +1,14 @@
+{
+  "generated_at_utc": "2026-04-18T04:47:02.966518+00:00",
+  "repository": "kushin77/ollama",
+  "scope": "shard-sync-next-step",
+  "status": "blocked_by_core_rate_limit",
+  "core_remaining": 0,
+  "reset_unix": 1776487637,
+  "latest_shard_report": ".github/agent_ready_shard_apply_report_20260418T044635Z.json",
+  "notes": [
+    "Shard apply attempted with corrected queue input.",
+    "Most label updates failed with GitHub core API rate-limit 403 responses.",
+    "Proceed again after reset window using bounded max-issues batches."
+  ]
+}

@@ -1,0 +1,108 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ollama
+
+# Reference the base configuration
+bases:
+  - ../
+
+# Production-specific patches
+patches:
+  - target:
+      kind: Deployment
+      labelSelector: "app=ollama-api"
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 5
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 512Mi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 1Gi
+      - op: replace
+        path: /spec/strategy/type
+        value: RollingUpdate
+      - op: replace
+        path: /spec/strategy/rollingUpdate/maxSurge
+        value: 1
+      - op: replace
+        path: /spec/strategy/rollingUpdate/maxUnavailable
+        value: 0
+
+  - target:
+      kind: HorizontalPodAutoscaler
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 3
+      - op: replace
+        path: /spec/maxReplicas
+        value: 20
+
+  - target:
+      kind: Deployment
+      labelSelector: "app=postgres"
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 1Gi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 2Gi
+
+  - target:
+      kind: Deployment
+      labelSelector: "app=prometheus"
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 512Mi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 2Gi
+
+  - target:
+      kind: PodDisruptionBudget
+    patch: |-
+      - op: replace
+        path: /spec/minAvailable
+        value: 2
+
+# Production ConfigMap
+configMapGenerator:
+  - name: ollama-config
+    behavior: merge
+    literals:
+      - ENVIRONMENT=production
+      - LOG_LEVEL=warn
+      - DATABASE_POOL_SIZE=50
+      - CACHE_TTL=3600
+      - ENABLE_METRICS=true
+      - ENABLE_TRACING=true
+
+# Production Secrets (loaded from environment)
+secretGenerator:
+  - name: ollama-secrets
+    behavior: merge
+    envs:
+      - secrets.env
+
+# Common labels for production
+commonLabels:
+  environment: production
+  tier: prod
+  sla: critical
+
+# Production namespace
+namespace: ollama
+
+# Annotations
+commonAnnotations:
+  deployed-by: gitops
+  cluster: production
+  on-call: platform-team
+  backup: enabled
+  compliance: sox2

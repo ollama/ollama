@@ -1,0 +1,227 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/venv/bin/python",
+  "python.analysis.typeCheckingMode": "strict",
+  "python.analysis.diagnosticSeverityOverrides": {
+    "reportMissingTypeStubs": "warning",
+    "reportPrivateUsage": "warning",
+    "reportUnusedImport": "error",
+    "reportUnusedVariable": "error",
+    "reportMissingDocstring": "information",
+    "reportUnnecessaryIsInstance": "warning",
+    "reportUnusedFunction": "error",
+    "reportConstantRedefinition": "error",
+    "reportIncompatibleMethodOverride": "error",
+    "reportIncompatibleVariableOverride": "error",
+    "reportInconsistentConstructor": "error",
+    "reportUnnecessaryCast": "warning",
+    "reportUnnecessaryComparison": "warning",
+    "reportUnusedCallResult": "warning",
+    "reportImplicitStringConcatenation": "warning"
+  },
+  "python.analysis.include": [
+    "${workspaceFolder}/ollama",
+    "${workspaceFolder}/tests"
+  ],
+  "python.analysis.exclude": ["**/node_modules", "**/__pycache__", "**/.*"],
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.black-formatter",
+    "editor.formatOnSave": true,
+    "editor.formatOnPaste": true,
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "explicit",
+      "source.fixAll": "explicit",
+      "source.fixAll.ruff": "explicit"
+    },
+    "editor.rulers": [100],
+    "editor.wordWrapColumn": 100
+  },
+  "python.linting.enabled": true,
+  "python.linting.pylintEnabled": false,
+  "python.linting.flake8Enabled": false,
+  "python.linting.mypyEnabled": true,
+  "python.linting.mypyArgs": [
+    "--strict",
+    "--warn-unused-ignores",
+    "--show-error-codes",
+    "--no-implicit-optional"
+  ],
+  "ruff.trace": "verbose",
+  "ruff.showNotifications": "error",
+  "python.formatting.provider": "black",
+  "python.formatting.blackArgs": [
+    "--line-length=100",
+    "--target-version=py311",
+    "--skip-magic-trailing-comma"
+  ],
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestArgs": [
+    "tests",
+    "-v",
+    "--strict-markers",
+    "--strict-config",
+    "--cov=ollama",
+    "--cov=config",
+    "--cov-fail-under=95",
+    "--cov-report=term-missing:skip-covered",
+    "--cov-report=html:htmlcov",
+    "--maxfail=1",
+    "-x"
+  ],
+  "python.testing.pytestPath": "${workspaceFolder}/venv/bin/pytest",
+  "editor.insertSpaces": true,
+  "editor.tabSize": 4,
+  "editor.trimAutoWhitespace": true,
+  "editor.formatOnSave": true,
+  "editor.formatOnPaste": true,
+  "editor.formatOnType": false,
+  "editor.bracketPairColorization.enabled": true,
+  "editor.bracketPairColorization.independentColorPoolPerBracketType": true,
+  "editor.guides.bracketPairs": "active",
+  "editor.guides.indentation": true,
+  "editor.inlineHints.enabled": true,
+  "editor.inlineHints.fontSize": 11,
+  "editor.inlineHints.padding": true,
+  "editor.wordWrap": "on",
+  "editor.wordWrapColumn": 100,
+  "editor.rulers": [100],
+  "editor.defaultFormatter": "ms-python.black-formatter",
+  "editor.formatOnSaveMode": "modifications",
+  "editor.codeActionsOnSave": {
+    "source.organizeImports": "explicit",
+    "source.fixAll": "explicit",
+    "source.fixAll.ruff": "explicit",
+    "source.fixAll.pylance": "explicit"
+  },
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+  "files.trimFinalNewlines": true,
+  "files.autoSave": "onFocusChange",
+  "files.autoSaveDelay": 1000,
+  "files.maxMemoryForLargeFilesMB": 4096,
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true,
+    "**/*.pyo": true,
+    "**/.pytest_cache": true,
+    "**/.mypy_cache": true,
+    "**/.ruff_cache": true,
+    "**/htmlcov": true,
+    "**/.coverage": true,
+    "**/*.egg-info": true,
+    "**/venv": true,
+    "**/.venv": true,
+    "**/.git": true,
+    "**/.DS_Store": true,
+    "**/node_modules": true,
+    "**/.env": true,
+    "**/.env.*": true
+  },
+  "files.watcherExclude": {
+    "**/.git": true,
+    "**/node_modules": true,
+    "**/venv": true,
+    "**/.venv": true,
+    "**/__pycache__": true,
+    "**/*.pyc": true,
+    "**/.pytest_cache": true,
+    "**/.mypy_cache": true,
+    "**/.ruff_cache": true,
+    "**/htmlcov": true,
+    "**/dist": true,
+    "**/build": true,
+    "**/.coverage": true
+  },
+  "files.encoding": "utf8",
+  "files.eol": "\n",
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/venv": true,
+    "**/.venv": true,
+    "**/.git": true,
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "**/.mypy_cache": true,
+    "**/.ruff_cache": true,
+    "**/*.egg-info": true,
+    "**/htmlcov": true,
+    "**/.coverage": true
+  },
+  "git.enabled": true,
+  "git.autofetch": true,
+  "git.autorefresh": true,
+  "git.confirmSync": true,
+  "git.mergeEditor": true,
+  "git.ignoreLimitWarning": false,
+  "scm.defaultViewMode": "tree",
+  "scm.repositories.visible": true,
+  "gitlens.advanced.messages": {
+    "suppressCommitNotFoundWarning": false
+  },
+  "gitlens.blame.heatmap.enabled": true,
+  "gitlens.blame.heatmap.coldColor": "rgb(255, 255, 255)",
+  "gitlens.blame.heatmap.hotColor": "rgb(255, 0, 0)",
+  "coverage-gutters.showLineCoverage": true,
+  "coverage-gutters.showBranchCoverage": true,
+  "coverage-gutters.highlightdark": "rgba(255, 0, 0, 0.3)",
+  "coverage-gutters.highlightlight": "rgba(255, 0, 0, 0.2)",
+  "[markdown]": {
+    "editor.wordWrap": "on",
+    "editor.wordWrapColumn": 100,
+    "editor.rulers": [100],
+    "editor.formatOnSave": false
+  },
+  "[yaml]": {
+    "editor.insertSpaces": true,
+    "editor.tabSize": 2
+  },
+  "[json]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[dockerfile]": {
+    "editor.formatOnSave": false
+  },
+  "pylance.analysis.typeCheckingMode": "strict",
+  "pylance.analysis.diagnosticSeverityOverrides": {},
+  "pylance.autoImportCompletions": true,
+  "terminal.integrated.defaultProfile.linux": "bash",
+  "terminal.integrated.profiles.linux": {
+    "bash": {
+      "path": "/bin/bash",
+      "args": ["-l"]
+    }
+  },
+  "terminal.integrated.env.linux": {
+    "PYTHONUNBUFFERED": "1",
+    "PYTHONBREAKPOINT": "ipdb.set_trace"
+  },
+  "explorer.fileNesting.enabled": true,
+  "explorer.fileNesting.patterns": {
+    "*.py": "${capture}.pyi",
+    "*.ts": "${capture}.js",
+    "*.tsx": "${capture}.jsx",
+    "package.json": "package-lock.json, yarn.lock"
+  },
+  "explorer.sortOrderLexicographicGroups": false,
+  "explorer.compactFolders": false,
+  "workbench.startupEditor": "none",
+  "workbench.editor.enablePreview": false,
+  "workbench.editor.enablePreviewFromCodeNavigation": false,
+  "workbench.editor.closeOnFileDelete": true,
+  "window.commandCenter": true,
+  "workbench.colorTheme": "One Dark Pro",
+  "workbench.iconTheme": "vscode-icons",
+  "editor.fontFamily": "JetBrains Mono, Fira Code, Consolas, 'Courier New', monospace",
+  "editor.fontSize": 13,
+  "editor.fontLigatures": true,
+  "editor.fontWeight": "500",
+  "editor.lineHeight": 1.6,
+  "editor.letterSpacing": 0.5,
+  "python.analysis.inlayHints.callArgumentNames": true,
+  "python.analysis.inlayHints.functionReturnTypes": true,
+  "python.analysis.inlayHints.variableTypes": true,
+  "docker.environment": {
+    "DOCKER_BUILDKIT": "1"
+  }
+}

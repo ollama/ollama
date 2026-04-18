@@ -1,0 +1,27 @@
+{
+  "generated_at_utc": "2026-04-18T04:46:55.550022+00:00",
+  "repository": "kushin77/ollama",
+  "checkpoint_type": "agent-ready-shard-rate-limit-deferred",
+  "reason": "GitHub API write rate limit exceeded (403) during shard apply",
+  "latest_reports": [
+    {
+      "report": ".github/agent_ready_shard_apply_report_20260418T044631Z.json",
+      "processed": 294,
+      "updated": 0,
+      "already_correct": 36,
+      "failed": 258
+    },
+    {
+      "report": ".github/agent_ready_shard_apply_report_20260418T044635Z.json",
+      "processed": 294,
+      "updated": 0,
+      "already_correct": 4,
+      "failed": 290
+    }
+  ],
+  "retry_instructions": [
+    "wait for GitHub API rate limit reset",
+    "rerun python3 scripts/apply_agent_ready_shards.py --manifest .github/agent_ready_shards.json",
+    "commit next agent_ready_shard_apply_report_*.json result"
+  ]
+}

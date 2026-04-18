@@ -1,0 +1,84 @@
+name: Auto-Delete Merged Branch
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+
+jobs:
+  delete-branch:
+    name: Delete Merged Branch
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check branch protection status
+        id: check
+        run: |
+          BRANCH="${{ github.event.pull_request.head.ref }}"
+
+          # Don't delete protected branches
+          if [[ "$BRANCH" =~ ^(main|release/|automation/) ]]; then
+            echo "protected=true" >> $GITHUB_OUTPUT
+            echo "Branch $BRANCH is protected, skipping deletion"
+            exit 0
+          fi
+
+          echo "protected=false" >> $GITHUB_OUTPUT
+
+      - name: Delete branch
+        if: steps.check.outputs.protected == 'false'
+        run: |
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+
+          BRANCH="${{ github.event.pull_request.head.ref }}"
+
+          # Double-check it exists before deletion
+          if git ls-remote --heads origin "$BRANCH" | grep -q "$BRANCH"; then
+            git push origin --delete "$BRANCH" || echo "Could not delete $BRANCH"
+            echo "::notice title=Branch Deleted::Branch '$BRANCH' has been automatically deleted after merge"
+          fi
+
+      - name: Log audit entry
+        run: |
+          python3 << 'PYTHON_EOF'
+          import json
+          from datetime import datetime
+          from pathlib import Path
+
+          audit_entry = {
+              'timestamp': datetime.utcnow().isoformat() + 'Z',
+              'branch': '${{ github.event.pull_request.head.ref }}',
+              'action': 'auto_deleted_on_merge',
+              'pr_number': ${{ github.event.pull_request.number }},
+              'pr_url': '${{ github.event.pull_request.html_url }}',
+              'commit': '${{ github.event.pull_request.merge_commit_sha }}'
+          }
+
+          # Append to immutable audit log
+          audit_path = Path('.github/branch_cleanup_audit.jsonl')
+          audit_path.parent.mkdir(exist_ok=True)
+          with open(audit_path, 'a') as f:
+              f.write(json.dumps(audit_entry) + '\n')
+          PYTHON_EOF
+
+      - name: Commit audit trail
+        if: always()
+        run: |
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+
+          if ! git diff --quiet .github/branch_cleanup_audit.jsonl 2>/dev/null; then
+            git add .github/branch_cleanup_audit.jsonl
+            git commit -m "chore: log auto-deleted branch in audit trail
+
+Branch: ${{ github.event.pull_request.head.ref }}
+PR: #${{ github.event.pull_request.number }}"
+            git push origin main || echo "Could not push audit changes"
+          fi

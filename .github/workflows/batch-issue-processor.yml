@@ -1,0 +1,93 @@
+name: Batch Process Issues
+
+on:
+  schedule:
+    # Run daily at 1 AM UTC - before branch cleanup
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Maximum issues to process (0 = all)'
+        required: false
+        default: '50'
+      state:
+        description: 'Filter by state (open, closed, all)'
+        required: false
+        default: 'open'
+
+permissions:
+  issues: write
+  pull-requests: read
+  contents: read
+  id-token: write
+
+jobs:
+  batch-process:
+    name: Batch Process GitHub Issues
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Resolve GitHub token from GSM
+        id: github-auth
+        env:
+          OLLAMA_GSM_ENABLED: "true"
+          GSM_PROJECT: ${{ secrets.GSM_PROJECT || 'gcp-eiq' }}
+          GSM_SECRET_NAME: ${{ secrets.GSM_SECRET_NAME || 'prod-github-token' }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          TOKEN="$(bash scripts/github-actions-token.sh)"
+          echo "::add-mask::$TOKEN"
+          printf 'token=%s\n' "$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Process issues in batch
+        run: |
+          python3 scripts/batch_issue_processor.py \
+            --limit ${{ github.event.inputs.limit || '50' }} \
+            --state ${{ github.event.inputs.state || 'open' }} \
+            --dry-run false
+        env:
+          GITHUB_TOKEN: ${{ steps.github-auth.outputs.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          LOG_LEVEL: info
+
+      - name: Generate batch report
+        if: always()
+        run: |
+          python3 scripts/generate_issue_report.py \
+            --format json \
+            --output-file .github/issue_batch_report_$(date -u +%Y%m%dT%H%M%SZ).json
+        env:
+          GITHUB_TOKEN: ${{ steps.github-auth.outputs.token }}
+
+      - name: Upload report as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-batch-report
+          path: .github/issue_batch_report_*.json
+          retention-days: 90
+
+      - name: Comment on issues (if changes made)
+        if: success()
+        run: |
+          echo "✅ Batch issue processing complete"
+          echo "Check artifacts for detailed report"

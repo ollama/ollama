@@ -1,0 +1,10 @@
+# Testing Dependencies
+-r core.txt
+
+pytest==7.4.3
+pytest-cov==4.1.0
+pytest-asyncio==0.21.1
+pytest-mock==3.12.0
+pytest-xdist==3.5.0
+httpx==0.25.1
+factory-boy==3.3.0

@@ -1,0 +1,56 @@
+groups:
+  - name: ollama-llm-observability
+    interval: 30s
+    rules:
+      - alert: OllamaHighP95Latency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, route) (
+              rate(ollama_http_request_duration_ms_bucket[5m])
+            )
+          ) > 2500
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High p95 latency on {{ $labels.route }}"
+          description: "p95 latency exceeded 2500ms for 10m."
+
+      - alert: OllamaHighServerErrorRate
+        expr: |
+          (
+            sum(rate(ollama_http_failures_total{reason="server_error"}[5m]))
+            /
+            clamp_min(sum(rate(ollama_http_requests_total[5m])), 1)
+          ) > 0.02
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High 5xx error rate"
+          description: "Server error ratio above 2% for 5m."
+
+      - alert: OllamaCacheSignalDrop
+        expr: |
+          sum(rate(ollama_signal_hits_total{signal=~"cache_hit|retrieval_hit"}[30m])) == 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Cache/retrieval hit signal dropped to zero"
+          description: "No cache or retrieval hits observed for 30m."
+
+      - alert: OllamaTokenBurnSpike
+        expr: |
+          (
+            sum(rate(ollama_tokens_total{kind="total"}[15m]))
+            /
+            clamp_min(sum(rate(ollama_tokens_total{kind="total"}[2h])), 1)
+          ) > 3
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Token burn spike detected"
+          description: "Token throughput is >3x rolling 2h baseline."

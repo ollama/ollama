@@ -1,0 +1,98 @@
+{
+  "timestamp": "2026-04-17T20:00:11.796976",
+  "repository": null,
+  "total_issues_processed": 4,
+  "pipeline_stages": [
+    "fetch",
+    "triage",
+    "analysis",
+    "github_updates"
+  ],
+  "pipeline": {
+    "fetch": {
+      "status": "success",
+      "issues_fetched": 5
+    },
+    "triage": {
+      "status": "success",
+      "total_triaged": 5,
+      "target_severity": "high",
+      "target_count": 4
+    },
+    "analysis": {
+      "status": "success",
+      "analyzed_count": 4
+    },
+    "execution": {
+      "status": "success",
+      "dry_run": false,
+      "attempted": 4,
+      "succeeded": 4,
+      "failed": 0
+    }
+  },
+  "execution_results": [
+    {
+      "issue": 15649,
+      "timestamp": "2026-04-17T20:00:11.790079",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15648,
+      "timestamp": "2026-04-17T20:00:11.792367",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15646,
+      "timestamp": "2026-04-17T20:00:11.794414",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15645,
+      "timestamp": "2026-04-17T20:00:11.796365",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    }
+  ],
+  "state_transitions": {
+    "15649": [
+      {
+        "issue_num": 15649,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:00:11.790316",
+        "metadata": {}
+      }
+    ],
+    "15648": [
+      {
+        "issue_num": 15648,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:00:11.792482",
+        "metadata": {}
+      }
+    ],
+    "15646": [
+      {
+        "issue_num": 15646,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:00:11.794516",
+        "metadata": {}
+      }
+    ],
+    "15645": [
+      {
+        "issue_num": 15645,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:00:11.796463",
+        "metadata": {}
+      }
+    ]
+  }
+}

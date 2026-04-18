@@ -1,0 +1,46 @@
+#!/bin/bash
+# Pre-commit hook to enforce Elite Standards
+# Runs all quality checks before allowing commit
+
+set -e
+
+echo "🔍 Running pre-commit checks..."
+
+# Get staged Python files
+PYTHON_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.py$' || echo "")
+
+if [ -z "$PYTHON_FILES" ]; then
+    echo "✅ No Python files to check"
+    exit 0
+fi
+
+echo "📝 Checking files: $PYTHON_FILES"
+
+# 1. Run Black formatter
+echo "🎨 Formatting with Black..."
+python3 -m black --line-length=100 --target-version=py311 $PYTHON_FILES || exit 1
+git add $PYTHON_FILES
+
+# 2. Run Ruff linter
+echo "🧹 Linting with Ruff..."
+python3 -m ruff check --fix --line-length=100 $PYTHON_FILES || exit 1
+git add $PYTHON_FILES
+
+# 3. Run mypy type checker
+echo "🔬 Type checking with mypy..."
+python3 -m mypy $PYTHON_FILES --strict || exit 1
+
+# 4. Run pytest for modified tests
+TEST_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '^tests/.*\.py$' || echo "")
+if [ -n "$TEST_FILES" ]; then
+    echo "🧪 Running modified tests..."
+    python3 -m pytest $TEST_FILES -v || exit 1
+fi
+
+# 5. Check for security vulnerabilities
+echo "🔐 Running security audit..."
+python3 -m pip_audit --desc || exit 1
+
+echo ""
+echo "✅ All pre-commit checks passed!"
+echo ""

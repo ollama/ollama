@@ -1,0 +1,21 @@
+{
+  "generated_utc": "2026-04-18T05:27:17.897885Z",
+  "commit": "095a15d8f",
+  "open_issues": 297,
+  "real_issues": 296,
+  "pr_excluded": [
+    400
+  ],
+  "agent_ready": 296,
+  "sharded": 296,
+  "shard_distribution": {
+    "shard/1": 75,
+    "shard/2": 74,
+    "shard/3": 74,
+    "shard/4": 74
+  },
+  "gap_issues_fixed_this_cycle": [],
+  "missing_agent_ready": [],
+  "missing_shard": [],
+  "status": "COMPLETE"
+}

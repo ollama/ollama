@@ -1,0 +1,96 @@
+name: Autonomous Issue Orchestrator
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '15 * * * *'
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  orchestrate:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: autonomous-issue-orchestrator
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Resolve GitHub token from GSM
+        id: github-auth
+        env:
+          OLLAMA_GSM_ENABLED: "true"
+          GSM_PROJECT: ${{ secrets.GSM_PROJECT || 'gcp-eiq' }}
+          GSM_SECRET_NAME: ${{ secrets.GSM_SECRET_NAME || 'prod-github-token' }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          TOKEN="$(bash scripts/github-actions-token.sh)"
+          echo "::add-mask::$TOKEN"
+          printf 'token=%s\n' "$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+
+      - name: Run idempotent autonomous orchestrator
+        env:
+          OLLAMA_GSM_ENABLED: "true"
+          GSM_PROJECT: ${{ secrets.GSM_PROJECT || 'gcp-eiq' }}
+          GSM_SECRET_NAME: ${{ secrets.GSM_SECRET_NAME || 'prod-github-token' }}
+        run: |
+          chmod +x scripts/run_issue_orchestrator_idempotent.sh
+          scripts/run_issue_orchestrator_idempotent.sh .github/issue-orchestrator.iac.json
+
+      - name: Create/update PR with immutable state artifacts
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ steps.github-auth.outputs.token }}
+          commit-message: "cmd/github-issues: persist autonomous issue orchestration state"
+          branch: "automation/issue-orchestrator-state"
+          title: "cmd/github-issues: persist autonomous orchestration state"
+          body: |
+            Automated immutable state update from the autonomous issue orchestrator.
+
+            Includes:
+            - issue ops ledger updates
+            - per-issue state snapshots
+            - orchestration reports
+          add-paths: |
+            .github/issue_ops_ledger.jsonl
+            .github/state/*.jsonl
+            .github/orchestrator_report*.json
+            .github/bulk_issue_close_report*.json
+          delete-branch: false
+
+      - name: Upload reports artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: autonomous-issue-orchestrator-reports
+          path: |
+            .github/orchestrator_report*.json
+            .github/bulk_issue_close_report*.json
+            .github/issue_ops_ledger.jsonl
+            .github/state/*.jsonl
+          if-no-files-found: warn

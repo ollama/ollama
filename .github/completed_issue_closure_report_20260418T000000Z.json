@@ -1,0 +1,13 @@
+{
+  "generated_at_utc": "2026-04-18T03:23:10.627865+00:00",
+  "repository": "kushin77/ollama",
+  "closed_issues": [
+    383,
+    384,
+    385
+  ],
+  "closure_basis": "Completed by existing cmd/github-issues implementation and canonical issue #386",
+  "evidence_commit": "d90a33a6e",
+  "canonical_issue": 386,
+  "open_issue_count_after": 316
+}

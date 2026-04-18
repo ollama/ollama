@@ -1,0 +1,247 @@
+{
+  "timestamp": "2026-04-17T20:03:57.500136",
+  "repository": null,
+  "total_issues_processed": 1,
+  "pipeline_stages": [
+    "fetch",
+    "triage",
+    "analysis",
+    "github_updates"
+  ],
+  "pipeline": {
+    "fetch": {
+      "status": "success",
+      "issues_fetched": 5
+    },
+    "triage": {
+      "status": "success",
+      "total_triaged": 5,
+      "target_severity": "low",
+      "target_count": 1
+    },
+    "analysis": {
+      "status": "success",
+      "analyzed_count": 1
+    },
+    "execution": {
+      "status": "success",
+      "dry_run": true,
+      "attempted": 1,
+      "succeeded": 1,
+      "failed": 0
+    }
+  },
+  "execution_results": [
+    {
+      "issue": 15649,
+      "timestamp": "2026-04-17T20:03:57.487329",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15648,
+      "timestamp": "2026-04-17T20:03:57.489862",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15646,
+      "timestamp": "2026-04-17T20:03:57.492348",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15645,
+      "timestamp": "2026-04-17T20:03:57.494688",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15647,
+      "timestamp": "2026-04-17T20:03:57.499229",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    }
+  ],
+  "state_transitions": {
+    "15649": [
+      {
+        "issue_num": 15649,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:03:57.487858",
+        "metadata": {}
+      }
+    ],
+    "15648": [
+      {
+        "issue_num": 15648,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:03:57.490354",
+        "metadata": {}
+      }
+    ],
+    "15646": [
+      {
+        "issue_num": 15646,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:03:57.492833",
+        "metadata": {}
+      }
+    ],
+    "15645": [
+      {
+        "issue_num": 15645,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:03:57.495178",
+        "metadata": {}
+      }
+    ],
+    "15647": [
+      {
+        "issue_num": 15647,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:03:57.499697",
+        "metadata": {}
+      }
+    ]
+  },
+  "orchestration": {
+    "run_id": "6b9e6d307873",
+    "mode": "all-severities",
+    "summaries": [
+      {
+        "timestamp": "2026-04-17T20:03:57.483389",
+        "repository": "offline",
+        "run_id": "6b9e6d307873",
+        "ops_ledger_file": ".github/issue_ops_ledger.jsonl",
+        "pipeline": {
+          "fetch": {
+            "status": "success",
+            "issues_fetched": 5
+          },
+          "triage": {
+            "status": "success",
+            "total_triaged": 5,
+            "target_severity": "high",
+            "target_count": 4
+          },
+          "analysis": {
+            "status": "success",
+            "analyzed_count": 4
+          },
+          "execution": {
+            "status": "success",
+            "dry_run": true,
+            "attempted": 4,
+            "succeeded": 4,
+            "failed": 0
+          }
+        },
+        "issues_processed": [
+          {
+            "number": 15649,
+            "severity": "high",
+            "type": "bug",
+            "title": "Ollama startup issue on macOS",
+            "status": "analyzed"
+          },
+          {
+            "number": 15648,
+            "severity": "high",
+            "type": "bug",
+            "title": "MLX models fail to load",
+            "status": "analyzed"
+          },
+          {
+            "number": 15646,
+            "severity": "high",
+            "type": "bug",
+            "title": "Docker build failing",
+            "status": "analyzed"
+          },
+          {
+            "number": 15645,
+            "severity": "high",
+            "type": "bug",
+            "title": "Memory leak in model inference",
+            "status": "analyzed"
+          }
+        ]
+      },
+      {
+        "timestamp": "2026-04-17T20:03:57.495682",
+        "repository": "offline",
+        "run_id": "6b9e6d307873",
+        "ops_ledger_file": ".github/issue_ops_ledger.jsonl",
+        "pipeline": {
+          "fetch": {
+            "status": "success",
+            "issues_fetched": 5
+          },
+          "triage": {
+            "status": "success",
+            "total_triaged": 5,
+            "target_severity": "medium",
+            "target_count": 0
+          },
+          "analysis": {
+            "status": "success",
+            "analyzed_count": 0
+          },
+          "execution": {
+            "status": "success",
+            "dry_run": true,
+            "attempted": 0,
+            "succeeded": 0,
+            "failed": 0
+          }
+        },
+        "issues_processed": []
+      },
+      {
+        "timestamp": "2026-04-17T20:03:57.496793",
+        "repository": "offline",
+        "run_id": "6b9e6d307873",
+        "ops_ledger_file": ".github/issue_ops_ledger.jsonl",
+        "pipeline": {
+          "fetch": {
+            "status": "success",
+            "issues_fetched": 5
+          },
+          "triage": {
+            "status": "success",
+            "total_triaged": 5,
+            "target_severity": "low",
+            "target_count": 1
+          },
+          "analysis": {
+            "status": "success",
+            "analyzed_count": 1
+          },
+          "execution": {
+            "status": "success",
+            "dry_run": true,
+            "attempted": 1,
+            "succeeded": 1,
+            "failed": 0
+          }
+        },
+        "issues_processed": [
+          {
+            "number": 15647,
+            "severity": "low",
+            "type": "feature",
+            "title": "API compatibility with OpenAI format",
+            "status": "analyzed"
+          }
+        ]
+      }
+    ],
+    "timestamp": "2026-04-17T20:03:57.500117"
+  }
+}

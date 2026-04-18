@@ -1,0 +1,908 @@
+{
+  "timestamp": "2026-04-17T20:43:43.238880",
+  "repository": "kushin77/ollama",
+  "total_issues_processed": 9,
+  "pipeline_stages": [
+    "fetch",
+    "triage",
+    "analysis",
+    "github_updates"
+  ],
+  "pipeline": {
+    "fetch": {
+      "status": "success",
+      "issues_fetched": 35
+    },
+    "triage": {
+      "status": "success",
+      "total_triaged": 35,
+      "target_severity": "low",
+      "target_count": 9
+    },
+    "analysis": {
+      "status": "success",
+      "analyzed_count": 9
+    },
+    "execution": {
+      "status": "success",
+      "dry_run": true,
+      "attempted": 9,
+      "succeeded": 9,
+      "failed": 0
+    }
+  },
+  "execution_results": [
+    {
+      "issue": 15649,
+      "timestamp": "2026-04-17T20:43:42.884431",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15648,
+      "timestamp": "2026-04-17T20:43:42.888194",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15642,
+      "timestamp": "2026-04-17T20:43:42.892011",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15641,
+      "timestamp": "2026-04-17T20:43:42.896134",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15635,
+      "timestamp": "2026-04-17T20:43:42.899069",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15634,
+      "timestamp": "2026-04-17T20:43:42.903109",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15632,
+      "timestamp": "2026-04-17T20:43:42.905571",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15624,
+      "timestamp": "2026-04-17T20:43:42.907946",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15623,
+      "timestamp": "2026-04-17T20:43:42.910279",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15609,
+      "timestamp": "2026-04-17T20:43:42.912899",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15599,
+      "timestamp": "2026-04-17T20:43:42.915168",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15596,
+      "timestamp": "2026-04-17T20:43:42.917482",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15594,
+      "timestamp": "2026-04-17T20:43:42.919672",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15651,
+      "timestamp": "2026-04-17T20:43:43.058400",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15650,
+      "timestamp": "2026-04-17T20:43:43.060880",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15647,
+      "timestamp": "2026-04-17T20:43:43.063176",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15645,
+      "timestamp": "2026-04-17T20:43:43.065939",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15644,
+      "timestamp": "2026-04-17T20:43:43.068148",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15643,
+      "timestamp": "2026-04-17T20:43:43.070149",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15620,
+      "timestamp": "2026-04-17T20:43:43.072215",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15619,
+      "timestamp": "2026-04-17T20:43:43.074416",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15615,
+      "timestamp": "2026-04-17T20:43:43.076733",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15601,
+      "timestamp": "2026-04-17T20:43:43.078830",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15598,
+      "timestamp": "2026-04-17T20:43:43.080561",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15597,
+      "timestamp": "2026-04-17T20:43:43.082470",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15595,
+      "timestamp": "2026-04-17T20:43:43.084233",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15646,
+      "timestamp": "2026-04-17T20:43:43.216014",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15640,
+      "timestamp": "2026-04-17T20:43:43.219112",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15639,
+      "timestamp": "2026-04-17T20:43:43.221935",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15638,
+      "timestamp": "2026-04-17T20:43:43.224582",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15626,
+      "timestamp": "2026-04-17T20:43:43.227238",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15625,
+      "timestamp": "2026-04-17T20:43:43.229998",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15614,
+      "timestamp": "2026-04-17T20:43:43.232308",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15604,
+      "timestamp": "2026-04-17T20:43:43.235514",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15600,
+      "timestamp": "2026-04-17T20:43:43.237856",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    }
+  ],
+  "state_transitions": {
+    "15649": [
+      {
+        "issue_num": 15649,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:42.885161",
+        "metadata": {}
+      }
+    ],
+    "15648": [
+      {
+        "issue_num": 15648,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:42.888733",
+        "metadata": {}
+      }
+    ],
+    "15642": [
+      {
+        "issue_num": 15642,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:42.892465",
+        "metadata": {}
+      }
+    ],
+    "15641": [
+      {
+        "issue_num": 15641,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:42.896600",
+        "metadata": {}
+      }
+    ],
+    "15635": [
+      {
+        "issue_num": 15635,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:42.899510",
+        "metadata": {}
+      }
+    ],
+    "15634": [
+      {
+        "issue_num": 15634,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:42.903519",
+        "metadata": {}
+      }
+    ],
+    "15632": [
+      {
+        "issue_num": 15632,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:42.905962",
+        "metadata": {}
+      }
+    ],
+    "15624": [
+      {
+        "issue_num": 15624,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:42.908340",
+        "metadata": {}
+      }
+    ],
+    "15623": [
+      {
+        "issue_num": 15623,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:42.910641",
+        "metadata": {}
+      }
+    ],
+    "15609": [
+      {
+        "issue_num": 15609,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:42.913279",
+        "metadata": {}
+      }
+    ],
+    "15599": [
+      {
+        "issue_num": 15599,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:42.915517",
+        "metadata": {}
+      }
+    ],
+    "15596": [
+      {
+        "issue_num": 15596,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:42.917841",
+        "metadata": {}
+      }
+    ],
+    "15594": [
+      {
+        "issue_num": 15594,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:42.920056",
+        "metadata": {}
+      }
+    ],
+    "15651": [
+      {
+        "issue_num": 15651,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:43.058886",
+        "metadata": {}
+      }
+    ],
+    "15650": [
+      {
+        "issue_num": 15650,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:43.061332",
+        "metadata": {}
+      }
+    ],
+    "15647": [
+      {
+        "issue_num": 15647,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:43.063550",
+        "metadata": {}
+      }
+    ],
+    "15645": [
+      {
+        "issue_num": 15645,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:43.066365",
+        "metadata": {}
+      }
+    ],
+    "15644": [
+      {
+        "issue_num": 15644,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:43.068507",
+        "metadata": {}
+      }
+    ],
+    "15643": [
+      {
+        "issue_num": 15643,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:43.070492",
+        "metadata": {}
+      }
+    ],
+    "15620": [
+      {
+        "issue_num": 15620,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:43.072553",
+        "metadata": {}
+      }
+    ],
+    "15619": [
+      {
+        "issue_num": 15619,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:43.074755",
+        "metadata": {}
+      }
+    ],
+    "15615": [
+      {
+        "issue_num": 15615,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:43.077124",
+        "metadata": {}
+      }
+    ],
+    "15601": [
+      {
+        "issue_num": 15601,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:43.079168",
+        "metadata": {}
+      }
+    ],
+    "15598": [
+      {
+        "issue_num": 15598,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:43.080896",
+        "metadata": {}
+      }
+    ],
+    "15597": [
+      {
+        "issue_num": 15597,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:43.082794",
+        "metadata": {}
+      }
+    ],
+    "15595": [
+      {
+        "issue_num": 15595,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:43.084538",
+        "metadata": {}
+      }
+    ],
+    "15646": [
+      {
+        "issue_num": 15646,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:43.216583",
+        "metadata": {}
+      }
+    ],
+    "15640": [
+      {
+        "issue_num": 15640,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:43.219567",
+        "metadata": {}
+      }
+    ],
+    "15639": [
+      {
+        "issue_num": 15639,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:43.222363",
+        "metadata": {}
+      }
+    ],
+    "15638": [
+      {
+        "issue_num": 15638,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:43.225061",
+        "metadata": {}
+      }
+    ],
+    "15626": [
+      {
+        "issue_num": 15626,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:43.227722",
+        "metadata": {}
+      }
+    ],
+    "15625": [
+      {
+        "issue_num": 15625,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:43.230389",
+        "metadata": {}
+      }
+    ],
+    "15614": [
+      {
+        "issue_num": 15614,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:43.232683",
+        "metadata": {}
+      }
+    ],
+    "15604": [
+      {
+        "issue_num": 15604,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:43.235987",
+        "metadata": {}
+      }
+    ],
+    "15600": [
+      {
+        "issue_num": 15600,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T20:43:43.238233",
+        "metadata": {}
+      }
+    ]
+  },
+  "orchestration": {
+    "run_id": "c5738f06c277",
+    "mode": "all-severities",
+    "summaries": [
+      {
+        "timestamp": "2026-04-17T20:43:42.319990",
+        "repository": "kushin77/ollama",
+        "run_id": "c5738f06c277",
+        "ops_ledger_file": ".github/issue_ops_ledger.jsonl",
+        "pipeline": {
+          "fetch": {
+            "status": "success",
+            "issues_fetched": 35
+          },
+          "triage": {
+            "status": "success",
+            "total_triaged": 35,
+            "target_severity": "high",
+            "target_count": 13
+          },
+          "analysis": {
+            "status": "success",
+            "analyzed_count": 13
+          },
+          "execution": {
+            "status": "success",
+            "dry_run": true,
+            "attempted": 13,
+            "succeeded": 13,
+            "failed": 0
+          }
+        },
+        "issues_processed": [
+          {
+            "number": 15649,
+            "severity": "high",
+            "type": "bug",
+            "title": "Ollama startu-up issue",
+            "status": "analyzed"
+          },
+          {
+            "number": 15648,
+            "severity": "high",
+            "type": "bug",
+            "title": "MLX models fail to load in v0.21.0 due to missing libmlxc.dylib (Apple Silicon)",
+            "status": "analyzed"
+          },
+          {
+            "number": 15642,
+            "severity": "high",
+            "type": "bug",
+            "title": "MLX runner fails on Apple M5 Max \u2014 empty libdirs in Metal GPU detection",
+            "status": "analyzed"
+          },
+          {
+            "number": 15641,
+            "severity": "high",
+            "type": "bug",
+            "title": "gemma4 -flash attention disabled --GPU: Tesla V100--ollama version 0.20.7",
+            "status": "analyzed"
+          },
+          {
+            "number": 15635,
+            "severity": "high",
+            "type": "bug",
+            "title": "/v1/responses endpoint ignores reasoning_effort: \"none\" \u2014 thinking not disabled for gemma4:e2b",
+            "status": "analyzed"
+          },
+          {
+            "number": 15634,
+            "severity": "high",
+            "type": "bug",
+            "title": "gemma4:26b with flash attention on 3090 with num_ctx 32k running slow on gpu+cpu",
+            "status": "analyzed"
+          },
+          {
+            "number": 15632,
+            "severity": "high",
+            "type": "bug",
+            "title": " [0.21.0-rc0] qwen3.6:35b-a3b-nvfp4 fails to load: layer 0 missing linear attention projections",
+            "status": "analyzed"
+          },
+          {
+            "number": 15624,
+            "severity": "high",
+            "type": "bug",
+            "title": "ollama: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.28' not found (required by ollama)",
+            "status": "analyzed"
+          },
+          {
+            "number": 15623,
+            "severity": "high",
+            "type": "bug",
+            "title": "gemma4:26b-nvfp4 has wrong metadata",
+            "status": "analyzed"
+          },
+          {
+            "number": 15609,
+            "severity": "high",
+            "type": "bug",
+            "title": "BERT-derived embedding models produce incorrect embeddings for non-ASCII text (strip_accents preprocessing dropped in gguf conversion)",
+            "status": "analyzed"
+          },
+          {
+            "number": 15599,
+            "severity": "high",
+            "type": "bug",
+            "title": "MAC-M5 macOS 26.4.1 run Ollama0.20.4  [error]   failed to create library",
+            "status": "analyzed"
+          },
+          {
+            "number": 15596,
+            "severity": "high",
+            "type": "bug",
+            "title": "Gemma 4 /api/chat slows from 6s \u2192 116s after few requests (v0.20.7)",
+            "status": "analyzed"
+          },
+          {
+            "number": 15594,
+            "severity": "high",
+            "type": "bug",
+            "title": "[Bug]: Metal compilation error on Apple M5 (macOS Tahoe 26.3.1) - static_assert failed",
+            "status": "analyzed"
+          }
+        ]
+      },
+      {
+        "timestamp": "2026-04-17T20:43:42.920710",
+        "repository": "kushin77/ollama",
+        "run_id": "c5738f06c277",
+        "ops_ledger_file": ".github/issue_ops_ledger.jsonl",
+        "pipeline": {
+          "fetch": {
+            "status": "success",
+            "issues_fetched": 35
+          },
+          "triage": {
+            "status": "success",
+            "total_triaged": 35,
+            "target_severity": "medium",
+            "target_count": 13
+          },
+          "analysis": {
+            "status": "success",
+            "analyzed_count": 13
+          },
+          "execution": {
+            "status": "success",
+            "dry_run": true,
+            "attempted": 13,
+            "succeeded": 13,
+            "failed": 0
+          }
+        },
+        "issues_processed": [
+          {
+            "number": 15651,
+            "severity": "medium",
+            "type": "bug",
+            "title": "create: blobs can still be GC-pruned during long-running create operations after the 1h grace window",
+            "status": "analyzed"
+          },
+          {
+            "number": 15650,
+            "severity": "medium",
+            "type": "bug",
+            "title": "Incorrectly calculates available system memory for qwen3.6:35b-a3b",
+            "status": "analyzed"
+          },
+          {
+            "number": 15647,
+            "severity": "medium",
+            "type": "bug",
+            "title": "tool_call.arguments truncated to exactly 214 chars on Ollama   Cloud API",
+            "status": "analyzed"
+          },
+          {
+            "number": 15645,
+            "severity": "medium",
+            "type": "bug",
+            "title": "v1/messages :cloud \u2014 Kimi K2.5 native tokens leak, nested objects stringified on Qwen/GLM",
+            "status": "analyzed"
+          },
+          {
+            "number": 15644,
+            "severity": "medium",
+            "type": "bug",
+            "title": "Integration: PaperClaw (autonomous peer-reviewed paper generator for Ollama)",
+            "status": "analyzed"
+          },
+          {
+            "number": 15643,
+            "severity": "medium",
+            "type": "bug",
+            "title": "Apple M5 backend/runtime compatibility issue in Ollama",
+            "status": "analyzed"
+          },
+          {
+            "number": 15620,
+            "severity": "medium",
+            "type": "bug",
+            "title": "feat: add XLM-R embedding support + SentencePiece Unigram tokenizer + embedding model fixes",
+            "status": "analyzed"
+          },
+          {
+            "number": 15619,
+            "severity": "medium",
+            "type": "bug",
+            "title": "Feature: Multi-model tier flags for `ollama launch claude` (`--large`, `--medium`, `--small`)",
+            "status": "analyzed"
+          },
+          {
+            "number": 15615,
+            "severity": "medium",
+            "type": "bug",
+            "title": "Guided Ollama install mission in KubeStellar Console",
+            "status": "analyzed"
+          },
+          {
+            "number": 15601,
+            "severity": "medium",
+            "type": "bug",
+            "title": "Vulkan/AMD performance: vendored llama.cpp (b7437, Dec 2025) missing Wave32 FA (#19625) and graphics queue (#20551) \u2014 ~56% t/s gap vs standalone llama.cpp",
+            "status": "analyzed"
+          },
+          {
+            "number": 15598,
+            "severity": "medium",
+            "type": "bug",
+            "title": "MLX backend for image generation wastes a lot of CPU time",
+            "status": "analyzed"
+          },
+          {
+            "number": 15597,
+            "severity": "medium",
+            "type": "bug",
+            "title": "`ollama ls` takes 5 seconds in interactive terminal (pselect6 timeout on stdout)",
+            "status": "analyzed"
+          },
+          {
+            "number": 15595,
+            "severity": "medium",
+            "type": "bug",
+            "title": "Gemma 4 json output is fenced with markdown backticks",
+            "status": "analyzed"
+          }
+        ]
+      },
+      {
+        "timestamp": "2026-04-17T20:43:43.085126",
+        "repository": "kushin77/ollama",
+        "run_id": "c5738f06c277",
+        "ops_ledger_file": ".github/issue_ops_ledger.jsonl",
+        "pipeline": {
+          "fetch": {
+            "status": "success",
+            "issues_fetched": 35
+          },
+          "triage": {
+            "status": "success",
+            "total_triaged": 35,
+            "target_severity": "low",
+            "target_count": 9
+          },
+          "analysis": {
+            "status": "success",
+            "analyzed_count": 9
+          },
+          "execution": {
+            "status": "success",
+            "dry_run": true,
+            "attempted": 9,
+            "succeeded": 9,
+            "failed": 0
+          }
+        },
+        "issues_processed": [
+          {
+            "number": 15646,
+            "severity": "low",
+            "type": "feature",
+            "title": "Please add client only for releases",
+            "status": "analyzed"
+          },
+          {
+            "number": 15640,
+            "severity": "low",
+            "type": "feature",
+            "title": "add the support for image input for vision capable models like qwen3.6 on openclaw.",
+            "status": "analyzed"
+          },
+          {
+            "number": 15639,
+            "severity": "low",
+            "type": "feature",
+            "title": "add the support for the token calculations and reduce the input tokens while answering",
+            "status": "analyzed"
+          },
+          {
+            "number": 15638,
+            "severity": "low",
+            "type": "feature",
+            "title": "[Feature]: Support encoder models",
+            "status": "analyzed"
+          },
+          {
+            "number": 15626,
+            "severity": "low",
+            "type": "feature",
+            "title": "Expose `max_soft_tokens` (image token budget) as a runtime parameter for Gemma 4 models",
+            "status": "analyzed"
+          },
+          {
+            "number": 15625,
+            "severity": "low",
+            "type": "feature",
+            "title": "qwen3.6 seems interesting , when will be available in ollama/llama.cpp",
+            "status": "analyzed"
+          },
+          {
+            "number": 15614,
+            "severity": "low",
+            "type": "feature",
+            "title": "A native Android app for Ollama to unlock seamless, privacy-first access to open-source cloud models",
+            "status": "analyzed"
+          },
+          {
+            "number": 15604,
+            "severity": "low",
+            "type": "feature",
+            "title": "More transparent permission flow for CLI installation on macOS using desktop app",
+            "status": "analyzed"
+          },
+          {
+            "number": 15600,
+            "severity": "low",
+            "type": "feature",
+            "title": "Ollama Cloud Prompt Caching",
+            "status": "analyzed"
+          }
+        ]
+      }
+    ],
+    "timestamp": "2026-04-17T20:43:43.238852"
+  }
+}

@@ -1,0 +1,132 @@
+{
+  "timestamp": "2026-04-18T01:51:57Z",
+  "repository": "kushin77/ollama",
+  "issues": {
+    "55": {
+      "number": 55,
+      "title": "\u26a1 [Phase 3 Issue #38]: Load Testing Baseline",
+      "state": "open",
+      "description": "MEDIUM | 70 hours\n- K6 load testing framework\n- Performance baseline for all APIs\n- CI/CD regression detection\n- Acceptance: <5% regression tolerance, 100+ users",
+      "created_at": "2026-01-27T15:58:16Z",
+      "updated_at": "2026-04-18T01:30:48Z",
+      "closed_at": null,
+      "html_url": "https://github.com/kushin77/ollama/issues/55",
+      "labels": [
+        "needs-evidence"
+      ],
+      "assignees": [],
+      "milestone": null,
+      "comments_count": 4,
+      "comments": [
+        {
+          "author": "JoshuaKushnir",
+          "created_at": "2026-02-02T18:28:51Z",
+          "updated_at": "2026-02-02T18:28:51Z",
+          "body": "Consolidating this Phase 3 work under epic #45 and closing this issue. Reopen if this is incorrect."
+        },
+        {
+          "author": "JoshuaKushnir",
+          "created_at": "2026-02-02T18:28:52Z",
+          "updated_at": "2026-02-02T18:28:52Z",
+          "body": "Consolidated under #45 for Phase 3 implementation."
+        },
+        {
+          "author": "kushin77",
+          "created_at": "2026-04-18T01:02:44Z",
+          "updated_at": "2026-04-18T01:02:44Z",
+          "body": "<!-- bulk-triage-close-v1 -->\nAutomated triage pass completed on 2026-04-18.\n\nStatus: this issue has been reviewed and moved to completed/closed as part of repository-wide backlog satisfaction and closure.\n\nIf additional implementation is still needed, comment with concrete acceptance criteria and this issue can be reopened."
+        },
+        {
+          "author": "kushin77",
+          "created_at": "2026-04-18T01:30:48Z",
+          "updated_at": "2026-04-18T01:30:48Z",
+          "body": "Reopening this issue: it was auto-closed without implementation evidence. Going forward, closure is allowed only after linked code changes and verification."
+        }
+      ]
+    },
+    "57": {
+      "number": 57,
+      "title": "\ud83e\uddea [Phase 3 Issue #40]: Comprehensive Test Coverage",
+      "state": "open",
+      "description": "MEDIUM | 60 hours\n- Unit test framework enhancements\n- Integration test suite expansion\n- Load test tier-2 (50 users)\n- Acceptance: 95%+ coverage, all critical paths tested",
+      "created_at": "2026-01-27T15:58:18Z",
+      "updated_at": "2026-04-18T01:30:51Z",
+      "closed_at": null,
+      "html_url": "https://github.com/kushin77/ollama/issues/57",
+      "labels": [
+        "needs-evidence"
+      ],
+      "assignees": [],
+      "milestone": null,
+      "comments_count": 4,
+      "comments": [
+        {
+          "author": "JoshuaKushnir",
+          "created_at": "2026-02-02T18:28:56Z",
+          "updated_at": "2026-02-02T18:28:56Z",
+          "body": "Consolidating this Phase 3 work under epic #45 and closing this issue. Reopen if this is incorrect."
+        },
+        {
+          "author": "JoshuaKushnir",
+          "created_at": "2026-02-02T18:28:56Z",
+          "updated_at": "2026-02-02T18:28:56Z",
+          "body": "Consolidated under #45 for Phase 3 implementation."
+        },
+        {
+          "author": "kushin77",
+          "created_at": "2026-04-18T01:02:42Z",
+          "updated_at": "2026-04-18T01:02:42Z",
+          "body": "<!-- bulk-triage-close-v1 -->\nAutomated triage pass completed on 2026-04-18.\n\nStatus: this issue has been reviewed and moved to completed/closed as part of repository-wide backlog satisfaction and closure.\n\nIf additional implementation is still needed, comment with concrete acceptance criteria and this issue can be reopened."
+        },
+        {
+          "author": "kushin77",
+          "created_at": "2026-04-18T01:30:50Z",
+          "updated_at": "2026-04-18T01:30:50Z",
+          "body": "Reopening this issue: it was auto-closed without implementation evidence. Going forward, closure is allowed only after linked code changes and verification."
+        }
+      ]
+    },
+    "56": {
+      "number": 56,
+      "title": "\ud83d\uddfa\ufe0f [Phase 3 Issue #39]: Scaling Roadmap & Tech Debt",
+      "state": "open",
+      "description": "MEDIUM | 65 hours\n- ADR documentation\n- Tech debt tracking\n- 3-5 year roadmap\n- Acceptance: All decisions as ADRs, 500+ spokes roadmap",
+      "created_at": "2026-01-27T15:58:17Z",
+      "updated_at": "2026-04-18T01:30:49Z",
+      "closed_at": null,
+      "html_url": "https://github.com/kushin77/ollama/issues/56",
+      "labels": [
+        "needs-evidence"
+      ],
+      "assignees": [],
+      "milestone": null,
+      "comments_count": 4,
+      "comments": [
+        {
+          "author": "JoshuaKushnir",
+          "created_at": "2026-02-02T18:28:53Z",
+          "updated_at": "2026-02-02T18:28:53Z",
+          "body": "Consolidating this Phase 3 work under epic #45 and closing this issue. Reopen if this is incorrect."
+        },
+        {
+          "author": "JoshuaKushnir",
+          "created_at": "2026-02-02T18:28:54Z",
+          "updated_at": "2026-02-02T18:28:54Z",
+          "body": "Consolidated under #45 for Phase 3 implementation."
+        },
+        {
+          "author": "kushin77",
+          "created_at": "2026-04-18T01:02:43Z",
+          "updated_at": "2026-04-18T01:02:43Z",
+          "body": "<!-- bulk-triage-close-v1 -->\nAutomated triage pass completed on 2026-04-18.\n\nStatus: this issue has been reviewed and moved to completed/closed as part of repository-wide backlog satisfaction and closure.\n\nIf additional implementation is still needed, comment with concrete acceptance criteria and this issue can be reopened."
+        },
+        {
+          "author": "kushin77",
+          "created_at": "2026-04-18T01:30:49Z",
+          "updated_at": "2026-04-18T01:30:49Z",
+          "body": "Reopening this issue: it was auto-closed without implementation evidence. Going forward, closure is allowed only after linked code changes and verification."
+        }
+      ]
+    }
+  }
+}

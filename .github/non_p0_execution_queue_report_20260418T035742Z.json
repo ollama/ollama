@@ -1,0 +1,98 @@
+{
+  "generated_at_utc": "2026-04-18T03:57:42.285728+00:00",
+  "repository": "kushin77/ollama",
+  "queue_output": ".github/next_wave_execution_queue.json",
+  "full_output": ".github/non_p0_execution_queue.json",
+  "open_issue_total": 310,
+  "p0_count": 36,
+  "non_p0_count": 274,
+  "next_wave_size": 50,
+  "missing_agent_ready": 0,
+  "priority_counts": {
+    "priority/high": 30,
+    "priority/low": 88,
+    "priority/medium": 44
+  },
+  "top_waves": [
+    [
+      "wave/02",
+      25
+    ],
+    [
+      "wave/2",
+      25
+    ],
+    [
+      "wave/10",
+      25
+    ],
+    [
+      "wave/11",
+      25
+    ],
+    [
+      "wave/12",
+      25
+    ],
+    [
+      "wave/07",
+      25
+    ],
+    [
+      "wave/7",
+      25
+    ],
+    [
+      "wave/8",
+      25
+    ],
+    [
+      "wave/08",
+      25
+    ],
+    [
+      "wave/9",
+      25
+    ],
+    [
+      "wave/09",
+      25
+    ],
+    [
+      "wave/4",
+      22
+    ],
+    [
+      "wave/04",
+      22
+    ],
+    [
+      "wave/05",
+      22
+    ],
+    [
+      "wave/06",
+      22
+    ],
+    [
+      "wave/6",
+      20
+    ],
+    [
+      "wave/5",
+      18
+    ],
+    [
+      "wave/13",
+      16
+    ],
+    [
+      "wave/01",
+      9
+    ],
+    [
+      "wave/3",
+      8
+    ]
+  ]
+}

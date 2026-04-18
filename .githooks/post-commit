@@ -1,0 +1,30 @@
+#!/bin/bash
+# Post-commit hook for Ollama Elite AI Platform
+# Ensures commits are signed with GPG
+# Usage: This runs automatically after 'git commit'
+
+set -e
+
+# Get the last commit
+LAST_COMMIT=$(git rev-parse HEAD)
+
+# Check if commit is signed
+if git verify-commit $LAST_COMMIT > /dev/null 2>&1; then
+    echo "✅ Commit is properly signed with GPG"
+    exit 0
+elif git rev-parse HEAD~1 > /dev/null 2>&1; then
+    # Only warn if there are previous commits
+    echo "⚠️  WARNING: Commit is not signed with GPG"
+    echo ""
+    echo "Sign your commits using:"
+    echo "  git commit -S -m 'your message'"
+    echo ""
+    echo "Or configure git to sign automatically:"
+    echo "  git config user.signingkey <key-id>"
+    echo "  git config commit.gpgSign true"
+    echo ""
+    echo "For more info: https://docs.github.com/en/authentication/managing-commit-signature-verification"
+    exit 0
+fi
+
+exit 0

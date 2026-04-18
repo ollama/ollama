@@ -1,0 +1,11 @@
+{
+	"generated_at_utc": "2026-04-18T06:04:55Z",
+	"source": "github_live_api",
+	"status": "INVALID_EMPTY_ARTIFACT_REPAIRED",
+	"note": "This file was created during a failed jq invocation and was initially empty. It is retained for immutable audit continuity and superseded by valid checkpoints.",
+	"superseded_by": [
+		".github/triage_continuous_checkpoint_20260418T060505Z.json",
+		".github/agent_ready_shard_apply_report_20260418T060602Z.json"
+	],
+	"repository": "kushin77/ollama"
+}

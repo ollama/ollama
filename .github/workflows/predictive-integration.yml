@@ -1,0 +1,35 @@
+name: Predictive Integration Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  predictive_integration:
+    name: Predictive integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: Install system deps
+        run: |
+          python -m pip install --upgrade pip
+
+      - name: Install predictive extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements/predictive.txt
+          pip install -e .
+
+      - name: Run optional predictive tests
+        run: |
+          pytest tests/unit/pmo/test_predictive_optional.py -q

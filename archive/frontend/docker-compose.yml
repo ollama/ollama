@@ -1,0 +1,45 @@
+version: "3.9"
+
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ollama-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # API Configuration
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://elevatediq.ai/ollama}
+      
+      # Firebase Configuration
+      NEXT_PUBLIC_FIREBASE_API_KEY: ${NEXT_PUBLIC_FIREBASE_API_KEY}
+      NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN}
+      NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${NEXT_PUBLIC_FIREBASE_PROJECT_ID}
+      NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ${NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET}
+      NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID}
+      NEXT_PUBLIC_FIREBASE_APP_ID: ${NEXT_PUBLIC_FIREBASE_APP_ID}
+      
+      # Production settings
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: 1
+    networks:
+      - ollama-net
+    labels:
+      # GCP Landing Zone Compliance Labels
+      environment: ${ENVIRONMENT:-production}
+      team: ollama-engineering
+      application: ollama
+      component: frontend
+      cost-center: eng-ai-platform
+      managed-by: docker-compose
+      git_repo: github.com/kushin77/ollama
+      lifecycle_status: active
+
+networks:
+  ollama-net:
+    driver: bridge
+    labels:
+      environment: ${ENVIRONMENT:-production}
+      application: ollama

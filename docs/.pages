@@ -1,0 +1,14 @@
+# .pages
+# Navigation order for awesome-pages plugin
+
+nav:
+  - index.md
+  - Getting Started
+  - Architecture
+  - API Reference
+  - Deployment
+  - Operations
+  - Features
+  - Security
+  - Contributing
+  - Resources

@@ -1,0 +1,55 @@
+name: GCP Landing Zone Onboarding
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Action to perform"
+        required: true
+        default: "plan"
+        type: choice
+        options:
+          - plan
+          - apply
+
+jobs:
+  onboard:
+    name: Infrastructure Bootstrap
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          # These would be the bootstrap credentials provided by the Landing Zone admin
+          workload_identity_provider: ${{ secrets.LZ_BOOTSTRAP_WIF_PROVIDER }}
+          service_account: ${{ secrets.LZ_BOOTSTRAP_SA }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7.0"
+
+      - name: Run Infrastructure Bootstrap
+        env:
+          ACTION: ${{ github.event.inputs.action }}
+        run: |
+          if [[ "$ACTION" == "apply" ]]; then
+            bash scripts/infra-bootstrap.sh --apply
+          else
+            bash scripts/infra-bootstrap.sh
+          fi
+
+      - name: Verify Documentation & Compliance
+        run: |
+          python scripts/validate_folder_structure.py --strict
+          echo "Compliance validation passed."

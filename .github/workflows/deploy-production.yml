@@ -1,0 +1,63 @@
+name: Deploy to Production (Elite Landing Zone)
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  GCP_REGION: us-central1
+
+jobs:
+  deploy:
+    name: Production Onboarding
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install uv
+          uv pip install --system -e .
+
+      - name: Elite Quality Check
+        run: |
+          python scripts/validate_folder_structure.py --strict
+          # Additional checks could be added here
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to GCP Landing Zone
+        run: |
+          chmod +x scripts/deploy-onboarding-lz.sh
+          bash scripts/deploy-onboarding-lz.sh
+
+      - name: Notify
+        if: always()
+        run: |
+          if [[ "${{ job.status }}" == "success" ]]; then
+            echo "✅ Deployment successful and project is Landing Zone compliant."
+          else
+            echo "❌ Deployment failed. Check Landing Zone policy logs."
+            exit 1
+          fi

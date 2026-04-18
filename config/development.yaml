@@ -1,0 +1,52 @@
+# Development Configuration
+server:
+  host: "127.0.0.1"
+  port: 8000
+  workers: 1
+  log_level: "DEBUG"
+  request_timeout: 300
+  reload: true
+
+database:
+  url: "sqlite:///./ollama.db"
+  echo: true
+
+cache:
+  type: "memory"
+  ttl: 600
+
+models:
+  llama2:
+    source: "huggingface"
+    model_id: "meta-llama/Llama-2-7b-chat"
+    quantization: "q4_K_M"
+    context_length: 2048
+    gpu_memory_reserved_mb: 6000
+    batch_size: 1
+    max_concurrent: 1
+
+inference:
+  enable_flash_attention: true
+  enable_paging: false
+  prefill_batch_size: 1
+  decode_batch_size: 1
+  max_concurrent_requests: 1
+
+monitoring:
+  prometheus:
+    enabled: false
+  jaeger:
+    enabled: false
+
+security:
+  api_key_auth_enabled: false
+  cors_origins:
+    - "*"
+  tls_enabled: false
+  request_timeout: 600
+
+vector_database:
+  type: "qdrant"
+  url: "http://localhost:6333"
+  collection: "embeddings"
+  embedding_model: "all-minilm-l6-v2"

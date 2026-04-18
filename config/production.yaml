@@ -1,0 +1,105 @@
+# Production Configuration
+# Architecture: Ollama runs locally on Docker, public access via GCP Load Balancer
+# - Local: Docker containers on the target server's internal interface
+# - Public: https://elevatediq.ai/ollama (GCP LB with TLS termination)
+# - All AI workloads execute locally, GCP provides ONLY the Load Balancer
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  public_url: "https://elevatediq.ai/ollama"
+  domain: "elevatediq.ai"
+  workers: 8
+  log_level: "INFO"
+  request_timeout: 300
+  keepalive_timeout: 15
+
+  # Security headers
+  security_headers:
+    strict_transport_security: "max-age=31536000; includeSubDomains; preload"
+    x_content_type_options: "nosniff"
+    x_frame_options: "DENY"
+    x_xss_protection: "1; mode=block"
+    content_security_policy: "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+
+  # Rate limiting for public endpoint
+  rate_limiting:
+    enabled: true
+    requests_per_minute: 100
+    burst: 150
+    per_api_key: true
+
+database:
+  url: "postgresql://ollama:${DB_PASSWORD}@postgres:5432/ollama"
+  pool_size: 20
+  max_overflow: 10
+  echo: false
+  timeout: 30
+
+cache:
+  type: "redis"
+  url: "redis://redis:6379/0"
+  ttl: 3600
+  password: "${REDIS_PASSWORD}"
+
+models:
+  llama2:
+    source: "huggingface"
+    model_id: "meta-llama/Llama-2-7b-chat"
+    quantization: "q4_K_M"
+    context_length: 4096
+    gpu_memory_reserved_mb: 10000
+    batch_size: 8
+    max_concurrent: 2
+
+  mistral:
+    source: "huggingface"
+    model_id: "mistralai/Mistral-7B-Instruct-v0.1"
+    quantization: "q5_K_M"
+    context_length: 32768
+    gpu_memory_reserved_mb: 12000
+    batch_size: 8
+    max_concurrent: 2
+
+inference:
+  enable_flash_attention: true
+  enable_paging: true
+  prefill_batch_size: 16
+  decode_batch_size: 8
+  max_concurrent_requests: 32
+
+monitoring:
+  prometheus:
+    enabled: true
+    port: 9090
+  jaeger:
+    enabled: true
+    agent_host: "jaeger"
+    agent_port: 6831
+  logging:
+    format: "json"
+    level: "INFO"
+
+security:
+  api_key_auth_enabled: true
+  api_key_header: "X-API-Key"
+  cors_origins:
+    - "https://elevatediq.ai"
+    - "https://*.elevatediq.ai"
+    - "http://localhost:3000"
+    - "http://localhost:8080"
+  cors_allow_credentials: true
+  cors_expose_headers:
+    - "Content-Type"
+    - "X-RateLimit-Limit"
+    - "X-RateLimit-Remaining"
+    - "X-Request-ID"
+  tls_enabled: true
+  tls_min_version: "1.2"
+  request_timeout: 300
+
+vector_database:
+  type: "qdrant"
+  url: "http://qdrant:6333"
+  collection: "embeddings"
+  embedding_model: "all-minilm-l6-v2"

@@ -1,0 +1,25 @@
+{
+  "version": "1.0",
+  "description": "Idempotent autonomous issue cycle configuration",
+  "repository": "kushin77/ollama",
+  "execution": {
+    "wave_size": 25,
+    "comment_budget": 20,
+    "max_issues_per_cycle": 50,
+    "comments_only": true,
+    "resume_from_previous_report": ".github/wave_assignment_report_20260418T031242Z.json"
+  },
+  "paths": {
+    "snapshot": ".github/open_issues_snapshot.json",
+    "manifest": ".github/autonomous_execution_batches.json",
+    "deferred_queue": ".github/wave_assignment_deferred_queue.json",
+    "report_dir": ".github"
+  },
+  "governance": {
+    "immutable": true,
+    "commit_required": true,
+    "idempotent": true,
+    "close_requires_commit_evidence": true,
+    "close_requires_verification": true
+  }
+}

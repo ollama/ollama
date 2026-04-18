@@ -1,0 +1,52 @@
+name: PMO CI
+
+on:
+  push:
+    branches: [main, feature/**]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-and-lint:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.11]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install dependencies (if present)
+        run: |
+          if [ -f requirements-pmo.txt ]; then pip install -r requirements-pmo.txt; fi
+          pip install -e .[dev] || true
+
+      - name: Install tooling
+        run: python -m pip install pytest mypy ruff pip-audit
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Type check (mypy)
+        run: mypy ollama/ --strict
+
+      - name: Run tests (with coverage)
+        run: pytest --cov=ollama --cov-report=xml:coverage.xml tests/ -q
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+
+      - name: Security scan (pip-audit)
+        run: pip-audit --fail-on high || true

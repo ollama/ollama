@@ -1,0 +1,83 @@
+name: Automated Issue Triage
+
+on:
+  issues:
+    types: [opened, labeled, unlabeled, edited]
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: read
+  contents: read
+  id-token: write
+
+jobs:
+  triage:
+    name: Classify and Triage Issue
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Resolve GitHub token from GSM
+        id: github-auth
+        env:
+          OLLAMA_GSM_ENABLED: "true"
+          GSM_PROJECT: ${{ secrets.GSM_PROJECT || 'gcp-eiq' }}
+          GSM_SECRET_NAME: ${{ secrets.GSM_SECRET_NAME || 'prod-github-token' }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          TOKEN="$(bash scripts/github-actions-token.sh)"
+          echo "::add-mask::$TOKEN"
+          printf 'token=%s\n' "$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Triage issue
+        run: python3 scripts/issue_triage.py
+        env:
+          GITHUB_TOKEN: ${{ steps.github-auth.outputs.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_ISSUE_NUMBER: ${{ github.event.issue.number }}
+          GITHUB_ISSUE_TITLE: ${{ github.event.issue.title }}
+          GITHUB_ISSUE_BODY: ${{ github.event.issue.body }}
+          GITHUB_ISSUE_LABELS: ${{ toJson(github.event.issue.labels) }}
+          GITHUB_ISSUE_ASSIGNEE: ${{ github.event.issue.assignee.login }}
+
+      - name: Log triage metadata
+        if: always()
+        run: |
+          python3 << 'PYTHON_EOF'
+          import json
+          from pathlib import Path
+          from datetime import datetime
+
+          metadata = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "action": "triage_executed",
+            "issue_number": ${{ github.event.issue.number }},
+            "event_action": "${{ github.event.action }}",
+            "actor": "${{ github.actor }}"
+          }
+
+          audit_file = Path(".github/issue_audit_trail.jsonl")
+          with open(audit_file, "a") as f:
+            f.write(json.dumps(metadata) + "\n")
+
+          print(f"✅ Audit log entry created: {metadata['timestamp']}")
+          PYTHON_EOF

@@ -1,0 +1,918 @@
+version: "3.9"
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║  OLLAMA ELITE DEPLOYMENT - IMMUTABLE INFRASTRUCTURE                      ║
+# ║  Local Docker Host: target server                                        ║
+# ║  Public Endpoint: https://elevatediq.ai/ollama (GCP Load Balancer)      ║
+# ╠══════════════════════════════════════════════════════════════════════════╣
+# ║  GCP LANDING ZONE COMPLIANCE                                             ║
+# ║  • Mandatory Labels: 8+ per Landing Zone mandate                         ║
+# ║  • Naming Convention: {environment}-{application}-{component}            ║
+# ║  • Security: Cloud Armor DDoS, CMEK encryption, TLS 1.3+                ║
+# ║  • Monitoring: Internal only, accessible through GCP LB                  ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+# ============================================================================
+# GCP LANDING ZONE - MANDATORY LABELS (8+ required)
+# ============================================================================
+x-common-labels: &common-labels
+  environment: "production"
+  team: "elevatediq-engineering"
+  application: "ollama"
+  cost-center: "ai-platform-001"
+  managed-by: "docker-compose"
+  git_repo: "github.com/kushin77/ollama"
+  lifecycle_status: "active"
+  security_tier: "high"
+
+services:
+  # ============================================================================
+  # OLLAMA API - Core AI Inference Service
+  # ============================================================================
+  prod-ollama-api:
+    image: ollama:${OLLAMA_VERSION:-1.0.0}
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: production
+      args:
+        PYTHON_VERSION: "3.11"
+        BUILD_DATE: "${BUILD_DATE}"
+        VCS_REF: "${GIT_COMMIT}"
+
+    container_name: prod-ollama-api
+    hostname: ollama-api
+    restart: unless-stopped
+    labels:
+      <<: *common-labels
+      component: "api"
+      tier: "critical"
+      backup_strategy: "none"
+      monitoring_enabled: "true"
+
+    # Resource Management (prevents OOM, ensures QoS)
+    deploy:
+      resources:
+        limits:
+          cpus: "8"
+          memory: 32G
+        reservations:
+          cpus: "4"
+          memory: 16G
+          devices:
+            - driver: nvidia
+              device_ids: ["${CUDA_DEVICE:-0}"]
+              capabilities: [gpu]
+
+    # Security Hardening
+    security_opt:
+      - no-new-privileges:true
+    read_only: true # Immutable root filesystem
+    tmpfs:
+      - /tmp:size=1G,mode=1777
+      - /app/cache:size=2G,mode=1777
+
+    # Networking (localhost binding, nginx proxy)
+    ports:
+      - "127.0.0.1:8000:8000"
+    networks:
+      ollama-network:
+        aliases:
+          - api.ollama.local
+
+    # Environment Configuration
+    env_file:
+      - .env
+      - .env.production
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_FORMAT=json
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - API_KEY_AUTH_ENABLED=true
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - PROMETHEUS_ENABLED=true
+      - JAEGER_AGENT_HOST=jaeger
+      - JAEGER_AGENT_PORT=6831
+
+    # Volume Mounts
+    volumes:
+      # Models (LARGE - backed up to GCS)
+      - type: volume
+        source: ollama-models
+        target: /models
+        read_only: false
+        volume:
+          nocopy: true
+
+      # Config (read-only, immutable)
+      - type: bind
+        source: ./config/production.yaml
+        target: /app/config.yaml
+        read_only: true
+
+      # Logs (ephemeral, shipped to monitoring)
+      - type: volume
+        source: ollama-logs
+        target: /var/log/ollama
+
+    # Health Check (auto-recovery)
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    # Service Dependencies
+    depends_on:
+      prod-ollama-postgres:
+        condition: service_healthy
+      prod-ollama-redis:
+        condition: service_healthy
+      prod-ollama-qdrant:
+        condition: service_healthy
+
+    # Logging Configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "5"
+        labels: "service,environment"
+
+  # ============================================================================
+  # POSTGRESQL - Metadata Database
+  # ============================================================================
+  prod-ollama-postgres:
+    image: postgres:15.5-alpine
+    container_name: prod-ollama-postgres
+    hostname: postgres
+    restart: unless-stopped
+    labels:
+      <<: *common-labels
+      component: "database"
+      tier: "critical"
+      backup_strategy: "gcp-daily"
+      monitoring_enabled: "true"
+
+    # Resource Limits
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8G
+        reservations:
+          cpus: "2"
+          memory: 4G
+
+    # Security
+    security_opt:
+      - no-new-privileges:true
+
+    # Networking
+    ports:
+      - "127.0.0.1:5432:5432"
+    networks:
+      ollama-network:
+        aliases:
+          - db.ollama.local
+
+    # Environment Configuration
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ollama}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-ollama}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF-8"
+      PGDATA: /var/lib/postgresql/data/pgdata
+      # Performance Tuning
+      POSTGRES_SHARED_BUFFERS: "2GB"
+      POSTGRES_EFFECTIVE_CACHE_SIZE: "6GB"
+      POSTGRES_MAINTENANCE_WORK_MEM: "512MB"
+      POSTGRES_CHECKPOINT_COMPLETION_TARGET: "0.9"
+      POSTGRES_WAL_BUFFERS: "16MB"
+      POSTGRES_MAX_WAL_SIZE: "4GB"
+      POSTGRES_MIN_WAL_SIZE: "1GB"
+
+    # Volume Mounts
+    volumes:
+      # Data (backed up to GCS daily)
+      - type: volume
+        source: postgres-data
+        target: /var/lib/postgresql/data
+
+      # Initialization scripts
+      - type: bind
+        source: ./docker/postgres/init
+        target: /docker-entrypoint-initdb.d
+        read_only: true
+
+      # Custom config
+      - type: bind
+        source: ./docker/postgres/postgresql.conf
+        target: /etc/postgresql/postgresql.conf
+        read_only: true
+
+      # Backup staging area
+      - type: volume
+        source: postgres-backups
+        target: /backups
+
+    # Health Check
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-ollama} -d ${POSTGRES_DB:-ollama}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # ============================================================================
+  # REDIS - Caching Layer
+  # ============================================================================
+  prod-ollama-redis:
+    image: redis:7.2.3-alpine
+    container_name: prod-ollama-redis
+    hostname: redis
+    restart: unless-stopped
+    labels:
+      <<: *common-labels
+      component: "cache"
+      tier: "high"
+      backup_strategy: "gcp-daily"
+      monitoring_enabled: "true"
+
+    # Resource Limits
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+        reservations:
+          cpus: "1"
+          memory: 2G
+
+    # Security
+    security_opt:
+      - no-new-privileges:true
+
+    # Networking
+    ports:
+      - "127.0.0.1:6379:6379"
+    networks:
+      ollama-network:
+        aliases:
+          - cache.ollama.local
+
+    # Command with production settings
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 3gb
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+      --tcp-backlog 511
+      --timeout 0
+      --tcp-keepalive 300
+      --daemonize no
+      --loglevel notice
+
+    # Volumes
+    volumes:
+      - type: volume
+        source: redis-data
+        target: /data
+
+      - type: bind
+        source: ./docker/redis/redis.conf
+        target: /usr/local/etc/redis/redis.conf
+        read_only: true
+
+    # Health Check
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "redis-cli",
+          "--no-auth-warning",
+          "-a",
+          "${REDIS_PASSWORD}",
+          "ping",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  # ============================================================================
+  # QDRANT - Vector Database
+  # ============================================================================
+  prod-ollama-qdrant:
+    image: qdrant/qdrant:v1.7.3
+    container_name: prod-ollama-qdrant
+    hostname: qdrant
+    restart: unless-stopped
+    labels:
+      <<: *common-labels
+      component: "vector-db"
+      tier: "high"
+      backup_strategy: "gcp-hourly"
+      monitoring_enabled: "true"
+
+    # Resource Limits
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8G
+        reservations:
+          cpus: "2"
+          memory: 4G
+
+    # Security
+    security_opt:
+      - no-new-privileges:true
+
+    # Networking
+    ports:
+      - "127.0.0.1:6333:6333" # HTTP API
+      - "127.0.0.1:6334:6334" # gRPC
+    networks:
+      ollama-network:
+        aliases:
+          - vector.ollama.local
+
+    # Environment
+    environment:
+      QDRANT__SERVICE__HTTP_PORT: "6333"
+      QDRANT__SERVICE__GRPC_PORT: "6334"
+      QDRANT__STORAGE__STORAGE_PATH: "/qdrant/storage"
+      QDRANT__STORAGE__SNAPSHOTS_PATH: "/qdrant/snapshots"
+      QDRANT__SERVICE__ENABLE_TLS: "false"
+      QDRANT__LOG_LEVEL: "INFO"
+
+    # Volumes
+    volumes:
+      - type: volume
+        source: qdrant-data
+        target: /qdrant/storage
+
+      - type: volume
+        source: qdrant-snapshots
+        target: /qdrant/snapshots
+
+    # Health Check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # ============================================================================
+  # PROMETHEUS - Metrics Collection
+  # Internal only - accessible through GCP LB for production
+  # ============================================================================
+  prod-ollama-prometheus:
+    image: prom/prometheus:v2.48.1
+    container_name: prod-ollama-prometheus
+    hostname: prometheus
+    restart: unless-stopped
+    user: "nobody"
+    labels:
+      <<: *common-labels
+      component: "monitoring"
+      tier: "medium"
+      backup_strategy: "gcp-weekly"
+      monitoring_enabled: "true"
+
+    # Resource Limits
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+        reservations:
+          cpus: "1"
+          memory: 2G
+
+    # Networking
+    ports:
+      - "127.0.0.1:9090:9090"
+    networks:
+      ollama-network:
+        aliases:
+          - metrics.ollama.local
+
+    # Volumes
+    volumes:
+      - type: bind
+        source: ./monitoring/prometheus/prometheus.yml
+        target: /etc/prometheus/prometheus.yml
+        read_only: true
+
+      - type: bind
+        source: ./monitoring/prometheus/alerts.yml
+        target: /etc/prometheus/alerts.yml
+        read_only: true
+
+      - type: volume
+        source: prometheus-data
+        target: /prometheus
+
+    # Command
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--storage.tsdb.retention.size=10GB"
+      - "--web.console.libraries=/etc/prometheus/console_libraries"
+      - "--web.console.templates=/etc/prometheus/consoles"
+      - "--web.enable-lifecycle"
+      - "--web.enable-admin-api"
+
+    # Health Check
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--tries=1",
+          "--spider",
+          "http://localhost:9090/-/healthy",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  # ============================================================================
+  # GRAFANA - Visualization & Dashboards
+  # Internal only - accessible through GCP LB for production
+  # ============================================================================
+  prod-ollama-grafana:
+    image: grafana/grafana:10.2.3
+    container_name: prod-ollama-grafana
+    hostname: grafana
+    restart: unless-stopped
+    user: "472"
+    labels:
+      <<: *common-labels
+      component: "monitoring"
+      tier: "medium"
+      backup_strategy: "config-only"
+      monitoring_enabled: "true"
+
+    # Resource Limits
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
+    # Networking - INTERNAL ONLY (no external ports in production)
+    # ports:
+    #   - "127.0.0.1:3000:3000"  # BLOCKED: Access through GCP LB only
+    networks:
+      ollama-network:
+        aliases:
+          - dashboards.ollama.local
+
+    # Environment
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_SERVER_ROOT_URL: "https://elevatediq.ai/grafana"
+      GF_DATABASE_TYPE: postgres
+      GF_DATABASE_HOST: prod-ollama-postgres:5432
+      GF_DATABASE_NAME: grafana
+      GF_DATABASE_USER: ${POSTGRES_USER:-ollama}
+      GF_DATABASE_PASSWORD: ${POSTGRES_PASSWORD}
+      GF_INSTALL_PLUGINS: "grafana-clock-panel,grafana-simple-json-datasource"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+
+    # Volumes
+    volumes:
+      - type: volume
+        source: grafana-data
+        target: /var/lib/grafana
+
+      - type: bind
+        source: ./monitoring/grafana/provisioning
+        target: /etc/grafana/provisioning
+        read_only: true
+
+      - type: bind
+        source: ./monitoring/grafana/dashboards
+        target: /var/lib/grafana/dashboards
+        read_only: true
+
+    # Health Check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+    # Dependencies
+    depends_on:
+      - prod-ollama-prometheus
+      - prod-ollama-postgres
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "30m"
+        max-file: "3"
+
+  # ============================================================================
+  # JAEGER - Distributed Tracing
+  # Internal only - accessible through GCP LB for production
+  # ============================================================================
+  prod-ollama-jaeger:
+    image: jaegertracing/all-in-one:1.52.0
+    container_name: prod-ollama-jaeger
+    hostname: jaeger
+    restart: unless-stopped
+    labels:
+      <<: *common-labels
+      component: "tracing"
+      tier: "medium"
+      backup_strategy: "gcp-weekly"
+      monitoring_enabled: "true"
+
+    # Resource Limits
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
+    # Networking - INTERNAL ONLY (no external UI port in production)
+    # ports:
+    #   - "127.0.0.1:16686:16686"  # UI - BLOCKED: Access through GCP LB only
+    networks:
+      ollama-network:
+        aliases:
+          - tracing.ollama.local
+
+    # Internal agent ports for tracing ingestion
+    expose:
+      - "5775/udp" # Zipkin compact
+      - "6831/udp" # Jaeger compact
+      - "6832/udp" # Jaeger binary
+      - "5778" # Serve configs
+      - "14268" # Direct send
+      - "14250" # Model proto
+      - "9411" # Zipkin
+
+    # Environment
+    environment:
+      COLLECTOR_ZIPKIN_HOST_PORT: ":9411"
+      COLLECTOR_OTLP_ENABLED: "true"
+      SPAN_STORAGE_TYPE: "badger"
+      BADGER_EPHEMERAL: "false"
+      BADGER_DIRECTORY_VALUE: "/badger/data"
+      BADGER_DIRECTORY_KEY: "/badger/key"
+
+    # Volumes
+    volumes:
+      - type: volume
+        source: jaeger-data
+        target: /badger
+
+    # Health Check
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:14269/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "30m"
+        max-file: "3"
+
+  # ============================================================================
+  # NGINX - Reverse Proxy & Gateway
+  # ============================================================================
+  prod-ollama-nginx:
+    image: nginx:1.25.3-alpine
+    container_name: prod-ollama-nginx
+    hostname: nginx
+    restart: unless-stopped
+    labels:
+      <<: *common-labels
+      component: "gateway"
+      tier: "critical"
+      backup_strategy: "config-only"
+      monitoring_enabled: "true"
+
+    # Resource Limits
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+
+    # Security
+    security_opt:
+      - no-new-privileges:true
+
+    # Networking - Only via GCP LB in production
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      ollama-network:
+        aliases:
+          - gateway.ollama.local
+
+    # Volumes
+    volumes:
+      - type: bind
+        source: ./docker/nginx/nginx.conf
+        target: /etc/nginx/nginx.conf
+        read_only: true
+
+      - type: bind
+        source: ./docker/nginx/conf.d
+        target: /etc/nginx/conf.d
+        read_only: true
+
+      - type: volume
+        source: nginx-cache
+        target: /var/cache/nginx
+
+      - type: volume
+        source: nginx-logs
+        target: /var/log/nginx
+
+    # Dependencies
+    depends_on:
+      - prod-ollama-api
+      - prod-ollama-grafana
+
+    # Health Check
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ============================================================================
+  # GCS SYNC - Automated Backup to Google Cloud Storage
+  # ============================================================================
+  prod-ollama-gcs-sync:
+    image: google/cloud-sdk:alpine
+    container_name: prod-ollama-gcs-sync
+    hostname: gcs-sync
+    restart: unless-stopped
+    labels:
+      <<: *common-labels
+      component: "backup"
+      tier: "high"
+      backup_strategy: "none"
+      monitoring_enabled: "true"
+
+    # Resource Limits
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+
+    # Environment
+    environment:
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/gcp_sa_key
+      GCS_BUCKET: ${GCS_BUCKET:-gs://elevatediq-ollama-backups}
+      SYNC_INTERVAL: ${GCS_SYNC_INTERVAL:-3600}
+
+    # Volumes (read-only access to data)
+    volumes:
+      - type: volume
+        source: ollama-models
+        target: /data/models
+        read_only: true
+
+      - type: volume
+        source: postgres-backups
+        target: /data/postgres
+        read_only: true
+
+      - type: volume
+        source: redis-data
+        target: /data/redis
+        read_only: true
+
+      - type: volume
+        source: qdrant-snapshots
+        target: /data/qdrant
+        read_only: true
+
+      - type: bind
+        source: ./scripts/gcs-sync.sh
+        target: /app/sync.sh
+        read_only: true
+
+      - type: bind
+        source: ./secrets/gcp-service-account.json
+        target: /run/secrets/gcp_sa_key
+        read_only: true
+
+    # Command
+    command: >
+      sh -c "
+      echo 'Activating GCP service account...';
+      gcloud auth activate-service-account --key-file=/run/secrets/gcp_sa_key;
+      echo 'Starting backup sync loop...';
+      while true; do
+        echo '=== GCS Sync started at $$(date) ===';
+        /app/sync.sh;
+        echo '=== GCS Sync completed at $$(date) ===';
+        echo 'Next sync in ${SYNC_INTERVAL:-3600} seconds...';
+        sleep ${SYNC_INTERVAL:-3600};
+      done
+      "
+
+    # Network
+    networks:
+      - ollama-network
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+# ==============================================================================
+# VOLUMES - Persistent Data Storage
+# ==============================================================================
+volumes:
+  # Application Logs (ephemeral, rotated)
+  ollama-logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/ollama/logs
+
+  # Large Data Volumes (backed up to GCS)
+  ollama-models:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/data/ollama/models
+    labels:
+      com.ollama.backup: "gcs-daily"
+      com.ollama.size: "large"
+
+  postgres-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/data/ollama/postgres
+    labels:
+      com.ollama.backup: "gcs-daily"
+      com.ollama.size: "medium"
+
+  postgres-backups:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/backups/postgres
+    labels:
+      com.ollama.backup: "staging"
+
+  redis-data:
+    driver: local
+    labels:
+      com.ollama.backup: "gcs-daily"
+
+  qdrant-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/data/ollama/qdrant
+    labels:
+      com.ollama.backup: "gcs-hourly"
+
+  qdrant-snapshots:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /mnt/backups/qdrant
+    labels:
+      com.ollama.backup: "staging"
+
+  prometheus-data:
+    driver: local
+    labels:
+      com.ollama.backup: "gcs-weekly"
+
+  grafana-data:
+    driver: local
+    labels:
+      com.ollama.backup: "config-only"
+
+  jaeger-data:
+    driver: local
+    labels:
+      com.ollama.backup: "gcs-weekly"
+
+  nginx-cache:
+    driver: local
+
+  nginx-logs:
+    driver: local
+
+# ==============================================================================
+# NETWORKS - Service Communication
+# ==============================================================================
+networks:
+  ollama-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.0.0/16
+          gateway: 172.25.0.1
+    driver_opts:
+      com.docker.network.bridge.name: br-ollama
+      com.docker.network.bridge.enable_icc: "true"
+      com.docker.network.bridge.enable_ip_masquerade: "true"
+      com.docker.network.driver.mtu: "1500"
+    labels:
+      com.ollama.network: "internal"
+      com.ollama.environment: "production"

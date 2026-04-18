@@ -1,0 +1,2 @@
+Method,Name,Error,Occurrences
+GET,/api/v1/models,HTTPError('404 Client Error: Not Found for url: /api/v1/models'),2447

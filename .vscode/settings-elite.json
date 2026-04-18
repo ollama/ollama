@@ -1,0 +1,70 @@
+{
+    "python.defaultInterpreterPath": "${workspaceFolder}/venv/bin/python",
+    "python.linting.mypyEnabled": true,
+    "python.linting.mypyArgs": [
+        "--strict",
+        "--ignore-missing-imports",
+        "--show-error-codes",
+        "--warn-redundant-casts"
+    ],
+    "python.analysis.typeCheckingMode": "strict",
+    "python.analysis.autoImportCompletions": true,
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportMissingTypeStubs": "warning",
+        "reportPrivateUsage": "warning",
+        "reportUnusedImport": "error",
+        "reportUnusedVariable": "error",
+        "reportMissingDocstring": "information",
+        "reportOptionalMemberAccess": "error"
+    },
+    "python.formatting.provider": "black",
+    "python.formatting.blackArgs": ["--line-length=100", "--target-version=py311"],
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.black-formatter",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit",
+            "source.fixAll.ruff": "explicit"
+        }
+    },
+    "python.testing.pytestEnabled": true,
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestArgs": ["tests", "-v", "--tb=short"],
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "ms-python.black-formatter",
+    "editor.rulers": [100],
+    "editor.wordWrapColumn": 100,
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true,
+    "editor.trimAutoWhitespace": true,
+    "editor.inlineHints.enabled": true,
+    "editor.bracketPairColorization.enabled": true,
+    "editor.guides.bracketPairs": "active",
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true,
+    "files.autoSave": "onFocusChange",
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/.pytest_cache": true,
+        "**/.mypy_cache": true,
+        "**/.ruff_cache": true,
+        "**/htmlcov": true,
+        "**/.coverage": true
+    },
+    "git.autofetch": true,
+    "git.confirmSync": true,
+    "git.signing.enabled": true,
+    "git.signing.commits": true,
+    "github.copilot.enable": {"*": true, "plaintext": false, "markdown": false},
+    "github.copilot.ui.ghostText.enabled": true,
+    "testing.automaticallyOpenPeekView": "failureInVisibleDocument",
+    "search.exclude": {
+        "**/venv": true,
+        "**/__pycache__": true,
+        "**/.pytest_cache": true,
+        "**/htmlcov": true
+    },
+    "explorer.fileNesting.enabled": true,
+    "workbench.startupEditor": "none",
+    "security.workspace.trust.startupPrompt": "once"
+}

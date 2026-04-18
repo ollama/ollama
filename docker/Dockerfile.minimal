@@ -1,0 +1,16 @@
+# Minimal working Ollama API for Cloud Run
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install only essential dependencies
+RUN pip install --no-cache-dir fastapi uvicorn[standard]
+
+# Copy minimal test server
+COPY test_server.py /app/server.py
+
+# Expose Cloud Run port
+EXPOSE 8080
+
+# Run on Cloud Run port
+CMD python -m uvicorn server:app --host 0.0.0.0 --port ${PORT:-8080}

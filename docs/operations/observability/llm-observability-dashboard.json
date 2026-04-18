@@ -1,0 +1,69 @@
+{
+  "title": "Ollama LLM Observability Baseline",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "panels": [
+    {
+      "title": "HTTP Requests by Route/Status",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (route, status) (rate(ollama_http_requests_total[5m]))",
+          "legendFormat": "{{route}} {{status}}"
+        }
+      ]
+    },
+    {
+      "title": "P95 Latency (ms)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(ollama_http_request_duration_ms_bucket[5m])))",
+          "legendFormat": "{{route}}"
+        }
+      ]
+    },
+    {
+      "title": "Failure Rate",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (route, reason) (rate(ollama_http_failures_total[5m]))",
+          "legendFormat": "{{route}} {{reason}}"
+        }
+      ]
+    },
+    {
+      "title": "Token Throughput",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (route, kind) (rate(ollama_tokens_total[5m]))",
+          "legendFormat": "{{route}} {{kind}}"
+        }
+      ]
+    },
+    {
+      "title": "Cache/Retrieval Hits",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by (route, signal) (rate(ollama_signal_hits_total[5m]))",
+          "legendFormat": "{{route}} {{signal}}"
+        }
+      ]
+    },
+    {
+      "title": "In-flight Requests",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "ollama_http_inflight_requests",
+          "legendFormat": "inflight"
+        }
+      ]
+    }
+  ]
+}

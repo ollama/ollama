@@ -1,0 +1,173 @@
+{
+  "timestamp": "2026-04-17T19:59:58.174379",
+  "repository": "kushin77/ollama",
+  "total_issues_processed": 9,
+  "pipeline_stages": [
+    "fetch",
+    "triage",
+    "analysis",
+    "github_updates"
+  ],
+  "pipeline": {
+    "fetch": {
+      "status": "success",
+      "issues_fetched": 37
+    },
+    "triage": {
+      "status": "success",
+      "total_triaged": 37,
+      "target_severity": "low",
+      "target_count": 9
+    },
+    "analysis": {
+      "status": "success",
+      "analyzed_count": 9
+    },
+    "execution": {
+      "status": "success",
+      "dry_run": true,
+      "attempted": 9,
+      "succeeded": 9,
+      "failed": 0
+    }
+  },
+  "execution_results": [
+    {
+      "issue": 15646,
+      "timestamp": "2026-04-17T19:59:58.153452",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15640,
+      "timestamp": "2026-04-17T19:59:58.156349",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15639,
+      "timestamp": "2026-04-17T19:59:58.158944",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15638,
+      "timestamp": "2026-04-17T19:59:58.161501",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15626,
+      "timestamp": "2026-04-17T19:59:58.164012",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15625,
+      "timestamp": "2026-04-17T19:59:58.166367",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15614,
+      "timestamp": "2026-04-17T19:59:58.168720",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15604,
+      "timestamp": "2026-04-17T19:59:58.171595",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 15600,
+      "timestamp": "2026-04-17T19:59:58.173686",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    }
+  ],
+  "state_transitions": {
+    "15646": [
+      {
+        "issue_num": 15646,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T19:59:58.153649",
+        "metadata": {}
+      }
+    ],
+    "15640": [
+      {
+        "issue_num": 15640,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T19:59:58.156464",
+        "metadata": {}
+      }
+    ],
+    "15639": [
+      {
+        "issue_num": 15639,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T19:59:58.159049",
+        "metadata": {}
+      }
+    ],
+    "15638": [
+      {
+        "issue_num": 15638,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T19:59:58.161599",
+        "metadata": {}
+      }
+    ],
+    "15626": [
+      {
+        "issue_num": 15626,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T19:59:58.164122",
+        "metadata": {}
+      }
+    ],
+    "15625": [
+      {
+        "issue_num": 15625,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T19:59:58.166461",
+        "metadata": {}
+      }
+    ],
+    "15614": [
+      {
+        "issue_num": 15614,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T19:59:58.168839",
+        "metadata": {}
+      }
+    ],
+    "15604": [
+      {
+        "issue_num": 15604,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T19:59:58.171680",
+        "metadata": {}
+      }
+    ],
+    "15600": [
+      {
+        "issue_num": 15600,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T19:59:58.173772",
+        "metadata": {}
+      }
+    ]
+  }
+}

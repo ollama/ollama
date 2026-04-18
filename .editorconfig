@@ -1,0 +1,64 @@
+# EditorConfig helps maintain consistent coding styles
+# https://editorconfig.org
+
+root = true
+
+# Default settings for all files
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# Python files
+[*.py]
+indent_size = 4
+max_line_length = 100
+
+# Shell scripts
+[*.sh]
+indent_size = 2
+
+# YAML files
+[*.{yml,yaml}]
+indent_size = 2
+
+# JSON files
+[*.json]
+indent_size = 2
+
+# Markdown files
+[*.md]
+trim_trailing_whitespace = false
+max_line_length = 80
+
+# Dockerfile
+[Dockerfile*]
+indent_size = 2
+
+# Makefile
+[Makefile]
+indent_style = tab
+
+# Configuration files
+[*.{toml,ini}]
+indent_size = 2
+
+# SQL files
+[*.sql]
+indent_size = 2
+
+# TypeScript/JavaScript
+[*.{ts,js,tsx,jsx}]
+indent_size = 2
+quote_type = single
+
+# HTML/XML
+[*.{html,xml}]
+indent_size = 2
+
+# CSS/SCSS
+[*.{css,scss,sass}]
+indent_size = 2

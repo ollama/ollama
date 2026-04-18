@@ -1,0 +1,113 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ollama
+
+# Base resources to include
+resources:
+  - 0-namespace-and-services.yaml
+  - 1-databases.yaml
+  - 2-api.yaml
+  - 3-monitoring.yaml
+  - 4-ingress.yaml
+
+# Common labels applied to all resources
+commonLabels:
+  app.kubernetes.io/name: ollama
+  app.kubernetes.io/version: "1.0.0"
+  app.kubernetes.io/part-of: ollama-platform
+  managed-by: kustomize
+
+# Common annotations
+commonAnnotations:
+  docs: "https://github.com/elevatediq/ollama"
+  contact: "ops@elevatediq.ai"
+
+# Replace image tags
+images:
+  - name: postgres
+    newTag: "15-alpine"
+  - name: redis
+    newTag: "7-alpine"
+  - name: qdrant
+    newTag: "latest"
+  - name: ollama
+    newTag: "latest"
+  - name: ollama-api
+    newTag: "latest"
+  - name: prometheus
+    newTag: "latest"
+  - name: grafana
+    newTag: "latest"
+  - name: jaeger
+    newTag: "latest"
+
+# Configuration patch
+configMapGenerator:
+  - name: ollama-config
+    behavior: create
+    literals:
+      - ENVIRONMENT=production
+      - LOG_LEVEL=info
+      - API_WORKERS=8
+      - CACHE_TTL=3600
+
+# Secret management (base64 encoded, override per environment)
+secretGenerator:
+  - name: ollama-secrets
+    behavior: create
+    literals:
+      - SECRET_KEY=CHANGE_ME_IN_OVERLAY
+      - DATABASE_PASSWORD=CHANGE_ME_IN_OVERLAY
+      - REDIS_PASSWORD=CHANGE_ME_IN_OVERLAY
+      - QDRANT_API_KEY=CHANGE_ME_IN_OVERLAY
+      - GRAFANA_PASSWORD=CHANGE_ME_IN_OVERLAY
+
+# Namespace directive
+namespace: ollama
+
+# Name prefix/suffix
+namePrefix: ""
+nameSuffix: ""
+
+# Replicas override (can be overridden in overlays)
+replicas:
+  - name: ollama-api
+    count: 3
+  - name: postgres
+    count: 1
+  - name: redis
+    count: 1
+  - name: qdrant
+    count: 1
+
+# Patches for specific resources
+patches:
+  - target:
+      kind: Deployment
+      labelSelector: "app=ollama-api"
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: IfNotPresent
+
+# Resource suffix for all generated names (remove if not needed)
+# Could be used for a common suffix like "-dev", "-prod"
+
+# Strategic merge patches for complex updates
+# (These can be used to patch resources in overlays)
+
+# Vars for substitution
+# (Useful for templates)
+
+# OpenAPI v3 schema validation
+commonKvs:
+  - name: LOG_LEVEL
+    value: info
+  - name: ENVIRONMENT
+    value: production
+
+# Metadata patches
+metadata:
+  labels:
+    kustomize.config.k8s.io/needs-hash: "true"

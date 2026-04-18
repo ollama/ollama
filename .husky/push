@@ -1,0 +1,27 @@
+#!/bin/bash
+# Push hook to enforce push frequency and quality standards
+
+set -e
+
+echo "📤 Validating push..."
+
+# Ensure all tests pass before pushing
+echo "🧪 Running full test suite..."
+python -m pytest tests/ -v --cov=ollama --cov-report=term-missing || exit 1
+
+# Ensure type checking passes
+echo "🔬 Running type checks..."
+python -m mypy ollama/ --strict || exit 1
+
+# Ensure linting passes
+echo "🧹 Running linting..."
+python -m ruff check ollama/ || exit 1
+
+# Ensure security audit passes
+echo "🔐 Running security audit..."
+python -m pip_audit --desc || exit 1
+
+echo ""
+echo "✅ All push validations passed!"
+echo "📤 Ready to push!"
+echo ""

@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+#
+# Commit-msg hook for PMO governance enforcement
+# Installed at: .git/hooks/commit-msg
+#
+# This hook enforces:
+# - Commit message format: type(scope): description
+# - GPG signature present
+
+set -euo pipefail
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+COMMIT_MSG_FILE=$1
+COMMIT_MSG=$(cat "$COMMIT_MSG_FILE")
+
+# Skip checks for merge commits
+if [[ "$COMMIT_MSG" =~ ^Merge ]]; then
+    exit 0
+fi
+
+# Check commit message format: type(scope): description
+# Valid types: feat, fix, refactor, perf, test, docs, infra, security, chore
+VALID_TYPES="feat|fix|refactor|perf|test|docs|infra|security|chore|merge"
+PATTERN="^($VALID_TYPES)(\([a-z0-9-]+\))?: .{10,}$"
+
+if ! echo "$COMMIT_MSG" | head -1 | grep -qE "$PATTERN"; then
+    echo -e "${RED}❌ Invalid commit message format${NC}"
+    echo ""
+    echo -e "${YELLOW}Required format:${NC}"
+    echo "  type(scope): description"
+    echo ""
+    echo -e "${YELLOW}Valid types:${NC}"
+    echo "  feat, fix, refactor, perf, test, docs, infra, security, chore"
+    echo ""
+    echo -e "${YELLOW}Examples:${NC}"
+    echo "  feat(api): add conversation history endpoint"
+    echo "  fix(auth): resolve token expiration edge case"
+    echo "  docs(readme): update deployment instructions"
+    echo ""
+    echo -e "${YELLOW}Your message:${NC}"
+    echo "  $COMMIT_MSG"
+    exit 1
+fi
+
+echo -e "${GREEN}✅ Commit message format valid${NC}"
+exit 0

@@ -1,0 +1,167 @@
+{
+  "timestamp": "2026-04-17T22:53:49.014500",
+  "repository": "offline",
+  "requested_repository": "kushin77/ollama",
+  "auth_source": "git_credentials",
+  "total_issues_processed": 0,
+  "pipeline_stages": [
+    "fetch",
+    "triage",
+    "analysis",
+    "github_updates"
+  ],
+  "pipeline": {
+    "fetch": {
+      "status": "success",
+      "issues_fetched": 0,
+      "passes": 3
+    },
+    "triage": {
+      "status": "success",
+      "total_triaged": 0,
+      "target_counts": {
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      }
+    },
+    "analysis": {
+      "status": "success",
+      "analyzed_count": 0
+    },
+    "execution": {
+      "status": "success",
+      "dry_run": true,
+      "attempted": 0,
+      "succeeded": 0,
+      "failed": 0
+    }
+  },
+  "execution_results": [],
+  "state_transitions": {},
+  "run_config": {
+    "run_id": "ed40bbf2bc9e",
+    "requested_repository": "kushin77/ollama",
+    "selected_repository": "offline",
+    "fallback_repository": "ollama/ollama",
+    "allow_fallback": false,
+    "all_severities": true,
+    "severity": "high",
+    "max_issues": 50,
+    "execute": true,
+    "auto_close_labels": [
+      "duplicate",
+      "invalid",
+      "wontfix"
+    ],
+    "auth_source": "git_credentials",
+    "token_present": true,
+    "config_hash": "1851ad30af7af6f8"
+  },
+  "orchestration": {
+    "run_id": "ed40bbf2bc9e",
+    "mode": "all-severities",
+    "summaries": [
+      {
+        "timestamp": "2026-04-17T22:53:49.014231",
+        "repository": "offline",
+        "requested_repository": "kushin77/ollama",
+        "run_id": "ed40bbf2bc9e",
+        "auth_source": "git_credentials",
+        "ops_ledger_file": ".github/issue_ops_ledger.jsonl",
+        "pipeline": {
+          "fetch": {
+            "status": "success",
+            "issues_fetched": 0
+          },
+          "triage": {
+            "status": "skipped",
+            "reason": "no_issues_or_no_access",
+            "total_triaged": 0,
+            "target_severity": "high",
+            "target_count": 0
+          },
+          "analysis": {
+            "status": "skipped",
+            "reason": "no_issues"
+          },
+          "execution": {
+            "status": "skipped",
+            "dry_run": true,
+            "attempted": 0,
+            "succeeded": 0,
+            "failed": 0
+          }
+        },
+        "issues_processed": []
+      },
+      {
+        "timestamp": "2026-04-17T22:53:49.014326",
+        "repository": "offline",
+        "requested_repository": "kushin77/ollama",
+        "run_id": "ed40bbf2bc9e",
+        "auth_source": "git_credentials",
+        "ops_ledger_file": ".github/issue_ops_ledger.jsonl",
+        "pipeline": {
+          "fetch": {
+            "status": "success",
+            "issues_fetched": 0
+          },
+          "triage": {
+            "status": "skipped",
+            "reason": "no_issues_or_no_access",
+            "total_triaged": 0,
+            "target_severity": "medium",
+            "target_count": 0
+          },
+          "analysis": {
+            "status": "skipped",
+            "reason": "no_issues"
+          },
+          "execution": {
+            "status": "skipped",
+            "dry_run": true,
+            "attempted": 0,
+            "succeeded": 0,
+            "failed": 0
+          }
+        },
+        "issues_processed": []
+      },
+      {
+        "timestamp": "2026-04-17T22:53:49.014402",
+        "repository": "offline",
+        "requested_repository": "kushin77/ollama",
+        "run_id": "ed40bbf2bc9e",
+        "auth_source": "git_credentials",
+        "ops_ledger_file": ".github/issue_ops_ledger.jsonl",
+        "pipeline": {
+          "fetch": {
+            "status": "success",
+            "issues_fetched": 0
+          },
+          "triage": {
+            "status": "skipped",
+            "reason": "no_issues_or_no_access",
+            "total_triaged": 0,
+            "target_severity": "low",
+            "target_count": 0
+          },
+          "analysis": {
+            "status": "skipped",
+            "reason": "no_issues"
+          },
+          "execution": {
+            "status": "skipped",
+            "dry_run": true,
+            "attempted": 0,
+            "succeeded": 0,
+            "failed": 0
+          }
+        },
+        "issues_processed": []
+      }
+    ],
+    "timestamp": "2026-04-17T22:53:49.014459"
+  }
+}

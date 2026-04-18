@@ -1,0 +1,72 @@
+#!/bin/bash
+#
+# Git pre-push hook to validate branch naming conventions
+# Install with: cp .githooks/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+#
+
+# Load governance rules
+GOVERNANCE_JSON=".github/branch-governance.iac.json"
+
+if [ ! -f "$GOVERNANCE_JSON" ]; then
+    echo "Warning: Branch governance config not found at $GOVERNANCE_JSON"
+    exit 0
+fi
+
+# Parse required pattern from governance config
+PATTERN=$(cat "$GOVERNANCE_JSON" | python3 -c "import sys, json; print(json.load(sys.stdin)['naming_conventions']['pattern'])" 2>/dev/null)
+
+if [ -z "$PATTERN" ]; then
+    echo "Warning: Could not load branch naming pattern"
+    exit 0
+fi
+
+# Get the current branch name
+BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
+# Don't validate special branches
+if [[ "$BRANCH" =~ ^(main|HEAD)$ ]]; then
+    exit 0
+fi
+
+# Check if branch name matches pattern
+if ! [[ "$BRANCH" =~ $PATTERN ]]; then
+    cat << EOF
+╭─────────────────────────────────────────────────────────────────────╮
+│ ❌ Branch naming convention violation                               │
+╰─────────────────────────────────────────────────────────────────────╯
+
+Branch name: $BRANCH
+Required pattern: $PATTERN
+
+Examples of valid branch names:
+  • feature/ai-inference-optimization
+  • fix/race-condition-in-cache
+  • chore/update-dependencies
+  • experiment/new-tokenizer
+  • docs/api-documentation-update
+
+Please rename your branch and try again:
+  git branch -m $BRANCH <new-name>
+
+See BRANCH_GOVERNANCE.md for full guidelines.
+EOF
+    exit 1
+fi
+
+# Warn about stale branches
+BRANCH_AGE=$(git log -1 --format="%ci" 2>/dev/null | xargs -I {} date -d {} +%s 2>/dev/null)
+NOW=$(date +%s)
+AGE_DAYS=$(( ($NOW - $BRANCH_AGE) / 86400 ))
+
+if [ $AGE_DAYS -gt 90 ]; then
+    cat << EOF
+⚠️  Warning: This branch is $AGE_DAYS days old with no commits.
+Consider:
+  1. Updating the branch with latest changes from main
+  2. Requesting deletion if work is complete
+  3. Adding the [keep-branch] label if still in use
+
+EOF
+fi
+
+exit 0

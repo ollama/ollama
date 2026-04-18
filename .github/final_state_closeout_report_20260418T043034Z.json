@@ -1,0 +1,32 @@
+{
+  "generated_at_utc": "2026-04-18T04:30:34.391298+00:00",
+  "repository": "kushin77/ollama",
+  "phase": "post-verification-closeout",
+  "git": {
+    "branch": "feature/42-kubernetes-hub",
+    "head_short": "2e1e48d22",
+    "working_tree_changes": [
+      " M cmd/github-issues/main_test.go",
+      " M tests/unit/test_execute_local_triage.py"
+    ],
+    "remote_prune_dry_run_output": [],
+    "stale_remote_detected": false
+  },
+  "issues": {
+    "open_total": 294,
+    "agent_ready_total": 294,
+    "p0_total": 36,
+    "p0_shard_labelled_total": 36
+  },
+  "checks": {
+    "all_open_agent_ready": true,
+    "all_p0_shard_labelled": true,
+    "remote_prune_clean": true
+  },
+  "todo_completion": {
+    "identify_stale_branches": true,
+    "delete_local_utility_branches": true,
+    "prune_stale_remote_tracking_branches": true,
+    "verify_final_state": true
+  }
+}

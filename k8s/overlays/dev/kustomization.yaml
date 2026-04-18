@@ -1,0 +1,79 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ollama-dev
+
+# Reference the base configuration
+bases:
+  - ../
+
+# Development-specific patches
+patches:
+  - target:
+      kind: Deployment
+      labelSelector: "app=ollama-api"
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 128Mi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 256Mi
+
+  - target:
+      kind: HorizontalPodAutoscaler
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+      - op: replace
+        path: /spec/maxReplicas
+        value: 2
+
+  - target:
+      kind: Deployment
+      labelSelector: "app=postgres"
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: 256Mi
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: 512Mi
+
+# Development ConfigMap
+configMapGenerator:
+  - name: ollama-config
+    behavior: merge
+    literals:
+      - ENVIRONMENT=development
+      - LOG_LEVEL=debug
+      - DATABASE_POOL_SIZE=5
+      - CACHE_TTL=300
+
+# Development Secrets (override for local testing)
+secretGenerator:
+  - name: ollama-secrets
+    behavior: merge
+    literals:
+      - SECRET_KEY=dev-secret-key-12345
+      - DATABASE_PASSWORD=dev-password
+      - REDIS_PASSWORD=dev-redis
+      - QDRANT_API_KEY=dev-qdrant-key
+      - GRAFANA_PASSWORD=dev-grafana
+
+# Common labels for dev
+commonLabels:
+  environment: development
+  tier: dev
+
+# Development namespace
+namespace: ollama-dev
+
+# Annotations for tracking
+commonAnnotations:
+  deployed-by: developer
+  cluster: local

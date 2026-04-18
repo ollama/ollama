@@ -1,0 +1,147 @@
+name: Branch Cleanup (Scheduled)
+
+on:
+  schedule:
+    # Run weekly on Sundays at 2 AM UTC
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run mode (no actual deletions)'
+        required: false
+        default: 'true'
+      age_days:
+        description: 'Minimum age in days for deletion'
+        required: false
+        default: '180'
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  cleanup:
+    name: Cleanup Stale Branches
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Configure git credentials
+        run: |
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+
+      - name: Determine execution mode
+        id: mode
+        run: |
+          # Check if we should execute deletion
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            DRY_RUN="${{ github.event.inputs.dry_run }}"
+            AGE_DAYS="${{ github.event.inputs.age_days }}"
+          else
+            # Scheduled run: use production defaults
+            DRY_RUN="true"  # Always dry-run on schedule (review first)
+            AGE_DAYS="180"
+          fi
+
+          echo "dry_run=$DRY_RUN" >> $GITHUB_OUTPUT
+          echo "age_days=$AGE_DAYS" >> $GITHUB_OUTPUT
+
+      - name: Run branch cleanup (dry run)
+        if: steps.mode.outputs.dry_run == 'true'
+        run: |
+          python3 scripts/cleanup_stale_branches.py \
+            --age-days ${{ steps.mode.outputs.age_days }} \
+            --exclude-patterns main,release,automation \
+            --dry-run \
+            --report-file .github/branch_cleanup_report.json
+
+      - name: Run branch cleanup (execute)
+        if: steps.mode.outputs.dry_run == 'false'
+        run: |
+          python3 scripts/cleanup_stale_branches.py \
+            --age-days ${{ steps.mode.outputs.age_days }} \
+            --exclude-patterns main,release,automation \
+            --execute \
+            --report-file .github/branch_cleanup_report.json
+
+      - name: Upload cleanup report
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: branch-cleanup-report
+          path: .github/branch_cleanup_report.json
+          retention-days: 90
+
+      - name: Generate cleanup summary
+        if: always()
+        run: |
+          python3 << 'PYTHON_EOF'
+          import json
+          from pathlib import Path
+
+          report_path = Path('.github/branch_cleanup_report.json')
+          if not report_path.exists():
+              print("No report generated")
+              exit(1)
+
+          with open(report_path) as f:
+              report = json.load(f)
+
+          deleted = len(report['results']['deleted'])
+          protected = len(report['results']['protected'])
+          errors = len(report['results']['errors'])
+
+          summary = f"""
+          ## Branch Cleanup Report
+
+          **Mode**: {'Dry Run' if report['dry_run'] else 'Execution'}
+
+          ### Results
+          - ✓ Deleted: {deleted}
+          - 🛡️ Protected: {protected}
+          - ⚠️ Errors: {errors}
+
+          """
+
+          if deleted > 0:
+              summary += f"\n### Deleted Branches\n"
+              for item in report['results']['deleted']:
+                  summary += f"- `{item['branch']}` ({item['age_days']} days old, reason: {item['reason']})\n"
+
+          if protected > 0:
+              summary += f"\n### Protected Branches (Not Deleted)\n"
+              for item in report['results']['protected'][:10]:
+                  summary += f"- `{item['branch']}` (reason: {item['reason']})\n"
+
+          if errors > 0:
+              summary += f"\n### Errors\n"
+              for item in report['results']['errors'][:5]:
+                  summary += f"- `{item['branch']}`: {item['error']}\n"
+
+          # Write to job summary
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+              f.write(summary)
+          PYTHON_EOF
+        env:
+          GITHUB_STEP_SUMMARY: ${{ env.GITHUB_STEP_SUMMARY }}
+
+      - name: Commit audit trail
+        if: always()
+        run: |
+          if git diff --quiet .github/branch_cleanup_audit.jsonl 2>/dev/null; then
+            echo "No changes to audit trail"
+          else
+            git add .github/branch_cleanup_audit.jsonl || true
+            git commit -m "chore: update branch cleanup audit trail" || true
+            git push origin main || echo "Could not push audit changes"
+          fi

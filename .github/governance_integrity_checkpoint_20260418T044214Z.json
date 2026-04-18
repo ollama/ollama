@@ -1,0 +1,28 @@
+{
+  "generated_at_utc": "2026-04-18T04:42:14.780479+00:00",
+  "repository": "kushin77/ollama",
+  "checkpoint_type": "governance-integrity-and-readiness",
+  "policy_files": {
+    "tracked_files": [
+      "BRANCH_GOVERNANCE.md",
+      ".github/instructions/autonomous-dev.instructions.md",
+      ".github/copilot-instructions.md"
+    ],
+    "sha256": {
+      "BRANCH_GOVERNANCE.md": "1e307a1955b78cc2f138df3fec54fa75b9054ee256b69395a81c46e320c434c7",
+      ".github/instructions/autonomous-dev.instructions.md": "48c8c6d2ecfc2bb353a2e93dd77657c679a5529b39802f8d32f9171c54b90482",
+      ".github/copilot-instructions.md": "ce55b73c3358859f066e22883acf1c57337cf23c69ab87a4806dcb2859b853e1"
+    },
+    "has_uncommitted_diff": false,
+    "diff_preview_first_120_lines": [],
+    "handling_decision": "preserve concurrent governance edits untouched and continue autonomous checkpoints"
+  },
+  "readiness": {
+    "open_total": 294,
+    "agent_ready_total": 294,
+    "p0_total": 36,
+    "p0_shard_labelled_total": 36,
+    "all_open_agent_ready": true,
+    "all_p0_shard_labelled": true
+  }
+}\n

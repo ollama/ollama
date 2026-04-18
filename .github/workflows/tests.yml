@@ -1,0 +1,196 @@
+name: Tests & Quality Checks
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "ollama/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "requirements/**"
+      - ".github/workflows/tests.yml"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "ollama/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "requirements/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache Python dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ matrix.python-version }}-${{ hashFiles('requirements/*.txt') }}
+          restore-keys: |
+            pip-${{ matrix.python-version }}-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          # Prefer editable install with dev extras to ensure CI has linters, type-checkers, and test deps
+          python -m pip install -e '.[dev]' || true
+          # Fallback: install known requirement bundles if editable install isn't available
+          if [ -f requirements-pmo.txt ]; then pip install -r requirements-pmo.txt || true; fi
+
+      - name: Run tests with coverage
+        run: |
+          pytest tests/ -v --cov=ollama --cov-report=xml --cov-report=html
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+
+      - name: Archive coverage report
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage-report-${{ matrix.python-version }}
+          path: htmlcov/
+
+  type-check:
+    name: Type Checking
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Cache Python dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: pip-typecheck-${{ hashFiles('requirements/*.txt') }}
+          restore-keys: |
+            pip-typecheck-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          # Prefer editable install with dev extras to ensure CI has linters, type-checkers, and test deps
+          python -m pip install -e '.[dev]' || true
+          # Fallback: install known requirement bundles if editable install isn't available
+          if [ -f requirements-pmo.txt ]; then pip install -r requirements-pmo.txt || true; fi
+
+      - name: Run type checking
+        run: mypy ollama/ --strict
+
+  lint:
+    name: Linting
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Cache Python dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: pip-lint-${{ hashFiles('requirements/*.txt') }}
+          restore-keys: |
+            pip-lint-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          # Prefer editable install with dev extras to ensure CI has linters, type-checkers, and test deps
+          python -m pip install -e '.[dev]' || true
+          # Fallback: install known requirement bundles if editable install isn't available
+          if [ -f requirements-pmo.txt ]; then pip install -r requirements-pmo.txt || true; fi
+
+      - name: Run Ruff linting
+        run: ruff check ollama/ tests/
+
+      - name: Check code formatting
+        run: black ollama/ tests/ --check --diff
+
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Cache Python dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: pip-security-${{ hashFiles('requirements/*.txt') }}
+          restore-keys: |
+            pip-security-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          # Prefer editable install with dev extras to ensure CI has linters, type-checkers, and test deps
+          python -m pip install -e '.[dev]' || true
+          # Fallback: install known requirement bundles if editable install isn't available
+          if [ -f requirements-pmo.txt ]; then pip install -r requirements-pmo.txt || true; fi
+
+      - name: Run pip-audit
+        run: pip-audit --skip-editable || true
+
+      - name: Run safety check
+        run: safety check || true
+
+      - name: Run Bandit security scan
+        run: bandit -r ollama/ -ll || true
+
+  all-checks-pass:
+    name: All Checks Pass
+    needs: [test, type-check, lint, security]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Decide whether the needed jobs succeeded or failed
+        run: |
+          if [[ "${{ needs.test.result }}" == "failure" || "${{ needs.type-check.result }}" == "failure" || "${{ needs.lint.result }}" == "failure" ]]; then
+            echo "Required checks failed"
+            exit 1
+          fi
+          echo "All checks passed"

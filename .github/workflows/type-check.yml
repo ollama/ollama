@@ -1,0 +1,51 @@
+name: Type Checking (mypy --strict)
+
+on:
+  push:
+    branches: [main, develop]
+    paths: ["ollama/**/*.py", "tests/**/*.py"]
+  pull_request:
+    branches: [main, develop]
+    paths: ["ollama/**/*.py", "tests/**/*.py"]
+
+jobs:
+  type-check:
+    name: Type Check with mypy (Strict Mode)
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install mypy
+
+      - name: Run mypy strict mode
+        run: |
+          mypy ollama/ --strict --show-error-codes --warn-unused-ignores
+          mypy tests/ --strict --show-error-codes
+
+      - name: Generate type coverage report
+        run: |
+          pip install monkeytype
+          mypy ollama/ --strict --html=type-report || true
+
+      - name: Upload type coverage report
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: type-coverage-report-py${{ matrix.python-version }}
+          path: type-report/
+          retention-days: 7

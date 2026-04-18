@@ -1,0 +1,152 @@
+{
+  "generated_at": "2026-04-18T04:08:03.020050+00:00",
+  "repo": "kushin77/ollama",
+  "strategy": "close newer exact-title duplicates for non-P0 issues",
+  "pairs_total": 16,
+  "actions": [
+    {
+      "duplicate_issue": 182,
+      "canonical_issue": 174,
+      "title": "[LLM/T5-43] Hybrid Dense+BM25 Search \u0393\u00c7\u00f6 Semantic + Keyword RAG for Technical Accuracy",
+      "comment_exit": 0,
+      "close_exit": 0,
+      "comment_error": "",
+      "close_error": ""
+    },
+    {
+      "duplicate_issue": 244,
+      "canonical_issue": 231,
+      "title": "[P1][ONPREM-FAANG] Ensemble + Judge Pipeline for High-Stakes Responses",
+      "comment_exit": 0,
+      "close_exit": 0,
+      "comment_error": "",
+      "close_error": ""
+    },
+    {
+      "duplicate_issue": 245,
+      "canonical_issue": 232,
+      "title": "[P1][ONPREM-FAANG] Safety and Policy Enforcement Engine",
+      "comment_exit": 0,
+      "close_exit": 0,
+      "comment_error": "",
+      "close_error": ""
+    },
+    {
+      "duplicate_issue": 246,
+      "canonical_issue": 233,
+      "title": "[P1][ONPREM-FAANG] Continuous Evaluation Harness (Regression + Release Gates)",
+      "comment_exit": 0,
+      "close_exit": 0,
+      "comment_error": "",
+      "close_error": ""
+    },
+    {
+      "duplicate_issue": 247,
+      "canonical_issue": 234,
+      "title": "[P1][ONPREM-FAANG] Reliability Hardening (Backpressure, Circuit Breakers, Graceful Degradation)",
+      "comment_exit": 0,
+      "close_exit": 0,
+      "comment_error": "",
+      "close_error": ""
+    },
+    {
+      "duplicate_issue": 248,
+      "canonical_issue": 235,
+      "title": "[P2][ONPREM-FAANG] Multi-Turn Memory Architecture (Session + Semantic + Summarization)",
+      "comment_exit": 0,
+      "close_exit": 0,
+      "comment_error": "",
+      "close_error": ""
+    },
+    {
+      "duplicate_issue": 249,
+      "canonical_issue": 236,
+      "title": "[P2][ONPREM-FAANG] Domain Adapters (LoRA) + Safe Rollout Controls",
+      "comment_exit": 0,
+      "close_exit": 0,
+      "comment_error": "",
+      "close_error": ""
+    },
+    {
+      "duplicate_issue": 250,
+      "canonical_issue": 237,
+      "title": "[P2][ONPREM-FAANG] Agentic Tool Execution Layer (Controlled On-Prem Actions)",
+      "comment_exit": 0,
+      "close_exit": 0,
+      "comment_error": "",
+      "close_error": ""
+    },
+    {
+      "duplicate_issue": 251,
+      "canonical_issue": 238,
+      "title": "[P2][ONPREM-FAANG] Multimodal Document Pipeline (Vision + PDF/DOCX + Unified Retrieval)",
+      "comment_exit": 0,
+      "close_exit": 0,
+      "comment_error": "",
+      "close_error": ""
+    },
+    {
+      "duplicate_issue": 252,
+      "canonical_issue": 239,
+      "title": "[P2][ONPREM-FAANG] Developer Experience Acceleration (Slash Commands + Prompt Packs + Task Automation)",
+      "comment_exit": 0,
+      "close_exit": 0,
+      "comment_error": "",
+      "close_error": ""
+    },
+    {
+      "duplicate_issue": 281,
+      "canonical_issue": 268,
+      "title": "[BROWSER-CHAT][EPIC] Agent Fleet Management for Multi-Agent Suites and Farms",
+      "comment_exit": 0,
+      "close_exit": 0,
+      "comment_error": "",
+      "close_error": ""
+    },
+    {
+      "duplicate_issue": 282,
+      "canonical_issue": 269,
+      "title": "[BROWSER-CHAT][EPIC] Knowledge Hub for Curated Links and YouTube Learning Sources",
+      "comment_exit": 0,
+      "close_exit": 0,
+      "comment_error": "",
+      "close_error": ""
+    },
+    {
+      "duplicate_issue": 283,
+      "canonical_issue": 270,
+      "title": "[BROWSER-CHAT][EPIC] Claude-Like Browser Copilot with Live Host Task Assistance",
+      "comment_exit": 0,
+      "close_exit": 0,
+      "comment_error": "",
+      "close_error": ""
+    },
+    {
+      "duplicate_issue": 284,
+      "canonical_issue": 271,
+      "title": "[BROWSER-CHAT][EPIC] Cross-Repo Assimilation from kushin77 AI/Ollama Repositories",
+      "comment_exit": 0,
+      "close_exit": 0,
+      "comment_error": "",
+      "close_error": ""
+    },
+    {
+      "duplicate_issue": 285,
+      "canonical_issue": 272,
+      "title": "[BROWSER-CHAT][EPIC] Sentiment Intelligence Program (Love/Hate Signal to Backlog)",
+      "comment_exit": 0,
+      "close_exit": 0,
+      "comment_error": "",
+      "close_error": ""
+    },
+    {
+      "duplicate_issue": 286,
+      "canonical_issue": 273,
+      "title": "[BROWSER-CHAT][EPIC] Local Hardware Acceleration Strategy for Faster Chat",
+      "comment_exit": 0,
+      "close_exit": 0,
+      "comment_error": "",
+      "close_error": ""
+    }
+  ]
+}

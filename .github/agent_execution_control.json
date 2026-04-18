@@ -1,0 +1,113 @@
+{
+  "execution_phase": "AUTONOMOUS_EXECUTION",
+  "start_timestamp": "2026-04-18T00:00:00Z",
+  "execution_rules": {
+    "idempotence": {
+      "requirement": "Multiple agents working simultaneously will NOT conflict",
+      "mechanism": "Deterministic lane/batch assignments with atomic claims",
+      "safety_guarantee": "Safe to retry: if agent crashes, another can claim same batch and resume"
+    },
+    "verifiable_closure": {
+      "requirement": "Issues closed only after PR is merged to main",
+      "mechanism": "Agents must post evidence (merged PR link) in closure comments",
+      "validation": "GitHub API confirmation of merge status before closing issue"
+    },
+    "code_quality_gates": {
+      "test_coverage": {
+        "requirement": "Code coverage >= 95%",
+        "check_command": "pytest tests/ -v --cov=ollama --cov-report=term-missing"
+      },
+      "linting": {
+        "requirement": "0 errors, 0 new warnings",
+        "check_command": "ruff check ollama/ --fix"
+      },
+      "type_checking": {
+        "requirement": "All type checks must pass",
+        "check_command": "mypy ollama/ --strict"
+      },
+      "security": {
+        "requirement": "0 critical, 0 high issues",
+        "check_command": "pip-audit"
+      },
+      "api_stability": {
+        "requirement": "No breaking changes to CLI or REST API",
+        "validation": "Peer review required before PR merge"
+      }
+    },
+    "safe_shutdown": {
+      "blocker_protocol": "Post issue comment with @maintainer tag requesting clarification",
+      "action": "Move to next issue in batch; return after maintainer response",
+      "force_solution": "NEVER - wait for guidance instead"
+    }
+  },
+  "autonomous_workflow": {
+    "phase_1_analysis": "Read GitHub issue, extract requirements, analyze dependencies",
+    "phase_2_planning": "Design solution, check architecture alignment, plan tests",
+    "phase_3_branching": "Create feature branch per naming convention",
+    "phase_4_implementation": "Write code, tests, documentation",
+    "phase_5_validation": "Run all quality gates locally",
+    "phase_6_pr_creation": "Submit PR with linked issue, acceptance criteria, test results",
+    "phase_7_review": "Address review feedback, commit improvements",
+    "phase_8_closure": "Merge PR, close issue, post completion evidence"
+  },
+  "lane_configurations": {
+    "lane_1": {
+      "shard": "shard_1",
+      "workpack_file": ".github/lane_workpacks/shard_1_workpack.json",
+      "issue_count": 74,
+      "p0_count": 9,
+      "batch_count": 7,
+      "concurrent_agents_allowed": 1,
+      "recommended_model": "llama3:8b"
+    },
+    "lane_2": {
+      "shard": "shard_2",
+      "workpack_file": ".github/lane_workpacks/shard_2_workpack.json",
+      "issue_count": 74,
+      "p0_count": 7,
+      "batch_count": 7,
+      "concurrent_agents_allowed": 1,
+      "recommended_model": "llama3:8b"
+    },
+    "lane_3": {
+      "shard": "shard_3",
+      "workpack_file": ".github/lane_workpacks/shard_3_workpack.json",
+      "issue_count": 73,
+      "p0_count": 8,
+      "batch_count": 7,
+      "concurrent_agents_allowed": 1,
+      "recommended_model": "llama3:8b"
+    },
+    "lane_4": {
+      "shard": "shard_4",
+      "workpack_file": ".github/lane_workpacks/shard_4_workpack.json",
+      "issue_count": 73,
+      "p0_count": 6,
+      "batch_count": 7,
+      "concurrent_agents_allowed": 1,
+      "recommended_model": "llama3:8b"
+    }
+  },
+  "execution_constraints": {
+    "max_parallel_agents_per_lane": 1,
+    "max_total_parallel_agents": 4,
+    "batch_claim_atomicity": "Only one agent may claim a batch at a time",
+    "issue_isolation": "Each issue in a batch is independent; safe to parallelize within batch",
+    "cross_lane_coordination": "No coordination needed; lanes are fully isolated",
+    "github_api_rate_limit": "5000 requests/hour per PAT; should be sufficient for 4 agents"
+  },
+  "monitoring": {
+    "progress_file": ".github/agent_execution_progress.json",
+    "refresh_interval": "30 seconds",
+    "check_command": "python3 scripts/agent_claim_work.py --status-only"
+  },
+  "failure_recovery": {
+    "agent_crash": "Progress saved atomically; next agent claims same batch from progress file",
+    "network_outage": "All local work preserved; GitHub sync resumes when connectivity restored",
+    "rate_limit": "Exponential backoff on rate limit; check progress file for retry schedule"
+  },
+  "final_validation": {
+    "success_criteria": "All 294 issues have merged PRs and are closed on GitHub",
+    "post_completion": "Audit trail in .github/agent_execution_progress.json with all issue closures"
+  }
+}

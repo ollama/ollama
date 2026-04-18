@@ -1,0 +1,142 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-dark-700;
+  }
+  
+  body {
+    @apply bg-dark-950 text-dark-50;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg font-medium transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-secondary {
+    @apply px-4 py-2 bg-dark-800 hover:bg-dark-700 text-white rounded-lg font-medium transition-colors duration-200 border border-dark-600;
+  }
+
+  .input-field {
+    @apply w-full px-4 py-2 bg-dark-900 border border-dark-700 rounded-lg text-white placeholder-dark-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent transition-all duration-200;
+  }
+
+  .card {
+    @apply bg-dark-900 border border-dark-800 rounded-xl p-6 shadow-lg;
+  }
+
+  .chat-message {
+    @apply p-4 rounded-lg mb-3 animate-fade-in;
+  }
+
+  .chat-message-user {
+    @apply bg-primary-900/30 border border-primary-700/50 ml-auto;
+  }
+
+  .chat-message-assistant {
+    @apply bg-dark-800 border border-dark-700;
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: theme('colors.dark.700') theme('colors.dark.900');
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    @apply bg-dark-900;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply bg-dark-700 rounded-full;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    @apply bg-dark-600;
+  }
+}
+
+/* Markdown styling */
+.markdown-content {
+  @apply text-dark-100;
+}
+
+.markdown-content p {
+  @apply mb-4;
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4 {
+  @apply font-bold mb-3 mt-6 text-white;
+}
+
+.markdown-content h1 {
+  @apply text-2xl;
+}
+
+.markdown-content h2 {
+  @apply text-xl;
+}
+
+.markdown-content h3 {
+  @apply text-lg;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  @apply mb-4 ml-6;
+}
+
+.markdown-content li {
+  @apply mb-2;
+}
+
+.markdown-content code {
+  @apply bg-dark-800 px-2 py-1 rounded text-sm font-mono text-primary-300;
+}
+
+.markdown-content pre {
+  @apply bg-dark-800 p-4 rounded-lg overflow-x-auto mb-4;
+}
+
+.markdown-content pre code {
+  @apply bg-transparent p-0 text-dark-100;
+}
+
+.markdown-content a {
+  @apply text-primary-400 hover:text-primary-300 underline;
+}
+
+.markdown-content blockquote {
+  @apply border-l-4 border-dark-700 pl-4 italic text-dark-400 my-4;
+}
+
+/* Loading animations */
+@keyframes shimmer {
+  0% {
+    background-position: -1000px 0;
+  }
+  100% {
+    background-position: 1000px 0;
+  }
+}
+
+.loading-shimmer {
+  animation: shimmer 2s infinite;
+  background: linear-gradient(
+    to right,
+    theme('colors.dark.900') 0%,
+    theme('colors.dark.800') 50%,
+    theme('colors.dark.900') 100%
+  );
+  background-size: 1000px 100%;
+}

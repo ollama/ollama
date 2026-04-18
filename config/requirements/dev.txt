@@ -1,0 +1,35 @@
+# Development Dependencies
+-r core.txt
+
+# Testing
+pytest==7.4.3
+pytest-cov==4.1.0
+pytest-asyncio==0.21.1
+pytest-xdist==3.5.0
+pytest-timeout==2.2.0
+hypothesis==6.88.0
+faker==20.1.0
+
+# Code Quality
+black==23.12.0
+isort==5.13.2
+flake8==6.1.0
+pylint==3.0.3
+mypy==1.7.1
+ruff==0.1.8
+
+# Debugging
+ipython==8.18.1
+ipdb==0.13.13
+memory-profiler==0.61.0
+
+# Documentation
+sphinx==7.2.6
+sphinx-rtd-theme==2.0.0
+myst-parser==2.0.0
+
+# Development Tools
+pre-commit==3.5.0
+bump2version==1.0.1
+twine==4.0.2
+build==1.0.3

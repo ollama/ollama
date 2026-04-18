@@ -1,0 +1,18 @@
+{
+  "generated_at_utc": "2026-04-18T03:49:42.924471+00:00",
+  "repository": "kushin77/ollama",
+  "open_issues": 310,
+  "p1_focus": {
+    "p1_total": 50,
+    "p1_agent_ready": 50,
+    "coverage": "100%"
+  },
+  "agent_ready_total": 81,
+  "session_awareness": {
+    "untouched_foreign_changes": [
+      "cmd/github-issues/main_test.go"
+    ],
+    "policy": "no edits to other-session code files"
+  },
+  "next_step_for_agents": "execute deterministic shards from .github/agent_ready_shards.json"
+}

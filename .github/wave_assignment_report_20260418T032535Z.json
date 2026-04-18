@@ -1,0 +1,159 @@
+{
+  "generated_at_utc": "2026-04-18T03:25:38.826857+00:00",
+  "repository": "kushin77/ollama",
+  "manifest": ".github/autonomous_execution_batches.json",
+  "processed": 49,
+  "labels_added": 0,
+  "comments_added": 20,
+  "already_marked": 0,
+  "comment_deferred": 29,
+  "rate_limit_blocked": false,
+  "failures": [],
+  "deferred_comment_issues": [
+    {
+      "issue": 128,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 129,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 130,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 131,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 132,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 133,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 134,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 135,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 136,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 137,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 138,
+      "wave": 6,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 139,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 140,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 141,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 142,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 143,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 144,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 145,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 146,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 147,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 148,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 149,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 150,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 151,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 152,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 153,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 154,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 155,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 156,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    }
+  ]
+}

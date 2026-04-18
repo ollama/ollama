@@ -1,0 +1,2 @@
+Method,Name,Error,Occurrences
+POST,/api/v1/generate,HTTPError('503 Server Error: Service Unavailable for url: /api/v1/generate'),7

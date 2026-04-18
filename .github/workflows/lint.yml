@@ -1,0 +1,48 @@
+name: Linting (ruff)
+
+on:
+  push:
+    branches: [main, develop]
+    paths: ["ollama/**/*.py", "tests/**/*.py"]
+  pull_request:
+    branches: [main, develop]
+    paths: ["ollama/**/*.py", "tests/**/*.py"]
+
+jobs:
+  lint:
+    name: Lint with ruff
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install ruff
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+
+      - name: Run ruff check
+        run: |
+          ruff check ollama/ tests/
+
+      - name: Run ruff format check
+        run: |
+          ruff format ollama/ tests/ --check
+
+      - name: Comment on PR with violations
+        if: failure()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '❌ Linting failed. Run `ruff check ollama/ tests/` and `ruff format ollama/ tests/` locally to fix.'
+            })

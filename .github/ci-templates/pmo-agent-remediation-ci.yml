@@ -1,0 +1,33 @@
+name: CI - pmo-agent-remediation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-and-lint:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.11]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install --upgrade pip
+      - run: |
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install -e .[dev] || true
+      - run: python -m pip install pytest mypy ruff pip-audit
+      - run: ruff check .
+      - run: mypy . --strict
+      - run: pytest --cov=. --cov-report=xml:coverage.xml tests/ -q
+      - uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+      - run: pip-audit --fail-on high || true

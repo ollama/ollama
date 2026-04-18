@@ -1,0 +1,529 @@
+{
+  "timestamp": "2026-04-17T19:45:19.559076",
+  "issue_num": 15649,
+  "results": {
+    "issue_num": 15649,
+    "execution_time": "2026-04-17T19:45:19.558167",
+    "ai_results": {
+      "claude": {
+        "issue_num": 15649,
+        "provider": "claude",
+        "phases": {
+          "analysis": {
+            "id": "ed9c30cb",
+            "issue_num": 15649,
+            "ai_provider": "claude",
+            "phase": "analysis",
+            "status": "success",
+            "content_hash": "390dd9d6a305",
+            "started_at": "2026-04-17T19:45:19.558190",
+            "inputs": {
+              "issue": {
+                "value": {
+                  "number": 15649,
+                  "title": "Ollama startup issue",
+                  "body": "Application fails to start on macOS",
+                  "labels": [
+                    "bug",
+                    "startup"
+                  ]
+                },
+                "added_at": "2026-04-17T19:45:19.558193",
+                "hash": "19098df39e0f"
+              }
+            },
+            "outputs": {
+              "result": {
+                "value": {
+                  "analysis_type": "root_cause",
+                  "issue_num": 15649,
+                  "analysis": "Claude to analyze issue",
+                  "affected_components": [
+                    "unknown"
+                  ],
+                  "severity_assessment": "medium"
+                },
+                "added_at": "2026-04-17T19:45:19.558213",
+                "hash": "f07613a6abc6"
+              }
+            }
+          },
+          "planning": {
+            "id": "57d1224d",
+            "issue_num": 15649,
+            "ai_provider": "claude",
+            "phase": "planning",
+            "status": "success",
+            "content_hash": "22ce23aeb6f1",
+            "started_at": "2026-04-17T19:45:19.558278",
+            "inputs": {
+              "analysis": {
+                "value": {
+                  "analysis_type": "root_cause",
+                  "issue_num": 15649,
+                  "analysis": "Claude to analyze issue",
+                  "affected_components": [
+                    "unknown"
+                  ],
+                  "severity_assessment": "medium"
+                },
+                "added_at": "2026-04-17T19:45:19.558281",
+                "hash": "f07613a6abc6"
+              }
+            },
+            "outputs": {
+              "result": {
+                "value": {
+                  "plan_type": "implementation",
+                  "steps": [
+                    {
+                      "step": 1,
+                      "action": "identify root cause"
+                    },
+                    {
+                      "step": 2,
+                      "action": "implement fix"
+                    },
+                    {
+                      "step": 3,
+                      "action": "write tests"
+                    }
+                  ],
+                  "estimated_effort": "medium"
+                },
+                "added_at": "2026-04-17T19:45:19.558294",
+                "hash": "95dc03505f76"
+              }
+            }
+          },
+          "implementation": {
+            "id": "7ccc8954",
+            "issue_num": 15649,
+            "ai_provider": "claude",
+            "phase": "implementation",
+            "status": "success",
+            "content_hash": "d94b647288ad",
+            "started_at": "2026-04-17T19:45:19.558369",
+            "inputs": {
+              "plan": {
+                "value": {
+                  "plan_type": "implementation",
+                  "steps": [
+                    {
+                      "step": 1,
+                      "action": "identify root cause"
+                    },
+                    {
+                      "step": 2,
+                      "action": "implement fix"
+                    },
+                    {
+                      "step": 3,
+                      "action": "write tests"
+                    }
+                  ],
+                  "estimated_effort": "medium"
+                },
+                "added_at": "2026-04-17T19:45:19.558372",
+                "hash": "95dc03505f76"
+              }
+            },
+            "outputs": {
+              "result": {
+                "value": {
+                  "fix_type": "code_change",
+                  "files_modified": [],
+                  "tests_added": [],
+                  "status": "ready_for_review"
+                },
+                "added_at": "2026-04-17T19:45:19.558387",
+                "hash": "8a6f6ed9f3bb"
+              }
+            }
+          },
+          "validation": {
+            "id": "98fbc825",
+            "issue_num": 15649,
+            "ai_provider": "claude",
+            "phase": "validation",
+            "status": "success",
+            "content_hash": "1416be8ade94",
+            "started_at": "2026-04-17T19:45:19.558445",
+            "inputs": {
+              "implementation": {
+                "value": {
+                  "fix_type": "code_change",
+                  "files_modified": [],
+                  "tests_added": [],
+                  "status": "ready_for_review"
+                },
+                "added_at": "2026-04-17T19:45:19.558448",
+                "hash": "8a6f6ed9f3bb"
+              }
+            },
+            "outputs": {
+              "result": {
+                "value": {
+                  "validation_status": "passed",
+                  "test_results": "all_pass",
+                  "regression_check": "no_regressions"
+                },
+                "added_at": "2026-04-17T19:45:19.558458",
+                "hash": "3449d4916370"
+              }
+            }
+          }
+        },
+        "status": "completed"
+      },
+      "grok": {
+        "issue_num": 15649,
+        "provider": "grok",
+        "phases": {
+          "analysis": {
+            "id": "b902cf15",
+            "issue_num": 15649,
+            "ai_provider": "grok",
+            "phase": "analysis",
+            "status": "success",
+            "content_hash": "a90edc6edbc5",
+            "started_at": "2026-04-17T19:45:19.558523",
+            "inputs": {
+              "issue": {
+                "value": {
+                  "number": 15649,
+                  "title": "Ollama startup issue",
+                  "body": "Application fails to start on macOS",
+                  "labels": [
+                    "bug",
+                    "startup"
+                  ]
+                },
+                "added_at": "2026-04-17T19:45:19.558527",
+                "hash": "19098df39e0f"
+              }
+            },
+            "outputs": {
+              "result": {
+                "value": {
+                  "analysis_type": "system_analysis",
+                  "issue_num": 15649,
+                  "system_context": "Understanding issue in system context",
+                  "proposed_solutions": 2,
+                  "confidence": 0.85
+                },
+                "added_at": "2026-04-17T19:45:19.558541",
+                "hash": "f6a0e6118905"
+              }
+            }
+          },
+          "planning": {
+            "id": "8dbbd5ef",
+            "issue_num": 15649,
+            "ai_provider": "grok",
+            "phase": "planning",
+            "status": "success",
+            "content_hash": "f60de6bf1414",
+            "started_at": "2026-04-17T19:45:19.558605",
+            "inputs": {
+              "analysis": {
+                "value": {
+                  "analysis_type": "system_analysis",
+                  "issue_num": 15649,
+                  "system_context": "Understanding issue in system context",
+                  "proposed_solutions": 2,
+                  "confidence": 0.85
+                },
+                "added_at": "2026-04-17T19:45:19.558608",
+                "hash": "f6a0e6118905"
+              }
+            },
+            "outputs": {
+              "result": {
+                "value": {
+                  "plan_type": "grok_optimization",
+                  "optimization_focus": "performance_and_clarity",
+                  "steps": [
+                    {
+                      "step": 1,
+                      "action": "optimize implementation"
+                    },
+                    {
+                      "step": 2,
+                      "action": "verify performance"
+                    },
+                    {
+                      "step": 3,
+                      "action": "document solution"
+                    }
+                  ]
+                },
+                "added_at": "2026-04-17T19:45:19.558621",
+                "hash": "0605012d400a"
+              }
+            }
+          },
+          "implementation": {
+            "id": "58c31d75",
+            "issue_num": 15649,
+            "ai_provider": "grok",
+            "phase": "implementation",
+            "status": "success",
+            "content_hash": "6d9a40e49884",
+            "started_at": "2026-04-17T19:45:19.558682",
+            "inputs": {
+              "plan": {
+                "value": {
+                  "plan_type": "grok_optimization",
+                  "optimization_focus": "performance_and_clarity",
+                  "steps": [
+                    {
+                      "step": 1,
+                      "action": "optimize implementation"
+                    },
+                    {
+                      "step": 2,
+                      "action": "verify performance"
+                    },
+                    {
+                      "step": 3,
+                      "action": "document solution"
+                    }
+                  ]
+                },
+                "added_at": "2026-04-17T19:45:19.558685",
+                "hash": "0605012d400a"
+              }
+            },
+            "outputs": {
+              "result": {
+                "value": {
+                  "fix_type": "optimized_change",
+                  "optimization_metrics": {
+                    "efficiency": "improved"
+                  },
+                  "status": "optimized_and_ready"
+                },
+                "added_at": "2026-04-17T19:45:19.558698",
+                "hash": "27e160292c24"
+              }
+            }
+          },
+          "validation": {
+            "id": "1d74d0b5",
+            "issue_num": 15649,
+            "ai_provider": "grok",
+            "phase": "validation",
+            "status": "success",
+            "content_hash": "46f6a3ee1f08",
+            "started_at": "2026-04-17T19:45:19.558763",
+            "inputs": {
+              "implementation": {
+                "value": {
+                  "fix_type": "optimized_change",
+                  "optimization_metrics": {
+                    "efficiency": "improved"
+                  },
+                  "status": "optimized_and_ready"
+                },
+                "added_at": "2026-04-17T19:45:19.558767",
+                "hash": "27e160292c24"
+              }
+            },
+            "outputs": {
+              "result": {
+                "value": {
+                  "validation_status": "passed",
+                  "performance_improvement": "20%",
+                  "clarity_improvement": "significant"
+                },
+                "added_at": "2026-04-17T19:45:19.558803",
+                "hash": "bc94c8775644"
+              }
+            }
+          }
+        },
+        "status": "completed"
+      }
+    },
+    "consensus": {
+      "consensus_status": "completed",
+      "agreement_count": 2,
+      "total_systems": 2
+    },
+    "final_recommendation": {
+      "recommended_action": "proceed_with_fix",
+      "confidence_level": "high",
+      "suggested_reviewers": [
+        "team-lead"
+      ],
+      "rationale": "Multiple AI systems reached consensus"
+    }
+  },
+  "execution_history": [
+    {
+      "id": "96608a05",
+      "issue_num": 15649,
+      "ai_provider": "claude",
+      "phase": "analysis",
+      "status": "success",
+      "content_hash": "94df1c0c0f31",
+      "started_at": "2026-04-17T19:45:19.557640",
+      "inputs": {
+        "issue": {
+          "value": {
+            "number": 15649,
+            "title": "Ollama startup issue",
+            "body": "Application fails to start on macOS",
+            "labels": [
+              "bug",
+              "startup"
+            ]
+          },
+          "added_at": "2026-04-17T19:45:19.557670",
+          "hash": "19098df39e0f"
+        }
+      },
+      "outputs": {
+        "result": {
+          "value": {
+            "analysis_type": "root_cause",
+            "issue_num": 15649,
+            "analysis": "Claude to analyze issue",
+            "affected_components": [
+              "unknown"
+            ],
+            "severity_assessment": "medium"
+          },
+          "added_at": "2026-04-17T19:45:19.557719",
+          "hash": "f07613a6abc6"
+        }
+      }
+    },
+    {
+      "id": "0ce4fa62",
+      "issue_num": 15649,
+      "ai_provider": "claude",
+      "phase": "planning",
+      "status": "success",
+      "content_hash": "2cd6f8fe01cd",
+      "started_at": "2026-04-17T19:45:19.557833",
+      "inputs": {
+        "analysis": {
+          "value": {
+            "analysis_type": "root_cause",
+            "issue_num": 15649,
+            "analysis": "Claude to analyze issue",
+            "affected_components": [
+              "unknown"
+            ],
+            "severity_assessment": "medium"
+          },
+          "added_at": "2026-04-17T19:45:19.557838",
+          "hash": "f07613a6abc6"
+        }
+      },
+      "outputs": {
+        "result": {
+          "value": {
+            "plan_type": "implementation",
+            "steps": [
+              {
+                "step": 1,
+                "action": "identify root cause"
+              },
+              {
+                "step": 2,
+                "action": "implement fix"
+              },
+              {
+                "step": 3,
+                "action": "write tests"
+              }
+            ],
+            "estimated_effort": "medium"
+          },
+          "added_at": "2026-04-17T19:45:19.557856",
+          "hash": "95dc03505f76"
+        }
+      }
+    },
+    {
+      "id": "b5fa614a",
+      "issue_num": 15649,
+      "ai_provider": "claude",
+      "phase": "implementation",
+      "status": "success",
+      "content_hash": "f8e6c527511c",
+      "started_at": "2026-04-17T19:45:19.557926",
+      "inputs": {
+        "plan": {
+          "value": {
+            "plan_type": "implementation",
+            "steps": [
+              {
+                "step": 1,
+                "action": "identify root cause"
+              },
+              {
+                "step": 2,
+                "action": "implement fix"
+              },
+              {
+                "step": 3,
+                "action": "write tests"
+              }
+            ],
+            "estimated_effort": "medium"
+          },
+          "added_at": "2026-04-17T19:45:19.557930",
+          "hash": "95dc03505f76"
+        }
+      },
+      "outputs": {
+        "result": {
+          "value": {
+            "fix_type": "code_change",
+            "files_modified": [],
+            "tests_added": [],
+            "status": "ready_for_review"
+          },
+          "added_at": "2026-04-17T19:45:19.557945",
+          "hash": "8a6f6ed9f3bb"
+        }
+      }
+    },
+    {
+      "id": "8d2e1491",
+      "issue_num": 15649,
+      "ai_provider": "claude",
+      "phase": "validation",
+      "status": "success",
+      "content_hash": "19167b20fdf5",
+      "started_at": "2026-04-17T19:45:19.558006",
+      "inputs": {
+        "implementation": {
+          "value": {
+            "fix_type": "code_change",
+            "files_modified": [],
+            "tests_added": [],
+            "status": "ready_for_review"
+          },
+          "added_at": "2026-04-17T19:45:19.558009",
+          "hash": "8a6f6ed9f3bb"
+        }
+      },
+      "outputs": {
+        "result": {
+          "value": {
+            "validation_status": "passed",
+            "test_results": "all_pass",
+            "regression_check": "no_regressions"
+          },
+          "added_at": "2026-04-17T19:45:19.558020",
+          "hash": "3449d4916370"
+        }
+      }
+    }
+  ]
+}

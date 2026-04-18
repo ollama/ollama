@@ -1,0 +1,11 @@
+# Terraform Variables Example for Budget Alerts
+# Copy this file to terraform.tfvars and fill in your values
+
+project_id                = "ollama-prod-gcp-123456"
+billing_account_name      = "My Billing Account"
+monthly_budget_usd        = 500
+budget_alert_email        = "team@company.com"
+budget_alert_email_critical = "oncall@company.com"
+environment               = "production"
+team                      = "platform"
+enable_pubsub_alerts      = false

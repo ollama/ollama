@@ -1,0 +1,467 @@
+{
+    // ============================================================
+    // ELITE STANDARDS ENFORCEMENT - OLLAMA PROJECT
+    // ============================================================
+
+    // Python Configuration - STRICT MODE
+    "python.defaultInterpreterPath": "${workspaceFolder}/venv/bin/python",
+    "python.linting.enabled": true,
+    "python.linting.pylintEnabled": false,
+    "python.linting.flake8Enabled": false,
+    "python.linting.mypyEnabled": true,
+    "python.linting.mypyArgs": [
+        "--strict",
+        "--ignore-missing-imports",
+        "--show-error-codes"
+    ],
+    "python.formatting.provider": "black",
+    "python.formatting.blackArgs": [
+        "--line-length=100",
+        "--target-version=py311"
+    ],
+    "python.testing.pytestEnabled": true,
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestArgs": [
+        "tests",
+        "-v",
+        "--cov=ollama",
+        "--cov-report=term-missing",
+        "--cov-report=html",
+        "--strict-markers"
+    ],
+    "python.analysis.typeCheckingMode": "strict",
+    "python.analysis.autoImportCompletions": true,
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportMissingTypeStubs": "warning",
+        "reportPrivateUsage": "warning",
+        "reportUnusedImport": "error",
+        "reportUnusedVariable": "error",
+        "reportMissingDocstring": "information",
+        "reportUnnecessaryIsInstance": "warning"
+    },
+
+    // Editor Configuration - ELITE STANDARDS
+    "editor.formatOnSave": true,
+    "editor.formatOnPaste": true,
+    "editor.codeActionsOnSave": {
+        "source.organizeImports": "explicit",
+        "source.fixAll": "explicit",
+        "source.fixAll.ruff": "explicit"
+    },
+    "editor.rulers": [
+        100
+    ],
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true,
+    "editor.trimAutoWhitespace": true,
+    "editor.wordWrap": "on",
+    "editor.wordWrapColumn": 100,
+    "editor.defaultFormatter": "ms-python.black-formatter",
+    "editor.bracketPairColorization.enabled": true,
+    "editor.bracketPairColorization.independentColorPoolPerBracketType": true,
+    "editor.guides.bracketPairs": "active",
+    "editor.guides.indentation": true,
+    "editor.inlineHints.enabled": true,
+    "editor.inlineHints.fontSize": 11,
+    "editor.inlineHints.padding": true,
+
+    // File Management
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true,
+    "files.trimFinalNewlines": true,
+    "files.autoSave": "onFocusChange",
+    "files.maxMemoryForLargeFilesMB": 4096,
+    "files.watcherExclude": {
+        "**/.git": true,
+        "**/node_modules": true,
+        "**/venv": true,
+        "**/.venv": true,
+        "**/__pycache__": true,
+        "**/*.pyc": true,
+        "**/.pytest_cache": true,
+        "**/.mypy_cache": true,
+        "**/.ruff_cache": true,
+        "**/htmlcov": true,
+        "**/dist": true,
+        "**/build": true
+    },
+
+    // Files to Exclude from Explorer
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/*.pyc": true,
+        "**/*.pyo": true,
+        "**/.pytest_cache": true,
+        "**/.mypy_cache": true,
+        "**/.ruff_cache": true,
+        "**/htmlcov": true,
+        "**/.coverage": true,
+        "**/*.egg-info": true,
+        "**/venv": true,
+        "**/.env": false
+    },
+
+    // Search Configuration
+    "search.exclude": {
+        "**/node_modules": true,
+        "**/venv": true,
+        "**/.venv": true,
+        "**/htmlcov": true,
+        "**/.pytest_cache": true,
+        "**/__pycache__": true,
+        "**/*.pyc": true,
+        "**/dist": true,
+        "**/build": true,
+        "**/.git": true
+    },
+
+    // Git Configuration - MANDATORY STANDARDS
+    "git.enableCommitSigning": true,
+    "git.alwaysSignOff": true,
+    "git.inputValidationLength": 50,
+    "git.inputValidationSubjectLength": 50,
+    "git.branchProtection": ["main", "develop"],
+    "git.branchPrefix": "feature/",
+    "git.detectSubmodules": true,
+    "git.confirmSync": true,
+    "git.autofetch": true,
+    "git.autofetchPeriod": 180,
+    "git.fetchOnPull": true,
+    "git.pullBeforeCheckout": true,
+    "git.showPushSuccessNotification": true,
+    "git.promptToSaveFilesBeforeCommit": "always",
+    "git.checkoutPublishingBranch": true,
+
+    // ============================================================
+    // FOLDER STRUCTURE ENFORCEMENT - 5 LEVEL MANDATE
+    // ============================================================
+    // Elite Filesystem Standards: Enforce 5-level hierarchy
+    // See: .github/copilot-instructions.md (Folder Structure Enforcement)
+
+    // Pre-commit validation runs:
+    // python scripts/validate_folder_structure.py --strict
+    // This validates:
+    // - Max 5 levels deep (absolute limit)
+    // - Level-specific directory count limits
+    // - Snake_case naming for all directories
+    // - __init__.py with docstrings in all domain/container dirs
+    // - Max 1 class per Level 5 file, 500 lines per file
+
+    "files.exclude": {
+        "**/.git": true,
+        "**/__pycache__": true,
+        "**/*.pyc": true
+    },
+
+    // ============================================================
+    // RULES ENCODED IN VALIDATOR
+    // ============================================================
+    // Level 1 (root): MAX 10 directories
+    // Level 2 (ollama/): MAX 12 subdir + 5 files (allowed: _models_compat.py, etc)
+    // Level 3 (domain): MAX 4 subdirs (api/, auth/, config/, exceptions/, etc)
+    // Level 4 (functional): MAX 20 files/container (40 for schemas)
+    // Level 5: LEAF LEVEL - No subdirs allowed
+
+    // CRITICAL VIOLATIONS (will fail pre-commit):
+    // ❌ Directories deeper than 5 levels
+    // ❌ Python files at Level 3 (domain root)
+    // ❌ Non-snake_case directory names
+    // ❌ __init__.py missing docstrings
+    // ❌ Level 4 containers with subdirectories
+
+    // Run validator manually:
+    // python scripts/validate_folder_structure.py --strict --verbose
+
+    // GitHub Copilot Configuration
+    "github.copilot.enable": {
+        "*": true,
+        "yaml": true,
+        "plaintext": false,
+        "markdown": true,
+        "python": true,
+        "dockerfile": true
+    },
+    "github.copilot.editor.enableAutoCompletions": true,
+
+    // Markdown Configuration
+    "[markdown]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.formatOnSave": true,
+        "editor.wordWrap": "on",
+        "editor.rulers": [
+            80
+        ]
+    },
+
+    // YAML Configuration
+    "[yaml]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.tabSize": 2,
+        "editor.insertSpaces": true
+    },
+
+    // JSON Configuration
+    "[json]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.tabSize": 2
+    },
+
+    // Python Specific - ELITE STANDARDS
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.black-formatter",
+        "editor.formatOnSave": true,
+        "editor.formatOnPaste": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit",
+            "source.fixAll": "explicit"
+        },
+        "editor.rulers": [100]
+    },
+
+    // Docker Configuration
+    "docker.languageserver.formatter.ignoreMultilineInstructions": true,
+    "docker.enableLinting": true,
+    "[dockerfile]": {
+        "editor.defaultFormatter": "ms-vscode.makefile-tools"
+    },
+
+    // Terminal Configuration
+    "terminal.integrated.env.linux": {
+        "PYTHONPATH": "${workspaceFolder}",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONUNBUFFERED": "1"
+    },
+    "terminal.integrated.env.osx": {
+        "PYTHONPATH": "${workspaceFolder}",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONUNBUFFERED": "1"
+    },
+    "terminal.integrated.env.windows": {
+        "PYTHONPATH": "${workspaceFolder}",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONUNBUFFERED": "1"
+    },
+    "terminal.integrated.fontSize": 12,
+    "terminal.integrated.lineHeight": 1.3,
+
+    // File Associations
+    "files.associations": {
+        "*.yaml": "yaml",
+        "*.yml": "yaml",
+        "Dockerfile*": "dockerfile",
+        ".env*": "dotenv",
+        "*.md": "markdown",
+        ".gitmessage": "plaintext"
+    },
+
+    // Ruff Configuration - LINTING ENFORCEMENT
+    "ruff.enable": true,
+    "ruff.lint.run": "onSave",
+    "github.copilot.chat.codeGeneration.instructions": [
+        "Strictly follow the .copilot-instructions mandate for all code generation",
+        "Maintain the 5-layer folder depth mandate (non-negotiable)",
+        "Security by default: private IPs, least privilege, CMEK encryption",
+        "No secrets in code: utilize GCP Secret Manager or environment variables",
+        "All infrastructure MUST be 100% IaC using Terraform",
+        "GPG sign all commits (enforced by project standards)",
+        "Resource naming: {environment}-{service}-{purpose} (lowercase with hyphens)"
+    ],
+
+    "ruff.lint.args": [
+        "--select=E,W,F,N,I,UP,RUF,B,S,C4,FA,PIE,PT,TID,ARG,PERF",
+        "--ignore=E501",
+        "--line-length=100",
+        "--target-version=py311"
+    ],
+    "ruff.fixAll": true,
+    "ruff.format.args": [
+        "--line-length=100"
+    ],
+
+    // Coverage Gutters
+    "coverage-gutters.coverageFileNames": [
+        "coverage.xml",
+        "lcov.info",
+        ".coverage"
+    ],
+    "coverage-gutters.showLineCoverage": true,
+    "coverage-gutters.showRulerCoverage": true,
+    "coverage-gutters.coverageColors": {
+        "covered": "rgba(0, 255, 0, 0.1)",
+        "uncovered": "rgba(255, 0, 0, 0.3)",
+        "partialCoverage": "rgba(255, 165, 0, 0.2)"
+    },
+
+    // IntelliCode Configuration
+    "editor.suggestSelection": "first",
+    "vsintellicode.modify.editor.suggestSelection": "automaticallyOverrodeDefaultValue",
+
+    // Workbench Configuration
+    "workbench.editorAssociations": {
+        "*.ipynb": "jupyter-notebook"
+    },
+    "workbench.editor.enablePreview": false,
+    "workbench.editor.enablePreviewFromQuickOpen": false,
+    "workbench.editor.tabSizing": "shrink",
+
+    // Problems Configuration
+    "problems.showCurrentInStatus": true,
+    "problems.autoReveal": true,
+
+    // Debug Configuration
+    "debug.internalConsoleOptions": "neverOpen",
+    "debug.showBreakpointsInOverviewRuler": true,
+
+    // Extension Configuration
+    "extensions.ignoreRecommendations": false,
+    "extensions.recommendations": true,
+
+    // ============================================================
+    // FOLDER STRUCTURE ENFORCEMENT (5-LEVEL DEEP MANDATE)
+    // ============================================================
+
+    // Folder-specific warnings for non-conforming patterns
+    "folderStructure.enforcement": {
+        "enabled": true,
+        "maxDepth": 5,
+        "maxDirectoriesPerLevel": {
+            "root": 12,
+            "level2": 12,
+            "level3": 4,
+            "level4": 20
+        },
+        "validateOnSave": true,
+        "validateOnCommit": true
+    },
+
+    // File exclusions to maintain structure cleanliness
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/*.pyc": true,
+        "**/*.pyo": true,
+        "**/.pytest_cache": true,
+        "**/.mypy_cache": true,
+        "**/.ruff_cache": true,
+        "**/htmlcov": true,
+        "**/.coverage": true,
+        "**/*.egg-info": true,
+        "**/venv": true,
+        "**/.venv": true,
+        "**/node_modules": true,
+        "**/.DS_Store": true,
+        "**/dist": true,
+        "**/build": true,
+        "**/.tox": true,
+        "**/.nox": true,
+        "**/.hypothesis": true
+    },
+
+    // Forbidden folder patterns (display warnings)
+    "folderStructure.forbiddenPatterns": [
+        "^src$",
+        "^lib$",
+        "^app$",
+        "^application$",
+        "^core$",
+        "^common$",
+        "^utils$",
+        "^helpers$",
+        "[A-Z]",
+        "_+$"
+    ],
+
+    // Level 1: Root directory rules
+    "folderStructure.level1": {
+        "allowedDirectories": [
+            "ollama",
+            "tests",
+            "docs",
+            "config",
+            "docker",
+            "k8s",
+            "scripts",
+            "alembic",
+            ".github",
+            ".vscode",
+            ".githooks",
+            "monitoring"
+        ],
+        "maxDirectories": 12,
+        "maxFiles": 5
+    },
+
+    // Level 2: Application package rules
+    "folderStructure.level2": {
+        "allowedDirectories": [
+            "api",
+            "auth",
+            "config",
+            "exceptions",
+            "middleware",
+            "models",
+            "monitoring",
+            "repositories",
+            "services",
+            "utils"
+        ],
+        "maxDirectories": 12,
+        "maxFiles": 8,
+        "forbiddenFiles": [
+            "utils.py",
+            "helpers.py",
+            "common.py"
+        ]
+    },
+
+    // Level 3: Domain container rules
+    "folderStructure.level3": {
+        "allowedDirectories": [
+            "routes",
+            "schemas",
+            "dependencies",
+            "generators",
+            "embeddings",
+            "completion"
+        ],
+        "maxDirectories": 4,
+        "maxFiles": 1,
+        "allowedFiles": [
+            "__init__.py"
+        ]
+    },
+
+    // Level 4: Functional container rules
+    "folderStructure.level4": {
+        "maxFiles": 20,
+        "maxLinesPeFile": 500,
+        "fileNamingPattern": "^[a-z][a-z0-9_]*\\.py$",
+        "forbiddenFiles": [
+            "main.py",
+            "utils.py",
+            "helpers.py",
+            "common.py"
+        ]
+    },
+
+    // Naming convention enforcement
+    "folderStructure.namingConventions": {
+        "directories": "lowercase_with_underscores",
+        "modules": "lowercase_with_underscores.py",
+        "classes": "PascalCase",
+        "functions": "snake_case",
+        "constants": "SCREAMING_SNAKE_CASE",
+        "privateMembers": "_snake_case"
+    },
+
+    // Test structure mirroring rules
+    "folderStructure.testMirroring": {
+        "enabled": true,
+        "rule": "tests/ directory structure MUST mirror ollama/ structure exactly",
+        "examples": [
+            "ollama/api/routes/inference.py → tests/unit/api/routes/test_inference.py",
+            "ollama/services/inference/generator.py → tests/unit/services/inference/test_generator.py"
+        ]
+    },
+    "snyk.advanced.organization": "e11775de-f062-4c42-977a-b04a4cb58628",
+    "snyk.advanced.autoSelectOrganization": false
+}

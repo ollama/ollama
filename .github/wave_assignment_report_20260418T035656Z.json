@@ -1,0 +1,104 @@
+{
+  "generated_at_utc": "2026-04-18T03:56:59.110710+00:00",
+  "repository": "kushin77/ollama",
+  "manifest": ".github/autonomous_execution_batches.json",
+  "processed": 50,
+  "labels_added": 0,
+  "comments_added": 20,
+  "already_marked": 12,
+  "comment_deferred": 18,
+  "rate_limit_blocked": false,
+  "failures": [],
+  "deferred_comment_issues": [
+    {
+      "issue": 102,
+      "wave": 1,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 105,
+      "wave": 1,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 106,
+      "wave": 2,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 107,
+      "wave": 2,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 108,
+      "wave": 2,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 109,
+      "wave": 2,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 110,
+      "wave": 2,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 111,
+      "wave": 2,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 112,
+      "wave": 2,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 113,
+      "wave": 2,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 114,
+      "wave": 2,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 115,
+      "wave": 2,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 116,
+      "wave": 2,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 117,
+      "wave": 2,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 118,
+      "wave": 2,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 119,
+      "wave": 2,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 120,
+      "wave": 2,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 121,
+      "wave": 2,
+      "reason": "budget_or_rate_limit"
+    }
+  ]
+}

@@ -1,0 +1,114 @@
+# Pre-commit hooks configuration
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+
+repos:
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+      - id: trailing-whitespace
+        name: Trim trailing whitespace
+        stages: [commit]
+      - id: end-of-file-fixer
+        name: Fix end of file
+        stages: [commit]
+      - id: check-yaml
+        name: Validate YAML
+        stages: [commit]
+      - id: check-json
+        name: Validate JSON
+        stages: [commit]
+      - id: check-toml
+        name: Validate TOML
+        stages: [commit]
+      - id: check-added-large-files
+        name: Check for large files
+        args: ["--maxkb=10000"]
+        stages: [commit]
+      - id: detect-private-key
+        name: Detect private keys
+        stages: [commit]
+      - id: debug-statements
+        name: Check for debug statements
+        stages: [commit]
+
+  # Code formatting with Black
+  - repo: https://github.com/psf/black
+    rev: 24.1.1
+    hooks:
+      - id: black
+        name: Format code with Black
+        language_version: python3.11
+        stages: [commit]
+
+  # Linting with Ruff
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.1.8
+    hooks:
+      - id: ruff
+        name: Lint with Ruff
+        args: [--fix, --exit-zero]
+        stages: [commit]
+
+  # Type checking with mypy
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.8.0
+    hooks:
+      - id: mypy
+        name: Type check with mypy
+        args: [--strict, --show-error-codes]
+        additional_dependencies:
+          [
+            "types-redis",
+            "types-setuptools",
+            "sqlalchemy",
+            "pydantic",
+            "fastapi",
+          ]
+        stages: [commit]
+
+  # Security scanning with bandit
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.5
+    hooks:
+      - id: bandit
+        name: Security check with Bandit
+        args: [-r, ollama, --skip, B101,B601]
+        stages: [commit]
+
+  # Import sorting
+  - repo: https://github.com/PyCQA/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        name: Sort imports with isort
+        args: [--profile, black, --line-length, "100"]
+        stages: [commit]
+
+  # Markdown linting
+  - repo: https://github.com/markdownlint/markdownlint
+    rev: v0.12.0
+    hooks:
+      - id: markdownlint
+        name: Lint Markdown
+        files: \.(md|markdown)$
+        stages: [commit]
+
+  # Commit message linting
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v2.4.0
+    hooks:
+      - id: conventional-pre-commit
+        name: Conventional commit check
+        stages: [commit-msg]
+        args: [--force-scope]
+
+  # YAML formatting
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v3.1.0
+    hooks:
+      - id: prettier
+        name: Format YAML with Prettier
+        types_or: [yaml]
+        stages: [commit]

@@ -1,0 +1,432 @@
+{
+  "timestamp": "2026-04-18T00:57:10.703845Z",
+  "repo": "kushin77/ollama",
+  "open_before": 356,
+  "processed": 356,
+  "closed": 314,
+  "commented": 314,
+  "failures": [
+    {
+      "issue": 54,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 53,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 52,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 51,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 50,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 49,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 48,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 47,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 46,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 45,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 44,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 43,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 42,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 31,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 30,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 29,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 28,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 27,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 26,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 25,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 24,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 23,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 22,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 21,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 20,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 19,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 18,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 17,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 16,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 15,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 14,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 13,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 12,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 11,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 10,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 8,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 7,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 6,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 5,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 4,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 2,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    },
+    {
+      "issue": 1,
+      "step": "comment",
+      "status": 403,
+      "response": {
+        "message": "You have exceeded a secondary rate limit and have been temporarily blocked from content creation. Please retry your request again later. For more on scraping GitHub and how it may affect your rights, please review our Terms of Service (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service)",
+        "documentation_url": "https://docs.github.com/rest/overview/rate-limits-for-the-rest-api#about-secondary-rate-limits",
+        "status": "403"
+      }
+    }
+  ],
+  "open_after": 0,
+  "remaining_issue_numbers": []
+}

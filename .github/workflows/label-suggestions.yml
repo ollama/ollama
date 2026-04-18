@@ -1,0 +1,150 @@
+name: AI Label Suggestions
+
+on:
+  issues:
+    types: [opened, edited]
+  pull_request:
+    types: [opened, edited, synchronize]
+
+jobs:
+  suggest-labels:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install openai pyyaml
+
+      - name: Analyze issue/PR and suggest labels
+        id: analyze
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          cat > analyze_labels.py << 'EOF'
+          import os
+          import sys
+          import json
+          import yaml
+          from typing import List, Dict
+
+          # Simulated AI label suggestion (replace with actual OpenAI API call)
+          def suggest_labels(title: str, body: str, existing_labels: List[str]) -> List[str]:
+              """
+              Analyze issue/PR content and suggest relevant labels.
+
+              In production, this would use OpenAI API to analyze content.
+              For now, using keyword-based heuristics.
+              """
+              suggestions = []
+              content = f"{title} {body}".lower()
+
+              # Type detection
+              if any(word in content for word in ['bug', 'error', 'crash', 'fail']):
+                  suggestions.append('type-bug')
+              elif any(word in content for word in ['feature', 'enhancement', 'add']):
+                  suggestions.append('type-feature')
+              elif any(word in content for word in ['docs', 'documentation']):
+                  suggestions.append('type-docs')
+              elif any(word in content for word in ['test', 'testing', 'coverage']):
+                  suggestions.append('type-test')
+              elif any(word in content for word in ['refactor', 'cleanup']):
+                  suggestions.append('type-refactor')
+
+              # Priority detection
+              if any(word in content for word in ['urgent', 'critical', 'asap', 'blocker']):
+                  suggestions.append('priority-p0')
+              elif any(word in content for word in ['high priority', 'important']):
+                  suggestions.append('priority-p1')
+              elif any(word in content for word in ['low priority', 'nice to have']):
+                  suggestions.append('priority-p2')
+
+              # Component detection
+              if any(word in content for word in ['api', 'endpoint', 'route']):
+                  suggestions.append('component-api')
+              elif any(word in content for word in ['auth', 'authentication', 'authorization']):
+                  suggestions.append('component-auth')
+              elif any(word in content for word in ['database', 'db', 'postgres', 'migration']):
+                  suggestions.append('component-database')
+              elif any(word in content for word in ['docker', 'container']):
+                  suggestions.append('component-docker')
+              elif any(word in content for word in ['test', 'pytest', 'coverage']):
+                  suggestions.append('component-tests')
+
+              # Effort detection
+              if any(word in content for word in ['trivial', 'small', 'quick']):
+                  suggestions.append('effort-xs')
+              elif any(word in content for word in ['large', 'complex', 'major']):
+                  suggestions.append('effort-xl')
+
+              # PMO-specific
+              if any(word in content for word in ['pmo', 'governance', 'compliance']):
+                  suggestions.append('pmo')
+
+              # Remove duplicates and existing labels
+              suggestions = list(set(suggestions))
+              suggestions = [s for s in suggestions if s not in existing_labels]
+
+              return suggestions
+
+          # Get issue/PR data from environment (would be passed by workflow)
+          title = os.getenv('TITLE', '')
+          body = os.getenv('BODY', '')
+          existing_labels = os.getenv('EXISTING_LABELS', '').split(',')
+          existing_labels = [l.strip() for l in existing_labels if l.strip()]
+
+          # Generate suggestions
+          suggestions = suggest_labels(title, body, existing_labels)
+
+          # Output for GitHub Actions
+          print(json.dumps({"suggestions": suggestions}))
+          EOF
+
+          python analyze_labels.py
+
+      - name: Comment with label suggestions
+        if: steps.analyze.outputs.suggestions != '[]'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const suggestions = ${{ steps.analyze.outputs.suggestions }};
+
+            if (suggestions && suggestions.length > 0) {
+              const comment = `### 🏷️ AI Label Suggestions
+
+              Based on the content analysis, I suggest adding these labels:
+
+              ${suggestions.map(label => `- \`${label}\``).join('\n')}
+
+              ---
+              <sub>🤖 Generated by AI Label Suggestion Engine</sub>`;
+
+              if (context.eventName === 'issues') {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  body: comment
+                });
+              } else if (context.eventName === 'pull_request') {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.payload.pull_request.number,
+                  body: comment
+                });
+              }
+            }

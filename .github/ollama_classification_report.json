@@ -1,0 +1,3538 @@
+{
+  "timestamp": "2026-04-18T05:38:25Z",
+  "model": "mistral:7b",
+  "total_classified": 294,
+  "successful": 294,
+  "failed": 0,
+  "skipped_pull_requests": 0,
+  "classifications": [
+    {
+      "issue": 60,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 62,
+      "classification": {
+        "priority": "normal",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 64,
+      "classification": {
+        "priority": "normal",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 65,
+      "classification": {
+        "priority": "normal",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 66,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.5
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 67,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 69,
+      "classification": {
+        "priority": "normal",
+        "category": "docs",
+        "is_duplicate": false,
+        "complexity": "trivial",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 71,
+      "classification": {
+        "priority": "normal",
+        "category": "chore",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 77,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 82,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 83,
+      "classification": {
+        "priority": "normal",
+        "category": "docs",
+        "is_duplicate": false,
+        "complexity": "trivial",
+        "confidence": 0.5
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 84,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.9
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 85,
+      "classification": {
+        "priority": "normal",
+        "category": "chore",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 86,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 87,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.9
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 88,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.9
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 89,
+      "classification": {
+        "priority": "high",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 90,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 91,
+      "classification": {
+        "priority": "normal",
+        "category": "docs",
+        "is_duplicate": false,
+        "complexity": "trivial",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 92,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.9
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 93,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 94,
+      "classification": {
+        "priority": "normal",
+        "category": "docs",
+        "is_duplicate": false,
+        "complexity": "trivial",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 95,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 96,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 97,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.95
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 98,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 99,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 100,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.9
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 101,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 102,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 105,
+      "classification": {
+        "priority": "normal",
+        "category": "chore",
+        "is_duplicate": false,
+        "complexity": "trivial",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 106,
+      "classification": {
+        "priority": "normal",
+        "category": "chore",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 107,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.95
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 108,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 109,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.95
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 110,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.95
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 111,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.9
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 112,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.9
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 113,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 114,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.9
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 115,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.95
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 116,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 117,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 118,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 119,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.95
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 120,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.85
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 121,
+      "classification": {
+        "priority": "high",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 122,
+      "classification": {
+        "priority": "normal",
+        "category": "chore",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 123,
+      "classification": {
+        "priority": "normal",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 124,
+      "classification": {
+        "priority": "normal",
+        "category": "chore",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 125,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 126,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 127,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 128,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 129,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 130,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 131,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 132,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 133,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 134,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 135,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 136,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 137,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 138,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 139,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.65
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 140,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 141,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 142,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 143,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 144,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 145,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 146,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 147,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 148,
+      "classification": {
+        "priority": "normal",
+        "category": "docs",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 149,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.65
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 150,
+      "classification": {
+        "priority": "high",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 151,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 152,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 153,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 154,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 155,
+      "classification": {
+        "priority": "normal",
+        "category": "chore",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 156,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 157,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 158,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 159,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "trivial",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 160,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 161,
+      "classification": {
+        "priority": "high",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 162,
+      "classification": {
+        "priority": "high",
+        "category": "chore",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 163,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 164,
+      "classification": {
+        "priority": "high",
+        "category": "chore",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 165,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 166,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 167,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 168,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 169,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 170,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 171,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 172,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 173,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 174,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 175,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 176,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 177,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 178,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 179,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 180,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 181,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 183,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 184,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 185,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 186,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 187,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 188,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 189,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 190,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 191,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.75
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 192,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 193,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 194,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 195,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 196,
+      "classification": {
+        "priority": "normal",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 197,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 198,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 199,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 200,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 201,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 202,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 203,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 204,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 205,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 206,
+      "classification": {
+        "priority": "normal",
+        "category": "docs",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 207,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 208,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 209,
+      "classification": {
+        "priority": "normal",
+        "category": "docs",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.5
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 210,
+      "classification": {
+        "priority": "normal",
+        "category": "question",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 211,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 212,
+      "classification": {
+        "priority": "high",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 213,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 214,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 215,
+      "classification": {
+        "priority": "normal",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 216,
+      "classification": {
+        "priority": "high",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 217,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 218,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 219,
+      "classification": {
+        "priority": "high",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 220,
+      "classification": {
+        "priority": "normal",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 221,
+      "classification": {
+        "priority": "normal",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 222,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 223,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 224,
+      "classification": {
+        "priority": "normal",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 226,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 227,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "complex",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 228,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "complex",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 229,
+      "classification": {
+        "priority": "critical",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 230,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 231,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 232,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "complex",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 233,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 234,
+      "classification": {
+        "priority": "critical",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 235,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "complex",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 236,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 237,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 238,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "complex",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 239,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 240,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "complex",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 241,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "complex",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 242,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "complex",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 253,
+      "classification": {
+        "priority": "critical",
+        "category": "chore",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 254,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 255,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 256,
+      "classification": {
+        "priority": "critical",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 257,
+      "classification": {
+        "priority": "critical",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 258,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 259,
+      "classification": {
+        "priority": "critical",
+        "category": "chore",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 260,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 261,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 262,
+      "classification": {
+        "priority": "critical",
+        "category": "chore",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 263,
+      "classification": {
+        "priority": "high",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 264,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 265,
+      "classification": {
+        "priority": "high",
+        "category": "chore",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 268,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "complex",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 269,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 270,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 271,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 272,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 273,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 274,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 275,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 276,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 277,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 278,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.75
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 279,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 280,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 287,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 288,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 289,
+      "classification": {
+        "priority": "normal",
+        "category": "docs",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 290,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 291,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 292,
+      "classification": {
+        "priority": "normal",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 293,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 294,
+      "classification": {
+        "priority": "normal",
+        "category": "docs",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 295,
+      "classification": {
+        "priority": "normal",
+        "category": "docs",
+        "is_duplicate": false,
+        "complexity": "trivial",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 296,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 297,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 298,
+      "classification": {
+        "priority": "normal",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 299,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 300,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 301,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 302,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 303,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 304,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 305,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 306,
+      "classification": {
+        "priority": "normal",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.5
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 307,
+      "classification": {
+        "priority": "high",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 308,
+      "classification": {
+        "priority": "normal",
+        "category": "docs",
+        "is_duplicate": false,
+        "complexity": "trivial",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 309,
+      "classification": {
+        "priority": "normal",
+        "category": "chore",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 310,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 311,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 312,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 313,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 314,
+      "classification": {
+        "priority": "critical",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 315,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 316,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 317,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 318,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 319,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 320,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 321,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 322,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 323,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 324,
+      "classification": {
+        "priority": "normal",
+        "category": "chore",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 325,
+      "classification": {
+        "priority": "normal",
+        "category": "chore",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 326,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 327,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 328,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 329,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 330,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 331,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 332,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 333,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 334,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 335,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 336,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 337,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 338,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 339,
+      "classification": {
+        "priority": "normal",
+        "category": "docs",
+        "is_duplicate": false,
+        "complexity": "trivial",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 340,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 341,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 342,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 343,
+      "classification": {
+        "priority": "normal",
+        "category": "chore",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 344,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 345,
+      "classification": {
+        "priority": "normal",
+        "category": "chore",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 346,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 347,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 348,
+      "classification": {
+        "priority": "normal",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 349,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 350,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 351,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 352,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 353,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 354,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 355,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 356,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 357,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 358,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 359,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 360,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 361,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 362,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 363,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 364,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 365,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 366,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 367,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 368,
+      "classification": {
+        "priority": "high",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 369,
+      "classification": {
+        "priority": "critical",
+        "category": "chore",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 370,
+      "classification": {
+        "priority": "critical",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.9
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 371,
+      "classification": {
+        "priority": "critical",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 1.0
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 372,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 373,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 374,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.9
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 375,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 376,
+      "classification": {
+        "priority": "critical",
+        "category": "bug",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.8
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 378,
+      "classification": {
+        "priority": "normal",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 379,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 389,
+      "classification": {
+        "priority": "high",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 390,
+      "classification": {
+        "priority": "high",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 391,
+      "classification": {
+        "priority": "normal",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 392,
+      "classification": {
+        "priority": "high",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 393,
+      "classification": {
+        "priority": "normal",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.6
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 394,
+      "classification": {
+        "priority": "normal",
+        "category": "feature",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 395,
+      "classification": {
+        "priority": "normal",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 396,
+      "classification": {
+        "priority": "normal",
+        "category": "refactor",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 397,
+      "classification": {
+        "priority": "normal",
+        "category": "chore",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    },
+    {
+      "issue": 398,
+      "classification": {
+        "priority": "normal",
+        "category": "docs",
+        "is_duplicate": false,
+        "complexity": "moderate",
+        "confidence": 0.7
+      },
+      "model": "mistral:7b",
+      "success": true
+    }
+  ]
+}

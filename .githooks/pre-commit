@@ -1,0 +1,248 @@
+#!/bin/bash
+# Pre-commit hook for Ollama Elite AI Platform
+# Runs all quality checks before commit
+# Usage: This runs automatically on 'git commit'
+
+set -e
+
+echo "🔍 Running pre-commit checks..."
+echo ""
+
+# Color codes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Track failures
+FAILED=0
+
+# ============================================================
+# GITLEAKS SECRET DETECTION (MANDATORY - Blocks on detection)
+# ============================================================
+echo "🔐 Scanning for secrets with gitleaks..."
+
+# Check if gitleaks is installed
+if ! command -v gitleaks &> /dev/null; then
+    echo -e "${YELLOW}⚠️  WARNING: gitleaks not installed${NC}"
+    echo "Install with: brew install gitleaks (macOS) or apt-get install gitleaks (Linux)"
+    echo "Or download from: https://github.com/gitleaks/gitleaks/releases"
+else
+    # Run gitleaks on staged files
+    if gitleaks detect --source . --verbose --no-git 2>&1 | grep -q "found.*leaks"; then
+        echo -e "${RED}❌ CRITICAL: Secrets detected in staged files!${NC}"
+        echo ""
+        echo "Detected secrets:"
+        gitleaks detect --source . --verbose --no-git 2>&1 || true
+        echo ""
+        echo "COMMIT REJECTED - Never commit secrets!"
+        echo ""
+        echo "Common secrets to avoid:"
+        echo "  • API keys (sk_live_*, sk_test_*)"
+        echo "  • Service account JSON files"
+        echo "  • AWS credentials"
+        echo "  • Private tokens and passwords"
+        echo "  • GCP service account keys"
+        echo ""
+        echo "Remediation:"
+        echo "  1. Remove secrets from files"
+        echo "  2. Use environment variables or Secret Manager"
+        echo "  3. Run: git reset <file> to unstage"
+        echo "  4. Run: git add <corrected-files>"
+        echo ""
+        FAILED=$((FAILED + 1))
+    else
+        echo -e "${GREEN}✅ No secrets detected${NC}"
+    fi
+fi
+
+echo ""
+
+# Get the list of staged Python files
+PYTHON_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.py$' || true)
+
+# Get list of all staged files (for folder structure validation)
+ALL_STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM || true)
+
+# ============================================================
+# 0. FOLDER STRUCTURE VALIDATION (NEW - 5-Level Deep Mandate)
+# ============================================================
+echo "📁 Validating folder structure compliance..."
+STRUCTURE_FAILED=0
+
+# Function to check depth
+check_depth() {
+    local path="$1"
+    local depth=$(echo "$path" | tr -cd '/' | wc -c)
+    local max_depth=5
+    if [ "$depth" -gt "$max_depth" ]; then
+        echo -e "${RED}❌ File exceeds max depth (5 levels): $path${NC}"
+        STRUCTURE_FAILED=$((STRUCTURE_FAILED + 1))
+        return 1
+    fi
+    return 0
+}
+
+# Function to validate file naming
+validate_naming() {
+    local file="$1"
+    local filename=$(basename "$file")
+
+    # Check for .py files
+    if [[ $file == *.py ]]; then
+        # Should be lowercase_with_underscores.py
+        if [[ ! $filename =~ ^[a-z][a-z0-9_]*\.py$ ]]; then
+            echo -e "${RED}❌ Invalid naming (should be lowercase_with_underscores.py): $file${NC}"
+            STRUCTURE_FAILED=$((STRUCTURE_FAILED + 1))
+            return 1
+        fi
+    fi
+    return 0
+}
+
+# Function to validate test mirroring
+validate_test_mirroring() {
+    # For each source file, check if test file exists or is being created
+    local source_file="$1"
+
+    # Only check ollama/ files, not tests/
+    if [[ $source_file != ollama/* ]]; then
+        return 0
+    fi
+
+    # Skip __init__.py files
+    if [[ $source_file == */__init__.py ]]; then
+        return 0
+    fi
+
+    # Construct expected test file path
+    local test_file="${source_file/ollama\//tests/unit/}"
+    test_file="tests/unit/${test_file#tests/unit/}"
+    test_file="${test_file%.py}/test_$(basename ${source_file%.py}).py"
+    test_file="tests/unit/$(echo $source_file | sed 's|ollama/||' | sed 's|\.py|_|' | sed 's|/|_|g')py"
+    test_file="tests/unit/$(echo $source_file | sed 's|ollama/||' | sed 's|/|/test_|' | sed 's|^|test_|')"
+
+    # For now, just validate the structure exists
+    return 0
+}
+
+# Validate all staged files
+for file in $ALL_STAGED_FILES; do
+    # Skip non-Python files for structure checks
+    if [[ $file != *.py ]] && [[ $file != *.md ]] && [[ $file != *.json ]] && [[ $file != *.yaml ]] && [[ $file != *.yml ]]; then
+        continue
+    fi
+
+    # Check depth
+    check_depth "$file" || true
+
+    # Validate naming for .py files
+    if [[ $file == *.py ]]; then
+        validate_naming "$file" || true
+    fi
+done
+
+if [ $STRUCTURE_FAILED -gt 0 ]; then
+    echo -e "${YELLOW}⚠️  Folder structure issues found: $STRUCTURE_FAILED${NC}"
+    FAILED=$((FAILED + 1))
+else
+    echo -e "${GREEN}✅ Folder structure compliant${NC}"
+fi
+
+echo ""
+if [ -z "$PYTHON_FILES" ]; then
+    echo "ℹ️  No Python files to check"
+    exit 0
+fi
+
+# 1. FOLDER STRUCTURE VALIDATION (MANDATORY - 5-Level Mandate)
+echo ""
+echo "📁 Validating 5-level folder structure compliance..."
+if python3 scripts/validate_folder_structure.py --strict > /tmp/structure_validation.txt 2>&1; then
+    echo -e "${GREEN}✅ Folder structure validation passed${NC}"
+else
+    echo -e "${RED}❌ Folder structure violations detected!${NC}"
+    cat /tmp/structure_validation.txt
+    echo ""
+    echo "Folder structure is CRITICAL - violations must be fixed before commit!"
+    echo "Run: python3 scripts/validate_folder_structure.py --strict --verbose"
+    FAILED=$((FAILED + 1))
+fi
+
+# 2. Type checking with mypy
+echo ""
+echo "📋 Type checking with mypy..."
+if ! mypy $PYTHON_FILES --strict 2>&1 | grep -q "error:"; then
+    echo -e "${GREEN}✅ Type checking passed${NC}"
+else
+    echo -e "${RED}❌ Type checking failed${NC}"
+    mypy $PYTHON_FILES --strict || true
+    FAILED=$((FAILED + 1))
+fi
+
+# 3. Linting with ruff
+echo ""
+echo "🔍 Linting with ruff..."
+if ruff check $PYTHON_FILES > /dev/null 2>&1; then
+    echo -e "${GREEN}✅ Linting passed${NC}"
+else
+    echo -e "${RED}❌ Linting found issues${NC}"
+    ruff check $PYTHON_FILES || true
+    FAILED=$((FAILED + 1))
+fi
+
+# 4. Code formatting check (black)
+echo ""
+echo "💅 Checking code format with black..."
+if black --check $PYTHON_FILES > /dev/null 2>&1; then
+    echo -e "${GREEN}✅ Code format passed${NC}"
+else
+    echo -e "${YELLOW}⚠️  Code format issues found - auto-fixing...${NC}"
+    black $PYTHON_FILES > /dev/null 2>&1
+    echo "Re-staging formatted files..."
+    git add $PYTHON_FILES
+fi
+
+# 5. Security audit (pip-audit)
+echo ""
+echo "🔐 Security audit with pip-audit..."
+if pip-audit --desc > /dev/null 2>&1; then
+    echo -e "${GREEN}✅ Security audit passed${NC}"
+else
+    echo -e "${YELLOW}⚠️  Security vulnerabilities detected${NC}"
+    pip-audit --desc || true
+    # Don't fail on audit - let user decide
+fi
+
+# 6. Test coverage check
+echo ""
+echo "🧪 Running tests..."
+if pytest tests/unit/ -q --tb=short > /dev/null 2>&1; then
+    echo -e "${GREEN}✅ Unit tests passed${NC}"
+else
+    echo -e "${RED}❌ Unit tests failed${NC}"
+    pytest tests/unit/ -q --tb=short || true
+    FAILED=$((FAILED + 1))
+fi
+
+# Summary
+echo ""
+echo "════════════════════════════════════════════════════════════"
+if [ $FAILED -eq 0 ]; then
+    echo -e "${GREEN}✅ All pre-commit checks passed!${NC}"
+    echo "Proceeding with commit..."
+    exit 0
+else
+    echo -e "${RED}❌ Pre-commit checks failed: $FAILED check(s) failed${NC}"
+    echo ""
+    echo "To fix issues:"
+    echo "  • Run: ruff check --fix <file>"
+    echo "  • Run: black <file>"
+    echo "  • Run: pytest tests/"
+    echo "  • Run: mypy <file> --strict"
+    echo ""
+    echo "To bypass (not recommended):"
+    echo "  git commit --no-verify"
+    echo "════════════════════════════════════════════════════════════"
+    exit 1
+fi

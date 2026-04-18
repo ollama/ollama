@@ -1,0 +1,106 @@
+# ============================================================================
+# MULTI-STAGE DOCKERFILE FOR OLLAMA API
+# Elite Production Build with Security Hardening
+# ============================================================================
+
+# Build Arguments
+ARG PYTHON_VERSION=3.11
+ARG BUILD_DATE
+ARG VCS_REF
+
+# ============================================================================
+# STAGE 1: Builder
+# ============================================================================
+FROM python:${PYTHON_VERSION}-slim as builder
+
+LABEL maintainer="Elevated IQ <admin@elevatediq.ai>"
+LABEL org.opencontainers.image.title="Ollama API"
+LABEL org.opencontainers.image.description="Elite AI Inference Platform"
+LABEL org.opencontainers.image.version="1.0.0"
+
+# Environment Variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=off \
+    PIP_DISABLE_PIP_VERSION_CHECK=on \
+    PIP_DEFAULT_TIMEOUT=100
+
+# System dependencies for building
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    build-essential \
+    libpq-dev \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Upgrade pip and install build tools
+RUN pip install --upgrade pip setuptools wheel
+
+WORKDIR /build
+
+# Copy project files
+COPY setup.py setup.cfg pyproject.toml README.md LICENSE ./
+COPY ollama/ ollama/
+COPY requirements/ requirements/ 2>/dev/null || true
+
+# Install Python dependencies
+RUN pip install -e . --no-cache-dir
+
+# ============================================================================
+# STAGE 2: Production (Minimal, Secure)
+# ============================================================================
+FROM python:${PYTHON_VERSION}-slim as production
+
+# Environment
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONFAULTHANDLER=1 \
+    PYTHONHASHSEED=random
+
+# Runtime dependencies only
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    curl \
+    ca-certificates \
+    tini \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Create application directories
+RUN mkdir -p /app /models /var/log/ollama /app/cache && \
+    chmod 1777 /tmp /app/cache
+
+# Create non-root user with specific UID
+RUN useradd -m -u 1000 -s /bin/bash ollama && \
+    chown -R ollama:ollama /app /models /var/log/ollama /app/cache
+
+WORKDIR /app
+
+# Copy Python packages from builder
+COPY --from=builder /usr/local/lib/python${PYTHON_VERSION}/site-packages /usr/local/lib/python${PYTHON_VERSION}/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Copy application code
+COPY --chown=ollama:ollama . .
+
+# Switch to non-root user
+USER ollama
+
+# Expose port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Use tini to handle signals properly
+ENTRYPOINT ["/usr/bin/tini", "--"]
+
+# Production command with uvicorn
+CMD ["uvicorn", \
+     "ollama.main:app", \
+     "--host", "0.0.0.0", \
+     "--port", "8000", \
+     "--workers", "4", \
+     "--loop", "uvloop", \
+     "--log-level", "info"]

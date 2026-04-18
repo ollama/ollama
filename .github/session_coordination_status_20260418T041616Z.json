@@ -1,0 +1,34 @@
+{
+  "generated_at_utc": "2026-04-18T04:16:16.096200+00:00",
+  "scope": "global-autonomous-triage-checkpoint",
+  "repository": "kushin77/ollama",
+  "branch": "feature/42-kubernetes-hub",
+  "live_metrics": {
+    "open_issues": 294,
+    "agent_ready_open": 294,
+    "p1_open": 0,
+    "shard_distribution": {
+      "shard/1": 74,
+      "shard/2": 74,
+      "shard/3": 73,
+      "shard/4": 73
+    }
+  },
+  "artifacts": {
+    "agent_ready_queue": ".github/agent_ready_queue.json",
+    "agent_ready_shards": ".github/agent_ready_shards.json",
+    "shard_apply_report": ".github/agent_ready_shard_apply_report_20260418T041550Z.json"
+  },
+  "governance": {
+    "immutable": true,
+    "idempotent": true,
+    "commit_required": true,
+    "session_safe": true,
+    "p1_lane_reserved_for_other_agents": true
+  },
+  "notes": [
+    "All currently open issues carry agent-ready label.",
+    "Shard labels refreshed to enable deterministic autonomous parallel execution.",
+    "Unrelated in-progress test files were intentionally untouched."
+  ]
+}

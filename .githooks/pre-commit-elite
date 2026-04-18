@@ -1,0 +1,180 @@
+#!/bin/bash
+# Pre-commit hook for elite standards enforcement
+# Runs all quality checks before allowing commit
+# Install: cp .githooks/pre-commit-elite .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+
+set -e
+
+echo "🔍 Running elite standards enforcement checks..."
+echo ""
+
+# Get changed files
+changed_files=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(py|yaml|yml|json|md)$' || true)
+
+if [ -z "$changed_files" ]; then
+    echo "✅ No staged changes to check"
+    exit 0
+fi
+
+# Track failures
+failures=0
+
+# ============================================================
+# FOLDER STRUCTURE ENFORCEMENT - CRITICAL
+# ============================================================
+echo "📁 Validating folder structure (no loose files at root)..."
+
+# Allowed files at root (whitelist)
+allowed_root_files=(
+    "README.md"
+    "CONTRIBUTING.md"
+    "LICENSE"
+    "CHANGELOG.md"
+    "pyproject.toml"
+    "setup.py"
+    "Dockerfile"
+    "docker-compose.yml"
+    "docker-compose.prod.yml"
+    "docker-compose.minimal.yml"
+    "docker-compose.elite.yml"
+    ".gitignore"
+    ".pre-commit-config.yaml"
+    "alembic.ini"
+    "test_server.py"
+    "verify-completion.sh"
+    ".copilot-instructions"
+    ".coverage"
+    "IMPLEMENTATION_COMPLETE.md"
+    "ELITE_STANDARDS_EXECUTIVE_SUMMARY.md"
+    "ELITE_STANDARDS_IMPLEMENTATION_COMPLETE.md"
+    "DEEP_SCAN_ELITE_STANDARDS_REPORT.md"
+    "FOLDER_STRUCTURE_ENFORCEMENT_COMPLETE.md"
+)
+
+# Get all files in root (excluding hidden files and directories)
+root_files=$(find . -maxdepth 1 -type f ! -name ".*" -printf "%f\n" 2>/dev/null || true)
+
+# Check for loose files
+loose_files=()
+while IFS= read -r file; do
+    # Skip if empty
+    [ -z "$file" ] && continue
+
+    # Check if file is in allowed list
+    allowed=false
+    for allowed_file in "${allowed_root_files[@]}"; do
+        if [[ "$file" == "$allowed_file" ]]; then
+            allowed=true
+            break
+        fi
+    done
+
+    # If not allowed and is a status/report/doc file, flag it
+    if ! $allowed; then
+        if [[ "$file" =~ \.(md|txt)$ ]] && [[ ! "$file" =~ ^(README|CONTRIBUTING|LICENSE|CHANGELOG) ]]; then
+            loose_files+=("$file")
+        fi
+    fi
+done <<< "$root_files"
+
+# Fail if loose files found
+if [ ${#loose_files[@]} -gt 0 ]; then
+    echo "❌ FOLDER STRUCTURE VIOLATION: Loose files detected at root"
+    echo ""
+    echo "The following files must be organized into subdirectories:"
+    for file in "${loose_files[@]}"; do
+        echo "  - $file"
+    done
+    echo ""
+    echo "Suggested actions:"
+    echo "  → Status reports: Move to docs/reports/"
+    echo "  → Documentation: Move to docs/"
+    echo "  → Scripts: Move to scripts/"
+    echo ""
+    echo "To auto-organize files, run:"
+    echo "  bash scripts/cleanup-root-directory.sh"
+    echo ""
+    ((failures++))
+else
+    echo "✅ Folder structure clean (no loose files)"
+fi
+
+echo ""
+
+# Run type checking
+echo "📝 Running type checking (mypy --strict)..."
+if ! python3 -m mypy ollama/ --strict --show-error-codes 2>&1 | head -20; then
+    echo "⚠️  Type checking has issues (non-blocking)"
+fi
+
+# Run linting
+echo ""
+echo "🧹 Running linting (ruff)..."
+if python3 -m ruff check ollama/ tests/ --fix; then
+    echo "✅ Linting passed"
+else
+    echo "❌ Linting failed"
+    ((failures++))
+fi
+
+# Run formatters (black, isort)
+echo ""
+echo "💅 Running code formatter (black)..."
+if python3 -m black ollama/ tests/ --line-length=100 --check 2>&1 | grep -q "would reformat\|reformatted"; then
+    echo "⚠️  Files need formatting. Running black..."
+    python3 -m black ollama/ tests/ --line-length=100
+    git add ollama/ tests/
+else
+    echo "✅ Code formatting passed"
+fi
+
+echo ""
+echo "📦 Checking import sorting (isort)..."
+if python3 -m isort ollama/ tests/ --profile black --line-length 100 --check-only 2>&1 | grep -q "ERROR\|would reformat"; then
+    echo "⚠️  Imports need sorting. Running isort..."
+    python3 -m isort ollama/ tests/ --profile black --line-length 100
+    git add ollama/ tests/
+else
+    echo "✅ Import sorting passed"
+fi
+
+# Security audit
+echo ""
+echo "🔐 Running security audit (pip-audit)..."
+if python3 -m pip_audit --skip-editable 2>&1 | grep -q "found.*vulnerability"; then
+    echo "⚠️  Security vulnerabilities detected (review before commit)"
+else
+    echo "✅ Security audit passed"
+fi
+
+# Check for debug statements
+echo ""
+echo "🐛 Checking for debug statements..."
+if grep -r "print(" ollama/ tests/ 2>/dev/null | grep -v "__str__" | grep -v "__repr__"; then
+    echo "⚠️  Debug print statements found (remove before commit)"
+    ((failures++))
+else
+    echo "✅ No debug statements found"
+fi
+
+# Check for TODOs and FIXMEs in production code
+echo ""
+echo "📌 Checking for TODOs in production code..."
+if grep -r "TODO\|FIXME" ollama/ --include="*.py" 2>/dev/null | grep -v "test_"; then
+    echo "⚠️  TODOs found in production code (should be tracked as issues)"
+else
+    echo "✅ No production TODOs found"
+fi
+
+# Summary
+echo ""
+echo "════════════════════════════════════════════════════════════"
+if [ $failures -eq 0 ]; then
+    echo "✅ ALL CHECKS PASSED - Ready to commit"
+    echo "════════════════════════════════════════════════════════════"
+    exit 0
+else
+    echo "❌ CHECKS FAILED - Fix issues before committing"
+    echo "════════════════════════════════════════════════════════════"
+    exit 1
+fi

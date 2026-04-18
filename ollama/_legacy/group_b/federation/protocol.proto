@@ -1,0 +1,450 @@
+/**
+ * Issue #42: Multi-Tier Hub-Spoke Federation Protocol
+ * 
+ * Defines the gRPC protocol for multi-tier federation with regional hubs.
+ * Enables service discovery, request routing, and state replication across regions.
+ * 
+ * Version: 1.0.0 (Week 1 - Feb 3, 2026)
+ * Status: READY FOR IMPLEMENTATION
+ * 
+ * Key Features:
+ * - Hub registration & discovery
+ * - Regional topology management
+ * - Request routing with latency awareness
+ * - State replication & consistency
+ * - Failure detection & recovery
+ */
+
+syntax = "proto3";
+
+package ollama.federation.v1;
+
+option go_package = "github.com/kushin77/ollama/ollama/federation/v1;federationv1";
+option python_package = "ollama.federation.v1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+// ============================================================================
+// Hub Registration & Discovery
+// ============================================================================
+
+/**
+ * Hub represents a regional inference hub in the federation.
+ * Each hub can serve requests independently and coordinate with other hubs.
+ */
+message Hub {
+  // Unique identifier for this hub (e.g., "us-central1-prod-1")
+  string hub_id = 1;
+  
+  // Human-readable name (e.g., "US Central 1 Primary")
+  string name = 2;
+  
+  // Region where hub is deployed (e.g., "us-central1")
+  string region = 3;
+  
+  // Zone within region (e.g., "us-central1-a")
+  string zone = 4;
+  
+  // gRPC endpoint for this hub (e.g., "hub-1.us-central1.ollama.local:8000")
+  string grpc_endpoint = 5;
+  
+  // HTTPS endpoint for REST clients
+  string https_endpoint = 6;
+  
+  // Hub capacity metrics
+  HubCapacity capacity = 7;
+  
+  // Hub current health status
+  HubStatus status = 8;
+  
+  // Last heartbeat timestamp
+  google.protobuf.Timestamp last_heartbeat = 9;
+  
+  // Hub version (e.g., "v1.0.0")
+  string version = 10;
+  
+  // Supported model types (e.g., ["llama3.2", "mixtral-8x7b"])
+  repeated string supported_models = 11;
+  
+  // Custom metadata for routing decisions
+  map<string, string> labels = 12;
+}
+
+/**
+ * HubCapacity describes resource limits and current utilization of a hub.
+ */
+message HubCapacity {
+  // Maximum concurrent requests this hub can handle
+  int32 max_concurrent_requests = 1;
+  
+  // Current inflight requests
+  int32 current_requests = 2;
+  
+  // Maximum memory available for models (GB)
+  int32 max_memory_gb = 3;
+  
+  // Current memory usage (GB)
+  int32 current_memory_gb = 4;
+  
+  // Available models on this hub
+  repeated string available_models = 5;
+  
+  // CPU utilization (0-100)
+  int32 cpu_utilization_percent = 6;
+  
+  // Memory utilization (0-100)
+  int32 memory_utilization_percent = 7;
+  
+  // Network utilization (0-100)
+  int32 network_utilization_percent = 8;
+}
+
+/**
+ * HubStatus indicates the health and state of a hub.
+ */
+enum HubStatus {
+  HUB_STATUS_UNKNOWN = 0;
+  HUB_STATUS_HEALTHY = 1;
+  HUB_STATUS_DEGRADED = 2;
+  HUB_STATUS_UNHEALTHY = 3;
+  HUB_STATUS_OFFLINE = 4;
+}
+
+// ============================================================================
+// Heartbeat & Health Checking
+// ============================================================================
+
+/**
+ * HeartbeatRequest sent by hubs to control plane every 5 seconds.
+ */
+message HeartbeatRequest {
+  // Hub identifier
+  string hub_id = 1;
+  
+  // Current hub status
+  Hub hub = 2;
+  
+  // Timestamp of heartbeat
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+/**
+ * HeartbeatResponse from control plane to hub.
+ */
+message HeartbeatResponse {
+  // Acknowledgment of heartbeat receipt
+  bool acknowledged = 1;
+  
+  // Updated topology if changed
+  TopologySnapshot topology = 2;
+  
+  // Commands for hub to execute
+  repeated HubCommand commands = 3;
+}
+
+/**
+ * HubCommand represents an action the control plane wants a hub to take.
+ */
+message HubCommand {
+  // Unique command ID
+  string command_id = 1;
+  
+  // Command type (e.g., "reload_config", "scale_model", "failover_to")
+  string command_type = 2;
+  
+  // Command parameters as JSON
+  string parameters = 3;
+  
+  // Deadline for command execution
+  google.protobuf.Timestamp deadline = 4;
+}
+
+/**
+ * HealthCheckRequest for on-demand health checks.
+ */
+message HealthCheckRequest {
+  // Hub ID to check
+  string hub_id = 1;
+}
+
+/**
+ * HealthCheckResponse indicates hub health.
+ */
+message HealthCheckResponse {
+  // Is hub healthy?
+  bool healthy = 1;
+  
+  // Current status
+  HubStatus status = 2;
+  
+  // Health check details
+  string message = 3;
+  
+  // Latency to hub (milliseconds)
+  int32 latency_ms = 4;
+}
+
+// ============================================================================
+// Request Routing & Topology
+// ============================================================================
+
+/**
+ * TopologySnapshot represents current state of all hubs in federation.
+ * Sent to hubs periodically and on-demand.
+ */
+message TopologySnapshot {
+  // All registered hubs in federation
+  repeated Hub hubs = 1;
+  
+  // Primary control plane hub
+  string primary_hub_id = 2;
+  
+  // Secondary control plane hub (for failover)
+  string secondary_hub_id = 3;
+  
+  // Topology version number (increments on changes)
+  int64 version = 4;
+  
+  // Timestamp of snapshot
+  google.protobuf.Timestamp timestamp = 5;
+  
+  // Routing policies for load balancing
+  map<string, RoutingPolicy> routing_policies = 6;
+}
+
+/**
+ * RoutingPolicy defines how requests should be routed.
+ */
+message RoutingPolicy {
+  // Policy identifier (e.g., "default", "model:llama3.2")
+  string policy_id = 1;
+  
+  // Strategy: "latency-aware", "round-robin", "least-loaded"
+  string strategy = 2;
+  
+  // Weight for each hub (hub_id -> weight)
+  map<string, int32> hub_weights = 3;
+  
+  // Preferred regions in order
+  repeated string preferred_regions = 4;
+  
+  // Fallback regions if preferred unavailable
+  repeated string fallback_regions = 5;
+}
+
+/**
+ * RouteRequest queries topology for best hub to serve a request.
+ */
+message RouteRequest {
+  // Model name to serve
+  string model = 1;
+  
+  // Client location/region hint
+  string client_region = 2;
+  
+  // Request size (for capacity planning)
+  int32 estimated_tokens = 3;
+  
+  // Required hub features
+  repeated string required_features = 4;
+}
+
+/**
+ * RouteResponse recommends which hub(s) should serve the request.
+ */
+message RouteResponse {
+  // Primary hub recommendation
+  string recommended_hub_id = 1;
+  
+  // Hub to contact
+  Hub hub = 2;
+  
+  // Backup hub if primary fails
+  string backup_hub_id = 3;
+  
+  // Estimated latency to primary hub (ms)
+  int32 estimated_latency_ms = 4;
+  
+  // Routing confidence (0-100)
+  int32 confidence = 5;
+}
+
+/**
+ * InferenceRequest routed through federation.
+ */
+message InferenceRequest {
+  // Trace ID for end-to-end tracing
+  string trace_id = 1;
+  
+  // Model to use
+  string model = 1;
+  
+  // User prompt/input
+  string prompt = 2;
+  
+  // Generation parameters
+  map<string, string> parameters = 3;
+  
+  // Client metadata
+  ClientMetadata client = 4;
+}
+
+/**
+ * ClientMetadata about the request originator.
+ */
+message ClientMetadata {
+  // Client region/location
+  string region = 1;
+  
+  // Client identifier
+  string client_id = 2;
+  
+  // API key (for authentication)
+  string api_key = 3;
+  
+  // User ID (if authenticated)
+  string user_id = 4;
+}
+
+/**
+ * InferenceResponse from hub.
+ */
+message InferenceResponse {
+  // Trace ID (matches request)
+  string trace_id = 1;
+  
+  // Generated text
+  string result = 2;
+  
+  // Tokens used
+  int32 tokens_used = 3;
+  
+  // Latency breakdown
+  LatencyBreakdown latency = 4;
+  
+  // Hub that served request
+  string served_by_hub = 5;
+}
+
+/**
+ * LatencyBreakdown for performance analysis.
+ */
+message LatencyBreakdown {
+  // Time to queue (ms)
+  int32 queue_time_ms = 1;
+  
+  // Time to first token (ms)
+  int32 time_to_first_token_ms = 2;
+  
+  // Total inference time (ms)
+  int32 total_inference_ms = 3;
+  
+  // Network round-trip time (ms)
+  int32 network_rtt_ms = 4;
+}
+
+// ============================================================================
+// State Replication & Consistency
+// ============================================================================
+
+/**
+ * ReplicationLog entry for state changes.
+ */
+message ReplicationLogEntry {
+  // Entry sequence number
+  int64 sequence_number = 1;
+  
+  // Type of state change (e.g., "config_update", "model_deployed")
+  string entry_type = 2;
+  
+  // Affected resource (e.g., "model:llama3.2")
+  string resource_id = 3;
+  
+  // State change data (JSON)
+  string payload = 4;
+  
+  // Timestamp of change
+  google.protobuf.Timestamp timestamp = 5;
+  
+  // Hub that originated change
+  string source_hub_id = 6;
+}
+
+/**
+ * SyncRequest asks hub for replication log entries.
+ */
+message SyncRequest {
+  // Hub requesting sync
+  string requesting_hub_id = 1;
+  
+  // Last sequence number received
+  int64 from_sequence_number = 2;
+  
+  // Maximum entries to return
+  int32 limit = 3;
+}
+
+/**
+ * SyncResponse with replication log entries.
+ */
+message SyncResponse {
+  // Requested log entries
+  repeated ReplicationLogEntry entries = 1;
+  
+  // Next sequence number to request
+  int64 next_sequence_number = 2;
+  
+  // Are there more entries available?
+  bool has_more = 3;
+}
+
+// ============================================================================
+// Federation Service Definition
+// ============================================================================
+
+/**
+ * FederationService manages hub discovery, routing, and coordination.
+ */
+service FederationService {
+  /**
+   * RegisterHub - Hub registers itself with control plane.
+   */
+  rpc RegisterHub(Hub) returns (google.protobuf.Empty);
+  
+  /**
+   * UnregisterHub - Hub deregisters (graceful shutdown).
+   */
+  rpc UnregisterHub(Hub) returns (google.protobuf.Empty);
+  
+  /**
+   * Heartbeat - Hub sends periodic heartbeat to control plane.
+   * Called every 5 seconds.
+   */
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  
+  /**
+   * HealthCheck - On-demand health check of a hub.
+   */
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+  
+  /**
+   * GetTopology - Get current federation topology.
+   */
+  rpc GetTopology(google.protobuf.Empty) returns (TopologySnapshot);
+  
+  /**
+   * Route - Get routing recommendation for inference request.
+   */
+  rpc Route(RouteRequest) returns (RouteResponse);
+  
+  /**
+   * Sync - Replicate state changes between hubs.
+   */
+  rpc Sync(SyncRequest) returns (SyncResponse);
+  
+  /**
+   * BroadcastCommand - Send command to all hubs in federation.
+   */
+  rpc BroadcastCommand(HubCommand) returns (google.protobuf.Empty);
+}

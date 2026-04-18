@@ -1,0 +1,258 @@
+version: "3.8"
+
+# =============================================================================
+# Production Docker Stack for Ollama
+# =============================================================================
+# Deployment Target: Local Docker (e.g., 192.168.168.35)
+# Public Access: GCP Load Balancer at https://elevatediq.ai/ollama
+# Security: Cloud Armor DDoS, CMEK encryption, TLS 1.3+, mutual TLS internal
+# Compliance: GCP Landing Zone Tenant (github.com/kushin77/GCP-landing-zone)
+# =============================================================================
+
+x-common-labels: &common-labels
+  environment: "production"
+  team: "ai-infrastructure"
+  application: "ollama"
+  cost-center: "AI-ENG-001"
+  managed-by: "docker-compose"
+  git_repo: "github.com/kushin77/ollama"
+  lifecycle_status: "active"
+  compliance: "none"
+
+services:
+  prod-ollama-api:
+    image: ollama:1.0.0 # ✅ Pinned version - NEVER use 'latest' or 'prod'
+    container_name: prod-ollama-api
+    restart: on-failure:3
+    labels:
+      <<: *common-labels
+      component: "api"
+      tier: "high"
+      backup_strategy: "daily"
+      monitoring_enabled: "true"
+    # ❌ NEVER expose port directly to host
+    # ✅ ONLY accessible through GCP Load Balancer via designated tunnel/VPN
+    # ports:
+    #   - "8000:8000"
+    environment:
+      - LOG_LEVEL=INFO
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - API_KEY_AUTH_ENABLED=true
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
+    depends_on:
+      prod-ollama-postgres:
+        condition: service_healthy
+      prod-ollama-redis:
+        condition: service_healthy
+      prod-ollama-qdrant:
+        condition: service_healthy
+    volumes:
+      - ollama-models:/models
+      - ./config/production.yaml:/app/config.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - ollama-network
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8G
+        reservations:
+          cpus: "2"
+          memory: 4G
+          devices:
+            - driver: nvidia
+              count: 1 # Explicit GPU count
+              capabilities: [gpu]
+
+  prod-ollama-postgres:
+    image: postgres:15.5-alpine # ✅ Explicit version pin
+    container_name: prod-ollama-postgres
+    restart: on-failure:3
+    labels:
+      <<: *common-labels
+      component: "database"
+      tier: "critical"
+      backup_strategy: "continuous"
+      monitoring_enabled: "true"
+    environment:
+      POSTGRES_USER: ollama
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ollama
+    # ❌ NEVER expose database to external clients
+    # ports:
+    #   - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ollama"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - ollama-network
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+        reservations:
+          cpus: "1"
+          memory: 2G
+
+  prod-ollama-redis:
+    image: redis:7.2.4-alpine # ✅ Explicit version pin
+    container_name: prod-ollama-redis
+    restart: on-failure:3
+    labels:
+      <<: *common-labels
+      component: "cache"
+      tier: "high"
+      backup_strategy: "hourly"
+      monitoring_enabled: "true"
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    # ❌ NEVER expose cache to external clients
+    # ports:
+    #   - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - ollama-network
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 1G
+
+  prod-ollama-qdrant:
+    image: qdrant/qdrant:v1.8.1 # ✅ Explicit version pin - NEVER 'latest'
+    container_name: prod-ollama-qdrant
+    restart: on-failure:3
+    labels:
+      <<: *common-labels
+      component: "vector-db"
+      tier: "high"
+      backup_strategy: "daily"
+      monitoring_enabled: "true"
+    # ❌ NEVER expose vector DB to external clients
+    # ports:
+    #   - "6333:6333"
+    #   - "6334:6334"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:6333/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    volumes:
+      - qdrant-data:/qdrant/storage
+    networks:
+      - ollama-network
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 1G
+
+  prod-ollama-prometheus:
+    image: prom/prometheus:v2.48.1 # ✅ Pinned version
+    container_name: prod-ollama-prometheus
+    restart: on-failure:3
+    labels:
+      <<: *common-labels
+      component: "monitoring"
+      tier: "medium"
+      backup_strategy: "weekly"
+      monitoring_enabled: "true"
+    # ❌ NEVER expose monitoring to external clients (access via VPN/tunnel only)
+    # ports:
+    #   - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    networks:
+      - ollama-network
+
+  prod-ollama-grafana:
+    image: grafana/grafana:10.2.3 # ✅ Pinned version
+    container_name: prod-ollama-grafana
+    restart: on-failure:3
+    labels:
+      <<: *common-labels
+      component: "monitoring"
+      tier: "medium"
+      backup_strategy: "weekly"
+      monitoring_enabled: "true"
+    # ❌ NEVER expose monitoring to external clients (access via VPN/tunnel only)
+    # ports:
+    #   - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - prod-ollama-prometheus
+    networks:
+      - ollama-network
+
+  prod-ollama-jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: prod-ollama-jaeger
+    restart: always
+    labels:
+      <<: *common-labels
+      component: "tracing"
+      tier: "medium"
+      backup_strategy: "none"
+      monitoring_enabled: "true"
+    # ❌ NEVER expose tracing to external clients (access via VPN/tunnel only)
+    # ports:
+    #   - "6831:6831/udp"
+    #   - "16686:16686"
+    environment:
+      - COLLECTOR_ZIPKIN_HOST_PORT=:9411
+    networks:
+      - ollama-network
+
+volumes:
+  ollama-models:
+    driver: local
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  qdrant-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+
+networks:
+  ollama-network:
+    driver: bridge

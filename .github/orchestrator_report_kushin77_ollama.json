@@ -1,0 +1,607 @@
+{
+  "timestamp": "2026-04-17T21:59:01.285965",
+  "repository": "kushin77/ollama",
+  "requested_repository": "kushin77/ollama",
+  "auth_source": "git_credentials",
+  "total_issues_processed": 20,
+  "pipeline_stages": [
+    "fetch",
+    "triage",
+    "analysis",
+    "github_updates"
+  ],
+  "pipeline": {
+    "fetch": {
+      "status": "success",
+      "issues_fetched": 20,
+      "passes": 3
+    },
+    "triage": {
+      "status": "success",
+      "total_triaged": 20,
+      "target_counts": {
+        "high": 0,
+        "medium": 20,
+        "low": 0
+      }
+    },
+    "analysis": {
+      "status": "success",
+      "analyzed_count": 20
+    },
+    "execution": {
+      "status": "success",
+      "dry_run": true,
+      "attempted": 20,
+      "succeeded": 20,
+      "failed": 0
+    }
+  },
+  "execution_results": [
+    {
+      "issue": 371,
+      "timestamp": "2026-04-17T21:59:00.793070",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 370,
+      "timestamp": "2026-04-17T21:59:00.796512",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 369,
+      "timestamp": "2026-04-17T21:59:00.799751",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 368,
+      "timestamp": "2026-04-17T21:59:00.802956",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 367,
+      "timestamp": "2026-04-17T21:59:00.806087",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 366,
+      "timestamp": "2026-04-17T21:59:00.809367",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 365,
+      "timestamp": "2026-04-17T21:59:00.812519",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 364,
+      "timestamp": "2026-04-17T21:59:00.815680",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 363,
+      "timestamp": "2026-04-17T21:59:00.819604",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 362,
+      "timestamp": "2026-04-17T21:59:00.822791",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 361,
+      "timestamp": "2026-04-17T21:59:00.825904",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 360,
+      "timestamp": "2026-04-17T21:59:00.829015",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 359,
+      "timestamp": "2026-04-17T21:59:00.832300",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 358,
+      "timestamp": "2026-04-17T21:59:00.835283",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 357,
+      "timestamp": "2026-04-17T21:59:00.838104",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 356,
+      "timestamp": "2026-04-17T21:59:00.840706",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 355,
+      "timestamp": "2026-04-17T21:59:00.843254",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 354,
+      "timestamp": "2026-04-17T21:59:00.845744",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 353,
+      "timestamp": "2026-04-17T21:59:00.848137",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    },
+    {
+      "issue": 352,
+      "timestamp": "2026-04-17T21:59:00.850394",
+      "success": true,
+      "dry_run": true,
+      "actions": []
+    }
+  ],
+  "state_transitions": {
+    "371": [
+      {
+        "issue_num": 371,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T21:59:00.793737",
+        "metadata": {}
+      }
+    ],
+    "370": [
+      {
+        "issue_num": 370,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T21:59:00.797085",
+        "metadata": {}
+      }
+    ],
+    "369": [
+      {
+        "issue_num": 369,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T21:59:00.800303",
+        "metadata": {}
+      }
+    ],
+    "368": [
+      {
+        "issue_num": 368,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T21:59:00.803495",
+        "metadata": {}
+      }
+    ],
+    "367": [
+      {
+        "issue_num": 367,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T21:59:00.806626",
+        "metadata": {}
+      }
+    ],
+    "366": [
+      {
+        "issue_num": 366,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T21:59:00.809926",
+        "metadata": {}
+      }
+    ],
+    "365": [
+      {
+        "issue_num": 365,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T21:59:00.813078",
+        "metadata": {}
+      }
+    ],
+    "364": [
+      {
+        "issue_num": 364,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T21:59:00.816251",
+        "metadata": {}
+      }
+    ],
+    "363": [
+      {
+        "issue_num": 363,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T21:59:00.820202",
+        "metadata": {}
+      }
+    ],
+    "362": [
+      {
+        "issue_num": 362,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T21:59:00.823334",
+        "metadata": {}
+      }
+    ],
+    "361": [
+      {
+        "issue_num": 361,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T21:59:00.826454",
+        "metadata": {}
+      }
+    ],
+    "360": [
+      {
+        "issue_num": 360,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T21:59:00.829563",
+        "metadata": {}
+      }
+    ],
+    "359": [
+      {
+        "issue_num": 359,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T21:59:00.832982",
+        "metadata": {}
+      }
+    ],
+    "358": [
+      {
+        "issue_num": 358,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T21:59:00.835767",
+        "metadata": {}
+      }
+    ],
+    "357": [
+      {
+        "issue_num": 357,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T21:59:00.838589",
+        "metadata": {}
+      }
+    ],
+    "356": [
+      {
+        "issue_num": 356,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T21:59:00.841208",
+        "metadata": {}
+      }
+    ],
+    "355": [
+      {
+        "issue_num": 355,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T21:59:00.843710",
+        "metadata": {}
+      }
+    ],
+    "354": [
+      {
+        "issue_num": 354,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T21:59:00.846221",
+        "metadata": {}
+      }
+    ],
+    "353": [
+      {
+        "issue_num": 353,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T21:59:00.848559",
+        "metadata": {}
+      }
+    ],
+    "352": [
+      {
+        "issue_num": 352,
+        "transition": "new -> triaged",
+        "timestamp": "2026-04-17T21:59:00.850812",
+        "metadata": {}
+      }
+    ]
+  },
+  "run_config": {
+    "run_id": "1206d43c1608",
+    "requested_repository": "kushin77/ollama",
+    "selected_repository": "kushin77/ollama",
+    "fallback_repository": "ollama/ollama",
+    "allow_fallback": false,
+    "all_severities": true,
+    "severity": "high",
+    "max_issues": 20,
+    "execute": false,
+    "auto_close_labels": [
+      "duplicate",
+      "invalid",
+      "wontfix"
+    ],
+    "auth_source": "git_credentials",
+    "token_present": true,
+    "config_hash": "52e87f13fdb6bbe0"
+  },
+  "orchestration": {
+    "run_id": "1206d43c1608",
+    "mode": "all-severities",
+    "summaries": [
+      {
+        "timestamp": "2026-04-17T21:59:00.001378",
+        "repository": "kushin77/ollama",
+        "requested_repository": "kushin77/ollama",
+        "run_id": "1206d43c1608",
+        "auth_source": "git_credentials",
+        "ops_ledger_file": ".github/issue_ops_ledger.jsonl",
+        "pipeline": {
+          "fetch": {
+            "status": "success",
+            "issues_fetched": 20
+          },
+          "triage": {
+            "status": "success",
+            "total_triaged": 20,
+            "target_severity": "high",
+            "target_count": 0
+          },
+          "analysis": {
+            "status": "success",
+            "analyzed_count": 0
+          },
+          "execution": {
+            "status": "success",
+            "dry_run": true,
+            "attempted": 0,
+            "succeeded": 0,
+            "failed": 0
+          }
+        },
+        "issues_processed": []
+      },
+      {
+        "timestamp": "2026-04-17T21:59:00.425171",
+        "repository": "kushin77/ollama",
+        "requested_repository": "kushin77/ollama",
+        "run_id": "1206d43c1608",
+        "auth_source": "git_credentials",
+        "ops_ledger_file": ".github/issue_ops_ledger.jsonl",
+        "pipeline": {
+          "fetch": {
+            "status": "success",
+            "issues_fetched": 20
+          },
+          "triage": {
+            "status": "success",
+            "total_triaged": 20,
+            "target_severity": "medium",
+            "target_count": 20
+          },
+          "analysis": {
+            "status": "success",
+            "analyzed_count": 20
+          },
+          "execution": {
+            "status": "success",
+            "dry_run": true,
+            "attempted": 20,
+            "succeeded": 20,
+            "failed": 0
+          }
+        },
+        "issues_processed": [
+          {
+            "number": 371,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[P0][STRUCTURE] Resolve strict folder-structure validation failures",
+            "status": "analyzed"
+          },
+          {
+            "number": 370,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[P0][IAC-IMMUTABLE] Enforce exact Terraform and provider version pins",
+            "status": "analyzed"
+          },
+          {
+            "number": 369,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[P0][IAC-IMMUTABLE] Add missing Terraform lockfiles and governance gate",
+            "status": "analyzed"
+          },
+          {
+            "number": 368,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[SENTIMENT][ENHANCEMENT-60] Launch readiness checklist synthesizer",
+            "status": "analyzed"
+          },
+          {
+            "number": 367,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[SENTIMENT][ENHANCEMENT-59] Dependency map generation for plans",
+            "status": "analyzed"
+          },
+          {
+            "number": 366,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[SENTIMENT][ENHANCEMENT-58] Risk register generation from thread",
+            "status": "analyzed"
+          },
+          {
+            "number": 365,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[SENTIMENT][ENHANCEMENT-57] Task effort estimation assistant",
+            "status": "analyzed"
+          },
+          {
+            "number": 364,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[SENTIMENT][ENHANCEMENT-56] Experiment logbook integration",
+            "status": "analyzed"
+          },
+          {
+            "number": 363,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[SENTIMENT][ENHANCEMENT-55] Hypothesis test planning assistant",
+            "status": "analyzed"
+          },
+          {
+            "number": 362,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[SENTIMENT][ENHANCEMENT-54] Debate mode with pros/cons framing",
+            "status": "analyzed"
+          },
+          {
+            "number": 361,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[SENTIMENT][ENHANCEMENT-53] Socratic tutor interaction mode",
+            "status": "analyzed"
+          },
+          {
+            "number": 360,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[SENTIMENT][ENHANCEMENT-52] Learner coaching progression mode",
+            "status": "analyzed"
+          },
+          {
+            "number": 359,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[SENTIMENT][ENHANCEMENT-51] Engineer deep-dive response mode",
+            "status": "analyzed"
+          },
+          {
+            "number": 358,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[SENTIMENT][ENHANCEMENT-50] Executive brief response mode",
+            "status": "analyzed"
+          },
+          {
+            "number": 357,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[SENTIMENT][ENHANCEMENT-49] Stakeholder summary generator",
+            "status": "analyzed"
+          },
+          {
+            "number": 356,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[SENTIMENT][ENHANCEMENT-48] Compliance evidence pack generator",
+            "status": "analyzed"
+          },
+          {
+            "number": 355,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[SENTIMENT][ENHANCEMENT-47] Incident response copiloting mode",
+            "status": "analyzed"
+          },
+          {
+            "number": 354,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[SENTIMENT][ENHANCEMENT-46] Plan rollback assistant",
+            "status": "analyzed"
+          },
+          {
+            "number": 353,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[SENTIMENT][ENHANCEMENT-45] Sandboxed what-if scenario simulator",
+            "status": "analyzed"
+          },
+          {
+            "number": 352,
+            "severity": "medium",
+            "type": "bug",
+            "title": "[SENTIMENT][ENHANCEMENT-44] Guardrail override request workflow",
+            "status": "analyzed"
+          }
+        ]
+      },
+      {
+        "timestamp": "2026-04-17T21:59:00.851469",
+        "repository": "kushin77/ollama",
+        "requested_repository": "kushin77/ollama",
+        "run_id": "1206d43c1608",
+        "auth_source": "git_credentials",
+        "ops_ledger_file": ".github/issue_ops_ledger.jsonl",
+        "pipeline": {
+          "fetch": {
+            "status": "success",
+            "issues_fetched": 20
+          },
+          "triage": {
+            "status": "success",
+            "total_triaged": 20,
+            "target_severity": "low",
+            "target_count": 0
+          },
+          "analysis": {
+            "status": "success",
+            "analyzed_count": 0
+          },
+          "execution": {
+            "status": "success",
+            "dry_run": true,
+            "attempted": 0,
+            "succeeded": 0,
+            "failed": 0
+          }
+        },
+        "issues_processed": []
+      }
+    ],
+    "timestamp": "2026-04-17T21:59:01.285897"
+  }
+}

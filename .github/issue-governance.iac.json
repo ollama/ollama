@@ -1,0 +1,343 @@
+{
+  "issue_management": {
+    "enabled": true,
+    "automation_level": "full",
+    "enforcement": "strict",
+    "audit_trail": {
+      "enabled": true,
+      "format": "jsonl",
+      "location": ".github/issue_audit_trail.jsonl",
+      "retention_days": 365,
+      "immutable": true
+    }
+  },
+  "issue_lifecycle": {
+    "auto_triage": {
+      "enabled": true,
+      "rules": {
+        "stale_threshold_days": 30,
+        "no_activity_threshold_days": 45,
+        "auto_close_no_response": 60,
+        "require_acceptance_criteria": true
+      }
+    },
+    "states": {
+      "open": {
+        "requires": ["title", "description"],
+        "auto_label": "needs-triage",
+        "sla_hours": 24
+      },
+      "in-progress": {
+        "requires": ["assignee", "acceptance_criteria", "linked_pr"],
+        "auto_label": "in-progress",
+        "sla_hours": 168
+      },
+      "blocked": {
+        "requires": ["blocker_issue", "reason"],
+        "auto_label": "blocked",
+        "escalation": true
+      },
+      "review": {
+        "requires": ["linked_pr", "test_coverage"],
+        "auto_label": "in-review",
+        "sla_hours": 48
+      },
+      "closed": {
+        "requires": ["linked_pr", "evidence"],
+        "auto_label": "done",
+        "archive": true
+      }
+    },
+    "transitions": {
+      "triage_to_open": {
+        "requires": ["acceptance_criteria"],
+        "auto_assign": false,
+        "notify": true
+      },
+      "open_to_in_progress": {
+        "requires": ["assignee", "linked_pr"],
+        "notify": true,
+        "update_project": true
+      },
+      "in_progress_to_review": {
+        "requires": ["test_coverage_percent", "ci_passing"],
+        "auto_request_review": true
+      },
+      "review_to_closed": {
+        "requires": ["approvals_count", "all_tests_passing"],
+        "auto_merge": false,
+        "archive": true
+      },
+      "open_to_closed_no_activity": {
+        "requires": ["no_response_days_count"],
+        "grace_period": 14,
+        "notification": true
+      }
+    }
+  },
+  "issue_categories": {
+    "feature_request": {
+      "form": "feature.yml",
+      "priority": "medium",
+      "acceptance_criteria_required": true,
+      "estimate_required": true,
+      "arch_review": true,
+      "auto_assign": false
+    },
+    "bug": {
+      "form": "bug.yml",
+      "priority": "high",
+      "reproduction_steps_required": true,
+      "expected_vs_actual": true,
+      "severity_levels": ["critical", "high", "medium", "low"],
+      "hotfix_capable": true,
+      "auto_assign": true
+    },
+    "documentation": {
+      "form": "docs.yml",
+      "priority": "low",
+      "scope_required": true,
+      "example_required": true,
+      "auto_assign": false
+    },
+    "security": {
+      "form": "security.yml",
+      "priority": "critical",
+      "affects_production": true,
+      "suppression_possible": false,
+      "disclosure_policy": "responsible",
+      "auto_assign": true,
+      "restrict_visibility": true
+    },
+    "performance": {
+      "form": "perf.yml",
+      "priority": "medium",
+      "benchmark_required": true,
+      "improvement_percent_required": true,
+      "regression_tests": true
+    },
+    "operations": {
+      "form": "ops.yml",
+      "priority": "medium",
+      "runbook_required": true,
+      "monitoring_required": true,
+      "alert_thresholds": true
+    }
+  },
+  "issue_batch_processing": {
+    "enabled": true,
+    "batch_size": 50,
+    "parallel_processing": true,
+    "max_concurrent": 5,
+    "error_recovery": "exponential_backoff",
+    "rate_limit_respect": true,
+    "api_timeout_seconds": 30
+  },
+  "issue_triage_rules": {
+    "auto_close_criteria": {
+      "stale_no_response": {
+        "days_without_response": 60,
+        "required_comment": "This issue has been automatically closed due to inactivity. Please reopen with acceptance criteria if still relevant.",
+        "create_linked_discussion": true
+      },
+      "duplicate_detection": {
+        "enabled": true,
+        "similarity_threshold": 0.85,
+        "action": "mark_duplicate_close"
+      },
+      "invalid_criteria": {
+        "no_acceptance_criteria": true,
+        "no_description": true,
+        "days_to_respond": 14
+      }
+    },
+    "auto_label_rules": [
+      {
+        "condition": "contains:acceptance_criteria",
+        "label": "has-acceptance-criteria"
+      },
+      {
+        "condition": "has:linked_pr",
+        "label": "in-progress"
+      },
+      {
+        "condition": "status:blocked",
+        "label": "blocked"
+      },
+      {
+        "condition": "responses:0,days:14",
+        "label": "needs-info"
+      },
+      {
+        "condition": "priority:critical",
+        "label": "critical"
+      }
+    ],
+    "auto_milestone_rules": [
+      {
+        "type": "bug",
+        "severity": "critical",
+        "milestone": "patch-release"
+      },
+      {
+        "type": "feature",
+        "priority": "high",
+        "milestone": "next-minor"
+      },
+      {
+        "type": "docs",
+        "priority": "any",
+        "milestone": "backlog"
+      }
+    ]
+  },
+  "issue_dependencies": {
+    "enabled": true,
+    "track_blockers": true,
+    "critical_path_analysis": true,
+    "auto_notify_dependents": true,
+    "prevent_circular_deps": true,
+    "validation_on_close": true
+  },
+  "issue_metrics": {
+    "enabled": true,
+    "tracking": {
+      "time_to_first_response_hours": 24,
+      "time_to_close_days": 14,
+      "lifecycle_stages": true,
+      "resolution_rate_percent": 90
+    },
+    "sla_levels": {
+      "critical": {
+        "response_hours": 1,
+        "resolution_days": 1,
+        "escalation_enabled": true
+      },
+      "high": {
+        "response_hours": 8,
+        "resolution_days": 3,
+        "escalation_enabled": true
+      },
+      "medium": {
+        "response_hours": 24,
+        "resolution_days": 7,
+        "escalation_enabled": false
+      },
+      "low": {
+        "response_hours": 72,
+        "resolution_days": 30,
+        "escalation_enabled": false
+      }
+    },
+    "reports": {
+      "daily": ".github/issue_metrics_daily.json",
+      "weekly": ".github/issue_metrics_weekly.json",
+      "monthly": ".github/issue_metrics_monthly.json",
+      "retention": 365
+    }
+  },
+  "autonomous_agents": {
+    "enabled": true,
+    "issue_triage_agent": {
+      "enabled": true,
+      "role": "Triage and categorize incoming issues",
+      "capabilities": [
+        "read_issues",
+        "apply_labels",
+        "update_projects",
+        "request_info",
+        "create_discussions"
+      ],
+      "restrictions": []
+    },
+    "issue_assignment_agent": {
+      "enabled": true,
+      "role": "Assign issues based on expertise and availability",
+      "capabilities": [
+        "assign_issues",
+        "notify_assignees",
+        "update_milestones",
+        "track_capacity"
+      ],
+      "expertise_mapping": ".github/developer_expertise.json"
+    },
+    "issue_closure_agent": {
+      "enabled": true,
+      "role": "Close issues with verification and evidence",
+      "capabilities": [
+        "verify_pr_links",
+        "check_test_coverage",
+        "validate_closure_criteria",
+        "close_issues",
+        "audit_log_closure"
+      ],
+      "require_evidence": true
+    },
+    "issue_escalation_agent": {
+      "enabled": true,
+      "role": "Escalate blocked or critical issues",
+      "capabilities": [
+        "detect_blockers",
+        "notify_stakeholders",
+        "create_incidents",
+        "request_emergency_review"
+      ],
+      "escalation_rules": ".github/escalation_rules.json"
+    }
+  },
+  "developer_enablement": {
+    "enabled": true,
+    "autonomous_development": {
+      "enabled": true,
+      "agent_instructions": ".github/instructions/autonomous-dev.instructions.md",
+      "code_generation": true,
+      "self_review": true,
+      "test_generation": true,
+      "pr_creation": true,
+      "require_human_review": true
+    },
+    "agent_safety": {
+      "max_file_size_kb": 500,
+      "max_files_per_pr": 20,
+      "protected_paths": ["Makefile", ".github", ".gitignore"],
+      "require_approval": true,
+      "approval_count": 1
+    }
+  },
+  "webhooks": {
+    "issue_created": {
+      "handlers": ["triage_agent", "metrics_logger"],
+      "async": true
+    },
+    "issue_updated": {
+      "handlers": ["state_transition_validator", "metrics_logger"],
+      "async": true
+    },
+    "pr_opened": {
+      "handlers": ["link_to_issue", "check_issue_referenced"],
+      "async": false
+    },
+    "pr_merged": {
+      "handlers": ["mark_issue_resolved", "cleanup_branch"],
+      "async": false
+    }
+  },
+  "compliance": {
+    "immutability": {
+      "audit_trail_immutable": true,
+      "changes_logged": true,
+      "no_deletion_allowed": true,
+      "retention_years": 7
+    },
+    "idempotency": {
+      "operation_idempotency": true,
+      "duplicate_detection": true,
+      "state_consistency": true
+    },
+    "transparency": {
+      "all_actions_logged": true,
+      "decisions_documented": true,
+      "reasoning_recorded": true
+    }
+  }
+}

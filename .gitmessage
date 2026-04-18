@@ -1,0 +1,38 @@
+# <type>(<scope>): <subject>
+# |<----  Using a Maximum Of 72 Characters  ---->|
+
+# Explain why this change is being made
+# |<----   Try To Limit Each Line to a Maximum Of 72 Characters   ---->|
+
+# Provide links or keys to any relevant tickets, articles or other resources
+# Example: Github issue #23
+
+# --- COMMIT END ---
+# Type can be
+#    feat     (new feature)
+#    fix      (bug fix)
+#    refactor (refactoring production code)
+#    perf     (performance improvement)
+#    test     (adding missing tests, refactoring tests)
+#    docs     (changes to documentation)
+#    infra    (changes to infrastructure, CI/CD, Docker, K8s)
+#    security (security related changes)
+#    chore    (updating build tasks, package manager configs, etc)
+# --------------------
+# Remember to
+#    Separate subject from body with a blank line
+#    Limit the subject line to 72 characters
+#    Capitalize the subject line
+#    Do not end the subject line with a period
+#    Use the imperative mood in the subject line
+#    Wrap the body at 72 characters
+#    Use the body to explain what and why vs. how
+#    Can use multiple lines with "-" for bullet points in body
+# --------------------
+# Examples:
+#    feat(api): add conversation history endpoint
+#    fix(auth): resolve token expiration edge case
+#    perf(inference): optimize batch processing for 2x throughput
+#    security(cors): restrict origins to allowlist
+#    docs(readme): update deployment instructions
+# --------------------

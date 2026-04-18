@@ -1,0 +1,18 @@
+{
+  "generated_at_utc": "2026-04-18T04:44:14.678329+00:00",
+  "repository": "kushin77/ollama",
+  "checkpoint_type": "one-go-autonomous-run",
+  "actions": {
+    "safe_duplicate_closures_executed": 0,
+    "evidence_close_candidates_available": 0,
+    "note": "No safe non-P0 duplicate or evidence-backed closure candidates detected in this pass."
+  },
+  "readiness": {
+    "open_total": 294,
+    "agent_ready_total": 294,
+    "p0_total": 36,
+    "p0_shard_labelled_total": 36,
+    "all_open_agent_ready": true,
+    "all_p0_shard_labelled": true
+  }
+}

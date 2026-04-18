@@ -1,0 +1,30 @@
+# Example tfvars for Automated Failover
+
+project_id = "my-gcp-project"
+environment = "production"
+application = "ollama"
+component = "api"
+
+primary_region   = "us-central1"
+secondary_region = "us-east1"
+
+# Self-links for the regional managed instance groups serving the API
+primary_instance_group   = "https://www.googleapis.com/compute/v1/projects/my-gcp-project/zones/us-central1-a/instanceGroups/primary-ollama-api"
+secondary_instance_group = "https://www.googleapis.com/compute/v1/projects/my-gcp-project/zones/us-east1-b/instanceGroups/secondary-ollama-api"
+
+# Enable failover resources
+enable_failover = true
+
+# Health check path for FastAPI service
+health_check_path = "/api/v1/health"
+
+labels = {
+  environment      = "production"
+  team             = "platform"
+  application      = "ollama"
+  component        = "api"
+  cost-center      = "0000"
+  managed-by       = "terraform"
+  git_repo         = "github.com/kushin77/ollama"
+  lifecycle_status = "active"
+}

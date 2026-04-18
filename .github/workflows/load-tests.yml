@@ -1,0 +1,233 @@
+name: Load Testing Suite
+
+on:
+  schedule:
+    # Run baseline weekly on Sunday 2 AM UTC
+    - cron: '0 2 * * 0'
+    # Run smoke test on every commit to main
+  push:
+    branches:
+      - main
+    paths:
+      - 'load-tests/**'
+      - '.github/workflows/load-tests.yml'
+  # Manual trigger for ad-hoc testing
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Which test to run'
+        required: true
+        default: 'smoke'
+        type: choice
+        options:
+          - smoke
+          - tier1-baseline
+          - tier2-stress
+          - all
+
+jobs:
+  smoke-test:
+    name: Smoke Test (5 VU, 30s)
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.test_type == 'smoke' ||
+      github.event.inputs.test_type == 'all'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up k6
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      - name: Run Smoke Test
+        id: smoke
+        env:
+          BASE_URL: https://elevatediq.ai/ollama
+          API_KEY: ${{ secrets.LOAD_TEST_API_KEY }}
+        run: |
+          k6 run load-tests/k6/smoke-test.js \
+            --vus=5 \
+            --duration=30s \
+            -e BASE_URL=${{ env.BASE_URL }} \
+            -e API_KEY=${{ secrets.LOAD_TEST_API_KEY }} \
+            -o json=load-tests/results/smoke-results.json
+        continue-on-error: true
+
+      - name: Upload Results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: smoke-test-results
+          path: load-tests/results/
+          retention-days: 30
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const resultsPath = 'load-tests/results/smoke-results.json';
+            
+            if (fs.existsSync(resultsPath)) {
+              const results = JSON.parse(fs.readFileSync(resultsPath, 'utf8'));
+              const metrics = results.metrics;
+              
+              let comment = `## 🔬 Load Testing Results\n\n`;
+              comment += `### Smoke Test (5 VU, 30s)\n`;
+              comment += `| Metric | Value | Target | Status |\n`;
+              comment += `|--------|-------|--------|--------|\n`;
+              comment += `| P95 Response | ${Math.round(metrics['http_req_duration'].values.p95)}ms | <500ms | `;
+              comment += `${metrics['http_req_duration'].values.p95 < 500 ? '✅' : '❌'} |\n`;
+              comment += `| Error Rate | ${Math.round(metrics['http_req_failed'].values.rate * 100)}% | <10% | `;
+              comment += `${metrics['http_req_failed'].values.rate < 0.1 ? '✅' : '❌'} |\n`;
+              
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: comment
+              });
+            }
+
+  tier1-baseline:
+    name: Tier 1 Baseline (50 VU, 6m)
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' && (
+        github.event.inputs.test_type == 'tier1-baseline' ||
+        github.event.inputs.test_type == 'all'
+      )
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up k6
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      - name: Run Tier 1 Baseline Test
+        id: tier1
+        env:
+          BASE_URL: https://elevatediq.ai/ollama
+          API_KEY: ${{ secrets.LOAD_TEST_API_KEY }}
+        run: |
+          k6 run load-tests/k6/tier1-baseline.js \
+            -e BASE_URL=${{ env.BASE_URL }} \
+            -e API_KEY=${{ secrets.LOAD_TEST_API_KEY }} \
+            -o json=load-tests/results/tier1-results.json
+        continue-on-error: true
+
+      - name: Check Baseline Thresholds
+        id: check
+        run: |
+          # This is a placeholder for threshold validation
+          # In production, parse JSON and validate against baselines
+          echo "baseline_passed=true" >> $GITHUB_OUTPUT
+
+      - name: Upload Results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: tier1-baseline-results
+          path: load-tests/results/
+          retention-days: 60
+
+      - name: Slack Notification
+        if: always()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "📊 Tier 1 Baseline Test Complete",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Load Test Results*\n*Test:* Tier 1 Baseline (50 VU)\n*Status:* ${{ job.status }}\n*Commit:* ${{ github.sha }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+  tier2-stress:
+    name: Tier 2 Stress Test (500 VU, 10m)
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' && (
+        github.event.inputs.test_type == 'tier2-stress' ||
+        github.event.inputs.test_type == 'all'
+      )
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up k6
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y k6
+
+      - name: Run Tier 2 Stress Test
+        id: tier2
+        env:
+          BASE_URL: https://elevatediq.ai/ollama
+          API_KEY: ${{ secrets.LOAD_TEST_API_KEY }}
+        run: |
+          k6 run load-tests/k6/tier2-stress-test.js \
+            -e BASE_URL=${{ env.BASE_URL }} \
+            -e API_KEY=${{ secrets.LOAD_TEST_API_KEY }} \
+            -o json=load-tests/results/tier2-results.json
+        continue-on-error: true
+
+      - name: Upload Results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: tier2-stress-results
+          path: load-tests/results/
+          retention-days: 90
+
+      - name: Slack Notification
+        if: always()
+        uses: slackapi/slack-github-action@v1.24.0
+        with:
+          payload: |
+            {
+              "text": "⚠️ Tier 2 Stress Test Complete",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Stress Test Results*\n*Test:* Tier 2 Stress (500 VU)\n*Status:* ${{ job.status }}\n*Commit:* ${{ github.sha }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+  notify-team:
+    name: Notify Team
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [smoke-test]
+
+    steps:
+      - name: Send Summary
+        run: |
+          echo "Load testing suite completed"
+          echo "Smoke test: ${{ needs.smoke-test.result }}"

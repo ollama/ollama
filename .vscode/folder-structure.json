@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Ollama Elite Folder Structure Enforcement",
+  "description": "Strict validation rules for folder structure up to 5 levels deep. MANDATE: All files must conform to this schema.",
+  "version": "1.0.0",
+  "enforcement": {
+    "maxDepth": 5,
+    "maxDirectoriesPerLevel": {
+      "level1_root": 12,
+      "level2_package": 12,
+      "level3_domain": 4,
+      "level4_functional": 20
+    }
+  },
+  "level1_root": {
+    "description": "Root project directory - maximum 10 top-level directories",
+    "allowed_directories": [
+      "ollama",
+      "tests",
+      "docs",
+      "config",
+      "docker",
+      "k8s",
+      "scripts",
+      "alembic",
+      ".github",
+      ".vscode",
+      ".githooks"
+    ]
+  },
+  "level2_application_package": {
+    "description": "Main application package (e.g., ollama/) - domain-oriented organization",
+    "allowed_subdirectories": [
+      "api",
+      "auth",
+      "config",
+      "exceptions",
+      "middleware",
+      "models",
+      "monitoring",
+      "repositories",
+      "services",
+      "utils"
+    ],
+    "max_subdirectories": 12
+  },
+  "level3_domain_container": {
+    "description": "Domain container - clear boundary for single responsibility",
+    "allowed_subdirectories": [
+      "routes",
+      "schemas",
+      "dependencies",
+      "generators",
+      "embeddings",
+      "completion"
+    ],
+    "max_subdirectories": 4,
+    "rules": [
+      "MANDATE: ONLY __init__.py file allowed at Level 3",
+      "MANDATE: NO business logic in Level 3 files"
+    ]
+  },
+  "level4_functional_container": {
+    "description": "Functional specialization - containers for specific concerns",
+    "max_files": 20,
+    "rules": [
+      "MANDATE: One resource/responsibility per file",
+      "MANDATE: Files follow naming: lowercase_with_underscores.py",
+      "MANDATE: Maximum 500 lines per file"
+    ]
+  },
+  "naming_conventions": {
+    "modules": "lowercase_with_underscores.py",
+    "classes": "PascalCase",
+    "functions": "snake_case (public), _snake_case (private)",
+    "constants": "SCREAMING_SNAKE_CASE",
+    "directories": "lowercase, plural when appropriate"
+  }
+}

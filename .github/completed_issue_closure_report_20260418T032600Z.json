@@ -1,0 +1,11 @@
+{
+  "generated_at_utc": "2026-04-18T03:26:04.962141+00:00",
+  "repository": "kushin77/ollama",
+  "closed_issues": [
+    58
+  ],
+  "closure_basis": "Completed by existing Copilot instructions enhancement work",
+  "evidence_commit": "cc2d5dc",
+  "evidence_summary_file": "ISSUE_58_COMPLETION_SUMMARY.md",
+  "open_issue_count_after": 315
+}

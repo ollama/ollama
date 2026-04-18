@@ -1,0 +1,5672 @@
+{
+  "generated_at_utc": "2026-04-18T05:34:53.319673+00:00",
+  "repository": "kushin77/ollama",
+  "source_snapshot": ".github/open_issues_snapshot.json",
+  "open_issue_count": 294,
+  "wave_size": 25,
+  "wave_count": 12,
+  "selection_policy": "severity_then_issue_number",
+  "execution_rules": [
+    "implement with code/docs/tests as appropriate",
+    "post commit evidence before closure",
+    "close only after verification evidence",
+    "commit generated reports and state artifacts"
+  ],
+  "waves": [
+    {
+      "wave": 1,
+      "size": 25,
+      "severity_counts": {
+        "critical": 25,
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      },
+      "issue_numbers": [
+        82,
+        84,
+        86,
+        87,
+        88,
+        90,
+        92,
+        93,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        227,
+        228,
+        229,
+        230,
+        240,
+        241,
+        242,
+        253,
+        254
+      ],
+      "issues": [
+        {
+          "number": 82,
+          "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+          "labels": [
+            "security",
+            "priority-p0",
+            "automated",
+            "type-bug",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/01",
+            "wave/1",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T03:57:01Z",
+          "url": "https://github.com/kushin77/ollama/issues/82",
+          "severity": "critical"
+        },
+        {
+          "number": 84,
+          "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+          "labels": [
+            "security",
+            "priority-p0",
+            "automated",
+            "type-bug",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/01",
+            "wave/1",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T03:57:02Z",
+          "url": "https://github.com/kushin77/ollama/issues/84",
+          "severity": "critical"
+        },
+        {
+          "number": 86,
+          "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+          "labels": [
+            "security",
+            "priority-p0",
+            "automated",
+            "type-bug",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/01",
+            "wave/1",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T03:57:03Z",
+          "url": "https://github.com/kushin77/ollama/issues/86",
+          "severity": "critical"
+        },
+        {
+          "number": 87,
+          "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+          "labels": [
+            "security",
+            "priority-p0",
+            "automated",
+            "type-bug",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/01",
+            "wave/1",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T03:57:04Z",
+          "url": "https://github.com/kushin77/ollama/issues/87",
+          "severity": "critical"
+        },
+        {
+          "number": 88,
+          "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+          "labels": [
+            "security",
+            "priority-p0",
+            "automated",
+            "type-bug",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/01",
+            "wave/1",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T03:57:04Z",
+          "url": "https://github.com/kushin77/ollama/issues/88",
+          "severity": "critical"
+        },
+        {
+          "number": 90,
+          "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+          "labels": [
+            "security",
+            "priority-p0",
+            "automated",
+            "type-bug",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/01",
+            "wave/1",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T03:57:05Z",
+          "url": "https://github.com/kushin77/ollama/issues/90",
+          "severity": "critical"
+        },
+        {
+          "number": 92,
+          "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+          "labels": [
+            "security",
+            "priority-p0",
+            "automated",
+            "type-bug",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/01",
+            "wave/1",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T03:57:07Z",
+          "url": "https://github.com/kushin77/ollama/issues/92",
+          "severity": "critical"
+        },
+        {
+          "number": 93,
+          "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+          "labels": [
+            "security",
+            "priority-p0",
+            "automated",
+            "type-bug",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/01",
+            "wave/1",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T03:57:07Z",
+          "url": "https://github.com/kushin77/ollama/issues/93",
+          "severity": "critical"
+        },
+        {
+          "number": 95,
+          "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+          "labels": [
+            "security",
+            "priority-p0",
+            "automated",
+            "type-bug",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/01",
+            "wave/1",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T03:57:08Z",
+          "url": "https://github.com/kushin77/ollama/issues/95",
+          "severity": "critical"
+        },
+        {
+          "number": 96,
+          "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+          "labels": [
+            "security",
+            "priority-p0",
+            "automated",
+            "type-bug",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/01",
+            "wave/1",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T03:57:09Z",
+          "url": "https://github.com/kushin77/ollama/issues/96",
+          "severity": "critical"
+        },
+        {
+          "number": 97,
+          "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+          "labels": [
+            "security",
+            "priority-p0",
+            "automated",
+            "type-bug",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/01",
+            "wave/1",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T03:57:09Z",
+          "url": "https://github.com/kushin77/ollama/issues/97",
+          "severity": "critical"
+        },
+        {
+          "number": 98,
+          "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+          "labels": [
+            "security",
+            "priority-p0",
+            "automated",
+            "type-bug",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/01",
+            "wave/1",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T03:57:10Z",
+          "url": "https://github.com/kushin77/ollama/issues/98",
+          "severity": "critical"
+        },
+        {
+          "number": 99,
+          "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+          "labels": [
+            "security",
+            "priority-p0",
+            "automated",
+            "type-bug",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/01",
+            "wave/1",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T03:57:10Z",
+          "url": "https://github.com/kushin77/ollama/issues/99",
+          "severity": "critical"
+        },
+        {
+          "number": 100,
+          "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+          "labels": [
+            "security",
+            "priority-p0",
+            "automated",
+            "type-bug",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/01",
+            "wave/1",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T03:57:11Z",
+          "url": "https://github.com/kushin77/ollama/issues/100",
+          "severity": "critical"
+        },
+        {
+          "number": 101,
+          "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+          "labels": [
+            "security",
+            "priority-p0",
+            "automated",
+            "type-bug",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/01",
+            "wave/1",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T03:57:11Z",
+          "url": "https://github.com/kushin77/ollama/issues/101",
+          "severity": "critical"
+        },
+        {
+          "number": 102,
+          "title": "\ud83d\udea8 Security Vulnerabilities Detected",
+          "labels": [
+            "security",
+            "priority-p0",
+            "automated",
+            "type-bug",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/01",
+            "wave/1",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T03:57:39Z",
+          "url": "https://github.com/kushin77/ollama/issues/102",
+          "severity": "critical"
+        },
+        {
+          "number": 227,
+          "title": "[P0][ONPREM-FAANG] Intelligent Model Router (Task-Aware + SLA-Aware Dispatch)",
+          "labels": [
+            "enhancement",
+            "priority-p0",
+            "priority/high",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T03:53:07Z",
+          "url": "https://github.com/kushin77/ollama/issues/227",
+          "severity": "critical"
+        },
+        {
+          "number": 228,
+          "title": "[P0][ONPREM-FAANG] Retrieval 2.0 (Hybrid Search + Reranker + Grounding)",
+          "labels": [
+            "enhancement",
+            "priority-p0",
+            "priority/high",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T03:53:07Z",
+          "url": "https://github.com/kushin77/ollama/issues/228",
+          "severity": "critical"
+        },
+        {
+          "number": 229,
+          "title": "[P0][ONPREM-FAANG] Structured Output Reliability (Schema-Constrained Generation)",
+          "labels": [
+            "enhancement",
+            "priority-p0",
+            "priority/high",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T03:53:08Z",
+          "url": "https://github.com/kushin77/ollama/issues/229",
+          "severity": "critical"
+        },
+        {
+          "number": 230,
+          "title": "[P0][ONPREM-FAANG] LLM Observability Baseline (Tracing, Cost, Quality Signals)",
+          "labels": [
+            "enhancement",
+            "priority-p0",
+            "priority/high",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T03:53:09Z",
+          "url": "https://github.com/kushin77/ollama/issues/230",
+          "severity": "critical"
+        },
+        {
+          "number": 240,
+          "title": "[P0][ONPREM-FAANG] Intelligent Model Router (Task-Aware + SLA-Aware Dispatch)",
+          "labels": [
+            "enhancement",
+            "priority-p0",
+            "priority/high",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T03:53:09Z",
+          "url": "https://github.com/kushin77/ollama/issues/240",
+          "severity": "critical"
+        },
+        {
+          "number": 241,
+          "title": "[P0][ONPREM-FAANG] Retrieval 2.0 (Hybrid Search + Reranker + Grounding)",
+          "labels": [
+            "enhancement",
+            "priority-p0",
+            "priority/high",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T03:53:10Z",
+          "url": "https://github.com/kushin77/ollama/issues/241",
+          "severity": "critical"
+        },
+        {
+          "number": 242,
+          "title": "[P0][ONPREM-FAANG] Structured Output Reliability (Schema-Constrained Generation)",
+          "labels": [
+            "enhancement",
+            "priority-p0",
+            "priority/high",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T03:53:11Z",
+          "url": "https://github.com/kushin77/ollama/issues/242",
+          "severity": "critical"
+        },
+        {
+          "number": 253,
+          "title": "[P0][ONPREM-FAANG][IAC] Immutable Infrastructure Baseline Enforcement",
+          "labels": [
+            "enhancement",
+            "priority-p0",
+            "iac-immutable",
+            "priority/high",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T03:53:11Z",
+          "url": "https://github.com/kushin77/ollama/issues/253",
+          "severity": "critical"
+        },
+        {
+          "number": 254,
+          "title": "[P0][ONPREM-FAANG][IAC] Idempotency Validation Harness + CI Gate",
+          "labels": [
+            "enhancement",
+            "priority-p0",
+            "idempotency",
+            "priority/high",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T03:53:12Z",
+          "url": "https://github.com/kushin77/ollama/issues/254",
+          "severity": "critical"
+        }
+      ]
+    },
+    {
+      "wave": 2,
+      "size": 25,
+      "severity_counts": {
+        "critical": 14,
+        "high": 11,
+        "medium": 0,
+        "low": 0
+      },
+      "issue_numbers": [
+        256,
+        257,
+        258,
+        259,
+        262,
+        263,
+        264,
+        265,
+        369,
+        370,
+        371,
+        389,
+        391,
+        395,
+        67,
+        83,
+        89,
+        91,
+        94,
+        105,
+        106,
+        107,
+        108,
+        109,
+        110
+      ],
+      "issues": [
+        {
+          "number": 256,
+          "title": "[P0][IAC-IMMUTABLE] CI Policy Check: Block Mutable Image Tags and Floating Versions",
+          "labels": [
+            "enhancement",
+            "priority-p0",
+            "priority/high",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T03:53:13Z",
+          "url": "https://github.com/kushin77/ollama/issues/256",
+          "severity": "critical"
+        },
+        {
+          "number": 257,
+          "title": "[P0][IAC-IMMUTABLE] Terraform Lockdown: Provider/Module Pinning and Lockfile Governance",
+          "labels": [
+            "enhancement",
+            "priority-p0",
+            "priority/high",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T03:53:14Z",
+          "url": "https://github.com/kushin77/ollama/issues/257",
+          "severity": "critical"
+        },
+        {
+          "number": 258,
+          "title": "[P0][IDEMPOTENT] Script Idempotency Standard + Shared Guard Library",
+          "labels": [
+            "enhancement",
+            "priority-p0",
+            "priority/high",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T03:53:14Z",
+          "url": "https://github.com/kushin77/ollama/issues/258",
+          "severity": "critical"
+        },
+        {
+          "number": 259,
+          "title": "[P0][IDEMPOTENT] Double-Run CI Matrix on Primary/Secondary Hosts (.42/.31)",
+          "labels": [
+            "enhancement",
+            "priority-p0",
+            "priority/high",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T03:53:15Z",
+          "url": "https://github.com/kushin77/ollama/issues/259",
+          "severity": "critical"
+        },
+        {
+          "number": 262,
+          "title": "[P0][IAC-IMMUTABLE] CI Policy Check: Block Mutable Image Tags and Floating Versions",
+          "labels": [
+            "enhancement",
+            "priority-p0",
+            "iac-immutable",
+            "priority/high",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T03:53:16Z",
+          "url": "https://github.com/kushin77/ollama/issues/262",
+          "severity": "critical"
+        },
+        {
+          "number": 263,
+          "title": "[P0][IAC-IMMUTABLE] Terraform Lockdown: Provider/Module Pinning and Lockfile Governance",
+          "labels": [
+            "enhancement",
+            "priority-p0",
+            "iac-immutable",
+            "priority/high",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T03:53:16Z",
+          "url": "https://github.com/kushin77/ollama/issues/263",
+          "severity": "critical"
+        },
+        {
+          "number": 264,
+          "title": "[P0][IDEMPOTENT] Script Idempotency Standard + Shared Guard Library",
+          "labels": [
+            "enhancement",
+            "priority-p0",
+            "idempotency",
+            "priority/high",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T03:53:17Z",
+          "url": "https://github.com/kushin77/ollama/issues/264",
+          "severity": "critical"
+        },
+        {
+          "number": 265,
+          "title": "[P0][IDEMPOTENT] Double-Run CI Matrix on Primary/Secondary Hosts (.42/.31)",
+          "labels": [
+            "enhancement",
+            "priority-p0",
+            "idempotency",
+            "priority/high",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T03:53:18Z",
+          "url": "https://github.com/kushin77/ollama/issues/265",
+          "severity": "critical"
+        },
+        {
+          "number": 369,
+          "title": "[P0][IAC-IMMUTABLE] Add missing Terraform lockfiles and governance gate",
+          "labels": [
+            "priority-p0",
+            "priority/high",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T03:53:36Z",
+          "url": "https://github.com/kushin77/ollama/issues/369",
+          "severity": "critical"
+        },
+        {
+          "number": 370,
+          "title": "[P0][IAC-IMMUTABLE] Enforce exact Terraform and provider version pins",
+          "labels": [
+            "priority-p0",
+            "priority/high",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T03:53:37Z",
+          "url": "https://github.com/kushin77/ollama/issues/370",
+          "severity": "critical"
+        },
+        {
+          "number": 371,
+          "title": "[P0][STRUCTURE] Resolve strict folder-structure validation failures",
+          "labels": [
+            "documentation",
+            "priority-p0",
+            "priority/high",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T03:53:38Z",
+          "url": "https://github.com/kushin77/ollama/issues/371",
+          "severity": "critical"
+        },
+        {
+          "number": 389,
+          "title": "[Monorepo Epic] Repository topology and tooling migration",
+          "labels": [
+            "tracking",
+            "status/triaged",
+            "priority/low",
+            "monorepo",
+            "architecture",
+            "critical-path",
+            "status/planned-wave",
+            "wave/01",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:11:36Z",
+          "url": "https://github.com/kushin77/ollama/issues/389",
+          "severity": "critical"
+        },
+        {
+          "number": 391,
+          "title": "[Monorepo] Introduce apps-packages-infra structure with compatibility shims",
+          "labels": [
+            "bug",
+            "python",
+            "status/triaged",
+            "priority/low",
+            "monorepo",
+            "architecture",
+            "critical-path",
+            "status/planned-wave",
+            "wave/01",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:11:36Z",
+          "url": "https://github.com/kushin77/ollama/issues/391",
+          "severity": "critical"
+        },
+        {
+          "number": 395,
+          "title": "[Monorepo] Implement path-based CI workflows and cache strategy",
+          "labels": [
+            "documentation",
+            "ci-cd",
+            "status/triaged",
+            "priority/low",
+            "monorepo",
+            "critical-path",
+            "status/planned-wave",
+            "wave/01",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:11:37Z",
+          "url": "https://github.com/kushin77/ollama/issues/395",
+          "severity": "critical"
+        },
+        {
+          "number": 67,
+          "title": "Vscode/workspace integration",
+          "labels": [
+            "bug",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/01",
+            "wave/1",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:11:26Z",
+          "url": "https://github.com/kushin77/ollama/issues/67",
+          "severity": "high"
+        },
+        {
+          "number": 83,
+          "title": "\ud83d\udcb0 Monthly Cost Report - February 2026",
+          "labels": [
+            "bug",
+            "pmo",
+            "automated",
+            "cost-tracking",
+            "monthly-report",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/01",
+            "wave/1",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:11:26Z",
+          "url": "https://github.com/kushin77/ollama/issues/83",
+          "severity": "high"
+        },
+        {
+          "number": 89,
+          "title": "EOD: lint/mypy failures \u2014 cleanup required",
+          "labels": [
+            "bug",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/01",
+            "wave/1",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:11:26Z",
+          "url": "https://github.com/kushin77/ollama/issues/89",
+          "severity": "high"
+        },
+        {
+          "number": 91,
+          "title": "\ud83d\udcb0 Monthly Cost Report - March 2026",
+          "labels": [
+            "bug",
+            "pmo",
+            "automated",
+            "cost-tracking",
+            "monthly-report",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/01",
+            "wave/1",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:11:27Z",
+          "url": "https://github.com/kushin77/ollama/issues/91",
+          "severity": "high"
+        },
+        {
+          "number": 94,
+          "title": "\ud83d\udcb0 Monthly Cost Report - April 2026",
+          "labels": [
+            "bug",
+            "pmo",
+            "automated",
+            "cost-tracking",
+            "monthly-report",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/01",
+            "wave/1",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:11:27Z",
+          "url": "https://github.com/kushin77/ollama/issues/94",
+          "severity": "high"
+        },
+        {
+          "number": 105,
+          "title": "Monthly Cost Report - April 2026 [from ollama#94]",
+          "labels": [
+            "bug",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/01",
+            "wave/1",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:11:28Z",
+          "url": "https://github.com/kushin77/ollama/issues/105",
+          "severity": "high"
+        },
+        {
+          "number": 106,
+          "title": "Monthly Cost Report - March 2026 [from ollama#91]",
+          "labels": [
+            "bug",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:11:28Z",
+          "url": "https://github.com/kushin77/ollama/issues/106",
+          "severity": "high"
+        },
+        {
+          "number": 107,
+          "title": "Security Vulnerabilities Detected - 2026-04-09 [from ollama#102]",
+          "labels": [
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:08:28Z",
+          "url": "https://github.com/kushin77/ollama/issues/107",
+          "severity": "high"
+        },
+        {
+          "number": 108,
+          "title": "Security Vulnerabilities Detected - 2026-04-08 [from ollama#101]",
+          "labels": [
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:08:29Z",
+          "url": "https://github.com/kushin77/ollama/issues/108",
+          "severity": "high"
+        },
+        {
+          "number": 109,
+          "title": "Security Vulnerabilities Detected - 2026-04-07 [from ollama#100]",
+          "labels": [
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:08:29Z",
+          "url": "https://github.com/kushin77/ollama/issues/109",
+          "severity": "high"
+        },
+        {
+          "number": 110,
+          "title": "Security Vulnerabilities Detected - 2026-04-06 [from ollama#99]",
+          "labels": [
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:08:30Z",
+          "url": "https://github.com/kushin77/ollama/issues/110",
+          "severity": "high"
+        }
+      ]
+    },
+    {
+      "wave": 3,
+      "size": 25,
+      "severity_counts": {
+        "critical": 0,
+        "high": 25,
+        "medium": 0,
+        "low": 0
+      },
+      "issue_numbers": [
+        111,
+        112,
+        113,
+        114,
+        115,
+        116,
+        117,
+        118,
+        119,
+        120,
+        121,
+        161,
+        162,
+        163,
+        164,
+        165,
+        166,
+        167,
+        195,
+        198,
+        200,
+        203,
+        287,
+        288,
+        289
+      ],
+      "issues": [
+        {
+          "number": 111,
+          "title": "Security Vulnerabilities Detected - 2026-04-05 [from ollama#98]",
+          "labels": [
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:08:31Z",
+          "url": "https://github.com/kushin77/ollama/issues/111",
+          "severity": "high"
+        },
+        {
+          "number": 112,
+          "title": "Security Vulnerabilities Detected - 2026-04-04 [from ollama#97]",
+          "labels": [
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:08:32Z",
+          "url": "https://github.com/kushin77/ollama/issues/112",
+          "severity": "high"
+        },
+        {
+          "number": 113,
+          "title": "Security Vulnerabilities Detected - 2026-04-03 [from ollama#96]",
+          "labels": [
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:08:32Z",
+          "url": "https://github.com/kushin77/ollama/issues/113",
+          "severity": "high"
+        },
+        {
+          "number": 114,
+          "title": "Security Vulnerabilities Detected - 2026-03-27 [from ollama#95]",
+          "labels": [
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:08:33Z",
+          "url": "https://github.com/kushin77/ollama/issues/114",
+          "severity": "high"
+        },
+        {
+          "number": 115,
+          "title": "Security Vulnerabilities Detected - 2026-03-25 [from ollama#93]",
+          "labels": [
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:08:34Z",
+          "url": "https://github.com/kushin77/ollama/issues/115",
+          "severity": "high"
+        },
+        {
+          "number": 116,
+          "title": "Security Vulnerabilities Detected - 2026-03-22 [from ollama#92]",
+          "labels": [
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:08:34Z",
+          "url": "https://github.com/kushin77/ollama/issues/116",
+          "severity": "high"
+        },
+        {
+          "number": 117,
+          "title": "Security Vulnerabilities Detected - 2026-03-15 [from ollama#90]",
+          "labels": [
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:08:35Z",
+          "url": "https://github.com/kushin77/ollama/issues/117",
+          "severity": "high"
+        },
+        {
+          "number": 118,
+          "title": "Security Vulnerabilities Detected - 2026-03-01 [from ollama#88]",
+          "labels": [
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:08:36Z",
+          "url": "https://github.com/kushin77/ollama/issues/118",
+          "severity": "high"
+        },
+        {
+          "number": 119,
+          "title": "Security Vulnerabilities Detected - 2026-02-22 [from ollama#87]",
+          "labels": [
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:08:36Z",
+          "url": "https://github.com/kushin77/ollama/issues/119",
+          "severity": "high"
+        },
+        {
+          "number": 120,
+          "title": "Security Vulnerabilities Detected - 2026-02-16 [from ollama#86]",
+          "labels": [
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:08:37Z",
+          "url": "https://github.com/kushin77/ollama/issues/120",
+          "severity": "high"
+        },
+        {
+          "number": 121,
+          "title": "EOD: lint/mypy failures \u0393\u00c7\u00f6 cleanup required [from ollama#89]",
+          "labels": [
+            "bug",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:11:29Z",
+          "url": "https://github.com/kushin77/ollama/issues/121",
+          "severity": "high"
+        },
+        {
+          "number": 161,
+          "title": "[LLM/T7-67] OWASP LLM Top 10 Compliance Audit \u0393\u00c7\u00f6 Score All 10 Categories and Implement Mitigations",
+          "labels": [
+            "enhancement",
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:09:07Z",
+          "url": "https://github.com/kushin77/ollama/issues/161",
+          "severity": "high"
+        },
+        {
+          "number": 162,
+          "title": "[LLM/T7-66] Container Security Hardening \u0393\u00c7\u00f6 Read-Only Rootfs, no-new-privileges, Cap Drop All",
+          "labels": [
+            "enhancement",
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:09:08Z",
+          "url": "https://github.com/kushin77/ollama/issues/162",
+          "severity": "high"
+        },
+        {
+          "number": 163,
+          "title": "[LLM/T7-65] Secret Scanning \u0393\u00c7\u00f6 Detect and Redact AWS Keys, JWTs, GitHub PATs in User Prompts",
+          "labels": [
+            "enhancement",
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:09:08Z",
+          "url": "https://github.com/kushin77/ollama/issues/163",
+          "severity": "high"
+        },
+        {
+          "number": 164,
+          "title": "[LLM/T7-64] Output Sanitization \u0393\u00c7\u00f6 XSS/Injection Prevention via Allowlist HTML Cleaning (bleach)",
+          "labels": [
+            "enhancement",
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:09:09Z",
+          "url": "https://github.com/kushin77/ollama/issues/164",
+          "severity": "high"
+        },
+        {
+          "number": 165,
+          "title": "[LLM/T7-63] Immutable Audit Log \u0393\u00c7\u00f6 SHA-256 Hash Chain for Tamper-Evident Request/Response Records",
+          "labels": [
+            "enhancement",
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:09:10Z",
+          "url": "https://github.com/kushin77/ollama/issues/165",
+          "severity": "high"
+        },
+        {
+          "number": 166,
+          "title": "[LLM/T7-62] Network Segmentation \u0393\u00c7\u00f6 Rebind Ollama from 0.0.0.0 to Internal IP + mTLS with Vault PKI",
+          "labels": [
+            "enhancement",
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:09:11Z",
+          "url": "https://github.com/kushin77/ollama/issues/166",
+          "severity": "high"
+        },
+        {
+          "number": 167,
+          "title": "[LLM/T7-61] Vault Integration \u0393\u00c7\u00f6 All LLM Stack Secrets via Vault, Zero .env Credentials",
+          "labels": [
+            "enhancement",
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:09:11Z",
+          "url": "https://github.com/kushin77/ollama/issues/167",
+          "severity": "high"
+        },
+        {
+          "number": 195,
+          "title": "[LLM/T3-30] RBAC for Model Access \u0393\u00c7\u00f6 Team-Based Tier Permissions via LiteLLM",
+          "labels": [
+            "enhancement",
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:09:32Z",
+          "url": "https://github.com/kushin77/ollama/issues/195",
+          "severity": "high"
+        },
+        {
+          "number": 198,
+          "title": "[LLM/T3-27] Rate Limiting Per User/IP \u0393\u00c7\u00f6 Fair GPU Resource Sharing",
+          "labels": [
+            "enhancement",
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/02",
+            "wave/2",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:09:34Z",
+          "url": "https://github.com/kushin77/ollama/issues/198",
+          "severity": "high"
+        },
+        {
+          "number": 200,
+          "title": "[LLM/T3-25] PII Scrubbing Before Logging \u0393\u00c7\u00f6 Microsoft Presidio Integration at Proxy Layer",
+          "labels": [
+            "enhancement",
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:09:35Z",
+          "url": "https://github.com/kushin77/ollama/issues/200",
+          "severity": "high"
+        },
+        {
+          "number": 203,
+          "title": "[LLM/T3-22] Prompt Injection Detection Middleware \u0393\u00c7\u00f6 OWASP LLM01 Guard at Proxy Layer",
+          "labels": [
+            "enhancement",
+            "security",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:09:38Z",
+          "url": "https://github.com/kushin77/ollama/issues/203",
+          "severity": "high"
+        },
+        {
+          "number": 287,
+          "title": "[BROWSER-CHAT][MASTER] Browser Chat Enhancement Program Tracker",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:11:14Z",
+          "url": "https://github.com/kushin77/ollama/issues/287",
+          "severity": "high"
+        },
+        {
+          "number": 288,
+          "title": "[BROWSER-CHAT][AGENT-FLEET] Suite and farm hierarchy model",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:11:14Z",
+          "url": "https://github.com/kushin77/ollama/issues/288",
+          "severity": "high"
+        },
+        {
+          "number": 289,
+          "title": "[BROWSER-CHAT][AGENT-FLEET] Agent capability policy matrix",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:11:15Z",
+          "url": "https://github.com/kushin77/ollama/issues/289",
+          "severity": "high"
+        }
+      ]
+    },
+    {
+      "wave": 4,
+      "size": 25,
+      "severity_counts": {
+        "critical": 0,
+        "high": 25,
+        "medium": 0,
+        "low": 0
+      },
+      "issue_numbers": [
+        290,
+        291,
+        292,
+        293,
+        295,
+        296,
+        297,
+        298,
+        299,
+        300,
+        301,
+        302,
+        303,
+        304,
+        306,
+        307,
+        308,
+        309,
+        310,
+        311,
+        312,
+        314,
+        315,
+        373,
+        374
+      ],
+      "issues": [
+        {
+          "number": 290,
+          "title": "[BROWSER-CHAT][AGENT-FLEET] Fleet dashboard and health panel",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:11:15Z",
+          "url": "https://github.com/kushin77/ollama/issues/290",
+          "severity": "high"
+        },
+        {
+          "number": 291,
+          "title": "[BROWSER-CHAT][AGENT-FLEET] Cross-agent handoff protocol",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:11:16Z",
+          "url": "https://github.com/kushin77/ollama/issues/291",
+          "severity": "high"
+        },
+        {
+          "number": 292,
+          "title": "[BROWSER-CHAT][AGENT-FLEET] Fleet lifecycle operations UX",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/03",
+            "wave/3",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:11:16Z",
+          "url": "https://github.com/kushin77/ollama/issues/292",
+          "severity": "high"
+        },
+        {
+          "number": 293,
+          "title": "[BROWSER-CHAT][AGENT-FLEET] Fleet audit trail and forensics",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:11:17Z",
+          "url": "https://github.com/kushin77/ollama/issues/293",
+          "severity": "high"
+        },
+        {
+          "number": 295,
+          "title": "[BROWSER-CHAT][KNOWLEDGE] YouTube channel/page ingestion metadata",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:11:18Z",
+          "url": "https://github.com/kushin77/ollama/issues/295",
+          "severity": "high"
+        },
+        {
+          "number": 296,
+          "title": "[BROWSER-CHAT][KNOWLEDGE] Stale/broken source detection",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:11:18Z",
+          "url": "https://github.com/kushin77/ollama/issues/296",
+          "severity": "high"
+        },
+        {
+          "number": 297,
+          "title": "[BROWSER-CHAT][KNOWLEDGE] Knowledge packs for agent suites",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:11:18Z",
+          "url": "https://github.com/kushin77/ollama/issues/297",
+          "severity": "high"
+        },
+        {
+          "number": 298,
+          "title": "[BROWSER-CHAT][KNOWLEDGE] Review workflow and trust scoring",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:11:19Z",
+          "url": "https://github.com/kushin77/ollama/issues/298",
+          "severity": "high"
+        },
+        {
+          "number": 299,
+          "title": "[BROWSER-CHAT][COPILOT] Goal-to-plan decomposition mode",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:11:19Z",
+          "url": "https://github.com/kushin77/ollama/issues/299",
+          "severity": "high"
+        },
+        {
+          "number": 300,
+          "title": "[BROWSER-CHAT][COPILOT] Live task execution checkpoints",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:11:19Z",
+          "url": "https://github.com/kushin77/ollama/issues/300",
+          "severity": "high"
+        },
+        {
+          "number": 301,
+          "title": "[BROWSER-CHAT][COPILOT] Host connector permission gates",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:11:20Z",
+          "url": "https://github.com/kushin77/ollama/issues/301",
+          "severity": "high"
+        },
+        {
+          "number": 302,
+          "title": "[BROWSER-CHAT][COPILOT] Action evidence and verification ledger",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:11:20Z",
+          "url": "https://github.com/kushin77/ollama/issues/302",
+          "severity": "high"
+        },
+        {
+          "number": 303,
+          "title": "[BROWSER-CHAT][COPILOT] Risky action simulation and dry-run",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:11:21Z",
+          "url": "https://github.com/kushin77/ollama/issues/303",
+          "severity": "high"
+        },
+        {
+          "number": 304,
+          "title": "[BROWSER-CHAT][COPILOT] Task replay and postmortem export",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:11:21Z",
+          "url": "https://github.com/kushin77/ollama/issues/304",
+          "severity": "high"
+        },
+        {
+          "number": 306,
+          "title": "[BROWSER-CHAT][ASSIMILATION] Reuse scoring and fit analysis",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:11:21Z",
+          "url": "https://github.com/kushin77/ollama/issues/306",
+          "severity": "high"
+        },
+        {
+          "number": 307,
+          "title": "[BROWSER-CHAT][ASSIMILATION] Duplicate capability reconciliation",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:11:22Z",
+          "url": "https://github.com/kushin77/ollama/issues/307",
+          "severity": "high"
+        },
+        {
+          "number": 308,
+          "title": "[BROWSER-CHAT][ASSIMILATION] Assimilation PR template and governance",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:11:22Z",
+          "url": "https://github.com/kushin77/ollama/issues/308",
+          "severity": "high"
+        },
+        {
+          "number": 309,
+          "title": "[BROWSER-CHAT][ASSIMILATION] Quarterly re-scan automation",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:11:23Z",
+          "url": "https://github.com/kushin77/ollama/issues/309",
+          "severity": "high"
+        },
+        {
+          "number": 310,
+          "title": "[BROWSER-CHAT][HARDWARE] Capability detection matrix (CPU/GPU/NPU)",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:11:23Z",
+          "url": "https://github.com/kushin77/ollama/issues/310",
+          "severity": "high"
+        },
+        {
+          "number": 311,
+          "title": "[BROWSER-CHAT][HARDWARE] Quantization profile strategy",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:11:23Z",
+          "url": "https://github.com/kushin77/ollama/issues/311",
+          "severity": "high"
+        },
+        {
+          "number": 312,
+          "title": "[BROWSER-CHAT][HARDWARE] Runtime backend selector",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:11:24Z",
+          "url": "https://github.com/kushin77/ollama/issues/312",
+          "severity": "high"
+        },
+        {
+          "number": 314,
+          "title": "[BROWSER-CHAT][HARDWARE] Thermal and stability guardrails",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:11:24Z",
+          "url": "https://github.com/kushin77/ollama/issues/314",
+          "severity": "high"
+        },
+        {
+          "number": 315,
+          "title": "[BROWSER-CHAT][HARDWARE] User-facing tuning controls",
+          "labels": [
+            "bug",
+            "priority/high",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:11:25Z",
+          "url": "https://github.com/kushin77/ollama/issues/315",
+          "severity": "high"
+        },
+        {
+          "number": 373,
+          "title": "feat(secrets): GSMClient lazy-init is not thread-safe \u2014 add mutex guard",
+          "labels": [
+            "bug",
+            "security",
+            "priority/high",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:11:34Z",
+          "url": "https://github.com/kushin77/ollama/issues/373",
+          "severity": "high"
+        },
+        {
+          "number": 374,
+          "title": "bug(secrets): GSMClient lazy-init is not thread-safe \u2014 add sync.Once guard",
+          "labels": [
+            "bug",
+            "security",
+            "priority/high",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/04",
+            "wave/4",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:11:35Z",
+          "url": "https://github.com/kushin77/ollama/issues/374",
+          "severity": "high"
+        }
+      ]
+    },
+    {
+      "wave": 5,
+      "size": 25,
+      "severity_counts": {
+        "critical": 0,
+        "high": 4,
+        "medium": 17,
+        "low": 4
+      },
+      "issue_numbers": [
+        376,
+        393,
+        394,
+        396,
+        65,
+        69,
+        77,
+        85,
+        122,
+        124,
+        231,
+        232,
+        233,
+        234,
+        255,
+        260,
+        261,
+        294,
+        313,
+        375,
+        397,
+        60,
+        62,
+        64,
+        66
+      ],
+      "issues": [
+        {
+          "number": 376,
+          "title": "bug(github): http.Client has no timeout \u2014 fix potential goroutine leak",
+          "labels": [
+            "bug",
+            "security",
+            "priority/high",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/05",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:11:37Z",
+          "url": "https://github.com/kushin77/ollama/issues/376",
+          "severity": "high"
+        },
+        {
+          "number": 393,
+          "title": "[Monorepo] Bootstrap pnpm workspace for active JS packages (conditional gate)",
+          "labels": [
+            "priority/high",
+            "status/triaged",
+            "monorepo",
+            "developer-experience",
+            "frontend",
+            "decision-record",
+            "status/planned-wave",
+            "wave/05",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:11:43Z",
+          "url": "https://github.com/kushin77/ollama/issues/393",
+          "severity": "high"
+        },
+        {
+          "number": 394,
+          "title": "[Monorepo] Create shared API contracts package and generated clients",
+          "labels": [
+            "bug",
+            "status/triaged",
+            "priority/medium",
+            "monorepo",
+            "developer-experience",
+            "api",
+            "status/planned-wave",
+            "wave/05",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:11:44Z",
+          "url": "https://github.com/kushin77/ollama/issues/394",
+          "severity": "high"
+        },
+        {
+          "number": 396,
+          "title": "[Monorepo] Unify local developer commands and task entrypoints",
+          "labels": [
+            "bug",
+            "python",
+            "status/triaged",
+            "priority/medium",
+            "monorepo",
+            "developer-experience",
+            "status/planned-wave",
+            "wave/05",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:11:45Z",
+          "url": "https://github.com/kushin77/ollama/issues/396",
+          "severity": "high"
+        },
+        {
+          "number": 65,
+          "title": "Migrate AuditTrail to pmo-agent-audit repo",
+          "labels": [
+            "documentation",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/05",
+            "wave/5",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:11:30Z",
+          "url": "https://github.com/kushin77/ollama/issues/65",
+          "severity": "medium"
+        },
+        {
+          "number": 69,
+          "title": "Onboarding: Developer setup & contribution checklist",
+          "labels": [
+            "documentation",
+            "onboarding",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/05",
+            "wave/5",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:11:30Z",
+          "url": "https://github.com/kushin77/ollama/issues/69",
+          "severity": "medium"
+        },
+        {
+          "number": 77,
+          "title": "feat: implement canary deployments (#52)",
+          "labels": [
+            "status/triaged",
+            "priority/medium",
+            "performance",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/05",
+            "wave/5",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:11:30Z",
+          "url": "https://github.com/kushin77/ollama/issues/77",
+          "severity": "medium"
+        },
+        {
+          "number": 85,
+          "title": "test/review today's phase 3 issue cleanup",
+          "labels": [
+            "documentation",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/05",
+            "wave/5",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:11:31Z",
+          "url": "https://github.com/kushin77/ollama/issues/85",
+          "severity": "medium"
+        },
+        {
+          "number": 122,
+          "title": "test/review today's phase 3 issue cleanup [from ollama#85]",
+          "labels": [
+            "documentation",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/05",
+            "wave/5",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:11:31Z",
+          "url": "https://github.com/kushin77/ollama/issues/122",
+          "severity": "medium"
+        },
+        {
+          "number": 124,
+          "title": "[LLM/Phase-6] Canary Deployment Preparation - Complete",
+          "labels": [
+            "documentation",
+            "llm-stack",
+            "phase-6",
+            "canary",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/05",
+            "wave/5",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:11:32Z",
+          "url": "https://github.com/kushin77/ollama/issues/124",
+          "severity": "medium"
+        },
+        {
+          "number": 231,
+          "title": "[P1][ONPREM-FAANG] Ensemble + Judge Pipeline for High-Stakes Responses",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/05",
+            "wave/5",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:11:32Z",
+          "url": "https://github.com/kushin77/ollama/issues/231",
+          "severity": "medium"
+        },
+        {
+          "number": 232,
+          "title": "[P1][ONPREM-FAANG] Safety and Policy Enforcement Engine",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/05",
+            "wave/5",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:11:32Z",
+          "url": "https://github.com/kushin77/ollama/issues/232",
+          "severity": "medium"
+        },
+        {
+          "number": 233,
+          "title": "[P1][ONPREM-FAANG] Continuous Evaluation Harness (Regression + Release Gates)",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/05",
+            "wave/5",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:11:33Z",
+          "url": "https://github.com/kushin77/ollama/issues/233",
+          "severity": "medium"
+        },
+        {
+          "number": 234,
+          "title": "[P1][ONPREM-FAANG] Reliability Hardening (Backpressure, Circuit Breakers, Graceful Degradation)",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/05",
+            "wave/5",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:11:33Z",
+          "url": "https://github.com/kushin77/ollama/issues/234",
+          "severity": "medium"
+        },
+        {
+          "number": 255,
+          "title": "[P1][ONPREM-FAANG][IAC] Drift Detection, Policy-as-Code, and Auto-Remediation Controls",
+          "labels": [
+            "enhancement",
+            "drift-control",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/05",
+            "wave/5",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:11:34Z",
+          "url": "https://github.com/kushin77/ollama/issues/255",
+          "severity": "medium"
+        },
+        {
+          "number": 260,
+          "title": "[P1][DRIFT] Scheduled Drift Detection Job + Alert Routing",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/05",
+            "wave/5",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:11:34Z",
+          "url": "https://github.com/kushin77/ollama/issues/260",
+          "severity": "medium"
+        },
+        {
+          "number": 261,
+          "title": "[P1][DRIFT] Policy-as-Code Ruleset (Conftest/OPA) for IaC Invariants",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/05",
+            "wave/5",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:11:34Z",
+          "url": "https://github.com/kushin77/ollama/issues/261",
+          "severity": "medium"
+        },
+        {
+          "number": 294,
+          "title": "[BROWSER-CHAT][KNOWLEDGE] Curated source registry schema",
+          "labels": [
+            "documentation",
+            "status/triaged",
+            "priority/medium",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/05",
+            "wave/5",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:11:35Z",
+          "url": "https://github.com/kushin77/ollama/issues/294",
+          "severity": "medium"
+        },
+        {
+          "number": 313,
+          "title": "[BROWSER-CHAT][HARDWARE] Benchmark harness and publish pipeline",
+          "labels": [
+            "status/triaged",
+            "priority/medium",
+            "performance",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/06",
+            "wave/6",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:11:36Z",
+          "url": "https://github.com/kushin77/ollama/issues/313",
+          "severity": "medium"
+        },
+        {
+          "number": 375,
+          "title": "feat(secrets): Add in-process secret cache with TTL and cache-miss metrics",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "performance",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/06",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:11:37Z",
+          "url": "https://github.com/kushin77/ollama/issues/375",
+          "severity": "medium"
+        },
+        {
+          "number": 397,
+          "title": "[Monorepo] Define CODEOWNERS and review policy by domain",
+          "labels": [
+            "documentation",
+            "governance",
+            "status/triaged",
+            "priority/medium",
+            "monorepo",
+            "developer-experience",
+            "status/planned-wave",
+            "wave/06",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:11:46Z",
+          "url": "https://github.com/kushin77/ollama/issues/397",
+          "severity": "medium"
+        },
+        {
+          "number": 60,
+          "title": "Pilot: Invitation \u2014 validate Investigation Canvas prototype",
+          "labels": [
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/06",
+            "wave/6",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:08:17Z",
+          "url": "https://github.com/kushin77/ollama/issues/60",
+          "severity": "low"
+        },
+        {
+          "number": 62,
+          "title": "Migrate RemediationEngine to pmo-agent-remediation repo",
+          "labels": [
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/06",
+            "wave/6",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:08:18Z",
+          "url": "https://github.com/kushin77/ollama/issues/62",
+          "severity": "low"
+        },
+        {
+          "number": 64,
+          "title": "Migrate SchedulerEngine to pmo-agent-scheduler repo",
+          "labels": [
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/06",
+            "wave/6",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:08:18Z",
+          "url": "https://github.com/kushin77/ollama/issues/64",
+          "severity": "low"
+        },
+        {
+          "number": 66,
+          "title": "Pilot Invitation: Investigation Canvas",
+          "labels": [
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/06",
+            "wave/6",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:08:20Z",
+          "url": "https://github.com/kushin77/ollama/issues/66",
+          "severity": "low"
+        }
+      ]
+    },
+    {
+      "wave": 6,
+      "size": 25,
+      "severity_counts": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 25
+      },
+      "issue_numbers": [
+        71,
+        123,
+        125,
+        126,
+        127,
+        128,
+        129,
+        130,
+        131,
+        132,
+        133,
+        134,
+        135,
+        136,
+        137,
+        138,
+        139,
+        140,
+        141,
+        142,
+        143,
+        144,
+        145,
+        146,
+        147
+      ],
+      "issues": [
+        {
+          "number": 71,
+          "title": "CI: Run onboarding helper in dry-run on PRs",
+          "labels": [
+            "automation",
+            "ci",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/06",
+            "wave/6",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:08:21Z",
+          "url": "https://github.com/kushin77/ollama/issues/71",
+          "severity": "low"
+        },
+        {
+          "number": 123,
+          "title": "[LLM/Phase-7] Advanced Optimization & Observability - Roadmap",
+          "labels": [
+            "llm-stack",
+            "optimization",
+            "phase-7",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/06",
+            "wave/6",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:08:39Z",
+          "url": "https://github.com/kushin77/ollama/issues/123",
+          "severity": "low"
+        },
+        {
+          "number": 125,
+          "title": "Enhancement: Ollama Multi-Model Orchestration Platform",
+          "labels": [
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/06",
+            "wave/6",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:08:41Z",
+          "url": "https://github.com/kushin77/ollama/issues/125",
+          "severity": "low"
+        },
+        {
+          "number": 126,
+          "title": "Enhancement: Ollama Advanced Safety and Content Filtering",
+          "labels": [
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/06",
+            "wave/6",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:08:41Z",
+          "url": "https://github.com/kushin77/ollama/issues/126",
+          "severity": "low"
+        },
+        {
+          "number": 127,
+          "title": "Enhancement: Ollama Context Window Optimization",
+          "labels": [
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/06",
+            "wave/6",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:08:42Z",
+          "url": "https://github.com/kushin77/ollama/issues/127",
+          "severity": "low"
+        },
+        {
+          "number": 128,
+          "title": "Enhancement: Ollama Fine-tuning and Adaptation Framework",
+          "labels": [
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/06",
+            "wave/6",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:08:43Z",
+          "url": "https://github.com/kushin77/ollama/issues/128",
+          "severity": "low"
+        },
+        {
+          "number": 129,
+          "title": "Enhancement: Ollama Advanced Prompt Engineering Framework",
+          "labels": [
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/06",
+            "wave/6",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:08:43Z",
+          "url": "https://github.com/kushin77/ollama/issues/129",
+          "severity": "low"
+        },
+        {
+          "number": 130,
+          "title": "Enhancement: Ollama Batch Processing Optimization",
+          "labels": [
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/06",
+            "wave/6",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:08:44Z",
+          "url": "https://github.com/kushin77/ollama/issues/130",
+          "severity": "low"
+        },
+        {
+          "number": 131,
+          "title": "Enhancement: Ollama Real-time Performance Monitoring Dashboard",
+          "labels": [
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/06",
+            "wave/6",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:08:45Z",
+          "url": "https://github.com/kushin77/ollama/issues/131",
+          "severity": "low"
+        },
+        {
+          "number": 132,
+          "title": "Enhancement: Ollama Multi-GPU Load Balancing",
+          "labels": [
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/06",
+            "wave/6",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:08:46Z",
+          "url": "https://github.com/kushin77/ollama/issues/132",
+          "severity": "low"
+        },
+        {
+          "number": 133,
+          "title": "Enhancement: Ollama Advanced Quantization Support",
+          "labels": [
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/06",
+            "wave/6",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:08:46Z",
+          "url": "https://github.com/kushin77/ollama/issues/133",
+          "severity": "low"
+        },
+        {
+          "number": 134,
+          "title": "Enhancement: Ollama Dynamic Model Loading and Unloading",
+          "labels": [
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/06",
+            "wave/6",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:08:47Z",
+          "url": "https://github.com/kushin77/ollama/issues/134",
+          "severity": "low"
+        },
+        {
+          "number": 135,
+          "title": "Enhancement: Ollama Advanced Model Caching Strategy",
+          "labels": [
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/06",
+            "wave/6",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:08:48Z",
+          "url": "https://github.com/kushin77/ollama/issues/135",
+          "severity": "low"
+        },
+        {
+          "number": 136,
+          "title": "[LLM/T9-88] Image Understanding \u0393\u00c7\u00f6 LLaVA:7b-v1.6-mistral for Screenshot, Diagram, and Log Analysis",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/06",
+            "wave/6",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:08:48Z",
+          "url": "https://github.com/kushin77/ollama/issues/136",
+          "severity": "low"
+        },
+        {
+          "number": 137,
+          "title": "[LLM/T10-100] Self-Improving Prompt Evolution \u0393\u00c7\u00f6 Auto-Rewrite Low-Score Patterns via LLM-as-Prompt-Engineer",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/06",
+            "wave/6",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:08:49Z",
+          "url": "https://github.com/kushin77/ollama/issues/137",
+          "severity": "low"
+        },
+        {
+          "number": 138,
+          "title": "[LLM/T10-98] Automated Regression Test Suite \u0393\u00c7\u00f6 Weekly 50-Question Baseline Comparison with Alerting",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:08:50Z",
+          "url": "https://github.com/kushin77/ollama/issues/138",
+          "severity": "low"
+        },
+        {
+          "number": 139,
+          "title": "[LLM/T10-97] DSPy Prompt Optimizer \u0393\u00c7\u00f6 Automated System Prompt Optimization via MIPROv2 Algorithm",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:08:51Z",
+          "url": "https://github.com/kushin77/ollama/issues/139",
+          "severity": "low"
+        },
+        {
+          "number": 140,
+          "title": "[LLM/T10-96] Continuous Fine-Tuning \u0393\u00c7\u00f6 Langfuse High-Score Traces \u0393\u00e5\u00c6 SFT Dataset \u0393\u00e5\u00c6 LoRA Monthly Cycle",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:08:51Z",
+          "url": "https://github.com/kushin77/ollama/issues/140",
+          "severity": "low"
+        },
+        {
+          "number": 141,
+          "title": "[LLM/T10-95] Ensemble + LLM-as-Judge \u0393\u00c7\u00f6 2x Generation with Judge Selection for Critical Decisions",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:08:52Z",
+          "url": "https://github.com/kushin77/ollama/issues/141",
+          "severity": "low"
+        },
+        {
+          "number": 142,
+          "title": "[LLM/T10-94] Domain-Aware Model Routing \u0393\u00c7\u00f6 Auto-Route code/security/architecture/quick to Optimal Model",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:08:53Z",
+          "url": "https://github.com/kushin77/ollama/issues/142",
+          "severity": "low"
+        },
+        {
+          "number": 143,
+          "title": "[LLM/T10-93] Model Cascade \u0393\u00c7\u00f6 phi3-fast Confidence Check \u0393\u00e5\u00c6 Auto-Escalate to llama3.1:8b for Complex Queries",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:08:54Z",
+          "url": "https://github.com/kushin77/ollama/issues/143",
+          "severity": "low"
+        },
+        {
+          "number": 144,
+          "title": "[LLM/T10-92] Constitutional AI Filter Loop \u0393\u00c7\u00f6 Post-Generation Principle Check with Auto-Revision",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:08:54Z",
+          "url": "https://github.com/kushin77/ollama/issues/144",
+          "severity": "low"
+        },
+        {
+          "number": 145,
+          "title": "[LLM/T10-91] LangGraph Agent Loop \u0393\u00c7\u00f6 Plan-Act-Observe-Replan for Autonomous Infrastructure Tasks",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:08:55Z",
+          "url": "https://github.com/kushin77/ollama/issues/145",
+          "severity": "low"
+        },
+        {
+          "number": 146,
+          "title": "[LLM/T9-87] Streaming Response Normalization \u0393\u00c7\u00f6 Flush at Sentence/Code Block Boundaries for Smooth UX",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:08:56Z",
+          "url": "https://github.com/kushin77/ollama/issues/146",
+          "severity": "low"
+        },
+        {
+          "number": 147,
+          "title": "[LLM/T9-86] Web Search Tool \u0393\u00c7\u00f6 DuckDuckGo Integration for Current Information (No API Key Required)",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:08:57Z",
+          "url": "https://github.com/kushin77/ollama/issues/147",
+          "severity": "low"
+        }
+      ]
+    },
+    {
+      "wave": 7,
+      "size": 25,
+      "severity_counts": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 25
+      },
+      "issue_numbers": [
+        148,
+        149,
+        150,
+        151,
+        152,
+        153,
+        154,
+        155,
+        156,
+        157,
+        158,
+        159,
+        160,
+        168,
+        169,
+        170,
+        171,
+        172,
+        173,
+        174,
+        175,
+        176,
+        177,
+        178,
+        179
+      ],
+      "issues": [
+        {
+          "number": 148,
+          "title": "[LLM/T9-85] Document Analysis Pipeline \u0393\u00c7\u00f6 PDF/DOCX Upload \u0393\u00e5\u00c6 Chunk \u0393\u00e5\u00c6 Index \u0393\u00e5\u00c6 Natural Language Query",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:08:57Z",
+          "url": "https://github.com/kushin77/ollama/issues/148",
+          "severity": "low"
+        },
+        {
+          "number": 149,
+          "title": "[LLM/T9-84] Self-Consistency Sampling \u0393\u00c7\u00f6 3x Generation with Agreement Score for High-Stakes Decisions",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:08:58Z",
+          "url": "https://github.com/kushin77/ollama/issues/149",
+          "severity": "low"
+        },
+        {
+          "number": 150,
+          "title": "[LLM/T9-83] Diff-Aware Code Review \u0393\u00c7\u00f6 git diff | claude-code with Security, Performance, Coverage Analysis",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:08:59Z",
+          "url": "https://github.com/kushin77/ollama/issues/150",
+          "severity": "low"
+        },
+        {
+          "number": 151,
+          "title": "[LLM/T9-82] JSON Mode / Structured Output \u0393\u00c7\u00f6 GBNF Grammar-Constrained Schema-Valid JSON Responses",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:09:00Z",
+          "url": "https://github.com/kushin77/ollama/issues/151",
+          "severity": "low"
+        },
+        {
+          "number": 152,
+          "title": "[LLM/T9-81] Function Calling / Tool Use \u0393\u00c7\u00f6 Native Tool API with Bash, File Read, kubectl",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:09:00Z",
+          "url": "https://github.com/kushin77/ollama/issues/152",
+          "severity": "low"
+        },
+        {
+          "number": 153,
+          "title": "[LLM/T8-78] VS Code Task Runner \u0393\u00c7\u00f6 AI Review, Generate Tests, Explain File via Command Palette",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:09:01Z",
+          "url": "https://github.com/kushin77/ollama/issues/153",
+          "severity": "low"
+        },
+        {
+          "number": 154,
+          "title": "[LLM/T8-77] Open WebUI \u0393\u00c7\u00f6 Claude-Like Chat Interface at ai.dev.internal with Model Switching",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:09:02Z",
+          "url": "https://github.com/kushin77/ollama/issues/154",
+          "severity": "low"
+        },
+        {
+          "number": 155,
+          "title": "[LLM/T8-76] Makefile Targets \u0393\u00c7\u00f6 claude-build, claude-test, claude-bench, claude-reload, claude-probe",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:09:03Z",
+          "url": "https://github.com/kushin77/ollama/issues/155",
+          "severity": "low"
+        },
+        {
+          "number": 156,
+          "title": "[LLM/T8-75] Prompt Testing Framework \u0393\u00c7\u00f6 Automated Assertions for Test-Driven Prompt Engineering",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:09:03Z",
+          "url": "https://github.com/kushin77/ollama/issues/156",
+          "severity": "low"
+        },
+        {
+          "number": 157,
+          "title": "[LLM/T8-74] CLI Alias Suite \u0393\u00c7\u00f6 claude, claude-pro, claude-code, think Commands with Pipe Support",
+          "labels": [
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:09:04Z",
+          "url": "https://github.com/kushin77/ollama/issues/157",
+          "severity": "low"
+        },
+        {
+          "number": 158,
+          "title": "[LLM/T8-73] Claude-Style Slash Commands \u0393\u00c7\u00f6 /think, /review, /arch, /debug in Continue.dev",
+          "labels": [
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:09:05Z",
+          "url": "https://github.com/kushin77/ollama/issues/158",
+          "severity": "low"
+        },
+        {
+          "number": 159,
+          "title": "[LLM/T8-71] OpenAI SDK Drop-in Compatibility \u0393\u00c7\u00f6 Switch base_url Only, Zero Code Changes for Existing Tools",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:09:05Z",
+          "url": "https://github.com/kushin77/ollama/issues/159",
+          "severity": "low"
+        },
+        {
+          "number": 160,
+          "title": "[LLM/T8-72] Continue.dev Optimized Config \u0393\u00c7\u00f6 All 4 Personas, 32K Context, nomic-embed Indexing",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:09:06Z",
+          "url": "https://github.com/kushin77/ollama/issues/160",
+          "severity": "low"
+        },
+        {
+          "number": 168,
+          "title": "[LLM/T6-58] Response Distribution Drift Detection \u0393\u00c7\u00f6 KS-Test Statistical Alerting for Silent Degradation",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:09:12Z",
+          "url": "https://github.com/kushin77/ollama/issues/168",
+          "severity": "low"
+        },
+        {
+          "number": 169,
+          "title": "[LLM/T6-57] Token Efficiency Tracking \u0393\u00c7\u00f6 Output/Input Ratio per Prompt Version with Drift Alerting",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/07",
+            "wave/7",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:09:13Z",
+          "url": "https://github.com/kushin77/ollama/issues/169",
+          "severity": "low"
+        },
+        {
+          "number": 170,
+          "title": "[LLM/T6-56] Implicit Satisfaction Signals \u0393\u00c7\u00f6 Behavioral Proxy Metrics for Response Quality",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/08",
+            "wave/8",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:09:14Z",
+          "url": "https://github.com/kushin77/ollama/issues/170",
+          "severity": "low"
+        },
+        {
+          "number": 171,
+          "title": "[LLM/T6-55] A/B Testing Framework \u0393\u00c7\u00f6 10% Traffic Split for Prompt Experiments with Auto-Promotion",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/08",
+            "wave/8",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:09:14Z",
+          "url": "https://github.com/kushin77/ollama/issues/171",
+          "severity": "low"
+        },
+        {
+          "number": 172,
+          "title": "[LLM/T6-54] Hallucination Detection Probe \u0393\u00c7\u00f6 Weekly Known-Answer Benchmark to Track Factual Accuracy",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/08",
+            "wave/8",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:09:15Z",
+          "url": "https://github.com/kushin77/ollama/issues/172",
+          "severity": "low"
+        },
+        {
+          "number": 173,
+          "title": "[LLM/T6-53] Prometheus SLO Alerting \u0393\u00c7\u00f6 P99 Latency Thresholds for claude-fast and claude-pro",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/08",
+            "wave/8",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:09:16Z",
+          "url": "https://github.com/kushin77/ollama/issues/173",
+          "severity": "low"
+        },
+        {
+          "number": 174,
+          "title": "[LLM/T5-43] Hybrid Dense+BM25 Search \u0393\u00c7\u00f6 Semantic + Keyword RAG for Technical Accuracy",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/08",
+            "wave/8",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:09:17Z",
+          "url": "https://github.com/kushin77/ollama/issues/174",
+          "severity": "low"
+        },
+        {
+          "number": 175,
+          "title": "[LLM/T6-52] Automated Quality Scoring \u0393\u00c7\u00f6 LLM-as-Judge: Completeness, Groundedness, Coherence",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/08",
+            "wave/8",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:09:17Z",
+          "url": "https://github.com/kushin77/ollama/issues/175",
+          "severity": "low"
+        },
+        {
+          "number": 176,
+          "title": "[LLM/T6-51] Deploy Langfuse \u0393\u00c7\u00f6 Open-Source LLM Observability: Traces, Latency, Token Counts",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/08",
+            "wave/8",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:09:18Z",
+          "url": "https://github.com/kushin77/ollama/issues/176",
+          "severity": "low"
+        },
+        {
+          "number": 177,
+          "title": "[LLM/T5-48] Recursive Summarization \u0393\u00c7\u00f6 Handle Arbitrarily Long Documents via Hierarchical Chunks",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/08",
+            "wave/8",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:09:19Z",
+          "url": "https://github.com/kushin77/ollama/issues/177",
+          "severity": "low"
+        },
+        {
+          "number": 178,
+          "title": "[LLM/T5-47] Episodic Memory \u0393\u00c7\u00f6 Auto-Extract Key Facts Post-Conversation and Persist",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/08",
+            "wave/8",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:09:20Z",
+          "url": "https://github.com/kushin77/ollama/issues/178",
+          "severity": "low"
+        },
+        {
+          "number": 179,
+          "title": "[LLM/T5-46] BGE-Reranker Cross-Encoder \u0393\u00c7\u00f6 Rerank Top-20 RAG Results to Top-5 for Precision",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/08",
+            "wave/8",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:09:20Z",
+          "url": "https://github.com/kushin77/ollama/issues/179",
+          "severity": "low"
+        }
+      ]
+    },
+    {
+      "wave": 8,
+      "size": 25,
+      "severity_counts": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 25
+      },
+      "issue_numbers": [
+        180,
+        181,
+        183,
+        184,
+        185,
+        186,
+        187,
+        188,
+        189,
+        190,
+        191,
+        192,
+        193,
+        194,
+        196,
+        197,
+        199,
+        201,
+        202,
+        204,
+        205,
+        206,
+        207,
+        208,
+        209
+      ],
+      "issues": [
+        {
+          "number": 180,
+          "title": "[LLM/T5-45] Project-Scoped Context Files \u0393\u00c7\u00f6 .ollama-context.md Auto-Injection per Repository",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/08",
+            "wave/8",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:09:21Z",
+          "url": "https://github.com/kushin77/ollama/issues/180",
+          "severity": "low"
+        },
+        {
+          "number": 181,
+          "title": "[LLM/T5-44] User Preference Memory \u0393\u00c7\u00f6 Persistent Preferences Auto-Injected into Every Request",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/08",
+            "wave/8",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:09:22Z",
+          "url": "https://github.com/kushin77/ollama/issues/181",
+          "severity": "low"
+        },
+        {
+          "number": 183,
+          "title": "[LLM/T5-42] Codebase RAG \u0393\u00c7\u00f6 AST-Aware Chunking and Milvus Indexing of Entire Workspace",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/08",
+            "wave/8",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:09:23Z",
+          "url": "https://github.com/kushin77/ollama/issues/183",
+          "severity": "low"
+        },
+        {
+          "number": 184,
+          "title": "[LLM/T5-41] Conversation Memory \u0393\u00c7\u00f6 PostgreSQL Store with Hierarchical Summarization",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/08",
+            "wave/8",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:09:23Z",
+          "url": "https://github.com/kushin77/ollama/issues/184",
+          "severity": "low"
+        },
+        {
+          "number": 185,
+          "title": "[LLM/T4-40] Model Pre-Warming at Boot \u0393\u00c7\u00f6 Eliminate Cold-Start Latency for Both Models",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/08",
+            "wave/8",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:09:24Z",
+          "url": "https://github.com/kushin77/ollama/issues/185",
+          "severity": "low"
+        },
+        {
+          "number": 186,
+          "title": "[LLM/T4-39] nomic-embed-text \u0393\u00c7\u00f6 Local CPU Embeddings for RAG and Semantic Cache",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/08",
+            "wave/8",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:09:25Z",
+          "url": "https://github.com/kushin77/ollama/issues/186",
+          "severity": "low"
+        },
+        {
+          "number": 187,
+          "title": "[LLM/T4-38] Background Batch Processing Queue \u0393\u00c7\u00f6 Celery + Redis for Non-Interactive Jobs",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/08",
+            "wave/8",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:09:26Z",
+          "url": "https://github.com/kushin77/ollama/issues/187",
+          "severity": "low"
+        },
+        {
+          "number": 188,
+          "title": "[LLM/T4-37] CPU/NUMA Pinning and Thread Optimization \u0393\u00c7\u00f6 Reduce P99 Latency Variance",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/08",
+            "wave/8",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:09:26Z",
+          "url": "https://github.com/kushin77/ollama/issues/188",
+          "severity": "low"
+        },
+        {
+          "number": 189,
+          "title": "[LLM/T4-36] Inference Benchmarking Harness \u0393\u00c7\u00f6 P50/P95/P99 Latency and Throughput Baseline",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/08",
+            "wave/8",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:09:27Z",
+          "url": "https://github.com/kushin77/ollama/issues/189",
+          "severity": "low"
+        },
+        {
+          "number": 190,
+          "title": "[LLM/T4-35] KV Cache Quantization \u0393\u00c7\u00f6 q4_0 for phi3-fast (50% Memory Reduction, 2x KV Ops)",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/08",
+            "wave/8",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:09:28Z",
+          "url": "https://github.com/kushin77/ollama/issues/190",
+          "severity": "low"
+        },
+        {
+          "number": 191,
+          "title": "[LLM/T4-34] Speculative Decoding \u0393\u00c7\u00f6 phi3-fast as Draft Model for llama3.1:8b (2-3x Throughput)",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/08",
+            "wave/8",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:09:29Z",
+          "url": "https://github.com/kushin77/ollama/issues/191",
+          "severity": "low"
+        },
+        {
+          "number": 192,
+          "title": "[LLM/T4-33] Parallel Request Handling \u0393\u00c7\u00f6 NUM_PARALLEL=2 for Dual-Model Concurrent Inference",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/08",
+            "wave/8",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:09:29Z",
+          "url": "https://github.com/kushin77/ollama/issues/192",
+          "severity": "low"
+        },
+        {
+          "number": 193,
+          "title": "[LLM/T4-32] GPU Optimization \u0393\u00c7\u00f6 Flash Attention 2, CUDA Graphs, RTX 3090 Power Limit",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/08",
+            "wave/8",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:09:30Z",
+          "url": "https://github.com/kushin77/ollama/issues/193",
+          "severity": "low"
+        },
+        {
+          "number": 194,
+          "title": "[LLM/T4-31] Upgrade Ollama to 0.6.x \u0393\u00c7\u00f6 Flash Attention 2, Continuous Batching, CUDA Graphs",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/08",
+            "wave/8",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:09:31Z",
+          "url": "https://github.com/kushin77/ollama/issues/194",
+          "severity": "low"
+        },
+        {
+          "number": 196,
+          "title": "[LLM/T3-29] Prompt Version Control \u0393\u00c7\u00f6 Semantic Versioning for System Prompts in Git",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:09:32Z",
+          "url": "https://github.com/kushin77/ollama/issues/196",
+          "severity": "low"
+        },
+        {
+          "number": 197,
+          "title": "[LLM/T3-28] Health Checks and Streaming SSE Normalization \u0393\u00c7\u00f6 Reliable Token Delivery",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:09:33Z",
+          "url": "https://github.com/kushin77/ollama/issues/197",
+          "severity": "low"
+        },
+        {
+          "number": 199,
+          "title": "[LLM/T3-26] Token Budget Enforcement \u0393\u00c7\u00f6 Reject Prompts Exceeding Context Window",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:09:35Z",
+          "url": "https://github.com/kushin77/ollama/issues/199",
+          "severity": "low"
+        },
+        {
+          "number": 201,
+          "title": "[LLM/T3-24] Complexity-Based Request Routing \u0393\u00c7\u00f6 Auto-Select Fast vs Pro Model",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:09:36Z",
+          "url": "https://github.com/kushin77/ollama/issues/201",
+          "severity": "low"
+        },
+        {
+          "number": 202,
+          "title": "[LLM/T3-23] Semantic Response Caching \u0393\u00c7\u00f6 GPTCache + Milvus for Paraphrase-Aware Cache Hits",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:09:37Z",
+          "url": "https://github.com/kushin77/ollama/issues/202",
+          "severity": "low"
+        },
+        {
+          "number": 204,
+          "title": "[LLM/T3-21] Deploy LiteLLM Proxy \u0393\u00c7\u00f6 OpenAI-Compatible API Gateway for All Local Models",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:09:38Z",
+          "url": "https://github.com/kushin77/ollama/issues/204",
+          "severity": "low"
+        },
+        {
+          "number": 205,
+          "title": "[LLM/T2-20] Multi-Step Chain-of-Thought Triggering \u0393\u00c7\u00f6 Automatic Deep Reasoning Activation",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:09:39Z",
+          "url": "https://github.com/kushin77/ollama/issues/205",
+          "severity": "low"
+        },
+        {
+          "number": 206,
+          "title": "[LLM/T2-19] Citation Discipline \u0393\u00c7\u00f6 Epistemics Markers for Training Data vs Inference vs Fact",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:09:40Z",
+          "url": "https://github.com/kushin77/ollama/issues/206",
+          "severity": "low"
+        },
+        {
+          "number": 207,
+          "title": "[LLM/T2-18] Self-Correction Loop \u0393\u00c7\u00f6 Model Reviews Its Own Code Before Outputting",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:09:41Z",
+          "url": "https://github.com/kushin77/ollama/issues/207",
+          "severity": "low"
+        },
+        {
+          "number": 208,
+          "title": "[LLM/T2-17] Refusal Calibration \u0393\u00c7\u00f6 Precise Limits, Default to Helping Professional Requests",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:09:41Z",
+          "url": "https://github.com/kushin77/ollama/issues/208",
+          "severity": "low"
+        },
+        {
+          "number": 209,
+          "title": "[LLM/T2-16] Staff Engineer Persona Calibration \u0393\u00c7\u00f6 FAANG L6 Voice and Standards",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:09:42Z",
+          "url": "https://github.com/kushin77/ollama/issues/209",
+          "severity": "low"
+        }
+      ]
+    },
+    {
+      "wave": 9,
+      "size": 25,
+      "severity_counts": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 25
+      },
+      "issue_numbers": [
+        210,
+        211,
+        212,
+        213,
+        214,
+        215,
+        216,
+        217,
+        218,
+        219,
+        220,
+        221,
+        222,
+        223,
+        224,
+        226,
+        235,
+        236,
+        237,
+        238,
+        239,
+        268,
+        269,
+        270,
+        271
+      ],
+      "issues": [
+        {
+          "number": 210,
+          "title": "[LLM/T2-15] Single-Question Clarification Protocol \u0393\u00c7\u00f6 Surgical Ambiguity Resolution",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:09:43Z",
+          "url": "https://github.com/kushin77/ollama/issues/210",
+          "severity": "low"
+        },
+        {
+          "number": 211,
+          "title": "[LLM/T2-14] Task Decomposition Framework \u0393\u00c7\u00f6 Goal \u0393\u00e5\u00c6 Subtasks \u0393\u00e5\u00c6 Execute \u0393\u00e5\u00c6 Summarize",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:09:44Z",
+          "url": "https://github.com/kushin77/ollama/issues/211",
+          "severity": "low"
+        },
+        {
+          "number": 212,
+          "title": "[LLM/T2-13] FAANG Code Quality Standards \u0393\u00c7\u00f6 Completeness, Types, Error Handling, Security",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:09:44Z",
+          "url": "https://github.com/kushin77/ollama/issues/212",
+          "severity": "low"
+        },
+        {
+          "number": 213,
+          "title": "[LLM/T2-12] Uncertainty Quantification \u0393\u00c7\u00f6 [HIGH/MEDIUM/LOW/UNKNOWN] Confidence Markers",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:09:45Z",
+          "url": "https://github.com/kushin77/ollama/issues/213",
+          "severity": "low"
+        },
+        {
+          "number": 214,
+          "title": "[LLM/T2-11] Tiered Response Protocol \u0393\u00c7\u00f6 Format and Length Calibration by Question Type",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:09:46Z",
+          "url": "https://github.com/kushin77/ollama/issues/214",
+          "severity": "low"
+        },
+        {
+          "number": 215,
+          "title": "[LLM/T1-10] Upgrade Base Model \u0393\u00c7\u00f6 llama3.1:8b-instruct-q8_0 Replaces llama3:8b",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:09:47Z",
+          "url": "https://github.com/kushin77/ollama/issues/215",
+          "severity": "low"
+        },
+        {
+          "number": 216,
+          "title": "[LLM/T1-9] Persistent Institutional Context \u0393\u00c7\u00f6 Project-Aware Base Context Injection via num_keep",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:09:47Z",
+          "url": "https://github.com/kushin77/ollama/issues/216",
+          "severity": "low"
+        },
+        {
+          "number": 217,
+          "title": "[LLM/T1-8] Mirostat v2 Sampling \u0393\u00c7\u00f6 Adaptive Coherence for Long-Form Responses",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:09:48Z",
+          "url": "https://github.com/kushin77/ollama/issues/217",
+          "severity": "low"
+        },
+        {
+          "number": 218,
+          "title": "[LLM/T1-7] Four Persona Modelfiles \u0393\u00c7\u00f6 claude-coder, claude-analyst, claude-writer, claude-fast",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:09:49Z",
+          "url": "https://github.com/kushin77/ollama/issues/218",
+          "severity": "low"
+        },
+        {
+          "number": 219,
+          "title": "[LLM/T1-6] Claude-Style Stop Sequences \u0393\u00c7\u00f6 Prevent Hallucinated Dialogue Loops",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:09:49Z",
+          "url": "https://github.com/kushin77/ollama/issues/219",
+          "severity": "low"
+        },
+        {
+          "number": 220,
+          "title": "[LLM/T1-5] Repetition Penalty Tuning \u0393\u00c7\u00f6 repeat_penalty=1.05, repeat_last_n=256",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:09:50Z",
+          "url": "https://github.com/kushin77/ollama/issues/220",
+          "severity": "low"
+        },
+        {
+          "number": 221,
+          "title": "[LLM/T1-4] Claude-Calibrated Temperature \u0393\u00c7\u00f6 temperature=1.0, top_p=0.999, top_k=0",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:09:51Z",
+          "url": "https://github.com/kushin77/ollama/issues/221",
+          "severity": "low"
+        },
+        {
+          "number": 222,
+          "title": "[LLM/T1-3] Context Window Maximization \u0393\u00c7\u00f6 32K Tokens with num_batch and num_keep",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:09:52Z",
+          "url": "https://github.com/kushin77/ollama/issues/222",
+          "severity": "low"
+        },
+        {
+          "number": 223,
+          "title": "[LLM/T1-2] XML Thinking Blocks \u0393\u00c7\u00f6 Transparent Chain-of-Thought Reasoning",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/09",
+            "wave/9",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:09:53Z",
+          "url": "https://github.com/kushin77/ollama/issues/223",
+          "severity": "low"
+        },
+        {
+          "number": 224,
+          "title": "[LLM/T1-1] Constitutional AI System Prompt \u0393\u00c7\u00f6 HHH Framework in Modelfile",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/10",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:09:53Z",
+          "url": "https://github.com/kushin77/ollama/issues/224",
+          "severity": "low"
+        },
+        {
+          "number": 226,
+          "title": "[EPIC][ONPREM-FAANG] 90-Day On-Prem AI Capability Uplift (Grok/Claude/Gemini Benchmark)",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/10",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:09:54Z",
+          "url": "https://github.com/kushin77/ollama/issues/226",
+          "severity": "low"
+        },
+        {
+          "number": 235,
+          "title": "[P2][ONPREM-FAANG] Multi-Turn Memory Architecture (Session + Semantic + Summarization)",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/10",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:09:58Z",
+          "url": "https://github.com/kushin77/ollama/issues/235",
+          "severity": "low"
+        },
+        {
+          "number": 236,
+          "title": "[P2][ONPREM-FAANG] Domain Adapters (LoRA) + Safe Rollout Controls",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/10",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:09:59Z",
+          "url": "https://github.com/kushin77/ollama/issues/236",
+          "severity": "low"
+        },
+        {
+          "number": 237,
+          "title": "[P2][ONPREM-FAANG] Agentic Tool Execution Layer (Controlled On-Prem Actions)",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/10",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:10:00Z",
+          "url": "https://github.com/kushin77/ollama/issues/237",
+          "severity": "low"
+        },
+        {
+          "number": 238,
+          "title": "[P2][ONPREM-FAANG] Multimodal Document Pipeline (Vision + PDF/DOCX + Unified Retrieval)",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/10",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:10:00Z",
+          "url": "https://github.com/kushin77/ollama/issues/238",
+          "severity": "low"
+        },
+        {
+          "number": 239,
+          "title": "[P2][ONPREM-FAANG] Developer Experience Acceleration (Slash Commands + Prompt Packs + Task Automation)",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/10",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:10:01Z",
+          "url": "https://github.com/kushin77/ollama/issues/239",
+          "severity": "low"
+        },
+        {
+          "number": 268,
+          "title": "[BROWSER-CHAT][EPIC] Agent Fleet Management for Multi-Agent Suites and Farms",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/10",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:10:09Z",
+          "url": "https://github.com/kushin77/ollama/issues/268",
+          "severity": "low"
+        },
+        {
+          "number": 269,
+          "title": "[BROWSER-CHAT][EPIC] Knowledge Hub for Curated Links and YouTube Learning Sources",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/10",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:10:10Z",
+          "url": "https://github.com/kushin77/ollama/issues/269",
+          "severity": "low"
+        },
+        {
+          "number": 270,
+          "title": "[BROWSER-CHAT][EPIC] Claude-Like Browser Copilot with Live Host Task Assistance",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/10",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:10:11Z",
+          "url": "https://github.com/kushin77/ollama/issues/270",
+          "severity": "low"
+        },
+        {
+          "number": 271,
+          "title": "[BROWSER-CHAT][EPIC] Cross-Repo Assimilation from kushin77 AI/Ollama Repositories",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/10",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:10:11Z",
+          "url": "https://github.com/kushin77/ollama/issues/271",
+          "severity": "low"
+        }
+      ]
+    },
+    {
+      "wave": 10,
+      "size": 25,
+      "severity_counts": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 25
+      },
+      "issue_numbers": [
+        272,
+        273,
+        274,
+        275,
+        276,
+        277,
+        278,
+        279,
+        280,
+        305,
+        316,
+        317,
+        318,
+        319,
+        320,
+        321,
+        322,
+        323,
+        324,
+        325,
+        326,
+        327,
+        328,
+        329,
+        330
+      ],
+      "issues": [
+        {
+          "number": 272,
+          "title": "[BROWSER-CHAT][EPIC] Sentiment Intelligence Program (Love/Hate Signal to Backlog)",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/10",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:10:12Z",
+          "url": "https://github.com/kushin77/ollama/issues/272",
+          "severity": "low"
+        },
+        {
+          "number": 273,
+          "title": "[BROWSER-CHAT][EPIC] Local Hardware Acceleration Strategy for Faster Chat",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/10",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:11:37Z",
+          "url": "https://github.com/kushin77/ollama/issues/273",
+          "severity": "low"
+        },
+        {
+          "number": 274,
+          "title": "[SENTIMENT][ENHANCEMENT-01] Persistent project workspaces with pinned goals",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/10",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:11:38Z",
+          "url": "https://github.com/kushin77/ollama/issues/274",
+          "severity": "low"
+        },
+        {
+          "number": 275,
+          "title": "[SENTIMENT][ENHANCEMENT-02] Conversation branching and compare mode",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/10",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:11:38Z",
+          "url": "https://github.com/kushin77/ollama/issues/275",
+          "severity": "low"
+        },
+        {
+          "number": 276,
+          "title": "[SENTIMENT][ENHANCEMENT-03] Prompt templates with parameter forms",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/10",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:11:39Z",
+          "url": "https://github.com/kushin77/ollama/issues/276",
+          "severity": "low"
+        },
+        {
+          "number": 277,
+          "title": "[SENTIMENT][ENHANCEMENT-04] Task board view for chat commitments",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/10",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:11:39Z",
+          "url": "https://github.com/kushin77/ollama/issues/277",
+          "severity": "low"
+        },
+        {
+          "number": 278,
+          "title": "[SENTIMENT][ENHANCEMENT-05] One-click response style presets",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/10",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:11:39Z",
+          "url": "https://github.com/kushin77/ollama/issues/278",
+          "severity": "low"
+        },
+        {
+          "number": 279,
+          "title": "[SENTIMENT][ENHANCEMENT-06] Evidence-backed answers with source cards",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/10",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:11:40Z",
+          "url": "https://github.com/kushin77/ollama/issues/279",
+          "severity": "low"
+        },
+        {
+          "number": 280,
+          "title": "[SENTIMENT][ENHANCEMENT-07] Hallucination risk indicator",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/10",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:11:40Z",
+          "url": "https://github.com/kushin77/ollama/issues/280",
+          "severity": "low"
+        },
+        {
+          "number": 305,
+          "title": "[BROWSER-CHAT][ASSIMILATION] Repo inventory crawler for kushin77 user+org",
+          "labels": [
+            "documentation",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/11",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:14:33Z",
+          "url": "https://github.com/kushin77/ollama/issues/305",
+          "severity": "low"
+        },
+        {
+          "number": 316,
+          "title": "[SENTIMENT][ENHANCEMENT-08] Citation confidence heatmap",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/11",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:14:36Z",
+          "url": "https://github.com/kushin77/ollama/issues/316",
+          "severity": "low"
+        },
+        {
+          "number": 317,
+          "title": "[SENTIMENT][ENHANCEMENT-09] Uncertainty expression modes",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/11",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:14:37Z",
+          "url": "https://github.com/kushin77/ollama/issues/317",
+          "severity": "low"
+        },
+        {
+          "number": 318,
+          "title": "[SENTIMENT][ENHANCEMENT-10] Follow-up question suggestion engine",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/11",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:14:39Z",
+          "url": "https://github.com/kushin77/ollama/issues/318",
+          "severity": "low"
+        },
+        {
+          "number": 319,
+          "title": "[SENTIMENT][ENHANCEMENT-11] Configurable verbosity profiles",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/11",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:14:40Z",
+          "url": "https://github.com/kushin77/ollama/issues/319",
+          "severity": "low"
+        },
+        {
+          "number": 320,
+          "title": "[SENTIMENT][ENHANCEMENT-12] Persona and tone presets",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/11",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:14:41Z",
+          "url": "https://github.com/kushin77/ollama/issues/320",
+          "severity": "low"
+        },
+        {
+          "number": 321,
+          "title": "[SENTIMENT][ENHANCEMENT-13] Model behavior changelog panel",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/11",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:14:42Z",
+          "url": "https://github.com/kushin77/ollama/issues/321",
+          "severity": "low"
+        },
+        {
+          "number": 322,
+          "title": "[SENTIMENT][ENHANCEMENT-14] Conversation objective summary card",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/11",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:14:43Z",
+          "url": "https://github.com/kushin77/ollama/issues/322",
+          "severity": "low"
+        },
+        {
+          "number": 323,
+          "title": "[SENTIMENT][ENHANCEMENT-15] Decision log capture from chat",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/11",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:14:45Z",
+          "url": "https://github.com/kushin77/ollama/issues/323",
+          "severity": "low"
+        },
+        {
+          "number": 324,
+          "title": "[SENTIMENT][ENHANCEMENT-16] Prompt linting and anti-pattern detector",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/11",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:14:46Z",
+          "url": "https://github.com/kushin77/ollama/issues/324",
+          "severity": "low"
+        },
+        {
+          "number": 325,
+          "title": "[SENTIMENT][ENHANCEMENT-17] Reusable prompt blocks library",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/11",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:14:47Z",
+          "url": "https://github.com/kushin77/ollama/issues/325",
+          "severity": "low"
+        },
+        {
+          "number": 326,
+          "title": "[SENTIMENT][ENHANCEMENT-18] Response rubric scoring view",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/11",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:14:48Z",
+          "url": "https://github.com/kushin77/ollama/issues/326",
+          "severity": "low"
+        },
+        {
+          "number": 327,
+          "title": "[SENTIMENT][ENHANCEMENT-19] Side-by-side response compare workspace",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/11",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:14:49Z",
+          "url": "https://github.com/kushin77/ollama/issues/327",
+          "severity": "low"
+        },
+        {
+          "number": 328,
+          "title": "[SENTIMENT][ENHANCEMENT-20] Safe guidance mode for novice users",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/11",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:14:51Z",
+          "url": "https://github.com/kushin77/ollama/issues/328",
+          "severity": "low"
+        },
+        {
+          "number": 329,
+          "title": "[SENTIMENT][ENHANCEMENT-21] Assumption extraction panel",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/11",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:14:52Z",
+          "url": "https://github.com/kushin77/ollama/issues/329",
+          "severity": "low"
+        },
+        {
+          "number": 330,
+          "title": "[SENTIMENT][ENHANCEMENT-22] Contradiction checker across thread",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/11",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:14:53Z",
+          "url": "https://github.com/kushin77/ollama/issues/330",
+          "severity": "low"
+        }
+      ]
+    },
+    {
+      "wave": 11,
+      "size": 25,
+      "severity_counts": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 25
+      },
+      "issue_numbers": [
+        331,
+        332,
+        333,
+        334,
+        335,
+        336,
+        337,
+        338,
+        339,
+        340,
+        341,
+        342,
+        343,
+        344,
+        345,
+        346,
+        347,
+        348,
+        349,
+        350,
+        351,
+        352,
+        353,
+        354,
+        355
+      ],
+      "issues": [
+        {
+          "number": 331,
+          "title": "[SENTIMENT][ENHANCEMENT-23] Missing-information detector",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/11",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:14:54Z",
+          "url": "https://github.com/kushin77/ollama/issues/331",
+          "severity": "low"
+        },
+        {
+          "number": 332,
+          "title": "[SENTIMENT][ENHANCEMENT-24] Requirements capture form-to-chat bridge",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/11",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:14:56Z",
+          "url": "https://github.com/kushin77/ollama/issues/332",
+          "severity": "low"
+        },
+        {
+          "number": 333,
+          "title": "[SENTIMENT][ENHANCEMENT-25] Meeting notes to structured output templates",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/11",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:14:57Z",
+          "url": "https://github.com/kushin77/ollama/issues/333",
+          "severity": "low"
+        },
+        {
+          "number": 334,
+          "title": "[SENTIMENT][ENHANCEMENT-26] Action item extraction with owner/date",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:14:58Z",
+          "url": "https://github.com/kushin77/ollama/issues/334",
+          "severity": "low"
+        },
+        {
+          "number": 335,
+          "title": "[SENTIMENT][ENHANCEMENT-27] Checklist synthesis from conversation",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:14:59Z",
+          "url": "https://github.com/kushin77/ollama/issues/335",
+          "severity": "low"
+        },
+        {
+          "number": 336,
+          "title": "[SENTIMENT][ENHANCEMENT-28] Timeline view for conversation milestones",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:15:00Z",
+          "url": "https://github.com/kushin77/ollama/issues/336",
+          "severity": "low"
+        },
+        {
+          "number": 337,
+          "title": "[SENTIMENT][ENHANCEMENT-29] Pinned artifact board in chat",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:15:02Z",
+          "url": "https://github.com/kushin77/ollama/issues/337",
+          "severity": "low"
+        },
+        {
+          "number": 338,
+          "title": "[SENTIMENT][ENHANCEMENT-30] Conversation export bundles (MD/JSON/PDF)",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:15:03Z",
+          "url": "https://github.com/kushin77/ollama/issues/338",
+          "severity": "low"
+        },
+        {
+          "number": 339,
+          "title": "[SENTIMENT][ENHANCEMENT-31] Inline glossary for domain jargon",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:15:04Z",
+          "url": "https://github.com/kushin77/ollama/issues/339",
+          "severity": "low"
+        },
+        {
+          "number": 340,
+          "title": "[SENTIMENT][ENHANCEMENT-32] Acronym expansion toggle",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:15:05Z",
+          "url": "https://github.com/kushin77/ollama/issues/340",
+          "severity": "low"
+        },
+        {
+          "number": 341,
+          "title": "[SENTIMENT][ENHANCEMENT-33] Localization and cultural tone profiles",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:15:07Z",
+          "url": "https://github.com/kushin77/ollama/issues/341",
+          "severity": "low"
+        },
+        {
+          "number": 342,
+          "title": "[SENTIMENT][ENHANCEMENT-34] Accessibility readability mode",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:15:08Z",
+          "url": "https://github.com/kushin77/ollama/issues/342",
+          "severity": "low"
+        },
+        {
+          "number": 343,
+          "title": "[SENTIMENT][ENHANCEMENT-35] Keyboard-first command palette",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:15:09Z",
+          "url": "https://github.com/kushin77/ollama/issues/343",
+          "severity": "low"
+        },
+        {
+          "number": 344,
+          "title": "[SENTIMENT][ENHANCEMENT-36] Offline drafting and deferred send mode",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:15:10Z",
+          "url": "https://github.com/kushin77/ollama/issues/344",
+          "severity": "low"
+        },
+        {
+          "number": 345,
+          "title": "[SENTIMENT][ENHANCEMENT-37] Conflict-free response edit history",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:15:12Z",
+          "url": "https://github.com/kushin77/ollama/issues/345",
+          "severity": "low"
+        },
+        {
+          "number": 346,
+          "title": "[SENTIMENT][ENHANCEMENT-38] Conversation branch and merge workflow",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:15:13Z",
+          "url": "https://github.com/kushin77/ollama/issues/346",
+          "severity": "low"
+        },
+        {
+          "number": 347,
+          "title": "[SENTIMENT][ENHANCEMENT-39] Source trust badges and provenance tags",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:15:14Z",
+          "url": "https://github.com/kushin77/ollama/issues/347",
+          "severity": "low"
+        },
+        {
+          "number": 348,
+          "title": "[SENTIMENT][ENHANCEMENT-40] Outdated-claim warning system",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:15:15Z",
+          "url": "https://github.com/kushin77/ollama/issues/348",
+          "severity": "low"
+        },
+        {
+          "number": 349,
+          "title": "[SENTIMENT][ENHANCEMENT-41] Quote exactness verifier",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:15:17Z",
+          "url": "https://github.com/kushin77/ollama/issues/349",
+          "severity": "low"
+        },
+        {
+          "number": 350,
+          "title": "[SENTIMENT][ENHANCEMENT-42] Claim-to-evidence trace map",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:15:18Z",
+          "url": "https://github.com/kushin77/ollama/issues/350",
+          "severity": "low"
+        },
+        {
+          "number": 351,
+          "title": "[SENTIMENT][ENHANCEMENT-43] Policy explanation cards",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:15:19Z",
+          "url": "https://github.com/kushin77/ollama/issues/351",
+          "severity": "low"
+        },
+        {
+          "number": 352,
+          "title": "[SENTIMENT][ENHANCEMENT-44] Guardrail override request workflow",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:15:20Z",
+          "url": "https://github.com/kushin77/ollama/issues/352",
+          "severity": "low"
+        },
+        {
+          "number": 353,
+          "title": "[SENTIMENT][ENHANCEMENT-45] Sandboxed what-if scenario simulator",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:15:21Z",
+          "url": "https://github.com/kushin77/ollama/issues/353",
+          "severity": "low"
+        },
+        {
+          "number": 354,
+          "title": "[SENTIMENT][ENHANCEMENT-46] Plan rollback assistant",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:15:23Z",
+          "url": "https://github.com/kushin77/ollama/issues/354",
+          "severity": "low"
+        },
+        {
+          "number": 355,
+          "title": "[SENTIMENT][ENHANCEMENT-47] Incident response copiloting mode",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:15:24Z",
+          "url": "https://github.com/kushin77/ollama/issues/355",
+          "severity": "low"
+        }
+      ]
+    },
+    {
+      "wave": 12,
+      "size": 19,
+      "severity_counts": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 19
+      },
+      "issue_numbers": [
+        356,
+        357,
+        358,
+        359,
+        360,
+        361,
+        362,
+        363,
+        364,
+        365,
+        366,
+        367,
+        368,
+        372,
+        378,
+        379,
+        390,
+        392,
+        398
+      ],
+      "issues": [
+        {
+          "number": 356,
+          "title": "[SENTIMENT][ENHANCEMENT-48] Compliance evidence pack generator",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:15:25Z",
+          "url": "https://github.com/kushin77/ollama/issues/356",
+          "severity": "low"
+        },
+        {
+          "number": 357,
+          "title": "[SENTIMENT][ENHANCEMENT-49] Stakeholder summary generator",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:15:26Z",
+          "url": "https://github.com/kushin77/ollama/issues/357",
+          "severity": "low"
+        },
+        {
+          "number": 358,
+          "title": "[SENTIMENT][ENHANCEMENT-50] Executive brief response mode",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/12",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:15:28Z",
+          "url": "https://github.com/kushin77/ollama/issues/358",
+          "severity": "low"
+        },
+        {
+          "number": 359,
+          "title": "[SENTIMENT][ENHANCEMENT-51] Engineer deep-dive response mode",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/13",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:15:29Z",
+          "url": "https://github.com/kushin77/ollama/issues/359",
+          "severity": "low"
+        },
+        {
+          "number": 360,
+          "title": "[SENTIMENT][ENHANCEMENT-52] Learner coaching progression mode",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/13",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:15:30Z",
+          "url": "https://github.com/kushin77/ollama/issues/360",
+          "severity": "low"
+        },
+        {
+          "number": 361,
+          "title": "[SENTIMENT][ENHANCEMENT-53] Socratic tutor interaction mode",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/13",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:15:31Z",
+          "url": "https://github.com/kushin77/ollama/issues/361",
+          "severity": "low"
+        },
+        {
+          "number": 362,
+          "title": "[SENTIMENT][ENHANCEMENT-54] Debate mode with pros/cons framing",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/13",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:15:33Z",
+          "url": "https://github.com/kushin77/ollama/issues/362",
+          "severity": "low"
+        },
+        {
+          "number": 363,
+          "title": "[SENTIMENT][ENHANCEMENT-55] Hypothesis test planning assistant",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/13",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:15:34Z",
+          "url": "https://github.com/kushin77/ollama/issues/363",
+          "severity": "low"
+        },
+        {
+          "number": 364,
+          "title": "[SENTIMENT][ENHANCEMENT-56] Experiment logbook integration",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/13",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:15:35Z",
+          "url": "https://github.com/kushin77/ollama/issues/364",
+          "severity": "low"
+        },
+        {
+          "number": 365,
+          "title": "[SENTIMENT][ENHANCEMENT-57] Task effort estimation assistant",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/13",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:15:36Z",
+          "url": "https://github.com/kushin77/ollama/issues/365",
+          "severity": "low"
+        },
+        {
+          "number": 366,
+          "title": "[SENTIMENT][ENHANCEMENT-58] Risk register generation from thread",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/13",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:15:37Z",
+          "url": "https://github.com/kushin77/ollama/issues/366",
+          "severity": "low"
+        },
+        {
+          "number": 367,
+          "title": "[SENTIMENT][ENHANCEMENT-59] Dependency map generation for plans",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/13",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:15:39Z",
+          "url": "https://github.com/kushin77/ollama/issues/367",
+          "severity": "low"
+        },
+        {
+          "number": 368,
+          "title": "[SENTIMENT][ENHANCEMENT-60] Launch readiness checklist synthesizer",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/13",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T04:15:40Z",
+          "url": "https://github.com/kushin77/ollama/issues/368",
+          "severity": "low"
+        },
+        {
+          "number": 372,
+          "title": "[Cross-Repo] Publish Enterprise Integration Bundle for code-server (Contract, GPU Profile, Eval Artifacts)",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/13",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T04:15:42Z",
+          "url": "https://github.com/kushin77/ollama/issues/372",
+          "severity": "low"
+        },
+        {
+          "number": 378,
+          "title": "feat(observability): Replace hand-rolled Prometheus text with prometheus/client_golang",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "observability",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/13",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T04:15:44Z",
+          "url": "https://github.com/kushin77/ollama/issues/378",
+          "severity": "low"
+        },
+        {
+          "number": 379,
+          "title": "feat(observability): Add W3C TraceContext propagation (traceparent/tracestate headers)",
+          "labels": [
+            "enhancement",
+            "status/triaged",
+            "priority/low",
+            "observability",
+            "needs-evidence",
+            "status/planned-wave",
+            "wave/13",
+            "agent-ready",
+            "shard/3"
+          ],
+          "updated_at": "2026-04-18T04:15:45Z",
+          "url": "https://github.com/kushin77/ollama/issues/379",
+          "severity": "low"
+        },
+        {
+          "number": 390,
+          "title": "[ADR] Monorepo topology and pnpm adoption decision",
+          "labels": [
+            "documentation",
+            "status/triaged",
+            "priority/low",
+            "monorepo",
+            "architecture",
+            "decision-record",
+            "status/planned-wave",
+            "wave/13",
+            "agent-ready",
+            "shard/4"
+          ],
+          "updated_at": "2026-04-18T05:33:25Z",
+          "url": "https://github.com/kushin77/ollama/issues/390",
+          "severity": "low"
+        },
+        {
+          "number": 392,
+          "title": "[Monorepo] Resolve frontend lifecycle state and documentation drift",
+          "labels": [
+            "documentation",
+            "status/triaged",
+            "monorepo",
+            "architecture",
+            "frontend",
+            "status/planned-wave",
+            "wave/13",
+            "agent-ready",
+            "shard/1"
+          ],
+          "updated_at": "2026-04-18T05:33:26Z",
+          "url": "https://github.com/kushin77/ollama/issues/392",
+          "severity": "low"
+        },
+        {
+          "number": 398,
+          "title": "[Monorepo] Publish migration runbook and validate rollback procedure",
+          "labels": [
+            "documentation",
+            "operations",
+            "status/triaged",
+            "monorepo",
+            "status/planned-wave",
+            "wave/13",
+            "agent-ready",
+            "shard/2"
+          ],
+          "updated_at": "2026-04-18T05:33:28Z",
+          "url": "https://github.com/kushin77/ollama/issues/398",
+          "severity": "low"
+        }
+      ]
+    }
+  ]
+}

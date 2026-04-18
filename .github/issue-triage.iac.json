@@ -1,0 +1,233 @@
+{
+  "issue_triage_specification": {
+    "version": "1.0",
+    "date": "2026-04-18",
+    "scope": "kushin77/ollama",
+    "purpose": "Automated issue triage, categorization, and workflow automation"
+  },
+  "triage_categories": {
+    "feature_request": {
+      "id": "feat",
+      "priority_default": "medium",
+      "labels": ["type:feature", "kind:feature-request"],
+      "form": "feature.md",
+      "fields": {
+        "title": { "required": true, "type": "string" },
+        "description": { "required": true, "type": "text", "min_length": 50 },
+        "acceptance_criteria": { "required": true, "type": "list" },
+        "use_case": { "required": true, "type": "text" },
+        "implementation_approach": { "required": false, "type": "text" },
+        "alternatives_considered": { "required": false, "type": "text" }
+      }
+    },
+    "bug": {
+      "id": "bug",
+      "priority_default": "high",
+      "labels": ["type:bug", "kind:bug-report"],
+      "form": "bug.md",
+      "fields": {
+        "title": { "required": true, "type": "string" },
+        "description": { "required": true, "type": "text" },
+        "reproduction_steps": { "required": true, "type": "list" },
+        "expected_behavior": { "required": true, "type": "text" },
+        "actual_behavior": { "required": true, "type": "text" },
+        "environment": { "required": true, "type": "object", "fields": ["os", "version", "reproducible_rate"] },
+        "logs": { "required": false, "type": "code_block" },
+        "workaround": { "required": false, "type": "text" }
+      },
+      "severity_levels": {
+        "critical": { "response_hours": 1, "resolution_days": 1, "hotfix": true },
+        "high": { "response_hours": 8, "resolution_days": 3, "hotfix": false },
+        "medium": { "response_hours": 24, "resolution_days": 7, "hotfix": false },
+        "low": { "response_hours": 72, "resolution_days": 30, "hotfix": false }
+      }
+    },
+    "documentation": {
+      "id": "docs",
+      "priority_default": "low",
+      "labels": ["type:docs", "kind:documentation"],
+      "form": "docs.md",
+      "fields": {
+        "title": { "required": true, "type": "string" },
+        "scope": { "required": true, "type": "enum", "values": ["api", "cli", "deployment", "architecture", "troubleshooting"] },
+        "description": { "required": true, "type": "text" },
+        "target_audience": { "required": true, "type": "list" },
+        "examples": { "required": true, "type": "list" }
+      }
+    },
+    "security": {
+      "id": "security",
+      "priority_default": "critical",
+      "labels": ["type:security", "kind:vulnerability"],
+      "form": "security.md",
+      "fields": {
+        "vulnerability_type": { "required": true, "type": "enum", "values": ["injection", "auth", "crypto", "dos", "rce", "info_disclosure", "privilege_escalation"] },
+        "affected_versions": { "required": true, "type": "list" },
+        "severity_cvss": { "required": true, "type": "number", "min": 0, "max": 10 },
+        "description": { "required": true, "type": "text" },
+        "reproduction": { "required": true, "type": "text" },
+        "impact": { "required": true, "type": "text" },
+        "remediation": { "required": true, "type": "text" },
+        "disclosure_timeline": { "required": true, "type": "date" }
+      },
+      "restrict_to": "maintainers_only"
+    },
+    "performance": {
+      "id": "perf",
+      "priority_default": "medium",
+      "labels": ["type:performance", "kind:optimization"],
+      "form": "perf.md",
+      "fields": {
+        "title": { "required": true, "type": "string" },
+        "metric": { "required": true, "type": "enum", "values": ["latency", "throughput", "memory", "cpu", "disk_io"] },
+        "current_baseline": { "required": true, "type": "text" },
+        "desired_target": { "required": true, "type": "text" },
+        "improvement_percent": { "required": true, "type": "number" },
+        "benchmark_methodology": { "required": true, "type": "text" },
+        "affected_component": { "required": true, "type": "string" }
+      },
+      "require_benchmark": true
+    },
+    "infrastructure": {
+      "id": "infra",
+      "priority_default": "medium",
+      "labels": ["type:infrastructure", "kind:deployment"],
+      "form": "infra.md",
+      "fields": {
+        "title": { "required": true, "type": "string" },
+        "category": { "required": true, "type": "enum", "values": ["ci_cd", "monitoring", "kubernetes", "terraform", "docker", "cloud"] },
+        "description": { "required": true, "type": "text" },
+        "current_state": { "required": true, "type": "text" },
+        "desired_state": { "required": true, "type": "text" },
+        "impact_scope": { "required": true, "type": "enum", "values": ["local_dev", "staging", "production"] }
+      },
+      "require_approval": "lead_engineer"
+    },
+    "testing": {
+      "id": "test",
+      "priority_default": "high",
+      "labels": ["type:testing", "kind:test-coverage"],
+      "form": "testing.md",
+      "fields": {
+        "title": { "required": true, "type": "string" },
+        "scope": { "required": true, "type": "enum", "values": ["unit", "integration", "e2e", "performance", "security"] },
+        "description": { "required": true, "type": "text" },
+        "coverage_target_percent": { "required": true, "type": "number", "min": 0, "max": 100 },
+        "modules": { "required": true, "type": "list" },
+        "test_scenarios": { "required": true, "type": "list" }
+      }
+    }
+  },
+  "auto_classification": {
+    "enabled": true,
+    "rules": [
+      {
+        "detect": "contains_keywords:crash|panic|error",
+        "classify_as": "bug",
+        "confidence": 0.9
+      },
+      {
+        "detect": "contains_keywords:vulnerability|cve|security|breach",
+        "classify_as": "security",
+        "confidence": 0.95
+      },
+      {
+        "detect": "contains_keywords:slow|latency|performance|throughput",
+        "classify_as": "performance",
+        "confidence": 0.8
+      },
+      {
+        "detect": "contains_keywords:document|guide|example|tutorial",
+        "classify_as": "documentation",
+        "confidence": 0.85
+      },
+      {
+        "detect": "contains_keywords:feature|add|new|request",
+        "classify_as": "feature_request",
+        "confidence": 0.7
+      }
+    ]
+  },
+  "workflow_automation": {
+    "on_issue_created": [
+      { "action": "auto_classify" },
+      { "action": "apply_initial_labels" },
+      { "action": "request_missing_info", "if": "missing_acceptance_criteria" },
+      { "action": "assign_triage_queue" },
+      { "action": "create_metrics_entry" }
+    ],
+    "on_issue_updated": [
+      { "action": "update_classification", "if": "content_changed" },
+      { "action": "validate_state_transition" },
+      { "action": "update_metrics" },
+      { "action": "check_sla_compliance" }
+    ],
+    "on_label_added": [
+      { "action": "update_project_board", "if": "label:in-progress" },
+      { "action": "notify_stakeholders", "if": "label:critical|blocked" },
+      { "action": "escalate", "if": "label:critical" }
+    ],
+    "on_pr_created": [
+      { "action": "auto_link_issue" },
+      { "action": "verify_issue_reference" },
+      { "action": "check_acceptance_criteria_met" },
+      { "action": "validate_test_coverage" }
+    ],
+    "on_pr_merged": [
+      { "action": "mark_issue_resolved" },
+      { "action": "move_to_closed" },
+      { "action": "update_metrics" },
+      { "action": "create_closure_record" }
+    ]
+  },
+  "issue_templates": {
+    "feature_request": {
+      "title": "[FEATURE] Clear description of feature",
+      "body": "### Use Case\nDescribe the use case for this feature.\n\n### Acceptance Criteria\n- [ ] Criterion 1\n- [ ] Criterion 2\n\n### Implementation Notes\nAny implementation suggestions."
+    },
+    "bug_report": {
+      "title": "[BUG] Clear description of bug",
+      "body": "### Description\nDescribe the bug.\n\n### Steps to Reproduce\n1. Step 1\n2. Step 2\n\n### Expected Behavior\nWhat should happen.\n\n### Actual Behavior\nWhat actually happens.\n\n### Environment\nOS, version, etc."
+    },
+    "documentation": {
+      "title": "[DOCS] Topic to document",
+      "body": "### Scope\nWhat should be documented.\n\n### Target Audience\nWho is this documentation for?\n\n### Suggested Content\n- Topic 1\n- Topic 2"
+    }
+  },
+  "metrics_tracking": {
+    "enabled": true,
+    "metrics": [
+      "issue_created_count",
+      "issue_closed_count",
+      "average_close_time_days",
+      "sla_compliance_percent",
+      "category_distribution",
+      "priority_distribution",
+      "assignee_workload",
+      "blocker_count"
+    ],
+    "aggregation": {
+      "hourly": false,
+      "daily": true,
+      "weekly": true,
+      "monthly": true
+    },
+    "alerts": [
+      {
+        "condition": "sla_compliance < 90",
+        "severity": "high",
+        "notify": ["maintainers"]
+      },
+      {
+        "condition": "critical_issues_count > 5",
+        "severity": "critical",
+        "notify": ["maintainers", "leads"]
+      },
+      {
+        "condition": "stale_blocked_issues_count > 3",
+        "severity": "medium",
+        "notify": ["team"]
+      }
+    ]
+  }
+}

@@ -1,0 +1,253 @@
+version: "3.9"
+
+# ============================================================================
+# OLLAMA MINIMAL DEPLOYMENT - Standard Images Only
+# Local Docker Host: target server
+# Public Endpoint: https://elevatediq.ai/ollama (GCP Load Balancer)
+# ============================================================================
+# GCP LANDING ZONE COMPLIANCE
+# • Mandatory Labels: 8+ per Landing Zone mandate
+# • Naming Convention: {environment}-{application}-{component}
+# • Security: Cloud Armor DDoS, CMEK encryption, TLS 1.3+
+# ============================================================================
+
+# ============================================================================
+# GCP LANDING ZONE - MANDATORY LABELS (8+ required)
+# ============================================================================
+x-common-labels: &common-labels
+  environment: "staging"
+  team: "elevatediq-engineering"
+  application: "ollama"
+  cost-center: "ai-platform-001"
+  managed-by: "docker-compose"
+  git_repo: "github.com/kushin77/ollama"
+  lifecycle_status: "active"
+  security_tier: "medium"
+
+services:
+  # ==========================================================================
+  # POSTGRESQL - Metadata Database
+  # ==========================================================================
+  staging-ollama-postgres:
+    image: postgres:15.5-alpine
+    container_name: staging-ollama-postgres
+    hostname: postgres
+    restart: unless-stopped
+    labels:
+      <<: *common-labels
+      component: "database"
+      tier: "high"
+      backup_strategy: "gcp-daily"
+      monitoring_enabled: "true"
+
+    ports:
+      - "127.0.0.1:5432:5432"
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ollama}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-ollama}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+      PGDATA: /var/lib/postgresql/data/pgdata
+
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ollama}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+    networks:
+      ollama-network:
+        aliases:
+          - postgres
+          - staging-ollama-postgres
+
+  # ==========================================================================
+  # REDIS - Caching Layer
+  # ==========================================================================
+  staging-ollama-redis:
+    image: redis:7.2.3-alpine
+    container_name: staging-ollama-redis
+    hostname: redis
+    restart: unless-stopped
+    labels:
+      <<: *common-labels
+      component: "cache"
+      tier: "high"
+      backup_strategy: "gcp-daily"
+      monitoring_enabled: "true"
+
+    ports:
+      - "127.0.0.1:6379:6379"
+
+    command: redis-server --appendonly yes
+
+    volumes:
+      - redis-data:/data
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+    networks:
+      ollama-network:
+        aliases:
+          - redis
+          - staging-ollama-redis
+
+  # ==========================================================================
+  # QDRANT - Vector Database
+  # ==========================================================================
+  staging-ollama-qdrant:
+    image: qdrant/qdrant:v1.7.3
+    container_name: staging-ollama-qdrant
+    hostname: qdrant
+    restart: unless-stopped
+    labels:
+      <<: *common-labels
+      component: "vector-db"
+      tier: "high"
+      backup_strategy: "gcp-hourly"
+      monitoring_enabled: "true"
+
+    ports:
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+
+    volumes:
+      - qdrant-data:/qdrant/storage
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+    networks:
+      ollama-network:
+        aliases:
+          - qdrant
+          - staging-ollama-qdrant
+
+  # ==========================================================================
+  # PROMETHEUS - Metrics
+  # ==========================================================================
+  staging-ollama-prometheus:
+    image: prom/prometheus:v2.48.1
+    container_name: staging-ollama-prometheus
+    hostname: prometheus
+    restart: unless-stopped
+    user: "nobody"
+    labels:
+      <<: *common-labels
+      component: "monitoring"
+      tier: "medium"
+      backup_strategy: "gcp-weekly"
+      monitoring_enabled: "true"
+
+    ports:
+      # Host port is configurable to avoid local port conflicts.
+      # Default maps to 9091 on host -> 9090 in container.
+      - "127.0.0.1:${PROMETHEUS_HOST_PORT:-9092}:9090"
+
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+
+    networks:
+      ollama-network:
+        aliases:
+          - prometheus
+          - staging-ollama-prometheus
+
+  # ==========================================================================
+  # GRAFANA - Dashboards
+  # ==========================================================================
+  staging-ollama-grafana:
+    image: grafana/grafana:10.2.3
+    container_name: staging-ollama-grafana
+    hostname: grafana
+    restart: unless-stopped
+    labels:
+      <<: *common-labels
+      component: "monitoring"
+      tier: "medium"
+      backup_strategy: "config-only"
+      monitoring_enabled: "true"
+
+    ports:
+      - "127.0.0.1:3300:3000"
+
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_SERVER_ROOT_URL: "https://elevatediq.ai/grafana"
+
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+
+    depends_on:
+      - staging-ollama-prometheus
+
+    networks:
+      ollama-network:
+        aliases:
+          - grafana
+          - staging-ollama-grafana
+
+  # ==========================================================================
+  # JAEGER - Tracing
+  # ==========================================================================
+  staging-ollama-jaeger:
+    image: jaegertracing/all-in-one:1.52.0
+    container_name: staging-ollama-jaeger
+    hostname: jaeger
+    restart: unless-stopped
+    labels:
+      <<: *common-labels
+      component: "tracing"
+      tier: "medium"
+      backup_strategy: "gcp-weekly"
+      monitoring_enabled: "true"
+
+    ports:
+      - "127.0.0.1:${JAEGER_HOST_PORT:-16687}:16686"
+      - "127.0.0.1:${JAEGER_UDP_PORT:-6831}:6831/udp"
+
+    environment:
+      COLLECTOR_ZIPKIN_HOST_PORT: ":9411"
+
+    networks:
+      ollama-network:
+        aliases:
+          - jaeger
+          - staging-ollama-jaeger
+
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  qdrant-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+
+networks:
+  ollama-network:
+    driver: bridge
+    labels:
+      <<: *common-labels
+      component: "network"

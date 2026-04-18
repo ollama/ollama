@@ -1,0 +1,137 @@
+{
+  "timestamp": "2026-04-17T20:47:21.612437",
+  "repository": "offline",
+  "total_issues_processed": 0,
+  "pipeline_stages": [
+    "fetch",
+    "triage",
+    "analysis",
+    "github_updates"
+  ],
+  "pipeline": {
+    "fetch": {
+      "status": "success",
+      "issues_fetched": 0
+    },
+    "triage": {
+      "status": "skipped",
+      "reason": "no_issues_or_no_access",
+      "total_triaged": 0,
+      "target_severity": "low",
+      "target_count": 0
+    },
+    "analysis": {
+      "status": "skipped",
+      "reason": "no_issues"
+    },
+    "execution": {
+      "status": "skipped",
+      "dry_run": true,
+      "attempted": 0,
+      "succeeded": 0,
+      "failed": 0
+    }
+  },
+  "execution_results": [],
+  "state_transitions": {},
+  "orchestration": {
+    "run_id": "d28d71d00a38",
+    "mode": "all-severities",
+    "summaries": [
+      {
+        "timestamp": "2026-04-17T20:47:21.612227",
+        "repository": "offline",
+        "run_id": "d28d71d00a38",
+        "ops_ledger_file": ".github/issue_ops_ledger.jsonl",
+        "pipeline": {
+          "fetch": {
+            "status": "success",
+            "issues_fetched": 0
+          },
+          "triage": {
+            "status": "skipped",
+            "reason": "no_issues_or_no_access",
+            "total_triaged": 0,
+            "target_severity": "high",
+            "target_count": 0
+          },
+          "analysis": {
+            "status": "skipped",
+            "reason": "no_issues"
+          },
+          "execution": {
+            "status": "skipped",
+            "dry_run": true,
+            "attempted": 0,
+            "succeeded": 0,
+            "failed": 0
+          }
+        },
+        "issues_processed": []
+      },
+      {
+        "timestamp": "2026-04-17T20:47:21.612329",
+        "repository": "offline",
+        "run_id": "d28d71d00a38",
+        "ops_ledger_file": ".github/issue_ops_ledger.jsonl",
+        "pipeline": {
+          "fetch": {
+            "status": "success",
+            "issues_fetched": 0
+          },
+          "triage": {
+            "status": "skipped",
+            "reason": "no_issues_or_no_access",
+            "total_triaged": 0,
+            "target_severity": "medium",
+            "target_count": 0
+          },
+          "analysis": {
+            "status": "skipped",
+            "reason": "no_issues"
+          },
+          "execution": {
+            "status": "skipped",
+            "dry_run": true,
+            "attempted": 0,
+            "succeeded": 0,
+            "failed": 0
+          }
+        },
+        "issues_processed": []
+      },
+      {
+        "timestamp": "2026-04-17T20:47:21.612384",
+        "repository": "offline",
+        "run_id": "d28d71d00a38",
+        "ops_ledger_file": ".github/issue_ops_ledger.jsonl",
+        "pipeline": {
+          "fetch": {
+            "status": "success",
+            "issues_fetched": 0
+          },
+          "triage": {
+            "status": "skipped",
+            "reason": "no_issues_or_no_access",
+            "total_triaged": 0,
+            "target_severity": "low",
+            "target_count": 0
+          },
+          "analysis": {
+            "status": "skipped",
+            "reason": "no_issues"
+          },
+          "execution": {
+            "status": "skipped",
+            "dry_run": true,
+            "attempted": 0,
+            "succeeded": 0,
+            "failed": 0
+          }
+        },
+        "issues_processed": []
+      }
+    ],
+    "timestamp": "2026-04-17T20:47:21.612430"
+  }
+}

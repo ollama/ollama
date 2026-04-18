@@ -1,0 +1,59 @@
+{
+  "generated_at_utc": "2026-04-18T03:27:02.719962+00:00",
+  "repository": "kushin77/ollama",
+  "manifest": ".github/autonomous_execution_batches.json",
+  "processed": 46,
+  "labels_added": 0,
+  "comments_added": 20,
+  "already_marked": 17,
+  "comment_deferred": 9,
+  "rate_limit_blocked": false,
+  "failures": [],
+  "deferred_comment_issues": [
+    {
+      "issue": 148,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 149,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 150,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 151,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 152,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 153,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 154,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 155,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    },
+    {
+      "issue": 156,
+      "wave": 7,
+      "reason": "budget_or_rate_limit"
+    }
+  ]
+}

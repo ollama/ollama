@@ -1,0 +1,201 @@
+{
+  "version": "1.0",
+  "description": "Declarative IaC triage rules for Ollama issues",
+  "last_updated": "2026-04-17",
+  
+  "rules": [
+    {
+      "id": "security_critical",
+      "name": "Security Issues",
+      "labels": ["security"],
+      "severity": "critical",
+      "priority_score": 100,
+      "auto_actions": [
+        "label:security-critical",
+        "label:urgent",
+        "assign:security-team"
+      ],
+      "escalation": "notify:maintainers"
+    },
+    
+    {
+      "id": "startup_crashes",
+      "name": "Startup/Launch Failures",
+      "patterns": ["startup", "launch", "initialization", "boot", "crash on start"],
+      "severity": "critical",
+      "priority_score": 95,
+      "type": ["bug"],
+      "auto_actions": [
+        "label:critical",
+        "assign:core-team"
+      ],
+      "investigation_template": ".github/templates/startup_crash_investigation.md"
+    },
+    
+    {
+      "id": "gpu_failures",
+      "name": "GPU/Backend Failures",
+      "patterns": ["MLX", "CUDA", "Metal", "GPU", "backend", "libmlx", "libcuda"],
+      "severity": "high",
+      "priority_score": 85,
+      "labels": ["gpu", "backend", "mlx"],
+      "auto_actions": [
+        "label:gpu-related",
+        "label:backend"
+      ],
+      "requires_platform_testing": true,
+      "platforms": ["macos", "linux", "windows"]
+    },
+    
+    {
+      "id": "model_loading_issues",
+      "name": "Model Loading Failures",
+      "patterns": ["fail to load", "model.*fail", "cannot load", "missing.*lib"],
+      "severity": "high",
+      "priority_score": 80,
+      "auto_actions": [
+        "label:model-loading"
+      ]
+    },
+    
+    {
+      "id": "api_incompatibility",
+      "name": "OpenAI API Compatibility Issues",
+      "patterns": ["v1/", "openai", "compatibility", "endpoint"],
+      "severity": "high",
+      "priority_score": 75,
+      "auto_actions": [
+        "label:api",
+        "label:openai-compat"
+      ]
+    },
+    
+    {
+      "id": "memory_issues",
+      "name": "Memory/Performance Issues",
+      "labels": ["performance", "memory", "memory-leak"],
+      "patterns": ["memory", "out of memory", "oom", "slow", "performance"],
+      "severity": "high",
+      "priority_score": 70,
+      "auto_actions": [
+        "label:performance",
+        "label:needs-investigation"
+      ],
+      "requires_profiling": true
+    },
+    
+    {
+      "id": "cloud_integration",
+      "name": "Cloud Integration Issues",
+      "labels": ["cloud"],
+      "patterns": ["cloud", "ollama cloud", ":cloud"],
+      "severity": "medium",
+      "priority_score": 50,
+      "requires_documentation": true
+    },
+    
+    {
+      "id": "feature_requests",
+      "name": "Feature Requests",
+      "labels": ["feature request", "enhancement"],
+      "severity": "low",
+      "priority_score": 20,
+      "type": ["feature", "enhancement"],
+      "requires_discussion": true,
+      "auto_actions": [
+        "label:needs-discussion",
+        "label:rfc"
+      ]
+    },
+    
+    {
+      "id": "documentation_gaps",
+      "name": "Documentation Issues",
+      "labels": ["documentation", "docs"],
+      "severity": "medium",
+      "priority_score": 30,
+      "type": ["documentation"],
+      "auto_actions": [
+        "label:documentation"
+      ]
+    },
+    
+    {
+      "id": "regression",
+      "name": "Regression Issues",
+      "labels": ["regression"],
+      "patterns": ["worked in", "broke in", "regression", "used to work"],
+      "severity": "critical",
+      "priority_score": 90,
+      "auto_actions": [
+        "label:regression",
+        "label:critical"
+      ],
+      "requires_bisect": true
+    },
+    
+    {
+      "id": "third_party_integration",
+      "name": "Third-party Integration Issues",
+      "patterns": ["langchain", "llamaindex", "integration", "plugin"],
+      "severity": "medium",
+      "priority_score": 40,
+      "auto_actions": [
+        "label:integration"
+      ]
+    }
+  ],
+  
+  "routing": {
+    "critical": {
+      "max_response_time_hours": 2,
+      "require_maintainer_review": true,
+      "auto_notify": ["@ollama/maintainers"]
+    },
+    "high": {
+      "max_response_time_hours": 24,
+      "require_review": true,
+      "auto_notify": ["@ollama/contributors"]
+    },
+    "medium": {
+      "max_response_time_hours": 72,
+      "require_review": false
+    },
+    "low": {
+      "max_response_time_hours": 168,
+      "backlog": true
+    }
+  },
+  
+  "workflows": {
+    "bug_investigation": {
+      "steps": [
+        "reproduce",
+        "isolate",
+        "root_cause_analysis",
+        "fix_implementation",
+        "testing",
+        "regression_check"
+      ]
+    },
+    "feature_implementation": {
+      "steps": [
+        "requirements_clarification",
+        "design_review",
+        "implementation",
+        "testing",
+        "documentation",
+        "release_notes"
+      ]
+    },
+    "performance_optimization": {
+      "steps": [
+        "baseline_measurement",
+        "profiling",
+        "optimization",
+        "benchmark_validation",
+        "regression_testing"
+      ]
+    }
+  }
+}

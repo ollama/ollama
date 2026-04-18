@@ -1,0 +1,3 @@
+Method,Name,Error,Occurrences
+POST,/api/v1/generate,HTTPError('500 Server Error: Internal Server Error for url: /api/v1/generate'),6568
+GET,/api/v1/models,HTTPError('500 Server Error: Internal Server Error for url: /api/v1/models'),2206

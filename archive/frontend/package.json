@@ -1,0 +1,51 @@
+{
+  "name": "ollama-frontend",
+  "version": "1.0.0",
+  "description": "Elite AI Platform - Production-grade frontend for local AI inference",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit",
+    "test": "jest",
+    "test:e2e": "playwright test",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css,md}\""
+  },
+  "dependencies": {
+    "next": "^14.2.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "firebase": "^11.1.0",
+    "@heroicons/react": "^2.1.0",
+    "axios": "^1.7.0",
+    "classnames": "^2.5.0",
+    "date-fns": "^4.1.0",
+    "zustand": "^5.0.0",
+    "react-markdown": "^9.0.0",
+    "react-syntax-highlighter": "^15.6.0",
+    "react-hot-toast": "^2.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@types/react-syntax-highlighter": "^15.5.0",
+    "typescript": "^5.6.0",
+    "tailwindcss": "^3.4.0",
+    "postcss": "^8.4.0",
+    "autoprefixer": "^10.4.0",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^14.2.0",
+    "prettier": "^3.4.0",
+    "@playwright/test": "^1.49.0",
+    "jest": "^29.7.0",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/jest-dom": "^6.6.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  }
+}
