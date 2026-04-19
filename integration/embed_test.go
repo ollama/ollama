@@ -73,7 +73,7 @@ func manhattanDistance[V float32 | float64](v1, v2 []V) V {
 }
 
 func TestEmbedCosineDistanceCorrelation(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	client, _, cleanup := InitServerConnection(ctx, t)
 	defer cleanup()

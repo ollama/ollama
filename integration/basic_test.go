@@ -38,8 +38,8 @@ func TestUnicode(t *testing.T) {
 	if testModel != "" {
 		t.Skip("uses hardcoded model, not applicable with model override")
 	}
-	skipUnderMinVRAM(t, 6)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	skipUnderMinVRAM(t, 12) // Actual model load is ~26G
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	// Set up the test data
 	req := api.ChatRequest{
@@ -78,7 +78,7 @@ func TestUnicode(t *testing.T) {
 	DoChat(ctx, t, client, req, []string{
 		"散射", // scattering
 		"频率", // frequency
-	}, 120*time.Second, 120*time.Second)
+	}, 180*time.Second, 30*time.Second)
 }
 
 func TestExtendedUnicodeOutput(t *testing.T) {
