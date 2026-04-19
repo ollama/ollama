@@ -24,9 +24,9 @@
 set(_compat_dir ${CMAKE_CURRENT_LIST_DIR})
 
 # Expose a single variable the main CMakeLists passes into FetchContent's
-# PATCH_COMMAND. Uses CMake's own `-E copy` so it's cross-platform; uses
-# `git apply` because the patch is in unified git-diff format (same as what
-# `git diff` produces — regeneration is one command, see README).
+# PATCH_COMMAND. Uses CMake's own `-E copy` for cross-platform file copy.
+# The patch itself is applied via a small CMake script so the step is
+# idempotent — re-configuring or rebuilding won't fail with "already applied".
 set(OLLAMA_LLAMA_CPP_COMPAT_PATCH_COMMAND
     ${CMAKE_COMMAND} -E copy
         "${_compat_dir}/llama-ollama-compat.h"
@@ -34,8 +34,9 @@ set(OLLAMA_LLAMA_CPP_COMPAT_PATCH_COMMAND
     COMMAND ${CMAKE_COMMAND} -E copy
         "${_compat_dir}/llama-ollama-compat.cpp"
         "src/llama-ollama-compat.cpp"
-    COMMAND git apply --whitespace=nowarn
-        "${_compat_dir}/upstream-edits.patch"
+    COMMAND ${CMAKE_COMMAND}
+        -DPATCH_FILE=${_compat_dir}/upstream-edits.patch
+        -P ${_compat_dir}/apply-patch.cmake
     CACHE INTERNAL "llama.cpp compat patch command for FetchContent")
 
 # Also export the individual paths in case callers want to do something
