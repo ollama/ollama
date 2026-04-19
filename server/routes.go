@@ -1643,7 +1643,7 @@ func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 	}
 }
 
-func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
+func (s *Server) GenerateRoutes(logger *slog.Logger, rc *ollama.Registry) (http.Handler, error) {
 	corsConfig := cors.DefaultConfig()
 	corsConfig.AllowWildcard = true
 	corsConfig.AllowBrowserExtensions = true
@@ -1736,7 +1736,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 		// wrap old with new
 		rs := &registry.Local{
 			Client:   rc,
-			Logger:   slog.Default(), // TODO(bmizerany): Take a logger, do not use slog.Default()
+			Logger:   logger,
 			Fallback: r,
 
 			Prune: PruneLayers,
@@ -1795,7 +1795,7 @@ func Serve(ln net.Listener) error {
 		}
 	}
 
-	h, err := s.GenerateRoutes(rc)
+	h, err := s.GenerateRoutes(slog.Default(), rc)
 	if err != nil {
 		return err
 	}
