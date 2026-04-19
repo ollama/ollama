@@ -4,15 +4,17 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
 const LevelTrace slog.Level = -8
 
 func NewLogger(w io.Writer, level slog.Level) *slog.Logger {
-	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{
+	handlerOptions := &slog.HandlerOptions{
 		Level:     level,
 		AddSource: true,
 		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
@@ -28,7 +30,14 @@ func NewLogger(w io.Writer, level slog.Level) *slog.Logger {
 			}
 			return attr
 		},
-	}))
+	}
+
+	logFormat := strings.ToLower(os.Getenv("OLLAMA_LOG_FORMAT"))
+	if logFormat == "json" {
+		return slog.New(slog.NewJSONHandler(w, handlerOptions))
+	}
+
+	return slog.New(slog.NewTextHandler(w, handlerOptions))
 }
 
 type key string
