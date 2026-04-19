@@ -1,50 +1,3 @@
-diff --git a/ggml/include/gguf.h b/ggml/include/gguf.h
-index 02d5f221c..2f64264f4 100644
---- a/ggml/include/gguf.h
-+++ b/ggml/include/gguf.h
-@@ -162,6 +162,9 @@ extern "C" {
-     // assumes that at least gguf_get_tensor_size bytes can be read from data
-     GGML_API void gguf_set_tensor_data(struct gguf_context * ctx, const char * name, const void * data);
- 
-+    // rename a tensor. Returns false if old_name is not present.
-+    GGML_API bool gguf_rename_tensor(struct gguf_context * ctx, const char * old_name, const char * new_name);
-+
-     // writing gguf files can be done in 3 ways:
-     //
-     // - write the entire gguf_context to a binary file in a single pass:
-diff --git a/ggml/src/gguf.cpp b/ggml/src/gguf.cpp
-index ab3cc9748..e3d06c959 100644
---- a/ggml/src/gguf.cpp
-+++ b/ggml/src/gguf.cpp
-@@ -1280,6 +1280,16 @@ void gguf_set_tensor_data(struct gguf_context * ctx, const char * name, const vo
-     ctx->info[tensor_id].t.data = (void *)(uintptr_t)data; // double cast suppresses warning about casting away const
- }
- 
-+bool gguf_rename_tensor(struct gguf_context * ctx, const char * old_name, const char * new_name) {
-+    const int64_t tensor_id = gguf_find_tensor(ctx, old_name);
-+    if (tensor_id < 0) {
-+        return false;
-+    }
-+    // ggml_set_name truncates to GGML_MAX_NAME.
-+    ggml_set_name(&ctx->info[tensor_id].t, new_name);
-+    return true;
-+}
-+
- struct gguf_writer_base {
-     size_t written_bytes {0u};
- 
-diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
-index 7b1fcfca0..155a819fa 100644
---- a/src/CMakeLists.txt
-+++ b/src/CMakeLists.txt
-@@ -32,6 +32,7 @@ add_library(llama
-             llama-model-loader.cpp
-             llama-model-saver.cpp
-             llama-model.cpp
-+            llama-ollama-compat.cpp
-             llama-quant.cpp
-             llama-sampler.cpp
-             llama-vocab.cpp
 diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
 index 4e65a45a5..75836c683 100644
 --- a/src/llama-model-loader.cpp
@@ -108,14 +61,14 @@ index 4ded484dd..7d3509c23 100644
  
      if (use_mmap_buffer) {
 diff --git a/tools/mtmd/clip.cpp b/tools/mtmd/clip.cpp
-index f0e8786b6..1e6319ca0 100644
+index f0e8786b6..35defa89d 100644
 --- a/tools/mtmd/clip.cpp
 +++ b/tools/mtmd/clip.cpp
 @@ -10,6 +10,8 @@
  #include "ggml-backend.h"
  #include "gguf.h"
  
-+#include "src/llama-ollama-compat.h"
++#include "llama-ollama-compat.h"
 +
  #include <algorithm>
  #include <cassert>
