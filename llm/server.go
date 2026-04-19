@@ -298,8 +298,8 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 
 	if err != nil {
 		var msg string
-		if s.status != nil && s.status.LastErrMsg != "" {
-			msg = s.status.LastErrMsg
+		if s.status != nil {
+			msg = s.status.Err()
 		}
 		err := fmt.Errorf("error starting runner: %v %s", err, msg)
 		if llamaModel != nil {
@@ -312,12 +312,12 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	go func() {
 		err := s.cmd.Wait()
 		// Favor a more detailed message over the process exit status
-		if err != nil && s.status != nil && s.status.LastErrMsg != "" {
+		if err != nil && s.status != nil && s.status.Err() != "" {
 			slog.Error("llama runner terminated", "error", err)
-			if strings.Contains(s.status.LastErrMsg, "unknown model") {
-				s.status.LastErrMsg = "this model is not supported by your version of Ollama. You may need to upgrade"
+			if strings.Contains(s.status.Err(), "unknown model") {
+				s.status.SetErr("this model is not supported by your version of Ollama. You may need to upgrade")
 			}
-			s.doneErr = errors.New(s.status.LastErrMsg)
+			s.doneErr = errors.New(s.status.Err())
 		} else {
 			s.doneErr = err
 		}
@@ -1276,8 +1276,8 @@ func (s *llmServer) getServerStatus(ctx context.Context) (ServerStatus, error) {
 	// Fail fast if its exited
 	if s.cmd.ProcessState != nil {
 		msg := ""
-		if s.status != nil && s.status.LastErrMsg != "" {
-			msg = s.status.LastErrMsg
+		if s.status != nil {
+			msg = s.status.Err()
 		}
 		if s.cmd.ProcessState.ExitCode() == -1 {
 			// Most likely a signal killed it, log some more details to try to help troubleshoot
@@ -1377,15 +1377,15 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 		if time.Now().After(stallTimer) {
 			// timeout
 			msg := ""
-			if s.status != nil && s.status.LastErrMsg != "" {
-				msg = s.status.LastErrMsg
+			if s.status != nil {
+				msg = s.status.Err()
 			}
 			return fmt.Errorf("timed out waiting for llama runner to start - progress %0.2f - %s", s.loadProgress, msg)
 		}
 		if s.cmd.ProcessState != nil {
 			msg := ""
-			if s.status != nil && s.status.LastErrMsg != "" {
-				msg = s.status.LastErrMsg
+			if s.status != nil {
+				msg = s.status.Err()
 			}
 			return fmt.Errorf("llama runner process no longer running: %d %s", s.cmd.ProcessState.ExitCode(), msg)
 		}
@@ -1695,8 +1695,8 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		if strings.Contains(err.Error(), "unexpected EOF") || strings.Contains(err.Error(), "forcibly closed") {
 			s.Close()
 			var msg string
-			if s.status != nil && s.status.LastErrMsg != "" {
-				msg = s.status.LastErrMsg
+			if s.status != nil && s.status.Err() != "" {
+				msg = s.status.Err()
 			} else {
 				msg = err.Error()
 			}
