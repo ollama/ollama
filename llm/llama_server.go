@@ -433,9 +433,9 @@ func NewLlamaServerRunner(
 	// and aborts model load. So gate on an explicit allowlist that mirrors
 	// the compat layer's clip-side coverage in llama/compat/.
 	compatClipArches := map[string]bool{
-		"gemma3": true,
+		"gemma3":    true,
+		"qwen35moe": true,
 		// Add entries as llama/compat grows clip handlers.
-		// "qwen35moe": true,
 	}
 	if len(projectors) == 0 &&
 		len(f.Tensors().Items("v.")) > 0 &&
