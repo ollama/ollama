@@ -465,16 +465,16 @@ func testCache(t *testing.T, backend ml.Backend, cache Cache, tests []testCase) 
 
 			context.Forward(out, mask).Compute(out, mask)
 
-			if !slices.Equal(out.Floats(), test.expected) {
-				t.Errorf("TestCache: have %v; want %v", out.Floats(), test.expected)
+			if !slices.Equal(out.Floats(nil), test.expected) {
+				t.Errorf("TestCache: have %v; want %v", out.Floats(nil), test.expected)
 			}
 
 			if !slices.Equal(out.Shape(), test.expectedShape) {
 				t.Errorf("TestCache: has shape %v; want %v", out.Shape(), test.expectedShape)
 			}
 
-			if !slices.Equal(mask.Floats(), test.expectedMask) {
-				t.Errorf("TestCache: have mask: have %v want %v", mask.Floats(), test.expectedMask)
+			if !slices.Equal(mask.Floats(nil), test.expectedMask) {
+				t.Errorf("TestCache: have mask: have %v want %v", mask.Floats(nil), test.expectedMask)
 			}
 		})
 	}
@@ -734,10 +734,13 @@ func (t *testTensor) DType() ml.DType {
 	return t.dtype
 }
 
-func (t *testTensor) Floats() []float32 {
-	out := make([]float32, len(t.data))
-	copy(out, t.data)
-	return out
+func (t *testTensor) Floats(dst []float32) []float32 {
+	if cap(dst) < len(t.data) {
+		dst = make([]float32, len(t.data))
+	}
+	dst = dst[:len(t.data)]
+	copy(dst, t.data)
+	return dst
 }
 
 func (t *testTensor) Neg(ctx ml.Context) ml.Tensor {

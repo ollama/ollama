@@ -56,7 +56,7 @@ func TestForward(t *testing.T) {
 			tt = typ.Forward(ctx, tt)
 
 			ctx.Forward(tt).Compute(tt)
-			if diff := cmp.Diff(want, tt.Floats()); diff != "" {
+			if diff := cmp.Diff(want, tt.Floats(nil)); diff != "" {
 				t.Error(diff)
 			}
 		})

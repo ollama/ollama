@@ -23,6 +23,7 @@ type Sampler struct {
 	minP        float32
 	temperature float32
 	grammar     *GrammarSampler
+	tokenBuf    []token
 }
 
 func (s *Sampler) Sample(logits []float32) (int32, error) {
@@ -30,7 +31,10 @@ func (s *Sampler) Sample(logits []float32) (int32, error) {
 		return -1, errors.New("sample: no logits provided to sample")
 	}
 
-	tokens := make([]token, len(logits))
+	if cap(s.tokenBuf) < len(logits) {
+		s.tokenBuf = make([]token, len(logits))
+	}
+	tokens := s.tokenBuf[:len(logits)]
 	for i := range logits {
 		tokens[i].id = int32(i)
 		tokens[i].value = logits[i]
@@ -165,7 +169,8 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 }
 
 type GrammarSampler struct {
-	grammar *llama.Grammar
+	grammar      *llama.Grammar
+	tokenDataBuf []llama.TokenData
 }
 
 func NewGrammarSampler(tok tokenizer.Tokenizer, grammarStr string) (*GrammarSampler, error) {
@@ -185,7 +190,11 @@ func NewGrammarSampler(tok tokenizer.Tokenizer, grammarStr string) (*GrammarSamp
 }
 
 func (g *GrammarSampler) Apply(tokens []token) {
-	tds := make([]llama.TokenData, len(tokens))
+	if cap(g.tokenDataBuf) < len(tokens) {
+		g.tokenDataBuf = make([]llama.TokenData, len(tokens))
+	}
+	tds := g.tokenDataBuf[:len(tokens)]
+
 	for i, token := range tokens {
 		tds[i].ID = token.id
 		tds[i].Logit = token.value
