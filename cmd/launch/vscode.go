@@ -358,9 +358,11 @@ func (v *VSCode) statePath() string {
 }
 
 // ShowInModelPicker ensures the given models are visible in VS Code's Copilot
-// Chat model picker. It sets the configured models to true in the picker
-// preferences so they appear in the dropdown. Models use the VS Code identifier
-// format "ollama/Ollama/<name>".
+// Chat model picker and sets the primary model as the active selection. It sets
+// the configured models to true in the picker preferences so they appear in the
+// dropdown, and writes the first model as the selected model for both the panel
+// and editor chat views. Models use the VS Code identifier format
+// "ollama/Ollama/<name>".
 func (v *VSCode) ShowInModelPicker(models []string) error {
 	if len(models) == 0 {
 		return nil
@@ -397,22 +399,25 @@ func (v *VSCode) ShowInModelPicker(models []string) error {
 	// Build name→ID map from VS Code's cached model list.
 	// VS Code uses numeric IDs like "ollama/Ollama/4", not "ollama/Ollama/kimi-k2.5:cloud".
 	nameToID := make(map[string]string)
+	var cached []map[string]any
 	var cacheJSON string
 	if err := db.QueryRow("SELECT value FROM ItemTable WHERE key = 'chat.cachedLanguageModels.v2'").Scan(&cacheJSON); err == nil {
-		var cached []map[string]any
-		if json.Unmarshal([]byte(cacheJSON), &cached) == nil {
-			for _, entry := range cached {
-				meta, _ := entry["metadata"].(map[string]any)
-				if meta == nil {
-					continue
-				}
-				if vendor, _ := meta["vendor"].(string); vendor == "ollama" {
-					name, _ := meta["name"].(string)
-					id, _ := entry["identifier"].(string)
-					if name != "" && id != "" {
-						nameToID[name] = id
-					}
-				}
+		_ = json.Unmarshal([]byte(cacheJSON), &cached)
+	}
+	cachedNames := make(map[string]bool)
+	for _, entry := range cached {
+		meta, _ := entry["metadata"].(map[string]any)
+		if meta == nil {
+			continue
+		}
+		if vendor, _ := meta["vendor"].(string); vendor == "ollama" {
+			name, _ := meta["name"].(string)
+			id, _ := entry["identifier"].(string)
+			if name != "" && id != "" {
+				nameToID[name] = id
+			}
+			if name != "" {
+				cachedNames[name] = true
 			}
 		}
 	}
@@ -437,10 +442,68 @@ func (v *VSCode) ShowInModelPicker(models []string) error {
 		return err
 	}
 
+	// Set the primary model as the active selection in Copilot Chat so it
+	// doesn't default to "auto" or whatever the user last picked manually.
+	primaryID := v.modelVSCodeIDs(models[0], nameToID)[0]
+	for _, key := range []string{"chat.currentLanguageModel.panel", "chat.currentLanguageModel.editor"} {
+		if _, err := db.Exec("INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)", key, primaryID); err != nil {
+			return err
+		}
+		if _, err := db.Exec("INSERT OR REPLACE INTO ItemTable (key, value) VALUES (?, ?)", key+".isDefault", "false"); err != nil {
+			return err
+		}
+	}
+
+	// Ensure configured models exist in the cached model list so VS Code can
+	// restore the selection immediately on startup, before extensions load.
+	// Without this, a model that was never previously used won't be in the
+	// cache, and VS Code falls back to "auto" until the Ollama BYOK provider
+	// discovers it via the API (which is slow).
+	cacheChanged := false
+	for _, m := range models {
+		if cachedNames[m] {
+			continue
+		}
+		if !strings.Contains(m, ":") && cachedNames[m+":latest"] {
+			continue
+		}
+		cacheID := m
+		if !strings.Contains(m, ":") {
+			cacheID = m + ":latest"
+		}
+		cached = append(cached, map[string]any{
+			"identifier": "ollama/Ollama/" + cacheID,
+			"metadata": map[string]any{
+				"extension":            map[string]any{"value": "github.copilot-chat"},
+				"name":                 m,
+				"id":                   m,
+				"vendor":               "ollama",
+				"version":              "1.0.0",
+				"family":               m,
+				"detail":               "Ollama",
+				"maxInputTokens":       4096,
+				"maxOutputTokens":      4096,
+				"isDefaultForLocation": map[string]any{},
+				"isUserSelectable":     true,
+				"capabilities":         map[string]any{"toolCalling": true},
+			},
+		})
+		cacheChanged = true
+	}
+	if cacheChanged {
+		cacheData, _ := json.Marshal(cached)
+		if _, err := db.Exec("INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('chat.cachedLanguageModels.v2', ?)", string(cacheData)); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
 // modelVSCodeIDs returns all possible VS Code picker IDs for a model name.
+// The primary (first) ID should match the live identifier that VS Code assigns
+// at runtime via toModelIdentifier(vendor, group, m.id), where m.id comes from
+// /api/tags and always includes the tag (e.g. "llama3.2:latest").
 func (v *VSCode) modelVSCodeIDs(model string, nameToID map[string]string) []string {
 	var ids []string
 	if id, ok := nameToID[model]; ok {
@@ -450,10 +513,13 @@ func (v *VSCode) modelVSCodeIDs(model string, nameToID map[string]string) []stri
 			ids = append(ids, id)
 		}
 	}
-	ids = append(ids, "ollama/Ollama/"+model)
+	// For untagged models, the live identifier includes :latest
+	// (e.g. ollama/Ollama/llama3.2:latest), so prefer that format
+	// to avoid a mismatch that causes VS Code to reset to "auto".
 	if !strings.Contains(model, ":") {
 		ids = append(ids, "ollama/Ollama/"+model+":latest")
 	}
+	ids = append(ids, "ollama/Ollama/"+model)
 	return ids
 }
 
