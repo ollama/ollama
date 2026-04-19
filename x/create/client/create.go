@@ -134,6 +134,16 @@ func CreateModel(opts CreateOptions, p *progress.Progress) error {
 		spinnerKey = "create"
 		capabilities = inferSafetensorsCapabilities(opts.ModelDir)
 
+		// Check if model has a vision encoder
+		if supportsVision(opts.ModelDir) {
+			capabilities = append(capabilities, "vision")
+		}
+
+		// Check if model has an audio encoder
+		if supportsAudio(opts.ModelDir) {
+			capabilities = append(capabilities, "audio")
+		}
+
 		// Set parser and renderer name based on architecture
 		parserName = getParserName(opts.ModelDir)
 		rendererName = getRendererName(opts.ModelDir)
