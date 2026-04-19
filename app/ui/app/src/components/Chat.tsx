@@ -16,19 +16,67 @@ import {
 } from "@/hooks/useChats";
 import { useHealth } from "@/hooks/useHealth";
 import { useMessageAutoscroll } from "@/hooks/useMessageAutoscroll";
+import { Message } from "@/gotypes";
 import {
   useState,
-  useEffect,
-  useLayoutEffect,
   useRef,
+  useEffect,
   useCallback,
+  useMemo,
+  useLayoutEffect,
 } from "react";
+
+// Session token stats component
+function SessionTokenStats({ messages }: { messages: Message[] }) {
+  const stats = useMemo(() => {
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let messageCount = 0;
+
+    messages.forEach((msg) => {
+      if (msg.role === "user") {
+        messageCount++;
+      }
+      const metrics = (msg as any).metrics;
+      if (metrics) {
+        inputTokens += metrics.prompt_eval_count ?? 0;
+        outputTokens += metrics.eval_count ?? 0;
+      }
+    });
+
+    const totalTokens = inputTokens + outputTokens;
+    return { inputTokens, outputTokens, totalTokens, messageCount };
+  }, [messages]);
+
+  if (stats.totalTokens === 0) return null;
+
+  return (
+    <div className="flex items-center justify-center gap-4 py-2 text-xs text-neutral-500 dark:text-neutral-400 border-t border-neutral-200 dark:border-neutral-700">
+      <span className="flex items-center gap-1">
+        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 2H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+        {stats.inputTokens} in
+      </span>
+      <span className="flex items-center gap-1">
+        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+        </svg>
+        {stats.outputTokens} out
+      </span>
+      <span className="text-neutral-400">|</span>
+      <span>{stats.messageCount} msgs</span>
+      <span className="text-neutral-400">|</span>
+      <span className="font-medium">{stats.totalTokens} total</span>
+    </div>
+);
+}
+
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useSelectedModel } from "@/hooks/useSelectedModel";
 import { useUser } from "@/hooks/useUser";
 import { useHasVisionCapability } from "@/hooks/useModelCapabilities";
-import { Message } from "@/gotypes";
 
 export default function Chat({ chatId }: { chatId: string }) {
   const queryClient = useQueryClient();
@@ -288,6 +336,11 @@ export default function Chat({ chatId }: { chatId: string }) {
               isDownloadingModel={isDownloadingModel}
               onFilesReceived={handleFilesReceived}
             />
+
+            {/* Session token stats */}
+            {messages.length > 0 && (
+              <SessionTokenStats messages={messages} />
+            )}
           </div>
         </main>
       )}
