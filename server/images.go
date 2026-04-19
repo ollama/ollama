@@ -147,7 +147,7 @@ func (m *Model) Capabilities() []model.Capability {
 	}
 
 	// Skip the thinking check if it's already set
-	if slices.Contains(capabilities, "thinking") {
+	if slices.Contains(capabilities, model.CapabilityThinking) {
 		return capabilities
 	}
 
