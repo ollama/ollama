@@ -9,6 +9,7 @@ export const FEATURED_MODELS = [
   "qwen3.5:397b-cloud",
   "gpt-oss:120b-cloud",
   "gpt-oss:20b-cloud",
+  "gemini-3-pro-preview",
   "deepseek-v3.1:671b-cloud",
   "gpt-oss:120b",
   "gpt-oss:20b",
@@ -41,7 +42,9 @@ export function mergeModels(
   const cloudModels = [...allModels.filter((m) => m.isCloud())];
 
   // Add any cloud models from FEATURED_MODELS that aren't in local models
-  FEATURED_MODELS.filter((f) => f.endsWith("cloud")).forEach((cloudModel) => {
+  FEATURED_MODELS.filter(
+    (f) => f.endsWith("cloud") || f === "gemini-3-pro-preview",
+  ).forEach((cloudModel) => {
     if (!cloudModels.some((m) => m.model === cloudModel)) {
       cloudModels.push(new Model({ model: cloudModel }));
     }
@@ -49,7 +52,7 @@ export function mergeModels(
 
   // 2. Get other featured models (non-cloud)
   const featuredModels = FEATURED_MODELS.filter(
-    (f) => !f.endsWith("cloud"),
+    (f) => !f.endsWith("cloud") && f !== "gemini-3-pro-preview",
   ).map((model) => {
     // Check if this model exists in local models
     const localMatch = allModels.find(
