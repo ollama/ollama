@@ -375,6 +375,8 @@ func FromMessagesRequest(r MessagesRequest) (*api.ChatRequest, error) {
 	var think *api.ThinkValue
 	if r.Thinking != nil && r.Thinking.Type == "enabled" {
 		think = &api.ThinkValue{Value: true}
+	} else if r.Thinking != nil && r.Thinking.Type == "disabled" {
+		think = &api.ThinkValue{Value: false}
 	}
 
 	stream := r.Stream
