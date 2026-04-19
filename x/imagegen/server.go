@@ -408,7 +408,7 @@ func (s *Server) ContextLength() int {
 }
 
 // Embedding returns embeddings for the input.
-func (s *Server) Embedding(ctx context.Context, input string) ([]float32, int, error) {
+func (s *Server) Embedding(ctx context.Context, input string, image *llm.ImageData) ([]float32, int, error) {
 	return nil, 0, errors.New("embeddings not supported for MLX models")
 }
 

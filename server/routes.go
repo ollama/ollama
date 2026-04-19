@@ -699,12 +699,12 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	var input []string
+	var inputs []api.EmbedInput
 
 	switch i := req.Input.(type) {
 	case string:
 		if len(i) > 0 {
-			input = append(input, i)
+			inputs = append(inputs, api.EmbedInput{Text: i})
 		}
 	case []any:
 		for _, v := range i {
@@ -712,7 +712,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid input type"})
 				return
 			}
-			input = append(input, v.(string))
+			inputs = append(inputs, api.EmbedInput{Text: v.(string)})
 		}
 	default:
 		if req.Input != nil {
@@ -720,6 +720,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			return
 		}
 	}
+	inputs = append(inputs, req.Inputs...)
 
 	name, err := getExistingName(modelRef.Name)
 	if err != nil {
@@ -735,7 +736,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 
 	checkpointLoaded := time.Now()
 
-	if len(input) == 0 {
+	if len(inputs) == 0 {
 		c.JSON(http.StatusOK, api.EmbedResponse{Model: req.Model, Embeddings: [][]float32{}})
 		return
 	}
@@ -748,8 +749,13 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	embedWithRetry := func(text string) ([]float32, int, error) {
-		emb, tokCount, err := r.Embedding(ctx, text)
+	embedWithRetry := func(item api.EmbedInput) ([]float32, int, error) {
+		var image *llm.ImageData
+		if len(item.Image) > 0 {
+			image = &llm.ImageData{ID: 0, Data: item.Image}
+		}
+
+		emb, tokCount, err := r.Embedding(ctx, item.Text, image)
 		if err == nil {
 			return emb, tokCount, nil
 		}
@@ -762,7 +768,11 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			return nil, 0, err
 		}
 
-		tokens, err := r.Tokenize(ctx, text)
+		if item.Text == "" {
+			return nil, 0, err
+		}
+
+		tokens, err := r.Tokenize(ctx, item.Text)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -788,15 +798,15 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		if err != nil {
 			return nil, 0, err
 		}
-		return r.Embedding(ctx, truncated)
+		return r.Embedding(ctx, truncated, image)
 	}
 
 	var g errgroup.Group
-	embeddings := make([][]float32, len(input))
+	embeddings := make([][]float32, len(inputs))
 	var totalTokens uint64
-	for i, text := range input {
+	for i, item := range inputs {
 		g.Go(func() error {
-			embedding, tokenCount, err := embedWithRetry(text)
+			embedding, tokenCount, err := embedWithRetry(item)
 			if err != nil {
 				return err
 			}
@@ -894,7 +904,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	embedding, _, err := r.Embedding(c.Request.Context(), req.Prompt)
+	embedding, _, err := r.Embedding(c.Request.Context(), req.Prompt, nil)
 	if err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
 		return
@@ -1731,6 +1741,9 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 
 	// Inference (Anthropic compatibility)
 	r.POST("/v1/messages", s.withInferenceRequestLogging("/v1/messages", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.AnthropicMessagesMiddleware(), s.ChatHandler)...)
+
+	// Inference (Cohere compatibility)
+	r.POST("/v2/embed", cloudPassthroughMiddleware(cloudErrRemoteInferenceUnavailable), middleware.CohereEmbedMiddleware(), s.EmbedHandler)
 
 	if rc != nil {
 		// wrap old with new
