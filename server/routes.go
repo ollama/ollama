@@ -244,11 +244,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
-		return
-	}
-
 	if modelRef.Source == modelSourceLocal && m.Config.RemoteHost != "" && m.Config.RemoteModel != "" {
 		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
 		return
@@ -2149,11 +2144,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
-		return
-	}
-
-	if req.TopLogprobs < 0 || req.TopLogprobs > 20 {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "top_logprobs must be between 0 and 20"})
 		return
 	}
 
