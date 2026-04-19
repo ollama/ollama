@@ -1,9 +1,9 @@
 package tokenizer
 
 import (
-	"container/heap"
 	"fmt"
 	"log/slog"
+	"math"
 	"strconv"
 	"strings"
 
@@ -53,6 +53,9 @@ func (spm SentencePiece) Is(id int32, special Special) bool {
 }
 
 func (spm SentencePiece) Encode(s string, addSpecial bool) ([]int32, error) {
+	if spm.vocab.AddSpacePrefix {
+		s = " " + s
+	}
 	fragments := []fragment{{value: s}}
 	for _, special := range spm.vocab.SpecialVocabulary() {
 		id := spm.vocab.Encode(special)
@@ -94,91 +97,7 @@ func (spm SentencePiece) Encode(s string, addSpecial bool) ([]int32, error) {
 			continue
 		}
 
-		q := &queue{}
-		heap.Init(q)
-
-		runes := []rune(text)
-		merges := make([]merge, len(runes))
-		for r := range runes {
-			merges[r] = merge{
-				p:     r - 1,
-				n:     r + 1,
-				runes: []rune{runes[r]},
-			}
-		}
-
-		pairwise := func(a, b int) *candidate {
-			if a < 0 || b >= len(runes) {
-				return nil
-			}
-
-			left, right := string(merges[a].runes), string(merges[b].runes)
-			if id := spm.vocab.Encode(left + right); id >= 0 {
-				return &candidate{
-					a:     a,
-					b:     b,
-					score: spm.vocab.Scores[id],
-					size:  len(left) + len(right),
-				}
-			}
-
-			return nil
-		}
-
-		for i := range len(runes) - 1 {
-			if pair := pairwise(i, i+1); pair != nil {
-				heap.Push(q, pair)
-			}
-		}
-
-		for q.Len() > 0 {
-			pair := heap.Pop(q).(*candidate)
-			left, right := merges[pair.a], merges[pair.b]
-
-			if string(left.runes) == "" || string(right.runes) == "" || len(string(left.runes))+len(string(right.runes)) != pair.size {
-				continue
-			}
-
-			merges[pair.a].runes = append(left.runes, right.runes...)
-			merges[pair.b].runes = nil
-			merges[pair.a].n = right.n
-			if right.n < len(merges) {
-				merges[right.n].p = pair.a
-			}
-
-			if pair := pairwise(merges[pair.a].p, pair.a); pair != nil {
-				heap.Push(q, pair)
-			}
-
-			if pair := pairwise(pair.a, merges[pair.a].n); pair != nil {
-				heap.Push(q, pair)
-			}
-		}
-
-		for _, merge := range merges {
-			if token := string(merge.runes); token != "" {
-				id := spm.vocab.Encode(token)
-
-				if id >= 0 {
-					ids = append(ids, id)
-					continue
-				}
-
-				// Fallback to byte tokenization
-				var result []int32
-				for _, b := range []byte(token) {
-					byteToken := fmt.Sprintf("<0x%02X>", b)
-					unknownID := spm.vocab.Encode(byteToken)
-					if unknownID >= 0 {
-						result = append(result, unknownID)
-					} else {
-						slog.Debug("unknown byte token", "byte", b, "token", byteToken)
-					}
-				}
-
-				ids = append(ids, result...)
-			}
-		}
+		ids = append(ids, spm.tokenizeViterbi(text)...)
 	}
 
 	if addSpecial {
@@ -189,33 +108,82 @@ func (spm SentencePiece) Encode(s string, addSpecial bool) ([]int32, error) {
 	return ids, nil
 }
 
-type candidate struct {
-	a, b  int
-	score float32
-	size  int
-}
+// tokenizeViterbi segments text into vocabulary tokens using the Viterbi algorithm,
+// finding the globally optimal (highest log-probability) segmentation.
+func (spm SentencePiece) tokenizeViterbi(text string) []int32 {
+	runes := []rune(text)
+	n := len(runes)
+	if n == 0 {
+		return nil
+	}
 
-type queue []*candidate
+	// dp[i] = best cumulative score for segmenting runes[0:i]
+	dp := make([]float32, n+1)
+	for i := range dp {
+		dp[i] = float32(math.Inf(-1))
+	}
+	dp[0] = 0
 
-func (q queue) Len() int { return len(q) }
+	// back[i] = rune-length of the token ending at position i in the best path
+	back := make([]int, n+1)
 
-func (q queue) Less(i, j int) bool {
-	return (q[i].score > q[j].score) || (q[i].score == q[j].score && q[i].a < q[j].a)
-}
+	for i := 0; i < n; i++ {
+		if math.IsInf(float64(dp[i]), -1) {
+			continue
+		}
+		for l := 1; i+l <= n && l <= spm.maxTokenLen; l++ {
+			piece := string(runes[i : i+l])
+			id := spm.vocab.Encode(piece)
+			if id < 0 {
+				continue
+			}
+			score := dp[i] + spm.vocab.Scores[id]
+			if score > dp[i+l] {
+				dp[i+l] = score
+				back[i+l] = l
+			}
+		}
+	}
 
-func (q queue) Swap(i, j int) { q[i], q[j] = q[j], q[i] }
+	// Traceback from position n to 0
+	var ids []int32
+	pos := n
+	for pos > 0 {
+		l := back[pos]
+		if l == 0 {
+			// Position unreachable via vocab — fall back to byte tokens for this char
+			ch := string(runes[pos-1 : pos])
+			var result []int32
+			for _, b := range []byte(ch) {
+				byteToken := fmt.Sprintf("<0x%02X>", b)
+				uid := spm.vocab.Encode(byteToken)
+				if uid >= 0 {
+					result = append(result, uid)
+				} else {
+					slog.Debug("unknown byte token", "byte", b, "token", byteToken)
+				}
+			}
+			// Prepend in reverse order since we're tracing backwards
+			for i := len(result) - 1; i >= 0; i-- {
+				ids = append(ids, result[i])
+			}
+			pos--
+			continue
+		}
+		piece := string(runes[pos-l : pos])
+		id := spm.vocab.Encode(piece)
+		if id >= 0 {
+			ids = append(ids, id)
+		}
+		pos -= l
+	}
 
-func (q *queue) Push(x interface{}) {
-	item := x.(*candidate)
-	*q = append(*q, item)
-}
+	// Reverse: traceback produces tokens in reverse order
+	for i, j := 0, len(ids)-1; i < j; i, j = i+1, j-1 {
+		ids[i], ids[j] = ids[j], ids[i]
+	}
 
-func (q *queue) Pop() interface{} {
-	old := *q
-	n := len(old)
-	item := old[n-1]
-	*q = old[0 : n-1]
-	return item
+	return ids
 }
 
 func (spm SentencePiece) Decode(ids []int32) (string, error) {

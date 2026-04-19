@@ -214,6 +214,7 @@ func New(c fs.Config) (model.Model, error) {
 				c.Uint("tokenizer.ggml.eos_token_id"),
 			)),
 		},
+		AddSpacePrefix: c.Bool("tokenizer.ggml.add_space_prefix", false),
 	}
 
 	var t tokenizer.Tokenizer
