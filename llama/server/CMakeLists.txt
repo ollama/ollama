@@ -75,8 +75,9 @@ FetchContent_MakeAvailable(llama_cpp)
 # Kept separate from the upstream-edits patch so our .cpp/.h stay
 # on-disk in llama/compat/ rather than being copied into _deps/.
 if(DEFINED OLLAMA_LLAMA_CPP_COMPAT_DIR)
-    target_sources(llama PRIVATE
-        ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/llama-ollama-compat.cpp)
+    file(GLOB _compat_sources CONFIGURE_DEPENDS
+        ${OLLAMA_LLAMA_CPP_COMPAT_DIR}/*.cpp)
+    target_sources(llama PRIVATE ${_compat_sources})
     target_include_directories(llama PRIVATE
         ${OLLAMA_LLAMA_CPP_COMPAT_DIR})
     # mtmd's clip.cpp #include's the compat header too — add the same dir
