@@ -434,6 +434,7 @@ func NewLlamaServerRunner(
 	// the compat layer's clip-side coverage in llama/compat/.
 	compatClipArches := map[string]bool{
 		"gemma3":      true,
+		"gemma4":      true,
 		"qwen35moe":   true,
 		"mistral3":    true,
 		"deepseekocr": true,

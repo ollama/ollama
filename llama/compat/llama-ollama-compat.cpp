@@ -824,6 +824,48 @@ void handle_deepseekocr_clip(gguf_context * meta, ggml_context * ctx) {
 }
 
 // =========================================================================
+// gemma4 (clip side — gemma4v projector)
+// =========================================================================
+//
+// Ollama's monolithic gemma4 GGUF embeds a SigLIP-style ViT plus the
+// gemma4v projector (a single `mm.input_projection`). All v.* / mm.*
+// tensor names already match upstream's PROJECTOR_TYPE_GEMMA4V — this
+// handler only needs KV translation and an F32 promote of the patch
+// embedding (Metal IM2COL).
+//
+// gemma4 vision uses image normalization mean=[0,0,0] / std=[1,1,1]
+// (the LM does its own per-image normalization via v.std_bias /
+// v.std_scale tensors) — different from the [0.5,0.5,0.5] used by
+// most other arches.
+
+void handle_gemma4_clip(gguf_context * meta, ggml_context * ctx) {
+    LLAMA_LOG_INFO("%s: detected Ollama-format gemma4 GGUF used as mmproj; translating\n", __func__);
+
+    copy_u32_kv(meta, "gemma4.vision.block_count",                   "clip.vision.block_count");
+    copy_u32_kv(meta, "gemma4.vision.embedding_length",              "clip.vision.embedding_length");
+    copy_u32_kv(meta, "gemma4.vision.feed_forward_length",           "clip.vision.feed_forward_length");
+    copy_u32_kv(meta, "gemma4.vision.attention.head_count",          "clip.vision.attention.head_count");
+    copy_f32_kv(meta, "gemma4.vision.attention.layer_norm_epsilon",  "clip.vision.attention.layer_norm_epsilon");
+    copy_u32_kv(meta, "gemma4.vision.patch_size",                    "clip.vision.patch_size");
+    // gemma4 vision is fixed at 224x224 patches.
+    inject_u32_if_missing(meta, "clip.vision.image_size", 224);
+    // projection_dim = LM embedding length.
+    copy_u32_kv(meta, "gemma4.embedding_length",                     "clip.vision.projection_dim");
+
+    static const float kZeros[3] = {0.0f, 0.0f, 0.0f};
+    static const float kOnes [3] = {1.0f, 1.0f, 1.0f};
+    inject_f32_arr_if_missing(meta, "clip.vision.image_mean", kZeros, 3);
+    inject_f32_arr_if_missing(meta, "clip.vision.image_std",  kOnes,  3);
+
+    inject_bool_if_missing(meta, "clip.has_vision_encoder", true);
+    gguf_set_val_str(meta, "clip.vision.projector_type", "gemma4v");
+    gguf_set_val_str(meta, "general.architecture",       "clip");
+
+    // Metal IM2COL needs F32 patch_embd weights (same as other arches).
+    promote_tensor_to_f32(meta, ctx, "v.patch_embd.weight");
+}
+
+// =========================================================================
 // llama4 (clip side)
 // =========================================================================
 //
@@ -1102,6 +1144,10 @@ void translate_clip_metadata(gguf_context * meta, ggml_context * ctx) {
     }
     if (detect_ollama_llama4(meta, ctx)) {
         handle_llama4_clip(meta, ctx);
+        return;
+    }
+    if (detect_ollama_gemma4(meta, ctx)) {
+        handle_gemma4_clip(meta, ctx);
         return;
     }
 }
