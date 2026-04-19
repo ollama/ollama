@@ -259,7 +259,7 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 		}
 	}
 
-	return nil
+	return scanner.Err()
 }
 
 // GenerateResponseFunc is a function that [Client.Generate] invokes every time
