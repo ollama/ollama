@@ -1,9 +1,35 @@
 import React from "react";
-import { Streamdown, defaultRemarkPlugins } from "streamdown";
+import { Streamdown, defaultRemarkPlugins, defaultRehypePlugins } from "streamdown";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import type { PluggableList } from "unified";
 import remarkCitationParser from "@/utils/remarkCitationParser";
 import CopyButton from "./CopyButton";
 import type { BundledLanguage } from "shiki";
 import { highlighter } from "@/lib/highlighter";
+
+// Extend GitHub's default sanitization schema to support math rendering
+// and custom citation elements while stripping dangerous tags like <style>
+// and <script> that can leak from model-generated HTML content.
+const sanitizeSchema = {
+  ...defaultSchema,
+  tagNames: [
+    ...(defaultSchema.tagNames || []),
+    "ol-citation",
+  ],
+  attributes: {
+    ...defaultSchema.attributes,
+    div: [
+      ...(defaultSchema.attributes?.div || []),
+      ["className", "math", "math-display"],
+    ],
+    span: [
+      ...(defaultSchema.attributes?.span || []),
+      ["className", "math", "math-inline"],
+    ],
+    "ol-citation": ["cursor", "start", "end"],
+  },
+  strip: ["script", "style"],
+};
 
 interface StreamingMarkdownContentProps {
   content: string;
@@ -135,6 +161,18 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
       ];
     }, []);
 
+    // Build rehype plugins: keep defaults (harden, raw, katex) but add
+    // sanitization after raw HTML parsing to prevent model-generated HTML
+    // (e.g. <style> tags) from affecting the UI
+    const rehypePlugins: PluggableList = React.useMemo(() => {
+      return [
+        defaultRehypePlugins.harden,
+        defaultRehypePlugins.raw,
+        [rehypeSanitize, sanitizeSchema],
+        defaultRehypePlugins.katex,
+      ] as PluggableList;
+    }, []);
+
     return (
       <div
         className={`
@@ -211,6 +249,7 @@ const StreamingMarkdownContent: React.FC<StreamingMarkdownContentProps> =
             parseIncompleteMarkdown={isStreaming}
             isAnimating={isStreaming}
             remarkPlugins={remarkPlugins}
+            rehypePlugins={rehypePlugins}
             controls={false}
             components={{
               pre: CodeBlock,
