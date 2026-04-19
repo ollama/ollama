@@ -515,8 +515,9 @@ func (s *Server) forwardBatch(pendingBatch batchState) (nextBatch batchState, er
 			continue
 		}
 
-		if !s.cache.enabled {
-			seq.inputs = append(seq.cache.Inputs, seq.inputs...)
+		// FIX: Always attempt to use cache
+		seq.inputs = append(seq.cache.Inputs, seq.inputs...)
+		if s.cache.enabled {
 			seq.cache.Inputs = []*input.Input{}
 		}
 
