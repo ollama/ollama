@@ -32,6 +32,47 @@ All durations are returned in nanoseconds.
 
 Certain endpoints stream responses as JSON objects. Streaming can be disabled by providing `{"stream": false}` for these endpoints.
 
+### Error responses
+
+If a request fails, the API returns an appropriate HTTP status code along with a JSON object containing an `error` field with a description of the issue:
+
+```json
+{
+  "error": "model 'nomodel' not found"
+}
+```
+
+Common HTTP status codes:
+
+| Status Code | Description |
+|-------------|-------------|
+| 400 | Bad request - the request body is invalid or missing required fields |
+| 404 | Not found - the requested model does not exist |
+| 500 | Internal server error - an unexpected error occurred on the server |
+
+#### Example
+
+##### Request
+
+```shell
+curl http://localhost:11434/api/generate -d '{
+  "model": "nomodel",
+  "prompt": "Hello"
+}'
+```
+
+##### Response
+
+```
+HTTP/1.1 404 Not Found
+```
+
+```json
+{
+  "error": "model 'nomodel' not found"
+}
+```
+
 ## Generate a completion
 
 ```
