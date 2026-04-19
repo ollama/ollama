@@ -393,49 +393,52 @@ void translate_clip_metadata(gguf_context * meta, ggml_context * ctx) {
     }
 }
 
-bool supply_promoted_tensor_data(const ggml_tensor * cur,
-                                 const char * source_file,
-                                 size_t file_offset,
-                                 std::vector<uint8_t> & out) {
+bool maybe_load_tensor(ggml_tensor * cur,
+                       const char * source_file,
+                       size_t file_offset,
+                       ggml_backend_buffer_type_t buft) {
+    // Check registry: is this tensor marked for F16→F32 promotion?
     {
         std::lock_guard<std::mutex> lk(g_promote_mutex);
         if (g_promote_f16_to_f32.find(ggml_get_name(cur)) == g_promote_f16_to_f32.end()) {
             return false;
         }
     }
-    // cur->type is F32 (after promotion). Source bytes are F16 at file_offset.
-    if (cur->type != GGML_TYPE_F32) {
-        return false;
-    }
+    // Destination was promoted to F32 by translate_clip_metadata. Source
+    // bytes on disk are still F16 at file_offset.
+    if (cur->type != GGML_TYPE_F32) return false;
 
-    const size_t n_elem = ggml_nelements(cur);
-    const size_t src_bytes = n_elem * sizeof(uint16_t);
-    const size_t dst_bytes = n_elem * sizeof(float);
+    const size_t n_elem   = ggml_nelements(cur);
+    const size_t src_size = n_elem * sizeof(uint16_t);
+    const size_t dst_size = n_elem * sizeof(float);
 
-    std::vector<uint8_t> src(src_bytes);
+    std::vector<uint8_t> src(src_size);
 
     FILE * f = std::fopen(source_file, "rb");
     if (!f) {
         LLAMA_LOG_ERROR("%s: failed to open '%s'\n", __func__, source_file);
         return false;
     }
-    if (std::fseek(f, (long) file_offset, SEEK_SET) != 0) {
-        std::fclose(f);
-        LLAMA_LOG_ERROR("%s: failed to seek in '%s'\n", __func__, source_file);
-        return false;
-    }
-    if (std::fread(src.data(), 1, src_bytes, f) != src_bytes) {
+    if (std::fseek(f, (long) file_offset, SEEK_SET) != 0 ||
+        std::fread(src.data(), 1, src_size, f) != src_size) {
         std::fclose(f);
         LLAMA_LOG_ERROR("%s: failed to read %zu bytes for '%s'\n",
-                        __func__, src_bytes, ggml_get_name(cur));
+                        __func__, src_size, ggml_get_name(cur));
         return false;
     }
     std::fclose(f);
 
-    out.resize(dst_bytes);
+    std::vector<uint8_t> dst(dst_size);
     convert_f16_to_f32(reinterpret_cast<const uint16_t *>(src.data()),
-                       reinterpret_cast<float *>(out.data()),
+                       reinterpret_cast<float *>(dst.data()),
                        n_elem);
+
+    // Deliver the converted bytes to the tensor's final backend buffer.
+    if (ggml_backend_buft_is_host(buft)) {
+        std::memcpy(cur->data, dst.data(), dst_size);
+    } else {
+        ggml_backend_tensor_set(cur, dst.data(), 0, dst_size);
+    }
 
     LLAMA_LOG_INFO("%s: promoted F16->F32 for %s (%zu elems)\n",
                    __func__, ggml_get_name(cur), n_elem);

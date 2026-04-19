@@ -18,6 +18,8 @@
 #include <string>
 #include <vector>
 
+#include "ggml-backend.h" // for ggml_backend_buffer_type_t
+
 struct gguf_context;
 struct ggml_context;
 struct ggml_tensor;
@@ -64,15 +66,17 @@ void apply_tensor_transforms(const llama_model_loader * ml, ggml_context * ctx);
 void translate_clip_metadata(gguf_context * meta, ggml_context * ctx);
 
 // Called from clip.cpp's tensor-loading loop, before reading bytes from the
-// file. If this tensor was marked for type promotion by translate_clip_metadata,
-// fills `out` with the promoted data (e.g. F16→F32) and returns true. The
-// caller should then use `out` instead of reading from the file.
+// file. If this tensor was marked for type promotion by translate_clip_metadata
+// (e.g. F16→F32), reads the source bytes, converts them, and writes the
+// result directly into `cur` (choosing host copy vs. backend upload based
+// on `buft`). Returns true if the tensor was handled — caller should skip
+// its normal file-read path. Returns false otherwise; caller loads normally.
 //
 // `file_offset` is the absolute file offset of the original (pre-promotion)
 // tensor data in the source GGUF.
-bool supply_promoted_tensor_data(const ggml_tensor * cur,
-                                 const char * source_file,
-                                 size_t file_offset,
-                                 std::vector<uint8_t> & out);
+bool maybe_load_tensor(ggml_tensor * cur,
+                       const char * source_file,
+                       size_t file_offset,
+                       ggml_backend_buffer_type_t buft);
 
 } // namespace llama_ollama_compat
