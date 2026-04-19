@@ -67,6 +67,88 @@ I'm a basic program that prints the famous "Hello, world!" message to the consol
 ollama run gemma3 "What's in this image? /Users/jmorgan/Desktop/smile.png"
 ```
 
+### Manage skills
+
+```
+ollama skills list
+ollama skills search text --tag dev --permission filesystem.read --verified
+ollama skills info my-skill
+ollama skills install ./my-skill
+ollama skills install owner/repo@v1.2.3
+ollama skills update my-skill
+ollama skills update my-skill --to v1.2.4
+ollama skills verify my-skill
+ollama skills enable my-skill
+ollama skills disable my-skill
+ollama skills allow my-skill filesystem.read network.fetch
+ollama skills revoke my-skill network.fetch
+ollama skills run my-skill --dry-run -- arg1 arg2
+ollama skills run my-skill --allow filesystem.read --scope chat -- arg1 arg2
+ollama skills run my-skill --yes -- arg1 arg2
+ollama skills logs my-skill --last 100
+ollama skills rollback my-skill
+ollama skills uninstall my-skill
+```
+
+`skill.toml` schema:
+
+```toml
+name = "my-skill"
+description = "What this skill does"
+version = "0.1.0"
+tags = ["dev", "git"]
+command = "./run.sh"
+args = ["--flag"]
+
+[io]
+inputs = ["text"]
+outputs = ["text"]
+input_schema = [{ name = "text", type = "string", required = true }]
+output_schema = [{ name = "result", type = "string" }]
+
+[permissions]
+required = ["filesystem.read"]
+
+[[examples]]
+prompt = "Summarize this diff"
+args = ["--staged"]
+output = "A short summary"
+
+[sandbox]
+timeout_seconds = 60
+max_output_bytes = 2097152
+allow_network = true
+allow_filesystem = true
+allowed_paths = ["/tmp", "/Users/you/project"]
+
+[provenance]
+sha256 = "3f786850e387550fdab836ed7e6dc881de23001b5f5f63b1f2d19e4e5b6f8d2a"
+signature = "base64-ed25519-signature"
+public_key = "base64-ed25519-public-key"
+```
+
+When you run `ollama run <model>` interactively, Ollama shows active skills and what each one can do.
+Use `/skills` in chat to re-display the current active skills.
+Use `/skill <name> [args...]` to execute a skill inline in chat, and `/skilltrace` to inspect recent invocations.
+You can also grant permissions via `OLLAMA_SKILL_ALLOW` (comma-separated), e.g. `OLLAMA_SKILL_ALLOW=filesystem.read,network.fetch`.
+For Git/GitHub installs, use a pinned ref (`@tag` or `@commit`) so updates stay deterministic.
+You can point `OLLAMA_SKILL_CATALOG` to a JSON catalog file for custom searchable skill listings.
+You can enforce install/run policy with `~/.ollama/skills/policy.json` (or `$OLLAMA_SKILLS/policy.json`) and review audit events in `audit.log`.
+
+Example `policy.json`:
+
+```json
+{
+  "require_sha256": true,
+  "require_signature": true,
+  "trusted_public_keys": ["base64-ed25519-public-key"],
+  "allowed_permissions": ["filesystem.read", "filesystem.write"],
+  "denied_permissions": ["network.fetch"],
+  "allow_network": false,
+  "max_timeout_seconds": 30,
+  "max_output_bytes": 1048576
+}
+```
 ### Generate embeddings
 
 ```
