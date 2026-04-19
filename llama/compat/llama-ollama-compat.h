@@ -3,20 +3,27 @@
 // Ollama-format GGUF compatibility shim.
 //
 // Older Ollama builds ship GGUFs that differ from upstream in a handful of
-// ways per-architecture. This shim detects those files during load and
-// translates them in-memory so the rest of llama.cpp can load them
-// unmodified. Single entry point per hook; all logic is data-driven from
-// per-architecture rules.
+// ways per-architecture (arch names, KV keys, tensor names, file layout).
+// This shim detects those files during load and translates them in-memory
+// so the rest of llama.cpp can load them unmodified.
 //
-// Two hooks:
-//   1. translate_metadata() — runs after gguf_init_from_file, mutates KVs
-//      and (optionally) tensor names on the gguf_context / ggml_context.
-//   2. apply_tensor_transforms() — runs after load_all_data, rewrites
-//      tensor data that differs numerically (e.g. gemma3 RMSNorm +1).
+// Three upstream hook points call into this namespace — one per insertion:
+//
+//   1. llama-model-loader.cpp (main model load):
+//        translate_metadata()        — mutate KVs / tensor metadata
+//        should_skip_tensor()        — filter weights_map population
+//
+//   2. tools/mtmd/clip.cpp (mmproj load):
+//        translate_clip_metadata()   — rewrite KVs + tensor names for clip
+//        maybe_load_tensor()         — override file read (e.g. F16->F32)
+//
+// Detection is per-arch; for any non-Ollama file every entry point is a
+// no-op. Per-arch logic lives in anonymous-namespace handle_<arch>()
+// functions in the .cpp; adding a new arch is a new handler plus one
+// dispatch line in each translate_* entry point.
 
-#include <cstdint>
+#include <cstddef>
 #include <string>
-#include <vector>
 
 #include "ggml-backend.h" // for ggml_backend_buffer_type_t
 
@@ -27,53 +34,27 @@ struct llama_model_loader;
 
 namespace llama_ollama_compat {
 
-// Inspect and mutate the just-loaded gguf_context. May update arch_name if
-// the file uses an Ollama-specific architecture name. Safe to call for any
-// model — no-op when no Ollama markers are present.
-//
-// If compat was applied, registers any tensor transforms against `ml` for
-// apply_tensor_transforms() to consume later.
+// Called from llama_model_loader's constructor, right after the arch is read.
 void translate_metadata(const llama_model_loader * ml,
                         gguf_context * meta,
                         ggml_context * ctx,
                         std::string & arch_name);
 
-// Returns true if the loader should skip this tensor entirely (not add to
-// weights_map, not count toward n_tensors). Used to drop embedded vision
-// tensors from the text model without physically removing them.
+// Called from llama_model_loader's weights_map population loop. Returns
+// true to drop a tensor from the loader — used to hide embedded vision
+// tensors from the text model's view without modifying the gguf_context.
 bool should_skip_tensor(const llama_model_loader * ml, const char * tensor_name);
 
-// Called after load_all_data returns for a model context. Applies any
-// registered transforms (read tensor data from the backend buffer, modify,
-// write back) to tensors in `ctx`. Call once per model context.
-void apply_tensor_transforms(const llama_model_loader * ml, ggml_context * ctx);
-
-// Called from the clip loader (tools/mtmd/clip.cpp). If the file is an
-// Ollama-format monolithic GGUF (text + embedded vision), rewrites the
-// clip-facing view of the metadata so the clip loader sees it as a normal
-// mmproj file. Safe to call unconditionally — no-op when not an Ollama file.
-//
-// Operations:
-//   - sets general.architecture = "clip"
-//   - sets clip.has_vision_encoder, clip.projector_type, clip.use_gelu
-//   - copies gemma3.vision.* KVs into clip.vision.*
-//   - renames vision tensors (v.patch_embedding -> v.patch_embd, etc.)
-//   - promotes specific F16 tensors to F32 in the ggml_context so clip
-//     allocates the correct buffer size
-//
-// Non-vision text tensors remain in the gguf but are never looked up by
-// clip, so they cost nothing.
+// Called from clip_model_loader's constructor. Rewrites the clip-facing
+// view of the metadata (arch=clip, clip.vision.* KVs, renamed tensors)
+// so the rest of clip.cpp can load an Ollama monolithic GGUF unchanged.
 void translate_clip_metadata(gguf_context * meta, ggml_context * ctx);
 
-// Called from clip.cpp's tensor-loading loop, before reading bytes from the
-// file. If this tensor was marked for type promotion by translate_clip_metadata
-// (e.g. F16→F32), reads the source bytes, converts them, and writes the
-// result directly into `cur` (choosing host copy vs. backend upload based
-// on `buft`). Returns true if the tensor was handled — caller should skip
-// its normal file-read path. Returns false otherwise; caller loads normally.
-//
-// `file_offset` is the absolute file offset of the original (pre-promotion)
-// tensor data in the source GGUF.
+// Called from clip.cpp's tensor-loading loop, before the normal file read.
+// If this tensor was marked for type promotion by translate_clip_metadata
+// (e.g. F16->F32), performs the conversion and writes the result into
+// `cur` (host memcpy or backend_tensor_set based on `buft`). Returns true
+// when the tensor was handled — caller should skip its normal read path.
 bool maybe_load_tensor(ggml_tensor * cur,
                        const char * source_file,
                        size_t file_offset,

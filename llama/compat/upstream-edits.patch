@@ -38,28 +38,6 @@ index 4e65a45a5..75836c683 100644
              // make sure there is no duplicated tensor names
              if (weights_map.find(tensor_name) != weights_map.end()) {
                  throw std::runtime_error(format("invalid model: tensor '%s' is duplicated", ggml_get_name(cur)));
-diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 4ded484dd..7d3509c23 100644
---- a/src/llama-model.cpp
-+++ b/src/llama-model.cpp
-@@ -6,6 +6,7 @@
- #include "llama-mmap.h"
- #include "llama-cparams.h"
- #include "llama-model-loader.h"
-+#include "llama-ollama-compat.h"
- 
- #include "llama-kv-cache.h"
- #include "llama-kv-cache-iswa.h"
-@@ -8023,6 +8024,9 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
-         if (!ml.load_all_data(ctx, buf_map, use_mlock ? &pimpl->mlock_mmaps : NULL, params.progress_callback, params.progress_callback_user_data)) {
-             return false;
-         }
-+        // Apply any Ollama-format numerical fixups (e.g. gemma3 RMSNorm +1)
-+        // while the data is in its final backend buffers.
-+        llama_ollama_compat::apply_tensor_transforms(&ml, ctx);
-     }
- 
-     if (use_mmap_buffer) {
 diff --git a/tools/mtmd/clip.cpp b/tools/mtmd/clip.cpp
 index f0e8786b6..35defa89d 100644
 --- a/tools/mtmd/clip.cpp
