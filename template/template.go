@@ -411,10 +411,20 @@ type templateTool struct {
 	Function templateToolFunction `json:"function"`
 }
 
+func (t templateTool) String() string {
+	bts, _ := json.Marshal(t)
+	return string(bts)
+}
+
 type templateToolFunction struct {
 	Name        string                         `json:"name"`
 	Description string                         `json:"description"`
 	Parameters  templateToolFunctionParameters `json:"parameters"`
+}
+
+func (t templateToolFunction) String() string {
+	bts, _ := json.Marshal(t)
+	return string(bts)
 }
 
 type templateToolFunctionParameters struct {
@@ -423,6 +433,11 @@ type templateToolFunctionParameters struct {
 	Items      any                `json:"items,omitempty"`
 	Required   []string           `json:"required,omitempty"`
 	Properties templateProperties `json:"properties"`
+}
+
+func (t templateToolFunctionParameters) String() string {
+	bts, _ := json.Marshal(t)
+	return string(bts)
 }
 
 // templateToolCall is a template-compatible representation of api.ToolCall
